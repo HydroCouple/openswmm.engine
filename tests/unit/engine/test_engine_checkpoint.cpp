@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 #include "core/SWMMEngine.hpp"
 #include "core/CompletedSourceArchive.hpp"
+#include "core/CheckpointInspection.hpp"
 #include "core/DateTime.hpp"
 #include "output/OutputReader.hpp"
 #include <openswmm/plugin_sdk/IOutputPlugin.hpp>
@@ -20,6 +21,7 @@
 #include "2d/output/Default2DOutputPlugin.hpp"
 #endif
 #endif
+
 #include <filesystem>
 #ifndef _WIN32
 #include <sys/resource.h>
@@ -30,6 +32,7 @@
 #include <iterator>
 #include <future>
 #include <numeric>
+#include <set>
 
 using namespace openswmm;
 namespace {
@@ -2205,6 +2208,7 @@ TEST(EngineCheckpoint, RuntimeWaterCombinedOutputsContinueReportAndExpiryBoundar
     }
 }
 
+#endif
 namespace {
 // A synchronous stateful adapter: future rates depend on its consumed cursor
 // and accumulator. The queue, schema and immutable inputs validate privately.
@@ -2328,14 +2332,24 @@ TEST(EngineCheckpoint, ExternalWaterDriverFreshRestartPreservesStateCursorAndFut
 
 TEST(EngineCheckpoint, ExternalWaterDriverDueUpdateStopsBeforeMutationAndAllowsRetry) {
     TestWaterDriver d;SurfaceSession s;
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
         ASSERT_NO_THROW(startProvider(s,"driver-due",2,0,true,2));
+#else
+        ASSERT_NO_THROW(startProvider(s,"driver-due",2));
+#endif
     ASSERT_EQ(s.engine.attachRuntimeWaterDriverCheckpoint(d),"");
     const auto cp=root()/"driver-due.chk";
         ASSERT_EQ(s.engine.saveCheckpoint(cp.string()),"");
-    const auto before=bytes(cp),binary=bytes(root()/"driver-due.out"),mesh=bytes(root()/"driver-due.h5");
+    const auto before=bytes(cp);
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+    const auto binary=bytes(root()/"driver-due.out"),mesh=bytes(root()/"driver-due.h5");
+#endif
     double elapsed=123;EXPECT_EQ(s.engine.step(&elapsed),SWMM_ERR_LIFECYCLE);EXPECT_EQ(elapsed,123);
     ASSERT_EQ(s.engine.saveCheckpoint(cp.string()),"");EXPECT_EQ(bytes(cp),before);
-    EXPECT_EQ(bytes(root()/"driver-due.out"),binary);EXPECT_EQ(bytes(root()/"driver-due.h5"),mesh);EXPECT_EQ(d.cursor,0);
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+    EXPECT_EQ(bytes(root()/"driver-due.out"),binary);EXPECT_EQ(bytes(root()/"driver-due.h5"),mesh);
+#endif
+    EXPECT_EQ(d.cursor,0);
     ASSERT_NO_THROW(drive(s.engine,d,4.2));EXPECT_NEAR(s.engine.context().current_time,4.2,1e-12);
     ASSERT_EQ(s.engine.saveCheckpoint(cp.string()),"");const auto due=bytes(cp);
     EXPECT_EQ(s.engine.step(&elapsed),SWMM_ERR_LIFECYCLE);
@@ -2344,6 +2358,7 @@ TEST(EngineCheckpoint, ExternalWaterDriverDueUpdateStopsBeforeMutationAndAllowsR
         ASSERT_NO_THROW(step(s.engine));EXPECT_EQ(d.cursor,2);
 }
 
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
 TEST(EngineCheckpoint, ExternalWaterDriverNestedGuardsPreserveDriverPhysicsAndBothOutputs) {
     TestWaterDriver da;SurfaceSession a;
         ASSERT_NO_THROW(startProvider(a,"driver-guard-source",2,0,true,2));
@@ -2401,6 +2416,7 @@ TEST(EngineCheckpoint, ExternalWaterDriverCombinedOutputsContinueExactlyAcrossRe
     }
 }
 
+#endif
 TEST(EngineCheckpoint, ExternalWaterDriverAttachmentAndCaptureRejectUnsupportedState) {
     TestWaterDriver d;SurfaceSession s;
         ASSERT_NO_THROW(startProvider(s,"driver-attach",2));
@@ -2424,7 +2440,6 @@ TEST(EngineCheckpoint, ExternalWaterDriverAttachmentAndCaptureRejectUnsupportedS
     EXPECT_FALSE(target.engine.loadCheckpoint(cp.string()).empty());
 }
 #endif
-#endif
 
 #ifdef OPENSWMM_HAS_2D
 namespace {
@@ -2447,7 +2462,12 @@ int boundaryFrame(SWMMEngine& e,int phase=0,const char* owner="edge-water") {
     return swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&e),&frame);
 }
 void compareBoundary(SurfaceSession& a,SurfaceSession& b,const std::string& name,bool output=false) {
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
     if(output)compareMesh(a.engine,b.engine,name);else compare(a.engine,b.engine,name);
+#else
+    if(output)throw std::runtime_error("Mesh output comparisons are unavailable");
+    compare(a.engine,b.engine,name);
+#endif
     const auto x=root()/(name+"-a.chk"),y=root()/(name+"-b.chk");
     ASSERT_EQ(a.engine.saveCheckpoint(x.string()),"");
         ASSERT_EQ(b.engine.saveCheckpoint(y.string()),"");
@@ -2580,6 +2600,7 @@ TEST(EngineCheckpoint, RuntimeBoundaryClearedHistoryRestoresPendingWorkAndNewOwn
         ASSERT_NO_THROW(until(b.engine,10));compareBoundary(a,b,"boundary-new-owner");
     EXPECT_EQ(b.engine.surfaceRouter2D().boundary().runtime_owner.begin()->second,"replacement");
 }
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
 TEST(EngineCheckpoint, RuntimeBoundaryInvalidNestedStatePreservesPhysicsBothOutputsAndAllowsRetry) {
     SurfaceSession a;
         ASSERT_NO_THROW(startBoundary(a,"boundary-guard-a",2,0,true,2));
@@ -2600,6 +2621,7 @@ TEST(EngineCheckpoint, RuntimeBoundaryInvalidNestedStatePreservesPhysicsBothOutp
         ASSERT_EQ(b.engine.loadCheckpoint(good.string()),"");compareMesh(a.engine,b.engine,name+"-valid-retry");
     }
 }
+#endif
 TEST(EngineCheckpoint, RuntimeBoundaryFramesRejectOwnershipGeometryAndQualityBeforeBarrier) {
     SurfaceSession a;
         ASSERT_NO_THROW(startBoundary(a,"boundary-api-guard",2));
@@ -2629,6 +2651,7 @@ TEST(EngineCheckpoint, RuntimeBoundaryFramesRejectOwnershipGeometryAndQualityBef
         EXPECT_EQ(boundaryFrame(old.engine),SWMM_ERR_PLUGIN);
     EXPECT_FALSE(old.engine.loadCheckpoint(file.string()).empty());
 }
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
 TEST(EngineCheckpoint, RuntimeBoundaryCombinedReportsContinueAcrossClearAndReacquisition) {
     for(int format:{1,2})for(int lid:{0,1,2}) {
         const auto name="boundary-output-"+std::to_string(format)+"-"+std::to_string(lid);SCOPED_TRACE(name);SurfaceSession a,b;
@@ -2678,6 +2701,7 @@ TEST(EngineCheckpoint, RuntimeBoundaryDriverDueUpdateAndPublicationFailureRemain
     ASSERT_NO_THROW(drive(a.engine,da,15));
         ASSERT_NO_THROW(drive(b.engine,db,15));compareBoundary(a,b,"boundary-driver-continued",true);
 }
+#endif
 #endif
 
 #ifdef OPENSWMM_HAS_2D
@@ -2907,7 +2931,12 @@ void startCatchmentProvider(SurfaceSession& s,const std::string& name,int lid=0,
     s.start(name,lid,1,closure,0,true,true,false,-1,output,format,output,identity,boundaries,boundaries?7:0,0,true);
 }
 void compareCatchmentProvider(SurfaceSession& a,SurfaceSession& b,const std::string& name,bool output=false) {
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
     if(output)compareMesh(a.engine,b.engine,name);else compare(a.engine,b.engine,name);
+#else
+    if(output)throw std::runtime_error("Mesh output comparisons are unavailable");
+    compare(a.engine,b.engine,name);
+#endif
     EXPECT_EQ(a.engine.surfaceRouter2D().state().volume,b.engine.surfaceRouter2D().state().volume);
     EXPECT_EQ(a.engine.surfaceRouter2D().subsurface().state().hu,b.engine.surfaceRouter2D().subsurface().state().hu);
     EXPECT_EQ(a.sources.runoff().soa().depth_perv,b.sources.runoff().soa().depth_perv);
@@ -3295,7 +3324,7 @@ TEST(EngineCheckpoint, StreamWriteRefusalPreservesPhysicalBoundaryAndDurablePref
     write(path,intact);
         ASSERT_NO_THROW(step(a.engine));
 }
-#ifdef OPENSWMM_HAS_HDF5_MODEL
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
 TEST(EngineCheckpoint, StreamRestoresWithDriverBinaryAndMeshOutputsAsOnePublication) {
     for(bool detailed:{false,true})for(int lid:{0,1,2}) {
         const auto name="stream-combined-"+std::to_string(detailed)+"-"+std::to_string(lid);SCOPED_TRACE(name);
@@ -3434,7 +3463,7 @@ TEST(EngineCheckpoint, StreamStagingCollisionPreservesUnownedFileAndFreshStateWi
     compareCatchmentProvider(a,b,"stream-staging-restored");equalStreamPrefix(recorded,resumed);
 }
 #endif
-#if defined(OPENSWMM_HAS_2D) && defined(OPENSWMM_HAS_HDF5_MODEL)
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
 namespace {
 uint64_t fileTestHash(const std::string& data) {
     uint64_t value=14695981039346656037ULL;
@@ -3906,6 +3935,192 @@ TEST(EngineCheckpoint, LargerConnectedSessionRelocatesAllHistoriesAndRichardsNod
     EXPECT_NEAR(a.engine.context().mass_balance_2d.error(),0,1.e-7);
     EXPECT_NEAR(a.engine.context().mass_balance.routing_error(),0,1.e-5);
     sameBinary(name,name+"-resumed",6);sameMesh(name,name+"-resumed",6);
+}
+#endif
+#endif
+
+namespace {
+std::set<std::string> inspectionFiles() {
+    std::set<std::string> names;
+    for(const auto& entry:std::filesystem::directory_iterator(root()))names.insert(entry.path().filename().string());
+    return names;
+}
+void inspectionReports(const CheckpointInspection::Reports& report,int records,double cadence,
+                       double start,double first,double last) {
+    EXPECT_TRUE(report.enabled);EXPECT_EQ(report.records,records);EXPECT_DOUBLE_EQ(report.cadence_seconds,cadence);
+    if(!records){EXPECT_FALSE(report.first_date);EXPECT_FALSE(report.last_date);return;}
+    ASSERT_TRUE(report.first_date);ASSERT_TRUE(report.last_date);
+    EXPECT_DOUBLE_EQ(*report.first_date,datetime::addSeconds(start,first+.001));
+    EXPECT_DOUBLE_EQ(*report.last_date,datetime::addSeconds(start,last+.001));
+}
+}
+TEST(EngineCheckpoint, InspectionBinaryCoveragePreservesFreshStateWithDelayedReportStart) {
+    for(bool late:{false,true})for(double phase:{0.,9.1,19.1}) {
+        const auto name="inspect-binary-"+std::to_string(late)+"-"+std::to_string(phase);SCOPED_TRACE(name);
+        SWMMEngine a,b;ASSERT_NO_THROW(startBinary(a,name,2,false,late));
+        ASSERT_NO_THROW(startBinary(b,name+"-fresh",2,false,late));
+        while(a.context().current_time<phase)ASSERT_NO_THROW(step(a));
+        const auto cp=root()/(name+".chk"),before=root()/(name+"-before.chk"),after=root()/(name+"-after.chk");
+        ASSERT_EQ(a.saveCheckpoint(cp.string()),"");ASSERT_EQ(b.saveCheckpoint(before.string()),"");
+        const auto output=bytes(root()/(name+"-fresh.out"));const auto files=inspectionFiles();CheckpointInspection info;
+        ASSERT_EQ(b.inspectCheckpoint(cp.string(),info),"");EXPECT_EQ(files,inspectionFiles());
+        EXPECT_EQ(bytes(root()/(name+"-fresh.out")),output);EXPECT_DOUBLE_EQ(b.context().current_time,0);
+        EXPECT_DOUBLE_EQ(info.engine_seconds,a.context().current_time);EXPECT_DOUBLE_EQ(info.engine_date,a.context().current_date);
+        EXPECT_DOUBLE_EQ(info.start_date,a.context().options.start_date);EXPECT_DOUBLE_EQ(info.report_start_date,a.context().options.report_start);
+        EXPECT_EQ(info.checkpoint_bytes,std::filesystem::file_size(cp));EXPECT_FALSE(info.completed_source_seconds);
+        EXPECT_FALSE(info.driver);EXPECT_FALSE(info.mesh.enabled);EXPECT_FALSE(info.file_outputs);EXPECT_TRUE(info.companions.empty());
+        const int records=phase==0?0:phase<10?(late?0:3):(late?2:6);
+        inspectionReports(info.binary,records,3,info.start_date,late?15:3,phase<10?9:18);
+        const auto saved=info;ASSERT_EQ(b.inspectCheckpoint(cp.string(),info),"");EXPECT_EQ(info,saved);
+        ASSERT_EQ(b.saveCheckpoint(after.string()),"");EXPECT_EQ(bytes(before),bytes(after));
+        ASSERT_EQ(b.loadCheckpoint(cp.string()),"");compare(a,b,name+"-restored");
+        if(phase>0){EXPECT_FALSE(b.inspectCheckpoint(cp.string(),info).empty());EXPECT_EQ(info,saved);}
+    }
+}
+
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, InspectionSourceAndDueDriverClocksPreserveFreshControllersAcrossProfiles) {
+    for(int lid:{0,1,2})for(int closure:{0,1,2}) {
+        const auto name="inspect-source-"+std::to_string(lid)+"-"+std::to_string(closure);SCOPED_TRACE(name);
+        TestWaterDriver da,db;Stream recorded,resumed;SurfaceSession a,b;
+        ASSERT_NO_THROW(startCatchmentProvider(a,name,lid,closure));
+        ASSERT_NO_THROW(startCatchmentProvider(b,name+"-fresh",lid,closure));
+        ASSERT_EQ(a.engine.attachRuntimeWaterDriverCheckpoint(da),"");ASSERT_EQ(b.engine.attachRuntimeWaterDriverCheckpoint(db),"");
+        const bool detailed=(lid+closure)%2;
+        ASSERT_EQ(a.engine.setEngineSourceResultStream(recorded,streamPath(name).string(),detailed),"");
+        ASSERT_EQ(b.engine.setEngineSourceResultStream(resumed,streamPath(name+"-fresh").string(),detailed),"");
+        ASSERT_NO_THROW(drive(a.engine,da,4.2));const auto cp=root()/(name+".chk"),before=root()/(name+"-before.chk"),after=root()/(name+"-after.chk");
+        ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");
+        const auto fresh=bytes(resumed.path());const auto cursor=resumed.cursor();const auto files=inspectionFiles();CheckpointInspection info;
+        ASSERT_EQ(b.engine.inspectCheckpoint(cp.string(),info),"");EXPECT_EQ(files,inspectionFiles());
+        EXPECT_DOUBLE_EQ(info.engine_seconds,a.engine.context().current_time);ASSERT_TRUE(info.completed_source_seconds);
+        EXPECT_DOUBLE_EQ(*info.completed_source_seconds,a.stage.completedEnd());EXPECT_LE(*info.completed_source_seconds,info.engine_seconds);
+        ASSERT_TRUE(info.driver);EXPECT_EQ(info.driver->identity,da.identity());EXPECT_EQ(info.driver->next_sequence,da.cursor);
+        EXPECT_DOUBLE_EQ(info.driver->next_update_seconds,info.engine_seconds);EXPECT_EQ(db.installs,0);EXPECT_EQ(db.cursor,0);
+        EXPECT_EQ(info.source_frames,recorded.cursor().frames);EXPECT_EQ(info.source_prefix_bytes,recorded.cursor().bytes);
+        EXPECT_EQ(info.detailed_sources,detailed);EXPECT_FALSE(info.binary.enabled);EXPECT_FALSE(info.mesh.enabled);
+        ASSERT_EQ(info.companions.size(),1);EXPECT_EQ(info.companions[0].path,recorded.path());
+        EXPECT_EQ(info.companions[0].required_bytes,recorded.cursor().bytes);
+        const auto saved=info;ASSERT_EQ(b.engine.inspectCheckpoint(cp.string(),info),"");EXPECT_EQ(info,saved);
+        EXPECT_EQ(resumed.cursor(),cursor);EXPECT_EQ(bytes(resumed.path()),fresh);
+        ASSERT_EQ(b.engine.saveCheckpoint(after.string()),"");EXPECT_EQ(bytes(before),bytes(after));
+        ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");EXPECT_EQ(db.installs,1);equalStreamPrefix(recorded,resumed);
+        ASSERT_NO_THROW(drive(a.engine,da,5.5));
+        ASSERT_NO_THROW(drive(b.engine,db,5.5));compare(a.engine,b.engine,name+"-continued");equalStreamPrefix(recorded,resumed);
+    }
+}
+TEST(EngineCheckpoint, InspectionExhaustedDriverHasNoFutureUpdateAndDoesNotAdoptItsCursor) {
+    TestWaterDriver da,db;Stream recorded,resumed;SurfaceSession a,b;
+    ASSERT_NO_THROW(startCatchmentProvider(a,"inspect-exhausted",2,2));
+    ASSERT_NO_THROW(startCatchmentProvider(b,"inspect-exhausted-fresh",2,2));
+    ASSERT_EQ(a.engine.attachRuntimeWaterDriverCheckpoint(da),"");ASSERT_EQ(b.engine.attachRuntimeWaterDriverCheckpoint(db),"");
+    ASSERT_EQ(a.engine.setEngineSourceResultStream(recorded,streamPath("inspect-exhausted").string(),true),"");
+    ASSERT_EQ(b.engine.setEngineSourceResultStream(resumed,streamPath("inspect-exhausted-fresh").string(),true),"");
+    ASSERT_NO_THROW(drive(a.engine,da,13.2));ASSERT_EQ(da.nextUpdateSeconds(),-1);
+    const auto cp=root()/"inspect-exhausted.chk";ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+    const auto cursor=resumed.cursor();const auto source=bytes(resumed.path());CheckpointInspection info;
+    ASSERT_EQ(b.engine.inspectCheckpoint(cp.string(),info),"");ASSERT_TRUE(info.driver);
+    EXPECT_EQ(info.driver->next_sequence,5);EXPECT_DOUBLE_EQ(info.driver->next_update_seconds,-1);
+    EXPECT_EQ(db.cursor,0);EXPECT_EQ(db.installs,0);EXPECT_EQ(resumed.cursor(),cursor);EXPECT_EQ(bytes(resumed.path()),source);
+    ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");EXPECT_EQ(db.cursor,5);EXPECT_EQ(db.installs,1);EXPECT_EQ(db.nextUpdateSeconds(),-1);
+    compare(a.engine,b.engine,"inspect-exhausted-restored");equalStreamPrefix(recorded,resumed);
+}
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+TEST(EngineCheckpoint, InspectionPairedCoverageDistinguishesEmptyDelayedAndDifferentCadences) {
+    for(int format:{1,2,3,4})for(double phase:{0.,9.1,19.1}) {
+        const auto name="inspect-paired-"+std::to_string(format)+"-"+std::to_string(phase);SCOPED_TRACE(name);
+        Stream recorded,resumed;SurfaceSession a,b;
+        ASSERT_NO_THROW(startCatchmentProvider(a,name,2,0,true,format));
+        ASSERT_NO_THROW(startCatchmentProvider(b,name+"-fresh",2,0,true,format));
+        ASSERT_EQ(a.engine.setEngineSourceResultStream(recorded,streamPath(name).string(),true),"");
+        ASSERT_EQ(b.engine.setEngineSourceResultStream(resumed,streamPath(name+"-fresh").string(),true),"");
+        if(format<3){ASSERT_EQ(a.engine.enableFileOutputCheckpointing(),"");ASSERT_EQ(b.engine.enableFileOutputCheckpointing(),"");}
+        if(phase>0)ASSERT_NO_THROW(until(a.engine,phase));
+        const auto cp=root()/(name+".chk"),before=root()/(name+"-before.chk"),after=root()/(name+"-after.chk");
+        ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");
+        const auto binary=bytes(root()/(name+"-fresh.out")),mesh=bytes(root()/(name+"-fresh.h5")),stream=bytes(resumed.path());
+        const auto cursor=resumed.cursor();const auto files=inspectionFiles();CheckpointInspection info;
+        ASSERT_EQ(b.engine.inspectCheckpoint(cp.string(),info),"");EXPECT_EQ(files,inspectionFiles());
+        const bool late=format==4;const int periods=phase==0?0:phase<10?(late?0:3):(late?2:6);
+        const int mesh_periods=phase==0?0:phase<10?(late?0:2):(late?1:3);
+        inspectionReports(info.binary,periods,3,info.start_date,late?15:3,phase<10?9:18);
+        inspectionReports(info.mesh,mesh_periods,6,info.start_date,late?15:3,phase<10?9:15);
+        EXPECT_DOUBLE_EQ(info.next_report_seconds,a.engine.context().next_report_ms/1000);
+        EXPECT_EQ(info.file_outputs,format<3);EXPECT_FALSE(info.relocatable_bundle);EXPECT_FALSE(info.driver);
+        EXPECT_EQ(info.companions.size(),format<3?3:1);EXPECT_DOUBLE_EQ(b.engine.context().current_time,0);
+        EXPECT_EQ(bytes(root()/(name+"-fresh.out")),binary);EXPECT_EQ(bytes(root()/(name+"-fresh.h5")),mesh);
+        EXPECT_EQ(resumed.cursor(),cursor);EXPECT_EQ(bytes(resumed.path()),stream);
+        ASSERT_EQ(b.engine.saveCheckpoint(after.string()),"");EXPECT_EQ(physicalCheckpoint(bytes(before)),physicalCheckpoint(bytes(after)));
+        ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");compare(a.engine,b.engine,name+"-restored");equalStreamPrefix(recorded,resumed);
+    }
+}
+TEST(EngineCheckpoint, InspectionMovedBundleUsesSavedPrefixAndResolvedCompanionPaths) {
+    const std::string name="inspect-large-moved";Stream recorded,resumed;SurfaceSession a,b;
+    ASSERT_NO_THROW(startScaledSurface(a,name,12,32,128,2,0,true,1));
+    ASSERT_NO_THROW(startScaledSurface(b,name+"-fresh",12,32,128,2,0,true,1));
+    ASSERT_EQ(a.engine.setEngineSourceResultStream(recorded,streamPath(name).string(),true),"");
+    ASSERT_EQ(b.engine.setEngineSourceResultStream(resumed,streamPath(name+"-fresh").string(),true),"");
+    ASSERT_EQ(a.engine.enableFileOutputCheckpointing(),"");ASSERT_EQ(b.engine.enableFileOutputCheckpointing(),"");
+    ASSERT_NO_THROW(until(a.engine,2.2));const auto cp=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+    const auto saved=recorded.cursor();const auto time=a.engine.context().current_time,source_time=a.stage.completedEnd();
+    ASSERT_NO_THROW(until(a.engine,6.4));EXPECT_GT(recorded.cursor().bytes,saved.bytes);
+    const auto folder=root()/(name+" export"),moved=root()/(name+" moved λ");
+    ASSERT_EQ(SWMMEngine::packageCheckpointBundle(cp.string(),folder.string()),"");std::filesystem::rename(folder,moved);
+    const auto binary=bytes(root()/(name+"-fresh.out")),mesh=bytes(root()/(name+"-fresh.h5")),fresh=bytes(resumed.path());
+    const auto cursor=resumed.cursor();const auto files=inspectionFiles();CheckpointInspection info;
+    ASSERT_EQ(b.engine.inspectCheckpoint(io::path_utf8(moved/"session.chk"),info),"");EXPECT_EQ(files,inspectionFiles());
+    EXPECT_TRUE(info.relocatable_bundle);EXPECT_TRUE(info.file_outputs);EXPECT_DOUBLE_EQ(info.engine_seconds,time);
+    ASSERT_TRUE(info.completed_source_seconds);EXPECT_DOUBLE_EQ(*info.completed_source_seconds,source_time);
+    EXPECT_EQ(info.source_frames,saved.frames);EXPECT_EQ(info.source_prefix_bytes,saved.bytes);
+    ASSERT_EQ(info.companions.size(),3);const char* names[]={"source.history","binary.out","mesh.h5"};
+    for(std::size_t i=0;i<info.companions.size();++i) {
+        EXPECT_EQ(info.companions[i].path,io::path_utf8(std::filesystem::canonical(moved)/names[i]));
+        EXPECT_EQ(info.companions[i].required_bytes,std::filesystem::file_size(moved/names[i]));
+    }
+    inspectionReports(info.binary,2,1,info.start_date,1,2);inspectionReports(info.mesh,2,1,info.start_date,1,2);
+    EXPECT_EQ(bytes(root()/(name+"-fresh.out")),binary);EXPECT_EQ(bytes(root()/(name+"-fresh.h5")),mesh);
+    EXPECT_EQ(resumed.cursor(),cursor);EXPECT_EQ(bytes(resumed.path()),fresh);
+    ASSERT_EQ(b.engine.loadCheckpoint(io::path_utf8(moved/"session.chk")),"");
+    ASSERT_NO_THROW(until(b.engine,6.4));compare(a.engine,b.engine,name+"-continued");equalStreamPrefix(recorded,resumed);
+}
+TEST(EngineCheckpoint, InspectionRejectionPreservesMetadataDriverAndAllFreshOutputsWithRetry) {
+    const std::string name="inspect-rejection";TestWaterDriver da;Stream recorded;SurfaceSession a;
+    ASSERT_NO_THROW(startCatchmentProvider(a,name,2,2,true,2));
+    ASSERT_EQ(a.engine.attachRuntimeWaterDriverCheckpoint(da),"");
+    ASSERT_EQ(a.engine.setEngineSourceResultStream(recorded,streamPath(name).string(),true),"");
+    ASSERT_EQ(a.engine.enableFileOutputCheckpointing(),"");ASSERT_NO_THROW(drive(a.engine,da,4.2));
+    const auto cp=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+    for(int variant=0;variant<5;++variant) {
+        SCOPED_TRACE(variant);const auto target=name+"-"+std::to_string(variant);TestWaterDriver db;Stream resumed;SurfaceSession b;
+        ASSERT_NO_THROW(startCatchmentProvider(b,target,2,2,true,2));
+        ASSERT_EQ(b.engine.attachRuntimeWaterDriverCheckpoint(db),"");
+        ASSERT_EQ(b.engine.setEngineSourceResultStream(resumed,streamPath(target).string(),true),"");
+        ASSERT_EQ(b.engine.enableFileOutputCheckpointing(),"");
+        const auto before=root()/(target+"-before.chk"),after=root()/(target+"-after.chk");ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");
+        const auto binary=bytes(root()/(target+".out")),mesh=bytes(root()/(target+".h5")),fresh=bytes(resumed.path());
+        const auto cursor=resumed.cursor();auto input=cp;std::filesystem::path damaged;std::string original;
+        if(variant==0){input=root()/(target+"-bad.chk");auto bad=bytes(cp);bad.back()^=1;write(input,bad);}
+        if(variant==1)db.reject=true;
+        if(variant==2)b.engine.context().subcatches.width[0]+=1;
+        if(variant==3){damaged=recorded.path();original=bytes(damaged);auto bad=original;bad.back()^=1;write(damaged,bad);}
+        if(variant==4) {
+            FileBundle bundle(cp);damaged=bundle.meshFile().path;original=bytes(damaged);
+            const auto file=H5Fopen(damaged.string().c_str(),H5F_ACC_RDWR,H5P_DEFAULT);ASSERT_GE(file,0);
+            const auto time=H5Dopen2(file,"time",H5P_DEFAULT);ASSERT_GE(time,0);double date;
+            ASSERT_GE(H5Dread(time,H5T_NATIVE_DOUBLE,H5S_ALL,H5S_ALL,H5P_DEFAULT,&date),0);date+=1;
+            ASSERT_GE(H5Dwrite(time,H5T_NATIVE_DOUBLE,H5S_ALL,H5S_ALL,H5P_DEFAULT,&date),0);H5Dclose(time);H5Fclose(file);
+            bundle.rehash(false);input=root()/(target+"-schema.chk");write(input,bundle.encode());
+        }
+        CheckpointInspection info;info.schema_version=99;info.engine_seconds=123;const auto sentinel=info;const auto files=inspectionFiles();
+        EXPECT_FALSE(b.engine.inspectCheckpoint(input.string(),info).empty());EXPECT_EQ(info,sentinel);EXPECT_EQ(files,inspectionFiles());
+        EXPECT_DOUBLE_EQ(b.engine.context().current_time,0);EXPECT_EQ(db.installs,0);EXPECT_EQ(db.cursor,0);
+        EXPECT_EQ(bytes(root()/(target+".out")),binary);EXPECT_EQ(bytes(root()/(target+".h5")),mesh);
+        EXPECT_EQ(resumed.cursor(),cursor);EXPECT_EQ(bytes(resumed.path()),fresh);
+        db.reject=false;if(variant==2)b.engine.context().subcatches.width[0]-=1;if(!damaged.empty())write(damaged,original);
+        ASSERT_EQ(b.engine.saveCheckpoint(after.string()),"");EXPECT_EQ(physicalCheckpoint(bytes(before)),physicalCheckpoint(bytes(after)));
+        ASSERT_EQ(b.engine.inspectCheckpoint(cp.string(),info),"");ASSERT_TRUE(info.driver);EXPECT_EQ(db.installs,0);
+        ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");EXPECT_EQ(db.installs,1);compare(a.engine,b.engine,target+"-restored");equalStreamPrefix(recorded,resumed);
+    }
 }
 #endif
 #endif

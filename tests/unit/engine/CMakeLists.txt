@@ -394,14 +394,9 @@ set_property(TEST
 # `_out.inp`, shared by test_object_deletion_ext and test_quality_roundtrip.
 # Also renamed. The check below is what stops a third.
 
-# The 2D suites read the HDF5 results file the run writes, so they need the
-# 2D results writer. A 2D build without it (OPENSWMM_2D_HDF5_OUTPUT=OFF) is a
-# deployment configuration — the WebAssembly package — not a test one.
-if(OPENSWMM_BUILD_2D AND NOT OPENSWMM_2D_HDF5_OUTPUT)
-    message(FATAL_ERROR
-        "The 2D unit tests read the HDF5 results file: configure them with "
-        "OPENSWMM_2D_HDF5_OUTPUT=ON (or OPENSWMM_BUILD_2D=OFF).")
-endif()
+# Water/source/checkpoint tests can run without the mesh results writer.
+# These surface/output suites require the writer and read back its HDF5 file.
+if(NOT OPENSWMM_BUILD_2D OR OPENSWMM_2D_HDF5_OUTPUT)
 
 # 2D surface routing tests — geometry, gradients, flux, parsing.
 # The 2D engine sources (MeshBuilder, VertexReconstruction, SurfaceFluxCalculator,
@@ -459,6 +454,8 @@ add_test(
 set_tests_properties(test_engine_2d_surface PROPERTIES
     LABELS "unit"
     ENVIRONMENT "OPENSWMM_2D_BACKEND=cpu")
+
+endif()
 
 # Exercise the acceleration path end-to-end under BOTH cell closures. The
 # Kokkos marcher kernels implement FLAT and VFR alike, so the factory must
@@ -637,6 +634,7 @@ if(OPENSWMM_BUILD_2D)
     add_gtest_unit(test_engine_2d_bc_units test_2d_bc_units.cpp)
     target_compile_definitions(test_engine_2d_bc_units PRIVATE
         OPENSWMM_BC_UNITS_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+    if(OPENSWMM_2D_HDF5_OUTPUT)
     # Results-file size controls ([2D_OPTIONS] OUTPUT_PRECISION /
     # OUTPUT_COMPRESSION / REPORT_2D_VARIABLES / REPORT_2D_SPECIES /
     # REPORT_2D_STEP): grammar + C API round trip, float32 storage, unselected
@@ -656,7 +654,6 @@ if(OPENSWMM_BUILD_2D)
         target_link_libraries(test_engine_2d_output_options PRIVATE ${HDF5_C_LIBRARIES})
         target_include_directories(test_engine_2d_output_options PRIVATE ${HDF5_INCLUDE_DIRS})
     endif()
-    if(OPENSWMM_2D_HDF5_OUTPUT)
         target_compile_definitions(test_engine_checkpoint PRIVATE OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST=1)
         if(TARGET hdf5::hdf5-shared)
             target_link_libraries(test_engine_checkpoint PRIVATE hdf5::hdf5-shared)

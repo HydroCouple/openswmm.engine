@@ -115,7 +115,8 @@ private:
                                     const std::vector<double>* pending_outfalls = nullptr,
         const std::function<void(const runoff::SourceWaterDriver&)>* validate_source = nullptr,
         const std::function<void()>* before_install = nullptr,
-                                    const std::vector<int>* boundary_slots = nullptr);
+                                    const std::vector<int>* boundary_slots = nullptr,
+                                    double* inspect_source_end = nullptr);
     void refreshSourceResultBoundary();
 
     // Recompute η/depth from state volumes for the whole mesh.

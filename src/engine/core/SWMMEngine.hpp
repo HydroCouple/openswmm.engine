@@ -102,6 +102,7 @@ extern "C" {
 namespace openswmm {
 
 class DefaultOutputPlugin;
+struct CheckpointInspection;
 
 /**
  * @brief Registered callback bundle (all optional).
@@ -249,6 +250,11 @@ public:
 #endif
     std::string saveCheckpoint(const std::string& path) const;
     std::string loadCheckpoint(const std::string& path);
+    /// Internal review metadata after restore's parse/model/physics/schema checks,
+    /// on a matching fresh session. Temporary output copies are discarded; nothing
+    /// is installed or published. Actual restore checks publication eligibility.
+    /// Failure leaves the caller's metadata unchanged.
+    std::string inspectCheckpoint(const std::string& path,CheckpointInspection&);
     /// Internal same-platform directory transport of a saved file checkpoint.
     /// Copies the accepted prefix; model/provider initialization is still required.
     static std::string packageCheckpointBundle(const std::string& checkpoint,const std::string& directory);
@@ -528,7 +534,9 @@ private:
     void checkCheckpointBoundary() const;
     std::string checkpointBytes(std::string&,bool include_outputs=true) const;
     std::string loadCheckpointBytes(std::string,const std::string& stream_contract={},
-        const std::string& binary_file={},const std::string& mesh_file={},uint64_t whole_binding=0);
+        const std::string& binary_file={},const std::string& mesh_file={},uint64_t whole_binding=0,
+        CheckpointInspection* inspection=nullptr);
+    std::string loadCheckpointPath(const std::string&,CheckpointInspection*);
 #ifdef OPENSWMM_HAS_2D
     std::string saveFileOutputCheckpoint(const std::string&) const;
 #endif

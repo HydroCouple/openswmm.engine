@@ -496,7 +496,8 @@ private:
         const std::vector<double>* engine_rainfall = nullptr,
         const double* engine_storage = nullptr, bool engine_routed = false,
         const std::function<void(const runoff::SourceWaterDriver&)>* validate_source = nullptr,
-        const std::function<void()>* before_install = nullptr);
+        const std::function<void()>* before_install = nullptr,
+        double* inspect_source_end = nullptr);
     void attachCommonSourceStage(SimulationContext&, CommonSourceStage&, Router*);
     void checkJointRoutingStep(const SimulationContext&, double dt, double start) const;
     Router* joint_hydraulic_ = nullptr; // externally owned, stable lifetime

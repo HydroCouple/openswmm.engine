@@ -2,6 +2,8 @@
 // Copyright 2026 Caleb Buahin
 #include "SWMMEngine.hpp"
 #include "CompletedSourceArchive.hpp"
+#include "CheckpointInspection.hpp"
+#include "DateTime.hpp"
 #include "FileIO.hpp"
 #include "../io/CheckpointFile.hpp"
 #include "../io/CheckpointDirectory.hpp"
@@ -24,6 +26,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <stdexcept>
 
 namespace openswmm {
@@ -148,7 +151,7 @@ std::string captureDriver(const WaterDriver& driver,double time,const std::strin
     Archive out;out(magic,version,endian,identity,time,water_crc,bytes,crc);return out.bytes();
 }
 std::unique_ptr<WaterDriver::PreparedRestore> prepareDriver(const WaterDriver& driver,double time,
-    const std::string& hydraulic,std::string bytes) {
+    const std::string& hydraulic,std::string bytes,CheckpointInspection::Driver* inspection=nullptr) {
     require(bytes.size()<=maxDriverBytes+8192,"Water driver archive exceeds its size limit.");
     Archive in(std::move(bytes));std::string magic,identity,payload;uint32_t version,endian,water_crc,crc;double saved;
     in(magic,version,endian,identity,saved,water_crc,payload,crc);in.finish();
@@ -157,9 +160,35 @@ std::unique_ptr<WaterDriver::PreparedRestore> prepareDriver(const WaterDriver& d
             "Water driver checkpoint identity/time/prescription binding differs.");
     WaterDriver::Snapshot state;Archive p(std::move(payload));p(state.next_sequence,state.next_update_seconds,state.state);p.finish();
     driverSnapshotOk(state,time);
-    auto prepared=driver.prepareRestore(state,time);require(bool(prepared),"Water driver returned no prepared restore.");return prepared;
+    auto prepared=driver.prepareRestore(state,time);require(bool(prepared),"Water driver returned no prepared restore.");
+    if(inspection)*inspection={identity,state.next_sequence,state.next_update_seconds};
+    return prepared;
 }
 #endif
+// Report dates are the exact calendar grid that the output validators check,
+// including REPORT_START and the writer's one-millisecond date convention.
+CheckpointInspection::Reports inspectReports(std::string bytes,bool mesh,
+    const SimulationContext& ctx,double next_report_ms) {
+    Archive in(std::move(bytes));uint32_t version;uint64_t records=0;
+    double cadence=0,due=0;bool groundwater=false;std::string image_or_descriptor;
+    if(mesh)in(version,cadence,records,due,groundwater,image_or_descriptor);
+    else {int count;in(version,count,image_or_descriptor);require(count>=0,"Invalid inspected report count.");records=count;}
+    in.finish();require(version==1,"Unsupported inspected report version.");
+    const double step=ctx.options.report_step,step_ms=1000*step,grid=std::round(next_report_ms/step_ms);
+    require(std::isfinite(grid)&&grid>=1&&grid<=std::numeric_limits<int>::max()&&grid*step_ms==next_report_ms,
+        "Invalid inspected report grid.");
+    const auto completed=static_cast<int>(grid)-1;
+    const double ratio=mesh&&cadence>0?cadence*86400/step:1;
+    require(std::isfinite(ratio)&&ratio>=1&&ratio<=std::numeric_limits<int>::max(),"Invalid inspected report cadence.");
+    const auto stride=static_cast<int>(std::round(ratio));
+    CheckpointInspection::Reports result;result.enabled=true;result.records=records;result.cadence_seconds=stride*step;
+    if(!records)return result;
+    auto date=[&](int report){return datetime::addSeconds(ctx.options.start_date,(report*step_ms+1)/1000);};
+    int first=1,upper=completed+1;
+    while(first<upper){const int middle=first+(upper-first)/2;if(date(middle)<ctx.options.report_start)first=middle+1;else upper=middle;}
+    require(first<=completed&&records<=uint64_t(1+(completed-first)/stride),"Inspected report coverage exceeds its grid.");
+    result.first_date=date(first);result.last_date=date(first+static_cast<int>(records-1)*stride);return result;
+}
 // Explicit fields: no padding, file handles, plugins or compiled expressions.
 #define BALANCE(X) \
     X(runoff_rainfall) X(runoff_runon) X(runoff_evap) X(runoff_infil) X(runoff_runoff) X(runoff_lid_drain) \
@@ -1025,8 +1054,21 @@ std::string SWMMEngine::saveFileOutputCheckpoint(const std::string& path) const 
 
 #endif
 std::string SWMMEngine::loadCheckpoint(const std::string& path) {
+    return loadCheckpointPath(path,nullptr);
+}
+std::string SWMMEngine::inspectCheckpoint(const std::string& path,CheckpointInspection& inspection) {
+    CheckpointInspection candidate;const auto error=loadCheckpointPath(path,&candidate);
+    if(error.empty())inspection=std::move(candidate);
+    return error;
+}
+std::string SWMMEngine::loadCheckpointPath(const std::string& path,CheckpointInspection* inspection) {
     try {
         auto bytes=readFile(path);Archive peek(bytes);std::string magic;peek(magic);
+        const auto size=bytes.size();
+        auto inspected=[&](std::string error,bool bundle=false) {
+            if(error.empty()&&inspection){inspection->checkpoint_bytes=size;inspection->relocatable_bundle=bundle;}
+            return error;
+        };
         if(magic==fileMagic) {
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
             require(checkpoint_file_outputs_,"Select the file-backed output profile before restore.");
@@ -1038,16 +1080,16 @@ std::string SWMMEngine::loadCheckpoint(const std::string& path) {
                 const auto cursor=twoD::EngineSourceResultStream::decodeCursor(source.cursor);
                 require(io::checkpointFileSize(io::utf8_path(source.path))==cursor.bytes,"Bundle source prefix size changed.");
             }
-            return loadCheckpointBytes(std::move(saved.physical),saved.source,saved.binary,saved.mesh,binding);
+            return inspected(loadCheckpointBytes(std::move(saved.physical),saved.source,saved.binary,saved.mesh,binding,inspection),saved.version==2);
 #else
             return "File-backed output checkpoints unavailable in this build.";
 #endif
         }
-        if(magic!=streamMagic)return loadCheckpointBytes(std::move(bytes));
+        if(magic!=streamMagic)return inspected(loadCheckpointBytes(std::move(bytes),{},{},{},0,inspection));
 #ifdef OPENSWMM_HAS_2D
         Archive in(std::move(bytes));uint32_t version,crc;std::string physical,contract;in(magic,version,crc,physical,contract);in.finish();
         Archive payload;payload(physical,contract);require(version==1 && crc==checksum(payload.bytes()),"Stream-bound checkpoint checksum or version differs.");
-        return loadCheckpointBytes(std::move(physical),contract);
+        return inspected(loadCheckpointBytes(std::move(physical),contract,{},{},0,inspection));
 #else
         return "Source stream checkpoint support unavailable in this build.";
 #endif
@@ -1099,8 +1141,9 @@ std::string SWMMEngine::packageCheckpointBundle(const std::string& checkpoint,co
 #endif
 }
 std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,const std::string& stream_contract,
-    const std::string& binary_file,const std::string& mesh_file,uint64_t whole_binding) {
+    const std::string& binary_file,const std::string& mesh_file,uint64_t whole_binding,CheckpointInspection* inspection) {
     try {
+        CheckpointInspection summary;
         require(!step_active_ && !runtime_pipeline_ && exchange_target_<0 && ctx_.current_time==0,"Engine restore requires an identically initialized fresh session.");
 #ifdef OPENSWMM_HAS_2D
         require(!engine_source_history_,"Restore the engine checkpoint before attaching its source history.");
@@ -1139,9 +1182,35 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,const std::st
         if(checkpoint_surface_output_&&!files)payload(mesh_output);
 #endif
         payload.finish();state.validate(*this);
+        if(inspection) {
+            summary.engine_seconds=state.boundary[0];summary.engine_date=state.boundary[1];
+            summary.start_date=ctx_.options.start_date;summary.report_start_date=ctx_.options.report_start;
+            summary.next_report_seconds=state.boundary[4]/1000;
+            summary.file_outputs=!binary_file.empty();
+            if(checkpoint_output_)summary.binary=inspectReports(binary_file.empty()?output:binary_file,false,ctx_,state.boundary[4]);
+#ifdef OPENSWMM_HAS_2D
+            if(checkpoint_surface_output_)summary.mesh=inspectReports(mesh_file.empty()?mesh_output:mesh_file,true,ctx_,state.boundary[4]);
+            if(prepared_stream) {
+                summary.detailed_sources=engine_source_stream_->detailed();
+                summary.source_prefix_bytes=prepared_stream->cursor.bytes;summary.source_frames=prepared_stream->cursor.frames;
+                Archive a(stream_contract);std::string path,cursor;uint64_t anchor,whole;a(path,cursor,anchor,whole);a.finish();
+                summary.companions.push_back({CheckpointInspection::Companion::Role::Source,path,summary.source_prefix_bytes});
+            }
+#ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
+            if(summary.file_outputs)for(const auto& item:std::array<std::pair<std::string,bool>,2>{{{binary_file,false},{mesh_file,true}}}) {
+                FileOutputContract contract(item.first,item.second);
+                summary.companions.push_back({item.second?CheckpointInspection::Companion::Role::Mesh:CheckpointInspection::Companion::Role::Binary,
+                    io::path_utf8(contract.file.path),contract.file.bytes});
+            }
+#endif
+#endif
+        }
 #ifdef OPENSWMM_HAS_2D
         std::unique_ptr<WaterDriver::PreparedRestore> prepared_driver;
-        if(runtime_water_driver_)prepared_driver=prepareDriver(*runtime_water_driver_,state.boundary[0],hydraulic,std::move(driver));
+        if(runtime_water_driver_) {
+            if(inspection)summary.driver.emplace();
+            prepared_driver=prepareDriver(*runtime_water_driver_,state.boundary[0],hydraulic,std::move(driver),inspection?&*summary.driver:nullptr);
+        }
 #endif
         std::shared_ptr<DefaultOutputPlugin::PreparedCheckpoint> prepared_output;
         std::function<void()> publish_output;
@@ -1172,7 +1241,7 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,const std::st
         }
 #endif
 #ifdef OPENSWMM_HAS_2D
-        if(prepared_stream) {
+        if(prepared_stream&&!inspection) {
             std::vector<io::CheckpointOutputPublication::Output> outputs;
             if(prepared_output)outputs.push_back(binary_output_plugin_->checkpointPublication(*prepared_output));
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
@@ -1208,14 +1277,19 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,const std::st
             }
             auto error=surface_router_.loadCheckpointBytes(ctx_,std::move(hydraulic),&state.boundary,&state.gages.rainfall,
                 &state.balance.routing_final_storage,state.stats.sum_iterations>0,bridge?&validate_source:nullptr,
-                before_install?&before_install:nullptr);
+                before_install&&!inspection?&before_install:nullptr,inspection?&summary.completed_source_seconds.emplace():nullptr);
             require(error.empty(),error.c_str());
+            if(inspection) {
+                if(prepared_stream)require(*summary.completed_source_seconds==prepared_stream->latest.source_end,"Inspected source clocks differ.");
+                *inspection=std::move(summary);return {};
+            }
             if(bridge) {static_assert(std::is_nothrow_move_assignable_v<runoff::SourceWaterDeliveryBridge>);*source_delivery_=std::move(*bridge);}
             state.install(*this);return {};
         }
 #endif
         auto routing=router_.prepareCheckpointBytes(ctx_,std::move(hydraulic),&state.boundary);
         if(state.boundary[0]>0)Router::validateSessionStorage(routing,ctx_,state.balance.routing_final_storage,state.stats.sum_iterations>0);
+        if(inspection){*inspection=std::move(summary);return {};}
         // All throwing parse/model/shape/ledger checks precede installation.
         if(prepared_output)publish_output();
         router_.installCheckpoint(ctx_,std::move(routing));state.install(*this);return {};
