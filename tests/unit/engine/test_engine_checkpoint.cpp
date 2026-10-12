@@ -29,6 +29,7 @@
 #include <cstdlib>
 #include <iterator>
 #include <future>
+#include <numeric>
 
 using namespace openswmm;
 namespace {
@@ -3743,4 +3744,168 @@ TEST(EngineCheckpoint, BundleDirectoryCollisionsAndConcurrentDestinationNeverRem
     {io::CheckpointDirectory stage(raced);private_folder=stage.staging();write(private_folder/"session.chk","owned");std::filesystem::create_directory(raced);EXPECT_THROW(stage.publish(),std::runtime_error);EXPECT_TRUE(std::filesystem::is_directory(raced));EXPECT_TRUE(std::filesystem::is_empty(raced));}
     EXPECT_FALSE(std::filesystem::exists(private_folder));EXPECT_TRUE(std::filesystem::is_directory(raced));
 }
+#endif
+
+#ifdef OPENSWMM_HAS_2D
+namespace {
+// Branching runoff graphs feed storage nodes on a connected sloping grid.
+// Alternate high/low outfall stages exercise porous-cell backwater and drainage.
+void startScaledSurface(SurfaceSession& s,const std::string& name,int side,int nodes,int sources,
+                        int lid=2,int closure=0,bool output=false,int graphs=0) {
+    if(!graphs)graphs=nodes;
+    if(side<2 || nodes<2 || nodes>2*side*side || graphs<1 || graphs>nodes || sources%nodes || sources%graphs || sources<graphs*2)
+        throw std::runtime_error("Invalid scale fixture dimensions");
+    const auto path=root()/name;const int per_graph=sources/graphs,cells=2*side*side;
+    std::string deck="[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 10/12/2026\nEND_DATE 10/12/2026\nEND_TIME 00:00:12\nROUTING_STEP .2\nVARIABLE_STEP 0\nREPORT_STEP 00:00:01\nWET_STEP 00:00:01\nDRY_STEP 00:00:03\nINFILTRATION GREEN_AMPT\nIGNORE_QUALITY YES\nIGNORE_SNOWMELT YES\nIGNORE_GROUNDWATER YES\nIGNORE_2D NO\n";
+    auto id=[](const char* prefix,int i){return std::string(prefix)+std::to_string(i);};
+    deck+="[STORAGE]\n";
+    for(int i=0;i<nodes;++i)deck+=id("N",i)+" 0 2 1.4 FUNCTIONAL 0 0 100 0 0\n";
+    deck+="[OUTFALLS]\n";
+    for(int i=0;i<nodes;++i)deck+=id("O",i)+" 0 FIXED "+(i%2?"2.5":".4")+" NO\n";
+    deck+="[CONDUITS]\n";
+    for(int i=0;i<nodes;++i)deck+=id("C",i)+" "+id("N",i)+" "+id("O",i)+" 10 .013 .75 0 0 0\n";
+    deck+="[XSECTIONS]\n";
+    for(int i=0;i<nodes;++i)deck+=id("C",i)+" CIRCULAR .1 0 0 0\n";
+    deck+="[RAINGAGES]\nR INTENSITY 0:00:02 1 TIMESERIES Rain\n[SUBCATCHMENTS]\n";
+    for(int i=0;i<sources;++i) {
+        const int branch=i%per_graph,group=i/per_graph;
+        const auto outlet=branch ? id("A",group*per_graph+(branch-1)/2) : id("N",group*nodes/graphs);
+        deck+=id("A",i)+" R "+outlet+" .001 "+std::to_string(30+i%5*10)+" 5 1 0\n";
+    }
+    deck+="[SUBAREAS]\n";
+    for(int i=0;i<sources;++i)deck+=id("A",i)+" .015 .12 .03 .05 35 OUTLET\n";
+    deck+="[INFILTRATION]\n";
+    for(int i=0;i<sources;++i)deck+=id("A",i)+" 3 .25 .3\n";
+    deck+="[LID_CONTROLS]\nI IT\nI SURFACE 3 .05 .12 1 3\nI STORAGE 6 .667 .1 0\nI DRAIN .5 .5 0 0\n[LID_USAGE]\n";
+    const int per_lid=sources/nodes;
+    for(int i=0;i<sources;i+=per_lid)deck+=id("A",i)+" I 1 2 1 50 30 0 * "+id("N",i/per_lid)+"\n";
+    if(lid) {
+        deck+="[LID_CONTROLS]\nStack NODE\nStack SURFACE 6 .1\nStack MEDIA 12 .45 .2 .08 2 10 3\nStack AGGREGATE 6 .4 100\nStack BOTTOM .5 0\n[LID_NODES]\n";
+        for(int i=0;i<nodes;++i)deck+=id("N",i)+" Stack "+std::to_string(10+i%3)+"\n";
+        if(lid==2)deck+="[LID_RICHARDS]\nStack OPTIONS 4 1e-7 1e-5 30\nStack 2 .03 2 1.6 .5 .0001\nStack 3 .03 2 1.6 .5 .0001\n";
+    }
+    deck+="[EVAPORATION]\nCONSTANT .1\n[TIMESERIES]\nRain 10/12/2026 00:00:00 5\nRain 10/12/2026 00:00:02 0\nRain 10/12/2026 00:00:04 3\nRain 10/12/2026 00:00:06 0\n";
+    if(output)deck+="[2D_OPTIONS]\nOUTPUT_FILE "+path.string()+".h5\nREPORT_2D_STEP 00:00:01\n";
+    write(path.string()+".inp",deck);auto& e=s.engine;
+    if(e.open((path.string()+".inp").c_str(),(path.string()+".rpt").c_str(),output?(path.string()+".out").c_str():nullptr))throw std::runtime_error(e.context().error_message);
+    auto& router=e.surfaceRouter2D();auto& mesh=router.mesh();
+    mesh.resize_vertices((side+1)*(side+1));mesh.resize_triangles(cells);
+    for(int y=0;y<=side;++y)for(int x=0;x<=side;++x) {
+        const int v=y*(side+1)+x;mesh.vx[v]=x;mesh.vy[v]=y;mesh.vz[v]=.5+.001*x;
+    }
+    for(int y=0;y<side;++y)for(int x=0;x<side;++x) {
+        const int a=y*(side+1)+x,k=2*(y*side+x);
+        mesh.set_triangle(k,a,a+1,a+side+1);mesh.set_triangle(k+1,a+1,a+side+2,a+side+1);
+    }
+    for(int i=0;i<cells;++i) {
+        mesh.mannings_n[i]=.03;mesh.tri_init_depth[i]=.02+.002*(i%5);
+        mesh.tri_coupled_node[i]=i<nodes?e.context().node_names.find(id("N",i)):-1;
+        mesh.tri_coupling_cd[i]=.6;mesh.tri_coupling_area[i]=.0002;
+    }
+    auto& options=router.options();options.mesh_units_si=true;options.num_threads=1;
+    options.momentum=twoD::Momentum2D::LOCAL_INERTIAL;options.max_timestep=.1;
+    options.coupling_sync=.7;options.evaporation=2;options.rainfall_mode=twoD::RainfallMode::SYSTEM;
+    auto& config=router.aquiferConfig();config.options.authored=true;config.options.force_closed_form=true;
+    config.options.gw_et="BOUNDARY_ET";
+    config.options.closure=closure==2?twoD::GwClosure::SIGMA:closure?twoD::GwClosure::ENSLAVED:twoD::GwClosure::CLOSED_FORM;
+    twoD::GwAquiferRow row;row.Ks=1.e-6*3600/.0254;row.zs=2/.3048;row.hg0=1/.3048;row.alpha=2*.3048;config.rows.push_back(row);
+    e.context().options.num_threads=1;
+    if(e.initialize())throw std::runtime_error(e.context().error_message);
+    if(output) {auto error=e.prepareCombinedOutputCheckpointing();if(!error.empty())throw std::runtime_error(error);}
+    if(e.start(output?1:0))throw std::runtime_error(e.context().error_message);
+    std::vector<int> seed(sources);std::iota(seed.begin(),seed.end(),0);
+    auto error=s.sources.initialize(e.context(),seed);if(!error.empty())throw std::runtime_error(error);
+    twoD::SurfaceOwnershipPreview preview;preview.mesh_weather_area=mesh.tri_area;
+    constexpr double ft2=.3048*.3048,inside=.05;
+    for(int sc=0;sc<sources;++sc) {
+        const auto& r=s.sources.runoff().soa();
+        const double lids=s.sources.context().subcatches.total_lid_area_ft2[sc]*ft2,full=r.area[sc]*ft2+lids;
+        twoD::SurfaceOwnerObject owner;owner.subcatch=sc;owner.reviewed=true;owner.declared_area=full;
+        owner.inside_area=inside;owner.outside_area=full-inside;preview.objects.push_back(owner);
+        // The current joint checkpoint profile manages every mesh cell.
+        // Spread each reviewed inside footprint over its assigned grid cells.
+        const int contacts=sources<cells ? 1+(cells-1-sc)/sources : 1;
+        for(int k=0;k<contacts;++k) {
+            const int cell=(sc+k*sources)%cells;const double area=inside/contacts;
+            preview.shares.push_back({sc,cell,area,area*r.area[sc]*(1-r.imperv_pct[sc])*ft2/full,
+                                      area*r.area[sc]*r.imperv_pct[sc]*ft2/full,area*lids/full,0});
+            preview.mesh_weather_area[cell]-=area;
+        }
+    }
+    error=s.stage.initialize(mesh,router.state(),options,router.subsurface(),s.sources,preview);
+    if(error.empty())error=e.enableSpatialSourceCheckpointing(s.stage);
+    if(!error.empty())throw std::runtime_error(error);
+}
+void scaledBalance(SurfaceSession& s,int lid) {
+    EXPECT_GT(s.stage.intervals(),0);EXPECT_GT(s.stage.meshRain(),0);
+    for(int g=0;g<int(s.sources.clocks().groups().size());++g)
+        EXPECT_NEAR(s.sources.balanceResidual(g),0,1.e-6)<<g;
+    EXPECT_NEAR(s.engine.surfaceRouter2D().subsurface().state().continuityResidual(),0,1.e-8);
+    const auto& states=s.engine.context().node_subtypes.storages.lid_state;
+    if(lid==2)for(const auto& state:states) {
+        EXPECT_TRUE(state.richards_report.ok)<<state.richards_report.error;
+        EXPECT_GT(state.richards_report.accepted,0);
+        EXPECT_NEAR(state.richards_report.balance,0,1.e-9);
+    }
+    const auto& surface=s.engine.surfaceRouter2D().state();
+    for(double volume:surface.volume){EXPECT_TRUE(std::isfinite(volume));EXPECT_GE(volume,0);}
+    bool drainage=false,backwater=false;
+    for(double flow:s.engine.context().links.flow){drainage|=flow>1.e-6;backwater|=flow<-1.e-6;}
+    EXPECT_TRUE(drainage);EXPECT_TRUE(backwater);
+    const auto& mesh=s.engine.surfaceRouter2D().mesh();
+    EXPECT_GT(std::count_if(mesh.cell_nbr.begin(),mesh.cell_nbr.end(),[](int n){return n>=0;}),mesh.n_cells());
+}
+}
+TEST(EngineCheckpoint, ConnectedMeshBranchingSourcesAndNodeBatchesRestartAcrossProfiles) {
+    for(int lid:{0,1,2})for(int closure:{0,1,2}) {
+        const auto name="scale-profiles-"+std::to_string(lid)+"-"+std::to_string(closure);SCOPED_TRACE(name);
+        Stream recorded,resumed;SurfaceSession a,b;
+        ASSERT_NO_THROW(startScaledSurface(a,name,4,4,16,lid,closure));
+        ASSERT_NO_THROW(startScaledSurface(b,name+"-resumed",4,4,16,lid,closure));
+        ASSERT_EQ(a.engine.setEngineSourceResultStream(recorded,streamPath(name).string(),true),"");
+        ASSERT_EQ(b.engine.setEngineSourceResultStream(resumed,streamPath(name+"-resumed").string(),true),"");
+        ASSERT_NO_THROW(until(a.engine,2.2));const auto cp=root()/(name+".chk");
+        ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");
+        compare(a.engine,b.engine,name+"-restored");equalStreamPrefix(recorded,resumed);
+        ASSERT_NO_THROW(until(a.engine,6.4));
+        ASSERT_NO_THROW(until(b.engine,6.4));
+        compare(a.engine,b.engine,name+"-continued");equalStreamPrefix(recorded,resumed);
+        EXPECT_EQ(a.sources.runoff().soa().depth_perv,b.sources.runoff().soa().depth_perv);
+        ASSERT_EQ(a.sources.clocks().groups().size(),4);
+        for(const auto& group:a.sources.clocks().groups())EXPECT_EQ(group.subcatches.size(),4);
+        scaledBalance(a,lid);scaledBalance(b,lid);
+        EXPECT_GT(a.engine.context().mass_balance.routing_outflow,0);
+        ASSERT_EQ(a.engine.end(),0);ASSERT_EQ(b.engine.end(),0);
+        EXPECT_NEAR(a.engine.context().mass_balance_2d.error(),0,1.e-7);
+        EXPECT_NEAR(b.engine.context().mass_balance_2d.error(),0,1.e-7);
+        EXPECT_NEAR(a.engine.context().mass_balance.routing_error(),0,1.e-5);
+        EXPECT_NEAR(b.engine.context().mass_balance.routing_error(),0,1.e-5);
+    }
+}
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+TEST(EngineCheckpoint, LargerConnectedSessionRelocatesAllHistoriesAndRichardsNodeStores) {
+    const std::string name="scale-large-bundle";Stream recorded,resumed;SurfaceSession a,b;
+    ASSERT_NO_THROW(startScaledSurface(a,name,12,32,128,2,0,true,1));
+    ASSERT_NO_THROW(startScaledSurface(b,name+"-resumed",12,32,128,2,0,true,1));
+    ASSERT_EQ(a.engine.setEngineSourceResultStream(recorded,streamPath(name).string(),true),"");
+    ASSERT_EQ(b.engine.setEngineSourceResultStream(resumed,streamPath(name+"-resumed").string(),true),"");
+    ASSERT_EQ(a.engine.enableFileOutputCheckpointing(),"");ASSERT_EQ(b.engine.enableFileOutputCheckpointing(),"");
+    ASSERT_NO_THROW(until(a.engine,2.2));const auto cp=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+    const auto folder=root()/(name+"-export"),moved=root()/(name+"-moved");
+    ASSERT_EQ(SWMMEngine::packageCheckpointBundle(cp.string(),folder.string()),"");std::filesystem::rename(folder,moved);
+    ASSERT_EQ(b.engine.loadCheckpoint((moved/"session.chk").string()),"");
+    ASSERT_NO_THROW(until(a.engine,6.4));
+    ASSERT_NO_THROW(until(b.engine,6.4));
+    compare(a.engine,b.engine,name);equalStreamPrefix(recorded,resumed);
+    EXPECT_EQ(a.engine.surfaceRouter2D().state().volume,b.engine.surfaceRouter2D().state().volume);
+    EXPECT_EQ(a.sources.runoff().soa().depth_perv,b.sources.runoff().soa().depth_perv);
+    ASSERT_EQ(a.sources.clocks().groups().size(),1);
+    ASSERT_EQ(a.sources.clocks().groups().front().subcatches.size(),128);
+    scaledBalance(a,2);scaledBalance(b,2);
+    ASSERT_EQ(a.engine.end(),0);ASSERT_EQ(b.engine.end(),0);
+    EXPECT_NEAR(a.engine.context().mass_balance_2d.error(),0,1.e-7);
+    EXPECT_NEAR(a.engine.context().mass_balance.routing_error(),0,1.e-5);
+    sameBinary(name,name+"-resumed",6);sameMesh(name,name+"-resumed",6);
+}
+#endif
 #endif

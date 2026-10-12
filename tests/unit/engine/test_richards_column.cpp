@@ -106,3 +106,52 @@ TEST(RichardsColumn, TighteningTimeToleranceConvergesWettingProfile) {
     }
     EXPECT_LT(tight_error,normal_error*.3);
 }
+
+TEST(RichardsColumn, LargeHeterogeneousBatchPreservesIndependentSolutionsAndWaterBalance) {
+    // Different cell counts form separate vector groups; boundary conditions,
+    // materials and wetness vary within each group and retain local controllers.
+    std::vector<Column> columns;
+    for (int lane=0;lane<257;++lane) {
+        auto c=column(4*(1+lane%3), .15+.1*(lane%8));
+        c.water[0]=lane%2 ? 0 : .02;
+        c.bottom=static_cast<Bottom>(lane%3);
+        c.bottom_K=1.e-5;c.bottom_head=.2;c.bottom_distance=.1;
+        c.cells[0].potential_et=1.e-7;
+        if(lane%4==0)for(std::size_t i=c.cells.size()/2;i<c.cells.size();++i)c.cells[i].Ks=1.e-8;
+        columns.push_back(std::move(c));
+    }
+    auto independent=columns;std::vector<Column*> batch;
+    for(auto& c:columns)batch.push_back(&c);
+    const auto reports=openswmm::richards::advance(batch,120);
+    ASSERT_EQ(reports.size(),columns.size());
+    for(std::size_t lane=0;lane<columns.size();++lane) {
+        SCOPED_TRACE(lane);
+        const double before=total(independent[lane]);
+        std::vector<Column*> single{&independent[lane]};
+        const auto reference=openswmm::richards::advance(single,120);
+        ASSERT_TRUE(reports[lane].ok)<<reports[lane].error;
+        ASSERT_TRUE(reference[0].ok)<<reference[0].error;
+        EXPECT_EQ(columns[lane].water,independent[lane].water);
+        EXPECT_EQ(reports[lane].accepted,reference[0].accepted);
+        EXPECT_EQ(reports[lane].rejected,reference[0].rejected);
+        EXPECT_EQ(reports[lane].rhs,reference[0].rhs);
+        EXPECT_EQ(reports[lane].newton,reference[0].newton);
+        EXPECT_DOUBLE_EQ(reports[lane].min_step,reference[0].min_step);
+        EXPECT_NEAR(total(columns[lane])+reports[lane].bottom_volume+reports[lane].evaporation,before,1.e-9);
+        EXPECT_LT(std::abs(reports[lane].balance),1.e-9);
+    }
+}
+
+TEST(RichardsColumn, InvalidLaneInLargeMixedSizeBatchLeavesEveryColumnUnchanged) {
+    std::vector<Column> columns;
+    for(int lane=0;lane<128;++lane)columns.push_back(column(4*(1+lane%3),.2+.1*(lane%7)));
+    columns.back().cells.back().material.specific_storage=0;
+    const auto before=columns;std::vector<Column*> batch;
+    for(auto& c:columns)batch.push_back(&c);
+    const auto reports=openswmm::richards::advance(batch,60);
+    ASSERT_EQ(reports.size(),columns.size());
+    for(std::size_t lane=0;lane<columns.size();++lane) {
+        SCOPED_TRACE(lane);EXPECT_FALSE(reports[lane].ok);
+        EXPECT_EQ(columns[lane].water,before[lane].water);
+    }
+}
