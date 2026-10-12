@@ -234,7 +234,10 @@ int swmm_coupling_apply_frame(SWMM_Engine h,const SWMM_CouplingFrame* f) {
             router.invalidateBoundaryNames(); router.invalidateBoundaryIndex();
         }
         if(forcing) router.state().runtime_forcings=std::move(*forcing);
-        if(f->source_count || f->boundary_count || f->forcing_count || f->clear_count) eng->context().runtime_coupling_used=true;
+        if(f->source_count || f->boundary_count || f->forcing_count || f->clear_count) {
+            eng->context().runtime_coupling_used=true;
+            eng->recordRuntimeCouplingPrescription();
+        }
         return SWMM_OK;
     } catch(const std::bad_alloc&) { return SWMM_ERR_NOMEM; }
       catch(...) { return SWMM_ERR_INTERNAL; }

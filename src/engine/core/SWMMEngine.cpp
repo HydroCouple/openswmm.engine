@@ -74,6 +74,7 @@
 #include "../2d/input/SectionHandlers2D.hpp"
 #include "../2d/subsurface/CommonSourceStage.hpp"
 #include "../2d/subsurface/EngineSourceResultHistory.hpp"
+#include "../2d/subsurface/EngineSourceResultStream.hpp"
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
 #include "../2d/output/Default2DOutputPlugin.hpp"
 #endif
@@ -1594,6 +1595,14 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         runtime_water_driver_->nextUpdateSeconds() <= runtimeCouplingTime())
         return CFFI_ERR_LIFECYCLE;
 #endif
+#ifdef OPENSWMM_HAS_2D
+    if(engine_source_stream_) {
+        try {
+            engine_source_stream_->preflight();
+            if(engine_source_stream_->pending_capture_ || engine_source_stream_->engine_end_!=ctx_.current_time) return CFFI_ERR_LIFECYCLE;
+        } catch(const std::exception& e) {engine_source_stream_->error_=e.what();return SWMM_ERR_WRONG_STATE;}
+    }
+#endif
     step_active_ = true;
     struct StepGuard {
         bool& active; bool& pipeline;
@@ -1966,6 +1975,12 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         checkpoint_ready_ = true;
         checkCheckpointBoundary();
 #ifdef OPENSWMM_HAS_2D
+        if(engine_source_stream_) {
+            const auto error=engine_source_stream_->capture(*this,twoD::EngineSourceResultStream::Kind::EngineStep,engine_source_start);
+            // Physics is accepted. Preserve readiness so saving can retry ONLY
+            // the missing capture; further steps refuse until it is settled.
+            if(!error.empty())return SWMM_ERR_WRONG_STATE;
+        }
         if(engine_source_history_) {
             const auto error=engine_source_history_->append(*this,engine_source_start);
             if(!error.empty())throw std::runtime_error(error);

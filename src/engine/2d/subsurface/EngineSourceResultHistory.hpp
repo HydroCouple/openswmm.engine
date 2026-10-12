@@ -26,6 +26,7 @@ private:
     friend class openswmm::SWMMEngine;
     friend struct EngineSourceResultFile;
     friend class ExplicitInertialSolver;
+    friend class EngineSourceResultStream;
     static std::map<std::string,SourceResultTable> schema(bool outfall_returns);
     static EngineSourceResultHistory projection(const openswmm::SWMMEngine&,std::size_t frame,double start);
     std::string append(const openswmm::SWMMEngine&,double start);

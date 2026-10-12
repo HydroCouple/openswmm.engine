@@ -9,6 +9,7 @@
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/subsurface/CommonSourceStage.hpp"
 #include "../2d/subsurface/EngineSourceResultHistory.hpp"
+#include "../2d/subsurface/EngineSourceResultStream.hpp"
 #include "../2d/solver/ExplicitInertialSolver.hpp"
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
 #include "../2d/output/Default2DOutputPlugin.hpp"
@@ -28,6 +29,7 @@ namespace {
 using Archive=detail::CompletedSourceArchive;
 constexpr uint64_t maxBytes=64*1024*1024;
 constexpr const char* magicName="OpenSWMM accepted water-only engine session";
+constexpr const char* streamMagic="OpenSWMM engine session with source stream";
 void require(bool ok,const char* message) { if(!ok)throw std::runtime_error(message); }
 template<class T> void finite(const T& v) {
     if constexpr(std::is_floating_point_v<T>) require(std::isfinite(v),"Nonfinite engine checkpoint field.");
@@ -53,7 +55,8 @@ std::string readFile(const std::string& path) {
 void publish(const std::string& path,const std::string& bytes) {
     if(std::filesystem::exists(path)) {
         Archive old(readFile(path));std::string magic;old(magic);
-        require(magic==magicName,"Engine checkpoint destination is an unrelated file.");
+        Archive incoming(bytes);std::string next;incoming(next);
+        require(magic==next && (magic==magicName || magic==streamMagic),"Engine checkpoint destination is an unrelated file.");
     }
     static std::atomic<uint64_t> serial{0};auto part=path+".session-part-"+std::to_string(++serial);
     FILE* f=std::fopen(part.c_str(),"wbx");require(f,"Cannot create engine checkpoint publication file.");
@@ -693,7 +696,7 @@ std::string SWMMEngine::enableCheckpointing(twoD::CommonSourceStage& stage) {ret
 std::string SWMMEngine::enableSpatialSourceCheckpointing(twoD::CommonSourceStage& stage) {return enableCheckpointingImpl(&stage,true);}
 std::string SWMMEngine::attachRuntimeWaterDriverCheckpoint(twoD::RuntimeWaterDriverCheckpoint& driver) {
     try {
-        require(!step_active_ && !runtime_pipeline_ && !runtime_water_driver_ && !engine_source_history_ &&
+        require(!step_active_ && !runtime_pipeline_ && !runtime_water_driver_ && !engine_source_history_ && !engine_source_stream_ &&
                 ctx_.current_time==0 && checkpoint_enabled_ && surface_router_.runtimeWaterCheckpointing(),
                 "Attach a water driver at the initial mesh water checkpoint boundary.");
         checkCheckpointBoundary();
@@ -715,6 +718,11 @@ void SWMMEngine::flushRuntimeCouplingBoundary(bool changing_prescription) {
     if (engine_source_history_ && !step_active_ &&
         (changing_prescription || surface_router_.pending_dt_>0))
         throw std::invalid_argument("Engine source history does not yet support completed coupling barriers.");
+    if(engine_source_stream_) {
+        require(!engine_source_stream_->pending_capture_,"Settle the missing stream capture before changing the coupling boundary.");
+        engine_source_stream_->preflight();
+    }
+    const bool pending=surface_router_.pending_dt_>0;
     surface_router_.flushPendingBatch(ctx_);
     if(source_delivery_) {
         const auto error=source_delivery_->capture(source_stage_->sources(),ctx_.current_time);
@@ -725,6 +733,16 @@ void SWMMEngine::flushRuntimeCouplingBoundary(bool changing_prescription) {
         for(int k=0;k<6;++k)*fields[k]+=totals[k]-source_totals_[k];
         source_totals_=totals;
         computeFinalStorage();
+    }
+    if(engine_source_stream_ && !step_active_ && (pending || changing_prescription)) {
+        const auto error=engine_source_stream_->capture(*this,twoD::EngineSourceResultStream::Kind::CouplingBarrier,ctx_.current_time);
+        if(!error.empty())throw std::runtime_error(error);
+    }
+}
+void SWMMEngine::recordRuntimeCouplingPrescription() {
+    if(engine_source_stream_) {
+        const auto error=engine_source_stream_->capture(*this,twoD::EngineSourceResultStream::Kind::PrescriptionUpdate,ctx_.current_time);
+        if(!error.empty())throw std::runtime_error(error);
     }
 }
 #endif
@@ -801,7 +819,7 @@ std::string SWMMEngine::enableCheckpointingImpl(
         return e.what();
     }
 }
-std::string SWMMEngine::checkpointBytes(std::string& result) const {
+std::string SWMMEngine::checkpointBytes(std::string& result,bool include_outputs) const {
     try {
         checkCheckpointBoundary();
         RestartState state(*this);Archive payload;state.archive(payload);std::string hydraulic;
@@ -820,12 +838,12 @@ std::string SWMMEngine::checkpointBytes(std::string& result) const {
         if(source_delivery_) {auto bridge=*source_delivery_;Archive a;bridge.checkpoint(a,false,source_stage_->sources());auto bytes=a.bytes();payload(bytes);}
         if(runtime_water_driver_) {auto driver=captureDriver(*runtime_water_driver_,ctx_.current_time,hydraulic);payload(driver);}
 #endif
-        if(checkpoint_output_) {
+        if(checkpoint_output_ && include_outputs) {
             require(io_thread_.flush()==0,"Cannot checkpoint failed output writes.");
             auto output=binary_output_plugin_->checkpointBytes(ctx_,ctx_.next_report_ms);payload(output);version+=3;
         }
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
-        if(checkpoint_surface_output_) {
+        if(checkpoint_surface_output_ && include_outputs) {
             require(io_thread_.flush()==0,"Cannot checkpoint failed mesh writes.");
             SimulationSnapshot snap;fillSurfaceSnapshot(snap);
             auto output=surface_output_plugin_->checkpointBytes(ctx_,ctx_.next_report_ms,snap);payload(output);version+=6;
@@ -842,21 +860,38 @@ std::string SWMMEngine::saveCheckpoint(const std::string& path) const {
         std::string bytes;const auto error=checkpointBytes(bytes);require(error.empty(),error.c_str());
 #ifdef OPENSWMM_HAS_2D
         require(!engine_source_history_ || engine_source_history_->boundary_==bytes,"Engine source history is not at the accepted checkpoint.");
+        if(engine_source_stream_) {
+            using Stream=twoD::EngineSourceResultStream;
+            std::string physical;const auto snapshot=checkpointBytes(physical,false);require(snapshot.empty(),snapshot.c_str());
+            const auto hash=Stream::fingerprint(physical);
+            if(engine_source_stream_->latest_.kind==Stream::Kind::SourceInterval || engine_source_stream_->latest_.boundary_fingerprint!=hash) {
+                const bool missing_step=engine_source_stream_->engine_end_<ctx_.current_time;
+                const auto captured=engine_source_stream_->capture(*this,engine_source_stream_->pending_capture_?engine_source_stream_->pending_kind_:(missing_step?Stream::Kind::EngineStep:Stream::Kind::Checkpoint),
+                    engine_source_stream_->pending_capture_?engine_source_stream_->pending_start_:(missing_step?engine_source_stream_->engine_end_:ctx_.current_time),hash);
+                require(captured.empty(),captured.c_str());
+            }
+            auto contract=engine_source_stream_->checkpointContract(hash,Stream::fingerprint(bytes));Archive data;data(bytes,contract);auto crc=checksum(data.bytes());
+            std::string magic=streamMagic;uint32_t version=1;Archive wrapped;wrapped(magic,version,crc,bytes,contract);bytes=wrapped.bytes();
+            require(bytes.size()<=maxBytes,"Stream-bound engine checkpoint exceeds its size limit.");
+        }
 #endif
         publish(path,bytes);return {};
     } catch(const std::exception& e) {return e.what();}
 }
 #ifdef OPENSWMM_HAS_2D
 void SWMMEngine::detachEngineSourceHistory() noexcept {
-    if(auto* cpu=dynamic_cast<twoD::ExplicitInertialSolver*>(surface_router_.solver_.get()))cpu->engine_source_history_=nullptr;
-    engine_source_history_=nullptr;
+    if(auto* cpu=dynamic_cast<twoD::ExplicitInertialSolver*>(surface_router_.solver_.get())) {
+        cpu->engine_source_history_=nullptr;cpu->engine_source_stream_=nullptr;
+    }
+    if(engine_source_stream_)engine_source_stream_->engine_=nullptr;
+    engine_source_stream_=nullptr;engine_source_history_=nullptr;
 }
 std::string SWMMEngine::setEngineSourceResultHistory(twoD::EngineSourceResultHistory& history,bool detailed_source_intervals) {
     try {
-        require(!step_active_ && !runtime_pipeline_ && !engine_source_history_ && ctx_.current_time==0 && history.tables().empty(),
+        require(!step_active_ && !runtime_pipeline_ && !engine_source_history_ && !engine_source_stream_ && ctx_.current_time==0 && history.tables().empty(),
                 "Attach an empty engine source recorder at the initial accepted boundary.");
         auto* cpu=dynamic_cast<twoD::ExplicitInertialSolver*>(surface_router_.solver_.get());
-        require(cpu && !cpu->source_history_ && !cpu->engine_source_history_,"Engine source history requires its unbound CPU marcher.");
+        require(cpu && !cpu->source_history_ && !cpu->engine_source_history_ && !cpu->engine_source_stream_,"Engine source history requires its unbound CPU marcher.");
         auto trial=history;trial.detailed_=detailed_source_intervals;
         const auto error=trial.append(*this,0);require(error.empty(),error.c_str());
         history=std::move(trial);engine_source_history_=&history;
@@ -866,22 +901,54 @@ std::string SWMMEngine::setEngineSourceResultHistory(twoD::EngineSourceResultHis
 }
 std::string SWMMEngine::resumeEngineSourceResultHistory(twoD::EngineSourceResultHistory& history) {
     try {
-        require(!step_active_ && !runtime_pipeline_ && !engine_source_history_,"Resume engine source history after restoring the engine checkpoint.");
+        require(!step_active_ && !runtime_pipeline_ && !engine_source_history_ && !engine_source_stream_,"Resume engine source history after restoring the engine checkpoint.");
         auto* cpu=dynamic_cast<twoD::ExplicitInertialSolver*>(surface_router_.solver_.get());
-        require(cpu && !cpu->source_history_ && !cpu->engine_source_history_,"Engine source history requires its unbound CPU marcher.");
+        require(cpu && !cpu->source_history_ && !cpu->engine_source_history_ && !cpu->engine_source_stream_,"Engine source history requires its unbound CPU marcher.");
         const auto error=history.resume(*this);require(error.empty(),error.c_str());engine_source_history_=&history;
         if(history.detailed_)cpu->engine_source_history_=&history;
         return {};
     } catch(const std::exception& e) {return e.what();}
 }
+std::string SWMMEngine::setEngineSourceResultStream(twoD::EngineSourceResultStream& stream,const std::string& path,bool detailed) {
+    try {
+        require(!step_active_ && !runtime_pipeline_ && !engine_source_history_ && !engine_source_stream_ && ctx_.current_time==0,
+            "Attach a stream at the initial accepted boundary.");
+        auto* cpu=dynamic_cast<twoD::ExplicitInertialSolver*>(surface_router_.solver_.get());
+        require(cpu && !cpu->source_history_ && !cpu->engine_source_history_ && !cpu->engine_source_stream_,"Stream requires its unbound CPU marcher.");
+        const auto error=stream.initialize(*this,path,detailed);require(error.empty(),error.c_str());
+        engine_source_stream_=&stream;cpu->engine_source_stream_=&stream;return {};
+    } catch(const std::exception& e){return e.what();}
+}
+
 #endif
 std::string SWMMEngine::loadCheckpoint(const std::string& path) {
+    try {
+        auto bytes=readFile(path);Archive peek(bytes);std::string magic;peek(magic);
+        if(magic!=streamMagic)return loadCheckpointBytes(std::move(bytes));
+#ifdef OPENSWMM_HAS_2D
+        Archive in(std::move(bytes));uint32_t version,crc;std::string physical,contract;in(magic,version,crc,physical,contract);in.finish();
+        Archive payload;payload(physical,contract);require(version==1 && crc==checksum(payload.bytes()),"Stream-bound checkpoint checksum or version differs.");
+        return loadCheckpointBytes(std::move(physical),contract);
+#else
+        return "Source stream checkpoint support unavailable in this build.";
+#endif
+    }catch(const std::exception& e){return e.what();}
+}
+std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,const std::string& stream_contract) {
     try {
         require(!step_active_ && !runtime_pipeline_ && exchange_target_<0 && ctx_.current_time==0,"Engine restore requires an identically initialized fresh session.");
 #ifdef OPENSWMM_HAS_2D
         require(!engine_source_history_,"Restore the engine checkpoint before attaching its source history.");
 #endif
-        checkCheckpointBoundary();Archive in(readFile(path));std::string magic,model,bytes;uint32_t version=0,crc=0;
+        checkCheckpointBoundary();
+#ifdef OPENSWMM_HAS_2D
+        require(bool(engine_source_stream_)==!stream_contract.empty(),"Stream checkpoints require their fresh stream destination; old checkpoints require no stream.");
+        std::unique_ptr<twoD::EngineSourceResultStream::PreparedRestore> prepared_stream;
+        if(engine_source_stream_)prepared_stream=engine_source_stream_->prepareRestore(stream_contract,twoD::EngineSourceResultStream::fingerprint(checkpoint));
+#else
+        require(stream_contract.empty(),"Source stream support unavailable.");
+#endif
+        Archive in(std::move(checkpoint));std::string magic,model,bytes;uint32_t version=0,crc=0;
         in(magic,version,model,crc,bytes);in.finish();
         uint32_t expected_version=3;
 #ifdef OPENSWMM_HAS_2D
@@ -937,6 +1004,25 @@ std::string SWMMEngine::loadCheckpoint(const std::string& path) {
         }
 #endif
 #ifdef OPENSWMM_HAS_2D
+        if(prepared_stream) {
+            std::vector<io::CheckpointOutputPublication::Output> outputs;
+            if(prepared_output)outputs.push_back(binary_output_plugin_->checkpointPublication(*prepared_output));
+#ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
+            if(prepared_mesh)outputs.push_back(surface_output_plugin_->checkpointPublication(*prepared_mesh));
+#endif
+            outputs.push_back(prepared_stream->publication);
+            publish_output=[&,outputs=std::move(outputs)] {
+#ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
+                std::lock_guard<std::recursive_mutex> lock(io::resultHdf5Mutex());
+#endif
+                io::CheckpointOutputPublication publication(outputs);publication.publish();
+                if(prepared_output)binary_output_plugin_->adoptCheckpoint(*prepared_output);
+#ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
+                if(prepared_mesh)surface_output_plugin_->adoptCheckpoint(*prepared_mesh);
+#endif
+                engine_source_stream_->adopt(*prepared_stream);
+            };
+        }
         if(surface_router_.isActive()) {
             std::function<void()> before_install;
             if(publish_output || prepared_driver)before_install=[&] {

@@ -100,22 +100,12 @@ void SourceResultHistory::initializeIdentity(const CommonSourceStage& stage) {
         if(outside>1e-12)row(tables_.at("footprints"),{owner,double(a.source),double(a.type),double(a.unit),usage,-1,outside});
     }
 }
-std::string SourceResultHistory::append(const CommonSourceStage& stage) {
-    try {
-        const auto error=stage.checkpointBoundary();if(!error.empty())return error;
-        if(stage.checkpoint_model_!=stage.checkpointModel())return "Source result model changed after attachment.";
-        if(!tables_.empty()&&(!stage_||stage_!=&stage||model_!=stage.checkpoint_model_))return "Source result recorder belongs to a different or saved run.";
-        const std::size_t frame=tables_.empty()?0:tables_.at("boundaries").rows();
-        const double start=frame?tables_.at("boundaries").columns[3].back():0;
-        if(stage.intervals()!=static_cast<long>(frame)||(frame==0&&stage.completedEnd()!=0)||
-           (frame>0&&stage.completedEnd()<=start))return "Capture initial state and every accepted source interval exactly once.";
-        auto trial=*this; // Qualification recorder: strong failure guarantee, not the optimized production writer.
+void SourceResultHistory::appendRows(const CommonSourceStage& stage,std::size_t frame,double start) {
         const auto& s=*stage.sources_;const auto& ctx=s.context();const auto& names=s.pollutantNames();
         const int np=int(names.size());
-        if(frame==0)trial.initializeIdentity(stage);
-        auto& ts=trial.tables_;const double end=stage.completedEnd();
+        auto& ts=tables_;const double end=stage.completedEnd();
         row(ts.at("boundaries"),{double(frame),double(stage.intervals()),start,end,stage.meshRain(),stage.meshEvaporation(),stage.meshReturn()});
-        if(trial.outfall_returns_) {
+        if(outfall_returns_) {
             row(ts.at("outfall_clock"),{double(frame),s.outfallReturnEnd()});
             for(const auto& q:s.pendingOutfallReturns()) {
                 auto& pending=ts.at("pending_outfall_return");
@@ -132,7 +122,7 @@ std::string SourceResultHistory::append(const CommonSourceStage& stage) {
                 const std::initializer_list<double> values{double(frame),double(sc),double(group),s.spatialFractions()[sc],
                     b.initial_storage*ft3,b.rain*ft3,b.evaporation*ft3,b.infiltration*ft3,b.spatial_infiltration*ft3,
                     b.outside_infiltration*ft3,b.aquifer_return*ft3,b.outlet*ft3,b.captured*ft3,b.runon*ft3,b.pervious_return*ft3,s.storedVolume(sc)*ft3};
-                if(trial.outfall_returns_)row(water,values,{b.outfall_return*ft3});
+                if(outfall_returns_)row(water,values,{b.outfall_return*ft3});
                 else row(water,values);
             }
         }
@@ -142,7 +132,7 @@ std::string SourceResultHistory::append(const CommonSourceStage& stage) {
         }
         const auto sourceId=[&](const SurfaceIntakeReceipt& r) {
             if(r.request.kind==SurfaceDonorKind::MESH)return -1;
-            for(std::size_t sc=0;sc<trial.sources_.size();++sc)if(trial.sources_[sc]==r.request.source)return int(sc);
+            for(std::size_t sc=0;sc<sources_.size();++sc)if(sources_[sc]==r.request.source)return int(sc);
             throw std::runtime_error("Unknown source result donor.");
         };
         const auto intake=[&](const char* table,const SurfaceIntakeReceipt& r) {
@@ -170,6 +160,25 @@ std::string SourceResultHistory::append(const CommonSourceStage& stage) {
         }
         for(const auto& r:stage.etReceipts())row(ts.at("et"),{double(frame),double(r.owner),double(r.source),double(r.type),double(r.unit),
             double(r.cell),r.start,r.end,r.area,r.potential,r.evaporation,r.soil_demand,r.unused});
+}
+SourceResultHistory SourceResultHistory::projection(const CommonSourceStage& stage,std::size_t frame,double start) {
+    const auto error=stage.checkpointBoundary();
+    if(!error.empty())throw std::runtime_error(error);
+    if(stage.checkpoint_model_!=stage.checkpointModel())throw std::runtime_error("Source result model changed after attachment.");
+    SourceResultHistory out;out.initializeIdentity(stage);out.appendRows(stage,frame,start);return out;
+}
+std::string SourceResultHistory::append(const CommonSourceStage& stage) {
+    try {
+        const auto error=stage.checkpointBoundary();if(!error.empty())return error;
+        if(stage.checkpoint_model_!=stage.checkpointModel())return "Source result model changed after attachment.";
+        if(!tables_.empty()&&(!stage_||stage_!=&stage||model_!=stage.checkpoint_model_))return "Source result recorder belongs to a different or saved run.";
+        const std::size_t frame=tables_.empty()?0:tables_.at("boundaries").rows();
+        const double start=frame?tables_.at("boundaries").columns[3].back():0;
+        if(stage.intervals()!=static_cast<long>(frame)||(frame==0&&stage.completedEnd()!=0)||
+           (frame>0&&stage.completedEnd()<=start))return "Capture initial state and every accepted source interval exactly once.";
+        auto trial=*this; // Qualification recorder: strong failure guarantee, not the optimized production writer.
+        if(frame==0)trial.initializeIdentity(stage);
+        trial.appendRows(stage,frame,start);
         const auto anchor=stage.checkpointBytes(trial.boundary_);if(!anchor.empty())return anchor;
         const auto invalid=trial.validate();if(!invalid.empty())return invalid;
         *this=std::move(trial);return {};

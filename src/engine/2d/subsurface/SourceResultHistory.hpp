@@ -45,6 +45,9 @@ private:
     friend struct SourceResultFile;
     friend struct EngineSourceResultFile;
     friend class EngineSourceResultHistory;
+    friend class EngineSourceResultStream;
+    void appendRows(const CommonSourceStage&,std::size_t frame,double start);
+    static SourceResultHistory projection(const CommonSourceStage&,std::size_t frame,double start);
     friend class Default2DOutputPlugin;
     friend class ExplicitInertialSolver;
     std::string refreshCheckpointMatch(const CommonSourceStage&);

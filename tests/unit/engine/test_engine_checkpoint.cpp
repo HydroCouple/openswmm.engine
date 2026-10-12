@@ -10,6 +10,7 @@
 #include "hydrology/LidNode.hpp"
 #include "2d/subsurface/SourceResultHistory.hpp"
 #include "2d/subsurface/EngineSourceResultHistory.hpp"
+#include "2d/subsurface/EngineSourceResultStream.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
 #include <openswmm/engine/openswmm_coupling.h>
 #ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
@@ -17,6 +18,10 @@
 #endif
 #endif
 #include <filesystem>
+#ifndef _WIN32
+#include <sys/resource.h>
+#include <csignal>
+#endif
 #include <fstream>
 #include <cstdlib>
 #include <iterator>
@@ -161,11 +166,17 @@ void step(SWMMEngine& e) {
     double t=-1;auto result=e.step(&t);
     if(result)throw std::runtime_error("step at "+std::to_string(e.context().current_time)+": "+e.context().error_message);
 }
+std::string physicalCheckpoint(std::string bytes) {
+    detail::CompletedSourceArchive peek(bytes);std::string magic;peek(magic);
+    if(magic!="OpenSWMM engine session with source stream")return bytes;
+    detail::CompletedSourceArchive in(std::move(bytes));uint32_t version,checksum;std::string physical,contract;
+    in(magic,version,checksum,physical,contract);in.finish();return physical;
+}
 void compare(SWMMEngine& a,SWMMEngine& b,const std::string& name) {
     auto pa=root()/(name+"-a.chk"),pb=root()/(name+"-b.chk");
     ASSERT_EQ(a.saveCheckpoint(pa.string()),"");
     ASSERT_EQ(b.saveCheckpoint(pb.string()),"");
-    ASSERT_EQ(bytes(pa),bytes(pb));
+    ASSERT_EQ(physicalCheckpoint(bytes(pa)),physicalCheckpoint(bytes(pb)));
 }
 uint32_t crc(const std::string& bytes) {
     uint32_t c=~uint32_t(0);for(unsigned char v:bytes) {c^=v;for(int k=0;k<8;++k)c=(c>>1)^((c&1)?0xedb88320u:0u);}return ~c;
@@ -1571,7 +1582,7 @@ std::string meshPhysical(std::string checkpoint) {
 void compareMesh(SWMMEngine& a,SWMMEngine& b,const std::string& name) {
     const auto x=root()/(name+"-a.chk"),y=root()/(name+"-b.chk");
     ASSERT_EQ(a.saveCheckpoint(x.string()),"");ASSERT_EQ(b.saveCheckpoint(y.string()),"");
-    EXPECT_EQ(meshPhysical(bytes(x)),meshPhysical(bytes(y)));
+    EXPECT_EQ(meshPhysical(physicalCheckpoint(bytes(x))),meshPhysical(physicalCheckpoint(bytes(y))));
 }
 twoD::Default2DOutputPlugin& meshWriter(SWMMEngine& e) {
     for(auto* p:e.plugin_factory().output_plugins())if(auto* w=dynamic_cast<twoD::Default2DOutputPlugin*>(p))return *w;
@@ -3143,5 +3154,275 @@ TEST(EngineCheckpoint, CatchmentSchedulerFramesValidateExpiryAgainstAcceptedSour
     const auto* row=s.engine.surfaceRouter2D().state().runtime_forcings.find(1,0);
     ASSERT_NE(row,nullptr);EXPECT_TRUE(row->enabled);EXPECT_GT(row->until,now);
     EXPECT_EQ(s.engine.saveCheckpoint(after.string()),"");
+}
+#endif
+
+#ifdef OPENSWMM_HAS_2D
+namespace {
+using Stream=twoD::EngineSourceResultStream;
+std::filesystem::path streamPath(const std::string& name) {
+    auto p=root()/(name+".source-stream");std::filesystem::remove(p);return p;
+}
+void equalStreamPrefix(const Stream& a,const Stream& b) {
+    EXPECT_EQ(a.cursor(),b.cursor());EXPECT_TRUE(bytes(a.path())==bytes(b.path())) << "Stream bytes differ.";
+}
+void matchStreamTable(const twoD::SourceResultTable& actual,const twoD::SourceResultTable& history,
+                      std::size_t frame,bool row_index=false) {
+    ASSERT_EQ(actual.fields,history.fields);ASSERT_EQ(actual.units,history.units);
+    auto begin=std::lower_bound(history.columns[0].begin(),history.columns[0].end(),double(frame));
+    auto end=std::upper_bound(begin,history.columns[0].end(),double(frame));
+    const auto offset=std::size_t(begin-history.columns[0].begin());ASSERT_EQ(actual.rows(),std::size_t(end-begin));
+    for(std::size_t c=0;c<actual.columns.size();++c)for(std::size_t r=0;r<actual.rows();++r)
+        EXPECT_DOUBLE_EQ(c==0?double(frame):actual.columns[c][r]+(row_index&&c==1?double(offset):0),history.columns[c][offset+r])<<actual.fields[c];
+}
+}
+TEST(EngineCheckpoint, StreamPreservesEveryQualifiedStepAndDetailedIntervalWithBoundedRetention) {
+    for(bool detailed:{false,true})for(int lid:{0,1,2}) {
+        const auto name="stream-coverage-"+std::to_string(detailed)+"-"+std::to_string(lid);SCOPED_TRACE(name);
+        Stream recorded;twoD::EngineSourceResultHistory history;SurfaceSession a,control;
+        ASSERT_NO_THROW(startClosedSpatial(a,name,lid,.7,true,lid==2));
+        ASSERT_NO_THROW(startClosedSpatial(control,name+"-control",lid,.7,true,lid==2));
+        ASSERT_EQ(a.engine.setEngineSourceResultStream(recorded,streamPath(name).string(),detailed),"");
+        ASSERT_EQ(control.engine.setEngineSourceResultHistory(history,detailed),"");
+        for(int i=0;i<32;++i){ASSERT_NO_THROW(step(a.engine));
+        ASSERT_NO_THROW(step(control.engine));compare(a.engine,control.engine,name);}
+        std::size_t steps=0,intervals=0;
+        ASSERT_EQ(Stream::visit(recorded.path(),recorded.cursor(),[&](const Stream::Frame& frame) {
+            if(frame.kind==Stream::Kind::SourceInterval) {
+                ASSERT_TRUE(detailed);++intervals;
+                for(const auto& [key,t]:frame.tables) {
+                    const auto name=key.substr(7);const bool indexed=name.starts_with("intake")||name.starts_with("return")||name.starts_with("pending_");
+                    // Mass row ids refer to the corresponding water table, whose
+                    // offset can differ from the number of mass rows (water-only fixture).
+                    matchStreamTable(t,history.sourceIntervals()->tables().at(name),intervals,indexed);
+                }
+            } else {
+                ASSERT_TRUE(frame.kind==Stream::Kind::Initial||frame.kind==Stream::Kind::EngineStep);
+                for(const auto& [key,t]:frame.tables)if(key.starts_with("engine/")) {
+                    const auto name=key.substr(7);matchStreamTable(t,history.tables().at(name),steps,name.starts_with("pending_"));
+                }
+                ++steps;
+            }
+        }),"");
+        EXPECT_EQ(steps,33);EXPECT_EQ(intervals,detailed?std::size_t(a.stage.intervals()):0);
+        EXPECT_GT(recorded.cursor().bytes,recorded.largestFrameBytes()*10);
+        EXPECT_EQ(recorded.latest().tables.at("engine/boundaries").rows(),1);
+        const auto retained=recorded.latest().tables.at("engine/node_delivery").rows();EXPECT_EQ(retained,std::size_t(a.engine.context().n_nodes()));
+    }
+}
+TEST(EngineCheckpoint, StreamRecordsCompletedBarriersAndPrescriptionsWithoutReplayingRoutingReceipts) {
+    for(bool detailed:{false,true})for(int lid:{0,1,2}) {
+        const auto name="stream-barriers-"+std::to_string(detailed)+"-"+std::to_string(lid);SCOPED_TRACE(name);
+        Stream recorded;SurfaceSession a;
+        ASSERT_NO_THROW(startCatchmentProvider(a,name,lid));
+        ASSERT_EQ(a.engine.setEngineSourceResultStream(recorded,streamPath(name).string(),detailed),"");
+        ASSERT_NO_THROW(until(a.engine,1.4));
+        ASSERT_LT(a.stage.completedEnd(),a.engine.context().current_time);
+        const auto at=a.engine.context().current_time;const auto prefix=recorded.cursor();const auto previous=recorded.latest().tables.at("engine/node_delivery");
+        double actual=-1;
+        ASSERT_EQ(a.engine.advanceTo(at,&actual),SWMM_OK);EXPECT_DOUBLE_EQ(actual,at);
+        EXPECT_EQ(recorded.latest().kind,Stream::Kind::CouplingBarrier);EXPECT_DOUBLE_EQ(recorded.latest().engine_start,at);EXPECT_DOUBLE_EQ(recorded.latest().engine_end,at);
+        EXPECT_DOUBLE_EQ(a.stage.completedEnd(),at);EXPECT_EQ(recorded.latest().tables.at("engine/node_delivery").columns[4],previous.columns[4]);
+        ASSERT_EQ(Stream::visit(recorded.path(),prefix,[](const auto&){}),""); // Earlier snapshots remain immutable.
+        SWMM_CouplingForcing rain{sizeof(rain),1,0,1,.003,2.125,0,nullptr};SWMM_CouplingFrame f{sizeof(f),1,"water",0,nullptr,0,nullptr,1,&rain,0,nullptr};
+        ASSERT_EQ(swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&a.engine),&f),SWMM_OK);
+        EXPECT_EQ(recorded.latest().kind,Stream::Kind::PrescriptionUpdate);EXPECT_DOUBLE_EQ(recorded.latest().engine_end,at);
+        const auto installed=recorded.cursor();rain.until_seconds=at;
+        EXPECT_EQ(swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&a.engine),&f),SWMM_ERR_BADPARAM);EXPECT_EQ(recorded.cursor(),installed);
+        ASSERT_EQ(a.engine.advanceTo(2.125,&actual),SWMM_OK);EXPECT_DOUBLE_EQ(actual,2.125);
+        int barriers=0,updates=0;
+        ASSERT_EQ(Stream::visit(recorded.path(),recorded.cursor(),[&](const auto& frame) {
+            if(frame.kind==Stream::Kind::CouplingBarrier||frame.kind==Stream::Kind::PrescriptionUpdate) {
+                ++barriers;updates+=frame.kind==Stream::Kind::PrescriptionUpdate;
+                const auto& n=frame.tables.at("engine/node_delivery").columns;
+                for(std::size_t r=0;r<n[0].size();++r){EXPECT_EQ(n[6][r],0);EXPECT_EQ(n[7][r],0);EXPECT_EQ(n[10][r],0);}
+            }
+        }),"");EXPECT_GE(barriers,3);EXPECT_EQ(updates,1);
+    }
+}
+TEST(EngineCheckpoint, StreamMissingChangedAndTruncatedPrefixesRefuseBeforeRestoreAndPermitRetry) {
+    Stream recorded;SurfaceSession a;
+        ASSERT_NO_THROW(startCatchmentProvider(a,"stream-prefix-source",2));
+    const auto source=streamPath("stream-prefix-source");
+        ASSERT_EQ(a.engine.setEngineSourceResultStream(recorded,source.string(),true),"");
+    ASSERT_EQ(providerFrame(a.engine,2.125),SWMM_OK);double actual;
+        ASSERT_EQ(a.engine.advanceTo(2.125,&actual),SWMM_OK);
+    const auto checkpoint=root()/"stream-prefix.chk";
+        ASSERT_EQ(a.engine.saveCheckpoint(checkpoint.string()),"");const auto cursor=recorded.cursor();const auto good=bytes(source);
+    // Later valid frames are outside the saved prefix and must not be copied on branching.
+    ASSERT_EQ(a.engine.advanceTo(3.5,&actual),SWMM_OK);
+        ASSERT_GT(recorded.cursor().bytes,cursor.bytes);const auto extended=bytes(source);
+    for(int variant=0;variant<5;++variant) {
+        SCOPED_TRACE(variant);Stream target;SurfaceSession b;const auto name="stream-prefix-target-"+std::to_string(variant);
+        ASSERT_NO_THROW(startCatchmentProvider(b,name,2));const auto destination=streamPath(name);
+        ASSERT_EQ(b.engine.setEngineSourceResultStream(target,destination.string(),true),"");const auto fresh=bytes(destination);const auto initial=target.cursor();
+        auto changed=good;if(variant==0)changed.resize(changed.size()-1);if(variant==1)changed[16]^=1;if(variant==2)changed[changed.size()/2]^=1;
+        if(variant==3)changed.back()^=1;
+        if(variant==4)std::filesystem::rename(source,source.string()+".missing");else write(source,changed);
+        EXPECT_FALSE(b.engine.loadCheckpoint(checkpoint.string()).empty());EXPECT_DOUBLE_EQ(b.engine.context().current_time,0);EXPECT_EQ(target.cursor(),initial);EXPECT_EQ(bytes(destination),fresh);
+        if(variant==4)std::filesystem::rename(source.string()+".missing",source);else write(source,extended);
+        ASSERT_EQ(b.engine.loadCheckpoint(checkpoint.string()),"");EXPECT_EQ(target.cursor(),cursor);EXPECT_EQ(bytes(destination),good);
+        ASSERT_EQ(Stream::visit(destination.string(),target.cursor(),[](const auto&){}),"");
+        double restored;
+        ASSERT_EQ(b.engine.advanceTo(3.5,&restored),SWMM_OK);EXPECT_DOUBLE_EQ(restored,actual);
+        compareCatchmentProvider(a,b,name);equalStreamPrefix(recorded,target);
+    }
+}
+TEST(EngineCheckpoint, StreamWriteRefusalPreservesPhysicalBoundaryAndDurablePrefix) {
+    Stream recorded;SurfaceSession a;
+        ASSERT_NO_THROW(startCatchmentProvider(a,"stream-write-refusal",2));const auto path=streamPath("stream-write-refusal");
+    ASSERT_EQ(a.engine.setEngineSourceResultStream(recorded,path.string(),true),"");
+        ASSERT_NO_THROW(until(a.engine,1.4));
+    const auto before=recorded.cursor();const auto saved=bytes(path);const auto time=a.engine.context().current_time,end=a.stage.completedEnd();
+    std::filesystem::permissions(path,std::filesystem::perms::owner_read);
+    EXPECT_NE(a.engine.step(nullptr),SWMM_OK);EXPECT_DOUBLE_EQ(a.engine.context().current_time,time);EXPECT_DOUBLE_EQ(a.stage.completedEnd(),end);EXPECT_EQ(recorded.cursor(),before);EXPECT_EQ(bytes(path),saved);
+    SWMM_CouplingForcing rain{sizeof(rain),1,0,1,.003,5,0,nullptr};SWMM_CouplingFrame f{sizeof(f),1,"water",0,nullptr,0,nullptr,1,&rain,0,nullptr};
+    EXPECT_NE(swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&a.engine),&f),SWMM_OK);EXPECT_DOUBLE_EQ(a.stage.completedEnd(),end);EXPECT_EQ(recorded.cursor(),before);
+    std::filesystem::permissions(path,std::filesystem::perms::owner_read|std::filesystem::perms::owner_write);
+    ASSERT_EQ(swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&a.engine),&f),SWMM_OK);
+        ASSERT_NO_THROW(step(a.engine));
+    ASSERT_EQ(Stream::visit(path.string(),recorded.cursor(),[](const auto&){}),"");
+    const auto intact=bytes(path);const auto accepted=recorded.cursor();write(path,intact+"partial");
+    EXPECT_NE(a.engine.step(nullptr),SWMM_OK);EXPECT_EQ(recorded.cursor(),accepted);EXPECT_FALSE(a.engine.saveCheckpoint((root()/"stream-partial.chk").string()).empty());
+    write(path,intact);
+        ASSERT_NO_THROW(step(a.engine));
+}
+#ifdef OPENSWMM_HAS_HDF5_MODEL
+TEST(EngineCheckpoint, StreamRestoresWithDriverBinaryAndMeshOutputsAsOnePublication) {
+    for(bool detailed:{false,true})for(int lid:{0,1,2}) {
+        const auto name="stream-combined-"+std::to_string(detailed)+"-"+std::to_string(lid);SCOPED_TRACE(name);
+        Stream recorded,resumed;TestWaterDriver da,db;SurfaceSession a,b;
+        ASSERT_NO_THROW(startCatchmentProvider(a,name,lid,0,true,2));
+        ASSERT_NO_THROW(startCatchmentProvider(b,name+"-resumed",lid,0,true,2));
+        ASSERT_EQ(a.engine.attachRuntimeWaterDriverCheckpoint(da),"");
+        ASSERT_EQ(b.engine.attachRuntimeWaterDriverCheckpoint(db),"");
+        ASSERT_EQ(a.engine.setEngineSourceResultStream(recorded,streamPath(name).string(),detailed),"");
+        ASSERT_EQ(b.engine.setEngineSourceResultStream(resumed,streamPath(name+"-resumed").string(),detailed),"");
+        ASSERT_EQ(providerFrame(a.engine),SWMM_OK);
+        ASSERT_NO_THROW(drive(a.engine,da,4.2));
+        const auto due=recorded.cursor();const auto due_bytes=bytes(recorded.path());double actual=-1;
+        EXPECT_EQ(a.engine.advanceTo(5,&actual),SWMM_ERR_LIFECYCLE);EXPECT_DOUBLE_EQ(actual,4.2);
+        EXPECT_EQ(recorded.cursor(),due);EXPECT_TRUE(bytes(recorded.path())==due_bytes);
+        const auto cp=root()/(name+".chk");
+        ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+        const auto binary=root()/(name+"-resumed.out"),mesh=root()/(name+"-resumed.h5");const auto bh=bytes(binary),mh=bytes(mesh),sh=bytes(resumed.path());const auto initial=resumed.cursor();const auto driver=driverState(db,0);
+        std::filesystem::permissions(mesh,std::filesystem::perms::owner_read);
+        EXPECT_FALSE(b.engine.loadCheckpoint(cp.string()).empty());EXPECT_DOUBLE_EQ(b.engine.context().current_time,0);EXPECT_EQ(bytes(binary),bh);EXPECT_EQ(bytes(mesh),mh);EXPECT_EQ(bytes(resumed.path()),sh);EXPECT_EQ(resumed.cursor(),initial);EXPECT_EQ(driverState(db,0),driver);
+        std::filesystem::permissions(mesh,std::filesystem::perms::owner_read|std::filesystem::perms::owner_write);
+        ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");compareCatchmentProvider(a,b,name+"-restored",true);equalStreamPrefix(recorded,resumed);
+        ASSERT_NO_THROW(drive(a.engine,da,25));
+        ASSERT_NO_THROW(drive(b.engine,db,25));compareCatchmentProvider(a,b,name+"-continued",true);equalStreamPrefix(recorded,resumed);
+        ASSERT_EQ(a.engine.end(),0);
+        ASSERT_EQ(b.engine.end(),0);sameBinary(name,name+"-resumed",8);sameMesh(name,name+"-resumed",4);
+    }
+}
+#endif
+#endif
+
+#if defined(OPENSWMM_HAS_2D) && !defined(_WIN32)
+TEST(EngineCheckpoint, StreamPartialFrameFailurePreservesPrefixAndRetriesAcceptedCaptureWithoutRoutingAgain) {
+    Stream recorded;SurfaceSession a;
+    ASSERT_NO_THROW(startCatchmentProvider(a,"stream-partial-write",2));
+    const auto path=streamPath("stream-partial-write");
+    ASSERT_EQ(a.engine.setEngineSourceResultStream(recorded,path.string(),false),"");
+    ASSERT_NO_THROW(until(a.engine,1.4));
+    const auto cursor=recorded.cursor();const auto prefix=bytes(path);const double before=a.engine.context().current_time;
+    struct LimitedFile {
+        rlimit previous{};decltype(std::signal(SIGXFSZ,SIG_IGN)) handler;
+        explicit LimitedFile(uint64_t bytes):handler(std::signal(SIGXFSZ,SIG_IGN)) {
+            if(getrlimit(RLIMIT_FSIZE,&previous))throw std::runtime_error("Cannot read test file-size limit.");
+            auto changed=previous;changed.rlim_cur=bytes;
+            if(setrlimit(RLIMIT_FSIZE,&changed))throw std::runtime_error("Cannot set test file-size limit.");
+        }
+        ~LimitedFile(){setrlimit(RLIMIT_FSIZE,&previous);std::signal(SIGXFSZ,handler);}
+    };
+    int result;
+    {LimitedFile limit(cursor.bytes+16);result=a.engine.step(nullptr);}
+    EXPECT_NE(result,SWMM_OK);EXPECT_GT(a.engine.context().current_time,before);EXPECT_EQ(a.engine.context().error_code,0);
+    EXPECT_EQ(recorded.cursor(),cursor);EXPECT_TRUE(bytes(path)==prefix);EXPECT_FALSE(recorded.lastError().empty());
+    const auto accepted=a.engine.context().current_time;const auto volumes=a.engine.surfaceRouter2D().state().volume;
+    EXPECT_EQ(a.engine.step(nullptr),SWMM_ERR_LIFECYCLE);EXPECT_DOUBLE_EQ(a.engine.context().current_time,accepted);
+    ASSERT_EQ(a.engine.saveCheckpoint((root()/"stream-partial-write.chk").string()),"");
+    EXPECT_EQ(recorded.latest().kind,Stream::Kind::EngineStep);EXPECT_DOUBLE_EQ(recorded.latest().engine_start,before);EXPECT_DOUBLE_EQ(recorded.latest().engine_end,accepted);
+    EXPECT_EQ(a.engine.surfaceRouter2D().state().volume,volumes);EXPECT_TRUE(recorded.lastError().empty());
+    EXPECT_EQ(recorded.cursor().frames,cursor.frames+1);ASSERT_EQ(Stream::visit(path.string(),recorded.cursor(),[](const auto&){}),"");
+    ASSERT_NO_THROW(step(a.engine));
+}
+#endif
+
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, StreamRestartPreservesPendingBatchesAcrossNodeAndGroundwaterProfiles) {
+    for(bool detailed:{false,true})for(int lid:{0,1,2})for(int closure:{0,1,2}) {
+        const auto name="stream-pending-"+std::to_string(detailed)+"-"+std::to_string(lid)+"-"+std::to_string(closure);SCOPED_TRACE(name);
+        Stream recorded,resumed;SurfaceSession a,b;
+        ASSERT_NO_THROW(startCatchmentProvider(a,name,lid,closure));
+        ASSERT_NO_THROW(startCatchmentProvider(b,name+"-resumed",lid,closure));
+        ASSERT_EQ(a.engine.setEngineSourceResultStream(recorded,streamPath(name).string(),detailed),"");
+        ASSERT_EQ(b.engine.setEngineSourceResultStream(resumed,streamPath(name+"-resumed").string(),detailed),"");
+        ASSERT_NO_THROW(until(a.engine,1.4));ASSERT_LT(a.stage.completedEnd(),a.engine.context().current_time);
+        const auto cp=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+        ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");compareCatchmentProvider(a,b,name+"-restored");equalStreamPrefix(recorded,resumed);
+        for(int i=0;i<20;++i) {
+            ASSERT_NO_THROW(step(a.engine));
+            ASSERT_NO_THROW(step(b.engine));
+        }
+        compareCatchmentProvider(a,b,name+"-continued");equalStreamPrefix(recorded,resumed);
+    }
+}
+TEST(EngineCheckpoint, StreamWrongRecordingProfileAndCursorLeaveFreshTargetUnchanged) {
+    Stream recorded,target;SurfaceSession a,b;
+    ASSERT_NO_THROW(startCatchmentProvider(a,"stream-profile-source",2));
+    ASSERT_NO_THROW(startCatchmentProvider(b,"stream-profile-target",2));
+    ASSERT_EQ(a.engine.setEngineSourceResultStream(recorded,streamPath("stream-profile-source").string(),true),"");
+    ASSERT_EQ(b.engine.setEngineSourceResultStream(target,streamPath("stream-profile-target").string(),false),"");
+    twoD::SourceResultHistory component;
+    EXPECT_THROW(b.engine.surfaceRouter2D().setSourceResultHistory(component),std::invalid_argument);
+    ASSERT_NO_THROW(until(a.engine,1.4));const auto cp=root()/"stream-profile.chk";
+    ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");const auto fresh=bytes(target.path());const auto cursor=target.cursor();
+    EXPECT_FALSE(b.engine.loadCheckpoint(cp.string()).empty());EXPECT_DOUBLE_EQ(b.engine.context().current_time,0);EXPECT_EQ(target.cursor(),cursor);EXPECT_TRUE(bytes(target.path())==fresh);
+    for(int variant=0;variant<4;++variant) {
+        auto wrong=recorded.cursor();if(variant==0)++wrong.frames;if(variant==1)--wrong.bytes;if(variant==2)wrong.fingerprint^=1;if(variant==3)wrong.identity[0]^=1;
+        EXPECT_FALSE(Stream::visit(recorded.path(),wrong,[](const auto&){}).empty());
+    }
+}
+#endif
+#if defined(OPENSWMM_HAS_2D) && !defined(_WIN32)
+TEST(EngineCheckpoint, StreamPrescriptionCaptureFailureReportsAcceptedUpdateAndSettlesWithoutReapplyingIt) {
+    Stream recorded;SurfaceSession a;
+    ASSERT_NO_THROW(startCatchmentProvider(a,"stream-update-write",2));const auto path=streamPath("stream-update-write");
+    ASSERT_EQ(a.engine.setEngineSourceResultStream(recorded,path.string(),false),"");const auto initial=recorded.cursor();
+    SWMM_CouplingForcing rain{sizeof(rain),1,0,1,.001,5,0,nullptr};SWMM_CouplingFrame f{sizeof(f),1,"water",0,nullptr,0,nullptr,1,&rain,0,nullptr};
+    ASSERT_EQ(swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&a.engine),&f),SWMM_OK);
+    const auto before=recorded.cursor();ASSERT_EQ(before.frames,initial.frames+2);const auto size=(before.bytes-initial.bytes)/2;
+    rlimit previous{};ASSERT_EQ(getrlimit(RLIMIT_FSIZE,&previous),0);auto limited=previous;limited.rlim_cur=before.bytes+size+16;
+    const auto handler=std::signal(SIGXFSZ,SIG_IGN);ASSERT_EQ(setrlimit(RLIMIT_FSIZE,&limited),0);
+    rain.rate_m_s=.003;const int result=swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&a.engine),&f);
+    const int restored=setrlimit(RLIMIT_FSIZE,&previous);std::signal(SIGXFSZ,handler);ASSERT_EQ(restored,0);
+    EXPECT_NE(result,SWMM_OK);EXPECT_TRUE(recorded.hasPendingCapture());EXPECT_FALSE(recorded.lastError().empty());
+    const auto* accepted=a.engine.surfaceRouter2D().state().runtime_forcings.find(1,0);ASSERT_NE(accepted,nullptr);EXPECT_DOUBLE_EQ(accepted->rate,.003);
+    EXPECT_EQ(recorded.latest().kind,Stream::Kind::CouplingBarrier);EXPECT_EQ(recorded.cursor().frames,before.frames+1);
+    EXPECT_EQ(a.engine.step(nullptr),SWMM_ERR_LIFECYCLE);EXPECT_DOUBLE_EQ(a.engine.context().current_time,0);
+    ASSERT_EQ(a.engine.saveCheckpoint((root()/"stream-update-write.chk").string()),"");
+    EXPECT_FALSE(recorded.hasPendingCapture());EXPECT_EQ(recorded.latest().kind,Stream::Kind::PrescriptionUpdate);EXPECT_EQ(recorded.cursor().frames,before.frames+2);
+    ASSERT_EQ(Stream::visit(path.string(),recorded.cursor(),[](const auto&){}),"");
+    ASSERT_NO_THROW(step(a.engine));
+}
+#endif
+
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, StreamStagingCollisionPreservesUnownedFileAndFreshStateWithValidRetry) {
+    Stream recorded,resumed;SurfaceSession a,b;
+    ASSERT_NO_THROW(startCatchmentProvider(a,"stream-staging-source",2));
+    ASSERT_NO_THROW(startCatchmentProvider(b,"stream-staging-target",2));
+    ASSERT_EQ(a.engine.setEngineSourceResultStream(recorded,streamPath("stream-staging-source").string(),true),"");
+    ASSERT_EQ(b.engine.setEngineSourceResultStream(resumed,streamPath("stream-staging-target").string(),true),"");
+    ASSERT_NO_THROW(until(a.engine,1.4));const auto cp=root()/"stream-staging.chk";
+    ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+    const auto unowned=resumed.path()+".stream-part-"+resumed.cursor().identity+"-1";write(unowned,"unrelated recovery file");
+    const auto fresh=bytes(resumed.path());const auto cursor=resumed.cursor();
+    EXPECT_FALSE(b.engine.loadCheckpoint(cp.string()).empty());EXPECT_EQ(bytes(unowned),"unrelated recovery file");
+    EXPECT_DOUBLE_EQ(b.engine.context().current_time,0);EXPECT_EQ(resumed.cursor(),cursor);EXPECT_TRUE(bytes(resumed.path())==fresh);
+    ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");EXPECT_EQ(bytes(unowned),"unrelated recovery file");
+    compareCatchmentProvider(a,b,"stream-staging-restored");equalStreamPrefix(recorded,resumed);
 }
 #endif

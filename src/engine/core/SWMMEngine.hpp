@@ -82,7 +82,7 @@
 #include "../2d/SurfaceRouter2D.hpp"
 #include "../2d/coupling/RuntimeWaterDriverCheckpoint.hpp"
 #include "../hydrology/SourceWaterDeliveryBridge.hpp"
-namespace openswmm::twoD { class Default2DOutputPlugin; class EngineSourceResultHistory; }
+namespace openswmm::twoD { class Default2DOutputPlugin; class EngineSourceResultHistory; class EngineSourceResultStream; }
 #endif
 
 #include <array>
@@ -241,6 +241,9 @@ public:
     // Caller keeps the recorder alive through end/close. Restore first, then resume.
     std::string setEngineSourceResultHistory(twoD::EngineSourceResultHistory&,bool detailed_source_intervals=false);
     std::string resumeEngineSourceResultHistory(twoD::EngineSourceResultHistory&);
+    /// Distinct internal full-history stream; no public GUI/API activation.
+    std::string setEngineSourceResultStream(twoD::EngineSourceResultStream&,const std::string& path,bool detailed=false);
+    void recordRuntimeCouplingPrescription();
 #endif
     std::string saveCheckpoint(const std::string& path) const;
     std::string loadCheckpoint(const std::string& path);
@@ -517,11 +520,14 @@ private:
     );
     std::string checkpointModel() const;
     void checkCheckpointBoundary() const;
-    std::string checkpointBytes(std::string&) const;
+    std::string checkpointBytes(std::string&,bool include_outputs=true) const;
+    std::string loadCheckpointBytes(std::string,const std::string& stream_contract={});
     const std::vector<int>* ordinarySourceOwners() const noexcept;
     bool ownsSpatialSource(int source) const noexcept;
 #ifdef OPENSWMM_HAS_2D
     friend class twoD::EngineSourceResultHistory;
+    friend class twoD::EngineSourceResultStream;
+    twoD::EngineSourceResultStream* engine_source_stream_ = nullptr;
     twoD::EngineSourceResultHistory* engine_source_history_ = nullptr;
     void detachEngineSourceHistory() noexcept;
     std::unique_ptr<runoff::SourceWaterDeliveryBridge> source_delivery_;
