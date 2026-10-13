@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Caleb Buahin
 #include "LidNode.hpp"
+#include "LidNodeRichardsState.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../input/Tokenizer.hpp"
@@ -550,13 +551,22 @@ void prepareStep(SimulationContext& ctx, double dt, double evaporation) {
 }
 void finishStep(SimulationContext& ctx) {
     auto& st = ctx.node_subtypes.storages;
+    std::vector<LidNodeState> mesh_ports;
+    for(int r=0;r<st.count();++r)
+        if(st.lid_state[r].richards && st.lid[r].bottom==LidNodeBottom::MeshAquifer && !st.lid_state[r].richards_mesh_pending_finish)
+            throw std::runtime_error("Mesh Richards routing finish requires one accepted owner preparation.");
+    if(std::any_of(st.lid_state.begin(),st.lid_state.end(),[](const auto& s){return s.richards_mesh_pending_finish;}))
+        mesh_ports.resize(st.count());
+    for(int r=0;r<st.count();++r)if(st.lid_state[r].richards_mesh_pending_finish)
+        mesh_ports[r]=detail::routed(ctx,r); // qualify every owned port state before changing any row
     for (int r = 0; r < st.count(); ++r) {
         auto& state = st.lid_state[r];
         if (state.cells.empty()) continue;
         const int n = st.node_idx[r];
+        if(state.richards_mesh_pending_finish)state=std::move(mesh_ports[r]);
         for (std::size_t i = 0; i < state.cells.size(); ++i) {
             auto& cell = state.cells[i];
-            if (state.richards) state.richards_water[i] += state.port_delta[i];
+            if (state.richards) { if(!state.richards_mesh_pending_finish)state.richards_water[i] += state.port_delta[i]; }
             else if (cell.geometric_volume > 0.0) cell.theta += state.port_delta[i] / cell.geometric_volume;
         }
         if (state.richards) refreshRichardsState(ctx, r);
@@ -580,6 +590,10 @@ void finishStep(SimulationContext& ctx) {
         st.evap_loss[r] += state.evap_volume;
         st.exfil_loss[r] += state.richards_bottom_loss;
         state.captured_flow = 0.0;
+        if(state.richards_mesh_pending_finish) {
+            std::fill(state.port_delta.begin(),state.port_delta.end(),0.0);
+            state.mobile_delta=0;state.richards_mesh_pending_finish=false;
+        }
     }
 }
 } // namespace openswmm::lidnode

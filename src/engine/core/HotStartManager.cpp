@@ -45,6 +45,7 @@
  */
 
 #include "HotStartManager.hpp"
+#include <algorithm>
 #include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "SimulationContext.hpp"
 #include "../hydrology/Runoff.hpp"
@@ -63,6 +64,13 @@
 #include <sstream>
 
 namespace openswmm {
+namespace {
+bool meshLidRestartUnsupported(const SimulationContext& ctx) {
+    return std::any_of(ctx.node_subtypes.storages.lid.begin(),ctx.node_subtypes.storages.lid.end(),[](const auto& c){
+        return c.control>=0 && c.bottom==LidNodeBottom::MeshAquifer;
+    });
+}
+}
 
 // ============================================================================
 // Thread-local last error
@@ -1016,6 +1024,9 @@ void restoreAquiferBlock(const HotStartFile& hs, SimulationContext& ctx,
 HotStartFile* HotStartManager::save(const SimulationContext& ctx,
                                     const std::string& path) {
     tl_last_io_error.clear();
+    if(meshLidRestartUnsupported(ctx)) {
+        tl_last_io_error="Mesh LID hotstart requires the R5 joint owner restart extension";return nullptr;
+    }
     if(ctx.runtime_coupling_used) {
         tl_last_io_error="Hotstart cannot preserve runtime 2D coupling prescriptions and receipts";
         return nullptr;
@@ -1142,6 +1153,9 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
                                     const groundwater::GWSolver* gw_solver,
                                     const std::string& path) {
     tl_last_io_error.clear();
+    if(meshLidRestartUnsupported(ctx)) {
+        tl_last_io_error="Mesh LID hotstart requires the R5 joint owner restart extension";return nullptr;
+    }
     if(ctx.runtime_coupling_used) {
         tl_last_io_error="Hotstart cannot preserve runtime 2D coupling prescriptions and receipts";
         return nullptr;
@@ -1281,6 +1295,10 @@ int HotStartManager::apply(HotStartFile& hs,
                            SimulationContext& ctx,
                            std::function<void(const std::string&)> warn_cb) {
     hs.warnings.clear();
+    if(meshLidRestartUnsupported(ctx)) {
+        tl_last_io_error="Mesh LID hotstart requires the R5 joint owner restart extension";
+        hs.warnings.push_back(tl_last_io_error);if(warn_cb)warn_cb(tl_last_io_error);return 1;
+    }
     int missing = 0;
 
     auto emit_warning = [&](const std::string& msg) {
@@ -1467,6 +1485,7 @@ int HotStartManager::apply(HotStartFile& hs,
                            std::function<void(const std::string&)> warn_cb) {
     // Apply hydraulic state (nodes, links) via the existing V1 overload
     int missing = apply(hs, ctx, warn_cb);
+    if(meshLidRestartUnsupported(ctx))return missing;
     if (!validAquiferInterface(hs,ctx)) return missing;
 
     // Apply V2 infiltration + GW state if the file has it
@@ -1506,6 +1525,9 @@ int HotStartManager::apply_legacy_routing(
         const std::string& path,
         SimulationContext& ctx,
         std::function<void(const std::string&)> warn_cb) {
+    if(meshLidRestartUnsupported(ctx)) {
+        tl_last_io_error="Mesh LID hotstart requires the R5 joint owner restart extension";return 1;
+    }
     std::ifstream file(openswmm::io::utf8_path(path), std::ios::binary);
     if (!file) {
         tl_last_io_error = "Cannot open hotstart file '" + path + "'";
@@ -1700,6 +1722,9 @@ int HotStartManager::apply_legacy_routing(
 
 int HotStartManager::save_legacy_routing(const std::string& path,
                                          const SimulationContext& ctx) {
+    if(meshLidRestartUnsupported(ctx)) {
+        tl_last_io_error="Mesh LID hotstart requires the R5 joint owner restart extension";return 1;
+    }
     std::ofstream file(openswmm::io::utf8_path(path), std::ios::binary | std::ios::trunc);
     if (!file) {
         tl_last_io_error = "Cannot open hotstart save file '" + path + "'";

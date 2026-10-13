@@ -26,6 +26,37 @@ TEST(RichardsColumn, RetentionStorageInverseIncludingSaturation) {
         EXPECT_LE(conductivity(p, 1.e-5, h), 1.e-5);
     }
 }
+TEST(RichardsColumn, HeldSurfaceSupplyAndEtAreIntegratedInsideTheOde) {
+    auto c=column(4);c.water[0]=0;c.inflow=1e-5;c.cells[0].potential_et=2e-6;
+    for(auto& cell:c.cells)cell.Ks=0;
+    const double initial=total(c);std::vector<Column*> batch{&c};auto r=openswmm::richards::advance(batch,60);
+    ASSERT_TRUE(r[0].ok)<<r[0].error;EXPECT_NEAR(r[0].inflow,.0006,1e-14);EXPECT_GT(r[0].evaporation,0);
+    EXPECT_NEAR(total(c)-initial,r[0].inflow-r[0].evaporation,1e-10);EXPECT_NEAR(r[0].balance,0,1e-10);
+    double supplied=0;for(const auto& t:r[0].transfers)if(t.from==-2){EXPECT_EQ(t.to,0);supplied+=t.volume;}
+    EXPECT_DOUBLE_EQ(supplied,r[0].inflow);
+}
+TEST(RichardsColumn, SurfaceSupplyConservesWithBothDirectionalBoundaryLimits) {
+    for(double head:{-10.,10.}) {
+        auto c=column(4,.8);c.inflow=1e-6;c.bottom=Bottom::Head;c.bottom_head=head;
+        c.bottom_K=.001;c.bottom_distance=.5;c.bottom_area=40;c.bottom_in_limit=c.bottom_out_limit=1e-6;
+        const double initial=total(c);std::vector<Column*> batch{&c};auto r=openswmm::richards::advance(batch,20);ASSERT_TRUE(r[0].ok)<<r[0].error;
+        EXPECT_NEAR(r[0].inflow,2e-5,1e-14);EXPECT_LE(r[0].bottom_inflow,c.bottom_in_limit);EXPECT_LE(r[0].bottom_outflow,c.bottom_out_limit);
+        EXPECT_GT(r[0].bottom_in_limited+r[0].bottom_out_limited,0);
+        EXPECT_NEAR(total(c)-initial,r[0].inflow-r[0].bottom_volume-r[0].evaporation,1e-10);
+    }
+}
+TEST(RichardsColumn, ContinuousSupplyIsNotAnInitialWaterPulseAndInvalidRatesRollBack) {
+    auto continuous=column(4),pulse=continuous;continuous.water[0]=pulse.water[0]=0;
+    continuous.inflow=1e-4;pulse.water[0]+=.006;
+    std::vector<Column*> a{&continuous},b{&pulse};auto x=openswmm::richards::advance(a,60),y=openswmm::richards::advance(b,60);
+    ASSERT_TRUE(x[0].ok && y[0].ok);EXPECT_NEAR(total(continuous),total(pulse),1e-10);
+    double difference=0;for(std::size_t k=0;k<continuous.water.size();++k)difference+=std::abs(continuous.water[k]-pulse.water[k]);
+    EXPECT_GT(difference,1e-7);
+    for(double rate:{-1.,std::numeric_limits<double>::infinity(),std::numeric_limits<double>::quiet_NaN()}) {
+        auto good=column(),bad=good;bad.inflow=rate;const auto before=good.water;std::vector<Column*> all{&good,&bad};
+        auto failed=openswmm::richards::advance(all,1);EXPECT_FALSE(failed[0].ok);EXPECT_EQ(good.water,before);
+    }
+}
 TEST(RichardsColumn, SealedInfiltrationConservesAndWetsTopFirst) {
     auto c = column(); double before = total(c); std::vector<Column*> batch{&c};
     auto r = openswmm::richards::advance(batch, 600);

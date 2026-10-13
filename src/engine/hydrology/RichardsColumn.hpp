@@ -39,8 +39,9 @@ struct Column {
     double bottom_out_limit = std::numeric_limits<double>::infinity();
     double bottom_in_limit = std::numeric_limits<double>::infinity();
     double bottom_area = 0.0, bottom_factor = 1.0;
+    double inflow = 0.0; // accepted, held surface supply, m3/s; zero preserves standalone preparation
 };
-// Negative indices: -3 evaporation, -4 bottom outflow, -5 bottom inflow.
+// Negative indices: -2 surface supply, -3 evaporation, -4 bottom outflow, -5 bottom inflow.
 struct Transfer { int from = -1, to = -1; double volume = 0.0; };
 struct Report {
     bool ok = true;
@@ -48,6 +49,7 @@ struct Report {
     int accepted = 0, rejected = 0, rhs = 0, newton = 0;
     double min_step = 0.0, bottom_volume = 0.0, evaporation = 0.0, balance = 0.0;
     double bottom_outflow = 0.0, bottom_inflow = 0.0;
+    double inflow = 0.0; // accepted integrated surface supply, m3
     int bottom_out_limited = 0, bottom_in_limited = 0; // accepted endpoints only
     std::vector<Transfer> transfers;
 };

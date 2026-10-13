@@ -74,6 +74,8 @@ struct Batch {
         if (et) et->assign(w.size(), 0.0);
         if (limited) limited->assign(lanes,0);
         for (int a = 0; a < lanes; ++a) if (!inactive || !(*inactive)[a]) ++reports[a]->rhs;
+        for (int a = 0; a < lanes; ++a)
+            if ((!inactive || !(*inactive)[a]) && columns[a]->inflow>0) f[a]+=columns[a]->inflow;
         for (int k = 0; k < n; ++k) for (int a = 0; a < lanes; ++a) {
             if (inactive && (*inactive)[a]) continue;
             const int i = k * lanes + a; const auto& c = columns[a]->cells[k];
@@ -242,6 +244,10 @@ struct Batch {
                     // Commit two accepted half steps and their endpoint flux
                     // integrals in chronological order, retaining directions.
                     for (int stage = 0; stage < 2; ++stage) for (int k = 0; k < n; ++k) {
+                        if(k==0 && columns[a]->inflow>0) {
+                            const double received=columns[a]->inflow*h[a];
+                            report.inflow+=received;report.transfers.push_back({-2,0,received});
+                        }
                         int i = k * lanes + a;
                         double v = h[a] * (stage ? faces2[i] : faces1[i]);
                         if (k + 1 < n) {
@@ -277,6 +283,7 @@ struct Batch {
             double initial = std::accumulate(col.water.begin(), col.water.end(), 0.0), final = 0;
             for (int k = 0; k < n; ++k) { col.water[k] = y[k * lanes + a]; final += col.water[k]; }
             report.balance = final - initial + report.bottom_volume + report.evaporation;
+            if(col.inflow>0)report.balance-=report.inflow;
         }
     }
 };
@@ -295,6 +302,7 @@ std::vector<Report> advance(std::vector<Column*>& columns, double dt) {
             std::isnan(c->bottom_in_limit) || c->bottom_in_limit < 0 ||
             !std::isfinite(c->bottom_area) || c->bottom_area < 0 ||
             !std::isfinite(c->bottom_factor) || c->bottom_factor < 0 || c->bottom_factor > 1 ||
+            !std::isfinite(c->inflow) || c->inflow<0 ||
             !seen.insert(c).second) {
             for (auto& r : reports) { r.ok = false; r.error = "Invalid Richards column"; } return reports;
         }
