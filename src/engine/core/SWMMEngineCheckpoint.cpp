@@ -909,6 +909,10 @@ std::string SWMMEngine::enableCheckpointingImpl(
             ctx_.mass_balance.runoff_init_store=ctx_.mass_balance.runoff_final_store=ordinary+spatialSourceStorage(stage->sources());
         }
 #endif
+        // A new manual attachment must not inherit a previous managed-session
+        // lifetime/status. The managed builder holds its local owner and
+        // reinstalls it immediately after this attachment succeeds.
+        checkpoint_session_resources_.reset();
         checkpoint_model_=std::move(model);checkpoint_enabled_=checkpoint_ready_=true;return {};
     } catch(const std::exception& e) {
         router_.checkpoint_owned_session_=owned;
@@ -963,6 +967,7 @@ std::string SWMMEngine::saveCheckpointNew(const std::string& path) const {
 }
 unsigned long SWMMEngine::checkpointSessionStatus() const noexcept {
     unsigned long flags=checkpoint_enabled_?SWMM_CHECKPOINT_SESSION_ATTACHED:0;
+    if(checkpoint_enabled_&&checkpoint_session_resources_)flags|=SWMM_CHECKPOINT_SESSION_MANAGED;
     if(checkpoint_enabled_&&checkpoint_ready_&&!step_active_&&!runtime_pipeline_&&exchange_target_<0&&
         ctx_.state==EngineState::RUNNING&&ctx_.error_code==0&&do_routing_) {
         flags|=SWMM_CHECKPOINT_SESSION_BOUNDARY;

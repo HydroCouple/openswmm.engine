@@ -103,6 +103,7 @@ namespace openswmm {
 
 class DefaultOutputPlugin;
 struct CheckpointInspection;
+struct CheckpointSessionResources;
 
 /**
  * @brief Registered callback bundle (all optional).
@@ -251,6 +252,8 @@ public:
 #endif
     std::string saveCheckpoint(const std::string& path) const;
     std::string saveCheckpointNew(const std::string& path) const;
+    std::string startCheckpointSession(int output,const std::string& source_path,
+                                      bool detailed,const std::string& ownership_token);
     /// Attachment/lifecycle hints only; full model/physical validation is separate.
     unsigned long checkpointSessionStatus() const noexcept;
     std::string loadCheckpoint(const std::string& path);
@@ -435,6 +438,9 @@ private:
     // Sub-systems
     // -----------------------------------------------------------------------
 
+    // Declared first so resources outlive context/router/plugin destruction,
+    // including error teardown. shared_ptr supports an out-of-line resource type.
+    std::shared_ptr<CheckpointSessionResources> checkpoint_session_resources_;
     SimulationContext      ctx_;        ///< All simulation data (SoA + options)
     bool                   lenient_open_ = false;  ///< permissive open (see setter)
     bool                   plugins_prepare_attempted_ = false;  ///< start() reached prepare_all (report file may be open)

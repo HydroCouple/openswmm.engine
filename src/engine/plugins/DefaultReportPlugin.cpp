@@ -195,7 +195,12 @@ int DefaultReportPlugin::prepare(const SimulationContext& ctx) {
     // analysis options) so they are available immediately — even if the
     // simulation crashes before write_summary() is called.
     if (!rpt_path_.empty() && !ctx.options.rpt_disabled) {
-        file_ = openswmm::io::fopen_utf8(rpt_path_, "w");
+        file_ = openswmm::io::fopen_utf8(rpt_path_, checkpoint_fresh_ ? "wx" : "w");
+        if (!file_ && checkpoint_fresh_) {
+            last_error_ = "Cannot create the exclusive managed-session report.";
+            state_ = PluginState::ERROR;
+            return -1;
+        }
         if (file_) {
             write_preamble(file_, ctx);
             std::fflush(file_);
@@ -262,7 +267,7 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
     if (!f) {
         // Fallback: prepare() was not called or file open failed.
         // Write the entire report monolithically.
-        f = openswmm::io::fopen_utf8(rpt_path_, "w");
+        f = openswmm::io::fopen_utf8(rpt_path_, checkpoint_fresh_ ? "wx" : "w");
         if (!f) return -1;
         write_preamble(f, ctx);
 

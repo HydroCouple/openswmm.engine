@@ -6,7 +6,9 @@
 #include "core/DateTime.hpp"
 #include "io/CheckpointDirectory.hpp"
 #include "core/FileIO.hpp"
+#include "plugins/DefaultReportPlugin.hpp"
 #include <openswmm/engine/openswmm_checkpoint.h>
+#include <openswmm/engine/openswmm_model.h>
 #include <atomic>
 #include <future>
 #include "output/OutputReader.hpp"
@@ -4318,3 +4320,187 @@ TEST(EngineCheckpoint, PublicFileSaveAndBundleExportKeepSavedPrefixAndPairedCove
 }
 #endif
 #endif
+
+namespace {
+SWMM_CheckpointSessionOptions managedOptions(int output=0,const char* stream=nullptr,const char* token=nullptr,bool detailed=false) {
+    return {sizeof(SWMM_CheckpointSessionOptions),1,output,stream,detailed?1:0,token};
+}
+void managed1dOpen(SWMMEngine& e,const std::string& name,int output=0) {
+    SWMMEngine authored;start(authored,name+"-model",2,0,true,false);authored.close();
+    const auto inp=root()/(name+"-model.inp"),rpt=root()/(name+".rpt"),out=root()/(name+".out");
+    if(e.open(inp.string().c_str(),rpt.string().c_str(),output?out.string().c_str():nullptr))throw std::runtime_error(e.context().error_message);
+}
+}
+TEST(EngineCheckpoint, ManagedSessionOneDimensionalProfilesOwnLifetimeAndContinueAfterRestore) {
+    for(int mode:{0,1}) {
+        SWMMEngine a,b;const auto name="managed-1d-"+std::to_string(mode);
+        ASSERT_NO_THROW(managed1dOpen(a,name+"-a",mode));
+        ASSERT_NO_THROW(managed1dOpen(b,name+"-b",mode));
+        const auto options=managedOptions(mode);ASSERT_EQ(swmm_checkpoint_start_session(&a,&options),SWMM_OK)<<swmm_checkpoint_last_error_msg();
+        ASSERT_EQ(swmm_checkpoint_start_session(&b,&options),SWMM_OK)<<swmm_checkpoint_last_error_msg();
+        unsigned long status=0;ASSERT_EQ(swmm_checkpoint_session_status(&a,&status),SWMM_OK);EXPECT_TRUE(status&SWMM_CHECKPOINT_SESSION_MANAGED);
+        EXPECT_EQ(swmm_checkpoint_start_session(&a,&options),SWMM_ERR_LIFECYCLE);
+        for(int k=0;k<9;++k)ASSERT_NO_THROW(step(a));
+        const auto cp=root()/(name+".chk");ASSERT_EQ(swmm_checkpoint_save(&a,cp.string().c_str()),SWMM_OK);
+        PublicInspection info;ASSERT_EQ(swmm_checkpoint_inspect(&b,cp.string().c_str(),&info.handle),SWMM_OK);
+        ASSERT_EQ(swmm_checkpoint_restore(&b,cp.string().c_str()),SWMM_OK);compare(a,b,name+"-restored");
+        for(int k=0;k<5;++k){step(a);step(b);}compare(a,b,name+"-continued");
+        const auto json=info.json();a.close();b.close();EXPECT_EQ(info.json(),json);
+        ASSERT_EQ(swmm_checkpoint_session_status(&b,&status),SWMM_OK);EXPECT_FALSE(status&SWMM_CHECKPOINT_SESSION_MANAGED);
+    }
+}
+TEST(EngineCheckpoint, ManagedSessionPreflightRefusesSchemaExistingAndAliasedDestinationsWithoutInitialization) {
+    SWMMEngine e;ASSERT_NO_THROW(managed1dOpen(e,"managed-preflight",1));auto options=managedOptions(1);
+    options.schema_version=2;EXPECT_EQ(swmm_checkpoint_start_session(&e,&options),SWMM_ERR_BADPARAM);options.schema_version=1;
+    options.struct_size=0;EXPECT_EQ(swmm_checkpoint_start_session(&e,&options),SWMM_ERR_BADPARAM);options.struct_size=sizeof options;
+    options.detailed_source_intervals=2;EXPECT_EQ(swmm_checkpoint_start_session(&e,&options),SWMM_ERR_BADPARAM);options.detailed_source_intervals=0;
+    write(root()/"managed-preflight.out","protected");EXPECT_EQ(swmm_checkpoint_start_session(&e,&options),SWMM_ERR_IO);
+    EXPECT_EQ(bytes(root()/"managed-preflight.out"),"protected");EXPECT_EQ(e.context().state,EngineState::OPENED);
+    std::filesystem::remove(root()/"managed-preflight.out");
+    EXPECT_EQ(swmm_checkpoint_start_session(nullptr,&options),SWMM_ERR_BADHANDLE);EXPECT_EQ(swmm_checkpoint_start_session(&e,nullptr),SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_checkpoint_start_session(&e,&options),SWMM_OK)<<swmm_checkpoint_last_error_msg();
+    e.close();SWMMEngine alias;const auto model=root()/"managed-preflight-model.inp",path=root()/"managed-alias.out";
+    ASSERT_EQ(alias.open(model.string().c_str(),path.string().c_str(),path.string().c_str()),0);
+    EXPECT_EQ(swmm_checkpoint_start_session(&alias,&options),SWMM_ERR_IO);EXPECT_EQ(alias.context().state,EngineState::OPENED);EXPECT_FALSE(std::filesystem::exists(path));
+}
+TEST(EngineCheckpoint, ManagedSessionInitializationFailureClosesAndFreshEngineCanRetry) {
+    SWMMEngine e;ASSERT_NO_THROW(managed1dOpen(e,"managed-failure"));e.context().options.rpt_controls=true;
+    auto options=managedOptions(0);EXPECT_EQ(swmm_checkpoint_start_session(&e,&options),SWMM_ERR_IO);
+    EXPECT_EQ(e.context().state,EngineState::CLOSED);unsigned long status=1;
+    ASSERT_EQ(swmm_checkpoint_session_status(&e,&status),SWMM_OK);EXPECT_EQ(status,0);
+    const auto inp=root()/"managed-failure-model.inp";
+    SWMMEngine retry;ASSERT_EQ(retry.open(inp.string().c_str(),(root()/"managed-failure-retry.rpt").string().c_str(),nullptr),0);
+    ASSERT_EQ(swmm_checkpoint_start_session(&retry,&options),SWMM_OK)<<swmm_checkpoint_last_error_msg();
+    ASSERT_NO_THROW(step(retry));retry.close();
+}
+#ifdef OPENSWMM_HAS_2D
+namespace {
+std::string managedDeck(int lid,int closure,bool owners=true) {
+    std::string d="[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 10/12/2026\nEND_DATE 10/12/2026\nEND_TIME 00:00:08\nROUTING_STEP .31\nVARIABLE_STEP 0\nWET_STEP 00:00:01\nDRY_STEP 00:00:01\nREPORT_STEP 00:00:02\nIGNORE_QUALITY YES\nIGNORE_SNOWMELT YES\nIGNORE_GROUNDWATER YES\n[STORAGE]\nSINK 0 100 0 FUNCTIONAL 0 0 10 0 0\n[OUTFALLS]\nDRAIN 0 FREE NO\n[RAINGAGES]\nR INTENSITY 0:00:01 1 TIMESERIES Rain\n[TIMESERIES]\nRain 10/12/2026 00:00:00 8\nRain 10/12/2026 00:00:04 0\n[SUBCATCHMENTS]\nA R B .0002 45 1 .5 0\nB R SINK .0002 65 1 .5 0\n[SUBAREAS]\nA .015 .12 .03 .05 35 PERVIOUS 55\nB .02 .13 .02 .04 25 OUTLET\n[INFILTRATION]\nA 75 5 .3\nB 75 5 .3\n[LID_CONTROLS]\nI IT\nI SURFACE 75 .05 .12 1 75\nI STORAGE 150 .667 .5 0\nI DRAIN .5 .5 0 0\n[LID_USAGE]\nA I 1 .2 .3 70 30 0 * DRAIN\n[EVAPORATION]\nCONSTANT 0\n[POLYGONS]\nA 1 0\nA 3 0\nA 3 1\nA 1 1\nB 1 1\nB 3 1\nB 3 2\nB 1 2\n[2D_OPTIONS]\nGROUNDWATER AUTO\nREPORT_2D_STEP 00:00:03\nMAX_TIMESTEP .12\nCOUPLING_SYNC .7\n[2D_VERTICES]\n0 0 0\n2 0 0\n2 2 0\n0 2 0\n[2D_QUADS]\n0 1 2 3 .03\n[2D_TRIANGLE_NODE_MAP]\n0 SINK 0 1\n[2D_AQUIFER_OPTIONS]\nMODE MESH\nNODE_ENROLMENT ROWS\nLINK_SEEPAGE NONE\nGW_ET BOUNDARY_ET\n";
+    if(owners)d+="[2D_SURFACE_OWNERSHIP]\nA SUBCATCH UNIFORM\nB SUBCATCH UNIFORM\n";
+    if(lid) {
+        d.replace(d.find("SINK 0 100 0"),12,"SINK 0 .325 0");
+        d+="[LID_CONTROLS]\nStack NODE\nStack SURFACE 75 .1\nStack MEDIA 150 .45 .2 .08 5 10 75\nStack AGGREGATE 100 .4 100\nStack BOTTOM 0 1\n[LID_NODES]\nSINK Stack .2\n";
+        if(lid==2)d+="[LID_RICHARDS]\nStack OPTIONS 4 1e-7 1e-5 30\nStack 2 .03 2 1.6 .5 .0001\nStack 3 .03 2 1.6 .5 .0001\n";
+    }
+    return d;
+}
+void managedSurfaceOpen(SWMMEngine& e,const std::string& name,int lid=0,int closure=0,int output=0,bool owners=true) {
+    const auto input=root()/(name+".inp");write(input,managedDeck(lid,closure,owners));
+    if(e.open(input.string().c_str(),(root()/(name+".rpt")).string().c_str(),output==1||output>=3?(root()/(name+".out")).string().c_str():nullptr))throw std::runtime_error(e.context().error_message);
+    auto& router=e.surfaceRouter2D();auto& cfg=router.aquiferConfig();cfg.options.authored=true;cfg.options.force_closed_form=true;
+    cfg.options.closure=closure==2?twoD::GwClosure::SIGMA:closure==1?twoD::GwClosure::ENSLAVED:twoD::GwClosure::CLOSED_FORM;
+    twoD::GwAquiferRow row;row.Ks=.0036*1000;row.zs=2;row.hg0=1;row.alpha=2;cfg.rows.push_back(row);
+    if(output>=2)router.options().output_file=(root()/(name+".h5")).string();
+}
+std::string managedToken(SWMMEngine& e) {
+    auto& r=e.surfaceRouter2D();auto p=twoD::resolveSurfaceOwnership(e.context(),r.mesh(),r.options(),r.aquiferConfig(),r.aquiferConfig().surface_owners);
+    if(!p.valid())throw std::runtime_error(p.errors.front());return p.token;
+}
+}
+TEST(EngineCheckpoint, ManagedSessionReviewedGraphsCoverLidsAquifersAndExactRestart) {
+    for(int lid:{0,1,2})for(int closure:{0,1,2}) {
+        const auto name="managed-surface-"+std::to_string(lid)+"-"+std::to_string(closure);SWMMEngine a,b;
+        ASSERT_NO_THROW(managedSurfaceOpen(a,name+"-a",lid,closure));
+        ASSERT_NO_THROW(managedSurfaceOpen(b,name+"-b",lid,closure));
+        const auto ta=managedToken(a),tb=managedToken(b),ja=(root()/(name+"-a.history")).string(),jb=(root()/(name+"-b.history")).string();
+        const auto oa=managedOptions(0,ja.c_str(),ta.c_str(),true),ob=managedOptions(0,jb.c_str(),tb.c_str(),true);
+        ASSERT_EQ(swmm_checkpoint_start_session(&a,&oa),SWMM_OK)<<swmm_checkpoint_last_error_msg();
+        ASSERT_EQ(swmm_checkpoint_start_session(&b,&ob),SWMM_OK)<<swmm_checkpoint_last_error_msg();
+        ASSERT_NE(a.sourceDelivery(),nullptr);ASSERT_NE(b.sourceDelivery(),nullptr);
+        ASSERT_NO_THROW(until(a,4.2));const auto cp=root()/(name+".chk");ASSERT_EQ(swmm_checkpoint_save(&a,cp.string().c_str()),SWMM_OK);
+        CheckpointInspection info;ASSERT_EQ(b.inspectCheckpoint(cp.string(),info),"");EXPECT_TRUE(info.completed_source_seconds);EXPECT_FALSE(info.driver);EXPECT_TRUE(info.detailed_sources);
+        ASSERT_EQ(swmm_checkpoint_restore(&b,cp.string().c_str()),SWMM_OK);compare(a,b,name+"-restored");
+        ASSERT_NO_THROW(until(a,6.2));
+        ASSERT_NO_THROW(until(b,6.2));compare(a,b,name+"-continued");
+        const auto& da=a.sourceDelivery()->delivered();const auto& db=b.sourceDelivery()->delivered();
+        ASSERT_EQ(da.size(),db.size());
+        for(size_t n=0;n<da.size();++n) {EXPECT_EQ(da[n].runoff,db[n].runoff);EXPECT_EQ(da[n].drain,db[n].drain);EXPECT_EQ(da[n].rate,db[n].rate);}
+        a.end();b.end();a.close();b.close();
+    }
+}
+TEST(EngineCheckpoint, ManagedSessionKeepsOrdinaryGuardAndRefusesStaleOrMissingReviewBeforeWriters) {
+    SWMMEngine ordinary;ASSERT_NO_THROW(managedSurfaceOpen(ordinary,"managed-ordinary"));EXPECT_NE(ordinary.initialize(),0);ordinary.close();
+    SWMMEngine e;ASSERT_NO_THROW(managedSurfaceOpen(e,"managed-stale"));const auto token=managedToken(e);auto options=managedOptions(0);
+    EXPECT_EQ(swmm_checkpoint_start_session(&e,&options),SWMM_ERR_IO);EXPECT_EQ(e.context().state,EngineState::OPENED);
+    e.context().subcatches.width[0]+=1; // width is validated by the native model, not the geometric token
+    e.context().subcatches.frac_imperv[0]+=.01;options.ownership_token=token.c_str();
+    EXPECT_EQ(swmm_checkpoint_start_session(&e,&options),SWMM_ERR_IO);EXPECT_EQ(e.context().state,EngineState::OPENED);EXPECT_FALSE(std::filesystem::exists(root()/"managed-stale.rpt"));
+    const auto current=managedToken(e);options.ownership_token=current.c_str();ASSERT_EQ(swmm_checkpoint_start_session(&e,&options),SWMM_OK)<<swmm_checkpoint_last_error_msg();
+}
+TEST(EngineCheckpoint, ManagedSessionMeshOnlyOwnsItsStageAndRefusesUnqualifiedJournal) {
+    SWMMEngine e;ASSERT_NO_THROW(managedSurfaceOpen(e,"managed-mesh-only",0,0,0,false));
+    const auto journal=(root()/"managed-mesh-only.history").string();auto options=managedOptions(0,journal.c_str());
+    EXPECT_EQ(swmm_checkpoint_start_session(&e,&options),SWMM_ERR_IO);EXPECT_EQ(e.context().state,EngineState::OPENED);
+    options.source_history=nullptr;ASSERT_EQ(swmm_checkpoint_start_session(&e,&options),SWMM_OK)<<swmm_checkpoint_last_error_msg();
+    ASSERT_NO_THROW(step(e));const auto cp=root()/"managed-mesh-only.chk";ASSERT_EQ(swmm_checkpoint_save(&e,cp.string().c_str()),SWMM_OK);e.close();
+}
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+TEST(EngineCheckpoint, ManagedSessionAllOutputProfilesAndRelocatedFileBundleRecover) {
+    for(int mode:{1,2,3,4}) {
+        const auto name="managed-output-"+std::to_string(mode);SWMMEngine a,b;
+        ASSERT_NO_THROW(managedSurfaceOpen(a,name+"-a",2,2,mode));
+        ASSERT_NO_THROW(managedSurfaceOpen(b,name+"-b",2,2,mode));
+        const auto ta=managedToken(a),tb=managedToken(b),ja=(root()/(name+"-a.history")).string(),jb=(root()/(name+"-b.history")).string();
+        const auto oa=managedOptions(mode,ja.c_str(),ta.c_str(),true),ob=managedOptions(mode,jb.c_str(),tb.c_str(),true);
+        ASSERT_EQ(swmm_checkpoint_start_session(&a,&oa),SWMM_OK)<<swmm_checkpoint_last_error_msg();
+        ASSERT_EQ(swmm_checkpoint_start_session(&b,&ob),SWMM_OK)<<swmm_checkpoint_last_error_msg();
+        ASSERT_NO_THROW(until(a,4.2));auto cp=root()/(name+".chk");ASSERT_EQ(swmm_checkpoint_save(&a,cp.string().c_str()),SWMM_OK);
+        if(mode==4) {const auto folder=root()/(name+"-bundle");ASSERT_EQ(swmm_checkpoint_export_bundle(cp.string().c_str(),folder.string().c_str()),SWMM_OK);cp=folder/"session.chk";}
+        PublicInspection info;ASSERT_EQ(swmm_checkpoint_inspect(&b,cp.string().c_str(),&info.handle),SWMM_OK)<<swmm_checkpoint_last_error_msg();
+        ASSERT_EQ(swmm_checkpoint_restore(&b,cp.string().c_str()),SWMM_OK);if(mode==2||mode==3)compareMesh(a,b,name+"-restored");else compare(a,b,name+"-restored");
+        ASSERT_NO_THROW(until(a,6.2));
+        ASSERT_NO_THROW(until(b,6.2));if(mode==2||mode==3)compareMesh(a,b,name+"-continued");else compare(a,b,name+"-continued");
+        ASSERT_EQ(a.end(),0);ASSERT_EQ(b.end(),0);if(mode==1||mode>=3)sameBinary(name+"-a",name+"-b",3);
+        if(mode>=2)sameMesh(name+"-a",name+"-b",3);a.close();b.close();
+    }
+}
+#endif
+#endif
+TEST(EngineCheckpoint, ManagedSessionRefusesAncillaryWritersBeforeAnyOutputIsTouched) {
+    SWMMEngine e;ASSERT_NO_THROW(managed1dOpen(e,"managed-ancillary"));
+    const auto target=root()/"managed-ancillary-interface.out";write(target,"protected ancillary output");
+    e.context().files.runoff_path.original=target.string();e.context().files.runoff_mode=FileMode::SAVE;
+    const auto options=managedOptions();EXPECT_EQ(swmm_checkpoint_start_session(&e,&options),SWMM_ERR_IO);
+    EXPECT_EQ(e.context().state,EngineState::OPENED);EXPECT_EQ(bytes(target),"protected ancillary output");EXPECT_FALSE(std::filesystem::exists(root()/"managed-ancillary.rpt"));
+    e.context().files.runoff_mode=FileMode::NONE;e.context().files.runoff_path={};
+    e.context().lid_usage.rpt_file.push_back(target.string());EXPECT_EQ(swmm_checkpoint_start_session(&e,&options),SWMM_ERR_IO);
+    EXPECT_EQ(e.context().state,EngineState::OPENED);EXPECT_EQ(bytes(target),"protected ancillary output");
+}
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, ManagedSessionUsesPersistedReviewedInputAndExactAreasWithoutInternalAttachments) {
+    for(int lid:{0,1,2})for(int closure:{0,1,2}) {
+        const auto name="managed-authored-"+std::to_string(lid)+"-"+std::to_string(closure);SWMMEngine author;
+        ASSERT_NO_THROW(managedSurfaceOpen(author,name+"-author",lid,closure));
+        const auto inp=root()/(name+"-persisted.inp");ASSERT_EQ(swmm_model_write(&author,inp.string().c_str()),SWMM_OK);author.close();
+        SWMMEngine a,b;
+        ASSERT_EQ(a.open(inp.string().c_str(),(root()/(name+"-a.rpt")).string().c_str(),nullptr),0);
+        ASSERT_EQ(b.open(inp.string().c_str(),(root()/(name+"-b.rpt")).string().c_str(),nullptr),0);
+        const auto ta=managedToken(a),tb=managedToken(b);const auto oa=managedOptions(0,nullptr,ta.c_str()),ob=managedOptions(0,nullptr,tb.c_str());
+        ASSERT_EQ(swmm_checkpoint_start_session(&a,&oa),SWMM_OK)<<swmm_checkpoint_last_error_msg();
+        ASSERT_EQ(swmm_checkpoint_start_session(&b,&ob),SWMM_OK)<<swmm_checkpoint_last_error_msg();
+        EXPECT_EQ(a.surfaceRouter2D().subsurface().state().closure[0],int8_t(closure));
+        ASSERT_NE(a.sourceDelivery(),nullptr);ASSERT_NO_THROW(until(a,4.2));const auto cp=root()/(name+".chk");
+        ASSERT_EQ(swmm_checkpoint_save(&a,cp.string().c_str()),SWMM_OK);ASSERT_EQ(swmm_checkpoint_restore(&b,cp.string().c_str()),SWMM_OK);
+        ASSERT_NO_THROW(until(a,6.2));
+        ASSERT_NO_THROW(until(b,6.2));compare(a,b,name+"-continued");a.close();b.close();
+    }
+}
+#endif
+TEST(EngineCheckpoint, ManagedSessionStatusDoesNotLeakIntoALaterManualAttachment) {
+    SWMMEngine author;ASSERT_NO_THROW(start(author,"managed-status-model",0,0,false,false));author.close();
+    SWMMEngine e;const auto inp=(root()/"managed-status-model.inp").string();
+    ASSERT_EQ(e.open(inp.c_str(),(root()/"managed-status-first.rpt").string().c_str(),nullptr),0);
+    const auto options=managedOptions();ASSERT_EQ(swmm_checkpoint_start_session(&e,&options),SWMM_OK);e.close();
+    ASSERT_EQ(e.open(inp.c_str(),(root()/"managed-status-manual.rpt").string().c_str(),nullptr),0);
+    ASSERT_EQ(e.initialize(),0);ASSERT_EQ(e.start(0),0);ASSERT_EQ(e.enableCheckpointing(),"");
+    unsigned long flags=0;ASSERT_EQ(swmm_checkpoint_session_status(&e,&flags),SWMM_OK);EXPECT_TRUE(flags&SWMM_CHECKPOINT_SESSION_ATTACHED);EXPECT_FALSE(flags&SWMM_CHECKPOINT_SESSION_MANAGED);
+    ASSERT_NO_THROW(step(e));e.close();
+}
+TEST(EngineCheckpoint, ManagedSessionExclusiveReportRefusesLateCollisionsAndFallbackDoesNotTruncate) {
+    const auto path=root()/"managed-late-report.rpt";DefaultReportPlugin report(path.string());SimulationContext context;
+    ASSERT_EQ(report.initialize({},nullptr),0);ASSERT_EQ(report.validate(context),0);report.requireFreshOutput();
+    write(path,"late report owner");EXPECT_NE(report.prepare(context),0);EXPECT_EQ(bytes(path),"late report owner");
+    EXPECT_NE(report.write_summary(context),0);EXPECT_EQ(bytes(path),"late report owner");
+    std::filesystem::remove(path);ASSERT_EQ(report.prepare(context),0);ASSERT_EQ(report.write_summary(context),0);EXPECT_GT(bytes(path).size(),0);
+}

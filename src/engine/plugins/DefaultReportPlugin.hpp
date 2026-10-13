@@ -63,6 +63,8 @@ public:
 
     /** @brief Write the summary statistics table to the .rpt file. */
     int write_summary(const SimulationContext& ctx) override;
+    // Managed sessions create a new report and never truncate a late collision.
+    void requireFreshOutput() noexcept { checkpoint_fresh_ = true; }
 
     const char* last_error_message() const noexcept override {
         return last_error_.c_str();
@@ -72,6 +74,7 @@ private:
     std::string rpt_path_;
     PluginState state_      = PluginState::UNLOADED;
     std::string last_error_;
+    bool checkpoint_fresh_ = false;
 
     // Progressive write state
     std::FILE*  file_             = nullptr; ///< Persistent file handle (opened in prepare)

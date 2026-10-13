@@ -41,7 +41,7 @@ int swmm_checkpoint_capabilities(SWMM_Engine handle,unsigned long* flags) {
     return operation([&] {
         if(!handle)return failure(SWMM_ERR_BADHANDLE,"Null checkpoint engine handle.");
         if(!flags)return failure(SWMM_ERR_BADPARAM,"Null checkpoint capability output.");
-        unsigned long supported=SWMM_CHECKPOINT_INSPECTION|SWMM_CHECKPOINT_RESTORE|SWMM_CHECKPOINT_BINARY_PROFILE;
+        unsigned long supported=SWMM_CHECKPOINT_INSPECTION|SWMM_CHECKPOINT_RESTORE|SWMM_CHECKPOINT_BINARY_PROFILE|SWMM_CHECKPOINT_SESSION_BUILDER;
         if(openswmm::io::checkpointNoReplaceAvailable())supported|=SWMM_CHECKPOINT_SAVE_NEW;
 #ifdef OPENSWMM_HAS_2D
         supported|=SWMM_CHECKPOINT_SURFACE_PROFILE|SWMM_CHECKPOINT_SOURCE_STREAM;
@@ -58,6 +58,23 @@ int swmm_checkpoint_session_status(SWMM_Engine handle,unsigned long* flags) {
         if(!handle)return failure(SWMM_ERR_BADHANDLE,"Null checkpoint engine handle.");
         if(!flags)return failure(SWMM_ERR_BADPARAM,"Null checkpoint session status output.");
         *flags=engine(handle)->checkpointSessionStatus();return int(SWMM_OK);
+    });
+}
+int swmm_checkpoint_start_session(SWMM_Engine handle,const SWMM_CheckpointSessionOptions* options) {
+    return operation([&] {
+        if(!handle)return failure(SWMM_ERR_BADHANDLE,"Null checkpoint engine handle.");
+        if(!options||options->struct_size<sizeof *options||options->schema_version!=1||options->output<0||options->output>SWMM_CHECKPOINT_OUTPUT_FILES||
+            (options->detailed_source_intervals!=0&&options->detailed_source_intervals!=1))return failure(SWMM_ERR_BADPARAM,"Invalid managed checkpoint options/schema.");
+        if(engine(handle)->context().state!=openswmm::EngineState::OPENED)return failure(SWMM_ERR_LIFECYCLE,"Managed checkpoint start requires OPENED.");
+        const std::string source=options->source_history?options->source_history:"",token=options->ownership_token?options->ownership_token:"";
+        if(!openswmm::detail::checkpointUtf8(source)||!openswmm::detail::checkpointUtf8(token))return failure(SWMM_ERR_BADPARAM,"Invalid UTF-8 checkpoint options.");
+#ifndef OPENSWMM_HAS_2D_HDF5_OUTPUT
+        if(options->output>=SWMM_CHECKPOINT_OUTPUT_MESH)return failure(SWMM_ERR_LIFECYCLE,"Managed mesh-output checkpoint profile unavailable in this build.");
+#endif
+#ifndef OPENSWMM_HAS_2D
+        if(!source.empty()||!token.empty())return failure(SWMM_ERR_LIFECYCLE,"Managed source profile unavailable in this build.");
+#endif
+        return result(engine(handle)->startCheckpointSession(options->output,source,options->detailed_source_intervals!=0,token));
     });
 }
 int swmm_checkpoint_inspect(SWMM_Engine handle,const char* path,SWMM_CheckpointInspection* snapshot) {

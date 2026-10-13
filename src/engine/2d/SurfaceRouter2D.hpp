@@ -503,6 +503,7 @@ private:
     Router* joint_hydraulic_ = nullptr; // externally owned, stable lifetime
     static double couplingSyncSpan(const SimulationContext&, const SolverOptions2D&);
     CommonSourceStage* common_stage_ = nullptr;
+    bool checkpoint_owned_initialization_ = false; // scoped explicit native builder
     SimulationContext* source_context_ = nullptr;
     std::string source_router_model_;
     bool source_boundary_ready_ = false;

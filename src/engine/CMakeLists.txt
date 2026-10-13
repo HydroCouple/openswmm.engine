@@ -27,7 +27,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 # Collect all source files (excluding geopackage — built as a separate library)
-file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES
+file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES CONFIGURE_DEPENDS
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     core/*.cpp
     data/*.cpp

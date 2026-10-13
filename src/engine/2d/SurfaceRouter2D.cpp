@@ -210,7 +210,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     joint_hydraulic_ = nullptr;
     source_router_model_.clear();
     source_boundary_ready_ = false;
-    if(!aquifer_cfg_.surface_owners.empty())
+    if(!checkpoint_owned_initialization_ && !aquifer_cfg_.surface_owners.empty())
         throw std::runtime_error("[2D_SURFACE_OWNERSHIP] Reviewed authoring is available; runtime recharge is unavailable until the R4 completed-interval water/quality/ET adapter is qualified. Remove ownership records to run the existing formulation.");
     ctx.surface_outfall_link_limit.clear();
     // Check if 2D sections were parsed (vertices present)
