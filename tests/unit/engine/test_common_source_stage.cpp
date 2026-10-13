@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <gtest/gtest.h>
 #include "2d/subsurface/CommonSourceStage.hpp"
+#include "2d/subsurface/LidNodeExchange.hpp"
 #include "2d/subsurface/SubsurfaceSolver.hpp"
 #include "2d/solver/ExplicitInertialSolver.hpp"
 #include "2d/SurfaceRouter2D.hpp"
@@ -19,6 +20,7 @@
 #include <sstream>
 #include <map>
 #include <limits>
+#include <numeric>
 #include <cstdlib>
 #include "core/CompletedSourceArchive.hpp"
 #include "2d/subsurface/SourceResultHistory.hpp"
@@ -2393,4 +2395,128 @@ TEST(CommonSourceStage, CatchmentProviderCheckpointBindsExactWeatherContactsWith
     catchmentProviders(b);ASSERT_FALSE(HasFatalFailure());
     const auto file=restartPath("catchment-contact-binding");ASSERT_EQ(a.stage.saveCheckpoint(file.string()),"");
     EXPECT_FALSE(b.stage.loadCheckpoint(file.string()).empty());EXPECT_DOUBLE_EQ(b.stage.completedEnd(),0);
+}
+
+namespace {
+richards::Column sharedColumn() {
+    richards::Column c;c.options.enabled=true;c.options.max_step=1;
+    c.cells.push_back({.1,1,1,.1});c.water.push_back(.02);
+    for(int i=0;i<4;++i) {
+        richards::Cell p;p.volume=p.dz=.25;p.area=1;p.z=1-(i+.5)/4;
+        p.theta_s=.45;p.Ks=1e-4;p.wilting=.1;p.material={.05,2,1.6,.5,1e-4};
+        c.cells.push_back(p);c.water.push_back(.3*p.volume);
+    }
+    return c;
+}
+RichardsBedOwner sharedOwner(richards::Column& c,double invert=9.5,double clog=1) {
+    return {0,&c,invert,clog,std::vector<double>(c.water.size(),10)};
+}
+double sharedPool(const Model& m,const richards::Column& c) {
+    double v=m.gw.state().liveStorage();for(const auto& r:m.gw.sourceReturns())v+=r.volume;
+    for(double w:c.water)v+=w;return v;
+}
+double creditedReturns(const Model& m) {
+    double v=m.stage.meshReturn();for(const auto& b:m.sources.ledgers())v+=b.aquifer_return*ft3;return v;
+}
+void equilibriumStorage(Model& m) {
+    auto& g=m.gw.state();soil::Params p;p.law=static_cast<SoilChar>(g.soil_char[0]);
+    p.Ks=g.Ks[0];p.theta_s=g.theta_s[0];p.theta_r=g.theta_r[0];p.alpha=g.alpha[0];
+    p.psi_b=g.psi_b[0];p.lambda=g.lambda[0];p.vg_n=g.vg_n[0];p.vg_L=g.vg_L[0];
+    g.hu[0]=soil::equilibriumStorage(p,g.zs[0]-g.hg[0]);
+}
+}
+TEST(RichardsCommonSource, MultipleCompletedIntakesEtAndPorousTransfersShareOnePhysicalFiring) {
+    for(auto closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA}) {
+        AtmosphericInput a;a.closure=closure;a.et="BOUNDARY_ET";a.pet={1e-5,2e-5};
+        Model m;m.setup(true,1,false,false,false,a);m.attach();auto c=sharedColumn();
+        ASSERT_EQ(m.stage.advance(0,.5),"");ASSERT_EQ(m.stage.advance(.5,1),"");
+        ASSERT_GT(m.gw.pendingSourceReceipts(0).size(),1u);ASSERT_GT(m.gw.state().et_pending[0],0);
+        const double before=sharedPool(m,c),et=m.gw.state().led_et,deep=m.gw.state().led_deep;
+        auto accepted=acceptRichardsBedsAtFiring(m.gw,m.surface,0,1,{sharedOwner(c)});
+        ASSERT_TRUE(accepted.error.empty())<<int(closure)<<" "<<accepted.error;
+        EXPECT_GT(accepted.trial.receipts[0].accepted_up+accepted.trial.receipts[0].accepted_down,0);
+        EXPECT_TRUE(m.gw.pendingSourceReceipts(0).empty());EXPECT_DOUBLE_EQ(m.gw.state().xacc_from_surface[0],0);
+        EXPECT_DOUBLE_EQ(m.gw.sourceCompletedTime(0),1);EXPECT_DOUBLE_EQ(m.gw.cellCompletedTime(0),1);
+        EXPECT_NEAR(before-sharedPool(m,c)-(m.gw.state().led_et-et)-(m.gw.state().led_deep-deep),0,1e-10);
+        EXPECT_EQ(m.gw.nodeExchangeVolumes(),std::vector<double>{0});EXPECT_DOUBLE_EQ(m.stage.completedEnd(),1);etBalance(m);
+    }
+}
+TEST(RichardsCommonSource, PendingIntakesNeverFinancePorousWithdrawalsFromDryAquifers) {
+    for(auto closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA}) {
+        AtmosphericInput a;a.closure=closure;Model m;m.setup(true,1,false,false,false,a);
+        auto& g=m.gw.state();g.hg[0]=0;g.hu[0]=g.theta_r[0]*g.zs[0];
+        if(closure==GwClosure::ENSLAVED)equilibriumStorage(m);
+        if(closure==GwClosure::SIGMA)std::fill(g.theta_sigma.begin(),g.theta_sigma.end(),g.theta_r[0]);
+        m.attach();ASSERT_EQ(m.stage.advance(0,1),"");ASSERT_GT(g.xacc_from_surface[0],0);
+        auto c=sharedColumn();auto accepted=acceptRichardsBedsAtFiring(m.gw,m.surface,0,1,{sharedOwner(c,-10)});
+        ASSERT_TRUE(accepted.error.empty())<<int(closure)<<" "<<accepted.error;
+        EXPECT_GT(accepted.trial.receipts[0].requested_up,0);EXPECT_DOUBLE_EQ(accepted.trial.receipts[0].reserved_up,0);
+        EXPECT_DOUBLE_EQ(accepted.trial.receipts[0].accepted_up,0);EXPECT_NEAR(accepted.balance,0,1e-10);
+    }
+}
+TEST(RichardsCommonSource, RefundsRetainDonorIdentityAndPhysicalReturnsCreditOnlyOnce) {
+    for(auto closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA}) {
+        SCOPED_TRACE(int(closure));
+        AtmosphericInput a;a.closure=closure;Model m;m.setup(true,1,false,false,false,a);
+        if(closure!=GwClosure::ENSLAVED)m.room(.005);m.attach();
+        ASSERT_EQ(m.stage.advance(0,1),"");const auto originals=m.gw.pendingSourceReceipts(0);
+        ASSERT_FALSE(originals.empty());m.gw.bookLinkSeepage(0,10);auto c=sharedColumn();
+        const double water=std::accumulate(c.water.begin(),c.water.end(),0.);
+        const double initial=sharedPool(m,c),et=m.gw.state().led_et,deep=m.gw.state().led_deep;
+        auto accepted=acceptRichardsBedsAtFiring(m.gw,m.surface,0,1,{sharedOwner(c,9.5,0)});
+        ASSERT_TRUE(accepted.error.empty())<<int(closure)<<" "<<accepted.error;
+        EXPECT_NEAR(std::accumulate(c.water.begin(),c.water.end(),0.),water,1e-10);
+        EXPECT_DOUBLE_EQ(accepted.trial.receipts[0].accepted_up,0);EXPECT_DOUBLE_EQ(accepted.trial.receipts[0].accepted_down,0);
+        EXPECT_DOUBLE_EQ(m.gw.state().xacc_to_surface[0],0);double returned=0;bool refund=false,physical=false;
+        for(const auto& r:m.gw.sourceReturns()) {
+            returned+=r.volume;EXPECT_DOUBLE_EQ(r.available_at,1);
+            if(r.kind==SurfaceReturnKind::NUMERICAL_REFUND) {
+                refund=true;EXPECT_TRUE(std::any_of(originals.begin(),originals.end(),[&](const auto& q){
+                    return q.request.source==r.intake.request.source && q.request.unit==r.intake.request.unit &&
+                        q.request.kind==r.intake.request.kind && q.start==r.intake.start && q.end==r.intake.end;
+                }));
+            } else physical=true;
+        }
+        // This bulk-column backstop refunds top intake; the algebraic and
+        // sigma closures settle this witness through physical table emergence.
+        EXPECT_EQ(refund,closure==GwClosure::CLOSED_FORM);EXPECT_TRUE(physical);EXPECT_GT(returned,0);
+        EXPECT_NEAR(initial-sharedPool(m,c)-(m.gw.state().led_et-et)-(m.gw.state().led_deep-deep),0,1e-10);
+        const double credits=creditedReturns(m);ASSERT_EQ(m.stage.advance(1,2),"");
+        EXPECT_TRUE(m.gw.sourceReturns().empty());EXPECT_NEAR(creditedReturns(m)-credits,returned,1e-10);
+        const auto once=creditedReturns(m);ASSERT_EQ(m.stage.advance(2,3),"");EXPECT_DOUBLE_EQ(creditedReturns(m),once);
+    }
+}
+TEST(RichardsCommonSource, FutureIntakesAndUnfinishedZeroIntakeEtHorizonsCannotBeGathered) {
+    AtmosphericInput a;a.rain=0;a.pet={1e-5,1e-5};a.et="BOUNDARY_ET";
+    Model m;m.setup(false,1,false,false,false,a);m.surface.volume[0]=m.surface.depth[0]=0;m.attach();
+    ASSERT_EQ(m.stage.advance(0,1),"");ASSERT_TRUE(m.gw.pendingSourceReceipts(0).empty());
+    auto c=sharedColumn();const auto water=c.water;const auto state=m.gw.state();
+    auto bad=acceptRichardsBedsAtFiring(m.gw,m.surface,0,2,{sharedOwner(c)});
+    EXPECT_NE(bad.error.find("source horizon"),std::string::npos);EXPECT_EQ(c.water,water);EXPECT_EQ(m.gw.state().hg,state.hg);
+    ASSERT_EQ(m.stage.advance(1,2),"");auto good=acceptRichardsBedsAtFiring(m.gw,m.surface,0,2,{sharedOwner(c)});
+    EXPECT_TRUE(good.error.empty())<<good.error;EXPECT_DOUBLE_EQ(m.gw.sourceCompletedTime(0),2);
+    Model future;future.setup(true);future.attach();ASSERT_EQ(future.stage.advance(0,1),"");ASSERT_EQ(future.stage.advance(1,2),"");
+    auto q=sharedColumn();bad=acceptRichardsBedsAtFiring(future.gw,future.surface,0,1,{sharedOwner(q)});
+    EXPECT_NE(bad.error.find("future"),std::string::npos);EXPECT_DOUBLE_EQ(future.gw.cellCompletedTime(0),0);
+}
+TEST(RichardsCommonSource, DueTierConsumesReviewedReceiptsWithoutAdvancingSlowerCells) {
+    Model m;m.setup(true,2);m.attach();m.gw.state().dt_cell={1,2};m.gw.assignTiers(1,2);
+    ASSERT_EQ(m.stage.advance(0,1),"");const double pending=m.gw.state().xacc_from_surface[1];ASSERT_GT(pending,0);
+    auto c=sharedColumn();auto accepted=acceptRichardsBedsForTier(m.gw,m.surface,0,0,1,{sharedOwner(c)});
+    ASSERT_TRUE(accepted.error.empty())<<accepted.error;EXPECT_DOUBLE_EQ(m.gw.cellCompletedTime(1),0);
+    EXPECT_DOUBLE_EQ(m.gw.state().xacc_from_surface[1],pending);EXPECT_FALSE(m.gw.pendingSourceReceipts(1).empty());
+    ASSERT_EQ(m.stage.advance(1,2),"");accepted=acceptRichardsBedsForTier(m.gw,m.surface,0,1,2,{sharedOwner(c)});
+    ASSERT_TRUE(accepted.error.empty())<<accepted.error;accepted=acceptRichardsBedsForTier(m.gw,m.surface,1,0,2,{});
+    ASSERT_TRUE(accepted.error.empty())<<accepted.error;EXPECT_DOUBLE_EQ(m.gw.sourceCompletedTime(1),2);
+    EXPECT_TRUE(m.gw.pendingSourceReceipts(1).empty());EXPECT_EQ(m.gw.tierFirings(),(std::vector<long>{2,1}));
+}
+TEST(RichardsCommonSource, BindingAndCheckpointCannotLoseJointOwnershipOrMutateSourcePartition) {
+    Model m;m.setup(true);auto c=sharedColumn();auto accepted=acceptRichardsBedsAtFiring(m.gw,m.surface,0,1,{sharedOwner(c)});
+    ASSERT_TRUE(accepted.error.empty())<<accepted.error;
+    EXPECT_NE(m.stage.initialize(m.mesh,m.surface,m.options,m.gw,m.sources,m.preview).find("before Richards"),std::string::npos);
+    EXPECT_EQ(m.sources.configureSpatialCoverage({1,1}),"");
+    Model shared;shared.setup(true);shared.attach();ASSERT_EQ(shared.stage.advance(0,1),"");auto q=sharedColumn();
+    accepted=acceptRichardsBedsAtFiring(shared.gw,shared.surface,0,1,{sharedOwner(q)});ASSERT_TRUE(accepted.error.empty())<<accepted.error;
+    const auto path=restartPath("richards-r4-joint-guard");{std::ofstream f(path);f<<"preserved";}
+    EXPECT_FALSE(shared.stage.saveCheckpoint(path.string()).empty());EXPECT_EQ(restartBytes(path),"preserved");
 }

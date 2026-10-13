@@ -154,6 +154,8 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
     }
     if(cells.empty()) return "Common source stage has no reviewed receiving cells.";
     if(gw.sourceReceiptOwnershipBound())return "Aquifer source receipt ownership already bound.";
+    if(std::any_of(gw.richards_bed_owned_.begin(),gw.richards_bed_owned_.end(),[](bool x){return x;}))
+        return "Common source ownership must bind before Richards owner firings.";
     // Both bindings are initial-state operations. Validate receiver queues
     // before changing the source partition so an invalid attachment is retryable.
     for(int i:cells) {
@@ -582,6 +584,6 @@ std::string CommonSourceStage::advance(double start,double end) {
         }
     }
     *sources_=std::move(bounded);et_receipts_=std::move(et_receipts);returns_=std::move(ready_returns);
-    gw_->acknowledgeSourceReturns(start);++intervals_;return {};
+    gw_->acknowledgeSourceReturns(start);gw_->source_completed_end_=end;++intervals_;return {};
 }
 }

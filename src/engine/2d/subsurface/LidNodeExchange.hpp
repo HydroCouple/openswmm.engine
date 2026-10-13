@@ -56,8 +56,15 @@ struct RichardsBedAcceptance {
 // Serial owner boundary: freeze, trial, settle the real GW closure privately,
 // validate the final hydraulic bounds and matching water, then publish once.
 // Failures leave columns, aquifer, pending surface returns and clocks unchanged.
+// Reviewed R4 water intake/refund receipts share this physical owner firing.
 // Only water is supported. Generic mobile-node receipts are excluded for these
-// beds. Routing/LID-state adoption, joint checkpoint and mesh activation follow.
+// beds. Cross-tier routing, joint checkpoint and mesh activation follow.
 RichardsBedAcceptance acceptRichardsBedsAtFiring(SubsurfaceSolver&, SurfaceStateData&,
     double start, double end, const std::vector<RichardsBedOwner>&);
+// Replace one actual due GW tier firing, preserving ordinary cells on that
+// tier and leaving other tiers/clocks/pending water untouched. The caller must
+// supply every bound Richards bed on the due tier. No cell is pinned/refired.
+// The whole tier, including a late ordinary-cell failure, publishes atomically.
+RichardsBedAcceptance acceptRichardsBedsForTier(SubsurfaceSolver&, SurfaceStateData&,
+    int tier, double start, double end, const std::vector<RichardsBedOwner>&);
 }

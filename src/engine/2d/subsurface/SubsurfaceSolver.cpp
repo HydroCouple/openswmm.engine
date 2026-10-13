@@ -337,7 +337,7 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh,
     for (std::size_t b = 0; b < node_beds_.size(); ++b)
         if (node_beds_[b].cell >= 0) cell_beds_[node_beds_[b].cell].push_back(b);
     pending_flag_.assign(static_cast<std::size_t>(n), 0);
-    source_owned_.assign(n,false);source_cell_end_.assign(n,0);source_receipts_.assign(n,{});source_returns_.clear();source_species_.clear();
+    source_owned_.assign(n,false);source_cell_end_.assign(n,0);source_receipts_.assign(n,{});source_returns_.clear();source_species_.clear();source_completed_end_=0;
     pending_surface_.clear();
     accumulators_pending_ = false;
     state_.active = true;
@@ -926,6 +926,12 @@ std::string SubsurfaceSolver::nodeWaterBudget(int cell, double interval, NodeWat
                 return "Invalid aquifer sigma state in node trial.";
         }
     const double L=std::max(0.0,state_.zs[u]-state_.hg[u]);
+    if(static_cast<GwClosure>(state_.closure[u])==GwClosure::ENSLAVED) {
+        const double equilibrium=soil::equilibriumStorage(paramsOf(cell),L);
+        if(!std::isfinite(equilibrium) || std::abs(state_.hu[u]-equilibrium)>
+            1e-12*std::max({1.,equilibrium,state_.hu[u]}))
+            return "Enslaved aquifer node trial requires its actual equilibrium storage.";
+    }
     double donor=specificYieldOf(cell)*state_.hg[u]*state_.area[u];
     if (static_cast<GwClosure>(state_.closure[u])==GwClosure::ENSLAVED)
         donor=std::max(0.0,state_.theta_s[u]*state_.hg[u]+soil::equilibriumStorage(paramsOf(cell),L)
@@ -2067,7 +2073,13 @@ void SubsurfaceSolver::fireGwCells(int tier, double dt, SurfaceStateData& surf, 
                 throw std::runtime_error("Richards-owned groundwater cells require joint owner firing acceptance.");
     source_firing_end_=accepted_end>=0 ? accepted_end : time+dt;
     if (!state_.active || !tierHasCells(tier)) return;
-    for (const int i : cells_by_tier_[static_cast<std::size_t>(tier)]) {
+    fireGwCellList(cells_by_tier_[static_cast<std::size_t>(tier)],dt,surf,time,accepted_end);
+    if (tier < static_cast<int>(tier_firings_.size()))
+        ++tier_firings_[static_cast<std::size_t>(tier)];
+}
+void SubsurfaceSolver::fireGwCellList(const std::vector<int>& cells, double dt, SurfaceStateData& surf,
+                                    double time, double accepted_end) {
+    for (const int i : cells) {
         const auto u = static_cast<std::size_t>(i);
         const bool exact=accepted_end>=0 && source_owned_[u];
         const double cell_time=exact ? source_cell_end_[u] : time;
@@ -2114,8 +2126,6 @@ void SubsurfaceSolver::fireGwCells(int tier, double dt, SurfaceStateData& surf, 
         }
         gather_fraction_ = 1.0;
     }
-    if (tier < static_cast<int>(tier_firings_.size()))
-        ++tier_firings_[static_cast<std::size_t>(tier)];
 }
 
 void SubsurfaceSolver::settle(SurfaceStateData& surf) {

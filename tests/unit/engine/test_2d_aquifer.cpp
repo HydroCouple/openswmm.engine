@@ -1510,11 +1510,11 @@ TEST(RichardsAquiferAcceptance, PendingOtherChannelsAndEtSettleOnTheirActualWate
         EXPECT_NEAR(initial-ownedWater(rig.gw,columns)-.001-rig.gw.state().led_deep-rig.gw.state().led_et-lid_et,0,1e-10);
     }
 }
-TEST(RichardsAquiferAcceptance, PairedSourceOwnershipAndLiveDriversAreExplicitlyUnqualified) {
+TEST(RichardsAquiferAcceptance, UnpairedSourceIntakesAndLiveDriversAreExplicitlyUnqualified) {
     NodeTrialRig rig;SurfaceStateData surf;surf.resize(1,0);auto c=trialColumn();
-    ASSERT_TRUE(rig.gw.configureSourceReceipts({0}).empty());const auto snapshot=rig.gw.state();
+    ASSERT_TRUE(rig.gw.configureSourceReceipts({0}).empty());rig.gw.bookInfiltrationFromSurface(0,.001);const auto snapshot=rig.gw.state();
     auto failed=acceptRichardsBedsAtFiring(rig.gw,surf,0,1,{owner(0,c,10)});
-    EXPECT_NE(failed.error.find("paired source owner"),std::string::npos);unchanged(rig.gw,snapshot);
+    EXPECT_NE(failed.error.find("Unpaired source water"),std::string::npos);unchanged(rig.gw,snapshot);
     NodeTrialRig live;live.gw.runtimeSources().rows.resize(1);
     failed=acceptRichardsBedsAtFiring(live.gw,surf,0,1,{owner(0,c,10)});
     EXPECT_NE(failed.error.find("live drivers"),std::string::npos);EXPECT_DOUBLE_EQ(live.gw.cellCompletedTime(0),0);
@@ -1540,4 +1540,67 @@ TEST(RichardsAquiferAcceptance, UnaccountedAquiferOverflowRejectsRatherThanHidin
     auto failed=acceptRichardsBedsAtFiring(rig.gw,surf,0,20,{owner(0,c,10,0)});
     EXPECT_NE(failed.error.find("water balance"),std::string::npos);unchanged(rig.gw,snapshot);EXPECT_EQ(c.water,water);
     EXPECT_DOUBLE_EQ(rig.gw.cellCompletedTime(0),0);
+}
+
+TEST(RichardsAquiferTier, NaturalTiersKeepIndependentClocksAndSpendOnlyDuePendingWater) {
+    NodeTrialRig rig(2,GwClosure::CLOSED_FORM,2,1,1,0,0,2);SurfaceStateData surf;surf.resize(2,0);
+    rig.gw.state().dt_cell={1,2};rig.gw.assignTiers(1,2);
+    ASSERT_EQ(rig.gw.state().tier[0],0);ASSERT_EQ(rig.gw.state().tier[1],1);
+    auto a=trialColumn(),b=a;rig.gw.bookLinkSeepage(1,.001);const auto slow=rig.gw.state().hg[1];
+    auto fast=acceptRichardsBedsForTier(rig.gw,surf,0,0,1,{owner(0,a,-2.5)});ASSERT_TRUE(fast.error.empty())<<fast.error;
+    EXPECT_DOUBLE_EQ(rig.gw.cellCompletedTime(0),1);EXPECT_DOUBLE_EQ(rig.gw.cellCompletedTime(1),0);
+    EXPECT_DOUBLE_EQ(rig.gw.state().hg[1],slow);EXPECT_DOUBLE_EQ(rig.gw.state().lacc[1],.001);
+    EXPECT_EQ(rig.gw.tierFirings(),(std::vector<long>{1,0}));
+    fast=acceptRichardsBedsForTier(rig.gw,surf,0,1,2,{owner(0,a,-2.5)});ASSERT_TRUE(fast.error.empty())<<fast.error;
+    auto coarse=acceptRichardsBedsForTier(rig.gw,surf,1,0,2,{owner(1,b,-2.5)});ASSERT_TRUE(coarse.error.empty())<<coarse.error;
+    EXPECT_DOUBLE_EQ(rig.gw.cellCompletedTime(1),2);EXPECT_DOUBLE_EQ(rig.gw.state().lacc[1],0);
+    EXPECT_EQ(rig.gw.tierFirings(),(std::vector<long>{2,1}));EXPECT_EQ(rig.gw.state().tier,(std::vector<uint8_t>{0,1}));
+}
+TEST(RichardsAquiferTier, OrdinaryCellsOnTheSameTierFireOnceAlongsidePorousOwners) {
+    NodeTrialRig rig(1,GwClosure::CLOSED_FORM,2,1,1,0,0,2),reference(1,GwClosure::CLOSED_FORM,2,1,1,0,0,2);
+    SurfaceStateData surf,expected;surf.resize(2,0);expected.resize(2,0);
+    for(auto* gw:{&rig.gw,&reference.gw}){gw->state().dt_cell={1,1};gw->assignTiers(1,1);gw->bookLinkSeepage(1,.001);}
+    auto c=trialColumn();auto accepted=acceptRichardsBedsForTier(rig.gw,surf,0,0,1,{owner(0,c,-2.5)});
+    ASSERT_TRUE(accepted.error.empty())<<accepted.error;reference.gw.fireGwCells(0,1,expected,0);
+    EXPECT_DOUBLE_EQ(rig.gw.state().hg[1],reference.gw.state().hg[1]);EXPECT_DOUBLE_EQ(rig.gw.state().hu[1],reference.gw.state().hu[1]);
+    EXPECT_DOUBLE_EQ(rig.gw.cellCompletedTime(1),1);EXPECT_DOUBLE_EQ(rig.gw.state().lacc[1],0);
+    EXPECT_EQ(rig.gw.tierFirings(),std::vector<long>{1});EXPECT_NEAR(accepted.balance,0,1e-10);
+}
+TEST(RichardsAquiferTier, LateOrdinaryRefundRollsBackColumnsTierAndAllWaterOwners) {
+    NodeTrialRig rig(2,GwClosure::CLOSED_FORM,2,1,1,0,0,2);SurfaceStateData surf;surf.resize(2,0);
+    rig.gw.state().dt_cell={1,1};rig.gw.assignTiers(1,1);rig.gw.state().nacc[1]=10;
+    auto c=trialColumn();const auto water=c.water;openswmm::detail::CompletedSourceArchive before;rig.gw.checkpoint(before,false);
+    auto refused=acceptRichardsBedsForTier(rig.gw,surf,0,0,1,{owner(0,c,-2.5)});
+    EXPECT_NE(refused.error.find("refunded"),std::string::npos);EXPECT_EQ(c.water,water);
+    openswmm::detail::CompletedSourceArchive after;rig.gw.checkpoint(after,false);EXPECT_EQ(before.bytes(),after.bytes());
+    EXPECT_EQ(rig.gw.tierFirings(),std::vector<long>{0});EXPECT_DOUBLE_EQ(rig.gw.cellCompletedTime(0),0);
+    rig.gw.state().nacc[1]=0;refused=acceptRichardsBedsForTier(rig.gw,surf,0,0,1,{owner(0,c,-2.5)});
+    EXPECT_TRUE(refused.error.empty())<<refused.error;
+}
+TEST(RichardsAquiferTier, WrongTierAliasedColumnsAndMissingBoundOwnerCannotAdvance) {
+    NodeTrialRig rig(2,GwClosure::CLOSED_FORM,2,1,1,0,0,2);SurfaceStateData surf;surf.resize(2,0);
+    rig.gw.state().dt_cell={1,2};rig.gw.assignTiers(1,2);auto a=trialColumn(),b=a;const auto water=a.water;
+    auto bad=acceptRichardsBedsForTier(rig.gw,surf,0,0,1,{owner(1,b,-2.5)});EXPECT_NE(bad.error.find("outside"),std::string::npos);
+    EXPECT_DOUBLE_EQ(rig.gw.cellCompletedTime(0),0);EXPECT_EQ(a.water,water);
+    auto good=acceptRichardsBedsForTier(rig.gw,surf,0,0,1,{owner(0,a,-2.5)});ASSERT_TRUE(good.error.empty())<<good.error;
+    bad=acceptRichardsBedsForTier(rig.gw,surf,0,1,2,{});EXPECT_NE(bad.error.find("omitted"),std::string::npos);
+    bad=acceptRichardsBedsForTier(rig.gw,surf,0,0,1,{owner(0,a,-2.5)});EXPECT_NE(bad.error.find("clocks"),std::string::npos);
+    NodeTrialRig shared(2);shared.gw.assignTiers(1,1);surf.resize(1,0);
+    bad=acceptRichardsBedsForTier(shared.gw,surf,0,0,1,{owner(0,b,-2.5),owner(1,b,-2.5)});
+    EXPECT_NE(bad.error.find("duplicate"),std::string::npos);EXPECT_DOUBLE_EQ(shared.gw.cellCompletedTime(0),0);
+}
+TEST(RichardsAquiferTier, DueTierWithoutPorousOwnersPreservesOrdinaryFiringResults) {
+    NodeTrialRig a(1),b(1);SurfaceStateData x,y;x.resize(1,0);y.resize(1,0);
+    a.gw.assignTiers(1,1);b.gw.assignTiers(1,1);a.gw.bookLinkSeepage(0,.001);b.gw.bookLinkSeepage(0,.001);
+    auto accepted=acceptRichardsBedsForTier(a.gw,x,0,0,1,{});ASSERT_TRUE(accepted.error.empty())<<accepted.error;
+    b.gw.fireGwCells(0,1,y,0);EXPECT_EQ(a.gw.state().hg,b.gw.state().hg);EXPECT_EQ(a.gw.state().hu,b.gw.state().hu);
+    EXPECT_EQ(a.gw.tierFirings(),b.gw.tierFirings());EXPECT_TRUE(accepted.trial.receipts.empty());
+}
+TEST(RichardsAquiferAcceptance, InconsistentEnslavedStorageCannotEnterAConservativeTransaction) {
+    NodeTrialRig rig(1,GwClosure::ENSLAVED);SurfaceStateData surf;surf.resize(1,0);auto c=trialColumn();
+    const double equilibrium=rig.gw.state().hu[0];rig.gw.state().hu[0]-=.001;const auto state=rig.gw.state();const auto water=c.water;
+    auto refused=acceptRichardsBedsAtFiring(rig.gw,surf,0,1,{owner(0,c,-2.5)});
+    EXPECT_NE(refused.error.find("actual equilibrium storage"),std::string::npos);unchanged(rig.gw,state);EXPECT_EQ(c.water,water);
+    EXPECT_DOUBLE_EQ(rig.gw.cellCompletedTime(0),0);rig.gw.state().hu[0]=equilibrium;
+    auto accepted=acceptRichardsBedsAtFiring(rig.gw,surf,0,1,{owner(0,c,-2.5)});EXPECT_TRUE(accepted.error.empty())<<accepted.error;
 }

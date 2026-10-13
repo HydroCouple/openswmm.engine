@@ -374,20 +374,25 @@ public:
     void checkpoint(detail::CompletedSourceArchive&,bool model); // internal accepted-boundary IO
 
 private:
+    friend class CommonSourceStage;
     friend RichardsBedAcceptance acceptRichardsBedsAtFiring(SubsurfaceSolver&, SurfaceStateData&,
         double, double, const std::vector<RichardsBedOwner>&);
+    friend RichardsBedAcceptance acceptRichardsBedsForTier(SubsurfaceSolver&, SurfaceStateData&,
+        int, double, double, const std::vector<RichardsBedOwner>&);
     void resolveRows(const MeshData& mesh, const GwUnitFactors& uf,
                      SubsurfaceConfig& cfg, std::vector<std::string>& warnings);
     void resolveClosures(std::vector<std::string>& warnings);
     soil::Params paramsOf(int i) const noexcept;
     /// One cell's firing — the §gw_split sequence.
     void fireCell(int i, double dt, SurfaceStateData& surf, double time);
+    void fireGwCellList(const std::vector<int>&, double dt, SurfaceStateData&, double time, double accepted_end);
     std::vector<bool> source_owned_;
     std::vector<std::string> source_species_;
     std::vector<double> source_cell_end_;
     std::vector<std::vector<SurfaceIntakeReceipt>> source_receipts_;
     std::vector<SurfaceReturnReceipt> source_returns_;
     double source_firing_end_ = 0.0;
+    double source_completed_end_ = 0.0; // transient R5 readiness; old restores cannot activate Richards ownership
     double gather_fraction_ = 1.0;
     double consumePending(double& value) noexcept {
         const double take = value * gather_fraction_;

@@ -12,8 +12,9 @@
 #include <type_traits>
 
 namespace openswmm::lidnode {
-twoD::RichardsBedAcceptance acceptRichardsNodesAtFiring(SimulationContext& ctx,twoD::SubsurfaceSolver& gw,
-    twoD::SurfaceStateData& surface,double start,double end,double evaporation,const std::vector<int>& input) {
+namespace {
+twoD::RichardsBedAcceptance acceptNodes(SimulationContext& ctx,twoD::SubsurfaceSolver& gw,
+    twoD::SurfaceStateData& surface,double start,double end,double evaporation,const std::vector<int>& input,int tier) {
     using twoD::RichardsBedAcceptance;
     const auto fail=[](const std::string& error){RichardsBedAcceptance r;r.error=error;return r;};
     if(!std::isfinite(start) || start<0 || !std::isfinite(end) || end<=start ||
@@ -103,7 +104,8 @@ twoD::RichardsBedAcceptance acceptRichardsNodesAtFiring(SimulationContext& ctx,t
     auto aquifer=gw;auto surf=surface;
     auto node_beds=ctx.nodes.aquifer2d_bed;node_beds.resize(ctx.n_nodes(),0);
     for(int n:nodes)node_beds[n]=1;
-    auto accepted=twoD::acceptRichardsBedsAtFiring(aquifer,surf,start,end,owners);
+    auto accepted=tier<0?twoD::acceptRichardsBedsAtFiring(aquifer,surf,start,end,owners):
+        twoD::acceptRichardsBedsForTier(aquifer,surf,tier,start,end,owners);
     if(!accepted.error.empty())return accepted;
     std::vector<detail::RichardsNodeDraft> drafts;
     try {
@@ -123,6 +125,16 @@ twoD::RichardsBedAcceptance acceptRichardsNodesAtFiring(SimulationContext& ctx,t
     ctx.nodes.aquifer2d_bed.swap(node_beds); // existing hydraulic checkpoint profile refuses unpaired aquifer owners
     for(auto& d:drafts)detail::publish(ctx,std::move(d));
     return accepted;
+}
+}
+twoD::RichardsBedAcceptance acceptRichardsNodesAtFiring(SimulationContext& ctx,twoD::SubsurfaceSolver& gw,
+    twoD::SurfaceStateData& surface,double start,double end,double evaporation,const std::vector<int>& nodes) {
+    return acceptNodes(ctx,gw,surface,start,end,evaporation,nodes,-1);
+}
+twoD::RichardsBedAcceptance acceptRichardsNodesForTier(SimulationContext& ctx,twoD::SubsurfaceSolver& gw,
+    twoD::SurfaceStateData& surface,int tier,double start,double end,double evaporation,const std::vector<int>& nodes) {
+    if(tier<0){twoD::RichardsBedAcceptance r;r.error="Invalid Richards node groundwater tier.";return r;}
+    return acceptNodes(ctx,gw,surface,start,end,evaporation,nodes,tier);
 }
 }
 #endif
