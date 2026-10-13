@@ -41,6 +41,7 @@
 #include "TopoSort.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../input/PostParseResolver.hpp"
+#include "../hydrology/LidNode.hpp"
 
 #include <cmath>
 #include <algorithm>
@@ -492,6 +493,9 @@ int Router::step(SimulationContext& ctx, double dt,
 
 int Router::stepImpl(SimulationContext& ctx, double dt, double evap_rate,
                      dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn, bool owned_callback) {
+    const bool mesh_richards=lidnode::validateRichardsRouting(ctx,dt);
+    if(mesh_richards && model_!=RouteModel::DYNWAVE)
+        throw std::runtime_error("Joint Mesh Richards routing is qualified only for native dynamic wave.");
     if (checkpoint_context_)
         checkCheckpointStep(ctx, dt, evap_rate, bool(non_conduit_fn), owned_callback);
     // 1. Old states are saved ONCE per step by SWMMEngine::step() BEFORE
@@ -575,6 +579,8 @@ int Router::stepImpl(SimulationContext& ctx, double dt, double evap_rate,
     if (ctx.options.routing_model != RoutingModel::FV)
         updateLinkStates(ctx);
 
+    if(mesh_richards)for(auto& s:ctx.node_subtypes.storages.lid_state)
+        if(s.richards_mesh_pending_finish)s.richards_mesh_routed=true;
     if (checkpoint_context_) checkpoint_step_finished_ = true;
     return iters;
 }

@@ -111,6 +111,7 @@ twoD::RichardsBedAcceptance acceptNodes(SimulationContext& ctx,twoD::SubsurfaceS
     try {
         for(std::size_t j=0;j<nodes.size();++j) {
             auto d=detail::draft(ctx,rows[j],columns[j],accepted.trial.reports[j],dt,end,true);
+            d.state.richards_mesh_start=start; // preserve the caller's exact accepted endpoint pair
             for(double v:{d.volume,d.depth,d.head,d.full_volume,d.lat_flow,d.state.held_volume,d.state.treated_volume})
                 if(!std::isfinite(v))return fail("Nonfinite Richards routing publication draft.");
             const double requested=std::max(0.,ctx.nodes.lat_flow[nodes[j]])*dt*cubic_metres;

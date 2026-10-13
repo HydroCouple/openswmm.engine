@@ -8,6 +8,7 @@
 #include "../input/Tokenizer.hpp"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 
@@ -18,6 +19,21 @@ bool richardsMode(const SimulationContext& ctx, int node) {
     return r >= 0 && ctx.node_subtypes.storages.lid_state[r].richards;
 }
 double exchangeRichardsPorts(SimulationContext& ctx, int link, double flow, double dt) {
+    const LidNodeState* mesh=nullptr;
+    for(int n:{ctx.links.node1[link],ctx.links.node2[link]}) {
+        const int r=ctx.node_subtypes.storage_row(n);
+        if(r<0 || !richardsMode(ctx,n) || bottomMode(ctx,n)!=LidNodeBottom::MeshAquifer)continue;
+        const auto& s=ctx.node_subtypes.storages.lid_state[r];
+        detail::checkMeshInterval(s,mesh?mesh->richards_mesh_start:s.richards_mesh_start,
+            mesh?mesh->richards_completed_time:s.richards_completed_time);
+        if(s.richards_mesh_routed)throw std::runtime_error("Mesh Richards final routing ports await finish.");
+        const double interval=s.richards_completed_time-s.richards_mesh_start;
+        if(!std::isfinite(dt) || dt<=0 || std::abs(dt-interval)>
+           8*std::numeric_limits<double>::epsilon()*std::max({1.,dt,s.richards_mesh_start,s.richards_completed_time}))
+            throw std::runtime_error("Mesh Richards port duration differs from its accepted owner interval.");
+        mesh=&s;
+    }
+    if(mesh && !std::isfinite(flow))throw std::runtime_error("Nonfinite Mesh Richards port flow.");
     const int source = flow > 0 ? ctx.links.node1[link] : ctx.links.node2[link];
     const int dest = flow > 0 ? ctx.links.node2[link] : ctx.links.node1[link];
     const int sr = ctx.node_subtypes.storage_row(source), dr = ctx.node_subtypes.storage_row(dest);
@@ -121,6 +137,12 @@ void refreshRichardsState(SimulationContext& ctx, int r) {
     refresh(st.lid_state[r],layers(ctx,st.lid[r].control),ctx.node_names.name_of(st.node_idx[r]));
 }
 namespace detail {
+void checkMeshInterval(const LidNodeState& s,double start,double end) {
+    if(!s.richards || !s.richards_mesh_pending_finish || !std::isfinite(start) || start<0 ||
+       !std::isfinite(end) || end<=start || !std::isfinite(end-start) ||
+       s.richards_mesh_start!=start || s.richards_completed_time!=end)
+        throw std::runtime_error("Mesh Richards routing requires the matching accepted owner interval.");
+}
 richards::Column column(const SimulationContext& ctx,int r,double dt,double evaporation,bool continuous) {
     const auto& st=ctx.node_subtypes.storages;const auto& s=st.lid_state[r];
     const int node=st.node_idx[r];const auto stack=layers(ctx,st.lid[r].control);
@@ -167,7 +189,7 @@ RichardsNodeDraft draft(const SimulationContext& ctx,int r,const richards::Colum
     s.evap_volume=s.richards_report.evaporation/cubic_metres;
     s.richards_bottom_loss=mesh?0:std::max(0.,s.richards_report.bottom_volume)/cubic_metres;
     refresh(s,layers(ctx,st.lid[r].control),ctx.node_names.name_of(d.node));
-    s.richards_completed_time=completed;s.richards_mesh_pending_finish=mesh;
+    s.richards_completed_time=completed;s.richards_mesh_pending_finish=mesh;s.richards_mesh_routed=false;
     // Richards geometry depends only on the surface cell; accepted porous
     // water does not change these curves, so the current context is read-only.
     const int us=ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
@@ -195,6 +217,21 @@ LidNodeState routed(const SimulationContext& ctx,int r) {
     refresh(s,layers(ctx,st.lid[r].control),ctx.node_names.name_of(st.node_idx[r]));
     return s;
 }
+}
+bool validateRichardsRouting(const SimulationContext& ctx,double dt) {
+    const auto& st=ctx.node_subtypes.storages;const LidNodeState* first=nullptr;
+    for(int r=0;r<st.count();++r) {
+        const auto& s=st.lid_state[r];
+        if(!s.richards || st.lid[r].bottom!=LidNodeBottom::MeshAquifer)continue;
+        detail::checkMeshInterval(s,ctx.current_time,first?first->richards_completed_time:s.richards_completed_time);
+        if(s.richards_mesh_routed)throw std::runtime_error("Mesh Richards owner interval was already routed.");
+        const double interval=s.richards_completed_time-s.richards_mesh_start;
+        if(!std::isfinite(dt) || dt<=0 || std::abs(dt-interval)>
+           8*std::numeric_limits<double>::epsilon()*std::max({1.,dt,s.richards_mesh_start,s.richards_completed_time}))
+            throw std::runtime_error("Mesh Richards global routing duration differs from its accepted owner interval.");
+        first=&s;
+    }
+    return first!=nullptr;
 }
 void prepareRichardsStep(SimulationContext& ctx,double dt,double evaporation) {
     auto& st=ctx.node_subtypes.storages;

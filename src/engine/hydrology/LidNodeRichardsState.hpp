@@ -15,4 +15,5 @@ RichardsNodeDraft draft(const SimulationContext&,int row,const richards::Column&
     const richards::Report&,double dt,double completed,bool mesh=false);
 void publish(SimulationContext&,RichardsNodeDraft&&) noexcept;
 LidNodeState routed(const SimulationContext&,int row);
+void checkMeshInterval(const LidNodeState&,double start,double end);
 }

@@ -549,17 +549,15 @@ void prepareStep(SimulationContext& ctx, double dt, double evaporation) {
         ctx.nodes.head[n] = ctx.nodes.invert_elev[n] + ctx.nodes.depth[n];
     }
 }
-void finishStep(SimulationContext& ctx) {
+namespace {
+void finishRows(SimulationContext& ctx,const std::vector<int>& rows) {
     auto& st = ctx.node_subtypes.storages;
     std::vector<LidNodeState> mesh_ports;
-    for(int r=0;r<st.count();++r)
-        if(st.lid_state[r].richards && st.lid[r].bottom==LidNodeBottom::MeshAquifer && !st.lid_state[r].richards_mesh_pending_finish)
-            throw std::runtime_error("Mesh Richards routing finish requires one accepted owner preparation.");
-    if(std::any_of(st.lid_state.begin(),st.lid_state.end(),[](const auto& s){return s.richards_mesh_pending_finish;}))
+    if(std::any_of(rows.begin(),rows.end(),[&](int r){return st.lid_state[r].richards_mesh_pending_finish;}))
         mesh_ports.resize(st.count());
-    for(int r=0;r<st.count();++r)if(st.lid_state[r].richards_mesh_pending_finish)
+    for(int r:rows)if(st.lid_state[r].richards_mesh_pending_finish)
         mesh_ports[r]=detail::routed(ctx,r); // qualify every owned port state before changing any row
-    for (int r = 0; r < st.count(); ++r) {
+    for (int r : rows) {
         auto& state = st.lid_state[r];
         if (state.cells.empty()) continue;
         const int n = st.node_idx[r];
@@ -592,9 +590,46 @@ void finishStep(SimulationContext& ctx) {
         state.captured_flow = 0.0;
         if(state.richards_mesh_pending_finish) {
             std::fill(state.port_delta.begin(),state.port_delta.end(),0.0);
-            state.mobile_delta=0;state.richards_mesh_pending_finish=false;
+            state.mobile_delta=0;state.richards_mesh_pending_finish=false;state.richards_mesh_routed=false;
         }
     }
+}
+}
+void finishStep(SimulationContext& ctx) {
+    const auto& st=ctx.node_subtypes.storages;std::vector<int> rows;
+    const LidNodeState* first=nullptr;
+    for(int r=0;r<st.count();++r) {
+        const auto& s=st.lid_state[r];rows.push_back(r);
+        if(!s.richards || st.lid[r].bottom!=LidNodeBottom::MeshAquifer)continue;
+        detail::checkMeshInterval(s,first?first->richards_mesh_start:s.richards_mesh_start,
+            first?first->richards_completed_time:s.richards_completed_time);
+        first=&s;
+    }
+    finishRows(ctx,rows);
+}
+void finishRichardsNodes(SimulationContext& ctx,double start,double end,const std::vector<int>& nodes) {
+    const auto& st=ctx.node_subtypes.storages;std::set<int> selected;std::vector<int> rows;
+    if(nodes.empty())throw std::runtime_error("Mesh Richards finish requires a nonempty owner cohort.");
+    for(int n:nodes) {
+        if(n<0 || n>=ctx.n_nodes() || !selected.insert(n).second)
+            throw std::runtime_error("Invalid or duplicate Mesh Richards finish owner.");
+        const int r=ctx.node_subtypes.storage_row(n);
+        if(r<0 || st.lid[r].bottom!=LidNodeBottom::MeshAquifer)
+            throw std::runtime_error("Richards cohort finish requires a Mesh owner.");
+        detail::checkMeshInterval(st.lid_state[r],start,end);rows.push_back(r);
+    }
+    // A cohort cannot finish one side of a native Mesh-to-Mesh connection.
+    // Unequal cadences need a qualified shared hydraulic scheduler first.
+    for(int link=0;link<ctx.n_links();++link) {
+        const int ends[]{ctx.links.node1[link],ctx.links.node2[link]};
+        for(int side=0;side<2;++side)if(selected.count(ends[side])) {
+            const int other=ends[1-side];
+            if(other<0 || other>=ctx.n_nodes() ||
+               (bottomMode(ctx,other)==LidNodeBottom::MeshAquifer && !selected.count(other)))
+                throw std::runtime_error("Mesh Richards finish omitted a connected hydraulic owner.");
+        }
+    }
+    std::sort(rows.begin(),rows.end());finishRows(ctx,rows);
 }
 } // namespace openswmm::lidnode
 
@@ -640,6 +675,9 @@ int portCell(const LidNodeState& state, double offset) {
     return state.cells.empty() ? -1 : 0;
 }
 void resetPorts(SimulationContext& ctx) {
+    if(std::any_of(ctx.node_subtypes.storages.lid_state.begin(),ctx.node_subtypes.storages.lid_state.end(),
+        [](const auto& s){return s.richards_mesh_routed;}))
+        throw std::runtime_error("Mesh Richards final routing ports must finish before reset.");
     for (auto& s : ctx.node_subtypes.storages.lid_state) {
         std::fill(s.port_delta.begin(), s.port_delta.end(), 0.0);
         s.mobile_delta = 0.0; s.quality_ports.clear();

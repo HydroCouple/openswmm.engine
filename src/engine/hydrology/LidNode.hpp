@@ -27,6 +27,12 @@ void initialize(SimulationContext&);
 void initializeInfiltration(SimulationContext&, int node);
 void prepareStep(SimulationContext&, double dt, double evaporation);
 void finishStep(SimulationContext&);
+// Internal Mesh cohort boundary. Every connected Mesh endpoint must belong to
+// the same accepted interval/cohort. Other LID rows and GW clocks are untouched.
+void finishRichardsNodes(SimulationContext&, double start, double end, const std::vector<int>& nodes);
+// Global routing preflight, before loss/flow/Picard mutation. Returns whether
+// Mesh owners are present; all must have accepted the current routing interval.
+bool validateRichardsRouting(const SimulationContext&, double dt);
 void resetPorts(SimulationContext&);
 double portOffset(const SimulationContext&, int link, int node);
 // Physical interfaces belong to the cell above, allowing only roundoff-sized
