@@ -898,6 +898,50 @@ double SubsurfaceSolver::specificYieldOf(int cell) const noexcept {
                          static_cast<GwClosure>(state_.closure[u]), nullptr);
 }
 
+std::string SubsurfaceSolver::nodeWaterBudget(int cell, double interval, NodeWaterBudget& out) const {
+    if (!state_.active || cell<0 || cell>=state_.n_cells || !std::isfinite(interval) || interval<=0)
+        return "Invalid aquifer node trial cell/interval.";
+    const auto u=static_cast<std::size_t>(cell);
+    for(double value:{state_.area[u],state_.zs[u],state_.hg[u],state_.hu[u],state_.et_pending[u],state_.c_loss[u]})
+        if(!std::isfinite(value) || value<0) return "Invalid aquifer storage/demand in node trial.";
+    if(state_.area[u]<=0 || state_.zs[u]<=0 || state_.hg[u]>state_.zs[u] ||
+       !std::isfinite(state_.lacc[u])) return "Invalid aquifer geometry/pending water in node trial.";
+    // Wells/live drivers require their interval reservations in the eventual
+    // scheduling adapter. Do not label a budget complete while omitting them.
+    if (tr_.active() || (u<cell_sources_.size() && !cell_sources_[u].empty()) || !runtime_sources_.rows.empty())
+        return "Node trials require water-only aquifers without unreserved wells/live drivers.";
+    if(!std::isfinite(state_.Ks[u]) || state_.Ks[u]<0 || !std::isfinite(state_.theta_s[u]) ||
+       !std::isfinite(state_.theta_r[u]) || state_.theta_r[u]<0 || state_.theta_s[u]<=state_.theta_r[u] ||
+       state_.theta_s[u]>1) return "Invalid aquifer material in node trial.";
+    if(static_cast<GwClosure>(state_.closure[u])==GwClosure::SIGMA)
+        for(int k=0;k<state_.m_layers;++k) {
+            const double theta=state_.theta_sigma[k*state_.n_cells+cell];
+            if(!std::isfinite(theta) || theta<state_.theta_r[u] || theta>state_.theta_s[u])
+                return "Invalid aquifer sigma state in node trial.";
+        }
+    const double L=std::max(0.0,state_.zs[u]-state_.hg[u]);
+    double donor=specificYieldOf(cell)*state_.hg[u]*state_.area[u];
+    if (static_cast<GwClosure>(state_.closure[u])==GwClosure::ENSLAVED)
+        donor=std::max(0.0,state_.theta_s[u]*state_.hg[u]+soil::equilibriumStorage(paramsOf(cell),L)
+                         -soil::equilibriumStorage(paramsOf(cell),state_.zs[u]))*state_.area[u];
+    double claimed=std::max(0.0,state_.et_pending[u])+std::max(0.0,-state_.lacc[u]);
+    claimed+=state_.c_loss[u]*state_.hg[u]/std::max(state_.zs[u],kTiny)*state_.area[u]*interval;
+    for (int p=edges_->cell_ptr[u];p<edges_->cell_ptr[u+1];++p) {
+        const auto e=static_cast<std::size_t>(edges_->cell_edge[p]);
+        const double pending=edges_->cell_sign[p]>0?state_.eacc_L[e]:state_.eacc_R[e];
+        if(!std::isfinite(pending))return "Nonfinite pending lateral node trial water.";
+        claimed+=std::max(0.0,-pending);
+    }
+    for (int b:cell_beds_[u]) {
+        if(!std::isfinite(state_.nacc[b]))return "Nonfinite pending node trial water.";
+        claimed+=std::max(0.0,state_.nacc[b]);
+    }
+    NodeWaterBudget proposed{state_.z_bed[u]+state_.hg[u],std::max(0.0,donor-claimed),infiltrationHeadroom(cell)};
+    if (!std::isfinite(proposed.head) || !std::isfinite(proposed.donor) || !std::isfinite(proposed.receiver))
+        return "Nonfinite aquifer node trial budget.";
+    out=proposed;return {};
+}
+
 double SubsurfaceSolver::gatherNode(int i) noexcept {
     double v = 0.0;
     // T7.4 fix (2026-09-21): the per-bed split weights are the volumes THIS

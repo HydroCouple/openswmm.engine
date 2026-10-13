@@ -155,3 +155,67 @@ TEST(RichardsColumn, InvalidLaneInLargeMixedSizeBatchLeavesEveryColumnUnchanged)
         EXPECT_EQ(columns[lane].water,before[lane].water);
     }
 }
+
+TEST(RichardsColumn, DirectionalReservationsBindInsideTheOdeAndConserveWithEt) {
+    for(bool inward:{false,true}) {
+        auto c=column(4,.8);c.bottom=Bottom::Head;c.bottom_K=1.e-3;c.bottom_distance=.1;
+        c.bottom_head=inward?5:-10;c.cells[0].potential_et=1.e-8;
+        c.bottom_out_limit=inward?0:1.e-6;c.bottom_in_limit=inward?1.e-6:0;
+        const auto initial=total(c);std::vector<Column*> batch{&c};auto r=openswmm::richards::advance(batch,60);
+        ASSERT_TRUE(r[0].ok)<<r[0].error;
+        EXPECT_LE(r[0].bottom_outflow,c.bottom_out_limit);EXPECT_LE(r[0].bottom_inflow,c.bottom_in_limit);
+        EXPECT_NEAR(inward?r[0].bottom_inflow:r[0].bottom_outflow,1.e-6,1.e-12);
+        EXPECT_GT(inward?r[0].bottom_in_limited:r[0].bottom_out_limited,0);
+        EXPECT_NEAR(initial-total(c),r[0].bottom_outflow-r[0].bottom_inflow+r[0].evaporation,1.e-10);
+    }
+}
+TEST(RichardsColumn, ZeroBoundaryAwardsDoNotSupplyWaterOrDisableRedistributionAndEt) {
+    auto c=column(4,.7);c.bottom=Bottom::Head;c.bottom_head=100;c.bottom_K=1.e-3;
+    c.bottom_out_limit=c.bottom_in_limit=0;c.cells[0].potential_et=1.e-8;
+    const auto before=c.water;const auto initial=total(c);std::vector<Column*> batch{&c};auto r=openswmm::richards::advance(batch,30);
+    ASSERT_TRUE(r[0].ok)<<r[0].error;EXPECT_DOUBLE_EQ(r[0].bottom_volume,0);
+    EXPECT_GT(r[0].bottom_in_limited,0);EXPECT_GT(r[0].evaporation,0);
+    EXPECT_NE(c.water,before);EXPECT_NEAR(total(c)+r[0].evaporation,initial,1.e-10);
+}
+TEST(RichardsColumn, ContactAreaAndWholeResistanceCloggingAreAppliedOnce) {
+    auto a=column(4,.8);a.water[0]=.04;
+    for(std::size_t k=1;k<a.cells.size();++k){auto& c=a.cells[k];a.water[k]=c.volume*storage(c.material,c.theta_s,1.04-c.z);}
+    a.bottom=Bottom::Head;a.bottom_head=0;a.bottom_K=1.e-5;a.bottom_distance=.2;
+    auto b=a,c=a;b.bottom_factor=.25;c.bottom_area=3;
+    std::vector<Column*> batch{&a,&b,&c};auto r=openswmm::richards::advance(batch,1.e-7);
+    for(const auto& x:r)ASSERT_TRUE(x.ok)<<x.error;
+    EXPECT_NEAR(r[1].bottom_volume/r[0].bottom_volume,.25,1.e-6);
+    EXPECT_NEAR(r[2].bottom_volume/r[0].bottom_volume,3,1.e-6);
+    const auto& cell=a.cells.back();const double expected=1.04/(.5*cell.dz/cell.Ks+.2/1.e-5);
+    EXPECT_NEAR(r[0].bottom_volume/1.e-7,expected,expected*1.e-6);
+}
+TEST(RichardsColumn, BoundedMixedBatchesPreserveIndependentClocksAndSolutions) {
+    std::vector<Column> all;
+    for(int n=0;n<257;++n){auto c=column(4*(1+n%3),.2+.1*(n%7));c.bottom=Bottom::Head;
+        c.bottom_head=n%2?5:-10;c.bottom_K=1.e-3;c.bottom_distance=.1;
+        c.bottom_out_limit=1.e-7*(1+n%5);c.bottom_in_limit=1.e-7*(1+n%3);all.push_back(c);}
+    auto independent=all;std::vector<Column*> batch;for(auto& c:all)batch.push_back(&c);
+    auto reports=openswmm::richards::advance(batch,20);
+    for(std::size_t n=0;n<all.size();++n){SCOPED_TRACE(n);std::vector<Column*> one{&independent[n]};auto r=openswmm::richards::advance(one,20);
+        ASSERT_TRUE(reports[n].ok)<<reports[n].error;ASSERT_TRUE(r[0].ok)<<r[0].error;
+        EXPECT_EQ(all[n].water,independent[n].water);EXPECT_EQ(reports[n].accepted,r[0].accepted);
+        EXPECT_EQ(reports[n].rejected,r[0].rejected);EXPECT_EQ(reports[n].rhs,r[0].rhs);
+        EXPECT_DOUBLE_EQ(reports[n].bottom_outflow,r[0].bottom_outflow);EXPECT_DOUBLE_EQ(reports[n].bottom_inflow,r[0].bottom_inflow);
+    }
+}
+TEST(RichardsColumn, InvalidDirectionalLimitOrAliasedColumnRejectsTheWholeBatch) {
+    for(double bad:{-1.,std::numeric_limits<double>::quiet_NaN(),-std::numeric_limits<double>::infinity()}) {
+        auto a=column(),b=a;const auto before=a.water;b.bottom_in_limit=bad;
+        std::vector<Column*> batch{&a,&b};auto r=openswmm::richards::advance(batch,30);EXPECT_FALSE(r[0].ok);EXPECT_EQ(a.water,before);
+    }
+    auto a=column();const auto before=a.water;std::vector<Column*> batch{&a,&a};auto r=openswmm::richards::advance(batch,30);
+    EXPECT_FALSE(r[0].ok);EXPECT_EQ(a.water,before);
+}
+TEST(RichardsColumn, BoundedTimeToleranceRefinementConvergesAfterAwardExhaustion) {
+    auto a=column(4,.8);a.bottom=Bottom::Head;a.bottom_head=-10;a.bottom_K=1.e-3;a.bottom_distance=.1;
+    a.bottom_out_limit=1.e-5;a.bottom_in_limit=0;auto b=a,c=a;
+    b.options.atol=1.e-9;b.options.rtol=1.e-7;c.options.atol=1.e-11;c.options.rtol=1.e-9;
+    std::vector<Column*> batch{&a,&b,&c};auto r=openswmm::richards::advance(batch,30);for(const auto& x:r)ASSERT_TRUE(x.ok)<<x.error;
+    double loose=0,tight=0;for(std::size_t k=0;k<a.water.size();++k){loose+=std::abs(a.water[k]-c.water[k]);tight+=std::abs(b.water[k]-c.water[k]);}
+    EXPECT_LT(tight,loose);for(const auto& x:r)EXPECT_LE(x.bottom_outflow,1.e-5);
+}

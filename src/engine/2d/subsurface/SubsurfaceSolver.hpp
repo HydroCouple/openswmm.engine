@@ -358,6 +358,11 @@ public:
     /// silently computes a number the solver never uses under SIGMA or
     /// ENSLAVED, and agrees only for as long as every fixture is closure A.
     double specificYieldOf(int cell) const noexcept;
+    // Internal R5 trial budget in SI, before accepting a new node receipt.
+    // Separate ceilings; incoming pending water never finances a withdrawal.
+    // Call after atmospheric demand/other accepted channels have been booked.
+    struct NodeWaterBudget { double head=0, donor=0, receiver=0; };
+    std::string nodeWaterBudget(int cell, double interval, NodeWaterBudget&) const;
 
     /// Storage now, for the continuity ledger.
     double storage() const noexcept { return state_.storage(); }

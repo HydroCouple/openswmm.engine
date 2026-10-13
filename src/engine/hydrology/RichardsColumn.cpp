@@ -5,6 +5,7 @@
 #include <limits>
 #include <map>
 #include <numeric>
+#include <set>
 
 namespace openswmm::richards {
 bool valid(const Material& p, double ts) {
@@ -39,6 +40,15 @@ double conductivity(const Material& p, double Ks, double h) {
     return Ks * std::pow(se, p.l) * term * term;
 }
 namespace {
+struct BoundaryRates { std::vector<double> out, in; };
+double reservedRate(double limit, double spent, double step) {
+    if (!std::isfinite(limit)) return std::numeric_limits<double>::infinity();
+    if (step <= 0 || spent >= limit) return 0;
+    double rate = std::min((limit-spent)/step, std::numeric_limits<double>::max());
+    // Round toward the budget, using the same multiply/add as the receipt.
+    while (spent + step*rate > limit) rate = std::nextafter(rate,0.0);
+    return rate;
+}
 struct Batch {
     int n, lanes;
     std::vector<Column*> columns;
@@ -56,11 +66,13 @@ struct Batch {
     // 1 micrometre of ponding; no water is discarded at that transition.
     void rhs(const std::vector<double>& w, std::vector<double>& f,
              std::vector<double>* faces = nullptr, std::vector<double>* et = nullptr,
-             const std::vector<bool>* inactive = nullptr) {
+             const std::vector<bool>* inactive = nullptr, const BoundaryRates* rates = nullptr,
+             std::vector<int>* limited = nullptr) {
         f.assign(w.size(), 0.0);
         std::vector<double> head(w.size()), K(w.size());
         if (faces) faces->assign(n * lanes, 0.0);
         if (et) et->assign(w.size(), 0.0);
+        if (limited) limited->assign(lanes,0);
         for (int a = 0; a < lanes; ++a) if (!inactive || !(*inactive)[a]) ++reports[a]->rhs;
         for (int k = 0; k < n; ++k) for (int a = 0; a < lanes; ++a) {
             if (inactive && (*inactive)[a]) continue;
@@ -96,22 +108,29 @@ struct Batch {
         for (int a = 0; a < lanes; ++a) {
             if (inactive && (*inactive)[a]) continue;
             const int i = (n - 1) * lanes + a; const auto& col = *columns[a]; const auto& c = col.cells.back();
+            const double area = col.bottom_area > 0 ? col.bottom_area : c.area;
             double q = 0.0;
-            if (col.bottom == Bottom::FreeDrainage) q = std::min(K[i], col.bottom_K) * c.area;
+            if (col.bottom == Bottom::FreeDrainage) q = std::min(K[i], col.bottom_K) * area;
             else if (col.bottom == Bottom::Head && K[i] > 0 && col.bottom_K > 0) {
                 const double resistance = 0.5 * c.dz / K[i] + col.bottom_distance / col.bottom_K;
-                q = c.area * (head[i] - col.bottom_head) / resistance;
+                q = area * (head[i] - col.bottom_head) / resistance;
+            }
+            q *= col.bottom_factor; // once, on the whole series conductance
+            if (rates) {
+                if (q > rates->out[a]) { q=rates->out[a]; if(limited)(*limited)[a]=1; }
+                else if (q < -rates->in[a]) { q=-rates->in[a]; if(limited)(*limited)[a]=-1; }
             }
             f[i] -= q; if (faces) (*faces)[i] = q;
         }
     }
-    std::vector<bool> implicit(const std::vector<double>& start, const std::vector<double>& steps, std::vector<double>& out) {
+    std::vector<bool> implicit(const std::vector<double>& start, const std::vector<double>& steps, std::vector<double>& out,
+                               const BoundaryRates* rates = nullptr) {
         out = start;
         std::vector<bool> done(lanes, false), success(lanes, false);
         std::vector<double> f, fp, residual(y.size()), lo(y.size()), di(y.size()), up(y.size()), delta(y.size()), perturbed, epsilon(y.size());
         for (int a = 0; a < lanes; ++a) if (steps[a] == 0) done[a] = success[a] = true;
         for (int it = 0; it < 35; ++it) {
-            rhs(out, f, nullptr, nullptr, &done);
+            rhs(out, f, nullptr, nullptr, &done, rates);
             bool all = true;
             for (int a = 0; a < lanes; ++a) if (!done[a]) {
                 ++reports[a]->newton;
@@ -139,7 +158,7 @@ struct Batch {
                     epsilon[i] = 1.e-8 * (k ? std::max(wet_distance, 1.e-4 * volume[i]) : volume[i]);
                     perturbed[i] += epsilon[i];
                 }
-                rhs(perturbed, fp, nullptr, nullptr, &done);
+                rhs(perturbed, fp, nullptr, nullptr, &done, rates);
                 for (int k = color; k < n; k += 3) for (int a = 0; a < lanes; ++a) if (!done[a]) {
                     int j = k * lanes + a;
                     for (int row = std::max(0, k - 1); row <= std::min(n - 1, k + 1); ++row) {
@@ -177,15 +196,37 @@ struct Batch {
     void run(double dt) {
         std::vector<double> time(lanes, 0), step(lanes), full, half, two, f, faces1, faces2, et1, et2;
         for (int a = 0; a < lanes; ++a) step[a] = std::min(dt, columns[a]->options.max_step);
+        const bool bounded = std::any_of(columns.begin(),columns.end(),[](const auto* c){
+            return std::isfinite(c->bottom_out_limit) || std::isfinite(c->bottom_in_limit);
+        });
+        auto rates = [&](const std::vector<double>& steps,const std::vector<double>* first_faces=nullptr) {
+            BoundaryRates b;b.out.resize(lanes);b.in.resize(lanes);
+            for(int a=0;a<lanes;++a) {
+                const double first = first_faces ? steps[a]*(*first_faces)[(n-1)*lanes+a] : 0;
+                b.out[a]=reservedRate(columns[a]->bottom_out_limit,reports[a]->bottom_outflow+std::max(0.,first),steps[a]);
+                b.in[a]=reservedRate(columns[a]->bottom_in_limit,reports[a]->bottom_inflow+std::max(0.,-first),steps[a]);
+            }
+            return b;
+        };
         int attempts = 0;
         while (*std::min_element(time.begin(), time.end()) < dt) {
             if (++attempts > 200000) { for (auto* r : reports) { r->ok = false; r->error = "Richards adaptive-step limit exceeded"; } return; }
             for (int a = 0; a < lanes; ++a) step[a] = std::min(step[a], std::max(0.0, dt - time[a]));
-            auto good = implicit(y, step, full);
+            BoundaryRates full_rates,half_rates,second_rates;
+            if(bounded)full_rates=rates(step);
+            auto good = implicit(y, step, full, bounded?&full_rates:nullptr);
             auto h = step; for (auto& v : h) v *= 0.5;
-            auto good1 = implicit(y, h, half), good2 = implicit(half, h, two);
+            if(bounded)half_rates=rates(h);
+            auto good1 = implicit(y, h, half, bounded?&half_rates:nullptr);
             std::vector<bool> inactive(lanes); for (int a = 0; a < lanes; ++a) inactive[a] = step[a] == 0;
-            rhs(half, f, &faces1, &et1, &inactive); rhs(two, f, &faces2, &et2, &inactive);
+            std::vector<int> limited1,limited2;
+            if(bounded) {
+                rhs(half,f,&faces1,&et1,&inactive,&half_rates,&limited1);
+                second_rates=rates(h,&faces1);
+            }
+            auto good2 = implicit(half, h, two, bounded?&second_rates:nullptr);
+            if(!bounded)rhs(half, f, &faces1, &et1, &inactive);
+            rhs(two, f, &faces2, &et2, &inactive,bounded?&second_rates:nullptr,bounded?&limited2:nullptr);
             for (int a = 0; a < lanes; ++a) {
                 if (step[a] == 0) continue;
                 auto& report = *reports[a]; const auto& opt = columns[a]->options;
@@ -208,12 +249,18 @@ struct Batch {
                             else if (v < 0) report.transfers.push_back({k + 1, k, -v});
                         } else {
                             report.bottom_volume += v;
+                            if (v > 0) report.bottom_outflow += v;
+                            else if (v < 0) report.bottom_inflow -= v;
                             if (v > 0) report.transfers.push_back({k, -4, v});
                             else if (v < 0) report.transfers.push_back({-5, k, -v});
                         }
                         double e = h[a] * (stage ? et2[i] : et1[i]);
                         report.evaporation += e;
                         if (e > 0) report.transfers.push_back({k, -3, e});
+                    }
+                    if(bounded) for(const int limited:{limited1[a],limited2[a]}) {
+                        report.bottom_out_limited += limited==1;
+                        report.bottom_in_limited += limited==-1;
                     }
                     for (int k = 0; k < n; ++k) y[k * lanes + a] = two[k * lanes + a];
                     time[a] = std::min(dt, time[a] + step[a]);
@@ -239,10 +286,16 @@ std::vector<Report> advance(std::vector<Column*>& columns, double dt) {
     if (!std::isfinite(dt) || dt <= 0) { for (auto& r : reports) { r.ok = false; r.error = "Invalid Richards interval"; } return reports; }
     // Work on copies: any failure is transactional across the complete batch.
     std::vector<Column> trial; trial.reserve(columns.size());
+    std::set<const Column*> seen;
     for (const auto* c : columns) {
         if (!c || c->cells.size() < 2 || c->water.size() != c->cells.size() || !valid(c->options) ||
             !std::isfinite(c->bottom_K) || c->bottom_K < 0 || !std::isfinite(c->bottom_head) ||
-            !std::isfinite(c->bottom_distance) || c->bottom_distance < 0) {
+            !std::isfinite(c->bottom_distance) || c->bottom_distance < 0 ||
+            std::isnan(c->bottom_out_limit) || c->bottom_out_limit < 0 ||
+            std::isnan(c->bottom_in_limit) || c->bottom_in_limit < 0 ||
+            !std::isfinite(c->bottom_area) || c->bottom_area < 0 ||
+            !std::isfinite(c->bottom_factor) || c->bottom_factor < 0 || c->bottom_factor > 1 ||
+            !seen.insert(c).second) {
             for (auto& r : reports) { r.ok = false; r.error = "Invalid Richards column"; } return reports;
         }
         for (std::size_t k = 0; k < c->cells.size(); ++k) {
