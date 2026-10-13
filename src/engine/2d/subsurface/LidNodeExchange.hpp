@@ -48,10 +48,15 @@ struct RichardsBedOwner {
     double invert=0, clogging=1;
     std::vector<double> max_water;
 };
+struct RichardsBedStep {
+    double start=0,end=0;
+    std::vector<RichardsBedReceipt> receipts; // private accepted water awaiting the GW firing
+};
 struct RichardsBedAcceptance {
     std::string error;
     RichardsBedTrial trial;
     double balance=0; // combined column/GW interval residual, m3
+    std::vector<RichardsBedStep> steps;
 };
 // Serial owner boundary: freeze, trial, settle the real GW closure privately,
 // validate the final hydraulic bounds and matching water, then publish once.
@@ -67,4 +72,14 @@ RichardsBedAcceptance acceptRichardsBedsAtFiring(SubsurfaceSolver&, SurfaceState
 // The whole tier, including a late ordinary-cell failure, publishes atomically.
 RichardsBedAcceptance acceptRichardsBedsForTier(SubsurfaceSolver&, SurfaceStateData&,
     int tier, double start, double end, const std::vector<RichardsBedOwner>&);
+// Internal pending-receipt sequence. Column vectors advance at these shorter
+// endpoints, with full-window directional budgets frozen once. Incoming water
+// cannot replenish a donor quota or an opposite-direction receiving quota.
+// All staged columns/receipts stay private until the actual GW closure accepts
+// the aggregate at end. Every intermediate hydraulic bound must also qualify.
+// Fixed forcing/materials and frozen GW heads; no native 1D port hooks yet.
+RichardsBedAcceptance acceptRichardsBedsAcrossSteps(SubsurfaceSolver&, SurfaceStateData&,
+    double start,double end,const std::vector<double>& step_ends,const std::vector<RichardsBedOwner>&);
+RichardsBedAcceptance acceptRichardsBedsForTierAcrossSteps(SubsurfaceSolver&, SurfaceStateData&,
+    int tier,double start,double end,const std::vector<double>& step_ends,const std::vector<RichardsBedOwner>&);
 }

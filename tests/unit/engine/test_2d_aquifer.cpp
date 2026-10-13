@@ -1604,3 +1604,98 @@ TEST(RichardsAquiferAcceptance, InconsistentEnslavedStorageCannotEnterAConservat
     EXPECT_DOUBLE_EQ(rig.gw.cellCompletedTime(0),0);rig.gw.state().hu[0]=equilibrium;
     auto accepted=acceptRichardsBedsAtFiring(rig.gw,surf,0,1,{owner(0,c,-2.5)});EXPECT_TRUE(accepted.error.empty())<<accepted.error;
 }
+
+TEST(RichardsPendingSteps, OppositeTransfersForcingEtAndOtherClaimsCloseAcrossAllClosures) {
+    for(auto closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA}) {
+        NodeTrialRig rig(3,closure,2,1,1,1e-5,.15,1,"BOTH");SurfaceStateData surf;surf.resize(1,0);
+        std::vector<Column> columns(2,trialColumn());for(auto& c:columns){c.inflow=1e-5;for(auto& cell:c.cells)cell.potential_et=1e-7;}
+        rig.gw.bookInfiltrationFromSurface(0,.003);rig.gw.bookLinkSeepage(0,.002);
+        rig.gw.state().nacc[2]=.001;rig.gw.bookAreaEt(0,2,.00004,0,.00004);
+        const double initial=ownedWater(rig.gw,columns),head=rig.gw.state().z_bed[0]+rig.gw.state().hg[0];
+        auto r=acceptRichardsBedsAcrossSteps(rig.gw,surf,0,2,{.25,.5,1,2},{owner(0,columns[0],10),owner(1,columns[1],-10)});
+        ASSERT_TRUE(r.error.empty())<<r.error;ASSERT_EQ(r.steps.size(),4u);double down=0,up=0,in=0,et=0;
+        for(std::size_t k=0;k<r.steps.size();++k) {
+            EXPECT_DOUBLE_EQ(r.steps[k].start,k?r.steps[k-1].end:0);
+            for(const auto& receipt:r.steps[k].receipts){EXPECT_DOUBLE_EQ(receipt.aquifer_head,head);down+=receipt.accepted_down;up+=receipt.accepted_up;}
+        }
+        for(const auto& report:r.trial.reports){in+=report.inflow;et+=report.evaporation;}
+        EXPECT_GT(down,0);EXPECT_GT(up,0);EXPECT_GT(et,0);
+        EXPECT_NEAR(initial+in-ownedWater(rig.gw,columns)-.001-et-rig.gw.state().led_deep-rig.gw.state().led_et,0,1e-10);
+        EXPECT_NEAR(down,rig.gw.richardsBedDownCumulative()[0]+rig.gw.richardsBedDownCumulative()[1],1e-14);
+        EXPECT_NEAR(up,rig.gw.richardsBedUpCumulative()[0]+rig.gw.richardsBedUpCumulative()[1],1e-14);
+        EXPECT_DOUBLE_EQ(rig.gw.cellCompletedTime(0),2);EXPECT_EQ(rig.gw.nodeExchangeVolumes(),std::vector<double>(3,0));
+    }
+}
+TEST(RichardsPendingSteps, PackedColumnsShareTheWholeWindowReceiverWithoutRenewingIt) {
+    NodeTrialRig a(65),b(65);SurfaceStateData sa,sb;sa.resize(1,0);sb.resize(1,0);
+    a.gw.state().hu[0]=b.gw.state().hu[0]=.45*2-1e-6;
+    std::vector<Column> ca;for(int n=0;n<65;++n)ca.push_back(trialColumn(4*(1+n%2)));auto cb=ca;
+    std::vector<RichardsBedOwner> oa,ob;for(int n=0;n<65;++n){oa.push_back(owner(n,ca[n],10));ob.push_back(owner(n,cb[n],10));}
+    std::reverse(ob.begin(),ob.end());const double initial=ownedWater(a.gw,ca);
+    auto x=acceptRichardsBedsAcrossSteps(a.gw,sa,0,20,{5,10,20},oa),y=acceptRichardsBedsAcrossSteps(b.gw,sb,0,20,{5,10,20},ob);
+    ASSERT_TRUE(x.error.empty())<<x.error;ASSERT_TRUE(y.error.empty())<<y.error;
+    long double spent=0;const double ceiling=x.trial.budgets[0].second.receiver;
+    for(const auto& step:x.steps){for(const auto& r:step.receipts)spent+=r.accepted_down;EXPECT_LE(spent,ceiling);}
+    EXPECT_GT(spent,0);EXPECT_NEAR(initial-ownedWater(a.gw,ca)-a.gw.state().led_et-a.gw.state().led_deep,0,1e-10);
+    for(int n=0;n<65;++n){EXPECT_EQ(ca[n].water,cb[n].water);EXPECT_DOUBLE_EQ(x.trial.receipts[n].accepted_down,y.trial.receipts[n].accepted_down);}
+    EXPECT_EQ(a.gw.state().hg,b.gw.state().hg);EXPECT_EQ(a.gw.richardsBedDownCumulative(),b.gw.richardsBedDownCumulative());
+}
+TEST(RichardsPendingSteps, PendingIntakesAndEarlierDownwardStepsNeverFundUpwardAwards) {
+    for(auto closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA}) {
+        NodeTrialRig rig(2,closure,0);SurfaceStateData surf;surf.resize(1,0);rig.gw.bookInfiltrationFromSurface(0,.02);
+        auto a=trialColumn(),b=a;auto r=acceptRichardsBedsAcrossSteps(rig.gw,surf,0,3,{1,2,3},{owner(0,a,10),owner(1,b,-10)});
+        ASSERT_TRUE(r.error.empty())<<r.error;double down=0;
+        for(const auto& step:r.steps)for(const auto& receipt:step.receipts){down+=receipt.accepted_down;EXPECT_DOUBLE_EQ(receipt.accepted_up,0);}
+        EXPECT_GT(down,0);EXPECT_GT(rig.gw.state().hg[0],0);EXPECT_EQ(rig.gw.richardsBedUpCumulative(),std::vector<double>(2,0));
+    }
+}
+TEST(RichardsPendingSteps, FutureSurfaceSupplyCannotRenewTheInitialPorousDonor) {
+    NodeTrialRig rig;SurfaceStateData surf;surf.resize(1,0);auto c=trialColumn();c.inflow=.2;
+    // Forecast ET reserves the entire initial porous donor. New surface supply
+    // may feed storage/ET, but cannot renew that window's bottom donor quota.
+    for(std::size_t k=1;k<c.cells.size();++k)c.cells[k].potential_et=.03;
+    const double initial=columnWater(c);auto r=acceptRichardsBedsAcrossSteps(rig.gw,surf,0,3,{1,2,3},{owner(0,c,10)});
+    ASSERT_TRUE(r.error.empty())<<r.error;EXPECT_GT(columnWater(c),initial);
+    for(const auto& step:r.steps)EXPECT_DOUBLE_EQ(step.receipts[0].accepted_down,0);
+    EXPECT_DOUBLE_EQ(rig.gw.richardsBedDownCumulative()[0],0);EXPECT_NEAR(r.trial.reports[0].inflow,.6,1e-14);
+}
+TEST(RichardsPendingSteps, InvalidCoverageAndAnIntermediateHydraulicFailurePublishNothing) {
+    NodeTrialRig rig;SurfaceStateData surf;surf.resize(1,0);auto c=trialColumn(4,.5);const auto water=c.water;
+    const auto before=rig.gw.state();
+    for(const auto& ends:std::vector<std::vector<double>>{{},{1},{1,1,2},{-1,2},{3,2},{1,std::numeric_limits<double>::quiet_NaN(),2}}) {
+        auto r=acceptRichardsBedsAcrossSteps(rig.gw,surf,0,2,ends,{owner(0,c,10)});
+        EXPECT_FALSE(r.error.empty());EXPECT_TRUE(r.steps.empty());unchanged(rig.gw,before);EXPECT_EQ(c.water,water);
+    }
+    auto o=owner(0,c,10);o.max_water[1]=c.water[1];
+    auto bad=acceptRichardsBedsAcrossSteps(rig.gw,surf,0,20,{5,10,20},{o});EXPECT_NE(bad.error.find("hydraulic"),std::string::npos);
+    unchanged(rig.gw,before);EXPECT_EQ(c.water,water);EXPECT_DOUBLE_EQ(rig.gw.cellCompletedTime(0),0);
+}
+TEST(RichardsPendingSteps, PrivatePackingCannotHideAliasedOriginalColumns) {
+    NodeTrialRig rig(2);SurfaceStateData surf;surf.resize(1,0);auto c=trialColumn();const auto water=c.water;const auto before=rig.gw.state();
+    auto bad=acceptRichardsBedsAcrossSteps(rig.gw,surf,0,2,{1,2},{owner(0,c,10),owner(1,c,-10)});
+    EXPECT_NE(bad.error.find("duplicate"),std::string::npos);EXPECT_TRUE(bad.steps.empty());unchanged(rig.gw,before);EXPECT_EQ(c.water,water);
+}
+TEST(RichardsPendingSteps, LateOrdinaryRefundDiscardsAllStagesAndAllowsCorrectedRetry) {
+    NodeTrialRig rig(2,GwClosure::CLOSED_FORM,2,1,1,0,0,2);SurfaceStateData surf;surf.resize(2,0);
+    rig.gw.state().dt_cell={2,2};rig.gw.assignTiers(2,1);rig.gw.state().nacc[1]=10;
+    auto c=trialColumn();const auto water=c.water;openswmm::detail::CompletedSourceArchive before;rig.gw.checkpoint(before,false);
+    auto bad=acceptRichardsBedsForTierAcrossSteps(rig.gw,surf,0,0,2,{.5,1,2},{owner(0,c,-2.5)});
+    EXPECT_NE(bad.error.find("refunded"),std::string::npos);EXPECT_TRUE(bad.steps.empty());EXPECT_EQ(c.water,water);
+    openswmm::detail::CompletedSourceArchive after;rig.gw.checkpoint(after,false);EXPECT_EQ(before.bytes(),after.bytes());
+    EXPECT_EQ(rig.gw.tierFirings(),std::vector<long>{0});rig.gw.state().nacc[1]=0;
+    auto good=acceptRichardsBedsForTierAcrossSteps(rig.gw,surf,0,0,2,{.5,1,2},{owner(0,c,-2.5)});
+    ASSERT_TRUE(good.error.empty())<<good.error;EXPECT_EQ(rig.gw.tierFirings(),std::vector<long>{1});EXPECT_DOUBLE_EQ(rig.gw.cellCompletedTime(1),2);
+}
+TEST(RichardsPendingSteps, ShortColumnStepsPreserveNaturalFastAndSlowGroundwaterFirings) {
+    NodeTrialRig rig(2,GwClosure::CLOSED_FORM,2,1,1,0,0,2);SurfaceStateData surf;surf.resize(2,0);
+    rig.gw.state().dt_cell={1,2};rig.gw.assignTiers(1,2);rig.gw.bookLinkSeepage(1,.001);
+    auto a=trialColumn(),b=a;const auto slow=b.water;const double hg=rig.gw.state().hg[1];
+    auto first=acceptRichardsBedsForTierAcrossSteps(rig.gw,surf,0,0,1,{.25,.5,.75,1},{owner(0,a,-2.5)});
+    ASSERT_TRUE(first.error.empty())<<first.error;EXPECT_EQ(b.water,slow);EXPECT_DOUBLE_EQ(rig.gw.state().hg[1],hg);
+    EXPECT_DOUBLE_EQ(rig.gw.cellCompletedTime(1),0);EXPECT_DOUBLE_EQ(rig.gw.state().lacc[1],.001);
+    auto second=acceptRichardsBedsForTierAcrossSteps(rig.gw,surf,0,1,2,{1.25,1.5,1.75,2},{owner(0,a,-2.5)});
+    ASSERT_TRUE(second.error.empty())<<second.error;
+    auto last=acceptRichardsBedsForTierAcrossSteps(rig.gw,surf,1,0,2,{.25,.5,.75,1,1.25,1.5,1.75,2},{owner(1,b,-2.5)});
+    ASSERT_TRUE(last.error.empty())<<last.error;EXPECT_EQ(last.steps.size(),8u);EXPECT_EQ(rig.gw.tierFirings(),(std::vector<long>{2,1}));
+    EXPECT_EQ(rig.gw.state().tier,(std::vector<uint8_t>{0,1}));EXPECT_DOUBLE_EQ(rig.gw.cellCompletedTime(1),2);
+}

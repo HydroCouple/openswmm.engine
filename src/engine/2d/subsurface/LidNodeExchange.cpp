@@ -18,8 +18,10 @@ double award(double demand, long double total, double ceiling, long double& spen
     spent+=v;return v;
 }
 }
-RichardsBedTrial trialRichardsBeds(const SubsurfaceSolver& gw,double dt,
-                                  const std::vector<RichardsBedBinding>& input) {
+static RichardsBedTrial trialBeds(const SubsurfaceSolver& gw,double dt,
+    const std::vector<RichardsBedBinding>& input,
+    const std::map<int,SubsurfaceSolver::NodeWaterBudget>* frozen=nullptr,
+    const std::map<int,std::pair<double,double>>* node_limits=nullptr) {
     RichardsBedTrial result;
     auto fail=[](const std::string& error){RichardsBedTrial r;r.error=error;return r;};
     if (!std::isfinite(dt) || dt<=0) return fail("Invalid Richards bed trial interval.");
@@ -41,7 +43,8 @@ RichardsBedTrial trialRichardsBeds(const SubsurfaceSolver& gw,double dt,
             return fail("Unresolved, disabled or duplicate Richards bed/column.");
         if(!budgets.count(bed.cell)) {
             SubsurfaceSolver::NodeWaterBudget budget;
-            const auto error=gw.nodeWaterBudget(bed.cell,dt,budget);if(!error.empty())return fail(error);
+            if(frozen)budget=frozen->at(bed.cell);
+            else {const auto error=gw.nodeWaterBudget(bed.cell,dt,budget);if(!error.empty())return fail(error);}
             budgets.emplace(bed.cell,budget);
         }
         // Validate material/state through the normal kernel before evaluating
@@ -62,6 +65,10 @@ RichardsBedTrial trialRichardsBeds(const SubsurfaceSolver& gw,double dt,
         }
         node_donor.push_back(std::max(0.0,donor-et)); // no surface/future inflow counted
         node_receiver.push_back(std::max(0.0,binding.max_bottom_water-source.water.back()));
+        if(node_limits) {
+            node_donor.back()=std::min(node_donor.back(),node_limits->at(binding.bed).first);
+            node_receiver.back()=std::min(node_receiver.back(),node_limits->at(binding.bed).second);
+        }
     }
     std::vector<richards::Column*> packed;
     for(auto& c:result.columns)packed.push_back(&c);
@@ -98,24 +105,39 @@ RichardsBedTrial trialRichardsBeds(const SubsurfaceSolver& gw,double dt,
     return result;
 }
 
-RichardsBedAcceptance acceptRichardsBedsAtFiring(SubsurfaceSolver& gw, SurfaceStateData& surface,
-    double start, double end, const std::vector<RichardsBedOwner>& input) {
+RichardsBedTrial trialRichardsBeds(const SubsurfaceSolver& gw,double dt,const std::vector<RichardsBedBinding>& input) {
+    return trialBeds(gw,dt,input);
+}
+RichardsBedAcceptance acceptRichardsBedsAtFiring(SubsurfaceSolver& gw,SurfaceStateData& surface,
+    double start,double end,const std::vector<RichardsBedOwner>& input) {
+    return acceptRichardsBedsAcrossSteps(gw,surface,start,end,{end},input);
+}
+RichardsBedAcceptance acceptRichardsBedsAcrossSteps(SubsurfaceSolver& gw, SurfaceStateData& surface,
+    double start,double end,const std::vector<double>& step_ends,const std::vector<RichardsBedOwner>& input) {
     auto fail=[](const std::string& error){RichardsBedAcceptance r;r.error=error;return r;};
     const double dt=end-start;
     if(!std::isfinite(start) || start<0 || !std::isfinite(end) || !std::isfinite(dt) || dt<=0 || input.empty())
         return fail("Invalid Richards joint owner firing interval.");
+    double previous=start;
+    if(step_ends.empty() || step_ends.back()!=end)return fail("Pending Richards steps must cover the exact groundwater interval.");
+    for(double t:step_ends) {
+        if(!std::isfinite(t) || t<=previous || t>end)return fail("Invalid or replayed pending Richards step endpoint.");
+        previous=t;
+    }
     if(!gw.richards_clock_valid_)
         return fail("Restored groundwater requires the R5 joint owner clock/restart extension.");
     if(gw.options_.per_subcatch || surface.transport.active() || gw.gather_fraction_!=1 ||
        surface.infil_rate.size()!=static_cast<std::size_t>(gw.state_.n_cells))
         return fail("Richards joint acceptance requires an idle water-only mesh owner boundary.");
     auto owners=input;const auto& beds=gw.node_beds_;
-    std::set<int> selected,cells;
+    std::set<int> selected,cells;std::set<const richards::Column*> owner_columns;
     for(const auto& owner:owners) {
         if(owner.bed<0 || owner.bed>=int(beds.size()) || !owner.column ||
            owner.max_water.size()!=owner.column->water.size() || owner.max_water.empty() ||
            !selected.insert(owner.bed).second)
             return fail("Invalid Richards hydraulic owner/bounds.");
+        if(!owner_columns.insert(owner.column).second)
+            return fail("Unresolved, disabled or duplicate Richards bed/column.");
         for(std::size_t k=0;k<owner.max_water.size();++k)
             if(!nonnegative(owner.max_water[k]) || !nonnegative(owner.column->water[k]) ||
                owner.column->water[k]>owner.max_water[k])
@@ -152,12 +174,84 @@ RichardsBedAcceptance acceptRichardsBedsAtFiring(SubsurfaceSolver& gw, SurfaceSt
     std::sort(owners.begin(),owners.end(),[&](const auto& a,const auto& b){return beds[a.bed].node<beds[b.bed].node;});
     std::vector<RichardsBedBinding> bindings;
     for(const auto& o:owners)bindings.push_back({o.bed,o.column,o.invert,o.max_water.back(),o.clogging});
-    RichardsBedAcceptance result;result.trial=trialRichardsBeds(gw,dt,bindings);
-    if(!result.trial.error.empty())return fail(result.trial.error);
+    RichardsBedAcceptance result;
+    if(step_ends.size()==1) {
+        result.trial=trialRichardsBeds(gw,dt,bindings);
+        if(!result.trial.error.empty())return fail(result.trial.error);
+        result.steps.push_back({start,end,result.trial.receipts});
+    } else {
+        std::map<int,SubsurfaceSolver::NodeWaterBudget> frozen;
+        std::map<int,std::pair<double,double>> node_quota;
+        std::map<int,long double> down,up,node_down,node_up;
+        std::vector<richards::Column> columns;
+        for(const auto& o:owners) {
+            const int cell=beds[o.bed].cell;
+            if(!frozen.count(cell)) {
+                SubsurfaceSolver::NodeWaterBudget budget;
+                if(auto e=gw.nodeWaterBudget(cell,dt,budget);!e.empty())return fail(e);
+                frozen.emplace(cell,budget);
+            }
+            const auto& c=*o.column;
+            if(c.cells.size()<2 || c.cells.size()!=c.water.size())return fail("Invalid pending Richards column layout.");
+            double donor=0,et=0;
+            for(std::size_t k=1;k<c.water.size();++k) {
+                donor+=std::max(0.,c.water[k]-c.cells[k].material.theta_r*c.cells[k].volume);
+                et+=c.cells[k].potential_et*dt;
+            }
+            const double receiver=std::max(0.,o.max_water.back()-c.water.back());
+            if(!std::isfinite(donor) || !nonnegative(et) || !nonnegative(receiver))return fail("Invalid pending Richards node budget.");
+            node_quota[o.bed]={std::max(0.,donor-et),receiver};columns.push_back(c);
+        }
+        const auto remaining=[](double ceiling,long double spent) {
+            double r=static_cast<double>(std::max(0.L,ceiling-spent));
+            while(spent+r>ceiling)r=std::nextafter(r,0.);
+            return r;
+        };
+        previous=start;
+        for(double t:step_ends) {
+            auto budgets=frozen;auto limits=node_quota;
+            for(auto& [cell,b]:budgets) {b.donor=remaining(b.donor,up[cell]);b.receiver=remaining(b.receiver,down[cell]);}
+            for(auto& [bed,q]:limits) {q.first=remaining(q.first,node_down[bed]);q.second=remaining(q.second,node_up[bed]);}
+            auto staged=bindings;
+            for(std::size_t j=0;j<staged.size();++j)staged[j].column=&columns[j];
+            auto trial=trialBeds(gw,t-previous,staged,&budgets,&limits);
+            if(!trial.error.empty())return fail(trial.error);
+            for(std::size_t j=0;j<owners.size();++j)
+                for(std::size_t k=0;k<owners[j].max_water.size();++k)
+                    if(!nonnegative(trial.columns[j].water[k]) || trial.columns[j].water[k]>owners[j].max_water[k])
+                        return fail("Pending Richards step exceeds hydraulic owner bounds; retry the window.");
+            result.steps.push_back({previous,t,trial.receipts});
+            if(result.trial.receipts.empty()) {
+                result.trial.receipts=trial.receipts;result.trial.reports=trial.reports;
+            } else for(std::size_t j=0;j<trial.receipts.size();++j) {
+                auto& a=result.trial.receipts[j];const auto& r=trial.receipts[j];
+                a.requested_down+=r.requested_down;a.requested_up+=r.requested_up;
+                a.accepted_down+=r.accepted_down;a.accepted_up+=r.accepted_up;
+                a.unused_down=r.unused_down;a.unused_up=r.unused_up;
+                auto& report=result.trial.reports[j];const auto& step=trial.reports[j];
+                report.accepted+=step.accepted;report.rejected+=step.rejected;report.rhs+=step.rhs;report.newton+=step.newton;
+                report.min_step=std::min(report.min_step,step.min_step);
+                report.bottom_volume+=step.bottom_volume;report.evaporation+=step.evaporation;report.balance+=step.balance;
+                report.bottom_outflow+=step.bottom_outflow;report.bottom_inflow+=step.bottom_inflow;report.inflow+=step.inflow;
+                report.bottom_out_limited+=step.bottom_out_limited;report.bottom_in_limited+=step.bottom_in_limited;
+                report.transfers.insert(report.transfers.end(),step.transfers.begin(),step.transfers.end());
+            }
+            for(const auto& r:trial.receipts) {down[r.cell]+=r.accepted_down;up[r.cell]+=r.accepted_up;node_down[r.bed]+=r.accepted_down;node_up[r.bed]+=r.accepted_up;}
+            result.trial.rhs+=trial.rhs;result.trial.newton+=trial.newton;
+            columns=std::move(trial.columns);previous=t;
+        }
+        for(auto& r:result.trial.receipts) {
+            r.accepted_down=static_cast<double>(node_down[r.bed]);r.accepted_up=static_cast<double>(node_up[r.bed]);
+            // Earlier unused awards were released before the next proposal;
+            // the aggregate must not count the same offered volume twice.
+            r.reserved_down=r.accepted_down+r.unused_down;r.reserved_up=r.accepted_up+r.unused_up;
+        }
+        result.trial.columns=std::move(columns);
+        for(const auto& b:frozen)result.trial.budgets.push_back(b);
+    }
     for(std::size_t j=0;j<owners.size();++j)
         for(std::size_t k=0;k<owners[j].max_water.size();++k)
-            if(!nonnegative(result.trial.columns[j].water[k]) ||
-               result.trial.columns[j].water[k]>owners[j].max_water[k])
+            if(!nonnegative(result.trial.columns[j].water[k]) || result.trial.columns[j].water[k]>owners[j].max_water[k])
                 return fail("Accepted Richards trial exceeds final hydraulic owner bounds; retry the interval.");
 
     // All work, including the normal closure's refund/return paths, stays on
@@ -245,6 +339,10 @@ RichardsBedAcceptance acceptRichardsBedsAtFiring(SubsurfaceSolver& gw, SurfaceSt
 
 RichardsBedAcceptance acceptRichardsBedsForTier(SubsurfaceSolver& gw,SurfaceStateData& surface,
     int tier,double start,double end,const std::vector<RichardsBedOwner>& owners) {
+    return acceptRichardsBedsForTierAcrossSteps(gw,surface,tier,start,end,{end},owners);
+}
+RichardsBedAcceptance acceptRichardsBedsForTierAcrossSteps(SubsurfaceSolver& gw,SurfaceStateData& surface,
+    int tier,double start,double end,const std::vector<double>& step_ends,const std::vector<RichardsBedOwner>& owners) {
     const auto fail=[](const std::string& e){RichardsBedAcceptance r;r.error=e;return r;};
     if(!gw.active() || !gw.richards_clock_valid_ || !gw.tierHasCells(tier) ||
        !std::isfinite(start) || start<0 || !std::isfinite(end) || end<=start || !std::isfinite(end-start))
@@ -252,6 +350,12 @@ RichardsBedAcceptance acceptRichardsBedsForTier(SubsurfaceSolver& gw,SurfaceStat
     if(gw.options_.per_subcatch || surface.transport.active() || gw.gather_fraction_!=1 ||
        surface.infil_rate.size()!=static_cast<std::size_t>(gw.state_.n_cells))
         return fail("Richards tier acceptance requires an idle water-only mesh owner boundary.");
+    double previous=start;
+    if(step_ends.empty() || step_ends.back()!=end)return fail("Pending Richards tier steps must cover the exact groundwater interval.");
+    for(double t:step_ends) {
+        if(!std::isfinite(t) || t<=previous || t>end)return fail("Invalid pending Richards tier step endpoint.");
+        previous=t;
+    }
     const auto& due=gw.cells_by_tier_[tier];std::set<int> cells(due.begin(),due.end()),selected,beds;
     std::set<const richards::Column*> columns;
     for(int cell:due) {
@@ -279,7 +383,7 @@ RichardsBedAcceptance acceptRichardsBedsForTier(SubsurfaceSolver& gw,SurfaceStat
     for(std::size_t j=0;j<owners.size();++j)private_owners[j].column=&trials[j];
     RichardsBedAcceptance result;
     if(!owners.empty()) {
-        result=acceptRichardsBedsAtFiring(candidate,surf,start,end,private_owners);
+        result=acceptRichardsBedsAcrossSteps(candidate,surf,start,end,step_ends,private_owners);
         if(!result.error.empty())return result;
     }
     std::vector<int> ordinary;double other_node=0;

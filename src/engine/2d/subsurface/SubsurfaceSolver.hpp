@@ -379,6 +379,10 @@ private:
         double, double, const std::vector<RichardsBedOwner>&);
     friend RichardsBedAcceptance acceptRichardsBedsForTier(SubsurfaceSolver&, SurfaceStateData&,
         int, double, double, const std::vector<RichardsBedOwner>&);
+    friend RichardsBedAcceptance acceptRichardsBedsAcrossSteps(SubsurfaceSolver&, SurfaceStateData&,
+        double,double,const std::vector<double>&,const std::vector<RichardsBedOwner>&);
+    friend RichardsBedAcceptance acceptRichardsBedsForTierAcrossSteps(SubsurfaceSolver&, SurfaceStateData&,
+        int,double,double,const std::vector<double>&,const std::vector<RichardsBedOwner>&);
     void resolveRows(const MeshData& mesh, const GwUnitFactors& uf,
                      SubsurfaceConfig& cfg, std::vector<std::string>& warnings);
     void resolveClosures(std::vector<std::string>& warnings);
