@@ -37,4 +37,27 @@ struct RichardsBedTrial {
 // hydraulic trial state; current production mesh/checkpoint guards remain.
 RichardsBedTrial trialRichardsBeds(const SubsurfaceSolver&, double interval,
                                  const std::vector<RichardsBedBinding>&);
+
+// Internal acceptance primitive for an actual due GW owner firing, replacing
+// that firing rather than advancing/pinning the owner at the LID cadence.
+// max_water contains the hydraulic owner's final bounds for EVERY column cell
+// (including surface and elastic storage). It must include accepted forcing.
+struct RichardsBedOwner {
+    int bed=-1;
+    richards::Column* column=nullptr;
+    double invert=0, clogging=1;
+    std::vector<double> max_water;
+};
+struct RichardsBedAcceptance {
+    std::string error;
+    RichardsBedTrial trial;
+    double balance=0; // combined column/GW interval residual, m3
+};
+// Serial owner boundary: freeze, trial, settle the real GW closure privately,
+// validate the final hydraulic bounds and matching water, then publish once.
+// Failures leave columns, aquifer, pending surface returns and clocks unchanged.
+// Only water is supported. Generic mobile-node receipts are excluded for these
+// beds. Routing/LID-state adoption, joint checkpoint and mesh activation follow.
+RichardsBedAcceptance acceptRichardsBedsAtFiring(SubsurfaceSolver&, SurfaceStateData&,
+    double start, double end, const std::vector<RichardsBedOwner>&);
 }

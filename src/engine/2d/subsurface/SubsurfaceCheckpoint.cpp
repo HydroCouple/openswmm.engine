@@ -18,6 +18,8 @@ void signal(detail::CompletedSourceArchive& a,GwSourceSignal& s) {
 }
 }
 void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) {
+    if(std::any_of(richards_bed_owned_.begin(),richards_bed_owned_.end(),[](bool owned){return owned;}))
+        throw std::runtime_error("Richards joint owner checkpoints require the R5 restart extension.");
     auto& s=state_;auto& t=tr_;auto& o=options_;
     if(model) {
         a(s.active,s.n_cells,s.m_layers);
@@ -53,6 +55,7 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
     a.sequence(source_receipts_,[&](auto& rows){a.sequence(rows,[&](auto& r){intake(a,r);});},true);
     a.sequence(source_returns_,[&](auto& r){returned(a,r);});
     if(a.reading()) {
+        richards_clock_valid_=false;
         const auto fail=[](){throw std::runtime_error("Invalid completed-source aquifer state.");};
         const auto nonnegative=[&](double v){if(!std::isfinite(v)||v<0)fail();};
         const auto paired=[&](double v,const auto& mass){nonnegative(v);if(int(mass.size())!=t.n_species)fail();

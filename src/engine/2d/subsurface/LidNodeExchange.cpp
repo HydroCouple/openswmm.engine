@@ -4,6 +4,9 @@
 #include <cmath>
 #include <map>
 #include <set>
+#include <type_traits>
+#include "../data/SurfaceStateData.hpp"
+#include "../solver/InertialEdges.hpp"
 
 namespace openswmm::twoD {
 namespace {
@@ -92,6 +95,121 @@ RichardsBedTrial trialRichardsBeds(const SubsurfaceSolver& gw,double dt,
         result.rhs+=report.rhs;result.newton+=report.newton;
     }
     for(const auto& b:budgets)result.budgets.push_back(b);
+    return result;
+}
+
+RichardsBedAcceptance acceptRichardsBedsAtFiring(SubsurfaceSolver& gw, SurfaceStateData& surface,
+    double start, double end, const std::vector<RichardsBedOwner>& input) {
+    auto fail=[](const std::string& error){RichardsBedAcceptance r;r.error=error;return r;};
+    const double dt=end-start;
+    if(!std::isfinite(start) || start<0 || !std::isfinite(end) || !std::isfinite(dt) || dt<=0 || input.empty())
+        return fail("Invalid Richards joint owner firing interval.");
+    if(!gw.richards_clock_valid_)
+        return fail("Restored groundwater requires the R5 joint owner clock/restart extension.");
+    if(gw.options_.per_subcatch || surface.transport.active() || gw.gather_fraction_!=1 ||
+       surface.infil_rate.size()!=static_cast<std::size_t>(gw.state_.n_cells))
+        return fail("Richards joint acceptance requires an idle water-only mesh owner boundary.");
+    auto owners=input;const auto& beds=gw.node_beds_;
+    std::set<int> selected,cells;
+    for(const auto& owner:owners) {
+        if(owner.bed<0 || owner.bed>=int(beds.size()) || !owner.column ||
+           owner.max_water.size()!=owner.column->water.size() || owner.max_water.empty() ||
+           !selected.insert(owner.bed).second)
+            return fail("Invalid Richards hydraulic owner/bounds.");
+        for(std::size_t k=0;k<owner.max_water.size();++k)
+            if(!nonnegative(owner.max_water[k]) || !nonnegative(owner.column->water[k]) ||
+               owner.column->water[k]>owner.max_water[k])
+                return fail("Initial Richards water exceeds its hydraulic owner bounds.");
+        const int cell=beds[owner.bed].cell;
+        if(cell<0 || cell>=gw.state_.n_cells || gw.cell_completed_[cell]!=start || gw.source_owned_[cell])
+            return fail("Richards firing is stale, discontinuous or shares an unsupported paired source owner.");
+        if(gw.state_.nacc[owner.bed]!=0)
+            return fail("Richards bed has an unpaired pending generic-node receipt.");
+        cells.insert(cell);
+    }
+    // A GW cell advances once, together with all of its already-bound porous
+    // owners. Omitting one would silently advance its receiving boundary clock.
+    for(std::size_t b=0;b<beds.size();++b)
+        if(cells.count(beds[b].cell) && gw.richards_bed_owned_[b] && !selected.count(int(b)))
+            return fail("Richards owner firing omitted another bound bed in the same cell.");
+    std::sort(owners.begin(),owners.end(),[&](const auto& a,const auto& b){return beds[a.bed].node<beds[b.bed].node;});
+    std::vector<RichardsBedBinding> bindings;
+    for(const auto& o:owners)bindings.push_back({o.bed,o.column,o.invert,o.max_water.back(),o.clogging});
+    RichardsBedAcceptance result;result.trial=trialRichardsBeds(gw,dt,bindings);
+    if(!result.trial.error.empty())return fail(result.trial.error);
+    for(std::size_t j=0;j<owners.size();++j)
+        for(std::size_t k=0;k<owners[j].max_water.size();++k)
+            if(!nonnegative(result.trial.columns[j].water[k]) ||
+               result.trial.columns[j].water[k]>owners[j].max_water[k])
+                return fail("Accepted Richards trial exceeds final hydraulic owner bounds; retry the interval.");
+
+    // All work, including the normal closure's refund/return paths, stays on
+    // private copies. No species callbacks, source owners or live wells qualify.
+    auto candidate=gw;auto candidate_surface=surface;
+    candidate.source_firing_end_=end;
+    std::map<int,long double> added;
+    for(const auto& receipt:result.trial.receipts) {
+        const double net=receipt.accepted_up-receipt.accepted_down; // native GW sign
+        candidate.state_.nacc[receipt.bed]=net;added[receipt.cell]+=net;
+        candidate.richards_bed_owned_[receipt.bed]=true;
+        candidate.richards_down_cum_[receipt.bed]+=receipt.accepted_down;
+        candidate.richards_up_cum_[receipt.bed]+=receipt.accepted_up;
+        candidate.bed_exchange_cum_[receipt.bed]+=net;
+        // Do NOT also pay the generic mobile-node queue: water goes directly
+        // into the accepted porous/surface column state below.
+        if(!std::isfinite(candidate.richards_down_cum_[receipt.bed]) ||
+           !std::isfinite(candidate.richards_up_cum_[receipt.bed]) ||
+           !std::isfinite(candidate.bed_exchange_cum_[receipt.bed]))
+            return fail("Richards cumulative receipt overflow.");
+    }
+    const auto storage=[](const SubsurfaceState& s,int i) {
+        double unsat=s.hu[i];
+        if(static_cast<GwClosure>(s.closure[i])==GwClosure::SIGMA)
+            unsat=sigma::columnStorage(&s.theta_sigma[i],s.m_layers,s.n_cells,s.zs[i]-s.hg[i]);
+        return (s.theta_s[i]*s.hg[i]+unsat)*s.area[i];
+    };
+    long double scale=1, balance=0;
+    for(const int cell:cells) {
+        double node=0,lateral=0;
+        for(const auto b:gw.cell_beds_[cell])node+=gw.state_.nacc[b];
+        for(int p=gw.edges_->cell_ptr[cell];p<gw.edges_->cell_ptr[cell+1];++p) {
+            const auto e=gw.edges_->cell_edge[p];
+            lateral+=gw.edges_->cell_sign[p]>0?gw.state_.eacc_L[e]:gw.state_.eacc_R[e];
+        }
+        const double initial=storage(gw.state_,cell);
+        const double incoming=lateral+gw.state_.lacc[cell]+gw.state_.xacc_from_surface[cell];
+        const double deep=candidate.state_.led_deep,et=candidate.state_.led_et;
+        const long refunds=candidate.node_refunds_;
+        try { candidate.fireCell(cell,dt,candidate_surface,start); }
+        catch(const std::exception& error) { return fail(error.what()); }
+        candidate.cell_completed_[cell]=end; // the caller's exact accepted endpoint
+        const double expected=node+static_cast<double>(added[cell]);
+        if(candidate.node_refunds_!=refunds ||
+           std::abs(candidate.state_.qnode_last[cell]*dt-expected)>
+               8*std::numeric_limits<double>::epsilon()*std::max(1.0,std::abs(expected)))
+            return fail("Groundwater did not accept the matching Richards receipt; retry the interval.");
+        const double returned=candidate.state_.xacc_to_surface[cell]-gw.state_.xacc_to_surface[cell];
+        const double residual=initial+incoming-expected-(candidate.state_.led_deep-deep)-
+            (candidate.state_.led_et-et)-returned-storage(candidate.state_,cell);
+        const double cell_scale=std::max(1.0,initial+std::max(0.0,incoming)+std::max(0.0,-expected));
+        if(!std::isfinite(residual) || std::abs(residual)>1.e-10*cell_scale)
+            return fail("Groundwater Richards owner firing failed its water balance.");
+        balance+=residual;scale+=cell_scale;
+    }
+    for(std::size_t j=0;j<owners.size();++j) {
+        balance+=result.trial.reports[j].balance;
+        for(double w:owners[j].column->water)scale+=w;
+    }
+    result.balance=static_cast<double>(balance);
+    if(!std::isfinite(result.balance) || std::abs(balance)>1.e-10*scale)
+        return fail("Joint Richards owner acceptance failed its water balance.");
+    // Finish allocations BEFORE committing; all three owner updates are no-throw.
+    std::vector<std::vector<double>> water;
+    for(const auto& c:result.trial.columns)water.push_back(c.water);
+    static_assert(std::is_nothrow_move_assignable_v<SubsurfaceSolver>);
+    static_assert(std::is_nothrow_move_assignable_v<SurfaceStateData>);
+    gw=std::move(candidate);surface=std::move(candidate_surface);
+    for(std::size_t j=0;j<owners.size();++j)owners[j].column->water.swap(water[j]);
     return result;
 }
 }

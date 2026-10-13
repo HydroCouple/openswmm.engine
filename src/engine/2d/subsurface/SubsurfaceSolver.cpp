@@ -302,6 +302,11 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh,
     // 1D node keeps working, it simply has no aquifer under it.
     state_.nacc.assign(node_beds_.size(), 0.0);
     bed_exchange_cum_.assign(node_beds_.size(), 0.0);   // G-O
+    cell_completed_.assign(n,0.0);
+    richards_clock_valid_=true;
+    richards_bed_owned_.assign(node_beds_.size(),false);
+    richards_down_cum_.assign(node_beds_.size(),0.0);
+    richards_up_cum_.assign(node_beds_.size(),0.0);
     bed_gathered_.assign(node_beds_.size(), 0.0);       // T7.4
     node_exchange_vol_.assign(static_cast<std::size_t>(std::max(0, n_nodes)),
                               0.0);
@@ -683,6 +688,7 @@ void SubsurfaceSolver::sampleNodeExchange(const NodeData* nodes, double dt) {
 
     for (std::size_t b = 0; b < node_beds_.size(); ++b) {
         const auto& bed = node_beds_[b];
+        if (richards_bed_owned_[b]) continue; // accepted porous owner, never generic mobile exchange
         if (bed.cell < 0) continue;
         const auto ni = static_cast<std::size_t>(bed.node);
         if (ni >= nodes->invert_elev.size()) continue;
@@ -1807,6 +1813,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     }
     if(paired)source_cell_end_[u]=time+dt;
     state_.hg[u] = hg1;
+    cell_completed_[u] = time + dt;
     // Drying recovers the equivalent wetting-front depth in proportion to
     // the newly created column deficit; no second time constant is authored.
     const double deficit_before = std::max(0.0, ts * L0 - hu_pre);
@@ -2054,6 +2061,10 @@ void SubsurfaceSolver::setSources(std::vector<GwResolvedSource> sources) {
 }
 void SubsurfaceSolver::fireGwCells(int tier, double dt, SurfaceStateData& surf, double time,
                                    double accepted_end) {
+    if (state_.active && tierHasCells(tier))
+        for (const int i : cells_by_tier_[static_cast<std::size_t>(tier)])
+            for (const auto b : cell_beds_[i]) if (richards_bed_owned_[b])
+                throw std::runtime_error("Richards-owned groundwater cells require joint owner firing acceptance.");
     source_firing_end_=accepted_end>=0 ? accepted_end : time+dt;
     if (!state_.active || !tierHasCells(tier)) return;
     for (const int i : cells_by_tier_[static_cast<std::size_t>(tier)]) {

@@ -93,6 +93,8 @@ struct MeshData;
 struct InertialEdges;
 struct SurfaceStateData;
 struct SolverOptions2D;
+struct RichardsBedOwner;
+struct RichardsBedAcceptance;
 struct GwTransportData;
 /// T7.2: declared in GwTransportData.hpp; the solver only needs the tag.
 enum class GwScope : int8_t;
@@ -363,12 +365,17 @@ public:
     // Call after atmospheric demand/other accepted channels have been booked.
     struct NodeWaterBudget { double head=0, donor=0, receiver=0; };
     std::string nodeWaterBudget(int cell, double interval, NodeWaterBudget&) const;
+    double cellCompletedTime(int cell) const { return cell_completed_.at(cell); }
+    const std::vector<double>& richardsBedDownCumulative() const noexcept { return richards_down_cum_; }
+    const std::vector<double>& richardsBedUpCumulative() const noexcept { return richards_up_cum_; }
 
     /// Storage now, for the continuity ledger.
     double storage() const noexcept { return state_.storage(); }
     void checkpoint(detail::CompletedSourceArchive&,bool model); // internal accepted-boundary IO
 
 private:
+    friend RichardsBedAcceptance acceptRichardsBedsAtFiring(SubsurfaceSolver&, SurfaceStateData&,
+        double, double, const std::vector<RichardsBedOwner>&);
     void resolveRows(const MeshData& mesh, const GwUnitFactors& uf,
                      SubsurfaceConfig& cfg, std::vector<std::string>& warnings);
     void resolveClosures(std::vector<std::string>& warnings);
@@ -458,6 +465,11 @@ private:
     GwOptions        options_;
     std::vector<GwNodeBed> node_beds_;
     std::vector<double>    bed_exchange_cum_;   ///< G-O: per bed (m³), cumulative
+    // Internal R5 owner clocks and directional receipts; execution/checkpoint
+    // activation remains guarded until the routing/restart adapter is qualified.
+    std::vector<double> cell_completed_, richards_down_cum_, richards_up_cum_;
+    std::vector<bool> richards_bed_owned_;
+    bool richards_clock_valid_ = true; // old checkpoints do not restore the joint owner clocks
     /// T7.4: the per-bed volumes the CURRENT gather took — the weights that
     /// split this firing's outgoing mass across the cell's beds. Written by
     /// `gatherNode`, read by `fireCellSpecies` in the same firing, so it can
