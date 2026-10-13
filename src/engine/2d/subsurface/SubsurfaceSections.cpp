@@ -27,6 +27,7 @@
 
 #include "SubsurfaceSections.hpp"
 #include "../../hydrology/LID.hpp"
+#include "../../hydrology/LidNode.hpp"
 #include "FootprintGeometry.hpp"
 #include <iomanip>
 #include <sstream>
@@ -571,12 +572,13 @@ std::vector<std::string> resolveSubsurface(
             errs.push_back("[2D_AQUIFER_NODE] unknown node '" + nm + "'.");
             continue;
         }
+        const bool effective_exchange = b.exchange && lidnode::bottomMode(ctx, b.node) != LidNodeBottom::Sealed;
         if (b.locate) {
             b.cell = locateNode(b.node);
-            if (b.cell < 0 && b.exchange)
+            if (b.cell < 0 && effective_exchange)
                 errs.push_back("[2D_AQUIFER_NODE] node '" + nm + "' CELL AUTO: the node's "
                                "[COORDINATES] fall in no mesh cell.");
-        } else if (b.exchange && (b.cell < 0 || b.cell >= n)) {
+        } else if (effective_exchange && (b.cell < 0 || b.cell >= n)) {
             errs.push_back("[2D_AQUIFER_NODE] node '" + nm + "' CELL " +
                            std::to_string(b.cell + 1) +
                            " is not on the mesh.");

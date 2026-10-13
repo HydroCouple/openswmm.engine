@@ -977,9 +977,14 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         const auto aq_errs = resolveSubsurface(ctx, mesh_, aquifer_cfg_,
                                                aquifer_node_names_, mesh_to_si);
         if (!aq_errs.empty()) throw std::runtime_error(aq_errs.front());
+        // Mask sealed LID connections in the solver copy. Keep authored rows
+        // and their opt-out/provenance flags intact for reversion and export.
+        auto runtime_aquifer = aquifer_cfg_;
+        for (auto& b : runtime_aquifer.node_beds)
+            if (lidnode::bottomMode(ctx, b.node) == LidNodeBottom::Sealed) b.exchange = false;
         const std::string aq_err = subsurface_.initialize(
             mesh_, marcher->inertialEdges(), options_, gwUnitFactors(ctx),
-            static_cast<int>(ctx.nodes.invert_elev.size()), aquifer_cfg_,
+            static_cast<int>(ctx.nodes.invert_elev.size()), runtime_aquifer,
             ctx.warnings);
         if (!aq_err.empty()) throw std::runtime_error(aq_err);
         marcher->setSubsurface(&subsurface_);

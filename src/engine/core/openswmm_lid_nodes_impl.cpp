@@ -186,14 +186,34 @@ SWMM_ENGINE_API int swmm_node_set_lid(SWMM_Engine engine, int node, int control,
             if (a.layer > numbered || (other_row >= 0 && c.node_subtypes.storages.lid[other_row].control >= 0)) return SWMM_ERR_BADPARAM;
         }
     }
+    const auto bottom = control < 0 ? openswmm::LidNodeBottom::Current : c.node_subtypes.storages.lid[r].bottom;
     c.node_subtypes.storages.lid_state[r] = {};
-    c.node_subtypes.storages.lid[r] = {control, control < 0 ? 0.0 : saturation};
+    c.node_subtypes.storages.lid[r] = {control, control < 0 ? 0.0 : saturation, bottom};
     if (control >= 0) openswmm::lidnode::sync(c, control);
     else {
         auto& a = c.lid_node_outlets;
         a.erase(std::remove_if(a.begin(), a.end(), [&](const auto& v) { return c.links.node1[v.link] == node || c.links.node2[v.link] == node; }), a.end());
     }
     c.nodes.full_volume[node] = 0.0;
+    return SWMM_OK;
+}
+SWMM_ENGINE_API int swmm_node_get_lid_bottom(SWMM_Engine engine, int node, int* mode) {
+    CHECK_HANDLE(engine);
+    const auto& c = to_engine(engine)->context();
+    if (!mode) return SWMM_ERR_BADPARAM;
+    CHECK_INDEX(node >= 0 && node < c.n_nodes());
+    *mode = static_cast<int>(openswmm::lidnode::bottomMode(c, node));
+    return SWMM_OK;
+}
+SWMM_ENGINE_API int swmm_node_set_lid_bottom(SWMM_Engine engine, int node, int mode) {
+    CHECK_HANDLE(engine);
+    auto& c = to_engine(engine)->context();
+    if (!editable(c)) return SWMM_ERR_LIFECYCLE;
+    CHECK_INDEX(node >= 0 && node < c.n_nodes());
+    const int r = c.node_subtypes.storage_row(node);
+    if (r < 0 || c.node_subtypes.storages.lid[r].control < 0 || mode < 0 || mode > 2)
+        return SWMM_ERR_BADPARAM;
+    c.node_subtypes.storages.lid[r].bottom = static_cast<openswmm::LidNodeBottom>(mode);
     return SWMM_OK;
 }
 SWMM_ENGINE_API int swmm_lid_node_outlet_get(SWMM_Engine engine, int link, int* layer, int* top) {

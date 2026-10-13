@@ -4504,3 +4504,26 @@ TEST(EngineCheckpoint, ManagedSessionExclusiveReportRefusesLateCollisionsAndFall
     EXPECT_NE(report.write_summary(context),0);EXPECT_EQ(bytes(path),"late report owner");
     std::filesystem::remove(path);ASSERT_EQ(report.prepare(context),0);ASSERT_EQ(report.write_summary(context),0);EXPECT_GT(bytes(path).size(),0);
 }
+
+TEST(EngineCheckpoint, LidBottomOwnerParticipatesInCompatibilityAndSealedContinuation) {
+    for(int lid:{1,2}) {
+        auto name="bottom-owner-"+std::to_string(lid);SWMMEngine a,b;
+        ASSERT_NO_THROW(start(a,name+"-a",lid,0,false));
+        const auto good=root()/(name+"-current.chk");ASSERT_EQ(a.saveCheckpoint(good.string()),"");
+        a.context().node_subtypes.storages.lid[0].bottom=LidNodeBottom::Sealed;
+        EXPECT_FALSE(a.saveCheckpoint((root()/(name+"-changed.chk")).string()).empty());
+        ASSERT_NO_THROW(start(b,name+"-b",lid,0,false,false));
+        b.context().node_subtypes.storages.lid[0].bottom=LidNodeBottom::Sealed;ASSERT_EQ(b.enableCheckpointing(),"");
+        EXPECT_FALSE(b.loadCheckpoint(good.string()).empty());
+        SWMMEngine c;ASSERT_NO_THROW(start(c,name+"-c",lid,0,false,false));
+        c.context().node_subtypes.storages.lid[0].bottom=LidNodeBottom::Sealed;ASSERT_EQ(c.enableCheckpointing(),"");
+        for(int k=0;k<4;++k)ASSERT_NO_THROW(step(b));
+        auto sealed=root()/(name+"-sealed.chk");ASSERT_EQ(b.saveCheckpoint(sealed.string()),"");
+        ASSERT_EQ(c.loadCheckpoint(sealed.string()),"");
+        for(int k=0;k<6;++k){
+            ASSERT_NO_THROW(step(b));
+            ASSERT_NO_THROW(step(c));
+            compare(b,c,name);
+        }
+    }
+}

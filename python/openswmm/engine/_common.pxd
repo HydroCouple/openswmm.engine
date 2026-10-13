@@ -916,6 +916,8 @@ cdef extern from "openswmm_infrastructure.h":
     cdef int swmm_lid_node_layers_set(SWMM_Engine e, int control, const SWMM_LidNodeLayer* rows, int count)
     cdef int swmm_node_get_lid(SWMM_Engine e, int node, int* control, double* saturation)
     cdef int swmm_node_set_lid(SWMM_Engine e, int node, int control, double saturation)
+    cdef int swmm_node_get_lid_bottom(SWMM_Engine e, int node, int* mode)
+    cdef int swmm_node_set_lid_bottom(SWMM_Engine e, int node, int mode)
     cdef int swmm_lid_node_outlet_get(SWMM_Engine e, int link, int* layer, int* top)
     cdef int swmm_lid_node_outlet_set(SWMM_Engine e, int link, int layer, int top)
     cdef int swmm_lid_node_state_count(SWMM_Engine e, int node)

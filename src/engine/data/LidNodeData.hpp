@@ -61,9 +61,11 @@ struct LidNodeState {
     double captured_flow = 0.0;
     double treated_volume = 0.0;
 };
+enum class LidNodeBottom { Current=0, Sealed=1, MeshAquifer=2 };
 struct LidNodeConfig {
     int control = -1;
     double initial_saturation = 0.0; // percent
+    LidNodeBottom bottom = LidNodeBottom::Current;
 };
 struct LidNodeOutlet {
     int link = -1;

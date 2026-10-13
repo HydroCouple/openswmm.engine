@@ -8,6 +8,7 @@ namespace openswmm {
 struct SimulationContext;
 namespace lidnode {
 bool richardsMode(const SimulationContext&, int node);
+LidNodeBottom bottomMode(const SimulationContext&, int node);
 double exchangeRichardsPorts(SimulationContext&, int link, double flow, double dt);
 void prepareRichardsStep(SimulationContext&, double dt, double evaporation);
 void refreshRichardsState(SimulationContext&, int row);

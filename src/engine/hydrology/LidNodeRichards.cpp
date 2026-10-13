@@ -144,7 +144,8 @@ void prepareRichardsStep(SimulationContext& ctx, double dt, double evaporation) 
             double thickness = 0; for (std::size_t i = 1; i < col.cells.size(); ++i) thickness += col.cells[i].dz;
             for (std::size_t i = 1; i < col.cells.size(); ++i) col.cells[i].potential_et = demand * col.cells[i].dz / thickness;
         }
-        if (!stack.empty() && stack.back().kind == LidNodeLayerKind::Bottom && stack.back().params[0] > 0) {
+        if (st.lid[r].bottom == LidNodeBottom::Current && !stack.empty() &&
+            stack.back().kind == LidNodeLayerKind::Bottom && stack.back().params[0] > 0) {
             col.bottom = richards::Bottom::FreeDrainage;
             col.bottom_K = stack.back().params[0] / ucf::Ucf[ucf::RAINFALL][us] * metres * bottomCloggingFactor(ctx, r);
         }

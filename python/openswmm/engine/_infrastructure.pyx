@@ -1018,6 +1018,27 @@ class LIDs:
         cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
         _check(swmm_node_set_lid(h, n, -1, 0.0))
 
+    def node_bottom(self, node):
+        """Per-node bottom owner: CURRENT, SEALED or MESH_AQUIFER."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        cdef int mode = 0
+        _check(swmm_node_get_lid_bottom(h, n, &mode))
+        return ("CURRENT", "SEALED", "MESH_AQUIFER")[mode]
+
+    def set_node_bottom(self, node, mode):
+        """Change one assigned LID's owner without editing its shared control.
+
+        Mesh ownership is authorable; execution requires R5 qualification.
+        """
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        modes = ("CURRENT", "SEALED", "MESH_AQUIFER")
+        mode = str(mode).upper()
+        if mode not in modes:
+            raise ValueError("bottom must be CURRENT, SEALED or MESH_AQUIFER")
+        _check(swmm_node_set_lid_bottom(h, n, modes.index(mode)))
+
     def set_outlet_anchor(self, link, int layer, *, position="BOTTOM"):
         """Anchor a link to a one-based physical layer; layer=0 removes it."""
         cdef SWMM_Engine h = _h(self._solver)

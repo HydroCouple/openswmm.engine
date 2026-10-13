@@ -7,6 +7,14 @@
 #include "hydrology/LidNode.hpp"
 #include "quality/QualityRouting.hpp"
 #include "hydraulics/Node.hpp"
+#include "hydraulics/Exfiltration.hpp"
+#ifdef OPENSWMM_HAS_2D
+#include <openswmm/engine/openswmm_gw2d.h>
+#include "2d/subsurface/SubsurfaceSections.hpp"
+#endif
+#ifdef LID_TEST_GEOPACKAGE
+#include <sqlite3.h>
+#endif
 #include "openswmm/engine/openswmm_infrastructure.h"
 #include "openswmm/engine/openswmm_links.h"
 #include "openswmm/engine/openswmm_pollutants.h"
@@ -1170,3 +1178,169 @@ TEST(LidNodes, ClassicalMobileCorrectionDoesNotHideMaterialWaterDeficits) {
     s.held_volume=held-1e-4;lidnode::prepareStep(c,.7,0);
     EXPECT_LT(c.nodes.volume[0],-1e-5);
 }
+
+TEST(LidNodes, BottomGrammarAndInputRoundTripPreserveDefaultAndExplicitOwners) {
+    for (auto mode : {LidNodeBottom::Current, LidNodeBottom::Sealed, LidNodeBottom::MeshAquifer}) {
+        auto c=model();c.node_subtypes.storages.lid[0].bottom=mode;
+        const auto path=(richardsArtifacts()/("bottom_"+std::to_string(int(mode))+".inp")).string();
+        ASSERT_EQ(inp_writer::writeInpFile(c,path),0);
+        std::ifstream in(path);std::string text((std::istreambuf_iterator<char>(in)),{});
+        if(mode==LidNodeBottom::Current)EXPECT_NE(text.find("S Stack 10\n"),std::string::npos);
+        else EXPECT_NE(text.find(mode==LidNodeBottom::Sealed?"BOTTOM SEALED":"BOTTOM MESH_AQUIFER"),std::string::npos);
+        SimulationContext reread;DefaultInputPlugin plugin;ASSERT_EQ(plugin.read(path,reread),0);
+        input::resolve_cross_references(reread);ASSERT_TRUE(reread.errors.empty());
+        EXPECT_EQ(reread.node_subtypes.storages.lid[0].bottom,mode);
+    }
+    for(const auto& row:{"S Stack 10 BOTTOM BAD","S Stack 10 SEALED","S Stack 10 BOTTOM SEALED EXTRA","S Stack 10 BOTTOM","S"}) {
+        auto c=model();c.node_subtypes.storages.lid[0]={};lidnode::readNodes(c,{row});
+        EXPECT_FALSE(c.errors.empty());EXPECT_EQ(c.node_subtypes.storages.lid[0].control,-1);
+    }
+    auto c=model();c.node_subtypes.storages.lid[0]={};lidnode::readNodes(c,{"S Stack 10 bottom current"});
+    EXPECT_TRUE(c.errors.empty());EXPECT_EQ(c.node_subtypes.storages.lid[0].bottom,LidNodeBottom::Current);
+}
+TEST(LidNodes, BottomApiPreservesOwnerAcrossAssignmentEditsAndRejectsInvalidEdits) {
+    SWMMEngine e;e.context()=model();e.context().state=EngineState::OPENED;auto h=reinterpret_cast<SWMM_Engine>(&e);
+    int mode=-1;ASSERT_EQ(swmm_node_get_lid_bottom(h,0,&mode),SWMM_OK);EXPECT_EQ(mode,0);
+    ASSERT_EQ(swmm_node_set_lid_bottom(h,0,1),SWMM_OK);ASSERT_EQ(swmm_node_set_lid(h,0,0,35),SWMM_OK);
+    ASSERT_EQ(swmm_node_get_lid_bottom(h,0,&mode),SWMM_OK);EXPECT_EQ(mode,1);
+    EXPECT_EQ(swmm_node_set_lid_bottom(h,1,1),SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_node_set_lid_bottom(h,0,3),SWMM_ERR_BADPARAM);
+    e.context().state=EngineState::RUNNING;EXPECT_EQ(swmm_node_set_lid_bottom(h,0,0),SWMM_ERR_LIFECYCLE);
+    e.context().state=EngineState::OPENED;ASSERT_EQ(swmm_node_set_lid(h,0,-1,0),SWMM_OK);
+    ASSERT_EQ(swmm_node_get_lid_bottom(h,0,&mode),SWMM_OK);EXPECT_EQ(mode,0);
+}
+TEST(LidNodes, SealedClassicalBottomSuppressesLegacySeepageWithoutChangingSharedControl) {
+    auto c=model();c.nodes.init_depth[0]=c.nodes.depth[0]=2;
+    c.node_subtypes.storages.exfil_ksat[0]=.001;
+    lidnode::initialize(c);exfil::ExfilSolver solver;solver.init(c);solver.computeAll(c,5);
+    ASSERT_GT(c.node_subtypes.storages.exfil_rate[0],0);
+    const auto params=c.lid_controls.node_layers[0].back().params;
+    c.node_subtypes.storages.lid[0].bottom=LidNodeBottom::Sealed;
+    solver.computeAll(c,5);EXPECT_DOUBLE_EQ(c.node_subtypes.storages.exfil_rate[0],0);
+    EXPECT_DOUBLE_EQ(lidnode::bottomConductivity(c,0),0);
+    EXPECT_EQ(c.lid_controls.node_layers[0].back().params,params);
+    c.node_subtypes.storages.lid[0].bottom=LidNodeBottom::Current;
+    EXPECT_DOUBLE_EQ(lidnode::bottomConductivity(c,0),.5);
+}
+TEST(LidNodes, SealedRichardsRetainsBottomWaterAndStillEvaporates) {
+    for (auto mode:{LidNodeBottom::Current,LidNodeBottom::Sealed}) {
+        auto c=richardsModel();c.lid_controls.node_layers[0].back().params[0]=.5;
+        c.node_subtypes.storages.lid[0].bottom=mode;c.nodes.init_depth[0]=c.nodes.depth[0]=2;
+        c.node_subtypes.storages.evap_frac[0]=1;
+        lidnode::initialize(c);const double initial=c.nodes.volume[0]+lidnode::heldVolume(c,0);
+        c.nodes.lat_flow[0]=0;lidnode::prepareStep(c,10,1.e-5);lidnode::resetPorts(c);lidnode::finishStep(c);
+        const auto& st=c.node_subtypes.storages;
+        EXPECT_GT(st.evap_loss[0],0);
+        if(mode==LidNodeBottom::Sealed)EXPECT_DOUBLE_EQ(st.exfil_loss[0],0);
+        else EXPECT_GT(st.exfil_loss[0],0);
+        EXPECT_NEAR(c.nodes.volume[0]+lidnode::heldVolume(c,0)+st.evap_loss[0]+st.exfil_loss[0],initial,1.e-10);
+    }
+}
+TEST(LidNodes, MeshBottomExecutionStaysGatedForBothFlowModels) {
+    for(bool richards:{false,true}) {
+        auto c=richards?richardsModel():model();c.node_subtypes.storages.lid[0].bottom=LidNodeBottom::MeshAquifer;
+        lidnode::validate(c);ASSERT_TRUE(c.errors.empty()); // authoring is allowed
+        lidnode::initialize(c);ASSERT_FALSE(c.errors.empty());
+        EXPECT_NE(c.errors.front().find("signed-volume adapter"),std::string::npos);
+    }
+}
+#ifdef LID_TEST_GEOPACKAGE
+TEST(LidNodes, GeoPackageBottomOwnerRoundTripOldReadAndSaveMigration) {
+    auto c=richardsModel();c.lid_controls.surface.resize(1);c.lid_controls.soil.resize(1);
+    c.lid_controls.storage.resize(1);c.lid_controls.pavement.resize(1);c.lid_controls.drain.resize(1);
+    c.lid_controls.drainmat.resize(1);c.lid_controls.removals.resize(1);
+    const auto path=(richardsArtifacts()/"bottom_migration.gpkg").string();std::filesystem::remove(path);
+    c.node_subtypes.storages.lid[0].bottom=LidNodeBottom::Sealed;
+    ASSERT_EQ(gpkg::write_to_file(path,c,"old"),0);
+    SimulationContext restored;ASSERT_EQ(gpkg::read_from_file(path,restored,"old"),0);
+    EXPECT_EQ(restored.node_subtypes.storages.lid[0].bottom,LidNodeBottom::Sealed);
+    sqlite3* db=nullptr;ASSERT_EQ(sqlite3_open(path.c_str(),&db),SQLITE_OK);
+    ASSERT_EQ(sqlite3_exec(db,"ALTER TABLE lid_nodes DROP COLUMN bottom_mode",nullptr,nullptr,nullptr),SQLITE_OK);sqlite3_close(db);
+    ASSERT_EQ(gpkg::read_from_file(path,restored,"old"),0);
+    EXPECT_EQ(restored.node_subtypes.storages.lid[0].bottom,LidNodeBottom::Current);
+    c.node_subtypes.storages.lid[0].bottom=LidNodeBottom::MeshAquifer;
+    ASSERT_EQ(gpkg::write_to_file(path,c,"new"),0);
+    ASSERT_EQ(gpkg::read_from_file(path,restored,"new"),0);EXPECT_EQ(restored.node_subtypes.storages.lid[0].bottom,LidNodeBottom::MeshAquifer);
+    ASSERT_EQ(gpkg::read_from_file(path,restored,"old"),0);EXPECT_EQ(restored.node_subtypes.storages.lid[0].bottom,LidNodeBottom::Current);
+}
+#endif
+#ifdef OPENSWMM_HAS_2D
+TEST(LidNodes, AtomicBedAndBottomPreviewPublishAndStaleRejection) {
+    SWMMEngine e;e.context()=model();e.context().state=EngineState::OPENED;auto h=reinterpret_cast<SWMM_Engine>(&e);
+    ASSERT_EQ(swmm_gw2d_node_add(h,"S",-1,0,0,0),SWMM_OK);ASSERT_EQ(swmm_gw2d_node_set_exchange(h,0,0),SWMM_OK);
+    SWMM_GwNodeBed old{"S",-1,1,0,0,0,0,0},next{"S",-1,1,1,0,0,0,40};
+    SWMM_LidNodeBottomEdit owner{0,0,2};
+    EXPECT_EQ(swmm_gw2d_node_replace(h,&old,1,&next,1,&owner,1,1),SWMM_ERR_BADPARAM); // inactive aquifer
+    e.surfaceRouter2D().aquiferConfig().rows.push_back({});e.surfaceRouter2D().options().groundwater=1;
+    e.surfaceRouter2D().mesh().resize_triangles(1);
+    ASSERT_EQ(swmm_gw2d_node_replace(h,&old,1,&next,1,&owner,1,0),SWMM_OK);
+    EXPECT_EQ(e.context().node_subtypes.storages.lid[0].bottom,LidNodeBottom::Current);
+    int exchange=1;swmm_gw2d_node_get_flags(h,0,nullptr,&exchange,nullptr);EXPECT_EQ(exchange,0);
+    ASSERT_EQ(swmm_gw2d_node_replace(h,&old,1,&next,1,&owner,1,1),SWMM_OK);
+    EXPECT_EQ(e.context().node_subtypes.storages.lid[0].bottom,LidNodeBottom::MeshAquifer);
+    EXPECT_EQ(swmm_gw2d_node_replace(h,&old,1,&old,1,nullptr,0,1),SWMM_ERR_BADPARAM);
+    auto bad=next;bad.exchange=0;
+    EXPECT_EQ(swmm_gw2d_node_replace(h,&next,1,&bad,1,nullptr,0,1),SWMM_ERR_BADPARAM);
+    bad=next;bad.area=0;EXPECT_EQ(swmm_gw2d_node_replace(h,&next,1,&bad,1,nullptr,0,1),SWMM_ERR_BADPARAM);
+    owner={0,2,1};ASSERT_EQ(swmm_gw2d_node_replace(h,&next,1,&old,1,&owner,1,1),SWMM_OK);
+    EXPECT_EQ(e.context().node_subtypes.storages.lid[0].bottom,LidNodeBottom::Sealed);
+}
+TEST(LidNodes, AtomicBedsRejectInvalidRowsAndPreserveOptOutAndProvenance) {
+    SWMMEngine e;e.context()=model();e.context().state=EngineState::OPENED;auto h=reinterpret_cast<SWMM_Engine>(&e);
+    ASSERT_EQ(swmm_gw2d_node_add(h,"S",-1,0,0,0),SWMM_OK);ASSERT_EQ(swmm_gw2d_node_set_exchange(h,0,0),SWMM_OK);
+    ASSERT_EQ(swmm_gw2d_node_add(h,"O",2,3,1,4),SWMM_OK);
+    SWMM_GwNodeBed old[]={{"S",-1,1,0,0,0,0,0},{"O",2,0,1,0,3,1,4}};
+    for(int failure=0;failure<6;++failure) {
+        auto bad=old[1];
+        if(failure==0)bad.node="Missing";if(failure==1)bad.node="s";if(failure==2)bad.kc=std::numeric_limits<double>::quiet_NaN();
+        if(failure==3)bad.dc=0;if(failure==4)bad.automatic=1;if(failure==5)bad.exchange=2;
+        SWMM_GwNodeBed next[]={old[0],bad};EXPECT_EQ(swmm_gw2d_node_replace(h,old,2,next,2,nullptr,0,1),SWMM_ERR_BADPARAM);
+        EXPECT_EQ(swmm_gw2d_node_replace(h,old,2,old,2,nullptr,0,0),SWMM_OK);
+    }
+    SWMM_GwNodeBed next[]={old[0],old[1]};next[1].area=7;
+    ASSERT_EQ(swmm_gw2d_node_replace(h,old,2,next,2,nullptr,0,1),SWMM_OK);
+    int locate=0,exchange=1,automatic=1;swmm_gw2d_node_get_flags(h,0,&locate,&exchange,&automatic);
+    EXPECT_EQ(locate,1);EXPECT_EQ(exchange,0);EXPECT_EQ(automatic,0);
+    ASSERT_EQ(swmm_gw2d_node_replace(h,next,2,old,2,nullptr,0,1),SWMM_OK);
+    e.surfaceRouter2D().aquiferConfig().node_beds[1].automatic=true;old[1].automatic=1;
+    ASSERT_EQ(swmm_gw2d_node_replace(h,old,2,old,2,nullptr,0,1),SWMM_OK);
+    next[1].automatic=1;EXPECT_EQ(swmm_gw2d_node_replace(h,old,2,next,2,nullptr,0,1),SWMM_ERR_BADPARAM);
+}
+TEST(LidNodes, SealedMasksOutsideAutoBedResolutionWithoutChangingAuthoredFlags) {
+    auto c=model();c.node_subtypes.storages.lid[0].bottom=LidNodeBottom::Sealed;
+    twoD::MeshData mesh;mesh.resize_triangles(1);
+    twoD::SubsurfaceConfig cfg;cfg.options.node_auto=false;cfg.rows.push_back({});
+    twoD::GwNodeBed bed;bed.locate=true;cfg.node_beds.push_back(bed);
+    std::vector<std::string> names{"S"};
+    EXPECT_TRUE(twoD::resolveSubsurface(c,mesh,cfg,names,1).empty());
+    EXPECT_TRUE(cfg.node_beds[0].exchange);EXPECT_TRUE(cfg.node_beds[0].locate);
+    c.node_subtypes.storages.lid[0].bottom=LidNodeBottom::Current;
+    EXPECT_FALSE(twoD::resolveSubsurface(c,mesh,cfg,names,1).empty());
+}
+#endif
+
+#ifdef OPENSWMM_HAS_2D
+TEST(LidNodes, SealedRuntimeMasksAuthoredAndAutomaticBedsForBothFlowModels) {
+    for(bool richards:{false,true})for(bool authored:{false,true}) {
+        auto stem=(richardsArtifacts()/("sealed_mesh_"+std::to_string(richards)+std::to_string(authored))).string();
+        std::ofstream f(stem+".inp");
+        f << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2004\nEND_DATE 01/01/2004\nEND_TIME 00:01:00\nROUTING_STEP 1\nVARIABLE_STEP 0\nREPORT_STEP 00:00:10\nIGNORE_QUALITY YES\n"
+          << "[STORAGE]\nS 0 2 1 FUNCTIONAL 0 0 100 0 0\n[LID_CONTROLS]\nStack NODE\nStack SURFACE 6 .1\nStack MEDIA 12 .45 .2 .08 2 10 3\nStack AGGREGATE 6 .4 100\nStack BOTTOM .5 0\n[LID_NODES]\nS Stack 10 BOTTOM SEALED\n";
+        if(richards)f << "[LID_RICHARDS]\nStack OPTIONS 4 1e-7 1e-5 30\nStack 2 .03 2 1.6 .5 .0001\nStack 3 .03 2 1.6 .5 .0001\n";
+        f << "[COORDINATES]\nS 2 2\n[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 1\nREPORT_2D NO\n[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n0 10 0\n[2D_TRIANGLES]\n0 1 2 .03 0\n0 2 3 .03 0\n[2D_AQUIFER]\n* 36 4 .45 .1 2\n[2D_AQUIFER_OPTIONS]\nGW_ET NONE\n";
+        if(authored)f << "NODE_ENROLMENT ROWS\n[2D_AQUIFER_NODE]\nS AUTO AREA 40\n";
+        f.close();SWMMEngine e;ASSERT_EQ(e.open((stem+".inp").c_str(),(stem+".rpt").c_str(),nullptr),0);
+        ASSERT_EQ(e.initialize(),0);ASSERT_TRUE(e.surfaceRouter2D().subsurface().active());
+        const auto& saved=e.surfaceRouter2D().aquiferConfig().node_beds;ASSERT_EQ(saved.size(),1u);
+        EXPECT_TRUE(saved[0].exchange);EXPECT_EQ(saved[0].automatic,!authored);
+        ASSERT_EQ(e.surfaceRouter2D().subsurface().nodeBeds().size(),1u);
+        EXPECT_EQ(e.surfaceRouter2D().subsurface().nodeBeds()[0].cell,-1);
+        EXPECT_FALSE(e.context().nodes.aquifer2d_bed[0]);
+        ASSERT_EQ(e.start(0),0);double t=0;ASSERT_EQ(e.step(&t),0);
+        EXPECT_DOUBLE_EQ(e.context().node_subtypes.storages.exfil_loss[0],0);
+        auto h=reinterpret_cast<SWMM_Engine>(&e);double exchanged=1;
+        ASSERT_EQ(swmm_gw2d_get_ledger(h,SWMM_GW2D_LED_NODE,&exchanged),SWMM_OK);EXPECT_DOUBLE_EQ(exchanged,0);
+        ASSERT_EQ(e.end(),0);ASSERT_EQ(e.close(),0);
+    }
+}
+#endif

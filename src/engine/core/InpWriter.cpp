@@ -2243,7 +2243,10 @@ int writeInpFile(const SimulationContext&  ctx_internal,
             const auto& name = ctx.node_names.name_of(st.node_idx[r]);
             if (swmm5) { note("SWMM 5 export treats LID node " + name + " as plain storage"); continue; }
             if (!header) { sec(f, "LID_NODES"); header = true; }
-            std::fprintf(f, "%s %s %.17g\n", name.c_str(), ctx.lid_names.name_of(lid.control).c_str(), lid.initial_saturation);
+            std::fprintf(f, "%s %s %.17g", name.c_str(), ctx.lid_names.name_of(lid.control).c_str(), lid.initial_saturation);
+            if (lid.bottom != LidNodeBottom::Current)
+                std::fprintf(f, " BOTTOM %s", lid.bottom == LidNodeBottom::Sealed ? "SEALED" : "MESH_AQUIFER");
+            std::fprintf(f, "\n");
         }
         if (!ctx.lid_node_outlets.empty()) {
             if (swmm5) note("SWMM 5 export omits [LID_NODE_OUTLETS]");

@@ -642,7 +642,9 @@ CREATE TABLE IF NOT EXISTS lid_layer_treatment (
 );
 CREATE TABLE IF NOT EXISTS lid_nodes (
     simulation_id TEXT NOT NULL, node_id TEXT NOT NULL, lid_id TEXT NOT NULL,
-    initial_saturation REAL NOT NULL, PRIMARY KEY(simulation_id, node_id)
+    initial_saturation REAL NOT NULL,
+    bottom_mode INTEGER NOT NULL DEFAULT 0 CHECK(bottom_mode IN (0,1,2)),
+    PRIMARY KEY(simulation_id, node_id)
 );
 CREATE TABLE IF NOT EXISTS lid_richards_options (
     simulation_id TEXT NOT NULL, lid_id TEXT NOT NULL,
@@ -1408,6 +1410,15 @@ void create_schema(sqlite3* db) {
     exec(db, PART_A3_DDL);
     exec(db, PART_A4_DDL);
     exec(db, PART_A5_DDL);
+    // Saving into an older database retains all simulations and gives their
+    // old LID assignments the unchanged bottom behavior.
+    bool has_bottom = false;
+    auto columns = prepare(db, "PRAGMA table_info(lid_nodes)");
+    while (sqlite3_step(columns.get()) == SQLITE_ROW)
+        has_bottom |= column_text(columns.get(), 1) == "bottom_mode";
+    columns.reset();
+    if (!has_bottom)
+        exec(db, "ALTER TABLE lid_nodes ADD COLUMN bottom_mode INTEGER NOT NULL DEFAULT 0 CHECK(bottom_mode IN (0,1,2))");
     exec(db, PART_B_DDL);
     exec(db, PART_C_DDL);
     exec(db, PART_D_DDL);

@@ -110,7 +110,15 @@ void readNodes(SimulationContext& ctx, const std::vector<std::string>& lines) {
         auto t = input::Tokenizer::tokenize(line);
         if (t.empty()) continue;
         double sat = 0.0;
-        if (t.size() != 3 || !number(t[2], sat) || sat < 0.0 || sat > 100.0) {
+        LidNodeBottom bottom = LidNodeBottom::Current;
+        bool valid_bottom = t.size() == 3;
+        if (t.size() == 5 && input::Tokenizer::to_upper(t[3]) == "BOTTOM") {
+            const auto mode = input::Tokenizer::to_upper(t[4]);
+            valid_bottom = mode == "CURRENT" || mode == "SEALED" || mode == "MESH_AQUIFER";
+            if (mode == "SEALED") bottom = LidNodeBottom::Sealed;
+            if (mode == "MESH_AQUIFER") bottom = LidNodeBottom::MeshAquifer;
+        }
+        if (!valid_bottom || !number(t[2], sat) || sat < 0.0 || sat > 100.0) {
             ctx.errors.push_back("Invalid [LID_NODES] row: " + line); continue;
         }
         const int n = ctx.node_names.find(t[0]), c = ctx.lid_names.find(t[1]);
@@ -119,7 +127,7 @@ void readNodes(SimulationContext& ctx, const std::vector<std::string>& lines) {
         if (r < 0) { ctx.errors.push_back("[LID_NODES] requires a storage node: " + t[0]); continue; }
         auto& config = ctx.node_subtypes.storages.lid[r];
         if (config.control >= 0) { ctx.errors.push_back("Duplicate [LID_NODES] assignment: " + t[0]); continue; }
-        config = {c, sat};
+        config = {c, sat, bottom};
     }
 }
 void readOutlets(SimulationContext& ctx, const std::vector<std::string>& lines) {
@@ -311,6 +319,11 @@ void initializeInfiltration(SimulationContext& ctx, int node) {
 }
 void initialize(SimulationContext& ctx) {
     auto& st = ctx.node_subtypes.storages;
+    for (int r=0;r<st.count();++r) if (st.lid[r].control >= 0 && st.lid[r].bottom == LidNodeBottom::MeshAquifer) {
+        ctx.errors.push_back("LID node " + ctx.node_names.name_of(st.node_idx[r]) +
+            ": MESH_AQUIFER bottom requires the R5 signed-volume adapter and restart qualification; execution is not yet enabled");
+        return;
+    }
     const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
     const double rd = rainDepth(ctx), rf = ucf::Ucf[ucf::RAINFALL][us];
     for (int r = 0; r < st.count(); ++r) {
@@ -572,10 +585,17 @@ void finishStep(SimulationContext& ctx) {
 } // namespace openswmm::lidnode
 
 namespace openswmm::lidnode {
+LidNodeBottom bottomMode(const SimulationContext& c, int node) {
+    if (node < 0 || node >= c.n_nodes()) return LidNodeBottom::Current;
+    const int r = c.node_subtypes.storage_row(node);
+    return r >= 0 && c.node_subtypes.storages.lid[r].control >= 0
+        ? c.node_subtypes.storages.lid[r].bottom : LidNodeBottom::Current;
+}
 double bottomConductivity(const SimulationContext& c, int r) {
     if (r < 0) return 0.0;
     const auto& st = c.node_subtypes.storages;
     if (st.lid[r].control >= 0) {
+        if (st.lid[r].bottom != LidNodeBottom::Current) return 0.0;
         const auto stack = layers(c, st.lid[r].control);
         if (!stack.empty() && stack.back().kind == LidNodeLayerKind::Bottom) return stack.back().params[0];
     }

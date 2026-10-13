@@ -447,6 +447,10 @@ std::string Router::checkpointModel(const SimulationContext& c) const {
     for(int j=0;j<c.n_links();++j) {auto name=c.link_names.name_of(j);a(name);}
     for(std::size_t r=0;r<st.lid.size();++r) {
         a(st.lid[r].control,st.lid[r].initial_saturation);
+        // Keep CURRENT fingerprints byte-compatible with qualified R4 models.
+        if (st.lid[r].bottom != LidNodeBottom::Current) {
+            std::string bottom_owner="LID bottom owner";a(bottom_owner,st.lid[r].bottom);
+        }
         auto layers=lidnode::layers(c,st.lid[r].control);
         a.sequence(layers,[&](auto& layer){
             auto& m=layer.retention;auto& f=layer.flow;

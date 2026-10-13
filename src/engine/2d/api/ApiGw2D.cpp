@@ -44,6 +44,8 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <set>
+#include <unordered_map>
 
 namespace {
 
@@ -305,7 +307,8 @@ SWMM_ENGINE_API int swmm_gw2d_node_add(SWMM_Engine engine, const char* node,
     AQ_CFG(engine);
     AQ_EDITABLE(eng);
     if (!node || node[0] == '\0' || cell < -1) return SWMM_ERR_BADPARAM;
-    if (kc < 0.0 || dc < 0.0 || area < 0.0) return SWMM_ERR_BADPARAM;
+    if (!std::isfinite(kc) || !std::isfinite(dc) || !std::isfinite(area) ||
+        kc < 0.0 || dc < 0.0 || area < 0.0) return SWMM_ERR_BADPARAM;
     if (kc > 0.0 && dc <= 0.0) return SWMM_ERR_BADPARAM;   // a bed needs a thickness
     GwNodeBed b;
     b.cell   = cell;
@@ -373,6 +376,89 @@ SWMM_ENGINE_API int swmm_gw2d_node_remove(SWMM_Engine engine, int index) {
     if (index < static_cast<int>(names.size()))
         names.erase(names.begin() + index);
     return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gw2d_node_replace(SWMM_Engine engine,
+    const SWMM_GwNodeBed* expected, int expected_count,
+    const SWMM_GwNodeBed* replacement, int count,
+    const SWMM_LidNodeBottomEdit* bottoms, int bottom_count, int apply) {
+    AQ_CFG(engine);
+    AQ_EDITABLE(eng);
+    if (expected_count < 0 || count < 0 || bottom_count < 0 || apply < 0 || apply > 1 ||
+        (expected_count && !expected) || (count && !replacement) || (bottom_count && !bottoms))
+        return SWMM_ERR_BADPARAM;
+    const auto& names = eng->surfaceRouter2D().aquiferNodeNames();
+    auto matches = [&](const SWMM_GwNodeBed& r, std::size_t i) {
+        const auto& b = cfg.node_beds[i];
+        return r.node && i < names.size() && names[i] == r.node &&
+            r.cell == b.cell && r.locate == int(b.locate) && r.exchange == int(b.exchange) &&
+            r.automatic == int(b.automatic) && r.kc == b.Kc && r.dc == b.dC && r.area == b.area;
+    };
+    if (expected_count != static_cast<int>(cfg.node_beds.size())) return SWMM_ERR_BADPARAM;
+    for (int i = 0; i < expected_count; ++i)
+        if (!matches(expected[i], i)) return SWMM_ERR_BADPARAM;
+    try {
+        auto& c = eng->context();
+        std::vector<GwNodeBed> beds;
+        std::vector<std::string> next_names;
+        std::set<int> edited;
+        std::unordered_map<int,std::size_t> bed_index;
+        std::unordered_map<std::string,std::size_t> automatic_index;
+        for (std::size_t i=0;i<cfg.node_beds.size();++i)
+            if (cfg.node_beds[i].automatic && i<names.size()) automatic_index.emplace(names[i],i);
+        std::unordered_map<int, openswmm::LidNodeBottom> modes;
+        beds.reserve(count); next_names.reserve(count); modes.reserve(bottom_count);
+        for (int i = 0; i < count; ++i) {
+            const auto& r = replacement[i];
+            if (!r.node || !r.node[0] || r.cell < -1 || (!r.locate && r.cell < 0) ||
+                r.locate < 0 || r.locate > 1 || r.exchange < 0 || r.exchange > 1 ||
+                r.automatic < 0 || r.automatic > 1 || !std::isfinite(r.kc) ||
+                !std::isfinite(r.dc) || !std::isfinite(r.area) || r.kc < 0 || r.dc < 0 ||
+                r.area < 0 || (r.kc > 0 && r.dc <= 0)) return SWMM_ERR_BADPARAM;
+            const int node = c.node_names.find(r.node);
+            if (node < 0 || !bed_index.emplace(node,beds.size()).second) return SWMM_ERR_BADPARAM;
+            if (r.automatic) {
+                const auto old = automatic_index.find(r.node);
+                if (old == automatic_index.end() || !matches(r,old->second)) return SWMM_ERR_BADPARAM;
+            }
+            GwNodeBed b;
+            b.node=node; b.cell=r.cell; b.locate=r.locate; b.exchange=r.exchange;
+            b.automatic=r.automatic; b.Kc=r.kc; b.dC=r.dc; b.area=r.area;
+            beds.push_back(b); next_names.emplace_back(r.node);
+        }
+        for (int i = 0; i < bottom_count; ++i) {
+            const auto& e = bottoms[i];
+            if (e.node < 0 || e.node >= c.n_nodes() || e.mode < 0 || e.mode > 2 ||
+                !edited.insert(e.node).second) return SWMM_ERR_BADPARAM;
+            const int row = c.node_subtypes.storage_row(e.node);
+            if (row < 0 || c.node_subtypes.storages.lid[row].control < 0 ||
+                static_cast<int>(c.node_subtypes.storages.lid[row].bottom) != e.expected_mode)
+                return SWMM_ERR_BADPARAM;
+            modes.emplace(row, static_cast<openswmm::LidNodeBottom>(e.mode));
+        }
+        const auto& st = c.node_subtypes.storages;
+        for (int row = 0; row < st.count(); ++row) {
+            auto mode = st.lid[row].bottom;
+            const auto edit = modes.find(row);
+            if (edit != modes.end()) mode = edit->second;
+            if (st.lid[row].control < 0 || mode != openswmm::LidNodeBottom::MeshAquifer) continue;
+            if (cfg.empty() || cfg.options.per_subcatch || eng->surfaceRouter2D().options().groundwater == 0 ||
+                c.options.ignore_2d || c.options.ignore_routing || eng->surfaceRouter2D().mesh().n_cells()==0) return SWMM_ERR_BADPARAM;
+            const auto binding = bed_index.find(st.node_idx[row]);
+            if (binding == bed_index.end()) return SWMM_ERR_BADPARAM;
+            const auto& b = beds[binding->second];
+            if (!b.exchange || b.automatic || b.area <= 0) return SWMM_ERR_BADPARAM;
+        }
+        bool changed = count != expected_count;
+        for (int i = 0; !changed && i < count; ++i) changed = !matches(replacement[i], i);
+        if (!apply) return SWMM_OK;
+        // All fallible validation/allocation precedes this publication seam.
+        cfg.node_beds.swap(beds);
+        eng->surfaceRouter2D().aquiferNodeNames().swap(next_names);
+        for (const auto& edit : modes) c.node_subtypes.storages.lid[edit.first].bottom = edit.second;
+        if (changed) cfg.options.authored = true;
+        return SWMM_OK;
+    } catch (...) { return SWMM_ERR_INTERNAL; }
 }
 
 // ---------------------------------------------------------------------------

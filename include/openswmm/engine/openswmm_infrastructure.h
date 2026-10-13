@@ -693,7 +693,7 @@ enum SWMM_LidNodeLayerKind {
     SWMM_LID_NODE_AGGREGATE = 2, SWMM_LID_NODE_BOTTOM = 3
 };
 typedef struct SWMM_LidNodeLayer { int kind; double params[7]; } SWMM_LidNodeLayer;
-/** Alternative flow model. model=0 preserves standard SWMM layer drainage;
+/** Alternative flow model. model=0 preserves the existing layer formulation with backwater;
  * model=1 is conservative semi-discrete Richards with adaptive stiff BDF1.
  * atol is water-content fraction, rtol dimensionless, max_step seconds. */
 typedef struct SWMM_LidRichardsOptions {
@@ -734,6 +734,17 @@ SWMM_ENGINE_API int swmm_lid_node_layers_set(SWMM_Engine engine, int control, co
  * Get also accepts non-storage nodes, returning control=-1. InitSat is percent. */
 SWMM_ENGINE_API int swmm_node_get_lid(SWMM_Engine engine, int node, int* control, double* saturation);
 SWMM_ENGINE_API int swmm_node_set_lid(SWMM_Engine engine, int node, int control, double saturation);
+/** Per-node bottom owner, independent of a shared control. Old assignments
+ * use CURRENT. INP grammar: Node Control InitSat [BOTTOM CURRENT|SEALED|MESH_AQUIFER].
+ * Nondefault modes are written explicitly. MESH_AQUIFER can be authored but
+ * execution remains gated on the R5 signed-volume/restart qualification. */
+enum SWMM_LidNodeBottom {
+    SWMM_LID_BOTTOM_CURRENT=0, SWMM_LID_BOTTOM_SEALED=1, SWMM_LID_BOTTOM_MESH_AQUIFER=2
+};
+SWMM_ENGINE_API int swmm_node_get_lid_bottom(SWMM_Engine engine, int node, int* mode);
+/** BUILDING/OPENED; requires an assigned storage LID. Assignment/saturation
+ * edits preserve this mode; removing the assignment resets it to CURRENT. */
+SWMM_ENGINE_API int swmm_node_set_lid_bottom(SWMM_Engine engine, int node, int mode);
 /** layer=0 removes an anchor; otherwise layer is one-based, top-to-bottom.
  * top=0 anchors BOTTOM, top=1 anchors TOP. Requires exactly one LID endpoint. */
 SWMM_ENGINE_API int swmm_lid_node_outlet_get(SWMM_Engine engine, int link, int* layer, int* top);
