@@ -28,6 +28,7 @@
 #include <openswmm/engine/openswmm_controls.h>
 #include <openswmm/engine/openswmm_nodes.h>
 #include <openswmm/engine/openswmm_links.h>
+#include <openswmm/engine/openswmm_gages.h>
 
 // ============================================================================
 // Fixture — bare engine with a couple of nodes + a link so name resolution
@@ -69,6 +70,39 @@ TEST_F(ControlRuleValidateTest, AcceptsWellFormedRule) {
               SWMM_OK);
     EXPECT_STREQ(errbuf, "");
     EXPECT_EQ(line, -1);
+}
+
+TEST_F(ControlRuleValidateTest, RainfallValidationUsesLegacyGrammarWithoutMutatingRules) {
+    ASSERT_GE(swmm_gage_add(engine, "RG"), 0);
+    const int before = swmm_control_count(engine);
+    for (const auto* attribute : {"INTENSITY", "24-HR_DEPTH", "48-HR_DEPTH", "24", "3-DAY_DEPTH"}) {
+        const std::string rule = std::string("RULE Rain\nIF GAGE RG ") + attribute +
+            " > .5\nTHEN PUMP P1 STATUS = ON";
+        char message[256] = {}; int line = -1;
+        EXPECT_EQ(swmm_control_validate_rule(engine, rule.c_str(), message, sizeof(message), &line), SWMM_OK)
+            << attribute << ": " << message;
+        EXPECT_EQ(swmm_control_count(engine), before);
+    }
+    for (const auto* attribute : {"49-HR_DEPTH", "72", "0", "nan", "999999999999999999999"}) {
+        const std::string rule = std::string("RULE Rain\nIF GAGE RG ") + attribute +
+            " > .5\nTHEN PUMP P1 STATUS = ON";
+        char message[256] = {}; int line = -1;
+        EXPECT_EQ(swmm_control_validate_rule(engine, rule.c_str(), message, sizeof(message), &line), SWMM_ERR_BADPARAM);
+        EXPECT_EQ(line, 2);
+        EXPECT_NE(std::string(message).find("1 to 48"), std::string::npos);
+        EXPECT_EQ(swmm_control_count(engine), before);
+    }
+}
+
+TEST_F(ControlRuleValidateTest, RainfallRulesParticipateInReferenceDiscovery) {
+    ASSERT_GE(swmm_gage_add(engine, "RG"), 0);
+    ASSERT_EQ(swmm_control_add_rule(engine,
+        "RULE Rain\nIF GAGE RG 24-HR_DEPTH > .5\nTHEN PUMP P1 STATUS = ON"), SWMM_OK);
+    int count = 4, references[4] = {};
+    ASSERT_EQ(swmm_control_find_references(engine, "rg", references, &count), SWMM_OK);
+    ASSERT_EQ(count, 1);
+    EXPECT_EQ(references[0], 0);
+    EXPECT_EQ(swmm_control_count(engine), 1);
 }
 
 // ============================================================================

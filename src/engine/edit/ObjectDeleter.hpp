@@ -89,7 +89,7 @@ CascadeResult analyze_hydrograph_impact(const SimulationContext& ctx, const std:
  * @brief Find control rules whose text references an object by name.
  *
  * @details Scans each rule's premise/action clauses for an object-type
- *          keyword (NODE, LINK, CONDUIT, PUMP, ORIFICE, WEIR, OUTLET)
+ *          keyword (NODE, LINK, CONDUIT, PUMP, ORIFICE, WEIR, OUTLET, GAGE)
  *          followed by @p object_name (case-insensitive, matching legacy
  *          rule parsing). Read-only; rule text is never modified by any
  *          delete — the caller decides what to do with affected rules.

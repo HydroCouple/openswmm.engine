@@ -819,6 +819,12 @@ int SWMMEngine::initialize() noexcept {
     // reset_state() applies init_depth to depth/old_depth/head but volumes need
     // separate computation using node geometry tables.
     ctx_.reset_state();
+    // These clocks belong to the engine rather than the context. A fresh
+    // open/re-initialize must begin booking rain at elapsed time zero.
+    old_runoff_time_ = new_runoff_time_ = 0.0;
+    old_runoff_ms_ = new_runoff_ms_ = new_rule_time_ms_ = 0.0;
+    prev_runoff_step_sec_ = 0.0;
+    has_runoff_ = has_snow_ = false;
 
     // MIN_SURFAREA is a project OPTION, and the junction storage convention was
     // not reading it. Legacy keeps no junction storage at all (node_getVolume
@@ -1979,6 +1985,10 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         accumulateAvgResults();
     }
 
+    // Keep a one-step API prescription through the output snapshot, then
+    // expire it before callbacks can prescribe the following routing step.
+    std::fill(ctx_.gages.api_rainfall.begin(), ctx_.gages.api_rainfall.end(), -1.0);
+
 #ifdef OPENSWMM_HAS_2D
     surface_router_.expireRuntime(runtimeCouplingTime());
 #endif
@@ -2370,14 +2380,6 @@ void SWMMEngine::stepRunoff(double dt_routing) {
             }
         }
 
-        // A2f. Apply rainfall adjustment to all gages
-        {
-            double rain_factor = ctx_.adjust_rain[mon];
-            if (rain_factor != 1.0) {
-                for (int g = 0; g < ctx_.n_gages(); ++g)
-                    ctx_.gages.rainfall[static_cast<std::size_t>(g)] *= rain_factor;
-            }
-        }
 #ifdef OPENSWMM_HAS_2D
         // The 2D integrates exactly the rates this runoff step applies, from
         // its start, so mesh and subcatchments receive the same gage depth.
@@ -2449,6 +2451,11 @@ void SWMMEngine::stepRunoff(double dt_routing) {
             new_runoff_time_ = total_sec;
         }
         if (new_runoff_ms_ > total_ms) new_runoff_ms_ = total_ms;
+
+        // Legacy runoff.c:241: book the resolved rates once, after the
+        // actual runoff duration is known. USE RUNOFF returns before this
+        // update in legacy and retains its zero history here as well.
+        gage::updatePastRain(ctx_, static_cast<int>(dt_runoff));
 
         // A2a. RDII convolution at wet weather step (matching legacy RdiiStep = WetStep).
         //      Legacy pre-computes RDII in createRdiiFile() at WetStep cadence;
@@ -8085,10 +8092,18 @@ void SWMMEngine::applyForcings(double dt) noexcept {
     // ---- Gage rainfall forcing (before runoff substeps read gages) ----
     for (int g = 0; g < ctx_.n_gages(); ++g) {
         auto ug = static_cast<std::size_t>(g);
+        if (ctx_.options.ignore_rainfall && f.gage_rainfall_mode[ug] != ForcingMode::NONE) {
+            ctx_.gages.rainfall[ug] = 0.0;
+            continue;
+        }
         if (f.gage_rainfall_mode[ug] == ForcingMode::OVERRIDE) {
             ctx_.gages.rainfall[ug] = f.gage_rainfall_value[ug];
         } else if (f.gage_rainfall_mode[ug] == ForcingMode::ADD) {
-            ctx_.gages.rainfall[ug] += f.gage_rainfall_value[ug];
+            // A held runoff rate already includes the previous forcing.
+            // Resolve the unforced cached gage rate so routing-only steps
+            // do not repeatedly add the same prescription to INTENSITY.
+            ctx_.gages.rainfall[ug] = gage::getReportRainfall(ctx_, g, ctx_.current_date)
+                                      + f.gage_rainfall_value[ug];
         }
     }
 

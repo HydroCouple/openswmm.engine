@@ -138,7 +138,7 @@ static bool iequals(const std::string& a, const std::string& b) {
 std::vector<int> find_control_rule_refs(const SimulationContext& ctx,
                                         const std::string& object_name) {
     static const char* kObjectKeywords[] = {
-        "NODE", "LINK", "CONDUIT", "PUMP", "ORIFICE", "WEIR", "OUTLET"};
+        "NODE", "LINK", "CONDUIT", "PUMP", "ORIFICE", "WEIR", "OUTLET", "GAGE"};
 
     std::vector<int> hits;
     if (object_name.empty()) return hits;
@@ -303,6 +303,7 @@ CascadeResult analyze_gage_impact(const SimulationContext& ctx, int gage_idx) {
             result.add(SWMM_REF_SUBCATCH, i, "gage", false);
     }
     const std::string& gage_name = ctx.gage_names.name_of(gage_idx);
+    add_rule_refs(ctx, gage_name, result);
     if (!gage_name.empty()) {
         for (std::size_t i = 0; i < ctx.unit_hyds.gage_names.size(); ++i)
             if (ctx.unit_hyds.gage_names[i] == gage_name)
@@ -690,6 +691,7 @@ CascadeResult delete_subcatch(SimulationContext& ctx, int sc_idx) {
 
 CascadeResult delete_gage(SimulationContext& ctx, int gage_idx) {
     CascadeResult result;
+    add_rule_refs(ctx, ctx.gage_names.name_of(gage_idx), result);
 
     // --- Step 1: nullify subcatch gage references ---
     const int nsc = ctx.n_subcatches();

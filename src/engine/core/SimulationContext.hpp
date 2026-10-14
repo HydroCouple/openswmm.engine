@@ -1879,6 +1879,11 @@ struct SimulationContext {
         // Clear SoA stores
         nodes      = NodeData{};
         links      = LinkData{};
+        // Reopening a rain-rule model must not reuse the previous subtype
+        // join rows or append its rules to the freshly parsed rule store.
+        node_subtypes.clear();
+        link_subtypes.clear();
+        control_rules = ControlRuleStore{};
         subcatches = SubcatchData{};
         gages      = GageData{};
         pollutants = PollutantData{};

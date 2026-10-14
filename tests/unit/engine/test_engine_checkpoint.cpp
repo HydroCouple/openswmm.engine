@@ -413,6 +413,72 @@ TEST(EngineCheckpoint, RunoffRainfallAndLegacyLIDContinuationPreservePendingWate
     }
 }
 
+TEST(EngineCheckpoint, RainRulesRetainCompletedHoursAndPartialHourAcrossRestart) {
+    const std::string deck =
+        "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
+        "START_DATE 01/01/2026\nEND_DATE 01/01/2026\nEND_TIME 03:05:00\n"
+        "ROUTING_STEP 300\nVARIABLE_STEP 0\nWET_STEP 00:05:00\nDRY_STEP 00:05:00\n"
+        "IGNORE_QUALITY YES\nIGNORE_2D YES\nIGNORE_GROUNDWATER YES\nIGNORE_SNOWMELT YES\n"
+        "[RAINGAGES]\nRG INTENSITY 1:00 1 TIMESERIES Rain\n"
+        "[SUBCATCHMENTS]\nS RG Out 1 100 100 1 0\n[SUBAREAS]\nS .015 .1 0 0 100 OUTLET\n"
+        "[INFILTRATION]\nS 3 .5 4 7 0\n[STORAGE]\nTank 10 10 0 FUNCTIONAL 0 0 1000\n"
+        "[OUTFALLS]\nOut 0 FREE NO\n[ORIFICES]\nValve Tank Out SIDE 0 .65 NO 0\n"
+        "[XSECTIONS]\nValve CIRCULAR 1 0 0 0\n"
+        "[TIMESERIES]\nRain 01/01/2026 00:00 1\nRain 01/01/2026 01:00 1\n"
+        "Rain 01/01/2026 02:00 1\nRain 01/01/2026 03:00 1\n"
+        "[CONTROLS]\nVARIABLE Past48 = GAGE RG 48-HR_DEPTH\n"
+        "RULE Wet\nIF Past48 > GAGE RG 1-HR_DEPTH\nTHEN ORIFICE Valve SETTING = .5\n"
+        "ELSE ORIFICE Valve SETTING = 0\n[REPORT]\nINPUT NO\nNODES NONE\nLINKS NONE\n";
+    auto input = root()/"rain-rule-hours.inp"; write(input, deck);
+    auto initialize = [&](SWMMEngine& e) {
+        ASSERT_EQ(e.open(input.string().c_str(), nullptr, nullptr), 0);
+        ASSERT_EQ(e.initialize(), 0); ASSERT_EQ(e.start(0), 0);
+        ASSERT_EQ(e.enableCheckpointing(), "");
+    };
+    SWMMEngine a, b; initialize(a); initialize(b);
+    while(a.context().current_time < 5400) ASSERT_NO_THROW(step(a));
+    EXPECT_NEAR(a.context().gages.past_rain[0], 1, 1e-12);
+    EXPECT_GT(a.context().gages.past_rain_interval[0], 0);
+    auto checkpoint = root()/"rain-rule-hours.chk";
+    ASSERT_EQ(a.saveCheckpoint(checkpoint.string()), "");
+    ASSERT_EQ(b.loadCheckpoint(checkpoint.string()), "");
+    while(a.context().elapsed_ms < a.context().options.totalDurationMs()) {
+        ASSERT_NO_THROW(step(a));
+        ASSERT_NO_THROW(step(b));
+        EXPECT_EQ(a.context().gages.past_rain, b.context().gages.past_rain);
+        EXPECT_EQ(a.context().gages.past_rain_accum, b.context().gages.past_rain_accum);
+        EXPECT_EQ(a.context().gages.past_rain_interval, b.context().gages.past_rain_interval);
+        EXPECT_EQ(a.context().links.setting, b.context().links.setting);
+    }
+    EXPECT_DOUBLE_EQ(a.context().links.setting[0], .5);
+    // The former record stored absolute calendar seconds; it cannot be
+    // interpreted as the new partial-hour interval. Reject it atomically.
+    detail::CompletedSourceArchive archive(bytes(checkpoint));
+    std::string magic, model, payload; uint32_t version, checksum;
+    archive(magic, version, model, checksum, payload); archive.finish();
+    auto marker = payload.find("engine runoff/rainfall boundary v4");
+    ASSERT_NE(marker, std::string::npos); payload[marker + std::string("engine runoff/rainfall boundary v").size()] = '3';
+    checksum = crc(payload); detail::CompletedSourceArchive old; old(magic, version, model, checksum, payload);
+    auto incompatible = root()/"rain-rule-old-record.chk"; write(incompatible, old.bytes());
+    SWMMEngine fresh; initialize(fresh);
+    EXPECT_FALSE(fresh.loadCheckpoint(incompatible.string()).empty());
+    EXPECT_EQ(fresh.context().current_time, 0);
+    EXPECT_DOUBLE_EQ(fresh.context().gages.past_rain_interval[0], 0);
+    SWMMEngine repeat;
+    for(int run=0;run<2;++run) {
+        ASSERT_EQ(repeat.open(input.string().c_str(), nullptr, nullptr),0);
+        EXPECT_EQ(repeat.context().control_rules.count(),2); // VARIABLE block plus RULE
+        EXPECT_EQ(repeat.context().link_subtypes.orifices.count(),1);
+        ASSERT_EQ(repeat.initialize(),0);
+        ASSERT_EQ(repeat.start(0),0);
+        while(repeat.context().current_time<5400)ASSERT_NO_THROW(step(repeat));
+        EXPECT_NEAR(repeat.context().gages.past_rain[0],1,1e-12);
+        EXPECT_DOUBLE_EQ(repeat.context().gages.past_rain[1],0);
+        ASSERT_EQ(repeat.end(),0);
+        ASSERT_EQ(repeat.close(),0);
+    }
+}
+
 TEST(EngineCheckpoint, RunoffCorruptionAndUnsupportedProfilesPreserveFreshTargets) {
     SWMMEngine a;
     ASSERT_NO_THROW(startRunoff(a,"runoff-atomic-source",2,2,2));
@@ -420,7 +486,7 @@ TEST(EngineCheckpoint, RunoffCorruptionAndUnsupportedProfilesPreserveFreshTarget
     auto good=root()/"runoff-atomic.chk";ASSERT_EQ(a.saveCheckpoint(good.string()),"");
     detail::CompletedSourceArchive in(bytes(good));std::string magic,model,payload;uint32_t version,sum;
     in(magic,version,model,sum,payload);in.finish();
-    const std::string tag="engine runoff/rainfall boundary v3";auto begin=payload.find(tag);ASSERT_NE(begin,std::string::npos);
+    const std::string tag="engine runoff/rainfall boundary v4";auto begin=payload.find(tag);ASSERT_NE(begin,std::string::npos);
     begin+=tag.size();detail::CompletedSourceArchive water_in(payload.substr(begin));std::string water,units;water_in(water,units);
     const auto runoff_at=begin+sizeof(uint64_t),lid_at=runoff_at+water.size()+sizeof(uint64_t);
     const auto sub_at=lid_at+units.size();

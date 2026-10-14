@@ -23,6 +23,11 @@ retroactive.
 
 ## [Unreleased]
 
+### Rain gage control rules (2026-10-14)
+
+- Restore legacy `GAGE id INTENSITY` and `GAGE id n-HR_DEPTH` behavior in 6.0.0, including completed-hour accumulation, exact-hour timing, lookback parameters in numeric and modulated rules, named variables, and variable comparisons. Keep the 1–48-hour limit; reject longer requests instead of falling back to one hour.
+- Include API-prescribed and shared-gage rainfall in history and retain legacy monthly adjustment timing. Report rain-gage rule dependencies during deletion checks. Engine checkpoints now use rainfall boundary record v4; older rainfall records are rejected because their timing field has a different meaning. Ordinary hotstart behavior is unchanged.
+
 ### Surface–subsurface ET (2026-10-05)
 
 - Spatial aquifers now resolve automatic groundwater ET to `BOTH` and automatic conduit exchange to `TWO_WAY`. Explicit `GW_ET NONE`, `LINK_SEEPAGE NONE` / `ONE_WAY`, and `GROUNDWATER NO` remain opt-outs. Legacy explicitly authored `LINK_SEEPAGE AUTO` still means one-way and saves as `ONE_WAY`; new automatic authoring uses `DEFAULT`.

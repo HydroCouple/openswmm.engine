@@ -85,7 +85,7 @@ enum class ConditionVar : int {
 
     // Gage attributes
     GAGE_RAIN      = 30,      ///< Current rainfall intensity
-    GAGE_RAIN_PAST = 31,      ///< Past n-hours rainfall (n stored in idx field)
+    GAGE_RAIN_PAST = 31,      ///< Past n-hours rainfall (n stored in parameter field)
 
     // System / time
     SIM_TIME       = 40,
@@ -125,6 +125,7 @@ struct Premise {
     bool         rhs_is_variable = false;
     ConditionVar rhs_var       = ConditionVar::NODE_DEPTH;
     int          rhs_idx       = -1;
+    int          rhs_param     = 0;          ///< Extra parameter for RHS gage depth
     double       rhs_value     = 0.0;
 };
 
@@ -164,6 +165,7 @@ struct NamedVariable {
     std::string  name;
     ConditionVar var;
     int          idx = -1;
+    int          param = 0;
 };
 
 // ============================================================================
@@ -244,7 +246,7 @@ public:
     void clearRules();
 
     // Named variables
-    void addNamedVariable(const std::string& name, ConditionVar var, int idx);
+    void addNamedVariable(const std::string& name, ConditionVar var, int idx, int param = 0);
 
     // Math expressions
     int addExpression(const std::string& name, const std::string& formula);
@@ -281,6 +283,7 @@ public:
         std::vector<int>    rule_idx;     ///< Which rule this premise belongs to
         std::vector<int>    premise_idx;  ///< Position within the rule's premise list
         std::vector<int>    obj_idx;      ///< Object index (node/link/gage)
+        std::vector<int>    param;        ///< Requested gage history hours
         std::vector<int>    flat_idx;     ///< Position in flat premise_results_ cache
         std::vector<int>    op;           ///< CompareOp as int
         std::vector<double> rhs_value;    ///< RHS threshold value

@@ -261,7 +261,7 @@ CheckpointInspection::Reports inspectReports(std::string bytes,bool mesh,
     X(snow_melt_imperv) X(snow_melt_perv) X(snow_melt_age_imperv) X(snow_melt_age_perv)
 #define GAGE_WATER(X) \
     X(rainfall) X(next_rainfall) X(api_rainfall) X(next_rain_date) X(is_raining) X(st_cur) X(st_next) X(st_rain) \
-    X(st_init) X(st_used) X(past_rain) X(past_rain_accum) X(past_rain_time) X(cumul_rain_accum)
+    X(st_init) X(st_used) X(past_rain) X(past_rain_accum) X(past_rain_interval) X(cumul_rain_accum)
 #define LID_USAGE_WATER(X) \
     X(wb_inflow) X(wb_evap) X(wb_infil) X(wb_surf_flow) X(wb_drain_flow) X(wb_init_vol) X(wb_final_vol)
 #define RUNOFF_ENGINE(X) \
@@ -366,8 +366,8 @@ struct SWMMEngine::RestartState {
                             &avg.link_flow,&avg.link_depth,&avg.link_velocity,&avg.link_volume,&avg.link_capacity})finite(*row);
         a.sequence(pending,[&](auto& p){fields(a,p.link_idx,p.value,p.priority,p.rule_idx,p.type);});
         fields(a,slots,action_count,control_scratch);
-        std::string marker="engine runoff/rainfall boundary v3";a(marker);
-        require(marker=="engine runoff/rainfall boundary v3","Invalid engine hydrology record.");
+        std::string marker="engine runoff/rainfall boundary v4";a(marker);
+        require(marker=="engine runoff/rainfall boundary v4","Invalid engine hydrology record.");
         std::string water,units;
         if(!a.reading()) {Archive r,l;runoff.checkpoint(r,false);lid.checkpoint(l,false,true);water=r.bytes();units=l.bytes();}
         a(water,units);
@@ -454,6 +454,8 @@ struct SWMMEngine::RestartState {
             for(double v:*row)require(v>=0,"Negative engine subcatchment water.");
         for(const auto* row:{&gages.rainfall,&gages.next_rainfall,&gages.st_rain,&gages.past_rain,&gages.past_rain_accum,&gages.cumul_rain_accum})
             for(double v:*row)require(v>=0,"Negative engine rainfall history.");
+        for(double v:gages.past_rain_interval)
+            require(v>=0 && v<=3600 && std::floor(v)==v,"Invalid rainfall partial-hour duration.");
         for(std::size_t i=0;i<gages.st_cur.size();++i) {
             auto count=e.ctx_.tables.tables[gages.ts_index[i]].size();
             require(gages.st_cur[i]>=-2 && (gages.st_cur[i]<0 || std::size_t(gages.st_cur[i])<count) &&
@@ -688,12 +690,12 @@ std::string SWMMEngine::checkpointModel() const {
     auto cr=controls_.rules_;auto named=controls_.named_vars_;
     a.sequence(cr,[&](auto& r){
         a(r.name,r.priority);
-        a.sequence(r.premises,[&](auto& p){a(p.logic,p.is_expression,p.expr_idx,p.lhs_var,p.lhs_idx,p.lhs_param,p.op,p.rhs_is_variable,p.rhs_var,p.rhs_idx,p.rhs_value);});
+        a.sequence(r.premises,[&](auto& p){a(p.logic,p.is_expression,p.expr_idx,p.lhs_var,p.lhs_idx,p.lhs_param,p.op,p.rhs_is_variable,p.rhs_var,p.rhs_idx,p.rhs_param,p.rhs_value);});
         for(auto* list:{&r.then_actions,&r.else_actions})a.sequence(*list,[&](auto& v){
             a(v.link_idx,v.rule_idx,v.type,v.curve_idx,v.tseries_idx,v.pid_idx,v.value);
         });
     });
-    a.sequence(named,[&](auto& n){a(n.name,n.var,n.idx);});
+    a.sequence(named,[&](auto& n){a(n.name,n.var,n.idx,n.param);});
     auto pid=controls_.pid_states_;
     a.sequence(pid,[&](auto& p){fields(a,p.kp,p.ki,p.kd,p.action_idx);});
     auto pumps=ctx_.link_subtypes.pumps;auto orifices=ctx_.link_subtypes.orifices;

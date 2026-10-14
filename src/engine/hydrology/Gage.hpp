@@ -81,7 +81,7 @@ struct GageState {
 
     double past_rain[MAXPASTRAIN] = {}; ///< Past hourly rainfall totals
     double past_rain_accum = 0.0;       ///< Accumulator for current hour
-    double past_rain_time  = 0.0;       ///< Time of last past-rain update
+    double past_rain_interval = 0.0;    ///< Seconds in the current partial hour (0..3600)
 };
 
 // ============================================================================
@@ -211,9 +211,13 @@ PrecipSplit splitPrecip(const SimulationContext& ctx, std::size_t sub);
  * @brief Update past n-hour rainfall accumulation.
  *
  * @param state      [in/out] Gage state.
- * @param current_time  Current simulation time (seconds from start).
+ * @param time_step  Actual runoff interval in integer seconds.
  */
-void updatePastRain(GageState& state, double current_time);
+void updatePastRain(GageState& state, int time_step);
+
+/// Accumulate the resolved gage rates over the actual runoff step in seconds.
+/// Mirrors legacy gage_updatePastRain, including its exact-hour rollover.
+void updatePastRain(SimulationContext& ctx, int time_step);
 
 /**
  * @brief Get past n-hour rainfall total.
