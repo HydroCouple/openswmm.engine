@@ -46,20 +46,31 @@ std::string HourlyMeteorology::read(std::istream& stream) {
 }
 std::string HourlyMeteorology::average(double start, double seconds, std::array<double, 5>& result) const {
     if (!std::isfinite(start) || !std::isfinite(seconds) || seconds <= 0 || records_.empty()) return "Invalid hourly meteorology request.";
-    constexpr double tolerance = 1e-5 / 86400.;
-    const double finish = start + seconds / 86400.;
-    if (!std::isfinite(finish) || start < records_.front().date - tolerance || finish > records_.back().date + 1./24 + tolerance)
+    constexpr double tolerance = 1e-5;
+    // Integrate in seconds. Adding a sub-microsecond snow remainder to an
+    // OLE day number can round the end back to the start, giving zero
+    // coverage and NaNs after normalization. Records are consecutive hours
+    // (validated by read), so their integer offsets also avoid tiny gaps.
+    double offset = (start - records_.front().date) * 86400.;
+    const double nearest_hour = std::round(offset / 3600.) * 3600.;
+    if (std::abs(offset - nearest_hour) <= tolerance) offset = nearest_hour;
+    const double available = static_cast<double>(records_.size()) * 3600.;
+    if (!std::isfinite(offset) || offset < -tolerance || offset >= available ||
+        seconds > available - offset + tolerance)
         return "Hourly meteorology does not cover the requested simulation interval.";
-    auto it = std::upper_bound(records_.begin(), records_.end(), start + tolerance,
-        [](double date, const HourlyMetRecord& r) { return date < r.date; });
-    if (it != records_.begin()) --it;
+    offset = std::max(0., offset);
+    auto index = static_cast<std::size_t>(offset / 3600.);
+    double within_hour = offset - static_cast<double>(index) * 3600.;
+    double remaining = seconds;
     std::array<double, 5> sum{}; double elapsed = 0;
-    for (; it != records_.end() && it->date < finish; ++it) {
-        const double duration = std::max(0., (std::min(finish, it->date + 1./24) - std::max(start, it->date)) * 86400.);
-        for (int i = 0; i < 5; ++i) sum[i] += duration * it->values[i];
+    for (; index < records_.size() && remaining > 0; ++index) {
+        const double duration = std::min(remaining, 3600. - within_hour);
+        for (int i = 0; i < 5; ++i) sum[i] += duration * records_[index].values[i];
         elapsed += duration;
+        remaining -= duration;
+        within_hour = 0;
     }
-    if (std::abs(elapsed - seconds) > 1e-4) return "Hourly meteorology interval has incomplete coverage.";
+    if (!(elapsed > 0) || remaining > tolerance) return "Hourly meteorology interval has incomplete coverage.";
     // Normalize by covered duration to avoid day-number cancellation drift.
     for (auto& v : sum) v /= elapsed;
     result = sum; return {};

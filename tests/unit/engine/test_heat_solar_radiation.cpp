@@ -937,6 +937,27 @@ TEST(SharedRadiation, HourlyWeatherConservesIntervalsAndRejectsGapsAtomically) {
     EXPECT_FALSE(met.read(invalid).empty());
 }
 
+TEST(SharedRadiation, HourlyWeatherResolvesSubMicrosecondBoundaryRemainders) {
+    openswmm::climate::HourlyMeteorology met;
+    std::istringstream input("02/01/2026 11:00 6 80 3 180 330\n"
+                             "02/01/2026 12:00 8 80 3 220 335\n");
+    ASSERT_TRUE(met.read(input).empty());
+    const double noon = openswmm::datetime::encodeDate(2026, 2, 1) + .5;
+    std::array<double, 5> values{};
+    // A held snow interval can leave a positive duration smaller than one
+    // representable day-number increment at an hourly forcing boundary.
+    for (double start : {noon, std::nextafter(noon, 0.0)}) {
+        ASSERT_TRUE(met.average(start, 1e-7, values).empty());
+        EXPECT_EQ(values, (std::array<double, 5>{8, 80, 3, 220, 335}));
+    }
+    ASSERT_TRUE(met.average(noon - 1./86400, 2, values).empty());
+    EXPECT_NEAR(values[0], 7, 1e-6);
+    EXPECT_NEAR(values[3], 200, 1e-5);
+    const auto accepted = values;
+    EXPECT_FALSE(met.average(noon + 1./24, 1, values).empty());
+    EXPECT_EQ(values, accepted);
+}
+
 TEST(SharedRadiation, MetFilePrecedesSeriesAndComputedWithoutChangingClimateClock) {
     openswmm::SimulationContext ctx;
     const auto day = openswmm::datetime::encodeDate(2026, 1, 1);
