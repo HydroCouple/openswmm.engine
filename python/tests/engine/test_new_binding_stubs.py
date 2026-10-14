@@ -7,7 +7,7 @@ import pytest
 import openswmm.engine
 
 
-@pytest.mark.parametrize('module', ['_transport', '_groundwater', '_gw_transport', '_surface_quality'])
+@pytest.mark.parametrize('module', ['_transport', '_groundwater', '_gw_transport', '_surface_quality', '_snow', '_snow2d', '_checkpoint'])
 def test_new_view_stub_signatures(module):
     runtime = importlib.import_module('openswmm.engine.' + module)
     stub = Path(openswmm.engine.__file__).with_name(module + '.pyi')

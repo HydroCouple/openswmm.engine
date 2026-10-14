@@ -243,7 +243,8 @@ from ._inflows import Inflows
 from ._controls import Controls
 from ._forcing import Forcing
 from ._climate import Climate
-from ._snow import Snow, MeshSnow
+from ._snow import Snow
+from ._checkpoint import Checkpoints
 
 # =============================================================================
 # Transport processes — heat, water age, reactions, process components
@@ -274,6 +275,7 @@ from ._spatial import Spatial
 try:
     from ._2d import (Surface2D, Infiltration2DView, Infil2DDefaults,
                       Infil2DRow, Infil2DCell, InitialQuality2D, BoundaryQuality2D)
+    from ._snow2d import MeshSnow
     HAS_2D = True
 except ModuleNotFoundError as error:
     if error.name != __name__ + "._2d":
@@ -360,7 +362,7 @@ __all__ = [
     "HotStart", "MassBalance", "Statistics", "OutputReader",
     # --- Hydrology, water quality, and time-varying inputs ---
     "Pollutants", "Quality", "Tables", "Patterns", "Inflows", "Controls", "Forcing",
-    "Climate", "Snow", "MeshSnow", "InitialQuality", "InitialQualityEntry",
+    "Climate", "Snow", "MeshSnow", "Checkpoints", "InitialQuality", "InitialQualityEntry",
     # --- Transport processes — heat, water age, reactions ---
     "Heat", "HeatNodeOverride",
     "WaterAge", "WaterAgeOverride",
@@ -419,7 +421,7 @@ __all__ += ['Transport', 'ThreadInfo', 'EffectiveThreads', 'TransportCell', 'Tra
 
 if not HAS_2D:
     __all__ = [name for name in __all__ if name not in {
-        "Surface2D", "Infiltration2DView", "Infil2DDefaults", "Infil2DRow", "Infil2DCell"}]
+        "Surface2D", "Infiltration2DView", "Infil2DDefaults", "Infil2DRow", "Infil2DCell", "MeshSnow"}]
 if HAS_GEOPACKAGE:
     __all__.append("GeoPackage")
 

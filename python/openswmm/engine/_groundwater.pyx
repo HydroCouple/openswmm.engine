@@ -4,6 +4,7 @@ Authored aquifer and node-bed values use project units. Runtime hydrology uses
 SI (metres, seconds, cubic metres); species concentrations use mass per cubic
 metre of zone water. Edit before initialize and read active state after start.
 """
+from libc.stdlib cimport malloc, free
 from dataclasses import dataclass
 from collections.abc import MutableMapping
 import numpy as np
@@ -27,6 +28,20 @@ cdef extern from "openswmm/engine/openswmm_gw2d.h":
     int swmm_gw2d_row_set_property(SWMM_Engine engine, int index, const char* key, double value) nogil
     int swmm_gw2d_row_get_property(SWMM_Engine engine, int index, const char* key, double* value) nogil
     int swmm_gw2d_row_remove(SWMM_Engine engine, int index) nogil
+    ctypedef struct SWMM_GwNodeBed:
+        const char* node
+        int cell
+        int locate
+        int exchange
+        int automatic
+        double kc
+        double dc
+        double area
+    ctypedef struct SWMM_LidNodeBottomEdit:
+        int node
+        int expected_mode
+        int mode
+    int swmm_gw2d_node_replace(SWMM_Engine,const SWMM_GwNodeBed*,int,const SWMM_GwNodeBed*,int,const SWMM_LidNodeBottomEdit*,int,int)
     int swmm_gw2d_node_count(SWMM_Engine engine, int* count) nogil
     int swmm_gw2d_node_add(SWMM_Engine engine, const char* node, int cell, double kc, double dc, double area) nogil
     int swmm_gw2d_node_get(SWMM_Engine engine, int index, char* node, int nodelen, int* cell, double* kc, double* dc, double* area) nogil
@@ -184,6 +199,58 @@ class Groundwater(EngineView):
             rows.append(AquiferNode(node.decode('utf-8'), cell, kc, dc, area,
                                     bool(locate), bool(exchange), bool(automatic)))
         return tuple(rows)
+
+    def replace_nodes(self, expected, replacement, *, bottoms=(), apply=True):
+        """Atomic compare/replace of the entire bed list and LID bottom owners.
+
+        expected/replacement are AquiferNode rows in project units. bottoms
+        contains (node index, expected mode, new mode) triples (0/1/2). apply=False
+        validates privately. Stale or invalid edits leave all rows unchanged;
+        automatic rows may only be retained unchanged.
+        """
+        expected=list(expected);replacement=list(replacement);bottoms=list(bottoms)
+        cdef int ne=len(expected), nr=len(replacement), nb=len(bottoms), i
+        cdef SWMM_GwNodeBed* old=NULL
+        cdef SWMM_GwNodeBed* new=NULL
+        cdef SWMM_LidNodeBottomEdit* edits=NULL
+        names=[]
+        for row in expected+replacement:
+            name=row.node.encode('utf-8')
+            if b'\0' in name:raise ValueError('Node name contains NUL')
+            names.append(name)
+        try:
+            if ne:
+                old=<SWMM_GwNodeBed*>malloc(ne*sizeof(SWMM_GwNodeBed))
+                if old==NULL:raise MemoryError()
+            if nr:
+                new=<SWMM_GwNodeBed*>malloc(nr*sizeof(SWMM_GwNodeBed))
+                if new==NULL:raise MemoryError()
+            if nb:
+                edits=<SWMM_LidNodeBottomEdit*>malloc(nb*sizeof(SWMM_LidNodeBottomEdit))
+                if edits==NULL:raise MemoryError()
+            for i in range(ne):
+                old[i].node=names[i]
+                old[i].cell=expected[i].cell
+                old[i].locate=expected[i].locate
+                old[i].exchange=expected[i].exchange
+                old[i].automatic=expected[i].automatic
+                old[i].kc=expected[i].kc
+                old[i].dc=expected[i].dc
+                old[i].area=expected[i].area
+            for i in range(nr):
+                new[i].node=names[ne+i]
+                new[i].cell=replacement[i].cell
+                new[i].locate=replacement[i].locate
+                new[i].exchange=replacement[i].exchange
+                new[i].automatic=replacement[i].automatic
+                new[i].kc=replacement[i].kc
+                new[i].dc=replacement[i].dc
+                new[i].area=replacement[i].area
+            for i in range(nb):
+                edits[i].node,edits[i].expected_mode,edits[i].mode=bottoms[i]
+            _check(swmm_gw2d_node_replace(_h(self),old,ne,new,nr,edits,nb,bool(apply)))
+        finally:
+            free(old);free(new);free(edits)
 
     def add_node(self, str node, int cell, double kc, double dc, double area=0):
         """Add a bed: kc in in/hr or mm/hr, dc in ft or m, area in ft² or m².

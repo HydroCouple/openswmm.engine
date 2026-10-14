@@ -995,6 +995,12 @@ cdef class Solver:
         return self._forcing
 
     @property
+    def checkpoints(self):
+        """Managed checkpoint session, save/restore and inspection access."""
+        from ._checkpoint import Checkpoints
+        return Checkpoints(self)
+
+    @property
     def snow(self):
         """Snow configuration, UEB parameters and accepted subcatchment state (SI)."""
         from ._snow import Snow

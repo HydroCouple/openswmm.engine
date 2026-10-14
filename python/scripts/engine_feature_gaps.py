@@ -81,6 +81,10 @@ SECTION_API: dict[str, list[str]] = {
     "TEMPERATURE": [r"^swmm_climate_.*(temp|snow|wind|adc|melt)"],
     "ADJUSTMENTS": [r"^swmm_climate_.*adjust"],
     "RAINGAGES": [r"^swmm_gage_"],
+    "UEB_OPTIONS": [r"^swmm_ueb_"],
+    "2D_SNOW_OPTIONS": [r"^swmm_snow2d_(get_options|apply_configuration)"],
+    "2D_SNOW_DEFAULTS": [r"^swmm_snow2d_(defaults_count|get_row|apply_configuration)"],
+    "2D_SNOW": [r"^swmm_snow2d_(cells_count|get_row|apply_configuration)"],
     "SNOWPACKS": [r"^swmm_snowpack_"],
     # Nodes
     "JUNCTIONS": [r"^swmm_node_"],

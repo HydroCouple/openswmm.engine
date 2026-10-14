@@ -64,6 +64,9 @@ from ._enums import (
 )
 
 
+cdef extern from "openswmm/engine/openswmm_output.h":
+    int swmm_output_has_subcatch_variable(SWMM_Output,int)
+
 cdef class OutputReader:
     """Read a SWMM binary ``.out`` file.
 
@@ -117,6 +120,10 @@ cdef class OutputReader:
             from ._enums import ErrorCode
             raise BadHandleError(ErrorCode.BADHANDLE, "OutputReader is closed")
         return self._handle
+
+    def has_subcatch_variable(self, int code):
+        """Whether this file contains a core/optional subcatchment variable."""
+        return bool(swmm_output_has_subcatch_variable(self._h(),code))
 
     @property
     def is_live(self):

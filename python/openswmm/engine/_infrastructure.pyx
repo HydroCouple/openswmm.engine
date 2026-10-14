@@ -55,6 +55,36 @@ from ._enums import (GrateType, InletCurveKind, InletHostKind, InletPlacement,
 from ._common cimport *
 
 
+cdef extern from "openswmm/engine/openswmm_infrastructure.h":
+    ctypedef struct SWMM_LidBottomState:
+        int flow_model
+        int cell
+        int valid_sample
+        double contact_area_m2
+        double surface_head_m
+        double aquifer_head_m
+        double aquifer_time_s
+        double down_cumulative_m3
+        double up_cumulative_m3
+        double net_cumulative_m3
+        double pending_down_m3
+        double pending_up_m3
+        double groundwater_residual_m3
+        double sample_start_s
+        double sample_end_s
+        double sampled_aquifer_time_s
+        double sampled_lid_head_m
+        double sampled_aquifer_head_m
+        double requested_down_m3
+        double requested_up_m3
+        double reserved_down_m3
+        double reserved_up_m3
+        double accepted_down_m3
+        double accepted_up_m3
+        double net_rate_m3s
+    int swmm_lid_node_base_area(SWMM_Engine,int,double*)
+    int swmm_lid_node_bottom_state_get(SWMM_Engine,int,SWMM_LidBottomState*)
+
 cdef inline SWMM_Engine _h(solver):
     return <SWMM_Engine><size_t>solver.handle
 
@@ -1017,6 +1047,27 @@ class LIDs:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
         _check(swmm_node_set_lid(h, n, -1, 0.0))
+
+    def node_base_area(self, node):
+        """Geometric LID contact area in project square-length units, before init."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        cdef double area
+        _check(swmm_lid_node_base_area(h,n,&area))
+        return area
+
+    def node_bottom_state(self, node):
+        """Accepted mesh-bottom diagnostics, always SI; positive net is LID to aquifer.
+
+        valid_sample is false before sampling; sample times describe the last
+        completed interval and aquifer_time_s describes the current aquifer.
+        Requires an initialized explicit mesh-bottom connection.
+        """
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        cdef SWMM_LidBottomState v
+        _check(swmm_lid_node_bottom_state_get(h,n,&v))
+        return {'flow_model': v.flow_model, 'cell': v.cell, 'valid_sample': v.valid_sample, 'contact_area_m2': v.contact_area_m2, 'surface_head_m': v.surface_head_m, 'aquifer_head_m': v.aquifer_head_m, 'aquifer_time_s': v.aquifer_time_s, 'down_cumulative_m3': v.down_cumulative_m3, 'up_cumulative_m3': v.up_cumulative_m3, 'net_cumulative_m3': v.net_cumulative_m3, 'pending_down_m3': v.pending_down_m3, 'pending_up_m3': v.pending_up_m3, 'groundwater_residual_m3': v.groundwater_residual_m3, 'sample_start_s': v.sample_start_s, 'sample_end_s': v.sample_end_s, 'sampled_aquifer_time_s': v.sampled_aquifer_time_s, 'sampled_lid_head_m': v.sampled_lid_head_m, 'sampled_aquifer_head_m': v.sampled_aquifer_head_m, 'requested_down_m3': v.requested_down_m3, 'requested_up_m3': v.requested_up_m3, 'reserved_down_m3': v.reserved_down_m3, 'reserved_up_m3': v.reserved_up_m3, 'accepted_down_m3': v.accepted_down_m3, 'accepted_up_m3': v.accepted_up_m3, 'net_rate_m3s': v.net_rate_m3s}
 
     def node_bottom(self, node):
         """Per-node bottom owner: CURRENT, SEALED or MESH_AQUIFER."""

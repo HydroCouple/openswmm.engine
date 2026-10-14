@@ -277,7 +277,7 @@ cdef class Surface2D:
     def snow(self):
         """Shared named snowpacks, cell assignments and accepted snapshots (SI)."""
         self._h()
-        from ._snow import MeshSnow
+        from ._snow2d import MeshSnow
         return MeshSnow(self._owner)
 
     @property

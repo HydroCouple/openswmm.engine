@@ -1,4 +1,4 @@
-from ._snow import MeshSnow
+from ._snow2d import MeshSnow
 
 from typing import Any, Mapping
 from ._coupling import DomainSources, SourceReceipt
