@@ -37,6 +37,9 @@
  */
 
 #include "DefaultOutputPlugin.hpp"
+#include "../hydrology/surface/NativeSnow.hpp"
+#include "../../../include/openswmm/engine/openswmm_output.h"
+#include <limits>
 #include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "../../../include/openswmm/plugin_sdk/PluginState.hpp"
 #include "../../../include/openswmm/plugin_sdk/SimulationSnapshot.hpp"
@@ -145,6 +148,11 @@ int DefaultOutputPlugin::update(const SimulationSnapshot& snapshot) {
             auto qi = uj * static_cast<std::size_t>(n_polluts_) + static_cast<std::size_t>(p);
             writeReal4(static_cast<float>(
                 qi < snapshot.subcatch_quality.size() ? snapshot.subcatch_quality[qi] : 0.0));
+        }
+        if(snow_process_)for(int field=0;field<SubcatchSnapshot::snow_process_count;++field) {
+            const auto i=uj*SubcatchSnapshot::snow_process_count+field;
+            writeReal4(static_cast<float>(i<snapshot.subcatch.snow_process.size()?
+                snapshot.subcatch.snow_process[i]:std::numeric_limits<double>::quiet_NaN()));
         }
     }
 
@@ -271,7 +279,8 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
     // block and misalign every consumer.
     n_polluts_ = ctx.options.ignore_quality ? 0 : ctx.n_reported_species();
 
-    n_subcatch_vars_ = 8 + n_polluts_;  // rainfall..soilmoist + pollutants
+    snow_process_=surface::hasUebSnow(ctx);
+    n_subcatch_vars_ = 8 + n_polluts_ + (snow_process_?SubcatchSnapshot::snow_process_count:0);  // rainfall..soilmoist + pollutants
     n_node_vars_ = 6 + n_polluts_;      // depth..overflow + pollutants
     n_link_vars_ = 5 + n_polluts_;      // flow..capacity + pollutants
 
@@ -400,7 +409,9 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
 
     // Variable codes
     writeInt4(n_subcatch_vars_);
-    for (int v = 0; v < n_subcatch_vars_; ++v) writeInt4(v);
+    for (int v = 0; v < 8+n_polluts_; ++v) writeInt4(v);
+    if(snow_process_)for(int v=0;v<SubcatchSnapshot::snow_process_count;++v)
+        writeInt4(SWMM_OUT_SUBCATCH_SNOW_SWE+v);
 
     writeInt4(n_node_vars_);
     for (int v = 0; v < n_node_vars_; ++v) writeInt4(v);

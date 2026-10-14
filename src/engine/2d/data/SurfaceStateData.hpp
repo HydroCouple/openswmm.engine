@@ -39,6 +39,7 @@
 #include <vector>
 
 #include "../coupling/RuntimeCoupling.hpp"
+#include "../../hydrology/surface/MeshSnow.hpp"
 #include "SurfaceTransportState.hpp"   // S1 — species mass per cell
 #include "MeshData.hpp"                 // kMaxCellVerts edge-slot stride
 
@@ -125,7 +126,18 @@ struct SurfaceStateData {
     std::vector<double> edge_flux;      ///< Normal flux through each edge
 
     // Source/sink terms — per triangle
-    std::vector<double> rainfall;       ///< Rainfall intensity (m/s)
+    // Snow owns precipitation only on its resolved weather footprints. The
+    // context is a non-owning forcing view, like nodes_1d; it is never archived.
+    surface::MeshSnow snow;
+    SimulationContext* snow_context = nullptr;
+    std::vector<double> snow_catch;
+    double liquidRainfall(int i) const {
+        return snow.owns(i) ? snow.liquidRates()[i] : runtime_forcings.rate(1,i,rainfall[i]);
+    }
+    double exposedEvaporation(int i) const {
+        return runtime_forcings.rate(2,i,evap_rate[i])*(snow.owns(i)?snow.exposedFractions()[i]:1.);
+    }
+    std::vector<double> rainfall;       ///< Raw precipitation intensity (m/s)
     std::vector<double> evap_rate;      ///< Evaporation demand rate (m/s, >= 0)
 
     /// Infiltration loss rate (m/s, >= 0) — a HELD rate (plan §5.5.2, D-I1):
@@ -228,6 +240,7 @@ struct SurfaceStateData {
     // -----------------------------------------------------------------------
 
     void resize(int n_triangles, int n_vertices) {
+        snow={};snow_context=nullptr;snow_catch.clear();
         auto nt = static_cast<std::size_t>(n_triangles);
         auto nv = static_cast<std::size_t>(n_vertices);
         auto n3 = nt * static_cast<std::size_t>(kMaxCellVerts);

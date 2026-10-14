@@ -87,6 +87,20 @@ PrecipSplit splitPrecip(const SimulationContext& ctx, std::size_t sub) {
     // (gage.c:524-526), then getNetPrecip applies the subcatchment's scale
     // factor (subcatch.c:789-790).
     const double ucf_rain = ucf::UCF(ucf::RAINFALL, ctx.options);
+    const int pack = sub < ctx.subcatches.snowpack.size() ? ctx.subcatches.snowpack[sub] : -1;
+    const auto& snow_config = ctx.snowpacks.config;
+    if (!ctx.options.ignore_snow_melt && pack >= 0 &&
+        snow_config.modelFor(pack) == surface::SnowKind::Ueb) {
+        const auto& p = snow_config.parameters;
+        const double temperature = (ctx.climate_state.temperature-32.)/1.8;
+        const double fraction = snow_config.division_temperature ? (is_snowing ? 1. : 0.) :
+            std::clamp((p.rain_temperature-temperature)/(p.rain_temperature-p.snow_temperature),0.,1.);
+        const auto site = snow_config.packs.find(pack);
+        const double drift = site == snow_config.packs.end() ? 1 : site->second.site.drift;
+        out.rainfall = intensity/ucf_rain*(1-fraction)*ctx.subcatches.rain_scale_factor[sub];
+        out.snowfall = intensity/ucf_rain*fraction*ctx.gages.snow_factor[ug]*drift*ctx.subcatches.snow_scale_factor[sub];
+        return out;
+    }
     if (is_snowing) {
         out.snowfall = intensity * ctx.gages.snow_factor[ug] / ucf_rain;
         out.snowfall *= ctx.subcatches.snow_scale_factor[sub];
@@ -320,6 +334,31 @@ double gageNextRainDate(const SimulationContext& ctx, int gage_idx, double t) {
     if (t1 < end)   return end;
     const int nxt = ctx.gages.st_next[ug];
     return (nxt >= 0) ? tbl->x[static_cast<std::size_t>(nxt)] : kNoDateValue;
+}
+
+double gageNextRateChange(const SimulationContext& ctx, int j, double date, double limit) {
+    const auto* table=gageRainSeries(ctx,j);
+    if(!table||table->x.empty()||ctx.options.ignore_rainfall)return limit;
+    constexpr double tolerance=1e-5/86400.;
+    const double duration=ctx.gages.interval_sec[j]/86400.;
+    int current=ctx.gages.st_cur[j];
+    double end=date,rate=0;
+    if(current>=0) {
+        end=table->x[current]+duration;
+        if(date<end-tolerance)rate=recordRate(ctx,j,*table,current);
+    }
+    if(rate==0) {
+        int next=ctx.gages.st_next[j];
+        while(next>=0&&table->x[next]<=date+tolerance)
+            next=nextNonzeroRecord(ctx,j,*table,next);
+        return next>=0?std::min(limit,table->x[next]):limit;
+    }
+    while(end<limit-tolerance) {
+        const int next=nextNonzeroRecord(ctx,j,*table,current);
+        if(next<0||table->x[next]>end+tolerance||recordRate(ctx,j,*table,next)!=rate)return end;
+        current=next;end=table->x[current]+duration;
+    }
+    return limit;
 }
 
 void updateAllGages(SimulationContext& ctx, double current_time) {

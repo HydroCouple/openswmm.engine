@@ -133,6 +133,11 @@ bool gageIsUsed(const SimulationContext& ctx, int gage_idx);
 /// runoff-step limit (runoff_getTimeStep takes only a positive difference).
 double gageNextRainDate(const SimulationContext& ctx, int gage_idx, double t);
 
+// Read-only forecast for held surface-process forcing. Adjacent records
+// with the same converted rate are one interval; gaps still end rainfall.
+// Unlike the legacy runoff clock this uses the exact interval start.
+double gageNextRateChange(const SimulationContext& ctx, int gage_idx, double date, double limit);
+
 /**
  * @brief The units factor the engine applies to a gage's raw values.
  *

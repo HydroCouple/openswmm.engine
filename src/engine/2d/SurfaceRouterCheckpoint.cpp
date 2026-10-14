@@ -6,6 +6,7 @@
 #include "../core/SimulationContext.hpp"
 #include "../core/DateTime.hpp"
 #include "../hydraulics/Routing.hpp"
+#include "../hydrology/LidNode.hpp"
 #include <cstdlib>
 #include <algorithm>
 #include <atomic>
@@ -75,6 +76,7 @@ struct SurfaceRouter2D::RestartState {
     std::vector<double> rainfall;
     SimulationContext::MassBalance2D mb;
     double delivery=0;
+    bool snow_profile=false;double snow_delivery_adjustment=0;
     OutfallExchange exchange;
     std::vector<double> window_outfall_accum_, limits;
     bool outfall_state_changed_=false;
@@ -86,6 +88,8 @@ struct SurfaceRouter2D::RestartState {
 #define COPY(v) v=r.v;
         ROUTER_FIELDS(COPY)
 #undef COPY
+        snow_profile=r.state_.snow.active();
+        for(const auto& snow:r.state_.snow.ledgers())snow_delivery_adjustment+=snow.liquid-snow.raw_precipitation;
         exchange=r.outfall_exchange_;window_outfall_accum_=r.window_outfall_accum_;outfall_state_changed_=r.outfall_state_changed_;
         limits=c.surface_outfall_link_limit;feedback.head_2d=c.node_subtypes.outfalls.head_2d;feedback.ramp_2d=c.node_subtypes.outfalls.ramp_2d;
         current_time=c.current_time;current_date=c.current_date;elapsed_ms=c.elapsed_ms;
@@ -101,6 +105,7 @@ struct SurfaceRouter2D::RestartState {
 #undef FIELD
         a(current_time,current_date,elapsed_ms,old_elapsed_ms,next_report_ms,evap_rate,rainfall);
         massBalance(a,mb);
+        if(snow_profile)a(snow_delivery_adjustment);
         if(runtime_water)a(runtime_used);
         if(boundary_water)a(boundary_slots,boundary_in,boundary_out);
     }
@@ -143,6 +148,9 @@ struct SurfaceRouter2D::RestartState {
            (!report_old_valid_ && report_window_old_ms_!=0) || (sim_time_>0 && co_forcing_first_))
             throw std::runtime_error("Invalid router checkpoint clocks/report window.");
         double rain=0,infil=0;for(std::size_t i=0;i<n;++i) {rain+=rain_cum_[i];infil+=infil_cum_applied_[i]*r.mesh_.tri_area[i];}
+        // Raw precipitation is reported separately from snow liquid delivery.
+        if(!std::isfinite(snow_delivery_adjustment))throw std::runtime_error("Invalid snow checkpoint delivery.");
+        rain+=snow_delivery_adjustment;
         for(double v:{mb.init_storage,mb.rainfall_in,mb.evap_out,mb.infil_out,mb.aquifer_in,mb.external_in,mb.external_out,mb.boundary_in,mb.boundary_out})
             if(!std::isfinite(v) || v<0) throw std::runtime_error("Invalid router checkpoint mass balance.");
         // Incremental outfall accounting can leave an ulp below zero when all
@@ -232,9 +240,9 @@ std::string SurfaceRouter2D::sourceBoundary(const SimulationContext& ctx) const 
        !ramp_prev_head_.empty() || (!joint_hydraulic_ && (outfall_state_changed_ || !window_outfall_accum_.empty())))
         return "Router checkpoint live 1D, land-use quality and external providers are not qualified.";
     if(joint_hydraulic_) {
-        if(state_.nodes_1d!=(node_coupling_points_.empty()?nullptr:&ctx.nodes) ||
+        if(state_.nodes_1d!=((node_coupling_points_.empty() && subsurface_.nodeBeds().empty())?nullptr:&ctx.nodes) ||
            state_.node_coupling!=(node_coupling_points_.empty()?nullptr:&node_coupling_points_) ||
-           coupling_points_.empty() || ctx.n_pollutants()!=0 || !subsurface_.nodeBeds().empty())
+           (coupling_points_.empty() && subsurface_.nodeBeds().empty()) || ctx.n_pollutants()!=0)
             return "Joint router checkpoint coupling/receiver layout differs.";
         if(outfall_exchange_.prepared_) return "Joint checkpoint has an unconsumed outfall reservation.";
     }
@@ -285,11 +293,14 @@ void SurfaceRouter2D::attachCommonSourceStage(SimulationContext& ctx,CommonSourc
        !cell_subcatch_.empty() || surface_quality_.active() || runtimeActive())
         throw std::invalid_argument("Router source attachment requires its initial CPU/all-cell profile and matching exchange scope.");
     if(hydraulic) {
+        for(const auto& bed:subsurface_.nodeBeds())if(bed.exchange && bed.cell>=0 &&
+            (!lidnode::active(ctx,bed.node) || lidnode::bottomMode(ctx,bed.node)!=LidNodeBottom::MeshAquifer))
+            throw std::invalid_argument("Joint source recovery requires explicit LID ownership for active node beds.");
         std::string bytes;const auto error=hydraulic->checkpointBytes(ctx,bytes);
         const char* ramp=std::getenv("OPENSWMM_2D_HEAD_RAMP");
         if(!error.empty())throw std::invalid_argument(error);
-        if((ramp && ramp[0]=='1') || coupling_points_.empty() || ctx.n_pollutants()!=0 ||
-           state_.transport.active() || !subsurface_.nodeBeds().empty() || !aquifer_link_shares_.empty())
+        if((ramp && ramp[0]=='1') || (coupling_points_.empty() && subsurface_.nodeBeds().empty()) || ctx.n_pollutants()!=0 ||
+           state_.transport.active() || !aquifer_link_shares_.empty())
             throw std::invalid_argument("Joint source attachment requires water-only coupling without head ramps or node/link beds.");
     }
     for(int i=0;i<mesh_.n_cells();++i) {
@@ -309,6 +320,8 @@ void SurfaceRouter2D::attachCommonSourceStage(SimulationContext& ctx,CommonSourc
     joint_hydraulic_=hydraulic;common_stage_=&stage;source_context_=&ctx;source_router_model_=std::move(model);source_boundary_ready_=true;
 }
 void SurfaceRouter2D::setSourceResultHistory(SourceResultHistory& history) {
+    if(joint_hydraulic_ && joint_hydraulic_->checkpoint_owned_session_)
+        throw std::invalid_argument("Attach history to the whole engine checkpoint session.");
     if(!common_stage_) throw std::invalid_argument("Router source results require an attached stage.");
     static_cast<ExplicitInertialSolver*>(solver_.get())->setSourceResultHistory(history);
 }

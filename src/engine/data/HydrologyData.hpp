@@ -31,6 +31,10 @@
 #define OPENSWMM_ENGINE_HYDROLOGY_DATA_HPP
 
 #include "LidNodeData.hpp"
+#include "../hydrology/surface/UebConfig.hpp"
+#include "../hydrology/surface/MeshSnowConfig.hpp"
+#include "../hydrology/surface/UebSubcatchments.hpp"
+#include "../hydrology/HourlyMeteorology.hpp"
 #include <vector>
 #include <string>
 #include <array>
@@ -53,6 +57,14 @@ namespace openswmm {
  * @ingroup engine_data
  */
 struct SnowpackStore {
+    // Derived at report time from accepted native and completed source owners.
+    // Not restart state; it is rebuilt after every run/resume.
+    std::vector<std::pair<std::string,double>> report_values;
+    surface::ueb::NativeState runtime;
+    surface::SnowConfig config;
+    surface::MeshSnowConfig mesh_config;
+    climate::HourlyMeteorology meteorology;
+    std::vector<climate::SnowDailyWeather> daily_weather;
     int count() const { return static_cast<int>(names.size()); }
 
     std::vector<std::string> names;

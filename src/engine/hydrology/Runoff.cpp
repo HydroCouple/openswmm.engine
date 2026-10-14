@@ -409,6 +409,18 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
 
         double precip  = precip_[ui];     // ft/sec (rainfall + snowmelt)
         double evapRate = evap_rate_[ui]; // ft/sec (global evap rate)
+        double snow_open_imperv=1,snow_open_perv=1;
+        const int snowpack=ctx.subcatches.snowpack[ui];
+        if(!source_forcing&&!ctx.options.ignore_snow_melt&&snowpack>=0&&
+           ctx.snowpacks.config.modelFor(snowpack)==surface::SnowKind::Ueb) {
+            const auto& flux=ctx.snowpacks.runtime.last;
+            if(flux.size()>=3*(ui+1)) {
+                const double plow=snowpack<int(ctx.snowpacks.plowable.size())?ctx.snowpacks.plowable[snowpack][6]:0;
+                snow_open_imperv=std::clamp(1-plow*flux[ui*3].active_fraction-(1-plow)*flux[ui*3+1].active_fraction,0.,1.);
+                snow_open_perv=std::clamp(1-flux[ui*3+2].active_fraction,0.,1.);
+            }
+        }
+
 
         double alpha_i = soa_.alpha_imperv[ui];
         double alpha_p = soa_.alpha_perv[ui];
@@ -669,6 +681,10 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             if (snp >= 0.0) precip_perv   = snp;
         }
 
+        // Snow suppresses the atmospheric footprint separately on impervious
+        // and pervious pools, without changing the source's LID PET forcing.
+        evapRate=evap_rate_[ui]*snow_open_imperv;
+        if(source_forcing && (*source_forcing)[slot].pet_imperv>=0)evapRate=(*source_forcing)[slot].pet_imperv;
         // Process all 3 subareas (matching legacy loop: IMPERV0, IMPERV1, PERV)
         precip = precip_imperv;
         double runoff0  = processSubarea(soa_.depth_imperv0[ui], alpha_i, 0.0,
@@ -708,6 +724,8 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                 alpha_p_adj = (f <= 0.0) ? 0.0 : alpha_p_adj / f;
         }
 
+        evapRate=evap_rate_[ui]*snow_open_perv;
+        if(source_forcing && (*source_forcing)[slot].pet_perv>=0)evapRate=(*source_forcing)[slot].pet_perv;
         precip = precip_perv;
         double runoff_p = processSubarea(soa_.depth_perv[ui], alpha_p_adj,
                                          ds_perv_adj, fp, true, runon_perv,

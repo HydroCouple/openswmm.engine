@@ -1496,7 +1496,7 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
     // Each of the four bindings does this in its own prologue — they run on
     // two different clocks, so no single upstream call site covers all of
     // them (SolarRadiation.hpp).
-    heat::updateSolarForcing(ctx);
+    heat::updateSolarForcing(ctx, dt);
 
     constexpr double kSqFtToSqM = 0.09290304;
     constexpr double kCuFtToCuM = 0.028316846592;

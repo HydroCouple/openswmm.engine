@@ -18,7 +18,7 @@ void row(SourceResultTable& t,std::initializer_list<double> values) {
 }
 bool id(double v,std::size_t count) { return v>=0 && v<double(count) && std::floor(v)==v; }
 }
-std::map<std::string,SourceResultTable> EngineSourceResultHistory::schema(bool returns) {
+std::map<std::string,SourceResultTable> EngineSourceResultHistory::schema(bool returns,bool lids) {
     std::map<std::string,SourceResultTable> tables;
     const auto add=[&](const char* name,std::initializer_list<std::pair<const char*,const char*>> fields) {
         auto& t=tables[name];for(const auto& [field,unit]:fields) {t.fields.push_back(field);t.units.push_back(unit);t.columns.emplace_back();}
@@ -39,12 +39,25 @@ std::map<std::string,SourceResultTable> EngineSourceResultHistory::schema(bool r
         auto& t=tables.at("source_water");t.fields.push_back("outfall_return");t.units.push_back("m3");t.columns.emplace_back();
         add("pending_outfall_return",{{"frame","1"},{"row","1"},{"source","1"},{"available_at","s"},{"volume","m3"}});
     }
+    if(lids) {
+        add("lid_bottom",{{"frame","1"},{"node","1"},{"bed","1"},{"cell","1"},{"flow_model","1"},{"contact_area","m2"},
+            {"surface_head","m"},{"aquifer_head","m"},{"aquifer_time","s"},{"down_cumulative","m3"},{"up_cumulative","m3"},
+            {"net_cumulative","m3"},{"pending_down","m3"},{"pending_up","m3"},{"groundwater_residual","m3"}});
+        add("lid_bottom_sample",{{"frame","1"},{"node","1"},{"valid","1"},{"start","s"},{"end","s"},{"aquifer_time","s"},
+            {"lid_head","m"},{"aquifer_head","m"},{"requested_down","m3"},{"requested_up","m3"},{"reserved_down","m3"},
+            {"reserved_up","m3"},{"accepted_down","m3"},{"accepted_up","m3"},{"net_rate","m3/s"}});
+        add("lid_profile",{{"frame","1"},{"node","1"},{"cell","1"},{"layer","1"},{"bottom","m"},{"top","m"},{"moisture","1"}});
+        // Absent rows mean unavailable; the classical formulation has no
+        // porous pressure profile. Surface HGL remains separately labelled.
+        add("richards_profile",{{"frame","1"},{"node","1"},{"cell","1"},{"pressure","m"},{"head","m"},{"water","m3"}});
+    }
     return tables;
 }
 EngineSourceResultHistory EngineSourceResultHistory::projection(const SWMMEngine& e,std::size_t frame,double start) {
-    const auto& stage=*e.source_stage_;const auto& source=stage.sources();const auto& bridge=*e.source_delivery_;const auto& ctx=e.ctx_;
+    const auto& stage=*e.surface_router_.commonSourceStage();const auto& source=stage.sources();const auto* bridge=e.source_delivery_.get();const auto& ctx=e.ctx_;
+    const auto& gw=e.surface_router_.subsurface();
     EngineSourceResultHistory out;out.outfall_returns_=source.acceptsOutfallReturns();out.start_date_=ctx.options.start_date;
-    out.tables_=schema(out.outfall_returns_);
+    out.lid_beds_=gw.lidReceiptsEnabled();out.tables_=schema(out.outfall_returns_,out.lid_beds_);
     for(int sc=0;sc<ctx.n_subcatches();++sc)out.sources_.push_back(ctx.subcatch_names.name_of(sc));
     for(int n=0;n<ctx.n_nodes();++n)out.nodes_.push_back(ctx.node_names.name_of(n));
     auto& t=out.tables_;const double f=double(frame);
@@ -64,11 +77,12 @@ EngineSourceResultHistory EngineSourceResultHistory::projection(const SWMMEngine
         }
     }
     for(int n=0;n<ctx.n_nodes();++n) {
-        const auto& captured=bridge.received()[n];const auto& delivered=bridge.delivered()[n];const auto& last=bridge.lastReceipts()[n];
+        if(!bridge) {row(t.at("node_delivery"),{f,double(n),0,0,0,0,0,0,start,ctx.current_time,0});continue;}
+        const auto& captured=bridge->received()[n];const auto& delivered=bridge->delivered()[n];const auto& last=bridge->lastReceipts()[n];
         row(t.at("node_delivery"),{f,double(n),captured.runoff*ft3,captured.drain*ft3,delivered.runoff*ft3,delivered.drain*ft3,
-            last.runoff*ft3,last.drain*ft3,bridge.lastStart(),bridge.receiverEnd(),last.rate*ft3});
+            last.runoff*ft3,last.drain*ft3,bridge->lastStart(),bridge->receiverEnd(),last.rate*ft3});
     }
-    for(const auto& q:bridge.pending()) {
+    if(bridge)for(const auto& q:bridge->pending()) {
         auto& pending=t.at("pending_delivery");const auto& d=q.water;
         require(q.ordinal<=9007199254740991ULL,"Source delivery ordinal exceeds exact result precision.");
         row(pending,{f,double(pending.rows()),double(q.ordinal),double(d.source),double(d.node),double(d.drain),d.start,d.end,q.available,d.volume*ft3});
@@ -76,11 +90,36 @@ EngineSourceResultHistory EngineSourceResultHistory::projection(const SWMMEngine
     if(out.outfall_returns_)for(const auto& q:source.pendingOutfallReturns()) {
         auto& pending=t.at("pending_outfall_return");row(pending,{f,double(pending.rows()),double(q.source),q.available,q.volume*ft3});
     }
+    if(out.lid_beds_)for(std::size_t bed=0;bed<gw.nodeBeds().size();++bed) {
+        const auto& b=gw.nodeBeds()[bed];if(!b.exchange || b.cell<0)continue;
+        const int n=b.node,sr=ctx.node_subtypes.storage_row(n);
+        if(sr<0 || ctx.node_subtypes.storages.lid[sr].bottom!=LidNodeBottom::MeshAquifer)continue;
+        const auto& state=ctx.node_subtypes.storages.lid_state[sr];
+        const double down=gw.richardsBedDownCumulative()[bed],up=gw.richardsBedUpCumulative()[bed];
+        row(t.at("lid_bottom"),{f,double(n),double(bed),double(b.cell),state.richards?2.:1.,b.area,
+            (ctx.nodes.invert_elev[n]+ctx.nodes.depth[n])*.3048,gw.state().z_bed[b.cell]+gw.state().hg[b.cell],
+            gw.cellCompletedTime(b.cell),down,up,down-up,gw.pendingBedDown(int(bed)),gw.pendingBedUp(int(bed)),gw.state().continuityResidual()});
+        const auto& d=gw.lidBedDiagnostics()[bed];const bool valid=d.end>d.start;
+        row(t.at("lid_bottom_sample"),{f,double(n),double(valid),d.start,d.end,d.groundwater_time,d.lid_head,d.groundwater_head,
+            d.requested_down,d.requested_up,d.reserved_down,d.reserved_up,d.accepted_down,d.accepted_up,
+            valid?(d.accepted_down-d.accepted_up)/(d.end-d.start):0});
+        for(std::size_t k=0;k<state.cells.size();++k) {
+            const auto& c=state.cells[k];
+            const double theta=state.richards&&k?c.theta:c.theta+(c.porosity-c.theta)*std::clamp((ctx.nodes.depth[n]-c.bottom)/(c.top-c.bottom),0.,1.);
+            row(t.at("lid_profile"),{f,double(n),double(k),double(c.layer),c.bottom*.3048,c.top*.3048,theta});
+            if(state.richards) {
+                const double pressure=k?state.richards_pressure[k]:ctx.nodes.depth[n]-c.bottom;
+                row(t.at("richards_profile"),{f,double(n),double(k),pressure*.3048,
+                    (ctx.nodes.invert_elev[n]+(k?.5*(c.bottom+c.top):c.bottom)+pressure)*.3048,
+                    (k?state.richards_water[k]:ctx.nodes.volume[n])*ft3});
+            }
+        }
+    }
     return out;
 }
 std::string EngineSourceResultHistory::append(const SWMMEngine& e,double start) {
     try {
-        require(e.source_stage_ && e.source_delivery_,"Engine source history requires explicit spatial-source attachment.");
+        require(e.surface_router_.commonSourceStage() && (e.source_delivery_ || e.surface_router_.subsurface().lidReceiptsEnabled()),"Engine history requires a managed source or LID bottom attachment.");
         std::string bytes;auto error=e.checkpointBytes(bytes);if(!error.empty())return error;
         const auto frame=tables_.empty()?0:tables_.at("boundaries").rows();
         require(frame ? engine_==&e && start==tables_.at("boundaries").columns[2].back() && e.ctx_.current_time>start :
@@ -89,13 +128,13 @@ std::string EngineSourceResultHistory::append(const SWMMEngine& e,double start) 
         if(!frame) {
             current.detailed_=detailed_;
             if(detailed_) {
-                error=current.source_intervals_.append(*e.source_stage_);
+                error=current.source_intervals_.append(*e.surface_router_.commonSourceStage());
                 if(!error.empty())return error;
             }
             trial=std::move(current);
         }
         else {
-            require(sources_==current.sources_ && nodes_==current.nodes_ && outfall_returns_==current.outfall_returns_ &&
+            require(sources_==current.sources_ && nodes_==current.nodes_ && outfall_returns_==current.outfall_returns_ && lid_beds_==current.lid_beds_ &&
                 start_date_==current.start_date_,"Engine source result identities changed.");
             for(const auto& [name,t]:current.tables_) {
                 auto& next=trial.tables_.at(name);const double offset=double(next.rows());
@@ -111,12 +150,12 @@ std::string EngineSourceResultHistory::append(const SWMMEngine& e,double start) 
 std::string EngineSourceResultHistory::resume(const SWMMEngine& e) {
     try {
         const auto invalid=validate();if(!invalid.empty())return invalid;
-        require(e.source_stage_ && e.source_delivery_,"Engine source history requires explicit spatial-source attachment.");
+        require(e.surface_router_.commonSourceStage() && (e.source_delivery_ || e.surface_router_.subsurface().lidReceiptsEnabled()),"Engine history requires a managed source or LID bottom attachment.");
         std::string bytes;auto error=e.checkpointBytes(bytes);if(!error.empty())return error;
         require(bytes==boundary_,"Engine source history does not match the restored whole-engine checkpoint.");
         const auto frame=tables_.at("boundaries").rows()-1;
         const auto current=projection(e,frame,tables_.at("boundaries").columns[1].back());
-        require(sources_==current.sources_ && nodes_==current.nodes_ && outfall_returns_==current.outfall_returns_ &&
+        require(sources_==current.sources_ && nodes_==current.nodes_ && outfall_returns_==current.outfall_returns_ && lid_beds_==current.lid_beds_ &&
             start_date_==current.start_date_,"Engine source result identities differ from checkpoint.");
         for(const auto& [name,t]:tables_) {
             const auto begin=std::lower_bound(t.columns[0].begin(),t.columns[0].end(),double(frame));
@@ -128,7 +167,7 @@ std::string EngineSourceResultHistory::resume(const SWMMEngine& e) {
         }
         auto trial=*this;
         if(detailed_) {
-            error=trial.source_intervals_.resumeCapturedBoundary(*e.source_stage_);
+            error=trial.source_intervals_.resumeCapturedBoundary(*e.surface_router_.commonSourceStage());
             if(!error.empty())return error;
         }
         trial.engine_=&e;*this=std::move(trial);return {};
@@ -136,11 +175,11 @@ std::string EngineSourceResultHistory::resume(const SWMMEngine& e) {
 }
 std::string EngineSourceResultHistory::validate() const {
     try {
-        const auto expected=schema(outfall_returns_);
+        const auto expected=schema(outfall_returns_,lid_beds_);
         require(!boundary_.empty() && boundary_.size()<=64*1024*1024 && std::isfinite(start_date_) &&
             tables_.size()==expected.size(),"Missing engine source result checkpoint or tables.");
         for(const auto* names:{&sources_,&nodes_}) {
-            require(!names->empty() && names->size()<=65536 && std::set<std::string>(names->begin(),names->end()).size()==names->size(),
+            require((!names->empty() || (lid_beds_ && names==&sources_)) && names->size()<=65536 && std::set<std::string>(names->begin(),names->end()).size()==names->size(),
                 "Invalid engine source result names.");
             for(const auto& name:*names)require(!name.empty() && name.size()<512 && name.find('\0')==std::string::npos,"Invalid engine source result name.");
         }
@@ -169,7 +208,7 @@ std::string EngineSourceResultHistory::validate() const {
         }
         const auto& w=tables_.at("source_water").columns;const auto& g=tables_.at("group_water").columns;
         const auto owners=offsets.at("source_water")[1],groups=offsets.at("group_water")[1];
-        require(owners>0 && groups>0,"Empty engine source ownership.");
+        require((owners>0 && groups>0) || (lid_beds_ && owners==0 && groups==0),"Empty engine source ownership.");
         std::vector<int> owner(sources_.size(),-1);
         std::vector<std::size_t> members(groups,0);
         for(std::size_t r=0;r<owners;++r) {
@@ -226,11 +265,32 @@ std::string EngineSourceResultHistory::validate() const {
                 if(f)require(close(n[4][r]-n[4][r-nodes_.size()],n[6][r]) && close(n[5][r]-n[5][r-nodes_.size()],n[7][r]),"Invalid accepted source delivery increment.");
             }
         }
+        if(lid_beds_) {
+            const auto& l=tables_.at("lid_bottom").columns;const auto& d=tables_.at("lid_bottom_sample").columns;
+            const auto count=offsets.at("lid_bottom")[1];require(count>0,"Missing LID bottom identities.");
+            for(std::size_t f=0;f<frames;++f) {
+                const auto at=offsets.at("lid_bottom")[f],sample=offsets.at("lid_bottom_sample")[f];
+                require(offsets.at("lid_bottom")[f+1]-at==count && offsets.at("lid_bottom_sample")[f+1]-sample==count,
+                    "LID bottom snapshot shape changed.");
+                for(std::size_t k=0;k<count;++k) {
+                    const auto r=at+k,q=sample+k;require(id(l[1][r],nodes_.size()) && l[5][r]>0 &&
+                        l[8][r]>=0 && l[8][r]<=b[2][f]+1e-12*std::max(1.,b[2][f]),"Invalid LID bottom identity or time.");
+                    for(std::size_t c=1;c<=5;++c)require(l[c][r]==l[c][k],"LID bottom identity changed.");
+                    for(std::size_t c:{9u,10u,12u,13u})require(l[c][r]>=0,"Negative gross LID bottom water.");
+                    require(close(l[11][r],l[9][r]-l[10][r]) && l[12][r]<=l[9][r]+1e-10 && l[13][r]<=l[10][r]+1e-10,
+                        "Unpaired LID bottom water.");
+                    require(d[1][q]==l[1][r] && (d[2][q]==0 || d[2][q]==1) && d[3][q]>=0 && d[4][q]>=d[3][q] &&
+                        d[4][q]<=b[2][f]+1e-12*std::max(1.,b[2][f]) && d[5][q]>=0 && d[5][q]<=d[4][q]+1e-12 &&
+                        d[12][q]<=d[10][q] && d[13][q]<=d[11][q],"Invalid accepted LID bottom sample.");
+                    if(f)require(l[9][r]>=l[9][r-count] && l[10][r]>=l[10][r-count],"LID bottom cumulative water decreased.");
+                }
+            }
+        }
         return validatePairing();
     } catch(const std::exception& e){return e.what();}
 }
 std::string EngineSourceResultHistory::captureSourceInterval(const CommonSourceStage& stage) {
-    if(!detailed_ || !engine_ || engine_->source_stage_!=&stage || !engine_->step_active_)
+    if(!detailed_ || !engine_ || engine_->surface_router_.commonSourceStage()!=&stage || !engine_->step_active_)
         return "Detailed source capture requires the attached active engine step.";
     return source_intervals_.append(stage);
 }

@@ -234,7 +234,7 @@ struct EngineSourceResultFile {
             PublicationFile file(part);if(file.id<0){part.clear();return "Cannot create engine source result publication file.";}
             attribute(file.id,"artifact_kind",kind);
             auto group=h5io::make_group(file.id,"engine_source_history");require(group.ok(),"Cannot create engine source history group.");
-            attribute(group.get(),"schema_version",history.detailed_?"2":"1");attribute(group.get(),"temporal_meaning",semantics);
+            attribute(group.get(),"schema_version",history.lid_beds_?(history.detailed_?"4":"3"):(history.detailed_?"2":"1"));attribute(group.get(),"temporal_meaning",semantics);
             attribute(group.get(),"outfall_returns",history.outfall_returns_?"1":"0");
             names(group.get(),"source_names",history.sources_);names(group.get(),"node_names",history.nodes_);
             for(const auto& [name,t]:history.tables_)writeTable(group.get(),name,t);
@@ -260,10 +260,10 @@ struct EngineSourceResultFile {
             if(!h5io::has_link(file.get(),"engine_source_history"))return {};
             auto group=h5io::open_group(file.get(),"engine_source_history");require(group.ok(),"Invalid engine source history group.");
             const auto version=attribute(group.get(),"schema_version");
-            require((version=="1" || version=="2") && attribute(group.get(),"temporal_meaning")==semantics,"Unsupported engine source result schema or metadata.");
-            require((version=="2")==h5io::has_link(group.get(),"source_intervals"),"Engine source interval capability differs from schema.");
+            require((version=="1" || version=="2" || version=="3" || version=="4") && attribute(group.get(),"temporal_meaning")==semantics,"Unsupported engine source result schema or metadata.");
+            require((version=="2" || version=="4")==h5io::has_link(group.get(),"source_intervals"),"Engine source interval capability differs from schema.");
             const auto returns=attribute(group.get(),"outfall_returns");require(returns=="0"||returns=="1","Invalid engine source return capability.");
-            EngineSourceResultHistory trial;trial.detailed_=version=="2";trial.outfall_returns_=returns=="1";trial.tables_=EngineSourceResultHistory::schema(trial.outfall_returns_);
+            EngineSourceResultHistory trial;trial.detailed_=version=="2"||version=="4";trial.lid_beds_=version=="3"||version=="4";trial.outfall_returns_=returns=="1";trial.tables_=EngineSourceResultHistory::schema(trial.outfall_returns_,trial.lid_beds_);
             trial.sources_=names(group.get(),"source_names");trial.nodes_=names(group.get(),"node_names");trial.boundary_=boundary(group.get());
             std::size_t total=0;for(auto& [name,t]:trial.tables_)readTable(group.get(),name,t,total);
             if(trial.detailed_) {

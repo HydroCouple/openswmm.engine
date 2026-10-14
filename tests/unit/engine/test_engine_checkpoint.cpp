@@ -9,6 +9,8 @@
 #include "plugins/DefaultReportPlugin.hpp"
 #include <openswmm/engine/openswmm_checkpoint.h>
 #include <openswmm/engine/openswmm_model.h>
+#include <openswmm/engine/openswmm_snow.h>
+#include "hydrology/surface/SnowCheckpoint.hpp"
 #include <atomic>
 #include <future>
 #include "output/OutputReader.hpp"
@@ -463,7 +465,8 @@ TEST(EngineCheckpoint, RunoffCorruptionAndUnsupportedProfilesPreserveFreshTarget
         if(k==3)b.context().gages.api_rainfall[0]=1;
         if(k==4)b.context().lid_usage.rpt_file[0]="detailed.txt";
         if(k==5)b.context().subcatches.gw_aquifer[0]=0;
-        EXPECT_FALSE(b.enableCheckpointing().empty());
+        if(k==0)EXPECT_EQ(b.enableCheckpointing(),""); // native snow is part of the accepted checkpoint
+        else EXPECT_FALSE(b.enableCheckpointing().empty());
     }
     SWMMEngine changed;
         ASSERT_NO_THROW(startRunoff(changed,"runoff-model-change",2,2,2));
@@ -1618,7 +1621,8 @@ void sameMesh(const std::string& a,const std::string& b,int periods) {
         EXPECT_EQ(n,H5Sget_simple_extent_npoints(ys));
         if(std::string(name)=="time")EXPECT_EQ(n,periods);
         std::vector<double> xv(n),yv(n);ASSERT_GE(H5Dread(xd,H5T_NATIVE_DOUBLE,H5S_ALL,H5S_ALL,H5P_DEFAULT,xv.data()),0);
-        ASSERT_GE(H5Dread(yd,H5T_NATIVE_DOUBLE,H5S_ALL,H5S_ALL,H5P_DEFAULT,yv.data()),0);EXPECT_EQ(xv,yv)<<name;
+        ASSERT_GE(H5Dread(yd,H5T_NATIVE_DOUBLE,H5S_ALL,H5S_ALL,H5P_DEFAULT,yv.data()),0);
+        for(std::size_t i=0;i<xv.size();++i)if(std::isnan(xv[i]))EXPECT_TRUE(std::isnan(yv[i]))<<name;else EXPECT_EQ(xv[i],yv[i])<<name;
         H5Sclose(xs);H5Sclose(ys);H5Dclose(xd);H5Dclose(yd);
     }
     H5Fclose(x);H5Fclose(y);
@@ -4385,8 +4389,13 @@ std::string managedDeck(int lid,int closure,bool owners=true) {
     }
     return d;
 }
-void managedSurfaceOpen(SWMMEngine& e,const std::string& name,int lid=0,int closure=0,int output=0,bool owners=true) {
-    const auto input=root()/(name+".inp");write(input,managedDeck(lid,closure,owners));
+void managedSurfaceOpen(SWMMEngine& e,const std::string& name,int lid=0,int closure=0,int output=0,bool owners=true,bool ports=false) {
+    auto deck=managedDeck(lid,closure,owners);
+    if(ports) {
+        deck.replace(deck.find("DRAIN 0 FREE NO"),std::string("DRAIN 0 FREE NO").size(),"DRAIN 0 FIXED .12 NO");
+        deck+="[CONDUITS]\nPipe SINK DRAIN 5 .015 0 0 0 0\n[XSECTIONS]\nPipe CIRCULAR .1 0 0 0\n[LID_NODE_OUTLETS]\nPipe 3 BOTTOM\n";
+    }
+    const auto input=root()/(name+".inp");write(input,deck);
     if(e.open(input.string().c_str(),(root()/(name+".rpt")).string().c_str(),output==1||output>=3?(root()/(name+".out")).string().c_str():nullptr))throw std::runtime_error(e.context().error_message);
     auto& router=e.surfaceRouter2D();auto& cfg=router.aquiferConfig();cfg.options.authored=true;cfg.options.force_closed_form=true;
     cfg.options.closure=closure==2?twoD::GwClosure::SIGMA:closure==1?twoD::GwClosure::ENSLAVED:twoD::GwClosure::CLOSED_FORM;
@@ -4527,3 +4536,124 @@ TEST(EngineCheckpoint, LidBottomOwnerParticipatesInCompatibilityAndSealedContinu
         }
     }
 }
+
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, ManagedLidBottomsUseGlobalRoutingAndResumePendingGroundwaterWater) {
+    for(int model:{1,2})for(int closure:{0,1,2})for(bool owners:{false,true})for(bool ports:{false,true}) {
+        const auto name="managed-lid-bed-"+std::to_string(model)+"-"+std::to_string(closure)+"-"+std::to_string(owners)+"-"+std::to_string(ports);
+        SCOPED_TRACE(name);SWMMEngine a,b;
+        auto setup=[&](SWMMEngine& e,const std::string& suffix) {
+            managedSurfaceOpen(e,name+suffix,model,closure,0,owners,ports);auto& c=e.context();
+            c.node_subtypes.storages.lid[0].bottom=LidNodeBottom::MeshAquifer;
+            twoD::GwNodeBed bed;bed.node=c.node_names.find("SINK");bed.cell=0;bed.area=.5;bed.Kc=5;bed.dC=.1;
+            e.surfaceRouter2D().aquiferConfig().node_beds.push_back(bed);
+            e.surfaceRouter2D().aquiferNodeNames().push_back("SINK");
+        };
+        ASSERT_NO_THROW(setup(a,"-a"));
+        ASSERT_NO_THROW(setup(b,"-b"));
+        const auto ta=owners?managedToken(a):"",tb=owners?managedToken(b):"";
+        const auto ja=(root()/(name+"-a.history")).string(),jb=(root()/(name+"-b.history")).string();
+        const auto oa=managedOptions(0,ja.c_str(),ta.c_str(),closure!=0),ob=managedOptions(0,jb.c_str(),tb.c_str(),closure!=0);
+        ASSERT_EQ(swmm_checkpoint_start_session(&a,&oa),SWMM_OK)<<swmm_checkpoint_last_error_msg();
+        ASSERT_EQ(swmm_checkpoint_start_session(&b,&ob),SWMM_OK)<<swmm_checkpoint_last_error_msg();
+        ASSERT_NO_THROW(until(a,2.2));const auto path=root()/(name+".chk");ASSERT_EQ(a.saveCheckpoint(path.string()),"");
+        ASSERT_EQ(b.loadCheckpoint(path.string()),"");compare(a,b,name+"-restored");
+        ASSERT_NO_THROW(until(a,6.2));
+        ASSERT_NO_THROW(until(b,6.2));compare(a,b,name+"-continued");
+        const auto& ga=a.surfaceRouter2D().subsurface();const auto& gb=b.surfaceRouter2D().subsurface();
+        SWMM_LidBottomState diagnostic{};
+        ASSERT_EQ(swmm_lid_node_bottom_state_get(&a,a.context().node_names.find("SINK"),&diagnostic),SWMM_OK);
+        EXPECT_EQ(diagnostic.flow_model,model==2?1:0);EXPECT_TRUE(diagnostic.valid_sample);
+        EXPECT_NEAR(diagnostic.net_cumulative_m3,ga.richardsBedDownCumulative()[0]-ga.richardsBedUpCumulative()[0],1e-14);
+        EXPECT_LE(diagnostic.accepted_down_m3,diagnostic.reserved_down_m3);
+        EXPECT_LE(diagnostic.accepted_up_m3,diagnostic.reserved_up_m3);
+        EXPECT_EQ(ga.pendingLidWater(),gb.pendingLidWater());EXPECT_EQ(ga.richardsBedDownCumulative(),gb.richardsBedDownCumulative());
+        EXPECT_EQ(bytes(ja),bytes(jb));
+        EXPECT_EQ(ga.nodeRefunds(),0);EXPECT_NEAR(ga.state().continuityResidual(),0,1e-10);
+        EXPECT_EQ(a.context().node_subtypes.storages.exfil_loss[0],0);
+        if(ports)EXPECT_LT(a.context().links.flow[0],0)<<"Backwater must exercise the native LID outlet.";
+        if(model==2)EXPECT_GT(ga.richardsBedDownCumulative()[0]+ga.richardsBedUpCumulative()[0],0);
+        a.end();b.end();a.close();b.close();
+    }
+}
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+TEST(EngineCheckpoint, LidOnlyDetailedHistoryPreservesProfilesAndDirectionalWater) {
+    for(int model:{1,2}) {
+        const auto name="lid-only-history-"+std::to_string(model);SWMMEngine e;
+        ASSERT_NO_THROW(managedSurfaceOpen(e,name,model,0,0,false));
+        auto& c=e.context();c.node_subtypes.storages.lid[0].bottom=LidNodeBottom::MeshAquifer;
+        twoD::GwNodeBed bed;bed.node=c.node_names.find("SINK");bed.cell=0;bed.area=.5;bed.Kc=5;bed.dC=.1;
+        e.surfaceRouter2D().aquiferConfig().node_beds.push_back(bed);e.surfaceRouter2D().aquiferNodeNames().push_back("SINK");
+        const auto options=managedOptions();ASSERT_EQ(swmm_checkpoint_start_session(&e,&options),SWMM_OK)<<swmm_checkpoint_last_error_msg();
+        twoD::EngineSourceResultHistory history;ASSERT_EQ(e.setEngineSourceResultHistory(history,true),"");
+        ASSERT_NO_THROW(until(e,2.2));const auto path=(root()/(name+".h5")).string();ASSERT_EQ(history.save(path),"");
+        twoD::EngineSourceResultHistory loaded;bool available=false;ASSERT_EQ(twoD::EngineSourceResultHistory::read(path,loaded,available),"");ASSERT_TRUE(available);
+        EXPECT_EQ(loaded.tables().at("source_water").rows(),0u);
+        EXPECT_GT(loaded.tables().at("lid_profile").rows(),0u);
+        EXPECT_EQ(loaded.tables().at("richards_profile").rows()>0,model==2);
+        for(const auto& [key,table]:history.tables())EXPECT_EQ(table.columns,loaded.tables().at(key).columns)<<key;
+        ASSERT_NE(loaded.sourceIntervals(),nullptr);EXPECT_GT(loaded.sourceIntervals()->tables().at("receiver").rows(),0u);
+        e.end();e.close();
+    }
+}
+#endif
+TEST(EngineCheckpoint, ManagedSnowOwnersAndMeshResumeAcceptedWaterWithoutDoubleCounting) {
+    for(int output:{0,2})for(bool owners:{false,true})for(auto model:{surface::SnowKind::DegreeDay,surface::SnowKind::Ueb}) {
+        const auto name="managed-snow-"+std::to_string(owners)+"-"+std::to_string(int(model))+"-"+std::to_string(output);SWMMEngine a,b;SCOPED_TRACE(name);
+        const auto setup=[&](SWMMEngine& e,const std::string& suffix) {
+            managedSurfaceOpen(e,name+suffix,0,0,output,owners);auto& c=e.context();c.options.ignore_snow_melt=false;
+            c.snowpack_names.try_add("Snow");c.snowpacks.names={"Snow"};
+            c.snowpacks.plowable=c.snowpacks.impervious=c.snowpacks.pervious={std::array<double,7>{1,2,0,.1,100,10,0}};
+            c.snowpacks.removal={std::array<double,6>{}};c.snowpacks.removal_subcatch={""};
+            c.snowpacks.config.model=model;c.snowpacks.config.step=60;c.snowpacks.config.monthly_range.fill(10.);
+            c.snowpacks.config.site=surface::ClimateSite{45,-120,-8,1000};
+            if(owners)for(int sc=0;sc<c.n_subcatches();++sc)c.subcatches.snowpack[sc]=0;
+            else c.snowpacks.mesh_config.defaults["*"].pack="Snow";
+        };
+        ASSERT_NO_THROW(setup(a,"-a"));
+        ASSERT_NO_THROW(setup(b,"-b"));
+        const auto ta=owners?managedToken(a):"",tb=owners?managedToken(b):"";
+        const auto oa=managedOptions(output,nullptr,ta.c_str()),ob=managedOptions(output,nullptr,tb.c_str());
+        ASSERT_EQ(swmm_checkpoint_start_session(&a,&oa),SWMM_OK)<<swmm_checkpoint_last_error_msg();
+        ASSERT_EQ(swmm_checkpoint_start_session(&b,&ob),SWMM_OK)<<swmm_checkpoint_last_error_msg();
+        ASSERT_NO_THROW(until(a,2.2));const auto path=root()/(name+".chk");ASSERT_EQ(a.saveCheckpoint(path.string()),"");
+        ASSERT_EQ(b.loadCheckpoint(path.string()),"");ASSERT_NO_THROW(until(a,6.2));
+        ASSERT_NO_THROW(until(b,6.2));
+        #ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+        if(output==2)compareMesh(a,b,name+"-continued");else
+#endif
+        compare(a,b,name+"-continued");
+        if(owners) {
+            const auto* source=a.completedSourceDriver();ASSERT_NE(source,nullptr);ASSERT_TRUE(source->snow().active());
+            double stored=0;for(const auto& book:source->snow().ledgers()){EXPECT_NEAR(book.residual(),0,1e-9);stored+=book.stored;}
+            EXPECT_NEAR(a.context().mass_balance.runoff_final_snow,stored,1e-9);
+            SWMM_SnowState state{};ASSERT_EQ(swmm_subcatch_get_snow_process_state(&a,0,2,&state),SWMM_OK);
+            EXPECT_EQ(state.swe_m,(source->snow().state().wsnow[2]+source->snow().state().fw[2])*.3048);
+            auto seed_context=a.context();snow::SnowSolver seed;
+            ASSERT_EQ(surface::initializeNativeSnow(seed_context,seed),"");
+            const auto hot=a.context().state_accessors.get_snow_state();
+            ASSERT_EQ(surface::restoreCombinedSnowCheckpoint(seed_context,seed.state(),nullptr,hot,true,true),"");
+            EXPECT_EQ((seed.state().wsnow[2]+seed.state().fw[2])*.3048,state.swe_m);
+            if(model==surface::SnowKind::Ueb) {
+                EXPECT_EQ(seed_context.snowpacks.runtime.columns[2].accepted.point.energy,
+                    source->context().snowpacks.runtime.columns[2].accepted.point.energy);
+                EXPECT_FALSE(seed_context.snowpacks.runtime.columns[2].pending());
+            }
+            if(model==surface::SnowKind::Ueb){SWMM_SnowLedger book{};ASSERT_EQ(swmm_snow_get_ueb_ledger(&a,&book),SWMM_OK);EXPECT_NEAR(book.residual_m3,0,1e-9);EXPECT_NEAR(book.energy_residual_kj,0,1e-6);}
+        } else {
+            const auto& snow=a.surfaceRouter2D().state().snow;ASSERT_TRUE(snow.active());
+            for(const auto& book:snow.ledgers()){EXPECT_NEAR(book.residual(),0,1e-9);if(model==surface::SnowKind::Ueb)EXPECT_NEAR(book.energyResidual(),0,1e-6);}
+            EXPECT_EQ(snow.saveCheckpoint(),b.surfaceRouter2D().state().snow.saveCheckpoint());
+        }
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+        if(output==2) {
+            ASSERT_EQ(a.end(),0);ASSERT_EQ(b.end(),0);
+            hid_t f=H5Fopen((root()/(name+"-a.h5")).string().c_str(),H5F_ACC_RDONLY,H5P_DEFAULT);
+            ASSERT_GE(f,0);hid_t d=H5Dopen2(f,"time",H5P_DEFAULT),space=H5Dget_space(d);
+            const auto periods=H5Sget_simple_extent_npoints(space);H5Sclose(space);H5Dclose(d);H5Fclose(f);
+            sameMesh(name+"-a",name+"-b",int(periods));
+        }
+#endif
+    }
+}
+#endif

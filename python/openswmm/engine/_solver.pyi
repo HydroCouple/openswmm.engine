@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     # collection modules import Solver themselves.
     from ._2d import Surface2D
     from ._climate import Climate
+    from ._snow import Snow
     from ._controls import Controls
     from ._edit import ModelEditor
     from ._forcing import Forcing
@@ -400,6 +401,8 @@ class Solver:
     def forcing(self) -> "Forcing": ...
     @property
     def climate(self) -> "Climate": ...
+    @property
+    def snow(self) -> "Snow": ...
     @property
     def infrastructure(self) -> "Infrastructure": ...
     @property

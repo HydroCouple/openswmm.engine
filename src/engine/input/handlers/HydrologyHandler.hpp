@@ -42,6 +42,10 @@ void handle_temperature(SimulationContext& ctx, const std::vector<std::string>& 
 
 /** @brief Parse [SNOWPACKS] into SnowpackStore + snowpack_names. */
 void handle_snowpacks(SimulationContext& ctx, const std::vector<std::string>& lines);
+void handle_ueb_options(SimulationContext& ctx, const std::vector<std::string>& lines);
+void handle_mesh_snow_options(SimulationContext&,const std::vector<std::string>&);
+void handle_mesh_snow_defaults(SimulationContext&,const std::vector<std::string>&);
+void handle_mesh_snow_cells(SimulationContext&,const std::vector<std::string>&);
 
 /** @brief Parse [AQUIFERS] into AquiferStore + aquifer_names. */
 void handle_aquifers(SimulationContext& ctx, const std::vector<std::string>& lines);

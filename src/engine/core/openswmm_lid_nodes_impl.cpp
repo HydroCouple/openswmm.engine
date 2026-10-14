@@ -3,6 +3,7 @@
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_infrastructure.h"
 #include "../hydrology/LidNode.hpp"
+#include "../hydraulics/Node.hpp"
 #include "UnitConversion.hpp"
 #include <algorithm>
 #include <cmath>
@@ -216,6 +217,18 @@ SWMM_ENGINE_API int swmm_node_set_lid_bottom(SWMM_Engine engine, int node, int m
     c.node_subtypes.storages.lid[r].bottom = static_cast<openswmm::LidNodeBottom>(mode);
     return SWMM_OK;
 }
+SWMM_ENGINE_API int swmm_lid_node_base_area(SWMM_Engine engine,int node,double* area) {
+    CHECK_HANDLE(engine);if(!area)return SWMM_ERR_BADPARAM;
+    auto& c=to_engine(engine)->context();if(!editable(c))return SWMM_ERR_LIFECYCLE;
+    CHECK_INDEX(node>=0&&node<c.n_nodes());
+    const int r=c.node_subtypes.storage_row(node);
+    if(r<0||c.node_subtypes.storages.lid[r].control<0||!c.node_subtypes.storages.lid_state[r].cells.empty())return SWMM_ERR_BADPARAM;
+    const int us=openswmm::ucf::getUnitSystem(static_cast<int>(c.options.flow_units));
+    const double length=openswmm::ucf::Ucf[openswmm::ucf::LENGTH][us];
+    const double value=openswmm::node::getSurfArea(c.nodes,node,0,&c.tables,us,&c.node_subtypes)*length*length;
+    if(!std::isfinite(value)||value<0)return SWMM_ERR_BADPARAM;
+    *area=value;return SWMM_OK;
+}
 SWMM_ENGINE_API int swmm_lid_node_outlet_get(SWMM_Engine engine, int link, int* layer, int* top) {
     CHECK_HANDLE(engine);
     if (!layer || !top) return SWMM_ERR_BADPARAM;
@@ -291,4 +304,34 @@ SWMM_ENGINE_API int swmm_lid_richards_statistics_get(SWMM_Engine engine, int nod
     const auto& r = c.node_subtypes.storages.lid_state[c.node_subtypes.storage_row(node)].richards_report;
     *out = {r.accepted, r.rejected, r.rhs, r.newton, r.min_step, r.balance}; return SWMM_OK;
 }
+}
+
+SWMM_ENGINE_API int swmm_lid_node_bottom_state_get(SWMM_Engine engine,int node,SWMM_LidBottomState* out) {
+    CHECK_HANDLE(engine);if(!out)return SWMM_ERR_BADPARAM;
+    const auto& c=to_engine(engine)->context();CHECK_INDEX(node>=0 && node<c.n_nodes());
+#ifdef OPENSWMM_HAS_2D
+    const int sr=c.node_subtypes.storage_row(node);
+    if(sr<0 || c.node_subtypes.storages.lid[sr].bottom!=openswmm::LidNodeBottom::MeshAquifer)return SWMM_ERR_BADPARAM;
+    const auto& gw=to_engine(engine)->surfaceRouter2D().subsurface();
+    if(!gw.lidReceiptsEnabled())return SWMM_ERR_BADPARAM;
+    for(std::size_t b=0;b<gw.nodeBeds().size();++b) {
+        const auto& bed=gw.nodeBeds()[b];if(bed.node!=node || !bed.exchange || bed.cell<0)continue;
+        const auto& d=gw.lidBedDiagnostics()[b];SWMM_LidBottomState v{};
+        v.flow_model=c.node_subtypes.storages.lid_state[sr].richards?1:0;v.cell=bed.cell;v.valid_sample=d.end>d.start;
+        v.contact_area_m2=bed.area;v.surface_head_m=(c.nodes.invert_elev[node]+c.nodes.depth[node])*.3048;
+        v.aquifer_head_m=gw.state().z_bed[bed.cell]+gw.state().hg[bed.cell];v.aquifer_time_s=gw.cellCompletedTime(bed.cell);
+        v.down_cumulative_m3=gw.richardsBedDownCumulative()[b];v.up_cumulative_m3=gw.richardsBedUpCumulative()[b];
+        v.net_cumulative_m3=v.down_cumulative_m3-v.up_cumulative_m3;
+        v.pending_down_m3=gw.pendingBedDown(int(b));v.pending_up_m3=gw.pendingBedUp(int(b));
+        v.groundwater_residual_m3=gw.state().continuityResidual();
+        v.sample_start_s=d.start;v.sample_end_s=d.end;v.sampled_aquifer_time_s=d.groundwater_time;
+        v.sampled_lid_head_m=d.lid_head;v.sampled_aquifer_head_m=d.groundwater_head;
+        v.requested_down_m3=d.requested_down;v.requested_up_m3=d.requested_up;
+        v.reserved_down_m3=d.reserved_down;v.reserved_up_m3=d.reserved_up;
+        v.accepted_down_m3=d.accepted_down;v.accepted_up_m3=d.accepted_up;
+        v.net_rate_m3s=v.valid_sample?(d.accepted_down-d.accepted_up)/(d.end-d.start):0;
+        *out=v;return SWMM_OK;
+    }
+#endif
+    return SWMM_ERR_BADPARAM;
 }

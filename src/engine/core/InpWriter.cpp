@@ -1330,6 +1330,20 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     const bool swmm5  = (opts.profile == InpWriteOptions::Profile::Swmm5) || stock5;
     auto note = [&](const std::string& s) { if (warnings) warnings->push_back(s); };
 
+    if (swmm5 && !ctx.options.ignore_snow_melt && !ctx.options.ignore_2d &&
+        ctx.snowpacks.mesh_config.mode!=surface::MeshSnowConfig::Mode::No && ctx.snowpacks.mesh_config.assigned()) {
+        note("SWMM 5.x cannot execute mesh snow. Export refused because dropping snow storage would change the model.");
+        return false;
+    }
+    if (swmm5 && !ctx.options.ignore_snow_melt) {
+        for (int pack : ctx.subcatches.snowpack) {
+            if (pack >= 0 && ctx.snowpacks.config.modelFor(pack) == surface::SnowKind::Ueb) {
+                note("SWMM 5.x cannot execute UEB snowpacks. Export refused because substituting degree-day snow would change the model.");
+                return -1;
+            }
+        }
+    }
+
     const std::string physical = mappedOutputPath(path, InpWriteOptions::OutputKind::Model, opts, warnings);
     if (physical.empty()) return -1;
     openswmm::io::AtomicOutputFile output(openswmm::io::utf8_path(physical));
@@ -1673,9 +1687,31 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         for (int i = 0; i < 12 && !has_humidity; ++i)
             if (opts.humidity[i] != 50.0) has_humidity = true;
         if (has_humidity) has_temp = true;
+        if (!swmm5 && ctx.snowpacks.config.hasTemperatureRows()) has_temp = true;
 
         if (has_temp) {
             sec(f,"TEMPERATURE");
+            const auto& snow = ctx.snowpacks.config;
+            if (!swmm5) {
+            if (snow.site) {
+                const auto& s = *snow.site;
+                std::fprintf(f, "SITE %.17g %.17g %.17g %.17g\n", s.latitude, s.longitude, s.timezone, s.elevation);
+            }
+            if (snow.model_authored)
+                std::fprintf(f, "SNOWMELT_MODEL %s\n", snow.model == surface::SnowKind::Ueb ? "UEB" : "DEGREE_DAY");
+            if (snow.step != 3600) std::fprintf(f, "SNOW_STEP %.17g\n", snow.step);
+            if (!snow.met_file.empty()) {
+                const auto path = emit_path_token(snow.met_file, dst_dir, force_abs_paths, warnings);
+                std::fprintf(f, "MET_FILE \"%s\"\n", path.c_str());
+            }
+            for (const auto& source : {std::pair{"SHORTWAVE", &snow.shortwave}, std::pair{"LONGWAVE", &snow.longwave}}) {
+                if (!source.second->authored) continue;
+                using Mode = surface::RadiationSource::Mode;
+                if (source.second->mode == Mode::Timeseries)
+                    std::fprintf(f, "%s TIMESERIES %s\n", source.first, source.second->series.c_str());
+                else std::fprintf(f, "%s %s\n", source.first, source.second->mode == Mode::File ? "FILE" : "COMPUTED");
+            }
+            }
             if (opts.temp_source == 1)
                 std::fprintf(f,"TIMESERIES   %s\n", opts.temp_ts_name.c_str());
             else if (opts.temp_source == 2) {
@@ -1743,6 +1779,20 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         }
     }
 
+    const auto ueb_rows = surface::uebOptionRows(ctx.snowpacks.config);
+    if (!swmm5 && !ueb_rows.empty()) {
+        sec(f, "UEB_OPTIONS");
+        for (const auto& row : ueb_rows) std::fprintf(f, "%s\n", row.c_str());
+    }
+
+    if(!swmm5)for(int section=0;section<3;++section) {
+        const auto rows=section==0?surface::meshSnowOptionRows(ctx.snowpacks.mesh_config):
+            surface::meshSnowRows(ctx.snowpacks.mesh_config,section==2);
+        if(rows.empty())continue;
+        sec(f,section==0?"2D_SNOW_OPTIONS":section==1?"2D_SNOW_DEFAULTS":"2D_SNOW");
+        for(const auto& row:rows)std::fprintf(f,"%s\n",row.c_str());
+    }
+
     // [SNOWPACKS]
     if (!ctx.snowpacks.names.empty()) {
         sec(f,"SNOWPACKS");
@@ -1750,6 +1800,13 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         std::fprintf(f,";;---------- ---------- ----------\n");
         for (size_t j = 0; j < ctx.snowpacks.names.size(); ++j) {
             const char* name = ctx.snowpacks.names[j].c_str();
+            const auto ueb = ctx.snowpacks.config.packs.find(static_cast<int>(j));
+            if (!swmm5 && ueb != ctx.snowpacks.config.packs.end()) {
+                const auto& p = ueb->second;
+                std::fprintf(f, "%s UEB %.17g %.17g %.17g %.17g %.17g MODEL %s\n", name,
+                    p.site.forest, p.site.drift, p.site.ground_heat, p.site.extinction_depth, p.initial_energy,
+                    p.model == surface::SnowKind::Ueb ? "UEB" : "DEGREE_DAY");
+            }
             if (j < ctx.snowpacks.plowable.size()) {
                 const auto& p = ctx.snowpacks.plowable[j];
                 std::fprintf(f,"%-16s PLOWABLE    ", name);

@@ -67,6 +67,13 @@
 
 #include "core/SWMMEngine.hpp"
 #include "hydrology/Climate.hpp"
+#include "hydrology/HourlyMeteorology.hpp"
+#include "hydrology/surface/SolarGeometry.hpp"
+#include "hydrology/surface/UebConfig.hpp"
+#include "input/handlers/HydrologyHandler.hpp"
+#include "core/InpWriter.hpp"
+#include "core/DateTime.hpp"
+#include <sstream>
 #include "transport/components/HeatFluxModules/RadiativeExchange.hpp"
 #include "transport/components/HeatFluxModules/SolarRadiation.hpp"
 
@@ -884,4 +891,152 @@ TEST(HeatSolarRadiationTest, WarningsDoNotSurviveARejectedConfig) {
     }
     (void)rc;
     swmm_engine_destroy(e);
+}
+
+
+TEST(SharedRadiation, SlopeIntegralAgreesWithAnalyticalEquinoxAndPolarLimits) {
+    using openswmm::surface::solarIntegral;
+    constexpr double pi = 3.14159265358979323846;
+    // Equinox at 45 N: horizontal sunrise/sunset at +/-90 degrees.
+    const auto horizontal = solarIntegral(45, 0, -180, 24, 0, 0);
+    EXPECT_NEAR(horizontal.horizontal, std::cos(pi/4)/pi, 1e-15);
+    EXPECT_DOUBLE_EQ(horizontal.horizontal, horizontal.hri);
+    const auto south = solarIntegral(45, 0, -180, 24, 30, 180);
+    const auto north = solarIntegral(45, 0, -180, 24, 30, 0);
+    EXPECT_NEAR(south.cosine, std::cos(pi/12)/pi, 1e-15);
+    EXPECT_NEAR(north.cosine, std::cos(5*pi/12)/pi, 1e-15);
+    EXPECT_NEAR(south.hri, south.cosine/std::cos(pi/6), 1e-15);
+    EXPECT_DOUBLE_EQ(solarIntegral(90, -23.4, -180, 24, 30, 0).cosine, 0);
+    EXPECT_NEAR(solarIntegral(90, 23.4, -180, 24, 0, 0).horizontal, std::sin(23.4*pi/180), 1e-15);
+    // East-facing snow receives more of the morning radiation; aspect is
+    // clockwise from north, not the reference driver's south-zero azimuth.
+    EXPECT_GT(solarIntegral(45, 0, -90, 6, 30, 90).hri,
+              solarIntegral(45, 0, -90, 6, 30, 270).hri);
+    double split = 0;
+    for (int h = 0; h < 24; ++h) split += solarIntegral(50, 17, -180+h*15, 1, 48, 240).hri/24;
+    EXPECT_NEAR(split, solarIntegral(50, 17, -180, 24, 48, 240).hri, 1e-15);
+}
+
+TEST(SharedRadiation, HourlyWeatherConservesIntervalsAndRejectsGapsAtomically) {
+    openswmm::climate::HourlyMeteorology met;
+    std::istringstream input("01/01/2026 00:00 -4 75 2 0 250\n01/01/2026 01:00 4 85 4 100 300\n");
+    ASSERT_TRUE(met.read(input).empty());
+    const double day = openswmm::datetime::encodeDate(2026, 1, 1);
+    std::array<double, 5> values{};
+    ASSERT_TRUE(met.average(day+1800./86400, 3600, values).empty());
+    EXPECT_NEAR(values[0], 0, 1e-8);
+    EXPECT_NEAR(values[3], 50, 1e-7);
+    EXPECT_NEAR(values[4], 275, 1e-7);
+    const auto accepted = values;
+    EXPECT_FALSE(met.average(day, 7201, values).empty());
+    EXPECT_EQ(values, accepted);
+    std::istringstream gap("01/01/2026 00:00 -4 75 2 0 250\n01/01/2026 02:00 4 85 4 100 300\n");
+    EXPECT_FALSE(met.read(gap).empty());
+    EXPECT_EQ(met.records().size(), 2u);
+    std::istringstream invalid("02/30/2026 00:00 -4 75 2 0 250\n");
+    EXPECT_FALSE(met.read(invalid).empty());
+}
+
+TEST(SharedRadiation, MetFilePrecedesSeriesAndComputedWithoutChangingClimateClock) {
+    openswmm::SimulationContext ctx;
+    const auto day = openswmm::datetime::encodeDate(2026, 1, 1);
+    ctx.current_date = day + .5;
+    auto& cfg = ctx.snowpacks.config;
+    ASSERT_TRUE(openswmm::surface::setSnowTemperature(cfg, {"SITE", "45", "-120", "-8", "1000"}).empty());
+    ASSERT_TRUE(openswmm::surface::setSnowTemperature(cfg, {"SHORTWAVE", "TIMESERIES", "missing"}).empty());
+    ASSERT_TRUE(openswmm::surface::setSnowTemperature(cfg, {"LONGWAVE", "TIMESERIES", "missing"}).empty());
+    std::istringstream input("01/01/2026 00:00 -4 75 2 0 250\n01/01/2026 01:00 4 85 4 100 300\n");
+    ASSERT_TRUE(ctx.snowpacks.meteorology.read(input).empty());
+    openswmm::climate::RadiationState result;
+    ASSERT_TRUE(openswmm::climate::resolveRadiation(ctx, day, 7200, result).empty());
+    EXPECT_NEAR(result.temperature, 0, 1e-8);
+    EXPECT_NEAR(result.humidity, .8, 1e-10);
+    EXPECT_NEAR(result.shortwave, 50, 1e-7);
+    EXPECT_NEAR(result.longwave, 275, 1e-7);
+    EXPECT_EQ(result.shortwave_source, openswmm::climate::RadiationOrigin::MetFile);
+    EXPECT_DOUBLE_EQ(ctx.current_date, day+.5);
+    EXPECT_LT(result.pressure, 101325);
+}
+
+TEST(SharedRadiation, SnowInputOptionsRoundTripAndInvalidEditsAreAtomic) {
+    openswmm::SimulationContext ctx;
+    openswmm::input::handle_temperature(ctx, {"SITE 41.74 -111.8 -7 1800", "SNOWMELT_MODEL UEB", "SNOW_STEP 00:30", "SHORTWAVE COMPUTED", "LONGWAVE TIMESERIES longwave"});
+    openswmm::input::handle_ueb_options(ctx, {"SURFACE_TEMP EQUILIBRIUM", "Z0 0.005", "BC_MONTHLY 1 8", "PRECIP_SPLIT DIVT"});
+    openswmm::input::handle_snowpacks(ctx, {"mountain UEB .2 1.5 2 .15 -200", "preserved UEB 0 1 0 .1 MODEL DEGREE_DAY"});
+    ASSERT_TRUE(ctx.errors.empty());
+    const auto& cfg = ctx.snowpacks.config;
+    EXPECT_EQ(cfg.modelFor(0), openswmm::surface::SnowKind::Ueb);
+    EXPECT_EQ(cfg.modelFor(1), openswmm::surface::SnowKind::DegreeDay);
+    EXPECT_DOUBLE_EQ(cfg.step, 1800);
+    EXPECT_DOUBLE_EQ(cfg.parameters.roughness, .005);
+    EXPECT_DOUBLE_EQ(cfg.packs.at(0).initial_energy, -200);
+    auto saved = cfg;
+    EXPECT_FALSE(openswmm::surface::setUebOption(saved, {"RHO_S", "nan"}).empty());
+    EXPECT_FALSE(openswmm::surface::setSnowTemperature(saved, {"SNOW_STEP", "01:99"}).empty());
+    EXPECT_DOUBLE_EQ(saved.step, cfg.step);
+    EXPECT_DOUBLE_EQ(saved.parameters.snow_density, cfg.parameters.snow_density);
+    const auto rows = openswmm::surface::uebOptionRows(cfg);
+    openswmm::SimulationContext reopened;
+    openswmm::input::handle_ueb_options(reopened, rows);
+    ASSERT_TRUE(reopened.errors.empty());
+    EXPECT_EQ(openswmm::surface::uebOptionRows(reopened.snowpacks.config), rows);
+    const std::string path = "shared_radiation_snow_roundtrip.inp";
+    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, path), 0);
+    std::ifstream file(path); std::string line, section;
+    openswmm::SimulationContext decoded;
+    while (std::getline(file, line)) {
+        if (!line.empty() && line.front() == '[') { section = line; continue; }
+        if (section == "[TEMPERATURE]") openswmm::input::handle_temperature(decoded, {line});
+        if (section == "[SNOWPACKS]") openswmm::input::handle_snowpacks(decoded, {line});
+        if (section == "[UEB_OPTIONS]") openswmm::input::handle_ueb_options(decoded, {line});
+    }
+    ASSERT_TRUE(decoded.errors.empty());
+    EXPECT_EQ(openswmm::surface::uebOptionRows(decoded.snowpacks.config), rows);
+    ASSERT_TRUE(decoded.snowpacks.config.site);
+    EXPECT_DOUBLE_EQ(decoded.snowpacks.config.site->longitude, cfg.site->longitude);
+    EXPECT_DOUBLE_EQ(decoded.snowpacks.config.packs.at(0).initial_energy, -200);
+    EXPECT_EQ(decoded.snowpacks.config.modelFor(1), openswmm::surface::SnowKind::DegreeDay);
+}
+
+
+TEST(SharedRadiation, HeatReadsMeasuredLongwaveWithoutCloudDoubleCounting) {
+    openswmm::SimulationContext ctx;
+    ctx.options.heat_transport = true; ctx.heat_config.radiative_exchange = true;
+    ctx.current_date = openswmm::datetime::encodeDate(2026, 1, 1);
+    ctx.snowpacks.config.met_file = "memory.met";
+    ctx.heat_config.cloud.configured = true; ctx.heat_config.cloud.fraction = .8;
+    std::istringstream data("01/01/2026 00:00 5 75 2 100 300\n");
+    ASSERT_TRUE(ctx.snowpacks.meteorology.read(data).empty());
+    openswmm::climate::updateSolarForcing(ctx, 3600);
+    EXPECT_DOUBLE_EQ(ctx.heat_state.shortwave_now, 100);
+    EXPECT_DOUBLE_EQ(ctx.climate_state.radiation.longwave, 300);
+    EXPECT_TRUE(ctx.climate_state.radiation.shared_heat_forcing);
+    openswmm::RadiativeConfig rc;
+    rc.albedo = .2; rc.sky_view = .75; rc.lw_reflection = .03;
+    const double computed = sr::netRadiativeFluxOut(2, 5, 75, rc, 100, 10, 300);
+    const double expected = sr::backLongwave(2, rc.emiss_water) - 80 - 300*.97*.75 - sr::landCoverLongwave(5, rc.emiss_landcover, .75);
+    EXPECT_DOUBLE_EQ(computed, expected);
+}
+
+TEST(SharedRadiation, ExplicitSiteIsSharedWithHeatAccessors) {
+    SWMM_Engine e = swmm_engine_new(); ASSERT_NE(e, nullptr);
+    auto& ctx = static_cast<openswmm::SWMMEngine*>(e)->context();
+    ASSERT_TRUE(openswmm::surface::setSnowTemperature(ctx.snowpacks.config, {"SITE", "45", "-120", "-8", "1500"}).empty());
+    double value = 0; int sited = 0;
+    ASSERT_EQ(swmm_heat_get_solar(e, SWMM_HEAT_SOLAR_LATITUDE, &value), SWMM_OK);
+    EXPECT_DOUBLE_EQ(value, 45);
+    ASSERT_EQ(swmm_heat_get_solar_sited(e, &sited), SWMM_OK); EXPECT_EQ(sited, 1);
+    ASSERT_EQ(swmm_heat_set_solar(e, SWMM_HEAT_SOLAR_LATITUDE, 47), SWMM_OK);
+    EXPECT_DOUBLE_EQ(ctx.snowpacks.config.site->latitude, 47);
+    swmm_engine_destroy(e);
+}
+
+TEST(SharedRadiation, MissingWeatherRefusesBeforePublishingAnyHeatForcing) {
+    openswmm::SimulationContext ctx;
+    ctx.options.heat_transport = true; ctx.heat_config.radiative_exchange = true;
+    ctx.current_date = openswmm::datetime::encodeDate(2026, 1, 1);
+    ASSERT_TRUE(openswmm::surface::setSnowTemperature(ctx.snowpacks.config, {"SHORTWAVE", "TIMESERIES", "missing"}).empty());
+    ctx.heat_state.shortwave_now = 500;
+    EXPECT_THROW(openswmm::climate::updateSolarForcing(ctx, 3600), std::runtime_error);
+    EXPECT_DOUBLE_EQ(ctx.heat_state.shortwave_now, 500);
 }

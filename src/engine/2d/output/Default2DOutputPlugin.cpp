@@ -783,6 +783,11 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
     face(ds_face_infil_rate_,     snap.surface_infil_rate);
     face(ds_face_infil_cum_,      snap.surface_infil_cum);
     face(ds_face_rain_cum_,       snap.surface_rain_cum);
+    if (want(report2d::RAINFALL) && !snap.surface_snow[0].empty()) {
+        createSnowDatasets(snap);
+        for (std::size_t k=0; k<ds_snow_.size(); ++k) face(ds_snow_[k], snap.surface_snow[k]);
+    }
+
     face(ds_face_vx_,             snap.surface_face_vx);
     face(ds_face_vy_,             snap.surface_face_vy);
     face(ds_face_continuity_err_, snap.surface_continuity_err);
@@ -988,6 +993,21 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
     if(checkpoint_write_failed_)return 1;
     ++n_steps_;
     return 0;
+}
+
+// Snow fields follow the rainfall report selection. They carry their actual
+// accepted timestamp because local source clocks need not equal report time.
+void Default2DOutputPlugin::createSnowDatasets(const SimulationSnapshot& snap) {
+    if (!want(report2d::RAINFALL) || snap.surface_snow[0].empty() || ds_snow_[0]>=0) return;
+    const hsize_t zero[2]{0,n_faces_}, chunk[2]{1,n_faces_};
+    for (std::size_t k=0; k<meshSnowFields.size(); ++k) {
+        const auto& field=meshSnowFields[k];
+        auto& id=ds_snow_[k]; id=createUnlimitedDataset(field.name,2,zero,chunk,H5T_NATIVE_DOUBLE);
+        writeStringAttr(id,"long_name",field.label); writeStringAttr(id,"units",field.units);
+        writeStringAttr(id,"mesh","Mesh2"); writeStringAttr(id,"location","face");
+        writeStringAttr(id,"state_time","Mesh2_face_snow_completed");
+        writeStringAttr(id,"missing_values","NaN for unassigned cells or quantities unavailable for the selected model");
+    }
 }
 
 // G-O: the aquifer's datasets, created on the first update() with a live kernel.
@@ -1297,6 +1317,7 @@ void Default2DOutputPlugin::checkpointWriteStatus(herr_t status) {
 std::vector<hid_t*> Default2DOutputPlugin::checkpointDatasets() {
     std::vector<hid_t*> ids{&ds_time_, &ds_face_depth_, &ds_face_head_, &ds_face_grad_hx_, &ds_face_grad_hy_, &ds_face_grad_hx_lim_, &ds_face_grad_hy_lim_, &ds_face_rainfall_, &ds_face_coupling_flux_, &ds_face_net_source_, &ds_face_infil_rate_, &ds_face_infil_cum_, &ds_face_rain_cum_, &ds_face_species_conc_, &ds_face_buildup_, &ds_gw_sat_conc_, &ds_gw_unsat_conc_, &ds_gw_species_ledger_, &ds_gw_ledger_, &ds_gw_bed_exchange_, &ds_gw_theta_, &ds_face_vx_, &ds_face_vy_, &ds_face_continuity_err_, &ds_edge_flux_, &ds_node_head_, &ds_node_depth_, &ds_face_max_depth_, &ds_face_max_velocity_, &ds_face_max_continuity_err_};
     for (auto& id : ds_gw_face_) ids.push_back(&id);
+    for (auto& id : ds_snow_) ids.push_back(&id);
     return ids;
 }
 void Default2DOutputPlugin::closeDatasets() noexcept {
@@ -1317,6 +1338,7 @@ void Default2DOutputPlugin::closeDatasets() noexcept {
     closeDS(ds_face_infil_rate_);
     closeDS(ds_face_infil_cum_);
     closeDS(ds_face_rain_cum_);
+    for (auto& id : ds_snow_) closeDS(id);
     closeDS(ds_face_species_conc_);
     closeDS(ds_face_buildup_);
     for (int k = 0; k < kGwFaceFields; ++k) closeDS(ds_gw_face_[k]);   // G-O

@@ -96,6 +96,7 @@ struct SurfaceStateData;
 struct SolverOptions2D;
 struct RichardsBedOwner;
 struct RichardsBedAcceptance;
+struct RichardsBedReceipt;
 struct GwTransportData;
 /// T7.2: declared in GwTransportData.hpp; the solver only needs the tag.
 enum class GwScope : int8_t;
@@ -317,7 +318,7 @@ public:
     /// gathers its share when IT fires — the node is never pinned to the
     /// aquifer's tier and the aquifer is never pinned to tier 0.
     /// @param nodes 1D node data, or nullptr when nothing is coupled.
-    void sampleNodeExchange(const NodeData* nodes, double dt);
+    void sampleNodeExchange(const NodeData* nodes, double dt, double end=-1);
 
     /// Per-node exchange volume this advance (m³ SI, + out of the aquifer
     /// into the pipe). The router books it into `nodes.coupling_volume`
@@ -369,6 +370,24 @@ public:
     double cellCompletedTime(int cell) const { return cell_completed_.at(cell); }
     const std::vector<double>& richardsBedDownCumulative() const noexcept { return richards_down_cum_; }
     const std::vector<double>& richardsBedUpCumulative() const noexcept { return richards_up_cum_; }
+    // Hydraulic columns book completed intervals; groundwater consumes them
+    // only at its own firing. Gross reservations cannot cancel each other.
+    struct PendingLidBed { double start=0,end=0,down=0,up=0; };
+    std::string configureLidReceipts(const std::vector<int>& beds,const std::vector<int>& mobile={});
+    std::string retainLidReceipts(double start,double end,const std::vector<RichardsBedReceipt>&);
+    bool lidReceiptsEnabled() const noexcept { return lid_receipts_enabled_; }
+    double pendingLidDown(int cell) const noexcept;
+    double pendingLidUp(int cell) const noexcept;
+    double pendingLidWater() const noexcept;
+    const std::vector<std::vector<PendingLidBed>>& pendingLidReceipts() const { return lid_receipts_; }
+    struct LidBedDiagnostic {
+        double start=0,end=0,groundwater_time=0,lid_head=0,groundwater_head=0;
+        double requested_down=0,requested_up=0,reserved_down=0,reserved_up=0,accepted_down=0,accepted_up=0;
+    };
+    const std::vector<LidBedDiagnostic>& lidBedDiagnostics() const { return lid_bed_diagnostics_; }
+    double pendingBedDown(int bed) const noexcept;
+    double pendingBedUp(int bed) const noexcept;
+    void setLidBedClogging(int bed,double factor) { lid_bed_factor_.at(bed)=factor; }
 
     /// Storage now, for the continuity ledger.
     double storage() const noexcept { return state_.storage(); }
@@ -479,6 +498,13 @@ private:
     // activation remains guarded until the routing/restart adapter is qualified.
     std::vector<double> cell_completed_, richards_down_cum_, richards_up_cum_;
     std::vector<bool> richards_bed_owned_;
+    bool lid_receipts_enabled_=false;
+    std::vector<std::vector<PendingLidBed>> lid_receipts_;
+    std::vector<double> lid_booked_end_;
+    std::vector<bool> mobile_lid_bed_;
+    std::vector<double> lid_bed_factor_;
+    std::vector<double> node_pending_down_,node_pending_up_;
+    std::vector<LidBedDiagnostic> lid_bed_diagnostics_;
     bool richards_clock_valid_ = true; // old checkpoints do not restore the joint owner clocks
     /// T7.4: the per-bed volumes the CURRENT gather took — the weights that
     /// split this firing's outgoing mass across the cell's beds. Written by

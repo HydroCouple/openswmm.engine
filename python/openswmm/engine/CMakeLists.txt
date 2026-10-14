@@ -41,6 +41,7 @@ set(_engine_modules
     _spatial
     _forcing
     _climate
+    _snow
 )
 
 foreach(_mod IN LISTS _engine_modules)

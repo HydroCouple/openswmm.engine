@@ -4,6 +4,7 @@
 #define OPENSWMM_SOURCE_WATER_DRIVER_HPP
 #include "SourceClockGroups.hpp"
 #include "LID.hpp"
+#include "surface/SourceSnow.hpp"
 #include <array>
 #include <memory>
 
@@ -102,6 +103,7 @@ public:
     std::string commit();
     void cancel();
     const SourceClockGroups& clocks() const { return clocks_; }
+    const surface::SourceSnow& snow(bool trial=false)const;
     const SimulationContext& context(bool trial = false) const;
     const RunoffSolver& runoff(bool trial = false) const;
     const lid::LIDSolver& lids(bool trial = false) const;

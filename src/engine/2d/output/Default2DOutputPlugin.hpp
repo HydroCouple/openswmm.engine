@@ -287,6 +287,11 @@ private:
     hid_t ds_face_infil_rate_      = H5I_INVALID_HID;
     hid_t ds_face_infil_cum_       = H5I_INVALID_HID;
     hid_t ds_face_rain_cum_        = H5I_INVALID_HID;
+    std::array<hid_t, meshSnowFields.size()> ds_snow_ = [] {
+        std::array<hid_t, meshSnowFields.size()> ids; ids.fill(H5I_INVALID_HID); return ids;
+    }();
+    void createSnowDatasets(const SimulationSnapshot&);
+
     /// Overland transport S1: [nTime, nSpecies, nFace] species concentration.
     /// Created lazily on the first update() carrying species; absent when the
     /// model has no 2D transport.

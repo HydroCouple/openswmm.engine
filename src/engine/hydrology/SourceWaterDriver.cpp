@@ -3,6 +3,8 @@
 #include "SourceWaterDriver.hpp"
 #include "../core/CompletedSourceArchive.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/UnitConversion.hpp"
+#include "surface/UebSubcatchments.hpp"
 #include "../transport/components/LidLayerCommon.hpp"
 #include <algorithm>
 #include <cmath>
@@ -156,6 +158,7 @@ struct SourceWaterDriver::State {
     SimulationContext ctx;
     RunoffSolver runoff;
     lid::LIDSolver lids;
+    surface::SourceSnow snow;
     bool partitioned=false;
     bool hydraulic_returns=false;
     double hydraulic_return_end=0;
@@ -170,7 +173,7 @@ struct SourceWaterDriver::State {
     std::vector<SourcePollutantLedger> pollutants;
     std::vector<std::vector<double>> runon_mass, return_mass; // pending paired transfers, conc*m3
     explicit State(const SimulationContext& c) : ctx(c) {}
-    State(const State& s) : ctx(s.ctx), runoff(s.runoff), lids(s.lids.waterTrial()),
+    State(const State& s) : ctx(s.ctx), runoff(s.runoff), lids(s.lids.waterTrial()), snow(s.snow),
         partitioned(s.partitioned),hydraulic_returns(s.hydraulic_returns),hydraulic_return_end(s.hydraulic_return_end),inside(s.inside),runon(s.runon), pervious_return(s.pervious_return), aquifer_returns(s.aquifer_returns),outfall_returns(s.outfall_returns), ledger(s.ledger), deliveries(s.deliveries), atmosphere(s.atmosphere),
         pollutant_names(s.pollutant_names), pollutants(s.pollutants), runon_mass(s.runon_mass), return_mass(s.return_mass) {}
 };
@@ -188,6 +191,7 @@ const SourceWaterDriver::State& SourceWaterDriver::view(bool trial) const {
     if (!s) throw std::logic_error("No source water state for this view.");
     return *s;
 }
+const surface::SourceSnow& SourceWaterDriver::snow(bool trial)const{return view(trial).snow;}
 const std::vector<double>& SourceWaterDriver::spatialFractions() const { return view(false).inside; }
 std::string SourceWaterDriver::configureSpatialCoverage(const std::vector<double>& fractions) {
     if(!state_ || trial_ || state_->partitioned || fractions.size()!=static_cast<std::size_t>(state_->ctx.n_subcatches()))
@@ -361,6 +365,16 @@ std::string SourceWaterDriver::initialize(const SimulationContext& c, const std:
             s->ctx.subcatches.total_lid_area_ft2[g.subcatch_idx[u]] += g.area[u];
         }
         s->runoff.init(s->ctx, areas);
+        std::vector<std::vector<int>> snow_groups;
+        bool snow_active=false;
+        for(const auto& g:clocks.groups()) {
+            snow_groups.push_back(g.subcatches);
+            for(int sc:g.subcatches)if(!c.options.ignore_snow_melt&&c.subcatches.snowpack[sc]>=0)snow_active=true;
+        }
+        if(snow_active)for(const auto& g:clocks.groups())for(int sc:g.subcatches)
+            s->ctx.subcatches.area[sc]=(s->runoff.soa().area[sc]+s->ctx.subcatches.total_lid_area_ft2[sc])*ucf::UCF(ucf::LANDAREA,c.options);
+        if(auto error=s->snow.initialize(s->ctx,snow_groups,s->runoff.soa().area);!error.empty())return error;
+
         const auto n = static_cast<std::size_t>(c.n_subcatches());
         s->inside.assign(n,1);s->runon.assign(n, 0); s->pervious_return.assign(n, 0); s->ledger.resize(n);
         s->runon_mass.assign(n, std::vector<double>(np, 0)); s->return_mass = s->runon_mass;
@@ -419,19 +433,22 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
                                const RunoffSolver::InfiltrationBoundary* boundary,
                                const BottomCeiling* ceiling) {
     const double dt = f.end - f.start; auto& c = s.ctx;
+    auto weather_input=f.sources;
+    if(s.snow.active())s.snow.advance(c,clocks_.groupForSubcatch(weather_input.front().subcatch),f.start,f.end,weather_input);
+
     if (s.partitioned && !ceiling) {
         for (const auto& [t, u] : s.lids.usageOrder()) {
             const auto& g = s.lids.group(t);
             if (s.inside[g.subcatch_idx[u]] > 0 && g.area[u] > 0 &&
                 lid::hasNativeBottom(g.type, g.stor_thick[u], g.stor_ksat[u]) &&
-                std::any_of(f.sources.begin(), f.sources.end(), [&](const auto& w) {
+                std::any_of(weather_input.begin(), weather_input.end(), [&](const auto& w) {
                     return w.subcatch == g.subcatch_idx[u];
                 }))
                 throw std::runtime_error("Completed inside native LID area requires a spatial bottom ceiling.");
         }
     }
     std::vector<const RunoffSourceForcing*> weather_at(c.n_subcatches(), nullptr);
-    for (const auto& weather : f.sources) weather_at[weather.subcatch] = &weather;
+    for (const auto& weather : weather_input) weather_at[weather.subcatch] = &weather;
     const auto selected = [&](int sc) { return sc >= 0 && sc < c.n_subcatches() && weather_at[sc]; };
     const auto available = [&](const auto& q) {
         return selected(q.source) && q.available-f.start<=1e-12*std::max(1.,std::max(q.available,f.start));
@@ -439,7 +456,7 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
     for(const auto& q:s.outfall_returns)if(available(q))s.runon[q.source]+=q.volume;
     std::erase_if(s.outfall_returns,available);
     const int np = int(s.pollutant_names.size());
-    auto forcing=f.sources;
+    auto forcing=weather_input;
     std::vector<SourceSurfaceReturn> incoming_aquifer;
     std::vector<std::vector<std::array<double,3>>> nonlid_return(c.n_subcatches(),std::vector<std::array<double,3>>(np));
     for(const auto& q:s.aquifer_returns)if(selected(q.source)) {
@@ -456,7 +473,7 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
     std::vector<std::vector<double>> outlet_mass(c.n_subcatches(), std::vector<double>(np, 0));
     // Consume each pending volume once. Runon is distributed across the full
     // non-LID + LID footprint, so partial LID coverage cannot multiply it.
-    for (const auto& weather : f.sources) {
+    for (const auto& weather : weather_input) {
         const int sc = weather.subcatch;
         const double full = s.runoff.soa().area[sc] + c.subcatches.total_lid_area_ft2[sc];
         if (s.runon[sc] > 0 && full <= 0) throw std::runtime_error("Runon receiver has no surface area.");
@@ -466,7 +483,13 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
         s.runon[sc] = 0; s.pervious_return[sc] = 0;
         std::fill(s.runon_mass[sc].begin(), s.runon_mass[sc].end(), 0);
         std::fill(s.return_mass[sc].begin(), s.return_mass[sc].end(), 0);
-        s.ledger[sc].rain += weather.rain * dt * full;
+        double arrival=weather.rain*full;
+        if(s.snow.active()&&c.subcatches.snowpack[sc]>=0) {
+            const double fi=s.runoff.soa().imperv_pct[sc];
+            arrival=weather.rain*c.subcatches.total_lid_area_ft2[sc]+s.runoff.soa().area[sc]*
+                (fi*c.subcatches.snow_net_imperv[sc]+(1-fi)*c.subcatches.snow_net_perv[sc]);
+        }
+        s.ledger[sc].rain += arrival * dt;
     }
     s.runoff.execute(c, dt, 0, f.infil_factor, f.recovery_factor, f.month, boundary, &forcing,s.partitioned ? &s.inside : nullptr);
     const auto& r = s.runoff.soa();
@@ -477,7 +500,7 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
         outlet_mass[sc] = b.surface_mass;
     }
     std::vector<double> outlet(c.n_subcatches(), 0), native(c.n_subcatches(), 0);
-    for (const auto& weather : f.sources) {
+    for (const auto& weather : weather_input) {
         const int sc = weather.subcatch; outlet[sc] = r.outflow_vol[sc];
         s.ledger[sc].evaporation += c.subcatches.evap_loss[sc] * r.area[sc] * dt;
         s.ledger[sc].infiltration += r.infil_vol[sc];
@@ -536,7 +559,7 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
     std::sort(inputs.begin(), inputs.end(), [](const auto& a, const auto& b) {
         return std::pair{a.type, a.unit} < std::pair{b.type, b.unit};
     });
-    for (const auto& weather : f.sources)
+    for (const auto& weather : weather_input)
         if (outlet[weather.subcatch] < -1e-12 ||
             capture_impervious[weather.subcatch] * r.imperv_runoff_cfs[weather.subcatch] * dt > r.imperv_runoff_cfs[weather.subcatch] * dt + 1e-12 ||
             capture_pervious[weather.subcatch] * r.perv_runoff_cfs[weather.subcatch] * dt > r.perv_runoff_cfs[weather.subcatch] * dt + 1e-12)
@@ -560,7 +583,10 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
     }
     for (auto& b : s.atmosphere) {
         const auto* weather = weather_at[b.source]; if (!weather) continue;
-        const double potential = weather->pet * dt * b.area;
+        double pet=weather->pet;
+        if(b.kind==SourceEtKind::PERVIOUS&&weather->pet_perv>=0)pet=weather->pet_perv;
+        if(b.kind==SourceEtKind::IMPERVIOUS&&weather->pet_imperv>=0)pet=weather->pet_imperv;
+        const double potential = pet * dt * b.area;
         double evaporation = r.actual_perv_evap_vol[b.source];
         if (b.kind == SourceEtKind::IMPERVIOUS)
             evaporation = c.subcatches.evap_loss[b.source] * r.area[b.source] * dt - evaporation;
@@ -626,7 +652,7 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
             for (int p = 0; p < np; ++p) quality->outlet[p] += drain_mass[p];
         g.drain_open[u] = g.drain_flow[u] > 0; g.old_drain_flow[u] = g.drain_flow[u];
     }
-    for (const auto& weather : f.sources) {
+    for (const auto& weather : weather_input) {
         const int sc = weather.subcatch;
         if (route(sc, c.subcatches.outlet_node[sc], c.subcatches.outlet_subcatch[sc], outlet[sc], false, outlet_mass[sc]))
             for (auto& b : s.pollutants) if (b.source == sc) {
@@ -651,6 +677,18 @@ std::string SourceWaterDriver::stage(int group, double end, double completed_thr
             for(const auto& q:trial_->outfall_returns)if(clocks_.groupForSubcatch(q.source)==group &&
                 q.available-f.start>1e-12*std::max(1.,q.available) && q.available<f.end)ends.push_back(q.available);
             std::sort(ends.begin(),ends.end());ends.erase(std::unique(ends.begin(),ends.end()),ends.end());
+            if(trial_->snow.active()) {
+                // UEB held windows stop at the same clock boundaries as native
+                // snow; weather intervals may also end sooner at gage changes.
+                double at=f.start;
+                while(at<f.end) {
+                    const double span=surface::ueb::nextSnowBoundary(trial_->ctx,at,f.end-at);
+                    const double next=std::min(f.end,at+span);
+                    if(!(next>at))throw std::runtime_error("Snow source boundary failed to advance.");
+                    if(next<f.end)ends.push_back(next);at=next;
+                }
+                std::sort(ends.begin(),ends.end());ends.erase(std::unique(ends.begin(),ends.end()),ends.end());
+            }
             double start=f.start;
             for(double end:ends) {
                 auto segment=f;segment.start=start;segment.end=end;
@@ -693,6 +731,9 @@ void SourceWaterDriver::checkpoint(detail::CompletedSourceArchive& a,bool model)
     auto& s=*state_;auto& c=s.ctx;auto& sub=c.subcatches;
     clocks_.checkpoint(a,model);
     s.runoff.checkpoint(a,model);s.lids.checkpoint(a,model);
+    s.snow.checkpoint(a,model,c);
+    if(!model&&s.snow.active())for(std::size_t g=0;g<clocks_.groups().size();++g)
+        if(s.snow.ledgers()[g].end!=clocks_.groups()[g].completed_end)throw std::runtime_error("Snow source restart clocks differ.");
     if(model) {
         a(s.partitioned,s.inside,s.pollutant_names,c.options.flow_units,c.options.ignore_quality,
             c.options.ignore_snow_melt,c.options.water_age,c.options.heat_transport);

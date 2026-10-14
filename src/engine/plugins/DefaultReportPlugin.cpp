@@ -280,6 +280,13 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
     // Write result sections (continuity, statistics, summaries)
     write_results(f, ctx);
 
+    if(!ctx.snowpacks.report_values.empty()) {
+        std::fprintf(f,"\n\n  Snow Process Water and Energy Balance (SI)\n  -----------------------------------------\n");
+        for(const auto& row:ctx.snowpacks.report_values)
+            std::fprintf(f,"\n  %-44s % .9g",row.first.c_str(),row.second);
+        std::fprintf(f,"\n  Negative sublimation is condensation; energy includes the active ground layer.\n");
+    }
+
     // Write analysis timing and close
     write_timing(f, ctx);
 

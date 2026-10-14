@@ -21,6 +21,7 @@
 #include "solver/SurfaceSolverFactory.hpp"
 #endif
 #include "../core/DateTime.hpp"
+#include "../hydrology/LidNodeAquifer.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../core/PerfTimers.hpp"
@@ -1007,9 +1008,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                 if (b.cell < 0 || b.node < 0 ||
                     static_cast<std::size_t>(b.node) >= ctx.nodes.aquifer2d_bed.size())
                     continue;
-                if (lidnode::richardsMode(ctx, b.node))
+                if (!b.exchange) continue;
+                if (lidnode::richardsMode(ctx, b.node) && lidnode::bottomMode(ctx,b.node)!=LidNodeBottom::MeshAquifer)
                     throw std::runtime_error("Richards 1D LID '" + ctx.node_names.name_of(b.node) +
-                        "' currently supports sealed or native-soil bottoms; select the existing formulation for an active 2D aquifer node bed.");
+                        "' requires explicit MESH_AQUIFER bottom ownership for an active aquifer bed.");
                 ctx.nodes.aquifer2d_bed[static_cast<std::size_t>(b.node)] = 1;
                 const int sr = ctx.node_subtypes.storage_row(b.node);
                 if (sr >= 0 &&
@@ -1060,6 +1062,23 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             subsurface_.initTransport(rows, &gw_, pollut_decay, ctx.warnings);
             marcher->refreshSubsurfaceRows();
             subsurface_.setSources(resolveGwSources(ctx, mesh_, gw_, subsurface_.state(), subsurface_.transport()));
+            std::vector<int> porous,mobile;
+            for(int n=0;n<ctx.n_nodes();++n)if(lidnode::bottomMode(ctx,n)==LidNodeBottom::MeshAquifer) {
+                if(ctx.n_pollutants()>0 || ctx.options.water_age || ctx.options.heat_transport || ctx.reactions.configured)
+                    throw std::runtime_error("Mesh LID bottom exchange currently requires water-only routing.");
+                int bed=-1;
+                for(std::size_t b=0;b<subsurface_.nodeBeds().size();++b) {
+                    const auto& row=subsurface_.nodeBeds()[b];
+                    if(row.node==n && row.exchange && row.cell>=0) {
+                        if(bed>=0)throw std::runtime_error("Mesh LID requires one resolved enabled bottom connection.");
+                        bed=int(b);
+                    }
+                }
+                if(bed<0)throw std::runtime_error("Mesh LID '"+ctx.node_names.name_of(n)+"' has no enabled receiving aquifer bed.");
+                if(lidnode::richardsMode(ctx,n))porous.push_back(bed);
+                else mobile.push_back(bed);
+            }
+            if(auto e=subsurface_.configureLidReceipts(porous,mobile);!e.empty())throw std::runtime_error(e);
         }
 
         // G-X3 (2026-09-19): conduit seepage → the cells the conduit crosses.
@@ -1338,6 +1357,29 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // the coverages resolved above and before the first runoff step.
     if (surface_quality_.active() && !ctx.options.ignore_quality)
         surface_quality_.initState(ctx, mesh_);
+    state_.snow_context=&ctx;
+    if(!ctx.options.ignore_snow_melt && ctx.snowpacks.mesh_config.mode!=surface::MeshSnowConfig::Mode::No &&
+       (ctx.snowpacks.mesh_config.assigned() || ctx.snowpacks.mesh_config.mode==surface::MeshSnowConfig::Mode::Yes)) {
+        std::vector<surface::MeshSnowGeometry> geometry(mesh_.n_cells());
+        constexpr double degrees=180./3.14159265358979323846;
+        for(int i=0;i<mesh_.n_cells();++i) {
+            auto& g=geometry[i];g.area=mesh_.tri_area[i];
+            if(i<int(mesh_.tri_tag.size()))g.tag=mesh_.tri_tag[i];
+            double nx=0,ny=0,nz=0;
+            const int nv=mesh_.cell_vertex_count(i);
+            for(int k=0;k<nv;++k) {
+                const int a=mesh_.cell_v[MeshData::slot(i,k)],b=mesh_.cell_v[MeshData::slot(i,(k+1)%nv)];
+                nx+=(mesh_.vy[a]-mesh_.vy[b])*(mesh_.vz[a]+mesh_.vz[b]);
+                ny+=(mesh_.vz[a]-mesh_.vz[b])*(mesh_.vx[a]+mesh_.vx[b]);
+                nz+=(mesh_.vx[a]-mesh_.vx[b])*(mesh_.vy[a]+mesh_.vy[b]);
+            }
+            if(nz<0){nx=-nx;ny=-ny;nz=-nz;}
+            g.slope=std::atan2(std::hypot(nx,ny),nz)*degrees;
+            g.aspect=std::hypot(nx,ny)>1e-15?std::fmod(std::atan2(nx,ny)*degrees+360.,360.):0;
+        }
+        if(auto error=state_.snow.initialize(ctx,geometry);!error.empty())throw std::runtime_error(error);
+        state_.snow_catch.assign(mesh_.n_cells(),1);
+    }
     infil_elapsed_ = 0.0;
     if (infil_.active()) {
         // Publish an initial held rate so the very first substep infiltrates
@@ -1571,6 +1613,23 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
         }
         co_forcing_elapsed_ = 0.0;
         co_forcing_first_ = false;
+    }
+
+    if(state_.snow.active()) {
+        // Interpolate caught precipitation with exactly the same spatial
+        // weights as raw precipitation. Their ratio is the cell catch factor.
+        auto caught=rates;
+        for(std::size_t g=0;g<caught.size();++g)caught[g]*=ctx.gages.snow_factor[g];
+        std::vector<double> raw_cells,caught_cells;
+        gageRatesToCells(ctx,rates,raw_cells);gageRatesToCells(ctx,caught,caught_cells);
+        for(std::size_t i=0;i<state_.snow_catch.size();++i)
+            state_.snow_catch[i]=raw_cells[i]>0?caught_cells[i]/raw_cells[i]:1.;
+        if(!common_stage_) {
+            auto rain=state_.rainfall;
+            for(int i=0;i<int(rain.size());++i)rain[i]=state_.runtime_forcings.rate(1,i,rain[i]);
+            if(auto error=state_.snow.advance(ctx,sim_time_,sim_time_+dt,rain,state_.snow_catch);!error.empty())
+                throw std::runtime_error(error);
+        }
     }
 
     // Apply once per batch against the unforced base, never yesterday's
@@ -2048,7 +2107,14 @@ void SurfaceRouter2D::publishLinkCoupling(SimulationContext& ctx) {
             // aquifer then had no channel to refund through, and created
             // the water instead) — the node exchange's per-batch budget,
             // here expressed with the accumulator itself (G-X1 rule 2).
-            const double left = kLinkFaceShare * avail + gw.lacc[c];
+            double left = kLinkFaceShare * avail + gw.lacc[c];
+            if(subsurface_.lidReceiptsEnabled()) {
+                SubsurfaceSolver::NodeWaterBudget budget;
+                if(auto e=subsurface_.nodeWaterBudget(int(c),std::max(ctx.options.routing_step,1.e-6),budget);!e.empty())
+                    throw std::runtime_error(e);
+                int consumers=0;for(const auto& share:aquifer_link_shares_)if(share.cell==int(c))++consumers;
+                left=std::min(left,budget.donor/std::max(1,consumers));
+            }
             if (sh.weight > 0.0)
                 gain_max_2d = std::min(gain_max_2d,
                                        std::max(left, 0.0) / sh.weight);
@@ -2107,6 +2173,11 @@ double SurfaceRouter2D::couplingSyncSpan(const SimulationContext& ctx,const Solv
                : ctx.options.routing_step);
 }
 
+void SurfaceRouter2D::prepareLidStep(SimulationContext& ctx,double dt,double evaporation) {
+    lidnode::prepareMeshRichardsStep(ctx,subsurface_,state_,dt,evaporation);
+    if(subsurface_.lidReceiptsEnabled() && !aquifer_link_shares_.empty())publishLinkCoupling(ctx);
+}
+
 void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_dt,
                                           double t) {
     if (!active_) return;
@@ -2121,6 +2192,11 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
             (!outfall_exchange_.prepared_ || outfall_exchange_.prepared_dt_ != routing_dt))
             throw std::invalid_argument("Joint outfall advance requires its matching pre-routing reservation.");
         source_boundary_ready_ = false;
+    }
+    for(std::size_t b=0;b<subsurface_.nodeBeds().size();++b) {
+        const int n=subsurface_.nodeBeds()[b].node;
+        if(lidnode::bottomMode(ctx,n)==LidNodeBottom::MeshAquifer && !lidnode::richardsMode(ctx,n))
+            subsurface_.setLidBedClogging(int(b),lidnode::bottomCloggingFactor(ctx,ctx.node_subtypes.storage_row(n)));
     }
     // Consume only the accepted hydraulic exchange, against reservations
     // made before the 1D solve. This also preserves every sample in a batch.
@@ -2598,9 +2674,9 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
         const double area = mesh_.tri_area[ui];
         const double weather_area = common_stage_ ? common_stage_->meshWeatherArea(i) : area;
         const double rain_rate = common_stage_ ? std::max(0.0, state_.runtime_forcings.rate(1,i,state_.rainfall[ui])) : state_.rainfall[ui];
-        rain_vol += rain_rate * weather_area;
+        rain_vol += (state_.snow.owns(i)?state_.liquidRainfall(i):rain_rate) * weather_area;
         rain_cum_[ui] += rain_rate * weather_area * dt;
-        evap_vol += evapSink(state_.evap_rate[ui], state_.depth[ui],
+        evap_vol += evapSink(state_.exposedEvaporation(i), state_.depth[ui],
                              options_.dry_depth) * area;
         if (do_infil) {
             // APPLIED depth (m) the marcher actually removed since the last

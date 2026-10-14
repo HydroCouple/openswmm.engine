@@ -281,7 +281,15 @@ SWMM_ENGINE_API int swmm_heat_get_solar(SWMM_Engine engine, int param,
                                         double* value) {
     CHECK_HANDLE(engine);
     if (value == nullptr) return SWMM_ERR_BADPARAM;
-    const auto& sc = to_engine(engine)->context().heat_config.solar;
+    const auto& ctx = to_engine(engine)->context();
+    const auto& sc = ctx.heat_config.solar;
+    if (ctx.snowpacks.config.site) {
+        const auto& site = *ctx.snowpacks.config.site;
+        if (param == SWMM_HEAT_SOLAR_LATITUDE) { *value = site.latitude; return SWMM_OK; }
+        if (param == SWMM_HEAT_SOLAR_LONGITUDE) { *value = site.longitude; return SWMM_OK; }
+        if (param == SWMM_HEAT_SOLAR_TIMEZONE) { *value = site.timezone; return SWMM_OK; }
+        if (param == SWMM_HEAT_SOLAR_ELEVATION) { *value = site.elevation; return SWMM_OK; }
+    }
     switch (param) {
         case SWMM_HEAT_SOLAR_LATITUDE:      *value = sc.latitude_deg;    break;
         case SWMM_HEAT_SOLAR_LONGITUDE:     *value = sc.longitude_deg;   break;
@@ -300,6 +308,7 @@ SWMM_ENGINE_API int swmm_heat_get_solar(SWMM_Engine engine, int param,
 SWMM_ENGINE_API int swmm_heat_set_solar(SWMM_Engine engine, int param,
                                         double value) {
     CHECK_HANDLE(engine);
+    if (!std::isfinite(value)) return SWMM_ERR_BADPARAM;
     auto& cfg = to_engine(engine)->context().heat_config;
     auto& sc  = cfg.solar;
     switch (param) {
@@ -346,6 +355,13 @@ SWMM_ENGINE_API int swmm_heat_set_solar(SWMM_Engine engine, int param,
         default:
             return SWMM_ERR_BADINDEX;
     }
+    auto& site = to_engine(engine)->context().snowpacks.config.site;
+    if (site) {
+        if (param == SWMM_HEAT_SOLAR_LATITUDE) site->latitude = value;
+        if (param == SWMM_HEAT_SOLAR_LONGITUDE) site->longitude = value;
+        if (param == SWMM_HEAT_SOLAR_TIMEZONE) site->timezone = value;
+        if (param == SWMM_HEAT_SOLAR_ELEVATION) site->elevation = value;
+    }
     cfg.configured = true;
     return SWMM_OK;
 }
@@ -354,7 +370,7 @@ SWMM_ENGINE_API int swmm_heat_get_solar_sited(SWMM_Engine engine, int* sited) {
     CHECK_HANDLE(engine);
     if (sited == nullptr) return SWMM_ERR_BADPARAM;
     const auto& sc = to_engine(engine)->context().heat_config.solar;
-    *sited = (sc.has_latitude && sc.has_longitude) ? 1 : 0;
+    *sited = (to_engine(engine)->context().snowpacks.config.site || (sc.has_latitude && sc.has_longitude)) ? 1 : 0;
     return SWMM_OK;
 }
 

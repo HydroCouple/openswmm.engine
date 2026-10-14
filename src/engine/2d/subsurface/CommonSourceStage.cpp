@@ -49,6 +49,7 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
     const SolverOptions2D& options,SubsurfaceSolver& gw,runoff::SourceWaterDriver& sources,const SurfaceOwnershipPreview& preview,bool mesh_only,
     const std::string& runtime_water_identity,bool runtime_boundaries,bool runtime_catchment_forcing) {
     if(mesh_) return "Common source stage already initialized.";
+    if(runtime_catchment_forcing&&sources.snow().active())return "Runtime catchment providers require phase-aware snow forcing receipts.";
     if(!gw.active() || !preview.valid() || preview.cancelled || preview.mesh_weather_area.size()!=mesh.tri_area.size())
         return "Common source stage requires a valid reviewed mesh/receiver snapshot.";
     const auto quality_error=qualityProfile(sources,surface,gw);if(!quality_error.empty())return quality_error;
@@ -154,7 +155,7 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
     }
     if(cells.empty()) return "Common source stage has no reviewed receiving cells.";
     if(gw.sourceReceiptOwnershipBound())return "Aquifer source receipt ownership already bound.";
-    if(std::any_of(gw.richards_bed_owned_.begin(),gw.richards_bed_owned_.end(),[](bool x){return x;}))
+    if(!gw.lidReceiptsEnabled() && std::any_of(gw.richards_bed_owned_.begin(),gw.richards_bed_owned_.end(),[](bool x){return x;}))
         return "Common source ownership must bind before Richards owner firings.";
     // Both bindings are initial-state operations. Validate receiver queues
     // before changing the source partition so an invalid attachment is retryable.
@@ -174,9 +175,17 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
         const auto invalid=RuntimeWaterCheckpoint::validate(binding,surface.runtime_sources,gw.runtimeSources(),surface.runtime_forcings,surface.boundary);
         if(!invalid.empty())return invalid;
     }
+    auto mesh_snow=surface.snow;
+    if(mesh_snow.active()) {
+        if(!surface.snow_context)return "Mesh snow has no weather owner.";
+        auto geometry=mesh_snow.geometry();
+        for(std::size_t i=0;i<geometry.size();++i)geometry[i].area=preview.mesh_weather_area[i];
+        if(auto error=mesh_snow.initialize(*surface.snow_context,geometry);!error.empty())return error;
+    }
     const auto partition_error=sources.configureSpatialCoverage(fractions);
     if(!partition_error.empty())return partition_error;
     const auto receipt_error=gw.configureSourceReceipts(cells);if(!receipt_error.empty())return receipt_error;
+    surface.snow=std::move(mesh_snow);
     mesh_=&mesh;surface_=&surface;options_=&options;gw_=&gw;sources_=&sources;donors_=std::move(donors);
     cells_=std::move(cells);owned_=std::move(owned);weather_=preview.mesh_weather_area;
     et_contacts_=std::move(et_contacts);
@@ -206,6 +215,8 @@ std::string CommonSourceStage::validateRuntimeWater(const RuntimeSources& surfac
 
 std::string CommonSourceStage::checkpointBoundary() const {
     if(!mesh_||!sources_||!gw_||!surface_||exchange_.planned_)return "Checkpoint requires an attached accepted source boundary.";
+    if(surface_->snow.active() && surface_->snow.completedEnd()!=completedEnd())
+        return "Checkpoint mesh snow clock does not match the accepted source boundary.";
     for(const auto& group:sources_->clocks().groups())
         if(!group.pending.empty()||group.completed_end!=completedEnd())return "Checkpoint source clocks do not match the accepted boundary.";
     const auto error=qualityProfile(*sources_,*surface_,*gw_);if(!error.empty())return error;
@@ -258,6 +269,14 @@ std::string CommonSourceStage::advance(double start,double end) {
             surface_->runtime_forcings.nextTime(start)}))return "Common source interval crosses provider expiry.";
     } else if(surface_->runtime_sources.active() || surface_->runtime_forcings.active() || gw_->runtimeSources().active())
         return "Common source runtime provider profile changed to an unsupported configuration.";
+    auto snow=surface_->snow;
+    if(snow.active()) {
+        if(!surface_->snow_context)return "Mesh snow has no weather owner.";
+        auto rain=surface_->rainfall;
+        for(int i=0;i<int(rain.size());++i)rain[i]=surface_->runtime_forcings.rate(1,i,rain[i]);
+        const auto error=snow.advance(*surface_->snow_context,start,end,rain,surface_->snow_catch);
+        if(!error.empty())return error;
+    }
     std::vector<SurfaceReturnReceipt> ready_returns;
     std::vector<runoff::SourceSurfaceReturn> source_returns;
     std::vector<double> mesh_return(mesh_->n_cells(),0);
@@ -333,11 +352,11 @@ std::string CommonSourceStage::advance(double start,double end) {
                 return "Common LID pollutant pairing needs qualified paired source returns.";
         }
         const double A=mesh_->tri_area[i],w=weather_[i];
-        const double rain=std::max(0.0,surface_->runtime_forcings.rate(1,i,surface_->rainfall[i]))*w*dt;
+        const double rain=std::max(0.0,snow.owns(i)?snow.liquidRates()[i]:surface_->runtime_forcings.rate(1,i,surface_->rainfall[i]))*w*dt;
         const double coupling=surface_->coupling_flux[i]*A*dt;
         const double incoming=rain+std::max(coupling,0.0)+mesh_return[i];
         const double available=std::max(0.0,surface_->volume[i]+incoming);
-        const double et_rate=surface_->runtime_forcings.rate(2,i,surface_->evap_rate[i]);
+        const double et_rate=surface_->runtime_forcings.rate(2,i,surface_->evap_rate[i])*(snow.owns(i)?snow.exposedFractions()[i]:1.);
         const double evap=evapSink(et_rate,surface_->depth[i],options_->dry_depth)*w*dt;
         const double out=std::max(-coupling,0.0);
         const auto* prescribed=surface_->runtime_forcings.get(3,i);
@@ -583,6 +602,7 @@ std::string CommonSourceStage::advance(double start,double end) {
             tr.gained_exfiltration[p]+=mesh_return_mass[m.cell][p];
         }
     }
+    surface_->snow=std::move(snow);
     *sources_=std::move(bounded);et_receipts_=std::move(et_receipts);returns_=std::move(ready_returns);
     gw_->acknowledgeSourceReturns(start);gw_->source_completed_end_=end;++intervals_;return {};
 }

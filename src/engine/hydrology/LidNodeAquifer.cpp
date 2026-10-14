@@ -11,12 +11,13 @@
 #include <algorithm>
 #include <cmath>
 #include <set>
+#include <optional>
 #include <type_traits>
 
 namespace openswmm::lidnode {
 namespace {
 twoD::RichardsBedAcceptance acceptNodes(SimulationContext& ctx,twoD::SubsurfaceSolver& gw,
-    twoD::SurfaceStateData& surface,double start,double end,double evaporation,const std::vector<int>& input,int tier,Router* router=nullptr,const std::vector<double>& step_ends={}) {
+    twoD::SurfaceStateData& surface,double start,double end,double evaporation,const std::vector<int>& input,int tier,Router* router=nullptr,const std::vector<double>& step_ends={},bool queued=false) {
     using twoD::RichardsBedAcceptance;
     const auto fail=[](const std::string& error){RichardsBedAcceptance r;r.error=error;return r;};
     if(!std::isfinite(start) || start<0 || !std::isfinite(end) || end<=start ||
@@ -103,7 +104,11 @@ twoD::RichardsBedAcceptance acceptNodes(SimulationContext& ctx,twoD::SubsurfaceS
     }
     // The lower-level transaction commits only into these private copies. Real
     // node pressure/capacity/forcing views must also qualify before publication.
-    auto aquifer=gw;auto surf=surface;
+    std::optional<twoD::SubsurfaceSolver> private_aquifer;
+    std::optional<twoD::SurfaceStateData> private_surface;
+    if(!queued){private_aquifer.emplace(gw);private_surface.emplace(surface);}
+    auto& aquifer=queued?gw:*private_aquifer;
+    auto& surf=queued?surface:*private_surface;
     auto node_beds=ctx.nodes.aquifer2d_bed;node_beds.resize(ctx.n_nodes(),0);
     for(int n:nodes)node_beds[n]=1;
     twoD::RichardsBedStepper stepper;
@@ -137,7 +142,21 @@ twoD::RichardsBedAcceptance acceptNodes(SimulationContext& ctx,twoD::SubsurfaceS
         ctx.old_elapsed_ms=ctx.elapsed_ms;ctx.elapsed_ms+=1000*interval;
         return {};
     };
-    auto accepted=router?twoD::acceptRichardsBedsForTierAcrossSteps(aquifer,surf,tier,start,end,step_ends,owners,&stepper):
+    twoD::RichardsBedAcceptance accepted;
+    if(queued) {
+        std::vector<twoD::RichardsBedBinding> bindings;
+        for(const auto& o:owners)bindings.push_back({o.bed,o.column,o.invert,o.max_water.back(),o.clogging});
+        accepted.trial=twoD::trialRichardsBeds(aquifer,dt,bindings);accepted.error=accepted.trial.error;
+        if(accepted.error.empty()) {
+            for(std::size_t j=0;j<columns.size();++j) {
+                columns[j]=accepted.trial.columns[j];
+                for(std::size_t k=0;k<columns[j].water.size();++k)
+                    if(!std::isfinite(columns[j].water[k]) || columns[j].water[k]<0 ||
+                       columns[j].water[k]>owners[j].max_water[k])
+                        return fail("Mesh Richards column exceeds its hydraulic pressure/storage envelope.");
+            }
+        }
+    } else accepted=router?twoD::acceptRichardsBedsForTierAcrossSteps(aquifer,surf,tier,start,end,step_ends,owners,&stepper):
         (tier<0?twoD::acceptRichardsBedsAtFiring(aquifer,surf,start,end,owners):
         twoD::acceptRichardsBedsForTier(aquifer,surf,tier,start,end,owners));
     if(!accepted.error.empty())return accepted;
@@ -154,6 +173,11 @@ twoD::RichardsBedAcceptance acceptNodes(SimulationContext& ctx,twoD::SubsurfaceS
             drafts.push_back(std::move(d));
         }
     } catch(const std::exception& e) {return fail(e.what());}
+    if(queued) {
+        if(auto error=gw.retainLidReceipts(start,end,accepted.trial.receipts);!error.empty())return fail(error);
+        for(auto& d:drafts)detail::publish(ctx,std::move(d));
+        return accepted;
+    }
     static_assert(std::is_nothrow_move_assignable_v<twoD::SubsurfaceSolver>);
     static_assert(std::is_nothrow_move_assignable_v<twoD::SurfaceStateData>);
     gw=std::move(aquifer);surface=std::move(surf);
@@ -161,6 +185,17 @@ twoD::RichardsBedAcceptance acceptNodes(SimulationContext& ctx,twoD::SubsurfaceS
     for(auto& d:drafts)detail::publish(ctx,std::move(d));
     return accepted;
 }
+}
+void prepareMeshRichardsStep(SimulationContext& ctx,twoD::SubsurfaceSolver& gw,
+    twoD::SurfaceStateData& surface,double dt,double evaporation) {
+    std::vector<int> nodes;
+    for(int n=0;n<ctx.n_nodes();++n)
+        if(richardsMode(ctx,n) && bottomMode(ctx,n)==LidNodeBottom::MeshAquifer)nodes.push_back(n);
+    if(nodes.empty()){prepareStep(ctx,dt,evaporation);return;}
+    if(!gw.lidReceiptsEnabled())throw std::runtime_error("Mesh Richards requires a configured groundwater receipt owner.");
+    auto result=acceptNodes(ctx,gw,surface,ctx.current_time,ctx.current_time+dt,evaporation,nodes,-1,nullptr,{},true);
+    if(!result.error.empty())throw std::runtime_error(result.error);
+    prepareStepAfterMesh(ctx,dt,evaporation);
 }
 twoD::RichardsBedAcceptance acceptRichardsNodesAtFiring(SimulationContext& ctx,twoD::SubsurfaceSolver& gw,
     twoD::SurfaceStateData& surface,double start,double end,double evaporation,const std::vector<int>& nodes) {

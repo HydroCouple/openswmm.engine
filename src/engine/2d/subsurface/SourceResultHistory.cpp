@@ -302,7 +302,9 @@ std::string SourceResultHistory::validate() const {
             for(const auto& key:keys)if(key!=keys[0])return false;
             return true;
         };
-        if(tables_.at("source_water").rows()==0||tables_.at("group_water").rows()==0||tables_.at("receiver").rows()==0||
+        const bool mesh_only=tables_.at("source_water").rows()==0 && tables_.at("group_water").rows()==0 &&
+            std::all_of(tables_.at("footprints").columns[0].begin(),tables_.at("footprints").columns[0].end(),[](double owner){return owner==0;});
+        if((!mesh_only && (tables_.at("source_water").rows()==0||tables_.at("group_water").rows()==0))||tables_.at("receiver").rows()==0||
            !complete("source_water",{1})||!complete("group_water",{1})||!complete("receiver",{1})||
            !complete("source_mass",{1,2,3,4})||!complete("group_mass",{1,2}))return "Incomplete source result endpoint history.";
         const auto& usages=tables_.at("lid_usages").columns;

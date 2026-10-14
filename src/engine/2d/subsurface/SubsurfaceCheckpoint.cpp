@@ -18,10 +18,11 @@ void signal(detail::CompletedSourceArchive& a,GwSourceSignal& s) {
 }
 }
 void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) {
-    if(std::any_of(richards_bed_owned_.begin(),richards_bed_owned_.end(),[](bool owned){return owned;}))
+    if(!lid_receipts_enabled_ && std::any_of(richards_bed_owned_.begin(),richards_bed_owned_.end(),[](bool owned){return owned;}))
         throw std::runtime_error("Richards joint owner checkpoints require the R5 restart extension.");
     auto& s=state_;auto& t=tr_;auto& o=options_;
     if(model) {
+        if(lid_receipts_enabled_) {std::string profile="completed LID bed receipts v1";a(profile,richards_bed_owned_,mobile_lid_bed_);}
         a(s.active,s.n_cells,s.m_layers);
     a.fixed(s.Ks,s.zs,s.theta_s,s.theta_r,s.alpha,s.psi_b,s.lambda,s.vg_n,s.vg_L,s.c_loss,s.soil_char,
             s.closure,s.area,s.z_bed);
@@ -54,10 +55,45 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
     a.fixed(source_cell_end_,bed_exchange_cum_,bed_gathered_,node_drawn_gw_,node_exchange_vol_);
     a.sequence(source_receipts_,[&](auto& rows){a.sequence(rows,[&](auto& r){intake(a,r);});},true);
     a.sequence(source_returns_,[&](auto& r){returned(a,r);});
+    if(lid_receipts_enabled_) {
+        a.fixed(cell_completed_,richards_down_cum_,richards_up_cum_,lid_booked_end_,lid_bed_factor_,node_pending_down_,node_pending_up_);
+        a.sequence(lid_bed_diagnostics_,[&](auto& d){a(d.start,d.end,d.groundwater_time,d.lid_head,d.groundwater_head,
+            d.requested_down,d.requested_up,d.reserved_down,d.reserved_up,d.accepted_down,d.accepted_up);},true);
+        a.sequence(lid_receipts_,[&](auto& rows){a.sequence(rows,[&](auto& r){a(r.start,r.end,r.down,r.up);});},true);
+    }
     if(a.reading()) {
-        richards_clock_valid_=false;
+        richards_clock_valid_=lid_receipts_enabled_;
         const auto fail=[](){throw std::runtime_error("Invalid completed-source aquifer state.");};
         const auto nonnegative=[&](double v){if(!std::isfinite(v)||v<0)fail();};
+        if(lid_receipts_enabled_) {
+            for(double t:cell_completed_)nonnegative(t);
+            for(std::size_t b=0;b<lid_receipts_.size();++b) {
+                nonnegative(richards_down_cum_[b]);nonnegative(richards_up_cum_[b]);nonnegative(lid_booked_end_[b]);
+                nonnegative(node_pending_down_[b]);nonnegative(node_pending_up_[b]);
+                const auto& d=lid_bed_diagnostics_[b];
+                for(double v:{d.start,d.end,d.groundwater_time,d.requested_down,d.requested_up,
+                    d.reserved_down,d.reserved_up,d.accepted_down,d.accepted_up})nonnegative(v);
+                if(!std::isfinite(d.lid_head) || !std::isfinite(d.groundwater_head) || d.end<d.start ||
+                    d.groundwater_time>d.end+1e-12*std::max(1.,d.end) || d.accepted_down>d.reserved_down ||
+                    d.accepted_up>d.reserved_up)fail();
+                if(std::abs(s.nacc[b]-(node_pending_up_[b]-node_pending_down_[b]))>
+                   1e-10*std::max({1.,node_pending_up_[b],node_pending_down_[b]}))fail();
+                if(!std::isfinite(lid_bed_factor_[b]) || lid_bed_factor_[b]<0 || lid_bed_factor_[b]>1)fail();
+                if(!richards_bed_owned_[b] && (!lid_receipts_[b].empty() || lid_booked_end_[b]!=0))fail();
+                if(!richards_bed_owned_[b] && !mobile_lid_bed_[b] && (richards_down_cum_[b]!=0 || richards_up_cum_[b]!=0))fail();
+                double previous=0,down=0,up=0;
+                for(const auto& r:lid_receipts_[b]) {
+                    nonnegative(r.start);nonnegative(r.end);nonnegative(r.down);nonnegative(r.up);
+                    if(r.start<previous || r.end<=r.start || r.end>lid_booked_end_[b] ||
+                       r.end<=cell_completed_[node_beds_[b].cell] || (r.down==0 && r.up==0))fail();
+                    previous=r.end;down+=r.down;up+=r.up;
+                }
+                if(down>richards_down_cum_[b] || up>richards_up_cum_[b] ||
+                   std::abs(bed_exchange_cum_[b]-(richards_up_cum_[b]-richards_down_cum_[b]))>
+                       1e-10*std::max({1.,richards_up_cum_[b],richards_down_cum_[b]}))
+                    if(richards_bed_owned_[b] || mobile_lid_bed_[b])fail();
+            }
+        }
         const auto paired=[&](double v,const auto& mass){nonnegative(v);if(int(mass.size())!=t.n_species)fail();
             for(double m:mass){nonnegative(m);if(v==0 && m!=0)fail();}};
         for(const auto* values:{&s.hg,&s.hu,&s.theta_sigma,&s.q0_last,&s.qnode_last,&s.qlat_last,

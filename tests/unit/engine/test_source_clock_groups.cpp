@@ -172,7 +172,7 @@ TEST(SourceClockGroups, MonthBoundaryChangesPetRainInfiltrationAndRecoveryTogeth
 
 TEST(SourceClockGroups, UnsupportedHistoriesHaveNamedRefusalsAndNoPartialInitialization) {
     auto c = context(); SourceClockGroups a; ASSERT_EQ(a.initialize(c, {}), ""); EXPECT_TRUE(a.groups().empty());
-    c.options.ignore_snow_melt = false; EXPECT_NE(a.initialize(c, {0}).find("snow"), std::string::npos);
+    c.options.ignore_snow_melt = false; {SourceClockGroups snow;EXPECT_EQ(snow.initialize(c,{0}),"");}
     c.options.ignore_snow_melt = true; c.climate_state.evap_method = climate::EvapMethod::TEMPERATURE;
     EXPECT_NE(a.initialize(c, {0}).find("history"), std::string::npos); c.climate_state.evap_method = climate::EvapMethod::CONSTANT;
     c.forcing.subcatch_evap_mode[0] = ForcingMode::ADD;

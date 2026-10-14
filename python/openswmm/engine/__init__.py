@@ -243,6 +243,7 @@ from ._inflows import Inflows
 from ._controls import Controls
 from ._forcing import Forcing
 from ._climate import Climate
+from ._snow import Snow, MeshSnow
 
 # =============================================================================
 # Transport processes — heat, water age, reactions, process components
@@ -359,7 +360,7 @@ __all__ = [
     "HotStart", "MassBalance", "Statistics", "OutputReader",
     # --- Hydrology, water quality, and time-varying inputs ---
     "Pollutants", "Quality", "Tables", "Patterns", "Inflows", "Controls", "Forcing",
-    "Climate", "InitialQuality", "InitialQualityEntry",
+    "Climate", "Snow", "MeshSnow", "InitialQuality", "InitialQualityEntry",
     # --- Transport processes — heat, water age, reactions ---
     "Heat", "HeatNodeOverride",
     "WaterAge", "WaterAgeOverride",

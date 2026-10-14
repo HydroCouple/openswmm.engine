@@ -1002,7 +1002,7 @@ void applyHeatSections(SimulationContext& ctx,
         // equatorial noon — a plausible wrong answer, which is the only kind
         // that survives review.
         if (rc.sw_mode == ShortwaveMode::COMPUTED) {
-            if (!sc.has_latitude || !sc.has_longitude)
+            if (!ctx.snowpacks.config.site && (!sc.has_latitude || !sc.has_longitude))
                 errors.push_back(
                     "[RADIATIVE_FLUXES] SHORTWAVE GLOBAL COMPUTED requires "
                     "[SOLAR_RADIATION] LATITUDE and LONGITUDE. They are NOT "
@@ -1050,7 +1050,7 @@ void applyHeatSections(SimulationContext& ctx,
         // diurnal curve by up to 12 h, dwarfing the 0.1° position accuracy
         // D-H6a-4 spends its argument on. Not an error — a deck really may
         // mean UTC — but never silent.
-        if (rc.sw_mode == ShortwaveMode::COMPUTED && !sc.has_timezone) {
+        if (rc.sw_mode == ShortwaveMode::COMPUTED && !sc.has_timezone && !ctx.snowpacks.config.site) {
             pending_warnings.push_back(
                 "[SOLAR_RADIATION] has no TIMEZONE, so local time is taken "
                 "as UTC. If the deck's clock is local, the computed solar "

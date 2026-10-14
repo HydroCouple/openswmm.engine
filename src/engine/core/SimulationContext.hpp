@@ -294,6 +294,9 @@ enum class EngineState : int32_t {
  * @ingroup engine_core
  */
 struct StateAccessors {
+    std::function<std::string()> get_snow_state;
+    // Empty result means valid; false validates without publishing.
+    std::function<std::string(const std::string&,bool)> set_snow_state;
     /// Read infiltration model id and the 6-double infiltration state into
     /// the caller-provided buffers. `out_infil` must point to a 6-element array.
     std::function<bool(int subcatch_index, int& out_model, double* out_infil)> get_infil_state;
@@ -1880,6 +1883,7 @@ struct SimulationContext {
         gages      = GageData{};
         pollutants = PollutantData{};
         tables     = TableData{};
+        snowpacks  = SnowpackStore{};
 
         // Clear name indices
         node_names.clear();
@@ -1887,6 +1891,7 @@ struct SimulationContext {
         subcatch_names.clear();
         gage_names.clear();
         pollutant_names.clear();
+        snowpack_names.clear();
 
         // Clear inflow-related stores that aren't reset by their owning solvers
         rdii_decay = RDIIDecayData{};

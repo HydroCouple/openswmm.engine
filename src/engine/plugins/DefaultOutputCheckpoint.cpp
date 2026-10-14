@@ -84,9 +84,12 @@ void DefaultOutputPlugin::validateCheckpoint(const SimulationContext& ctx, doubl
     for (int p = 0; p < periods; ++p) {
         const auto offset = checkpoint_header_.size() + std::size_t(p) * width;
         require(scalar<double>(bytes, offset) == date(first + p), "Binary output checkpoint report date differs.");
-        for (std::size_t v = 0; v < values; ++v)
-            require(std::isfinite(scalar<float>(bytes, offset + sizeof(double) + v * sizeof(float))),
-                    "Nonfinite binary output checkpoint value.");
+        for (std::size_t v = 0; v < values; ++v) {
+            const float value=scalar<float>(bytes, offset + sizeof(double) + v * sizeof(float));
+            const bool optional=snow_process_ && v<std::size_t(n_subcatch_)*n_subcatch_vars_ &&
+                v%n_subcatch_vars_>=std::size_t(8+n_polluts_);
+            require(std::isfinite(value)||(optional&&std::isnan(value)),"Nonfinite binary output checkpoint value.");
+        }
     }
 }
 
@@ -152,7 +155,11 @@ void DefaultOutputPlugin::validateFileCheckpoint(FILE* file,uint64_t bytes,const
     require(std::fread(header.data(),1,header.size(),file)==header.size()&&header==checkpoint_header_,"Binary file checkpoint header differs.");
     std::array<float,16384> buffer{};
     for(int p=0;p<periods;++p){double time;require(std::fread(&time,sizeof(time),1,file)==1&&time==date(first+p),"Binary file checkpoint date differs.");
-        uint64_t left=values;while(left){const auto n=std::min(left,uint64_t(buffer.size()));require(std::fread(buffer.data(),sizeof(float),n,file)==n,"Binary file checkpoint is truncated.");for(uint64_t i=0;i<n;++i)require(std::isfinite(buffer[i]),"Nonfinite binary file checkpoint value.");left-=n;}}
+        uint64_t left=values;while(left){const auto n=std::min(left,uint64_t(buffer.size()));require(std::fread(buffer.data(),sizeof(float),n,file)==n,"Binary file checkpoint is truncated.");for(uint64_t i=0;i<n;++i) {
+            const uint64_t v=values-left+i;
+            const bool optional=snow_process_ && v<uint64_t(n_subcatch_)*n_subcatch_vars_ && v%n_subcatch_vars_>=uint64_t(8+n_polluts_);
+            require(std::isfinite(buffer[i])||(optional&&std::isnan(buffer[i])),"Nonfinite binary file checkpoint value.");
+        }left-=n;}}
     require(std::fgetc(file)==EOF&&!std::ferror(file),"Binary file checkpoint contains extra data.");
 }
 std::string DefaultOutputPlugin::captureFileCheckpoint(const SimulationContext& ctx,double next,const std::filesystem::path& base,

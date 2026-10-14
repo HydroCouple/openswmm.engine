@@ -42,6 +42,10 @@ void meshState(Archive& a,SurfaceStateData& s) {
             s.coupling_forced,s.coupling_persist,s.coupling_force_val,s.coupling_native,s.old_depth,
             s.old_volume,s.stat_max_depth,s.stat_max_velocity,s.stat_max_cont_err,s.stat_cum_volume);
     a(s.forcing_dirty,s.forcing_ever_set,s.evap_loss_total);
+    if(s.snow.active()) {
+        auto bytes=a.reading()?std::string{}:s.snow.saveCheckpoint();a(bytes);a.fixed(s.snow_catch);
+        if(a.reading())if(auto error=s.snow.restoreCheckpoint(bytes);!error.empty())throw std::runtime_error(error);
+    }
     auto& t=s.transport;
     a.fixed(t.cell_mass,t.lost_infiltration,t.lost_boundary,t.gained_external,t.lost_external,t.lost_coupling,
             t.exch_mass,t.exch_spill,t.gained_rainfall,t.gained_boundary,t.gained_coupling,
@@ -99,6 +103,7 @@ std::string CommonSourceStage::checkpointModel() const {
     a.sequence(t.bc_quality_rows,[&](auto& b){a(b.slot,b.species,b.conc);});
     auto owned=owned_;auto weather=weather_;auto cells=cells_;auto donors=donors_;auto et=et_contacts_;
     a(owned,weather,cells,et);
+    if(surface_->snow.active()){auto identity=surface_->snow.configurationIdentity();a(identity);}
     a.sequence(donors,[&](auto& d){a(d.source,d.type,d.unit,d.identity,d.area,d.contacts);});
     if(runtimeWaterEnabled()) {auto identity=runtime_water_identity_;a(identity);}
     if(runtimeCatchmentForcingEnabled()) {

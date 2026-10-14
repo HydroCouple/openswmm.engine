@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Caleb Buahin
 #include "SWMMEngine.hpp"
+#include "../hydrology/surface/NativeSnow.hpp"
+#include "../hydrology/surface/SnowCheckpoint.hpp"
 #include "CompletedSourceArchive.hpp"
 #include "CheckpointInspection.hpp"
 #include "DateTime.hpp"
@@ -298,6 +300,9 @@ struct SWMMEngine::RestartState {
     GageData gages;
     LidUsageStore lid_usage;
     double runoff_interp;
+    std::unique_ptr<SimulationContext> snow_context;
+    snow::SnowSolver snow;
+    std::vector<double> snow_rain,snow_snow;
     std::array<double,6> boundary;
     double controls_remaining;
     std::vector<TableCursor> cursors;
@@ -329,6 +334,10 @@ struct SWMMEngine::RestartState {
 #ifdef OPENSWMM_HAS_2D
         spatial=bool(e.source_delivery_);source_totals=e.source_totals_;
 #endif
+        if(std::any_of(e.ctx_.subcatches.snowpack.begin(),e.ctx_.subcatches.snowpack.end(),[](int p){return p>=0;})) {
+            snow_context=std::make_unique<SimulationContext>(e.ctx_);snow=e.snow_;
+            snow_rain=e.snow_rain_;snow_snow=e.snow_snow_;
+        }
         int at=0;for(const auto* row:{e.ctx_.max_courant_crit,e.ctx_.max_flow_turns,e.ctx_.max_non_converged,e.ctx_.max_mass_bal_errs})
             for(int i=0;i<SimulationContext::MAX_STATS;++i)tops[at++]=row[i];
         for(const auto& t:e.ctx_.tables.tables)cursors.push_back(t.cursor);
@@ -373,6 +382,14 @@ struct SWMMEngine::RestartState {
         LID_USAGE_WATER(F)
 #undef F
         field(a,runoff_interp);
+        if(snow_context) {
+            auto bytes=a.reading()?std::string{}:surface::saveSnowCheckpoint(*snow_context,snow.state());a(bytes);
+            if(a.reading()) {
+                auto error=surface::restoreSnowCheckpoint(*snow_context,snow.state(),bytes);
+                require(error.empty(),error.c_str());
+            }
+            a(snow_rain,snow_snow);
+        }
 #define F(v) a(v);
         RUNOFF_ENGINE(F)
 #undef F
@@ -404,8 +421,20 @@ struct SWMMEngine::RestartState {
         require(lid_drain_q_interp_.empty() || lid_drain_q_interp_.size()==std::size_t(e.ctx_.n_nodes()),"Invalid engine LID-drain interpolation shape.");
         for(double q:lid_drain_q_interp_)require(q>=0,"Negative engine LID drain interpolation.");
         runoff.validateCheckpoint(e.runoff_);lid.validateCheckpoint(e.lid_,std::size_t(e.ctx_.n_subcatches()));
-        require(runoff_interp>=0 && runoff_interp<=1 && std::isfinite(runoff_interp) && !has_snow_,"Invalid engine runoff interpolation.");
+        require(runoff_interp>=0 && runoff_interp<=1 && std::isfinite(runoff_interp),"Invalid engine runoff interpolation.");
         const auto ns=std::size_t(e.ctx_.n_subcatches());
+        if(snow_context) {
+            for(const auto* row:{&snow_rain,&snow_snow}) {
+                require(row->empty()||row->size()==ns,"Invalid snow forcing buffer shape.");
+                for(double v:*row)require(std::isfinite(v)&&v>=0,"Invalid snow forcing buffer.");
+            }
+            const auto& state=snow.state();
+            for(std::size_t sc=0;sc<ns;++sc) {
+                if(!state.enabled[sc])continue;
+                double water=0;for(int k=0;k<3;++k){const auto i=sc*3+k;water+=state.wsnow[i]*state.fArea[i];}
+                require(std::abs(water-subcatch.snow_depth[sc])<=1e-10,"Snow and subcatchment checkpoint inventories differ.");
+            }
+        }
         for(const auto* row:{&wet_q_interp_,&gw_q_interp_,&lid_vlidin_vol_,&lid_qsurf_cfs_,&old_gw_rate_}) {
             require(row->empty() || row->size()==ns,"Invalid engine runoff buffer shape.");
             for(double v:*row)require(std::isfinite(v) && v>=0,"Invalid engine runoff interpolation water.");
@@ -516,6 +545,10 @@ struct SWMMEngine::RestartState {
         ENGINE(COPY)
         RUNOFF_ENGINE(COPY)
 #undef COPY
+        if(snow_context) {
+            e.snow_=std::move(snow);e.ctx_.snowpacks.runtime=std::move(snow_context->snowpacks.runtime);
+            e.snow_rain_=std::move(snow_rain);e.snow_snow_=std::move(snow_snow);
+        }
         e.runoff_=std::move(runoff);e.lid_=std::move(lid);e.ctx_.runoff_interp_f=runoff_interp;
 #define COPY(v) e.ctx_.subcatches.v=std::move(subcatch.v);
         SUBCATCH_WATER(COPY)
@@ -608,9 +641,9 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
 #endif
     require(!callbacks_.on_progress && !callbacks_.on_warning && !callbacks_.on_step_begin && !callbacks_.on_step_end,
             "Engine checkpoint does not recover external callbacks.");
-    require(ctx_.options.temp_source==0 && ctx_.options.wind_type!=2 && ctx_.options.humidity_type!=2 &&
+    require(ctx_.options.temp_source<=1 && ctx_.options.wind_type!=2 &&
             (ctx_.options.evap_type==0 || ctx_.options.evap_type==1) && ctx_.options.temp_file.empty() && !ctx_.options.rpt_controls,
-            "Engine checkpoint supports in-memory constant/monthly climate and no control-report continuation.");
+            "Engine checkpoint requires in-memory climate sources and no control-report continuation.");
     for(const auto& t:ctx_.tables.tables)require(!t.is_file_based && !t.file_handle,"Engine checkpoint cannot recover file-backed tables.");
     const auto& f=ctx_.forcing;
     for(const auto* row:{&f.node_lat_inflow_mode,&f.node_head_boundary_mode,&f.node_quality_mode,&f.node_temperature_mode,&f.node_age_mode,
@@ -619,9 +652,8 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
         for(auto mode:*row)require(mode==ForcingMode::NONE,"Engine checkpoint cannot recover runtime forcing.");
     require(f.climate_temperature_mode==ForcingMode::NONE && f.climate_wind_mode==ForcingMode::NONE && f.climate_evap_mode==ForcingMode::NONE,
             "Engine checkpoint cannot recover runtime climate forcing.");
-    require(ctx_.n_subcatches()==0 || (ctx_.options.ignore_snow_melt && ctx_.options.ignore_groundwater),
-            "Runoff session checkpoint currently requires IGNORE_SNOWMELT and IGNORE_GROUNDWATER.");
-    for(int pack:ctx_.subcatches.snowpack)require(pack<0,"Engine checkpoint does not recover assigned snowpacks.");
+    require(ctx_.n_subcatches()==0 || ctx_.options.ignore_groundwater,
+            "Runoff session checkpoint currently requires IGNORE_GROUNDWATER.");
     for(int aquifer:ctx_.subcatches.gw_aquifer)require(aquifer<0,"Engine checkpoint does not recover assigned groundwater.");
     for(const auto& path:ctx_.lid_usage.rpt_file)require(path.empty(),"Engine checkpoint cannot append detailed LID reports.");
     require(gage_states_.size()==std::size_t(ctx_.n_gages()),"Engine rainfall state shape differs.");
@@ -629,7 +661,7 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
             ctx_.gages.ts_index[i]>=0 && ctx_.gages.ts_index[i]<ctx_.n_tables() && ctx_.gages.file_path[i].empty() &&
             ctx_.gages.rain_series[i].empty() && ctx_.gages.api_rainfall[i]==-1,
             "Engine checkpoint supports inline rainfall without API overrides.");
-    for(const auto* row:{&gw_frac_perv_,&gw_perv_evap_,&gw_2d_recharge_vol_,&gw_infil_with_2d_,&gw_infil_rate_,&snow_rain_,&snow_snow_})
+    for(const auto* row:{&gw_frac_perv_,&gw_perv_evap_,&gw_2d_recharge_vol_,&gw_infil_with_2d_,&gw_infil_rate_})
         require(row->empty(),"Engine checkpoint has unqualified hydrology interpolation state.");
     require(lid_drain_q_interp_.empty() || lid_drain_q_interp_.size()==std::size_t(ctx_.n_nodes()),"Engine checkpoint LID-drain shape differs.");
     require(router_.structures_==&hydstruct_,"Engine checkpoint structure solver ownership differs.");
@@ -688,6 +720,9 @@ std::string SWMMEngine::checkpointModel() const {
       sub.infil_p5,sub.snowpack,sub.snowpack_name,sub.gw_aquifer,sub.gw_node,sub.total_lid_area_ft2,sub.comments,sub.tags,sub.rpt_flag);
     auto adj=ctx_.subcatch_infil_pattern,np=ctx_.subcatch_n_perv_pattern,ds=ctx_.subcatch_d_store_pattern;auto has=ctx_.has_subcatch_adj_patterns;a(adj,np,ds,has);
     a(g.rain_type,g.source,g.ts_index,g.ts_name,g.interval_sec,g.snow_factor,g.scale_factor,g.co_gage_index,g.comments);
+    if(std::any_of(ctx_.subcatches.snowpack.begin(),ctx_.subcatches.snowpack.end(),[](int p){return p>=0;})) {
+        auto snow=surface::snowModelIdentity(ctx_,snow_.state());a(snow);
+    }
     for(int i=0;i<ctx_.n_gages();++i){auto used=gage::gageIsUsed(ctx_,i);a(used);}
     a(lc.names,lc.lid_type,lc.surface,lc.soil,lc.pavement,lc.storage,lc.drain,lc.drainmat,lc.removals,
       lu.subcatch_index,lu.lid_index,lu.number,lu.area,lu.width,lu.init_sat,lu.from_imperv,lu.to_perv,lu.drain_to,lu.from_perv);
@@ -853,12 +888,14 @@ std::string SWMMEngine::enableCheckpointingImpl(
 #endif
 ) {
     const bool owned=router_.checkpoint_owned_session_;
+    const bool aquifer_owned=router_.checkpoint_aquifer_session_;
     const bool fresh_router=router_.checkpoint_context_==nullptr;
     try {
         require(!step_active_ && !runtime_pipeline_ && exchange_target_<0 && !checkpoint_enabled_ && ctx_.current_time==0,
                 "Enable engine checkpointing at start's initial session boundary.");
         router_.checkpoint_owned_session_=true;
 #ifdef OPENSWMM_HAS_2D
+        router_.checkpoint_aquifer_session_=stage && !surface_router_.subsurface_.nodeBeds().empty();
         require(!stage || own_sources || stage->meshOnly(),"Private catchment ownership requires explicit spatial-source attachment.");
         std::unique_ptr<runoff::SourceWaterDeliveryBridge> bridge;
         if(own_sources) {
@@ -902,6 +939,19 @@ std::string SWMMEngine::enableCheckpointingImpl(
 #ifdef OPENSWMM_HAS_2D
         if(bridge) {
             source_stage_=stage;source_delivery_=std::move(bridge);
+            if(stage->sources().snow().active()) {
+                double initial=0;
+                for(int sc=0;sc<ctx_.n_subcatches();++sc) {
+                    snow_.state().enabled[sc]=!ownsSpatialSource(sc);
+                    if(!ownsSpatialSource(sc)) {
+                        const double area=ctx_.subcatches.area[sc]/ucf::UCF(ucf::LANDAREA,ctx_.options)-ctx_.subcatches.total_lid_area_ft2[sc];
+                        initial+=surface::nativeSnowVolume(snow_.state(),sc,std::max(0.,area));
+                    }
+                }
+                for(const auto& b:stage->sources().snow().ledgers())initial+=b.initial;
+                ctx_.mass_balance.runoff_init_snow=ctx_.mass_balance.runoff_final_snow=initial;
+            }
+
             double ordinary=0;const auto& s=runoff_.soa();
             for(int i=0;i<ctx_.n_subcatches();++i)if(!ownsSpatialSource(i))
                 ordinary+=(s.depth_imperv0[i]*s.frac_imperv0[i]+s.depth_imperv1[i]*s.frac_imperv1[i]+s.depth_perv[i]*(1-s.imperv_pct[i]))*s.area[i];
@@ -916,6 +966,7 @@ std::string SWMMEngine::enableCheckpointingImpl(
         checkpoint_model_=std::move(model);checkpoint_enabled_=checkpoint_ready_=true;return {};
     } catch(const std::exception& e) {
         router_.checkpoint_owned_session_=owned;
+        router_.checkpoint_aquifer_session_=aquifer_owned;
         if(fresh_router) {
             router_.checkpoint_context_=nullptr;router_.checkpoint_model_.clear();
             router_.checkpoint_time_=router_.checkpoint_step_end_=0;

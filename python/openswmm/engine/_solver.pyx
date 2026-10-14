@@ -995,6 +995,12 @@ cdef class Solver:
         return self._forcing
 
     @property
+    def snow(self):
+        """Snow configuration, UEB parameters and accepted subcatchment state (SI)."""
+        from ._snow import Snow
+        return Snow(self)
+
+    @property
     def climate(self):
         if self._climate is None:
             from ._climate import Climate

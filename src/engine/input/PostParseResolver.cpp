@@ -152,6 +152,7 @@ void resolve_external_file_slots(SimulationContext& ctx,
     for (auto& gfp : ctx.gages.file_path) resolve(gfp);
 
     resolve(ctx.options.temp_file);
+    resolve(ctx.snowpacks.config.met_file);
 
     for (auto& tbl : ctx.tables.tables) {
         if (tbl.type != TableType::TIMESERIES) continue;
@@ -1916,6 +1917,18 @@ void resolve_cross_references(SimulationContext& ctx) {
     // -------------------------------------------------------------------------
     const std::string inp_dir = openswmm::io::parentDir(ctx.inp_file_path);
     resolve_external_file_slots(ctx, inp_dir);
+    const auto validate_snow_rows=[&](const auto& rows) {
+        for(const auto& [key,row]:rows)
+            if(!ieq(row.pack,"NONE")&&ctx.snowpack_names.find(row.pack)<0)
+                ctx.errors.push_back("[2D_SNOW] Unknown snowpack: "+row.pack);
+    };
+    validate_snow_rows(ctx.snowpacks.mesh_config.defaults);validate_snow_rows(ctx.snowpacks.mesh_config.cells);
+    if (const auto error = ctx.snowpacks.config.parameters.validate(); !error.empty())
+        ctx.errors.push_back("[UEB_OPTIONS] " + error);
+    if (!ctx.snowpacks.config.met_file.empty()) {
+        const auto error = ctx.snowpacks.meteorology.load(ctx.snowpacks.config.met_file.absolute);
+        if (!error.empty()) ctx.errors.push_back(error);
+    }
 
     // -------------------------------------------------------------------------
     // Load external FILE-referenced timeseries from disk

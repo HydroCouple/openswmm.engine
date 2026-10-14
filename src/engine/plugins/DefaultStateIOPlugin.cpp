@@ -123,7 +123,9 @@ int DefaultStateIOPlugin::read_state(const std::string& path, SimulationContext&
     // Solver-internal state flows through ctx.state_accessors (wired by
     // SWMMEngine at open()). HotStartManager::apply auto-promotes to V2 when
     // accessors are available and the file is V2.
-    HotStartManager::apply(*hs, ctx, warn_cb);
+    if(HotStartManager::apply(*hs, ctx, warn_cb)<0) {
+        last_error_=HotStartManager::last_io_error();return 1;
+    }
 
     // Surface any warnings collected by HotStartManager itself.
     for (const auto& w : hs->warnings) warnings_.push_back(w);

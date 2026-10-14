@@ -1165,3 +1165,31 @@ TEST(Output2DSourceHistory, OlderHistoryCannotResumeReturnProfileWithoutItsRequi
     EXPECT_NEAR(m.history.tables().at("source_water").columns.back().back(),.1*.3048*.3048*.3048,1e-15);
 }
 #endif
+
+TEST(Output2DSnow, WritesAcceptedStateWithUnitsMissingValuesAndRainfallSelection) {
+    fs::create_directories(kOutDir);
+    for(bool selected:{false,true}) {
+        const auto path=kOutDir/(selected?"snow.h5":"snow-disabled.h5");
+        openswmm::SimulationContext ctx;Default2DOutputPlugin writer(path.string());
+        ASSERT_EQ(writer.initialize({},nullptr),0);ASSERT_EQ(writer.prepare(ctx),0);
+        SolverOptions2D options;options.report_2d_vars=report2d::DEPTH | (selected?report2d::RAINFALL:0);
+        ASSERT_EQ(writer.configureOutput(options,60),"");writer.prepareMeshAndDatasets(unitSquare());
+        auto snap=makeSnap(1,.1,.2);snap.surface_species_count=0;snap.surface_species_conc.clear();
+        const double missing=std::numeric_limits<double>::quiet_NaN();
+        for(std::size_t k=0;k<snap.surface_snow.size();++k)snap.surface_snow[k]={double(k)+.123456789012345,missing};
+        snap.surface_snow[0]={1,-1};snap.surface_snow[1]={3590,missing};
+        ASSERT_EQ(writer.update(snap),0);ASSERT_EQ(writer.finalize(ctx),0);
+        H5File file(path);ASSERT_GE(file.id,0);
+        for(std::size_t k=0;k<openswmm::meshSnowFields.size();++k) {
+            const auto& field=openswmm::meshSnowFields[k];EXPECT_EQ(file.has(field.name),selected);
+            if(!selected)continue;
+            EXPECT_EQ(file.dims(field.name),(std::vector<hsize_t>{1,2}));
+            const auto values=file.readAll(field.name);ASSERT_EQ(values.size(),2);
+            EXPECT_EQ(values[0],snap.surface_snow[k][0]);
+            if(k==0)EXPECT_EQ(values[1],-1);else EXPECT_TRUE(std::isnan(values[1]));
+            EXPECT_EQ(file.storageSize(field.name),8);
+            hid_t ds=H5Dopen2(file.id,field.name,H5P_DEFAULT);
+            EXPECT_GT(H5Aexists(ds,"units"),0);EXPECT_GT(H5Aexists(ds,"state_time"),0);H5Dclose(ds);
+        }
+    }
+}

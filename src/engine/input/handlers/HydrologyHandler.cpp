@@ -220,7 +220,12 @@ void handle_temperature(SimulationContext& ctx, const std::vector<std::string>& 
 
         const std::string key = Tokenizer::to_upper(tok[0]);
 
-        if (key == "TIMESERIES" && tok.size() >= 2) {
+        if (key == "SITE" || key == "SNOWMELT_MODEL" || key == "SNOW_STEP" ||
+            key == "MET_FILE" || key == "SHORTWAVE" || key == "LONGWAVE") {
+            const auto error = surface::setSnowTemperature(ctx.snowpacks.config, tok);
+            if (!error.empty()) ctx.errors.push_back("[TEMPERATURE] " + error);
+        }
+        else if (key == "TIMESERIES" && tok.size() >= 2) {
             ctx.options.temp_source = 1;
             ctx.options.temp_ts_name = tok[1];
         }
@@ -348,7 +353,12 @@ void handle_snowpacks(SimulationContext& ctx, const std::vector<std::string>& li
 
         const std::string surface = Tokenizer::to_upper(tok[1]);
 
-        if (surface == "PLOWABLE" && tok.size() >= 9) {
+        if (surface == "UEB") {
+            const auto error = openswmm::surface::setSnowpackUeb(ctx.snowpacks.config, idx,
+                std::vector<std::string>(tok.begin() + 2, tok.end()));
+            if (!error.empty()) ctx.errors.push_back("[SNOWPACKS] " + name + ": " + error);
+        }
+        else if (surface == "PLOWABLE" && tok.size() >= 9) {
             for (int i = 0; i < 7; ++i)
                 ctx.snowpacks.plowable[idx][i] = to_double(tok[2 + i]);
         }
@@ -372,6 +382,29 @@ void handle_snowpacks(SimulationContext& ctx, const std::vector<std::string>& li
 // ============================================================================
 // handle_aquifers()
 // ============================================================================
+
+void handle_ueb_options(SimulationContext& ctx, const std::vector<std::string>& lines) {
+    for (const auto& line : lines) {
+        const auto tok = Tokenizer::tokenize(line);
+        if (tok.empty()) continue;
+        const auto error = surface::setUebOption(ctx.snowpacks.config, tok, false);
+        if (!error.empty()) ctx.errors.push_back("[UEB_OPTIONS] " + error);
+    }
+}
+
+namespace {
+void meshSnowRows(SimulationContext& ctx,const std::vector<std::string>& lines,int section) {
+    for(const auto& line:lines) {
+        const auto tokens=Tokenizer::tokenize(line);if(tokens.empty())continue;
+        const auto error=section==0?surface::setMeshSnowOption(ctx.snowpacks.mesh_config,tokens):
+            surface::setMeshSnowRow(ctx.snowpacks.mesh_config,tokens,section==2);
+        if(!error.empty())ctx.errors.push_back("[2D_SNOW] "+error);
+    }
+}
+}
+void handle_mesh_snow_options(SimulationContext& ctx,const std::vector<std::string>& lines){meshSnowRows(ctx,lines,0);}
+void handle_mesh_snow_defaults(SimulationContext& ctx,const std::vector<std::string>& lines){meshSnowRows(ctx,lines,1);}
+void handle_mesh_snow_cells(SimulationContext& ctx,const std::vector<std::string>& lines){meshSnowRows(ctx,lines,2);}
 
 void handle_aquifers(SimulationContext& ctx, const std::vector<std::string>& lines) {
     for (const auto& line : lines) {

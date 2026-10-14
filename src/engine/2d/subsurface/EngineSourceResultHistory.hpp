@@ -27,7 +27,7 @@ private:
     friend struct EngineSourceResultFile;
     friend class ExplicitInertialSolver;
     friend class EngineSourceResultStream;
-    static std::map<std::string,SourceResultTable> schema(bool outfall_returns);
+    static std::map<std::string,SourceResultTable> schema(bool outfall_returns,bool lid_beds=false);
     static EngineSourceResultHistory projection(const openswmm::SWMMEngine&,std::size_t frame,double start);
     std::string append(const openswmm::SWMMEngine&,double start);
     std::string resume(const openswmm::SWMMEngine&);
@@ -36,6 +36,7 @@ private:
     std::string validatePairing() const;
     const openswmm::SWMMEngine* engine_=nullptr;
     bool outfall_returns_=false;
+    bool lid_beds_=false;
     bool detailed_=false;
     SourceResultHistory source_intervals_;
     double start_date_=0;

@@ -117,6 +117,7 @@ private:
     int                 n_links_    = 0;
     int                 n_polluts_  = 0;
     int                 n_subcatch_vars_ = 0;
+    bool                snow_process_ = false;
     int                 n_node_vars_ = 0;
     int                 n_link_vars_ = 0;
     int                 flow_units_code_ = 0;

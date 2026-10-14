@@ -224,6 +224,7 @@ private:
     void installCheckpoint(SimulationContext&, std::shared_ptr<RestartState>) noexcept;
     SimulationContext* checkpoint_context_ = nullptr; // non-owning, stable lifetime
     bool checkpoint_owned_session_ = false; // engine owns structure/control memory
+    bool checkpoint_aquifer_session_ = false; // paired engine/surface recovery owns node-bed receipts
     std::string checkpoint_model_;
     double checkpoint_time_ = 0.0, checkpoint_step_end_ = 0.0;
     bool checkpoint_ready_ = false, checkpoint_prepared_ = false, checkpoint_step_finished_ = false;

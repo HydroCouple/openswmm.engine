@@ -1,3 +1,4 @@
+from ._snow import MeshSnow
 
 from typing import Any, Mapping
 from ._coupling import DomainSources, SourceReceipt
@@ -106,6 +107,9 @@ class Surface2D:
 
     @property
     def groundwater(self) -> Groundwater: ...
+
+    @property
+    def snow(self) -> MeshSnow: ...
 
     def __init__(self, owner: Solver | ModelBuilder | int) -> None:
         """Construct an accessor retaining its engine owner. Raw registered

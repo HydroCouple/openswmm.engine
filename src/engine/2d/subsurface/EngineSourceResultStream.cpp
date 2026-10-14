@@ -189,7 +189,7 @@ void EngineSourceResultStream::append(Frame frame) {
 std::string EngineSourceResultStream::initialize(const SWMMEngine& e,const std::string& path,bool detailed) {
     bool created=false;
     try {
-        require(!engine_&&path_.empty()&&e.ctx_.current_time==0&&e.source_stage_&&e.source_delivery_,"Attach an empty stream at the initial spatial-source checkpoint.");
+        require(!engine_&&path_.empty()&&e.ctx_.current_time==0&&e.surface_router_.commonSourceStage()&&(e.source_delivery_||e.surface_router_.subsurface().lidReceiptsEnabled()),"Attach an empty stream at the initial spatial-source checkpoint.");
         std::vector<std::string> sources,nodes;for(int sc=0;sc<e.ctx_.n_subcatches();++sc)sources.push_back(e.ctx_.subcatch_names.name_of(sc));for(int n=0;n<e.ctx_.n_nodes();++n)nodes.push_back(e.ctx_.node_names.name_of(n));
         Archive meta;auto model=e.checkpoint_model_;meta(model,sources,nodes,detailed);metadata_=meta.bytes();
         std::random_device random;const char* hex="0123456789abcdef";std::string id;id.reserve(32);for(int i=0;i<32;++i)id+=hex[random()&15];
@@ -204,20 +204,20 @@ std::string EngineSourceResultStream::initialize(const SWMMEngine& e,const std::
 }
 std::string EngineSourceResultStream::capture(const SWMMEngine& e,Kind kind,double start,uint64_t anchor) {
     try {
-        require(engine_==&e&&e.source_stage_&&e.source_delivery_,"Source stream belongs to a different engine.");
+        require(engine_==&e&&e.surface_router_.commonSourceStage()&&(e.source_delivery_||e.surface_router_.subsurface().lidReceiptsEnabled()),"Source stream belongs to a different engine.");
         if(!anchor){std::string bytes;const auto error=e.checkpointBytes(bytes,false);require(error.empty(),error.c_str());anchor=fingerprint(bytes);}
         pending_capture_=true;pending_kind_=kind;pending_start_=start;
-        Frame frame;frame.kind=kind;frame.sequence=cursor_.frames;frame.engine_start=start;frame.engine_end=e.ctx_.current_time;frame.source_start=source_end_;frame.source_end=e.source_stage_->completedEnd();frame.source_intervals=e.source_stage_->intervals();frame.boundary_fingerprint=anchor;
+        Frame frame;frame.kind=kind;frame.sequence=cursor_.frames;frame.engine_start=start;frame.engine_end=e.ctx_.current_time;frame.source_start=source_end_;frame.source_end=e.surface_router_.commonSourceStage()->completedEnd();frame.source_intervals=e.surface_router_.commonSourceStage()->intervals();frame.boundary_fingerprint=anchor;
         auto projected=EngineSourceResultHistory::projection(e,frame.sequence,start);
         if(kind!=Kind::EngineStep) {auto& n=projected.tables_.at("node_delivery").columns;for(std::size_t r=0;r<n[0].size();++r){n[6][r]=n[7][r]=n[10][r]=0;n[8][r]=n[9][r]=frame.engine_end;}}
         merge(frame.tables,std::move(projected.tables_),"engine/");
-        if(kind==Kind::Initial) {auto source=SourceResultHistory::projection(*e.source_stage_,0,0);merge(frame.tables,std::move(source.tables_),"source/");}
+        if(kind==Kind::Initial) {auto source=SourceResultHistory::projection(*e.surface_router_.commonSourceStage(),0,0);merge(frame.tables,std::move(source.tables_),"source/");}
         append(std::move(frame));pending_capture_=false;error_.clear();return {};
     }catch(const std::exception& e){error_=e.what();return error_;}
 }
 std::string EngineSourceResultStream::captureSourceInterval(const CommonSourceStage& stage) {
     try {
-        require(detailed_&&engine_&&engine_->source_stage_==&stage,"Source interval requires its attached detailed stream.");
+        require(detailed_&&engine_&&engine_->surface_router_.commonSourceStage()==&stage,"Source interval requires its attached detailed stream.");
         Frame frame;frame.kind=Kind::SourceInterval;frame.sequence=cursor_.frames;frame.engine_start=frame.engine_end=engine_end_;frame.source_start=source_end_;frame.source_end=stage.completedEnd();frame.source_intervals=stage.intervals();
         auto source=SourceResultHistory::projection(stage,frame.source_intervals,frame.source_start);source.tables_.erase("footprints");source.tables_.erase("lid_usages");merge(frame.tables,std::move(source.tables_),"source/");append(std::move(frame));return {};
     }catch(const std::exception& e){error_=e.what();return error_;}

@@ -58,7 +58,7 @@ void publish(const std::string& path,const std::string& bytes) {
 void greenAmpt(Archive& a,GreenAmptState& s) {
     a(s.S,s.Ks,s.IMDmax,s.IMD,s.F,s.Fu,s.Fumax,s.Lu,s.T,s.saturated);
 }
-void lidState(Archive& a,LidNodeState& s) {
+void lidState(Archive& a,LidNodeState& s,bool mesh) {
     a(s.richards); a.fixed(s.richards_water,s.richards_pressure);
     auto& r=s.richards_report;
     a(r.ok,r.error,r.accepted,r.rejected,r.rhs,r.newton,r.min_step,r.bottom_volume,r.evaporation,r.balance);
@@ -70,6 +70,8 @@ void lidState(Archive& a,LidNodeState& s) {
     a(s.quality_outlet_conc,s.quality_old_mobile,s.mobile_delta); a.fixed(s.port_delta);
     a.sequence(s.cells,[&](auto& c){a(c.theta);},true);
     a(s.held_volume,s.evap_volume,s.captured_flow,s.treated_volume);
+    if(mesh && s.richards)a(s.richards_completed_time,s.richards_mesh_start,s.richards_mesh_pending_finish,
+        s.richards_mesh_routed,r.bottom_outflow,r.bottom_inflow,r.inflow);
 }
 // Explicit fields only. Model arrays are compared, never restored. Old/new
 // report values, pending exchange volumes, retained stores and statistics are
@@ -162,7 +164,8 @@ struct Router::RestartState {
         CONDUIT_STATE(FIELD)
 #undef FIELD
         a.fixed(storages.evap_loss,storages.exfil_loss,storages.exfil_rate,outfalls.head_2d,outfalls.ramp_2d);
-        a.sequence(storages.lid_state,[&](auto& s){lidState(a,s);},true);
+        std::size_t lid_row=0;
+        a.sequence(storages.lid_state,[&](auto& s){lidState(a,s,storages.lid[lid_row++].bottom==LidNodeBottom::MeshAquifer);},true);
         a(dw.losses_all_zero_,dw.last_converged_,dw.variable_step_,dw.sim_time_,dw.evap_rate);
         // Scalar fields above; remaining arrays below have initialized model shapes.
         a.fixed(dw.area1_,dw.area2_,dw.area_mid_,dw.hrad_mid_,dw.width_mid_,dw.depth1_,dw.depth2_,dw.depth_mid_,
@@ -283,8 +286,12 @@ struct Router::RestartState {
                 // Classical node continuity may additionally withdraw retained
                 // water to fill new conduit storage (DynamicWave::setNodeDepth).
                 // This is carried in port_delta, but is not a layer-port flow.
-                const double delta=s.port_delta[i];
-                require(s.richards ? close(portBalance[i],delta) :
+                // Mesh columns consume and clear their trial deltas at the
+                // joint acceptance boundary. Their immutable port receipts
+                // still describe the accepted interval and close its ledger.
+                const bool mesh=s.richards && storages.lid[r].bottom==LidNodeBottom::MeshAquifer;
+                const double delta=mesh?portBalance[i]:s.port_delta[i];
+                require(mesh ? s.port_delta[i]==0 : s.richards ? close(portBalance[i],delta) :
                         (delta<=portBalance[i] || close(portBalance[i],delta)),
                         "Hydraulic checkpoint LID port/continuity ledger differs.");
                 if (!retained.empty()) {
@@ -304,6 +311,15 @@ struct Router::RestartState {
                 }
             }
             const auto& report=s.richards_report;
+            if(s.richards && storages.lid[r].bottom==LidNodeBottom::MeshAquifer) {
+                require(s.richards_completed_time==time && !s.richards_mesh_pending_finish && !s.richards_mesh_routed &&
+                    std::isfinite(s.richards_mesh_start) && s.richards_mesh_start>=0 && s.richards_mesh_start<=time &&
+                    std::isfinite(report.bottom_outflow) && report.bottom_outflow>=0 &&
+                    std::isfinite(report.bottom_inflow) && report.bottom_inflow>=0 &&
+                    std::isfinite(report.inflow) && report.inflow>=0 &&
+                    close(report.bottom_volume,report.bottom_outflow-report.bottom_inflow),
+                    "Invalid hydraulic checkpoint completed LID bed receipt.");
+            }
             require(report.ok && report.error.empty() && report.accepted>=0 && report.accepted<=200000 && report.rejected>=0 && report.rhs>=0 &&
                     report.newton>=0 && std::isfinite(report.min_step) && report.min_step>=0 &&
                     std::isfinite(report.bottom_volume) && std::isfinite(report.evaporation) && report.evaporation>=0 &&
@@ -371,7 +387,7 @@ void Router::checkCheckpointProfile(const SimulationContext& c) const {
     for (int n=0;n<c.n_nodes();++n) {
         require((c.nodes.type[n]==NodeType::JUNCTION || c.nodes.type[n]==NodeType::STORAGE || c.nodes.type[n]==NodeType::OUTFALL) &&
                 !c.nodes.is_virtual[n] && !c.nodes.is_inlet[n] &&
-                (c.nodes.aquifer2d_bed.empty() || !c.nodes.aquifer2d_bed[n]),
+                (c.nodes.aquifer2d_bed.empty() || !c.nodes.aquifer2d_bed[n] || checkpoint_aquifer_session_),
                 "Hydraulic checkpoint dividers, virtual/inlet junctions and aquifer-owned node beds are not qualified.");
         if (c.nodes.type[n]==NodeType::STORAGE) {
             int r=c.node_subtypes.storage_row(n);require(r>=0, "Hydraulic checkpoint storage join is missing.");

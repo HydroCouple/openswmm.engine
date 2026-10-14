@@ -137,7 +137,7 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
     // H6a: this binding runs on the RUNOFF clock, the node/link one on the
     // routing clock, so each resolves its own step's solar forcing
     // (SolarRadiation.hpp). Idempotent within a step.
-    heat::updateSolarForcing(ctx);
+    heat::updateSolarForcing(ctx, dt);
 
     for (int i = 0; i < nsc && i < static_cast<int>(soa.area.size()); ++i) {
         const auto ui = static_cast<std::size_t>(i);

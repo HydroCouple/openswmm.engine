@@ -274,6 +274,13 @@ cdef class Surface2D:
         return text.decode('utf-8') if text != NULL else ''
 
     @property
+    def snow(self):
+        """Shared named snowpacks, cell assignments and accepted snapshots (SI)."""
+        self._h()
+        from ._snow import MeshSnow
+        return MeshSnow(self._owner)
+
+    @property
     def groundwater(self):
         """Two-zone aquifer authoring and runtime snapshots."""
         self._h()

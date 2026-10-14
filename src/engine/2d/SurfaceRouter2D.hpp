@@ -218,6 +218,7 @@ public:
 
     /// Check if the 2D module is active.
     bool isActive() const noexcept { return active_; }
+    void prepareLidStep(SimulationContext&,double dt,double evaporation);
 
     /// Thread-count advisories produced by initialize() (THREADS above the
     /// machine limits, triangle gate reducing an explicit request). The engine
@@ -275,6 +276,7 @@ public:
     bool runtimeCpuAvailable() const noexcept;
     RuntimeSources& runtimeSources() noexcept { return state_.runtime_sources; }
     bool commonSourceAttached() const noexcept { return common_stage_!=nullptr; }
+    const CommonSourceStage* commonSourceStage() const noexcept { return common_stage_; }
     bool runtimeWaterCheckpointing() const noexcept;
     bool runtimeBoundaryCheckpointing() const noexcept;
     std::string validateRuntimeWater(const RuntimeSources&,const RuntimeSources&,const RuntimeForcings&,double time,const BoundaryData* boundary=nullptr) const;

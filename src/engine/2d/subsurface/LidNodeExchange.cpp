@@ -9,6 +9,72 @@
 #include "../solver/InertialEdges.hpp"
 
 namespace openswmm::twoD {
+std::string SubsurfaceSolver::configureLidReceipts(const std::vector<int>& beds,const std::vector<int>& mobile) {
+    if(beds.empty() && mobile.empty())return {};
+    if(lid_receipts_enabled_ || !richards_clock_valid_ || tr_.active())
+        return "LID receipts require an initial water-only groundwater owner.";
+    std::set<int> seen;
+    auto all=beds;all.insert(all.end(),mobile.begin(),mobile.end());
+    for(int b:all) {
+        if(b<0 || b>=int(node_beds_.size()) || !seen.insert(b).second ||
+           !node_beds_[b].exchange || node_beds_[b].cell<0 || state_.nacc[b]!=0 ||
+           cell_completed_[node_beds_[b].cell]!=0)
+            return "LID receipt bed is unresolved, duplicate or already running.";
+        NodeWaterBudget budget;
+        if(auto e=nodeWaterBudget(node_beds_[b].cell,1,budget);!e.empty())return e;
+    }
+    for(int b:beds)richards_bed_owned_[b]=true;
+    for(int b:mobile)mobile_lid_bed_[b]=true;
+    lid_receipts_enabled_=true;return {};
+}
+double SubsurfaceSolver::pendingBedDown(int bed) const noexcept {
+    double v=node_pending_down_[bed];for(const auto& r:lid_receipts_[bed])v+=r.down;return v;
+}
+double SubsurfaceSolver::pendingBedUp(int bed) const noexcept {
+    double v=node_pending_up_[bed];for(const auto& r:lid_receipts_[bed])v+=r.up;return v;
+}
+double SubsurfaceSolver::pendingLidDown(int cell) const noexcept {
+    double v=0;for(int b:cell_beds_[cell]){v+=node_pending_down_[b];for(const auto& r:lid_receipts_[b])v+=r.down;}return v;
+}
+double SubsurfaceSolver::pendingLidUp(int cell) const noexcept {
+    double v=0;for(int b:cell_beds_[cell]){v+=node_pending_up_[b];for(const auto& r:lid_receipts_[b])v+=r.up;}return v;
+}
+double SubsurfaceSolver::pendingLidWater() const noexcept {
+    double v=0;for(const auto& rows:lid_receipts_)for(const auto& r:rows)v+=r.down-r.up;return v;
+}
+std::string SubsurfaceSolver::retainLidReceipts(double start,double end,const std::vector<RichardsBedReceipt>& rows) {
+    if(!lid_receipts_enabled_ || !std::isfinite(start) || start<0 || !std::isfinite(end) || end<=start)
+        return "Invalid completed LID receipt interval.";
+    std::set<int> seen;std::map<int,std::pair<double,double>> totals;
+    for(const auto& r:rows) {
+        if(r.bed<0 || r.bed>=int(node_beds_.size()) || !richards_bed_owned_[r.bed] ||
+           !seen.insert(r.bed).second || node_beds_[r.bed].node!=r.node || node_beds_[r.bed].cell!=r.cell ||
+           lid_booked_end_[r.bed]!=start || cell_completed_[r.cell]>start+8*std::numeric_limits<double>::epsilon()*std::max(1.,start) ||
+           !std::isfinite(r.accepted_down) || r.accepted_down<0 || !std::isfinite(r.accepted_up) || r.accepted_up<0)
+            return "Invalid, stale or unpaired completed LID receipt.";
+        totals[r.cell].first+=r.accepted_down;totals[r.cell].second+=r.accepted_up;
+        if(!std::isfinite(richards_down_cum_[r.bed]+r.accepted_down) ||
+           !std::isfinite(richards_up_cum_[r.bed]+r.accepted_up))return "LID receipt cumulative overflow.";
+    }
+    for(const auto& [cell,amount]:totals) {
+        NodeWaterBudget budget;if(auto e=nodeWaterBudget(cell,end-start,budget);!e.empty())return e;
+        if(amount.first>budget.receiver || amount.second>budget.donor)
+            return "Completed LID receipt exceeds the shared groundwater reservation.";
+    }
+    // Allocate before publishing any books. Empty receipts still advance the
+    // hydraulic owner clock but do not grow an idle column's queue.
+    for(const auto& r:rows)if(r.accepted_down>0 || r.accepted_up>0)
+        lid_receipts_[r.bed].reserve(lid_receipts_[r.bed].size()+1);
+    for(const auto& r:rows) {
+        if(r.accepted_down>0 || r.accepted_up>0)lid_receipts_[r.bed].push_back({start,end,r.accepted_down,r.accepted_up});
+        lid_booked_end_[r.bed]=end;
+        lid_bed_diagnostics_[r.bed]={start,end,cell_completed_[r.cell],r.lid_head,r.aquifer_head,
+            r.requested_down,r.requested_up,r.reserved_down,r.reserved_up,r.accepted_down,r.accepted_up};
+        richards_down_cum_[r.bed]+=r.accepted_down;richards_up_cum_[r.bed]+=r.accepted_up;
+        bed_exchange_cum_[r.bed]+=r.accepted_up-r.accepted_down;
+    }
+    return {};
+}
 namespace {
 bool nonnegative(double x) { return std::isfinite(x) && x>=0; }
 double award(double demand, long double total, double ceiling, long double& spent) {

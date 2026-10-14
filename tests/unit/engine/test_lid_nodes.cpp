@@ -1150,6 +1150,60 @@ TEST(RichardsMeshNodes, NativeDynamicWaveBackwaterPortsFinishAcceptedNodeInterva
     }
     EXPECT_EQ(engine.close(),0);
 }
+TEST(RichardsMeshRuntime, PendingGrossReceiptsWaitForGroundwaterAndRecoverExactly) {
+    for(auto closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(int direction:{-1,1}) {
+        MeshLidRig rig(3,false,closure);auto& c=rig.c;auto& gw=rig.gw;
+        for(int n:rig.nodes)c.nodes.invert_elev[n]=direction<0?-10:0;
+        ASSERT_EQ(gw.configureLidReceipts({0,1,2}),"");
+        const double initial=rig.water();
+        ASSERT_NO_THROW(lidnode::prepareMeshRichardsStep(c,gw,rig.surface,.2,0));
+        ASSERT_NO_THROW(lidnode::finishStep(c));c.current_time=.2;
+        EXPECT_GT(std::abs(gw.pendingLidWater()),0);
+        const auto pending=gw.pendingLidWater();
+        EXPECT_NEAR(rig.water()+pending,initial,1e-9);
+        auto restored=gw;detail::CompletedSourceArchive out;gw.checkpoint(out,false);
+        detail::CompletedSourceArchive in(out.bytes());ASSERT_NO_THROW(restored.checkpoint(in,false));in.finish();
+        EXPECT_EQ(aquiferSnapshot(restored),aquiferSnapshot(gw));
+        ASSERT_NO_THROW(gw.fireGwCells(0,.1,rig.surface,0,.1));
+        EXPECT_EQ(gw.pendingLidWater(),pending);EXPECT_EQ(gw.state().led_node,0);
+        EXPECT_NEAR(rig.water()+gw.pendingLidWater(),initial,1e-9);
+        for(int k=1;k<5;++k) {
+            ASSERT_NO_THROW(lidnode::prepareMeshRichardsStep(c,gw,rig.surface,.2,0));
+            ASSERT_NO_THROW(lidnode::finishStep(c));c.current_time+=.2;
+        }
+        EXPECT_EQ(gw.cellCompletedTime(0),.1);
+        EXPECT_NEAR(rig.water()+gw.pendingLidWater(),initial,1e-9);
+        const auto before=gw.pendingLidWater();
+        ASSERT_NO_THROW(gw.fireGwCells(0,.9,rig.surface,.1,1));
+        EXPECT_EQ(gw.pendingLidWater(),0);EXPECT_NEAR(gw.state().led_node,-before,1e-12);
+        EXPECT_EQ(gw.nodeRefunds(),0);EXPECT_NEAR(rig.water(),initial,1e-9);
+        EXPECT_EQ(gw.nodeExchangeVolumes(),std::vector<double>(4,0));
+        EXPECT_NEAR(gw.state().continuityResidual(),0,1e-10);
+    }
+}
+TEST(RichardsMeshRuntime, FutureWithdrawalsSurviveCompetingEvaporationAndDeepLoss) {
+    for(auto closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA}) {
+        SCOPED_TRACE(int(closure));MeshLidRig rig(1,false,closure);auto& gw=rig.gw;
+        rig.config.options.gw_et="BOTH";std::vector<std::string> warnings;GwUnitFactors units;
+        ASSERT_EQ(gw.initialize(rig.mesh,rig.edges,rig.options,units,rig.c.n_nodes(),rig.config,warnings),"");
+        gw.assignTiers(1,1);ASSERT_EQ(gw.configureLidReceipts({0}),"");
+        SubsurfaceSolver::NodeWaterBudget budget;ASSERT_EQ(gw.nodeWaterBudget(0,1,budget),"");
+        const double reserved=budget.donor*.8;ASSERT_GT(reserved,0);
+        RichardsBedReceipt receipt;receipt.node=0;receipt.bed=0;receipt.cell=0;
+        receipt.requested_up=receipt.reserved_up=receipt.accepted_up=reserved;
+        ASSERT_EQ(gw.retainLidReceipts(0,1,{receipt}),"");
+        // Demands arrive after the LID has reserved its completed interval.
+        // An earlier aquifer firing must leave that future claim funded.
+        gw.state().et_pending[0]=10;gw.state().c_loss[0]=10;
+        ASSERT_NO_THROW(gw.fireGwCells(0,.5,rig.surface,0,.5));
+        EXPECT_EQ(gw.pendingBedUp(0),reserved);EXPECT_EQ(gw.state().led_node,0);
+        EXPECT_GT(gw.state().led_deep+gw.state().led_et,0);
+        ASSERT_NO_THROW(gw.fireGwCells(0,.5,rig.surface,.5,1));
+        EXPECT_EQ(gw.pendingBedUp(0),0);EXPECT_EQ(gw.nodeRefunds(),0);
+        EXPECT_NEAR(gw.state().led_node,reserved,1e-12);
+        EXPECT_NEAR(gw.state().continuityResidual(),0,1e-10);
+    }
+}
 TEST(RichardsMeshNodes, VectorPublicationIsStableAcrossCallerOrderAndPackingBoundary) {
     MeshLidRig a(65),b(65);for(int n:a.nodes){a.c.nodes.lat_flow[n]=b.c.nodes.lat_flow[n]=.001;}
     auto reversed=b.nodes;std::reverse(reversed.begin(),reversed.end());
@@ -1852,12 +1906,18 @@ TEST(LidNodes, SealedRichardsRetainsBottomWaterAndStillEvaporates) {
         EXPECT_NEAR(c.nodes.volume[0]+lidnode::heldVolume(c,0)+st.evap_loss[0]+st.exfil_loss[0],initial,1.e-10);
     }
 }
-TEST(LidNodes, MeshBottomExecutionStaysGatedForBothFlowModels) {
+TEST(LidNodes, MeshBottomInitializesButRequiresItsRoutingOwner) {
     for(bool richards:{false,true}) {
         auto c=richards?richardsModel():model();c.node_subtypes.storages.lid[0].bottom=LidNodeBottom::MeshAquifer;
         lidnode::validate(c);ASSERT_TRUE(c.errors.empty()); // authoring is allowed
-        lidnode::initialize(c);ASSERT_FALSE(c.errors.empty());
-        EXPECT_NE(c.errors.front().find("signed-volume adapter"),std::string::npos);
+        lidnode::initialize(c);
+#ifdef OPENSWMM_HAS_2D
+        ASSERT_TRUE(c.errors.empty());
+        if(richards)EXPECT_THROW(lidnode::prepareStep(c,1,0),std::runtime_error);
+#else
+        ASSERT_FALSE(c.errors.empty());
+        EXPECT_NE(c.errors.front().find("2D groundwater"),std::string::npos);
+#endif
     }
 }
 #ifdef LID_TEST_GEOPACKAGE
@@ -1960,3 +2020,12 @@ TEST(LidNodes, SealedRuntimeMasksAuthoredAndAutomaticBedsForBothFlowModels) {
     }
 }
 #endif
+
+TEST(LidNodes, BaseContactAreaUsesAuthoredGeometryWithoutPoreOrWholeCellSubstitution) {
+    SWMMEngine e;e.context()=model();auto& c=e.context();c.state=EngineState::OPENED;
+    double area=-1;ASSERT_EQ(swmm_lid_node_base_area(&e,0,&area),SWMM_OK);EXPECT_DOUBLE_EQ(area,100.);
+    c.node_subtypes.storages.a[0]=1;c.node_subtypes.storages.b[0]=2;c.node_subtypes.storages.c[0]=0;
+    ASSERT_EQ(swmm_lid_node_base_area(&e,0,&area),SWMM_OK);EXPECT_EQ(area,0.);
+    area=123;EXPECT_NE(swmm_lid_node_base_area(&e,1,&area),SWMM_OK);EXPECT_EQ(area,123);
+    c.state=EngineState::RUNNING;EXPECT_EQ(swmm_lid_node_base_area(&e,0,&area),SWMM_ERR_LIFECYCLE);
+}

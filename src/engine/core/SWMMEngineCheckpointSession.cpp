@@ -98,7 +98,9 @@ std::string SWMMEngine::startCheckpointSession(int output,const std::string& sou
                 const auto preview=twoD::resolveSurfaceOwnership(ctx_,r.mesh(),r.options(),r.aquiferConfig(),owners);
                 reviewed(preview);require(!token.empty()&&token==preview.token,"Reviewed ownership token is stale; preview the current model again.");
             } else require(token.empty(),"Ownership token supplied without ownership records.");
-            require(source_path.empty()||!owners.empty(),"Source journals require reviewed private catchment graphs.");
+            const bool lid_beds=std::any_of(ctx_.node_subtypes.storages.lid.begin(),ctx_.node_subtypes.storages.lid.end(),
+                [](const auto& l){return l.control>=0 && l.bottom==LidNodeBottom::MeshAquifer;});
+            require(source_path.empty()||!owners.empty()||lid_beds,"Journals require reviewed catchment or LID bottom ownership.");
         } else require(token.empty(),"Ownership token supplied for a 1D session.");
 #else
         require(source_path.empty()&&token.empty(),"Surface checkpoint session unavailable in this build.");

@@ -310,6 +310,11 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
         }
     }
 
+    if (hs.header.version >= 14u) {
+        if (hs.snow_state.size()>64u*1024u*1024u || !write_pod(buf,static_cast<uint32_t>(hs.snow_state.size())))return false;
+        buf.write(hs.snow_state.data(),static_cast<std::streamsize>(hs.snow_state.size()));
+        if(!buf.good())return false;
+    }
     // Compute CRC32 over the body
     const std::string body = buf.str();
     const uint32_t crc = crc32(
@@ -380,7 +385,7 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
 
     // Header
     if (!read_pod(is, hs.header.version))    return false;
-    if (hs.header.version < 1u || hs.header.version > 13u) {
+    if (hs.header.version < 1u || hs.header.version > 14u) {
         tl_last_io_error = "Unsupported hot start version " +
                            std::to_string(hs.header.version) + " in '" + path + "'";
         return false;
@@ -555,6 +560,11 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
             row.resize(size);
             for (auto& value : row) if (!read_pod(is,value)) return false;
         }
+    }
+    if(hs.header.version>=14u) {
+        uint32_t size=0;
+        if(!read_pod(is,size)||size>64u*1024u*1024u||size>file_size)return false;
+        hs.snow_state.resize(size);is.read(hs.snow_state.data(),size);if(!is.good())return false;
     }
     hs.path = path;
     return true;
@@ -1136,6 +1146,10 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
     }
 
     if (!hs->gw_interface.empty()) hs->header.version = std::max(hs->header.version, 13u);
+    try {
+        if(ctx.state_accessors.get_snow_state)hs->snow_state=ctx.state_accessors.get_snow_state();
+        if(!hs->snow_state.empty())hs->header.version=14u;
+    }catch(const std::exception& e){tl_last_io_error=e.what();delete hs;return nullptr;}
     if (!write_file(*hs, path)) {
         delete hs;
         return nullptr;
@@ -1264,6 +1278,10 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
     }
 
     if (!hs->gw_interface.empty()) hs->header.version = std::max(hs->header.version, 13u);
+    try {
+        if(ctx.state_accessors.get_snow_state)hs->snow_state=ctx.state_accessors.get_snow_state();
+        if(!hs->snow_state.empty())hs->header.version=14u;
+    }catch(const std::exception& e){tl_last_io_error=e.what();delete hs;return nullptr;}
     if (!write_file(*hs, path)) {
         delete hs;
         return nullptr;
@@ -1295,6 +1313,13 @@ int HotStartManager::apply(HotStartFile& hs,
                            SimulationContext& ctx,
                            std::function<void(const std::string&)> warn_cb) {
     hs.warnings.clear();
+    if(!hs.snow_state.empty()) {
+        const std::string error=ctx.state_accessors.set_snow_state?
+            ctx.state_accessors.set_snow_state(hs.snow_state,false):"Snow state accessor is unavailable.";
+        if(!error.empty()) {
+            tl_last_io_error=error;hs.warnings.push_back(error);if(warn_cb)warn_cb(error);return -1;
+        }
+    }
     if(meshLidRestartUnsupported(ctx)) {
         tl_last_io_error="Mesh LID hotstart requires the R5 joint owner restart extension";
         hs.warnings.push_back(tl_last_io_error);if(warn_cb)warn_cb(tl_last_io_error);return 1;
@@ -1471,6 +1496,15 @@ int HotStartManager::apply(HotStartFile& hs,
             if (warn_cb) warn_cb(m);
         });
 
+    if(!hs.snow_state.empty()) {
+        const auto error=ctx.state_accessors.set_snow_state(hs.snow_state,true);
+        if(!error.empty()){tl_last_io_error=error;return -1;}
+    } else if(ctx.state_accessors.set_snow_state && (std::any_of(ctx.subcatches.snowpack.begin(),ctx.subcatches.snowpack.end(),[](int p){return p>=0;}) ||
+              (ctx.state_accessors.get_snow_state&&!ctx.state_accessors.get_snow_state().empty()))) {
+        const auto error=ctx.state_accessors.set_snow_state({},true);
+        if(!error.empty()){tl_last_io_error=error;return -1;}
+        emit_warning("Hot start lacks snow state: assigned native and mesh snowpacks start bare; future snow forcing is retained.");
+    }
     return missing;
 }
 
@@ -1485,6 +1519,7 @@ int HotStartManager::apply(HotStartFile& hs,
                            std::function<void(const std::string&)> warn_cb) {
     // Apply hydraulic state (nodes, links) via the existing V1 overload
     int missing = apply(hs, ctx, warn_cb);
+    if(missing<0)return missing;
     if(meshLidRestartUnsupported(ctx))return missing;
     if (!validAquiferInterface(hs,ctx)) return missing;
 

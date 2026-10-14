@@ -27,6 +27,8 @@
  */
 
 #include "SWMMEngine.hpp"
+#include "../hydrology/surface/NativeSnow.hpp"
+#include "../../../include/openswmm/engine/openswmm_snow.h"
 #include "../hydraulics/SurfaceExchange.hpp"
 #include "../hydrology/LidNode.hpp"
 #include "DateTime.hpp"
@@ -36,6 +38,7 @@
 #include "UnitConversion.hpp"
 #include "../quality/MsxSurfaceQuality.hpp"   // BW-MSX: species buildup / washoff
 #include "../hydrology/Gage.hpp"
+#include "../hydrology/surface/SnowCheckpoint.hpp"
 #include "../hydraulics/Link.hpp"
 #include "../hydraulics/XSectBatch.hpp"
 #include "../hydraulics/Outfall.hpp"
@@ -105,13 +108,9 @@ static inline void omp_set_num_threads(int) {}
 // so a parse error surfaced to callers as "Cannot open output file" and a
 // lifecycle error as "Cannot open report file".  Values corrected below to
 // the public enum; the local names are kept to avoid churn at call sites.
-static constexpr int SWMM_OK                 = 0;
 static constexpr int SWMM_ERR_MEMORY         = 1;   // public SWMM_ERR_NOMEM
 static constexpr int SWMM_ERR_FILE_NOT_FOUND = 2;   // public SWMM_ERR_INPFILE
 static constexpr int SWMM_ERR_WRONG_STATE    = 6;   // public SWMM_ERR_LIFECYCLE
-static constexpr int SWMM_ERR_PARSE          = 5;   // public SWMM_ERR_PARSE
-static constexpr int SWMM_ERR_PLUGIN         = 10;  // public SWMM_ERR_PLUGIN
-static constexpr int SWMM_ERR_IO             = 11;  // public SWMM_ERR_IO
 
 namespace openswmm {
 
@@ -717,6 +716,29 @@ int SWMMEngine::open(const char* inp_path,
         runoff::RunoffSolver* runoff_ptr = &runoff_;
         groundwater::GWSolver* gw_ptr    = &groundwater_;
 
+        ctx_.state_accessors.get_snow_state = [this]() {
+#ifdef OPENSWMM_HAS_2D
+            const auto* mesh=surface_router_.isActive()?&surface_router_.state().snow:nullptr;
+#else
+            const surface::MeshSnow* mesh=nullptr;
+#endif
+#ifdef OPENSWMM_HAS_2D
+            if(const auto* source=completedSourceDriver();source&&source->snow().active()) {
+                auto context=ctx_;auto snow=snow_.state();
+                source->snow().exportAccepted(source->context(),context,snow);
+                return surface::saveCombinedSnowCheckpoint(context,snow,mesh);
+            }
+#endif
+            return surface::saveCombinedSnowCheckpoint(ctx_,snow_.state(),mesh);
+        };
+        ctx_.state_accessors.set_snow_state = [this](const std::string& bytes,bool apply) {
+#ifdef OPENSWMM_HAS_2D
+            auto* mesh=surface_router_.isActive()?&surface_router_.state().snow:nullptr;
+#else
+            surface::MeshSnow* mesh=nullptr;
+#endif
+            return surface::restoreCombinedSnowCheckpoint(ctx_,snow_.state(),mesh,bytes,apply,true);
+        };
         ctx_.state_accessors.get_infil_state =
             [runoff_ptr](int i, int& model, double* infil) -> bool {
                 runoff_ptr->infil_get_state(i, model, infil);
@@ -1295,6 +1317,7 @@ static double snowCoverVolumeFt3(const openswmm::SimulationContext& ctx,
     for (int i = 0; i < ctx.n_subcatches(); ++i) {
         auto ui = static_cast<std::size_t>(i);
         if (ctx.subcatches.snowpack[ui] < 0) continue;
+        if(!soa.enabled[ui])continue;
         double depth = 0.0;
         for (int k = 0; k < openswmm::snow::N_SUBAREAS; ++k) {
             auto idx = static_cast<std::size_t>(i * openswmm::snow::N_SUBAREAS + k);
@@ -2010,7 +2033,7 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
  *
  * @param dt_routing  Routing timestep (seconds).
  */
-void SWMMEngine::stepRunoff(double dt_routing) noexcept {
+void SWMMEngine::stepRunoff(double dt_routing) {
     // ================================================================
     // PHASE A: RUNOFF WITH INDEPENDENT CLOCK (matching legacy)
     //
@@ -2321,6 +2344,19 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             ctx_.climate_state.humidity = std::clamp(h, 0.0, 100.0);
         }
 
+        // The hourly meteorology source precedes legacy temperature, wind
+        // and humidity sources. Runtime prescriptions retain highest priority.
+        if (!ctx_.snowpacks.meteorology.empty()) {
+            std::array<double, 5> met;
+            const auto error = ctx_.snowpacks.meteorology.average(abs_time, 1, met);
+            if (!error.empty()) throw std::runtime_error(error);
+            ctx_.climate_state.temperature = ctx_.forcing.effective_temperature(met[0]*1.8+32);
+            ctx_.climate_state.wind_speed = ctx_.forcing.effective_wind(met[2]/.44704);
+            ctx_.climate_state.humidity = met[1];
+            const double ta = ctx_.climate_state.temperature;
+            ctx_.climate_state.ea = 8.1175e6*std::exp(-7701.544/(ta+405.0265));
+        }
+
         // A2d. Monthly adjustment factors
         ctx_.climate_state.infil_factor = ctx_.adjust_hydcon[mon];
 
@@ -2393,6 +2429,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         // Compute variable runoff timestep
         double dt_runoff = computeRunoffTimestep(abs_time, is_raining, has_runoff_, has_snow_);
         if (dt_runoff <= 0.0) dt_runoff = 1.0;
+        dt_runoff = surface::ueb::nextSnowBoundary(ctx_, old_runoff_time_, dt_runoff);
 
         // Update runoff clock
         new_runoff_time_ = old_runoff_time_ + dt_runoff;
@@ -2494,6 +2531,10 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                           ctx_.climate_state.wind_speed, snow_rain_.data(),
                           snow_snow_.data(),
                           ctx_.climate_state.gamma, ctx_.climate_state.ea);
+            const double snow_date=ctx_.options.start_date+old_runoff_time_/86400.;
+            if (const auto error = surface::ueb::advanceSubcatchments(ctx_, snow_.state(), snow_date,
+                    old_runoff_time_, dt_runoff, snow_rain_.data(), snow_snow_.data()); !error.empty())
+                throw std::runtime_error(error);
 
             // A3a (Gap #20): Build per-subcatch snow-modified net precip.
             // netPrecip[i] = imelt[i] + rainfall*(1-asc[i])  (matching legacy)
@@ -2519,6 +2560,11 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                 double net_plow   = soa.imelt[plow_idx]   + rainfall_ft * (1.0 - soa.asc[plow_idx]);
                 double net_imperv = soa.imelt[imperv_idx] + rainfall_ft * (1.0 - soa.asc[imperv_idx]);
                 double net_perv   = soa.imelt[perv_idx]   + rainfall_ft * (1.0 - soa.asc[perv_idx]);
+                if (soa.external[ui]) {
+                    net_plow = soa.external_net[plow_idx];
+                    net_imperv = soa.external_net[imperv_idx];
+                    net_perv = soa.external_net[perv_idx];
+                }
 
                 ctx_.subcatches.snow_net_imperv[ui] = (fTotalI > 0.0)
                     ? (net_plow * fPlow + net_imperv * fImperv) / fTotalI
@@ -5031,7 +5077,11 @@ void SWMMEngine::stepRouting(double dt_routing) {
         last_step_steady_ = true;
         return;
     }
+#ifdef OPENSWMM_HAS_2D
+    surface_router_.prepareLidStep(ctx_,dt_routing,ctx_.climate_state.evap_rate);
+#else
     lidnode::prepareStep(ctx_, dt_routing, ctx_.climate_state.evap_rate);
+#endif
     // legacy routeFlow: the hydraulic old state rolls only on a routed step.
     ctx_.save_hyd_state();
 #ifdef OPENSWMM_HAS_2D
@@ -5821,6 +5871,16 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
     double step_loss_rate = 0.0;   // legacy StepFlowTotals.evapLoss + seepLoss
     double step_ww_rate   = 0.0;   // legacy StepFlowTotals.wwInflow
     ctx_.mass_balance.routing_outflow += ctx_.mass_balance.step_ext_withdrawal * dt_routing;
+    // Porous LID/aquifer receipts bypass the mobile lateral-flow queue. Book
+    // their actual gross water once, in the same domain-transfer categories.
+    for(std::size_t r=0;r<ctx_.node_subtypes.storages.lid.size();++r) {
+        const auto& st=ctx_.node_subtypes.storages;
+        if(st.lid[r].bottom!=LidNodeBottom::MeshAquifer || !st.lid_state[r].richards)continue;
+        const auto& receipt=st.lid_state[r].richards_report;
+        ctx_.mass_balance.step_ext_inflow+=receipt.bottom_inflow/(.028316846592*dt_routing);
+        ctx_.mass_balance.routing_coupling_out+=receipt.bottom_outflow/.028316846592;
+        ctx_.mass_balance.step_outflow+=receipt.bottom_outflow/(.028316846592*dt_routing);
+    }
 
     // Accumulate DWF, GW, RDII, and external inflow volumes from step accumulators
     // (step accumulators are set during Inflow::computeAll / RDIISolver::computeAll
@@ -6185,6 +6245,22 @@ void SWMMEngine::computeFinalStorage() noexcept {
         // vectors that wrote every pollutant column as zero: a field that
         // exists, is exposed, is read, and is never written.
         ctx_.mass_balance.runoff_snowremov = snow_.state().removed;
+#ifdef OPENSWMM_HAS_2D
+        if(source_delivery_&&source_stage_->sources().snow().active()) {
+            const auto& source=source_stage_->sources();
+            for(const auto& book:source.snow().ledgers()) {
+                ctx_.mass_balance.runoff_final_snow+=book.stored;
+                ctx_.mass_balance.runoff_snowremov+=book.removed;
+            }
+            for(int sc=0;sc<ctx_.n_subcatches();++sc)if(ownsSpatialSource(sc)) {
+                const double depth=surface::nativeSnowDepth(source.snow().state(),sc);
+                // A completed source has its own clock. Publish held accepted
+                // state, avoiding interpolation against ordinary runoff time.
+                ctx_.subcatches.snow_depth[sc]=ctx_.subcatches.old_snow_depth[sc]=depth;
+            }
+        }
+#endif
+
     }
 
     // (LID exfiltration / evaporation are folded into the runoff-continuity
@@ -6604,6 +6680,22 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                     snap.subcatch.infil[ui] =
                         (ctx_.subcatches.infil_loss[ui] * nonlid_ft2 + in)
                         / full_ft2;
+                }
+            }
+
+            // Snow owns a separate accepted clock. Store it beside the SI
+            // process samples so histories never label a runoff-boundary state
+            // as if it were evaluated at the hydraulic report instant.
+            if(surface::hasUebSnow(ctx_)) {
+                snap.subcatch.snow_process.resize(ctx_.n_subcatches()*SubcatchSnapshot::snow_process_count);
+                for(int sc=0;sc<ctx_.n_subcatches();++sc) {
+                    const auto* c=&ctx_;const auto* snow=&snow_.state();
+#ifdef OPENSWMM_HAS_2D
+                    if(const auto* source=completedSourceDriver();source && source->snow().active() &&
+                       source->clocks().groupForSubcatch(sc)>=0) {c=&source->context();snow=&source->snow().state();}
+#endif
+                    const auto row=surface::nativeSnowResults(*c,*snow,sc);
+                    std::copy(row.begin(),row.end(),snap.subcatch.snow_process.begin()+sc*row.size());
                 }
             }
 
@@ -7261,6 +7353,28 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
     // not the rate applied over the window that ended there. The applied
     // volume is Mesh2_face_rain_cum.
     surface_router_.reportRainfall(ctx_, snap.sim_time, snap.surface_rainfall);
+    for (auto& field : snap.surface_snow) field.clear();
+    if (st.snow.active()) {
+        const int cells = msh.n_cells();
+        const double missing=std::numeric_limits<double>::quiet_NaN();
+        for (auto& field : snap.surface_snow) field.assign(cells,missing);
+        for (int i=0; i<cells; ++i) {
+            snap.surface_snow[0][i]=-1;
+            if(!st.snow.owns(i))continue;
+            const auto& out=st.snow.outputs()[i];const auto& book=st.snow.ledgers()[i];
+            const double dt=st.snow.lastSeconds();
+            const double age=st.snow.kind(i)==surface::SnowKind::Ueb?st.snow.columns()[i].accepted.point.age:missing;
+            const std::array<double,meshSnowFields.size()> values{double(st.snow.kind(i)),st.snow.completedEnd(),
+                out.swe_m,out.cover_frac,dt>0?out.melt_m/dt:0,st.snow.liquidRates()[i],dt>0?out.sublim_m/dt:0,
+                out.energy_kJm2,out.Ts_C,out.T_C,out.albedo,age,book.initial,book.raw_precipitation,
+                book.precipitation,book.liquid,book.sublimation,book.stored,book.residual(),st.snow.kind(i)==surface::SnowKind::Ueb?book.net_energy:missing,
+                st.snow.kind(i)==surface::SnowKind::Ueb?book.initial_energy:missing,
+                st.snow.kind(i)==surface::SnowKind::Ueb?book.stored_energy:missing,
+                st.snow.kind(i)==surface::SnowKind::Ueb?book.energyResidual():missing};
+            for (std::size_t k=0; k<values.size(); ++k) snap.surface_snow[k][i]=values[k];
+        }
+    }
+
     snap.surface_coupling_flux  = st.coupling_flux;
     snap.surface_net_source     = st.net_source;
     // Per-cell infiltration (plan §5.5.6). The held rate lives on the surface
@@ -7796,6 +7910,49 @@ int SWMMEngine::report() noexcept {
     // Gap #68: copy inlet stats into inlet_usages / inlet_diag for reporting
     if (ctx_.inlet_usages.count() > 0)
         inlet_.gatherStats(ctx_);
+
+    ctx_.snowpacks.report_values.clear();
+    SWMM_SnowLedger snowBook{};
+    if(swmm_snow_get_ueb_ledger(static_cast<SWMM_Engine>(this),&snowBook)==SWMM_OK) {
+        ctx_.snowpacks.report_values={
+            {"Subcatchment UEB initial water (m3)",snowBook.initial_m3},
+            {"Subcatchment UEB precipitation (m3)",snowBook.precipitation_m3},
+            {"Subcatchment UEB liquid outflow (m3)",snowBook.liquid_m3},
+            {"Subcatchment UEB throughfall (m3)",snowBook.throughfall_m3},
+            {"Subcatchment UEB sublimation (m3)",snowBook.sublimation_m3},
+            {"Subcatchment UEB removal (m3)",snowBook.removed_m3},
+            {"Subcatchment UEB transfer in (m3)",snowBook.transferred_m3},
+            {"Subcatchment UEB stored water (m3)",snowBook.stored_m3},
+            {"Subcatchment UEB water residual (m3)",snowBook.residual_m3},
+            {"Subcatchment UEB initial energy (kJ)",snowBook.initial_energy_kj},
+            {"Subcatchment UEB net energy input (kJ)",snowBook.net_energy_kj},
+            {"Subcatchment UEB depletion remapping (kJ)",snowBook.geometry_energy_kj},
+            {"Subcatchment UEB plowed energy out (kJ)",snowBook.plowed_energy_kj},
+            {"Subcatchment UEB stored energy (kJ)",snowBook.stored_energy_kj},
+            {"Subcatchment UEB energy residual (kJ)",snowBook.energy_residual_kj}};
+    }
+#ifdef OPENSWMM_HAS_2D
+    const auto& meshSnow=surface_router_.state().snow;
+    if(meshSnow.active()) {
+        surface::MeshSnowLedger total;double energyResidual=0;bool energy=false;
+        for(int i=0;i<int(meshSnow.ledgers().size());++i)if(meshSnow.owns(i)) {
+            const auto& b=meshSnow.ledgers()[i];total.initial+=b.initial;total.precipitation+=b.precipitation;
+            total.raw_precipitation+=b.raw_precipitation;total.liquid+=b.liquid;total.sublimation+=b.sublimation;total.stored+=b.stored;
+            if(meshSnow.kind(i)==surface::SnowKind::Ueb) {
+                energy=true;total.initial_energy+=b.initial_energy;total.net_energy+=b.net_energy;
+                total.stored_energy+=b.stored_energy;energyResidual+=b.energyResidual();
+            }
+        }
+        auto& rows=ctx_.snowpacks.report_values;
+        rows.insert(rows.end(),{{"Mesh snow initial water (m3)",total.initial},
+            {"Mesh raw precipitation (m3)",total.raw_precipitation},{"Mesh corrected precipitation (m3)",total.precipitation},
+            {"Mesh snow liquid surface input (m3)",total.liquid},{"Mesh snow sublimation (m3)",total.sublimation},
+            {"Mesh snow stored water (m3)",total.stored},{"Mesh snow water residual (m3)",total.residual()}});
+        if(energy)rows.insert(rows.end(),{{"Mesh UEB initial energy (kJ)",total.initial_energy},
+            {"Mesh UEB net energy input (kJ)",total.net_energy},{"Mesh UEB stored energy (kJ)",total.stored_energy},
+            {"Mesh UEB energy residual (kJ)",energyResidual}});
+    }
+#endif
 
     // Phase 4: write summary reports via all report plugins
     if (!plugins_.empty()) {
@@ -8561,6 +8718,10 @@ void SWMMEngine::initHydraulics() noexcept {
     //     open fails gracefully, exactly like a 1D validation error.
     try {
         surface_router_.initialize(ctx_);
+        for(int n=0;n<ctx_.n_nodes();++n)if(lidnode::bottomMode(ctx_,n)==LidNodeBottom::MeshAquifer &&
+            (!surface_router_.isActive() || !surface_router_.subsurface().active() ||
+             n>=int(ctx_.nodes.aquifer2d_bed.size()) || !ctx_.nodes.aquifer2d_bed[n]))
+            throw std::runtime_error("Mesh LID '"+ctx_.node_names.name_of(n)+"' requires an active resolved 2D aquifer bottom connection.");
     } catch (const std::exception& e) {
         ctx_.errors.push_back(std::string("2D initialization failed: ") + e.what());
         set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
@@ -8935,127 +9096,10 @@ void SWMMEngine::initHydrology() noexcept {
     // 3. Gage states
     gage_states_.resize(static_cast<std::size_t>(ctx_.n_gages()));
 
-    // 4. Snow solver: init and populate from parsed snowpack data
-    snow_.init(ctx_.n_subcatches());
-    {
-        auto& soa = snow_.state();
-        int unit_sys_snow = ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units));
-
-        // Transfer global snowmelt parameters
-        soa.tipm = ctx_.options.snow_ati_wt;
-        soa.rnm  = ctx_.options.snow_nrg_ratio;
-
-        // Transfer ADC curves from options
-        for (int k = 0; k < 10; ++k) {
-            soa.adc_imperv[k] = ctx_.options.adc_imperv[k];
-            soa.adc_perv[k]   = ctx_.options.adc_perv[k];
-        }
-
-        // Transfer per-subcatchment snowpack parameters
-        for (int i = 0; i < ctx_.n_subcatches(); ++i) {
-            auto ui = static_cast<std::size_t>(i);
-            int sp_idx = ctx_.subcatches.snowpack[ui];
-            if (sp_idx < 0) continue;
-            auto usp = static_cast<std::size_t>(sp_idx);
-
-            // Surface types: 0=PLOWABLE, 1=IMPERVIOUS, 2=PERVIOUS
-            const std::array<double, 7>* surfaces[3] = {nullptr, nullptr, nullptr};
-            if (usp < ctx_.snowpacks.plowable.size())   surfaces[0] = &ctx_.snowpacks.plowable[usp];
-            if (usp < ctx_.snowpacks.impervious.size())  surfaces[1] = &ctx_.snowpacks.impervious[usp];
-            if (usp < ctx_.snowpacks.pervious.size())    surfaces[2] = &ctx_.snowpacks.pervious[usp];
-
-            for (int k = 0; k < snow::N_SUBAREAS; ++k) {
-                auto idx = static_cast<std::size_t>(i * snow::N_SUBAREAS + k);
-                if (!surfaces[k]) continue;
-                const auto& p = *surfaces[k];
-                // p[0]=Cmin, p[1]=Cmax, p[2]=Tbase, p[3]=FWF, p[4]=SD0, p[5]=FW0, p[6]=SNN0
-                // legacy setMeltParams (snow.c): the melt coefficients are
-                // per DEGREE, so an SI deck's mm/hr-degC also carries
-                // UCF(TEMPERATURE) = 1.8; the initial free water is capped
-                // at FWF x SD0; ATI starts at the base temperature.
-                soa.dhmin[idx]  = p[0] * ucf::Ucf[ucf::TEMPERATURE][unit_sys_snow]
-                                       / ucf::Ucf[ucf::RAINFALL][unit_sys_snow];
-                soa.dhmax[idx]  = p[1] * ucf::Ucf[ucf::TEMPERATURE][unit_sys_snow]
-                                       / ucf::Ucf[ucf::RAINFALL][unit_sys_snow];
-                soa.tbase[idx]  = p[2];
-                if (unit_sys_snow == 1) // SI: convert °C to °F
-                    soa.tbase[idx] = (9. / 5.) * soa.tbase[idx] + 32.0;
-                soa.fwfrac[idx] = p[3];
-                soa.wsnow[idx]  = p[4] / ucf::Ucf[ucf::RAINDEPTH][unit_sys_snow];
-                soa.fw[idx]     = std::min(p[5], p[3] * p[4])
-                                  / ucf::Ucf[ucf::RAINDEPTH][unit_sys_snow];
-                soa.ati[idx]    = soa.tbase[idx];
-                // F6: the 7th field is SNN0 on the PLOWABLE row and SD100 —
-                // the depth at which areal coverage reaches 100 % — on the
-                // other two. Legacy splits it exactly this way
-                // (`snow.c:348-352`). Pinning `si` to the INITIAL pack depth
-                // instead made `asc` identically 1 on every deck, so
-                // `rain·(1 − asc)` was always zero and no rain ever reached
-                // the ground under a pack unless the deck wrote an explicit
-                // ADC row.
-                if (k == snow::SNOW_PLOWABLE) {
-                    soa.snn[ui] = p[6];
-                    // The plowable surface has no SD100 of its own; legacy
-                    // leaves its `si` at the init value (0).
-                } else {
-                    soa.si[idx] = p[6] / ucf::Ucf[ucf::RAINDEPTH][unit_sys_snow];
-                }
-            }
-
-            // Fractional area of each snow surface (legacy snow_initSnowpack,
-            // snow.c:178-182). Without this the SoA fArea stays zero, so
-            // plowSnow() and the melt area-weighting treat every surface as
-            // having no area — packs could never accumulate (Gap: M3 repair).
-            //   plowable = snn * fracImperv
-            //   imperv   = (1 - snn) * fracImperv
-            //   pervious = 1 - fracImperv
-            {
-                double fimp = ctx_.subcatches.frac_imperv[ui];
-                double snn  = soa.snn[ui];
-                auto base = static_cast<std::size_t>(i * snow::N_SUBAREAS);
-                soa.fArea[base + snow::SNOW_PLOWABLE] = snn * fimp;
-                soa.fArea[base + snow::SNOW_IMPERV]   = (1.0 - snn) * fimp;
-                soa.fArea[base + snow::SNOW_PERV]     = 1.0 - fimp;
-                // Match legacy: zero initial state where the surface has no
-                // area (snow.c:184-197).
-                for (int k = 0; k < snow::N_SUBAREAS; ++k) {
-                    auto idx = base + static_cast<std::size_t>(k);
-                    if (soa.fArea[idx] <= 0.0) {
-                        soa.wsnow[idx] = 0.0;
-                        soa.fw[idx]    = 0.0;
-                        soa.si[idx]    = 0.0;
-                    }
-                }
-            }
-
-            // Transfer plowing/removal parameters
-            if (usp < ctx_.snowpacks.removal.size()) {
-                const auto& r = ctx_.snowpacks.removal[usp];
-                auto sf = static_cast<std::size_t>(i * 5);
-                soa.weplow[ui]  = r[0] / ucf::Ucf[ucf::RAINDEPTH][unit_sys_snow];
-                soa.sfrac[sf+0] = r[1]; // fraction removed
-                soa.sfrac[sf+1] = r[2]; // fraction to impervious
-                soa.sfrac[sf+2] = r[3]; // fraction to pervious
-                soa.sfrac[sf+3] = r[4]; // fraction immediate melt
-                soa.sfrac[sf+4] = r[5]; // fraction to other subcatchment
-
-                // Resolve target subcatchment for plowed snow
-                if (usp < ctx_.snowpacks.removal_subcatch.size() &&
-                    !ctx_.snowpacks.removal_subcatch[usp].empty()) {
-                    soa.to_subcatch[ui] = ctx_.subcatch_names.find(
-                        ctx_.snowpacks.removal_subcatch[usp]);
-                }
-            }
-        }
+    // Both ordinary runoff and completed source owners use one snow setup.
+    if(const auto error=surface::initializeNativeSnow(ctx_,snow_);!error.empty()) {
+        ctx_.errors.push_back(error);set_error(SWMM_ERR_PARSE,error.c_str());
     }
-    // legacy snow_initSnowpack (snow.c:202): newSnowDepth starts at the
-    // initial pack's depth, so the first runoff step's old-state roll
-    // carries it into oldSnowDepth. It started at 0 here, and a run whose
-    // first runoff step is the DRY step (no rain, HasSnow not yet set —
-    // runoff25a-sw5, 23 h) reported the initial cover ramping up from 0
-    // for the whole step.
-    for (int i = 0; i < ctx_.n_subcatches(); ++i)
-        ctx_.subcatches.snow_depth[static_cast<std::size_t>(i)] = subcatchSnowDepth(i);
 
     // Date sanity (legacy project_validate, project.c:161-169): the run must
     // end after it starts, and the report window must begin before the end.
@@ -9243,6 +9287,11 @@ void SWMMEngine::initHydrology() noexcept {
             ctx_.climate_state.file_tmin = 70.0;
             ctx_.climate_state.file_tmax = 70.0;
         }
+    }
+
+    if (const auto error = climate::initializeRadiation(ctx_); !error.empty()) {
+        ctx_.errors.push_back(error);
+        set_error(SWMM_ERR_PARSE, error.c_str());
     }
 
     // 6. Groundwater solver: init and populate from parsed aquifer/GW data
@@ -10530,6 +10579,9 @@ bool SWMMEngine::ownsSpatialSource(int source) const noexcept {
     return owners && source>=0 && static_cast<std::size_t>(source)<owners->size() && (*owners)[source]>=0;
 }
 #ifdef OPENSWMM_HAS_2D
+const runoff::SourceWaterDriver* SWMMEngine::completedSourceDriver() const {
+    return source_delivery_&&source_stage_?&source_stage_->sources():nullptr;
+}
 std::array<double,6> SWMMEngine::sourceTotals(const runoff::SourceWaterDriver& source,
     const runoff::SourceWaterDeliveryBridge& bridge) const {
     std::array<double,6> totals{};
@@ -10537,6 +10589,10 @@ std::array<double,6> SWMMEngine::sourceTotals(const runoff::SourceWaterDriver& s
         const auto& b=source.ledgers()[sc];
         totals[0]+=b.rain;totals[1]+=b.evaporation;totals[2]+=b.infiltration;totals[3]+=b.aquifer_return+b.outfall_return;
     }
+    if(source.snow().active())for(const auto& b:source.snow().ledgers()) {
+        totals[0]+=b.precipitation-b.liquid+std::max(0.,-b.sublimation);totals[1]+=std::max(0.,b.sublimation);
+    }
+    totals[0]=std::max(0.,totals[0]); // roundoff when snow liquid exactly cancels the water-ledger input
     for (const auto& b:bridge.received()) {totals[4]+=b.runoff;totals[5]+=b.drain;}
     return totals;
 }

@@ -237,6 +237,7 @@ public:
     /// Caller owns the driver through close; it must send due updates itself.
     std::string attachRuntimeWaterDriverCheckpoint(twoD::RuntimeWaterDriverCheckpoint&);
     const runoff::SourceWaterDeliveryBridge* sourceDelivery() const { return source_delivery_.get(); }
+    const runoff::SourceWaterDriver* completedSourceDriver() const;
     /// Settle past surface work and publish newly completed private outlets
     /// before adopting a future runtime prescription at the accepted engine time.
     void flushRuntimeCouplingBoundary(bool changing_prescription=false);
@@ -767,7 +768,7 @@ private:
      *
      * @param dt_routing  Routing timestep (seconds).
      */
-    void stepRunoff(double dt_routing) noexcept;
+    void stepRunoff(double dt_routing);
 
     /**
      * @brief Compute variable runoff timestep matching legacy runoff_getTimeStep().

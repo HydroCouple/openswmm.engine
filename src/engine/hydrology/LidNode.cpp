@@ -320,11 +320,13 @@ void initializeInfiltration(SimulationContext& ctx, int node) {
 }
 void initialize(SimulationContext& ctx) {
     auto& st = ctx.node_subtypes.storages;
+#ifndef OPENSWMM_HAS_2D
     for (int r=0;r<st.count();++r) if (st.lid[r].control >= 0 && st.lid[r].bottom == LidNodeBottom::MeshAquifer) {
         ctx.errors.push_back("LID node " + ctx.node_names.name_of(st.node_idx[r]) +
-            ": MESH_AQUIFER bottom requires the R5 signed-volume adapter and restart qualification; execution is not yet enabled");
+            ": MESH_AQUIFER bottom requires a build with the 2D groundwater solver");
         return;
     }
+#endif
     const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
     const double rd = rainDepth(ctx), rf = ucf::Ucf[ucf::RAINFALL][us];
     for (int r = 0; r < st.count(); ++r) {

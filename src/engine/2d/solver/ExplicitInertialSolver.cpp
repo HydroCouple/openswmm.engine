@@ -439,16 +439,16 @@ struct ExplicitInertialSolver::CellSourceStep {
 OPENSWMM_SOURCE_INLINE bool ExplicitInertialSolver::prepareCellSources(int i, double dt, CellSourceStep& source) {
     const double area = mesh_->tri_area[i];
     const double area_dt = area * dt;
-    const double rain = std::max(0.0, state_->runtime_forcings.rate(1,i,state_->rainfall[i])) * area_dt;
+    const double rain = std::max(0.0, state_->liquidRainfall(i)) * area_dt;
     const double coupling = state_->coupling_flux[i] * area_dt;
     const double requested_infil = std::max(0.0,
         infilSink(state_->runtime_forcings.rate(3,i,state_->infil_rate[i]), state_->depth[i], opts_->dry_depth)) * area_dt;
     const double requested_evap = std::max(0.0,
-        evapSink(state_->runtime_forcings.rate(2,i,state_->evap_rate[i]), state_->depth[i], opts_->dry_depth)) * area_dt;
+        evapSink(state_->exposedEvaporation(i), state_->depth[i], opts_->dry_depth)) * area_dt;
     const double back = gw_ ? gw_->takeToSurface(i) : 0.0;
     if (rain == 0.0 && coupling == 0.0 && requested_infil == 0.0 &&
         requested_evap == 0.0 && back == 0.0) {
-        if(gw_)gw_->bookSurfaceEt(i,dt,state_->runtime_forcings.rate(2,i,state_->evap_rate[i]),0.0);
+        if(gw_)gw_->bookSurfaceEt(i,dt,state_->exposedEvaporation(i),0.0);
         return false;
     }
 
@@ -462,7 +462,7 @@ OPENSWMM_SOURCE_INLINE bool ExplicitInertialSolver::prepareCellSources(int i, do
     const double infil = gw_ ? gw_->acceptSurfaceInfiltration(i, requested_infil * scale, state_->runtime_forcings.get(3,i)!=nullptr)
                              : requested_infil * scale;
     const double evap = requested_evap * scale;
-    if(gw_)gw_->bookSurfaceEt(i,dt,state_->runtime_forcings.rate(2,i,state_->evap_rate[i]),evap);
+    if(gw_)gw_->bookSurfaceEt(i,dt,state_->exposedEvaporation(i),evap);
     const double out = requested_out * scale;
     if(auto* row=const_cast<RuntimeForcing*>(state_->runtime_forcings.get(3,i))) {
         auto& receipt=row->receipt;
@@ -2351,7 +2351,7 @@ void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub, double time) {
         // 1D heads, exactly like the surface's junction exchange, and booked
         // into the GW cells' accumulators (G-B) rather than applied directly.
         if (gw_ && state_->nodes_1d)
-            gw_->sampleNodeExchange(state_->nodes_1d, dt0);
+            gw_->sampleNodeExchange(state_->nodes_1d, dt0, time + (s + 1) * dt0);
         captureSourceResults();
         if (dbg_invariant) {
             const double inv2 = invariant();
@@ -2483,7 +2483,7 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
                 if (gw_) {
                     for (int k = 0; k < Kgw; ++k) gw_->fireGwCells(k, dt_tail, *state_, t + s * dt_tail,
                                                                 common_stage_ ? source_phase_end_ : -1.0);
-                    if (state_->nodes_1d) gw_->sampleNodeExchange(state_->nodes_1d, dt_tail);
+                    if (state_->nodes_1d) gw_->sampleNodeExchange(state_->nodes_1d, dt_tail, source_phase_end_);
                 }
                 captureSourceResults();
                 ++substeps_run_;

@@ -109,7 +109,7 @@ bool storage(hid_t a, hid_t b) {
 }
 
 // Rectangular hyperslabs bound series reads even when one row is very wide.
-void visitNumbers(hid_t dataset,const std::function<void(double)>& visit={}) {
+void visitNumbers(hid_t dataset,const std::function<void(double)>& visit={},const std::vector<unsigned char>& missing={}) {
     auto dims=shape(dataset);if(std::any_of(dims.begin(),dims.end(),[](auto n){return n==0;}))return;
     std::vector<hsize_t> at(dims.size(),0),tile(dims.size(),1);hsize_t capacity=65536;
     for(int d=int(dims.size())-1;d>=0;--d){tile[d]=std::min(dims[d],capacity);capacity=std::max<hsize_t>(1,capacity/tile[d]);}
@@ -122,7 +122,11 @@ void visitNumbers(hid_t dataset,const std::function<void(double)>& visit={}) {
         if(!dims.empty())require(H5Sselect_hyperslab(space.id,H5S_SELECT_SET,at.data(),nullptr,count.data(),nullptr)>=0,"Cannot select mesh checkpoint block.");
         Handle memory{H5Screate_simple(1,&n,nullptr),H5Sclose};std::vector<double> values(n);
         require(H5Dread(dataset,H5T_NATIVE_DOUBLE,memory.id,space.id,H5P_DEFAULT,values.data())>=0,"Cannot read mesh checkpoint block.");
-        for(double v:values){require(std::isfinite(v),"Nonfinite mesh checkpoint result.");if(visit)visit(v);}
+        for(std::size_t j=0;j<values.size();++j) {
+            const double v=values[j];const auto cell=dims.empty()?0:at.back()+j%count.back();
+            const bool unavailable=cell<missing.size()&&missing[cell];
+            require(std::isfinite(v)||(unavailable&&std::isnan(v)),"Nonfinite mesh checkpoint result.");if(visit)visit(v);
+        }
         if(dims.empty())break;
         for(int d=int(dims.size())-1;d>=0;--d){at[d]+=tile[d];if(at[d]<dims[d])break;at[d]=0;if(d==0)done=true;}
     }
@@ -179,6 +183,7 @@ void Default2DOutputPlugin::validateCheckpoint(hid_t file, const SimulationConte
     require(groundwater == (steps > 0 && want(report2d::GROUNDWATER) && snap.gw2d_active),
             "Mesh checkpoint groundwater presence differs.");
     if (groundwater) reference.createGroundwaterDatasets(snap);
+    if (steps>0) reference.createSnowDatasets(snap);
     auto expected = links(reference.file_id_), actual = links(file);
     actual.erase("source_history"); require(actual == expected, "Mesh checkpoint dataset selection differs.");
     attributes(reference.file_id_, file);
@@ -195,7 +200,17 @@ void Default2DOutputPlugin::validateCheckpoint(hid_t file, const SimulationConte
         const bool series = !maximum.empty() && maximum[0] == H5S_UNLIMITED;
         if (series) dims[0] = steps;
         require(dims == shape(b.id) && maximum == shape(b.id, true), "Mesh checkpoint dataset shape differs.");
-        visitNumbers(b.id);
+        std::vector<unsigned char> missing;
+        for(std::size_t field=0;field<meshSnowFields.size();++field)if(name==meshSnowFields[field].name) {
+            require(dims.size()==2&&dims[1]==snap.surface_snow[0].size(),"Mesh snow checkpoint identity differs.");
+            missing.resize(dims[1]);
+            for(std::size_t cell=0;cell<missing.size();++cell) {
+                const int model=int(snap.surface_snow[0][cell]);
+                missing[cell]=field!=0&&(model<0||field==10||
+                    (model==0&&(field==7||field==8||field==9||field==11||field>=19)));
+            }
+        }
+        visitNumbers(b.id,{},missing);
         if (!series && name.find("Mesh2_face_max_") != 0)
             require(raw(a.id, false) == raw(b.id, false), "Mesh checkpoint static geometry or aquifer identity differs.");
     }
@@ -276,6 +291,7 @@ void Default2DOutputPlugin::resolveCheckpointDatasets(PreparedCheckpoint& result
     reference.n_faces_ = n_faces_; reference.report_vars_ = report_vars_;
     reference.storage_type_ = storage_type_; reference.compression_ = compression_;
     if (result.groundwater) reference.createGroundwaterDatasets(snap);
+    if (result.steps>0) reference.createSnowDatasets(snap);
     const auto targets = checkpointDatasets(), gw = reference.checkpointDatasets();
     result.datasets.reserve(targets.size());
     for (std::size_t k = 0; k < targets.size(); ++k) {

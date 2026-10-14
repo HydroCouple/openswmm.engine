@@ -61,6 +61,8 @@ struct RunoffSourceForcing {
     int subcatch = -1;
     double rain = 0.0, pet = 0.0;
     std::array<double,3> surface_return{}; // ft/s by IMPERV0/IMPERV1/PERV; never rain
+    double raw_precipitation = -1; // before subcatchment scales and phase partition
+    double pet_imperv = -1, pet_perv = -1; // optional exposed atmospheric footprints
 };
 /// Actual completed subarea water budget (ft3; area in ft2). Pool order is
 /// IMPERV0, IMPERV1, PERV. Ordinary runoff does not write these diagnostics.

@@ -307,6 +307,13 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh,
     richards_bed_owned_.assign(node_beds_.size(),false);
     richards_down_cum_.assign(node_beds_.size(),0.0);
     richards_up_cum_.assign(node_beds_.size(),0.0);
+    lid_receipts_enabled_=false;
+    lid_receipts_.assign(node_beds_.size(),{});
+    lid_booked_end_.assign(node_beds_.size(),0.0);
+    mobile_lid_bed_.assign(node_beds_.size(),false);
+    lid_bed_factor_.assign(node_beds_.size(),1.0);
+    lid_bed_diagnostics_.assign(node_beds_.size(),{});
+    node_pending_down_.assign(node_beds_.size(),0.0);node_pending_up_=node_pending_down_;
     bed_gathered_.assign(node_beds_.size(), 0.0);       // T7.4
     node_exchange_vol_.assign(static_cast<std::size_t>(std::max(0, n_nodes)),
                               0.0);
@@ -525,8 +532,13 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
         const double Sy = std::max(state_.theta_s[don] - state_.theta_r[don],
                                    kSyFloor);
         const int nf = std::max(1, cell_nface_[don]);
-        const double cap = kFaceShare * T * Sy * state_.area[don] /
+        double cap = kFaceShare * T * Sy * state_.area[don] /
                            (static_cast<double>(nf) * std::max(dt, kTiny));
+        if(lid_receipts_enabled_) {
+            NodeWaterBudget budget;
+            if(auto e=nodeWaterBudget(int(don),dt,budget);!e.empty())throw std::runtime_error(e);
+            cap=std::min(cap,budget.donor/dt);
+        }
         if (std::abs(Q) > cap) Q = (Q > 0.0) ? cap : -cap;
 
         const double vol = Q * dt;
@@ -682,7 +694,7 @@ void SubsurfaceSolver::resetNodeExchangeVolumes() noexcept {
     std::fill(node_drawn_gw_.begin(), node_drawn_gw_.end(), 0.0);   // G-X1
 }
 
-void SubsurfaceSolver::sampleNodeExchange(const NodeData* nodes, double dt) {
+void SubsurfaceSolver::sampleNodeExchange(const NodeData* nodes, double dt, double end) {
     if (!state_.active || node_beds_.empty() || nodes == nullptr) return;
     const double l12 = opts_ ? opts_->len_1d_to_2d : 1.0;
 
@@ -706,7 +718,8 @@ void SubsurfaceSolver::sampleNodeExchange(const NodeData* nodes, double dt) {
             : state_.Ks[ci] * bed.area /
                   std::max(0.5 * state_.zs[ci], kTiny);
 
-        double Q = cond * (h_gw - h_pipe);   // m³/s, + out of the aquifer
+        double Q = cond * (h_gw - h_pipe) * lid_bed_factor_[b];   // m³/s, + out of the aquifer
+        const double requested=Q*dt;
         if (Q > 0.0) {
             // Cap an aquifer→pipe drain at the cell's drainable water.
             //
@@ -749,7 +762,12 @@ void SubsurfaceSolver::sampleNodeExchange(const NodeData* nodes, double dt) {
             // `avail` being small in ABSOLUTE terms, which only the clamp
             // itself knows. No threshold to tune, and no geometry can make
             // this lie.
-            const double cap = kFaceShare * avail / std::max(dt, kTiny);
+            double cap = kFaceShare * avail / std::max(dt, kTiny);
+            if(lid_receipts_enabled_) {
+                NodeWaterBudget budget;
+                if(auto e=nodeWaterBudget(bed.cell,dt,budget);!e.empty())throw std::runtime_error(e);
+                cap=std::min(cap,budget.donor/dt);
+            }
             if (Q > cap) {
                 Q = cap;
                 ++drain_cap_binds_;
@@ -783,7 +801,7 @@ void SubsurfaceSolver::sampleNodeExchange(const NodeData* nodes, double dt) {
                     ? std::max(0.0, nodes->volume[ni]) * v12 : 0.0;
                 const double drawn = (ni < node_drawn_gw_.size())
                     ? node_drawn_gw_[ni] : 0.0;
-                const double through = (ni < nodes->inflow.size())
+                const double through = (!mobile_lid_bed_[b] && ni < nodes->inflow.size())
                     ? std::max(0.0, nodes->inflow[ni]) * v12 : 0.0;
                 cap = std::min(cap, std::max(0.0, held - drawn) /
                                         std::max(dt, kTiny) + through);
@@ -791,6 +809,12 @@ void SubsurfaceSolver::sampleNodeExchange(const NodeData* nodes, double dt) {
                 if (ni < node_drawn_gw_.size())
                     node_drawn_gw_[ni] += std::min(-Q * dt, std::max(0.0, held - drawn));
             }
+        }
+        if(mobile_lid_bed_[b]) {
+            const double sampled=end>=0?end:cell_completed_[ci];
+            lid_bed_diagnostics_[b]={std::max(0.,sampled-dt),sampled,cell_completed_[ci],h_pipe,h_gw,
+                std::max(0.,-requested),std::max(0.,requested),std::max(0.,-Q*dt),std::max(0.,Q*dt),
+                std::max(0.,-Q*dt),std::max(0.,Q*dt)};
         }
         if (Q == 0.0) continue;
 
@@ -814,7 +838,14 @@ void SubsurfaceSolver::sampleNodeExchange(const NodeData* nodes, double dt) {
             }
         }
         state_.nacc[b] += vol;                       // gathered at the GW firing
+        if(lid_receipts_enabled_) {
+            node_pending_down_[b]+=std::max(0.,-vol);node_pending_up_[b]+=std::max(0.,vol);
+        }
         bed_exchange_cum_[b] += vol;                 // G-O: the per-bed series
+        if(mobile_lid_bed_[b]) {
+            richards_down_cum_[b]+=std::max(0.,-vol);
+            richards_up_cum_[b]+=std::max(0.,vol);
+        }
         if (ni < node_exchange_vol_.size())
             node_exchange_vol_[ni] += vol;           // flushed by the router
     }
@@ -936,7 +967,7 @@ std::string SubsurfaceSolver::nodeWaterBudget(int cell, double interval, NodeWat
     if (static_cast<GwClosure>(state_.closure[u])==GwClosure::ENSLAVED)
         donor=std::max(0.0,state_.theta_s[u]*state_.hg[u]+soil::equilibriumStorage(paramsOf(cell),L)
                          -soil::equilibriumStorage(paramsOf(cell),state_.zs[u]))*state_.area[u];
-    double claimed=std::max(0.0,state_.et_pending[u])+std::max(0.0,-state_.lacc[u]);
+    double claimed=std::max(0.0,state_.et_pending[u])+std::max(0.0,-state_.lacc[u])+pendingLidUp(cell);
     claimed+=state_.c_loss[u]*state_.hg[u]/std::max(state_.zs[u],kTiny)*state_.area[u]*interval;
     for (int p=edges_->cell_ptr[u];p<edges_->cell_ptr[u+1];++p) {
         const auto e=static_cast<std::size_t>(edges_->cell_edge[p]);
@@ -946,7 +977,7 @@ std::string SubsurfaceSolver::nodeWaterBudget(int cell, double interval, NodeWat
     }
     for (int b:cell_beds_[u]) {
         if(!std::isfinite(state_.nacc[b]))return "Nonfinite pending node trial water.";
-        claimed+=std::max(0.0,state_.nacc[b]);
+        if(!lid_receipts_enabled_)claimed+=std::max(0.0,state_.nacc[b]);
     }
     NodeWaterBudget proposed{state_.z_bed[u]+state_.hg[u],std::max(0.0,donor-claimed),infiltrationHeadroom(cell)};
     if (!std::isfinite(proposed.head) || !std::isfinite(proposed.donor) || !std::isfinite(proposed.receiver))
@@ -970,6 +1001,7 @@ double SubsurfaceSolver::gatherNode(int i) noexcept {
     for (std::size_t b = 0; b < node_beds_.size(); ++b) {
         if (node_beds_[b].cell != i) continue;
         const double take = consumePending(state_.nacc[b]);
+        if(lid_receipts_enabled_) {consumePending(node_pending_down_[b]);consumePending(node_pending_up_[b]);}
         if (b < bed_gathered_.size()) bed_gathered_[b] = take;
         v += take;
     }
@@ -1160,12 +1192,12 @@ double SubsurfaceSolver::infiltrationHeadroom(int cell) const noexcept {
     if (cl == GwClosure::SIGMA)
         deficit = std::min(deficit, std::max(0.0, state_.theta_s[u] - state_.theta_sigma[u]) *
                           L / state_.m_layers * state_.area[u]);
-    double pending = std::max(0.0, state_.xacc_from_surface[u]) + std::max(0.0, state_.lacc[u]);
+    double pending = std::max(0.0, state_.xacc_from_surface[u]) + std::max(0.0, state_.lacc[u]) + pendingLidDown(cell);
     for (int p = edges_->cell_ptr[u]; p < edges_->cell_ptr[u + 1]; ++p) {
         const auto e = static_cast<std::size_t>(edges_->cell_edge[p]);
         pending += std::max(0.0, edges_->cell_sign[p] > 0 ? state_.eacc_L[e] : state_.eacc_R[e]);
     }
-    for (const auto b : cell_beds_[u]) pending += std::max(0.0, -state_.nacc[b]);
+    if(!lid_receipts_enabled_)for (const auto b : cell_beds_[u]) pending += std::max(0.0, -state_.nacc[b]);
     return std::max(0.0, deficit - pending);
 }
 
@@ -1336,9 +1368,18 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         for(int p=0;p<tr_.n_species;++p)if(!close(mass[p],tr_.xacc_from_surface[tr_.idx(p,i)]))
             throw std::runtime_error("Unpaired source mass in owned groundwater cell.");
     }
+    // Completed hydraulic receipts become ordinary signed cell water only
+    // when this groundwater owner reaches their endpoint. Later receipts
+    // keep both directional budgets reserved across earlier cell firings.
+    if(lid_receipts_enabled_)for(int b:cell_beds_[u]) {
+        auto& pending=lid_receipts_[b];
+        for(const auto& r:pending)if(r.end<=time+dt)state_.nacc[b]+=r.up-r.down;
+        std::erase_if(pending,[&](const auto& r){return r.end<=time+dt;});
+    }
     // --- gather the accumulated cross-cadence volumes ---------------------
     const double lat_vol  = gatherLateral(i);                 // m³, + in
     const double node_vol = gatherNode(i);                    // m³, + OUT
+    const double future_lid_up=pendingLidUp(i);
     double infil_vol = consumePending(state_.xacc_from_surface[u]); // m³, + in
     // G-X3: conduit seepage delivered to this cell since its last firing —
     // a saturated-zone inflow, so it rides the table update with the
@@ -1354,7 +1395,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     // Surface-cadence demand has already paid actual surface evaporation.
     const bool et_boundary=(options_.gw_et=="BOUNDARY_ET"||options_.gw_et=="BOTH");
     const bool et_caprise=(options_.gw_et=="CAPILLARY_RISE"||options_.gw_et=="BOTH");
-    const double budget=options_.per_subcatch?std::max(0.0,surf.evap_rate[u])*A*dt:consumePending(state_.et_pending[u]);
+    const double budget=options_.per_subcatch?std::max(0.0,surf.exposedEvaporation(i))*A*dt:consumePending(state_.et_pending[u]);
     double q_et=et_boundary?budget/(A*dt):0.0;
     if(et_boundary && cl!=GwClosure::SIGMA){
         const double Se=L0>kTiny?std::clamp((state_.hu[u]/L0-state_.theta_r[u])/std::max(ts-state_.theta_r[u],kTiny),1.0e-6,1.0):1.0;
@@ -1417,7 +1458,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
             // from the aquifer alone. Internal rise spends only the water
             // remaining after those committed signed exchanges.
             const double available = std::max(0.0, Sy * hg0 * A
-                                              + lat_vol - node_vol + link_vol);
+                                              + lat_vol - node_vol + link_vol-future_lid_up);
             // Leave a few ulps so multiply/divide roundoff cannot make
             // the saturated update refund an already delivered node debit.
             const double take = available / (A * dt) * (1.0 - 8.0 * std::numeric_limits<double>::epsilon());
@@ -1427,13 +1468,19 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     if(cl==GwClosure::CLOSED_FORM)q_et=std::min(q_et,std::max(0.0,state_.hu[u]-state_.theta_r[u]*L0-std::max(0.0,q0)*dt)/dt);
     if(cl==GwClosure::ENSLAVED){
         const double donor=std::max(0.0,ts*hg0+soil::equilibriumStorage(p,L0)-soil::equilibriumStorage(p,zs)
-                                       +q_in*dt+(lat_vol-node_vol+link_vol)/A);
+                                       +q_in*dt+(lat_vol-node_vol+link_vol-future_lid_up)/A);
         q_et=std::min(q_et,donor/dt); q0=q_in-q_et;
     }
     state_.q0_last[u] = q0;
 
     // --- 2. saturated explicit FV update ----------------------------------
-    const double q_deep = state_.c_loss[u] * hg0 / std::max(zs, kTiny);
+    double q_deep = state_.c_loss[u] * hg0 / std::max(zs, kTiny);
+    if(lid_receipts_enabled_) {
+        const double donor=cl==GwClosure::ENSLAVED
+            ? std::max(0.,ts*hg0+soil::equilibriumStorage(p,L0)-soil::equilibriumStorage(p,zs))*A
+            : Sy*hg0*A;
+        q_deep=std::min(q_deep,std::max(0.,donor+q0*A*dt+lat_vol-node_vol+link_vol-future_lid_up)/(A*dt));
+    }
     state_.qdeep_last[u] = q_deep;
     state_.qlat_last[u]  = lat_vol / dt;
     state_.qnode_last[u] = node_vol / dt;
@@ -1498,7 +1545,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         drainable = std::max(0.0, ts * hg0 + soil::equilibriumStorage(p,L0)
                                   - soil::equilibriumStorage(p,zs)) * A;
     const double requested_source_out = source.out;
-    source.out = std::min(source.out, std::max(0.0,drainable + other_sat + source.in));
+    source.out = std::min(source.out, std::max(0.0,drainable + other_sat + source.in-future_lid_up));
     const double runtime_scale = requested_source_out > 0.0 ? source.out/requested_source_out : 1.0;
     if(runtime) for(auto k:runtime_sources_.cells[u]) {
         auto& s=runtime_sources_.rows[k];
@@ -2069,7 +2116,7 @@ void SubsurfaceSolver::fireGwCells(int tier, double dt, SurfaceStateData& surf, 
                                    double accepted_end) {
     if (state_.active && tierHasCells(tier))
         for (const int i : cells_by_tier_[static_cast<std::size_t>(tier)])
-            for (const auto b : cell_beds_[i]) if (richards_bed_owned_[b])
+            for (const auto b : cell_beds_[i]) if (richards_bed_owned_[b] && !lid_receipts_enabled_)
                 throw std::runtime_error("Richards-owned groundwater cells require joint owner firing acceptance.");
     source_firing_end_=accepted_end>=0 ? accepted_end : time+dt;
     if (!state_.active || !tierHasCells(tier)) return;
@@ -2081,8 +2128,8 @@ void SubsurfaceSolver::fireGwCellList(const std::vector<int>& cells, double dt, 
                                     double time, double accepted_end) {
     for (const int i : cells) {
         const auto u = static_cast<std::size_t>(i);
-        const bool exact=accepted_end>=0 && source_owned_[u];
-        const double cell_time=exact ? source_cell_end_[u] : time;
+        const bool exact=accepted_end>=0 && (source_owned_[u] || lid_receipts_enabled_);
+        const double cell_time=exact ? (source_owned_[u]?source_cell_end_[u]:cell_completed_[u]) : time;
         const double cell_dt=exact ? accepted_end-cell_time : dt;
         if (u >= cell_sources_.size() || cell_sources_[u].empty()) {
             fireCell(i, cell_dt, surf, cell_time);

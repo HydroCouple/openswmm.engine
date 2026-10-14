@@ -6,6 +6,10 @@ struct SimulationContext;
 class Router;
 namespace twoD { class SubsurfaceSolver; struct SurfaceStateData; struct RichardsBedAcceptance; }
 namespace lidnode {
+// Production column preparation at the single global hydraulic cadence.
+// Accepted gross receipts wait for each receiving groundwater cell's clock.
+void prepareMeshRichardsStep(SimulationContext&,twoD::SubsurfaceSolver&,
+    twoD::SurfaceStateData&,double dt,double evaporation);
 // Internal water-only real LID-state bridge at an explicit closed owner interval.
 // Uses current node geometry, pressure limits, forcing and clogging; no new UI
 // parameters. Successful preparation requires one finishStep after routing ports.
