@@ -35,6 +35,64 @@ template<class A,class B> auto min(A a,B b) {using T=std::common_type_t<A,B>;ret
 template<class A,class B> auto max(A a,B b) {using T=std::common_type_t<A,B>;return std::max(T(a),T(b));}
 namespace equilibrium {
 
+// Namespace declarations give every translated helper internal linkage before
+// its block-scope extern declarations are seen by MSVC (including with LTCG).
+int predicorr_(doublereal *dt, doublereal *ub, doublereal *w, doublereal *a,
+    doublereal *ta, doublereal *prain, doublereal *ps, doublereal *ws,
+    doublereal *rh, doublereal *qsi, doublereal *qli, integer *iradfl,
+    doublereal *rkn, doublereal *qnetob, doublereal *cdh, doublereal *cde,
+    doublereal *rid, doublereal *param, doublereal *sitev, doublereal *qh,
+    doublereal *qe, doublereal *e, doublereal *mr, doublereal *qm,
+    doublereal *q, doublereal *fm, doublereal *tsurf, doublereal *qnet);
+int qfm_(doublereal *ub, doublereal *w, doublereal *a, doublereal *ta,
+    doublereal *prain, doublereal *ps, doublereal *ws, doublereal *rh,
+    doublereal *qsi, doublereal *qli, doublereal *rkn, integer *iradfl,
+    doublereal *qnetob, doublereal *cdh, doublereal *cde, doublereal *rid,
+    doublereal *param, doublereal *sitev, doublereal *fm, doublereal *q,
+    doublereal *qm, doublereal *mr, doublereal *qe, doublereal *e,
+    doublereal *tsurf, doublereal *qh, doublereal *qnet);
+doublereal tavg_(doublereal *ub, doublereal *w, doublereal *rhow, doublereal *cs,
+    doublereal *to, doublereal *rhog, doublereal *de, doublereal *cg,
+    doublereal *hf);
+doublereal srftmp_(doublereal *qsi, doublereal *a, doublereal *qli, doublereal *qpin,
+    doublereal *ea, doublereal *ta, doublereal *tave, doublereal *tk,
+    doublereal *pr, doublereal *ra, doublereal *cp, doublereal *rho,
+    doublereal *rkn, doublereal *hneu, doublereal *es, doublereal *sbc,
+    doublereal *cs, doublereal *rs, doublereal *w, doublereal *qnetob,
+    integer *iradfl, doublereal *ws, doublereal *z__, doublereal *g,
+    doublereal *fc, doublereal *fstab);
+doublereal surfeb_(doublereal *ts, doublereal *rkn, doublereal *ws, doublereal *tak,
+    doublereal *z__, doublereal *g, doublereal *fstab, doublereal *qp,
+    doublereal *densa, doublereal *cp, doublereal *hneu, doublereal *pr,
+    doublereal *ea, doublereal *tk, doublereal *dens, doublereal *cs,
+    doublereal *rs, doublereal *tavek, doublereal *qsn, doublereal *qli,
+    doublereal *fc, doublereal *es, doublereal *sbc, doublereal *qnetob,
+    integer *iradfl);
+doublereal rkinst_(doublereal *rkn, doublereal *ws, doublereal *ta, doublereal *ts,
+    doublereal *z__, doublereal *g, doublereal *fstab);
+doublereal partsnow_(doublereal *p, doublereal *ta, doublereal *tr, doublereal *ts);
+doublereal qpf_(doublereal *pr, doublereal *ta, doublereal *to, doublereal *ps,
+    doublereal *rhow, doublereal *hf, doublereal *cw, doublereal *cs);
+int turbflux_(doublereal *pr, doublereal *ra, doublereal *ta, doublereal *tk,
+    doublereal *ts, doublereal *z__, doublereal *g, doublereal *cp,
+    doublereal *rkn, doublereal *ws, doublereal *ea, doublereal *rhow,
+    doublereal *hneu, doublereal *qh, doublereal *qe, doublereal *e,
+    doublereal *fstab);
+doublereal fmelt_(doublereal *ub, doublereal *rhow, doublereal *w, doublereal *hf,
+    doublereal *lc, doublereal *rid, doublereal *ks, doublereal *prain);
+doublereal svp_(doublereal *t);
+doublereal svpi_(doublereal *t);
+doublereal svpw_(doublereal *t);
+int prehelp_(doublereal *w1, doublereal *w, doublereal *dt, doublereal *fm,
+    doublereal *fm1, doublereal *fac, doublereal *ps, doublereal *prain,
+    doublereal *e, doublereal *rhow, doublereal *hf, doublereal *q,
+    doublereal *qm, doublereal *mr, doublereal *qe, doublereal *hneu);
+doublereal albedo_(doublereal *tausn, doublereal *coszen, doublereal *d__, doublereal *aep,
+    doublereal *abg, doublereal *avo, doublereal *airo);
+int agesn_(doublereal *tausn, doublereal *dt, doublereal *ps, doublereal *tsurf,
+    doublereal *tk);
+
+
 
 static thread_local integer c__5 = 5;
 static thread_local integer c__1 = 1;
@@ -819,6 +877,87 @@ doublereal albedo_(doublereal *tausn, doublereal *coszen, doublereal *d__,
 
 }
 namespace force_restore {
+
+// Namespace declarations give every translated helper internal linkage before
+// its block-scope extern declarations are seen by MSVC (including with LTCG).
+int predicorr_(doublereal *dt, doublereal *ub, doublereal *w, doublereal *a,
+    doublereal *ta, doublereal *prain, doublereal *ps, doublereal *ws,
+    doublereal *rh, doublereal *qsi, doublereal *qli, integer *iradfl,
+    doublereal *rkn, doublereal *qnetob, doublereal *cdh, doublereal *cde,
+    doublereal *rid, doublereal *param, doublereal *sitev, integer *itsmethod,
+    doublereal *mtime, doublereal *qh, doublereal *qe, doublereal *e,
+    doublereal *mr, doublereal *qm, doublereal *q, doublereal *fm,
+    doublereal *tsurf, doublereal *tave, doublereal *qnet, doublereal *refdepth,
+    doublereal *totalrefdepth, doublereal *smelt, doublereal *gsurf);
+int qfm_(doublereal *ub, doublereal *w, doublereal *a, doublereal *ta,
+    doublereal *prain, doublereal *ps, doublereal *ws, doublereal *rh,
+    doublereal *qsi, doublereal *qli, doublereal *rkn, integer *iradfl,
+    doublereal *qnetob, doublereal *cdh, doublereal *cde, doublereal *rid,
+    doublereal *param, doublereal *sitev, integer *itsmethod, doublereal *mtime,
+    doublereal *fm, doublereal *q, doublereal *qm, doublereal *mr,
+    doublereal *qe, doublereal *e, doublereal *tsurf, doublereal *tave,
+    doublereal *qh, doublereal *qnet, doublereal *dt, doublereal *refdepth,
+    doublereal *totalrefdepth, doublereal *smelt);
+doublereal tavg_(doublereal *ub, doublereal *w, doublereal *rhow, doublereal *cs,
+    doublereal *to, doublereal *rhog, doublereal *de, doublereal *cg,
+    doublereal *hf);
+doublereal srftmp_(doublereal *qsi, doublereal *a, doublereal *qli, doublereal *qpin,
+    doublereal *ea, doublereal *ta, doublereal *tave, doublereal *tk,
+    doublereal *pr, doublereal *ra, doublereal *cp, doublereal *rho,
+    doublereal *rkn, doublereal *hneu, doublereal *es, doublereal *sbc,
+    doublereal *cs, doublereal *rs, doublereal *w, doublereal *qnetob,
+    integer *iradfl, doublereal *ws, doublereal *z__, doublereal *g,
+    doublereal *fc, doublereal *fstab, doublereal *mtime, doublereal *param,
+    integer *itsmethod, doublereal *dt, doublereal *ub, doublereal *refdepth,
+    doublereal *smelt);
+doublereal surfeb_(doublereal *ts, doublereal *rkn, doublereal *ws, doublereal *tak,
+    doublereal *z__, doublereal *g, doublereal *fstab, doublereal *qp,
+    doublereal *densa, doublereal *cp, doublereal *hneu, doublereal *pr,
+    doublereal *ea, doublereal *tk, doublereal *dens, doublereal *cs,
+    doublereal *rs, doublereal *tavek, doublereal *qsn, doublereal *qli,
+    doublereal *fc, doublereal *es, doublereal *sbc, doublereal *qnetob,
+    integer *iradfl, doublereal *mtime, doublereal *param, integer *itsmethod,
+    doublereal *w, doublereal *dt, doublereal *ub, doublereal *refdepth);
+doublereal qcest_(doublereal *ts, doublereal *rkn, doublereal *ws, doublereal *tak,
+    doublereal *z__, doublereal *g, doublereal *fstab, doublereal *qp,
+    doublereal *densa, doublereal *cp, doublereal *hneu, doublereal *pr,
+    doublereal *ea, doublereal *tk, doublereal *dens, doublereal *cs,
+    doublereal *rs, doublereal *tavek, doublereal *qsn, doublereal *qli,
+    doublereal *fc, doublereal *es, doublereal *sbc, doublereal *qnetob,
+    integer *iradfl, doublereal *mtime, doublereal *param, integer *itsmethod,
+    doublereal *w, doublereal *dt);
+doublereal rkinst_(doublereal *rkn, doublereal *ws, doublereal *ta, doublereal *ts,
+    doublereal *z__, doublereal *g, doublereal *fstab);
+doublereal partsnow_(doublereal *p, doublereal *ta, doublereal *tr, doublereal *ts);
+doublereal qpf_(doublereal *pr, doublereal *ta, doublereal *to, doublereal *ps,
+    doublereal *rhow, doublereal *hf, doublereal *cw, doublereal *cs);
+int turbflux_(doublereal *pr, doublereal *ra, doublereal *ta, doublereal *tk,
+    doublereal *ts, doublereal *z__, doublereal *g, doublereal *cp,
+    doublereal *rkn, doublereal *ws, doublereal *ea, doublereal *rhow,
+    doublereal *hneu, doublereal *qh, doublereal *qe, doublereal *e,
+    doublereal *fstab);
+doublereal fmelt_(doublereal *ub, doublereal *rhow, doublereal *w, doublereal *hf,
+    doublereal *lc, doublereal *rid, doublereal *ks, doublereal *prain);
+doublereal svp_(doublereal *t);
+doublereal svpi_(doublereal *t);
+doublereal svpw_(doublereal *t);
+int prehelp_(doublereal *w1, doublereal *w, doublereal *dt, doublereal *fm,
+    doublereal *fm1, doublereal *fac, doublereal *ps, doublereal *prain,
+    doublereal *e, doublereal *rhow, doublereal *hf, doublereal *q,
+    doublereal *qm, doublereal *mr, doublereal *qe, doublereal *hneu);
+doublereal albedo_(doublereal *tausn, doublereal *coszen, doublereal *d__, doublereal *aep,
+    doublereal *abg, doublereal *avo, doublereal *airo);
+int agesn_(doublereal *tausn, doublereal *dt, doublereal *ps, doublereal *tsurf,
+    doublereal *tk, doublereal *dnews);
+doublereal lane_(doublereal *lans, doublereal *lang, doublereal *zs, doublereal *rho,
+    doublereal *rhog, doublereal *cs, doublereal *cg, doublereal *r__,
+    doublereal *ze, doublereal *w1day);
+doublereal refdep_(doublereal *flans, doublereal *a, doublereal *b, doublereal *hf,
+    doublereal *rhom, doublereal *dt, doublereal *x1);
+int grad_(doublereal *qc1, doublereal *qc2, doublereal *t1, doublereal *t2,
+    doublereal *a, doublereal *b);
+doublereal daily_ave__(doublereal *backup, integer *n, doublereal *a);
+
 
 
 struct {
