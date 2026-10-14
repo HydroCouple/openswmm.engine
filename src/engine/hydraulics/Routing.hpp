@@ -165,6 +165,13 @@ public:
     /// so they need the solver itself. Must be set before the first step().
     void setStructureSolver(hydstruct::StructureSolver* s) { structures_ = s; }
 
+    // Internal water-only conduit window: copy persistent DW history and batch
+    // geometry without retaining pointers into the live router. Checkpoint and
+    // external structure sessions are not part of this transaction profile.
+    std::unique_ptr<Router> privateDynamicWaveWindow() const;
+    void publishDynamicWaveWindow(Router&) noexcept;
+
+
     /// Whether the most recent step() converged. DYNWAVE returns the solver's
     /// real final Picard flag; other models always converge (legacy only tracks
     /// dynwave non-convergence). FV has no convergence loop at all — that is a

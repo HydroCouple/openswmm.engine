@@ -26,6 +26,7 @@
  */
 
 #include "Routing.hpp"
+#include <type_traits>
 #include "fv/ExplicitFvSolver.hpp"
 #include "fv/NetworkMeshBuilder.hpp"
 #include "fv/NetworkSolverFactory.hpp"
@@ -489,6 +490,25 @@ int Router::step(SimulationContext& ctx, double dt,
                  double evap_rate,
                  dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn) {
     return stepImpl(ctx, dt, evap_rate, std::move(non_conduit_fn), false);
+}
+
+std::unique_ptr<Router> Router::privateDynamicWaveWindow() const {
+    if(model_!=RouteModel::DYNWAVE || checkpoint_context_ || !dw_solver_.isInitialized())
+        throw std::runtime_error("Private Richards routing requires initialized dynamic wave outside a checkpoint session.");
+    auto r=std::make_unique<Router>();
+    r->model_=model_;r->groups_=groups_;r->dw_solver_=dw_solver_;
+    r->groups_.setBypassMask(nullptr);r->dw_solver_.groups_=&r->groups_;
+    r->lstep_enabled_=lstep_enabled_;r->lstep_rs_=lstep_rs_;
+    r->lstep_pmin_=lstep_pmin_;r->lstep_pmax_=lstep_pmax_;r->lstep_pdt_time_=lstep_pdt_time_;
+    r->lstep_ptime_=lstep_ptime_;r->lstep_pbin_=lstep_pbin_;
+    return r;
+}
+void Router::publishDynamicWaveWindow(Router& r) noexcept {
+    static_assert(std::is_nothrow_swappable_v<XSectGroups>);
+    static_assert(std::is_nothrow_swappable_v<dynwave::DWSolver>);
+    using std::swap;swap(groups_,r.groups_);swap(dw_solver_,r.dw_solver_);
+    groups_.setBypassMask(nullptr);r.groups_.setBypassMask(nullptr);
+    dw_solver_.groups_=&groups_;r.dw_solver_.groups_=&r.groups_;
 }
 
 int Router::stepImpl(SimulationContext& ctx, double dt, double evap_rate,

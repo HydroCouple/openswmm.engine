@@ -2,6 +2,7 @@
 #pragma once
 #include "SubsurfaceSolver.hpp"
 #include "../../hydrology/RichardsColumn.hpp"
+#include <functional>
 
 namespace openswmm::twoD {
 // Internal water-only trial, not a runtime activation/receipt publication API.
@@ -56,6 +57,7 @@ struct RichardsBedAcceptance {
     std::string error;
     RichardsBedTrial trial;
     double balance=0; // combined column/GW interval residual, m3
+    double routing_volume=0; // signed column water supplied/removed by staged native routing, m3
     std::vector<RichardsBedStep> steps;
 };
 // Serial owner boundary: freeze, trial, settle the real GW closure privately,
@@ -77,9 +79,18 @@ RichardsBedAcceptance acceptRichardsBedsForTier(SubsurfaceSolver&, SurfaceStateD
 // cannot replenish a donor quota or an opposite-direction receiving quota.
 // All staged columns/receipts stay private until the actual GW closure accepts
 // the aggregate at end. Every intermediate hydraulic bound must also qualify.
-// Fixed forcing/materials and frozen GW heads; no native 1D port hooks yet.
+// Fixed forcing/materials and frozen GW heads. A synchronous private stepper
+// may reconcile native routing after each column solve, before GW settlement.
+// It must own all mutated routing state privately; failure discards that window.
+struct RichardsBedStepper {
+    std::function<std::string(double,double,const std::vector<richards::Column>&,
+        const std::vector<richards::Report>&,std::vector<std::vector<double>>&,
+        std::vector<std::pair<double,double>>&)> route; // gross porous withdrawals / bottom intakes, m3
+};
 RichardsBedAcceptance acceptRichardsBedsAcrossSteps(SubsurfaceSolver&, SurfaceStateData&,
-    double start,double end,const std::vector<double>& step_ends,const std::vector<RichardsBedOwner>&);
+    double start,double end,const std::vector<double>& step_ends,const std::vector<RichardsBedOwner>&,
+    const RichardsBedStepper* stepper=nullptr);
 RichardsBedAcceptance acceptRichardsBedsForTierAcrossSteps(SubsurfaceSolver&, SurfaceStateData&,
-    int tier,double start,double end,const std::vector<double>& step_ends,const std::vector<RichardsBedOwner>&);
+    int tier,double start,double end,const std::vector<double>& step_ends,const std::vector<RichardsBedOwner>&,
+    const RichardsBedStepper* stepper=nullptr);
 }

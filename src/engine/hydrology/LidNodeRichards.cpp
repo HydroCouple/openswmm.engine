@@ -233,14 +233,15 @@ bool validateRichardsRouting(const SimulationContext& ctx,double dt) {
     }
     return first!=nullptr;
 }
-void prepareRichardsStep(SimulationContext& ctx,double dt,double evaporation) {
+void prepareRichardsStep(SimulationContext& ctx,double dt,double evaporation,bool mesh_prepared) {
+    if(mesh_prepared)validateRichardsRouting(ctx,dt);
     auto& st=ctx.node_subtypes.storages;
     // Refuse the whole batch before capturing forcing or changing any owner.
-    for(int r=0;r<st.count();++r)if(st.lid_state[r].richards && st.lid[r].bottom==LidNodeBottom::MeshAquifer)
+    for(int r=0;r<st.count();++r)if(!mesh_prepared && st.lid_state[r].richards && st.lid[r].bottom==LidNodeBottom::MeshAquifer)
         throw std::runtime_error("Mesh Richards nodes require joint aquifer owner preparation.");
     std::vector<richards::Column> columns;std::vector<int> rows;
     columns.reserve(st.count());rows.reserve(st.count());
-    for(int r=0;r<st.count();++r)if(st.lid_state[r].richards) {
+    for(int r=0;r<st.count();++r)if(st.lid_state[r].richards && st.lid[r].bottom!=LidNodeBottom::MeshAquifer) {
         rows.push_back(r);columns.push_back(detail::column(ctx,r,dt,evaporation));
     }
     if(columns.empty())return;

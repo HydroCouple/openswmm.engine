@@ -113,7 +113,7 @@ RichardsBedAcceptance acceptRichardsBedsAtFiring(SubsurfaceSolver& gw,SurfaceSta
     return acceptRichardsBedsAcrossSteps(gw,surface,start,end,{end},input);
 }
 RichardsBedAcceptance acceptRichardsBedsAcrossSteps(SubsurfaceSolver& gw, SurfaceStateData& surface,
-    double start,double end,const std::vector<double>& step_ends,const std::vector<RichardsBedOwner>& input) {
+    double start,double end,const std::vector<double>& step_ends,const std::vector<RichardsBedOwner>& input,const RichardsBedStepper* stepper) {
     auto fail=[](const std::string& error){RichardsBedAcceptance r;r.error=error;return r;};
     const double dt=end-start;
     if(!std::isfinite(start) || start<0 || !std::isfinite(end) || !std::isfinite(dt) || dt<=0 || input.empty())
@@ -175,14 +175,14 @@ RichardsBedAcceptance acceptRichardsBedsAcrossSteps(SubsurfaceSolver& gw, Surfac
     std::vector<RichardsBedBinding> bindings;
     for(const auto& o:owners)bindings.push_back({o.bed,o.column,o.invert,o.max_water.back(),o.clogging});
     RichardsBedAcceptance result;
-    if(step_ends.size()==1) {
+    if(step_ends.size()==1 && !stepper) {
         result.trial=trialRichardsBeds(gw,dt,bindings);
         if(!result.trial.error.empty())return fail(result.trial.error);
         result.steps.push_back({start,end,result.trial.receipts});
     } else {
         std::map<int,SubsurfaceSolver::NodeWaterBudget> frozen;
         std::map<int,std::pair<double,double>> node_quota;
-        std::map<int,long double> down,up,node_down,node_up;
+        std::map<int,long double> down,up,node_down,node_up,port_out,port_in;
         std::vector<richards::Column> columns;
         for(const auto& o:owners) {
             const int cell=beds[o.bed].cell;
@@ -203,6 +203,7 @@ RichardsBedAcceptance acceptRichardsBedsAcrossSteps(SubsurfaceSolver& gw, Surfac
             node_quota[o.bed]={std::max(0.,donor-et),receiver};columns.push_back(c);
         }
         const auto remaining=[](double ceiling,long double spent) {
+            if(spent>=ceiling)return 0.; // gross ports may consume received as well as original water
             double r=static_cast<double>(std::max(0.L,ceiling-spent));
             while(spent+r>ceiling)r=std::nextafter(r,0.);
             return r;
@@ -211,7 +212,7 @@ RichardsBedAcceptance acceptRichardsBedsAcrossSteps(SubsurfaceSolver& gw, Surfac
         for(double t:step_ends) {
             auto budgets=frozen;auto limits=node_quota;
             for(auto& [cell,b]:budgets) {b.donor=remaining(b.donor,up[cell]);b.receiver=remaining(b.receiver,down[cell]);}
-            for(auto& [bed,q]:limits) {q.first=remaining(q.first,node_down[bed]);q.second=remaining(q.second,node_up[bed]);}
+            for(auto& [bed,q]:limits) {q.first=remaining(q.first,node_down[bed]+port_out[bed]);q.second=remaining(q.second,node_up[bed]+port_in[bed]);}
             auto staged=bindings;
             for(std::size_t j=0;j<staged.size();++j)staged[j].column=&columns[j];
             auto trial=trialBeds(gw,t-previous,staged,&budgets,&limits);
@@ -220,6 +221,32 @@ RichardsBedAcceptance acceptRichardsBedsAcrossSteps(SubsurfaceSolver& gw, Surfac
                 for(std::size_t k=0;k<owners[j].max_water.size();++k)
                     if(!nonnegative(trial.columns[j].water[k]) || trial.columns[j].water[k]>owners[j].max_water[k])
                         return fail("Pending Richards step exceeds hydraulic owner bounds; retry the window.");
+            if(stepper) {
+                if(!stepper->route)return fail("Missing private Richards routing stepper.");
+                std::vector<std::vector<double>> water;
+                for(const auto& c:trial.columns)water.push_back(c.water);
+                std::vector<std::pair<double,double>> claims(owners.size());
+                try {if(auto e=stepper->route(previous,t,trial.columns,trial.reports,water,claims);!e.empty())return fail(e);}
+                catch(const std::exception& e){return fail(e.what());}
+                if(water.size()!=owners.size() || claims.size()!=owners.size())return fail("Invalid staged Richards routing owner count.");
+                long double delta=0;
+                for(std::size_t j=0;j<owners.size();++j) {
+                    if(!nonnegative(claims[j].first) || !nonnegative(claims[j].second))return fail("Invalid staged Richards routing claim.");
+                    // Consume original allowances by gross port traffic. A
+                    // simultaneous inflow must not hide a withdrawal or renew
+                    // bottom receiving room through net cancellation.
+                    port_out[owners[j].bed]+=claims[j].first;port_in[owners[j].bed]+=claims[j].second;
+                    if(water[j].size()!=owners[j].max_water.size())return fail("Invalid staged Richards routing water layout.");
+                    for(std::size_t k=0;k<water[j].size();++k) {
+                        if(!nonnegative(water[j][k]) || water[j][k]>owners[j].max_water[k])
+                            return fail("Staged Richards routing exceeds hydraulic owner bounds; retry the window.");
+                        delta+=water[j][k]-trial.columns[j].water[k];
+                    }
+                    trial.columns[j].water.swap(water[j]);
+                }
+                result.routing_volume+=static_cast<double>(delta);
+                if(!std::isfinite(result.routing_volume))return fail("Nonfinite staged Richards routing water.");
+            }
             result.steps.push_back({previous,t,trial.receipts});
             if(result.trial.receipts.empty()) {
                 result.trial.receipts=trial.receipts;result.trial.reports=trial.reports;
@@ -342,7 +369,7 @@ RichardsBedAcceptance acceptRichardsBedsForTier(SubsurfaceSolver& gw,SurfaceStat
     return acceptRichardsBedsForTierAcrossSteps(gw,surface,tier,start,end,{end},owners);
 }
 RichardsBedAcceptance acceptRichardsBedsForTierAcrossSteps(SubsurfaceSolver& gw,SurfaceStateData& surface,
-    int tier,double start,double end,const std::vector<double>& step_ends,const std::vector<RichardsBedOwner>& owners) {
+    int tier,double start,double end,const std::vector<double>& step_ends,const std::vector<RichardsBedOwner>& owners,const RichardsBedStepper* stepper) {
     const auto fail=[](const std::string& e){RichardsBedAcceptance r;r.error=e;return r;};
     if(!gw.active() || !gw.richards_clock_valid_ || !gw.tierHasCells(tier) ||
        !std::isfinite(start) || start<0 || !std::isfinite(end) || end<=start || !std::isfinite(end-start))
@@ -383,7 +410,7 @@ RichardsBedAcceptance acceptRichardsBedsForTierAcrossSteps(SubsurfaceSolver& gw,
     for(std::size_t j=0;j<owners.size();++j)private_owners[j].column=&trials[j];
     RichardsBedAcceptance result;
     if(!owners.empty()) {
-        result=acceptRichardsBedsAcrossSteps(candidate,surf,start,end,step_ends,private_owners);
+        result=acceptRichardsBedsAcrossSteps(candidate,surf,start,end,step_ends,private_owners,stepper);
         if(!result.error.empty())return result;
     }
     std::vector<int> ordinary;double other_node=0;
@@ -417,7 +444,7 @@ RichardsBedAcceptance acceptRichardsBedsForTierAcrossSteps(SubsurfaceSolver& gw,
         for(double w:trials[j].water)final+=w;
     }
     for(const auto& r:result.trial.reports){inflow+=r.inflow;et+=r.evaporation;}
-    result.balance=static_cast<double>(initial+inflow-final-other_node-et-
+    result.balance=static_cast<double>(initial+inflow+result.routing_volume-final-other_node-et-
         (candidate.state_.led_et-gw.state_.led_et)-(candidate.state_.led_deep-gw.state_.led_deep));
     if(!std::isfinite(result.balance) || std::abs(result.balance)>1e-10*std::max(1.L,std::abs(initial)+inflow))
         return fail("Richards groundwater tier firing failed its combined water balance.");

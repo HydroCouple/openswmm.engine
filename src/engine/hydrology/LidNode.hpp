@@ -10,7 +10,7 @@ namespace lidnode {
 bool richardsMode(const SimulationContext&, int node);
 LidNodeBottom bottomMode(const SimulationContext&, int node);
 double exchangeRichardsPorts(SimulationContext&, int link, double flow, double dt);
-void prepareRichardsStep(SimulationContext&, double dt, double evaporation);
+void prepareRichardsStep(SimulationContext&, double dt, double evaporation, bool mesh_prepared=false);
 void refreshRichardsState(SimulationContext&, int row);
 void readRichards(SimulationContext&, const std::vector<std::string>&);
 std::vector<LidNodeLayer> layers(const SimulationContext&, int control);
@@ -26,6 +26,8 @@ void initialize(SimulationContext&);
 // a pre-V10 hot start. Exact continuation requires V10 history.
 void initializeInfiltration(SimulationContext&, int node);
 void prepareStep(SimulationContext&, double dt, double evaporation);
+// Internal mixed-mode preparation after all Mesh columns share an accepted interval.
+void prepareStepAfterMesh(SimulationContext&, double dt, double evaporation);
 void finishStep(SimulationContext&);
 // Internal Mesh cohort boundary. Every connected Mesh endpoint must belong to
 // the same accepted interval/cohort. Other LID rows and GW clocks are untouched.

@@ -405,9 +405,9 @@ void initialize(SimulationContext& ctx) {
         initializeInfiltration(ctx, n);
     }
 }
-void prepareStep(SimulationContext& ctx, double dt, double evaporation) {
+static void prepareStepImpl(SimulationContext& ctx, double dt, double evaporation, bool mesh_prepared) {
     if (!(dt > 0.0)) return;
-    prepareRichardsStep(ctx, dt, evaporation);
+    prepareRichardsStep(ctx, dt, evaporation, mesh_prepared);
     auto& st = ctx.node_subtypes.storages;
     const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
     for (int r = 0; r < st.count(); ++r) {
@@ -594,6 +594,13 @@ void finishRows(SimulationContext& ctx,const std::vector<int>& rows) {
         }
     }
 }
+}
+void prepareStep(SimulationContext& ctx,double dt,double evaporation) {
+    prepareStepImpl(ctx,dt,evaporation,false);
+}
+void prepareStepAfterMesh(SimulationContext& ctx,double dt,double evaporation) {
+    if(!validateRichardsRouting(ctx,dt))throw std::runtime_error("Mixed Mesh preparation requires accepted Richards owners.");
+    prepareStepImpl(ctx,dt,evaporation,true);
 }
 void finishStep(SimulationContext& ctx) {
     const auto& st=ctx.node_subtypes.storages;std::vector<int> rows;

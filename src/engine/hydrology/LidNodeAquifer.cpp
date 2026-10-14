@@ -4,6 +4,8 @@
 #include "LidNodeRichardsState.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../hydraulics/Node.hpp"
+#include "../hydraulics/Routing.hpp"
+#include "../core/DateTime.hpp"
 #include "../2d/subsurface/LidNodeExchange.hpp"
 #include "../2d/data/SurfaceStateData.hpp"
 #include <algorithm>
@@ -14,7 +16,7 @@
 namespace openswmm::lidnode {
 namespace {
 twoD::RichardsBedAcceptance acceptNodes(SimulationContext& ctx,twoD::SubsurfaceSolver& gw,
-    twoD::SurfaceStateData& surface,double start,double end,double evaporation,const std::vector<int>& input,int tier) {
+    twoD::SurfaceStateData& surface,double start,double end,double evaporation,const std::vector<int>& input,int tier,Router* router=nullptr,const std::vector<double>& step_ends={}) {
     using twoD::RichardsBedAcceptance;
     const auto fail=[](const std::string& error){RichardsBedAcceptance r;r.error=error;return r;};
     if(!std::isfinite(start) || start<0 || !std::isfinite(end) || end<=start ||
@@ -104,12 +106,44 @@ twoD::RichardsBedAcceptance acceptNodes(SimulationContext& ctx,twoD::SubsurfaceS
     auto aquifer=gw;auto surf=surface;
     auto node_beds=ctx.nodes.aquifer2d_bed;node_beds.resize(ctx.n_nodes(),0);
     for(int n:nodes)node_beds[n]=1;
-    auto accepted=tier<0?twoD::acceptRichardsBedsAtFiring(aquifer,surf,start,end,owners):
-        twoD::acceptRichardsBedsForTier(aquifer,surf,tier,start,end,owners);
+    twoD::RichardsBedStepper stepper;
+    if(router)stepper.route=[&](double a,double b,const auto& cols,const auto& reports,auto& water,auto& claims) -> std::string {
+        const double interval=b-a;
+        if(ctx.current_time!=a)return "Private Richards routing clock is discontinuous.";
+        ctx.save_lat_qual_state();
+        for(std::size_t j=0;j<nodes.size();++j) {
+            auto d=detail::draft(ctx,rows[j],cols[j],reports[j],interval,b,true);
+            d.state.richards_mesh_start=a;detail::publish(ctx,std::move(d));
+        }
+        prepareStepAfterMesh(ctx,interval,evaporation);
+        ctx.save_hyd_state();router->step(ctx,interval,evaporation);
+        if(!router->lastStepConverged())return "Private Richards native dynamic wave did not converge; retry the window.";
+        for(int n=0;n<ctx.n_nodes();++n)
+            if(!std::isfinite(ctx.nodes.volume[n]) || !std::isfinite(ctx.nodes.depth[n]) ||
+               !std::isfinite(ctx.nodes.head[n]) || !std::isfinite(ctx.nodes.overflow[n]) || ctx.nodes.overflow[n]!=0)
+                return "Private Richards routing has nonfinite state or unqualified flooding.";
+        for(double q:ctx.links.flow)if(!std::isfinite(q))return "Nonfinite private Richards link flow.";
+        finishStep(ctx);
+        for(std::size_t j=0;j<nodes.size();++j) {
+            const auto& state=ctx.node_subtypes.storages.lid_state[rows[j]];
+            for(const auto& p:state.quality_ports) {
+                if(p.cell>0 && p.volume<0)claims[j].first-=p.volume*cubic_metres;
+                if(p.cell==int(water[j].size())-1 && p.volume>0)claims[j].second+=p.volume*cubic_metres;
+            }
+            water[j][0]=ctx.nodes.volume[nodes[j]]*cubic_metres;
+            for(std::size_t k=1;k<water[j].size();++k)water[j][k]=state.richards_water[k]*cubic_metres;
+        }
+        ctx.current_time=b;ctx.current_date=datetime::addSeconds(ctx.options.start_date,b);
+        ctx.old_elapsed_ms=ctx.elapsed_ms;ctx.elapsed_ms+=1000*interval;
+        return {};
+    };
+    auto accepted=router?twoD::acceptRichardsBedsForTierAcrossSteps(aquifer,surf,tier,start,end,step_ends,owners,&stepper):
+        (tier<0?twoD::acceptRichardsBedsAtFiring(aquifer,surf,start,end,owners):
+        twoD::acceptRichardsBedsForTier(aquifer,surf,tier,start,end,owners));
     if(!accepted.error.empty())return accepted;
     std::vector<detail::RichardsNodeDraft> drafts;
     try {
-        for(std::size_t j=0;j<nodes.size();++j) {
+        if(!router)for(std::size_t j=0;j<nodes.size();++j) {
             auto d=detail::draft(ctx,rows[j],columns[j],accepted.trial.reports[j],dt,end,true);
             d.state.richards_mesh_start=start; // preserve the caller's exact accepted endpoint pair
             for(double v:{d.volume,d.depth,d.head,d.full_volume,d.lat_flow,d.state.held_volume,d.state.treated_volume})
@@ -137,5 +171,36 @@ twoD::RichardsBedAcceptance acceptRichardsNodesForTier(SimulationContext& ctx,tw
     if(tier<0){twoD::RichardsBedAcceptance r;r.error="Invalid Richards node groundwater tier.";return r;}
     return acceptNodes(ctx,gw,surface,start,end,evaporation,nodes,tier);
 }
+twoD::RichardsBedAcceptance routeRichardsNodesForTierWindow(SimulationContext& ctx,Router& router,
+    twoD::SubsurfaceSolver& gw,twoD::SurfaceStateData& surface,int tier,double start,double end,
+    const std::vector<double>& step_ends,double evaporation,const std::vector<int>& nodes) {
+    const auto fail=[](const std::string& e){twoD::RichardsBedAcceptance r;r.error=e;return r;};
+    if(tier<0 || ctx.current_time!=start || ctx.options.routing_model!=RoutingModel::DYNWAVE)
+        return fail("Invalid private Richards routing tier, model or start clock.");
+    for(int l=0;l<ctx.n_links();++l)if(ctx.links.type[l]!=LinkType::CONDUIT)
+        return fail("Private Richards routing window currently requires native conduits.");
+    for(int n=0;n<ctx.n_nodes();++n) {
+        if(ctx.options.allow_ponding && ctx.nodes.ponded_area[n]>0)
+            return fail("Private Richards routing window has unqualified ponding.");
+        if(bottomMode(ctx,n)==LidNodeBottom::MeshAquifer && std::find(nodes.begin(),nodes.end(),n)==nodes.end())
+            return fail("Private Richards routing window omitted a global Mesh owner.");
+    }
+    // Clear live IO/accessor handles in the private context. Native conduit
+    // routing reads owned hydraulic data; no callback can publish externally.
+    try {
+        auto candidate=ctx;candidate.twod_io={};candidate.state_accessors={};
+        auto aquifer=gw;auto surf=surface;auto routing=router.privateDynamicWaveWindow();
+        auto accepted=acceptNodes(candidate,aquifer,surf,start,end,evaporation,nodes,tier,routing.get(),step_ends);
+        if(!accepted.error.empty())return accepted;
+        candidate.twod_io=ctx.twod_io;candidate.state_accessors=ctx.state_accessors;
+        static_assert(std::is_nothrow_move_assignable_v<SimulationContext>);
+        static_assert(std::is_nothrow_move_assignable_v<twoD::SubsurfaceSolver>);
+        static_assert(std::is_nothrow_move_assignable_v<twoD::SurfaceStateData>);
+        ctx=std::move(candidate);gw=std::move(aquifer);surface=std::move(surf);
+        router.publishDynamicWaveWindow(*routing);
+        return accepted;
+    } catch(const std::exception& e){return fail(e.what());}
+}
+
 }
 #endif

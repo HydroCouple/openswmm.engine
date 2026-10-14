@@ -3,6 +3,7 @@
 #include <vector>
 namespace openswmm {
 struct SimulationContext;
+class Router;
 namespace twoD { class SubsurfaceSolver; struct SurfaceStateData; struct RichardsBedAcceptance; }
 namespace lidnode {
 // Internal water-only real LID-state bridge at an explicit closed owner interval.
@@ -15,5 +16,12 @@ twoD::RichardsBedAcceptance acceptRichardsNodesAtFiring(SimulationContext&,twoD:
 // including its ordinary cells. Caller supplies all due Richards node owners.
 twoD::RichardsBedAcceptance acceptRichardsNodesForTier(SimulationContext&,twoD::SubsurfaceSolver&,
     twoD::SurfaceStateData&,int tier,double start,double end,double evaporation,const std::vector<int>& nodes);
+// Internal atomic fixed-forcing conduit window. Native DW and mixed LID rows
+// advance at step_ends; the due GW tier settles once. The caller supplies all
+// Mesh nodes in the 1D network on that tier. Other GW tiers retain their clocks.
+// No live source/face drivers, structure callbacks, ponding/flooding or restart.
+twoD::RichardsBedAcceptance routeRichardsNodesForTierWindow(SimulationContext&,Router&,
+    twoD::SubsurfaceSolver&,twoD::SurfaceStateData&,int tier,double start,double end,
+    const std::vector<double>& step_ends,double evaporation,const std::vector<int>& nodes);
 }
 }
