@@ -120,7 +120,10 @@ void startStructures(SWMMEngine& e,const std::string& name,int mode=0,int lid=0,
     deck+="\n[CURVES]\nXC RATING 0 0\nXC 3 .1\nPC2 PUMP4 0 0\nPC2 .8 .025\nPC2 3 .08\n";
     if(kind<5) {
         deck+="PC PUMP"+std::to_string(kind+1);
-        deck+=kind==0 ? " 0 .01\nPC 50 .04\nPC 300 .08\n" : (kind==2 ? " 0 .08\nPC 1 .04\nPC 3 0\n" : " 0 0\nPC .8 .025\nPC 3 .08\n");
+        // The stepped PUMP2 curve must leave water for P2 at their shared
+        // Richards port; the larger continuous-curve rates starve P2 here.
+        if(kind==1)deck+=" 0 0\nPC .8 .0025\nPC 3 .008\n";
+        else deck+=kind==0 ? " 0 .01\nPC 50 .04\nPC 300 .08\n" : (kind==2 ? " 0 .08\nPC 1 .04\nPC 3 0\n" : " 0 0\nPC .8 .025\nPC 3 .08\n");
     }
     deck+="[EVAPORATION]\nMONTHLY .1 .2 .1 .1 .1 .1 .1 .1 .1 .1 .1 .1\n[INFLOWS]\nS FLOW Q FLOW 1 1 .02\n[TIMESERIES]\nQ 01/31/2004 23:59:00 .02\nQ 01/31/2004 23:59:35 .09\nQ 02/01/2004 00:00:30 -.01\nQ 02/01/2004 00:01:00 .07\nA 01/31/2004 23:59:00 .2\nA 02/01/2004 00:01:00 .9\n";
     deck+="[CONTROLS]\nRULE P_PID\nIF NODE S DEPTH <> 1.2\nTHEN PUMP P SETTING = PID -.1 .5 .005\nRULE R_PID\nIF NODE S DEPTH <> 1.1\nTHEN ORIFICE R SETTING = PID -.1 .5 .005\nRULE W_TS\nIF NODE S DEPTH > 0\nTHEN WEIR W SETTING = TIMESERIES A\nRULE X_NUM\nIF SIMULATION TIME > 00:00:50\nTHEN OUTLET X SETTING = .4\nELSE OUTLET X SETTING = .8\nRULE R_OFF\nIF SIMULATION TIME > 00:01:10\nAND SIMULATION TIME < 00:01:25\nTHEN ORIFICE R SETTING = 0\nPRIORITY 2\n";
@@ -320,6 +323,9 @@ TEST(EngineCheckpoint, StructuralPIDContinuationUsesRealEngineStepsAndCurrentLID
         ASSERT_NO_THROW(startStructures(a,name+"-a",mode,lid,kind));
         ASSERT_NO_THROW(startStructures(b,name+"-b",mode,lid,kind));
         while(a.context().current_time<47)ASSERT_NO_THROW(step(a));
+        const int p2=a.context().link_names.find("P2");ASSERT_GE(p2,0);
+        const double pumped_before=a.context().links.stat_pump_volume[p2];
+        EXPECT_GT(pumped_before,0);
         auto p=root()/(name+".chk");ASSERT_EQ(a.saveCheckpoint(p.string()),"");
         ASSERT_EQ(b.loadCheckpoint(p.string()),"");compare(a,b,name);
         int count=0;bool moving=false,flowing=false;
@@ -333,7 +339,11 @@ TEST(EngineCheckpoint, StructuralPIDContinuationUsesRealEngineStepsAndCurrentLID
             if(++count%17==0)compare(a,b,name);
         }
         compare(a,b,name);EXPECT_TRUE(flowing);EXPECT_TRUE(moving);
-        EXPECT_GT(a.context().links.stat_pump_volume[a.context().link_names.find("P2")],0);
+        EXPECT_GE(a.context().links.stat_pump_volume[p2],pumped_before);
+        // The reduced PUMP2 fixture sustains P2 across the saved boundary;
+        // other curves can exhaust the shared port earlier in the run.
+        if(kind==1)EXPECT_GT(a.context().links.stat_pump_volume[p2],pumped_before);
+        EXPECT_EQ(a.context().links.stat_pump_volume[p2],b.context().links.stat_pump_volume[p2]);
         ASSERT_EQ(a.end(),0);ASSERT_EQ(b.end(),0);
         EXPECT_EQ(a.context().mass_balance.routing_error(),b.context().mass_balance.routing_error());
     }
