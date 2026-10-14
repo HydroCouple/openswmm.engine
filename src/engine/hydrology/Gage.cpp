@@ -141,6 +141,14 @@ const Table* gageRainSeries(const SimulationContext& ctx, int gage_idx) {
     return nullptr;
 }
 
+int gageSeriesRainType(const SimulationContext& ctx, int gage_idx) {
+    const auto ug = static_cast<std::size_t>(gage_idx);
+    if (ctx.gages.source[ug] == RainSource::FILE_RAIN &&
+        ctx.gages.file_format[ug] == RainFileFormat::STAN_PRCP)
+        return 1; // interval depth after the loader's rain-type conversion
+    return ctx.gages.rain_type[ug];
+}
+
 double gageUnitsFactor(const SimulationContext& ctx, int gage_idx) {
     if (gage_idx < 0 || gage_idx >= ctx.n_gages()) return 1.0;
     const auto ug = static_cast<std::size_t>(gage_idx);
@@ -216,7 +224,7 @@ constexpr double kNoDateValue = -693594.0;   ///< legacy NO_DATE (1/1/0001)
 double recordRate(const SimulationContext& ctx, int j, const Table& tbl, int k) {
     const auto uk = static_cast<std::size_t>(k);
     const auto uj = static_cast<std::size_t>(j);
-    const int rain_type = ctx.gages.rain_type[uj];
+    const int rain_type = gageSeriesRainType(ctx, j);
     const double interval = ctx.gages.interval_sec[uj];
     double r = tbl.y[uk];
     if (rain_type == 1 && interval > 0.0) {

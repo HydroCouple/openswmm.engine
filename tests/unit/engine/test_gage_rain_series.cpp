@@ -349,3 +349,42 @@ TEST_F(GageRainSeries, RuntimeAgreement) {
     EXPECT_GT(wet_checks, 0)
         << "no gage reported any rainfall, so the agreement above proved nothing";
 }
+
+TEST_F(GageRainSeries, FullFileRecordIgnoresSimulationWindowAndKeepsCumulativeBaseline) {
+    openModelAt("rain_series/rain_full_record.inp", "_rain_full_record.rpt", nullptr);
+    const std::vector<std::vector<double>> expected = {
+        {10, 12, 14, 1, 3}, {40, 48, 56, 4, 12}, {40, 8, 8, 4, 8}
+    };
+    for (const char* prefix : {"TSF_", "STD_"}) {
+        int type = 0;
+        for (const char* name : {"INTENSITY", "VOLUME", "CUMULATIVE"}) {
+            const std::string id = std::string(prefix) + name;
+            const auto values = seriesValues(gageIndex(id.c_str()));
+            ASSERT_EQ(values.size(), 5u) << id;
+            for (std::size_t i = 0; i < values.size(); ++i)
+                EXPECT_NEAR(values[i], expected[type][i], 1e-6) << id << " row " << i;
+            ++type;
+        }
+    }
+    ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(engine_, 0), SWMM_OK);
+    double elapsed = 0;
+    ASSERT_EQ(swmm_engine_step(engine_, &elapsed), SWMM_OK);
+    // The 14-inch counter at run start follows 12 inches two days earlier.
+    // Only 2 inches fall in the first 15-minute interval (8 in/hr).
+    for (const char* prefix : {"TSF_", "STD_"}) {
+        int type = 0;
+        for (const char* name : {"INTENSITY", "VOLUME", "CUMULATIVE"}) {
+            const std::string id = std::string(prefix) + name;
+            const int idx = gageIndex(id.c_str());
+            double rate = 0;
+            ASSERT_EQ(swmm_gage_get_rainfall(engine_, idx, &rate), SWMM_OK);
+            EXPECT_NEAR(rate, expected[type][2], 1e-6) << id;
+            int authoredType = -1;
+            ASSERT_EQ(swmm_gage_get_rain_type(engine_, idx, &authoredType), SWMM_OK);
+            EXPECT_EQ(authoredType, type) << id;
+            ++type;
+        }
+    }
+    swmm_engine_end(engine_);
+}

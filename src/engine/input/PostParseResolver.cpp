@@ -449,8 +449,8 @@ static void load_external_timeseries_files(SimulationContext& ctx, const std::st
 //   StationID  Year  Month  Day  Hour  Minute  Value
 // A single file may contain many stations; each gage selects its own rows by
 // station ID.  The whole file is scanned to gather the "Rainfall File Summary"
-// statistics (first/last date, periods-with-precip), but only records inside
-// the simulation window are retained for routing — kept in the gage's own
+// statistics (first/last date, periods-with-precip). All records are retained
+// for plotting and timestamp-based routing — kept in the gage's own
 // `rain_series` Table so the runtime reuses the same step-function lookup as
 // an inline [TIMESERIES] gage without polluting ctx.tables.
 // -------------------------------------------------------------------------
@@ -470,7 +470,6 @@ static void load_external_timeseries_files(SimulationContext& ctx, const std::st
 
 static void load_rain_file_user_csv(SimulationContext& ctx, int g,
                                     const std::string& path,
-                                    double win_lo, double win_hi,
                                     MultiColumnFileCache& file_cache) {
     const auto ug = static_cast<std::size_t>(g);
 
@@ -510,14 +509,13 @@ static void load_rain_file_user_csv(SimulationContext& ctx, int g,
     series.type = TableType::TIMESERIES;
     series.id   = ctx.gage_names.name_of(g);
 
-    // Retain only the records needed to route the simulation window; the
-    // cache rows are already sorted ascending, so the copy stays sorted.
+    // Retain the full record for plotting independently of simulation dates.
+    // Keeping earlier records also preserves the CUMULATIVE baseline.
     const auto& vals = pf->columns[uc];
     for (std::size_t i = 0; i < pf->dates.size(); ++i) {
         const double val = vals[i];
         if (std::isnan(val)) continue;  // missing/unreadable cell
         const double dt = pf->dates[i];
-        if (dt < win_lo || dt > win_hi) continue;
         series.x.push_back(dt);
         series.y.push_back(val);
     }
@@ -705,7 +703,7 @@ static int nws_read_online_value(const char* s, long& v, char& flag) {
 /// returns the whole-file statistics the "Rainfall File Summary" reports.
 /// Mirrors legacy readNWSLine + saveRainfall + saveAccumRainfall.
 static void nws_read_file(std::FILE* f, const NwsFileSpec& spec,
-                          double win_lo, double win_hi, double file_start,
+                          double file_start,
                           Table& series,
                           double& first_date, double& last_date,
                           long& periods_precip) {
@@ -722,7 +720,6 @@ static void nws_read_file(std::FILE* f, const NwsFileSpec& spec,
         if (first_date == 0.0 || when < first_date) first_date = when;
         if (when > last_date) last_date = when;
         if (x > 0.0f) ++periods_precip;
-        if (when < win_lo || when > win_hi) return;
         series.x.push_back(when);
         series.y.push_back(static_cast<double>(x));
     };
@@ -835,10 +832,8 @@ static void nws_read_file(std::FILE* f, const NwsFileSpec& spec,
                                 first_date = when;
                             if (when > last_date) last_date = when;
                             ++periods_precip;
-                            if (when >= win_lo && when <= win_hi) {
-                                series.x.push_back(when);
-                                series.y.push_back(static_cast<double>(x));
-                            }
+                            series.x.push_back(when);
+                            series.y.push_back(static_cast<double>(x));
                             when = datetime::addSeconds(when,
                                                         spec.interval_sec);
                         }
@@ -859,14 +854,6 @@ static void load_external_rain_files_impl(SimulationContext& ctx,
                                           MultiColumnFileCache& file_cache) {
     const int n_gages = ctx.gages.count();
     if (n_gages == 0) return;
-
-    // Retain a generous window around the run so the gage has data at and just
-    // before the start, and through the end, of the simulation.
-    const double start = ctx.options.start_date;
-    const double end   = (ctx.options.end_date > start)
-                           ? ctx.options.end_date : (start + 366.0);
-    const double win_lo = start - 1.0;
-    const double win_hi = end + 1.0;
 
     for (int g = 0; g < n_gages; ++g) {
         const auto ug = static_cast<std::size_t>(g);
@@ -896,7 +883,7 @@ static void load_external_rain_files_impl(SimulationContext& ctx,
         }
 
         if (is_csv) {
-            load_rain_file_user_csv(ctx, g, path, win_lo, win_hi, file_cache);
+            load_rain_file_user_csv(ctx, g, path, file_cache);
             continue;
         }
 
@@ -931,7 +918,7 @@ static void load_external_rain_files_impl(SimulationContext& ctx,
             nws_series.id   = ctx.gage_names.name_of(g);
             double nws_first = 0.0, nws_last = 0.0;
             long   nws_periods = 0;
-            nws_read_file(fp, nws, win_lo, win_hi,
+            nws_read_file(fp, nws,
                           ctx.gages.file_start_date[ug], nws_series,
                           nws_first, nws_last, nws_periods);
             std::fclose(fp);
@@ -997,9 +984,6 @@ static void load_external_rain_files_impl(SimulationContext& ctx,
             if (first_date == 0.0 || dt < first_date) first_date = dt;
             if (dt > last_date) last_date = dt;
             if (val > 0.0f) ++periods_precip;
-
-            // Retain only the records needed to route the simulation window.
-            if (dt < win_lo || dt > win_hi) continue;
 
             // PARITY: legacy readStdLine (rain.c) write-side transform, all
             // in single precision.

@@ -176,9 +176,9 @@ struct GageData {
     std::vector<double>         file_start_date;
 
     /**
-     * @brief Resolved rainfall series for a FILE_RAIN gage (windowed to the run).
+     * @brief Resolved rainfall series for a FILE_RAIN gage (full file record).
      * @details Populated by load_external_rain_files() with the station's records
-     *          that fall inside the simulation window, already converted to the
+     *          accepted by the file filters, already converted to the
      *          project's rain depth units.  Reusing a Table gives the runtime the
      *          same cursor/step-function lookup as an inline [TIMESERIES] gage,
      *          without polluting ctx.tables (so INP round-trips still emit FILE).

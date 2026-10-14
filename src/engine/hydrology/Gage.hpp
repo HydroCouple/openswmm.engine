@@ -147,6 +147,10 @@ double gageNextRainDate(const SimulationContext& ctx, int gage_idx, double t);
  */
 double gageUnitsFactor(const SimulationContext& ctx, int gage_idx);
 
+/// Standard/NWS rain-file loaders already convert authored values to interval
+/// depths. Resolve those as VOLUME while preserving the authored rain type.
+int gageSeriesRainType(const SimulationContext& ctx, int gage_idx);
+
 /**
  * @brief Apply the rain-type transform, units factor and scale factor.
  *

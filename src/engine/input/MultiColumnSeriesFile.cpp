@@ -169,7 +169,9 @@ bool parse_series_datetime(const std::string& cell, double& out) {
         else if (n < 6) { s = 0; }
         if (n >= 4) {
             const int meridiem = trailing_meridiem(cell);
-            if (meridiem != 0) {
+            // Some TSF exporters append AM/PM to a 24-hour clock (00 AM,
+            // 13..23 PM). Those hours are already absolute; do not add 12.
+            if (meridiem != 0 && h >= 1 && h <= 12) {
                 if (h == 12) h = 0;          // 12:xx AM → 00:xx, 12:xx PM → 12:xx
                 if (meridiem == 2) h += 12;  // PM
             }
