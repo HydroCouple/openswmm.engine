@@ -333,6 +333,8 @@ void StructureSolver::computePumpFlowK(SimulationContext& ctx, double dt,
         // NOTE: pump startup/shutoff hysteresis is evaluated ONCE per timestep
         // in updatePumpTargetSettings(), NOT here inside the DW iteration loop.
         links.setting[uj] = links.target_setting[uj];
+        // Pump flowClass is a report diagnostic in legacy (NO == DRY).
+        links.flow_class[uj] = FlowClass::DRY;
 
         // If pump is off, no flow
         if (links.setting[uj] == 0.0) {
@@ -399,6 +401,22 @@ void StructureSolver::computePumpFlowK(SimulationContext& ctx, double dt,
             case 6: // Ideal pump
                 q = nodes.inflow[un1] + nodes.overflow[un1];
                 break;
+        }
+
+        // Preserve the legacy off-curve classification without changing flow.
+        if (ci >= 0 && uci < ctx.tables.tables.size() && ct >= 1 && ct <= 5) {
+            const auto& x = ctx.tables.tables[uci].x;
+            if (!x.empty()) {
+                double argument = depth * ucf_len;
+                if (ct == 1) argument = nodes.volume[un1] * ucf_vol;
+                if (ct == 3 || ct == 5) {
+                    const double speed = ct == 5 ? links.setting[uj] : 1.0;
+                    argument = std::max(head / (speed * speed), 0.0) * ucf_len;
+                }
+                if (argument < x.front() || argument > x.back())
+                    links.flow_class[uj] = ct == 4 && argument < x.front()
+                        ? FlowClass::DN_DRY : FlowClass::UP_DRY;
+            }
         }
 
         q = std::max(q, 0.0);

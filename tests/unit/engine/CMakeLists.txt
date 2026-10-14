@@ -121,6 +121,7 @@ add_gtest_unit(test_engine_report_options_api     test_report_options_api.cpp)
 # open() (before parsing) as in report_writeLogo(), and elapsed time rolls
 # whole days into a "d." prefix as in report_writeSysTime().
 add_gtest_unit(test_engine_report_timing          test_report_timing.cpp)
+add_gtest_unit(test_engine_mc_report_parity       test_mc_report_parity.cpp)
 add_gtest_unit(test_engine_ard_transport          test_ard_transport.cpp)
 add_gtest_unit(test_engine_initial_quality        test_initial_quality.cpp)
 add_gtest_unit(test_engine_process_components     test_process_components.cpp)

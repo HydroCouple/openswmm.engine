@@ -361,6 +361,28 @@ TEST_F(ControlsParityTest, MixedVariableTypeShortCircuitOrder) {
         << "Rule must reduce in declaration order: F OR T AND F = F";
 }
 
+TEST_F(ControlsParityTest, FailedAndStopsBeforeLaterOrCanStartPump) {
+    // Reduced SSO700_CEHRSEarly rule from the MC storm model. Legacy stops
+    // at the first AND reached with a false accumulated result; a later
+    // true OR must not start the pump after that short circuit.
+    ctx.nodes.depth[0] = 0.0;
+    ctx.nodes.depth[1] = 0.0;
+    ctx.nodes.head[1] = 4.0;
+    ctx.links.setting[0] = 0.0;
+    ctx.links.target_setting[0] = 0.0;
+    ControlEngine engine;
+    ASSERT_EQ(engine.parseRuleText(
+        "RULE Early\n"
+        "IF NODE J1 DEPTH >= 14\n"
+        "AND NODE J2 DEPTH > 5\n"
+        "AND NODE J1 HEAD > 3.2\n"
+        "OR NODE J2 HEAD > 3.75\n"
+        "THEN PUMP P1 STATUS = ON\n"
+        "ELSE PUMP P1 STATUS = OFF\n", ctx), 1);
+    engine.evaluate(ctx, ctx.current_date, 60.0);
+    EXPECT_DOUBLE_EQ(ctx.links.target_setting[0], 0.0);
+}
+
 // ============================================================================
 // P0-C05 — expression-vs-direct premises reduce in declaration order
 // ============================================================================

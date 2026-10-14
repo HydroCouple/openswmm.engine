@@ -100,7 +100,7 @@ void lidState(Archive& a,LidNodeState& s,bool mesh) {
     X(inflow) X(outflow) X(overflow) X(losses) X(old_net_inflow) \
     X(full_volume) X(rpt_full_volume) X(old_depth) X(old_volume) X(old_lat_flow) \
     X(old_inflow) X(stat_vol_flooded) X(stat_time_flooded) X(stat_max_depth) X(stat_max_overflow) \
-    X(stat_max_overflow_date) X(stat_sum_depth) X(stat_sum_volume) X(stat_max_depth_date) X(stat_max_rpt_depth) \
+    X(stat_max_overflow_date) X(stat_sum_depth) X(stat_sum_volume) X(stat_storage_max_volume) X(stat_storage_max_volume_date) X(stat_max_depth_date) X(stat_max_rpt_depth) \
     X(stat_max_inflow_date) X(stat_time_surcharged) X(stat_max_surcharge_height) X(stat_outfall_avg_flow) X(stat_max_lat_inflow) \
     X(stat_max_total_inflow) X(stat_storage_max_outflow) X(stat_lat_inflow_vol) X(stat_total_inflow_vol) X(stat_total_outflow_vol) \
     X(stat_outfall_max_flow) X(stat_outfall_periods) X(stat_non_converged_count) X(stat_time_courant_critical) X(stat_total_load)
@@ -112,7 +112,7 @@ void lidState(Archive& a,LidNodeState& s,bool mesh) {
     X(conc_old) X(stat_vol_flow) X(stat_max_flow) X(stat_max_veloc) X(stat_max_filling) \
     X(stat_time_surcharged) X(stat_flow_class) X(stat_norm_ltd) X(stat_inlet_ctrl) X(stat_max_flow_date) \
     X(stat_time_full_upstream) X(stat_time_full_dnstream) X(stat_time_full_both) X(stat_time_capacity_limited) X(stat_total_load) \
-    X(stat_pump_cycles) X(stat_pump_on_time) X(stat_pump_volume) X(stat_pump_energy) X(stat_pump_was_on) \
+    X(stat_pump_cycles) X(stat_pump_on_time) X(stat_pump_volume) X(stat_pump_energy) X(stat_pump_sum_flow) X(stat_pump_periods) X(stat_pump_off_curve_low) X(stat_pump_off_curve_high) X(stat_pump_was_on) \
     X(stat_flow_turns) X(stat_flow_turn_sign) X(stat_time_courant_critical) X(stat_lstep_min) X(stat_lstep_max) \
     X(stat_lstep_dt_time) X(stat_lstep_time) X(stat_lstep_bin_time) X(stat_conv_steps) X(stat_conv_total)
 #define CONDUIT_MODEL(X) \
@@ -526,7 +526,7 @@ std::string Router::checkpointBytes(const SimulationContext& c,std::string& resu
                 "Hydraulic checkpoint requires a completed accepted routing boundary.");
         checkCheckpointProfile(c);require(checkpoint_model_==checkpointModel(c), "Hydraulic checkpoint model changed after attachment.");
         RestartState s(*this,c);s.validate(*this,c);Archive payload;s.archive(payload);
-        auto bytes=payload.bytes(),model=checkpoint_model_;auto crc=checksum(bytes);std::string magic=magicName;uint32_t version=1;
+        auto bytes=payload.bytes(),model=checkpoint_model_;auto crc=checksum(bytes);std::string magic=magicName;uint32_t version=3;
         Archive out;out(magic,version,model,crc,bytes);require(out.bytes().size()<=maxBytes,"Hydraulic checkpoint exceeds its size limit.");
         result=out.bytes();return {};
     } catch(const std::exception& e) {return e.what();}
@@ -543,7 +543,7 @@ std::shared_ptr<Router::RestartState> Router::prepareCheckpointBytes(const Simul
     checkCheckpointProfile(c);require(checkpoint_model_==checkpointModel(c), "Hydraulic checkpoint target model changed.");
     require(!bytes.empty() && bytes.size()<=maxBytes,"Hydraulic checkpoint exceeds its size limit.");
     Archive in(std::move(bytes));std::string magic,model,payload;uint32_t version=0,crc=0;in(magic,version,model,crc,payload);in.finish();
-    require(magic==magicName && version==1 && model==checkpoint_model_ && crc==checksum(payload),
+    require(magic==magicName && version==3 && model==checkpoint_model_ && crc==checksum(payload),
             "Hydraulic checkpoint format/model/checksum differs.");
     auto s=std::make_shared<RestartState>(*this,c);Archive state(std::move(payload));s->archive(state);state.finish();s->validate(*this,c);
     if(boundary) require(*boundary==std::array<double,6>{s->time,s->date,s->elapsed,s->old_elapsed,s->next_report,s->evap},

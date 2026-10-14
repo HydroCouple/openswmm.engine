@@ -254,7 +254,7 @@ CheckpointInspection::Reports inspectReports(std::string bytes,bool mesh,
     X(runoff) X(rainfall) X(evap_loss) X(infil_loss) X(ponded_depth) X(old_ponded_depth) X(washoff_vout1) \
     X(gw_flow) X(snow_depth) X(lid_drain_flow) X(old_runoff) X(old_gw_flow) X(old_snow_depth) X(old_lid_drain_flow) \
     X(runon_inflow) X(old_runon_inflow) X(runon_rate) X(outfall_runon_vol) X(gw_sw_head) X(gw_node_avail_flow) X(gw_max_infil_vol) \
-    X(subarea_runoff_rate) X(lid_return_to_perv_cfs) X(lid_drain_runon_cfs) X(stat_precip_vol) X(stat_evap_vol) X(stat_infil_vol) \
+    X(subarea_runoff_rate) X(lid_return_to_perv_cfs) X(lid_drain_runon_cfs) X(stat_precip_vol) X(stat_runon_vol) X(stat_gw_time) X(stat_evap_vol) X(stat_infil_vol) \
     X(stat_imperv_vol) X(stat_perv_vol) X(stat_runoff_vol) X(stat_max_runoff) X(stat_gw_infil_vol) X(stat_gw_upper_evap_vol) \
     X(stat_gw_lower_evap_vol) X(stat_gw_deep_perc_vol) X(stat_gw_flow_vol) X(stat_gw_max_flow) X(stat_gw_sum_theta) \
     X(stat_gw_sum_depth) X(stat_gw_final_theta) X(stat_gw_final_depth) X(stat_gw_steps) X(snow_net_imperv) X(snow_net_perv) \
@@ -981,9 +981,10 @@ std::string SWMMEngine::checkpointBytes(std::string& result,bool include_outputs
     try {
         checkCheckpointBoundary();
         RestartState state(*this);Archive payload;state.archive(payload);std::string hydraulic;
-        uint32_t version=3;std::string error;
+        // New report-statistics schema; keep profile/output offsets distinct from old files.
+        uint32_t version=103;std::string error;
 #ifdef OPENSWMM_HAS_2D
-        if(surface_router_.isActive()) {version=source_delivery_?5:4;error=surface_router_.checkpointBytes(ctx_,hydraulic);}
+        if(surface_router_.isActive()) {version=source_delivery_?105:104;error=surface_router_.checkpointBytes(ctx_,hydraulic);}
         else
 #endif
         error=router_.checkpointBytes(ctx_,hydraulic);
@@ -1245,9 +1246,9 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,const std::st
         Archive in(std::move(checkpoint));std::string magic,model,bytes;uint32_t version=0,crc=0;
         in(magic,version,model,crc,bytes);in.finish();
         const bool files=!binary_file.empty();
-        uint32_t expected_version=3;
+        uint32_t expected_version=103;
 #ifdef OPENSWMM_HAS_2D
-        if(surface_router_.isActive())expected_version=source_delivery_?5:4;
+        if(surface_router_.isActive())expected_version=source_delivery_?105:104;
         if(surface_router_.runtimeWaterCheckpointing())expected_version+=20;
         if(runtime_water_driver_)expected_version+=40;
 #endif

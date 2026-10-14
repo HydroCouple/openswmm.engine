@@ -471,7 +471,7 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
 
             std::fprintf(f, "\n  %-20s %10.2f%10.2f%10.2f%10.4f %-20s %-20s",
                 name.c_str(),
-                ctx.subcatches.area[ui],
+                (ctx.subcatches.area[ui] / ucf::UCF(ucf::LANDAREA, opt)) * ucf::UCF(ucf::LANDAREA, opt),
                 ctx.subcatches.width[ui] * du_opt.length,
                 ctx.subcatches.frac_imperv[ui] * 100.0,
                 ctx.subcatches.slope[ui] * 100.0,
@@ -936,14 +936,12 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // legacy writes it from rdii_closeRdii, which never runs under
     // IGNORE_RAINFALL (swmm5.c:735 skips rain_open) or IGNORE_RDII
-    if (has_rdii && opt.rpt_continuity && !opt.ignore_rainfall && !opt.ignore_rdii) {
+    // USE RDII bypasses the generator and has no generation statistics.
+    if (has_rdii && opt.rpt_continuity && !opt.ignore_rainfall && !opt.ignore_rdii
+        && ctx.files.rdii_mode != FileMode::USE) {
         const auto& mb = ctx.mass_balance;
-        double total_area_ft2 = 0.0;
-        for (int i = 0; i < ctx.n_subcatches(); ++i)
-            total_area_ft2 += ctx.subcatches.area[static_cast<std::size_t>(i)] * landAreaToFt2(fu);
-
-        double sewer_rain = mb.runoff_rainfall;
-        double rdii_prod = mb.routing_rdii;
+        double sewer_rain = mb.rdii_rainfall;
+        double rdii_prod = mb.rdii_produced;
         double ratio = (sewer_rain > 0.0) ? rdii_prod / sewer_rain : 0.0;
         double ucf1 = cont_vcf1;
         double ucf2 = cont_vcf2;
@@ -2130,29 +2128,29 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             auto uj = static_cast<std::size_t>(j);
             double a = ctx.subcatches.area[uj];
             if (a <= 0.0) continue;
-            double area_ft2 = a * landAreaToFt2(fu);
+            double area_ft2 = a / ucf::UCF(ucf::LANDAREA, opt);
 
             // Depth columns: ft³/ft² = ft → in (US) | mm (SI) via depth_vcf.
             double precip_in = (area_ft2 > 0.0) ?
-                ctx.subcatches.stat_precip_vol[uj] / area_ft2 * depth_vcf : 0.0;
+                ctx.subcatches.stat_precip_vol[uj] * depth_vcf / area_ft2 : 0.0;
             double evap_in = (area_ft2 > 0.0) ?
-                ctx.subcatches.stat_evap_vol[uj] / area_ft2 * depth_vcf : 0.0;
+                ctx.subcatches.stat_evap_vol[uj] * depth_vcf / area_ft2 : 0.0;
             double infil_in = (area_ft2 > 0.0) ?
-                ctx.subcatches.stat_infil_vol[uj] / area_ft2 * depth_vcf : 0.0;
+                ctx.subcatches.stat_infil_vol[uj] * depth_vcf / area_ft2 : 0.0;
             double imperv_in = (area_ft2 > 0.0) ?
-                ctx.subcatches.stat_imperv_vol[uj] / area_ft2 * depth_vcf : 0.0;
+                ctx.subcatches.stat_imperv_vol[uj] * depth_vcf / area_ft2 : 0.0;
             double perv_in = (area_ft2 > 0.0) ?
-                ctx.subcatches.stat_perv_vol[uj] / area_ft2 * depth_vcf : 0.0;
+                ctx.subcatches.stat_perv_vol[uj] * depth_vcf / area_ft2 : 0.0;
             double runoff_in = (area_ft2 > 0.0) ?
-                ctx.subcatches.stat_runoff_vol[uj] / area_ft2 * depth_vcf : 0.0;
+                ctx.subcatches.stat_runoff_vol[uj] * depth_vcf / area_ft2 : 0.0;
             double runoff_vol = ctx.subcatches.stat_runoff_vol[uj] * Vcf;
             double peak = ctx.subcatches.stat_max_runoff[uj] * Qcf;
-            double r = ctx.subcatches.stat_precip_vol[uj];
+            double r = ctx.subcatches.stat_precip_vol[uj] + ctx.subcatches.stat_runon_vol[uj];
             double coeff = (r > 0.0) ? ctx.subcatches.stat_runoff_vol[uj] / r : 0.0;
 
             std::fprintf(f, "\n  %-20s", ctx.subcatch_names.name_of(j).c_str());
             std::fprintf(f, " %10.2f", precip_in);
-            std::fprintf(f, " %10.2f", 0.0);  // runon
+            std::fprintf(f, " %10.2f", ctx.subcatches.stat_runon_vol[uj] * depth_vcf / area_ft2);
             std::fprintf(f, " %10.2f", evap_in);
             std::fprintf(f, " %10.2f", infil_in);
             std::fprintf(f, " %10.2f", imperv_in);
@@ -2358,12 +2356,12 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             double seep_in   = (area_ft2 > 0.0) ? ctx.subcatches.stat_gw_deep_perc_vol[uj]  / area_ft2 * depth_vcf : 0.0;
             double lat_in    = (area_ft2 > 0.0) ? ctx.subcatches.stat_gw_flow_vol[uj]       / area_ft2 * depth_vcf : 0.0;
             double max_flow  = ctx.subcatches.stat_gw_max_flow[uj] * Qcf;
-            long   steps     = ctx.subcatches.stat_gw_steps[uj];
-            double avg_theta = (steps > 0L) ? ctx.subcatches.stat_gw_sum_theta[uj] / static_cast<double>(steps) : 0.0;
-            double avg_depth = (steps > 0L) ? ctx.subcatches.stat_gw_sum_depth[uj] / static_cast<double>(steps) * len_ucf : 0.0;
+            double seconds = ctx.subcatches.stat_gw_time[uj];
+            double avg_theta = (seconds > 0.0) ? ctx.subcatches.stat_gw_sum_theta[uj] / seconds : 0.0;
+            double avg_depth = (seconds > 0.0) ? ctx.subcatches.stat_gw_sum_depth[uj] * len_ucf / seconds : 0.0;
             double fin_theta = ctx.subcatches.stat_gw_final_theta[uj];
             double fin_depth = ctx.subcatches.stat_gw_final_depth[uj] * len_ucf;
-            std::fprintf(f, "\n  %-20s %8.2f %8.2f %8.2f %8.2f %8.2f %8.4f %8.2f %8.4f %8.2f",
+            std::fprintf(f, "\n  %-20s %8.2f %8.2f %8.2f %8.2f %8.2f %8.2f %8.2f %8.2f %8.2f",
                 ctx.subcatch_names.name_of(j).c_str(),
                 infil_in, evap_in, seep_in, lat_in, max_flow,
                 avg_theta, avg_depth, fin_theta, fin_depth);
@@ -2590,7 +2588,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     if (route_rpt) {
         bool any_flooding = false;
         for (int j = 0; j < ctx.n_nodes(); ++j)
-            if (ctx.nodes.stat_vol_flooded[static_cast<std::size_t>(j)] > 0.0)
+            if (ctx.nodes.stat_time_flooded[static_cast<std::size_t>(j)] > 0.0)
                 { any_flooding = true; break; }
 
         WRITE(f, "*********************");
@@ -2614,9 +2612,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
             for (int j = 0; j < ctx.n_nodes(); ++j) {
                 auto uj = static_cast<std::size_t>(j);
-                if (ctx.nodes.stat_vol_flooded[uj] <= 0.0) continue;
+                if (ctx.nodes.stat_time_flooded[uj] <= 0.0) continue;
 
-                double hours = ctx.nodes.stat_time_flooded[uj] / 3600.0;
+                double hours = std::max(0.01, ctx.nodes.stat_time_flooded[uj] / 3600.0);
                 double max_rate = ctx.nodes.stat_max_overflow[uj] * Qcf;
                 double vol_mgal = ctx.nodes.stat_vol_flooded[uj] * Vcf;
                 int days, hrs, mins;
@@ -2690,40 +2688,22 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 if (ctx.nodes.type[uj] != NodeType::STORAGE) continue;
 
                 const double full_vol = ctx.nodes.full_volume[uj];
-                const double max_depth = ctx.nodes.stat_max_depth[uj];
-
-                // Volume from the node's actual depth→volume relation, not a linear
-                // depth ratio. Storage surface area varies with depth for FUNCTIONAL,
-                // TABULAR and the geometric shapes, so full_vol*(depth/full_depth) is
-                // exact only for a constant-area unit and grossly overstates the rest
-                // (a shallow functional/geometric node was reported ~20x too full).
-                // Average is the true time-average accumulated per routing step
-                // (stat_sum_volume); maximum is exact — V(d) is monotonic, so the max
-                // volume occurs at the max depth. node::getVolume returns internal ft³
-                // from the same relation the solver routes on.
-                const int us =
-                    ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
-                // const_cast: getVolume takes a mutable TableData* for the tabular
-                // curve's lookup cursor cache; the report context is const and this
-                // is a read-only computation, so mutating the cursor is benign.
-                auto* tbls = const_cast<TableData*>(&ctx.tables);
+                // Volume peaks can occur before depth peaks once full storage
+                // has been reached, so use the dedicated volume statistics.
                 const double avg_vol_ft3 =
                     ctx.nodes.stat_sum_volume[uj] / static_cast<double>(report_steps);
-                const double max_vol_ft3 = node::getVolume(
-                    ctx.nodes, j, max_depth, tbls, us, &ctx.node_subtypes);
+                const double max_vol_ft3 = ctx.nodes.stat_storage_max_volume[uj];
 
                 // Percent full is by VOLUME (legacy semantics), not by depth.
                 double pct_avg = (full_vol > 0.0) ? avg_vol_ft3 / full_vol * 100.0 : 0.0;
                 double pct_max = (full_vol > 0.0) ? max_vol_ft3 / full_vol * 100.0 : 0.0;
-                pct_avg = std::min(pct_avg, 100.0);
-                pct_max = std::min(pct_max, 100.0);
 
                 // ft³ → 1000 ft³|m³
                 const double avg_vol = avg_vol_ft3 * svol_ucf / 1000.0;
                 const double max_vol = max_vol_ft3 * svol_ucf / 1000.0;
 
                 int days, hrs, mins;
-                elapsedToParts(ctx.nodes.stat_max_depth_date[uj],
+                elapsedToParts(ctx.nodes.stat_storage_max_volume_date[uj],
                                ctx.options.report_start, days, hrs, mins);
 
                 double max_outflow = ctx.nodes.stat_storage_max_outflow[uj] * Qcf;
@@ -2899,9 +2879,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             // [XSECTIONS] row keeps xsect.type DUMMY (0) there — pumps and
             // outlets — and an IRREGULAR section prints CHANNEL.
             const auto shape = ctx.links.xsect_shape[uj];
-            const bool dummy = shape == XsectShape::DUMMY ||
-                               lt == static_cast<int>(LinkType::PUMP) ||
-                               lt == static_cast<int>(LinkType::OUTLET);
+            const bool pump = lt == static_cast<int>(LinkType::PUMP);
+            const bool dummy = !pump && (shape == XsectShape::DUMMY ||
+                               lt == static_cast<int>(LinkType::OUTLET));
             std::fprintf(f, "\n  %-20s", ctx.link_names.name_of(j).c_str());
             if (dummy)                               std::fprintf(f, " DUMMY   ");
             else if (shape == XsectShape::IRREGULAR) std::fprintf(f, " CHANNEL ");
@@ -2928,7 +2908,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                     continue;
                 }
             }
-            if (dummy) continue;
+            if (dummy || pump) continue;
 
             if (lt == static_cast<int>(LinkType::CONDUIT)) {
                 if (mv > 50.0) std::fprintf(f, "    >50.00");
@@ -3068,24 +3048,27 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 "\n  ---------------------------------------------------------------------------------------------------------",
                 FlowUnitWords[fu], FlowUnitWords[fu], FlowUnitWords[fu], vol_word);
 
-            double totalSeconds = (ctx.options.end_date - ctx.options.start_date) * 86400.0;
+            double totalSeconds = ctx.routing_stats.report_time;
 
             for (int j = 0; j < ctx.n_links(); ++j) {
                 auto uj = static_cast<std::size_t>(j);
                 if (ctx.links.type[uj] != LinkType::PUMP) continue;
 
                 double max_flow = ctx.links.stat_max_flow[uj] * Qcf;
-                double vol = ctx.links.stat_vol_flow[uj] * Vcf;
+                double vol = ctx.links.stat_pump_volume[uj] * Vcf;
                 double on_time = ctx.links.stat_pump_on_time[uj];
                 double pctUtilized = (totalSeconds > 0.0) ? on_time / totalSeconds * 100.0 : 0.0;
                 int    startUps   = ctx.links.stat_pump_cycles[uj];
-                double avgFlow    = (on_time > 0.0) ? (ctx.links.stat_pump_volume[uj] / on_time) * Qcf : 0.0;
+                double avgFlow = (ctx.links.stat_pump_periods[uj] > 0)
+                    ? ctx.links.stat_pump_sum_flow[uj] / ctx.links.stat_pump_periods[uj] * Qcf : 0.0;
                 double energyKwh  = ctx.links.stat_pump_energy[uj];
 
                 std::fprintf(f, "\n  %-20s %8.2f  %10d %9.2f %9.2f %9.2f %9.3f %9.2f",
                     ctx.link_names.name_of(j).c_str(),
                     pctUtilized, startUps, 0.0, avgFlow, max_flow, vol, energyKwh);
-                std::fprintf(f, " %6.1f %6.1f", 0.0, 0.0);
+                std::fprintf(f, " %6.1f %6.1f",
+                    on_time > 0.0 ? ctx.links.stat_pump_off_curve_low[uj] / on_time * 100.0 : 0.0,
+                    on_time > 0.0 ? ctx.links.stat_pump_off_curve_high[uj] / on_time * 100.0 : 0.0);
             }
             WRITE(f, "");
             WRITE(f, "");

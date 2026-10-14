@@ -247,6 +247,12 @@ void RDIISolver::init(SimulationContext& ctx) {
         }
     }
 
+    // A gage-only UH is a valid zero-response group in legacy. Its sewer
+    // area still contributes rainfall to the RDII continuity report.
+    for (const auto& name : ctx.unit_hyds.gage_assignments) {
+        if (findUnitHyd(name) < 0) addUnitHydParams(name, UnitHydParams{});
+    }
+
     // Resize decay_params parallel to uh_params; default-constructed entries
     // mean `active == false`, i.e. the response uses the linear IA model.
     decay_params.assign(uh_params.size(), std::array<ExpDecayParams, 3>{});
@@ -586,6 +592,10 @@ void RDIISolver::emitTick(SimulationContext& ctx, double T) {
             if (!pend.empty()) pend.erase(pend.begin());
             if (!have_tick_rate) { tick_rate = rate; have_tick_rate = true; }
             double rainDepth = tick_rate * static_cast<double>(ri) / 3600.0;
+            const double sewer_area_ft2 = groups_.area[ug]
+                / ucf::Ucf[ucf::LANDAREA][unit_sys];
+            ctx.mass_balance.rdii_rainfall += rainDepth
+                / ucf::Ucf[ucf::RAINDEPTH][unit_sys] * sewer_area_ft2;
 
             // IA month is the month of the CHUNK date (legacy applyIA uses
             // gageDate); the buffer month is the tick's.
@@ -659,6 +669,9 @@ void RDIISolver::emitTick(SimulationContext& ctx, double T) {
         auto un = static_cast<std::size_t>(grid_node_[col]);
         double q = (un < node_rdii_flow_.size()) ? node_rdii_flow_[un] : 0.0;
         if (q < ZERO_RDII) q = 0.0;
+        // Legacy TotalRdiiVol uses the unrounded generated flow, including
+        // the final driver tick; routed volume uses the float32 interface.
+        if (q > 0.0) ctx.mass_balance.rdii_produced += q * grid_step_;
         float qf = static_cast<float>(q);
         node_rdii_flow_[un] = static_cast<double>(qf);
         grid_flows_.push_back(qf);

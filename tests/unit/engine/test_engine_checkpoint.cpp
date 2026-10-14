@@ -349,7 +349,7 @@ TEST(EngineCheckpoint, StructuralStateCorruptionAndMaterialChangePreserveFreshTa
     for(int i=0;i<71;++i)ASSERT_NO_THROW(step(a));
     auto good=root()/"structural-atomic.chk";ASSERT_EQ(a.saveCheckpoint(good.string()),"");
     detail::CompletedSourceArchive in(bytes(good));std::string magic,model,payload;uint32_t version,sum;
-    in(magic,version,model,sum,payload);in.finish();ASSERT_EQ(version,3);
+    in(magic,version,model,sum,payload);in.finish();ASSERT_EQ(version,103);
     auto hydraulic=payload.find("OpenSWMM accepted DW hydraulic boundary");ASSERT_NE(hydraulic,std::string::npos);
     // Two fixed PID rows (3 doubles each), one orifice and one weir area precede
     // the length-prefixed nested archive. This fixture keeps those shapes explicit.
@@ -726,7 +726,7 @@ TEST(EngineCheckpoint, SurfaceNestedFailuresPreserveEveryComponentAndAllowValidR
     const double savedStorage=a.engine.context().mass_balance.routing_final_storage;
     auto valid=bytes(good),surface=engineSurface(valid),data=surfacePayload(surface);
     detail::CompletedSourceArchive in(valid);std::string magic,model,payload;uint32_t version,sum;
-    in(magic,version,model,sum,payload);in.finish();ASSERT_EQ(version,4);
+    in(magic,version,model,sum,payload);in.finish();ASSERT_EQ(version,104);
     a.engine.context().gages.rainfall[0]+=1;
     auto rain=root()/"surface-other-rain.chk";ASSERT_EQ(a.engine.saveCheckpoint(rain.string()),"");
     auto otherRain=engineSurface(bytes(rain));a.engine.context().gages.rainfall[0]-=1;
@@ -968,7 +968,7 @@ TEST(EngineCheckpoint, SpatialBridgeCorruptionRejectsBeforeEveryComponentInstall
     while(a.engine.context().current_time<16 || a.engine.sourceDelivery()->pending().empty())ASSERT_NO_THROW(step(a.engine));
     const auto good=root()/"spatial-atomic.chk";ASSERT_EQ(a.engine.saveCheckpoint(good.string()),"");
     detail::CompletedSourceArchive input(bytes(good));std::string magic,model,payload;uint32_t version,sum;
-    input(magic,version,model,sum,payload);input.finish();ASSERT_EQ(version,5);
+    input(magic,version,model,sum,payload);input.finish();ASSERT_EQ(version,105);
     auto bridge=*a.engine.sourceDelivery();detail::CompletedSourceArchive saved;bridge.checkpoint(saved,false,a.sources);
     auto water=saved.bytes();detail::CompletedSourceArchive encoded;encoded(water);const auto location=payload.find(encoded.bytes());ASSERT_NE(location,std::string::npos);
     SpatialBridgeWire original(bridge,a.sources.clocks().groups().size());detail::CompletedSourceArchive read(water);original.io(read);read.finish();
@@ -1611,7 +1611,7 @@ TEST(EngineCheckpoint, BinaryOutputPreservesExistingSourceBatchSchedule) {
         const auto a=root()/(name+".chk"),b=root()/(name+"-ordinary.chk");
         ASSERT_EQ(binary.engine.saveCheckpoint(a.string()),"");ASSERT_EQ(ordinary.engine.saveCheckpoint(b.string()),"");
         detail::CompletedSourceArchive in(bytes(a));std::string magic,model,payload;uint32_t version,sum;
-        in(magic,version,model,sum,payload);in.finish();ASSERT_EQ(version,8u);
+        in(magic,version,model,sum,payload);in.finish();ASSERT_EQ(version,108u);
         const int marker=516114522;const std::string native(reinterpret_cast<const char*>(&marker),4);
         const auto body=payload.rfind(native);ASSERT_NE(body,std::string::npos);ASSERT_GE(body,24u);
         payload.resize(body-24);version-=3;sum=crc(payload);detail::CompletedSourceArchive out;out(magic,version,model,sum,payload);

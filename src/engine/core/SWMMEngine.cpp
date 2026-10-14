@@ -3681,7 +3681,9 @@ void SWMMEngine::accumulateRunoffMassBalance(double dt_runoff) noexcept {
         if (ctx_.subcatches.runoff[ui] > ctx_.subcatches.stat_max_runoff[ui])
             ctx_.subcatches.stat_max_runoff[ui] = ctx_.subcatches.runoff[ui];
         ctx_.subcatches.stat_precip_vol[ui] +=
-            rain_ftsec * area_ft2 * dt_runoff;
+            rain_ftsec * (ctx_.subcatches.area[ui] / ucf::UCF(ucf::LANDAREA, ctx_.options)) * dt_runoff;
+        ctx_.subcatches.stat_runon_vol[ui] += ctx_.subcatches.runon_rate[ui]
+            * (ctx_.subcatches.area[ui] / ucf::UCF(ucf::LANDAREA, ctx_.options)) * dt_runoff;
         ctx_.subcatches.stat_runoff_vol[ui] +=
             ctx_.subcatches.runoff[ui] * dt_runoff;
     }
@@ -4862,10 +4864,14 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
 
     // Pass actual infiltration rate to groundwater (upper zone percolation input).
     // sw_head is read from the pre-assembled subcatches.gw_sw_head[].
+    // Legacy uses getDateTime(NewRunoffTime), not the routing clock, for
+    // monthly aquifer evaporation patterns. Runoff can be ahead of routing.
+    const int gw_evap_month = datetime::monthOfYear(datetime::addSeconds(
+        ctx_.options.start_date, (new_runoff_ms_ + 1.0) / 1000.0));
     groundwater_.execute(ctx_, dt_runoff, ctx_.climate_state.evap_rate,
                          gw_infil_ptr,
                          ctx_.subcatches.gw_sw_head.data(),
-                         gw_frac_perv_.data(), gw_perv_evap_.data());
+                         gw_frac_perv_.data(), gw_perv_evap_.data(), gw_evap_month);
 
     // Store GW flow rates in subcatch state for Phase 2 interpolation.
     // GW flow is in ft/sec (rate per unit area).
@@ -4901,10 +4907,12 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
         ctx_.subcatches.stat_gw_flow_vol[ui] += flow_cfs * dt_runoff;
         if (flow_cfs > ctx_.subcatches.stat_gw_max_flow[ui])
             ctx_.subcatches.stat_gw_max_flow[ui] = flow_cfs;
-        ctx_.subcatches.stat_gw_sum_theta[ui] += gws.theta[ui];
-        ctx_.subcatches.stat_gw_sum_depth[ui] += gws.lower_depth[ui];
+        const double water_table = gws.lower_depth[ui] + gws.bottom_elev[ui];
+        ctx_.subcatches.stat_gw_sum_theta[ui] += gws.theta[ui] * dt_runoff;
+        ctx_.subcatches.stat_gw_sum_depth[ui] += water_table * dt_runoff;
         ctx_.subcatches.stat_gw_final_theta[ui] = gws.theta[ui];
-        ctx_.subcatches.stat_gw_final_depth[ui] = gws.lower_depth[ui];
+        ctx_.subcatches.stat_gw_final_depth[ui] = water_table;
+        ctx_.subcatches.stat_gw_time[ui] += dt_runoff;
         ctx_.subcatches.stat_gw_steps[ui]++;
     }
 }
@@ -5533,15 +5541,16 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         // Depth statistics
         double cur_depth = ctx_.nodes.depth[uj];
         ctx_.nodes.stat_sum_depth[uj] += cur_depth;
-        // Storage-volume statistics: accumulate the node's actual stored volume at
-        // this depth (legacy StorageStats avgVol += newVolume). Recomputed from the
-        // maintained depth via the same relation the report uses, so the Storage
-        // Volume Summary's average is exact for the nonlinear shapes rather than a
-        // volume-of-average-depth approximation.
+        // Legacy tracks the first maximum capped volume independently of depth:
+        // a storage unit can stay full while its surcharge depth keeps rising.
         if (ctx_.nodes.type[uj] == NodeType::STORAGE) {
-            const int us = ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units));
-            ctx_.nodes.stat_sum_volume[uj] += node::getVolume(
-                ctx_.nodes, j, cur_depth, &ctx_.tables, us, &ctx_.node_subtypes);
+            const double volume = ctx_.nodes.volume[uj];
+            ctx_.nodes.stat_sum_volume[uj] += volume;
+            const double capped = std::min(volume, ctx_.nodes.full_volume[uj]);
+            if (capped > ctx_.nodes.stat_storage_max_volume[uj]) {
+                ctx_.nodes.stat_storage_max_volume[uj] = capped;
+                ctx_.nodes.stat_storage_max_volume_date[uj] = stat_date;
+            }
         }
         if (cur_depth > ctx_.nodes.stat_max_depth[uj]) {
             ctx_.nodes.stat_max_depth[uj] = cur_depth;
@@ -5736,32 +5745,30 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
                 auto& CDs = ctx_.link_subtypes.conduits;
                 if (CDs.normal_flow_limited[ucrs]) {
                     ctx_.links.stat_norm_ltd[uj] += dt_routing;
-                    CDs.normal_flow_limited[ucrs] = uint8_t{0};  // reset for next step
                 }
                 if (CDs.inlet_control[ucrs]) {
                     ctx_.links.stat_inlet_ctrl[uj] += dt_routing;
-                    CDs.inlet_control[ucrs] = uint8_t{0};
                 }
             }
         }
 
         // Pump utilization statistics
         if (ctx_.links.type[uj] == LinkType::PUMP) {
-            bool is_on = (ctx_.links.setting[uj] > 0.0 && q > 0.0);
-            bool was_on = ctx_.links.stat_pump_was_on[uj];
-
-            // Legacy counts start-ups only on OFF→ON transitions (stats.c:682-683);
-            // refactored previously incremented on either direction, giving a 2×
-            // inflation in reported start-up counts.
-            if (is_on && !was_on) {
+            constexpr double min_pump_flow = 0.001; // legacy MIN_RUNOFF_FLOW (CFS)
+            const bool is_on = q > min_pump_flow;
+            if (is_on && ctx_.links.old_flow[uj] < min_pump_flow) {
                 ctx_.links.stat_pump_cycles[uj]++;
             }
-            if (is_on != was_on) {
-                ctx_.links.stat_pump_was_on[uj] = is_on;
-            }
+            ctx_.links.stat_pump_was_on[uj] = is_on;
             if (is_on) {
                 ctx_.links.stat_pump_on_time[uj] += dt_routing;
                 ctx_.links.stat_pump_volume[uj] += q * dt_routing;
+                ctx_.links.stat_pump_sum_flow[uj] += q;
+                ctx_.links.stat_pump_periods[uj]++;
+                if (ctx_.links.flow_class[uj] == FlowClass::DN_DRY)
+                    ctx_.links.stat_pump_off_curve_low[uj] += dt_routing;
+                if (ctx_.links.flow_class[uj] == FlowClass::UP_DRY)
+                    ctx_.links.stat_pump_off_curve_high[uj] += dt_routing;
 
                 // Pump energy (kWh), matching legacy link_getPower:
                 //   power_kW = |dh| * |q| / 8.814 * KWperHP ; energy += power_kW * dt/3600

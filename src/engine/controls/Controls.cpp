@@ -266,7 +266,9 @@ int ControlEngine::evaluate(SimulationContext& ctx, double current_date, double 
             if (p == 0) {
                 result = (pval != 0);
             } else if (logic == LogicOp::AND) {
-                if (!result) continue;          // short-circuit
+                // Legacy stops the rule at a failed AND chain. Continuing
+                // would let a later OR incorrectly revive the rule.
+                if (!result) break;
                 result = (pval != 0);
             } else { // OR
                 if (!result) result = (pval != 0);

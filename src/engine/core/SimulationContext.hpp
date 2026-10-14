@@ -1134,6 +1134,11 @@ struct SimulationContext {
         /// parity deck: **-8.193 % before, +1.419 % after.**
         double runoff_final_snow = 0.0;
 
+        // RDII generation totals (ft3), distinct from routed RDII and runoff
+        // rainfall: sewer service areas need not equal subcatchment areas.
+        double rdii_rainfall = 0.0;
+        double rdii_produced = 0.0;
+
         // Routing totals
         double routing_dry_weather   = 0.0;
         double routing_wet_weather   = 0.0;

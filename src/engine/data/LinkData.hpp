@@ -546,6 +546,10 @@ struct LinkData {
      *      where link_getPower = |dh| * |q| / 8.814 * KWperHP.
      */
     std::vector<double>     stat_pump_energy;
+    std::vector<double> stat_pump_sum_flow;  ///< Sum of active-period flows for legacy arithmetic mean (CFS).
+    std::vector<long> stat_pump_periods;  ///< Count of active routing periods.
+    std::vector<double> stat_pump_off_curve_low;  ///< Active seconds below the pump curve range.
+    std::vector<double> stat_pump_off_curve_high;  ///< Active seconds above the pump curve range.
 
     /** @brief Previous pump state for cycle detection (true = on). */
     std::vector<bool>       stat_pump_was_on;
@@ -693,6 +697,10 @@ struct LinkData {
         stat_pump_on_time.assign(un, 0.0);
         stat_pump_volume.assign(un, 0.0);
         stat_pump_energy.assign(un, 0.0);
+        stat_pump_off_curve_high.assign(un, 0.0);
+        stat_pump_off_curve_low.assign(un, 0.0);
+        stat_pump_periods.assign(un, 0.0);
+        stat_pump_sum_flow.assign(un, 0.0);
         stat_pump_was_on.assign(un, false);
         stat_flow_turns.assign(un, 0L);
         stat_flow_turn_sign.assign(un, 0);
@@ -743,7 +751,7 @@ struct LinkData {
         g(stat_time_full_upstream, 0.0); g(stat_time_full_dnstream, 0.0);
         g(stat_time_full_both, 0.0); g(stat_time_capacity_limited, 0.0);
         g(stat_pump_cycles, 0); g(stat_pump_on_time, 0.0);
-        g(stat_pump_volume, 0.0); g(stat_pump_energy, 0.0);
+        g(stat_pump_volume, 0.0); g(stat_pump_energy, 0.0); g(stat_pump_off_curve_high, 0.0); g(stat_pump_off_curve_low, 0.0); g(stat_pump_periods, 0.0); g(stat_pump_sum_flow, 0.0);
         g(stat_pump_was_on, false);
         g(stat_flow_turns, 0L); g(stat_flow_turn_sign, 0);
         g(stat_time_courant_critical, 0.0);
@@ -795,7 +803,7 @@ struct LinkData {
         r(rpt_flag); r(stat_vol_flow); r(stat_max_flow); r(stat_max_veloc);
         r(stat_max_filling); r(stat_time_surcharged); r(stat_max_flow_date); r(stat_time_full_upstream);
         r(stat_time_full_dnstream); r(stat_time_full_both); r(stat_time_capacity_limited); r(stat_pump_cycles);
-        r(stat_pump_on_time); r(stat_pump_volume); r(stat_pump_energy); r(stat_pump_was_on);
+        r(stat_pump_on_time); r(stat_pump_volume); r(stat_pump_energy); r(stat_pump_off_curve_high); r(stat_pump_off_curve_low); r(stat_pump_periods); r(stat_pump_sum_flow); r(stat_pump_was_on);
         r(stat_flow_turns); r(stat_flow_turn_sign); r(stat_time_courant_critical); r(stat_norm_ltd);
         r(stat_inlet_ctrl); r(pump_curve_name); r(comments); r(tags);
         r(stat_flow_class);
@@ -837,7 +845,7 @@ struct LinkData {
         e(stat_time_surcharged); e(stat_norm_ltd); e(stat_inlet_ctrl);
         e(stat_max_flow_date); e(stat_time_full_upstream); e(stat_time_full_dnstream);
         e(stat_time_full_both); e(stat_time_capacity_limited);
-        e(stat_pump_cycles); e(stat_pump_on_time); e(stat_pump_volume); e(stat_pump_energy);
+        e(stat_pump_cycles); e(stat_pump_on_time); e(stat_pump_volume); e(stat_pump_energy); e(stat_pump_off_curve_high); e(stat_pump_off_curve_low); e(stat_pump_periods); e(stat_pump_sum_flow);
         e(stat_pump_was_on); e(stat_flow_turns); e(stat_flow_turn_sign);
         e(stat_time_courant_critical);
         e(stat_lstep_min); e(stat_lstep_max); e(stat_lstep_dt_time); e(stat_lstep_time);
@@ -976,6 +984,10 @@ struct LinkData {
         stat_pump_on_time.shrink_to_fit();
         stat_pump_volume.shrink_to_fit();
         stat_pump_energy.shrink_to_fit();
+        stat_pump_off_curve_high.shrink_to_fit();
+        stat_pump_off_curve_low.shrink_to_fit();
+        stat_pump_periods.shrink_to_fit();
+        stat_pump_sum_flow.shrink_to_fit();
         stat_pump_was_on.shrink_to_fit();
         stat_total_load.shrink_to_fit();
     }
