@@ -34,13 +34,12 @@
 #include "../core/DateTime.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
+#include "SurfaceSpeciesKernel.hpp"
 
 namespace openswmm::msxsurf {
 
 namespace {
 
-constexpr double kMinRunoffRate = 1.0e-9;   // ft/s threshold (stepSurfaceQuality)
-constexpr double kLperFt3       = 28.317;
 
 std::string upper(std::string s) {
     for (auto& c : s) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
@@ -286,186 +285,94 @@ void initState(SimulationContext& ctx) {
     }
 }
 
-void step(SimulationContext& ctx, double dt_runoff, double abs_time) {
+namespace {
+// Multispecies Phase 2 (S2): the species family as a surface-species block,
+// so it runs the pollutant kernel's expressions (SurfaceSpeciesKernel). The
+// parameter structs are rebuilt from the species arrays on every call, as the
+// pollutant side's refreshLanduseParams does from ctx.buildup / ctx.washoff,
+// so a C API edit takes effect on the next step.
+struct SpeciesParams {
+    std::vector<landuse::BuildupParams> bu;
+    std::vector<landuse::WashoffParams> wo;
+};
+SpeciesParams speciesParams(const MsxSurfaceData& s) {
+    SpeciesParams p;
+    const std::size_t n = s.bu_type.size();
+    p.bu.resize(n); p.wo.resize(n);
+    for (std::size_t k = 0; k < n; ++k) {
+        auto& bp = p.bu[k];
+        bp.type = static_cast<landuse::BuildupType>(s.bu_type[k]);
+        bp.coeff[0] = s.bu_c1[k];
+        bp.coeff[1] = s.bu_c2[k];
+        bp.coeff[2] = s.bu_c3[k];
+        bp.normalizer = s.bu_normalizer[k];
+        bp.max_days = s.bu_max_days[k];
+        auto& wp = p.wo[k];
+        wp.type = static_cast<landuse::WashoffType>(s.wo_type[k]);
+        wp.coeff = s.wo_coeff[k];
+        wp.expon = s.wo_expon[k];
+        wp.sweep_effic = s.wo_sweep_effic[k];
+        wp.bmp_effic = s.wo_bmp_effic[k];
+    }
+    return p;
+}
+surfacespecies::Block speciesBlock(MsxSurfaceData& s, const SpeciesParams& p) {
+    surfacespecies::Block b;
+    b.n = s.n_species;
+    b.nlu = s.n_landuses;
+    b.bu_params = &p.bu;
+    b.wo_params = &p.wo;
+    b.buildup = &s.buildup;
+    b.conc = &s.washoff_conc;
+    b.ponded_qual = &s.ponded_qual;
+    b.runon_qual_rate = &s.runon_qual_rate;
+    b.total_load = &s.led_subcatch_load;
+    b.mcf = &s.mcf;
+    b.c_rain = &s.c_rain;
+    b.snow_only = &s.snow_only;
+    b.led_surface_buildup = &s.led_buildup;
+    b.led_wet_deposition = &s.led_wet_deposition;
+    b.led_bmp_removal = &s.led_bmp_removal;
+    b.led_infil_loss = &s.led_infil_loss;
+    b.led_runoff_load = &s.led_runoff_load;
+    return b;
+}
+}  // namespace
+
+void step(SimulationContext& ctx, double dt_runoff, double old_runoff_time) {
     auto& s = ctx.reactions.surface;
     if (!s.active() || !(dt_runoff > 0.0)) return;
-    const int nsc = ctx.n_subcatches(), nlu = s.n_landuses, nm = s.n_species;
-    const double dt_days = dt_runoff / ucf::SEC_PER_DAY;
-    const double ucf_rain = ucf::UCF(ucf::RAINFALL, ctx.options);
-    const double ucf_flow = ucf::UCF(ucf::FLOW, ctx.options);
+    const auto p = speciesParams(s);
+    auto b = speciesBlock(s, p);
+    surfacespecies::step(ctx, b, dt_runoff, old_runoff_time);
+}
 
-    // Review C3 (2026-10-15): run-on. A subcatchment whose outlet is another
-    // subcatchment hands that subcatchment its previous step's species load
-    // (runoff × concentration, legacy subcatch_getRunon's one-step lag); the
-    // receiver carries it to its own outlet. `deliver` skips such a
-    // subcatchment, so before this its species reached nothing.
-    std::vector<double> runon;
-    if (s.washoff_conc_old.size() == static_cast<std::size_t>(nsc) * static_cast<std::size_t>(nm)) {
-        for (int i = 0; i < nsc; ++i) {
-            const auto ui = static_cast<std::size_t>(i);
-            const int k = (ui < ctx.subcatches.outlet_subcatch.size()) ? ctx.subcatches.outlet_subcatch[ui] : -1;
-            if (k < 0 || k == i || k >= nsc) continue;
-            if (ui < ctx.subcatches.outlet_node.size() && ctx.subcatches.outlet_node[ui] >= 0) continue;
-            const double q_old = (ui < ctx.subcatches.old_runoff.size()) ? ctx.subcatches.old_runoff[ui] : 0.0;
-            if (!(q_old > 0.0)) continue;
-            if (runon.empty()) runon.assign(static_cast<std::size_t>(nsc) * static_cast<std::size_t>(nm), 0.0);
-            for (int m = 0; m < nm; ++m)
-                runon[s.sidx(k, m)] += q_old * s.washoff_conc_old[s.sidx(i, m)] * kLperFt3;
-        }
-    }
+void bookPostLid(SimulationContext& ctx, double dt_runoff,
+                 const std::vector<double>& lid_infil_vol) {
+    auto& s = ctx.reactions.surface;
+    if (!s.active() || ctx.n_subcatches() <= 0) return;
+    const auto p = speciesParams(s);
+    auto b = speciesBlock(s, p);
+    surfacespecies::bookPostLid(ctx, b, dt_runoff, lid_infil_vol);
+}
 
-    for (int i = 0; i < nsc; ++i) {
-        const auto ui = static_cast<std::size_t>(i);
-        const double q       = ctx.subcatches.runoff[ui];    // cfs
-        const double area_ac = ctx.subcatches.area[ui];      // acres (LANDAREA units)
-        // legacy's washoff `runoff` argument: the area-averaged subarea rate
-        // in ft/sec (subcatch_getRunoff's return). Shared with the pollutant
-        // kernel so the two stay bit-identical — deriving it here as
-        // q / area_ft2 lands a ULP away, because q has round-tripped through
-        // a volume (Voutflow * dt / dt).
-        const double runoff_fts = (ui < ctx.subcatches.subarea_runoff_rate.size())
-                                ? ctx.subcatches.subarea_runoff_rate[ui] : 0.0;
-        for (int m = 0; m < nm; ++m) {
-            const double mcf_m = s.mcf[static_cast<std::size_t>(m)];
-            double total_load = 0.0;   // concentration-mass units / s
-            for (int lu = 0; lu < nlu; ++lu) {
-                const auto cov = ui * static_cast<std::size_t>(nlu) + static_cast<std::size_t>(lu);
-                const double frac = (cov < ctx.subcatches.coverage.size())
-                                        ? ctx.subcatches.coverage[cov] / 100.0 : 0.0;
-                if (frac <= 0.0) continue;
-                const auto k  = s.pidx(lu, m);
-                const auto bu = s.bu_idx(i, lu, m);
-                const int  bt = s.bu_type[k];
-                const double norm = (s.bu_normalizer[k] == 0)
-                                        ? frac * area_ac : frac * ctx.subcatches.curb_length[ui];
+void clearRunon(SimulationContext& ctx) noexcept {
+    auto& s = ctx.reactions.surface;
+    std::fill(s.runon_qual_rate.begin(), s.runon_qual_rate.end(), 0.0);
+}
 
-                // --- Buildup accumulation (stepSurfaceQuality) ---------------
-                // Legacy accumulates buildup ONLY while the subcatchment is
-                // effectively dry (runoff.c:280 guards surfqual_getBuildup
-                // with `runoff < MIN_RUNOFF`), the exact complement of the
-                // washoff gate below. The pollutant kernel carries the same
-                // condition and SameParametersSameSurfaceLoads asserts the
-                // two stay bit-identical, so they move together.
-                if (bt != 0 && runoff_fts < 2.31481e-8) {
-                    double mass = s.buildup[bu];
-                    if (bt == 4) {                                   // EXTERNAL
-                        const double max_bu = s.bu_c1[k], sf = s.bu_c2[k];
-                        const int ts_idx = static_cast<int>(s.bu_c3[k]);
-                        double rate = 0.0;
-                        if (ts_idx >= 0 && ts_idx < static_cast<int>(ctx.tables.tables.size()))
-                            rate = sf * table_lookup_cursor(
-                                ctx.tables.tables[static_cast<std::size_t>(ts_idx)], abs_time);
-                        double new_mass = std::min(mass + rate * dt_days, max_bu);
-                        new_mass = std::max(new_mass, 0.0);
-                        const double change = new_mass - mass;
-                        if (change != 0.0) {
-                            s.buildup[bu] = new_mass;
-                            s.led_buildup[static_cast<std::size_t>(m)] += change * norm;
-                        }
-                    } else {
-                        const double c0 = s.bu_c1[k], c1 = s.bu_c2[k], c2 = s.bu_c3[k];
-                        double days = 0.0;
-                        if (mass > 0.0) {
-                            switch (bt) {                            // inverse: mass → days
-                                case 1: days = (c1 * c2 > 0.0) ? std::pow(mass / c1, 1.0 / c2) : 0.0; break;
-                                case 2: days = (c0 * c1 > 0.0 && mass < c0) ? -std::log(1.0 - mass / c0) / c1 : 0.0; break;
-                                case 3: days = (c0 > mass) ? mass * c2 / (c0 - mass) : s.bu_max_days[k]; break;
-                                default: break;
-                            }
-                        }
-                        days += dt_days;
-                        // legacy surfqual.c:149 `MAX(newBuildup, oldBuildup)`
-                        // — buildup never decreases across a step.
-                        const double new_mass =
-                            std::max(buildupAt(bt, c0, c1, c2, days), mass);
-                        const double change = new_mass - mass;
-                        s.buildup[bu] = new_mass;
-                        if (change > 0.0)
-                            s.led_buildup[static_cast<std::size_t>(m)] += change * norm;
-                    }
-                }
-
-                // --- Washoff (stepSurfaceQuality) -----------------------------
-                const int wt = s.wo_type[k];
-                // legacy findWashoffLoads returns below MIN_RUNOFF
-                // (2.31481e-8 ft/sec), on the ft/sec rate.
-                // legacy landuse_getWashoffLoad makes the load PROPORTIONAL to
-                // vOutflow, so a subcatchment that sheds nothing washes off
-                // nothing whatever is on the ground. `q` is that number
-                // (Voutflow/tStep); the pollutant kernel carries the same
-                // condition and SameParametersSameSurfaceLoads holds the two
-                // together.
-                if (wt != 0 && runoff_fts >= 2.31481e-8 && q > 0.0) {
-                    const double buildup  = s.buildup[bu];
-                    // legacy keeps Subcatch.area in ft2 as area / UCF(LANDAREA)
-                    // — 43561.6 ft2 per ACRE, 107639 per HECTARE. The
-                    // exact-acre constant is 3.7e-5 off on a US deck and a
-                    // factor 2.471 off on an SI one. The pollutant path
-                    // (SWMMEngine::stepSurfaceQuality) carries the same
-                    // correction; SameParametersSameSurfaceLoads asserts the
-                    // two stay bit-identical, so they move together.
-                    const double area_ft2 =
-                        area_ac / ucf::UCF(ucf::LANDAREA, ctx.options);
-                    (void)area_ft2;
-                    const double q_expon  = runoff_fts * ucf_rain;
-                    const double q_flow   = q * ucf_flow;
-                    double load = 0.0;
-                    switch (wt) {
-                        case 3: load = s.wo_coeff[k] * kLperFt3 * q * frac; break;                 // EMC
-                        case 1:                                                                    // EXP
-                            if (buildup > 0.0 && mcf_m > 0.0)
-                                load = (s.wo_coeff[k] / 3600.0) * std::pow(q_expon, s.wo_expon[k])
-                                     * (buildup * norm) / mcf_m;
-                            break;
-                        case 2: load = s.wo_coeff[k] * std::pow(q_flow, s.wo_expon[k]) * frac; break; // RC
-                        default: break;
-                    }
-                    const double avail    = (mcf_m > 0.0) ? (buildup * norm) / mcf_m : 0.0;
-                    const double max_load = avail / dt_runoff;
-                    if (load > max_load && wt != 3) load = max_load;
-
-                    const double washed_mass = load * mcf_m * dt_runoff;
-                    if (bt == 0 && washed_mass > buildup * norm) {
-                        // no buildup function: book the washoff as buildup so the
-                        // ledger balances (landuse.c:585-593)
-                        s.led_buildup[static_cast<std::size_t>(m)] += washed_mass;
-                        s.buildup[bu] = 0.0;
-                    } else if (norm > 0.0) {
-                        s.buildup[bu] = std::max(s.buildup[bu] - washed_mass / norm, 0.0);
-                    }
-                    const double bmp_removed = load * (s.wo_bmp_effic[k] / 100.0);
-                    if (bmp_removed > 0.0) {
-                        s.led_bmp_removal[static_cast<std::size_t>(m)] += bmp_removed * dt_runoff * mcf_m;
-                        load -= bmp_removed;
-                    }
-                    total_load += load;
-                }
-            }
-
-            // Review C3: the run-on load joins what this subcatchment sheds. With
-            // no runoff to carry it, it is booked as lost rather than as load.
-            if (!runon.empty()) {
-                const double ro = runon[s.sidx(i, m)];
-                if (ro > 0.0) {
-                    if (q > kMinRunoffRate) total_load += ro;
-                    else s.led_runon_lost[static_cast<std::size_t>(m)] += ro * dt_runoff * mcf_m;
-                }
-            }
-            // Reported concentration (surfqual.c:370) and the two bookings.
-            double conc = 0.0;
-            if (q > kMinRunoffRate && total_load > 0.0) conc = total_load / q / kLperFt3;
-            s.washoff_conc[s.sidx(i, m)] = conc;
-            if (total_load > 0.0) {
-                const double mass = total_load * dt_runoff * mcf_m;
-                const bool reaches_system =
-                    (ctx.subcatches.outlet_node[ui] >= 0 ||
-                     ctx.subcatches.outlet_subcatch[ui] == i);
-                if (reaches_system) s.led_runoff_load[static_cast<std::size_t>(m)] += mass;
-                s.led_subcatch_load[s.sidx(i, m)] += mass;
-            }
-        }
+void addRunon(SimulationContext& ctx, int donor, int receiver, double q) noexcept {
+    auto& s = ctx.reactions.surface;
+    if (!s.active()) return;
+    // The pollutant line in assembleRunon, species side: legacy
+    // subcatch.c:553, newQual += oldRunoff * oldQual * LperFT3.
+    for (int m = 0; m < s.n_species; ++m) {
+        const auto src = s.sidx(donor, m), dst = s.sidx(receiver, m);
+        if (src < s.washoff_conc_old.size() && dst < s.runon_qual_rate.size())
+            s.runon_qual_rate[dst] += q * s.washoff_conc_old[src] * 28.317;
     }
 }
+
 
 void sweep(SimulationContext& ctx, int sc, int lu, double frac, double removal_frac) {
     auto& s = ctx.reactions.surface;

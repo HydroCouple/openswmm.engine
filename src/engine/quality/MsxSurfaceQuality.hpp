@@ -92,10 +92,21 @@ void initState(SimulationContext& ctx);
  * @brief One runoff step: buildup accrual then washoff for every
  *        (subcatchment, land use, species); stores the washoff
  *        concentration per (subcatchment, species) for delivery.
- * @param dt_runoff   runoff step (s)
- * @param abs_time    absolute date-time at the start of the step (EXT buildup)
+ *        Runs the pollutant kernel (SurfaceSpeciesKernel) over the species
+ *        store (Multispecies Phase 2).
+ * @param dt_runoff        runoff step (s)
+ * @param old_runoff_time  seconds since the start at the step's start
  */
-void step(SimulationContext& ctx, double dt_runoff, double abs_time);
+void step(SimulationContext& ctx, double dt_runoff, double old_runoff_time);
+
+/// Post-LID bookings for the species, after the LID units have run
+/// (SWMMEngine::bookWashoffLoads' species half).
+void bookPostLid(SimulationContext& ctx, double dt_runoff,
+                 const std::vector<double>& lid_infil_vol);
+
+/// Run-on, beside the pollutant lines in SWMMEngine::assembleRunon.
+void clearRunon(SimulationContext& ctx) noexcept;
+void addRunon(SimulationContext& ctx, int donor, int receiver, double q) noexcept;
 
 /**
  * @brief Sweeping removal on the (subcatchment, land use) event the A7 block

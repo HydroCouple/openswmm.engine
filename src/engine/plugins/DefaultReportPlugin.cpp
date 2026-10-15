@@ -2340,14 +2340,15 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             std::fprintf(f, "\n  System                        ");
             for (int m = 0; m < nm; ++m) std::fprintf(f, "%14.3f", sys[static_cast<std::size_t>(m)]);
             WRITE(f, "");
-            std::fprintf(f, "  Surface ledger (species: initial buildup, net buildup, washed to network, swept, BMP removed, run-on lost):\n");
+            std::fprintf(f, "  Surface ledger (species: initial buildup, net buildup, wet deposition, washed to network, swept, BMP removed, infiltration loss):\n");
+            auto at = [](const std::vector<double>& v, std::size_t k) { return k < v.size() ? v[k] : 0.0; };
             for (int m = 0; m < nm; ++m) {
                 const auto um = static_cast<std::size_t>(m);
-                std::fprintf(f, "    %-16s %14.3f %14.3f %14.3f %14.3f %14.3f %14.3f\n",
+                std::fprintf(f, "    %-16s %14.3f %14.3f %14.3f %14.3f %14.3f %14.3f %14.3f\n",
                              ctx.reactions.species_name[um].c_str(),
-                             ms.led_init_buildup[um], ms.led_buildup[um],
+                             ms.led_init_buildup[um], ms.led_buildup[um], at(ms.led_wet_deposition, um),
                              ms.led_runoff_load[um], ms.led_sweeping[um], ms.led_bmp_removal[um],
-                             um < ms.led_runon_lost.size() ? ms.led_runon_lost[um] : 0.0);
+                             at(ms.led_infil_loss, um));
             }
             WRITE(f, "");
             WRITE(f, "");
