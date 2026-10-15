@@ -1,15 +1,37 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Caleb Buahin
 #include "CheckpointOutputPublication.hpp"
+#include "../core/FileIO.hpp"
 #include <atomic>
 #include <fstream>
 #include <stdexcept>
 #include <sys/stat.h>
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <fcntl.h>
 #include <io.h>
 #endif
 
 namespace openswmm::io {
+FILE* checkpointOpenOutput(const std::filesystem::path& path) {
+#ifdef _WIN32
+    // Publication replaces live files. CRT fopen does not share DELETE access.
+    HANDLE handle=CreateFileW(path.c_str(),GENERIC_READ|GENERIC_WRITE,
+        FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,CREATE_NEW,
+        FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(handle==INVALID_HANDLE_VALUE)return nullptr;
+    const int fd=_open_osfhandle(reinterpret_cast<intptr_t>(handle),_O_RDWR|_O_BINARY);
+    if(fd<0){CloseHandle(handle);return nullptr;}
+    FILE* stream=_fdopen(fd,"w+b");
+    if(!stream)_close(fd);
+    return stream;
+#else
+    return fopen_path(path,"w+bx");
+#endif
+}
 int checkpointFileDescriptor(FILE* stream) noexcept {
 #ifdef _WIN32
     return stream?_fileno(stream):-1;
@@ -26,13 +48,25 @@ bool fresh(const CheckpointOutputPublication::Output& output) {
        std::filesystem::file_size(output.destination,ec)!=output.fresh_header.size() || ec)return false;
     if(output.original_descriptor>=0) {
 #ifdef _WIN32
-        struct _stat64 opened{},named{};
-        if(_fstat64(output.original_descriptor,&opened) || _wstat64(output.destination.c_str(),&named))return false;
+        // CRT stat inode fields are not Windows file identities. Compare the
+        // live handle with the named file by volume serial and file index.
+        const auto original=reinterpret_cast<HANDLE>(_get_osfhandle(output.original_descriptor));
+        const auto named_handle=CreateFileW(output.destination.c_str(),FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
+        if(named_handle==INVALID_HANDLE_VALUE)return false;
+        BY_HANDLE_FILE_INFORMATION opened{},named{};
+        const bool identified=GetFileInformationByHandle(original,&opened) &&
+            GetFileInformationByHandle(named_handle,&named);
+        CloseHandle(named_handle);
+        if(!identified || (named.dwFileAttributes&FILE_ATTRIBUTE_REPARSE_POINT) ||
+           opened.dwVolumeSerialNumber!=named.dwVolumeSerialNumber ||
+           opened.nFileIndexHigh!=named.nFileIndexHigh || opened.nFileIndexLow!=named.nFileIndexLow)return false;
 #else
         struct stat opened{},named{};
         if(fstat(output.original_descriptor,&opened) || stat(output.destination.c_str(),&named))return false;
-#endif
         if(opened.st_dev!=named.st_dev || opened.st_ino!=named.st_ino)return false;
+#endif
     }
     std::ifstream in(output.destination,std::ios::binary);std::string bytes(output.fresh_header.size(),'\0');
     in.read(bytes.data(),bytes.size());return bool(in) && in.peek()==std::char_traits<char>::eof() && bytes==output.fresh_header;

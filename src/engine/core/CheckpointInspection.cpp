@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "CheckpointInspection.hpp"
-#include <charconv>
+#include <locale>
+#include <sstream>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -35,9 +36,10 @@ std::string quoted(std::string_view text) {
 }
 std::string number(double value) {
     if(!std::isfinite(value))throw std::logic_error("Checkpoint metadata contains a nonfinite number.");
-    char buffer[128];const auto r=std::to_chars(buffer,buffer+sizeof buffer,value,std::chars_format::general,std::numeric_limits<double>::max_digits10);
-    if(r.ec!=std::errc{})throw std::logic_error("Cannot serialize checkpoint metadata number.");
-    return {buffer,r.ptr};
+    std::ostringstream out;out.imbue(std::locale::classic());
+    out.precision(std::numeric_limits<double>::max_digits10);out<<value;
+    if(!out)throw std::logic_error("Cannot serialize checkpoint metadata number.");
+    return out.str();
 }
 std::string optional(const std::optional<double>& value){return value?number(*value):"null";}
 std::string count(uint64_t value){return quoted(std::to_string(value));}

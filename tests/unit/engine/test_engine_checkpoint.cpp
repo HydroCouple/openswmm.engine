@@ -37,6 +37,7 @@
 #include <fstream>
 #include <cstdlib>
 #include <iterator>
+#include <locale>
 #include <future>
 #include <numeric>
 #include <set>
@@ -2023,6 +2024,23 @@ TEST(EngineCheckpoint, CombinedOutputPublicationAndSpatialFailuresPreserveBothWr
         ASSERT_EQ(b.engine.loadCheckpoint(good.string()),"");compareMesh(a.engine,b.engine,name+"-retry");ASSERT_EQ(b.engine.end(),0);
     }
     ASSERT_EQ(a.engine.end(),0);
+}
+TEST(EngineCheckpoint, OutputPublicationKeepsLiveStreamsAndRejectsReplacedFileIdentity) {
+    const auto destination=root()/"publication-live",stage=root()/"publication-live-stage",moved=root()/"publication-live-moved";
+    for(const auto& path:{destination,stage,moved})std::filesystem::remove(path);
+    const auto open=[](const auto& path){return std::unique_ptr<FILE,decltype(&std::fclose)>(io::checkpointOpenOutput(path),&std::fclose);};
+    auto original=open(destination),prepared=open(stage);ASSERT_TRUE(original);ASSERT_TRUE(prepared);
+    ASSERT_EQ(std::fwrite("header",1,6,original.get()),6u);ASSERT_EQ(std::fflush(original.get()),0);
+    ASSERT_EQ(std::fwrite("prefix",1,6,prepared.get()),6u);ASSERT_EQ(std::fflush(prepared.get()),0);
+    EXPECT_FALSE(open(destination));EXPECT_EQ(bytes(destination),"header");
+    std::filesystem::rename(destination,moved);write(destination,"header");
+    EXPECT_THROW((io::CheckpointOutputPublication({{stage,destination,"header",io::checkpointFileDescriptor(original.get())}})),std::runtime_error);
+    EXPECT_EQ(bytes(destination),"header");EXPECT_EQ(bytes(stage),"prefix");
+    std::filesystem::remove(destination);std::filesystem::rename(moved,destination);
+    {io::CheckpointOutputPublication publication({{stage,destination,"header",io::checkpointFileDescriptor(original.get())}});publication.publish();}
+    EXPECT_EQ(bytes(destination),"prefix");
+    ASSERT_EQ(std::fwrite("-continued",1,10,prepared.get()),10u);ASSERT_EQ(std::fflush(prepared.get()),0);
+    EXPECT_EQ(bytes(destination),"prefix-continued");
 }
 TEST(EngineCheckpoint, OutputPublicationRollsBackAnEarlierRenameAndProtectsAliasedPaths) {
     const auto a=root()/"publication-a",b=root()/"publication-b",sa=root()/"publication-a-stage",sb=root()/"publication-b-stage";
@@ -4222,6 +4240,16 @@ struct PublicInspection {
         if(buffer.back()!=0)throw std::runtime_error("Inspection JSON is not terminated.");buffer.pop_back();return buffer;
     }
 };
+}
+TEST(EngineCheckpoint, PublicMetadataJsonUsesClassicLocaleAndRoundTripPrecision) {
+    struct Comma : std::numpunct<char> {char do_decimal_point() const override{return ',';} char do_thousands_sep() const override{return '.';} std::string do_grouping() const override{return "\3";}};
+    struct Restore {std::locale previous;~Restore(){std::locale::global(previous);}} restore{std::locale()};
+    std::locale::global(std::locale(std::locale::classic(),new Comma));
+    CheckpointInspection info;info.engine_seconds=std::nextafter(1.,2.);info.engine_date=12345.125;
+    const auto json=info.json();
+    EXPECT_NE(json.find("\"engine_seconds\":1.0000000000000002"),std::string::npos);
+    EXPECT_NE(json.find("\"engine_date\":12345.125"),std::string::npos);
+    EXPECT_EQ(json.find("12.345,125"),std::string::npos);
 }
 TEST(EngineCheckpoint, PublicMetadataJsonPreservesLargeCountsUnicodeAndRejectsInvalidFields) {
     CheckpointInspection info;info.engine_seconds=12.125;info.engine_date=36526.000000011576;

@@ -78,7 +78,7 @@ constexpr std::size_t kOutputBufferBytes = 1u << 20;
 
 int DefaultOutputPlugin::prepare(const SimulationContext& ctx) {
     // Open binary output file
-    out_file_ = openswmm::io::fopen_utf8(out_path_, checkpoint_fresh_ ? "w+bx" : "w+b");
+    out_file_ = checkpoint_fresh_ ? io::checkpointOpenOutput(io::utf8_path(out_path_)) : io::fopen_utf8(out_path_, "w+b");
     if (!out_file_) {
         last_error_ = "Cannot open output file: " + out_path_;
         return -1;

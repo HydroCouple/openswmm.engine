@@ -502,6 +502,8 @@ TEST(CommonSourceStage, CompletedSpatialOutletsReachTheHydraulicBridgeAfterSettl
     Model m;m.setup(true,1,false,false,false,a);ASSERT_FALSE(HasFatalFailure());
     m.context.nodes.resize(1);m.context.node_names.try_add("RECEIVER");
     m.context.subcatches.outlet_node={0,0};
+    // Manning runoff requires a positive slope on the draining subareas.
+    m.context.subcatches.slope={.01,.01};
     m.context.lid_controls.drain[0][0]=43.2;
     m.sources=runoff::SourceWaterDriver{};
     ASSERT_EQ(m.sources.initialize(m.context,{0,1},{{0,.5},{1,1}}),"");

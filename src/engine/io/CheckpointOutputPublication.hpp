@@ -8,6 +8,8 @@
 
 namespace openswmm::io {
 int checkpointFileDescriptor(FILE*) noexcept;
+// Create a fresh binary update stream whose handle permits checkpoint renames.
+FILE* checkpointOpenOutput(const std::filesystem::path&);
 // Internal checkpoint publication. Writers remain on their old handles until
 // every rename succeeds. This is not an atomic view for external readers or a
 // power-loss transaction. A failed rollback retains its backup for recovery.

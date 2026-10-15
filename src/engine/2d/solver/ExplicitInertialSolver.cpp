@@ -329,10 +329,16 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
 
 void ExplicitInertialSolver::refreshSubsurfaceRows() {
     gw_row_map_.assign(state_->transport.n_species,-1);
-    if(gw_ && gw_->transport().active())
-        for(int r=0;r<state_->transport.n_species;++r)
-            for(int g=0;g<gw_->transport().n_species;++g)
-                if(state_->transport.row_names[r]==gw_->transport().row_names[g]) gw_row_map_[r]=g;
+    if(gw_ && gw_->transport().active()) {
+        const auto& surface = state_->transport;
+        const auto& groundwater = gw_->transport();
+        if (surface.row_names.size() != static_cast<std::size_t>(surface.n_species) ||
+            groundwater.row_names.size() != static_cast<std::size_t>(groundwater.n_species))
+            throw std::invalid_argument("Surface and groundwater transport require a name for every species row.");
+        for(int r=0;r<surface.n_species;++r)
+            for(int g=0;g<groundwater.n_species;++g)
+                if(surface.row_names[r]==groundwater.row_names[g]) gw_row_map_[r]=g;
+    }
 }
 
 double ExplicitInertialSolver::donorConc(int s, int cell) const noexcept {
@@ -2090,7 +2096,8 @@ void ExplicitInertialSolver::runRk2Step(double dt) {
     // Member buffers: vector assignment reuses capacity, so no per-step
     // allocation (F6).
     rk_v0_  = state_->volume;
-    const auto boundary_receipts0=state_->boundary->receipts;
+    std::map<int, RuntimeReceipt> boundary_receipts0;
+    if (state_->boundary) boundary_receipts0 = state_->boundary->receipts;
     rk_qx0_ = qcx_;
     rk_qy0_ = qcy_;
     rk_bc0_ = bc_accum_; rk_ex0_ = exch_; rk_inf0_ = state_->infil_applied;
@@ -2124,7 +2131,7 @@ void ExplicitInertialSolver::runRk2Step(double dt) {
         }
         if (state_->depth[i] <= opts_->dry_depth) { qcx_[i] = 0.0; qcy_[i] = 0.0; }
     }
-    for(auto& entry:state_->boundary->receipts) {
+    if (state_->boundary) for(auto& entry:state_->boundary->receipts) {
         const auto& before=boundary_receipts0.at(entry.first); auto& now=entry.second;
         const auto blend=[](double a,double b){return a+0.5*(b-a);};
         now.requested=blend(before.requested,now.requested); now.applied=blend(before.applied,now.applied);

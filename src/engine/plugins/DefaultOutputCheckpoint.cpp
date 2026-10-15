@@ -115,7 +115,7 @@ std::shared_ptr<DefaultOutputPlugin::PreparedCheckpoint> DefaultOutputPlugin::pr
     for (int i = 0; i < 32 && !prepared->stream; ++i) {
         prepared->staging = path;
         prepared->staging += ".report-part-" + std::to_string(++serial);
-        prepared->stream = io::fopen_path(prepared->staging, "w+bx");
+        prepared->stream = io::checkpointOpenOutput(prepared->staging);
         if (!prepared->stream) prepared->staging.clear(); // never discard somebody else's file
     }
     require(prepared->stream, "Cannot create staged binary report prefix.");
