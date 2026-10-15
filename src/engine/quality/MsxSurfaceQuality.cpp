@@ -294,6 +294,26 @@ void step(SimulationContext& ctx, double dt_runoff, double abs_time) {
     const double ucf_rain = ucf::UCF(ucf::RAINFALL, ctx.options);
     const double ucf_flow = ucf::UCF(ucf::FLOW, ctx.options);
 
+    // Review C3 (2026-10-15): run-on. A subcatchment whose outlet is another
+    // subcatchment hands that subcatchment its previous step's species load
+    // (runoff × concentration, legacy subcatch_getRunon's one-step lag); the
+    // receiver carries it to its own outlet. `deliver` skips such a
+    // subcatchment, so before this its species reached nothing.
+    std::vector<double> runon;
+    if (s.washoff_conc_old.size() == static_cast<std::size_t>(nsc) * static_cast<std::size_t>(nm)) {
+        for (int i = 0; i < nsc; ++i) {
+            const auto ui = static_cast<std::size_t>(i);
+            const int k = (ui < ctx.subcatches.outlet_subcatch.size()) ? ctx.subcatches.outlet_subcatch[ui] : -1;
+            if (k < 0 || k == i || k >= nsc) continue;
+            if (ui < ctx.subcatches.outlet_node.size() && ctx.subcatches.outlet_node[ui] >= 0) continue;
+            const double q_old = (ui < ctx.subcatches.old_runoff.size()) ? ctx.subcatches.old_runoff[ui] : 0.0;
+            if (!(q_old > 0.0)) continue;
+            if (runon.empty()) runon.assign(static_cast<std::size_t>(nsc) * static_cast<std::size_t>(nm), 0.0);
+            for (int m = 0; m < nm; ++m)
+                runon[s.sidx(k, m)] += q_old * s.washoff_conc_old[s.sidx(i, m)] * kLperFt3;
+        }
+    }
+
     for (int i = 0; i < nsc; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         const double q       = ctx.subcatches.runoff[ui];    // cfs
@@ -422,6 +442,15 @@ void step(SimulationContext& ctx, double dt_runoff, double abs_time) {
                 }
             }
 
+            // Review C3: the run-on load joins what this subcatchment sheds. With
+            // no runoff to carry it, it is booked as lost rather than as load.
+            if (!runon.empty()) {
+                const double ro = runon[s.sidx(i, m)];
+                if (ro > 0.0) {
+                    if (q > kMinRunoffRate) total_load += ro;
+                    else s.led_runon_lost[static_cast<std::size_t>(m)] += ro * dt_runoff * mcf_m;
+                }
+            }
             // Reported concentration (surfqual.c:370) and the two bookings.
             double conc = 0.0;
             if (q > kMinRunoffRate && total_load > 0.0) conc = total_load / q / kLperFt3;

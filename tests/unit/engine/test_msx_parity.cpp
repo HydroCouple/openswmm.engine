@@ -590,3 +590,131 @@ TEST(MsxParityMixing, UntreatedStorageTracksResidenceTimeUnderEverySolver) {
         finish(r);
     }
 }
+
+// A2 (2026-10-15): an explicit solver on stiff kinetics overshoots below zero.
+// The negative concentration must not survive (nor be silently zeroed later by
+// transport): it is clamped where it is produced, with a warning. At base B
+// reached −1.78 here and A+B+C ended at 194 of 100.
+TEST(MsxParityReactions, StiffExplicitOvershootIsClampedAndReported) {
+    { std::ofstream f(kOutDir / "stiff.rxn");
+      f << "[REACTION_OPTIONS]\nSOLVER EUL\nCOUPLING NONE\nRATE_UNITS HR\n"
+           "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\nBULK C MG\n"
+           "[REACTION_COEFFICIENTS]\nCONSTANT k1 1.0\nCONSTANT k2 500.0\n"
+           "[REACTION_PIPES]\nRATE A -k1*A\nRATE B k1*A-k2*B\nRATE C k2*B\n"
+           "[REACTION_TANKS]\nRATE A -k1*A\nRATE B k1*A-k2*B\nRATE C k2*B\n"
+           "[REACTION_QUALITY]\nGLOBAL A 100\n"; }
+    const std::string body =
+        reviewOptions("") +
+        "[STORAGE]\nST1 0.0 5.0 2.0 FUNCTIONAL 0 0 500 0 0\n\n"
+        "[OUTFALLS]\nO1 -1.0 FREE NO\n\n"
+        "[WEIRS]\nW1 ST1 O1 TRANSVERSE 4.0 1.8 NO 0 0\n\n"
+        "[XSECTIONS]\nW1 RECT_OPEN 1.0 2.0 0 0\n\n"
+        "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions  config=\"stiff.rxn\"\n\n"
+        "[REPORT]\nINPUT NO\n";
+    DeckRun r = openDeck("stiff_overshoot", body);
+    ASSERT_TRUE(r.opened) << readAll(r.rpt);
+    ASSERT_TRUE(startRun(r));
+    double elapsed = 0.0, min_b = 1e300;
+    const int st = r.eng->context().node_names.find("ST1");
+    while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0)
+        min_b = std::min(min_b, speciesNodeConc(r, st, 1));
+    EXPECT_GE(min_b, 0.0) << "a negative concentration survived the reaction step";
+    bool warned = false;
+    for (const auto& w : r.eng->context().warnings)
+        if (w.find("negative") != std::string::npos) warned = true;
+    EXPECT_TRUE(warned) << "the clamp was silent";
+    finish(r);
+}
+
+// B14 (2026-10-15): the species routing ledger. Fed exactly like a pollutant
+// (inflow, a withdrawal, conduit seepage, an evaporating storage unit) and
+// with no kinetics, the species' ledger rows must equal the pollutant's.
+namespace {
+std::string ledgerDeck(const std::string& rxn) {
+    return reviewOptions("") +
+        "[EVAPORATION]\nCONSTANT 50.0\nDRY_ONLY NO\n\n"
+        "[POLLUTANTS]\n;;Name Units Crain Cgw Crdii Kdecay\nCu MG/L 0 0 0 0\n\n"
+        "[JUNCTIONS]\nJ1 2.0 3.0 0 0 0\n\n"
+        "[STORAGE]\nST1 0.0 5.0 1.0 FUNCTIONAL 0 0 400 0 1.0\n\n"
+        "[OUTFALLS]\nO1 -1.0 FREE NO\n\n"
+        "[CONDUITS]\nC1 J1 ST1 200.0 0.013 0 0 0\n\n"
+        "[ORIFICES]\nOR1 ST1 O1 SIDE 0 0.65 NO 0\n\n"
+        "[XSECTIONS]\nC1 CIRCULAR 1.0 0 0 0 1\nOR1 CIRCULAR 0.15 0 0 0\n\n"
+        "[LOSSES]\nC1 0 0 0 NO 20\n\n"
+        "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions  config=\"" + rxn + "\"\n\n"
+        "[INFLOWS]\nJ1 FLOW QIN FLOW 1.0 1.0\nJ1 Cu CIN CONCEN 1.0 1.0\nJ1 Sp CIN CONCEN 1.0 1.0\n\n"
+        "[DWF]\nJ1 FLOW -0.01\n\n"
+        "[TIMESERIES]\nQIN 0:00 0.08\nQIN 1:00 0.08\nQIN 1:30 0.0\nQIN 5:00 0.0\n"
+        "CIN 0:00 100.0\nCIN 5:00 100.0\n\n"
+        "[REPORT]\nINPUT NO\n";
+}
+}  // namespace
+
+TEST(MsxParityLedger, SpeciesLedgerMatchesThePollutantLedger) {
+    DeckRun r = openDeck("ledger_parity", ledgerDeck("model.rxn"));
+    ASSERT_TRUE(r.opened) << readAll(r.rpt);
+    ASSERT_TRUE(startRun(r));
+    stepAll(r);
+    const auto& ctx = r.eng->context();
+    const auto& mb = ctx.mass_balance;
+    const auto& led = ctx.reactions.msx_ledger;
+    ASSERT_TRUE(led.armed);
+    const double p_in = mb.qual_routing_dw_in[0] + mb.qual_routing_wet[0] + mb.qual_routing_gw_in[0] +
+                        mb.qual_routing_ii_in[0] + mb.qual_routing_ex_in[0];
+    ASSERT_GT(p_in, 0.0);
+    ASSERT_GT(mb.qual_routing_seep[0], 0.0) << "the conduit did not seep; deck defect";
+    auto near = [](double a, double b) { return std::fabs(a - b) <= 1e-9 * std::max(1.0, std::fabs(b)); };
+    EXPECT_TRUE(near(led.inflow[0], p_in)) << led.inflow[0] << " vs " << p_in;
+    EXPECT_TRUE(near(led.outflow[0], mb.qual_routing_outflow[0])) << led.outflow[0] << " vs " << mb.qual_routing_outflow[0];
+    EXPECT_TRUE(near(led.flooding[0], mb.qual_routing_flood[0]));
+    EXPECT_TRUE(near(led.seepage[0], mb.qual_routing_seep[0])) << led.seepage[0] << " vs " << mb.qual_routing_seep[0];
+    EXPECT_TRUE(near(led.init[0], mb.qual_routing_init[0]));
+    EXPECT_EQ(led.clamped[0], 0.0);
+    EXPECT_TRUE(near(led.reacted[0], 0.0)) << "no kinetics, yet reacted " << led.reacted[0];
+    // The report prints the block.
+    swmm_engine_end(r.e);
+    swmm_engine_report(r.e);
+    r.started = false;
+    finish(r);
+    EXPECT_NE(readAll(r.rpt).find("Reaction Species Routing"), std::string::npos);
+}
+
+TEST(MsxParityLedger, ReactingSpeciesLedgerCloses) {
+    { std::ofstream f(kOutDir / "decay.rxn");
+      f << "[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS HR\n[REACTION_SPECIES]\nBULK Sp MG\n"
+           "[REACTION_PIPES]\nRATE Sp -0.5*Sp\n[REACTION_TANKS]\nRATE Sp -0.5*Sp\n"; }
+    // The pollutant twin decays at the same rate (12 /day = 0.5 /hr) on the
+    // pollutant path, so both ledgers carry the CSTR scheme's own error.
+    std::string body = ledgerDeck("decay.rxn");
+    const std::string cu = "Cu MG/L 0 0 0 0\n";
+    body.replace(body.find(cu), cu.size(), "Cu MG/L 0 0 0 12\n");
+    DeckRun r = openDeck("ledger_decay", body);
+    ASSERT_TRUE(r.opened) << readAll(r.rpt);
+    ASSERT_TRUE(startRun(r));
+    stepAll(r);
+    swmm_engine_end(r.e);   // the pollutant's final stored mass is computed at end
+    r.started = false;
+    const auto& ctx = r.eng->context();
+    const auto& led = ctx.reactions.msx_ledger;
+    const auto& rx = ctx.reactions;
+    double fin = led.final_dry[0];
+    for (int j = 0; j < ctx.n_nodes(); ++j) fin += rx.msx_node_conc[static_cast<std::size_t>(j)] * ctx.nodes.volume[static_cast<std::size_t>(j)];
+    for (int j = 0; j < ctx.n_links(); ++j) fin += rx.msx_link_conc[static_cast<std::size_t>(j)] * ctx.links.volume[static_cast<std::size_t>(j)];
+    const double in = led.init[0] + led.inflow[0] + led.clamped[0];
+    const double out = led.outflow[0] + led.flooding[0] + led.seepage[0] + led.reacted[0] + fin;
+    ASSERT_GT(led.reacted[0], 0.05 * in) << "the decay removed almost nothing; deck defect";
+    // The legacy CSTR scheme does not close exactly with decay (−3.5 % here,
+    // legacy and v6 pollutant alike: staggered link delivery and backward-
+    // Euler mixing). The species ledger must report that same scheme error,
+    // not a booking error: within half a percentage point of the pollutant.
+    const auto& mb = ctx.mass_balance;
+    const double p_in = mb.qual_routing_ex_in[0] + mb.qual_routing_dw_in[0] + mb.qual_routing_init[0];
+    const double p_out = mb.qual_routing_outflow[0] + mb.qual_routing_flood[0] + mb.qual_routing_seep[0] +
+                         mb.qual_routing_reacted[0] + mb.qual_routing_final[0];
+    const double err_sp = (in - out) / in, err_p = (p_in - p_out) / p_in;
+    EXPECT_NEAR(err_sp, err_p, 0.005)
+        << "species error " << err_sp * 100 << " % vs pollutant " << err_p * 100 << " %";
+    EXPECT_NEAR(led.reacted[0], mb.qual_routing_reacted[0], 0.01 * mb.qual_routing_reacted[0])
+        << "species reacted " << led.reacted[0] << " vs pollutant " << mb.qual_routing_reacted[0];
+    finish(r);
+}

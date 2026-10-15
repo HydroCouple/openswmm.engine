@@ -1778,12 +1778,18 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
                     const double paired = std::min(S, (D > 0.0 ? D : 0.0));
                     // S4: rows route by kind — pollutant rows to the
                     // np-strided species queue, the age and temperature rows
-                    // to their scalar queues, MSX rows nowhere (the 1D node
-                    // has no MSX inflow accumulator for ANY loader yet — a 1D
-                    // seam, recorded; the mass stays in lost_coupling). The
-                    // pairing reads the published node ROW value, so the
-                    // temperature row pairs against the node temperature.
+                    // to their scalar queues, and (review D1, 2026-10-15)
+                    // reaction-species rows to the species mass queue that
+                    // feeds msx_ext_mass_in. They used to go nowhere and the
+                    // mass stayed in lost_coupling. The pairing reads the
+                    // published node ROW value, so the temperature row pairs
+                    // against the node temperature.
                     const auto npol = static_cast<std::size_t>(tr.n_pollut);
+                    const auto nmsx = static_cast<std::size_t>(tr.n_msx);
+                    const auto nsp_all = static_cast<std::size_t>(ctx.reactions.n_species());
+                    auto& mq = ctx.reactions.msx_coupling_queue;
+                    if (nmsx > 0 && mq.size() != static_cast<std::size_t>(ctx.n_nodes()) * nsp_all)
+                        mq.assign(static_cast<std::size_t>(ctx.n_nodes()) * nsp_all, 0.0);
                     for (std::size_t sp = 0; sp < ns; ++sp) {
                         double inc = tr.exch_mass[k * ns + sp];
                         if (paired > 0.0 &&
@@ -1798,6 +1804,9 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
                         } else if (static_cast<int>(sp) == tr.temp_row) {
                             if (ni < ctx.nodes.coupling_temp_vol_queue.size())
                                 row = &ctx.nodes.coupling_temp_vol_queue[ni];
+                        } else if (sp >= npol && sp < npol + nmsx) {
+                            const std::size_t k = ni * nsp_all + (sp - npol);
+                            if (k < mq.size()) row = &mq[k];
                         }
                         if (!row) continue;
                         *row += inc * options_.flow_2d_to_1d;
@@ -1968,9 +1977,14 @@ double SurfaceRouter2D::linkRowConc(const SimulationContext& ctx, int link,
         return (ul < ctx.heat_state.link_temp.size())
                    ? ctx.heat_state.link_temp[ul] : 0.0;
     }
-    // Pollutants only. MSX rows have no 1D link concentration the seam can
-    // read — the same gap the surface's own node seam records, and the
-    // reason an MSX row's mass stays where it is rather than crossing.
+    // Review F21 (2026-10-15): reaction-species rows read the conduit's
+    // published species concentration; they used to read nothing, so a
+    // leaking pipe delivered water without its species.
+    if (s >= tr.n_pollut && s < tr.n_pollut + tr.n_msx) {
+        const auto ns = static_cast<std::size_t>(ctx.reactions.n_species());
+        const auto k = ul * ns + static_cast<std::size_t>(s - tr.n_pollut);
+        return (k < ctx.reactions.msx_link_conc.size()) ? ctx.reactions.msx_link_conc[k] : 0.0;
+    }
     if (s < tr.n_pollut) {
         const int np = ctx.n_pollutants();
         const auto k = ul * static_cast<std::size_t>(np) +
@@ -2021,10 +2035,17 @@ void SurfaceRouter2D::flushAquiferNodeSpecies(SimulationContext& ctx) {
             } else if (sp == gtr.temp_row) {
                 if (ni < ctx.nodes.coupling_temp_vol_queue.size())
                     ctx.nodes.coupling_temp_vol_queue[ni] += m;
+            } else if (sp >= gtr.n_pollut && sp < gtr.n_pollut + gtr.n_msx) {
+                // Review F21 (2026-10-15): the species mass queue, drained
+                // into msx_ext_mass_in with the bed's water. It used to stay
+                // booked out of the aquifer and reach nothing.
+                const auto nsp_all = static_cast<std::size_t>(ctx.reactions.n_species());
+                auto& mq = ctx.reactions.msx_coupling_queue;
+                if (mq.size() != static_cast<std::size_t>(ctx.n_nodes()) * nsp_all)
+                    mq.assign(static_cast<std::size_t>(ctx.n_nodes()) * nsp_all, 0.0);
+                const std::size_t k = ni * nsp_all + static_cast<std::size_t>(sp - gtr.n_pollut);
+                if (k < mq.size()) mq[k] += m;
             }
-            // An MSX row has no 1D node inlet for any loader yet — the same
-            // recorded gap the surface seam has. Its mass stays booked out
-            // of the aquifer (`lost_node`) rather than vanishing silently.
         }
     }
 
@@ -2045,6 +2066,23 @@ void SurfaceRouter2D::flushAquiferNodeSpecies(SimulationContext& ctx) {
                 if (m != 0.0 &&
                     static_cast<std::size_t>(sp) < ctx.mass_balance.qual_routing_seep.size())
                     ctx.mass_balance.qual_routing_seep[static_cast<std::size_t>(sp)] += m;
+            }
+        }
+    }
+    // …and the reaction species the same recharge carried, on the species
+    // routing ledger (review B14/F21).
+    {
+        auto& rx = ctx.reactions;
+        auto& led = rx.msx_ledger;
+        const auto ns = static_cast<std::size_t>(rx.n_species());
+        if (led.armed && gtr.n_msx > 0 && led.seepage.size() == ns) {
+            for (std::size_t ni = 0; ni < nv.size() && ni < nn; ++ni) {
+                if (nv[ni] >= 0.0) continue;
+                const double v_1d = -nv[ni] * options_.flow_2d_to_1d;
+                for (std::size_t m = 0; m < ns; ++m) {
+                    const std::size_t k = ni * ns + m;
+                    if (k < rx.msx_node_conc.size()) led.seepage[m] += v_1d * rx.msx_node_conc[k];
+                }
             }
         }
     }

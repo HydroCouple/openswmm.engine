@@ -60,6 +60,7 @@
 #include "../plugins/ProcessComponentRegistry.hpp"
 #include "../transport/components/EulerianArdComponent/ArdConfig.hpp"
 #include "../transport/components/ReactionModule/ReactionLegacyBinding.hpp"
+#include "../transport/components/ReactionModule/MsxLegacyTransport.hpp"
 #include "../transport/components/ReactionModule/ReactionsComponent.hpp"
 #include "../transport/components/HeatModule/HeatComponent.hpp"
 #include "../transport/components/WaterAgeModule/WaterAgeComponent.hpp"
@@ -5049,6 +5050,9 @@ void SWMMEngine::stepRouting(double dt_routing) {
     // (msx_ext_mass_in, re-zeroed by computeAll) that the ARD engine, the
     // legacy MSX dispatch and LARD consume later in the step.
     if (!ctx_.options.ignore_quality) msxsurf::deliver(ctx_, dt_routing);
+    // Review D1/F21: species mass the 2D surface and the aquifer handed to
+    // nodes, at the coupled volume's own delivery rate.
+    if (!ctx_.options.ignore_quality) transport::drainMsxCouplingQueue(ctx_, dt_routing);
 
     // B2a. RDII inflows — apply pre-computed values from wet weather step,
     //      or, under [FILES] USE RDII, the interface file's flows (legacy
@@ -6079,6 +6083,9 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                 const auto up = static_cast<std::size_t>(p);
                 total[up] += quality_outflow * ctx_.nodes.conc[uj * np + up] * dt_routing;
             }
+            // Review B14: reaction species leave by the same classification.
+            transport::bookMsxSystemOutflow(ctx_, j, quality_outflow,
+                                            quality_flooding, dt_routing);
         }
         // Negative lateral flow withdraws the current mixed concentration.
         // Its water has already been booked by the inflow assembly.
@@ -6088,6 +6095,8 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                 ctx_.mass_balance.qual_routing_outflow[up] +=
                     -ctx_.nodes.lat_flow[uj] * ctx_.nodes.conc[uj * np + up] * dt_routing;
             }
+            transport::bookMsxSystemOutflow(ctx_, j, -ctx_.nodes.lat_flow[uj],
+                                            false, dt_routing);
         }
 
         // Storage losses are separate volumes (legacy removeStorageLosses,

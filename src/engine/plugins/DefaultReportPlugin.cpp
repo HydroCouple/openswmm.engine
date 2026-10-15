@@ -1537,6 +1537,76 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     }
 
     // =====================================================================
+    // Review B14 (2026-10-15): Reaction Species Routing Continuity — the
+    // [REACTION_SPECIES] twin of the block above, under QUALITY_SOLVER
+    // LEGACY. Same raw basis (concentration × ft³) and conversion: MG and
+    // UG species report mass like a pollutant; any other unit reports
+    // concentration × litres. The clamp row is mass ADDED where a reaction
+    // step drove a concentration negative (review A2).
+    // =====================================================================
+    if (ctx.n_nodes() > 0 && !opt.ignore_routing && !opt.ignore_quality &&
+        ctx.reactions.msx_ledger.armed && ctx.reactions.n_species() > 0) {
+        const auto& rx  = ctx.reactions;
+        const auto& led = rx.msx_ledger;
+        const int nsp = rx.n_species();
+        const auto uns = static_cast<std::size_t>(nsp);
+        static constexpr double LperFT3 = 28.317;
+        auto at = [](const std::vector<double>& v, std::size_t s) {
+            return s < v.size() ? v[s] : 0.0;
+        };
+        static const char* labels[10] = {
+            "Inflow (all sources) .....", "External Outflow .........",
+            "Flooding Loss ............", "Exfiltration Loss ........",
+            "Mass Reacted .............", "Clamped to Zero (added) ..",
+            "Initial Stored Mass ......", "Final Stored Mass ........",
+            "Continuity Error (%) .....", "" };
+        std::vector<std::array<double, 9>> vals(uns);
+        std::vector<std::string> unit_word(uns);
+        for (std::size_t s = 0; s < uns; ++s) {
+            double fin = at(led.final_dry, s);
+            for (int j = 0; j < ctx.n_nodes(); ++j)
+                fin += at(rx.msx_node_conc, static_cast<std::size_t>(j) * uns + s) *
+                       ctx.nodes.volume[static_cast<std::size_t>(j)];
+            for (int j = 0; j < ctx.n_links(); ++j)
+                fin += at(rx.msx_link_conc, static_cast<std::size_t>(j) * uns + s) *
+                       ctx.links.volume[static_cast<std::size_t>(j)];
+            const std::array<double, 8> raw = {
+                at(led.inflow, s), at(led.outflow, s), at(led.flooding, s),
+                at(led.seepage, s), at(led.reacted, s), at(led.clamped, s),
+                at(led.init, s), fin };
+            const double in_  = raw[0] + raw[5] + raw[6];
+            const double out_ = raw[1] + raw[2] + raw[3] + raw[4] + raw[7];
+            double err = 0.0;
+            if (std::fabs(in_ - out_) < 0.001) err = 0.0;
+            else if (in_ > 0.0)  err = 100.0 * (1.0 - out_ / in_);
+            else if (out_ > 0.0) err = 100.0 * (in_ / out_ - 1.0);
+            std::string u = s < rx.species_units.size() ? rx.species_units[s] : std::string();
+            for (auto& ch : u) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+            double cf = LperFT3;
+            if (u.rfind("MG", 0) == 0)      { cf *= cont_mass;          unit_word[s] = load_word; }
+            else if (u.rfind("UG", 0) == 0) { cf *= cont_mass / 1000.0; unit_word[s] = load_word; }
+            else                            { unit_word[s] = "conc*L"; }
+            for (int k = 0; k < 8; ++k) vals[s][static_cast<std::size_t>(k)] = raw[static_cast<std::size_t>(k)] * cf;
+            vals[s][8] = err;
+        }
+        for (std::size_t s1 = 0; s1 < uns; s1 += 5) {
+            const std::size_t s2 = std::min(s1 + 5, uns);
+            std::fprintf(f, "\n  **************************");
+            for (std::size_t s = s1; s < s2; ++s) std::fprintf(f, "%14s", rx.species_name[s].c_str());
+            std::fprintf(f, "\n  Reaction Species Routing  ");
+            for (std::size_t s = s1; s < s2; ++s) std::fprintf(f, "%14s", unit_word[s].c_str());
+            std::fprintf(f, "\n  **************************");
+            for (std::size_t s = s1; s < s2; ++s) std::fprintf(f, "    ----------");
+            for (int k = 0; k < 9; ++k) {
+                std::fprintf(f, "\n  %s", labels[k]);
+                for (std::size_t s = s1; s < s2; ++s) std::fprintf(f, "%14.3f", vals[s][static_cast<std::size_t>(k)]);
+            }
+            WRITE(f, "");
+            WRITE(f, "");
+        }
+    }
+
+    // =====================================================================
     // Highest Continuity Errors — matches legacy report_writeMaxStats()
     // =====================================================================
     // legacy stats_findMaxStats + report_writeMaxStats: dynamic wave with
@@ -2270,13 +2340,14 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             std::fprintf(f, "\n  System                        ");
             for (int m = 0; m < nm; ++m) std::fprintf(f, "%14.3f", sys[static_cast<std::size_t>(m)]);
             WRITE(f, "");
-            std::fprintf(f, "  Surface ledger (species: initial buildup, net buildup, washed to network, swept, BMP removed):\n");
+            std::fprintf(f, "  Surface ledger (species: initial buildup, net buildup, washed to network, swept, BMP removed, run-on lost):\n");
             for (int m = 0; m < nm; ++m) {
                 const auto um = static_cast<std::size_t>(m);
-                std::fprintf(f, "    %-16s %14.3f %14.3f %14.3f %14.3f %14.3f\n",
+                std::fprintf(f, "    %-16s %14.3f %14.3f %14.3f %14.3f %14.3f %14.3f\n",
                              ctx.reactions.species_name[um].c_str(),
                              ms.led_init_buildup[um], ms.led_buildup[um],
-                             ms.led_runoff_load[um], ms.led_sweeping[um], ms.led_bmp_removal[um]);
+                             ms.led_runoff_load[um], ms.led_sweeping[um], ms.led_bmp_removal[um],
+                             um < ms.led_runon_lost.size() ? ms.led_runon_lost[um] : 0.0);
             }
             WRITE(f, "");
             WRITE(f, "");

@@ -1634,3 +1634,80 @@ TEST(GwTransportKernel, GroundwaterHdfUnitsFollowNativeSpeciesEvenWhenSurfaceTra
         H5Fclose(h5);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Review F21 (2026-10-15): the 1D ⇄ aquifer seam for a reaction-component
+// species. Seeded like TSS, the species must cross both inbound seams and the
+// outbound one exactly as the pollutant does. At base an MSX row left the
+// aquifer as `lost_node` and reached nothing, and a leaking conduit delivered
+// none (its link concentration was never read).
+// ---------------------------------------------------------------------------
+namespace {
+std::string withSpeciesX(std::string body, const std::string& tag) {
+    fs::create_directories(kOutDir);
+    { std::ofstream f(kOutDir / (tag + ".rxn"));
+      f << "[REACTION_OPTIONS]\nSOLVER RK5\n[REACTION_SPECIES]\nBULK X MG\n"
+           "[REACTION_PIPES]\nRATE X 0\n[REACTION_TANKS]\nRATE X 0\n"; }
+    const std::string iq = "[GW_INITIAL_QUALITY]\n;;Scope Zone Species Value\n";
+    const auto at = body.find(iq);
+    if (at != std::string::npos)
+        body.insert(at + iq.size(), "*       SAT    X  5.0\n*       UNSAT  X  2.0\nCELL 1  SAT    X  25.0\n");
+    // Species rain in clean while TSS rains at 10 mg/L; take rain off the mesh
+    // so the two differ only through the seam under test.
+    const std::string rain = "RAINFALL_MODE SYSTEM";
+    const auto rp = body.find(rain);
+    if (rp != std::string::npos) body.replace(rp, rain.size(), "RAINFALL_MODE NONE");
+    body.insert(body.find("[REPORT]"),
+                "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions config=\"" + tag + ".rxn\"\n\n");
+    return body;
+}
+}  // namespace
+
+TEST(GwTransportKernel, DrainingAquiferHandsReactionSpeciesToTheNode) {
+    Deck r = open("seam_node_out_msx", withSpeciesX(seamDeck(0.95, 0.0, 0.0, 0.0), "seam_node_out_msx"));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r.e, 1), SWMM_OK);
+    r.started = true;
+    const auto& ctx = r.eng->context();
+    const int j1 = ctx.node_names.find("J1");
+    const auto np = static_cast<std::size_t>(ctx.n_pollutants());
+    // The junction is fed only by the bed. Seeded identically, the species
+    // must track TSS there at every step while the aquifer drains.
+    double peak_tss = 0.0, worst = 0.0, elapsed = 0.0;
+    while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+        const auto ns = static_cast<std::size_t>(ctx.reactions.n_species());
+        const double c_tss = ctx.nodes.conc[static_cast<std::size_t>(j1) * np];
+        const double c_x = ns ? ctx.reactions.msx_node_conc[static_cast<std::size_t>(j1) * ns] : 0.0;
+        peak_tss = std::max(peak_tss, c_tss);
+        worst = std::max(worst, std::fabs(c_x - c_tss));
+    }
+    const auto& t = r.eng->surfaceRouter2D().subsurface().transport();
+    ASSERT_EQ(t.n_msx, 1) << "the aquifer does not transport the species";
+    const auto x = static_cast<std::size_t>(t.n_pollut);
+    ASSERT_GT(t.lost_node[0], 0.0) << "the aquifer drained no TSS; deck defect";
+    ASSERT_GT(peak_tss, 1.0) << "the junction never carried TSS; deck defect";
+    EXPECT_NEAR(t.lost_node[x], t.lost_node[0], 1e-9 * t.lost_node[0])
+        << "the species left the aquifer differently from TSS";
+    EXPECT_LT(worst, 1e-9 * peak_tss)
+        << "species and TSS differ by up to " << worst << " at J1 (peak TSS " << peak_tss << ")";
+    finish(r);
+}
+
+TEST(GwTransportKernel, LeakingConduitCarriesReactionSpeciesIntoTheAquifer) {
+    std::string body = seamDeck(0.5, 0.0, 100.0, 0.0);
+    const std::string anchor = "[2D_AQUIFER_OPTIONS]\n";
+    body.insert(body.find(anchor) + anchor.size(), "LINK_SEEPAGE ONE_WAY\n");
+    Deck r = open("seam_link_msx", withSpeciesX(body, "seam_link_msx"));
+    ASSERT_TRUE(r.opened);
+    ASSERT_TRUE(run(r));
+    const auto& t = r.eng->surfaceRouter2D().subsurface().transport();
+    const auto& led = r.eng->surfaceRouter2D().subsurface().state();
+    ASSERT_EQ(t.n_msx, 1);
+    const auto x = static_cast<std::size_t>(t.n_pollut);
+    ASSERT_GT(led.led_link, 0.0) << "no seepage water; deck defect";
+    ASSERT_GT(t.gained_link[0], 0.0) << "TSS control delivered nothing";
+    EXPECT_GT(t.gained_link[x], 0.0) << "the conduit's species never reached the aquifer";
+    EXPECT_LE(t.gained_link[x] / led.led_link, 25.0 * (1.0 + 1e-9));
+    finish(r);
+}

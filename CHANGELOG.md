@@ -23,6 +23,16 @@ retroactive.
 
 ## [Unreleased]
 
+### Water-quality physics review fixes (2026-10-15)
+
+- **Aquifer inbound species units.** Node-bed recharge and leaking-conduit seepage booked their species mass in concentration × ft³ into the concentration × m³ aquifer store, so recharge carried 35.3× its water's concentration while both ledgers still closed. Mass now rides the 2D volume at both seams. Aquifer decks with node beds or seeping conduits and quality change.
+- **Treatment ledger.** `[TREATMENT]` removal was added to "Mass Reacted" as a rate; it is now booked as mass, and quality routing continuity closes as in legacy (a 50 % removal deck: 43.5 % → 2.55 %, legacy 2.69 %). Concentrations are unchanged.
+- **Reaction species (MSX) under `QUALITY_SOLVER LEGACY`.** Storage residence time (`HRT`) is now advanced at untreated storage nodes for tank kinetics under all three quality solvers; species mix with the storage and conduit evaporation factors and over the floored net-lateral denominator exactly as pollutants do (the denominator also no longer depends on whether `[POLLUTANTS]` exists, which affects age-only and heat-only decks with a withdrawal); species no longer react at flow-through junctions, matching pollutant decay.
+- **Negative concentrations from reaction steps** (an explicit solver on stiff kinetics) are set to zero where they are produced, with a warning and, under LEGACY, a ledger row for the mass added. Previously transport zeroed them silently.
+- **Reaction Species Routing Continuity.** New `.rpt` block and per-species ledger (inflow, outflow, flooding, exfiltration, reacted, clamped, initial and final storage) under LEGACY. With identical inputs and no kinetics its rows equal the pollutant ledger's.
+- **Species transfers that were dropped.** The 2D surface drain and the aquifer bed now deliver reaction species to their node, a leaking conduit delivers its species to the aquifer, and run-on carries species from one subcatchment to the next (one runoff step late, as legacy run-on; mass reaching a subcatchment without runoff is reported as run-on lost in the MSX washoff ledger).
+- Not yet: mesh water entering the network through a surface outfall and water gained by a conduit from the aquifer still carry no quality; reaction-species state, the new ledger and the species coupling queue are not part of hotstart or managed checkpoints.
+
 ### Rain gage control rules (2026-10-14)
 
 - Restore legacy `GAGE id INTENSITY` and `GAGE id n-HR_DEPTH` behavior in 6.0.0, including completed-hour accumulation, exact-hour timing, lookback parameters in numeric and modulated rules, named variables, and variable comparisons. Keep the 1–48-hour limit; reject longer requests instead of falling back to one hour.

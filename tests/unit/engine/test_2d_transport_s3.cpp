@@ -333,3 +333,37 @@ TEST(SurfaceTransportS3, SpeciesArePassengersOnTheCoupledHydraulics) {
     EXPECT_EQ(b.eng->context().mass_balance_2d.coupling_2d_to_1d_out, drained_q);
     close(b);
 }
+
+// ---------------------------------------------------------------------------
+// Review D1 (2026-10-15): the same drain carrying a reaction-component species.
+// The 2D→1D queue routed pollutant rows to the node and MSX rows nowhere, so
+// the junction read 0 for the species while it read c0 for the pollutant.
+// ---------------------------------------------------------------------------
+TEST(SurfaceTransportS3, DrainDeliversReactionSpeciesToTheNode) {
+    const double c0 = 4.0;
+    { std::ofstream f("_s3_drain_msx.rxn");
+      f << "[REACTION_OPTIONS]\nSOLVER RK5\n[REACTION_SPECIES]\nBULK X MG\n"
+           "[REACTION_PIPES]\nRATE X 0\n[REACTION_TANKS]\nRATE X 0\n"; }
+    std::string body = deck("J1", 1.0, 0.5, c0, "", 1.0);
+    const std::string iq = "[2D_INITIAL_QUALITY]\n* Cu 4\n";
+    const auto at = body.find(iq);
+    ASSERT_NE(at, std::string::npos);
+    body.insert(at + iq.size(), "* X 4\n");
+    body.insert(body.find("[REPORT]"),
+                "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions config=\"_s3_drain_msx.rxn\"\n\n");
+    CoupledRun r = runDeck("_s3_drain_msx", body);
+    ASSERT_TRUE(r.ok) << "coupled deck did not run";
+    const auto& ctx = r.eng->context();
+    const auto& tr  = r.eng->surfaceRouter2D().state().transport;
+    ASSERT_EQ(tr.n_msx, 1) << "the species is not transported on the mesh";
+    ASSERT_GT(ctx.mass_balance_2d.coupling_2d_to_1d_out, 0.5) << "no drain";
+    const int j1 = swmm_node_index(r.e, "J1");
+    const double cu = ctx.nodes.conc[static_cast<std::size_t>(j1)];
+    const auto ns = static_cast<std::size_t>(ctx.reactions.n_species());
+    const double x = ctx.reactions.msx_node_conc[static_cast<std::size_t>(j1) * ns];
+    ASSERT_NEAR(cu, c0, 1.0e-9 * c0) << "pollutant control failed; deck defect";
+    EXPECT_NEAR(x, cu, 1.0e-9 * c0)
+        << "the junction fed only by the drain reads species " << x
+        << " against pollutant " << cu;
+    close(r);
+}

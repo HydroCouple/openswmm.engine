@@ -24,6 +24,7 @@
  */
 
 #include "ReactionArdBinding.hpp"
+#include "ReactionLegacyBinding.hpp"
 
 #include <cmath>
 #include <string>
@@ -167,6 +168,8 @@ void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
             rx, /*tank=*/false, dt, sc.msx.data(), hydvar, sc.ws,
             (n_pollut > 0) ? sc.pollut.data() : nullptr);
         if (rep.ok) {
+            if (clampRateSpecies(rx, false, sc.msx.data(), nullptr) > 0.0)
+                noteNegativeClamp(ctx, "a transport cell");
             for (int m = 0; m < nm; ++m)
                 cell_phi[static_cast<std::size_t>(n_pollut + m) * unc + ucell] =
                     sc.msx[static_cast<std::size_t>(m)];
@@ -201,6 +204,8 @@ void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
             rx, /*tank=*/true, dt, sc.msx.data(), hydvar, sc.ws,
             (n_pollut > 0) ? sc.pollut.data() : nullptr);
         if (rep.ok) {
+            if (clampRateSpecies(rx, true, sc.msx.data(), nullptr) > 0.0)
+                noteNegativeClamp(ctx, "a node store");
             for (int m = 0; m < nm; ++m)
                 node_mass[und * uns + static_cast<std::size_t>(n_pollut + m)] =
                     sc.msx[static_cast<std::size_t>(m)] * vol;

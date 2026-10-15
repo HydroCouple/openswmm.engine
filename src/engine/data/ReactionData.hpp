@@ -139,6 +139,7 @@ struct ReactionData {
     std::vector<RxExprSpan> tank_expr;       ///< per species
     bool compiled = false;                   ///< R2 compile pass succeeded
     bool warned_react_failure       = false;
+    bool warned_negative_clamp      = false;   ///< review A2: once-per-run note
 
     // ---- R4: MSX species element state under QUALITY_SOLVER LEGACY --------
     // [element * n_species + s]; sized lazily by the legacy binding. R4b
@@ -157,6 +158,32 @@ struct ReactionData {
     // engine's node mixing: routeLegacyMsx (LEGACY), ArdEngine stage 1b /
     // 1a' (EULERIAN_ARD) and the LARD node stage.
     std::vector<double> msx_ext_mass_in;
+
+    /// Review D1/F21 (2026-10-15): species MASS (conc-units × ft³) handed to
+    /// a node by the 2D surface drain and the aquifer bed, [node * ns + m].
+    /// Drained into `msx_ext_mass_in` every routing step by the same
+    /// remaining-span rule as `NodeData::coupling_qual_queue`
+    /// (transport::drainMsxCouplingQueue). Empty until a seam books into it.
+    std::vector<double> msx_coupling_queue;
+
+    /// Review B14 (2026-10-15): the reaction-species routing ledger under
+    /// QUALITY_SOLVER LEGACY, per species, in conc-units × ft³ (the
+    /// pollutant ledger's convention). Armed by the first routeLegacyMsx
+    /// call; ARD keeps its own ledger and LARD is not yet booked here.
+    ///   init + inflow + clamped = outflow + flooding + seepage + reacted
+    ///                             + final storage (+ final_dry) + residual
+    struct MsxRoutingLedger {
+        bool armed = false;
+        std::vector<double> init, inflow, outflow, flooding, seepage,
+                            reacted, clamped, final_dry;
+        void arm(std::size_t ns) {
+            armed = true;
+            for (auto* v : {&init, &inflow, &outflow, &flooding, &seepage,
+                            &reacted, &clamped, &final_dry})
+                v->assign(ns, 0.0);
+        }
+    };
+    MsxRoutingLedger msx_ledger;
 
     /// BW-MSX (2026-09-19): surface buildup / washoff / sweeping of MSX
     /// species — rows parked by name at parse, resolved after this component

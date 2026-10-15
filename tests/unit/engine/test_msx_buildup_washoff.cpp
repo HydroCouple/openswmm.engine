@@ -377,3 +377,54 @@ TEST(MsxBuildupWashoff, MsxOnlyDeckBuildsUpAndWashesOff) {
     EXPECT_GT(max_x, 1.0) << "X must reach J1 with no pollutant in the deck";
     close(r);
 }
+
+// ---------------------------------------------------------------------------
+// Review C3 (2026-10-15): run-on. S1 (the only subcatchment with land-use
+// buildup) drains onto S2, an impervious subcatchment that drains to J1. Every
+// unit of X that reaches the network must come through S2 as run-on. At base
+// a subcatchment whose outlet is another subcatchment was skipped: S1's X was
+// washed off its land and delivered nowhere.
+// ---------------------------------------------------------------------------
+TEST(MsxBuildupWashoff, RunonCarriesSpeciesToTheReceivingSubcatchment) {
+    write("_bw_runon.rxn", rxn_inert());
+    std::string body = deck("", std::string(kPollut) + bw({"TSS", "X"}), pc("_bw_runon.rxn"));
+    auto rep = [&](const std::string& a, const std::string& b) {
+        const auto at = body.find(a); ASSERT_NE(at, std::string::npos) << a;
+        body.replace(at, a.size(), b);
+    };
+    rep("S1  RG1  J1  10.0  50   500  0.5  0\n",
+        "S1  RG1  S2  10.0  50   500  0.5  0\nS2  RG1  J1  2.0  100   200  0.5  0\n");
+    rep("S1  0.01  0.1  0.05  0.05  25  OUTLET\n",
+        "S1  0.01  0.1  0.05  0.05  25  OUTLET\nS2  0.01  0.1  0.05  0.05  0  OUTLET\n");
+    rep("S1  3.0  0.5  4.0  7  0\n", "S1  3.0  0.5  4.0  7  0\nS2  3.0  0.5  4.0  7  0\n");
+    DeckRun r = run("_bw_runon", body);
+    ASSERT_TRUE(r.ok);
+    const auto& ctx = cpp(r.e).context();
+    const auto& ms = ctx.reactions.surface;
+    double x_peak = 0.0, tss_peak = 0.0;
+    for (double v : r.x_node) x_peak = std::max(x_peak, v);
+    for (double v : r.tss_node) tss_peak = std::max(tss_peak, v);
+    ASSERT_GT(tss_peak, 0.0) << "TSS control never reached J1; deck defect";
+    EXPECT_GT(x_peak, 0.0) << "S1's species never reached the network";
+    // Everything washed off the land reached the system: system washed ==
+    // initial + net buildup − swept − BMP − what is still on the ground.
+    double final_store = 0.0;
+    for (int sc = 0; sc < ctx.n_subcatches(); ++sc) {
+        const double frac = ctx.subcatches.coverage[static_cast<std::size_t>(sc)] / 100.0;
+        final_store += ms.buildup[ms.bu_idx(sc, 0, 0)] * frac * ctx.subcatches.area[static_cast<std::size_t>(sc)];
+    }
+    const double washed = ms.led_init_buildup[0] + ms.led_buildup[0] - ms.led_sweeping[0]
+                        - ms.led_bmp_removal[0] - final_store;
+    ASSERT_GT(washed, 0.0);
+    // Run-on arrives one runoff step late (legacy subcatch_getRunon), so S1's
+    // final step is still in transit when the run ends: its runoff × its
+    // concentration over the 5-minute wet step, in the store's user mass.
+    const double in_transit = ctx.subcatches.runoff[0] * ms.washoff_conc[ms.sidx(0, 0)] *
+                              28.317 * 300.0 * ms.mcf[0];
+    EXPECT_NEAR(ms.led_runoff_load[0] + in_transit, washed, 1.0e-6 * washed)
+        << "reached the system " << ms.led_runoff_load[0] << " of " << washed << " washed off (run-on lost "
+        << (ms.led_runon_lost.empty() ? -1.0 : ms.led_runon_lost[0]) << "; S1 load "
+        << ms.led_subcatch_load[ms.sidx(0, 0)] << ", S2 load " << ms.led_subcatch_load[ms.sidx(1, 0)]
+        << ", S1 final runoff " << ctx.subcatches.runoff[0] << ")";
+    close(r);
+}

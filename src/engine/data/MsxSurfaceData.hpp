@@ -125,6 +125,10 @@ struct MsxSurfaceData {
     std::vector<double> led_runoff_load; ///< delivered to the network
     std::vector<double> led_sweeping;
     std::vector<double> led_bmp_removal;
+    /// Review C3: run-on that reached a subcatchment with no runoff to carry
+    /// it on (user mass) — the analogue of the pollutant path's ponded
+    /// infiltration of run-on, which this store does not model.
+    std::vector<double> led_runon_lost;
     std::vector<double> led_subcatch_load; ///< [sc * n_species + m], per-subcatchment total (report)
 
     bool resolved = false;
@@ -164,6 +168,7 @@ struct MsxSurfaceData {
         led_init_buildup.assign(nm, 0.0); led_buildup.assign(nm, 0.0);
         led_runoff_load.assign(nm, 0.0);  led_sweeping.assign(nm, 0.0);
         led_bmp_removal.assign(nm, 0.0);
+        led_runon_lost.assign(nm, 0.0);
         led_subcatch_load.assign(static_cast<std::size_t>(nsc) * nm, 0.0);
     }
 };

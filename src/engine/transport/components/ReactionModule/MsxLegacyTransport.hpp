@@ -74,6 +74,19 @@ namespace openswmm::transport {
 /// No-op unless a reaction system with at least one species is configured.
 void routeLegacyMsx(SimulationContext& ctx, double dt);
 
+/// Review D1/F21: drain `ReactionData::msx_coupling_queue` (species mass
+/// handed to nodes by the 2D surface and the aquifer) into
+/// `msx_ext_mass_in`, by the coupling-volume queue's remaining-span rule.
+/// Call after msxsurf::deliver, before assembleLateralInflows.
+void drainMsxCouplingQueue(SimulationContext& ctx, double dt);
+
+/// Review B14: book species leaving the system at `node` at flow `q`
+/// (ft³/s, > 0) for `dt` into the routing ledger's outflow or flooding row,
+/// at the node's published concentration. No-op until the LEGACY ledger is
+/// armed. Called from the same classification that books pollutants.
+void bookMsxSystemOutflow(SimulationContext& ctx, int node, double q,
+                          bool flooding, double dt);
+
 }  // namespace openswmm::transport
 
 #endif  // OPENSWMM_ENGINE_TRANSPORT_MSX_LEGACY_TRANSPORT_HPP
