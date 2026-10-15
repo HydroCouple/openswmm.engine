@@ -1266,13 +1266,16 @@ TEST(RichardsAquiferTrial, ManyContactsShareOneReceiverWithoutAreaClampOrOrderDe
     std::vector<RichardsBedBinding> bindings;for(int n=0;n<131;++n)bindings.push_back({n,&columns[n],10,.5,1});
     const auto before=rig.gw.state();auto a=trialRichardsBeds(rig.gw,20,bindings);ASSERT_TRUE(a.error.empty())<<a.error;
     std::reverse(bindings.begin(),bindings.end());auto b=trialRichardsBeds(rig.gw,20,bindings);ASSERT_TRUE(b.error.empty())<<b.error;
-    double sum=0;int cap_hits=0;
+    long double sum=0;int cap_hits=0;
     for(std::size_t n=0;n<a.receipts.size();++n){const auto& r=a.receipts[n];sum+=r.accepted_down;cap_hits+=a.reports[n].bottom_out_limited;
         EXPECT_EQ(a.columns[n].water,b.columns[n].water);EXPECT_DOUBLE_EQ(r.accepted_down,b.receipts[n].accepted_down);
         EXPECT_EQ(r.node,int(n));EXPECT_LE(r.accepted_down,r.reserved_down);
         EXPECT_NEAR(columnWater(columns[n])-columnWater(a.columns[n]),r.accepted_down-r.accepted_up+a.reports[n].evaporation,1.e-10);
     }
-    ASSERT_EQ(a.budgets.size(),1u);EXPECT_LE(sum,a.budgets[0].second.receiver);EXPECT_GT(cap_hits,0);
+    ASSERT_EQ(a.budgets.size(),1u);
+    // Receipts are doubles; allow one representable step when their sum is
+    // accumulated using the platform's long-double representation.
+    EXPECT_LE(sum,std::nextafter(a.budgets[0].second.receiver,std::numeric_limits<double>::infinity()));EXPECT_GT(cap_hits,0);
     EXPECT_EQ(rig.gw.state().hg,before.hg);EXPECT_EQ(rig.gw.state().hu,before.hu);EXPECT_EQ(rig.gw.state().nacc,before.nacc);
 }
 TEST(RichardsAquiferTrial, SharedDryDonorCapsUpwardFlowAcrossEveryClosureAndEtClaim) {
@@ -1635,7 +1638,10 @@ TEST(RichardsPendingSteps, PackedColumnsShareTheWholeWindowReceiverWithoutRenewi
     auto x=acceptRichardsBedsAcrossSteps(a.gw,sa,0,20,{5,10,20},oa),y=acceptRichardsBedsAcrossSteps(b.gw,sb,0,20,{5,10,20},ob);
     ASSERT_TRUE(x.error.empty())<<x.error;ASSERT_TRUE(y.error.empty())<<y.error;
     long double spent=0;const double ceiling=x.trial.budgets[0].second.receiver;
-    for(const auto& step:x.steps){for(const auto& r:step.receipts)spent+=r.accepted_down;EXPECT_LE(spent,ceiling);}
+    // The same shared ceiling applies to every prefix of completed steps;
+    // one double ulp covers rounding across contacts and step boundaries.
+    for(const auto& step:x.steps){for(const auto& r:step.receipts)spent+=r.accepted_down;
+        EXPECT_LE(spent,std::nextafter(ceiling,std::numeric_limits<double>::infinity()));}
     EXPECT_GT(spent,0);EXPECT_NEAR(initial-ownedWater(a.gw,ca)-a.gw.state().led_et-a.gw.state().led_deep,0,1e-10);
     for(int n=0;n<65;++n){EXPECT_EQ(ca[n].water,cb[n].water);EXPECT_DOUBLE_EQ(x.trial.receipts[n].accepted_down,y.trial.receipts[n].accepted_down);}
     EXPECT_EQ(a.gw.state().hg,b.gw.state().hg);EXPECT_EQ(a.gw.richardsBedDownCumulative(),b.gw.richardsBedDownCumulative());
