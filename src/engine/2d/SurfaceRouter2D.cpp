@@ -2247,13 +2247,15 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
             // disappearance. A GAINING conduit is the other direction and
             // has no 1D receiver yet (see the T7.4 handoff): its water
             // arrives in the pipe without the aquifer's quality.
+            //     Review F22 (2026-10-15): in the aquifer's conc·m³, i.e.
+            //     on `vol_2d`. Booking `rate·barrels·dt·weight` (ft³) made a
+            //     leaking pipe deliver 35.31× its own concentration.
             if (rate > 0.0 && subsurface_.transport().active()) {
                 const auto& gtr = subsurface_.transport();
-                const double v_1d = rate * barrels * routing_dt * sh.weight;
                 for (int sp = 0; sp < gtr.n_species; ++sp) {
                     const double c = linkRowConc(ctx, sh.link, sp, gtr);
                     if (c != 0.0)
-                        subsurface_.bookLinkSeepageMass(sh.cell, sp, v_1d * c);
+                        subsurface_.bookLinkSeepageMass(sh.cell, sp, vol_2d * c);
                 }
             }
         }

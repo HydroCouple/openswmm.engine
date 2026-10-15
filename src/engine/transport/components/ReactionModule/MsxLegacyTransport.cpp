@@ -110,7 +110,7 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
             sc.mass_in[udn * uns + s] += q * sc.link_old[uj * uns + s];
     }
 
-    // ---- 3. Node mixing (mixAtNodes mirror; no evap factor). External
+    // ---- 3. Node mixing (mixAtNodes mirror, storage evap factor). External
     //         loads: U2 (2026-09-07) — [INFLOWS] rows naming a species
     //         arrive through msx_ext_mass_in (a RATE, the qual_mass_in
     //         shape) and join the link mass here; empty when no such row
@@ -133,6 +133,9 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
         // exactly as they do for a pollutant.
         const bool reactor = quality::nodeIsReactor(ctx, i);
         const bool dry     = quality::nodeIsDry(ctx, i, q_in);
+        // Review B1 (2026-10-15): a species concentrates with the water it
+        // is dissolved in, exactly as a pollutant does (mixAtNodes).
+        const double f_evap = reactor ? quality::storageEvapFactor(ctx, i) : 1.0;
         for (std::size_t s = 0; s < uns; ++s) {
             const double c_old = sc.node_old[ui * uns + s];
             const double ext_rate = has_ext ? rx.msx_ext_mass_in[ui * uns + s] : 0.0;
@@ -153,13 +156,14 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
                 continue;
             }
 
+            const double c1 = c_old * f_evap;
             double c_new;
             if (q_in <= LEGACY_ZERO) {
-                c_new = zero_bf ? 0.0 : c_old;
+                c_new = zero_bf ? 0.0 : c1;
             } else {
                 const double c_in  = mass / v_in;
-                const double c_max = std::max(c_old, c_in);
-                c_new = (c_old * v_old + mass) / (v_old + v_in);
+                const double c_max = std::max(c1, c_in);
+                c_new = (c1 * v_old + mass) / (v_old + v_in);
                 c_new = std::min(c_new, c_max);
             }
             if (dry) c_new = 0.0;

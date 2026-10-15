@@ -825,16 +825,20 @@ void SubsurfaceSolver::sampleNodeExchange(const NodeData* nodes, double dt, doub
         // sides and no mapping is needed — only the unit factor the volume
         // already takes. The aquifer→node direction is booked at the CELL's
         // firing instead, where the cell's concentration is known.
+        //     Review F22 (2026-10-15): the store is concentration × m³, so
+        //     the mass rides the 2D volume `-vol`. This booked the 1D's
+        //     ft³ instead, and every recharge carried 35.31× its water's
+        //     concentration into the aquifer — invisible to both ledgers,
+        //     because the booking and the store shared the factor.
         if (tr_.active() && vol < 0.0 && node_row_conc_ != nullptr &&
             node_row_ns_ == tr_.n_species) {
-            const double vol_1d_to_2d = opts_ ? opts_->vol_1d_to_2d : 1.0;
-            const double v_1d = -vol / std::max(vol_1d_to_2d, kTiny);  // 1D volume units
+            const double v_2d = -vol;  // m³, the aquifer's own volume unit
             const auto nb = node_beds_.size();
             for (int sp = 0; sp < tr_.n_species; ++sp) {
                 const double c = node_row_conc_[ni * static_cast<std::size_t>(node_row_ns_) +
                                                 static_cast<std::size_t>(sp)];
                 if (c == 0.0) continue;
-                tr_.nacc_mass[static_cast<std::size_t>(sp) * nb + b] += v_1d * c;
+                tr_.nacc_mass[static_cast<std::size_t>(sp) * nb + b] += v_2d * c;
             }
         }
         state_.nacc[b] += vol;                       // gathered at the GW firing

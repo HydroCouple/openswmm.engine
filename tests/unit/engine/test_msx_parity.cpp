@@ -462,3 +462,131 @@ TEST(MsxParityForcing, ReservedForcingNeedsItsOption) {
                                     SWMM_FORCING_PERSIST), SWMM_OK);
     finish(r);
 }
+
+// ---------------------------------------------------------------------------
+// Review round 1 (2026-10-15): the LEGACY species mirror must mix exactly as
+// the pollutant path does, and residence time must exist for tank kinetics.
+// ---------------------------------------------------------------------------
+namespace {
+
+std::string reviewOptions(const std::string& extra) {
+    return "[OPTIONS]\n"
+           "FLOW_UNITS           CMS\nFLOW_ROUTING         DYNWAVE\n"
+           "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+           "END_DATE             01/01/2026\nEND_TIME             03:00:00\n"
+           "REPORT_STEP          00:05:00\nWET_STEP             00:05:00\n"
+           "DRY_STEP             00:05:00\nROUTING_STEP         30\n"
+           "ALLOW_PONDING        NO\n" + extra + "\n";
+}
+const char* kReactions =
+    "[PROCESS_COMPONENTS]\n"
+    "org.hydrocouple.openswmm.reactions  config=\"model.rxn\"\n\n";
+
+}  // namespace
+
+// B1: a closed, evaporating storage unit. The pollutant concentrates by the
+// storage unit's evaporation factor (legacy findStorageQual); a species with
+// the same initial concentration and no kinetics must concentrate with it.
+// At base the species mirror had no evaporation factor and stayed at 100.
+TEST(MsxParityMixing, EvaporatingStorageConcentratesSpeciesLikeAPollutant) {
+    const std::string body =
+        reviewOptions("") +
+        "[EVAPORATION]\nCONSTANT 250.0\nDRY_ONLY NO\n\n"
+        "[POLLUTANTS]\n;;Name Units Crain Cgw Crdii Kdecay\nCu MG/L 0 0 0 0\n\n"
+        "[STORAGE]\nST1 0.0 5.0 2.0 FUNCTIONAL 0 0 500 0 1.0\n\n"
+        "[OUTFALLS]\nO1 -1.0 FREE NO\n\n"
+        "[WEIRS]\nW1 ST1 O1 TRANSVERSE 4.0 1.8 NO 0 0\n\n"
+        "[XSECTIONS]\nW1 RECT_OPEN 1.0 2.0 0 0\n\n" +
+        std::string(kReactions) +
+        "[INITIAL_QUALITY]\nNODE ST1 Cu 100.0\nNODE ST1 Sp 100.0\n\n"
+        "[REPORT]\nINPUT NO\n";
+    DeckRun r = openDeck("evap_storage", body);
+    ASSERT_TRUE(r.opened) << readAll(r.rpt);
+    ASSERT_TRUE(startRun(r));
+    stepAll(r);
+    const auto& ctx = r.eng->context();
+    const int st = ctx.node_names.find("ST1");
+    ASSERT_GE(st, 0);
+    const double cu = ctx.nodes.conc[static_cast<std::size_t>(st) *
+                                     static_cast<std::size_t>(ctx.n_pollutants())];
+    const double sp = speciesNodeConc(r, st, 0);
+    ASSERT_GT(cu, 100.5) << "the storage did not evaporate; deck defect";
+    EXPECT_NEAR(sp, cu, 1.0e-12 * cu)
+        << "species " << sp << " vs pollutant " << cu
+        << " in the same evaporating storage";
+    finish(r);
+}
+
+// B2: legacy forms a node's mixing denominator from the floored NET lateral
+// flow, so a withdrawal (a negative DWF row) concentrates the remaining
+// inflow. The species must see the same denominator whether or not the deck
+// also declares a pollutant. At base the correction ran only when
+// [POLLUTANTS] existed: 166.7 mg/L with one, 100 without.
+TEST(MsxParityMixing, WithdrawalDenominatorDoesNotDependOnPollutantCount) {
+    auto body = [](bool with_pollutant) {
+        std::string s = reviewOptions("");
+        if (with_pollutant)
+            s += "[POLLUTANTS]\n;;Name Units Crain Cgw Crdii Kdecay\nCu MG/L 0 0 0 0\n\n";
+        s += "[JUNCTIONS]\nJ1 0.0 3.0 0 0 0\n\n"
+             "[OUTFALLS]\nO1 -1.0 FREE NO\n\n"
+             "[CONDUITS]\nC1 J1 O1 120.0 0.013 0 0 0\n\n"
+             "[XSECTIONS]\nC1 CIRCULAR 1.0 0 0 0 1\n\n";
+        s += kReactions;
+        s += "[INFLOWS]\nJ1 FLOW QIN FLOW 1.0 1.0\nJ1 Sp CIN CONCEN 1.0 1.0\n";
+        if (with_pollutant) s += "J1 Cu CIN CONCEN 1.0 1.0\n";
+        s += "\n[DWF]\nJ1 FLOW -0.4\n\n"
+             "[TIMESERIES]\nQIN 0:00 1.0\nQIN 5:00 1.0\nCIN 0:00 100.0\nCIN 5:00 100.0\n\n"
+             "[REPORT]\nINPUT NO\n";
+        return s;
+    };
+    double sp[2] = {0.0, 0.0};
+    for (int k = 0; k < 2; ++k) {
+        DeckRun r = openDeck(k ? "withdrawal_mixed" : "withdrawal_msx_only", body(k == 1));
+        ASSERT_TRUE(r.opened) << readAll(r.rpt);
+        ASSERT_TRUE(startRun(r));
+        stepAll(r);
+        sp[k] = speciesNodeConc(r, r.eng->context().node_names.find("J1"), 0);
+        finish(r);
+    }
+    ASSERT_GT(sp[1], 150.0) << "the mixed deck did not concentrate; deck defect";
+    EXPECT_NEAR(sp[0], sp[1], 1.0e-12 * sp[1])
+        << "MSX-only " << sp[0] << " vs mixed " << sp[1];
+}
+
+// A6: residence time at a storage unit WITHOUT a treatment expression. Tank
+// kinetics read HRT; at base only treated storage nodes ever updated it, so
+// this one read 0 for the whole run under every solver.
+TEST(MsxParityMixing, UntreatedStorageTracksResidenceTimeUnderEverySolver) {
+    for (int s = 0; s < 3; ++s) {
+        const std::string body =
+            reviewOptions(kSolvers[s]) +
+            "[POLLUTANTS]\n;;Name Units Crain Cgw Crdii Kdecay\nCu MG/L 0 0 0 0\n\n"
+            "[JUNCTIONS]\nJ1 2.0 3.0 0 0 0\n\n"
+            "[STORAGE]\nST1 0.0 5.0 1.0 FUNCTIONAL 0 0 400 0 0\n\n"
+            "[OUTFALLS]\nO1 -1.0 FREE NO\n\n"
+            "[CONDUITS]\nC1 J1 ST1 60.0 0.013 0 0 0\n\n"
+            "[ORIFICES]\nOR1 ST1 O1 SIDE 0 0.65 NO 0\n\n"
+            "[XSECTIONS]\nC1 CIRCULAR 1.0 0 0 0 1\nOR1 CIRCULAR 0.15 0 0 0\n\n" +
+            std::string(kReactions) +
+            "[INFLOWS]\nJ1 FLOW QIN FLOW 1.0 1.0\n\n"
+            "[TIMESERIES]\nQIN 0:00 0.05\nQIN 5:00 0.05\n\n"
+            "[REPORT]\nINPUT NO\n";
+        DeckRun r = openDeck(std::string("hrt_untreated_") + std::to_string(s), body);
+        ASSERT_TRUE(r.opened) << readAll(r.rpt);
+        ASSERT_TRUE(startRun(r));
+        stepAll(r);
+        const auto& ctx = r.eng->context();
+        const auto st = static_cast<std::size_t>(ctx.node_names.find("ST1"));
+        const double v = ctx.nodes.volume[st];
+        const double q = ctx.nodes.inflow[st];
+        ASSERT_GT(q, 0.0);
+        const double hrt = ctx.nodes.hrt[st];
+        // Three hours of near-steady through-flow: the residence-time
+        // recursion approaches V/Q (legacy updateHRT's fixed point).
+        EXPECT_GT(hrt, 0.5 * v / q) << "solver " << s << ": HRT " << hrt
+                                    << " s, V/Q " << v / q << " s";
+        EXPECT_LT(hrt, 1.5 * v / q) << "solver " << s << ": HRT " << hrt
+                                    << " s, V/Q " << v / q << " s";
+        finish(r);
+    }
+}

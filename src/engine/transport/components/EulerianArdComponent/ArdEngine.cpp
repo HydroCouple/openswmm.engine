@@ -32,6 +32,7 @@
 #include "../../../core/SimulationContext.hpp"
 #include "../../../core/UnitConversion.hpp"
 #include "../../../quality/NegativeSources.hpp"
+#include "../../../quality/QualityRouting.hpp"
 #include "../../../hydraulics/Node.hpp"
 #include "../../InitialQualitySeeds.hpp"
 #include "../../TransportPolicy.hpp"   // E2
@@ -1268,6 +1269,7 @@ void ArdEngine::step(SimulationContext& ctx, double dt) {
     // splitting, documented; the integrator substeps adaptively inside):
     // exact-exponential kdecay on pollutant rows + MSX integration per cell
     // (pipe scope) and per node store (tank scope).
+    quality::updateUntreatedStorageHrt(ctx, dt);   // review A6: tank HRT
     transport::reactArdStage(
         ctx, dt, state_.cell_phi.data(), state_.cell_a.data(),
         mesh_.cell_dx.data(), mesh_.n_cells(), node_mass_.data(),

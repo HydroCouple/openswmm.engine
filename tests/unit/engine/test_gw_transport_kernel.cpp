@@ -875,6 +875,8 @@ struct SeamResult {
     double seep_ledger = 0.0;    ///< 1D qual_routing_seep
     double ex_in_ledger = 0.0;   ///< 1D qual_routing_ex_in (the coupling row)
     double v12 = 1.0;            ///< vol_1d_to_2d, for the unit check
+    double led_node = 0.0;       ///< water ledger, m³, + out of the aquifer
+    double led_link = 0.0;       ///< water ledger, m³, + into the aquifer
 };
 
 SeamResult runSeam(const std::string& tag, const std::string& body) {
@@ -895,6 +897,8 @@ SeamResult runSeam(const std::string& tag, const std::string& body) {
         o.init        = t.init_mass[0];
     }
     o.v12 = r.eng->surfaceRouter2D().options().vol_1d_to_2d;
+    o.led_node = r.eng->surfaceRouter2D().subsurface().state().led_node;
+    o.led_link = r.eng->surfaceRouter2D().subsurface().state().led_link;
     for (double v : ctx.nodes.coupling_qual_queue) o.queue_sum += v;
     if (!ctx.mass_balance.qual_routing_gw_in.empty())
         o.gw_in_ledger = ctx.mass_balance.qual_routing_gw_in[0];
@@ -1196,6 +1200,16 @@ TEST(GwTransportKernel, LeakingConduitCarriesItsQualityIntoTheAquifer) {
     // is the quantity the aquifer received; the two are booked on opposite
     // sides of one transfer, never removed twice from the 1D.
     EXPECT_GT(s.seep_ledger, 0.0) << "the 1D booked no exfiltration";
+    // Review F22 (2026-10-15): the mass must arrive in the AQUIFER's units.
+    // Per delivered m³ it cannot carry more than the richest water on the
+    // deck (cell 1's 25 mg/L seed; rain is 10, the rest of the column 5 and
+    // 2). Booking the conduit's conc·ft³ into the conc·m³ store made it
+    // carry 35.31× the pipe's concentration.
+    ASSERT_GT(s.led_link, 0.0) << "no seepage water arrived; deck defect";
+    EXPECT_LE(s.gained_link / s.led_link, 25.0 * (1.0 + 1.0e-9))
+        << "the aquifer received " << s.gained_link << " conc·m³ with "
+        << s.led_link << " m³ — " << s.gained_link / s.led_link
+        << " per m³ (1/vol_1d_to_2d = " << 1.0 / s.v12 << ")";
 }
 
 TEST(GwTransportKernel, RechargingNodeSendsItsQualityDownTheBedAndIsLedgered) {
@@ -1224,6 +1238,14 @@ TEST(GwTransportKernel, RechargingNodeSendsItsQualityDownTheBedAndIsLedgered) {
     // reason its quality continuity error used to grow by exactly this.
     EXPECT_GT(s.seep_ledger, 0.0)
         << "the node gave up mass with no ledger entry (the pre-T7.4 defect)";
+    // Review F22 (2026-10-15): the node's water is at most 50 mg/L (its only
+    // inflow) and the aquifer it could have drawn from is at most 25, so a
+    // recharge cannot deliver more than 50 per m³ — in the aquifer's units.
+    ASSERT_LT(s.led_node, 0.0) << "the bed did not recharge; deck defect";
+    EXPECT_LE(s.gained_node / -s.led_node, 50.0 * (1.0 + 1.0e-9))
+        << "the aquifer received " << s.gained_node << " conc·m³ with "
+        << -s.led_node << " m³ — " << s.gained_node / -s.led_node
+        << " per m³ (1/vol_1d_to_2d = " << 1.0 / s.v12 << ")";
 }
 
 TEST(GwTransportKernel, DrainingAquiferHandsItsMassToTheNodeQueue) {

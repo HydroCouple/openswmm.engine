@@ -579,6 +579,7 @@ public:
         //      integrator handles only MSX kinetics), so there is no
         //      double-decay the way the legacy binding had to avoid.
         if (L.msx_first >= 0) {
+            quality::updateUntreatedStorageHrt(ctx, dt);   // review A6
             auto& rx = ctx.reactions;
             const int nsp = ns - L.msx_first;
             if (static_cast<int>(msx_block_.size()) < nsp)
