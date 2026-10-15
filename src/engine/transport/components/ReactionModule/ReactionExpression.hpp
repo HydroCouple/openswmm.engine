@@ -114,6 +114,20 @@ int reactionHydVarCount();
 /// Name + one-line description of hydraulic variable @p idx.
 bool reactionHydVarInfo(int idx, const char** name, const char** description);
 
+/// Physics review A1 (2026-10-15): whether any engine fills hydraulic
+/// variable @p idx. D, Q, U, RE, US, FF and AV are not filled by any
+/// binding yet; HRT, DT and TEMP are.
+bool reactionHydVarPopulated(int idx);
+
+/// Diagnostic for the first unpopulated hydraulic variable the compiled
+/// expression @p span reads, or empty. @p error_col is its 1-based column in
+/// @p src (or -1). The evaluator still accepts every variable; this is the
+/// contract check that the system-level compile and the validator apply.
+std::string unpopulatedHydVarDiagnostic(const std::string& src,
+                                        const std::vector<RxToken>& pool,
+                                        const RxExprSpan& span,
+                                        int& error_col);
+
 /// Tier-1 evaluation: one pass, fixed-depth stack, allocation-free.
 double evalReactionExpression(const std::vector<RxToken>& pool,
                               const RxExprSpan& span,

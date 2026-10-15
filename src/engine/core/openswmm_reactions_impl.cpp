@@ -138,8 +138,11 @@ SWMM_ENGINE_API int swmm_reaction_validate_expression(SWMM_Engine engine,
     std::vector<openswmm::transport::RxToken> pool;   // scratch, discarded
     openswmm::transport::RxExprSpan span;
     int col = -1;
-    const std::string err = openswmm::transport::compileReactionExpression(
+    std::string err = openswmm::transport::compileReactionExpression(
         expr, sym, pool, span, col);
+    // Physics review A1: the editor refuses what the load refuses.
+    if (err.empty())
+        err = openswmm::transport::unpopulatedHydVarDiagnostic(expr, pool, span, col);
     if (err.empty()) return SWMM_OK;
 
     if (errbuf && buflen > 0) copy_to_buf(err, errbuf, buflen);

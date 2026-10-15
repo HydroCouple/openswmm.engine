@@ -113,9 +113,19 @@ void parseOptions(SimulationContext& ctx, const std::vector<std::string>& lines,
             else if (val == "CM2") rx.area_units = ReactionAreaUnits::CM2;
             else errors.push_back("[REACTION_OPTIONS] unknown AREA_UNITS '" +
                                   tok[1] + "' (FT2|M2|CM2).");
+            // Physics review A3: no wall-area term exists (AV is refused).
+            if (rx.area_units != ReactionAreaUnits::FT2)
+                ctx.warnings.push_back("[REACTION_OPTIONS] AREA_UNITS " + val +
+                    " has no effect: no reaction expression can use a wall "
+                    "area yet.");
         } else if (key == "TIMESTEP") {
             if (to_num(tok[1], num) && num >= 0.0) rx.timestep = num;
             else errors.push_back("[REACTION_OPTIONS] bad TIMESTEP '" + tok[1] + "'.");
+            // Physics review A3: kept for round trip, read by no binding.
+            if (rx.timestep > 0.0)
+                ctx.warnings.push_back("[REACTION_OPTIONS] TIMESTEP " + tok[1] +
+                    " is not used: reactions advance with the quality step and "
+                    "choose their own substeps within it.");
         } else if (key == "ATOL") {
             if (to_num(tok[1], num) && num > 0.0) rx.atol = num;
             else errors.push_back("[REACTION_OPTIONS] bad ATOL '" + tok[1] + "'.");
@@ -584,8 +594,11 @@ bool recompileReactionSystem(SimulationContext& ctx,
     auto compile_one = [&](const std::string& src_expr, RxExprSpan& span,
                            const std::string& where) {
         int col = 0;
-        const std::string err = compileReactionExpression(
+        std::string err = compileReactionExpression(
             src_expr, sym, rx.token_pool, span, col);
+        // Physics review A1: refuse what would silently read zero.
+        if (err.empty())
+            err = unpopulatedHydVarDiagnostic(src_expr, rx.token_pool, span, col);
         if (!err.empty())
             errors.push_back(where + " (col " + std::to_string(col) +
                              "): " + err + ".");
