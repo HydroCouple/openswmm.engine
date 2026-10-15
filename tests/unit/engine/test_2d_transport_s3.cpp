@@ -367,3 +367,41 @@ TEST(SurfaceTransportS3, DrainDeliversReactionSpeciesToTheNode) {
         << " against pollutant " << cu;
     close(r);
 }
+
+// ---------------------------------------------------------------------------
+// Review D2 (2026-10-15). A pan standing over a submerged surface outfall
+// feeds the network backwards through O1 → C1 → J1. The only water J1 ever
+// receives is mesh water, so J1 reads the pan's concentration (bounded by
+// it), for the pollutant and the reaction species alike. Before, the mesh
+// mass left into lost_coupling and the outfall fed the network clean.
+// ---------------------------------------------------------------------------
+TEST(SurfaceTransportS3, MeshWaterEnteringThroughAnOutfallCarriesItsQuality) {
+    const double c0 = 4.0;
+    { std::ofstream f("_s3_outfall_in.rxn");
+      f << "[REACTION_OPTIONS]\nSOLVER RK5\n[REACTION_SPECIES]\nBULK X MG\n"
+           "[REACTION_PIPES]\nRATE X 0\n[REACTION_TANKS]\nRATE X 0\n"; }
+    std::string body = deck("O1", 0.5, 0.5, c0, "", 3.0);
+    const std::string iq = "[2D_INITIAL_QUALITY]\n* Cu 4\n";
+    const auto at = body.find(iq);
+    ASSERT_NE(at, std::string::npos);
+    body.insert(at + iq.size(), "* X 4\n");
+    body.insert(body.find("[REPORT]"),
+                "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions config=\"_s3_outfall_in.rxn\"\n\n");
+    CoupledRun r = runDeck("_s3_outfall_in", body);
+    ASSERT_TRUE(r.ok) << "coupled deck did not run";
+    const auto& ctx = r.eng->context();
+    ASSERT_GT(ctx.mass_balance_2d.outfall_out, 0.5)
+        << "fixture produced no mesh → outfall withdrawal";
+    const int j1 = swmm_node_index(r.e, "J1");
+    ASSERT_GE(j1, 0);
+    const auto uj = static_cast<std::size_t>(j1);
+    const double cu = ctx.nodes.conc[uj];
+    const auto ns = static_cast<std::size_t>(ctx.reactions.n_species());
+    ASSERT_EQ(ns, 1u);
+    const double x = ctx.reactions.msx_node_conc[uj * ns];
+    EXPECT_GT(cu, 0.9 * c0) << "J1 was fed by mesh water at " << c0 << " and reads " << cu;
+    EXPECT_LE(cu, c0 * (1.0 + 1.0e-9));
+    EXPECT_GT(x, 0.9 * c0) << "species X at J1 reads " << x;
+    EXPECT_LE(x, c0 * (1.0 + 1.0e-9));
+    close(r);
+}

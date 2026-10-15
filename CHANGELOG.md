@@ -31,7 +31,9 @@ retroactive.
 - **Negative concentrations from reaction steps** (an explicit solver on stiff kinetics) are set to zero where they are produced, with a warning and, under LEGACY, a ledger row for the mass added. Previously transport zeroed them silently.
 - **Reaction Species Routing Continuity.** New `.rpt` block and per-species ledger (inflow, outflow, flooding, exfiltration, reacted, clamped, initial and final storage) under LEGACY. With identical inputs and no kinetics its rows equal the pollutant ledger's.
 - **Species transfers that were dropped.** The 2D surface drain and the aquifer bed now deliver reaction species to their node, a leaking conduit delivers its species to the aquifer, and run-on carries species from one subcatchment to the next (one runoff step late, as legacy run-on; mass reaching a subcatchment without runoff is reported as run-on lost in the MSX washoff ledger).
-- Not yet: mesh water entering the network through a surface outfall and water gained by a conduit from the aquifer still carry no quality; reaction-species state, the new ledger and the species coupling queue are not part of hotstart or managed checkpoints.
+- **Mesh water entering the network through a surface outfall** now carries the mesh cell's pollutants, reaction species, age and temperature into the outfall's next quality step (booked as external inflow). Previously the mass left the mesh and the outfall fed the network at its `OUTFALL_BACKFLOW_QUALITY` value.
+- **Water a conduit gains from the aquifer** (`LINK_SEEPAGE TWO_WAY`) now carries the aquifer's dissolved saturated-zone quality to the conduit's end nodes, split as the water is (booked as groundwater inflow). The aquifer debits exactly the mass delivered. Previously the water arrived clean and the aquifer's mass reached nothing.
+- Not yet: reaction-species state, the new ledger, the species coupling queue and these two pending transfers are not part of hotstart or managed checkpoints.
 
 ### Rain gage control rules (2026-10-14)
 

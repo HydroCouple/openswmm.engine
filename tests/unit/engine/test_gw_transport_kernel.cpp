@@ -1711,3 +1711,60 @@ TEST(GwTransportKernel, LeakingConduitCarriesReactionSpeciesIntoTheAquifer) {
     EXPECT_LE(t.gained_link[x] / led.led_link, 25.0 * (1.0 + 1e-9));
     finish(r);
 }
+
+// ---------------------------------------------------------------------------
+// Review (2026-10-15): a GAINING conduit delivers the aquifer's quality.
+// High table, no bed, clean pipe inflow, no rain on the mesh: the only
+// source of TSS or species X in the network is the water the conduit gains.
+// At base the water arrived clean and the aquifer booked the mass as
+// `lost_link` with no receiver. The identity: everything the aquifer booked
+// out through gaining conduits (debited, still pending, or short) equals
+// what the 1D booked in as groundwater inflow plus what is still pending.
+// ---------------------------------------------------------------------------
+TEST(GwTransportKernel, GainingConduitDeliversTheAquiferQualityToTheNetwork) {
+    std::string body = deck(Mesh::Tri, "", 0.95);
+    const std::string anchor = "[2D_AQUIFER_OPTIONS]\n";
+    body.insert(body.find(anchor) + anchor.size(), "LINK_SEEPAGE TWO_WAY\n");
+    body.insert(body.find("[REPORT]\nINPUT NO\n"),
+                "[INFLOWS]\nJ1  FLOW  IN1  FLOW  1.0  1.0\n\n"
+                "[TIMESERIES]\nIN1  0:00  0.01\nIN1  1:00  0.01\n\n"
+                "[LOSSES]\n;;Link Kentry Kexit Kavg Flap Seepage\nC1  0 0 0 NO  100\n\n");
+    Deck r = open("seam_link_gain", withSpeciesX(body, "seam_link_gain"));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r.e, 1), SWMM_OK);
+    r.started = true;
+    const auto& ctx = r.eng->context();
+    const int j1 = ctx.node_names.find("J1");
+    ASSERT_GE(j1, 0);
+    const auto uj = static_cast<std::size_t>(j1);
+    const auto np = static_cast<std::size_t>(ctx.n_pollutants());
+    double peak_tss = 0.0, peak_x = 0.0, elapsed = 0.0;
+    while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+        const auto ns = static_cast<std::size_t>(ctx.reactions.n_species());
+        peak_tss = std::max(peak_tss, ctx.nodes.conc[uj * np]);
+        if (ns) peak_x = std::max(peak_x, ctx.reactions.msx_node_conc[uj * ns]);
+    }
+    const auto& gw = r.eng->surfaceRouter2D().subsurface();
+    const auto& t = gw.transport();
+    const double led_link = gw.state().led_link;
+    ASSERT_LT(led_link, 0.0) << "the conduit never gained; deck defect";
+    ASSERT_GT(t.lost_link[0], 0.0) << "no TSS left the aquifer through the conduit";
+    EXPECT_GT(peak_tss, 0.1) << "J1 never carried the aquifer's TSS";
+    EXPECT_LE(peak_tss, 25.0 * (1.0 + 1e-9));
+    EXPECT_GT(peak_x, 0.1) << "J1 never carried the aquifer's species";
+    // Cross-domain identity, TSS, in 1D units.
+    const double f21 = r.eng->surfaceRouter2D().options().flow_2d_to_1d;
+    double pend_2d = 0.0;
+    for (int c = 0; c < t.n_cells; ++c) pend_2d += t.lout_mass[t.idx(0, c)];
+    const double aq_out = (t.lost_link[0] + pend_2d + t.link_gain_shortfall[0]) * f21;
+    double pend_1d = 0.0;
+    for (std::size_t i = 0; i < ctx.link_gain_quality.mass.size(); i += np)
+        pend_1d += ctx.link_gain_quality.mass[i];
+    const double gw_in = ctx.mass_balance.qual_routing_gw_in[0];
+    EXPECT_NEAR(gw_in + pend_1d, aq_out, 1e-9 * aq_out)
+        << "1D received " << gw_in << " + pending " << pend_1d
+        << ", aquifer gave " << aq_out;
+    EXPECT_EQ(t.link_gain_shortfall[0], 0.0);
+    finish(r);
+}

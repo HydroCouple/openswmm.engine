@@ -108,12 +108,35 @@ bool OutfallExchange::apply(const MeshData& mesh, SurfaceStateData& state,
             }
             remaining -= take;
             const double dv = volume < 0 ? -take : take;
+            // Review D2 (2026-10-15): mesh water entering the network through
+            // this outfall carries the cell's quality. The water has already
+            // reached the outfall hydraulically; its volume and mass join the
+            // outfall's mixing at the next quality step
+            // (QualitySolver::addQualityOnlyInflows). Before, the mass left
+            // the mesh into lost_coupling and the outfall fed the network at
+            // its OUTFALL_BACKFLOW_QUALITY value.
+            auto& q1d = ctx.surface_outfall_quality;
+            const double to_1d = opts.flow_1d_to_2d > 0 ? 1.0 / opts.flow_1d_to_2d : 1.0;
+            const int np_1d = ctx.n_pollutants(), ns_1d = ctx.reactions.n_species();
+            if (volume < 0 && take > 0 && tr.n_species > 0) {
+                q1d.ensure(ctx.n_nodes(), np_1d, ns_1d);
+                q1d.vol[static_cast<std::size_t>(p.node)] += take * to_1d;
+                q1d.any = true;
+            }
             for (int sp = 0; sp < tr.n_species; ++sp) {
                 double& mass = tr.cell_mass[tr.idx(sp, c)];
                 if (volume < 0) {
                     const double dm = old > 0 ? mass * (take / old) : 0;
                     mass -= dm;
                     tr.lost_coupling[sp] += dm;
+                    const auto un = static_cast<std::size_t>(p.node);
+                    const double m1 = dm * to_1d;
+                    if (sp < tr.n_pollut && sp < np_1d)
+                        q1d.mass[un * static_cast<std::size_t>(np_1d) + static_cast<std::size_t>(sp)] += m1;
+                    else if (sp >= tr.n_pollut && sp < tr.n_pollut + tr.n_msx && sp - tr.n_pollut < ns_1d)
+                        q1d.msx[un * static_cast<std::size_t>(ns_1d) + static_cast<std::size_t>(sp - tr.n_pollut)] += m1;
+                    else if (sp == tr.age_row) q1d.age_vol[un] += m1;
+                    else if (sp == tr.temp_row) q1d.temp_vol[un] += m1;
                 } else if (node_conc) {
                     const auto ix = static_cast<std::size_t>(p.node) * tr.n_species + sp;
                     const double dm = ix < node_conc->size() ? take * (*node_conc)[ix] : 0;

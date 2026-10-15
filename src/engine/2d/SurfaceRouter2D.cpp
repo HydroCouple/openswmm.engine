@@ -2278,13 +2278,12 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
             const double vol_2d =
                 rate * barrels * routing_dt * options_.vol_1d_to_2d * sh.weight;
             subsurface_.bookLinkSeepage(sh.cell, vol_2d);
-            // T7.4: …and its quality, for a LEAKING conduit only. The 1D
+            // T7.4: …and its quality, for a LEAKING conduit. The 1D
             // quality solver already debits this mass as the conduit's
             // exfiltration loss (`qual_routing_seep`), so handing it over
             // here completes a transfer that was previously a
-            // disappearance. A GAINING conduit is the other direction and
-            // has no 1D receiver yet (see the T7.4 handoff): its water
-            // arrives in the pipe without the aquifer's quality.
+            // disappearance. A GAINING conduit is the other direction,
+            // handled below.
             //     Review F22 (2026-10-15): in the aquifer's conc·m³, i.e.
             //     on `vol_2d`. Booking `rate·barrels·dt·weight` (ft³) made a
             //     leaking pipe deliver 35.31× its own concentration.
@@ -2294,6 +2293,46 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
                     const double c = linkRowConc(ctx, sh.link, sp, gtr);
                     if (c != 0.0)
                         subsurface_.bookLinkSeepageMass(sh.cell, sp, vol_2d * c);
+                }
+            }
+            // Review (2026-10-15): a GAINING conduit's water now arrives with
+            // the aquifer's quality. Dynamic wave hands the gained water to
+            // the end nodes' inflow (halved unless one end is an outfall,
+            // none to an outfall end); the same split carries the volume and
+            // the cell's dissolved saturated mass into those nodes' next
+            // quality step. The cell debits exactly what was delivered.
+            if (rate < 0.0 && subsurface_.transport().active()) {
+                const auto& gtr = subsurface_.transport();
+                const auto ul = static_cast<std::size_t>(sh.link);
+                const int n1 = ctx.links.node1[ul], n2 = ctx.links.node2[ul];
+                const bool o1 = ctx.nodes.type[static_cast<std::size_t>(n1)] == NodeType::OUTFALL;
+                const bool o2 = ctx.nodes.type[static_cast<std::size_t>(n2)] == NodeType::OUTFALL;
+                const double f1 = o1 ? 0.0 : (o2 ? 1.0 : 0.5);
+                const double f2 = o2 ? 0.0 : (o1 ? 1.0 : 0.5);
+                const int np_1d = ctx.n_pollutants(), ns_1d = ctx.reactions.n_species();
+                auto& q1d = ctx.link_gain_quality;
+                q1d.ensure(ctx.n_nodes(), np_1d, ns_1d);
+                q1d.any = true;
+                const double vol_1d = -vol_2d * options_.flow_2d_to_1d;
+                const int ends[2] = {n1, n2};
+                const double fr[2] = {f1, f2};
+                for (int e = 0; e < 2; ++e)
+                    if (fr[e] > 0.0) q1d.vol[static_cast<std::size_t>(ends[e])] += fr[e] * vol_1d;
+                for (int sp = 0; sp < gtr.n_species; ++sp) {
+                    const double m2d = subsurface_.bookLinkGain(sh.cell, sp, -vol_2d);
+                    if (m2d == 0.0) continue;
+                    const double m1 = m2d * options_.flow_2d_to_1d;
+                    for (int e = 0; e < 2; ++e) {
+                        if (!(fr[e] > 0.0)) continue;
+                        const auto un = static_cast<std::size_t>(ends[e]);
+                        const double me = fr[e] * m1;
+                        if (sp < gtr.n_pollut && sp < np_1d)
+                            q1d.mass[un * static_cast<std::size_t>(np_1d) + static_cast<std::size_t>(sp)] += me;
+                        else if (sp >= gtr.n_pollut && sp < gtr.n_pollut + gtr.n_msx && sp - gtr.n_pollut < ns_1d)
+                            q1d.msx[un * static_cast<std::size_t>(ns_1d) + static_cast<std::size_t>(sp - gtr.n_pollut)] += me;
+                        else if (sp == gtr.age_row) q1d.age_vol[un] += me;
+                        else if (sp == gtr.temp_row) q1d.temp_vol[un] += me;
+                    }
                 }
             }
         }

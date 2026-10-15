@@ -179,6 +179,29 @@ public:
         const auto u = static_cast<std::size_t>(cell);
         return state_.hg[u] * state_.theta_s[u] * state_.area[u];
     }
+    /// A gaining conduit draws `vol` m³ of water from `cell`: book the mass
+    /// it carries, at the cell's dissolved saturated concentration, for the
+    /// cell to debit at its next firing, and return it (native units). The
+    /// mass is capped at what the cell holds less what is already pending, so
+    /// a cell whose saturated zone has emptied cannot export residual mass
+    /// at a concentration divided by a vanishing volume.
+    double bookLinkGain(int cell, int species, double vol) noexcept {
+        if (!tr_.active() || !(vol > 0.0) || cell < 0 || cell >= tr_.n_cells ||
+            species < 0 || species >= tr_.n_species) return 0.0;
+        const double v = satVolume(cell);
+        if (!(v > 0.0)) return 0.0;
+        const auto u = static_cast<std::size_t>(cell);
+        const auto k = tr_.idx(species, cell);
+        const double mob = tr_.dissolvedFraction(species, cell, state_.theta_s[u]);
+        double m = vol * (tr_.sat_mass[k] / v) * mob;
+        if (!tr_.signedRow(species)) {
+            const double avail = std::max(0.0, tr_.sat_mass[k] * mob - tr_.lout_mass[k]);
+            m = std::min(m, avail);
+        }
+        if (m == 0.0) return 0.0;
+        tr_.lout_mass[k] += m;
+        return m;
+    }
     /// …and of its unsaturated column store (m³), whatever closure holds it.
     double unsatVolume(int cell) const noexcept {
         const auto u = static_cast<std::size_t>(cell);

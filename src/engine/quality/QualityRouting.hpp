@@ -180,6 +180,7 @@ public:
     /// mass (queued by SurfaceRouter2D, drained by assembleLateralInflows)
     /// into qual_mass_in. No-op when no 2D coupling is active.
     void addCouplingLoads(SimulationContext& ctx, double dt);
+    void addQualityOnlyInflows(SimulationContext& ctx, double dt);  ///< review D2 + gaining conduits
 
     /**
      * @brief Add subcatchment washoff quality loads to node inflows.

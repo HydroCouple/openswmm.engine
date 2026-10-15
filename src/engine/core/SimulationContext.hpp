@@ -1427,6 +1427,32 @@ struct SimulationContext {
     // Empty for ordinary models; infinity for nodes without a surface outfall.
     std::vector<double> surface_outfall_link_limit;
 
+    /// Review D2 / gaining conduits (2026-10-15): quality for water that has
+    /// ALREADY reached a node hydraulically outside the lateral-inflow
+    /// assembly — mesh water entering through a surface outfall, aquifer
+    /// water a conduit gained (delivered to its end nodes as `inflow`). The
+    /// next quality step adds the volume to the node's mixing volume and the
+    /// mass to its loads (QualitySolver::addQualityOnlyInflows), then clears
+    /// it. 1D units: ft³, concentration × ft³, age·ft³ (hours), °C·ft³.
+    struct QualityOnlyInflow {
+        std::vector<double> vol, mass, msx, age_vol, temp_vol;
+        bool any = false;
+        void ensure(int nn, int np, int ns) {
+            const auto un = static_cast<std::size_t>(nn > 0 ? nn : 0);
+            if (vol.size() != un) { vol.assign(un, 0.0); age_vol.assign(un, 0.0); temp_vol.assign(un, 0.0); }
+            if (mass.size() != un * static_cast<std::size_t>(np > 0 ? np : 0))
+                mass.assign(un * static_cast<std::size_t>(np > 0 ? np : 0), 0.0);
+            if (msx.size() != un * static_cast<std::size_t>(ns > 0 ? ns : 0))
+                msx.assign(un * static_cast<std::size_t>(ns > 0 ? ns : 0), 0.0);
+        }
+        void clear() {
+            for (auto* v : {&vol, &mass, &msx, &age_vol, &temp_vol}) std::fill(v->begin(), v->end(), 0.0);
+            any = false;
+        }
+    };
+    QualityOnlyInflow surface_outfall_quality;  ///< D2: booked as external inflow
+    QualityOnlyInflow link_gain_quality;        ///< gaining conduits: groundwater inflow
+
     bool runtime_coupling_used = false; ///< Runtime prescriptions require a future restart format.
     struct MassBalance2D {
         double init_storage          = 0.0;  ///< Initial surface storage (m³)
@@ -1859,6 +1885,8 @@ struct SimulationContext {
     void reset() {
         runtime_coupling_used = false;
         surface_outfall_link_limit.clear();
+        surface_outfall_quality = {};
+        link_gain_quality = {};
         state = EngineState::CREATED;
         control_log.clear();
         control_rule_names.clear();

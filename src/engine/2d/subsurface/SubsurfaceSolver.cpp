@@ -1966,8 +1966,23 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) noexcept {
             msat += link_in_m;
             tr_.gained_link[us] += link_in_m;
         }
-        if (f.link < 0.0)
+        // Review (2026-10-15): a GAINING conduit's mass now reaches the 1D.
+        // The router booked what it delivered (at this cell's dissolved
+        // saturated concentration when the water left); the cell debits
+        // exactly that, so the aquifer gives what the network received.
+        const double out_m = tr_.lout_mass.empty() ? 0.0
+                                                   : consumePending(tr_.lout_mass[k]);
+        if (out_m != 0.0) {
+            double dm = out_m;
+            if (!tr_.signedRow(s) && dm > msat) {
+                tr_.link_gain_shortfall[us] += dm - std::max(msat, 0.0);
+                dm = std::max(msat, 0.0);
+            }
+            msat -= dm;
+            tr_.lost_link[us] += dm;
+        } else if (f.link < 0.0) {
             tr_.lost_link[us] += take(msat, -f.link, v_sat, mob_sat);
+        }
 
         // (4) recharge across the table, or capillary rise — internal to
         //     this cell, so it is informational only.
