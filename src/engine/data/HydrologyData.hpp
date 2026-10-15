@@ -158,6 +158,13 @@ struct LidControlStore {
      *  removals[lid_index] = vector of {pollutant_index, fraction} pairs.
      */
     std::vector<std::vector<std::pair<int, double>>> removals;
+
+    /** @brief REMOVALS entries naming something that was not a pollutant when
+     *  the row was read: a reaction species, or a pollutant declared later in
+     *  the file. Kept by name and bound by msxsurf::resolve (Multispecies
+     *  Phase 2); the writer emits them so they survive a save.
+     */
+    std::vector<std::vector<std::pair<std::string, double>>> removals_by_name;
 };
 
 // ============================================================================

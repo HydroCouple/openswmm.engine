@@ -104,6 +104,15 @@ void step(SimulationContext& ctx, double dt_runoff, double old_runoff_time);
 void bookPostLid(SimulationContext& ctx, double dt_runoff,
                  const std::vector<double>& lid_infil_vol);
 
+/// LID underdrain species load from one unit (the A6b drain loop's species
+/// half), and the per-runoff-step roll of those loads.
+void addLidDrain(SimulationContext& ctx, int control, int sc, int node, double drain_cfs,
+                 bool to_perv, bool runoff_load, double dt_runoff) noexcept;
+void rollLidDrain(SimulationContext& ctx) noexcept;
+
+/// Bind LID REMOVALS entries kept by name (called by resolve).
+void resolveLidRemovals(SimulationContext& ctx, std::vector<std::string>& warnings);
+
 /// Run-on, beside the pollutant lines in SWMMEngine::assembleRunon.
 void clearRunon(SimulationContext& ctx) noexcept;
 void addRunon(SimulationContext& ctx, int donor, int receiver, double q) noexcept;

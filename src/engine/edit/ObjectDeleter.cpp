@@ -1433,7 +1433,7 @@ CascadeResult delete_lid(SimulationContext& ctx, int lid_idx) {
         const auto ui = static_cast<std::size_t>(lid_idx);
         auto e = [&](auto& v) { if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(lid_idx)); };
         e(L.names); e(L.lid_type); e(L.surface); e(L.soil); e(L.pavement);
-        e(L.storage); e(L.drain); e(L.drainmat); e(L.removals); e(L.node_layers);
+        e(L.storage); e(L.drain); e(L.drainmat); e(L.removals); e(L.removals_by_name); e(L.node_layers);
     }
     ctx.lid_names.remove_at(lid_idx);
 

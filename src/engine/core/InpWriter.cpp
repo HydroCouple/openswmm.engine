@@ -2288,6 +2288,26 @@ int writeInpFile(const SimulationContext&  ctx_internal,
                     std::fprintf(f,"\n");
                 }
             }
+            // REMOVALS (percent): pollutants by index, then the entries kept
+            // by name (reaction species). The writer used to emit no
+            // REMOVALS row at all, so a save dropped every LID drain removal.
+            {
+                std::string row;
+                char buf[64];
+                if (uj < ctx.lid_controls.removals.size())
+                    for (const auto& pr : ctx.lid_controls.removals[uj]) {
+                        if (pr.first < 0 || pr.first >= ctx.n_pollutants()) continue;
+                        std::snprintf(buf, sizeof buf, " %.17g", pr.second * 100.0);
+                        row += " " + ctx.pollutant_names.name_of(pr.first) + buf;
+                    }
+                if (uj < ctx.lid_controls.removals_by_name.size())
+                    for (const auto& pr : ctx.lid_controls.removals_by_name[uj]) {
+                        if (swmm5) { note("SWMM 5 export omits the LID removal of reaction species " + pr.first); continue; }
+                        std::snprintf(buf, sizeof buf, " %.17g", pr.second * 100.0);
+                        row += " " + pr.first + buf;
+                    }
+                if (!row.empty()) std::fprintf(f, "%-16s REMOVALS  %s\n", name, row.c_str());
+            }
         }
     }
 

@@ -2169,6 +2169,7 @@ void SWMMEngine::stepRunoff(double dt_routing) {
             // XXXXX00035: v6 899 mg/L at period 8 against legacy ~0, with
             // legacy's 999 arriving at period 9).
             ctx_.nodes.lid_drain_qual_load_old = ctx_.nodes.lid_drain_qual_load;
+            msxsurf::rollLidDrain(ctx_);
             ctx_.nodes.lid_drain_qual_vol_old  = ctx_.nodes.lid_drain_qual_vol;
             std::fill(ctx_.nodes.lid_drain_qual_load.begin(),
                       ctx_.nodes.lid_drain_qual_load.end(), 0.0);
@@ -3039,7 +3040,7 @@ void SWMMEngine::stepRunoff(double dt_routing) {
                     // reason age did — the drain's temperature is paired
                     // inside this block, so a heat-only deck must reach it.
                     if ((np_use > 0 || ctx_.options.water_age ||
-                         ctx_.options.heat_transport)
+                         ctx_.options.heat_transport || msxsurf::active(ctx_))
                         && g.drain_flow[uu] > 0.0
                         && !ctx_.options.ignore_quality) {
                         double drain_cfs = g.drain_flow[uu] * lid_area;
@@ -3169,6 +3170,12 @@ void SWMMEngine::stepRunoff(double dt_routing) {
                                     }
                                 }
                             }
+                            // Multispecies Phase 2 (S3): the species ride the
+                            // same drain water to the same node.
+                            msxsurf::addLidDrain(ctx_, g.control_idx[uu], sc, dest_node, drain_cfs,
+                                                 g.to_perv[uu] != 0,
+                                                 g.drain_node[uu] >= 0 || g.drain_subcatch[uu] == sc,
+                                                 dt_runoff);
                         }
                     }
                 }

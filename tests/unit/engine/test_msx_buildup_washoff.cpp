@@ -33,6 +33,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cmath>
 #include <fstream>
 #include <sstream>
@@ -439,6 +440,7 @@ struct TwinOpts {
     std::string lid_controls;            ///< full [LID_CONTROLS] body
     std::string lid_usage;               ///< full [LID_USAGE] body
     std::string rxn_extra;               ///< appended to the reactions file
+    std::string lid_extra;               ///< appended to [LID_CONTROLS] (e.g. REMOVALS)
 };
 
 std::string twinDeck(const TwinOpts& o) {
@@ -484,7 +486,7 @@ std::string twinDeck(const TwinOpts& o) {
         for (const char* n : {"TSS", "X"}) s << "LU1  " << n << "  " << o.buildup << "\n";
     s << "\n[WASHOFF]\n";
     for (const char* n : {"TSS", "X"}) s << "LU1  " << n << "  " << o.washoff << "  " << o.sweep_bmp << "\n";
-    if (!o.lid_controls.empty()) s << "\n[LID_CONTROLS]\n" << o.lid_controls;
+    if (!o.lid_controls.empty()) s << "\n[LID_CONTROLS]\n" << o.lid_controls << o.lid_extra;
     if (!o.lid_usage.empty())    s << "\n[LID_USAGE]\n" << o.lid_usage;
     return s.str();
 }
@@ -496,6 +498,8 @@ struct Gap { double diff = 0.0, scale = 0.0; int n = 0;
 
 struct Twin {
     bool ok = false;
+    double drain_seen = 0.0;   ///< LID drain flow that reached a node (cfs, summed over steps)
+    double drain_sub  = 0.0;   ///< subcatchment LID drain flow (cfs, summed over steps)
     Gap conc, node, load, buildup, init, runoff, bmp, sweep;
 };
 
@@ -524,6 +528,15 @@ Twin runTwin(const std::string& tag, const TwinOpts& o) {
                        ms.washoff_conc[ms.sidx(sc, 0)]);
         const auto uj = static_cast<std::size_t>(j1);
         t.node.add(ctx.nodes.conc[uj * np], ctx.reactions.msx_node_conc[uj * nm]);
+        for (double v : ctx.nodes.lid_drain_qual_vol) t.drain_seen += v;
+        for (double v : ctx.subcatches.lid_drain_flow) t.drain_sub += v;
+        if (std::getenv("TWIN_LID_DEBUG"))
+            for (int g = 0; g < cpp(e).lid().numGroups(); ++g) {
+                const auto& grp = cpp(e).lid().group(g);
+                for (int u = 0; u < grp.count; ++u)
+                    std::printf("LID t=%.0f g%d u%d surf %.4g soil %.4g stor %.4g drain %.4g node %d\n", elapsed * 86400.0, g, u,
+                                grp.surf_depth[u], grp.soil_moist[u], grp.stor_depth[u], grp.drain_flow[u], grp.drain_node[u]);
+            }
     } while (elapsed > 0.0 && ++guard < 100000);
     swmm_engine_end(e);
     const auto& sq = cpp(e).surfaceQuality();
@@ -606,4 +619,93 @@ TEST(MsxSurfaceTwin, R11_RunonPondedMix) {
 TEST(MsxSurfaceTwin, R15_SiTwinOfR2) {
     TwinOpts o; o.flow_units = "CMS"; o.routing = "PERVIOUS"; o.pct_routed = "50";
     expectTwin(runTwin("_tw_r15", o), "R15");
+}
+
+// S3: a bio-retention cell whose underdrain actually flows (no offset, no
+// seepage into native soil), with the drain removing 30 % of both. At base
+// the species' drain mass reached nothing and its removal row was dropped.
+namespace {
+const char* kFlowingBioRetention =
+    "BC2  BC\nBC2  SURFACE  6.0  0.0  0.1  1.0  5\nBC2  SOIL  12.0  0.5  0.2  0.1  10.0  10.0  3.5\n"
+    "BC2  STORAGE  12.0  0.75  0.0  0\nBC2  DRAIN  2.0  0.5  0  0\n";
+}
+TEST(MsxSurfaceTwin, R7b_FlowingUnderdrainWithRemoval) {
+    TwinOpts o; o.routing = "PERVIOUS"; o.pct_routed = "50"; o.lid_controls = kFlowingBioRetention;
+    o.lid_extra = "BC2  REMOVALS  TSS  30  X  30\n";
+    o.lid_usage = "S1  BC2  1  4000  50  100  100  0  *  J1\n";
+    const Twin t = runTwin("_tw_r7b", o);
+    EXPECT_GT(t.drain_seen, 0.0) << "the underdrain never flowed; deck defect";
+    expectTwin(t, "R7b");
+}
+
+// S3: LID REMOVALS rows survive a save, for pollutants and species alike.
+// Before, the writer emitted no REMOVALS row at all, so saving a model lost
+// every LID drain removal.
+TEST(MsxSurfaceTwin, LidRemovalsRoundTripThroughTheWriter) {
+    TwinOpts o; o.lid_controls = kFlowingBioRetention; o.lid_extra = "BC2  REMOVALS  TSS  30  X  40\n";
+    o.lid_usage = "S1  BC2  1  4000  50  100  100  0  *  J1\n";
+    write("_tw_rm.rxn", rxn_inert());
+    write("_tw_rm.inp", twinDeck(o) + "\n[PROCESS_COMPONENTS]\n" + pc("_tw_rm.rxn") + "\n\n[REPORT]\nINPUT NO\n");
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, "_tw_rm.inp", "_tw_rm.rpt", "_tw_rm.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_model_write(e, "_tw_rm_rt.inp"), SWMM_OK);
+    swmm_engine_close(e); swmm_engine_destroy(e);
+    std::ifstream f("_tw_rm_rt.inp"); std::stringstream ss; ss << f.rdbuf();
+    const std::string text = ss.str();
+    const auto at = text.find("REMOVALS");
+    ASSERT_NE(at, std::string::npos) << "no REMOVALS row written";
+    const std::string row = text.substr(at, text.find('\n', at) - at);
+    EXPECT_NE(row.find("TSS"), std::string::npos) << row;
+    EXPECT_NE(row.find("X"), std::string::npos) << row;
+    SWMM_Engine e2 = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e2, "_tw_rm_rt.inp", "_tw_rm_rt.rpt", "_tw_rm_rt.out", nullptr), SWMM_OK);
+    const auto& ms = cpp(e2).context().reactions.surface;
+    ASSERT_EQ(ms.lid_rmvl.size(), 1u) << "species removal not resolved after reload";
+    EXPECT_DOUBLE_EQ(ms.lid_rmvl[0], 0.40);
+    swmm_engine_close(e2); swmm_engine_destroy(e2);
+}
+
+// S3 parity: a pollutant's LID REMOVALS row read before [POLLUTANTS] (the
+// usual SWMM file order) was dropped, because the name was not yet known.
+// Legacy applies it. The same deck in either section order must book the
+// same BMP removal. Measured on this deck: base 0.032 lb with the late
+// order against 0.348 lb (legacy 0.348).
+TEST(MsxSurfaceTwin, PollutantLidRemovalDeclaredBeforePollutantsApplies) {
+    TwinOpts o; o.routing = "PERVIOUS"; o.pct_routed = "50"; o.lid_controls = kFlowingBioRetention;
+    o.lid_extra = "BC2  REMOVALS  TSS  30\n";
+    o.lid_usage = "S1  BC2  1  4000  50  100  100  0  *  J1\n";
+    std::string early = twinDeck(o);
+    // Pollutant-only: drop the species rows.
+    std::string kept;
+    for (std::size_t a = 0, b; a < early.size(); a = b + 1) {
+        b = early.find('\n', a); if (b == std::string::npos) b = early.size();
+        const std::string line = early.substr(a, b - a);
+        if (line.rfind("LU1  X  ", 0) == 0) continue;
+        kept += line + "\n";
+    }
+    early = kept + "\n[REPORT]\nINPUT NO\n";
+    // Late order: move the [POLLUTANTS] block to the end.
+    std::string late = early;
+    const auto p0 = late.find("[POLLUTANTS]");
+    const auto p1 = late.find("\n[", p0 + 1);
+    const std::string block = late.substr(p0, p1 - p0);
+    late.erase(p0, p1 - p0);
+    late.insert(late.find("[REPORT]"), block + "\n");
+    auto bmp = [](const std::string& tag, const std::string& body) {
+        write(tag + ".inp", body);
+        SWMM_Engine e = swmm_engine_create();
+        double v = -1.0;
+        if (swmm_engine_open(e, (tag + ".inp").c_str(), (tag + ".rpt").c_str(), (tag + ".out").c_str(), nullptr) == SWMM_OK &&
+            swmm_engine_initialize(e) == SWMM_OK && swmm_engine_start(e, 1) == SWMM_OK) {
+            double t = 0.0;
+            while (swmm_engine_step(e, &t) == SWMM_OK && t > 0.0) {}
+            swmm_engine_end(e);
+            v = cpp(e).context().mass_balance.qual_bmp_removal[0];
+        }
+        swmm_engine_close(e); swmm_engine_destroy(e);
+        return v;
+    };
+    const double a = bmp("_tw_rm_early", early), b = bmp("_tw_rm_late", late);
+    ASSERT_GT(a, 0.0);
+    EXPECT_EQ(b, a) << "REMOVALS before [POLLUTANTS] booked " << b << " against " << a;
 }

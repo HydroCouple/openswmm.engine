@@ -120,10 +120,45 @@ bool applyLatePollutantRow(SimulationContext& ctx, const MsxSurfaceRows::Loading
 
 } // namespace
 
+// Multispecies Phase 2 (S3): LID REMOVALS entries kept by name at parse time.
+// A pollutant declared after [LID_CONTROLS] (the usual file order) goes back
+// to the pollutant table, where the parser could not put it; a species gets
+// its drain removal fraction; anything else is reported.
+void resolveLidRemovals(SimulationContext& ctx, std::vector<std::string>& warnings) {
+    auto& lc = ctx.lid_controls;
+    auto& s = ctx.reactions.surface;
+    const int nm = ctx.reactions.configured ? ctx.reactions.n_species() : 0;
+    const int nc = lc.count();
+    s.lid_rmvl.assign(nm > 0 && nc > 0 ? static_cast<std::size_t>(nc) * static_cast<std::size_t>(nm) : 0, 0.0);
+    for (std::size_t c = 0; c < lc.removals_by_name.size(); ++c) {
+        auto& rows = lc.removals_by_name[c];
+        std::vector<std::pair<std::string, double>> keep;
+        for (const auto& [name, frac] : rows) {
+            const int pi = ctx.pollutant_names.find(name);
+            if (pi >= 0) {
+                if (lc.removals.size() <= c) lc.removals.resize(c + 1);
+                lc.removals[c].push_back({pi, frac});
+                continue;
+            }
+            keep.push_back({name, frac});
+            const int m = nm > 0 ? ctx.reactions.find_species(name) : -1;
+            if (m >= 0 && static_cast<int>(c) < nc)
+                s.lid_rmvl[c * static_cast<std::size_t>(nm) + static_cast<std::size_t>(m)] = frac;
+            else
+                warnings.push_back("[LID_CONTROLS] " +
+                                   (c < lc.names.size() ? lc.names[c] : std::string("?")) +
+                                   " REMOVALS: '" + name +
+                                   "' is neither a pollutant nor a reaction species; ignored.");
+        }
+        rows = std::move(keep);
+    }
+}
+
 std::vector<std::string> resolve(SimulationContext& ctx) {
     std::vector<std::string> warnings;
     auto& s  = ctx.reactions.surface;
     s.resolved = false;
+    resolveLidRemovals(ctx, warnings);
     if (s.rows.empty()) return warnings;
 
     // Rows naming a pollutant declared after the section go back to the
@@ -356,6 +391,38 @@ void bookPostLid(SimulationContext& ctx, double dt_runoff,
     surfacespecies::bookPostLid(ctx, b, dt_runoff, lid_infil_vol);
 }
 
+void addLidDrain(SimulationContext& ctx, int control, int sc, int node, double drain_cfs,
+                 bool to_perv, bool runoff_load, double dt_runoff) noexcept {
+    auto& s = ctx.reactions.surface;
+    if (!s.active() || node < 0 || node >= ctx.n_nodes()) return;
+    const int nm = s.n_species;
+    const auto want = static_cast<std::size_t>(ctx.n_nodes()) * static_cast<std::size_t>(nm);
+    if (s.lid_drain_load.size() != want) s.lid_drain_load.assign(want, 0.0);
+    // The pollutant lines in the A6b drain loop, species side: the drain
+    // carries the subcatchment's washoff concentration less the unit's
+    // removal, and books the removed share as BMP removal.
+    for (int m = 0; m < nm; ++m) {
+        const auto rk = static_cast<std::size_t>(control) * static_cast<std::size_t>(nm) + static_cast<std::size_t>(m);
+        const double rmvl = (control >= 0 && rk < s.lid_rmvl.size()) ? s.lid_rmvl[rk] : 0.0;
+        const double c_src = s.washoff_conc[s.sidx(sc, m)];
+        s.lid_drain_load[static_cast<std::size_t>(node) * static_cast<std::size_t>(nm) + static_cast<std::size_t>(m)] +=
+            drain_cfs * c_src * (1.0 - rmvl);
+        if (!to_perv) {
+            const double w = drain_cfs * c_src * dt_runoff * 28.317 * s.mcf[static_cast<std::size_t>(m)];
+            if (w > 0.0) {
+                s.led_bmp_removal[static_cast<std::size_t>(m)] += rmvl * w;
+                if (runoff_load) s.led_runoff_load[static_cast<std::size_t>(m)] += w * (1.0 - rmvl);
+            }
+        }
+    }
+}
+
+void rollLidDrain(SimulationContext& ctx) noexcept {
+    auto& s = ctx.reactions.surface;
+    s.lid_drain_load_old = s.lid_drain_load;
+    std::fill(s.lid_drain_load.begin(), s.lid_drain_load.end(), 0.0);
+}
+
 void clearRunon(SimulationContext& ctx) noexcept {
     auto& s = ctx.reactions.surface;
     std::fill(s.runon_qual_rate.begin(), s.runon_qual_rate.end(), 0.0);
@@ -432,6 +499,27 @@ void deliver(SimulationContext& ctx, double /*dt_routing*/) {
             const double mass_rate = f1 * (q_old * c_old) + f * (q_new * c_new);
             if (mass_rate > 0.0)
                 rx.msx_ext_mass_in[base + static_cast<std::size_t>(m)] += mass_rate;
+        }
+    }
+    // Multispecies Phase 2 (S3): LID underdrain loads, the species half of
+    // QualitySolver::addLidDrainLoads (same interpolation, same node gate on
+    // the drained water).
+    if (s.lid_drain_load.size() == want) {
+        const double f  = ctx.runoff_interp_f;
+        const double f1 = 1.0 - f;
+        const bool has_old = s.lid_drain_load_old.size() == want;
+        for (int j = 0; j < ctx.n_nodes(); ++j) {
+            const auto uj = static_cast<std::size_t>(j);
+            const double v_new = uj < ctx.nodes.lid_drain_qual_vol.size() ? ctx.nodes.lid_drain_qual_vol[uj] : 0.0;
+            const double v_old = uj < ctx.nodes.lid_drain_qual_vol_old.size() ? ctx.nodes.lid_drain_qual_vol_old[uj] : 0.0;
+            if (f1 * v_old + f * v_new <= 0.0) continue;
+            for (int m = 0; m < nm; ++m) {
+                const auto k = uj * static_cast<std::size_t>(nm) + static_cast<std::size_t>(m);
+                const double w_new = s.lid_drain_load[k];
+                const double w_old = has_old ? s.lid_drain_load_old[k] : 0.0;
+                const double load = f1 * w_old + f * w_new;
+                if (load > 0.0) rx.msx_ext_mass_in[k] += load;
+            }
         }
     }
 }

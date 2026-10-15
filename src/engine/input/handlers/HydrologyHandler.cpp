@@ -663,10 +663,16 @@ void handle_lid_controls(SimulationContext& ctx, const std::vector<std::string>&
                 ctx.lid_controls.removals.resize(uidx + 1);
             for (std::size_t i = 2; i + 1 < tok.size(); i += 2) {
                 int pi = ctx.pollutant_names.find(tok[i]);
+                double frac = to_double(tok[i + 1]) / 100.0;
+                frac = std::max(0.0, std::min(1.0, frac));
                 if (pi >= 0) {
-                    double frac = to_double(tok[i + 1]) / 100.0;
-                    frac = std::max(0.0, std::min(1.0, frac));
                     ctx.lid_controls.removals[uidx].push_back({pi, frac});
+                } else {
+                    // Multispecies Phase 2: a reaction species (or a pollutant
+                    // declared later), bound once the names are final.
+                    auto& byname = ctx.lid_controls.removals_by_name;
+                    if (byname.size() <= uidx) byname.resize(uidx + 1);
+                    byname[uidx].push_back({tok[i], frac});
                 }
             }
         }

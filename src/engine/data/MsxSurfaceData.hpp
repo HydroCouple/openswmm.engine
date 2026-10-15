@@ -129,6 +129,14 @@ struct MsxSurfaceData {
     /// the same fields for every family).
     std::vector<double> c_rain;
     std::vector<bool>   snow_only;
+    /// LID underdrain removal fraction `[control * n_species + m]` (from the
+    /// LID REMOVALS rows that name a species), and the underdrain species
+    /// load each node receives `[node * n_species + m]` (concentration mass
+    /// / s) for this and the previous runoff step — the mirrors of
+    /// LIDGroupSoA::drain_rmvl and NodeData::lid_drain_qual_load(_old).
+    std::vector<double> lid_rmvl;
+    std::vector<double> lid_drain_load;
+    std::vector<double> lid_drain_load_old;
 
     // ---- ledgers per species [m], user mass ---------------------------
     std::vector<double> led_init_buildup;
