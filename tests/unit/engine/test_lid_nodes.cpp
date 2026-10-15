@@ -2029,3 +2029,27 @@ TEST(LidNodes, BaseContactAreaUsesAuthoredGeometryWithoutPoreOrWholeCellSubstitu
     area=123;EXPECT_NE(swmm_lid_node_base_area(&e,1,&area),SWMM_OK);EXPECT_EQ(area,123);
     c.state=EngineState::RUNNING;EXPECT_EQ(swmm_lid_node_base_area(&e,0,&area),SWMM_ERR_LIFECYCLE);
 }
+
+// Physics review E9/E12 (2026-10-15): reaction species have no LID layer
+// adapter. A classical LID node ran them as a plain tank that bypassed the
+// retained cells, ports and layer treatment, and LID capture shrank the
+// shared mixing volume without removing species mass (probe P10: X ended
+// at 10.24 against a 10 mg/L source under a 2/day decay). Until the adapter
+// exists the combination is refused, as it already is for Richards nodes.
+// Water age and heat keep working on classical LID nodes.
+TEST(LidNodes, ReactionSpeciesAreRefusedOnClassicalLidNodes) {
+    auto c = model(); lidnode::sync(c, 0);
+    lidnode::validate(c);
+    ASSERT_TRUE(c.errors.empty()) << c.errors.front();
+    c.reactions.configured = true;
+    lidnode::validate(c);
+    ASSERT_FALSE(c.errors.empty()) << "reaction species accepted on a classical LID node";
+    EXPECT_NE(c.errors.back().find("LID node S"), std::string::npos) << c.errors.back();
+    EXPECT_NE(c.errors.back().find("reaction species"), std::string::npos) << c.errors.back();
+    for (int option = 0; option < 2; ++option) {
+        auto ok = model(); lidnode::sync(ok, 0);
+        if (option == 0) ok.options.water_age = true; else ok.options.heat_transport = true;
+        lidnode::validate(ok);
+        EXPECT_TRUE(ok.errors.empty()) << (ok.errors.empty() ? "" : ok.errors.front());
+    }
+}

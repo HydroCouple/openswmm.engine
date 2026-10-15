@@ -186,6 +186,12 @@ void validate(SimulationContext& ctx) {
         if (!error.empty()) { ctx.errors.push_back("LID node " + ctx.node_names.name_of(n) + ": " + error); continue; }
         if (stack.front().flow.enabled && (ctx.options.water_age || ctx.options.heat_transport || ctx.reactions.configured))
             ctx.errors.push_back("Richards LID node " + ctx.node_names.name_of(n) + ": water age, heat and MSX require porous-cell transport adapters that are not yet supported");
+        // Physics review E9/E12 (2026-10-15): reaction species have no layer
+        // adapter. They mixed as a plain tank that bypassed retained cells,
+        // ports and layer treatment, and capture removed their water but not
+        // their mass, so a decaying species could end above its source.
+        else if (ctx.reactions.configured)
+            ctx.errors.push_back("LID node " + ctx.node_names.name_of(n) + ": reaction species are not yet routed through LID layers (no layer adapter); remove the reactions component or the LID assignment");
         const double d = thickness(stack) / rainDepth(ctx);
         if (std::abs(d - ctx.nodes.full_depth[n]) > 1.e-7 * std::max(1.0, d))
             ctx.errors.push_back("LID node " + ctx.node_names.name_of(n) + ": MaxDepth must equal the sum of layer thicknesses");
