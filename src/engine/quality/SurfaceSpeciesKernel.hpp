@@ -57,6 +57,11 @@ struct Block {
     std::vector<double>* led_bmp_removal = nullptr;
     std::vector<double>* led_infil_loss = nullptr;
     std::vector<double>* led_runoff_load = nullptr;
+    std::vector<double>* led_sweeping = nullptr;
+    /// Street sweeping this step: `[sc * nlu + lu]` events (shared by every
+    /// family, SubcatchData::sweep_now) and the land use's removal fraction.
+    const std::vector<unsigned char>* sweep_now = nullptr;
+    const std::vector<double>* sweep_removal = nullptr;
 
     std::size_t bu_idx(int sc, int lu, int s) const noexcept {
         return static_cast<std::size_t>(sc) * static_cast<std::size_t>(nlu * n)

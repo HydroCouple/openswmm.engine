@@ -408,6 +408,9 @@ surfacespecies::Block speciesBlock(SimulationContext& ctx, MsxSurfaceData& s, co
     b.led_bmp_removal = &s.led_bmp_removal;
     b.led_infil_loss = &s.led_infil_loss;
     b.led_runoff_load = &s.led_runoff_load;
+    b.led_sweeping = &s.led_sweeping;
+    b.sweep_now = &ctx.subcatches.sweep_now;
+    b.sweep_removal = &ctx.landuses.sweep_removal;
     return b;
 }
 }  // namespace
@@ -513,28 +516,6 @@ void addRunon(SimulationContext& ctx, int donor, int receiver, double q) noexcep
 }
 
 
-void sweep(SimulationContext& ctx, int sc, int lu, double frac, double removal_frac) {
-    auto& s = ctx.reactions.surface;
-    if (!s.active() || sc < 0 || sc >= s.n_subcatch || lu < 0 || lu >= s.n_landuses) return;
-    const auto ui = static_cast<std::size_t>(sc);
-    for (int m = 0; m < s.n_species; ++m) {
-        const auto k  = s.pidx(lu, m);
-        const auto bu = s.bu_idx(sc, lu, m);
-        const double effic = s.wo_sweep_effic[k] / 100.0;
-        const double norm = (s.bu_normalizer[k] == 0)
-                                ? frac * ctx.subcatches.area[ui]
-                                : frac * ctx.subcatches.curb_length[ui];
-        const double old_bu  = s.buildup[bu];
-        // legacy surfqual_sweepBuildup (surfqual.c:236-242): clamp the new
-        // store into [0, old] FIRST and book the clamped difference, so the
-        // ledger closes even when removal_frac * effic falls outside [0,1].
-        double new_bu = old_bu * (1.0 - removal_frac * effic);
-        new_bu = std::min(old_bu, new_bu);
-        new_bu = std::max(0.0, new_bu);
-        s.buildup[bu] = new_bu;
-        s.led_sweeping[static_cast<std::size_t>(m)] += (old_bu - new_bu) * norm;
-    }
-}
 
 void deliver(SimulationContext& ctx, double /*dt_routing*/) {
     auto& s = ctx.reactions.surface;

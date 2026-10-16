@@ -126,13 +126,6 @@ void resolveLidRemovals(SimulationContext& ctx, std::vector<std::string>& warnin
 void clearRunon(SimulationContext& ctx) noexcept;
 void addRunon(SimulationContext& ctx, int donor, int receiver, double q) noexcept;
 
-/**
- * @brief Sweeping removal on the (subcatchment, land use) event the A7 block
- *        fires — called AFTER that block has reset the shared
- *        `sweep_last_swept` counter, with the same coverage fraction and
- *        land-use removal fraction.
- */
-void sweep(SimulationContext& ctx, int sc, int lu, double frac, double removal_frac);
 
 /**
  * @brief Deliver this routing step's washoff into `msx_ext_mass_in`

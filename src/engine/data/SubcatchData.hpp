@@ -703,6 +703,15 @@ struct SubcatchData {
      *           Per-(subcatch,landuse) tracking so each subcatchment sweeps
      *           independently on its own schedule. */
     std::vector<double> sweep_last_swept;
+    /// [sc * n_landuses + lu] 1 when the land use sweeps this runoff step
+    /// (decided at the step's start, applied by the surface kernel between
+    /// buildup and washoff).
+    std::vector<unsigned char> sweep_now;
+    /// [sc * n_landuses + lu] absolute date (days) the land use was last
+    /// swept — legacy landFactor[].lastSwept. The sweep decision compares
+    /// the step's start date with it, as legacy does; sweep_last_swept stays
+    /// the readable "days since last swept". Runtime only.
+    std::vector<double> sweep_last_date;
 
     /**
      * @brief Resize the coverage and sweep matrices.

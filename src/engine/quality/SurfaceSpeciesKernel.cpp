@@ -134,6 +134,27 @@ void step(SimulationContext& ctx, Block& b, double dt_runoff,
                     double norm = (bp.normalizer == 0)
                         ? frac * area_ac : frac * ctx.subcatches.curb_length[ui];
 
+                    // Multispecies Phase 2 (S7 parity): street sweeping, in
+                    // legacy's place — after buildup, before washoff
+                    // (runoff.c: getBuildup, sweepBuildup, getWashoff). The
+                    // events were decided before this step by
+                    // SWMMEngine::planSweeping; v6 used to sweep after the
+                    // washoff, so on a recession step the land washed off
+                    // what legacy had already swept.
+                    auto apply_sweep = [&]() {
+                        if (!b.sweep_now || !b.led_sweeping || !b.sweep_removal) return;
+                        const auto sk = ui * static_cast<std::size_t>(nlu) + static_cast<std::size_t>(lu);
+                        if (sk >= b.sweep_now->size() || !(*b.sweep_now)[sk]) return;
+                        const double removal_frac = (*b.sweep_removal)[static_cast<std::size_t>(lu)];
+                        const double effic = wp.sweep_effic / 100.0;
+                        const double old_bu = (*b.buildup)[bu];
+                        double new_bu = old_bu * (1.0 - removal_frac * effic);
+                        new_bu = std::min(old_bu, new_bu);
+                        new_bu = std::max(0.0, new_bu);
+                        (*b.buildup)[bu] = new_bu;
+                        (*b.led_sweeping)[static_cast<std::size_t>(p)] += (old_bu - new_bu) * norm;
+                    };
+
                     // --- Buildup accumulation (matching legacy
                     //     surfqual_getBuildup). Legacy calls it from
                     //     runoff.c:280 under `if (runoff < MIN_RUNOFF)`:
@@ -185,6 +206,7 @@ void step(SimulationContext& ctx, Block& b, double dt_runoff,
                                 (*b.led_surface_buildup)[
                                     static_cast<std::size_t>(p)] += buildup_change * norm;
                             }
+                            apply_sweep();
                             continue;
                         }
 
@@ -236,6 +258,7 @@ void step(SimulationContext& ctx, Block& b, double dt_runoff,
                                 static_cast<std::size_t>(p)] += buildup_change * norm;
                         }
                     }
+                    apply_sweep();
 
                     // --- Washoff computation (matching legacy surfqual_getWashoff)
                     // legacy findWashoffLoads returns early below MIN_RUNOFF

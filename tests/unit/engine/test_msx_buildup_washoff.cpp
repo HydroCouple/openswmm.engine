@@ -785,3 +785,92 @@ TEST(MsxSurfaceTwin, UnderdrainRunonClosesTheRoutingLedger) {
     EXPECT_NEAR(runoff, wet_lb, 0.02 * wet_lb) << "surface runoff " << runoff << " lb, routing in " << wet_lb << " lb";
     swmm_engine_close(e); swmm_engine_destroy(e);
 }
+
+// S7 parity: street sweeping happens where legacy does it — decided at the
+// step's start against the last-swept DATE, applied between buildup and
+// washoff. v6 swept after the washoff and on a summed day counter: on this
+// deck (12 h interval, LastSweep 0.3 d, hourly dry steps) it swept 73.794 lb
+// and left 37.686 lb against legacy's 74.178 / 37.306.
+TEST(MsxSurfaceTwin, StreetSweepingMatchesLegacyTiming) {
+    const char* deck =
+        "[OPTIONS]\n"
+        "FLOW_UNITS           CFS\n"
+        "FLOW_ROUTING         DYNWAVE\n"
+        "INFILTRATION         HORTON\n"
+        "START_DATE           01/01/2026\n"
+        "START_TIME           00:00:00\n"
+        "END_DATE             01/03/2026\n"
+        "END_TIME             00:00:00\n"
+        "REPORT_STEP          00:15:00\n"
+        "WET_STEP             00:05:00\n"
+        "DRY_STEP             01:00:00\n"
+        "ROUTING_STEP         0:00:30\n"
+        "DRY_DAYS             5\n"
+        "\n"
+        "[RAINGAGES]\n"
+        "RG1  INTENSITY 0:05 1.0 TIMESERIES TS1\n"
+        "\n"
+        "[SUBCATCHMENTS]\n"
+        "S1  RG1  J1  10.0  50   500  0.5  0\n"
+        "\n"
+        "[SUBAREAS]\n"
+        "S1  0.01  0.1  0.05  0.05  25  OUTLET\n"
+        "\n"
+        "[INFILTRATION]\n"
+        "S1  3.0  0.5  4.0  7  0\n"
+        "\n"
+        "[TIMESERIES]\n"
+        "TS1  01/02/2026 06:00 1.0\n"
+        "TS1  01/02/2026 07:00 1.0\n"
+        "TS1  01/02/2026 07:05 0.0\n"
+        "\n"
+        "[JUNCTIONS]\n"
+        "J1  100.0  10.0  0.0  0.0  0.0\n"
+        "\n"
+        "[OUTFALLS]\n"
+        "O1  95.0  FREE\n"
+        "\n"
+        "[CONDUITS]\n"
+        "C1  J1  O1  400.0  0.013  0  0\n"
+        "\n"
+        "[XSECTIONS]\n"
+        "C1  CIRCULAR  1.5  0  0  0  1\n"
+        "\n"
+        "[POLLUTANTS]\n"
+        "TSS  MG/L  0  0  0  0  NO  *  0.0  0  0\n"
+        "\n"
+        "[LANDUSES]\n"
+        "LU1  0.5  0.6  0.3\n"
+        "\n"
+        "[COVERAGES]\n"
+        "S1  LU1  100\n"
+        "\n"
+        "[LOADINGS]\n"
+        "S1  TSS  7.5\n"
+        "\n"
+        "[BUILDUP]\n"
+        "LU1  TSS  POW  100  2  1  AREA\n"
+        "\n"
+        "[WASHOFF]\n"
+        "LU1  TSS  EXP  0.1  1.0  50  0\n"
+        "\n"
+        "[REPORT]\n"
+        "INPUT NO\n"
+        "SUBCATCHMENTS ALL\n"
+        "\n"
+        ;
+    write("_tw_sweep.inp", deck);
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, "_tw_sweep.inp", "_tw_sweep.rpt", "_tw_sweep.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+    double t = 0.0;
+    while (swmm_engine_step(e, &t) == SWMM_OK && t > 0.0) {}
+    swmm_engine_end(e);
+    const auto& mb = cpp(e).context().mass_balance;
+    // Legacy 5.3.0 .rpt values (3 decimals).
+    EXPECT_NEAR(mb.qual_sweeping[0], 74.178, 6e-4) << "sweeping";
+    EXPECT_NEAR(mb.qual_runoff_load[0], 0.253, 6e-4) << "surface runoff";
+    EXPECT_NEAR(mb.qual_init_buildup[0], 75.000, 6e-4) << "[LOADINGS] initial buildup";
+    swmm_engine_close(e); swmm_engine_destroy(e);
+}
