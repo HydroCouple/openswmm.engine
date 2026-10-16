@@ -257,6 +257,12 @@ add_gtest_unit(test_engine_xsect_polygon_dedup test_xsect_polygon_dedup.cpp)
 add_gtest_unit(test_engine_link_polygon_runtime test_link_polygon_runtime.cpp)
 target_compile_definitions(test_engine_link_polygon_runtime PRIVATE
     OPENSWMM_FV_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+
+# XSECT_GEOMETRY through the generic options key API (round trip, refusal
+# after open). Writes its one-conduit model under tests/output/options_api.
+add_gtest_unit(test_engine_xsect_geometry_option test_xsect_geometry_option.cpp)
+target_compile_definitions(test_engine_xsect_geometry_option PRIVATE
+    OPENSWMM_FV_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
 # GUI editor round-trip getters/setters (pollutant units, aquifer ET pattern,
 # snowpack surfaces, inlet params/type, LID layers/type).
 add_gtest_unit(test_engine_editor_roundtrip_api test_editor_roundtrip_api.cpp)
