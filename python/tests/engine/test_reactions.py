@@ -93,7 +93,7 @@ def _reactions_model(tag):
             "[REACTION_COEFFICIENTS]\n"
             "CONSTANT Kb 0.05\n"
             "[REACTION_TERMS]\n"
-            "Kf 0.5 * RE / D\n"
+            "Kf 0.5 * HRT / DT\n"
             "[REACTION_PIPES]\n"
             "RATE X -Kb * Kf * X\n"
             "RATE Y -Kb * X\n"
@@ -409,18 +409,18 @@ class TestReactionTerms(_ReactionsCase):
         kf = s.reactions.terms["Kf"]
         self.assertEqual(kf.name, "Kf")
         self.assertTrue(kf.expression)
-        kf.expression = "0.25 * RE"
-        self.assertEqual(kf.expression, "0.25 * RE")
-        self.assertEqual(s.reactions.terms["Kf"].expression, "0.25 * RE")
+        kf.expression = "0.25 * HRT"
+        self.assertEqual(kf.expression, "0.25 * HRT")
+        self.assertEqual(s.reactions.terms["Kf"].expression, "0.25 * HRT")
 
     def test_add_term(self):
         s = self.opened_solver()
         terms = s.reactions.terms
-        kg = terms.add("Kg", "2.0 * D")
+        kg = terms.add("Kg", "2.0 * DT")
         self.assertEqual(len(terms), 2)
         self.assertEqual(kg.name, "Kg")
         self.assertEqual(kg.index, 1)
-        self.assertEqual(kg.expression, "2.0 * D")
+        self.assertEqual(kg.expression, "2.0 * DT")
 
     def test_uncompilable_term_is_refused(self):
         s = self.opened_solver()
@@ -432,7 +432,7 @@ class TestReactionTerms(_ReactionsCase):
     def test_remove_unreferenced_term(self):
         s = self.opened_solver()
         terms = s.reactions.terms
-        terms.add("Kg", "2.0 * D")
+        terms.add("Kg", "2.0 * DT")
         terms.remove("Kg")
         self.assertEqual(len(terms), 1)
         self.assertNotIn("Kg", terms)
