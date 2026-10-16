@@ -567,6 +567,14 @@ double ControlEngine::getVariableValue(const SimulationContext& ctx,
                 xs.y_full = ctx.links.xsect_y_full[ui];
                 xs.a_full = ctx.links.xsect_a_full[ui];
                 xs.w_max = ctx.links.xsect_w_max[ui];
+                // A POLYGON link, or any shape compiled under XSECT_GEOMETRY
+                // EXACT, evaluates through ctx.cheb_sections; without the
+                // attach its area reads from the wrong (or no) geometry.
+                {
+                    const int ci = ctx.links.xsect_cheb_idx[ui];
+                    if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.cheb_sections.size())
+                        xs.cheb = &ctx.cheb_sections[static_cast<std::size_t>(ci)];
+                }
                 const int cr = ctx.link_subtypes.conduit_row(idx);
                 const int barrels = (cr >= 0) ? ctx.link_subtypes.conduits.barrels[static_cast<size_t>(cr)] : 1;
                 return link::getVelocity(xs, ctx.links.flow[ui], ctx.links.depth[ui],
