@@ -1824,7 +1824,10 @@ retroactive.
   default — the two members describe opposite physical events) and a new
   `GeometryError` for `SWMM_ERR_GEOMETRY`; `XSectShape.POLYGON` and
   `ErrorCode.GEOMETRY` round out the two enums the shape and the error code
-  belong to. See `docs/dev/cheb_section.md` for the design rationale and
+  belong to. `XSECT_GEOMETRY` itself is readable and settable through the
+  generic `swmm_options_get` / `swmm_options_set` key API (before open only,
+  since the compiled sections are built at open). See `docs/dev/cheb_section.md`
+  for the design rationale and
   measured performance, and Appendix D's `[XSECTIONS]` / `[CURVES]`
   reference for the input format.
 
