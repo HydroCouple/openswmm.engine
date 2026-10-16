@@ -123,3 +123,31 @@ class TestSaveSchedule(EngineSolverCase):
         self.assertEqual(len(opened_solver.save_schedule), 1)
         opened_solver.save_schedule.clear()
         self.assertEqual(len(opened_solver.save_schedule), 0)
+
+    def test_format_defaults_to_auto_and_round_trips(self):
+        opened_solver = self.opened_solver()
+        d = artifact_dir(self)
+        sched = opened_solver.save_schedule
+        sched.clear()
+        sched.append((datetime(2024, 1, 1), os.path.join(d, "a.hs")))
+        sched.append((datetime(2024, 2, 1), os.path.join(d, "b.hs")))
+        self.assertEqual(sched.get_format(0), "AUTO")
+        sched.set_format(1, "native")
+        self.assertEqual(sched.get_format(-1), "NATIVE")
+        # Replacing path/time keeps the format; insert keeps everyone's.
+        sched[1] = (datetime(2024, 3, 1), os.path.join(d, "c.hs"))
+        self.assertEqual(sched.get_format(1), "NATIVE")
+        sched.insert(0, (datetime(2023, 12, 1), os.path.join(d, "z.hs")))
+        self.assertEqual([sched.get_format(i) for i in range(len(sched))],
+                         ["AUTO", "AUTO", "NATIVE"])
+        with self.assertRaises(ValueError):
+            sched.set_format(0, "BINARY")
+        with self.assertRaises(IndexError):
+            sched.get_format(3)
+        sched.clear()
+
+    def test_legacy_omits_names_only_known_state(self):
+        omits = self.opened_solver().save_schedule.legacy_omits()
+        self.assertIsInstance(omits, tuple)
+        self.assertLessEqual(
+            set(omits), {"WATER_AGE", "REACTION_SPECIES", "AQUIFER", "NODE_LIDS"})

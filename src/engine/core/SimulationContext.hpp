@@ -82,6 +82,7 @@
 #include "FilePathPair.hpp"
 #include "../data/ArdConfigData.hpp"
 #include "../data/BedZoneData.hpp"
+#include "../data/ChannelThermalData.hpp"
 #include "../data/GageData.hpp"
 #include "../data/HeatData.hpp"
 #include "../data/WaterAgeData.hpp"
@@ -187,6 +188,11 @@ enum class FileMode {
     USE
 };
 
+/// File format a `SAVE HOTSTART` row writes. Values match the C API's
+/// `SWMM_HOTSTART_FORMAT_*`. AUTO is the behaviour of a row with no format
+/// keyword: legacy SWMM5 `.hsf`, or native when node LIDs need it.
+enum class HotstartFormat { AUTO = 0, LEGACY = 1, NATIVE = 2 };
+
 /**
  * @brief Configuration parsed from the `[FILES]` section.
  *
@@ -212,6 +218,8 @@ struct HotstartSaveEntry {
     /// Optional `SAVE HOTSTART` datetime as a SWMM decimal day.
     /// `0.0` means "no datetime — write at end of run".
     double       datetime = 0.0;
+    /// Optional trailing `LEGACY` / `NATIVE` keyword on the row.
+    HotstartFormat format = HotstartFormat::AUTO;
 };
 
 struct FilesSpec {
@@ -297,6 +305,14 @@ enum class EngineState : int32_t {
  * @ingroup engine_core
  */
 struct StateAccessors {
+    std::function<std::vector<ChannelThermalRegion>()> get_channel_thermal_regions;
+    // Each region appears once. Validate the complete batch before mutation.
+    std::function<std::string(const std::vector<ChannelThermalIncrement>&)> apply_channel_thermal_increments;
+    std::function<std::vector<ChannelSpeciesRegion>()> get_channel_species_regions;
+    std::function<std::string(const std::vector<ChannelSpeciesIncrement>&)> apply_channel_species_increments;
+    std::function<std::string()> get_snow_state;
+    // Empty result means valid; false validates without publishing.
+    std::function<std::string(const std::string&,bool)> set_snow_state;
     /// Read infiltration model id and the 6-double infiltration state into
     /// the caller-provided buffers. `out_infil` must point to a 6-element array.
     std::function<bool(int subcatch_index, int& out_model, double* out_infil)> get_infil_state;
@@ -338,6 +354,7 @@ class SurfaceRouter2D;
 struct PendingBoundaryRow;
 struct PendingEdgeConveyanceRow;
 struct PendingInitialQualityRow;
+struct PendingInitialBedQualityRow;
 struct PendingBoundaryQualityRow;
 struct GwTransportData;
 class SurfaceQuality2D;   // S7 (2026-09-19)
@@ -1008,6 +1025,7 @@ struct SimulationContext {
         /// S2/S3: authored [2D_INITIAL_QUALITY] / [2D_BOUNDARY_QUALITY] rows,
         /// retained after initialize() so the InpWriter can round-trip them.
         std::vector<twoD::PendingInitialQualityRow>*  pending_iq = nullptr;
+        std::vector<twoD::PendingInitialBedQualityRow>* pending_ibq = nullptr;
         std::vector<twoD::PendingBoundaryQualityRow>* pending_bq = nullptr;
         /// Per-cell infiltration (track I, plan §5.5). Owned by
         /// SurfaceRouter2D; the [2D_INFILTRATION*] section handlers populate
@@ -1151,6 +1169,12 @@ struct SimulationContext {
      *
      * @see Legacy: RunoffTotals, RoutingTotals in massbal.c
      */
+    // One row per node, booked at the same committed seam as routing totals.
+    // Read-only external coupling accounting; never a second withdrawal.
+    struct OutfallExports {
+        std::vector<double> water_m3, reverse_m3, heat_j, pollutant_amounts;
+    } outfall_exports;
+
     struct MassBalance {
         // Runoff totals
         double runoff_rainfall   = 0.0;  ///< Total rainfall volume (ft3)
@@ -1176,6 +1200,11 @@ struct SimulationContext {
         /// percentage was not a meaningful number. Measured on the snow
         /// parity deck: **-8.193 % before, +1.419 % after.**
         double runoff_final_snow = 0.0;
+
+        // RDII generation totals (ft3), distinct from routed RDII and runoff
+        // rainfall: sewer service areas need not equal subcatchment areas.
+        double rdii_rainfall = 0.0;
+        double rdii_produced = 0.0;
 
         // Routing totals
         double routing_dry_weather   = 0.0;
@@ -1270,6 +1299,7 @@ struct SimulationContext {
         // Quality mass balance (per-pollutant, in mass units)
         std::vector<double> qual_init_buildup;   ///< Initial buildup mass
         std::vector<double> qual_final_buildup;  ///< Final buildup mass
+        std::vector<double> qual_ponded_lost;    ///< Ponded mass written off when a surface dried (legacy FINAL_LOAD)
         std::vector<double> qual_surface_buildup; ///< Accumulated buildup during sim
         std::vector<double> qual_wet_deposition; ///< Wet deposition mass
         std::vector<double> qual_sweeping;       ///< Mass removed by sweeping
@@ -1299,6 +1329,7 @@ struct SimulationContext {
             auto np = static_cast<std::size_t>(n_pollutants);
             qual_init_buildup.assign(np, 0.0);
             qual_final_buildup.assign(np, 0.0);
+            qual_ponded_lost.assign(np, 0.0);
             qual_surface_buildup.assign(np, 0.0);
             qual_wet_deposition.assign(np, 0.0);
             qual_sweeping.assign(np, 0.0);
@@ -1325,6 +1356,7 @@ struct SimulationContext {
             // Save quality vectors, reset scalars, restore vectors
             auto qi = std::move(qual_init_buildup);
             auto qf = std::move(qual_final_buildup);
+            auto qpl = std::move(qual_ponded_lost);
             auto qsb = std::move(qual_surface_buildup);
             auto qwd = std::move(qual_wet_deposition);
             auto qsw = std::move(qual_sweeping);
@@ -1348,6 +1380,7 @@ struct SimulationContext {
             *this = MassBalance{};
             qual_init_buildup = std::move(qi);
             qual_final_buildup = std::move(qf);
+            qual_ponded_lost = std::move(qpl);
             qual_surface_buildup = std::move(qsb);
             qual_wet_deposition = std::move(qwd);
             qual_sweeping = std::move(qsw);
@@ -1370,7 +1403,7 @@ struct SimulationContext {
             routing_forcing_qual_inflow = std::move(qrfqi);
             // Zero out the quality vectors (except init_buildup which is
             // computed once during initQuality and must survive reset)
-            for (auto* v : {&qual_final_buildup,
+            for (auto* v : {&qual_final_buildup, &qual_ponded_lost,
                             &qual_surface_buildup, &qual_wet_deposition,
                             &qual_sweeping, &qual_bmp_removal,
                             &qual_infil_loss, &qual_runoff_load,
@@ -1464,6 +1497,32 @@ struct SimulationContext {
     // Per-incident-link surface donation limit (ft³/s), indexed by node.
     // Empty for ordinary models; infinity for nodes without a surface outfall.
     std::vector<double> surface_outfall_link_limit;
+
+    /// Review D2 / gaining conduits (2026-10-15): quality for water that has
+    /// ALREADY reached a node hydraulically outside the lateral-inflow
+    /// assembly — mesh water entering through a surface outfall, aquifer
+    /// water a conduit gained (delivered to its end nodes as `inflow`). The
+    /// next quality step adds the volume to the node's mixing volume and the
+    /// mass to its loads (QualitySolver::addQualityOnlyInflows), then clears
+    /// it. 1D units: ft³, concentration × ft³, age·ft³ (hours), °C·ft³.
+    struct QualityOnlyInflow {
+        std::vector<double> vol, mass, msx, age_vol, temp_vol;
+        bool any = false;
+        void ensure(int nn, int np, int ns) {
+            const auto un = static_cast<std::size_t>(nn > 0 ? nn : 0);
+            if (vol.size() != un) { vol.assign(un, 0.0); age_vol.assign(un, 0.0); temp_vol.assign(un, 0.0); }
+            if (mass.size() != un * static_cast<std::size_t>(np > 0 ? np : 0))
+                mass.assign(un * static_cast<std::size_t>(np > 0 ? np : 0), 0.0);
+            if (msx.size() != un * static_cast<std::size_t>(ns > 0 ? ns : 0))
+                msx.assign(un * static_cast<std::size_t>(ns > 0 ? ns : 0), 0.0);
+        }
+        void clear() {
+            for (auto* v : {&vol, &mass, &msx, &age_vol, &temp_vol}) std::fill(v->begin(), v->end(), 0.0);
+            any = false;
+        }
+    };
+    QualityOnlyInflow surface_outfall_quality;  ///< D2: booked as external inflow
+    QualityOnlyInflow link_gain_quality;        ///< gaining conduits: groundwater inflow
 
     bool runtime_coupling_used = false; ///< Runtime prescriptions require a future restart format.
     struct MassBalance2D {
@@ -1895,8 +1954,11 @@ struct SimulationContext {
      *          Call this before re-running or re-opening a simulation.
      */
     void reset() {
+        outfall_exports = OutfallExports{};
         runtime_coupling_used = false;
         surface_outfall_link_limit.clear();
+        surface_outfall_quality = {};
+        link_gain_quality = {};
         state = EngineState::CREATED;
         control_log.clear();
         control_rule_names.clear();
@@ -1922,10 +1984,16 @@ struct SimulationContext {
         // Clear SoA stores
         nodes      = NodeData{};
         links      = LinkData{};
+        // Reopening a rain-rule model must not reuse the previous subtype
+        // join rows or append its rules to the freshly parsed rule store.
+        node_subtypes.clear();
+        link_subtypes.clear();
+        control_rules = ControlRuleStore{};
         subcatches = SubcatchData{};
         gages      = GageData{};
         pollutants = PollutantData{};
         tables     = TableData{};
+        snowpacks  = SnowpackStore{};
 
         // Clear name indices
         node_names.clear();
@@ -1933,6 +2001,7 @@ struct SimulationContext {
         subcatch_names.clear();
         gage_names.clear();
         pollutant_names.clear();
+        snowpack_names.clear();
 
         // Clear inflow-related stores that aren't reset by their owning solvers
         rdii_decay = RDIIDecayData{};

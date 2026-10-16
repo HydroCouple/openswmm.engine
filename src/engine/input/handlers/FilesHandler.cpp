@@ -55,6 +55,22 @@ double parse_optional_datetime(const std::vector<std::string>& tok,
     return parse_datetime(tok[idx], tok[idx + 1]);
 }
 
+// A time token legacy datetime_strToTime accepts: decimal hours, or
+// H[:M[:S]] in digits. parse_time_day_fraction cannot tell a bad token from
+// midnight, so this checks the form.
+bool is_time_token(const std::string& s) {
+    double hours = 0.0;
+    if (parse_double_strict(s, hours)) return true;
+    int fields = 0;
+    bool digit = false;
+    for (const char c : s) {
+        if (c >= '0' && c <= '9') { digit = true; continue; }
+        if (c != ':' || !digit || ++fields > 2) return false;
+        digit = false;
+    }
+    return digit;
+}
+
 } // anonymous
 
 void handle_files(SimulationContext& ctx, const std::vector<std::string>& lines) {
@@ -101,9 +117,40 @@ void handle_files(SimulationContext& ctx, const std::vector<std::string>& lines)
             files.outflows_path = path;
         } else if (kind_word == "HOTSTART") {
             if (mode == FileMode::SAVE) {
+                // Legacy iface.c reads a datetime only from a five-token row
+                // and rejects one whose date or time does not parse.
+                if (tok.size() == 5) {
+                    if (parse_date(tok[3]) <= 0.0) {
+                        ctx.errors.push_back(format_error(ERR_DATETIME, tok[3]));
+                        continue;
+                    }
+                    if (!is_time_token(tok[4])) {
+                        ctx.errors.push_back(format_error(ERR_DATETIME, tok[4]));
+                        continue;
+                    }
+                }
                 HotstartSaveEntry entry;
                 entry.path = path;
                 entry.datetime = parse_optional_datetime(tok, 3);
+                // Optional trailing format keyword, after the datetime if
+                // there is one: `SAVE HOTSTART f [date time] LEGACY|NATIVE`.
+                // It must trail: legacy SWMM 5 reads a datetime only from a
+                // five-token row and ignores later tokens, so a four- or
+                // six-token row still opens there. Any other token in that
+                // position is ignored, with a warning.
+                const std::size_t fmt_at = (tok.size() >= 6) ? 5 : 3;
+                if (tok.size() == fmt_at + 1) {
+                    const std::string fmt = Tokenizer::to_upper(tok[fmt_at]);
+                    if      (fmt == "LEGACY") entry.format = HotstartFormat::LEGACY;
+                    else if (fmt == "NATIVE") entry.format = HotstartFormat::NATIVE;
+                    else {
+                        ctx.warnings.push_back(
+                            "\n  WARNING: Unknown SAVE HOTSTART format '" + tok[fmt_at] +
+                            "' in [FILES] section - LEGACY or NATIVE expected; "
+                            "the default format will be used.");
+                        if (ctx.warning_code == 0) ctx.warning_code = 101;
+                    }
+                }
                 files.hotstart_saves.push_back(std::move(entry));
             } else {  // USE
                 files.hotstart_use_path = path;

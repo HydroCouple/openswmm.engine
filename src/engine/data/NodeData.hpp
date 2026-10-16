@@ -657,6 +657,8 @@ struct NodeData {
     /// volume, not volume-of-the-average-depth (which understates a convex curve).
     /// @see Legacy: StorageStats[k].avgVol
     std::vector<double>     stat_sum_volume;
+    std::vector<double> stat_storage_max_volume;  ///< Maximum stored volume, capped at full volume (ft3).
+    std::vector<double> stat_storage_max_volume_date;  ///< Date of the first maximum stored volume.
 
     /// Date/time when maximum depth occurred (OADate (days since 12/30/1899)).
     /// @see Legacy: NodeStats[i].maxDepthDate
@@ -830,6 +832,8 @@ struct NodeData {
         stat_max_overflow_date.assign(un, 0.0);
         stat_sum_depth.assign(un, 0.0);
         stat_sum_volume.assign(un, 0.0);
+        stat_storage_max_volume_date.assign(un, 0.0);
+        stat_storage_max_volume.assign(un, 0.0);
         stat_max_depth_date.assign(un, 0.0);
         stat_max_rpt_depth.assign(un, 0.0);
         stat_max_inflow_date.assign(un, 0.0);
@@ -889,7 +893,7 @@ struct NodeData {
         g(stat_vol_flooded, 0.0); g(stat_time_flooded, 0.0);
         g(stat_max_depth, 0.0); g(stat_max_overflow, 0.0);
         g(stat_max_overflow_date, 0.0); g(stat_sum_depth, 0.0);
-        g(stat_sum_volume, 0.0);
+        g(stat_sum_volume, 0.0); g(stat_storage_max_volume_date, 0.0); g(stat_storage_max_volume, 0.0);
         g(stat_max_depth_date, 0.0); g(stat_max_rpt_depth, 0.0);
         g(stat_max_inflow_date, 0.0); g(stat_time_surcharged, 0.0);
         g(stat_max_surcharge_height, 0.0);
@@ -938,7 +942,7 @@ struct NodeData {
         r(full_volume); r(rpt_full_volume); r(old_depth); r(old_volume); r(old_lat_flow);
         r(old_inflow); r(rpt_flag); r(stat_vol_flooded); r(stat_time_flooded);
         r(stat_max_depth); r(stat_max_overflow); r(stat_max_overflow_date); r(stat_sum_depth);
-        r(stat_sum_volume); r(stat_max_depth_date); r(stat_max_rpt_depth); r(stat_max_inflow_date);
+        r(stat_sum_volume); r(stat_storage_max_volume_date); r(stat_storage_max_volume); r(stat_max_depth_date); r(stat_max_rpt_depth); r(stat_max_inflow_date);
         r(stat_time_surcharged); r(stat_max_surcharge_height); r(stat_max_lat_inflow); r(stat_max_total_inflow);
         r(stat_storage_max_outflow);
         r(stat_lat_inflow_vol); r(stat_total_inflow_vol); r(stat_total_outflow_vol); r(stat_outfall_avg_flow);
@@ -979,7 +983,7 @@ struct NodeData {
         e(comments); e(tags); e(rpt_flag);
 
         e(stat_vol_flooded); e(stat_time_flooded); e(stat_max_depth); e(stat_max_overflow);
-        e(stat_max_overflow_date); e(stat_sum_depth); e(stat_sum_volume); e(stat_max_depth_date);
+        e(stat_max_overflow_date); e(stat_sum_depth); e(stat_sum_volume); e(stat_storage_max_volume_date); e(stat_storage_max_volume); e(stat_max_depth_date);
         e(stat_max_rpt_depth); e(stat_max_inflow_date); e(stat_time_surcharged);
         e(stat_max_surcharge_height); e(stat_outfall_avg_flow); e(stat_max_lat_inflow);
         e(stat_max_total_inflow); e(stat_storage_max_outflow);

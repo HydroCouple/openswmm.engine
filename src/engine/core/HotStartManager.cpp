@@ -45,8 +45,10 @@
  */
 
 #include "HotStartManager.hpp"
+#include <algorithm>
 #include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "SimulationContext.hpp"
+#include "../transport/components/ReactionModule/ReactionLegacyBinding.hpp"   // ensureMsxState
 #include "../hydrology/Runoff.hpp"
 #include "../hydrology/Groundwater.hpp"
 #ifdef OPENSWMM_HAS_2D
@@ -63,6 +65,21 @@
 #include <sstream>
 
 namespace openswmm {
+namespace {
+bool meshLidRestartUnsupported(const SimulationContext& ctx) {
+    return std::any_of(ctx.node_subtypes.storages.lid.begin(),ctx.node_subtypes.storages.lid.end(),[](const auto& c){
+        return c.control>=0 && c.bottom==LidNodeBottom::MeshAquifer;
+    });
+}
+bool coupledThermalRestartUnsupported(const SimulationContext& ctx) {
+#ifdef OPENSWMM_HAS_2D
+    const auto* router=ctx.twod_io.surface_router;
+    return router&&(router->state().heat.enabled||router->subsurface().heat().active());
+#else
+    (void)ctx;return false;
+#endif
+}
+}
 
 // ============================================================================
 // Thread-local last error
@@ -302,6 +319,17 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
         }
     }
 
+    if (hs.header.version >= 14u) {
+        if (hs.snow_state.size()>64u*1024u*1024u || !write_pod(buf,static_cast<uint32_t>(hs.snow_state.size())))return false;
+        buf.write(hs.snow_state.data(),static_cast<std::streamsize>(hs.snow_state.size()));
+        if(!buf.good())return false;
+    }
+    if (hs.header.version >= 15u) {
+        if(hs.engine_checkpoint.empty() || hs.engine_checkpoint.size()>512u*1024u*1024u ||
+           !write_pod(buf,static_cast<uint32_t>(hs.engine_checkpoint.size())))return false;
+        buf.write(hs.engine_checkpoint.data(),static_cast<std::streamsize>(hs.engine_checkpoint.size()));
+        if(!buf.good())return false;
+    }
     // Compute CRC32 over the body
     const std::string body = buf.str();
     const uint32_t crc = crc32(
@@ -372,7 +400,7 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
 
     // Header
     if (!read_pod(is, hs.header.version))    return false;
-    if (hs.header.version < 1u || hs.header.version > 13u) {
+    if (hs.header.version < 1u || hs.header.version > 15u) {
         tl_last_io_error = "Unsupported hot start version " +
                            std::to_string(hs.header.version) + " in '" + path + "'";
         return false;
@@ -547,6 +575,16 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
             row.resize(size);
             for (auto& value : row) if (!read_pod(is,value)) return false;
         }
+    }
+    if(hs.header.version>=14u) {
+        uint32_t size=0;
+        if(!read_pod(is,size)||size>64u*1024u*1024u||size>file_size)return false;
+        hs.snow_state.resize(size);is.read(hs.snow_state.data(),size);if(!is.good())return false;
+    }
+    if(hs.header.version>=15u) {
+        uint32_t size=0;
+        if(!read_pod(is,size)||size==0||size>512u*1024u*1024u||size>file_size)return false;
+        hs.engine_checkpoint.resize(size);is.read(hs.engine_checkpoint.data(),size);if(!is.good())return false;
     }
     hs.path = path;
     return true;
@@ -1016,6 +1054,12 @@ void restoreAquiferBlock(const HotStartFile& hs, SimulationContext& ctx,
 HotStartFile* HotStartManager::save(const SimulationContext& ctx,
                                     const std::string& path) {
     tl_last_io_error.clear();
+    if(coupledThermalRestartUnsupported(ctx)) {
+        tl_last_io_error="Coupled mesh/ground heat hotstart requires its thermal energy restart extension";return nullptr;
+    }
+    if(meshLidRestartUnsupported(ctx)) {
+        tl_last_io_error="Mesh LID hotstart requires the R5 joint owner restart extension";return nullptr;
+    }
     if(ctx.runtime_coupling_used) {
         tl_last_io_error="Hotstart cannot preserve runtime 2D coupling prescriptions and receipts";
         return nullptr;
@@ -1125,6 +1169,10 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
     }
 
     if (!hs->gw_interface.empty()) hs->header.version = std::max(hs->header.version, 13u);
+    try {
+        if(ctx.state_accessors.get_snow_state)hs->snow_state=ctx.state_accessors.get_snow_state();
+        if(!hs->snow_state.empty())hs->header.version=14u;
+    }catch(const std::exception& e){tl_last_io_error=e.what();delete hs;return nullptr;}
     if (!write_file(*hs, path)) {
         delete hs;
         return nullptr;
@@ -1141,10 +1189,27 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
                                     const runoff::RunoffSolver* runoff_solver,
                                     const groundwater::GWSolver* gw_solver,
                                     const std::string& path) {
+    return save_with_engine_checkpoint(ctx,runoff_solver,gw_solver,path,{});
+}
+
+HotStartFile* HotStartManager::save_with_engine_checkpoint(const SimulationContext& ctx,
+                                    const runoff::RunoffSolver* runoff_solver,
+                                    const groundwater::GWSolver* gw_solver,
+                                    const std::string& path,
+                                    const std::string& engine_checkpoint) {
     tl_last_io_error.clear();
-    if(ctx.runtime_coupling_used) {
+    if(engine_checkpoint.empty() && coupledThermalRestartUnsupported(ctx)) {
+        tl_last_io_error="Coupled mesh/ground heat hotstart requires its thermal energy restart extension";return nullptr;
+    }
+    if(engine_checkpoint.empty() && meshLidRestartUnsupported(ctx)) {
+        tl_last_io_error="Mesh LID hotstart requires the R5 joint owner restart extension";return nullptr;
+    }
+    if(engine_checkpoint.empty() && ctx.runtime_coupling_used) {
         tl_last_io_error="Hotstart cannot preserve runtime 2D coupling prescriptions and receipts";
         return nullptr;
+    }
+    if(engine_checkpoint.size()>512u*1024u*1024u) {
+        tl_last_io_error="Native engine hotstart checkpoint exceeds the 512 MiB limit";return nullptr;
     }
 
     auto* hs = new HotStartFile();
@@ -1250,6 +1315,14 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
     }
 
     if (!hs->gw_interface.empty()) hs->header.version = std::max(hs->header.version, 13u);
+    try {
+        if(ctx.state_accessors.get_snow_state)hs->snow_state=ctx.state_accessors.get_snow_state();
+        if(!hs->snow_state.empty())hs->header.version=14u;
+    }catch(const std::exception& e){tl_last_io_error=e.what();delete hs;return nullptr;}
+    if(!engine_checkpoint.empty()) {
+        hs->engine_checkpoint=engine_checkpoint;
+        hs->header.version=15u;
+    }
     if (!write_file(*hs, path)) {
         delete hs;
         return nullptr;
@@ -1273,6 +1346,14 @@ HotStartFile* HotStartManager::open(const std::string& path) {
     return hs;
 }
 
+bool HotStartManager::is_native_file(const std::string& path) noexcept {
+    std::ifstream file(openswmm::io::utf8_path(path), std::ios::binary);
+    char magic[16] = {};
+    file.read(magic, sizeof(magic));
+    return file.gcount() == static_cast<std::streamsize>(sizeof(magic)) &&
+           std::memcmp(magic, "OPENSWMM_HS_V1", 15) == 0;
+}
+
 // ============================================================================
 // HotStartManager::apply()
 // ============================================================================
@@ -1281,6 +1362,25 @@ int HotStartManager::apply(HotStartFile& hs,
                            SimulationContext& ctx,
                            std::function<void(const std::string&)> warn_cb) {
     hs.warnings.clear();
+    if(!hs.engine_checkpoint.empty()) {
+        tl_last_io_error="Native V15 engine checkpoint must be restored through SWMMEngine start; partial hotstart apply is refused";
+        hs.warnings.push_back(tl_last_io_error);if(warn_cb)warn_cb(tl_last_io_error);return -1;
+    }
+    if(coupledThermalRestartUnsupported(ctx)) {
+        tl_last_io_error="Coupled mesh/ground heat hotstart requires its thermal energy restart extension";
+        hs.warnings.push_back(tl_last_io_error);if(warn_cb)warn_cb(tl_last_io_error);return -1;
+    }
+    if(!hs.snow_state.empty()) {
+        const std::string error=ctx.state_accessors.set_snow_state?
+            ctx.state_accessors.set_snow_state(hs.snow_state,false):"Snow state accessor is unavailable.";
+        if(!error.empty()) {
+            tl_last_io_error=error;hs.warnings.push_back(error);if(warn_cb)warn_cb(error);return -1;
+        }
+    }
+    if(meshLidRestartUnsupported(ctx)) {
+        tl_last_io_error="Mesh LID hotstart requires the R5 joint owner restart extension";
+        hs.warnings.push_back(tl_last_io_error);if(warn_cb)warn_cb(tl_last_io_error);return 1;
+    }
     int missing = 0;
 
     auto emit_warning = [&](const std::string& msg) {
@@ -1453,6 +1553,15 @@ int HotStartManager::apply(HotStartFile& hs,
             if (warn_cb) warn_cb(m);
         });
 
+    if(!hs.snow_state.empty()) {
+        const auto error=ctx.state_accessors.set_snow_state(hs.snow_state,true);
+        if(!error.empty()){tl_last_io_error=error;return -1;}
+    } else if(ctx.state_accessors.set_snow_state && (std::any_of(ctx.subcatches.snowpack.begin(),ctx.subcatches.snowpack.end(),[](int p){return p>=0;}) ||
+              (ctx.state_accessors.get_snow_state&&!ctx.state_accessors.get_snow_state().empty()))) {
+        const auto error=ctx.state_accessors.set_snow_state({},true);
+        if(!error.empty()){tl_last_io_error=error;return -1;}
+        emit_warning("Hot start lacks snow state: assigned native and mesh snowpacks start bare; future snow forcing is retained.");
+    }
     return missing;
 }
 
@@ -1467,6 +1576,8 @@ int HotStartManager::apply(HotStartFile& hs,
                            std::function<void(const std::string&)> warn_cb) {
     // Apply hydraulic state (nodes, links) via the existing V1 overload
     int missing = apply(hs, ctx, warn_cb);
+    if(missing<0)return missing;
+    if(meshLidRestartUnsupported(ctx))return missing;
     if (!validAquiferInterface(hs,ctx)) return missing;
 
     // Apply V2 infiltration + GW state if the file has it
@@ -1502,10 +1613,38 @@ int HotStartManager::apply(HotStartFile& hs,
 // OBJECT INDEX. Mirrors legacy hotstart.c initializeFromHotstartFile() +
 // readRouting(); see also hotstart_is_valid() for the stamp/version logic.
 
+/// Marks the reaction species trailer after a legacy-layout body.
+static constexpr char kSpeciesTrailerTag[15] = {'O','P','E','N','S','W','M','M','-','H','S','M','S','X','1'};
+
+std::size_t HotStartManager::legacy_runoff_size(const SimulationContext& ctx,
+                                                int n_land) {
+    const auto& sub = ctx.subcatches;
+    const auto np = static_cast<std::size_t>(std::max(ctx.n_pollutants(), 0));
+    std::size_t n = 0;
+    for (int i = 0; i < ctx.n_subcatches(); ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        n += 4 + 6;
+        if (ui < sub.gw_aquifer.size() && sub.gw_aquifer[ui] >= 0) n += 4;
+        if (ui < sub.snowpack.size()   && sub.snowpack[ui]   >= 0) n += 15;
+        if (np > 0)
+            n += 2 * np + static_cast<std::size_t>(std::max(n_land, 0)) * (np + 1);
+    }
+    return n;
+}
+
 int HotStartManager::apply_legacy_routing(
         const std::string& path,
         SimulationContext& ctx,
-        std::function<void(const std::string&)> warn_cb) {
+        std::function<void(const std::string&)> warn_cb,
+        std::vector<double>* runoff,
+        LegacySpeciesTrailer* species) {
+    if (coupledThermalRestartUnsupported(ctx)) {
+        tl_last_io_error = "Legacy hotstart has no coupled mesh/ground thermal energy";
+        return -1;
+    }
+    if(meshLidRestartUnsupported(ctx)) {
+        tl_last_io_error="Mesh LID hotstart requires the R5 joint owner restart extension";return 1;
+    }
     std::ifstream file(openswmm::io::utf8_path(path), std::ios::binary);
     if (!file) {
         tl_last_io_error = "Cannot open hotstart file '" + path + "'";
@@ -1584,7 +1723,30 @@ int HotStartManager::apply_legacy_routing(
         return 3;
     }
 
-    if (nSub > 0) {
+    // Legacy initializeFromHotstartFile refuses a land-use count that differs
+    // from the model's: the runoff section is positional per land use.
+    if (runoff && version >= 3 && nLand != ctx.n_landuses()) {
+        tl_last_io_error = "Hotstart land use count mismatch (file " +
+            std::to_string(nLand) + " vs model " +
+            std::to_string(ctx.n_landuses()) + ")";
+        return 3;
+    }
+
+    if (runoff) {
+        runoff->clear();
+        if (version >= 3 && nSub > 0) {
+            runoff->resize(legacy_runoff_size(ctx, nLand));
+            file.read(reinterpret_cast<char*>(runoff->data()),
+                      static_cast<std::streamsize>(runoff->size() * sizeof(double)));
+            if (!file) {
+                tl_last_io_error =
+                    "Hotstart runoff section truncated in '" + path + "'";
+                return 1;
+            }
+        }
+    }
+
+    if (nSub > 0 && (!runoff || version < 3)) {
         // Routing state IS applied below; subcatchment runoff/infiltration/
         // groundwater/snowpack/buildup state in the file is skipped, not
         // applied — a continuation run is hydraulically hot-started but its
@@ -1595,7 +1757,7 @@ int HotStartManager::apply_legacy_routing(
         if (warn_cb) warn_cb(msg);
     }
 
-    if (version >= 3 && nSub > 0) {
+    if (!runoff && version >= 3 && nSub > 0) {
         // Skip the readRunoff() section. All fields legacy wrote here are
         // 8-byte doubles (saveRunoff). Per subcatchment: 3 sub-area ponded
         // depths + total runoff (4), infiltration state (6), +4 if it has
@@ -1684,6 +1846,77 @@ int HotStartManager::apply_legacy_routing(
         }
     }
 
+    // --- reaction species trailer (v6 only; legacy stops reading above) ---
+    if (species) {
+        *species = LegacySpeciesTrailer{};
+        char tag[15] = {};
+        file.read(tag, 15);
+        if (file && std::memcmp(tag, kSpeciesTrailerTag, 15) == 0) {
+            int32_t ns = 0, nn = 0, nl = 0, surf = 0;
+            bool ok = read_pod(file, ns) && ns >= 0 && ns < 100000;
+            std::vector<std::string> names(ok ? static_cast<std::size_t>(ns) : 0u);
+            for (auto& n : names) ok = ok && read_string(file, n);
+            ok = ok && read_pod(file, nn) && read_pod(file, nl);
+            ok = ok && nn == nNodes && nl == nLinks;
+            const auto uns = static_cast<std::size_t>(std::max(ns, 0));
+            std::vector<double> node(ok ? static_cast<std::size_t>(nn) * uns : 0u);
+            std::vector<double> link(ok ? static_cast<std::size_t>(nl) * uns : 0u);
+            if (ok) {
+                file.read(reinterpret_cast<char*>(node.data()), static_cast<std::streamsize>(node.size() * sizeof(double)));
+                file.read(reinterpret_cast<char*>(link.data()), static_cast<std::streamsize>(link.size() * sizeof(double)));
+                ok = static_cast<bool>(file) && read_pod(file, surf);
+            }
+            if (ok && surf == 1) {
+                int32_t nsc = 0, nlu = 0;
+                ok = read_pod(file, nsc) && read_pod(file, nlu) && nsc >= 0 && nlu >= 0;
+                if (ok) {
+                    species->n_subcatch = nsc;
+                    species->n_landuses = nlu;
+                    const auto a = static_cast<std::size_t>(nsc) * uns;
+                    species->washoff.resize(a);
+                    species->ponded.resize(a);
+                    species->buildup.resize(a * static_cast<std::size_t>(nlu));
+                    for (auto* v : {&species->washoff, &species->ponded, &species->buildup})
+                        file.read(reinterpret_cast<char*>(v->data()), static_cast<std::streamsize>(v->size() * sizeof(double)));
+                    ok = static_cast<bool>(file);
+                }
+            }
+            if (!ok) {
+                tl_last_io_error = "Hotstart reaction species block is malformed in '" + path + "'";
+                return 1;
+            }
+            species->species = names;
+
+            // Network concentrations, by name, before init_modules() so every
+            // engine seeds from them (ensureMsxState fills once, when unsized).
+            auto& rx = ctx.reactions;
+            const int nm = rx.configured ? rx.n_species() : 0;
+            const auto unm = static_cast<std::size_t>(nm);
+            std::vector<int> col(uns, -1);
+            for (std::size_t s = 0; s < uns; ++s) {
+                col[s] = nm > 0 ? rx.find_species(names[s]) : -1;
+                if (col[s] < 0 && warn_cb)
+                    warn_cb("USE HOTSTART: reaction species '" + names[s] +
+                            "' is not in the current model; its state is skipped");
+            }
+            if (nm > 0) {
+                transport::ensureMsxState(ctx);
+                for (std::size_t s = 0; s < uns; ++s) {
+                    if (col[s] < 0) continue;
+                    const auto m = static_cast<std::size_t>(col[s]);
+                    for (std::size_t e = 0; e < static_cast<std::size_t>(nn); ++e)
+                        if (e * unm + m < rx.msx_node_conc.size())
+                            rx.msx_node_conc[e * unm + m] = node[e * uns + s];
+                    for (std::size_t e = 0; e < static_cast<std::size_t>(nl); ++e)
+                        if (e * unm + m < rx.msx_link_conc.size())
+                            rx.msx_link_conc[e * unm + m] = link[e * uns + s];
+                }
+            }
+        } else if (file && warn_cb) {
+            warn_cb("USE HOTSTART: unrecognised data after the routing records was ignored");
+        }
+    }
+
     (void)flowUnits;
     (void)nLand;
     (void)warn_cb;
@@ -1691,15 +1924,56 @@ int HotStartManager::apply_legacy_routing(
     return 0;
 }
 
+bool HotStartManager::apply_species_surface(
+        const LegacySpeciesTrailer& tr, SimulationContext& ctx,
+        const std::function<void(const std::string&)>& warn) {
+    auto& s = ctx.reactions.surface;
+    if (tr.n_landuses < 0 || !s.active()) return false;
+    if (tr.n_subcatch != ctx.n_subcatches() || tr.n_landuses != s.n_landuses) {
+        if (warn) warn("USE HOTSTART: reaction species surface state skipped "
+                       "(subcatchment or land use count differs from the model)");
+        return false;
+    }
+    const auto uns = tr.species.size();
+    const int nlu = tr.n_landuses;
+    for (std::size_t k = 0; k < uns; ++k) {
+        const int m = ctx.reactions.find_species(tr.species[k]);
+        if (m < 0 || m >= s.n_species) continue;
+        for (int sc = 0; sc < tr.n_subcatch; ++sc) {
+            const auto src = static_cast<std::size_t>(sc) * uns + k;
+            const auto dst = s.sidx(sc, m);
+            if (dst < s.washoff_conc.size()) s.washoff_conc[dst] = tr.washoff[src];
+            if (dst < s.washoff_conc_old.size()) s.washoff_conc_old[dst] = tr.washoff[src];
+            if (dst < s.ponded_qual.size()) s.ponded_qual[dst] = tr.ponded[src];
+            for (int lu = 0; lu < nlu; ++lu) {
+                const auto b = (static_cast<std::size_t>(sc) * static_cast<std::size_t>(nlu) +
+                                static_cast<std::size_t>(lu)) * uns + k;
+                const auto d = s.bu_idx(sc, lu, m);
+                if (d < s.buildup.size()) s.buildup[d] = tr.buildup[b];
+            }
+        }
+    }
+    return true;
+}
+
 // ============================================================================
 // HotStartManager::save_legacy_routing()
 //
-// Op-for-op transliteration of legacy hotstart.c saveHotstart()+saveRouting()
-// for the "SWMM5-HOTSTART4" format (hotstart.c:327-353, 358-399).
+// Op-for-op transliteration of legacy hotstart.c saveHotstart()+saveRunoff()+
+// saveRouting() for the "SWMM5-HOTSTART4" format (hotstart.c:327-353,
+// 492-561, 358-399).
 // ============================================================================
 
 int HotStartManager::save_legacy_routing(const std::string& path,
-                                         const SimulationContext& ctx) {
+                                         const SimulationContext& ctx,
+                                         const std::vector<double>* runoff) {
+    if (coupledThermalRestartUnsupported(ctx)) {
+        tl_last_io_error = "Legacy hotstart cannot preserve coupled mesh/ground thermal energy";
+        return -1;
+    }
+    if(meshLidRestartUnsupported(ctx)) {
+        tl_last_io_error="Mesh LID hotstart requires the R5 joint owner restart extension";return 1;
+    }
     std::ofstream file(openswmm::io::utf8_path(path), std::ios::binary | std::ios::trunc);
     if (!file) {
         tl_last_io_error = "Cannot open hotstart save file '" + path + "'";
@@ -1712,7 +1986,7 @@ int HotStartManager::save_legacy_routing(const std::string& path,
     file.write(stamp, 15);                          // NUL not written (strlen)
 
     const int32_t nSub   = ctx.n_subcatches();
-    const int32_t nLand  = 0;                       // land uses (unused here)
+    const int32_t nLand  = runoff ? ctx.n_landuses() : 0;
     const int32_t nNodes = ctx.n_nodes();
     const int32_t nLinks = ctx.n_links();
     const int32_t nPollut = ctx.n_pollutants();
@@ -1722,6 +1996,16 @@ int HotStartManager::save_legacy_routing(const std::string& path,
         !write_pod(file, nPollut) || !write_pod(file, flowUnits)) {
         tl_last_io_error = "Hotstart header write failed for '" + path + "'";
         return 1;
+    }
+
+    // --- runoff state (legacy saveRunoff), all double, before the routing.
+    if (runoff) {
+        if (runoff->size() != legacy_runoff_size(ctx, nLand)) {
+            tl_last_io_error = "Hotstart runoff section has the wrong size for '" + path + "'";
+            return 1;
+        }
+        file.write(reinterpret_cast<const char*>(runoff->data()),
+                   static_cast<std::streamsize>(runoff->size() * sizeof(double)));
     }
 
     const auto& nodes = ctx.nodes;
@@ -1759,6 +2043,34 @@ int HotStartManager::save_legacy_routing(const std::string& path,
             float q = (qi < links.conc.size())
                 ? static_cast<float>(links.conc[qi]) : 0.0f;
             write_pod(file, q);
+        }
+    }
+
+    // --- reaction species trailer: legacy reads no further than the links,
+    //     so this is invisible to it (hotstart.c initializeFromHotstartFile).
+    const auto& rx = ctx.reactions;
+    const int nm = rx.configured ? rx.n_species() : 0;
+    const auto unm = static_cast<std::size_t>(nm);
+    if (nm > 0 && rx.msx_node_conc.size() == static_cast<std::size_t>(nNodes) * unm &&
+        rx.msx_link_conc.size() == static_cast<std::size_t>(nLinks) * unm) {
+        file.write(kSpeciesTrailerTag, 15);
+        write_pod(file, static_cast<int32_t>(nm));
+        for (int m = 0; m < nm; ++m) write_string(file, rx.species_name[static_cast<std::size_t>(m)]);
+        write_pod(file, nNodes);
+        write_pod(file, nLinks);
+        file.write(reinterpret_cast<const char*>(rx.msx_node_conc.data()),
+                   static_cast<std::streamsize>(rx.msx_node_conc.size() * sizeof(double)));
+        file.write(reinterpret_cast<const char*>(rx.msx_link_conc.data()),
+                   static_cast<std::streamsize>(rx.msx_link_conc.size() * sizeof(double)));
+        const auto& s = rx.surface;
+        const bool surf = s.active() && s.n_species == nm && s.n_subcatch == nSub;
+        write_pod(file, static_cast<int32_t>(surf ? 1 : 0));
+        if (surf) {
+            write_pod(file, static_cast<int32_t>(s.n_subcatch));
+            write_pod(file, static_cast<int32_t>(s.n_landuses));
+            for (const auto* v : {&s.washoff_conc, &s.ponded_qual, &s.buildup})
+                file.write(reinterpret_cast<const char*>(v->data()),
+                           static_cast<std::streamsize>(v->size() * sizeof(double)));
         }
     }
 

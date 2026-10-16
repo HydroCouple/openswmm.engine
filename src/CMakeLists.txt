@@ -23,6 +23,9 @@ add_subdirectory(plugin_sdk)  # → openswmm_plugin_sdk (INTERFACE, no .so)
 
 # ---- New engine (Phase 2+) ----
 add_subdirectory(engine)   # → openswmm_engine (output name: openswmm.engine)
+if(OPENSWMM_WITH_HYDROCOUPLE)
+    add_subdirectory(couplers)
+endif()
 
 # ---- CLI ----
 add_subdirectory(cli)

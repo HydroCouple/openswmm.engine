@@ -72,7 +72,8 @@ void write_file(const char* path, const std::string& body) {
 }
 
 void write_deck(const char* path, const std::string& extra_options = "",
-                const std::string& pc_lines = "", bool dry = false) {
+                const std::string& pc_lines = "", bool dry = false,
+                bool storage_reactors = false) {
     std::ofstream f(path);
     f << "[TITLE]\nsnapshot quality gate deck\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
@@ -80,11 +81,15 @@ void write_deck(const char* path, const std::string& extra_options = "",
       << "END_DATE 01/01/2026\nEND_TIME 00:10:00\n"
       << "ROUTING_STEP 5\nREPORT_STEP 00:01:00\n"
       << extra_options << "\n"
-      << "[JUNCTIONS]\n"
+      << (storage_reactors ? "[STORAGE]\n" : "[JUNCTIONS]\n")
       // `dry` = InitDepth 0 and a FREE outfall: nothing anywhere holds
       // water, which is the configuration that exposed dry-element age
       // reporting (links published 6.000000 h on water that never existed).
-      << (dry ? "J0 10.0 10 0 0 0\nJ1 10.0 10 0 0 0\nJ2 10.0 10 0 0 0\n\n"
+      << (storage_reactors
+              ? "J0 10 10 1.5 FUNCTIONAL 0 0 1000 0 0\n"
+                "J1 10 10 1.5 FUNCTIONAL 0 0 1000 0 0\n"
+                "J2 10 10 1.5 FUNCTIONAL 0 0 1000 0 0\n\n"
+              : dry ? "J0 10.0 10 0 0 0\nJ1 10.0 10 0 0 0\nJ2 10.0 10 0 0 0\n\n"
               : "J0 10.0 10 1.5 0 0\nJ1 10.0 10 1.5 0 0\nJ2 10.0 10 1.5 0 0\n\n")
       << (dry ? "[OUTFALLS]\nOUT 10.0 FREE  NO\n\n"
               : "[OUTFALLS]\nOUT 10.0 FIXED 11.5 NO\n\n")
@@ -195,6 +200,72 @@ TEST(OutputQualityTest, NodeAndLinkConcentrationsReachTheOutFile) {
             << kCinit << " — link_quality never reaches the writer.";
     }
 
+    swmm_output_close(h);
+}
+
+// ---------------------------------------------------------------------------
+// Gate 1b (E1, 2026-10-14) — reactions-component species reach the .out as
+// ordinary pollutant columns, trailing the reserved rows.
+//
+// Before E1 the reported list was pollutants + age + temperature only: a
+// BULK/WALL species from [REACTION_SPECIES] existed in the registry and in
+// msx_*_conc but never in the file, so no reader (GUI, Python) could see
+// what the reactions produced. The observable is a FORMULA species
+// X = 2 * TSS on the level pool: TSS is pinned at Cinit, so X must read
+// exactly 2 * Cinit at every storage node and link. Zero-volume junctions
+// deliberately do not execute tank reactions (the native routing contract).
+// A WALL species is declared too, to pin that it is LISTED (its value is
+// whatever the binding holds; nothing drives it here).
+// ---------------------------------------------------------------------------
+TEST(OutputQualityTest, ReactionSpeciesReportAsTrailingPollutantColumns) {
+    write_file("_oq_msx.rxn",
+               "[REACTION_SPECIES]\nBULK X MG\nWALL W MG\n"
+               "[REACTION_PIPES]\nFORMULA X 2.0 * TSS\n"
+               "[REACTION_TANKS]\nFORMULA X 2.0 * TSS\n");
+    write_deck("_oq_msx.inp", "",
+               "org.hydrocouple.openswmm.reactions config=\"_oq_msx.rxn\"",
+               false, true);
+    ASSERT_TRUE(run_deck("_oq_msx.inp", "_oq_msx.rpt", "_oq_msx.out"));
+
+    SWMM_Output h = swmm_output_open("_oq_msx.out");
+    ASSERT_NE(h, nullptr);
+
+    ASSERT_EQ(swmm_output_get_pollut_count(h), 3)
+        << "the reactions species are missing from the header";
+    const auto ids = read_species_ids("_oq_msx.out");
+    ASSERT_EQ(ids.size(), 3u);
+    EXPECT_EQ(ids[0], "TSS");
+    EXPECT_EQ(ids[1], "X") << "MSX species must trail the pollutants in "
+                               "[REACTION_SPECIES] order";
+    EXPECT_EQ(ids[2], "W");
+
+    const int n_periods = swmm_output_get_period_count(h);
+    ASSERT_GT(n_periods, 1);
+    const int period = n_periods - 1;
+
+    {
+        std::vector<float> v(32, -1.0f);
+        int count = 0;
+        ASSERT_EQ(swmm_output_get_node_attribute(h, 0, period, v.data(),
+                                                 &count), 0);
+        ASSERT_GE(count, 9) << "node record lacks the species columns";
+        EXPECT_NEAR(v[6], static_cast<float>(kCinit), 1.0e-3f)
+            << "the pollutant column moved when species columns were added";
+        EXPECT_NEAR(v[7], static_cast<float>(2.0 * kCinit), 1.0e-2f)
+            << "node X column reads " << v[7] << ", expected 2 * Cinit — "
+               "msx_node_conc never reached the writer";
+    }
+    {
+        std::vector<float> v(32, -1.0f);
+        int count = 0;
+        ASSERT_EQ(swmm_output_get_link_attribute(h, 0, period, v.data(),
+                                                 &count), 0);
+        ASSERT_GE(count, 8) << "link record lacks the species columns";
+        EXPECT_NEAR(v[5], static_cast<float>(kCinit), 1.0e-3f);
+        EXPECT_NEAR(v[6], static_cast<float>(2.0 * kCinit), 1.0e-2f)
+            << "link X column reads " << v[6] << ", expected 2 * Cinit — "
+               "msx_link_conc never reached the writer";
+    }
     swmm_output_close(h);
 }
 

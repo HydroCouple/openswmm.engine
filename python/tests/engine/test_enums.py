@@ -7,6 +7,7 @@ from openswmm.engine import (
     XSectShape, FlowUnits, RouteModel, WarnCode, ObjectType,
     HeatFluxModule, HeatShortwaveMode, HeatRadiativeParam, HeatSolarParam,
     HeatCloudParam, HeatSourceKind, WaterAgeSource,
+    GroundHeatValue, GroundHeatLayerValue, ChannelGroundValue,
     ReactionScope, ReactionExprForm,
 )
 
@@ -30,7 +31,8 @@ class TestErrorCode(unittest.TestCase):
             "OUTFILE": 4, "PARSE": 5, "LIFECYCLE": 6, "BADHANDLE": 7,
             "BADINDEX": 8, "BADPARAM": 9, "PLUGIN": 10, "IO": 11,
             "HOTSTART": 12, "CRS": 13, "NUMERICAL": 14, "DEPENDENCY": 15,
-            "GEOMETRY": 16, "INTERNAL": 99,
+            "CANCELLED": 16, "INTERNAL": 99,
+            "GEOMETRY": 17,
         }
         for name, val in expected.items():
             self.assertEqual(ErrorCode[name].value, val)
@@ -211,13 +213,32 @@ class TestHeatFluxModule(unittest.TestCase):
     def test_known_values(self):
         expected = {
             "SURFACE_EXCHANGE": 0, "RADIATIVE_EXCHANGE": 1,
-            "LAYER_CONDUCTION": 2,
+            "LAYER_CONDUCTION": 2, "SEDIMENT_EXCHANGE": 3,
         }
         for name, val in expected.items():
             self.assertEqual(HeatFluxModule[name].value, val)
 
     def test_member_count(self):
-        self.assertEqual(len(HeatFluxModule), 3)
+        self.assertEqual(len(HeatFluxModule), 4)
+
+
+class TestGroundHeatValues(unittest.TestCase):
+    """Pin Python selectors to the public soil and channel heat C enums."""
+
+    def test_soil_values(self):
+        self.assertEqual(GroundHeatValue.ENERGY, 0)
+        self.assertEqual(GroundHeatValue.LID_CONTACT, 15)
+        self.assertEqual(len(GroundHeatValue), 16)
+
+    def test_layer_values(self):
+        self.assertEqual(GroundHeatLayerValue.TOP, 0)
+        self.assertEqual(GroundHeatLayerValue.SATURATED_WATER, 7)
+        self.assertEqual(len(GroundHeatLayerValue), 8)
+
+    def test_channel_values(self):
+        self.assertEqual(ChannelGroundValue.BED_TEMPERATURE, 0)
+        self.assertEqual(ChannelGroundValue.INTERVAL_COUNT, 4)
+        self.assertEqual(len(ChannelGroundValue), 5)
 
 
 # ---------------------------------------------------------------------------
@@ -245,13 +266,13 @@ class TestHeatRadiativeParam(unittest.TestCase):
         expected = {
             "SHORTWAVE": 0, "ALBEDO": 1, "SHADE_FACTOR": 2, "SKY_VIEW": 3,
             "EMISS_WATER": 4, "EMISS_LANDCOVER": 5, "ATM_EMISS_COEFF": 6,
-            "LW_REFLECTION": 7,
+            "LW_REFLECTION": 7, "LANDCOVER_TEMPERATURE": 8,
         }
         for name, val in expected.items():
             self.assertEqual(HeatRadiativeParam[name].value, val)
 
     def test_member_count(self):
-        self.assertEqual(len(HeatRadiativeParam), 8)
+        self.assertEqual(len(HeatRadiativeParam), 9)
 
 
 # ---------------------------------------------------------------------------

@@ -112,7 +112,7 @@ void applyHeatFluxes(SimulationContext& ctx, double dt) {
     // H6a: resolve this step's Jin and cloud fraction BEFORE any flux call.
     // `netFluxOut` is const and reads the cache; nothing downstream can
     // refresh it.
-    updateSolarForcing(ctx);
+    updateSolarForcing(ctx, dt);
 
     auto& hs = ctx.heat_state;
     const double rho = ctx.options.water_density;
@@ -162,6 +162,7 @@ void applyHeatFluxes(SimulationContext& ctx, double dt) {
     const auto& CD = ctx.link_subtypes.conduits;
     for (int j = 0; j < nl; ++j) {
         const auto uj = static_cast<std::size_t>(j);
+        if(uj<ctx.heat_state.mesh_contact_link.size()&&ctx.heat_state.mesh_contact_link[uj])continue;
         if (uj >= hs.link_temp.size()) break;
         const double vol_ft3 = ctx.links.volume[uj];
         if (!(vol_ft3 > 0.0)) continue;

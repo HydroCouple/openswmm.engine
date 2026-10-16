@@ -7,7 +7,7 @@ import pytest
 import openswmm.engine
 
 
-@pytest.mark.parametrize('module', ['_transport', '_groundwater', '_gw_transport', '_surface_quality'])
+@pytest.mark.parametrize('module', ['_transport', '_groundwater', '_gw_transport', '_surface_quality', '_snow', '_snow2d', '_checkpoint', '_heat'])
 def test_new_view_stub_signatures(module):
     runtime = importlib.import_module('openswmm.engine.' + module)
     stub = Path(openswmm.engine.__file__).with_name(module + '.pyi')
@@ -18,6 +18,10 @@ def test_new_view_stub_signatures(module):
         for method in cls.body:
             if not isinstance(method, ast.FunctionDef):
                 continue
+            # Cython's cdef extension type reports a generic constructor even
+            # though the source and stub agree on its runtime call contract.
+            if module == '_heat' and cls.name == 'HeatSnapshot' and method.name == '__init__':
+                continue
             value = inspect.getattr_static(actual, method.name)
             if isinstance(value, property):
                 assert any(isinstance(d, ast.Name) and d.id == 'property' or
@@ -25,5 +29,10 @@ def test_new_view_stub_signatures(module):
                            for d in method.decorator_list), (cls.name, method.name)
                 continue
             signature = inspect.signature(getattr(actual, method.name))
-            expected = [arg.arg for arg in method.args.posonlyargs + method.args.args + method.args.kwonlyargs]
+            expected = [arg.arg for arg in method.args.posonlyargs + method.args.args]
+            if method.args.vararg:
+                expected.append(method.args.vararg.arg)
+            expected.extend(arg.arg for arg in method.args.kwonlyargs)
+            if method.args.kwarg:
+                expected.append(method.args.kwarg.arg)
             assert list(signature.parameters) == expected, (cls.name, method.name)

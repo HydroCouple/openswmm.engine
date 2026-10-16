@@ -407,10 +407,10 @@ SWMM_ENGINE_API int swmm_gage_get_rainfall_series_count(SWMM_Engine engine, int 
  *          whichever comes first; rainfall is zero in between. Pair this with
  *          swmm_gage_get_rain_interval() to reconstruct that behaviour.
  *
- * @note A FILE gage's series is windowed to the [OPTIONS] simulation dates
- *       (± one day) and reflects the file as it was read at open. Call
- *       swmm_gage_reload_rain_files() first if the path, station, units, or
- *       simulation dates have changed since.
+ * @note A FILE gage exposes its full loaded record, independently of the
+ *       [OPTIONS] simulation dates. An explicit FILE start-date filter still
+ *       applies. Call swmm_gage_reload_rain_files() if the file contents,
+ *       path, station, units, or FILE start-date filter have changed.
  *
  * @param engine      Engine handle.
  * @param idx         Zero-based gage index.
@@ -432,7 +432,7 @@ SWMM_ENGINE_API int swmm_gage_get_rainfall_series(SWMM_Engine engine, int idx,
  *
  * @details Rain files are loaded once, during open(). Nothing re-runs that
  *          afterwards, so changing a gage's path, station id, or rain units —
- *          or the simulation dates the data is windowed to — has no effect
+ *          or its FILE start-date filter — has no effect
  *          until the model is reopened, and readers keep seeing the previous
  *          file's contents. Call this after such an edit.
  *

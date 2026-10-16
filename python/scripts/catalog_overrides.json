@@ -105,6 +105,15 @@
      "options"
     ]
    }
+  },
+  "heat_snapshot": {
+   "class": "HeatSnapshot",
+   "construct": {
+    "via": "new",
+    "args": [
+     "solver"
+    ]
+   }
   }
  },
  "function_modules": [
@@ -172,6 +181,7 @@
   "pollutant.rdii_conc": "concentration",
   "species.atol": "concentration",
   "species.initial": "concentration",
+  "species.rain_conc": "concentration",
   "species.rtol": "dimensionless",
   "statistics.link_surcharge_time": "s",
   "statistics.link_surcharge_time_at": "s",
@@ -186,6 +196,7 @@
   "subcatchment.infiltration.curve_number_drying_time": "d",
   "subcatchment.n_imperv": "manning_n",
   "subcatchment.n_perv": "manning_n",
+  "surface2d.geometry_scale_to_si": "dimensionless",
   "surface2d.get_coupling_flux": "m/s",
   "surface2d.get_depth": "m",
   "surface2d.get_depths": "m",
@@ -203,6 +214,7 @@
   "xsect.full_hyd_radius": "length",
   "xsect.full_section_factor": "section_factor",
   "xsect.max_area": "area",
-  "xsect.max_width": "length"
+  "xsect.max_width": "length",
+  "snow.step_seconds": "s"
  }
 }

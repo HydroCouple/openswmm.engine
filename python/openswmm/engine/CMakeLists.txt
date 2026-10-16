@@ -41,6 +41,8 @@ set(_engine_modules
     _spatial
     _forcing
     _climate
+    _snow
+    _checkpoint
 )
 
 foreach(_mod IN LISTS _engine_modules)
@@ -55,6 +57,8 @@ endforeach()
 
 # Optional 2-D module (off by default).
 if(OPENSWMM_BUILD_2D)
+    add_cython_extension(NAME _snow2d TARGET engine__snow2d SOURCE _snow2d.pyx
+        INSTALL_DIR openswmm/engine LIBS openswmm::engine)
     add_cython_extension(NAME _coupling TARGET engine__coupling SOURCE _coupling.pyx
         INSTALL_DIR openswmm/engine LIBS openswmm::engine)
     add_cython_extension(NAME _surface_quality TARGET engine__surface_quality SOURCE _surface_quality.pyx

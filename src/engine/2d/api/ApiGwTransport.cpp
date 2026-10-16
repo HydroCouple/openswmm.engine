@@ -108,7 +108,16 @@ SWMM_ENGINE_API int swmm_gw_transport_option_get(SWMM_Engine engine,
     const std::string k(key);
     auto yn = [](bool b) { return std::string(b ? "YES" : "NO"); };
     std::string v;
-    if      (k == "TRANSPORT_POLLUTANTS")  v = yn(o.transport_pollutants);
+    if(k=="THERMAL_MODEL")v=o.thermal_model;
+    else if(k=="THERMAL_LAYERS")v=std::to_string(o.thermal_layers);
+    else if(k=="LATERAL_CONDUCTION")v=yn(o.lateral_conduction);
+    else if(k=="SOIL_ET_HEAT")v=o.soil_et_heat;
+    else if(k=="THERMAL_MAX_STEP"||k=="WATER_THERMAL_CONDUCTIVITY"||k=="AIR_THERMAL_CONDUCTIVITY"||k=="SURFACE_THERMAL_RESISTANCE") {
+        const double value=k=="THERMAL_MAX_STEP"?o.thermal_max_step:k=="WATER_THERMAL_CONDUCTIVITY"?o.water_conductivity:
+                           k=="AIR_THERMAL_CONDUCTIVITY"?o.air_conductivity:o.surface_resistance;
+        char number[64];std::snprintf(number,sizeof number,"%.17g",value);v=number;
+    }
+    else if (k == "TRANSPORT_POLLUTANTS")  v = yn(o.transport_pollutants);
     else if (k == "TRANSPORT_MSX")         v = yn(o.transport_msx);
     else if (k == "TRANSPORT_AGE")         v = yn(o.transport_age);
     else if (k == "TRANSPORT_TEMPERATURE") v = yn(o.transport_temperature);

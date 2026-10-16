@@ -122,6 +122,9 @@ public:
      */
     void stop();
 
+    /** Wait for queued and currently executing writes. Call from the producer. */
+    int flush() const;
+
     // -----------------------------------------------------------------------
     // Diagnostics
     // -----------------------------------------------------------------------
@@ -143,7 +146,9 @@ private:
 
     std::thread              thread_;
     std::queue<WriteTask>    queue_;
-    std::mutex               mutex_;
+    mutable std::mutex       mutex_;
+    mutable std::condition_variable cv_idle_;
+    bool                     writing_ = false;
     std::condition_variable  cv_not_full_;   ///< Wakes producer when space available
     std::condition_variable  cv_not_empty_;  ///< Wakes consumer when task available
     std::atomic<bool>        stop_flag_      {false};

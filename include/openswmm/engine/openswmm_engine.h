@@ -130,7 +130,8 @@ typedef enum SWMM_ErrorCode {
     SWMM_ERR_CRS         = 13,
     SWMM_ERR_NUMERICAL   = 14,
     SWMM_ERR_DEPENDENCY  = 15,  /**< Object has dependents that would be affected by deletion. */
-    SWMM_ERR_GEOMETRY    = 16,  /**< Cross-section geometry is invalid, or cannot be
+    SWMM_ERR_CANCELLED   = 16,  /**< A caller cancelled a cancellable read-only operation. */
+    SWMM_ERR_GEOMETRY    = 17,  /**< Cross-section geometry is invalid, or cannot be
                                  *   changed at run time in the active routing model.
                                  *   @see swmm_link_set_polygon. */
     SWMM_ERR_INTERNAL    = 99
@@ -204,6 +205,16 @@ SWMM_ENGINE_API SWMM_Engine swmm_engine_create(void);
 SWMM_ENGINE_API int swmm_engine_open(SWMM_Engine engine,
                                       const char* inp, const char* rpt, const char* out,
                                       const char* input_plugin_lib);
+
+/**
+ * @brief Parse a model for configured metadata without loading runtime plugins.
+ * @details Uses the built-in input reader and normal strict model validation.
+ * No report/result plugins are created and no simulation is initialized or
+ * advanced. Existing model/species/options/geometry getters can inspect the
+ * OPENED handle. initialize/start are refused on this handle; close and use a
+ * normal open before simulation. Model-declared SAVE paths are never opened.
+ */
+SWMM_ENGINE_API int swmm_engine_open_metadata(SWMM_Engine engine, const char* inp);
 
 /** @brief Initialize the simulation → SWMM_STATE_INITIALIZED. */
 SWMM_ENGINE_API int swmm_engine_initialize(SWMM_Engine engine);
@@ -407,6 +418,18 @@ typedef struct SWMM_TransportMatrix {
  *  @p out is NULL. */
 SWMM_ENGINE_API int swmm_get_transport_matrix(SWMM_Engine engine, SWMM_TransportMatrix* out);
 
+/** Side-effect-free pre-run preview. Boolean fields must be 0 or 1;
+ * groundwater is -1 (Automatic), 0 (Off), 1 (On). This is planned transport,
+ * not proof of initialized runtime activity or local heat-flux support. */
+typedef struct SWMM_TransportDraft {
+    int ignore_quality, heat, age, ignore_2d;
+    int surface_class[SWMM_TRANSPORT_CLASS_COUNT];
+    int groundwater;
+} SWMM_TransportDraft;
+SWMM_ENGINE_API int swmm_preview_transport_matrix(SWMM_Engine engine,
+    const SWMM_TransportDraft* draft, SWMM_TransportMatrix* out);
+
+
 /** Display names for the matrix axes ("" when out of range). */
 SWMM_ENGINE_API const char* swmm_transport_domain_name(int domain);
 SWMM_ENGINE_API const char* swmm_transport_class_name(int species_class);
@@ -601,6 +624,7 @@ SWMM_ENGINE_API int swmm_runoff_iface_close(SWMM_Engine engine);
 #include "openswmm_forcing.h"
 #include "openswmm_climate.h"
 #include "openswmm_edit.h"
+#include "openswmm_checkpoint.h"
 
 #ifdef OPENSWMM_HAS_2D
 #include "openswmm_2d.h"

@@ -298,7 +298,9 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
     if (nn > 0) {
         devRefresh(d_node_invert_, state.nodes_1d->invert_elev);
         devRefresh(d_node_fulldepth_, state.nodes_1d->full_depth);
-        devRefresh(d_node_fullvol_, state.nodes_1d->full_volume);
+        // The spill budget's pond base (see SurfaceStateData::node_pond_base).
+        devRefresh(d_node_fullvol_, state.node_pond_base ? *state.node_pond_base
+                                                         : state.nodes_1d->full_volume);
     }
 
     // Tier-0 pins: BC cells + coupling cells (fastest-changing forcing).
@@ -1145,9 +1147,12 @@ void ExplicitKokkosSurfaceSolver::runMacroCycle(double dt0, int nsub) {
 // ===========================================================================
 
 void ExplicitKokkosSurfaceSolver::pushForcings() {
-    devRefresh(d_rain_, state_->rainfall);
+    if(state_->snow.active()) {
+        auto rain=state_->rainfall,evap=state_->evap_rate;
+        for(int i=0;i<int(rain.size());++i){rain[i]=state_->liquidRainfall(i);evap[i]=state_->exposedEvaporation(i);}
+        devRefresh(d_rain_,rain);devRefresh(d_evap_,evap);
+    } else {devRefresh(d_rain_,state_->rainfall);devRefresh(d_evap_,state_->evap_rate);}
     devRefresh(d_coup_, state_->coupling_flux);
-    devRefresh(d_evap_, state_->evap_rate);
     // Held INFIL_STEP rate (plan §5.5, D-I1) — republished host-side by
     // Infil2D::updateRates, so it uploads with the other held forcings.
     devRefresh(d_infil_, state_->infil_rate);

@@ -14,7 +14,7 @@ bool nonnegative(double v) { return std::isfinite(v) && v >= 0; }
 }
 
 std::string SurfaceExchange::plan(const SubsurfaceSolver& gw, double start, double end,
-                                 double completed, const std::vector<SurfaceIntakeRequest>& requests) {
+                                 double completed, const std::vector<SurfaceIntakeRequest>& requests, const Capacity* prescribed) {
     if (planned_) return "Settle or cancel the previous source interval first.";
     if (!nonnegative(start) || !std::isfinite(end) || !std::isfinite(completed) ||
         start != completed_end_ || end <= start || end > completed)
@@ -29,9 +29,9 @@ std::string SurfaceExchange::plan(const SubsurfaceSolver& gw, double start, doub
             !nonnegative(r.water_ceiling) || !nonnegative(r.candidate) ||
             !(gw.state().area[r.cell] > 0) || !std::isfinite(gw.state().area[r.cell]))
             return "Invalid source identity, receiver, contact area, head or water request.";
-        const double capacity = gw.sourceInfiltrationCapacity(r.cell, r.pond, end - start);
-        const double volume = capacity * r.area * (end - start);
-        if (!std::isfinite(volume)) return "Source capacity volume overflow.";
+        const double volume = prescribed ? (*prescribed)(r,end-start) :
+            gw.sourceInfiltrationCapacity(r.cell,r.pond,end-start)*r.area*(end-start);
+        if (!nonnegative(volume)) return "Invalid source capacity volume.";
         proposed.push_back({r, std::min(r.candidate, volume), 0});
         contact[r.cell] += r.area;
     }
@@ -64,32 +64,43 @@ std::string SurfaceExchange::plan(const SubsurfaceSolver& gw, double start, doub
     std::map<int, long double> demand;
     for (const auto& a : proposed) demand[a.request.cell] += a.demand;
     std::map<int, double> headroom;
-    std::map<int, long double> remaining;
+    std::map<int, long double> remaining, allocated;
     for (const auto& [cell, sum] : demand) remaining[cell] = headroom[cell] = gw.infiltrationHeadroom(cell);
     for (auto& a : proposed) {
         const int c = a.request.cell;
         const long double scale = demand[c] > headroom[c] ? headroom[c] / demand[c] : 1;
         a.maximum = static_cast<double>(std::min(remaining[c], a.demand * scale));
         if (a.maximum > remaining[c]) a.maximum = std::nextafter(a.maximum, 0.0);
-        remaining[c] -= a.maximum;
+        // Use the same ascending sum as commit, including platforms where
+        // long double is double. Repeated remainder subtraction can award
+        // one ulp more than the shared headroom at a nearly saturated cell.
+        while (allocated[c] + a.maximum > headroom[c])
+            a.maximum = std::nextafter(a.maximum, 0.0);
+        allocated[c] += a.maximum;
+        remaining[c] = headroom[c] - allocated[c];
     }
     awards_ = std::move(proposed); start_ = start; end_ = end; planned_ = true; receiver_ = &gw;
     return {};
 }
 
-std::string SurfaceExchange::commit(SubsurfaceSolver& gw, const std::vector<SurfaceIntakeActual>& actual) {
+std::string SurfaceExchange::commit(SubsurfaceSolver& gw, const std::vector<SurfaceIntakeActual>& actual, const Capacity* prescribed) {
     if (!planned_ || receiver_ != &gw || actual.size() != awards_.size()) return "No matching source interval to settle.";
-    const int ns = gw.transport().active() ? gw.transport().n_species : 0;
+    const auto& transport=gw.transport();
+    const int ns = transport.active() ? transport.n_species : 0;
     std::map<int, long double> totals;
     std::vector<SurfaceIntakeReceipt> receipts;
     for (std::size_t j = 0; j < actual.size(); ++j) {
         const auto& x = actual[j]; const auto& a = awards_[j];
         if (!nonnegative(x.volume) || x.volume > a.maximum || int(x.mass.size()) != ns)
             return "Actual source transfer exceeds its award or has incompatible species.";
-        for (const double m : x.mass) if (!nonnegative(m) || (x.volume == 0 && m != 0))
-            return "Source water and constituent mass must be paired.";
-        const double capacity_volume = gw.sourceInfiltrationCapacity(a.request.cell, a.request.pond, end_-start_) * a.request.area * (end_-start_);
-        if (x.volume > capacity_volume)
+        for (int s=0;s<ns;++s) {
+            const double mass=x.mass[static_cast<std::size_t>(s)];
+            if(!std::isfinite(mass) || (s!=transport.temp_row && mass<0) || (x.volume==0 && mass!=0))
+                return "Source water and constituent mass must be paired.";
+        }
+        const double capacity_volume = prescribed ? (*prescribed)(a.request,end_-start_) :
+            gw.sourceInfiltrationCapacity(a.request.cell,a.request.pond,end_-start_)*a.request.area*(end_-start_);
+        if (!nonnegative(capacity_volume) || x.volume > capacity_volume)
             return "Receiver capacity changed; cancel and recompute source trials before withdrawal.";
         totals[a.request.cell] += x.volume;
         receipts.push_back({a.request, start_, end_, x.volume, x.mass});
@@ -101,6 +112,7 @@ std::string SurfaceExchange::commit(SubsurfaceSolver& gw, const std::vector<Surf
     // Validation/allocation finish before any receiver mutation. No unused award
     // is booked, and capacity refresh cannot restore an accepted pending receipt.
     for (const auto& r : receipts) {
+        gw.retainSourceReceipt(r);
         gw.bookInfiltrationFromSurface(r.request.cell, r.volume);
         gw.state().wetting_front[r.request.cell] += r.volume / gw.state().area[r.request.cell];
         gw.state().infil_remaining[r.request.cell] = gw.infiltrationHeadroom(r.request.cell);

@@ -36,6 +36,7 @@
 #include "../../../include/openswmm/plugin_sdk/PluginState.hpp"
 #include "../../../include/openswmm/plugin_sdk/SimulationSnapshot.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../quality/MsxSurfaceQuality.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../core/DateTime.hpp"
 #include "../hydraulics/Node.hpp"   // node::getVolume — storage volume from its depth-relation
@@ -195,7 +196,12 @@ int DefaultReportPlugin::prepare(const SimulationContext& ctx) {
     // analysis options) so they are available immediately — even if the
     // simulation crashes before write_summary() is called.
     if (!rpt_path_.empty() && !ctx.options.rpt_disabled) {
-        file_ = openswmm::io::fopen_utf8(rpt_path_, "w");
+        file_ = openswmm::io::fopen_utf8(rpt_path_, checkpoint_fresh_ ? "wx" : "w");
+        if (!file_ && checkpoint_fresh_) {
+            last_error_ = "Cannot create the exclusive managed-session report.";
+            state_ = PluginState::ERROR;
+            return -1;
+        }
         if (file_) {
             write_preamble(file_, ctx);
             std::fflush(file_);
@@ -262,7 +268,7 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
     if (!f) {
         // Fallback: prepare() was not called or file open failed.
         // Write the entire report monolithically.
-        f = openswmm::io::fopen_utf8(rpt_path_, "w");
+        f = openswmm::io::fopen_utf8(rpt_path_, checkpoint_fresh_ ? "wx" : "w");
         if (!f) return -1;
         write_preamble(f, ctx);
 
@@ -274,6 +280,13 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
 
     // Write result sections (continuity, statistics, summaries)
     write_results(f, ctx);
+
+    if(!ctx.snowpacks.report_values.empty()) {
+        std::fprintf(f,"\n\n  Snow Process Water and Energy Balance (SI)\n  -----------------------------------------\n");
+        for(const auto& row:ctx.snowpacks.report_values)
+            std::fprintf(f,"\n  %-44s % .9g",row.first.c_str(),row.second);
+        std::fprintf(f,"\n  Negative sublimation is condensation; energy includes the active ground layer.\n");
+    }
 
     // Write analysis timing and close
     write_timing(f, ctx);
@@ -459,7 +472,7 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
 
             std::fprintf(f, "\n  %-20s %10.2f%10.2f%10.2f%10.4f %-20s %-20s",
                 name.c_str(),
-                ctx.subcatches.area[ui],
+                (ctx.subcatches.area[ui] / ucf::UCF(ucf::LANDAREA, opt)) * ucf::UCF(ucf::LANDAREA, opt),
                 ctx.subcatches.width[ui] * du_opt.length,
                 ctx.subcatches.frac_imperv[ui] * 100.0,
                 ctx.subcatches.slope[ui] * 100.0,
@@ -956,14 +969,12 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // legacy writes it from rdii_closeRdii, which never runs under
     // IGNORE_RAINFALL (swmm5.c:735 skips rain_open) or IGNORE_RDII
-    if (has_rdii && opt.rpt_continuity && !opt.ignore_rainfall && !opt.ignore_rdii) {
+    // USE RDII bypasses the generator and has no generation statistics.
+    if (has_rdii && opt.rpt_continuity && !opt.ignore_rainfall && !opt.ignore_rdii
+        && ctx.files.rdii_mode != FileMode::USE) {
         const auto& mb = ctx.mass_balance;
-        double total_area_ft2 = 0.0;
-        for (int i = 0; i < ctx.n_subcatches(); ++i)
-            total_area_ft2 += ctx.subcatches.area[static_cast<std::size_t>(i)] * landAreaToFt2(fu);
-
-        double sewer_rain = mb.runoff_rainfall;
-        double rdii_prod = mb.routing_rdii;
+        double sewer_rain = mb.rdii_rainfall;
+        double rdii_prod = mb.rdii_produced;
         double ratio = (sewer_rain > 0.0) ? rdii_prod / sewer_rain : 0.0;
         double ucf1 = cont_vcf1;
         double ucf2 = cont_vcf2;
@@ -1038,14 +1049,21 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // pass through). Error: |in - out| < 0.001 -> 0 (TINY), else relative
     // to the larger side's convention (massbal_getLoadingError).
     // =====================================================================
-    if (ctx.n_subcatches() > 0 && ctx.n_pollutants() > 0 && !opt.ignore_quality) {
+    // Multispecies Phase 2: reaction species that build up, wash off or rain
+    // in follow the pollutants as extra columns, from their own ledgers.
+    const auto& ms_rq = ctx.reactions.surface;
+    const int nm_rq = (ms_rq.active() && !opt.ignore_quality) ? ms_rq.n_species : 0;
+    if (ctx.n_subcatches() > 0 && (ctx.n_pollutants() > 0 || nm_rq > 0) && !opt.ignore_quality) {
         const int np = ctx.n_pollutants();
+        const int ncol = np + nm_rq;
         const auto& mb = ctx.mass_balance;
         auto at = [](const std::vector<double>& v, int p) {
             return (static_cast<std::size_t>(p) < v.size()) ? v[static_cast<std::size_t>(p)] : 0.0;
         };
         auto logn = [](double x) { return x > 0.0 ? std::log10(x) : x; };
-        std::vector<std::array<double, 9>> vals(static_cast<std::size_t>(np));
+        std::vector<std::array<double, 9>> vals(static_cast<std::size_t>(ncol));
+        std::vector<std::string> col_name(static_cast<std::size_t>(ncol));
+        std::vector<bool> col_counts(static_cast<std::size_t>(ncol), false), col_mass(static_cast<std::size_t>(ncol), false);
         double max_err = 0.0;
         for (int p = 0; p < np; ++p) {
             const double in_  = at(mb.qual_init_buildup, p) + at(mb.qual_surface_buildup, p) +
@@ -1066,6 +1084,27 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             const bool counts = static_cast<std::size_t>(p) < ctx.pollutants.units.size() &&
                                 ctx.pollutants.units[static_cast<std::size_t>(p)] == MassUnits::COUNTS_PER_L;
             if (counts) for (int k = 0; k < 8; ++k) v[static_cast<std::size_t>(k)] = logn(v[static_cast<std::size_t>(k)]);
+            col_name[static_cast<std::size_t>(p)] = ctx.pollutant_names.name_of(p);
+            col_counts[static_cast<std::size_t>(p)] = counts;
+        }
+        for (int m = 0; m < nm_rq; ++m) {
+            const auto um = static_cast<std::size_t>(m);
+            const double final_bu = msxsurf::remainingBuildup(ctx, m);
+            const double in_  = at(ms_rq.led_init_buildup, m) + at(ms_rq.led_buildup, m) +
+                                at(ms_rq.led_wet_deposition, m);
+            const double out_ = at(ms_rq.led_sweeping, m) + at(ms_rq.led_infil_loss, m) +
+                                at(ms_rq.led_bmp_removal, m) + at(ms_rq.led_runoff_load, m) + final_bu;
+            double err = 0.0;
+            if (std::fabs(in_ - out_) < 0.001) err = 0.0;
+            else if (in_ > 0.0)  err = 100.0 * (1.0 - out_ / in_);
+            else if (out_ > 0.0) err = 100.0 * (in_ / out_ - 1.0);
+            max_err = std::max(max_err, err);
+            vals[static_cast<std::size_t>(np) + um] = {
+                at(ms_rq.led_init_buildup, m), at(ms_rq.led_buildup, m), at(ms_rq.led_wet_deposition, m),
+                at(ms_rq.led_sweeping, m), at(ms_rq.led_infil_loss, m), at(ms_rq.led_bmp_removal, m),
+                at(ms_rq.led_runoff_load, m), final_bu, err };
+            col_name[static_cast<std::size_t>(np) + um] = ctx.reactions.species_name[um];
+            col_mass[static_cast<std::size_t>(np) + um] = ms_rq.mcf[um] == 1.0;   // no mass conversion (D-A27)
         }
         if (opt.rpt_continuity || max_err > 10.0) {
             static const char* labels[9] = {
@@ -1074,16 +1113,15 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 "Infiltration Loss ........", "BMP Removal ..............",
                 "Surface Runoff ...........", "Remaining Buildup ........",
                 "Continuity Error (%) ....." };
-            for (int p1 = 0; p1 < np; p1 += 5) {
-                const int p2 = std::min(p1 + 5, np);
+            for (int p1 = 0; p1 < ncol; p1 += 5) {
+                const int p2 = std::min(p1 + 5, ncol);
                 std::fprintf(f, "\n  **************************");
                 for (int p = p1; p < p2; ++p)
-                    std::fprintf(f, "%14s", ctx.pollutant_names.name_of(p).c_str());
+                    std::fprintf(f, "%14s", col_name[static_cast<std::size_t>(p)].c_str());
                 std::fprintf(f, "\n  Runoff Quality Continuity ");
                 for (int p = p1; p < p2; ++p) {
-                    const bool counts = static_cast<std::size_t>(p) < ctx.pollutants.units.size() &&
-                        ctx.pollutants.units[static_cast<std::size_t>(p)] == MassUnits::COUNTS_PER_L;
-                    std::fprintf(f, "%14s", counts ? "LogN" : load_word);
+                    const auto up = static_cast<std::size_t>(p);
+                    std::fprintf(f, "%14s", col_counts[up] ? "LogN" : (col_mass[up] ? "mass" : load_word));
                 }
                 std::fprintf(f, "\n  **************************");
                 for (int p = p1; p < p2; ++p) std::fprintf(f, "    ----------");
@@ -1555,6 +1593,76 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 WRITE(f, "");
                 WRITE(f, "");
             }
+        }
+    }
+
+    // =====================================================================
+    // Review B14 (2026-10-15): Reaction Species Routing Continuity — the
+    // [REACTION_SPECIES] twin of the block above, under QUALITY_SOLVER
+    // LEGACY. Same raw basis (concentration × ft³) and conversion: MG and
+    // UG species report mass like a pollutant; any other unit reports
+    // concentration × litres. The clamp row is mass ADDED where a reaction
+    // step drove a concentration negative (review A2).
+    // =====================================================================
+    if (ctx.n_nodes() > 0 && !opt.ignore_routing && !opt.ignore_quality &&
+        ctx.reactions.msx_ledger.armed && ctx.reactions.n_species() > 0) {
+        const auto& rx  = ctx.reactions;
+        const auto& led = rx.msx_ledger;
+        const int nsp = rx.n_species();
+        const auto uns = static_cast<std::size_t>(nsp);
+        static constexpr double LperFT3 = 28.317;
+        auto at = [](const std::vector<double>& v, std::size_t s) {
+            return s < v.size() ? v[s] : 0.0;
+        };
+        static const char* labels[10] = {
+            "Inflow (all sources) .....", "External Outflow .........",
+            "Flooding Loss ............", "Exfiltration Loss ........",
+            "Mass Reacted .............", "Clamped to Zero (added) ..",
+            "Initial Stored Mass ......", "Final Stored Mass ........",
+            "Continuity Error (%) .....", "" };
+        std::vector<std::array<double, 9>> vals(uns);
+        std::vector<std::string> unit_word(uns);
+        for (std::size_t s = 0; s < uns; ++s) {
+            double fin = at(led.final_dry, s);
+            for (int j = 0; j < ctx.n_nodes(); ++j)
+                fin += at(rx.msx_node_conc, static_cast<std::size_t>(j) * uns + s) *
+                       ctx.nodes.volume[static_cast<std::size_t>(j)];
+            for (int j = 0; j < ctx.n_links(); ++j)
+                fin += at(rx.msx_link_conc, static_cast<std::size_t>(j) * uns + s) *
+                       ctx.links.volume[static_cast<std::size_t>(j)];
+            const std::array<double, 8> raw = {
+                at(led.inflow, s), at(led.outflow, s), at(led.flooding, s),
+                at(led.seepage, s), at(led.reacted, s), at(led.clamped, s),
+                at(led.init, s), fin };
+            const double in_  = raw[0] + raw[5] + raw[6];
+            const double out_ = raw[1] + raw[2] + raw[3] + raw[4] + raw[7];
+            double err = 0.0;
+            if (std::fabs(in_ - out_) < 0.001) err = 0.0;
+            else if (in_ > 0.0)  err = 100.0 * (1.0 - out_ / in_);
+            else if (out_ > 0.0) err = 100.0 * (in_ / out_ - 1.0);
+            std::string u = s < rx.species_units.size() ? rx.species_units[s] : std::string();
+            for (auto& ch : u) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+            double cf = LperFT3;
+            if (u.rfind("MG", 0) == 0)      { cf *= cont_mass;          unit_word[s] = load_word; }
+            else if (u.rfind("UG", 0) == 0) { cf *= cont_mass / 1000.0; unit_word[s] = load_word; }
+            else                            { unit_word[s] = "conc*L"; }
+            for (int k = 0; k < 8; ++k) vals[s][static_cast<std::size_t>(k)] = raw[static_cast<std::size_t>(k)] * cf;
+            vals[s][8] = err;
+        }
+        for (std::size_t s1 = 0; s1 < uns; s1 += 5) {
+            const std::size_t s2 = std::min(s1 + 5, uns);
+            std::fprintf(f, "\n  **************************");
+            for (std::size_t s = s1; s < s2; ++s) std::fprintf(f, "%14s", rx.species_name[s].c_str());
+            std::fprintf(f, "\n  Reaction Species Routing  ");
+            for (std::size_t s = s1; s < s2; ++s) std::fprintf(f, "%14s", unit_word[s].c_str());
+            std::fprintf(f, "\n  **************************");
+            for (std::size_t s = s1; s < s2; ++s) std::fprintf(f, "    ----------");
+            for (int k = 0; k < 9; ++k) {
+                std::fprintf(f, "\n  %s", labels[k]);
+                for (std::size_t s = s1; s < s2; ++s) std::fprintf(f, "%14.3f", vals[s][static_cast<std::size_t>(k)]);
+            }
+            WRITE(f, "");
+            WRITE(f, "");
         }
     }
 
@@ -2150,29 +2258,29 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             auto uj = static_cast<std::size_t>(j);
             double a = ctx.subcatches.area[uj];
             if (a <= 0.0) continue;
-            double area_ft2 = a * landAreaToFt2(fu);
+            double area_ft2 = a / ucf::UCF(ucf::LANDAREA, opt);
 
             // Depth columns: ft³/ft² = ft → in (US) | mm (SI) via depth_vcf.
             double precip_in = (area_ft2 > 0.0) ?
-                ctx.subcatches.stat_precip_vol[uj] / area_ft2 * depth_vcf : 0.0;
+                ctx.subcatches.stat_precip_vol[uj] * depth_vcf / area_ft2 : 0.0;
             double evap_in = (area_ft2 > 0.0) ?
-                ctx.subcatches.stat_evap_vol[uj] / area_ft2 * depth_vcf : 0.0;
+                ctx.subcatches.stat_evap_vol[uj] * depth_vcf / area_ft2 : 0.0;
             double infil_in = (area_ft2 > 0.0) ?
-                ctx.subcatches.stat_infil_vol[uj] / area_ft2 * depth_vcf : 0.0;
+                ctx.subcatches.stat_infil_vol[uj] * depth_vcf / area_ft2 : 0.0;
             double imperv_in = (area_ft2 > 0.0) ?
-                ctx.subcatches.stat_imperv_vol[uj] / area_ft2 * depth_vcf : 0.0;
+                ctx.subcatches.stat_imperv_vol[uj] * depth_vcf / area_ft2 : 0.0;
             double perv_in = (area_ft2 > 0.0) ?
-                ctx.subcatches.stat_perv_vol[uj] / area_ft2 * depth_vcf : 0.0;
+                ctx.subcatches.stat_perv_vol[uj] * depth_vcf / area_ft2 : 0.0;
             double runoff_in = (area_ft2 > 0.0) ?
-                ctx.subcatches.stat_runoff_vol[uj] / area_ft2 * depth_vcf : 0.0;
+                ctx.subcatches.stat_runoff_vol[uj] * depth_vcf / area_ft2 : 0.0;
             double runoff_vol = ctx.subcatches.stat_runoff_vol[uj] * Vcf;
             double peak = ctx.subcatches.stat_max_runoff[uj] * Qcf;
-            double r = ctx.subcatches.stat_precip_vol[uj];
+            double r = ctx.subcatches.stat_precip_vol[uj] + ctx.subcatches.stat_runon_vol[uj];
             double coeff = (r > 0.0) ? ctx.subcatches.stat_runoff_vol[uj] / r : 0.0;
 
             std::fprintf(f, "\n  %-20s", ctx.subcatch_names.name_of(j).c_str());
             std::fprintf(f, " %10.2f", precip_in);
-            std::fprintf(f, " %10.2f", 0.0);  // runon
+            std::fprintf(f, " %10.2f", ctx.subcatches.stat_runon_vol[uj] * depth_vcf / area_ft2);
             std::fprintf(f, " %10.2f", evap_in);
             std::fprintf(f, " %10.2f", infil_in);
             std::fprintf(f, " %10.2f", imperv_in);
@@ -2199,10 +2307,19 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // while the ledger row printed 16057× them (known-mass audit,
     // QUALITY_LEDGER_UNITS_AUDIT §7).
     // =====================================================================
-    if (runoff_rpt && ctx.n_pollutants() > 0
+    // Multispecies Phase 2: reaction species follow the pollutants as extra
+    // columns (they used to have a separate "MSX Washoff Summary").
+    const auto& ms_wo = ctx.reactions.surface;
+    const int nm_wo = (ms_wo.active() && ctx.n_subcatches() > 0) ? ms_wo.n_species : 0;
+    if (runoff_rpt && (ctx.n_pollutants() > 0 || nm_wo > 0)
         && !opt.ignore_quality) {
         int ns = ctx.n_subcatches();
-        int np = ctx.n_pollutants();
+        int np_p = ctx.n_pollutants();
+        int np = np_p + nm_wo;   // columns
+        auto colName = [&](int p) {
+            return p < np_p ? ctx.pollutant_names.name_of(p)
+                            : ctx.reactions.species_name[static_cast<std::size_t>(p - np_p)];
+        };
 
         WRITE(f, "****************************");
         WRITE(f, "Subcatchment Washoff Summary");
@@ -2214,9 +2331,14 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         for (int p = 1; p < np; ++p) std::fprintf(f, "--------------");
         std::fprintf(f, " \n                                ");
         for (int p = 0; p < np; ++p)
-            std::fprintf(f, "%14s", ctx.pollutant_names.name_of(p).c_str());
+            std::fprintf(f, "%14s", colName(p).c_str());
         std::fprintf(f, " \n  Subcatchment                  ");
         for (int p = 0; p < np; ++p) {
+            if (p >= np_p) {
+                const double mcf = ms_wo.mcf[static_cast<std::size_t>(p - np_p)];
+                std::fprintf(f, "%14s", (mcf == 1.0) ? "mass" : (si_report ? "kg" : "lbs"));
+                continue;
+            }
             auto up = static_cast<std::size_t>(p);
             MassUnits mu = (up < ctx.pollutants.units.size()) ?
                             ctx.pollutants.units[up] : MassUnits::MG_PER_L;
@@ -2232,9 +2354,15 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             std::fprintf(f, "\n  %-30s", ctx.subcatch_names.name_of(j).c_str());
             for (int p = 0; p < np; ++p) {
                 auto up = static_cast<std::size_t>(p);
-                auto idx = uj * static_cast<std::size_t>(np) + up;
-                double load_lbs = (idx < ctx.subcatches.total_load.size())
-                    ? ctx.subcatches.total_load[idx] : 0.0;
+                double load_lbs = 0.0;
+                if (p < np_p) {
+                    auto idx = uj * static_cast<std::size_t>(np_p) + up;
+                    load_lbs = (idx < ctx.subcatches.total_load.size())
+                        ? ctx.subcatches.total_load[idx] : 0.0;
+                } else {
+                    const auto k = ms_wo.sidx(j, p - np_p);
+                    load_lbs = k < ms_wo.led_subcatch_load.size() ? ms_wo.led_subcatch_load[k] : 0.0;
+                }
                 sys_loads[up] += load_lbs;
                 std::fprintf(f, "%14.3f", load_lbs);
             }
@@ -2249,60 +2377,6 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
         WRITE(f, "");
         WRITE(f, "");
-    }
-
-    // =====================================================================
-    // BW-MSX (2026-09-19): the reactions component's species that build up
-    // and wash off — same layout as the pollutant block, user mass per
-    // species (MG/UG species print lbs/kg; other units print "mass").
-    // =====================================================================
-    {
-        const auto& ms = ctx.reactions.surface;
-        if (ms.active() && ctx.n_subcatches() > 0
-            && !opt.ignore_quality) {
-            const int ns = ctx.n_subcatches();
-            const int nm = ms.n_species;
-            WRITE(f, "********************************");
-            WRITE(f, "Subcatchment MSX Washoff Summary");
-            WRITE(f, "********************************");
-            std::fprintf(f, "\n");
-            std::fprintf(f, " \n  ----------------------------------");
-            for (int m = 1; m < nm; ++m) std::fprintf(f, "--------------");
-            std::fprintf(f, " \n                                ");
-            for (int m = 0; m < nm; ++m)
-                std::fprintf(f, "%14s", ctx.reactions.species_name[static_cast<std::size_t>(m)].c_str());
-            std::fprintf(f, " \n  Subcatchment                  ");
-            for (int m = 0; m < nm; ++m) {
-                const double mcf = ms.mcf[static_cast<std::size_t>(m)];
-                std::fprintf(f, "%14s", (mcf == 1.0) ? "mass" : (si_report ? "kg" : "lbs"));
-            }
-            std::fprintf(f, " \n  ----------------------------------");
-            for (int m = 1; m < nm; ++m) std::fprintf(f, "--------------");
-            std::vector<double> sys(static_cast<std::size_t>(nm), 0.0);
-            for (int j = 0; j < ns; ++j) {
-                std::fprintf(f, "\n  %-30s", ctx.subcatch_names.name_of(j).c_str());
-                for (int m = 0; m < nm; ++m) {
-                    const double v = ms.led_subcatch_load[ms.sidx(j, m)];
-                    sys[static_cast<std::size_t>(m)] += v;
-                    std::fprintf(f, "%14.3f", v);
-                }
-            }
-            std::fprintf(f, " \n  ----------------------------------");
-            for (int m = 1; m < nm; ++m) std::fprintf(f, "--------------");
-            std::fprintf(f, "\n  System                        ");
-            for (int m = 0; m < nm; ++m) std::fprintf(f, "%14.3f", sys[static_cast<std::size_t>(m)]);
-            WRITE(f, "");
-            std::fprintf(f, "  Surface ledger (species: initial buildup, net buildup, washed to network, swept, BMP removed):\n");
-            for (int m = 0; m < nm; ++m) {
-                const auto um = static_cast<std::size_t>(m);
-                std::fprintf(f, "    %-16s %14.3f %14.3f %14.3f %14.3f %14.3f\n",
-                             ctx.reactions.species_name[um].c_str(),
-                             ms.led_init_buildup[um], ms.led_buildup[um],
-                             ms.led_runoff_load[um], ms.led_sweeping[um], ms.led_bmp_removal[um]);
-            }
-            WRITE(f, "");
-            WRITE(f, "");
-        }
     }
 
 #ifdef OPENSWMM_HAS_2D
@@ -2378,12 +2452,12 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             double seep_in   = (area_ft2 > 0.0) ? ctx.subcatches.stat_gw_deep_perc_vol[uj]  / area_ft2 * depth_vcf : 0.0;
             double lat_in    = (area_ft2 > 0.0) ? ctx.subcatches.stat_gw_flow_vol[uj]       / area_ft2 * depth_vcf : 0.0;
             double max_flow  = ctx.subcatches.stat_gw_max_flow[uj] * Qcf;
-            long   steps     = ctx.subcatches.stat_gw_steps[uj];
-            double avg_theta = (steps > 0L) ? ctx.subcatches.stat_gw_sum_theta[uj] / static_cast<double>(steps) : 0.0;
-            double avg_depth = (steps > 0L) ? ctx.subcatches.stat_gw_sum_depth[uj] / static_cast<double>(steps) * len_ucf : 0.0;
+            double seconds = ctx.subcatches.stat_gw_time[uj];
+            double avg_theta = (seconds > 0.0) ? ctx.subcatches.stat_gw_sum_theta[uj] / seconds : 0.0;
+            double avg_depth = (seconds > 0.0) ? ctx.subcatches.stat_gw_sum_depth[uj] * len_ucf / seconds : 0.0;
             double fin_theta = ctx.subcatches.stat_gw_final_theta[uj];
             double fin_depth = ctx.subcatches.stat_gw_final_depth[uj] * len_ucf;
-            std::fprintf(f, "\n  %-20s %8.2f %8.2f %8.2f %8.2f %8.2f %8.4f %8.2f %8.4f %8.2f",
+            std::fprintf(f, "\n  %-20s %8.2f %8.2f %8.2f %8.2f %8.2f %8.2f %8.2f %8.2f %8.2f",
                 ctx.subcatch_names.name_of(j).c_str(),
                 infil_in, evap_in, seep_in, lat_in, max_flow,
                 avg_theta, avg_depth, fin_theta, fin_depth);
@@ -2610,7 +2684,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     if (route_rpt) {
         bool any_flooding = false;
         for (int j = 0; j < ctx.n_nodes(); ++j)
-            if (ctx.nodes.stat_vol_flooded[static_cast<std::size_t>(j)] > 0.0)
+            if (ctx.nodes.stat_time_flooded[static_cast<std::size_t>(j)] > 0.0)
                 { any_flooding = true; break; }
 
         WRITE(f, "*********************");
@@ -2634,9 +2708,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
             for (int j = 0; j < ctx.n_nodes(); ++j) {
                 auto uj = static_cast<std::size_t>(j);
-                if (ctx.nodes.stat_vol_flooded[uj] <= 0.0) continue;
+                if (ctx.nodes.stat_time_flooded[uj] <= 0.0) continue;
 
-                double hours = ctx.nodes.stat_time_flooded[uj] / 3600.0;
+                double hours = std::max(0.01, ctx.nodes.stat_time_flooded[uj] / 3600.0);
                 double max_rate = ctx.nodes.stat_max_overflow[uj] * Qcf;
                 double vol_mgal = ctx.nodes.stat_vol_flooded[uj] * Vcf;
                 int days, hrs, mins;
@@ -2710,40 +2784,22 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 if (ctx.nodes.type[uj] != NodeType::STORAGE) continue;
 
                 const double full_vol = ctx.nodes.full_volume[uj];
-                const double max_depth = ctx.nodes.stat_max_depth[uj];
-
-                // Volume from the node's actual depth→volume relation, not a linear
-                // depth ratio. Storage surface area varies with depth for FUNCTIONAL,
-                // TABULAR and the geometric shapes, so full_vol*(depth/full_depth) is
-                // exact only for a constant-area unit and grossly overstates the rest
-                // (a shallow functional/geometric node was reported ~20x too full).
-                // Average is the true time-average accumulated per routing step
-                // (stat_sum_volume); maximum is exact — V(d) is monotonic, so the max
-                // volume occurs at the max depth. node::getVolume returns internal ft³
-                // from the same relation the solver routes on.
-                const int us =
-                    ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
-                // const_cast: getVolume takes a mutable TableData* for the tabular
-                // curve's lookup cursor cache; the report context is const and this
-                // is a read-only computation, so mutating the cursor is benign.
-                auto* tbls = const_cast<TableData*>(&ctx.tables);
+                // Volume peaks can occur before depth peaks once full storage
+                // has been reached, so use the dedicated volume statistics.
                 const double avg_vol_ft3 =
                     ctx.nodes.stat_sum_volume[uj] / static_cast<double>(report_steps);
-                const double max_vol_ft3 = node::getVolume(
-                    ctx.nodes, j, max_depth, tbls, us, &ctx.node_subtypes);
+                const double max_vol_ft3 = ctx.nodes.stat_storage_max_volume[uj];
 
                 // Percent full is by VOLUME (legacy semantics), not by depth.
                 double pct_avg = (full_vol > 0.0) ? avg_vol_ft3 / full_vol * 100.0 : 0.0;
                 double pct_max = (full_vol > 0.0) ? max_vol_ft3 / full_vol * 100.0 : 0.0;
-                pct_avg = std::min(pct_avg, 100.0);
-                pct_max = std::min(pct_max, 100.0);
 
                 // ft³ → 1000 ft³|m³
                 const double avg_vol = avg_vol_ft3 * svol_ucf / 1000.0;
                 const double max_vol = max_vol_ft3 * svol_ucf / 1000.0;
 
                 int days, hrs, mins;
-                elapsedToParts(ctx.nodes.stat_max_depth_date[uj],
+                elapsedToParts(ctx.nodes.stat_storage_max_volume_date[uj],
                                ctx.options.report_start, days, hrs, mins);
 
                 double max_outflow = ctx.nodes.stat_storage_max_outflow[uj] * Qcf;
@@ -2919,9 +2975,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             // [XSECTIONS] row keeps xsect.type DUMMY (0) there — pumps and
             // outlets — and an IRREGULAR section prints CHANNEL.
             const auto shape = ctx.links.xsect_shape[uj];
-            const bool dummy = shape == XsectShape::DUMMY ||
-                               lt == static_cast<int>(LinkType::PUMP) ||
-                               lt == static_cast<int>(LinkType::OUTLET);
+            const bool pump = lt == static_cast<int>(LinkType::PUMP);
+            const bool dummy = !pump && (shape == XsectShape::DUMMY ||
+                               lt == static_cast<int>(LinkType::OUTLET));
             std::fprintf(f, "\n  %-20s", ctx.link_names.name_of(j).c_str());
             if (dummy)                               std::fprintf(f, " DUMMY   ");
             else if (shape == XsectShape::IRREGULAR) std::fprintf(f, " CHANNEL ");
@@ -2948,7 +3004,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                     continue;
                 }
             }
-            if (dummy) continue;
+            if (dummy || pump) continue;
 
             if (lt == static_cast<int>(LinkType::CONDUIT)) {
                 if (mv > 50.0) std::fprintf(f, "    >50.00");
@@ -3088,24 +3144,27 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 "\n  ---------------------------------------------------------------------------------------------------------",
                 FlowUnitWords[fu], FlowUnitWords[fu], FlowUnitWords[fu], vol_word);
 
-            double totalSeconds = (ctx.options.end_date - ctx.options.start_date) * 86400.0;
+            double totalSeconds = ctx.routing_stats.report_time;
 
             for (int j = 0; j < ctx.n_links(); ++j) {
                 auto uj = static_cast<std::size_t>(j);
                 if (ctx.links.type[uj] != LinkType::PUMP) continue;
 
                 double max_flow = ctx.links.stat_max_flow[uj] * Qcf;
-                double vol = ctx.links.stat_vol_flow[uj] * Vcf;
+                double vol = ctx.links.stat_pump_volume[uj] * Vcf;
                 double on_time = ctx.links.stat_pump_on_time[uj];
                 double pctUtilized = (totalSeconds > 0.0) ? on_time / totalSeconds * 100.0 : 0.0;
                 int    startUps   = ctx.links.stat_pump_cycles[uj];
-                double avgFlow    = (on_time > 0.0) ? (ctx.links.stat_pump_volume[uj] / on_time) * Qcf : 0.0;
+                double avgFlow = (ctx.links.stat_pump_periods[uj] > 0)
+                    ? ctx.links.stat_pump_sum_flow[uj] / ctx.links.stat_pump_periods[uj] * Qcf : 0.0;
                 double energyKwh  = ctx.links.stat_pump_energy[uj];
 
                 std::fprintf(f, "\n  %-20s %8.2f  %10d %9.2f %9.2f %9.2f %9.3f %9.2f",
                     ctx.link_names.name_of(j).c_str(),
                     pctUtilized, startUps, 0.0, avgFlow, max_flow, vol, energyKwh);
-                std::fprintf(f, " %6.1f %6.1f", 0.0, 0.0);
+                std::fprintf(f, " %6.1f %6.1f",
+                    on_time > 0.0 ? ctx.links.stat_pump_off_curve_low[uj] / on_time * 100.0 : 0.0,
+                    on_time > 0.0 ? ctx.links.stat_pump_off_curve_high[uj] / on_time * 100.0 : 0.0);
             }
             WRITE(f, "");
             WRITE(f, "");

@@ -67,6 +67,7 @@ public:
     void computeAll(SimulationContext& ctx, double dt);
 
     ExfilSoA& state() { return soa_; }
+    const ExfilSoA& state() const { return soa_; }
 
 private:
     ExfilSoA soa_;

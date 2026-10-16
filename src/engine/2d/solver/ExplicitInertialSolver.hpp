@@ -45,6 +45,7 @@
 #define OPENSWMM_ENGINE_2D_EXPLICIT_INERTIAL_SOLVER_HPP
 
 #include <array>
+#include <functional>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -53,10 +54,16 @@
 #include "InertialEdges.hpp"
 #include "../data/SolverOptions2D.hpp"   // Momentum2D
 
+namespace openswmm::detail { class CompletedSourceArchive; }
+namespace openswmm { class SWMMEngine; }
+namespace openswmm::runoff { class SourceWaterDriver; }
 namespace openswmm::twoD {
 
 class SubsurfaceSolver;   // G1: the two-zone groundwater kernel, if authored
 class CommonSourceStage;
+class ChannelGroundState;
+class SourceResultHistory;
+class EngineSourceResultHistory;
 
 class ExplicitInertialSolver final : public ISurfaceSolver {
 public:
@@ -72,6 +79,16 @@ public:
     void pinExternalSourceCells(const std::vector<int>& cells);
     /// Internal qualification adapter; owned externally and attached at time zero.
     void setCommonSourceStage(CommonSourceStage& stage);
+    void setChannelGround(ChannelGroundState&);
+    /// Capture initial state and every finest accepted source interval, after
+    /// all due groundwater firings/node sampling; externally owned recorder.
+    void setSourceResultHistory(SourceResultHistory& history);
+    /// Internal accepted CPU surface/source boundary, not a whole-engine hotstart.
+    /// First order, no live 1D coupling or external boundary providers.
+    std::string saveCheckpoint(const std::string& path) const;
+    std::string loadCheckpoint(const std::string& path);
+    /// Bind a saved exact source-history prefix after a marcher restore.
+    void resumeSourceResultHistory(SourceResultHistory& history);
     void finalize() override;
     /// Refresh changed perimeter topology between completed advances.
     void refreshBoundaries();
@@ -93,6 +110,16 @@ public:
 
 private:
     friend struct ExplicitInertialSolverTestAccess;
+    friend class SurfaceRouter2D;
+    friend class openswmm::SWMMEngine;
+    std::string checkpointBytes(std::string& bytes) const;
+    std::string loadCheckpointBytes(std::string bytes, const std::array<double,10>* router_boundary = nullptr,
+                                    const std::vector<double>* pending_outfalls = nullptr,
+        const std::function<void(const runoff::SourceWaterDriver&)>* validate_source = nullptr,
+        const std::function<void()>* before_install = nullptr,
+                                    const std::vector<int>* boundary_slots = nullptr,
+                                    double* inspect_source_end = nullptr);
+    void refreshSourceResultBoundary();
 
     // Recompute η/depth from state volumes for the whole mesh.
     void reconstructAll();
@@ -268,12 +295,17 @@ private:
     // Returns false only when no source bookkeeping or volume change occurred.
     bool applyCellSources(int cell, double dt);
     bool applyRuntimeSources(int cell, double dt);
-    struct CellSourceStep;
+    struct CellSourceStep {
+        double area_dt=0,rain=0,coupling=0,available=0,infil=0,evap=0,out=0,final_volume=0,requested_infil=0;
+        double* ledger=nullptr;
+    };
     bool prepareCellSources(int cell, double dt, CellSourceStep& source);
+    void mixCellSourceRow(int cell,int row,double& mass,const CellSourceStep&);
+    void prepareChannelGround(double seconds);
     void applyCellSourceRow(int cell, int row, double& mass,
                             const CellSourceStep& source);
     enum class SourceLedger { Infiltration, CouplingOut, Rainfall,
-                              CouplingIn, Exfiltration, Boundary, ExternalIn, ExternalOut, Count };
+                              CouplingIn, Exfiltration, Boundary, ExternalIn, ExternalOut, BedExchange, Count };
     void bookSourceLedger(SourceLedger ledger, int species, double mass) noexcept;
     void flushSourceLedgers();
     int sourceThread() const noexcept;
@@ -281,6 +313,9 @@ private:
     // applied evaporation volume. Fold only after the parallel region ends.
     std::vector<double> source_ledgers_;
     std::size_t source_ledger_stride_ = 0;
+    ChannelGroundState* channel_ground_=nullptr;
+    std::vector<CellSourceStep> channel_sources_;
+    std::vector<uint8_t> channel_source_ready_,channel_temperature_mixed_;
     /// False when every booked ΔM is known to have been consumed already —
     /// true after a GLOBAL substep, where every active face fired and then
     /// every active cell gathered both of its sides (faces touching an
@@ -335,6 +370,14 @@ private:
 
     double t_last_sync_ = 0.0;          ///< lazy-source clock
     CommonSourceStage* common_stage_ = nullptr;
+    SourceResultHistory* source_history_ = nullptr;
+    EngineSourceResultHistory* engine_source_history_ = nullptr;
+    class EngineSourceResultStream* engine_source_stream_ = nullptr;
+    bool checkpoint_ready_ = false;
+    bool joint_checkpoint_ = false; // only SurfaceRouter2D may restore live 1D pairing
+    std::string checkpointBoundary() const;
+    void checkpointState(detail::CompletedSourceArchive& archive);
+    void captureSourceResults();
     double source_phase_end_ = 0.0;
     int    cycles_since_rebuild_ = 1000; ///< persists across advances (co-advance)
     /// Lazy-source landing without the O(nt) rebuild (advance boundaries

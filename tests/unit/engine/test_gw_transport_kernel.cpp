@@ -724,6 +724,95 @@ TEST(GwTransportKernel, HotStartCarriesTheAquiferSpeciesAcrossARestart) {
     finish(r2);
 }
 
+// The same restart through the deck alone: `[FILES] SAVE HOTSTART … NATIVE`
+// writes the V5/V6 blocks, and `USE HOTSTART` reads the file's stamp and
+// applies it once the aquifer exists. Without NATIVE the row writes the
+// legacy format and this test fails on the stamp — that is the falsifier.
+TEST(GwTransportKernel, FilesNativeHotStartCarriesTheAquiferSpeciesAcrossARestart) {
+    const fs::path hsf = fs::absolute(kOutDir / "gw_species_files.hsf");
+    fs::remove(hsf);
+
+    double sat0 = 0.0, uns0 = 0.0, infil0 = 0.0;
+    {
+        Deck r = open("hs_files_write", deck(Mesh::Tri,
+            "[FILES]\nSAVE HOTSTART \"" + hsf.string() + "\" NATIVE\n\n"));
+        ASSERT_TRUE(r.opened);
+        ASSERT_TRUE(run(r));
+        // end() writes the [FILES] save, after the 2D finalize — so the
+        // reference values are read after it too.
+        ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
+        r.started = false;
+        const auto& t = r.eng->surfaceRouter2D().subsurface().transport();
+        sat0   = t.sat_mass[t.idx(0, 0)];
+        uns0   = t.unsat_mass[t.idx(0, 0)];
+        infil0 = t.gained_infil[0];
+        finish(r);
+    }
+    std::string stamp(14, '\0');
+    { std::ifstream f(hsf, std::ios::binary); f.read(stamp.data(), 14); }
+    ASSERT_EQ(stamp, "OPENSWMM_HS_V1") << "SAVE HOTSTART … NATIVE did not write a native file";
+    EXPECT_GT(sat0, 0.0);
+
+    Deck r2 = open("hs_files_read", deck(Mesh::Tri,
+        "[FILES]\nUSE HOTSTART \"" + hsf.string() + "\"\n\n"));
+    ASSERT_TRUE(r2.opened);
+    ASSERT_EQ(swmm_engine_initialize(r2.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r2.e, 1), SWMM_OK);
+    r2.started = true;
+    const auto& t2 = r2.eng->surfaceRouter2D().subsurface().transport();
+    EXPECT_NEAR(t2.sat_mass[t2.idx(0, 0)], sat0, 1.0e-9 * std::fabs(sat0))
+        << "the [FILES] restart did not resume the saturated store";
+    EXPECT_NEAR(t2.unsat_mass[t2.idx(0, 0)], uns0, 1.0e-9 * std::fabs(uns0) + 1.0e-12)
+        << "the [FILES] restart did not resume the column store";
+    EXPECT_NEAR(t2.gained_infil[0], infil0, 1.0e-9 * std::fabs(infil0) + 1.0e-12);
+    finish(r2);
+}
+
+// The same restart in a model whose storage node carries a LID. The native
+// file was applied before init_modules() whenever node LIDs were present,
+// so the aquifer, which does not exist yet then, was dropped without a word.
+TEST(GwTransportKernel, FilesNativeHotStartWithANodeLidCarriesTheAquifer) {
+    const std::string lid =
+        "[STORAGE]\nS1 -1.0 0.75 0 FUNCTIONAL 0 0 100 0 0\n\n"   // depth = layer sum
+        "[WEIRS]\nW1 S1 J1 TRANSVERSE 0.8 1.84 NO 0 0 NO\n\n"
+        "[XSECTIONS]\nW1 RECT_OPEN 0.2 0.2 0 0\n\n"
+        "[LID_CONTROLS]\nTrain NODE\nTrain SURFACE 150 .1\n"
+        "Train MEDIA 300 .45 .20 .08 125 75 75\nTrain AGGREGATE 300 .40 2500\n"
+        "Train BOTTOM 0 0\n\n"
+        "[LID_NODES]\nS1 Train 10\n\n"
+        "[LID_NODE_OUTLETS]\nW1 1 BOTTOM\n\n";
+    const fs::path hsf = fs::absolute(kOutDir / "gw_species_files_lid.hsf");
+    fs::remove(hsf);
+
+    double sat0 = 0.0, uns0 = 0.0;
+    {
+        Deck r = open("hs_files_lid_write", deck(Mesh::Tri, lid +
+            "[FILES]\nSAVE HOTSTART \"" + hsf.string() + "\" NATIVE\n\n"));
+        ASSERT_TRUE(r.opened);
+        ASSERT_TRUE(run(r));
+        ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
+        r.started = false;
+        const auto& t = r.eng->surfaceRouter2D().subsurface().transport();
+        sat0 = t.sat_mass[t.idx(0, 0)];
+        uns0 = t.unsat_mass[t.idx(0, 0)];
+        finish(r);
+    }
+    EXPECT_GT(sat0, 0.0);
+
+    Deck r2 = open("hs_files_lid_read", deck(Mesh::Tri, lid +
+        "[FILES]\nUSE HOTSTART \"" + hsf.string() + "\"\n\n"));
+    ASSERT_TRUE(r2.opened);
+    ASSERT_EQ(swmm_engine_initialize(r2.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r2.e, 1), SWMM_OK);
+    r2.started = true;
+    const auto& t2 = r2.eng->surfaceRouter2D().subsurface().transport();
+    EXPECT_NEAR(t2.sat_mass[t2.idx(0, 0)], sat0, 1.0e-9 * std::fabs(sat0))
+        << "the [FILES] restart did not resume the saturated store";
+    EXPECT_NEAR(t2.unsat_mass[t2.idx(0, 0)], uns0, 1.0e-9 * std::fabs(uns0) + 1.0e-12)
+        << "the [FILES] restart did not resume the column store";
+    finish(r2);
+}
+
 // ---------------------------------------------------------------------------
 // T7.5 — the results file carries the tuple.
 // ---------------------------------------------------------------------------
@@ -875,6 +964,8 @@ struct SeamResult {
     double seep_ledger = 0.0;    ///< 1D qual_routing_seep
     double ex_in_ledger = 0.0;   ///< 1D qual_routing_ex_in (the coupling row)
     double v12 = 1.0;            ///< vol_1d_to_2d, for the unit check
+    double led_node = 0.0;       ///< water ledger, m³, + out of the aquifer
+    double led_link = 0.0;       ///< water ledger, m³, + into the aquifer
 };
 
 SeamResult runSeam(const std::string& tag, const std::string& body) {
@@ -895,6 +986,8 @@ SeamResult runSeam(const std::string& tag, const std::string& body) {
         o.init        = t.init_mass[0];
     }
     o.v12 = r.eng->surfaceRouter2D().options().vol_1d_to_2d;
+    o.led_node = r.eng->surfaceRouter2D().subsurface().state().led_node;
+    o.led_link = r.eng->surfaceRouter2D().subsurface().state().led_link;
     for (double v : ctx.nodes.coupling_qual_queue) o.queue_sum += v;
     if (!ctx.mass_balance.qual_routing_gw_in.empty())
         o.gw_in_ledger = ctx.mass_balance.qual_routing_gw_in[0];
@@ -1196,6 +1289,16 @@ TEST(GwTransportKernel, LeakingConduitCarriesItsQualityIntoTheAquifer) {
     // is the quantity the aquifer received; the two are booked on opposite
     // sides of one transfer, never removed twice from the 1D.
     EXPECT_GT(s.seep_ledger, 0.0) << "the 1D booked no exfiltration";
+    // Review F22 (2026-10-15): the mass must arrive in the AQUIFER's units.
+    // Per delivered m³ it cannot carry more than the richest water on the
+    // deck (cell 1's 25 mg/L seed; rain is 10, the rest of the column 5 and
+    // 2). Booking the conduit's conc·ft³ into the conc·m³ store made it
+    // carry 35.31× the pipe's concentration.
+    ASSERT_GT(s.led_link, 0.0) << "no seepage water arrived; deck defect";
+    EXPECT_LE(s.gained_link / s.led_link, 25.0 * (1.0 + 1.0e-9))
+        << "the aquifer received " << s.gained_link << " conc·m³ with "
+        << s.led_link << " m³ — " << s.gained_link / s.led_link
+        << " per m³ (1/vol_1d_to_2d = " << 1.0 / s.v12 << ")";
 }
 
 TEST(GwTransportKernel, RechargingNodeSendsItsQualityDownTheBedAndIsLedgered) {
@@ -1224,6 +1327,14 @@ TEST(GwTransportKernel, RechargingNodeSendsItsQualityDownTheBedAndIsLedgered) {
     // reason its quality continuity error used to grow by exactly this.
     EXPECT_GT(s.seep_ledger, 0.0)
         << "the node gave up mass with no ledger entry (the pre-T7.4 defect)";
+    // Review F22 (2026-10-15): the node's water is at most 50 mg/L (its only
+    // inflow) and the aquifer it could have drawn from is at most 25, so a
+    // recharge cannot deliver more than 50 per m³ — in the aquifer's units.
+    ASSERT_LT(s.led_node, 0.0) << "the bed did not recharge; deck defect";
+    EXPECT_LE(s.gained_node / -s.led_node, 50.0 * (1.0 + 1.0e-9))
+        << "the aquifer received " << s.gained_node << " conc·m³ with "
+        << -s.led_node << " m³ — " << s.gained_node / -s.led_node
+        << " per m³ (1/vol_1d_to_2d = " << 1.0 / s.v12 << ")";
 }
 
 TEST(GwTransportKernel, DrainingAquiferHandsItsMassToTheNodeQueue) {
@@ -1611,4 +1722,173 @@ TEST(GwTransportKernel, GroundwaterHdfUnitsFollowNativeSpeciesEvenWhenSurfaceTra
         }
         H5Fclose(h5);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Review F21 (2026-10-15): the 1D ⇄ aquifer seam for a reaction-component
+// species. Seeded like TSS, the species must cross both inbound seams and the
+// outbound one exactly as the pollutant does. At base an MSX row left the
+// aquifer as `lost_node` and reached nothing, and a leaking conduit delivered
+// none (its link concentration was never read).
+// ---------------------------------------------------------------------------
+namespace {
+std::string withSpeciesX(std::string body, const std::string& tag) {
+    fs::create_directories(kOutDir);
+    { std::ofstream f(kOutDir / (tag + ".rxn"));
+      f << "[REACTION_OPTIONS]\nSOLVER RK5\n[REACTION_SPECIES]\nBULK X MG\n"
+           "[REACTION_PIPES]\nRATE X 0\n[REACTION_TANKS]\nRATE X 0\n"; }
+    const std::string iq = "[GW_INITIAL_QUALITY]\n;;Scope Zone Species Value\n";
+    const auto at = body.find(iq);
+    if (at != std::string::npos)
+        body.insert(at + iq.size(), "*       SAT    X  5.0\n*       UNSAT  X  2.0\nCELL 1  SAT    X  25.0\n");
+    // Species rain in clean while TSS rains at 10 mg/L; take rain off the mesh
+    // so the two differ only through the seam under test.
+    const std::string rain = "RAINFALL_MODE SYSTEM";
+    const auto rp = body.find(rain);
+    if (rp != std::string::npos) body.replace(rp, rain.size(), "RAINFALL_MODE NONE");
+    body.insert(body.find("[REPORT]"),
+                "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions config=\"" + tag + ".rxn\"\n\n");
+    return body;
+}
+}  // namespace
+
+TEST(GwTransportKernel, DrainingAquiferHandsReactionSpeciesToTheNode) {
+    Deck r = open("seam_node_out_msx", withSpeciesX(seamDeck(0.95, 0.0, 0.0, 0.0), "seam_node_out_msx"));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r.e, 1), SWMM_OK);
+    r.started = true;
+    const auto& ctx = r.eng->context();
+    const int j1 = ctx.node_names.find("J1");
+    const auto np = static_cast<std::size_t>(ctx.n_pollutants());
+    // The junction is fed only by the bed. Seeded identically, the species
+    // must track TSS there at every step while the aquifer drains.
+    double peak_tss = 0.0, worst = 0.0, elapsed = 0.0;
+    while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+        const auto ns = static_cast<std::size_t>(ctx.reactions.n_species());
+        const double c_tss = ctx.nodes.conc[static_cast<std::size_t>(j1) * np];
+        const double c_x = ns ? ctx.reactions.msx_node_conc[static_cast<std::size_t>(j1) * ns] : 0.0;
+        peak_tss = std::max(peak_tss, c_tss);
+        worst = std::max(worst, std::fabs(c_x - c_tss));
+    }
+    const auto& t = r.eng->surfaceRouter2D().subsurface().transport();
+    ASSERT_EQ(t.n_msx, 1) << "the aquifer does not transport the species";
+    const auto x = static_cast<std::size_t>(t.n_pollut);
+    ASSERT_GT(t.lost_node[0], 0.0) << "the aquifer drained no TSS; deck defect";
+    ASSERT_GT(peak_tss, 1.0) << "the junction never carried TSS; deck defect";
+    EXPECT_NEAR(t.lost_node[x], t.lost_node[0], 1e-9 * t.lost_node[0])
+        << "the species left the aquifer differently from TSS";
+    EXPECT_LT(worst, 1e-9 * peak_tss)
+        << "species and TSS differ by up to " << worst << " at J1 (peak TSS " << peak_tss << ")";
+    finish(r);
+}
+
+TEST(GwTransportKernel, LeakingConduitCarriesReactionSpeciesIntoTheAquifer) {
+    std::string body = seamDeck(0.5, 0.0, 100.0, 0.0);
+    const std::string anchor = "[2D_AQUIFER_OPTIONS]\n";
+    body.insert(body.find(anchor) + anchor.size(), "LINK_SEEPAGE ONE_WAY\n");
+    Deck r = open("seam_link_msx", withSpeciesX(body, "seam_link_msx"));
+    ASSERT_TRUE(r.opened);
+    ASSERT_TRUE(run(r));
+    const auto& t = r.eng->surfaceRouter2D().subsurface().transport();
+    const auto& led = r.eng->surfaceRouter2D().subsurface().state();
+    ASSERT_EQ(t.n_msx, 1);
+    const auto x = static_cast<std::size_t>(t.n_pollut);
+    ASSERT_GT(led.led_link, 0.0) << "no seepage water; deck defect";
+    ASSERT_GT(t.gained_link[0], 0.0) << "TSS control delivered nothing";
+    EXPECT_GT(t.gained_link[x], 0.0) << "the conduit's species never reached the aquifer";
+    EXPECT_LE(t.gained_link[x] / led.led_link, 25.0 * (1.0 + 1e-9));
+    finish(r);
+}
+
+// ---------------------------------------------------------------------------
+// Review (2026-10-15): a GAINING conduit delivers the aquifer's quality.
+// High table, no bed, clean pipe inflow, no rain on the mesh: the only
+// source of TSS or species X in the network is the water the conduit gains.
+// At base the water arrived clean and the aquifer booked the mass as
+// `lost_link` with no receiver. The identity: everything the aquifer booked
+// out through gaining conduits (debited, still pending, or short) equals
+// what the 1D booked in as groundwater inflow plus what is still pending.
+// ---------------------------------------------------------------------------
+TEST(GwTransportKernel, GainingConduitDeliversTheAquiferQualityToTheNetwork) {
+    std::string body = deck(Mesh::Tri, "", 0.95);
+    const std::string anchor = "[2D_AQUIFER_OPTIONS]\n";
+    body.insert(body.find(anchor) + anchor.size(), "LINK_SEEPAGE TWO_WAY\n");
+    body.insert(body.find("[REPORT]\nINPUT NO\n"),
+                "[INFLOWS]\nJ1  FLOW  IN1  FLOW  1.0  1.0\n\n"
+                "[TIMESERIES]\nIN1  0:00  0.01\nIN1  1:00  0.01\n\n"
+                "[LOSSES]\n;;Link Kentry Kexit Kavg Flap Seepage\nC1  0 0 0 NO  100\n\n");
+    Deck r = open("seam_link_gain", withSpeciesX(body, "seam_link_gain"));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r.e, 1), SWMM_OK);
+    r.started = true;
+    const auto& ctx = r.eng->context();
+    const int j1 = ctx.node_names.find("J1");
+    ASSERT_GE(j1, 0);
+    const auto uj = static_cast<std::size_t>(j1);
+    const auto np = static_cast<std::size_t>(ctx.n_pollutants());
+    double peak_tss = 0.0, peak_x = 0.0, elapsed = 0.0;
+    while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+        const auto ns = static_cast<std::size_t>(ctx.reactions.n_species());
+        peak_tss = std::max(peak_tss, ctx.nodes.conc[uj * np]);
+        if (ns) peak_x = std::max(peak_x, ctx.reactions.msx_node_conc[uj * ns]);
+    }
+    const auto& gw = r.eng->surfaceRouter2D().subsurface();
+    const auto& t = gw.transport();
+    const double led_link = gw.state().led_link;
+    ASSERT_LT(led_link, 0.0) << "the conduit never gained; deck defect";
+    ASSERT_GT(t.lost_link[0], 0.0) << "no TSS left the aquifer through the conduit";
+    EXPECT_GT(peak_tss, 0.1) << "J1 never carried the aquifer's TSS";
+    EXPECT_LE(peak_tss, 25.0 * (1.0 + 1e-9));
+    EXPECT_GT(peak_x, 0.1) << "J1 never carried the aquifer's species";
+    // Cross-domain identity, TSS, in 1D units.
+    const double f21 = r.eng->surfaceRouter2D().options().flow_2d_to_1d;
+    double pend_2d = 0.0;
+    for (int c = 0; c < t.n_cells; ++c) pend_2d += t.lout_mass[t.idx(0, c)];
+    const double aq_out = (t.lost_link[0] + pend_2d + t.link_gain_shortfall[0]) * f21;
+    double pend_1d = 0.0;
+    for (std::size_t i = 0; i < ctx.link_gain_quality.mass.size(); i += np)
+        pend_1d += ctx.link_gain_quality.mass[i];
+    const double gw_in = ctx.mass_balance.qual_routing_gw_in[0];
+    EXPECT_NEAR(gw_in + pend_1d, aq_out, 1e-9 * aq_out)
+        << "1D received " << gw_in << " + pending " << pend_1d
+        << ", aquifer gave " << aq_out;
+    EXPECT_EQ(t.link_gain_shortfall[0], 0.0);
+    finish(r);
+}
+
+// Multispecies Phase 2 (S4, review D7): reaction species rain onto the mesh
+// at their [REACTION_RAINFALL] concentration. They used to rain in clean.
+// Seeded and rained exactly like TSS (10 mg/L), X must track TSS on every
+// mesh cell at every step.
+TEST(GwTransportKernel, SpeciesRainOnTheMeshAtTheirRainfallConcentration) {
+    std::string body = deck(Mesh::Tri);
+    fs::create_directories(kOutDir);
+    { std::ofstream f(kOutDir / "mesh_rain_msx.rxn");
+      f << "[REACTION_OPTIONS]\nSOLVER RK5\n[REACTION_SPECIES]\nBULK X MG\n"
+           "[REACTION_PIPES]\nRATE X 0\n[REACTION_TANKS]\nRATE X 0\n"
+           "[REACTION_RAINFALL]\nX  10.0\n"; }
+    const std::string iq = "[GW_INITIAL_QUALITY]\n;;Scope Zone Species Value\n";
+    body.insert(body.find(iq) + iq.size(), "*       SAT    X  5.0\n*       UNSAT  X  2.0\nCELL 1  SAT    X  25.0\n");
+    body.insert(body.find("[REPORT]"),
+                "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions config=\"mesh_rain_msx.rxn\"\n\n");
+    Deck r = open("mesh_rain_msx", body);
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r.e, 1), SWMM_OK);
+    r.started = true;
+    const auto& tr = r.eng->surfaceRouter2D().state().transport;
+    ASSERT_EQ(tr.n_msx, 1);
+    const int x = tr.n_pollut;
+    double worst = 0.0, peak = 0.0, elapsed = 0.0;
+    while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0)
+        for (int c = 0; c < tr.n_cells; ++c) {
+            const double a = tr.cell_mass[tr.idx(0, c)], b = tr.cell_mass[tr.idx(x, c)];
+            peak = std::max(peak, std::fabs(a));
+            worst = std::max(worst, std::fabs(a - b));
+        }
+    ASSERT_GT(peak, 0.0) << "no TSS on the mesh; deck defect";
+    EXPECT_LE(worst, 1e-12 * peak) << "X and TSS differ by up to " << worst << " (peak " << peak << ")";
+    finish(r);
 }

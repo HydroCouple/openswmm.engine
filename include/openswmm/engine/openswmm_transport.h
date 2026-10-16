@@ -132,6 +132,89 @@ SWMM_ENGINE_API int swmm_transport_get_source(SWMM_Engine engine, int index,
                                               int* is_ts, double* value,
                                               char* ts_name, int ts_len);
 
+/* =========================================================================
+ * Authoring (closed C-API gaps 2026-10-11)
+ *
+ * The setters below edit the transport.ard configuration that the
+ * serializer writes back to the component file, so API edits persist on
+ * save. They are accepted while the model is being edited (BUILDING or
+ * OPENED) and return SWMM_ERR_LIFECYCLE afterwards. Each edit marks the
+ * configuration as present (swmm_transport_get_configured() == 1).
+ * ========================================================================= */
+
+/**
+ * @brief [TRANSPORT_OPTIONS] DETAILED_OUTPUT: per-cell CSV sidecar path.
+ *
+ * @param buf Receives the path; empty when detailed output is off.
+ */
+SWMM_ENGINE_API int swmm_transport_get_detailed_output(SWMM_Engine engine,
+                                                       char* buf, int buflen);
+
+/**
+ * @brief Set the DETAILED_OUTPUT path; NULL or "" turns detailed output off.
+ *
+ * @details Stored as given. A relative path is resolved by the operating
+ *          system against the working directory when the run writes it
+ *          (a component file resolves relative paths against its own
+ *          directory at parse time).
+ */
+SWMM_ENGINE_API int swmm_transport_set_detailed_output(SWMM_Engine engine,
+                                                       const char* path);
+
+/**
+ * @brief Add or replace the [CONDUIT_DISPERSION] override of a conduit.
+ *
+ * @param link_index Conduit index (other link types are refused).
+ * @param value      Coefficient in display units (len²/s), >= 0.
+ */
+SWMM_ENGINE_API int swmm_transport_set_conduit_disp(SWMM_Engine engine,
+                                                    int link_index,
+                                                    double value);
+
+/** @brief Remove the [CONDUIT_DISPERSION] row at @p index. */
+SWMM_ENGINE_API int swmm_transport_remove_conduit_disp(SWMM_Engine engine,
+                                                       int index);
+
+/**
+ * @brief Add or replace a [TRANSPORT_BOUNDARIES] row (keyed by node + species).
+ *
+ * @param element Node name.
+ * @param species Reactions-component species name.
+ * @param is_ts   0: @p value is a concentration (species units, >= 0);
+ *                1: @p ts_name names a timeseries.
+ *
+ * @return SWMM_ERR_BADPARAM for an unknown node, species or timeseries,
+ *         a negative concentration, or a missing series name; the
+ *         configuration is left unchanged.
+ */
+SWMM_ENGINE_API int swmm_transport_set_boundary(SWMM_Engine engine,
+                                                const char* element,
+                                                const char* species,
+                                                int is_ts, double value,
+                                                const char* ts_name);
+
+/** @brief Remove the [TRANSPORT_BOUNDARIES] row at @p index. */
+SWMM_ENGINE_API int swmm_transport_remove_boundary(SWMM_Engine engine,
+                                                   int index);
+
+/**
+ * @brief Add or replace a [TRANSPORT_SOURCES] row (keyed by conduit + species).
+ *
+ * @param element Conduit name.
+ * @param value   Mass rate in species mass units/s; negative is extraction.
+ *
+ * @return As swmm_transport_set_boundary(); a non-conduit link is refused.
+ */
+SWMM_ENGINE_API int swmm_transport_set_source(SWMM_Engine engine,
+                                              const char* element,
+                                              const char* species,
+                                              int is_ts, double value,
+                                              const char* ts_name);
+
+/** @brief Remove the [TRANSPORT_SOURCES] row at @p index. */
+SWMM_ENGINE_API int swmm_transport_remove_source(SWMM_Engine engine,
+                                                 int index);
+
 #ifdef __cplusplus
 }
 #endif

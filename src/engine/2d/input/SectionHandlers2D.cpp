@@ -346,6 +346,23 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
         else if (iequals(val, "AQUIFER_2D"))       opts.infil_destination = "AQUIFER_2D";
         else return "Unknown INFIL_DESTINATION: " + val +
                     " (expected LOST|SUBCATCH_AQUIFER|AQUIFER_2D)";
+    } else if (iequals(key, "HEAT_MODEL")) {
+        if(iequals(val,"COUPLED"))opts.coupled_heat=true;
+        else if(iequals(val,"TRANSPORT_ONLY"))opts.coupled_heat=false;
+        else return "HEAT_MODEL expects TRANSPORT_ONLY or COUPLED";
+        opts.heat_model_authored=true;
+    } else if (iequals(key,"HEAT_SURFACE_EXCHANGE")||iequals(key,"HEAT_RADIATIVE_EXCHANGE")) {
+        int mode=-1;
+        if(iequals(val,"YES"))mode=1;else if(iequals(val,"NO"))mode=0;
+        else if(!iequals(val,"AUTO"))return key+" expects AUTO, YES or NO";
+        (iequals(key,"HEAT_SURFACE_EXCHANGE")?opts.heat_surface:opts.heat_radiative)=mode;
+        (iequals(key,"HEAT_SURFACE_EXCHANGE")?opts.heat_surface_authored:opts.heat_radiative_authored)=true;
+    } else if (iequals(key,"BED_HEAT_MODEL")) {
+        if(iequals(val,"NONE"))opts.bed_heat_model=0;
+        else if(iequals(val,"LOCAL_STORAGE"))opts.bed_heat_model=1;
+        else if(iequals(val,"GROUND_COLUMN"))opts.bed_heat_model=2;
+        else return "BED_HEAT_MODEL expects NONE, LOCAL_STORAGE or GROUND_COLUMN";
+        opts.bed_heat_authored=true;
     } else if (iequals(key, "EVAPORATION")) {
         if      (iequals(val, "YES") || iequals(val, "ON") || iequals(val, "FORCING"))
             opts.evaporation = 1;
@@ -408,7 +425,7 @@ bool is2DRetiredOptionKey(const std::string& key) {
 
 bool is2DOptionKey(const std::string& key) {
     static const char* kKeys[] = {
-        "MAX_TIMESTEP", "DRY_DEPTH", "COUPLING_CD", "COUPLING_SYNC",
+        "MAX_TIMESTEP", "DRY_DEPTH", "COUPLING_CD", "COUPLING_SYNC", "DISPERSION",
         "LIMITER_EPSILON", "FLUX_DH_EPS", "RAINFALL_MODE", "REPORT_2D",
         "CELL_CLOSURE", "FACE_RECONSTRUCTION", "VFR_MIN_WET_FRAC",
         "OUTPUT_FILE",
@@ -422,7 +439,7 @@ bool is2DOptionKey(const std::string& key) {
         "INFILTRATION", "INFIL_STEP", "INFIL_DEFAULT_METHOD", "INFIL_DESTINATION",
         "EVAPORATION", "TRANSPORT_POLLUTANTS", "TRANSPORT_MSX", "TRANSPORT_AGE",
         "TRANSPORT_TEMPERATURE",
-        "GROUNDWATER", "GW_ET",
+        "GROUNDWATER", "GW_ET", "HEAT_MODEL", "HEAT_SURFACE_EXCHANGE", "HEAT_RADIATIVE_EXCHANGE", "BED_HEAT_MODEL",
     };
     for (const char* k : kKeys) {
         if (iequals(key, k)) return true;
@@ -453,6 +470,7 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
     if (iequals(key, "LIMITER_EPSILON"))   return fmt_g(opts.limiter_epsilon);
     if (iequals(key, "FLUX_DH_EPS"))       return fmt_g(opts.flux_dh_eps);
     if (iequals(key, "COUPLING_CD"))       return fmt_g(opts.coupling_cd);
+    if (iequals(key, "DISPERSION"))        return fmt_g(opts.dispersion);
     if (iequals(key, "COUPLING_SYNC"))     return fmt_g(opts.coupling_sync);
     if (iequals(key, "REPORT_2D"))         return opts.report_2d ? "YES" : "NO";
     if (iequals(key, "OUTPUT_FILE"))       return opts.output_file;
@@ -522,6 +540,10 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
         return opts.infil_default_method.empty() ? "NONE" : opts.infil_default_method;
     if (iequals(key, "INFIL_DESTINATION"))
         return opts.infil_destination.empty() ? "LOST" : opts.infil_destination;
+    if(iequals(key,"HEAT_MODEL"))return opts.coupled_heat?"COUPLED":"TRANSPORT_ONLY";
+    if(iequals(key,"BED_HEAT_MODEL"))return opts.bed_heat_model==0?"NONE":opts.bed_heat_model==1?"LOCAL_STORAGE":"GROUND_COLUMN";
+    if(iequals(key,"HEAT_SURFACE_EXCHANGE"))return opts.heat_surface<0?"AUTO":opts.heat_surface?"YES":"NO";
+    if(iequals(key,"HEAT_RADIATIVE_EXCHANGE"))return opts.heat_radiative<0?"AUTO":opts.heat_radiative?"YES":"NO";
     if (iequals(key, "EVAPORATION"))
         return opts.evaporation == 0 ? "NO" : (opts.evaporation == 2 ? "CLIMATE" : "YES");
     if (iequals(key, "TRANSPORT_POLLUTANTS"))  return opts.transport_pollutants  ? "YES" : "NO";
@@ -1169,6 +1191,45 @@ std::string parse2DInitialQualityLine(
     return {};
 }
 
+std::string parse2DInitialBedQualityLine(
+    const std::vector<std::string>& tokens,
+    std::vector<SurfaceRouter2D::PendingInitialBedQualityRow>& rows)
+{
+    if (tokens.empty()) return {};
+    SurfaceRouter2D::PendingInitialBedQualityRow r;
+    std::size_t at = 0;
+    if (tokens[0] == "*") {
+        if (tokens.size() != 3)
+            return "[2D_INITIAL_BED_QUALITY] '*' row needs SPECIES CONC";
+        r.all = true;
+        at = 1;
+    } else if (iequals(tokens[0], "CELL")) {
+        if (tokens.size() != 4)
+            return "[2D_INITIAL_BED_QUALITY] CELL row needs CELL <n> SPECIES CONC";
+        bool ok = false;
+        const int cell = tryParseInt(tokens[1], ok);
+        if (!ok || cell < 1)
+            return "[2D_INITIAL_BED_QUALITY] invalid CELL index (1-based): " + tokens[1];
+        r.tri = cell - 1;
+        at = 2;
+    } else if (iequals(tokens[0], "TAG")) {
+        if (tokens.size() != 4)
+            return "[2D_INITIAL_BED_QUALITY] TAG row needs TAG <name> SPECIES CONC";
+        r.tag = tokens[1];
+        at = 2;
+    } else {
+        return "[2D_INITIAL_BED_QUALITY] row must start with CELL, TAG or '*': " + tokens[0];
+    }
+    r.species = tokens[at];
+    bool okc = false;
+    r.conc = tryParseDouble(tokens[at + 1], okc);
+    if (!okc || !std::isfinite(r.conc) || r.conc < 0.0)
+        return "[2D_INITIAL_BED_QUALITY] CONC must be a finite non-negative number, got '" +
+               tokens[at + 1] + "'";
+    rows.push_back(std::move(r));
+    return {};
+}
+
 // ============================================================================
 // [2D_BOUNDARY_QUALITY] — overland transport S2
 // ============================================================================
@@ -1208,6 +1269,7 @@ void register2DSections(MeshData& mesh,
                         std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
                         std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
                         std::vector<SurfaceRouter2D::PendingInitialQualityRow>& pending_iq_rows,
+                        std::vector<SurfaceRouter2D::PendingInitialBedQualityRow>& pending_ibq_rows,
                         std::vector<SurfaceRouter2D::PendingBoundaryQualityRow>& pending_bq_rows,
                         input::SectionRegistry& registry)
 {
@@ -1216,6 +1278,10 @@ void register2DSections(MeshData& mesh,
     registry.register_custom("2D_INITIAL_QUALITY",
         makeSectionHandler([&pending_iq_rows](const std::vector<std::string>& tokens) {
             return parse2DInitialQualityLine(tokens, pending_iq_rows);
+        }));
+    registry.register_custom("2D_INITIAL_BED_QUALITY",
+        makeSectionHandler([&pending_ibq_rows](const std::vector<std::string>& tokens) {
+            return parse2DInitialBedQualityLine(tokens, pending_ibq_rows);
         }));
     // S2: inflow concentration on a non-WALL boundary edge. Main .inp only.
     registry.register_custom("2D_BOUNDARY_QUALITY",
@@ -1308,13 +1374,17 @@ void register2DSections(MeshData& mesh,
             for (const auto& raw : lines) {
                 auto tokens = openswmm::input::Tokenizer::tokenize(raw);
                 if (tokens.size() >= 2 && iequals(tokens[0], "FILE")) {
-                    // Path may contain spaces; the tokenizer split an unquoted
-                    // path, so rejoin the tokens after FILE (a quoted path is a
-                    // single token already). Fixes meshes like "My Model.2dm".
+                    // Standard FILE rows consume the raw tail so unquoted
+                    // filenames retain repeated spaces. Keep CSV compatibility.
+                    const auto line = openswmm::input::Tokenizer::trim(
+                        openswmm::input::Tokenizer::strip_comment(raw));
                     std::string path = tokens[1];
                     for (std::size_t k = 2; k < tokens.size(); ++k) { path += ' '; path += tokens[k]; }
-                    if (path.size() >= 2 && path.front() == '"' && path.back() == '"')
-                        path = path.substr(1, path.size() - 2);
+                    if (line.size() > 4 && std::isspace(static_cast<unsigned char>(line[4]))) {
+                        const auto tail = openswmm::input::Tokenizer::trim(line.substr(4));
+                        if (!tail.empty() && tail.front() != '"' && tail.front() != ',')
+                            path = std::string(tail);
+                    }
                     options.mesh_file = path;
                     return; // only first FILE line
                 }
@@ -1336,6 +1406,7 @@ std::string load2DMeshExternalFile(MeshData& mesh,
                                    const std::string& inp_base_dir,
                                    std::vector<std::string>* warnings,
                                    std::vector<SurfaceRouter2D::PendingInitialQualityRow>* pending_iq_rows,
+                                   std::vector<SurfaceRouter2D::PendingInitialBedQualityRow>* pending_ibq_rows,
                                    std::vector<SurfaceRouter2D::PendingBoundaryQualityRow>* pending_bq_rows)
 {
     namespace fs = std::filesystem;
@@ -1391,6 +1462,11 @@ std::string load2DMeshExternalFile(MeshData& mesh,
         mini.register_custom("2D_INITIAL_QUALITY",
             makeSectionHandler([pending_iq_rows](const std::vector<std::string>& tokens) {
                 return parse2DInitialQualityLine(tokens, *pending_iq_rows);
+            }));
+    if (pending_ibq_rows)
+        mini.register_custom("2D_INITIAL_BED_QUALITY",
+            makeSectionHandler([pending_ibq_rows](const std::vector<std::string>& tokens) {
+                return parse2DInitialBedQualityLine(tokens, *pending_ibq_rows);
             }));
     if (pending_bq_rows)
         mini.register_custom("2D_BOUNDARY_QUALITY",

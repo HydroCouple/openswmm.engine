@@ -31,6 +31,7 @@
 
 #include "../hydrology/Gage.hpp"
 #include "../input/PostParseResolver.hpp"
+#include <cmath>
 
 extern "C" {
 
@@ -354,6 +355,8 @@ SWMM_ENGINE_API int swmm_gage_set_rainfall(SWMM_Engine engine, int idx, double r
     auto& ctx = to_engine(engine)->context();
     CHECK_RUNNING(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
+    if (!std::isfinite(rainfall) || rainfall < 0.0) return SWMM_ERR_BADPARAM;
+    ctx.gages.api_rainfall[static_cast<std::size_t>(idx)] = rainfall;
     ctx.gages.rainfall[static_cast<std::size_t>(idx)] = rainfall;
     return SWMM_OK;
 }
@@ -408,7 +411,7 @@ SWMM_ENGINE_API int swmm_gage_get_rainfall_series(SWMM_Engine engine, int idx,
     if (!tbl) return SWMM_OK;   // no series: nothing to write, not an error
 
     const auto ug = static_cast<std::size_t>(idx);
-    const int  rain_type    = ctx.gages.rain_type[ug];
+    const int  rain_type    = openswmm::gage::gageSeriesRainType(ctx, idx);
     const double interval   = ctx.gages.interval_sec[ug];
     const double units_fac  = openswmm::gage::gageUnitsFactor(ctx, idx);
     const double scale_fac  = ctx.gages.scale_factor[ug];

@@ -50,6 +50,20 @@ TEST(HortonInfil, DryPeriodRecovers) {
     EXPECT_LT(s.tp, 1000.0);  // tp should have recovered (decreased)
 }
 
+TEST(HortonInfil, HourlyLowRainThenStormRetainsLegacyMinimumRate) {
+    // MC typical-year parameters. Five light-rain steps make the legacy
+    // Newton iteration's cumulative time non-finite. Its MAX(fp, fmin)
+    // still returns a finite minimum rate on the following wet step.
+    HortonState s;
+    horton_init(s, 1.0, 0.025, 10.8, 10.0, 1.8, default_opts());
+    for (int i = 0; i < 5; ++i)
+        EXPECT_DOUBLE_EQ(horton_getInfil(s, 0.001 / 43200.0, 0.0, 3600.0),
+                         0.001 / 43200.0);
+    const double rate = horton_getInfil(s, 0.1 / 43200.0, 0.0, 3600.0);
+    EXPECT_DOUBLE_EQ(rate, 0.025 / 43200.0);
+    EXPECT_TRUE(std::isfinite(s.Fe));
+}
+
 TEST(HortonInfil, WetPeriodInfiltrates) {
     HortonState s;
     horton_init(s, 3.0, 0.5, 4.0, 0.1, 0.0, default_opts());

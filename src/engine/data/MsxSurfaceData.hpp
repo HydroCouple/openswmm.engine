@@ -118,6 +118,27 @@ struct MsxSurfaceData {
     /// `SubcatchData::conc_old`, rolled by `SubcatchData::save_state()`; this
     /// one is rolled beside it, on the same runoff cadence.
     std::vector<double> washoff_conc_old;
+    /// Multispecies Phase 2: the pollutant kernel's ponded-water species mass
+    /// `[sc * n_species + m]` (concentration mass) and run-on load rate
+    /// (concentration mass / s), the mirrors of SubcatchData::ponded_qual and
+    /// runon_qual_rate.
+    std::vector<double> ponded_qual;
+    std::vector<double> runon_qual_rate;
+    /// Per species: rainfall concentration (0 = rain falls clean) and the
+    /// snow-only buildup flag (species have none; kept so the kernel reads
+    /// the same fields for every family).
+    std::vector<double> c_rain;
+    std::vector<bool>   snow_only;
+    /// LID underdrain removal fraction `[control * n_species + m]` (from the
+    /// LID REMOVALS rows that name a species), and the underdrain species
+    /// load each node receives `[node * n_species + m]` (concentration mass
+    /// / s) for this and the previous runoff step — the mirrors of
+    /// LIDGroupSoA::drain_rmvl and NodeData::lid_drain_qual_load(_old).
+    std::vector<double> lid_rmvl;
+    std::vector<double> lid_drain_load;
+    std::vector<double> lid_drain_load_old;
+    /// `[sc * n_species + m]` the species twin of SubcatchData::lid_drain_runon_qual.
+    std::vector<double> lid_drain_runon_load;
 
     // ---- ledgers per species [m], user mass ---------------------------
     std::vector<double> led_init_buildup;
@@ -125,10 +146,15 @@ struct MsxSurfaceData {
     std::vector<double> led_runoff_load; ///< delivered to the network
     std::vector<double> led_sweeping;
     std::vector<double> led_bmp_removal;
+    std::vector<double> led_wet_deposition; ///< rainfall concentration × rain volume
+    std::vector<double> led_infil_loss;     ///< infiltrated from ponded water and LID units
+    std::vector<double> led_ponded_lost;    ///< ponded mass written off when a surface dried
     std::vector<double> led_subcatch_load; ///< [sc * n_species + m], per-subcatchment total (report)
 
     bool resolved = false;
-    bool active() const noexcept { return resolved && n_species > 0 && n_landuses > 0; }
+    /// `resolved` already requires a land use for buildup/washoff rows; a
+    /// species that only rains in (Multispecies Phase 2) resolves without one.
+    bool active() const noexcept { return resolved && n_species > 0; }
 
     std::size_t pidx(int lu, int m) const noexcept {
         return static_cast<std::size_t>(lu) * static_cast<std::size_t>(n_species) +
@@ -152,6 +178,8 @@ struct MsxSurfaceData {
         wo_type.assign(n, 0); wo_coeff.assign(n, 0.0); wo_expon.assign(n, 0.0);
         wo_sweep_effic.assign(n, 0.0); wo_bmp_effic.assign(n, 0.0);
         mcf.assign(static_cast<std::size_t>(nm), 1.0);
+        if (c_rain.size() != static_cast<std::size_t>(nm)) c_rain.assign(static_cast<std::size_t>(nm), 0.0);
+        snow_only.assign(static_cast<std::size_t>(nm), false);
     }
     void resize_state(int nsc) {
         n_subcatch = nsc;
@@ -159,11 +187,17 @@ struct MsxSurfaceData {
         buildup.assign(static_cast<std::size_t>(nsc) * static_cast<std::size_t>(n_landuses) * nm, 0.0);
         washoff_conc.assign(static_cast<std::size_t>(nsc) * nm, 0.0);
         washoff_conc_old.assign(static_cast<std::size_t>(nsc) * nm, 0.0);
+        ponded_qual.assign(static_cast<std::size_t>(nsc) * nm, 0.0);
+        runon_qual_rate.assign(static_cast<std::size_t>(nsc) * nm, 0.0);
+        lid_drain_runon_load.assign(static_cast<std::size_t>(nsc) * nm, 0.0);
         if (init_loading.size() != static_cast<std::size_t>(nsc) * nm)
             init_loading.assign(static_cast<std::size_t>(nsc) * nm, 0.0);
         led_init_buildup.assign(nm, 0.0); led_buildup.assign(nm, 0.0);
         led_runoff_load.assign(nm, 0.0);  led_sweeping.assign(nm, 0.0);
         led_bmp_removal.assign(nm, 0.0);
+        led_wet_deposition.assign(nm, 0.0);
+        led_infil_loss.assign(nm, 0.0);
+        led_ponded_lost.assign(nm, 0.0);
         led_subcatch_load.assign(static_cast<std::size_t>(nsc) * nm, 0.0);
     }
 };

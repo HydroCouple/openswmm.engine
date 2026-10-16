@@ -39,7 +39,9 @@
 #include <vector>
 
 #include "../coupling/RuntimeCoupling.hpp"
+#include "../../hydrology/surface/MeshSnow.hpp"
 #include "SurfaceTransportState.hpp"   // S1 — species mass per cell
+#include "../heat/MeshHeat.hpp"
 #include "MeshData.hpp"                 // kMaxCellVerts edge-slot stride
 
 namespace openswmm { struct NodeData; }  // 1D node data (held during a 2D advance)
@@ -83,6 +85,12 @@ struct SurfaceStateData {
     /// What a 1D→2D spill or outfall discharge arrives at.
     const std::vector<double>*        node_row_conc   = nullptr;
     const std::vector<CouplingPoint>* node_coupling   = nullptr;  ///< non-outfall points
+    /// Per-node volume (1D ft³) at which a coupled node's pond starts: what
+    /// the active 1D router books at the rim — `rpt_full_volume` under DW (0
+    /// for a plain junction), `full_volume` otherwise (FV holds MIN_SURFAREA ×
+    /// full depth below the pond). A 1D→2D spill may only draw volume above
+    /// it. Null falls back to `full_volume`.
+    const std::vector<double>*        node_pond_base  = nullptr;
 
     /// S1 — overland species transport. `transport.active()` is false (and
     /// every marcher species branch is skipped) unless the router sized it,
@@ -90,6 +98,7 @@ struct SurfaceStateData {
     /// otherwise untouched. Embedded rather than pointed-to: it is per-cell
     /// STATE, sized with `volume`, and it is copied when the state is.
     SurfaceTransportState transport;
+    MeshHeatState heat;
 
     std::vector<double> depth;          ///< Mean wetted depth h̄ = V/A_wet (m) [reconstructed]
     std::vector<double> head;           ///< Free-surface elevation η (m) [reconstructed]
@@ -125,7 +134,18 @@ struct SurfaceStateData {
     std::vector<double> edge_flux;      ///< Normal flux through each edge
 
     // Source/sink terms — per triangle
-    std::vector<double> rainfall;       ///< Rainfall intensity (m/s)
+    // Snow owns precipitation only on its resolved weather footprints. The
+    // context is a non-owning forcing view, like nodes_1d; it is never archived.
+    surface::MeshSnow snow;
+    SimulationContext* snow_context = nullptr;
+    std::vector<double> snow_catch;
+    double liquidRainfall(int i) const {
+        return snow.owns(i) ? snow.liquidRates()[i] : runtime_forcings.rate(1,i,rainfall[i]);
+    }
+    double exposedEvaporation(int i) const {
+        return runtime_forcings.rate(2,i,evap_rate[i])*(snow.owns(i)?snow.exposedFractions()[i]:1.);
+    }
+    std::vector<double> rainfall;       ///< Raw precipitation intensity (m/s)
     std::vector<double> evap_rate;      ///< Evaporation demand rate (m/s, >= 0)
 
     /// Infiltration loss rate (m/s, >= 0) — a HELD rate (plan §5.5.2, D-I1):
@@ -228,6 +248,8 @@ struct SurfaceStateData {
     // -----------------------------------------------------------------------
 
     void resize(int n_triangles, int n_vertices) {
+        heat.clear();
+        snow={};snow_context=nullptr;snow_catch.clear();
         auto nt = static_cast<std::size_t>(n_triangles);
         auto nv = static_cast<std::size_t>(n_vertices);
         auto n3 = nt * static_cast<std::size_t>(kMaxCellVerts);

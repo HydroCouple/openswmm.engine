@@ -307,6 +307,23 @@ cdef class Solver:
         self._access.raise_callback_error()
         _check(rc)
 
+    def open_metadata(self) -> None:
+        """Parse configured metadata without runtime plugins or output files.
+
+        Existing model, species and option accessors inspect the parsed model.
+        Close and open normally before initializing a simulation.
+        """
+        self._access.require_idle()
+        if self._handle == NULL:
+            self.create()
+        cdef bytes b_inp = self._inp.encode('utf-8')
+        with self._operation():
+            rc = swmm_engine_open_metadata(<SWMM_Engine><size_t>self.handle, b_inp)
+        self._generation += 1
+        self._surface2d = None
+        self._access.raise_callback_error()
+        _check(rc)
+
     def initialize(self) -> None:
         """Initialize the simulation; transition to ``INITIALIZED``."""
         self._access.require_idle()
@@ -995,6 +1012,18 @@ cdef class Solver:
         return self._forcing
 
     @property
+    def checkpoints(self):
+        """Managed checkpoint session, save/restore and inspection access."""
+        from ._checkpoint import Checkpoints
+        return Checkpoints(self)
+
+    @property
+    def snow(self):
+        """Snow configuration, UEB parameters and accepted subcatchment state (SI)."""
+        from ._snow import Snow
+        return Snow(self)
+
+    @property
     def climate(self):
         if self._climate is None:
             from ._climate import Climate
@@ -1377,6 +1406,12 @@ class SimulationOptions(MutableMapping):
         # DW surcharge method + TPA celerity (issue #156 Phase 5; adding
         # SURCHARGE_METHOD also closes the long-standing known-keys gap).
         "SURCHARGE_METHOD", "TPA_CELERITY",
+        # Physical constants (heat transport) and FV node feedback.
+        "WATER_DENSITY", "WATER_SPECIFIC_HEAT_CAPACITY", "WIND_FUNC_COEFF_A",
+        "WIND_FUNC_COEFF_B", "PRESSURE_RATIO", "FV_NODE_FEEDBACK_DT",
+        # Legacy / retired keywords: COMPATIBILITY round-trips verbatim;
+        # VIRTUAL_JUNCTION_MOMENTUM reads NONE and refuses FULL.
+        "COMPATIBILITY", "VIRTUAL_JUNCTION_MOMENTUM",
     )
 
     def __getitem__(self, key: str) -> str:

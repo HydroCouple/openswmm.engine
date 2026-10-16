@@ -43,6 +43,7 @@
 #include "fv/FvOptions.hpp"
 #include "fv/INetworkSolver.hpp"
 #include "fv/NetworkMeshData.hpp"
+#include <array>
 
 #include <memory>
 #include <string>
@@ -50,8 +51,10 @@
 #include <vector>
 
 namespace openswmm {
+namespace twoD { class SurfaceRouter2D; }
 
 struct SimulationContext;
+struct OutfallData;
 
 // ============================================================================
 // Routing model enum
@@ -118,6 +121,23 @@ public:
              double evap_rate = 0.0,
              dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn = nullptr);
 
+    /// Internal, opt-in accepted hydraulic component checkpoint. Enable only
+    /// after Router/LID initialization at time zero. Currently qualified for
+    /// water-only DW conduits, ordinary junctions, functional storage (including
+    /// node LIDs), and FREE/NORMAL/FIXED outfalls. No production caller or change
+    /// to the seed hot-start format. External runoff, controls, exfiltration
+    /// solvers, 2D producers and output writers require their own paired state.
+    void enableCheckpointing(SimulationContext& ctx);
+    /// Before saving old state or preparing LID/forcing for a tracked step.
+    /// Preparation failures cannot be mislabeled as an accepted boundary.
+    void beginCheckpointStep(SimulationContext& ctx, double dt);
+    /// Call once after successful step(), LID finishStep(), postprocessing and
+    /// the caller's clock advance. Until then save and another tracked step are
+    /// refused. A returned DW non-convergence is an accepted legacy step.
+    void acceptCheckpointBoundary(SimulationContext& ctx);
+    std::string saveCheckpoint(const SimulationContext& ctx, const std::string& path) const;
+    std::string loadCheckpoint(SimulationContext& ctx, const std::string& path);
+
     /**
      * @brief Compute adaptive timestep (DW only).
      *
@@ -177,6 +197,13 @@ public:
     /// so they need the solver itself. Must be set before the first step().
     void setStructureSolver(hydstruct::StructureSolver* s) { structures_ = s; }
 
+    // Internal water-only conduit window: copy persistent DW history and batch
+    // geometry without retaining pointers into the live router. Checkpoint and
+    // external structure sessions are not part of this transaction profile.
+    std::unique_ptr<Router> privateDynamicWaveWindow() const;
+    void publishDynamicWaveWindow(Router&) noexcept;
+
+
     /// Whether the most recent step() converged. DYNWAVE returns the solver's
     /// real final Picard flag; other models always converge (legacy only tracks
     /// dynwave non-convergence). FV has no convergence loop at all — that is a
@@ -216,6 +243,29 @@ public:
     const std::vector<std::string>& fvErrors()   const { return fv_errors_; }
 
 private:
+    friend class twoD::SurfaceRouter2D;
+    friend class SWMMEngine;
+    struct RestartState;
+    std::string checkpointBytes(const SimulationContext&, std::string&) const;
+    std::shared_ptr<RestartState> prepareCheckpointBytes(const SimulationContext&, std::string,
+                                                       const std::array<double,6>* boundary = nullptr,
+                                                       const double* delivery = nullptr,
+                                                       const OutfallData* feedback = nullptr) const;
+    static void validateJointDelivery(const NodeData&, const std::vector<uint8_t>&, double);
+    static void validateSessionStorage(const std::shared_ptr<RestartState>&, const SimulationContext&, double, bool);
+    void installCheckpoint(SimulationContext&, std::shared_ptr<RestartState>) noexcept;
+    SimulationContext* checkpoint_context_ = nullptr; // non-owning, stable lifetime
+    bool checkpoint_owned_session_ = false; // engine owns structure/control memory
+    bool checkpoint_aquifer_session_ = false; // paired engine/surface recovery owns node-bed receipts
+    std::string checkpoint_model_;
+    double checkpoint_time_ = 0.0, checkpoint_step_end_ = 0.0;
+    bool checkpoint_ready_ = false, checkpoint_prepared_ = false, checkpoint_step_finished_ = false;
+    std::string checkpointModel(const SimulationContext& ctx) const;
+    void checkCheckpointProfile(const SimulationContext& ctx) const;
+    void checkCheckpointStep(SimulationContext& ctx, double dt, double evap_rate, bool callback, bool owned_callback = false);
+    int stepImpl(SimulationContext& ctx, double dt, double evap_rate,
+                 dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn, bool owned_callback);
+
     RouteModel model_ = RouteModel::DYNWAVE;
     XSectGroups groups_;
 

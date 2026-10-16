@@ -76,7 +76,8 @@ class ErrorCode(IntEnum):
     CRS = 13
     NUMERICAL = 14
     DEPENDENCY = 15
-    GEOMETRY = 16
+    CANCELLED = 16
+    GEOMETRY = 17
     INTERNAL = 99
 
 
@@ -559,6 +560,16 @@ class OutSubcatchVar(IntEnum):
     GW_ELEV = 6
     SOIL_MOIST = 7
     POLLUT_BASE = 8
+    SNOW_SWE = 65536
+    SNOW_ENERGY = 65537
+    SNOW_SURFACE_TEMP = 65538
+    SNOW_BULK_TEMP = 65539
+    SNOW_ALBEDO = 65540
+    SNOW_COVER = 65541
+    SNOW_MELT = 65542
+    SNOW_INPUT = 65543
+    SNOW_SUBLIMATION = 65544
+    SNOW_TIME = 65545
 
 
 class OutNodeVar(IntEnum):
@@ -962,6 +973,7 @@ class HeatFluxModule(IntEnum):
     SURFACE_EXCHANGE = 0
     RADIATIVE_EXCHANGE = 1
     LAYER_CONDUCTION = 2
+    SEDIMENT_EXCHANGE = 3
 
 
 class HeatShortwaveMode(IntEnum):
@@ -983,6 +995,7 @@ class HeatRadiativeParam(IntEnum):
     EMISS_LANDCOVER = 5
     ATM_EMISS_COEFF = 6
     LW_REFLECTION = 7
+    LANDCOVER_TEMPERATURE = 8
 
 
 class HeatSolarParam(IntEnum):
@@ -1007,6 +1020,83 @@ class HeatCloudParam(IntEnum):
     SW_ATTEN_N = 2
     LW_CLOUD_K = 3
 
+
+class HeatSedimentParam(IntEnum):
+    """``[SEDIMENT_EXCHANGE]`` GLOBAL parameters. Mirrors ``SWMM_HeatSedimentParam``."""
+    THERMAL_DIFFUSIVITY = 0
+    SOLUTE_DIFFUSIVITY = 1
+    BED_THICKNESS = 2
+    GROUND_DEPTH = 3
+    GROUND_TEMPERATURE = 4
+    HYPORHEIC_VELOCITY = 5
+    DENSITY = 6
+    SPECIFIC_HEAT = 7
+    INITIAL_TEMPERATURE = 8
+    MESH_POROSITY = 9
+
+class HeatAttr(IntEnum):
+    """Per-element heat override attributes. Mirrors ``SWMM_HeatAttr``."""
+    ALBEDO = 0
+    SHADE_FACTOR = 1
+    SKY_VIEW = 2
+    EMISS_WATER = 3
+    EMISS_LANDCOVER = 4
+    LANDCOVER_TEMPERATURE = 5
+    THERMAL_DIFFUSIVITY = 6
+    SOLUTE_DIFFUSIVITY = 7
+    BED_THICKNESS = 8
+    GROUND_DEPTH = 9
+    GROUND_TEMPERATURE = 10
+    HYPORHEIC_VELOCITY = 11
+    SEDIMENT_DENSITY = 12
+    SEDIMENT_SPECIFIC_HEAT = 13
+    MESH_POROSITY = 14
+
+class HeatOverrideScope(IntEnum):
+    """Per-element override scope. Mirrors ``SWMM_HeatOverrideScope``."""
+    TAG = 1
+    NODE = 2
+    LINK = 3
+    CELL2D = 6
+    MESH_TAG = 7
+
+class GroundHeatValue(IntEnum):
+    """Canonical soil heat fields returned by ``Heat.ground_values``."""
+    ENERGY = 0
+    CAPACITY = 1
+    TEMPERATURE = 2
+    INITIAL_ENERGY = 3
+    ADVECTIVE_ENERGY = 4
+    SOURCE_ENERGY = 5
+    SURFACE_ENERGY = 6
+    DEEP_ENERGY = 7
+    LATENT_ENERGY = 8
+    LATERAL_ENERGY = 9
+    WATER_CONTACT_ENERGY = 10
+    RESIDUAL = 11
+    NORMALIZED_RESIDUAL = 12
+    PENDING_LATERAL = 13
+    CHANNEL_CONTACT = 14
+    LID_CONTACT = 15
+
+class GroundHeatLayerValue(IntEnum):
+    """Fixed-depth soil layer fields returned by ``Heat.ground_layers``."""
+    TOP = 0
+    BOTTOM = 1
+    TEMPERATURE = 2
+    ENERGY = 3
+    CAPACITY = 4
+    MOISTURE = 5
+    CONDUCTIVITY = 6
+    SATURATED_WATER = 7
+
+class ChannelGroundValue(IntEnum):
+    """Mapped channel/soil results returned by ``Heat.channel_ground_values``."""
+    BED_TEMPERATURE = 0
+    ATMOSPHERIC_ENERGY = 1
+    TO_SOIL_ENERGY = 2
+    WATER_INCREMENT = 3
+    INTERVAL_COUNT = 4
 
 class HeatSourceKind(IntEnum):
     """``[HEAT_SOURCES]`` water sources. Mirrors ``SWMM_HeatSourceKind``."""

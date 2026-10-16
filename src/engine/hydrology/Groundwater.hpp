@@ -192,10 +192,12 @@ public:
      * @param sw_head    Per-subcatchment surface water head (ft).
      * @param frac_perv  Per-subcatchment pervious fraction (0-1).
      * @param perv_evap_rate Per-subcatchment pervious evap rate already exerted (ft/sec over full area).
+     * @param evap_pattern_month Runoff endpoint month (1-12); 0 uses ctx.current_date.
      */
     void execute(SimulationContext& ctx, double dt, double max_evap,
                  const double* infil_rate, const double* sw_head,
-                 const double* frac_perv, const double* perv_evap_rate);
+                 const double* frac_perv, const double* perv_evap_rate,
+                 int evap_pattern_month = 0);
 
     GWSoA&       state()       { return soa_; }
     const GWSoA& state() const { return soa_; }

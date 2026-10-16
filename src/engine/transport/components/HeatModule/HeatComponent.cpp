@@ -164,6 +164,8 @@ constexpr AttrSpec kAttrTable[] = {
     {"HYPORHEIC_VELOCITY",     HeatAttr::SED_HYPORHEIC_VELOCITY,  false, false},
     {"SEDIMENT_DENSITY",       HeatAttr::SED_DENSITY,             false, true},
     {"SEDIMENT_SPECIFIC_HEAT", HeatAttr::SED_SPECIFIC_HEAT,       false, true},
+    {"MESH_POROSITY",          HeatAttr::SED_MESH_POROSITY,        true, false},
+    {"GROUND_SOURCE",          HeatAttr::SED_GROUND_SOURCE,        false, false},
 };
 static_assert(sizeof(kAttrTable) / sizeof(kAttrTable[0]) ==
                   static_cast<std::size_t>(HeatAttr::COUNT_),
@@ -203,7 +205,7 @@ ScopeRef parseScope(const std::vector<std::string>& toks,
     if (sc == "GLOBAL") {
         r.scope = HeatScope::GLOBAL; r.value_at = 2; r.ok = true; return r;
     }
-    if (sc == "TAG" || sc == "LINK" || sc == "NODE") {
+    if (sc == "TAG" || sc == "LINK" || sc == "NODE" || sc == "CELL2D" || sc == "MESH_TAG") {
         if (toks.size() < 4) {
             errors.push_back("[" + section + "] " + sc +
                              " scope needs a name and a value: '" + line +
@@ -212,14 +214,15 @@ ScopeRef parseScope(const std::vector<std::string>& toks,
         }
         r.scope = (sc == "TAG")  ? HeatScope::TAG
                 : (sc == "LINK") ? HeatScope::LINK
-                                 : HeatScope::NODE;
+                : (sc == "NODE") ? HeatScope::NODE
+                : (sc == "CELL2D") ? HeatScope::CELL2D : HeatScope::MESH_TAG;
         r.name = toks[2];
         r.value_at = 3;
         r.ok = true;
         return r;
     }
     errors.push_back("[" + section + "] unknown scope '" + toks[1] +
-                     "' (GLOBAL, TAG, LINK, NODE): '" + line + "'.");
+                     "' (GLOBAL, TAG, LINK, NODE, CELL2D, MESH_TAG): '" + line + "'.");
     return r;
 }
 
@@ -254,6 +257,9 @@ bool validateAttr(const AttrSpec& spec, double v, const std::string& section,
                          "negative, got " + tok + ".");
         return false;
     }
+    if(spec.attr==HeatAttr::SED_GROUND_SOURCE&&v!=0&&v!=1) {
+        errors.push_back("["+section+"] GROUND_SOURCE expects PRESCRIBED or MESH_CONTACTS (0 or 1).");return false;
+    }
     return true;
 }
 
@@ -264,6 +270,9 @@ bool recordOverride(SimulationContext& ctx, HeatAttr attr,
                     const ScopeRef& sr, double v,
                     const std::string& section, const std::string& line,
                     std::vector<std::string>& errors) {
+    if(attr==HeatAttr::SED_GROUND_SOURCE&&sr.scope!=HeatScope::TAG&&sr.scope!=HeatScope::LINK) {
+        errors.push_back("["+section+"] GROUND_SOURCE applies only to GLOBAL, network TAG or LINK.");return false;
+    }
     auto& rows = ctx.heat_config.overrides.rows;
     for (const auto& r : rows) {
         if (r.attr == attr && r.scope == sr.scope && r.name == sr.name) {
@@ -618,6 +627,19 @@ void applyHeatSections(SimulationContext& ctx,
 
                 const auto vt = static_cast<std::size_t>(sr.value_at);
                 double v = 0.0;
+                if(k=="GROUND_SOURCE") {
+                    if(vt>=toks.size()||toks.size()!=vt+1) {
+                        errors.push_back("[SEDIMENT_EXCHANGE] GROUND_SOURCE needs one PRESCRIBED or MESH_CONTACTS value.");continue;
+                    }
+                    const auto mode=upper(toks[vt]);
+                    if(mode=="PRESCRIBED")v=0;else if(mode=="MESH_CONTACTS")v=1;
+                    else if(!parse_finite(toks[vt],v)||(v!=0&&v!=1)) {
+                        errors.push_back("[SEDIMENT_EXCHANGE] GROUND_SOURCE expects PRESCRIBED or MESH_CONTACTS.");continue;
+                    }
+                    if(sr.scope==HeatScope::GLOBAL){sd.mesh_ground=v!=0;sd.ground_source_configured=true;}
+                    else recordOverride(ctx,HeatAttr::SED_GROUND_SOURCE,sr,v,"SEDIMENT_EXCHANGE",line,errors);
+                    continue;
+                }
                 if (vt >= toks.size() || !parse_finite(toks[vt], v)) {
                     errors.push_back(
                         "[SEDIMENT_EXCHANGE] " + toks[0] +
@@ -677,6 +699,10 @@ void applyHeatSections(SimulationContext& ctx,
                 else if (k == "GROUND_DEPTH")             positive(sd.ground_depth);
                 else if (k == "SEDIMENT_DENSITY")         positive(sd.sed_density);
                 else if (k == "SEDIMENT_SPECIFIC_HEAT")   positive(sd.sed_specific_heat);
+                else if (k == "MESH_POROSITY") {
+                    if(v<0 || v>1)errors.push_back("[SEDIMENT_EXCHANGE] MESH_POROSITY must be in [0,1].");
+                    else sd.mesh_porosity=v;
+                }
                 else if (k == "HYPORHEIC_VELOCITY") {
                     // Zero is the default and means conduction only. A
                     // NEGATIVE exchange velocity has no reading — the
@@ -1002,7 +1028,7 @@ void applyHeatSections(SimulationContext& ctx,
         // equatorial noon — a plausible wrong answer, which is the only kind
         // that survives review.
         if (rc.sw_mode == ShortwaveMode::COMPUTED) {
-            if (!sc.has_latitude || !sc.has_longitude)
+            if (!ctx.snowpacks.config.site && (!sc.has_latitude || !sc.has_longitude))
                 errors.push_back(
                     "[RADIATIVE_FLUXES] SHORTWAVE GLOBAL COMPUTED requires "
                     "[SOLAR_RADIATION] LATITUDE and LONGITUDE. They are NOT "
@@ -1050,7 +1076,7 @@ void applyHeatSections(SimulationContext& ctx,
         // diurnal curve by up to 12 h, dwarfing the 0.1° position accuracy
         // D-H6a-4 spends its argument on. Not an error — a deck really may
         // mean UTC — but never silent.
-        if (rc.sw_mode == ShortwaveMode::COMPUTED && !sc.has_timezone) {
+        if (rc.sw_mode == ShortwaveMode::COMPUTED && !sc.has_timezone && !ctx.snowpacks.config.site) {
             pending_warnings.push_back(
                 "[SOLAR_RADIATION] has no TIMEZONE, so local time is taken "
                 "as UTC. If the deck's clock is local, the computed solar "
@@ -1076,7 +1102,11 @@ void applyHeatSections(SimulationContext& ctx,
     // which this table reaches nothing says so. (ON + IGNORE_QUALITY warns
     // engine-level in SWMMEngine::open — it applies with or without this
     // component.)
-    if (!ctx.options.heat_transport) {
+    const auto& heat=ctx.heat_config;
+    const bool thermal=heat.surface_exchange||heat.radiative_exchange||heat.layer_conduction||heat.sediment_exchange||
+        heat.dry_temp_policy!=DryTempPolicy::HOLD||!heat.node_over_source.empty()||!heat.overrides.rows.empty()||
+        std::any_of(std::begin(heat.configured_source),std::end(heat.configured_source),[](bool value){return value;});
+    if (!ctx.options.heat_transport && thermal) {
         ctx.warnings.push_back(
             "A heat component is configured but [OPTIONS] HEAT_TRANSPORT is "
             "OFF — no temperature is tracked this simulation. Set "
@@ -1122,7 +1152,7 @@ static_assert(sizeof(SolarConfig) == 88,
               "then update this size pin");
 // H6b. Compiler-measured, not hand-computed — IO3b's record notes the first
 // hand computation was wrong twice, which is the whole point of asking.
-static_assert(sizeof(SedimentConfig) == 88,
+static_assert(sizeof(SedimentConfig) == 104,
               "SedimentConfig changed: teach saveHeatConfig its new field, "
               "then update this size pin");
 static_assert(sizeof(CloudConfig) == 40,
@@ -1150,6 +1180,8 @@ std::string renderOverrides(const SimulationContext& ctx, bool sediment) {
         const char* scope = (r.scope == HeatScope::TAG)  ? "TAG"
                           : (r.scope == HeatScope::LINK) ? "LINK"
                           : (r.scope == HeatScope::NODE) ? "NODE"
+                          : (r.scope == HeatScope::CELL2D) ? "CELL2D"
+                          : (r.scope == HeatScope::MESH_TAG) ? "MESH_TAG"
                                                          : "GLOBAL";
         out += std::string(attrKey(r.attr)) + " " + scope + " " + r.name +
                " " + fmt_degc(r.value) + "\n";
@@ -1185,6 +1217,8 @@ std::string saveHeatConfig(const SimulationContext& ctx) {
     if (cfg.surface_exchange)   flux += "SURFACE_EXCHANGE ON\n";
     if (cfg.radiative_exchange) flux += "RADIATIVE_EXCHANGE ON\n";
     if (cfg.layer_conduction)   flux += "LAYER_CONDUCTION ON\n";
+    if (cfg.dry_temp_policy == DryTempPolicy::AIR) flux += "DRY_ELEMENT_TEMPERATURE AIR\n";
+    if (cfg.dry_temp_policy == DryTempPolicy::DEFAULT) flux += "DRY_ELEMENT_TEMPERATURE DEFAULT\n";
     if (cfg.sediment_exchange)  flux += "SEDIMENT_EXCHANGE ON\n";   // H6b
     if (!flux.empty()) out += "[HEAT_FLUXES]\n" + flux + "\n";
 
@@ -1312,6 +1346,10 @@ std::string saveHeatConfig(const SimulationContext& ctx) {
         const SedimentConfig sd{};
         const auto& s = cfg.sediment;
         std::string bed;
+        if(s.ground_source_configured)
+            bed+=std::string("GROUND_SOURCE GLOBAL ")+(s.mesh_ground?"MESH_CONTACTS\n":"PRESCRIBED\n");
+        if(s.mesh_porosity!=sd.mesh_porosity)
+            bed += "MESH_POROSITY GLOBAL " + fmt_degc(s.mesh_porosity) + "\n";
         if (s.thermal_diffusivity != sd.thermal_diffusivity)
             bed += "THERMAL_DIFFUSIVITY GLOBAL " +
                    fmt_degc(s.thermal_diffusivity) + "\n";
@@ -1354,10 +1392,17 @@ std::string saveHeatConfig(const SimulationContext& ctx) {
     // keeps the copy fallback) — but with every section rendered above, a
     // configured model never declines again: IO3b is what retired the
     // step-3 loss for H6a-configured models.
-    return out;
+    return cfg.configured && out.empty() ? "; Heat settings use defaults.\n" : out;
 }
 
 }  // namespace
+
+bool heatAttrValueOk(HeatAttr attr, double value) noexcept {
+    const AttrSpec* spec = findAttr(attr);
+    if (spec == nullptr || !std::isfinite(value)) return false;
+    std::vector<std::string> ignored;
+    return validateAttr(*spec, value, "", "", ignored);
+}
 
 void registerHeatComponent() {
     components::ProcessComponentRegistry::instance().register_component(

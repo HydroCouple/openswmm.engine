@@ -171,6 +171,12 @@ than clamped; a species the mesh does not carry is an open-time error.
 Without a row, pollutant, MSX and age rows start at zero and the temperature
 row at the `INITIAL_STATE` source temperature, as in 1D.
 
+For the separate finite porewater reservoir in a `LOCAL_STORAGE` mesh bed,
+**`[2D_INITIAL_BED_QUALITY]`** uses the same global, mesh-tag and cell scopes.
+It seeds bed concentration using bed pore volume (cell area × bed thickness ×
+porosity), with water age entered in hours. It requires coupled heat and a
+local-storage bed; groundwater-owned stores use `[GW_INITIAL_QUALITY]`.
+
 **`[2D_BOUNDARY_QUALITY]`** (@ref engine_manual_sect_2D_BOUNDARY_QUALITY)
 gives the concentration carried by water **entering** through a boundary
 edge:

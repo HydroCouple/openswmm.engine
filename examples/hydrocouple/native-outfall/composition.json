@@ -1,0 +1,144 @@
+{
+  "components": [
+    {
+      "id": "network",
+      "info": {
+        "component_info_id": "org.hydrocouple.openswmm.engine"
+      },
+      "arguments": {
+        "configuration": {
+          "schema": "openswmm.component/1",
+          "role": "complete_model",
+          "model": "model.inp",
+          "output_directory": "out/native",
+          "outfalls": [
+            "O"
+          ],
+          "exchange_times_s": [
+            60,
+            120,
+            600
+          ]
+        }
+      }
+    },
+    {
+      "id": "receiver",
+      "info": {
+        "component_info_id": "org.hydrocouple.openswmm.test.sink"
+      },
+      "arguments": {
+        "config": {
+          "schema": "hydrocouple.interval-transfer/1",
+          "epoch_julian_day": 2461041.5,
+          "species": [
+            {
+              "id": "B",
+              "basis": "kg"
+            },
+            {
+              "id": "A",
+              "basis": "kg"
+            }
+          ],
+          "expected_transfers": 3,
+          "receipt_file": "out/receipts.csv"
+        }
+      }
+    }
+  ],
+  "connections": [
+    {
+      "from": {
+        "component": "network",
+        "output": "transfer_id"
+      },
+      "to": {
+        "component": "receiver",
+        "input": "transfer_id"
+      }
+    },
+    {
+      "from": {
+        "component": "network",
+        "output": "epoch_julian_day"
+      },
+      "to": {
+        "component": "receiver",
+        "input": "epoch_julian_day"
+      }
+    },
+    {
+      "from": {
+        "component": "network",
+        "output": "interval_start_s"
+      },
+      "to": {
+        "component": "receiver",
+        "input": "interval_start_s"
+      }
+    },
+    {
+      "from": {
+        "component": "network",
+        "output": "interval_end_s"
+      },
+      "to": {
+        "component": "receiver",
+        "input": "interval_end_s"
+      }
+    },
+    {
+      "from": {
+        "component": "network",
+        "output": "water_m3"
+      },
+      "to": {
+        "component": "receiver",
+        "input": "water_m3"
+      }
+    },
+    {
+      "from": {
+        "component": "network",
+        "output": "enthalpy_j"
+      },
+      "to": {
+        "component": "receiver",
+        "input": "enthalpy_j"
+      }
+    },
+    {
+      "from": {
+        "component": "network",
+        "output": "species.A"
+      },
+      "to": {
+        "component": "receiver",
+        "input": "species.A"
+      }
+    },
+    {
+      "from": {
+        "component": "network",
+        "output": "species.B"
+      },
+      "to": {
+        "component": "receiver",
+        "input": "species.B"
+      }
+    }
+  ],
+  "workflow": {
+    "strategy": "time_stepped"
+  },
+  "writers": [
+    {
+      "type": "csv",
+      "path": "out/interval-results.csv"
+    }
+  ],
+  "run": {
+    "manifest": "out/manifest.json"
+  }
+}

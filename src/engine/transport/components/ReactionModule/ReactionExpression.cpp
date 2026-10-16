@@ -125,13 +125,13 @@ const FuncDef* findFunc(const std::string& ident) {
 const char* kHydVarNames[] = {"D", "Q", "U", "RE", "US", "FF", "AV",
                               "HRT", "DT", "TEMP"};
 const char* kHydVarDescs[] = {
-    "Depth (ft)",
-    "Flow (cfs)",
-    "Velocity (ft/s)",
-    "Reynolds number",
-    "Shear velocity (ft/s)",
-    "Darcy-Weisbach friction factor",
-    "Wetted surface area per volume (1/ft)",
+    "Depth (ft); not yet populated, refused",
+    "Flow (cfs); not yet populated, refused",
+    "Velocity (ft/s); not yet populated, refused",
+    "Reynolds number; not yet populated, refused",
+    "Shear velocity (ft/s); not yet populated, refused",
+    "Darcy-Weisbach friction factor; not yet populated, refused",
+    "Wetted surface area per volume (1/ft); not yet populated, refused",
     "Hydraulic residence time (s)",
     "Reaction step (s)",
     "Water temperature (degC; TEMPERATURE option when heat is off)",
@@ -527,6 +527,43 @@ bool reactionHydVarInfo(int idx, const char** name, const char** description) {
     if (name)        *name        = kHydVarNames[idx];
     if (description) *description = kHydVarDescs[idx];
     return true;
+}
+
+bool reactionHydVarPopulated(int idx) {
+    return idx >= static_cast<int>(RxHydVar::HRT) &&
+           idx < static_cast<int>(RxHydVar::COUNT_);
+}
+
+std::string unpopulatedHydVarDiagnostic(const std::string& src,
+                                        const std::vector<RxToken>& pool,
+                                        const RxExprSpan& span,
+                                        int& error_col) {
+    error_col = -1;
+    for (int k = span.begin; k < span.begin + span.len; ++k) {
+        if (k < 0 || static_cast<std::size_t>(k) >= pool.size()) break;
+        const RxToken& t = pool[static_cast<std::size_t>(k)];
+        if (t.op != RxToken::PUSH_HYDVAR || reactionHydVarPopulated(t.idx)) continue;
+        const std::string name = kHydVarNames[t.idx];
+        // Column of the first whole-word, case-insensitive occurrence.
+        const std::string us = upper(src);
+        auto ident = [](char c) {
+            return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+        };
+        for (std::size_t p = us.find(name); p != std::string::npos;
+             p = us.find(name, p + 1)) {
+            const bool l = p == 0 || !ident(us[p - 1]);
+            const std::size_t e = p + name.size();
+            if (l && (e >= us.size() || !ident(us[e]))) {
+                error_col = static_cast<int>(p) + 1;
+                break;
+            }
+        }
+        return "hydraulic variable '" + name +
+               "' is not populated by any quality solver yet (it would read "
+               "0); expressions using it are refused until the hydraulics "
+               "supply it";
+    }
+    return {};
 }
 
 }  // namespace openswmm::transport

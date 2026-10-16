@@ -48,7 +48,7 @@
  * |---------|-----------------|---------------|
  * | Delimiters | Space, tab, CR/LF | Same, plus comma at a token boundary |
  * | Comment char | `;` (semicolon) | `;` or `;;` |
- * | Quoted strings | Filenames only | Supported anywhere (double-quotes) |
+ * | Quoted strings | Filenames only | Whole tokens or embedded key="value" (double-quotes) |
  * | Performance | sscanf-based | std::string_view, no allocations |
  *
  * @see Legacy reference: src/solver/input.c — getToken()

@@ -23,22 +23,29 @@ OUTDIR="$REPO/tests/output/trackI_g1"
 
 rm -rf "$OUTDIR"; mkdir -p "$OUTDIR"
 
-# Every .inp in the repo that carries a 2D mesh (inline or sidecar) and no
-# infiltration section. Sorted so the report is stable.
+# Every authored water-only .inp in the repo that carries a 2D mesh (inline or
+# sidecar), with no infiltration or new thermal options. This is T01's
+# compatibility slice: the pre-thermal baseline cannot run decks that require
+# HEAT_MODEL / THERMAL_MODEL, and those decks are tested by the thermal gates.
+# Generated output trees are not input decks, even when they contain .inp
+# files emitted by a test. Sorted so the report is stable.
 # (bash 3.2 on macOS has no mapfile)
 MODELS=()
 while IFS= read -r line; do
     [ -n "$line" ] && MODELS+=("$line")
 done < <(
-  # Underscore-prefixed decks are gtest SCRATCH fixtures (the suites write
-  # them into the data cwd as they run) — ephemeral, sometimes deliberately
-  # malformed, and present or absent depending on what ran last. Sweeping
-  # them in made the census's verdict depend on test-run residue: the S2
-  # check's own refusal fixtures showed up as "differing" decks.
+  # Underscore-prefixed decks and tests/output are gtest scratch/generated
+  # artifacts. Their presence depends on which suites ran and can include
+  # malformed inputs or features unsupported by the baseline. The C API
+  # round-trip fixture directory is generated outside tests/output, so exclude
+  # it explicitly as well.
   find "$REPO/tests" -name '*.inp' -not -name '_*' \
-       -not -path '*/trackI_g1/*' -print0 \
+       -not -path '*/output/*' \
+       -not -path '*/test_capi_gap_closures_artifacts/*' \
+       -print0 \
   | xargs -0 grep -l -E '^\[2D_(TRIANGLES|MESH_FILE)\]' 2>/dev/null \
-  | xargs grep -L -E '^\[2D_INFILTRATION' 2>/dev/null | sort
+  | xargs grep -L -E '^\[2D_INFILTRATION|^\[2D_INITIAL_BED_QUALITY\]|^\[2D_(HEAT|GROUND_HEAT)|^[[:space:]]*(HEAT_MODEL|BED_HEAT_MODEL|THERMAL_MODEL)[[:space:]]' 2>/dev/null \
+  | sort
 )
 
 echo "G1 bitwise regression: ${#MODELS[@]} 2D models"

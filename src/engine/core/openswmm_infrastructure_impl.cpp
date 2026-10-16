@@ -1033,6 +1033,83 @@ SWMM_ENGINE_API int swmm_lid_set_drain(SWMM_Engine engine, int idx, double coeff
     return SWMM_OK;
 }
 
+// Multispecies Phase 2 open item O2: LID underdrain REMOVALS by constituent.
+// A constituent below the pollutant count is a pollutant; pollutant count + m
+// is reaction species m (the surface-species convention of swmm_buildup_*).
+// Pollutants live in lid_controls.removals (by index), species in
+// removals_by_name (by name, as the file holds them) and, once resolved, in
+// the species store's lid_rmvl.
+SWMM_ENGINE_API int swmm_lid_get_removal(SWMM_Engine engine, int idx, int constituent, double* percent) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
+    if (!percent) return SWMM_ERR_BADPARAM;
+    const int np = ctx.n_pollutants();
+    const int nm = ctx.reactions.configured ? ctx.reactions.n_species() : 0;
+    CHECK_INDEX(constituent >= 0 && constituent < np + nm);
+    const auto ui = static_cast<std::size_t>(idx);
+    *percent = 0.0;
+    if (constituent < np) {
+        if (ui < ctx.lid_controls.removals.size())
+            for (const auto& pr : ctx.lid_controls.removals[ui])
+                if (pr.first == constituent) *percent = pr.second * 100.0;
+    } else {
+        const auto& name = ctx.reactions.species_name[static_cast<std::size_t>(constituent - np)];
+        if (ui < ctx.lid_controls.removals_by_name.size())
+            for (const auto& pr : ctx.lid_controls.removals_by_name[ui])
+                if (openswmm::ieq(pr.first, name)) *percent = pr.second * 100.0;
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_lid_set_removal(SWMM_Engine engine, int idx, int constituent, double percent) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    if (ctx.state != openswmm::EngineState::BUILDING &&
+        ctx.state != openswmm::EngineState::OPENED)
+        return SWMM_ERR_LIFECYCLE;
+    CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
+    if (ctx.lid_controls.lid_type[idx] == "NODE") return SWMM_ERR_BADPARAM;
+    if (!(percent >= 0.0 && percent <= 100.0)) return SWMM_ERR_BADPARAM;
+    const int np = ctx.n_pollutants();
+    const int nm = ctx.reactions.configured ? ctx.reactions.n_species() : 0;
+    CHECK_INDEX(constituent >= 0 && constituent < np + nm);
+    const auto ui = static_cast<std::size_t>(idx);
+    const double frac = percent / 100.0;
+    if (constituent < np) {
+        auto& all = ctx.lid_controls.removals;
+        if (all.size() <= ui) all.resize(ui + 1);
+        auto& rows = all[ui];
+        bool found = false;
+        for (auto it = rows.begin(); it != rows.end(); ++it)
+            if (it->first == constituent) {
+                if (frac == 0.0) rows.erase(it); else it->second = frac;
+                found = true;
+                break;
+            }
+        if (!found && frac != 0.0) rows.push_back({constituent, frac});
+    } else {
+        const int m = constituent - np;
+        const auto& name = ctx.reactions.species_name[static_cast<std::size_t>(m)];
+        auto& all = ctx.lid_controls.removals_by_name;
+        if (all.size() <= ui) all.resize(ui + 1);
+        auto& rows = all[ui];
+        bool found = false;
+        for (auto it = rows.begin(); it != rows.end(); ++it)
+            if (openswmm::ieq(it->first, name)) {
+                if (frac == 0.0) rows.erase(it); else it->second = frac;
+                found = true;
+                break;
+            }
+        if (!found && frac != 0.0) rows.push_back({name, frac});
+        auto& rm = ctx.reactions.surface.lid_rmvl;
+        const auto k = ui * static_cast<std::size_t>(nm) + static_cast<std::size_t>(m);
+        if (rm.size() == static_cast<std::size_t>(ctx.lid_controls.count()) * static_cast<std::size_t>(nm))
+            rm[k] = frac;
+    }
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_lid_set_pavement(SWMM_Engine engine, int idx, double thick, double void_ratio,
                                           double frac_imperv, double ksat, double clog_factor, double regen_days) {
     CHECK_HANDLE(engine);

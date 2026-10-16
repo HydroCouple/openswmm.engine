@@ -70,7 +70,7 @@ compiler's own tables, so there is exactly one copy of the truth.
     rxn = s.reactions
     nh3 = rxn.species.add("NH3", units="MG", atol=1e-6, rtol=1e-6)
     rxn.coefficients.add("Kb", value=0.05)
-    rxn.terms.add("Kf", "1.5826e-4 * RE^0.88 / D")
+    rxn.terms.add("Kf", "0.5 * DT")
 
     nh3.set_expression(ReactionScope.PIPE, ReactionExprForm.RATE, "-Kb * NH3")
     nh3.initial = 0.5
@@ -362,6 +362,18 @@ class ReactionSpecies:
         ``BUILDING``/``OPENED`` only.
         """
         _check(swmm_reaction_init_global_set(_h(self._solver), self._index, value))
+
+    @property
+    def rain_conc(self) -> float:
+        """Rainfall concentration in species units; zero means clean rainfall."""
+        cdef double value = 0.0
+        _check(swmm_reaction_rain_conc_get(_h(self._solver), self._index, &value))
+        return value
+
+    @rain_conc.setter
+    def rain_conc(self, double value) -> None:
+        """Set ``[REACTION_RAINFALL]`` concentration (``>= 0``, before start)."""
+        _check(swmm_reaction_rain_conc_set(_h(self._solver), self._index, value))
 
     def __repr__(self) -> str:
         try:

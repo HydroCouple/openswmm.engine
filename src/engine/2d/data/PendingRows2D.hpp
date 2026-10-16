@@ -94,6 +94,21 @@ struct PendingInitialQualityRow {
     double      conc = 0.0;   ///< species units (mass = conc x cell volume)
 };
 
+/**
+ * @brief One `[2D_INITIAL_BED_QUALITY]` row for finite local-bed porewater.
+ *
+ * Uses the same `CELL` / `TAG` / `*` scopes and `* < TAG < CELL`
+ * precedence as surface initial quality. Concentration is multiplied by
+ * the resolved local-bed porewater volume, not the overland-water volume.
+ */
+struct PendingInitialBedQualityRow {
+    int         tri = -1;
+    std::string tag;
+    bool        all = false;
+    std::string species;
+    double      conc = 0.0;
+};
+
 /// S2 — one `[2D_BOUNDARY_QUALITY]` row: `TRI EDGE SPECIES CONC`, the same
 /// 0-based TRI / 0..2 EDGE spelling as `[2D_BOUNDARY_CONDITIONS]`. Gives the
 /// concentration INFLOW through that boundary edge carries; outflow always

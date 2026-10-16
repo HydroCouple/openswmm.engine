@@ -137,6 +137,13 @@ extern "C"
     SWMM_ENGINE_API int swmm_trace_prepare(SWMM_Trace handle, const char *output_path,
                                            const char *cache_path, const char *fingerprint,
                                            SWMM_TraceProgress progress, void *user);
+    /** Scan the whole reporting periods already written to an output that may still
+     * be growing (a running or cancelled simulation). Needs no closing footer and
+     * writes no cache. Appends during the scan are ignored; a truncated file fails
+     * with SWMM_TRACE_MISMATCH. info.periods reports how many periods were used.
+     */
+    SWMM_ENGINE_API int swmm_trace_prepare_live(SWMM_Trace handle, const char *output_path,
+                                                SWMM_TraceProgress progress, void *user);
     /** Restore validated averages, e.g. from a saved analysis, or analytic fixtures.
      * Derived direction/delay/throughput fields are recomputed. */
     SWMM_ENGINE_API int swmm_trace_set_averages(SWMM_Trace handle,

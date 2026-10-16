@@ -924,6 +924,218 @@ USE HOTSTART ")" << hs.path() << "\"\n";
     EXPECT_EQ(engine.close(), 0);
 }
 
+// The runoff section rides between the header and the routing records, and
+// the reader hands it back unchanged (or skips it, with a warning, when the
+// caller takes none). Files go to tests/unit/engine/data/hotstart_format/
+// for review.
+static std::string reviewPath(const std::string& name) {
+    fs::create_directories("hotstart_format");
+    return (fs::absolute("hotstart_format") / name).string();
+}
+
+TEST(HotStartLegacyRoutingTest, SaveWritesTheSubcatchmentSectionItsReaderReturns) {
+    const std::string hs = reviewPath("bare_context_legacy.hsf");
+    SimulationContext ctx = make_legacy_routing_context();
+    ctx.nodes.depth = {1.5, 2.5, 0.25};
+    ctx.links.flow  = {3.0, 4.0};
+    std::vector<double> runoff(HotStartManager::legacy_runoff_size(ctx, 1));
+    for (std::size_t k = 0; k < runoff.size(); ++k) runoff[k] = 0.5 + static_cast<double>(k);
+    ASSERT_EQ(HotStartManager::save_legacy_routing(hs, ctx, &runoff), 0)
+        << HotStartManager::last_io_error();
+
+    // 15-char stamp + 6 int32; S1 (groundwater) 4+6+4 + quality 2*1 +
+    // buildup 1*(1+1) doubles, S2 (snowpack) 4+6+15+2+2; node floats
+    // 2+1 (J1), 2+1+1 (storage ST1, HRT), 2+1 (OUT1); link floats 2*(3+1).
+    ASSERT_EQ(runoff.size(), 18u + 29u);
+    const std::size_t want = 15 + 6 * 4 + (18 + 29) * 8 + (3 + 4 + 3 + 8) * 4;
+    EXPECT_EQ(fs::file_size(hs), want);
+    std::ifstream f(hs, std::ios::binary);
+    f.seekg(15);
+    int32_t counts[6] = {};
+    f.read(reinterpret_cast<char*>(counts), sizeof counts);
+    EXPECT_EQ(counts[0], 2);   // subcatchments
+    EXPECT_EQ(counts[1], 1);   // land uses
+
+    auto back = make_legacy_routing_context();
+    std::vector<double> read_back;
+    ASSERT_EQ(HotStartManager::apply_legacy_routing(hs, back, {}, &read_back), 0)
+        << HotStartManager::last_io_error();
+    EXPECT_EQ(read_back, runoff);
+    EXPECT_DOUBLE_EQ(back.nodes.depth[1], 2.5);
+    EXPECT_DOUBLE_EQ(back.links.flow[1], 4.0);
+
+    auto skipped = make_legacy_routing_context();
+    std::vector<std::string> warnings;
+    ASSERT_EQ(HotStartManager::apply_legacy_routing(hs, skipped,
+                  [&](const std::string& m) { warnings.push_back(m); }), 0)
+        << HotStartManager::last_io_error();
+    EXPECT_DOUBLE_EQ(skipped.nodes.depth[1], 2.5);
+    ASSERT_EQ(warnings.size(), 1u);   // subcatchment state skipped
+}
+
+// A file with the subcatchment section missing — what the writer produced
+// before 2026-10-18 — is refused with a reason, not misread.
+TEST(HotStartLegacyRoutingTest, FileWithoutTheSubcatchmentSectionIsRefusedWithAReason) {
+    const std::string hs = reviewPath("missing_subcatchment_section.hsf");
+    SimulationContext ctx = make_legacy_routing_context();
+    ASSERT_EQ(HotStartManager::save_legacy_routing(hs, ctx), 0);   // no section
+
+    std::vector<double> runoff;
+    std::vector<std::string> warnings;
+    EXPECT_NE(HotStartManager::apply_legacy_routing(hs, ctx,
+                  [&](const std::string& m) { warnings.push_back(m); }, &runoff), 0);
+    EXPECT_FALSE(HotStartManager::last_io_error().empty());
+    EXPECT_TRUE(warnings.empty()) << "no skip warning for a file that is refused";
+}
+
+// O3: SAVE HOTSTART writes legacy's runoff section and USE HOTSTART applies
+// it. Before, the file declared the subcatchments but carried no runoff
+// records, so neither v6 nor legacy could read it, and a legacy file's
+// runoff state (ponded water, infiltration, groundwater, buildup) was
+// skipped: the continuation restarted its hydrology and buildup cold.
+static std::string splitRunDeck(const std::string& end_time,
+                                const std::string& start_time,
+                                const std::string& files) {
+    return R"([OPTIONS]
+FLOW_UNITS CFS
+FLOW_ROUTING DYNWAVE
+INFILTRATION HORTON
+START_DATE 01/01/2026
+START_TIME )" + start_time + R"(
+END_DATE 01/01/2026
+END_TIME )" + end_time + R"(
+REPORT_STEP 00:05:00
+WET_STEP 00:05:00
+DRY_STEP 00:05:00
+ROUTING_STEP 0:00:30
+DRY_DAYS 5
+[RAINGAGES]
+RG1 INTENSITY 0:05 1.0 TIMESERIES TS1
+[SUBCATCHMENTS]
+S1 RG1 S2 10.0 50 500 0.5 0
+S2 RG1 J1 2.0 100 200 0.5 0
+[SUBAREAS]
+S1 0.01 0.1 0.05 0.05 25 OUTLET 100
+S2 0.01 0.1 0.05 0.05 0 OUTLET
+[INFILTRATION]
+S1 3.0 0.5 4.0 7 0
+S2 3.0 0.5 4.0 7 0
+[AQUIFERS]
+A1 0.5 0.15 0.30 0.1 12 15 0.35 14 0.002 95 99 0.30
+[GROUNDWATER]
+S1 A1 J1 110 0.001 2 0 0 0 0 *
+[TIMESERIES]
+TS1 01/01/2026 00:00 1.0
+TS1 01/01/2026 01:00 1.0
+TS1 01/01/2026 01:05 0.0
+[JUNCTIONS]
+J1 100.0 10.0 0.0 0.0 0.0
+[OUTFALLS]
+O1 95.0 FREE
+[CONDUITS]
+C1 J1 O1 400.0 0.013 0 0
+[XSECTIONS]
+C1 CIRCULAR 1.5 0 0 0 1
+[POLLUTANTS]
+TSS MG/L 0 0 0 0 NO * 0.0 0 0
+[LANDUSES]
+LU1 0 0 0
+[COVERAGES]
+S1 LU1 100
+S2 LU1 100
+[BUILDUP]
+LU1 TSS POW 100 2 1 AREA
+[WASHOFF]
+LU1 TSS EXP 0.1 1.0 0 0
+[FILES]
+)" + files + "\n";
+}
+
+TEST(HotStartLegacyRoutingTest, SplitRunRestoresRunoffSectionLikeLegacy) {
+    TempFile inp1(".inp"), inp2(".inp"), hs(".hsf");
+    { std::ofstream f(inp1.path()); f << splitRunDeck("02:00:00", "00:00:00", "SAVE HOTSTART \"" + hs.path() + "\""); }
+    { std::ofstream f(inp2.path()); f << splitRunDeck("03:00:00", "02:00:00", "USE HOTSTART \"" + hs.path() + "\""); }
+
+    struct State {
+        std::vector<double> d0, d1, dp, runoff, conc, ponded, buildup, theta, lower;
+        double hort_tp[2]{}, hort_fe[2]{};
+    };
+    auto capture = [](const openswmm::SWMMEngine& e) {
+        State s;
+        const auto& soa = e.runoff_solver().soa();
+        s.d0 = soa.depth_imperv0; s.d1 = soa.depth_imperv1; s.dp = soa.depth_perv;
+        s.runoff = e.context().subcatches.runoff;
+        s.conc = e.context().subcatches.conc;
+        s.ponded = e.context().subcatches.ponded_qual;
+        s.buildup = e.surfaceQuality().buildup;
+        s.theta = e.gw_solver().state().theta;
+        s.lower = e.gw_solver().state().lower_depth;
+        for (int i = 0; i < 2; ++i) {
+            int m = 0; double x[6];
+            e.runoff_solver().infil_get_state(i, m, x);
+            s.hort_tp[i] = x[0]; s.hort_fe[i] = x[1];
+        }
+        return s;
+    };
+
+    State end1;
+    double surface1 = 0.0;
+    {
+        openswmm::SWMMEngine e;
+        ASSERT_EQ(e.open(inp1.path().c_str(), nullptr, nullptr), 0);
+        ASSERT_EQ(e.initialize(), 0);
+        ASSERT_EQ(e.start(0), 0);
+        double t = 0.0;
+        do { ASSERT_EQ(e.step(&t), 0); } while (t > 0.0);
+        end1 = capture(e);
+        ASSERT_EQ(e.end(), 0);
+        // What is still on the land: buildup + ponded mass, without the
+        // ponds already written off during the run.
+        surface1 = e.context().mass_balance.qual_final_buildup[0] -
+                   e.context().mass_balance.qual_ponded_lost[0];
+        EXPECT_EQ(e.close(), 0);
+    }
+    ASSERT_GT(end1.ponded[0] + end1.ponded[1], 0.0);  // the split leaves water ponded
+    {
+        // Legacy's layout: nLand is the model's, and the runoff section sits
+        // between the header and the routing records.
+        std::ifstream f(hs.path(), std::ios::binary);
+        f.seekg(15 + 4);
+        int32_t n_land = -1;
+        f.read(reinterpret_cast<char*>(&n_land), 4);
+        EXPECT_EQ(n_land, 1);
+    }
+
+    openswmm::SWMMEngine e;
+    ASSERT_EQ(e.open(inp2.path().c_str(), nullptr, nullptr), 0);
+    ASSERT_EQ(e.initialize(), 0) << e.context().warnings.size();
+    ASSERT_EQ(e.start(0), 0);
+    for (const auto& w : e.context().warnings)
+        EXPECT_EQ(w.find("was skipped"), std::string::npos) << w;
+    const State st = capture(e);
+    EXPECT_EQ(st.d0, end1.d0);
+    EXPECT_EQ(st.d1, end1.d1);
+    EXPECT_EQ(st.dp, end1.dp);
+    EXPECT_EQ(st.runoff, end1.runoff);
+    EXPECT_EQ(st.conc, end1.conc);
+    EXPECT_EQ(st.ponded, end1.ponded);
+    ASSERT_EQ(st.buildup.size(), end1.buildup.size());
+    for (std::size_t k = 0; k < st.buildup.size(); ++k)   // mass -> per area round trip
+        EXPECT_NEAR(st.buildup[k], end1.buildup[k], 1e-12 * std::abs(end1.buildup[k]));
+    EXPECT_EQ(st.theta[0], end1.theta[0]);
+    EXPECT_NEAR(st.lower[0], end1.lower[0], 1e-12);   // via the water table elevation
+    for (int i = 0; i < 2; ++i) {
+        EXPECT_EQ(st.hort_tp[i], end1.hort_tp[i]);
+        EXPECT_EQ(st.hort_fe[i], end1.hort_fe[i]);
+    }
+    // legacy massbal_open after readRunoff: the initial load is what the
+    // first run left on the land.
+    EXPECT_NEAR(e.context().mass_balance.qual_init_buildup[0], surface1, 1e-9 * surface1);
+    EXPECT_GT(e.context().mass_balance.runoff_init_store, 0.0);
+    EXPECT_EQ(e.end(), 0);
+    EXPECT_EQ(e.close(), 0);
+}
+
 } /* legacy-routing regression namespace */
 
 } /* anonymous namespace */

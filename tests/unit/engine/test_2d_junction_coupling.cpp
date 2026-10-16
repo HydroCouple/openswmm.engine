@@ -57,7 +57,14 @@ namespace {
 // patch bed sits at z = 1.0 m = J1's crown elevation, so spill/capture happen at
 // the rim. ALLOW_PONDING is OFF on purpose: only the 2D-coupled exception lets
 // J1's HGL climb above the crown.
-std::string build_junction_model(const std::string& extra_2d_options) {
+const char* const kTwoPhaseInflow =
+    "IN_TS   0:00   0.10\n"
+    "IN_TS   0:12   0.10\n"
+    "IN_TS   0:13   0.0\n"
+    "IN_TS   0:40   0.0\n";
+
+std::string build_junction_model(const std::string& extra_2d_options,
+                                 const std::string& inflow_ts = kTwoPhaseInflow) {
     return
         "[OPTIONS]\n"
         "FLOW_UNITS           CMS\n"
@@ -91,11 +98,8 @@ std::string build_junction_model(const std::string& extra_2d_options) {
         "J1      FLOW         IN_TS    FLOW  1.0      1.0\n"
         "\n"
         "[TIMESERIES]\n"
-        ";;Name  Time   Value   (surcharge for 12 min, then off so the patch drains)\n"
-        "IN_TS   0:00   0.10\n"
-        "IN_TS   0:12   0.10\n"
-        "IN_TS   0:13   0.0\n"
-        "IN_TS   0:40   0.0\n"
+        ";;Name  Time   Value   (default: surcharge for 12 min, then off so the patch drains)\n"
+        + inflow_ts +
         "\n"
         "[2D_OPTIONS]\n"
         "MAX_TIMESTEP     1\n"
@@ -129,15 +133,17 @@ struct RunResult {
     double final_patch_depth = 0.0; // max per-cell 2D depth at the last step (m)
     double cont_2d = 0.0;
     double cont_routing = 0.0;
+    double spilled_1d_to_2d = 0.0;  // cumulative 1D→2D exchange (m³)
 };
 
 RunResult run_junction_model(const fs::path& dir, const std::string& tag,
-                             const std::string& extra_2d_options) {
+                             const std::string& extra_2d_options,
+                             const std::string& inflow_ts = kTwoPhaseInflow) {
     RunResult r;
     const fs::path inp = dir / (tag + ".inp");
     const fs::path rpt = dir / (tag + ".rpt");
     const fs::path out = dir / (tag + ".out");
-    { std::ofstream f(inp); f << build_junction_model(extra_2d_options); }
+    { std::ofstream f(inp); f << build_junction_model(extra_2d_options, inflow_ts); }
 
     SWMM_Engine eng = swmm_engine_create();
     if (swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
@@ -174,6 +180,8 @@ RunResult run_junction_model(const fs::path& dir, const std::string& tag,
     }
 
     swmm_engine_end(eng);
+    swmm_2d_get_mass_balance(eng, nullptr, nullptr, nullptr, &r.spilled_1d_to_2d,
+                             nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
     swmm_2d_get_continuity_error(eng, &r.cont_2d);
     swmm_get_routing_continuity_error(eng, &r.cont_routing);
     swmm_engine_report(eng);
@@ -233,4 +241,31 @@ TEST_F(JunctionCoupling2DTest, JunctionSpillsAndCapturesAcrossTheCrown) {
         << "final_patch_depth_m," << r.final_patch_depth << "\n"
         << "continuity_2d_frac," << r.cont_2d << "\n"
         << "continuity_routing_frac," << r.cont_routing << "\n";
+}
+
+// The 1D→2D spill may draw a coupled junction's whole pond. DW books the
+// pond above rpt_full_volume = 0; a spill budget measured above full_volume =
+// MIN_SURFAREA × full depth (1.167 m² × 1 m = 1.167 m³ here) withheld the
+// first 1.167 m³, so J1 had to pond 1.167 / 33.3 m² ≈ 3.5 cm above its rim
+// before any water reached the patch, and the patch got ~1.167 m³ less.
+TEST_F(JunctionCoupling2DTest, SpillDrawsTheWholePond) {
+    const std::string pulse =
+        "IN_TS   0:00   0.09\n"
+        "IN_TS   0:01   0.09\n"
+        "IN_TS   0:02   0.0\n"
+        "IN_TS   0:40   0.0\n";
+    RunResult r = run_junction_model(dir_, "junction_small_pond", "", pulse);
+    ASSERT_TRUE(r.ok) << "coupled junction run failed";
+    std::ofstream csv(dir_ / "junction_small_pond_massbalance.csv");
+    csv << "metric,value\n"
+        << "peak_j1_depth_m," << r.peak_j1_depth << "\n"
+        << "spilled_1d_to_2d_m3," << r.spilled_1d_to_2d << "\n"
+        << "continuity_2d_frac," << r.cont_2d << "\n";
+    EXPECT_GT(r.peak_j1_depth, 1.0) << "fixture never surcharged J1";
+    const double withheld_head = 1.167 / (100.0 / 3.0);   // 1D pond head if 1.167 m³ is held back
+    EXPECT_LT(r.peak_j1_depth, 1.0 + 0.5 * withheld_head)
+        << "J1 ponded as if MIN_SURFAREA × full depth were withheld from the spill";
+    EXPECT_GT(r.spilled_1d_to_2d, 0.6)
+        << "the spill drew less than the pond holds";
+    EXPECT_LT(std::abs(r.cont_2d), 0.05) << "2D continuity: " << r.cont_2d;
 }

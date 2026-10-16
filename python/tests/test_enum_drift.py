@@ -8,7 +8,7 @@ _spec = importlib.util.spec_from_file_location("_binding_enums", Path(__file__).
 _enums = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_enums)
 
-MAPPING = {'RunoffTotal': 'SWMM_RUNOFF_', 'RoutingTotal': 'SWMM_ROUTING_', 'RefType': 'SWMM_REF_', 'FilePathRole': 'SWMM_FILE_', 'ForcingType': 'SWMM_FORCE_', 'EvapType': 'SWMM_EVAP_', 'TempSource': 'SWMM_TEMP_', 'WindType': 'SWMM_WIND_', 'HumidityType': 'SWMM_HUMIDITY_', 'HumidityVar': 'SWMM_HUMIDITY_', 'HeatElemKind': 'SWMM_HEAT_ELEM_', 'InpProfile': 'SWMM_INP_PROFILE_', 'TransportDispersionMode': 'SWMM_DISPERSION_', 'UnitSystem': 'SWMM_'}
+MAPPING = {'RunoffTotal': 'SWMM_RUNOFF_', 'RoutingTotal': 'SWMM_ROUTING_', 'RefType': 'SWMM_REF_', 'FilePathRole': 'SWMM_FILE_', 'ForcingType': 'SWMM_FORCE_', 'EvapType': 'SWMM_EVAP_', 'TempSource': 'SWMM_TEMP_', 'WindType': 'SWMM_WIND_', 'HumidityType': 'SWMM_HUMIDITY_', 'HumidityVar': 'SWMM_HUMIDITY_', 'HeatElemKind': 'SWMM_HEAT_ELEM_', 'InpProfile': 'SWMM_INP_PROFILE_', 'TransportDispersionMode': 'SWMM_DISPERSION_', 'HeatSedimentParam': 'SWMM_HEAT_SED_', 'HeatAttr': 'SWMM_HEAT_ATTR_', 'HeatOverrideScope': 'SWMM_HEAT_SCOPE_', 'UnitSystem': 'SWMM_'}
 
 @pytest.mark.parametrize("name,prefix", MAPPING.items())
 def test_native_enum_members(name, prefix):

@@ -124,7 +124,8 @@ double landCoverLongwave(double t_air_c, double emiss_landcover,
 double netRadiativeFluxOut(double t_water_c, double t_air_c,
                            double humidity_pct, const RadiativeConfig& cfg,
                            double jin_wm2 = -1.0,
-                           double cloud_factor = 1.0) noexcept;
+                           double cloud_factor = 1.0,
+                           double incoming_longwave = -1.0) noexcept;
 
 /// This module's contribution to the net outward flux at `t_w` [W/m²].
 /// Returns 0 unless HEAT_TRANSPORT is on AND `[HEAT_FLUXES]
@@ -136,6 +137,8 @@ double netRadiativeFluxOut(double t_water_c, double t_air_c,
 /// equilibrium — making the answer depend on which module ran last.
 double radiativeFluxOut(const SimulationContext& ctx,
                         const HeatElement& elem, double t_w) noexcept;
+/// Same evaluator with an explicit domain enable; no global mutation.
+double radiativeFluxOut(const SimulationContext&,const HeatElement&,double,bool enabled) noexcept;
 
 }  // namespace openswmm::transport::heat
 

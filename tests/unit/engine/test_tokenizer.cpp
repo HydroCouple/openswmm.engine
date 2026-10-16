@@ -133,6 +133,16 @@ TEST(TokenizerTest, QuotedPathWithColon) {
     EXPECT_THAT(tokens, ElementsAre("FILE", "path/to/rain.csv:EAST_STATION"));
 }
 
+TEST(TokenizerTest, QuotedKeyValuePreservesSpacesAndComments) {
+    auto tokens = Tokenizer::tokenize(R"(component config="Config  Folder/model; v1.rxn" version="1.0" ; comment)");
+    EXPECT_THAT(tokens, ElementsAre("component", R"(config="Config  Folder/model; v1.rxn")", R"(version="1.0")"));
+}
+
+TEST(TokenizerTest, QuotedKeyValueInCsvPreservesCommaAndSpaces) {
+    auto tokens = Tokenizer::tokenize(R"(component,config="Config Folder/a, b.rxn",version=1)");
+    EXPECT_THAT(tokens, ElementsAre("component", R"(config="Config Folder/a, b.rxn")", "version=1"));
+}
+
 // ============================================================================
 // tokenize_views
 // ============================================================================

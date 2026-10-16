@@ -106,6 +106,14 @@ extern "C"
             h, [&]() -> int
             { return static_cast<FlowTracer *>(h)->prepare(out, cache, digest, cb, u); });
     }
+    int swmm_trace_prepare_live(SWMM_Trace h, const char *out, SWMM_TraceProgress cb, void *u)
+    {
+        if (!h)
+            return SWMM_TRACE_INVALID;
+        return guarded(
+            h, [&]() -> int
+            { return static_cast<FlowTracer *>(h)->prepare(out, nullptr, nullptr, cb, u, true); });
+    }
     int swmm_trace_set_averages(SWMM_Trace h, const SWMM_TraceNodeAverage *n, int nn,
                                 const SWMM_TraceLinkAverage *l, int nl, const SWMM_TraceInfo *info)
     {

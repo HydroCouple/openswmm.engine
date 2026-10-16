@@ -41,8 +41,11 @@
 #include "../data/SubcatchData.hpp"
 #include "surface/InfilBank.hpp"
 #include <vector>
+#include <array>
 #include <functional>
 #include <utility>
+
+namespace openswmm::detail { class CompletedSourceArchive; }
 
 namespace openswmm {
 
@@ -57,6 +60,15 @@ namespace runoff {
 struct RunoffSourceForcing {
     int subcatch = -1;
     double rain = 0.0, pet = 0.0;
+    std::array<double,3> surface_return{}; // ft/s by IMPERV0/IMPERV1/PERV; never rain
+    double raw_precipitation = -1; // before subcatchment scales and phase partition
+    double pet_imperv = -1, pet_perv = -1; // optional exposed atmospheric footprints
+};
+/// Actual completed subarea water budget (ft3; area in ft2). Pool order is
+/// IMPERV0, IMPERV1, PERV. Ordinary runoff does not write these diagnostics.
+struct CompletedSubareaWater {
+    double area = 0, opening = 0, rain = 0, runon = 0, evaporation = 0;
+    double infiltration = 0, spatial_infiltration = 0, outflow = 0, outlet = 0, closing = 0;
 };
 
 // ============================================================================
@@ -139,6 +151,7 @@ struct RunoffSoA {
     /// volume domain exactly as legacy subcatch.c:746-751 does
     /// (`vOutflow = Voutflow - VlidIn + VlidOut; newRunoff = vOutflow/tStep`).
     std::vector<double> outflow_vol;
+    std::vector<std::array<CompletedSubareaWater, 3>> completed;
 
     void resize(int n);
     void computeAlpha();
@@ -161,15 +174,20 @@ public:
     /// Optional reviewed non-LID areas (source index, m2) bypass the legacy
     /// rounded LANDAREA conversion only for those sources, at initialization.
     void init(SimulationContext& ctx, const std::vector<std::pair<int, double>>& spatial_areas = {});
+    /// Reconstruct the reviewed area overrides for a matching compiled source.
+    std::vector<std::pair<int,double>> reviewedAreas() const;
     /**
      * @param infil_factor    Monthly infiltration rate multiplier (default 1.0).
      * @param recovery_factor Monthly soil recovery multiplier (default 1.0).
+     * @param source_owners   Internal ordinary-path exclusion map: -1 ordinary,
+     *                        nonnegative completed spatial-source group.
      */
     void execute(SimulationContext& ctx, double dt, double evap_rate = 0.0,
                  double infil_factor = 1.0, double recovery_factor = 1.0,
                  int month = -1, const InfiltrationBoundary* boundary = nullptr,
                  const std::vector<RunoffSourceForcing>* source_forcing = nullptr,
-                 const std::vector<double>* spatial_fractions = nullptr);
+                 const std::vector<double>* spatial_fractions = nullptr,
+                 const std::vector<int>* source_owners = nullptr);
 
     /// Legacy findNativeInfil for a subcatchment with no pervious non-LID
     /// area: the native soil's rate for its own rain + runon (advances the
@@ -181,6 +199,9 @@ public:
     double infilFactorUsed(int i) const { return infil_factor_used_[static_cast<std::size_t>(i)]; }
 
     const RunoffSoA& soa() const { return soa_; }
+    RunoffSoA& soa() { return soa_; }  ///< Hot start restores the ponded depths.
+    void checkpoint(detail::CompletedSourceArchive&,bool model); // internal accepted-boundary IO
+    void validateCheckpoint(const RunoffSolver& model) const;
     /// Completed water still waiting for next interval's inter-subarea route.
     double pendingRoutingVolume(const SimulationContext& ctx, int source) const;
 

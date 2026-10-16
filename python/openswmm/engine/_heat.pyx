@@ -61,12 +61,15 @@ and a refused write does not take effect at all — it raises
 # cython: language_level=3
 
 from collections.abc import Iterator
+from array import array
 from typing import NamedTuple
 
 from ._common cimport *
 from ._enums import (
-    HeatCloudParam, HeatFluxModule, HeatRadiativeParam, HeatShortwaveMode,
-    HeatSolarParam, HeatSourceKind)
+    HeatAttr, HeatCloudParam, HeatFluxModule, HeatOverrideScope,
+    HeatRadiativeParam, HeatSedimentParam, HeatShortwaveMode, HeatSolarParam,
+    HeatSourceKind, EngineState, ErrorCode)
+from ._exceptions import StaleObjectError
 
 
 cdef inline SWMM_Engine _h(solver):
@@ -178,8 +181,8 @@ class _HeatModules:
 class _HeatRadiative:
     """``solver.heat.radiative`` — mapping keyed by :class:`HeatRadiativeParam`.
 
-    ``SHORTWAVE`` is W/m2; every other parameter is a dimensionless fraction
-    in ``[0, 1]``.
+    ``SHORTWAVE`` is W/m2; ``LANDCOVER_TEMPERATURE`` is Celsius (NaN
+    inherits air temperature); the remaining parameters are fractions in ``[0, 1]``.
     """
 
     def __init__(self, solver):
@@ -195,7 +198,8 @@ class _HeatRadiative:
         """Read one ``[RADIATIVE_FLUXES]`` parameter.
 
         :param key: A :class:`HeatRadiativeParam` member, code, or name.
-        :returns: ``SHORTWAVE`` in W/m2; all others a fraction in ``[0, 1]``.
+        :returns: ``SHORTWAVE`` in W/m2; ``LANDCOVER_TEMPERATURE`` in Celsius
+            (NaN inherits air); remaining parameters as fractions in ``[0, 1]``.
         :raises KeyError: *key* is not a valid :class:`HeatRadiativeParam`.
         :raises EngineError: The engine refused the read.
         """
@@ -211,8 +215,9 @@ class _HeatRadiative:
         API and the deck agree, and a refused write does not take effect.
 
         :param key: A :class:`HeatRadiativeParam` member, code, or name.
-        :param value: ``SHORTWAVE`` in W/m2 (must be >= 0); every other
-            parameter a fraction in ``[0, 1]``.
+        :param value: ``SHORTWAVE`` in W/m2 (must be >= 0);
+            ``LANDCOVER_TEMPERATURE`` in Celsius (NaN restores air-temperature
+            inheritance); remaining parameters as fractions in ``[0, 1]``.
         :raises KeyError: *key* is not a valid :class:`HeatRadiativeParam`.
         :raises EngineError: A fraction is outside ``[0, 1]``; ``SHORTWAVE``
             is negative; or ``SHORTWAVE`` is written while
@@ -287,6 +292,11 @@ class _HeatSolar:
         """
         param = _member(HeatSolarParam, key)
         _check(swmm_heat_set_solar(_h(self._solver), int(param), value))
+
+    def clear(self) -> None:
+        """Clear the shared site before initialization; COMPUTED mode refuses it."""
+        _check(swmm_heat_clear_solar_site(_h(self._solver)))
+
 
     def __repr__(self) -> str:
         try:
@@ -634,6 +644,227 @@ class _HeatNodeOverrides:
 
 
 # =============================================================================
+# [SEDIMENT_EXCHANGE] and per-element overrides
+# =============================================================================
+
+class HeatElementOverride(NamedTuple):
+    """One per-element heat attribute override row.
+
+    :ivar attr: The :class:`HeatAttr` overridden.
+    :ivar scope: :class:`HeatOverrideScope` — network ``TAG``/``NODE``/``LINK``
+        or mesh ``CELL2D``/``MESH_TAG``. CELL2D names are one-based file IDs.
+    :ivar name: Tag or element name.
+    :ivar value: The override value, in the attribute's units.
+    """
+
+    attr: HeatAttr
+    scope: HeatOverrideScope
+    name: str
+    value: float
+
+
+class HeatLidMaterial(NamedTuple):
+    """LID water/soil conductivity (W/m/K), soil density (kg/m3), heat capacity (J/kg/K)."""
+    water_conductivity: float
+    soil_conductivity: float
+    soil_density: float
+    soil_specific_heat: float
+
+
+class HeatElementValue(NamedTuple):
+    """Effective value and its origin; dynamic temperatures have a NaN value."""
+    value: float
+    source: int
+    source_name: str
+
+
+class _HeatSediment:
+    """``solver.heat.sediment`` — ``[SEDIMENT_EXCHANGE]`` GLOBAL parameters,
+    a mapping keyed by :class:`HeatSedimentParam`. Values the parser refuses
+    are refused here too, never clamped."""
+
+    def __init__(self, solver):
+        self._solver = solver
+
+    def __len__(self) -> int:
+        return len(HeatSedimentParam)
+
+    def __iter__(self) -> Iterator[HeatSedimentParam]:
+        return iter(HeatSedimentParam)
+
+    @property
+    def ground_source_configured(self) -> bool:
+        """Whether GLOBAL GROUND_SOURCE was explicitly authored, including PRESCRIBED."""
+        cdef int configured
+        _check(swmm_heat_ground_source_configured(_h(self._solver),&configured))
+        return bool(configured)
+
+    def clear_ground_source(self) -> None:
+        """Restore the absent/default PRESCRIBED channel ground selection before a run."""
+        _check(swmm_heat_clear_ground_source(_h(self._solver)))
+
+    def __getitem__(self, key) -> float:
+        cdef double value = 0.0
+        param = _member(HeatSedimentParam, key)
+        _check(swmm_heat_get_sediment(_h(self._solver), int(param), &value))
+        return value
+
+    def __setitem__(self, key, double value) -> None:
+        param = _member(HeatSedimentParam, key)
+        _check(swmm_heat_set_sediment(_h(self._solver), int(param), value))
+
+    def is_configured(self, key) -> bool:
+        """Authored status of GROUND_TEMPERATURE or INITIAL_TEMPERATURE."""
+        cdef int configured = 0
+        param = _member(HeatSedimentParam, key)
+        _check(swmm_heat_sediment_temperature_configured(_h(self._solver), int(param), &configured))
+        return bool(configured)
+
+    def clear(self, key) -> None:
+        """Restore temperature inheritance; ground reset also clears its series."""
+        param = _member(HeatSedimentParam, key)
+        _check(swmm_heat_clear_sediment_temperature(_h(self._solver), int(param)))
+
+    @property
+    def ground_timeseries(self) -> str:
+        """Timeseries driving the ground temperature; ``''`` for the constant."""
+        cdef char buf[1024]
+        _check(swmm_heat_get_sediment_ground_timeseries(_h(self._solver), buf, 1024))
+        return buf.decode('utf-8')
+
+    @ground_timeseries.setter
+    def ground_timeseries(self, name) -> None:
+        cdef bytes b = (name or '').encode('utf-8')
+        _check(swmm_heat_set_sediment_ground_timeseries(_h(self._solver), b))
+
+    def __repr__(self) -> str:
+        try:
+            return f"<HeatSediment n={len(self)}>"
+        except Exception:
+            return "<HeatSediment (engine closed)>"
+
+
+class _HeatElementOverrides:
+    """``solver.heat.element_overrides`` — per-element radiative and sediment
+    attribute overrides, a sequence of :class:`HeatElementOverride` rows."""
+
+    def __init__(self, solver):
+        self._solver = solver
+
+    def __len__(self) -> int:
+        cdef int count = 0
+        _check(swmm_heat_element_override_count(_h(self._solver), &count))
+        return count
+
+    def __iter__(self) -> Iterator[HeatElementOverride]:
+        cdef int n = len(self)
+        for i in range(n):
+            yield self[i]
+
+    def __getitem__(self, int row_index) -> HeatElementOverride:
+        cdef int n = len(self)
+        cdef int i = row_index + n if row_index < 0 else row_index
+        if not (0 <= i < n):
+            raise IndexError(row_index)
+        cdef int attr = 0, scope = 0
+        cdef double value = 0.0
+        cdef char name[512]
+        _check(swmm_heat_get_element_override(
+            _h(self._solver), i, &attr, &scope, name, 512, &value))
+        return HeatElementOverride(HeatAttr(attr), HeatOverrideScope(scope),
+                                   name.decode('utf-8'), value)
+
+    def set(self, attr, scope, str name, double value) -> None:
+        """Add or update the override for ``(attr, scope, name)``.
+
+        Sediment attributes apply at LINK or TAG scope only (the bed lies
+        beneath conduits). An unknown element or tag is refused and leaves
+        the rows unchanged.
+        """
+        a = _member(HeatAttr, attr)
+        sc = _member(HeatOverrideScope, scope)
+        cdef bytes b = name.encode('utf-8')
+        _check(swmm_heat_set_element_override(_h(self._solver), int(a), int(sc), b, value))
+        self._solver._bump_generation()
+
+    def remove(self, int row_index) -> None:
+        """Remove one override row; later rows shift down."""
+        _check(swmm_heat_remove_element_override(_h(self._solver), row_index))
+        self._solver._bump_generation()
+
+    def __repr__(self) -> str:
+        try:
+            return f"<HeatElementOverrides n={len(self)}>"
+        except Exception:
+            return "<HeatElementOverrides (engine closed)>"
+
+
+cdef int _hydrothermal_edit(SWMM_Engine engine, void* user) noexcept with gil:
+    context = <object>user
+    try:
+        context[3] = context[0](context[1])
+        return 0
+    except BaseException as error:
+        context[2] = error
+        return int(ErrorCode.BADPARAM)
+
+
+cdef class HeatSnapshot:
+    """Owned pre-run heat memento; lifecycle and structural edits invalidate it.
+
+    Use as a context manager or call close(). Closing is safe after the solver
+    is destroyed. Scalar heat edits may be undone repeatedly with restore().
+    """
+    cdef SWMM_HeatSnapshot _snapshot
+    cdef object _owner
+    cdef long long _generation
+
+    def __init__(self, solver):
+        if self._snapshot != NULL:
+            raise RuntimeError("HeatSnapshot is already initialized")
+        cdef SWMM_Engine handle = _h(solver)
+        cdef int state = 0
+        _check(swmm_engine_get_state(handle, &state))
+        if state not in (int(EngineState.OPENED), int(EngineState.BUILDING)):
+            _check(int(ErrorCode.LIFECYCLE))
+        self._owner = solver
+        self._generation = solver.generation
+        self._snapshot = swmm_heat_snapshot_create(handle)
+        if self._snapshot == NULL:
+            raise MemoryError("Cannot capture heat configuration")
+
+    def restore(self) -> None:
+        """Restore to the original authoring session, refusing stale snapshots."""
+        if self._snapshot == NULL:
+            raise ValueError("HeatSnapshot is closed")
+        if self._generation != self._owner.generation:
+            raise StaleObjectError("HeatSnapshot was invalidated by a lifecycle or structural edit")
+        cdef SWMM_Engine handle = _h(self._owner)
+        _check(swmm_heat_snapshot_restore(handle, self._snapshot))
+        self._owner._bump_generation()
+        self._generation = self._owner.generation
+
+    def close(self) -> None:
+        """Release the memento without accessing the original engine."""
+        if self._snapshot != NULL:
+            swmm_heat_snapshot_destroy(self._snapshot)
+            self._snapshot = NULL
+        self._owner = None
+
+    def __enter__(self):
+        if self._snapshot == NULL:
+            raise ValueError("HeatSnapshot is closed")
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def __dealloc__(self):
+        if self._snapshot != NULL:
+            swmm_heat_snapshot_destroy(self._snapshot)
+
+
+# =============================================================================
 # Heat view
 # =============================================================================
 
@@ -665,6 +896,8 @@ class Heat:
         self._cloud = None
         self._sources = None
         self._node_overrides = None
+        self._sediment = None
+        self._element_overrides = None
 
     # ---- Toggles ----------------------------------------------------
 
@@ -812,6 +1045,200 @@ class Heat:
         if self._node_overrides is None:
             self._node_overrides = _HeatNodeOverrides(self._solver)
         return self._node_overrides
+
+    @property
+    def sediment(self) -> _HeatSediment:
+        """``[SEDIMENT_EXCHANGE]`` GLOBAL parameters, keyed by
+        :class:`HeatSedimentParam`."""
+        if self._sediment is None:
+            self._sediment = _HeatSediment(self._solver)
+        return self._sediment
+
+    @property
+    def element_overrides(self) -> _HeatElementOverrides:
+        """Per-element radiative and sediment attribute overrides."""
+        if self._element_overrides is None:
+            self._element_overrides = _HeatElementOverrides(self._solver)
+        return self._element_overrides
+
+    @property
+    def dry_policy(self) -> int:
+        """Dry-element temperature policy: HOLD=0, AIR=1, DEFAULT=2."""
+        cdef int policy = 0
+        _check(swmm_heat_get_dry_policy(_h(self._solver), &policy))
+        return policy
+
+    @dry_policy.setter
+    def dry_policy(self, int policy) -> None:
+        _check(swmm_heat_set_dry_policy(_h(self._solver), policy))
+
+    @property
+    def lid_material(self) -> HeatLidMaterial:
+        """Read-only LID conduction material assumptions, all in SI units."""
+        cdef double values[4]
+        _check(swmm_heat_get_lid_material(_h(self._solver), values))
+        return HeatLidMaterial(values[0], values[1], values[2], values[3])
+
+    @property
+    def authoring_flags(self) -> int:
+        """Provenance bits: configured=1, shared site=2, explicit lat/lon/timezone/elevation=4/8/16/32."""
+        cdef unsigned flags = 0
+        _check(swmm_heat_get_authoring_flags(_h(self._solver), &flags))
+        return flags
+
+    def effective_element(self, attr, scope, str name) -> HeatElementValue:
+        """Read NODE/LINK/CELL2D precedence, independent of process activation.
+
+        Source codes are GLOBAL=0, TAG=1, NODE=2, LINK=3, air=4, series=5,
+        CELL2D=6, MESH_TAG=7 (mesh tags are independent of network tags).
+        Dynamic temperatures return NaN and identify their source by name.
+        """
+        a = _member(HeatAttr, attr)
+        sc = _member(HeatOverrideScope, scope)
+        cdef bytes encoded = name.encode('utf-8')
+        if b'\0' in encoded:
+            raise ValueError("Element name contains a null byte")
+        cdef double value = 0.0
+        cdef int source = 0
+        cdef bytearray buffer = bytearray(256)
+        while True:
+            _check(swmm_heat_get_effective_element(_h(self._solver), int(a), int(sc), encoded,
+                                                   &value, &source, buffer, len(buffer)))
+            origin = bytes(buffer).split(b'\0', 1)[0]
+            if len(origin) < len(buffer) - 1:
+                return HeatElementValue(value, source, origin.decode('utf-8'))
+            buffer = bytearray(len(buffer) * 2)
+
+    @property
+    def mesh_status(self) -> dict:
+        """Requested and initialized mesh heat, active modules and capability reason.
+
+        Water heat capacity is J/(m3 K). Experimental status includes any
+        qualification limits; saved switches alone do not imply activation.
+        """
+        cdef SWMM_Heat2DStatus status
+        status.struct_size=sizeof(SWMM_Heat2DStatus)
+        _check(swmm_heat_get_2d_status(_h(self._solver),&status))
+        return dict(requested=bool(status.requested), initialized=bool(status.initialized),
+                    surface_active=bool(status.surface_active),radiative_active=bool(status.radiative_active),
+                    bed_active=bool(status.bed_active),bed_model=status.bed_model,
+                    experimental=bool(status.experimental),water_heat_capacity=status.water_heat_capacity,
+                    reason=(<bytes>status.reason).decode('utf-8'))
+
+    def mesh_values(self, int kind, int first_cell, int count) -> list[float]:
+        """Read a contiguous range of zero-based mesh cells, in SI units.
+
+        Kind matches SWMM_Heat2DValue: water/bed temperature (0/1, degC),
+        bed energy/capacity (2/3, J and J/K), atmospheric/radiation/sensible/
+        latent/deep/water-to-bed/water increment (4..10, J), accepted
+        evaporation (11, m3), thermal residual (12, J). Inactive results
+        raise an engine lifecycle error rather than inventing values.
+        """
+        if count<0:
+            raise ValueError("count must be nonnegative")
+        cdef double[::1] values=array('d',[0.0])*count
+        _check(swmm_heat_get_2d_values(_h(self._solver),kind,first_cell,count,
+                                     &values[0] if count else NULL))
+        return list(values)
+
+    def ground_status(self) -> dict:
+        """Requested and measured finite soil heat, owner counts and capability reason.
+
+        Water heat capacity is J/(m3 K). Canonical storage includes solid
+        grains and porewater. Thermal layers are independent of sigma layers.
+        """
+        cdef SWMM_GroundHeatStatus status
+        status.struct_size=sizeof(SWMM_GroundHeatStatus)
+        _check(swmm_heat_get_ground_status(_h(self._solver),&status))
+        return dict(requested=bool(status.requested),initialized=bool(status.initialized),
+                    aquifer_cells=status.aquifer_cells,standalone_cells=status.standalone_cells,
+                    thermal_layers=status.thermal_layers,conduction_active=bool(status.conduction_active),
+                    lateral_active=bool(status.lateral_active),experimental=bool(status.experimental),
+                    water_heat_capacity=status.water_heat_capacity,reason=(<bytes>status.reason).decode('utf-8'))
+
+    def ground_values(self, int kind, int first_cell, int count) -> list[float]:
+        """Canonical soil values over zero-based mesh cells; unmodeled cells are NaN.
+
+        Kinds 0..14 match SWMM_GroundHeatValue: energy (J), capacity (J/K),
+        mean temperature (degC), initial/advective/source/surface/deep/latent/
+        lateral/water-contact energy (J), residual (J), normalized residual
+        (dimensionless), pending lateral energy (J), channel-contact energy (J). Positive receipts enter soil.
+        """
+        if count<0:
+            raise ValueError("count must be nonnegative")
+        cdef double[::1] values=array('d',[0.0])*count
+        _check(swmm_heat_get_ground_values(_h(self._solver),kind,first_cell,count,&values[0] if count else NULL))
+        return list(values)
+
+    def ground_layers(self, int cell, int kind, int first_layer, int count) -> list[float]:
+        """Fixed depth layers; cell/layer indices are zero based.
+
+        Kinds 0..7: top/bottom depth (m), temperature (degC), energy (J),
+        capacity (J/K), moisture (m3/m3), conductivity (W/(m K)), saturated
+        water (m3). Invalid ranges raise without publishing partial values.
+        """
+        if count<0:
+            raise ValueError("count must be nonnegative")
+        cdef double[::1] values=array('d',[0.0])*count
+        _check(swmm_heat_get_ground_layers(_h(self._solver),cell,kind,first_layer,count,&values[0] if count else NULL))
+        return list(values)
+
+    def channel_ground_status(self) -> dict:
+        """Requested channel ground choice and measured mapping/activity counts."""
+        cdef SWMM_ChannelGroundStatus status
+        status.struct_size=sizeof(SWMM_ChannelGroundStatus)
+        _check(swmm_heat_get_channel_ground_status(_h(self._solver),&status))
+        return dict(requested=bool(status.requested),initialized=bool(status.initialized),
+                    exchange_active=bool(status.exchange_active),mapped_links=status.mapped_links,
+                    contact_cells=status.contact_cells,contact_intervals=status.contact_intervals,
+                    experimental=bool(status.experimental),reason=(<bytes>status.reason).decode('utf-8'))
+
+    def channel_ground_values(self, int kind, int first_link, int count) -> list[float]:
+        """Mapped channel fields over zero-based link indices; unmapped links are NaN.
+
+        Kinds 0..4: soil-derived bed temperature (degC), atmosphere-to-channel
+        energy (J), channel-to-soil energy (J), thermal water increment (J),
+        contact interval count (dimensionless). The bed view adds no store.
+        """
+        if count<0:
+            raise ValueError("count must be nonnegative")
+        cdef double[::1] values=array('d',[0.0])*count
+        _check(swmm_heat_get_channel_ground_values(_h(self._solver),kind,first_link,count,&values[0] if count else NULL))
+        return list(values)
+
+    def channel_ground_contact(self, int index) -> dict:
+        """One initialized contact: zero-based indices, chainage fractions and SI invert (m)."""
+        cdef SWMM_ChannelGroundContact contact
+        contact.struct_size=sizeof(SWMM_ChannelGroundContact)
+        _check(swmm_heat_get_channel_ground_contact(_h(self._solver),index,&contact))
+        return dict(link=contact.link,cell=contact.cell,layer=contact.layer,
+                    begin_fraction=contact.begin_fraction,end_fraction=contact.end_fraction,
+                    share=contact.share,invert_m=contact.invert_m)
+
+    def snapshot(self) -> HeatSnapshot:
+        """Capture heat settings, shared site and component registrations before initialization."""
+        return HeatSnapshot(self._solver)
+
+    def edit_atomic(self, callback):
+        """Apply callback(solver) before initialization, rolling back on any exception.
+
+        Only climate, snow, heat configuration, HEAT_TRANSPORT, component
+        registrations and climate-file paths may be changed. Topology, lifecycle
+        and nested transactions are forbidden. The callback result is returned;
+        its original exception is re-raised after native rollback completes.
+        """
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+        cdef SWMM_Engine handle = _h(self._solver)
+        cdef int result
+        context = [callback, self._solver, None, None]
+        with self._solver._operation(<size_t>handle):
+            result = swmm_hydrothermal_edit_atomic(handle, _hydrothermal_edit, <void*>context)
+        self._solver._bump_generation()
+        if context[2] is not None:
+            raise context[2]
+        _check(result)
+        return context[3]
 
     def __repr__(self) -> str:
         try:

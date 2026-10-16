@@ -62,6 +62,7 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr const char* kNext       = "org.hydrocouple.openswmm.test.smoke.next";
+constexpr const char* kInstalled  = "org.hydrocouple.openswmm.test.smoke.installed";
 constexpr const char* kEnv        = "org.hydrocouple.openswmm.test.smoke.env";
 constexpr const char* kExplicit   = "org.hydrocouple.openswmm.test.smoke.explicit";
 constexpr const char* kMisstamped = "hc_smoke_misstamped";   // refused: matched by file
@@ -176,6 +177,17 @@ TEST_F(ComponentLoader, MisStampedTwinIsRefusedWithBothStamps) {
         << "engine stamp missing: " << err;
 }
 
+TEST_F(ComponentLoader, DiscoversInstalledComponentDirectoryWithoutAnExplicitPath) {
+    const auto libs = all_libraries();
+    const auto* installed = by_id(libs, kInstalled);
+    ASSERT_NE(installed, nullptr) << dump(libs);
+    EXPECT_STREQ(installed->load_error, "");
+    EXPECT_STREQ(installed->stamp, HYDROCOUPLE_COMPONENT_ABI_STAMP);
+    const auto directory = fs::path(installed->path).parent_path();
+    EXPECT_EQ(directory.filename(), "components");
+    EXPECT_EQ(directory.parent_path().filename(), "hydrocouple");
+}
+
 // ---------------------------------------------------------------------------
 // Gate D-a, part 3: the legacy library loads, and is reported unstamped.
 // ---------------------------------------------------------------------------
@@ -200,7 +212,8 @@ TEST_F(ComponentLoader, SecondCopyOfAnIdIsRefusedNamingTheFirst) {
     // reviewer can see it (CLAUDE.md §4.1).
     const fs::path dup_dir = fs::path(PC_OUTPUT_DIR) / "duplicate_id";
     fs::create_directories(dup_dir);
-    const auto* original = by_id(all_libraries(), kExplicit);
+    const auto originals = all_libraries();
+    const auto* original = by_id(originals, kExplicit);
     ASSERT_NE(original, nullptr);
     const fs::path copy = dup_dir / fs::path(original->path).filename();
     fs::copy_file(original->path, copy, fs::copy_options::overwrite_existing);

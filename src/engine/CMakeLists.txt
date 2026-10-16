@@ -27,7 +27,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 # Collect all source files (excluding geopackage — built as a separate library)
-file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES
+file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES CONFIGURE_DEPENDS
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     core/*.cpp
     data/*.cpp
@@ -516,11 +516,12 @@ if(OPENSWMM_BUILD_2D)
     # Collect 2D source files. The explicit local-inertial LTS marcher is the
     # only integrator (D2 retirement, 2026-07-29): no SUNDIALS, no hypre, no
     # global linear solve anywhere in the 2D module.
-    file(GLOB_RECURSE OPENSWMM_2D_SOURCES
+    file(GLOB_RECURSE OPENSWMM_2D_SOURCES CONFIGURE_DEPENDS
         RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
         2d/data/*.cpp
         2d/gw/*.cpp
         2d/quality/*.cpp   # S7
+        2d/heat/*.cpp
         2d/infil/*.cpp
         2d/subsurface/*.cpp
         2d/mesh/*.cpp
@@ -528,6 +529,7 @@ if(OPENSWMM_BUILD_2D)
         2d/coupling/*.cpp
         2d/input/*.cpp
         2d/SurfaceRouter2D.cpp
+        2d/SurfaceRouterCheckpoint.cpp
         2d/api/*.cpp
     )
 
@@ -535,6 +537,7 @@ if(OPENSWMM_BUILD_2D)
     # CSR layout.
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/InertialEdges.cpp)
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/ExplicitInertialSolver.cpp)
+    list(APPEND OPENSWMM_2D_SOURCES 2d/solver/ExplicitInertialCheckpoint.cpp)
 
     # Runtime backend selector (dlopen of the optional GPU plugin; serial CPU
     # fallback). Lives in the core — it owns the CPU↔plugin decision — but
@@ -547,7 +550,8 @@ if(OPENSWMM_BUILD_2D)
     # WebAssembly build does): OUTPUT_FILE is then ignored with a warning and
     # results are read through the swmm_2d_* API.
     if(OPENSWMM_2D_HDF5_OUTPUT)
-        list(APPEND OPENSWMM_2D_SOURCES 2d/output/Default2DOutputPlugin.cpp)
+        list(APPEND OPENSWMM_2D_SOURCES 2d/output/Default2DOutputPlugin.cpp
+            2d/output/Default2DOutputCheckpoint.cpp)
     endif()
 
     target_sources(openswmm_engine PRIVATE ${OPENSWMM_2D_SOURCES})

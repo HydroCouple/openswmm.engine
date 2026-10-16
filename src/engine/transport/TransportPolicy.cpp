@@ -150,15 +150,15 @@ RowLayout canonicalRows(const SimulationContext& ctx, const ClassEnables& e) {
 // The matrix
 // ---------------------------------------------------------------------------
 
-Matrix resolve(const SimulationContext& ctx) {
+Matrix resolve(const SimulationContext& ctx, const Draft* draft) {
     Matrix m;
     const int  np       = ctx.n_pollutants();
-    const bool ignoreQ  = ctx.options.ignore_quality;
+    const bool ignoreQ  = draft ? draft->ignore_quality : ctx.options.ignore_quality;
     const bool msxOn    = reactionsActive(ctx);
     const int  nm       = msxOn ? ctx.reactions.n_species() : 0;
     const bool msxWall  = msxOn && reactionsHaveWall(ctx);
-    const bool ageOn    = ctx.options.water_age;
-    const bool heatOn   = ctx.options.heat_transport;
+    const bool ageOn    = draft ? draft->age : ctx.options.water_age;
+    const bool heatOn   = draft ? draft->heat : ctx.options.heat_transport;
 
     // ---- Runoff / LID ------------------------------------------------------
     {
@@ -169,9 +169,15 @@ Matrix resolve(const SimulationContext& ctx) {
         else if (ignoreQ)  disabled(pol, "IGNORE_QUALITY");
         else               enabled(pol, np);
 
-        unavailable(m.at(Domain::RUNOFF, SpeciesClass::MSX),
-                    msxOn ? "runoff and LID have no reactions binding"
-                          : "no reactions component");
+        // Multispecies Phase 2: species build up, wash off, rain in and
+        // pass LID units through the shared surface kernel; no reaction
+        // kinetics run on the land surface.
+        Cell& msx = m.at(Domain::RUNOFF, SpeciesClass::MSX);
+        if (!msxOn)                              unavailable(msx, "no reactions component");
+        else if (!has_sub)                       unavailable(msx, "no subcatchments");
+        else if (ignoreQ)                        disabled(msx, "IGNORE_QUALITY");
+        else if (!ctx.reactions.surface.active()) unavailable(msx, "no species buildup, washoff or rainfall rows");
+        else { enabled(msx, nm); msx.reason = "loading and transport; no surface reactions"; }
 
         Cell& age = m.at(Domain::RUNOFF, SpeciesClass::AGE);
         if (!has_sub)      unavailable(age, "no subcatchments");
@@ -192,7 +198,11 @@ Matrix resolve(const SimulationContext& ctx) {
     // aquifer still has no transported quality of its own.
     {
         const auto* aq = ctx.twod_io.aquifer_state;
-        const bool two_zone = aq != nullptr && aq->active && aq->n_cells > 0;
+        const auto* options=opts2D(ctx);
+        const bool authored=(!aq||aq->n_cells==0)&&hasMesh2D(ctx)&&ctx.twod_io.aquifer&&!ctx.twod_io.aquifer->empty()
+            &&!ctx.options.ignore_2d&&(!options||options->groundwater!=0);
+        const bool planned=draft||authored;
+        const bool two_zone = draft ? draft->groundwater : authored || (aq != nullptr && aq->active && aq->n_cells > 0);
         if (two_zone) {
             const ClassEnables e = groundwaterEnables(ctx);
             const auto* g = ctx.twod_io.gw;
@@ -200,22 +210,22 @@ Matrix resolve(const SimulationContext& ctx) {
             if (np == 0)                                    unavailable(pol, "no [POLLUTANTS]");
             else if (ignoreQ)                               disabled(pol, "IGNORE_QUALITY");
             else if (g && !g->options.transport_pollutants) disabled(pol, "TRANSPORT_POLLUTANTS NO");
-            else                                            enabled(pol, e.n_pollut);
+            else                                            enabled(pol, planned ? np : e.n_pollut);
 
             Cell& msx = m.at(Domain::GROUNDWATER, SpeciesClass::MSX);
             if (!reactionsActive(ctx))                unavailable(msx, "no reactions component");
-            else if (e.msx_has_wall)                  unavailable(msx, "WALL species have no subsurface transport");
+            else if (planned ? msxWall : e.msx_has_wall) unavailable(msx, "WALL species have no subsurface transport");
             else if (ignoreQ)                         disabled(msx, "IGNORE_QUALITY");
             else if (g && !g->options.transport_msx)  disabled(msx, "TRANSPORT_MSX NO");
-            else                                      enabled(msx, e.n_msx);
+            else                                      enabled(msx, planned ? nm : e.n_msx);
 
             Cell& age = m.at(Domain::GROUNDWATER, SpeciesClass::AGE);
-            if (!ctx.options.water_age)               unavailable(age, "WATER_AGE OFF");
+            if (!ageOn)               unavailable(age, "WATER_AGE OFF");
             else if (g && !g->options.transport_age)  disabled(age, "TRANSPORT_AGE NO");
             else                                      enabled(age, 1);
 
             Cell& tmp = m.at(Domain::GROUNDWATER, SpeciesClass::TEMPERATURE);
-            if (!ctx.options.heat_transport)                  unavailable(tmp, "HEAT_TRANSPORT OFF");
+            if (!heatOn)                  unavailable(tmp, "HEAT_TRANSPORT OFF");
             else if (g && !g->options.transport_temperature)  disabled(tmp, "TRANSPORT_TEMPERATURE NO");
             else                                              enabled(tmp, 1);
         } else {
@@ -246,8 +256,8 @@ Matrix resolve(const SimulationContext& ctx) {
         else if (ignoreQ)  disabled(msx, "IGNORE_QUALITY");
         else               enabled(msx, nm);
         if (msx.state == CellState::ENABLED && msxWall &&
-            ctx.options.quality_solver == QualitySolverKind::EULERIAN_ARD)
-            msx.reason = "WALL species: EULERIAN_ARD falls back to LEGACY";
+            (draft || ctx.options.quality_solver == QualitySolverKind::EULERIAN_ARD))
+            msx.reason = draft ? "WALL species: solver support confirmed at initialization" : "WALL species: EULERIAN_ARD falls back to LEGACY";
 
         Cell& age = m.at(Domain::NETWORK_1D, SpeciesClass::AGE);
         if (!ageOn)        unavailable(age, "WATER_AGE OFF");
@@ -262,9 +272,9 @@ Matrix resolve(const SimulationContext& ctx) {
 
     // ---- 2D surface --------------------------------------------------------
     {
-        const bool mesh = hasMesh2D(ctx);
+        const bool mesh = draft ? draft->mesh : hasMesh2D(ctx);
         const auto* o   = opts2D(ctx);
-        const bool ig2d = ctx.options.ignore_2d;
+        const bool ig2d = draft ? draft->ignore_2d : ctx.options.ignore_2d;
         auto gate = [&](Cell& c, bool project_on, const char* off_why,
                         bool key_on, const char* key, bool quality_gated,
                         int count, const char* unavailable_why = nullptr) {
@@ -278,17 +288,17 @@ Matrix resolve(const SimulationContext& ctx) {
         };
         gate(m.at(Domain::SURFACE_2D, SpeciesClass::POLLUTANTS),
              np > 0, "no [POLLUTANTS]",
-             !o || o->transport_pollutants, "TRANSPORT_POLLUTANTS", true, np);
+             draft ? draft->surface_class[0] : !o || o->transport_pollutants, "TRANSPORT_POLLUTANTS", true, np);
         gate(m.at(Domain::SURFACE_2D, SpeciesClass::MSX),
              msxOn, "no reactions component",
-             !o || o->transport_msx, "TRANSPORT_MSX", true, nm,
+             draft ? draft->surface_class[1] : !o || o->transport_msx, "TRANSPORT_MSX", true, nm,
              msxWall ? "WALL species have no surface transport semantics" : nullptr);
         gate(m.at(Domain::SURFACE_2D, SpeciesClass::AGE),
              ageOn, "WATER_AGE OFF",
-             !o || o->transport_age, "TRANSPORT_AGE", false, 1);
+             draft ? draft->surface_class[2] : !o || o->transport_age, "TRANSPORT_AGE", false, 1);
         gate(m.at(Domain::SURFACE_2D, SpeciesClass::TEMPERATURE),
              heatOn, "HEAT_TRANSPORT OFF",
-             !o || o->transport_temperature, "TRANSPORT_TEMPERATURE", false, 1);
+             draft ? draft->surface_class[3] : !o || o->transport_temperature, "TRANSPORT_TEMPERATURE", false, 1);
     }
 
     return m;

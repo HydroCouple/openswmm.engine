@@ -41,10 +41,13 @@
 
 #include "../../../include/openswmm/plugin_sdk/IOutputPlugin.hpp"
 
+#include "../io/CheckpointOutputPublication.hpp"
+#include "../io/CheckpointFile.hpp"
 #include <string>
 #include <atomic>
 #include <cstdio>
 #include <vector>
+#include <memory>
 
 namespace openswmm {
 
@@ -87,6 +90,22 @@ public:
     }
 
 private:
+    friend class SWMMEngine;
+    struct PreparedCheckpoint;
+    bool checkpoint_fresh_ = false;
+    std::string checkpoint_header_;
+    std::string checkpointBytes(const SimulationContext&, double next_report_ms) const;
+    std::shared_ptr<PreparedCheckpoint> prepareCheckpoint(const SimulationContext&, double next_report_ms, std::string);
+    void installCheckpoint(PreparedCheckpoint&);
+    io::CheckpointOutputPublication::Output checkpointPublication(const PreparedCheckpoint&) const;
+    void adoptCheckpoint(PreparedCheckpoint&) noexcept;
+    void validateCheckpoint(const SimulationContext&, double next_report_ms, int periods, const std::string&) const;
+    std::string readPrefix() const;
+    std::string captureFileCheckpoint(const SimulationContext&,double,const std::filesystem::path&,
+        std::shared_ptr<io::OwnedCheckpointFile>&) const;
+    std::shared_ptr<PreparedCheckpoint> prepareFileCheckpoint(const SimulationContext&,double,std::string);
+    void validateFileCheckpoint(FILE*,uint64_t,const SimulationContext&,double,int) const;
+
     std::string         out_path_;
     PluginState         state_      = PluginState::UNLOADED;
     std::string         last_error_;
@@ -98,6 +117,7 @@ private:
     int                 n_links_    = 0;
     int                 n_polluts_  = 0;
     int                 n_subcatch_vars_ = 0;
+    bool                snow_process_ = false;
     int                 n_node_vars_ = 0;
     int                 n_link_vars_ = 0;
     int                 flow_units_code_ = 0;

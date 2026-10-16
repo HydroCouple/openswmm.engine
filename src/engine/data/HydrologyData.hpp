@@ -31,6 +31,10 @@
 #define OPENSWMM_ENGINE_HYDROLOGY_DATA_HPP
 
 #include "LidNodeData.hpp"
+#include "../hydrology/surface/UebConfig.hpp"
+#include "../hydrology/surface/MeshSnowConfig.hpp"
+#include "../hydrology/surface/UebSubcatchments.hpp"
+#include "../hydrology/HourlyMeteorology.hpp"
 #include <vector>
 #include <string>
 #include <array>
@@ -53,6 +57,14 @@ namespace openswmm {
  * @ingroup engine_data
  */
 struct SnowpackStore {
+    // Derived at report time from accepted native and completed source owners.
+    // Not restart state; it is rebuilt after every run/resume.
+    std::vector<std::pair<std::string,double>> report_values;
+    surface::ueb::NativeState runtime;
+    surface::SnowConfig config;
+    surface::MeshSnowConfig mesh_config;
+    climate::HourlyMeteorology meteorology;
+    std::vector<climate::SnowDailyWeather> daily_weather;
     int count() const { return static_cast<int>(names.size()); }
 
     std::vector<std::string> names;
@@ -146,6 +158,13 @@ struct LidControlStore {
      *  removals[lid_index] = vector of {pollutant_index, fraction} pairs.
      */
     std::vector<std::vector<std::pair<int, double>>> removals;
+
+    /** @brief REMOVALS entries naming something that was not a pollutant when
+     *  the row was read: a reaction species, or a pollutant declared later in
+     *  the file. Kept by name and bound by msxsurf::resolve (Multispecies
+     *  Phase 2); the writer emits them so they survive a save.
+     */
+    std::vector<std::vector<std::pair<std::string, double>>> removals_by_name;
 };
 
 // ============================================================================

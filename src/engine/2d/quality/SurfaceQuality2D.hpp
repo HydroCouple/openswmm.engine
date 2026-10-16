@@ -182,6 +182,9 @@ public:
     /// Cumulative runoff volume (m³) the cell produced (the positive part of
     /// its net outflow per step, D-A22) — the `q·A·dt` the washoff laws saw.
     double runoffVolume(int c) const noexcept { return runoff_vol_[static_cast<std::size_t>(c)]; }
+    /// …of which on steps fast enough to wash off (legacy MIN_RUNOFF): the
+    /// volume an EMC washes off at its concentration.
+    double wetRunoffVolume(int c) const noexcept { return wet_runoff_vol_[static_cast<std::size_t>(c)]; }
 
 private:
     std::size_t cidx(int c, int lu) const noexcept {
@@ -218,6 +221,7 @@ private:
     std::vector<double>      bu_;       ///< bidx(c, lu, s)
     std::vector<double>      last_swept_; ///< [c * n_lu + lu] days
     std::vector<double>      runoff_vol_; ///< [c] m³, cumulative
+    std::vector<double>      wet_runoff_vol_; ///< [c] m³, cumulative, washoff-eligible steps
     std::vector<double>      led_init_, led_bu_, led_wo_, led_sw_, led_bmp_;   ///< [s] user mass
 };
 

@@ -115,14 +115,15 @@ double landCoverLongwave(double t_air_c, double emiss_landcover,
 
 double netRadiativeFluxOut(double t_water_c, double t_air_c,
                            double humidity_pct, const RadiativeConfig& cfg,
-                           double jin_wm2, double cloud_factor) noexcept {
+                           double jin_wm2, double cloud_factor, double incoming_longwave) noexcept {
     // Negative sentinel = "no resolved value, use the configured constant".
     // 0 is a legal Jin (night) and must not read as unset.
     const double jin = (jin_wm2 < 0.0) ? cfg.shortwave_wm2 : jin_wm2;
 
     const double jsn = netShortwave(jin, cfg.albedo, cfg.shade_factor);
     const double jbr = backLongwave(t_water_c, cfg.emiss_water);
-    const double jan = atmosphericLongwave(t_air_c, humidity_pct,
+    const double jan = incoming_longwave >= 0 ? incoming_longwave*(1-cfg.lw_reflection)*cfg.sky_view :
+        atmosphericLongwave(t_air_c, humidity_pct,
                                            cfg.atm_emiss_coeff,
                                            cfg.lw_reflection, cfg.sky_view,
                                            cloud_factor);
@@ -143,8 +144,10 @@ double netRadiativeFluxOut(double t_water_c, double t_air_c,
 
 double radiativeFluxOut(const SimulationContext& ctx,
                         const HeatElement& elem, double t_w) noexcept {
-    if (!ctx.options.heat_transport || !ctx.heat_config.radiative_exchange)
-        return 0.0;
+    return radiativeFluxOut(ctx,elem,t_w,ctx.heat_config.radiative_exchange);
+}
+double radiativeFluxOut(const SimulationContext& ctx,const HeatElement& elem,double t_w,bool enabled) noexcept {
+    if(!ctx.options.heat_transport || !enabled)return 0.0;
 
     // H6a. `shortwave_now` is resolved once per step by `updateSolarForcing`
     // at every binding prologue; this call is const and only reads it.
@@ -171,7 +174,8 @@ double radiativeFluxOut(const SimulationContext& ctx,
                            ctx.heat_state.shortwave_now);
     return netRadiativeFluxOut(
         t_w, t_air_c, rh, rc, jin,
-        cloudLongwaveFactor(ctx.heat_state.cloud_now, cc.lw_cloud_k));
+        cloudLongwaveFactor(ctx.heat_state.cloud_now, cc.lw_cloud_k),
+        ctx.climate_state.radiation.shared_heat_forcing ? ctx.climate_state.radiation.longwave : -1.0);
 }
 
 }  // namespace openswmm::transport::heat

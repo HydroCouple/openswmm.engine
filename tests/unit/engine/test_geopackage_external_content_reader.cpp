@@ -42,6 +42,7 @@
 #include <sqlite3.h>
 #include <string>
 
+#include "core/HotStartManager.hpp"
 #include "core/SimulationContext.hpp"
 #include "input/geopackage/ExternalContentReader.hpp"
 #include "input/geopackage/ExternalContentWriter.hpp"
@@ -49,7 +50,10 @@
 #include "input/geopackage/GpkgUtils.hpp"
 
 namespace fs = std::filesystem;
+using openswmm::HotStartManager;
+using openswmm::NodeType;
 using openswmm::SimulationContext;
+using openswmm::gpkg::GpkgError;
 using openswmm::TableType;
 using openswmm::gpkg::open_database;
 using openswmm::gpkg::create_schema;
@@ -324,6 +328,84 @@ TEST(GpkgExternalContentReader, HotstartUsePopulatedRoundTrip) {
 }
 
 // ---------------------------------------------------------------------------
+// A legacy hot start of a model with subcatchments and a storage node, with a
+// trailer after the links, comes back from the .gpkg byte for byte. Before,
+// the writer refused the subcatchment section, misread every node after a
+// storage node (its residence-time float) and dropped the trailer.
+// ---------------------------------------------------------------------------
+
+namespace {
+SimulationContext hotstartModel(int n_subcatch) {
+    SimulationContext ctx;
+    for (int i = 0; i < n_subcatch; ++i) ctx.subcatch_names.add("S" + std::to_string(i + 1));
+    ctx.landuse_names.add("LU");
+    ctx.node_names.add("J1");
+    ctx.node_names.add("O1");
+    ctx.link_names.add("L1");
+    ctx.pollutant_names.add("TSS");
+    ctx.allocate_objects();
+    ctx.nodes.type[0] = NodeType::STORAGE;
+    ctx.nodes.type[1] = NodeType::OUTFALL;
+    return ctx;
+}
+} // namespace
+
+TEST(GpkgExternalContentReader, HotstartWithSubcatchmentsStorageAndTrailerRoundTrips) {
+    const std::string sim = "sim1";
+    const std::string stem = "hotstart_runoff_section";
+    const fs::path src = testDir() / "hotstart_runoff_section.hsf";
+    const SimulationContext model = hotstartModel(1);
+    // 1 subcatchment, no groundwater or snowpack, 1 pollutant, 1 land use:
+    // 4 + 6 + 2*1 + 1*(1+1) doubles.
+    ASSERT_EQ(HotStartManager::legacy_runoff_size(model, 1), 14u);
+    {
+        std::ofstream o(src, std::ios::binary);
+        o.write("SWMM5-HOTSTART4", 15);
+        for (int32_t v : {1, 1, 2, 1, 1, 0})   // nSub nLand nNodes nLinks nPollut flowUnits
+            o.write(reinterpret_cast<const char*>(&v), 4);
+        for (int k = 0; k < 14; ++k) {
+            const double d = 0.5 + k;
+            o.write(reinterpret_cast<const char*>(&d), 8);
+        }
+        // J1 (storage): depth, lateral inflow, residence time, TSS;
+        // O1: depth, lateral inflow, TSS; L1: flow, depth, setting, TSS.
+        for (float f : {0.5f, 0.1f, 3600.0f, 12.5f, 0.25f, 0.0f, 7.0f,
+                        1.75f, 0.4f, 1.0f, 5.0f})
+            o.write(reinterpret_cast<const char*>(&f), 4);
+        o.write("OPENSWMM-HSMSX1\x02\x00\x00\x00trailer", 26);
+    }
+    std::string original;
+    {
+        std::ifstream f(src, std::ios::binary);
+        original.assign(std::istreambuf_iterator<char>(f), {});
+    }
+
+    auto db = freshDb(stem);
+    plantMinimalModel(db.get(), sim);
+    {
+        SimulationContext other = hotstartModel(2);   // the file does not fit it
+        other.files.hotstart_use_path = src.string();
+        EXPECT_THROW(write_external_content(db.get(), other, sim), GpkgError);
+    }
+    {
+        SimulationContext wctx = hotstartModel(1);
+        wctx.files.hotstart_use_path = src.string();
+        ASSERT_NO_THROW(write_external_content(db.get(), wctx, sim));
+    }
+
+    SimulationContext rctx = hotstartModel(1);
+    const std::string scratch = scratchDirFor(dbPathFor(stem));
+    ASSERT_NO_THROW(read_external_content(db.get(), rctx, sim, scratch));
+    std::string rebuilt;
+    {
+        std::ifstream f(rctx.files.hotstart_use_path.absolute, std::ios::binary);
+        rebuilt.assign(std::istreambuf_iterator<char>(f), {});
+    }
+    EXPECT_EQ(rebuilt.size(), original.size());
+    EXPECT_TRUE(rebuilt == original) << "the rebuilt hot start differs from the embedded one";
+}
+
+// ---------------------------------------------------------------------------
 // Empty scratch_dir → no-op
 // ---------------------------------------------------------------------------
 
@@ -336,4 +418,39 @@ TEST(GpkgExternalContentReader, EmptyScratchDirSkipsHydration) {
     ASSERT_NO_THROW(read_external_content(db.get(), rctx, sim, ""));
     EXPECT_TRUE(rctx.options.temp_file.empty());
     EXPECT_TRUE(rctx.files.inflows_path.empty());
+}
+
+// ---------------------------------------------------------------------------
+// SAVE HOTSTART format keyword survives write → read; NULL reads as AUTO.
+// ---------------------------------------------------------------------------
+
+TEST(GpkgExternalContentReader, HotstartSaveFormatRoundTrip) {
+    const std::string sim = "sim1";
+    const std::string stem = "hotstart_save_format";
+    auto db = freshDb(stem);
+    plantMinimalModel(db.get(), sim);
+    {
+        SimulationContext wctx;
+        openswmm::HotstartSaveEntry a, n, l;
+        a.path = (testDir() / "rt_auto.hsf").string();
+        n.path = (testDir() / "rt_native.hsf").string();
+        n.format = openswmm::HotstartFormat::NATIVE;
+        l.path = (testDir() / "rt_legacy.hsf").string();
+        l.format = openswmm::HotstartFormat::LEGACY;
+        l.datetime = 46036.5;
+        for (const auto* e : {&a, &n, &l}) {
+            std::error_code ec;
+            fs::remove(e->path.str(), ec);   // pending slots: no file on disk
+        }
+        wctx.files.hotstart_saves = {a, n, l};
+        ASSERT_NO_THROW(write_external_content(db.get(), wctx, sim));
+    }
+    SimulationContext rctx;
+    const std::string scratch = scratchDirFor(dbPathFor(stem));
+    ASSERT_NO_THROW(read_external_content(db.get(), rctx, sim, scratch));
+    ASSERT_EQ(rctx.files.hotstart_saves.size(), 3u);
+    EXPECT_EQ(rctx.files.hotstart_saves[0].format, openswmm::HotstartFormat::AUTO);
+    EXPECT_EQ(rctx.files.hotstart_saves[1].format, openswmm::HotstartFormat::NATIVE);
+    EXPECT_EQ(rctx.files.hotstart_saves[2].format, openswmm::HotstartFormat::LEGACY);
+    EXPECT_DOUBLE_EQ(rctx.files.hotstart_saves[2].datetime, 46036.5);
 }

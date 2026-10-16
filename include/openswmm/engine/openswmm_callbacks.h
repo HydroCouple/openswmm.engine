@@ -85,6 +85,20 @@ typedef void (*SWMM_ProgressCallback)(
     void*       user_data
 );
 
+/**
+ * @brief Reports progress for a synchronous, cancellable read-only operation.
+ *
+ * Return nonzero to cancel the operation. The callback runs on the calling
+ * thread and must not mutate or close the engine. `stage` is operation-specific
+ * and `progress` is in [0, 100].
+ */
+typedef int (*SWMM_CancelCallback)(
+    SWMM_Engine engine,
+    int         stage,
+    int         progress,
+    void*       user_data
+);
+
 /* =========================================================================
  * Warning / error callback
  * ========================================================================= */

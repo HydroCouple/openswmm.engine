@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+namespace openswmm::detail { class CompletedSourceArchive; }
+
 namespace openswmm::runoff {
 
 struct SourceForcingInterval {
@@ -32,12 +34,14 @@ struct SourceClockGroup {
 /// Cancellation restores no water: uncommitted source trials must stay private.
 class SourceClockGroups {
 public:
-    std::string initialize(const SimulationContext&, const std::vector<int>& seeds);
+    std::string initialize(const SimulationContext&, const std::vector<int>& seeds,
+                           bool hydraulic_returns = false);
     std::string stage(int group, double end, double completed_through);
     std::string commit(int group);
     void cancel(int group);
     const std::vector<SourceClockGroup>& groups() const { return groups_; }
     int groupForSubcatch(int source) const;
+    void checkpoint(detail::CompletedSourceArchive&,bool model); // internal accepted-boundary IO
 
 private:
     struct RainSeries {

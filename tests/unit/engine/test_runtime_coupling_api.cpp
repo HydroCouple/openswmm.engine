@@ -139,4 +139,26 @@ TEST_F(RuntimeCouplingApi, DirectBoundaryUsesTotalFlowAndRejectsDisabledHeat) {
     ASSERT_EQ(swmm_coupling_capabilities(engine, &flags), SWMM_OK);
     EXPECT_EQ(flags, 1u | 8u | 64u | 128u | 512u);
 }
+
+TEST_F(RuntimeCouplingApi, SchedulerCallbacksReclampNewFractionalExpiries) {
+    struct Callback {int begin=0,end=0,rc=-1;};Callback callback;
+    ASSERT_EQ(swmm_set_step_begin_callback(engine,[](void* h,double,double,void* data) {
+        auto& c=*static_cast<Callback*>(data);if(c.begin++)return;
+        SWMM_CouplingForcing row{sizeof(row),1,0,1,.003,.375,0,nullptr};
+        SWMM_CouplingFrame f{sizeof(f),1,"water",0,nullptr,0,nullptr,1,&row,0,nullptr};
+        c.rc=swmm_coupling_apply_frame(static_cast<SWMM_Engine>(h),&f);
+    },&callback),SWMM_OK);
+    ASSERT_EQ(swmm_set_step_end_callback(engine,[](void* h,double,double,void* data) {
+        auto& c=*static_cast<Callback*>(data);if(c.end++)return;
+        SWMM_CouplingForcing row{sizeof(row),1,0,1,.003,.75,0,nullptr};
+        SWMM_CouplingFrame f{sizeof(f),1,"water",0,nullptr,0,nullptr,1,&row,0,nullptr};
+        c.rc=swmm_coupling_apply_frame(static_cast<SWMM_Engine>(h),&f);
+    },&callback),SWMM_OK);
+    double elapsed=-1,seconds=-1;
+    ASSERT_EQ(swmm_engine_step(engine,&elapsed),SWMM_OK);ASSERT_EQ(callback.rc,SWMM_OK);
+    ASSERT_EQ(swmm_engine_get_elapsed_seconds(engine,&seconds),SWMM_OK);EXPECT_DOUBLE_EQ(seconds,.375);
+    ASSERT_EQ(swmm_engine_step(engine,&elapsed),SWMM_OK);
+    ASSERT_EQ(swmm_engine_get_elapsed_seconds(engine,&seconds),SWMM_OK);EXPECT_DOUBLE_EQ(seconds,.75);
+    EXPECT_NEAR(volume(),.003*50*.75,1e-12);
+}
 } // namespace

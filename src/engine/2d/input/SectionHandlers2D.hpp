@@ -255,7 +255,7 @@ bool is2DRetiredOptionKey(const std::string& key);
  *
  * report2DVarTokens() lists the group tokens in bit order (DEPTH, VELOCITY,
  * EDGE_FLUX, NODE_HEAD, SPECIES, RAINFALL, INFILTRATION, COUPLING,
- * GRADIENTS, CONTINUITY, ENVELOPES, BUILDUP (S7), GROUNDWATER, GW_DETAILED
+ * GRADIENTS, CONTINUITY, ENVELOPES, BUILDUP (S7), GROUNDWATER, GW_DETAILED, HEAT
  * (G-O)). parseReport2DVars() accepts a
  * whitespace/comma-separated list of those tokens or one of the presets
  * DEFAULT | MINIMAL | ALL (case-insensitive); it returns an empty error
@@ -305,6 +305,7 @@ void register2DSections(MeshData& mesh,
                         std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
                         std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
                         std::vector<SurfaceRouter2D::PendingInitialQualityRow>& pending_iq_rows,
+                        std::vector<SurfaceRouter2D::PendingInitialBedQualityRow>& pending_ibq_rows,
                         std::vector<SurfaceRouter2D::PendingBoundaryQualityRow>& pending_bq_rows,
                         input::SectionRegistry& registry);
 
@@ -312,6 +313,11 @@ void register2DSections(MeshData& mesh,
 std::string parse2DInitialQualityLine(
     const std::vector<std::string>& tokens,
     std::vector<SurfaceRouter2D::PendingInitialQualityRow>& rows);
+
+/// Initial local-bed porewater concentrations; same scope grammar as surface.
+std::string parse2DInitialBedQualityLine(
+    const std::vector<std::string>& tokens,
+    std::vector<SurfaceRouter2D::PendingInitialBedQualityRow>& rows);
 
 /// S2 — one `[2D_BOUNDARY_QUALITY]` line (`TRI EDGE SPECIES CONC`). Empty = OK.
 std::string parse2DBoundaryQualityLine(
@@ -355,6 +361,7 @@ std::string load2DMeshExternalFile(MeshData& mesh,
                                    const std::string& inp_base_dir,
                                    std::vector<std::string>* warnings = nullptr,
                                    std::vector<SurfaceRouter2D::PendingInitialQualityRow>* pending_iq_rows = nullptr,
+                                   std::vector<SurfaceRouter2D::PendingInitialBedQualityRow>* pending_ibq_rows = nullptr,
                                    std::vector<SurfaceRouter2D::PendingBoundaryQualityRow>* pending_bq_rows = nullptr);
 
 /**

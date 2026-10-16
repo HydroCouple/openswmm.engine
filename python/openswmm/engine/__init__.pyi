@@ -105,6 +105,7 @@ from ._forcing import Forcing as Forcing
 # =============================================================================
 from ._heat import Heat as Heat
 from ._heat import HeatNodeOverride as HeatNodeOverride
+from ._heat import HeatLidMaterial as HeatLidMaterial, HeatElementValue as HeatElementValue, HeatSnapshot as HeatSnapshot
 from ._water_age import WaterAge as WaterAge
 from ._water_age import WaterAgeOverride as WaterAgeOverride
 from ._reactions import Reactions as Reactions
@@ -181,6 +182,9 @@ from ._enums import (
     HeatSolarParam as HeatSolarParam,
     HeatCloudParam as HeatCloudParam,
     HeatSourceKind as HeatSourceKind,
+    GroundHeatValue as GroundHeatValue,
+    GroundHeatLayerValue as GroundHeatLayerValue,
+    ChannelGroundValue as ChannelGroundValue,
     WaterAgeSource as WaterAgeSource,
     ReactionScope as ReactionScope,
     ReactionExprForm as ReactionExprForm,

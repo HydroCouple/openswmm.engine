@@ -78,6 +78,11 @@ SWMM_ENGINE_API int swmm_spatial_get_crs(SWMM_Engine engine, char* buf, int bufl
  */
 SWMM_ENGINE_API int swmm_spatial_set_node_coord(SWMM_Engine engine, int idx, double x, double y);
 
+/** Whether a node has authored/API-assigned coordinates. Distinguishes a
+ * valid (0,0) from the default for an unlocated node; does not alter geometry.
+ * Returns BADINDEX for an invalid node and BADPARAM for a null output. */
+SWMM_ENGINE_API int swmm_spatial_node_has_coord(SWMM_Engine engine, int idx, int* present);
+
 /**
  * @brief Get the X/Y coordinates for a node.
  * @param engine  Engine handle.
@@ -264,6 +269,51 @@ SWMM_ENGINE_API int swmm_spatial_set_gage_coord(SWMM_Engine engine, int idx, dou
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_spatial_get_gage_coord(SWMM_Engine engine, int idx, double* x, double* y);
+
+/* =========================================================================
+ * [MAP] extent and units, and GUI annotation sections
+ * (closed C-API gaps 2026-10-11)
+ * ========================================================================= */
+
+/** @brief `[MAP] DIMENSIONS`: the map extent (x1, y1) - (x2, y2). */
+SWMM_ENGINE_API int swmm_spatial_get_map_dimensions(SWMM_Engine engine,
+        double* x1, double* y1, double* x2, double* y2);
+
+/** @brief Set the `[MAP] DIMENSIONS` extent. All four values must be finite. */
+SWMM_ENGINE_API int swmm_spatial_set_map_dimensions(SWMM_Engine engine,
+        double x1, double y1, double x2, double y2);
+
+/** @brief `[MAP] UNITS` as stored (upper case, e.g. FEET, METERS, DEGREES,
+ *         NONE; empty when the deck did not state it). */
+SWMM_ENGINE_API int swmm_spatial_get_map_units(SWMM_Engine engine, char* buf,
+                                               int buflen);
+
+/** @brief Set `[MAP] UNITS`; stored upper case like the parser does. */
+SWMM_ENGINE_API int swmm_spatial_set_map_units(SWMM_Engine engine,
+                                               const char* units);
+
+/**
+ * @brief Read a GUI annotation section verbatim: `LABELS`, `BACKDROP`,
+ *        `PROFILE` or `PROFILES` (case-insensitive).
+ *
+ * @details The engine never interprets these sections; it keeps their lines
+ *          and writes them back unchanged on save. The text is the section's
+ *          lines joined by '\n', without the `[SECTION]` header.
+ *
+ * @param required If not NULL, receives the buffer size (including the
+ *                 terminating NUL) the full text needs; @p buf may be NULL
+ *                 to query it.
+ * @return ::SWMM_ERR_BADPARAM for any other section name.
+ */
+SWMM_ENGINE_API int swmm_spatial_get_annotation(SWMM_Engine engine,
+        const char* section, char* buf, int buflen, int* required);
+
+/**
+ * @brief Replace a GUI annotation section's lines with @p text (lines
+ *        separated by '\n'); NULL or "" removes the section from the model.
+ */
+SWMM_ENGINE_API int swmm_spatial_set_annotation(SWMM_Engine engine,
+        const char* section, const char* text);
 
 #ifdef __cplusplus
 } /* extern "C" */

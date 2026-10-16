@@ -8,6 +8,9 @@ def test_minimal_package_exports():
     assert not engine.HAS_GEOPACKAGE
     namespace = {}
     exec('from openswmm.engine import *', namespace)
+    assert 'MeshSnow' not in namespace
+    assert 'Snow' in namespace
+    assert 'Checkpoints' in namespace
     assert 'Surface2D' not in namespace
     assert 'Groundwater' not in namespace
     assert 'SurfaceQuality' not in namespace

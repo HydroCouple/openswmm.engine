@@ -146,7 +146,13 @@ struct Matrix {
 };
 
 /// Build the full matrix (states + reasons). Pure: never writes warnings.
-Matrix resolve(const SimulationContext& ctx);
+struct Draft {
+    bool ignore_quality=false, heat=false, age=false, ignore_2d=false;
+    bool surface_class[4]={true,true,true,true};
+    bool groundwater=false;
+    bool mesh=false;
+};
+Matrix resolve(const SimulationContext& ctx, const Draft* draft = nullptr);
 
 const char* domainName(Domain d) noexcept;
 const char* speciesClassName(SpeciesClass c) noexcept;

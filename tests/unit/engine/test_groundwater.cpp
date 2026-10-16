@@ -23,6 +23,10 @@
 
 #include "hydrology/Groundwater.hpp"
 #include "core/SimulationContext.hpp"
+#include "core/DateTime.hpp"
+#include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_output.h>
+#include <openswmm/legacy/engine/openswmm_solver.h>
 
 #ifndef BENCHMARK_DATA_DIR
 #  define BENCHMARK_DATA_DIR ""
@@ -48,6 +52,90 @@ static SimulationContext& make_gw_dummy_ctx() {
     return ctx;
 }
 static SimulationContext& gw_dummy_ctx = make_gw_dummy_ctx();
+
+TEST(GroundwaterEvaporation, UsesRunoffEndpointMonthAheadOfRoutingClock) {
+    SimulationContext ctx;
+    ctx.subcatch_names.add("S1");
+    ctx.subcatches.resize(1);
+    ctx.subcatches.area[0] = 1.0;
+    ctx.current_date = datetime::encodeDate(1970, 3, 31)
+                     + datetime::encodeTime(23, 0, 0);
+    ctx.patterns.add("MONTHLY", 0, {0.1, 0.3, 0.4, 0.5, 0.6, 0.7,
+                                   0.8, 0.8, 0.7, 0.5, 0.4, 0.2});
+    GWSolver solver;
+    solver.init(1);
+    auto& state = solver.state();
+    state.total_depth[0] = 10.0;
+    state.theta[0] = 0.2;
+    state.upper_evap_frac[0] = 1.0;
+    state.upper_evap_pat[0] = 0;
+    const double zero[] = {0.0}, perv[] = {1.0};
+    solver.execute(ctx, 3600.0, 1e-7, zero, zero, perv, zero, 4);
+    EXPECT_DOUBLE_EQ(state.upper_evap[0], 0.5e-7);
+    EXPECT_EQ(datetime::monthOfYear(ctx.current_date), 3);
+}
+
+TEST(GroundwaterEvaporation, SurfaceEvaporationSpendsTheSharedDemandBeforeSoilEt) {
+    for(const double surface : {0.0,4e-7,1e-6}) {
+        SimulationContext ctx;ctx.subcatch_names.add("S1");ctx.subcatches.resize(1);
+        ctx.subcatches.area[0]=100;
+        GWSolver solver;solver.init(1);auto& state=solver.state();
+        state.total_depth[0]=10;state.theta[0]=.2;state.upper_evap_frac[0]=1;
+        const double zero[]={0},perv[]={1},used[]={surface};
+        solver.execute(ctx,60,1e-6,zero,zero,perv,used,1);
+        EXPECT_NEAR(state.upper_evap[0],1e-6-surface,1e-15);
+        EXPECT_NEAR(state.upper_evap[0]+state.lower_evap[0]+surface,1e-6,1e-15);
+    }
+}
+
+TEST(GroundwaterParity, MonthBoundaryAndHourlyHortonMatchLegacySavedResults) {
+    const std::string base = "mc_storm_parity/groundwater_month_horton";
+    ASSERT_EQ(swmm_run((base + ".inp").c_str(),
+                       (base + ".legacy.rpt").c_str(),
+                       (base + ".legacy.out").c_str()), 0);
+    SWMM_Engine engine = swmm_engine_create();
+    ASSERT_NE(engine, nullptr);
+    ASSERT_EQ(swmm_engine_open(engine, (base + ".inp").c_str(),
+                              (base + ".new.rpt").c_str(),
+                              (base + ".new.out").c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(engine), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(engine, 1), SWMM_OK);
+    double elapsed = 0.0;
+    int error = 0;
+    do { error = swmm_engine_step(engine, &elapsed); }
+    while (error == SWMM_OK && elapsed > 0.0);
+    EXPECT_EQ(error, SWMM_OK);
+    EXPECT_EQ(swmm_engine_end(engine), SWMM_OK);
+    swmm_engine_close(engine);
+    swmm_engine_destroy(engine);
+
+    SWMM_Output legacy = swmm_output_open((base + ".legacy.out").c_str());
+    SWMM_Output current = swmm_output_open((base + ".new.out").c_str());
+    ASSERT_NE(legacy, nullptr);
+    ASSERT_NE(current, nullptr);
+    ASSERT_EQ(swmm_output_get_period_count(legacy), 112);
+    ASSERT_EQ(swmm_output_get_period_count(current), 112);
+    ASSERT_EQ(swmm_output_get_subcatch_count(legacy), 1);
+    ASSERT_EQ(swmm_output_get_subcatch_count(current), 1);
+    for (int period = 0; period < 112; ++period) {
+        for (int var = 0; var < 8; ++var) {
+            float a = 0.0f, b = 0.0f;
+            ASSERT_EQ(swmm_output_get_subcatch_result(legacy, period, var, &a), 0);
+            ASSERT_EQ(swmm_output_get_subcatch_result(current, period, var, &b), 0);
+            EXPECT_TRUE(std::isfinite(b)) << period << ":" << var;
+            EXPECT_EQ(a, b) << period << ":" << var;
+        }
+        for (int var = 0; var < 15; ++var) {
+            float a = 0.0f, b = 0.0f;
+            ASSERT_EQ(swmm_output_get_system_result(legacy, period, var, &a), 0);
+            ASSERT_EQ(swmm_output_get_system_result(current, period, var, &b), 0);
+            EXPECT_TRUE(std::isfinite(b)) << period << ":" << var;
+            EXPECT_EQ(a, b) << period << ":" << var;
+        }
+    }
+    swmm_output_close(legacy);
+    swmm_output_close(current);
+}
 
 // ============================================================================
 // GWSoA initialization

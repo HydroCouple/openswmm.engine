@@ -216,7 +216,7 @@ void routeLidLayerTemperature(SimulationContext& ctx,
 
     // H6a: runoff-clock binding, same reasoning as HeatWatershed
     // (SolarRadiation.hpp).
-    heat::updateSolarForcing(ctx);
+    heat::updateSolarForcing(ctx, dt);
 
     for (int t = 0; t < solver.numGroups(); ++t) {
         const auto& g = solver.group(t);

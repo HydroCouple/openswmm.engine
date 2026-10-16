@@ -648,7 +648,7 @@ SWMM_ENGINE_API int swmm_subcatch_get_gw_state(SWMM_Engine engine, int idx,
                                                double* theta, double* lower_depth);
 
 /**
- * @brief Set the snow pack state on one snow subarea of a subcatchment.
+ * @brief Set degree-day snow state on one snow subarea of a subcatchment.
  *
  * State injection for data assimilation (e.g. observed SWE). Pass a
  * negative value to leave that component unchanged.
@@ -668,7 +668,8 @@ SWMM_ENGINE_API int swmm_subcatch_set_snow_state(SWMM_Engine engine, int idx,
                                                  double ati, double coldc);
 
 /**
- * @brief Get the snow pack state on one snow subarea of a subcatchment.
+ * @brief Get degree-day snow state on one snow subarea of a subcatchment.
+ * UEB callers use swmm_subcatch_get_snow_process_state in openswmm_snow.h.
  *
  * @param engine      Engine handle.
  * @param idx         Subcatchment index (must have a snow pack).

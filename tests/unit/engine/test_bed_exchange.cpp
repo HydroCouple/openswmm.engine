@@ -25,16 +25,16 @@
  *          `bedCouplingForLink` is where the geometry lives and it is gated
  *          separately, at deck level, in the handoff's protocol.
  *
- *          **Every gate below is an IDENTITY or an INVARIANT**, not a value
- *          transcribed from the reference. A transcribed value tests that I
- *          copied a number; an identity tests that the system is the one
- *          claimed. Where a reference value IS the point — the reduction to
- *          `relaxT` — the reference is the engine's own other function, so
- *          the two cannot drift apart unnoticed.
+ *          The conservation and limit gates are identities or invariants.
+ *          The grounded three-store benchmark additionally compares the
+ *          matrix-exponential step with an independent RK4 integration of
+ *          the governing rates, so the hyporheic direction is not inferred
+ *          from a copied production result.
  */
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cmath>
 
 #include "transport/components/HeatFluxModules/BedExchange.hpp"
@@ -57,6 +57,45 @@ BedCoupling nominal() {
     g.c_b  = 2.4e7;      // J/K  (~8 m3 of saturated sediment)
     g.t_gr = 12.0;
     return g;
+}
+
+struct PairReference {
+    double water = 0.0;
+    double bed = 0.0;
+    double ground_j = 0.0;
+};
+
+/// Independent RK4 integration of the stated finite water/bed/ground ODE.
+/// This deliberately advances the three physical rates directly rather than
+/// using relaxPair's matrix-exponential formula.
+PairReference integrateFinitePair(const BedCoupling& g, double water,
+                                  double bed, double surface_power,
+                                  double seconds) {
+    using State = std::array<double, 3>; // water °C, bed °C, ground receipt J
+    const auto derivative = [&g, surface_power](const State& x) {
+        return State{
+            (surface_power + g.g_wb * (x[1] - x[0])) / g.c_w,
+            (g.g_wb * (x[0] - x[1]) + g.g_bg * (g.t_gr - x[1])) / g.c_b,
+            g.g_bg * (g.t_gr - x[1])
+        };
+    };
+    const auto shifted = [](const State& x, const State& dx, double scale) {
+        return State{x[0] + scale * dx[0], x[1] + scale * dx[1],
+                     x[2] + scale * dx[2]};
+    };
+
+    State x{water, bed, 0.0};
+    const int steps = static_cast<int>(std::ceil(seconds / 0.05));
+    const double h = seconds / steps;
+    for (int i = 0; i < steps; ++i) {
+        const State k1 = derivative(x);
+        const State k2 = derivative(shifted(x, k1, 0.5 * h));
+        const State k3 = derivative(shifted(x, k2, 0.5 * h));
+        const State k4 = derivative(shifted(x, k3, h));
+        for (std::size_t j = 0; j < x.size(); ++j)
+            x[j] += h * (k1[j] + 2.0 * k2[j] + 2.0 * k3[j] + k4[j]) / 6.0;
+    }
+    return {x[0], x[1], x[2]};
 }
 
 }  // namespace
@@ -161,7 +200,63 @@ TEST(BedExchangeTest, GroundConductionSetsTheLongRunEquilibrium) {
 }
 
 // ---------------------------------------------------------------------------
-// 5. The near-degenerate branch must AGREE with the spectral branch. The two
+// 5. Independent three-store benchmark for the hyporheic direction finding.
+//    The pair is integrated from the governing rates with RK4, then compared
+//    with the exact production step. With identical positive surface input,
+//    a colder finite bed and a colder deep boundary, adding the documented
+//    rho*cp*v_h*A conductance increases transfer out of the water and into
+//    the bed; it cannot be judged from a project run whose forcing and flow
+//    also evolve over the interval.
+// ---------------------------------------------------------------------------
+TEST(BedExchangeTest, AddedHyporheicConductanceMatchesIndependentGroundedPair) {
+    constexpr double initial_water = 25.0;
+    constexpr double initial_bed = 20.0;
+    constexpr double surface_area = 25.0;
+    constexpr double surface_power = 1000.0;
+    constexpr double seconds = 14400.0;
+    constexpr double rho_water = 1000.0;
+    constexpr double cp_water = 4184.0;
+    constexpr double hyporheic_velocity = 3.0e-5;
+    constexpr double bed_contact_area = 50.0;
+
+    const BedCoupling conduction_only = nominal();
+    BedCoupling with_hyporheic = conduction_only;
+    with_hyporheic.g_wb += rho_water * cp_water * hyporheic_velocity * bed_contact_area;
+
+    const PairReference expected_conduction = integrateFinitePair(
+        conduction_only, initial_water, initial_bed, surface_power, seconds);
+    const PairReference expected_hyporheic = integrateFinitePair(
+        with_hyporheic, initial_water, initial_bed, surface_power, seconds);
+    const auto actual_conduction = relaxPair(
+        conduction_only, initial_water, initial_bed,
+        -surface_power / surface_area, -surface_power / surface_area, 0.0,
+        surface_area, seconds);
+    const auto actual_hyporheic = relaxPair(
+        with_hyporheic, initial_water, initial_bed,
+        -surface_power / surface_area, -surface_power / surface_area, 0.0,
+        surface_area, seconds);
+
+    EXPECT_NEAR(initial_water + actual_conduction.dt_w, expected_conduction.water, 1e-9);
+    EXPECT_NEAR(initial_bed + actual_conduction.dt_b, expected_conduction.bed, 1e-9);
+    EXPECT_NEAR(initial_water + actual_hyporheic.dt_w, expected_hyporheic.water, 1e-9);
+    EXPECT_NEAR(initial_bed + actual_hyporheic.dt_b, expected_hyporheic.bed, 1e-9);
+
+    EXPECT_LT(expected_hyporheic.water, expected_conduction.water);
+    EXPECT_GT(expected_hyporheic.bed, expected_conduction.bed);
+    EXPECT_LT(expected_hyporheic.ground_j, expected_conduction.ground_j);
+
+    const double conduction_energy = conduction_only.c_w * actual_conduction.dt_w +
+        conduction_only.c_b * actual_conduction.dt_b;
+    const double hyporheic_energy = with_hyporheic.c_w * actual_hyporheic.dt_w +
+        with_hyporheic.c_b * actual_hyporheic.dt_b;
+    EXPECT_NEAR(conduction_energy,
+                surface_power * seconds + expected_conduction.ground_j, 1e-5);
+    EXPECT_NEAR(hyporheic_energy,
+                surface_power * seconds + expected_hyporheic.ground_j, 1e-5);
+}
+
+// ---------------------------------------------------------------------------
+// 6. The near-degenerate branch must AGREE with the spectral branch. The two
 //    are selected by a threshold on `s*dt`, and a threshold between two
 //    formulas that disagree is a discontinuity in the model that would show
 //    up as a jump when a parameter crosses it.
@@ -192,7 +287,7 @@ TEST(BedExchangeTest, DegenerateAndSpectralBranchesAgree) {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Solute exchange conserves mass to relative round-off.
+// 7. Solute exchange conserves mass to relative round-off.
 //
 //    NOT bit-exact, and this gate said it was until a driver disagreed at
 //    dt = 1e6: `vw*(vb*share)` and `vb*(vw*share)` are the same factors in a
@@ -214,7 +309,7 @@ TEST(BedExchangeTest, SoluteExchangeConservesMass) {
 }
 
 // ---------------------------------------------------------------------------
-// 7. Solute exchange cannot cross over either, at any step, and lands on the
+// 8. Solute exchange cannot cross over either, at any step, and lands on the
 //    volume-weighted mean. Same property as gate 3, different closed form —
 //    they are separate code paths and a fix to one does not fix the other.
 // ---------------------------------------------------------------------------
@@ -231,7 +326,7 @@ TEST(BedExchangeTest, SoluteExchangeNeverCrossesTheMean) {
 }
 
 // ---------------------------------------------------------------------------
-// 8. Refusals. Every one of these is a shape the binding can hand in — a dry
+// 9. Refusals. Every one of these is a shape the binding can hand in — a dry
 //    link, a massless bed, a zero step — and each must be a no-op rather
 //    than a NaN that then propagates into the published temperature.
 // ---------------------------------------------------------------------------
@@ -256,7 +351,7 @@ TEST(BedExchangeTest, DegenerateInputsAreNoOpsNotNaNs) {
 }
 
 // ---------------------------------------------------------------------------
-// 9. The dt-sweep discriminator D-H5d established, applied to the pair: the
+// 10. The dt-sweep discriminator D-H5d established, applied to the pair: the
 //    coupled step must converge to the substepped answer as dt shrinks, at
 //    first order or better. A coupling that is simply WRONG does not
 //    converge to the same limit, so this catches an error the invariant

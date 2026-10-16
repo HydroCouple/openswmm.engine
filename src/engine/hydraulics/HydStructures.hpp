@@ -56,6 +56,7 @@
 namespace openswmm {
 
 struct SimulationContext;
+class SWMMEngine;
 
 namespace hydstruct {
 
@@ -221,6 +222,7 @@ public:
                              double* node_new_surf_area, int link_idx);
 
 private:
+    friend class openswmm::SWMMEngine;
     PumpGroup    pumps_;
     OrificeGroup orifices_;
     WeirGroup    weirs_;

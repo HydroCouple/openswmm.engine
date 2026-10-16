@@ -26,6 +26,7 @@
  */
 
 #include "Routing.hpp"
+#include <type_traits>
 #include "fv/ExplicitFvSolver.hpp"
 #include "fv/NetworkMeshBuilder.hpp"
 #include "fv/NetworkSolverFactory.hpp"
@@ -41,6 +42,7 @@
 #include "TopoSort.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../input/PostParseResolver.hpp"
+#include "../hydrology/LidNode.hpp"
 
 #include <cmath>
 #include <algorithm>
@@ -344,6 +346,11 @@ void fillXSectParamsArray(SimulationContext& ctx, std::vector<XSectParams>& out)
 }  // namespace
 
 void Router::init(SimulationContext& ctx, RouteModel model) {
+    checkpoint_context_ = nullptr;
+    checkpoint_owned_session_ = false;
+    checkpoint_model_.clear();
+    checkpoint_time_ = checkpoint_step_end_ = 0.0;
+    checkpoint_ready_ = checkpoint_prepared_ = checkpoint_step_finished_ = false;
     model_ = model;
 
     int n_links = ctx.n_links();
@@ -477,6 +484,35 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
 int Router::step(SimulationContext& ctx, double dt,
                  double evap_rate,
                  dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn) {
+    return stepImpl(ctx, dt, evap_rate, std::move(non_conduit_fn), false);
+}
+
+std::unique_ptr<Router> Router::privateDynamicWaveWindow() const {
+    if(model_!=RouteModel::DYNWAVE || checkpoint_context_ || !dw_solver_.isInitialized())
+        throw std::runtime_error("Private Richards routing requires initialized dynamic wave outside a checkpoint session.");
+    auto r=std::make_unique<Router>();
+    r->model_=model_;r->groups_=groups_;r->dw_solver_=dw_solver_;
+    r->groups_.setBypassMask(nullptr);r->dw_solver_.groups_=&r->groups_;
+    r->lstep_enabled_=lstep_enabled_;r->lstep_rs_=lstep_rs_;
+    r->lstep_pmin_=lstep_pmin_;r->lstep_pmax_=lstep_pmax_;r->lstep_pdt_time_=lstep_pdt_time_;
+    r->lstep_ptime_=lstep_ptime_;r->lstep_pbin_=lstep_pbin_;
+    return r;
+}
+void Router::publishDynamicWaveWindow(Router& r) noexcept {
+    static_assert(std::is_nothrow_swappable_v<XSectGroups>);
+    static_assert(std::is_nothrow_swappable_v<dynwave::DWSolver>);
+    using std::swap;swap(groups_,r.groups_);swap(dw_solver_,r.dw_solver_);
+    groups_.setBypassMask(nullptr);r.groups_.setBypassMask(nullptr);
+    dw_solver_.groups_=&groups_;r.dw_solver_.groups_=&r.groups_;
+}
+
+int Router::stepImpl(SimulationContext& ctx, double dt, double evap_rate,
+                     dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn, bool owned_callback) {
+    const bool mesh_richards=lidnode::validateRichardsRouting(ctx,dt);
+    if(mesh_richards && model_!=RouteModel::DYNWAVE)
+        throw std::runtime_error("Joint Mesh Richards routing is qualified only for native dynamic wave.");
+    if (checkpoint_context_)
+        checkCheckpointStep(ctx, dt, evap_rate, bool(non_conduit_fn), owned_callback);
     // 1. Old states are saved ONCE per step by SWMMEngine::step() BEFORE
     //    lateral inflows are assembled — matching legacy routing_execute,
     //    which snapshots old hyd state / oldLatFlow (initSystemInflows,
@@ -558,6 +594,9 @@ int Router::step(SimulationContext& ctx, double dt,
     if (ctx.options.routing_model != RoutingModel::FV)
         updateLinkStates(ctx);
 
+    if(mesh_richards)for(auto& s:ctx.node_subtypes.storages.lid_state)
+        if(s.richards_mesh_pending_finish)s.richards_mesh_routed=true;
+    if (checkpoint_context_) checkpoint_step_finished_ = true;
     return iters;
 }
 

@@ -504,10 +504,9 @@ TEST(TransportPolicyProcesses, InfilDestinationAppliesToUnspelledRowsOnly) {
     const std::string rows =
         "[2D_INFILTRATION_DEFAULTS]\n*  CONSTANT  50.0  -  -  -  -\n\n";
     {
-        // AQUIFER_2D is authoring-only: the row takes it and resolve refuses
-        // it with the reserved-destination message, exactly like a spelled
-        // DEST would.
-        DeckRun r = openDeck("dest_aq2d", deck("", "INFIL_DESTINATION AQUIFER_2D\n", rows));
+        // The default reaches unspelled rows. This deck has no subcatchment
+        // aquifer, so resolving that destination must fail.
+        DeckRun r = openDeck("dest_aq2d", deck("", "INFIL_DESTINATION SUBCATCH_AQUIFER\n", rows));
         ASSERT_TRUE(r.opened);
         EXPECT_NE(swmm_engine_initialize(r.e), SWMM_OK);
         swmm_engine_close(r.e);
@@ -517,12 +516,23 @@ TEST(TransportPolicyProcesses, InfilDestinationAppliesToUnspelledRowsOnly) {
         // A row that spells LOST keeps it.
         const std::string spelled =
             "[2D_INFILTRATION_DEFAULTS]\n*  CONSTANT  50.0  -  -  -  -  LOST\n\n";
-        DeckRun r = openDeck("dest_spelled", deck("", "INFIL_DESTINATION AQUIFER_2D\n", spelled));
+        DeckRun r = openDeck("dest_spelled", deck("", "INFIL_DESTINATION SUBCATCH_AQUIFER\n", spelled));
         ASSERT_TRUE(r.opened);
         EXPECT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
         swmm_engine_close(r.e);
         swmm_engine_destroy(r.e);
     }
+}
+
+TEST(TransportPolicyProcesses, ObsoleteAquiferDestinationIsRejectedEvenWithExplicitLostRows) {
+    const std::string spelled =
+        "[2D_INFILTRATION_DEFAULTS]\n* CONSTANT 50.0 - - - - LOST\n\n";
+    DeckRun r = openDeck("dest_obsolete", deck("", "INFIL_DESTINATION AQUIFER_2D\n", spelled));
+    ASSERT_TRUE(r.opened);
+    EXPECT_NE(swmm_engine_initialize(r.e), SWMM_OK);
+    EXPECT_NE(r.eng->context().error_message.find("obsolete"), std::string::npos);
+    swmm_engine_close(r.e);
+    swmm_engine_destroy(r.e);
 }
 
 // ---------------------------------------------------------------------------

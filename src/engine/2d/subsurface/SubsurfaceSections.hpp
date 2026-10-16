@@ -90,6 +90,8 @@
 #include "../../input/SectionRegistry.hpp"
 
 #include <string>
+#include <functional>
+#include <limits>
 #include <vector>
 
 namespace openswmm {
@@ -140,6 +142,28 @@ std::vector<std::string> resolveSubsurface(SimulationContext& ctx,
                                            SubsurfaceConfig& cfg,
                                            std::vector<std::string>& names,
                                            double node_xy_to_mesh);
+
+struct MeshPolylineInterval {
+    int cell=-1;
+    double begin=0,end=0; ///< SI chainage along the complete polyline, m.
+    double share=1; ///< coincident shared-edge ownership, never added length.
+};
+struct MeshPolylineMapping {
+    std::string error;
+    double length=0,covered_length=0;
+    bool cancelled=false;
+    std::size_t interval_count=0,contact_cells=0;
+    std::vector<MeshPolylineInterval> intervals;
+};
+/** Exact convex-cell clipping with along-polyline intervals. Shared-edge
+ * ownership is divided only over that interval; ordinary interior lengths
+ * are not diluted. Reuses the hydraulic locator without changing its path.
+ * Invalid points or overlapping mesh interiors return an error and no rows. */
+MeshPolylineMapping mapMeshPolyline(const MeshData&,const std::vector<double>& x,const std::vector<double>& y,
+                                    const std::function<bool(int)>& progress = {},
+                                    std::size_t first_interval = 0,
+                                    std::size_t max_intervals = std::numeric_limits<std::size_t>::max(),
+                                    bool count_contact_cells = false);
 
 /// G-X3 (2026-09-19): the length-weighted (conduit, cell) shares for every
 /// conduit with a [LOSSES] seepage rate whose polyline crosses the mesh

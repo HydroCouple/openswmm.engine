@@ -39,6 +39,7 @@
 #include <sstream>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <unordered_map>
 
 namespace openswmm {
@@ -100,6 +101,7 @@ void ControlEngine::buildPremiseSoA() {
         g.rule_idx.reserve(static_cast<size_t>(kv.second));
         g.premise_idx.reserve(static_cast<size_t>(kv.second));
         g.obj_idx.reserve(static_cast<size_t>(kv.second));
+        g.param.reserve(static_cast<size_t>(kv.second));
         g.flat_idx.reserve(static_cast<size_t>(kv.second));
         g.op.reserve(static_cast<size_t>(kv.second));
         g.rhs_value.reserve(static_cast<size_t>(kv.second));
@@ -121,6 +123,7 @@ void ControlEngine::buildPremiseSoA() {
             g.rule_idx.push_back(r);
             g.premise_idx.push_back(p);
             g.obj_idx.push_back(prem.lhs_idx);
+            g.param.push_back(prem.lhs_param);
             g.flat_idx.push_back(rule_premise_offset_[static_cast<size_t>(r)] + p);
             g.op.push_back(static_cast<int>(prem.op));
             g.rhs_value.push_back(prem.rhs_value);
@@ -154,7 +157,7 @@ void ControlEngine::batchEvaluateGroup(PremiseSoA& g,
     // This is the key vectorisation win: all gathers hit the same array type
     for (int i = 0; i < g.count; ++i) {
         auto ui = static_cast<size_t>(i);
-        g.lhs_values[ui] = getVariableValue(ctx, g.var_type, g.obj_idx[ui], current_time);
+        g.lhs_values[ui] = getVariableValue(ctx, g.var_type, g.obj_idx[ui], current_time, g.param[ui]);
     }
 
     // Phase 1b: Batch compare — SIMD-friendly: contiguous lhs[] vs threshold[]
@@ -263,7 +266,9 @@ int ControlEngine::evaluate(SimulationContext& ctx, double current_date, double 
             if (p == 0) {
                 result = (pval != 0);
             } else if (logic == LogicOp::AND) {
-                if (!result) continue;          // short-circuit
+                // Legacy stops the rule at a failed AND chain. Continuing
+                // would let a later OR incorrectly revive the rule.
+                if (!result) break;
                 result = (pval != 0);
             } else { // OR
                 if (!result) result = (pval != 0);
@@ -441,7 +446,7 @@ bool ControlEngine::evaluatePremise(const SimulationContext& ctx,
     if (lhs == MISSING) return false;
 
     double rhs = p.rhs_is_variable
-        ? getVariableValue(ctx, p.rhs_var, p.rhs_idx, current_time)
+        ? getVariableValue(ctx, p.rhs_var, p.rhs_idx, current_time, p.rhs_param)
         : p.rhs_value;
     if (rhs == MISSING) return false;
 
@@ -588,13 +593,15 @@ double ControlEngine::getVariableValue(const SimulationContext& ctx,
             return 0.0;
 
         case ConditionVar::GAGE_RAIN:
-            return (idx >= 0 && idx < ctx.n_gages()) ? ctx.gages.rainfall[ui] : MISSING;
+            if (idx < 0 || idx >= ctx.n_gages()) return MISSING;
+            return ctx.gages.st_used[ui] ? ctx.gages.rainfall[ui] : 0.0;
         case ConditionVar::GAGE_RAIN_PAST: {
             if (idx < 0 || idx >= ctx.n_gages()) return MISSING;
-            int hours = (param > 0 && param <= GageData::MAXPASTRAIN) ? param : 1;
+            if (param < 1 || param > GageData::MAXPASTRAIN) return MISSING;
+            if (!ctx.gages.st_used[ui]) return 0.0;
             double total = 0.0;
             auto base = ui * static_cast<std::size_t>(GageData::MAXPASTRAIN);
-            for (int h = 0; h < hours; ++h)
+            for (int h = 0; h < param; ++h)
                 total += ctx.gages.past_rain[base + static_cast<std::size_t>(h)];
             return total;
         }
@@ -684,12 +691,12 @@ double ControlEngine::getNamedVariableValue(const std::string& name,
                                              double current_time) const {
     for (const auto& nv : named_vars_)
         if (ieq(nv.name, name))
-            return getVariableValue(ctx, nv.var, nv.idx, current_time);
+            return getVariableValue(ctx, nv.var, nv.idx, current_time, nv.param);
     return 0.0;
 }
 
-void ControlEngine::addNamedVariable(const std::string& name, ConditionVar var, int idx) {
-    named_vars_.push_back({name, var, idx});
+void ControlEngine::addNamedVariable(const std::string& name, ConditionVar var, int idx, int param) {
+    named_vars_.push_back({name, var, idx, param});
 }
 
 int ControlEngine::addExpression(const std::string& name, const std::string& formula) {
@@ -867,17 +874,19 @@ static bool parsePremiseVariable(const std::vector<std::string>& toks, int& k,
         if (attr == "INTENSITY") {
             cv = ConditionVar::GAGE_RAIN;
         } else {
-            // n-hour past rain: attribute is a number
-            double nh = 0.0;
-            if (!tryParseDouble(attr, nh) || nh < 1.0) {
+            // Legacy getGageAttrib uses atoi: n-HR_DEPTH, bare integers,
+            // and historical numeric prefixes all mean an hour count.
+            // strtol retains that behavior without an overflowing int cast.
+            const long hours = std::strtol(attr.c_str(), nullptr, 10);
+            if (hours < 1 || hours > GageData::MAXPASTRAIN) {
                 err_code = ERR_KEYWORD; err_tok = toks[static_cast<size_t>(k + 2)];
                 err = "'" + toks[static_cast<size_t>(k + 2)] +
                       "' is not a valid GAGE attribute (expected INTENSITY "
-                      "or an hour count >= 1)";
+                      "or n-HR_DEPTH with n from 1 to 48)";
                 return false;
             }
             cv = ConditionVar::GAGE_RAIN_PAST;
-            extra_param = static_cast<int>(nh);
+            extra_param = static_cast<int>(hours);
         }
         k += 3;
         return true;
@@ -1094,11 +1103,12 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
     // match() even accepts a prefix — a quirk we deliberately do not copy).
     auto resolveNamedVariable = [&](const std::string& tok,
                                     ConditionVar& out_var,
-                                    int& out_idx) -> bool {
+                                    int& out_idx, int& out_param) -> bool {
         for (const auto& nv : named_vars_) {
             if (ieq(nv.name, tok)) {
                 out_var = nv.var;
                 out_idx = nv.idx;
+                out_param = nv.param;
                 return true;
             }
         }
@@ -1133,7 +1143,7 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                                       var_err, var_code, var_tok))
                 return fail("in VARIABLE '" + toks[1] + "': " + var_err,
                             var_code, var_tok);
-            addNamedVariable(toks[1], var, obj_idx);
+            addNamedVariable(toks[1], var, obj_idx, extra);
             continue;
         }
 
@@ -1213,9 +1223,10 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                         prem.expr_idx = ei;
                         k += 1;
                     } else if (resolveNamedVariable(toks[static_cast<size_t>(k)],
-                                                    lhs_cv, lhs_idx)) {
+                                                    lhs_cv, lhs_idx, lhs_param)) {
                         prem.lhs_var = lhs_cv;
                         prem.lhs_idx = lhs_idx;
+                        prem.lhs_param = lhs_param;
                         k += 1;
                     } else if (!parsePremiseVariable(toks, k, ctx,
                                                      lhs_cv, lhs_idx, lhs_param,
@@ -1255,10 +1266,11 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                 std::string rhs_err, rhs_tok;  // discarded: failure falls back
                 int rhs_code = 0;              // to a constant-value parse below
                 if (resolveNamedVariable(toks[static_cast<size_t>(k)],
-                                          rhs_cv, rhs_idx)) {
+                                          rhs_cv, rhs_idx, rhs_param)) {
                     prem.rhs_is_variable = true;
                     prem.rhs_var = rhs_cv;
                     prem.rhs_idx = rhs_idx;
+                    prem.rhs_param = rhs_param;
                     k += 1;
                 } else if (parsePremiseVariable(toks, k, ctx,
                                                  rhs_cv, rhs_idx, rhs_param,
@@ -1266,6 +1278,7 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                     prem.rhs_is_variable = true;
                     prem.rhs_var = rhs_cv;
                     prem.rhs_idx = rhs_idx;
+                    prem.rhs_param = rhs_param;
                 } else {
                     // Parse as constant value with unit-aware dispatch
                     // (P0-C01).  parsePremiseRHS mirrors legacy

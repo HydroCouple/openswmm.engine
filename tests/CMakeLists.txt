@@ -138,7 +138,9 @@ if(OPENSWMM_BUILD_UNIT_TESTS)
     # G1 — the two-zone groundwater numerical gates. Deliberately NOT under
     # unit/: it needs no gtest and no model, so it can be built and run first
     # when the kernel is under suspicion.
-    add_subdirectory(verification/gw2d_gates)
+    if(OPENSWMM_BUILD_2D)
+        add_subdirectory(verification/gw2d_gates)
+    endif()
 
     # Legacy solver tests
     add_test(NAME test_legacy_solver_api

@@ -684,7 +684,9 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             opt.write_absolute_paths = Tokenizer::parse_boolean(val);
 
         } else if (key == "COMPATIBILITY") {
-            // no-op; recognized but unused in new engine
+            // Not acted on by the v6 engine; kept verbatim so the round trip
+            // and swmm_options_get/set("COMPATIBILITY") see it.
+            opt.ext_options[key] = val;
 
         // -----------------------------------------------------------------
         // Unknown key → ext_options (R05)

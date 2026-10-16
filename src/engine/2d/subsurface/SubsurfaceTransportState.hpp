@@ -41,12 +41,11 @@
  *          the bulk store means the column is treated as well mixed for
  *          transport while its WATER stays σ-resolved.
  *
- *          **Heat is water-only in T7.1.** The temperature row is a water
- *          temperature-volume, exactly as on the surface. The soil matrix's
- *          own heat capacity (`[GW_PARAMS] rho_s / c_s`), conduction and the
- *          thermal boundaries are T7.3; until then a temperature row in the
- *          aquifer transports, but it does not yet exchange heat with the
- *          solids.
+ *          The temperature row remains a liquid-water temperature-volume,
+ *          exactly as on the surface. The separate ground thermal columns
+ *          own soil-matrix plus porewater energy, conduction and thermal
+ *          boundaries; accepted water transfers carry sensible energy between
+ *          those stores without putting solid heat into `layer_mass`.
  *
  * @ingroup engine_2d
  *
@@ -153,6 +152,14 @@ struct SubsurfaceTransportState {
     /// `[s * n_cells + c]` mass a LEAKING conduit delivered, at the
     /// conduit's own concentration — the twin of the water's `lacc`.
     std::vector<double> lacc_mass;
+    /// `[s * n_cells + c]` mass a GAINING conduit already delivered to its
+    /// end nodes (review, 2026-10-15), debited from the saturated store when
+    /// the cell fires — the twin of the water's negative `lacc`. Booked into
+    /// `lost_link` at that debit, so the aquifer ledger is unchanged in form.
+    std::vector<double> lout_mass;
+    /// `[s]` informational: gain mass the 1D received that the cell could not
+    /// supply at its firing (its store had already been drawn below it).
+    std::vector<double> link_gain_shortfall;
     /// `[s * n_nodes]` mass the aquifer owes each 1D node, booked at the
     /// cell's firing and flushed by the router into the node's coupling
     /// queues. Reset per routing batch, exactly as `node_exchange_vol_` is.
@@ -172,6 +179,7 @@ struct SubsurfaceTransportState {
     std::vector<double> net_lateral;     ///< net across the domain edge (0 on a closed mesh)
     std::vector<double> gained_source, lost_source; ///< wells, native concentration x m3
     std::vector<double> lost_reaction;   ///< T7.2: first-order decay
+    std::vector<double> generated_age,gained_contact; ///< explicit finite-porewater model only; empty in compatibility mode
     /// Mass in both stores at the start of the run — the conservation gate's
     /// reference (the aquifer is seeded from `[GW_INITIAL_QUALITY]`).
     std::vector<double> init_mass;
@@ -199,6 +207,8 @@ struct SubsurfaceTransportState {
         xacc_from_surface.assign(ns * nc, 0.0);
         xacc_to_surface.assign(ns * nc, 0.0);
         lacc_mass.assign(ns * nc, 0.0);          // T7.4
+        lout_mass.assign(ns * nc, 0.0);
+        link_gain_shortfall.assign(ns, 0.0);
         // nacc_mass and node_out_mass are sized by the solver, which knows
         // the bed and node counts.
         lost_deep.assign(ns, 0.0);
@@ -212,6 +222,7 @@ struct SubsurfaceTransportState {
         net_lateral.assign(ns, 0.0);
         gained_source.assign(ns, 0.0); lost_source.assign(ns, 0.0);
         lost_reaction.assign(ns, 0.0);          // T7.2
+        generated_age.clear();gained_contact.clear();
         init_mass.assign(ns, 0.0);
         internal_recharge.assign(ns, 0.0);
         alpha_L.assign(nc, 1.0);                // T7.2: the row defaults
@@ -299,9 +310,11 @@ struct SubsurfaceTransportState {
     /// definition, one place to add a channel to.
     double continuityDenominator(int s) const noexcept {
         const auto us = static_cast<std::size_t>(s);
-        return std::fabs(init_mass[us]) + std::fabs(gained_infil[us]) +
+        double total=std::fabs(init_mass[us]) + std::fabs(gained_infil[us]) +
                std::fabs(gained_node[us]) + std::fabs(gained_link[us]) +
                std::fabs(net_lateral[us]) + std::fabs(gained_source[us]);
+        if(!generated_age.empty())total+=std::abs(generated_age[us])+std::abs(gained_contact[us]);
+        return total;
     }
 
     /// T7.1's conservation statement, the twin of
@@ -313,8 +326,9 @@ struct SubsurfaceTransportState {
         const auto us = static_cast<std::size_t>(s);
         const double out = lost_deep[us] + lost_node[us] + lost_link[us] +
                            lost_dunne[us] + lost_et[us] + lost_reaction[us] + lost_source[us];
-        const double in  = gained_infil[us] + gained_node[us] + gained_link[us] +
+        double in  = gained_infil[us] + gained_node[us] + gained_link[us] +
                            net_lateral[us] + gained_source[us];
+        if(!generated_age.empty())in+=generated_age[us]+gained_contact[us];
         return ledgeredStorage(s) + out - in - init_mass[us];
     }
 };

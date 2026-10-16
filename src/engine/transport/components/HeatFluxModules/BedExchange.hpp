@@ -101,6 +101,7 @@
 
 namespace openswmm {
 struct SimulationContext;
+struct ChannelThermalRegion;
 }
 
 namespace openswmm::transport::heat {
@@ -248,6 +249,8 @@ double linkBedAreaM2(const SimulationContext& ctx, int link) noexcept;
 /// expression, exported so the LARD binding does not grow a fourth copy of
 /// the XSectParams builder.
 double linkFreeSurfaceFt2(const SimulationContext& ctx, int link) noexcept;
+/// Shared LEGACY/LARD geometry adapter, in SI. ARD supplies its actual cell geometry.
+void fillChannelThermalGeometry(const SimulationContext&,ChannelThermalRegion&) noexcept;
 
 /// The deep-ground temperature in force this step, °C — resolves the
 /// `GROUND_TEMPERATURE TIMESERIES` spelling against the simulation clock.

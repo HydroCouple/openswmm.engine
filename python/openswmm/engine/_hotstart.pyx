@@ -234,6 +234,13 @@ cdef class HotStart:
 # Save schedule — solver.save_schedule
 # =============================================================================
 
+# SWMM_HOTSTART_FORMAT_AUTO / _LEGACY / _NATIVE, by value.
+_SAVE_FORMATS = ("AUTO", "LEGACY", "NATIVE")
+# SWMM_HOTSTART_OMITS_* bits, by name.
+_LEGACY_OMITS = ((0x1, "WATER_AGE"), (0x2, "REACTION_SPECIES"),
+                 (0x4, "AQUIFER"), (0x8, "NODE_LIDS"))
+
+
 class SaveScheduleEntry(NamedTuple):
     """One row in the engine's ``[SAVE HOTSTART]`` schedule."""
     when: datetime
@@ -315,16 +322,64 @@ class SaveSchedule(MutableSequence):
     def insert(self, idx, value):
         """Insert *value* at *idx* (emulated via clear + re-add; the C save API is append-only)."""
         # The C API only supports append; emulate insert by clearing and
-        # re-adding (same approach as solver.events).
+        # re-adding (same approach as solver.events). Formats ride along.
         n = len(self)
         if idx < 0:
             idx += n
         idx = max(0, min(idx, n))
-        existing = [self[i] for i in range(n)]
-        existing.insert(idx, value)
+        existing = [(self[i], self.get_format(i)) for i in range(n)]
+        existing.insert(idx, (value, "AUTO"))
         self.clear()
-        for ent in existing:
+        for i, (ent, fmt) in enumerate(existing):
             self.append(ent)
+            if fmt != "AUTO":
+                self.set_format(i, fmt)
+
+    def get_format(self, idx) -> str:
+        """File format of entry *idx*: ``"AUTO"``, ``"LEGACY"`` or ``"NATIVE"``.
+
+        AUTO (the default, and every row without a format keyword) writes the
+        legacy SWMM5 ``.hsf``, or the native file when the model has node
+        LIDs. NATIVE also keeps the state :meth:`legacy_omits` names; legacy
+        SWMM 5 cannot read it.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int fmt = 0
+        _check(swmm_hotstart_saves_get_format(h, self._index(idx), &fmt))
+        return _SAVE_FORMATS[fmt]
+
+    def set_format(self, idx, fmt: str) -> None:
+        """Set the file format of entry *idx* (``"AUTO"``, ``"LEGACY"`` or ``"NATIVE"``)."""
+        key = str(fmt).upper()
+        if key not in _SAVE_FORMATS:
+            raise ValueError(
+                "hot-start save format must be one of " + ", ".join(_SAVE_FORMATS)
+                + "; got " + repr(fmt))
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_hotstart_saves_set_format(h, self._index(idx),
+                                              _SAVE_FORMATS.index(key)))
+
+    def legacy_omits(self) -> tuple:
+        """Model state a legacy SWMM5 file has no place for and NATIVE keeps.
+
+        A tuple drawn from ``"WATER_AGE"``, ``"REACTION_SPECIES"``,
+        ``"AQUIFER"`` and ``"NODE_LIDS"``; empty when nothing in the model
+        needs NATIVE. ``[POLLUTANTS]`` concentrations are in both formats.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int flags = 0
+        _check(swmm_hotstart_legacy_omits(h, &flags))
+        return tuple(name for bit, name in _LEGACY_OMITS if flags & bit)
+
+    def _index(self, idx) -> int:
+        if not isinstance(idx, int):
+            raise TypeError("SaveSchedule index must be int")
+        n = len(self)
+        if idx < 0:
+            idx += n
+        if not 0 <= idx < n:
+            raise IndexError(idx)
+        return idx
 
     def append(self, value):
         """Append a hot-start save-schedule entry *value*."""

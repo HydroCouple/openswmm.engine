@@ -6,7 +6,9 @@
  */
 
 #include "GeoPackageReader.hpp"
+#ifdef OPENSWMM_HAS_2D
 #include "2d/subsurface/SubsurfaceSections.hpp"
+#endif
 #include <sstream>
 #include "../../core/Constants.hpp"
 #include "ExternalContentReader.hpp"
@@ -1549,15 +1551,19 @@ static void read_lid_nodes(sqlite3* db, SimulationContext& ctx, const std::strin
         }
     }
     if (table_exists(db, "lid_nodes")) {
-        auto stmt = prepare(db, "SELECT node_id,lid_id,initial_saturation FROM lid_nodes WHERE simulation_id=?");
+        const bool has_bottom = column_exists(db, "lid_nodes", "bottom_mode");
+        auto stmt = prepare(db, std::string("SELECT node_id,lid_id,initial_saturation,") +
+            (has_bottom ? "bottom_mode" : "0") + " FROM lid_nodes WHERE simulation_id=?");
         bind_text(stmt.get(), 1, sim);
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             int n = ctx.node_names.find(column_text(stmt.get(), 0));
             int c = ctx.lid_names.find(column_text(stmt.get(), 1));
             int r = ctx.node_subtypes.storage_row(n);
             double sat = column_double(stmt.get(), 2);
-            if (r < 0 || c < 0 || !std::isfinite(sat) || sat < 0 || sat > 100) throw std::runtime_error("Invalid LID node assignment");
-            ctx.node_subtypes.storages.lid[r] = {c, sat};
+            int bottom = sqlite3_column_int(stmt.get(), 3);
+            if (r < 0 || c < 0 || !std::isfinite(sat) || sat < 0 || sat > 100 ||
+                bottom < 0 || bottom > 2) throw std::runtime_error("Invalid LID node assignment");
+            ctx.node_subtypes.storages.lid[r] = {c, sat, static_cast<LidNodeBottom>(bottom)};
         }
     }
     if (table_exists(db, "lid_node_outlets")) {
@@ -2208,6 +2214,9 @@ int read_model(sqlite3* db, SimulationContext& ctx,
             auto row=prepare(db,"SELECT sections FROM surface_ownership_2d_input WHERE simulation_id=?");
             bind_text(row.get(),1,simulation_id);
             if(sqlite3_step(row.get())==SQLITE_ROW){
+#ifndef OPENSWMM_HAS_2D
+                throw GpkgError("Reviewed surface ownership requires a 2D-enabled engine.");
+#else
                 if(!ctx.twod_io.aquifer||!ctx.twod_io.aquifer_nodes||!ctx.twod_io.aquifer_links)
                     throw GpkgError("Reviewed surface ownership requires a 2D-enabled engine.");
                 twoD::SubsurfaceConfig proposed;std::vector<std::string> nodes,links;
@@ -2219,6 +2228,7 @@ int read_model(sqlite3* db, SimulationContext& ctx,
                     else body.push_back(line);
                 }
                 flush();*ctx.twod_io.aquifer=std::move(proposed);*ctx.twod_io.aquifer_nodes=std::move(nodes);*ctx.twod_io.aquifer_links=std::move(links);
+#endif
             }
         }
 
@@ -2227,7 +2237,8 @@ int read_model(sqlite3* db, SimulationContext& ctx,
         // was provided (callers that only need model definition).
         read_external_content(db, ctx, simulation_id, scratch_dir);
         return 0;
-    } catch (const std::exception&) {
+    } catch (const std::exception& error) {
+        ctx.errors.push_back(error.what());
         return -1;
     }
 }

@@ -58,6 +58,12 @@ SWMM_ENGINE_API int swmm_engine_initialize(SWMM_Engine engine) {
     return to_engine(engine)->initialize();
 }
 
+SWMM_ENGINE_API int swmm_engine_open_metadata(SWMM_Engine engine, const char* inp) {
+    CHECK_HANDLE(engine);
+    if (!inp || !inp[0]) return SWMM_ERR_BADPARAM;
+    return to_engine(engine)->open(inp, nullptr, nullptr, nullptr, true);
+}
+
 SWMM_ENGINE_API int swmm_engine_start(SWMM_Engine engine, int save_results) {
     CHECK_HANDLE(engine);
     return to_engine(engine)->start(save_results);
@@ -338,6 +344,32 @@ SWMM_ENGINE_API int swmm_get_transport_matrix(SWMM_Engine engine,
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_preview_transport_matrix(SWMM_Engine engine,
+    const SWMM_TransportDraft* draft, SWMM_TransportMatrix* out) {
+    if(!engine || !draft || !out) return SWMM_ERR_BADPARAM;
+    for(int value:{draft->ignore_quality,draft->heat,draft->age,draft->ignore_2d,
+        draft->surface_class[0],draft->surface_class[1],draft->surface_class[2],draft->surface_class[3]})
+        if(value!=0 && value!=1)return SWMM_ERR_BADPARAM;
+    if(draft->groundwater < -1 || draft->groundwater > 1)return SWMM_ERR_BADPARAM;
+    namespace tp=openswmm::transport;
+    tp::Draft d;
+    d.ignore_quality=draft->ignore_quality; d.heat=draft->heat;d.age=draft->age;d.ignore_2d=draft->ignore_2d;
+    for(int i=0;i<4;++i)d.surface_class[i]=draft->surface_class[i];
+#ifdef OPENSWMM_HAS_2D
+    const auto& router=to_engine(engine)->surfaceRouter2D();
+    d.mesh=router.mesh().n_cells()>0 || !router.options().mesh_file.empty();
+    d.groundwater=!d.ignore_2d && d.mesh && draft->groundwater!=0 && !router.aquiferConfig().empty();
+#endif
+    const auto matrix=tp::resolve(to_engine(engine)->context(),&d);
+    std::memset(out,0,sizeof(*out));
+    for(int i=0;i<4;++i)for(int j=0;j<4;++j) {
+        const auto& cell=matrix.cells[i][j];auto& target=out->cell[i][j];
+        target.state=static_cast<int>(cell.state);target.count=cell.count;
+        std::strncpy(target.reason,cell.reason.c_str(),sizeof(target.reason)-1);
+    }
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API const char* swmm_transport_domain_name(int domain) {
     if (domain < 0 || domain >= SWMM_TRANSPORT_DOMAIN_COUNT) return "";
     return openswmm::transport::domainName(
@@ -367,6 +399,7 @@ SWMM_ENGINE_API const char* swmm_error_message(int code) {
         case SWMM_ERR_HOTSTART:  return "Hot start file error";
         case SWMM_ERR_CRS:       return "Coordinate reference system error";
         case SWMM_ERR_NUMERICAL: return "Numerical instability (fatal)";
+        case SWMM_ERR_CANCELLED: return "Operation cancelled by caller";
         case SWMM_ERR_INTERNAL:  return "Internal engine error";
         // Virtual-junction rule codes (ErrorCodes.hpp ERR_VJ_*)
         case 609: return "Virtual junction must connect exactly two conduits";

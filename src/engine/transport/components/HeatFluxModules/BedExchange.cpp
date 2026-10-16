@@ -24,6 +24,7 @@
  */
 
 #include "BedExchange.hpp"
+#include "../../../data/ChannelThermalData.hpp"
 
 #include <cmath>
 #include <cstddef>
@@ -93,6 +94,24 @@ PairStep relaxPair(const BedCoupling& g, double t_w, double t_b,
     if (h > 0.0) {
         const double s = (j1 - j0) / h;
         if (s > 0.0 && std::isfinite(s)) djdt = s;
+    }
+
+    // The isolated two-body limit has a scalar closed form. Use it directly
+    // when no external flux or deep-ground contact is active: the general
+    // spectral matrix formula loses accuracy when hyporheic conductance is
+    // many orders of magnitude larger than either body's capacity per step.
+    // This limit is common for large, intentionally stiff exchange tests and
+    // keeps both temperatures on the same conserved-energy trajectory.
+    if (g.g_bg == 0.0 && djdt == 0.0 && j0 == 0.0) {
+        const double total = g.c_w + g.c_b;
+        const double rate = g.g_wb / g.c_w + g.g_wb / g.c_b;
+        const double difference = (t_w - t_b) * std::expm1(-rate * dt);
+        const double dw = (g.c_b / total) * difference;
+        const double db = -(g.c_w / g.c_b) * dw;
+        if (!std::isfinite(dw) || !std::isfinite(db)) return out;
+        out.dt_w = dw;
+        out.dt_b = db;
+        return out;
     }
 
     // du/dt = M u + c, u = (T_w - t_w, T_b - t_b), u(0) = 0.
@@ -249,6 +268,17 @@ double groundTempFor(const SimulationContext& ctx, const SedimentConfig& sc,
                                                            : sc.ground_temp;
 }
 
+void fillChannelThermalGeometry(const SimulationContext& ctx,ChannelThermalRegion& region) noexcept {
+    const int link=region.link;
+    if(link<0||link>=ctx.n_links())return;
+    const int row=ctx.link_subtypes.conduit_row(link);if(row<0)return;
+    const auto& conduits=ctx.link_subtypes.conduits;
+    const double length=conduits.length[row]>0?conduits.length[row]:conduits.mod_length[row];
+    region.length=length*.3048;region.depth=ctx.links.depth[link]*.3048;
+    region.surface_area=linkFreeSurfaceFt2(ctx,link)*kSqFtToSqM;
+    region.bed_area=linkBedAreaM2(ctx,link);
+}
+
 BedCoupling bedCouplingFromContact(const SimulationContext& ctx,
                                    const SedimentConfig& sc,
                                    double bed_m2, double vol_ft3,
@@ -348,6 +378,7 @@ void applyBedSoluteExchange(SimulationContext& ctx, double* link_conc,
 
     for (int j = 0; j < nl; ++j) {
         const auto uj = static_cast<std::size_t>(j);
+        if(uj<ctx.heat_state.mesh_contact_link.size()&&ctx.heat_state.mesh_contact_link[uj])continue;
         if (uj >= bed.link_temp.size()) break;
 
         const double vol_ft3 = ctx.links.volume[uj];

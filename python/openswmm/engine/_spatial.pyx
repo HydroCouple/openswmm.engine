@@ -94,8 +94,66 @@ class Spatial:
         _check(swmm_spatial_set_crs(h, b))
 
     # ------------------------------------------------------------------
+    # [MAP] and GUI annotation sections
+    # ------------------------------------------------------------------
+
+    @property
+    def map_dimensions(self) -> Tuple[float, float, float, float]:
+        """``[MAP] DIMENSIONS`` as ``(x1, y1, x2, y2)``."""
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double x1 = 0.0, y1 = 0.0, x2 = 0.0, y2 = 0.0
+        _check(swmm_spatial_get_map_dimensions(h, &x1, &y1, &x2, &y2))
+        return (x1, y1, x2, y2)
+
+    @map_dimensions.setter
+    def map_dimensions(self, value) -> None:
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        x1, y1, x2, y2 = value
+        _check(swmm_spatial_set_map_dimensions(h, x1, y1, x2, y2))
+
+    @property
+    def map_units(self) -> str:
+        """``[MAP] UNITS`` (upper case; ``''`` when not stated)."""
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef char buf[64]
+        _check(swmm_spatial_get_map_units(h, buf, 64))
+        return buf.decode('utf-8')
+
+    @map_units.setter
+    def map_units(self, str value) -> None:
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes b = value.encode('utf-8')
+        _check(swmm_spatial_set_map_units(h, b))
+
+    def get_annotation(self, str section) -> str:
+        """Lines of ``LABELS``, ``BACKDROP``, ``PROFILE`` or ``PROFILES``,
+        verbatim and joined by newlines (the engine never interprets them)."""
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes sec = section.encode('utf-8')
+        cdef int required = 0
+        _check(swmm_spatial_get_annotation(h, sec, NULL, 0, &required))
+        cdef bytearray buf = bytearray(required)
+        _check(swmm_spatial_get_annotation(h, sec, buf, required, NULL))
+        return bytes(buf).split(b'\0', 1)[0].decode('utf-8')
+
+    def set_annotation(self, str section, text) -> None:
+        """Replace an annotation section's lines; ``''`` or ``None`` removes it."""
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes sec = section.encode('utf-8')
+        cdef bytes t = (text or '').encode('utf-8')
+        _check(swmm_spatial_set_annotation(h, sec, t))
+
+    # ------------------------------------------------------------------
     # Node coords
     # ------------------------------------------------------------------
+
+    def node_has_coord(self, node) -> bool:
+        """Whether coordinates were supplied, including a valid origin (0, 0)."""
+        cdef int i = _resolve_node(self._solver, node)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int present = 0
+        _check(swmm_spatial_node_has_coord(h, i, &present))
+        return bool(present)
 
     def node_coord(self, node) -> Tuple[float, float]:
         """Return the ``(x, y)`` coordinate of *node*."""

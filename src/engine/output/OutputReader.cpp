@@ -200,7 +200,13 @@ const char* OutputReader::pollut_id(int index) const {
 // Per-period results (all objects, one variable, one period)
 // ============================================================================
 
+int OutputReader::subcatchColumn(int code) const {
+    if(code<0)return -1;
+    for(std::size_t i=0;i<subcatch_codes_.size();++i)if(subcatch_codes_[i]==code)return int(i);
+    return -1;
+}
 bool OutputReader::get_subcatch_result(int period, int var, float* values) const {
+    var=subcatchColumn(var);
     if (!file_ || !values) return false;
     if (period < 0 || period >= n_periods_) return false;
     if (var < 0 || var >= n_subcatch_vars_) return false;
@@ -273,6 +279,7 @@ bool OutputReader::get_link_block(int period, std::vector<float>& values) const 
 bool OutputReader::get_subcatch_series(int obj_idx, int var,
                                        int start_period, int end_period,
                                        float* values) const {
+    var=subcatchColumn(var);
     if (!file_ || !values) return false;
     if (obj_idx < 0 || obj_idx >= n_subcatch_) return false;
     if (var < 0 || var >= n_subcatch_vars_) return false;
@@ -340,10 +347,13 @@ bool OutputReader::get_subcatch_attribute(int obj_idx, int period,
     if (period < 0 || period >= n_periods_) return false;
 
     if (!seekToVar(period, 0, obj_idx, 0)) return false;
-    for (int v = 0; v < n_subcatch_vars_; ++v) {
+    // Preserve the legacy caller allocation (8 + pollutant count). Optional
+    // process fields are accessed by code through the series/result APIs.
+    const int legacy=std::min(n_subcatch_vars_,8+n_polluts_);
+    for (int v = 0; v < legacy; ++v) {
         if (!readReal4(values[v])) return false;
     }
-    if (count) *count = n_subcatch_vars_;
+    if (count) *count = legacy;
     return true;
 }
 
@@ -535,9 +545,9 @@ bool OutputReader::readVariableCodes() {
         int32_t nv = 0;
         // Subcatch vars
         if (!readInt4(nv)) return false;
-        n_subcatch_vars_ = static_cast<int>(nv);
-        if (std::fseek(file_, static_cast<long>(nv) * static_cast<long>(sizeof(int32_t)), SEEK_CUR) != 0)
-            return false;
+        if(nv<0 || nv>1000000)return false;
+        n_subcatch_vars_ = static_cast<int>(nv);subcatch_codes_.resize(nv);
+        for(auto& code:subcatch_codes_) {int32_t v;if(!readInt4(v))return false;code=v;}
 
         // Node vars
         if (!readInt4(nv)) return false;

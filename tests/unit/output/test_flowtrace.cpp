@@ -177,6 +177,7 @@ TEST(FlowTrace, ValidationAndCancellation)
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 namespace
 {
@@ -361,6 +362,42 @@ TEST(FlowTraceReports, UnequalIntervalsCrossingsUnitsAndCache)
     EXPECT_NEAR(3 * .028316846592, f.la[0].absolute_flow_m3s, 1e-9);
     EXPECT_NEAR(3 * .3048, f.la[0].absolute_velocity_mps, 1e-8);
     EXPECT_NEAR(25 * .028316846592, f.na[0].volume_m3, 1e-8);
+}
+TEST(FlowTraceReports, LiveOutputScansThePeriodsWrittenSoFar)
+{
+    // Same data as unequal.out, but without the 24-byte footer the engine writes at
+    // the end of a run, and with half of a fourth record appended mid-write.
+    const std::string complete = writeOutput("live-complete.out", 3, false, 2);
+    const std::string live = std::string(TRACE_TEST_OUTPUT) + "/live-partial.out";
+    {
+        std::ifstream in(complete, std::ios::binary);
+        std::vector<char> bytes((std::istreambuf_iterator<char>(in)), {});
+        bytes.resize(bytes.size() - 24);
+        bytes.insert(bytes.end(), 10, '\0'); // a partially flushed record is not counted
+        std::ofstream out(live, std::ios::binary | std::ios::trunc);
+        out.write(bytes.data(), std::streamsize(bytes.size()));
+    }
+    Fixture a({{"S", 0, 0}, {"O", 1, 0}}, {{"SO", 0, 1, 0, 30}});
+    Fixture b({{"S", 0, 0}, {"O", 1, 0}}, {{"SO", 0, 1, 0, 30}});
+    EXPECT_NE(0, swmm_trace_prepare(a.h, live.c_str(), nullptr, nullptr, nullptr, nullptr));
+    ASSERT_EQ(0, swmm_trace_prepare_live(a.h, live.c_str(), nullptr, nullptr)) << swmm_trace_error(a.h);
+    ASSERT_EQ(0, swmm_trace_prepare(b.h, complete.c_str(), nullptr, nullptr, nullptr, nullptr));
+    SWMM_TraceInfo ia{}, ib{};
+    swmm_trace_get_info(a.h, &ia);
+    swmm_trace_get_info(b.h, &ib);
+    EXPECT_EQ(2, ia.periods);
+    EXPECT_EQ(ib.periods, ia.periods);
+    EXPECT_EQ(0, ia.cache_loaded);
+    ASSERT_EQ(0, swmm_trace_get_averages(a.h, a.na.data(), 2, a.la.data(), 1));
+    ASSERT_EQ(0, swmm_trace_get_averages(b.h, b.na.data(), 2, b.la.data(), 1));
+    EXPECT_DOUBLE_EQ(ib.duration_s, ia.duration_s);
+    EXPECT_DOUBLE_EQ(b.la[0].net_flow_m3s, a.la[0].net_flow_m3s);
+    EXPECT_DOUBLE_EQ(b.la[0].absolute_flow_m3s, a.la[0].absolute_flow_m3s);
+    EXPECT_DOUBLE_EQ(b.na[0].volume_m3, a.na[0].volume_m3);
+    // A finished file also scans in live mode (the footer is recognised).
+    ASSERT_EQ(0, swmm_trace_prepare_live(a.h, complete.c_str(), nullptr, nullptr));
+    swmm_trace_get_info(a.h, &ia);
+    EXPECT_EQ(2, ia.periods);
 }
 TEST(FlowTraceReports, InvalidTimestampMissingIdsCancellationAndSnapshot)
 {

@@ -244,11 +244,13 @@ from ._inflows import Inflows
 from ._controls import Controls
 from ._forcing import Forcing
 from ._climate import Climate
+from ._snow import Snow
+from ._checkpoint import Checkpoints
 
 # =============================================================================
 # Transport processes — heat, water age, reactions, process components
 # =============================================================================
-from ._heat import Heat, HeatNodeOverride
+from ._heat import Heat, HeatNodeOverride, HeatLidMaterial, HeatElementValue, HeatSnapshot
 from ._water_age import WaterAge, WaterAgeOverride
 from ._reactions import (
     Reactions,
@@ -273,7 +275,8 @@ from ._spatial import Spatial
 # =============================================================================
 try:
     from ._2d import (Surface2D, Infiltration2DView, Infil2DDefaults,
-                      Infil2DRow, Infil2DCell)
+                      Infil2DRow, Infil2DCell, InitialQuality2D, BoundaryQuality2D)
+    from ._snow2d import MeshSnow
     HAS_2D = True
 except ModuleNotFoundError as error:
     if error.name != __name__ + "._2d":
@@ -322,7 +325,9 @@ from ._enums import (
     TableType, FilePathRole, UserFlagType,
     # Transport processes — heat, water age, reactions
     HeatFluxModule, HeatShortwaveMode, HeatRadiativeParam, HeatSolarParam,
-    HeatCloudParam, HeatSourceKind, WaterAgeSource,
+    HeatCloudParam, HeatSourceKind, HeatSedimentParam, HeatAttr, HeatOverrideScope,
+    GroundHeatValue, GroundHeatLayerValue, ChannelGroundValue,
+    WaterAgeSource,
     ReactionScope, ReactionExprForm,
     # Street inlets
     InletType, GrateType, ThroatType, InletCurveKind,
@@ -360,9 +365,9 @@ __all__ = [
     "HotStart", "MassBalance", "Statistics", "OutputReader",
     # --- Hydrology, water quality, and time-varying inputs ---
     "Pollutants", "Quality", "Tables", "Patterns", "Inflows", "Controls", "Forcing",
-    "Climate", "InitialQuality", "InitialQualityEntry",
+    "Climate", "Snow", "MeshSnow", "Checkpoints", "InitialQuality", "InitialQualityEntry",
     # --- Transport processes — heat, water age, reactions ---
-    "Heat", "HeatNodeOverride",
+    "Heat", "HeatNodeOverride", "HeatLidMaterial", "HeatElementValue", "HeatSnapshot",
     "WaterAge", "WaterAgeOverride",
     "Reactions", "ReactionSpecies", "ReactionCoefficient", "ReactionTerm",
     "ReactionInitialEntry", "ReactionHydVar", "ReactionFunction",
@@ -397,7 +402,9 @@ __all__ = [
     "TableType", "FilePathRole", "UserFlagType",
     # --- Enumerations: transport processes ---
     "HeatFluxModule", "HeatShortwaveMode", "HeatRadiativeParam", "HeatSolarParam",
-    "HeatCloudParam", "HeatSourceKind", "WaterAgeSource",
+    "HeatCloudParam", "HeatSourceKind", "HeatSedimentParam", "HeatAttr",
+    "HeatOverrideScope", "GroundHeatValue", "GroundHeatLayerValue",
+    "ChannelGroundValue", "WaterAgeSource",
     "ReactionScope", "ReactionExprForm",
     # --- Enumerations: street inlets ---
     "InletType", "GrateType", "ThroatType", "InletCurveKind",
@@ -418,7 +425,7 @@ __all__ += ['Transport', 'ThreadInfo', 'EffectiveThreads', 'TransportCell', 'Tra
 
 if not HAS_2D:
     __all__ = [name for name in __all__ if name not in {
-        "Surface2D", "Infiltration2DView", "Infil2DDefaults", "Infil2DRow", "Infil2DCell"}]
+        "Surface2D", "Infiltration2DView", "Infil2DDefaults", "Infil2DRow", "Infil2DCell", "MeshSnow"}]
 if HAS_GEOPACKAGE:
     __all__.append("GeoPackage")
 
@@ -429,8 +436,8 @@ __all__ += ["KnownProcessComponent", "ComponentLibrary"]
 from ._enums import (CellScope as CellScope, GroundwaterSoil as GroundwaterSoil, GroundwaterClosure as GroundwaterClosure, GroundwaterVariable as GroundwaterVariable, GroundwaterLedger as GroundwaterLedger, GroundwaterZone as GroundwaterZone, GroundwaterSpeciesLedger as GroundwaterSpeciesLedger)
 __all__ += ['CellScope', 'GroundwaterSoil', 'GroundwaterClosure', 'GroundwaterVariable', 'GroundwaterLedger', 'GroundwaterZone', 'GroundwaterSpeciesLedger']
 if HAS_2D:
-    from ._groundwater import Groundwater, AquiferRow, AquiferNode
-    __all__ += ["Groundwater", "AquiferRow", "AquiferNode"]
+    from ._groundwater import Groundwater, AquiferRow, AquiferNode, AquiferLink
+    __all__ += ["Groundwater", "AquiferRow", "AquiferNode", "AquiferLink"]
 
 from ._enums import GroundwaterTransportZone as GroundwaterTransportZone
 __all__.append("GroundwaterTransportZone")

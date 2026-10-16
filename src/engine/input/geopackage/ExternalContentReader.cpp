@@ -383,10 +383,25 @@ void hydrateRoutingInterface(sqlite3* db, SimulationContext& ctx,
 
 void hydrateHotstart(sqlite3* db, SimulationContext& ctx,
                      const std::string& sim, const std::string& scratch) {
-    // Each row in hotstart_slots becomes one scratch HSF file.
+    // Each row in hotstart_slots becomes one scratch HSF file. Files older
+    // than the SAVE HOTSTART format column read it as NULL (AUTO).
+    // Columns newer files carry; an older file reads them as NULL.
+    auto has_column = [&](const char* table, const char* column) {
+        bool has = false;
+        auto cols = prepare(db, std::string("PRAGMA table_info(") + table + ")");
+        while (sqlite3_step(cols.get()) == SQLITE_ROW)
+            has |= column_text(cols.get(), 1) == column;
+        return has;
+    };
+    auto col = [&](const char* column) {
+        return std::string(has_column("hotstart_slots", column) ? column : "NULL");
+    };
+    const bool has_hrt = has_column("hotstart_node_state", "hrt");
     auto stmt = prepare(db,
         "SELECT slot_name, direction, save_datetime, format_version, "
-        "       flow_units, num_pollutants, status "
+        "       flow_units, num_pollutants, status, " + col("save_format") + ", "
+        + col("num_subcatch") + ", " + col("num_landuses") + ", "
+        + col("runoff_section") + ", " + col("tail_section") + " "
         "FROM hotstart_slots WHERE simulation_id=? ORDER BY slot_name");
     bind_text(stmt.get(), 1, sim);
 
@@ -395,6 +410,10 @@ void hydrateHotstart(sqlite3* db, SimulationContext& ctx,
         double save_datetime = 0.0;
         int    format_version = 4;
         int    num_pollutants = 0;
+        HotstartFormat save_format = HotstartFormat::AUTO;
+        int    num_subcatch = 0;
+        int    num_landuses = 0;
+        std::string runoff_raw, tail_raw;
     };
     std::vector<SlotMeta> slots;
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
@@ -414,6 +433,18 @@ void hydrateHotstart(sqlite3* db, SimulationContext& ctx,
         s.flow_units     = fu ? fu : "CFS";
         s.num_pollutants = sqlite3_column_int(stmt.get(), 5);
         s.status         = st ? st : "pending";
+        const std::string sf = column_text(stmt.get(), 7);
+        if      (sf == "LEGACY") s.save_format = HotstartFormat::LEGACY;
+        else if (sf == "NATIVE") s.save_format = HotstartFormat::NATIVE;
+        s.num_subcatch = sqlite3_column_int(stmt.get(), 8);
+        s.num_landuses = sqlite3_column_int(stmt.get(), 9);
+        auto bytes = [&](int c) {
+            const auto* p = static_cast<const char*>(sqlite3_column_blob(stmt.get(), c));
+            return p ? std::string(p, static_cast<std::size_t>(sqlite3_column_bytes(stmt.get(), c)))
+                     : std::string();
+        };
+        s.runoff_raw = bytes(10);
+        s.tail_raw   = bytes(11);
         slots.push_back(std::move(s));
     }
 
@@ -440,8 +471,15 @@ void hydrateHotstart(sqlite3* db, SimulationContext& ctx,
             formats::HotstartSnapshot snap;
             snap.header.file_stamp     = "SWMM5-HOTSTART4";
             snap.header.file_version   = s.format_version;
-            snap.header.num_subcatch   = 0;
-            snap.header.num_landuses   = 0;
+            snap.header.num_subcatch   = s.num_subcatch;
+            snap.header.num_landuses   = s.num_landuses;
+            snap.runoff_raw            = s.runoff_raw;
+            snap.tail_raw              = s.tail_raw;
+            if (!snap.runoff_raw.empty() && s.num_subcatch != ctx.n_subcatches())
+                throw GpkgError("hotstart slot '" + s.name + "' holds " +
+                                std::to_string(s.num_subcatch) +
+                                " subcatchments, the model " +
+                                std::to_string(ctx.n_subcatches()));
             snap.header.num_pollut     = s.num_pollutants;
             snap.header.flow_units     = flowUnitsIdx(s.flow_units);
 
@@ -449,12 +487,18 @@ void hydrateHotstart(sqlite3* db, SimulationContext& ctx,
             const int n_nodes = ctx.node_names.size();
             snap.header.num_nodes = n_nodes;
             snap.node_state.resize(static_cast<std::size_t>(n_nodes));
-            for (auto& ns : snap.node_state)
+            for (std::size_t i = 0; i < snap.node_state.size(); ++i) {
+                auto& ns = snap.node_state[i];
                 ns.concentration.resize(static_cast<std::size_t>(
                     s.num_pollutants));
+                // v4 files carry a residence time for every storage node.
+                ns.has_hrt = s.format_version >= 4 && i < ctx.nodes.type.size() &&
+                             ctx.nodes.type[i] == NodeType::STORAGE;
+            }
             {
-                auto ns = prepare(db,
-                    "SELECT node_id, depth, lateral_inflow, overflow "
+                auto ns = prepare(db, std::string(
+                    "SELECT node_id, depth, lateral_inflow, overflow, ")
+                    + (has_hrt ? "hrt " : "NULL ") +
                     "FROM hotstart_node_state "
                     "WHERE simulation_id=? AND slot_name=?");
                 bind_text(ns.get(), 1, sim);
@@ -468,6 +512,7 @@ void hydrateHotstart(sqlite3* db, SimulationContext& ctx,
                     dst.depth          = sqlite3_column_double(ns.get(), 1);
                     dst.lateral_inflow = sqlite3_column_double(ns.get(), 2);
                     dst.overflow       = sqlite3_column_double(ns.get(), 3);
+                    dst.hrt            = sqlite3_column_double(ns.get(), 4);
                 }
             }
             // Node pollutant state.
@@ -560,6 +605,7 @@ void hydrateHotstart(sqlite3* db, SimulationContext& ctx,
             openswmm::HotstartSaveEntry entry;
             entry.path     = std::string{};
             entry.datetime = s.save_datetime;
+            entry.format   = s.save_format;
             bindSlot(entry.path,
                       "<gpkg:hotstart_slots:" + s.name + ">",
                       scratch_path);

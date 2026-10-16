@@ -13,6 +13,7 @@
 #include <openswmm/engine/openswmm_2d.h>
 #include <openswmm/engine/openswmm_forcing.h>
 #include "../../core/SWMMEngine.hpp"
+#include "../../core/UnitConversion.hpp"
 #include "../mesh/MeshBuilder.hpp"
 #include "../data/Report2DVars.hpp"
 
@@ -108,6 +109,16 @@ int swmm_2d_prepare_for_edit(SWMM_Engine engine) {
 // ============================================================================
 // Mesh Geometry
 // ============================================================================
+
+int swmm_2d_geometry_scale_to_si(SWMM_Engine engine, double* scale) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    if (!scale) return SWMM_ERR_BADPARAM;
+    const auto& options = router2d.options();
+    const bool us = openswmm::ucf::getUnitSystem(static_cast<int>(eng->context().options.flow_units)) == 0;
+    *scale = options.mesh_units_si || options.mesh_scaled_to_si || !us ? 1.0 : 0.3048;
+    return SWMM_OK;
+}
 
 int swmm_2d_vertex_count(SWMM_Engine engine, int* count) {
     GET_ENGINE(engine);
@@ -1661,6 +1672,218 @@ const char* swmm_2d_output_variable_text(unsigned mask) {
     static thread_local std::string buf;
     buf = openswmm::twoD::report2d::formatMask(mask);
     return buf.c_str();
+}
+
+// ---------------------------------------------------------------------------
+// Authored [2D_INITIAL_QUALITY] / [2D_BOUNDARY_QUALITY] rows
+// ---------------------------------------------------------------------------
+
+namespace {
+
+bool quality_editable(const openswmm::SWMMEngine& eng) {
+    const auto s = eng.context().state;
+    return s == openswmm::EngineState::OPENED || s == openswmm::EngineState::BUILDING;
+}
+
+void copy_out(const std::string& v, char* buf, int len) {
+    if (!buf || len <= 0) return;
+    const auto n = std::min(static_cast<std::size_t>(len - 1), v.size());
+    std::memcpy(buf, v.data(), n);
+    buf[n] = '\0';
+}
+
+/// The parser defers the cell upper bound to initialize; check it here only
+/// when a mesh is already present.
+bool cell_ok(openswmm::SWMMEngine& eng, int cell) {
+    if (cell < 0) return false;
+    const int n = eng.surfaceRouter2D().mesh().n_triangles();
+    return n <= 0 || cell < n;
+}
+
+}  // namespace
+
+int swmm_2d_initial_quality_count(SWMM_Engine engine, int* count) {
+    GET_ENGINE(engine);
+    if (!count) return SWMM_ERR_BADPARAM;
+    *count = static_cast<int>(eng->surfaceRouter2D().pendingInitialQualityRows().size());
+    return SWMM_OK;
+}
+
+int swmm_2d_get_initial_quality(SWMM_Engine engine, int index, int* scope,
+                                char* tag, int tag_len, int* cell,
+                                char* species, int species_len, double* conc) {
+    GET_ENGINE(engine);
+    const auto& rows = eng->surfaceRouter2D().pendingInitialQualityRows();
+    if (index < 0 || index >= static_cast<int>(rows.size())) return SWMM_ERR_BADINDEX;
+    const auto& r = rows[static_cast<std::size_t>(index)];
+    if (scope) *scope = r.all ? SWMM_2D_QUAL_SCOPE_GLOBAL
+                       : (r.tri >= 0 ? SWMM_2D_QUAL_SCOPE_CELL : SWMM_2D_QUAL_SCOPE_TAG);
+    if (cell) *cell = r.tri;
+    if (conc) *conc = r.conc;
+    copy_out(r.tag, tag, tag_len);
+    copy_out(r.species, species, species_len);
+    return SWMM_OK;
+}
+
+int swmm_2d_set_initial_quality(SWMM_Engine engine, int scope, const char* tag,
+                                int cell, const char* species, double conc) {
+    GET_ENGINE(engine);
+    if (!quality_editable(*eng)) return SWMM_ERR_LIFECYCLE;
+    if (!species || !*species) return SWMM_ERR_BADPARAM;
+    if (!std::isfinite(conc) || conc < 0.0) return SWMM_ERR_BADPARAM;
+    openswmm::twoD::PendingInitialQualityRow row;
+    switch (scope) {
+        case SWMM_2D_QUAL_SCOPE_GLOBAL: row.all = true; break;
+        case SWMM_2D_QUAL_SCOPE_TAG:
+            if (!tag || !*tag) return SWMM_ERR_BADPARAM;
+            row.tag = tag;
+            break;
+        case SWMM_2D_QUAL_SCOPE_CELL:
+            if (!cell_ok(*eng, cell)) return SWMM_ERR_BADINDEX;
+            row.tri = cell;
+            break;
+        default: return SWMM_ERR_BADPARAM;
+    }
+    row.species = species;
+    row.conc = conc;
+    auto& rows = eng->surfaceRouter2D().pendingInitialQualityRows();
+    for (auto& r : rows)
+        if (r.all == row.all && r.tri == row.tri && r.tag == row.tag &&
+            r.species == row.species) {
+            r.conc = conc;
+            return SWMM_OK;
+        }
+    rows.push_back(std::move(row));
+    return SWMM_OK;
+}
+
+int swmm_2d_remove_initial_quality(SWMM_Engine engine, int index) {
+    GET_ENGINE(engine);
+    if (!quality_editable(*eng)) return SWMM_ERR_LIFECYCLE;
+    auto& rows = eng->surfaceRouter2D().pendingInitialQualityRows();
+    if (index < 0 || index >= static_cast<int>(rows.size())) return SWMM_ERR_BADINDEX;
+    rows.erase(rows.begin() + index);
+    return SWMM_OK;
+}
+
+int swmm_2d_initial_bed_quality_count(SWMM_Engine engine, int* count) {
+    GET_ENGINE(engine);
+    if (!count) return SWMM_ERR_BADPARAM;
+    *count = static_cast<int>(eng->surfaceRouter2D().pendingInitialBedQualityRows().size());
+    return SWMM_OK;
+}
+
+int swmm_2d_get_initial_bed_quality(SWMM_Engine engine, int index, int* scope,
+                                    char* tag, int tag_len, int* cell,
+                                    char* species, int species_len, double* conc) {
+    GET_ENGINE(engine);
+    const auto& rows = eng->surfaceRouter2D().pendingInitialBedQualityRows();
+    if (index < 0 || index >= static_cast<int>(rows.size())) return SWMM_ERR_BADINDEX;
+    const auto& r = rows[static_cast<std::size_t>(index)];
+    if (scope) *scope = r.all ? SWMM_2D_QUAL_SCOPE_GLOBAL
+                       : (r.tri >= 0 ? SWMM_2D_QUAL_SCOPE_CELL : SWMM_2D_QUAL_SCOPE_TAG);
+    if (cell) *cell = r.tri;
+    if (conc) *conc = r.conc;
+    copy_out(r.tag, tag, tag_len);
+    copy_out(r.species, species, species_len);
+    return SWMM_OK;
+}
+
+int swmm_2d_set_initial_bed_quality(SWMM_Engine engine, int scope, const char* tag,
+                                    int cell, const char* species, double conc) {
+    GET_ENGINE(engine);
+    if (!quality_editable(*eng)) return SWMM_ERR_LIFECYCLE;
+    if (!species || !*species) return SWMM_ERR_BADPARAM;
+    if (!std::isfinite(conc) || conc < 0.0) return SWMM_ERR_BADPARAM;
+    openswmm::twoD::PendingInitialBedQualityRow row;
+    switch (scope) {
+        case SWMM_2D_QUAL_SCOPE_GLOBAL: row.all = true; break;
+        case SWMM_2D_QUAL_SCOPE_TAG:
+            if (!tag || !*tag) return SWMM_ERR_BADPARAM;
+            row.tag = tag;
+            break;
+        case SWMM_2D_QUAL_SCOPE_CELL:
+            if (!cell_ok(*eng, cell)) return SWMM_ERR_BADINDEX;
+            row.tri = cell;
+            break;
+        default: return SWMM_ERR_BADPARAM;
+    }
+    row.species = species;
+    row.conc = conc;
+    auto& rows = eng->surfaceRouter2D().pendingInitialBedQualityRows();
+    for (auto& r : rows)
+        if (r.all == row.all && r.tri == row.tri && r.tag == row.tag &&
+            r.species == row.species) {
+            r.conc = conc;
+            return SWMM_OK;
+        }
+    rows.push_back(std::move(row));
+    return SWMM_OK;
+}
+
+int swmm_2d_remove_initial_bed_quality(SWMM_Engine engine, int index) {
+    GET_ENGINE(engine);
+    if (!quality_editable(*eng)) return SWMM_ERR_LIFECYCLE;
+    auto& rows = eng->surfaceRouter2D().pendingInitialBedQualityRows();
+    if (index < 0 || index >= static_cast<int>(rows.size())) return SWMM_ERR_BADINDEX;
+    rows.erase(rows.begin() + index);
+    return SWMM_OK;
+}
+
+int swmm_2d_boundary_quality_count(SWMM_Engine engine, int* count) {
+    GET_ENGINE(engine);
+    if (!count) return SWMM_ERR_BADPARAM;
+    *count = static_cast<int>(eng->surfaceRouter2D().pendingBoundaryQualityRows().size());
+    return SWMM_OK;
+}
+
+int swmm_2d_get_boundary_quality(SWMM_Engine engine, int index, int* cell,
+                                 int* edge, char* species, int species_len,
+                                 double* conc) {
+    GET_ENGINE(engine);
+    const auto& rows = eng->surfaceRouter2D().pendingBoundaryQualityRows();
+    if (index < 0 || index >= static_cast<int>(rows.size())) return SWMM_ERR_BADINDEX;
+    const auto& r = rows[static_cast<std::size_t>(index)];
+    if (cell) *cell = r.tri;
+    if (edge) *edge = r.edge;
+    if (conc) *conc = r.conc;
+    copy_out(r.species, species, species_len);
+    return SWMM_OK;
+}
+
+int swmm_2d_set_boundary_quality(SWMM_Engine engine, int cell, int edge,
+                                 const char* species, double conc) {
+    GET_ENGINE(engine);
+    if (!quality_editable(*eng)) return SWMM_ERR_LIFECYCLE;
+    if (!species || !*species) return SWMM_ERR_BADPARAM;
+    if (!std::isfinite(conc) || conc < 0.0) return SWMM_ERR_BADPARAM;
+    if (!cell_ok(*eng, cell)) return SWMM_ERR_BADINDEX;
+    if (edge < 0 || edge >= openswmm::twoD::kMaxCellVerts) return SWMM_ERR_BADINDEX;
+    auto& router = eng->surfaceRouter2D();
+    if (router.mesh().n_triangles() > 0 && edge >= router.mesh().cell_vertex_count(cell))
+        return SWMM_ERR_BADINDEX;
+    auto& rows = router.pendingBoundaryQualityRows();
+    for (auto& r : rows)
+        if (r.tri == cell && r.edge == edge && r.species == species) {
+            r.conc = conc;
+            return SWMM_OK;
+        }
+    openswmm::twoD::PendingBoundaryQualityRow row;
+    row.tri = cell;
+    row.edge = edge;
+    row.species = species;
+    row.conc = conc;
+    rows.push_back(std::move(row));
+    return SWMM_OK;
+}
+
+int swmm_2d_remove_boundary_quality(SWMM_Engine engine, int index) {
+    GET_ENGINE(engine);
+    if (!quality_editable(*eng)) return SWMM_ERR_LIFECYCLE;
+    auto& rows = eng->surfaceRouter2D().pendingBoundaryQualityRows();
+    if (index < 0 || index >= static_cast<int>(rows.size())) return SWMM_ERR_BADINDEX;
+    rows.erase(rows.begin() + index);
+    return SWMM_OK;
 }
 
 } // extern "C"

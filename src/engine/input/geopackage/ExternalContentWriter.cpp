@@ -34,6 +34,7 @@
 
 #include "../../core/DateTime.hpp"
 #include "../../core/FilePathPair.hpp"
+#include "../../core/HotStartManager.hpp"
 #include "../../core/SimulationContext.hpp"
 
 #include <cstdio>
@@ -254,12 +255,14 @@ void insert_hotstart_slot_row(sqlite3*            db,
                                int                 format_version,
                                const std::string&  flow_units,
                                int                 num_pollut,
-                               const std::string&  status) {
+                               const std::string&  status,
+                               HotstartFormat      save_format = HotstartFormat::AUTO) {
     auto stmt = prepare(db,
         "INSERT INTO hotstart_slots "
         "(simulation_id, slot_name, direction, save_datetime, "
-        " format_version, flow_units, num_pollutants, captured_at, status) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        " format_version, flow_units, num_pollutants, captured_at, status, "
+        " save_format) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     bind_text(stmt.get(), 1, sim);
     bind_text(stmt.get(), 2, slot_name);
     bind_text(stmt.get(), 3, direction);
@@ -272,6 +275,10 @@ void insert_hotstart_slot_row(sqlite3*            db,
     if (status == "populated") bind_text(stmt.get(), 8, oadateToIso(save_datetime));
     else                       sqlite3_bind_null(stmt.get(), 8);
     bind_text(stmt.get(), 9, status);
+    // NULL = AUTO, so a row written for an older .gpkg reads back unchanged.
+    if      (save_format == HotstartFormat::LEGACY) bind_text(stmt.get(), 10, "LEGACY");
+    else if (save_format == HotstartFormat::NATIVE) bind_text(stmt.get(), 10, "NATIVE");
+    else                                            sqlite3_bind_null(stmt.get(), 10);
     sqlite3_step(stmt.get());
 }
 
@@ -284,8 +291,8 @@ void insert_hotstart_state(sqlite3*                       db,
     {
         auto stmt = prepare(db,
             "INSERT INTO hotstart_node_state "
-            "(simulation_id, slot_name, node_id, depth, lateral_inflow, overflow) "
-            "VALUES (?, ?, ?, ?, ?, ?)");
+            "(simulation_id, slot_name, node_id, depth, lateral_inflow, overflow, hrt) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)");
         for (std::size_t i = 0; i < snap.node_state.size(); ++i) {
             if (static_cast<int>(i) >= ctx.node_names.size()) break;
             const auto& s = snap.node_state[i];
@@ -296,6 +303,8 @@ void insert_hotstart_state(sqlite3*                       db,
             bind_double(stmt.get(), 4, s.depth);
             bind_double(stmt.get(), 5, s.lateral_inflow);
             bind_double(stmt.get(), 6, s.overflow);
+            if (s.has_hrt) bind_double(stmt.get(), 7, s.hrt);
+            else           sqlite3_bind_null(stmt.get(), 7);
             sqlite3_step(stmt.get());
         }
     }
@@ -369,7 +378,37 @@ void insert_hotstart_state(sqlite3*                       db,
             }
         }
     }
-    // Subcatch runoff state is out of scope for IO-6e (see HotstartFormat.hpp).
+    // The subcatchment section and any trailer ride on the slot row as they
+    // are in the file (their layout depends on the model, not on names).
+    {
+        auto stmt = prepare(db,
+            "UPDATE hotstart_slots SET num_subcatch=?, num_landuses=?, "
+            "runoff_section=?, tail_section=? WHERE simulation_id=? AND slot_name=?");
+        bind_int(stmt.get(), 1, snap.runoff_raw.empty() ? 0 : snap.header.num_subcatch);
+        bind_int(stmt.get(), 2, snap.header.num_landuses);
+        auto bind_bytes = [&](int col, const std::string& b) {
+            if (b.empty()) sqlite3_bind_null(stmt.get(), col);
+            else bind_blob(stmt.get(), col, b.data(), static_cast<int>(b.size()));
+        };
+        bind_bytes(3, snap.runoff_raw);
+        bind_bytes(4, snap.tail_raw);
+        bind_text(stmt.get(), 5, sim);
+        bind_text(stmt.get(), 6, slot);
+        sqlite3_step(stmt.get());
+    }
+}
+
+// The model's side of a legacy file's layout (see formats::HsfLayout).
+formats::HsfLayout hsfLayout(const SimulationContext& ctx) {
+    formats::HsfLayout layout;
+    layout.n_subcatch = ctx.n_subcatches();
+    layout.runoff_doubles = [&ctx](int n_landuses) {
+        return HotStartManager::legacy_runoff_size(ctx, n_landuses);
+    };
+    layout.storage.assign(ctx.nodes.type.size(), 0);
+    for (std::size_t i = 0; i < ctx.nodes.type.size(); ++i)
+        layout.storage[i] = ctx.nodes.type[i] == NodeType::STORAGE;
+    return layout;
 }
 
 // -------------------------------------------------------------------------
@@ -486,8 +525,13 @@ void writeHotstartUseSlot(sqlite3* db, const SimulationContext& ctx,
     if (!fileExists(path)) {
         throw GpkgError("hotstart USE file not readable: '" + path + "'");
     }
+    if (HotStartManager::is_native_file(path)) {
+        throw GpkgError("hotstart USE file '" + path + "' is a native "
+                        "OpenSWMM hotstart; a GeoPackage can embed only the "
+                        "legacy SWMM5 format");
+    }
     formats::HotstartSnapshot snap;
-    auto r = formats::parseHotstartHsf(path, snap);
+    auto r = formats::parseHotstartHsf(path, snap, hsfLayout(ctx));
     if (!r.ok) throw GpkgError("hotstart parse failed: " + r.error);
 
     insert_hotstart_slot_row(db, sim, "use", "USE",
@@ -506,8 +550,10 @@ void writeHotstartSaveSlots(sqlite3* db, const SimulationContext& ctx,
         const std::string slot_name = "save_" + std::to_string(slot_idx++);
         if (save.path.empty()) continue;
         const std::string path = fopenToken(save.path);
-        if (!fileExists(path)) {
-            // Pending: parent row only, no state.
+        // Pending: parent row only, no state. A native file from an earlier
+        // run is also left out: the state tables hold the legacy layout only,
+        // and the run that follows writes the file again.
+        if (!fileExists(path) || HotStartManager::is_native_file(path)) {
             insert_hotstart_slot_row(db, sim, slot_name, "SAVE",
                                       save.datetime,
                                       /*format_version=*/4,
@@ -515,11 +561,11 @@ void writeHotstartSaveSlots(sqlite3* db, const SimulationContext& ctx,
                                           static_cast<int>(
                                               ctx.options.flow_units)),
                                       ctx.n_pollutants(),
-                                      "pending");
+                                      "pending", save.format);
             continue;
         }
         formats::HotstartSnapshot snap;
-        auto r = formats::parseHotstartHsf(path, snap);
+        auto r = formats::parseHotstartHsf(path, snap, hsfLayout(ctx));
         if (!r.ok) {
             throw GpkgError("hotstart SAVE parse failed for '" + path
                               + "': " + r.error);
@@ -529,7 +575,7 @@ void writeHotstartSaveSlots(sqlite3* db, const SimulationContext& ctx,
                                   snap.header.file_version,
                                   flowUnitsToken(snap.header.flow_units),
                                   snap.header.num_pollut,
-                                  "populated");
+                                  "populated", save.format);
         insert_hotstart_state(db, sim, slot_name, ctx, snap);
     }
 }

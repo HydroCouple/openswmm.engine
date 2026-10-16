@@ -27,6 +27,11 @@
  */
 
 #include "openswmm_api_common.hpp"
+
+#include <cctype>
+#include <cmath>
+#include <string>
+#include <vector>
 #include "../../../include/openswmm/engine/openswmm_spatial.h"
 
 extern "C" {
@@ -75,6 +80,16 @@ SWMM_ENGINE_API int swmm_spatial_set_node_coord(SWMM_Engine engine, int idx, dou
     if (ctx.spatial.node_has_xy.size() < ctx.spatial.node_x.size())
         ctx.spatial.node_has_xy.resize(ctx.spatial.node_x.size(), 0);
     ctx.spatial.node_has_xy[ui] = 1;   // G-X2
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_spatial_node_has_coord(SWMM_Engine engine, int idx, int* present) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (!present) return SWMM_ERR_BADPARAM;
+    const auto ui = static_cast<std::size_t>(idx);
+    *present = ui < ctx.spatial.node_has_xy.size() && ctx.spatial.node_has_xy[ui] ? 1 : 0;
     return SWMM_OK;
 }
 
@@ -283,3 +298,108 @@ SWMM_ENGINE_API int swmm_spatial_get_gage_coord(SWMM_Engine engine, int idx, dou
 }
 
 } /* extern "C" */
+
+// ---------------------------------------------------------------------------
+// [MAP] and annotation sections
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// The passthrough sections DefaultInputPlugin captures, or nullptr.
+const char* annotation_tag(const char* section) {
+    if (section == nullptr) return nullptr;
+    std::string up(section);
+    for (auto& c : up) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    for (const char* tag : {"LABELS", "BACKDROP", "PROFILE", "PROFILES"})
+        if (up == tag) return tag;
+    return nullptr;
+}
+
+}  // namespace
+
+SWMM_ENGINE_API int swmm_spatial_get_map_dimensions(SWMM_Engine engine,
+        double* x1, double* y1, double* x2, double* y2) {
+    CHECK_HANDLE(engine);
+    const auto& sp = to_engine(engine)->context().spatial;
+    if (x1) *x1 = sp.map_x1;
+    if (y1) *y1 = sp.map_y1;
+    if (x2) *x2 = sp.map_x2;
+    if (y2) *y2 = sp.map_y2;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_spatial_set_map_dimensions(SWMM_Engine engine,
+        double x1, double y1, double x2, double y2) {
+    CHECK_HANDLE(engine);
+    if (!std::isfinite(x1) || !std::isfinite(y1) || !std::isfinite(x2) || !std::isfinite(y2))
+        return SWMM_ERR_BADPARAM;
+    auto& sp = to_engine(engine)->context().spatial;
+    sp.map_x1 = x1;
+    sp.map_y1 = y1;
+    sp.map_x2 = x2;
+    sp.map_y2 = y2;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_spatial_get_map_units(SWMM_Engine engine, char* buf,
+                                               int buflen) {
+    CHECK_HANDLE(engine);
+    if (buf == nullptr || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const std::string& u = to_engine(engine)->context().spatial.map_units;
+    const auto n = std::min(static_cast<std::size_t>(buflen - 1), u.size());
+    std::memcpy(buf, u.data(), n);
+    buf[n] = '\0';
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_spatial_set_map_units(SWMM_Engine engine,
+                                               const char* units) {
+    CHECK_HANDLE(engine);
+    if (units == nullptr) return SWMM_ERR_BADPARAM;
+    std::string u(units);
+    for (auto& c : u) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    to_engine(engine)->context().spatial.map_units = std::move(u);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_spatial_get_annotation(SWMM_Engine engine,
+        const char* section, char* buf, int buflen, int* required) {
+    CHECK_HANDLE(engine);
+    const char* tag = annotation_tag(section);
+    if (tag == nullptr) return SWMM_ERR_BADPARAM;
+    const auto& all = to_engine(engine)->context().passthrough_sections;
+    std::string text;
+    if (const auto it = all.find(tag); it != all.end())
+        for (std::size_t i = 0; i < it->second.size(); ++i) {
+            if (i) text += '\n';
+            text += it->second[i];
+        }
+    if (required) *required = static_cast<int>(text.size() + 1);
+    if (buf == nullptr) return SWMM_OK;
+    if (buflen <= 0) return SWMM_ERR_BADPARAM;
+    const auto n = std::min(static_cast<std::size_t>(buflen - 1), text.size());
+    std::memcpy(buf, text.data(), n);
+    buf[n] = '\0';
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_spatial_set_annotation(SWMM_Engine engine,
+        const char* section, const char* text) {
+    CHECK_HANDLE(engine);
+    const char* tag = annotation_tag(section);
+    if (tag == nullptr) return SWMM_ERR_BADPARAM;
+    auto& all = to_engine(engine)->context().passthrough_sections;
+    if (text == nullptr || *text == '\0') {
+        all.erase(tag);
+        return SWMM_OK;
+    }
+    std::vector<std::string> lines;
+    std::string cur;
+    for (const char* p = text; *p; ++p) {
+        if (*p == '\n') { lines.push_back(std::move(cur)); cur.clear(); }
+        else if (*p != '\r') cur += *p;
+    }
+    if (!cur.empty()) lines.push_back(std::move(cur));
+    all[tag] = std::move(lines);
+    return SWMM_OK;
+}

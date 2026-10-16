@@ -211,7 +211,7 @@ void handle_rdii(SimulationContext& ctx, const std::vector<std::string>& lines) 
 //   UHgroup  RainGage             (gage assignment line)
 //   UHgroup  Month  Response  R  T  K  [Dmax  Drecov  Dinit]
 //
-// Where Month is 1-12 or "All", Response is "Short"/"Medium"/"Long".
+// Where Month is a month name, 1-12 or "All", Response is "Short"/"Medium"/"Long".
 // ============================================================================
 
 void handle_hydrographs(SimulationContext& ctx, const std::vector<std::string>& lines) {
@@ -235,12 +235,32 @@ void handle_hydrographs(SimulationContext& ctx, const std::vector<std::string>& 
 
         // Otherwise: UHgroup  Month  Response  R  T  K  [Dmax  Drecov  Dinit]
 
-        // Parse month: "All" → -1, or numeric 1-12 → 0-based (0-11)
+        // Legacy datetime_findMonth accepts case-insensitive three-letter
+        // month prefixes. A named month must not fall through to ALL.
         int month = -1;
         std::string month_upper = Tokenizer::to_upper(tok[1]);
         if (month_upper != "ALL") {
-            month = static_cast<int>(to_double(tok[1])) - 1;
-            if (month < 0 || month > 11) month = -1;
+            static const char* months[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                                           "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+            for (int m = 0; m < 12; ++m) {
+                if (month_upper.compare(0, 3, months[m]) == 0) {
+                    month = m;
+                    break;
+                }
+            }
+            // Preserve the engine's numeric-month extension.
+            if (month < 0) {
+                int numeric_month = 0;
+                const auto [end, ec] = std::from_chars(
+                    tok[1].data(), tok[1].data() + tok[1].size(), numeric_month);
+                if (ec == std::errc{} && end == tok[1].data() + tok[1].size()
+                    && numeric_month >= 1 && numeric_month <= 12)
+                    month = numeric_month - 1;
+            }
+            if (month < 0) {
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[1]));
+                continue;
+            }
         }
 
         // Parse response type: Short=0, Medium=1, Long=2

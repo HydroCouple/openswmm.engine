@@ -61,6 +61,12 @@
  *          EOF-4   4      CRC32 of all preceding bytes: uint32_t
  *          ```
  *
+ *          **V15** keeps the compatible record blocks and appends a complete
+ *          accepted engine-session checkpoint. It is used for qualified
+ *          thermal and 2D restarts so water, clocks, thermal stores, and
+ *          accepted exchange receipts restore together. V15 files restore
+ *          only into the matching initialized model through SWMMEngine.
+ *
  *          ### Threading
  *
  *          `HotStartFile` instances are not thread-safe. The C API wraps each
@@ -165,6 +171,8 @@ struct HotStartHeader {
  * @ingroup engine_hotstart
  */
 struct HotStartFile {
+    std::string snow_state; ///< V14: native degree-day and UEB accepted/held states
+    std::string engine_checkpoint; ///< V15: complete accepted engine/2D state for qualified native restarts
     HotStartHeader                    header;
     std::vector<HotStartNodeRecord>   nodes;
     std::vector<HotStartLinkRecord>   links;
@@ -258,6 +266,24 @@ struct HotStartFile {
  *
  * @ingroup engine_hotstart
  */
+/**
+ * @brief Reaction species carried after legacy's `.hsf` routing records.
+ *
+ * @details Legacy hotstart.c stops reading after the link records, so the
+ *          trailer is invisible to it. Network concentrations are applied as
+ *          the file is read; the surface block waits here until
+ *          msxsurf::initState() has sized the store (apply_species_surface()).
+ *          Species are matched by name.
+ */
+struct LegacySpeciesTrailer {
+    std::vector<std::string> species;
+    int n_subcatch = 0;
+    int n_landuses = -1;              ///< -1: the file has no surface block
+    std::vector<double> washoff;      ///< [sc * ns + s] washoff concentration
+    std::vector<double> ponded;       ///< [sc * ns + s] ponded mass
+    std::vector<double> buildup;      ///< [(sc * nlu + lu) * ns + s], per normalizer unit
+};
+
 class HotStartManager {
 public:
     HotStartManager() = delete;
@@ -294,6 +320,14 @@ public:
                               const groundwater::GWSolver* gw,
                               const std::string& path);
 
+    /// Capture a qualified full engine-session restart in native V15 format.
+    /// `engine_checkpoint` must come from SWMMEngine's accepted-boundary session snapshot.
+    static HotStartFile* save_with_engine_checkpoint(const SimulationContext& ctx,
+                              const runoff::RunoffSolver* runoff,
+                              const groundwater::GWSolver* gw,
+                              const std::string& path,
+                              const std::string& engine_checkpoint);
+
     // -----------------------------------------------------------------------
     // Open
     // -----------------------------------------------------------------------
@@ -308,6 +342,15 @@ public:
      * @returns Heap-allocated `HotStartFile*` on success, nullptr on error.
      */
     static HotStartFile* open(const std::string& path);
+
+    /**
+     * @brief True when `path` starts with the native `OPENSWMM_HS_V1` magic.
+     *
+     * @details Reads the first 16 bytes only; no validation. A missing,
+     *          short or legacy (`SWMM5-HOTSTART…`) file returns false.
+     *          `[FILES] USE HOTSTART` dispatches on this.
+     */
+    static bool is_native_file(const std::string& path) noexcept;
 
     // -----------------------------------------------------------------------
     // Apply
@@ -370,33 +413,70 @@ public:
      * @param ctx     Allocated target context; node/link/pollutant counts must
      *                match the file.
      * @param warn_cb Optional warning callback.
+     * @param runoff  When given, receives the file's runoff section
+     *                (legacy_runoff_size() doubles) for the caller to apply
+     *                once the hydrology and quality state exist; when null the
+     *                section is skipped with a warning.
      * @returns 0 on success; non-zero error code otherwise (description in
      *          last_io_error()).
      */
     static int apply_legacy_routing(const std::string& path,
                                     SimulationContext& ctx,
-                                    std::function<void(const std::string&)> warn_cb = {});
+                                    std::function<void(const std::string&)> warn_cb = {},
+                                    std::vector<double>* runoff = nullptr,
+                                    LegacySpeciesTrailer* species = nullptr);
+
+    /**
+     * @brief Apply the trailer's surface block to the reaction species'
+     *        surface store, by species name.
+     * @returns false (with a warning) when the land-use or subcatchment
+     *          count differs from the model's; nothing is applied then.
+     */
+    static bool apply_species_surface(const LegacySpeciesTrailer& tr,
+                                      SimulationContext& ctx,
+                                      const std::function<void(const std::string&)>& warn);
+
+    /**
+     * @brief Number of doubles in legacy's runoff section (hotstart.c
+     *        saveRunoff) for the current model with @p n_land land uses.
+     *
+     * @details Per subcatchment: 3 sub-area ponded depths + runoff (4),
+     *          infiltration state (6), +4 with groundwater, +15 with a
+     *          snowpack, and when pollutants exist runoff and ponded quality
+     *          (2 per pollutant) plus per land use the buildup of each
+     *          pollutant and the date it was last swept.
+     */
+    static std::size_t legacy_runoff_size(const SimulationContext& ctx, int n_land);
 
     /**
      * @brief Write the current routing state as a legacy EPA SWMM5 `.hsf`
      *        (SAVE HOTSTART), byte-format-compatible with legacy readRouting()
      *        and apply_legacy_routing() above.
      *
-     * @details Mirrors legacy hotstart.c saveHotstart()+saveRouting() for the
-     *          "SWMM5-HOTSTART4" version: 15-char stamp + object counts
-     *          (nSub, nLand, nNodes, nLinks, nPollut, flowUnits as int32), then
-     *          per node `depth, latFlow[, storage hrt], qual[]` and per link
+     * @details Mirrors legacy hotstart.c saveHotstart()+saveRunoff()+
+     *          saveRouting() for the "SWMM5-HOTSTART4" version: 15-char stamp +
+     *          object counts (nSub, nLand, nNodes, nLinks, nPollut, flowUnits
+     *          as int32), then one double record per subcatchment (ponded
+     *          depths, runoff, infiltration, groundwater, snowpack, quality,
+     *          buildup — the `runoff` argument), then per node
+     *          `depth, latFlow[, storage hrt], qual[]` and per link
      *          `flow, depth, setting, qual[]` — all float, internal units
      *          (ft, cfs). Storage residence time is preserved when quality
      *          state is allocated, and otherwise written as zero.
      *
      * @param path  Absolute path for the `.hsf` file.
      * @param ctx   Source context (final routing state).
+     * @param runoff Legacy runoff section (legacy_runoff_size() doubles for
+     *               the model's land uses), written between the header and
+     *               the routing records. Null writes no runoff section and
+     *               zero land uses, which only a model without subcatchments
+     *               can read back.
      * @returns 0 on success; non-zero on file-open/write error
      *          (description in last_io_error()).
      */
     static int save_legacy_routing(const std::string& path,
-                                   const SimulationContext& ctx);
+                                   const SimulationContext& ctx,
+                                   const std::vector<double>* runoff = nullptr);
 
     // -----------------------------------------------------------------------
     // Flush (write-back modifications)

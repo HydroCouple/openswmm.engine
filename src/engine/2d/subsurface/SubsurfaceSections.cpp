@@ -27,6 +27,7 @@
 
 #include "SubsurfaceSections.hpp"
 #include "../../hydrology/LID.hpp"
+#include "../../hydrology/LidNode.hpp"
 #include "FootprintGeometry.hpp"
 #include <iomanip>
 #include <sstream>
@@ -399,13 +400,24 @@ namespace {
 /// whole network's nodes O(n) rather than O(n_nodes × n_cells).
 class CellLocator {
 public:
-    explicit CellLocator(const MeshData& m) : m_(m) {
+    explicit CellLocator(const MeshData& m, const std::function<bool(int)>& progress = {})
+        : m_(m), progress_(progress) {
         const int n = m.n_cells();
         if (n == 0 || m.vx.empty()) return;
+        const auto report = [&](int start, int width, int item, int count) {
+            if (!progress_) return false;
+            const int stride = std::max(1, count / 100);
+            if (item % stride != 0 && item + 1 != count) return false;
+            const int pct = count > 0 ? start + width * (item + 1) / count : start + width;
+            if (!progress_(pct)) return false;
+            cancelled_ = true;
+            return true;
+        };
         xmin_ = ymin_ =  1.0e300; xmax_ = ymax_ = -1.0e300;
         for (std::size_t v = 0; v < m.vx.size(); ++v) {
             xmin_ = std::min(xmin_, m.vx[v]); xmax_ = std::max(xmax_, m.vx[v]);
             ymin_ = std::min(ymin_, m.vy[v]); ymax_ = std::max(ymax_, m.vy[v]);
+            if (report(0, 20, static_cast<int>(v), static_cast<int>(m.vx.size()))) return;
         }
         nb_ = std::max(1, static_cast<int>(std::sqrt(static_cast<double>(n))));
         dx_ = std::max((xmax_ - xmin_) / nb_, 1.0e-9);
@@ -421,6 +433,7 @@ public:
             for (int j = bin(by0, ymin_, dy_); j <= bin(by1, ymin_, dy_); ++j)
                 for (int i = bin(bx0, xmin_, dx_); i <= bin(bx1, xmin_, dx_); ++i)
                     bins_[static_cast<std::size_t>(j) * nb_ + i].push_back(c);
+            if (report(20, 30, c, n)) return;
         }
     }
     int locate(double x, double y) const {
@@ -433,27 +446,44 @@ public:
     /// G-X3: every cell whose bounding box may meet the box [x0,x1]×[y0,y1]
     /// (the union of the bins the box covers, de-duplicated), for a segment
     /// clip. Empty when the box misses the mesh entirely.
-    std::vector<int> candidates(double x0, double y0, double x1, double y1) const {
+    std::vector<int> candidates(double x0, double y0, double x1, double y1,
+                                int progress_start = 0, int progress_width = 0) const {
         std::vector<int> out;
         if (bins_.empty()) return out;
         if (std::max(x0, x1) < xmin_ || std::min(x0, x1) > xmax_ ||
             std::max(y0, y1) < ymin_ || std::min(y0, y1) > ymax_) return out;
         const int i0 = bin(std::min(x0, x1), xmin_, dx_), i1 = bin(std::max(x0, x1), xmin_, dx_);
         const int j0 = bin(std::min(y0, y1), ymin_, dy_), j1 = bin(std::max(y0, y1), ymin_, dy_);
-        for (int j = j0; j <= j1; ++j)
-            for (int i = i0; i <= i1; ++i)
-                for (const int c : bins_[static_cast<std::size_t>(j) * nb_ + i])
+        const int row_count = j1 - j0 + 1;
+        const int row_stride = std::max(1, row_count / 100);
+        std::size_t visited = 0;
+        for (int j = j0; j <= j1; ++j) {
+            for (int i = i0; i <= i1; ++i) {
+                for (const int c : bins_[static_cast<std::size_t>(j) * nb_ + i]) {
                     out.push_back(c);
+                    if ((++visited & 4095u) == 0u && progress_) {
+                        const int pct = progress_start + progress_width * (j - j0) / row_count;
+                        if (progress_(pct)) { cancelled_ = true; return {}; }
+                    }
+                }
+            }
+            if (progress_ && ((j - j0) % row_stride == 0 || j == j1)) {
+                const int pct = progress_start + progress_width * (j - j0 + 1) / row_count;
+                if (progress_(pct)) { cancelled_ = true; return {}; }
+            }
+        }
         std::sort(out.begin(), out.end());
         out.erase(std::unique(out.begin(), out.end()), out.end());
         return out;
     }
+    bool cancelled() const noexcept { return cancelled_; }
     /// G-X3: the length of the segment (x0,y0)→(x1,y1) inside cell `c`.
     /// Cells are CCW and convex (MeshBuilder validates both), so this is
     /// the Cyrus–Beck clip: the parameter interval [t_lo, t_hi] that lies on
     /// the inner side of every edge's half-plane. Exact for a straight
     /// segment — no sampling, no step error.
-    double lengthInside(int c, double x0, double y0, double x1, double y1) const {
+    double lengthInside(int c, double x0, double y0, double x1, double y1,
+                        double* begin=nullptr,double* end=nullptr) const {
         const int nv = m_.cell_nv[static_cast<std::size_t>(c)];
         const double dx = x1 - x0, dy = y1 - y0;
         double t_lo = 0.0, t_hi = 1.0;
@@ -474,7 +504,17 @@ public:
             else          t_lo = std::max(t_lo, t);   // entering it
             if (t_lo >= t_hi) return 0.0;
         }
+        if(begin)*begin=t_lo;if(end)*end=t_hi;
         return (t_hi - t_lo) * std::hypot(dx, dy);
+    }
+    bool onBoundary(int c,double x,double y) const {
+        const int nv=m_.cell_nv[std::size_t(c)];
+        for(int i=0,j=nv-1;i<nv;j=i++) {
+            const auto a=std::size_t(m_.cell_vertex(c,j)),b=std::size_t(m_.cell_vertex(c,i));
+            const double dx=m_.vx[b]-m_.vx[a],dy=m_.vy[b]-m_.vy[a];
+            if(std::abs(dx*(y-m_.vy[a])-dy*(x-m_.vx[a]))<=1e-10*std::hypot(dx,dy))return true;
+        }
+        return false;
     }
     /// The area of the polygon (px, py) inside cell `c`. Sutherland–Hodgman
     /// against the cell's edge half-planes — exact for the convex CCW clip
@@ -516,7 +556,7 @@ public:
     }
 private:
     int bin(double v, double v0, double d) const {
-        return std::clamp(static_cast<int>((v - v0) / d), 0, nb_ - 1);
+        return static_cast<int>(std::clamp((v-v0)/d,0.,double(nb_-1)));
     }
     bool inside(int c, double x, double y) const {   // ray casting, any polygon
         const int nv = m_.cell_nv[static_cast<std::size_t>(c)];
@@ -532,12 +572,89 @@ private:
         return in;
     }
     const MeshData& m_;
+    std::function<bool(int)> progress_;
+    mutable bool cancelled_ = false;
     double xmin_ = 0, xmax_ = 0, ymin_ = 0, ymax_ = 0, dx_ = 1, dy_ = 1;
     int nb_ = 0;
     std::vector<std::vector<int>> bins_;
 };
 
 }  // namespace
+
+MeshPolylineMapping mapMeshPolyline(const MeshData& mesh,const std::vector<double>& x,const std::vector<double>& y,
+                                    const std::function<bool(int)>& progress,
+                                    std::size_t first_interval,std::size_t max_intervals,
+                                    bool count_contact_cells) {
+    MeshPolylineMapping out;
+    std::set<int> contact_cells;
+    const auto appendInterval = [&](int cell,double begin,double end,double share) {
+        const std::size_t index=out.interval_count++;
+        if(index>=first_interval&&index-first_interval<max_intervals)
+            out.intervals.push_back({cell,begin,end,share});
+        if(count_contact_cells)contact_cells.insert(cell);
+    };
+    const auto markCancelled = [&]() {
+        out.cancelled=true;
+        out.intervals.clear();
+        out.interval_count=0;
+        out.contact_cells=0;
+        out.covered_length=0;
+        return true;
+    };
+    const auto poll = [&](int pct) {
+        return progress && progress(pct) ? markCancelled() : false;
+    };
+    if(x.size()!=y.size()||x.size()<2){out.error="A channel polyline needs matching x/y arrays and at least two points.";return out;}
+    for(std::size_t i=0;i<x.size();++i)if(!std::isfinite(x[i])||!std::isfinite(y[i])) {
+        out.error="A channel polyline contains a nonfinite coordinate.";return out;
+    }
+    if (poll(0)) return out;
+    const CellLocator locator(mesh, [&](int pct) { return progress && progress(pct / 2); });
+    if (locator.cancelled()) { markCancelled(); return out; }
+    const std::size_t segment_count = x.size() - 1;
+    for(std::size_t p=1;p<x.size();++p) {
+        const int segment_start = 50 + int(50 * (p - 1) / segment_count);
+        const int segment_end = 50 + int(50 * p / segment_count);
+        const int segment_width = segment_end - segment_start;
+        if (poll(segment_start)) return out;
+        const double length=std::hypot(x[p]-x[p-1],y[p]-y[p-1]);if(!(length>0))continue;
+        if(!std::isfinite(length)||!std::isfinite(out.length+length)) {
+            out.error="Channel polyline length exceeds the finite coordinate range.";out.intervals.clear();out.covered_length=0;return out;
+        }
+        struct Clip {int cell;double a,b;};std::vector<Clip> clips;std::vector<double> cuts;
+        const auto candidates = locator.candidates(x[p-1],y[p-1],x[p],y[p],
+            segment_start, segment_width / 2);
+        if (locator.cancelled()) { markCancelled(); return out; }
+        for(std::size_t ci=0;ci<candidates.size();++ci) {
+            if ((ci & 1023u) == 0u && poll(segment_start + segment_width / 2 +
+                    segment_width / 2 * int(ci) / std::max(1, int(candidates.size())))) return out;
+            const int cell = candidates[ci];
+            double a=0,b=0;if(!(locator.lengthInside(cell,x[p-1],y[p-1],x[p],y[p],&a,&b)>0))continue;
+            clips.push_back({cell,a,b});cuts.push_back(a);cuts.push_back(b);
+        }
+        if (poll(segment_start + segment_width * 3 / 4)) return out;
+        std::sort(cuts.begin(),cuts.end());cuts.erase(std::unique(cuts.begin(),cuts.end()),cuts.end());
+        for(std::size_t k=1;k<cuts.size();++k) {
+            if ((k & 1023u) == 0u && poll(segment_start + segment_width * 3 / 4 +
+                    segment_width / 4 * int(k) / std::max(1, int(cuts.size())))) return out;
+            const double a=cuts[k-1],b=cuts[k],mid=a+(b-a)*.5;
+            std::vector<int> owners;for(const auto& c:clips)if(c.a<=mid&&mid<c.b)owners.push_back(c.cell);
+            if(owners.empty())continue;
+            if(owners.size()>1)for(int cell:owners)
+                if(!locator.onBoundary(cell,x[p-1]+mid*(x[p]-x[p-1]),y[p-1]+mid*(y[p]-y[p-1]))) {
+                    out.error="Channel contact crosses overlapping mesh interiors; correct mesh ownership before coupling.";
+                    out.intervals.clear();out.covered_length=0;return out;
+                }
+            out.covered_length+=(b-a)*length;
+            for(int cell:owners)appendInterval(cell,out.length+a*length,out.length+b*length,1./owners.size());
+        }
+        out.length+=length;
+    }
+    if(count_contact_cells)out.contact_cells=contact_cells.size();
+    if (poll(100)) return out;
+    if(!(out.length>0))out.error="Channel polyline has no positive length.";
+    return out;
+}
 
 std::vector<std::string> resolveSubsurface(
     SimulationContext& ctx, const MeshData& mesh, SubsurfaceConfig& cfg,
@@ -571,12 +688,13 @@ std::vector<std::string> resolveSubsurface(
             errs.push_back("[2D_AQUIFER_NODE] unknown node '" + nm + "'.");
             continue;
         }
+        const bool effective_exchange = b.exchange && lidnode::bottomMode(ctx, b.node) != LidNodeBottom::Sealed;
         if (b.locate) {
             b.cell = locateNode(b.node);
-            if (b.cell < 0 && b.exchange)
+            if (b.cell < 0 && effective_exchange)
                 errs.push_back("[2D_AQUIFER_NODE] node '" + nm + "' CELL AUTO: the node's "
                                "[COORDINATES] fall in no mesh cell.");
-        } else if (b.exchange && (b.cell < 0 || b.cell >= n)) {
+        } else if (effective_exchange && (b.cell < 0 || b.cell >= n)) {
             errs.push_back("[2D_AQUIFER_NODE] node '" + nm + "' CELL " +
                            std::to_string(b.cell + 1) +
                            " is not on the mesh.");

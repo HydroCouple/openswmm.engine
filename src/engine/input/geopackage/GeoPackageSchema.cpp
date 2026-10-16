@@ -642,7 +642,9 @@ CREATE TABLE IF NOT EXISTS lid_layer_treatment (
 );
 CREATE TABLE IF NOT EXISTS lid_nodes (
     simulation_id TEXT NOT NULL, node_id TEXT NOT NULL, lid_id TEXT NOT NULL,
-    initial_saturation REAL NOT NULL, PRIMARY KEY(simulation_id, node_id)
+    initial_saturation REAL NOT NULL,
+    bottom_mode INTEGER NOT NULL DEFAULT 0 CHECK(bottom_mode IN (0,1,2)),
+    PRIMARY KEY(simulation_id, node_id)
 );
 CREATE TABLE IF NOT EXISTS lid_richards_options (
     simulation_id TEXT NOT NULL, lid_id TEXT NOT NULL,
@@ -957,6 +959,11 @@ CREATE TABLE IF NOT EXISTS hotstart_slots (
     num_pollutants  INTEGER NOT NULL,
     captured_at     TEXT,                                -- ISO8601; NULL until populated
     status          TEXT NOT NULL DEFAULT 'pending',     -- 'pending' | 'populated'
+    save_format     TEXT CHECK(save_format IN ('LEGACY','NATIVE')), -- SAVE keyword; NULL = AUTO
+    num_subcatch    INTEGER,                             -- header count; NULL = 0
+    num_landuses    INTEGER,                             -- header count; NULL = 0
+    runoff_section  BLOB,                                -- subcatchment section, verbatim
+    tail_section    BLOB,                                -- bytes after the links, verbatim
     PRIMARY KEY (simulation_id, slot_name),
     FOREIGN KEY (simulation_id)
         REFERENCES simulations(simulation_id)
@@ -971,6 +978,7 @@ CREATE TABLE IF NOT EXISTS hotstart_node_state (
     depth           REAL NOT NULL,
     lateral_inflow  REAL,
     overflow        REAL,
+    hrt             REAL,                                -- storage residence time (v4)
     PRIMARY KEY (simulation_id, slot_name, node_id),
     FOREIGN KEY (simulation_id, slot_name)
         REFERENCES hotstart_slots(simulation_id, slot_name)
@@ -1408,9 +1416,36 @@ void create_schema(sqlite3* db) {
     exec(db, PART_A3_DDL);
     exec(db, PART_A4_DDL);
     exec(db, PART_A5_DDL);
+    // Saving into an older database retains all simulations and gives their
+    // old LID assignments the unchanged bottom behavior.
+    bool has_bottom = false;
+    auto columns = prepare(db, "PRAGMA table_info(lid_nodes)");
+    while (sqlite3_step(columns.get()) == SQLITE_ROW)
+        has_bottom |= column_text(columns.get(), 1) == "bottom_mode";
+    columns.reset();
+    if (!has_bottom)
+        exec(db, "ALTER TABLE lid_nodes ADD COLUMN bottom_mode INTEGER NOT NULL DEFAULT 0 CHECK(bottom_mode IN (0,1,2))");
     exec(db, PART_B_DDL);
     exec(db, PART_C_DDL);
     exec(db, PART_D_DDL);
+    // Older databases lack the newer hot-start columns. Their rows read back
+    // as they were written: format AUTO (NULL), no subcatchment section, no
+    // trailer, no residence times.
+    auto add_missing = [&](const char* table, const char* column, const char* type) {
+        bool has = false;
+        auto cols = prepare(db, std::string("PRAGMA table_info(") + table + ")");
+        while (sqlite3_step(cols.get()) == SQLITE_ROW)
+            has |= column_text(cols.get(), 1) == column;
+        cols.reset();
+        if (!has)
+            exec(db, std::string("ALTER TABLE ") + table + " ADD COLUMN " + column + " " + type);
+    };
+    add_missing("hotstart_slots", "save_format", "TEXT CHECK(save_format IN ('LEGACY','NATIVE'))");
+    add_missing("hotstart_slots", "num_subcatch", "INTEGER");
+    add_missing("hotstart_slots", "num_landuses", "INTEGER");
+    add_missing("hotstart_slots", "runoff_section", "BLOB");
+    add_missing("hotstart_slots", "tail_section", "BLOB");
+    add_missing("hotstart_node_state", "hrt", "REAL");
     exec(db, MESH_2D_DDL);
     exec(db, "CREATE TABLE IF NOT EXISTS surface_ownership_2d_input (simulation_id TEXT PRIMARY KEY, sections TEXT NOT NULL)");
 }

@@ -96,7 +96,10 @@ double horton_getInfil(HortonState& state, double precip, double depth, double d
             F1 = fmin * t1 + df / kd * (1.0 - std::exp(-kd * t1));
         }
         fp = (F1 - Fp) / dt;
-        fp = std::max(fp, fmin);  // Floor at fmin (matching legacy line 443)
+        // Legacy MAX(fp, fmin) selects fmin when the Newton iteration's
+        // cumulative time has become NaN. std::max retains the NaN and
+        // contaminates runoff and groundwater on subsequent wet steps.
+        fp = fp >= fmin ? fp : fmin;
 
         // Limit infiltration rate to available water
         fp = std::min(fp, ia);
@@ -113,7 +116,7 @@ double horton_getInfil(HortonState& state, double precip, double depth, double d
             F1 = Fp + fp * dt;
             tp = tp + dt / 2.0;
             for (int iter = 0; iter < 20; ++iter) {
-                double kt = std::min(60.0, kd * tp);
+                double kt = 60.0 <= kd * tp ? 60.0 : kd * tp;
                 double ex = std::exp(-kt);
                 double FF = fmin * tp + df / kd * (1.0 - ex) - F1;
                 double FF1 = fmin + df * ex;

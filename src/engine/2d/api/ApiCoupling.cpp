@@ -46,7 +46,7 @@ int cellCheck(SWMMEngine& eng,int d,int cell) {
     auto& r=eng.surfaceRouter2D();
     if(!domainOk(d)) return SWMM_ERR_BADPARAM;
     if(cell<0 || cell>=r.mesh().n_cells()) return SWMM_ERR_BADINDEX;
-    if(d==1 && (!r.subsurface().active() || r.subsurface().state().zs[cell]<=0.0)) return SWMM_ERR_LIFECYCLE;
+    if(d==1 && (!r.subsurface().active() || !r.subsurface().covers(cell) || r.subsurface().state().zs[cell]<=0.0)) return SWMM_ERR_LIFECYCLE;
     return SWMM_OK;
 }
 int edgeCheck(SWMMEngine& eng,int d,int cell,int edge) {
@@ -78,8 +78,9 @@ int swmm_coupling_apply_frame(SWMM_Engine h,const SWMM_CouplingFrame* f) {
         const std::string owner=f->provider ? f->provider : "";
         if(owner.find('/')!=std::string::npos) return SWMM_ERR_BADPARAM;
         auto& router=eng->surfaceRouter2D(); auto& tr=router.state().transport;
+        if(router.commonSourceAttached() && f->boundary_count && !router.runtimeBoundaryCheckpointing())return SWMM_ERR_PLUGIN;
         const auto& mesh=router.mesh(); const int nc=mesh.n_cells();
-        const double now=eng->context().elapsed_ms/1000.0;
+        const double now=eng->runtimeCouplingTime();
         std::optional<RuntimeSources> next[2];
         const auto editSources=[&](int d)->RuntimeSources& {
             if(!next[d]) next[d]=sources(*eng,d); return *next[d];
@@ -139,6 +140,10 @@ int swmm_coupling_apply_frame(SWMM_Engine h,const SWMM_CouplingFrame* f) {
                 if(in.kind==0) { bc->clearRuntime(slot); concentrations->erase(slot); continue; }
                 bc->saveRuntime(slot); bc->runtime_owner[slot]=owner;
                 bc->ensureReceipt(slot,tr.n_species);
+                // Save all authored bindings, then disconnect every signal
+                // while an external stage or flow prescription owns the edge.
+                bc->edge_bc_tseries[slot]=bc->edge_bc_flow_tseries[slot]=bc->edge_bc_rating_curve[slot]=-1;
+                bc->edge_bc_tseries_name[slot].clear();bc->edge_bc_flow_tseries_name[slot].clear();bc->edge_bc_rating_curve_name[slot].clear();
                 bc->edge_bc_type[slot]=in.kind==1 ? SWMM_2D_BC_SPECIFIED_STAGE : SWMM_2D_BC_SPECIFIED_FLOW;
                 if(in.kind==1) {
                     bc->edge_bc_head[slot]=in.value; bc->edge_bc_tseries[slot]=-1; bc->edge_bc_tseries_name[slot].clear();
@@ -147,8 +152,9 @@ int swmm_coupling_apply_frame(SWMM_Engine h,const SWMM_CouplingFrame* f) {
                     bc->edge_bc_flow_tseries[slot]=-1; bc->edge_bc_flow_tseries_name[slot].clear();
                     bc->edge_bc_rating_curve[slot]=-1; bc->edge_bc_rating_curve_name[slot].clear();
                 }
-                auto& tuple=(*concentrations)[slot]; tuple.clear();
-                if(in.species_count) tuple.assign(in.concentrations,in.concentrations+in.species_count);
+                if(router.runtimeBoundaryCheckpointing())concentrations->erase(slot);
+                else {auto& tuple=(*concentrations)[slot];tuple.clear();
+                    if(in.species_count)tuple.assign(in.concentrations,in.concentrations+in.species_count);}
             } else {
                 auto& store=editSources(1); const auto id=boundaryId(in.cell,in.edge);
                 const auto* old=store.find(id,in.cell);
@@ -203,9 +209,15 @@ int swmm_coupling_apply_frame(SWMM_Engine h,const SWMM_CouplingFrame* f) {
         }
         for(int d=0;d<2;++d) if(next[d]) next[d]->rebuild(nc);
         if(forcing) forcing->rebuild(nc);
+        if(router.commonSourceAttached() && (f->source_count || f->boundary_count || f->forcing_count || f->clear_count)) {
+            if(!router.runtimeWaterCheckpointing())return SWMM_ERR_PLUGIN;
+            const auto invalid=router.validateRuntimeWater(next[0]?*next[0]:sources(*eng,0),
+                next[1]?*next[1]:sources(*eng,1),forcing?*forcing:router.state().runtime_forcings,now,bc?&*bc:nullptr);
+            if(!invalid.empty())return SWMM_ERR_PLUGIN;
+        }
         // All validation/allocation precedes the barrier. Preserve cumulative
         // physics belonging to the old prescription, then commit by moves.
-        router.flushPendingBatch(eng->context());
+        eng->flushRuntimeCouplingBoundary(f->source_count || f->boundary_count || f->forcing_count || f->clear_count);
         for(int d=0;d<2;++d) if(next[d]) next[d]->syncReceipts(sources(*eng,d));
         if(bc) {
             for(auto& entry:bc->receipts) {
@@ -222,7 +234,10 @@ int swmm_coupling_apply_frame(SWMM_Engine h,const SWMM_CouplingFrame* f) {
             router.invalidateBoundaryNames(); router.invalidateBoundaryIndex();
         }
         if(forcing) router.state().runtime_forcings=std::move(*forcing);
-        if(f->source_count || f->boundary_count || f->forcing_count || f->clear_count) eng->context().runtime_coupling_used=true;
+        if(f->source_count || f->boundary_count || f->forcing_count || f->clear_count) {
+            eng->context().runtime_coupling_used=true;
+            eng->recordRuntimeCouplingPrescription();
+        }
         return SWMM_OK;
     } catch(const std::bad_alloc&) { return SWMM_ERR_NOMEM; }
       catch(...) { return SWMM_ERR_INTERNAL; }
@@ -290,8 +305,8 @@ int swmm_coupling_get_boundary_receipt(SWMM_Engine h,int d,int cell,int edge,SWM
         if(row) {
             receiptOut(row->receipt,*out,req,app);
             const int temp=eng->surfaceRouter2D().subsurface().transport().temp_row;
-            out->requested_heat_j=temp>=0 ? req[temp]*runtimeWaterHeatCapacity : 0.0;
-            out->applied_heat_j=temp>=0 ? app[temp]*runtimeWaterHeatCapacity : 0.0;
+            out->requested_heat_j=temp>=0 ? req[temp]*eng->surfaceRouter2D().options().water_heat_capacity : 0.0;
+            out->applied_heat_j=temp>=0 ? app[temp]*eng->surfaceRouter2D().options().water_heat_capacity : 0.0;
             out->rejected_heat_j=out->requested_heat_j-out->applied_heat_j;
             return SWMM_OK;
         }

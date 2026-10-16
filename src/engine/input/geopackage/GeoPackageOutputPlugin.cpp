@@ -70,10 +70,19 @@ int GeoPackageOutputPlugin::register_species_variables(const SimulationContext& 
     for (int s = 0; s < nr; ++s) {
         const std::string& sname = ctx.reported_species_names[static_cast<std::size_t>(s)];
         const bool is_age = (s >= np);
-        const std::string units = is_age
+        // E1 (2026-10-14): reactions-component species trail the reserved
+        // rows (open() builds the list; the .out writer strides the same
+        // way) and carry their [REACTION_SPECIES] unit token.
+        const int msx = s - np - (ctx.options.water_age ? 1 : 0)
+                        - (ctx.options.heat_transport ? 1 : 0);
+        const bool is_msx = msx >= 0 && msx < ctx.reactions.n_species();
+        const std::string units = is_msx
+            ? ctx.reactions.species_units[static_cast<std::size_t>(msx)]
+            : is_age
             ? "hours"
             : species_units_label(ctx.pollutants.units[static_cast<std::size_t>(s)]);
-        const std::string desc = is_age ? "Water age" : "Species concentration";
+        const std::string desc = is_msx ? "Reaction species concentration"
+                                 : is_age ? "Water age" : "Species concentration";
 
         for (const char* obj : kObjTypes) {
             sqlite3_reset(probe.get());

@@ -1909,3 +1909,343 @@ TEST(DWSolverRitter, DryBedRegressionBaseline) {
 TEST(DWSolverRitter, DISABLED_DryBedMatchesRitterAnalytical) {
     runRitterDryBed(/*tol_dam_ft=*/0.10, /*tol_l1_ft=*/0.05, /*tol_front_ft=*/15.0);
 }
+
+// Accepted hydraulic component restart, separately from legacy seed hot-start.
+#include "core/CompletedSourceArchive.hpp"
+#include "core/DateTime.hpp"
+#include "hydraulics/TimestepController.hpp"
+#include "hydrology/LidNode.hpp"
+#include <filesystem>
+#include <cstdlib>
+#include <cstring>
+namespace {
+std::filesystem::path hydraulicArtifacts() {
+    const char* configured=std::getenv("SWMM_R4_HYDRAULIC_OUT");
+    auto dir=configured?std::filesystem::path(configured):std::filesystem::path(__FILE__).parent_path()/"../../verification/hydraulic_restart";
+    std::filesystem::create_directories(dir);return dir;
+}
+std::string hydraulicBytes(const std::filesystem::path& p) {
+    std::ifstream f(p,std::ios::binary);return std::string(std::istreambuf_iterator<char>(f),{});
+}
+void hydraulicFile(const std::filesystem::path& p,const std::string& bytes) {
+    std::ofstream f(p,std::ios::binary);f.write(bytes.data(),bytes.size());
+}
+SimulationContext hydraulicModel(int method,bool lids,bool richards=false,bool backwater=false,int continuity=1,int uf=0) {
+    SimulationContext c;
+    c.options.start_date=datetime::encodeDate(2026,10,9);c.current_date=c.options.start_date;
+    c.options.routing_step=2;c.options.min_routing_step=.05;c.options.report_step=3.5;c.next_report_ms=3500;
+    c.options.surcharge_method=method;c.options.max_trials=20;c.options.allow_ponding=true;
+    c.options.anderson_accel=true;c.options.node_continuity=static_cast<NodeContinuity>(continuity);c.options.unsteady_friction=uf;
+    c.nodes.resize(3);c.node_names.try_add("A");c.node_names.try_add("B");c.node_names.try_add("O");
+    for(int i=0;i<2;++i) {
+        c.node_subtypes.set_node_type(c.nodes,i,NodeType::STORAGE);
+        auto r=c.node_subtypes.storage_row(i);c.node_subtypes.storages.c[r]=100;
+        c.node_subtypes.storages.evap_frac[r]=.8;
+        c.nodes.full_depth[i]=3;c.nodes.sur_depth[i]=10;c.nodes.ponded_area[i]=150;
+        c.nodes.init_depth[i]=c.nodes.depth[i]=lids?0:2.2-.3*i;
+        c.nodes.head[i]=c.nodes.depth[i];c.nodes.crown_elev[i]=1.5;c.nodes.degree[i]=2;
+    }
+    int out=c.node_subtypes.set_node_type(c.nodes,2,NodeType::OUTFALL);
+    c.node_subtypes.outfalls.bc_type[out]=OutfallType::FIXED;
+    c.node_subtypes.outfalls.param[out]=backwater?2.15:.2;
+    c.nodes.depth[2]=c.nodes.head[2]=c.node_subtypes.outfalls.param[out];
+    c.nodes.full_depth[2]=3;c.nodes.crown_elev[2]=1.5;c.nodes.degree[2]=2;
+    c.links.resize(3);c.link_names.try_add("AO");c.link_names.try_add("BO");c.link_names.try_add("AB");
+    for(int j=0;j<3;++j) {
+        int row=c.link_subtypes.set_link_type(c.links,j,LinkType::CONDUIT);auto& cd=c.link_subtypes.conduits;
+        c.links.node1[j]=j==1?1:0;c.links.node2[j]=j==2?1:2;
+        c.links.offset1[j]=lids?.75:0;c.links.offset2[j]=j==2?c.links.offset1[j]:0;
+        c.links.xsect_shape[j]=XsectShape::CIRCULAR;c.links.xsect_y_full[j]=lids?.1:1.5;
+        cd.length[row]=cd.true_length[row]=cd.mod_length[row]=lids?10:100;
+        cd.roughness[row]=.013;cd.barrels[row]=j==2?6:1;cd.slope[row]=.01;
+    }
+    if(lids) {
+        c.lid_names.try_add("Stack");c.lid_controls.names={"Stack"};c.lid_controls.lid_type={"NODE"};c.lid_controls.node_layers.resize(1);
+        LidNodeLayer surface;surface.kind=LidNodeLayerKind::Surface;surface.params={6,.1};
+        LidNodeLayer media;media.kind=LidNodeLayerKind::Media;media.params={12,.45,.2,.08,2,10,3};
+        LidNodeLayer aggregate;aggregate.kind=LidNodeLayerKind::Aggregate;aggregate.params={6,.4,100};
+        LidNodeLayer bottom;bottom.kind=LidNodeLayerKind::Bottom;bottom.params={.5,0};
+        if(richards) {
+            surface.flow={true,4,1.e-7,1.e-5,30};
+            media.retention=aggregate.retention={.03,2,1.6,.5,1.e-4};
+        }
+        c.lid_controls.node_layers[0]={surface,media,aggregate,bottom};
+        for(auto& lid:c.node_subtypes.storages.lid)lid={0,10};
+        c.lid_node_outlets={{0,2,false},{1,2,false}};
+        lidnode::initialize(c);
+    } else {
+        for(int i=0;i<2;++i)c.nodes.volume[i]=100*c.nodes.depth[i];
+        for(int i=0;i<2;++i)c.nodes.full_volume[i]=c.nodes.rpt_full_volume[i]=300;
+    }
+    return c;
+}
+void hydraulicInitialize(Router& r,SimulationContext& c) {
+    for(int n:c.node_subtypes.storages.node_idx) {
+        c.nodes.full_volume[n]=0;
+        c.nodes.full_volume[n]=c.nodes.rpt_full_volume[n]=node::getVolume(c.nodes,n,c.nodes.full_depth[n],&c.tables,0,&c.node_subtypes);
+        c.nodes.depth[n]=node::getDepth(c.nodes,n,c.nodes.volume[n],&c.tables,0,&c.node_subtypes);
+        c.nodes.head[n]=c.nodes.invert_elev[n]+c.nodes.depth[n];
+    }
+    r.init(c,RouteModel::DYNWAVE);r.setDWNumThreads(1);r.enableLinkStepStats(c);r.enableCheckpointing(c);
+}
+double hydraulicStep(Router& r,SimulationContext& c,int k) {
+    const double dt=std::min(2.,r.getAdaptiveStep(c,2,.75));
+    r.beginCheckpointStep(c,dt);
+    c.nodes.save_state();c.links.save_state();
+    c.climate_state.evap_rate=k>=28?.00002:0;
+    c.climate_state.infil_factor=k>=40?.8:1;
+    // Distinct lanes and wet/dry forcing, plus carried producer volumes. The
+    // hydraulic component owns these buffers, not the producer's scheduler.
+    for(int i=0;i<2;++i) {
+        c.nodes.coupling_volume[i]=c.nodes.coupling_queue[i];c.nodes.coupling_queue[i]=0;
+        c.nodes.coupling_inflow[i]=c.nodes.coupling_volume[i]/dt;
+        c.nodes.lat_flow[i]=(k<35?(i?.3:.6):0)+c.nodes.coupling_inflow[i];
+    }
+    lidnode::prepareStep(c,dt,c.climate_state.evap_rate);
+    r.step(c,dt,c.climate_state.evap_rate);lidnode::finishStep(c);
+    r.accumulateLinkStepStats(c,dt,true);
+    for(int i=0;i<2;++i)c.nodes.coupling_queue[i]=k%4==1?.017*(i+1):0;
+    hydraulics::TimestepController::advance(c,dt);
+    if(c.elapsed_ms>=c.next_report_ms)c.next_report_ms+=3500;
+    r.acceptCheckpointBoundary(c);return dt;
+}
+uint32_t hydraulicCrc(const std::string& bytes) {
+    uint32_t crc=~uint32_t(0);for(unsigned char c:bytes){crc^=c;for(int k=0;k<8;++k)crc=(crc>>1)^((crc&1)?0xedb88320u:0u);}return ~crc;
+}
+// Edit the explicit clock/first node-state fields while preserving the CRC.
+std::string hydraulicMutant(const std::string& file,int variant) {
+    using A=detail::CompletedSourceArchive;A in(file);
+    std::string magic,model,payload;uint32_t version,crc;in(magic,version,model,crc,payload);in.finish();
+    // Export receipts precede the clocks and vary in size with the model.
+    // Skip their serialized vectors before mutating clock and node fields.
+    A prefix(payload);std::vector<double> water,reverse,heat,pollutants;
+    prefix(water,reverse,heat,pollutants);A receipts;receipts(water,reverse,heat,pollutants);
+    const auto clock=receipts.bytes().size();
+    auto put=[&](std::size_t off,double value){std::memcpy(payload.data()+clock+off,&value,sizeof(value));};
+    const std::size_t firstRow=clock+9*sizeof(double)+sizeof(bool); // eight leading doubles, flag, step span
+    if(variant==0)put(0,-1);
+    if(variant==1)put(sizeof(double),0);
+    if(variant==2)put(3*sizeof(double),1.e30);
+    if(variant==3)put(7*sizeof(double),std::numeric_limits<double>::quiet_NaN());
+    if(variant==4)put(firstRow-clock+sizeof(uint64_t),-1); // node depth
+    if(variant==5)put(firstRow-clock+sizeof(uint64_t),std::numeric_limits<double>::infinity());
+    if(variant==6)put(firstRow-clock+sizeof(uint64_t),.5); // head/depth mismatch
+    if(variant==7){uint64_t size=999;std::memcpy(payload.data()+firstRow,&size,sizeof(size));}
+    if(variant==8)payload[clock+8*sizeof(double)]=char(2); // invalid bool representation
+    crc=hydraulicCrc(payload);A out;out(magic,version,model,crc,payload);return out.bytes();
+}
+std::string hydraulicStateDouble(const std::string& file,double oldValue,double newValue) {
+    using A=detail::CompletedSourceArchive;A in(file);std::string magic,model,payload;uint32_t version,crc;
+    in(magic,version,model,crc,payload);in.finish();
+    std::string pattern(reinterpret_cast<const char*>(&oldValue),sizeof(oldValue));
+    auto offset=payload.find(pattern);EXPECT_NE(offset,std::string::npos);
+    if(offset==std::string::npos)return file;
+    EXPECT_EQ(payload.find(pattern,offset+1),std::string::npos);
+    std::memcpy(payload.data()+offset,&newValue,sizeof(newValue));crc=hydraulicCrc(payload);
+    A out;out(magic,version,model,crc,payload);return out.bytes();
+}
+}
+
+TEST(HydraulicCheckpoint, ConduitSurchargeAndAdaptiveContinuationAreExact) {
+    for(int method=0;method<4;++method)for(int continuity=0;continuity<2;++continuity)for(int uf=0;uf<2;++uf) {
+        const auto key=std::to_string(method)+std::to_string(continuity)+std::to_string(uf);
+        SCOPED_TRACE(key);auto a=hydraulicModel(method,false,false,false,continuity,uf);Router ra;hydraulicInitialize(ra,a);
+        for(int k=0;k<18;++k)hydraulicStep(ra,a,k);
+        ASSERT_GT(std::abs(a.links.flow[0]),0);ASSERT_GT(a.links.stat_lstep_time[0],0);
+        const auto path=hydraulicArtifacts()/("conduit-"+key+".chk");
+        ASSERT_EQ(ra.saveCheckpoint(a,path.string()),"");
+        auto b=hydraulicModel(method,false,false,false,continuity,uf);Router rb;hydraulicInitialize(rb,b);
+        ASSERT_EQ(rb.loadCheckpoint(b,path.string()),"");
+        ASSERT_EQ(b.links.flow,a.links.flow);ASSERT_EQ(b.nodes.old_volume,a.nodes.old_volume);
+        const auto other=hydraulicArtifacts()/("conduit-restored-"+key+".chk");
+        ASSERT_EQ(rb.saveCheckpoint(b,other.string()),"");ASSERT_EQ(hydraulicBytes(path),hydraulicBytes(other));
+        for(int k=18;k<65;++k) {
+            ASSERT_EQ(hydraulicStep(ra,a,k),hydraulicStep(rb,b,k));
+            ASSERT_EQ(ra.lastStepConverged(),rb.lastStepConverged());
+            ASSERT_EQ(a.nodes.depth,b.nodes.depth);ASSERT_EQ(a.links.flow,b.links.flow);
+        }
+        ASSERT_EQ(ra.saveCheckpoint(a,path.string()),"");ASSERT_EQ(rb.saveCheckpoint(b,other.string()),"");
+        EXPECT_EQ(hydraulicBytes(path),hydraulicBytes(other));
+    }
+}
+TEST(HydraulicCheckpoint, NodeLidRetainedMobileBackwaterAndPortsContinueExactly) {
+    for(bool richards:{false,true})for(bool backwater:{false,true}) {
+        SCOPED_TRACE(std::to_string(richards)+"/"+std::to_string(backwater));
+        auto a=hydraulicModel(0,true,richards,backwater);Router ra;hydraulicInitialize(ra,a);
+        double initial=a.node_subtypes.storages.lid_state[0].held_volume;
+        for(int k=0;k<18;++k)hydraulicStep(ra,a,k);
+        const auto& s=a.node_subtypes.storages.lid_state[0];
+        ASSERT_NE(s.held_volume,initial);ASSERT_GT(s.treated_volume,0);
+        if(richards)ASSERT_GT(s.richards_report.accepted,0);else ASSERT_GT(s.surface_infil.F,0);
+        if(backwater)ASSERT_FALSE(s.quality_ports.empty());
+        ASSERT_NE(a.nodes.coupling_queue[0],0);
+        const auto path=hydraulicArtifacts()/("lid-"+std::to_string(richards)+std::to_string(backwater)+".chk");
+        ASSERT_EQ(ra.saveCheckpoint(a,path.string()),"");
+        auto b=hydraulicModel(0,true,richards,backwater);Router rb;hydraulicInitialize(rb,b);
+        ASSERT_EQ(rb.loadCheckpoint(b,path.string()),"");
+        const auto other=hydraulicArtifacts()/("lid-restored-"+std::to_string(richards)+std::to_string(backwater)+".chk");
+        ASSERT_EQ(rb.saveCheckpoint(b,other.string()),"");ASSERT_EQ(hydraulicBytes(path),hydraulicBytes(other));
+        for(int k=18;k<65;++k) {
+            ASSERT_EQ(hydraulicStep(ra,a,k),hydraulicStep(rb,b,k));
+            ASSERT_EQ(a.nodes.volume,b.nodes.volume);ASSERT_EQ(a.links.flow,b.links.flow);
+            ASSERT_EQ(a.node_subtypes.storages.lid_state[0].held_volume,b.node_subtypes.storages.lid_state[0].held_volume);
+        }
+        ASSERT_EQ(ra.saveCheckpoint(a,path.string()),"");ASSERT_EQ(rb.saveCheckpoint(b,other.string()),"");
+        EXPECT_EQ(hydraulicBytes(path),hydraulicBytes(other));
+    }
+}
+TEST(HydraulicCheckpoint, NodeLidThermalEnergySurvivesRestore) {
+    auto a=hydraulicModel(0,true,true,true);Router ra;hydraulicInitialize(ra,a);
+    auto& source=a.node_subtypes.storages.lid_state[0];
+    source.thermal_energy.resize(source.cells.size());
+    for(std::size_t i=0;i<source.thermal_energy.size();++i)
+        source.thermal_energy[i]=(static_cast<double>(i)-1.5)*1234.5;
+    source.thermal_ground_contact_j.resize(source.cells.size());
+    for(std::size_t i=0;i<source.thermal_ground_contact_j.size();++i)
+        source.thermal_ground_contact_j[i]=857.375+static_cast<double>(i)*31.25;
+    const auto path=hydraulicArtifacts()/"lid-thermal-state.chk";
+    ASSERT_EQ(ra.saveCheckpoint(a,path.string()),"");
+
+    auto b=hydraulicModel(0,true,true,true);Router rb;hydraulicInitialize(rb,b);
+    const auto corrupt=hydraulicArtifacts()/"lid-thermal-state-corrupt.chk";
+    hydraulicFile(corrupt,hydraulicStateDouble(hydraulicBytes(path),source.thermal_energy.front(),
+        std::numeric_limits<double>::quiet_NaN()));
+    const auto before=hydraulicArtifacts()/"lid-thermal-state-before.chk";
+    const auto after=hydraulicArtifacts()/"lid-thermal-state-after.chk";
+    ASSERT_EQ(rb.saveCheckpoint(b,before.string()),"");
+    EXPECT_FALSE(rb.loadCheckpoint(b,corrupt.string()).empty());
+    const auto corrupt_contact=hydraulicArtifacts()/"lid-thermal-contact-corrupt.chk";
+    hydraulicFile(corrupt_contact,hydraulicStateDouble(hydraulicBytes(path),source.thermal_ground_contact_j.front(),
+        std::numeric_limits<double>::quiet_NaN()));
+    EXPECT_FALSE(rb.loadCheckpoint(b,corrupt_contact.string()).empty());
+    ASSERT_EQ(rb.saveCheckpoint(b,after.string()),"");
+    EXPECT_EQ(hydraulicBytes(before),hydraulicBytes(after));
+    ASSERT_EQ(rb.loadCheckpoint(b,path.string()),"");
+    EXPECT_EQ(b.node_subtypes.storages.lid_state[0].thermal_energy,source.thermal_energy);
+    EXPECT_EQ(b.node_subtypes.storages.lid_state[0].thermal_ground_contact_j,source.thermal_ground_contact_j);
+    const auto restored=hydraulicArtifacts()/"lid-thermal-state-restored.chk";
+    ASSERT_EQ(rb.saveCheckpoint(b,restored.string()),"");
+    EXPECT_EQ(hydraulicBytes(path),hydraulicBytes(restored));
+}
+TEST(HydraulicCheckpoint, InvalidNodeLidThermalEnergyIsRefusedBeforePublication) {
+    auto c=hydraulicModel(0,true,true,true);Router r;hydraulicInitialize(r,c);
+    const auto path=hydraulicArtifacts()/"lid-thermal-invalid.chk";
+    hydraulicFile(path,"preserve prior checkpoint");
+    auto& energy=c.node_subtypes.storages.lid_state[0].thermal_energy;
+    energy={1};
+    EXPECT_FALSE(r.saveCheckpoint(c,path.string()).empty());
+    EXPECT_EQ(hydraulicBytes(path),"preserve prior checkpoint");
+    energy.assign(c.node_subtypes.storages.lid_state[0].cells.size(),0);
+    energy[0]=std::numeric_limits<double>::quiet_NaN();
+    EXPECT_FALSE(r.saveCheckpoint(c,path.string()).empty());
+    EXPECT_EQ(hydraulicBytes(path),"preserve prior checkpoint");
+    energy.assign(c.node_subtypes.storages.lid_state[0].cells.size(),0);
+    auto& receipt=c.node_subtypes.storages.lid_state[0].thermal_ground_contact_j;
+    receipt={1};
+    EXPECT_FALSE(r.saveCheckpoint(c,path.string()).empty());
+    EXPECT_EQ(hydraulicBytes(path),"preserve prior checkpoint");
+    receipt.assign(c.node_subtypes.storages.lid_state[0].cells.size(),0);
+    receipt[0]=std::numeric_limits<double>::quiet_NaN();
+    EXPECT_FALSE(r.saveCheckpoint(c,path.string()).empty());
+    EXPECT_EQ(hydraulicBytes(path),"preserve prior checkpoint");
+}
+TEST(HydraulicCheckpoint, InvalidRestorePreservesFreshStateAndCanRetry) {
+    auto a=hydraulicModel(0,true,true,true);Router ra;hydraulicInitialize(ra,a);
+    for(int k=0;k<8;++k)hydraulicStep(ra,a,k);
+    auto good=hydraulicArtifacts()/"good.chk",bad=hydraulicArtifacts()/"bad.chk";
+    ASSERT_EQ(ra.saveCheckpoint(a,good.string()),"");auto bytes=hydraulicBytes(good);
+    for(int variant=0;variant<14;++variant) {
+        SCOPED_TRACE(variant);auto b=hydraulicModel(0,true,true,true);Router rb;hydraulicInitialize(rb,b);
+        auto before=hydraulicArtifacts()/"fresh-before.chk",after=hydraulicArtifacts()/"fresh-after.chk";
+        ASSERT_EQ(rb.saveCheckpoint(b,before.string()),"");auto altered=bytes;
+        if(variant<9)altered=hydraulicMutant(bytes,variant);
+        if(variant==9)altered.back()^=1;
+        if(variant==10)altered.resize(altered.size()-3);
+        if(variant==11)altered+='x';
+        if(variant==12)b.lid_controls.node_layers[0][1].retention.alpha=3;
+        if(variant==13)b.links.offset1[0]+=.1;
+        if(variant<12)ASSERT_TRUE(altered!=bytes);
+        hydraulicFile(bad,altered);EXPECT_FALSE(rb.loadCheckpoint(b,bad.string()).empty());
+        if(variant==12)b.lid_controls.node_layers[0][1].retention.alpha=2;
+        if(variant==13)b.links.offset1[0]-=.1;
+        ASSERT_EQ(rb.saveCheckpoint(b,after.string()),"");EXPECT_TRUE(hydraulicBytes(before)==hydraulicBytes(after));
+        EXPECT_EQ(rb.loadCheckpoint(b,good.string()),"");
+    }
+}
+TEST(HydraulicCheckpoint, InconsistentRichardsStoragePressureAndMoistureAreAtomic) {
+    auto a=hydraulicModel(0,true,true,true);Router ra;hydraulicInitialize(ra,a);
+    for(int k=0;k<8;++k)hydraulicStep(ra,a,k);
+    auto good=hydraulicArtifacts()/"richards-consistency-good.chk",bad=hydraulicArtifacts()/"richards-consistency-bad.chk";
+    ASSERT_EQ(ra.saveCheckpoint(a,good.string()),"");auto bytes=hydraulicBytes(good);
+    const auto& s=a.node_subtypes.storages.lid_state[0];
+    for(auto values: {std::pair{s.held_volume,s.held_volume+1},std::pair{s.richards_pressure[1],s.richards_pressure[1]+1},
+                     std::pair{s.richards_water[1],s.richards_water[1]+1},std::pair{s.cells[1].theta,-.01}}) {
+        auto b=hydraulicModel(0,true,true,true);Router rb;hydraulicInitialize(rb,b);
+        auto before=hydraulicArtifacts()/"richards-consistency-before.chk",after=hydraulicArtifacts()/"richards-consistency-after.chk";
+        ASSERT_EQ(rb.saveCheckpoint(b,before.string()),"");hydraulicFile(bad,hydraulicStateDouble(bytes,values.first,values.second));
+        EXPECT_FALSE(rb.loadCheckpoint(b,bad.string()).empty());
+        ASSERT_EQ(rb.saveCheckpoint(b,after.string()),"");EXPECT_EQ(hydraulicBytes(before),hydraulicBytes(after));
+        EXPECT_EQ(rb.loadCheckpoint(b,good.string()),"");
+    }
+}
+TEST(HydraulicCheckpoint, InitialRestoreAndUnrelatedDestinationPreservation) {
+    auto a=hydraulicModel(0,true);Router ra;hydraulicInitialize(ra,a);
+    auto path=hydraulicArtifacts()/"initial.chk",other=hydraulicArtifacts()/"initial-restored.chk";
+    ASSERT_EQ(ra.saveCheckpoint(a,path.string()),"");
+    auto b=hydraulicModel(0,true);Router rb;hydraulicInitialize(rb,b);
+    ASSERT_EQ(rb.loadCheckpoint(b,path.string()),"");ASSERT_EQ(rb.saveCheckpoint(b,other.string()),"");
+    EXPECT_EQ(hydraulicBytes(path),hydraulicBytes(other));
+    auto protectedFile=hydraulicArtifacts()/"unrelated.txt";hydraulicFile(protectedFile,"preserve me");
+    EXPECT_FALSE(ra.saveCheckpoint(a,protectedFile.string()).empty());EXPECT_EQ(hydraulicBytes(protectedFile),"preserve me");
+}
+TEST(HydraulicCheckpoint, RefusesUnclosedReplayNonfiniteAndCallbackBoundaries) {
+    auto c=hydraulicModel(0,true);Router r;hydraulicInitialize(r,c);auto before=hydraulicArtifacts()/"guard-before.chk";
+    auto after=hydraulicArtifacts()/"guard-after.chk";ASSERT_EQ(r.saveCheckpoint(c,before.string()),"");
+    EXPECT_THROW(r.step(c,0),std::runtime_error);
+    EXPECT_THROW(r.step(c,-1),std::runtime_error);
+    EXPECT_THROW(r.step(c,std::numeric_limits<double>::quiet_NaN()),std::runtime_error);
+    EXPECT_THROW(r.step(c,1,0,[](SimulationContext&,double,int){}),std::runtime_error);
+    c.current_time=1;
+    EXPECT_THROW(r.step(c,1),std::runtime_error);c.current_time=0;
+    ASSERT_EQ(r.saveCheckpoint(c,after.string()),"");EXPECT_EQ(hydraulicBytes(before),hydraulicBytes(after));
+    r.beginCheckpointStep(c,1);
+    c.nodes.save_state();c.links.save_state();c.nodes.lat_flow[0]=.6;
+    lidnode::prepareStep(c,1,0);r.step(c,1);
+    EXPECT_FALSE(r.saveCheckpoint(c,after.string()).empty());
+    EXPECT_THROW(r.step(c,1),std::runtime_error);
+    EXPECT_THROW(r.acceptCheckpointBoundary(c),std::runtime_error);
+    hydraulics::TimestepController::advance(c,1);
+    EXPECT_THROW(r.acceptCheckpointBoundary(c),std::runtime_error);
+    lidnode::finishStep(c);
+    EXPECT_NO_THROW(r.acceptCheckpointBoundary(c));
+    EXPECT_THROW(r.acceptCheckpointBoundary(c),std::runtime_error);ASSERT_EQ(r.saveCheckpoint(c,after.string()),"");
+    EXPECT_NE(hydraulicBytes(before),hydraulicBytes(after));
+}
+TEST(HydraulicCheckpoint, FailedRichardsPreparationCannotSaveAndRestoreRecovers) {
+    auto c=hydraulicModel(0,true,true);Router r;hydraulicInitialize(r,c);
+    auto good=hydraulicArtifacts()/"failed-preparation-good.chk";
+    auto recovered=hydraulicArtifacts()/"failed-preparation-restored.chk";
+    ASSERT_EQ(r.saveCheckpoint(c,good.string()),"");auto before=hydraulicBytes(good);
+    r.beginCheckpointStep(c,1);c.nodes.lat_flow[0]=std::numeric_limits<double>::infinity();
+    EXPECT_THROW(lidnode::prepareStep(c,1,0),std::runtime_error);
+    EXPECT_FALSE(r.saveCheckpoint(c,good.string()).empty());EXPECT_EQ(hydraulicBytes(good),before);
+    EXPECT_THROW(r.beginCheckpointStep(c,1),std::runtime_error);
+    EXPECT_THROW(r.acceptCheckpointBoundary(c),std::runtime_error);
+    ASSERT_EQ(r.loadCheckpoint(c,good.string()),"");ASSERT_EQ(r.saveCheckpoint(c,recovered.string()),"");
+    EXPECT_EQ(hydraulicBytes(recovered),before);
+    EXPECT_NO_THROW(hydraulicStep(r,c,0));
+}
+TEST(HydraulicCheckpoint, UnqualifiedProfilesFailBeforeAttachment) {
+    for(int variant=0;variant<7;++variant) {
+        auto c=hydraulicModel(0,true);Router r;r.init(c,RouteModel::DYNWAVE);
+        if(variant==0)c.options.water_age=true;
+        if(variant==1)c.options.heat_transport=true;
+        if(variant==2)c.nodes.is_virtual[0]=1;
+        if(variant==3)c.nodes.aquifer2d_bed.assign(3,1);
+        if(variant==4)c.node_subtypes.outfalls.bc_type[0]=OutfallType::TIMESERIES;
+        if(variant==5)c.links.type[0]=LinkType::ORIFICE;
+        if(variant==6)c.pollutant_names.try_add("X");
+        EXPECT_THROW(r.enableCheckpointing(c),std::runtime_error);
+        EXPECT_FALSE(r.saveCheckpoint(c,(hydraulicArtifacts()/"unqualified.chk").string()).empty());
+    }
+}

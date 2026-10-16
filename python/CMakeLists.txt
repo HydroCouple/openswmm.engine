@@ -128,6 +128,29 @@ if(OPENSWMM_ENGINE_INSTALL_PREFIX)
     add_library(openswmm::common         ALIAS OpenSWMMEngine::openswmm_common)
     add_library(openswmm::plugin_sdk     ALIAS OpenSWMMEngine::openswmm_plugin_sdk)
 
+    # A prebuilt engine carries its compiled feature set on the imported
+    # target. Mirror those features when deciding which optional Python
+    # extensions to build; otherwise a 2D engine wheel silently omits the
+    # 2D wrappers simply because the parent project's cache options were not
+    # evaluated in this standalone package build.
+    get_target_property(_openswmm_engine_definitions
+        OpenSWMMEngine::openswmm_engine INTERFACE_COMPILE_DEFINITIONS)
+    if(NOT DEFINED OPENSWMM_BUILD_2D)
+        if("OPENSWMM_HAS_2D=1" IN_LIST _openswmm_engine_definitions)
+            set(OPENSWMM_BUILD_2D ON)
+        else()
+            set(OPENSWMM_BUILD_2D OFF)
+        endif()
+    endif()
+    if(NOT DEFINED OPENSWMM_WITH_GEOPACKAGE)
+        if("OPENSWMM_HAS_GEOPACKAGE=1" IN_LIST _openswmm_engine_definitions)
+            set(OPENSWMM_WITH_GEOPACKAGE ON)
+        else()
+            set(OPENSWMM_WITH_GEOPACKAGE OFF)
+        endif()
+    endif()
+    unset(_openswmm_engine_definitions)
+
     if(NOT DEFINED LIBRARY_VERSION)
         set(LIBRARY_VERSION   "${PROJECT_VERSION}")
         set(LIBRARY_SOVERSION "${PROJECT_VERSION_MAJOR}")
