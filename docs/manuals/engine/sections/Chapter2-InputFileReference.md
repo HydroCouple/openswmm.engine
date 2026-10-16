@@ -3750,6 +3750,36 @@ refused as an unknown section.
 
 <!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:297-390,399,449-453; src/engine/transport/MsxInitialQuality.hpp:17-40 -->
 
+### Component section: [REACTION_RAINFALL] {#engine_manual_sect_REACTION_RAINFALL}
+
+Purpose: \status{Implemented}
+Sets the concentration each species carries in with rainfall — the species
+counterpart of the Crain column of `[POLLUTANTS]`.
+
+Format:
+```
+Species   Concentration
+```
+
+Parameters:
+
+| Parameter | Meaning | Units / values | Default |
+|---|---|---|---|
+| `Species` | A species declared in `[REACTION_SPECIES]`. | text | required |
+| `Concentration` | Concentration of the species in rainfall, in the species' own units. | value, 0 or greater | 0 |
+
+Remarks:
+A row short of its two fields, an undeclared species, a non-numeric or negative
+concentration, or a second row for the same species is an error. A species
+with no row, and every species when the section is absent, rains in clean. The
+value is also reachable through `swmm_reaction_rain_conc_get` /
+`swmm_reaction_rain_conc_set` and, in Python, `ReactionSpecies.rain_conc`; on
+save the section is written only when at least one species has a non-zero
+value.
+
+<!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:402-431,444,499; src/engine/transport/components/ReactionModule/ReactionsWriter.cpp:165-176 -->
+
+
 ### Component section: [REACTION_SOURCES] {#engine_manual_sect_REACTION_SOURCES}
 
 Purpose: \status{Planned}

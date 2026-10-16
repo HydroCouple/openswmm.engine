@@ -43,6 +43,7 @@ class ReactionSpecies:
     atol: float
     rtol: float
     initial: float
+    rain_conc: float
     pipe_expression: Tuple[ReactionExprForm, str]
     tank_expression: Tuple[ReactionExprForm, str]
 
