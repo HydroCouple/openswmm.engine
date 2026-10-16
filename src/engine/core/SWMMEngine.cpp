@@ -172,7 +172,8 @@ SWMMEngine::~SWMMEngine() {
 int SWMMEngine::open(const char* inp_path,
                      const char* rpt_path,
                      const char* out_path,
-                     const char* input_plugin_lib) noexcept {
+                     const char* input_plugin_lib,
+                     bool metadata_only) noexcept {
     if (ctx_.state != EngineState::CREATED &&
         ctx_.state != EngineState::CLOSED) {
         set_error(SWMM_ERR_WRONG_STATE,
@@ -182,6 +183,7 @@ int SWMMEngine::open(const char* inp_path,
 
     // Reset context for a fresh run
     ctx_.reset();
+    metadata_only_ = metadata_only;
 #ifdef OPENSWMM_HAS_2D
     // Router-owned groundwater rows outlive ctx_.reset(). A fresh open must
     // replace authoring (including derived lookup indexes), not append to it.
@@ -295,7 +297,7 @@ int SWMMEngine::open(const char* inp_path,
                 &surface_router_.pendingInitialQualityRows(),
                 &surface_router_.pendingBoundaryQualityRows());
             if (!err.empty()) {
-                if (lenient_open_) {
+                if (lenient_open_ && !metadata_only_) {
                     // A missing/unreadable external mesh must not make the
                     // whole model unopenable in an editor — discard any
                     // partially-read mesh state, record the diagnostic, and
@@ -412,7 +414,7 @@ int SWMMEngine::open(const char* inp_path,
 
         if (!errs.empty()) {
             for (const auto& e : errs) ctx_.errors.push_back(e);
-            if (!lenient_open_) {
+            if (!lenient_open_ || metadata_only_) {
                 ctx_.error_code    = SWMM_ERR_PARSE;
                 ctx_.error_message = errs.front();
                 write_open_failure_report();
@@ -550,6 +552,16 @@ int SWMMEngine::open(const char* inp_path,
             // same changeset (lesson 21) — see
             // test_heat_transport.cpp's ARD gate, now inverted.
         }
+
+        // E1 (2026-10-14): reactions-component species report as ordinary
+        // pollutant columns, TRAILING the reserved rows so no existing index
+        // consumer moves (the H1 rule again). Both BULK and WALL species are
+        // listed; the name is the contract, as for the reserved rows. Order
+        // is the [REACTION_SPECIES] order (ctx_.reactions index m), which
+        // is also the msx_*_conc stride the snapshot reads below.
+        for (int m = 0; m < ctx_.reactions.n_species(); ++m)
+            ctx_.reported_species_names.push_back(
+                ctx_.reactions.species_name[static_cast<std::size_t>(m)]);
     }
 
     // Warn about unknown/skipped sections. Route through push_report_warning so
@@ -640,7 +652,7 @@ int SWMMEngine::open(const char* inp_path,
         // (report_writeErrorMsg). Without this the diagnostics would only reach
         // stderr and the .rpt would be absent.
         write_open_failure_report();
-        if (!lenient_open_) {
+        if (!lenient_open_ || metadata_only_) {
             set_error(SWMM_ERR_PARSE, ctx_.errors.front().c_str());
             return SWMM_ERR_PARSE;
         }
@@ -649,6 +661,13 @@ int SWMMEngine::open(const char* inp_path,
         // parsed objects intact and editable. An editor/GUI can then load as
         // much of the model as parsed and surface the errors as diagnostics.
         // Running the model still requires a fresh, strict open.
+    }
+
+    // Metadata discovery stops before runtime plugin factories and all output
+    // registration. Parsed authoring remains available through the public API.
+    if (metadata_only_) {
+        ctx_.state = EngineState::OPENED;
+        return SWMM_OK;
     }
 
     // Phase 4: load plugins listed in [PLUGINS]
@@ -800,6 +819,11 @@ int SWMMEngine::open(const char* inp_path,
 // ============================================================================
 
 int SWMMEngine::initialize() noexcept {
+    if (metadata_only_) {
+        set_error(SWMM_ERR_WRONG_STATE,
+                  "Metadata-only handles cannot initialize; close and open the model for simulation");
+        return SWMM_ERR_WRONG_STATE;
+    }
     // INITIALIZED is accepted so a caller can re-initialize before start()
     // (e.g. after adding control rules through the C API); every init_* step
     // rebuilds from ctx_ rather than appending, and ControlEngine::clearRules
@@ -5307,6 +5331,23 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                 ctx_.nodes.inflow[uj] = std::fabs(q_sys);
             }
             if (q_sys > 0.0) {
+                // Publish the SAME committed discharge as continuity, before
+                // report-window filtering. This is accounting only: no source
+                // or hydraulic state is changed by an external consumer.
+                constexpr double cubicMetresPerCubicFoot = 0.028316846592;
+                auto& exports = ctx_.outfall_exports;
+                const double volume = q_sys * dt_routing * cubicMetresPerCubicFoot;
+                exports.water_m3[uj] += volume;
+                if (ctx_.options.heat_transport && uj < ctx_.heat_state.node_temp.size())
+                    exports.heat_j[uj] += volume * ctx_.heat_state.node_temp[uj] *
+                        ctx_.options.water_density * ctx_.options.water_specific_heat;
+                for (int p = 0; p < np; ++p) {
+                    const auto index = uj * np + static_cast<std::size_t>(p);
+                    const auto units = ctx_.pollutants.units[p];
+                    const double factor = units == MassUnits::MG_PER_L ? 1.e-3 :
+                        units == MassUnits::UG_PER_L ? 1.e-6 : 1000.0;
+                    exports.pollutant_amounts[index] += volume * ctx_.nodes.conc[index] * factor;
+                }
                 // Owned sources receive the same accepted system discharge as
                 // hydraulic continuity. An inflow rewritten by outfall backflow
                 // is not a new return. Ordinary legacy runon above is unchanged.
@@ -5321,6 +5362,7 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                 // here (after the step_ext_inflow consumption at the top of
                 // this function) for the per-step snapshot only.
                 ctx_.mass_balance.routing_external += -q_sys * dt_routing;
+                ctx_.outfall_exports.reverse_m3[uj] += -q_sys * dt_routing * 0.028316846592;
                 ctx_.mass_balance.step_ext_inflow  += -q_sys;
             }
             // Legacy node_getSystemOutflow zeroes an outfall's overflow and
@@ -6384,6 +6426,15 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 // disagree without the species-name gate catching it.
                 const bool temp_col = ctx_.options.heat_transport;
                 const std::size_t temp_i = np_s + (ctx_.options.water_age ? 1u : 0u);
+                // E1: reactions-component species trail the reserved rows
+                // (see the reported list built in open()). msx_*_conc are
+                // [element * nm + m]; the guard on size() covers a deck
+                // whose binding never sized them (no engine ran reactions).
+                const auto& rx = ctx_.reactions;
+                const auto unm = static_cast<std::size_t>(
+                    rx.n_species() > 0 ? rx.n_species() : 0);
+                const std::size_t msx_i0 =
+                    temp_i + (ctx_.options.heat_transport ? 1u : 0u);
                 constexpr double kSecPerHour = 3600.0;
                 // Reported-depth threshold for "this element holds water".
                 // Deliberately tiny: the intent is to exclude elements the
@@ -6444,6 +6495,16 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                     if (temp_col && n < ctx_.heat_state.node_temp.size())
                         snap.node_quality[n * nr_s + temp_i] =
                             ctx_.heat_state.node_temp[n];
+                    // E1: MSX species — the published element state, as a
+                    // pollutant column. No old/new blend (there is no
+                    // msx_node_conc_old) and no dry mask (pollutants carry
+                    // none either: a residual concentration is reported).
+                    for (std::size_t m = 0; m < unm; ++m) {
+                        const std::size_t src = n * unm + m;
+                        if (src < rx.msx_node_conc.size())
+                            snap.node_quality[n * nr_s + msx_i0 + m] =
+                                rx.msx_node_conc[src];
+                    }
                 }
 
                 snap.link_quality.assign(nL_s * nr_s, 0.0);
@@ -6501,6 +6562,13 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                     if (temp_col && l < ctx_.heat_state.link_temp.size())
                         snap.link_quality[l * nr_s + temp_i] =
                             ctx_.heat_state.link_temp[l];
+                    // E1: MSX species — see the node loop.
+                    for (std::size_t m = 0; m < unm; ++m) {
+                        const std::size_t src = l * unm + m;
+                        if (src < rx.msx_link_conc.size())
+                            snap.link_quality[l * nr_s + msx_i0 + m] =
+                                rx.msx_link_conc[src];
+                    }
                 }
 
                 // Subcatchment washoff carries legacy's runoff gate: a
@@ -6581,6 +6649,19 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                             snap.subcatch_quality[s * nr_s + p] =
                                 f1_ro_q * ctx_.subcatches.conc_old[src] +
                                 f_ro_q * ctx_.subcatches.conc[src];
+                    }
+                    // E1: BW-MSX washoff concentration, blended on the
+                    // runoff clock exactly like the pollutant rows above and
+                    // inside the same has_runoff gate. Decks without
+                    // [BUILDUP]/[WASHOFF] rows for MSX species leave the
+                    // arrays empty and the column reads 0.
+                    for (std::size_t m = 0; m < unm; ++m) {
+                        const std::size_t src = s * unm + m;
+                        if (src < rx.surface.washoff_conc.size() &&
+                            src < rx.surface.washoff_conc_old.size())
+                            snap.subcatch_quality[s * nr_s + msx_i0 + m] =
+                                f1_ro_q * rx.surface.washoff_conc_old[src] +
+                                f_ro_q * rx.surface.washoff_conc[src];
                     }
                     // A3 retires the placeholder that reported 0 here: the
                     // subcatchment now publishes the age of the water it is
@@ -9828,6 +9909,11 @@ double SWMMEngine::reportedNodeVolume(int i, double depth,
 void SWMMEngine::initMassBalance() noexcept {
     // 14. Mass balance: record initial storage (nodes + links, matching legacy)
     ctx_.mass_balance.reset();
+    ctx_.outfall_exports.water_m3.assign(ctx_.n_nodes(), 0.0);
+    ctx_.outfall_exports.reverse_m3.assign(ctx_.n_nodes(), 0.0);
+    ctx_.outfall_exports.heat_j.assign(ctx_.n_nodes(), 0.0);
+    ctx_.outfall_exports.pollutant_amounts.assign(
+        static_cast<std::size_t>(ctx_.n_nodes()) * ctx_.n_pollutants(), 0.0);
     ctx_.negsrc.reset();  // D-NS1 (X6): clamp counters share the lifecycle
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         // Legacy-convention node volume (junctions => 0) so init storage matches

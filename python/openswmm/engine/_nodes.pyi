@@ -58,6 +58,8 @@ class StorageView:
 
 
 class OutfallView:
+    @property
+    def export_receipt(self) -> dict[str, Any]: ...
     type: OutfallType
     param: float
     flap_gate: bool

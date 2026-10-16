@@ -202,6 +202,16 @@ SWMM_ENGINE_API int swmm_engine_open(SWMM_Engine engine,
                                       const char* inp, const char* rpt, const char* out,
                                       const char* input_plugin_lib);
 
+/**
+ * @brief Parse a model for configured metadata without loading runtime plugins.
+ * @details Uses the built-in input reader and normal strict model validation.
+ * No report/result plugins are created and no simulation is initialized or
+ * advanced. Existing model/species/options/geometry getters can inspect the
+ * OPENED handle. initialize/start are refused on this handle; close and use a
+ * normal open before simulation. Model-declared SAVE paths are never opened.
+ */
+SWMM_ENGINE_API int swmm_engine_open_metadata(SWMM_Engine engine, const char* inp);
+
 /** @brief Initialize the simulation → SWMM_STATE_INITIALIZED. */
 SWMM_ENGINE_API int swmm_engine_initialize(SWMM_Engine engine);
 

@@ -1108,6 +1108,12 @@ struct SimulationContext {
      *
      * @see Legacy: RunoffTotals, RoutingTotals in massbal.c
      */
+    // One row per node, booked at the same committed seam as routing totals.
+    // Read-only external coupling accounting; never a second withdrawal.
+    struct OutfallExports {
+        std::vector<double> water_m3, reverse_m3, heat_j, pollutant_amounts;
+    } outfall_exports;
+
     struct MassBalance {
         // Runoff totals
         double runoff_rainfall   = 0.0;  ///< Total rainfall volume (ft3)
@@ -1883,6 +1889,7 @@ struct SimulationContext {
      *          Call this before re-running or re-opening a simulation.
      */
     void reset() {
+        outfall_exports = OutfallExports{};
         runtime_coupling_used = false;
         surface_outfall_link_limit.clear();
         surface_outfall_quality = {};

@@ -156,7 +156,8 @@ public:
     int open(const char* inp_path,
              const char* rpt_path,
              const char* out_path,
-             const char* input_plugin_lib = nullptr) noexcept;
+             const char* input_plugin_lib = nullptr,
+             bool metadata_only = false) noexcept;
 
     /**
      * @brief Apply initial conditions and prepare the engine for stepping.
@@ -444,6 +445,7 @@ private:
     std::shared_ptr<CheckpointSessionResources> checkpoint_session_resources_;
     SimulationContext      ctx_;        ///< All simulation data (SoA + options)
     bool                   lenient_open_ = false;  ///< permissive open (see setter)
+    bool                   metadata_only_ = false; ///< parse-only handle cannot initialize a run
     bool                   plugins_prepare_attempted_ = false;  ///< start() reached prepare_all (report file may be open)
     PluginFactory          plugins_;   ///< Phase 4: plugin loader + lifecycle
     IOThread               io_thread_; ///< Phase 5: writer thread

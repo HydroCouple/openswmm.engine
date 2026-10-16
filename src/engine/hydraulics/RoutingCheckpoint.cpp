@@ -142,17 +142,19 @@ struct Router::RestartState {
     StorageData storages;
     OutfallData outfalls;
     ConduitData conduits;
+    SimulationContext::OutfallExports exports;
     dynwave::DWSolver dw;
     double time,date,elapsed,old_elapsed,next_report,evap,infil_factor,recovery_factor;
     bool link_steps;
     double link_step_span;
     RestartState(const Router& r,const SimulationContext& c)
         : nodes(c.nodes),links(c.links),storages(c.node_subtypes.storages),
-          outfalls(c.node_subtypes.outfalls),conduits(c.link_subtypes.conduits),dw(r.dw_solver_),
+          outfalls(c.node_subtypes.outfalls),conduits(c.link_subtypes.conduits),exports(c.outfall_exports),dw(r.dw_solver_),
           time(c.current_time),date(c.current_date),elapsed(c.elapsed_ms),old_elapsed(c.old_elapsed_ms),
           next_report(c.next_report_ms),evap(c.climate_state.evap_rate),infil_factor(c.climate_state.infil_factor),
           recovery_factor(c.climate_state.recovery_factor),link_steps(r.lstep_enabled_),link_step_span(r.lstep_rs_) {}
     void archive(Archive& a) {
+        a.fixed(exports.water_m3, exports.reverse_m3, exports.heat_j, exports.pollutant_amounts);
         a(time,date,elapsed,old_elapsed,next_report,evap,infil_factor,recovery_factor,link_steps,link_step_span);
 #define FIELD(v) a.fixed(nodes.v);
         NODE_STATE(FIELD)
@@ -177,6 +179,8 @@ struct Router::RestartState {
         a.fixed(d.As,d.hs,d.hs_prev_iter,d.P,d.P_hat,d.P_hat_0,d.T_s_target,d.t_s,d.surcharged);
     }
     void validate(const Router& router,const SimulationContext& c) const {
+        nonnegative(exports.water_m3); nonnegative(exports.reverse_m3);
+        finite(exports.heat_j); nonnegative(exports.pollutant_amounts);
         for (double v : {time,date,elapsed,old_elapsed,next_report,evap,infil_factor,recovery_factor,link_step_span,
                          dw.variable_step_,dw.sim_time_,dw.evap_rate})
             require(std::isfinite(v), "Nonfinite hydraulic checkpoint clock/forcing.");
@@ -346,6 +350,7 @@ struct Router::RestartState {
         }
     }
     void install(Router& r,SimulationContext& c) noexcept {
+        c.outfall_exports = std::move(exports);
 #define MOVE(v) static_assert(std::is_nothrow_move_assignable_v<decltype(nodes.v)>); c.nodes.v=std::move(nodes.v);
         NODE_STATE(MOVE)
 #undef MOVE

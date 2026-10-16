@@ -307,6 +307,23 @@ cdef class Solver:
         self._access.raise_callback_error()
         _check(rc)
 
+    def open_metadata(self) -> None:
+        """Parse configured metadata without runtime plugins or output files.
+
+        Existing model, species and option accessors inspect the parsed model.
+        Close and open normally before initializing a simulation.
+        """
+        self._access.require_idle()
+        if self._handle == NULL:
+            self.create()
+        cdef bytes b_inp = self._inp.encode('utf-8')
+        with self._operation():
+            rc = swmm_engine_open_metadata(<SWMM_Engine><size_t>self.handle, b_inp)
+        self._generation += 1
+        self._surface2d = None
+        self._access.raise_callback_error()
+        _check(rc)
+
     def initialize(self) -> None:
         """Initialize the simulation; transition to ``INITIALIZED``."""
         self._access.require_idle()

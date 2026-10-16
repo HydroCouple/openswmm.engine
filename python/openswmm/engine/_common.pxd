@@ -50,6 +50,7 @@ cdef extern from "openswmm_engine.h":
     # --- Engine lifecycle ---
     cdef SWMM_Engine swmm_engine_create()
     cdef int  swmm_engine_open(SWMM_Engine e, const char* inp, const char* rpt, const char* out, const char* input_plugin_lib)
+    cdef int  swmm_engine_open_metadata(SWMM_Engine e, const char* inp)
     cdef int  swmm_engine_initialize(SWMM_Engine e)
     cdef int  swmm_engine_start(SWMM_Engine e, int save_results)
     # NOTE: step/stride may invoke registered step_begin/step_end callbacks.
@@ -286,6 +287,13 @@ cdef extern from "openswmm_nodes.h":
     # Outfall route-to
     cdef int swmm_node_set_outfall_route_to(SWMM_Engine e, int idx, int subcatch_idx)
     cdef int swmm_node_get_outfall_route_to(SWMM_Engine e, int idx, int* subcatch_idx)
+    ctypedef struct SWMM_OutfallExportReceipt:
+        double exported_m3
+        double reversed_m3
+        double exported_heat_j
+        unsigned int flags
+    cdef int swmm_node_get_export_receipt(SWMM_Engine e, int idx,
+        SWMM_OutfallExportReceipt* receipt, double* pollutant_amounts, int count)
     # Depth from volume
     cdef int swmm_node_get_depth_from_volume(SWMM_Engine e, int idx, double volume, double* depth)
     # Quality mass flux

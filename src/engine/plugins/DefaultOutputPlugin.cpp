@@ -46,8 +46,10 @@
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 
+#include <cctype>
 #include <cstring>
 #include <cmath>
+#include <string>
 
 namespace openswmm {
 
@@ -70,6 +72,27 @@ int DefaultOutputPlugin::validate(const SimulationContext& /*ctx*/) {
 }
 
 namespace {
+
+/// E1 (2026-10-14): unit code for a reactions-component species column.
+/// Reported index `p` sits past the pollutants AND the reserved rows; the
+/// species unit string is the [REACTION_SPECIES] token (MG, UG, COUNT —
+/// a trailing "/L" is tolerated). Anything else — a WALL species' mass per
+/// area, say — writes 0 like the reserved rows do: the .out unit field is a
+/// 3-value concentration enum, and readers key on the NAME.
+int msxUnitCode(const openswmm::SimulationContext& ctx, int p) {
+    const auto& rx = ctx.reactions;
+    int m = p - ctx.n_pollutants() - (ctx.options.water_age ? 1 : 0)
+            - (ctx.options.heat_transport ? 1 : 0);
+    if (m < 0 || m >= rx.n_species()) return 0;
+    std::string u = rx.species_units[static_cast<std::size_t>(m)];
+    for (auto& c : u) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    if (u.size() > 2 && u.compare(u.size() - 2, 2, "/L") == 0) u.erase(u.size() - 2);
+    if (u == "MG")    return static_cast<int>(openswmm::MassUnits::MG_PER_L);
+    if (u == "UG")    return static_cast<int>(openswmm::MassUnits::UG_PER_L);
+    if (u == "COUNT") return static_cast<int>(openswmm::MassUnits::COUNTS_PER_L);
+    return 0;
+}
+
 /// Output-stream buffer size. 1 MB: large enough that a 500k-element
 /// header is a handful of writes, small enough to be irrelevant next to
 /// the model itself.
@@ -333,7 +356,7 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
         // [POLLUTANTS]) and segfaulted the writer.
         const bool is_reserved = (p >= ctx.n_pollutants());
         writeInt4(is_reserved
-                      ? 0
+                      ? msxUnitCode(ctx, p)
                       : static_cast<int>(
                             ctx.pollutants.units[static_cast<std::size_t>(p)]));
     }

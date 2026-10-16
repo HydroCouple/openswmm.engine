@@ -80,6 +80,8 @@ function(add_gtest_unit TEST_NAME SOURCE_FILE)
 endfunction()
 
 # ---- Unit test targets ----
+add_gtest_unit(test_engine_outfall_export_receipts test_outfall_export_receipts.cpp)
+add_gtest_unit(test_engine_component_metadata test_component_metadata.cpp)
 # NOTE: Files are created as stubs initially. Implement when the corresponding
 #       engine component is written (see MASTER_IMPLEMENTATION_PLAN.md phases).
 
@@ -1100,6 +1102,18 @@ if(OPENSWMM_WITH_HYDROCOUPLE)
         PC_OUTPUT_DIR="${PROJECT_SOURCE_DIR}/tests/output/process_components")
     # The libraries must exist on disk before the test scans for them.
     add_dependencies(test_engine_process_component_loader hc_smoke_components)
+    find_package(nlohmann_json CONFIG REQUIRED)
+    add_gtest_unit(test_engine_component test_engine_component.cpp)
+    target_link_libraries(test_engine_component PRIVATE HydroCouple::HydroCouple nlohmann_json::nlohmann_json ${CMAKE_DL_LIBS})
+    target_compile_definitions(test_engine_component PRIVATE ENGINE_COMPONENT_LIBRARY="$<TARGET_FILE:openswmm_engine_component>")
+    add_dependencies(test_engine_component openswmm_engine_component)
+    set(OPENSWMM_COMPONENT_RECEIVER_LIBRARY "" CACHE FILEPATH "Optional CF2 receiver for direct engine-component acceptance")
+    if(OPENSWMM_COMPONENT_RECEIVER_LIBRARY)
+        if(NOT EXISTS "${OPENSWMM_COMPONENT_RECEIVER_LIBRARY}")
+            message(FATAL_ERROR "OPENSWMM_COMPONENT_RECEIVER_LIBRARY does not exist")
+        endif()
+        target_compile_definitions(test_engine_component PRIVATE ENGINE_RECEIVER_LIBRARY="${OPENSWMM_COMPONENT_RECEIVER_LIBRARY}")
+    endif()
 endif()
 
 # ---- No two test sources may share a scratch-fixture name ----
