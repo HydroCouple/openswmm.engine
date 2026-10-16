@@ -137,6 +137,8 @@ struct MsxSurfaceData {
     std::vector<double> lid_rmvl;
     std::vector<double> lid_drain_load;
     std::vector<double> lid_drain_load_old;
+    /// `[sc * n_species + m]` the species twin of SubcatchData::lid_drain_runon_qual.
+    std::vector<double> lid_drain_runon_load;
 
     // ---- ledgers per species [m], user mass ---------------------------
     std::vector<double> led_init_buildup;
@@ -186,6 +188,7 @@ struct MsxSurfaceData {
         washoff_conc_old.assign(static_cast<std::size_t>(nsc) * nm, 0.0);
         ponded_qual.assign(static_cast<std::size_t>(nsc) * nm, 0.0);
         runon_qual_rate.assign(static_cast<std::size_t>(nsc) * nm, 0.0);
+        lid_drain_runon_load.assign(static_cast<std::size_t>(nsc) * nm, 0.0);
         if (init_loading.size() != static_cast<std::size_t>(nsc) * nm)
             init_loading.assign(static_cast<std::size_t>(nsc) * nm, 0.0);
         led_init_buildup.assign(nm, 0.0); led_buildup.assign(nm, 0.0);

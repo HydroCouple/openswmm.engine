@@ -737,3 +737,51 @@ TEST(MsxSurfaceTwin, R12b_RainOnlyNoLandUseRows) {
     EXPECT_GT(t.wet.scale, 0.0) << "TSS deposited nothing; deck defect";
     expectTwin(t, "R12b");
 }
+
+// P2-D4 parity: a LID underdrain routed to another subcatchment adds its
+// water and its quality, less removal, to that subcatchment's run-on, one
+// runoff step late (legacy lid_addDrainRunon). v6 sent the quality straight
+// to the receiver's outlet node, with a second copy of the drain water.
+TEST(MsxSurfaceTwin, R8_UnderdrainToAnotherSubcatchment) {
+    TwinOpts o; o.runon = true; o.lid_controls = kFlowingBioRetention;
+    o.lid_extra = "BC2  REMOVALS  TSS  30  X  30\n";
+    o.lid_usage = "S1  BC2  1  4000  50  100  100  0  *  S2\n";
+    const Twin t = runTwin("_tw_r8", o);
+    EXPECT_GT(t.drain_sub, 0.0) << "the underdrain never flowed; deck defect";
+    expectTwin(t, "R8");
+}
+
+// P2-D4 parity, pollutant side: with the drain's quality on the node twice
+// over and absent from the receiver's runoff, the routing ledger did not
+// close (wet inflow 2.331 lb, outflow 1.225 lb; legacy 2.176 / 2.163). It
+// must close to the small stored remainder, and the surface runoff ledger
+// must equal the routing inflow up to the last step in transit.
+TEST(MsxSurfaceTwin, UnderdrainRunonClosesTheRoutingLedger) {
+    TwinOpts o; o.runon = true; o.lid_controls = kFlowingBioRetention;
+    o.lid_extra = "BC2  REMOVALS  TSS  30\n";
+    o.lid_usage = "S1  BC2  1  4000  50  100  100  0  *  S2\n";
+    std::string body = twinDeck(o), kept;
+    for (std::size_t a = 0, b; a < body.size(); a = b + 1) {
+        b = body.find('\n', a); if (b == std::string::npos) b = body.size();
+        const std::string line = body.substr(a, b - a);
+        if (line.rfind("LU1  X  ", 0) == 0) continue;
+        kept += line + "\n";
+    }
+    write("_tw_d4.inp", kept + "\n[REPORT]\nINPUT NO\n");
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, "_tw_d4.inp", "_tw_d4.rpt", "_tw_d4.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+    double t = 0.0;
+    while (swmm_engine_step(e, &t) == SWMM_OK && t > 0.0) {}
+    swmm_engine_end(e);
+    const auto& mb = cpp(e).context().mass_balance;
+    const double wet = mb.qual_routing_wet[0], out = mb.qual_routing_outflow[0];
+    const double runoff = mb.qual_runoff_load[0];
+    ASSERT_GT(wet, 0.0);
+    EXPECT_NEAR(out, wet, 0.02 * wet) << "routing in " << wet << ", out " << out;
+    // The routing ledger is mg/L x ft3; the runoff ledger is lb (US deck).
+    const double wet_lb = wet * 28.317 / 453592.37;
+    EXPECT_NEAR(runoff, wet_lb, 0.02 * wet_lb) << "surface runoff " << runoff << " lb, routing in " << wet_lb << " lb";
+    swmm_engine_close(e); swmm_engine_destroy(e);
+}

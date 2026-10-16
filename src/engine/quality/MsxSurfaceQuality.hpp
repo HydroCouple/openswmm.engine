@@ -109,6 +109,11 @@ void bookPostLid(SimulationContext& ctx, double dt_runoff,
 void addLidDrain(SimulationContext& ctx, int control, int sc, int node, double drain_cfs,
                  bool to_perv, bool runoff_load, double dt_runoff) noexcept;
 void rollLidDrain(SimulationContext& ctx) noexcept;
+/// A LID underdrain routed to another subcatchment: the species join that
+/// subcatchment's run-on (next runoff step), as the water does.
+void addLidDrainRunon(SimulationContext& ctx, int control, int sc, int receiver, double drain_cfs,
+                      bool to_perv, bool runoff_load, double dt_runoff) noexcept;
+void consumeLidDrainRunon(SimulationContext& ctx, int receiver) noexcept;
 
 /// Set the store up for a species that only rains in (called by resolve and
 /// initState).

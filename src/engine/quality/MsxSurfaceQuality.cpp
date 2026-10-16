@@ -455,6 +455,40 @@ void addLidDrain(SimulationContext& ctx, int control, int sc, int node, double d
     }
 }
 
+void addLidDrainRunon(SimulationContext& ctx, int control, int sc, int receiver, double drain_cfs,
+                      bool to_perv, bool runoff_load, double dt_runoff) noexcept {
+    auto& s = ctx.reactions.surface;
+    if (!s.active() || receiver < 0 || receiver >= ctx.n_subcatches()) return;
+    const int nm = s.n_species;
+    for (int m = 0; m < nm; ++m) {
+        const auto rk = static_cast<std::size_t>(control) * static_cast<std::size_t>(nm) + static_cast<std::size_t>(m);
+        const double rmvl = (control >= 0 && rk < s.lid_rmvl.size()) ? s.lid_rmvl[rk] : 0.0;
+        const double c_src = s.washoff_conc[s.sidx(sc, m)];
+        const auto k = s.sidx(receiver, m);
+        if (k < s.lid_drain_runon_load.size())
+            s.lid_drain_runon_load[k] += (drain_cfs * c_src * 28.317) * (1.0 - rmvl);
+        if (!to_perv) {
+            const double w = drain_cfs * c_src * dt_runoff * 28.317 * s.mcf[static_cast<std::size_t>(m)];
+            if (w > 0.0) {
+                s.led_bmp_removal[static_cast<std::size_t>(m)] += rmvl * w;
+                if (runoff_load) s.led_runoff_load[static_cast<std::size_t>(m)] += w * (1.0 - rmvl);
+            }
+        }
+    }
+}
+
+void consumeLidDrainRunon(SimulationContext& ctx, int receiver) noexcept {
+    auto& s = ctx.reactions.surface;
+    if (!s.active()) return;
+    for (int m = 0; m < s.n_species; ++m) {
+        const auto k = s.sidx(receiver, m);
+        if (k < s.lid_drain_runon_load.size() && k < s.runon_qual_rate.size()) {
+            s.runon_qual_rate[k] += s.lid_drain_runon_load[k];
+            s.lid_drain_runon_load[k] = 0.0;
+        }
+    }
+}
+
 void rollLidDrain(SimulationContext& ctx) noexcept {
     auto& s = ctx.reactions.surface;
     s.lid_drain_load_old = s.lid_drain_load;

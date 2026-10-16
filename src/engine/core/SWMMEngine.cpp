@@ -3078,6 +3078,63 @@ void SWMMEngine::stepRunoff(double dt_routing) {
                                 dest_node = ctx_.subcatches.outlet_node[
                                     static_cast<std::size_t>(target_sc)];
                         }
+                        // Multispecies Phase 2 (P2-D4 parity): where the
+                        // drain WATER went to another subcatchment's run-on
+                        // (the A6b routing rule above), its quality goes
+                        // there too, less removal, one runoff step late —
+                        // legacy lid_addDrainRunon. It used to go straight to
+                        // that subcatchment's outlet node with a second copy
+                        // of the drain water, so the node counted the water
+                        // twice and the receiver's runoff carried it clean.
+                        int runon_sc = -1;
+                        {
+                            int dn2 = g.drain_node[uu], dsc2 = g.drain_subcatch[uu];
+                            if (dn2 < 0 && (dsc2 < 0 || dsc2 == sc)) {
+                                dn2  = ctx_.subcatches.outlet_node[static_cast<std::size_t>(sc)];
+                                dsc2 = ctx_.subcatches.outlet_subcatch[static_cast<std::size_t>(sc)];
+                            }
+                            if (dn2 < 0 && dsc2 >= 0 && dsc2 != sc && dsc2 < ctx_.n_subcatches())
+                                runon_sc = dsc2;
+                        }
+                        if (runon_sc >= 0) {
+                            const auto urs = static_cast<std::size_t>(runon_sc);
+                            const bool is_runoff_load_r =
+                                (g.drain_node[uu] >= 0 || g.drain_subcatch[uu] == sc);
+                            for (int p = 0; p < np_use; ++p) {
+                                auto rmvl_idx = static_cast<std::size_t>(u * np_lid + p);
+                                double rmvl = (rmvl_idx < g.drain_rmvl.size())
+                                              ? g.drain_rmvl[rmvl_idx] : 0.0;
+                                auto src_idx = static_cast<std::size_t>(sc * np_ctx + p);
+                                double c_src = (src_idx < ctx_.subcatches.conc.size())
+                                               ? ctx_.subcatches.conc[src_idx] : 0.0;
+                                const auto ri = urs * static_cast<std::size_t>(np_ctx) +
+                                                static_cast<std::size_t>(p);
+                                if (ri < ctx_.subcatches.lid_drain_runon_qual.size())
+                                    ctx_.subcatches.lid_drain_runon_qual[ri] +=
+                                        (drain_cfs * c_src * 28.317) * (1.0 - rmvl);
+                                if (!g.to_perv[uu]) {
+                                    const double mass_ucf_d = ucf::UCF(ucf::MASS, ctx_.options);
+                                    double mcf_d = mass_ucf_d;
+                                    if (static_cast<std::size_t>(p) < ctx_.pollutants.units.size()) {
+                                        switch (ctx_.pollutants.units[static_cast<std::size_t>(p)]) {
+                                            case MassUnits::UG_PER_L:     mcf_d = mass_ucf_d / 1000.0; break;
+                                            case MassUnits::COUNTS_PER_L: mcf_d = 1.0; break;
+                                            default: break;
+                                        }
+                                    }
+                                    const double w = drain_cfs * c_src *
+                                                     dt_runoff * 28.317 * mcf_d;
+                                    if (w > 0.0) {
+                                        ctx_.mass_balance.qual_bmp_removal[static_cast<std::size_t>(p)] += rmvl * w;
+                                        if (is_runoff_load_r)
+                                            ctx_.mass_balance.qual_runoff_load[static_cast<std::size_t>(p)] += w * (1.0 - rmvl);
+                                    }
+                                }
+                            }
+                            msxsurf::addLidDrainRunon(ctx_, g.control_idx[uu], sc, runon_sc, drain_cfs,
+                                                      g.to_perv[uu] != 0, is_runoff_load_r, dt_runoff);
+                            dest_node = -1;   // the node receives this water later, as runoff
+                        }
                         if (dest_node >= 0 && dest_node < ctx_.n_nodes()) {
                             auto udn = static_cast<std::size_t>(dest_node);
                             // Add drain volume to node quality vol accumulator
@@ -9556,6 +9613,19 @@ void SWMMEngine::assembleRunon() noexcept {
         if (ownsSpatialSource(i)) continue;
         auto ui = static_cast<std::size_t>(i);
         double q = ctx_.subcatches.lid_drain_runon_cfs[ui];
+        // P2-D4: the drain run-on's quality, accumulated beside its water.
+        {
+            const int np_r = ctx_.n_pollutants();
+            for (int p = 0; p < np_r; ++p) {
+                const auto k = ui * static_cast<std::size_t>(np_r) + static_cast<std::size_t>(p);
+                if (k < ctx_.subcatches.lid_drain_runon_qual.size() &&
+                    k < ctx_.subcatches.runon_qual_rate.size()) {
+                    ctx_.subcatches.runon_qual_rate[k] += ctx_.subcatches.lid_drain_runon_qual[k];
+                    ctx_.subcatches.lid_drain_runon_qual[k] = 0.0;
+                }
+            }
+            msxsurf::consumeLidDrainRunon(ctx_, i);
+        }
         if (q > 0.0) {
             add_runon(i, q);
             ctx_.subcatches.lid_drain_runon_cfs[ui] = 0.0;

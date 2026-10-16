@@ -419,6 +419,11 @@ struct SubcatchData {
      *           its own storage. Rebuilt by assembleRunon() every runoff
      *           substep, like runon_inflow. */
     std::vector<double> runon_qual_rate;
+    /// [sc * np + p] pollutant load (concentration mass / s, removal already
+    /// applied) a LID underdrain routed to this subcatchment delivered in the
+    /// last runoff step; joins runon_qual_rate at the next assembleRunon, the
+    /// drain water's own lag (legacy lid_addDrainRunon).
+    std::vector<double> lid_drain_runon_qual;
 
     /**
      * @brief Area-averaged subarea runoff RATE, ft/sec — legacy's
@@ -988,7 +993,7 @@ struct SubcatchData {
                             v.begin() + static_cast<std::ptrdiff_t>(base + np));
             };
             erase2d(conc); erase2d(conc_old); erase2d(init_loading);
-            erase2d(ponded_qual); erase2d(runon_qual_rate); erase2d(washoff_load);
+            erase2d(ponded_qual); erase2d(runon_qual_rate); erase2d(lid_drain_runon_qual); erase2d(washoff_load);
         }
 
         // Flat 2D total load: [sc * np + p]
@@ -1027,6 +1032,7 @@ struct SubcatchData {
             init_loading.assign(total, 0.0);
             ponded_qual.assign(total, 0.0);
             runon_qual_rate.assign(total, 0.0);
+            lid_drain_runon_qual.assign(total, 0.0);
             washoff_load.assign(total, 0.0);
         }
     }
@@ -1131,6 +1137,7 @@ struct SubcatchData {
         conc_old.shrink_to_fit();
         ponded_qual.shrink_to_fit();
         runon_qual_rate.shrink_to_fit();
+        lid_drain_runon_qual.shrink_to_fit();
         washoff_load.shrink_to_fit();
         total_load.shrink_to_fit();
         coverage.shrink_to_fit();
