@@ -868,6 +868,8 @@ SWMM_ENGINE_API int swmm_subcatch_set_snow_state(SWMM_Engine engine, int idx,
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     auto ui = static_cast<std::size_t>(idx);
     if (ctx.subcatches.snowpack[ui] < 0) return SWMM_ERR_BADPARAM;
+    if (ctx.snowpacks.config.modelFor(ctx.subcatches.snowpack[ui]) == openswmm::surface::SnowKind::Ueb)
+        return SWMM_ERR_BADPARAM; // ATI/cold-content injection is degree-day only.
     CHECK_INDEX(surface >= 0 && surface < openswmm::snow::N_SUBAREAS);
 
     auto& soa = eng->snowSolver().state();
@@ -901,6 +903,8 @@ SWMM_ENGINE_API int swmm_subcatch_get_snow_state(SWMM_Engine engine, int idx,
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
     auto ui = static_cast<std::size_t>(idx);
     if (ctx.subcatches.snowpack[ui] < 0) return SWMM_ERR_BADPARAM;
+    if (ctx.snowpacks.config.modelFor(ctx.subcatches.snowpack[ui]) == openswmm::surface::SnowKind::Ueb)
+        return SWMM_ERR_BADPARAM; // Use swmm_subcatch_get_snow_process_state.
     CHECK_INDEX(surface >= 0 && surface < openswmm::snow::N_SUBAREAS);
 
     const auto& soa = eng->snowSolver().state();
@@ -1408,6 +1412,10 @@ SWMM_ENGINE_API int swmm_snowpack_rename(SWMM_Engine engine, int idx, const char
     for (auto& ref : ctx.subcatches.snowpack_name) {
         if (openswmm::ieq(ref, prev)) ref = new_id;
     }
+    const auto rename_snow_rows=[&](auto& rows) {
+        for(auto& [key,row]:rows)if(openswmm::ieq(row.pack,prev))row.pack=new_id;
+    };
+    rename_snow_rows(ctx.snowpacks.mesh_config.defaults);rename_snow_rows(ctx.snowpacks.mesh_config.cells);
     return SWMM_OK;
 }
 

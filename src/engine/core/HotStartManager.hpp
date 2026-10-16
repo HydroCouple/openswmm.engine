@@ -165,6 +165,7 @@ struct HotStartHeader {
  * @ingroup engine_hotstart
  */
 struct HotStartFile {
+    std::string snow_state; ///< V14: native degree-day and UEB accepted/held states
     HotStartHeader                    header;
     std::vector<HotStartNodeRecord>   nodes;
     std::vector<HotStartLinkRecord>   links;

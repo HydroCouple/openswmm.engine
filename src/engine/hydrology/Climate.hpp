@@ -35,6 +35,7 @@
 
 #ifndef OPENSWMM_CLIMATE_HPP
 #define OPENSWMM_CLIMATE_HPP
+#include "Radiation.hpp"
 
 namespace openswmm {
 
@@ -85,6 +86,7 @@ struct MovingAvg7 {
 // ============================================================================
 
 struct ClimateState {
+    RadiationState radiation;
     double temperature  = 70.0;  ///< Air temperature (deg F) — effective (post-forcing)
     double temp_range   = 0.0;   ///< Daily temperature range (deg F)
     double evap_rate    = 0.0;   ///< Evaporation rate (ft/sec)

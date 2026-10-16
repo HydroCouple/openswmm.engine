@@ -29,6 +29,9 @@
 
 #include "../subsurface/SubsurfaceSolver.hpp"
 #include "../subsurface/CommonSourceStage.hpp"
+#include "../subsurface/SourceResultHistory.hpp"
+#include "../subsurface/EngineSourceResultHistory.hpp"
+#include "../subsurface/EngineSourceResultStream.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -82,6 +85,11 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     state_ = &state;
     opts_  = &opts;
     common_stage_ = nullptr;
+    source_history_ = nullptr;
+    engine_source_history_ = nullptr;
+    engine_source_stream_ = nullptr;
+    checkpoint_ready_ = true;
+    source_phase_end_ = 0.0;
 
     const int nt = mesh.n_triangles();
     if (nt <= 0) return;
@@ -321,10 +329,16 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
 
 void ExplicitInertialSolver::refreshSubsurfaceRows() {
     gw_row_map_.assign(state_->transport.n_species,-1);
-    if(gw_ && gw_->transport().active())
-        for(int r=0;r<state_->transport.n_species;++r)
-            for(int g=0;g<gw_->transport().n_species;++g)
-                if(state_->transport.row_names[r]==gw_->transport().row_names[g]) gw_row_map_[r]=g;
+    if(gw_ && gw_->transport().active()) {
+        const auto& surface = state_->transport;
+        const auto& groundwater = gw_->transport();
+        if (surface.row_names.size() != static_cast<std::size_t>(surface.n_species) ||
+            groundwater.row_names.size() != static_cast<std::size_t>(groundwater.n_species))
+            throw std::invalid_argument("Surface and groundwater transport require a name for every species row.");
+        for(int r=0;r<surface.n_species;++r)
+            for(int g=0;g<groundwater.n_species;++g)
+                if(surface.row_names[r]==groundwater.row_names[g]) gw_row_map_[r]=g;
+    }
 }
 
 double ExplicitInertialSolver::donorConc(int s, int cell) const noexcept {
@@ -431,16 +445,16 @@ struct ExplicitInertialSolver::CellSourceStep {
 OPENSWMM_SOURCE_INLINE bool ExplicitInertialSolver::prepareCellSources(int i, double dt, CellSourceStep& source) {
     const double area = mesh_->tri_area[i];
     const double area_dt = area * dt;
-    const double rain = std::max(0.0, state_->runtime_forcings.rate(1,i,state_->rainfall[i])) * area_dt;
+    const double rain = std::max(0.0, state_->liquidRainfall(i)) * area_dt;
     const double coupling = state_->coupling_flux[i] * area_dt;
     const double requested_infil = std::max(0.0,
         infilSink(state_->runtime_forcings.rate(3,i,state_->infil_rate[i]), state_->depth[i], opts_->dry_depth)) * area_dt;
     const double requested_evap = std::max(0.0,
-        evapSink(state_->runtime_forcings.rate(2,i,state_->evap_rate[i]), state_->depth[i], opts_->dry_depth)) * area_dt;
+        evapSink(state_->exposedEvaporation(i), state_->depth[i], opts_->dry_depth)) * area_dt;
     const double back = gw_ ? gw_->takeToSurface(i) : 0.0;
     if (rain == 0.0 && coupling == 0.0 && requested_infil == 0.0 &&
         requested_evap == 0.0 && back == 0.0) {
-        if(gw_)gw_->bookSurfaceEt(i,dt,state_->runtime_forcings.rate(2,i,state_->evap_rate[i]),0.0);
+        if(gw_)gw_->bookSurfaceEt(i,dt,state_->exposedEvaporation(i),0.0);
         return false;
     }
 
@@ -454,7 +468,7 @@ OPENSWMM_SOURCE_INLINE bool ExplicitInertialSolver::prepareCellSources(int i, do
     const double infil = gw_ ? gw_->acceptSurfaceInfiltration(i, requested_infil * scale, state_->runtime_forcings.get(3,i)!=nullptr)
                              : requested_infil * scale;
     const double evap = requested_evap * scale;
-    if(gw_)gw_->bookSurfaceEt(i,dt,state_->runtime_forcings.rate(2,i,state_->evap_rate[i]),evap);
+    if(gw_)gw_->bookSurfaceEt(i,dt,state_->exposedEvaporation(i),evap);
     const double out = requested_out * scale;
     if(auto* row=const_cast<RuntimeForcing*>(state_->runtime_forcings.get(3,i))) {
         auto& receipt=row->receipt;
@@ -524,7 +538,8 @@ OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::applyCellSourceRow(
 }
 
 bool ExplicitInertialSolver::applyCellSources(int i, double dt) {
-    if (common_stage_ && common_stage_->ownsCell(i)) return false;
+    if (common_stage_ && common_stage_->ownsCell(i))
+        return common_stage_->runtimeWaterEnabled() && applyRuntimeSources(i,dt);
     CellSourceStep source;
     if (!prepareCellSources(i, dt, source)) return applyRuntimeSources(i, dt);
     if (species_on_) {
@@ -2081,7 +2096,8 @@ void ExplicitInertialSolver::runRk2Step(double dt) {
     // Member buffers: vector assignment reuses capacity, so no per-step
     // allocation (F6).
     rk_v0_  = state_->volume;
-    const auto boundary_receipts0=state_->boundary->receipts;
+    std::map<int, RuntimeReceipt> boundary_receipts0;
+    if (state_->boundary) boundary_receipts0 = state_->boundary->receipts;
     rk_qx0_ = qcx_;
     rk_qy0_ = qcy_;
     rk_bc0_ = bc_accum_; rk_ex0_ = exch_; rk_inf0_ = state_->infil_applied;
@@ -2115,7 +2131,7 @@ void ExplicitInertialSolver::runRk2Step(double dt) {
         }
         if (state_->depth[i] <= opts_->dry_depth) { qcx_[i] = 0.0; qcy_[i] = 0.0; }
     }
-    for(auto& entry:state_->boundary->receipts) {
+    if (state_->boundary) for(auto& entry:state_->boundary->receipts) {
         const auto& before=boundary_receipts0.at(entry.first); auto& now=entry.second;
         const auto blend=[](double a,double b){return a+0.5*(b-a);};
         now.requested=blend(before.requested,now.requested); now.applied=blend(before.applied,now.applied);
@@ -2335,13 +2351,15 @@ void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub, double time) {
             // The GW cells of this rung fire AFTER the surface cells of the
             // same rung, so a cell that infiltrated in this substep hands the
             // water down within the substep rather than a rung later.
-            if (gw_) gw_->fireGwCells(k, (1 << k) * dt0, *state_, time + (s + 1 - (1 << k)) * dt0);
+            if (gw_) gw_->fireGwCells(k, (1 << k) * dt0, *state_, time + (s + 1 - (1 << k)) * dt0,
+                                      common_stage_ ? source_phase_end_ : -1.0);
         }
         // Node exchange is sampled at tier-0 cadence against the batch-frozen
         // 1D heads, exactly like the surface's junction exchange, and booked
         // into the GW cells' accumulators (G-B) rather than applied directly.
         if (gw_ && state_->nodes_1d)
-            gw_->sampleNodeExchange(state_->nodes_1d, dt0);
+            gw_->sampleNodeExchange(state_->nodes_1d, dt0, time + (s + 1) * dt0);
+        captureSourceResults();
         if (dbg_invariant) {
             const double inv2 = invariant();
             if (std::fabs(inv2 - inv0) > 1.0e-9 * (std::fabs(inv0) + 1.0))
@@ -2356,7 +2374,11 @@ void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub, double time) {
 }
 
 double ExplicitInertialSolver::advance(double t_current, double t_target) {
+    if (common_stage_ && (!checkpoint_ready_ || !std::isfinite(t_current) || !std::isfinite(t_target) ||
+        t_current != t_last_sync_ || t_current != common_stage_->completedEnd() || t_target < t_current))
+        throw std::invalid_argument("Common source marcher requires its accepted completed clock.");
     if (!initialized_ || t_target <= t_current) return t_target;
+    if (common_stage_) checkpoint_ready_ = false;
 
     double t = t_current;
     // The lazy-source clock persists across advances (inactive cells may owe
@@ -2466,9 +2488,11 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
                 source_phase_end_ = s + 1 == nt ? t_target : t + (s + 1) * dt_tail;
                 fireCells(active_cells_, dt_tail, /*tier0=*/true);
                 if (gw_) {
-                    for (int k = 0; k < Kgw; ++k) gw_->fireGwCells(k, dt_tail, *state_, t + s * dt_tail);
-                    if (state_->nodes_1d) gw_->sampleNodeExchange(state_->nodes_1d, dt_tail);
+                    for (int k = 0; k < Kgw; ++k) gw_->fireGwCells(k, dt_tail, *state_, t + s * dt_tail,
+                                                                common_stage_ ? source_phase_end_ : -1.0);
+                    if (state_->nodes_1d) gw_->sampleNodeExchange(state_->nodes_1d, dt_tail, source_phase_end_);
                 }
+                captureSourceResults();
                 ++substeps_run_;
                 ++last_steps_;
             }
@@ -2532,7 +2556,18 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
         for (std::size_t k = 0; k < bc_cell_.size(); ++k)
             state_->edge_flux[bc_slot_[k]] = bc_accum_[k] / span;
 
+    refreshSourceResultBoundary();
+    checkpoint_ready_ = true;
     return t_target;
+}
+
+void ExplicitInertialSolver::refreshSourceResultBoundary() {
+    if(source_history_) {
+        // Final render/face publication belongs to the accepted boundary too.
+        // Update only its checkpoint match, never add a second source interval.
+        const auto error=source_history_->refreshCheckpointMatch(*common_stage_);
+        if(!error.empty())throw std::runtime_error("[2D_SOURCE_RESULTS] " + error);
+    }
 }
 
 void ExplicitInertialSolver::reinitialize(double /*t0*/) {
@@ -2624,8 +2659,42 @@ void ExplicitInertialSolver::setCommonSourceStage(CommonSourceStage& stage) {
     pinExternalSourceCells(stage.cells());
 }
 
+void ExplicitInertialSolver::setSourceResultHistory(SourceResultHistory& history) {
+    if (!common_stage_ || source_history_ || engine_source_history_ || engine_source_stream_ || t_last_sync_ != 0.0 || !history.tables().empty())
+        throw std::invalid_argument("Source results require an empty recorder and initial common source stage.");
+    const auto error = history.append(*common_stage_);
+    if (!error.empty()) throw std::invalid_argument(error);
+    source_history_ = &history;
+}
+void ExplicitInertialSolver::captureSourceResults() {
+    if(engine_source_stream_ && engine_source_stream_->detailed()) {
+        const auto error=engine_source_stream_->captureSourceInterval(*common_stage_);
+        if(!error.empty())throw std::runtime_error("[2D_SOURCE_STREAM] " + error);
+    }
+    if(engine_source_history_) {
+        const auto error=engine_source_history_->captureSourceInterval(*common_stage_);
+        if(!error.empty())throw std::runtime_error("[2D_SOURCE_RESULTS] " + error);
+    }
+    if (!source_history_) return;
+    const auto error = source_history_->append(*common_stage_);
+    if (!error.empty()) throw std::runtime_error("[2D_SOURCE_RESULTS] " + error);
+}
+void ExplicitInertialSolver::resumeSourceResultHistory(SourceResultHistory& history) {
+    const auto error = checkpointBoundary();
+    if (!error.empty() || source_history_ || engine_source_history_ || engine_source_stream_)
+        throw std::invalid_argument(error.empty() ? "Source history already attached." : error);
+    const auto match = history.resume(*common_stage_);
+    if (!match.empty()) throw std::invalid_argument(match);
+    source_history_ = &history;
+}
+
 void ExplicitInertialSolver::finalize() {
     common_stage_ = nullptr;
+    source_history_ = nullptr;
+    engine_source_history_ = nullptr;
+    engine_source_stream_ = nullptr;
+    checkpoint_ready_ = false;
+    joint_checkpoint_ = false;
     if (initialized_) { settleAccumulators(); flushSourceLedgers(); }
     if (!telemetry_path_.empty() && !telemetry_.empty()) {
         if (std::FILE* f = openswmm::io::fopen_utf8(telemetry_path_, "w")) {

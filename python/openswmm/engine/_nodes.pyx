@@ -342,6 +342,42 @@ cdef class OutfallView:
         _check(swmm_node_set_outfall_route_to(
             _h(self._node._solver), self._node._index, subcatch_idx))
 
+    @property
+    def export_receipt(self) -> dict:
+        """Copied cumulative committed export, independent of REPORT_START.
+
+        Keys: exported_m3, reversed_m3, exported_heat_j, flags,
+        pollutant_amounts and pollutant_amount_units. Pollutants use stable IDs
+        and kg for MG/L or UG/L, counts for #/L. Heat is J relative to 0 degC.
+        Capability flags are 1 water, 2 LEGACY pollutants, 4 native heat.
+        Exports have already left the donor; never debit them a second time.
+        Native rerouting/2D ownership and pre-start reads raise EngineError.
+        No MSX or ARD/LARD mass capability is implied.
+        """
+        _check_fresh(self._node)
+        cdef SWMM_Engine handle = _h(self._node._solver)
+        cdef int count = swmm_pollutant_count(handle)
+        cdef SWMM_OutfallExportReceipt receipt
+        cdef np.ndarray[np.float64_t, ndim=1] amounts = np.empty(max(count, 0), dtype=np.float64)
+        _check(swmm_node_get_export_receipt(handle, self._node._index,
+                                           &receipt, <double*>amounts.data, count))
+        cdef int i, units
+        values = {}
+        amount_units = {}
+        for i in range(count):
+            name = swmm_pollutant_id(handle, i).decode('utf-8')
+            _check(swmm_pollutant_get_units(handle, i, &units))
+            values[name] = float(amounts[i])
+            amount_units[name] = 'counts' if units == 2 else 'kg'
+        return {
+            'exported_m3': receipt.exported_m3,
+            'reversed_m3': receipt.reversed_m3,
+            'exported_heat_j': receipt.exported_heat_j,
+            'flags': receipt.flags,
+            'pollutant_amounts': values,
+            'pollutant_amount_units': amount_units,
+        }
+
     def __repr__(self) -> str:
         return f"<OutfallView for {self._node!r}>"
 

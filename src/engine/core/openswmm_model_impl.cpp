@@ -49,33 +49,38 @@
 #endif
 
 #include <cstdio>
-#include <sstream>
+#include <cstdlib>
 
 namespace {
 
-// Split a space-separated args string into a vector<string>, dropping
-// empty tokens.  Mirrors the [PLUGINS]-line tokenizer for the common
-// (no-quoting) case the GUI's free-form args field produces.
+// Use the same quoting rules as [PLUGINS] when args come from the C API.
 std::vector<std::string> split_args(const char* s) {
-    std::vector<std::string> out;
-    if (!s || s[0] == '\0') return out;
-    std::istringstream is(s);
-    std::string tok;
-    while (is >> tok) out.push_back(std::move(tok));
-    return out;
+    return s ? openswmm::input::Tokenizer::tokenize(s) : std::vector<std::string>{};
 }
 
-// Inverse: join init_args with single spaces.
+// Reconstruct an editable argument string without losing token boundaries.
 std::string join_args(const std::vector<std::string>& args) {
     std::string out;
     for (std::size_t i = 0; i < args.size(); ++i) {
         if (i) out += ' ';
-        out += args[i];
+        const auto tokens = openswmm::input::Tokenizer::tokenize(args[i]);
+        out += tokens.size() == 1 && tokens[0] == args[i]
+            ? args[i] : "\"" + args[i] + "\"";
     }
     return out;
 }
 
 // Common buffer-fill helper: NUL-terminated, truncated at sz - 1.
+// Shortest %g form that reads back to exactly v (998.2, not 998.20000000000005).
+std::string fmt_full(double v) {
+    char b[40];
+    for (int prec = 15; prec <= 17; ++prec) {
+        std::snprintf(b, sizeof(b), "%.*g", prec, v);
+        if (std::strtod(b, nullptr) == v) break;
+    }
+    return b;
+}
+
 void fill_buf(char* buf, int sz, const std::string& s) {
     if (!buf || sz <= 0) return;
     std::size_t n = std::min(static_cast<std::size_t>(sz - 1), s.size());
@@ -1144,6 +1149,25 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
     else if (k == "DISPERSION")        val = opt.lard_rwpt ? "RWPT" : "OFF";
     else if (k == "RWPT_SEED")         val = std::to_string(opt.rwpt_seed);
 
+    // Physical constants and FV feedback (closed C-API gaps 2026-10-11).
+    // Printed at full precision: std::to_string's six decimals would read
+    // the 1.5e-8 wind-function coefficients back as zero.
+    else if (k == "WATER_DENSITY")     val = fmt_full(opt.water_density);
+    else if (k == "WATER_SPECIFIC_HEAT_CAPACITY")
+        val = fmt_full(opt.water_specific_heat);
+    else if (k == "WIND_FUNC_COEFF_A") val = fmt_full(opt.wind_func_coeff_a);
+    else if (k == "WIND_FUNC_COEFF_B") val = fmt_full(opt.wind_func_coeff_b);
+    else if (k == "PRESSURE_RATIO")    val = fmt_full(opt.pressure_ratio);
+    else if (k == "FV_NODE_FEEDBACK_DT") val = opt.fv.node_feedback_dt ? "YES" : "NO";
+    // Legacy COMPATIBILITY is kept verbatim for the round trip; the v6
+    // engine does not act on it.
+    else if (k == "COMPATIBILITY") {
+        const auto it = opt.ext_options.find("COMPATIBILITY");
+        val = it != opt.ext_options.end() ? it->second : "";
+    }
+    // Retired 2026-08-14: the only effective value is NONE.
+    else if (k == "VIRTUAL_JUNCTION_MOMENTUM") val = "NONE";
+
     // System / Performance
     else if (k == "THREADS")           val = std::to_string(opt.num_threads);
 
@@ -1603,6 +1627,27 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
     }
     else if (k == "RWPT_SEED")
         opt.rwpt_seed = stoi_strict(v);
+    else if (k == "WATER_DENSITY")     opt.water_density       = stod_strict(v);
+    else if (k == "WATER_SPECIFIC_HEAT_CAPACITY")
+        opt.water_specific_heat = stod_strict(v);
+    else if (k == "WIND_FUNC_COEFF_A") opt.wind_func_coeff_a   = stod_strict(v);
+    else if (k == "WIND_FUNC_COEFF_B") opt.wind_func_coeff_b   = stod_strict(v);
+    else if (k == "PRESSURE_RATIO")    opt.pressure_ratio      = stod_strict(v);
+    else if (k == "FV_NODE_FEEDBACK_DT") {
+        // Same grammar as the [OPTIONS] parser: anything but NO/FALSE/0/OFF is on.
+        const std::string vu = upper_copy(v);
+        opt.fv.node_feedback_dt =
+            !(vu == "NO" || vu == "FALSE" || vu == "0" || vu == "OFF");
+    }
+    else if (k == "COMPATIBILITY") {
+        if (v.empty()) opt.ext_options.erase("COMPATIBILITY");
+        else           opt.ext_options["COMPATIBILITY"] = v;
+    }
+    else if (k == "VIRTUAL_JUNCTION_MOMENTUM") {
+        // Retired: NONE is accepted, FULL (the defective scheme) is refused.
+        const std::string vu = upper_copy(v);
+        if (vu != "NONE" && vu != "OFF") return SWMM_ERR_BADPARAM;
+    }
 
     else {
         return SWMM_ERR_BADPARAM;

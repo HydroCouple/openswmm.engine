@@ -330,6 +330,101 @@ SWMM_ENGINE_API int swmm_heat_get_effective_source_temp(SWMM_Engine engine,
                                                         int source, int node,
                                                         double* temp_c);
 
+/* =========================================================================
+ * [SEDIMENT_EXCHANGE] and per-element attribute overrides
+ * (closed C-API gaps 2026-10-11)
+ *
+ * Values are REFUSED, never clamped, by the same rules as the parser
+ * (HeatComponent.cpp). Edits persist: the heat serializer writes the
+ * configuration and the override rows back to the component file on save.
+ * ========================================================================= */
+
+/** @brief `[SEDIMENT_EXCHANGE]` GLOBAL parameters (bed zone beneath conduits). */
+typedef enum SWMM_HeatSedimentParam {
+    SWMM_HEAT_SED_THERMAL_DIFFUSIVITY = 0, /**< m²/s, > 0. */
+    SWMM_HEAT_SED_SOLUTE_DIFFUSIVITY  = 1, /**< m²/s, >= 0 (0 = advection-only storage). */
+    SWMM_HEAT_SED_BED_THICKNESS       = 2, /**< m, > 0. */
+    SWMM_HEAT_SED_GROUND_DEPTH        = 3, /**< m, > 0. */
+    SWMM_HEAT_SED_GROUND_TEMPERATURE  = 4, /**< °C, constant spelling; setting it
+                                            *   replaces a ground timeseries. */
+    SWMM_HEAT_SED_HYPORHEIC_VELOCITY  = 5, /**< m/s, >= 0. */
+    SWMM_HEAT_SED_DENSITY             = 6, /**< kg/m³, > 0. */
+    SWMM_HEAT_SED_SPECIFIC_HEAT       = 7, /**< J/kg/K, > 0. */
+    SWMM_HEAT_SED_INITIAL_TEMPERATURE = 8  /**< °C; unset = start at ground temperature. */
+} SWMM_HeatSedimentParam;
+
+/** @brief Read a `[SEDIMENT_EXCHANGE]` GLOBAL parameter. */
+SWMM_ENGINE_API int swmm_heat_get_sediment(SWMM_Engine engine, int param,
+                                           double* value);
+
+/** @brief Write a `[SEDIMENT_EXCHANGE]` GLOBAL parameter.
+ *  @returns ::SWMM_ERR_BADPARAM for a value the parser refuses (not finite,
+ *           not positive where required, negative diffusivity/velocity);
+ *           ::SWMM_ERR_BADINDEX for an unknown @p param. Temperatures mark
+ *           the value as stated so the writer keeps it. */
+SWMM_ENGINE_API int swmm_heat_set_sediment(SWMM_Engine engine, int param,
+                                           double value);
+
+/** @brief Ground-temperature timeseries name; empty when the constant
+ *         spelling is in force. */
+SWMM_ENGINE_API int swmm_heat_get_sediment_ground_timeseries(SWMM_Engine engine,
+                                                             char* buf, int buflen);
+
+/** @brief Drive the ground temperature from a `[TIMESERIES]`; NULL or ""
+ *         returns to the constant value.
+ *  @returns ::SWMM_ERR_BADPARAM if @p name is not a timeseries of the model. */
+SWMM_ENGINE_API int swmm_heat_set_sediment_ground_timeseries(SWMM_Engine engine,
+                                                             const char* name);
+
+/** @brief Attributes that take per-element overrides. Mirrors `openswmm::HeatAttr`. */
+typedef enum SWMM_HeatAttr {
+    SWMM_HEAT_ATTR_ALBEDO                  = 0,  /**< `[RADIATIVE_FLUXES]`, [0,1]. */
+    SWMM_HEAT_ATTR_SHADE_FACTOR            = 1,  /**< [0,1]. */
+    SWMM_HEAT_ATTR_SKY_VIEW                = 2,  /**< [0,1]. */
+    SWMM_HEAT_ATTR_EMISS_WATER             = 3,  /**< [0,1]. */
+    SWMM_HEAT_ATTR_EMISS_LANDCOVER         = 4,  /**< [0,1]. */
+    SWMM_HEAT_ATTR_LANDCOVER_TEMPERATURE   = 5,  /**< °C. */
+    SWMM_HEAT_ATTR_THERMAL_DIFFUSIVITY     = 6,  /**< `[SEDIMENT_EXCHANGE]`, > 0. */
+    SWMM_HEAT_ATTR_SOLUTE_DIFFUSIVITY      = 7,  /**< >= 0. */
+    SWMM_HEAT_ATTR_BED_THICKNESS           = 8,  /**< > 0. */
+    SWMM_HEAT_ATTR_GROUND_DEPTH            = 9,  /**< > 0. */
+    SWMM_HEAT_ATTR_GROUND_TEMPERATURE      = 10, /**< °C. */
+    SWMM_HEAT_ATTR_HYPORHEIC_VELOCITY      = 11, /**< >= 0. */
+    SWMM_HEAT_ATTR_SEDIMENT_DENSITY        = 12, /**< > 0. */
+    SWMM_HEAT_ATTR_SEDIMENT_SPECIFIC_HEAT  = 13  /**< > 0. */
+} SWMM_HeatAttr;
+
+/** @brief Scope of a per-element override row. GLOBAL values are set with
+ *         ::swmm_heat_set_radiative / ::swmm_heat_set_sediment instead. */
+typedef enum SWMM_HeatOverrideScope {
+    SWMM_HEAT_SCOPE_TAG  = 1, /**< every element carrying the tag. */
+    SWMM_HEAT_SCOPE_NODE = 2, /**< one node (radiative attributes only). */
+    SWMM_HEAT_SCOPE_LINK = 3  /**< one link. */
+} SWMM_HeatOverrideScope;
+
+/** @brief Number of per-element override rows (radiative and sediment). */
+SWMM_ENGINE_API int swmm_heat_element_override_count(SWMM_Engine engine,
+                                                     int* count);
+
+/** @brief Read one override row. Any out-pointer may be NULL. */
+SWMM_ENGINE_API int swmm_heat_get_element_override(SWMM_Engine engine, int index,
+                                                   int* attr, int* scope,
+                                                   char* name, int name_len,
+                                                   double* value);
+
+/** @brief Add or update the override for (@p attr, @p scope, @p name).
+ *  @returns ::SWMM_ERR_BADPARAM for a refused value, a sediment attribute at
+ *           NODE scope (the bed exists beneath conduits only), or a name
+ *           that resolves to no element/tag (the configuration is then left
+ *           unchanged); ::SWMM_ERR_LIFECYCLE once the run is initialized. */
+SWMM_ENGINE_API int swmm_heat_set_element_override(SWMM_Engine engine, int attr,
+                                                   int scope, const char* name,
+                                                   double value);
+
+/** @brief Remove one override row by index. */
+SWMM_ENGINE_API int swmm_heat_remove_element_override(SWMM_Engine engine,
+                                                      int index);
+
 #ifdef __cplusplus
 }
 #endif

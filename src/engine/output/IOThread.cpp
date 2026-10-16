@@ -68,6 +68,8 @@ void IOThread::stop() {
 
 void IOThread::run() {}
 
+int IOThread::flush() const { return last_error(); }
+
 #else
 
 // ============================================================================
@@ -131,6 +133,12 @@ void IOThread::stop() {
     running_.store(false, std::memory_order_relaxed);
 }
 
+int IOThread::flush() const {
+    std::unique_lock<std::mutex> lock(mutex_);
+    cv_idle_.wait(lock, [this] { return queue_.empty() && !writing_; });
+    return last_error();
+}
+
 // ============================================================================
 // run()  — worker thread body
 // ============================================================================
@@ -153,6 +161,7 @@ void IOThread::run() {
 
             task = std::move(queue_.front());
             queue_.pop();
+            writing_ = true;
         }
 
         // Notify producer that space is available
@@ -164,6 +173,11 @@ void IOThread::run() {
             last_error_.store(rc, std::memory_order_relaxed);
         }
         tasks_completed_.fetch_add(1, std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            writing_ = false;
+        }
+        cv_idle_.notify_all();
     }
 
     running_.store(false, std::memory_order_relaxed);

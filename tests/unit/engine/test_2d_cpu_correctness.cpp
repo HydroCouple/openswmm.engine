@@ -110,10 +110,25 @@ TEST(Cpu2DCorrectness,ParallelInfiltrationTransfersCellLocalSpeciesToGroundwater
         auto m=grid(24);auto s=state(m,.1);auto o=options(threads,4);InertialEdges ed;ed.build(m);
         SubsurfaceSolver gw;SubsurfaceConfig cfg;GwAquiferRow row;row.hg0=.5;row.Ks=1e-6;cfg.rows.push_back(row);std::vector<std::string>warnings;
         ASSERT_TRUE(gw.initialize(m,ed,o,GwUnitFactors{},0,cfg,warnings).empty());RowLayoutLite layout;layout.n_species=layout.n_pollut=1;layout.names={"Tracer"};gw.initTransport(layout,nullptr,{},warnings);
-        s.transport.resize(1,m.n_cells(),0);for(int i=0;i<m.n_cells();++i){s.infil_rate[i]=.001;s.transport.cell_mass[i]=(1+i%5)*s.volume[i];}
+        s.transport.resize(1,m.n_cells(),0);s.transport.row_names=layout.names;for(int i=0;i<m.n_cells();++i){s.infil_rate[i]=.001;s.transport.cell_mass[i]=(1+i%5)*s.volume[i];}
         const double initial=sum(s.transport.cell_mass);ExplicitInertialSolver solver;solver.setSubsurface(&gw);solver.initialize(m,s,o);solver.advance(0,1);
         EXPECT_NEAR(sum(s.transport.cell_mass)+gw.transport().storage(0),initial,1e-9);
         EXPECT_NEAR(s.transport.lost_infiltration[0],gw.transport().storage(0),1e-9);
+    }
+}
+TEST(Cpu2DCorrectness,GroundwaterCouplingRejectsMissingSpeciesNames) {
+    for (bool missing_surface : {false, true}) {
+        auto m=grid(1);auto s=state(m,.1);auto o=options();InertialEdges ed;ed.build(m);
+        SubsurfaceSolver gw;SubsurfaceConfig cfg;GwAquiferRow row;row.hg0=.5;cfg.rows.push_back(row);
+        std::vector<std::string> warnings;
+        ASSERT_TRUE(gw.initialize(m,ed,o,GwUnitFactors{},0,cfg,warnings).empty());
+        RowLayoutLite layout;layout.n_species=layout.n_pollut=1;layout.names={"Tracer"};
+        gw.initTransport(layout,nullptr,{},warnings);
+        s.transport.resize(1,m.n_cells(),0);s.transport.row_names=layout.names;
+        if (missing_surface) s.transport.row_names.clear();
+        else gw.transport().row_names.clear();
+        ExplicitInertialSolver solver;solver.setSubsurface(&gw);
+        EXPECT_THROW(solver.initialize(m,s,o),std::invalid_argument);
     }
 }
 TEST(Cpu2DCorrectness,Rk2EvaporationLedgerMatchesItsAveragedState) {
@@ -290,7 +305,7 @@ TEST(Cpu2DCorrectness,ManySpeciesTransfersConserveSurfaceAndGroundwaterMass) {
         RowLayoutLite layout; layout.n_species = layout.n_pollut = ns;
         for (int r = 0; r < ns; ++r) layout.names.push_back("Tracer" + std::to_string(r));
         gw.initTransport(layout, nullptr, {}, warnings);
-        s.transport.resize(ns, m.n_cells(), 0); std::vector<double> initial(ns, 0.0);
+        s.transport.resize(ns, m.n_cells(), 0); s.transport.row_names = layout.names; std::vector<double> initial(ns, 0.0);
         for (int i = 0; i < m.n_cells(); ++i) {
             s.infil_rate[i] = .001;
             for (int r = 0; r < ns; ++r) {

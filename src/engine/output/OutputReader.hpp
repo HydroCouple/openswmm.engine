@@ -118,6 +118,7 @@ public:
     int report_step()   const noexcept { return report_step_; }
     int error_code()    const noexcept { return error_code_; }
 
+    bool has_subcatch_variable(int code) const { const int i=subcatchColumn(code);return i>=0 && i<n_subcatch_vars_; }
     int subcatch_var_count() const noexcept { return n_subcatch_vars_; }
     int node_var_count()     const noexcept { return n_node_vars_; }
     int link_var_count()     const noexcept { return n_link_vars_; }
@@ -230,6 +231,8 @@ private:
 
     // Variable counts (read from file)
     int n_subcatch_vars_ = 0;
+    std::vector<int> subcatch_codes_;
+    int subcatchColumn(int code) const;
     int n_node_vars_     = 0;
     int n_link_vars_     = 0;
     int n_system_vars_   = 0;

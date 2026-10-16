@@ -238,7 +238,8 @@ SWMM_ENGINE_API int swmm_plugins_count(SWMM_Engine engine, int* count);
  *          field).  When non-NULL, the buffer is NUL-terminated and
  *          truncated at @p path_buf_sz - 1 / @p args_buf_sz - 1 if too
  *          small (no error returned).  The args string is reconstructed
- *          by joining the row's `init_args` vector with single spaces.
+ *          by joining the row's `init_args` vector with single spaces, quoting
+ *          arguments when needed so they can be passed back to swmm_plugin_set.
  *
  * @param engine        Engine handle.
  * @param idx           Index in [0, count).
@@ -266,7 +267,7 @@ swmm_plugin_get(SWMM_Engine engine,
  *
  * @param engine        Engine handle.
  * @param path_or_id    Library path, plugin id, or `id:version` string.
- * @param args          Space-separated argument tokens; may be NULL or
+ * @param args          Space-separated argument tokens (quotes supported); may be NULL or
  *                      empty for "no arguments".
  * @returns SWMM_OK on success; SWMM_ERR_BADPARAM when @p path_or_id is
  *          NULL or empty.

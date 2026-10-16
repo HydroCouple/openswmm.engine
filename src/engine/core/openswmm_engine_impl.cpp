@@ -58,6 +58,12 @@ SWMM_ENGINE_API int swmm_engine_initialize(SWMM_Engine engine) {
     return to_engine(engine)->initialize();
 }
 
+SWMM_ENGINE_API int swmm_engine_open_metadata(SWMM_Engine engine, const char* inp) {
+    CHECK_HANDLE(engine);
+    if (!inp || !inp[0]) return SWMM_ERR_BADPARAM;
+    return to_engine(engine)->open(inp, nullptr, nullptr, nullptr, true);
+}
+
 SWMM_ENGINE_API int swmm_engine_start(SWMM_Engine engine, int save_results) {
     CHECK_HANDLE(engine);
     return to_engine(engine)->start(save_results);

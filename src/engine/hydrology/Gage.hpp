@@ -81,7 +81,7 @@ struct GageState {
 
     double past_rain[MAXPASTRAIN] = {}; ///< Past hourly rainfall totals
     double past_rain_accum = 0.0;       ///< Accumulator for current hour
-    double past_rain_time  = 0.0;       ///< Time of last past-rain update
+    double past_rain_interval = 0.0;    ///< Seconds in the current partial hour (0..3600)
 };
 
 // ============================================================================
@@ -133,6 +133,11 @@ bool gageIsUsed(const SimulationContext& ctx, int gage_idx);
 /// runoff-step limit (runoff_getTimeStep takes only a positive difference).
 double gageNextRainDate(const SimulationContext& ctx, int gage_idx, double t);
 
+// Read-only forecast for held surface-process forcing. Adjacent records
+// with the same converted rate are one interval; gaps still end rainfall.
+// Unlike the legacy runoff clock this uses the exact interval start.
+double gageNextRateChange(const SimulationContext& ctx, int gage_idx, double date, double limit);
+
 /**
  * @brief The units factor the engine applies to a gage's raw values.
  *
@@ -146,6 +151,10 @@ double gageNextRainDate(const SimulationContext& ctx, int gage_idx, double t);
  *          the legacy standard-file path byte-identical.
  */
 double gageUnitsFactor(const SimulationContext& ctx, int gage_idx);
+
+/// Standard/NWS rain-file loaders already convert authored values to interval
+/// depths. Resolve those as VOLUME while preserving the authored rain type.
+int gageSeriesRainType(const SimulationContext& ctx, int gage_idx);
 
 /**
  * @brief Apply the rain-type transform, units factor and scale factor.
@@ -202,9 +211,13 @@ PrecipSplit splitPrecip(const SimulationContext& ctx, std::size_t sub);
  * @brief Update past n-hour rainfall accumulation.
  *
  * @param state      [in/out] Gage state.
- * @param current_time  Current simulation time (seconds from start).
+ * @param time_step  Actual runoff interval in integer seconds.
  */
-void updatePastRain(GageState& state, double current_time);
+void updatePastRain(GageState& state, int time_step);
+
+/// Accumulate the resolved gage rates over the actual runoff step in seconds.
+/// Mirrors legacy gage_updatePastRain, including its exact-hour rollover.
+void updatePastRain(SimulationContext& ctx, int time_step);
 
 /**
  * @brief Get past n-hour rainfall total.

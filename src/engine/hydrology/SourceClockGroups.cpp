@@ -21,7 +21,8 @@ double next(const std::vector<double>& times, double t, double end) {
 }
 }
 
-std::string SourceClockGroups::initialize(const SimulationContext& ctx, const std::vector<int>& seeds) {
+std::string SourceClockGroups::initialize(const SimulationContext& ctx, const std::vector<int>& seeds,
+                                         bool hydraulic_returns) {
     for (const auto& g : groups_)
         if (!g.pending.empty() || g.completed_end > 0.0)
             return "Pending or committed source clocks require a fresh adapter for a new simulation.";
@@ -50,6 +51,15 @@ std::string SourceClockGroups::initialize(const SimulationContext& ctx, const st
         if (dest < 0 || dest >= n) return "Unresolved LID drain graph destination: " + target;
         if (dest != sc) join(sc, dest);
     }
+    // Snow plowing is an internal water transfer and shares one source clock,
+    // just like runoff and LID drains. Never split a donor/receiver pair.
+    if(!ctx.options.ignore_snow_melt)for(int sc=0;sc<n;++sc) {
+        const int p=ctx.subcatches.snowpack[sc];
+        if(p<0 || p>=int(ctx.snowpacks.removal.size()) || ctx.snowpacks.removal[p][5]<=0)continue;
+        const int dest=ctx.subcatch_names.find(ctx.snowpacks.removal_subcatch[p]);
+        if(dest<0 || dest>=n)return "Unresolved snow plowing destination.";
+        join(sc,dest);
+    }
     std::vector<bool> selected(static_cast<std::size_t>(n), false);
     for (int sc : seeds) {
         if (sc < 0 || sc >= n) return "Invalid spatial source graph seed.";
@@ -77,11 +87,13 @@ std::string SourceClockGroups::initialize(const SimulationContext& ctx, const st
 
     // These source kernels need separate qualification, not an inferred rate
     // from a future global state. Keep a named refusal until those adapters land.
-    if (!ctx.options.ignore_snow_melt) return "Source clock forcing currently requires IGNORE_SNOWMELT YES; snow forcing is not qualified.";
+
     if (ctx.files.runoff_mode == FileMode::USE) return "Completed source clocks cannot use precomputed USE RUNOFF losses.";
-    for (int sc : ctx.node_subtypes.outfalls.route_to)
-        if (sc >= 0 && result.groupForSubcatch(sc) >= 0)
+    for (int sc : ctx.node_subtypes.outfalls.route_to) {
+        if (hydraulic_returns && (sc < -1 || sc >= n)) return "Invalid hydraulic outfall return destination.";
+        if (!hydraulic_returns && sc >= 0 && result.groupForSubcatch(sc) >= 0)
             return "Source clock graph has an unqualified hydraulic outfall return.";
+    }
     result.evap_method_ = ctx.climate_state.evap_method;
     if (result.evap_method_ != climate::EvapMethod::CONSTANT &&
         result.evap_method_ != climate::EvapMethod::MONTHLY &&
@@ -191,7 +203,7 @@ std::string SourceClockGroups::stage(int group, double end, double completed_thr
     auto& g = groups_[group];
     if (!g.pending.empty()) return "Source group already has a pending interval.";
     if (!std::isfinite(end) || !std::isfinite(completed_through) || end <= g.completed_end ||
-        end > completed_through || end > duration_) return "Source interval must be completed, contiguous and within the simulation.";
+        end > completed_through || end-duration_ > 1e-12*std::max(1.,duration_)) return "Source interval must be completed, contiguous and within the simulation.";
     std::vector<SourceForcingInterval> intervals;
     for (double t = g.completed_end; t < end;) {
         const double date = datetime::addSeconds(start_date_, t);
@@ -227,12 +239,14 @@ std::string SourceClockGroups::stage(int group, double end, double completed_thr
             }
             // Match splitPrecip's scale and unit order, then apply the
             // source prescription in the API's project rainfall units.
+            const double raw_precipitation=rain/rain_ucf_;
             rain = rain / rain_ucf_ * rain_scale_[sc];
             if (sc < static_cast<int>(forcing_.subcatch_rainfall_mode.size()) && forcing_.subcatch_rainfall_mode[sc] != ForcingMode::NONE)
                 rain = forcing_.effective_rainfall(sc, rain * rain_ucf_) / rain_ucf_;
             const double source_pet = forcing_.effective_evap_rate(sc, dry_only_ && rain > 0.0 ? 0.0 : pet);
             if (!nonnegative(rain) || !nonnegative(source_pet)) return "Source interval has invalid resolved rain or PET.";
             f.sources.push_back({sc, rain, source_pet});
+            f.sources.back().raw_precipitation=raw_precipitation;
         }
         if (f.end <= t) return "Source forcing boundary failed to advance.";
         t = f.end; intervals.push_back(std::move(f));

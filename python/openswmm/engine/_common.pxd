@@ -50,6 +50,7 @@ cdef extern from "openswmm_engine.h":
     # --- Engine lifecycle ---
     cdef SWMM_Engine swmm_engine_create()
     cdef int  swmm_engine_open(SWMM_Engine e, const char* inp, const char* rpt, const char* out, const char* input_plugin_lib)
+    cdef int  swmm_engine_open_metadata(SWMM_Engine e, const char* inp)
     cdef int  swmm_engine_initialize(SWMM_Engine e)
     cdef int  swmm_engine_start(SWMM_Engine e, int save_results)
     # NOTE: step/stride may invoke registered step_begin/step_end callbacks.
@@ -286,6 +287,13 @@ cdef extern from "openswmm_nodes.h":
     # Outfall route-to
     cdef int swmm_node_set_outfall_route_to(SWMM_Engine e, int idx, int subcatch_idx)
     cdef int swmm_node_get_outfall_route_to(SWMM_Engine e, int idx, int* subcatch_idx)
+    ctypedef struct SWMM_OutfallExportReceipt:
+        double exported_m3
+        double reversed_m3
+        double exported_heat_j
+        unsigned int flags
+    cdef int swmm_node_get_export_receipt(SWMM_Engine e, int idx,
+        SWMM_OutfallExportReceipt* receipt, double* pollutant_amounts, int count)
     # Depth from volume
     cdef int swmm_node_get_depth_from_volume(SWMM_Engine e, int idx, double volume, double* depth)
     # Quality mass flux
@@ -923,6 +931,8 @@ cdef extern from "openswmm_infrastructure.h":
     cdef int swmm_lid_node_layers_set(SWMM_Engine e, int control, const SWMM_LidNodeLayer* rows, int count)
     cdef int swmm_node_get_lid(SWMM_Engine e, int node, int* control, double* saturation)
     cdef int swmm_node_set_lid(SWMM_Engine e, int node, int control, double saturation)
+    cdef int swmm_node_get_lid_bottom(SWMM_Engine e, int node, int* mode)
+    cdef int swmm_node_set_lid_bottom(SWMM_Engine e, int node, int mode)
     cdef int swmm_lid_node_outlet_get(SWMM_Engine e, int link, int* layer, int* top)
     cdef int swmm_lid_node_outlet_set(SWMM_Engine e, int link, int layer, int top)
     cdef int swmm_lid_node_state_count(SWMM_Engine e, int node)
@@ -1045,6 +1055,12 @@ cdef extern from "openswmm_spatial.h":
     # CRS
     cdef int swmm_spatial_set_crs(SWMM_Engine e, const char* crs)
     cdef int swmm_spatial_get_crs(SWMM_Engine e, char* buf, int buflen)
+    cdef int swmm_spatial_get_map_dimensions(SWMM_Engine e, double* x1, double* y1, double* x2, double* y2)
+    cdef int swmm_spatial_set_map_dimensions(SWMM_Engine e, double x1, double y1, double x2, double y2)
+    cdef int swmm_spatial_get_map_units(SWMM_Engine e, char* buf, int buflen)
+    cdef int swmm_spatial_set_map_units(SWMM_Engine e, const char* units)
+    cdef int swmm_spatial_get_annotation(SWMM_Engine e, const char* section, char* buf, int buflen, int* required)
+    cdef int swmm_spatial_set_annotation(SWMM_Engine e, const char* section, const char* text)
     # Node coordinates
     cdef int swmm_spatial_set_node_coord(SWMM_Engine e, int idx, double x, double y)
     cdef int swmm_spatial_get_node_coord(SWMM_Engine e, int idx, double* x, double* y)
@@ -1451,6 +1467,17 @@ cdef extern from "openswmm_heat.h":
     cdef int swmm_heat_remove_node_override(SWMM_Engine e, int index)
     cdef int swmm_heat_get_effective_source_temp(SWMM_Engine e, int source,
                                                   int node, double* temp_c)
+    cdef int swmm_heat_get_sediment(SWMM_Engine e, int param, double* value)
+    cdef int swmm_heat_set_sediment(SWMM_Engine e, int param, double value)
+    cdef int swmm_heat_get_sediment_ground_timeseries(SWMM_Engine e, char* buf, int buflen)
+    cdef int swmm_heat_set_sediment_ground_timeseries(SWMM_Engine e, const char* name)
+    cdef int swmm_heat_element_override_count(SWMM_Engine e, int* count)
+    cdef int swmm_heat_get_element_override(SWMM_Engine e, int index, int* attr,
+                                            int* scope, char* name, int name_len,
+                                            double* value)
+    cdef int swmm_heat_set_element_override(SWMM_Engine e, int attr, int scope,
+                                            const char* name, double value)
+    cdef int swmm_heat_remove_element_override(SWMM_Engine e, int index)
 
 
 cdef extern from "openswmm_water_age.h":

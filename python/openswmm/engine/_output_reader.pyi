@@ -47,6 +47,7 @@ class _OutputNodeStats:
 
 
 class OutputReader:
+    def has_subcatch_variable(self, code: int) -> bool: ...
     """Read a SWMM binary ``.out`` file."""
 
     @property

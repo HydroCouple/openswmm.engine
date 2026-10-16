@@ -33,6 +33,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cmath>
 #include <fstream>
 #include <sstream>
@@ -376,4 +377,411 @@ TEST(MsxBuildupWashoff, MsxOnlyDeckBuildsUpAndWashesOff) {
     for (double v : r.x_node) max_x = std::max(max_x, v);
     EXPECT_GT(max_x, 1.0) << "X must reach J1 with no pollutant in the deck";
     close(r);
+}
+
+// ---------------------------------------------------------------------------
+// Review C3 (2026-10-15): run-on. S1 (the only subcatchment with land-use
+// buildup) drains onto S2, an impervious subcatchment that drains to J1. Every
+// unit of X that reaches the network must come through S2 as run-on. At base
+// a subcatchment whose outlet is another subcatchment was skipped: S1's X was
+// washed off its land and delivered nowhere.
+// ---------------------------------------------------------------------------
+TEST(MsxBuildupWashoff, RunonCarriesSpeciesToTheReceivingSubcatchment) {
+    write("_bw_runon.rxn", rxn_inert());
+    std::string body = deck("", std::string(kPollut) + bw({"TSS", "X"}), pc("_bw_runon.rxn"));
+    auto rep = [&](const std::string& a, const std::string& b) {
+        const auto at = body.find(a); ASSERT_NE(at, std::string::npos) << a;
+        body.replace(at, a.size(), b);
+    };
+    rep("S1  RG1  J1  10.0  50   500  0.5  0\n",
+        "S1  RG1  S2  10.0  50   500  0.5  0\nS2  RG1  J1  2.0  100   200  0.5  0\n");
+    rep("S1  0.01  0.1  0.05  0.05  25  OUTLET\n",
+        "S1  0.01  0.1  0.05  0.05  25  OUTLET\nS2  0.01  0.1  0.05  0.05  0  OUTLET\n");
+    rep("S1  3.0  0.5  4.0  7  0\n", "S1  3.0  0.5  4.0  7  0\nS2  3.0  0.5  4.0  7  0\n");
+    DeckRun r = run("_bw_runon", body);
+    ASSERT_TRUE(r.ok);
+    const auto& ctx = cpp(r.e).context();
+    const auto& ms = ctx.reactions.surface;
+    double x_peak = 0.0, tss_peak = 0.0;
+    for (double v : r.x_node) x_peak = std::max(x_peak, v);
+    for (double v : r.tss_node) tss_peak = std::max(tss_peak, v);
+    ASSERT_GT(tss_peak, 0.0) << "TSS control never reached J1; deck defect";
+    EXPECT_GT(x_peak, 0.0) << "S1's species never reached the network";
+    // Multispecies Phase 2: the species now runs the pollutant kernel, run-on
+    // included (ponded mix at the receiver, the same one-step lag), so the
+    // check is the twin rule: S1's species reaches J1 exactly as TSS does.
+    // The earlier ledger closure leaned on a private run-on ledger that the
+    // shared kernel replaced.
+    ASSERT_EQ(r.x_node.size(), r.tss_node.size());
+    for (std::size_t k = 0; k < r.x_node.size(); ++k)
+        ASSERT_EQ(r.x_node[k], r.tss_node[k]) << "J1 at step " << k;
+    EXPECT_EQ(ms.led_runoff_load[0], ctx.mass_balance.qual_runoff_load[0]);
+    close(r);
+}
+
+// ===========================================================================
+// Phase 2 twin gates (2026-10-15, MULTISPECIES_PHASE2_WATERSHED_LID_DESIGN).
+// A species X carrying TSS's [BUILDUP]/[WASHOFF] rows must produce TSS's
+// numbers exactly, in every regime the pollutant kernel supports — not only
+// in the EXP/OUTLET/no-LID regime gate (a) runs, where every difference
+// between the two kernels happens to vanish.
+// ===========================================================================
+namespace {
+
+struct TwinOpts {
+    std::string flow_units = "CFS";
+    std::string routing    = "OUTLET";   ///< [SUBAREAS] RouteTo
+    std::string pct_routed = "100";
+    std::string buildup    = "POW  100  2  1  AREA";   ///< "" = no buildup row
+    std::string washoff    = "EXP  0.1  1.0";
+    std::string sweep_bmp  = "0  0";
+    std::string tss_rain   = "0";        ///< [POLLUTANTS] Crain for TSS
+    bool        runon      = false;      ///< S1 drains to S2, S2 to J1
+    std::string lid_controls;            ///< full [LID_CONTROLS] body
+    std::string lid_usage;               ///< full [LID_USAGE] body
+    std::string rxn_extra;               ///< appended to the reactions file
+    std::string lid_extra;               ///< appended to [LID_CONTROLS] (e.g. REMOVALS)
+    bool        landuse_rows = true;     ///< false: no [BUILDUP]/[WASHOFF] rows at all
+};
+
+std::string twinDeck(const TwinOpts& o) {
+    const bool si = o.flow_units == "CMS";
+    std::ostringstream s;
+    s << "[OPTIONS]\nFLOW_UNITS           " << o.flow_units
+      << "\nFLOW_ROUTING         DYNWAVE\nINFILTRATION         HORTON\n"
+         "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+         "END_DATE             01/01/2026\nEND_TIME             03:00:00\n"
+         "REPORT_STEP          00:05:00\nWET_STEP             00:05:00\nDRY_STEP             00:05:00\n"
+         "ROUTING_STEP         0:00:30\nDRY_DAYS             5\n"
+         "\n[RAINGAGES]\nRG1  INTENSITY 0:05 1.0 TIMESERIES TS1\n"
+         "\n[SUBCATCHMENTS]\n";
+    if (si) {
+        s << "S1  RG1  " << (o.runon ? "S2" : "J1") << "  4.0  50  150  0.5  0\n";
+        if (o.runon) s << "S2  RG1  J1  0.8  100  60  0.5  0\n";
+    } else {
+        s << "S1  RG1  " << (o.runon ? "S2" : "J1") << "  10.0  50  500  0.5  0\n";
+        if (o.runon) s << "S2  RG1  J1  2.0  100  200  0.5  0\n";
+    }
+    s << "\n[SUBAREAS]\n";
+    const char* sub = si ? "0.01  0.1  1.27  1.27" : "0.01  0.1  0.05  0.05";
+    // Nimp Nperv Simp Sperv PctZero RouteTo PctRouted.
+    s << "S1  " << sub << "  25  " << o.routing << "  " << o.pct_routed << "\n";
+    if (o.runon) s << "S2  " << sub << "  0  OUTLET\n";
+    s << "\n[INFILTRATION]\n";
+    const char* inf = si ? "76  12.7  4.0  7  0" : "3.0  0.5  4.0  7  0";
+    s << "S1  " << inf << "\n";
+    if (o.runon) s << "S2  " << inf << "\n";
+    s << "\n[TIMESERIES]\nTS1  01/01/2026 00:00 " << (si ? "25.4" : "1.0")
+      << "\nTS1  01/01/2026 01:00 " << (si ? "25.4" : "1.0") << "\nTS1  01/01/2026 01:05 0.0\n";
+    if (si)
+        s << "\n[JUNCTIONS]\nJ1  30.0  3.0  0.0  0.0  0.0\n\n[OUTFALLS]\nO1  28.5  FREE\n"
+             "\n[CONDUITS]\nC1  J1  O1  120.0  0.013  0  0\n\n[XSECTIONS]\nC1  CIRCULAR  0.45  0  0  0  1\n";
+    else
+        s << "\n[JUNCTIONS]\nJ1  100.0  10.0  0.0  0.0  0.0\n\n[OUTFALLS]\nO1  95.0  FREE\n"
+             "\n[CONDUITS]\nC1  J1  O1  400.0  0.013  0  0\n\n[XSECTIONS]\nC1  CIRCULAR  1.5  0  0  0  1\n";
+    s << "\n[POLLUTANTS]\nTSS  MG/L  " << o.tss_rain << "  0  0  0  NO  *  0.0  0  0\n"
+      << "\n[LANDUSES]\nLU1  0  0  0\n\n[COVERAGES]\nS1  LU1  100\n";
+    if (o.runon) s << "S2  LU1  100\n";
+    if (o.landuse_rows) {
+        s << "\n[BUILDUP]\n";
+        if (!o.buildup.empty())
+            for (const char* n : {"TSS", "X"}) s << "LU1  " << n << "  " << o.buildup << "\n";
+        s << "\n[WASHOFF]\n";
+        for (const char* n : {"TSS", "X"}) s << "LU1  " << n << "  " << o.washoff << "  " << o.sweep_bmp << "\n";
+    }
+    if (!o.lid_controls.empty()) s << "\n[LID_CONTROLS]\n" << o.lid_controls << o.lid_extra;
+    if (!o.lid_usage.empty())    s << "\n[LID_USAGE]\n" << o.lid_usage;
+    return s.str();
+}
+
+/// Largest |X − TSS| over a quantity, beside the largest |TSS| it was
+/// compared against (so a failure says how big the gap is, not just that).
+struct Gap { double diff = 0.0, scale = 0.0; int n = 0;
+    void add(double tss, double x) { diff = std::max(diff, std::fabs(x - tss)); scale = std::max(scale, std::fabs(tss)); ++n; } };
+
+struct Twin {
+    bool ok = false;
+    double drain_seen = 0.0;   ///< LID drain flow that reached a node (cfs, summed over steps)
+    double drain_sub  = 0.0;   ///< subcatchment LID drain flow (cfs, summed over steps)
+    Gap conc, node, load, buildup, init, runoff, bmp, sweep, wet, infil;
+};
+
+Twin runTwin(const std::string& tag, const TwinOpts& o) {
+    Twin t;
+    write(tag + ".rxn", rxn_inert() + o.rxn_extra);
+    std::string body = twinDeck(o) + "\n[PROCESS_COMPONENTS]\n" + pc((tag + ".rxn").c_str()) +
+                       "\n\n[REPORT]\nINPUT NO\n";
+    write(tag + ".inp", body);
+    SWMM_Engine e = swmm_engine_create();
+    if (!e) return t;
+    if (swmm_engine_open(e, (tag + ".inp").c_str(), (tag + ".rpt").c_str(), (tag + ".out").c_str(), nullptr) != SWMM_OK ||
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
+        swmm_engine_destroy(e);
+        return t;
+    }
+    auto& ctx = cpp(e).context();
+    const auto& ms = ctx.reactions.surface;
+    const int np = ctx.n_pollutants(), nm = ctx.reactions.n_species(), ns = ctx.n_subcatches();
+    const int j1 = ctx.node_names.find("J1");
+    double elapsed = 0.0; int guard = 0;
+    do {
+        if (swmm_engine_step(e, &elapsed) != SWMM_OK) break;
+        for (int sc = 0; sc < ns; ++sc)
+            t.conc.add(ctx.subcatches.conc[static_cast<std::size_t>(sc * np)],
+                       ms.washoff_conc[ms.sidx(sc, 0)]);
+        const auto uj = static_cast<std::size_t>(j1);
+        t.node.add(ctx.nodes.conc[uj * np], ctx.reactions.msx_node_conc[uj * nm]);
+        for (double v : ctx.nodes.lid_drain_qual_vol) t.drain_seen += v;
+        for (double v : ctx.subcatches.lid_drain_flow) t.drain_sub += v;
+        if (std::getenv("TWIN_LID_DEBUG"))
+            for (int g = 0; g < cpp(e).lid().numGroups(); ++g) {
+                const auto& grp = cpp(e).lid().group(g);
+                for (int u = 0; u < grp.count; ++u)
+                    std::printf("LID t=%.0f g%d u%d surf %.4g soil %.4g stor %.4g drain %.4g node %d\n", elapsed * 86400.0, g, u,
+                                grp.surf_depth[u], grp.soil_moist[u], grp.stor_depth[u], grp.drain_flow[u], grp.drain_node[u]);
+            }
+    } while (elapsed > 0.0 && ++guard < 100000);
+    swmm_engine_end(e);
+    const auto& sq = cpp(e).surfaceQuality();
+    for (int sc = 0; sc < ns; ++sc) {
+        t.load.add(ctx.subcatches.total_load[static_cast<std::size_t>(sc * np)], ms.led_subcatch_load[ms.sidx(sc, 0)]);
+        if (ms.n_landuses > 0 && !sq.buildup.empty() && !ms.buildup.empty())
+            t.buildup.add(sq.buildup[sq.bu_idx(sc, 0, 0)], ms.buildup[ms.bu_idx(sc, 0, 0)]);
+    }
+    const auto& mb = ctx.mass_balance;
+    t.init.add(mb.qual_init_buildup[0], ms.led_init_buildup[0]);
+    t.runoff.add(mb.qual_runoff_load[0], ms.led_runoff_load[0]);
+    t.bmp.add(mb.qual_bmp_removal[0], ms.led_bmp_removal[0]);
+    t.sweep.add(mb.qual_sweeping[0], ms.led_sweeping[0]);
+    if (ms.active()) {
+        t.wet.add(mb.qual_wet_deposition[0], ms.led_wet_deposition[0]);
+        t.infil.add(mb.qual_infil_loss[0], ms.led_infil_loss[0]);
+    }
+    t.ok = true;
+    // Evidence line for the round records.
+    std::printf("TWIN %-24s conc %.6g/%.6g node %.6g/%.6g load %.6g/%.6g bu %.6g/%.6g runoff %.6g/%.6g bmp %.6g/%.6g\n",
+                tag.c_str(), t.conc.diff, t.conc.scale, t.node.diff, t.node.scale, t.load.diff, t.load.scale,
+                t.buildup.diff, t.buildup.scale, t.runoff.diff, t.runoff.scale, t.bmp.diff, t.bmp.scale);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+    return t;
+}
+
+void expectTwin(const Twin& t, const std::string& tag) {
+    ASSERT_TRUE(t.ok) << tag << " did not run";
+    ASSERT_GT(t.load.scale, 0.0) << tag << ": nothing washed off; deck defect";
+    EXPECT_EQ(t.conc.diff, 0.0)    << tag << ": subcatchment concentration differs (TSS up to " << t.conc.scale << ")";
+    EXPECT_EQ(t.node.diff, 0.0)    << tag << ": J1 concentration differs (TSS up to " << t.node.scale << ")";
+    EXPECT_EQ(t.load.diff, 0.0)    << tag << ": subcatchment load differs (TSS " << t.load.scale << ")";
+    EXPECT_EQ(t.buildup.diff, 0.0) << tag << ": final buildup differs";
+    EXPECT_EQ(t.init.diff, 0.0)    << tag << ": initial buildup differs";
+    EXPECT_EQ(t.runoff.diff, 0.0)  << tag << ": runoff load ledger differs (TSS " << t.runoff.scale << ")";
+    EXPECT_EQ(t.bmp.diff, 0.0)     << tag << ": BMP removal ledger differs (TSS " << t.bmp.scale << ")";
+    EXPECT_EQ(t.sweep.diff, 0.0)   << tag << ": sweeping ledger differs";
+    EXPECT_EQ(t.wet.diff, 0.0)     << tag << ": wet deposition ledger differs (TSS " << t.wet.scale << ")";
+    EXPECT_EQ(t.infil.diff, 0.0)   << tag << ": infiltration loss ledger differs (TSS " << t.infil.scale << ")";
+}
+
+const char* kBioRetention =
+    "BC1  BC\nBC1  SURFACE  6.0  0.0  0.1  1.0  5\nBC1  SOIL  12.0  0.5  0.2  0.1  0.5  10.0  3.5\n"
+    "BC1  STORAGE  12.0  0.75  0.5  0\nBC1  DRAIN  0.5  0.5  6  6\n";
+
+}  // namespace
+
+TEST(MsxSurfaceTwin, R1_ExpOutletNoLid) {
+    TwinOpts o; expectTwin(runTwin("_tw_r1", o), "R1");
+}
+TEST(MsxSurfaceTwin, R2_ExpPervious) {
+    TwinOpts o; o.routing = "PERVIOUS"; o.pct_routed = "50"; expectTwin(runTwin("_tw_r2", o), "R2");
+}
+TEST(MsxSurfaceTwin, R3_ExpImpervious) {
+    TwinOpts o; o.routing = "IMPERVIOUS"; o.pct_routed = "50"; expectTwin(runTwin("_tw_r3", o), "R3");
+}
+TEST(MsxSurfaceTwin, R4_RatingCurveOutletAndPervious) {
+    TwinOpts o; o.washoff = "RC  2.0  1.2"; expectTwin(runTwin("_tw_r4a", o), "R4 outlet");
+    o.routing = "PERVIOUS"; o.pct_routed = "50"; expectTwin(runTwin("_tw_r4b", o), "R4 pervious");
+}
+TEST(MsxSurfaceTwin, R5_EmcWithBuildupFunction) {
+    TwinOpts o; o.washoff = "EMC  20  0"; o.routing = "PERVIOUS"; o.pct_routed = "50";
+    expectTwin(runTwin("_tw_r5", o), "R5");
+}
+TEST(MsxSurfaceTwin, R6_RatingCurveWithoutBuildup) {
+    TwinOpts o; o.buildup = ""; o.washoff = "RC  2.0  1.2"; expectTwin(runTwin("_tw_r6", o), "R6");
+}
+TEST(MsxSurfaceTwin, R7_BioRetentionDrainToNode) {
+    TwinOpts o; o.routing = "PERVIOUS"; o.pct_routed = "50"; o.lid_controls = kBioRetention;
+    o.lid_usage = "S1  BC1  1  20000  100  0  50  0  *  J1\n";
+    expectTwin(runTwin("_tw_r7", o), "R7");
+}
+TEST(MsxSurfaceTwin, R9_RainBarrelReturnToPervious) {
+    TwinOpts o; o.lid_controls = "RB1  RB\nRB1  STORAGE  36  0.75  0  0\nRB1  DRAIN  0.5  0.5  0  6\n";
+    o.lid_usage = "S1  RB1  4  12  0  0  30  1\n";
+    expectTwin(runTwin("_tw_r9", o), "R9");
+}
+TEST(MsxSurfaceTwin, R10_RunonOntoFullyCoveredLid) {
+    TwinOpts o; o.runon = true; o.lid_controls = kBioRetention;
+    o.lid_usage = "S2  BC1  1  87120  100  0  100  0\n";   // 2 ac = 87120 ft²: S2 fully covered
+    expectTwin(runTwin("_tw_r10", o), "R10");
+}
+TEST(MsxSurfaceTwin, R11_RunonPondedMix) {
+    TwinOpts o; o.runon = true; expectTwin(runTwin("_tw_r11", o), "R11");
+}
+TEST(MsxSurfaceTwin, R15_SiTwinOfR2) {
+    TwinOpts o; o.flow_units = "CMS"; o.routing = "PERVIOUS"; o.pct_routed = "50";
+    expectTwin(runTwin("_tw_r15", o), "R15");
+}
+
+// S3: a bio-retention cell whose underdrain actually flows (no offset, no
+// seepage into native soil), with the drain removing 30 % of both. At base
+// the species' drain mass reached nothing and its removal row was dropped.
+namespace {
+const char* kFlowingBioRetention =
+    "BC2  BC\nBC2  SURFACE  6.0  0.0  0.1  1.0  5\nBC2  SOIL  12.0  0.5  0.2  0.1  10.0  10.0  3.5\n"
+    "BC2  STORAGE  12.0  0.75  0.0  0\nBC2  DRAIN  2.0  0.5  0  0\n";
+}
+TEST(MsxSurfaceTwin, R7b_FlowingUnderdrainWithRemoval) {
+    TwinOpts o; o.routing = "PERVIOUS"; o.pct_routed = "50"; o.lid_controls = kFlowingBioRetention;
+    o.lid_extra = "BC2  REMOVALS  TSS  30  X  30\n";
+    o.lid_usage = "S1  BC2  1  4000  50  100  100  0  *  J1\n";
+    const Twin t = runTwin("_tw_r7b", o);
+    EXPECT_GT(t.drain_seen, 0.0) << "the underdrain never flowed; deck defect";
+    expectTwin(t, "R7b");
+}
+
+// S3: LID REMOVALS rows survive a save, for pollutants and species alike.
+// Before, the writer emitted no REMOVALS row at all, so saving a model lost
+// every LID drain removal.
+TEST(MsxSurfaceTwin, LidRemovalsRoundTripThroughTheWriter) {
+    TwinOpts o; o.lid_controls = kFlowingBioRetention; o.lid_extra = "BC2  REMOVALS  TSS  30  X  40\n";
+    o.lid_usage = "S1  BC2  1  4000  50  100  100  0  *  J1\n";
+    write("_tw_rm.rxn", rxn_inert());
+    write("_tw_rm.inp", twinDeck(o) + "\n[PROCESS_COMPONENTS]\n" + pc("_tw_rm.rxn") + "\n\n[REPORT]\nINPUT NO\n");
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, "_tw_rm.inp", "_tw_rm.rpt", "_tw_rm.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_model_write(e, "_tw_rm_rt.inp"), SWMM_OK);
+    swmm_engine_close(e); swmm_engine_destroy(e);
+    std::ifstream f("_tw_rm_rt.inp"); std::stringstream ss; ss << f.rdbuf();
+    const std::string text = ss.str();
+    const auto at = text.find("REMOVALS");
+    ASSERT_NE(at, std::string::npos) << "no REMOVALS row written";
+    const std::string row = text.substr(at, text.find('\n', at) - at);
+    EXPECT_NE(row.find("TSS"), std::string::npos) << row;
+    EXPECT_NE(row.find("X"), std::string::npos) << row;
+    SWMM_Engine e2 = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e2, "_tw_rm_rt.inp", "_tw_rm_rt.rpt", "_tw_rm_rt.out", nullptr), SWMM_OK);
+    const auto& ms = cpp(e2).context().reactions.surface;
+    ASSERT_EQ(ms.lid_rmvl.size(), 1u) << "species removal not resolved after reload";
+    EXPECT_DOUBLE_EQ(ms.lid_rmvl[0], 0.40);
+    swmm_engine_close(e2); swmm_engine_destroy(e2);
+}
+
+// S3 parity: a pollutant's LID REMOVALS row read before [POLLUTANTS] (the
+// usual SWMM file order) was dropped, because the name was not yet known.
+// Legacy applies it. The same deck in either section order must book the
+// same BMP removal. Measured on this deck: base 0.032 lb with the late
+// order against 0.348 lb (legacy 0.348).
+TEST(MsxSurfaceTwin, PollutantLidRemovalDeclaredBeforePollutantsApplies) {
+    TwinOpts o; o.routing = "PERVIOUS"; o.pct_routed = "50"; o.lid_controls = kFlowingBioRetention;
+    o.lid_extra = "BC2  REMOVALS  TSS  30\n";
+    o.lid_usage = "S1  BC2  1  4000  50  100  100  0  *  J1\n";
+    std::string early = twinDeck(o);
+    // Pollutant-only: drop the species rows.
+    std::string kept;
+    for (std::size_t a = 0, b; a < early.size(); a = b + 1) {
+        b = early.find('\n', a); if (b == std::string::npos) b = early.size();
+        const std::string line = early.substr(a, b - a);
+        if (line.rfind("LU1  X  ", 0) == 0) continue;
+        kept += line + "\n";
+    }
+    early = kept + "\n[REPORT]\nINPUT NO\n";
+    // Late order: move the [POLLUTANTS] block to the end.
+    std::string late = early;
+    const auto p0 = late.find("[POLLUTANTS]");
+    const auto p1 = late.find("\n[", p0 + 1);
+    const std::string block = late.substr(p0, p1 - p0);
+    late.erase(p0, p1 - p0);
+    late.insert(late.find("[REPORT]"), block + "\n");
+    auto bmp = [](const std::string& tag, const std::string& body) {
+        write(tag + ".inp", body);
+        SWMM_Engine e = swmm_engine_create();
+        double v = -1.0;
+        if (swmm_engine_open(e, (tag + ".inp").c_str(), (tag + ".rpt").c_str(), (tag + ".out").c_str(), nullptr) == SWMM_OK &&
+            swmm_engine_initialize(e) == SWMM_OK && swmm_engine_start(e, 1) == SWMM_OK) {
+            double t = 0.0;
+            while (swmm_engine_step(e, &t) == SWMM_OK && t > 0.0) {}
+            swmm_engine_end(e);
+            v = cpp(e).context().mass_balance.qual_bmp_removal[0];
+        }
+        swmm_engine_close(e); swmm_engine_destroy(e);
+        return v;
+    };
+    const double a = bmp("_tw_rm_early", early), b = bmp("_tw_rm_late", late);
+    ASSERT_GT(a, 0.0);
+    EXPECT_EQ(b, a) << "REMOVALS before [POLLUTANTS] booked " << b << " against " << a;
+}
+
+// S4: rain carries the species in. TSS rains at its [POLLUTANTS] Crain, X at
+// its [REACTION_RAINFALL] value; the two must deposit identically, on the
+// pervious ponded water and on a LID footprint.
+TEST(MsxSurfaceTwin, R12_RainConcentration) {
+    TwinOpts o; o.tss_rain = "2"; o.rxn_extra = "[REACTION_RAINFALL]\nX  2\n";
+    o.lid_controls = kFlowingBioRetention; o.lid_usage = "S1  BC2  1  4000  50  100  100  0  *  J1\n";
+    const Twin t = runTwin("_tw_r12", o);
+    EXPECT_GT(t.wet.scale, 0.0) << "TSS deposited nothing; deck defect";
+    expectTwin(t, "R12");
+}
+// …and with no buildup or washoff rows at all: deposition alone.
+TEST(MsxSurfaceTwin, R12b_RainOnlyNoLandUseRows) {
+    TwinOpts o; o.tss_rain = "2"; o.rxn_extra = "[REACTION_RAINFALL]\nX  2\n"; o.landuse_rows = false;
+    const Twin t = runTwin("_tw_r12b", o);
+    EXPECT_GT(t.wet.scale, 0.0) << "TSS deposited nothing; deck defect";
+    expectTwin(t, "R12b");
+}
+
+// P2-D4 parity: a LID underdrain routed to another subcatchment adds its
+// water and its quality, less removal, to that subcatchment's run-on, one
+// runoff step late (legacy lid_addDrainRunon). v6 sent the quality straight
+// to the receiver's outlet node, with a second copy of the drain water.
+TEST(MsxSurfaceTwin, R8_UnderdrainToAnotherSubcatchment) {
+    TwinOpts o; o.runon = true; o.lid_controls = kFlowingBioRetention;
+    o.lid_extra = "BC2  REMOVALS  TSS  30  X  30\n";
+    o.lid_usage = "S1  BC2  1  4000  50  100  100  0  *  S2\n";
+    const Twin t = runTwin("_tw_r8", o);
+    EXPECT_GT(t.drain_sub, 0.0) << "the underdrain never flowed; deck defect";
+    expectTwin(t, "R8");
+}
+
+// P2-D4 parity, pollutant side: with the drain's quality on the node twice
+// over and absent from the receiver's runoff, the routing ledger did not
+// close (wet inflow 2.331 lb, outflow 1.225 lb; legacy 2.176 / 2.163). It
+// must close to the small stored remainder, and the surface runoff ledger
+// must equal the routing inflow up to the last step in transit.
+TEST(MsxSurfaceTwin, UnderdrainRunonClosesTheRoutingLedger) {
+    TwinOpts o; o.runon = true; o.lid_controls = kFlowingBioRetention;
+    o.lid_extra = "BC2  REMOVALS  TSS  30\n";
+    o.lid_usage = "S1  BC2  1  4000  50  100  100  0  *  S2\n";
+    std::string body = twinDeck(o), kept;
+    for (std::size_t a = 0, b; a < body.size(); a = b + 1) {
+        b = body.find('\n', a); if (b == std::string::npos) b = body.size();
+        const std::string line = body.substr(a, b - a);
+        if (line.rfind("LU1  X  ", 0) == 0) continue;
+        kept += line + "\n";
+    }
+    write("_tw_d4.inp", kept + "\n[REPORT]\nINPUT NO\n");
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, "_tw_d4.inp", "_tw_d4.rpt", "_tw_d4.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+    double t = 0.0;
+    while (swmm_engine_step(e, &t) == SWMM_OK && t > 0.0) {}
+    swmm_engine_end(e);
+    const auto& mb = cpp(e).context().mass_balance;
+    const double wet = mb.qual_routing_wet[0], out = mb.qual_routing_outflow[0];
+    const double runoff = mb.qual_runoff_load[0];
+    ASSERT_GT(wet, 0.0);
+    EXPECT_NEAR(out, wet, 0.02 * wet) << "routing in " << wet << ", out " << out;
+    // The routing ledger is mg/L x ft3; the runoff ledger is lb (US deck).
+    const double wet_lb = wet * 28.317 / 453592.37;
+    EXPECT_NEAR(runoff, wet_lb, 0.02 * wet_lb) << "surface runoff " << runoff << " lb, routing in " << wet_lb << " lb";
+    swmm_engine_close(e); swmm_engine_destroy(e);
 }

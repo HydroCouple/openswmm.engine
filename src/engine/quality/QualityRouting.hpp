@@ -96,6 +96,17 @@ bool nodeIsReactor(const SimulationContext& ctx, int node);
 /// receiving flow keeps its mix.
 bool nodeIsDry(const SimulationContext& ctx, int node, double q_in);
 
+/// Legacy findStorageQual's evaporation concentration factor
+/// `1 + vEvap/v1` for a storage node (1 for any other node). Shared by the
+/// pollutant reactor and the reaction-species mirror (review B1).
+double storageEvapFactor(const SimulationContext& ctx, int node);
+
+/// Residence time (`nodes.hrt`, s) at storage nodes WITHOUT a treatment
+/// expression, by legacy updateHRT on the hydraulic inflow. Treated nodes
+/// are advanced by applyNodeTreatment. No-op without a reactions component
+/// (review A6).
+void updateUntreatedStorageHrt(SimulationContext& ctx, double dt);
+
 /**
  * @brief One node's [TREATMENT] application, against the CALLER's inflow
  *        figures — the seam the LEGACY pass and the LARD MIX share.
@@ -169,6 +180,7 @@ public:
     /// mass (queued by SurfaceRouter2D, drained by assembleLateralInflows)
     /// into qual_mass_in. No-op when no 2D coupling is active.
     void addCouplingLoads(SimulationContext& ctx, double dt);
+    void addQualityOnlyInflows(SimulationContext& ctx, double dt);  ///< review D2 + gaining conduits
 
     /**
      * @brief Add subcatchment washoff quality loads to node inflows.

@@ -310,6 +310,42 @@ TEST(RDIISolverInit, EmptyAssignments) {
     }
 }
 
+TEST(RDIIContinuity, SewerRainAndGeneratedVolumeDoNotUseRunoffOrRoutingTotals) {
+    auto ctx = makeRdiiContext(1, 1);
+    ctx.options.wet_step = 3600.0;
+    ctx.gage_names.add("G1");
+    input::handle_hydrographs(ctx, {"UH G1", "UH ALL SHORT 0.2 1 1"});
+    ctx.rdii_assigns.add(0, "UH", 2.0);
+    RDIISolver solver;
+    solver.init(ctx);
+    ctx.gages.rainfall[0] = 1.0; // one inch over the two-acre sewer area
+    solver.advance(ctx, 3600.0);
+    ctx.gages.rainfall[0] = 0.0;
+    solver.advance(ctx, 7200.0);
+    solver.advance(ctx, 10800.0);
+    const double rain_volume = (1.0 / 12.0) * (2.0 / 2.2956e-5);
+    EXPECT_DOUBLE_EQ(ctx.mass_balance.rdii_rainfall, rain_volume);
+    EXPECT_NEAR(ctx.mass_balance.rdii_produced, 0.2 * rain_volume, 1e-10);
+    EXPECT_DOUBLE_EQ(ctx.mass_balance.runoff_rainfall, 0.0);
+    EXPECT_DOUBLE_EQ(ctx.mass_balance.routing_rdii, 0.0);
+}
+
+TEST(RDIIContinuity, GageOnlyHydrographCountsRainfallWithoutProducingFlow) {
+    auto ctx = makeRdiiContext(1, 1);
+    ctx.options.wet_step = 3600.0;
+    ctx.gage_names.add("G1");
+    input::handle_hydrographs(ctx, {"UH G1"});
+    ctx.rdii_assigns.add(0, "UH", 2.0);
+    RDIISolver solver;
+    solver.init(ctx);
+    ctx.gages.rainfall[0] = 1.0;
+    solver.advance(ctx, 3600.0);
+    EXPECT_DOUBLE_EQ(ctx.mass_balance.rdii_rainfall,
+                     (1.0 / 12.0) * (2.0 / 2.2956e-5));
+    EXPECT_DOUBLE_EQ(ctx.mass_balance.rdii_produced, 0.0);
+    EXPECT_DOUBLE_EQ(solver.nodeFlows()[0], 0.0);
+}
+
 TEST(RDIISolverInit, RegistersUnitHydrographs) {
     RDIISolver solver;
     UnitHydParams uh = makeUniformUH(0.5, 3600.0, 7200.0);
@@ -726,12 +762,42 @@ TEST(RDIIAssignData, AddAndCount) {
 // ============================================================================
 
 TEST(InpFormat, HydrographsMonthNames) {
-    // Verify month name mapping
-    static const char* months[] = {"JAN","FEB","MAR","APR","MAY","JUN",
-                                   "JUL","AUG","SEP","OCT","NOV","DEC"};
+    SimulationContext ctx;
+    static const char* months[] = {"Jan","feb","MAR","April","May","Jun",
+                                   "Jul","Aug","Sep","Oct","Nov","Dec"};
     for (int m = 0; m < 12; ++m) {
-        EXPECT_NE(std::string(months[m]).size(), 0u);
+        input::handle_hydrographs(ctx, {
+            std::string("UH ") + months[m] + " SHORT 0.2 1 1"});
+        ASSERT_EQ(ctx.unit_hyds.entries.size(), static_cast<size_t>(m + 1));
+        EXPECT_EQ(ctx.unit_hyds.entries.back().month, m);
     }
+    EXPECT_TRUE(ctx.errors.empty());
+}
+
+TEST(InpFormat, SummerHydrographOverridePreservesApril) {
+    SimulationContext ctx;
+    input::handle_hydrographs(ctx, {"UH ALL SHORT 0.2 1 1",
+                                    "UH Jun SHORT 0 1 1"});
+    ASSERT_TRUE(ctx.errors.empty());
+    RDIISolver solver;
+    solver.init(ctx);
+    ASSERT_EQ(solver.uh_params.size(), 1u);
+    for (int m = 0; m < 12; ++m)
+        EXPECT_DOUBLE_EQ(solver.uh_params[0].r[m][0], m == 5 ? 0.0 : 0.2);
+}
+
+TEST(InpFormat, InvalidHydrographMonthDoesNotOverwriteAllMonths) {
+    for (const char* month : {"Jnu", "0", "13", "4junk"}) {
+        SimulationContext ctx;
+        input::handle_hydrographs(ctx, {
+            std::string("UH ") + month + " SHORT 0.2 1 1"});
+        ASSERT_EQ(ctx.errors.size(), 1u) << month;
+        EXPECT_TRUE(ctx.unit_hyds.entries.empty());
+    }
+    SimulationContext ctx;
+    input::handle_hydrographs(ctx, {"UH 4 SHORT 0.2 1 1"});
+    ASSERT_EQ(ctx.unit_hyds.entries.size(), 1u);
+    EXPECT_EQ(ctx.unit_hyds.entries[0].month, 3);
 }
 
 TEST(InpFormat, ResponseNames) {

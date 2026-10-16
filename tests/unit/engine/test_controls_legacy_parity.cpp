@@ -30,6 +30,7 @@
 #include "core/SimulationOptions.hpp"
 #include "core/Constants.hpp"
 #include "core/DateTime.hpp"
+#include "hydrology/Gage.hpp"
 
 using openswmm::SimulationContext;
 using openswmm::controls::ControlEngine;
@@ -73,6 +74,87 @@ protected:
         ctx.current_date = ctx.options.start_date;
     }
 };
+
+class GageControlsParityTest : public ControlsParityTest {
+protected:
+    void SetUp() override {
+        ControlsParityTest::SetUp();
+        ctx.gage_names.add("RG");
+        ctx.gages.resize(1);
+        ctx.gages.st_used[0] = 1;
+        ctx.gages.rainfall[0] = 2.0;
+        ctx.gages.past_rain[0] = 1.0;
+        ctx.gages.past_rain[1] = 3.0;
+        ctx.gages.past_rain[23] = 7.0;
+        ctx.gages.past_rain[47] = 13.0;
+    }
+    std::string rule(const std::string& condition) {
+        return "RULE Rain\nIF " + condition +
+            "\nTHEN PUMP P1 SETTING = .5\nELSE PUMP P1 SETTING = 0\n";
+    }
+    void fires(const std::string& text, double expected = .5) {
+        ControlEngine engine;
+        ASSERT_GE(engine.parseRuleText(text, ctx), 0) << engine.lastParseError().message;
+        engine.evaluate(ctx, ctx.options.start_date, 60);
+        EXPECT_DOUBLE_EQ(ctx.links.target_setting[0], expected);
+    }
+};
+
+TEST_F(GageControlsParityTest, LegacyAttributeGrammarAndLimit) {
+    for (const auto* attr : {"INTENSITY", "1-HR_DEPTH", "24-HR_DEPTH", "48-hr_depth",
+                             "24", "+24", "24.5", "1e999", "3-DAY_DEPTH"}) {
+        SCOPED_TRACE(attr);
+        ControlEngine engine;
+        EXPECT_GE(engine.parseRuleText(rule(std::string("GAGE RG ") + attr + " >= 0"), ctx), 0);
+    }
+    for (const auto* attr : {"0", "-1", "49", "49-HR_DEPTH", "72", "168-HR_DEPTH",
+                             "NaN", "Inf", "9999999999999999999999999", "DEPTH"}) {
+        SCOPED_TRACE(attr);
+        ControlEngine engine;
+        EXPECT_LT(engine.parseRuleText(rule(std::string("GAGE RG ") + attr + " >= 0"), ctx), 0);
+        EXPECT_NE(engine.lastParseError().message.find("1 to 48"), std::string::npos);
+    }
+    ControlEngine engine;
+    EXPECT_LT(engine.parseRuleText(rule("GAGE Missing 24-HR_DEPTH >= 0"), ctx), 0);
+}
+
+TEST_F(GageControlsParityTest, NumericActionsRetainEachLookbackInBatchEvaluation) {
+    fires(rule("GAGE RG 1-HR_DEPTH = 1"));
+    fires(rule("GAGE RG 24-HR_DEPTH = 11"));
+    fires(rule("GAGE RG 48-HR_DEPTH = 24"));
+    fires(rule("GAGE RG 24-HR_DEPTH = 1"), 0);
+    fires(rule("GAGE RG INTENSITY = 2"));
+}
+
+TEST_F(GageControlsParityTest, RightHandAndNamedVariablesRetainTheirLookbacks) {
+    fires(rule("GAGE RG 48-HR_DEPTH > GAGE RG 24-HR_DEPTH"));
+    fires(rule("GAGE RG 24-HR_DEPTH = GAGE RG 48-HR_DEPTH"), 0);
+    fires("VARIABLE Rain24 = GAGE RG 24-HR_DEPTH\nVARIABLE Rain48 = GAGE RG 48-HR_DEPTH\n" +
+          rule("Rain48 > Rain24"));
+    fires("VARIABLE Rain24 = GAGE RG 24-HR_DEPTH\nEXPRESSION TwiceRain = Rain24 * 2\n" +
+          rule("TwiceRain = 22"));
+}
+
+TEST_F(GageControlsParityTest, UnusedGagesMatchLegacyZeroConditions) {
+    ctx.gages.st_used[0] = 0;
+    fires(rule("GAGE RG INTENSITY = 0"));
+    fires(rule("GAGE RG 48-HR_DEPTH = 0"));
+}
+
+TEST(GageControlHistory, ExactHoursExcludeThePartialBucketAndSplitLongIntervals) {
+    openswmm::gage::GageState state;
+    state.rainfall = 2;
+    openswmm::gage::updatePastRain(state, 3600);
+    EXPECT_DOUBLE_EQ(openswmm::gage::getPastRain(state, 1), 0);
+    EXPECT_DOUBLE_EQ(state.past_rain_accum, 2);
+    openswmm::gage::updatePastRain(state, 1);
+    EXPECT_DOUBLE_EQ(openswmm::gage::getPastRain(state, 1), 2);
+    openswmm::gage::updatePastRain(state, 3 * 3600);
+    EXPECT_NEAR(openswmm::gage::getPastRain(state, 4), 8, 1e-12);
+    state.rainfall = 0;
+    openswmm::gage::updatePastRain(state, 49 * 3600);
+    EXPECT_DOUBLE_EQ(openswmm::gage::getPastRain(state, 48), 0);
+}
 
 // ============================================================================
 // P0-C01 — SIMULATION TIME RHS parses as decimal hours
@@ -277,6 +359,28 @@ TEST_F(ControlsParityTest, MixedVariableTypeShortCircuitOrder) {
     eng.evaluate(ctx, ctx.current_date, 60.0);
     EXPECT_DOUBLE_EQ(ctx.links.target_setting[0], 1.0)
         << "Rule must reduce in declaration order: F OR T AND F = F";
+}
+
+TEST_F(ControlsParityTest, FailedAndStopsBeforeLaterOrCanStartPump) {
+    // Reduced SSO700_CEHRSEarly rule from the MC storm model. Legacy stops
+    // at the first AND reached with a false accumulated result; a later
+    // true OR must not start the pump after that short circuit.
+    ctx.nodes.depth[0] = 0.0;
+    ctx.nodes.depth[1] = 0.0;
+    ctx.nodes.head[1] = 4.0;
+    ctx.links.setting[0] = 0.0;
+    ctx.links.target_setting[0] = 0.0;
+    ControlEngine engine;
+    ASSERT_EQ(engine.parseRuleText(
+        "RULE Early\n"
+        "IF NODE J1 DEPTH >= 14\n"
+        "AND NODE J2 DEPTH > 5\n"
+        "AND NODE J1 HEAD > 3.2\n"
+        "OR NODE J2 HEAD > 3.75\n"
+        "THEN PUMP P1 STATUS = ON\n"
+        "ELSE PUMP P1 STATUS = OFF\n", ctx), 1);
+    engine.evaluate(ctx, ctx.current_date, 60.0);
+    EXPECT_DOUBLE_EQ(ctx.links.target_setting[0], 0.0);
 }
 
 // ============================================================================

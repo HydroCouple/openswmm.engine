@@ -127,7 +127,7 @@ SWMM_ENGINE_API int swmm_control_remove_rule(SWMM_Engine engine, int idx);
  * @brief Find control rules whose text references an object by name.
  *
  * @details Scans each rule's clauses for an object-type keyword (NODE, LINK,
- *          CONDUIT, PUMP, ORIFICE, WEIR, OUTLET) immediately followed by
+ *          CONDUIT, PUMP, ORIFICE, WEIR, OUTLET, GAGE) immediately followed by
  *          @p object_name (case-insensitive, matching legacy rule parsing).
  *          Read-only — no delete ever edits rule text; callers decide what to
  *          do with affected rules.

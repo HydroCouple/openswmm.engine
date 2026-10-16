@@ -83,6 +83,53 @@ OpenSWMM Engine is a community-driven, open-source continuation of the EPA Storm
 
 A domain-split C API replaces the monolithic legacy interface — separate headers per domain (engine lifecycle, model building, nodes, links, subcatchments, gages, pollutants, tables, inflows, controls, infrastructure, spatial data, quality, mass balance, callbacks, hot start, statistics, and optional GeoPackage I/O) under `include/openswmm/engine/`. Full reference at the [C engine documentation site](https://hydrocouple.org/openswmm.engine).
 
+### Optional native HydroCouple components
+
+The [generic engine component](docs/COMPONENT_ENGINE.md) exposes configured
+metadata and CPU 1D execution, including standard MSX pollutant output and
+conservative outfall transfers to custom receivers. The existing FVQual
+outfall adapter below remains separately available.
+
+`OPENSWMM_WITH_HYDROCOUPLE=ON` builds `openswmm_model_component` under
+`build/components`. It depends on the HydroCouple interface headers and
+nlohmann-json, and uses only the public engine C API. It does not link
+HydroCoupleSDK. Supply the same ABI 4 interface checkout and C++ toolchain as
+the host; the default interface revision is pinned in `cmake/FetchHydroCouple.cmake`.
+With vcpkg, include the `hydrocouple` manifest feature for nlohmann-json, or
+provide its installed CMake package through `CMAKE_PREFIX_PATH`.
+
+```sh
+cmake -S . -B build-hc -DOPENSWMM_WITH_HYDROCOUPLE=ON \
+  -DFETCHCONTENT_SOURCE_DIR_HYDROCOUPLE=/path/to/HydroCouple \
+  -DCMAKE_PREFIX_PATH=/path/to/dependencies
+cmake --build build-hc --target openswmm_model_component
+```
+
+The `openswmm.model` component hosts native runoff and a 1D network in
+`network_only` mode, disabling native 2D before initialization. Its required
+local JSON setup declares the physical epoch, exact elapsed exchange times,
+external outfalls, receiving mesh geometry, normalized mapping weights and
+temperature/species basis. `outfall_transfers` supplies already-debited
+interval amounts to one direct FVQual receiver. A matching acknowledgment is
+required before another advance and at finish. Native boundary audits,
+packets and acknowledgments remain available when a receiver fails.
+
+`swmm_node_get_export_receipt` exposes cumulative SI water/reversed water,
+native heat and pollutant amounts booked at the native continuity seam before
+report filtering. Legacy MG/L and UG/L amounts use kg; count amounts retain
+counts and are refused by this wrapper. Native heat availability is explicit;
+fixed-temperature assumptions must be declared. Internal routed/2D-owned
+outfalls, MSX or non-LEGACY quality, reversal, adapted packet connections and
+multiple receiving components are outside the qualified path. The ledger is
+included in hydraulic checkpoints (older incompatible payloads are rejected). Coordinated coupled restart and receiving-stage feedback remain
+separate work.
+
+The sibling FVQual repository's `verification/swmm_coupling.py` qualifies actual
+Composer hosting, native API parity, failure cleanup, independent instances
+and exact recorded replay. Its `examples/swmm_reservoir/README.md` describes the
+synthetic heat/species case and six-hour Bellinge review. The Bellinge receiving
+basin, physical mapping and inlet temperature remain synthetic assumptions.
+
 ### Python Bindings — Full Modeling Workflows
 
 The Python API is not just a solver wrapper — it supports the complete modeling lifecycle in code:

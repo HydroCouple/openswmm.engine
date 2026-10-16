@@ -79,6 +79,24 @@ SWMM_ENGINE_API int swmm_node_index(SWMM_Engine engine, const char* id);
  */
 SWMM_ENGINE_API const char* swmm_node_id(SWMM_Engine engine, int idx);
 
+/** Cumulative committed 1D outfall transfers, independent of REPORT_START.
+ * Positive exports have already left SWMM: consumers must not withdraw them
+ * again. Reverse water is retained separately and is not a one-way export.
+ * SI water is m3; heat is J relative to 0 degC using model rho/cp. Pollutant
+ * arrays use kg for MG/L and UG/L, and counts for #/L. Read units first.
+ * Flags: 1 external water, 2 LEGACY pollutant loads, 4 native heat.
+ * Route-to-subcatchment and native 2D-owned outfalls are refused.
+ * No MSX or ARD/LARD mass capability is implied by these receipts.
+ */
+typedef struct SWMM_OutfallExportReceipt {
+    double exported_m3;
+    double reversed_m3;
+    double exported_heat_j;
+    unsigned flags;
+} SWMM_OutfallExportReceipt;
+SWMM_ENGINE_API int swmm_node_get_export_receipt(SWMM_Engine engine, int idx,
+    SWMM_OutfallExportReceipt* receipt, double* pollutant_amounts, int count);
+
 /* =========================================================================
  * Creation (BUILDING or OPENED — "editable" states)
  * ========================================================================= */

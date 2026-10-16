@@ -153,6 +153,14 @@ struct SubsurfaceTransportState {
     /// `[s * n_cells + c]` mass a LEAKING conduit delivered, at the
     /// conduit's own concentration — the twin of the water's `lacc`.
     std::vector<double> lacc_mass;
+    /// `[s * n_cells + c]` mass a GAINING conduit already delivered to its
+    /// end nodes (review, 2026-10-15), debited from the saturated store when
+    /// the cell fires — the twin of the water's negative `lacc`. Booked into
+    /// `lost_link` at that debit, so the aquifer ledger is unchanged in form.
+    std::vector<double> lout_mass;
+    /// `[s]` informational: gain mass the 1D received that the cell could not
+    /// supply at its firing (its store had already been drawn below it).
+    std::vector<double> link_gain_shortfall;
     /// `[s * n_nodes]` mass the aquifer owes each 1D node, booked at the
     /// cell's firing and flushed by the router into the node's coupling
     /// queues. Reset per routing batch, exactly as `node_exchange_vol_` is.
@@ -199,6 +207,8 @@ struct SubsurfaceTransportState {
         xacc_from_surface.assign(ns * nc, 0.0);
         xacc_to_surface.assign(ns * nc, 0.0);
         lacc_mass.assign(ns * nc, 0.0);          // T7.4
+        lout_mass.assign(ns * nc, 0.0);
+        link_gain_shortfall.assign(ns, 0.0);
         // nacc_mass and node_out_mass are sized by the solver, which knows
         // the bed and node counts.
         lost_deep.assign(ns, 0.0);

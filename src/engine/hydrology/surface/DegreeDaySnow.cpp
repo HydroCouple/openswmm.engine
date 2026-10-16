@@ -36,7 +36,11 @@ namespace snow {
 
 void SnowSoA::resize(int n) {
     n_subcatch = n;
+    enabled.assign(static_cast<std::size_t>(n),1);
+    external.assign(static_cast<std::size_t>(n),false);
     auto total = static_cast<std::size_t>(n * N_SUBAREAS);
+    external_net.assign(total,0);
+    ueb_transfer_energy.assign(total,0);
     auto un = static_cast<std::size_t>(n);
 
     wsnow.assign(total, 0.0);
@@ -299,6 +303,7 @@ void DegreeDaySnow::execute(SimulationContext& /*ctx*/, double dt,
     if (n == 0) return;
 
     for (int j = 0; j < n; ++j) {
+        if (!soa_.enabled[j] || (j < int(soa_.external.size()) && soa_.external[j])) continue;
         auto uj = static_cast<std::size_t>(j);
         const double rain = rainfall[uj];
         const double snow = snowfall[uj];
@@ -453,6 +458,7 @@ void DegreeDaySnow::plowSnow(SimulationContext& ctx, double dt, const double* sn
     if (n == 0) return;
 
     for (int j = 0; j < n; ++j) {
+        if (!soa_.enabled[j] || (j < int(soa_.external.size()) && soa_.external[j])) continue;
         auto uj = static_cast<std::size_t>(j);
 
         // Add this subcatchment's snowfall to all subareas
@@ -490,6 +496,7 @@ void DegreeDaySnow::plowSnow(SimulationContext& ctx, double dt, const double* sn
     // the two-subcatchment transfer gate: age-volume gained exactly
     // `dt * moved`, 60 against a 40180 baseline.
     for (int j = 0; j < n; ++j) {
+        if (!soa_.enabled[j] || (j < int(soa_.external.size()) && soa_.external[j])) continue;
         auto uj = static_cast<std::size_t>(j);
 
         // Check if plowable area has excess snow
@@ -587,6 +594,15 @@ void DegreeDaySnow::plowSnow(SimulationContext& ctx, double dt, const double* sn
                 auto target_perv = static_cast<std::size_t>(m * N_SUBAREAS + SNOW_PERV);
                 if (soa_.fArea[target_perv] > 0.0) {
                     double f = soa_.fArea[plow_idx] / soa_.fArea[target_perv];
+                    if (soa_.conservative_plowing || (m < int(soa_.external.size()) && soa_.external[m])) {
+                        const auto actualArea = [&](int sc) {
+                            const double lid = sc < int(ctx.subcatches.total_lid_area_ft2.size()) ?
+                                ctx.subcatches.total_lid_area_ft2[sc] : 0;
+                            return std::max(0.,ctx.subcatches.area[sc]/ucf::UCF(ucf::LANDAREA,ctx.options)-lid);
+                        };
+                        const double target_area=actualArea(m);
+                        f*=target_area>0?actualArea(j)/target_area:0;
+                    }
                     const double moved = soa_.sfrac[sf + 4] * exc * f;
                     // S2b — the CROSS-SUBCATCHMENT transfer, and the reason
                     // the age has to live in this solver. An update running
@@ -597,8 +613,13 @@ void DegreeDaySnow::plowSnow(SimulationContext& ctx, double dt, const double* sn
                             mixAge(soa_.wsnow[target_perv] + soa_.fw[target_perv],
                                    soa_.age[target_perv], moved, donor_age);
                     }
+                    if(soa_.external[m] && moved>0 && exc>0) {
+                        const double cold=soa_.coldc[plow_idx]*soa_.sfrac[sf+4];
+                        soa_.ueb_transfer_energy[target_perv]-=cold*f*333500*.3048;
+                        soa_.coldc[plow_idx]-=cold;
+                    }
                     soa_.wsnow[target_perv] += moved;
-                    sfracTotal += soa_.sfrac[sf + 4];
+                    if (f > 0) sfracTotal += soa_.sfrac[sf + 4];
                 }
             }
         }

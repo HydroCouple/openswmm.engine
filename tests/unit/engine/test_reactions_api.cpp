@@ -210,8 +210,17 @@ TEST_F(ReactionsApiTest, ValidationOutcomes) {
     // OK: species, coefficient, pollutant (read-only), hydvar, 2-arg func.
     EXPECT_EQ(swmm_reaction_validate_expression(
                   engine_, SWMM_RXN_SCOPE_PIPE,
-                  "MIN(HOCL, 2) * k1 + TSS * D", err, 256, &col),
+                  "MIN(HOCL, 2) * k1 + TSS * HRT", err, 256, &col),
               SWMM_OK) << err;
+
+    // Physics review A1 (2026-10-15): a hydraulic variable no engine
+    // populates is refused here exactly as at load, pointing at itself.
+    EXPECT_EQ(swmm_reaction_validate_expression(
+                  engine_, SWMM_RXN_SCOPE_PIPE,
+                  "MIN(HOCL, 2) * k1 + TSS * D", err, 256, &col),
+              SWMM_ERR_BADPARAM);
+    EXPECT_NE(std::string(err).find("hydraulic variable 'D'"), std::string::npos) << err;
+    EXPECT_EQ(col, 27);
 
     // Term scope accepts references to ALL terms (D-RC1).
     EXPECT_EQ(swmm_reaction_validate_expression(

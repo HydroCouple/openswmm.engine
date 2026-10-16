@@ -65,8 +65,9 @@ from typing import NamedTuple
 
 from ._common cimport *
 from ._enums import (
-    HeatCloudParam, HeatFluxModule, HeatRadiativeParam, HeatShortwaveMode,
-    HeatSolarParam, HeatSourceKind)
+    HeatAttr, HeatCloudParam, HeatFluxModule, HeatOverrideScope,
+    HeatRadiativeParam, HeatSedimentParam, HeatShortwaveMode, HeatSolarParam,
+    HeatSourceKind)
 
 
 cdef inline SWMM_Engine _h(solver):
@@ -634,6 +635,123 @@ class _HeatNodeOverrides:
 
 
 # =============================================================================
+# [SEDIMENT_EXCHANGE] and per-element overrides
+# =============================================================================
+
+class HeatElementOverride(NamedTuple):
+    """One per-element heat attribute override row.
+
+    :ivar attr: The :class:`HeatAttr` overridden.
+    :ivar scope: :class:`HeatOverrideScope` — ``TAG``, ``NODE`` or ``LINK``.
+    :ivar name: Tag or element name.
+    :ivar value: The override value, in the attribute's units.
+    """
+
+    attr: HeatAttr
+    scope: HeatOverrideScope
+    name: str
+    value: float
+
+
+class _HeatSediment:
+    """``solver.heat.sediment`` — ``[SEDIMENT_EXCHANGE]`` GLOBAL parameters,
+    a mapping keyed by :class:`HeatSedimentParam`. Values the parser refuses
+    are refused here too, never clamped."""
+
+    def __init__(self, solver):
+        self._solver = solver
+
+    def __len__(self) -> int:
+        return len(HeatSedimentParam)
+
+    def __iter__(self) -> Iterator[HeatSedimentParam]:
+        return iter(HeatSedimentParam)
+
+    def __getitem__(self, key) -> float:
+        cdef double value = 0.0
+        param = _member(HeatSedimentParam, key)
+        _check(swmm_heat_get_sediment(_h(self._solver), int(param), &value))
+        return value
+
+    def __setitem__(self, key, double value) -> None:
+        param = _member(HeatSedimentParam, key)
+        _check(swmm_heat_set_sediment(_h(self._solver), int(param), value))
+
+    @property
+    def ground_timeseries(self) -> str:
+        """Timeseries driving the ground temperature; ``''`` for the constant."""
+        cdef char buf[1024]
+        _check(swmm_heat_get_sediment_ground_timeseries(_h(self._solver), buf, 1024))
+        return buf.decode('utf-8')
+
+    @ground_timeseries.setter
+    def ground_timeseries(self, name) -> None:
+        cdef bytes b = (name or '').encode('utf-8')
+        _check(swmm_heat_set_sediment_ground_timeseries(_h(self._solver), b))
+
+    def __repr__(self) -> str:
+        try:
+            return f"<HeatSediment n={len(self)}>"
+        except Exception:
+            return "<HeatSediment (engine closed)>"
+
+
+class _HeatElementOverrides:
+    """``solver.heat.element_overrides`` — per-element radiative and sediment
+    attribute overrides, a sequence of :class:`HeatElementOverride` rows."""
+
+    def __init__(self, solver):
+        self._solver = solver
+
+    def __len__(self) -> int:
+        cdef int count = 0
+        _check(swmm_heat_element_override_count(_h(self._solver), &count))
+        return count
+
+    def __iter__(self) -> Iterator[HeatElementOverride]:
+        cdef int n = len(self)
+        for i in range(n):
+            yield self[i]
+
+    def __getitem__(self, int row_index) -> HeatElementOverride:
+        cdef int n = len(self)
+        cdef int i = row_index + n if row_index < 0 else row_index
+        if not (0 <= i < n):
+            raise IndexError(row_index)
+        cdef int attr = 0, scope = 0
+        cdef double value = 0.0
+        cdef char name[512]
+        _check(swmm_heat_get_element_override(
+            _h(self._solver), i, &attr, &scope, name, 512, &value))
+        return HeatElementOverride(HeatAttr(attr), HeatOverrideScope(scope),
+                                   name.decode('utf-8'), value)
+
+    def set(self, attr, scope, str name, double value) -> None:
+        """Add or update the override for ``(attr, scope, name)``.
+
+        Sediment attributes apply at LINK or TAG scope only (the bed lies
+        beneath conduits). An unknown element or tag is refused and leaves
+        the rows unchanged.
+        """
+        a = _member(HeatAttr, attr)
+        sc = _member(HeatOverrideScope, scope)
+        cdef bytes b = name.encode('utf-8')
+        _check(swmm_heat_set_element_override(_h(self._solver), int(a), int(sc), b, value))
+        self._solver._bump_generation()
+
+    def remove(self, int row_index) -> None:
+        """Remove one override row; later rows shift down."""
+        _check(swmm_heat_remove_element_override(_h(self._solver), row_index))
+        self._solver._bump_generation()
+
+    def __repr__(self) -> str:
+        try:
+            return f"<HeatElementOverrides n={len(self)}>"
+        except Exception:
+            return "<HeatElementOverrides (engine closed)>"
+
+
+# =============================================================================
 # Heat view
 # =============================================================================
 
@@ -665,6 +783,8 @@ class Heat:
         self._cloud = None
         self._sources = None
         self._node_overrides = None
+        self._sediment = None
+        self._element_overrides = None
 
     # ---- Toggles ----------------------------------------------------
 
@@ -812,6 +932,21 @@ class Heat:
         if self._node_overrides is None:
             self._node_overrides = _HeatNodeOverrides(self._solver)
         return self._node_overrides
+
+    @property
+    def sediment(self) -> _HeatSediment:
+        """``[SEDIMENT_EXCHANGE]`` GLOBAL parameters, keyed by
+        :class:`HeatSedimentParam`."""
+        if self._sediment is None:
+            self._sediment = _HeatSediment(self._solver)
+        return self._sediment
+
+    @property
+    def element_overrides(self) -> _HeatElementOverrides:
+        """Per-element radiative and sediment attribute overrides."""
+        if self._element_overrides is None:
+            self._element_overrides = _HeatElementOverrides(self._solver)
+        return self._element_overrides
 
     def __repr__(self) -> str:
         try:

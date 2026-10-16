@@ -26,9 +26,11 @@
 
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_transport.h"
+#include "../transport/components/EulerianArdComponent/ArdConfig.hpp"
 
 #include <cmath>
 #include <cstring>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -191,4 +193,157 @@ SWMM_ENGINE_API int swmm_transport_get_source(SWMM_Engine engine, int index,
     return get_row(to_engine(engine)->context().ard_config.source_rows,
                    index, element, elem_len, species, spec_len, is_ts,
                    value, ts_name, ts_len);
+}
+
+// ---------------------------------------------------------------------------
+// Authoring
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Re-run the row resolution that open() performs. On failure the raw rows
+/// are restored and resolved again, so a rejected edit leaves no trace.
+/// While a model is being BUILT the rows stay raw, as the parser stores
+/// them: species and series may be declared later, and resolution is
+/// order-independent by design.
+int resolve_or_revert(openswmm::SimulationContext& ctx,
+                      openswmm::ArdConfigData before) {
+    if (ctx.state == openswmm::EngineState::BUILDING) {
+        ctx.ard_config.transport_rows_resolved = false;
+        return SWMM_OK;
+    }
+    std::vector<std::string> errors;
+    openswmm::transport::resolveArdTransportRows(ctx, errors);
+    if (errors.empty()) return SWMM_OK;
+    ctx.ard_config = std::move(before);
+    std::vector<std::string> ignored;
+    openswmm::transport::resolveArdTransportRows(ctx, ignored);
+    return SWMM_ERR_BADPARAM;
+}
+
+int set_row(SWMM_Engine engine, bool is_bc, const char* element,
+            const char* species, int is_ts, double value, const char* ts_name) {
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    if (!element || !*element || !species || !*species) return SWMM_ERR_BADPARAM;
+    if (is_ts != 0 && is_ts != 1) return SWMM_ERR_BADPARAM;
+    if (is_ts && (!ts_name || !*ts_name)) return SWMM_ERR_BADPARAM;
+    // Same numeric rules as the parser: a boundary concentration is >= 0, a
+    // source rate may be negative (extraction).
+    if (!is_ts && (!std::isfinite(value) || (is_bc && value < 0.0)))
+        return SWMM_ERR_BADPARAM;
+
+    auto before = ctx.ard_config;
+    auto& rows = is_bc ? ctx.ard_config.boundary_rows : ctx.ard_config.source_rows;
+    openswmm::ArdTransportRow row;
+    row.element = element;
+    row.species = species;
+    row.is_ts   = is_ts != 0;
+    row.value   = is_ts ? 0.0 : value;
+    row.ts_name = is_ts ? ts_name : "";
+    bool replaced = false;
+    for (auto& r : rows)
+        if (r.element == row.element && r.species == row.species) {
+            r = row;
+            replaced = true;
+            break;
+        }
+    if (!replaced) rows.push_back(std::move(row));
+    ctx.ard_config.configured = true;
+    return resolve_or_revert(ctx, std::move(before));
+}
+
+int remove_row(SWMM_Engine engine, bool is_bc, int index) {
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    auto& rows = is_bc ? ctx.ard_config.boundary_rows : ctx.ard_config.source_rows;
+    if (index < 0 || index >= static_cast<int>(rows.size())) return SWMM_ERR_BADINDEX;
+    auto before = ctx.ard_config;
+    rows.erase(rows.begin() + index);
+    return resolve_or_revert(ctx, std::move(before));
+}
+
+}  // namespace
+
+SWMM_ENGINE_API int swmm_transport_get_detailed_output(SWMM_Engine engine,
+                                                       char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (buf == nullptr || buflen <= 0) return SWMM_ERR_BADPARAM;
+    put_str(to_engine(engine)->context().ard_config.detailed_output_path, buf, buflen);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_transport_set_detailed_output(SWMM_Engine engine,
+                                                       const char* path) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    ctx.ard_config.detailed_output_path = path ? path : "";
+    ctx.ard_config.configured = true;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_transport_set_conduit_disp(SWMM_Engine engine,
+                                                    int link_index,
+                                                    double value) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(link_index >= 0 && link_index < ctx.n_links());
+    // Conduits only: structures are zero-volume passthrough (parser rule).
+    if (ctx.link_subtypes.conduit_row(link_index) < 0) return SWMM_ERR_BADPARAM;
+    if (!(value >= 0.0) || !std::isfinite(value)) return SWMM_ERR_BADPARAM;
+    auto& cfg = ctx.ard_config;
+    for (std::size_t i = 0; i < cfg.conduit_disp_link.size(); ++i)
+        if (cfg.conduit_disp_link[i] == link_index) {
+            cfg.conduit_disp_value[i] = value;
+            cfg.configured = true;
+            return SWMM_OK;
+        }
+    cfg.conduit_disp_link.push_back(link_index);
+    cfg.conduit_disp_value.push_back(value);
+    cfg.configured = true;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_transport_remove_conduit_disp(SWMM_Engine engine,
+                                                       int index) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    auto& cfg = ctx.ard_config;
+    CHECK_INDEX(index >= 0 && index < static_cast<int>(cfg.conduit_disp_link.size()));
+    cfg.conduit_disp_link.erase(cfg.conduit_disp_link.begin() + index);
+    cfg.conduit_disp_value.erase(cfg.conduit_disp_value.begin() + index);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_transport_set_boundary(SWMM_Engine engine,
+                                                const char* element,
+                                                const char* species,
+                                                int is_ts, double value,
+                                                const char* ts_name) {
+    CHECK_HANDLE(engine);
+    return set_row(engine, true, element, species, is_ts, value, ts_name);
+}
+
+SWMM_ENGINE_API int swmm_transport_remove_boundary(SWMM_Engine engine,
+                                                   int index) {
+    CHECK_HANDLE(engine);
+    return remove_row(engine, true, index);
+}
+
+SWMM_ENGINE_API int swmm_transport_set_source(SWMM_Engine engine,
+                                              const char* element,
+                                              const char* species,
+                                              int is_ts, double value,
+                                              const char* ts_name) {
+    CHECK_HANDLE(engine);
+    return set_row(engine, false, element, species, is_ts, value, ts_name);
+}
+
+SWMM_ENGINE_API int swmm_transport_remove_source(SWMM_Engine engine,
+                                                 int index) {
+    CHECK_HANDLE(engine);
+    return remove_row(engine, false, index);
 }

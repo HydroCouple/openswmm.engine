@@ -149,7 +149,7 @@ SWMM_ENGINE_API int swmm_hotstart_apply(SWMM_Engine engine, SWMM_HotStart hs) {
     openswmm::HotStartFile* file = to_hs(hs);
 
     // Gap #54: apply V2 format including infiltration + GW state
-    openswmm::HotStartManager::apply(
+    const int result = openswmm::HotStartManager::apply(
         *file,
         ctx,
         &eng->runoff_solver(),
@@ -160,7 +160,7 @@ SWMM_ENGINE_API int swmm_hotstart_apply(SWMM_Engine engine, SWMM_HotStart hs) {
         }
     );
 
-    return SWMM_OK;
+    return result<0?SWMM_ERR_HOTSTART:SWMM_OK;
 }
 
 // ----------------------------------------------------------------------------

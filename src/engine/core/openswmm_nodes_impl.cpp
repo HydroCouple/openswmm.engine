@@ -35,6 +35,7 @@
 #include "../hydraulics/Node.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <string>
 
@@ -66,6 +67,31 @@ SWMM_ENGINE_API const char* swmm_node_id(SWMM_Engine engine, int idx) {
     const auto& ctx = to_engine(engine)->context();
     if (idx < 0 || idx >= ctx.n_nodes()) return nullptr;
     return ctx.node_names.name_of(idx).c_str();
+}
+
+SWMM_ENGINE_API int swmm_node_get_export_receipt(SWMM_Engine engine, int idx,
+    SWMM_OutfallExportReceipt* receipt, double* amounts, int count) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    if (idx < 0 || idx >= ctx.n_nodes()) return SWMM_ERR_BADINDEX;
+    if (!receipt || count < 0 || (count && !amounts) || count != ctx.n_pollutants())
+        return SWMM_ERR_BADPARAM;
+    if (ctx.nodes.type[idx] != openswmm::NodeType::OUTFALL) return SWMM_ERR_BADPARAM;
+    const int row = ctx.node_subtypes.outfall_row(idx);
+    if (row < 0 || ctx.node_subtypes.outfalls.route_to[row] >= 0 ||
+        (static_cast<std::size_t>(idx) < ctx.surface_outfall_link_limit.size() &&
+         std::isfinite(ctx.surface_outfall_link_limit[idx]))) return SWMM_ERR_BADPARAM;
+    if (ctx.outfall_exports.water_m3.size() != static_cast<std::size_t>(ctx.n_nodes()))
+        return SWMM_ERR_LIFECYCLE;
+    unsigned flags = 1;
+    if (!ctx.options.ignore_quality && ctx.options.quality_solver == openswmm::QualitySolverKind::LEGACY) flags |= 2;
+    if (ctx.options.heat_transport && ctx.options.quality_solver == openswmm::QualitySolverKind::LEGACY)
+        flags |= 4;
+    *receipt = {ctx.outfall_exports.water_m3[idx], ctx.outfall_exports.reverse_m3[idx],
+               ctx.outfall_exports.heat_j[idx], flags};
+    for (int p = 0; p < count; ++p)
+        amounts[p] = ctx.outfall_exports.pollutant_amounts[static_cast<std::size_t>(idx) * count + p];
+    return SWMM_OK;
 }
 
 // ============================================================================

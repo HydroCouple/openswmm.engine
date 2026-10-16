@@ -88,6 +88,7 @@ class FvRoutingOptions(unittest.TestCase):
             self.assertEqual(s.options["FV_TIME_INTEGRATION"], "EULER")
             self.assertEqual(s.options["FV_BACKEND"], "AUTO")
             self.assertEqual(s.options["FV_COMPACTION"], "YES")
+            self.assertEqual(s.options["FV_NODE_FEEDBACK_DT"], "NO")
             self.assertEqual(int(s.options["FV_ORDER"]), 1)
             self.assertEqual(int(s.options["FV_MIN_CELLS"]), 4)
             self.assertAlmostEqual(float(s.options["FV_CELL_LENGTH"]), 0.0)
@@ -116,6 +117,7 @@ class FvRoutingOptions(unittest.TestCase):
                 "FV_TIME_INTEGRATION": "RK2",
                 "FV_STRUCTURE_COUPLING": "ROUTING_STEP",
                 "FV_COMPACTION": "NO",
+                "FV_NODE_FEEDBACK_DT": "YES",
                 "FV_BACKEND": "CPU",
                 "FV_MIN_PARALLEL_CELLS": "12345",
                 "FV_LTS": "NO",
@@ -151,6 +153,7 @@ class FvRoutingOptions(unittest.TestCase):
                 "FV_STRUCTURE_COUPLING", "FV_COMPACTION", "FV_BACKEND",
                 "FV_MIN_PARALLEL_CELLS", "FV_PRESSURE_CLOSURE",
                 "FV_LTS", "FV_LTS_MAX_TIERS", "FV_CFL_CENSUS_INTERVAL",
+                "FV_NODE_FEEDBACK_DT",
             },
         )
 

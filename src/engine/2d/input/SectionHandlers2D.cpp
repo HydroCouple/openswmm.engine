@@ -408,7 +408,7 @@ bool is2DRetiredOptionKey(const std::string& key) {
 
 bool is2DOptionKey(const std::string& key) {
     static const char* kKeys[] = {
-        "MAX_TIMESTEP", "DRY_DEPTH", "COUPLING_CD", "COUPLING_SYNC",
+        "MAX_TIMESTEP", "DRY_DEPTH", "COUPLING_CD", "COUPLING_SYNC", "DISPERSION",
         "LIMITER_EPSILON", "FLUX_DH_EPS", "RAINFALL_MODE", "REPORT_2D",
         "CELL_CLOSURE", "FACE_RECONSTRUCTION", "VFR_MIN_WET_FRAC",
         "OUTPUT_FILE",
@@ -453,6 +453,7 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
     if (iequals(key, "LIMITER_EPSILON"))   return fmt_g(opts.limiter_epsilon);
     if (iequals(key, "FLUX_DH_EPS"))       return fmt_g(opts.flux_dh_eps);
     if (iequals(key, "COUPLING_CD"))       return fmt_g(opts.coupling_cd);
+    if (iequals(key, "DISPERSION"))        return fmt_g(opts.dispersion);
     if (iequals(key, "COUPLING_SYNC"))     return fmt_g(opts.coupling_sync);
     if (iequals(key, "REPORT_2D"))         return opts.report_2d ? "YES" : "NO";
     if (iequals(key, "OUTPUT_FILE"))       return opts.output_file;
@@ -1308,13 +1309,17 @@ void register2DSections(MeshData& mesh,
             for (const auto& raw : lines) {
                 auto tokens = openswmm::input::Tokenizer::tokenize(raw);
                 if (tokens.size() >= 2 && iequals(tokens[0], "FILE")) {
-                    // Path may contain spaces; the tokenizer split an unquoted
-                    // path, so rejoin the tokens after FILE (a quoted path is a
-                    // single token already). Fixes meshes like "My Model.2dm".
+                    // Standard FILE rows consume the raw tail so unquoted
+                    // filenames retain repeated spaces. Keep CSV compatibility.
+                    const auto line = openswmm::input::Tokenizer::trim(
+                        openswmm::input::Tokenizer::strip_comment(raw));
                     std::string path = tokens[1];
                     for (std::size_t k = 2; k < tokens.size(); ++k) { path += ' '; path += tokens[k]; }
-                    if (path.size() >= 2 && path.front() == '"' && path.back() == '"')
-                        path = path.substr(1, path.size() - 2);
+                    if (line.size() > 4 && std::isspace(static_cast<unsigned char>(line[4]))) {
+                        const auto tail = openswmm::input::Tokenizer::trim(line.substr(4));
+                        if (!tail.empty() && tail.front() != '"' && tail.front() != ',')
+                            path = std::string(tail);
+                    }
                     options.mesh_file = path;
                     return; // only first FILE line
                 }

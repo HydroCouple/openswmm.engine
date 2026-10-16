@@ -38,15 +38,21 @@
 
 #include "../../../../include/openswmm/plugin_sdk/IOutputPlugin.hpp"
 
+#include "../../io/CheckpointOutputPublication.hpp"
+#include "../../io/CheckpointFile.hpp"
 #include <string>
+#include <memory>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 #include <hdf5.h>
 
+namespace openswmm { class SWMMEngine; }
 namespace openswmm::twoD {
 
 struct MeshData;          // forward declaration
 struct SolverOptions2D;   // forward declaration
+class SourceResultHistory;
 
 /**
  * @brief Default 2D output plugin: writes CF/UGRID-compliant HDF5 file.
@@ -211,7 +217,40 @@ public:
     /// Bitmask of report2d::Var groups in effect (for tests / the C API).
     unsigned reportVariables() const noexcept { return report_vars_; }
 
+    /// Producer handoff of immutable accepted source histories; HDF5 remains
+    /// exclusively on the output owner thread. Optional internal hook, no
+    /// automatic runtime ownership activation or plugin SDK payload change.
+    void enqueueSourceHistory(std::shared_ptr<const SourceResultHistory> history);
+
+
 private:
+    friend class openswmm::SWMMEngine;
+    // Internal single-file, water-only continuation. IO must be idle.
+    bool checkpoint_fresh_ = false;
+    bool checkpoint_write_failed_ = false;
+    void checkpointWriteStatus(herr_t);
+    std::string checkpoint_header_;
+    struct PreparedCheckpoint;
+    std::string checkpointBytes(const SimulationContext&, double next_report_ms,
+                                const SimulationSnapshot&);
+    std::shared_ptr<PreparedCheckpoint> prepareCheckpoint(const SimulationContext&,
+        double next_report_ms, const SimulationSnapshot&, const SourceResultHistory*, std::string);
+    void installCheckpoint(PreparedCheckpoint&);
+    io::CheckpointOutputPublication::Output checkpointPublication(const PreparedCheckpoint&) const;
+    void adoptCheckpoint(PreparedCheckpoint&) noexcept;
+    void validateCheckpoint(hid_t, const SimulationContext&, double, const SimulationSnapshot&,
+                            hsize_t, double, bool) const;
+    std::vector<hid_t*> checkpointDatasets();
+    void closeDatasets() noexcept;
+    std::string fileBytes() const;
+    std::string captureFileCheckpoint(const SimulationContext&,double,const SimulationSnapshot&,const std::filesystem::path&,
+        std::shared_ptr<io::OwnedCheckpointFile>&);
+    std::shared_ptr<PreparedCheckpoint> prepareFileCheckpoint(const SimulationContext&,double,const SimulationSnapshot&,std::string);
+    void resolveCheckpointDatasets(PreparedCheckpoint&,const SimulationSnapshot&);
+    std::mutex source_mutex_;
+    std::vector<std::shared_ptr<const SourceResultHistory>> source_pending_;
+    std::shared_ptr<const SourceResultHistory> source_written_;
+    int writePendingSourceHistory();
     // ---- results-file size controls (configureOutput) ----
     hid_t    storage_type_ = H5T_NATIVE_DOUBLE;  ///< H5T_IEEE_F32LE when FLOAT32
     int      compression_  = 4;                  ///< zlib level; 0 = none
@@ -248,6 +287,11 @@ private:
     hid_t ds_face_infil_rate_      = H5I_INVALID_HID;
     hid_t ds_face_infil_cum_       = H5I_INVALID_HID;
     hid_t ds_face_rain_cum_        = H5I_INVALID_HID;
+    std::array<hid_t, meshSnowFields.size()> ds_snow_ = [] {
+        std::array<hid_t, meshSnowFields.size()> ids; ids.fill(H5I_INVALID_HID); return ids;
+    }();
+    void createSnowDatasets(const SimulationSnapshot&);
+
     /// Overland transport S1: [nTime, nSpecies, nFace] species concentration.
     /// Created lazily on the first update() carrying species; absent when the
     /// model has no 2D transport.

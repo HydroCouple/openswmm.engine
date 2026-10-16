@@ -81,6 +81,22 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
     sc.ensure(static_cast<std::size_t>(nn), static_cast<std::size_t>(nl),
               uns);
 
+    // Review B14 (2026-10-15): arm the species routing ledger on the first
+    // routed step, opening it with the stored mass exactly as the pollutant
+    // ledger's initMassBalance does (concentration × volume, nodes + links).
+    auto& led = rx.msx_ledger;
+    if (!led.armed || led.init.size() != uns) {
+        led.arm(uns);
+        for (int i = 0; i < nn; ++i)
+            for (std::size_t s = 0; s < uns; ++s)
+                led.init[s] += rx.msx_node_conc[static_cast<std::size_t>(i) * uns + s] *
+                               ctx.nodes.old_volume[static_cast<std::size_t>(i)];
+        for (int j = 0; j < nl; ++j)
+            for (std::size_t s = 0; s < uns; ++s)
+                led.init[s] += rx.msx_link_conc[static_cast<std::size_t>(j) * uns + s] *
+                               ctx.links.old_volume[static_cast<std::size_t>(j)];
+    }
+
     // ---- 1. Old-state snapshots (post-reaction: the react stages ran
     //         earlier in execute(), so transport moves this step's reacted
     //         concentrations — the Lie split the header documents). --------
@@ -110,7 +126,7 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
             sc.mass_in[udn * uns + s] += q * sc.link_old[uj * uns + s];
     }
 
-    // ---- 3. Node mixing (mixAtNodes mirror; no evap factor). External
+    // ---- 3. Node mixing (mixAtNodes mirror, storage evap factor). External
     //         loads: U2 (2026-09-07) — [INFLOWS] rows naming a species
     //         arrive through msx_ext_mass_in (a RATE, the qual_mass_in
     //         shape) and join the link mass here; empty when no such row
@@ -133,10 +149,23 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
         // exactly as they do for a pollutant.
         const bool reactor = quality::nodeIsReactor(ctx, i);
         const bool dry     = quality::nodeIsDry(ctx, i, q_in);
+        // Review B1 (2026-10-15): a species concentrates with the water it
+        // is dissolved in, exactly as a pollutant does (mixAtNodes).
+        const double f_evap = reactor ? quality::storageEvapFactor(ctx, i) : 1.0;
+        // The storage unit's exfiltration VOLUME this step, booked at the
+        // stored concentration before evaporation — mixAtNodes' seepage row.
+        double v_exfil = 0.0;
+        if (reactor) {
+            const int srow = ctx.node_subtypes.storage_row(i);
+            const auto& st = ctx.node_subtypes.storages;
+            if (srow >= 0 && static_cast<std::size_t>(srow) < st.exfil_loss.size())
+                v_exfil = st.exfil_loss[static_cast<std::size_t>(srow)];
+        }
         for (std::size_t s = 0; s < uns; ++s) {
             const double c_old = sc.node_old[ui * uns + s];
             const double ext_rate = has_ext ? rx.msx_ext_mass_in[ui * uns + s] : 0.0;
             const double mass = (sc.mass_in[ui * uns + s] + ext_rate) * dt;
+            led.inflow[s] += ext_rate * dt;
 
             if (!reactor) {
                 // findNodeQual: no storage volume, so the concentration is
@@ -153,21 +182,27 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
                 continue;
             }
 
+            led.seepage[s] += v_exfil * c_old;
+            const double c1 = c_old * f_evap;
             double c_new;
             if (q_in <= LEGACY_ZERO) {
-                c_new = zero_bf ? 0.0 : c_old;
+                c_new = zero_bf ? 0.0 : c1;
             } else {
                 const double c_in  = mass / v_in;
-                const double c_max = std::max(c_old, c_in);
-                c_new = (c_old * v_old + mass) / (v_old + v_in);
+                const double c_max = std::max(c1, c_in);
+                c_new = (c1 * v_old + mass) / (v_old + v_in);
                 c_new = std::min(c_new, c_max);
             }
-            if (dry) c_new = 0.0;
+            if (dry) {
+                led.final_dry[s] += c_new * ctx.nodes.volume[ui];
+                c_new = 0.0;
+            }
             rx.msx_node_conc[ui * uns + s] = std::max(c_new, 0.0);
         }
     }
 
-    // ---- 4. Link update (updateLinkQuality mirror; k = 0, no evap). ------
+    // ---- 4. Link update (updateLinkQuality mirror; k = 0; seepage and
+    //         evaporation as for a pollutant). ------------------------------
     const bool is_steady =
         (ctx.options.routing_model == RoutingModel::STEADY);
     for (int j = 0; j < nl; ++j) {
@@ -187,25 +222,86 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
                                  ? 0.0
                                  : quality::conduitMixingInflow(ctx, j, dt);
         const bool dry = !is_steady && !passthrough && quality::linkIsDry(ctx, j);
+        // Review B14: the conduit's seepage and evaporation, exactly as
+        // updateLinkQuality treats a pollutant — seepage booked at the
+        // stored concentration, the store concentrated by fEvap.
+        double q_seep = 0.0, f_evap = 1.0;
+        if (!passthrough) {
+            const int cr = ctx.link_subtypes.conduit_row(j);
+            if (cr >= 0) {
+                const auto ucr = static_cast<std::size_t>(cr);
+                const auto& CD = ctx.link_subtypes.conduits;
+                const double barrels = static_cast<double>(CD.barrels[ucr]);
+                q_seep = CD.seep_loss_rate[ucr] * barrels;
+                const double v_evap = CD.evap_loss_rate[ucr] * barrels * dt;
+                if (v_evap > 0.0 && v_old > quality::ZERO_VOLUME) f_evap += v_evap / v_old;
+            }
+        }
 
         for (std::size_t s = 0; s < uns; ++s) {
             const double c_old = sc.link_old[uj * uns + s];
             const double c_up  = rx.msx_node_conc[uup * uns + s];
             double c_new;
-            if (passthrough || is_steady) {
+            if (passthrough) {
                 c_new = c_up;
-            } else if (q_in <= LEGACY_ZERO) {
-                c_new = c_old;
+            } else if (is_steady) {
+                led.seepage[s] += q_seep * c_up * dt;
+                c_new = c_up * f_evap;
             } else {
-                const double v_in  = q_in * dt;
-                const double c_max = std::max(c_old, c_up);
-                c_new = (c_old * v_old + c_up * v_in) / (v_old + v_in);
-                c_new = std::min(c_new, c_max);
+                led.seepage[s] += q_seep * c_old * dt;
+                const double c1 = c_old * f_evap;
+                if (q_in <= LEGACY_ZERO) {
+                    c_new = c1;
+                } else {
+                    const double v_in  = q_in * dt;
+                    const double c_max = std::max(c1, c_up);
+                    c_new = (c1 * v_old + c_up * v_in) / (v_old + v_in);
+                    c_new = std::min(c_new, c_max);
+                }
             }
-            if (dry) c_new = 0.0;
+            if (dry) {
+                led.final_dry[s] += c_new * ctx.links.volume[uj];
+                c_new = 0.0;
+            }
             rx.msx_link_conc[uj * uns + s] = std::max(c_new, 0.0);
         }
     }
+}
+
+void drainMsxCouplingQueue(SimulationContext& ctx, double dt) {
+    auto& rx = ctx.reactions;
+    auto& q = rx.msx_coupling_queue;
+    const int nsp = rx.n_species();
+    if (q.empty() || nsp <= 0 || !(dt > 0.0)) return;
+    const auto want = static_cast<std::size_t>(ctx.n_nodes()) * static_cast<std::size_t>(nsp);
+    if (q.size() != want) return;
+    if (rx.msx_ext_mass_in.size() != want) rx.msx_ext_mass_in.assign(want, 0.0);
+    // assembleLateralInflows' drain_queue rule, read at the same span: this
+    // runs after msxsurf::deliver and before the span is advanced, so the
+    // species mass leaves the queue at the rate the coupled volume does.
+    const double remaining = ctx.coupling_delivery_remaining;
+    for (std::size_t k = 0; k < want; ++k) {
+        double& qm = q[k];
+        if (qm == 0.0) continue;
+        double rate;
+        if (remaining > dt) { rate = qm / remaining; qm -= rate * dt; }
+        else                { rate = qm / dt;        qm = 0.0; }
+        rx.msx_ext_mass_in[k] += rate;
+    }
+}
+
+void bookMsxSystemOutflow(SimulationContext& ctx, int node, double q,
+                          bool flooding, double dt) {
+    auto& rx = ctx.reactions;
+    auto& led = rx.msx_ledger;
+    const int nsp = rx.n_species();
+    if (!led.armed || nsp <= 0 || !(q > 0.0) || node < 0) return;
+    const auto uns = static_cast<std::size_t>(nsp);
+    const auto base = static_cast<std::size_t>(node) * uns;
+    if (base + uns > rx.msx_node_conc.size() || led.outflow.size() != uns) return;
+    auto& row = flooding ? led.flooding : led.outflow;
+    for (std::size_t s = 0; s < uns; ++s)
+        row[s] += q * rx.msx_node_conc[base + s] * dt;
 }
 
 }  // namespace openswmm::transport

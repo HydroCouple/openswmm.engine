@@ -162,6 +162,20 @@ std::string serializeReactionSystem(const SimulationContext& ctx) {
                 break;
             }
         }
+        // [REACTION_RAINFALL] (Multispecies Phase 2), only when a species rains in.
+        {
+            bool rain = false;
+            for (const auto v : rx.rain_conc) rain = rain || v != 0.0;
+            if (rain) {
+                out += "\n[REACTION_RAINFALL]\n";
+                out += ";;Species         Concentration\n";
+                for (int s = 0; s < rx.n_species(); ++s) {
+                    const auto u = static_cast<std::size_t>(s);
+                    if (u < rx.rain_conc.size() && rx.rain_conc[u] != 0.0)
+                        out += rx.species_name[u] + "  " + fmt_double(rx.rain_conc[u]) + "\n";
+                }
+            }
+        }
         if (any || any_own_elem) {
             out += "\n[REACTION_QUALITY]\n";
             out += ";;Scope    [Element]        Species          Value\n";

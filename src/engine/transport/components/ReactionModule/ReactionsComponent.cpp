@@ -113,9 +113,19 @@ void parseOptions(SimulationContext& ctx, const std::vector<std::string>& lines,
             else if (val == "CM2") rx.area_units = ReactionAreaUnits::CM2;
             else errors.push_back("[REACTION_OPTIONS] unknown AREA_UNITS '" +
                                   tok[1] + "' (FT2|M2|CM2).");
+            // Physics review A3: no wall-area term exists (AV is refused).
+            if (rx.area_units != ReactionAreaUnits::FT2)
+                ctx.warnings.push_back("[REACTION_OPTIONS] AREA_UNITS " + val +
+                    " has no effect: no reaction expression can use a wall "
+                    "area yet.");
         } else if (key == "TIMESTEP") {
             if (to_num(tok[1], num) && num >= 0.0) rx.timestep = num;
             else errors.push_back("[REACTION_OPTIONS] bad TIMESTEP '" + tok[1] + "'.");
+            // Physics review A3: kept for round trip, read by no binding.
+            if (rx.timestep > 0.0)
+                ctx.warnings.push_back("[REACTION_OPTIONS] TIMESTEP " + tok[1] +
+                    " is not used: reactions advance with the quality step and "
+                    "choose their own substeps within it.");
         } else if (key == "ATOL") {
             if (to_num(tok[1], num) && num > 0.0) rx.atol = num;
             else errors.push_back("[REACTION_OPTIONS] bad ATOL '" + tok[1] + "'.");
@@ -389,6 +399,38 @@ void parseQuality(SimulationContext& ctx, const std::vector<std::string>& lines,
     for (const auto& e : mirrorInitialQualityMsxRows(ctx)) errors.push_back(e);
 }
 
+/// [REACTION_RAINFALL] (Multispecies Phase 2): `species concentration`, the
+/// species' counterpart of the [POLLUTANTS] Crain column.
+void parseRainfall(SimulationContext& ctx, const std::vector<std::string>& lines,
+                   std::vector<std::string>& errors) {
+    auto& rx = ctx.reactions;
+    std::vector<bool> seen(static_cast<std::size_t>(rx.n_species()), false);
+    for (const auto& line : lines) {
+        auto tok = Tokenizer::tokenize(line);
+        if (tok.empty()) continue;
+        if (tok.size() < 2) {
+            errors.push_back("[REACTION_RAINFALL] row needs species concentration: '" + line + "'.");
+            continue;
+        }
+        const int m = rx.find_species(tok[0]);
+        if (m < 0) {
+            errors.push_back("[REACTION_RAINFALL] undeclared species '" + tok[0] + "'.");
+            continue;
+        }
+        double v = 0.0;
+        if (!to_num(tok[1], v) || v < 0.0) {
+            errors.push_back("[REACTION_RAINFALL] bad concentration '" + tok[1] + "' for '" + tok[0] + "'.");
+            continue;
+        }
+        if (seen[static_cast<std::size_t>(m)]) {
+            errors.push_back("[REACTION_RAINFALL] duplicate row for '" + tok[0] + "'.");
+            continue;
+        }
+        seen[static_cast<std::size_t>(m)] = true;
+        rx.rain_conc[static_cast<std::size_t>(m)] = v;
+    }
+}
+
 }  // namespace
 
 const std::vector<std::string>& reactionSectionTags() {
@@ -398,7 +440,8 @@ const std::vector<std::string>& reactionSectionTags() {
         "REACTION_PIPES",         "REACTION_TANKS",
         "REACTION_SOURCES",       "REACTION_QUALITY",
         "REACTION_PARAMETERS",    "REACTION_PATTERNS",
-        "REACTION_REPORT",        "REACTION_SUBCATCHMENTS"};
+        "REACTION_REPORT",        "REACTION_SUBCATCHMENTS",
+        "REACTION_RAINFALL"};
     return tags;
 }
 
@@ -451,6 +494,10 @@ void applyReactionSections(SimulationContext& ctx,
     else
         ctx.reactions.init_global.assign(
             static_cast<std::size_t>(ctx.reactions.n_species()), 0.0);
+    ctx.reactions.rain_conc.assign(
+        static_cast<std::size_t>(ctx.reactions.n_species()), 0.0);
+    s = config.find("REACTION_RAINFALL");
+    if (s) parseRainfall(ctx, *s, errors);
 
     // Later-phase sections: defined behavior, never silent acceptance.
     const struct { const char* tag; const char* phase; } later[] = {
@@ -584,8 +631,11 @@ bool recompileReactionSystem(SimulationContext& ctx,
     auto compile_one = [&](const std::string& src_expr, RxExprSpan& span,
                            const std::string& where) {
         int col = 0;
-        const std::string err = compileReactionExpression(
+        std::string err = compileReactionExpression(
             src_expr, sym, rx.token_pool, span, col);
+        // Physics review A1: refuse what would silently read zero.
+        if (err.empty())
+            err = unpopulatedHydVarDiagnostic(src_expr, rx.token_pool, span, col);
         if (!err.empty())
             errors.push_back(where + " (col " + std::to_string(col) +
                              "): " + err + ".");

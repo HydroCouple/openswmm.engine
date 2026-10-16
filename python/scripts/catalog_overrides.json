@@ -203,6 +203,7 @@
   "xsect.full_hyd_radius": "length",
   "xsect.full_section_factor": "section_factor",
   "xsect.max_area": "area",
-  "xsect.max_width": "length"
+  "xsect.max_width": "length",
+  "snow.step_seconds": "s"
  }
 }

@@ -324,7 +324,7 @@ void Infil2D::updateRates(const MeshData& mesh, SurfaceStateData& state, double 
         if (!r.has_method) continue;
 
         if (bank_.owner(static_cast<int>(i)) == surface::InfilBank::Owner::EXTERNAL) continue;
-        state.infil_rate[i] = bank_.rate(static_cast<int>(i), state.rainfall[i], 0.0,
+        state.infil_rate[i] = bank_.rate(static_cast<int>(i), state.liquidRainfall(static_cast<int>(i)), 0.0,
                                          state.depth[i], dt, factors);
     }
 }

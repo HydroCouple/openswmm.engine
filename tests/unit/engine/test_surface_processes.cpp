@@ -96,8 +96,13 @@ TEST(SurfaceProcesses, ExternalOwnerKeepsPublishedRateAndKernelStateUntouched) {
     infil.bank().setOwner(0,surface::InfilBank::Owner::EXTERNAL);
     s.rainfall[0]=1e-5; s.depth[0]=.1; s.infil_rate[0]=2e-6; infil.updateRates(mesh,s,300);
     EXPECT_DOUBLE_EQ(s.infil_rate[0],2e-6); EXPECT_DOUBLE_EQ(infil.cumulative()[0],0);
-    infil.bank().pack(0,m,after); EXPECT_EQ(std::memcmp(before,after,sizeof before),0);
     EXPECT_DOUBLE_EQ(infil.bank().rate(0,1e-5,0,.1,300,{1,1}),0);
+    // External owners serialize no internal state. Re-enable the internal
+    // owner to check that the skipped update left its kernel unchanged.
+    infil.bank().pack(0,m,after);
+    for (double value : after) EXPECT_DOUBLE_EQ(value,0);
+    infil.bank().setOwner(0,surface::InfilBank::Owner::BANK);
+    infil.bank().pack(0,m,after); EXPECT_EQ(std::memcmp(before,after,sizeof before),0);
 }
 
 TEST(SurfaceProcesses, InfiltrationPackRestoresContinuationForEveryStatefulMethod) {

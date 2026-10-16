@@ -31,6 +31,7 @@
 # a caller may deliberately want one.
 #
 # Resolution order:
+#   0. An explicit FETCHCONTENT_SOURCE_DIR_HYDROCOUPLE checkout.
 #   1. An already-defined `HydroCouple::HydroCouple` target (superbuild).
 #   2. `find_package(HydroCouple CONFIG)` --- a system/vcpkg install, or the
 #      sibling checkout via `CMAKE_PREFIX_PATH` / `HydroCouple_ROOT`. Preferred
@@ -47,23 +48,13 @@ set(OPENSWMM_HYDROCOUPLE_GIT_REPOSITORY
     "https://github.com/hydrocouple/HydroCouple.git"
     CACHE STRING "Git remote for the HydroCouple interface headers")
 
-# The pinned commit. EMPTY on purpose since 2026-09-29, and the empty value is
-# the honest one: the owner chose to target ABI 4 — HydroCouple's in-progress
-# "contract-consistency round (breaking)" — which exists only as uncommitted
-# definitions in the developer's checkout. No pushed commit provides it, so
-# there is nothing a clean machine can fetch, and a pin that could never
-# satisfy OPENSWMM_HYDROCOUPLE_EXPECTED_ABI would only move the failure from a
-# clear configure-time message to a static_assert after a clone.
-#
-# History: bef95cb19310c6560e7f35158515bf27ec57ac29 was the pin for ABI 2
-# (dbb5ac49, ceff514d). When ABI 4 is pushed, set this to that commit's FULL
-# 40-character SHA — never an abbreviation, never a branch: WorkflowStatus was
-# once renumbered without a release, and a moving ref is a silent ABI change.
+# CF1 (2026-10-15): ABI 4 and the shared loader header are published. This full
+# SHA was verified against the upstream dev ref; do not replace it with a
+# moving branch. Explicit developer overrides still take precedence.
 set(OPENSWMM_HYDROCOUPLE_GIT_TAG
-    ""
+    "b1722c4d1439e9782b97519ece86cec95096eb2a"
     CACHE STRING
-    "Pinned HydroCouple commit (full SHA). Empty while the targeted ABI exists \
-only uncommitted; see FETCHCONTENT_SOURCE_DIR_HYDROCOUPLE.")
+    "Pinned HydroCouple commit (full SHA); explicit source/install overrides are supported")
 
 # D1 (2026-09-29): the ABI the pin stands for, enforced on EVERY resolution
 # path, not only the fetch. Resolution tries a local install before the pinned
@@ -94,9 +85,8 @@ endfunction()
 # --- 0. an explicit local source tree ----------------------------------------
 #
 # `FETCHCONTENT_SOURCE_DIR_HYDROCOUPLE` is CMake's own override: FetchContent
-# builds the named directory in place instead of cloning. It is the way to
-# compile against UNCOMMITTED HydroCouple definitions, which is what targeting
-# ABI 4 currently requires:
+# builds the named directory in place instead of cloning. Use it when working
+# against a local HydroCouple checkout, including uncommitted definitions:
 #
 #   cmake … -DOPENSWMM_WITH_HYDROCOUPLE=ON \
 #           -DFETCHCONTENT_SOURCE_DIR_HYDROCOUPLE=/path/to/HydroCouple
@@ -163,12 +153,11 @@ endif()
 # been pushed to OPENSWMM_HYDROCOUPLE_GIT_REPOSITORY before anything else.
 if(OPENSWMM_HYDROCOUPLE_GIT_TAG STREQUAL "")
     message(FATAL_ERROR
-        "OPENSWMM_WITH_HYDROCOUPLE=ON, but this build targets HydroCouple ABI "
-        "${OPENSWMM_HYDROCOUPLE_EXPECTED_ABI}, which no pushed commit provides yet, "
-        "and no installed copy was found.\n"
-        "Build against a local checkout:\n"
+        "OPENSWMM_WITH_HYDROCOUPLE=ON, but OPENSWMM_HYDROCOUPLE_GIT_TAG is empty "
+        "and no installed copy was found. Clear this cached override to use the "
+        "default pin, set a full commit SHA, or build against a local checkout:\n"
         "  -DFETCHCONTENT_SOURCE_DIR_HYDROCOUPLE=/path/to/HydroCouple\n"
-        "Once that ABI is pushed, set OPENSWMM_HYDROCOUPLE_GIT_TAG to its full SHA.")
+        "The selected headers must provide ABI ${OPENSWMM_HYDROCOUPLE_EXPECTED_ABI}.")
 endif()
 
 include(FetchContent)

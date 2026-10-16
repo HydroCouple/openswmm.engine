@@ -41,6 +41,10 @@ struct LidNodeState {
     std::vector<double> richards_pressure; // ft, negative means suction
     richards::Report richards_report; // SI diagnostics for last accepted interval
     double richards_bottom_loss = 0.0; // ft3, outside-mesh system loss
+    double richards_completed_time = 0.0; // internal owner clock; R5 joint restart still guarded
+    double richards_mesh_start = 0.0; // accepted hydraulic interval; transient until joint restart qualifies
+    bool richards_mesh_pending_finish = false; // accepted interval awaits one hydraulic port finish
+    bool richards_mesh_routed = false; // final native routing trial awaits finish; no replay/reset
     // One modified Green-Ampt history for the media directly below SURFACE.
     // Other layer/port wetting uses the physical cell and mobile inventories.
     GreenAmptState surface_infil;
@@ -61,9 +65,11 @@ struct LidNodeState {
     double captured_flow = 0.0;
     double treated_volume = 0.0;
 };
+enum class LidNodeBottom { Current=0, Sealed=1, MeshAquifer=2 };
 struct LidNodeConfig {
     int control = -1;
     double initial_saturation = 0.0; // percent
+    LidNodeBottom bottom = LidNodeBottom::Current;
 };
 struct LidNodeOutlet {
     int link = -1;

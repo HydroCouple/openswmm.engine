@@ -80,10 +80,13 @@ function(add_gtest_unit TEST_NAME SOURCE_FILE)
 endfunction()
 
 # ---- Unit test targets ----
+add_gtest_unit(test_engine_outfall_export_receipts test_outfall_export_receipts.cpp)
+add_gtest_unit(test_engine_component_metadata test_component_metadata.cpp)
 # NOTE: Files are created as stubs initially. Implement when the corresponding
 #       engine component is written (see MASTER_IMPLEMENTATION_PLAN.md phases).
 
 add_gtest_unit(test_engine_tokenizer         test_tokenizer.cpp)
+add_gtest_unit(test_engine_inp_path_spaces   test_inp_path_spaces.cpp)
 add_gtest_unit(test_engine_name_index        test_name_index.cpp)
 add_gtest_unit(test_engine_name_case_parity  test_name_case_parity.cpp)
 add_gtest_unit(test_engine_options_parser    test_options_parser.cpp)
@@ -120,6 +123,7 @@ add_gtest_unit(test_engine_report_options_api     test_report_options_api.cpp)
 # open() (before parsing) as in report_writeLogo(), and elapsed time rolls
 # whole days into a "d." prefix as in report_writeSysTime().
 add_gtest_unit(test_engine_report_timing          test_report_timing.cpp)
+add_gtest_unit(test_engine_mc_report_parity       test_mc_report_parity.cpp)
 add_gtest_unit(test_engine_ard_transport          test_ard_transport.cpp)
 add_gtest_unit(test_engine_initial_quality        test_initial_quality.cpp)
 add_gtest_unit(test_engine_process_components     test_process_components.cpp)
@@ -147,6 +151,7 @@ add_gtest_unit(test_engine_outfall_backflow       test_outfall_backflow_quality.
 add_gtest_unit(test_engine_negative_sources       test_negative_sources.cpp)
 add_gtest_unit(test_engine_water_age_api          test_water_age_api.cpp)
 add_gtest_unit(test_engine_transport_options_api  test_transport_options_api.cpp)
+add_gtest_unit(test_engine_capi_gap_closures     test_capi_gap_closures.cpp)
 add_gtest_unit(test_engine_options_malformed      test_options_malformed_values.cpp)
 add_gtest_unit(test_engine_water_age              test_water_age.cpp)
 add_gtest_unit(test_engine_water_age_watershed    test_water_age_watershed.cpp)
@@ -318,6 +323,7 @@ target_compile_definitions(test_engine_groundwater PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
 )
 add_gtest_unit(test_engine_routing          test_routing.cpp)
+add_gtest_unit(test_engine_checkpoint       test_engine_checkpoint.cpp)
 target_compile_definitions(test_engine_routing PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
 )
@@ -422,14 +428,9 @@ set_property(TEST
 # `_out.inp`, shared by test_object_deletion_ext and test_quality_roundtrip.
 # Also renamed. The check below is what stops a third.
 
-# The 2D suites read the HDF5 results file the run writes, so they need the
-# 2D results writer. A 2D build without it (OPENSWMM_2D_HDF5_OUTPUT=OFF) is a
-# deployment configuration — the WebAssembly package — not a test one.
-if(OPENSWMM_BUILD_2D AND NOT OPENSWMM_2D_HDF5_OUTPUT)
-    message(FATAL_ERROR
-        "The 2D unit tests read the HDF5 results file: configure them with "
-        "OPENSWMM_2D_HDF5_OUTPUT=ON (or OPENSWMM_BUILD_2D=OFF).")
-endif()
+# Water/source/checkpoint tests can run without the mesh results writer.
+# These surface/output suites require the writer and read back its HDF5 file.
+if(NOT OPENSWMM_BUILD_2D OR OPENSWMM_2D_HDF5_OUTPUT)
 
 # 2D surface routing tests — geometry, gradients, flux, parsing.
 # The 2D engine sources (MeshBuilder, VertexReconstruction, SurfaceFluxCalculator,
@@ -496,6 +497,8 @@ if(OPENSWMM_BUILD_2D)
 else()
     message(STATUS "OpenSWMM tests: test_engine_2d_surface skipped "
             "(needs -DOPENSWMM_BUILD_2D=ON)")
+endif()
+
 endif()
 
 # Exercise the acceleration path end-to-end under BOTH cell closures. The
@@ -675,6 +678,7 @@ if(OPENSWMM_BUILD_2D)
     add_gtest_unit(test_engine_2d_bc_units test_2d_bc_units.cpp)
     target_compile_definitions(test_engine_2d_bc_units PRIVATE
         OPENSWMM_BC_UNITS_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+    if(OPENSWMM_2D_HDF5_OUTPUT)
     # Results-file size controls ([2D_OPTIONS] OUTPUT_PRECISION /
     # OUTPUT_COMPRESSION / REPORT_2D_VARIABLES / REPORT_2D_SPECIES /
     # REPORT_2D_STEP): grammar + C API round trip, float32 storage, unselected
@@ -693,6 +697,16 @@ if(OPENSWMM_BUILD_2D)
         endif()
         target_link_libraries(test_engine_2d_output_options PRIVATE ${HDF5_C_LIBRARIES})
         target_include_directories(test_engine_2d_output_options PRIVATE ${HDF5_INCLUDE_DIRS})
+    endif()
+        target_compile_definitions(test_engine_checkpoint PRIVATE OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST=1)
+        if(TARGET hdf5::hdf5-shared)
+            target_link_libraries(test_engine_checkpoint PRIVATE hdf5::hdf5-shared)
+        elseif(TARGET hdf5::hdf5-static)
+            target_link_libraries(test_engine_checkpoint PRIVATE hdf5::hdf5-static)
+        else()
+            target_link_libraries(test_engine_checkpoint PRIVATE ${HDF5_C_LIBRARIES})
+            target_include_directories(test_engine_checkpoint PRIVATE ${HDF5_INCLUDE_DIRS})
+        endif()
     endif()
     # E2 (2026-09-07) — TransportPolicy (Domain x Species matrix),
     # swmm_get_transport_matrix, the .rpt matrix block and the [2D_OPTIONS]
@@ -729,6 +743,7 @@ if(OPENSWMM_BUILD_2D)
     add_gtest_unit(test_engine_surface_exchange test_surface_exchange.cpp)
     add_gtest_unit(test_engine_source_clock_groups test_source_clock_groups.cpp)
     add_gtest_unit(test_engine_source_water_driver test_source_water_driver.cpp)
+    add_gtest_unit(test_engine_source_water_delivery_bridge test_source_water_delivery_bridge.cpp)
     add_gtest_unit(test_engine_common_source_stage test_common_source_stage.cpp)
     add_gtest_unit(test_engine_sigma_conservation test_sigma_conservation.cpp)
     target_compile_definitions(test_engine_common_source_stage PRIVATE OPENSWMM_R4_STAGE_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r4_stage_2026-10-06/models")
@@ -748,6 +763,7 @@ if(OPENSWMM_BUILD_2D)
     # of the transport matrix. Decks under tests/output/gw_transport_kernel.
     add_gtest_unit(test_engine_gw_source_forcing test_gw_source_forcing.cpp)
     add_gtest_unit(test_engine_runtime_coupling_api test_runtime_coupling_api.cpp)
+    add_gtest_unit(test_engine_runtime_water_checkpoint test_runtime_water_checkpoint.cpp)
     add_gtest_unit(test_engine_gw_transport_kernel test_gw_transport_kernel.cpp)
     target_compile_definitions(test_engine_gw_transport_kernel PRIVATE
         OPENSWMM_GW_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
@@ -1134,6 +1150,18 @@ if(OPENSWMM_WITH_HYDROCOUPLE)
         PC_OUTPUT_DIR="${PROJECT_SOURCE_DIR}/tests/output/process_components")
     # The libraries must exist on disk before the test scans for them.
     add_dependencies(test_engine_process_component_loader hc_smoke_components)
+    find_package(nlohmann_json CONFIG REQUIRED)
+    add_gtest_unit(test_engine_component test_engine_component.cpp)
+    target_link_libraries(test_engine_component PRIVATE HydroCouple::HydroCouple nlohmann_json::nlohmann_json ${CMAKE_DL_LIBS})
+    target_compile_definitions(test_engine_component PRIVATE ENGINE_COMPONENT_LIBRARY="$<TARGET_FILE:openswmm_engine_component>")
+    add_dependencies(test_engine_component openswmm_engine_component)
+    set(OPENSWMM_COMPONENT_RECEIVER_LIBRARY "" CACHE FILEPATH "Optional CF2 receiver for direct engine-component acceptance")
+    if(OPENSWMM_COMPONENT_RECEIVER_LIBRARY)
+        if(NOT EXISTS "${OPENSWMM_COMPONENT_RECEIVER_LIBRARY}")
+            message(FATAL_ERROR "OPENSWMM_COMPONENT_RECEIVER_LIBRARY does not exist")
+        endif()
+        target_compile_definitions(test_engine_component PRIVATE ENGINE_RECEIVER_LIBRARY="${OPENSWMM_COMPONENT_RECEIVER_LIBRARY}")
+    endif()
 endif()
 
 # ---- No two test sources may share a scratch-fixture name ----

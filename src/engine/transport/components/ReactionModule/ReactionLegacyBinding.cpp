@@ -24,6 +24,7 @@
  */
 
 #include "ReactionLegacyBinding.hpp"
+#include "../../../quality/QualityRouting.hpp"
 
 #include <cmath>
 #include <string>
@@ -41,12 +42,13 @@ namespace {
 /// the species count changes (model reopen).
 struct BindingScratch {
     RxWorkspace ws;
-    std::vector<double> block;
+    std::vector<double> block, added;
     int sized_for = -1;
     void ensure(const ReactionData& rx) {
         if (sized_for != rx.n_species()) {
             ws.init(rx);
             block.assign(static_cast<std::size_t>(rx.n_species()), 0.0);
+            added.assign(static_cast<std::size_t>(rx.n_species()), 0.0);
             sized_for = rx.n_species();
         }
     }
@@ -91,6 +93,44 @@ void ensureMsxState(SimulationContext& ctx) {
     // routeLegacyMsx advects the element state on the CSTR mirror family
     // (QualityRouting.cpp end-of-execute), so RATE species now arrive
     // downstream under every engine.
+}
+
+/// Review A2: one warning per run when the reaction step had to clamp a
+/// negative concentration. The LEGACY binding also books the mass the clamp
+/// added (msx_ledger.clamped); the other engines report it here only.
+void noteNegativeClamp(SimulationContext& ctx, const char* where) {
+    auto& rx = ctx.reactions;
+    if (rx.warned_negative_clamp) return;
+    rx.warned_negative_clamp = true;
+    ctx.warnings.push_back(
+        std::string("Reaction step produced a negative concentration at ") +
+        where + "; it was set to zero (mass added). The explicit solver is "
+        "too coarse for these kinetics: use [REACTION_OPTIONS] SOLVER ROS2, "
+        "COUPLING FULL or a shorter step.");
+}
+
+double clampRateSpecies(const ReactionData& rx, bool tank, double* block,
+                        double* added) {
+    // Review A2 (2026-10-15): an explicit step on stiff kinetics can
+    // overshoot below zero; downstream mixing then clamped it silently and
+    // created mass with no record. Clamp once, where it is produced, and
+    // return what was added. Only RATE species — EQUIL and FORMULA species
+    // may legitimately be signed. The integrator itself stays the pure
+    // numerical method its gates pin.
+    const auto& forms = tank ? rx.tank_form : rx.pipe_form;
+    double total = 0.0;
+    const int ns = rx.n_species();
+    for (int s = 0; s < ns; ++s) {
+        const auto us = static_cast<std::size_t>(s);
+        double a = 0.0;
+        if (us < forms.size() && forms[us] == ReactionExprForm::RATE && block[s] < 0.0) {
+            a = -block[s];
+            block[s] = 0.0;
+        }
+        if (added) added[s] = a;
+        total += a;
+    }
+    return total;
 }
 
 namespace {
@@ -151,10 +191,21 @@ void reactElements(SimulationContext& ctx, double dt, bool tank,
     // TEMPERATURE constant applies.
     const auto& elem_temp =
         tank ? ctx.heat_state.node_temp : ctx.heat_state.link_temp;
+    // Review B14: the routing ledger books what the reaction step does to
+    // each element's mass, on the element's current volume.
+    auto& led = rx.msx_ledger;
+    const bool book = led.armed && led.reacted.size() == static_cast<std::size_t>(ns);
+    const auto& volume = tank ? ctx.nodes.volume : ctx.links.volume;
 
     for (int e = 0; e < n_elems; ++e) {
         const auto ue = static_cast<std::size_t>(e);
         const auto base = ue * static_cast<std::size_t>(ns);
+        // Review A5 (2026-10-15): a flow-through node holds no water for
+        // quality (legacy findNodeQual: concentration is the inflow's, and
+        // nothing reacts there — the pollutant path's KD1 gate). Reacting
+        // its concentration in tank scope removed mass from water passing
+        // through on a volume basis it does not have.
+        if (tank && !quality::nodeIsReactor(ctx, e)) continue;
 
         // HRT for nodes (treatment-variable parity); zero elsewhere in R4 —
         // full hydraulic-variable population is the ARD binding's job (R6).
@@ -177,9 +228,22 @@ void reactElements(SimulationContext& ctx, double dt, bool tank,
             rx, tank, dt, sc.block.data(), hydvar, sc.ws, pollut);
 
         if (rep.ok) {
+            const double v = (ue < volume.size()) ? volume[ue] : 0.0;
+            // Net reacted = what the kinetics removed (before the clamp);
+            // the clamp's addition is booked on its own row.
+            if (book)
+                for (int s = 0; s < ns; ++s) {
+                    const auto us = static_cast<std::size_t>(s);
+                    led.reacted[us] += (msx_conc[base + us] - sc.block[us]) * v;
+                }
+            if (clampRateSpecies(rx, tank, sc.block.data(), sc.added.data()) > 0.0) {
+                noteNegativeClamp(ctx, what);
+                if (book)
+                    for (int s = 0; s < ns; ++s)
+                        led.clamped[static_cast<std::size_t>(s)] += sc.added[static_cast<std::size_t>(s)] * v;
+            }
             for (int s = 0; s < ns; ++s)
-                msx_conc[base + static_cast<std::size_t>(s)] =
-                    sc.block[static_cast<std::size_t>(s)];
+                msx_conc[base + static_cast<std::size_t>(s)] = sc.block[static_cast<std::size_t>(s)];
         } else if (!rx.warned_react_failure) {
             rx.warned_react_failure = true;
             ctx.warnings.push_back(
@@ -210,6 +274,8 @@ void reactSpeciesBlock(SimulationContext& ctx, bool tank, double dt,
                                               sc.block.data(), hydvar,
                                               sc.ws, pollut);
     if (rep.ok) {
+        if (clampRateSpecies(rx, tank, sc.block.data(), nullptr) > 0.0)
+            noteNegativeClamp(ctx, "a LARD element");
         for (int s = 0; s < ns; ++s)
             species_block[s] = sc.block[static_cast<std::size_t>(s)];
     } else if (!rx.warned_react_failure) {

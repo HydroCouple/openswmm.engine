@@ -37,14 +37,19 @@
  */
 
 #include "DefaultOutputPlugin.hpp"
+#include "../hydrology/surface/NativeSnow.hpp"
+#include "../../../include/openswmm/engine/openswmm_output.h"
+#include <limits>
 #include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "../../../include/openswmm/plugin_sdk/PluginState.hpp"
 #include "../../../include/openswmm/plugin_sdk/SimulationSnapshot.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 
+#include <cctype>
 #include <cstring>
 #include <cmath>
+#include <string>
 
 namespace openswmm {
 
@@ -67,6 +72,27 @@ int DefaultOutputPlugin::validate(const SimulationContext& /*ctx*/) {
 }
 
 namespace {
+
+/// E1 (2026-10-14): unit code for a reactions-component species column.
+/// Reported index `p` sits past the pollutants AND the reserved rows; the
+/// species unit string is the [REACTION_SPECIES] token (MG, UG, COUNT —
+/// a trailing "/L" is tolerated). Anything else — a WALL species' mass per
+/// area, say — writes 0 like the reserved rows do: the .out unit field is a
+/// 3-value concentration enum, and readers key on the NAME.
+int msxUnitCode(const openswmm::SimulationContext& ctx, int p) {
+    const auto& rx = ctx.reactions;
+    int m = p - ctx.n_pollutants() - (ctx.options.water_age ? 1 : 0)
+            - (ctx.options.heat_transport ? 1 : 0);
+    if (m < 0 || m >= rx.n_species()) return 0;
+    std::string u = rx.species_units[static_cast<std::size_t>(m)];
+    for (auto& c : u) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    if (u.size() > 2 && u.compare(u.size() - 2, 2, "/L") == 0) u.erase(u.size() - 2);
+    if (u == "MG")    return static_cast<int>(openswmm::MassUnits::MG_PER_L);
+    if (u == "UG")    return static_cast<int>(openswmm::MassUnits::UG_PER_L);
+    if (u == "COUNT") return static_cast<int>(openswmm::MassUnits::COUNTS_PER_L);
+    return 0;
+}
+
 /// Output-stream buffer size. 1 MB: large enough that a 500k-element
 /// header is a handful of writes, small enough to be irrelevant next to
 /// the model itself.
@@ -75,7 +101,7 @@ constexpr std::size_t kOutputBufferBytes = 1u << 20;
 
 int DefaultOutputPlugin::prepare(const SimulationContext& ctx) {
     // Open binary output file
-    out_file_ = openswmm::io::fopen_utf8(out_path_, "w+b");
+    out_file_ = checkpoint_fresh_ ? io::checkpointOpenOutput(io::utf8_path(out_path_)) : io::fopen_utf8(out_path_, "w+b");
     if (!out_file_) {
         last_error_ = "Cannot open output file: " + out_path_;
         return -1;
@@ -101,6 +127,10 @@ int DefaultOutputPlugin::prepare(const SimulationContext& ctx) {
 
     // Write header
     writeHeader(ctx);
+    if (checkpoint_fresh_) {
+        try { checkpoint_header_ = readPrefix(); }
+        catch (const std::exception& e) { last_error_ = e.what(); return -1; }
+    }
 
     step_count_ = 0;
     n_periods_ = 0;
@@ -141,6 +171,11 @@ int DefaultOutputPlugin::update(const SimulationSnapshot& snapshot) {
             auto qi = uj * static_cast<std::size_t>(n_polluts_) + static_cast<std::size_t>(p);
             writeReal4(static_cast<float>(
                 qi < snapshot.subcatch_quality.size() ? snapshot.subcatch_quality[qi] : 0.0));
+        }
+        if(snow_process_)for(int field=0;field<SubcatchSnapshot::snow_process_count;++field) {
+            const auto i=uj*SubcatchSnapshot::snow_process_count+field;
+            writeReal4(static_cast<float>(i<snapshot.subcatch.snow_process.size()?
+                snapshot.subcatch.snow_process[i]:std::numeric_limits<double>::quiet_NaN()));
         }
     }
 
@@ -267,7 +302,8 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
     // block and misalign every consumer.
     n_polluts_ = ctx.options.ignore_quality ? 0 : ctx.n_reported_species();
 
-    n_subcatch_vars_ = 8 + n_polluts_;  // rainfall..soilmoist + pollutants
+    snow_process_=surface::hasUebSnow(ctx);
+    n_subcatch_vars_ = 8 + n_polluts_ + (snow_process_?SubcatchSnapshot::snow_process_count:0);  // rainfall..soilmoist + pollutants
     n_node_vars_ = 6 + n_polluts_;      // depth..overflow + pollutants
     n_link_vars_ = 5 + n_polluts_;      // flow..capacity + pollutants
 
@@ -320,7 +356,7 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
         // [POLLUTANTS]) and segfaulted the writer.
         const bool is_reserved = (p >= ctx.n_pollutants());
         writeInt4(is_reserved
-                      ? 0
+                      ? msxUnitCode(ctx, p)
                       : static_cast<int>(
                             ctx.pollutants.units[static_cast<std::size_t>(p)]));
     }
@@ -396,7 +432,9 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
 
     // Variable codes
     writeInt4(n_subcatch_vars_);
-    for (int v = 0; v < n_subcatch_vars_; ++v) writeInt4(v);
+    for (int v = 0; v < 8+n_polluts_; ++v) writeInt4(v);
+    if(snow_process_)for(int v=0;v<SubcatchSnapshot::snow_process_count;++v)
+        writeInt4(SWMM_OUT_SUBCATCH_SNOW_SWE+v);
 
     writeInt4(n_node_vars_);
     for (int v = 0; v < n_node_vars_; ++v) writeInt4(v);

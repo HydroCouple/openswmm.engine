@@ -559,6 +559,16 @@ class OutSubcatchVar(IntEnum):
     GW_ELEV = 6
     SOIL_MOIST = 7
     POLLUT_BASE = 8
+    SNOW_SWE = 65536
+    SNOW_ENERGY = 65537
+    SNOW_SURFACE_TEMP = 65538
+    SNOW_BULK_TEMP = 65539
+    SNOW_ALBEDO = 65540
+    SNOW_COVER = 65541
+    SNOW_MELT = 65542
+    SNOW_INPUT = 65543
+    SNOW_SUBLIMATION = 65544
+    SNOW_TIME = 65545
 
 
 class OutNodeVar(IntEnum):
@@ -1007,6 +1017,41 @@ class HeatCloudParam(IntEnum):
     SW_ATTEN_N = 2
     LW_CLOUD_K = 3
 
+
+class HeatSedimentParam(IntEnum):
+    """``[SEDIMENT_EXCHANGE]`` GLOBAL parameters. Mirrors ``SWMM_HeatSedimentParam``."""
+    THERMAL_DIFFUSIVITY = 0
+    SOLUTE_DIFFUSIVITY = 1
+    BED_THICKNESS = 2
+    GROUND_DEPTH = 3
+    GROUND_TEMPERATURE = 4
+    HYPORHEIC_VELOCITY = 5
+    DENSITY = 6
+    SPECIFIC_HEAT = 7
+    INITIAL_TEMPERATURE = 8
+
+class HeatAttr(IntEnum):
+    """Per-element heat override attributes. Mirrors ``SWMM_HeatAttr``."""
+    ALBEDO = 0
+    SHADE_FACTOR = 1
+    SKY_VIEW = 2
+    EMISS_WATER = 3
+    EMISS_LANDCOVER = 4
+    LANDCOVER_TEMPERATURE = 5
+    THERMAL_DIFFUSIVITY = 6
+    SOLUTE_DIFFUSIVITY = 7
+    BED_THICKNESS = 8
+    GROUND_DEPTH = 9
+    GROUND_TEMPERATURE = 10
+    HYPORHEIC_VELOCITY = 11
+    SEDIMENT_DENSITY = 12
+    SEDIMENT_SPECIFIC_HEAT = 13
+
+class HeatOverrideScope(IntEnum):
+    """Per-element override scope. Mirrors ``SWMM_HeatOverrideScope``."""
+    TAG = 1
+    NODE = 2
+    LINK = 3
 
 class HeatSourceKind(IntEnum):
     """``[HEAT_SOURCES]`` water sources. Mirrors ``SWMM_HeatSourceKind``."""

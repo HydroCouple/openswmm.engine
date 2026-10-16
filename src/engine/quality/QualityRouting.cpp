@@ -112,6 +112,55 @@ bool nodeIsReactor(const SimulationContext& ctx, int node) {
            ctx.nodes.old_volume[ui] > ZERO_VOLUME;
 }
 
+// Review B1 (2026-10-15): one owner for the storage evaporation factor, so the
+// pollutant reactor and the species mirror cannot drift apart again (the
+// mirror had none). Legacy findStorageQual: fEvap = 1 + vEvap/v1 from the
+// unit's ACTUAL evaporation volume, skipped below a litre of old volume.
+double storageEvapFactor(const SimulationContext& ctx, int node) {
+    double f_evap = 1.0;
+    const auto ui = static_cast<std::size_t>(node);
+    if (ui >= ctx.nodes.type.size() || ctx.nodes.type[ui] != NodeType::STORAGE)
+        return f_evap;
+    const int srow = ctx.node_subtypes.storage_row(node);
+    if (srow < 0) return f_evap;
+    const auto us = static_cast<std::size_t>(srow);
+    const auto& st = ctx.node_subtypes.storages;
+    const double v_old = ctx.nodes.old_volume[ui];
+    const double v_evap =
+        (us < st.evap_loss.size()) ? std::max(0.0, st.evap_loss[us] - st.lid_state[us].evap_volume) : 0.0;
+    if (v_evap > 0.0 && v_old > ZERO_VOLUME) f_evap += v_evap / v_old;
+    return f_evap;
+}
+
+// Review A6 (2026-10-15): residence time at storage units that carry no
+// treatment expression. Tank kinetics read nodes.hrt; it was only ever
+// updated inside the treatment path, so an untreated storage unit held its
+// initial value for the whole run under every quality solver. Treated
+// nodes keep their existing update (applyNodeTreatment, legacy-parity
+// gated) and are skipped here so no node is advanced twice. The flow is the
+// node's hydraulic inflow, legacy updateHRT's `Node.inflow`. Runs only with
+// a reactions component: HRT is read by nothing else, and ordinary decks
+// keep byte-identical hot-start files.
+void updateUntreatedStorageHrt(SimulationContext& ctx, double dt) {
+    if (dt <= 0.0 || !transport::legacyReactionsActive(ctx)) return;
+    auto& nodes = ctx.nodes;
+    const auto& treat = ctx.treatment;
+    const bool any_treatment = ctx.n_pollutants() > 0 && treat.hasAny();
+    for (int j = 0; j < ctx.n_nodes(); ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        if (nodes.type[uj] != NodeType::STORAGE || uj >= nodes.hrt.size()) continue;
+        if (any_treatment && uj < treat.has_treatment.size() && treat.has_treatment[uj])
+            continue;
+        const double v_old = nodes.old_volume[uj];
+        if (v_old < LEGACY_ZERO) {
+            nodes.hrt[uj] = 0.0;
+        } else {
+            const double q = (uj < nodes.inflow.size()) ? std::abs(nodes.inflow[uj]) : 0.0;
+            nodes.hrt[uj] = std::max((nodes.hrt[uj] + dt) * v_old / (v_old + q * dt), 0.0);
+        }
+    }
+}
+
 bool nodeIsDry(const SimulationContext& ctx, int node, double q_in) {
     const auto ui = static_cast<std::size_t>(node);
     return (ctx.nodes.volume[ui] <= ZERO_VOLUME ||
@@ -234,6 +283,47 @@ void QualitySolver::init(int n_nodes, int n_links, int n_pollutants) {
     (void)n_links;
 }
 
+// Review D2 / gaining conduits (2026-10-15): water that already reached a
+// node hydraulically (through a surface outfall from the mesh, or gained by a
+// conduit from the aquifer) joins the node's mixing volume with the mass the
+// donor gave up. The volume is outside qual_vol_lat_: it is not lateral flow
+// and takes no part in legacy's floored-net denominator.
+void QualitySolver::addQualityOnlyInflows(SimulationContext& ctx, double dt) {
+    if (!(dt > 0.0)) return;
+    const int np = ctx.n_pollutants();
+    const int ns = ctx.reactions.n_species();
+    auto& nodes = ctx.nodes;
+    auto& mb = ctx.mass_balance;
+    auto apply = [&](SimulationContext::QualityOnlyInflow& q, std::vector<double>& row) {
+        if (!q.any) return;
+        const auto nn = std::min<std::size_t>(q.vol.size(), static_cast<std::size_t>(ctx.n_nodes()));
+        auto& rx = ctx.reactions;
+        if (ns > 0 && rx.msx_ext_mass_in.size() != static_cast<std::size_t>(ctx.n_nodes()) * static_cast<std::size_t>(ns))
+            rx.msx_ext_mass_in.assign(static_cast<std::size_t>(ctx.n_nodes()) * static_cast<std::size_t>(ns), 0.0);
+        for (std::size_t i = 0; i < nn; ++i) {
+            if (q.vol[i] <= 0.0) continue;
+            nodes.qual_vol_in[i] += q.vol[i];
+            for (int p = 0; p < np; ++p) {
+                const auto k = i * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
+                if (k >= q.mass.size() || k >= nodes.qual_mass_in.size()) continue;
+                nodes.qual_mass_in[k] += q.mass[k] / dt;
+                if (static_cast<std::size_t>(p) < row.size()) row[static_cast<std::size_t>(p)] += q.mass[k];
+            }
+            for (int m = 0; m < ns; ++m) {
+                const auto k = i * static_cast<std::size_t>(ns) + static_cast<std::size_t>(m);
+                if (k < q.msx.size() && k < rx.msx_ext_mass_in.size()) rx.msx_ext_mass_in[k] += q.msx[k] / dt;
+            }
+            if (ctx.options.water_age && i < ctx.water_age_state.node_age_vol_in.size())
+                ctx.water_age_state.node_age_vol_in[i] += q.age_vol[i] / dt;
+            if (ctx.options.heat_transport && i < ctx.heat_state.node_temp_vol_in.size())
+                ctx.heat_state.node_temp_vol_in[i] += q.temp_vol[i] / dt;
+        }
+        q.clear();
+    };
+    apply(ctx.surface_outfall_quality, mb.qual_routing_ex_in);
+    apply(ctx.link_gain_quality, mb.qual_routing_gw_in);
+}
+
 void QualitySolver::assembleExternalLoads(SimulationContext& ctx, double dt) {
     if (!loadersNeeded(n_pollutants_, ctx)) return;
 
@@ -272,6 +362,7 @@ void QualitySolver::assembleExternalLoads(SimulationContext& ctx, double dt) {
     addIfaceLoads(ctx, dt);        // Routing interface file loads → nodes
     addExtInflowLoads(ctx, dt);    // Direct [INFLOWS] CONCEN/MASS loads → nodes
     addCouplingLoads(ctx, dt);     // S3: 2D→1D junction drain (volume + mass)
+    addQualityOnlyInflows(ctx, dt); // review D2 + gaining conduits
 
     // legacy seeds the node's quality-inflow DENOMINATOR with the NET lateral
     // flow floored at zero — routing.c:480, Node.qualInflow =
@@ -288,7 +379,11 @@ void QualitySolver::assembleExternalLoads(SimulationContext& ctx, double dt) {
     // correction is never positive (net <= sum of positive parts), and the
     // S3 coupling volume is deliberately outside it (legacy has no 2D seam;
     // legacy-comparable runs carry coupling_inflow == 0).
-    if (n_pollutants_ > 0) {
+    // Review B2 (2026-10-15): the denominator is a property of the node's
+    // WATER, shared by every species family that mixes over qual_vol_in
+    // (reaction species, age, temperature). Gated on the pollutant count it
+    // made an MSX-only deck mix the same inflow over a different volume.
+    {
         auto& nodes = ctx.nodes;
         const std::size_t nn = std::min(qual_vol_lat_.size(),
                                         nodes.qual_vol_in.size());
@@ -538,6 +633,7 @@ void QualitySolver::execute(SimulationContext& ctx, double dt) {
     // species. The first draft placed it after reactLegacyLinks and the
     // FORMULA tracking gate promptly drifted by 4.3e-3: transport was
     // mixing a value the formula had just pinned.
+    updateUntreatedStorageHrt(ctx, dt);   // review A6
     transport::routeLegacyMsx(ctx, dt);
     // Legacy's per-node order is reaction, then mixing, then treatment — the
     // first two inside findStorageQual, treatmnt_treat immediately after it
@@ -1131,21 +1227,18 @@ void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt) {
         // inferred evaporation from v_new < v_old + v_in — true for EVERY
         // draining node, and outflow is not evaporation — inflating the store
         // to retain mass the downstream link had already pulled.
-        double f_evap = 1.0;
+        const double f_evap = storageEvapFactor(ctx, i);
         double q_exfil = 0.0;
         if (is_storage) {
             const int srow = ctx.node_subtypes.storage_row(i);
             if (srow >= 0) {
                 const auto us = static_cast<size_t>(srow);
                 const auto& st = ctx.node_subtypes.storages;
-                const double v_evap =
-                    (us < st.evap_loss.size()) ? std::max(0.0, st.evap_loss[us] - st.lid_state[us].evap_volume) : 0.0;
                 const double v_exfil =
                     (us < st.exfil_loss.size()) ? st.exfil_loss[us] : 0.0;
                 // legacy holds Storage[k].exfilLoss as a VOLUME over the step
                 // and books the seepage ledger at the rate exfilLoss/tStep.
                 q_exfil = (dt > 0.0) ? v_exfil / dt : 0.0;
-                if (v_evap > 0.0 && v_old > ZERO_VOLUME) f_evap += v_evap / v_old;
             }
         }
 
@@ -1698,10 +1791,15 @@ void applyNodeTreatment(SimulationContext& ctx, int j, double dt,
                 mass_lost = std::max(0.0, mass_lost);
             }
 
+            // Review B6 (2026-10-15): `mass_lost` is legacy's RATE (it
+            // passes it to massbal_addReactedMass, which multiplies by the
+            // step). Every other writer of qual_routing_reacted books MASS,
+            // so the rate goes in times dt — booked bare, "Mass Reacted"
+            // held one routing step's worth per second of removal.
             if (mass_lost > 0.0 &&
                 static_cast<std::size_t>(p) < ctx.mass_balance.qual_routing_reacted.size()) {
                 ctx.mass_balance.qual_routing_reacted[static_cast<std::size_t>(p)]
-                    += mass_lost;
+                    += mass_lost * dt;
             }
 
             nodes.conc[ci] = cOut;

@@ -255,7 +255,8 @@ static void getDxDt(GWContext& c, double /*t*/, const double* x, double* dxdt) {
 
 void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap,
                        const double* infil_rate, const double* sw_head,
-                       const double* frac_perv, const double* perv_evap_rate) {
+                       const double* frac_perv, const double* perv_evap_rate,
+                       int evap_pattern_month) {
     int n = soa_.n_subcatch;
     if (n == 0) return;
 
@@ -288,7 +289,8 @@ void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap,
         double evap_frac = soa_.upper_evap_frac[ui];
         int pat_idx = soa_.upper_evap_pat[ui];
         if (pat_idx >= 0 && pat_idx < ctx.patterns.count()) {
-            int month = datetime::monthOfYear(ctx.current_date);
+            int month = evap_pattern_month > 0 ? evap_pattern_month
+                : datetime::monthOfYear(ctx.current_date);
             auto upat = static_cast<std::size_t>(pat_idx);
             const auto& facs = ctx.patterns.factors[upat];
             if (month >= 1 && month <= static_cast<int>(facs.size()))

@@ -42,6 +42,7 @@
 #ifndef OPENSWMM_SIMULATION_SNAPSHOT_HPP
 #define OPENSWMM_SIMULATION_SNAPSHOT_HPP
 
+#include "SnowResults.hpp"
 #include <vector>
 #include <string>
 #include <cstdint>
@@ -87,6 +88,10 @@ struct LinkSnapshot {
  * @ingroup engine_plugins
  */
 struct SubcatchSnapshot {
+    // Optional UEB process columns, in SWMM_OUT_SUBCATCH_SNOW_* order.
+    // SI regardless of project display units; missing values remain NaN.
+    static constexpr int snow_process_count = 10;
+    std::vector<double> snow_process; // [subcatch * snow_process_count + field]
     std::vector<double> rainfall;   ///< Rainfall rate [display rate units]
     std::vector<double> snow_depth; ///< Snow depth [display depth units]
     std::vector<double> evap;       ///< Evaporation [display rate units]
@@ -271,6 +276,7 @@ struct SimulationSnapshot {
     std::vector<double> surface_grad_hy;        ///< Unlimited head gradient ∂h/∂y, per face
     std::vector<double> surface_grad_hx_lim;    ///< Slope-limited head gradient ∂h/∂x, per face
     std::vector<double> surface_grad_hy_lim;    ///< Slope-limited head gradient ∂h/∂y, per face
+    MeshSnowSnapshot surface_snow;              ///< Accepted snow state/ledgers, SI; own completed clock.
     std::vector<double> surface_rainfall;       ///< Rainfall intensity (m/s), per face
     std::vector<double> surface_coupling_flux;  ///< Coupling flux to SWMM node (m/s, + = into 2D), per face
     std::vector<double> surface_net_source;     ///< Net source/sink (m/s), per face

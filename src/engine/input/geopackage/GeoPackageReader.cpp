@@ -1549,15 +1549,19 @@ static void read_lid_nodes(sqlite3* db, SimulationContext& ctx, const std::strin
         }
     }
     if (table_exists(db, "lid_nodes")) {
-        auto stmt = prepare(db, "SELECT node_id,lid_id,initial_saturation FROM lid_nodes WHERE simulation_id=?");
+        const bool has_bottom = column_exists(db, "lid_nodes", "bottom_mode");
+        auto stmt = prepare(db, std::string("SELECT node_id,lid_id,initial_saturation,") +
+            (has_bottom ? "bottom_mode" : "0") + " FROM lid_nodes WHERE simulation_id=?");
         bind_text(stmt.get(), 1, sim);
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             int n = ctx.node_names.find(column_text(stmt.get(), 0));
             int c = ctx.lid_names.find(column_text(stmt.get(), 1));
             int r = ctx.node_subtypes.storage_row(n);
             double sat = column_double(stmt.get(), 2);
-            if (r < 0 || c < 0 || !std::isfinite(sat) || sat < 0 || sat > 100) throw std::runtime_error("Invalid LID node assignment");
-            ctx.node_subtypes.storages.lid[r] = {c, sat};
+            int bottom = sqlite3_column_int(stmt.get(), 3);
+            if (r < 0 || c < 0 || !std::isfinite(sat) || sat < 0 || sat > 100 ||
+                bottom < 0 || bottom > 2) throw std::runtime_error("Invalid LID node assignment");
+            ctx.node_subtypes.storages.lid[r] = {c, sat, static_cast<LidNodeBottom>(bottom)};
         }
     }
     if (table_exists(db, "lid_node_outlets")) {

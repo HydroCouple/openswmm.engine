@@ -102,6 +102,12 @@
                     ]
                 }
             ]
+        },
+        "hydrocouple": {
+            "description": "Header-only HydroCouple native component wrapper (requires an explicitly supplied ABI-compatible interface checkout)",
+            "dependencies": [
+                "nlohmann-json"
+            ]
         }
     },
     "overrides": [

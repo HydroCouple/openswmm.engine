@@ -6,6 +6,14 @@
 cdef extern from "openswmm_2d.h":
     int swmm_2d_set_edge_bc_concentrations(void* engine, int cell, int edge, const double* values, int count) nogil
     int swmm_2d_clear_edge_bc(void* engine, int cell, int edge)
+    int swmm_2d_initial_quality_count(void* engine, int* count)
+    int swmm_2d_get_initial_quality(void* engine, int index, int* scope, char* tag, int tag_len, int* cell, char* species, int species_len, double* conc)
+    int swmm_2d_set_initial_quality(void* engine, int scope, const char* tag, int cell, const char* species, double conc)
+    int swmm_2d_remove_initial_quality(void* engine, int index)
+    int swmm_2d_boundary_quality_count(void* engine, int* count)
+    int swmm_2d_get_boundary_quality(void* engine, int index, int* cell, int* edge, char* species, int species_len, double* conc)
+    int swmm_2d_set_boundary_quality(void* engine, int cell, int edge, const char* species, double conc)
+    int swmm_2d_remove_boundary_quality(void* engine, int index)
     int swmm_2d_get_report_rainfall_bulk(void* engine, double report_date, double* rainfall) nogil
     # Status
     int swmm_2d_is_active(void* engine, int* active)

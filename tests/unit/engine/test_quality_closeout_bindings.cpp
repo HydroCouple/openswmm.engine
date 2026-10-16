@@ -35,6 +35,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <cmath>
 
 #include <cstdio>
 #include <fstream>
@@ -42,6 +43,7 @@
 
 #include <openswmm/engine/openswmm_engine.h>
 
+#include <openswmm/engine/openswmm_massbalance.h>
 #include "core/SWMMEngine.hpp"
 
 namespace {
@@ -259,6 +261,43 @@ TEST(QualityCloseoutTest, TreatmentRemovesUnderLard) {
         EXPECT_EQ(w.find("treatment interop is"), std::string::npos) << w;
     swmm_engine_destroy(treated);
     swmm_engine_destroy(untreated);
+}
+
+// ---------------------------------------------------------------------------
+// Review B6 (2026-10-15): treatment books MASS into the reacted ledger, not a
+// rate. A 50 % removal at J1 under LEGACY on a steady 100 mg/L inflow: the
+// quality routing balance must close. At base the removal was divided by the
+// 5 s routing step before it was added, the "Mass Reacted" row held a fifth
+// of the removal, and the continuity error was large.
+TEST(QualityCloseoutTest, TreatmentRemovalIsBookedAsMassAndTheBalanceCloses) {
+    const std::string polls = "[POLLUTANTS]\nTSS MG/L 0 0 0 0\n\n";
+    const std::string treat = "[TREATMENT]\nJ1 TSS R = 0.5\n\n";
+    const std::string inflow_tss =
+        "[TIMESERIES]\nT_TSS 0:00 100\nT_TSS 2:00 100\n\n";
+    std::string d = deck("", polls + treat + inflow_tss);
+    const std::string mark = "[INFLOWS]\nJ0 FLOW \"\" FLOW 1.0 1.0 3.0\n";
+    const auto at = d.find(mark);
+    ASSERT_NE(at, std::string::npos);
+    d.insert(at + mark.size(), "J0 TSS T_TSS CONCEN 1.0 1.0\n");
+
+    SWMM_Engine e = run("_qcb_treat_ledger", d);
+    ASSERT_NE(e, nullptr);
+    const auto& mb = as_cpp_engine(e).context().mass_balance;
+    ASSERT_FALSE(mb.qual_routing_reacted.empty());
+    const double in  = mb.qual_routing_ex_in[0];
+    const double out = mb.qual_routing_outflow[0];
+    const double reacted = mb.qual_routing_reacted[0];
+    ASSERT_GT(in, 0.0) << "no TSS entered; deck defect";
+    // Half of what reaches J1 is removed there. Allow for the start-up and
+    // the mass still stored in the chain.
+    EXPECT_GT(reacted, 0.3 * in) << "reacted " << reacted << " of " << in;
+    EXPECT_LT(reacted, 0.6 * in) << "reacted " << reacted << " of " << in;
+    double err = 1.0;
+    ASSERT_EQ(swmm_get_quality_continuity_error(e, 0, &err), SWMM_OK);
+    EXPECT_LT(std::fabs(err), 0.01)
+        << "quality routing continuity error " << err * 100.0
+        << " % (in " << in << ", out " << out << ", reacted " << reacted << ")";
+    swmm_engine_destroy(e);
 }
 
 // ---------------------------------------------------------------------------

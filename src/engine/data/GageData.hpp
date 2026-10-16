@@ -176,9 +176,9 @@ struct GageData {
     std::vector<double>         file_start_date;
 
     /**
-     * @brief Resolved rainfall series for a FILE_RAIN gage (windowed to the run).
+     * @brief Resolved rainfall series for a FILE_RAIN gage (full file record).
      * @details Populated by load_external_rain_files() with the station's records
-     *          that fall inside the simulation window, already converted to the
+     *          accepted by the file filters, already converted to the
      *          project's rain depth units.  Reusing a Table gives the runtime the
      *          same cursor/step-function lookup as an inline [TIMESERIES] gage,
      *          without polluting ctx.tables (so INP round-trips still emit FILE).
@@ -295,8 +295,8 @@ struct GageData {
     /** @brief Per-gage accumulator for the current partial hour. */
     std::vector<double>         past_rain_accum;
 
-    /** @brief Per-gage time (seconds) of last past-rain shift. */
-    std::vector<double>         past_rain_time;
+    /** @brief Per-gage seconds in the current partial hour (0..3600). */
+    std::vector<double>         past_rain_interval;
 
     /**
      * @brief Gap #31: Cumulative rainfall accumulator (project rain units).
@@ -362,7 +362,7 @@ struct GageData {
 
         past_rain.assign(un * MAXPASTRAIN, 0.0);
         past_rain_accum.assign(un, 0.0);
-        past_rain_time.assign(un, 0.0);
+        past_rain_interval.assign(un, 0.0);
         cumul_rain_accum.assign(un, 0.0);
         co_gage_index.assign(un, -1);
         comments.assign(un, std::string{});
@@ -395,7 +395,7 @@ struct GageData {
         g(st_used, static_cast<uint8_t>(0));
         // Flat 2D: [gage * MAXPASTRAIN + hour]
         past_rain.resize(un * static_cast<std::size_t>(MAXPASTRAIN), 0.0);
-        g(past_rain_accum, 0.0); g(past_rain_time, 0.0); g(cumul_rain_accum, 0.0);
+        g(past_rain_accum, 0.0); g(past_rain_interval, 0.0); g(cumul_rain_accum, 0.0);
         g(co_gage_index, -1);
         comments.resize(un, std::string{});
     }
@@ -416,7 +416,7 @@ struct GageData {
         e(scale_factor); e(file_start_date);
         e(rainfall); e(next_rainfall); e(api_rainfall); e(next_rain_date); e(is_raining);
         e(st_cur); e(st_next); e(st_rain); e(st_init); e(st_used);
-        e(past_rain_accum); e(past_rain_time); e(cumul_rain_accum); e(co_gage_index);
+        e(past_rain_accum); e(past_rain_interval); e(cumul_rain_accum); e(co_gage_index);
         e(comments);
 
         // Flat 2D past_rain: [gage * MAXPASTRAIN + hour]
@@ -455,7 +455,7 @@ struct GageData {
 
         past_rain.shrink_to_fit();
         past_rain_accum.shrink_to_fit();
-        past_rain_time.shrink_to_fit();
+        past_rain_interval.shrink_to_fit();
         cumul_rain_accum.shrink_to_fit();
         co_gage_index.shrink_to_fit();
         comments.shrink_to_fit();
@@ -473,7 +473,7 @@ struct GageData {
         std::fill(st_used.begin(), st_used.end(), static_cast<uint8_t>(0));
         std::fill(past_rain.begin(),     past_rain.end(),     0.0);
         std::fill(past_rain_accum.begin(), past_rain_accum.end(), 0.0);
-        std::fill(past_rain_time.begin(),  past_rain_time.end(),  0.0);
+        std::fill(past_rain_interval.begin(),  past_rain_interval.end(),  0.0);
         std::fill(cumul_rain_accum.begin(), cumul_rain_accum.end(), 0.0);
         // co_gage_index is static (set at parse time), not reset between runs
     }

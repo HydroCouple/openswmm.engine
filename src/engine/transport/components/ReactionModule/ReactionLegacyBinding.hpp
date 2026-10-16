@@ -52,6 +52,7 @@
 
 namespace openswmm {
 struct SimulationContext;
+struct ReactionData;
 }
 
 namespace openswmm::transport {
@@ -64,6 +65,16 @@ bool legacyReactionsActive(const SimulationContext& ctx);
 /// [REACTION_QUALITY] overrides). Shared by the LEGACY dispatch and the
 /// LARD engine's init — one seeding spelling for both engines.
 void ensureMsxState(SimulationContext& ctx);
+
+/// Review A2: record (once per run) that a reaction step clamped a negative
+/// concentration to zero at `where`.
+void noteNegativeClamp(SimulationContext& ctx, const char* where);
+
+/// Review A2: set every negative RATE species in `block` (scope `tank`) to
+/// zero; writes the concentration added per species to `added` when it is
+/// non-null, returns the sum.
+double clampRateSpecies(const ReactionData& rx, bool tank, double* block,
+                        double* added);
 
 /// L3: integrate ONE species block in place over dt through the shared
 /// integrator. `pollut` may be null (no pollutant context); `tank`

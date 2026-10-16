@@ -257,3 +257,63 @@ class TestPrintSummary(unittest.TestCase):
         print(f"    of which allowlisted:          {len(KNOWN_UNBOUND):>4}")
         print(f"    of which unjustified:          {len(unjustified):>4}")
         print(f"  Declared in .pxd but not called: {len(declared_not_called):>4}")
+
+
+# ---------------------------------------------------------------------------
+# Public surface: every member declared in a .pyi stub is implemented in the
+# matching .pyx/.py class (directly or through a base class). Other bindings
+# (the WebAssembly package) mirror the API from the stubs, so a stub member
+# with no implementation would be copied as a phantom.
+# ---------------------------------------------------------------------------
+_surface_spec = importlib.util.spec_from_file_location(
+    "_python_surface", _PYTHON_DIR / "scripts/python_surface.py")
+_surface = importlib.util.module_from_spec(_surface_spec)
+_surface_spec.loader.exec_module(_surface)
+
+
+class TestPublicSurface(unittest.TestCase):
+    def test_every_stub_member_is_implemented(self):
+        missing = _surface.check()
+        self.assertEqual(missing, [], "stub members without an implementation:\n  - "
+                         + "\n  - ".join(missing))
+
+    def test_surface_covers_the_main_classes(self):
+        surface = _surface.collect()
+        self.assertIn("Solver", surface["_solver"]["classes"])
+        self.assertIn("step", surface["_solver"]["classes"]["Solver"]["members"])
+        self.assertIn("__len__", surface["_nodes"]["classes"]["Nodes"]["members"])
+
+
+# ---------------------------------------------------------------------------
+# Engine input features vs C API: every section/option key the parsers accept
+# is reachable through some C function, or its absence is justified in
+# scripts/engine_feature_gaps_allow.json. Text only.
+# ---------------------------------------------------------------------------
+_gaps_spec = importlib.util.spec_from_file_location(
+    "_engine_feature_gaps", _PYTHON_DIR / "scripts/engine_feature_gaps.py")
+_gaps = importlib.util.module_from_spec(_gaps_spec)
+_gaps_spec.loader.exec_module(_gaps)
+
+
+class TestEngineFeatureGaps(unittest.TestCase):
+    def test_every_gap_is_justified(self):
+        problems = _gaps.check()
+        self.assertEqual(problems, [], "\n  - ".join(["engine feature gaps:"] + problems))
+
+    def test_gate_reports_unlisted_and_stale_entries(self):
+        allow = _gaps.load_allow()
+        dropped = sorted(allow)[0]
+        trimmed = {k: v for k, v in allow.items() if k != dropped}
+        trimmed["G1:NO_SUCH_SECTION"] = "stale on purpose"
+        original = _gaps.load_allow
+        _gaps.load_allow = lambda: trimmed
+        try:
+            problems = _gaps.check()
+        finally:
+            _gaps.load_allow = original
+        self.assertIn(f"unjustified gap: {dropped}", problems)
+        self.assertIn("stale allow-list entry: G1:NO_SUCH_SECTION", problems)
+
+    def test_every_parsed_section_is_mapped(self):
+        unmapped = [r["section"] for r in _gaps.analyse()["sections"] if r["class"] == "UNMAPPED"]
+        self.assertEqual(unmapped, [])

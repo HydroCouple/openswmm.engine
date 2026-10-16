@@ -4,6 +4,7 @@ Authored aquifer and node-bed values use project units. Runtime hydrology uses
 SI (metres, seconds, cubic metres); species concentrations use mass per cubic
 metre of zone water. Edit before initialize and read active state after start.
 """
+from libc.stdlib cimport malloc, free
 from dataclasses import dataclass
 from collections.abc import MutableMapping
 import numpy as np
@@ -27,12 +28,30 @@ cdef extern from "openswmm/engine/openswmm_gw2d.h":
     int swmm_gw2d_row_set_property(SWMM_Engine engine, int index, const char* key, double value) nogil
     int swmm_gw2d_row_get_property(SWMM_Engine engine, int index, const char* key, double* value) nogil
     int swmm_gw2d_row_remove(SWMM_Engine engine, int index) nogil
+    ctypedef struct SWMM_GwNodeBed:
+        const char* node
+        int cell
+        int locate
+        int exchange
+        int automatic
+        double kc
+        double dc
+        double area
+    ctypedef struct SWMM_LidNodeBottomEdit:
+        int node
+        int expected_mode
+        int mode
+    int swmm_gw2d_node_replace(SWMM_Engine,const SWMM_GwNodeBed*,int,const SWMM_GwNodeBed*,int,const SWMM_LidNodeBottomEdit*,int,int)
     int swmm_gw2d_node_count(SWMM_Engine engine, int* count) nogil
     int swmm_gw2d_node_add(SWMM_Engine engine, const char* node, int cell, double kc, double dc, double area) nogil
     int swmm_gw2d_node_get(SWMM_Engine engine, int index, char* node, int nodelen, int* cell, double* kc, double* dc, double* area) nogil
     int swmm_gw2d_node_remove(SWMM_Engine engine, int index) nogil
     int swmm_gw2d_node_get_flags(SWMM_Engine engine, int index, int* locate, int* exchange, int* automatic) nogil
     int swmm_gw2d_node_set_exchange(SWMM_Engine engine, int index, int exchange) nogil
+    int swmm_gw2d_link_count(SWMM_Engine engine, int* count) nogil
+    int swmm_gw2d_link_add(SWMM_Engine engine, const char* link, double kc, double dc, int exchange) nogil
+    int swmm_gw2d_link_get(SWMM_Engine engine, int index, char* link, int linklen, double* kc, double* dc, int* exchange) nogil
+    int swmm_gw2d_link_remove(SWMM_Engine engine, int index) nogil
     int swmm_gw2d_is_active(SWMM_Engine engine, int* active) nogil
     int swmm_gw2d_get_dimensions(SWMM_Engine engine, int* n_cells, int* m_layers) nogil
     int swmm_gw2d_get_cell(SWMM_Engine engine, int cell, int var, double* value) nogil
@@ -68,6 +87,14 @@ class AquiferNode:
     locate: bool
     exchange: bool
     automatic: bool
+
+@dataclass(frozen=True)
+class AquiferLink:
+    """[2D_AQUIFER_LINKS] conduit-bed row; kc in seepage units, dc in project length."""
+    link: str
+    kc: float
+    dc: float
+    exchange: bool
 
 class AquiferOptions(EngineView, MutableMapping):
     """Text options using the native INP key/value spellings."""
@@ -173,6 +200,58 @@ class Groundwater(EngineView):
                                     bool(locate), bool(exchange), bool(automatic)))
         return tuple(rows)
 
+    def replace_nodes(self, expected, replacement, *, bottoms=(), apply=True):
+        """Atomic compare/replace of the entire bed list and LID bottom owners.
+
+        expected/replacement are AquiferNode rows in project units. bottoms
+        contains (node index, expected mode, new mode) triples (0/1/2). apply=False
+        validates privately. Stale or invalid edits leave all rows unchanged;
+        automatic rows may only be retained unchanged.
+        """
+        expected=list(expected);replacement=list(replacement);bottoms=list(bottoms)
+        cdef int ne=len(expected), nr=len(replacement), nb=len(bottoms), i
+        cdef SWMM_GwNodeBed* old=NULL
+        cdef SWMM_GwNodeBed* new=NULL
+        cdef SWMM_LidNodeBottomEdit* edits=NULL
+        names=[]
+        for row in expected+replacement:
+            name=row.node.encode('utf-8')
+            if b'\0' in name:raise ValueError('Node name contains NUL')
+            names.append(name)
+        try:
+            if ne:
+                old=<SWMM_GwNodeBed*>malloc(ne*sizeof(SWMM_GwNodeBed))
+                if old==NULL:raise MemoryError()
+            if nr:
+                new=<SWMM_GwNodeBed*>malloc(nr*sizeof(SWMM_GwNodeBed))
+                if new==NULL:raise MemoryError()
+            if nb:
+                edits=<SWMM_LidNodeBottomEdit*>malloc(nb*sizeof(SWMM_LidNodeBottomEdit))
+                if edits==NULL:raise MemoryError()
+            for i in range(ne):
+                old[i].node=names[i]
+                old[i].cell=expected[i].cell
+                old[i].locate=expected[i].locate
+                old[i].exchange=expected[i].exchange
+                old[i].automatic=expected[i].automatic
+                old[i].kc=expected[i].kc
+                old[i].dc=expected[i].dc
+                old[i].area=expected[i].area
+            for i in range(nr):
+                new[i].node=names[ne+i]
+                new[i].cell=replacement[i].cell
+                new[i].locate=replacement[i].locate
+                new[i].exchange=replacement[i].exchange
+                new[i].automatic=replacement[i].automatic
+                new[i].kc=replacement[i].kc
+                new[i].dc=replacement[i].dc
+                new[i].area=replacement[i].area
+            for i in range(nb):
+                edits[i].node,edits[i].expected_mode,edits[i].mode=bottoms[i]
+            _check(swmm_gw2d_node_replace(_h(self),old,ne,new,nr,edits,nb,bool(apply)))
+        finally:
+            free(old);free(new);free(edits)
+
     def add_node(self, str node, int cell, double kc, double dc, double area=0):
         """Add a bed: kc in in/hr or mm/hr, dc in ft or m, area in ft² or m².
 
@@ -189,6 +268,30 @@ class Groundwater(EngineView):
     def set_node_exchange(self, int index, bint enabled):
         """Enable or opt out of groundwater exchange for one authored bed."""
         _check(swmm_gw2d_node_set_exchange(_h(self), index, int(enabled)))
+
+    @property
+    def links(self):
+        """[2D_AQUIFER_LINKS] conduit-bed rows."""
+        cdef SWMM_Engine h = _h(self)
+        cdef int count=0, index, exchange=0
+        cdef double kc=0, dc=0
+        cdef char link[512]
+        _check(swmm_gw2d_link_count(h, &count))
+        rows = []
+        for index in range(count):
+            _check(swmm_gw2d_link_get(h, index, link, 512, &kc, &dc, &exchange))
+            rows.append(AquiferLink(link.decode('utf-8'), kc, dc, bool(exchange)))
+        return tuple(rows)
+
+    def add_link(self, str link, double kc=0, double dc=0, bint exchange=True):
+        """Add a conduit bed: kc in [LOSSES] seepage units (0 = the conduit's
+        seep rate), dc in ft or m (0 = full depth). Edit before initialization."""
+        cdef bytes name = link.encode('utf-8')
+        _check(swmm_gw2d_link_add(_h(self), name, kc, dc, int(exchange)))
+
+    def remove_link(self, int index):
+        """Remove a conduit-bed row; subsequent indices shift."""
+        _check(swmm_gw2d_link_remove(_h(self), index))
 
     @property
     def active(self):

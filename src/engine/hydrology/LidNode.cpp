@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Caleb Buahin
 #include "LidNode.hpp"
+#include "LidNodeRichardsState.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../input/Tokenizer.hpp"
@@ -110,7 +111,15 @@ void readNodes(SimulationContext& ctx, const std::vector<std::string>& lines) {
         auto t = input::Tokenizer::tokenize(line);
         if (t.empty()) continue;
         double sat = 0.0;
-        if (t.size() != 3 || !number(t[2], sat) || sat < 0.0 || sat > 100.0) {
+        LidNodeBottom bottom = LidNodeBottom::Current;
+        bool valid_bottom = t.size() == 3;
+        if (t.size() == 5 && input::Tokenizer::to_upper(t[3]) == "BOTTOM") {
+            const auto mode = input::Tokenizer::to_upper(t[4]);
+            valid_bottom = mode == "CURRENT" || mode == "SEALED" || mode == "MESH_AQUIFER";
+            if (mode == "SEALED") bottom = LidNodeBottom::Sealed;
+            if (mode == "MESH_AQUIFER") bottom = LidNodeBottom::MeshAquifer;
+        }
+        if (!valid_bottom || !number(t[2], sat) || sat < 0.0 || sat > 100.0) {
             ctx.errors.push_back("Invalid [LID_NODES] row: " + line); continue;
         }
         const int n = ctx.node_names.find(t[0]), c = ctx.lid_names.find(t[1]);
@@ -119,7 +128,7 @@ void readNodes(SimulationContext& ctx, const std::vector<std::string>& lines) {
         if (r < 0) { ctx.errors.push_back("[LID_NODES] requires a storage node: " + t[0]); continue; }
         auto& config = ctx.node_subtypes.storages.lid[r];
         if (config.control >= 0) { ctx.errors.push_back("Duplicate [LID_NODES] assignment: " + t[0]); continue; }
-        config = {c, sat};
+        config = {c, sat, bottom};
     }
 }
 void readOutlets(SimulationContext& ctx, const std::vector<std::string>& lines) {
@@ -177,6 +186,12 @@ void validate(SimulationContext& ctx) {
         if (!error.empty()) { ctx.errors.push_back("LID node " + ctx.node_names.name_of(n) + ": " + error); continue; }
         if (stack.front().flow.enabled && (ctx.options.water_age || ctx.options.heat_transport || ctx.reactions.configured))
             ctx.errors.push_back("Richards LID node " + ctx.node_names.name_of(n) + ": water age, heat and MSX require porous-cell transport adapters that are not yet supported");
+        // Physics review E9/E12 (2026-10-15): reaction species have no layer
+        // adapter. They mixed as a plain tank that bypassed retained cells,
+        // ports and layer treatment, and capture removed their water but not
+        // their mass, so a decaying species could end above its source.
+        else if (ctx.reactions.configured)
+            ctx.errors.push_back("LID node " + ctx.node_names.name_of(n) + ": reaction species are not yet routed through LID layers (no layer adapter); remove the reactions component or the LID assignment");
         const double d = thickness(stack) / rainDepth(ctx);
         if (std::abs(d - ctx.nodes.full_depth[n]) > 1.e-7 * std::max(1.0, d))
             ctx.errors.push_back("LID node " + ctx.node_names.name_of(n) + ": MaxDepth must equal the sum of layer thicknesses");
@@ -311,6 +326,13 @@ void initializeInfiltration(SimulationContext& ctx, int node) {
 }
 void initialize(SimulationContext& ctx) {
     auto& st = ctx.node_subtypes.storages;
+#ifndef OPENSWMM_HAS_2D
+    for (int r=0;r<st.count();++r) if (st.lid[r].control >= 0 && st.lid[r].bottom == LidNodeBottom::MeshAquifer) {
+        ctx.errors.push_back("LID node " + ctx.node_names.name_of(st.node_idx[r]) +
+            ": MESH_AQUIFER bottom requires a build with the 2D groundwater solver");
+        return;
+    }
+#endif
     const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
     const double rd = rainDepth(ctx), rf = ucf::Ucf[ucf::RAINFALL][us];
     for (int r = 0; r < st.count(); ++r) {
@@ -391,9 +413,9 @@ void initialize(SimulationContext& ctx) {
         initializeInfiltration(ctx, n);
     }
 }
-void prepareStep(SimulationContext& ctx, double dt, double evaporation) {
+static void prepareStepImpl(SimulationContext& ctx, double dt, double evaporation, bool mesh_prepared) {
     if (!(dt > 0.0)) return;
-    prepareRichardsStep(ctx, dt, evaporation);
+    prepareRichardsStep(ctx, dt, evaporation, mesh_prepared);
     auto& st = ctx.node_subtypes.storages;
     const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
     for (int r = 0; r < st.count(); ++r) {
@@ -517,6 +539,13 @@ void prepareStep(SimulationContext& ctx, double dt, double evaporation) {
         state.held_volume = 0.0;
         for (const auto& c : state.cells) state.held_volume += c.theta * c.geometric_volume;
         ctx.nodes.volume[n] += before + capture - state.evap_volume - state.held_volume;
+        // Independent retained/mobile sums can leave an empty mobile store a
+        // few ULPs below zero. Keep larger deficits visible to validation.
+        const double roundoff = 16 * std::numeric_limits<double>::epsilon() *
+            std::max({1.0, std::abs(state.quality_old_mobile), before, capture,
+                      state.evap_volume, state.held_volume});
+        if (ctx.nodes.volume[n] < 0.0 && ctx.nodes.volume[n] >= -roundoff)
+            ctx.nodes.volume[n] = 0.0;
         // This is an internal redistribution before the routing step, so both
         // storage capacity and the initial hydraulic head must be refreshed.
         ctx.nodes.full_volume[n] = 0.0;
@@ -528,15 +557,22 @@ void prepareStep(SimulationContext& ctx, double dt, double evaporation) {
         ctx.nodes.head[n] = ctx.nodes.invert_elev[n] + ctx.nodes.depth[n];
     }
 }
-void finishStep(SimulationContext& ctx) {
+namespace {
+void finishRows(SimulationContext& ctx,const std::vector<int>& rows) {
     auto& st = ctx.node_subtypes.storages;
-    for (int r = 0; r < st.count(); ++r) {
+    std::vector<LidNodeState> mesh_ports;
+    if(std::any_of(rows.begin(),rows.end(),[&](int r){return st.lid_state[r].richards_mesh_pending_finish;}))
+        mesh_ports.resize(st.count());
+    for(int r:rows)if(st.lid_state[r].richards_mesh_pending_finish)
+        mesh_ports[r]=detail::routed(ctx,r); // qualify every owned port state before changing any row
+    for (int r : rows) {
         auto& state = st.lid_state[r];
         if (state.cells.empty()) continue;
         const int n = st.node_idx[r];
+        if(state.richards_mesh_pending_finish)state=std::move(mesh_ports[r]);
         for (std::size_t i = 0; i < state.cells.size(); ++i) {
             auto& cell = state.cells[i];
-            if (state.richards) state.richards_water[i] += state.port_delta[i];
+            if (state.richards) { if(!state.richards_mesh_pending_finish)state.richards_water[i] += state.port_delta[i]; }
             else if (cell.geometric_volume > 0.0) cell.theta += state.port_delta[i] / cell.geometric_volume;
         }
         if (state.richards) refreshRichardsState(ctx, r);
@@ -560,15 +596,70 @@ void finishStep(SimulationContext& ctx) {
         st.evap_loss[r] += state.evap_volume;
         st.exfil_loss[r] += state.richards_bottom_loss;
         state.captured_flow = 0.0;
+        if(state.richards_mesh_pending_finish) {
+            std::fill(state.port_delta.begin(),state.port_delta.end(),0.0);
+            state.mobile_delta=0;state.richards_mesh_pending_finish=false;state.richards_mesh_routed=false;
+        }
     }
+}
+}
+void prepareStep(SimulationContext& ctx,double dt,double evaporation) {
+    prepareStepImpl(ctx,dt,evaporation,false);
+}
+void prepareStepAfterMesh(SimulationContext& ctx,double dt,double evaporation) {
+    if(!validateRichardsRouting(ctx,dt))throw std::runtime_error("Mixed Mesh preparation requires accepted Richards owners.");
+    prepareStepImpl(ctx,dt,evaporation,true);
+}
+void finishStep(SimulationContext& ctx) {
+    const auto& st=ctx.node_subtypes.storages;std::vector<int> rows;
+    const LidNodeState* first=nullptr;
+    for(int r=0;r<st.count();++r) {
+        const auto& s=st.lid_state[r];rows.push_back(r);
+        if(!s.richards || st.lid[r].bottom!=LidNodeBottom::MeshAquifer)continue;
+        detail::checkMeshInterval(s,first?first->richards_mesh_start:s.richards_mesh_start,
+            first?first->richards_completed_time:s.richards_completed_time);
+        first=&s;
+    }
+    finishRows(ctx,rows);
+}
+void finishRichardsNodes(SimulationContext& ctx,double start,double end,const std::vector<int>& nodes) {
+    const auto& st=ctx.node_subtypes.storages;std::set<int> selected;std::vector<int> rows;
+    if(nodes.empty())throw std::runtime_error("Mesh Richards finish requires a nonempty owner cohort.");
+    for(int n:nodes) {
+        if(n<0 || n>=ctx.n_nodes() || !selected.insert(n).second)
+            throw std::runtime_error("Invalid or duplicate Mesh Richards finish owner.");
+        const int r=ctx.node_subtypes.storage_row(n);
+        if(r<0 || st.lid[r].bottom!=LidNodeBottom::MeshAquifer)
+            throw std::runtime_error("Richards cohort finish requires a Mesh owner.");
+        detail::checkMeshInterval(st.lid_state[r],start,end);rows.push_back(r);
+    }
+    // A cohort cannot finish one side of a native Mesh-to-Mesh connection.
+    // Unequal cadences need a qualified shared hydraulic scheduler first.
+    for(int link=0;link<ctx.n_links();++link) {
+        const int ends[]{ctx.links.node1[link],ctx.links.node2[link]};
+        for(int side=0;side<2;++side)if(selected.count(ends[side])) {
+            const int other=ends[1-side];
+            if(other<0 || other>=ctx.n_nodes() ||
+               (bottomMode(ctx,other)==LidNodeBottom::MeshAquifer && !selected.count(other)))
+                throw std::runtime_error("Mesh Richards finish omitted a connected hydraulic owner.");
+        }
+    }
+    std::sort(rows.begin(),rows.end());finishRows(ctx,rows);
 }
 } // namespace openswmm::lidnode
 
 namespace openswmm::lidnode {
+LidNodeBottom bottomMode(const SimulationContext& c, int node) {
+    if (node < 0 || node >= c.n_nodes()) return LidNodeBottom::Current;
+    const int r = c.node_subtypes.storage_row(node);
+    return r >= 0 && c.node_subtypes.storages.lid[r].control >= 0
+        ? c.node_subtypes.storages.lid[r].bottom : LidNodeBottom::Current;
+}
 double bottomConductivity(const SimulationContext& c, int r) {
     if (r < 0) return 0.0;
     const auto& st = c.node_subtypes.storages;
     if (st.lid[r].control >= 0) {
+        if (st.lid[r].bottom != LidNodeBottom::Current) return 0.0;
         const auto stack = layers(c, st.lid[r].control);
         if (!stack.empty() && stack.back().kind == LidNodeLayerKind::Bottom) return stack.back().params[0];
     }
@@ -599,6 +690,9 @@ int portCell(const LidNodeState& state, double offset) {
     return state.cells.empty() ? -1 : 0;
 }
 void resetPorts(SimulationContext& ctx) {
+    if(std::any_of(ctx.node_subtypes.storages.lid_state.begin(),ctx.node_subtypes.storages.lid_state.end(),
+        [](const auto& s){return s.richards_mesh_routed;}))
+        throw std::runtime_error("Mesh Richards final routing ports must finish before reset.");
     for (auto& s : ctx.node_subtypes.storages.lid_state) {
         std::fill(s.port_delta.begin(), s.port_delta.end(), 0.0);
         s.mobile_delta = 0.0; s.quality_ports.clear();

@@ -579,6 +579,7 @@ public:
         //      integrator handles only MSX kinetics), so there is no
         //      double-decay the way the legacy binding had to avoid.
         if (L.msx_first >= 0) {
+            quality::updateUntreatedStorageHrt(ctx, dt);   // review A6
             auto& rx = ctx.reactions;
             const int nsp = ns - L.msx_first;
             if (static_cast<int>(msx_block_.size()) < nsp)
@@ -742,7 +743,7 @@ private:
         if ((!flux_on && !bed_on) || !(dt > 0.0)) return;
         namespace th = transport::heat;
 
-        if (flux_on) th::updateSolarForcing(ctx);
+        if (flux_on) th::updateSolarForcing(ctx, dt);
         if (bed_on) th::seedBedTemperature(ctx);
         const double t_gr = bed_on ? th::groundTemperature(ctx) : 0.0;
         const double rho = ctx.options.water_density;

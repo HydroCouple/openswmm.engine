@@ -274,3 +274,14 @@ TEST(MultiColumnSeriesFile, MalformedRowsAreCountedNotFatal) {
     EXPECT_EQ(f.dates.size(), 0u);
     EXPECT_EQ(f.unparsed_rows, 2);
 }
+
+TEST(MultiColumnSeriesFile, TsfRedundantMeridiemKeeps24HourClock) {
+    const double day = dt::encodeDate(2019, 1, 1);
+    for (int hour : {0, 1, 11, 12, 13, 20, 23}) {
+        const std::string stamp = "01/01/2019 " + std::to_string(hour)
+            + ":15:00 " + (hour < 12 ? "AM" : "PM");
+        double actual = 0.0;
+        ASSERT_TRUE(parse_series_datetime(stamp, actual));
+        EXPECT_NEAR(actual, day + dt::encodeTime(hour, 15, 0), 1e-9) << stamp;
+    }
+}

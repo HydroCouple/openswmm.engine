@@ -59,6 +59,7 @@
 #include "DateTime.hpp"
 #include "UnitConversion.hpp"
 #include "../input/PostParseResolver.hpp"
+#include "../input/Tokenizer.hpp"
 
 // 2D model definition (plain define-free data structs; reached at runtime
 // through ctx.twod_io — null in non-2D engine builds).
@@ -82,6 +83,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -99,6 +101,19 @@ namespace inp_writer {
 
 static void sec(FILE* f, const char* name) {
     std::fprintf(f, "\n[%s]\n", name);
+}
+
+// Preserve filename whitespace and characters with input-format meaning.
+static std::string quote_path(const std::string& path) {
+    return path.empty() || path.find_first_of(" \t\r\n\v\f;,") != std::string::npos
+        ? "\"" + path + "\"" : path;
+}
+
+// Embedded quotes (file="folder name/output.h5") already protect an argument.
+// Whole quoted arguments lose their outer quotes on read, so restore them.
+static std::string quote_argument(const std::string& arg) {
+    const auto tokens = input::Tokenizer::tokenize(arg);
+    return tokens.size() == 1 && tokens[0] == arg ? arg : "\"" + arg + "\"";
 }
 
 // Format an OADate as MM/DD/YYYY
@@ -614,7 +629,7 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
             sec(f, "GW_INITIAL_QUALITY");
             if (!gw->initial_quality_file.empty())
                 std::fprintf(f, "%-16s %s\n", "FILE",
-                             gw->initial_quality_file.c_str());
+                             quote_path(gw->initial_quality_file).c_str());
             std::fprintf(f, ";;%-14s %-14s %-16s %s\n", "Scope", "Zone",
                          "Species", "Value");
             for (const auto& r : gw->initial_quality) {
@@ -773,7 +788,7 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx,
         const std::string of_tok =
             emit_path_token(o.output_file, dst_dir, force_abs_paths, warnings);
         if (!of_tok.empty())
-            std::fprintf(f, "%-22s %s\n", "OUTPUT_FILE", of_tok.c_str());
+            std::fprintf(f, "%-22s %s\n", "OUTPUT_FILE", quote_path(of_tok).c_str());
     }
     // Results-file size controls — option-default rule: only non-defaults are
     // emitted so pre-2026-09 files round-trip byte-identically.
@@ -847,7 +862,7 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx,
             tok = emit_path_token(o.mesh_file, dst_dir, force_abs_paths, warnings);
         }
         sec(f, "2D_MESH_FILE");
-        std::fprintf(f, "FILE %s\n", tok.c_str());
+        std::fprintf(f, "FILE %s\n", quote_path(tok).c_str());
 
         // External mode means "the mesh lives in a sidecar": write the
         // CURRENT in-memory state to the .2dm the emitted reference resolves
@@ -1315,6 +1330,20 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     const bool swmm5  = (opts.profile == InpWriteOptions::Profile::Swmm5) || stock5;
     auto note = [&](const std::string& s) { if (warnings) warnings->push_back(s); };
 
+    if (swmm5 && !ctx.options.ignore_snow_melt && !ctx.options.ignore_2d &&
+        ctx.snowpacks.mesh_config.mode!=surface::MeshSnowConfig::Mode::No && ctx.snowpacks.mesh_config.assigned()) {
+        note("SWMM 5.x cannot execute mesh snow. Export refused because dropping snow storage would change the model.");
+        return false;
+    }
+    if (swmm5 && !ctx.options.ignore_snow_melt) {
+        for (int pack : ctx.subcatches.snowpack) {
+            if (pack >= 0 && ctx.snowpacks.config.modelFor(pack) == surface::SnowKind::Ueb) {
+                note("SWMM 5.x cannot execute UEB snowpacks. Export refused because substituting degree-day snow would change the model.");
+                return -1;
+            }
+        }
+    }
+
     const std::string physical = mappedOutputPath(path, InpWriteOptions::OutputKind::Model, opts, warnings);
     if (physical.empty()) return -1;
     openswmm::io::AtomicOutputFile output(openswmm::io::utf8_path(physical));
@@ -1549,6 +1578,8 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         std::fprintf(f,"%-20s %g\n", "FV_SLOT_CELERITY", fvo.slot_celerity);
         if (fvo.pressurized_implicit)
             std::fprintf(f,"%-20s %s\n", "FV_PRESSURIZED_IMPLICIT", "YES");
+        if (fvo.node_feedback_dt)   // non-default only
+            std::fprintf(f,"%-20s %s\n", "FV_NODE_FEEDBACK_DT", "YES");
         if (fvo.pressure_closure == 1)  // issue #156: non-default only
             std::fprintf(f,"%-20s %s\n", "FV_PRESSURE_CLOSURE", "TPA");
         if (fvo.dispersion > 0.0)
@@ -1576,6 +1607,25 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     }
     if (o.write_absolute_paths)
         std::fprintf(f,"%-20s %s\n",  "WRITE_ABSOLUTE_PATHS", "YES");
+    if (!swmm5) {
+        // v6-only physical constants: written when they differ from the
+        // SimulationOptions defaults (option-default rule), at full precision.
+        const SimulationOptions defaults{};
+        auto put = [&](const char* name, double v, double dflt) {
+            if (v == dflt) return;
+            char b[40];   // shortest form that reads back to exactly v
+            for (int prec = 15; prec <= 17; ++prec) {
+                std::snprintf(b, sizeof(b), "%.*g", prec, v);
+                if (std::strtod(b, nullptr) == v) break;
+            }
+            std::fprintf(f, "%-20s %s\n", name, b);
+        };
+        put("WATER_DENSITY",                o.water_density,       defaults.water_density);
+        put("WATER_SPECIFIC_HEAT_CAPACITY", o.water_specific_heat, defaults.water_specific_heat);
+        put("WIND_FUNC_COEFF_A",            o.wind_func_coeff_a,   defaults.wind_func_coeff_a);
+        put("WIND_FUNC_COEFF_B",            o.wind_func_coeff_b,   defaults.wind_func_coeff_b);
+        put("PRESSURE_RATIO",               o.pressure_ratio,      defaults.pressure_ratio);
+    }
     for (const auto& kv : o.ext_options) {
         // "GWF:<subcatch>:<type>" entries are the parsed [GWF] section, not real
         // options — they are re-emitted by the [GWF] writer. Round-tripping them
@@ -1637,9 +1687,31 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         for (int i = 0; i < 12 && !has_humidity; ++i)
             if (opts.humidity[i] != 50.0) has_humidity = true;
         if (has_humidity) has_temp = true;
+        if (!swmm5 && ctx.snowpacks.config.hasTemperatureRows()) has_temp = true;
 
         if (has_temp) {
             sec(f,"TEMPERATURE");
+            const auto& snow = ctx.snowpacks.config;
+            if (!swmm5) {
+            if (snow.site) {
+                const auto& s = *snow.site;
+                std::fprintf(f, "SITE %.17g %.17g %.17g %.17g\n", s.latitude, s.longitude, s.timezone, s.elevation);
+            }
+            if (snow.model_authored)
+                std::fprintf(f, "SNOWMELT_MODEL %s\n", snow.model == surface::SnowKind::Ueb ? "UEB" : "DEGREE_DAY");
+            if (snow.step != 3600) std::fprintf(f, "SNOW_STEP %.17g\n", snow.step);
+            if (!snow.met_file.empty()) {
+                const auto path = emit_path_token(snow.met_file, dst_dir, force_abs_paths, warnings);
+                std::fprintf(f, "MET_FILE \"%s\"\n", path.c_str());
+            }
+            for (const auto& source : {std::pair{"SHORTWAVE", &snow.shortwave}, std::pair{"LONGWAVE", &snow.longwave}}) {
+                if (!source.second->authored) continue;
+                using Mode = surface::RadiationSource::Mode;
+                if (source.second->mode == Mode::Timeseries)
+                    std::fprintf(f, "%s TIMESERIES %s\n", source.first, source.second->series.c_str());
+                else std::fprintf(f, "%s %s\n", source.first, source.second->mode == Mode::File ? "FILE" : "COMPUTED");
+            }
+            }
             if (opts.temp_source == 1)
                 std::fprintf(f,"TIMESERIES   %s\n", opts.temp_ts_name.c_str());
             else if (opts.temp_source == 2) {
@@ -1707,6 +1779,20 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         }
     }
 
+    const auto ueb_rows = surface::uebOptionRows(ctx.snowpacks.config);
+    if (!swmm5 && !ueb_rows.empty()) {
+        sec(f, "UEB_OPTIONS");
+        for (const auto& row : ueb_rows) std::fprintf(f, "%s\n", row.c_str());
+    }
+
+    if(!swmm5)for(int section=0;section<3;++section) {
+        const auto rows=section==0?surface::meshSnowOptionRows(ctx.snowpacks.mesh_config):
+            surface::meshSnowRows(ctx.snowpacks.mesh_config,section==2);
+        if(rows.empty())continue;
+        sec(f,section==0?"2D_SNOW_OPTIONS":section==1?"2D_SNOW_DEFAULTS":"2D_SNOW");
+        for(const auto& row:rows)std::fprintf(f,"%s\n",row.c_str());
+    }
+
     // [SNOWPACKS]
     if (!ctx.snowpacks.names.empty()) {
         sec(f,"SNOWPACKS");
@@ -1714,6 +1800,13 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         std::fprintf(f,";;---------- ---------- ----------\n");
         for (size_t j = 0; j < ctx.snowpacks.names.size(); ++j) {
             const char* name = ctx.snowpacks.names[j].c_str();
+            const auto ueb = ctx.snowpacks.config.packs.find(static_cast<int>(j));
+            if (!swmm5 && ueb != ctx.snowpacks.config.packs.end()) {
+                const auto& p = ueb->second;
+                std::fprintf(f, "%s UEB %.17g %.17g %.17g %.17g %.17g MODEL %s\n", name,
+                    p.site.forest, p.site.drift, p.site.ground_heat, p.site.extinction_depth, p.initial_energy,
+                    p.model == surface::SnowKind::Ueb ? "UEB" : "DEGREE_DAY");
+            }
             if (j < ctx.snowpacks.plowable.size()) {
                 const auto& p = ctx.snowpacks.plowable[j];
                 std::fprintf(f,"%-16s PLOWABLE    ", name);
@@ -2195,6 +2288,26 @@ int writeInpFile(const SimulationContext&  ctx_internal,
                     std::fprintf(f,"\n");
                 }
             }
+            // REMOVALS (percent): pollutants by index, then the entries kept
+            // by name (reaction species). The writer used to emit no
+            // REMOVALS row at all, so a save dropped every LID drain removal.
+            {
+                std::string row;
+                char buf[64];
+                if (uj < ctx.lid_controls.removals.size())
+                    for (const auto& pr : ctx.lid_controls.removals[uj]) {
+                        if (pr.first < 0 || pr.first >= ctx.n_pollutants()) continue;
+                        std::snprintf(buf, sizeof buf, " %.17g", pr.second * 100.0);
+                        row += " " + ctx.pollutant_names.name_of(pr.first) + buf;
+                    }
+                if (uj < ctx.lid_controls.removals_by_name.size())
+                    for (const auto& pr : ctx.lid_controls.removals_by_name[uj]) {
+                        if (swmm5) { note("SWMM 5 export omits the LID removal of reaction species " + pr.first); continue; }
+                        std::snprintf(buf, sizeof buf, " %.17g", pr.second * 100.0);
+                        row += " " + pr.first + buf;
+                    }
+                if (!row.empty()) std::fprintf(f, "%-16s REMOVALS  %s\n", name, row.c_str());
+            }
         }
     }
 
@@ -2207,7 +2320,10 @@ int writeInpFile(const SimulationContext&  ctx_internal,
             const auto& name = ctx.node_names.name_of(st.node_idx[r]);
             if (swmm5) { note("SWMM 5 export treats LID node " + name + " as plain storage"); continue; }
             if (!header) { sec(f, "LID_NODES"); header = true; }
-            std::fprintf(f, "%s %s %.17g\n", name.c_str(), ctx.lid_names.name_of(lid.control).c_str(), lid.initial_saturation);
+            std::fprintf(f, "%s %s %.17g", name.c_str(), ctx.lid_names.name_of(lid.control).c_str(), lid.initial_saturation);
+            if (lid.bottom != LidNodeBottom::Current)
+                std::fprintf(f, " BOTTOM %s", lid.bottom == LidNodeBottom::Sealed ? "SEALED" : "MESH_AQUIFER");
+            std::fprintf(f, "\n");
         }
         if (!ctx.lid_node_outlets.empty()) {
             if (swmm5) note("SWMM 5 export omits [LID_NODE_OUTLETS]");
@@ -2916,7 +3032,7 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // U2: the CSV sidecar is referenced, not expanded — its rows carry
     // from_file and are skipped below.
     if(!ctx.initial_quality.file.empty())
-        std::fprintf(f,"%-8s %s\n","FILE",ctx.initial_quality.file.c_str());
+        std::fprintf(f,"%-8s %s\n","FILE",quote_path(ctx.initial_quality.file).c_str());
     std::fprintf(f,";;%-8s %-16s %-16s %-10s\n","Scope","Element","Constituent","Value");
     std::fprintf(f,";;%-8s %-16s %-16s %-10s\n","--------","----------------","----------------","----------");
     for(int j=0;j<ctx.initial_quality.count();++j){auto u=static_cast<size_t>(j);
@@ -3507,8 +3623,8 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // [PLUGINS]
     if(swmm5&&!ctx.plugin_specs.empty()) note("[PLUGINS] omitted (SWMM 5.x profile)");
     if(!swmm5&&!ctx.plugin_specs.empty()){sec(f,"PLUGINS");
-    for(const auto&ps:ctx.plugin_specs){std::fprintf(f,"%s",ps.path.c_str());
-    for(const auto&a:ps.init_args)std::fprintf(f," %s",a.c_str());std::fprintf(f,"\n");
+    for(const auto&ps:ctx.plugin_specs){std::fprintf(f,"%s",quote_path(ps.path).c_str());
+    for(const auto&a:ps.init_args)std::fprintf(f," %s",quote_argument(a).c_str());std::fprintf(f,"\n");
     }}
 
     // Do not publish component files after a detected main-output failure.

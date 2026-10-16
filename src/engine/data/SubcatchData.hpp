@@ -419,6 +419,11 @@ struct SubcatchData {
      *           its own storage. Rebuilt by assembleRunon() every runoff
      *           substep, like runon_inflow. */
     std::vector<double> runon_qual_rate;
+    /// [sc * np + p] pollutant load (concentration mass / s, removal already
+    /// applied) a LID underdrain routed to this subcatchment delivered in the
+    /// last runoff step; joins runon_qual_rate at the next assembleRunon, the
+    /// drain water's own lag (legacy lid_addDrainRunon).
+    std::vector<double> lid_drain_runon_qual;
 
     /**
      * @brief Area-averaged subarea runoff RATE, ft/sec — legacy's
@@ -485,6 +490,8 @@ struct SubcatchData {
      * @see Legacy: SubcatchStats[i].precip
      */
     std::vector<double> stat_precip_vol;
+    std::vector<double> stat_runon_vol;  ///< Cumulative received runon volume (ft3).
+    std::vector<double> stat_gw_time;  ///< Elapsed groundwater time (seconds).
     std::vector<double> stat_evap_vol;     ///< Cumulative evaporation volume (ft3)
     std::vector<double> stat_infil_vol;    ///< Cumulative infiltration volume (ft3)
     std::vector<double> stat_imperv_vol;   ///< Cumulative impervious runoff volume (ft3)
@@ -509,10 +516,10 @@ struct SubcatchData {
     std::vector<double> stat_gw_deep_perc_vol;  ///< Cumulative deep percolation (ft³)
     std::vector<double> stat_gw_flow_vol;       ///< Cumulative lateral GW outflow (ft³)
     std::vector<double> stat_gw_max_flow;       ///< Peak lateral GW outflow (CFS)
-    std::vector<double> stat_gw_sum_theta;      ///< Sum of upper-zone theta (for time-avg)
-    std::vector<double> stat_gw_sum_depth;      ///< Sum of water table height (ft, for time-avg)
+    std::vector<double> stat_gw_sum_theta;      ///< Time integral of upper-zone theta (seconds)
+    std::vector<double> stat_gw_sum_depth;      ///< Time integral of water table elevation (ft-seconds)
     std::vector<double> stat_gw_final_theta;    ///< Upper-zone theta at last GW step
-    std::vector<double> stat_gw_final_depth;    ///< Water table height at last GW step (ft)
+    std::vector<double> stat_gw_final_depth;    ///< Water table elevation at last GW step (ft)
     std::vector<long>   stat_gw_steps;          ///< Step count for GW averages
 
     // -----------------------------------------------------------------------
@@ -776,6 +783,8 @@ struct SubcatchData {
         rpt_flag.assign(un, 0);
 
         stat_precip_vol.assign(un, 0.0);
+        stat_gw_time.assign(un, 0.0);
+        stat_runon_vol.assign(un, 0.0);
         stat_evap_vol.assign(un, 0.0);
         stat_infil_vol.assign(un, 0.0);
         stat_imperv_vol.assign(un, 0.0);
@@ -854,7 +863,7 @@ struct SubcatchData {
         tags.resize(un, std::string{});
 
         g(rpt_flag, static_cast<char>(0));
-        g(stat_precip_vol, 0.0); g(stat_evap_vol, 0.0);
+        g(stat_precip_vol, 0.0); g(stat_gw_time, 0.0); g(stat_runon_vol, 0.0); g(stat_evap_vol, 0.0);
         g(stat_infil_vol, 0.0); g(stat_imperv_vol, 0.0);
         g(stat_perv_vol, 0.0); g(stat_runoff_vol, 0.0);
         g(stat_max_runoff, 0.0);
@@ -916,7 +925,7 @@ struct SubcatchData {
         r(gw_flow); r(snow_depth); r(lid_drain_flow); r(old_runoff);
         r(old_gw_flow); r(old_snow_depth); r(old_lid_drain_flow); r(runon_inflow);
         r(old_runon_inflow); r(runon_rate); r(gw_sw_head); r(gw_node_avail_flow); r(gw_max_infil_vol);
-        r(outfall_runon_vol); r(rpt_flag); r(stat_precip_vol); r(stat_evap_vol);
+        r(outfall_runon_vol); r(rpt_flag); r(stat_precip_vol); r(stat_gw_time); r(stat_runon_vol); r(stat_evap_vol);
         r(stat_infil_vol); r(stat_imperv_vol); r(stat_perv_vol); r(stat_runoff_vol);
         r(stat_max_runoff); r(stat_gw_infil_vol); r(stat_gw_upper_evap_vol); r(stat_gw_lower_evap_vol);
         r(stat_gw_deep_perc_vol); r(stat_gw_flow_vol); r(stat_gw_max_flow); r(stat_gw_sum_theta);
@@ -959,7 +968,7 @@ struct SubcatchData {
         e(gw_sw_head); e(gw_node_avail_flow); e(gw_max_infil_vol);
         e(comments); e(tags); e(rpt_flag);
 
-        e(stat_precip_vol); e(stat_evap_vol); e(stat_infil_vol);
+        e(stat_precip_vol); e(stat_gw_time); e(stat_runon_vol); e(stat_evap_vol); e(stat_infil_vol);
         e(stat_imperv_vol); e(stat_perv_vol); e(stat_runoff_vol); e(stat_max_runoff);
         e(stat_gw_infil_vol); e(stat_gw_upper_evap_vol); e(stat_gw_lower_evap_vol);
         e(stat_gw_deep_perc_vol); e(stat_gw_flow_vol); e(stat_gw_max_flow);
@@ -984,7 +993,7 @@ struct SubcatchData {
                             v.begin() + static_cast<std::ptrdiff_t>(base + np));
             };
             erase2d(conc); erase2d(conc_old); erase2d(init_loading);
-            erase2d(ponded_qual); erase2d(runon_qual_rate); erase2d(washoff_load);
+            erase2d(ponded_qual); erase2d(runon_qual_rate); erase2d(lid_drain_runon_qual); erase2d(washoff_load);
         }
 
         // Flat 2D total load: [sc * np + p]
@@ -1023,6 +1032,7 @@ struct SubcatchData {
             init_loading.assign(total, 0.0);
             ponded_qual.assign(total, 0.0);
             runon_qual_rate.assign(total, 0.0);
+            lid_drain_runon_qual.assign(total, 0.0);
             washoff_load.assign(total, 0.0);
         }
     }
@@ -1093,6 +1103,8 @@ struct SubcatchData {
         rpt_flag.shrink_to_fit();
 
         stat_precip_vol.shrink_to_fit();
+        stat_gw_time.shrink_to_fit();
+        stat_runon_vol.shrink_to_fit();
         stat_evap_vol.shrink_to_fit();
         stat_infil_vol.shrink_to_fit();
         stat_imperv_vol.shrink_to_fit();
@@ -1125,6 +1137,7 @@ struct SubcatchData {
         conc_old.shrink_to_fit();
         ponded_qual.shrink_to_fit();
         runon_qual_rate.shrink_to_fit();
+        lid_drain_runon_qual.shrink_to_fit();
         washoff_load.shrink_to_fit();
         total_load.shrink_to_fit();
         coverage.shrink_to_fit();

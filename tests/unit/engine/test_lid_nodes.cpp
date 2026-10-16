@@ -7,6 +7,22 @@
 #include "hydrology/LidNode.hpp"
 #include "quality/QualityRouting.hpp"
 #include "hydraulics/Node.hpp"
+#include "hydraulics/Exfiltration.hpp"
+#ifdef OPENSWMM_HAS_2D
+#include <openswmm/engine/openswmm_gw2d.h>
+#include "2d/subsurface/SubsurfaceSections.hpp"
+#include "hydrology/LidNodeAquifer.hpp"
+#include "hydrology/LidNodeRichardsState.hpp"
+#include "2d/subsurface/LidNodeExchange.hpp"
+#include "2d/subsurface/CommonSourceStage.hpp"
+#include "2d/solver/InertialEdges.hpp"
+#include "2d/data/SurfaceStateData.hpp"
+#include "core/CompletedSourceArchive.hpp"
+#include "hydraulics/Routing.hpp"
+#endif
+#ifdef LID_TEST_GEOPACKAGE
+#include <sqlite3.h>
+#endif
 #include "openswmm/engine/openswmm_infrastructure.h"
 #include "openswmm/engine/openswmm_links.h"
 #include "openswmm/engine/openswmm_pollutants.h"
@@ -985,6 +1001,668 @@ TEST(LidNodes, RichardsOwnsPorousStorageAndConservesCapturedSupply) {
     }
     EXPECT_GT(s.cells[1].theta, s.cells[4].theta);
 }
+#ifdef OPENSWMM_HAS_2D
+namespace {
+using namespace openswmm::twoD;
+struct MeshLidRig {
+    SimulationContext c;
+    MeshData mesh;InertialEdges edges;SolverOptions2D options;SubsurfaceConfig config;
+    SubsurfaceSolver gw;SurfaceStateData surface;std::vector<int> nodes;
+    explicit MeshLidRig(int count=1,bool si=false,GwClosure closure=GwClosure::CLOSED_FORM,int aquifer_cells=1,bool separate_beds=false) : c(richardsModel()) {
+        c.nodes.resize(count+1);c.nodes.type[0]=NodeType::STORAGE;c.nodes.type[1]=NodeType::OUTFALL;
+        nodes.push_back(0);
+        for(int n=2;n<=count;++n) {c.node_names.add("S"+std::to_string(n));c.node_subtypes.set_node_type(c.nodes,n,NodeType::STORAGE);nodes.push_back(n);}
+        if(si) {
+            c.options.flow_units=FlowUnits::CMS;
+            for(auto& l:c.lid_controls.node_layers[0]) {
+                if(l.kind!=LidNodeLayerKind::Bottom)l.params[0]*=25.4;
+                if(l.kind==LidNodeLayerKind::Media){l.params[4]*=25.4;l.params[6]*=25.4;}
+                if(l.kind==LidNodeLayerKind::Aggregate)l.params[2]*=25.4;
+            }
+        }
+        for(int n:nodes) {
+            const int r=c.node_subtypes.storage_row(n);auto& st=c.node_subtypes.storages;
+            st.c[r]=100*(si?ucf::Ucf[ucf::VOLUME][1]/ucf::Ucf[ucf::LENGTH][1]:1);
+            st.lid[r]={0,10};st.evap_frac[r]=1;
+            c.nodes.full_depth[n]=2;c.nodes.init_depth[n]=c.nodes.depth[n]=1.6;c.nodes.invert_elev[n]=-10;
+        }
+        c.nodes.invert_elev[1]=-10;lidnode::initialize(c);
+        if(!c.errors.empty())throw std::runtime_error(c.errors.front());
+        for(int n:nodes)c.node_subtypes.storages.lid[c.node_subtypes.storage_row(n)].bottom=LidNodeBottom::MeshAquifer;
+        mesh.resize_triangles(aquifer_cells);
+        for(int i=0;i<aquifer_cells;++i){mesh.tri_area[i]=1;mesh.tri_cz[i]=0;}
+        edges.build(mesh);surface.resize(aquifer_cells,0);
+        config.options.closure=closure;config.options.force_closed_form=true;config.options.gw_et="NONE";
+        GwAquiferRow row;row.Ks=.001;row.zs=4;row.hg0=2;row.theta_s=.45;row.theta_r=.1;row.alpha=2;config.rows.push_back(row);
+        for(int n:nodes){GwNodeBed b;b.node=n;b.cell=separate_beds?(n==0?0:n-1):0;b.area=1;b.Kc=.0001;b.dC=.15;config.node_beds.push_back(b);}
+        std::vector<std::string> warnings;GwUnitFactors units;
+        if(auto error=gw.initialize(mesh,edges,options,units,c.n_nodes(),config,warnings);!error.empty())throw std::runtime_error(error);
+        gw.assignTiers(1,1);
+    }
+    double water() const {
+        double w=gw.state().liveStorage();
+        for(int n:nodes)w+=(c.nodes.volume[n]+lidnode::heldVolume(c,n))*.028316846592;
+        return w;
+    }
+};
+std::string aquiferSnapshot(SubsurfaceSolver& gw) {detail::CompletedSourceArchive a;gw.checkpoint(a,false);return a.bytes();}
+void expectMeshStateUnchanged(const LidNodeState& a,const LidNodeState& b) {
+    EXPECT_EQ(a.richards_water,b.richards_water);EXPECT_EQ(a.richards_pressure,b.richards_pressure);
+    EXPECT_EQ(a.port_delta,b.port_delta);EXPECT_DOUBLE_EQ(a.mobile_delta,b.mobile_delta);
+    EXPECT_DOUBLE_EQ(a.richards_completed_time,b.richards_completed_time);EXPECT_DOUBLE_EQ(a.richards_mesh_start,b.richards_mesh_start);
+    EXPECT_EQ(a.richards_mesh_pending_finish,b.richards_mesh_pending_finish);EXPECT_EQ(a.richards_mesh_routed,b.richards_mesh_routed);
+    EXPECT_DOUBLE_EQ(a.held_volume,b.held_volume);EXPECT_DOUBLE_EQ(a.treated_volume,b.treated_volume);
+    EXPECT_DOUBLE_EQ(a.captured_flow,b.captured_flow);EXPECT_DOUBLE_EQ(a.evap_volume,b.evap_volume);
+    ASSERT_EQ(a.quality_ports.size(),b.quality_ports.size());
+    for(std::size_t k=0;k<a.quality_ports.size();++k) {
+        EXPECT_EQ(a.quality_ports[k].link,b.quality_ports[k].link);EXPECT_EQ(a.quality_ports[k].cell,b.quality_ports[k].cell);
+        EXPECT_DOUBLE_EQ(a.quality_ports[k].volume,b.quality_ports[k].volume);
+    }
+}
+void expectMeshRoutingUnchanged(const SimulationContext& a,const SimulationContext& b) {
+    EXPECT_EQ(a.nodes.volume,b.nodes.volume);EXPECT_EQ(a.nodes.depth,b.nodes.depth);EXPECT_EQ(a.nodes.head,b.nodes.head);
+    EXPECT_EQ(a.nodes.full_volume,b.nodes.full_volume);EXPECT_EQ(a.nodes.rpt_full_volume,b.nodes.rpt_full_volume);
+    EXPECT_EQ(a.nodes.inflow,b.nodes.inflow);EXPECT_EQ(a.nodes.outflow,b.nodes.outflow);EXPECT_EQ(a.nodes.losses,b.nodes.losses);
+    EXPECT_EQ(a.nodes.lat_flow,b.nodes.lat_flow);EXPECT_EQ(a.nodes.aquifer2d_bed,b.nodes.aquifer2d_bed);
+    EXPECT_EQ(a.links.flow,b.links.flow);EXPECT_EQ(a.links.depth,b.links.depth);EXPECT_EQ(a.links.volume,b.links.volume);
+    EXPECT_EQ(a.node_subtypes.storages.evap_loss,b.node_subtypes.storages.evap_loss);
+    EXPECT_EQ(a.node_subtypes.storages.exfil_loss,b.node_subtypes.storages.exfil_loss);
+    for(std::size_t r=0;r<a.node_subtypes.storages.lid_state.size();++r)
+        expectMeshStateUnchanged(a.node_subtypes.storages.lid_state[r],b.node_subtypes.storages.lid_state[r]);
+}
+}
+TEST(RichardsMeshNodes, PublishesRealPressureGeometryForcingAndEtWithoutOutsideOrGenericPayments) {
+    for(auto closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA}) {
+        MeshLidRig rig(1,false,closure);auto& c=rig.c;c.nodes.lat_flow[0]=.01;
+        const double initial=rig.water(),head=lidnode::portDepth(c,0,.1);
+        auto accepted=lidnode::acceptRichardsNodesAtFiring(c,rig.gw,rig.surface,0,.2,1e-6,rig.nodes);
+        ASSERT_TRUE(accepted.error.empty())<<accepted.error;auto& s=c.node_subtypes.storages.lid_state[0];
+        EXPECT_NEAR(s.richards_report.inflow,.01*.2*.028316846592,1e-14);EXPECT_GT(s.richards_report.evaporation,0);
+        EXPECT_GT(lidnode::portDepth(c,0,.1),head);EXPECT_NEAR(c.nodes.head[0],c.nodes.invert_elev[0]+c.nodes.depth[0],1e-14);
+        EXPECT_NEAR(c.nodes.full_volume[0],45,1e-10);EXPECT_DOUBLE_EQ(c.nodes.rpt_full_volume[0],c.nodes.full_volume[0]);
+        EXPECT_DOUBLE_EQ(s.richards_completed_time,.2);EXPECT_TRUE(s.richards_mesh_pending_finish);
+        EXPECT_DOUBLE_EQ(s.richards_bottom_loss,0);EXPECT_EQ(rig.gw.nodeExchangeVolumes(),std::vector<double>(2,0));
+        EXPECT_TRUE(c.nodes.aquifer2d_bed[0]);
+        EXPECT_DOUBLE_EQ(c.nodes.coupling_volume[0],0);EXPECT_NEAR(c.nodes.lat_flow[0],0,1e-14);
+        EXPECT_NEAR(initial+s.richards_report.inflow-rig.water()-s.richards_report.evaporation-rig.gw.state().led_deep-rig.gw.state().led_et,0,1e-10);
+        const double evap=s.evap_volume;lidnode::resetPorts(c);lidnode::finishStep(c);
+        EXPECT_NEAR(c.nodes.lat_flow[0],.01,1e-14);EXPECT_NEAR(c.node_subtypes.storages.evap_loss[0],evap,1e-14);
+        EXPECT_DOUBLE_EQ(c.node_subtypes.storages.exfil_loss[0],0);EXPECT_FALSE(s.richards_mesh_pending_finish);
+        const auto water=s.richards_water;EXPECT_THROW(lidnode::finishStep(c),std::runtime_error);EXPECT_EQ(s.richards_water,water);
+    }
+}
+TEST(RichardsMeshNodes, CurrentPortRulesUseTheAcceptedPorousHeadAndFinishWaterOnce) {
+    MeshLidRig rig;auto& c=rig.c;c.links.resize(1);c.links.node1[0]=0;c.links.node2[0]=1;c.links.offset1[0]=1;
+    c.nodes.depth[1]=4;const double initial=rig.water();
+    auto accepted=lidnode::acceptRichardsNodesAtFiring(c,rig.gw,rig.surface,0,.2,0,rig.nodes);ASSERT_TRUE(accepted.error.empty())<<accepted.error;
+    lidnode::resetPorts(c);const double q=lidnode::exchangePorts(c,0,-100,.2);ASSERT_LT(q,0);
+    const int cell=lidnode::portCell(c.node_subtypes.storages.lid_state[0],1);ASSERT_GT(cell,0);
+    const double received=-q*.2;EXPECT_NEAR(c.node_subtypes.storages.lid_state[0].port_delta[cell],received,1e-14);
+    lidnode::finishStep(c);EXPECT_GT(lidnode::portDepth(c,0,1),c.nodes.depth[0]);
+    EXPECT_NEAR(initial+received*.028316846592-rig.water()-rig.gw.state().led_deep-rig.gw.state().led_et,0,1e-10);
+    EXPECT_EQ(c.node_subtypes.storages.lid_state[0].port_delta,std::vector<double>(9,0));
+    EXPECT_DOUBLE_EQ(c.node_subtypes.storages.lid_state[0].mobile_delta,0);
+    auto next=lidnode::acceptRichardsNodesAtFiring(c,rig.gw,rig.surface,.2,.4,0,rig.nodes);EXPECT_TRUE(next.error.empty())<<next.error;
+}
+TEST(RichardsMeshNodes, SiAndUsInputsPublishEquivalentPhysicalOwners) {
+    MeshLidRig us,si(1,true);us.c.nodes.lat_flow[0]=si.c.nodes.lat_flow[0]=.01;
+    auto a=lidnode::acceptRichardsNodesAtFiring(us.c,us.gw,us.surface,0,.2,0,us.nodes);
+    auto b=lidnode::acceptRichardsNodesAtFiring(si.c,si.gw,si.surface,0,.2,0,si.nodes);
+    ASSERT_TRUE(a.error.empty())<<a.error;ASSERT_TRUE(b.error.empty())<<b.error;
+    const auto& x=us.c.node_subtypes.storages.lid_state[0];const auto& y=si.c.node_subtypes.storages.lid_state[0];
+    for(std::size_t k=1;k<x.cells.size();++k) {EXPECT_NEAR(x.richards_water[k],y.richards_water[k],1e-10);EXPECT_NEAR(x.richards_pressure[k],y.richards_pressure[k],1e-8);}
+    EXPECT_NEAR(us.c.nodes.volume[0],si.c.nodes.volume[0],1e-10);
+    EXPECT_NEAR(a.trial.receipts[0].accepted_up,b.trial.receipts[0].accepted_up,1e-12);
+}
+TEST(RichardsMeshNodes, NativeDynamicWaveBackwaterPortsFinishAcceptedNodeIntervals) {
+    const auto stem=(richardsArtifacts()/"mesh_richards_dynamic_wave").string();
+    std::ofstream f(stem+".inp");
+    f << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2004\nEND_DATE 01/01/2004\nEND_TIME 00:01:00\nROUTING_STEP 1\nVARIABLE_STEP 0\nREPORT_STEP 00:00:10\nIGNORE_QUALITY YES\n"
+      << "[STORAGE]\nS -10 2 1.6 FUNCTIONAL 0 0 100 0 0\n[OUTFALLS]\nO -10 FIXED -7.5 NO\n[CONDUITS]\nD S O 10 .013 .75 0 0 0\n[XSECTIONS]\nD CIRCULAR .1 0 0 0 1\n"
+      << "[LID_CONTROLS]\nStack NODE\nStack SURFACE 6 .1\nStack MEDIA 12 .45 .2 .08 2 10 3\nStack AGGREGATE 6 .4 100\nStack BOTTOM 0 0\n[LID_NODES]\nS Stack 10\n"
+      << "[LID_RICHARDS]\nStack OPTIONS 4 1e-7 1e-5 30\nStack 2 .03 2 1.6 .5 .0001\nStack 3 .03 2 1.6 .5 .0001\n";
+    f.close();SWMMEngine engine;ASSERT_EQ(engine.open((stem+".inp").c_str(),(stem+".rpt").c_str(),nullptr),0);
+    ASSERT_EQ(engine.initialize(),0);auto& c=engine.context();
+    // Exercise the internal bridge without enabling the unqualified production scheduler.
+    c.node_subtypes.storages.lid[0].bottom=LidNodeBottom::MeshAquifer;
+    MeshLidRig aquifer;Router router;router.init(c,RouteModel::DYNWAVE);
+    for(int step=0;step<3;++step) {
+        c.nodes.save_state();c.links.save_state();
+        const double start=step*.2,end=(step+1)*.2;
+        auto accepted=lidnode::acceptRichardsNodesAtFiring(c,aquifer.gw,aquifer.surface,start,end,0,{0});
+        ASSERT_TRUE(accepted.error.empty())<<accepted.error;
+        if(!step)EXPECT_THROW(router.enableCheckpointing(c),std::runtime_error);
+        const auto prepared=c.node_subtypes.storages.lid_state[0].richards_water;
+        EXPECT_GT(router.step(c,.2),0);EXPECT_LT(c.links.flow[0],0);
+        auto& state=c.node_subtypes.storages.lid_state[0];ASSERT_FALSE(state.quality_ports.empty());
+        double received=0;for(const auto& port:state.quality_ports)received+=port.volume;
+        EXPECT_GT(received,0);EXPECT_TRUE(state.richards_mesh_routed);
+        const auto routed=c;EXPECT_THROW(router.step(c,.2),std::runtime_error);expectMeshRoutingUnchanged(routed,c);
+        EXPECT_THROW(lidnode::resetPorts(c),std::runtime_error);expectMeshRoutingUnchanged(routed,c);
+        EXPECT_THROW(lidnode::exchangePorts(c,0,-.001,.2),std::runtime_error);expectMeshRoutingUnchanged(routed,c);
+        lidnode::finishRichardsNodes(c,start,end,{0});
+        EXPECT_NEAR(state.held_volume-std::accumulate(prepared.begin()+1,prepared.end(),0.),received,1e-10);
+        EXPECT_DOUBLE_EQ(c.node_subtypes.storages.exfil_loss[0],0);
+        EXPECT_EQ(aquifer.gw.nodeExchangeVolumes(),std::vector<double>(2,0));
+        EXPECT_FALSE(state.richards_mesh_pending_finish);EXPECT_DOUBLE_EQ(state.richards_completed_time,end);
+        EXPECT_GT(lidnode::portDepth(c,0,.75),c.nodes.depth[0]);
+        c.current_time=end;
+    }
+    EXPECT_EQ(engine.close(),0);
+}
+TEST(RichardsMeshRuntime, PendingGrossReceiptsWaitForGroundwaterAndRecoverExactly) {
+    for(auto closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(int direction:{-1,1}) {
+        MeshLidRig rig(3,false,closure);auto& c=rig.c;auto& gw=rig.gw;
+        for(int n:rig.nodes)c.nodes.invert_elev[n]=direction<0?-10:0;
+        ASSERT_EQ(gw.configureLidReceipts({0,1,2}),"");
+        const double initial=rig.water();
+        ASSERT_NO_THROW(lidnode::prepareMeshRichardsStep(c,gw,rig.surface,.2,0));
+        ASSERT_NO_THROW(lidnode::finishStep(c));c.current_time=.2;
+        EXPECT_GT(std::abs(gw.pendingLidWater()),0);
+        const auto pending=gw.pendingLidWater();
+        EXPECT_NEAR(rig.water()+pending,initial,1e-9);
+        auto restored=gw;detail::CompletedSourceArchive out;gw.checkpoint(out,false);
+        detail::CompletedSourceArchive in(out.bytes());ASSERT_NO_THROW(restored.checkpoint(in,false));in.finish();
+        EXPECT_EQ(aquiferSnapshot(restored),aquiferSnapshot(gw));
+        ASSERT_NO_THROW(gw.fireGwCells(0,.1,rig.surface,0,.1));
+        EXPECT_EQ(gw.pendingLidWater(),pending);EXPECT_EQ(gw.state().led_node,0);
+        EXPECT_NEAR(rig.water()+gw.pendingLidWater(),initial,1e-9);
+        for(int k=1;k<5;++k) {
+            ASSERT_NO_THROW(lidnode::prepareMeshRichardsStep(c,gw,rig.surface,.2,0));
+            ASSERT_NO_THROW(lidnode::finishStep(c));c.current_time+=.2;
+        }
+        EXPECT_EQ(gw.cellCompletedTime(0),.1);
+        EXPECT_NEAR(rig.water()+gw.pendingLidWater(),initial,1e-9);
+        const auto before=gw.pendingLidWater();
+        ASSERT_NO_THROW(gw.fireGwCells(0,.9,rig.surface,.1,1));
+        EXPECT_EQ(gw.pendingLidWater(),0);EXPECT_NEAR(gw.state().led_node,-before,1e-12);
+        EXPECT_EQ(gw.nodeRefunds(),0);EXPECT_NEAR(rig.water(),initial,1e-9);
+        EXPECT_EQ(gw.nodeExchangeVolumes(),std::vector<double>(4,0));
+        EXPECT_NEAR(gw.state().continuityResidual(),0,1e-10);
+    }
+}
+TEST(RichardsMeshRuntime, FutureWithdrawalsSurviveCompetingEvaporationAndDeepLoss) {
+    for(auto closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA}) {
+        SCOPED_TRACE(int(closure));MeshLidRig rig(1,false,closure);auto& gw=rig.gw;
+        rig.config.options.gw_et="BOTH";std::vector<std::string> warnings;GwUnitFactors units;
+        ASSERT_EQ(gw.initialize(rig.mesh,rig.edges,rig.options,units,rig.c.n_nodes(),rig.config,warnings),"");
+        gw.assignTiers(1,1);ASSERT_EQ(gw.configureLidReceipts({0}),"");
+        SubsurfaceSolver::NodeWaterBudget budget;ASSERT_EQ(gw.nodeWaterBudget(0,1,budget),"");
+        const double reserved=budget.donor*.8;ASSERT_GT(reserved,0);
+        RichardsBedReceipt receipt;receipt.node=0;receipt.bed=0;receipt.cell=0;
+        receipt.requested_up=receipt.reserved_up=receipt.accepted_up=reserved;
+        ASSERT_EQ(gw.retainLidReceipts(0,1,{receipt}),"");
+        // Demands arrive after the LID has reserved its completed interval.
+        // An earlier aquifer firing must leave that future claim funded.
+        gw.state().et_pending[0]=10;gw.state().c_loss[0]=10;
+        ASSERT_NO_THROW(gw.fireGwCells(0,.5,rig.surface,0,.5));
+        EXPECT_EQ(gw.pendingBedUp(0),reserved);EXPECT_EQ(gw.state().led_node,0);
+        EXPECT_GT(gw.state().led_deep+gw.state().led_et,0);
+        ASSERT_NO_THROW(gw.fireGwCells(0,.5,rig.surface,.5,1));
+        EXPECT_EQ(gw.pendingBedUp(0),0);EXPECT_EQ(gw.nodeRefunds(),0);
+        EXPECT_NEAR(gw.state().led_node,reserved,1e-12);
+        EXPECT_NEAR(gw.state().continuityResidual(),0,1e-10);
+    }
+}
+TEST(RichardsMeshNodes, VectorPublicationIsStableAcrossCallerOrderAndPackingBoundary) {
+    MeshLidRig a(65),b(65);for(int n:a.nodes){a.c.nodes.lat_flow[n]=b.c.nodes.lat_flow[n]=.001;}
+    auto reversed=b.nodes;std::reverse(reversed.begin(),reversed.end());
+    auto x=lidnode::acceptRichardsNodesAtFiring(a.c,a.gw,a.surface,0,.2,0,a.nodes);
+    auto y=lidnode::acceptRichardsNodesAtFiring(b.c,b.gw,b.surface,0,.2,0,reversed);
+    ASSERT_TRUE(x.error.empty())<<x.error;ASSERT_TRUE(y.error.empty())<<y.error;ASSERT_EQ(x.trial.receipts.size(),65u);
+    for(int n:a.nodes) {
+        const int r=a.c.node_subtypes.storage_row(n);EXPECT_EQ(a.c.node_subtypes.storages.lid_state[r].richards_water,b.c.node_subtypes.storages.lid_state[r].richards_water);
+        EXPECT_DOUBLE_EQ(a.c.nodes.volume[n],b.c.nodes.volume[n]);
+    }
+    EXPECT_EQ(a.gw.state().hg,b.gw.state().hg);EXPECT_EQ(a.gw.richardsBedUpCumulative(),b.gw.richardsBedUpCumulative());
+}
+TEST(RichardsMeshNodes, LateInvalidNodeAndUnfinishedPortsLeaveEveryOwnerUntouched) {
+    MeshLidRig rig(2);auto& c=rig.c;const auto w0=c.node_subtypes.storages.lid_state[0].richards_water;
+    const auto w1=c.node_subtypes.storages.lid_state[1].richards_water;const auto snapshot=aquiferSnapshot(rig.gw);const auto mobile=c.nodes.volume;
+    c.node_subtypes.storages.lid_state[1].cells.back().layer=999;
+    auto bad=lidnode::acceptRichardsNodesAtFiring(c,rig.gw,rig.surface,0,.2,0,rig.nodes);EXPECT_FALSE(bad.error.empty());
+    EXPECT_EQ(aquiferSnapshot(rig.gw),snapshot);EXPECT_EQ(c.nodes.volume,mobile);
+    EXPECT_EQ(c.node_subtypes.storages.lid_state[0].richards_water,w0);EXPECT_EQ(c.node_subtypes.storages.lid_state[1].richards_water,w1);
+    c.node_subtypes.storages.lid_state[1].cells.back().layer=3;c.node_subtypes.storages.lid_state[0].port_delta[1]=.01;
+    bad=lidnode::acceptRichardsNodesAtFiring(c,rig.gw,rig.surface,0,.2,0,rig.nodes);EXPECT_NE(bad.error.find("unfinished"),std::string::npos);
+    EXPECT_EQ(aquiferSnapshot(rig.gw),snapshot);EXPECT_EQ(c.nodes.volume,mobile);
+    c.node_subtypes.storages.lid_state[0].port_delta[1]=0;
+    bad=lidnode::acceptRichardsNodesAtFiring(c,rig.gw,rig.surface,0,.2,0,rig.nodes);EXPECT_TRUE(bad.error.empty())<<bad.error;
+}
+TEST(RichardsMeshNodes, ReplayMissingFinishAndUnqualifiedOrdinaryPreparationCannotAdvanceClocks) {
+    MeshLidRig rig;auto& c=rig.c;
+    auto accepted=lidnode::acceptRichardsNodesAtFiring(c,rig.gw,rig.surface,0,.2,0,rig.nodes);ASSERT_TRUE(accepted.error.empty())<<accepted.error;
+    const auto water=c.node_subtypes.storages.lid_state[0].richards_water;const auto hg=rig.gw.state().hg;
+    auto failed=lidnode::acceptRichardsNodesAtFiring(c,rig.gw,rig.surface,.2,.4,0,rig.nodes);EXPECT_NE(failed.error.find("unfinished"),std::string::npos);
+    EXPECT_EQ(rig.gw.state().hg,hg);EXPECT_EQ(c.node_subtypes.storages.lid_state[0].richards_water,water);
+    EXPECT_THROW(lidnode::prepareStep(c,.2,0),std::runtime_error);EXPECT_EQ(c.node_subtypes.storages.lid_state[0].richards_water,water);
+    lidnode::finishStep(c);
+    failed=lidnode::acceptRichardsNodesAtFiring(c,rig.gw,rig.surface,0,.2,0,rig.nodes);EXPECT_FALSE(failed.error.empty());
+    EXPECT_DOUBLE_EQ(c.node_subtypes.storages.lid_state[0].richards_completed_time,.2);
+    EXPECT_DOUBLE_EQ(rig.gw.cellCompletedTime(0),.2);
+}
+TEST(RichardsMeshNodes, ForcingAboveHydraulicCapacityCannotPublishWaterOrOwnership) {
+    MeshLidRig rig(2);auto& c=rig.c;c.nodes.lat_flow[rig.nodes.back()]=1000;
+    for(auto& cell:c.node_subtypes.storages.lid_state[1].cells)cell.conductivity=0;
+    const auto water0=c.node_subtypes.storages.lid_state[0].richards_water;
+    const auto water1=c.node_subtypes.storages.lid_state[1].richards_water;
+    const auto mobile=c.nodes.volume,forcing=c.nodes.lat_flow;const auto flags=c.nodes.aquifer2d_bed;
+    const auto snapshot=aquiferSnapshot(rig.gw);
+    auto refused=lidnode::acceptRichardsNodesAtFiring(c,rig.gw,rig.surface,0,.2,0,rig.nodes);
+    EXPECT_NE(refused.error.find("final hydraulic owner bounds"),std::string::npos);
+    EXPECT_EQ(aquiferSnapshot(rig.gw),snapshot);
+    EXPECT_EQ(c.nodes.volume,mobile);EXPECT_EQ(c.nodes.lat_flow,forcing);EXPECT_EQ(c.nodes.aquifer2d_bed,flags);
+    EXPECT_EQ(c.node_subtypes.storages.lid_state[0].richards_water,water0);
+    EXPECT_EQ(c.node_subtypes.storages.lid_state[1].richards_water,water1);
+    for(const auto& state:c.node_subtypes.storages.lid_state) {
+        EXPECT_DOUBLE_EQ(state.richards_completed_time,0);EXPECT_FALSE(state.richards_mesh_pending_finish);
+    }
+}
+TEST(RichardsMeshNodes, BadAcceptedPortStateRefusesTheWholeFinishBeforeAnyLayerChanges) {
+    MeshLidRig rig(2);auto& c=rig.c;
+    auto accepted=lidnode::acceptRichardsNodesAtFiring(c,rig.gw,rig.surface,0,.2,0,rig.nodes);ASSERT_TRUE(accepted.error.empty())<<accepted.error;
+    auto& a=c.node_subtypes.storages.lid_state[0];auto& b=c.node_subtypes.storages.lid_state[1];
+    a.port_delta[1]=.00001;b.port_delta[1]=-100;const auto wa=a.richards_water,wb=b.richards_water;
+    EXPECT_THROW(lidnode::finishStep(c),std::runtime_error);EXPECT_EQ(a.richards_water,wa);EXPECT_EQ(b.richards_water,wb);
+    EXPECT_TRUE(a.richards_mesh_pending_finish);EXPECT_TRUE(b.richards_mesh_pending_finish);
+    b.port_delta[1]=0;EXPECT_NO_THROW(lidnode::finishStep(c));EXPECT_NE(a.richards_water,wa);
+}
+TEST(RichardsMeshNodes, LegacyAndV11HotstartsCannotDiscardJointOwnersOrTruncateExistingFiles) {
+    MeshLidRig rig;const auto path=(richardsArtifacts()/"mesh_hotstart_guard.hsf").string();
+    {std::ofstream f(path,std::ios::binary);f<<"preserved";}
+    EXPECT_EQ(HotStartManager::save(rig.c,path),nullptr);
+    EXPECT_EQ(HotStartManager::save(rig.c,nullptr,nullptr,path),nullptr);
+    EXPECT_NE(HotStartManager::save_legacy_routing(path,rig.c),0);
+    std::ifstream f(path,std::ios::binary);EXPECT_EQ(std::string(std::istreambuf_iterator<char>(f),{}),"preserved");
+    auto normal=richardsModel();lidnode::initialize(normal);
+    const auto valid=(richardsArtifacts()/"mesh_guard_current.hsf").string();std::unique_ptr<HotStartFile> hs(HotStartManager::save(normal,valid));ASSERT_TRUE(hs);
+    const auto water=rig.c.node_subtypes.storages.lid_state[0].richards_water;
+    EXPECT_NE(HotStartManager::apply(*hs,rig.c),0);EXPECT_NE(HotStartManager::apply(*hs,rig.c,nullptr,nullptr),0);
+    EXPECT_NE(HotStartManager::apply_legacy_routing(path,rig.c),0);EXPECT_EQ(rig.c.node_subtypes.storages.lid_state[0].richards_water,water);
+}
+TEST(RichardsMeshNodes, TierAdoptionKeepsSlowerOrdinaryReceiversAndNodeFinishIndependent) {
+    MeshLidRig rig(1,false,GwClosure::CLOSED_FORM,2);auto& c=rig.c;
+    rig.gw.state().dt_cell={.2,.4};rig.gw.assignTiers(.2,2);rig.gw.bookLinkSeepage(1,.001);
+    for(int step=0;step<2;++step) {
+        auto accepted=lidnode::acceptRichardsNodesForTier(c,rig.gw,rig.surface,0,step*.2,(step+1)*.2,0,rig.nodes);
+        ASSERT_TRUE(accepted.error.empty())<<accepted.error;lidnode::resetPorts(c);lidnode::finishStep(c);
+        EXPECT_DOUBLE_EQ(rig.gw.cellCompletedTime(1),0);EXPECT_DOUBLE_EQ(rig.gw.state().lacc[1],.001);
+    }
+    auto ordinary=acceptRichardsBedsForTier(rig.gw,rig.surface,1,0,.4,{});
+    ASSERT_TRUE(ordinary.error.empty())<<ordinary.error;EXPECT_DOUBLE_EQ(rig.gw.cellCompletedTime(1),.4);
+    EXPECT_EQ(rig.gw.tierFirings(),(std::vector<long>{2,1}));EXPECT_EQ(rig.gw.state().tier,(std::vector<uint8_t>{0,1}));
+    EXPECT_DOUBLE_EQ(c.node_subtypes.storages.lid_state[0].richards_completed_time,.4);
+    EXPECT_DOUBLE_EQ(c.node_subtypes.storages.exfil_loss[0],0);
+}
+TEST(RichardsMeshNodes, RealNodeAdoptionSettlesCompletedMeshWeatherReceiptsAndEt) {
+    MeshLidRig rig;auto& c=rig.c;c.options.total_duration_ms=3600000;c.options.ignore_snow_melt=true;
+    runoff::SourceWaterDriver sources;ASSERT_EQ(sources.initialize(c,{},{}),"");
+    SurfaceOwnershipPreview preview;preview.mesh_weather_area={1};CommonSourceStage stage;
+    ASSERT_EQ(stage.initialize(rig.mesh,rig.surface,rig.options,rig.gw,sources,preview,true),"");
+    rig.surface.rainfall[0]=.001;rig.surface.evap_rate[0]=1e-6;
+    c.nodes.lat_flow[0]=.01;ASSERT_EQ(stage.advance(0,.2),"");
+    ASSERT_FALSE(rig.gw.pendingSourceReceipts(0).empty());const double before=rig.water();
+    auto accepted=lidnode::acceptRichardsNodesForTier(c,rig.gw,rig.surface,0,0,.2,0,rig.nodes);
+    ASSERT_TRUE(accepted.error.empty())<<accepted.error;EXPECT_TRUE(rig.gw.pendingSourceReceipts(0).empty());
+    EXPECT_NEAR(before+accepted.trial.reports[0].inflow-rig.water()-rig.gw.state().led_deep-rig.gw.state().led_et,0,1e-10);
+    EXPECT_DOUBLE_EQ(rig.gw.sourceCompletedTime(0),.2);EXPECT_DOUBLE_EQ(stage.completedEnd(),.2);
+    lidnode::finishStep(c);EXPECT_NEAR(c.nodes.lat_flow[0],.01,1e-14);EXPECT_DOUBLE_EQ(c.node_subtypes.storages.exfil_loss[0],0);
+    EXPECT_EQ(rig.gw.nodeExchangeVolumes(),std::vector<double>(2,0));
+}
+TEST(RichardsMeshCohorts, FastAndSlowOwnersFinishTheirOwnForcingAndLossesOnce) {
+    MeshLidRig rig(2,false,GwClosure::CLOSED_FORM,2,true);auto& c=rig.c;
+    rig.gw.state().dt_cell={.2,.4};rig.gw.assignTiers(.2,2);
+    c.nodes.lat_flow[0]=.01;c.nodes.lat_flow[2]=.02;
+    const auto slow=c.node_subtypes.storages.lid_state[1];const double initial=rig.water();double in=0,et=0;
+    for(int step=0;step<2;++step) {
+        auto a=lidnode::acceptRichardsNodesForTier(c,rig.gw,rig.surface,0,step*.2,(step+1)*.2,1e-6,{0});
+        ASSERT_TRUE(a.error.empty())<<a.error;in+=a.trial.reports[0].inflow;et+=a.trial.reports[0].evaporation;
+        EXPECT_NO_THROW(lidnode::finishRichardsNodes(c,step*.2,(step+1)*.2,{0}));
+        expectMeshStateUnchanged(slow,c.node_subtypes.storages.lid_state[1]);
+        EXPECT_DOUBLE_EQ(c.nodes.lat_flow[2],.02);EXPECT_DOUBLE_EQ(c.node_subtypes.storages.evap_loss[1],0);
+        EXPECT_DOUBLE_EQ(rig.gw.cellCompletedTime(1),0);
+        EXPECT_THROW(lidnode::finishRichardsNodes(c,step*.2,(step+1)*.2,{0}),std::runtime_error);
+    }
+    auto b=lidnode::acceptRichardsNodesForTier(c,rig.gw,rig.surface,1,0,.4,1e-6,{2});
+    ASSERT_TRUE(b.error.empty())<<b.error;in+=b.trial.reports[0].inflow;et+=b.trial.reports[0].evaporation;
+    const auto fast=c.node_subtypes.storages.lid_state[0];const double fast_loss=c.node_subtypes.storages.evap_loss[0];
+    EXPECT_NO_THROW(lidnode::finishRichardsNodes(c,0,.4,{2}));expectMeshStateUnchanged(fast,c.node_subtypes.storages.lid_state[0]);
+    EXPECT_DOUBLE_EQ(c.node_subtypes.storages.evap_loss[0],fast_loss);EXPECT_DOUBLE_EQ(c.nodes.lat_flow[0],.01);
+    EXPECT_NEAR(c.nodes.lat_flow[2],.02,1e-14);EXPECT_EQ(rig.gw.tierFirings(),(std::vector<long>{2,1}));
+    EXPECT_NEAR(initial+in-et-rig.water()-rig.gw.state().led_deep-rig.gw.state().led_et,0,1e-10);
+    EXPECT_NEAR((c.node_subtypes.storages.evap_loss[0]+c.node_subtypes.storages.evap_loss[1])*.028316846592,et,1e-14);
+}
+TEST(RichardsMeshCohorts, ExplicitFinishLeavesCurrentRichardsAndClassicalLidsUntouched) {
+    MeshLidRig rig(3);auto& c=rig.c;auto& st=c.node_subtypes.storages;
+    c.lid_names.add("Classical");c.lid_controls.names.push_back("Classical");c.lid_controls.lid_type.push_back("NODE");
+    auto classical=c.lid_controls.node_layers[0];classical.front().flow.enabled=false;
+    c.lid_controls.node_layers.push_back(classical);st.lid[2].control=1;
+    for(auto& lid:st.lid)lid.bottom=LidNodeBottom::Current;
+    lidnode::initialize(c);ASSERT_TRUE(c.errors.empty());st.lid[0].bottom=LidNodeBottom::MeshAquifer;
+    ASSERT_TRUE(st.lid_state[1].richards);ASSERT_FALSE(st.lid_state[2].richards);
+    c.nodes.lat_flow[0]=.01;c.nodes.lat_flow[2]=.03;c.nodes.lat_flow[3]=.04;
+    st.lid_state[1].captured_flow=.001;st.lid_state[2].captured_flow=.002;
+    st.lid_state[1].evap_volume=.003;st.lid_state[2].evap_volume=.004;
+    auto a=lidnode::acceptRichardsNodesAtFiring(c,rig.gw,rig.surface,0,.2,1e-6,{0});ASSERT_TRUE(a.error.empty())<<a.error;
+    const auto before=c;EXPECT_NO_THROW(lidnode::finishRichardsNodes(c,0,.2,{0}));
+    for(int r:{1,2}) {
+        expectMeshStateUnchanged(before.node_subtypes.storages.lid_state[r],st.lid_state[r]);
+        const int n=st.node_idx[r];EXPECT_DOUBLE_EQ(c.nodes.lat_flow[n],before.nodes.lat_flow[n]);
+        EXPECT_DOUBLE_EQ(c.nodes.volume[n],before.nodes.volume[n]);EXPECT_DOUBLE_EQ(c.nodes.depth[n],before.nodes.depth[n]);
+        EXPECT_DOUBLE_EQ(st.evap_loss[r],before.node_subtypes.storages.evap_loss[r]);
+        EXPECT_DOUBLE_EQ(st.exfil_loss[r],before.node_subtypes.storages.exfil_loss[r]);
+    }
+}
+TEST(RichardsMeshCohorts, InvalidFinishIntervalsAndOwnersLeaveEveryDraftUntouched) {
+    MeshLidRig rig(2);auto& c=rig.c;
+    auto a=lidnode::acceptRichardsNodesAtFiring(c,rig.gw,rig.surface,0,.2,0,rig.nodes);ASSERT_TRUE(a.error.empty())<<a.error;
+    const auto before=c;const auto hg=rig.gw.state().hg,hu=rig.gw.state().hu;
+    for(const auto& owners:std::vector<std::vector<int>>{{},{0,0},{0,1},{0,999}}) {
+        EXPECT_THROW(lidnode::finishRichardsNodes(c,0,.2,owners),std::runtime_error);expectMeshRoutingUnchanged(before,c);
+    }
+    for(auto interval:std::vector<std::pair<double,double>>{{.1,.2},{0,.1},{0,0},{0,std::numeric_limits<double>::quiet_NaN()}}) {
+        EXPECT_THROW(lidnode::finishRichardsNodes(c,interval.first,interval.second,rig.nodes),std::runtime_error);
+        expectMeshRoutingUnchanged(before,c);
+    }
+    EXPECT_EQ(rig.gw.state().hg,hg);EXPECT_EQ(rig.gw.state().hu,hu);
+    EXPECT_NO_THROW(lidnode::finishRichardsNodes(c,0,.2,{2,0}));
+}
+TEST(RichardsMeshCohorts, ConnectedMeshPortsRequireJointFinishAndPayBothLayersOnce) {
+    MeshLidRig rig(2);auto& c=rig.c;c.nodes.invert_elev[0]=-9;
+    c.links.resize(1);c.link_names.add("P");c.links.node1[0]=0;c.links.node2[0]=2;c.links.offset1[0]=c.links.offset2[0]=1;
+    auto a=lidnode::acceptRichardsNodesAtFiring(c,rig.gw,rig.surface,0,.2,0,rig.nodes);ASSERT_TRUE(a.error.empty())<<a.error;
+    const double initial=rig.water();lidnode::resetPorts(c);const double q=lidnode::exchangePorts(c,0,100,.2);ASSERT_GT(q,0);
+    const auto before=c;EXPECT_THROW(lidnode::finishRichardsNodes(c,0,.2,{0}),std::runtime_error);expectMeshRoutingUnchanged(before,c);
+    const int k=lidnode::portCell(c.node_subtypes.storages.lid_state[0],1);
+    const double wa=c.node_subtypes.storages.lid_state[0].richards_water[k],wb=c.node_subtypes.storages.lid_state[1].richards_water[k];
+    EXPECT_NO_THROW(lidnode::finishRichardsNodes(c,0,.2,{2,0}));
+    EXPECT_NEAR(c.node_subtypes.storages.lid_state[0].richards_water[k],wa-q*.2,1e-12);
+    EXPECT_NEAR(c.node_subtypes.storages.lid_state[1].richards_water[k],wb+q*.2,1e-12);EXPECT_NEAR(initial,rig.water(),1e-10);
+}
+TEST(RichardsMeshCohorts, UnpreparedMismatchedOrWrongDurationPortEndpointsCannotBookWater) {
+    MeshLidRig rig(2,false,GwClosure::CLOSED_FORM,2,true);auto& c=rig.c;
+    c.links.resize(1);c.link_names.add("P");c.links.node1[0]=0;c.links.node2[0]=2;c.links.offset1[0]=c.links.offset2[0]=1;
+    auto before=c;EXPECT_THROW(lidnode::exchangePorts(c,0,1,.2),std::runtime_error);expectMeshRoutingUnchanged(before,c);
+    rig.gw.state().dt_cell={.2,.4};rig.gw.assignTiers(.2,2);
+    auto a=lidnode::acceptRichardsNodesForTier(c,rig.gw,rig.surface,0,0,.2,0,{0});ASSERT_TRUE(a.error.empty())<<a.error;
+    before=c;EXPECT_THROW(lidnode::exchangePorts(c,0,1,.2),std::runtime_error);expectMeshRoutingUnchanged(before,c);
+    auto b=lidnode::acceptRichardsNodesForTier(c,rig.gw,rig.surface,1,0,.4,0,{2});ASSERT_TRUE(b.error.empty())<<b.error;
+    before=c;EXPECT_THROW(lidnode::exchangePorts(c,0,1,.2),std::runtime_error);expectMeshRoutingUnchanged(before,c);
+    EXPECT_THROW(lidnode::finishStep(c),std::runtime_error);expectMeshRoutingUnchanged(before,c);
+    c.links.node2[0]=1;before=c;
+    EXPECT_THROW(lidnode::exchangePorts(c,0,1,.1),std::runtime_error);expectMeshRoutingUnchanged(before,c);
+    EXPECT_THROW(lidnode::exchangePorts(c,0,std::numeric_limits<double>::quiet_NaN(),.2),std::runtime_error);expectMeshRoutingUnchanged(before,c);
+}
+TEST(RichardsMeshCohorts, PicardResetReplacesTrialsAndFinishUsesOnlyTheFinalSignedVolumes) {
+    MeshLidRig rig(2);auto& c=rig.c;c.nodes.invert_elev[0]=-9;
+    c.links.resize(1);c.link_names.add("P");c.links.node1[0]=0;c.links.node2[0]=2;c.links.offset1[0]=c.links.offset2[0]=1;
+    auto a=lidnode::acceptRichardsNodesAtFiring(c,rig.gw,rig.surface,0,.2,0,rig.nodes);ASSERT_TRUE(a.error.empty())<<a.error;
+    const auto wa=c.node_subtypes.storages.lid_state[0].richards_water,wb=c.node_subtypes.storages.lid_state[1].richards_water;
+    const int k=lidnode::portCell(c.node_subtypes.storages.lid_state[0],1);
+    lidnode::resetPorts(c);ASSERT_GT(lidnode::exchangePorts(c,0,1e-5,.2),0);
+    lidnode::resetPorts(c);const double q=lidnode::exchangePorts(c,0,2e-5,.2);ASSERT_GT(q,0);
+    EXPECT_NO_THROW(lidnode::finishRichardsNodes(c,0,.2,rig.nodes));
+    EXPECT_NEAR(c.node_subtypes.storages.lid_state[0].richards_water[k],wa[k]-q*.2,1e-12);
+    EXPECT_NEAR(c.node_subtypes.storages.lid_state[1].richards_water[k],wb[k]+q*.2,1e-12);
+}
+TEST(RichardsMeshCohorts, LateBadPortDraftRollsBackTheWholeFinishAndCanRetry) {
+    MeshLidRig rig(2);auto& c=rig.c;c.nodes.lat_flow[0]=.01;c.nodes.lat_flow[2]=.02;
+    auto a=lidnode::acceptRichardsNodesAtFiring(c,rig.gw,rig.surface,0,.2,1e-6,rig.nodes);ASSERT_TRUE(a.error.empty())<<a.error;
+    c.node_subtypes.storages.lid_state[0].port_delta[1]=1e-5;c.node_subtypes.storages.lid_state[1].port_delta[1]=-100;
+    const auto before=c;const auto hg=rig.gw.state().hg,hu=rig.gw.state().hu;
+    EXPECT_THROW(lidnode::finishRichardsNodes(c,0,.2,{2,0}),std::runtime_error);expectMeshRoutingUnchanged(before,c);
+    EXPECT_EQ(rig.gw.state().hg,hg);EXPECT_EQ(rig.gw.state().hu,hu);
+    c.node_subtypes.storages.lid_state[1].port_delta[1]=0;
+    EXPECT_NO_THROW(lidnode::finishRichardsNodes(c,0,.2,rig.nodes));EXPECT_NEAR(c.nodes.lat_flow[0],.01,1e-14);
+    EXPECT_NEAR(c.nodes.lat_flow[2],.02,1e-14);const auto done=c;
+    EXPECT_THROW(lidnode::finishRichardsNodes(c,0,.2,rig.nodes),std::runtime_error);expectMeshRoutingUnchanged(done,c);
+}
+TEST(RichardsMeshCohorts, GlobalRouterRefusesUnequalDueIntervalsBeforeAnyHydraulicMutation) {
+    MeshLidRig rig(2,false,GwClosure::CLOSED_FORM,2,true);auto& c=rig.c;Router router;router.init(c,RouteModel::DYNWAVE);
+    auto before=c;EXPECT_THROW(router.step(c,.2),std::runtime_error);expectMeshRoutingUnchanged(before,c);
+    rig.gw.state().dt_cell={.2,.4};rig.gw.assignTiers(.2,2);
+    auto a=lidnode::acceptRichardsNodesForTier(c,rig.gw,rig.surface,0,0,.2,0,{0});ASSERT_TRUE(a.error.empty())<<a.error;
+    auto b=lidnode::acceptRichardsNodesForTier(c,rig.gw,rig.surface,1,0,.4,0,{2});ASSERT_TRUE(b.error.empty())<<b.error;
+    before=c;EXPECT_THROW(router.step(c,.2),std::runtime_error);expectMeshRoutingUnchanged(before,c);
+    EXPECT_DOUBLE_EQ(rig.gw.cellCompletedTime(0),.2);EXPECT_DOUBLE_EQ(rig.gw.cellCompletedTime(1),.4);
+}
+TEST(RichardsMeshCohorts, GlobalRouterRequiresTheCurrentClockDurationAndQualifiedModel) {
+    MeshLidRig rig;auto& c=rig.c;
+    auto a=lidnode::acceptRichardsNodesAtFiring(c,rig.gw,rig.surface,0,.2,0,rig.nodes);ASSERT_TRUE(a.error.empty())<<a.error;
+    Router dw;dw.init(c,RouteModel::DYNWAVE);c.current_time=.1;auto before=c;
+    EXPECT_THROW(dw.step(c,.2),std::runtime_error);expectMeshRoutingUnchanged(before,c);
+    c.current_time=0;before=c;EXPECT_THROW(dw.step(c,.1),std::runtime_error);expectMeshRoutingUnchanged(before,c);
+    for(auto model:{RouteModel::KINWAVE,RouteModel::STEADY,RouteModel::FV}) {
+        Router other;other.init(c,model);before=c;EXPECT_THROW(other.step(c,.2),std::runtime_error);expectMeshRoutingUnchanged(before,c);
+    }
+}
+TEST(RichardsMeshCohorts, EndpointRoundoffAtLongClocksDoesNotRejectTheActualRoutingDuration) {
+    MeshLidRig rig;auto& c=rig.c;
+    // Constant physical stores let the first accepted owner interval move to
+    // a long simulation clock without unrelated vertical or bed transients.
+    for(auto& cell:c.node_subtypes.storages.lid_state[0].cells)cell.conductivity=0;
+    c.lid_controls.node_layers[0].front().flow.max_step=86400;rig.config.rows[0].Ks=0;rig.config.node_beds[0].Kc=0;
+    std::vector<std::string> warnings;GwUnitFactors units;
+    ASSERT_EQ(rig.gw.initialize(rig.mesh,rig.edges,rig.options,units,c.n_nodes(),rig.config,warnings),"");
+    auto first=lidnode::acceptRichardsNodesAtFiring(c,rig.gw,rig.surface,0,86400,0,{0});ASSERT_TRUE(first.error.empty())<<first.error;
+    lidnode::finishRichardsNodes(c,0,86400,{0});c.current_time=86400;
+    c.links.resize(1);c.link_names.add("P");c.links.node1[0]=0;c.links.node2[0]=1;c.links.offset1[0]=1;
+    const double end=c.current_time+.2;
+    auto next=lidnode::acceptRichardsNodesAtFiring(c,rig.gw,rig.surface,c.current_time,end,0,{0});ASSERT_TRUE(next.error.empty())<<next.error;
+    EXPECT_NE(end-c.current_time,.2);EXPECT_TRUE(lidnode::validateRichardsRouting(c,.2));
+    EXPECT_NO_THROW(lidnode::exchangePorts(c,0,-.001,.2));
+    const auto before=c;EXPECT_THROW(lidnode::validateRichardsRouting(c,.2001),std::runtime_error);
+    EXPECT_THROW(lidnode::exchangePorts(c,0,-.001,.2001),std::runtime_error);expectMeshRoutingUnchanged(before,c);
+    EXPECT_NO_THROW(lidnode::finishRichardsNodes(c,c.current_time,end,{0}));
+}
+TEST(RichardsMeshCohorts, NativeDynamicWaveRoutesConnectedMeshNodesAndFinishesTheirPairedPorts) {
+    const auto stem=(richardsArtifacts()/"mesh_richards_connected_cohort").string();
+    std::ofstream f(stem+".inp");
+    f << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2004\nEND_DATE 01/01/2004\nEND_TIME 00:01:00\nROUTING_STEP 1\nVARIABLE_STEP 0\nREPORT_STEP 00:00:10\nIGNORE_QUALITY YES\n"
+      << "[STORAGE]\nS -10 2 1.6 FUNCTIONAL 0 0 100 0 0\nT -10 2 1.6 FUNCTIONAL 0 0 100 0 0\n[OUTFALLS]\nO -10 FIXED -7.5 NO\n"
+      << "[CONDUITS]\nD S T 10 .013 .75 .75 0 0\nB T O 10 .013 .75 0 0 0\n[XSECTIONS]\nD CIRCULAR .1 0 0 0 1\nB CIRCULAR .1 0 0 0 1\n"
+      << "[LID_CONTROLS]\nStack NODE\nStack SURFACE 6 .1\nStack MEDIA 12 .45 .2 .08 2 10 3\nStack AGGREGATE 6 .4 100\nStack BOTTOM 0 0\n[LID_NODES]\nS Stack 10\nT Stack 10\n"
+      << "[LID_RICHARDS]\nStack OPTIONS 4 1e-7 1e-5 30\nStack 2 .03 2 1.6 .5 .0001\nStack 3 .03 2 1.6 .5 .0001\n";
+    f.close();SWMMEngine engine;ASSERT_EQ(engine.open((stem+".inp").c_str(),(stem+".rpt").c_str(),nullptr),0);
+    ASSERT_EQ(engine.initialize(),0);auto& c=engine.context();
+    for(auto& lid:c.node_subtypes.storages.lid)lid.bottom=LidNodeBottom::MeshAquifer;
+    MeshLidRig aquifer(2);aquifer.config.node_beds[1].node=1;
+    std::vector<std::string> warnings;GwUnitFactors units;
+    ASSERT_EQ(aquifer.gw.initialize(aquifer.mesh,aquifer.edges,aquifer.options,units,c.n_nodes(),aquifer.config,warnings),"");
+    aquifer.gw.assignTiers(.2,1);Router router;router.init(c,RouteModel::DYNWAVE);bool exchanged=false;
+    for(int step=0;step<4;++step) {
+        const double start=step*.2,end=(step+1)*.2;
+        auto a=lidnode::acceptRichardsNodesForTier(c,aquifer.gw,aquifer.surface,0,start,end,0,{1,0});
+        ASSERT_TRUE(a.error.empty())<<a.error;EXPECT_NEAR(a.balance,0,1e-10);
+        const double held=c.node_subtypes.storages.lid_state[0].held_volume+c.node_subtypes.storages.lid_state[1].held_volume;
+        c.nodes.save_state();c.links.save_state();EXPECT_GT(router.step(c,.2),0);
+        double ports=0;for(const auto& s:c.node_subtypes.storages.lid_state)for(const auto& p:s.quality_ports)ports+=p.volume;
+        exchanged=exchanged || std::abs(c.links.flow[0])>1e-10;
+        const auto routed=c;EXPECT_THROW(lidnode::finishRichardsNodes(c,start,end,{0}),std::runtime_error);
+        expectMeshRoutingUnchanged(routed,c);EXPECT_NO_THROW(lidnode::finishRichardsNodes(c,start,end,{1,0}));
+        EXPECT_NEAR(c.node_subtypes.storages.lid_state[0].held_volume+c.node_subtypes.storages.lid_state[1].held_volume-held,ports,1e-10);
+        for(const auto& s:c.node_subtypes.storages.lid_state) {EXPECT_FALSE(s.richards_mesh_pending_finish);EXPECT_FALSE(s.richards_mesh_routed);}
+        EXPECT_DOUBLE_EQ(aquifer.gw.cellCompletedTime(0),end);c.current_time=end;
+    }
+    EXPECT_TRUE(exchanged);EXPECT_EQ(aquifer.gw.tierFirings(),std::vector<long>{4});EXPECT_EQ(engine.close(),0);
+}
+namespace {
+struct NativeWindowRig {
+    SWMMEngine engine;MeshLidRig aquifer{2};Router router;
+    NativeWindowRig(bool mixed=false,GwClosure closure=GwClosure::CLOSED_FORM,bool dynamic_slot=false) {
+        const auto stem=(richardsArtifacts()/"mesh_richards_private_window").string();
+        std::ofstream f(stem+".inp");
+        f << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2004\nEND_DATE 01/01/2004\nEND_TIME 00:01:00\nROUTING_STEP 1\nVARIABLE_STEP 0\nREPORT_STEP 00:00:10\nIGNORE_QUALITY YES\n" << (dynamic_slot?"SURCHARGE_METHOD DYNAMIC_SLOT\n":"")
+          << "[STORAGE]\nS -10 2 1.6 FUNCTIONAL 0 0 100 0 0\nT -10 2 1.6 FUNCTIONAL 0 0 100 0 0\n";
+        if(mixed)f << "C -10 2 1.6 FUNCTIONAL 0 0 100 0 0\nK -10 2 1.6 FUNCTIONAL 0 0 100 0 0\n";
+        f << "[OUTFALLS]\nO -10 FIXED -7.5 NO\n[CONDUITS]\nD S T 10 .013 .75 .75 0 0\nB T O 10 .013 .75 0 0 0\n"
+          << "[XSECTIONS]\nD CIRCULAR .1 0 0 0 1\nB CIRCULAR .1 0 0 0 1\n"
+          << "[LID_CONTROLS]\nStack NODE\nStack SURFACE 6 .1\nStack MEDIA 12 .45 .2 .08 2 10 3\nStack AGGREGATE 6 .4 100\nStack BOTTOM 0 0\n";
+        if(mixed)f << "Classic NODE\nClassic SURFACE 6 .1\nClassic MEDIA 12 .45 .2 .08 2 10 3\nClassic AGGREGATE 6 .4 100\nClassic BOTTOM 0 0\n";
+        f << "[LID_NODES]\nS Stack 10\nT Stack 10\n";
+        if(mixed)f << "C Stack 10\nK Classic 10\n";
+        f << "[LID_RICHARDS]\nStack OPTIONS 4 1e-7 1e-5 30\nStack 2 .03 2 1.6 .5 .0001\nStack 3 .03 2 1.6 .5 .0001\n";f.close();
+        if(engine.open((stem+".inp").c_str(),(stem+".rpt").c_str(),nullptr) || engine.initialize())
+            throw std::runtime_error("Native window fixture failed.");
+        auto& c=engine.context();
+        for(int r:{0,1})c.node_subtypes.storages.lid[r].bottom=LidNodeBottom::MeshAquifer;
+        aquifer.config.options.closure=closure;aquifer.config.options.dunne=false;aquifer.config.node_beds[1].node=1;
+        std::vector<std::string> warnings;GwUnitFactors units;
+        if(auto e=aquifer.gw.initialize(aquifer.mesh,aquifer.edges,aquifer.options,units,c.n_nodes(),aquifer.config,warnings);!e.empty())
+            throw std::runtime_error(e);
+        aquifer.gw.assignTiers(.4,1);router.init(c,RouteModel::DYNWAVE);
+    }
+    RichardsBedAcceptance run(double start,double end,const std::vector<double>& ends) {
+        return lidnode::routeRichardsNodesForTierWindow(engine.context(),router,aquifer.gw,aquifer.surface,0,start,end,ends,1e-6,{1,0});
+    }
+};
+}
+namespace {
+void expectNativeGwUnchanged(const SubsurfaceSolver& a,const SubsurfaceSolver& b) {
+    const auto& x=a.state();const auto& y=b.state();
+    EXPECT_EQ(x.hg,y.hg);EXPECT_EQ(x.hu,y.hu);EXPECT_EQ(x.theta_sigma,y.theta_sigma);
+    EXPECT_EQ(x.nacc,y.nacc);EXPECT_EQ(x.lacc,y.lacc);EXPECT_EQ(x.eacc_L,y.eacc_L);EXPECT_EQ(x.eacc_R,y.eacc_R);
+    EXPECT_EQ(x.xacc_from_surface,y.xacc_from_surface);EXPECT_EQ(x.xacc_to_surface,y.xacc_to_surface);
+    EXPECT_DOUBLE_EQ(x.led_deep,y.led_deep);EXPECT_DOUBLE_EQ(x.led_et,y.led_et);
+    EXPECT_EQ(a.richardsBedDownCumulative(),b.richardsBedDownCumulative());
+    EXPECT_EQ(a.richardsBedUpCumulative(),b.richardsBedUpCumulative());EXPECT_EQ(a.tierFirings(),b.tierFirings());
+    for(int i=0;i<x.n_cells;++i)EXPECT_DOUBLE_EQ(a.cellCompletedTime(i),b.cellCompletedTime(i));
+}
+}
+TEST(RichardsNativeWindow, ConnectedPortsFeedTheNextColumnStepAndSettleTheBedOnce) {
+    for(auto closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA}) {
+        NativeWindowRig rig(false,closure);auto& c=rig.engine.context();c.nodes.lat_flow[0]=.01;
+        auto a=rig.run(0,.4,{.1,.2,.3,.4});ASSERT_TRUE(a.error.empty())<<a.error;
+        ASSERT_EQ(a.steps.size(),4u);EXPECT_NEAR(a.balance,0,1e-10);EXPECT_NE(a.routing_volume,0);
+        EXPECT_LT(c.links.flow[1],0);EXPECT_TRUE(rig.router.lastStepConverged());
+        EXPECT_EQ(rig.aquifer.gw.tierFirings(),std::vector<long>{1});EXPECT_DOUBLE_EQ(rig.aquifer.gw.cellCompletedTime(0),.4);
+        EXPECT_DOUBLE_EQ(c.current_time,.4);EXPECT_DOUBLE_EQ(c.elapsed_ms,400);EXPECT_DOUBLE_EQ(c.old_elapsed_ms,300);
+        for(int r:{0,1}) {
+            const auto& state=c.node_subtypes.storages.lid_state[r];
+            EXPECT_FALSE(state.richards_mesh_pending_finish);EXPECT_FALSE(state.richards_mesh_routed);
+            EXPECT_DOUBLE_EQ(state.richards_completed_time,.4);EXPECT_DOUBLE_EQ(state.captured_flow,0);
+            for(double d:state.port_delta)EXPECT_DOUBLE_EQ(d,0);
+        }
+        EXPECT_NEAR(c.nodes.lat_flow[0],.01,1e-14);EXPECT_NEAR(c.node_subtypes.storages.lid_state[0].treated_volume,.004,1e-12);
+        EXPECT_EQ(rig.aquifer.gw.nodeExchangeVolumes(),std::vector<double>(c.n_nodes(),0));
+        auto replay=rig.run(0,.4,{.2,.4});EXPECT_FALSE(replay.error.empty());
+    }
+}
+TEST(RichardsNativeWindow, MixedCurrentAndClassicalRowsPrepareAndFinishEachShortStepOnce) {
+    NativeWindowRig rig(true);auto& c=rig.engine.context();auto expected=c;
+    for(int n:{2,3}){c.nodes.lat_flow[n]=.02;expected.nodes.lat_flow[n]=.02;}
+    // Independent Current/classical rows have no links. Their normal standalone
+    // preparation/finish is the reference for the same four short intervals.
+    for(int r:{0,1})expected.node_subtypes.storages.lid[r].bottom=LidNodeBottom::Current;
+    for(int k=0;k<4;++k){lidnode::prepareStep(expected,.1,1e-6);lidnode::resetPorts(expected);lidnode::finishStep(expected);expected.current_time=(k+1)*.1;}
+    auto a=rig.run(0,.4,{.1,.2,.3,.4});ASSERT_TRUE(a.error.empty())<<a.error;
+    for(int r:{2,3}) {
+        EXPECT_NEAR(c.node_subtypes.storages.lid_state[r].held_volume,expected.node_subtypes.storages.lid_state[r].held_volume,1e-10);
+        EXPECT_NEAR(c.node_subtypes.storages.lid_state[r].treated_volume,.008,1e-12);
+        EXPECT_NEAR(c.node_subtypes.storages.evap_loss[r],expected.node_subtypes.storages.evap_loss[r],1e-12);
+        EXPECT_NEAR(c.nodes.lat_flow[r],.02,1e-14);
+    }
+    EXPECT_TRUE(c.node_subtypes.storages.lid_state[2].richards);EXPECT_FALSE(c.node_subtypes.storages.lid_state[3].richards);
+}
+TEST(RichardsNativeWindow, LateGroundwaterFailureDiscardsNativeHistoryAndRetryMatchesCleanContinuation) {
+    NativeWindowRig rig(false,GwClosure::CLOSED_FORM,true);
+    rig.router.dwSolver().dpsStateMut().P[0]=.5;
+    ASSERT_TRUE(rig.run(0,.4,{.2,.4}).error.empty());
+    auto& c=rig.engine.context();auto reference=c;auto gw=rig.aquifer.gw;auto surface=rig.aquifer.surface;
+    auto router=rig.router.privateDynamicWaveWindow();
+    // Late physical-cell overflow: column and native routing stages succeed,
+    // but an unaccounted saturated link receipt cannot settle with Dunne off.
+    rig.aquifer.gw.bookLinkSeepage(0,10);const auto bad=rig.aquifer.gw;const auto before=c;
+    auto failed=rig.run(.4,.8,{.5,.6,.7,.8});ASSERT_FALSE(failed.error.empty());
+    EXPECT_NE(failed.error.find("balance"),std::string::npos)<<failed.error;
+    expectMeshRoutingUnchanged(before,c);EXPECT_DOUBLE_EQ(c.current_time,.4);EXPECT_DOUBLE_EQ(c.elapsed_ms,before.elapsed_ms);
+    expectNativeGwUnchanged(bad,rig.aquifer.gw);
+    rig.aquifer.gw=gw;
+    auto clean=lidnode::routeRichardsNodesForTierWindow(reference,*router,gw,surface,0,.4,.8,{.5,.6,.7,.8},1e-6,{0,1});
+    auto retry=rig.run(.4,.8,{.5,.6,.7,.8});ASSERT_TRUE(clean.error.empty())<<clean.error;ASSERT_TRUE(retry.error.empty())<<retry.error;
+    expectMeshRoutingUnchanged(reference,c);expectNativeGwUnchanged(gw,rig.aquifer.gw);
+    EXPECT_EQ(rig.router.dwSolver().dpsState().P,router->dwSolver().dpsState().P);
+}
+TEST(RichardsNativeWindow, NonconvergenceLeavesAllOwnersUnchangedBeforeRetry) {
+    NativeWindowRig rig(true);auto& c=rig.engine.context();c.nodes.lat_flow[2]=-.1;
+    rig.router.dwSolver().head_tol=1e-12;rig.router.dwSolver().max_trials=1;
+    auto before=c;auto snap=aquiferSnapshot(rig.aquifer.gw);auto failed=rig.run(0,.4,{.2,.4});
+    ASSERT_FALSE(failed.error.empty());EXPECT_NE(failed.error.find("converge"),std::string::npos)<<failed.error;
+    expectMeshRoutingUnchanged(before,c);EXPECT_EQ(aquiferSnapshot(rig.aquifer.gw),snap);
+    rig.router.dwSolver().max_trials=30;auto retry=rig.run(0,.4,{.2,.4});EXPECT_TRUE(retry.error.empty())<<retry.error;
+}
+TEST(RichardsNativeWindow, OtherGroundwaterTiersRetainTheirPhysicalClocksAndPendingClaims) {
+    MeshLidRig rig(1,false,GwClosure::CLOSED_FORM,2);auto& c=rig.c;Router router;router.init(c,RouteModel::DYNWAVE);
+    rig.gw.state().dt_cell={.4,.8};rig.gw.assignTiers(.4,2);rig.gw.bookLinkSeepage(1,.001);
+    const double head=rig.gw.state().hg[1],pending=rig.gw.state().lacc[1];
+    auto a=lidnode::routeRichardsNodesForTierWindow(c,router,rig.gw,rig.surface,0,0,.4,{.1,.2,.3,.4},0,{0});
+    ASSERT_TRUE(a.error.empty())<<a.error;EXPECT_EQ(rig.gw.tierFirings(),(std::vector<long>{1,0}));
+    EXPECT_DOUBLE_EQ(rig.gw.cellCompletedTime(1),0);EXPECT_DOUBLE_EQ(rig.gw.state().hg[1],head);EXPECT_DOUBLE_EQ(rig.gw.state().lacc[1],pending);
+}
+TEST(RichardsNativeWindow, OneStepMatchesExistingAcceptedNativeRoutingAndFinish) {
+    NativeWindowRig rig;auto& c=rig.engine.context();c.nodes.lat_flow[0]=.01;
+    auto reference=c;auto gw=rig.aquifer.gw;auto surface=rig.aquifer.surface;auto router=rig.router.privateDynamicWaveWindow();
+    auto accepted=lidnode::acceptRichardsNodesForTier(reference,gw,surface,0,0,.2,1e-6,{0,1});
+    ASSERT_TRUE(accepted.error.empty())<<accepted.error;
+    reference.save_lat_qual_state();reference.save_hyd_state();router->step(reference,.2,1e-6);
+    lidnode::finishStep(reference);reference.current_time=.2;
+    auto a=rig.run(0,.2,{.2});ASSERT_TRUE(a.error.empty())<<a.error;
+    expectMeshRoutingUnchanged(reference,c);expectNativeGwUnchanged(gw,rig.aquifer.gw);
+    EXPECT_EQ(a.trial.receipts.size(),accepted.trial.receipts.size());
+}
+TEST(RichardsNativeWindow, ShorterNativeIntervalsRefineConnectedColumnPortWater) {
+    std::vector<std::vector<double>> states;
+    for(int steps:{4,8,16}) {
+        NativeWindowRig rig;auto& c=rig.engine.context();c.nodes.lat_flow[0]=.01;
+        std::vector<double> ends;for(int k=1;k<=steps;++k)ends.push_back(.4*k/steps);ends.back()=.4;
+        auto a=rig.run(0,.4,ends);ASSERT_TRUE(a.error.empty())<<a.error;EXPECT_NEAR(a.balance,0,1e-10);
+        std::vector<double> water;
+        for(int r:{0,1})for(double v:c.node_subtypes.storages.lid_state[r].richards_water)water.push_back(v);
+        states.push_back(std::move(water));
+        EXPECT_EQ(rig.aquifer.gw.tierFirings(),std::vector<long>{1});
+    }
+    double coarse=0,fine=0;
+    for(std::size_t k=0;k<states[0].size();++k) {coarse+=std::abs(states[0][k]-states[1][k]);fine+=std::abs(states[1][k]-states[2][k]);}
+    EXPECT_GT(coarse,1e-12);EXPECT_LT(fine,coarse);
+    RecordProperty("coarse_difference_ft3",coarse);RecordProperty("fine_difference_ft3",fine);
+}
+TEST(RichardsNativeWindow, GrossPortTrafficCannotRenewOriginalBedAllowancesThroughNetCancellation) {
+    for(bool upward:{false,true}) {
+        MeshLidRig rig;auto c=lidnode::detail::column(rig.c,0,.6,0,true);
+        double donor=0;
+        for(std::size_t k=1;k<c.water.size();++k)donor+=c.water[k]-c.cells[k].material.theta_r*c.cells[k].volume;
+        const double receiver=10-c.water.back();
+        const auto& cell=c.cells.back();
+        const double head=cell.z+richards::pressure(cell.material,cell.theta_s,c.water.back()/cell.volume);
+        // Opposite small head offsets exercise both directional allowances.
+        const double invert=rig.gw.state().z_bed[0]+rig.gw.state().hg[0]-head+(upward?-.001:.001);
+        RichardsBedStepper stepper;
+        // Concurrent external replacement leaves net column water unchanged,
+        // but still consumes the original donor or bottom receiving allowance.
+        stepper.route=[&](double a,double,const auto&,const auto&,auto&,auto& claims) -> std::string {
+            if(a==0)claims[0]=upward?std::make_pair(receiver,receiver):std::make_pair(donor,0.);
+            return {};
+        };
+        RichardsBedOwner owner{0,&c,invert,1,std::vector<double>(c.water.size(),10)};
+        auto a=acceptRichardsBedsForTierAcrossSteps(rig.gw,rig.surface,0,0,.6,{.2,.4,.6},{owner},&stepper);
+        ASSERT_TRUE(a.error.empty())<<a.error;ASSERT_EQ(a.steps.size(),3u);
+        EXPECT_GT(upward?a.steps[0].receipts[0].accepted_up:a.steps[0].receipts[0].accepted_down,0);
+        for(int k:{1,2})EXPECT_DOUBLE_EQ(upward?a.steps[k].receipts[0].accepted_up:a.steps[k].receipts[0].accepted_down,0);
+        EXPECT_DOUBLE_EQ(a.routing_volume,0);EXPECT_NEAR(a.balance,0,1e-10);
+    }
+}
+TEST(RichardsNativeWindow, RefusesIncompleteOwnersBadEndpointsAndUnsupportedProfilesWithoutMutation) {
+    NativeWindowRig rig;auto& c=rig.engine.context();const auto before=c;const auto snap=aquiferSnapshot(rig.aquifer.gw);
+    for(auto ends:{std::vector<double>{.2},std::vector<double>{.2,.2,.4},std::vector<double>{.3,.2,.4}}) {
+        EXPECT_FALSE(rig.run(0,.4,ends).error.empty());expectMeshRoutingUnchanged(before,c);
+    }
+    EXPECT_FALSE(lidnode::routeRichardsNodesForTierWindow(c,rig.router,rig.aquifer.gw,rig.aquifer.surface,0,0,.4,{.2,.4},0,{0}).error.empty());
+    c.options.water_age=true;auto unsupported=c;EXPECT_FALSE(rig.run(0,.4,{.2,.4}).error.empty());expectMeshRoutingUnchanged(unsupported,c);c.options.water_age=false;
+    c.links.type[0]=LinkType::ORIFICE;unsupported=c;EXPECT_FALSE(rig.run(0,.4,{.2,.4}).error.empty());expectMeshRoutingUnchanged(unsupported,c);
+    EXPECT_EQ(aquiferSnapshot(rig.aquifer.gw),snap);
+}
+
+#endif
 TEST(LidNodes, RichardsHydrostaticPortsHaveOneDonorBudgetAcrossTrials) {
     auto c = richardsModel(); c.nodes.init_depth[0] = c.nodes.depth[0] = 2; lidnode::initialize(c);
     c.links.resize(1); c.links.node1[0] = 0; c.links.node2[0] = 1;
@@ -1148,5 +1826,230 @@ TEST(LidNodes, RichardsRoutedBackwaterSupplySeepageAndQualityConserve) {
         EXPECT_NEAR(massin, b.qual_routing_final[0] + b.qual_routing_outflow[0] + b.qual_routing_flood[0] + b.qual_routing_reacted[0] + b.qual_routing_seep[0], std::max(.001, massin * .001));
         EXPECT_GT(e.context().node_subtypes.storages.lid_state[0].richards_report.accepted, 0);
         e.close();
+    }
+}
+
+TEST(LidNodes, DryClassicalMobileRoundoffCannotBecomeNegativeHydraulicInventory) {
+    auto c=model();lidnode::initialize(c);auto& s=c.node_subtypes.storages.lid_state[0];
+    for(auto& cell:s.cells)cell.conductivity=0;
+    c.nodes.volume[0]=0;c.nodes.depth[0]=0;c.nodes.lat_flow[0]=0;
+    const double held=std::accumulate(s.cells.begin(),s.cells.end(),0.,[](double v,const auto& cell){return v+cell.theta*cell.geometric_volume;});
+    ASSERT_GT(held,0);s.held_volume=std::nextafter(held,0.);const auto before=s.held_volume;
+    lidnode::prepareStep(c,.7,0);
+    EXPECT_GE(c.nodes.volume[0],0);EXPECT_DOUBLE_EQ(c.nodes.volume[0],0);
+    EXPECT_NEAR(c.nodes.volume[0]+s.held_volume,before,16*std::numeric_limits<double>::epsilon()*std::max(1.,held));
+    EXPECT_DOUBLE_EQ(s.evap_volume,0);EXPECT_DOUBLE_EQ(c.nodes.lat_flow[0],0);
+}
+TEST(LidNodes, ClassicalMobileCorrectionDoesNotHideMaterialWaterDeficits) {
+    auto c=model();lidnode::initialize(c);auto& s=c.node_subtypes.storages.lid_state[0];
+    for(auto& cell:s.cells)cell.conductivity=0;
+    c.nodes.volume[0]=0;c.nodes.depth[0]=0;c.nodes.lat_flow[0]=0;
+    const double held=std::accumulate(s.cells.begin(),s.cells.end(),0.,[](double v,const auto& cell){return v+cell.theta*cell.geometric_volume;});
+    s.held_volume=held-1e-4;lidnode::prepareStep(c,.7,0);
+    EXPECT_LT(c.nodes.volume[0],-1e-5);
+}
+
+TEST(LidNodes, BottomGrammarAndInputRoundTripPreserveDefaultAndExplicitOwners) {
+    for (auto mode : {LidNodeBottom::Current, LidNodeBottom::Sealed, LidNodeBottom::MeshAquifer}) {
+        auto c=model();c.node_subtypes.storages.lid[0].bottom=mode;
+        const auto path=(richardsArtifacts()/("bottom_"+std::to_string(int(mode))+".inp")).string();
+        ASSERT_EQ(inp_writer::writeInpFile(c,path),0);
+        std::ifstream in(path);std::string text((std::istreambuf_iterator<char>(in)),{});
+        if(mode==LidNodeBottom::Current)EXPECT_NE(text.find("S Stack 10\n"),std::string::npos);
+        else EXPECT_NE(text.find(mode==LidNodeBottom::Sealed?"BOTTOM SEALED":"BOTTOM MESH_AQUIFER"),std::string::npos);
+        SimulationContext reread;DefaultInputPlugin plugin;ASSERT_EQ(plugin.read(path,reread),0);
+        input::resolve_cross_references(reread);ASSERT_TRUE(reread.errors.empty());
+        EXPECT_EQ(reread.node_subtypes.storages.lid[0].bottom,mode);
+    }
+    for(const auto& row:{"S Stack 10 BOTTOM BAD","S Stack 10 SEALED","S Stack 10 BOTTOM SEALED EXTRA","S Stack 10 BOTTOM","S"}) {
+        auto c=model();c.node_subtypes.storages.lid[0]={};lidnode::readNodes(c,{row});
+        EXPECT_FALSE(c.errors.empty());EXPECT_EQ(c.node_subtypes.storages.lid[0].control,-1);
+    }
+    auto c=model();c.node_subtypes.storages.lid[0]={};lidnode::readNodes(c,{"S Stack 10 bottom current"});
+    EXPECT_TRUE(c.errors.empty());EXPECT_EQ(c.node_subtypes.storages.lid[0].bottom,LidNodeBottom::Current);
+}
+TEST(LidNodes, BottomApiPreservesOwnerAcrossAssignmentEditsAndRejectsInvalidEdits) {
+    SWMMEngine e;e.context()=model();e.context().state=EngineState::OPENED;auto h=reinterpret_cast<SWMM_Engine>(&e);
+    int mode=-1;ASSERT_EQ(swmm_node_get_lid_bottom(h,0,&mode),SWMM_OK);EXPECT_EQ(mode,0);
+    ASSERT_EQ(swmm_node_set_lid_bottom(h,0,1),SWMM_OK);ASSERT_EQ(swmm_node_set_lid(h,0,0,35),SWMM_OK);
+    ASSERT_EQ(swmm_node_get_lid_bottom(h,0,&mode),SWMM_OK);EXPECT_EQ(mode,1);
+    EXPECT_EQ(swmm_node_set_lid_bottom(h,1,1),SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_node_set_lid_bottom(h,0,3),SWMM_ERR_BADPARAM);
+    e.context().state=EngineState::RUNNING;EXPECT_EQ(swmm_node_set_lid_bottom(h,0,0),SWMM_ERR_LIFECYCLE);
+    e.context().state=EngineState::OPENED;ASSERT_EQ(swmm_node_set_lid(h,0,-1,0),SWMM_OK);
+    ASSERT_EQ(swmm_node_get_lid_bottom(h,0,&mode),SWMM_OK);EXPECT_EQ(mode,0);
+}
+TEST(LidNodes, SealedClassicalBottomSuppressesLegacySeepageWithoutChangingSharedControl) {
+    auto c=model();c.nodes.init_depth[0]=c.nodes.depth[0]=2;
+    c.node_subtypes.storages.exfil_ksat[0]=.001;
+    lidnode::initialize(c);exfil::ExfilSolver solver;solver.init(c);solver.computeAll(c,5);
+    ASSERT_GT(c.node_subtypes.storages.exfil_rate[0],0);
+    const auto params=c.lid_controls.node_layers[0].back().params;
+    c.node_subtypes.storages.lid[0].bottom=LidNodeBottom::Sealed;
+    solver.computeAll(c,5);EXPECT_DOUBLE_EQ(c.node_subtypes.storages.exfil_rate[0],0);
+    EXPECT_DOUBLE_EQ(lidnode::bottomConductivity(c,0),0);
+    EXPECT_EQ(c.lid_controls.node_layers[0].back().params,params);
+    c.node_subtypes.storages.lid[0].bottom=LidNodeBottom::Current;
+    EXPECT_DOUBLE_EQ(lidnode::bottomConductivity(c,0),.5);
+}
+TEST(LidNodes, SealedRichardsRetainsBottomWaterAndStillEvaporates) {
+    for (auto mode:{LidNodeBottom::Current,LidNodeBottom::Sealed}) {
+        auto c=richardsModel();c.lid_controls.node_layers[0].back().params[0]=.5;
+        c.node_subtypes.storages.lid[0].bottom=mode;c.nodes.init_depth[0]=c.nodes.depth[0]=2;
+        c.node_subtypes.storages.evap_frac[0]=1;
+        lidnode::initialize(c);const double initial=c.nodes.volume[0]+lidnode::heldVolume(c,0);
+        c.nodes.lat_flow[0]=0;lidnode::prepareStep(c,10,1.e-5);lidnode::resetPorts(c);lidnode::finishStep(c);
+        const auto& st=c.node_subtypes.storages;
+        EXPECT_GT(st.evap_loss[0],0);
+        if(mode==LidNodeBottom::Sealed)EXPECT_DOUBLE_EQ(st.exfil_loss[0],0);
+        else EXPECT_GT(st.exfil_loss[0],0);
+        EXPECT_NEAR(c.nodes.volume[0]+lidnode::heldVolume(c,0)+st.evap_loss[0]+st.exfil_loss[0],initial,1.e-10);
+    }
+}
+TEST(LidNodes, MeshBottomInitializesButRequiresItsRoutingOwner) {
+    for(bool richards:{false,true}) {
+        auto c=richards?richardsModel():model();c.node_subtypes.storages.lid[0].bottom=LidNodeBottom::MeshAquifer;
+        lidnode::validate(c);ASSERT_TRUE(c.errors.empty()); // authoring is allowed
+        lidnode::initialize(c);
+#ifdef OPENSWMM_HAS_2D
+        ASSERT_TRUE(c.errors.empty());
+        if(richards)EXPECT_THROW(lidnode::prepareStep(c,1,0),std::runtime_error);
+#else
+        ASSERT_FALSE(c.errors.empty());
+        EXPECT_NE(c.errors.front().find("2D groundwater"),std::string::npos);
+#endif
+    }
+}
+#ifdef LID_TEST_GEOPACKAGE
+TEST(LidNodes, GeoPackageBottomOwnerRoundTripOldReadAndSaveMigration) {
+    auto c=richardsModel();c.lid_controls.surface.resize(1);c.lid_controls.soil.resize(1);
+    c.lid_controls.storage.resize(1);c.lid_controls.pavement.resize(1);c.lid_controls.drain.resize(1);
+    c.lid_controls.drainmat.resize(1);c.lid_controls.removals.resize(1);
+    const auto path=(richardsArtifacts()/"bottom_migration.gpkg").string();std::filesystem::remove(path);
+    c.node_subtypes.storages.lid[0].bottom=LidNodeBottom::Sealed;
+    ASSERT_EQ(gpkg::write_to_file(path,c,"old"),0);
+    SimulationContext restored;ASSERT_EQ(gpkg::read_from_file(path,restored,"old"),0);
+    EXPECT_EQ(restored.node_subtypes.storages.lid[0].bottom,LidNodeBottom::Sealed);
+    sqlite3* db=nullptr;ASSERT_EQ(sqlite3_open(path.c_str(),&db),SQLITE_OK);
+    ASSERT_EQ(sqlite3_exec(db,"ALTER TABLE lid_nodes DROP COLUMN bottom_mode",nullptr,nullptr,nullptr),SQLITE_OK);sqlite3_close(db);
+    ASSERT_EQ(gpkg::read_from_file(path,restored,"old"),0);
+    EXPECT_EQ(restored.node_subtypes.storages.lid[0].bottom,LidNodeBottom::Current);
+    c.node_subtypes.storages.lid[0].bottom=LidNodeBottom::MeshAquifer;
+    ASSERT_EQ(gpkg::write_to_file(path,c,"new"),0);
+    ASSERT_EQ(gpkg::read_from_file(path,restored,"new"),0);EXPECT_EQ(restored.node_subtypes.storages.lid[0].bottom,LidNodeBottom::MeshAquifer);
+    ASSERT_EQ(gpkg::read_from_file(path,restored,"old"),0);EXPECT_EQ(restored.node_subtypes.storages.lid[0].bottom,LidNodeBottom::Current);
+}
+#endif
+#ifdef OPENSWMM_HAS_2D
+TEST(LidNodes, AtomicBedAndBottomPreviewPublishAndStaleRejection) {
+    SWMMEngine e;e.context()=model();e.context().state=EngineState::OPENED;auto h=reinterpret_cast<SWMM_Engine>(&e);
+    ASSERT_EQ(swmm_gw2d_node_add(h,"S",-1,0,0,0),SWMM_OK);ASSERT_EQ(swmm_gw2d_node_set_exchange(h,0,0),SWMM_OK);
+    SWMM_GwNodeBed old{"S",-1,1,0,0,0,0,0},next{"S",-1,1,1,0,0,0,40};
+    SWMM_LidNodeBottomEdit owner{0,0,2};
+    EXPECT_EQ(swmm_gw2d_node_replace(h,&old,1,&next,1,&owner,1,1),SWMM_ERR_BADPARAM); // inactive aquifer
+    e.surfaceRouter2D().aquiferConfig().rows.push_back({});e.surfaceRouter2D().options().groundwater=1;
+    e.surfaceRouter2D().mesh().resize_triangles(1);
+    ASSERT_EQ(swmm_gw2d_node_replace(h,&old,1,&next,1,&owner,1,0),SWMM_OK);
+    EXPECT_EQ(e.context().node_subtypes.storages.lid[0].bottom,LidNodeBottom::Current);
+    int exchange=1;swmm_gw2d_node_get_flags(h,0,nullptr,&exchange,nullptr);EXPECT_EQ(exchange,0);
+    ASSERT_EQ(swmm_gw2d_node_replace(h,&old,1,&next,1,&owner,1,1),SWMM_OK);
+    EXPECT_EQ(e.context().node_subtypes.storages.lid[0].bottom,LidNodeBottom::MeshAquifer);
+    EXPECT_EQ(swmm_gw2d_node_replace(h,&old,1,&old,1,nullptr,0,1),SWMM_ERR_BADPARAM);
+    auto bad=next;bad.exchange=0;
+    EXPECT_EQ(swmm_gw2d_node_replace(h,&next,1,&bad,1,nullptr,0,1),SWMM_ERR_BADPARAM);
+    bad=next;bad.area=0;EXPECT_EQ(swmm_gw2d_node_replace(h,&next,1,&bad,1,nullptr,0,1),SWMM_ERR_BADPARAM);
+    owner={0,2,1};ASSERT_EQ(swmm_gw2d_node_replace(h,&next,1,&old,1,&owner,1,1),SWMM_OK);
+    EXPECT_EQ(e.context().node_subtypes.storages.lid[0].bottom,LidNodeBottom::Sealed);
+}
+TEST(LidNodes, AtomicBedsRejectInvalidRowsAndPreserveOptOutAndProvenance) {
+    SWMMEngine e;e.context()=model();e.context().state=EngineState::OPENED;auto h=reinterpret_cast<SWMM_Engine>(&e);
+    ASSERT_EQ(swmm_gw2d_node_add(h,"S",-1,0,0,0),SWMM_OK);ASSERT_EQ(swmm_gw2d_node_set_exchange(h,0,0),SWMM_OK);
+    ASSERT_EQ(swmm_gw2d_node_add(h,"O",2,3,1,4),SWMM_OK);
+    SWMM_GwNodeBed old[]={{"S",-1,1,0,0,0,0,0},{"O",2,0,1,0,3,1,4}};
+    for(int failure=0;failure<6;++failure) {
+        auto bad=old[1];
+        if(failure==0)bad.node="Missing";if(failure==1)bad.node="s";if(failure==2)bad.kc=std::numeric_limits<double>::quiet_NaN();
+        if(failure==3)bad.dc=0;if(failure==4)bad.automatic=1;if(failure==5)bad.exchange=2;
+        SWMM_GwNodeBed next[]={old[0],bad};EXPECT_EQ(swmm_gw2d_node_replace(h,old,2,next,2,nullptr,0,1),SWMM_ERR_BADPARAM);
+        EXPECT_EQ(swmm_gw2d_node_replace(h,old,2,old,2,nullptr,0,0),SWMM_OK);
+    }
+    SWMM_GwNodeBed next[]={old[0],old[1]};next[1].area=7;
+    ASSERT_EQ(swmm_gw2d_node_replace(h,old,2,next,2,nullptr,0,1),SWMM_OK);
+    int locate=0,exchange=1,automatic=1;swmm_gw2d_node_get_flags(h,0,&locate,&exchange,&automatic);
+    EXPECT_EQ(locate,1);EXPECT_EQ(exchange,0);EXPECT_EQ(automatic,0);
+    ASSERT_EQ(swmm_gw2d_node_replace(h,next,2,old,2,nullptr,0,1),SWMM_OK);
+    e.surfaceRouter2D().aquiferConfig().node_beds[1].automatic=true;old[1].automatic=1;
+    ASSERT_EQ(swmm_gw2d_node_replace(h,old,2,old,2,nullptr,0,1),SWMM_OK);
+    next[1].automatic=1;EXPECT_EQ(swmm_gw2d_node_replace(h,old,2,next,2,nullptr,0,1),SWMM_ERR_BADPARAM);
+}
+TEST(LidNodes, SealedMasksOutsideAutoBedResolutionWithoutChangingAuthoredFlags) {
+    auto c=model();c.node_subtypes.storages.lid[0].bottom=LidNodeBottom::Sealed;
+    twoD::MeshData mesh;mesh.resize_triangles(1);
+    twoD::SubsurfaceConfig cfg;cfg.options.node_auto=false;cfg.rows.push_back({});
+    twoD::GwNodeBed bed;bed.locate=true;cfg.node_beds.push_back(bed);
+    std::vector<std::string> names{"S"};
+    EXPECT_TRUE(twoD::resolveSubsurface(c,mesh,cfg,names,1).empty());
+    EXPECT_TRUE(cfg.node_beds[0].exchange);EXPECT_TRUE(cfg.node_beds[0].locate);
+    c.node_subtypes.storages.lid[0].bottom=LidNodeBottom::Current;
+    EXPECT_FALSE(twoD::resolveSubsurface(c,mesh,cfg,names,1).empty());
+}
+#endif
+
+#ifdef OPENSWMM_HAS_2D
+TEST(LidNodes, SealedRuntimeMasksAuthoredAndAutomaticBedsForBothFlowModels) {
+    for(bool richards:{false,true})for(bool authored:{false,true}) {
+        auto stem=(richardsArtifacts()/("sealed_mesh_"+std::to_string(richards)+std::to_string(authored))).string();
+        std::ofstream f(stem+".inp");
+        f << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2004\nEND_DATE 01/01/2004\nEND_TIME 00:01:00\nROUTING_STEP 1\nVARIABLE_STEP 0\nREPORT_STEP 00:00:10\nIGNORE_QUALITY YES\n"
+          << "[STORAGE]\nS 0 2 1 FUNCTIONAL 0 0 100 0 0\n[LID_CONTROLS]\nStack NODE\nStack SURFACE 6 .1\nStack MEDIA 12 .45 .2 .08 2 10 3\nStack AGGREGATE 6 .4 100\nStack BOTTOM .5 0\n[LID_NODES]\nS Stack 10 BOTTOM SEALED\n";
+        if(richards)f << "[LID_RICHARDS]\nStack OPTIONS 4 1e-7 1e-5 30\nStack 2 .03 2 1.6 .5 .0001\nStack 3 .03 2 1.6 .5 .0001\n";
+        f << "[COORDINATES]\nS 2 2\n[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 1\nREPORT_2D NO\n[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n0 10 0\n[2D_TRIANGLES]\n0 1 2 .03 0\n0 2 3 .03 0\n[2D_AQUIFER]\n* 36 4 .45 .1 2\n[2D_AQUIFER_OPTIONS]\nGW_ET NONE\n";
+        if(authored)f << "NODE_ENROLMENT ROWS\n[2D_AQUIFER_NODE]\nS AUTO AREA 40\n";
+        f.close();SWMMEngine e;ASSERT_EQ(e.open((stem+".inp").c_str(),(stem+".rpt").c_str(),nullptr),0);
+        ASSERT_EQ(e.initialize(),0);ASSERT_TRUE(e.surfaceRouter2D().subsurface().active());
+        const auto& saved=e.surfaceRouter2D().aquiferConfig().node_beds;ASSERT_EQ(saved.size(),1u);
+        EXPECT_TRUE(saved[0].exchange);EXPECT_EQ(saved[0].automatic,!authored);
+        ASSERT_EQ(e.surfaceRouter2D().subsurface().nodeBeds().size(),1u);
+        EXPECT_EQ(e.surfaceRouter2D().subsurface().nodeBeds()[0].cell,-1);
+        EXPECT_FALSE(e.context().nodes.aquifer2d_bed[0]);
+        ASSERT_EQ(e.start(0),0);double t=0;ASSERT_EQ(e.step(&t),0);
+        EXPECT_DOUBLE_EQ(e.context().node_subtypes.storages.exfil_loss[0],0);
+        auto h=reinterpret_cast<SWMM_Engine>(&e);double exchanged=1;
+        ASSERT_EQ(swmm_gw2d_get_ledger(h,SWMM_GW2D_LED_NODE,&exchanged),SWMM_OK);EXPECT_DOUBLE_EQ(exchanged,0);
+        ASSERT_EQ(e.end(),0);ASSERT_EQ(e.close(),0);
+    }
+}
+#endif
+
+TEST(LidNodes, BaseContactAreaUsesAuthoredGeometryWithoutPoreOrWholeCellSubstitution) {
+    SWMMEngine e;e.context()=model();auto& c=e.context();c.state=EngineState::OPENED;
+    double area=-1;ASSERT_EQ(swmm_lid_node_base_area(&e,0,&area),SWMM_OK);EXPECT_DOUBLE_EQ(area,100.);
+    c.node_subtypes.storages.a[0]=1;c.node_subtypes.storages.b[0]=2;c.node_subtypes.storages.c[0]=0;
+    ASSERT_EQ(swmm_lid_node_base_area(&e,0,&area),SWMM_OK);EXPECT_EQ(area,0.);
+    area=123;EXPECT_NE(swmm_lid_node_base_area(&e,1,&area),SWMM_OK);EXPECT_EQ(area,123);
+    c.state=EngineState::RUNNING;EXPECT_EQ(swmm_lid_node_base_area(&e,0,&area),SWMM_ERR_LIFECYCLE);
+}
+
+// Physics review E9/E12 (2026-10-15): reaction species have no LID layer
+// adapter. A classical LID node ran them as a plain tank that bypassed the
+// retained cells, ports and layer treatment, and LID capture shrank the
+// shared mixing volume without removing species mass (probe P10: X ended
+// at 10.24 against a 10 mg/L source under a 2/day decay). Until the adapter
+// exists the combination is refused, as it already is for Richards nodes.
+// Water age and heat keep working on classical LID nodes.
+TEST(LidNodes, ReactionSpeciesAreRefusedOnClassicalLidNodes) {
+    auto c = model(); lidnode::sync(c, 0);
+    lidnode::validate(c);
+    ASSERT_TRUE(c.errors.empty()) << c.errors.front();
+    c.reactions.configured = true;
+    lidnode::validate(c);
+    ASSERT_FALSE(c.errors.empty()) << "reaction species accepted on a classical LID node";
+    EXPECT_NE(c.errors.back().find("LID node S"), std::string::npos) << c.errors.back();
+    EXPECT_NE(c.errors.back().find("reaction species"), std::string::npos) << c.errors.back();
+    for (int option = 0; option < 2; ++option) {
+        auto ok = model(); lidnode::sync(ok, 0);
+        if (option == 0) ok.options.water_age = true; else ok.options.heat_transport = true;
+        lidnode::validate(ok);
+        EXPECT_TRUE(ok.errors.empty()) << (ok.errors.empty() ? "" : ok.errors.front());
     }
 }

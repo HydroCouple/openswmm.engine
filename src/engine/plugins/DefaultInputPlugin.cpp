@@ -113,6 +113,10 @@ void DefaultInputPlugin::register_builtin_handlers() {
     registry_.register_builtin("EVAPORATION",   input::handle_evaporation);
     registry_.register_builtin("TEMPERATURE",   input::handle_temperature);
     registry_.register_builtin("SNOWPACKS",     input::handle_snowpacks);
+    registry_.register_builtin("UEB_OPTIONS",   input::handle_ueb_options);
+    registry_.register_builtin("2D_SNOW_OPTIONS", input::handle_mesh_snow_options);
+    registry_.register_builtin("2D_SNOW_DEFAULTS", input::handle_mesh_snow_defaults);
+    registry_.register_builtin("2D_SNOW", input::handle_mesh_snow_cells);
 
     // Inflows / loading
     registry_.register_builtin("INFLOWS",       input::handle_inflows);

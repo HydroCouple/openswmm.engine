@@ -91,7 +91,21 @@ typedef enum SWMM_OutSubcatchVar {
     SWMM_OUT_SUBCATCH_GW_FLOW       = 5, /**< Groundwater flow. */
     SWMM_OUT_SUBCATCH_GW_ELEV       = 6, /**< Groundwater table elevation. */
     SWMM_OUT_SUBCATCH_SOIL_MOIST    = 7, /**< Soil moisture content. */
-    SWMM_OUT_SUBCATCH_POLLUT_BASE   = 8  /**< First pollutant concentration slot. */
+    SWMM_OUT_SUBCATCH_POLLUT_BASE   = 8, /**< First pollutant concentration slot. */
+    /* Optional UEB fields. These are codes, not positional array indices.
+       All use SI, averaged over the non-LID subcatchment area. Their accepted
+       clock is recorded separately; it can differ from the hydraulic report
+       clock. A file without UEB has no extension. Unavailable rows are NaN. */
+    SWMM_OUT_SUBCATCH_SNOW_SWE      = 65536, /**< m, including retained liquid. */
+    SWMM_OUT_SUBCATCH_SNOW_ENERGY   = 65537, /**< kJ/m2, including bare-ground energy. */
+    SWMM_OUT_SUBCATCH_SNOW_SURFACE_TEMP = 65538, /**< degC, snow/ground surface. */
+    SWMM_OUT_SUBCATCH_SNOW_BULK_TEMP = 65539, /**< degC. */
+    SWMM_OUT_SUBCATCH_SNOW_ALBEDO   = 65540, /**< fraction. */
+    SWMM_OUT_SUBCATCH_SNOW_COVER    = 65541, /**< fraction. */
+    SWMM_OUT_SUBCATCH_SNOW_MELT     = 65542, /**< m/s. */
+    SWMM_OUT_SUBCATCH_SNOW_INPUT    = 65543, /**< m/s, liquid reaching surface. */
+    SWMM_OUT_SUBCATCH_SNOW_SUBLIMATION = 65544, /**< m/s, negative is condensation. */
+    SWMM_OUT_SUBCATCH_SNOW_TIME     = 65545 /**< accepted seconds since run start. */
 } SWMM_OutSubcatchVar;
 
 /**
@@ -100,6 +114,10 @@ typedef enum SWMM_OutSubcatchVar {
  * @details Variables stored per node per output period.
  *          Pollutant concentrations follow at indices >= SWMM_OUT_NODE_POLLUT_BASE.
  */
+/** Return 1 if the file carries a subcatchment variable code, 0 if absent,
+ * or -1 for an invalid handle. This does not require a completed period. */
+SWMM_ENGINE_API int swmm_output_has_subcatch_variable(SWMM_Output handle,int code);
+
 typedef enum SWMM_OutNodeVar {
     SWMM_OUT_NODE_DEPTH          = 0, /**< Water depth above invert. */
     SWMM_OUT_NODE_HEAD           = 1, /**< Hydraulic head. */
@@ -469,12 +487,13 @@ SWMM_ENGINE_API int swmm_output_get_system_series(SWMM_Output handle,
  * ========================================================================= */
 
 /**
- * @brief Get all result variables for a single subcatchment at one period.
+ * @brief Get legacy result variables for a single subcatchment at one period.
+ * Optional snow fields are retrieved by code through get_subcatch_series/result.
  *
  * @param handle       Output reader handle.
  * @param subcatch_idx Zero-based subcatchment index.
  * @param period       Zero-based period index.
- * @param values       Caller-allocated array of n_subcatch_vars floats.
+ * @param values       Caller-allocated array of 8 + pollutant_count floats.
  * @param count        Pointer to receive the number of variables written.
  * @returns 0 on success, -1 on error.
  */

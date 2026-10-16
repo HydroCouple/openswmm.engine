@@ -867,10 +867,16 @@ int PluginFactory::catalog_scan_locked(const std::string& dir) {
     const std::size_t before = component_catalog_state().records.size();
     std::error_code ec;
     if (!fs::is_directory(dir, ec)) return 0;
+    std::vector<fs::path> candidates;
     for (const auto& entry : fs::directory_iterator(dir, ec)) {
         if (!entry.is_regular_file(ec)) continue;
         if (!is_shared_library(entry.path().filename().string())) continue;
-        const std::string path = entry.path().string();
+        candidates.push_back(entry.path());
+    }
+    // Duplicate identities must have a stable first candidate, as in Composer.
+    std::sort(candidates.begin(), candidates.end());
+    for (const auto& candidate : candidates) {
+        const std::string path = candidate.string();
         void* handle = platform_load(path);
         if (!handle) continue;   // discovery never fails on an unloadable file
         if (!catalog_adopt_locked(path, handle)) platform_unload(handle);
@@ -889,6 +895,10 @@ void PluginFactory::catalog_defaults_locked() {
         catalog_scan_locked(base);
         catalog_scan_locked((fs::path(base) / "plugins").string());
         catalog_scan_locked((fs::path(base) / "components").string());
+        // Engine wrappers install to <prefix>/lib/hydrocouple/components.
+        // The host library lives in lib on Unix and can live in bin on Windows.
+        catalog_scan_locked((fs::path(base) / "hydrocouple" / "components").string());
+        catalog_scan_locked((fs::path(base) / ".." / "lib" / "hydrocouple" / "components").string());
     }
     if (const char* env = std::getenv("HYDROCOUPLE_COMPONENT_PATH")) {
 #if defined(_WIN32)

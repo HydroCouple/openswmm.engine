@@ -43,7 +43,14 @@
 #ifndef OPENSWMM_ENGINE_TRANSPORT_HEAT_COMPONENT_HPP
 #define OPENSWMM_ENGINE_TRANSPORT_HEAT_COMPONENT_HPP
 
+#include "../../../data/HeatOverrideData.hpp"
+
 namespace openswmm::transport {
+
+/// The parser's per-attribute value rule (fractions in [0,1], strictly
+/// positive lengths and material properties, non-negative diffusivity and
+/// velocity), shared so the C API and the deck refuse the same values.
+bool heatAttrValueOk(HeatAttr attr, double value) noexcept;
 
 /// Register `org.hydrocouple.openswmm.heat` with the process-component
 /// registry (idempotent; called from SWMMEngine::open before resolution).

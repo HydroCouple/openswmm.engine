@@ -46,6 +46,8 @@
 
 #include "core/InpWriter.hpp"
 #include "core/SWMMEngine.hpp"
+#include "transport/components/ReactionModule/ReactionsWriter.hpp"
+#include <openswmm/engine/openswmm_reactions.h>
 
 namespace {
 
@@ -524,3 +526,107 @@ TEST_F(ReactionsConfigTest, NodeLinkQualityWorksEmbedded) {
 }
 
 }  // namespace
+
+// ---------------------------------------------------------------------------
+// Physics review A1 (2026-10-15): no engine populates the hydraulic variables
+// D, Q, U, RE, US, FF or AV, so an expression using one read 0 and the
+// kinetics silently did nothing. Until a hydraulics provider fills them, a
+// reaction system that references one is refused, naming the variable and
+// the expression. HRT, DT and TEMP are populated and stay accepted. Files
+// are kept in the test's working directory for review.
+// ---------------------------------------------------------------------------
+TEST_F(ReactionsConfigTest, UnpopulatedHydraulicVariablesAreRefused) {
+    const char* kUnpopulated[] = {"D", "Q", "U", "RE", "US", "FF", "AV"};
+    for (const char* v : kUnpopulated) {
+        const std::string tag = std::string("_rx_hv_") + v;
+        write_rxn((tag + ".rxn").c_str(),
+                  std::string("[REACTION_SPECIES]\nBULK A MG\n"
+                              "[REACTION_PIPES]\nRATE  A  -0.1 * ") + v + " * A\n");
+        write_deck((tag + ".inp").c_str(),
+                   "org.hydrocouple.openswmm.reactions  config=\"" + tag + ".rxn\"");
+        SWMM_Engine e = swmm_engine_create();
+        ASSERT_NE(e, nullptr);
+        EXPECT_NE(swmm_engine_open(e, (tag + ".inp").c_str(), (tag + ".rpt").c_str(),
+                                   (tag + ".out").c_str(), nullptr), SWMM_OK)
+            << v << " was accepted and would read 0";
+        EXPECT_TRUE(contains(as_cpp_engine(e).context().errors,
+                             std::string("hydraulic variable '") + v + "'"))
+            << "no error names " << v;
+        swmm_engine_destroy(e);
+    }
+    // A term is refused too, even if only a rate uses it indirectly.
+    write_rxn("_rx_hv_term.rxn",
+              "[REACTION_SPECIES]\nBULK A MG\n[REACTION_TERMS]\nKW  0.2 * AV\n"
+              "[REACTION_TANKS]\nRATE  A  -KW * A\n");
+    write_deck("_rx_hv_term.inp",
+               "org.hydrocouple.openswmm.reactions  config=\"_rx_hv_term.rxn\"");
+    EXPECT_NE(open_deck("_rx_hv_term.inp", "_rx_hv_term.rpt", "_rx_hv_term.out"), SWMM_OK);
+    EXPECT_TRUE(contains(as_cpp_engine(engine_).context().errors, "[REACTION_TERMS] 'KW'"));
+}
+
+TEST_F(ReactionsConfigTest, PopulatedHydraulicVariablesStayAccepted) {
+    write_rxn("_rx_hv_ok.rxn",
+              "[REACTION_SPECIES]\nBULK A MG\n"
+              "[REACTION_PIPES]\nRATE  A  -0.001 * A * (TEMP / 20) * (1 + 0 * DT)\n"
+              "[REACTION_TANKS]\nRATE  A  -0.001 * A * HRT / (HRT + 1)\n");
+    write_deck("_rx_hv_ok.inp",
+               "org.hydrocouple.openswmm.reactions  config=\"_rx_hv_ok.rxn\"");
+    EXPECT_EQ(open_deck("_rx_hv_ok.inp", "_rx_hv_ok.rpt", "_rx_hv_ok.out"), SWMM_OK);
+}
+
+// Physics review A3: TIMESTEP and AREA_UNITS are parsed but nothing uses
+// them. Say so when a file sets them; the writer's own defaults stay quiet.
+TEST_F(ReactionsConfigTest, UnusedTimestepAndAreaUnitsAreReported) {
+    write_rxn("_rx_unused.rxn",
+              "[REACTION_OPTIONS]\nTIMESTEP 60\nAREA_UNITS M2\n"
+              "[REACTION_SPECIES]\nBULK A MG\n[REACTION_PIPES]\nRATE  A  -0.001 * A\n");
+    write_deck("_rx_unused.inp",
+               "org.hydrocouple.openswmm.reactions  config=\"_rx_unused.rxn\"");
+    ASSERT_EQ(open_deck("_rx_unused.inp", "_rx_unused.rpt", "_rx_unused.out"), SWMM_OK);
+    const auto& w = as_cpp_engine(engine_).context().warnings;
+    EXPECT_TRUE(contains(w, "TIMESTEP 60 is not used")) << "no TIMESTEP warning";
+    EXPECT_TRUE(contains(w, "AREA_UNITS M2 has no effect")) << "no AREA_UNITS warning";
+
+    SWMM_Engine e = swmm_engine_create();
+    write_rxn("_rx_defaults.rxn",
+              "[REACTION_OPTIONS]\nTIMESTEP 0\nAREA_UNITS FT2\n"
+              "[REACTION_SPECIES]\nBULK A MG\n[REACTION_PIPES]\nRATE  A  -0.001 * A\n");
+    write_deck("_rx_defaults.inp",
+               "org.hydrocouple.openswmm.reactions  config=\"_rx_defaults.rxn\"");
+    ASSERT_EQ(swmm_engine_open(e, "_rx_defaults.inp", "_rx_defaults.rpt",
+                               "_rx_defaults.out", nullptr), SWMM_OK);
+    const auto& w2 = as_cpp_engine(e).context().warnings;
+    EXPECT_FALSE(contains(w2, "TIMESTEP")) << "the written default warned";
+    EXPECT_FALSE(contains(w2, "AREA_UNITS")) << "the written default warned";
+    swmm_engine_destroy(e);
+}
+
+// Multispecies Phase 2 (S4): [REACTION_RAINFALL] gives a species a rainfall
+// concentration. It parses, round-trips through the writer and the C API,
+// and refuses undeclared species, negative values and duplicate rows.
+TEST_F(ReactionsConfigTest, RainfallConcentrationParsesRoundTripsAndValidates) {
+    write_rxn("_rx_rain.rxn", "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
+                              "[REACTION_RAINFALL]\nB  2.5\n");
+    write_deck("_rx_rain.inp", "org.hydrocouple.openswmm.reactions  config=\"_rx_rain.rxn\"");
+    ASSERT_EQ(open_deck("_rx_rain.inp", "_rx_rain.rpt", "_rx_rain.out"), SWMM_OK);
+    const auto& rx = as_cpp_engine(engine_).context().reactions;
+    ASSERT_EQ(rx.rain_conc.size(), 2u);
+    EXPECT_EQ(rx.rain_conc[0], 0.0);
+    EXPECT_EQ(rx.rain_conc[1], 2.5);
+    const std::string text = openswmm::transport::serializeReactionSystem(as_cpp_engine(engine_).context());
+    EXPECT_NE(text.find("[REACTION_RAINFALL]"), std::string::npos) << text;
+    double v = -1.0;
+    ASSERT_EQ(swmm_reaction_rain_conc_get(engine_, 1, &v), SWMM_OK);
+    EXPECT_EQ(v, 2.5);
+    ASSERT_EQ(swmm_reaction_rain_conc_set(engine_, 0, 4.0), SWMM_OK);
+    EXPECT_EQ(rx.rain_conc[0], 4.0);
+    EXPECT_NE(swmm_reaction_rain_conc_set(engine_, 0, -1.0), SWMM_OK);
+    for (const char* bad : {"Z  1\n", "A  -1\n", "A  1\nA  2\n"}) {
+        write_rxn("_rx_rain_bad.rxn", std::string("[REACTION_SPECIES]\nBULK A MG\n[REACTION_RAINFALL]\n") + bad);
+        write_deck("_rx_rain_bad.inp", "org.hydrocouple.openswmm.reactions  config=\"_rx_rain_bad.rxn\"");
+        SWMM_Engine e = swmm_engine_create();
+        EXPECT_NE(swmm_engine_open(e, "_rx_rain_bad.inp", "_rx_rain_bad.rpt", "_rx_rain_bad.out", nullptr), SWMM_OK) << bad;
+        EXPECT_TRUE(contains(as_cpp_engine(e).context().errors, "[REACTION_RAINFALL]")) << bad;
+        swmm_engine_destroy(e);
+    }
+}

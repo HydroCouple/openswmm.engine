@@ -128,10 +128,15 @@ std::vector<std::string> Tokenizer::tokenize(std::string_view line) {
 
         // Regular token: read to the next delimiter. A comma only ends the
         // token where it separates; otherwise it is an ordinary name
-        // character, as it is in legacy SWMM.
+        // character, as it is in legacy SWMM. Embedded quotes group values
+        // such as config="folder name/model.rxn" and remain in the token.
         std::size_t start = i;
-        while (i < n && !is_space(stripped[i]) &&
-               !(stripped[i] == ',' && comma_separates(stripped, i, pure_csv))) {
+        bool in_quote = false;
+        while (i < n) {
+            const char c = stripped[i];
+            if (c == '"') in_quote = !in_quote;
+            else if (!in_quote && (is_space(c) ||
+                     (c == ',' && comma_separates(stripped, i, pure_csv)))) break;
             ++i;
         }
         tokens.emplace_back(stripped.substr(start, i - start));

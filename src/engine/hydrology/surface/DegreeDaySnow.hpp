@@ -65,6 +65,10 @@ constexpr int SNOW_PERV     = 2;
 
 struct SnowSoA {
     int n_subcatch = 0;
+    // Native UEB columns publish into the reporting arrays below, but their
+    // water must never also be advanced by the degree-day solver.
+    std::vector<bool> external;
+    std::vector<double> external_net; ///< UEB melt plus throughfall, ft/s
 
     // Per subcatchment × 3 subareas = flat arrays [subcatch * 3 + subarea]
     std::vector<double> wsnow;    ///< Snow water equivalent (ft)
@@ -100,6 +104,9 @@ struct SnowSoA {
     /// which water went where. The age therefore moves at the point the
     /// water moves, which is the only place that knows.
     std::vector<double> age;
+    std::vector<double> ueb_transfer_energy; // pending DD-to-UEB plow heat, kJ/m2 of receiving subarea
+    std::vector<unsigned char> enabled; // driver ownership mask, true by default
+    bool conservative_plowing=false; // completed source footprints use actual donor/receiver areas
     /// S2b — age of the water this step PUBLISHED as `imelt` (seconds).
     ///
     /// Not the same as `age`, and the difference is the whole reason this

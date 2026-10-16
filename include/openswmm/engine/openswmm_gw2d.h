@@ -278,6 +278,51 @@ SWMM_ENGINE_API int swmm_gw2d_node_get_flags(SWMM_Engine engine, int index,
 SWMM_ENGINE_API int swmm_gw2d_node_set_exchange(SWMM_Engine engine, int index,
                                                 int exchange);
 
+/** Complete authored/resolved bed snapshot in project units. locate preserves
+ * CELL AUTO even after it has resolved to a nonnegative cell. automatic rows
+ * may be retained unchanged; they cannot be fabricated by this edit API. */
+typedef struct SWMM_GwNodeBed {
+    const char* node;
+    int cell, locate, exchange, automatic;
+    double kc, dc, area;
+} SWMM_GwNodeBed;
+/** Compare-and-replace a per-node owner as part of the same bed transaction.
+ * Modes are SWMM_LID_BOTTOM_* from openswmm_infrastructure.h. */
+typedef struct SWMM_LidNodeBottomEdit {
+    int node, expected_mode, mode;
+} SWMM_LidNodeBottomEdit;
+/** BUILDING/OPENED only. Compares the entire current bed list with expected,
+ * validates every replacement and owner edit, then publishes once. Stale,
+ * duplicate, unknown, nonfinite or contradictory input returns BADPARAM and
+ * changes nothing. Mesh ownership requires an enabled MESH aquifer and an
+ * enabled authored bed with positive AREA; mapping is checked at initialize.
+ * Mesh execution remains gated until R5 numerical/restart qualification.
+ * Existing AREA=0 retains whole-cell semantics. NULL arrays require count=0.
+ * apply=0 validates a private draft only; apply=1 publishes it. */
+SWMM_ENGINE_API int swmm_gw2d_node_replace(SWMM_Engine engine,
+    const SWMM_GwNodeBed* expected, int expected_count,
+    const SWMM_GwNodeBed* replacement, int count,
+    const SWMM_LidNodeBottomEdit* bottoms, int bottom_count, int apply);
+
+/* =========================================================================
+ * [2D_AQUIFER_LINKS] conduit beds (closed C-API gap 2026-10-11)
+ * ========================================================================= */
+
+SWMM_ENGINE_API int swmm_gw2d_link_count(SWMM_Engine engine, int* count);
+
+/** Add a conduit bed row. @p kc in the [LOSSES] seepage units (0 = the
+ *  conduit's own seep rate), @p dc in ft | m (0 = the conduit's full depth);
+ *  both >= 0. @p exchange 0 keeps the conduit a legacy loss (EXCHANGE NO).
+ *  The link name resolves at initialize, as for node beds. */
+SWMM_ENGINE_API int swmm_gw2d_link_add(SWMM_Engine engine, const char* link,
+                                       double kc, double dc, int exchange);
+
+SWMM_ENGINE_API int swmm_gw2d_link_get(SWMM_Engine engine, int index,
+                                       char* link, int linklen, double* kc,
+                                       double* dc, int* exchange);
+
+SWMM_ENGINE_API int swmm_gw2d_link_remove(SWMM_Engine engine, int index);
+
 /* =========================================================================
  * Running state — SI throughout
  * ========================================================================= */

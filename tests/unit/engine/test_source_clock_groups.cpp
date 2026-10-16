@@ -4,6 +4,7 @@
 #include "hydrology/LID.hpp"
 #include "core/SWMMEngine.hpp"
 #include "core/DateTime.hpp"
+#include "core/FileIO.hpp"
 #include "core/UnitConversion.hpp"
 #include <openswmm/engine/openswmm_engine.h>
 #include <filesystem>
@@ -172,7 +173,7 @@ TEST(SourceClockGroups, MonthBoundaryChangesPetRainInfiltrationAndRecoveryTogeth
 
 TEST(SourceClockGroups, UnsupportedHistoriesHaveNamedRefusalsAndNoPartialInitialization) {
     auto c = context(); SourceClockGroups a; ASSERT_EQ(a.initialize(c, {}), ""); EXPECT_TRUE(a.groups().empty());
-    c.options.ignore_snow_melt = false; EXPECT_NE(a.initialize(c, {0}).find("snow"), std::string::npos);
+    c.options.ignore_snow_melt = false; {SourceClockGroups snow;EXPECT_EQ(snow.initialize(c,{0}),"");}
     c.options.ignore_snow_melt = true; c.climate_state.evap_method = climate::EvapMethod::TEMPERATURE;
     EXPECT_NE(a.initialize(c, {0}).find("history"), std::string::npos); c.climate_state.evap_method = climate::EvapMethod::CONSTANT;
     c.forcing.subcatch_evap_mode[0] = ForcingMode::ADD;
@@ -243,9 +244,9 @@ TEST(SourceClockGroups, RealEngineFutureRunoffCursorCannotAdvanceCompletedSource
          "[INFILTRATION]\nS0 3.5 .5 .26\nS1 3.5 .5 .26\n"; f.close();
     SWMM_Engine h = swmm_engine_create();
     struct Cleanup { SWMM_Engine h; ~Cleanup() { swmm_engine_close(h); swmm_engine_destroy(h); } } cleanup{h};
-    ASSERT_EQ(swmm_engine_open(h, (dir / "clock.inp").c_str(), (dir / "clock.rpt").c_str(), (dir / "clock.out").c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(h, io::path_utf8(dir / "clock.inp").c_str(), io::path_utf8(dir / "clock.rpt").c_str(), io::path_utf8(dir / "clock.out").c_str(), nullptr), SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(h), SWMM_OK); ASSERT_EQ(swmm_engine_start(h, 0), SWMM_OK);
-    auto* engine = static_cast<SWMMEngine*>(h); ASSERT_EQ(engine->openRunoffIfaceWrite((dir / "clock.rnf").string()), 0);
+    auto* engine = static_cast<SWMMEngine*>(h); ASSERT_EQ(engine->openRunoffIfaceWrite(io::path_utf8(dir / "clock.rnf")), 0);
     double elapsed = 0; ASSERT_EQ(swmm_engine_step(h, &elapsed), SWMM_OK); engine->closeRunoffIface();
     std::ifstream input(dir / "clock.rnf", std::ios::binary); input.seekg(28); float runoff_end = 0;
     input.read(reinterpret_cast<char*>(&runoff_end), sizeof(runoff_end)); ASSERT_TRUE(input.good());
@@ -336,4 +337,14 @@ TEST(SourceClockGroups, CompletedRunoffVolumeClosesForMixedSubareasAndInstantDra
         }
         EXPECT_GT(output, 0);
     }
+}
+
+TEST(SourceClockGroups, OwnedOutfallTopologyRequiresExplicitReceiptQualification) {
+    auto c=context();c.node_subtypes.outfalls.add_default(0);c.node_subtypes.outfalls.route_to[0]=0;
+    SourceClockGroups ordinary,qualified;
+    EXPECT_FALSE(ordinary.initialize(c,{0}).empty());EXPECT_TRUE(ordinary.groups().empty());
+    ASSERT_EQ(qualified.initialize(c,{0},true),"");ASSERT_EQ(qualified.stage(0,1,1),"");
+    EXPECT_DOUBLE_EQ(supply(qualified.groups()[0],0),0);ASSERT_EQ(qualified.commit(0),"");
+    SourceClockGroups invalid;c.node_subtypes.outfalls.route_to[0]=c.n_subcatches();
+    EXPECT_FALSE(invalid.initialize(c,{0},true).empty());EXPECT_TRUE(invalid.groups().empty());
 }

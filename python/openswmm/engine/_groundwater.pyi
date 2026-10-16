@@ -3,7 +3,7 @@ from typing import Any, Mapping
 from ._coupling import DomainSources, SourceReceipt
 
 from dataclasses import dataclass
-from collections.abc import Iterator, MutableMapping
+from collections.abc import Iterable, Iterator, MutableMapping
 from typing import Any
 import numpy as np
 from numpy.typing import NDArray
@@ -32,6 +32,13 @@ class AquiferNode:
     exchange: bool
     automatic: bool
 
+@dataclass(frozen=True)
+class AquiferLink:
+    link: str
+    kc: float
+    dc: float
+    exchange: bool
+
 from ._gw_transport import GroundwaterTransport
 
 class AquiferOptions(MutableMapping[str, str]):
@@ -59,9 +66,14 @@ class Groundwater:
     def remove_row(self, index: int) -> None: ...
     @property
     def nodes(self) -> tuple[AquiferNode, ...]: ...
+    def replace_nodes(self, expected: Iterable[AquiferNode], replacement: Iterable[AquiferNode], *, bottoms: Iterable[tuple[int, int, int]] = (), apply: bool = True) -> None: ...
     def add_node(self, node: str, cell: int, kc: float, dc: float, area: float = ...) -> None: ...
     def remove_node(self, index: int) -> None: ...
     def set_node_exchange(self, index: int, enabled: bool) -> None: ...
+    @property
+    def links(self) -> tuple[AquiferLink, ...]: ...
+    def add_link(self, link: str, kc: float = ..., dc: float = ..., exchange: bool = ...) -> None: ...
+    def remove_link(self, index: int) -> None: ...
     @property
     def active(self) -> bool: ...
     @property

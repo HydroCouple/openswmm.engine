@@ -2,6 +2,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <functional>
 
 namespace openswmm::twoD {
 class SubsurfaceSolver;
@@ -28,6 +29,16 @@ struct SurfaceIntakeReceipt {
     // from outlet or mesh concentration. Empty only when transport is inactive.
     std::vector<double> mass;
 };
+enum class SurfaceReturnKind { NUMERICAL_REFUND, PHYSICAL_DUNNE, COLUMN_EXCESS };
+// Refunds retain the original donor tuple; physical/older-column emergence
+// identifies only the receiver cell, to be split by reviewed surface ownership.
+struct SurfaceReturnReceipt {
+    SurfaceReturnKind kind = SurfaceReturnKind::NUMERICAL_REFUND;
+    SurfaceIntakeReceipt intake;
+    double available_at = 0.0;
+    double volume = 0.0;
+    std::vector<double> mass;
+};
 struct SurfaceIntakeActual {
     double volume = 0;
     std::vector<double> mass;
@@ -36,18 +47,23 @@ struct SurfaceIntakeActual {
 // Serial transaction foundation, not a scheduler or runtime activation switch.
 // Plan is read-only. Commit revalidates receiver headroom BEFORE callers install
 // their trial source state. Invalid settlements book nothing and can be retried.
-// Source state, pending provenance/rejection returns and restart integration are
-// the caller's responsibilities; the production ownership gate remains closed.
+// Reviewed source ownership retains pending provenance in the receiver.
+// Source adoption and restart integration remain the caller's responsibilities;
+// the production ownership gate remains closed.
 class SurfaceExchange {
 public:
+    // Optional qualified mesh prescription; returns a capacity volume in m3.
+    // Both planning and settlement use it; donor/receiver ceilings still apply.
+    using Capacity = std::function<double(const SurfaceIntakeRequest&,double)>;
     std::string plan(const SubsurfaceSolver&, double start, double end,
-                     double completed_through, const std::vector<SurfaceIntakeRequest>&);
-    std::string commit(SubsurfaceSolver&, const std::vector<SurfaceIntakeActual>&);
+                     double completed_through, const std::vector<SurfaceIntakeRequest>&, const Capacity* = nullptr);
+    std::string commit(SubsurfaceSolver&, const std::vector<SurfaceIntakeActual>&, const Capacity* = nullptr);
     void cancel() noexcept;
     const std::vector<SurfaceIntakeAward>& awards() const noexcept { return awards_; }
     const std::vector<SurfaceIntakeReceipt>& receipts() const noexcept { return receipts_; }
     double completedEnd() const noexcept { return completed_end_; }
 private:
+    friend class CommonSourceStage;
     double start_ = 0, end_ = 0, completed_end_ = 0;
     bool planned_ = false;
     const SubsurfaceSolver* receiver_ = nullptr;

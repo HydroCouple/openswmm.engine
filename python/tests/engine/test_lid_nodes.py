@@ -43,6 +43,21 @@ class TestLidNodes(unittest.TestCase):
         self.solver.close()
         self.solver.destroy()
 
+    def test_bottom_owner_survives_assignment_edits(self):
+        lids = self.solver.infrastructure.lids
+        lids.assign_node("S", "Stack")
+        self.assertEqual(lids.node_bottom("S"), "CURRENT")
+        lids.set_node_bottom("S", "sealed")
+        lids.assign_node("S", "Stack", initial_saturation=30)
+        self.assertEqual(lids.node_bottom("S"), "SEALED")
+        with self.assertRaises(ValueError):
+            lids.set_node_bottom("S", "unlimited")
+        with self.assertRaises(EngineError):
+            lids.set_node_bottom("O", "SEALED")
+        self.assertEqual(lids.node_bottom("S"), "SEALED")
+        lids.remove_node("S")
+        self.assertEqual(lids.node_bottom("S"), "CURRENT")
+
     def test_arbitrary_layers_and_atomic_rejection(self):
         self.assertEqual(self.solver.infrastructure.lids.get_layers("Stack"), self.layers)
         self.solver.infrastructure.lids.assign_node("S", "Stack", initial_saturation=25)

@@ -1318,12 +1318,13 @@ static void write_lid_nodes(sqlite3* db, const SimulationContext& ctx, const std
             if(sqlite3_step(treatment.get())!=SQLITE_DONE)throw std::runtime_error("Cannot write LID treatment");
         }}
     }
-    auto node = prepare(db, "INSERT INTO lid_nodes VALUES (?,?,?,?)");
+    auto node = prepare(db, "INSERT INTO lid_nodes (simulation_id,node_id,lid_id,initial_saturation,bottom_mode) VALUES (?,?,?,?,?)");
     const auto& st = ctx.node_subtypes.storages;
     for (int r = 0; r < st.count(); ++r) if (st.lid[r].control >= 0) {
         sqlite3_reset(node.get()); sqlite3_clear_bindings(node.get());
         bind_text(node.get(), 1, sim); bind_text(node.get(), 2, ctx.node_names.name_of(st.node_idx[r]));
         bind_text(node.get(), 3, ctx.lid_names.name_of(st.lid[r].control)); bind_double(node.get(), 4, st.lid[r].initial_saturation);
+        bind_int(node.get(), 5, static_cast<int>(st.lid[r].bottom));
         if (sqlite3_step(node.get()) != SQLITE_DONE) throw std::runtime_error("Cannot write LID node assignment");
     }
     auto outlet = prepare(db, "INSERT INTO lid_node_outlets VALUES (?,?,?,?)");

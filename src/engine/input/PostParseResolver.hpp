@@ -71,7 +71,7 @@ void resolve_cross_references(SimulationContext& ctx);
  *          reading the previous file's data.
  *
  *          Rebuilds `ctx.gages.rain_series` and the rainfall-file summary
- *          statistics, windowed to the current [OPTIONS] simulation dates.
+ *          statistics, independent of the [OPTIONS] simulation dates.
  */
 void load_external_rain_files(SimulationContext& ctx);
 

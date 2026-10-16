@@ -418,7 +418,100 @@ Temperatures supplied from NOAA's latest Climate Data Online GHCN files should h
 Wind speed can be specified either by monthly average values or by the same Climate file used for air temperature. If neither option appears, then wind speed is assumed to be 0.
 Separate Areal Depletion Curves (ADC) can be defined for impervious and pervious subareas. The ADC parameters will default to 1.0 (meaning no depletion) if no data are supplied for a particular type of subarea.
 
- 
+#### Energy-balance snow and shared radiation
+
+The following additional [TEMPERATURE] rows configure UEB snow and the radiation forcing shared with heat transport:
+
+```
+SNOWMELT_MODEL  DEGREE_DAY / UEB
+SNOW_STEP      Step
+SITE           Latitude Longitude Timezone Elevation
+SHORTWAVE      COMPUTED / FILE
+SHORTWAVE      TIMESERIES Series
+LONGWAVE       COMPUTED / FILE
+LONGWAVE       TIMESERIES Series
+MET_FILE       "Path"
+```
+
+| Key | Default | Meaning and units |
+| --- | --- | --- |
+| SNOWMELT_MODEL | DEGREE_DAY | Shared snow formulation; an individual [SNOWPACKS] UEB row can override it. |
+| SNOW_STEP | 3600 | Snow update interval in seconds or HH:MM[:SS], from 1 to 21600 seconds. Mesh snow can choose a separate interval in [2D_SNOW_OPTIONS]. |
+| SITE | legacy climate/solar site | Latitude in degrees north, longitude in degrees east, UTC offset in hours, and elevation in metres in both US and SI projects. Bounds are ±90 degrees latitude, ±180 degrees longitude, ±14 hours and -500 to 10000 m elevation. An explicit SITE takes precedence over conflicting legacy site values and emits a warning. |
+| SHORTWAVE | COMPUTED | Incoming horizontal shortwave radiation; a named series supplies W/m². FILE uses the hourly MET_FILE. |
+| LONGWAVE | COMPUTED | Incoming longwave radiation; a named series supplies W/m². FILE uses the hourly MET_FILE. |
+| MET_FILE | none | Hourly meteorology path, resolved relative to the input file. Quote a path containing spaces. |
+
+MET_FILE is distinct from the legacy daily climate FILE row. Each record has seven fields: `MM/DD/YYYY HH:00 Temperature_C RH_percent Wind_m/s Shortwave_W/m2 Longwave_W/m2`. Records must be finite, consecutive, unique whole hours and cover the simulation interval; each record describes the following hour. These quantities always use the displayed SI units, independent of project units. An hourly MET_FILE supplies all five quantities and takes precedence over other air-temperature and radiation selectors while it is active. A radiation FILE selector requires MET_FILE. Named radiation series must exist in [TIMESERIES].
+
+Computed shortwave uses the Bristow–Campbell parameters in [UEB_OPTIONS]. Forcing is averaged over the snow interval; UEB snow site parameters are supplied by [SNOWPACKS]. The legacy TIMESERIES, FILE, WINDSPEED, SNOWMELT and ADC rows remain available.
+
+<!-- source: src/engine/hydrology/surface/UebConfig.cpp; src/engine/hydrology/UebForcing.cpp; src/engine/hydrology/HourlyMeteorology.cpp -->
+
+### Section: [UEB_OPTIONS] {#engine_manual_sect_UEB_OPTIONS}
+
+Purpose:
+Sets shared Utah Energy Balance snow parameters and computed-radiation coefficients. These rows do not by themselves select UEB; use SNOWMELT_MODEL in [TEMPERATURE] or a per-pack model in [SNOWPACKS].
+
+Formats:
+```
+SURFACE_TEMP  MODIFIED_FORCE_RESTORE / EQUILIBRIUM
+PRECIP_SPLIT  UEB / DIVT
+Key           Value
+BC_MONTHLY    Month Range
+```
+
+| Key | Default | Meaning and units |
+| --- | --- | --- |
+| SURFACE_TEMP | MODIFIED_FORCE_RESTORE | Surface-temperature scheme; EQUILIBRIUM selects the alternative equilibrium solve. |
+| PRECIP_SPLIT | UEB | UEB partitions precipitation between the TB and TR temperatures. DIVT uses the legacy SNOWMELT division temperature for an all-snow/all-rain split. |
+| Z0 | 0.01 | Aerodynamic roughness length (m). |
+| ZM | 2 | Measurement height above the surface (m); must exceed Z0. |
+| KS | 0.02 | Equilibrium heat-exchange conductance (m/h). |
+| KSAT | 200 | Snow drainage conductivity (m/h). |
+| LC | 0.02 | Liquid-water retention parameter (dimensionless). |
+| DE | 0.1 | Thermally active soil depth (m). |
+| RHO_S | 200 | Snow density (kg/m³), greater than zero and less than 917. |
+| RHO_G | 1700 | Soil density (kg/m³). |
+| CG | 2.09 | Soil specific heat capacity (kJ/(kg K)). |
+| LAMBDA_S | 0.33 | Snow thermal conductivity (kJ/(m K h)). |
+| LAMBDA_G | 6.5 | Soil thermal conductivity (kJ/(m K h)). |
+| OMEGA_LF | 0.0654 | Low-frequency parameter for modified force restore (1/h). |
+| R | 1 | Modified force-restore amplitude factor (dimensionless). |
+| FSTAB | 1 | Atmospheric stability factor (fraction from 0 to 1). |
+| TR | 3 | Temperature at which precipitation is entirely rain under PRECIP_SPLIT UEB (°C); must exceed TB. |
+| TB | -1 | Temperature at which precipitation is entirely snow under PRECIP_SPLIT UEB (°C); must exceed absolute zero. |
+| ABG | 0.25 | Bare-ground albedo (fraction from 0 to 1). |
+| ALPHA_VO | 0.85 | New-snow visible albedo (fraction from 0 to 1). |
+| ALPHA_IRO | 0.65 | New-snow infrared albedo (fraction from 0 to 1). |
+| EPSILON | 0.99 | Snow emissivity (fraction from 0 to 1). |
+| DNEWS | 0.002 | New-snow depth scale for resetting snow age (m water equivalent). |
+| R3 | 0.03 | Snow-age dust parameter (nonnegative, dimensionless). |
+| CV | 0.2 | Visible snow-age coefficient (fraction from 0 to 1). |
+| CIR | 0.5 | Infrared snow-age coefficient (fraction from 0 to 1). |
+| BC_A | 0.8 | Bristow–Campbell maximum transmittance, greater than zero and at most 1. |
+| BC_C | 2.4 | Positive Bristow–Campbell exponent. |
+| BC_MONTHLY | unspecified | Month (integer 1–12) and positive daily temperature range in °C, at most 100. Supply one row per month to override that month's range. |
+
+Remarks:
+All parameter units are fixed as listed, including in US projects; the conductivity and conductance units retain the UEB reference model's hour-based convention. Every numeric value must be finite. Lengths, densities, heat capacities, thermal conductivities, KS, OMEGA_LF and R must be positive; KSAT, DNEWS and R3 may be zero. LC must be nonnegative and less than `1000/RHO_S - 1000/917`. The complete parameter set is validated before initialization.
+
+An unspecified BC_MONTHLY value uses the available daily temperature range; it does not invent a monthly climatology. Unknown keys or extra fields are errors. The input writer emits only values that differ from their defaults and explicitly supplied monthly ranges.
+
+Example:
+```
+[UEB_OPTIONS]
+SURFACE_TEMP MODIFIED_FORCE_RESTORE
+PRECIP_SPLIT UEB
+BC_A 0.8
+BC_C 2.4
+BC_MONTHLY 1 10
+```
+
+This section has no counterpart in SWMM 5.
+
+<!-- source: src/engine/hydrology/surface/UebConfig.cpp; src/engine/hydrology/surface/UebSnow.hpp; src/engine/hydrology/surface/UebSnow.cpp -->
+
 ### Section: [ADJUSTMENTS] {#engine_manual_sect_ADJUSTMENTS}
 
 Purpose:
@@ -895,7 +988,20 @@ The PLOWABLE line contains parameters for the impervious area of a subcatchment 
 The REMOVAL line describes how snow removed from the plowable area is transferred onto other areas. The various transfer fractions should sum to no more than 1.0. If the line is omitted then no snow removal takes place.
 
 
- 
+#### UEB site and model override
+
+An additional row supplies the UEB site parameters of a named pack:
+
+```
+Name UEB Fc F Qg Aep (U0) (MODEL UEB / DEGREE_DAY)
+```
+
+Fc is forest-cover fraction (0 to 1); F is the nonnegative precipitation drift multiplier; Qg is ground heat flux (W/m²); Aep is positive extinction depth (m); and optional U0 is initial snow energy (kJ/m², default 0). These units are fixed in both US and SI projects. All values must be finite. An authored UEB row selects UEB for that pack unless MODEL DEGREE_DAY is appended. A pack without this row follows the shared SNOWMELT_MODEL in [TEMPERATURE].
+
+The PLOWABLE, IMPERVIOUS and PERVIOUS rows still supply initial snow and free water. Their SD0 and SD100 columns are water-equivalent depths, distinct from geometric snow thickness. Mesh assignments in [2D_SNOW_DEFAULTS] and [2D_SNOW] reference these same named packs but maintain independent state per cell; mesh initialization uses the pack's PERVIOUS row. Mesh FC, F, QG and AEP overrides do not edit the named pack.
+
+<!-- source: src/engine/input/handlers/HydrologyHandler.cpp; src/engine/hydrology/surface/UebConfig.cpp; src/engine/hydrology/surface/MeshSnow.cpp -->
+
 ### Section: [JUNCTIONS] {#engine_manual_sect_JUNCTIONS}
 
 Purpose:
@@ -2722,13 +2828,107 @@ P1 .. P5    the method's positional parameters, laid out exactly as in [2D_INFIL
 Dest    LOST (default), SUBCATCH_AQUIFER or AQUIFER_2D.
 
 Remarks:
-Among the [2D_*] sections that address a cell by a bare index column, this is the only 1-based one; the sections that spell CELL as a scope keyword ([2D_INITIAL_QUALITY], [2D_AQUIFER], the quality and [GW_*] sections) are 1-based as well, whereas the TRI columns of [2D_INITIAL_VELOCITY], [2D_BOUNDARY_CONDITIONS] and [2D_BOUNDARY_QUALITY] are 0-based. Only the lower bound is checked at parse; a cell beyond the mesh is reported at initialise. A cell row wins over any tag or `*` row of [2D_INFILTRATION_DEFAULTS].
+The bare cell-index columns in [2D_INFILTRATION] and [2D_SNOW] are 1-based. The sections that spell CELL as a scope keyword ([2D_INITIAL_QUALITY], [2D_AQUIFER], the quality and [GW_*] sections) are 1-based as well, whereas the TRI columns of [2D_INITIAL_VELOCITY], [2D_BOUNDARY_CONDITIONS] and [2D_BOUNDARY_QUALITY] are 0-based. Only the lower bound is checked at parse; a cell beyond the mesh is reported at initialise. A cell row wins over any tag or `*` row of [2D_INFILTRATION_DEFAULTS].
 
 The section may also be placed in the external mesh file, where it replaces the inline rows.
 
 This section has no counterpart in SWMM 5.
 
 <!-- source: src/engine/2d/input/SectionHandlers2D.cpp:982-1019,1093-1117 (registration 1296-1297) -->
+
+### Section: [2D_SNOW_OPTIONS] {#engine_manual_sect_2D_SNOW_OPTIONS}
+
+Purpose:
+Controls mesh snow processing and its update interval independently of subcatchment snow.
+
+Formats:
+```
+SNOWMELT   AUTO / YES / NO
+SNOW_STEP  DEFAULT / Step
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| SNOWMELT | AUTO | AUTO processes assigned cells; NO retains authored assignments without running mesh snow. YES requires an assignment and at least one active cell with a weather footprint at initialization. |
+| SNOW_STEP | DEFAULT | Inherits [TEMPERATURE] SNOW_STEP. An explicit interval uses seconds or HH:MM[:SS] and must be from 1 to 21600 seconds. DEFAULT restores inheritance. |
+
+Remarks:
+[OPTIONS] IGNORE_SNOWMELT YES disables both subcatchment and mesh snow, including when mesh SNOWMELT is YES. Selecting YES does not assign a snowpack. Assign cells through [2D_SNOW_DEFAULTS] or [2D_SNOW]; cells with no resolved pack pass precipitation through without mesh snow processing.
+
+This section requires a build with 2D support and has no counterpart in SWMM 5.
+
+<!-- source: src/engine/hydrology/surface/MeshSnowConfig.cpp; src/engine/hydrology/surface/MeshSnow.cpp -->
+
+### Section: [2D_SNOW_DEFAULTS] {#engine_manual_sect_2D_SNOW_DEFAULTS}
+
+Purpose:
+Assigns a named snowpack to the whole mesh or to cells carrying a specific tag.
+
+Formats:
+```
+*          SNOWPACK Name (Key Value ...)
+Tag        SNOWPACK Name (Key Value ...)
+TAG Tag    SNOWPACK Name (Key Value ...)
+```
+
+Parameters:
+Tag    exact cell tag from [2D_TRIANGLES] or [2D_QUADS]; `*` is the mesh-wide fallback. The TAG prefix is optional; quote tags or names containing spaces.
+Name    named pack from [SNOWPACKS], or NONE to disable snow for this scope.
+
+| Override key | Units and accepted range | When omitted |
+| --- | --- | --- |
+| FC | Forest-cover fraction, 0 to 1 | Inherit from the named pack or a broader mesh row. |
+| F | Nonnegative precipitation drift multiplier | Inherit from the named pack or a broader mesh row. |
+| QG | Ground heat flux in W/m², either sign | Inherit from the named pack or a broader mesh row. |
+| AEP | Positive extinction depth in m | Inherit from the named pack or a broader mesh row. |
+| SLOPE | Degrees, at least 0 and less than 90 | Use cell geometry, unless supplied by a broader mesh row. |
+| ASPECT | Degrees, 0 to 360 | Use cell geometry, unless supplied by a broader mesh row. |
+
+Remarks:
+Override units are fixed in both US and SI projects. Keys on a row must be unique and values finite. Supply SLOPE and ASPECT together, or omit both. A row's pack replaces the broader assignment; explicitly supplied override fields replace broader fields, while omitted fields retain them. Resolution applies the `*` row first, then the exact tag, then the cell row in [2D_SNOW]. A later authored row with the same tag replaces that tag's entire earlier row. NONE disables snow even when a broader row assigned a pack.
+
+Example:
+```
+[2D_SNOW_DEFAULTS]
+* SNOWPACK SP
+TAG Forest SNOWPACK SP FC 0.6
+TAG Road SNOWPACK NONE
+```
+
+This section requires a build with 2D support and has no counterpart in SWMM 5.
+
+<!-- source: src/engine/hydrology/surface/MeshSnowConfig.cpp; src/engine/hydrology/surface/MeshSnow.cpp -->
+
+### Section: [2D_SNOW] {#engine_manual_sect_2D_SNOW}
+
+Purpose:
+Overrides the snowpack assignment and optional site fields of an individual mesh cell.
+
+Formats:
+```
+Cell       SNOWPACK Name (Key Value ...)
+CELL Cell  SNOWPACK Name (Key Value ...)
+```
+
+Parameters:
+Cell    positive, one-based index in the combined triangle/quad cell ordering. The CELL prefix is optional. Cells beyond the loaded mesh are refused at initialization when mesh snow is enabled.
+Name    named pack from [SNOWPACKS], or NONE to disable this cell's snow processing.
+
+Remarks:
+The FC, F, QG, AEP, SLOPE and ASPECT keys and inheritance rules are those of [2D_SNOW_DEFAULTS]. A cell row has highest priority; SLOPE and ASPECT must be supplied together. A later row for the same cell replaces its entire earlier row. Input-file indices are one-based; Python and C API snapshot indices are zero-based.
+
+Example:
+```
+[2D_SNOW]
+CELL 1 SNOWPACK SP SLOPE 15 ASPECT 180
+CELL 2 SNOWPACK NONE
+```
+
+Each assigned cell keeps its own snow water, energy, thermal history and accepted ledger. It shares the named pack's parameters with subcatchments, not their snow state. The pack's resolved model may be DEGREE_DAY or UEB; energy-balance fields unavailable for degree-day cells are reported as NaN. Liquid released by snow becomes surface input rather than being counted as a second precipitation source.
+
+This section requires a build with 2D support and has no counterpart in SWMM 5.
+
+<!-- source: src/engine/hydrology/surface/MeshSnowConfig.cpp; src/engine/hydrology/surface/MeshSnow.cpp -->
 
 ### Section: [2D_SURFACE_OWNERSHIP] {#engine_manual_sect_2D_SURFACE_OWNERSHIP}
 
