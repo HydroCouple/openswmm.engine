@@ -310,6 +310,8 @@ SWMM_ENGINE_API int swmm_reaction_species_add(SWMM_Engine engine,
     rx.tank_form.push_back(openswmm::ReactionExprForm::NONE);
     rx.tank_expr_src.emplace_back();
     rx.init_global.push_back(0.0);
+    rx.rain_conc.resize(static_cast<std::size_t>(rx.n_species()) - 1, 0.0);
+    rx.rain_conc.push_back(0.0);
     rebuild_msx_registry(ctx, old_base, old_n);
     if (!recompile_or_rollback(ctx, rx_backup, reg_backup))
         return SWMM_ERR_BADPARAM;
@@ -344,6 +346,7 @@ SWMM_ENGINE_API int swmm_reaction_species_remove(SWMM_Engine engine,
     rx.tank_form.erase(rx.tank_form.begin() + u);
     rx.tank_expr_src.erase(rx.tank_expr_src.begin() + u);
     rx.init_global.erase(rx.init_global.begin() + u);
+    if (u < rx.rain_conc.size()) rx.rain_conc.erase(rx.rain_conc.begin() + u);
     // Per-element initial rows for the species vanish with it; higher
     // species indexes shift down.
     for (int r = static_cast<int>(rx.init_elem_idx.size()) - 1; r >= 0; --r) {
@@ -583,6 +586,31 @@ SWMM_ENGINE_API int swmm_reaction_init_global_get(SWMM_Engine engine,
     if (!value) return SWMM_ERR_BADPARAM;
     const auto u = static_cast<std::size_t>(species_idx);
     *value = (u < rx.init_global.size()) ? rx.init_global[u] : 0.0;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_reaction_rain_conc_get(SWMM_Engine engine,
+        int species_idx, double* value) {
+    CHECK_HANDLE(engine);
+    const auto& rx = to_engine(engine)->context().reactions;
+    CHECK_INDEX(species_idx >= 0 && species_idx < rx.n_species());
+    if (!value) return SWMM_ERR_BADPARAM;
+    const auto u = static_cast<std::size_t>(species_idx);
+    *value = (u < rx.rain_conc.size()) ? rx.rain_conc[u] : 0.0;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_reaction_rain_conc_set(SWMM_Engine engine,
+        int species_idx, double value) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    auto& rx = ctx.reactions;
+    CHECK_INDEX(species_idx >= 0 && species_idx < rx.n_species());
+    if (!(value >= 0.0)) return SWMM_ERR_BADPARAM;
+    if (rx.rain_conc.size() < static_cast<std::size_t>(rx.n_species()))
+        rx.rain_conc.resize(static_cast<std::size_t>(rx.n_species()), 0.0);
+    rx.rain_conc[static_cast<std::size_t>(species_idx)] = value;
     return SWMM_OK;
 }
 

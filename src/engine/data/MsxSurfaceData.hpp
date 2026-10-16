@@ -149,7 +149,9 @@ struct MsxSurfaceData {
     std::vector<double> led_subcatch_load; ///< [sc * n_species + m], per-subcatchment total (report)
 
     bool resolved = false;
-    bool active() const noexcept { return resolved && n_species > 0 && n_landuses > 0; }
+    /// `resolved` already requires a land use for buildup/washoff rows; a
+    /// species that only rains in (Multispecies Phase 2) resolves without one.
+    bool active() const noexcept { return resolved && n_species > 0; }
 
     std::size_t pidx(int lu, int m) const noexcept {
         return static_cast<std::size_t>(lu) * static_cast<std::size_t>(n_species) +

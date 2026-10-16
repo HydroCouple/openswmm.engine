@@ -172,6 +172,12 @@ SWMM_ENGINE_API int swmm_reaction_init_global_get(SWMM_Engine engine,
         int species_idx, double* value);
 SWMM_ENGINE_API int swmm_reaction_init_global_set(SWMM_Engine engine,
         int species_idx, double value);
+/** @brief Rainfall concentration of species @p species_idx ([REACTION_RAINFALL];
+ *  0 = rain falls clean). The setter is BUILDING/OPENED only. */
+SWMM_ENGINE_API int swmm_reaction_rain_conc_get(SWMM_Engine engine,
+        int species_idx, double* value);
+SWMM_ENGINE_API int swmm_reaction_rain_conc_set(SWMM_Engine engine,
+        int species_idx, double value);
 SWMM_ENGINE_API int swmm_reaction_init_elem_count(SWMM_Engine engine);
 SWMM_ENGINE_API int swmm_reaction_init_elem_get(SWMM_Engine engine,
         int entry_idx, int* is_link, int* elem_idx, int* species_idx,

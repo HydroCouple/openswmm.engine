@@ -123,6 +123,9 @@ struct ReactionData {
 
     // ---- [REACTION_QUALITY] GLOBAL initial values (R1) ---------------------
     std::vector<double> init_global;         ///< size n_species
+    /// [REACTION_RAINFALL]: concentration of each species in rainfall, in its
+    /// own units (0 = rain falls clean). Size n_species. Multispecies Phase 2.
+    std::vector<double> rain_conc;
 
     // ---- [REACTION_QUALITY] NODE/LINK per-element overrides (E-B) ----------
     // Sparse row table over the GLOBAL seed; covered by clear() via the

@@ -154,7 +154,8 @@ void resolveLidRemovals(SimulationContext& ctx, std::vector<std::string>& warnin
     }
 }
 
-std::vector<std::string> resolve(SimulationContext& ctx) {
+namespace {
+std::vector<std::string> resolveRows(SimulationContext& ctx) {
     std::vector<std::string> warnings;
     auto& s  = ctx.reactions.surface;
     s.resolved = false;
@@ -262,6 +263,40 @@ std::vector<std::string> resolve(SimulationContext& ctx) {
     refreshDerived(ctx);
     return warnings;
 }
+}  // namespace
+
+// Multispecies Phase 2 (S4): a species that rains in deposits on every
+// subcatchment, land use or not — the pollutant kernel's wet deposition has
+// no land-use condition. Such a deck may have no species buildup rows, so the
+// store is set up here with empty land-use parameters.
+void activateForRain(SimulationContext& ctx) noexcept {
+    auto& s = ctx.reactions.surface;
+    auto& rx = ctx.reactions;
+    if (s.resolved || !rx.configured) return;
+    const int nm = rx.n_species();
+    bool rain = false;
+    for (int m = 0; m < nm && m < static_cast<int>(rx.rain_conc.size()); ++m)
+        rain = rain || rx.rain_conc[static_cast<std::size_t>(m)] > 0.0;
+    if (!rain) return;
+    if (s.n_species != nm || s.n_landuses != std::max(ctx.n_landuses(), 0)) {
+        s.resize_params(std::max(ctx.n_landuses(), 0), nm);
+        s.init_loading.assign(static_cast<std::size_t>(std::max(ctx.n_subcatches(), 0)) *
+                              static_cast<std::size_t>(nm), 0.0);
+        for (int m = 0; m < nm; ++m)
+            s.mcf[static_cast<std::size_t>(m)] =
+                speciesUnitFactor(static_cast<std::size_t>(m) < rx.species_units.size()
+                                      ? rx.species_units[static_cast<std::size_t>(m)] : std::string{},
+                                  ctx.options);
+        refreshDerived(ctx);
+    }
+    s.resolved = true;
+}
+
+std::vector<std::string> resolve(SimulationContext& ctx) {
+    auto warnings = resolveRows(ctx);
+    activateForRain(ctx);
+    return warnings;
+}
 
 void refreshDerived(SimulationContext& ctx) noexcept {
     auto& s = ctx.reactions.surface;
@@ -278,6 +313,7 @@ void refreshDerived(SimulationContext& ctx) noexcept {
 
 void initState(SimulationContext& ctx) {
     auto& s = ctx.reactions.surface;
+    activateForRain(ctx);   // a rain concentration set through the API after open
     if (!s.active()) return;
     const int nsc = ctx.n_subcatches(), nlu = s.n_landuses, nm = s.n_species;
     s.resize_state(nsc);
@@ -351,7 +387,7 @@ SpeciesParams speciesParams(const MsxSurfaceData& s) {
     }
     return p;
 }
-surfacespecies::Block speciesBlock(MsxSurfaceData& s, const SpeciesParams& p) {
+surfacespecies::Block speciesBlock(SimulationContext& ctx, MsxSurfaceData& s, const SpeciesParams& p) {
     surfacespecies::Block b;
     b.n = s.n_species;
     b.nlu = s.n_landuses;
@@ -363,7 +399,9 @@ surfacespecies::Block speciesBlock(MsxSurfaceData& s, const SpeciesParams& p) {
     b.runon_qual_rate = &s.runon_qual_rate;
     b.total_load = &s.led_subcatch_load;
     b.mcf = &s.mcf;
-    b.c_rain = &s.c_rain;
+    // [REACTION_RAINFALL] when given, else the store's zeros (rain falls clean).
+    b.c_rain = ctx.reactions.rain_conc.size() == static_cast<std::size_t>(s.n_species)
+                   ? &ctx.reactions.rain_conc : &s.c_rain;
     b.snow_only = &s.snow_only;
     b.led_surface_buildup = &s.led_buildup;
     b.led_wet_deposition = &s.led_wet_deposition;
@@ -378,7 +416,7 @@ void step(SimulationContext& ctx, double dt_runoff, double old_runoff_time) {
     auto& s = ctx.reactions.surface;
     if (!s.active() || !(dt_runoff > 0.0)) return;
     const auto p = speciesParams(s);
-    auto b = speciesBlock(s, p);
+    auto b = speciesBlock(ctx, s, p);
     surfacespecies::step(ctx, b, dt_runoff, old_runoff_time);
 }
 
@@ -387,7 +425,7 @@ void bookPostLid(SimulationContext& ctx, double dt_runoff,
     auto& s = ctx.reactions.surface;
     if (!s.active() || ctx.n_subcatches() <= 0) return;
     const auto p = speciesParams(s);
-    auto b = speciesBlock(s, p);
+    auto b = speciesBlock(ctx, s, p);
     surfacespecies::bookPostLid(ctx, b, dt_runoff, lid_infil_vol);
 }
 

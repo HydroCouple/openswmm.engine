@@ -399,6 +399,38 @@ void parseQuality(SimulationContext& ctx, const std::vector<std::string>& lines,
     for (const auto& e : mirrorInitialQualityMsxRows(ctx)) errors.push_back(e);
 }
 
+/// [REACTION_RAINFALL] (Multispecies Phase 2): `species concentration`, the
+/// species' counterpart of the [POLLUTANTS] Crain column.
+void parseRainfall(SimulationContext& ctx, const std::vector<std::string>& lines,
+                   std::vector<std::string>& errors) {
+    auto& rx = ctx.reactions;
+    std::vector<bool> seen(static_cast<std::size_t>(rx.n_species()), false);
+    for (const auto& line : lines) {
+        auto tok = Tokenizer::tokenize(line);
+        if (tok.empty()) continue;
+        if (tok.size() < 2) {
+            errors.push_back("[REACTION_RAINFALL] row needs species concentration: '" + line + "'.");
+            continue;
+        }
+        const int m = rx.find_species(tok[0]);
+        if (m < 0) {
+            errors.push_back("[REACTION_RAINFALL] undeclared species '" + tok[0] + "'.");
+            continue;
+        }
+        double v = 0.0;
+        if (!to_num(tok[1], v) || v < 0.0) {
+            errors.push_back("[REACTION_RAINFALL] bad concentration '" + tok[1] + "' for '" + tok[0] + "'.");
+            continue;
+        }
+        if (seen[static_cast<std::size_t>(m)]) {
+            errors.push_back("[REACTION_RAINFALL] duplicate row for '" + tok[0] + "'.");
+            continue;
+        }
+        seen[static_cast<std::size_t>(m)] = true;
+        rx.rain_conc[static_cast<std::size_t>(m)] = v;
+    }
+}
+
 }  // namespace
 
 const std::vector<std::string>& reactionSectionTags() {
@@ -408,7 +440,8 @@ const std::vector<std::string>& reactionSectionTags() {
         "REACTION_PIPES",         "REACTION_TANKS",
         "REACTION_SOURCES",       "REACTION_QUALITY",
         "REACTION_PARAMETERS",    "REACTION_PATTERNS",
-        "REACTION_REPORT",        "REACTION_SUBCATCHMENTS"};
+        "REACTION_REPORT",        "REACTION_SUBCATCHMENTS",
+        "REACTION_RAINFALL"};
     return tags;
 }
 
@@ -461,6 +494,10 @@ void applyReactionSections(SimulationContext& ctx,
     else
         ctx.reactions.init_global.assign(
             static_cast<std::size_t>(ctx.reactions.n_species()), 0.0);
+    ctx.reactions.rain_conc.assign(
+        static_cast<std::size_t>(ctx.reactions.n_species()), 0.0);
+    s = config.find("REACTION_RAINFALL");
+    if (s) parseRainfall(ctx, *s, errors);
 
     // Later-phase sections: defined behavior, never silent acceptance.
     const struct { const char* tag; const char* phase; } later[] = {

@@ -46,6 +46,8 @@
 
 #include "core/InpWriter.hpp"
 #include "core/SWMMEngine.hpp"
+#include "transport/components/ReactionModule/ReactionsWriter.hpp"
+#include <openswmm/engine/openswmm_reactions.h>
 
 namespace {
 
@@ -597,4 +599,34 @@ TEST_F(ReactionsConfigTest, UnusedTimestepAndAreaUnitsAreReported) {
     EXPECT_FALSE(contains(w2, "TIMESTEP")) << "the written default warned";
     EXPECT_FALSE(contains(w2, "AREA_UNITS")) << "the written default warned";
     swmm_engine_destroy(e);
+}
+
+// Multispecies Phase 2 (S4): [REACTION_RAINFALL] gives a species a rainfall
+// concentration. It parses, round-trips through the writer and the C API,
+// and refuses undeclared species, negative values and duplicate rows.
+TEST_F(ReactionsConfigTest, RainfallConcentrationParsesRoundTripsAndValidates) {
+    write_rxn("_rx_rain.rxn", "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
+                              "[REACTION_RAINFALL]\nB  2.5\n");
+    write_deck("_rx_rain.inp", "org.hydrocouple.openswmm.reactions  config=\"_rx_rain.rxn\"");
+    ASSERT_EQ(open_deck("_rx_rain.inp", "_rx_rain.rpt", "_rx_rain.out"), SWMM_OK);
+    const auto& rx = as_cpp_engine(engine_).context().reactions;
+    ASSERT_EQ(rx.rain_conc.size(), 2u);
+    EXPECT_EQ(rx.rain_conc[0], 0.0);
+    EXPECT_EQ(rx.rain_conc[1], 2.5);
+    const std::string text = openswmm::transport::serializeReactionSystem(as_cpp_engine(engine_).context());
+    EXPECT_NE(text.find("[REACTION_RAINFALL]"), std::string::npos) << text;
+    double v = -1.0;
+    ASSERT_EQ(swmm_reaction_rain_conc_get(engine_, 1, &v), SWMM_OK);
+    EXPECT_EQ(v, 2.5);
+    ASSERT_EQ(swmm_reaction_rain_conc_set(engine_, 0, 4.0), SWMM_OK);
+    EXPECT_EQ(rx.rain_conc[0], 4.0);
+    EXPECT_NE(swmm_reaction_rain_conc_set(engine_, 0, -1.0), SWMM_OK);
+    for (const char* bad : {"Z  1\n", "A  -1\n", "A  1\nA  2\n"}) {
+        write_rxn("_rx_rain_bad.rxn", std::string("[REACTION_SPECIES]\nBULK A MG\n[REACTION_RAINFALL]\n") + bad);
+        write_deck("_rx_rain_bad.inp", "org.hydrocouple.openswmm.reactions  config=\"_rx_rain_bad.rxn\"");
+        SWMM_Engine e = swmm_engine_create();
+        EXPECT_NE(swmm_engine_open(e, "_rx_rain_bad.inp", "_rx_rain_bad.rpt", "_rx_rain_bad.out", nullptr), SWMM_OK) << bad;
+        EXPECT_TRUE(contains(as_cpp_engine(e).context().errors, "[REACTION_RAINFALL]")) << bad;
+        swmm_engine_destroy(e);
+    }
 }

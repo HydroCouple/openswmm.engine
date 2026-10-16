@@ -441,6 +441,7 @@ struct TwinOpts {
     std::string lid_usage;               ///< full [LID_USAGE] body
     std::string rxn_extra;               ///< appended to the reactions file
     std::string lid_extra;               ///< appended to [LID_CONTROLS] (e.g. REMOVALS)
+    bool        landuse_rows = true;     ///< false: no [BUILDUP]/[WASHOFF] rows at all
 };
 
 std::string twinDeck(const TwinOpts& o) {
@@ -481,11 +482,13 @@ std::string twinDeck(const TwinOpts& o) {
     s << "\n[POLLUTANTS]\nTSS  MG/L  " << o.tss_rain << "  0  0  0  NO  *  0.0  0  0\n"
       << "\n[LANDUSES]\nLU1  0  0  0\n\n[COVERAGES]\nS1  LU1  100\n";
     if (o.runon) s << "S2  LU1  100\n";
-    s << "\n[BUILDUP]\n";
-    if (!o.buildup.empty())
-        for (const char* n : {"TSS", "X"}) s << "LU1  " << n << "  " << o.buildup << "\n";
-    s << "\n[WASHOFF]\n";
-    for (const char* n : {"TSS", "X"}) s << "LU1  " << n << "  " << o.washoff << "  " << o.sweep_bmp << "\n";
+    if (o.landuse_rows) {
+        s << "\n[BUILDUP]\n";
+        if (!o.buildup.empty())
+            for (const char* n : {"TSS", "X"}) s << "LU1  " << n << "  " << o.buildup << "\n";
+        s << "\n[WASHOFF]\n";
+        for (const char* n : {"TSS", "X"}) s << "LU1  " << n << "  " << o.washoff << "  " << o.sweep_bmp << "\n";
+    }
     if (!o.lid_controls.empty()) s << "\n[LID_CONTROLS]\n" << o.lid_controls << o.lid_extra;
     if (!o.lid_usage.empty())    s << "\n[LID_USAGE]\n" << o.lid_usage;
     return s.str();
@@ -500,7 +503,7 @@ struct Twin {
     bool ok = false;
     double drain_seen = 0.0;   ///< LID drain flow that reached a node (cfs, summed over steps)
     double drain_sub  = 0.0;   ///< subcatchment LID drain flow (cfs, summed over steps)
-    Gap conc, node, load, buildup, init, runoff, bmp, sweep;
+    Gap conc, node, load, buildup, init, runoff, bmp, sweep, wet, infil;
 };
 
 Twin runTwin(const std::string& tag, const TwinOpts& o) {
@@ -542,13 +545,18 @@ Twin runTwin(const std::string& tag, const TwinOpts& o) {
     const auto& sq = cpp(e).surfaceQuality();
     for (int sc = 0; sc < ns; ++sc) {
         t.load.add(ctx.subcatches.total_load[static_cast<std::size_t>(sc * np)], ms.led_subcatch_load[ms.sidx(sc, 0)]);
-        t.buildup.add(sq.buildup[sq.bu_idx(sc, 0, 0)], ms.buildup[ms.bu_idx(sc, 0, 0)]);
+        if (ms.n_landuses > 0 && !sq.buildup.empty() && !ms.buildup.empty())
+            t.buildup.add(sq.buildup[sq.bu_idx(sc, 0, 0)], ms.buildup[ms.bu_idx(sc, 0, 0)]);
     }
     const auto& mb = ctx.mass_balance;
     t.init.add(mb.qual_init_buildup[0], ms.led_init_buildup[0]);
     t.runoff.add(mb.qual_runoff_load[0], ms.led_runoff_load[0]);
     t.bmp.add(mb.qual_bmp_removal[0], ms.led_bmp_removal[0]);
     t.sweep.add(mb.qual_sweeping[0], ms.led_sweeping[0]);
+    if (ms.active()) {
+        t.wet.add(mb.qual_wet_deposition[0], ms.led_wet_deposition[0]);
+        t.infil.add(mb.qual_infil_loss[0], ms.led_infil_loss[0]);
+    }
     t.ok = true;
     // Evidence line for the round records.
     std::printf("TWIN %-24s conc %.6g/%.6g node %.6g/%.6g load %.6g/%.6g bu %.6g/%.6g runoff %.6g/%.6g bmp %.6g/%.6g\n",
@@ -570,6 +578,8 @@ void expectTwin(const Twin& t, const std::string& tag) {
     EXPECT_EQ(t.runoff.diff, 0.0)  << tag << ": runoff load ledger differs (TSS " << t.runoff.scale << ")";
     EXPECT_EQ(t.bmp.diff, 0.0)     << tag << ": BMP removal ledger differs (TSS " << t.bmp.scale << ")";
     EXPECT_EQ(t.sweep.diff, 0.0)   << tag << ": sweeping ledger differs";
+    EXPECT_EQ(t.wet.diff, 0.0)     << tag << ": wet deposition ledger differs (TSS " << t.wet.scale << ")";
+    EXPECT_EQ(t.infil.diff, 0.0)   << tag << ": infiltration loss ledger differs (TSS " << t.infil.scale << ")";
 }
 
 const char* kBioRetention =
@@ -708,4 +718,22 @@ TEST(MsxSurfaceTwin, PollutantLidRemovalDeclaredBeforePollutantsApplies) {
     const double a = bmp("_tw_rm_early", early), b = bmp("_tw_rm_late", late);
     ASSERT_GT(a, 0.0);
     EXPECT_EQ(b, a) << "REMOVALS before [POLLUTANTS] booked " << b << " against " << a;
+}
+
+// S4: rain carries the species in. TSS rains at its [POLLUTANTS] Crain, X at
+// its [REACTION_RAINFALL] value; the two must deposit identically, on the
+// pervious ponded water and on a LID footprint.
+TEST(MsxSurfaceTwin, R12_RainConcentration) {
+    TwinOpts o; o.tss_rain = "2"; o.rxn_extra = "[REACTION_RAINFALL]\nX  2\n";
+    o.lid_controls = kFlowingBioRetention; o.lid_usage = "S1  BC2  1  4000  50  100  100  0  *  J1\n";
+    const Twin t = runTwin("_tw_r12", o);
+    EXPECT_GT(t.wet.scale, 0.0) << "TSS deposited nothing; deck defect";
+    expectTwin(t, "R12");
+}
+// …and with no buildup or washoff rows at all: deposition alone.
+TEST(MsxSurfaceTwin, R12b_RainOnlyNoLandUseRows) {
+    TwinOpts o; o.tss_rain = "2"; o.rxn_extra = "[REACTION_RAINFALL]\nX  2\n"; o.landuse_rows = false;
+    const Twin t = runTwin("_tw_r12b", o);
+    EXPECT_GT(t.wet.scale, 0.0) << "TSS deposited nothing; deck defect";
+    expectTwin(t, "R12b");
 }

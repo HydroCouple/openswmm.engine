@@ -1768,3 +1768,38 @@ TEST(GwTransportKernel, GainingConduitDeliversTheAquiferQualityToTheNetwork) {
     EXPECT_EQ(t.link_gain_shortfall[0], 0.0);
     finish(r);
 }
+
+// Multispecies Phase 2 (S4, review D7): reaction species rain onto the mesh
+// at their [REACTION_RAINFALL] concentration. They used to rain in clean.
+// Seeded and rained exactly like TSS (10 mg/L), X must track TSS on every
+// mesh cell at every step.
+TEST(GwTransportKernel, SpeciesRainOnTheMeshAtTheirRainfallConcentration) {
+    std::string body = deck(Mesh::Tri);
+    fs::create_directories(kOutDir);
+    { std::ofstream f(kOutDir / "mesh_rain_msx.rxn");
+      f << "[REACTION_OPTIONS]\nSOLVER RK5\n[REACTION_SPECIES]\nBULK X MG\n"
+           "[REACTION_PIPES]\nRATE X 0\n[REACTION_TANKS]\nRATE X 0\n"
+           "[REACTION_RAINFALL]\nX  10.0\n"; }
+    const std::string iq = "[GW_INITIAL_QUALITY]\n;;Scope Zone Species Value\n";
+    body.insert(body.find(iq) + iq.size(), "*       SAT    X  5.0\n*       UNSAT  X  2.0\nCELL 1  SAT    X  25.0\n");
+    body.insert(body.find("[REPORT]"),
+                "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions config=\"mesh_rain_msx.rxn\"\n\n");
+    Deck r = open("mesh_rain_msx", body);
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r.e, 1), SWMM_OK);
+    r.started = true;
+    const auto& tr = r.eng->surfaceRouter2D().state().transport;
+    ASSERT_EQ(tr.n_msx, 1);
+    const int x = tr.n_pollut;
+    double worst = 0.0, peak = 0.0, elapsed = 0.0;
+    while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0)
+        for (int c = 0; c < tr.n_cells; ++c) {
+            const double a = tr.cell_mass[tr.idx(0, c)], b = tr.cell_mass[tr.idx(x, c)];
+            peak = std::max(peak, std::fabs(a));
+            worst = std::max(worst, std::fabs(a - b));
+        }
+    ASSERT_GT(peak, 0.0) << "no TSS on the mesh; deck defect";
+    EXPECT_LE(worst, 1e-12 * peak) << "X and TSS differ by up to " << worst << " (peak " << peak << ")";
+    finish(r);
+}

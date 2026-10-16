@@ -838,11 +838,17 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             // S2: rainfall carries the [POLLUTANTS] rain concentration —
             // the same column the 1D runoff path uses, so a species that rains
             // in at 10 mg/L on a subcatchment rains in at 10 mg/L on the mesh.
-            // S4: MSX rows rain in clean, age rains in at 0 (new water), the
-            // temperature row at the RAINFALL source temperature.
+            // S4: age rains in at 0 (new water), the temperature row at the
+            // RAINFALL source temperature. Multispecies Phase 2: reaction
+            // species rain in at their [REACTION_RAINFALL] concentration
+            // (0 when absent, as before).
             tr.rain_conc.assign(static_cast<std::size_t>(ns), 0.0);
             for (int p = 0; p < np; ++p) tr.rain_conc[static_cast<std::size_t>(p)] =
                 ctx.pollutants.c_rain[static_cast<std::size_t>(p)];
+            for (int m = 0; m < tr.n_msx; ++m)
+                if (static_cast<std::size_t>(m) < ctx.reactions.rain_conc.size())
+                    tr.rain_conc[static_cast<std::size_t>(tr.n_pollut + m)] =
+                        ctx.reactions.rain_conc[static_cast<std::size_t>(m)];
             if (tr.temp_row >= 0)
                 tr.rain_conc[static_cast<std::size_t>(tr.temp_row)] =
                     ctx.heat_config.source_temp(HeatSource::RAINFALL, -1);

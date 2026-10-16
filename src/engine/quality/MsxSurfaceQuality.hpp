@@ -110,6 +110,10 @@ void addLidDrain(SimulationContext& ctx, int control, int sc, int node, double d
                  bool to_perv, bool runoff_load, double dt_runoff) noexcept;
 void rollLidDrain(SimulationContext& ctx) noexcept;
 
+/// Set the store up for a species that only rains in (called by resolve and
+/// initState).
+void activateForRain(SimulationContext& ctx) noexcept;
+
 /// Bind LID REMOVALS entries kept by name (called by resolve).
 void resolveLidRemovals(SimulationContext& ctx, std::vector<std::string>& warnings);
 
