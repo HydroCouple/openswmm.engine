@@ -52,7 +52,10 @@ namespace {
 constexpr double kSqMPerAcre  = 4046.8564224;
 constexpr double kSqMPerHa    = 10000.0;
 constexpr double kM3PerFt3    = 0.028316846592;
-constexpr double kMinRunoffMs = 1.0e-9 * 0.3048;   // the 1D ft/s threshold, in m/s
+// legacy consts.h MIN_RUNOFF, 2.31481e-8 ft/s (0.001 in/hr), in m/s — the
+// subcatchment kernel's dry/wet threshold for buildup and washoff
+// (Multispecies Phase 2, S5; this was 1e-9 ft/s, the old MSX copy's value).
+constexpr double kMinRunoffMs = 2.31481e-8 * 0.3048;
 
 bool iequals(const std::string& a, const char* b) {
     std::size_t i = 0;
@@ -432,6 +435,7 @@ std::vector<std::string> SurfaceQuality2D::resolve(const SimulationContext& ctx,
     bu_.assign(static_cast<std::size_t>(n_lu_) * static_cast<std::size_t>(n_sp_) * static_cast<std::size_t>(n_cells_), 0.0);
     last_swept_.assign(static_cast<std::size_t>(n_cells_) * static_cast<std::size_t>(n_lu_), 0.0);
     runoff_vol_.assign(static_cast<std::size_t>(n_cells_), 0.0);
+    wet_runoff_vol_.assign(static_cast<std::size_t>(n_cells_), 0.0);
     led_init_.assign(static_cast<std::size_t>(n_sp_), 0.0);
     led_bu_ = led_wo_ = led_sw_ = led_bmp_ = led_init_;
     active_ = true;
@@ -518,20 +522,28 @@ void SurfaceQuality2D::step(const SimulationContext& ctx, const MeshData& mesh,
         const double Q_m3s   = v_out / dt_runoff;
         const double q_expon = q_ms * q_to_display;
         const double q_flow  = (Q_m3s / kM3PerFt3) * ucf_flow;
+        if (q_ms >= kMinRunoffMs) wet_runoff_vol_[uc] += v_out;
 
         for (int lu = 0; lu < n_lu_; ++lu) {
             const double frac = cov_[cidx(c, lu)];
             if (frac <= 0.0) continue;
             const double interval = static_cast<std::size_t>(lu) < ctx.landuses.sweep_interval.size()
                                         ? ctx.landuses.sweep_interval[static_cast<std::size_t>(lu)] : 0.0;
-            // --- sweeping event for this (cell, land use), the A7 rule -----------
+            // --- sweeping event for this (cell, land use) — the subcatchment
+            //     rule (Multispecies Phase 2, S5): decided at the step's start
+            //     on a calendar clock, applied between buildup and washoff.
+            //     The clock used to stop during rain and out of season and was
+            //     checked after the step had been added.
             bool sweep_now = false;
-            if (!is_raining && in_season && interval > 0.0) {
+            if (interval > 0.0) {
                 double& ls = last_swept_[cidx(c, lu)];
+                if (!is_raining && in_season && ls >= interval) { ls = 0.0; sweep_now = true; }
                 ls += dt_days;
-                if (ls >= interval) { ls = 0.0; sweep_now = true; }
             }
-            const double removal_frac = sweep_now ? ctx.landuses.sweep_removal[static_cast<std::size_t>(lu)] / 100.0 : 0.0;
+            // The [LANDUSES] removal is a fraction, as legacy reads it; it was
+            // divided by 100 here a second time.
+            const double removal_frac = sweep_now ? ctx.landuses.sweep_removal[static_cast<std::size_t>(lu)] : 0.0;
+            const bool cell_dry = !(q_ms >= kMinRunoffMs);
 
             for (int s = 0; s < n_sp_; ++s) {
                 const Params& P = param(lu, s);
@@ -540,8 +552,9 @@ void SurfaceQuality2D::step(const SimulationContext& ctx, const MeshData& mesh,
                 const double norm = (P.normalizer == 0) ? frac * area_la : frac * curb_[uc];
                 double& B = bu_[bidx(c, lu, s)];
 
-                // --- buildup accrual (stepSurfaceQuality) ---------------------
-                if (P.bu_type != 0) {
+                // --- buildup accrual (the subcatchment kernel): only on a dry
+                //     step (legacy runoff.c:280), never decreasing.
+                if (P.bu_type != 0 && cell_dry) {
                     if (P.bu_type == 4) {                                   // EXT
                         double rate = 0.0;
                         if (P.ts_idx >= 0 && P.ts_idx < static_cast<int>(ctx.tables.tables.size()))
@@ -561,11 +574,21 @@ void SurfaceQuality2D::step(const SimulationContext& ctx, const MeshData& mesh,
                             }
                         }
                         days += dt_days;
-                        const double nb = buildupAt(P.bu_type, P.c0, P.c1, P.c2, days);
+                        const double nb = std::max(buildupAt(P.bu_type, P.c0, P.c1, P.c2, days), B);
                         const double change = nb - B;
                         B = nb;
                         if (change > 0.0) led_bu_[us] += change * norm;
                     }
+                }
+
+                // --- sweeping removal, between buildup and washoff (legacy order)
+                if (sweep_now) {
+                    const double old_b = B;
+                    double new_b = old_b * (1.0 - removal_frac * (P.sweep_effic / 100.0));
+                    new_b = std::min(old_b, new_b);
+                    new_b = std::max(0.0, new_b);
+                    B = new_b;
+                    led_sw_[us] += (old_b - new_b) * norm;
                 }
 
                 // --- washoff into the cell row (stepSurfaceQuality, SI) ----------
@@ -574,16 +597,23 @@ void SurfaceQuality2D::step(const SimulationContext& ctx, const MeshData& mesh,
                     double w_row = 0.0;
                     const double b_mass_row = (mcf > 0.0) ? (B * norm) / mcf / 1000.0 : 0.0;  // user → conc-mass → row
                     switch (P.wo_type) {
-                        case 3: w_row = P.coeff * Q_m3s; break;                                              // EMC
+                        case 3: w_row = P.coeff * Q_m3s * frac; break;                                       // EMC, the land use's share
                         case 1: if (B > 0.0) w_row = (P.coeff / 3600.0) * std::pow(q_expon, P.expon) * b_mass_row; break;  // EXP
-                        case 2: w_row = P.coeff * std::pow(q_flow, P.expon) / 1000.0; break;                 // RC
+                        case 2: w_row = P.coeff * std::pow(q_flow * frac, P.expon) / 1000.0; break;          // RC on the land use's flow
                         default: break;
                     }
+                    // The kernel's cap: only a land use with a buildup function is
+                    // limited by its store, and a capped step empties it
+                    // exactly. EMC used to be exempt and a store-less rating
+                    // curve capped to nothing.
                     const double max_row = b_mass_row / dt_runoff;
-                    if (w_row > max_row && P.wo_type != 3) w_row = max_row;
+                    bool capped = false;
+                    if (w_row > max_row && P.bu_type != 0) { w_row = max_row; capped = true; }
                     const double washed_user = w_row * 1000.0 * mcf * dt_runoff;
                     if (P.bu_type == 0 && washed_user > B * norm) {
                         led_bu_[us] += washed_user;          // "no buildup function" ledger branch
+                        B = 0.0;
+                    } else if (capped) {
                         B = 0.0;
                     } else if (norm > 0.0) {
                         B = std::max(B - washed_user / norm, 0.0);
@@ -599,11 +629,6 @@ void SurfaceQuality2D::step(const SimulationContext& ctx, const MeshData& mesh,
                     }
                 }
 
-                // --- sweeping removal (A7) -----------------------------------------
-                if (sweep_now) {
-                    const double removed = B * removal_frac * (P.sweep_effic / 100.0);
-                    if (removed > 0.0) { B = std::max(B - removed, 0.0); led_sw_[us] += removed * norm; }
-                }
             }
         }
     }

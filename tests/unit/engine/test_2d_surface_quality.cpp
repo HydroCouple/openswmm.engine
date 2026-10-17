@@ -242,10 +242,11 @@ TEST(SurfaceQuality2D_S7, EmcWashoffIsExactOnATriangleAndAQuadPan) {
         ASSERT_EQ(router.mesh().n_triangles(), quad ? 1 : 2);
         // runoff the quality step has seen, plus what the marcher booked
         // since the last runoff step (the routing loop runs past it)
-        double v_end = 0.0, runoff = 0.0, pending = 0.0;
+        double v_end = 0.0, runoff = 0.0, wet = 0.0, pending = 0.0;
         for (int c = 0; c < tr.n_cells; ++c) {
             v_end   += st.volume[static_cast<std::size_t>(c)];
             runoff  += sq.runoffVolume(c);
+            wet     += sq.wetRunoffVolume(c);
             pending += std::max(tr.cell_runoff_vol[static_cast<std::size_t>(c)], 0.0);
         }
         const double v0 = r.v_start;
@@ -258,7 +259,7 @@ TEST(SurfaceQuality2D_S7, EmcWashoffIsExactOnATriangleAndAQuadPan) {
         EXPECT_NEAR(runoff + pending, drained, 1e-10 * v0)
             << (quad ? "quad" : "tri") << ": Σ net cell outflow must equal the drained volume";
         // washed (row units = mg/L × m³) == C_emc × runoff volume
-        EXPECT_NEAR(tr.gained_washoff[0], 50.0 * runoff, 1e-10 * 50.0 * v0)
+        EXPECT_NEAR(tr.gained_washoff[0], 50.0 * wet, 1e-10 * 50.0 * v0)
             << (quad ? "quad" : "tri") << ": EMC washoff must equal C × runoff";
         // …and every gram of it left the pan into J1 or is still on the pan:
         // the S1 identity (surface + lost − gained) is invariant (it was 0 at t=0).
@@ -300,10 +301,11 @@ TEST(SurfaceQuality2D_S7, EmcWashoffIsExactOnAMixedTriQuadPan) {
     ASSERT_EQ(router.mesh().n_quads(), 1);
     ASSERT_EQ(router.mesh().n_triangles(), 3);
 
-    double v_end = 0.0, runoff = 0.0, pending = 0.0;
+    double v_end = 0.0, runoff = 0.0, wet = 0.0, pending = 0.0;
     for (int c = 0; c < tr.n_cells; ++c) {
         v_end   += st.volume[static_cast<std::size_t>(c)];
         runoff  += sq.runoffVolume(c);
+        wet     += sq.wetRunoffVolume(c);
         pending += std::max(tr.cell_runoff_vol[static_cast<std::size_t>(c)], 0.0);
     }
     const double v0 = r.v_start;
@@ -319,7 +321,7 @@ TEST(SurfaceQuality2D_S7, EmcWashoffIsExactOnAMixedTriQuadPan) {
     EXPECT_NEAR(runoff + pending, drained, 1e-10 * v0)
         << "mixed: Sigma net cell outflow must equal the drained volume "
            "(gross flux would exceed it — the eastern water counted twice)";
-    EXPECT_NEAR(tr.gained_washoff[0], 50.0 * runoff, 1e-10 * 50.0 * v0)
+    EXPECT_NEAR(tr.gained_washoff[0], 50.0 * wet, 1e-10 * 50.0 * v0)
         << "mixed: EMC washoff must equal C x runoff";
     EXPECT_NEAR(tr.totalIncludingLedgers(0), 0.0, 1e-9 * 50.0 * v0);
     close(r);
@@ -559,4 +561,101 @@ TEST(SurfaceQuality2D_S7, CApiRowsShareTheFileGrammar) {
     EXPECT_DOUBLE_EQ(bu[0], sq.buildupPerArea(0, 0));
     EXPECT_DOUBLE_EQ(bu[1], sq.buildupPerArea(1, 0));
     swmm_engine_close(e); swmm_engine_destroy(e);
+}
+
+// ---------------------------------------------------------------------------
+// Multispecies Phase 2, S5 (review D4): the 2D surface store runs the
+// subcatchment kernel's rules. Each case failed before the alignment.
+// ---------------------------------------------------------------------------
+namespace {
+DeckOpts drainingPan(const std::string& quality, const std::string& coverages,
+                     const std::string& end = "00:40:00") {
+    DeckOpts o;
+    o.node = "J1"; o.z_pan = 5.0; o.h0 = 0.5; o.exch_area = 0.002;
+    o.quality = quality; o.coverages = coverages; o.end_time = end;
+    return o;
+}
+}  // namespace
+
+// Buildup accrues only on a dry step (legacy runoff.c:280). The pan runs off
+// on every step of this 10-minute run, so its store must not grow; before,
+// it accrued through the storm.
+TEST(SurfaceQuality2D_S7, BuildupWaitsForADryStep) {
+    DeckOpts o = drainingPan("\n[POLLUTANTS]\nTSS  MG/L  0  0  0  0  NO  *  0.0  0  0\n"
+                             "\n[LANDUSES]\nLU1  0  0  0\n"
+                             "\n[BUILDUP]\nLU1  TSS  POW  100  2  1  AREA\n"
+                             "\n[WASHOFF]\nLU1  TSS  EXP  0.0  1.0  0  0\n",
+                             "\n[2D_COVERAGES]\nTAG pan  LU1  100\n", "00:10:00");
+    DeckRun r = run("_s7_drygate", deck(o), /*step=*/false);
+    ASSERT_TRUE(r.ok) << "open rc " << r.rc_open;
+    const auto& sq = cpp(r.e).surfaceRouter2D().surfaceQuality();
+    // The first runoff step sees no cell runoff yet (the mesh has not run),
+    // so it is a dry step; take the reference after it.
+    double elapsed = 0.0;
+    ASSERT_EQ(swmm_engine_step(r.e, &elapsed), SWMM_OK);
+    const double b0 = sq.buildup(0, 0, 0);
+    ASSERT_GT(b0, 0.0);
+    while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    double runoff = 0.0;
+    for (int c = 0; c < sq.nCells(); ++c) runoff += sq.runoffVolume(c);
+    ASSERT_GT(runoff, 0.0) << "the pan must run off";
+    EXPECT_EQ(sq.buildup(0, 0, 0), b0) << "buildup accrued while the cell was running off";
+    close(r);
+}
+
+// EMC and rating-curve washoff scale with each land use's share of the cell
+// (the kernel's frac). Two land uses at 50 % with EMC 50 must wash off
+// 50 × runoff, not 100 ×.
+TEST(SurfaceQuality2D_S7, EmcWashoffScalesWithLandUseShare) {
+    DeckOpts o = drainingPan("\n[POLLUTANTS]\nTSS  MG/L  0  0  0  0  NO  *  0.0  0  0\n"
+                             "\n[LANDUSES]\nLU1  0  0  0\nLU2  0  0  0\n"
+                             "\n[WASHOFF]\nLU1  TSS  EMC  50  0  0  0\nLU2  TSS  EMC  50  0  0  0\n",
+                             "\n[2D_COVERAGES]\nTAG pan  LU1  50  LU2  50\n");
+    DeckRun r = run("_s7_emc2", deck(o));
+    ASSERT_TRUE(r.ok) << "open rc " << r.rc_open;
+    const auto& sq = cpp(r.e).surfaceRouter2D().surfaceQuality();
+    const auto& tr = cpp(r.e).surfaceRouter2D().state().transport;
+    double runoff = 0.0;
+    for (int c = 0; c < sq.nCells(); ++c) runoff += sq.wetRunoffVolume(c);
+    ASSERT_GT(runoff, 0.0);
+    ASSERT_EQ(sq.coverage(0, 0), 0.5) << "LU1 share";
+    ASSERT_EQ(sq.coverage(0, 1), 0.5) << "LU2 share";
+    EXPECT_NEAR(tr.gained_washoff[0], 50.0 * runoff, 1e-9 * 50.0 * runoff)
+        << "two half-covering land uses washed off " << tr.gained_washoff[0] / runoff << " × runoff";
+    close(r);
+}
+
+// A rating-curve washoff with no buildup function is not capped by an empty
+// store (the kernel caps only when a buildup function exists). Before, it
+// never washed off at all.
+TEST(SurfaceQuality2D_S7, RatingCurveWithoutBuildupWashesOff) {
+    DeckOpts o = drainingPan("\n[POLLUTANTS]\nTSS  MG/L  0  0  0  0  NO  *  0.0  0  0\n"
+                             "\n[LANDUSES]\nLU1  0  0  0\n"
+                             "\n[WASHOFF]\nLU1  TSS  RC  2.0  1.2  0  0\n",
+                             "\n[2D_COVERAGES]\nTAG pan  LU1  100\n");
+    DeckRun r = run("_s7_rc0", deck(o));
+    ASSERT_TRUE(r.ok) << "open rc " << r.rc_open;
+    const auto& tr = cpp(r.e).surfaceRouter2D().state().transport;
+    EXPECT_GT(tr.gained_washoff[0], 0.0) << "no rating-curve washoff without a buildup function";
+    close(r);
+}
+
+// Street sweeping removes `removal × efficiency` of the store per event — the
+// [LANDUSES] removal is a fraction, as legacy reads it. Before, the 2D store
+// divided it by 100 again. Dry pan, a sweep every 0.01 day removing half.
+TEST(SurfaceQuality2D_S7, SweepingRemovesItsFraction) {
+    DeckOpts o;   // default pan: below J1, no flow, no rain
+    o.quality = "\n[POLLUTANTS]\nTSS  MG/L  0  0  0  0  NO  *  0.0  0  0\n"
+                "\n[LANDUSES]\nLU1  0.01  0.5  0\n"
+                "\n[BUILDUP]\nLU1  TSS  POW  100  2  1  AREA\n"
+                "\n[WASHOFF]\nLU1  TSS  EXP  0.1  1.0  100  0\n";
+    o.coverages = "\n[2D_COVERAGES]\nTAG pan  LU1  100\n";
+    o.end_time = "00:30:00";
+    DeckRun r = run("_s7_sweep", deck(o));
+    ASSERT_TRUE(r.ok) << "open rc " << r.rc_open;
+    const auto& sq = cpp(r.e).surfaceRouter2D().surfaceQuality();
+    ASSERT_GT(sq.ledInitBuildup()[0], 0.0);
+    EXPECT_GT(sq.ledSweeping()[0], 0.4 * sq.ledInitBuildup()[0])
+        << "swept " << sq.ledSweeping()[0] << " of " << sq.ledInitBuildup()[0];
+    close(r);
 }
