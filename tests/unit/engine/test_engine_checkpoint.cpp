@@ -5,6 +5,7 @@
 #include "core/CheckpointInspection.hpp"
 #include "core/DateTime.hpp"
 #include "io/CheckpointDirectory.hpp"
+#include "io/CheckpointOutputPublication.hpp"
 #include "core/FileIO.hpp"
 #include "plugins/DefaultReportPlugin.hpp"
 #include <openswmm/engine/openswmm_checkpoint.h>
@@ -1543,6 +1544,27 @@ TEST(EngineCheckpoint, BinaryOutputModeRefusesExistingDestinationAndWrongLifecyc
     ASSERT_NO_THROW(start(no_output,"binary-no-output"));EXPECT_FALSE(no_output.prepareOutputCheckpointing().empty());
 }
 
+TEST(EngineCheckpoint, OutputPublicationKeepsLiveStreamsAndRejectsReplacedFileIdentity) {
+    const auto destination=root()/"publication-live",stage=root()/"publication-live-stage",moved=root()/"publication-live-moved";
+    for(const auto& path:{destination,stage,moved})std::filesystem::remove(path);
+    const auto open=[](const auto& path,bool existing=false){return std::unique_ptr<FILE,decltype(&std::fclose)>(io::checkpointOpenOutput(path,existing),&std::fclose);};
+    EXPECT_FALSE(open(stage,true));EXPECT_FALSE(std::filesystem::exists(stage));
+    auto original=open(destination);ASSERT_TRUE(original);
+    ASSERT_EQ(std::fwrite("header",1,6,original.get()),6u);ASSERT_EQ(std::fflush(original.get()),0);
+    // File-backed restoration copies the prefix, then reopens its live stream.
+    write(stage,"prefix");auto prepared=open(stage,true);ASSERT_TRUE(prepared);
+    EXPECT_EQ(bytes(stage),"prefix");ASSERT_EQ(std::fseek(prepared.get(),0,SEEK_END),0);
+    EXPECT_FALSE(open(destination));EXPECT_EQ(bytes(destination),"header");
+    std::filesystem::rename(destination,moved);write(destination,"header");
+    EXPECT_THROW((io::CheckpointOutputPublication({{stage,destination,"header",io::checkpointFileDescriptor(original.get())}})),std::runtime_error);
+    EXPECT_EQ(bytes(destination),"header");EXPECT_EQ(bytes(stage),"prefix");
+    std::filesystem::remove(destination);std::filesystem::rename(moved,destination);
+    {io::CheckpointOutputPublication publication({{stage,destination,"header",io::checkpointFileDescriptor(original.get())}});publication.publish();}
+    EXPECT_EQ(bytes(destination),"prefix");
+    ASSERT_EQ(std::fwrite("-continued",1,10,prepared.get()),10u);ASSERT_EQ(std::fflush(prepared.get()),0);
+    EXPECT_EQ(bytes(destination),"prefix-continued");
+}
+
 #ifdef OPENSWMM_HAS_2D
 TEST(EngineCheckpoint, BinaryOutputContinuesMeshAndPairedSpatialHistories) {
     for(int lid=0;lid<3;++lid)for(double cadence:{.7,.31})for(bool returns:{false,true}) {
@@ -2024,23 +2046,6 @@ TEST(EngineCheckpoint, CombinedOutputPublicationAndSpatialFailuresPreserveBothWr
         ASSERT_EQ(b.engine.loadCheckpoint(good.string()),"");compareMesh(a.engine,b.engine,name+"-retry");ASSERT_EQ(b.engine.end(),0);
     }
     ASSERT_EQ(a.engine.end(),0);
-}
-TEST(EngineCheckpoint, OutputPublicationKeepsLiveStreamsAndRejectsReplacedFileIdentity) {
-    const auto destination=root()/"publication-live",stage=root()/"publication-live-stage",moved=root()/"publication-live-moved";
-    for(const auto& path:{destination,stage,moved})std::filesystem::remove(path);
-    const auto open=[](const auto& path){return std::unique_ptr<FILE,decltype(&std::fclose)>(io::checkpointOpenOutput(path),&std::fclose);};
-    auto original=open(destination),prepared=open(stage);ASSERT_TRUE(original);ASSERT_TRUE(prepared);
-    ASSERT_EQ(std::fwrite("header",1,6,original.get()),6u);ASSERT_EQ(std::fflush(original.get()),0);
-    ASSERT_EQ(std::fwrite("prefix",1,6,prepared.get()),6u);ASSERT_EQ(std::fflush(prepared.get()),0);
-    EXPECT_FALSE(open(destination));EXPECT_EQ(bytes(destination),"header");
-    std::filesystem::rename(destination,moved);write(destination,"header");
-    EXPECT_THROW((io::CheckpointOutputPublication({{stage,destination,"header",io::checkpointFileDescriptor(original.get())}})),std::runtime_error);
-    EXPECT_EQ(bytes(destination),"header");EXPECT_EQ(bytes(stage),"prefix");
-    std::filesystem::remove(destination);std::filesystem::rename(moved,destination);
-    {io::CheckpointOutputPublication publication({{stage,destination,"header",io::checkpointFileDescriptor(original.get())}});publication.publish();}
-    EXPECT_EQ(bytes(destination),"prefix");
-    ASSERT_EQ(std::fwrite("-continued",1,10,prepared.get()),10u);ASSERT_EQ(std::fflush(prepared.get()),0);
-    EXPECT_EQ(bytes(destination),"prefix-continued");
 }
 TEST(EngineCheckpoint, OutputPublicationRollsBackAnEarlierRenameAndProtectsAliasedPaths) {
     const auto a=root()/"publication-a",b=root()/"publication-b",sa=root()/"publication-a-stage",sb=root()/"publication-b-stage";

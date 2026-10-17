@@ -176,7 +176,7 @@ std::shared_ptr<DefaultOutputPlugin::PreparedCheckpoint> DefaultOutputPlugin::pr
     auto saved=io::CheckpointFile::decode(std::move(descriptor));saved.verify();
     auto prepared=std::make_shared<PreparedCheckpoint>();prepared->periods=periods;prepared->file_copy=io::copyCheckpointFile(saved.path,saved.bytes,io::utf8_path(out_path_));
     require(prepared->file_copy->file.fingerprint==saved.fingerprint,"Binary companion changed during copying.");
-    prepared->staging=prepared->file_copy->file.path;prepared->stream=io::fopen_path(prepared->staging,"r+b");require(prepared->stream,"Cannot open staged binary companion.");
+    prepared->staging=prepared->file_copy->file.path;prepared->stream=io::checkpointOpenOutput(prepared->staging,/* existing = */ true);require(prepared->stream,"Cannot open staged binary companion.");
     validateFileCheckpoint(prepared->stream,saved.bytes,ctx,next,periods);io::checkpointSeek(prepared->stream,saved.bytes);return prepared;
 }
 } // namespace openswmm

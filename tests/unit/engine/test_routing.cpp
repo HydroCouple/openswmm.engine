@@ -2016,17 +2016,22 @@ uint32_t hydraulicCrc(const std::string& bytes) {
 std::string hydraulicMutant(const std::string& file,int variant) {
     using A=detail::CompletedSourceArchive;A in(file);
     std::string magic,model,payload;uint32_t version,crc;in(magic,version,model,crc,payload);in.finish();
-    auto put=[&](std::size_t off,double value){std::memcpy(payload.data()+off,&value,sizeof(value));};
-    constexpr std::size_t firstRow=9*sizeof(double)+sizeof(bool); // eight leading doubles, flag, step span
+    // Export receipts precede the clocks and vary in size with the model.
+    // Skip their serialized vectors before mutating clock and node fields.
+    A prefix(payload);std::vector<double> water,reverse,heat,pollutants;
+    prefix(water,reverse,heat,pollutants);A receipts;receipts(water,reverse,heat,pollutants);
+    const auto clock=receipts.bytes().size();
+    auto put=[&](std::size_t off,double value){std::memcpy(payload.data()+clock+off,&value,sizeof(value));};
+    const std::size_t firstRow=clock+9*sizeof(double)+sizeof(bool); // eight leading doubles, flag, step span
     if(variant==0)put(0,-1);
     if(variant==1)put(sizeof(double),0);
     if(variant==2)put(3*sizeof(double),1.e30);
     if(variant==3)put(7*sizeof(double),std::numeric_limits<double>::quiet_NaN());
-    if(variant==4)put(firstRow+sizeof(uint64_t),-1); // node depth
-    if(variant==5)put(firstRow+sizeof(uint64_t),std::numeric_limits<double>::infinity());
-    if(variant==6)put(firstRow+sizeof(uint64_t),.5); // head/depth mismatch
+    if(variant==4)put(firstRow-clock+sizeof(uint64_t),-1); // node depth
+    if(variant==5)put(firstRow-clock+sizeof(uint64_t),std::numeric_limits<double>::infinity());
+    if(variant==6)put(firstRow-clock+sizeof(uint64_t),.5); // head/depth mismatch
     if(variant==7){uint64_t size=999;std::memcpy(payload.data()+firstRow,&size,sizeof(size));}
-    if(variant==8)payload[8*sizeof(double)]=char(2); // invalid bool representation
+    if(variant==8)payload[clock+8*sizeof(double)]=char(2); // invalid bool representation
     crc=hydraulicCrc(payload);A out;out(magic,version,model,crc,payload);return out.bytes();
 }
 std::string hydraulicStateDouble(const std::string& file,double oldValue,double newValue) {
@@ -2104,10 +2109,11 @@ TEST(HydraulicCheckpoint, InvalidRestorePreservesFreshStateAndCanRetry) {
         if(variant==11)altered+='x';
         if(variant==12)b.lid_controls.node_layers[0][1].retention.alpha=3;
         if(variant==13)b.links.offset1[0]+=.1;
+        if(variant<12)ASSERT_TRUE(altered!=bytes);
         hydraulicFile(bad,altered);EXPECT_FALSE(rb.loadCheckpoint(b,bad.string()).empty());
         if(variant==12)b.lid_controls.node_layers[0][1].retention.alpha=2;
         if(variant==13)b.links.offset1[0]-=.1;
-        ASSERT_EQ(rb.saveCheckpoint(b,after.string()),"");EXPECT_EQ(hydraulicBytes(before),hydraulicBytes(after));
+        ASSERT_EQ(rb.saveCheckpoint(b,after.string()),"");EXPECT_TRUE(hydraulicBytes(before)==hydraulicBytes(after));
         EXPECT_EQ(rb.loadCheckpoint(b,good.string()),"");
     }
 }

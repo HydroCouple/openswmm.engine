@@ -16,20 +16,20 @@
 #endif
 
 namespace openswmm::io {
-FILE* checkpointOpenOutput(const std::filesystem::path& path) {
+FILE* checkpointOpenOutput(const std::filesystem::path& path, bool existing) {
 #ifdef _WIN32
     // Publication replaces live files. CRT fopen does not share DELETE access.
     HANDLE handle=CreateFileW(path.c_str(),GENERIC_READ|GENERIC_WRITE,
-        FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,CREATE_NEW,
+        FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,existing?OPEN_EXISTING:CREATE_NEW,
         FILE_ATTRIBUTE_NORMAL,nullptr);
     if(handle==INVALID_HANDLE_VALUE)return nullptr;
     const int fd=_open_osfhandle(reinterpret_cast<intptr_t>(handle),_O_RDWR|_O_BINARY);
     if(fd<0){CloseHandle(handle);return nullptr;}
-    FILE* stream=_fdopen(fd,"w+b");
+    FILE* stream=_fdopen(fd,existing?"r+b":"w+b");
     if(!stream)_close(fd);
     return stream;
 #else
-    return fopen_path(path,"w+bx");
+    return fopen_path(path,existing?"r+b":"w+bx");
 #endif
 }
 int checkpointFileDescriptor(FILE* stream) noexcept {

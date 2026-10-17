@@ -152,7 +152,8 @@ jobs:
         run: cmake --build build-${{ matrix.vcpkg_triplet }} --config Debug
 
       - name: Unit tests
-        run: ctest --test-dir build-${{ matrix.vcpkg_triplet }} -C Debug -L unit --output-on-failure
+        # Stream Windows cases so a canceled run identifies the last active test.
+        run: ctest --test-dir build-${{ matrix.vcpkg_triplet }} -C Debug -L unit --output-on-failure ${{ runner.os == 'Windows' && '--verbose' || '' }}
 
       - name: Diagnose Linux unit-test segfaults (gdb)
         if: failure() && runner.os == 'Linux'
