@@ -498,6 +498,27 @@ void rollLidDrain(SimulationContext& ctx) noexcept {
     std::fill(s.lid_drain_load.begin(), s.lid_drain_load.end(), 0.0);
 }
 
+double remainingBuildup(const SimulationContext& ctx, int m) noexcept {
+    const auto& s = ctx.reactions.surface;
+    if (!s.active() || m < 0 || m >= s.n_species) return 0.0;
+    double total = 0.0;
+    const int nlu = s.n_landuses;
+    for (int sc = 0; sc < ctx.n_subcatches(); ++sc) {
+        const auto usc = static_cast<std::size_t>(sc);
+        for (int lu = 0; lu < nlu; ++lu) {
+            const auto cov = usc * static_cast<std::size_t>(nlu) + static_cast<std::size_t>(lu);
+            const double frac = cov < ctx.subcatches.coverage.size() ? ctx.subcatches.coverage[cov] / 100.0 : 0.0;
+            if (frac <= 0.0) continue;
+            const double norm = (s.bu_normalizer[s.pidx(lu, m)] == 0)
+                                    ? frac * ctx.subcatches.area[usc]
+                                    : frac * ctx.subcatches.curb_length[usc];
+            const auto k = s.bu_idx(sc, lu, m);
+            if (k < s.buildup.size()) total += s.buildup[k] * norm;
+        }
+    }
+    return total;
+}
+
 void clearRunon(SimulationContext& ctx) noexcept {
     auto& s = ctx.reactions.surface;
     std::fill(s.runon_qual_rate.begin(), s.runon_qual_rate.end(), 0.0);

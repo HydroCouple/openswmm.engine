@@ -122,6 +122,10 @@ void activateForRain(SimulationContext& ctx) noexcept;
 /// Bind LID REMOVALS entries kept by name (called by resolve).
 void resolveLidRemovals(SimulationContext& ctx, std::vector<std::string>& warnings);
 
+/// Species @p m left on the land at the end (user mass), the
+/// `qual_final_buildup` row of the pollutants.
+double remainingBuildup(const SimulationContext& ctx, int m) noexcept;
+
 /// Run-on, beside the pollutant lines in SWMMEngine::assembleRunon.
 void clearRunon(SimulationContext& ctx) noexcept;
 void addRunon(SimulationContext& ctx, int donor, int receiver, double q) noexcept;

@@ -874,3 +874,47 @@ TEST(MsxSurfaceTwin, StreetSweepingMatchesLegacyTiming) {
     EXPECT_NEAR(mb.qual_init_buildup[0], 75.000, 6e-4) << "[LOADINGS] initial buildup";
     swmm_engine_close(e); swmm_engine_destroy(e);
 }
+
+// S6: the report lists reaction species beside the pollutants in the Runoff
+// Quality Continuity block and the Subcatchment Washoff Summary (the
+// separate MSX washoff block is gone). With TSS's rows, X's column equals
+// TSS's, line by line.
+TEST(MsxSurfaceTwin, ReportListsSpeciesBesidePollutants) {
+    TwinOpts o; o.routing = "PERVIOUS"; o.pct_routed = "50";
+    write("_tw_rpt.rxn", rxn_inert());
+    write("_tw_rpt.inp", twinDeck(o) + "\n[PROCESS_COMPONENTS]\n" + pc("_tw_rpt.rxn") + "\n\n[REPORT]\nINPUT NO\n");
+    {
+        SWMM_Engine e = swmm_engine_create();
+        ASSERT_EQ(swmm_engine_open(e, "_tw_rpt.inp", "_tw_rpt.rpt", "_tw_rpt.out", nullptr), SWMM_OK);
+        ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+        ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+        double t = 0.0;
+        while (swmm_engine_step(e, &t) == SWMM_OK && t > 0.0) {}
+        swmm_engine_end(e);
+        swmm_engine_report(e);
+        swmm_engine_close(e); swmm_engine_destroy(e);
+    }
+    std::ifstream f("_tw_rpt.rpt"); std::stringstream ss; ss << f.rdbuf();
+    const std::string text = ss.str();
+    auto rowValues = [&](std::size_t from, const std::string& label) {
+        const auto at = text.find(label, from);
+        EXPECT_NE(at, std::string::npos) << label;
+        std::istringstream line(text.substr(at + label.size(), text.find('\n', at) - at - label.size()));
+        std::vector<std::string> v; std::string w;
+        while (line >> w) v.push_back(w);
+        return v;
+    };
+    const auto cont = text.find("Runoff Quality Continuity");
+    ASSERT_NE(cont, std::string::npos);
+    for (const char* label : {"Initial Buildup ..........", "Surface Runoff ...........", "Remaining Buildup ........"}) {
+        const auto v = rowValues(cont, label);
+        ASSERT_EQ(v.size(), 2u) << label << ": expected a TSS and an X column";
+        EXPECT_EQ(v[0], v[1]) << label;
+    }
+    const auto wo = text.find("Subcatchment Washoff Summary");
+    ASSERT_NE(wo, std::string::npos);
+    const auto sys = rowValues(wo, "System");
+    ASSERT_EQ(sys.size(), 2u);
+    EXPECT_EQ(sys[0], sys[1]);
+    EXPECT_EQ(text.find("MSX Washoff Summary"), std::string::npos);
+}

@@ -36,6 +36,7 @@
 #include "../../../include/openswmm/plugin_sdk/PluginState.hpp"
 #include "../../../include/openswmm/plugin_sdk/SimulationSnapshot.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../quality/MsxSurfaceQuality.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../core/DateTime.hpp"
 #include "../hydraulics/Node.hpp"   // node::getVolume — storage volume from its depth-relation
@@ -1016,14 +1017,21 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // pass through). Error: |in - out| < 0.001 -> 0 (TINY), else relative
     // to the larger side's convention (massbal_getLoadingError).
     // =====================================================================
-    if (ctx.n_subcatches() > 0 && ctx.n_pollutants() > 0 && !opt.ignore_quality) {
+    // Multispecies Phase 2: reaction species that build up, wash off or rain
+    // in follow the pollutants as extra columns, from their own ledgers.
+    const auto& ms_rq = ctx.reactions.surface;
+    const int nm_rq = (ms_rq.active() && !opt.ignore_quality) ? ms_rq.n_species : 0;
+    if (ctx.n_subcatches() > 0 && (ctx.n_pollutants() > 0 || nm_rq > 0) && !opt.ignore_quality) {
         const int np = ctx.n_pollutants();
+        const int ncol = np + nm_rq;
         const auto& mb = ctx.mass_balance;
         auto at = [](const std::vector<double>& v, int p) {
             return (static_cast<std::size_t>(p) < v.size()) ? v[static_cast<std::size_t>(p)] : 0.0;
         };
         auto logn = [](double x) { return x > 0.0 ? std::log10(x) : x; };
-        std::vector<std::array<double, 9>> vals(static_cast<std::size_t>(np));
+        std::vector<std::array<double, 9>> vals(static_cast<std::size_t>(ncol));
+        std::vector<std::string> col_name(static_cast<std::size_t>(ncol));
+        std::vector<bool> col_counts(static_cast<std::size_t>(ncol), false), col_mass(static_cast<std::size_t>(ncol), false);
         double max_err = 0.0;
         for (int p = 0; p < np; ++p) {
             const double in_  = at(mb.qual_init_buildup, p) + at(mb.qual_surface_buildup, p) +
@@ -1044,6 +1052,27 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             const bool counts = static_cast<std::size_t>(p) < ctx.pollutants.units.size() &&
                                 ctx.pollutants.units[static_cast<std::size_t>(p)] == MassUnits::COUNTS_PER_L;
             if (counts) for (int k = 0; k < 8; ++k) v[static_cast<std::size_t>(k)] = logn(v[static_cast<std::size_t>(k)]);
+            col_name[static_cast<std::size_t>(p)] = ctx.pollutant_names.name_of(p);
+            col_counts[static_cast<std::size_t>(p)] = counts;
+        }
+        for (int m = 0; m < nm_rq; ++m) {
+            const auto um = static_cast<std::size_t>(m);
+            const double final_bu = msxsurf::remainingBuildup(ctx, m);
+            const double in_  = at(ms_rq.led_init_buildup, m) + at(ms_rq.led_buildup, m) +
+                                at(ms_rq.led_wet_deposition, m);
+            const double out_ = at(ms_rq.led_sweeping, m) + at(ms_rq.led_infil_loss, m) +
+                                at(ms_rq.led_bmp_removal, m) + at(ms_rq.led_runoff_load, m) + final_bu;
+            double err = 0.0;
+            if (std::fabs(in_ - out_) < 0.001) err = 0.0;
+            else if (in_ > 0.0)  err = 100.0 * (1.0 - out_ / in_);
+            else if (out_ > 0.0) err = 100.0 * (in_ / out_ - 1.0);
+            max_err = std::max(max_err, err);
+            vals[static_cast<std::size_t>(np) + um] = {
+                at(ms_rq.led_init_buildup, m), at(ms_rq.led_buildup, m), at(ms_rq.led_wet_deposition, m),
+                at(ms_rq.led_sweeping, m), at(ms_rq.led_infil_loss, m), at(ms_rq.led_bmp_removal, m),
+                at(ms_rq.led_runoff_load, m), final_bu, err };
+            col_name[static_cast<std::size_t>(np) + um] = ctx.reactions.species_name[um];
+            col_mass[static_cast<std::size_t>(np) + um] = ms_rq.mcf[um] == 1.0;   // no mass conversion (D-A27)
         }
         if (opt.rpt_continuity || max_err > 10.0) {
             static const char* labels[9] = {
@@ -1052,16 +1081,15 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 "Infiltration Loss ........", "BMP Removal ..............",
                 "Surface Runoff ...........", "Remaining Buildup ........",
                 "Continuity Error (%) ....." };
-            for (int p1 = 0; p1 < np; p1 += 5) {
-                const int p2 = std::min(p1 + 5, np);
+            for (int p1 = 0; p1 < ncol; p1 += 5) {
+                const int p2 = std::min(p1 + 5, ncol);
                 std::fprintf(f, "\n  **************************");
                 for (int p = p1; p < p2; ++p)
-                    std::fprintf(f, "%14s", ctx.pollutant_names.name_of(p).c_str());
+                    std::fprintf(f, "%14s", col_name[static_cast<std::size_t>(p)].c_str());
                 std::fprintf(f, "\n  Runoff Quality Continuity ");
                 for (int p = p1; p < p2; ++p) {
-                    const bool counts = static_cast<std::size_t>(p) < ctx.pollutants.units.size() &&
-                        ctx.pollutants.units[static_cast<std::size_t>(p)] == MassUnits::COUNTS_PER_L;
-                    std::fprintf(f, "%14s", counts ? "LogN" : load_word);
+                    const auto up = static_cast<std::size_t>(p);
+                    std::fprintf(f, "%14s", col_counts[up] ? "LogN" : (col_mass[up] ? "mass" : load_word));
                 }
                 std::fprintf(f, "\n  **************************");
                 for (int p = p1; p < p2; ++p) std::fprintf(f, "    ----------");
@@ -2247,10 +2275,19 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // while the ledger row printed 16057× them (known-mass audit,
     // QUALITY_LEDGER_UNITS_AUDIT §7).
     // =====================================================================
-    if (runoff_rpt && ctx.n_pollutants() > 0
+    // Multispecies Phase 2: reaction species follow the pollutants as extra
+    // columns (they used to have a separate "MSX Washoff Summary").
+    const auto& ms_wo = ctx.reactions.surface;
+    const int nm_wo = (ms_wo.active() && ctx.n_subcatches() > 0) ? ms_wo.n_species : 0;
+    if (runoff_rpt && (ctx.n_pollutants() > 0 || nm_wo > 0)
         && !opt.ignore_quality) {
         int ns = ctx.n_subcatches();
-        int np = ctx.n_pollutants();
+        int np_p = ctx.n_pollutants();
+        int np = np_p + nm_wo;   // columns
+        auto colName = [&](int p) {
+            return p < np_p ? ctx.pollutant_names.name_of(p)
+                            : ctx.reactions.species_name[static_cast<std::size_t>(p - np_p)];
+        };
 
         WRITE(f, "****************************");
         WRITE(f, "Subcatchment Washoff Summary");
@@ -2262,9 +2299,14 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         for (int p = 1; p < np; ++p) std::fprintf(f, "--------------");
         std::fprintf(f, " \n                                ");
         for (int p = 0; p < np; ++p)
-            std::fprintf(f, "%14s", ctx.pollutant_names.name_of(p).c_str());
+            std::fprintf(f, "%14s", colName(p).c_str());
         std::fprintf(f, " \n  Subcatchment                  ");
         for (int p = 0; p < np; ++p) {
+            if (p >= np_p) {
+                const double mcf = ms_wo.mcf[static_cast<std::size_t>(p - np_p)];
+                std::fprintf(f, "%14s", (mcf == 1.0) ? "mass" : (si_report ? "kg" : "lbs"));
+                continue;
+            }
             auto up = static_cast<std::size_t>(p);
             MassUnits mu = (up < ctx.pollutants.units.size()) ?
                             ctx.pollutants.units[up] : MassUnits::MG_PER_L;
@@ -2280,9 +2322,15 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             std::fprintf(f, "\n  %-30s", ctx.subcatch_names.name_of(j).c_str());
             for (int p = 0; p < np; ++p) {
                 auto up = static_cast<std::size_t>(p);
-                auto idx = uj * static_cast<std::size_t>(np) + up;
-                double load_lbs = (idx < ctx.subcatches.total_load.size())
-                    ? ctx.subcatches.total_load[idx] : 0.0;
+                double load_lbs = 0.0;
+                if (p < np_p) {
+                    auto idx = uj * static_cast<std::size_t>(np_p) + up;
+                    load_lbs = (idx < ctx.subcatches.total_load.size())
+                        ? ctx.subcatches.total_load[idx] : 0.0;
+                } else {
+                    const auto k = ms_wo.sidx(j, p - np_p);
+                    load_lbs = k < ms_wo.led_subcatch_load.size() ? ms_wo.led_subcatch_load[k] : 0.0;
+                }
                 sys_loads[up] += load_lbs;
                 std::fprintf(f, "%14.3f", load_lbs);
             }
@@ -2297,62 +2345,6 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
         WRITE(f, "");
         WRITE(f, "");
-    }
-
-    // =====================================================================
-    // BW-MSX (2026-09-19): the reactions component's species that build up
-    // and wash off — same layout as the pollutant block, user mass per
-    // species (MG/UG species print lbs/kg; other units print "mass").
-    // =====================================================================
-    {
-        const auto& ms = ctx.reactions.surface;
-        if (ms.active() && ctx.n_subcatches() > 0
-            && !opt.ignore_quality) {
-            const int ns = ctx.n_subcatches();
-            const int nm = ms.n_species;
-            WRITE(f, "********************************");
-            WRITE(f, "Subcatchment MSX Washoff Summary");
-            WRITE(f, "********************************");
-            std::fprintf(f, "\n");
-            std::fprintf(f, " \n  ----------------------------------");
-            for (int m = 1; m < nm; ++m) std::fprintf(f, "--------------");
-            std::fprintf(f, " \n                                ");
-            for (int m = 0; m < nm; ++m)
-                std::fprintf(f, "%14s", ctx.reactions.species_name[static_cast<std::size_t>(m)].c_str());
-            std::fprintf(f, " \n  Subcatchment                  ");
-            for (int m = 0; m < nm; ++m) {
-                const double mcf = ms.mcf[static_cast<std::size_t>(m)];
-                std::fprintf(f, "%14s", (mcf == 1.0) ? "mass" : (si_report ? "kg" : "lbs"));
-            }
-            std::fprintf(f, " \n  ----------------------------------");
-            for (int m = 1; m < nm; ++m) std::fprintf(f, "--------------");
-            std::vector<double> sys(static_cast<std::size_t>(nm), 0.0);
-            for (int j = 0; j < ns; ++j) {
-                std::fprintf(f, "\n  %-30s", ctx.subcatch_names.name_of(j).c_str());
-                for (int m = 0; m < nm; ++m) {
-                    const double v = ms.led_subcatch_load[ms.sidx(j, m)];
-                    sys[static_cast<std::size_t>(m)] += v;
-                    std::fprintf(f, "%14.3f", v);
-                }
-            }
-            std::fprintf(f, " \n  ----------------------------------");
-            for (int m = 1; m < nm; ++m) std::fprintf(f, "--------------");
-            std::fprintf(f, "\n  System                        ");
-            for (int m = 0; m < nm; ++m) std::fprintf(f, "%14.3f", sys[static_cast<std::size_t>(m)]);
-            WRITE(f, "");
-            std::fprintf(f, "  Surface ledger (species: initial buildup, net buildup, wet deposition, washed to network, swept, BMP removed, infiltration loss):\n");
-            auto at = [](const std::vector<double>& v, std::size_t k) { return k < v.size() ? v[k] : 0.0; };
-            for (int m = 0; m < nm; ++m) {
-                const auto um = static_cast<std::size_t>(m);
-                std::fprintf(f, "    %-16s %14.3f %14.3f %14.3f %14.3f %14.3f %14.3f %14.3f\n",
-                             ctx.reactions.species_name[um].c_str(),
-                             ms.led_init_buildup[um], ms.led_buildup[um], at(ms.led_wet_deposition, um),
-                             ms.led_runoff_load[um], ms.led_sweeping[um], ms.led_bmp_removal[um],
-                             at(ms.led_infil_loss, um));
-            }
-            WRITE(f, "");
-            WRITE(f, "");
-        }
     }
 
 #ifdef OPENSWMM_HAS_2D

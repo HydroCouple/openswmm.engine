@@ -169,9 +169,15 @@ Matrix resolve(const SimulationContext& ctx, const Draft* draft) {
         else if (ignoreQ)  disabled(pol, "IGNORE_QUALITY");
         else               enabled(pol, np);
 
-        unavailable(m.at(Domain::RUNOFF, SpeciesClass::MSX),
-                    msxOn ? "runoff and LID have no reactions binding"
-                          : "no reactions component");
+        // Multispecies Phase 2: species build up, wash off, rain in and
+        // pass LID units through the shared surface kernel; no reaction
+        // kinetics run on the land surface.
+        Cell& msx = m.at(Domain::RUNOFF, SpeciesClass::MSX);
+        if (!msxOn)                              unavailable(msx, "no reactions component");
+        else if (!has_sub)                       unavailable(msx, "no subcatchments");
+        else if (ignoreQ)                        disabled(msx, "IGNORE_QUALITY");
+        else if (!ctx.reactions.surface.active()) unavailable(msx, "no species buildup, washoff or rainfall rows");
+        else { enabled(msx, nm); msx.reason = "loading and transport; no surface reactions"; }
 
         Cell& age = m.at(Domain::RUNOFF, SpeciesClass::AGE);
         if (!has_sub)      unavailable(age, "no subcatchments");
