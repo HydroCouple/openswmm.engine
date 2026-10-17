@@ -3727,6 +3727,35 @@ refused as an unknown section.
 
 <!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:297-390,399,449-453; src/engine/transport/MsxInitialQuality.hpp:17-40 -->
 
+### Component section: [REACTION_RAINFALL] {#engine_manual_sect_REACTION_RAINFALL}
+
+Purpose: \status{Implemented}
+Sets the concentration of each reaction species in rainfall, corresponding
+to the rain concentration column of `[POLLUTANTS]`.
+
+Format:
+```
+Species   Concentration
+```
+
+Parameters:
+
+| Parameter | Meaning | Units / values | Default |
+|---|---|---|---|
+| `Species` | A species declared in `[REACTION_SPECIES]`. | text | required |
+| `Concentration` | Species concentration in rainfall. | species' own concentration units, 0 or greater | 0 |
+
+Remarks:
+Omitted species have zero rainfall concentration; omitting the section gives
+clean rainfall for every reaction species. A row missing its concentration,
+an undeclared species, a nonnumeric or negative concentration, or a second
+row for the same species is an error. These values describe rainfall quality;
+initial concentrations are set separately in `[REACTION_QUALITY]`
+(@ref engine_manual_sect_REACTION_QUALITY). On save, only nonzero rainfall
+concentrations are written.
+
+<!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:402-431,497-500; src/engine/transport/components/ReactionModule/ReactionsWriter.cpp:165-178; src/engine/data/ReactionData.hpp:126-128 -->
+
 ### Component section: [REACTION_SOURCES] {#engine_manual_sect_REACTION_SOURCES}
 
 Purpose: \status{Planned}
