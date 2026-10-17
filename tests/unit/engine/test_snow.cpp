@@ -1549,6 +1549,52 @@ TEST(MeshSnow, UniformPlaneMatchesPointKernelAndConservesWaterAtDifferentConsume
     EXPECT_FALSE(fine.advance(ctx,3600,3900,{0,-1},{1,1}).empty());
     EXPECT_EQ(fine.completedEnd(),3600);EXPECT_EQ(fine.outputs()[0].swe_m,before);
 }
+TEST(MeshSnow, PackOverridesAndPartialCoverageUseTheirOwnKernels) {
+    SimulationContext ctx;
+    ctx.options.ignore_snow_melt=false;
+    ctx.options.start_date=datetime::encodeDate(2026,1,1);
+    ctx.options.end_date=ctx.options.start_date+2./24;
+    ctx.snowpack_names.add("DD");ctx.snowpack_names.add("UEB");
+    ctx.snowpacks.names={"DD","UEB"};
+    ctx.snowpacks.pervious.assign(2,std::array<double,7>{.02,.06,32,.1,6,.6,0});
+    ctx.snowpacks.config.model=surface::SnowKind::DegreeDay;
+    ctx.snowpacks.config.packs[1].model=surface::SnowKind::Ueb;
+    ctx.snowpacks.config.site=surface::ClimateSite{45,-120,-8,1000};
+    ctx.snowpacks.mesh_config.defaults["*"].pack="DD";
+    ctx.snowpacks.mesh_config.cells[1].pack="UEB";
+    ctx.snowpacks.mesh_config.cells[2].pack="NONE";
+    ctx.climate_state.temperature=45;ctx.climate_state.snow_divt=32;
+    std::istringstream met("01/01/2026 00:00 5 50 0 400 300\n01/01/2026 01:00 5 50 0 400 300\n");
+    ASSERT_TRUE(ctx.snowpacks.meteorology.read(met).empty());
+    surface::MeshSnow mixed,dd,ueb;
+    ASSERT_TRUE(mixed.initialize(ctx,{{"",100,0,0},{"",230,0,0},{"",90,0,0},{"",0,0,0}}).empty());
+    ASSERT_TRUE(mixed.owns(0));ASSERT_TRUE(mixed.owns(1));
+    EXPECT_FALSE(mixed.owns(2));EXPECT_FALSE(mixed.owns(3));
+    EXPECT_EQ(mixed.kind(0),surface::SnowKind::DegreeDay);
+    EXPECT_EQ(mixed.kind(1),surface::SnowKind::Ueb);
+    const auto authored=ctx.snowpacks.mesh_config;
+    ctx.snowpacks.mesh_config.cells.clear();
+    ASSERT_TRUE(dd.initialize(ctx,{{"",100,0,0}}).empty());
+    ctx.snowpacks.mesh_config.defaults["*"].pack="UEB";
+    ASSERT_TRUE(ueb.initialize(ctx,{{"",230,0,0}}).empty());
+    ctx.snowpacks.mesh_config=authored;
+    ASSERT_TRUE(mixed.advance(ctx,0,3600,{0,0,0,0},{1,1,1,1}).empty());
+    ASSERT_TRUE(dd.advance(ctx,0,3600,{0},{1}).empty());
+    ASSERT_TRUE(ueb.advance(ctx,0,3600,{0},{1}).empty());
+    EXPECT_EQ(mixed.outputs()[0].swe_m,dd.outputs()[0].swe_m);
+    EXPECT_EQ(mixed.outputs()[1].swe_m,ueb.outputs()[0].swe_m);
+    EXPECT_EQ(mixed.outputs()[1].energy_kJm2,ueb.outputs()[0].energy_kJm2);
+    EXPECT_TRUE(std::isnan(mixed.outputs()[0].energy_kJm2));
+    EXPECT_TRUE(std::isfinite(mixed.outputs()[1].energy_kJm2));
+    for(int i:{0,1})EXPECT_NEAR(mixed.ledgers()[i].residual(),0,1e-9);
+    EXPECT_EQ(mixed.ledgers()[2].initial,0);EXPECT_EQ(mixed.ledgers()[3].initial,0);
+    ctx.options.ignore_snow_melt=true;
+    surface::MeshSnow disabled;
+    EXPECT_TRUE(disabled.initialize(ctx,{{"",100,0,0},{"",230,0,0}}).empty());
+    EXPECT_FALSE(disabled.active());
+    EXPECT_EQ(ctx.snowpacks.mesh_config.cells[1].pack,"UEB");
+}
+
 TEST(MeshSnow, DegreeDayUsesExistingPointKernelWithCompleteCover) {
     SimulationContext ctx;ctx.options.ignore_snow_melt=false;ctx.options.start_date=datetime::encodeDate(2026,1,1);
     ctx.options.end_date=ctx.options.start_date+2./24;ctx.snowpack_names.add("SP");ctx.snowpacks.names={"SP"};

@@ -152,6 +152,7 @@ void SubsurfaceSolver::resolveRows(const MeshData& mesh,
     // what makes the writer a verbatim echo and double conversion
     // unreachable.
     const int n = state_.n_cells;
+    covered_.assign(static_cast<std::size_t>(n), options_.per_subcatch ? 1 : 0);
 
     // `* < TAG < CELL` by scope, then by authored order within a scope — the
     // same precedence the 2D infiltration and roughness sections use, so a
@@ -168,6 +169,7 @@ void SubsurfaceSolver::resolveRows(const MeshData& mesh,
                     if (r.cell != i) continue;
                 }
                 const auto u = static_cast<std::size_t>(i);
+                covered_[u] = 1;
                 state_.Ks[u]      = r.Ks * uf.rate;
                 state_.zs[u]      = r.zs * uf.length;
                 state_.theta_s[u] = r.theta_s;      // dimensionless
@@ -283,6 +285,28 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh,
         }
     }
 
+    // Cells no row covers have no aquifer. Their defaulted parameters stay
+    // in the arrays but hold no water and are never fired.
+    {
+        const long n_covered = std::count(covered_.begin(), covered_.end(), uint8_t{1});
+        if (n_covered == 0)
+            return "2D aquifer: no mesh cell matches a [2D_AQUIFER] row; add a '*' row or rows for the aquifer's cells.";
+        if (n_covered < n) {
+            const std::size_t m = static_cast<std::size_t>(state_.m_layers);
+            for (int i = 0; i < n; ++i) {
+                const auto u = static_cast<std::size_t>(i);
+                if (covered_[u]) continue;
+                state_.hg[u] = 0.0;
+                state_.hu[u] = 0.0;
+                for (std::size_t k = 0; k < m; ++k)
+                    state_.theta_sigma[k * static_cast<std::size_t>(n) + u] = 0.0;
+            }
+            warnings.emplace_back("2D aquifer: " + std::to_string(n - n_covered) + " of " +
+                std::to_string(n) + " mesh cells have no [2D_AQUIFER] row and no aquifer; "
+                "they keep surface infiltration and their faces are no-flow.");
+        }
+    }
+
     // Lateral topology. PER_SUBCATCH has none — degenerate cells, zero
     // lateral flux, and the identical code path everywhere else (§8).
     const int ne = options_.per_subcatch ? 0 : edges.ne;
@@ -330,6 +354,13 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh,
                 warnings.emplace_back(
                     "2D aquifer: [2D_AQUIFER_NODE] row has no containing mesh "
                     "cell; the node exchanges with nothing.");
+                continue;
+            }
+            if (!covered_[static_cast<std::size_t>(b.cell)]) {
+                b.cell = -1;
+                warnings.emplace_back(
+                    "2D aquifer: [2D_AQUIFER_NODE] row lies on a cell with no "
+                    "[2D_AQUIFER] row; the node exchanges with nothing.");
                 continue;
             }
             b.Kc   *= uf.rate;
@@ -391,6 +422,7 @@ void SubsurfaceSolver::refreshDtCell(const MeshData& mesh,
                 const auto eu = static_cast<std::size_t>(e);
                 const int  j  = (edges.cL[eu] == i) ? edges.cR[eu] : edges.cL[eu];
                 const auto ju = static_cast<std::size_t>(j);
+                if (!covered_[u] || !covered_[ju]) continue;   // no-flow face
                 const double Ke = harmonic(state_.Ks[u], state_.Ks[ju]);
                 const double Te = std::max({state_.hg[u], state_.hg[ju],
                                             0.01 * zs});
@@ -476,7 +508,7 @@ void SubsurfaceSolver::assignTiers(double dt0, int n_tiers) {
         // fires. Pinning is the surface twin's business.
         t = std::clamp(t, 0, K - 1);
         state_.tier[u] = static_cast<uint8_t>(t);
-        cells_by_tier_[static_cast<std::size_t>(t)].push_back(i);
+        if (covered_[u]) cells_by_tier_[static_cast<std::size_t>(t)].push_back(i);
     }
 
     // A face fires at the FINER of its two cells — the standard LTS face
@@ -486,6 +518,8 @@ void SubsurfaceSolver::assignTiers(double dt0, int n_tiers) {
     const int ne = static_cast<int>(state_.eacc_L.size());
     for (int e = 0; e < ne; ++e) {
         const auto eu = static_cast<std::size_t>(e);
+        if (!covered_[static_cast<std::size_t>(edges_->cL[eu])] ||
+            !covered_[static_cast<std::size_t>(edges_->cR[eu])]) continue;   // no-flow face
         const int tL = state_.tier[static_cast<std::size_t>(edges_->cL[eu])];
         const int tR = state_.tier[static_cast<std::size_t>(edges_->cR[eu])];
         const int t  = std::min(tL, tR);
@@ -973,6 +1007,7 @@ std::string SubsurfaceSolver::nodeWaterBudget(int cell, double interval, NodeWat
                          -soil::equilibriumStorage(paramsOf(cell),state_.zs[u]))*state_.area[u];
     double claimed=std::max(0.0,state_.et_pending[u])+std::max(0.0,-state_.lacc[u])+pendingLidUp(cell);
     claimed+=state_.c_loss[u]*state_.hg[u]/std::max(state_.zs[u],kTiny)*state_.area[u]*interval;
+    if (!state_.eacc_L.empty())   // PER_SUBCATCH: no lateral accumulators
     for (int p=edges_->cell_ptr[u];p<edges_->cell_ptr[u+1];++p) {
         const auto e=static_cast<std::size_t>(edges_->cell_edge[p]);
         const double pending=edges_->cell_sign[p]>0?state_.eacc_L[e]:state_.eacc_R[e];
@@ -1183,7 +1218,7 @@ double SubsurfaceSolver::takeToSurfaceMass(int cell, int species) noexcept {
 // ---------------------------------------------------------------------------
 
 double SubsurfaceSolver::infiltrationHeadroom(int cell) const noexcept {
-    if (!state_.active || cell < 0 || cell >= state_.n_cells) return 0.0;
+    if (!state_.active || !covers(cell)) return 0.0;
     const auto u = static_cast<std::size_t>(cell);
     const double L = std::max(0.0, state_.zs[u] - state_.hg[u]);
     double col = state_.hu[u];
@@ -1197,6 +1232,8 @@ double SubsurfaceSolver::infiltrationHeadroom(int cell) const noexcept {
         deficit = std::min(deficit, std::max(0.0, state_.theta_s[u] - state_.theta_sigma[u]) *
                           L / state_.m_layers * state_.area[u]);
     double pending = std::max(0.0, state_.xacc_from_surface[u]) + std::max(0.0, state_.lacc[u]) + pendingLidDown(cell);
+    // PER_SUBCATCH sizes no lateral accumulators: there is no lateral flow.
+    if (!state_.eacc_L.empty())
     for (int p = edges_->cell_ptr[u]; p < edges_->cell_ptr[u + 1]; ++p) {
         const auto e = static_cast<std::size_t>(edges_->cell_edge[p]);
         pending += std::max(0.0, edges_->cell_sign[p] > 0 ? state_.eacc_L[e] : state_.eacc_R[e]);
@@ -1224,7 +1261,7 @@ void SubsurfaceSolver::publishCellInfiltration(int i, SurfaceStateData& surf, do
 }
 
 double SubsurfaceSolver::sourceInfiltrationCapacity(int i, double pond, double interval) const noexcept {
-        if (!state_.active || i < 0 || i >= state_.n_cells ||
+        if (!state_.active || !covers(i) ||
             !(interval > 0.0) || !std::isfinite(interval) ||
             !(pond >= 0.0) || !std::isfinite(pond)) return 0.0;
         const auto u = static_cast<std::size_t>(i);
@@ -1251,7 +1288,7 @@ double SubsurfaceSolver::sourceInfiltrationCapacity(int i, double pond, double i
 }
 
 double SubsurfaceSolver::acceptSurfaceInfiltration(int cell, double requested, bool prescribed) noexcept {
-    if (!(requested > 0.0) || !std::isfinite(requested) || cell < 0 || cell >= state_.n_cells || !state_.active) return 0.0;
+    if (!(requested > 0.0) || !std::isfinite(requested) || !covers(cell) || !state_.active) return 0.0;
     const auto u = static_cast<std::size_t>(cell);
     if (!prescribed && (!(state_.Ks[u] > 0.0) || !(state_.infil_capacity[u] > 0.0) || !std::isfinite(state_.infil_capacity[u]))) return 0.0;
     const double take = std::min(requested, infiltrationHeadroom(cell));
@@ -1263,7 +1300,7 @@ double SubsurfaceSolver::acceptSurfaceInfiltration(int cell, double requested, b
 
 void SubsurfaceSolver::bookInfiltrationFromSurface(int cell,
                                                    double vol_m3) noexcept {
-    if (!state_.active || cell < 0 || cell >= state_.n_cells) return;
+    if (!state_.active || !covers(cell)) return;
     state_.xacc_from_surface[static_cast<std::size_t>(cell)] += vol_m3;
     // Cell-local booking is called concurrently by the surface marcher.
     // settle() does not use the obsolete pending flag; do not race on it.
@@ -1273,7 +1310,7 @@ void SubsurfaceSolver::bookInfiltrationFromSurface(int cell,
 // cells the conduit crosses. Booked per routing step, gathered per firing —
 // the same cross-cadence accumulator the surface infiltration uses.
 void SubsurfaceSolver::bookLinkSeepage(int cell, double vol_m3) noexcept {
-    if (!state_.active || cell < 0 || cell >= state_.n_cells) return;
+    if (!state_.active || !covers(cell)) return;
     state_.lacc[static_cast<std::size_t>(cell)] += vol_m3;
     accumulators_pending_ = true;
 }
@@ -1314,7 +1351,7 @@ void SubsurfaceSolver::compactPending() noexcept {
 // ---------------------------------------------------------------------------
 
 void SubsurfaceSolver::bookSurfaceEt(int cell,double dt,double rate,double surface) {
-    if(!active()||options_.per_subcatch||cell<0||cell>=state_.n_cells||!(dt>0.0))return;
+    if(!active()||options_.per_subcatch||!covers(cell)||!(dt>0.0))return;
     const auto u=static_cast<std::size_t>(cell);
     const double potential=std::max(0.0,rate)*state_.area[u]*dt;
     const double taken=std::clamp(surface,0.0,potential);
@@ -1325,7 +1362,7 @@ void SubsurfaceSolver::bookSurfaceEt(int cell,double dt,double rate,double surfa
 }
 
 void SubsurfaceSolver::bookAreaEt(int cell,double dt,double potential,double evaporation,double soil) {
-    if(!active()||options_.per_subcatch||cell<0||cell>=state_.n_cells||!(dt>0.0))return;
+    if(!active()||options_.per_subcatch||!covers(cell)||!(dt>0.0))return;
     if(!std::isfinite(dt)||!std::isfinite(potential)||!std::isfinite(evaporation)||!std::isfinite(soil)||
        potential<0||evaporation<0||soil<0||evaporation+soil>potential+1e-12*std::max(1.0,potential))
         throw std::invalid_argument("Invalid completed atmospheric area budget.");

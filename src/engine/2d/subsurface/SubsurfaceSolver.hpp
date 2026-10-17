@@ -154,6 +154,15 @@ public:
     void bookAreaEt(int cell,double dt,double potential,double owner_evaporation,double soil_demand);
 
     bool active() const noexcept { return state_.active; }
+    /// Mesh mode: 1 where a [2D_AQUIFER] row (`*`, TAG or CELL) covers the
+    /// cell. An uncovered cell has no aquifer: no storage, no lateral faces,
+    /// and its infiltration stays with the surface model. All 1 in
+    /// PER_SUBCATCH mode.
+    const std::vector<uint8_t>& coverage() const noexcept { return covered_; }
+    bool covers(int cell) const noexcept {
+        return cell >= 0 && static_cast<std::size_t>(cell) < covered_.size() &&
+               covered_[static_cast<std::size_t>(cell)] != 0;
+    }
     SubsurfaceState&       state()       noexcept { return state_; }
     const SubsurfaceState& state() const noexcept { return state_; }
 
@@ -565,6 +574,9 @@ private:
     /// Mesh mode: cell → containing subcatchment for the legacy arbitration
     /// (centroid-in-polygon, draft decision 13). −1 = not covered.
     std::vector<int> cell_subcatch_;
+    /// See coverage(). Rebuilt from the rows by every initialize(), so a
+    /// restart reproduces it without a checkpoint field.
+    std::vector<uint8_t> covered_;
 };
 
 }  // namespace openswmm::twoD

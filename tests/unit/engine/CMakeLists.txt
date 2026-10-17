@@ -724,6 +724,12 @@ if(OPENSWMM_BUILD_2D)
     add_gtest_unit(test_engine_runtime_coupling_api test_runtime_coupling_api.cpp)
     add_gtest_unit(test_engine_runtime_water_checkpoint test_runtime_water_checkpoint.cpp)
     add_gtest_unit(test_engine_gw_transport_kernel test_gw_transport_kernel.cpp)
+    # Closure audit C1 (2026-10-17): pre-run groundwater resolution and the
+    # atomic hydrothermal edit contracts. Decks under
+    # tests/output/hydrothermal_config_api.
+    add_gtest_unit(test_engine_hydrothermal_config_api test_hydrothermal_config_api.cpp)
+    target_compile_definitions(test_engine_hydrothermal_config_api PRIVATE
+        OPENSWMM_HYDROTHERMAL_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
     target_compile_definitions(test_engine_gw_transport_kernel PRIVATE
         OPENSWMM_GW_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
     # T7.5 reads the .h5 the run wrote, so it links HDF5 the same way the

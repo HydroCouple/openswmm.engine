@@ -46,7 +46,7 @@ int cellCheck(SWMMEngine& eng,int d,int cell) {
     auto& r=eng.surfaceRouter2D();
     if(!domainOk(d)) return SWMM_ERR_BADPARAM;
     if(cell<0 || cell>=r.mesh().n_cells()) return SWMM_ERR_BADINDEX;
-    if(d==1 && (!r.subsurface().active() || r.subsurface().state().zs[cell]<=0.0)) return SWMM_ERR_LIFECYCLE;
+    if(d==1 && (!r.subsurface().active() || !r.subsurface().covers(cell) || r.subsurface().state().zs[cell]<=0.0)) return SWMM_ERR_LIFECYCLE;
     return SWMM_OK;
 }
 int edgeCheck(SWMMEngine& eng,int d,int cell,int edge) {

@@ -1067,7 +1067,15 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                     throw std::runtime_error("[GW_INITIAL_QUALITY] LAYER is unsupported by bulk groundwater transport; use SAT or UNSAT explicitly.");
             subsurface_.initTransport(rows, &gw_, pollut_decay, ctx.warnings);
             marcher->refreshSubsurfaceRows();
-            subsurface_.setSources(resolveGwSources(ctx, mesh_, gw_, subsurface_.state(), subsurface_.transport()));
+            {
+                auto sources = resolveGwSources(ctx, mesh_, gw_, subsurface_.state(), subsurface_.transport());
+                for (const auto& src : sources)
+                    for (const auto& cell : src.cells)
+                        if (!subsurface_.covers(cell.first))
+                            throw std::runtime_error("[GW_SOURCES] '" + src.name + "' lies on mesh cell " +
+                                std::to_string(cell.first) + ", which has no [2D_AQUIFER] row.");
+                subsurface_.setSources(std::move(sources));
+            }
             std::vector<int> porous,mobile;
             for(int n=0;n<ctx.n_nodes();++n)if(lidnode::bottomMode(ctx,n)==LidNodeBottom::MeshAquifer) {
                 if(ctx.n_pollutants()>0 || ctx.options.water_age || ctx.options.heat_transport || ctx.reactions.configured)
@@ -1097,6 +1105,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             aquifer_link_shares_ = resolveLinkSeepage(ctx, mesh_, aquifer_cfg_,
                                                       aquifer_link_names_,
                                                       mesh_to_si, n_conduits);
+            // A reach over a cell with no aquifer seeps nowhere: like a reach
+            // outside the mesh, that share stays a system loss.
+            aquifer_link_shares_.erase(std::remove_if(aquifer_link_shares_.begin(), aquifer_link_shares_.end(),
+                [this](const GwLinkShare& sh) { return !subsurface_.covers(sh.cell); }), aquifer_link_shares_.end());
             for (const auto& sh : aquifer_link_shares_)
                 if (aquifer_link_ids_.empty() || aquifer_link_ids_.back() != sh.link)
                     aquifer_link_ids_.push_back(sh.link);
@@ -1171,8 +1183,15 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         // Told before resolve() because that is where the destinations are
         // validated.
         infil_.setAquifer2DAvailable(subsurface_.active());
-        infil_.setAquiferOwners(std::vector<uint8_t>(mesh_.n_triangles(),
-            subsurface_.active() && options_.infiltration != 0 ? 1 : 0));
+        {
+            // Only cells a [2D_AQUIFER] row covers have an aquifer to own them.
+            std::vector<uint8_t> owners(mesh_.n_triangles(),
+                subsurface_.active() && options_.infiltration != 0 ? 1 : 0);
+            const auto& covered = subsurface_.coverage();
+            if (covered.size() == owners.size())
+                for (std::size_t i = 0; i < owners.size(); ++i) owners[i] &= covered[i];
+            infil_.setAquiferOwners(std::move(owners));
+        }
         if (options_.infil_destination == "AQUIFER_2D")
             throw std::runtime_error("[2D_OPTIONS] INFIL_DESTINATION AQUIFER_2D is obsolete; remove this option. Aquifer-owned cells compute their receiving capacity.");
         std::string infil_err;

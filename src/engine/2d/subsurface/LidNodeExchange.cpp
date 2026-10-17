@@ -377,6 +377,7 @@ RichardsBedAcceptance acceptRichardsBedsAcrossSteps(SubsurfaceSolver& gw, Surfac
     for(const int cell:cells) {
         double node=0,lateral=0;
         for(const auto b:gw.cell_beds_[cell])node+=gw.state_.nacc[b];
+        if(!gw.state_.eacc_L.empty())   // PER_SUBCATCH: no lateral accumulators
         for(int p=gw.edges_->cell_ptr[cell];p<gw.edges_->cell_ptr[cell+1];++p) {
             const auto e=gw.edges_->cell_edge[p];
             lateral+=gw.edges_->cell_sign[p]>0?gw.state_.eacc_L[e]:gw.state_.eacc_R[e];
