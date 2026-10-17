@@ -175,10 +175,28 @@ TEST(XSectBoundary, FourQuarterArcBulgesFormAFullCircle) {
     ASSERT_EQ(chain.size(), 4u);
 
     // Invert shifted to y=0: original min y was -1, so full depth is 2.
-    const double y_full = 2.0;
-    const ExactProps full = evalExact(chain.data(), 4, y_full);
-    EXPECT_NEAR(full.area, kPi, 1.0e-10);
-    EXPECT_NEAR(full.width, 0.0, 1.0e-9);   // top of circle: width -> 0
+    //
+    // The enclosed area, from Green's theorem over the whole closed chain —
+    // no horizontal clip involved, so exact on any platform.
+    double total = 0.0;
+    for (const BElem& e : chain) total += greenArea(e);
+    EXPECT_NEAR(total, kPi, 1.0e-12);
+
+    // The width -> 0 / area -> pi limit at the crown, checked just BELOW it.
+    // y = 2 itself is both a vertex height and an exact horizontal tangency
+    // of the top arc — the degenerate case this module does not claim (see
+    // the y = 1.0 note below). There, a one-ulp mismatch between the arc
+    // centre and y = 2, which glibc and Apple libm round differently while
+    // building the arcs from their bulges, splits the single tangent point
+    // into two crossings sqrt(2 r ulp) ~ 4e-8 apart: the Linux CI run read
+    // width 4.2e-8 and area pi + 4.2e-8 there, while macOS read exactly 0
+    // and pi. A micro-step below the crown pins the same limit with the
+    // circular-segment closed forms, on any libm.
+    const double dc = 1.0 - 1.0e-6;   // height above the centre, just under r
+    const ExactProps near_top = evalExact(chain.data(), 4, 1.0 + dc);
+    EXPECT_NEAR(near_top.width, 2.0 * std::sqrt(1.0 - dc * dc), 1.0e-10);
+    EXPECT_NEAR(near_top.area,
+                dc * std::sqrt(1.0 - dc * dc) + std::asin(dc) + 0.5 * kPi, 1.0e-10);
 
     // A GENERIC depth (not the y=1.0 equator, which after the shift lands
     // exactly on two of the four vertex heights at once — a critical-height
