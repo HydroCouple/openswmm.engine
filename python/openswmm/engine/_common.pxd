@@ -1424,6 +1424,20 @@ cdef extern from "openswmm_xsect.h":
 
 
 cdef extern from "openswmm_heat.h":
+    ctypedef void* SWMM_HeatSnapshot
+    ctypedef int (*SWMM_HydrothermalEdit)(SWMM_Engine, void*) noexcept
+    int swmm_hydrothermal_edit_atomic(SWMM_Engine, SWMM_HydrothermalEdit, void*)
+    int swmm_heat_get_dry_policy(SWMM_Engine, int*)
+    int swmm_heat_set_dry_policy(SWMM_Engine, int)
+    int swmm_heat_get_lid_material(SWMM_Engine, double*)
+    int swmm_heat_clear_solar_site(SWMM_Engine)
+    int swmm_heat_get_authoring_flags(SWMM_Engine, unsigned*)
+    SWMM_HeatSnapshot swmm_heat_snapshot_create(SWMM_Engine)
+    int swmm_heat_snapshot_restore(SWMM_Engine, SWMM_HeatSnapshot)
+    void swmm_heat_snapshot_destroy(SWMM_HeatSnapshot)
+    int swmm_heat_sediment_temperature_configured(SWMM_Engine, int, int*)
+    int swmm_heat_clear_sediment_temperature(SWMM_Engine, int)
+    int swmm_heat_get_effective_element(SWMM_Engine, int, int, const char*, double*, int*, char*, int)
 
     # Toggles
     cdef int swmm_heat_get_enabled(SWMM_Engine e, int* enabled)

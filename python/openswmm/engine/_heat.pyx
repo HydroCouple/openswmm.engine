@@ -67,7 +67,8 @@ from ._common cimport *
 from ._enums import (
     HeatAttr, HeatCloudParam, HeatFluxModule, HeatOverrideScope,
     HeatRadiativeParam, HeatSedimentParam, HeatShortwaveMode, HeatSolarParam,
-    HeatSourceKind)
+    HeatSourceKind, EngineState, ErrorCode)
+from ._exceptions import StaleObjectError
 
 
 cdef inline SWMM_Engine _h(solver):
@@ -290,6 +291,11 @@ class _HeatSolar:
         """
         param = _member(HeatSolarParam, key)
         _check(swmm_heat_set_solar(_h(self._solver), int(param), value))
+
+    def clear(self) -> None:
+        """Clear the shared site before initialization; COMPUTED mode refuses it."""
+        _check(swmm_heat_clear_solar_site(_h(self._solver)))
+
 
     def __repr__(self) -> str:
         try:
@@ -655,6 +661,21 @@ class HeatElementOverride(NamedTuple):
     value: float
 
 
+class HeatLidMaterial(NamedTuple):
+    """LID water/soil conductivity (W/m/K), soil density (kg/m3), heat capacity (J/kg/K)."""
+    water_conductivity: float
+    soil_conductivity: float
+    soil_density: float
+    soil_specific_heat: float
+
+
+class HeatElementValue(NamedTuple):
+    """Effective value and its origin; dynamic temperatures have a NaN value."""
+    value: float
+    source: int
+    source_name: str
+
+
 class _HeatSediment:
     """``solver.heat.sediment`` — ``[SEDIMENT_EXCHANGE]`` GLOBAL parameters,
     a mapping keyed by :class:`HeatSedimentParam`. Values the parser refuses
@@ -678,6 +699,18 @@ class _HeatSediment:
     def __setitem__(self, key, double value) -> None:
         param = _member(HeatSedimentParam, key)
         _check(swmm_heat_set_sediment(_h(self._solver), int(param), value))
+
+    def is_configured(self, key) -> bool:
+        """Authored status of GROUND_TEMPERATURE or INITIAL_TEMPERATURE."""
+        cdef int configured = 0
+        param = _member(HeatSedimentParam, key)
+        _check(swmm_heat_sediment_temperature_configured(_h(self._solver), int(param), &configured))
+        return bool(configured)
+
+    def clear(self, key) -> None:
+        """Restore temperature inheritance; ground reset also clears its series."""
+        param = _member(HeatSedimentParam, key)
+        _check(swmm_heat_clear_sediment_temperature(_h(self._solver), int(param)))
 
     @property
     def ground_timeseries(self) -> str:
@@ -751,6 +784,71 @@ class _HeatElementOverrides:
             return f"<HeatElementOverrides n={len(self)}>"
         except Exception:
             return "<HeatElementOverrides (engine closed)>"
+
+
+cdef int _hydrothermal_edit(SWMM_Engine engine, void* user) noexcept with gil:
+    context = <object>user
+    try:
+        context[3] = context[0](context[1])
+        return 0
+    except BaseException as error:
+        context[2] = error
+        return int(ErrorCode.BADPARAM)
+
+
+cdef class HeatSnapshot:
+    """Owned pre-run heat memento; lifecycle and structural edits invalidate it.
+
+    Use as a context manager or call close(). Closing is safe after the solver
+    is destroyed. Scalar heat edits may be undone repeatedly with restore().
+    """
+    cdef SWMM_HeatSnapshot _snapshot
+    cdef object _owner
+    cdef long long _generation
+
+    def __init__(self, solver):
+        if self._snapshot != NULL:
+            raise RuntimeError("HeatSnapshot is already initialized")
+        cdef SWMM_Engine handle = _h(solver)
+        cdef int state = 0
+        _check(swmm_engine_get_state(handle, &state))
+        if state not in (int(EngineState.OPENED), int(EngineState.BUILDING)):
+            _check(int(ErrorCode.LIFECYCLE))
+        self._owner = solver
+        self._generation = solver.generation
+        self._snapshot = swmm_heat_snapshot_create(handle)
+        if self._snapshot == NULL:
+            raise MemoryError("Cannot capture heat configuration")
+
+    def restore(self) -> None:
+        """Restore to the original authoring session, refusing stale snapshots."""
+        if self._snapshot == NULL:
+            raise ValueError("HeatSnapshot is closed")
+        if self._generation != self._owner.generation:
+            raise StaleObjectError("HeatSnapshot was invalidated by a lifecycle or structural edit")
+        cdef SWMM_Engine handle = _h(self._owner)
+        _check(swmm_heat_snapshot_restore(handle, self._snapshot))
+        self._owner._bump_generation()
+        self._generation = self._owner.generation
+
+    def close(self) -> None:
+        """Release the memento without accessing the original engine."""
+        if self._snapshot != NULL:
+            swmm_heat_snapshot_destroy(self._snapshot)
+            self._snapshot = NULL
+        self._owner = None
+
+    def __enter__(self):
+        if self._snapshot == NULL:
+            raise ValueError("HeatSnapshot is closed")
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def __dealloc__(self):
+        if self._snapshot != NULL:
+            swmm_heat_snapshot_destroy(self._snapshot)
 
 
 # =============================================================================
@@ -949,6 +1047,78 @@ class Heat:
         if self._element_overrides is None:
             self._element_overrides = _HeatElementOverrides(self._solver)
         return self._element_overrides
+
+    @property
+    def dry_policy(self) -> int:
+        """Dry-element temperature policy: HOLD=0, AIR=1, DEFAULT=2."""
+        cdef int policy = 0
+        _check(swmm_heat_get_dry_policy(_h(self._solver), &policy))
+        return policy
+
+    @dry_policy.setter
+    def dry_policy(self, int policy) -> None:
+        _check(swmm_heat_set_dry_policy(_h(self._solver), policy))
+
+    @property
+    def lid_material(self) -> HeatLidMaterial:
+        """Read-only LID conduction material assumptions, all in SI units."""
+        cdef double values[4]
+        _check(swmm_heat_get_lid_material(_h(self._solver), values))
+        return HeatLidMaterial(values[0], values[1], values[2], values[3])
+
+    @property
+    def authoring_flags(self) -> int:
+        """Provenance bits: configured=1, shared site=2, explicit lat/lon/timezone/elevation=4/8/16/32."""
+        cdef unsigned flags = 0
+        _check(swmm_heat_get_authoring_flags(_h(self._solver), &flags))
+        return flags
+
+    def effective_element(self, attr, scope, str name) -> HeatElementValue:
+        """Read pre-run NODE/LINK precedence, independent of process activation.
+
+        Source codes are GLOBAL=0, TAG=1, NODE=2, LINK=3, air=4, series=5.
+        Dynamic temperatures return NaN and identify their source by name.
+        """
+        a = _member(HeatAttr, attr)
+        sc = _member(HeatOverrideScope, scope)
+        cdef bytes encoded = name.encode('utf-8')
+        if b'\0' in encoded:
+            raise ValueError("Element name contains a null byte")
+        cdef double value = 0.0
+        cdef int source = 0
+        cdef bytearray buffer = bytearray(256)
+        while True:
+            _check(swmm_heat_get_effective_element(_h(self._solver), int(a), int(sc), encoded,
+                                                   &value, &source, buffer, len(buffer)))
+            origin = bytes(buffer).split(b'\0', 1)[0]
+            if len(origin) < len(buffer) - 1:
+                return HeatElementValue(value, source, origin.decode('utf-8'))
+            buffer = bytearray(len(buffer) * 2)
+
+    def snapshot(self) -> HeatSnapshot:
+        """Capture heat settings, shared site and component registrations before initialization."""
+        return HeatSnapshot(self._solver)
+
+    def edit_atomic(self, callback):
+        """Apply callback(solver) before initialization, rolling back on any exception.
+
+        Only climate, snow, heat configuration, HEAT_TRANSPORT, component
+        registrations and climate-file paths may be changed. Topology, lifecycle
+        and nested transactions are forbidden. The callback result is returned;
+        its original exception is re-raised after native rollback completes.
+        """
+        if not callable(callback):
+            raise TypeError("callback must be callable")
+        cdef SWMM_Engine handle = _h(self._solver)
+        cdef int result
+        context = [callback, self._solver, None, None]
+        with self._solver._operation(<size_t>handle):
+            result = swmm_hydrothermal_edit_atomic(handle, _hydrothermal_edit, <void*>context)
+        self._solver._bump_generation()
+        if context[2] is not None:
+            raise context[2]
+        _check(result)
+        return context[3]
 
     def __repr__(self) -> str:
         try:

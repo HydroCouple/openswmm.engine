@@ -249,7 +249,7 @@ from ._checkpoint import Checkpoints
 # =============================================================================
 # Transport processes — heat, water age, reactions, process components
 # =============================================================================
-from ._heat import Heat, HeatNodeOverride
+from ._heat import Heat, HeatNodeOverride, HeatLidMaterial, HeatElementValue, HeatSnapshot
 from ._water_age import WaterAge, WaterAgeOverride
 from ._reactions import (
     Reactions,
@@ -364,7 +364,7 @@ __all__ = [
     "Pollutants", "Quality", "Tables", "Patterns", "Inflows", "Controls", "Forcing",
     "Climate", "Snow", "MeshSnow", "Checkpoints", "InitialQuality", "InitialQualityEntry",
     # --- Transport processes — heat, water age, reactions ---
-    "Heat", "HeatNodeOverride",
+    "Heat", "HeatNodeOverride", "HeatLidMaterial", "HeatElementValue", "HeatSnapshot",
     "WaterAge", "WaterAgeOverride",
     "Reactions", "ReactionSpecies", "ReactionCoefficient", "ReactionTerm",
     "ReactionInitialEntry", "ReactionHydVar", "ReactionFunction",

@@ -47,7 +47,15 @@ cdef extern from "openswmm/engine/openswmm_engine.h":
         SWMM_TransportCell cell[4][4]
     int swmm_get_thread_info(SWMM_ThreadInfo*)
     int swmm_get_effective_threads(SWMM_Engine, int, int*, int*, int*)
+    ctypedef struct SWMM_TransportDraft:
+        int ignore_quality
+        int heat
+        int age
+        int ignore_2d
+        int surface_class[4]
+        int groundwater
     int swmm_get_transport_matrix(SWMM_Engine, SWMM_TransportMatrix*)
+    int swmm_preview_transport_matrix(SWMM_Engine, const SWMM_TransportDraft*, SWMM_TransportMatrix*)
     const char* swmm_transport_domain_name(int)
     const char* swmm_transport_class_name(int)
 
@@ -122,6 +130,35 @@ class Transport:
     """``solver.transport`` configuration, with read-only authored rows."""
     def __init__(self, owner):
         self._owner = owner
+
+    def preview_matrix(self, *, ignore_quality, heat, age, ignore_2d,
+                       surface_classes, groundwater=-1):
+        """Plan transport without mutating the open model.
+
+        Boolean fields accept only 0/1. surface_classes has four entries in
+        POLLUTANTS, MSX, AGE, TEMPERATURE order; groundwater is -1 (auto),
+        0 (off) or 1 (on). The result has the same shape as transport_matrix.
+        It describes planned transport, not initialized process activity.
+        """
+        from operator import index
+        cdef SWMM_TransportDraft draft
+        cdef SWMM_TransportMatrix matrix
+        cdef int d, c
+        draft.ignore_quality = index(ignore_quality)
+        draft.heat = index(heat)
+        draft.age = index(age)
+        draft.ignore_2d = index(ignore_2d)
+        values = tuple(surface_classes)
+        if len(values) != 4:
+            raise ValueError("surface_classes must have four entries")
+        for c in range(4):
+            draft.surface_class[c] = index(values[c])
+        draft.groundwater = index(groundwater)
+        _check(swmm_preview_transport_matrix(_h(self._owner), &draft, &matrix))
+        return {TransportDomain(d): {
+            TransportClass(c): TransportCell(TransportState(matrix.cell[d][c].state),
+                matrix.cell[d][c].count, matrix.cell[d][c].reason.decode('utf-8'))
+            for c in range(4)} for d in range(4)}
 
     @property
     def configured(self):

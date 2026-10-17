@@ -105,6 +105,15 @@
      "options"
     ]
    }
+  },
+  "heat_snapshot": {
+   "class": "HeatSnapshot",
+   "construct": {
+    "via": "new",
+    "args": [
+     "solver"
+    ]
+   }
   }
  },
  "function_modules": [

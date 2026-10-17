@@ -35,6 +35,10 @@ class Transport:
     def __init__(self, owner: Solver | ModelBuilder) -> None: ...
     @property
     def configured(self) -> bool: ...
+    def preview_matrix(self, *, ignore_quality: bool | int, heat: bool | int,
+                       age: bool | int, ignore_2d: bool | int,
+                       surface_classes: tuple[bool | int, bool | int, bool | int, bool | int],
+                       groundwater: int = ...) -> dict[TransportDomain, dict[TransportClass, TransportCell]]: ...
     dispersion_mode: TransportDispersionMode
     dispersion_value: float
     target_dx: float

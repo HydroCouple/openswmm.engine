@@ -214,6 +214,23 @@
    "doc": "",
    "parent": "heat"
   },
+  "heat_snapshot": {
+   "class": "HeatSnapshot",
+   "module": "_heat",
+   "path": "",
+   "doc": "",
+   "construct": {
+    "via": "new",
+    "args": [
+     "solver"
+    ]
+   },
+   "c": [
+    "swmm_engine_get_state",
+    "swmm_heat_snapshot_create",
+    "swmm_heat_snapshot_destroy"
+   ]
+  },
   "hotstart": {
    "class": "HotStart",
    "module": "_hotstart",
@@ -7757,6 +7774,19 @@
    "access": "r"
   },
   {
+   "path": "heat.authoring_flags",
+   "target": "heat",
+   "name": "authoring_flags",
+   "form": "property",
+   "python": "Heat.authoring_flags",
+   "doc": "Provenance bits: configured=1, shared site=2, explicit lat/lon/timezone/elevation=4/8/16/32.",
+   "c": [
+    "swmm_heat_get_authoring_flags"
+   ],
+   "type": "int",
+   "access": "r"
+  },
+  {
    "path": "heat.cloud.clear",
    "target": "heat.cloud",
    "name": "clear",
@@ -7899,6 +7929,68 @@
    "units": "W/m2"
   },
   {
+   "path": "heat.dry_policy",
+   "target": "heat",
+   "name": "dry_policy",
+   "form": "property",
+   "python": "Heat.dry_policy",
+   "doc": "Dry-element temperature policy: HOLD=0, AIR=1, DEFAULT=2.",
+   "c": [
+    "swmm_heat_get_dry_policy",
+    "swmm_heat_set_dry_policy"
+   ],
+   "type": "int",
+   "access": "rw"
+  },
+  {
+   "path": "heat.edit_atomic",
+   "target": "heat",
+   "name": "edit_atomic",
+   "form": "method",
+   "python": "Heat.edit_atomic",
+   "doc": "Apply callback(solver) before initialization, rolling back on any exception.",
+   "c": [
+    "swmm_hydrothermal_edit_atomic"
+   ],
+   "returns": "object",
+   "params": [
+    {
+     "name": "callback",
+     "type": "Callable[[Solver], object]",
+     "required": true
+    }
+   ]
+  },
+  {
+   "path": "heat.effective_element",
+   "target": "heat",
+   "name": "effective_element",
+   "form": "method",
+   "python": "Heat.effective_element",
+   "doc": "Read pre-run NODE/LINK precedence, independent of process activation.",
+   "c": [
+    "swmm_heat_get_effective_element"
+   ],
+   "returns": "HeatElementValue",
+   "params": [
+    {
+     "name": "attr",
+     "type": "Union[HeatAttr, int, str]",
+     "required": true
+    },
+    {
+     "name": "scope",
+     "type": "Union[HeatOverrideScope, int, str]",
+     "required": true
+    },
+    {
+     "name": "name",
+     "type": "str",
+     "required": true
+    }
+   ]
+  },
+  {
    "target": "heat.element_overrides",
    "form": "item",
    "python": "_HeatElementOverrides[]",
@@ -7995,6 +8087,19 @@
     "swmm_heat_get_enabled"
    ],
    "type": "bool",
+   "access": "r"
+  },
+  {
+   "path": "heat.lid_material",
+   "target": "heat",
+   "name": "lid_material",
+   "form": "property",
+   "python": "Heat.lid_material",
+   "doc": "Read-only LID conduction material assumptions, all in SI units.",
+   "c": [
+    "swmm_heat_get_lid_material"
+   ],
+   "type": "HeatLidMaterial",
    "access": "r"
   },
   {
@@ -8193,6 +8298,25 @@
    ]
   },
   {
+   "path": "heat.sediment.clear",
+   "target": "heat.sediment",
+   "name": "clear",
+   "form": "method",
+   "python": "_HeatSediment.clear",
+   "doc": "Restore temperature inheritance; ground reset also clears its series.",
+   "c": [
+    "swmm_heat_clear_sediment_temperature"
+   ],
+   "returns": "None",
+   "params": [
+    {
+     "name": "key",
+     "type": "Union[HeatSedimentParam, int, str]",
+     "required": true
+    }
+   ]
+  },
+  {
    "target": "heat.sediment",
    "form": "item",
    "python": "_HeatSediment[]",
@@ -8224,6 +8348,25 @@
    ],
    "type": "str",
    "access": "rw"
+  },
+  {
+   "path": "heat.sediment.is_configured",
+   "target": "heat.sediment",
+   "name": "is_configured",
+   "form": "method",
+   "python": "_HeatSediment.is_configured",
+   "doc": "Authored status of GROUND_TEMPERATURE or INITIAL_TEMPERATURE.",
+   "c": [
+    "swmm_heat_sediment_temperature_configured"
+   ],
+   "returns": "bool",
+   "params": [
+    {
+     "name": "key",
+     "type": "Union[HeatSedimentParam, int, str]",
+     "required": true
+    }
+   ]
   },
   {
    "target": "heat.sediment",
@@ -8307,6 +8450,30 @@
    ],
    "type": "str",
    "access": "r"
+  },
+  {
+   "path": "heat.snapshot",
+   "target": "heat",
+   "name": "snapshot",
+   "form": "method",
+   "python": "Heat.snapshot",
+   "doc": "Capture heat settings, shared site and component registrations before initialization.",
+   "c": [],
+   "returns": "HeatSnapshot",
+   "params": []
+  },
+  {
+   "path": "heat.solar.clear",
+   "target": "heat.solar",
+   "name": "clear",
+   "form": "method",
+   "python": "_HeatSolar.clear",
+   "doc": "Clear the shared site before initialization; COMPUTED mode refuses it.",
+   "c": [
+    "swmm_heat_clear_solar_site"
+   ],
+   "returns": "None",
+   "params": []
   },
   {
    "target": "heat.solar",
@@ -8497,6 +8664,32 @@
    "c": [
     "swmm_heat_set_source_temp"
    ]
+  },
+  {
+   "path": "heat_snapshot.close",
+   "target": "heat_snapshot",
+   "name": "close",
+   "form": "method",
+   "python": "HeatSnapshot.close",
+   "doc": "Release the memento without accessing the original engine.",
+   "c": [
+    "swmm_heat_snapshot_destroy"
+   ],
+   "returns": "None",
+   "params": []
+  },
+  {
+   "path": "heat_snapshot.restore",
+   "target": "heat_snapshot",
+   "name": "restore",
+   "form": "method",
+   "python": "HeatSnapshot.restore",
+   "doc": "Restore to the original authoring session, refusing stale snapshots.",
+   "c": [
+    "swmm_heat_snapshot_restore"
+   ],
+   "returns": "None",
+   "params": []
   },
   {
    "path": "hotstart.apply",
@@ -24337,6 +24530,56 @@
    "units": "length2/s"
   },
   {
+   "path": "transport.preview_matrix",
+   "target": "transport",
+   "name": "preview_matrix",
+   "form": "method",
+   "python": "Transport.preview_matrix",
+   "doc": "Plan transport without mutating the open model.",
+   "c": [
+    "swmm_preview_transport_matrix"
+   ],
+   "returns": "dict[TransportDomain, dict[TransportClass, TransportCell]]",
+   "params": [
+    {
+     "name": "ignore_quality",
+     "type": "bool | int",
+     "required": true,
+     "keyword_only": true
+    },
+    {
+     "name": "heat",
+     "type": "bool | int",
+     "required": true,
+     "keyword_only": true
+    },
+    {
+     "name": "age",
+     "type": "bool | int",
+     "required": true,
+     "keyword_only": true
+    },
+    {
+     "name": "ignore_2d",
+     "type": "bool | int",
+     "required": true,
+     "keyword_only": true
+    },
+    {
+     "name": "surface_classes",
+     "type": "tuple[bool | int, bool | int, bool | int, bool | int]",
+     "required": true,
+     "keyword_only": true
+    },
+    {
+     "name": "groundwater",
+     "type": "int",
+     "required": false,
+     "keyword_only": true
+    }
+   ]
+  },
+  {
    "path": "transport.remove_boundary",
    "target": "transport",
    "name": "remove_boundary",
@@ -26134,6 +26377,23 @@
     "scope": "HeatOverrideScope",
     "name": "str",
     "value": "float"
+   },
+   "doc": ""
+  },
+  "HeatElementValue": {
+   "fields": {
+    "value": "float",
+    "source": "int",
+    "source_name": "str"
+   },
+   "doc": ""
+  },
+  "HeatLidMaterial": {
+   "fields": {
+    "water_conductivity": "float",
+    "soil_conductivity": "float",
+    "soil_density": "float",
+    "soil_specific_heat": "float"
    },
    "doc": ""
   },
