@@ -68,7 +68,15 @@ inline Channel makeWalledChannel(const XSectParams& xs, int n, double dx,
     ch.dx = dx;
 
     ch.mesh.geom.resize(1);
-    buildGeometry(xs, xsect::isOpen(xs.type), slot_celerity, ch.mesh.geom[0]);
+    // Per-INSTANCE isOpen, not isOpen(xs.type): a POLYGON (or any section
+    // carrying a compiled boundary under XSECT_GEOMETRY EXACT) has no shape
+    // code the int overload can classify, so it would silently fall to
+    // `default: return false` and build an OPEN channel as a closed one.
+    // Inert for every pre-existing fixture here — they all leave xs.cheb
+    // null, where this overload just forwards to isOpen(xs.type).
+    // (Roughness now lives in mesh.conduit_roughness/_rough_factor below,
+    // not on FvGeometry — upstream moved it to the per-conduit SoA.)
+    buildGeometry(xs, xsect::isOpen(xs), slot_celerity, ch.mesh.geom[0]);
     ch.mesh.geom[0].barrels = 1;
 
     ch.mesh.conduit_cell_begin = {0};

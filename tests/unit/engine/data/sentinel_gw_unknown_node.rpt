@@ -1,0 +1,33 @@
+
+  OPENSWMM ENGINE - VERSION 6.0.0-alpha.3
+  ------------------------------------------------------------
+
+  GW: undefined receiving node is ERROR 209 
+  ERROR 209: undefined object NONODE.
+  
+  ****************
+  Analysis Options
+  ****************
+  Flow Units ............... CFS
+  Process Models:
+    Rainfall/Runoff ........ YES
+    RDII ................... NO
+    Snowmelt ............... NO
+    Groundwater ............ YES
+    Flow Routing ........... YES
+    Ponding Allowed ........ NO
+    Water Quality .......... NO
+  Infiltration Method ...... HORTON
+  Flow Routing Method ...... KINWAVE
+  Cross-Section Geometry ... LEGACY
+  Starting Date ............ 01/01/2020 00:00:00
+  Ending Date .............. 01/01/2020 03:00:00
+  Antecedent Dry Days ...... 0.0
+  Report Time Step ......... 00:15:00
+  Wet Time Step ............ 00:05:00
+  Dry Time Step ............ 01:00:00
+  Routing Time Step ........ 30.00 sec
+  
+  
+
+  [Report interrupted — simulation did not complete normally]

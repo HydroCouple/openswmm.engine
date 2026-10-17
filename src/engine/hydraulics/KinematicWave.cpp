@@ -33,6 +33,7 @@
  */
 
 #include "KinematicWave.hpp"
+#include "Link.hpp"
 #include "XSectBatch.hpp"
 #include "Link.hpp"
 #include "../core/SimulationContext.hpp"
@@ -59,6 +60,10 @@ static constexpr double STOR_STOPTOL = 0.005;
 // Tree-layout routing helpers (legacy flowrout.c) — shared with STEADY
 // ============================================================================
 
+// MERGE NOTE: upstream declared this over (const LinkData&, size_t); this
+// branch's definition takes the whole context so it can attach a compiled
+// boundary (xs.cheb) — without it, a POLYGON conduit's getAofY/getSofA
+// below silently return 0. Declaration matched to the real definition.
 static XSectParams buildXSP_KW(const SimulationContext& ctx, std::size_t uk);
 
 /// PARITY node.c:1008 storage_getOutflow — flow from a storage unit into a
@@ -379,6 +384,10 @@ int KWSolver::solveConduit(int idx, const XSectParams& xs,
 static XSectParams buildXSP_KW(const SimulationContext& ctx, std::size_t uk) {
     const LinkData& links = ctx.links;
     XSectParams xs{};
+    // link::translateShape is the canonical LinkData-enum -> batch-enum
+    // translation (Link.cpp) — POLYGON=26 was appended to both enums at the
+    // same numeric value, breaking the flat +1 offset every earlier shape
+    // follows, so this delegates rather than re-deriving the mapping here.
     auto ls = links.xsect_shape[uk];
     xs.type = link::translateShape(ls);
     xs.y_full = links.xsect_y_full[uk];
@@ -409,6 +418,12 @@ static XSectParams buildXSP_KW(const SimulationContext& ctx, std::size_t uk) {
             xs.area_lut          = &td.area_lut;
             xs.transect_tbl_size = transect::N_TRANSECT_TBL;
         }
+    }
+
+    {
+        const int ci = links.xsect_cheb_idx[uk];
+        if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.cheb_sections.size())
+            xs.cheb = &ctx.cheb_sections[static_cast<std::size_t>(ci)];
     }
     return xs;
 }

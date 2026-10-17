@@ -53,8 +53,8 @@
   Sweeping Removal .........         0.000
   Infiltration Loss ........         0.000
   BMP Removal ..............         0.000
-  Surface Runoff ...........         0.000
-  Remaining Buildup ........       914.937
+  Surface Runoff ...........       906.180
+  Remaining Buildup ........         8.758
   Continuity Error (%) .....         0.000
   
   
@@ -79,17 +79,17 @@
   Quality Routing Continuity           lbs
   **************************    ----------
   Dry Weather Inflow .......         0.000
-  Wet Weather Inflow .......         0.000
+  Wet Weather Inflow .......       905.629
   Groundwater Inflow .......         0.000
   RDII Inflow ..............         0.000
   External Inflow ..........         0.000
-  External Outflow .........         0.000
+  External Outflow .........       921.225
   Flooding Loss ............         0.000
   Exfiltration Loss ........         0.000
   Mass Reacted .............         0.000
   Initial Stored Mass ......         0.000
-  Final Stored Mass ........         0.000
-  Continuity Error (%) .....         0.000
+  Final Stored Mass ........         0.021
+  Continuity Error (%) .....        -1.725
   
   
   ***************************
@@ -153,15 +153,15 @@
                                  TSS
   Subcatchment                   lbs
   ----------------------------------
-  S1                           0.000
-  S2                           0.000
-  S3                           0.000
-  S4                           0.000
-  S5                           0.000
-  S6                           0.000
+  S1                         164.445
+  S2                         191.295
+  S3                          59.282
+  S4                         155.791
+  S5                         230.874
+  S6                         104.493
   S7                           0.000
   ----------------------------------
-  System                       0.000
+  System                     906.180
   
   
   ******************
@@ -234,9 +234,9 @@
                          Freq      Flow      Flow      Volume           TSS
   Outfall Node           Pcnt       CFS       CFS    10^6 gal           lbs
   -------------------------------------------------------------------------
-  O1                    97.70      3.14     71.61       1.391         0.000
+  O1                    97.70      3.14     71.61       1.391       921.412
   -------------------------------------------------------------------------
-  System                97.70      3.14     71.61       1.391         0.000
+  System                97.70      3.14     71.61       1.391       921.412
   
   
   ********************
@@ -298,19 +298,19 @@
                                  TSS
   Link                           lbs
   ----------------------------------
-  C1                           0.000
-  C2                           0.000
-  C3                           0.000
-  C4                           0.000
-  C5                           0.000
-  C6                           0.000
-  C7                           0.000
-  C8                           0.000
-  C9                           0.000
-  C10                          0.000
-  C11                          0.000
+  C1                         181.224
+  C2                         189.169
+  C3                          60.151
+  C4                          67.154
+  C5                         243.579
+  C6                         168.669
+  C7                         390.361
+  C8                         408.510
+  C9                         426.727
+  C10                        643.935
+  C11                        921.412
   
 
-  Analysis begun on:  Wed Aug 19 03:06:43 2026
-  Analysis ended on:  Wed Aug 19 03:06:44 2026
+  Analysis begun on:  Wed Oct  7 22:42:52 2026
+  Analysis ended on:  Wed Oct  7 22:42:53 2026
   Total elapsed time: 00:00:01

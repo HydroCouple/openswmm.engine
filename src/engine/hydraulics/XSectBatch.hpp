@@ -70,6 +70,8 @@ namespace openswmm {
 // Forward declaration
 struct SimulationContext;
 
+namespace chebsec { struct ChebSection; }
+
 // ============================================================================
 // Cross-section shape codes (matches legacy enums.h XsectType)
 // ============================================================================
@@ -100,7 +102,8 @@ enum class XSectShape : int {
     IRREGULAR          = 22,
     CUSTOM             = 23,
     FORCE_MAIN         = 24,
-    STREET_XSECT       = 25
+    STREET_XSECT       = 25,
+    POLYGON            = 26
 };
 
 // ============================================================================
@@ -140,6 +143,14 @@ struct XSectParams {
     /// into the owning TransectData, so it has the same lifetime as area_tbl
     /// and is null whenever that is.
     const xsect::LocateLut* area_lut = nullptr;
+
+    // Piecewise-Chebyshev boundary (POLYGON shapes ALWAYS; other shapes only
+    // under `[OPTIONS] XSECT_GEOMETRY EXACT`). When non-null, every accessor
+    // in XsectEval takes this path instead of its per-shape table/formula
+    // dispatch, regardless of @ref type — see the `xs.cheb` early-return at
+    // the top of each dispatcher in XSectKernels.hpp. Points into
+    // ctx.cheb_sections (a std::deque, so the address is stable for the run).
+    const chebsec::ChebSection* cheb = nullptr;
 };
 
 // ============================================================================
@@ -159,6 +170,12 @@ double getAofS(const XSectParams& xs, double s_factor);
 double getAmax(const XSectParams& xs);
 double getYcrit(const XSectParams& xs, double q);
 bool   isOpen(int type);
+/// Per-instance open/closed test. A POLYGON section (or any shape whose
+/// XSectParams::cheb is set under XSECT_GEOMETRY EXACT) cannot be classified
+/// from its shape code alone — open vs. closed is a property of the specific
+/// compiled boundary, recorded in ChebSection::is_open. Falls back to
+/// isOpen(int) for shapes with no compiled boundary.
+bool   isOpen(const XSectParams& xs);
 int    setParams(XSectParams& xs, int type, const double p[], double ucf);
 
 // Lookup table helpers (exposed for batch kernels and testing)
@@ -215,6 +232,12 @@ struct ShapeGroup {
     std::vector<const double*> width_tables;  ///< Per-link width table
     int transect_tbl_size = 0;                ///< Table size (same for all)
 
+    // Per-link compiled Chebyshev boundary (POLYGON group always; other
+    // groups only under XSECT_GEOMETRY EXACT — see attachChebSections()).
+    // Non-null entries here are what make the scalar per-element fallback
+    // (paramsAt()) route through the exact/Chebyshev path.
+    std::vector<const chebsec::ChebSection*> cheb;
+
     // Pre-allocated working buffers (avoids per-call allocation in hot loop)
     mutable std::vector<double> buf_d;   ///< Gather buffer for depths
     mutable std::vector<double> buf_r;   ///< Scatter buffer for results
@@ -263,6 +286,66 @@ public:
      * @param ctx  SimulationContext with transect_tables populated.
      */
     void attachTransectTables(const SimulationContext& ctx);
+
+    /**
+     * @brief Attach compiled Chebyshev boundaries to POLYGON (and, under
+     *        XSECT_GEOMETRY EXACT, any other) shape groups.
+     *
+     * @details Must be called after build() when POLYGON shapes exist, or
+     *          when EXACT mode compiled built-in shapes too. Mirrors
+     *          attachTransectTables() exactly, one array (cheb) instead of
+     *          three, keyed by LinkData::xsect_cheb_idx instead of
+     *          xsect_curve.
+     *
+     * @param ctx  SimulationContext with cheb_sections populated.
+     *
+     * @note **Sorting a group's elements by compiled section was built,
+     *       measured and REJECTED (promptperf.md Phase D) — do not re-add it
+     *       without new evidence.** The idea: a group stores links in
+     *       ascending link-index order, so consecutive elements reference
+     *       different compiled sections, and sorting by section would keep
+     *       each section's data hot across the run of links using it. It
+     *       works and it is numerically inert (Bellinge's 180 MB EXACT `.out`
+     *       came back byte-identical, as the permutation argument requires),
+     *       and it genuinely engages — 932 of the 951 CIRCULAR elements moved,
+     *       collapsing into 46 contiguous runs. It is simply **not faster**:
+     *       interleaved A/B on Bellinge measured 44.20 s unsorted vs 45.18 s
+     *       sorted (3 pairs each), i.e. ~2 % the wrong way and well inside
+     *       this network's run-to-run spread.
+     *       The mechanism, which is the part worth keeping: sorting **trades
+     *       output locality for input locality**. Unsorted, `link_idx` rises
+     *       monotonically, so gather_depths/scatter_results stream
+     *       sequentially through the global per-link arrays (eight of them on
+     *       the triple path). Sorted, those accesses scatter. The input side
+     *       had little left to buy, because the compiled sections are already
+     *       deduplicated — 46 of them, only a few hot cache lines each (see
+     *       ChebSection.hpp) — so the section working set was cache-resident
+     *       before any reordering. promptperf.md's own synthetic table
+     *       predicted a 2.5x win here, but it modelled section access ALONE,
+     *       with no global scatter arrays present, and against the pre-Phase-B
+     *       25 kB sections. Dedup (Phase C) removed the problem Phase D was
+     *       designed to solve.
+     */
+    void attachChebSections(const SimulationContext& ctx);
+
+    /**
+     * @brief Re-read one link's cross-section into the grouped SoA arrays.
+     *
+     * @details For run-time geometry change (Phase 7). Updates the element's
+     *          scalar summary fields and compiled-boundary pointer in place,
+     *          and drops the packed bypass mirrors so they cannot serve the
+     *          pre-change copies.
+     *
+     * @returns true when the update was applied in place. **false means the
+     *          link's SHAPE changed** — groups partition by shape, so the link
+     *          has moved between them and only a full rebuild
+     *          (build + attachTransectTables + attachChebSections) is correct.
+     *          That is the normal case for swmm_link_set_polygon on a conduit
+     *          that was not already POLYGON. The rebuild is left to the caller
+     *          because the XSectParams array it needs is assembled in
+     *          Router::init, not here.
+     */
+    bool refreshLink(const SimulationContext& ctx, int link_j);
 
     /**
      * @brief Build shape groups from an array of XSectParams.

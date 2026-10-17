@@ -53,11 +53,12 @@ double phi2(double z) noexcept {
     return (std::expm1(z) - z) / (z * z);
 }
 
-/// Cross-section parameters for a link. The same shape `HeatFluxes.cpp`
-/// builds; kept local rather than exported because widening that file's
-/// helper to a public seam is a bigger change than repeating ten field
-/// copies, and CLAUDE.md §3 says touch only what must be touched.
-XSectParams buildXsp(const LinkData& links, std::size_t uk) {
+/// Cross-section parameters for a link, compiled boundary attached. The same
+/// shape `HeatFluxes.cpp` builds; kept local rather than exported because
+/// widening that file's helper to a public seam is a bigger change than
+/// repeating ten field copies.
+XSectParams buildXsp(const SimulationContext& ctx, std::size_t uk) {
+    const LinkData& links = ctx.links;
     XSectParams xs{};
     const auto ls = links.xsect_shape[uk];
     xs.type   = link::translateShape(ls);
@@ -71,6 +72,12 @@ XSectParams buildXsp(const LinkData& links, std::size_t uk) {
     xs.a_bot  = links.xsect_a_bot[uk];
     xs.s_bot  = links.xsect_s_bot[uk];
     xs.r_bot  = links.xsect_r_bot[uk];
+    // A POLYGON link, or any shape compiled under XSECT_GEOMETRY EXACT, keeps
+    // its geometry in ctx.cheb_sections; without this the accessors below see
+    // no boundary and the bed area / free surface silently read as zero.
+    const int ci = links.xsect_cheb_idx[uk];
+    if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.cheb_sections.size())
+        xs.cheb = &ctx.cheb_sections[static_cast<std::size_t>(ci)];
     return xs;
 }
 
@@ -204,7 +211,7 @@ double linkBedAreaM2(const SimulationContext& ctx, int link) noexcept {
     // Contact area = wetted perimeter x length x barrels. P = A/R, the
     // engine's own identity — NOT the reference's top width, which is zero
     // for a full pipe. See BedZoneData.hpp divergence 1.
-    const auto   xs   = buildXsp(ctx.links, uj);
+    const auto   xs   = buildXsp(ctx, uj);
     const double area = xsect::getAofY(xs, depth);
     const double rhyd = xsect::getRofY(xs, depth);
     if (!(area > 0.0) || !(rhyd > 0.0)) return 0.0;
@@ -227,7 +234,7 @@ double linkFreeSurfaceFt2(const SimulationContext& ctx, int link) noexcept {
     if (!(length > 0.0)) length = CD.mod_length[ucr];
     const double depth = ctx.links.depth[uj];
     if (!(length > 0.0) || !(depth > 0.0)) return 0.0;
-    const auto xs = buildXsp(ctx.links, uj);
+    const auto xs = buildXsp(ctx, uj);
     const double top_width = xsect::getWofY(xs, depth);
     if (!(top_width > 0.0)) return 0.0;
     return top_width * length * static_cast<double>(CD.barrels[ucr]);

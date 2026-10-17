@@ -340,12 +340,19 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
                                double, double, double, double, double, double,
                                double, double, double, double, double,
                                const double*, const double*, const double*,
+                               const void*,
                                int, int, bool>;
     const auto geom_key = [](const XSectParams& x, int barrels, bool is_open) {
+        // x.cheb must be part of the key: two links can share every scalar
+        // summary field above (y_full, a_full, w_max, ...) while pointing at
+        // different compiled boundaries — e.g. two POLYGON curves with the
+        // same envelope but a different profile — and without this, the
+        // second link would silently inherit the first's tabulated geometry.
         return GeomKey{x.type, x.culvert_code, x.transect,
                        x.y_full, x.w_max, x.yw_max, x.a_full, x.r_full,
                        x.s_full, x.s_max, x.y_bot, x.a_bot, x.s_bot, x.r_bot,
                        x.area_tbl, x.hrad_tbl, x.width_tbl,
+                       static_cast<const void*>(x.cheb),
                        x.transect_tbl_size, barrels, is_open};
     };
     std::map<GeomKey, int> geom_memo;   // key -> conduit row already tabulated
@@ -378,7 +385,8 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
 
         mesh.conduit_link[ur] = j;
 
-        XSectParams xs = link::buildXSectParams(ctx.links, uj, &ctx.transect_tables);
+        XSectParams xs = link::buildXSectParams(ctx.links, uj, &ctx.transect_tables,
+                                                &ctx.cheb_sections);
         if (xs.y_full <= 0.0 || xs.a_full <= 0.0) {
             // A control volume needs a real section. A link whose geometry
             // never resolved cannot be marched. (DUMMY shapes are handled
@@ -390,7 +398,14 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
             continue;
         }
 
-        const bool is_open = xsect::isOpen(xs.type);
+        // Per-INSTANCE isOpen, not isOpen(xs.type): a POLYGON (or any
+        // section carrying a compiled boundary under XSECT_GEOMETRY
+        // EXACT) has no shape code the int overload can classify, so it
+        // falls to `default: return false` and an open channel would be
+        // built as a closed pipe (slot and all). Identical for every
+        // other shape -- the overload forwards to isOpen(int) when no
+        // compiled boundary is attached.
+        const bool is_open = xsect::isOpen(xs);
         int sec;
         if (const auto hit = geom_memo.find(geom_key(xs, CD.barrels[ur], is_open));
             hit != geom_memo.end()) {
@@ -709,13 +724,19 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
             const auto& a = mesh.geom[static_cast<std::size_t>(g0)];
             const auto& b = mesh.geom[static_cast<std::size_t>(g1)];
             // Only average like with like. Different shape types, transect
-            // tables (IRREGULAR/CUSTOM/STREET) and differing barrel counts have
-            // no meaningful average; those faces keep their own section, which
-            // is still well balanced (the C-property holds for ANY consistent
-            // choice) and merely first order in the step.
+            // tables (IRREGULAR/CUSTOM/STREET), compiled Chebyshev boundaries
+            // (POLYGON, or any shape under XSECT_GEOMETRY EXACT — two
+            // per-link boundaries can't be averaged into a third valid one,
+            // and the copy below only copies a.xs.cheb verbatim, which would
+            // silently make the "averaged" y_full/a_full/... below dead code
+            // since every accessor checks xs.cheb first) and differing barrel
+            // counts have no meaningful average; those faces keep their own
+            // section, which is still well balanced (the C-property holds for
+            // ANY consistent choice) and merely first order in the step.
             if (a.xs.type != b.xs.type || a.barrels != b.barrels ||
                 a.xs.transect >= 0 || b.xs.transect >= 0 ||
-                a.xs.area_tbl != nullptr || b.xs.area_tbl != nullptr)
+                a.xs.area_tbl != nullptr || b.xs.area_tbl != nullptr ||
+                a.xs.cheb != nullptr || b.xs.cheb != nullptr)
                 continue;
             const auto key = std::make_pair(std::min(g0, g1), std::max(g0, g1));
             int gf;
@@ -737,7 +758,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
                 xs.s_bot  = mid(a.xs.s_bot,  xb.s_bot);
                 xs.r_bot  = mid(a.xs.r_bot,  xb.r_bot);
                 FvGeometry g{};
-                buildGeometry(xs, xsect::isOpen(xs.type), opts.slot_celerity, g,
+                buildGeometry(xs, xsect::isOpen(xs), opts.slot_celerity, g,
                               a.barrels);
                 // A face section is geometry only: friction and losses are
                 // read through the CELL's conduit (mesh.conduit_*), never

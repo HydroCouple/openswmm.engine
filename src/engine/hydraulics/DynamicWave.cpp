@@ -55,6 +55,7 @@
  */
 
 #include "DynamicWave.hpp"
+#include "Link.hpp"
 #include "SurfaceExchange.hpp"
 #include "Node.hpp"
 #include "Outfall.hpp"
@@ -655,7 +656,23 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
         const auto ucr = static_cast<std::size_t>(ctx.link_subtypes.conduit_row(j));
         XsectShape shape = links.xsect_shape[uj];
 
-        is_open_[uj] = isOpenShape(shape);   // legacy xsect_isOpen (Amax == 1)
+        // POLYGON carries no shape code isOpenShape() can classify — a compiled
+        // boundary's own is_open is authoritative there (mirrors the cheb-vs-
+        // shape fallback in recomputeConduitLossOne below). Every other shape
+        // uses upstream's legacy-faithful isOpenShape (Amax == 1), which also
+        // covers DUMMY/POWER/IRREGULAR/STREET that this branch's older
+        // four-shape test missed. This precompute feeds is_open_/
+        // tile_is_open_, which every DYNWAVE crown-cap and slot-exclusion
+        // check downstream reads, so getting it right here is what makes an
+        // open POLYGON channel behave like RECT_OPEN instead of a closed pipe.
+        if (shape == XsectShape::POLYGON) {
+            const int cheb_i = links.xsect_cheb_idx[uj];
+            is_open_[uj] =
+                (cheb_i >= 0 && static_cast<std::size_t>(cheb_i) < ctx.cheb_sections.size()) &&
+                ctx.cheb_sections[static_cast<std::size_t>(cheb_i)].is_open;
+        } else {
+            is_open_[uj] = isOpenShape(shape);   // legacy xsect_isOpen (Amax == 1)
+        }
         is_force_main_[uj] = (shape == XsectShape::FORCE_MAIN);
         has_losses_[uj] = (CD.loss_inlet[ucr] != 0.0 ||
                            CD.loss_outlet[ucr] != 0.0 ||
@@ -1637,7 +1654,9 @@ static XSectParams buildXSP(const SimulationContext& ctx, std::size_t uk) {
     // PARITY: LinkData::XsectShape and the batch XSectShape are NOT a uniform +1
     // offset — the middle block (MODBASKET..ARCH, data 8-20) is ordered
     // differently, so `+1` mapped e.g. CATENARY (12) onto VERT_ELLIPSE (13)
-    // and every tabular shape onto the wrong kernel. Use the canonical map.
+    // and every tabular shape onto the wrong kernel. POLYGON=26 was then
+    // appended to BOTH enums at the same value, breaking the offset again.
+    // Use the canonical map (link::translateShape, Link.cpp).
     auto ls = links.xsect_shape[uk];
     xs.type = link::translateShape(ls);
     xs.y_full = links.xsect_y_full[uk];
@@ -1675,6 +1694,14 @@ static XSectParams buildXSP(const SimulationContext& ctx, std::size_t uk) {
             xs.area_lut        = &td.area_lut;
             xs.transect_tbl_size = transect::N_TRANSECT_TBL;
         }
+    }
+    // Compiled Chebyshev boundary: every POLYGON link, and, under
+    // XSECT_GEOMETRY EXACT, any other shape too. Same "otherwise the scalar
+    // getters return 0" reasoning as the transect-table block above.
+    {
+        const int ci = links.xsect_cheb_idx[uk];
+        if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.cheb_sections.size())
+            xs.cheb = &ctx.cheb_sections[static_cast<std::size_t>(ci)];
     }
     return xs;
 }
@@ -1784,8 +1811,12 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
         // STEP B prep — fused inline. yCap is the EXTRAN crown cap; SLOT
         // mode disables it (yCap = ∞). Branchless via select.
         if (!slot_mode) {
-            const int bs = tile_xsect_batch_shape_[uci];
-            const bool is_open = xsect::isOpen(bs);
+            // tile_is_open_ (not xsect::isOpen(int) on the shape code) is
+            // POLYGON-correct — a compiled boundary's open/closed-ness is a
+            // property of the ChebSection, not the shape code, and this
+            // precomputed value already accounts for that (see is_open_'s
+            // init in refreshConduitTile).
+            const bool is_open = tile_is_open_[uci];
             const double yCap = (!is_open && yf > 0.0) ? EXTRAN_CROWN_CUTOFF * yf : 1e30;
             wcap_d1_[uj] = std::min(y1,   yCap);
             wcap_d2_[uj] = std::min(y2,   yCap);
@@ -2053,7 +2084,7 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                 if (wSlotM > 0.0)
                     wMsa = wSlotM;
                 else if (yMid / yf >= getCrownCutoff() &&
-                         !xsect::isOpen(tile_xsect_batch_shape_[uci]))
+                         !xsect::isOpen(xs))
                     wMsa = xsect::getWofY(xs, getCrownCutoff() * yf);
                 else
                     wMsa = wM;
@@ -2087,7 +2118,7 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                 if (wSlotM > 0.0)
                     wMsa = wSlotM;
                 else if (yMid / yf >= getCrownCutoff() &&
-                         !xsect::isOpen(tile_xsect_batch_shape_[uci]))
+                         !xsect::isOpen(xs))
                     wMsa = xsect::getWofY(xs, getCrownCutoff() * yf);
                 else
                     wMsa = wM;
@@ -2282,13 +2313,24 @@ void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt,
             if (length <= 0.0) length = CD.mod_length[ucr];
             const int shape = links.xsect_batch_shape[u];
 
+            // isOpen(int) can't classify a compiled boundary (POLYGON, or any
+            // shape under XSECT_GEOMETRY EXACT) — its open/closed-ness is a
+            // property of the specific ChebSection, not the shape code. Look
+            // that up directly rather than building the full XSectParams just
+            // for this early-exit check. (Named is_open_sect, not isOpenShape:
+            // that is a file-scope function here and a local would shadow it.)
+            const int cheb_idx = links.xsect_cheb_idx[u];
+            const bool is_open_sect =
+                (cheb_idx >= 0 && static_cast<std::size_t>(cheb_idx) < ctx.cheb_sections.size())
+                    ? ctx.cheb_sections[static_cast<std::size_t>(cheb_idx)].is_open
+                    : xsect::isOpen(shape);
             // G-X4: an aquifer-coupled conduit runs the signed law even
             // with no [LOSSES] seepage rate — `[2D_AQUIFER_LINKS] KC` is
             // what lets a pipe that never leaked GAIN below the table.
             const bool gw_two_way = !CD.gw_coupled.empty() &&
                                     CD.gw_coupled[ucr] != 0;
             const double k_seep = gw_two_way ? CD.gw_kc[ucr] : CD.seep_rate[ucr];
-            const bool wantEvap = xsect::isOpen(shape) && evap > 0.0;
+            const bool wantEvap = is_open_sect && evap > 0.0;
             const bool wantSeep = k_seep > 0.0;
             if (wantEvap || wantSeep) {
                 const XSectParams xs = buildXSP(ctx, u);  // faithful incl. transect

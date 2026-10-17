@@ -1,0 +1,135 @@
+
+[TITLE]
+;;Project Title/Notes
+Save-As path re-anchoring probe
+
+[OPTIONS]
+;;Option               Value
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         KINWAVE
+LINK_OFFSETS         DEPTH
+MIN_SLOPE            0
+ALLOW_PONDING        NO
+SKIP_STEADY_STATE    NO
+
+IGNORE_RAINFALL      NO
+IGNORE_SNOWMELT      YES
+IGNORE_GROUNDWATER   YES
+IGNORE_RDII          NO
+IGNORE_ROUTING       NO
+IGNORE_QUALITY       NO
+
+START_DATE           01/01/2007
+START_TIME           00:00:00
+REPORT_START_DATE    01/01/2007
+REPORT_START_TIME    00:00:00
+END_DATE             01/01/2007
+END_TIME             03:00:00
+SWEEP_START          1/1
+SWEEP_END            12/31
+DRY_DAYS             0
+REPORT_STEP          0:15:00
+WET_STEP             0:15:00
+DRY_STEP             0:15:00
+ROUTING_STEP         0:00:30
+RULE_STEP            0:00:00
+
+INERTIAL_DAMPING     PARTIAL
+NORMAL_FLOW_LIMITED  BOTH
+FORCE_MAIN_EQUATION  H-W
+SURCHARGE_METHOD     EXTRAN
+UNSTEADY_FRICTION    NONE
+UF_K3                0.015
+VARIABLE_STEP        0.75
+LENGTHENING_STEP     0
+MIN_SURFAREA         0
+MAX_TRIALS           8
+HEAD_TOLERANCE       0
+SYS_FLOW_TOL         5
+LAT_FLOW_TOL         5
+MINIMUM_STEP         0.5
+THREADS              1
+WRITE_ABSOLUTE_PATHS YES
+
+[EVAPORATION]
+;;Type       Parameters
+;;---------- ----------
+CONSTANT     0.0000
+DRY_ONLY     NO
+
+[RAINGAGES]
+;;Name             Format       Intvl    SCF      Source          
+;;---------------- ------------ -------- -------- ----------------
+RG1              INTENSITY    1:00         1.00     FILE "/Users/corinnewiesner/Projects/SWMM_dev/tests/unit/engine/data/saveas_paths/data/rain.dat" STA01 IN
+
+[SUBCATCHMENTS]
+;;Name             RainGage         Outlet           Area         %%Imperv   Width        %%Slope    CurbLen    Snowpack         RainScale  SnowScale 
+;;---------------- ---------------- ---------------- ------------ ---------- ------------ ---------- ---------- ---------------- ---------- ----------
+S1               RG1              J1                         10        100          500        0.5          0
+
+[SUBAREAS]
+;;Subcatch         N-Imperv   N-Perv     S-Imperv   S-Perv     %%ZeroImp  RouteTo  PctRouted 
+;;---------------- ---------- ---------- ---------- ---------- ---------- -------- ----------
+S1                   0.0100     0.1000     0.0000     0.0000     100.00 OUTLET       100.00
+
+[INFILTRATION]
+;;Subcatch         Param1     Param2     Param3     Param4     Param5    
+;;---------------- ---------- ---------- ---------- ---------- ----------
+S1                        3        0.5          4          7          0 HORTON
+
+[JUNCTIONS]
+;;Name             Elev         MaxDepth     InitDepth    SurDepth     Aponded     
+;;---------------- ------------ ------------ ------------ ------------ ------------
+J1                    10.0000       5.0000       0.0000       0.0000       0.0000
+
+[OUTFALLS]
+;;Name             Elev         Type         Stage Data       Gated    Route To        
+;;---------------- ------------ ------------ ---------------- -------- ----------------
+O1                          0 FREE         NO      
+
+[CONDUITS]
+;;Name             FromNode         ToNode           Length       Roughness    InOffset     OutOffset    InitFlow   MaxFlow   
+;;---------------- ---------------- ---------------- ------------ ------------ ------------ ------------ ---------- ----------
+C1               J1               O1                           400            0.01            0            0          0          0
+
+[XSECTIONS]
+;;Link             Shape            Geom1        Geom2        Geom3        Geom4        Barrels  Culvert 
+;;---------------- ---------------- ------------ ------------ ------------ ------------ -------- --------
+C1               CIRCULAR         3 0 0 0        1
+
+[REPORT]
+;;Keyword          Value
+DISABLED             NO
+INPUT                NO
+CONTINUITY           YES
+FLOWSTATS            YES
+CONTROLS             NO
+AVERAGES             NO
+SUBCATCHMENTS        NONE
+NODES                NONE
+LINKS                NONE
+
+[TIMESERIES]
+;;Name             Date/Time            Value       
+;;---------------- -------------------- ------------
+TS1              FILE         "/Users/corinnewiesner/Projects/SWMM_dev/tests/unit/engine/data/saveas_paths/data/series.dat"
+
+[MAP]
+DIMENSIONS 0.0000             0.0000             0.0000             0.0000            
+Units      None
+
+[COORDINATES]
+;;Node           X-Coord            Y-Coord           
+;;-------------- ------------------ ------------------
+J1               0.0000             0.0000            
+O1               0.0000             0.0000            
+
+[SYMBOLS]
+;;Gage           X-Coord            Y-Coord           
+;;-------------- ------------------ ------------------
+RG1              0.0000             0.0000            
+
+[FILES]
+;;Mode         FileType   Path
+USE           INFLOWS    "/Users/corinnewiesner/Projects/SWMM_dev/tests/unit/engine/data/saveas_paths/data/inflows.txt"

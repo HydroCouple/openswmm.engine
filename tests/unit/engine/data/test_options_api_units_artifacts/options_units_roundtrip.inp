@@ -19,11 +19,11 @@ IGNORE_RDII          NO
 IGNORE_ROUTING       NO
 IGNORE_QUALITY       NO
 
-START_DATE           02/06/8616
+START_DATE           01/01/2004
 START_TIME           00:00:00
-REPORT_START_DATE    02/06/8616
+REPORT_START_DATE    01/01/2004
 REPORT_START_TIME    00:00:00
-END_DATE             02/06/8616
+END_DATE             01/01/2004
 END_TIME             00:00:00
 SWEEP_START          1/1
 SWEEP_END            12/31
@@ -38,14 +38,16 @@ INERTIAL_DAMPING     PARTIAL
 NORMAL_FLOW_LIMITED  BOTH
 FORCE_MAIN_EQUATION  H-W
 SURCHARGE_METHOD     EXTRAN
+UNSTEADY_FRICTION    NONE
+UF_K3                0.015
 VARIABLE_STEP        0.75
 LENGTHENING_STEP     0
 MIN_SURFAREA         0
 MAX_TRIALS           8
-HEAD_TOLERANCE       0.005
+HEAD_TOLERANCE       0
 SYS_FLOW_TOL         3
 LAT_FLOW_TOL         3
-MINIMUM_STEP         0:00:02
+MINIMUM_STEP         2
 THREADS              8
 
 [EVAPORATION]
@@ -62,16 +64,16 @@ J1                     0.0000       0.0000       0.0000       0.0000       0.000
 [OUTFALLS]
 ;;Name             Elev         Type         Stage Data       Gated    Route To        
 ;;---------------- ------------ ------------ ---------------- -------- ----------------
-O1                     0.0000 FREE         NO      
+O1                          0 FREE         NO      
 
 [CONDUITS]
 ;;Name             FromNode         ToNode           Length       Roughness    InOffset     OutOffset    InitFlow   MaxFlow   
 ;;---------------- ---------------- ---------------- ------------ ------------ ------------ ------------ ---------- ----------
-L1               J1               O1                           100           0.013       0.0000       0.0000     0.0000     0.0000
+L1               J1               O1                           100           0.013            0            0          0          0
 
 [XSECTIONS]
-;;Link             Shape            Geom1        Geom2        Geom3        Geom4        Barrels 
-;;---------------- ---------------- ------------ ------------ ------------ ------------ --------
+;;Link             Shape            Geom1        Geom2        Geom3        Geom4        Barrels  Culvert 
+;;---------------- ---------------- ------------ ------------ ------------ ------------ -------- --------
 L1               CIRCULAR         1 0 0 0        1
 
 [REPORT]

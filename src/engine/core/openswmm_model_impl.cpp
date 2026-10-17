@@ -1027,6 +1027,9 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
     else if (k == "FORCE_MAIN_EQUATION") {
         val = (opt.force_main_eqn == 1) ? "D-W" : "H-W";
     }
+    else if (k == "XSECT_GEOMETRY") {
+        val = (opt.xsect_geometry == openswmm::XsectGeometryMode::EXACT) ? "EXACT" : "LEGACY";
+    }
     else if (k == "NORMAL_FLOW_LIMITED") {
         switch (opt.normal_flow_ltd) {
             case 0:  val = "SLOPE";   break;
@@ -1455,6 +1458,19 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         for (auto& c : vu) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
         if      (vu == "H-W" || vu == "HW" || vu == "HAZEN-WILLIAMS") opt.force_main_eqn = 0;
         else if (vu == "D-W" || vu == "DW" || vu == "DARCY-WEISBACH") opt.force_main_eqn = 1;
+        else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "XSECT_GEOMETRY") {
+        // The compiled sections this selects are built once, at open, by the
+        // resolver. Flipping the flag afterwards would change what the report
+        // prints and nothing else — the hot loop would keep the geometry it
+        // was built with — so refuse rather than leave the two disagreeing.
+        if (to_engine(engine)->context().state != openswmm::EngineState::CREATED)
+            return SWMM_ERR_LIFECYCLE;
+        std::string vu(v);
+        for (auto& c : vu) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+        if      (vu == "LEGACY") opt.xsect_geometry = openswmm::XsectGeometryMode::LEGACY;
+        else if (vu == "EXACT")  opt.xsect_geometry = openswmm::XsectGeometryMode::EXACT;
         else return SWMM_ERR_BADPARAM;
     }
     else if (k == "NORMAL_FLOW_LIMITED") {

@@ -363,6 +363,28 @@ class ReactionSpecies:
         """
         _check(swmm_reaction_init_global_set(_h(self._solver), self._index, value))
 
+    # ------------------------------------------------------------------
+    # Rainfall concentration ([REACTION_RAINFALL])
+    # ------------------------------------------------------------------
+
+    @property
+    def rain_conc(self) -> float:
+        """Concentration carried in by rainfall, in this species' own units.
+
+        0 means rain falls clean, which is the default for every species.
+        """
+        cdef double v = 0.0
+        _check(swmm_reaction_rain_conc_get(_h(self._solver), self._index, &v))
+        return v
+
+    @rain_conc.setter
+    def rain_conc(self, double value) -> None:
+        """Set the rainfall concentration (species units, ``>= 0``).
+
+        ``BUILDING``/``OPENED`` only.
+        """
+        _check(swmm_reaction_rain_conc_set(_h(self._solver), self._index, value))
+
     def __repr__(self) -> str:
         try:
             name, is_wall, units, atol, rtol = _species_row(
