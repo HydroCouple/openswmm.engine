@@ -1130,6 +1130,48 @@ class Heat:
                                      &values[0] if count else NULL))
         return list(values)
 
+    def ground_status(self) -> dict:
+        """Requested and measured finite soil heat, owner counts and capability reason.
+
+        Water heat capacity is J/(m3 K). Canonical storage includes solid
+        grains and porewater. Thermal layers are independent of sigma layers.
+        """
+        cdef SWMM_GroundHeatStatus status
+        status.struct_size=sizeof(SWMM_GroundHeatStatus)
+        _check(swmm_heat_get_ground_status(_h(self._solver),&status))
+        return dict(requested=bool(status.requested),initialized=bool(status.initialized),
+                    aquifer_cells=status.aquifer_cells,standalone_cells=status.standalone_cells,
+                    thermal_layers=status.thermal_layers,conduction_active=bool(status.conduction_active),
+                    lateral_active=bool(status.lateral_active),experimental=bool(status.experimental),
+                    water_heat_capacity=status.water_heat_capacity,reason=(<bytes>status.reason).decode('utf-8'))
+
+    def ground_values(self, int kind, int first_cell, int count) -> list[float]:
+        """Canonical soil values over zero-based mesh cells; unmodeled cells are NaN.
+
+        Kinds 0..13 match SWMM_GroundHeatValue: energy (J), capacity (J/K),
+        mean temperature (degC), initial/advective/source/surface/deep/latent/
+        lateral/water-contact energy (J), residual (J), normalized residual
+        (dimensionless), pending lateral energy (J). Positive receipts enter soil.
+        """
+        if count<0:
+            raise ValueError("count must be nonnegative")
+        cdef double[::1] values=array('d',[0.0])*count
+        _check(swmm_heat_get_ground_values(_h(self._solver),kind,first_cell,count,&values[0] if count else NULL))
+        return list(values)
+
+    def ground_layers(self, int cell, int kind, int first_layer, int count) -> list[float]:
+        """Fixed depth layers; cell/layer indices are zero based.
+
+        Kinds 0..7: top/bottom depth (m), temperature (degC), energy (J),
+        capacity (J/K), moisture (m3/m3), conductivity (W/(m K)), saturated
+        water (m3). Invalid ranges raise without publishing partial values.
+        """
+        if count<0:
+            raise ValueError("count must be nonnegative")
+        cdef double[::1] values=array('d',[0.0])*count
+        _check(swmm_heat_get_ground_layers(_h(self._solver),cell,kind,first_layer,count,&values[0] if count else NULL))
+        return list(values)
+
     def snapshot(self) -> HeatSnapshot:
         """Capture heat settings, shared site and component registrations before initialization."""
         return HeatSnapshot(self._solver)

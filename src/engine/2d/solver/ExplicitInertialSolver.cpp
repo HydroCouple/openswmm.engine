@@ -65,6 +65,8 @@
 #include "SurfaceFluxCalculator.hpp"   // evapSink, computeBoundaryEdgeFlux
 #include "../coupling/NodeCoupling.hpp"  // computeNodeCouplingQ (live exchange)
 #include "../../data/NodeData.hpp"
+#include "../../core/SimulationContext.hpp"
+#include "../gw/GwTransportData.hpp"
 
 namespace openswmm::twoD {
 
@@ -470,6 +472,19 @@ OPENSWMM_SOURCE_INLINE bool ExplicitInertialSolver::prepareCellSources(int i, do
     const double evap = requested_evap * scale;
     if(gw_)gw_->bookSurfaceEt(i,dt,state_->exposedEvaporation(i),evap);
     const double out = requested_out * scale;
+    if(gw_ && gw_->heat().active() && state_->transport.temp_row<0) {
+        // Without a surface temperature state, surface water is an external
+        // prescribed-temperature reservoir. Use the existing rainfall/source
+        // temperature rather than inventing zero-degree infiltration. Return
+        // water and its paired heat leave the modeled thermal domain together.
+        gw_->takeToSurfaceMass(i,gw_->transport().temp_row);
+        const double temperature=gw_->heat().context->heat_config.source_temp(HeatSource::RAINFALL,-1);
+        gw_->bookInfiltrationMass(i,gw_->transport().temp_row,infil*temperature);
+        if(auto* row=const_cast<RuntimeForcing*>(state_->runtime_forcings.get(3,i))) {
+            row->receipt.heat_requested+=requested_infil*temperature*opts_->water_heat_capacity;
+            row->receipt.heat_applied+=infil*temperature*opts_->water_heat_capacity;
+        }
+    }
     if(auto* row=const_cast<RuntimeForcing*>(state_->runtime_forcings.get(3,i))) {
         auto& receipt=row->receipt;
         receipt.requested+=requested_infil; receipt.applied+=infil;
@@ -518,6 +533,8 @@ OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::applyCellSourceRow(
         const double before=mass;
         mass=applyMeshHeatCell(*mesh_,*opts_,state_->heat,i,mass,source.available,
                               source.evap,source.area_dt/mesh_->tri_area[i]);
+        if(gw_&&state_->heat.ground_column&&state_->heat.aquifer_owned[i])
+            gw_->heat().refreshView(i,gw_->transport());
         // Surface-row continuity includes heat gained from both atmosphere
         // and bed. The combined thermal budget separately cancels bed exchange.
         book(SourceLedger::ExternalIn,r,mass-before);
@@ -526,6 +543,8 @@ OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::applyCellSourceRow(
     // transfers directly to groundwater avoids shared-ledger deltas.
     const double concentration = source.available > 0.0 ? mass / source.available : 0.0;
     const double mi = concentration * source.infil;
+    if(r==tr.temp_row&&state_->heat.ground_column)
+        advectStandaloneGround(state_->heat,i,source.infil,concentration);
     const double mc = concentration * source.out;
     const bool intensive = r == tr.age_row || r == tr.temp_row;
     const double me = intensive ? concentration * source.evap : 0.0;
@@ -883,6 +902,8 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
                     mesh_->mannings_n[i], dw_slope_[i],
                     opts_->flux_dh_eps / std::max(edges_.cell_lchar[i], 1.0e-9));
             dt = std::min(dt, opts_->max_timestep);
+            if(state_->heat.ground_column)
+                dt=std::min(dt,state_->heat.groundOwner(i).config->options.thermal_max_step);
             dt_cell[static_cast<std::size_t>(k)] = dt;
             if (dt < local) local = dt;
         }
@@ -2659,7 +2680,7 @@ void ExplicitInertialSolver::pinExternalSourceCells(const std::vector<int>& cell
 }
 
 void ExplicitInertialSolver::setCommonSourceStage(CommonSourceStage& stage) {
-    if(state_ && state_->heat.enabled)
+    if((state_ && state_->heat.enabled)||(gw_&&gw_->heat().active()))
         throw std::invalid_argument("Coupled heat with common surface/LID source ownership is not yet qualified.");
     if (!initialized_ || second_order_ || t_last_sync_ != 0.0 || stage.completedEnd() != 0.0 ||
         !stage.matches(mesh_, state_, gw_))

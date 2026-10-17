@@ -46,6 +46,7 @@
 // [2D_OPTIONS] key routing for swmm_options_get_ext / swmm_options_set_ext
 // (is2DOptionKey / format2DOptionValue / parse2DOptionsLine).
 #include "../2d/input/SectionHandlers2D.hpp"
+#include "../2d/SurfaceRouter2D.hpp"
 #endif
 
 #include <cstdio>
@@ -1188,6 +1189,15 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
     for (auto& c : k) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
     std::string v(value);
 
+#ifdef OPENSWMM_HAS_2D
+    const auto& thermal_context=to_engine(engine)->context();
+    const auto* thermal_router=thermal_context.twod_io.surface_router;
+    const bool finite_thermal=(thermal_router&&thermal_router->options().coupled_heat)||
+         (thermal_context.twod_io.gw&&thermal_context.twod_io.gw->options.thermal_model=="POROUS_EQUILIBRIUM");
+    if(finite_thermal&&thermal_context.state!=openswmm::EngineState::BUILDING&&thermal_context.state!=openswmm::EngineState::OPENED&&
+       (k=="HEAT_TRANSPORT"||k=="WATER_DENSITY"||k=="WATER_SPECIFIC_HEAT_CAPACITY"))return SWMM_ERR_LIFECYCLE;
+#endif
+
     // ── Exception guard at the C boundary ────────────────────────────────
     // Thirty of this function's key branches parse with raw std::stod /
     // std::stoi, which THROW on a malformed value. An exception crossing
@@ -1709,6 +1719,15 @@ SWMM_ENGINE_API int swmm_options_set_ext(SWMM_Engine engine,
     if (!key || !value) return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();
+#ifdef OPENSWMM_HAS_2D
+    const auto thermal_key=upper_key(key);
+    if(thermal_key=="HEAT_MODEL"||thermal_key=="BED_HEAT_MODEL"||thermal_key=="HEAT_SURFACE_EXCHANGE"||thermal_key=="HEAT_RADIATIVE_EXCHANGE") {
+        CHECK_EDITABLE(ctx);
+    }
+    if(((ctx.twod_io.options&&ctx.twod_io.options->coupled_heat)||
+        (ctx.twod_io.gw&&ctx.twod_io.gw->options.thermal_model=="POROUS_EQUILIBRIUM"))&&
+       (thermal_key=="TRANSPORT_TEMPERATURE"||thermal_key=="GROUNDWATER"||thermal_key=="MESH_FILE")) {CHECK_EDITABLE(ctx);}
+#endif
 
     // WRITE_ABSOLUTE_PATHS is a first-class SimulationOptions field, not an
     // extension key. Letting it fall through to ext_options produced a

@@ -3,6 +3,23 @@
 #include <openswmm/engine/openswmm_heat.h>
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/SurfaceRouter2D.hpp"
+#include "../transport/components/HeatFluxModules/HeatOverrides.hpp"
+#include <algorithm>
+#include <limits>
+#include <numeric>
+namespace {
+bool thermalResultsReady(const openswmm::SimulationContext& ctx,const openswmm::twoD::SurfaceRouter2D& router) {
+    return router.isActive() || ctx.state==openswmm::EngineState::ENDED || ctx.state==openswmm::EngineState::REPORTED;
+}
+const openswmm::twoD::GroundThermalCell* groundCell(const openswmm::twoD::SurfaceRouter2D& router,int i) {
+    const auto& h=router.state().heat;
+    const auto& owner=h.ground_column?h.groundOwner(i):router.subsurface().heat();
+    return std::size_t(i)<owner.cells.size()&&!owner.cells[i].column.energy.empty()?&owner.cells[i]:nullptr;
+}
+double soilResidual(const openswmm::twoD::GroundThermalCell& c,double energy) {
+    return energy-c.initial_j-c.advective_j-c.source_j-c.surface_j-c.deep_j-c.latent_j-c.lateral_j-c.water_contact_j;
+}
+}
 #endif
 
 int swmm_heat_get_2d_status(SWMM_Engine engine,SWMM_Heat2DStatus* out) {
@@ -13,16 +30,18 @@ int swmm_heat_get_2d_status(SWMM_Engine engine,SWMM_Heat2DStatus* out) {
     const auto& ctx=to_engine(engine)->context();
     const auto& router=to_engine(engine)->surfaceRouter2D();
     const auto& options=router.options();const auto& heat=router.state().heat;
-    status.requested=options.coupled_heat;status.initialized=router.isActive();
-    status.surface_active=heat.enabled&&heat.surface;
-    status.radiative_active=heat.enabled&&heat.radiative;status.bed_active=heat.enabled&&heat.bed;
-    status.bed_model=options.bed_heat_model;status.experimental=1;
+    status.requested=options.coupled_heat;status.initialized=thermalResultsReady(ctx,router);
+    status.surface_active=status.initialized&&heat.enabled&&heat.surface;
+    status.radiative_active=status.initialized&&heat.enabled&&heat.radiative;
+    status.bed_active=status.initialized&&heat.enabled&&heat.bed;
+    status.bed_model=options.bed_heat_model;status.experimental=options.coupled_heat?1:0;
     status.water_heat_capacity=options.water_heat_capacity;
     const char* reason=!options.coupled_heat?"Transport only; coupled 2D heat is off.":
         !ctx.options.heat_transport?"Saved; inactive because Heat transport is off.":
         !options.transport_temperature?"Saved; inactive because mesh temperature transport is off.":
-        !router.isActive()?"Requested; initialize a model with an enabled surface mesh to measure activation.":
+        !status.initialized?"Requested; initialize a model with an enabled surface mesh to measure activation.":
         !heat.enabled?"Saved; inactive because no mesh temperature row is available.":
+        !heat.surface&&!heat.radiative&&!heat.bed?"Coupled model is initialized; all mesh heat exchanges are off.":
         "Experimental coupled 2D heat is active; restart and coupled snow/LID owners are not yet qualified.";
     std::strncpy(status.reason,reason,sizeof status.reason-1);
 #else
@@ -39,7 +58,7 @@ int swmm_heat_get_2d_values(SWMM_Engine engine,int kind,int first,int count,doub
     const auto& state=router.state();const auto& h=state.heat;
     const auto n=router.mesh().n_cells();
     if(first>n || count>n-first)return SWMM_ERR_BADINDEX;
-    if(!h.enabled)return SWMM_ERR_LIFECYCLE;
+    if(!thermalResultsReady(to_engine(engine)->context(),router)||!h.enabled)return SWMM_ERR_LIFECYCLE;
     if(kind>=SWMM_HEAT_2D_BED_TEMPERATURE && kind<=SWMM_HEAT_2D_BED_CAPACITY && !h.bed)return SWMM_ERR_LIFECYCLE;
     const std::vector<double>* values=nullptr;
     switch(kind) {
@@ -56,11 +75,120 @@ int swmm_heat_get_2d_values(SWMM_Engine engine,int kind,int first,int count,doub
     }
     for(int k=0;k<count;++k) {
         const auto i=std::size_t(first+k);
+        if(h.ground_column&&((kind>=SWMM_HEAT_2D_BED_TEMPERATURE&&kind<=SWMM_HEAT_2D_BED_CAPACITY)||kind==SWMM_HEAT_2D_THERMAL_RESIDUAL)) {
+            const auto& cell=h.groundOwner(int(i)).cells[i];const auto& c=cell.column;
+            double energy=0,capacity=0,total=0;
+            const auto& sd=openswmm::transport::heat::sedimentFor(to_engine(engine)->context(),openswmm::HeatElement::cell2d(int(i)));
+            for(std::size_t j=0;j<c.energy.size();++j) {
+                total+=c.energy[j];const double f=std::clamp((sd.bed_thickness-c.depth_edges[j])/(c.depth_edges[j+1]-c.depth_edges[j]),0.,1.);
+                energy+=f*c.energy[j];capacity+=f*c.capacity[j];
+            }
+            if(kind==SWMM_HEAT_2D_THERMAL_RESIDUAL)
+                out[k]=total-cell.initial_j-cell.advective_j-cell.source_j-cell.surface_j-cell.deep_j-cell.latent_j-cell.lateral_j-cell.water_contact_j+
+                    h.water_j[i]+h.water_bed_j[i]-h.atmospheric_j[i];
+            else out[k]=kind==SWMM_HEAT_2D_BED_ENERGY?energy:kind==SWMM_HEAT_2D_BED_CAPACITY?capacity:energy/capacity;
+            continue;
+        }
         if(values)out[k]=(*values)[i];
         else if(kind==SWMM_HEAT_2D_BED_TEMPERATURE)out[k]=h.bed_energy[i]/h.bed_capacity[i];
         else if(kind==SWMM_HEAT_2D_WATER_TEMPERATURE)
             out[k]=state.volume[i]>0?state.transport.cell_mass[state.transport.idx(state.transport.temp_row,int(i))]/state.volume[i]:h.reported_temperature[i];
         else out[k]=(h.bed?h.bed_energy[i]-h.initial_bed_energy[i]:0)+h.water_j[i]-h.atmospheric_j[i]-h.ground_j[i];
+    }
+    return SWMM_OK;
+#else
+    return SWMM_ERR_PLUGIN;
+#endif
+}
+
+int swmm_heat_get_ground_status(SWMM_Engine engine,SWMM_GroundHeatStatus* out) {
+    CHECK_HANDLE(engine);if(!out||out->struct_size<sizeof(SWMM_GroundHeatStatus))return SWMM_ERR_BADPARAM;
+    SWMM_GroundHeatStatus status{};status.struct_size=sizeof status;
+#ifdef OPENSWMM_HAS_2D
+    const auto& ctx=to_engine(engine)->context();const auto& router=to_engine(engine)->surfaceRouter2D();
+    const auto& h=router.state().heat;const auto& cfg=router.gwTransport().options;
+    status.requested=cfg.thermal_model=="POROUS_EQUILIBRIUM"||router.options().bed_heat_model==2;
+    status.initialized=thermalResultsReady(ctx,router);status.thermal_layers=cfg.thermal_layers;
+    status.experimental=status.requested;status.water_heat_capacity=router.options().water_heat_capacity;
+    if(status.initialized)for(int i=0;i<router.mesh().n_cells();++i)if(groundCell(router,i)) {
+        if(h.ground_column&&!h.aquifer_owned[i])++status.standalone_cells;else ++status.aquifer_cells;
+    }
+    const bool active=status.aquifer_cells+status.standalone_cells>0;
+    status.conduction_active=active&&cfg.conduction;status.lateral_active=status.aquifer_cells>0&&status.conduction_active&&cfg.lateral_conduction;
+    const char* reason=!status.requested?"Water-only model; porous ground heat is off.":
+        !ctx.options.heat_transport?"Saved; inactive because Heat transport is off.":
+        !status.initialized?"Requested; initialize to measure thermal storage and activation.":
+        !active?"Saved; no active ground thermal owner or temperature row.":
+        "Experimental finite soil heat is active; restart and other-owner contacts remain under qualification.";
+    std::strncpy(status.reason,reason,sizeof status.reason-1);
+#else
+    std::strcpy(status.reason,"This engine was built without 2D routing.");
+#endif
+    *out=status;return SWMM_OK;
+}
+int swmm_heat_get_ground_values(SWMM_Engine engine,int kind,int first,int count,double* out) {
+    CHECK_HANDLE(engine);
+    if(kind<0||kind>SWMM_GROUND_HEAT_PENDING_LATERAL||first<0||count<0||(count&&!out))return SWMM_ERR_BADPARAM;
+#ifdef OPENSWMM_HAS_2D
+    const auto& router=to_engine(engine)->surfaceRouter2D();const int n=router.mesh().n_cells();
+    if(first>n||count>n-first)return SWMM_ERR_BADINDEX;
+    if(!thermalResultsReady(to_engine(engine)->context(),router)||
+       (!router.state().heat.ground_column&&!router.subsurface().heat().active()))return SWMM_ERR_LIFECYCLE;
+    for(int k=0;k<count;++k) {
+        const auto* cell=groundCell(router,first+k);
+        if(!cell){out[k]=std::numeric_limits<double>::quiet_NaN();continue;}
+        const auto& c=*cell;const auto& column=c.column;
+        const double energy=std::accumulate(column.energy.begin(),column.energy.end(),0.);
+        const double capacity=std::accumulate(column.capacity.begin(),column.capacity.end(),0.);
+        switch(kind) {
+            case SWMM_GROUND_HEAT_ENERGY:out[k]=energy;break;
+            case SWMM_GROUND_HEAT_CAPACITY:out[k]=capacity;break;
+            case SWMM_GROUND_HEAT_TEMPERATURE:out[k]=energy/capacity;break;
+            case SWMM_GROUND_HEAT_INITIAL_ENERGY:out[k]=c.initial_j;break;
+            case SWMM_GROUND_HEAT_ADVECTIVE_ENERGY:out[k]=c.advective_j;break;
+            case SWMM_GROUND_HEAT_SOURCE_ENERGY:out[k]=c.source_j;break;
+            case SWMM_GROUND_HEAT_SURFACE_ENERGY:out[k]=c.surface_j;break;
+            case SWMM_GROUND_HEAT_DEEP_ENERGY:out[k]=c.deep_j;break;
+            case SWMM_GROUND_HEAT_LATENT_ENERGY:out[k]=c.latent_j;break;
+            case SWMM_GROUND_HEAT_LATERAL_ENERGY:out[k]=c.lateral_j;break;
+            case SWMM_GROUND_HEAT_WATER_CONTACT_ENERGY:out[k]=c.water_contact_j;break;
+            case SWMM_GROUND_HEAT_RESIDUAL:out[k]=soilResidual(c,energy);break;
+            case SWMM_GROUND_HEAT_PENDING_LATERAL:out[k]=router.subsurface().pendingHeat(first+k);break;
+            default:{
+                double scale=capacity+std::abs(c.initial_j);
+                for(double v:{c.advective_j,c.source_j,c.surface_j,c.deep_j,c.latent_j,c.lateral_j,c.water_contact_j})scale+=std::abs(v);
+                for(double v:column.energy)scale+=std::abs(v);
+                out[k]=soilResidual(c,energy)/std::max(1.,scale);break;
+            }
+        }
+    }
+    return SWMM_OK;
+#else
+    return SWMM_ERR_PLUGIN;
+#endif
+}
+int swmm_heat_get_ground_layers(SWMM_Engine engine,int cell,int kind,int first,int count,double* out) {
+    CHECK_HANDLE(engine);
+    if(kind<0||kind>SWMM_GROUND_LAYER_SATURATED_WATER||first<0||count<0||(count&&!out))return SWMM_ERR_BADPARAM;
+#ifdef OPENSWMM_HAS_2D
+    const auto& router=to_engine(engine)->surfaceRouter2D();
+    if(cell<0||cell>=router.mesh().n_cells())return SWMM_ERR_BADINDEX;
+    if(!thermalResultsReady(to_engine(engine)->context(),router))return SWMM_ERR_LIFECYCLE;
+    const auto* c=groundCell(router,cell);if(!c)return SWMM_ERR_LIFECYCLE;
+    const int n=int(c->column.energy.size());if(first>n||count>n-first)return SWMM_ERR_BADINDEX;
+    const auto& column=c->column;
+    for(int k=0;k<count;++k) {
+        const auto j=std::size_t(first+k);
+        switch(kind) {
+            case SWMM_GROUND_LAYER_TOP:out[k]=column.depth_edges[j];break;
+            case SWMM_GROUND_LAYER_BOTTOM:out[k]=column.depth_edges[j+1];break;
+            case SWMM_GROUND_LAYER_TEMPERATURE:out[k]=column.energy[j]/column.capacity[j];break;
+            case SWMM_GROUND_LAYER_ENERGY:out[k]=column.energy[j];break;
+            case SWMM_GROUND_LAYER_CAPACITY:out[k]=column.capacity[j];break;
+            case SWMM_GROUND_LAYER_MOISTURE:out[k]=column.theta[j];break;
+            case SWMM_GROUND_LAYER_CONDUCTIVITY:out[k]=column.conductivity[j];break;
+            default:out[k]=c->saturated_water[j];break;
+        }
     }
     return SWMM_OK;
 #else

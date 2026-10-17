@@ -1451,6 +1451,21 @@ cdef extern from "openswmm_heat.h":
         char reason[256]
     int swmm_heat_get_2d_status(SWMM_Engine,SWMM_Heat2DStatus*)
     int swmm_heat_get_2d_values(SWMM_Engine,int,int,int,double*)
+    ctypedef struct SWMM_GroundHeatStatus:
+        unsigned int struct_size
+        int requested
+        int initialized
+        int aquifer_cells
+        int standalone_cells
+        int thermal_layers
+        int conduction_active
+        int lateral_active
+        int experimental
+        double water_heat_capacity
+        char reason[256]
+    int swmm_heat_get_ground_status(SWMM_Engine,SWMM_GroundHeatStatus*)
+    int swmm_heat_get_ground_values(SWMM_Engine,int,int,int,double*)
+    int swmm_heat_get_ground_layers(SWMM_Engine,int,int,int,int,double*)
 
     # Toggles
     cdef int swmm_heat_get_enabled(SWMM_Engine e, int* enabled)

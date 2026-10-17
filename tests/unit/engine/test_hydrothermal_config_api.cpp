@@ -274,14 +274,14 @@ int writeEverything(SWMM_Engine e) {
     ok(swmm_climate_set_adc_pervious(e, adc, 10));
     ok(swmm_climate_set_snow_temp(e, 30.5));
     ok(swmm_snow_set_model(e, 1));
-    ok(swmm_options_set_ext(e, "HEAT_TRANSPORT", "YES"));
+    ok(swmm_options_set(e, "HEAT_TRANSPORT", "YES"));
     ok(swmm_heat_set_module(e, SWMM_HEAT_SEDIMENT_EXCHANGE, 1));
     ok(swmm_heat_set_dry_policy(e, 1));
     ok(swmm_heat_set_source_temp(e, SWMM_HEAT_SRC_GW, 17.5));
     ok(swmm_heat_set_sediment(e, SWMM_HEAT_SED_GROUND_TEMPERATURE, 9.5));
     ok(swmm_heat_set_solar(e, SWMM_HEAT_SOLAR_LATITUDE, 0.0));
     ok(swmm_heat_set_solar(e, SWMM_HEAT_SOLAR_LONGITUDE, 0.0));
-    ok(swmm_process_component_register(e, "HEAT", "atomic_heat.cfg"));
+    ok(swmm_process_component_register(e, "org.hydrocouple.openswmm.heat", "atomic_heat.cfg"));
     ok(swmm_file_path_set(e, SWMM_FILE_CLIMATE_TEMP, "", "climate_atomic.dat"));
     return rc;
 }
@@ -605,7 +605,7 @@ std::string channelDeck() {
 int authorBed(SWMM_Engine e, bool module, double cb_velocity) {
     int rc = SWMM_OK;
     const auto ok = [&rc](int r) { if (rc == SWMM_OK) rc = r; };
-    ok(swmm_options_set_ext(e, "HEAT_TRANSPORT", "YES"));
+    ok(swmm_options_set(e, "HEAT_TRANSPORT", "YES"));
     ok(swmm_process_component_register(e, "org.hydrocouple.openswmm.heat", "c3_bed.heat"));
     ok(swmm_heat_set_source_temp(e, SWMM_HEAT_SRC_EXTERNAL_INFLOW, 22.0));
     ok(swmm_heat_set_source_temp(e, SWMM_HEAT_SRC_INITIAL_STATE, 22.0));

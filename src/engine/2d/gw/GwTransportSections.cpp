@@ -158,6 +158,39 @@ std::string parseGwTransportOptionsLine(const std::vector<std::string>& tokens,
     const std::string& k = tokens[0];
     const std::string& v = tokens[1];
 
+    if(iequals(k,"THERMAL_MODEL")) {
+        if(iequals(v,"WATER_ONLY"))o.thermal_model="WATER_ONLY";
+        else if(iequals(v,"POROUS_EQUILIBRIUM"))o.thermal_model="POROUS_EQUILIBRIUM";
+        else return "[GW_TRANSPORT_OPTIONS] THERMAL_MODEL expects WATER_ONLY or POROUS_EQUILIBRIUM";
+        o.thermal_authored.insert("THERMAL_MODEL");return {};
+    }
+    if(iequals(k,"THERMAL_LAYERS")) {
+        double count=0;if(!num(v,count)||count<1||count>128||std::floor(count)!=count)
+            return "[GW_TRANSPORT_OPTIONS] THERMAL_LAYERS must be an integer in [1,128]";
+        o.thermal_layers=int(count);o.thermal_authored.insert("THERMAL_LAYERS");return {};
+    }
+    if(iequals(k,"LATERAL_CONDUCTION")) {
+        if(iequals(v,"YES")||iequals(v,"ON"))o.lateral_conduction=true;
+        else if(iequals(v,"NO")||iequals(v,"OFF"))o.lateral_conduction=false;
+        else return "[GW_TRANSPORT_OPTIONS] LATERAL_CONDUCTION expects YES or NO";
+        o.thermal_authored.insert("LATERAL_CONDUCTION");return {};
+    }
+    if(iequals(k,"SOIL_ET_HEAT")) {
+        if(iequals(v,"LATENT_SURFACE"))o.soil_et_heat="LATENT_SURFACE";
+        else if(iequals(v,"SENSIBLE_ONLY"))o.soil_et_heat="SENSIBLE_ONLY";
+        else return "[GW_TRANSPORT_OPTIONS] SOIL_ET_HEAT expects LATENT_SURFACE or SENSIBLE_ONLY";
+        o.thermal_authored.insert("SOIL_ET_HEAT");return {};
+    }
+    for(const auto* key:{"THERMAL_MAX_STEP","WATER_THERMAL_CONDUCTIVITY","AIR_THERMAL_CONDUCTIVITY","SURFACE_THERMAL_RESISTANCE"})
+        if(iequals(k,key)) {
+            double value=0;if(!num(v,value)||!(value>0))return std::string("[GW_TRANSPORT_OPTIONS] ")+key+" must be finite and positive";
+            if(iequals(k,"THERMAL_MAX_STEP"))o.thermal_max_step=value;
+            else if(iequals(k,"WATER_THERMAL_CONDUCTIVITY"))o.water_conductivity=value;
+            else if(iequals(k,"AIR_THERMAL_CONDUCTIVITY"))o.air_conductivity=value;
+            else o.surface_resistance=value;
+            o.thermal_authored.insert(key);return {};
+        }
+
     auto yesno = [&](bool& field) -> std::string {
         if      (iequals(v, "YES") || iequals(v, "ON"))  field = true;
         else if (iequals(v, "NO")  || iequals(v, "OFF")) field = false;
@@ -170,19 +203,23 @@ std::string parseGwTransportOptionsLine(const std::vector<std::string>& tokens,
     if (iequals(k, "TRANSPORT_AGE"))         return yesno(o.transport_age);
     if (iequals(k, "TRANSPORT_TEMPERATURE")) return yesno(o.transport_temperature);
     if (iequals(k, "DISPERSION"))            return yesno(o.dispersion);
-    if (iequals(k, "CONDUCTION"))            return yesno(o.conduction);
+    if (iequals(k, "CONDUCTION")) {
+        auto error=yesno(o.conduction);if(error.empty())o.thermal_authored.insert("CONDUCTION");return error;
+    }
 
     if (iequals(k, "SURFACE_THERMAL_BC")) {
+        if(iequals(v,"ADIABATIC")){o.surface_thermal_bc="ADIABATIC";o.surface_thermal_arg.clear();return {};}
         if (iequals(v, "AIR") || iequals(v, "SURFACE_WATER")) {
             o.surface_thermal_bc = iequals(v, "AIR") ? "AIR" : "SURFACE_WATER";
             o.surface_thermal_arg.clear();
-        } else if (iequals(v, "FIXED") || iequals(v, "TIMESERIES")) {
+        } else if (iequals(v, "FIXED") || iequals(v, "TIMESERIES")||iequals(v,"HEAT_FLUX")||iequals(v,"FLUX_TIMESERIES")) {
             if (tokens.size() < 3)
                 return "[GW_TRANSPORT_OPTIONS] SURFACE_THERMAL_BC " + v +
                        " needs a value or series name";
-            o.surface_thermal_bc  = iequals(v, "FIXED") ? "FIXED" : "TIMESERIES";
+            o.surface_thermal_bc  = iequals(v, "FIXED") ? "FIXED" : iequals(v,"HEAT_FLUX")?"HEAT_FLUX":
+                                    iequals(v,"FLUX_TIMESERIES")?"FLUX_TIMESERIES":"TIMESERIES";
             o.surface_thermal_arg = tokens[2];
-            if (o.surface_thermal_bc == "FIXED") {
+            if (o.surface_thermal_bc == "FIXED"||o.surface_thermal_bc=="HEAT_FLUX") {
                 double t = 0.0;
                 if (!num(tokens[2], t))
                     return "[GW_TRANSPORT_OPTIONS] SURFACE_THERMAL_BC FIXED "
@@ -196,8 +233,9 @@ std::string parseGwTransportOptionsLine(const std::vector<std::string>& tokens,
     }
 
     if (iequals(k, "DEEP_THERMAL_BC")) {
+        if(iequals(v,"ADIABATIC")){o.deep_thermal_bc="ADIABATIC";o.deep_thermal_arg.clear();o.deep_depth=0;return {};}
         if (!(iequals(v, "GEOTHERMAL_FLUX") || iequals(v, "FIXED_TEMP") ||
-              iequals(v, "TIMESERIES")))
+              iequals(v, "TIMESERIES")||iequals(v,"FLUX_TIMESERIES")))
             return "[GW_TRANSPORT_OPTIONS] DEEP_THERMAL_BC: expected "
                    "GEOTHERMAL_FLUX|FIXED_TEMP|TIMESERIES, got " + v;
         if (tokens.size() < 3)
@@ -205,9 +243,9 @@ std::string parseGwTransportOptionsLine(const std::vector<std::string>& tokens,
                    "series name";
         o.deep_thermal_bc  = iequals(v, "GEOTHERMAL_FLUX") ? "GEOTHERMAL_FLUX"
                            : iequals(v, "FIXED_TEMP")      ? "FIXED_TEMP"
-                                                           : "TIMESERIES";
+                           : iequals(v,"FLUX_TIMESERIES") ? "FLUX_TIMESERIES" : "TIMESERIES";
         o.deep_thermal_arg = tokens[2];
-        if (o.deep_thermal_bc != "TIMESERIES") {
+        if (o.deep_thermal_bc != "TIMESERIES"&&o.deep_thermal_bc!="FLUX_TIMESERIES") {
             double d = 0.0;
             if (!num(tokens[2], d))
                 return "[GW_TRANSPORT_OPTIONS] DEEP_THERMAL_BC " +
@@ -229,7 +267,7 @@ std::string parseGwTransportOptionsLine(const std::vector<std::string>& tokens,
         else if (iequals(v, "GEOMETRIC"))  o.thermal_mixing = "GEOMETRIC";
         else return "[GW_TRANSPORT_OPTIONS] THERMAL_MIXING: expected "
                     "ARITHMETIC|GEOMETRIC, got " + v;
-        return {};
+        o.thermal_authored.insert("THERMAL_MIXING");return {};
     }
 
     if (iequals(k, "C_DIFF")) {

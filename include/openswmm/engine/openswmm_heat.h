@@ -34,6 +34,9 @@
  *      Setters mutate engine state; the flux modules re-read the config
  *      every step, so a mid-run edit takes effect on the next routing step.
  *      This is the same contract `openswmm_water_age.h` documents.
+ *      New finite mesh/soil stores require model selection, initial state
+ *      and capacity-defining parameters before initialization. Weather and
+ *      flux inputs retain their live-update behavior.
  *
  * @warning `swmm_heat_set_shortwave_mode` with
  *          ::SWMM_HEAT_SW_COMPUTED returns ::SWMM_ERR_BADPARAM unless BOTH
@@ -67,7 +70,8 @@ typedef enum SWMM_HeatFluxModule {
 } SWMM_HeatFluxModule;
 
 /** Pre-run climate/snow/heat transaction. The callback may use only climate,
- * snow-configuration, heat-configuration, HEAT_TRANSPORT, component registrations and climate-file path
+ * snow configuration, heat configuration (including 2D heat and GW/aquifer
+ * authoring), HEAT_TRANSPORT, component registrations and climate-file path
  * setters. Returning an error restores values and provenance. The callback
  * must not change topology, destroy the engine, run, or nest transactions. */
 typedef int (*SWMM_HydrothermalEdit)(SWMM_Engine engine, void* user);
@@ -80,7 +84,7 @@ SWMM_ENGINE_API int swmm_heat_set_dry_policy(SWMM_Engine engine, int policy);
  * soil density, soil specific heat, all SI. */
 SWMM_ENGINE_API int swmm_heat_get_lid_material(SWMM_Engine engine, double values[4]);
 SWMM_ENGINE_API int swmm_heat_clear_solar_site(SWMM_Engine engine);
-/** Exact pre-run memento for heat settings, their shared site and component
+/** Exact pre-run memento for heat settings, 2D heat/GW/aquifer authoring, their shared site and component
  * registrations. Callers must check their authoring identity before Undo. It owns no
  * engine; the caller must ensure the original engine is still open before
  * restoring. Destroy is safe after closing the engine. */
@@ -506,6 +510,50 @@ typedef enum SWMM_Heat2DValue {
     SWMM_HEAT_2D_THERMAL_RESIDUAL=12 /**< J; bed change + water increment - external heat. */
 } SWMM_Heat2DValue;
 SWMM_ENGINE_API int swmm_heat_get_2d_values(SWMM_Engine,int kind,int first_cell,int count,double* values);
+
+/** Soil state is canonical solid-plus-water energy, not a second copy of the
+ * transported water-temperature row. Initialize struct_size before reading. */
+typedef struct SWMM_GroundHeatStatus {
+    unsigned int struct_size;
+    int requested,initialized,aquifer_cells,standalone_cells,thermal_layers;
+    int conduction_active,lateral_active,experimental;
+    double water_heat_capacity; /**< J/(m3 K). */
+    char reason[256];
+} SWMM_GroundHeatStatus;
+SWMM_ENGINE_API int swmm_heat_get_ground_status(SWMM_Engine,SWMM_GroundHeatStatus*);
+/** Per-cell canonical fields. Positive receipts enter soil. Unmodeled cells
+ * return NaN; an entirely inactive model returns SWMM_ERR_LIFECYCLE. All
+ * energies are J relative to 0 degC, accumulated since initialization. */
+typedef enum SWMM_GroundHeatValue {
+    SWMM_GROUND_HEAT_ENERGY=0,
+    SWMM_GROUND_HEAT_CAPACITY=1, /**< J/K. */
+    SWMM_GROUND_HEAT_TEMPERATURE=2, /**< capacity-weighted degC. */
+    SWMM_GROUND_HEAT_INITIAL_ENERGY=3,
+    SWMM_GROUND_HEAT_ADVECTIVE_ENERGY=4,
+    SWMM_GROUND_HEAT_SOURCE_ENERGY=5,
+    SWMM_GROUND_HEAT_SURFACE_ENERGY=6,
+    SWMM_GROUND_HEAT_DEEP_ENERGY=7,
+    SWMM_GROUND_HEAT_LATENT_ENERGY=8,
+    SWMM_GROUND_HEAT_LATERAL_ENERGY=9,
+    SWMM_GROUND_HEAT_WATER_CONTACT_ENERGY=10,
+    SWMM_GROUND_HEAT_RESIDUAL=11,
+    SWMM_GROUND_HEAT_NORMALIZED_RESIDUAL=12, /**< dimensionless, absolute-energy scaled. */
+    SWMM_GROUND_HEAT_PENDING_LATERAL=13 /**< J awaiting this cell's LTS gather; add to stored energy for domain totals. */
+} SWMM_GroundHeatValue;
+SWMM_ENGINE_API int swmm_heat_get_ground_values(SWMM_Engine,int kind,int first_cell,int count,double* values);
+/** Fixed thermal depth grid, independent of hydraulic sigma layers. */
+typedef enum SWMM_GroundHeatLayerValue {
+    SWMM_GROUND_LAYER_TOP=0, /**< depth below terrain, m. */
+    SWMM_GROUND_LAYER_BOTTOM=1, /**< depth below terrain, m. */
+    SWMM_GROUND_LAYER_TEMPERATURE=2, /**< degC. */
+    SWMM_GROUND_LAYER_ENERGY=3, /**< J relative to 0 degC. */
+    SWMM_GROUND_LAYER_CAPACITY=4, /**< J/K. */
+    SWMM_GROUND_LAYER_MOISTURE=5, /**< m3 water per m3 bulk soil. */
+    SWMM_GROUND_LAYER_CONDUCTIVITY=6, /**< W/(m K). */
+    SWMM_GROUND_LAYER_SATURATED_WATER=7 /**< m3. */
+} SWMM_GroundHeatLayerValue;
+/** Zero-based cell/layer ranges. Invalid ranges leave all output untouched. */
+SWMM_ENGINE_API int swmm_heat_get_ground_layers(SWMM_Engine,int cell,int kind,int first_layer,int count,double* values);
 
 #ifdef __cplusplus
 }

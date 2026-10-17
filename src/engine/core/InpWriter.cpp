@@ -567,7 +567,7 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
         std::fprintf(f, "%-24s %s\n", "TRANSPORT_AGE",         o.transport_age         ? "YES" : "NO");
         std::fprintf(f, "%-24s %s\n", "TRANSPORT_TEMPERATURE", o.transport_temperature ? "YES" : "NO");
         std::fprintf(f, "%-24s %s\n", "DISPERSION",            o.dispersion ? "YES" : "NO");
-        std::fprintf(f, "%-24s %s\n", "CONDUCTION",            o.conduction ? "YES" : "NO");
+        if(o.thermal_authored.count("CONDUCTION"))std::fprintf(f, "%-24s %s\n", "CONDUCTION", o.conduction ? "YES" : "NO");
         std::fprintf(f, "%-24s %s%s%s\n", "SURFACE_THERMAL_BC",
                      o.surface_thermal_bc.c_str(),
                      o.surface_thermal_arg.empty() ? "" : " ",
@@ -587,7 +587,19 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
                              o.deep_thermal_bc.c_str(),
                              o.deep_thermal_arg.c_str());
         }
-        std::fprintf(f, "%-24s %s\n", "THERMAL_MIXING", o.thermal_mixing.c_str());
+        if(o.thermal_authored.count("THERMAL_MIXING"))std::fprintf(f, "%-24s %s\n", "THERMAL_MIXING", o.thermal_mixing.c_str());
+        if(o.deep_thermal_bc=="ADIABATIC")std::fprintf(f,"%-24s ADIABATIC\n","DEEP_THERMAL_BC");
+        if(o.thermal_authored.count("THERMAL_MODEL"))std::fprintf(f,"%-24s %s\n","THERMAL_MODEL",o.thermal_model.c_str());
+        if(o.thermal_authored.count("THERMAL_LAYERS"))std::fprintf(f,"%-24s %d\n","THERMAL_LAYERS",o.thermal_layers);
+        if(o.thermal_authored.count("LATERAL_CONDUCTION"))std::fprintf(f,"%-24s %s\n","LATERAL_CONDUCTION",o.lateral_conduction?"YES":"NO");
+        if(o.thermal_authored.count("SOIL_ET_HEAT"))std::fprintf(f,"%-24s %s\n","SOIL_ET_HEAT",o.soil_et_heat.c_str());
+        for(const auto* key:{"THERMAL_MAX_STEP","WATER_THERMAL_CONDUCTIVITY","AIR_THERMAL_CONDUCTIVITY","SURFACE_THERMAL_RESISTANCE"})
+            if(o.thermal_authored.count(key)) {
+                const double value=std::strcmp(key,"THERMAL_MAX_STEP")==0?o.thermal_max_step:
+                    std::strcmp(key,"WATER_THERMAL_CONDUCTIVITY")==0?o.water_conductivity:
+                    std::strcmp(key,"AIR_THERMAL_CONDUCTIVITY")==0?o.air_conductivity:o.surface_resistance;
+                std::fprintf(f,"%-24s %.17g\n",key,value);
+            }
         std::fprintf(f, "%-24s %.12g\n", "C_DIFF", o.c_diff);
     }
 

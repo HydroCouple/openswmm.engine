@@ -68,6 +68,11 @@ extern "C" {
  * SURFACE_THERMAL_BC, DEEP_THERMAL_BC, THERMAL_MIXING, C_DIFF. Values use the
  * section's own spelling; SURFACE_THERMAL_BC / DEEP_THERMAL_BC read back with
  * their argument appended ("FIXED 12.5", "GEOTHERMAL_FLUX 0.065 DEPTH 20").
+ * Additive porous-model keys: THERMAL_MODEL WATER_ONLY|POROUS_EQUILIBRIUM,
+ * THERMAL_LAYERS (fixed depth cells, 1..128), LATERAL_CONDUCTION (default NO),
+ * THERMAL_MAX_STEP (s), WATER_THERMAL_CONDUCTIVITY and AIR_THERMAL_CONDUCTIVITY
+ * (W/m/K), SURFACE_THERMAL_RESISTANCE (m2 K/W), SOIL_ET_HEAT
+ * LATENT_SURFACE|SENSIBLE_ONLY. WATER_ONLY never activates dormant conduction.
  */
 
 /** @brief Read one option into @p buf. SWMM_ERR_BADPARAM on an unknown key. */

@@ -66,11 +66,13 @@
 #include "../solver/InertialEdges.hpp"
 #include "../gw/GwTransportData.hpp"   // T7.1
 #include "../../data/NodeData.hpp"
+#include "../../transport/components/HeatFluxModules/SurfaceExchange.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <numeric>
 #include <stdexcept>
 
 namespace openswmm::twoD {
@@ -247,6 +249,8 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh,
                                          SubsurfaceConfig& cfg,
                                          std::vector<std::string>& warnings) {
     state_ = SubsurfaceState{};
+    heat_.clear();heat_link_out_volume_.clear();
+    heat_faces_.clear();heat_pending_left_.clear();heat_pending_right_.clear();heat_dt_.clear();
     if (cfg.empty()) return {};
 
     options_   = cfg.options;
@@ -470,6 +474,9 @@ void SubsurfaceSolver::refreshDtCell(const MeshData& mesh,
         // that is the whole point of the reduction.
 
         state_.dt_cell[u] = std::min(dt_g, dt_u);
+        if(heat_.active()&&!heat_.cells[u].column.energy.empty())
+            state_.dt_cell[u]=std::min(state_.dt_cell[u],heat_.config->options.thermal_max_step);
+        if(u<heat_dt_.size())state_.dt_cell[u]=std::min(state_.dt_cell[u],heat_dt_[u]);
     }
 }
 
@@ -541,6 +548,7 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
         const auto eu = static_cast<std::size_t>(e);
         const auto l  = static_cast<std::size_t>(E.cL[eu]);
         const auto r  = static_cast<std::size_t>(E.cR[eu]);
+        if(!heat_faces_.empty())fireLateralHeatFace(e,dt);
 
         const double HL = state_.z_bed[l] + state_.hg[l];
         const double HR = state_.z_bed[r] + state_.hg[r];
@@ -646,7 +654,12 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
                             tr_.dissolvedFraction(s, static_cast<int>(l), state_.theta_s[l]);
                         const double cb = mb / vb *
                             tr_.dissolvedFraction(s, static_cast<int>(r), state_.theta_s[r]);
-                        double dMd = cond * (ca - cb);      // + = l → r
+                        // Porous heat already resolves molecular phase
+                        // conduction. Only mechanical dispersion rides the
+                        // water temperature row; solute D_m is unchanged.
+                        const double row_cond=heat_.active()&&s==tr_.temp_row
+                            ? alpha*vpore*area_f*E.inv_dx[eu]*dt : cond;
+                        double dMd = row_cond * (ca - cb);      // + = l → r
                         if (dMd == 0.0) continue;
                         // The pairwise equalisation bound, divided by the
                         // RECEIVER's face count: pairwise bounds do not
@@ -1056,6 +1069,8 @@ void SubsurfaceSolver::initTransport(const RowLayoutLite& rows,
                                      const std::vector<double>& pollut_decay,
                                      std::vector<std::string>& warnings) {
     tr_.clear();
+    heat_.clear();heat_link_out_volume_.clear();
+    heat_faces_.clear();heat_pending_left_.clear();heat_pending_right_.clear();heat_dt_.clear();
     if (!state_.active || rows.n_species <= 0) return;
     const int ne = options_.per_subcatch ? 0
                                          : (edges_ ? edges_->ne : 0);
@@ -1102,7 +1117,8 @@ void SubsurfaceSolver::initTransport(const RowLayoutLite& rows,
         // place or dropping them silently.
         bool any_layer = false;
         for (const auto& r : gw->initial_quality)
-            if (r.zone == GwZone::LAYER) { any_layer = true; break; }
+            if (r.zone == GwZone::LAYER && !(gw->options.thermal_model=="POROUS_EQUILIBRIUM" &&
+                rows.temp_row>=0 && r.species=="__TEMPERATURE__")) { any_layer = true; break; }
         if (any_layer)
             warnings.emplace_back(
                 "[GW_INITIAL_QUALITY] LAYER rows were not applied: the "
@@ -1869,7 +1885,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     // so mass can never travel on a volume the water gave back.
     if (tr_.active()) {
         CellFlux f;
-        f.runtime_dt=dt; f.requested_source_out=requested_source_out;
+        f.hg_final=hg1;f.runtime_dt=dt; f.requested_source_out=requested_source_out;
         f.v_sat0   = hg0 * ts * A;
         f.v_uns0   = hu_pre * A;
         f.lateral  = lat_vol;
@@ -1923,7 +1939,168 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
 // T7.1 — one cell's species pass
 // ---------------------------------------------------------------------------
 
+std::string SubsurfaceSolver::initLateralHeat() {
+    const auto& o=heat_.config->options;
+    if(!o.conduction||!o.lateral_conduction)return {};
+    const int n=state_.n_cells,nz=o.thermal_layers;const auto& edges=*edges_;
+    heat_faces_.resize(edges.ne);heat_pending_left_.assign(std::size_t(edges.ne)*nz,0);
+    heat_pending_right_=heat_pending_left_;heat_dt_.assign(n,1e30);
+    std::vector<double> conductance(std::size_t(n)*nz,0);
+    for(int e=0;e<edges.ne;++e) {
+        const int l=edges.cL[e],r=edges.cR[e];if(!covers(l)||!covers(r))continue;
+        auto& face=heat_faces_[e];const auto& a=heat_.cells[l].column;const auto& b=heat_.cells[r].column;
+        face.distance_left=mesh_->edge_dist_c[edges.slotL[e]];face.distance_right=mesh_->edge_dist_c[edges.slotR[e]];
+        if(!(face.distance_left>0)||!(face.distance_right>0)||!std::isfinite(face.distance_left)||!std::isfinite(face.distance_right))
+            return "Lateral heat contact requires positive cell-centroid normal distances on both sides of every face.";
+        const double ka=std::max({a.material.grain_conductivity,a.material.water_conductivity,a.material.air_conductivity});
+        const double kb=std::max({b.material.grain_conductivity,b.material.water_conductivity,b.material.air_conductivity});
+        int j=0,k=0;while(j<nz&&k<nz) {
+            const double atop=mesh_->tri_cz[l]-a.depth_edges[j],abot=mesh_->tri_cz[l]-a.depth_edges[j+1];
+            const double btop=mesh_->tri_cz[r]-b.depth_edges[k],bbot=mesh_->tri_cz[r]-b.depth_edges[k+1];
+            const double low=std::max(abot,bbot),high=std::min(atop,btop);
+            if(high>low) {
+                face.slices.push_back({j,k,low,high});
+                const double g=edges.xi[e]*(high-low)/(face.distance_left/ka+face.distance_right/kb);
+                conductance[std::size_t(l)*nz+j]+=g;conductance[std::size_t(r)*nz+k]+=g;
+            }
+            if(abot>=bbot)++j;if(bbot>=abot)++k;
+        }
+    }
+    // Solid capacity and the largest phase conductivity give a bound that
+    // remains safe when theta or the saturated footprint changes between
+    // tier rebuilds. The explicit contact sum is at most one half per step.
+    for(int i=0;i<n;++i)if(covers(i)) {
+        const auto& c=heat_.cells[i].column;const auto& m=c.material;
+        for(int j=0;j<nz;++j)if(const double g=conductance[std::size_t(i)*nz+j];g>0) {
+            const double capacity=c.area*(c.depth_edges[j+1]-c.depth_edges[j])*(1-m.porosity)*m.grain_density*m.grain_specific_heat;
+            heat_dt_[i]=std::min(heat_dt_[i],std::min(.5,o.c_diff)*capacity/g);
+        }
+    }
+    return {};
+}
+void SubsurfaceSolver::fireLateralHeatFace(int e,double dt) {
+    const auto& face=heat_faces_[e];if(face.slices.empty())return;
+    const int l=edges_->cL[e],r=edges_->cR[e],nz=heat_.config->options.thermal_layers;
+    const auto& a=heat_.cells[l].column;const auto& b=heat_.cells[r].column;
+    const double table=std::min(state_.z_bed[l]+state_.hg[l],state_.z_bed[r]+state_.hg[r]);
+    for(const auto& s:face.slices) {
+        const double height=std::min(s.high,table)-s.low;if(!(height>0))continue;
+        const double g=edges_->xi[e]*height/(face.distance_left/a.conductivity[s.left]+face.distance_right/b.conductivity[s.right]);
+        const double joules=dt*g*(a.energy[s.left]/a.capacity[s.left]-b.energy[s.right]/b.capacity[s.right]);
+        if(!std::isfinite(joules))throw std::runtime_error("Nonfinite saturated lateral thermal contact; check material properties and step size.");
+        heat_pending_left_[std::size_t(e)*nz+s.left]-=joules;
+        heat_pending_right_[std::size_t(e)*nz+s.right]+=joules;
+    }
+}
+void SubsurfaceSolver::gatherLateralHeat(int i) noexcept {
+    if(heat_faces_.empty())return;
+    const int nz=heat_.config->options.thermal_layers;auto& cell=heat_.cells[i];
+    for(int p=edges_->cell_ptr[i];p<edges_->cell_ptr[i+1];++p) {
+        const int e=edges_->cell_edge[p];auto& pending=edges_->cell_sign[p]>0?heat_pending_left_:heat_pending_right_;
+        for(int j=0;j<nz;++j) {
+            auto& receipt=pending[std::size_t(e)*nz+j];cell.column.energy[j]+=receipt;cell.lateral_j+=receipt;receipt=0;
+        }
+    }
+}
+double SubsurfaceSolver::pendingHeat(int i) const noexcept {
+    if(heat_faces_.empty()||i<0||i>=state_.n_cells)return 0;
+    const int nz=heat_.config->options.thermal_layers;double total=0;
+    for(int p=edges_->cell_ptr[i];p<edges_->cell_ptr[i+1];++p) {
+        const int e=edges_->cell_edge[p];const auto& pending=edges_->cell_sign[p]>0?heat_pending_left_:heat_pending_right_;
+        for(int j=0;j<nz;++j)total+=pending[std::size_t(e)*nz+j];
+    }
+    return total;
+}
+std::string SubsurfaceSolver::initHeat(SimulationContext& ctx,const GwTransportData& config) {
+    heat_.clear();heat_link_out_volume_.clear();
+    heat_faces_.clear();heat_pending_left_.clear();heat_pending_right_.clear();heat_dt_.clear();
+    if(config.options.thermal_model!="POROUS_EQUILIBRIUM"||tr_.temp_row<0)return {};
+    if(config.options.thermal_model=="POROUS_EQUILIBRIUM" && tr_.temp_row>=0 && options_.per_subcatch)
+        return "Porous ground heat currently requires a spatial mesh; PER_SUBCATCH retains water-only heat transport.";
+    if(auto error=heat_.initialize(ctx,*mesh_,state_,tr_,config,covered_);!error.empty())return error;
+    if(heat_.active()) {
+        heat_link_out_volume_.assign(state_.n_cells,0);
+        for(int i=0;i<state_.n_cells;++i)heat_.refreshView(i,tr_);
+        if(auto error=initLateralHeat();!error.empty())return error;
+        refreshDtCell(*mesh_,*edges_);
+    }
+    return {};
+}
+
+void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
+    auto& cell=heat_.cells[i];auto& column=cell.column;
+    if(column.energy.empty()||cell.failed)return;
+    try {
+        gatherLateralHeat(i);
+        const int r=tr_.temp_row;const auto k=tr_.idx(r,i);const double cp=heat_.water_capacity;
+        const double tsat=heat_.zoneTemperature(i,true);
+        const double top=column.energy.front()/column.capacity.front(),bottom=column.energy.back()/column.capacity.back();
+        const double source=f.source_mass&&std::size_t(r)<f.source_mass->size()?(*f.source_mass)[r]:0;
+        const double lateral=gatherLateralMass(i,r),infil=consumePending(tr_.xacc_from_surface[k]);
+        const double link_in=consumePending(tr_.lacc_mass[k]),node_in=gatherNodeMass(i,r);
+        const bool link_packet=heat_link_out_volume_[i]>0;
+        const double booked_link=consumePending(tr_.lout_mass[k]);heat_link_out_volume_[i]=0;
+        const double link_out=link_packet?booked_link:std::max(0.,-f.link)*tsat;
+        const double node_out=std::max(0.,f.node_out)*tsat,source_out=f.source_out*tsat;
+        const double deep=f.deep*bottom,et=f.et*top,dunne=f.dunne*top;
+        const double refund=f.refund_mass?(*f.refund_mass)[r]:0;
+        const double excess=(f.reject-f.paired_refund)*top;
+        tr_.gained_source[r]+=source;tr_.net_lateral[r]+=lateral;tr_.gained_infil[r]+=infil;
+        tr_.gained_link[r]+=link_in;tr_.lost_link[r]+=link_out;tr_.gained_node[r]+=node_in;
+        tr_.lost_node[r]+=node_out;tr_.lost_deep[r]+=deep;tr_.lost_source[r]+=source_out;
+        tr_.lost_et[r]+=et;tr_.lost_dunne[r]+=refund+excess+dunne;
+        if(f.dunne_mass) {
+            (*f.dunne_mass)[r]=dunne;(*f.excess_mass)[r]=excess;
+        } else tr_.xacc_to_surface[k]+=excess+dunne;
+        if(node_out!=0 && !tr_.node_out_mass.empty()) {
+            double drawn=0;for(std::size_t b=0;b<node_beds_.size();++b)if(node_beds_[b].cell==i)drawn+=std::max(0.,bed_gathered_[b]);
+            const auto nn=tr_.node_out_mass.size()/tr_.n_species;
+            if(drawn>0)for(std::size_t b=0;b<node_beds_.size();++b)if(node_beds_[b].cell==i) {
+                const int node=node_beds_[b].node;
+                if(node>=0&&std::size_t(node)<nn)tr_.node_out_mass[std::size_t(r)*nn+node]+=node_out*std::max(0.,bed_gathered_[b])/drawn;
+            }
+        }
+        double heater_j=0;
+        if(std::size_t(i)<runtime_sources_.cells.size())for(auto index:runtime_sources_.cells[i]) {
+            auto& row=runtime_sources_.rows[index];const double requested=std::max(0.,-row.flow)*f.runtime_dt;
+            row.receipt.requested_mass[r]-=requested*tsat;
+            if(f.requested_source_out>0)row.receipt.applied_mass[r]-=requested/f.requested_source_out*source_out;
+            if(f.v_sat0+f.source_in>0)heater_j+=row.heat*f.runtime_dt;
+        }
+        std::vector<double> moisture,new_sat;
+        if(auto error=projectGroundMoisture(state_,i,f.hg_final,column.depth_edges,moisture,&new_sat);!error.empty())
+            throw std::runtime_error(error);
+        // Integrated lateral/node/well contacts retain their hydraulic
+        // saturated-zone resolution. Top/deep transfers are localized at
+        // their physical boundary. No geometric handover is a heat source.
+        auto weights=cell.saturated_water;
+        double weight=std::accumulate(weights.begin(),weights.end(),0.);
+        if(!(weight>0)){weights=new_sat;weight=std::accumulate(weights.begin(),weights.end(),0.);}
+        if(!(weight>0)){std::fill(weights.begin(),weights.end(),0);weights.back()=1;weight=1;}
+        const double body_water=f.lateral-f.node_out+f.link+f.source_in-f.source_out;
+        const double body_j=cp*(source+lateral+link_in-link_out+node_in-node_out-source_out);
+        std::vector<double> water(weights.size()),energy(weights.size());
+        for(std::size_t j=0;j<weights.size();++j){water[j]=body_water*weights[j]/weight;energy[j]=body_j*weights[j]/weight;}
+        water.front()+=f.infil_in-f.reject-f.et-f.dunne;
+        energy.front()+=cp*(infil-refund-excess-et-dunne);
+        water.back()-=f.deep;energy.back()-=cp*deep;
+        const auto advected=advectPorousColumn(column,moisture,water,energy);
+        if(!advected.error.empty())throw std::runtime_error(advected.error);
+        cell.saturated_water=std::move(new_sat);
+        cell.advective_j+=advected.external_j-heater_j;cell.source_j+=heater_j;
+        if(heat_.config->options.soil_et_heat=="LATENT_SURFACE" && f.et>0) {
+            const double latent=-heat_.density*f.et*transport::heat::latentHeatOfVaporization(top);
+            column.energy.front()+=latent;cell.latent_j+=latent;
+        }
+        if(auto error=heat_.conduct(i,f.dt);!error.empty())throw std::runtime_error(error);
+        heat_.refreshView(i,tr_);
+    } catch(const std::exception& error) {
+        cell.failed=1;try{cell.error=error.what();}catch(...){}
+    } catch(...) {cell.failed=1;}
+}
+
 void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) noexcept {
+    if(heat_.active())fireGroundHeatSpecies(i,f);
     const auto k0 = static_cast<std::size_t>(i);
     (void)k0;
     // Arrivals land before anything is taken, so a cell that receives and
@@ -1945,6 +2122,7 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) noexcept {
                                         state_.theta_r[uc], ts_cell);
 
     for (int s = 0; s < tr_.n_species; ++s) {
+        if(s==tr_.temp_row&&heat_.active())continue;
         const auto k  = tr_.idx(s, i);
         const auto us = static_cast<std::size_t>(s);
         double& msat = tr_.sat_mass[k];

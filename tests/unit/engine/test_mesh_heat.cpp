@@ -11,6 +11,8 @@
 #include <openswmm/engine/openswmm_model.h>
 #include <openswmm/engine/openswmm_process_components.h>
 #include <openswmm/engine/openswmm_coupling.h>
+#include <openswmm/engine/openswmm_gw_transport.h>
+#include <openswmm/engine/openswmm_gw2d.h>
 #include "core/SWMMEngine.hpp"
 #include "2d/SurfaceRouter2D.hpp"
 #include "transport/components/HeatFluxModules/HeatOverrides.hpp"
@@ -299,4 +301,83 @@ TEST(MeshHeat, ForcedEvaporationReceiptsUseExactlyTheHydraulicLossAtDrying) {
         if(rate>1)EXPECT_DOUBLE_EQ(final_volume,0);
         ASSERT_EQ(swmm_engine_end(m.e),SWMM_OK);
     }
+}
+TEST(MeshHeat, AutoInheritsLiveModulesAndFiniteCapacityEditsRequireReinitialization) {
+    Model m("live-inputs");ASSERT_NE(m.e,nullptr);
+    ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_MODEL","COUPLED"),SWMM_OK);
+    ASSERT_EQ(swmm_options_set_ext(m.e,"BED_HEAT_MODEL","LOCAL_STORAGE"),SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(m.e),SWMM_OK);ASSERT_EQ(swmm_engine_start(m.e,0),SWMM_OK);
+    EXPECT_EQ(swmm_options_set_ext(m.e,"BED_HEAT_MODEL","NONE"),SWMM_ERR_LIFECYCLE);
+    EXPECT_EQ(swmm_options_set(m.e,"HEAT_TRANSPORT","NO"),SWMM_ERR_LIFECYCLE);
+    EXPECT_EQ(swmm_options_set(m.e,"WATER_DENSITY","999"),SWMM_ERR_LIFECYCLE);
+    EXPECT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_BED_THICKNESS,.4),SWMM_ERR_LIFECYCLE);
+    ASSERT_EQ(swmm_heat_set_module(m.e,SWMM_HEAT_RADIATIVE_EXCHANGE,1),SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_radiative(m.e,SWMM_HEAT_RAD_SHORTWAVE,300),SWMM_OK);
+    double actual=0;ASSERT_EQ(swmm_coupling_advance_to(m.e,1,&actual),SWMM_OK);
+    const auto& h=static_cast<openswmm::SWMMEngine*>(m.e)->surfaceRouter2D().state().heat;
+    EXPECT_TRUE(h.radiative);ASSERT_EQ(swmm_engine_end(m.e),SWMM_OK);
+}
+TEST(MeshHeat, AtomicAndSnapshotRestoreIncludeMeshGroundChoicesAndAuthoringFlags) {
+    Model m("atomic-ground");ASSERT_NE(m.e,nullptr);
+    auto snapshot=swmm_heat_snapshot_create(m.e);ASSERT_NE(snapshot,nullptr);
+    struct Edit {int result=SWMM_ERR_BADPARAM;bool applied=false;} state;
+    const auto edit=[](SWMM_Engine e,void* data) {
+        auto& s=*static_cast<Edit*>(data);
+        s.applied=swmm_options_set_ext(e,"HEAT_MODEL","COUPLED")==SWMM_OK &&
+            swmm_options_set_ext(e,"BED_HEAT_MODEL","LOCAL_STORAGE")==SWMM_OK &&
+            swmm_options_set_ext(e,"GW_ET","BOTH")==SWMM_OK &&
+            swmm_gw_transport_option_set(e,"THERMAL_MODEL","POROUS_EQUILIBRIUM")==SWMM_OK &&
+            swmm_heat_set_sediment(e,SWMM_HEAT_SED_MESH_POROSITY,.6)==SWMM_OK;
+        return s.applied?s.result:SWMM_ERR_INTERNAL;
+    };
+    EXPECT_EQ(swmm_hydrothermal_edit_atomic(m.e,edit,&state),SWMM_ERR_BADPARAM);ASSERT_TRUE(state.applied);
+    auto& options=static_cast<openswmm::SWMMEngine*>(m.e)->surfaceRouter2D().options();
+    EXPECT_FALSE(options.coupled_heat);EXPECT_FALSE(options.heat_model_authored);
+    char value[128]{};ASSERT_EQ(swmm_gw_transport_option_get(m.e,"THERMAL_MODEL",value,sizeof value),SWMM_OK);
+    EXPECT_STREQ(value,"WATER_ONLY");
+    ASSERT_EQ(swmm_gw2d_option_get(m.e,"GW_ET",value,sizeof value),SWMM_OK);EXPECT_STREQ(value,"AUTO");
+    double porosity=0;ASSERT_EQ(swmm_heat_get_sediment(m.e,SWMM_HEAT_SED_MESH_POROSITY,&porosity),SWMM_OK);
+    EXPECT_DOUBLE_EQ(porosity,.3);
+    state.result=SWMM_OK;ASSERT_EQ(swmm_hydrothermal_edit_atomic(m.e,edit,&state),SWMM_OK);
+    ASSERT_TRUE(options.coupled_heat);ASSERT_TRUE(options.heat_model_authored);
+    EXPECT_EQ(swmm_heat_snapshot_restore(m.e,snapshot),SWMM_OK);swmm_heat_snapshot_destroy(snapshot);
+    EXPECT_FALSE(options.coupled_heat);EXPECT_FALSE(options.heat_model_authored);
+    ASSERT_EQ(swmm_gw_transport_option_get(m.e,"THERMAL_MODEL",value,sizeof value),SWMM_OK);EXPECT_STREQ(value,"WATER_ONLY");
+    ASSERT_EQ(swmm_gw2d_option_get(m.e,"GW_ET",value,sizeof value),SWMM_OK);EXPECT_STREQ(value,"AUTO");
+    ASSERT_EQ(swmm_heat_get_sediment(m.e,SWMM_HEAT_SED_MESH_POROSITY,&porosity),SWMM_OK);EXPECT_DOUBLE_EQ(porosity,.3);
+}
+TEST(MeshHeat, StandaloneGroundColumnHasOneFiniteStoreAndConservativeThroughflow) {
+    LocalHeat f("standalone-column");ASSERT_NE(f.model.e,nullptr);f.options.bed_heat_model=2;
+    ASSERT_EQ(swmm_gw_transport_option_set(f.model.e,"SURFACE_THERMAL_BC","ADIABATIC"),SWMM_OK);
+    ASSERT_EQ(swmm_gw_transport_option_set(f.model.e,"DEEP_THERMAL_BC","ADIABATIC"),SWMM_OK);
+    f.model.ctx().heat_config.sediment.initial_temp=-5;f.model.ctx().heat_config.sediment.has_initial_temp=true;
+    ASSERT_TRUE(f.initialize().empty());auto& h=f.state.heat;auto& cell=h.standalone_ground.cells[0];
+    auto& c=cell.column;const auto total=[&](){return std::accumulate(c.energy.begin(),c.energy.end(),0.);};
+    const double initial=total(),water0=20*5*4184000.;const double final=f.step(0,100,5,0,60);
+    ASSERT_EQ(h.failures[0],0)<<cell.error;EXPECT_GT(total(),initial);
+    EXPECT_NEAR(total()+final*4184000.,initial+water0,1e-5);
+    const auto capacity=c.capacity;const double before=total();
+    openswmm::twoD::advectStandaloneGround(h,0,1e4,-10);
+    EXPECT_EQ(c.capacity,capacity);EXPECT_NEAR(total()-before,cell.advective_j,1e-4);
+    for(std::size_t j=0;j<c.energy.size();++j) {
+        EXPECT_GE(c.energy[j]/c.capacity[j],-10);EXPECT_LE(c.energy[j]/c.capacity[j],20);
+    }
+    const double after=total();EXPECT_DOUBLE_EQ(f.step(0,0,0,0,600),0);
+    EXPECT_NEAR(total(),after,1e-5);EXPECT_EQ(h.failures[0],0);
+    const auto preserved=c.energy;
+    openswmm::twoD::advectStandaloneGround(h,0,1e308,20);
+    EXPECT_EQ(h.failures[0],1);EXPECT_EQ(c.energy,preserved);
+}
+TEST(MeshHeat, SavingWaterOnlyGroundOptionsDoesNotAuthorDormantConductionDefaults) {
+    Model m("ground-defaults","[GW_TRANSPORT_OPTIONS]\nTRANSPORT_AGE NO\n");ASSERT_NE(m.e,nullptr);
+    const auto file=out/"_ground-defaults-written.inp";
+    ASSERT_EQ(swmm_model_write(m.e,file.string().c_str()),SWMM_OK);
+    const auto read=[&](){std::ifstream input(file);return std::string((std::istreambuf_iterator<char>(input)),{});};
+    EXPECT_EQ(read().find("\nCONDUCTION "),std::string::npos);
+    EXPECT_EQ(read().find("\nTHERMAL_MIXING "),std::string::npos);
+    EXPECT_EQ(read().find("\nTHERMAL_MODEL "),std::string::npos);
+    ASSERT_EQ(swmm_gw_transport_option_set(m.e,"CONDUCTION","YES"),SWMM_OK);
+    ASSERT_EQ(swmm_model_write(m.e,file.string().c_str()),SWMM_OK);
+    EXPECT_NE(read().find("\nCONDUCTION "),std::string::npos);
+    EXPECT_EQ(read().find("\nTHERMAL_MODEL "),std::string::npos);
 }

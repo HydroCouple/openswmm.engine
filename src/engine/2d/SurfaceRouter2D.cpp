@@ -907,6 +907,8 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         }
     }
 
+    const bool porous_heat_requested=ctx.options.heat_transport&&options_.groundwater!=0&&!aquifer_cfg_.empty()&&
+        gw_.options.thermal_model=="POROUS_EQUILIBRIUM"&&gw_.options.transport_temperature;
     if (!solver_) {
         // The Kokkos plugin covers all-triangle LOCAL_INERTIAL models only
         // (SurfaceSolverFactory R6 gate); everything else runs on the CPU.
@@ -916,7 +918,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         const bool plugin_ok =
             mesh_.n_quads() == 0 &&
             options_.momentum == Momentum2D::LOCAL_INERTIAL &&
-            !state_.transport.active();
+            !state_.transport.active()&&!porous_heat_requested;
         solver_ = makeSurfaceSolver(options_, &backend_name_,
                                     mesh_.n_triangles(), plugin_ok);
         // Say which solver this run is on. Rides the advisory-warning path
@@ -934,14 +936,18 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             backend_name_.c_str(), closure, options_.lts_tiers,
             mesh_.n_triangles(), mesh_.n_quads(),
             plugin_ok ? "" :
-            state_.transport.active()
+            porous_heat_requested&&!state_.transport.active()
+                ? " — porous-ground heat requires the CPU marcher"
+                : state_.transport.active()
                 ? " — the GPU/Kokkos plugin carries no transport rows "
                   "(species / age / temperature); CPU marcher used"
                 : " — the GPU/Kokkos plugin serves all-triangle "
                   "LOCAL_INERTIAL models only");
         thread_warnings_.emplace_back(buf);
     }
-    options_.water_heat_capacity=options_.coupled_heat && ctx.options.heat_transport && state_.transport.temp_row>=0
+    options_.water_heat_capacity=ctx.options.heat_transport &&
+        ((options_.coupled_heat&&state_.transport.temp_row>=0)||
+         (options_.groundwater!=0&&!aquifer_cfg_.empty()&&gw_.options.thermal_model=="POROUS_EQUILIBRIUM"&&gw_.options.transport_temperature))
         ? ctx.options.water_density*ctx.options.water_specific_heat : runtimeWaterHeatCapacity;
     if(!(options_.water_heat_capacity>0) || !std::isfinite(options_.water_heat_capacity))
         throw std::runtime_error("[2D heat] Water density and specific heat must give a finite positive capacity.");
@@ -1067,9 +1073,11 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             if (!gw_.boundary_quality.empty())
                 throw std::runtime_error("[GW_BOUNDARY_QUALITY] is unsupported: no hydraulic groundwater edge binding exists; use a well/source for operational forcing.");
             for (const auto& row : gw_.initial_quality)
-                if (row.zone == GwZone::LAYER)
+                if (row.zone == GwZone::LAYER && !(gw_.options.thermal_model=="POROUS_EQUILIBRIUM" &&
+                    GL.temp_row>=0 && row.species=="__TEMPERATURE__"))
                     throw std::runtime_error("[GW_INITIAL_QUALITY] LAYER is unsupported by bulk groundwater transport; use SAT or UNSAT explicitly.");
             subsurface_.initTransport(rows, &gw_, pollut_decay, ctx.warnings);
+            if(auto error=subsurface_.initHeat(ctx,gw_);!error.empty())throw std::runtime_error("[2D ground heat] "+error);
             marcher->refreshSubsurfaceRows();
             {
                 auto sources = resolveGwSources(ctx, mesh_, gw_, subsurface_.state(), subsurface_.transport());
@@ -1409,8 +1417,14 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         if(auto error=state_.snow.initialize(ctx,geometry);!error.empty())throw std::runtime_error(error);
         state_.snow_catch.assign(mesh_.n_cells(),1);
     }
-    if(auto error=initializeMeshHeat(ctx,mesh_,state_,options_);!error.empty())
+    if(state_.snow.active()&&subsurface_.heat().active())
+        throw std::runtime_error("[2D ground heat] Reciprocal snow/soil ownership is awaiting qualification.");
+    if(auto error=initializeMeshHeat(ctx,mesh_,state_,options_,&subsurface_.heat(),&subsurface_.coverage());!error.empty())
         throw std::runtime_error("[2D heat] "+error);
+    if(subsurface_.heat().active()&&gw_.options.conduction&&gw_.options.surface_thermal_bc=="SURFACE_WATER")
+        for(const auto& cell:subsurface_.heat().cells)
+            if(!cell.column.energy.empty()&&!cell.surface_owned)
+                throw std::runtime_error("[2D ground heat] SURFACE_WATER requires active HEAT_MODEL COUPLED and BED_HEAT_MODEL GROUND_COLUMN.");
     infil_elapsed_ = 0.0;
     if (infil_.active()) {
         // Publish an initial held rate so the very first substep infiltrates
@@ -1748,6 +1762,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
     }
 
     prepareMeshHeat(ctx,state_,dt);
+    if(subsurface_.heat().active())subsurface_.heat().prepare();
     {
         perf::ScopedTimer tm_adv(perf::sec_2d_advance);
         solver_->advance(sim_time_, sim_time_ + dt);  // always reaches target
@@ -1755,6 +1770,10 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
     if(state_.heat.enabled && std::any_of(state_.heat.failures.begin(),state_.heat.failures.end(),
                                          [](int failed){return failed!=0;}))
         throw std::runtime_error("[2D heat] Nonfinite thermal update; refine the thermal step or check forcing/material values.");
+    for(std::size_t i=0;i<subsurface_.heat().cells.size();++i) {
+        const auto& cell=subsurface_.heat().cells[i];
+        if(cell.failed)throw std::runtime_error("[2D ground heat] Cell "+std::to_string(i+1)+": "+cell.error);
+    }
     sim_time_ += dt;
     applyAgingAndReactions(ctx, dt);   // S4: Lie-split after the advance
 

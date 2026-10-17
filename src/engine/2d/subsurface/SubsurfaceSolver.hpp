@@ -78,6 +78,7 @@
 #include "../coupling/RuntimeCoupling.hpp"   // T7.1
 
 #include <algorithm>
+#include "../heat/GroundHeat.hpp"
 #include <string>
 #include <vector>
 
@@ -85,6 +86,7 @@ namespace openswmm::detail { class CompletedSourceArchive; }
 
 namespace openswmm {
 struct NodeData;
+struct SimulationContext;
 }  // namespace openswmm
 
 namespace openswmm::twoD {
@@ -172,6 +174,10 @@ public:
     /// and inert (`active() == false`) until then.
     SubsurfaceTransportState&       transport()       noexcept { return tr_; }
     const SubsurfaceTransportState& transport() const noexcept { return tr_; }
+    GroundHeatState& heat() noexcept {return heat_;}
+    const GroundHeatState& heat() const noexcept {return heat_;}
+    double pendingHeat(int cell) const noexcept;
+    std::string initHeat(SimulationContext&,const GwTransportData&);
     /// Size the rows and seed both stores from `[GW_INITIAL_QUALITY]`.
     /// Separate from `initialize` because the row layout needs the resolved
     /// `[GW_*]` sections, which the router owns. @p names is the row layout's
@@ -203,6 +209,7 @@ public:
         const auto k = tr_.idx(species, cell);
         const double mob = tr_.dissolvedFraction(species, cell, state_.theta_s[u]);
         double m = vol * (tr_.sat_mass[k] / v) * mob;
+        if(heat_.active() && species==tr_.temp_row)heat_link_out_volume_[u]+=vol;
         if (!tr_.signedRow(species)) {
             const double avail = std::max(0.0, tr_.sat_mass[k] * mob - tr_.lout_mass[k]);
             m = std::min(m, avail);
@@ -462,6 +469,7 @@ private:
     /// (G-X4: `+` a leaking conduit filling the cell, `−` a gaining one
     /// drawing from it), `+ recharge` is unsaturated → saturated.
     struct CellFlux {
+        double hg_final=0;
         double runtime_dt=0.0, requested_source_out=0.0;
         double v_sat0 = 0.0, v_uns0 = 0.0;   ///< water volumes BEFORE the firing
         double lateral = 0.0;                ///< gathered, + into the cell
@@ -492,6 +500,7 @@ private:
     /// Move the tuple along @p f. Called at the END of `fireCell`, when every
     /// volume is final.
     void fireCellSpecies(int i, const CellFlux& f) noexcept;
+    void fireGroundHeatSpecies(int i,const CellFlux& f) noexcept;
     /// Gather this cell's lateral side accumulators (m³) and zero them.
     double gatherLateral(int i) noexcept;
     /// T7.1: the same gather for one species' mass.
@@ -523,6 +532,15 @@ private:
     std::vector<std::vector<std::pair<std::size_t,double>>> cell_sources_;
     SubsurfaceState  state_;
     SubsurfaceTransportState tr_;   ///< T7.1
+    GroundHeatState heat_;
+    std::vector<double> heat_link_out_volume_;
+    struct ThermalFaceSlice {int left=0,right=0;double low=0,high=0;};
+    struct ThermalFace {double distance_left=0,distance_right=0;std::vector<ThermalFaceSlice> slices;};
+    std::vector<ThermalFace> heat_faces_;
+    std::vector<double> heat_pending_left_,heat_pending_right_,heat_dt_;
+    std::string initLateralHeat();
+    void fireLateralHeatFace(int edge,double seconds);
+    void gatherLateralHeat(int cell) noexcept;
     GwOptions        options_;
     std::vector<GwNodeBed> node_beds_;
     std::vector<double>    bed_exchange_cum_;   ///< G-O: per bed (m³), cumulative

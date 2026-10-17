@@ -6,10 +6,46 @@ transport and existing 1D/lumped heat calculations retain their behavior.
 `HEAT_TRANSPORT` and mesh temperature transport must also be enabled. Child
 settings remain saved when a parent is off.
 
-The current coupled runtime is experimental. Restart, reciprocal snow/LID
-ownership and porous-ground coupling are not yet qualified. Active unsupported
+The current coupled runtime is experimental. Restart and reciprocal snow/LID
+ownership are not yet qualified. The fixed-grid ground and shared surface-column
+paths have focused numerical/runtime tests; the full release matrix remains open. Active unsupported
 owner combinations are refused. Query `swmm_heat_get_2d_status` for the actual
 activation and qualification reason; a saved switch is not runtime evidence.
+
+`[GW_TRANSPORT_OPTIONS] THERMAL_MODEL POROUS_EQUILIBRIUM` explicitly selects
+finite soil-plus-water storage beneath an active spatial aquifer. Its default
+is `WATER_ONLY`, including old files with `CONDUCTION YES`. New thermal layers
+have fixed depths; their count is `THERMAL_LAYERS`, independently of the hydraulic
+SIGMA count. Moisture is sampled by overlap for SIGMA and uniformly within the
+bulk unsaturated store for CLOSED_FORM/ENSLAVED. Accepted water transfers move
+their paired sensible heat; geometric water-table handover creates no energy.
+The fixed-grid vertical flux reconstruction uses layer continuity, giving a
+documented piston attribution for bulk hydraulic closures.
+
+Porous temperature-volume rows are water-property views of the canonical soil
+energy. They are not extra energy stores. Material density and specific heat in
+`GW_TRANSPORT_PARAMS` describe grains. Conductivity uses arithmetic or geometric
+phase mixing and resistance-weighted interfaces. Solute molecular diffusivity
+does not act as a second thermal conductivity; mechanical dispersion still rides
+the water phase. `CONDUCTION NO` retains porous storage and accepted sensible
+heat advection. `THERMAL_MAX_STEP` bounds the existing hydraulic owner clock.
+
+`SOIL_ET_HEAT LATENT_SURFACE` debits latent heat once at bare-soil evaporation's
+top boundary, using actual accepted soil evaporation. `SENSIBLE_ONLY` retains
+the extraction's sensible heat and supports externally owned transpiration
+energy. If surface temperature transport is disabled, infiltrating water is an
+external prescribed-temperature reservoir using the existing rainfall source
+temperature. Returning aquifer water and heat leave the modeled thermal domain
+together. A full surface-water heat budget requires its temperature row.
+
+`LATERAL_CONDUCTION YES` adds saturated-only conduction on the existing groundwater
+face clock, using actual overlapping saturated elevations and normal distances
+from each cell centroid to the face. Resistance weighting uses each material's
+phase conductivity. The two-point normal approximation is not generally second
+order on skew/nonorthogonal meshes. An explicit bound based on solid capacity
+and maximum phase conductivity limits the sum of contact weights to at most
+one half; LTS side receipts remain pending until the receiving owner fires.
+No unsaturated lateral conduction is implied. The default is off.
 
 ## Surface exchange and water losses
 
@@ -40,8 +76,16 @@ Temperatures and temperature-volume rows remain signed Celsius quantities.
 
 `BED_HEAT_MODEL NONE|LOCAL_STORAGE|GROUND_COLUMN` defaults to `NONE`.
 `LOCAL_STORAGE` supplies a finite saturated bed under each mesh cell without an
-active aquifer. `GROUND_COLUMN` is reserved for the porous-ground integration
-and currently causes an actionable initialization refusal.
+active aquifer. `GROUND_COLUMN` uses the existing aquifer columns on covered
+cells and standalone fixed saturated columns on uncovered cells. An aquifer
+contact requires `POROUS_EQUILIBRIUM` and groundwater temperature transport.
+There is no additional bed capacity over aquifer-owned soil: bed fields are
+overlap-weighted views of its near-surface layers. Standalone columns span
+`BED_THICKNESS + GROUND_DEPTH` below terrain, with the latter measured below
+the bed; their porewater is fixed and saturated. Accepted infiltration displaces
+equal water through the bottom, transferring heat through finite layers with
+implicit upwind advection. The fixed moisture assumption is not a groundwater
+flow solution.
 
 Mesh bed parameters use the existing `[SEDIMENT_EXCHANGE]` authoring table.
 For the new mesh model, sediment density and specific heat describe the solid
@@ -63,6 +107,20 @@ The full bed retains energy when surface water disappears. Deep exchange uses
 series. The water and bed advance together with the existing exact linearized
 two-body operator; integrated atmospheric/deep receipts use the same system.
 
+For `GROUND_COLUMN`, grain conductivity comes from the same diffusivity conversion
+on standalone cells and `GW_TRANSPORT_PARAMS` on aquifer cells. The porous phase
+mixing then supplies the conductive interfaces. Water, the fixed vertical chain,
+actual porewater hyporheic contacts, atmosphere and deep boundaries share one
+backward-Euler finite contact solve; it is first order in time. The aquifer's
+separate conduction step is disabled for surface-owned columns. `CONDUCTION NO`
+disables molecular conduction while retaining sensible advection and explicitly
+configured hyporheic recirculation. The exposed part of a cell receives its top
+boundary; the wetted part instead contacts finite water. `SURFACE_WATER` requires
+this actual contact and never treats a sampled water temperature as a reservoir.
+AIR uses `SURFACE_THERMAL_RESISTANCE`; fixed/series temperatures, flux/flux-series,
+adiabatic and geothermal boundaries use the existing project series system.
+Missing temperature-series coverage is a runtime error.
+
 Balanced hyporheic recirculation adds no net water. It is eligible by default
 only on `channel:*` cells created by channel burning. A positive explicit
 `HYPORHEIC_VELOCITY` at `MESH_TAG` or `CELL2D` scope opts other cells in. A
@@ -81,10 +139,27 @@ the new scopes use 6 and 7 because 4/5 already identify dynamic air/ground data.
 evaporation and signed cumulative component joules. Its zero-based cell ranges
 follow the bulk runtime API convention. Positive external energy enters the
 thermal system; positive water-to-bed energy leaves water and enters bed.
-The diagnostic residual is bed-energy change plus the water thermal increment
-minus atmospheric and deep energy. Water advection is excluded from that local
-operator residual. Internal water/bed exchange is never an additional external
+For local storage the diagnostic residual is bed-energy change plus the water
+thermal increment minus atmospheric and deep energy. For ground columns it
+combines the canonical ground residual with the water operator residual, removing
+accepted ground advection/sources and counting contact receipts once. Internal water/bed exchange is never an additional external
 source. Missing/inactive bed values produce a lifecycle error.
 
 Dry-water HOLD/AIR/DEFAULT affects the reported value only; it cannot overwrite
 retained bed energy. No temperature floor changes conserved energy.
+
+`swmm_heat_get_ground_status`, `swmm_heat_get_ground_values` and
+`swmm_heat_get_ground_layers` (Python `heat.ground_status()`, `ground_values()`
+and `ground_layers()`) expose the actual owner counts, fixed thermal depths,
+solid-plus-water joules/capacity, moisture, conductivity and separated receipts.
+An uncovered cell returns NaN in a bulk ground read. Layer ranges are checked
+before writing any outputs. Add pending lateral joules to canonical stored
+energy when auditing a domain between LTS owner firings. The legacy groundwater
+water-temperature continuity table is not a soil-plus-water energy budget.
+
+New selectors and finite material/capacity changes require reinitialization;
+existing weather and AUTO-inherited heat module switches remain live. Atomic
+hydrothermal authoring edits and heat snapshots include the mesh and aquifer
+configuration. Native hotstart writes/loads explicitly refuse active new thermal
+stores until the thermal state extension is qualified; an existing destination
+is preserved. All of these capabilities remain experimental.
