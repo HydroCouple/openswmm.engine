@@ -130,6 +130,15 @@ long g_trace_rstep_sn = 0;
 SWMMEngine::SWMMEngine()
     : io_thread_(plugins_)   // IOThread needs a PluginFactory& at construction
 {
+    // API-created configuration must be serializable before the first open.
+    // Shared registry installation remains once per process and thread safe.
+    static std::once_flag process_components_registered;
+    std::call_once(process_components_registered, [] {
+        transport::registerReactionsComponent();
+        transport::registerArdComponent();
+        transport::registerWaterAgeComponent();
+        transport::registerHeatComponent();
+    });
     ctx_.state = EngineState::CREATED;
 #ifdef OPENSWMM_HAS_2D
     wire2DModelIO();
@@ -368,13 +377,7 @@ int SWMMEngine::open(const char* inp_path,
     // ConcurrentEngines.TwoInstancesDeterministic. Registration is idempotent
     // (same four ids, same data every time), so hoisting it to a one-time init
     // is behaviour-preserving for a single engine and removes the race.
-    static std::once_flag process_components_registered;
-    std::call_once(process_components_registered, [] {
-        transport::registerReactionsComponent();
-        transport::registerArdComponent();
-        transport::registerWaterAgeComponent();
-        transport::registerHeatComponent();
-    });
+    // Constructor registration also covers API-created models saved before open().
     {
         std::string base_dir;
         if (inp_path && inp_path[0] != '\0')

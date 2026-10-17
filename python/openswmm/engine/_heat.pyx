@@ -179,8 +179,8 @@ class _HeatModules:
 class _HeatRadiative:
     """``solver.heat.radiative`` — mapping keyed by :class:`HeatRadiativeParam`.
 
-    ``SHORTWAVE`` is W/m2; every other parameter is a dimensionless fraction
-    in ``[0, 1]``.
+    ``SHORTWAVE`` is W/m2; ``LANDCOVER_TEMPERATURE`` is Celsius (NaN
+    inherits air temperature); the remaining parameters are fractions in ``[0, 1]``.
     """
 
     def __init__(self, solver):
@@ -196,7 +196,8 @@ class _HeatRadiative:
         """Read one ``[RADIATIVE_FLUXES]`` parameter.
 
         :param key: A :class:`HeatRadiativeParam` member, code, or name.
-        :returns: ``SHORTWAVE`` in W/m2; all others a fraction in ``[0, 1]``.
+        :returns: ``SHORTWAVE`` in W/m2; ``LANDCOVER_TEMPERATURE`` in Celsius
+            (NaN inherits air); remaining parameters as fractions in ``[0, 1]``.
         :raises KeyError: *key* is not a valid :class:`HeatRadiativeParam`.
         :raises EngineError: The engine refused the read.
         """
@@ -212,8 +213,9 @@ class _HeatRadiative:
         API and the deck agree, and a refused write does not take effect.
 
         :param key: A :class:`HeatRadiativeParam` member, code, or name.
-        :param value: ``SHORTWAVE`` in W/m2 (must be >= 0); every other
-            parameter a fraction in ``[0, 1]``.
+        :param value: ``SHORTWAVE`` in W/m2 (must be >= 0);
+            ``LANDCOVER_TEMPERATURE`` in Celsius (NaN restores air-temperature
+            inheritance); remaining parameters as fractions in ``[0, 1]``.
         :raises KeyError: *key* is not a valid :class:`HeatRadiativeParam`.
         :raises EngineError: A fraction is outside ``[0, 1]``; ``SHORTWAVE``
             is negative; or ``SHORTWAVE`` is written while

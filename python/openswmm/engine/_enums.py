@@ -1124,11 +1124,13 @@ class HeatFluxModule(IntEnum):
     @cvar SURFACE_EXCHANGE: Latent + sensible surface exchange.
     @cvar RADIATIVE_EXCHANGE: Shortwave + longwave radiation.
     @cvar LAYER_CONDUCTION: LID vertical conduction.
+    @cvar SEDIMENT_EXCHANGE: Channel sediment and hyporheic exchange.
     """
 
     SURFACE_EXCHANGE = 0
     RADIATIVE_EXCHANGE = 1
     LAYER_CONDUCTION = 2
+    SEDIMENT_EXCHANGE = 3
 
 
 class HeatShortwaveMode(IntEnum):
@@ -1163,6 +1165,7 @@ class HeatRadiativeParam(IntEnum):
     @cvar EMISS_LANDCOVER: Land-cover emissivity, [0, 1].
     @cvar ATM_EMISS_COEFF: Brunt atmospheric-emissivity coefficient, [0, 1].
     @cvar LW_REFLECTION: Longwave reflection RL, [0, 1].
+    @cvar LANDCOVER_TEMPERATURE: Celsius; NaN restores air-temperature inheritance.
     """
 
     SHORTWAVE = 0
@@ -1173,6 +1176,7 @@ class HeatRadiativeParam(IntEnum):
     EMISS_LANDCOVER = 5
     ATM_EMISS_COEFF = 6
     LW_REFLECTION = 7
+    LANDCOVER_TEMPERATURE = 8
 
 
 class HeatSolarParam(IntEnum):

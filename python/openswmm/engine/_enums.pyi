@@ -958,6 +958,7 @@ class HeatFluxModule(IntEnum):
     SURFACE_EXCHANGE = 0
     RADIATIVE_EXCHANGE = 1
     LAYER_CONDUCTION = 2
+    SEDIMENT_EXCHANGE = 3
 
 
 class HeatShortwaveMode(IntEnum):
@@ -979,6 +980,7 @@ class HeatRadiativeParam(IntEnum):
     EMISS_LANDCOVER = 5
     ATM_EMISS_COEFF = 6
     LW_REFLECTION = 7
+    LANDCOVER_TEMPERATURE = 8
 
 
 class HeatSolarParam(IntEnum):

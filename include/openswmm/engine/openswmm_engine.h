@@ -414,6 +414,18 @@ typedef struct SWMM_TransportMatrix {
  *  @p out is NULL. */
 SWMM_ENGINE_API int swmm_get_transport_matrix(SWMM_Engine engine, SWMM_TransportMatrix* out);
 
+/** Side-effect-free pre-run preview. Boolean fields must be 0 or 1;
+ * groundwater is -1 (Automatic), 0 (Off), 1 (On). This is planned transport,
+ * not proof of initialized runtime activity or local heat-flux support. */
+typedef struct SWMM_TransportDraft {
+    int ignore_quality, heat, age, ignore_2d;
+    int surface_class[SWMM_TRANSPORT_CLASS_COUNT];
+    int groundwater;
+} SWMM_TransportDraft;
+SWMM_ENGINE_API int swmm_preview_transport_matrix(SWMM_Engine engine,
+    const SWMM_TransportDraft* draft, SWMM_TransportMatrix* out);
+
+
 /** Display names for the matrix axes ("" when out of range). */
 SWMM_ENGINE_API const char* swmm_transport_domain_name(int domain);
 SWMM_ENGINE_API const char* swmm_transport_class_name(int species_class);

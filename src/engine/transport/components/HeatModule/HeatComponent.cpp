@@ -1076,7 +1076,11 @@ void applyHeatSections(SimulationContext& ctx,
     // which this table reaches nothing says so. (ON + IGNORE_QUALITY warns
     // engine-level in SWMMEngine::open — it applies with or without this
     // component.)
-    if (!ctx.options.heat_transport) {
+    const auto& heat=ctx.heat_config;
+    const bool thermal=heat.surface_exchange||heat.radiative_exchange||heat.layer_conduction||heat.sediment_exchange||
+        heat.dry_temp_policy!=DryTempPolicy::HOLD||!heat.node_over_source.empty()||!heat.overrides.rows.empty()||
+        std::any_of(std::begin(heat.configured_source),std::end(heat.configured_source),[](bool value){return value;});
+    if (!ctx.options.heat_transport && thermal) {
         ctx.warnings.push_back(
             "A heat component is configured but [OPTIONS] HEAT_TRANSPORT is "
             "OFF — no temperature is tracked this simulation. Set "
@@ -1185,6 +1189,8 @@ std::string saveHeatConfig(const SimulationContext& ctx) {
     if (cfg.surface_exchange)   flux += "SURFACE_EXCHANGE ON\n";
     if (cfg.radiative_exchange) flux += "RADIATIVE_EXCHANGE ON\n";
     if (cfg.layer_conduction)   flux += "LAYER_CONDUCTION ON\n";
+    if (cfg.dry_temp_policy == DryTempPolicy::AIR) flux += "DRY_ELEMENT_TEMPERATURE AIR\n";
+    if (cfg.dry_temp_policy == DryTempPolicy::DEFAULT) flux += "DRY_ELEMENT_TEMPERATURE DEFAULT\n";
     if (cfg.sediment_exchange)  flux += "SEDIMENT_EXCHANGE ON\n";   // H6b
     if (!flux.empty()) out += "[HEAT_FLUXES]\n" + flux + "\n";
 
@@ -1354,7 +1360,7 @@ std::string saveHeatConfig(const SimulationContext& ctx) {
     // keeps the copy fallback) — but with every section rendered above, a
     // configured model never declines again: IO3b is what retired the
     // step-3 loss for H6a-configured models.
-    return out;
+    return cfg.configured && out.empty() ? "; Heat settings use defaults.\n" : out;
 }
 
 }  // namespace

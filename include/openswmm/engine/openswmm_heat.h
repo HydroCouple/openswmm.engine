@@ -62,8 +62,42 @@ extern "C" {
 typedef enum SWMM_HeatFluxModule {
     SWMM_HEAT_SURFACE_EXCHANGE   = 0, /**< Latent + sensible (H2). */
     SWMM_HEAT_RADIATIVE_EXCHANGE = 1, /**< Shortwave + longwave (H3). */
-    SWMM_HEAT_LAYER_CONDUCTION   = 2  /**< LID vertical conduction (H5b). */
+    SWMM_HEAT_LAYER_CONDUCTION   = 2, /**< LID vertical conduction (H5b). */
+    SWMM_HEAT_SEDIMENT_EXCHANGE  = 3 /**< Channel bed conduction and hyporheic exchange. */
 } SWMM_HeatFluxModule;
+
+/** Pre-run climate/snow/heat transaction. The callback may use only climate,
+ * snow-configuration, heat-configuration, HEAT_TRANSPORT, component registrations and climate-file path
+ * setters. Returning an error restores values and provenance. The callback
+ * must not change topology, destroy the engine, run, or nest transactions. */
+typedef int (*SWMM_HydrothermalEdit)(SWMM_Engine engine, void* user);
+SWMM_ENGINE_API int swmm_hydrothermal_edit_atomic(SWMM_Engine engine,
+    SWMM_HydrothermalEdit edit, void* user);
+/** Dry policy: HOLD=0, AIR=1, DEFAULT=2. */
+SWMM_ENGINE_API int swmm_heat_get_dry_policy(SWMM_Engine engine, int* policy);
+SWMM_ENGINE_API int swmm_heat_set_dry_policy(SWMM_Engine engine, int policy);
+/** Read-only LID material assumptions: water conductivity, soil conductivity,
+ * soil density, soil specific heat, all SI. */
+SWMM_ENGINE_API int swmm_heat_get_lid_material(SWMM_Engine engine, double values[4]);
+SWMM_ENGINE_API int swmm_heat_clear_solar_site(SWMM_Engine engine);
+/** Exact pre-run memento for heat settings, their shared site and component
+ * registrations. Callers must check their authoring identity before Undo. It owns no
+ * engine; the caller must ensure the original engine is still open before
+ * restoring. Destroy is safe after closing the engine. */
+/** Authoring provenance bits: configured=1, shared site=2, explicit
+ * latitude/longitude/timezone/elevation=4/8/16/32. */
+SWMM_ENGINE_API int swmm_heat_get_authoring_flags(SWMM_Engine engine, unsigned* flags);
+typedef void* SWMM_HeatSnapshot;
+SWMM_ENGINE_API SWMM_HeatSnapshot swmm_heat_snapshot_create(SWMM_Engine engine);
+SWMM_ENGINE_API int swmm_heat_snapshot_restore(SWMM_Engine engine, SWMM_HeatSnapshot snapshot);
+SWMM_ENGINE_API void swmm_heat_snapshot_destroy(SWMM_HeatSnapshot snapshot);
+
+
+/** Authored status and reset for ground/initial bed temperature. */
+SWMM_ENGINE_API int swmm_heat_sediment_temperature_configured(SWMM_Engine engine,
+    int param, int* configured);
+SWMM_ENGINE_API int swmm_heat_clear_sediment_temperature(SWMM_Engine engine, int param);
+
 
 /** @brief Where incoming shortwave comes from (plan §2.5, D-H6a-3).
  *
@@ -91,7 +125,8 @@ typedef enum SWMM_HeatRadiativeParam {
     SWMM_HEAT_RAD_EMISS_WATER      = 4, /**< εw [0,1]. */
     SWMM_HEAT_RAD_EMISS_LANDCOVER  = 5, /**< εlc [0,1]. */
     SWMM_HEAT_RAD_ATM_EMISS_COEFF  = 6, /**< Brunt Aa [0,1]. */
-    SWMM_HEAT_RAD_LW_REFLECTION    = 7  /**< RL [0,1]. */
+    SWMM_HEAT_RAD_LW_REFLECTION    = 7, /**< RL [0,1]. */
+    SWMM_HEAT_RAD_LANDCOVER_TEMPERATURE = 8 /**< °C; NaN restores air-temperature inheritance. */
 } SWMM_HeatRadiativeParam;
 
 /** @brief `[SOLAR_RADIATION]` parameters (consulted under COMPUTED only). */
@@ -424,6 +459,14 @@ SWMM_ENGINE_API int swmm_heat_set_element_override(SWMM_Engine engine, int attr,
 /** @brief Remove one override row by index. */
 SWMM_ENGINE_API int swmm_heat_remove_element_override(SWMM_Engine engine,
                                                       int index);
+
+/** Read the effective pre-run property for a named NODE or LINK. Source is
+ *  GLOBAL=0, TAG=1, NODE=2, LINK=3, air temperature=4 or ground series=5.
+ *  Dynamic temperatures return NaN; source_name identifies the tag/series.
+ *  This reports configuration precedence, independent of process activation. */
+SWMM_ENGINE_API int swmm_heat_get_effective_element(SWMM_Engine engine,
+    int attr, int scope, const char* name, double* value, int* source,
+    char* source_name, int source_name_len);
 
 #ifdef __cplusplus
 }
