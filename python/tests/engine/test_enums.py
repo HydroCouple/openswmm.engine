@@ -211,13 +211,13 @@ class TestHeatFluxModule(unittest.TestCase):
     def test_known_values(self):
         expected = {
             "SURFACE_EXCHANGE": 0, "RADIATIVE_EXCHANGE": 1,
-            "LAYER_CONDUCTION": 2,
+            "LAYER_CONDUCTION": 2, "SEDIMENT_EXCHANGE": 3,
         }
         for name, val in expected.items():
             self.assertEqual(HeatFluxModule[name].value, val)
 
     def test_member_count(self):
-        self.assertEqual(len(HeatFluxModule), 3)
+        self.assertEqual(len(HeatFluxModule), 4)
 
 
 # ---------------------------------------------------------------------------
@@ -245,13 +245,13 @@ class TestHeatRadiativeParam(unittest.TestCase):
         expected = {
             "SHORTWAVE": 0, "ALBEDO": 1, "SHADE_FACTOR": 2, "SKY_VIEW": 3,
             "EMISS_WATER": 4, "EMISS_LANDCOVER": 5, "ATM_EMISS_COEFF": 6,
-            "LW_REFLECTION": 7,
+            "LW_REFLECTION": 7, "LANDCOVER_TEMPERATURE": 8,
         }
         for name, val in expected.items():
             self.assertEqual(HeatRadiativeParam[name].value, val)
 
     def test_member_count(self):
-        self.assertEqual(len(HeatRadiativeParam), 8)
+        self.assertEqual(len(HeatRadiativeParam), 9)
 
 
 # ---------------------------------------------------------------------------
