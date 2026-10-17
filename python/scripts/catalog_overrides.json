@@ -171,6 +171,7 @@
   "pollutant.rdii_conc": "concentration",
   "species.atol": "concentration",
   "species.initial": "concentration",
+  "species.rain_conc": "concentration",
   "species.rtol": "dimensionless",
   "statistics.link_surcharge_time": "s",
   "statistics.link_surcharge_time_at": "s",

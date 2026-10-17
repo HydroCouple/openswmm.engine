@@ -90,7 +90,7 @@ Species, coefficients, terms
      - Contents
    * - :attr:`Reactions.species`
      - :class:`ReactionSpecies` — ``name``, ``is_wall``, ``units``,
-       ``atol``, ``rtol``, ``initial``, and the two scope expressions.
+       ``atol``, ``rtol``, ``initial``, ``rain_conc``, and the two scope expressions.
    * - :attr:`Reactions.coefficients`
      - :class:`ReactionCoefficient` — ``name``, ``is_param``
        (PARAMETER vs CONSTANT), ``value``.
@@ -111,7 +111,12 @@ All three collections support ``len()``, iteration, ``in``, indexing by
     "CL2" in s.reactions.species          # True
     s.reactions.species.get_index("CL2")  # 0
 
-    s.reactions.terms.add("Kf", "1.5826e-4*RE^0.88/D")
+    s.reactions.terms.add("Kf", "0.5 * DT")
+
+``species.rain_conc`` reads or writes the ``[REACTION_RAINFALL]`` concentration
+in that species' units. It defaults to zero (clean rainfall), accepts nonnegative
+values before simulation start, and survives ``serialize()`` / ``apply_text()``.
+It remains readable during a simulation.
 
 Per-scope expressions
 ---------------------

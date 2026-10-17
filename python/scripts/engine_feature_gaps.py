@@ -202,6 +202,7 @@ SECTION_API: dict[str, list[str]] = {
     "REACTION_SUBCATCHMENTS": [r"^swmm_reactions?_.*(subcatch|scope|expr)", r"^swmm_reactions_(apply_text|serialize)$"],
     "REACTION_SOURCES": [r"^swmm_reactions?_.*source", r"^swmm_reactions_(apply_text|serialize)$"],
     "REACTION_QUALITY": [r"^swmm_reactions?_.*(quality|initial)", r"^swmm_reactions_(apply_text|serialize)$"],
+    "REACTION_RAINFALL": [r"^swmm_reaction_rain_conc_", r"^swmm_reactions_(apply_text|serialize)$"],
     "REACTION_PATTERNS": [r"^swmm_reactions?_.*pattern", r"^swmm_reactions_(apply_text|serialize)$"],
     "REACTION_REPORT": [r"^swmm_reactions?_.*report", r"^swmm_reactions_(apply_text|serialize)$"],
     "WATER_AGE_SOURCES": [r"^swmm_water_age_"],

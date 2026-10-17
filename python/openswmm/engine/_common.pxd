@@ -1550,6 +1550,8 @@ cdef extern from "openswmm_reactions.h":
     # Initial quality
     cdef int swmm_reaction_init_global_get(SWMM_Engine e, int species_idx, double* value)
     cdef int swmm_reaction_init_global_set(SWMM_Engine e, int species_idx, double value)
+    cdef int swmm_reaction_rain_conc_get(SWMM_Engine e, int species_idx, double* value)
+    cdef int swmm_reaction_rain_conc_set(SWMM_Engine e, int species_idx, double value)
     cdef int swmm_reaction_init_elem_count(SWMM_Engine e)
     cdef int swmm_reaction_init_elem_get(SWMM_Engine e, int entry_idx, int* is_link,
                                           int* elem_idx, int* species_idx, double* value)

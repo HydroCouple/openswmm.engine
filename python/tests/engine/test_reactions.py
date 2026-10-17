@@ -35,6 +35,7 @@ import unittest
 
 from openswmm.engine import (
     BadParamError,
+    LifecycleError,
     ReactionCoefficient,
     ReactionExprForm,
     ReactionFunction,
@@ -93,7 +94,7 @@ def _reactions_model(tag):
             "[REACTION_COEFFICIENTS]\n"
             "CONSTANT Kb 0.05\n"
             "[REACTION_TERMS]\n"
-            "Kf 0.5 * RE / D\n"
+            "Kf 0.5 * DT\n"
             "[REACTION_PIPES]\n"
             "RATE X -Kb * Kf * X\n"
             "RATE Y -Kb * X\n"
@@ -258,6 +259,33 @@ class TestReactionSpecies(_ReactionsCase):
         self.assertAlmostEqual(x.initial, 2.5)
         self.assertAlmostEqual(s.reactions.species["X"].initial, 2.5)
 
+    def test_rain_concentration_roundtrip_and_refusal(self):
+        s = self.opened_solver()
+        x, y = s.reactions.species["X"], s.reactions.species["Y"]
+        self.assertEqual(x.rain_conc, 0.0)
+        self.assertEqual(y.rain_conc, 0.0)
+        x.rain_conc = 3.75
+        self.assertEqual(s.reactions.species["X"].rain_conc, 3.75)
+        self.assertEqual(y.rain_conc, 0.0)
+        saved = s.reactions.serialize()
+        self.assertIn("[REACTION_RAINFALL]", saved)
+        for value in (-1.0, float("nan")):
+            with self.assertRaises(BadParamError):
+                x.rain_conc = value
+            self.assertEqual(s.reactions.serialize(), saved)
+        x.rain_conc = 0.0
+        s.reactions.apply_text(saved)
+        self.assertEqual(s.reactions.species["X"].rain_conc, 3.75)
+        self.assertEqual(s.reactions.species["Y"].rain_conc, 0.0)
+
+    def test_rain_concentration_is_readable_but_not_editable_after_start(self):
+        s = self.running_solver()
+        x = s.reactions.species["X"]
+        self.assertEqual(x.rain_conc, 0.0)
+        with self.assertRaises(LifecycleError):
+            x.rain_conc = 1.0
+        self.assertEqual(x.rain_conc, 0.0)
+
     def test_expression_roundtrip(self):
         s = self.opened_solver()
         x = s.reactions.species["X"]
@@ -409,18 +437,25 @@ class TestReactionTerms(_ReactionsCase):
         kf = s.reactions.terms["Kf"]
         self.assertEqual(kf.name, "Kf")
         self.assertTrue(kf.expression)
-        kf.expression = "0.25 * RE"
-        self.assertEqual(kf.expression, "0.25 * RE")
-        self.assertEqual(s.reactions.terms["Kf"].expression, "0.25 * RE")
+        kf.expression = "0.25 * DT"
+        self.assertEqual(kf.expression, "0.25 * DT")
+        self.assertEqual(s.reactions.terms["Kf"].expression, "0.25 * DT")
 
     def test_add_term(self):
         s = self.opened_solver()
         terms = s.reactions.terms
-        kg = terms.add("Kg", "2.0 * D")
+        kg = terms.add("Kg", "2.0 * DT")
         self.assertEqual(len(terms), 2)
         self.assertEqual(kg.name, "Kg")
         self.assertEqual(kg.index, 1)
-        self.assertEqual(kg.expression, "2.0 * D")
+        self.assertEqual(kg.expression, "2.0 * DT")
+
+    def test_unpopulated_hydraulic_variable_is_refused_without_mutation(self):
+        s = self.opened_solver()
+        before = s.reactions.serialize()
+        with self.assertRaises(BadParamError):
+            s.reactions.terms.add("Unavailable", "RE")
+        self.assertEqual(s.reactions.serialize(), before)
 
     def test_uncompilable_term_is_refused(self):
         s = self.opened_solver()
@@ -432,7 +467,7 @@ class TestReactionTerms(_ReactionsCase):
     def test_remove_unreferenced_term(self):
         s = self.opened_solver()
         terms = s.reactions.terms
-        terms.add("Kg", "2.0 * D")
+        terms.add("Kg", "2.0 * DT")
         terms.remove("Kg")
         self.assertEqual(len(terms), 1)
         self.assertNotIn("Kg", terms)
