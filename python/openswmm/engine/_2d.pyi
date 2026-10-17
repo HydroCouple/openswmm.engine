@@ -138,6 +138,9 @@ class Surface2D:
     # ====================================================================
 
     @property
+    def geometry_scale_to_si(self) -> float: ...
+
+    @property
     def n_vertices(self) -> int:
         """Number of mesh vertices.
 

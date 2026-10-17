@@ -185,6 +185,7 @@
   "subcatchment.infiltration.curve_number_drying_time": "d",
   "subcatchment.n_imperv": "manning_n",
   "subcatchment.n_perv": "manning_n",
+  "surface2d.geometry_scale_to_si": "dimensionless",
   "surface2d.get_coupling_flux": "m/s",
   "surface2d.get_depth": "m",
   "surface2d.get_depths": "m",

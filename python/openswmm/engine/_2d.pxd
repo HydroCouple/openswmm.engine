@@ -19,6 +19,7 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_is_active(void* engine, int* active)
 
     # Mesh geometry
+    int swmm_2d_geometry_scale_to_si(void* engine, double* scale)
     int swmm_2d_vertex_count(void* engine, int* count)
     int swmm_2d_triangle_count(void* engine, int* count)
     int swmm_2d_vertex_get_xyz(void* engine, int idx,

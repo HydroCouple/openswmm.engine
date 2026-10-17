@@ -41,6 +41,23 @@ class TestComponentMetadata(unittest.TestCase):
         finally:
             solver.destroy()
 
+    def test_coordinate_presence_and_mesh_scale_before_simulation(self):
+        with self.model.open("a") as model:
+            model.write("\n[COORDINATES]\nJ 0 0\n[2D_OPTIONS]\nREPORT_2D NO\n"
+                        "[2D_VERTICES]\n0 0 10\n10 0 10\n10 10 10\n"
+                        "[2D_TRIANGLES]\n0 1 2 .03 0\n")
+        solver = Solver(self.model, self.report, self.output)
+        try:
+            solver.open_metadata()
+            self.assertTrue(solver.spatial.node_has_coord("J"))
+            self.assertFalse(solver.spatial.node_has_coord("O"))
+            self.assertEqual(solver.spatial.node_coord("J"), (0, 0))
+            self.assertEqual(solver.surface2d.geometry_scale_to_si, .3048)
+            self.assertEqual(solver.surface2d.n_vertices, 3)
+            self.assertFalse(self.output.exists())
+        finally:
+            solver.destroy()
+
     def test_missing_runtime_plugin_is_not_loaded_during_inspection(self):
         with self.model.open("a") as model:
             model.write("\n[PLUGINS]\nINPUT missing-component-plugin.dylib\n")

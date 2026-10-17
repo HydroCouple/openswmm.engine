@@ -72,6 +72,7 @@ HC::IOutput* output(HC::IModelComponent& component,const std::string& id) {
     ADD_FAILURE()<<"Missing output "<<id;return nullptr;
 }
 template<class T> T read(HC::IOutput* item) {
+    if(!item)throw std::runtime_error("Cannot read a missing component output");
     T value{};const int64_t one=1,zero=0;std::string message;
     HC::BufferDescriptor buffer{&value,std::is_same_v<T,double>?HC::DataKind::Float64:HC::DataKind::String,1,&one,nullptr,sizeof(T)};
     EXPECT_TRUE(item->getValuesInto(buffer,{&zero,1},{&one,1},&message))<<message;return value;
@@ -105,6 +106,9 @@ protected:
         if(exports) { configuration["outfalls"]={"O"};configuration["exchange_times_s"]={60,120,600}; }
         argument(*component,"configuration",configuration);component->initialize();
         ASSERT_EQ(component->status(),Status::Initialized)<<diagnostics(*component);
+        // Reviewable configured catalogue, written by the harness, not the component.
+        const auto catalogue=Json::parse(read<std::string>(output(*component,"model_metadata")));
+        std::ofstream(directory/"catalogue.json")<<catalogue.dump(2)<<'\n';
     }
     void ready(bool exports=false) {
         initialize(exports);ASSERT_TRUE(component->validate().empty())<<diagnostics(*component);
@@ -299,5 +303,134 @@ TEST_F(EngineReceiver, PartialAcceptanceRecordsBothAcceptedAndUnreceivedAmounts)
     }
     EXPECT_DOUBLE_EQ(ledger["accepted_amounts"][0].get<double>(),accepted);
     EXPECT_GT(ledger["unreceived_amounts"][0].get<double>(),0);
+}
+#endif
+
+TEST_F(EngineComponent, GeometryPreservesOriginMissingCoordinatesAndLinkVertices) {
+    std::ofstream(model,std::ios::app)<<"\n[OPTIONS]\nCRS EPSG:2263\n[COORDINATES]\nJ 0 0\n[VERTICES]\nC 5 7\n";
+    initialize();const auto m=Json::parse(read<std::string>(output(*component,"model_metadata")));
+    EXPECT_EQ(m["spatial"]["crs"],"EPSG:2263");EXPECT_EQ(m["spatial"]["project_length_units"],"ft");
+    EXPECT_EQ(m["nodes"][0]["coordinates"],Json({0,0}));EXPECT_TRUE(m["nodes"][1]["coordinates"].is_null());
+    EXPECT_EQ(m["links"][0]["coordinates"],Json({{0,0},{5,7},nullptr}));
+    EXPECT_FALSE(fs::exists(directory/"wrapped"));
+}
+
+TEST_F(EngineComponent, WatershedCatalogueSeparatesLegacyGroundwaterSnowAndLidUsage) {
+    std::ofstream(model,std::ios::app)<<R"(
+[RAINGAGES]
+G INTENSITY 1:00 1 TIMESERIES Rain
+[TIMESERIES]
+Rain 0:00 0
+[SUBCATCHMENTS]
+S G J 1 25 500 .5 0 Pack
+[SUBAREAS]
+S .01 .1 .05 .05 25 OUTLET
+[INFILTRATION]
+S 3 .5 4 7 0
+[POLYGONS]
+S 0 0
+S 10 0
+S 10 10
+S 0 10
+[AQUIFERS]
+AQ .5 .15 .3 .1 12 15 .35 14 0 0 4 .3
+[GROUNDWATER]
+S AQ J 6 .1 1 0 0 0 0 *
+[SNOWPACKS]
+Pack PLOWABLE .001 .002 32 .1 .1 0 .5
+Pack IMPERVIOUS .001 .002 32 .1 .1 0 0
+Pack PERVIOUS .001 .002 32 .1 .1 0 0
+[LID_CONTROLS]
+Garden BC
+Garden SURFACE 6 .1 .1 1 0
+Garden SOIL 12 .45 .2 .1 .5 10 3
+Garden STORAGE 12 .75 .5 0
+[LID_USAGE]
+S Garden 1 100 10 0 10 0
+)";
+    initialize();const auto m=Json::parse(read<std::string>(output(*component,"model_metadata")));
+    ASSERT_EQ(m["subcatchments"].size(),1u);EXPECT_EQ(m["subcatchments"][0]["polygon"].size(),4u);
+    EXPECT_EQ(m["subcatchments"][0]["outlet_node"],"J");EXPECT_EQ(m["subcatchments"][0]["snowpack"],"Pack");
+    EXPECT_TRUE(m["legacy_groundwater"]["configured"]);EXPECT_EQ(m["legacy_groundwater"]["connections"][0]["aquifer"],"AQ");
+    EXPECT_EQ(m["snow"]["packs"][0]["model"],"DEGREE_DAY");
+    EXPECT_EQ(m["lids"]["watershed_usage"][0]["subcatchment"],"S");
+    EXPECT_EQ(m["lids"]["watershed_usage"][0]["control"],"Garden");
+    EXPECT_FALSE(m["explicit_groundwater"]["configured"]);EXPECT_TRUE(m["explicit_groundwater"]["rows"].empty());
+    EXPECT_FALSE(fs::exists(directory/"wrapped"));
+}
+
+TEST_F(EngineComponent, NodeLidCatalogueRetainsRichardsModelAndSealedBottom) {
+    auto deck=bytes(model);deck.replace(deck.find("FLOW_ROUTING KINWAVE"),19,"FLOW_ROUTING DYNWAVE");
+    deck.replace(deck.find("HEAT_TRANSPORT ON"),17,"HEAT_TRANSPORT OFF");std::ofstream(model)<<deck;
+    std::ofstream(model,std::ios::app)<<R"(
+[STORAGE]
+Store 0 2 1 FUNCTIONAL 0 0 100 0 0
+[LID_CONTROLS]
+Stack NODE
+Stack SURFACE 6 .1
+Stack MEDIA 12 .45 .2 .08 2 10 3
+Stack AGGREGATE 6 .4 100
+Stack BOTTOM .5 0
+[LID_NODES]
+Store Stack 10 BOTTOM SEALED
+[LID_RICHARDS]
+Stack OPTIONS 4 1e-7 1e-5 30
+Stack 2 .03 2 1.6 .5 .0001
+Stack 3 .03 2 1.6 .5 .0001
+)";
+    initialize();const auto m=Json::parse(read<std::string>(output(*component,"model_metadata")));
+    EXPECT_EQ(m["lids"]["controls"][0]["node_flow_model"],"RICHARDS");
+    EXPECT_EQ(m["lids"]["node_assignments"][0],Json({{"node","Store"},{"control","Stack"},{"bottom","SEALED"}}));
+    EXPECT_FALSE(fs::exists(directory/"wrapped"));
+}
+
+#ifdef OPENSWMM_HAS_2D
+TEST_F(EngineComponent, MixedSurfaceGeometryAndRepeatedConnectionsAreReadWithoutPreparing) {
+    std::ofstream(model,std::ios::app)<<R"(
+[2D_OPTIONS]
+REPORT_2D NO
+[2D_VERTICES]
+0 0 10
+10 0 10
+10 10 10
+0 10 10
+20 0 10
+20 10 10
+[2D_TRIANGLES]
+0 1 2 .03 0
+[2D_QUADS]
+1 4 5 2 .03 0
+[2D_TRIANGLE_NODE_MAP]
+0 J .6 2
+0 O .7 3
+[2D_VERTEX_NODE_MAP]
+3 J .5 4
+[2D_AQUIFER]
+* 1 4 .45 .1 2
+[2D_AQUIFER_NODE]
+J AUTO KC 1 DC 2 AREA 3
+[2D_AQUIFER_LINKS]
+C KC 1 DC 2 EXCHANGE NO
+)";
+    initialize();const auto m=Json::parse(read<std::string>(output(*component,"model_metadata")));
+    EXPECT_FALSE(m["runnable"]);const auto& surface=m["surface"];
+    ASSERT_EQ(surface["vertices_m"].size(),6u);EXPECT_DOUBLE_EQ(surface["vertices_m"][1][0].get<double>(),3.048);
+    EXPECT_EQ(surface["cells"][0]["vertices"],Json({0,1,2}));EXPECT_EQ(surface["cells"][1]["vertices"],Json({1,4,5,2}));
+    ASSERT_EQ(surface["cell_connections"].size(),2u);EXPECT_EQ(surface["cell_connections"][0]["node"],"J");
+    EXPECT_EQ(surface["cell_connections"][1]["node"],"O");EXPECT_NEAR(surface["cell_connections"][1]["area_m2"].get<double>(),3*.3048*.3048,1e-14);
+    EXPECT_EQ(surface["vertex_connections"][0]["vertex"],3);EXPECT_EQ(surface["vertex_connections"][0]["node"],"J");
+    const auto& gw=m["explicit_groundwater"];EXPECT_EQ(gw["mode"],"MESH");EXPECT_EQ(gw["geometry_source"],"surface.cells");
+    EXPECT_TRUE(gw["configured"]);EXPECT_TRUE(gw["node_beds"][0]["locate_at_initialize"]);EXPECT_TRUE(gw["node_beds"][0]["cell"].is_null());
+    EXPECT_FALSE(gw["link_beds"][0]["exchange"]);EXPECT_FALSE(m["legacy_groundwater"]["configured"]);
+    component->prepare();EXPECT_EQ(component->status(),Status::Failed);EXPECT_FALSE(fs::exists(directory/"wrapped"));
+}
+
+TEST_F(EngineComponent, ExplicitPerSubcatchGroundwaterDoesNotBecomeLegacyGroundwater) {
+    std::ofstream(model,std::ios::app)<<"\n[2D_AQUIFER_OPTIONS]\nMODE PER_SUBCATCH\n[2D_AQUIFER]\n* 1 4 .45 .1 2\n";
+    initialize();const auto m=Json::parse(read<std::string>(output(*component,"model_metadata")));
+    EXPECT_EQ(m["surface_vertex_count"],0);EXPECT_TRUE(m["surface"]["vertices_m"].empty());
+    EXPECT_TRUE(m["explicit_groundwater"]["configured"]);EXPECT_EQ(m["explicit_groundwater"]["mode"],"PER_SUBCATCH");
+    EXPECT_EQ(m["explicit_groundwater"]["geometry_source"],"subcatchments");
+    EXPECT_FALSE(m["legacy_groundwater"]["configured"]);EXPECT_FALSE(m["runnable"]);EXPECT_FALSE(fs::exists(directory/"wrapped"));
 }
 #endif

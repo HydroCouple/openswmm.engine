@@ -93,6 +93,12 @@ SWMM_ENGINE_API int swmm_2d_prepare_for_edit(SWMM_Engine engine);
  * Mesh Geometry — Query (read-only after initialization)
  * ========================================================================= */
 
+/** Multiplier converting the current mesh XYZ coordinates and lengths to
+ * metres (square it for areas). Available on a parsed mesh before initialize.
+ * Accounts for project units, external mesh SI declarations and initialization's
+ * in-place SI conversion. Does not initialize, normalize or change the mesh. */
+SWMM_ENGINE_API int swmm_2d_geometry_scale_to_si(SWMM_Engine engine, double* scale);
+
 /** @brief Get the number of mesh vertices.
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_vertex_count(SWMM_Engine engine, int* count);

@@ -377,6 +377,13 @@ cdef class Surface2D:
         _check(swmm_2d_prepare_for_edit(self._h()))
 
     @property
+    def geometry_scale_to_si(self) -> float:
+        """Multiply current mesh coordinates by this factor to obtain metres."""
+        cdef double scale = 0
+        _check(swmm_2d_geometry_scale_to_si(self._h(), &scale))
+        return scale
+
+    @property
     def n_vertices(self) -> int:
         """Number of mesh vertices.
 

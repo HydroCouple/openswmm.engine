@@ -1056,6 +1056,7 @@ cdef extern from "openswmm_spatial.h":
     cdef int swmm_spatial_set_annotation(SWMM_Engine e, const char* section, const char* text)
     # Node coordinates
     cdef int swmm_spatial_set_node_coord(SWMM_Engine e, int idx, double x, double y)
+    cdef int swmm_spatial_node_has_coord(SWMM_Engine e, int idx, int* present)
     cdef int swmm_spatial_get_node_coord(SWMM_Engine e, int idx, double* x, double* y)
     cdef int swmm_spatial_get_node_coords_bulk(SWMM_Engine e, double* x_buf, double* y_buf, int count)
     cdef int swmm_spatial_set_node_coords_bulk(SWMM_Engine e, const double* x_buf, const double* y_buf, int count)

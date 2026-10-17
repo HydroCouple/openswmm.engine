@@ -78,6 +78,11 @@ SWMM_ENGINE_API int swmm_spatial_get_crs(SWMM_Engine engine, char* buf, int bufl
  */
 SWMM_ENGINE_API int swmm_spatial_set_node_coord(SWMM_Engine engine, int idx, double x, double y);
 
+/** Whether a node has authored/API-assigned coordinates. Distinguishes a
+ * valid (0,0) from the default for an unlocated node; does not alter geometry.
+ * Returns BADINDEX for an invalid node and BADPARAM for a null output. */
+SWMM_ENGINE_API int swmm_spatial_node_has_coord(SWMM_Engine engine, int idx, int* present);
+
 /**
  * @brief Get the X/Y coordinates for a node.
  * @param engine  Engine handle.

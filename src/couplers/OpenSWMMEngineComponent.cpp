@@ -7,6 +7,7 @@
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_spatial.h>
 #include <openswmm/engine/openswmm_hotstart.h>
+#include <openswmm/engine/openswmm_snow.h>
 #ifdef OPENSWMM_HAS_2D
 #include <openswmm/engine/openswmm_2d.h>
 #include <openswmm/engine/openswmm_gw2d.h>
@@ -254,6 +255,7 @@ private:
         }
     }
     void discover(SWMM_Engine engine);
+    void discoverGeometry(SWMM_Engine engine);
     void validateConnections();
     void verifyReceipt();
     void recordNativeBoundary(double end,int code) const;
@@ -379,6 +381,145 @@ void OpenSWMMEngineComponent::discover(SWMM_Engine engine) {
     } else times_.clear();
     metadata_["selected_outfalls"]=selected;metadata_["interval_profile"]=outfalls_.empty()?Json(nullptr):Json(profile);
     metadata_["execution_restrictions"]=reasons_;metadata_["runnable"]=reasons_.empty();
+    discoverGeometry(engine);
+}
+
+// Parsed authoring only: no kernel initialization, mapping resolution or time
+// advancement. Native surface/GW physics continue to share one internal owner.
+void OpenSWMMEngineComponent::discoverGeometry(SWMM_Engine engine) {
+    auto nodeId=[&](int i)->Json { return i<0?Json(nullptr):Json(swmm_node_id(engine,i)); };
+    auto subcatchId=[&](int i)->Json { return i<0?Json(nullptr):Json(swmm_subcatch_id(engine,i)); };
+    const auto crs=readText([&](char* b,int n){check(engine,swmm_spatial_get_crs(engine,b,n));});
+    const auto flow=metadata_.at("flow_units").get<std::string>();
+    const bool us=flow=="CFS" || flow=="GPM" || flow=="MGD";
+    metadata_["spatial"]={{"crs",crs.empty()?Json(nullptr):Json(crs)},
+        {"coordinate_units","as_authored"},{"project_length_units",us?"ft":"m"},
+        {"catalogue_stage","parsed"},{"mesh_index_base",0}};
+    std::vector<bool> located(swmm_node_count(engine));
+    for(int i=0;i<swmm_node_count(engine);++i) {
+        int present=0;check(engine,swmm_spatial_node_has_coord(engine,i,&present));located[i]=present!=0;
+        Json xy=nullptr;
+        if(present) { double x=0,y=0;check(engine,swmm_spatial_get_node_coord(engine,i,&x,&y));xy={x,y}; }
+        metadata_["nodes"][i]["coordinates"]=xy;
+    }
+    for(int i=0;i<swmm_link_count(engine);++i) {
+        int n=0,from=-1,to=-1;check(engine,swmm_spatial_get_link_vertex_count(engine,i,&n));
+        check(engine,swmm_link_get_from_node(engine,i,&from));check(engine,swmm_link_get_to_node(engine,i,&to));
+        std::vector<double> x(n),y(n);Json coordinates=Json::array();
+        if(n)check(engine,swmm_spatial_get_link_vertices(engine,i,x.data(),y.data(),n));
+        for(int j=0;j<n;++j) {
+            const bool missing=(j==0 && from>=0 && !located[from]) || (j==n-1 && to>=0 && !located[to]);
+            coordinates.push_back(missing?Json(nullptr):Json{x[j],y[j]});
+        }
+        metadata_["links"][i]["coordinates"]=coordinates;
+    }
+    metadata_["subcatchments"]=Json::array();
+    Json legacy={{"owner","native_watershed"},{"aquifers",Json::array()},{"connections",Json::array()}};
+    for(int i=0;i<swmm_aquifer_count(engine);++i)legacy["aquifers"].push_back(swmm_aquifer_id(engine,i));
+    for(int i=0;i<swmm_subcatch_count(engine);++i) {
+        int n=0,node=-1,subcatch=-1,aquifer=-1,gwNode=-1;
+        check(engine,swmm_spatial_get_subcatch_polygon_count(engine,i,&n));
+        std::vector<double> x(n),y(n);Json polygon=Json::array();
+        if(n)check(engine,swmm_spatial_get_subcatch_polygon(engine,i,x.data(),y.data(),n));
+        for(int j=0;j<n;++j)polygon.push_back({x[j],y[j]});
+        check(engine,swmm_subcatch_get_outlet(engine,i,&node));
+        check(engine,swmm_subcatch_get_outlet_subcatch(engine,i,&subcatch));
+        check(engine,swmm_subcatch_get_aquifer(engine,i,&aquifer));check(engine,swmm_subcatch_get_gw_node(engine,i,&gwNode));
+        const char* pack=swmm_subcatch_get_snowpack(engine,i);
+        metadata_["subcatchments"].push_back({{"id",subcatchId(i)},{"polygon",polygon},
+            {"outlet_node",nodeId(node)},{"outlet_subcatchment",subcatchId(subcatch)},
+            {"snowpack",pack && *pack?Json(pack):Json(nullptr)}});
+        if(aquifer>=0)legacy["connections"].push_back({{"subcatchment",subcatchId(i)},
+            {"aquifer",swmm_aquifer_id(engine,aquifer)},{"node",nodeId(gwNode)}});
+    }
+    legacy["configured"]=!legacy["connections"].empty();metadata_["legacy_groundwater"]=legacy;
+    int snowModel=0;check(engine,swmm_snow_get_model(engine,&snowModel));
+    metadata_["snow"]={{"owner","native_watershed"},{"default_model",snowModel==SWMM_SNOW_UEB?"UEB":"DEGREE_DAY"},{"packs",Json::array()}};
+    for(int i=0;i<swmm_snowpack_count(engine);++i) {
+        SWMM_UebSnowpack pack{};check(engine,swmm_snowpack_get_ueb(engine,i,&pack));
+        const int model=pack.model==SWMM_SNOW_DEFAULT?snowModel:pack.model;
+        metadata_["snow"]["packs"].push_back({{"id",swmm_snowpack_id(engine,i)},{"model",model==SWMM_SNOW_UEB?"UEB":"DEGREE_DAY"}});
+    }
+    metadata_["lids"]={{"controls",Json::array()},{"watershed_usage",Json::array()},{"node_assignments",Json::array()}};
+    for(int i=0;i<swmm_lid_count(engine);++i) {
+        int type=0;check(engine,swmm_lid_get_type(engine,i,&type));
+        SWMM_LidRichardsOptions options{};check(engine,swmm_lid_richards_options_get(engine,i,&options));
+        metadata_["lids"]["controls"].push_back({{"id",swmm_lid_id(engine,i)},{"type",type},
+            {"node_flow_model",options.model?"RICHARDS":"CLASSICAL"}});
+    }
+    for(int i=0;i<swmm_lid_usage_count(engine);++i) {
+        int subcatch=-1,lid=-1,number=0,toPerv=0;double area=0;
+        check(engine,swmm_lid_usage_get(engine,i,&subcatch,&lid,&number,&area,nullptr,nullptr,nullptr,&toPerv,nullptr));
+        metadata_["lids"]["watershed_usage"].push_back({{"index",i},{"subcatchment",subcatchId(subcatch)},
+            {"control",swmm_lid_id(engine,lid)},{"number",number},{"unit_area_project",area},{"to_pervious",toPerv!=0}});
+    }
+    for(int i=0;i<swmm_node_count(engine);++i) {
+        int lid=-1,bottom=0;double saturation=0;check(engine,swmm_node_get_lid(engine,i,&lid,&saturation));if(lid<0)continue;
+        check(engine,swmm_node_get_lid_bottom(engine,i,&bottom));
+        metadata_["lids"]["node_assignments"].push_back({{"node",nodeId(i)},{"control",swmm_lid_id(engine,lid)},
+            {"bottom",bottom==SWMM_LID_BOTTOM_MESH_AQUIFER?"MESH_AQUIFER":bottom==SWMM_LID_BOTTOM_SEALED?"SEALED":"CURRENT"}});
+    }
+    Json surface={{"owner","native_integrated2d"},{"vertices_m",Json::array()},{"cells",Json::array()},
+        {"vertex_connections",Json::array()},{"cell_connections",Json::array()}};
+    Json gw={{"owner","native_integrated2d"},{"internal_exchange","native_surface_groundwater"},
+        {"configured",metadata_["explicit_groundwater_configured"]},{"mode",metadata_["explicit_groundwater_mode"]},
+        {"rows",Json::array()},{"node_beds",Json::array()},{"link_beds",Json::array()}};
+#ifdef OPENSWMM_HAS_2D
+    surface["available"]=true;gw["available"]=true;
+    gw["geometry_source"]=metadata_["explicit_groundwater_mode"]=="PER_SUBCATCH"?"subcatchments":"surface.cells";
+    gw["options"]=Json::object();
+    for(const char* key:{"NODE_ENROLMENT","LINK_SEEPAGE","GW_ET","GW_ET_EFFECTIVE","LINK_SEEPAGE_EFFECTIVE"})
+        gw["options"][key]=readText([&](char* b,int n){check(engine,swmm_gw2d_option_get(engine,key,b,n));});
+    const int vertices=metadata_["surface_vertex_count"].get<int>();
+    if(vertices) {
+        double scale=1;check(engine,swmm_2d_geometry_scale_to_si(engine,&scale));surface["source_scale_to_m"]=scale;
+        for(int i=0;i<vertices;++i) {
+            double x=0,y=0,z=0;check(engine,swmm_2d_vertex_get_xyz(engine,i,&x,&y,&z));
+            surface["vertices_m"].push_back({x*scale,y*scale,z*scale});
+            int node=-1;check(engine,swmm_2d_vertex_get_coupled_node(engine,i,&node));
+            if(node>=0) {
+                double cd=0,area=0;check(engine,swmm_2d_get_vertex_coupling_cd(engine,i,&cd));check(engine,swmm_2d_get_vertex_coupling_area(engine,i,&area));
+                surface["vertex_connections"].push_back({{"vertex",i},{"node",nodeId(node)},{"cd",cd},{"area_m2",area*scale*scale}});
+            }
+        }
+        int cells=0,rows=0;check(engine,swmm_2d_cell_count(engine,&cells));
+        for(int i=0;i<cells;++i) {
+            int v[4],n=0;check(engine,swmm_2d_cell_get_vertices(engine,i,v,&n));
+            surface["cells"].push_back({{"index",i},{"vertices",std::vector<int>(v,v+n)}});
+        }
+        check(engine,swmm_2d_triangle_coupling_rows(engine,&rows));
+        for(int i=0;i<rows;++i) {
+            int cell=-1,node=-1;double cd=0,area=0;
+            check(engine,swmm_2d_get_triangle_coupling_row(engine,i,&cell,&node,&cd,&area));
+            surface["cell_connections"].push_back({{"cell",cell},{"node",nodeId(node)},{"cd",cd},{"area_m2",area*scale*scale}});
+        }
+    }
+    const int rowCount=metadata_["explicit_groundwater_row_count"].get<int>();
+    for(int i=0;i<rowCount;++i) {
+        int scope=0,cell=-1;double ks=0,zs=0,ts=0,tr=0,alpha=0;
+        auto tag=readText([&](char* b,int n){check(engine,swmm_gw2d_row_get(engine,i,&scope,b,n,&cell,&ks,&zs,&ts,&tr,&alpha));});
+        gw["rows"].push_back({{"index",i},{"scope",scope==SWMM_GW2D_SCOPE_CELL?"CELL":scope==SWMM_GW2D_SCOPE_TAG?"TAG":"GLOBAL"},
+            {"tag",tag},{"cell",scope==SWMM_GW2D_SCOPE_CELL?Json(cell):Json(nullptr)},
+            {"ks_project",ks},{"thickness_project",zs},{"theta_s",ts},{"theta_r",tr},{"alpha_project",alpha}});
+    }
+    int nodes=0,links=0;check(engine,swmm_gw2d_node_count(engine,&nodes));check(engine,swmm_gw2d_link_count(engine,&links));
+    for(int i=0;i<nodes;++i) {
+        int cell=-1,locate=0,exchange=0,automatic=0;double kc=0,dc=0,area=0;
+        auto name=readText([&](char* b,int n){check(engine,swmm_gw2d_node_get(engine,i,b,n,&cell,&kc,&dc,&area));});
+        check(engine,swmm_gw2d_node_get_flags(engine,i,&locate,&exchange,&automatic));
+        gw["node_beds"].push_back({{"node",name},{"cell",locate?Json(nullptr):Json(cell)},
+            {"locate_at_initialize",locate!=0},{"exchange",exchange!=0},{"automatic",automatic!=0},
+            {"kc_project",kc},{"thickness_project",dc},{"area_project",area}});
+    }
+    for(int i=0;i<links;++i) {
+        int exchange=0;double kc=0,dc=0;
+        auto name=readText([&](char* b,int n){check(engine,swmm_gw2d_link_get(engine,i,b,n,&kc,&dc,&exchange));});
+        gw["link_beds"].push_back({{"link",name},{"exchange",exchange!=0},{"kc_project",kc},{"thickness_project",dc}});
+    }
+#else
+    surface["available"]=false;gw["available"]=false;gw["geometry_source"]=nullptr;
+#endif
+    metadata_["surface"]=surface;metadata_["explicit_groundwater"]=gw;
 }
 
 void OpenSWMMEngineComponent::validateConnections() {

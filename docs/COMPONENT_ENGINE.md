@@ -41,8 +41,37 @@ simulation, loading runtime `[PLUGINS]`, or writing results. `model_metadata`
 is a scalar String containing `openswmm.component-metadata/1` JSON: stable node
 and link IDs/endpoints, pollutant units, reaction BULK/WALL kinds and declared
 units, process registrations, transport policy, clocks, legacy aquifer count,
-explicit groundwater mode/configuration and surface counts. This is an initial
-catalogue, not a complete spatial geometry interface. Check `runnable` and
+explicit groundwater mode/configuration and surface counts. The additive spatial
+catalogue includes:
+
+- `spatial`: declared CRS (null when absent), project length units, parsed-stage
+  provenance, and zero-based mesh indices. Node/link/subcatchment coordinates
+  remain as authored; a declared CRS is not inferred from the flow units.
+- `nodes[].coordinates`, `links[].coordinates`, and `subcatchments[].polygon`:
+  node locations, endpoint/interior polylines and watershed boundaries. An
+  unlocated node or link endpoint is null, distinct from an authored `(0, 0)`.
+  Incomplete polylines are inspection records, not valid GeoJSON geometries.
+- `surface`: mixed triangle/quad connectivity, vertices normalized to metres,
+  vertex-to-node connections and every cell-to-node row (including repeated
+  cells), with exchange areas in square metres. `source_scale_to_m` accounts
+  for project units and a mesh's SI declaration. Mesh indices are model-local,
+  and must not be reused across a remesh.
+- `legacy_groundwater`: separate aquifer definitions and actual subcatchment /
+  aquifer / receiving-node connections, owned by native watershed hydrology.
+- `explicit_groundwater`: MESH or PER_SUBCATCH mode, authored scopes, node beds,
+  conduit beds and enrollment options. PER_SUBCATCH remains explicit groundwater;
+  its geometry source is the subcatchments. AUTO locations remain unresolved
+  until native initialization. Automatic rows and resolved runtime mappings are
+  not synthesized during inspection. Properties ending `_project` use project
+  units: lengths ft/m, areas ft²/m², conductivity in/hr or mm/hr and alpha 1/ft
+  or 1/m. The native integrated surface/groundwater owner retains internal exchange.
+- `snow` and `lids`: effective degree-day/UEB pack selections, conventional LID
+  usage, node assignments, classical/Richards flow choice and bottom ownership.
+  These describe authoring; the native parser's compatibility gates still apply.
+
+These records support connection inspection, without advertising new execution,
+remapping, species conversion, or restart capabilities. Full forcing/boundary
+catalogues and resolved connection validation remain separate work. Check `runnable` and
 `execution_restrictions`; metadata inspection can succeed for a model whose
 execution is not qualified. Runtime plugins and model-authored additional output
 channels are refused until their metadata/output isolation is qualified.
@@ -56,6 +85,7 @@ solver = Solver("model.inp")
 try:
     solver.open_metadata()       # C API: swmm_engine_open_metadata
     print([node.id for node in solver.nodes])
+    print(solver.spatial.node_has_coord("J"))  # preserves a valid origin
     print([species.name for species in solver.reactions.species])
 finally:
     solver.destroy()

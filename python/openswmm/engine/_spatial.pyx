@@ -147,6 +147,14 @@ class Spatial:
     # Node coords
     # ------------------------------------------------------------------
 
+    def node_has_coord(self, node) -> bool:
+        """Whether coordinates were supplied, including a valid origin (0, 0)."""
+        cdef int i = _resolve_node(self._solver, node)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int present = 0
+        _check(swmm_spatial_node_has_coord(h, i, &present))
+        return bool(present)
+
     def node_coord(self, node) -> Tuple[float, float]:
         """Return the ``(x, y)`` coordinate of *node*."""
         cdef int i = _resolve_node(self._solver, node)

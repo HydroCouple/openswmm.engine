@@ -83,6 +83,16 @@ SWMM_ENGINE_API int swmm_spatial_set_node_coord(SWMM_Engine engine, int idx, dou
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_spatial_node_has_coord(SWMM_Engine engine, int idx, int* present) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (!present) return SWMM_ERR_BADPARAM;
+    const auto ui = static_cast<std::size_t>(idx);
+    *present = ui < ctx.spatial.node_has_xy.size() && ctx.spatial.node_has_xy[ui] ? 1 : 0;
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_spatial_get_node_coord(SWMM_Engine engine, int idx, double* x, double* y) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();

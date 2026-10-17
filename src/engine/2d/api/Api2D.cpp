@@ -13,6 +13,7 @@
 #include <openswmm/engine/openswmm_2d.h>
 #include <openswmm/engine/openswmm_forcing.h>
 #include "../../core/SWMMEngine.hpp"
+#include "../../core/UnitConversion.hpp"
 #include "../mesh/MeshBuilder.hpp"
 #include "../data/Report2DVars.hpp"
 
@@ -108,6 +109,16 @@ int swmm_2d_prepare_for_edit(SWMM_Engine engine) {
 // ============================================================================
 // Mesh Geometry
 // ============================================================================
+
+int swmm_2d_geometry_scale_to_si(SWMM_Engine engine, double* scale) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    if (!scale) return SWMM_ERR_BADPARAM;
+    const auto& options = router2d.options();
+    const bool us = openswmm::ucf::getUnitSystem(static_cast<int>(eng->context().options.flow_units)) == 0;
+    *scale = options.mesh_units_si || options.mesh_scaled_to_si || !us ? 1.0 : 0.3048;
+    return SWMM_OK;
+}
 
 int swmm_2d_vertex_count(SWMM_Engine engine, int* count) {
     GET_ENGINE(engine);
