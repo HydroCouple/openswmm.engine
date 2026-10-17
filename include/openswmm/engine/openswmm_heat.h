@@ -385,7 +385,8 @@ typedef enum SWMM_HeatSedimentParam {
     SWMM_HEAT_SED_HYPORHEIC_VELOCITY  = 5, /**< m/s, >= 0. */
     SWMM_HEAT_SED_DENSITY             = 6, /**< kg/m³, > 0. */
     SWMM_HEAT_SED_SPECIFIC_HEAT       = 7, /**< J/kg/K, > 0. */
-    SWMM_HEAT_SED_INITIAL_TEMPERATURE = 8  /**< °C; unset = start at ground temperature. */
+    SWMM_HEAT_SED_INITIAL_TEMPERATURE = 8, /**< °C; unset = start at ground temperature. */
+    SWMM_HEAT_SED_MESH_POROSITY = 9 /**< [0,1], new mesh bed only. */
 } SWMM_HeatSedimentParam;
 
 /** @brief Read a `[SEDIMENT_EXCHANGE]` GLOBAL parameter. */
@@ -426,7 +427,8 @@ typedef enum SWMM_HeatAttr {
     SWMM_HEAT_ATTR_GROUND_TEMPERATURE      = 10, /**< °C. */
     SWMM_HEAT_ATTR_HYPORHEIC_VELOCITY      = 11, /**< >= 0. */
     SWMM_HEAT_ATTR_SEDIMENT_DENSITY        = 12, /**< > 0. */
-    SWMM_HEAT_ATTR_SEDIMENT_SPECIFIC_HEAT  = 13  /**< > 0. */
+    SWMM_HEAT_ATTR_SEDIMENT_SPECIFIC_HEAT  = 13, /**< > 0. */
+    SWMM_HEAT_ATTR_MESH_POROSITY = 14 /**< [0,1], new mesh bed only. */
 } SWMM_HeatAttr;
 
 /** @brief Scope of a per-element override row. GLOBAL values are set with
@@ -434,7 +436,9 @@ typedef enum SWMM_HeatAttr {
 typedef enum SWMM_HeatOverrideScope {
     SWMM_HEAT_SCOPE_TAG  = 1, /**< every element carrying the tag. */
     SWMM_HEAT_SCOPE_NODE = 2, /**< one node (radiative attributes only). */
-    SWMM_HEAT_SCOPE_LINK = 3  /**< one link. */
+    SWMM_HEAT_SCOPE_LINK = 3, /**< one link. */
+    SWMM_HEAT_SCOPE_CELL2D = 6, /**< one mesh cell; name is its 1-based file ID. */
+    SWMM_HEAT_SCOPE_MESH_TAG = 7 /**< mesh region tag, independent of network TAG. */
 } SWMM_HeatOverrideScope;
 
 /** @brief Number of per-element override rows (radiative and sediment). */
@@ -460,13 +464,48 @@ SWMM_ENGINE_API int swmm_heat_set_element_override(SWMM_Engine engine, int attr,
 SWMM_ENGINE_API int swmm_heat_remove_element_override(SWMM_Engine engine,
                                                       int index);
 
-/** Read the effective pre-run property for a named NODE or LINK. Source is
- *  GLOBAL=0, TAG=1, NODE=2, LINK=3, air temperature=4 or ground series=5.
+/** Read the effective property for a named NODE, LINK or CELL2D. Source is
+ *  GLOBAL=0, TAG=1, NODE=2, LINK=3, air temperature=4, ground series=5,
+ *  CELL2D=6 or MESH_TAG=7. CELL2D names use one-based native cell IDs.
  *  Dynamic temperatures return NaN; source_name identifies the tag/series.
  *  This reports configuration precedence, independent of process activation. */
 SWMM_ENGINE_API int swmm_heat_get_effective_element(SWMM_Engine engine,
     int attr, int scope, const char* name, double* value, int* source,
     char* source_name, int source_name_len);
+
+/** Requested configuration and measured 2D runtime activation are distinct.
+ * Initialize struct_size before calling. Values apply to the mesh domain.
+ * New coupled physics remains experimental until its restart/owner matrix is
+ * qualified; the reason field states this explicitly. */
+typedef struct SWMM_Heat2DStatus {
+    unsigned int struct_size;
+    int requested, initialized, surface_active, radiative_active, bed_active;
+    int bed_model; /**< 0 NONE, 1 LOCAL_STORAGE, 2 GROUND_COLUMN. */
+    int experimental;
+    double water_heat_capacity; /**< J/(m3 K), shared by transport/heat receipts. */
+    char reason[256];
+} SWMM_Heat2DStatus;
+SWMM_ENGINE_API int swmm_heat_get_2d_status(SWMM_Engine,SWMM_Heat2DStatus*);
+
+/** SI runtime fields, cumulative since initialization. Positive J enters the
+ * named store; WATER_TO_BED is positive water -> bed. Cell indices are zero
+ * based at this bulk API. Bed-only fields are unavailable without a bed. */
+typedef enum SWMM_Heat2DValue {
+    SWMM_HEAT_2D_WATER_TEMPERATURE=0, /**< degC; dry reporting policy only. */
+    SWMM_HEAT_2D_BED_TEMPERATURE=1, /**< degC. */
+    SWMM_HEAT_2D_BED_ENERGY=2, /**< J relative to 0 degC. */
+    SWMM_HEAT_2D_BED_CAPACITY=3, /**< J/K. */
+    SWMM_HEAT_2D_ATMOSPHERIC_ENERGY=4,
+    SWMM_HEAT_2D_RADIATIVE_ENERGY=5,
+    SWMM_HEAT_2D_SENSIBLE_ENERGY=6,
+    SWMM_HEAT_2D_LATENT_ENERGY=7,
+    SWMM_HEAT_2D_DEEP_ENERGY=8,
+    SWMM_HEAT_2D_WATER_TO_BED_ENERGY=9,
+    SWMM_HEAT_2D_WATER_THERMAL_INCREMENT=10, /**< J; excludes water advection. */
+    SWMM_HEAT_2D_ACCEPTED_EVAPORATION=11, /**< m3. */
+    SWMM_HEAT_2D_THERMAL_RESIDUAL=12 /**< J; bed change + water increment - external heat. */
+} SWMM_Heat2DValue;
+SWMM_ENGINE_API int swmm_heat_get_2d_values(SWMM_Engine,int kind,int first_cell,int count,double* values);
 
 #ifdef __cplusplus
 }

@@ -296,6 +296,8 @@ struct HeatOverrideData {
     std::vector<RadiativeConfig> rad_link;   ///< [link], empty ⇒ use global
     std::vector<RadiativeConfig> rad_node;   ///< [node], empty ⇒ use global
     std::vector<SedimentConfig>  sed_link;   ///< [link], empty ⇒ use global
+    std::vector<RadiativeConfig> rad_cell;   ///< [surface mesh cell]
+    std::vector<SedimentConfig> sed_cell;    ///< [surface mesh cell], not ARD cells
 
     bool resolved = false;
 

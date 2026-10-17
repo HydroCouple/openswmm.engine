@@ -482,6 +482,7 @@ if(OPENSWMM_BUILD_2D)
         2d/data/*.cpp
         2d/gw/*.cpp
         2d/quality/*.cpp   # S7
+        2d/heat/*.cpp
         2d/infil/*.cpp
         2d/subsurface/*.cpp
         2d/mesh/*.cpp

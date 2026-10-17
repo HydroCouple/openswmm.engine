@@ -31,6 +31,10 @@
 #include "openswmm_api_common.hpp"
 
 #include <cmath>
+#include <charconv>
+#ifdef OPENSWMM_HAS_2D
+#include "../2d/data/MeshData.hpp"
+#endif
 #include <string>
 #include <vector>
 #include "../../../include/openswmm/engine/openswmm_heat.h"
@@ -659,12 +663,15 @@ static_assert(SWMM_HEAT_ATTR_SEDIMENT_SPECIFIC_HEAT ==
                   static_cast<int>(HeatAttr::SED_THERMAL_DIFFUSIVITY) &&
               SWMM_HEAT_ATTR_LANDCOVER_TEMPERATURE ==
                   static_cast<int>(HeatAttr::LANDCOVER_TEMP) &&
-              SWMM_HEAT_ATTR_SEDIMENT_SPECIFIC_HEAT + 1 ==
+              SWMM_HEAT_ATTR_MESH_POROSITY == static_cast<int>(HeatAttr::SED_MESH_POROSITY) &&
+              SWMM_HEAT_ATTR_MESH_POROSITY + 1 ==
                   static_cast<int>(HeatAttr::COUNT_),
               "SWMM_HeatAttr must mirror openswmm::HeatAttr");
 static_assert(SWMM_HEAT_SCOPE_TAG == static_cast<int>(HeatScope::TAG) &&
               SWMM_HEAT_SCOPE_NODE == static_cast<int>(HeatScope::NODE) &&
-              SWMM_HEAT_SCOPE_LINK == static_cast<int>(HeatScope::LINK),
+              SWMM_HEAT_SCOPE_LINK == static_cast<int>(HeatScope::LINK) &&
+              SWMM_HEAT_SCOPE_CELL2D == static_cast<int>(HeatScope::CELL2D) &&
+              SWMM_HEAT_SCOPE_MESH_TAG == static_cast<int>(HeatScope::MESH_TAG),
               "SWMM_HeatOverrideScope must mirror openswmm::HeatScope");
 
 /// The GLOBAL sediment parameters that share an override attribute (and so
@@ -678,6 +685,7 @@ int sediment_attr(int param) {
         case SWMM_HEAT_SED_HYPORHEIC_VELOCITY:  return static_cast<int>(HeatAttr::SED_HYPORHEIC_VELOCITY);
         case SWMM_HEAT_SED_DENSITY:             return static_cast<int>(HeatAttr::SED_DENSITY);
         case SWMM_HEAT_SED_SPECIFIC_HEAT:       return static_cast<int>(HeatAttr::SED_SPECIFIC_HEAT);
+        case SWMM_HEAT_SED_MESH_POROSITY:       return static_cast<int>(HeatAttr::SED_MESH_POROSITY);
         default:                                return -1;
     }
 }
@@ -690,6 +698,8 @@ std::vector<std::string> reresolve(openswmm::SimulationContext& ctx) {
     ov.rad_link.clear();
     ov.rad_node.clear();
     ov.sed_link.clear();
+    ov.rad_cell.clear();
+    ov.sed_cell.clear();
     return openswmm::transport::heat::resolveHeatOverrides(ctx);
 }
 
@@ -710,6 +720,7 @@ SWMM_ENGINE_API int swmm_heat_get_sediment(SWMM_Engine engine, int param,
         case SWMM_HEAT_SED_DENSITY:             *value = sd.sed_density;         break;
         case SWMM_HEAT_SED_SPECIFIC_HEAT:       *value = sd.sed_specific_heat;   break;
         case SWMM_HEAT_SED_INITIAL_TEMPERATURE: *value = sd.initial_temp;        break;
+        case SWMM_HEAT_SED_MESH_POROSITY:       *value = sd.mesh_porosity; break;
         default: return SWMM_ERR_BADINDEX;
     }
     return SWMM_OK;
@@ -719,7 +730,7 @@ SWMM_ENGINE_API int swmm_heat_set_sediment(SWMM_Engine engine, int param,
                                            double value) {
     CHECK_HANDLE(engine);
     if (param < SWMM_HEAT_SED_THERMAL_DIFFUSIVITY ||
-        param > SWMM_HEAT_SED_INITIAL_TEMPERATURE)
+        param > SWMM_HEAT_SED_MESH_POROSITY)
         return SWMM_ERR_BADINDEX;
     if (!std::isfinite(value)) return SWMM_ERR_BADPARAM;
     const int attr = sediment_attr(param);
@@ -741,6 +752,7 @@ SWMM_ENGINE_API int swmm_heat_set_sediment(SWMM_Engine engine, int param,
         case SWMM_HEAT_SED_HYPORHEIC_VELOCITY:  sd.hyporheic_velocity  = value; break;
         case SWMM_HEAT_SED_DENSITY:             sd.sed_density         = value; break;
         case SWMM_HEAT_SED_SPECIFIC_HEAT:       sd.sed_specific_heat   = value; break;
+        case SWMM_HEAT_SED_MESH_POROSITY:       sd.mesh_porosity       = value; break;
         case SWMM_HEAT_SED_INITIAL_TEMPERATURE:
             sd.initial_temp     = value;
             sd.has_initial_temp = true;
@@ -818,7 +830,7 @@ SWMM_ENGINE_API int swmm_heat_set_element_override(SWMM_Engine engine, int attr,
     CHECK_EDITABLE(ctx);
     if (attr < 0 || attr >= static_cast<int>(HeatAttr::COUNT_)) return SWMM_ERR_BADINDEX;
     if (scope != SWMM_HEAT_SCOPE_TAG && scope != SWMM_HEAT_SCOPE_NODE &&
-        scope != SWMM_HEAT_SCOPE_LINK)
+        scope != SWMM_HEAT_SCOPE_LINK && scope != SWMM_HEAT_SCOPE_CELL2D && scope != SWMM_HEAT_SCOPE_MESH_TAG)
         return SWMM_ERR_BADPARAM;
     if (name == nullptr || *name == '\0') return SWMM_ERR_BADPARAM;
     const auto a = static_cast<HeatAttr>(attr);
@@ -862,30 +874,44 @@ SWMM_ENGINE_API int swmm_heat_get_effective_element(SWMM_Engine engine,
     int attr, int scope, const char* name, double* value, int* source,
     char* source_name, int source_name_len) {
     CHECK_HANDLE(engine);
-    if (!name || !value || !source || attr<0 || attr>SWMM_HEAT_ATTR_SEDIMENT_SPECIFIC_HEAT
-        || (scope!=SWMM_HEAT_SCOPE_NODE && scope!=SWMM_HEAT_SCOPE_LINK)
+    if (!name || !value || !source || attr<0 || attr>SWMM_HEAT_ATTR_MESH_POROSITY
+        || (scope!=SWMM_HEAT_SCOPE_NODE && scope!=SWMM_HEAT_SCOPE_LINK && scope!=SWMM_HEAT_SCOPE_CELL2D)
         || (scope==SWMM_HEAT_SCOPE_NODE && attr>=SWMM_HEAT_ATTR_THERMAL_DIFFUSIVITY))
         return SWMM_ERR_BADPARAM;
     const auto& ctx=to_engine(engine)->context();
     const bool link=scope==SWMM_HEAT_SCOPE_LINK;
-    const int index=link?ctx.link_names.find(name):ctx.node_names.find(name);
+    const bool cell=scope==SWMM_HEAT_SCOPE_CELL2D;
+    int index=link?ctx.link_names.find(name):ctx.node_names.find(name);
+    std::string tag;
+    if(cell) {
+#ifdef OPENSWMM_HAS_2D
+        int id=0;const std::string text(name);
+        const auto parsed=std::from_chars(text.data(),text.data()+text.size(),id);
+        const auto* mesh=ctx.twod_io.mesh;
+        if(parsed.ec!=std::errc{}||parsed.ptr!=text.data()+text.size()||!mesh||id<1||id>mesh->n_cells())return SWMM_ERR_BADINDEX;
+        index=id-1;tag=std::size_t(index)<mesh->tri_tag.size()?mesh->tri_tag[index]:"";
+#else
+        return SWMM_ERR_PLUGIN;
+#endif
+    }
     if(index<0)return SWMM_ERR_BADINDEX;
     const auto& tags=link?ctx.links.tags:ctx.nodes.tags;
-    const std::string tag=std::size_t(index)<tags.size()?tags[std::size_t(index)]:"";
+    if(!cell)tag=std::size_t(index)<tags.size()?tags[std::size_t(index)]:"";
     int rc=SWMM_OK;
     if(attr<=SWMM_HEAT_ATTR_EMISS_LANDCOVER)rc=swmm_heat_get_radiative(engine,attr+1,value);
     else if(attr==SWMM_HEAT_ATTR_LANDCOVER_TEMPERATURE)rc=swmm_heat_get_radiative(engine,SWMM_HEAT_RAD_LANDCOVER_TEMPERATURE,value);
     else {
         const int params[]={SWMM_HEAT_SED_THERMAL_DIFFUSIVITY,SWMM_HEAT_SED_SOLUTE_DIFFUSIVITY,
             SWMM_HEAT_SED_BED_THICKNESS,SWMM_HEAT_SED_GROUND_DEPTH,SWMM_HEAT_SED_GROUND_TEMPERATURE,
-            SWMM_HEAT_SED_HYPORHEIC_VELOCITY,SWMM_HEAT_SED_DENSITY,SWMM_HEAT_SED_SPECIFIC_HEAT};
+            SWMM_HEAT_SED_HYPORHEIC_VELOCITY,SWMM_HEAT_SED_DENSITY,SWMM_HEAT_SED_SPECIFIC_HEAT,
+            SWMM_HEAT_SED_MESH_POROSITY};
         rc=swmm_heat_get_sediment(engine,params[attr-SWMM_HEAT_ATTR_THERMAL_DIFFUSIVITY],value);
     }
     if(rc!=SWMM_OK)return rc;
     *source=0;std::string origin="Global";
     for(int pass=0;pass<2;++pass)for(const auto& row:ctx.heat_config.overrides.rows) {
         if(static_cast<int>(row.attr)!=attr)continue;
-        if((pass==0&&row.scope==HeatScope::TAG&&row.name==tag)
+        if((pass==0&&row.scope==(cell?HeatScope::MESH_TAG:HeatScope::TAG)&&row.name==tag)
             ||(pass==1&&static_cast<int>(row.scope)==scope&&row.name==name)) {
             *value=row.value;*source=static_cast<int>(row.scope);origin=row.name;
         }

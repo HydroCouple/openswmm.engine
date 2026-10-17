@@ -235,6 +235,9 @@ double cloudLongwaveFactor(double cloud_fraction, double k_lw) noexcept {
 // ===========================================================================
 
 void updateSolarForcing(SimulationContext& ctx, double seconds) {
+    updateSolarForcing(ctx, seconds, false);
+}
+void updateSolarForcing(SimulationContext& ctx, double seconds, bool mesh_enabled) {
     auto& hs = ctx.heat_state;
 
     // Unobserved work is not free and not tested (lesson 39): under any
@@ -244,7 +247,7 @@ void updateSolarForcing(SimulationContext& ctx, double seconds) {
     // 0: `radiativeFluxOut` returns early under this same condition, so
     // nothing reads it, and leaving a resolved-looking 0 behind would make
     // a later read silently lose the configured constant.
-    if (!ctx.options.heat_transport || !ctx.heat_config.radiative_exchange) {
+    if (!ctx.options.heat_transport || (!ctx.heat_config.radiative_exchange && !mesh_enabled)) {
         hs.shortwave_now = -1.0;
         hs.cloud_now     = 0.0;
         return;

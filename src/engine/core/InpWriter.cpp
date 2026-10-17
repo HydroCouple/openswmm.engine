@@ -816,6 +816,10 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx,
         std::fprintf(f, "%-22s %s\n", "INFIL_DEFAULT_METHOD", o.infil_default_method.c_str());
     if (!o.infil_destination.empty() && o.infil_destination != "LOST")
         std::fprintf(f, "%-22s %s\n", "INFIL_DESTINATION", o.infil_destination.c_str());
+    if(o.heat_model_authored)std::fprintf(f,"%-22s %s\n","HEAT_MODEL",o.coupled_heat?"COUPLED":"TRANSPORT_ONLY");
+    if(o.bed_heat_authored)std::fprintf(f,"%-22s %s\n","BED_HEAT_MODEL",o.bed_heat_model==0?"NONE":o.bed_heat_model==1?"LOCAL_STORAGE":"GROUND_COLUMN");
+    if(o.heat_surface_authored)std::fprintf(f,"%-22s %s\n","HEAT_SURFACE_EXCHANGE",o.heat_surface<0?"AUTO":o.heat_surface?"YES":"NO");
+    if(o.heat_radiative_authored)std::fprintf(f,"%-22s %s\n","HEAT_RADIATIVE_EXCHANGE",o.heat_radiative<0?"AUTO":o.heat_radiative?"YES":"NO");
     if (o.evaporation != 1)
         std::fprintf(f, "%-22s %s\n", "EVAPORATION", o.evaporation == 0 ? "NO" : "CLIMATE");
     if (!o.transport_pollutants)  std::fprintf(f, "%-22s NO\n", "TRANSPORT_POLLUTANTS");

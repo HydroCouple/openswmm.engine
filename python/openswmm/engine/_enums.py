@@ -1250,6 +1250,7 @@ class HeatSedimentParam(IntEnum):
     DENSITY = 6
     SPECIFIC_HEAT = 7
     INITIAL_TEMPERATURE = 8
+    MESH_POROSITY = 9
 
 
 class HeatAttr(IntEnum):
@@ -1273,6 +1274,7 @@ class HeatAttr(IntEnum):
     HYPORHEIC_VELOCITY = 11
     SEDIMENT_DENSITY = 12
     SEDIMENT_SPECIFIC_HEAT = 13
+    MESH_POROSITY = 14
 
 
 class HeatOverrideScope(IntEnum):
@@ -1281,6 +1283,8 @@ class HeatOverrideScope(IntEnum):
     TAG = 1
     NODE = 2
     LINK = 3
+    CELL2D = 6
+    MESH_TAG = 7
 
 
 class HeatSourceKind(IntEnum):

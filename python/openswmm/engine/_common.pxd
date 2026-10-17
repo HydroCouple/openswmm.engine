@@ -1438,6 +1438,19 @@ cdef extern from "openswmm_heat.h":
     int swmm_heat_sediment_temperature_configured(SWMM_Engine, int, int*)
     int swmm_heat_clear_sediment_temperature(SWMM_Engine, int)
     int swmm_heat_get_effective_element(SWMM_Engine, int, int, const char*, double*, int*, char*, int)
+    ctypedef struct SWMM_Heat2DStatus:
+        unsigned int struct_size
+        int requested
+        int initialized
+        int surface_active
+        int radiative_active
+        int bed_active
+        int bed_model
+        int experimental
+        double water_heat_capacity
+        char reason[256]
+    int swmm_heat_get_2d_status(SWMM_Engine,SWMM_Heat2DStatus*)
+    int swmm_heat_get_2d_values(SWMM_Engine,int,int,int,double*)
 
     # Toggles
     cdef int swmm_heat_get_enabled(SWMM_Engine e, int* enabled)

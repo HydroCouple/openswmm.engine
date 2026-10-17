@@ -210,6 +210,15 @@ enum Var : unsigned {
  * typical urban drainage surface routing problems.
  */
 struct SolverOptions2D {
+    // Explicit opt-in. Unauthored fields are omitted by the writer.
+    bool coupled_heat=false,heat_model_authored=false;
+    int heat_surface=-1,heat_radiative=-1; // AUTO inherits network module
+    bool heat_surface_authored=false,heat_radiative_authored=false;
+    int bed_heat_model=0; // NONE, LOCAL_STORAGE, GROUND_COLUMN
+    bool bed_heat_authored=false;
+    // Derived during initialization: legacy runtime-water conversion stays
+    // 4.186 MJ/(m3 K); opt-in coupled heat uses configured water rho*cp.
+    double water_heat_capacity=4186000.0;
     /// [2D_OPTIONS] MOMENTUM_EQUATION — momentum closure (see Momentum2D).
     Momentum2D momentum = Momentum2D::LOCAL_INERTIAL;
     /// [2D_OPTIONS] FRONT_REBUILD AUTO|YES|NO — rebuild the flux-active set

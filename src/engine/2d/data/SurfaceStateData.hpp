@@ -41,6 +41,7 @@
 #include "../coupling/RuntimeCoupling.hpp"
 #include "../../hydrology/surface/MeshSnow.hpp"
 #include "SurfaceTransportState.hpp"   // S1 — species mass per cell
+#include "../heat/MeshHeat.hpp"
 #include "MeshData.hpp"                 // kMaxCellVerts edge-slot stride
 
 namespace openswmm { struct NodeData; }  // 1D node data (held during a 2D advance)
@@ -91,6 +92,7 @@ struct SurfaceStateData {
     /// otherwise untouched. Embedded rather than pointed-to: it is per-cell
     /// STATE, sized with `volume`, and it is copied when the state is.
     SurfaceTransportState transport;
+    MeshHeatState heat;
 
     std::vector<double> depth;          ///< Mean wetted depth h̄ = V/A_wet (m) [reconstructed]
     std::vector<double> head;           ///< Free-surface elevation η (m) [reconstructed]
@@ -240,6 +242,7 @@ struct SurfaceStateData {
     // -----------------------------------------------------------------------
 
     void resize(int n_triangles, int n_vertices) {
+        heat.clear();
         snow={};snow_context=nullptr;snow_catch.clear();
         auto nt = static_cast<std::size_t>(n_triangles);
         auto nv = static_cast<std::size_t>(n_vertices);

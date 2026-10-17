@@ -209,6 +209,7 @@ double cloudLongwaveFactor(double cloud_fraction, double k_lw) noexcept;
  *       lesson 39 is about.
  */
 void updateSolarForcing(SimulationContext& ctx, double seconds = 1);
+void updateSolarForcing(SimulationContext& ctx, double seconds, bool mesh_enabled);
 
 }  // namespace openswmm::climate
 

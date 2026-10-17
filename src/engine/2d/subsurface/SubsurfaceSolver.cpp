@@ -1569,7 +1569,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
             auto& s=runtime_sources_.rows[k];
             s.receipt.heat_requested += s.heat*dt;
             if (ts*hg0*A+source.in>0.0 && tr_.temp_row>=0) {
-                const double dm=s.heat*dt/runtimeWaterHeatCapacity;
+                const double dm=s.heat*dt/opts_->water_heat_capacity;
                 source.mass[tr_.temp_row] += dm;
                 s.receipt.heat_applied += s.heat*dt;
                 s.receipt.requested_mass[tr_.temp_row] += dm;

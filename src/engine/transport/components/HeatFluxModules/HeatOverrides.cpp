@@ -26,8 +26,12 @@
 #include "HeatOverrides.hpp"
 
 #include <cstddef>
+#include <charconv>
 
 #include "../../../core/SimulationContext.hpp"
+#ifdef OPENSWMM_HAS_2D
+#include "../../../2d/data/MeshData.hpp"
+#endif
 
 namespace openswmm::transport::heat {
 
@@ -67,6 +71,7 @@ void patchSediment(SedimentConfig& c, HeatAttr a, double v) noexcept {
         case HeatAttr::SED_HYPORHEIC_VELOCITY:  c.hyporheic_velocity = v; break;
         case HeatAttr::SED_DENSITY:             c.sed_density = v; break;
         case HeatAttr::SED_SPECIFIC_HEAT:       c.sed_specific_heat = v; break;
+        case HeatAttr::SED_MESH_POROSITY:       c.mesh_porosity = v; break;
         default: break;
     }
 }
@@ -86,8 +91,13 @@ std::vector<std::string> resolveHeatOverrides(SimulationContext& ctx) {
     // D-PE2's whole point: a deck that shades three conduits must not
     // allocate a SedimentConfig for every link in the network.
     bool want_rad_link = false, want_rad_node = false, want_sed = false;
+    bool want_rad_cell=false,want_sed_cell=false;
     for (const auto& r : ov.rows) {
         if (r.scope == HeatScope::GLOBAL) continue;     // already in the base
+        if(r.scope==HeatScope::CELL2D || r.scope==HeatScope::MESH_TAG) {
+            if(isSedimentAttr(r.attr))want_sed_cell=true;else want_rad_cell=true;
+            continue;
+        }
         if (isSedimentAttr(r.attr)) {
             want_sed = true;
         } else if (r.scope == HeatScope::NODE) {
@@ -108,6 +118,37 @@ std::vector<std::string> resolveHeatOverrides(SimulationContext& ctx) {
     if (want_sed && nl > 0)
         ov.sed_link.assign(static_cast<std::size_t>(nl),
                            ctx.heat_config.sediment);
+
+    if(want_rad_cell||want_sed_cell) {
+#ifdef OPENSWMM_HAS_2D
+        const auto* mesh=ctx.twod_io.mesh;
+        const int nc=mesh?mesh->n_cells():0;
+        if(want_rad_cell)ov.rad_cell.assign(nc,ctx.heat_config.radiative);
+        if(want_sed_cell)ov.sed_cell.assign(nc,ctx.heat_config.sediment);
+        for(const auto scope:{HeatScope::MESH_TAG,HeatScope::CELL2D})for(const auto& r:ov.rows) {
+            if(r.scope!=scope)continue;
+            int cell=-1;
+            if(scope==HeatScope::CELL2D) {
+                const auto parsed=std::from_chars(r.name.data(),r.name.data()+r.name.size(),cell);
+                if(parsed.ec!=std::errc{}||parsed.ptr!=r.name.data()+r.name.size()||cell<1||cell>nc) {
+                    errors.push_back("model.heat: CELL2D '"+r.name+"' is not a valid 1-based mesh cell.");continue;
+                }
+                --cell;
+            }
+            bool hit=false;
+            for(int i=0;i<nc;++i) {
+                if(scope==HeatScope::CELL2D ? i!=cell :
+                    (std::size_t(i)>=mesh->tri_tag.size()||mesh->tri_tag[i]!=r.name))continue;
+                hit=true;
+                if(isSedimentAttr(r.attr))patchSediment(ov.sed_cell[i],r.attr,r.value);
+                else patchRadiative(ov.rad_cell[i],r.attr,r.value);
+            }
+            if(!hit)errors.push_back("model.heat: MESH_TAG '"+r.name+"' matches no mesh region.");
+        }
+#else
+        errors.push_back("model.heat: mesh overrides require a 2D-enabled engine.");
+#endif
+    }
 
     // Two passes, in specificity order (D-PE3). Precedence is a property of
     // the ORDER, not of a comparison: TAG writes first, element writes
@@ -202,6 +243,8 @@ const RadiativeConfig& radiativeFor(const SimulationContext& ctx,
             return ov.rad_link[ui];
         if (e.kind == HeatElemKind::NODE && ui < ov.rad_node.size())
             return ov.rad_node[ui];
+        if (e.kind == HeatElemKind::CELL2D && ui < ov.rad_cell.size())
+            return ov.rad_cell[ui];
     }
     // SUBCATCH and LID have no radiative override table: a subcatchment's
     // shading is a watershed property this program models through its own
@@ -213,6 +256,8 @@ const RadiativeConfig& radiativeFor(const SimulationContext& ctx,
 const SedimentConfig& sedimentFor(const SimulationContext& ctx,
                                   const HeatElement& e) noexcept {
     const auto& ov = ctx.heat_config.overrides;
+    if(e.kind==HeatElemKind::CELL2D && e.index>=0 && std::size_t(e.index)<ov.sed_cell.size())
+        return ov.sed_cell[e.index];
     if (e.kind == HeatElemKind::LINK && e.index >= 0) {
         const auto ui = static_cast<std::size_t>(e.index);
         if (ui < ov.sed_link.size()) return ov.sed_link[ui];

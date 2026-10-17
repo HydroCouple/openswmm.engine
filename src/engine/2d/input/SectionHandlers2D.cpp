@@ -346,6 +346,23 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
         else if (iequals(val, "AQUIFER_2D"))       opts.infil_destination = "AQUIFER_2D";
         else return "Unknown INFIL_DESTINATION: " + val +
                     " (expected LOST|SUBCATCH_AQUIFER|AQUIFER_2D)";
+    } else if (iequals(key, "HEAT_MODEL")) {
+        if(iequals(val,"COUPLED"))opts.coupled_heat=true;
+        else if(iequals(val,"TRANSPORT_ONLY"))opts.coupled_heat=false;
+        else return "HEAT_MODEL expects TRANSPORT_ONLY or COUPLED";
+        opts.heat_model_authored=true;
+    } else if (iequals(key,"HEAT_SURFACE_EXCHANGE")||iequals(key,"HEAT_RADIATIVE_EXCHANGE")) {
+        int mode=-1;
+        if(iequals(val,"YES"))mode=1;else if(iequals(val,"NO"))mode=0;
+        else if(!iequals(val,"AUTO"))return key+" expects AUTO, YES or NO";
+        (iequals(key,"HEAT_SURFACE_EXCHANGE")?opts.heat_surface:opts.heat_radiative)=mode;
+        (iequals(key,"HEAT_SURFACE_EXCHANGE")?opts.heat_surface_authored:opts.heat_radiative_authored)=true;
+    } else if (iequals(key,"BED_HEAT_MODEL")) {
+        if(iequals(val,"NONE"))opts.bed_heat_model=0;
+        else if(iequals(val,"LOCAL_STORAGE"))opts.bed_heat_model=1;
+        else if(iequals(val,"GROUND_COLUMN"))opts.bed_heat_model=2;
+        else return "BED_HEAT_MODEL expects NONE, LOCAL_STORAGE or GROUND_COLUMN";
+        opts.bed_heat_authored=true;
     } else if (iequals(key, "EVAPORATION")) {
         if      (iequals(val, "YES") || iequals(val, "ON") || iequals(val, "FORCING"))
             opts.evaporation = 1;
@@ -422,7 +439,7 @@ bool is2DOptionKey(const std::string& key) {
         "INFILTRATION", "INFIL_STEP", "INFIL_DEFAULT_METHOD", "INFIL_DESTINATION",
         "EVAPORATION", "TRANSPORT_POLLUTANTS", "TRANSPORT_MSX", "TRANSPORT_AGE",
         "TRANSPORT_TEMPERATURE",
-        "GROUNDWATER", "GW_ET",
+        "GROUNDWATER", "GW_ET", "HEAT_MODEL", "HEAT_SURFACE_EXCHANGE", "HEAT_RADIATIVE_EXCHANGE", "BED_HEAT_MODEL",
     };
     for (const char* k : kKeys) {
         if (iequals(key, k)) return true;
@@ -523,6 +540,10 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
         return opts.infil_default_method.empty() ? "NONE" : opts.infil_default_method;
     if (iequals(key, "INFIL_DESTINATION"))
         return opts.infil_destination.empty() ? "LOST" : opts.infil_destination;
+    if(iequals(key,"HEAT_MODEL"))return opts.coupled_heat?"COUPLED":"TRANSPORT_ONLY";
+    if(iequals(key,"BED_HEAT_MODEL"))return opts.bed_heat_model==0?"NONE":opts.bed_heat_model==1?"LOCAL_STORAGE":"GROUND_COLUMN";
+    if(iequals(key,"HEAT_SURFACE_EXCHANGE"))return opts.heat_surface<0?"AUTO":opts.heat_surface?"YES":"NO";
+    if(iequals(key,"HEAT_RADIATIVE_EXCHANGE"))return opts.heat_radiative<0?"AUTO":opts.heat_radiative?"YES":"NO";
     if (iequals(key, "EVAPORATION"))
         return opts.evaporation == 0 ? "NO" : (opts.evaporation == 2 ? "CLIMATE" : "YES");
     if (iequals(key, "TRANSPORT_POLLUTANTS"))  return opts.transport_pollutants  ? "YES" : "NO";

@@ -1017,6 +1017,7 @@ class HeatSedimentParam(IntEnum):
     DENSITY = 6
     SPECIFIC_HEAT = 7
     INITIAL_TEMPERATURE = 8
+    MESH_POROSITY = 9
 
 class HeatAttr(IntEnum):
     """Per-element heat override attributes. Mirrors ``SWMM_HeatAttr``."""
@@ -1034,12 +1035,15 @@ class HeatAttr(IntEnum):
     HYPORHEIC_VELOCITY = 11
     SEDIMENT_DENSITY = 12
     SEDIMENT_SPECIFIC_HEAT = 13
+    MESH_POROSITY = 14
 
 class HeatOverrideScope(IntEnum):
     """Per-element override scope. Mirrors ``SWMM_HeatOverrideScope``."""
     TAG = 1
     NODE = 2
     LINK = 3
+    CELL2D = 6
+    MESH_TAG = 7
 
 class HeatSourceKind(IntEnum):
     """``[HEAT_SOURCES]`` water sources. Mirrors ``SWMM_HeatSourceKind``."""

@@ -728,6 +728,8 @@ if(OPENSWMM_BUILD_2D)
     # atomic hydrothermal edit contracts. Decks under
     # tests/output/hydrothermal_config_api.
     add_gtest_unit(test_engine_hydrothermal_config_api test_hydrothermal_config_api.cpp)
+    add_gtest_unit(test_engine_mesh_heat test_mesh_heat.cpp)
+    target_compile_definitions(test_engine_mesh_heat PRIVATE OPENSWMM_MESH_HEAT_OUT="${PROJECT_SOURCE_DIR}/tests/output")
     target_compile_definitions(test_engine_hydrothermal_config_api PRIVATE
         OPENSWMM_HYDROTHERMAL_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
     target_compile_definitions(test_engine_gw_transport_kernel PRIVATE

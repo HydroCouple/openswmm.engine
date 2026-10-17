@@ -453,7 +453,7 @@ OPENSWMM_SOURCE_INLINE bool ExplicitInertialSolver::prepareCellSources(int i, do
         evapSink(state_->exposedEvaporation(i), state_->depth[i], opts_->dry_depth)) * area_dt;
     const double back = gw_ ? gw_->takeToSurface(i) : 0.0;
     if (rain == 0.0 && coupling == 0.0 && requested_infil == 0.0 &&
-        requested_evap == 0.0 && back == 0.0) {
+        requested_evap == 0.0 && back == 0.0 && !state_->heat.enabled) {
         if(gw_)gw_->bookSurfaceEt(i,dt,state_->exposedEvaporation(i),0.0);
         return false;
     }
@@ -514,6 +514,14 @@ OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::applyCellSourceRow(
     mass += rain_mass + coupling_mass;
     book(SourceLedger::Rainfall, r, rain_mass);
     book(SourceLedger::CouplingIn, r, coupling_mass);
+    if(r==tr.temp_row && state_->heat.enabled) {
+        const double before=mass;
+        mass=applyMeshHeatCell(*mesh_,*opts_,state_->heat,i,mass,source.available,
+                              source.evap,source.area_dt/mesh_->tri_area[i]);
+        // Surface-row continuity includes heat gained from both atmosphere
+        // and bed. The combined thermal budget separately cancels bed exchange.
+        book(SourceLedger::ExternalIn,r,mass-before);
+    }
     // All sinks see the same mixed concentration. Passing cell-local
     // transfers directly to groundwater avoids shared-ledger deltas.
     const double concentration = source.available > 0.0 ? mass / source.available : 0.0;
@@ -529,8 +537,8 @@ OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::applyCellSourceRow(
         row->receipt.requested_mass[r]+=concentration*source.requested_infil;
         row->receipt.applied_mass[r]+=mi;
         if(r==tr.temp_row) {
-            row->receipt.heat_requested+=concentration*source.requested_infil*runtimeWaterHeatCapacity;
-            row->receipt.heat_applied+=mi*runtimeWaterHeatCapacity;
+            row->receipt.heat_requested+=concentration*source.requested_infil*opts_->water_heat_capacity;
+            row->receipt.heat_applied+=mi*opts_->water_heat_capacity;
         }
     }
     if (gw_ && r<static_cast<int>(gw_row_map_.size()) && gw_row_map_[r]>=0)
@@ -572,7 +580,7 @@ bool ExplicitInertialSolver::applyRuntimeSources(int i, double dt) {
         for (auto k : store.cells[i]) {
             auto& s = store.rows[k];
             double dm = std::max(0.0, s.flow) * dt * s.concentrations[r] + dt * std::max(0.0,s.rates[r]);
-            if (r == tr.temp_row && available > 0.0) dm += s.heat * dt / runtimeWaterHeatCapacity;
+            if (r == tr.temp_row && available > 0.0) dm += s.heat * dt / opts_->water_heat_capacity;
             mass += dm;
             s.receipt.requested_mass[r] += dm;
             s.receipt.applied_mass[r] += dm;
@@ -755,7 +763,7 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
                                    state_->head[i], state_->depth[i]);
         const double thresh = cell_active_[i] ? h_off : h_on;
         if (state_->depth[i] >= thresh || state_->coupling_flux[i] != 0.0 ||
-            pin_t0_[i])
+            pin_t0_[i] || state_->heat.enabled)
             next[i] = 1;
     }
 
@@ -1773,8 +1781,8 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
             const double requested=requested_volume*c, applied=applied_volume*c;
             receipt.requested_mass[r]+=requested; receipt.applied_mass[r]+=applied;
             if(static_cast<int>(r)==state_->transport.temp_row) {
-                receipt.heat_requested+=requested*runtimeWaterHeatCapacity;
-                receipt.heat_applied+=applied*runtimeWaterHeatCapacity;
+                receipt.heat_requested+=requested*opts_->water_heat_capacity;
+                receipt.heat_applied+=applied*opts_->water_heat_capacity;
             }
         }
         if (f != 0.0) {
@@ -2651,6 +2659,8 @@ void ExplicitInertialSolver::pinExternalSourceCells(const std::vector<int>& cell
 }
 
 void ExplicitInertialSolver::setCommonSourceStage(CommonSourceStage& stage) {
+    if(state_ && state_->heat.enabled)
+        throw std::invalid_argument("Coupled heat with common surface/LID source ownership is not yet qualified.");
     if (!initialized_ || second_order_ || t_last_sync_ != 0.0 || stage.completedEnd() != 0.0 ||
         !stage.matches(mesh_, state_, gw_))
         throw std::invalid_argument("Common source stage requires matching initial first-order mesh/receiver state.");
