@@ -58,6 +58,7 @@ struct Block {
     std::vector<double>* led_infil_loss = nullptr;
     std::vector<double>* led_runoff_load = nullptr;
     std::vector<double>* led_sweeping = nullptr;
+    std::vector<double>* led_ponded_lost = nullptr;   ///< ponded mass written off when dry
     /// Street sweeping this step: `[sc * nlu + lu]` events (shared by every
     /// family, SubcatchData::sweep_now) and the land use's removal fraction.
     const std::vector<unsigned char>* sweep_now = nullptr;

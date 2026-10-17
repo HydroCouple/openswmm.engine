@@ -1238,6 +1238,7 @@ struct SimulationContext {
         // Quality mass balance (per-pollutant, in mass units)
         std::vector<double> qual_init_buildup;   ///< Initial buildup mass
         std::vector<double> qual_final_buildup;  ///< Final buildup mass
+        std::vector<double> qual_ponded_lost;    ///< Ponded mass written off when a surface dried (legacy FINAL_LOAD)
         std::vector<double> qual_surface_buildup; ///< Accumulated buildup during sim
         std::vector<double> qual_wet_deposition; ///< Wet deposition mass
         std::vector<double> qual_sweeping;       ///< Mass removed by sweeping
@@ -1267,6 +1268,7 @@ struct SimulationContext {
             auto np = static_cast<std::size_t>(n_pollutants);
             qual_init_buildup.assign(np, 0.0);
             qual_final_buildup.assign(np, 0.0);
+            qual_ponded_lost.assign(np, 0.0);
             qual_surface_buildup.assign(np, 0.0);
             qual_wet_deposition.assign(np, 0.0);
             qual_sweeping.assign(np, 0.0);
@@ -1293,6 +1295,7 @@ struct SimulationContext {
             // Save quality vectors, reset scalars, restore vectors
             auto qi = std::move(qual_init_buildup);
             auto qf = std::move(qual_final_buildup);
+            auto qpl = std::move(qual_ponded_lost);
             auto qsb = std::move(qual_surface_buildup);
             auto qwd = std::move(qual_wet_deposition);
             auto qsw = std::move(qual_sweeping);
@@ -1316,6 +1319,7 @@ struct SimulationContext {
             *this = MassBalance{};
             qual_init_buildup = std::move(qi);
             qual_final_buildup = std::move(qf);
+            qual_ponded_lost = std::move(qpl);
             qual_surface_buildup = std::move(qsb);
             qual_wet_deposition = std::move(qwd);
             qual_sweeping = std::move(qsw);
@@ -1338,7 +1342,7 @@ struct SimulationContext {
             routing_forcing_qual_inflow = std::move(qrfqi);
             // Zero out the quality vectors (except init_buildup which is
             // computed once during initQuality and must survive reset)
-            for (auto* v : {&qual_final_buildup,
+            for (auto* v : {&qual_final_buildup, &qual_ponded_lost,
                             &qual_surface_buildup, &qual_wet_deposition,
                             &qual_sweeping, &qual_bmp_removal,
                             &qual_infil_loss, &qual_runoff_load,

@@ -47,6 +47,7 @@
 
 #include "core/SWMMEngine.hpp"
 #include "core/SimulationContext.hpp"
+#include "quality/MsxSurfaceQuality.hpp"
 
 namespace {
 
@@ -503,7 +504,7 @@ struct Twin {
     bool ok = false;
     double drain_seen = 0.0;   ///< LID drain flow that reached a node (cfs, summed over steps)
     double drain_sub  = 0.0;   ///< subcatchment LID drain flow (cfs, summed over steps)
-    Gap conc, node, load, buildup, init, runoff, bmp, sweep, wet, infil;
+    Gap conc, node, load, buildup, init, runoff, bmp, sweep, wet, infil, final;
 };
 
 Twin runTwin(const std::string& tag, const TwinOpts& o) {
@@ -556,6 +557,7 @@ Twin runTwin(const std::string& tag, const TwinOpts& o) {
     if (ms.active()) {
         t.wet.add(mb.qual_wet_deposition[0], ms.led_wet_deposition[0]);
         t.infil.add(mb.qual_infil_loss[0], ms.led_infil_loss[0]);
+        t.final.add(mb.qual_final_buildup[0], openswmm::msxsurf::remainingBuildup(ctx, 0));
     }
     t.ok = true;
     // Evidence line for the round records.
@@ -580,6 +582,7 @@ void expectTwin(const Twin& t, const std::string& tag) {
     EXPECT_EQ(t.sweep.diff, 0.0)   << tag << ": sweeping ledger differs";
     EXPECT_EQ(t.wet.diff, 0.0)     << tag << ": wet deposition ledger differs (TSS " << t.wet.scale << ")";
     EXPECT_EQ(t.infil.diff, 0.0)   << tag << ": infiltration loss ledger differs (TSS " << t.infil.scale << ")";
+    EXPECT_EQ(t.final.diff, 0.0)   << tag << ": remaining buildup differs (TSS " << t.final.scale << ")";
 }
 
 const char* kBioRetention =
@@ -917,4 +920,33 @@ TEST(MsxSurfaceTwin, ReportListsSpeciesBesidePollutants) {
     ASSERT_EQ(sys.size(), 2u);
     EXPECT_EQ(sys[0], sys[1]);
     EXPECT_EQ(text.find("MSX Washoff Summary"), std::string::npos);
+}
+
+// Open item O1 (2026-10-17): what remains on the land includes the mass in
+// ponded water, and every pond written off as it dried (legacy
+// massbal_getBuildup + surfqual.c FINAL_LOAD). v6 counted buildup only and
+// dropped a drying pond's mass, so a run-on deck reported 118.558 lb
+// remaining against legacy's 118.677 and a 0.113 % continuity error against
+// 0.014 %.
+TEST(MsxSurfaceTwin, RemainingBuildupCountsPondedMassLikeLegacy) {
+    TwinOpts o; o.runon = true;
+    std::string body = twinDeck(o), kept;
+    for (std::size_t a = 0, b; a < body.size(); a = b + 1) {
+        b = body.find('\n', a); if (b == std::string::npos) b = body.size();
+        const std::string line = body.substr(a, b - a);
+        if (line.rfind("LU1  X  ", 0) == 0) continue;
+        kept += line + "\n";
+    }
+    write("_tw_o1.inp", kept + "\n[REPORT]\nINPUT NO\n");
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, "_tw_o1.inp", "_tw_o1.rpt", "_tw_o1.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+    double t = 0.0;
+    while (swmm_engine_step(e, &t) == SWMM_OK && t > 0.0) {}
+    swmm_engine_end(e);
+    const auto& mb = cpp(e).context().mass_balance;
+    EXPECT_NEAR(mb.qual_final_buildup[0], 118.677, 6e-4) << "remaining buildup (legacy 118.677)";
+    EXPECT_NEAR(mb.qual_runoff_load[0], 1.307, 6e-4) << "surface runoff (legacy 1.307)";
+    swmm_engine_close(e); swmm_engine_destroy(e);
 }

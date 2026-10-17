@@ -409,6 +409,7 @@ surfacespecies::Block speciesBlock(SimulationContext& ctx, MsxSurfaceData& s, co
     b.led_infil_loss = &s.led_infil_loss;
     b.led_runoff_load = &s.led_runoff_load;
     b.led_sweeping = &s.led_sweeping;
+    b.led_ponded_lost = &s.led_ponded_lost;
     b.sweep_now = &ctx.subcatches.sweep_now;
     b.sweep_removal = &ctx.landuses.sweep_removal;
     return b;
@@ -515,7 +516,10 @@ double remainingBuildup(const SimulationContext& ctx, int m) noexcept {
             const auto k = s.bu_idx(sc, lu, m);
             if (k < s.buildup.size()) total += s.buildup[k] * norm;
         }
+        const auto pk = s.sidx(sc, m);
+        if (pk < s.ponded_qual.size()) total += s.ponded_qual[pk] * s.mcf[static_cast<std::size_t>(m)];
     }
+    if (static_cast<std::size_t>(m) < s.led_ponded_lost.size()) total += s.led_ponded_lost[static_cast<std::size_t>(m)];
     return total;
 }
 

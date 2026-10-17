@@ -4006,6 +4006,7 @@ surfacespecies::Block pollutantSurfaceBlock(SimulationContext& ctx,
     b.led_infil_loss = &mb.qual_infil_loss;
     b.led_runoff_load = &mb.qual_runoff_load;
     b.led_sweeping = &mb.qual_sweeping;
+    b.led_ponded_lost = &mb.qual_ponded_lost;
     b.sweep_now = &ctx.subcatches.sweep_now;
     b.sweep_removal = &ctx.landuses.sweep_removal;
     return b;
@@ -5723,6 +5724,7 @@ void SWMMEngine::computeFinalQualityMassBalance() noexcept {
     if (ctx_.n_pollutants() > 0) {
         int np = ctx_.n_pollutants();
         int nlu = std::max(ctx_.n_landuses(), 1);
+        const auto mcf = pollutantSurfaceMcf(ctx_);
         for (int p = 0; p < np; ++p) {
             double total = 0.0;
             for (int i = 0; i < ctx_.n_subcatches(); ++i) {
@@ -5744,7 +5746,15 @@ void SWMMEngine::computeFinalQualityMassBalance() noexcept {
                     if (bu < surface_quality_.buildup.size())
                         total += surface_quality_.buildup[bu] * norm;
                 }
+                // legacy massbal_getBuildup: the mass still in ponded water
+                // is part of what remains on the land.
+                const auto sq = ui * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
+                if (sq < ctx_.subcatches.ponded_qual.size())
+                    total += ctx_.subcatches.ponded_qual[sq] * mcf[static_cast<std::size_t>(p)];
             }
+            // …plus every pond written off as it dried (legacy FINAL_LOAD).
+            if (static_cast<std::size_t>(p) < ctx_.mass_balance.qual_ponded_lost.size())
+                total += ctx_.mass_balance.qual_ponded_lost[static_cast<std::size_t>(p)];
             ctx_.mass_balance.qual_final_buildup[static_cast<std::size_t>(p)] = total;
         }
     }

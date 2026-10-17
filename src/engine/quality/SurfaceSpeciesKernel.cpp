@@ -524,6 +524,13 @@ void step(SimulationContext& ctx, Block& b, double dt_runoff,
                         // final-buildup term on either path; that matches the
                         // 4073 computation and is recorded as a small parity
                         // gap against legacy's FINAL_STORED_LOAD.
+                        // legacy surfqual.c:433-437: a surface with no inflow
+                        // writes its ponded mass off to the FINAL_LOAD
+                        // category (Multispecies Phase 2 open item O1; v6
+                        // dropped it with no ledger row).
+                        if (b.led_ponded_lost && (*b.ponded_qual)[sq_idx] != 0.0 &&
+                            up < b.led_ponded_lost->size())
+                            (*b.led_ponded_lost)[up] += (*b.ponded_qual)[sq_idx] * mcf_p;
                         (*b.ponded_qual)[sq_idx] = 0.0;
                     } else {
                         // Complete-mix balance (matching legacy findPondedLoads):
