@@ -29,7 +29,10 @@ class FlowTracer
     std::string error;
     bool prepared = false;
     int derive();
-    int prepare(const char *, const char *, const char *, SWMM_TraceProgress, void *);
+    /** live: scan the whole periods already written to an output that may still be
+     *  growing (no footer needed, no cache; appends are fine, truncation fails). */
+    int prepare(const char *, const char *, const char *, SWMM_TraceProgress, void *,
+                bool live = false);
     int estimate(int direction, int seed, SWMM_TraceValue *, SWMM_TraceValue *, SWMM_TraceSummary &,
                  SWMM_TraceProgress, void *);
     std::string cacheKey(const char *digest) const;

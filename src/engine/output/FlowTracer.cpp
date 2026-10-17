@@ -345,8 +345,10 @@ int FlowTracer::derive()
 }
 
 int FlowTracer::prepare(const char *path, const char *cache, const char *digest,
-                        SWMM_TraceProgress cb, void *user)
+                        SWMM_TraceProgress cb, void *user, bool live)
 {
+    if (live)
+        cache = digest = nullptr; // a growing file has no stable content identity
     prepared = false;
     error.clear();
     if (!path || !*path)
@@ -376,9 +378,10 @@ int FlowTracer::prepare(const char *path, const char *cache, const char *digest,
         return derive();
     }
     OutputReader reader;
-    if (!reader.open(path) || reader.error_code() != 0)
+    if (!(live ? reader.openLive(path) : reader.open(path)) || reader.error_code() != 0)
     {
-        error = "A completed, successful output is required";
+        error = live ? "Cannot read the output written so far"
+                     : "A completed, successful output is required";
         return SWMM_TRACE_IO;
     }
     if (reader.node_count() != int(nodes.size()) || reader.link_count() != int(links.size()))
@@ -556,8 +559,11 @@ int FlowTracer::prepare(const char *path, const char *cache, const char *digest,
         if (info.periods == 1)
             a.forward_volume_m3 = a.reverse_volume_m3 = 0;
     }
-    if (size != std::filesystem::file_size(path, ec) ||
-        stamp != std::filesystem::last_write_time(path, ec) || ec)
+    // A live output may grow while it is scanned; only the periods counted at
+    // open were read. A shrinking file means a new run truncated it.
+    const auto after = std::filesystem::file_size(path, ec);
+    if (ec || (live ? after < size
+                    : (size != after || stamp != std::filesystem::last_write_time(path, ec) || ec)))
     {
         error = "Output changed during preparation";
         return SWMM_TRACE_MISMATCH;
