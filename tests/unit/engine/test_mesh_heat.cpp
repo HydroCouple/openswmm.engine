@@ -819,6 +819,89 @@ TEST(MeshHeat, FullMarcherHonorsHeterogeneousCellHyporheicRatesAndReciprocalRece
     EXPECT_GT(std::abs(contact_receipt[1]),std::abs(contact_receipt[0]));
 }
 
+TEST(MeshHeat, FullMarcherHeterogeneousHyporheicReceiptsSurviveSpatialRefinement) {
+    const std::string coarse_mesh=
+        "[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n0 10 0\n\n"
+        "[2D_TRIANGLES]\n0 1 2 .03 .1 channel:burned\n0 2 3 .03 .1 channel:tributary\n\n";
+    const std::string refined_mesh=
+        "[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n0 10 0\n"
+        "5 0 0\n10 5 0\n5 5 0\n5 10 0\n0 5 0\n\n"
+        "[2D_TRIANGLES]\n"
+        "0 4 6 .03 .1 channel:burned\n4 1 5 .03 .1 channel:burned\n"
+        "6 5 2 .03 .1 channel:burned\n4 5 6 .03 .1 channel:burned\n"
+        "0 6 8 .03 .1 channel:tributary\n6 2 7 .03 .1 channel:tributary\n"
+        "8 7 3 .03 .1 channel:tributary\n6 7 8 .03 .1 channel:tributary\n\n";
+    struct Result {double volume=0,water=0,bed=0,contact=0,water_temperature=0,bed_temperature=0;};
+    const auto run=[](const std::string& id,const std::string& mesh,int cells_per_region)
+        ->std::optional<std::array<Result,2>> {
+        Model m(id,"",mesh);if(!m.e)return {};
+        for(const auto& setting:{std::pair{"HEAT_MODEL","COUPLED"},
+                                 std::pair{"BED_HEAT_MODEL","LOCAL_STORAGE"},
+                                 std::pair{"HEAT_SURFACE_EXCHANGE","NO"},
+                                 std::pair{"HEAT_RADIATIVE_EXCHANGE","NO"}})
+            if(swmm_options_set_ext(m.e,setting.first,setting.second)!=SWMM_OK)return {};
+        auto& ctx=m.ctx();ctx.heat_config.sediment.has_initial_temp=true;
+        ctx.heat_config.sediment.initial_temp=-5;ctx.heat_config.sediment.ground_depth=0;
+        constexpr int cell_scope=6;constexpr double slow=1e-12,fast=.1;
+        for(int cell=0;cell<2*cells_per_region;++cell) {
+            const double velocity=cell<cells_per_region?slow:fast;
+            if(swmm_heat_set_element_override(m.e,SWMM_HEAT_ATTR_HYPORHEIC_VELOCITY,
+                cell_scope,std::to_string(cell+1).c_str(),velocity)!=SWMM_OK)return {};
+        }
+        if(swmm_engine_initialize(m.e)!=SWMM_OK||swmm_engine_start(m.e,0)!=SWMM_OK)return {};
+        auto& state=static_cast<openswmm::SWMMEngine*>(m.e)->surfaceRouter2D().state();
+        const auto* mesh_data=ctx.twod_io.mesh;const int row=state.transport.temp_row;
+        if(row<0||!state.heat.enabled||!state.heat.bed||!mesh_data||
+           mesh_data->n_cells()!=2*cells_per_region||state.heat.hyporheic_eligible.size()!=std::size_t(2*cells_per_region))return {};
+        const double rho_cp=ctx.options.water_density*ctx.options.water_specific_heat;
+        std::array<Result,2> result{};std::array<double,2> initial_water_j{},initial_bed_j{},bed_capacity{};
+        for(int cell=0;cell<2*cells_per_region;++cell) {
+            const int region=cell<cells_per_region?0:1;
+            if(!(state.volume[cell]>0)||!state.heat.hyporheic_eligible[cell])return {};
+            const double water_volume=state.volume[cell];
+            state.transport.cell_mass[state.transport.idx(row,cell)]=22*water_volume;
+            initial_water_j[region]+=rho_cp*22*water_volume;
+            initial_bed_j[region]+=state.heat.bed_energy[cell];
+            bed_capacity[region]+=state.heat.bed_capacity[cell];
+            result[region].volume+=water_volume;
+        }
+        double elapsed=0;
+        if(swmm_engine_step(m.e,&elapsed)!=SWMM_OK||!(elapsed>0)||swmm_engine_end(m.e)!=SWMM_OK)return {};
+        for(int cell=0;cell<2*cells_per_region;++cell) {
+            const int region=cell<cells_per_region?0:1;
+            const double mass=state.transport.cell_mass[state.transport.idx(row,cell)];
+            result[region].water+=rho_cp*mass-initial_water_j[region]/cells_per_region;
+            result[region].bed+=state.heat.bed_energy[cell]-initial_bed_j[region]/cells_per_region;
+            result[region].contact+=state.heat.water_bed_j[cell];
+            result[region].water_temperature+=mass;
+            result[region].bed_temperature+=state.heat.bed_energy[cell];
+            EXPECT_EQ(state.heat.failures[cell],0);
+        }
+        for(int region=0;region<2;++region) {
+            result[region].water_temperature/=result[region].volume;
+            result[region].bed_temperature/=bed_capacity[region];
+        }
+        return result;
+    };
+    const auto coarse=run("marcher-heterogeneous-refine-coarse",coarse_mesh,1);
+    const auto refined=run("marcher-heterogeneous-refine-fine",refined_mesh,4);
+    ASSERT_TRUE(coarse.has_value());ASSERT_TRUE(refined.has_value());
+    for(int region=0;region<2;++region) {
+        EXPECT_NEAR((*coarse)[region].volume,5,1e-12);
+        EXPECT_NEAR((*refined)[region].volume,5,1e-12);
+        EXPECT_NEAR((*coarse)[region].water+(*coarse)[region].bed,0,1e-5);
+        EXPECT_NEAR((*refined)[region].water+(*refined)[region].bed,0,1e-5);
+        EXPECT_NEAR((*coarse)[region].bed,(*coarse)[region].contact,1e-5);
+        EXPECT_NEAR((*refined)[region].bed,(*refined)[region].contact,1e-5);
+        EXPECT_NEAR((*coarse)[region].water,(*refined)[region].water,1e-5);
+        EXPECT_NEAR((*coarse)[region].bed,(*refined)[region].bed,1e-5);
+        EXPECT_NEAR((*coarse)[region].water_temperature,(*refined)[region].water_temperature,1e-9);
+        EXPECT_NEAR((*coarse)[region].bed_temperature,(*refined)[region].bed_temperature,1e-9);
+    }
+    EXPECT_GT(std::abs((*coarse)[1].contact),std::abs((*coarse)[0].contact));
+    EXPECT_GT(std::abs((*refined)[1].contact),std::abs((*refined)[0].contact));
+}
+
 TEST(MeshHeat, RuntimeHeatUsesConfiguredCapacityAndExactPowerReceipt) {
     Model m("runtime-capacity");ASSERT_NE(m.e,nullptr);
     ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_MODEL","COUPLED"),SWMM_OK);
