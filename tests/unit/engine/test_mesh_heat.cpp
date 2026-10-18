@@ -148,6 +148,39 @@ TEST(MeshHeat, IsolatedPairMatchesIndependentAnalyticDecayFromOneSecondToTwoHour
         EXPECT_NEAR(f.state.heat.bed_energy[0]-f.state.heat.initial_bed_energy[0],f.state.heat.water_bed_j[0],1e-5);
     }
 }
+TEST(MeshHeat, ConstantRadiationAndFiniteBedMatchIndependentForcedTwoBodySolution) {
+    LocalHeat f("forced-pair");ASSERT_NE(f.model.e,nullptr);
+    auto& ctx=f.model.ctx();auto& cfg=ctx.heat_config.sediment;
+    cfg.has_initial_temp=true;cfg.initial_temp=-4;cfg.ground_depth=0;cfg.hyporheic_velocity=2e-5;
+    auto& radiation=ctx.heat_config.radiative;
+    radiation.albedo=.25;radiation.shade_factor=.2;radiation.emiss_water=0;
+    radiation.sky_view=0;radiation.emiss_landcover=0;radiation.shortwave_wm2=500;
+    f.options.heat_radiative=1;
+    ASSERT_TRUE(f.initialize().empty());
+
+    constexpr double water_volume=5,wet_area=50,initial_water_c=22,initial_bed_c=-4,dt=900;
+    const double rho_cp=ctx.options.water_density*ctx.options.water_specific_heat;
+    const double cw=rho_cp*water_volume,cb=f.state.heat.bed_capacity[0];
+    const double conductive=cfg.thermal_diffusivity*cfg.sed_density*cfg.sed_specific_heat*wet_area/cfg.bed_thickness;
+    const double hyporheic=rho_cp*cfg.hyporheic_velocity*wet_area;
+    const double g=conductive+hyporheic,k=g*(1/cw+1/cb);
+    const double incoming_power=500*(1-radiation.albedo)*(1-radiation.shade_factor)*wet_area;
+    const double total_capacity=cw+cb;
+    const double initial_mean=(cw*initial_water_c+cb*initial_bed_c)/total_capacity;
+    const double delta0=initial_water_c-initial_bed_c;
+    const double delta=delta0*std::exp(-k*dt)+incoming_power/(cw*k)*(-std::expm1(-k*dt));
+    const double expected_water=initial_mean+incoming_power*dt/total_capacity+cb/total_capacity*delta;
+    const double expected_bed=initial_mean+incoming_power*dt/total_capacity-cw/total_capacity*delta;
+
+    openswmm::twoD::prepareMeshHeat(ctx,f.state,dt);
+    const double mass=f.step(0,initial_water_c*water_volume,water_volume,0,dt);
+    EXPECT_NEAR(mass/water_volume,expected_water,1e-10);
+    EXPECT_NEAR(f.state.heat.bed_energy[0]/cb,expected_bed,1e-10);
+    EXPECT_NEAR(f.state.heat.atmospheric_j[0],incoming_power*dt,1e-6);
+    EXPECT_NEAR(f.state.heat.water_j[0]+(f.state.heat.bed_energy[0]-cb*initial_bed_c),
+                incoming_power*dt,1e-6);
+    EXPECT_NEAR(f.state.heat.water_bed_j[0],f.state.heat.bed_energy[0]-cb*initial_bed_c,1e-6);
+}
 TEST(MeshHeat, SheetCellsConductionOnlyUntilExplicitScopeOptInAndZeroStillDisables) {
     for(const double velocity:{0.,1e-12,1e-5,1.}) {
         LocalHeat f("eligibility"+std::to_string(velocity));ASSERT_NE(f.model.e,nullptr);
