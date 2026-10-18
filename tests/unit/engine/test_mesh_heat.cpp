@@ -342,6 +342,48 @@ TEST(MeshHeat, FullMarcherAppliesAtmosphereToStagnantWaterAndClosesWaterEnergy) 
     EXPECT_EQ(swmm_heat_get_2d_values(m.e,SWMM_HEAT_2D_ATMOSPHERIC_ENERGY,1,2,residual),SWMM_ERR_BADINDEX);
 }
 
+TEST(MeshHeat, FullMarcherAppliesHyporheicExchangeOnlyOnChannelTaggedCells) {
+    Model m("marcher-hyporheic");ASSERT_NE(m.e,nullptr);
+    ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_MODEL","COUPLED"),SWMM_OK);
+    ASSERT_EQ(swmm_options_set_ext(m.e,"BED_HEAT_MODEL","LOCAL_STORAGE"),SWMM_OK);
+    ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_SURFACE_EXCHANGE","NO"),SWMM_OK);
+    ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_RADIATIVE_EXCHANGE","NO"),SWMM_OK);
+    auto& sediment=m.ctx().heat_config.sediment;
+    sediment.has_initial_temp=true;sediment.initial_temp=-5;sediment.ground_depth=0;
+    sediment.hyporheic_velocity=.01;
+    ASSERT_EQ(swmm_engine_initialize(m.e),SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(m.e,0),SWMM_OK);
+    auto& state=static_cast<openswmm::SWMMEngine*>(m.e)->surfaceRouter2D().state();
+    const int row=state.transport.temp_row;ASSERT_GE(row,0);ASSERT_TRUE(state.heat.bed);
+    const double rho_cp=m.ctx().options.water_density*m.ctx().options.water_specific_heat;
+    std::vector<double> initial_water(2),initial_bed=state.heat.bed_energy;
+    for(int i=0;i<2;++i) {
+        const double volume=state.volume[i];ASSERT_GT(volume,0);
+        initial_water[i]=state.transport.cell_mass[state.transport.idx(row,i)];
+        const double water_c=initial_water[i]/volume;
+        const double bed_c=initial_bed[i]/state.heat.bed_capacity[i];
+        EXPECT_NE(water_c,bed_c);
+    }
+    double elapsed=0;ASSERT_EQ(swmm_engine_step(m.e,&elapsed),SWMM_OK);ASSERT_GT(elapsed,0);
+    ASSERT_EQ(swmm_engine_end(m.e),SWMM_OK);
+    const auto& mesh=m.ctx().twod_io.mesh;
+    ASSERT_NE(mesh,nullptr);ASSERT_EQ(mesh->tri_tag[0],"channel:burned");ASSERT_EQ(mesh->tri_tag[1],"forest");
+    std::vector<double> water_delta(2);
+    for(int i=0;i<2;++i) {
+        const double volume=state.volume[i];
+        water_delta[i]=rho_cp*(state.transport.cell_mass[state.transport.idx(row,i)]-initial_water[i]);
+        EXPECT_NEAR(water_delta[i],state.heat.water_j[i],1e-6);
+        EXPECT_NEAR(state.heat.bed_energy[i]-initial_bed[i],state.heat.water_bed_j[i],1e-6);
+        EXPECT_NEAR(water_delta[i]+(state.heat.bed_energy[i]-initial_bed[i]),0,1e-6);
+        EXPECT_NEAR(state.heat.atmospheric_j[i],0,1e-9);
+        EXPECT_NEAR(state.heat.ground_j[i],0,1e-9);
+        EXPECT_GT(volume,0);
+    }
+    EXPECT_GT(std::abs(water_delta[0]),std::abs(water_delta[1]));
+    EXPECT_EQ(state.heat.failures[0],0);
+    EXPECT_EQ(state.heat.failures[1],0);
+}
+
 TEST(MeshHeat, RuntimeHeatUsesConfiguredCapacityAndExactPowerReceipt) {
     Model m("runtime-capacity");ASSERT_NE(m.e,nullptr);
     ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_MODEL","COUPLED"),SWMM_OK);
