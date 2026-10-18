@@ -1154,6 +1154,47 @@ TEST(GroundHeat, LateralGroundwaterThermalAdvectionIsInvariantUnderUniformSpatia
     }
     EXPECT_LE(max_temperature_difference,.05);
 }
+TEST(GroundHeat, StaggeredLateralAdvectionAndDispersionReceiptsCloseAcrossCellTiers) {
+    Model m("lateral-advection-lts","CLOSED_FORM",.5,false,
+        "[2D_AQUIFER]\nCELL 1 36 1 .45 .1 2 HG0 .9\nCELL 2 36 1 .45 .1 2 HG0 .5\n"
+        "[GW_INITIAL_QUALITY]\nCELL 1 SAT __TEMPERATURE__ 10\nCELL 1 UNSAT __TEMPERATURE__ 10\n"
+        "CELL 2 SAT __TEMPERATURE__ 20\nCELL 2 UNSAT __TEMPERATURE__ 20\n"
+        "[GW_TRANSPORT_PARAMS]\n* 2650 880 2 0 0.5 0 0 0 .065\n");
+    ASSERT_NE(m.e,nullptr);ASSERT_EQ(swmm_gw_transport_option_set(m.e,"DISPERSION","YES"),SWMM_OK);
+    ASSERT_EQ(m.start(),SWMM_OK);
+    auto& router=m.router();auto& gw=router.subsurface();auto& tr=gw.transport();
+    const double initial_energy=energy(gw.heat()),initial_water=gw.state().storage();
+    constexpr double fast_dt=.01,slow_dt=.08;constexpr int fast_steps=8;
+    gw.state().dt_cell[0]=fast_dt;gw.state().dt_cell[1]=slow_dt;gw.assignTiers(fast_dt,4);
+    ASSERT_EQ(gw.state().tier[0],0);ASSERT_EQ(gw.state().tier[1],3);
+    const auto pending_temperature_volume=[&]() {
+        double total=0;const std::size_t ne=gw.state().eacc_L.size();
+        for(std::size_t e=0;e<ne;++e) {
+            const std::size_t index=std::size_t(tr.temp_row)*ne+e;
+            total+=tr.sacc_L[index]+tr.sacc_R[index];
+        }
+        return total;
+    };
+    for(int step=0;step<fast_steps;++step) {
+        gw.fireGwFaces(0,fast_dt);
+        gw.fireGwCells(0,fast_dt,router.state(),step*fast_dt);
+        for(const auto& cell:gw.heat().cells)ASSERT_EQ(cell.failed,0)<<cell.error;
+        EXPECT_NEAR(gw.heat().cells[0].column.energy.front()/gw.heat().cells[0].column.capacity.front(),10,.05);
+        EXPECT_NEAR(gw.state().liveStorage(),initial_water,1e-10);
+        EXPECT_NEAR(energy(gw.heat())+gw.heat().water_capacity*pending_temperature_volume(),initial_energy,1e-5);
+        if(step+1<fast_steps)EXPECT_GT(std::abs(pending_temperature_volume()),0);
+    }
+    gw.fireGwCells(3,slow_dt,router.state(),0);
+    for(const auto& cell:gw.heat().cells)ASSERT_EQ(cell.failed,0)<<cell.error;
+    EXPECT_NEAR(pending_temperature_volume(),0,1e-12);
+    EXPECT_NEAR(gw.state().storage(),initial_water,1e-10);
+    EXPECT_NEAR(energy(gw.heat()),initial_energy,1e-5);
+    EXPECT_NEAR(gw.heat().cells[0].advective_j+gw.heat().cells[1].advective_j,0,1e-5);
+    for(const auto& cell:gw.heat().cells)for(std::size_t j=0;j<cell.column.energy.size();++j) {
+        const double temperature=cell.column.energy[j]/cell.column.capacity[j];
+        EXPECT_GE(temperature,10-1e-9);EXPECT_LE(temperature,20+1e-9);
+    }
+}
 TEST(GroundHeat, PendingLateralHeatSurvivesAquiferRetiering) {
     Model m("lateral-retier","CLOSED_FORM",1,false,
         "CELL 1 SAT __TEMPERATURE__ 10\nCELL 2 SAT __TEMPERATURE__ 20\n"
