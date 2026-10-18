@@ -1806,6 +1806,68 @@ TEST(SnowEngineIntegration, DegreeDayBoundaryAndReciprocalUebSoilContactOwnTheir
         swmm_engine_close(handle);swmm_engine_destroy(handle);
     }
 }
+
+TEST(SnowEngineIntegration, UebContactStopsAtMeltOutAndWetAreaOwnsTheSurface) {
+    const std::string stem="_mesh_snow_ueb_contact_melt_transition";
+    {
+        std::ofstream f(stem+".inp");
+        f<<"[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
+          "START_DATE 01/01/2026\nEND_DATE 01/01/2026\nSTART_TIME 00:00\nEND_TIME 12:00\n"
+          "WET_STEP 00:01\nDRY_STEP 00:01\nROUTING_STEP 30\nREPORT_STEP 00:05\nIGNORE_QUALITY YES\n"
+          "[TEMPERATURE]\nTIMESERIES air\nSNOWMELT 1.11111111111111 .5 .6 0 45 0\nSNOWMELT_MODEL UEB\nSITE 45 -120 -8 1000\n"
+          "SHORTWAVE TIMESERIES sw\nLONGWAVE TIMESERIES lw\n"
+          "[RAINGAGES]\nRG INTENSITY 1:00 1 TIMESERIES rain\n"
+          "[TIMESERIES]\nair 01/01/2026 00:00 35\nair 01/01/2026 12:00 35\n"
+          "rain 01/01/2026 00:00 0\nrain 01/01/2026 12:00 0\n"
+          "sw 01/01/2026 00:00 900\nsw 01/01/2026 12:00 900\n"
+          "lw 01/01/2026 00:00 400\nlw 01/01/2026 12:00 400\n"
+          "[SNOWPACKS]\nSP PERVIOUS 1 2 0 .1 10 0 0\n"
+          "[2D_OPTIONS]\nMAX_TIMESTEP 30\nREPORT_2D NO\nINFILTRATION YES\nEVAPORATION NO\n"
+          "HEAT_MODEL COUPLED\nBED_HEAT_MODEL GROUND_COLUMN\nHEAT_SURFACE_EXCHANGE NO\nHEAT_RADIATIVE_EXCHANGE NO\n"
+          "[2D_SNOW_DEFAULTS]\n* SNOWPACK SP QG 20\n"
+          "[2D_VERTICES]\n0 0 0\n10 0 0\n0 10 0\n"
+          "[2D_TRIANGLES]\n0 1 2 .03\n"
+          "[2D_AQUIFER_OPTIONS]\nNODE_ENROLMENT ROWS\nGW_ET NONE\nM_LAYERS 4\nCLOSURE SIGMA\n"
+          "[2D_AQUIFER]\n* 36 1 .45 .1 2 HG0 .5\n"
+          "[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION YES\n"
+          "SURFACE_THERMAL_BC HEAT_FLUX 5\nDEEP_THERMAL_BC ADIABATIC\n"
+          "[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ -3\n* UNSAT __TEMPERATURE__ -3\n";
+    }
+    SWMM_Engine handle=swmm_engine_create();ASSERT_NE(handle,nullptr);
+    ASSERT_EQ(swmm_engine_open(handle,(stem+".inp").c_str(),(stem+".rpt").c_str(),(stem+".out").c_str(),nullptr),SWMM_OK)
+        <<swmm_get_last_error_msg(handle);
+    ASSERT_EQ(swmm_engine_initialize(handle),SWMM_OK)<<swmm_get_last_error_msg(handle);
+    auto& engine=*static_cast<SWMMEngine*>(handle);auto& router=engine.surfaceRouter2D();auto& snow=router.state().snow;
+    ASSERT_EQ(snow.kind(0),surface::SnowKind::Ueb);ASSERT_GT(snow.outputs()[0].swe_m,0);
+    ASSERT_EQ(swmm_engine_start(handle,0),SWMM_OK)<<swmm_get_last_error_msg(handle);
+    double elapsed=0,previous_soil_j=0,previous_contact_kj=0;
+    double previous_cover=snow.outputs()[0].cover_frac;
+    int count=0;bool melted=false,contact_stopped=false,wet_snowless=false,external_resumed=false;
+    do {
+        ASSERT_EQ(swmm_engine_step(handle,&elapsed),SWMM_OK)<<swmm_get_last_error_msg(handle);
+        ASSERT_LT(++count,10000);
+        double soil_j=0;ASSERT_EQ(swmm_heat_get_ground_values(handle,SWMM_GROUND_HEAT_SURFACE_ENERGY,0,1,&soil_j),SWMM_OK);
+        const auto& book=snow.ledgers()[0];
+        EXPECT_NEAR(book.energyResidual(),0,1e-5);
+        const double cover=snow.outputs()[0].cover_frac;
+        if(previous_cover>0&&cover<=0)melted=true;
+        if(melted&&previous_cover<=0&&cover<=0) {
+            EXPECT_NEAR(book.ground_contact_energy,previous_contact_kj,1e-9);
+            contact_stopped=true;
+            if(router.state().volume[0]>1e-12) {
+                wet_snowless=true;
+                EXPECT_NEAR(soil_j-previous_soil_j,0,1e-6);
+            } else if(soil_j-previous_soil_j>0)external_resumed=true;
+        }
+        previous_cover=cover;previous_soil_j=soil_j;previous_contact_kj=book.ground_contact_energy;
+    } while(elapsed>0);
+    EXPECT_TRUE(melted)<<"hot forcing did not deplete the assigned UEB pack";
+    EXPECT_TRUE(contact_stopped)<<"snow/soil contact continued after the snow cover disappeared";
+    EXPECT_TRUE(wet_snowless||external_resumed)
+        <<"neither ponded-water ownership nor a dry external boundary followed melt-out";
+    ASSERT_EQ(swmm_engine_end(handle),SWMM_OK);
+    swmm_engine_close(handle);swmm_engine_destroy(handle);
+}
 #endif
 
 TEST(SnowEngineIntegration, SessionCheckpointResumesNativeSnowAndRoutingExactly) {
