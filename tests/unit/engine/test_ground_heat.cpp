@@ -833,6 +833,68 @@ TEST(GroundHeat, PendingLateralHeatSurvivesAquiferRetiering) {
     EXPECT_NEAR(gw.pendingHeat(0)+gw.pendingHeat(1),0,1e-7);
     EXPECT_NEAR(gw.heat().cells[0].lateral_j+gw.heat().cells[1].lateral_j,0,1e-6);
 }
+TEST(GroundHeat, LateralConductionUsesHeterogeneousCellMaterialsAndClosesEnergy) {
+    Model m("lateral-heterogeneous-materials","CLOSED_FORM",1,false,
+        "CELL 1 SAT __TEMPERATURE__ 10\nCELL 1 UNSAT __TEMPERATURE__ 10\n"
+        "CELL 2 SAT __TEMPERATURE__ 20\nCELL 2 UNSAT __TEMPERATURE__ 20\n"
+        "[GW_TRANSPORT_PARAMS]\n* 2650 880 1 0 0 0 0 0 .065\n"
+        "CELL 2 2650 880 4 0 0 0 0 0 .065\n");
+    ASSERT_NE(m.e,nullptr);
+    ASSERT_EQ(swmm_gw_transport_option_set(m.e,"CONDUCTION","YES"),SWMM_OK);
+    ASSERT_EQ(swmm_gw_transport_option_set(m.e,"LATERAL_CONDUCTION","YES"),SWMM_OK);
+    ASSERT_EQ(m.start(),SWMM_OK);
+
+    auto& router=m.router();auto& gw=router.subsurface();const auto& mesh=router.mesh();
+    ASSERT_EQ(gw.heat().cells.size(),2u);
+    const auto& left=gw.heat().cells[0].column;const auto& right=gw.heat().cells[1].column;
+    ASSERT_NEAR(left.material.grain_conductivity,1,1e-12);
+    ASSERT_NEAR(right.material.grain_conductivity,4,1e-12);
+    ASSERT_EQ(left.energy.size(),right.energy.size());
+
+    int left_slot=-1,right_slot=-1;
+    for(int edge=0;edge<mesh.cell_nv[0];++edge)
+        if(mesh.cell_nbr[edge]==1)left_slot=edge;
+    for(int edge=0;edge<mesh.cell_nv[1];++edge)
+        if(mesh.cell_nbr[openswmm::twoD::kMaxCellVerts+edge]==0)
+            right_slot=openswmm::twoD::kMaxCellVerts+edge;
+    ASSERT_GE(left_slot,0);ASSERT_GE(right_slot,0);
+
+    // Independent finite-volume oracle: integrate each vertical overlap of
+    // the two columns using the series resistance across their half cells.
+    const double table=std::min(gw.state().z_bed[0]+gw.state().hg[0],
+                                gw.state().z_bed[1]+gw.state().hg[1]);
+    double conductance=0;
+    int j=0,k=0;
+    while(j<static_cast<int>(left.energy.size())&&k<static_cast<int>(right.energy.size())) {
+        const double left_top=mesh.tri_cz[0]-left.depth_edges[std::size_t(j)];
+        const double left_bottom=mesh.tri_cz[0]-left.depth_edges[std::size_t(j+1)];
+        const double right_top=mesh.tri_cz[1]-right.depth_edges[std::size_t(k)];
+        const double right_bottom=mesh.tri_cz[1]-right.depth_edges[std::size_t(k+1)];
+        const double low=std::max(left_bottom,right_bottom);
+        const double high=std::min(left_top,right_top);
+        const double height=std::min(high,table)-low;
+        if(height>0) {
+            const double resistance=mesh.edge_dist_c[std::size_t(left_slot)]/left.conductivity[std::size_t(j)]+
+                mesh.edge_dist_c[std::size_t(right_slot)]/right.conductivity[std::size_t(k)];
+            conductance+=mesh.edge_length[std::size_t(left_slot)]*height/resistance;
+        }
+        if(left_bottom>=right_bottom)++j;
+        if(right_bottom>=left_bottom)++k;
+    }
+    ASSERT_GT(conductance,0);
+    const double expected=0.1*conductance*10.0;
+    const double initial=energy(gw.heat());
+    gw.state().dt_cell[0]=gw.state().dt_cell[1]=0.1;
+    gw.assignTiers(0.1,1);
+    gw.fireGwFaces(0,0.1);
+    gw.fireGwCells(0,0.1,router.state(),0);
+
+    for(const auto& cell:gw.heat().cells)ASSERT_EQ(cell.failed,0)<<cell.error;
+    EXPECT_NEAR(gw.heat().cells[0].lateral_j,expected,1e-7);
+    EXPECT_NEAR(gw.heat().cells[1].lateral_j,-expected,1e-7);
+    EXPECT_NEAR(gw.heat().cells[0].lateral_j+gw.heat().cells[1].lateral_j,0,1e-9);
+    EXPECT_NEAR(energy(gw.heat()),initial,2e-5);
+}
 TEST(GroundHeat, GlobalAndStaggeredLateralConductionCloseAndConvergeSpatially) {
     struct Run {std::vector<std::vector<double>> temperature;double initial=0,final=0,pending=0;};
     const auto run=[](bool staggered,const std::string& suffix)->Run {
