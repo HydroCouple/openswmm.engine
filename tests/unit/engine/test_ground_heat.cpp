@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <numeric>
@@ -10,6 +11,7 @@
 #include <openswmm/engine/openswmm_gw_transport.h>
 #include <openswmm/engine/openswmm_coupling.h>
 #include <openswmm/engine/openswmm_hotstart.h>
+#include "core/CompletedSourceArchive.hpp"
 #include "core/SWMMEngine.hpp"
 #include "2d/SurfaceRouter2D.hpp"
 #include "2d/subsurface/SubsurfaceSolver.hpp"
@@ -109,6 +111,45 @@ TEST(GroundHeat, GroundPorewaterNodeReversalPreservesGrossMassAndAgeReceipts) {
     EXPECT_NEAR(poreMass(gw.heat(),dye)-initial,tr.gained_node[dye]-tr.lost_node[dye],1e-9);
     EXPECT_NEAR(gw.nodeExchangeMass()[std::size_t(dye)*2],tr.lost_node[dye],1e-12);
     EXPECT_NEAR(tr.residual(dye),0,1e-9);EXPECT_NEAR(tr.residual(age),0,1e-9);
+}
+TEST(GroundHeat, AcceptedLateralPorewaterPacketRemainsReservedAcrossAnInterveningFiniteContact) {
+    Model m("reserved-lateral-porewater-source","CLOSED_FORM",.5,false,porewater_species+
+        "CELL 1 SAT Dye 20\nCELL 1 UNSAT Dye 20\nCELL 2 SAT Dye 2\nCELL 2 UNSAT Dye 2\n"
+        "[2D_AQUIFER]\nCELL 1 36 1 .45 .1 2 HG0 .6\nCELL 2 36 1 .45 .1 2 HG0 .5\n");
+    Model restored_model("reserved-lateral-porewater-restored","CLOSED_FORM",.5,false,porewater_species+
+        "CELL 1 SAT Dye 20\nCELL 1 UNSAT Dye 20\nCELL 2 SAT Dye 2\nCELL 2 UNSAT Dye 2\n"
+        "[2D_AQUIFER]\nCELL 1 36 1 .45 .1 2 HG0 .6\nCELL 2 36 1 .45 .1 2 HG0 .5\n");
+    ASSERT_NE(m.e,nullptr);ASSERT_NE(restored_model.e,nullptr);
+    ASSERT_EQ(enablePorewater(m),SWMM_OK);ASSERT_EQ(enablePorewater(restored_model),SWMM_OK);
+    auto& gw=m.router().subsurface();auto& restored=restored_model.router().subsurface();
+    auto& tr=gw.transport();const int dye=tr.rowIndex("Dye");ASSERT_GE(dye,0);
+    ASSERT_TRUE(gw.heat().cells[0].porewater.active());ASSERT_TRUE(gw.heat().cells[1].porewater.active());
+    const double initial=poreMass(gw.heat(),dye);
+    gw.state().dt_cell[0]=.1;gw.state().dt_cell[1]=.1;gw.assignTiers(.1,1);
+    gw.fireGwFaces(0,.1);
+    auto& donor=gw.heat().cells[0].porewater;auto& receiver=gw.heat().cells[1].porewater;
+    const auto nl=gw.heat().cells[0].column.theta.size();double queued=0;std::size_t layer=0;
+    for(std::size_t j=0;j<nl;++j){const double v=donor.reserved_out[std::size_t(dye)*nl+j];queued+=v;if(v>0)layer=j;}
+    ASSERT_GT(queued,0);
+    openswmm::detail::CompletedSourceArchive saved;gw.checkpoint(saved,false);
+    openswmm::detail::CompletedSourceArchive input(saved.bytes());restored.checkpoint(input,false);input.finish();
+    EXPECT_EQ(restored.heat().cells[0].porewater.reserved_out,donor.reserved_out);
+    const double contact=std::min(.1*donor.contactAvailableMass(dye,layer),.1*receiver.contactAvailableMass(dye,layer));
+    ASSERT_GT(contact,0);
+    auto& restored_donor=restored.heat().cells[0].porewater;auto& restored_receiver=restored.heat().cells[1].porewater;
+    ASSERT_TRUE(donor.applyContactMassIncrement(dye,layer,-contact));
+    ASSERT_TRUE(receiver.applyContactMassIncrement(dye,layer,contact));
+    ASSERT_TRUE(restored_donor.applyContactMassIncrement(dye,layer,-contact));
+    ASSERT_TRUE(restored_receiver.applyContactMassIncrement(dye,layer,contact));
+    gw.fireGwCells(0,.1,m.router().state(),0);restored.fireGwCells(0,.1,restored_model.router().state(),0);
+    for(const auto* solver:{&gw,&restored})for(const auto& cell:solver->heat().cells) {
+        ASSERT_EQ(cell.failed,0)<<cell.error;
+        for(double v:cell.porewater.reserved_out)EXPECT_DOUBLE_EQ(v,0);
+    }
+    EXPECT_EQ(gw.heat().cells[0].porewater.mass,restored.heat().cells[0].porewater.mass);
+    EXPECT_EQ(gw.heat().cells[1].porewater.mass,restored.heat().cells[1].porewater.mass);
+    EXPECT_NEAR(poreMass(gw.heat(),dye),initial,1e-9*std::max(1.,initial));
+    EXPECT_NEAR(tr.residual(dye),0,1e-8);
 }
 TEST(GroundHeat, CommittedLinkHeatCannotBeSpentAgainByAnInterveningFiniteWaterContact) {
     Model m("reserved-link-heat","CLOSED_FORM",.5,false,

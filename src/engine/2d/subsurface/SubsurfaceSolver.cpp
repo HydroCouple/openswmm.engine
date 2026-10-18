@@ -599,7 +599,16 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
                 const auto ne = static_cast<std::size_t>(E.ne);
                 for (int s = 0; s < tr_.n_species; ++s) {
                     const double m_don = tr_.sat_mass[tr_.idx(s, static_cast<int>(don))];
-                    if (m_don == 0.0) {
+                    const bool layered_porewater=heat_.active()&&s!=tr_.temp_row&&
+                        heat_.cells[don].porewater.active();
+                    const double mobile_donor=layered_porewater?saturatedPorewaterMobileMass(int(don),s):
+                        m_don*tr_.dissolvedFraction(s,static_cast<int>(don),state_.theta_s[don]);
+                    if(layered_porewater&&(!std::isfinite(mobile_donor)||mobile_donor<0)) {
+                        auto& owner=heat_.cells[don];owner.failed=1;
+                        try{owner.error="Invalid reserved-layer porewater donor for an accepted face transfer.";}catch(...){}
+                        continue;
+                    }
+                    if (mobile_donor == 0.0) {
                         if(heat_.active()&&s==tr_.temp_row)bookPresetHeatOut(int(don),std::abs(vol),0);
                         continue;
                     }
@@ -607,16 +616,15 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
                     // sorbed on the grains stays with the cell. That single
                     // multiplier is the whole of retardation here, which is
                     // why no channel carries an R of its own.
-                    const double mob =
-                        tr_.dissolvedFraction(s, static_cast<int>(don),
-                                              state_.theta_s[don]);
-                    double dm = std::abs(vol) * (m_don / vd) * mob;
+                    double dm = std::abs(vol) * (mobile_donor / vd);
                     if(heat_.active()&&s==tr_.temp_row)bookPresetHeatOut(int(don),std::abs(vol),dm);
                     // Never export more than the donor holds (the water's
                     // own positivity share bounds the volume the same way);
                     // the signed temperature row has no floor.
-                    if (!tr_.signedRow(s) && dm > std::abs(m_don))
-                        dm = std::abs(m_don);
+                    if (!tr_.signedRow(s)) {
+                        const double available=layered_porewater?mobile_donor:std::abs(m_don);
+                        if(dm>available)dm=available;
+                    }
                     bookPresetPorewaterOut(int(don),s,dm);
                     const double sgn = (vol > 0.0) ? 1.0 : -1.0;
                     const auto k = static_cast<std::size_t>(s) * ne + eu;
@@ -656,10 +664,26 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
                     for (int s = 0; s < tr_.n_species; ++s) {
                         const double ma = tr_.sat_mass[tr_.idx(s, static_cast<int>(l))];
                         const double mb = tr_.sat_mass[tr_.idx(s, static_cast<int>(r))];
-                        const double ca = ma / va *
-                            tr_.dissolvedFraction(s, static_cast<int>(l), state_.theta_s[l]);
-                        const double cb = mb / vb *
-                            tr_.dissolvedFraction(s, static_cast<int>(r), state_.theta_s[r]);
+                        const bool layered_porewater_a=heat_.active()&&s!=tr_.temp_row&&heat_.cells[l].porewater.active();
+                        const bool layered_porewater_b=heat_.active()&&s!=tr_.temp_row&&heat_.cells[r].porewater.active();
+                        const double mobile_a=layered_porewater_a?saturatedPorewaterMobileMass(int(l),s):
+                            ma*tr_.dissolvedFraction(s,static_cast<int>(l),state_.theta_s[l]);
+                        const double mobile_b=layered_porewater_b?saturatedPorewaterMobileMass(int(r),s):
+                            mb*tr_.dissolvedFraction(s,static_cast<int>(r),state_.theta_s[r]);
+                        if((layered_porewater_a&&(!std::isfinite(mobile_a)||mobile_a<0))||
+                           (layered_porewater_b&&(!std::isfinite(mobile_b)||mobile_b<0))) {
+                            if(layered_porewater_a) {
+                                auto& owner=heat_.cells[l];owner.failed=1;
+                                try{owner.error="Invalid reserved-layer porewater donor for accepted dispersion.";}catch(...){}
+                            }
+                            if(layered_porewater_b) {
+                                auto& owner=heat_.cells[r];owner.failed=1;
+                                try{owner.error="Invalid reserved-layer porewater donor for accepted dispersion.";}catch(...){}
+                            }
+                            continue;
+                        }
+                        const double ca = mobile_a / va;
+                        const double cb = mobile_b / vb;
                         // Porous heat already resolves molecular phase
                         // conduction. Only mechanical dispersion rides the
                         // water temperature row; solute D_m is unchanged.
@@ -674,7 +698,6 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
                         // donor. The surface proved this the hard way
                         // (its own comment records 15.31 against a max of
                         // 10); the same 1/nf argument holds here.
-                        const std::size_t recv = (dMd > 0.0) ? r : l;
                         const double eq = (ca - cb) * va * vb / (va + vb) /
                                           static_cast<double>((dMd > 0.0) ? nf_r : nf_l);
                         double cap = std::abs(eq);
@@ -684,7 +707,10 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
                         // warm/cold front, so for it the equalisation
                         // bound alone is the cap.
                         if (!tr_.signedRow(s)) {
-                            const double give = std::abs((dMd > 0.0) ? ma : mb) * kFaceShare;
+                            const bool layered_donor=dMd>0?layered_porewater_a:layered_porewater_b;
+                            const double give = std::abs((dMd > 0.0)
+                                ? (layered_donor?mobile_a:ma)
+                                : (layered_donor?mobile_b:mb)) * kFaceShare;
                             cap = std::min(cap, give);
                         }
                         if (std::abs(dMd) > cap) {

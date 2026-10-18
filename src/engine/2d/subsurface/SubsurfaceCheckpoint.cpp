@@ -2,6 +2,7 @@
 #include "SubsurfaceSolver.hpp"
 #include "../heat/ThermalCheckpoint.hpp"
 #include "../../core/CompletedSourceArchive.hpp"
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -64,7 +65,7 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
         a.sequence(lid_receipts_,[&](auto& rows){a.sequence(rows,[&](auto& r){a(r.start,r.end,r.down,r.up);});},true);
     }
     if(heat_.active()) {
-        std::string profile="accepted-boundary porous thermal state v1";a(profile);
+        std::string profile="accepted-boundary porous thermal state v2";a(profile);
         checkpoint::groundHeat(a,heat_,false);
         a.fixed(heat_link_out_volume_,heat_preset_out_j_,heat_preset_out_water_,heat_node_out_volume_,
                 heat_node_gathered_out_,porewater_preset_out_,heat_pending_left_,heat_pending_right_,heat_dt_);
@@ -72,6 +73,19 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
             &heat_node_out_volume_,&heat_node_gathered_out_,&porewater_preset_out_,&heat_pending_left_,
             &heat_pending_right_,&heat_dt_})for(double v:*row)if(!std::isfinite(v))
                 throw std::runtime_error("Nonfinite pending thermal checkpoint receipt.");
+        if(a.reading()&&!porewater_preset_out_.empty()) {
+            const auto nl=std::size_t(heat_.config->options.thermal_layers),nc=std::size_t(state_.n_cells);
+            std::size_t ns=0;for(const auto& cell:heat_.cells)ns=std::max(ns,std::size_t(cell.porewater.n_species));
+            if(!nl||!ns||porewater_preset_out_.size()!=ns*nc*nl)
+                throw std::runtime_error("Pending porewater export checkpoint shape differs from its physical layers.");
+            for(std::size_t i=0;i<nc;++i)for(std::size_t r=0;r<ns;++r)for(std::size_t j=0;j<nl;++j) {
+                const auto packet=(r*nc+i)*nl+j;
+                const auto& pore=heat_.cells[i].porewater;
+                const double reserved=pore.active()?pore.reserved_out[r*nl+j]:0;
+                if(porewater_preset_out_[packet]!=reserved)
+                    throw std::runtime_error("Pending porewater export does not match its reserved physical-layer donor.");
+            }
+        }
     }
     if(a.reading()) {
         richards_clock_valid_=lid_receipts_enabled_;

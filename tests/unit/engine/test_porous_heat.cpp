@@ -298,6 +298,23 @@ TEST(GroundPorewater, DryResidueRemainsInTheDerivedPhysicalZoneAndInvalidSeedsAr
     EXPECT_FALSE(pore.initialize(soil,{0},{0},{1},{0},-1,-1).empty());EXPECT_EQ(pore.mass,before);
     EXPECT_FALSE(pore.initialize(soil,{0},{0},{0},{-1},-1,-1).empty());EXPECT_EQ(pore.mass,before);
 }
+TEST(GroundPorewater, ReservedExportCannotBeSpentAgainByAFiniteContact) {
+    ThermalMaterial material;PorousHeatColumn soil;
+    ASSERT_TRUE(soil.initialize(1,{0,1},material,{.4},{10}).empty());
+    GroundPorewaterColumn pore;ASSERT_TRUE(pore.initialize(soil,{.4},{10},{0},{0},-1,-1).empty());
+    ASSERT_TRUE(pore.reserveOutgoing(0,0,4));
+    EXPECT_DOUBLE_EQ(pore.contactAvailableMass(0,0),6);
+    EXPECT_FALSE(pore.applyContactMassIncrement(0,0,-7));
+    EXPECT_DOUBLE_EQ(pore.mass[0],10);EXPECT_DOUBLE_EQ(pore.reserved_out[0],4);
+    ASSERT_TRUE(pore.applyContactMassIncrement(0,0,-3));
+    EXPECT_DOUBLE_EQ(pore.mass[0],7);EXPECT_DOUBLE_EQ(pore.contactAvailableMass(0,0),3);
+    // The cell's existing gather removes the queued four-unit packet from
+    // canonical mass, then releases exactly the matching reservation.
+    pore.mass[0]-=4;
+    ASSERT_TRUE(pore.settleOutgoingReservation(0,0,4));
+    EXPECT_DOUBLE_EQ(pore.mass[0],3);EXPECT_DOUBLE_EQ(pore.contactAvailableMass(0,0),3);
+    EXPECT_DOUBLE_EQ(pore.reserved_out[0],0);
+}
 TEST(PorousHeat, ClosureMoistureProjectionConservesWaterAcrossMovingAndCollapsedLayers) {
     for(auto closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})
         for(double hg:{0.,.1,.75,1.,1.999999,2.}) {

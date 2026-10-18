@@ -28,27 +28,49 @@ std::string SubsurfaceSolver::initPorewater() {
 }
 void SubsurfaceSolver::bookPresetPorewaterOut(int i,int r,double target) noexcept {
     if(!heat_.active()||r==tr_.temp_row||!(target>0))return;
-    auto& cell=heat_.cells[i];const auto& pore=cell.porewater;if(!pore.active())return;
+    auto& cell=heat_.cells[i];auto& pore=cell.porewater;if(!pore.active())return;
     const auto& column=cell.column;const auto nl=column.theta.size();const auto row=std::size_t(r)*nl;
     const auto base=(std::size_t(r)*state_.n_cells+i)*nl;
     const auto mobile=[&](std::size_t j) {
         const double water=column.theta[j]*column.area*(column.depth_edges[j+1]-column.depth_edges[j]);
         const double capacity=water+pore.retention[row+j];
-        return capacity>0?pore.mass[row+j]/capacity*cell.saturated_water[j]:0;
+        const double active=pore.contactAvailableMass(r,j);
+        return capacity>0?active/capacity*cell.saturated_water[j]:0;
     };
     double total=0,largest=0;std::size_t anchor=0;
     for(std::size_t j=0;j<nl;++j){const double part=mobile(j);total+=part;if(part>largest){largest=part;anchor=j;}}
     const auto fail=[&](){cell.failed=1;try{cell.error="Accepted porewater export has no finite physical layer donor.";}catch(...) {}};
-    if(!(total>0)||!std::isfinite(total)||!std::isfinite(target)){fail();return;}
+    if(!(total>0)||!std::isfinite(total)||!std::isfinite(target)||target>total){fail();return;}
     double sum=0;
-    for(std::size_t j=0;j<nl;++j) {
-        const double receipt=target*(mobile(j)/total);sum+=receipt;
-        if(!std::isfinite(porewater_preset_out_[base+j]+receipt)){fail();return;}
-    }
+    for(std::size_t j=0;j<nl;++j)sum+=target*(mobile(j)/total);
     const double correction=target-sum;
-    if(!std::isfinite(porewater_preset_out_[base+anchor]+target*(mobile(anchor)/total)+correction)){fail();return;}
-    for(std::size_t j=0;j<nl;++j)porewater_preset_out_[base+j]+=target*(mobile(j)/total);
-    porewater_preset_out_[base+anchor]+=correction;
+    for(std::size_t j=0;j<nl;++j) {
+        const double receipt=target*(mobile(j)/total);
+        const double adjusted=receipt+(j==anchor?correction:0);
+        if(!std::isfinite(porewater_preset_out_[base+j]+adjusted)||!pore.canReserveOutgoing(r,j,adjusted)){fail();return;}
+    }
+    for(std::size_t j=0;j<nl;++j) {
+        const double receipt=target*(mobile(j)/total);
+        const double adjusted=receipt+(j==anchor?correction:0);
+        if(!pore.reserveOutgoing(r,j,adjusted)){fail();return;}
+        porewater_preset_out_[base+j]+=adjusted;
+    }
+}
+double SubsurfaceSolver::saturatedPorewaterMobileMass(int i,int r) const noexcept {
+    if(!heat_.active()||i<0||std::size_t(i)>=heat_.cells.size())return std::numeric_limits<double>::quiet_NaN();
+    const auto& cell=heat_.cells[i];const auto& pore=cell.porewater;const auto& column=cell.column;
+    if(!pore.active()||r<0||r>=pore.n_species||r==pore.temp_row||
+       cell.saturated_water.size()!=column.theta.size())return std::numeric_limits<double>::quiet_NaN();
+    const auto nl=column.theta.size(),row=std::size_t(r)*nl;double total=0;
+    for(std::size_t j=0;j<nl;++j) {
+        const double bulk=column.area*(column.depth_edges[j+1]-column.depth_edges[j]);
+        const double capacity=column.theta[j]*bulk+pore.retention[row+j];
+        const double active=pore.contactAvailableMass(r,j);
+        if(!std::isfinite(capacity)||capacity<0||!std::isfinite(active))return std::numeric_limits<double>::quiet_NaN();
+        if(capacity>0)total+=active/capacity*cell.saturated_water[j];
+        if(!std::isfinite(total))return std::numeric_limits<double>::quiet_NaN();
+    }
+    return total;
 }
 void SubsurfaceSolver::fireGroundPorewaterSpecies(int i,const CellFlux& f) noexcept {
     auto& cell=heat_.cells[i];if(cell.failed||!cell.porewater.active())return;
@@ -143,6 +165,7 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i,const CellFlux& f) noexc
             for(std::size_t j=0;j<nl;++j) {
                 if(!std::isfinite(advected.mass[j])||advected.mass[j]<0)throw std::runtime_error("Invalid accepted porewater species sink.");
                 tr_.lost_reaction[r]+=advected.mass[j]*(1-keep);next.mass[row+j]=advected.mass[j]*keep;
+                if(!next.settleOutgoingReservation(r,j,preset[j]))throw std::runtime_error("Accepted porewater export reservation does not match its gathered packet.");
             }
         }
         const double before=std::accumulate(next.generated_age.begin(),next.generated_age.end(),0.);

@@ -2,6 +2,7 @@
 #include "GroundPorewater.hpp"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numeric>
 #include <stdexcept>
 namespace openswmm::twoD {
@@ -22,7 +23,8 @@ std::string GroundPorewaterColumn::initialize(const PorousHeatColumn& soil,const
             return "Ground porewater saturated overlap exceeds its physical layer water.";
     }
     GroundPorewaterColumn next;next.n_species=int(ns);next.age_row=age;next.temp_row=temperature;
-    next.mass.assign(ns*nl,0);next.retention=next.mass;next.contact_mass=next.mass;next.generated_age.assign(nl,0);
+    next.mass.assign(ns*nl,0);next.retention=next.mass;next.contact_mass=next.mass;
+    next.reserved_out=next.mass;next.generated_age.assign(nl,0);
     for(std::size_t r=0;r<ns;++r) {
         if(!std::isfinite(kd[r])||kd[r]<0)return "Ground porewater Kd must be finite and nonnegative.";
         if(int(r)==temperature)continue;
@@ -80,5 +82,43 @@ bool GroundPorewaterColumn::generateAge(const PorousHeatColumn& soil,double dt) 
     }
     for(std::size_t j=0;j<nl;++j){const double generated=dt*soil.theta[j]*bulk(soil,j);mass[base+j]+=generated;generated_age[j]+=generated;}
     return true;
+}
+double GroundPorewaterColumn::contactAvailableMass(int r,std::size_t j) const noexcept {
+    if(n_species<=0||r<0||r>=n_species||retention.size()%std::size_t(n_species)!=0||
+       mass.size()!=retention.size()||reserved_out.size()!=mass.size()||r==temp_row)
+        return std::numeric_limits<double>::quiet_NaN();
+    const auto nl=retention.size()/std::size_t(n_species);if(j>=nl)return std::numeric_limits<double>::quiet_NaN();
+    const auto k=std::size_t(r)*nl+j;
+    const double available=mass[k]-reserved_out[k];
+    if(!std::isfinite(mass[k])||!std::isfinite(reserved_out[k])||mass[k]<0||reserved_out[k]<0||available<0)
+        return std::numeric_limits<double>::quiet_NaN();
+    return available;
+}
+bool GroundPorewaterColumn::canReserveOutgoing(int r,std::size_t j,double amount) const noexcept {
+    const double available=contactAvailableMass(r,j);
+    const auto nl=retention.size()/std::size_t(std::max(1,n_species));
+    if(!std::isfinite(available)||!std::isfinite(amount)||amount<0||r<0||r>=n_species||j>=nl)return false;
+    const auto k=std::size_t(r)*nl+j;
+    return std::isfinite(reserved_out[k]+amount)&&amount<=available;
+}
+bool GroundPorewaterColumn::reserveOutgoing(int r,std::size_t j,double amount) noexcept {
+    if(!canReserveOutgoing(r,j,amount))return false;
+    const auto nl=retention.size()/std::size_t(std::max(1,n_species)),k=std::size_t(r)*nl+j;
+    reserved_out[k]+=amount;return true;
+}
+bool GroundPorewaterColumn::settleOutgoingReservation(int r,std::size_t j,double amount) noexcept {
+    const auto nl=retention.size()/std::size_t(std::max(1,n_species));
+    if(r<0||r>=n_species||j>=nl||reserved_out.size()!=mass.size()||!std::isfinite(amount)||amount<0)return false;
+    const auto k=std::size_t(r)*nl+j;
+    if(!std::isfinite(reserved_out[k])||amount>reserved_out[k])return false;
+    reserved_out[k]=(amount==reserved_out[k])?0:reserved_out[k]-amount;
+    return true;
+}
+bool GroundPorewaterColumn::applyContactMassIncrement(int r,std::size_t j,double increment) noexcept {
+    const auto nl=retention.size()/std::size_t(std::max(1,n_species));
+    if(r<0||r>=n_species||j>=nl||mass.size()!=retention.size()||reserved_out.size()!=mass.size()||r==temp_row||!std::isfinite(increment))return false;
+    const auto k=std::size_t(r)*nl+j;const double next=mass[k]+increment;
+    if(!std::isfinite(next)||!std::isfinite(reserved_out[k])||next<reserved_out[k]||reserved_out[k]<0)return false;
+    mass[k]=next;return true;
 }
 } // namespace openswmm::twoD

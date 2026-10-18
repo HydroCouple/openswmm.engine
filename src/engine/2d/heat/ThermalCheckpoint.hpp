@@ -70,7 +70,7 @@ inline void groundHeat(Archive& a,GroundHeatState& h,bool model) {
     a.sequence(h.cells,[&](auto& c){
         auto& col=c.column;auto& p=c.porewater;
         a.fixed(col.theta,col.capacity,col.energy,col.conductivity,c.saturated_water,
-                p.mass,p.contact_mass,p.generated_age);
+                p.mass,p.contact_mass,p.reserved_out,p.generated_age);
         a(c.advective_j,c.source_j,c.surface_j,c.deep_j,c.latent_j,c.lateral_j,c.water_contact_j,
           c.channel_contact_j,c.vertical_absolute_j,c.failed,c.error);
     });
@@ -83,7 +83,8 @@ inline void groundHeat(Archive& a,GroundHeatState& h,bool model) {
                c.porewater.n_species==0)continue;
             if(col.theta.size()+1!=col.depth_edges.size()||col.capacity.size()!=col.theta.size()||
                col.energy.size()!=col.theta.size()||col.conductivity.size()!=col.theta.size()||
-               c.saturated_water.size()!=col.theta.size()||c.porewater.mass.size()!=c.porewater.n_species*col.theta.size()) {
+               c.saturated_water.size()!=col.theta.size()||c.porewater.mass.size()!=c.porewater.n_species*col.theta.size()||
+               c.porewater.reserved_out.size()!=c.porewater.mass.size()) {
                 throw std::runtime_error("Invalid thermal ground checkpoint layer shapes (layers="+
                     std::to_string(col.theta.size())+", edges="+std::to_string(col.depth_edges.size())+
                     ", capacity="+std::to_string(col.capacity.size())+", energy="+std::to_string(col.energy.size())+
@@ -97,7 +98,11 @@ inline void groundHeat(Archive& a,GroundHeatState& h,bool model) {
                    !(col.capacity[j]>0)||!std::isfinite(col.capacity[j])||!std::isfinite(col.energy[j])||
                    !(col.conductivity[j]>0)||!std::isfinite(col.conductivity[j])||
                    !std::isfinite(c.saturated_water[j])||c.saturated_water[j]<0)bad("invalid layer thermodynamic value");
-            for(double v:c.porewater.mass)if(!std::isfinite(v)||v<0)bad("invalid porewater inventory");
+            const auto& p=c.porewater;
+            if(p.mass.size()!=p.reserved_out.size())bad("invalid porewater reservation shape");
+            for(std::size_t k=0;k<p.mass.size();++k)
+                if(!std::isfinite(p.mass[k])||p.mass[k]<0||!std::isfinite(p.reserved_out[k])||
+                   p.reserved_out[k]<0||p.reserved_out[k]>p.mass[k])bad("invalid porewater inventory or outgoing reservation");
         }
     }
 }

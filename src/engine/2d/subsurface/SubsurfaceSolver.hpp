@@ -543,6 +543,7 @@ private:
     std::vector<double> porewater_preset_out_; // [species*n_cells*layers + cell*layers + layer]
     void bookPresetHeatOut(int cell,double volume,double temperature_volume) noexcept;
     void bookPresetPorewaterOut(int cell,int species,double mass) noexcept;
+    double saturatedPorewaterMobileMass(int cell,int species) const noexcept;
     struct ThermalFaceSlice {int left=0,right=0;double low=0,high=0;};
     struct ThermalFace {double distance_left=0,distance_right=0;std::vector<ThermalFaceSlice> slices;};
     std::vector<ThermalFace> heat_faces_;
