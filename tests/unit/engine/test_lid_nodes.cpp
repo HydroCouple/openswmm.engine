@@ -133,6 +133,36 @@ TEST(LidNodes, ThermalContactIsReciprocalAndDryMatrixContinuesConducting) {
                     [](double x,const ThermalStore& s){return x+s.energy;}),
                 dry.boundary_j[0],1e-7);
 }
+TEST(LidNodes, AcceptedWaterReceiptsCarryProducerTemperatureSensibleEnergy) {
+    LidNodeState state;
+    state.cells={{.5,1.5,2,2,1,0,0,0,0,0,0,LidNodeLayerKind::Surface,0},
+                 {0,.5,1,2,.45,.2,.2,.08,0,0,0,LidNodeLayerKind::Media,1}};
+    ConductionConfig material;LidNodeThermalGraph graph;
+    ASSERT_TRUE(twoD::buildLidNodeThermalGraph(state,2,4.184e6,material,-5,graph).empty());
+    const double before=graph.stores[0].energy+graph.stores[1].energy;
+    const std::vector<LidThermalWaterTransfer> transfers={
+        {0,1,.01,0},       // internal LID redistribution uses the old donor temperature
+        {-1,0,.002,10},    // prescribed exterior source uses its producer temperature
+        {1,-1,.003,0}};    // export to the ground carries the same donor-time sensible heat
+    std::vector<double> energy;double external=0;
+    ASSERT_TRUE(twoD::transferLidNodeThermalEnergy(graph,state.cells.size(),4.184e6,
+        transfers,energy,external).empty());
+    ASSERT_EQ(energy.size(),2u);
+    EXPECT_NEAR(energy[0],graph.stores[0].energy+(.01*4.184e6*5)+(.002*4.184e6*10),1e-8);
+    EXPECT_NEAR(energy[1],graph.stores[1].energy-(.01*4.184e6*5)+(.003*4.184e6*5),1e-8);
+    EXPECT_NEAR(external,.002*4.184e6*10+.003*4.184e6*5,1e-8);
+    EXPECT_NEAR(std::accumulate(energy.begin(),energy.end(),0.0),before+external,1e-8);
+}
+TEST(LidNodes, InvalidAcceptedThermalTransferLeavesOutputsUntouched) {
+    LidNodeState state;state.cells={{0,1,1,1,1,0,0,0,0,0,0,LidNodeLayerKind::Surface,0}};
+    ConductionConfig material;LidNodeThermalGraph graph;
+    ASSERT_TRUE(twoD::buildLidNodeThermalGraph(state,1,4.184e6,material,2,graph).empty());
+    std::vector<double> energy={17};double external=23;
+    const auto error=twoD::transferLidNodeThermalEnergy(graph,1,4.184e6,
+        {{0,1,.001,0}},energy,external);
+    EXPECT_NE(error.find("Invalid accepted LID thermal water transfer"),std::string::npos);
+    EXPECT_EQ(energy,(std::vector<double>{17}));EXPECT_DOUBLE_EQ(external,23);
+}
 TEST(LidNodes, ThermalGraphRefusesUnbookedEnergyWhenSurfaceWaterDisappears) {
     LidNodeState state;
     state.cells={{.5,1.5,2,2,1,0,0,0,0,0,0,LidNodeLayerKind::Surface,0},
