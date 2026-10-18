@@ -399,7 +399,7 @@ set_property(TEST
 
 # Water/source/checkpoint tests can run without the mesh results writer.
 # These surface/output suites require the writer and read back its HDF5 file.
-if(NOT OPENSWMM_BUILD_2D OR OPENSWMM_2D_HDF5_OUTPUT)
+if(OPENSWMM_BUILD_2D AND OPENSWMM_2D_HDF5_OUTPUT)
 
 # 2D surface routing tests — geometry, gradients, flux, parsing.
 # The 2D engine sources (MeshBuilder, VertexReconstruction, SurfaceFluxCalculator,
