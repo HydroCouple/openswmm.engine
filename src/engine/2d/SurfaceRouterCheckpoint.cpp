@@ -115,8 +115,12 @@ struct SurfaceRouter2D::RestartState {
     }
     void validate(const SurfaceRouter2D& r,const SimulationContext& c) const {
         const auto n=static_cast<std::size_t>(r.mesh_.n_cells()),ng=static_cast<std::size_t>(c.n_gages());
-        for(const auto* row:{&infil_cum_applied_,&coupling_cum_applied_,&rain_cum_,&report_old_depth_,&report_old_head_})
+        for(const auto* row:{&coupling_cum_applied_,&rain_cum_,&report_old_depth_,&report_old_head_})
             if(row->size()!=n) throw std::runtime_error("Router checkpoint cell shape differs.");
+        const bool tracks_infiltration=r.infil_.active()||r.common_stage_;
+        if((tracks_infiltration && infil_cum_applied_.size()!=n) ||
+           (!tracks_infiltration && !infil_cum_applied_.empty()))
+            throw std::runtime_error("Router checkpoint infiltration shape differs from its resolved model.");
         if(report_rain_cum_.size()!=(report_rain_ms_>=0?n:0) || rainfall.size()!=ng)
             throw std::runtime_error("Router checkpoint report/weather shape differs.");
         const auto booked=gage_rate_.size();
@@ -147,7 +151,10 @@ struct SurfaceRouter2D::RestartState {
            !close(report_window_new_ms_,1000*sim_time_) || report_rain_ms_<-1 || report_rain_ms_>report_window_new_ms_ ||
            (!report_old_valid_ && report_window_old_ms_!=0) || (sim_time_>0 && co_forcing_first_))
             throw std::runtime_error("Invalid router checkpoint clocks/report window.");
-        double rain=0,infil=0;for(std::size_t i=0;i<n;++i) {rain+=rain_cum_[i];infil+=infil_cum_applied_[i]*r.mesh_.tri_area[i];}
+        double rain=0,infil=0;for(std::size_t i=0;i<n;++i) {
+            rain+=rain_cum_[i];
+            if(!infil_cum_applied_.empty())infil+=infil_cum_applied_[i]*r.mesh_.tri_area[i];
+        }
         // Raw precipitation is reported separately from snow liquid delivery.
         if(!std::isfinite(snow_delivery_adjustment))throw std::runtime_error("Invalid snow checkpoint delivery.");
         rain+=snow_delivery_adjustment;
@@ -242,13 +249,17 @@ std::string SurfaceRouter2D::sourceBoundary(const SimulationContext& ctx) const 
     if(joint_hydraulic_) {
         if(state_.nodes_1d!=((node_coupling_points_.empty() && subsurface_.nodeBeds().empty())?nullptr:&ctx.nodes) ||
            state_.node_coupling!=(node_coupling_points_.empty()?nullptr:&node_coupling_points_) ||
-           (coupling_points_.empty() && subsurface_.nodeBeds().empty()) || ctx.n_pollutants()!=0)
+           ((coupling_points_.empty() && subsurface_.nodeBeds().empty()) &&
+            (ctx.n_nodes()!=0 || ctx.n_links()!=0)) || ctx.n_pollutants()!=0)
             return "Joint router checkpoint coupling/receiver layout differs.";
         if(outfall_exchange_.prepared_) return "Joint checkpoint has an unconsumed outfall reservation.";
     }
-    if(infil_.resolvedRows().size()!=mesh_.tri_area.size()) return "Router checkpoint requires aquifer-owned infiltration rows.";
+    const auto& infiltration_rows=infil_.resolvedRows();
+    if(!infiltration_rows.empty() && infiltration_rows.size()!=mesh_.tri_area.size())
+        return "Router checkpoint requires complete aquifer-owned infiltration rows.";
     for(int i=0;i<mesh_.n_cells();++i)
-        if(state_.coupling_flux[i]!=0 || state_.coupling_forced[i]!=0 || infil_.resolvedRows()[i].has_method)
+        if(state_.coupling_flux[i]!=0 || state_.coupling_forced[i]!=0 ||
+           (!infiltration_rows.empty() && infiltration_rows[i].has_method))
             return "Router checkpoint requires aquifer-owned cells without external coupling donors.";
     const auto* cpu=dynamic_cast<ExplicitInertialSolver*>(solver_.get());
     if(!cpu) return "Router checkpoint requires the first-order CPU marcher.";
@@ -265,7 +276,8 @@ std::string SurfaceRouter2D::sourceBoundary(const SimulationContext& ctx) const 
     if(!close(boundary_in,ctx.mass_balance_2d.boundary_in) || !close(boundary_out,ctx.mass_balance_2d.boundary_out) ||
        (!bc_nonwall_dirty_ && slots!=bc_nonwall_slots_))return "Router completed boundary receipts or index differ.";
     if(cpu->completedSourceTime()!=sim_time_) return "Router/source completed clocks differ.";
-    if(source_router_model_!=sourceRouterModel(ctx)) return "Router checkpoint model changed after attachment.";
+    const auto current_model=sourceRouterModel(ctx)+channel_ground_.modelIdentity();
+    if(source_router_model_!=current_model) return "Router checkpoint model changed after attachment.";
     if(!close(ctx.mass_balance_2d.rainfall_in,common_stage_->meshRain()) ||
        !close(ctx.mass_balance_2d.evap_out,common_stage_->meshEvaporation()) ||
        !close(ctx.mass_balance_2d.aquifer_in,common_stage_->meshReturn()) ||
@@ -289,7 +301,7 @@ void SurfaceRouter2D::attachCommonSourceStage(SimulationContext& ctx,CommonSourc
     if(common_stage_ || !active_ || !cpu || sim_time_!=0 || pending_dt_!=0 || ctx.current_time!=0 ||
        !stage.matches(&mesh_,&state_,&subsurface_) || int(stage.cells().size())!=mesh_.n_cells() ||
        (!hydraulic && (ctx.n_nodes()!=0 || ctx.n_links()!=0 || !coupling_points_.empty())) || !subcatch_recharge_.empty() ||
-       infil_.resolvedRows().size()!=mesh_.tri_area.size() ||
+       (!infil_.resolvedRows().empty() && infil_.resolvedRows().size()!=mesh_.tri_area.size()) ||
        !cell_subcatch_.empty() || surface_quality_.active() || runtimeActive())
         throw std::invalid_argument("Router source attachment requires its initial CPU/all-cell profile and matching exchange scope.");
     if(hydraulic) {
@@ -299,12 +311,20 @@ void SurfaceRouter2D::attachCommonSourceStage(SimulationContext& ctx,CommonSourc
         std::string bytes;const auto error=hydraulic->checkpointBytes(ctx,bytes);
         const char* ramp=std::getenv("OPENSWMM_2D_HEAD_RAMP");
         if(!error.empty())throw std::invalid_argument(error);
-        if((ramp && ramp[0]=='1') || (coupling_points_.empty() && subsurface_.nodeBeds().empty()) || ctx.n_pollutants()!=0 ||
-           state_.transport.active() || !aquifer_link_shares_.empty())
-            throw std::invalid_argument("Joint source attachment requires water-only coupling without head ramps or node/link beds.");
+        const auto& transport=state_.transport;
+        const bool temperature_only=transport.active() && transport.n_species==1 &&
+            transport.n_pollut==0 && transport.n_msx==0 && transport.age_row<0 &&
+            transport.temp_row==0 && transport.rowIndex("__TEMPERATURE__")==0;
+        if((ramp && ramp[0]=='1') ||
+           ((coupling_points_.empty() && subsurface_.nodeBeds().empty()) && (ctx.n_nodes()!=0 || ctx.n_links()!=0)) ||
+           ctx.n_pollutants()!=0 ||
+           (transport.active() && !temperature_only) || !aquifer_link_shares_.empty())
+            throw std::invalid_argument("Joint source attachment requires a supported exchange profile without head ramps or node/link beds.");
     }
+    const auto& infiltration_rows=infil_.resolvedRows();
     for(int i=0;i<mesh_.n_cells();++i) {
-        if(state_.coupling_flux[i]!=0 || state_.coupling_forced[i]!=0 || infil_.resolvedRows()[i].has_method)
+        if(state_.coupling_flux[i]!=0 || state_.coupling_forced[i]!=0 ||
+           (!infiltration_rows.empty() && infiltration_rows[i].has_method))
             throw std::invalid_argument("Router source attachment requires aquifer-owned cells without external coupling donors.");
         for(int k=0;k<mesh_.cell_vertex_count(i);++k) if(!stage.runtimeBoundariesEnabled() && mesh_.cell_neighbour(i,k)<0 &&
             boundary_.edge_bc_type.at(MeshData::slot(i,k))!=int8_t(BoundaryType::WALL))
@@ -312,10 +332,16 @@ void SurfaceRouter2D::attachCommonSourceStage(SimulationContext& ctx,CommonSourc
     }
     // Empty node row publishers do not represent a live node provider.
     if(node_row_conc_.empty()) state_.node_row_conc=nullptr;
+    // The common source stage can withdraw water through the mesh/aquifer
+    // contact even when no standalone 2D infiltration method was authored.
+    // Keep the same per-cell accepted-depth ledger so the surface continuity
+    // check and its checkpoint can still close.
+    if(infil_cum_applied_.empty())infil_cum_applied_.assign(mesh_.n_cells(),0.0);
     // Construct the joint identity before installing any attachment pointers.
     auto points=coupling_points_;Archive identity;
     if(hydraulic)identity.sequence(points,[&](auto& p){identity(p.cell_idx,p.vertex_idx,p.node_idx,p.cd,p.area,p.is_outfall,p.has_flap_gate,p.area_authored);});
     auto model=sourceRouterModel(ctx)+identity.bytes();
+    model+=channel_ground_.modelIdentity();
     cpu->setCommonSourceStage(stage);cpu->joint_checkpoint_=hydraulic!=nullptr;
     joint_hydraulic_=hydraulic;common_stage_=&stage;source_context_=&ctx;source_router_model_=std::move(model);source_boundary_ready_=true;
 }
@@ -347,6 +373,10 @@ std::string SurfaceRouter2D::checkpointBytes(const SimulationContext& ctx,std::s
                 return "Joint outfall receipts differ from undrained surface coupling.";
         std::string cpu;const auto ce=static_cast<ExplicitInertialSolver*>(solver_.get())->checkpointBytes(cpu);if(!ce.empty())return ce;
         Archive state;snapshot.archive(state);state(cpu);
+        if(channel_ground_.active()) {
+            std::string profile="routed channel thermal receipts v1";state(profile);
+            auto channel=channel_ground_;channel.checkpoint(state);
+        }
         if(joint_hydraulic_) {
             Router::validateJointDelivery(ctx.nodes,ctx.coupled_node,snapshot.delivery);
             std::string hydraulic;const auto he=joint_hydraulic_->checkpointBytes(ctx,hydraulic);if(!he.empty())return he;
@@ -383,7 +413,12 @@ std::string SurfaceRouter2D::loadCheckpointBytes(SimulationContext& ctx,std::str
         if(magic!=(joint_hydraulic_?jointMagic:magicName) || version!=(joint_hydraulic_?2u:1u)+(runtimeWaterCheckpointing()?2u:0u)+(runtimeBoundaryCheckpointing()?2u:0u) || endian!=0x01020304 || longBytes!=sizeof(long)) return "Unsupported router checkpoint version/platform.";
         if(model!=source_router_model_) return "Router checkpoint report/weather model differs.";
         if(crc!=checksum(payload)) return "Router checkpoint checksum differs.";
-        RestartState snapshot(*this,ctx);Archive state(std::move(payload));snapshot.archive(state);std::string cpu,hydraulic;state(cpu);
+        RestartState snapshot(*this,ctx);auto channel=channel_ground_;Archive state(std::move(payload));snapshot.archive(state);std::string cpu,hydraulic;state(cpu);
+        if(channel.active()) {
+            std::string profile;state(profile);
+            if(profile!="routed channel thermal receipts v1")return "Unsupported routed channel thermal checkpoint profile.";
+            channel.checkpoint(state);
+        }
         if(joint_hydraulic_) {state(hydraulic,snapshot.delivery);snapshot.archiveJoint(state);}
         state.finish();
         snapshot.validate(*this,ctx);
@@ -405,7 +440,7 @@ std::string SurfaceRouter2D::loadCheckpointBytes(SimulationContext& ctx,std::str
         // Parsing/model/ledger/clock checks have all completed. CPU installation
         // above and these remaining explicit moves cannot throw.
         if(joint_hydraulic_)joint_hydraulic_->installCheckpoint(ctx,std::move(prepared));
-        snapshot.install(*this,ctx);return {};
+        channel_ground_=std::move(channel);snapshot.install(*this,ctx);return {};
     } catch(const std::exception& e) { return e.what(); }
 }
 }

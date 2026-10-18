@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "SubsurfaceSolver.hpp"
+#include "../heat/ThermalCheckpoint.hpp"
 #include "../../core/CompletedSourceArchive.hpp"
 #include <cmath>
 #include <stdexcept>
@@ -34,6 +35,7 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
             a.sequence(r.terms,[&](auto& v){a(v.row,v.massRate,v.massScale);signal(a,v.signal);});});
         a(t.n_species,t.n_cells,t.n_pollut,t.n_msx,t.age_row,t.temp_row,t.dispersion_on);
     a.fixed(t.row_names,t.alpha_L,t.alpha_T,t.D_m,t.rho_b,t.kd,t.decay);
+        auto thermal=checkpoint::groundHeatModelIdentity(heat_);a(thermal);
         return;
     }
     a.fixed(s.hg,s.hu,s.theta_sigma,s.q0_last,s.qnode_last,s.qlat_last,s.qdeep_last,s.qet_last,s.dunne_last,
@@ -60,6 +62,16 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
         a.sequence(lid_bed_diagnostics_,[&](auto& d){a(d.start,d.end,d.groundwater_time,d.lid_head,d.groundwater_head,
             d.requested_down,d.requested_up,d.reserved_down,d.reserved_up,d.accepted_down,d.accepted_up);},true);
         a.sequence(lid_receipts_,[&](auto& rows){a.sequence(rows,[&](auto& r){a(r.start,r.end,r.down,r.up);});},true);
+    }
+    if(heat_.active()) {
+        std::string profile="accepted-boundary porous thermal state v1";a(profile);
+        checkpoint::groundHeat(a,heat_,false);
+        a.fixed(heat_link_out_volume_,heat_preset_out_j_,heat_preset_out_water_,heat_node_out_volume_,
+                heat_node_gathered_out_,porewater_preset_out_,heat_pending_left_,heat_pending_right_,heat_dt_);
+        if(a.reading())for(const auto* row:{&heat_link_out_volume_,&heat_preset_out_j_,&heat_preset_out_water_,
+            &heat_node_out_volume_,&heat_node_gathered_out_,&porewater_preset_out_,&heat_pending_left_,
+            &heat_pending_right_,&heat_dt_})for(double v:*row)if(!std::isfinite(v))
+                throw std::runtime_error("Nonfinite pending thermal checkpoint receipt.");
     }
     if(a.reading()) {
         richards_clock_valid_=lid_receipts_enabled_;
@@ -95,7 +107,10 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
             }
         }
         const auto paired=[&](double v,const auto& mass){nonnegative(v);if(int(mass.size())!=t.n_species)fail();
-            for(double m:mass){nonnegative(m);if(v==0 && m!=0)fail();}};
+            for(int p=0;p<t.n_species;++p) {
+                const double m=mass[static_cast<std::size_t>(p)];
+                if(!std::isfinite(m)||(p!=t.temp_row&&m<0)||(v==0&&m!=0))fail();
+            }};
         for(const auto* values:{&s.hg,&s.hu,&s.theta_sigma,&s.q0_last,&s.qnode_last,&s.qlat_last,
             &s.qdeep_last,&s.qet_last,&s.dunne_last,&s.qplus_last,&s.infil_interval,&s.wetting_front,
             &s.reject_last,&s.reject_cumulative,&s.dunne_cumulative,&s.et_pending,&s.et_potential_cumulative,&s.et_surface_cumulative,
@@ -129,7 +144,14 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
                 for(int p=0;p<t.n_species;++p)if(std::abs(mass[p]-t.xacc_from_surface[t.idx(p,i)])>1e-10*std::max(1.,mass[p])||t.xacc_to_surface[t.idx(p,i)]!=0)fail();
             }
         }
-        for(double m:t.sat_mass)nonnegative(m);for(double m:t.unsat_mass)nonnegative(m);
+        const auto validateSpeciesMass=[&](const std::vector<double>& mass) {
+            if(t.n_cells<=0||mass.size()!=std::size_t(t.n_species)*std::size_t(t.n_cells))fail();
+            for(std::size_t k=0;k<mass.size();++k) {
+                const int species=int(k/std::size_t(t.n_cells));const double value=mass[k];
+                if(!std::isfinite(value)||(species!=t.temp_row&&value<0))fail();
+            }
+        };
+        validateSpeciesMass(t.sat_mass);validateSpeciesMass(t.unsat_mass);
         for(const auto& r:source_returns_) {
             const int i=r.intake.request.cell;if(i<0||i>=s.n_cells||!source_owned_[i])fail();
             paired(r.volume,r.mass);nonnegative(r.available_at);

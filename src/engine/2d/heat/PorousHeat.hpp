@@ -34,7 +34,7 @@ ThermalSolution solveThermalContacts(const std::vector<ThermalStore>&,
 struct PorousHeatColumn {
     ThermalMaterial material;
     double area=0;
-    std::vector<double> depth_edges,theta,capacity,energy,conductivity;
+    std::vector<double> depth_edges,theta,capacity,energy,initial_energy,conductivity;
     std::string initialize(double area_m2,const std::vector<double>& fixed_depth_edges,
         const ThermalMaterial&,const std::vector<double>& moisture,const std::vector<double>& initial_celsius);
     // Changing theta changes capacity, never energy. Physical water transfers

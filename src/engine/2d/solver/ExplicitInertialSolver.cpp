@@ -2744,8 +2744,8 @@ void ExplicitInertialSolver::setChannelGround(ChannelGroundState& stage) {
 }
 
 void ExplicitInertialSolver::setCommonSourceStage(CommonSourceStage& stage) {
-    if((state_ && state_->heat.enabled)||(gw_&&gw_->heat().active()))
-        throw std::invalid_argument("Coupled heat with common surface/LID source ownership is not yet qualified.");
+    if(((state_ && state_->heat.enabled)||(gw_&&gw_->heat().active())) && !stage.meshOnly())
+        throw std::invalid_argument("Coupled heat with catchment/LID source ownership is not yet qualified.");
     if (!initialized_ || second_order_ || t_last_sync_ != 0.0 || stage.completedEnd() != 0.0 ||
         !stage.matches(mesh_, state_, gw_))
         throw std::invalid_argument("Common source stage requires matching initial first-order mesh/receiver state.");

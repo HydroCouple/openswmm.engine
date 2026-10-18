@@ -169,6 +169,16 @@ TEST(SurfaceExchange, ActualDonorMassAndWaterStayPairedInPendingReceipts) {
     EXPECT_DOUBLE_EQ(e.receipts()[0].start,0);EXPECT_DOUBLE_EQ(e.receipts()[0].end,1);
 }
 
+TEST(SurfaceExchange, SignedTemperatureVolumeCanBeTransferredWithItsWater) {
+    Receiver r;r.init();RowLayoutLite rows;rows.n_species=1;rows.temp_row=0;rows.names={"__TEMPERATURE__"};
+    std::vector<std::string> warnings;r.gw.initTransport(rows,nullptr,{},warnings);
+    SurfaceExchange e;ASSERT_EQ(e.plan(r.gw,0,1,1,{request("cold-water")}),"");
+    auto actual=full(e);actual[0].mass={-4.5};
+    ASSERT_EQ(e.commit(r.gw,actual),"");
+    EXPECT_DOUBLE_EQ(r.gw.transport().xacc_from_surface[r.gw.transport().idx(0,0)],-4.5);
+    EXPECT_DOUBLE_EQ(e.receipts()[0].mass[0],-4.5);
+}
+
 TEST(SurfaceExchange, ClosedSaturationAndActualFiringConserveAcrossClosures) {
     for(auto cl:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA}) {
         Receiver saturated;saturated.init(cl,SoilChar::RUSSO,1,2);SurfaceExchange zero;

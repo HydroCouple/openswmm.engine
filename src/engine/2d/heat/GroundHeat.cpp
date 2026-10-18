@@ -88,6 +88,7 @@ std::string GroundHeatState::initialize(SimulationContext& ctx,const MeshData& m
                 const int layer=row.layer-1; // existing file/API LAYER contract is one-based
                 cell.column.energy[layer]=cell.column.capacity[layer]*row.value;
             }
+        cell.column.initial_energy=cell.column.energy;
         cell.initial_j=total(cell.column.energy);cell.geo_flux=p.geo_flux;
     }
     *this=std::move(next);prepare();return {};

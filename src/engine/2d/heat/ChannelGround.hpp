@@ -3,6 +3,7 @@
 #include "MeshHeat.hpp"
 #include <cstdint>
 #include <utility>
+namespace openswmm::detail {class CompletedSourceArchive;}
 namespace openswmm::twoD {
 struct ChannelGroundContact {
     int link=-1,cell=-1,layer=-1;
@@ -31,6 +32,8 @@ public:
     const std::vector<double>& channelAtmosphere() const noexcept {return channel_atmospheric_j_;}
     const std::vector<double>& channelToGround() const noexcept {return channel_ground_j_;}
     const std::vector<double>& channelThermalIncrement() const noexcept {return channel_increment_j_;}
+    std::string modelIdentity() const;
+    void checkpoint(openswmm::detail::CompletedSourceArchive&);
 private:
     SimulationContext* context_=nullptr;
     const MeshData* mesh_=nullptr;

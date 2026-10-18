@@ -59,7 +59,12 @@ std::string ExplicitInertialSolver::checkpointBoundary() const {
     if((!joint_checkpoint_ && (state_->nodes_1d || state_->node_coupling)) || state_->node_row_conc || !exch_head_slope_.empty() || (!common_stage_->runtimeBoundariesEnabled() && !bc_cell_.empty()))
         return "CPU checkpoint live 1D coupling and external boundary providers are not qualified.";
     if(joint_checkpoint_) {
-        if(bool(state_->nodes_1d)!=bool(state_->node_coupling) || state_->transport.active() ||
+        const auto& transport=state_->transport;
+        const bool temperature_only=transport.active() && transport.n_species==1 &&
+            transport.n_pollut==0 && transport.n_msx==0 && transport.age_row<0 &&
+            transport.temp_row==0 && transport.rowIndex("__TEMPERATURE__")==0;
+        if(bool(state_->nodes_1d)!=bool(state_->node_coupling) ||
+           (transport.active() && !temperature_only) ||
            node_drawn_.size()!=(state_->nodes_1d?std::size_t(state_->nodes_1d->count()):0) ||
            exch_.size()!=(state_->node_coupling?state_->node_coupling->size():0))
             return "Joint CPU checkpoint coupling layout differs.";
@@ -257,6 +262,7 @@ std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const 
         stage.sources_=common_stage_->sources_; stage.gw_=gw_; stage.surface_=state_;
         trial.gw_=gw_; trial.state_=state_; trial.common_stage_=common_stage_;
         *stage.sources_=std::move(source); *gw_=std::move(gw); *state_=std::move(surface);
+        if(state_->heat.enabled)state_->heat.aquifer_ground=&gw_->heat();
         *common_stage_=std::move(stage); *this=std::move(trial); return {};
     } catch(const std::exception& e) { return e.what(); }
 }

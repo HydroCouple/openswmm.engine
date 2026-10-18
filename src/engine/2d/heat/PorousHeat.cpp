@@ -113,6 +113,7 @@ std::string PorousHeatColumn::initialize(double a,const std::vector<double>& edg
         return "Thermal layer depths must increase and initial temperatures must be finite.";
     if(auto error=next.setMoisture(water);!error.empty())return error;
     for(std::size_t j=0;j<n;++j)next.energy[j]=next.capacity[j]*temperatures[j];
+    next.initial_energy=next.energy;
     *this=std::move(next);return {};
 }
 std::string PorousHeatColumn::setMoisture(const std::vector<double>& water) {

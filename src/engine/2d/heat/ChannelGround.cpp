@@ -7,6 +7,7 @@
 #include "../data/SolverOptions2D.hpp"
 #include "../gw/GwTransportData.hpp"
 #include "../../core/SimulationContext.hpp"
+#include "../../core/CompletedSourceArchive.hpp"
 #include "../../hydraulics/XSectBatch.hpp"
 #include "../../transport/components/HeatFluxModules/HeatOverrides.hpp"
 #include "../../transport/components/HeatFluxModules/HeatFluxes.hpp"
@@ -18,6 +19,7 @@
 #include <limits>
 namespace openswmm::twoD {
 namespace {
+using Archive=detail::CompletedSourceArchive;
 using namespace transport::heat;
 bool explicitlySelected(const SimulationContext& ctx,int link) {
     const auto& name=ctx.link_names.name_of(link);
@@ -27,6 +29,23 @@ bool explicitlySelected(const SimulationContext& ctx,int link) {
            ((row.scope==HeatScope::LINK&&row.name==name)||(row.scope==HeatScope::TAG&&row.name==tag)))return true;
     return false;
 }
+}
+std::string ChannelGroundState::modelIdentity() const {
+    Archive a;auto owned_cells=cell_owned_,owned_links=link_owned_;auto cells=cells_;auto ranges=contact_ranges_;
+    auto contacts=contacts_;
+    a(owned_cells,owned_links,cells,ranges);
+    a.sequence(contacts,[&](auto& c){a(c.link,c.cell,c.layer,c.begin,c.end,c.share,c.invert);});
+    return a.bytes();
+}
+void ChannelGroundState::checkpoint(Archive& a) {
+    a.fixed(channel_atmospheric_j_,channel_ground_j_,channel_increment_j_);
+    if(a.reading()) {
+        const auto bad=[](){throw std::runtime_error("Invalid routed channel thermal checkpoint state.");};
+        if(channel_atmospheric_j_.size()!=link_owned_.size()||channel_ground_j_.size()!=link_owned_.size()||
+           channel_increment_j_.size()!=link_owned_.size())bad();
+        for(const auto* row:{&channel_atmospheric_j_,&channel_ground_j_,&channel_increment_j_})
+            for(double v:*row)if(!std::isfinite(v))bad();
+    }
 }
 std::string ChannelGroundState::initialize(SimulationContext& ctx,const MeshData& mesh,GroundHeatState& soil,
     SubsurfaceTransportState& transport,SurfaceStateData& surface,double coordinate_scale) {
