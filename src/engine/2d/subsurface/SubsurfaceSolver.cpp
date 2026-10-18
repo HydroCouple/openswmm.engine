@@ -2043,7 +2043,7 @@ std::string SubsurfaceSolver::initHeat(SimulationContext& ctx,const GwTransportD
 
 void SubsurfaceSolver::bookPresetHeatOut(int i,double volume,double temperature_volume) noexcept {
     if(!heat_.active()||!(volume>0)||i<0||std::size_t(i)>=heat_.cells.size())return;
-    auto& cell=heat_.cells[i];const auto& c=cell.column;const auto& sat=cell.saturated_water;
+    auto& cell=heat_.cells[i];auto& c=cell.column;const auto& sat=cell.saturated_water;
     const auto n=c.energy.size();if(!n)return;
     const auto base=std::size_t(i)*heat_.config->options.thermal_layers;
     const double total=std::accumulate(sat.begin(),sat.end(),0.);if(!(total>0))return;
@@ -2052,12 +2052,24 @@ void SubsurfaceSolver::bookPresetHeatOut(int i,double volume,double temperature_
     for(std::size_t j=0;j<n;++j)if(sat[j]>0) {
         last=j;const double energy=receipt(j);sum+=energy;
         if(!std::isfinite(energy)||!std::isfinite(heat_preset_out_j_[base+j]+energy)||
-           !std::isfinite(heat_preset_out_water_[base+j]+volume*(sat[j]/total))){cell.failed=1;return;}
+           !std::isfinite(heat_preset_out_water_[base+j]+volume*(sat[j]/total))||
+           !std::isfinite(c.energy[j]-energy)){cell.failed=1;return;}
     }
     const double correction=target-sum;
-    if(!std::isfinite(target)||!std::isfinite(correction)||!std::isfinite(heat_preset_out_j_[base+last]+receipt(last)+correction)){cell.failed=1;return;}
+    if(!std::isfinite(target)||!std::isfinite(correction)||
+       !std::isfinite(heat_preset_out_j_[base+last]+receipt(last)+correction)||
+       !std::isfinite(c.energy[last]-receipt(last)-correction)){cell.failed=1;return;}
     for(std::size_t j=0;j<n;++j)if(sat[j]>0) {
-        heat_preset_out_j_[base+j]+=receipt(j);heat_preset_out_water_[base+j]+=volume*(sat[j]/total);
+        const double part=receipt(j);
+        const double reserved=part+(j==last?correction:0.0);
+        // The accepted face/link transfer has already left this cell, even
+        // though the hydraulic/thermal column gathers its volume at the next
+        // tier firing. Reserve its producer-time sensible energy now so an
+        // intervening surface/ground contact cannot spend that packet again.
+        heat_preset_out_j_[base+j]+=part;
+        heat_preset_out_water_[base+j]+=volume*(sat[j]/total);
+        cell.column.energy[j]-=reserved;
+        cell.advective_j-=reserved;
     }
     heat_preset_out_j_[base+last]+=correction;
 }
@@ -2103,7 +2115,7 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
         std::vector<double> water(weights.size()),energy(weights.size()),withdrawal(weights.size());
         for(std::size_t j=0;j<weights.size();++j) {
             const double share=weights[j]/weight;
-            water[j]=(body_water+preset_water_total)*share-preset_water[j];energy[j]=incoming_j*share-preset[j];
+            water[j]=(body_water+preset_water_total)*share-preset_water[j];energy[j]=incoming_j*share;
             withdrawal[j]=(node_volume+f.source_out+implicit_link_volume)*share;
         }
         water.front()+=f.infil_in-f.reject-f.et-f.dunne;energy.front()+=cp*(infil-refund);

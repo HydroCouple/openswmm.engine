@@ -110,6 +110,39 @@ TEST(GroundHeat, GroundPorewaterNodeReversalPreservesGrossMassAndAgeReceipts) {
     EXPECT_NEAR(gw.nodeExchangeMass()[std::size_t(dye)*2],tr.lost_node[dye],1e-12);
     EXPECT_NEAR(tr.residual(dye),0,1e-9);EXPECT_NEAR(tr.residual(age),0,1e-9);
 }
+TEST(GroundHeat, CommittedLinkHeatCannotBeSpentAgainByAnInterveningFiniteWaterContact) {
+    Model m("reserved-link-heat","CLOSED_FORM",.5,false,
+        "* SAT __TEMPERATURE__ 40\n* UNSAT __TEMPERATURE__ 40\n"
+        "[GW_TRANSPORT_PARAMS]\n* 2650 880 10000000 0 0 0 0 0 .065\n");
+    ASSERT_NE(m.e,nullptr);
+    ASSERT_EQ(swmm_gw_transport_option_set(m.e,"CONDUCTION","YES"),SWMM_OK);
+    ASSERT_EQ(enablePorewater(m),SWMM_OK);auto& gw=m.router().subsurface();auto& state=m.router().state();
+    const int row=gw.transport().temp_row;const double cp=gw.heat().water_capacity;
+    const double draw=std::min(.1,.5*gw.specificYieldOf(0)*gw.state().hg[0]*gw.state().area[0]);
+    ASSERT_GT(draw,0);const double before=energy(gw.heat());
+    gw.bookLinkSeepage(0,-draw);const double exported=gw.bookLinkGain(0,row,draw)*cp;
+    EXPECT_NEAR(exported,draw*40*cp,1e-8);
+    // A large but finite bath approaches a controlled 10 degC boundary.
+    // This deliberately isolates the real face/link -> contact -> GW-gather
+    // ordering without changing any accepted hydraulic transfer.
+    constexpr double volume=1e8,seconds=3600;
+    const double bath_before=10*volume;
+    const double bath_after=openswmm::twoD::applyMeshHeatCell(m.router().mesh(),m.router().options(),state.heat,0,
+        bath_before,volume,0,seconds);
+    ASSERT_EQ(state.heat.failures[0],0)<<gw.heat().cells[0].error;
+    gw.heat().refreshView(0,gw.transport());gw.assignTiers(seconds,1);gw.fireGwCells(0,seconds,state,0);
+    for(const auto& cell:gw.heat().cells) {
+        ASSERT_EQ(cell.failed,0)<<cell.error;
+        for(std::size_t j=0;j<cell.column.energy.size();++j) {
+            const double temperature=cell.column.energy[j]/cell.column.capacity[j];
+            EXPECT_GE(temperature,10-1e-8);EXPECT_LE(temperature,40+1e-8);
+        }
+    }
+    const double residual=energy(gw.heat())-before+cp*(bath_after-bath_before)+exported;
+    const double energy_scale=std::abs(before)+std::abs(cp*(bath_after-bath_before))+std::abs(exported);
+    EXPECT_LE(std::abs(residual),1e-8*std::max(1.0,energy_scale));
+    EXPECT_NEAR(gw.state().continuityResidual(),0,1e-8);
+}
 TEST(GroundHeat, IsothermalAcceptedInfiltrationPreservesAllThreeClosuresAndSignedTemperature) {
     for(const auto* closure:{"CLOSED_FORM","ENSLAVED","SIGMA"})for(double hg:{0.,.5,1.}) {
         Model m(std::string("infil-")+closure+std::to_string(hg),closure,hg);ASSERT_NE(m.e,nullptr);
@@ -540,7 +573,10 @@ TEST(GroundHeat, ZeroMeanLinkPacketsRetainSignedLayerDonorsAcrossSourceSubinterv
             ASSERT_EQ(cell.failed,0)<<cell.error;
             for(std::size_t j=0;j<cell.column.energy.size();++j) {
                 const double t=cell.column.energy[j]/cell.column.capacity[j];
-                EXPECT_GE(t,-10-1e-9);EXPECT_LE(t,10+1e-9);
+                // Producer-time signed layer receipts are summed in bulk-CV
+                // units before being booked back to the fixed thermal grid.
+                // Allow a few microdegrees for that conservative roundoff.
+                EXPECT_GE(t,-10-1e-5);EXPECT_LE(t,10+1e-5);
             }
         }
         EXPECT_NEAR(energy(gw.heat())-before,-packet*4184000.,1e-5);
