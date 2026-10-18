@@ -1005,6 +1005,86 @@ TEST(GroundHeat, HeterogeneousLateralConductionConvergesAcrossSpatialAndTimeRefi
     EXPECT_GT(coarse.temperature[0],10);
     EXPECT_LT(coarse.temperature[1],20);
 }
+TEST(GroundHeat, HeterogeneousLateralContactUsesBothSkewedCellNormalDistances) {
+    struct EngineGuard {
+        SWMM_Engine engine=swmm_engine_create();
+        bool running=false;
+        ~EngineGuard() {
+            if(engine) {
+                if(running)swmm_engine_end(engine);
+                swmm_engine_close(engine);swmm_engine_destroy(engine);
+            }
+        }
+    } guard;
+    const fs::path file=out/"skewed-lateral-contact.inp";fs::create_directories(out);
+    std::ofstream(file)<<"[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
+        "START_DATE 01/01/2026\nEND_DATE 01/01/2026\nEND_TIME 00:10:00\nROUTING_STEP 5\nREPORT_STEP 00:01:00\n"
+        "[JUNCTIONS]\nJ1 -2 4 0 0 0\n[OUTFALLS]\nO1 -2.5 FREE NO\n"
+        "[CONDUITS]\nC1 J1 O1 30 .013 0 0 0\n[XSECTIONS]\nC1 RECT_OPEN 1 2 0 0 1\n"
+        "[COORDINATES]\nJ1 40 0\nO1 70 0\n"
+        "[2D_OPTIONS]\nREPORT_2D NO\nMAX_TIMESTEP 5\nLTS_TIERS 1\nEVAPORATION NO\nINFILTRATION NO\n"
+        "[2D_VERTICES]\n0 0 0\n10 0 0\n12 10 0\n2 10 0\n20 2 0\n22 12 0\n"
+        "[2D_QUADS]\n0 1 2 3 .03 left\n1 4 5 2 .03 right\n"
+        "[2D_AQUIFER_OPTIONS]\nNODE_ENROLMENT ROWS\nGW_ET NONE\nM_LAYERS 4\nCLOSURE CLOSED_FORM\n"
+        "[2D_AQUIFER]\n* 1 1 .45 .1 2 HG0 1\n"
+        "[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION YES\nLATERAL_CONDUCTION YES\n"
+        "THERMAL_MIXING ARITHMETIC\nTHERMAL_MAX_STEP 60\nSURFACE_THERMAL_BC ADIABATIC\nDEEP_THERMAL_BC ADIABATIC\n"
+        "[GW_TRANSPORT_PARAMS]\n* 2650 880 10 0 0 0 0 0 .065\nCELL 2 2650 880 100 0 0 0 0 0 .065\n"
+        "[GW_INITIAL_QUALITY]\nCELL 1 SAT __TEMPERATURE__ 10\nCELL 1 UNSAT __TEMPERATURE__ 10\n"
+        "CELL 2 SAT __TEMPERATURE__ 20\nCELL 2 UNSAT __TEMPERATURE__ 20\n";
+
+    SWMM_Engine engine=guard.engine;ASSERT_NE(engine,nullptr);
+    ASSERT_EQ(swmm_engine_open(engine,file.string().c_str(),
+        (out/"skewed-lateral-contact.rpt").string().c_str(),nullptr,nullptr),SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(engine),SWMM_OK)<<swmm_get_last_error_msg(engine);
+    ASSERT_EQ(swmm_engine_start(engine,0),SWMM_OK)<<swmm_get_last_error_msg(engine);
+    guard.running=true;
+    auto& router=static_cast<openswmm::SWMMEngine*>(engine)->surfaceRouter2D();
+    auto& gw=router.subsurface();const auto& mesh=router.mesh();
+    ASSERT_EQ(gw.heat().cells.size(),2u);
+    const auto& left=gw.heat().cells[0].column;const auto& right=gw.heat().cells[1].column;
+    int left_slot=-1,right_slot=-1;
+    for(int edge=0;edge<mesh.cell_nv[0];++edge)
+        if(mesh.cell_nbr[edge]==1)left_slot=edge;
+    for(int edge=0;edge<mesh.cell_nv[1];++edge)
+        if(mesh.cell_nbr[openswmm::twoD::kMaxCellVerts+edge]==0)
+            right_slot=openswmm::twoD::kMaxCellVerts+edge;
+    ASSERT_GE(left_slot,0);ASSERT_GE(right_slot,0);
+    EXPECT_GT(std::abs(mesh.edge_dist_c[std::size_t(left_slot)]-
+                       mesh.edge_dist_c[std::size_t(right_slot)]),.01);
+
+    const double table=std::min(gw.state().z_bed[0]+gw.state().hg[0],
+                                gw.state().z_bed[1]+gw.state().hg[1]);
+    double expected=0;int j=0,k=0;
+    while(j<static_cast<int>(left.energy.size())&&k<static_cast<int>(right.energy.size())) {
+        const double left_top=mesh.tri_cz[0]-left.depth_edges[std::size_t(j)];
+        const double left_bottom=mesh.tri_cz[0]-left.depth_edges[std::size_t(j+1)];
+        const double right_top=mesh.tri_cz[1]-right.depth_edges[std::size_t(k)];
+        const double right_bottom=mesh.tri_cz[1]-right.depth_edges[std::size_t(k+1)];
+        const double low=std::max(left_bottom,right_bottom);
+        const double high=std::min(left_top,right_top);
+        const double height=std::min(high,table)-low;
+        if(height>0) {
+            const double resistance=mesh.edge_dist_c[std::size_t(left_slot)]/left.conductivity[std::size_t(j)]+
+                mesh.edge_dist_c[std::size_t(right_slot)]/right.conductivity[std::size_t(k)];
+            const double g=mesh.edge_length[std::size_t(left_slot)]*height/resistance;
+            const double tl=left.energy[std::size_t(j)]/left.capacity[std::size_t(j)];
+            const double tr=right.energy[std::size_t(k)]/right.capacity[std::size_t(k)];
+            expected+=.1*g*(tr-tl);
+        }
+        if(left_bottom>=right_bottom)++j;
+        if(right_bottom>=left_bottom)++k;
+    }
+    ASSERT_GT(expected,0);
+    const double initial=energy(gw.heat());
+    gw.state().dt_cell[0]=gw.state().dt_cell[1]=.1;gw.assignTiers(.1,1);
+    gw.fireGwFaces(0,.1);gw.fireGwCells(0,.1,router.state(),0);
+    for(const auto& cell:gw.heat().cells)ASSERT_EQ(cell.failed,0)<<cell.error;
+    EXPECT_NEAR(gw.heat().cells[0].lateral_j,expected,1e-7);
+    EXPECT_NEAR(gw.heat().cells[1].lateral_j,-expected,1e-7);
+    EXPECT_NEAR(energy(gw.heat()),initial,2e-5);
+    ASSERT_EQ(swmm_engine_end(engine),SWMM_OK);guard.running=false;
+}
 TEST(GroundHeat, GlobalAndStaggeredLateralConductionCloseAndConvergeSpatially) {
     struct Run {std::vector<std::vector<double>> temperature;double initial=0,final=0,pending=0;};
     const auto run=[](bool staggered,const std::string& suffix)->Run {
