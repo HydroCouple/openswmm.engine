@@ -947,6 +947,59 @@ TEST(GroundHeat, MechanicalDispersionCarriesTemperatureWithoutAddingNetWater) {
     EXPECT_NEAR(gw.state().storage(),initial_water,1e-10);
     EXPECT_NEAR(energy(gw.heat()),initial_energy,1e-6);
 }
+TEST(GroundHeat, SkewedHeterogeneousFaceCarriesAcceptedGroundwaterHeatConservatively) {
+    struct EngineGuard {
+        SWMM_Engine engine=swmm_engine_create();bool running=false;
+        ~EngineGuard(){if(engine){if(running)swmm_engine_end(engine);swmm_engine_close(engine);swmm_engine_destroy(engine);}}
+    } guard;
+    fs::create_directories(out);const fs::path file=out/"skewed-groundwater-advection.inp";
+    std::ofstream(file)<<"[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
+        "START_DATE 01/01/2026\nEND_DATE 01/01/2026\nEND_TIME 00:10:00\nROUTING_STEP 5\nREPORT_STEP 00:01:00\n"
+        "[JUNCTIONS]\nJ1 -2 4 0 0 0\n[OUTFALLS]\nO1 -2.5 FREE NO\n"
+        "[CONDUITS]\nC1 J1 O1 30 .013 0 0 0\n[XSECTIONS]\nC1 RECT_OPEN 1 2 0 0 1\n"
+        "[COORDINATES]\nJ1 40 0\nO1 70 0\n"
+        "[2D_OPTIONS]\nREPORT_2D NO\nMAX_TIMESTEP 5\nLTS_TIERS 1\nEVAPORATION NO\nINFILTRATION NO\n"
+        "[2D_VERTICES]\n0 0 0\n10 0 0\n12 10 0\n2 10 0\n20 2 0\n22 12 0\n"
+        "[2D_QUADS]\n0 1 2 3 .03 left\n1 4 5 2 .03 right\n"
+        "[2D_AQUIFER_OPTIONS]\nNODE_ENROLMENT ROWS\nGW_ET NONE\nM_LAYERS 4\nCLOSURE CLOSED_FORM\n"
+        "[2D_AQUIFER]\nCELL 1 36 1 .45 .1 2 HG0 .9\nCELL 2 36 1 .45 .1 2 HG0 .5\n"
+        "[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION NO\nDISPERSION NO\n"
+        "[GW_INITIAL_QUALITY]\nCELL 1 SAT __TEMPERATURE__ 10\nCELL 1 UNSAT __TEMPERATURE__ 10\n"
+        "CELL 2 SAT __TEMPERATURE__ 20\nCELL 2 UNSAT __TEMPERATURE__ 20\n";
+    ASSERT_NE(guard.engine,nullptr);
+    ASSERT_EQ(swmm_engine_open(guard.engine,file.string().c_str(),
+        (out/"skewed-groundwater-advection.rpt").string().c_str(),nullptr,nullptr),SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(guard.engine),SWMM_OK)<<swmm_get_last_error_msg(guard.engine);
+    ASSERT_EQ(swmm_engine_start(guard.engine,0),SWMM_OK)<<swmm_get_last_error_msg(guard.engine);guard.running=true;
+    auto& router=static_cast<openswmm::SWMMEngine*>(guard.engine)->surfaceRouter2D();
+    auto& gw=router.subsurface();auto& tr=gw.transport();const auto& mesh=router.mesh();
+    openswmm::twoD::InertialEdges edges;edges.build(mesh);
+    ASSERT_EQ(edges.ne,1);ASSERT_EQ(edges.cL[0],0);ASSERT_EQ(edges.cR[0],1);
+    EXPECT_GT(std::abs(mesh.edge_dist_c[std::size_t(edges.slotL[0])] -
+                       mesh.edge_dist_c[std::size_t(edges.slotR[0])]),.01);
+    const double centroid_distance=std::hypot(mesh.tri_cx[0]-mesh.tri_cx[1],
+                                               mesh.tri_cy[0]-mesh.tri_cy[1]);
+    const double head_left=gw.state().z_bed[0]+gw.state().hg[0];
+    const double head_right=gw.state().z_bed[1]+gw.state().hg[1];
+    ASSERT_GT(head_left,head_right);
+    const double conductivity=2*gw.state().Ks[0]*gw.state().Ks[1]/(gw.state().Ks[0]+gw.state().Ks[1]);
+    constexpr double dt=.01;gw.state().dt_cell[0]=gw.state().dt_cell[1]=dt;gw.assignTiers(dt,1);
+    const double expected_volume=conductivity*gw.state().hg[0]*edges.xi[0]/centroid_distance*
+        (head_left-head_right)*dt;
+    const double initial_water=gw.state().storage(),initial_energy=energy(gw.heat());
+    gw.fireGwFaces(0,dt);
+    EXPECT_NEAR(-gw.state().eacc_L[0],expected_volume,1e-12);
+    const double expected_temperature_volume=expected_volume*10;
+    const std::size_t mass_index=std::size_t(tr.temp_row)*std::size_t(edges.ne);
+    EXPECT_NEAR(-tr.sacc_L[mass_index],expected_temperature_volume,1e-12);
+    gw.fireGwCells(0,dt,router.state(),dt);
+    for(const auto& cell:gw.heat().cells)ASSERT_EQ(cell.failed,0)<<cell.error;
+    const double expected_j=gw.heat().water_capacity*expected_temperature_volume;
+    EXPECT_NEAR(gw.heat().cells[0].advective_j,-expected_j,1e-6);
+    EXPECT_NEAR(gw.heat().cells[1].advective_j,expected_j,1e-6);
+    EXPECT_NEAR(energy(gw.heat()),initial_energy,1e-5);
+    EXPECT_NEAR(gw.state().storage(),initial_water,1e-10);
+}
 TEST(GroundHeat, LateralGroundwaterThermalAdvectionConvergesUnderTimeRefinement) {
     const std::string extra="[2D_AQUIFER]\nCELL 1 36 1 .45 .1 2 HG0 .9\nCELL 2 36 1 .45 .1 2 HG0 .5\n"
         "[GW_INITIAL_QUALITY]\nCELL 1 SAT __TEMPERATURE__ 10\nCELL 1 UNSAT __TEMPERATURE__ 10\n"
