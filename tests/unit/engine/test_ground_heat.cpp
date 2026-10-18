@@ -72,6 +72,26 @@ int enablePorewater(Model& m) {
 const std::string porewater_species="[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0\n"
     "[OPTIONS]\nWATER_AGE ON\n[GW_INITIAL_QUALITY]\n* SAT Dye 10\n* UNSAT Dye 10\n";
 }
+TEST(GroundHeat, MeshLidGroundContactRefusesHeatUntilItsWaterRouteIsQualified) {
+    const auto file=out/"mesh-lid-ground-heat-refusal.inp";fs::create_directories(out);
+    std::ofstream(file)<<"[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
+        "START_DATE 01/01/2026\nEND_DATE 01/01/2026\nEND_TIME 00:10:00\nROUTING_STEP 5\nREPORT_STEP 00:01:00\n"
+        "[STORAGE]\nS -2 2 1 FUNCTIONAL 0 0 100 0 0\n[OUTFALLS]\nO -2 FREE NO\n"
+        "[CONDUITS]\nC1 S O 30 .013 0 0 0\n[XSECTIONS]\nC1 RECT_OPEN 1 2 0 0 1\n"
+        "[COORDINATES]\nS 1 3\nO 9 3\n[2D_OPTIONS]\nREPORT_2D NO\nMAX_TIMESTEP 5\nLTS_TIERS 1\nEVAPORATION NO\nINFILTRATION NO\n"
+        "[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n[2D_TRIANGLES]\n0 1 2 .03 .1 floodplain\n"
+        "[2D_AQUIFER_OPTIONS]\nNODE_ENROLMENT ROWS\nGW_ET NONE\nM_LAYERS 4\nCLOSURE CLOSED_FORM\n"
+        "[2D_AQUIFER]\n* 36 1 .45 .1 2 HG0 .5\n[2D_AQUIFER_NODE]\nS 1 KC 3600 DC .1 AREA 1\n"
+        "[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION NO\n"
+        "[LID_CONTROLS]\nStack NODE\nStack SURFACE 6 .1\nStack MEDIA 12 .45 .2 .08 2 10 3\n"
+        "Stack AGGREGATE 6 .4 100\nStack BOTTOM .5 0\n[LID_NODES]\nS Stack 10 BOTTOM MESH_AQUIFER\n";
+    SWMM_Engine engine=swmm_engine_create();ASSERT_NE(engine,nullptr);
+    ASSERT_EQ(swmm_engine_open(engine,file.string().c_str(),(out/"mesh-lid-ground-heat-refusal.rpt").string().c_str(),nullptr,nullptr),SWMM_OK)
+        <<swmm_get_last_error_msg(engine);
+    EXPECT_NE(swmm_engine_initialize(engine),SWMM_OK);
+    EXPECT_NE(std::string(swmm_get_last_error_msg(engine)).find("Mesh LID bottom exchange currently requires water-only routing."),std::string::npos);
+    swmm_engine_close(engine);swmm_engine_destroy(engine);
+}
 TEST(GroundHeat, ExplicitGroundPorewaterUsesAcceptedWellDonorsAndBooksItsAgeClock) {
     for(const auto* closure:{"CLOSED_FORM","ENSLAVED","SIGMA"}) {
         SCOPED_TRACE(closure);Model m(std::string("pore-well-")+closure,closure,.5,false,porewater_species);ASSERT_NE(m.e,nullptr);
