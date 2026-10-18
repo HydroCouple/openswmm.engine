@@ -604,6 +604,7 @@ TEST(Output2DWriter, LocalBedTracerAndAgeAreReportedFromLivePorewaterState) {
     const auto conc = file.readAll("Mesh2_face_bed_species_conc");
     const auto exchange = file.readAll("Mesh2_face_bed_species_exchange");
     const std::size_t last_species = static_cast<std::size_t>(shape[0] - 1) * shape[1] * shape[2];
+    const std::size_t last_initial = static_cast<std::size_t>(shape[0] - 1) * shape[1] * shape[2];
     EXPECT_GT(conc[last_species], 0.0);
     EXPECT_DOUBLE_EQ(conc[last_species + 1], 5.0);
     EXPECT_GT(exchange[last_species], 0.0);
@@ -611,6 +612,14 @@ TEST(Output2DWriter, LocalBedTracerAndAgeAreReportedFromLivePorewaterState) {
     const auto age_generation = file.readAll("Mesh2_face_bed_age_generation");
     EXPECT_GT(age_generation[last_face], 0.0);
     EXPECT_GT(age_generation[last_face + 1], 0.0);
+    for(std::size_t cell=0;cell<shape[2];++cell) {
+        const double current_cu=conc[last_species+cell]*pore[last_face+cell];
+        EXPECT_NEAR(current_cu-initial_amount[last_initial+cell],exchange[last_species+cell],1e-8);
+        const std::size_t age_index=last_species+shape[2]+cell;
+        const double current_age=conc[age_index]*pore[last_face+cell];
+        EXPECT_NEAR(current_age-initial_amount[last_initial+shape[2]+cell],
+                    age_generation[last_face+cell]+exchange[age_index],1e-8);
+    }
 }
 
 TEST(Output2DWriter, LocalBedThermalStorageIsReportedWithoutQualityTransport) {
