@@ -613,6 +613,67 @@ TEST(Output2DWriter, LocalBedTracerAndAgeAreReportedFromLivePorewaterState) {
     EXPECT_GT(age_generation[last_face + 1], 0.0);
 }
 
+TEST(Output2DWriter, LocalBedThermalStorageIsReportedWithoutQualityTransport) {
+    std::error_code ec;
+    fs::create_directories(kOutDir, ec);
+    const std::string stem = "local_bed_heat_without_quality";
+    const fs::path inp = kOutDir / (stem + ".inp");
+    const fs::path h5 = kOutDir / (stem + ".h5");
+    fs::remove(h5, ec);
+    {
+        std::ofstream f(inp);
+        f << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
+             "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:03:00\n"
+             "REPORT_STEP 00:00:10\nROUTING_STEP 5\n"
+             "[JUNCTIONS]\nJ1 0 1 0 0 0\n[OUTFALLS]\nO1 -0.5 FREE NO\n"
+             "[CONDUITS]\nC1 J1 O1 30 .013 0 0 0\n[XSECTIONS]\nC1 RECT_OPEN 1 2 0 0 1\n"
+             "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\nDRY_DEPTH .001\n"
+             "REPORT_2D YES\nHEAT_MODEL COUPLED\nBED_HEAT_MODEL LOCAL_STORAGE\n"
+             "HEAT_SURFACE_EXCHANGE NO\nHEAT_RADIATIVE_EXCHANGE NO\n"
+             "OUTPUT_FILE " << stem << ".h5\nOUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES HEAT\n"
+             "[2D_VERTICES]\n0 0 -10\n10 0 -10\n10 10 -10\n0 10 -10\n"
+             "[2D_TRIANGLES]\n0 1 2 .03 .1 channel:test\n0 2 3 .03 .1 floodplain\n"
+             "[REPORT]\nINPUT NO\n";
+    }
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    const fs::path rpt = kOutDir / (stem + ".rpt"), out = kOutDir / (stem + ".out");
+    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_BED_THICKNESS, .3), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_MESH_POROSITY, .4), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_DENSITY, 1000), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_SPECIFIC_HEAT, 1000), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_INITIAL_TEMPERATURE, 5), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+    double elapsed = 0.0;
+    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    ASSERT_EQ(swmm_engine_end(e), SWMM_OK);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+
+    H5File file(h5);
+    ASSERT_GE(file.id, 0) << "No local-bed thermal state was written";
+    ASSERT_TRUE(file.has("Mesh2_face_bed_initial_energy"));
+    ASSERT_TRUE(file.has("Mesh2_face_bed_porewater_volume"));
+    EXPECT_FALSE(file.has("Mesh2_face_bed_species_conc"));
+    EXPECT_FALSE(file.has("Mesh2_face_bed_species_initial_amount"));
+    const auto dims = file.dims("Mesh2_face_bed_initial_energy");
+    ASSERT_EQ(dims.size(), 2u);
+    ASSERT_GE(dims[0], 2u);
+    ASSERT_EQ(dims[1], 2u);
+    const auto energy = file.readAll("Mesh2_face_bed_initial_energy");
+    const auto pore = file.readAll("Mesh2_face_bed_porewater_volume");
+    const double expected_energy =
+        ((1.0 - .4) * 1000.0 * 1000.0 + .4 * 1000.0 * 4184.0) * 15.0 * 5.0;
+    for(std::size_t step=0;step<dims[0];++step) {
+        EXPECT_NEAR(energy[step*2],expected_energy,1e-8);
+        EXPECT_NEAR(energy[step*2+1],expected_energy,1e-8);
+        EXPECT_NEAR(pore[step*2],6.0,1e-12);
+        EXPECT_NEAR(pore[step*2+1],6.0,1e-12);
+    }
+}
+
 // A 1 mm, 1-min burst at 00:05 on a dry pan, reported every 5 min.
 // Mesh2_face_rainfall is reported as the .out reports subcatchment rainfall:
 // the gage rate that STARTS at the report instant, so the 00:05 record shows
