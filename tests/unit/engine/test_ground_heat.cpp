@@ -377,6 +377,46 @@ TEST(GroundHeat, SaturatedLateralConductionUsesTheFaceClockAndRetainsCrossTierPe
     EXPECT_GT(gw.heat().zoneTemperature(0,true),10);EXPECT_LT(gw.heat().zoneTemperature(1,true),20);
     EXPECT_NEAR(gw.heat().cells[0].lateral_j+gw.heat().cells[1].lateral_j,0,1e-6);
 }
+TEST(GroundHeat, PendingLateralHeatSurvivesAquiferRetiering) {
+    Model m("lateral-retier","CLOSED_FORM",1,false,
+        "CELL 1 SAT __TEMPERATURE__ 10\nCELL 2 SAT __TEMPERATURE__ 20\n"
+        "[GW_TRANSPORT_PARAMS]\n* 2650 880 2000000 0 0 0 0 0 .065\n");
+    ASSERT_NE(m.e,nullptr);
+    ASSERT_EQ(swmm_gw_transport_option_set(m.e,"CONDUCTION","YES"),SWMM_OK);
+    ASSERT_EQ(swmm_gw_transport_option_set(m.e,"LATERAL_CONDUCTION","YES"),SWMM_OK);
+    ASSERT_EQ(m.start(),SWMM_OK);
+    auto& gw=m.router().subsurface();
+    const double initial=energy(gw.heat());
+    gw.state().dt_cell[0]=.1;gw.state().dt_cell[1]=.8;gw.assignTiers(.1,4);
+    ASSERT_EQ(gw.state().tier[0],0);ASSERT_EQ(gw.state().tier[1],3);
+
+    gw.fireGwFaces(0,.1);
+    const double pending_before=gw.pendingHeat(0)+gw.pendingHeat(1);
+    ASSERT_GT(std::abs(gw.pendingHeat(0))+std::abs(gw.pendingHeat(1)),0);
+    EXPECT_NEAR(energy(gw.heat())+pending_before,initial,2e-5);
+
+    // Reverse the fast and slow owners while a signed face receipt is queued.
+    gw.state().dt_cell[0]=.8;gw.state().dt_cell[1]=.1;gw.assignTiers(.1,4);
+    ASSERT_EQ(gw.state().tier[0],3);ASSERT_EQ(gw.state().tier[1],0);
+    gw.fireGwCells(0,.1,m.router().state(),0);
+    EXPECT_NEAR(energy(gw.heat())+gw.pendingHeat(0)+gw.pendingHeat(1),initial,2e-5);
+
+    for(int k=0;k<8;++k) {
+        gw.fireGwFaces(0,.1);
+        gw.fireGwCells(0,.1,m.router().state(),k*.1);
+        if(k==7)gw.fireGwCells(3,.8,m.router().state(),0);
+        for(const auto& cell:gw.heat().cells) {
+            ASSERT_EQ(cell.failed,0)<<cell.error;
+            for(std::size_t j=0;j<cell.column.energy.size();++j) {
+                const double temperature=cell.column.energy[j]/cell.column.capacity[j];
+                EXPECT_GE(temperature,10-1e-9);EXPECT_LE(temperature,20+1e-9);
+            }
+        }
+        EXPECT_NEAR(energy(gw.heat())+gw.pendingHeat(0)+gw.pendingHeat(1),initial,2e-5);
+    }
+    EXPECT_NEAR(gw.pendingHeat(0)+gw.pendingHeat(1),0,1e-7);
+    EXPECT_NEAR(gw.heat().cells[0].lateral_j+gw.heat().cells[1].lateral_j,0,1e-6);
+}
 TEST(GroundHeat, RoutedChannelsAndMultipleCellsShareOneFiniteConservativeSoilSolve) {
     const std::string extra="[JUNCTIONS]\nJ2 -.2 4 0 0 0\n[OUTFALLS]\nO2 -.2 FREE NO\n"
         "[CONDUITS]\nC2 J2 O2 8 .013 0 0 0\n[XSECTIONS]\nC2 RECT_OPEN 1 2 0 0 1\n"
