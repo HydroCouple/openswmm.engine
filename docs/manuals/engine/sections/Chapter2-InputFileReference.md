@@ -600,10 +600,22 @@ p3    time it takes for a fully saturated soil to dry (days). 
 ### Section: [LID_NODES] {#engine_manual_sect_LID_NODES}
 
 A LID node remains an ordinary storage node. Assign a compatible BC, RG, IT,
-PP, or NODE control using `Node Control InitialSaturationPercent` in
-`[LID_NODES]`. The supported routing formulation is `FLOW_ROUTING DYNWAVE`.
+PP, or NODE control in `[LID_NODES]` using
+`Node Control InitialSaturationPercent [BOTTOM CURRENT|SEALED|MESH_AQUIFER]`.
+Omitting the optional bottom fields selects `CURRENT`. The supported routing
+formulation is `FLOW_ROUTING DYNWAVE`.
 The storage's maximum depth must equal the sum of the physical layer
 thicknesses, converted to the node's length units.
+
+`BOTTOM MESH_AQUIFER` is supported for a NODE control with an enabled
+`[LID_RICHARDS]` profile and a resolved `[2D_AQUIFER_NODE]` bed on the active
+mesh aquifer. Accepted bottom water is exchanged with that groundwater owner.
+When coupled 2D heat and ground-column conduction are enabled, each physical
+LID layer has persistent heat capacity and energy, configured vertical layer
+conduction, and a reciprocal bottom contact with the soil column. The signed
+contact energy is included in the mesh heat results when `HEAT` is selected.
+The `CURRENT` and `SEALED` bottom modes retain their existing non-mesh
+ownership behavior.
 
 A NODE control contains any number of ordered physical layers, written from
 top to bottom. MEDIA and AGGREGATE may repeat without a fixed layer limit.
@@ -2841,7 +2853,7 @@ SNOW_STEP  DEFAULT / Step
 Remarks:
 [OPTIONS] IGNORE_SNOWMELT YES disables both subcatchment and mesh snow, including when mesh SNOWMELT is YES. Selecting YES does not assign a snowpack. Assign cells through [2D_SNOW_DEFAULTS] or [2D_SNOW]; cells with no resolved pack pass precipitation through without mesh snow processing.
 
-When degree-day mesh snow and 2D ground conduction are both active, the soil column retains its configured top boundary independently of degree-day melt. AIR, FIXED, TIMESERIES, HEAT_FLUX and FLUX_TIMESERIES are soil-side external energy terms; SURFACE_WATER keeps its existing surface-water/soil coupling. Degree-day snow has no energy state, so no combined snow/soil energy closure is reported. A mesh snow assignment that resolves to UEB with active 2D ground heat is refused until reciprocal UEB/soil energy exchange is supported.
+When degree-day mesh snow and 2D ground conduction are both active, the soil column retains its configured top boundary independently of degree-day melt. AIR, FIXED, TIMESERIES, HEAT_FLUX and FLUX_TIMESERIES are soil-side external energy terms; SURFACE_WATER keeps its existing surface-water/soil coupling. Degree-day snow has no energy state, so no combined snow/soil energy closure is reported. For assigned UEB cells with an active 2D ground column, modeled contact replaces the pack's prescribed `QG` over the accepted snow-covered contact area. The contact uses UEB surface temperature and the soil top half-layer plus authored surface resistance; accepted soil joules are applied with the opposite sign to the UEB energy ledger. Cells or area without a modeled UEB contact keep their configured external soil boundary.
 
 This section requires a build with 2D support and has no counterpart in SWMM 5.
 
