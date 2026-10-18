@@ -4,9 +4,11 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
+#include <cstdlib>
 #include <numeric>
 #include <cmath>
 #include <set>
+#include <string>
 #include <vector>
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_heat.h>
@@ -28,9 +30,24 @@
 #include "2d/heat/PorousHeat.hpp"
 #include "2d/heat/ThermalCheckpoint.hpp"
 #include "2d/solver/InertialEdges.hpp"
+#include "platform_test_support.hpp"
 namespace {
 namespace fs=std::filesystem;
 const fs::path out=fs::path(OPENSWMM_GROUND_HEAT_OUT)/"ground_heat";
+struct ScopedBackendRequest {
+    bool had_previous=false;
+    std::string previous;
+    explicit ScopedBackendRequest(const char* backend) {
+        if(const char* value=std::getenv("OPENSWMM_2D_BACKEND")) {
+            had_previous=true;previous=value;
+        }
+        plattest::setEnvVar("OPENSWMM_2D_BACKEND",backend);
+    }
+    ~ScopedBackendRequest() {
+        if(had_previous)plattest::setEnvVar("OPENSWMM_2D_BACKEND",previous.c_str());
+        else plattest::unsetEnvVar("OPENSWMM_2D_BACKEND");
+    }
+};
 struct Model {
     SWMM_Engine e=nullptr;bool running=false;
     Model(const std::string& name,const std::string& closure="CLOSED_FORM",double hg=.5,bool partial=false,const std::string& extra="",bool mapped_channel=false) {
@@ -717,6 +734,7 @@ TEST(GroundHeat, PartialCoverageAndDisabledMasterDoNotInventThermalStores) {
     openswmm::detail::CompletedSourceArchive input(saved.bytes());
     openswmm::twoD::checkpoint::groundHeat(input,restored,false);input.finish();
     EXPECT_FALSE(restored.cells[0].reserved_out_water.empty());EXPECT_TRUE(restored.cells[1].reserved_out_water.empty());
+    ScopedBackendRequest request_omp("omp");
     Model off("parent-off");ASSERT_NE(off.e,nullptr);
     ASSERT_EQ(swmm_options_set(off.e,"HEAT_TRANSPORT","NO"),SWMM_OK);
     ASSERT_EQ(off.start(),SWMM_OK)<<swmm_get_last_error_msg(off.e);
@@ -818,6 +836,7 @@ TEST(GroundHeat, DisabledAquiferKeepsWaterOnlySurfaceHeatConversion) {
     EXPECT_NEAR((t.cell_mass[t.idx(r,0)]+t.cell_mass[t.idx(r,1)]-initial)*4186000.,2000,1e-5);
 }
 TEST(GroundHeat, PorousGroundHeatReportsTheRequiredCpuBackendFallback) {
+    ScopedBackendRequest request_omp("omp");
     Model m("porous-ground-backend-fallback");ASSERT_NE(m.e,nullptr);
     ASSERT_EQ(m.start(),SWMM_OK);
     SWMM_2DRunStats stats{};
