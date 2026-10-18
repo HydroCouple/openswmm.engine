@@ -13,6 +13,7 @@
 #include <openswmm/engine/openswmm_model.h>
 #include <openswmm/engine/openswmm_snow.h>
 #include <openswmm/engine/openswmm_2d.h>
+#include <openswmm/engine/openswmm_heat.h>
 #include <openswmm/engine/openswmm_gw_transport.h>
 #include "hydrology/surface/SnowCheckpoint.hpp"
 #include <atomic>
@@ -681,7 +682,8 @@ struct ThermalSurfaceSession {
     void start(const std::string& name,double surface_temperature=12,
                const std::string& channel_tag="channel:test",bool dry_surface=false,
                bool atmospheric_exchange=false,bool temperature_timeseries=false,
-               bool lateral_conduction=false,bool heterogeneous_ground=false) {
+               bool lateral_conduction=false,bool heterogeneous_ground=false,
+               bool mapped_channel=false,bool enable_checkpoint=true) {
         const auto p=root()/name;
         std::string deck=
             "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
@@ -697,6 +699,13 @@ struct ThermalSurfaceSession {
             "WINDSPEED MONTHLY 5 5 5 5 5 5 5 5 5 5 5 5\n"
             "[TIMESERIES]\nAirTemp 01/01/2026 00:00:00 5\n"
             "AirTemp 01/01/2026 00:00:20 35\nAirTemp 01/01/2026 00:03:00 35\n";
+        if(mapped_channel) {
+            deck.replace(deck.find("IGNORE_QUALITY YES"),std::string("IGNORE_QUALITY YES").size(),"IGNORE_QUALITY NO");
+            deck+="[JUNCTIONS]\nJ1 .2 4 0 0 0\n[OUTFALLS]\nO1 .2 FREE NO\n"
+                  "[CONDUITS]\nC1 J1 O1 3.6 .013 0 0 0\n"
+                  "[XSECTIONS]\nC1 RECT_OPEN .5 .1 0 0 1\n"
+                  "[COORDINATES]\nJ1 .2 .5\nO1 3.8 .5\n[DWF]\nJ1 FLOW .01\n";
+        }
         write(p.string()+".inp",deck);
         if(engine.open((p.string()+".inp").c_str(),(p.string()+".rpt").c_str(),nullptr))
             throw std::runtime_error("thermal surface open: "+engine.context().error_message);
@@ -711,6 +720,12 @@ struct ThermalSurfaceSession {
             throw std::runtime_error("thermal surface configuration failed");
         if(lateral_conduction&&swmm_gw_transport_option_set(&engine,"LATERAL_CONDUCTION","YES")!=SWMM_OK)
             throw std::runtime_error("thermal lateral conduction configuration failed");
+        if(mapped_channel&&
+           (swmm_heat_set_sediment(&engine,SWMM_HEAT_SED_GROUND_SOURCE,1)!=SWMM_OK ||
+            swmm_heat_set_sediment(&engine,SWMM_HEAT_SED_HYPORHEIC_VELOCITY,2e-5)!=SWMM_OK ||
+            swmm_heat_set_sediment(&engine,SWMM_HEAT_SED_BED_THICKNESS,.1)!=SWMM_OK ||
+            swmm_heat_set_module(&engine,SWMM_HEAT_SEDIMENT_EXCHANGE,1)!=SWMM_OK))
+            throw std::runtime_error("thermal channel contact configuration failed");
         auto& ctx=engine.context();ctx.options.num_threads=1;
         ctx.heat_config.global_temp[static_cast<int>(HeatSource::INITIAL_STATE)]=surface_temperature;
         auto& router=engine.surfaceRouter2D();auto& mesh=router.mesh();
@@ -733,7 +748,7 @@ struct ThermalSurfaceSession {
         twoD::SurfaceOwnershipPreview preview;preview.mesh_weather_area=mesh.tri_area;
         if(auto error=stage.initialize(mesh,router.state(),options,router.subsurface(),sources,preview,true);!error.empty())
             throw std::runtime_error(error);
-        if(auto error=engine.enableCheckpointing(stage);!error.empty())throw std::runtime_error(error+
+        if(enable_checkpoint)if(auto error=engine.enableCheckpointing(stage);!error.empty())throw std::runtime_error(error+
             " [nodes="+std::to_string(ctx.n_nodes())+", links="+std::to_string(ctx.n_links())+
             ", mesh="+std::to_string(mesh.n_cells())+", stageCells="+std::to_string(stage.cells().size())+
             ", match="+std::to_string(stage.matches(&mesh,&router.state(),&router.subsurface()))+
@@ -919,6 +934,21 @@ TEST(EngineCheckpoint, ThermalCrossTierContactReceiptSurvivesRestart) {
         if(++count%9==0)compare(source.engine,target.engine,"surface-thermal-cross-tier-continued");
     }
     compare(source.engine,target.engine,"surface-thermal-cross-tier-final");
+}
+
+TEST(EngineCheckpoint, RoutedChannelHyporheicStateCannotAttachCheckpoint) {
+    ThermalSurfaceSession source;
+    ASSERT_NO_THROW(source.start("surface-thermal-channel-source",12,"channel:test",false,false,false,false,false,true,false));
+    ASSERT_TRUE(source.engine.surfaceRouter2D().channelGround().active());
+    const auto error=source.engine.enableCheckpointing(source.stage);
+    EXPECT_NE(error.find("Hydraulic checkpoint quality, age, heat and structure/control solvers are not qualified."),std::string::npos)<<error;
+    EXPECT_EQ(source.engine.checkpointSessionStatus(),0u);
+
+    while(source.engine.context().current_time<43.1)ASSERT_NO_THROW(step(source.engine));
+    const auto& channel=source.engine.surfaceRouter2D().channelGround();
+    ASSERT_GT(channel.contactCount(0),0u);
+    double soil_exchange=0;for(double value:channel.channelToGround())soil_exchange+=value;
+    ASSERT_GT(std::abs(soil_exchange),0);
 }
 
 TEST(EngineCheckpoint, ThermalCheckpointModelMismatchLeavesTargetThermalStateUnchanged) {
