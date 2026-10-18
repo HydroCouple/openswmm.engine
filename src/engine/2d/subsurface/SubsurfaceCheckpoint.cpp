@@ -145,7 +145,10 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
             }
         }
         const auto validateSpeciesMass=[&](const std::vector<double>& mass) {
-            if(t.n_cells<=0||mass.size()!=std::size_t(t.n_species)*std::size_t(t.n_cells))fail();
+            // A water-only aquifer has no transport grid. Its correctly shaped
+            // species stores are empty, so do not require t.n_cells > 0.
+            if(t.n_species==0) { if(!mass.empty())fail(); return; }
+            if(t.n_species<0||t.n_cells<=0||mass.size()!=std::size_t(t.n_species)*std::size_t(t.n_cells))fail();
             for(std::size_t k=0;k<mass.size();++k) {
                 const int species=int(k/std::size_t(t.n_cells));const double value=mass[k];
                 if(!std::isfinite(value)||(species!=t.temp_row&&value<0))fail();
