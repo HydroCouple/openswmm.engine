@@ -993,6 +993,74 @@ TEST(EngineCheckpoint, MeshThermalSourceIntakeUsesMixedSurfaceTemperature) {
     EXPECT_TRUE(session.stage.returns().empty());
 }
 
+TEST(EngineCheckpoint, MeshThermalRejectedIntakeRefundConservesEnergyAcrossSourceIntervals) {
+    ThermalSurfaceSession session;
+    ASSERT_NO_THROW(session.start("surface-thermal-mesh-refund"));
+    auto& surface=session.engine.surfaceRouter2D().state();
+    auto& gw=session.engine.surfaceRouter2D().subsurface();
+    ASSERT_EQ(surface.transport.temp_row,0);
+    surface.rainfall[0]=.001;
+    surface.transport.rain_conc={5};
+
+    ASSERT_EQ(session.stage.advance(0,1),"");
+    double intake_volume=0,intake_temperature_volume=0,cell0_intake_volume=0,cell0_temperature_volume=0;
+    for(const auto& receipt:session.stage.receipts())if(receipt.request.kind==twoD::SurfaceDonorKind::MESH) {
+        intake_volume+=receipt.volume;
+        intake_temperature_volume+=receipt.mass[0];
+        if(receipt.request.cell==0) {
+            cell0_intake_volume+=receipt.volume;
+            cell0_temperature_volume+=receipt.mass[0];
+        }
+    }
+    ASSERT_GT(intake_volume,0);
+    double queued_intake_volume=0,queued_temperature_volume=0;
+    for(int cell=0;cell<gw.state().n_cells;++cell)for(const auto& receipt:gw.pendingSourceReceipts(cell)) {
+        queued_intake_volume+=receipt.volume;queued_temperature_volume+=receipt.mass[0];
+    }
+    EXPECT_NEAR(queued_intake_volume,intake_volume,1e-12);
+    EXPECT_NEAR(queued_temperature_volume,intake_temperature_volume,1e-12);
+    const auto initial_energy=[&]() {
+        double total=0;for(const auto& cell:gw.heat().cells)
+            total+=std::accumulate(cell.column.energy.begin(),cell.column.energy.end(),0.);
+        return total;
+    };
+    const double energy_before=initial_energy();
+    const double link_volume=4,link_temperature=27,cp=gw.heat().water_capacity;
+    gw.bookLinkSeepage(0,link_volume);
+    gw.bookLinkSeepageMass(0,surface.transport.temp_row,link_volume*link_temperature);
+    gw.assignTiers(1,1);
+    gw.fireGwCells(0,1,surface,0,1);
+    for(const auto& cell:gw.heat().cells)ASSERT_EQ(cell.failed,0)<<cell.error;
+
+    double refund_volume=0,returned_temperature_volume=0,refund_temperature_volume=0;
+    for(const auto& returned:gw.sourceReturns()) {
+        returned_temperature_volume+=returned.mass[0];
+        if(returned.kind==twoD::SurfaceReturnKind::NUMERICAL_REFUND&&returned.intake.request.cell==0) {
+            refund_volume+=returned.volume;refund_temperature_volume+=returned.mass[0];
+        }
+    }
+    ASSERT_GT(refund_volume,0);
+    ASSERT_GT(returned_temperature_volume,0);
+    EXPECT_NEAR(refund_volume,cell0_intake_volume,1e-12);
+    EXPECT_NEAR(refund_temperature_volume,cell0_temperature_volume,1e-12);
+    const double energy_after=initial_energy();
+    const double external=cp*(intake_temperature_volume+link_volume*link_temperature);
+    const double residual=energy_after-energy_before+cp*returned_temperature_volume-external;
+    EXPECT_LE(std::abs(residual),1e-8*std::max(1.,std::abs(external)))
+        << "energy input=" << external << " J, residual=" << residual << " J";
+
+    surface.rainfall[0]=0;
+    ASSERT_EQ(session.stage.advance(1,2),"");
+    EXPECT_TRUE(gw.sourceReturns().empty());
+    ASSERT_FALSE(session.stage.returns().empty());
+    EXPECT_NEAR(surface.transport.gained_exfiltration[0],returned_temperature_volume,1e-12);
+    double credited_temperature_volume=0;
+    for(const auto& returned:session.stage.returns())credited_temperature_volume+=returned.mass[0];
+    EXPECT_NEAR(credited_temperature_volume,returned_temperature_volume,1e-12);
+    ASSERT_EQ(session.stage.advance(2,3),"");
+    EXPECT_TRUE(session.stage.returns().empty());
+}
+
 TEST(EngineCheckpoint, ThermalCheckpointModelMismatchLeavesTargetThermalStateUnchanged) {
     ThermalSurfaceSession source,target;
     ASSERT_NO_THROW(source.start("surface-thermal-mismatch-source"));
