@@ -825,6 +825,53 @@ TEST(GroundHeat, PendingLateralHeatSurvivesAquiferRetiering) {
     EXPECT_NEAR(gw.pendingHeat(0)+gw.pendingHeat(1),0,1e-7);
     EXPECT_NEAR(gw.heat().cells[0].lateral_j+gw.heat().cells[1].lateral_j,0,1e-6);
 }
+TEST(GroundHeat, GlobalAndStaggeredLateralConductionCloseAndConvergeSpatially) {
+    struct Run {std::vector<std::vector<double>> temperature;double initial=0,final=0,pending=0;};
+    const auto run=[](bool staggered,const std::string& suffix)->Run {
+        Model m("lateral-global-lts-"+suffix,"CLOSED_FORM",1,false,
+            "CELL 1 SAT __TEMPERATURE__ 10\nCELL 1 UNSAT __TEMPERATURE__ 10\n"
+            "CELL 2 SAT __TEMPERATURE__ 20\nCELL 2 UNSAT __TEMPERATURE__ 20\n"
+            "[GW_TRANSPORT_PARAMS]\n* 2650 880 2000000 0 0 0 0 0 .065\n");
+        if(!m.e||swmm_gw_transport_option_set(m.e,"CONDUCTION","YES")!=SWMM_OK||
+           swmm_gw_transport_option_set(m.e,"LATERAL_CONDUCTION","YES")!=SWMM_OK||m.start()!=SWMM_OK)return {};
+        auto& gw=m.router().subsurface();Run result;result.initial=energy(gw.heat());
+        if(staggered) {
+            gw.state().dt_cell[0]=.1;gw.state().dt_cell[1]=.8;gw.assignTiers(.1,4);
+            if(gw.state().tier[0]!=0||gw.state().tier[1]!=3)return {};
+        } else {
+            gw.state().dt_cell[0]=.1;gw.state().dt_cell[1]=.1;gw.assignTiers(.1,1);
+            if(gw.state().tier[0]!=0||gw.state().tier[1]!=0)return {};
+        }
+        constexpr int steps=800;
+        for(int k=0;k<steps;++k) {
+            gw.fireGwFaces(0,.1);
+            gw.fireGwCells(0,.1,m.router().state(),k*.1);
+            if(staggered&&k%8==7)gw.fireGwCells(3,.8,m.router().state(),(k-7)*.1);
+            for(const auto& cell:gw.heat().cells)if(cell.failed)return {};
+        }
+        result.final=energy(gw.heat());result.pending=gw.pendingHeat(0)+gw.pendingHeat(1);
+        for(const auto& cell:gw.heat().cells) {
+            std::vector<double> column;column.reserve(cell.column.energy.size());
+            for(std::size_t j=0;j<cell.column.energy.size();++j)
+                column.push_back(cell.column.energy[j]/cell.column.capacity[j]);
+            result.temperature.push_back(std::move(column));
+        }
+        return result;
+    };
+    const auto global=run(false,"global"),staggered=run(true,"staggered");
+    ASSERT_EQ(global.temperature.size(),2u);ASSERT_EQ(staggered.temperature.size(),2u);
+    EXPECT_NEAR(global.final+global.pending,global.initial,2e-5);
+    EXPECT_NEAR(staggered.final+staggered.pending,staggered.initial,2e-5);
+    EXPECT_NEAR(global.pending,0,1e-7);EXPECT_NEAR(staggered.pending,0,1e-7);
+    double max_difference=0;
+    for(std::size_t cell=0;cell<global.temperature.size();++cell) {
+        ASSERT_EQ(global.temperature[cell].size(),staggered.temperature[cell].size());
+        for(std::size_t layer=0;layer<global.temperature[cell].size();++layer)
+            max_difference=std::max(max_difference,std::abs(global.temperature[cell][layer]-staggered.temperature[cell][layer]));
+    }
+    // The 0.1 s global solve is the fine-clock comparison for the 0.8 s slow tier.
+    EXPECT_LE(max_difference,.05)<<"maximum layer-temperature difference, C";
+}
 TEST(GroundHeat, RoutedChannelsAndMultipleCellsShareFiniteConservativeSoilAndSpeciesSolves) {
     const std::string extra="[JUNCTIONS]\nJ2 -.2 4 0 0 0\n[OUTFALLS]\nO2 -.2 FREE NO\n"
         "[CONDUITS]\nC2 J2 O2 8 .013 0 0 0\n[XSECTIONS]\nC2 RECT_OPEN 1 2 0 0 1\n"
