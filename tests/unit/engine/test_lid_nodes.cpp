@@ -133,6 +133,39 @@ TEST(LidNodes, ThermalContactIsReciprocalAndDryMatrixContinuesConducting) {
                     [](double x,const ThermalStore& s){return x+s.energy;}),
                 dry.boundary_j[0],1e-7);
 }
+TEST(LidNodes, BottomGroundContactUsesMappedAreaAndBothHalfLayerResistances) {
+    LidNodeState state;
+    state.cells={{.5,1.5,2,2,1,0,0,0,0,0,0,LidNodeLayerKind::Surface,0},
+                 {0,.5,1,2,.45,.2,.2,.08,0,0,0,LidNodeLayerKind::Media,1}};
+    ConductionConfig material;LidNodeThermalGraph graph;
+    ASSERT_TRUE(twoD::buildLidNodeThermalGraph(state,2,4.184e6,material,-5,graph).empty());
+    ThermalContact contact{0,1,7};
+    constexpr double overlap=.1,ground_area=.2,soil_dz=.4,soil_lambda=1.5,interface_resistance=.02;
+    ASSERT_TRUE(twoD::buildLidNodeGroundThermalContact(graph,3,2,overlap,ground_area,
+        soil_dz,soil_lambda,interface_resistance,contact).empty());
+    const double lambda_lid=.2*material.water_conductivity+.8*material.sed_conductivity;
+    const double expected=overlap/(.5*graph.physical_thickness_m.back()/lambda_lid+
+        interface_resistance+.5*soil_dz/soil_lambda);
+    EXPECT_EQ(contact.a,1);EXPECT_EQ(contact.b,2);
+    EXPECT_NEAR(contact.conductance,expected,1e-14);
+
+    auto stores=graph.stores;stores.push_back({3e6,45e6});
+    auto contacts=graph.contacts;contacts.push_back(contact);
+    const double before=std::accumulate(stores.begin(),stores.end(),0.,
+        [](double sum,const ThermalStore& store){return sum+store.energy;});
+    const auto solved=solveThermalContacts(stores,contacts,{},1800);
+    ASSERT_TRUE(solved.error.empty())<<solved.error;
+    EXPECT_NEAR(std::accumulate(solved.energy.begin(),solved.energy.end(),0.),before,1e-7);
+    EXPECT_NEAR(solved.energy[2]-stores[2].energy,solved.contact_j.back(),1e-7);
+    EXPECT_NEAR((solved.energy[0]-stores[0].energy)+(solved.energy[1]-stores[1].energy),
+        -solved.contact_j.back(),1e-7);
+
+    const auto unchanged=contact;
+    EXPECT_FALSE(twoD::buildLidNodeGroundThermalContact(graph,3,2,.201,ground_area,
+        soil_dz,soil_lambda,interface_resistance,contact).empty());
+    EXPECT_EQ(contact.a,unchanged.a);EXPECT_EQ(contact.b,unchanged.b);
+    EXPECT_DOUBLE_EQ(contact.conductance,unchanged.conductance);
+}
 TEST(LidNodes, AcceptedWaterReceiptsCarryProducerTemperatureSensibleEnergy) {
     LidNodeState state;
     state.cells={{.5,1.5,2,2,1,0,0,0,0,0,0,LidNodeLayerKind::Surface,0},

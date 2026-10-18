@@ -16,6 +16,7 @@ struct LidNodeThermalGraph {
     std::vector<std::size_t> cells; // compact thermal-store index -> LID cell
     std::vector<ThermalStore> stores;
     std::vector<ThermalContact> contacts;
+    std::vector<double> physical_thickness_m,physical_area_m2,physical_conductivity;
 };
 
 // Accepted hydraulic transfer. Cell indices are physical top-to-bottom LID
@@ -35,6 +36,15 @@ struct LidThermalWaterTransfer {
 std::string buildLidNodeThermalGraph(const LidNodeState&, double mobile_water_ft3,
     double water_heat_capacity, const ConductionConfig&, double initial_celsius,
     LidNodeThermalGraph&);
+
+// Build the bottom LID-to-soil contact for a combined graph whose ground
+// store has already been appended. Contact area is the actual mapped overlap,
+// bounded by both owners; the two half-layer resistances remain distinct.
+// interface_resistance_m2_k_w is an additional nonnegative interface term.
+std::string buildLidNodeGroundThermalContact(const LidNodeThermalGraph&,
+    std::size_t combined_store_count,int ground_store,double overlap_area_m2,double ground_area_m2,
+    double ground_layer_thickness_m,double ground_conductivity,
+    double interface_resistance_m2_k_w,ThermalContact&);
 
 // Publish a successful graph solution back to its original physical-cell
 // layout. Zero-capacity cells carry exactly zero stored energy.

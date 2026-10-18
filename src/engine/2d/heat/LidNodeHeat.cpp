@@ -32,6 +32,9 @@ std::string buildLidNodeThermalGraph(const LidNodeState& state,double mobile_wat
 
     LidNodeThermalGraph next;std::vector<double> thickness,area,conductivity;
     thickness.reserve(state.cells.size());area.reserve(state.cells.size());conductivity.reserve(state.cells.size());
+    next.physical_thickness_m.resize(state.cells.size());
+    next.physical_area_m2.resize(state.cells.size());
+    next.physical_conductivity.resize(state.cells.size());
     for(std::size_t i=0;i<state.cells.size();++i) {
         const auto& cell=state.cells[i];
         if(!std::isfinite(cell.top)||!std::isfinite(cell.bottom)||!(cell.top>cell.bottom)||
@@ -63,6 +66,7 @@ std::string buildLidNodeThermalGraph(const LidNodeState& state,double mobile_wat
         const double lambda=saturation*material.water_conductivity+(1-saturation)*material.sed_conductivity;
         if(!std::isfinite(capacity)||capacity<0||!positive(lambda))
             return "Invalid LID thermal layer capacity or conductivity.";
+        next.physical_thickness_m[i]=dz;next.physical_area_m2[i]=a;next.physical_conductivity[i]=lambda;
         thickness.push_back(dz);area.push_back(a);conductivity.push_back(lambda);
         if(capacity>0) {
             const double energy=state.thermal_energy.empty()?capacity*initial_celsius:state.thermal_energy[i];
@@ -89,6 +93,24 @@ std::string buildLidNodeThermalGraph(const LidNodeState& state,double mobile_wat
         next.contacts.push_back({int(j-1),int(j),conductance});
     }
     output=std::move(next);return {};
+}
+std::string buildLidNodeGroundThermalContact(const LidNodeThermalGraph& graph,
+    std::size_t combined_store_count,int ground_store,double overlap_area,double ground_area,double soil_thickness,
+    double soil_conductivity,double interface_resistance,ThermalContact& output) {
+    const auto n=graph.physical_thickness_m.size();
+    if(!n||graph.cells.empty()||graph.cells.size()!=graph.stores.size()||
+       graph.physical_area_m2.size()!=n||graph.physical_conductivity.size()!=n||
+       graph.cells.back()!=n-1||ground_store<int(graph.stores.size())||
+       ground_store<0||std::size_t(ground_store)>=combined_store_count||combined_store_count<=graph.stores.size()||
+       !positive(overlap_area)||!positive(ground_area)||overlap_area>ground_area*(1+1e-12)||
+       overlap_area>graph.physical_area_m2.back()*(1+1e-12)||
+       !positive(soil_thickness)||!positive(soil_conductivity)||!nonnegative(interface_resistance))
+        return "Invalid LID-to-ground thermal contact geometry or owner index.";
+    const double resistance=.5*graph.physical_thickness_m.back()/graph.physical_conductivity.back()+
+        interface_resistance+.5*soil_thickness/soil_conductivity;
+    const double conductance=overlap_area/resistance;
+    if(!positive(resistance)||!positive(conductance))return "Invalid LID-to-ground thermal contact resistance.";
+    output={int(graph.stores.size()-1),ground_store,conductance};return {};
 }
 std::string publishLidNodeThermalEnergy(LidNodeState& state,const LidNodeThermalGraph& graph,
     const std::vector<double>& energy) {
