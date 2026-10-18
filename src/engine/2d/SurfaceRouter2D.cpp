@@ -2004,6 +2004,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
     // Ledgers every batch (accumulateMassBalance reads coupling_volume as
     // "this batch's exchange", so it MUST run before the queue move below) …
     accumulateMassBalance(ctx, dt);
+    if(common_stage_)common_stage_->synchronizeSurfaceLedgers(ctx);
 
     // G1: the aquifer's node exchange rides the same 1D delivery channel as
     // the surface's — to the node they are the same thing, water arriving
@@ -2970,7 +2971,7 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     }
 
     // Rainfall inflow (m³): rainfall is m/s after forcings are applied.
-    if (common_stage_) mb.rainfall_in = common_stage_->meshRain();
+    if (common_stage_&&!common_stage_->standaloneLocalBed()) mb.rainfall_in = common_stage_->meshRain();
     else mb.rainfall_in += rain_vol * dt;
 
     // The CPU marcher records the applied evaporation after sharing the

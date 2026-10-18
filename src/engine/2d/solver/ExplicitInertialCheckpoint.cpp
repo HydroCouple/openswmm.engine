@@ -52,7 +52,7 @@ void publish(const std::string& path,const std::string& bytes) {
 }
 
 std::string ExplicitInertialSolver::checkpointBoundary() const {
-    if(!initialized_ || !common_stage_ || !gw_ || second_order_ || !checkpoint_ready_ ||
+    if(!initialized_ || !common_stage_ || (!gw_&&!common_stage_->standaloneLocalBed()) || second_order_ || !checkpoint_ready_ ||
        !common_stage_->matches(mesh_,state_,gw_)) return "CPU checkpoint requires an accepted attached first-order source marcher.";
     if(t_last_sync_!=common_stage_->completedEnd() || source_phase_end_!=t_last_sync_)
         return "CPU/source completed clocks differ.";
@@ -214,10 +214,12 @@ std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const 
         if(magic!=magicName || version!=(common_stage_->runtimeBoundariesEnabled()?2u:1u) || endian!=0x01020304 || longBytes!=sizeof(long))
             return "Unsupported CPU checkpoint version/platform.";
         if(crc!=checksum(payload)) return "CPU checkpoint checksum differs.";
-        auto source=common_stage_->sources_->waterTrial(); auto gw=*gw_; auto surface=*state_; auto stage=*common_stage_; auto trial=*this;
+        auto* live_gw=gw_?gw_:common_stage_->gw_;
+        if(!live_gw)return "CPU checkpoint has no matching groundwater state owner.";
+        auto source=common_stage_->sources_->waterTrial(); auto gw=*live_gw; auto surface=*state_; auto stage=*common_stage_; auto trial=*this;
         BoundaryData boundary;if(common_stage_->runtimeBoundariesEnabled()) {boundary=*state_->boundary;surface.boundary=&boundary;}
         stage.sources_=&source; stage.gw_=&gw; stage.surface_=&surface;
-        trial.gw_=&gw; trial.state_=&surface; trial.common_stage_=&stage;
+        trial.gw_=gw_?&gw:nullptr; trial.state_=&surface; trial.common_stage_=&stage;
         Archive state(std::move(payload)); std::string component; state(component); trial.checkpointState(state); state.finish();
         const auto component_error=stage.loadCheckpointBytes(std::move(component)); if(!component_error.empty()) return component_error;
         const auto invalid=trial.checkpointBoundary(); if(!invalid.empty()) return invalid;
@@ -264,10 +266,11 @@ std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const 
         if(common_stage_->runtimeBoundariesEnabled()) {
             *const_cast<BoundaryData*>(state_->boundary)=std::move(boundary);surface.boundary=state_->boundary;
         }
-        stage.sources_=common_stage_->sources_; stage.gw_=gw_; stage.surface_=state_;
+        stage.sources_=common_stage_->sources_; stage.gw_=live_gw; stage.surface_=state_;
         trial.gw_=gw_; trial.state_=state_; trial.common_stage_=common_stage_;
-        *stage.sources_=std::move(source); *gw_=std::move(gw); *state_=std::move(surface);
-        if(state_->heat.enabled)state_->heat.aquifer_ground=&gw_->heat();
+        *stage.sources_=std::move(source); *live_gw=std::move(gw); *state_=std::move(surface);
+        if(state_->heat.enabled)
+            state_->heat.aquifer_ground=state_->heat.ground_column?&live_gw->heat():nullptr;
         *common_stage_=std::move(stage); *this=std::move(trial); return {};
     } catch(const std::exception& e) { return e.what(); }
 }

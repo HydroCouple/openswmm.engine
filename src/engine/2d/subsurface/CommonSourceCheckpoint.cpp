@@ -130,6 +130,7 @@ std::string CommonSourceStage::checkpointModel() const {
         std::string profile="reviewed catchment provider forcing v1";auto contacts=forcing_contacts_;a(profile,contacts);
     }
     if(runtimeBoundariesEnabled()) {auto model=RuntimeWaterCheckpoint::boundaryModel(authored_boundary_,&sources_->context().tables);a(model);}
+    auto standalone_local_bed=standalone_local_bed_;a(standalone_local_bed);
     return a.bytes();
 }
 std::string CommonSourceStage::checkpointBytes(std::string& bytes) const {
@@ -143,7 +144,13 @@ std::string CommonSourceStage::checkpointBytes(std::string& bytes) const {
         state.sequence(receipts,[&](auto& r){intake(state,r);});
         state.sequence(et,[&](auto& r){state(r.owner,r.source,r.type,r.unit,r.cell,r.start,r.end,r.area,r.potential,r.evaporation,r.soil_demand,r.unused);});
         state.sequence(returns,[&](auto& r){returned(state,r);});
-        source.checkpoint(state,false);gw.checkpoint(state,false);meshState(state,mesh);
+        source.checkpoint(state,false);
+        // A standalone local bed has no aquifer runtime state to persist. The
+        // inactive solver's default vectors are intentionally not a valid
+        // completed-source aquifer checkpoint, so leave that block out of the
+        // profile rather than round-tripping synthetic groundwater state.
+        if(!standalone_local_bed_)gw.checkpoint(state,false);
+        meshState(state,mesh);
         if(runtimeWaterEnabled()) {
             // Source result capture precedes the engine's expiry pass. Its
             // immutable completed snapshot has no still-active expired rows.
@@ -201,7 +208,9 @@ std::string CommonSourceStage::loadCheckpointBytes(std::string bytes,const std::
         state.sequence(trial.exchange_.receipts_,[&](auto& r){intake(state,r);});
         state.sequence(trial.et_receipts_,[&](auto& r){state(r.owner,r.source,r.type,r.unit,r.cell,r.start,r.end,r.area,r.potential,r.evaporation,r.soil_demand,r.unused);});
         state.sequence(trial.returns_,[&](auto& r){returned(state,r);});
-        source.checkpoint(state,false);gw.checkpoint(state,false);meshState(state,mesh);
+        source.checkpoint(state,false);
+        if(!standalone_local_bed_)gw.checkpoint(state,false);
+        meshState(state,mesh);
         if(runtimeWaterEnabled()) {
             std::string providers;state(providers);
             const auto invalid=RuntimeWaterCheckpoint::restore(runtimeWaterBinding(trial.completedEnd()),
@@ -209,9 +218,7 @@ std::string CommonSourceStage::loadCheckpointBytes(std::string bytes,const std::
             if(!invalid.empty())return invalid;
         }
         state.finish();
-        if(mesh.heat.enabled) {
-            mesh.heat.aquifer_ground=&gw.heat();
-        }
+        if(mesh.heat.enabled)mesh.heat.aquifer_ground=mesh.heat.ground_column?&gw.heat():nullptr;
         trial.sources_=&source;trial.gw_=&gw;trial.surface_=&mesh;
         const auto invalid=trial.checkpointBoundary();if(!invalid.empty())return invalid;
         const double end=trial.completedEnd();
@@ -233,7 +240,7 @@ std::string CommonSourceStage::loadCheckpointBytes(std::string bytes,const std::
             return false;
         };
         for(const auto& r:trial.exchange_.receipts_)if(!validIntake(r))return "Invalid checkpoint last intake.";
-        for(int cell:trial.cells_)for(const auto& r:gw.pendingSourceReceipts(cell))if(!validIntake(r))return "Invalid checkpoint pending donor.";
+        if(!trial.standalone_local_bed_)for(int cell:trial.cells_)for(const auto& r:gw.pendingSourceReceipts(cell))if(!validIntake(r))return "Invalid checkpoint pending donor.";
         const auto validReturn=[&](const auto& r){
             if(!trial.ownsCell(r.intake.request.cell)||!std::isfinite(r.available_at)||r.available_at<0||r.available_at>end||
                !std::isfinite(r.volume)||r.volume<0||int(r.mass.size())!=ntransport||int(r.kind)<0||int(r.kind)>2)return false;
@@ -247,7 +254,7 @@ std::string CommonSourceStage::loadCheckpointBytes(std::string bytes,const std::
             return true;
         };
         for(const auto& r:trial.returns_)if(!validReturn(r))return "Invalid checkpoint last return.";
-        for(const auto& r:gw.sourceReturns())if(!validReturn(r))return "Invalid checkpoint pending return.";
+        if(!trial.standalone_local_bed_)for(const auto& r:gw.sourceReturns())if(!validReturn(r))return "Invalid checkpoint pending return.";
         for(const auto& r:trial.et_receipts_) {
             if(int(r.owner)<0||int(r.owner)>3||!std::isfinite(r.start)||!std::isfinite(r.end)||r.start<0||r.end<=r.start||r.end>end||
                 (r.cell!=-1&&!trial.ownsCell(r.cell)))return "Invalid checkpoint ET interval.";
@@ -269,9 +276,7 @@ std::string CommonSourceStage::loadCheckpointBytes(std::string bytes,const std::
         }
         trial.sources_=sources_;trial.gw_=gw_;trial.surface_=surface_;
         *sources_=std::move(source);*gw_=std::move(gw);*surface_=std::move(mesh);
-        if(surface_->heat.enabled) {
-            surface_->heat.aquifer_ground=&gw_->heat();
-        }
+        if(surface_->heat.enabled)surface_->heat.aquifer_ground=surface_->heat.ground_column?&gw_->heat():nullptr;
         *this=std::move(trial);
         return {};
     } catch(const std::exception& e){return e.what();}

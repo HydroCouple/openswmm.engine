@@ -685,13 +685,15 @@ struct ThermalSurfaceSession {
                bool atmospheric_exchange=false,bool temperature_timeseries=false,
                bool lateral_conduction=false,bool heterogeneous_ground=false,
                bool mapped_channel=false,bool enable_checkpoint=true,
-               bool ueb_snow=false,bool mesh_richards_lid=false,bool mesh_output=false) {
+               bool ueb_snow=false,bool mesh_richards_lid=false,bool mesh_output=false,
+               bool local_storage=false) {
         const auto p=root()/name;
         std::string deck=
             "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
             "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:03:00\n"
             "ROUTING_STEP 1\nREPORT_STEP 00:00:10\nIGNORE_2D NO\nIGNORE_QUALITY YES\n"
-            "[2D_OPTIONS]\nREPORT_2D NO\nMAX_TIMESTEP .2\nLTS_TIERS 1\nEVAPORATION NO\nINFILTRATION NO\n"
+            "[2D_OPTIONS]\nREPORT_2D NO\nMAX_TIMESTEP .2\nLTS_TIERS 1\nEVAPORATION NO\nINFILTRATION NO\n";
+        if(!local_storage)deck+=
             "[2D_AQUIFER_OPTIONS]\nNODE_ENROLMENT ROWS\nGW_ET NONE\nM_LAYERS 4\nCLOSURE CLOSED_FORM\n"
             "[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION YES\nDISPERSION NO\n"
             "SOIL_ET_HEAT SENSIBLE_ONLY\nSURFACE_THERMAL_BC ADIABATIC\nDEEP_THERMAL_BC ADIABATIC\n"
@@ -728,14 +730,15 @@ struct ThermalSurfaceSession {
         if(engine.open((p.string()+".inp").c_str(),(p.string()+".rpt").c_str(),nullptr))
             throw std::runtime_error("thermal surface open: "+engine.context().error_message);
         if(swmm_options_set_ext(&engine,"HEAT_MODEL","COUPLED")!=SWMM_OK ||
-           swmm_options_set_ext(&engine,"BED_HEAT_MODEL","GROUND_COLUMN")!=SWMM_OK ||
+           swmm_options_set_ext(&engine,"BED_HEAT_MODEL",local_storage?"LOCAL_STORAGE":"GROUND_COLUMN")!=SWMM_OK ||
            swmm_options_set_ext(&engine,"HEAT_SURFACE_EXCHANGE",atmospheric_exchange?"YES":"NO")!=SWMM_OK ||
-           swmm_options_set_ext(&engine,"HEAT_RADIATIVE_EXCHANGE","NO")!=SWMM_OK ||
-           swmm_gw_transport_option_set(&engine,"THERMAL_MODEL","POROUS_EQUILIBRIUM")!=SWMM_OK ||
+           swmm_options_set_ext(&engine,"HEAT_RADIATIVE_EXCHANGE","NO")!=SWMM_OK)
+            throw std::runtime_error("thermal surface configuration failed");
+        if(!local_storage&&(swmm_gw_transport_option_set(&engine,"THERMAL_MODEL","POROUS_EQUILIBRIUM")!=SWMM_OK ||
            swmm_gw_transport_option_set(&engine,"CONDUCTION","YES")!=SWMM_OK ||
            swmm_gw_transport_option_set(&engine,"SURFACE_THERMAL_BC","ADIABATIC")!=SWMM_OK ||
-           swmm_gw_transport_option_set(&engine,"DEEP_THERMAL_BC","ADIABATIC")!=SWMM_OK)
-            throw std::runtime_error("thermal surface configuration failed");
+           swmm_gw_transport_option_set(&engine,"DEEP_THERMAL_BC","ADIABATIC")!=SWMM_OK))
+            throw std::runtime_error("ground thermal surface configuration failed");
         if(lateral_conduction&&swmm_gw_transport_option_set(&engine,"LATERAL_CONDUCTION","YES")!=SWMM_OK)
             throw std::runtime_error("thermal lateral conduction configuration failed");
         if(mapped_channel&&
@@ -774,8 +777,10 @@ struct ThermalSurfaceSession {
         auto& options=router.options();options.mesh_units_si=true;options.num_threads=1;
         options.momentum=twoD::Momentum2D::LOCAL_INERTIAL;options.max_timestep=.2;
         options.coupling_sync=1;options.rainfall_mode=twoD::RainfallMode::SYSTEM;
-        auto& config=router.aquiferConfig();config.options.authored=true;config.options.force_closed_form=true;
-        twoD::GwAquiferRow row;row.Ks=.000001*3600/.0254;row.zs=2/.3048;row.hg0=1/.3048;row.alpha=2*.3048;config.rows.push_back(row);
+        if(!local_storage) {
+            auto& config=router.aquiferConfig();config.options.authored=true;config.options.force_closed_form=true;
+            twoD::GwAquiferRow row;row.Ks=.000001*3600/.0254;row.zs=2/.3048;row.hg0=1/.3048;row.alpha=2*.3048;config.rows.push_back(row);
+        }
         if(engine.initialize())throw std::runtime_error("thermal surface initialize: "+ctx.error_message);
         if(mesh_output)if(auto error=engine.prepareSurfaceOutputCheckpointing();!error.empty())
             throw std::runtime_error("thermal mesh output checkpoint setup: "+error);
@@ -843,6 +848,41 @@ TEST(EngineCheckpoint, CoupledMeshAndGroundThermalStateContinuesAcrossRestart) {
     }
     compare(a.engine,b.engine,"surface-thermal-restart-final");
     for(const auto& cell:ground.cells)ASSERT_EQ(cell.failed,0)<<cell.error;
+}
+
+TEST(EngineCheckpoint, StandaloneLocalBedThermalStateContinuesAcrossRestart) {
+    ThermalSurfaceSession a,b;
+    ASSERT_NO_THROW(a.start("surface-local-bed-restart-a",12,"channel:test",false,false,false,
+                            false,false,false,true,false,false,false,true));
+    ASSERT_NO_THROW(b.start("surface-local-bed-restart-b",12,"channel:test",false,false,false,
+                            false,false,false,true,false,false,false,true));
+    auto& router=a.engine.surfaceRouter2D();
+    ASSERT_TRUE(router.state().heat.enabled);ASSERT_TRUE(router.state().heat.bed);
+    ASSERT_FALSE(router.state().heat.ground_column);ASSERT_FALSE(router.subsurface().active());
+    auto& heat=router.state().heat;
+    ASSERT_EQ(heat.aquifer_ground,nullptr);
+    ASSERT_EQ(heat.bed_energy.size(),2u);ASSERT_EQ(heat.bed_capacity.size(),2u);
+    // Seed a distinct accepted bed state so restore must recover the local
+    // finite store, rather than merely reproduce its initial configuration.
+    heat.bed_energy[0]=heat.bed_capacity[0]*4.25;
+    heat.refreshBedView(0);
+    while(a.engine.context().current_time<43.1)ASSERT_NO_THROW(step(a.engine));
+    const auto file=root()/"surface-local-bed-restart.chk";
+    ASSERT_EQ(a.engine.saveCheckpoint(file.string()),"");
+    ASSERT_EQ(b.engine.loadCheckpoint(file.string()),"");
+    compare(a.engine,b.engine,"surface-local-bed-restart-restored");
+    EXPECT_EQ(b.engine.surfaceRouter2D().state().heat.aquifer_ground,nullptr);
+    EXPECT_EQ(a.engine.surfaceRouter2D().state().heat.bed_energy,
+              b.engine.surfaceRouter2D().state().heat.bed_energy);
+    int count=0;
+    while(a.engine.context().elapsed_ms<a.engine.context().options.totalDurationMs()) {
+        ASSERT_NO_THROW(step(a.engine));
+        ASSERT_NO_THROW(step(b.engine));
+        if(++count%11==0)compare(a.engine,b.engine,"surface-local-bed-restart-continued");
+    }
+    compare(a.engine,b.engine,"surface-local-bed-restart-final");
+    EXPECT_EQ(a.engine.surfaceRouter2D().state().heat.bed_energy,
+              b.engine.surfaceRouter2D().state().heat.bed_energy);
 }
 
 #ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
