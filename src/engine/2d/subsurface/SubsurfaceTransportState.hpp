@@ -41,12 +41,11 @@
  *          the bulk store means the column is treated as well mixed for
  *          transport while its WATER stays σ-resolved.
  *
- *          **Heat is water-only in T7.1.** The temperature row is a water
- *          temperature-volume, exactly as on the surface. The soil matrix's
- *          own heat capacity (`[GW_PARAMS] rho_s / c_s`), conduction and the
- *          thermal boundaries are T7.3; until then a temperature row in the
- *          aquifer transports, but it does not yet exchange heat with the
- *          solids.
+ *          The temperature row remains a liquid-water temperature-volume,
+ *          exactly as on the surface. The separate ground thermal columns
+ *          own soil-matrix plus porewater energy, conduction and thermal
+ *          boundaries; accepted water transfers carry sensible energy between
+ *          those stores without putting solid heat into `layer_mass`.
  *
  * @ingroup engine_2d
  *
