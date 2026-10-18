@@ -24,6 +24,7 @@
  */
 
 #include "BedExchange.hpp"
+#include "../../../data/ChannelThermalData.hpp"
 
 #include <cmath>
 #include <cstddef>
@@ -249,6 +250,17 @@ double groundTempFor(const SimulationContext& ctx, const SedimentConfig& sc,
                                                            : sc.ground_temp;
 }
 
+void fillChannelThermalGeometry(const SimulationContext& ctx,ChannelThermalRegion& region) noexcept {
+    const int link=region.link;
+    if(link<0||link>=ctx.n_links())return;
+    const int row=ctx.link_subtypes.conduit_row(link);if(row<0)return;
+    const auto& conduits=ctx.link_subtypes.conduits;
+    const double length=conduits.length[row]>0?conduits.length[row]:conduits.mod_length[row];
+    region.length=length*.3048;region.depth=ctx.links.depth[link]*.3048;
+    region.surface_area=linkFreeSurfaceFt2(ctx,link)*kSqFtToSqM;
+    region.bed_area=linkBedAreaM2(ctx,link);
+}
+
 BedCoupling bedCouplingFromContact(const SimulationContext& ctx,
                                    const SedimentConfig& sc,
                                    double bed_m2, double vol_ft3,
@@ -348,6 +360,7 @@ void applyBedSoluteExchange(SimulationContext& ctx, double* link_conc,
 
     for (int j = 0; j < nl; ++j) {
         const auto uj = static_cast<std::size_t>(j);
+        if(uj<ctx.heat_state.mesh_contact_link.size()&&ctx.heat_state.mesh_contact_link[uj])continue;
         if (uj >= bed.link_temp.size()) break;
 
         const double vol_ft3 = ctx.links.volume[uj];

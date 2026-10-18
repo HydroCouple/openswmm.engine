@@ -390,7 +390,8 @@ typedef enum SWMM_HeatSedimentParam {
     SWMM_HEAT_SED_DENSITY             = 6, /**< kg/m³, > 0. */
     SWMM_HEAT_SED_SPECIFIC_HEAT       = 7, /**< J/kg/K, > 0. */
     SWMM_HEAT_SED_INITIAL_TEMPERATURE = 8, /**< °C; unset = start at ground temperature. */
-    SWMM_HEAT_SED_MESH_POROSITY = 9 /**< [0,1], new mesh bed only. */
+    SWMM_HEAT_SED_MESH_POROSITY = 9, /**< [0,1], new mesh bed only. */
+    SWMM_HEAT_SED_GROUND_SOURCE = 10 /**< 0 PRESCRIBED, 1 MESH_CONTACTS; routed channels only, pre-run. */
 } SWMM_HeatSedimentParam;
 
 /** @brief Read a `[SEDIMENT_EXCHANGE]` GLOBAL parameter. */
@@ -432,7 +433,8 @@ typedef enum SWMM_HeatAttr {
     SWMM_HEAT_ATTR_HYPORHEIC_VELOCITY      = 11, /**< >= 0. */
     SWMM_HEAT_ATTR_SEDIMENT_DENSITY        = 12, /**< > 0. */
     SWMM_HEAT_ATTR_SEDIMENT_SPECIFIC_HEAT  = 13, /**< > 0. */
-    SWMM_HEAT_ATTR_MESH_POROSITY = 14 /**< [0,1], new mesh bed only. */
+    SWMM_HEAT_ATTR_MESH_POROSITY = 14, /**< [0,1], new mesh bed only. */
+    SWMM_HEAT_ATTR_GROUND_SOURCE = 15 /**< 0 PRESCRIBED, 1 MESH_CONTACTS; GLOBAL/TAG/LINK only. */
 } SWMM_HeatAttr;
 
 /** @brief Scope of a per-element override row. GLOBAL values are set with
@@ -510,6 +512,10 @@ typedef enum SWMM_Heat2DValue {
     SWMM_HEAT_2D_THERMAL_RESIDUAL=12 /**< J; bed change + water increment - external heat. */
 } SWMM_Heat2DValue;
 SWMM_ENGINE_API int swmm_heat_get_2d_values(SWMM_Engine,int kind,int first_cell,int count,double* values);
+/** Exact authoring state for the new channel ground selector. Clear restores
+ * the absent/default PRESCRIBED choice; both operations are pre-run only. */
+SWMM_ENGINE_API int swmm_heat_ground_source_configured(SWMM_Engine,int* configured);
+SWMM_ENGINE_API int swmm_heat_clear_ground_source(SWMM_Engine);
 
 /** Soil state is canonical solid-plus-water energy, not a second copy of the
  * transported water-temperature row. Initialize struct_size before reading. */
@@ -538,7 +544,8 @@ typedef enum SWMM_GroundHeatValue {
     SWMM_GROUND_HEAT_WATER_CONTACT_ENERGY=10,
     SWMM_GROUND_HEAT_RESIDUAL=11,
     SWMM_GROUND_HEAT_NORMALIZED_RESIDUAL=12, /**< dimensionless, absolute-energy scaled. */
-    SWMM_GROUND_HEAT_PENDING_LATERAL=13 /**< J awaiting this cell's LTS gather; add to stored energy for domain totals. */
+    SWMM_GROUND_HEAT_PENDING_LATERAL=13, /**< J awaiting this cell's LTS gather; add to stored energy for domain totals. */
+    SWMM_GROUND_HEAT_CHANNEL_CONTACT=14 /**< J, routed channel water -> soil. */
 } SWMM_GroundHeatValue;
 SWMM_ENGINE_API int swmm_heat_get_ground_values(SWMM_Engine,int kind,int first_cell,int count,double* values);
 /** Fixed thermal depth grid, independent of hydraulic sigma layers. */

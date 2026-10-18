@@ -165,6 +165,7 @@ constexpr AttrSpec kAttrTable[] = {
     {"SEDIMENT_DENSITY",       HeatAttr::SED_DENSITY,             false, true},
     {"SEDIMENT_SPECIFIC_HEAT", HeatAttr::SED_SPECIFIC_HEAT,       false, true},
     {"MESH_POROSITY",          HeatAttr::SED_MESH_POROSITY,        true, false},
+    {"GROUND_SOURCE",          HeatAttr::SED_GROUND_SOURCE,        false, false},
 };
 static_assert(sizeof(kAttrTable) / sizeof(kAttrTable[0]) ==
                   static_cast<std::size_t>(HeatAttr::COUNT_),
@@ -256,6 +257,9 @@ bool validateAttr(const AttrSpec& spec, double v, const std::string& section,
                          "negative, got " + tok + ".");
         return false;
     }
+    if(spec.attr==HeatAttr::SED_GROUND_SOURCE&&v!=0&&v!=1) {
+        errors.push_back("["+section+"] GROUND_SOURCE expects PRESCRIBED or MESH_CONTACTS (0 or 1).");return false;
+    }
     return true;
 }
 
@@ -266,6 +270,9 @@ bool recordOverride(SimulationContext& ctx, HeatAttr attr,
                     const ScopeRef& sr, double v,
                     const std::string& section, const std::string& line,
                     std::vector<std::string>& errors) {
+    if(attr==HeatAttr::SED_GROUND_SOURCE&&sr.scope!=HeatScope::TAG&&sr.scope!=HeatScope::LINK) {
+        errors.push_back("["+section+"] GROUND_SOURCE applies only to GLOBAL, network TAG or LINK.");return false;
+    }
     auto& rows = ctx.heat_config.overrides.rows;
     for (const auto& r : rows) {
         if (r.attr == attr && r.scope == sr.scope && r.name == sr.name) {
@@ -620,6 +627,19 @@ void applyHeatSections(SimulationContext& ctx,
 
                 const auto vt = static_cast<std::size_t>(sr.value_at);
                 double v = 0.0;
+                if(k=="GROUND_SOURCE") {
+                    if(vt>=toks.size()||toks.size()!=vt+1) {
+                        errors.push_back("[SEDIMENT_EXCHANGE] GROUND_SOURCE needs one PRESCRIBED or MESH_CONTACTS value.");continue;
+                    }
+                    const auto mode=upper(toks[vt]);
+                    if(mode=="PRESCRIBED")v=0;else if(mode=="MESH_CONTACTS")v=1;
+                    else if(!parse_finite(toks[vt],v)||(v!=0&&v!=1)) {
+                        errors.push_back("[SEDIMENT_EXCHANGE] GROUND_SOURCE expects PRESCRIBED or MESH_CONTACTS.");continue;
+                    }
+                    if(sr.scope==HeatScope::GLOBAL){sd.mesh_ground=v!=0;sd.ground_source_configured=true;}
+                    else recordOverride(ctx,HeatAttr::SED_GROUND_SOURCE,sr,v,"SEDIMENT_EXCHANGE",line,errors);
+                    continue;
+                }
                 if (vt >= toks.size() || !parse_finite(toks[vt], v)) {
                     errors.push_back(
                         "[SEDIMENT_EXCHANGE] " + toks[0] +
@@ -1132,7 +1152,7 @@ static_assert(sizeof(SolarConfig) == 88,
               "then update this size pin");
 // H6b. Compiler-measured, not hand-computed — IO3b's record notes the first
 // hand computation was wrong twice, which is the whole point of asking.
-static_assert(sizeof(SedimentConfig) == 96,
+static_assert(sizeof(SedimentConfig) == 104,
               "SedimentConfig changed: teach saveHeatConfig its new field, "
               "then update this size pin");
 static_assert(sizeof(CloudConfig) == 40,
@@ -1326,6 +1346,8 @@ std::string saveHeatConfig(const SimulationContext& ctx) {
         const SedimentConfig sd{};
         const auto& s = cfg.sediment;
         std::string bed;
+        if(s.ground_source_configured)
+            bed+=std::string("GROUND_SOURCE GLOBAL ")+(s.mesh_ground?"MESH_CONTACTS\n":"PRESCRIBED\n");
         if(s.mesh_porosity!=sd.mesh_porosity)
             bed += "MESH_POROSITY GLOBAL " + fmt_degc(s.mesh_porosity) + "\n";
         if (s.thermal_diffusivity != sd.thermal_diffusivity)

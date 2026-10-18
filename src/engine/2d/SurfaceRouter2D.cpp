@@ -7,6 +7,7 @@
  */
 
 #include "SurfaceRouter2D.hpp"
+#include "../transport/components/HeatFluxModules/HeatOverrides.hpp"
 #include "../hydrology/LidNode.hpp"
 #include "../hydraulics/Routing.hpp"
 #include "gw/GwSourceResolver.hpp"
@@ -206,6 +207,7 @@ void SurfaceRouter2D::prepareForEdit() {
 }
 
 void SurfaceRouter2D::initialize(SimulationContext& ctx) {
+    channel_ground_.clear();ctx.heat_state.mesh_contact_link.clear();
     common_stage_ = nullptr;
     source_context_ = nullptr;
     joint_hydraulic_ = nullptr;
@@ -1485,6 +1487,23 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     render_dirty_ = false;
 }
 
+
+void SurfaceRouter2D::initializeChannelGround(SimulationContext& ctx) {
+    bool requested=false;
+    if(ctx.options.heat_transport&&ctx.heat_config.sediment_exchange)
+        for(int link=0;link<ctx.n_links();++link)
+            if(transport::heat::sedimentFor(ctx,HeatElement::link(link)).mesh_ground)requested=true;
+    if(!requested)return;
+    if(!active_)throw std::runtime_error("MESH_CONTACTS channel heat requires an enabled 2D mesh and porous thermal aquifer.");
+    const double coordinate_scale=ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units))==0?.3048:1.;
+    if(auto error=channel_ground_.initialize(ctx,mesh_,subsurface_.heat(),subsurface_.transport(),state_,coordinate_scale);!error.empty())
+        throw std::runtime_error(error);
+    if(channel_ground_.active()) {
+        auto* cpu=dynamic_cast<ExplicitInertialSolver*>(solver_.get());
+        if(!cpu)throw std::runtime_error("MESH_CONTACTS channel heat requires the CPU mesh transport solver.");
+        cpu->setChannelGround(channel_ground_);
+    }
+}
 
 void SurfaceRouter2D::step(SimulationContext& ctx, double dt, double t) {
     if (!active_) return;

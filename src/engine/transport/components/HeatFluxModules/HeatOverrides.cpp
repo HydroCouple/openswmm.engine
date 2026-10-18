@@ -72,6 +72,7 @@ void patchSediment(SedimentConfig& c, HeatAttr a, double v) noexcept {
         case HeatAttr::SED_DENSITY:             c.sed_density = v; break;
         case HeatAttr::SED_SPECIFIC_HEAT:       c.sed_specific_heat = v; break;
         case HeatAttr::SED_MESH_POROSITY:       c.mesh_porosity = v; break;
+        case HeatAttr::SED_GROUND_SOURCE:       c.mesh_ground = v!=0; break;
         default: break;
     }
 }

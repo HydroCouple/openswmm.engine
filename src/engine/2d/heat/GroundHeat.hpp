@@ -8,7 +8,7 @@ struct MeshData;struct GwTransportData;struct SubsurfaceTransportState;
 struct GroundThermalCell {
     PorousHeatColumn column;
     std::vector<double> saturated_water;
-    double initial_j=0,advective_j=0,source_j=0,surface_j=0,deep_j=0,latent_j=0,lateral_j=0,water_contact_j=0;
+    double initial_j=0,advective_j=0,source_j=0,surface_j=0,deep_j=0,latent_j=0,lateral_j=0,water_contact_j=0,channel_contact_j=0;
     double vertical_absolute_j=0,geo_flux=.065;
     bool surface_owned=false;
     int failed=0;

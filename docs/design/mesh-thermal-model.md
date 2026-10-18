@@ -127,6 +127,46 @@ only on `channel:*` cells created by channel burning. A positive explicit
 resolved zero velocity disables recirculation while retaining conduction.
 Burned reaches are 2D-owned; they must not receive an additional routed 1D bed.
 
+## Routed-channel mesh contacts (experimental)
+
+The existing sediment authoring table adds `GROUND_SOURCE GLOBAL|TAG|LINK`
+with `PRESCRIBED` (absent/default) or `MESH_CONTACTS`. Explicit global
+`PRESCRIBED` remains distinguishable from an absent key. The generic override
+API uses values 0/1. Mesh-cell, mesh-tag and node scopes do not apply to this
+channel selector. `SEDIMENT_EXCHANGE` and overall heat transport are its
+parents; selecting a source does not enable either.
+
+Mesh contacts require an active spatial `POROUS_EQUILIBRIUM` aquifer. The full
+node/vertices polyline is clipped against every crossed triangle/quad, with
+stable link/cell IDs and along-reach intervals. Shared-edge ownership is split
+only on that interval. Missing coverage, coordinates, out-of-profile invert
+levels and explicit closed-pipe requests receive named errors. Global selection
+applies to eligible open channels. Burned channels have already left 1D routing.
+
+Channel water and each contacted soil column advance in one finite implicit
+system on the existing finest source clock. When overland ground-column heat
+also contacts that soil, its mixed finite water joins the same solve before
+intensive sinks. One soil energy state serves multiple reaches; there is no
+additional legacy bed capacity on that footprint. LEGACY uses its link store,
+ARD uses actual channel cells, and LARD retains its established mean-temperature
+and uniform-parcel-increment binding. A refused channel update leaves both
+thermal sides unchanged.
+
+The accepted contact joules enter soil and leave channel water with opposite
+signs. `SWMM_GROUND_HEAT_CHANNEL_CONTACT` exposes the soil receipt separately
+from overland-water exchange. Mapped bed geometry requires reinitialization;
+live bed OFF stops these contacts while retaining soil energy, and ON resumes
+prepared contacts. A selector that was dormant at initialization cannot lazily
+allocate a new contact model during a run. Independent atmospheric/ground
+processes retain their own switches.
+
+This is a heat-only experimental capability. Conservative bed tracer/age
+partitioning, complete footprint/atmospheric ownership, wider geometry/transfer
+refinement, reciprocal snow/LID, restart and GUI release qualification remain
+open. Active unqualified bed tracer/age combinations are refused. Inspect the
+canonical soil/layer results for its storage; old prescribed-bed fields are
+not an additional mapped-soil energy budget.
+
 ## Spatial values and diagnostics
 
 `CELL2D <one-based native cell ID>` and `MESH_TAG <region name>` are scopes of

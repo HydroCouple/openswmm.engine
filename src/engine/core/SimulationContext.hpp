@@ -82,6 +82,7 @@
 #include "FilePathPair.hpp"
 #include "../data/ArdConfigData.hpp"
 #include "../data/BedZoneData.hpp"
+#include "../data/ChannelThermalData.hpp"
 #include "../data/GageData.hpp"
 #include "../data/HeatData.hpp"
 #include "../data/WaterAgeData.hpp"
@@ -294,6 +295,9 @@ enum class EngineState : int32_t {
  * @ingroup engine_core
  */
 struct StateAccessors {
+    std::function<std::vector<ChannelThermalRegion>()> get_channel_thermal_regions;
+    // Each region appears once. Validate the complete batch before mutation.
+    std::function<std::string(const std::vector<ChannelThermalIncrement>&)> apply_channel_thermal_increments;
     std::function<std::string()> get_snow_state;
     // Empty result means valid; false validates without publishing.
     std::function<std::string(const std::string&,bool)> set_snow_state;

@@ -413,6 +413,7 @@ struct HeatConfigData {
  *          PUBLISHED temperatures (°C) the reports and gates read.
  */
 struct HeatState {
+    std::vector<unsigned char> mesh_contact_link; ///< Empty in prescribed compatibility mode.
     std::vector<double> node_temp_vol_in;  ///< [node], °C·ft³/s
     /// [node], °C·ft³/s arriving through LID underdrains, accumulated in the
     /// runoff step beside `nodes.lid_drain_qual_vol` and consumed by the
@@ -520,6 +521,8 @@ struct HeatState {
     static constexpr int kNSubArea = static_cast<int>(HeatSubArea::COUNT_);
 
     void resize(int n_nodes, int n_links, double initial_temp) {
+        // Lazy 1D backend seeding must retain the router's already-bound
+        // contact ownership. Model/router initialization clears that mask.
         node_temp_vol_in.assign(static_cast<std::size_t>(n_nodes), 0.0);
         node_lid_drain_temp_vol_in.assign(static_cast<std::size_t>(n_nodes), 0.0);
         node_temp.assign(static_cast<std::size_t>(n_nodes), initial_temp);

@@ -15,6 +15,7 @@ struct MeshHeatState {
     GroundHeatState standalone_ground;
     GroundHeatState* aquifer_ground=nullptr; // borrowed physical owner
     std::vector<unsigned char> aquifer_owned;
+    std::vector<double> channel_footprint; // empty by default; SI area owned by routed channels
     double ground_now=0;
     std::vector<double> bed_energy,initial_bed_energy,bed_capacity,reported_temperature;
     std::vector<double> atmospheric_j,radiative_j,sensible_j,ground_j,water_bed_j,water_j,latent_j,evaporated_m3;
@@ -25,6 +26,24 @@ struct MeshHeatState {
     void refreshBedView(int i);
     void clear(){*this=MeshHeatState{};}
 };
+struct MeshAtmosphericFlux {
+    double radiation=0,sensible=0,latent=0;
+    double total() const noexcept {return radiation+sensible+latent;}
+};
+// A column's portion of one shared finite thermal system. Index ranges let
+// a multi-owner solve reuse exactly the same mesh physics and receipts.
+struct GroundColumnAssembly {
+    GroundHeatState* owner=nullptr;
+    MeshHeatState* mesh_heat=nullptr;
+    int cell=-1,first_store=0,soil_count=0,water=-1;
+    std::size_t first_contact=0,vertical_count=0,contact_count=0,first_boundary=0,top_count=0,ground_count=0,atmosphere=0;
+    double mass=0,volume=0,evaporated=0,seconds=0,wet=0,temperature=0,slope=0,water_initial_j=0;
+    MeshAtmosphericFlux flux0,flux1;
+};
+GroundColumnAssembly appendGroundColumnSystem(const MeshData&,const SolverOptions2D&,GroundHeatState&,int cell,
+    MeshHeatState*,double temperature_volume,double volume,double evaporated,double seconds,double channel_area,
+    std::vector<ThermalStore>&,std::vector<ThermalContact>&,std::vector<ThermalBoundary>&);
+double commitGroundColumnSystem(const GroundColumnAssembly&,const ThermalSolution&) noexcept;
 std::string initializeMeshHeat(SimulationContext&,const MeshData&,SurfaceStateData&,const SolverOptions2D&,
     GroundHeatState* aquifer=nullptr,const std::vector<uint8_t>* coverage=nullptr);
 void prepareMeshHeat(SimulationContext&,SurfaceStateData&,double seconds);

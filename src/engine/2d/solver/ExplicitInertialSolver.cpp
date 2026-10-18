@@ -67,6 +67,7 @@
 #include "../../data/NodeData.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../gw/GwTransportData.hpp"
+#include "../heat/ChannelGround.hpp"
 
 namespace openswmm::twoD {
 
@@ -87,6 +88,7 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     state_ = &state;
     opts_  = &opts;
     common_stage_ = nullptr;
+    channel_ground_=nullptr;channel_sources_.clear();channel_source_ready_.clear();channel_temperature_mixed_.clear();
     source_history_ = nullptr;
     engine_source_history_ = nullptr;
     engine_source_stream_ = nullptr;
@@ -428,13 +430,6 @@ void ExplicitInertialSolver::flushSourceLedgers() {
     }
 }
 
-// Compute one source budget after face volume lands; publish final_volume
-// only after every species row has consumed that same budget.
-struct ExplicitInertialSolver::CellSourceStep {
-    double area_dt, rain, coupling, available, infil, evap, out, final_volume, requested_infil;
-    double* ledger;
-};
-
 // These shared helpers also run inside the fused per-row loop. Avoid adding
 // a function call per species when the surrounding OpenMP kernel is large.
 #if defined(_MSC_VER)
@@ -508,7 +503,7 @@ OPENSWMM_SOURCE_INLINE bool ExplicitInertialSolver::prepareCellSources(int i, do
     return true;
 }
 
-OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::applyCellSourceRow(
+OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::mixCellSourceRow(
     int i, int r, double& mass, const CellSourceStep& source) {
     auto& tr = state_->transport;
     const auto ns = static_cast<std::size_t>(tr.n_species);
@@ -529,15 +524,28 @@ OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::applyCellSourceRow(
     mass += rain_mass + coupling_mass;
     book(SourceLedger::Rainfall, r, rain_mass);
     book(SourceLedger::CouplingIn, r, coupling_mass);
-    if(r==tr.temp_row && state_->heat.enabled) {
-        const double before=mass;
-        mass=applyMeshHeatCell(*mesh_,*opts_,state_->heat,i,mass,source.available,
-                              source.evap,source.area_dt/mesh_->tri_area[i]);
-        if(gw_&&state_->heat.ground_column&&state_->heat.aquifer_owned[i])
-            gw_->heat().refreshView(i,gw_->transport());
-        // Surface-row continuity includes heat gained from both atmosphere
-        // and bed. The combined thermal budget separately cancels bed exchange.
-        book(SourceLedger::ExternalIn,r,mass-before);
+}
+
+OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::applyCellSourceRow(
+    int i, int r, double& mass, const CellSourceStep& source) {
+    auto& tr = state_->transport;
+    const auto ns = static_cast<std::size_t>(tr.n_species);
+    const auto book = [&source, ns](SourceLedger kind, int row, double amount) {
+        source.ledger[static_cast<std::size_t>(kind) * ns + row] += amount;
+    };
+    const bool mixed=r==tr.temp_row&&std::size_t(i)<channel_temperature_mixed_.size()&&channel_temperature_mixed_[i];
+    if(!mixed) {
+        mixCellSourceRow(i,r,mass,source);
+        if(r==tr.temp_row && state_->heat.enabled) {
+            const double before=mass;
+            mass=applyMeshHeatCell(*mesh_,*opts_,state_->heat,i,mass,source.available,
+                                  source.evap,source.area_dt/mesh_->tri_area[i]);
+            if(gw_&&state_->heat.ground_column&&state_->heat.aquifer_owned[i])
+                gw_->heat().refreshView(i,gw_->transport());
+            // Surface-row continuity includes heat gained from both atmosphere
+            // and bed. The combined thermal budget separately cancels bed exchange.
+            book(SourceLedger::ExternalIn,r,mass-before);
+        }
     }
     // All sinks see the same mixed concentration. Passing cell-local
     // transfers directly to groundwater avoids shared-ledger deltas.
@@ -568,7 +576,9 @@ bool ExplicitInertialSolver::applyCellSources(int i, double dt) {
     if (common_stage_ && common_stage_->ownsCell(i))
         return common_stage_->runtimeWaterEnabled() && applyRuntimeSources(i,dt);
     CellSourceStep source;
-    if (!prepareCellSources(i, dt, source)) return applyRuntimeSources(i, dt);
+    if(std::size_t(i)<channel_source_ready_.size()&&channel_source_ready_[i]) {
+        source=channel_sources_[i];source.ledger=source_ledgers_.data()+std::size_t(sourceThread())*source_ledger_stride_;
+    } else if (!prepareCellSources(i, dt, source)) return applyRuntimeSources(i, dt);
     if (species_on_) {
         auto& tr = state_->transport;
         for (int r = 0; r < tr.n_species; ++r)
@@ -1486,8 +1496,43 @@ void ExplicitInertialSolver::bookFaceSpecies(int e, int a, int b, double dM,
 // (measured: the merged body cost the LI cell pass +17 % — register pressure
 // and dead branches inside the OpenMP-outlined loop; the LI instantiation is
 // the pre-FULL_SWE kernel again). Dispatch is one branch per firing.
+void ExplicitInertialSolver::prepareChannelGround(double dt) {
+    std::vector<SurfaceThermalSample> samples;
+    auto& tr=state_->transport;const bool coupled=state_->heat.enabled&&state_->heat.ground_column;
+    if(coupled) {
+        samples.resize(mesh_->n_cells());const auto ns=std::size_t(tr.n_species);const int row=tr.temp_row;
+        if(row<0)throw std::runtime_error("Shared mesh/channel thermal contact has no surface temperature row.");
+        for(int i:channel_ground_->cells()) {
+            double volume=0,mass=0;
+            for(int p=edges_.cell_ptr[i];p<edges_.cell_ptr[i+1];++p) {
+                const int edge=edges_.cell_edge[p];const bool left=edges_.cell_sign[p]>0;
+                auto& dv=left?facc_L_[edge]:facc_R_[edge];volume+=dv;dv=0;
+                auto& dm=(left?sacc_L_:sacc_R_)[std::size_t(edge)*ns+row];mass+=dm;dm=0;
+            }
+            state_->volume[i]=std::max(0.,state_->volume[i]+volume);tr.cell_mass[tr.idx(row,i)]+=mass;
+            if(!tr.cell_runoff_vol.empty())tr.cell_runoff_vol[i]-=volume;
+            auto& source=channel_sources_[i];
+            // Preserve the hydraulic source gate's pre-firing depth, just as
+            // both existing cell kernels do. Heat cannot alter accepted water.
+            if(!prepareCellSources(i,dt,source))throw std::runtime_error("Shared thermal source budget was not prepared.");
+            channel_source_ready_[i]=1;
+            mixCellSourceRow(i,row,tr.cell_mass[tr.idx(row,i)],source);
+            samples[i]={tr.cell_mass[tr.idx(row,i)],source.available,source.evap};
+        }
+    }
+    std::vector<double> mass;
+    if(auto error=channel_ground_->advance(*opts_,samples,dt,mass);!error.empty())
+        throw std::runtime_error("[Channel ground heat] "+error);
+    if(coupled)for(int i:channel_ground_->cells()) {
+        auto& current=tr.cell_mass[tr.idx(tr.temp_row,i)];
+        bookSourceLedger(SourceLedger::ExternalIn,tr.temp_row,mass[i]-current);current=mass[i];
+        channel_temperature_mixed_[i]=1;
+    }
+}
+
 void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
                                        double dt_c, bool tier0) {
+    if(tier0&&channel_ground_)prepareChannelGround(dt_c);
     if (tier0 && common_stage_) {
         // Managed cells are pinned on the finest tier. Land their accepted
         // face water before gathering requests; momentum still lands below.
@@ -1512,6 +1557,9 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
     } else {
         if (fuse) fireCellsImpl<false, true>(cells, dt_c, tier0);
         else      fireCellsImpl<false, false>(cells, dt_c, tier0);
+    }
+    if(tier0&&channel_ground_)for(int cell:channel_ground_->cells()) {
+        channel_source_ready_[cell]=0;channel_temperature_mixed_[cell]=0;
     }
 }
 
@@ -1571,7 +1619,10 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
             state_->volume[i] = std::max(0.0, state_->volume[i] + flux_m3);
             if (!state_->transport.cell_runoff_vol.empty())
                 state_->transport.cell_runoff_vol[i] -= flux_m3;
-            has_sources = prepareCellSources(i, dt_c, source);
+            if(std::size_t(i)<channel_source_ready_.size()&&channel_source_ready_[i]) {
+                source=channel_sources_[i];source.ledger=source_ledgers_.data()+std::size_t(sourceThread())*source_ledger_stride_;
+                has_sources=true;
+            } else has_sources = prepareCellSources(i, dt_c, source);
         }
         if (species) {
             auto& tr = state_->transport;
@@ -2677,6 +2728,14 @@ void ExplicitInertialSolver::resyncFromVolumes(double /*t0*/) {
 void ExplicitInertialSolver::pinExternalSourceCells(const std::vector<int>& cells) {
     for (int cell : cells) pin_t0_.at(static_cast<std::size_t>(cell)) = 1;
     cycles_since_rebuild_ = kRebuildEveryCycles;
+}
+
+void ExplicitInertialSolver::setChannelGround(ChannelGroundState& stage) {
+    if(!initialized_||t_last_sync_!=0||common_stage_)throw std::invalid_argument("Channel ground contacts require an initial CPU mesh source clock.");
+    if(!stage.active())return;
+    channel_ground_=&stage;
+    channel_sources_.resize(mesh_->n_cells());channel_source_ready_.assign(mesh_->n_cells(),0);channel_temperature_mixed_=channel_source_ready_;
+    pinExternalSourceCells(stage.cells());
 }
 
 void ExplicitInertialSolver::setCommonSourceStage(CommonSourceStage& stage) {

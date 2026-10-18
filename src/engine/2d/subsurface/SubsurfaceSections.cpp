@@ -454,7 +454,8 @@ public:
     /// the Cyrus–Beck clip: the parameter interval [t_lo, t_hi] that lies on
     /// the inner side of every edge's half-plane. Exact for a straight
     /// segment — no sampling, no step error.
-    double lengthInside(int c, double x0, double y0, double x1, double y1) const {
+    double lengthInside(int c, double x0, double y0, double x1, double y1,
+                        double* begin=nullptr,double* end=nullptr) const {
         const int nv = m_.cell_nv[static_cast<std::size_t>(c)];
         const double dx = x1 - x0, dy = y1 - y0;
         double t_lo = 0.0, t_hi = 1.0;
@@ -475,7 +476,17 @@ public:
             else          t_lo = std::max(t_lo, t);   // entering it
             if (t_lo >= t_hi) return 0.0;
         }
+        if(begin)*begin=t_lo;if(end)*end=t_hi;
         return (t_hi - t_lo) * std::hypot(dx, dy);
+    }
+    bool onBoundary(int c,double x,double y) const {
+        const int nv=m_.cell_nv[std::size_t(c)];
+        for(int i=0,j=nv-1;i<nv;j=i++) {
+            const auto a=std::size_t(m_.cell_vertex(c,j)),b=std::size_t(m_.cell_vertex(c,i));
+            const double dx=m_.vx[b]-m_.vx[a],dy=m_.vy[b]-m_.vy[a];
+            if(std::abs(dx*(y-m_.vy[a])-dy*(x-m_.vx[a]))<=1e-10*std::hypot(dx,dy))return true;
+        }
+        return false;
     }
     /// The area of the polygon (px, py) inside cell `c`. Sutherland–Hodgman
     /// against the cell's edge half-planes — exact for the convex CCW clip
@@ -517,7 +528,7 @@ public:
     }
 private:
     int bin(double v, double v0, double d) const {
-        return std::clamp(static_cast<int>((v - v0) / d), 0, nb_ - 1);
+        return static_cast<int>(std::clamp((v-v0)/d,0.,double(nb_-1)));
     }
     bool inside(int c, double x, double y) const {   // ray casting, any polygon
         const int nv = m_.cell_nv[static_cast<std::size_t>(c)];
@@ -539,6 +550,42 @@ private:
 };
 
 }  // namespace
+
+MeshPolylineMapping mapMeshPolyline(const MeshData& mesh,const std::vector<double>& x,const std::vector<double>& y) {
+    MeshPolylineMapping out;
+    if(x.size()!=y.size()||x.size()<2){out.error="A channel polyline needs matching x/y arrays and at least two points.";return out;}
+    for(std::size_t i=0;i<x.size();++i)if(!std::isfinite(x[i])||!std::isfinite(y[i])) {
+        out.error="A channel polyline contains a nonfinite coordinate.";return out;
+    }
+    const CellLocator locator(mesh);
+    for(std::size_t p=1;p<x.size();++p) {
+        const double length=std::hypot(x[p]-x[p-1],y[p]-y[p-1]);if(!(length>0))continue;
+        if(!std::isfinite(length)||!std::isfinite(out.length+length)) {
+            out.error="Channel polyline length exceeds the finite coordinate range.";out.intervals.clear();out.covered_length=0;return out;
+        }
+        struct Clip {int cell;double a,b;};std::vector<Clip> clips;std::vector<double> cuts;
+        for(int cell:locator.candidates(x[p-1],y[p-1],x[p],y[p])) {
+            double a=0,b=0;if(!(locator.lengthInside(cell,x[p-1],y[p-1],x[p],y[p],&a,&b)>0))continue;
+            clips.push_back({cell,a,b});cuts.push_back(a);cuts.push_back(b);
+        }
+        std::sort(cuts.begin(),cuts.end());cuts.erase(std::unique(cuts.begin(),cuts.end()),cuts.end());
+        for(std::size_t k=1;k<cuts.size();++k) {
+            const double a=cuts[k-1],b=cuts[k],mid=a+(b-a)*.5;
+            std::vector<int> owners;for(const auto& c:clips)if(c.a<=mid&&mid<c.b)owners.push_back(c.cell);
+            if(owners.empty())continue;
+            if(owners.size()>1)for(int cell:owners)
+                if(!locator.onBoundary(cell,x[p-1]+mid*(x[p]-x[p-1]),y[p-1]+mid*(y[p]-y[p-1]))) {
+                    out.error="Channel contact crosses overlapping mesh interiors; correct mesh ownership before coupling.";
+                    out.intervals.clear();out.covered_length=0;return out;
+                }
+            out.covered_length+=(b-a)*length;
+            for(int cell:owners)out.intervals.push_back({cell,out.length+a*length,out.length+b*length,1./owners.size()});
+        }
+        out.length+=length;
+    }
+    if(!(out.length>0))out.error="Channel polyline has no positive length.";
+    return out;
+}
 
 std::vector<std::string> resolveSubsurface(
     SimulationContext& ctx, const MeshData& mesh, SubsurfaceConfig& cfg,

@@ -1451,6 +1451,8 @@ cdef extern from "openswmm_heat.h":
         char reason[256]
     int swmm_heat_get_2d_status(SWMM_Engine,SWMM_Heat2DStatus*)
     int swmm_heat_get_2d_values(SWMM_Engine,int,int,int,double*)
+    int swmm_heat_ground_source_configured(SWMM_Engine,int*)
+    int swmm_heat_clear_ground_source(SWMM_Engine)
     ctypedef struct SWMM_GroundHeatStatus:
         unsigned int struct_size
         int requested

@@ -141,6 +141,7 @@ enum class HeatAttr : int {
     SED_DENSITY,
     SED_SPECIFIC_HEAT,
     SED_MESH_POROSITY,
+    SED_GROUND_SOURCE,
     COUNT_
 };
 

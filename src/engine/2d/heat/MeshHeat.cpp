@@ -56,13 +56,9 @@ void pairIntegrals(const BedCoupling& g,double tw,double tb,double j0,double slo
     iw=dt*dt*(alpha*f+beta*dt*(a*f+b*q));
     ib=dt*dt*(alpha*q+beta*dt*(c*f+d*q));
 }
-struct AtmosphericFlux {
-    double radiation=0,sensible=0,latent=0;
-    double total() const noexcept {return radiation+sensible+latent;}
-};
-AtmosphericFlux outward(const MeshHeatState& h,int i,double t,double evaporation) noexcept {
+MeshAtmosphericFlux outward(const MeshHeatState& h,int i,double t,double evaporation) noexcept {
     const auto& ctx=*h.context;const auto elem=HeatElement::cell2d(i);
-    AtmosphericFlux flux;
+    MeshAtmosphericFlux flux;
     flux.radiation=h.radiative?radiativeFluxOut(ctx,elem,t,true):0;
     if(h.surface) {
         const double air=(ctx.forcing.elementAirTempF(elem,ctx.climate_state.temperature)-32)*5./9;
@@ -78,54 +74,75 @@ AtmosphericFlux outward(const MeshHeatState& h,int i,double t,double evaporation
 }
 double groundColumnStep(const MeshData& mesh,const SolverOptions2D& options,MeshHeatState& h,int i,
     double mass,double volume,double evaporated,double dt) {
-    auto& owner=h.groundOwner(i);auto& cell=owner.cells[i];auto& c=cell.column;
-    const auto& o=owner.config->options;const auto& sc=sedimentFor(*h.context,HeatElement::cell2d(i));
-    const int water=int(c.energy.size());auto stores=c.stores();
-    auto contacts=o.conduction?c.contacts():std::vector<ThermalContact>{};
-    const auto vertical_count=contacts.size();
-    double wet=0,tw=0;AtmosphericFlux f0,f1;double slope=0;
-    if(volume>0) {
-        tw=mass/volume;double eta=0,depth=0;inertial::cellEtaDepth(mesh,options,i,volume,eta,depth);
-        wet=depth>0?std::clamp(volume/depth,0.,c.area):0;
-        stores.push_back({owner.water_capacity*volume,owner.water_capacity*mass});
-        if(o.conduction&&wet>0)contacts.push_back({water,0,wet/(.5*(c.depth_edges[1]-c.depth_edges[0])/c.conductivity[0])});
+    std::vector<ThermalStore> stores;std::vector<ThermalContact> contacts;std::vector<ThermalBoundary> boundaries;
+    const double channel=h.channel_footprint.empty()?0:h.channel_footprint[i];
+    const auto assembled=appendGroundColumnSystem(mesh,options,h.groundOwner(i),i,&h,mass,volume,evaporated,dt,channel,stores,contacts,boundaries);
+    auto solved=solveThermalContacts(stores,contacts,boundaries,dt);
+    if(!solved.error.empty())throw std::runtime_error(solved.error);
+    return commitGroundColumnSystem(assembled,solved);
+}
+}
+GroundColumnAssembly appendGroundColumnSystem(const MeshData& mesh,const SolverOptions2D& options,GroundHeatState& owner,int i,
+    MeshHeatState* h,double mass,double volume,double evaporated,double dt,double channel_area,
+    std::vector<ThermalStore>& stores,std::vector<ThermalContact>& contacts,std::vector<ThermalBoundary>& boundaries) {
+    auto& c=owner.cells[i].column;const auto& o=owner.config->options;
+    if(channel_area<0||channel_area>c.area||!std::isfinite(channel_area))throw std::runtime_error("Channel thermal footprint exceeds its soil cell area.");
+    GroundColumnAssembly a;a.owner=&owner;a.mesh_heat=h;a.cell=i;a.mass=mass;a.volume=volume;a.evaporated=evaporated;a.seconds=dt;
+    a.first_store=int(stores.size());a.soil_count=int(c.energy.size());
+    for(const auto& store:c.stores())stores.push_back(store);
+    a.first_contact=contacts.size();
+    if(o.conduction)for(auto contact:c.contacts()) {contact.a+=a.first_store;contact.b+=a.first_store;contacts.push_back(contact);}
+    a.vertical_count=contacts.size()-a.first_contact;
+    if(h&&volume>0) {
+        a.water=int(stores.size());a.temperature=mass/volume;a.water_initial_j=owner.water_capacity*mass;
+        stores.push_back({owner.water_capacity*volume,a.water_initial_j});
+        double eta=0,depth=0;inertial::cellEtaDepth(mesh,options,i,volume,eta,depth);
+        a.wet=depth>0?std::clamp(volume/depth,0.,c.area):0;
+        const double contact_area=a.wet*(1-channel_area/c.area);
+        const auto& sc=sedimentFor(*h->context,HeatElement::cell2d(i));
+        if(o.conduction&&contact_area>0)contacts.push_back({a.water,a.first_store,contact_area/(.5*(c.depth_edges[1]-c.depth_edges[0])/c.conductivity[0])});
         double pores=0;
         for(std::size_t j=0;j<c.energy.size();++j)
             pores+=c.theta[j]*c.area*std::max(0.,std::min(sc.bed_thickness,c.depth_edges[j+1])-c.depth_edges[j]);
-        if(h.hyporheic_eligible[i]&&pores>0&&sc.hyporheic_velocity>0)
+        if(h->hyporheic_eligible[i]&&pores>0&&sc.hyporheic_velocity>0)
             for(std::size_t j=0;j<c.energy.size();++j) {
                 const double v=c.theta[j]*c.area*std::max(0.,std::min(sc.bed_thickness,c.depth_edges[j+1])-c.depth_edges[j]);
-                if(v>0)contacts.push_back({water,int(j),owner.water_capacity*sc.hyporheic_velocity*wet*v/pores});
+                if(v>0)contacts.push_back({a.water,a.first_store+int(j),owner.water_capacity*sc.hyporheic_velocity*contact_area*v/pores});
             }
-        const double evaporation=wet>0?evaporated/(wet*dt):0;
-        f0=outward(h,i,tw,evaporation);f1=outward(h,i,tw+kProbeC,evaporation);
-        slope=std::max(0.,(f1.total()-f0.total())/kProbeC);
+        const double evaporation=a.wet>0?evaporated/(a.wet*dt):0;
+        a.flux0=outward(*h,i,a.temperature,evaporation);a.flux1=outward(*h,i,a.temperature+kProbeC,evaporation);
+        a.slope=std::max(0.,(a.flux1.total()-a.flux0.total())/kProbeC);
     }
-    std::vector<ThermalBoundary> boundaries;
-    const auto top_count=owner.boundaries(i,1-wet/c.area,boundaries);
-    const auto ground_count=boundaries.size();
-    if(volume>0)boundaries.push_back({water,wet*slope,tw,-wet*f0.total()});
-    auto solved=solveThermalContacts(stores,contacts,boundaries,dt);
-    if(!solved.error.empty())throw std::runtime_error(solved.error);
-    double contact=0;
-    for(std::size_t j=0;j<solved.contact_j.size();++j)
-        if(j<vertical_count)cell.vertical_absolute_j+=std::abs(solved.contact_j[j]);else contact+=solved.contact_j[j];
-    cell.water_contact_j+=contact;h.water_bed_j[i]+=contact;
-    for(std::size_t j=0;j<ground_count;++j) {
-        if(j<top_count)cell.surface_j+=solved.boundary_j[j];else cell.deep_j+=solved.boundary_j[j];
-        h.ground_j[i]+=solved.boundary_j[j];
-    }
-    for(int j=0;j<water;++j)c.energy[j]=solved.energy[j];
-    h.refreshBedView(i);
-    if(!(volume>0))return mass;
-    const double delta_t=solved.temperature[water]-tw;
-    h.water_j[i]+=solved.energy[water]-stores[water].energy;
-    h.atmospheric_j[i]+=solved.boundary_j.back();h.evaporated_m3[i]+=evaporated;
-    const auto received=[&](double a,double b){return -wet*dt*(a+(slope>0?(b-a)/kProbeC:0)*delta_t);};
-    h.radiative_j[i]+=received(f0.radiation,f1.radiation);h.sensible_j[i]+=received(f0.sensible,f1.sensible);
-    h.latent_j[i]+=received(f0.latent,f1.latent);h.reported_temperature[i]=solved.temperature[water];
-    return solved.energy[water]/owner.water_capacity;
+    a.contact_count=contacts.size()-a.first_contact;a.first_boundary=boundaries.size();
+    std::vector<ThermalBoundary> ground;
+    a.top_count=owner.boundaries(i,(1-a.wet/c.area)*(1-channel_area/c.area),ground);a.ground_count=ground.size();
+    for(auto boundary:ground){boundary.store+=a.first_store;boundaries.push_back(boundary);}
+    a.atmosphere=boundaries.size();
+    if(a.water>=0)boundaries.push_back({a.water,a.wet*a.slope,a.temperature,-a.wet*a.flux0.total()});
+    return a;
 }
+double commitGroundColumnSystem(const GroundColumnAssembly& a,const ThermalSolution& solved) noexcept {
+    auto& owner=*a.owner;auto& cell=owner.cells[a.cell];auto& c=cell.column;auto* h=a.mesh_heat;
+    double contact=0;
+    for(std::size_t k=0;k<a.contact_count;++k) {
+        const double j=solved.contact_j[a.first_contact+k];
+        if(k<a.vertical_count)cell.vertical_absolute_j+=std::abs(j);else contact+=j;
+    }
+    cell.water_contact_j+=contact;if(h)h->water_bed_j[a.cell]+=contact;
+    for(std::size_t k=0;k<a.ground_count;++k) {
+        const double j=solved.boundary_j[a.first_boundary+k];
+        if(k<a.top_count)cell.surface_j+=j;else {cell.deep_j+=j;if(h)h->ground_j[a.cell]+=j;}
+    }
+    for(int j=0;j<a.soil_count;++j)c.energy[j]=solved.energy[a.first_store+j];
+    if(h)h->refreshBedView(a.cell);
+    if(a.water<0)return a.mass;
+    const double delta=solved.temperature[a.water]-a.temperature;
+    h->water_j[a.cell]+=solved.energy[a.water]-a.water_initial_j;
+    h->atmospheric_j[a.cell]+=solved.boundary_j[a.atmosphere];h->evaporated_m3[a.cell]+=a.evaporated;
+    const auto received=[&](double first,double second){return -a.wet*a.seconds*(first+(a.slope>0?(second-first)/kProbeC:0)*delta);};
+    h->radiative_j[a.cell]+=received(a.flux0.radiation,a.flux1.radiation);h->sensible_j[a.cell]+=received(a.flux0.sensible,a.flux1.sensible);
+    h->latent_j[a.cell]+=received(a.flux0.latent,a.flux1.latent);h->reported_temperature[a.cell]=solved.temperature[a.water];
+    return solved.energy[a.water]/owner.water_capacity;
 }
 std::string initializeMeshHeat(SimulationContext& ctx,const MeshData& mesh,SurfaceStateData& state,
                                const SolverOptions2D& options,GroundHeatState* aquifer,const std::vector<uint8_t>* coverage) {

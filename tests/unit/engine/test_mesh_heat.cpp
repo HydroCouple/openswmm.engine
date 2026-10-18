@@ -381,3 +381,57 @@ TEST(MeshHeat, SavingWaterOnlyGroundOptionsDoesNotAuthorDormantConductionDefault
     EXPECT_NE(read().find("\nCONDUCTION "),std::string::npos);
     EXPECT_EQ(read().find("\nTHERMAL_MODEL "),std::string::npos);
 }
+TEST(MeshHeat, ChannelGroundSourceUsesExistingOverridesAndPreservesExplicitOffAuthoring) {
+    Model m("channel-ground-source");ASSERT_NE(m.e,nullptr);int configured=-1;
+    ASSERT_EQ(swmm_heat_ground_source_configured(m.e,&configured),SWMM_OK);EXPECT_EQ(configured,0);
+    ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_GROUND_SOURCE,1),SWMM_OK);
+    EXPECT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_GROUND_SOURCE,.5),SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_heat_set_element_override(m.e,SWMM_HEAT_ATTR_GROUND_SOURCE,SWMM_HEAT_SCOPE_CELL2D,"1",1),SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_heat_set_element_override(m.e,SWMM_HEAT_ATTR_GROUND_SOURCE,SWMM_HEAT_SCOPE_LINK,"C1",0),SWMM_OK);
+    double value=-1;int source=-1;char origin[128];
+    ASSERT_EQ(swmm_heat_get_effective_element(m.e,SWMM_HEAT_ATTR_GROUND_SOURCE,SWMM_HEAT_SCOPE_LINK,"C1",&value,&source,origin,sizeof origin),SWMM_OK);
+    EXPECT_DOUBLE_EQ(value,0);EXPECT_EQ(source,SWMM_HEAT_SCOPE_LINK);
+    ASSERT_EQ(swmm_heat_clear_ground_source(m.e),SWMM_OK);
+    ASSERT_EQ(swmm_heat_ground_source_configured(m.e,&configured),SWMM_OK);EXPECT_EQ(configured,0);
+    ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_GROUND_SOURCE,0),SWMM_OK);
+    ASSERT_EQ(swmm_process_component_register(m.e,"org.hydrocouple.openswmm.heat","channel-ground.cfg"),SWMM_OK);
+    const auto file=out/"_channel-ground-roundtrip.inp";ASSERT_EQ(swmm_model_write(m.e,file.string().c_str()),SWMM_OK);
+    auto e=swmm_engine_create();ASSERT_EQ(swmm_engine_open(e,file.string().c_str(),(out/"channel-ground-reopen.rpt").string().c_str(),nullptr,nullptr),SWMM_OK);
+    EXPECT_EQ(swmm_heat_ground_source_configured(e,&configured),SWMM_OK);EXPECT_EQ(configured,1);
+    EXPECT_EQ(swmm_heat_get_sediment(e,SWMM_HEAT_SED_GROUND_SOURCE,&value),SWMM_OK);EXPECT_DOUBLE_EQ(value,0);
+    EXPECT_EQ(swmm_heat_get_effective_element(e,SWMM_HEAT_ATTR_GROUND_SOURCE,SWMM_HEAT_SCOPE_LINK,"C1",&value,&source,origin,sizeof origin),SWMM_OK);
+    EXPECT_EQ(source,SWMM_HEAT_SCOPE_LINK);EXPECT_DOUBLE_EQ(value,0);
+    swmm_engine_close(e);swmm_engine_destroy(e);
+}
+TEST(MeshHeat, ChannelThermalBindingsUpdateActualLegacyArdAndLardStoresAtomically) {
+    for(const auto* solver:{"LEGACY","EULERIAN_ARD","LAGRANGIAN"}) {
+        Model m(std::string("channel-binding-")+solver,"[DWF]\nJ1 FLOW .01\n[TRANSPORT_OPTIONS]\nTARGET_DX 5\n");
+        ASSERT_NE(m.e,nullptr);ASSERT_EQ(swmm_options_set(m.e,"QUALITY_SOLVER",solver),SWMM_OK);
+        ASSERT_EQ(swmm_engine_initialize(m.e),SWMM_OK);ASSERT_EQ(swmm_engine_start(m.e,0),SWMM_OK);
+        double actual=0;ASSERT_EQ(swmm_coupling_advance_to(m.e,5.,&actual),SWMM_OK);
+        auto& access=m.ctx().state_accessors;ASSERT_TRUE(bool(access.get_channel_thermal_regions));
+        ASSERT_TRUE(bool(access.apply_channel_thermal_increments));const auto before=access.get_channel_thermal_regions();
+        ASSERT_FALSE(before.empty())<<solver;
+        if(std::string(solver)=="EULERIAN_ARD")EXPECT_GT(before.size(),1);
+        else EXPECT_EQ(before.size(),1);
+        std::vector<openswmm::ChannelThermalIncrement> increments;
+        for(const auto& r:before){
+            EXPECT_GT(r.volume,0);EXPECT_LT(r.begin,r.end);EXPECT_GT(r.length,0);EXPECT_GT(r.bed_area,0);EXPECT_GT(r.surface_area,0);
+            increments.push_back({r.link,r.region,3});
+        }
+        ASSERT_TRUE(access.apply_channel_thermal_increments(increments).empty());
+        const auto after=access.get_channel_thermal_regions();ASSERT_EQ(after.size(),before.size());
+        double water=0,mass=0;
+        for(std::size_t k=0;k<after.size();++k) {
+            EXPECT_EQ(after[k].region,before[k].region);EXPECT_DOUBLE_EQ(after[k].volume,before[k].volume);
+            EXPECT_NEAR(after[k].temperature,before[k].temperature+3,1e-12);
+            water+=after[k].volume;mass+=after[k].volume*after[k].temperature;
+        }
+        EXPECT_NEAR(m.ctx().heat_state.link_temp[0],mass/water,1e-12);
+        increments.push_back({0,999999,4});
+        EXPECT_FALSE(access.apply_channel_thermal_increments(increments).empty());
+        const auto refused=access.get_channel_thermal_regions();ASSERT_EQ(refused.size(),after.size());
+        for(std::size_t k=0;k<after.size();++k)EXPECT_DOUBLE_EQ(refused[k].temperature,after[k].temperature);
+        ASSERT_EQ(swmm_engine_end(m.e),SWMM_OK);
+    }
+}

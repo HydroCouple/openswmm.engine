@@ -13,12 +13,13 @@
 #include "core/SWMMEngine.hpp"
 #include "2d/SurfaceRouter2D.hpp"
 #include "2d/subsurface/SubsurfaceSolver.hpp"
+#include "2d/heat/ChannelGround.hpp"
 namespace {
 namespace fs=std::filesystem;
 const fs::path out=fs::path(OPENSWMM_GROUND_HEAT_OUT)/"ground_heat";
 struct Model {
     SWMM_Engine e=nullptr;bool running=false;
-    Model(const std::string& name,const std::string& closure="CLOSED_FORM",double hg=.5,bool partial=false,const std::string& extra="") {
+    Model(const std::string& name,const std::string& closure="CLOSED_FORM",double hg=.5,bool partial=false,const std::string& extra="",bool mapped_channel=false) {
         fs::create_directories(out);const auto file=out/("_"+name+".inp");
         std::ofstream(file)<<"[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
             "START_DATE 01/01/2026\nEND_DATE 01/01/2026\nEND_TIME 00:10:00\nROUTING_STEP 5\nREPORT_STEP 00:01:00\n"
@@ -33,6 +34,13 @@ struct Model {
             "\n[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION NO\n"
             "DISPERSION NO\nSOIL_ET_HEAT SENSIBLE_ONLY\nSURFACE_THERMAL_BC ADIABATIC\nDEEP_THERMAL_BC ADIABATIC\n"
             "[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ -3\n* UNSAT __TEMPERATURE__ -3\n"<<extra;
+        if(mapped_channel) {
+            std::ifstream input(file);std::string text((std::istreambuf_iterator<char>(input)),{});input.close();
+            const auto replace=[&](const char* before,const char* after){const auto at=text.find(before);if(at!=std::string::npos)text.replace(at,std::string(before).size(),after);};
+            replace("J1 -2 4 0 0 0","J1 -.2 4 0 0 0");replace("O1 -2.5 FREE NO","O1 -.2 FREE NO");
+            replace("C1 J1 O1 30 .013 0 0 0","C1 J1 O1 8 .013 0 0 0");replace("J1 40 0\nO1 70 0","J1 1 3\nO1 9 3");
+            std::ofstream(file)<<text;
+        }
         e=swmm_engine_create();
         if(swmm_engine_open(e,file.string().c_str(),(out/(name+".rpt")).string().c_str(),nullptr,nullptr)!=SWMM_OK) {
             swmm_engine_destroy(e);e=nullptr;
@@ -279,4 +287,97 @@ TEST(GroundHeat, SaturatedLateralConductionUsesTheFaceClockAndRetainsCrossTierPe
     EXPECT_NEAR(gw.pendingHeat(0)+gw.pendingHeat(1),0,1e-7);
     EXPECT_GT(gw.heat().zoneTemperature(0,true),10);EXPECT_LT(gw.heat().zoneTemperature(1,true),20);
     EXPECT_NEAR(gw.heat().cells[0].lateral_j+gw.heat().cells[1].lateral_j,0,1e-6);
+}
+TEST(GroundHeat, RoutedChannelsAndMultipleCellsShareOneFiniteConservativeSoilSolve) {
+    const std::string extra="[JUNCTIONS]\nJ2 -.2 4 0 0 0\n[OUTFALLS]\nO2 -.2 FREE NO\n"
+        "[CONDUITS]\nC2 J2 O2 8 .013 0 0 0\n[XSECTIONS]\nC2 RECT_OPEN 1 2 0 0 1\n"
+        "[COORDINATES]\nJ2 1 7\nO2 9 7\n[DWF]\nJ1 FLOW .01\nJ2 FLOW .01\n[TRANSPORT_OPTIONS]\nTARGET_DX 2\n";
+    for(const auto* solver:{"LEGACY","EULERIAN_ARD","LAGRANGIAN"}) {
+        Model m(std::string("channel-operator-")+solver,"SIGMA",.5,false,extra,true);ASSERT_NE(m.e,nullptr);
+        ASSERT_EQ(swmm_options_set(m.e,"QUALITY_SOLVER",solver),SWMM_OK);
+        ASSERT_EQ(swmm_gw_transport_option_set(m.e,"CONDUCTION","YES"),SWMM_OK);
+        ASSERT_EQ(m.start(),SWMM_OK);double actual=0;ASSERT_EQ(swmm_coupling_advance_to(m.e,5.,&actual),SWMM_OK);
+        auto& ctx=static_cast<openswmm::SWMMEngine*>(m.e)->context();auto& gw=m.router().subsurface();
+        // Isolate the finite contact operator. Normal runtime activation is
+        // tested separately once its source-clock coordinator is installed.
+        ctx.heat_config.sediment_exchange=true;ctx.heat_config.sediment.mesh_ground=true;
+        ctx.heat_config.sediment.hyporheic_velocity=2e-5;
+        openswmm::twoD::ChannelGroundState contacts;
+        ASSERT_TRUE(contacts.initialize(ctx,m.router().mesh(),gw.heat(),gw.transport(),m.router().state(),1.).empty());
+        EXPECT_TRUE(contacts.ownsLink(0));EXPECT_TRUE(contacts.ownsLink(1));EXPECT_EQ(contacts.cells().size(),2);
+        ASSERT_GT(contacts.contacts().size(),2);
+        const auto water_energy=[&](){double result=0;for(const auto& r:ctx.state_accessors.get_channel_thermal_regions())result+=r.volume*r.temperature*4184000.;return result;};
+        const double initial=energy(gw.heat())+water_energy();const auto hg=gw.state().hg,hu=gw.state().hu;
+        const auto volume=m.router().state().volume;std::vector<double> surface;
+        const auto error=contacts.advance(m.router().options(),{},3600,surface);ASSERT_TRUE(error.empty())<<error;
+        EXPECT_NEAR(energy(gw.heat())+water_energy(),initial,2e-5);
+        EXPECT_EQ(gw.state().hg,hg);EXPECT_EQ(gw.state().hu,hu);EXPECT_EQ(m.router().state().volume,volume);
+        EXPECT_GT(sum(contacts.channelToGround()),0);
+        EXPECT_NEAR(sum(contacts.channelThermalIncrement())+sum(contacts.channelToGround())-sum(contacts.channelAtmosphere()),0,1e-6);
+        double soil_receipt=0;for(const auto& c:gw.heat().cells) {
+            soil_receipt+=c.channel_contact_j;for(std::size_t j=0;j<c.column.energy.size();++j) {
+                EXPECT_GE(c.column.energy[j]/c.column.capacity[j],-3-1e-10);EXPECT_LE(c.column.energy[j]/c.column.capacity[j],20+1e-10);
+            }
+        }
+        EXPECT_NEAR(soil_receipt,sum(contacts.channelToGround()),1e-6);
+        const auto saved=ctx.state_accessors.apply_channel_thermal_increments;
+        ctx.state_accessors.apply_channel_thermal_increments=[](const auto&){return std::string("forced binding refusal");};
+        const double before_soil=energy(gw.heat()),before_water=water_energy();
+        EXPECT_EQ(contacts.advance(m.router().options(),{},60,surface),"forced binding refusal");
+        EXPECT_DOUBLE_EQ(energy(gw.heat()),before_soil);EXPECT_DOUBLE_EQ(water_energy(),before_water);
+        ctx.state_accessors.apply_channel_thermal_increments=saved;
+    }
+}
+TEST(GroundHeat, ConfiguredChannelContactsRunOnTheActualSourceClockAndHonorLiveBedOff) {
+    for(const auto* solver:{"LEGACY","EULERIAN_ARD","LAGRANGIAN"}) {
+        SCOPED_TRACE(solver);
+        Model m(std::string("channel-runtime-")+solver,"SIGMA",.5,false,
+            "[DWF]\nJ1 FLOW .01\n[TRANSPORT_OPTIONS]\nTARGET_DX 2\n",true);
+        ASSERT_NE(m.e,nullptr);ASSERT_EQ(swmm_options_set(m.e,"QUALITY_SOLVER",solver),SWMM_OK);
+        ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_GROUND_SOURCE,1),SWMM_OK);
+        ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_HYPORHEIC_VELOCITY,2e-5),SWMM_OK);
+        ASSERT_EQ(swmm_heat_set_module(m.e,SWMM_HEAT_SEDIMENT_EXCHANGE,1),SWMM_OK);
+        ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_MODEL","COUPLED"),SWMM_OK);
+        ASSERT_EQ(swmm_options_set_ext(m.e,"BED_HEAT_MODEL","GROUND_COLUMN"),SWMM_OK);
+        ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_SURFACE_EXCHANGE","NO"),SWMM_OK);
+        ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_RADIATIVE_EXCHANGE","NO"),SWMM_OK);
+        ASSERT_EQ(swmm_gw_transport_option_set(m.e,"CONDUCTION","YES"),SWMM_OK);
+        ASSERT_EQ(m.start(),SWMM_OK);ASSERT_TRUE(m.router().channelGround().active());
+        auto& ctx=static_cast<openswmm::SWMMEngine*>(m.e)->context();
+        ASSERT_EQ(ctx.heat_state.mesh_contact_link.size(),1);EXPECT_TRUE(ctx.heat_state.mesh_contact_link[0]);
+        auto& gw=m.router().subsurface();auto& state=m.router().state();
+        const auto surface_energy=[&](){double e=0;for(int i=0;i<2;++i)e+=state.transport.cell_mass[state.transport.idx(state.transport.temp_row,i)]*4184000.;return e;};
+        const double initial=surface_energy();double actual=0;
+        ASSERT_EQ(swmm_coupling_advance_to(m.e,5.,&actual),SWMM_OK);
+        ASSERT_EQ(ctx.heat_state.mesh_contact_link.size(),1);EXPECT_TRUE(ctx.heat_state.mesh_contact_link[0]);
+        const auto& contacts=m.router().channelGround();
+        EXPECT_GT(sum(contacts.channelToGround()),0);
+        EXPECT_NEAR(surface_energy()-initial,sum(state.heat.water_j),2e-5);
+        EXPECT_NEAR(sum(state.heat.water_j)+sum(state.heat.water_bed_j)-sum(state.heat.atmospheric_j),0,2e-5);
+        EXPECT_NEAR(sum(contacts.channelThermalIncrement())+sum(contacts.channelToGround())-sum(contacts.channelAtmosphere()),0,1e-5);
+        double residual[2];ASSERT_EQ(swmm_heat_get_ground_values(m.e,SWMM_GROUND_HEAT_NORMALIZED_RESIDUAL,0,2,residual),SWMM_OK);
+        EXPECT_NEAR(residual[0],0,1e-10);EXPECT_NEAR(residual[1],0,1e-10);
+        EXPECT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_BED_THICKNESS,.3),SWMM_ERR_LIFECYCLE);
+        ASSERT_EQ(swmm_heat_set_module(m.e,SWMM_HEAT_SEDIMENT_EXCHANGE,0),SWMM_OK);
+        const double paused=sum(contacts.channelToGround());
+        ASSERT_EQ(swmm_coupling_advance_to(m.e,10.,&actual),SWMM_OK);
+        EXPECT_DOUBLE_EQ(sum(contacts.channelToGround()),paused);
+        ASSERT_EQ(swmm_heat_set_module(m.e,SWMM_HEAT_SEDIMENT_EXCHANGE,1),SWMM_OK);
+        ASSERT_EQ(swmm_coupling_advance_to(m.e,15.,&actual),SWMM_OK);
+        EXPECT_GT(sum(contacts.channelToGround()),paused);
+        for(const auto& cell:gw.heat().cells)ASSERT_EQ(cell.failed,0)<<cell.error;
+    }
+}
+TEST(GroundHeat, ChannelContactsCanRunWithoutAnOverlandTemperatureRow) {
+    Model m("channel-soil-only","CLOSED_FORM",.5,false,"[DWF]\nJ1 FLOW .01\n",true);ASSERT_NE(m.e,nullptr);
+    ASSERT_EQ(swmm_options_set_ext(m.e,"TRANSPORT_TEMPERATURE","NO"),SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_GROUND_SOURCE,1),SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_module(m.e,SWMM_HEAT_SEDIMENT_EXCHANGE,1),SWMM_OK);
+    ASSERT_EQ(swmm_gw_transport_option_set(m.e,"CONDUCTION","YES"),SWMM_OK);
+    ASSERT_EQ(m.start(),SWMM_OK);EXPECT_LT(m.router().state().transport.temp_row,0);
+    const double initial=energy(m.router().subsurface().heat());double actual=0;
+    ASSERT_EQ(swmm_coupling_advance_to(m.e,5.,&actual),SWMM_OK);
+    const auto& contacts=m.router().channelGround();EXPECT_GT(sum(contacts.channelToGround()),0);
+    EXPECT_NEAR(energy(m.router().subsurface().heat())-initial,sum(contacts.channelToGround()),1e-5);
+    EXPECT_FALSE(m.router().state().heat.enabled);EXPECT_TRUE(m.router().state().heat.bed_energy.empty());
 }

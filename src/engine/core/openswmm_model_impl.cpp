@@ -1192,8 +1192,10 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
 #ifdef OPENSWMM_HAS_2D
     const auto& thermal_context=to_engine(engine)->context();
     const auto* thermal_router=thermal_context.twod_io.surface_router;
-    const bool finite_thermal=(thermal_router&&thermal_router->options().coupled_heat)||
-         (thermal_context.twod_io.gw&&thermal_context.twod_io.gw->options.thermal_model=="POROUS_EQUILIBRIUM");
+    bool finite_thermal=(thermal_router&&thermal_router->options().coupled_heat)||
+         (thermal_context.twod_io.gw&&thermal_context.twod_io.gw->options.thermal_model=="POROUS_EQUILIBRIUM")||thermal_context.heat_config.sediment.mesh_ground;
+    for(const auto& row:thermal_context.heat_config.overrides.rows)
+        if(row.attr==openswmm::HeatAttr::SED_GROUND_SOURCE&&row.value==1)finite_thermal=true;
     if(finite_thermal&&thermal_context.state!=openswmm::EngineState::BUILDING&&thermal_context.state!=openswmm::EngineState::OPENED&&
        (k=="HEAT_TRANSPORT"||k=="WATER_DENSITY"||k=="WATER_SPECIFIC_HEAT_CAPACITY"))return SWMM_ERR_LIFECYCLE;
 #endif

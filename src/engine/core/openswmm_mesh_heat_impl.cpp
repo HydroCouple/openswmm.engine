@@ -17,7 +17,7 @@ const openswmm::twoD::GroundThermalCell* groundCell(const openswmm::twoD::Surfac
     return std::size_t(i)<owner.cells.size()&&!owner.cells[i].column.energy.empty()?&owner.cells[i]:nullptr;
 }
 double soilResidual(const openswmm::twoD::GroundThermalCell& c,double energy) {
-    return energy-c.initial_j-c.advective_j-c.source_j-c.surface_j-c.deep_j-c.latent_j-c.lateral_j-c.water_contact_j;
+    return energy-c.initial_j-c.advective_j-c.source_j-c.surface_j-c.deep_j-c.latent_j-c.lateral_j-c.water_contact_j-c.channel_contact_j;
 }
 }
 #endif
@@ -84,7 +84,7 @@ int swmm_heat_get_2d_values(SWMM_Engine engine,int kind,int first,int count,doub
                 energy+=f*c.energy[j];capacity+=f*c.capacity[j];
             }
             if(kind==SWMM_HEAT_2D_THERMAL_RESIDUAL)
-                out[k]=total-cell.initial_j-cell.advective_j-cell.source_j-cell.surface_j-cell.deep_j-cell.latent_j-cell.lateral_j-cell.water_contact_j+
+                out[k]=soilResidual(cell,total)+
                     h.water_j[i]+h.water_bed_j[i]-h.atmospheric_j[i];
             else out[k]=kind==SWMM_HEAT_2D_BED_ENERGY?energy:kind==SWMM_HEAT_2D_BED_CAPACITY?capacity:energy/capacity;
             continue;
@@ -128,7 +128,7 @@ int swmm_heat_get_ground_status(SWMM_Engine engine,SWMM_GroundHeatStatus* out) {
 }
 int swmm_heat_get_ground_values(SWMM_Engine engine,int kind,int first,int count,double* out) {
     CHECK_HANDLE(engine);
-    if(kind<0||kind>SWMM_GROUND_HEAT_PENDING_LATERAL||first<0||count<0||(count&&!out))return SWMM_ERR_BADPARAM;
+    if(kind<0||kind>SWMM_GROUND_HEAT_CHANNEL_CONTACT||first<0||count<0||(count&&!out))return SWMM_ERR_BADPARAM;
 #ifdef OPENSWMM_HAS_2D
     const auto& router=to_engine(engine)->surfaceRouter2D();const int n=router.mesh().n_cells();
     if(first>n||count>n-first)return SWMM_ERR_BADINDEX;
@@ -154,9 +154,10 @@ int swmm_heat_get_ground_values(SWMM_Engine engine,int kind,int first,int count,
             case SWMM_GROUND_HEAT_WATER_CONTACT_ENERGY:out[k]=c.water_contact_j;break;
             case SWMM_GROUND_HEAT_RESIDUAL:out[k]=soilResidual(c,energy);break;
             case SWMM_GROUND_HEAT_PENDING_LATERAL:out[k]=router.subsurface().pendingHeat(first+k);break;
+            case SWMM_GROUND_HEAT_CHANNEL_CONTACT:out[k]=c.channel_contact_j;break;
             default:{
                 double scale=capacity+std::abs(c.initial_j);
-                for(double v:{c.advective_j,c.source_j,c.surface_j,c.deep_j,c.latent_j,c.lateral_j,c.water_contact_j})scale+=std::abs(v);
+                for(double v:{c.advective_j,c.source_j,c.surface_j,c.deep_j,c.latent_j,c.lateral_j,c.water_contact_j,c.channel_contact_j})scale+=std::abs(v);
                 for(double v:column.energy)scale+=std::abs(v);
                 out[k]=soilResidual(c,energy)/std::max(1.,scale);break;
             }

@@ -48,6 +48,7 @@
 #include "gw/GwTransportData.hpp"
 #include "quality/SurfaceQuality2D.hpp"   // S7
 #include "subsurface/SubsurfaceSolver.hpp"   // G1: the two-zone GW kernel
+#include "heat/ChannelGround.hpp"
 #include "infil/Infil2D.hpp"
 #include "mesh/RainfallInterpolator.hpp"
 
@@ -96,6 +97,9 @@ public:
      * @param ctx Simulation context (must have mesh_2d populated from parsing).
      */
     void initialize(SimulationContext& ctx);
+    /// Bind selected finite channel contacts after 1D heat state is seeded.
+    void initializeChannelGround(SimulationContext& ctx);
+    const ChannelGroundState& channelGround() const noexcept {return channel_ground_;}
     /// Internal qualification hook: externally owned stage, all cells managed,
     /// wall boundaries, no live 1D exchanges. Does not activate authored ownership.
     void setCommonSourceStage(SimulationContext& ctx, CommonSourceStage& stage);
@@ -518,6 +522,7 @@ private:
 
     MeshData         mesh_;
     SurfaceStateData state_;
+    ChannelGroundState channel_ground_;
     SolverOptions2D  options_;
     BoundaryData     boundary_;
     std::vector<std::string> thread_warnings_;   ///< See threadWarnings().

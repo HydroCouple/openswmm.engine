@@ -1239,6 +1239,7 @@ class HeatSedimentParam(IntEnum):
     @cvar DENSITY: Bed bulk density, kg/m3, > 0.
     @cvar SPECIFIC_HEAT: Bed specific heat, J/kg/K, > 0.
     @cvar INITIAL_TEMPERATURE: Initial bed temperature, degC.
+    @cvar GROUND_SOURCE: Dimensionless selector: 0 prescribed, 1 finite mesh contacts.
     """
 
     THERMAL_DIFFUSIVITY = 0
@@ -1251,6 +1252,7 @@ class HeatSedimentParam(IntEnum):
     SPECIFIC_HEAT = 7
     INITIAL_TEMPERATURE = 8
     MESH_POROSITY = 9
+    GROUND_SOURCE = 10
 
 
 class HeatAttr(IntEnum):
@@ -1275,6 +1277,7 @@ class HeatAttr(IntEnum):
     SEDIMENT_DENSITY = 12
     SEDIMENT_SPECIFIC_HEAT = 13
     MESH_POROSITY = 14
+    GROUND_SOURCE = 15
 
 
 class HeatOverrideScope(IntEnum):

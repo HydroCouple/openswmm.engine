@@ -158,8 +158,13 @@ SWMM_ENGINE_API int swmm_heat_get_module(SWMM_Engine engine, int module,
 SWMM_ENGINE_API int swmm_heat_set_module(SWMM_Engine engine, int module,
                                          int on) {
     CHECK_HANDLE(engine);
-    auto& cfg = to_engine(engine)->context().heat_config;
+    auto& ctx=to_engine(engine)->context();auto& cfg=ctx.heat_config;
     const bool b = (on != 0);
+    if(module==SWMM_HEAT_SEDIMENT_EXCHANGE&&b&&!cfg.sediment_exchange&&ctx.options.heat_transport&&ctx.heat_state.mesh_contact_link.empty()) {
+        bool mesh=cfg.sediment.mesh_ground;
+        for(const auto& row:cfg.overrides.rows)if(row.attr==openswmm::HeatAttr::SED_GROUND_SOURCE&&row.value==1)mesh=true;
+        if(mesh){CHECK_EDITABLE(ctx);}
+    }
     switch (module) {
         case SWMM_HEAT_SURFACE_EXCHANGE:   cfg.surface_exchange   = b; break;
         case SWMM_HEAT_RADIATIVE_EXCHANGE: cfg.radiative_exchange = b; break;
@@ -701,7 +706,8 @@ static_assert(SWMM_HEAT_ATTR_SEDIMENT_SPECIFIC_HEAT ==
               SWMM_HEAT_ATTR_LANDCOVER_TEMPERATURE ==
                   static_cast<int>(HeatAttr::LANDCOVER_TEMP) &&
               SWMM_HEAT_ATTR_MESH_POROSITY == static_cast<int>(HeatAttr::SED_MESH_POROSITY) &&
-              SWMM_HEAT_ATTR_MESH_POROSITY + 1 ==
+              SWMM_HEAT_ATTR_GROUND_SOURCE == static_cast<int>(HeatAttr::SED_GROUND_SOURCE) &&
+              SWMM_HEAT_ATTR_GROUND_SOURCE + 1 ==
                   static_cast<int>(HeatAttr::COUNT_),
               "SWMM_HeatAttr must mirror openswmm::HeatAttr");
 static_assert(SWMM_HEAT_SCOPE_TAG == static_cast<int>(HeatScope::TAG) &&
@@ -723,6 +729,7 @@ int sediment_attr(int param) {
         case SWMM_HEAT_SED_DENSITY:             return static_cast<int>(HeatAttr::SED_DENSITY);
         case SWMM_HEAT_SED_SPECIFIC_HEAT:       return static_cast<int>(HeatAttr::SED_SPECIFIC_HEAT);
         case SWMM_HEAT_SED_MESH_POROSITY:       return static_cast<int>(HeatAttr::SED_MESH_POROSITY);
+        case SWMM_HEAT_SED_GROUND_SOURCE:       return static_cast<int>(HeatAttr::SED_GROUND_SOURCE);
         default:                                return -1;
     }
 }
@@ -742,6 +749,23 @@ std::vector<std::string> reresolve(openswmm::SimulationContext& ctx) {
 
 }  // namespace
 
+SWMM_ENGINE_API int swmm_heat_ground_source_configured(SWMM_Engine engine,int* configured) {
+    CHECK_HANDLE(engine);if(!configured)return SWMM_ERR_BADPARAM;
+    *configured=to_engine(engine)->context().heat_config.sediment.ground_source_configured;return SWMM_OK;
+}
+SWMM_ENGINE_API int swmm_heat_clear_ground_source(SWMM_Engine engine) {
+    CHECK_HANDLE(engine);auto& ctx=to_engine(engine)->context();CHECK_EDITABLE(ctx);
+    try {
+        auto before=ctx.heat_config;
+        try {
+            ctx.heat_config.sediment.mesh_ground=false;ctx.heat_config.sediment.ground_source_configured=false;
+            if(reresolve(ctx).empty())return SWMM_OK;
+            ctx.heat_config=std::move(before);return SWMM_ERR_BADPARAM;
+        } catch(...) {ctx.heat_config=std::move(before);throw;}
+    } catch(const std::bad_alloc&) {return SWMM_ERR_NOMEM;}
+      catch(...) {return SWMM_ERR_INTERNAL;}
+}
+
 SWMM_ENGINE_API int swmm_heat_get_sediment(SWMM_Engine engine, int param,
                                            double* value) {
     CHECK_HANDLE(engine);
@@ -758,6 +782,7 @@ SWMM_ENGINE_API int swmm_heat_get_sediment(SWMM_Engine engine, int param,
         case SWMM_HEAT_SED_SPECIFIC_HEAT:       *value = sd.sed_specific_heat;   break;
         case SWMM_HEAT_SED_INITIAL_TEMPERATURE: *value = sd.initial_temp;        break;
         case SWMM_HEAT_SED_MESH_POROSITY:       *value = sd.mesh_porosity; break;
+        case SWMM_HEAT_SED_GROUND_SOURCE:       *value = sd.mesh_ground?1:0; break;
         default: return SWMM_ERR_BADINDEX;
     }
     return SWMM_OK;
@@ -767,7 +792,7 @@ SWMM_ENGINE_API int swmm_heat_set_sediment(SWMM_Engine engine, int param,
                                            double value) {
     CHECK_HANDLE(engine);
     if (param < SWMM_HEAT_SED_THERMAL_DIFFUSIVITY ||
-        param > SWMM_HEAT_SED_MESH_POROSITY)
+        param > SWMM_HEAT_SED_GROUND_SOURCE)
         return SWMM_ERR_BADINDEX;
     if (!std::isfinite(value)) return SWMM_ERR_BADPARAM;
     const int attr = sediment_attr(param);
@@ -775,6 +800,8 @@ SWMM_ENGINE_API int swmm_heat_set_sediment(SWMM_Engine engine, int param,
     if (attr >= 0 && !openswmm::transport::heatAttrValueOk(static_cast<HeatAttr>(attr), value))
         return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
+    if(param==SWMM_HEAT_SED_GROUND_SOURCE){CHECK_EDITABLE(ctx);}
+    if(param==SWMM_HEAT_SED_BED_THICKNESS&&!ctx.heat_state.mesh_contact_link.empty()){CHECK_EDITABLE(ctx);}
 #ifdef OPENSWMM_HAS_2D
     if(ctx.twod_io.options&&ctx.twod_io.options->coupled_heat&&ctx.twod_io.options->bed_heat_model>0&&
        (param==SWMM_HEAT_SED_BED_THICKNESS||param==SWMM_HEAT_SED_DENSITY||param==SWMM_HEAT_SED_SPECIFIC_HEAT||
@@ -796,6 +823,7 @@ SWMM_ENGINE_API int swmm_heat_set_sediment(SWMM_Engine engine, int param,
         case SWMM_HEAT_SED_DENSITY:             sd.sed_density         = value; break;
         case SWMM_HEAT_SED_SPECIFIC_HEAT:       sd.sed_specific_heat   = value; break;
         case SWMM_HEAT_SED_MESH_POROSITY:       sd.mesh_porosity       = value; break;
+        case SWMM_HEAT_SED_GROUND_SOURCE:       sd.mesh_ground=value!=0;sd.ground_source_configured=true;break;
         case SWMM_HEAT_SED_INITIAL_TEMPERATURE:
             sd.initial_temp     = value;
             sd.has_initial_temp = true;
@@ -880,6 +908,7 @@ SWMM_ENGINE_API int swmm_heat_set_element_override(SWMM_Engine engine, int attr,
     // The bed zone exists beneath conduits only (parser rule).
     if (openswmm::isSedimentAttr(a) && scope == SWMM_HEAT_SCOPE_NODE)
         return SWMM_ERR_BADPARAM;
+    if(a==HeatAttr::SED_GROUND_SOURCE&&scope!=SWMM_HEAT_SCOPE_TAG&&scope!=SWMM_HEAT_SCOPE_LINK)return SWMM_ERR_BADPARAM;
     if (!openswmm::transport::heatAttrValueOk(a, value)) return SWMM_ERR_BADPARAM;
 
     auto& cfg = ctx.heat_config;
@@ -917,7 +946,7 @@ SWMM_ENGINE_API int swmm_heat_get_effective_element(SWMM_Engine engine,
     int attr, int scope, const char* name, double* value, int* source,
     char* source_name, int source_name_len) {
     CHECK_HANDLE(engine);
-    if (!name || !value || !source || attr<0 || attr>SWMM_HEAT_ATTR_MESH_POROSITY
+    if (!name || !value || !source || attr<0 || attr>SWMM_HEAT_ATTR_GROUND_SOURCE
         || (scope!=SWMM_HEAT_SCOPE_NODE && scope!=SWMM_HEAT_SCOPE_LINK && scope!=SWMM_HEAT_SCOPE_CELL2D)
         || (scope==SWMM_HEAT_SCOPE_NODE && attr>=SWMM_HEAT_ATTR_THERMAL_DIFFUSIVITY))
         return SWMM_ERR_BADPARAM;
@@ -947,7 +976,7 @@ SWMM_ENGINE_API int swmm_heat_get_effective_element(SWMM_Engine engine,
         const int params[]={SWMM_HEAT_SED_THERMAL_DIFFUSIVITY,SWMM_HEAT_SED_SOLUTE_DIFFUSIVITY,
             SWMM_HEAT_SED_BED_THICKNESS,SWMM_HEAT_SED_GROUND_DEPTH,SWMM_HEAT_SED_GROUND_TEMPERATURE,
             SWMM_HEAT_SED_HYPORHEIC_VELOCITY,SWMM_HEAT_SED_DENSITY,SWMM_HEAT_SED_SPECIFIC_HEAT,
-            SWMM_HEAT_SED_MESH_POROSITY};
+            SWMM_HEAT_SED_MESH_POROSITY,SWMM_HEAT_SED_GROUND_SOURCE};
         rc=swmm_heat_get_sediment(engine,params[attr-SWMM_HEAT_ATTR_THERMAL_DIFFUSIVITY],value);
     }
     if(rc!=SWMM_OK)return rc;

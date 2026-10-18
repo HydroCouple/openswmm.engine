@@ -56,6 +56,7 @@
 #include "../2d/subsurface/SubsurfaceSections.hpp"   // G1
 #endif
 #include "../transport/components/HeatFluxModules/HeatOverrides.hpp"  // PE2
+#include "../transport/components/HeatFluxModules/BedExchange.hpp"
 #include "../transport/components/HeatFluxModules/SurfaceExchange.hpp" // dew point -> RH
 #include "../plugins/DefaultInputPlugin.hpp"
 #include "../plugins/ProcessComponentRegistry.hpp"
@@ -740,6 +741,29 @@ int SWMMEngine::open(const char* inp_path,
         runoff::RunoffSolver* runoff_ptr = &runoff_;
         groundwater::GWSolver* gw_ptr    = &groundwater_;
 
+        ctx_.state_accessors.get_channel_thermal_regions = [this]() {
+            if(ctx_.options.quality_solver==QualitySolverKind::EULERIAN_ARD&&ard_.initialized())return ard_.thermalRegions();
+            if(ctx_.options.quality_solver==QualitySolverKind::LAGRANGIAN&&lard_.initialized())return lard_.thermalRegions(ctx_);
+            std::vector<ChannelThermalRegion> out;
+            if(!ctx_.options.heat_transport)return out;
+            for(int link=0;link<ctx_.n_links();++link)
+                if(std::size_t(link)<ctx_.heat_state.link_temp.size()&&ctx_.links.volume[link]>0)
+                {
+                    out.push_back({link,0,0,1,ctx_.links.volume[link]*.028316846592,ctx_.heat_state.link_temp[link]});
+                    transport::heat::fillChannelThermalGeometry(ctx_,out.back());
+                }
+            return out;
+        };
+        ctx_.state_accessors.apply_channel_thermal_increments = [this](const std::vector<ChannelThermalIncrement>& updates)->std::string {
+            if(ctx_.options.quality_solver==QualitySolverKind::EULERIAN_ARD&&ard_.initialized())return ard_.applyThermalIncrements(ctx_,updates);
+            if(ctx_.options.quality_solver==QualitySolverKind::LAGRANGIAN&&lard_.initialized())return lard_.applyThermalIncrements(ctx_,updates);
+            for(const auto& u:updates)
+                if(u.link<0||std::size_t(u.link)>=ctx_.heat_state.link_temp.size()||u.region!=0||!std::isfinite(u.celsius)||
+                   !std::isfinite(ctx_.heat_state.link_temp[u.link]+u.celsius))return "Legacy thermal increment has an invalid channel region.";
+            for(const auto& u:updates)ctx_.heat_state.link_temp[u.link]+=u.celsius;
+            return {};
+        };
+
         ctx_.state_accessors.get_snow_state = [this]() {
 #ifdef OPENSWMM_HAS_2D
             const auto* mesh=surface_router_.isActive()?&surface_router_.state().snow:nullptr;
@@ -838,6 +862,15 @@ int SWMMEngine::initialize() noexcept {
                   "swmm_engine_initialize: must call open() first");
         return SWMM_ERR_WRONG_STATE;
     }
+
+#ifndef OPENSWMM_HAS_2D
+    if(ctx_.options.heat_transport&&ctx_.heat_config.sediment_exchange)
+        for(int link=0;link<ctx_.n_links();++link)
+            if(transport::heat::sedimentFor(ctx_,HeatElement::link(link)).mesh_ground) {
+                set_error(CFFI_ERR_BADPARAM,"MESH_CONTACTS channel heat requires an engine with 2D routing support.");
+                return CFFI_ERR_BADPARAM;
+            }
+#endif
 
     // Everything from here to init_modules() is the "state seeding" phase —
     // per-node/per-link loops over ctx_. Closed out just before init_modules(),
@@ -7952,6 +7985,10 @@ void SWMMEngine::init_modules() noexcept {
     { perf::ScopedTimer _pt(perf::sec_init_hydrology);  initHydrology();  }
     { perf::ScopedTimer _pt(perf::sec_init_quality);    initQuality();    }
     { perf::ScopedTimer _pt(perf::sec_init_geometry);   initGeometry();   }
+#ifdef OPENSWMM_HAS_2D
+    try {surface_router_.initializeChannelGround(ctx_);}
+    catch(const std::exception& e){ctx_.errors.push_back(std::string("Channel ground heat initialization failed: ")+e.what());set_error(CFFI_ERR_BADPARAM,ctx_.errors.back().c_str());}
+#endif
     initMassBalance();
 
     // Allocate forcing arrays to match object counts

@@ -52,6 +52,40 @@ namespace openswmm::transport {
 namespace fvk = openswmm::transport::fvkernels;
 namespace k   = openswmm::fv::kernels;
 
+std::vector<ChannelThermalRegion> ArdEngine::thermalRegions() const {
+    std::vector<ChannelThermalRegion> out;if(!initialized_||temp_row_<0)return out;
+    const auto nc=std::size_t(mesh_.n_cells());out.reserve(nc);
+    for(std::size_t r=0;r<mesh_.conduit_cell_begin.size();++r) {
+        const int begin=mesh_.conduit_cell_begin[r],count=mesh_.conduit_cell_count[r];
+        double length=0;for(int k=0;k<count;++k)length+=mesh_.cell_dx[begin+k];if(!(length>0))continue;
+        double along=0;
+        for(int k=0;k<count;++k) {
+            const int c=begin+k;const double dx=mesh_.cell_dx[c],volume=state_.cell_a[c]*dx*.028316846592;
+            if(volume>0) {
+                out.push_back({mesh_.conduit_link[r],c,along/length,(along+dx)/length,
+                    volume,state_.cell_phi[std::size_t(temp_row_)*nc+c]});
+                auto& region=out.back();const auto& g=mesh_.geom[mesh_.cell_geom[c]];
+                const double depth=fv::kernels::depthOfArea(g,state_.cell_a[c]),radius=fv::kernels::hydRadOfDepth(g,depth);
+                region.length=dx*.3048;region.depth=depth*.3048;
+                region.surface_area=g.is_open?fv::kernels::widthOfDepth(g,depth)*dx*.09290304:0;
+                region.bed_area=radius>0?state_.cell_a[c]/radius*dx*.09290304:0;
+            }
+            along+=dx;
+        }
+    }
+    return out;
+}
+std::string ArdEngine::applyThermalIncrements(SimulationContext& ctx,const std::vector<ChannelThermalIncrement>& updates) {
+    if(!initialized_||temp_row_<0)return "ARD channel thermal state is unavailable.";
+    const auto nc=std::size_t(mesh_.n_cells()),row=std::size_t(temp_row_)*nc;
+    for(const auto& u:updates)
+        if(u.region<0||std::size_t(u.region)>=nc||cellLink(std::size_t(u.region))!=u.link||
+           !std::isfinite(u.celsius)||!std::isfinite(state_.cell_phi[row+u.region]+u.celsius))
+            return "ARD thermal increment does not match its finite channel region.";
+    for(const auto& u:updates)state_.cell_phi[row+u.region]+=u.celsius;
+    publish(ctx);return {};
+}
+
 namespace {
 /// CFL number for the advection subcycling. Conservative: the kernels are
 /// TVD at CFL ≤ 1; 0.9 leaves headroom for the projected-flux ramp.
@@ -1436,6 +1470,8 @@ void ArdEngine::applyBedSoluteExchange(SimulationContext& ctx, double dt) {
     const auto une = static_cast<std::size_t>(n_exch);
 
     for (std::size_t c = 0; c < unc; ++c) {
+        const int mesh_link=cellLink(c);
+        if(mesh_link>=0&&std::size_t(mesh_link)<ctx.heat_state.mesh_contact_link.size()&&ctx.heat_state.mesh_contact_link[mesh_link])continue;
         const auto gi = static_cast<std::size_t>(mesh_.cell_geom[c]);
         if (gi >= mesh_.geom.size()) continue;
         const auto& g = mesh_.geom[gi];
@@ -1527,6 +1563,8 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
     const auto tr  = static_cast<std::size_t>(temp_row_);
     const auto unc = static_cast<std::size_t>(mesh_.n_cells());
     for (std::size_t c = 0; c < unc; ++c) {
+        const int mesh_link=cellLink(c);
+        if(mesh_link>=0&&std::size_t(mesh_link)<ctx.heat_state.mesh_contact_link.size()&&ctx.heat_state.mesh_contact_link[mesh_link])continue;
         const auto gi = static_cast<std::size_t>(mesh_.cell_geom[c]);
         if (gi >= mesh_.geom.size()) continue;
         const auto& g = mesh_.geom[gi];

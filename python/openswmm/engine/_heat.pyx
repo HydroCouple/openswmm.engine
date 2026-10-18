@@ -692,6 +692,17 @@ class _HeatSediment:
     def __iter__(self) -> Iterator[HeatSedimentParam]:
         return iter(HeatSedimentParam)
 
+    @property
+    def ground_source_configured(self) -> bool:
+        """Whether GLOBAL GROUND_SOURCE was explicitly authored, including PRESCRIBED."""
+        cdef int configured
+        _check(swmm_heat_ground_source_configured(_h(self._solver),&configured))
+        return bool(configured)
+
+    def clear_ground_source(self) -> None:
+        """Restore the absent/default PRESCRIBED channel ground selection before a run."""
+        _check(swmm_heat_clear_ground_source(_h(self._solver)))
+
     def __getitem__(self, key) -> float:
         cdef double value = 0.0
         param = _member(HeatSedimentParam, key)
@@ -1148,10 +1159,10 @@ class Heat:
     def ground_values(self, int kind, int first_cell, int count) -> list[float]:
         """Canonical soil values over zero-based mesh cells; unmodeled cells are NaN.
 
-        Kinds 0..13 match SWMM_GroundHeatValue: energy (J), capacity (J/K),
+        Kinds 0..14 match SWMM_GroundHeatValue: energy (J), capacity (J/K),
         mean temperature (degC), initial/advective/source/surface/deep/latent/
         lateral/water-contact energy (J), residual (J), normalized residual
-        (dimensionless), pending lateral energy (J). Positive receipts enter soil.
+        (dimensionless), pending lateral energy (J), channel-contact energy (J). Positive receipts enter soil.
         """
         if count<0:
             raise ValueError("count must be nonnegative")
