@@ -2275,8 +2275,11 @@ CF/UGRID-aware reader. Four keys shape it:
 | `BUILDUP` | `Mesh2_face_buildup`, when `[2D_COVERAGES]` rows resolved | yes |
 | `GROUNDWATER` | the per-cell `Mesh2_face_gw_*` fields, the groundwater ledger and the node-exchange cumulative, when a mesh aquifer resolved | yes |
 | `GW_DETAILED` | `Mesh2_face_gw_theta_sigma` per layer and face — \f$m\f$ layers × nFace per step | no |
+| `HEAT` | Water, mesh bed, and soil temperature/energy/capacity fields; fixed-grid soil layers; signed cumulative thermal receipts and residuals | no |
 
-*Table 9-4 The fourteen `REPORT_2D_VARIABLES` tokens*
+*Table 9-4 The fifteen `REPORT_2D_VARIABLES` tokens*
+
+`HEAT` is opt-in and writes fields only when the corresponding thermal owner is initialized. Face fields use SI units and the `[time, face]` layout; soil-layer fields use `[time, layer, face]`, with the top layer first and a static center-depth field in metres. Unowned cells/layers are NaN. `mesh_heat_budget` and `ground_heat_budget` use `[time, face, term]`, units of joules, and carry named term/sign-convention attributes. Their receipts are cumulative from initialization; internal water/bed and water/channel contacts are signed and cancel in the combined owner balance. The groundwater budget residual is stored energy minus initial energy and the listed cumulative receipts. `HEAT` is excluded from `DEFAULT` to preserve existing results-file contents; add it explicitly or select `ALL` to write it.
 
 **`REPORT_2D_SPECIES`** narrows the `SPECIES` group to a list of species
 names (`ALL`, the default, writes every transported species). The

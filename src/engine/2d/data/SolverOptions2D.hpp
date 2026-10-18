@@ -194,7 +194,8 @@ enum Var : unsigned {
     BUILDUP      = 1u << 11, ///< S7: Mesh2_face_buildup (when [2D_COVERAGES] rows resolved)
     GROUNDWATER  = 1u << 12, ///< G-O: Mesh2_face_gw_* per-cell fields, groundwater_ledger, groundwater_node_exchange_cum (when a [2D_AQUIFER] resolved)
     GW_DETAILED  = 1u << 13, ///< G-O: Mesh2_face_gw_theta_sigma [time, layer, face] — m × nFace per step
-    ALL_MASK     = (1u << 14) - 1u,
+    HEAT         = 1u << 14, ///< Thermal temperatures, soil layers, and signed cumulative heat budgets
+    ALL_MASK     = (1u << 15) - 1u,
     /// DEFAULT: everything a user renders or plots; solver diagnostics off.
     DEFAULT_MASK = DEPTH | VELOCITY | EDGE_FLUX | NODE_HEAD | SPECIES |
                    RAINFALL | INFILTRATION | ENVELOPES | BUILDUP | GROUNDWATER,

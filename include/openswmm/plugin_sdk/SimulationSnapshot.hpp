@@ -363,6 +363,34 @@ struct SimulationSnapshot {
     /// is the parallel name list (null when there are no beds).
     std::vector<double>             gw2d_bed_exchange_cum;
     const std::vector<std::string>* gw2d_node_names = nullptr;
+
+    // P9 thermal result contract. Values are copied from accepted runtime
+    // owners on the simulation thread; energy terms are cumulative signed J.
+    // Missing cells/layers are NaN so a report never fabricates a temperature.
+    bool thermal2d_active = false;
+    int thermal2d_layer_count = 0;
+    int thermal2d_surface_budget_terms = 6;
+    int thermal2d_ground_budget_terms = 11;
+    std::vector<double> thermal2d_water_temperature; ///< degC, face
+    std::vector<double> thermal2d_bed_temperature;   ///< degC, face
+    std::vector<double> thermal2d_bed_energy;        ///< J, face
+    std::vector<double> thermal2d_bed_capacity;      ///< J K-1, face
+    /// [face, term]: radiation, sensible, latent, deep boundary, water->bed,
+    /// accepted non-advective water increment. All terms are cumulative J.
+    std::vector<double> thermal2d_surface_budget;
+    std::vector<double> thermal2d_evaporation_m3; ///< cumulative accepted evaporation, face
+    std::vector<double> thermal2d_ground_temperature; ///< capacity-weighted degC, face
+    std::vector<double> thermal2d_ground_energy;      ///< J, face
+    std::vector<double> thermal2d_ground_capacity;    ///< J K-1, face
+    /// [layer, face], fixed-grid depth positive downward.
+    std::vector<double> thermal2d_ground_layer_center_m;
+    std::vector<double> thermal2d_ground_layer_temperature;
+    std::vector<double> thermal2d_ground_layer_energy;
+    std::vector<double> thermal2d_ground_layer_capacity;
+    /// [face, term]: initial, advective, source, surface, deep, latent,
+    /// lateral, water contact, channel contact, residual, pending lateral.
+    std::vector<double> thermal2d_ground_budget;
+
     std::vector<double> surface_edge_flux;      ///< Normal flux through each edge, flat [tri*3+edge]
     std::vector<double> surface_vert_head;      ///< Reconstructed head at vertices (m) — SOLVER field (dry-cell head = bed)
     std::vector<double> surface_vert_depth;     ///< SIGNED vertex depth η_v − z_v (m) — wet-masked, wetted-contact-gated render reconstruction; > 0 where water reaches the vertex, 0 = no-data sentinel (older engines also emitted negatives on the dry side of partially wet cells — readers stay negative-tolerant)

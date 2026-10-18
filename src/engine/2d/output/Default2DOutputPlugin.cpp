@@ -973,6 +973,44 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
             extendAndWrite3D(ds_gw_theta_, snap.gw2d_theta_sigma.data(), n_gw_layers_, n_faces_);
     }
 
+    // P9: optional thermal fields are created only for an active thermal
+    // owner. Their absent-vs-NaN semantics distinguish an unavailable model
+    // from an uncovered cell in a model that is active elsewhere.
+    if (want(report2d::HEAT) && snap.thermal2d_active) {
+        if (!heat_created_) createThermalDatasets(snap);
+        auto writeThermalFace = [&](hid_t ds, const std::vector<double>& v) {
+            if (ds != H5I_INVALID_HID && v.size() == static_cast<std::size_t>(n_faces_))
+                extendAndWrite2D(ds, v.data(), n_faces_);
+        };
+        writeThermalFace(ds_heat_water_temp_, snap.thermal2d_water_temperature);
+        writeThermalFace(ds_heat_bed_temp_, snap.thermal2d_bed_temperature);
+        writeThermalFace(ds_heat_bed_energy_, snap.thermal2d_bed_energy);
+        writeThermalFace(ds_heat_bed_capacity_, snap.thermal2d_bed_capacity);
+        writeThermalFace(ds_heat_evaporation_, snap.thermal2d_evaporation_m3);
+        writeThermalFace(ds_heat_ground_temp_, snap.thermal2d_ground_temperature);
+        writeThermalFace(ds_heat_ground_energy_, snap.thermal2d_ground_energy);
+        writeThermalFace(ds_heat_ground_capacity_, snap.thermal2d_ground_capacity);
+        if (ds_heat_surface_budget_ != H5I_INVALID_HID && snap.thermal2d_surface_budget_terms > 0 &&
+            snap.thermal2d_surface_budget.size() ==
+                static_cast<std::size_t>(n_faces_) * snap.thermal2d_surface_budget_terms)
+            extendAndWrite3D(ds_heat_surface_budget_, snap.thermal2d_surface_budget.data(),
+                n_faces_, static_cast<hsize_t>(snap.thermal2d_surface_budget_terms));
+        if (n_heat_layers_ > 0) {
+            const auto expected = static_cast<std::size_t>(n_heat_layers_ * n_faces_);
+            if (ds_heat_layer_temp_ != H5I_INVALID_HID && snap.thermal2d_ground_layer_temperature.size() == expected)
+                extendAndWrite3D(ds_heat_layer_temp_, snap.thermal2d_ground_layer_temperature.data(), n_heat_layers_, n_faces_);
+            if (ds_heat_layer_energy_ != H5I_INVALID_HID && snap.thermal2d_ground_layer_energy.size() == expected)
+                extendAndWrite3D(ds_heat_layer_energy_, snap.thermal2d_ground_layer_energy.data(), n_heat_layers_, n_faces_);
+            if (ds_heat_layer_capacity_ != H5I_INVALID_HID && snap.thermal2d_ground_layer_capacity.size() == expected)
+                extendAndWrite3D(ds_heat_layer_capacity_, snap.thermal2d_ground_layer_capacity.data(), n_heat_layers_, n_faces_);
+        }
+        if (ds_heat_ground_budget_ != H5I_INVALID_HID && snap.thermal2d_ground_budget_terms > 0 &&
+            snap.thermal2d_ground_budget.size() ==
+                static_cast<std::size_t>(n_faces_) * snap.thermal2d_ground_budget_terms)
+            extendAndWrite3D(ds_heat_ground_budget_, snap.thermal2d_ground_budget.data(),
+                n_faces_, static_cast<hsize_t>(snap.thermal2d_ground_budget_terms));
+    }
+
     // Per-node fields
     if (ds_node_head_ != H5I_INVALID_HID &&
         snap.surface_vert_head.size() == static_cast<std::size_t>(n_nodes_))
@@ -993,6 +1031,92 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
     if(checkpoint_write_failed_)return 1;
     ++n_steps_;
     return 0;
+}
+
+void Default2DOutputPlugin::createThermalDatasets(const SimulationSnapshot& snap) {
+    heat_created_ = true;
+    const hsize_t zero2[2]{0, n_faces_}, face_chunk[2]{1, std::min<hsize_t>(n_faces_, 4096)};
+    auto createFace = [&](const char* name, const char* label, const char* units) {
+        hid_t ds = createUnlimitedDataset(name, 2, zero2, face_chunk);
+        writeStringAttr(ds, "long_name", label);
+        writeStringAttr(ds, "units", units);
+        writeStringAttr(ds, "mesh", "Mesh2");
+        writeStringAttr(ds, "location", "face");
+        writeStringAttr(ds, "missing_values", "NaN means this cell has no owner for the reported quantity");
+        return ds;
+    };
+    auto createBudget = [&](const char* name, const char* label, int terms, const char* names) -> hid_t {
+        if (terms <= 0) return H5I_INVALID_HID;
+        const hsize_t zero3[3]{0, n_faces_, static_cast<hsize_t>(terms)};
+        const hsize_t chunk3[3]{1, std::min<hsize_t>(n_faces_, 1024), static_cast<hsize_t>(terms)};
+        hid_t ds = createUnlimitedDataset(name, 3, zero3, chunk3);
+        writeStringAttr(ds, "long_name", label);
+        writeStringAttr(ds, "units", "J");
+        writeStringAttr(ds, "mesh", "Mesh2");
+        writeStringAttr(ds, "location", "face");
+        writeStringAttr(ds, "layout", "[time, face, term]");
+        writeStringAttr(ds, "terms", names);
+        writeStringAttr(ds, "cell_methods", "time: sum (cumulative since initialization)");
+        return ds;
+    };
+    if (snap.thermal2d_water_temperature.size() == static_cast<std::size_t>(n_faces_))
+        ds_heat_water_temp_ = createFace("Mesh2_face_water_temperature", "overland water temperature", "degree_Celsius");
+    if (snap.thermal2d_bed_temperature.size() == static_cast<std::size_t>(n_faces_)) {
+        ds_heat_bed_temp_ = createFace("Mesh2_face_bed_temperature", "mesh bed temperature", "degree_Celsius");
+        ds_heat_bed_energy_ = createFace("Mesh2_face_bed_energy", "mesh bed sensible energy relative to 0 Celsius", "J");
+        ds_heat_bed_capacity_ = createFace("Mesh2_face_bed_heat_capacity", "mesh bed heat capacity", "J K-1");
+    }
+    if (snap.thermal2d_surface_budget.size() == static_cast<std::size_t>(n_faces_) * snap.thermal2d_surface_budget_terms) {
+        ds_heat_surface_budget_ = createBudget("mesh_heat_budget", "Mesh surface thermal receipts", snap.thermal2d_surface_budget_terms,
+            "radiation_j,sensible_j,latent_j,deep_boundary_j,water_to_bed_j,water_thermal_increment_j");
+        writeStringAttr(ds_heat_surface_budget_, "sign_convention",
+            "positive into the named external store; water_to_bed_j is positive water to bed and is internal to the combined system");
+    }
+    if (snap.thermal2d_evaporation_m3.size() == static_cast<std::size_t>(n_faces_))
+        ds_heat_evaporation_ = createFace("Mesh2_face_accepted_evaporation_cum", "cumulative accepted surface evaporation", "m3");
+    if (snap.thermal2d_ground_temperature.size() == static_cast<std::size_t>(n_faces_)) {
+        ds_heat_ground_temp_ = createFace("Mesh2_face_soil_temperature", "capacity-weighted soil temperature", "degree_Celsius");
+        ds_heat_ground_energy_ = createFace("Mesh2_face_soil_energy", "soil sensible energy relative to 0 Celsius", "J");
+        ds_heat_ground_capacity_ = createFace("Mesh2_face_soil_heat_capacity", "soil heat capacity", "J K-1");
+    }
+    n_heat_layers_ = static_cast<hsize_t>(std::max(0, snap.thermal2d_layer_count));
+    const auto layer_size = static_cast<std::size_t>(n_heat_layers_ * n_faces_);
+    if (n_heat_layers_ > 0 && snap.thermal2d_ground_layer_temperature.size() == layer_size &&
+        snap.thermal2d_ground_layer_energy.size() == layer_size &&
+        snap.thermal2d_ground_layer_capacity.size() == layer_size) {
+        const hsize_t zero3[3]{0, n_heat_layers_, n_faces_};
+        const hsize_t chunk3[3]{1, n_heat_layers_, std::min<hsize_t>(n_faces_, 2048)};
+        auto createLayer = [&](const char* name, const char* label, const char* units) {
+            hid_t ds = createUnlimitedDataset(name, 3, zero3, chunk3);
+            writeStringAttr(ds, "long_name", label); writeStringAttr(ds, "units", units);
+            writeStringAttr(ds, "mesh", "Mesh2"); writeStringAttr(ds, "location", "face");
+            writeStringAttr(ds, "layout", "[time, layer, face]; layers are fixed-depth thermal stores, top layer first");
+            writeStringAttr(ds, "missing_values", "NaN means this cell has no thermal layer at that index");
+            return ds;
+        };
+        ds_heat_layer_temp_ = createLayer("Mesh2_face_soil_layer_temperature", "fixed-grid soil layer temperature", "degree_Celsius");
+        ds_heat_layer_energy_ = createLayer("Mesh2_face_soil_layer_energy", "fixed-grid soil layer sensible energy relative to 0 Celsius", "J");
+        ds_heat_layer_capacity_ = createLayer("Mesh2_face_soil_layer_heat_capacity", "fixed-grid soil layer heat capacity", "J K-1");
+        if (snap.thermal2d_ground_layer_center_m.size() == layer_size) {
+            const hsize_t dims[2]{n_heat_layers_, n_faces_};
+            hid_t space = H5Screate_simple(2, dims, nullptr);
+            hid_t ds = H5Dcreate2(file_id_, "Mesh2_face_soil_layer_center_depth", storage_type_, space,
+                                  H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+            checkpointWriteStatus(H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
+                                          snap.thermal2d_ground_layer_center_m.data()));
+            writeStringAttr(ds, "long_name", "fixed-grid soil layer center depth below ground surface");
+            writeStringAttr(ds, "units", "m"); writeStringAttr(ds, "mesh", "Mesh2"); writeStringAttr(ds, "location", "face");
+            writeStringAttr(ds, "layout", "[layer, face]; depth positive downward; NaN means no layer");
+            H5Dclose(ds); H5Sclose(space);
+        }
+    }
+    if (snap.thermal2d_ground_budget.size() == static_cast<std::size_t>(n_faces_) * snap.thermal2d_ground_budget_terms) {
+        ds_heat_ground_budget_ = createBudget("ground_heat_budget", "Ground thermal state and cumulative receipts", snap.thermal2d_ground_budget_terms,
+            "initial_j,advective_j,source_j,surface_boundary_j,deep_boundary_j,latent_j,lateral_net_j,water_contact_j,channel_contact_j,residual_j,pending_lateral_j");
+        writeStringAttr(ds_heat_ground_budget_, "sign_convention",
+            "cumulative signed receipts; contact terms are internal and equal-opposite on paired stores; residual is stored energy minus initial and receipts");
+    }
+    writeStringAttr(file_id_, "thermal_result_schema_version", "1");
 }
 
 // Snow fields follow the rainfall report selection. They carry their actual
@@ -1315,7 +1439,7 @@ void Default2DOutputPlugin::checkpointWriteStatus(herr_t status) {
 }
 
 std::vector<hid_t*> Default2DOutputPlugin::checkpointDatasets() {
-    std::vector<hid_t*> ids{&ds_time_, &ds_face_depth_, &ds_face_head_, &ds_face_grad_hx_, &ds_face_grad_hy_, &ds_face_grad_hx_lim_, &ds_face_grad_hy_lim_, &ds_face_rainfall_, &ds_face_coupling_flux_, &ds_face_net_source_, &ds_face_infil_rate_, &ds_face_infil_cum_, &ds_face_rain_cum_, &ds_face_species_conc_, &ds_face_buildup_, &ds_gw_sat_conc_, &ds_gw_unsat_conc_, &ds_gw_species_ledger_, &ds_gw_ledger_, &ds_gw_bed_exchange_, &ds_gw_theta_, &ds_face_vx_, &ds_face_vy_, &ds_face_continuity_err_, &ds_edge_flux_, &ds_node_head_, &ds_node_depth_, &ds_face_max_depth_, &ds_face_max_velocity_, &ds_face_max_continuity_err_};
+    std::vector<hid_t*> ids{&ds_time_, &ds_face_depth_, &ds_face_head_, &ds_face_grad_hx_, &ds_face_grad_hy_, &ds_face_grad_hx_lim_, &ds_face_grad_hy_lim_, &ds_face_rainfall_, &ds_face_coupling_flux_, &ds_face_net_source_, &ds_face_infil_rate_, &ds_face_infil_cum_, &ds_face_rain_cum_, &ds_face_species_conc_, &ds_face_buildup_, &ds_gw_sat_conc_, &ds_gw_unsat_conc_, &ds_gw_species_ledger_, &ds_gw_ledger_, &ds_gw_bed_exchange_, &ds_gw_theta_, &ds_heat_water_temp_, &ds_heat_bed_temp_, &ds_heat_bed_energy_, &ds_heat_bed_capacity_, &ds_heat_surface_budget_, &ds_heat_evaporation_, &ds_heat_ground_temp_, &ds_heat_ground_energy_, &ds_heat_ground_capacity_, &ds_heat_layer_temp_, &ds_heat_layer_energy_, &ds_heat_layer_capacity_, &ds_heat_ground_budget_, &ds_face_vx_, &ds_face_vy_, &ds_face_continuity_err_, &ds_edge_flux_, &ds_node_head_, &ds_node_depth_, &ds_face_max_depth_, &ds_face_max_velocity_, &ds_face_max_continuity_err_};
     for (auto& id : ds_gw_face_) ids.push_back(&id);
     for (auto& id : ds_snow_) ids.push_back(&id);
     return ids;
@@ -1347,6 +1471,19 @@ void Default2DOutputPlugin::closeDatasets() noexcept {
     closeDS(ds_gw_ledger_);
     closeDS(ds_gw_bed_exchange_);
     closeDS(ds_gw_theta_);
+    closeDS(ds_heat_water_temp_);
+    closeDS(ds_heat_bed_temp_);
+    closeDS(ds_heat_bed_energy_);
+    closeDS(ds_heat_bed_capacity_);
+    closeDS(ds_heat_surface_budget_);
+    closeDS(ds_heat_evaporation_);
+    closeDS(ds_heat_ground_temp_);
+    closeDS(ds_heat_ground_energy_);
+    closeDS(ds_heat_ground_capacity_);
+    closeDS(ds_heat_layer_temp_);
+    closeDS(ds_heat_layer_energy_);
+    closeDS(ds_heat_layer_capacity_);
+    closeDS(ds_heat_ground_budget_);
     closeDS(ds_face_vx_);
     closeDS(ds_face_vy_);
     closeDS(ds_face_continuity_err_);

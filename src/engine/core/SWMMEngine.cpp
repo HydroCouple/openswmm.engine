@@ -7073,6 +7073,137 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
             snap.gw2d_bed_exchange_cum.clear(); snap.gw2d_node_names = nullptr;
         }
     }
+
+    // P9: copy the canonical thermal owners into the immutable output
+    // snapshot. Reports use the accepted, cumulative joule receipts already
+    // maintained by the mesh/aquifer kernels; no flux is reconstructed from
+    // report-time temperatures.
+    {
+        const std::size_t n = static_cast<std::size_t>(msh.n_cells());
+        const double missing = std::numeric_limits<double>::quiet_NaN();
+        const auto& heat = st.heat;
+        const auto& transport = st.transport;
+        snap.thermal2d_active = heat.enabled || surface_router_.subsurface().heat().active() ||
+                                transport.temp_row >= 0;
+
+        if (transport.temp_row >= 0 && transport.n_cells == static_cast<int>(n)) {
+            snap.thermal2d_water_temperature.assign(n, missing);
+            for (std::size_t i = 0; i < n; ++i) {
+                const double volume = i < st.volume.size() ? st.volume[i] : 0.0;
+                if (volume > 0.0) {
+                    const auto k = transport.idx(transport.temp_row, static_cast<int>(i));
+                    if (k < transport.cell_mass.size())
+                        snap.thermal2d_water_temperature[i] = transport.cell_mass[k] / volume;
+                } else if (heat.enabled && i < heat.reported_temperature.size()) {
+                    snap.thermal2d_water_temperature[i] = heat.reported_temperature[i];
+                }
+            }
+        } else {
+            snap.thermal2d_water_temperature.clear();
+        }
+
+        if (heat.enabled) {
+            if (heat.bed && heat.bed_energy.size() == n && heat.bed_capacity.size() == n) {
+                snap.thermal2d_bed_energy = heat.bed_energy;
+                snap.thermal2d_bed_capacity = heat.bed_capacity;
+                snap.thermal2d_bed_temperature.assign(n, missing);
+                for (std::size_t i = 0; i < n; ++i)
+                    if (heat.bed_capacity[i] > 0.0)
+                        snap.thermal2d_bed_temperature[i] = heat.bed_energy[i] / heat.bed_capacity[i];
+            } else {
+                snap.thermal2d_bed_energy.clear();
+                snap.thermal2d_bed_capacity.clear();
+                snap.thermal2d_bed_temperature.clear();
+            }
+            snap.thermal2d_surface_budget.assign(n * 6, 0.0);
+            const std::vector<double>* terms[] = {&heat.radiative_j, &heat.sensible_j,
+                &heat.latent_j, &heat.ground_j, &heat.water_bed_j, &heat.water_j};
+            for (std::size_t term = 0; term < 6; ++term)
+                if (terms[term]->size() == n)
+                    for (std::size_t i = 0; i < n; ++i)
+                        snap.thermal2d_surface_budget[i * 6 + term] = (*terms[term])[i];
+            snap.thermal2d_evaporation_m3 = heat.evaporated_m3.size() == n
+                ? heat.evaporated_m3 : std::vector<double>{};
+        } else {
+            snap.thermal2d_bed_energy.clear();
+            snap.thermal2d_bed_capacity.clear();
+            snap.thermal2d_bed_temperature.clear();
+            snap.thermal2d_surface_budget.clear();
+            snap.thermal2d_evaporation_m3.clear();
+        }
+
+        const auto& aquifer_heat = surface_router_.subsurface().heat();
+        std::vector<const twoD::GroundThermalCell*> cells(n, nullptr);
+        std::vector<const twoD::PorousHeatColumn*> columns(n, nullptr);
+        int layers = 0;
+        for (std::size_t i = 0; i < n; ++i) {
+            const twoD::GroundHeatState* owner = nullptr;
+            if (heat.ground_column) {
+                if (i < heat.aquifer_owned.size() && heat.aquifer_owned[i] && heat.aquifer_ground)
+                    owner = heat.aquifer_ground;
+                else
+                    owner = &heat.standalone_ground;
+            } else if (aquifer_heat.active()) {
+                owner = &aquifer_heat;
+            }
+            if (!owner || i >= owner->cells.size() || owner->cells[i].column.energy.empty()) continue;
+            cells[i] = &owner->cells[i];
+            columns[i] = &owner->cells[i].column;
+            layers = std::max(layers, static_cast<int>(columns[i]->energy.size()));
+        }
+        if (layers > 0) {
+            snap.thermal2d_layer_count = layers;
+            snap.thermal2d_ground_temperature.assign(n, missing);
+            snap.thermal2d_ground_energy.assign(n, missing);
+            snap.thermal2d_ground_capacity.assign(n, missing);
+            const auto layer_size = static_cast<std::size_t>(layers) * n;
+            snap.thermal2d_ground_layer_center_m.assign(layer_size, missing);
+            snap.thermal2d_ground_layer_temperature.assign(layer_size, missing);
+            snap.thermal2d_ground_layer_energy.assign(layer_size, missing);
+            snap.thermal2d_ground_layer_capacity.assign(layer_size, missing);
+            snap.thermal2d_ground_budget.assign(n * 11, missing);
+            for (std::size_t i = 0; i < n; ++i) {
+                if (!cells[i]) continue;
+                const auto& cell = *cells[i];
+                const auto& column = *columns[i];
+                double total_energy = 0.0, total_capacity = 0.0;
+                for (std::size_t j = 0; j < column.energy.size(); ++j) {
+                    const auto k = j * n + i;
+                    snap.thermal2d_ground_layer_center_m[k] =
+                        0.5 * (column.depth_edges[j + 1] + column.depth_edges[j]);
+                    snap.thermal2d_ground_layer_energy[k] = column.energy[j];
+                    snap.thermal2d_ground_layer_capacity[k] = column.capacity[j];
+                    snap.thermal2d_ground_layer_temperature[k] = column.energy[j] / column.capacity[j];
+                    total_energy += column.energy[j];
+                    total_capacity += column.capacity[j];
+                }
+                if (total_capacity > 0.0) {
+                    snap.thermal2d_ground_energy[i] = total_energy;
+                    snap.thermal2d_ground_capacity[i] = total_capacity;
+                    snap.thermal2d_ground_temperature[i] = total_energy / total_capacity;
+                }
+                const double residual = total_energy - cell.initial_j - cell.advective_j -
+                    cell.source_j - cell.surface_j - cell.deep_j - cell.latent_j -
+                    cell.lateral_j - cell.water_contact_j - cell.channel_contact_j;
+                const double pending = surface_router_.subsurface().pendingHeat(static_cast<int>(i));
+                const double values[11] = {cell.initial_j, cell.advective_j, cell.source_j,
+                    cell.surface_j, cell.deep_j, cell.latent_j, cell.lateral_j,
+                    cell.water_contact_j, cell.channel_contact_j, residual, pending};
+                std::copy(values, values + 11, snap.thermal2d_ground_budget.begin() +
+                    static_cast<std::ptrdiff_t>(i * 11));
+            }
+        } else {
+            snap.thermal2d_layer_count = 0;
+            snap.thermal2d_ground_temperature.clear();
+            snap.thermal2d_ground_energy.clear();
+            snap.thermal2d_ground_capacity.clear();
+            snap.thermal2d_ground_layer_center_m.clear();
+            snap.thermal2d_ground_layer_temperature.clear();
+            snap.thermal2d_ground_layer_energy.clear();
+            snap.thermal2d_ground_layer_capacity.clear();
+            snap.thermal2d_ground_budget.clear();
+        }
+    }
 #else
     (void)snap;
 #endif

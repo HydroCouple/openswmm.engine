@@ -31,6 +31,7 @@ inline const std::vector<std::string>& tokens() {
         "INFILTRATION", "COUPLING", "GRADIENTS", "CONTINUITY", "ENVELOPES",
         "BUILDUP",   // S7
         "GROUNDWATER", "GW_DETAILED",   // G-O
+        "HEAT",
     };
     return kTokens;
 }

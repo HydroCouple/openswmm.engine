@@ -261,7 +261,7 @@ Table 9-2 Momentum closures of the 2D marcher
 
 Table 9-3 Diagonal selection of the two-plane quadrilateral closure (Begnudelli and Sanders, 2007, Cases 1–3)
 
-Table 9-4 The fourteen `REPORT_2D_VARIABLES` tokens
+Table 9-4 The fifteen `REPORT_2D_VARIABLES` tokens
 
 Table 9-5 The forty-two live `[2D_OPTIONS]` keys and the theory each selects
 

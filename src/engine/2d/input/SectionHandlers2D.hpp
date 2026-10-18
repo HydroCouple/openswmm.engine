@@ -255,7 +255,7 @@ bool is2DRetiredOptionKey(const std::string& key);
  *
  * report2DVarTokens() lists the group tokens in bit order (DEPTH, VELOCITY,
  * EDGE_FLUX, NODE_HEAD, SPECIES, RAINFALL, INFILTRATION, COUPLING,
- * GRADIENTS, CONTINUITY, ENVELOPES, BUILDUP (S7), GROUNDWATER, GW_DETAILED
+ * GRADIENTS, CONTINUITY, ENVELOPES, BUILDUP (S7), GROUNDWATER, GW_DETAILED, HEAT
  * (G-O)). parseReport2DVars() accepts a
  * whitespace/comma-separated list of those tokens or one of the presets
  * DEFAULT | MINIMAL | ALL (case-insensitive); it returns an empty error
