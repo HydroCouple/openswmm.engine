@@ -317,6 +317,13 @@ TEST(GroundHeat, MeshRichardsBottomReceiptUsesSequentialDonorEnergy) {
     ASSERT_TRUE(gw.retainLidReceipts(0,5,{receipt}).empty());
     ASSERT_EQ(gw.pendingLidReceipts()[0].size(),1u);
     EXPECT_DOUBLE_EQ(gw.pendingLidReceipts()[0][0].down_j,stale_j);
+    const auto before_energy=lid.thermal_energy;
+    lid.quality_transfers.back().volume=transfer_ft3*.5;
+    EXPECT_FALSE(gw.completeLidThermalInterval(ctx).empty());
+    EXPECT_EQ(lid.thermal_energy,before_energy);
+    EXPECT_DOUBLE_EQ(gw.pendingLidReceipts()[0][0].down_j,stale_j);
+    EXPECT_FALSE(gw.pendingLidReceipts()[0][0].heat_applied);
+    lid.quality_transfers.back().volume=transfer_ft3;
     ASSERT_TRUE(gw.completeLidThermalInterval(ctx).empty());
     EXPECT_TRUE(gw.pendingLidReceipts()[0][0].heat_applied);
     EXPECT_NEAR(gw.pendingLidReceipts()[0][0].down_j,packet_j[1],
