@@ -261,6 +261,12 @@ std::string initializeMeshHeat(SimulationContext& ctx,const MeshData& mesh,Surfa
     h.surface_inherits=options.heat_surface<0;h.radiative_inherits=options.heat_radiative<0;
     h.surface=options.heat_surface<0?ctx.heat_config.surface_exchange:options.heat_surface!=0;
     h.radiative=options.heat_radiative<0?ctx.heat_config.radiative_exchange:options.heat_radiative!=0;
+    if(h.bed&&state.transport.n_species>0) {
+        h.bed_species=state.transport.n_species;
+        h.bed_age_row=state.transport.age_row;
+        h.bed_temp_row=state.transport.temp_row;
+        state.transport.gained_bed.assign(static_cast<std::size_t>(h.bed_species),0);
+    }
     const auto errors=transport::heat::resolveHeatOverrides(ctx);
     if(!errors.empty())return errors.front();
     const auto n=std::size_t(mesh.n_cells());
@@ -311,10 +317,8 @@ std::string initializeMeshHeat(SimulationContext& ctx,const MeshData& mesh,Surfa
             if(!std::isfinite(h.bed_pore_volume[i]))return "Local bed porewater volume must be finite.";
         }
         if(state.transport.n_species>0) {
-            h.bed_species=state.transport.n_species;h.bed_age_row=state.transport.age_row;h.bed_temp_row=state.transport.temp_row;
             h.bed_carried_mass.assign(n*h.bed_species,0);
             h.bed_initial_mass=h.bed_carried_mass;h.bed_exchange_mass=h.bed_carried_mass;h.bed_generated_age.assign(n,0);
-            state.transport.gained_bed.assign(h.bed_species,0);
         }
     }
     return {};
@@ -350,11 +354,82 @@ std::string configureGroundLidOwners(SimulationContext& ctx,const MeshData& mesh
     return {};
 }
 double applyLocalBedSpecies(const MeshData& mesh,MeshHeatState& h,int i,int r,double mass,double volume,double dt) noexcept {
-    if(!h.enabled||!h.bed||h.ground_column||r==h.bed_temp_row||r<0||r>=h.bed_species||!(volume>0)||!(dt>0))return mass;
-    const double pores=h.bed_pore_volume[i];if(!(pores>0))return mass;
-    const auto k=std::size_t(r)*h.bed_pore_volume.size()+i;
+    if(!h.enabled||!h.bed||r==h.bed_temp_row||r<0||r>=h.bed_species||!(volume>0)||!(dt>0))return mass;
     const auto& sc=sedimentFor(*h.context,HeatElement::cell2d(i));
-    const double q=mesh.tri_area[i]*(sc.solute_diffusivity/sc.bed_thickness+(h.hyporheic_eligible[i]?sc.hyporheic_velocity:0));
+    if(h.ground_column) {
+        if(i<0||std::size_t(i)>=h.aquifer_owned.size()||!h.aquifer_owned[i]||!h.aquifer_ground||
+           std::size_t(i)>=h.aquifer_ground->cells.size()||!(sc.bed_thickness>0)||
+           !std::isfinite(sc.bed_thickness)||sc.solute_diffusivity<0||!std::isfinite(sc.solute_diffusivity)||
+           sc.hyporheic_velocity<0||!std::isfinite(sc.hyporheic_velocity)||!std::isfinite(mass)||mass<0) {
+            h.failures[i]=1;return mass;
+        }
+        auto& ground=h.aquifer_ground->cells[std::size_t(i)];
+        auto& pore=ground.porewater;const auto& column=ground.column;
+        const auto nl=column.theta.size();
+        if(!pore.active()||std::size_t(r)>=std::size_t(pore.n_species)||pore.n_species!=h.bed_species||
+           column.depth_edges.size()!=nl+1||pore.mass.size()!=std::size_t(pore.n_species)*nl||
+           pore.retention.size()!=pore.mass.size()||pore.reserved_out.size()!=pore.mass.size()||
+           !std::isfinite(column.area)||!(column.area>0)) {h.failures[i]=1;return mass;}
+        const double mesh_area=mesh.tri_area[std::size_t(i)];
+        const double channel_area=h.channel_footprint.empty()?0.0:h.channel_footprint[std::size_t(i)];
+        if(!(mesh_area>0)||!std::isfinite(mesh_area)||channel_area<0||!std::isfinite(channel_area)||
+           channel_area>mesh_area*(1+1e-10)) {h.failures[i]=1;return mass;}
+        const double contact_area=std::max(0.0,mesh_area-std::min(channel_area,mesh_area));
+        const double velocity=std::size_t(i)<h.hyporheic_eligible.size()&&h.hyporheic_eligible[std::size_t(i)]
+            ?sc.hyporheic_velocity:0.0;
+        const double rate=sc.solute_diffusivity/sc.bed_thickness+velocity;
+        if(!(contact_area>0)||!(rate>0))return mass;
+        double total_pore_overlap=0;
+        for(std::size_t j=0;j<nl;++j) {
+            const double overlap=std::max(0.0,std::min(column.depth_edges[j+1],sc.bed_thickness)-column.depth_edges[j]);
+            total_pore_overlap+=column.theta[j]*overlap;
+        }
+        if(!(total_pore_overlap>0))return mass;
+
+        // The surface store contacts every fixed soil layer intersected by
+        // the bed. Solve this star-shaped finite system as one backward-Euler
+        // update; sequential pair updates would make the result depend on
+        // layer order. Reserved accepted groundwater exports remain outside
+        // the contact donor inventory until their owning gather settles them.
+        std::vector<double> qdt(nl,0.0),active_mass(nl,0.0),capacity(nl,0.0);
+        const auto base=std::size_t(r)*nl;
+        double denominator=volume,numerator=mass;
+        for(std::size_t j=0;j<nl;++j) {
+            const double overlap=std::max(0.0,std::min(column.depth_edges[j+1],sc.bed_thickness)-column.depth_edges[j]);
+            if(!(overlap>0)||!(column.theta[j]>0))continue;
+            const double bulk=column.area*(column.depth_edges[j+1]-column.depth_edges[j]);
+            capacity[j]=column.theta[j]*bulk+pore.retention[base+j];
+            active_mass[j]=pore.contactAvailableMass(r,j);
+            qdt[j]=dt*rate*contact_area*(column.theta[j]*overlap/total_pore_overlap);
+            if(!(capacity[j]>0)||!std::isfinite(capacity[j])||!std::isfinite(active_mass[j])||active_mass[j]<0||
+               !std::isfinite(qdt[j])||qdt[j]<0) {h.failures[i]=1;return mass;}
+            if(qdt[j]==0)continue;
+            const double conductance_dt=qdt[j];
+            const double denominator_j=capacity[j]+conductance_dt;
+            const double weight=conductance_dt*capacity[j]/denominator_j;
+            denominator+=weight;
+            numerator+=weight*(active_mass[j]/capacity[j]);
+        }
+        if(!(denominator>0)||!std::isfinite(denominator)||!std::isfinite(numerator)) {h.failures[i]=1;return mass;}
+        const double surface_concentration=numerator/denominator;
+        if(!std::isfinite(surface_concentration)||surface_concentration<0) {h.failures[i]=1;return mass;}
+        auto next=pore;double total_transfer=0;
+        for(std::size_t j=0;j<nl;++j)if(qdt[j]>0) {
+            const double soil_concentration=(active_mass[j]+qdt[j]*surface_concentration)/(capacity[j]+qdt[j]);
+            const double increment=qdt[j]*(surface_concentration-soil_concentration);
+            if(!std::isfinite(increment)||!next.canApplyContactMassIncrement(r,j,increment)||
+               !next.applyContactMassIncrement(r,j,increment)) {h.failures[i]=1;return mass;}
+            total_transfer+=increment;
+        }
+        const double next_surface=mass-total_transfer;
+        if(!std::isfinite(total_transfer)||!std::isfinite(next_surface)||next_surface<0) {h.failures[i]=1;return mass;}
+        pore=std::move(next);return next_surface;
+    }
+    if(i<0||std::size_t(i)>=h.bed_pore_volume.size())return mass;
+    const double pores=h.bed_pore_volume[std::size_t(i)];if(!(pores>0))return mass;
+    const auto k=std::size_t(r)*h.bed_pore_volume.size()+std::size_t(i);
+    const double q=mesh.tri_area[std::size_t(i)]*(sc.solute_diffusivity/sc.bed_thickness+
+        (h.hyporheic_eligible[std::size_t(i)]?sc.hyporheic_velocity:0));
     if(!(q>0))return mass;
     const auto delta=exchangePair(mass/volume,h.bed_carried_mass[k]/pores,volume,pores,q,dt);
     const double next=volume*(mass/volume+delta.dc_w),transfer=mass-next,bed=h.bed_carried_mass[k]+transfer;

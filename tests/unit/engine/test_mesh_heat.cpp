@@ -430,6 +430,50 @@ TEST(MeshHeat, LocalBedTracerAndAgeRunOnBothActualSpeciesKernelsWithSeparateExch
         ASSERT_EQ(swmm_engine_end(m.e),SWMM_OK);
     }
 }
+TEST(MeshHeat, GroundColumnSurfaceHyporheicTracerAndAgeUseFiniteSharedPorewater) {
+    LocalHeat f("ground-column-surface-porewater");ASSERT_NE(f.model.e,nullptr);
+    auto& config=f.model.ctx().heat_config.sediment;
+    config.bed_thickness=.3;config.solute_diffusivity=0;config.hyporheic_velocity=.001;
+    openswmm::twoD::ThermalMaterial material;material.porosity=.4;
+    openswmm::twoD::GroundHeatState ground;ground.cells.resize(2);
+    for(auto& cell:ground.cells) {
+        ASSERT_TRUE(cell.column.initialize(50,{0,.3,1.0},material,{.3,.3},{10,10}).empty());
+        cell.saturated_water={.1,.1};
+        ASSERT_TRUE(cell.porewater.initialize(cell.column,cell.saturated_water,
+            {2,20,0},{148,1480,0},{0,0,0},1,2).empty());
+    }
+    openswmm::twoD::MeshHeatState heat;
+    heat.context=&f.model.ctx();heat.enabled=true;heat.bed=true;heat.ground_column=true;
+    heat.bed_species=3;heat.bed_age_row=1;heat.bed_temp_row=2;heat.aquifer_ground=&ground;
+    heat.aquifer_owned={1,1};heat.hyporheic_eligible={1,0};heat.channel_footprint={25,0};heat.failures={0,0};
+
+    const double dye_before=ground.cells[0].porewater.mass[0]+ground.cells[0].porewater.mass[1];
+    const double dye_surface=openswmm::twoD::applyLocalBedSpecies(f.mesh(),heat,0,0,0,5,60);
+    const double age_before=ground.cells[0].porewater.mass[2]+ground.cells[0].porewater.mass[3];
+    const double age_surface=openswmm::twoD::applyLocalBedSpecies(f.mesh(),heat,0,1,0,5,60);
+    ASSERT_GT(dye_surface,0);ASSERT_GT(age_surface,0);
+    const double qdt=.001*25*60,soil_capacity=4.5,water_capacity=5;
+    const double attenuation=qdt*soil_capacity/(soil_capacity+qdt);
+    const double dye_expected=water_capacity*(attenuation*10)/(water_capacity+attenuation);
+    const double age_expected=water_capacity*(attenuation*100)/(water_capacity+attenuation);
+    EXPECT_NEAR(dye_surface,dye_expected,1e-11);
+    EXPECT_NEAR(age_surface,age_expected,1e-10);
+    EXPECT_NEAR(dye_surface+ground.cells[0].porewater.mass[0]+ground.cells[0].porewater.mass[1],dye_before,1e-11);
+    EXPECT_NEAR(age_surface+ground.cells[0].porewater.mass[2]+ground.cells[0].porewater.mass[3],age_before,1e-10);
+    EXPECT_NEAR(ground.cells[0].porewater.contact_mass[0]+ground.cells[0].porewater.contact_mass[1],
+                ground.cells[0].porewater.mass[0]+ground.cells[0].porewater.mass[1]-dye_before,1e-11);
+    EXPECT_EQ(ground.cells[1].porewater.mass[0]+ground.cells[1].porewater.mass[1],150);
+    EXPECT_EQ(heat.failures,std::vector<int>({0,0}));
+
+    auto protected_ground=ground;
+    auto& protected_pore=protected_ground.cells[0].porewater;
+    const double protected_mass=protected_pore.mass[0];
+    ASSERT_TRUE(protected_pore.reserveOutgoing(0,0,protected_mass));
+    auto protected_heat=heat;protected_heat.aquifer_ground=&protected_ground;
+    EXPECT_DOUBLE_EQ(openswmm::twoD::applyLocalBedSpecies(f.mesh(),protected_heat,0,0,0,5,60),0);
+    EXPECT_DOUBLE_EQ(protected_pore.mass[0],protected_mass);
+    EXPECT_DOUBLE_EQ(protected_pore.reserved_out[0],protected_mass);
+}
 TEST(MeshHeat, InitialBedQualitySeedsLocalPorewaterWithScopedPrecedenceAndAgeUnits) {
     const std::string extra =
         "[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0 0\n"

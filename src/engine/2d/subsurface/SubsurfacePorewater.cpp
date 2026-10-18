@@ -26,6 +26,25 @@ std::string SubsurfaceSolver::initPorewater() {
         return {};
     } catch(const std::exception& error){return error.what();}
 }
+std::string SubsurfaceSolver::refreshPorewaterContactLedger() {
+    if(tr_.gained_contact.empty())return {};
+    std::fill(tr_.gained_contact.begin(),tr_.gained_contact.end(),0.0);
+    for(int i=0;i<state_.n_cells;++i) {
+        const auto& cell=heat_.cells[std::size_t(i)];const auto& pore=cell.porewater;
+        if(!pore.active())continue;
+        const auto nl=cell.column.theta.size();
+        if(pore.contact_mass.size()!=std::size_t(tr_.n_species)*nl)
+            return "Ground porewater contact receipt layout differs from its species/layer state.";
+        for(int r=0;r<tr_.n_species;++r)if(r!=tr_.temp_row)for(std::size_t j=0;j<nl;++j) {
+            const double increment=pore.contact_mass[std::size_t(r)*nl+j];
+            const double next=tr_.gained_contact[std::size_t(r)]+increment;
+            if(!std::isfinite(increment)||!std::isfinite(next))
+                return "Ground porewater contact receipt is nonfinite.";
+            tr_.gained_contact[std::size_t(r)]=next;
+        }
+    }
+    return {};
+}
 void SubsurfaceSolver::bookPresetPorewaterOut(int i,int r,double target) noexcept {
     if(!heat_.active()||r==tr_.temp_row||!(target>0))return;
     auto& cell=heat_.cells[i];auto& pore=cell.porewater;if(!pore.active())return;

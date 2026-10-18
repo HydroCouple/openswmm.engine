@@ -179,6 +179,9 @@ public:
     double pendingHeat(int cell) const noexcept;
     std::string initHeat(SimulationContext&,const GwTransportData&);
     std::string initPorewater();
+    /// Rebuild the signed soil-side contact receipt from the canonical layer
+    /// increments after the mesh/channel synchronization has settled.
+    std::string refreshPorewaterContactLedger();
     /// Size the rows and seed both stores from `[GW_INITIAL_QUALITY]`.
     /// Separate from `initialize` because the row layout needs the resolved
     /// `[GW_*]` sections, which the router owns. @p names is the row layout's

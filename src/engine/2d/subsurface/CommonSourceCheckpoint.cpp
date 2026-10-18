@@ -53,13 +53,24 @@ void meshState(Archive& a,SurfaceStateData& s) {
         auto bytes=a.reading()?std::string{}:s.snow.saveCheckpoint();a(bytes);a.fixed(s.snow_catch);
         if(a.reading())if(auto error=s.snow.restoreCheckpoint(bytes);!error.empty())throw std::runtime_error(error);
     }
+    auto& t=s.transport;
     if(s.heat.enabled) {
-        std::string profile="accepted-boundary mesh thermal state v1";a(profile);
+        std::string profile=a.reading()?std::string{}:"accepted-boundary mesh thermal state v2";a(profile);
+        if(a.reading() && profile!="accepted-boundary mesh thermal state v1" &&
+           profile!="accepted-boundary mesh thermal state v2")
+            throw std::runtime_error("Unsupported accepted-boundary mesh thermal checkpoint profile.");
         checkpoint::meshHeat(a,s.heat);
         if(s.heat.reported_temperature.size()!=s.depth.size())
             throw std::runtime_error("Thermal mesh checkpoint cell shape differs from its surface.");
+        if(profile=="accepted-boundary mesh thermal state v2") {
+            std::string receipt_profile=a.reading()?std::string{}:"finite mesh bed species receipt ledger v1";a(receipt_profile);
+            if(a.reading() && receipt_profile!="finite mesh bed species receipt ledger v1")
+                throw std::runtime_error("Unsupported mesh bed species receipt checkpoint profile.");
+            a.fixed(t.gained_bed);
+        } else if(a.reading() && s.heat.bed && !t.gained_bed.empty()) {
+            throw std::runtime_error("Legacy mesh thermal checkpoint has no finite-bed species receipts; restart cannot preserve the bed mass budget.");
+        }
     }
-    auto& t=s.transport;
     a.fixed(t.cell_mass,t.lost_infiltration,t.lost_boundary,t.gained_external,t.lost_external,t.lost_coupling,
             t.exch_mass,t.exch_spill,t.gained_rainfall,t.gained_boundary,t.gained_coupling,
             t.gained_exfiltration,t.gained_washoff,t.cell_runoff_vol,t.coupling_src);
@@ -74,11 +85,13 @@ void meshState(Archive& a,SurfaceStateData& s) {
         for(const auto* values:{&t.cell_mass,&t.lost_infiltration,&t.lost_boundary,&t.gained_external,
             &t.lost_external,&t.lost_coupling,&t.exch_mass,&t.exch_spill,&t.gained_rainfall,
             &t.gained_boundary,&t.gained_coupling,&t.gained_exfiltration,&t.gained_washoff,&t.cell_runoff_vol,
-            &t.coupling_src})
+            &t.coupling_src,&t.gained_bed})
             for(double v:*values)if(!std::isfinite(v))throw std::runtime_error("Nonfinite t checkpoint state.");
         for(double v:s.volume)if(!std::isfinite(v)||v<0)throw std::runtime_error("Invalid checkpoint mesh water.");
         if(t.n_cells<0||t.n_species<0||t.cell_mass.size()!=std::size_t(t.n_cells)*std::size_t(t.n_species))
             throw std::runtime_error("Invalid checkpoint mesh transport shape.");
+        if(s.heat.enabled && s.heat.bed && t.n_species>0 && t.gained_bed.size()!=std::size_t(t.n_species))
+            throw std::runtime_error("Invalid checkpoint mesh bed species receipt shape.");
         for(std::size_t k=0;k<t.cell_mass.size();++k) {
             const int row=t.n_cells>0?int(k/std::size_t(t.n_cells)):-1;
             if(!std::isfinite(t.cell_mass[k])||(row!=t.temp_row&&t.cell_mass[k]<0))

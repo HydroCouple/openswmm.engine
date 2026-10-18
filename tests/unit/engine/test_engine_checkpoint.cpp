@@ -926,12 +926,15 @@ TEST(EngineCheckpoint, StandaloneLocalBedQualityStateContinuesAcrossRestart) {
     EXPECT_NE(ageMass(a.engine),age_initial);
     double generated_age=0;for(double value:a.engine.surfaceRouter2D().state().heat.bed_generated_age)generated_age+=value;
     EXPECT_GT(generated_age,0);
+    ASSERT_NE(a.engine.surfaceRouter2D().state().transport.gained_bed[dye],0);
     const auto checkpoint=root()/"surface-local-bed-quality-restart.chk";
     ASSERT_EQ(a.engine.saveCheckpoint(checkpoint.string()),"");
     ASSERT_EQ(b.engine.loadCheckpoint(checkpoint.string()),"");
     compare(a.engine,b.engine,"surface-local-bed-quality-restart-restored");
     EXPECT_EQ(a.engine.surfaceRouter2D().state().heat.bed_carried_mass,
               b.engine.surfaceRouter2D().state().heat.bed_carried_mass);
+    EXPECT_EQ(a.engine.surfaceRouter2D().state().transport.gained_bed,
+              b.engine.surfaceRouter2D().state().transport.gained_bed);
     int count=0;
     while(a.engine.context().elapsed_ms<a.engine.context().options.totalDurationMs()) {
         ASSERT_NO_THROW(step(a.engine));
@@ -943,6 +946,8 @@ TEST(EngineCheckpoint, StandaloneLocalBedQualityStateContinuesAcrossRestart) {
               b.engine.surfaceRouter2D().state().heat.bed_carried_mass);
     EXPECT_EQ(a.engine.surfaceRouter2D().state().transport.cell_mass,
               b.engine.surfaceRouter2D().state().transport.cell_mass);
+    EXPECT_EQ(a.engine.surfaceRouter2D().state().transport.gained_bed,
+              b.engine.surfaceRouter2D().state().transport.gained_bed);
 }
 
 #ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST

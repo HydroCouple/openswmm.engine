@@ -1496,6 +1496,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     configureSnowGroundContacts();
     if(state_.heat.ground_column&&subsurface_.heat().active())
         if(auto error=subsurface_.initPorewater();!error.empty())throw std::runtime_error("[2D porewater] "+error);
+    if(state_.heat.ground_column&&!subsurface_.transport().generated_age.empty()&&
+       (state_.transport.n_species!=subsurface_.transport().n_species||
+        state_.transport.row_names!=subsurface_.transport().row_names))
+        throw std::runtime_error("[2D porewater] Surface and groundwater quality row layouts must match for shared bed contacts.");
     if(subsurface_.heat().active()&&gw_.options.conduction&&gw_.options.surface_thermal_bc=="SURFACE_WATER")
         for(const auto& cell:subsurface_.heat().cells)
             if(!cell.column.energy.empty()&&!cell.surface_owned)
@@ -1882,6 +1886,8 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
         perf::ScopedTimer tm_adv(perf::sec_2d_advance);
         solver_->advance(sim_time_, sim_time_ + dt);  // always reaches target
     }
+    if(auto error=subsurface_.refreshPorewaterContactLedger();!error.empty())
+        throw std::runtime_error("[2D porewater] "+error);
     advanceDryGroundColumns(mesh_,options_,state_,dt);
     if(state_.heat.ground_column&&subsurface_.heat().active())
         for(std::size_t i=0;i<state_.heat.aquifer_owned.size();++i)

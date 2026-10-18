@@ -76,7 +76,12 @@ int enablePorewater(Model& m) {
     for(const auto& pair:{std::pair{"HEAT_MODEL","COUPLED"},{"BED_HEAT_MODEL","GROUND_COLUMN"},
                          {"HEAT_SURFACE_EXCHANGE","NO"},{"HEAT_RADIATIVE_EXCHANGE","NO"}}) {
         const int rc=swmm_options_set_ext(m.e,pair.first,pair.second);if(rc!=SWMM_OK)return rc;
-    }return m.start();
+    }
+    // Most groundwater porewater tests isolate accepted hydraulic transfers.
+    // Surface-bed diffusion has its own finite-contact regression and must be
+    // explicitly disabled here rather than silently changing those oracles.
+    if(const int rc=swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_SOLUTE_DIFFUSIVITY,0);rc!=SWMM_OK)return rc;
+    return m.start();
 }
 const std::string porewater_species="[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0\n"
     "[OPTIONS]\nWATER_AGE ON\n[GW_INITIAL_QUALITY]\n* SAT Dye 10\n* UNSAT Dye 10\n";
@@ -1395,6 +1400,43 @@ TEST(GroundHeat, RoutedChannelPollutantAndAgeExchangeWithSharedPorewaterConserva
         EXPECT_EQ(m.router().channelGround().channelSpeciesToGround(),
                  restored.router().channelGround().channelSpeciesToGround());
     }
+}
+TEST(GroundHeat, OverlandHyporheicSpeciesContactBooksReciprocalSurfaceAndSoilReceipts) {
+    Model m("overland-ground-porewater", "CLOSED_FORM", .5, false, porewater_species);
+    ASSERT_NE(m.e,nullptr);
+    for(const auto& pair:{std::pair{"HEAT_MODEL","COUPLED"},{"BED_HEAT_MODEL","GROUND_COLUMN"},
+                         {"HEAT_SURFACE_EXCHANGE","NO"},{"HEAT_RADIATIVE_EXCHANGE","NO"}})
+        ASSERT_EQ(swmm_options_set_ext(m.e,pair.first,pair.second),SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_BED_THICKNESS,.3),SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_SOLUTE_DIFFUSIVITY,0),SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_HYPORHEIC_VELOCITY,.001),SWMM_OK);
+    ASSERT_EQ(m.start(),SWMM_OK);
+    auto& router=m.router();auto& surface=router.state();auto& gw=router.subsurface();
+    ASSERT_TRUE(surface.heat.ground_column);ASSERT_EQ(surface.heat.hyporheic_eligible[0],1);
+    ASSERT_EQ(surface.heat.hyporheic_eligible[1],0);ASSERT_TRUE(gw.heat().cells[0].porewater.active());
+    const int dye=surface.transport.rowIndex("Dye"),ground_dye=gw.transport().rowIndex("Dye");
+    ASSERT_GE(dye,0);ASSERT_GE(ground_dye,0);ASSERT_EQ(surface.transport.row_names,gw.transport().row_names);
+    const auto si=surface.transport.idx(dye,0);
+    surface.volume[0]=5;surface.depth[0]=.1;surface.head[0]=.1;surface.transport.cell_mass[si]=0;
+    const double soil_initial=poreMass(gw.heat(),ground_dye);
+    const double soil_contact_before=gw.transport().gained_contact[ground_dye];
+    const double surface_contact_before=surface.transport.gained_bed[dye];
+    double actual=0;
+    ASSERT_EQ(swmm_coupling_advance_to(m.e,5,&actual),SWMM_OK)<<swmm_get_last_error_msg(m.e);
+    const double soil_delta=poreMass(gw.heat(),ground_dye)-soil_initial;
+    const double soil_receipt=gw.transport().gained_contact[ground_dye]-soil_contact_before;
+    const double surface_receipt=surface.transport.gained_bed[dye]-surface_contact_before;
+    EXPECT_NE(soil_delta,0);
+    EXPECT_NEAR(soil_delta,soil_receipt,1e-10);
+    EXPECT_NEAR(soil_receipt+surface_receipt,0,1e-10);
+    EXPECT_NEAR(gw.transport().residual(ground_dye),0,1e-9);
+    double layer_receipt=0;
+    for(const auto& cell:gw.heat().cells) {
+        const auto nl=cell.column.theta.size();
+        for(std::size_t j=0;j<nl;++j)layer_receipt+=cell.porewater.contact_mass[std::size_t(ground_dye)*nl+j];
+    }
+    EXPECT_NEAR(gw.transport().gained_contact[ground_dye],layer_receipt,1e-10);
+    EXPECT_GT(surface_receipt,0);
 }
 TEST(GroundHeat, ChannelContactsCanRunWithoutAnOverlandTemperatureRow) {
     Model m("channel-soil-only","CLOSED_FORM",.5,false,"[DWF]\nJ1 FLOW .01\n",true);ASSERT_NE(m.e,nullptr);

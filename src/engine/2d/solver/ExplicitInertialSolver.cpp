@@ -540,6 +540,9 @@ OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::applyCellSourceRow(
             const double before=mass;
             mass=applyLocalBedSpecies(*mesh_,state_->heat,i,r,mass,source.available,source.area_dt/mesh_->tri_area[i]);
             book(SourceLedger::BedExchange,r,mass-before);
+            if(mass!=before&&gw_&&state_->heat.ground_column&&std::size_t(i)<state_->heat.aquifer_owned.size()&&
+               state_->heat.aquifer_owned[std::size_t(i)])
+                gw_->heat().refreshView(i,gw_->transport());
         }
         if(r==tr.temp_row && state_->heat.enabled) {
             const double before=mass;
