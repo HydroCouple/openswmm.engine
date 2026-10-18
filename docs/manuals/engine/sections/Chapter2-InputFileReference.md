@@ -2596,7 +2596,7 @@ Parameters:
 Path    absolute path, or a path relative to the directory of the input file. Surrounding double quotes are stripped; an unquoted path containing spaces is rejoined from its tokens.
 
 Remarks:
-Only the first FILE line of the section is read. The conventional extension is `.2dm`, but the file is plain input-file text: any of [2D_OPTIONS], [2D_VERTICES], [2D_TRIANGLES], [2D_QUADS], [2D_INITIAL_VELOCITY], [2D_VERTEX_NODE_MAP], [2D_TRIANGLE_NODE_MAP], [2D_BOUNDARY_CONDITIONS], [2D_EDGE_CONVEYANCE], [2D_INITIAL_QUALITY], [2D_BOUNDARY_QUALITY], [2D_INFILTRATION_OPTIONS], [2D_INFILTRATION_DEFAULTS] and [2D_INFILTRATION], with the same grammar as here. It may not contain [2D_MESH_FILE] itself, and it does not carry the aquifer, coverage, loading, curb-length or [GW_*] sections, which stay in the main file.
+Only the first FILE line of the section is read. The conventional extension is `.2dm`, but the file is plain input-file text: any of [2D_OPTIONS], [2D_VERTICES], [2D_TRIANGLES], [2D_QUADS], [2D_INITIAL_VELOCITY], [2D_VERTEX_NODE_MAP], [2D_TRIANGLE_NODE_MAP], [2D_BOUNDARY_CONDITIONS], [2D_EDGE_CONVEYANCE], [2D_INITIAL_QUALITY], [2D_INITIAL_BED_QUALITY], [2D_BOUNDARY_QUALITY], [2D_INFILTRATION_OPTIONS], [2D_INFILTRATION_DEFAULTS] and [2D_INFILTRATION], with the same grammar as here. It may not contain [2D_MESH_FILE] itself, and it does not carry the aquifer, coverage, loading, curb-length or [GW_*] sections, which stay in the main file.
 
 The external file is parsed after the main file. Per section, the external file wins: a section present in both replaces the inline rows rather than adding to them, and its [2D_OPTIONS] values override inline ones. Its own `;; UNITS:` header is honoured (see [2D_VERTICES]). A missing or unreadable file is fatal when the model is opened for a run.
 
@@ -2826,7 +2826,7 @@ P1 .. P5    the method's positional parameters, laid out exactly as in [2D_INFIL
 Dest    LOST (default), SUBCATCH_AQUIFER or AQUIFER_2D.
 
 Remarks:
-The bare cell-index columns in [2D_INFILTRATION] and [2D_SNOW] are 1-based. The sections that spell CELL as a scope keyword ([2D_INITIAL_QUALITY], [2D_AQUIFER], the quality and [GW_*] sections) are 1-based as well, whereas the TRI columns of [2D_INITIAL_VELOCITY], [2D_BOUNDARY_CONDITIONS] and [2D_BOUNDARY_QUALITY] are 0-based. Only the lower bound is checked at parse; a cell beyond the mesh is reported at initialise. A cell row wins over any tag or `*` row of [2D_INFILTRATION_DEFAULTS].
+The bare cell-index columns in [2D_INFILTRATION] and [2D_SNOW] are 1-based. The sections that spell CELL as a scope keyword ([2D_INITIAL_QUALITY], [2D_INITIAL_BED_QUALITY], [2D_AQUIFER], the quality and [GW_*] sections) are 1-based as well, whereas the TRI columns of [2D_INITIAL_VELOCITY], [2D_BOUNDARY_CONDITIONS] and [2D_BOUNDARY_QUALITY] are 0-based. Only the lower bound is checked at parse; a cell beyond the mesh is reported at initialise. A cell row wins over any tag or `*` row of [2D_INFILTRATION_DEFAULTS].
 
 The section may also be placed in the external mesh file, where it replaces the inline rows.
 
@@ -3135,6 +3135,33 @@ The section may also be placed in the external mesh file. The surface transport 
 This section has no counterpart in SWMM 5.
 
 <!-- source: src/engine/2d/input/SectionHandlers2D.cpp:1124-1167 (registration 1213-1216); src/engine/2d/SurfaceRouter2D.cpp:1104-1160 -->
+
+### Section: [2D_INITIAL_BED_QUALITY] {#engine_manual_sect_2D_INITIAL_BED_QUALITY}
+
+Purpose:
+Sets initial pollutant or water-age concentration in the finite porewater of a local 2D mesh bed.
+
+Format:
+```
+*          Species  Conc
+TAG name   Species  Conc
+CELL n     Species  Conc
+```
+
+Parameters:
+name    a cell tag from [2D_TRIANGLES] or [2D_QUADS].
+n    1-based unified cell index.
+Species    name of a carried pollutant or reaction species, or `__WATER_AGE__` when water age is on. `__TEMPERATURE__` is not a bed species; bed temperature is initialized by the heat model.
+Conc    concentration in the species' units, or water age in hours. Must be finite and >= 0.
+
+Remarks:
+The same `*`, then TAG, then CELL precedence applies as in [2D_INITIAL_QUALITY]. The seeded mass is concentration × local-bed pore volume (cell area × bed thickness × porosity), and the seed is saved as the bed's initial mass for exchange accounting. This section requires `HEAT_MODEL COUPLED` and `BED_HEAT_MODEL LOCAL_STORAGE`. Groundwater-owned `GROUND_COLUMN` porewater is initialized through [GW_INITIAL_QUALITY]. Unknown species, unmatched tags, out-of-range cells or an inactive local bed are fatal at initialise.
+
+The section may also be placed in the external mesh file. The mesh bed and hyporheic formulation is in @ref hydraulics_ref_ch9_two_dimensional.
+
+This section has no counterpart in SWMM 5.
+
+<!-- source: src/engine/2d/input/SectionHandlers2D.cpp (2D_INITIAL_BED_QUALITY registration); src/engine/2d/SurfaceRouter2D.cpp (local bed porewater initialization) -->
 
 ### Section: [2D_BOUNDARY_QUALITY] {#engine_manual_sect_2D_BOUNDARY_QUALITY}
 

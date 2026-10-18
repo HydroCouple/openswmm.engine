@@ -372,6 +372,43 @@ TEST(MeshHeat, LocalBedTracerAndAgeRunOnBothActualSpeciesKernelsWithSeparateExch
         ASSERT_EQ(swmm_engine_end(m.e),SWMM_OK);
     }
 }
+TEST(MeshHeat, InitialBedQualitySeedsLocalPorewaterWithScopedPrecedenceAndAgeUnits) {
+    const std::string extra =
+        "[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0 0\n"
+        "[OPTIONS]\nWATER_AGE YES\n"
+        "[2D_INITIAL_BED_QUALITY]\n"
+        "* Dye 2\nTAG forest Dye 5\nCELL 2 Dye 8\n"
+        "* __WATER_AGE__ 1\n";
+    Model m("local-bed-initial-quality", extra);
+    ASSERT_NE(m.e, nullptr);
+    ASSERT_EQ(swmm_options_set_ext(m.e, "HEAT_MODEL", "COUPLED"), SWMM_OK);
+    ASSERT_EQ(swmm_options_set_ext(m.e, "BED_HEAT_MODEL", "LOCAL_STORAGE"), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(m.e, SWMM_HEAT_SED_BED_THICKNESS, .3), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(m.e, SWMM_HEAT_SED_MESH_POROSITY, .4), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(m.e), SWMM_OK) << swmm_get_last_error_msg(m.e);
+
+    const auto& router = static_cast<openswmm::SWMMEngine*>(m.e)->surfaceRouter2D();
+    const auto& state = router.state();
+    const auto& heat = state.heat;
+    const auto& transport = state.transport;
+    const int dye = transport.rowIndex("Dye");
+    const int age = transport.age_row;
+    ASSERT_GE(dye, 0);
+    ASSERT_GE(age, 0);
+    ASSERT_EQ(heat.bed_pore_volume.size(), 2);
+    for (int cell = 0; cell < 2; ++cell) {
+        const auto k = static_cast<std::size_t>(cell);
+        const double expected_dye = cell == 0 ? 2.0 : 8.0;
+        EXPECT_NEAR(heat.bed_carried_mass[static_cast<std::size_t>(dye) * 2 + k] /
+                        heat.bed_pore_volume[k],
+                    expected_dye, 1e-12);
+        EXPECT_NEAR(heat.bed_carried_mass[static_cast<std::size_t>(age) * 2 + k] /
+                        heat.bed_pore_volume[k],
+                    3600.0, 1e-9); // age is authored in hours and stored in seconds
+    }
+    EXPECT_EQ(heat.bed_initial_mass, heat.bed_carried_mass);
+    EXPECT_EQ(heat.bed_exchange_mass, std::vector<double>(heat.bed_carried_mass.size(), 0.0));
+}
 TEST(MeshHeat, ConstantRadiationUsesWettedAreaAndIntegratedJoules) {
     LocalHeat f("radiation");ASSERT_NE(f.model.e,nullptr);
     auto& cfg=f.model.ctx().heat_config.radiative;

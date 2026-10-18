@@ -344,6 +344,7 @@ class SurfaceRouter2D;
 struct PendingBoundaryRow;
 struct PendingEdgeConveyanceRow;
 struct PendingInitialQualityRow;
+struct PendingInitialBedQualityRow;
 struct PendingBoundaryQualityRow;
 struct GwTransportData;
 class SurfaceQuality2D;   // S7 (2026-09-19)
@@ -971,6 +972,7 @@ struct SimulationContext {
         /// S2/S3: authored [2D_INITIAL_QUALITY] / [2D_BOUNDARY_QUALITY] rows,
         /// retained after initialize() so the InpWriter can round-trip them.
         std::vector<twoD::PendingInitialQualityRow>*  pending_iq = nullptr;
+        std::vector<twoD::PendingInitialBedQualityRow>* pending_ibq = nullptr;
         std::vector<twoD::PendingBoundaryQualityRow>* pending_bq = nullptr;
         /// Per-cell infiltration (track I, plan §5.5). Owned by
         /// SurfaceRouter2D; the [2D_INFILTRATION*] section handlers populate

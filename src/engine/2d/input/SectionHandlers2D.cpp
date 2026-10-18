@@ -1191,6 +1191,45 @@ std::string parse2DInitialQualityLine(
     return {};
 }
 
+std::string parse2DInitialBedQualityLine(
+    const std::vector<std::string>& tokens,
+    std::vector<SurfaceRouter2D::PendingInitialBedQualityRow>& rows)
+{
+    if (tokens.empty()) return {};
+    SurfaceRouter2D::PendingInitialBedQualityRow r;
+    std::size_t at = 0;
+    if (tokens[0] == "*") {
+        if (tokens.size() != 3)
+            return "[2D_INITIAL_BED_QUALITY] '*' row needs SPECIES CONC";
+        r.all = true;
+        at = 1;
+    } else if (iequals(tokens[0], "CELL")) {
+        if (tokens.size() != 4)
+            return "[2D_INITIAL_BED_QUALITY] CELL row needs CELL <n> SPECIES CONC";
+        bool ok = false;
+        const int cell = tryParseInt(tokens[1], ok);
+        if (!ok || cell < 1)
+            return "[2D_INITIAL_BED_QUALITY] invalid CELL index (1-based): " + tokens[1];
+        r.tri = cell - 1;
+        at = 2;
+    } else if (iequals(tokens[0], "TAG")) {
+        if (tokens.size() != 4)
+            return "[2D_INITIAL_BED_QUALITY] TAG row needs TAG <name> SPECIES CONC";
+        r.tag = tokens[1];
+        at = 2;
+    } else {
+        return "[2D_INITIAL_BED_QUALITY] row must start with CELL, TAG or '*': " + tokens[0];
+    }
+    r.species = tokens[at];
+    bool okc = false;
+    r.conc = tryParseDouble(tokens[at + 1], okc);
+    if (!okc || !std::isfinite(r.conc) || r.conc < 0.0)
+        return "[2D_INITIAL_BED_QUALITY] CONC must be a finite non-negative number, got '" +
+               tokens[at + 1] + "'";
+    rows.push_back(std::move(r));
+    return {};
+}
+
 // ============================================================================
 // [2D_BOUNDARY_QUALITY] — overland transport S2
 // ============================================================================
@@ -1230,6 +1269,7 @@ void register2DSections(MeshData& mesh,
                         std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
                         std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
                         std::vector<SurfaceRouter2D::PendingInitialQualityRow>& pending_iq_rows,
+                        std::vector<SurfaceRouter2D::PendingInitialBedQualityRow>& pending_ibq_rows,
                         std::vector<SurfaceRouter2D::PendingBoundaryQualityRow>& pending_bq_rows,
                         input::SectionRegistry& registry)
 {
@@ -1238,6 +1278,10 @@ void register2DSections(MeshData& mesh,
     registry.register_custom("2D_INITIAL_QUALITY",
         makeSectionHandler([&pending_iq_rows](const std::vector<std::string>& tokens) {
             return parse2DInitialQualityLine(tokens, pending_iq_rows);
+        }));
+    registry.register_custom("2D_INITIAL_BED_QUALITY",
+        makeSectionHandler([&pending_ibq_rows](const std::vector<std::string>& tokens) {
+            return parse2DInitialBedQualityLine(tokens, pending_ibq_rows);
         }));
     // S2: inflow concentration on a non-WALL boundary edge. Main .inp only.
     registry.register_custom("2D_BOUNDARY_QUALITY",
@@ -1362,6 +1406,7 @@ std::string load2DMeshExternalFile(MeshData& mesh,
                                    const std::string& inp_base_dir,
                                    std::vector<std::string>* warnings,
                                    std::vector<SurfaceRouter2D::PendingInitialQualityRow>* pending_iq_rows,
+                                   std::vector<SurfaceRouter2D::PendingInitialBedQualityRow>* pending_ibq_rows,
                                    std::vector<SurfaceRouter2D::PendingBoundaryQualityRow>* pending_bq_rows)
 {
     namespace fs = std::filesystem;
@@ -1417,6 +1462,11 @@ std::string load2DMeshExternalFile(MeshData& mesh,
         mini.register_custom("2D_INITIAL_QUALITY",
             makeSectionHandler([pending_iq_rows](const std::vector<std::string>& tokens) {
                 return parse2DInitialQualityLine(tokens, *pending_iq_rows);
+            }));
+    if (pending_ibq_rows)
+        mini.register_custom("2D_INITIAL_BED_QUALITY",
+            makeSectionHandler([pending_ibq_rows](const std::vector<std::string>& tokens) {
+                return parse2DInitialBedQualityLine(tokens, *pending_ibq_rows);
             }));
     if (pending_bq_rows)
         mini.register_custom("2D_BOUNDARY_QUALITY",

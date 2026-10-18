@@ -1424,6 +1424,73 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     }
     if(auto error=initializeMeshHeat(ctx,mesh_,state_,options_,&subsurface_.heat(),&subsurface_.coverage());!error.empty())
         throw std::runtime_error("[2D heat] "+error);
+    // [2D_INITIAL_BED_QUALITY] seeds the finite LOCAL_STORAGE porewater
+    // reservoir. Resolve after heat initialization because the local bed's
+    // pore volume is owned by that state; surface initial quality above keeps
+    // its existing water-volume semantics.
+    if (!pending_ibq_rows_.empty()) {
+        auto& heat = state_.heat;
+        auto& tr = state_.transport;
+        if (!heat.enabled || !heat.bed || heat.ground_column ||
+            heat.bed_pore_volume.empty() || heat.bed_species <= 0)
+            throw std::runtime_error(
+                "[2D_INITIAL_BED_QUALITY] requires HEAT_MODEL COUPLED and "
+                "BED_HEAT_MODEL LOCAL_STORAGE with finite bed porewater; "
+                "GROUND_COLUMN bed species are authored through [GW_INITIAL_QUALITY].");
+        if (!tr.active())
+            throw std::runtime_error(
+                "[2D_INITIAL_BED_QUALITY] rows are present but the model carries "
+                "no transported species ([POLLUTANTS] empty or IGNORE_QUALITY set).");
+        const int nc = mesh_.n_cells();
+        const auto ns = static_cast<std::size_t>(heat.bed_species);
+        if (heat.bed_pore_volume.size() != static_cast<std::size_t>(nc) ||
+            heat.bed_carried_mass.size() != ns * static_cast<std::size_t>(nc) ||
+            heat.bed_initial_mass.size() != heat.bed_carried_mass.size())
+            throw std::runtime_error(
+                "[2D_INITIAL_BED_QUALITY] local bed porewater state has an invalid shape.");
+        for (int pass = 0; pass < 3; ++pass) {
+            for (const auto& row : pending_ibq_rows_) {
+                const int kind = row.all ? 0 : (row.tri < 0 ? 1 : 2);
+                if (kind != pass) continue;
+                const int sp = tr.rowIndex(row.species);
+                if (sp < 0 || sp >= heat.bed_species || sp == heat.bed_temp_row)
+                    throw std::runtime_error(
+                        "[2D_INITIAL_BED_QUALITY] unknown or unsupported bed species '" +
+                        row.species + "'; use a carried pollutant or __WATER_AGE__, "
+                        "not __TEMPERATURE__.");
+                double concentration = row.conc;
+                if (sp == heat.bed_age_row) concentration *= 3600.0; // deck age is hours
+                auto seed = [&](int cell) {
+                    const auto k = static_cast<std::size_t>(sp) * nc + cell;
+                    heat.bed_carried_mass[k] = concentration * heat.bed_pore_volume[cell];
+                };
+                if (row.all) {
+                    for (int cell = 0; cell < nc; ++cell) seed(cell);
+                } else if (row.tri < 0) {
+                    bool hit = false;
+                    for (int cell = 0; cell < nc; ++cell) {
+                        if (static_cast<std::size_t>(cell) < mesh_.tri_tag.size() &&
+                            mesh_.tri_tag[static_cast<std::size_t>(cell)] == row.tag) {
+                            seed(cell);
+                            hit = true;
+                        }
+                    }
+                    if (!hit)
+                        throw std::runtime_error(
+                            "[2D_INITIAL_BED_QUALITY] TAG '" + row.tag +
+                            "' matches no mesh cell, so this row would seed nothing.");
+                } else {
+                    if (row.tri >= nc)
+                        throw std::runtime_error(
+                            "[2D_INITIAL_BED_QUALITY] CELL " +
+                            std::to_string(row.tri + 1) + " is beyond the mesh (" +
+                            std::to_string(nc) + " cells).");
+                    seed(row.tri);
+                }
+            }
+        }
+        heat.bed_initial_mass = heat.bed_carried_mass;
+    }
     if(auto error=configureGroundLidOwners(ctx,mesh_,subsurface_.heat(),subsurface_.nodeBeds());!error.empty())
         throw std::runtime_error("[2D LID heat] "+error);
     configureSnowGroundContacts();

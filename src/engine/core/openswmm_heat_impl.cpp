@@ -61,6 +61,7 @@ struct Thermal2DAuthoring {
     std::optional<openswmm::twoD::GwTransportData> transport;
     std::optional<openswmm::twoD::SubsurfaceConfig> aquifer;
     std::optional<std::vector<std::string>> nodes,links;
+    std::optional<std::vector<openswmm::twoD::PendingInitialBedQualityRow>> initial_bed_quality;
 #endif
     explicit Thermal2DAuthoring(const openswmm::SimulationContext& ctx) {
 #ifdef OPENSWMM_HAS_2D
@@ -69,6 +70,7 @@ struct Thermal2DAuthoring {
         if(ctx.twod_io.aquifer)aquifer=*ctx.twod_io.aquifer;
         if(ctx.twod_io.aquifer_nodes)nodes=*ctx.twod_io.aquifer_nodes;
         if(ctx.twod_io.aquifer_links)links=*ctx.twod_io.aquifer_links;
+        if(ctx.twod_io.pending_ibq)initial_bed_quality=*ctx.twod_io.pending_ibq;
 #else
         (void)ctx;
 #endif
@@ -80,6 +82,8 @@ struct Thermal2DAuthoring {
         if(aquifer&&ctx.twod_io.aquifer)*ctx.twod_io.aquifer=std::move(*aquifer);
         if(nodes&&ctx.twod_io.aquifer_nodes)*ctx.twod_io.aquifer_nodes=std::move(*nodes);
         if(links&&ctx.twod_io.aquifer_links)*ctx.twod_io.aquifer_links=std::move(*links);
+        if(initial_bed_quality&&ctx.twod_io.pending_ibq)
+            *ctx.twod_io.pending_ibq=std::move(*initial_bed_quality);
 #else
         (void)ctx;
 #endif

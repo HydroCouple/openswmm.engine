@@ -40,7 +40,7 @@
  *   2D_INFILTRATION, 2D_MESH_FILE (external mode) or 2D_VERTICES,
  *   2D_TRIANGLES, 2D_QUADS, 2D_VERTEX_NODE_MAP, 2D_TRIANGLE_NODE_MAP,
  *   2D_BOUNDARY_CONDITIONS, 2D_EDGE_CONVEYANCE (inline mode),
- *   2D_INITIAL_QUALITY, 2D_BOUNDARY_QUALITY
+ *   2D_INITIAL_QUALITY, 2D_INITIAL_BED_QUALITY, 2D_BOUNDARY_QUALITY
  *
  * @ingroup engine_core
  *
@@ -1145,6 +1145,18 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
         sec(f, "2D_INITIAL_QUALITY");
         std::fprintf(f, ";;%-6s %-16s %-12s %s\n", "SCOPE", "NAME", "SPECIES", "CONC");
         for (const auto& r : *tio.pending_iq) {
+            if (r.all)
+                std::fprintf(f, "%-8s %-16s %-12s %.12g\n", "*", "", r.species.c_str(), r.conc);
+            else if (r.tri >= 0)
+                std::fprintf(f, "%-8s %-16d %-12s %.12g\n", "CELL", r.tri + 1, r.species.c_str(), r.conc);
+            else
+                std::fprintf(f, "%-8s %-16s %-12s %.12g\n", "TAG", r.tag.c_str(), r.species.c_str(), r.conc);
+        }
+    }
+    if (tio.pending_ibq && !tio.pending_ibq->empty()) {
+        sec(f, "2D_INITIAL_BED_QUALITY");
+        std::fprintf(f, ";;%-6s %-16s %-12s %s\n", "SCOPE", "NAME", "SPECIES", "CONC");
+        for (const auto& r : *tio.pending_ibq) {
             if (r.all)
                 std::fprintf(f, "%-8s %-16s %-12s %.12g\n", "*", "", r.species.c_str(), r.conc);
             else if (r.tri >= 0)

@@ -655,6 +655,35 @@ TEST(CapiGap2DQuality, InitialQualityRows) {
     EXPECT_EQ(swmm_2d_remove_initial_quality(d.e, 5), SWMM_ERR_BADINDEX);
 }
 
+TEST(CapiGap2DQuality, InitialBedQualityRows) {
+    OpenedDeck d(writeQuality2DDeck("q2d_ibq",
+        "[2D_INITIAL_BED_QUALITY]\n* TSS 2.0\nTAG east TSS 4.0\nCELL 2 TSS 7.5\n"));
+    ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
+    int count = -1;
+    ASSERT_EQ(swmm_2d_initial_bed_quality_count(d.e, &count), SWMM_OK);
+    EXPECT_EQ(count, 3);
+    int scope = -1, cell = -9;
+    char tag[64] = {}, species[64] = {};
+    double conc = -1;
+    ASSERT_EQ(swmm_2d_get_initial_bed_quality(d.e, 1, &scope, tag, 64,
+                                               &cell, species, 64, &conc), SWMM_OK);
+    EXPECT_EQ(scope, SWMM_2D_QUAL_SCOPE_TAG);
+    EXPECT_STREQ(tag, "east");
+    EXPECT_STREQ(species, "TSS");
+    EXPECT_DOUBLE_EQ(conc, 4.0);
+
+    ASSERT_EQ(swmm_2d_set_initial_bed_quality(d.e, SWMM_2D_QUAL_SCOPE_CELL,
+                                               nullptr, 1, "TSS", 9.0), SWMM_OK);
+    ASSERT_EQ(swmm_2d_initial_bed_quality_count(d.e, &count), SWMM_OK);
+    EXPECT_EQ(count, 3); // same key replaces
+    EXPECT_EQ(swmm_2d_set_initial_bed_quality(d.e, SWMM_2D_QUAL_SCOPE_CELL,
+                                               nullptr, 999, "TSS", 1.0), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_2d_set_initial_bed_quality(d.e, SWMM_2D_QUAL_SCOPE_GLOBAL,
+                                               nullptr, -1, "TSS", -1.0), SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_2d_remove_initial_bed_quality(d.e, 0), SWMM_OK);
+    EXPECT_EQ(swmm_2d_remove_initial_bed_quality(d.e, 9), SWMM_ERR_BADINDEX);
+}
+
 TEST(CapiGap2DQuality, BoundaryQualityRows) {
     OpenedDeck d(writeQuality2DDeck("q2d_bq", "[2D_BOUNDARY_QUALITY]\n0 2 TSS 12.0\n"));
     ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
@@ -683,16 +712,33 @@ TEST(CapiGap2DQuality, EditsSurviveSaveAndAreRefusedAfterInitialize) {
         OpenedDeck d(writeQuality2DDeck("q2d_save", ""));
         ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
         ASSERT_EQ(swmm_2d_set_initial_quality(d.e, SWMM_2D_QUAL_SCOPE_GLOBAL, nullptr, -1, "TSS", 5.0), SWMM_OK);
+        ASSERT_EQ(swmm_2d_set_initial_bed_quality(d.e, SWMM_2D_QUAL_SCOPE_TAG, "vault", -1, "TSS", 2.5), SWMM_OK);
         ASSERT_EQ(swmm_2d_set_boundary_quality(d.e, 0, 2, "TSS", 12.0), SWMM_OK);
         ASSERT_EQ(swmm_model_write(d.e, saved.string().c_str()), SWMM_OK) << swmm_get_last_error_msg(d.e);
+        ASSERT_EQ(swmm_options_set(d.e, "HEAT_TRANSPORT", "YES"), SWMM_OK);
+        ASSERT_EQ(swmm_options_set_ext(d.e, "HEAT_MODEL", "COUPLED"), SWMM_OK);
+        ASSERT_EQ(swmm_options_set_ext(d.e, "BED_HEAT_MODEL", "LOCAL_STORAGE"), SWMM_OK);
         ASSERT_EQ(swmm_engine_initialize(d.e), SWMM_OK) << swmm_get_last_error_msg(d.e);
         EXPECT_EQ(swmm_2d_set_boundary_quality(d.e, 0, 2, "TSS", 1.0), SWMM_ERR_LIFECYCLE);
+        EXPECT_EQ(swmm_2d_remove_initial_bed_quality(d.e, 0), SWMM_ERR_LIFECYCLE);
         EXPECT_EQ(swmm_2d_remove_initial_quality(d.e, 0), SWMM_ERR_LIFECYCLE);
     }
     OpenedDeck r(saved);
     ASSERT_EQ(r.rc, SWMM_OK) << swmm_get_last_error_msg(r.e);
     EXPECT_EQ(iqCount(r.e), 1);
     EXPECT_EQ(bqCount(r.e), 1);
+    int bed_count = -1;
+    ASSERT_EQ(swmm_2d_initial_bed_quality_count(r.e, &bed_count), SWMM_OK);
+    EXPECT_EQ(bed_count, 1);
+    int bed_scope = -1;
+    char bed_tag[64] = {}, bed_species[64] = {};
+    double bed_conc = -1;
+    ASSERT_EQ(swmm_2d_get_initial_bed_quality(r.e, 0, &bed_scope,
+        bed_tag, sizeof bed_tag, nullptr, bed_species, sizeof bed_species, &bed_conc), SWMM_OK);
+    EXPECT_EQ(bed_scope, SWMM_2D_QUAL_SCOPE_TAG);
+    EXPECT_STREQ(bed_tag, "vault");
+    EXPECT_STREQ(bed_species, "TSS");
+    EXPECT_DOUBLE_EQ(bed_conc, 2.5);
 }
 #endif
 

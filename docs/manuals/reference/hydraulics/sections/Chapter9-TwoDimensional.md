@@ -440,6 +440,17 @@ the cell velocities. Without the latter a model can only start from
 rest, which excludes solutions such as Thacker's oscillating basins
 whose initial state has \f$\mathbf{u} \neq 0\f$.
 
+For a finite local mesh bed, `[2D_INITIAL_BED_QUALITY]` seeds the bed
+porewater separately from the overland water. It uses the same `*`, `TAG`
+and one-based `CELL` scopes and `* < TAG < CELL` precedence as
+`[2D_INITIAL_QUALITY]`; each concentration is multiplied by that cell's
+bed pore volume (area × bed thickness × porosity). Pollutants use their
+declared concentration units, and `__WATER_AGE__` is authored in hours.
+This section requires coupled heat with `BED_HEAT_MODEL LOCAL_STORAGE`.
+Temperature remains owned by the heat state. For groundwater-owned
+`GROUND_COLUMN` porewater, seed `SAT` or `UNSAT` through
+`[GW_INITIAL_QUALITY]` instead.
+
 ### 9.3.1 Quadrilateral cells
 
 The mesh may mix triangles with convex quadrilaterals. Quads are listed

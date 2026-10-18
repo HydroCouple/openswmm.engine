@@ -930,6 +930,16 @@ SWMM_ENGINE_API int swmm_2d_set_initial_quality(SWMM_Engine engine, int scope,
 
 SWMM_ENGINE_API int swmm_2d_remove_initial_quality(SWMM_Engine engine, int index);
 
+/* Authored [2D_INITIAL_BED_QUALITY] rows seed finite LOCAL_STORAGE bed
+ * porewater. Scope constants and lifecycle match [2D_INITIAL_QUALITY]. */
+SWMM_ENGINE_API int swmm_2d_initial_bed_quality_count(SWMM_Engine engine, int* count);
+SWMM_ENGINE_API int swmm_2d_get_initial_bed_quality(SWMM_Engine engine, int index,
+        int* scope, char* tag, int tag_len, int* cell,
+        char* species, int species_len, double* conc);
+SWMM_ENGINE_API int swmm_2d_set_initial_bed_quality(SWMM_Engine engine, int scope,
+        const char* tag, int cell, const char* species, double conc);
+SWMM_ENGINE_API int swmm_2d_remove_initial_bed_quality(SWMM_Engine engine, int index);
+
 SWMM_ENGINE_API int swmm_2d_boundary_quality_count(SWMM_Engine engine, int* count);
 
 /** @brief Read one [2D_BOUNDARY_QUALITY] row (inflow concentration through a

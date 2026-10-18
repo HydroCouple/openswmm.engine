@@ -155,6 +155,7 @@ void SWMMEngine::wire2DModelIO() noexcept {
     ctx_.twod_io.pending_bc = &surface_router_.pendingBCRows();
     ctx_.twod_io.pending_ec = &surface_router_.pendingEdgeConveyanceRows();
     ctx_.twod_io.pending_iq = &surface_router_.pendingInitialQualityRows();
+    ctx_.twod_io.pending_ibq = &surface_router_.pendingInitialBedQualityRows();
     ctx_.twod_io.pending_bq = &surface_router_.pendingBoundaryQualityRows();
     ctx_.twod_io.infil      = &surface_router_.infil();
     ctx_.twod_io.gw         = &surface_router_.gwTransport();   // U4
@@ -253,6 +254,7 @@ int SWMMEngine::open(const char* inp_path,
                                  surface_router_.pendingBCRows(),
                                  surface_router_.pendingEdgeConveyanceRows(),
                                  surface_router_.pendingInitialQualityRows(),
+                                 surface_router_.pendingInitialBedQualityRows(),
                                  surface_router_.pendingBoundaryQualityRows(),
                                  dip->registry());
         // U4 (2026-09-07): the [GW_*] subsurface-transport authoring
@@ -306,6 +308,7 @@ int SWMMEngine::open(const char* inp_path,
                 &surface_router_.infil(),
                 mf, base_dir, &ctx_.warnings,
                 &surface_router_.pendingInitialQualityRows(),
+                &surface_router_.pendingInitialBedQualityRows(),
                 &surface_router_.pendingBoundaryQualityRows());
             if (!err.empty()) {
                 if (lenient_open_ && !metadata_only_) {
