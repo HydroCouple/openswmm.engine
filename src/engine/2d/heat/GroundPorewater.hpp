@@ -15,6 +15,7 @@ struct GroundPorewaterColumn {
         const std::vector<double>& kd,int age,int temperature);
     std::pair<std::vector<double>,std::vector<double>> zoneMasses(const PorousHeatColumn&,
         const std::vector<double>& saturated_water) const;
+    std::pair<double,double> zoneMass(const PorousHeatColumn&,const std::vector<double>& saturated_water,int species) const noexcept;
     bool generateAge(const PorousHeatColumn&,double seconds) noexcept;
 };
 } // namespace openswmm::twoD

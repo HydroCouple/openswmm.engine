@@ -1423,6 +1423,8 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         throw std::runtime_error("[2D ground heat] Reciprocal snow/soil ownership is awaiting qualification.");
     if(auto error=initializeMeshHeat(ctx,mesh_,state_,options_,&subsurface_.heat(),&subsurface_.coverage());!error.empty())
         throw std::runtime_error("[2D heat] "+error);
+    if(state_.heat.ground_column&&subsurface_.heat().active())
+        if(auto error=subsurface_.initPorewater();!error.empty())throw std::runtime_error("[2D porewater] "+error);
     if(subsurface_.heat().active()&&gw_.options.conduction&&gw_.options.surface_thermal_bc=="SURFACE_WATER")
         for(const auto& cell:subsurface_.heat().cells)
             if(!cell.column.energy.empty()&&!cell.surface_owned)

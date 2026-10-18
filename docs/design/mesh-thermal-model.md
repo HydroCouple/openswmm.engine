@@ -202,6 +202,19 @@ from external sources. Spatial bed initial-condition authoring, public species
 outputs, groundwater-connected tracer partition, restart and full qualification
 remain open; this is not a supported capability declaration for those paths.
 
+In experimental `GROUND_COLUMN` runs with a porous aquifer and carried
+species, the aquifer now partitions its existing tracer/age mass on the fixed
+soil grid. Each layer's equilibrium capacity is porewater volume plus
+`rho_bulk * Kd * bulk_volume`; age never sorbs. Initial SAT/UNSAT total mass
+is preserved, including its established `initial_concentration * water_volume`
+interpretation. The bulk arrays become derived views and add no mass store.
+Accepted water transfers use paired physical layer donors, and soil ET retains
+solute while carrying age. Only the existing groundwater decay and explicit
+species removals act on this soil mass. Generated age-volume has its own
+continuity receipt. Reciprocal overland/channel species contacts and complete
+pending-export/contact ownership are still being qualified; the existing
+channel tracer guard remains in place.
+
 `CELL2D <one-based native cell ID>` and `MESH_TAG <region name>` are scopes of
 the existing heat override table and C/Python API. Mesh region tags form a
 separate namespace from network `[TAGS]`. Precedence is global, mesh tag, cell.

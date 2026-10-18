@@ -251,6 +251,7 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh,
     state_ = SubsurfaceState{};
     heat_.clear();heat_link_out_volume_.clear();heat_preset_out_j_.clear();heat_preset_out_water_.clear();heat_node_out_volume_.clear();heat_node_gathered_out_.clear();
     heat_faces_.clear();heat_pending_left_.clear();heat_pending_right_.clear();heat_dt_.clear();
+    porewater_preset_out_.clear();
     if (cfg.empty()) return {};
 
     options_   = cfg.options;
@@ -616,6 +617,7 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
                     // the signed temperature row has no floor.
                     if (!tr_.signedRow(s) && dm > std::abs(m_don))
                         dm = std::abs(m_don);
+                    bookPresetPorewaterOut(int(don),s,dm);
                     const double sgn = (vol > 0.0) ? 1.0 : -1.0;
                     const auto k = static_cast<std::size_t>(s) * ne + eu;
                     tr_.sacc_L[k] -= sgn * dm;
@@ -690,6 +692,7 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
                             ++tr_.dispersion_limiter_binds;
                         }
                         const auto k = static_cast<std::size_t>(s) * ne + eu;
+                        bookPresetPorewaterOut(int(dMd>0?l:r),s,std::abs(dMd));
                         tr_.sacc_L[k] -= dMd;
                         tr_.sacc_R[k] += dMd;
                     }
@@ -1077,6 +1080,7 @@ void SubsurfaceSolver::initTransport(const RowLayoutLite& rows,
     tr_.clear();
     heat_.clear();heat_link_out_volume_.clear();heat_preset_out_j_.clear();heat_preset_out_water_.clear();heat_node_out_volume_.clear();heat_node_gathered_out_.clear();
     heat_faces_.clear();heat_pending_left_.clear();heat_pending_right_.clear();heat_dt_.clear();
+    porewater_preset_out_.clear();
     if (!state_.active || rows.n_species <= 0) return;
     const int ne = options_.per_subcatch ? 0
                                          : (edges_ ? edges_->ne : 0);
@@ -2020,6 +2024,7 @@ double SubsurfaceSolver::pendingHeat(int i) const noexcept {
 std::string SubsurfaceSolver::initHeat(SimulationContext& ctx,const GwTransportData& config) {
     heat_.clear();heat_link_out_volume_.clear();heat_preset_out_j_.clear();heat_preset_out_water_.clear();heat_node_out_volume_.clear();heat_node_gathered_out_.clear();
     heat_faces_.clear();heat_pending_left_.clear();heat_pending_right_.clear();heat_dt_.clear();
+    porewater_preset_out_.clear();
     if(config.options.thermal_model!="POROUS_EQUILIBRIUM"||tr_.temp_row<0)return {};
     if(config.options.thermal_model=="POROUS_EQUILIBRIUM" && tr_.temp_row>=0 && options_.per_subcatch)
         return "Porous ground heat currently requires a spatial mesh; PER_SUBCATCH retains water-only heat transport.";
@@ -2141,6 +2146,7 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
 }
 
 void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) noexcept {
+    if(heat_.active()&&heat_.cells[i].porewater.active())fireGroundPorewaterSpecies(i,f);
     if(heat_.active())fireGroundHeatSpecies(i,f);
     const auto k0 = static_cast<std::size_t>(i);
     (void)k0;
@@ -2163,7 +2169,7 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) noexcept {
                                         state_.theta_r[uc], ts_cell);
 
     for (int s = 0; s < tr_.n_species; ++s) {
-        if(s==tr_.temp_row&&heat_.active())continue;
+        if(heat_.active()&&(s==tr_.temp_row||heat_.cells[i].porewater.active()))continue;
         const auto k  = tr_.idx(s, i);
         const auto us = static_cast<std::size_t>(s);
         double& msat = tr_.sat_mass[k];

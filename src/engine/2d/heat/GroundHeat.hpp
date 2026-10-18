@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 #include "PorousHeat.hpp"
+#include "GroundPorewater.hpp"
 #include <cstdint>
 namespace openswmm {struct SimulationContext;}
 namespace openswmm::twoD {
 struct MeshData;struct GwTransportData;struct SubsurfaceTransportState;
 struct GroundThermalCell {
     PorousHeatColumn column;
+    GroundPorewaterColumn porewater;
     std::vector<double> saturated_water;
     double initial_j=0,advective_j=0,source_j=0,surface_j=0,deep_j=0,latent_j=0,lateral_j=0,water_contact_j=0,channel_contact_j=0;
     double vertical_absolute_j=0,geo_flux=.065;

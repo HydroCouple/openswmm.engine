@@ -152,6 +152,10 @@ void GroundHeatState::refreshView(int i,SubsurfaceTransportState& tr) const {
         sat+=cell.saturated_water[j]*t;unsat+=(vw-cell.saturated_water[j])*t;
     }
     tr.sat_mass[tr.idx(tr.temp_row,i)]=sat;tr.unsat_mass[tr.idx(tr.temp_row,i)]=unsat;
+    if(cell.porewater.active())for(int r=0;r<tr.n_species;++r)if(r!=tr.temp_row) {
+        const auto pair=cell.porewater.zoneMass(c,cell.saturated_water,r);
+        tr.sat_mass[tr.idx(r,i)]=pair.first;tr.unsat_mass[tr.idx(r,i)]=pair.second;
+    }
 }
 std::size_t GroundHeatState::boundaries(int i,double exposed,std::vector<ThermalBoundary>& bc) const {
     const auto& cell=cells[i];const auto& c=cell.column;const auto& o=config->options;

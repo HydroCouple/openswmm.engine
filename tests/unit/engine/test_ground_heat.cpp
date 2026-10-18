@@ -53,6 +53,62 @@ struct Model {
 };
 double sum(const std::vector<double>& x){return std::accumulate(x.begin(),x.end(),0.);}
 double energy(const openswmm::twoD::GroundHeatState& h){double e=0;for(const auto& c:h.cells)e+=sum(c.column.energy);return e;}
+double poreMass(const openswmm::twoD::GroundHeatState& h,int species) {
+    double mass=0;for(const auto& cell:h.cells)if(cell.porewater.active()) {
+        const auto nl=cell.column.theta.size();for(std::size_t j=0;j<nl;++j)mass+=cell.porewater.mass[std::size_t(species)*nl+j];
+    }return mass;
+}
+int enablePorewater(Model& m) {
+    for(const auto& pair:{std::pair{"HEAT_MODEL","COUPLED"},{"BED_HEAT_MODEL","GROUND_COLUMN"},
+                         {"HEAT_SURFACE_EXCHANGE","NO"},{"HEAT_RADIATIVE_EXCHANGE","NO"}}) {
+        const int rc=swmm_options_set_ext(m.e,pair.first,pair.second);if(rc!=SWMM_OK)return rc;
+    }return m.start();
+}
+const std::string porewater_species="[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0\n"
+    "[OPTIONS]\nWATER_AGE ON\n[GW_INITIAL_QUALITY]\n* SAT Dye 10\n* UNSAT Dye 10\n";
+}
+TEST(GroundHeat, ExplicitGroundPorewaterUsesAcceptedWellDonorsAndBooksItsAgeClock) {
+    for(const auto* closure:{"CLOSED_FORM","ENSLAVED","SIGMA"}) {
+        SCOPED_TRACE(closure);Model m(std::string("pore-well-")+closure,closure,.5,false,porewater_species);ASSERT_NE(m.e,nullptr);
+        ASSERT_EQ(enablePorewater(m),SWMM_OK);auto& gw=m.router().subsurface();auto& tr=gw.transport();
+        ASSERT_TRUE(gw.heat().cells[0].porewater.active());const int dye=tr.rowIndex("Dye"),age=tr.age_row,ns=tr.n_species;
+        ASSERT_GE(dye,0);ASSERT_GE(age,0);const double initial=poreMass(gw.heat(),dye);
+        EXPECT_NEAR(initial,tr.init_mass[dye],1e-10);std::vector<double> concentrations(ns,0),rates(ns,0);
+        ASSERT_EQ(swmm_coupling_set_source(m.e,"well",1,0,-.001,0,concentrations.data(),rates.data(),ns,1),SWMM_OK);
+        double actual=0;ASSERT_EQ(swmm_coupling_advance_to(m.e,1,&actual),SWMM_OK);
+        for(const auto& cell:gw.heat().cells) {
+            ASSERT_EQ(cell.failed,0)<<cell.error;const auto nl=cell.column.theta.size();
+            for(std::size_t j=0;j<nl;++j) {
+                const double water=cell.column.theta[j]*cell.column.area*(cell.column.depth_edges[j+1]-cell.column.depth_edges[j]);
+                if(water>0)EXPECT_NEAR(cell.porewater.mass[std::size_t(dye)*nl+j]/water,10,1e-9);
+            }
+        }
+        EXPECT_NEAR(initial-poreMass(gw.heat(),dye),10*gw.state().led_source_out,1e-9);
+        EXPECT_NEAR(tr.residual(dye),0,1e-9);EXPECT_GT(tr.generated_age[age],0);EXPECT_NEAR(tr.residual(age),0,1e-9);
+        double generated=0;for(const auto& cell:gw.heat().cells)generated+=sum(cell.porewater.generated_age);
+        EXPECT_NEAR(generated,tr.generated_age[age],1e-10);
+        EXPECT_NEAR(poreMass(gw.heat(),age)+tr.lost_source[age],generated,1e-9);
+        int cell=0;SWMM_CouplingReceipt receipt{};std::vector<double> requested(ns),applied(ns);
+        ASSERT_EQ(swmm_coupling_get_receipts(m.e,1,"well",&cell,1,&receipt,requested.data(),applied.data(),ns),SWMM_OK);
+        EXPECT_NEAR(-applied[dye],tr.lost_source[dye],1e-12);
+    }
+}
+TEST(GroundHeat, GroundPorewaterNodeReversalPreservesGrossMassAndAgeReceipts) {
+    Model m("pore-node-reversal","CLOSED_FORM",.5,false,porewater_species+
+        "[2D_AQUIFER_NODE]\nJ1 1 KC 3600 DC .1 AREA 1\n");ASSERT_NE(m.e,nullptr);ASSERT_EQ(enablePorewater(m),SWMM_OK);
+    auto& gw=m.router().subsurface();auto& tr=gw.transport();const int dye=tr.rowIndex("Dye"),age=tr.age_row;
+    openswmm::NodeData nodes;nodes.resize(2);const double head=gw.state().z_bed[0]+gw.state().hg[0],length=m.router().options().len_1d_to_2d;
+    nodes.invert_elev[0]=(head+.25)/length;nodes.volume[0]=100;
+    std::vector<double> concentrations(2*tr.n_species,0);concentrations[dye]=20;concentrations[age]=100;concentrations[tr.temp_row]=-3;
+    const double initial=poreMass(gw.heat(),dye);gw.setNodeRowConc(concentrations.data(),tr.n_species);gw.assignTiers(1,1);
+    gw.sampleNodeExchange(&nodes,.5);const double incoming=-gw.nodeExchangeVolumes()[0];ASSERT_GT(incoming,0);
+    nodes.invert_elev[0]=(head-.25)/length;gw.sampleNodeExchange(&nodes,.5);EXPECT_NEAR(gw.nodeExchangeVolumes()[0],0,1e-12);
+    gw.fireGwCells(0,1,m.router().state(),0);gw.setNodeRowConc(nullptr,0);
+    for(const auto& cell:gw.heat().cells)ASSERT_EQ(cell.failed,0)<<cell.error;
+    EXPECT_GT(tr.lost_node[dye],0);EXPECT_NEAR(tr.gained_node[dye],incoming*20,1e-12);
+    EXPECT_NEAR(poreMass(gw.heat(),dye)-initial,tr.gained_node[dye]-tr.lost_node[dye],1e-9);
+    EXPECT_NEAR(gw.nodeExchangeMass()[std::size_t(dye)*2],tr.lost_node[dye],1e-12);
+    EXPECT_NEAR(tr.residual(dye),0,1e-9);EXPECT_NEAR(tr.residual(age),0,1e-9);
 }
 TEST(GroundHeat, IsothermalAcceptedInfiltrationPreservesAllThreeClosuresAndSignedTemperature) {
     for(const auto* closure:{"CLOSED_FORM","ENSLAVED","SIGMA"})for(double hg:{0.,.5,1.}) {

@@ -55,13 +55,20 @@ std::pair<std::vector<double>,std::vector<double>> GroundPorewaterColumn::zoneMa
     if(saturated.size()!=nl||mass.size()!=std::size_t(n_species)*nl||retention.size()!=mass.size())
         throw std::invalid_argument("Ground porewater view shapes differ.");
     std::vector<double> sat(n_species,0),unsat(n_species,0);
-    for(int r=0;r<n_species;++r)if(r!=temp_row)for(std::size_t j=0;j<nl;++j) {
+    for(int r=0;r<n_species;++r){const auto pair=zoneMass(soil,saturated,r);sat[r]=pair.first;unsat[r]=pair.second;}
+    return {std::move(sat),std::move(unsat)};
+}
+std::pair<double,double> GroundPorewaterColumn::zoneMass(const PorousHeatColumn& soil,
+    const std::vector<double>& saturated,int r) const noexcept {
+    double sat=0,unsat=0;const auto nl=soil.theta.size();
+    if(r==temp_row||r<0||r>=n_species)return {0,0};
+    for(std::size_t j=0;j<nl;++j) {
         const auto k=std::size_t(r)*nl+j;
         const double water=soil.theta[j]*bulk(soil,j),capacity=water+retention[k],fraction=saturatedFraction(soil,j,saturated[j]);
         const double share=capacity>0?std::clamp((saturated[j]+retention[k]*fraction)/capacity,0.,1.):fraction;
-        const double carried=mass[k]*share;sat[r]+=carried;unsat[r]+=mass[k]-carried;
+        const double carried=mass[k]*share;sat+=carried;unsat+=mass[k]-carried;
     }
-    return {std::move(sat),std::move(unsat)};
+    return {sat,unsat};
 }
 bool GroundPorewaterColumn::generateAge(const PorousHeatColumn& soil,double dt) noexcept {
     if(age_row<0)return true;

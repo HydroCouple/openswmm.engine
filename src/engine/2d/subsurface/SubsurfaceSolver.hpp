@@ -178,6 +178,7 @@ public:
     const GroundHeatState& heat() const noexcept {return heat_;}
     double pendingHeat(int cell) const noexcept;
     std::string initHeat(SimulationContext&,const GwTransportData&);
+    std::string initPorewater();
     /// Size the rows and seed both stores from `[GW_INITIAL_QUALITY]`.
     /// Separate from `initialize` because the row layout needs the resolved
     /// `[GW_*]` sections, which the router owns. @p names is the row layout's
@@ -215,6 +216,7 @@ public:
             m = std::min(m, avail);
         }
         if (m == 0.0) return 0.0;
+        bookPresetPorewaterOut(cell,species,m);
         tr_.lout_mass[k] += m;
         return m;
     }
@@ -501,6 +503,7 @@ private:
     /// volume is final.
     void fireCellSpecies(int i, const CellFlux& f) noexcept;
     void fireGroundHeatSpecies(int i,const CellFlux& f) noexcept;
+    void fireGroundPorewaterSpecies(int i,const CellFlux& f) noexcept;
     /// Gather this cell's lateral side accumulators (m³) and zero them.
     double gatherLateral(int i) noexcept;
     /// T7.1: the same gather for one species' mass.
@@ -537,7 +540,9 @@ private:
     std::vector<double> heat_preset_out_j_; // [cell*thermal_layers+layer], accepted producer-time exports
     std::vector<double> heat_preset_out_water_; // paired physical layer volumes, including source-interval splits
     std::vector<double> heat_node_out_volume_,heat_node_gathered_out_; // gross accepted exports per hydraulic bed
+    std::vector<double> porewater_preset_out_; // [species*n_cells*layers + cell*layers + layer]
     void bookPresetHeatOut(int cell,double volume,double temperature_volume) noexcept;
+    void bookPresetPorewaterOut(int cell,int species,double mass) noexcept;
     struct ThermalFaceSlice {int left=0,right=0;double low=0,high=0;};
     struct ThermalFace {double distance_left=0,distance_right=0;std::vector<ThermalFaceSlice> slices;};
     std::vector<ThermalFace> heat_faces_;
