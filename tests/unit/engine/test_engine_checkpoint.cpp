@@ -951,6 +951,48 @@ TEST(EngineCheckpoint, RoutedChannelHyporheicStateCannotAttachCheckpoint) {
     ASSERT_GT(std::abs(soil_exchange),0);
 }
 
+TEST(EngineCheckpoint, MeshThermalSourceIntakeUsesMixedSurfaceTemperature) {
+    ThermalSurfaceSession session;
+    ASSERT_NO_THROW(session.start("surface-thermal-mesh-source"));
+    auto& surface=session.engine.surfaceRouter2D().state();
+    auto& gw=session.engine.surfaceRouter2D().subsurface();
+    ASSERT_EQ(surface.transport.temp_row,0);
+    ASSERT_EQ(surface.transport.n_species,1);
+    surface.rainfall[0]=.001;
+    surface.transport.rain_conc={5};
+
+    ASSERT_EQ(session.stage.advance(0,1),"");
+    double intake_volume=0,intake_temperature_volume=0;
+    for(const auto& receipt:session.stage.receipts())if(receipt.request.kind==twoD::SurfaceDonorKind::MESH) {
+        intake_volume+=receipt.volume;
+        intake_temperature_volume+=receipt.mass[0];
+    }
+    ASSERT_GT(intake_volume,0);
+    EXPECT_GT(intake_temperature_volume/intake_volume,5);
+    EXPECT_LT(intake_temperature_volume/intake_volume,12);
+
+    const auto initial_energy=[&]() {
+        double total=0;for(const auto& cell:gw.heat().cells)
+            total+=std::accumulate(cell.column.energy.begin(),cell.column.energy.end(),0.);
+        return total;
+    };
+    const double energy_before=initial_energy();
+    gw.assignTiers(1,1);
+    gw.fireGwCells(0,1,surface,0,1);
+    for(const auto& cell:gw.heat().cells)ASSERT_EQ(cell.failed,0)<<cell.error;
+
+    ASSERT_TRUE(gw.sourceReturns().empty());
+    const double energy_change=initial_energy()-energy_before;
+    double advective=0;for(const auto& cell:gw.heat().cells)advective+=cell.advective_j;
+    EXPECT_NEAR(energy_change,advective,1e-7*std::max(1.,std::abs(energy_change)));
+    EXPECT_NEAR(advective,gw.heat().water_capacity*intake_temperature_volume,
+                1e-7*std::max(1.,std::abs(advective)));
+
+    ASSERT_EQ(session.stage.advance(1,2),"");
+    EXPECT_TRUE(gw.sourceReturns().empty());
+    EXPECT_TRUE(session.stage.returns().empty());
+}
+
 TEST(EngineCheckpoint, ThermalCheckpointModelMismatchLeavesTargetThermalStateUnchanged) {
     ThermalSurfaceSession source,target;
     ASSERT_NO_THROW(source.start("surface-thermal-mismatch-source"));
