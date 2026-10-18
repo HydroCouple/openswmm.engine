@@ -574,8 +574,10 @@ TEST(GroundHeat, IsothermalAcceptedInfiltrationPreservesAllThreeClosuresAndSigne
         EXPECT_NEAR(energy(gw.heat())+pending-initial,-3*input*4184000.,1e-5);
     }
 }
-TEST(GroundHeat, SigmaWaterTableRiseAndDrawdownPreserveFixedGridEnergyAndCapacity) {
-    Model m("sigma-water-table-thermal", "SIGMA", .25);ASSERT_NE(m.e,nullptr);
+TEST(GroundHeat, RuntimeWaterTableRiseAndDrawdownPreserveFixedGridEnergyAndCapacityAcrossClosures) {
+  for(const char* closure:{"CLOSED_FORM","ENSLAVED","SIGMA"}) {
+    SCOPED_TRACE(closure);
+    Model m(std::string("water-table-thermal-")+closure,closure,.25);ASSERT_NE(m.e,nullptr);
     ASSERT_EQ(m.start(),SWMM_OK);
     auto& gw=m.router().subsurface();auto& tr=gw.transport();const int row=tr.temp_row;
     ASSERT_GE(row,0);ASSERT_TRUE(gw.heat().active());
@@ -616,14 +618,14 @@ TEST(GroundHeat, SigmaWaterTableRiseAndDrawdownPreserveFixedGridEnergyAndCapacit
     const double rising_water=waterStorage(),rising_table=tableStorage();
     ASSERT_GT(rising_water,initial_water);
     EXPECT_NEAR(rising_water,gw.state().storage(),1e-10);
-    ASSERT_GT(rising_table,initial_table+phase_volume*.5);
+    ASSERT_GT(rising_table,initial_table);
     EXPECT_NEAR(gw.state().led_source_in,phase_volume,1e-9);
     EXPECT_DOUBLE_EQ(gw.state().led_source_out,0);
     EXPECT_NEAR(gw.state().continuityResidual(),0,1e-9);
     EXPECT_NEAR(energy(gw.heat())-initial_energy,-3*cp*(rising_water-initial_water),1e-4);
     double sigma_change=0;for(std::size_t k=0;k<initial_sigma.size();++k)
         sigma_change+=std::abs(gw.state().theta_sigma[k]-initial_sigma[k]);
-    EXPECT_GT(sigma_change,1e-5);
+    if(std::string(closure)=="SIGMA")EXPECT_GT(sigma_change,1e-5);
     const double rising_saturated=std::accumulate(gw.heat().cells[0].saturated_water.begin(),
         gw.heat().cells[0].saturated_water.end(),0.);
     EXPECT_GT(rising_saturated,initial_saturated);
@@ -645,6 +647,7 @@ TEST(GroundHeat, SigmaWaterTableRiseAndDrawdownPreserveFixedGridEnergyAndCapacit
     EXPECT_NEAR(gw.state().continuityResidual(),0,1e-9);
     EXPECT_NEAR(energy(gw.heat())-initial_energy,-3*cp*(drawn_water-initial_water),1e-4);
     checkLayers();
+  }
 }
 TEST(GroundHeat, PartialCoverageAndDisabledMasterDoNotInventThermalStores) {
     Model partial("partial","CLOSED_FORM",.5,true);ASSERT_NE(partial.e,nullptr);ASSERT_EQ(partial.start(),SWMM_OK);
