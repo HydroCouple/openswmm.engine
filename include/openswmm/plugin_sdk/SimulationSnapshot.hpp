@@ -390,6 +390,22 @@ struct SimulationSnapshot {
     /// [face, term]: initial, advective, source, surface, deep, latent,
     /// lateral, water contact, channel contact, residual, pending lateral, LID contact.
     std::vector<double> thermal2d_ground_budget;
+    /// Mesh-connected Richards LID thermal stores, in stable [lid_layer]
+    /// order. Static arrays describe the node/face/physical LID cell mapping;
+    /// time-varying arrays carry accepted canonical energy and capacity.
+    int thermal2d_lid_layer_count = 0;
+    std::vector<int> thermal2d_lid_layer_node_index;
+    std::vector<int> thermal2d_lid_layer_face_index;
+    std::vector<int> thermal2d_lid_layer_physical_index;
+    std::vector<int> thermal2d_lid_layer_control_index;
+    std::vector<int> thermal2d_lid_layer_authored_index;
+    std::vector<std::string> thermal2d_lid_layer_node_id;
+    std::vector<double> thermal2d_lid_layer_top_m;
+    std::vector<double> thermal2d_lid_layer_bottom_m;
+    std::vector<double> thermal2d_lid_layer_area_m2;
+    std::vector<double> thermal2d_lid_layer_temperature;
+    std::vector<double> thermal2d_lid_layer_energy;
+    std::vector<double> thermal2d_lid_layer_capacity;
 
     std::vector<double> surface_edge_flux;      ///< Normal flux through each edge, flat [tri*3+edge]
     std::vector<double> surface_vert_head;      ///< Reconstructed head at vertices (m) — SOLVER field (dry-cell head = bed)

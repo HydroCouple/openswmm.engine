@@ -977,7 +977,31 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
     // owner. Their absent-vs-NaN semantics distinguish an unavailable model
     // from an uncovered cell in a model that is active elsewhere.
     if (want(report2d::HEAT) && snap.thermal2d_active) {
+        const auto n_lid = static_cast<std::size_t>(std::max(0, snap.thermal2d_lid_layer_count));
+        const bool lid_shape_ok = snap.thermal2d_lid_layer_count >= 0 &&
+            snap.thermal2d_lid_layer_node_index.size() == n_lid &&
+            snap.thermal2d_lid_layer_face_index.size() == n_lid &&
+            snap.thermal2d_lid_layer_physical_index.size() == n_lid &&
+            snap.thermal2d_lid_layer_control_index.size() == n_lid &&
+            snap.thermal2d_lid_layer_authored_index.size() == n_lid &&
+            snap.thermal2d_lid_layer_node_id.size() == n_lid &&
+            snap.thermal2d_lid_layer_top_m.size() == n_lid &&
+            snap.thermal2d_lid_layer_bottom_m.size() == n_lid &&
+            snap.thermal2d_lid_layer_area_m2.size() == n_lid &&
+            snap.thermal2d_lid_layer_temperature.size() == n_lid &&
+            snap.thermal2d_lid_layer_energy.size() == n_lid &&
+            snap.thermal2d_lid_layer_capacity.size() == n_lid;
+        if (!lid_shape_ok) {
+            last_error_ = "Mesh LID thermal output snapshot has inconsistent layer mappings or state arrays.";
+            state_ = PluginState::ERROR;
+            return 1;
+        }
         if (!heat_created_) createThermalDatasets(snap);
+        if (static_cast<hsize_t>(n_lid) != n_heat_lid_layers_) {
+            last_error_ = "Mesh LID thermal layer mapping changed after output datasets were created.";
+            state_ = PluginState::ERROR;
+            return 1;
+        }
         auto writeThermalFace = [&](hid_t ds, const std::vector<double>& v) {
             if (ds != H5I_INVALID_HID && v.size() == static_cast<std::size_t>(n_faces_))
                 extendAndWrite2D(ds, v.data(), n_faces_);
@@ -1009,6 +1033,11 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
                 static_cast<std::size_t>(n_faces_) * snap.thermal2d_ground_budget_terms)
             extendAndWrite3D(ds_heat_ground_budget_, snap.thermal2d_ground_budget.data(),
                 n_faces_, static_cast<hsize_t>(snap.thermal2d_ground_budget_terms));
+        if (n_heat_lid_layers_ > 0) {
+            extendAndWrite2D(ds_heat_lid_temp_, snap.thermal2d_lid_layer_temperature.data(), n_heat_lid_layers_);
+            extendAndWrite2D(ds_heat_lid_energy_, snap.thermal2d_lid_layer_energy.data(), n_heat_lid_layers_);
+            extendAndWrite2D(ds_heat_lid_capacity_, snap.thermal2d_lid_layer_capacity.data(), n_heat_lid_layers_);
+        }
     }
 
     // Per-node fields
@@ -1116,7 +1145,68 @@ void Default2DOutputPlugin::createThermalDatasets(const SimulationSnapshot& snap
         writeStringAttr(ds_heat_ground_budget_, "sign_convention",
             "cumulative signed receipts; contact terms are internal and equal-opposite on paired stores; residual is stored energy minus initial and receipts");
     }
-    writeStringAttr(file_id_, "thermal_result_schema_version", "2");
+    n_heat_lid_layers_ = static_cast<hsize_t>(std::max(0, snap.thermal2d_lid_layer_count));
+    const auto n_lid = static_cast<std::size_t>(n_heat_lid_layers_);
+    if (n_lid > 0) {
+        const hsize_t dims[1]{n_heat_lid_layers_};
+        auto createStatic = [&](const char* name, const char* label, const char* units,
+                                hid_t file_type, hid_t memory_type, const void* values) {
+            hid_t space = H5Screate_simple(1, dims, nullptr);
+            hid_t ds = H5Dcreate2(file_id_, name, file_type, space,
+                                  H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+            checkpointWriteStatus(H5Dwrite(ds, memory_type, H5S_ALL, H5S_ALL,
+                                           H5P_DEFAULT, values));
+            writeStringAttr(ds, "long_name", label);
+            writeStringAttr(ds, "units", units);
+            writeStringAttr(ds, "mesh", "Mesh2");
+            writeStringAttr(ds, "location", "LID layer");
+            writeStringAttr(ds, "layout", "[lid_layer]; zero-based indices map each thermal store to its owning node, mesh face, and physical LID cell");
+            H5Dclose(ds); H5Sclose(space);
+        };
+        createStatic("Mesh2_lid_layer_node_index", "network node index for each mesh-connected LID thermal layer", "1", H5T_NATIVE_INT, H5T_NATIVE_INT, snap.thermal2d_lid_layer_node_index.data());
+        createStatic("Mesh2_lid_layer_face_index", "mesh face index for each mesh-connected LID thermal layer", "1", H5T_NATIVE_INT, H5T_NATIVE_INT, snap.thermal2d_lid_layer_face_index.data());
+        createStatic("Mesh2_lid_layer_physical_cell_index", "physical LID cell index within its owning node", "1", H5T_NATIVE_INT, H5T_NATIVE_INT, snap.thermal2d_lid_layer_physical_index.data());
+        createStatic("Mesh2_lid_layer_control_index", "LID control index for each mesh-connected LID thermal layer", "1", H5T_NATIVE_INT, H5T_NATIVE_INT, snap.thermal2d_lid_layer_control_index.data());
+        createStatic("Mesh2_lid_layer_authored_index", "authored LID layer index for each physical thermal cell", "1", H5T_NATIVE_INT, H5T_NATIVE_INT, snap.thermal2d_lid_layer_authored_index.data());
+        createStatic("Mesh2_lid_layer_top_elevation", "LID physical-cell top elevation relative to node invert", "m", H5T_NATIVE_DOUBLE, H5T_NATIVE_DOUBLE, snap.thermal2d_lid_layer_top_m.data());
+        createStatic("Mesh2_lid_layer_bottom_elevation", "LID physical-cell bottom elevation relative to node invert", "m", H5T_NATIVE_DOUBLE, H5T_NATIVE_DOUBLE, snap.thermal2d_lid_layer_bottom_m.data());
+        createStatic("Mesh2_lid_layer_area", "LID physical-cell cross-sectional area", "m2", H5T_NATIVE_DOUBLE, H5T_NATIVE_DOUBLE, snap.thermal2d_lid_layer_area_m2.data());
+
+        hid_t string_type = H5Tcopy(H5T_C_S1);
+        H5Tset_size(string_type, H5T_VARIABLE);
+        H5Tset_cset(string_type, H5T_CSET_UTF8);
+        hid_t string_space = H5Screate_simple(1, dims, nullptr);
+        hid_t node_names = H5Dcreate2(file_id_, "Mesh2_lid_layer_node_id", string_type,
+                                      string_space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        std::vector<const char*> node_name_values;
+        node_name_values.reserve(n_lid);
+        for (const auto& name : snap.thermal2d_lid_layer_node_id) node_name_values.push_back(name.c_str());
+        checkpointWriteStatus(H5Dwrite(node_names, string_type, H5S_ALL, H5S_ALL,
+                                       H5P_DEFAULT, node_name_values.data()));
+        writeStringAttr(node_names, "long_name", "network node ID for each mesh-connected LID thermal layer");
+        writeStringAttr(node_names, "mesh", "Mesh2");
+        writeStringAttr(node_names, "location", "LID layer");
+        writeStringAttr(node_names, "layout", "[lid_layer]");
+        H5Dclose(node_names); H5Sclose(string_space); H5Tclose(string_type);
+
+        const hsize_t zero2[2]{0, n_heat_lid_layers_};
+        const hsize_t chunk2[2]{1, std::min<hsize_t>(n_heat_lid_layers_, 4096)};
+        auto createLidState = [&](const char* name, const char* label, const char* units,
+                                  const char* missing) {
+            hid_t ds = createUnlimitedDataset(name, 2, zero2, chunk2);
+            writeStringAttr(ds, "long_name", label);
+            writeStringAttr(ds, "units", units);
+            writeStringAttr(ds, "mesh", "Mesh2");
+            writeStringAttr(ds, "location", "LID layer");
+            writeStringAttr(ds, "layout", "[time, lid_layer]; static Mesh2_lid_layer_* datasets identify the owning node, face and physical LID cell");
+            writeStringAttr(ds, "missing_values", missing);
+            return ds;
+        };
+        ds_heat_lid_temp_ = createLidState("Mesh2_lid_layer_temperature", "mesh-connected LID physical-layer temperature", "degree_Celsius", "NaN means the physical cell currently has zero heat capacity");
+        ds_heat_lid_energy_ = createLidState("Mesh2_lid_layer_energy", "mesh-connected LID physical-layer sensible energy relative to 0 Celsius", "J", "Zero for a physical cell with zero heat capacity");
+        ds_heat_lid_capacity_ = createLidState("Mesh2_lid_layer_heat_capacity", "mesh-connected LID physical-layer heat capacity", "J K-1", "Zero for a physical cell with zero heat capacity");
+    }
+    writeStringAttr(file_id_, "thermal_result_schema_version", "3");
 }
 
 // Snow fields follow the rainfall report selection. They carry their actual
@@ -1439,7 +1529,7 @@ void Default2DOutputPlugin::checkpointWriteStatus(herr_t status) {
 }
 
 std::vector<hid_t*> Default2DOutputPlugin::checkpointDatasets() {
-    std::vector<hid_t*> ids{&ds_time_, &ds_face_depth_, &ds_face_head_, &ds_face_grad_hx_, &ds_face_grad_hy_, &ds_face_grad_hx_lim_, &ds_face_grad_hy_lim_, &ds_face_rainfall_, &ds_face_coupling_flux_, &ds_face_net_source_, &ds_face_infil_rate_, &ds_face_infil_cum_, &ds_face_rain_cum_, &ds_face_species_conc_, &ds_face_buildup_, &ds_gw_sat_conc_, &ds_gw_unsat_conc_, &ds_gw_species_ledger_, &ds_gw_ledger_, &ds_gw_bed_exchange_, &ds_gw_theta_, &ds_heat_water_temp_, &ds_heat_bed_temp_, &ds_heat_bed_energy_, &ds_heat_bed_capacity_, &ds_heat_surface_budget_, &ds_heat_evaporation_, &ds_heat_ground_temp_, &ds_heat_ground_energy_, &ds_heat_ground_capacity_, &ds_heat_layer_temp_, &ds_heat_layer_energy_, &ds_heat_layer_capacity_, &ds_heat_ground_budget_, &ds_face_vx_, &ds_face_vy_, &ds_face_continuity_err_, &ds_edge_flux_, &ds_node_head_, &ds_node_depth_, &ds_face_max_depth_, &ds_face_max_velocity_, &ds_face_max_continuity_err_};
+    std::vector<hid_t*> ids{&ds_time_, &ds_face_depth_, &ds_face_head_, &ds_face_grad_hx_, &ds_face_grad_hy_, &ds_face_grad_hx_lim_, &ds_face_grad_hy_lim_, &ds_face_rainfall_, &ds_face_coupling_flux_, &ds_face_net_source_, &ds_face_infil_rate_, &ds_face_infil_cum_, &ds_face_rain_cum_, &ds_face_species_conc_, &ds_face_buildup_, &ds_gw_sat_conc_, &ds_gw_unsat_conc_, &ds_gw_species_ledger_, &ds_gw_ledger_, &ds_gw_bed_exchange_, &ds_gw_theta_, &ds_heat_water_temp_, &ds_heat_bed_temp_, &ds_heat_bed_energy_, &ds_heat_bed_capacity_, &ds_heat_surface_budget_, &ds_heat_evaporation_, &ds_heat_ground_temp_, &ds_heat_ground_energy_, &ds_heat_ground_capacity_, &ds_heat_layer_temp_, &ds_heat_layer_energy_, &ds_heat_layer_capacity_, &ds_heat_ground_budget_, &ds_heat_lid_temp_, &ds_heat_lid_energy_, &ds_heat_lid_capacity_, &ds_face_vx_, &ds_face_vy_, &ds_face_continuity_err_, &ds_edge_flux_, &ds_node_head_, &ds_node_depth_, &ds_face_max_depth_, &ds_face_max_velocity_, &ds_face_max_continuity_err_};
     for (auto& id : ds_gw_face_) ids.push_back(&id);
     for (auto& id : ds_snow_) ids.push_back(&id);
     return ids;
@@ -1484,6 +1574,9 @@ void Default2DOutputPlugin::closeDatasets() noexcept {
     closeDS(ds_heat_layer_energy_);
     closeDS(ds_heat_layer_capacity_);
     closeDS(ds_heat_ground_budget_);
+    closeDS(ds_heat_lid_temp_);
+    closeDS(ds_heat_lid_energy_);
+    closeDS(ds_heat_lid_capacity_);
     closeDS(ds_face_vx_);
     closeDS(ds_face_vy_);
     closeDS(ds_face_continuity_err_);

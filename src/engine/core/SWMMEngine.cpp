@@ -54,6 +54,7 @@
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/gw/GwTransportSections.hpp"   // U4
 #include "../2d/subsurface/SubsurfaceSections.hpp"   // G1
+#include "../2d/heat/LidNodeHeat.hpp"
 #endif
 #include "../transport/components/HeatFluxModules/HeatOverrides.hpp"  // PE2
 #include "../transport/components/HeatFluxModules/BedExchange.hpp"
@@ -7258,6 +7259,67 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
             snap.thermal2d_ground_layer_capacity.clear();
             snap.thermal2d_ground_budget.clear();
         }
+
+        // Publish the LID-side stores paired with ground_heat_budget's signed
+        // lid_contact_j receipt. Keep the static mapping in the snapshot so
+        // asynchronous output never has to consult mutable simulation state.
+        snap.thermal2d_lid_layer_count = 0;
+        snap.thermal2d_lid_layer_node_index.clear();
+        snap.thermal2d_lid_layer_face_index.clear();
+        snap.thermal2d_lid_layer_physical_index.clear();
+        snap.thermal2d_lid_layer_control_index.clear();
+        snap.thermal2d_lid_layer_authored_index.clear();
+        snap.thermal2d_lid_layer_node_id.clear();
+        snap.thermal2d_lid_layer_top_m.clear();
+        snap.thermal2d_lid_layer_bottom_m.clear();
+        snap.thermal2d_lid_layer_area_m2.clear();
+        snap.thermal2d_lid_layer_temperature.clear();
+        snap.thermal2d_lid_layer_energy.clear();
+        snap.thermal2d_lid_layer_capacity.clear();
+        const auto& storage = ctx_.node_subtypes.storages;
+        const double initial_lid_temperature = ctx_.heat_config.global_temp[
+            static_cast<int>(HeatSource::INITIAL_STATE)];
+        for (std::size_t face = 0; face < owners.size(); ++face) {
+            const auto* owner = owners[face];
+            if (!owner || face >= owner->lid_owners.size()) continue;
+            for (const auto& binding : owner->lid_owners[face]) {
+                if (binding.row < 0 || static_cast<std::size_t>(binding.row) >= storage.lid_state.size() ||
+                    static_cast<std::size_t>(binding.row) >= storage.lid.size() ||
+                    binding.node < 0 || binding.node >= ctx_.n_nodes()) continue;
+                const auto& lid = storage.lid_state[static_cast<std::size_t>(binding.row)];
+                twoD::LidNodeThermalGraph graph;
+                if (!twoD::buildLidNodeThermalGraph(lid, 0.0, owner->water_capacity,
+                        ctx_.heat_config.conduction, initial_lid_temperature, graph).empty()) continue;
+                std::vector<double> layer_energy(lid.cells.size(), 0.0);
+                std::vector<double> layer_capacity(lid.cells.size(), 0.0);
+                for (std::size_t k = 0; k < graph.cells.size(); ++k) {
+                    const auto physical = graph.cells[k];
+                    if (physical >= lid.cells.size() || k >= graph.stores.size()) continue;
+                    layer_energy[physical] = graph.stores[k].energy;
+                    layer_capacity[physical] = graph.stores[k].capacity;
+                }
+                for (std::size_t physical = 0; physical < lid.cells.size(); ++physical) {
+                    const auto& cell = lid.cells[physical];
+                    const double capacity = layer_capacity[physical];
+                    const double energy = layer_energy[physical];
+                    if (!std::isfinite(capacity) || !std::isfinite(energy)) continue;
+                    snap.thermal2d_lid_layer_node_index.push_back(binding.node);
+                    snap.thermal2d_lid_layer_face_index.push_back(static_cast<int>(face));
+                    snap.thermal2d_lid_layer_physical_index.push_back(static_cast<int>(physical));
+                    snap.thermal2d_lid_layer_control_index.push_back(storage.lid[static_cast<std::size_t>(binding.row)].control);
+                    snap.thermal2d_lid_layer_authored_index.push_back(cell.layer);
+                    snap.thermal2d_lid_layer_node_id.push_back(ctx_.node_names.name_of(binding.node));
+                    snap.thermal2d_lid_layer_top_m.push_back(cell.top * 0.3048);
+                    snap.thermal2d_lid_layer_bottom_m.push_back(cell.bottom * 0.3048);
+                    snap.thermal2d_lid_layer_area_m2.push_back(graph.physical_area_m2[physical]);
+                    snap.thermal2d_lid_layer_temperature.push_back(capacity > 0.0
+                        ? energy / capacity : missing);
+                    snap.thermal2d_lid_layer_energy.push_back(energy);
+                    snap.thermal2d_lid_layer_capacity.push_back(capacity);
+                }
+            }
+        }
+        snap.thermal2d_lid_layer_count = static_cast<int>(snap.thermal2d_lid_layer_energy.size());
     }
 #else
     (void)snap;

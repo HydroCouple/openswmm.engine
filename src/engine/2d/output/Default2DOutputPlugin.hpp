@@ -327,6 +327,7 @@ private:
     void createGroundwaterDatasets(const SimulationSnapshot& snap);
     bool    heat_created_           = false;
     hsize_t n_heat_layers_          = 0;
+    hsize_t n_heat_lid_layers_      = 0;
     hid_t   ds_heat_water_temp_     = H5I_INVALID_HID;
     hid_t   ds_heat_bed_temp_       = H5I_INVALID_HID;
     hid_t   ds_heat_bed_energy_     = H5I_INVALID_HID;
@@ -340,6 +341,9 @@ private:
     hid_t   ds_heat_layer_energy_   = H5I_INVALID_HID;
     hid_t   ds_heat_layer_capacity_ = H5I_INVALID_HID;
     hid_t   ds_heat_ground_budget_  = H5I_INVALID_HID;
+    hid_t   ds_heat_lid_temp_       = H5I_INVALID_HID;
+    hid_t   ds_heat_lid_energy_     = H5I_INVALID_HID;
+    hid_t   ds_heat_lid_capacity_   = H5I_INVALID_HID;
     void createThermalDatasets(const SimulationSnapshot& snap);
     hid_t ds_face_vx_              = H5I_INVALID_HID;
     hid_t ds_face_vy_              = H5I_INVALID_HID;

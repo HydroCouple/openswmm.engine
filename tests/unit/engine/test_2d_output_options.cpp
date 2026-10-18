@@ -1022,6 +1022,85 @@ TEST(Output2DWriter, CoupledGroundHeatFieldsAndBudgetsEndToEnd) {
             EXPECT_NEAR(budget[(t * budget_dims[1] + c) * budget_dims[2] + 9], 0.0, 1e-5);
 }
 
+TEST(Output2DWriter, MeshRichardsLidThermalStateMapsToItsReciprocalGroundReceipt) {
+    std::error_code ec;
+    fs::create_directories(kOutDir, ec);
+    const std::string stem = "mesh_richards_lid_heat_h5";
+    const fs::path inp = kOutDir / (stem + ".inp");
+    const fs::path h5 = kOutDir / (stem + ".h5");
+    fs::remove(h5, ec);
+    {
+        std::ofstream f(inp);
+        f << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
+             "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:10:00\n"
+             "REPORT_STEP 00:01:00\nWET_STEP 00:01:00\nDRY_STEP 00:01:00\nROUTING_STEP 5\n"
+             "[STORAGE]\nS -2 2 1 FUNCTIONAL 0 0 100 0 0\n[COORDINATES]\nS 1 3\n"
+             "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\nREPORT_2D YES\n"
+             "HEAT_MODEL COUPLED\nBED_HEAT_MODEL GROUND_COLUMN\n"
+             "HEAT_SURFACE_EXCHANGE NO\nHEAT_RADIATIVE_EXCHANGE NO\n"
+             "OUTPUT_FILE " << stem << ".h5\nOUTPUT_PRECISION FLOAT64\n"
+             "REPORT_2D_VARIABLES DEPTH HEAT\n"
+             "[2D_VERTICES]\n0 0 0\n10 0 0\n0 10 0\n[2D_TRIANGLES]\n0 1 2 .03 .1 floodplain\n"
+             "[2D_AQUIFER_OPTIONS]\nNODE_ENROLMENT ROWS\nGW_ET NONE\nM_LAYERS 4\nCLOSURE CLOSED_FORM\n"
+             "[2D_AQUIFER]\n* 36 1 .45 .1 2 HG0 .5\n"
+             "[2D_AQUIFER_NODE]\nS 1 KC 3600 DC .1 AREA 1\n"
+             "[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION YES\n"
+             "SURFACE_THERMAL_BC ADIABATIC\nDEEP_THERMAL_BC ADIABATIC\n"
+             "[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ -3\n* UNSAT __TEMPERATURE__ -3\n"
+             "[LID_CONTROLS]\nStack NODE\nStack SURFACE 6 .1\n"
+             "Stack MEDIA 12 .45 .2 .08 2 10 3\nStack AGGREGATE 6 .4 100\nStack BOTTOM 0 0\n"
+             "[LID_NODES]\nS Stack 10 BOTTOM MESH_AQUIFER\n"
+             "[LID_RICHARDS]\nStack OPTIONS 4 1e-7 1e-5 30\n"
+             "Stack 2 .03 2 1.6 .5 .0001\nStack 3 .03 2 1.6 .5 .0001\n"
+             "[HEAT_FLUXES]\nLAYER_CONDUCTION ON\n[REPORT]\nINPUT NO\n";
+    }
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    const fs::path rpt = kOutDir / (stem + ".rpt"), out = kOutDir / (stem + ".out");
+    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK) << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK) << swmm_get_last_error_msg(e);
+    double elapsed = 0.0;
+    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    swmm_engine_end(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+
+    H5File file(h5);
+    ASSERT_GE(file.id, 0) << "No 2D thermal result was written";
+    for (const char* name : {"Mesh2_lid_layer_node_id", "Mesh2_lid_layer_node_index",
+                             "Mesh2_lid_layer_face_index", "Mesh2_lid_layer_physical_cell_index",
+                             "Mesh2_lid_layer_authored_index", "Mesh2_lid_layer_temperature",
+                             "Mesh2_lid_layer_energy", "Mesh2_lid_layer_heat_capacity",
+                             "ground_heat_budget"})
+        EXPECT_TRUE(file.has(name)) << name;
+    const auto lid_dims = file.dims("Mesh2_lid_layer_temperature");
+    ASSERT_EQ(lid_dims.size(), 2u);
+    ASSERT_GT(lid_dims[0], 0u);
+    ASSERT_GT(lid_dims[1], 0u);
+    EXPECT_EQ(file.dims("Mesh2_lid_layer_node_id"), (std::vector<hsize_t>{lid_dims[1]}));
+    EXPECT_EQ(file.dsAttr("Mesh2_lid_layer_energy", "units"), "J");
+    EXPECT_NE(file.dsAttr("Mesh2_lid_layer_temperature", "layout").find("physical LID cell"), std::string::npos);
+    const auto temperature = file.readAll("Mesh2_lid_layer_temperature");
+    const auto energy = file.readAll("Mesh2_lid_layer_energy");
+    const auto capacity = file.readAll("Mesh2_lid_layer_heat_capacity");
+    ASSERT_EQ(temperature.size(), energy.size());
+    ASSERT_EQ(temperature.size(), capacity.size());
+    for (std::size_t i = 0; i < energy.size(); ++i) {
+        EXPECT_GE(capacity[i], 0.0);
+        if (capacity[i] > 0.0) EXPECT_NEAR(temperature[i], energy[i] / capacity[i], 1e-8);
+        else EXPECT_TRUE(std::isnan(temperature[i]));
+    }
+    const auto budget_dims = file.dims("ground_heat_budget");
+    const auto budget = file.readAll("ground_heat_budget");
+    ASSERT_EQ(budget_dims.size(), 3u);
+    bool saw_lid_contact = false;
+    for (hsize_t t = 0; t < budget_dims[0]; ++t)
+        for (hsize_t c = 0; c < budget_dims[1]; ++c)
+            saw_lid_contact |= std::abs(budget[(t * budget_dims[1] + c) * budget_dims[2] + 11]) > 0.0;
+    EXPECT_TRUE(saw_lid_contact) << "LID layer output should be paired with its soil-side contact receipt";
+}
+
 TEST(Output2DWriter, Report2DStepThinsTheTimeAxis) {
     SolverOptions2D o;
     o.report_2d_step = 3600.0;   // 12 × the 300 s report step
@@ -1305,6 +1384,19 @@ TEST(Output2DThermal, WritesOnlySelectedInitializedThermalStateAndSignedBudgets)
         snap.thermal2d_ground_budget_terms = 12;
         snap.thermal2d_ground_budget.assign(24, 0.0);
         snap.thermal2d_ground_budget[9] = -1.25;
+        snap.thermal2d_lid_layer_count = 2;
+        snap.thermal2d_lid_layer_node_index = {3, 3};
+        snap.thermal2d_lid_layer_face_index = {0, 0};
+        snap.thermal2d_lid_layer_physical_index = {1, 2};
+        snap.thermal2d_lid_layer_control_index = {0, 0};
+        snap.thermal2d_lid_layer_authored_index = {1, 2};
+        snap.thermal2d_lid_layer_node_id = {"S", "S"};
+        snap.thermal2d_lid_layer_top_m = {.3, .15};
+        snap.thermal2d_lid_layer_bottom_m = {.15, 0.0};
+        snap.thermal2d_lid_layer_area_m2 = {2.0, 2.0};
+        snap.thermal2d_lid_layer_temperature = {10.0, 12.0};
+        snap.thermal2d_lid_layer_energy = {100.0, 144.0};
+        snap.thermal2d_lid_layer_capacity = {10.0, 12.0};
         ASSERT_EQ(writer.update(snap), 0);
         ASSERT_EQ(writer.finalize(ctx), 0);
 
@@ -1316,6 +1408,8 @@ TEST(Output2DThermal, WritesOnlySelectedInitializedThermalStateAndSignedBudgets)
         EXPECT_EQ(file.has("Mesh2_face_soil_layer_temperature"), selected);
         EXPECT_EQ(file.has("mesh_heat_budget"), selected);
         EXPECT_EQ(file.has("ground_heat_budget"), selected);
+        EXPECT_EQ(file.has("Mesh2_lid_layer_temperature"), selected);
+        EXPECT_EQ(file.has("Mesh2_lid_layer_node_id"), selected);
         EXPECT_EQ(H5Aexists(file.id, "thermal_result_schema_version") > 0, selected);
         if (!selected) continue;
 
@@ -1323,6 +1417,9 @@ TEST(Output2DThermal, WritesOnlySelectedInitializedThermalStateAndSignedBudgets)
         EXPECT_EQ(file.dims("Mesh2_face_soil_layer_temperature"), (std::vector<hsize_t>{1, 2, 2}));
         EXPECT_EQ(file.dims("mesh_heat_budget"), (std::vector<hsize_t>{1, 2, 6}));
         EXPECT_EQ(file.dims("ground_heat_budget"), (std::vector<hsize_t>{1, 2, 12}));
+        EXPECT_EQ(file.dims("Mesh2_lid_layer_temperature"), (std::vector<hsize_t>{1, 2}));
+        EXPECT_EQ(file.dims("Mesh2_lid_layer_face_index"), (std::vector<hsize_t>{2}));
+        EXPECT_EQ(file.rootAttr("thermal_result_schema_version"), "3");
         const auto water = file.readAll("Mesh2_face_water_temperature");
         ASSERT_EQ(water.size(), 2u);
         EXPECT_DOUBLE_EQ(water[0], 12.5);
@@ -1337,5 +1434,13 @@ TEST(Output2DThermal, WritesOnlySelectedInitializedThermalStateAndSignedBudgets)
         EXPECT_EQ(file.dsAttr("mesh_heat_budget", "terms"),
                   "radiation_j,sensible_j,latent_j,deep_boundary_j,water_to_bed_j,water_thermal_increment_j");
         EXPECT_EQ(file.dsAttr("Mesh2_face_soil_layer_temperature", "units"), "degree_Celsius");
+        const auto lid_temp = file.readAll("Mesh2_lid_layer_temperature");
+        const auto lid_energy = file.readAll("Mesh2_lid_layer_energy");
+        const auto lid_capacity = file.readAll("Mesh2_lid_layer_heat_capacity");
+        ASSERT_EQ(lid_temp.size(), 2u);
+        EXPECT_DOUBLE_EQ(lid_temp[0], 10.0);
+        EXPECT_DOUBLE_EQ(lid_energy[1], 144.0);
+        EXPECT_DOUBLE_EQ(lid_capacity[0], 10.0);
+        EXPECT_EQ(file.dsAttr("Mesh2_lid_layer_temperature", "location"), "LID layer");
     }
 }
