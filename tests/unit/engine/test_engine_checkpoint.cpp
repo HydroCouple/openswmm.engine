@@ -777,6 +777,50 @@ TEST(EngineCheckpoint, CoupledMeshAndGroundThermalStateContinuesAcrossRestart) {
     for(const auto& cell:ground.cells)ASSERT_EQ(cell.failed,0)<<cell.error;
 }
 
+TEST(EngineCheckpoint, ThermalPendingLinkReceiptSurvivesRestart) {
+    ThermalSurfaceSession source,target;
+    ASSERT_NO_THROW(source.start("surface-thermal-pending-source"));
+    ASSERT_NO_THROW(target.start("surface-thermal-pending-target"));
+    while(source.engine.context().current_time<43.1)ASSERT_NO_THROW(step(source.engine));
+
+    // Model a channel seepage packet accepted between aquifer firings. The
+    // hydraulic volume and its signed temperature-volume must remain paired
+    // through the checkpoint and be consumed once by the resumed cell clock.
+    auto& gw=source.engine.surfaceRouter2D().subsurface();
+    auto& transport=gw.transport();
+    ASSERT_GE(transport.temp_row,0);
+    const int cell=0;
+    const double volume=2.5e-5,temperature=27.0;
+    gw.bookLinkSeepage(cell,volume);
+    gw.bookLinkSeepageMass(cell,transport.temp_row,volume*temperature);
+    EXPECT_DOUBLE_EQ(gw.state().lacc[cell],volume);
+    EXPECT_DOUBLE_EQ(transport.lacc_mass[transport.idx(transport.temp_row,cell)],volume*temperature);
+
+    const auto file=root()/"surface-thermal-pending-receipt.chk";
+    ASSERT_EQ(source.engine.saveCheckpoint(file.string()),"");
+    ASSERT_EQ(target.engine.loadCheckpoint(file.string()),"");
+    auto& restored_gw=target.engine.surfaceRouter2D().subsurface();
+    ASSERT_DOUBLE_EQ(restored_gw.state().lacc[cell],volume);
+    ASSERT_DOUBLE_EQ(restored_gw.transport().lacc_mass[
+        restored_gw.transport().idx(restored_gw.transport().temp_row,cell)],volume*temperature);
+    compare(source.engine,target.engine,"surface-thermal-pending-restored");
+
+    int count=0;
+    while(source.engine.context().elapsed_ms<source.engine.context().options.totalDurationMs()) {
+        ASSERT_NO_THROW(step(source.engine));
+        ASSERT_NO_THROW(step(target.engine));
+        if(++count%9==0)compare(source.engine,target.engine,"surface-thermal-pending-continued");
+    }
+    compare(source.engine,target.engine,"surface-thermal-pending-final");
+    const auto& source_gw=source.engine.surfaceRouter2D().subsurface().state();
+    const auto& target_gw=target.engine.surfaceRouter2D().subsurface().state();
+    EXPECT_NEAR(source_gw.led_link,volume,1e-12);
+    EXPECT_DOUBLE_EQ(source_gw.led_link,target_gw.led_link);
+    const auto& source_heat=source.engine.surfaceRouter2D().subsurface().heat();
+    const auto& target_heat=target.engine.surfaceRouter2D().subsurface().heat();
+    EXPECT_DOUBLE_EQ(source_heat.cells[cell].advective_j,target_heat.cells[cell].advective_j);
+}
+
 TEST(EngineCheckpoint, ThermalCheckpointModelMismatchLeavesTargetThermalStateUnchanged) {
     ThermalSurfaceSession source,target;
     ASSERT_NO_THROW(source.start("surface-thermal-mismatch-source"));
