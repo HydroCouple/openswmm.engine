@@ -879,6 +879,14 @@ TEST(EngineCheckpoint, MeshRichardsLidThermalEnergyContinuesAcrossRestart) {
     auto& router=source.engine.surfaceRouter2D();
     ASSERT_TRUE(router.subsurface().heat().active());
     auto& context=source.engine.context();
+    for(auto* engine:{&source.engine,&target.engine}) {
+        auto& groundwater=engine->surfaceRouter2D().subsurface();
+        groundwater.state().dt_cell[0]=1;
+        groundwater.state().dt_cell[1]=.2;
+        groundwater.assignTiers(.2,3);
+        ASSERT_EQ(groundwater.state().tier[0],2);
+        ASSERT_EQ(groundwater.state().tier[1],0);
+    }
     const int row=context.node_subtypes.storage_row(context.node_names.find("LID"));
     ASSERT_GE(row,0);
     auto& lid=context.node_subtypes.storages.lid_state[std::size_t(row)];
