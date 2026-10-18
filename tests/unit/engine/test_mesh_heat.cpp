@@ -832,7 +832,7 @@ TEST(MeshHeat, FullMarcherHeterogeneousHyporheicReceiptsSurviveSpatialRefinement
         "0 6 8 .03 .1 channel:tributary\n6 2 7 .03 .1 channel:tributary\n"
         "8 7 3 .03 .1 channel:tributary\n6 7 8 .03 .1 channel:tributary\n\n";
     struct Result {double volume=0,water=0,bed=0,contact=0,water_temperature=0,bed_temperature=0;};
-    const auto run=[](const std::string& id,const std::string& mesh,int cells_per_region)
+    const auto run=[](const std::string& id,const std::string& mesh,int cells_per_region,int time_steps)
         ->std::optional<std::array<Result,2>> {
         Model m(id,"",mesh);if(!m.e)return {};
         for(const auto& setting:{std::pair{"HEAT_MODEL","COUPLED"},
@@ -865,8 +865,11 @@ TEST(MeshHeat, FullMarcherHeterogeneousHyporheicReceiptsSurviveSpatialRefinement
             bed_capacity[region]+=state.heat.bed_capacity[cell];
             result[region].volume+=water_volume;
         }
-        double elapsed=0;
-        if(swmm_engine_step(m.e,&elapsed)!=SWMM_OK||!(elapsed>0)||swmm_engine_end(m.e)!=SWMM_OK)return {};
+        for(int step=1;step<=time_steps;++step) {
+            double actual=0;const double target=5.*step/time_steps;
+            if(swmm_coupling_advance_to(m.e,target,&actual)!=SWMM_OK||actual!=target)return {};
+        }
+        if(swmm_engine_end(m.e)!=SWMM_OK)return {};
         for(int cell=0;cell<2*cells_per_region;++cell) {
             const int region=cell<cells_per_region?0:1;
             const double mass=state.transport.cell_mass[state.transport.idx(row,cell)];
@@ -883,20 +886,24 @@ TEST(MeshHeat, FullMarcherHeterogeneousHyporheicReceiptsSurviveSpatialRefinement
         }
         return result;
     };
-    const auto coarse=run("marcher-heterogeneous-refine-coarse",coarse_mesh,1);
-    const auto refined=run("marcher-heterogeneous-refine-fine",refined_mesh,4);
-    ASSERT_TRUE(coarse.has_value());ASSERT_TRUE(refined.has_value());
+    const auto coarse=run("marcher-heterogeneous-refine-coarse",coarse_mesh,1,1);
+    const auto coarse_fine_time=run("marcher-heterogeneous-refine-coarse-time",coarse_mesh,1,10);
+    const auto refined=run("marcher-heterogeneous-refine-fine",refined_mesh,4,1);
+    const auto refined_fine_time=run("marcher-heterogeneous-refine-fine-time",refined_mesh,4,10);
+    ASSERT_TRUE(coarse.has_value());ASSERT_TRUE(coarse_fine_time.has_value());
+    ASSERT_TRUE(refined.has_value());ASSERT_TRUE(refined_fine_time.has_value());
     for(int region=0;region<2;++region) {
-        EXPECT_NEAR((*coarse)[region].volume,5,1e-12);
-        EXPECT_NEAR((*refined)[region].volume,5,1e-12);
-        EXPECT_NEAR((*coarse)[region].water+(*coarse)[region].bed,0,1e-5);
-        EXPECT_NEAR((*refined)[region].water+(*refined)[region].bed,0,1e-5);
-        EXPECT_NEAR((*coarse)[region].bed,(*coarse)[region].contact,1e-5);
-        EXPECT_NEAR((*refined)[region].bed,(*refined)[region].contact,1e-5);
-        EXPECT_NEAR((*coarse)[region].water,(*refined)[region].water,1e-5);
-        EXPECT_NEAR((*coarse)[region].bed,(*refined)[region].bed,1e-5);
-        EXPECT_NEAR((*coarse)[region].water_temperature,(*refined)[region].water_temperature,1e-9);
-        EXPECT_NEAR((*coarse)[region].bed_temperature,(*refined)[region].bed_temperature,1e-9);
+        for(const auto* result:{&*coarse,&*coarse_fine_time,&*refined,&*refined_fine_time}) {
+            EXPECT_NEAR((*result)[region].volume,5,1e-12);
+            EXPECT_NEAR((*result)[region].water+(*result)[region].bed,0,1e-5);
+            EXPECT_NEAR((*result)[region].bed,(*result)[region].contact,1e-5);
+        }
+        for(const auto* result:{&*coarse_fine_time,&*refined,&*refined_fine_time}) {
+            EXPECT_NEAR((*coarse)[region].water,(*result)[region].water,1e-5);
+            EXPECT_NEAR((*coarse)[region].bed,(*result)[region].bed,1e-5);
+            EXPECT_NEAR((*coarse)[region].water_temperature,(*result)[region].water_temperature,1e-9);
+            EXPECT_NEAR((*coarse)[region].bed_temperature,(*result)[region].bed_temperature,1e-9);
+        }
     }
     EXPECT_GT(std::abs((*coarse)[1].contact),std::abs((*coarse)[0].contact));
     EXPECT_GT(std::abs((*refined)[1].contact),std::abs((*refined)[0].contact));
