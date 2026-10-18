@@ -763,6 +763,58 @@ int SWMMEngine::open(const char* inp_path,
             for(const auto& u:updates)ctx_.heat_state.link_temp[u.link]+=u.celsius;
             return {};
         };
+        ctx_.state_accessors.get_channel_species_regions = [this]() {
+            if(ctx_.options.quality_solver==QualitySolverKind::EULERIAN_ARD&&ard_.initialized())return ard_.speciesRegions(ctx_);
+            if(ctx_.options.quality_solver==QualitySolverKind::LAGRANGIAN&&lard_.initialized())return lard_.speciesRegions(ctx_);
+            std::vector<ChannelSpeciesRegion> out;
+            if(!ctx_.options.heat_transport)return out;
+            const int np=ctx_.n_pollutants(),age=ctx_.options.water_age?np:-1,temp=np+(age>=0?1:0);
+            for(const auto& thermal:ctx_.state_accessors.get_channel_thermal_regions()) {
+                ChannelSpeciesRegion region;region.link=thermal.link;region.region=thermal.region;
+                region.begin=thermal.begin;region.end=thermal.end;region.volume=thermal.volume;
+                region.concentration.assign(temp+1,0);
+                for(int p=0;p<np;++p)region.row_names.push_back(ctx_.pollutant_names.name_of(p));
+                if(age>=0)region.row_names.emplace_back("__WATER_AGE__");
+                region.row_names.emplace_back("__TEMPERATURE__");
+                for(int p=0;p<np;++p) {
+                    const auto k=std::size_t(thermal.link)*np+p;
+                    if(k<ctx_.links.conc.size())region.concentration[p]=ctx_.links.conc[k];
+                }
+                if(age>=0&&std::size_t(thermal.link)<ctx_.water_age_state.link_age.size())
+                    region.concentration[age]=ctx_.water_age_state.link_age[thermal.link];
+                if(std::size_t(thermal.link)<ctx_.heat_state.link_temp.size())
+                    region.concentration[temp]=ctx_.heat_state.link_temp[thermal.link];
+                out.push_back(std::move(region));
+            }
+            return out;
+        };
+        ctx_.state_accessors.apply_channel_species_increments = [this](const std::vector<ChannelSpeciesIncrement>& updates)->std::string {
+            if(ctx_.options.quality_solver==QualitySolverKind::EULERIAN_ARD&&ard_.initialized())return ard_.applySpeciesIncrements(ctx_,updates);
+            if(ctx_.options.quality_solver==QualitySolverKind::LAGRANGIAN&&lard_.initialized())return lard_.applySpeciesIncrements(ctx_,updates);
+            const int np=ctx_.n_pollutants(),age=ctx_.options.water_age?np:-1,temp=np+(age>=0?1:0),ns=temp+1;
+            for(const auto& u:updates) {
+                if(u.link<0||u.link>=ctx_.n_links()||u.region!=0||u.concentration_delta.size()!=std::size_t(ns))
+                    return "Legacy species increment has an invalid channel region or row count.";
+                if(u.concentration_delta[temp]!=0)return "Legacy species update cannot modify the temperature row.";
+                for(int p=0;p<np;++p) {
+                    const auto k=std::size_t(u.link)*np+p;
+                    if(!std::isfinite(u.concentration_delta[p])||k>=ctx_.links.conc.size()||
+                       !std::isfinite(ctx_.links.conc[k]+u.concentration_delta[p])||ctx_.links.conc[k]+u.concentration_delta[p]<0)
+                        return "Legacy species increment is invalid or makes a pollutant mass negative.";
+                }
+                if(age>=0) {
+                    if(std::size_t(u.link)>=ctx_.water_age_state.link_age.size()||!std::isfinite(u.concentration_delta[age])||
+                       !std::isfinite(ctx_.water_age_state.link_age[u.link]+u.concentration_delta[age])||
+                       ctx_.water_age_state.link_age[u.link]+u.concentration_delta[age]<0)
+                        return "Legacy water-age increment is invalid.";
+                }
+            }
+            for(const auto& u:updates) {
+                for(int p=0;p<np;++p)ctx_.links.conc[std::size_t(u.link)*np+p]+=u.concentration_delta[p];
+                if(age>=0)ctx_.water_age_state.link_age[u.link]+=u.concentration_delta[age];
+            }
+            return {};
+        };
 
         ctx_.state_accessors.get_snow_state = [this]() {
 #ifdef OPENSWMM_HAS_2D

@@ -12,11 +12,13 @@
 #include "../../transport/components/HeatFluxModules/HeatOverrides.hpp"
 #include "../../transport/components/HeatFluxModules/HeatFluxes.hpp"
 #include "../../transport/components/HeatFluxModules/SurfaceExchange.hpp"
+#include "../../transport/TransportPolicy.hpp"
 #include <algorithm>
 #include <cmath>
 #include <numeric>
 #include <stdexcept>
 #include <limits>
+#include <map>
 namespace openswmm::twoD {
 namespace {
 using Archive=detail::CompletedSourceArchive;
@@ -35,15 +37,17 @@ std::string ChannelGroundState::modelIdentity() const {
     auto contacts=contacts_;
     a(owned_cells,owned_links,cells,ranges);
     a.sequence(contacts,[&](auto& c){a(c.link,c.cell,c.layer,c.begin,c.end,c.share,c.invert);});
+    auto row_names=transport_?transport_->row_names:std::vector<std::string>{};a(row_names);
     return a.bytes();
 }
 void ChannelGroundState::checkpoint(Archive& a) {
-    a.fixed(channel_atmospheric_j_,channel_ground_j_,channel_increment_j_);
+    a.fixed(channel_atmospheric_j_,channel_ground_j_,channel_increment_j_,channel_species_to_ground_);
     if(a.reading()) {
         const auto bad=[](){throw std::runtime_error("Invalid routed channel thermal checkpoint state.");};
         if(channel_atmospheric_j_.size()!=link_owned_.size()||channel_ground_j_.size()!=link_owned_.size()||
-           channel_increment_j_.size()!=link_owned_.size())bad();
-        for(const auto* row:{&channel_atmospheric_j_,&channel_ground_j_,&channel_increment_j_})
+           channel_increment_j_.size()!=link_owned_.size()||
+           channel_species_to_ground_.size()!=link_owned_.size()*std::size_t(transport_?transport_->n_species:0))bad();
+        for(const auto* row:{&channel_atmospheric_j_,&channel_ground_j_,&channel_increment_j_,&channel_species_to_ground_})
             for(double v:*row)if(!std::isfinite(v))bad();
     }
 }
@@ -53,8 +57,8 @@ std::string ChannelGroundState::initialize(SimulationContext& ctx,const MeshData
     if(!ctx.options.heat_transport||!ctx.heat_config.sediment_exchange)return {};
     bool selected=false;for(int link=0;link<ctx.n_links();++link)if(sedimentFor(ctx,HeatElement::link(link)).mesh_ground)selected=true;
     if(!selected)return {};
-    if(ctx.n_pollutants()>0||ctx.options.water_age||transport.n_msx>0)
-        return "MESH_CONTACTS channel bed tracer/age ownership is awaiting conservative porewater partition qualification.";
+    if(transport.n_msx>0||openswmm::transport::network1DEnables(ctx).n_msx>0)
+        return "MESH_CONTACTS MSX exchange is unavailable; MSX porewater row mapping is not supported.";
     ChannelGroundState next;next.context_=&ctx;next.mesh_=&mesh;next.ground_=&soil;next.transport_=&transport;next.surface_=&surface;
     next.cell_owned_.assign(mesh.n_cells(),0);next.link_owned_.assign(ctx.n_links(),0);
     for(int link=0;link<ctx.n_links();++link) {
@@ -116,6 +120,7 @@ std::string ChannelGroundState::initialize(SimulationContext& ctx,const MeshData
         next.contact_ranges_[link]={begin,cursor};
     }
     next.channel_atmospheric_j_.assign(ctx.n_links(),0);next.channel_ground_j_.assign(ctx.n_links(),0);next.channel_increment_j_.assign(ctx.n_links(),0);
+    next.channel_species_to_ground_.assign(std::size_t(transport.n_species)*ctx.n_links(),0);
     for(int cell:next.cells_)soil.cells[cell].surface_owned=true;
     ctx.heat_state.mesh_contact_link=next.link_owned_;
     *this=std::move(next);return {};
@@ -213,10 +218,157 @@ std::string ChannelGroundState::advance(const SolverOptions2D& options,const std
         std::vector<ChannelThermalIncrement> increments;increments.reserve(regions.size());
         for(std::size_t k=0;k<regions.size();++k)
             increments.push_back({regions[k].link,regions[k].region,solved.temperature[water[k].store]-regions[k].temperature});
+
+        std::vector<ChannelSpeciesIncrement> species_increments;
+        std::vector<GroundPorewaterColumn> next_porewater;
+        auto next_species_receipt=channel_species_to_ground_;
+        const bool has_carried_species=transport_->n_species>(transport_->temp_row>=0?1:0);
+        if(has_carried_species) {
+            if(transport_->n_species<0||transport_->row_names.size()!=std::size_t(transport_->n_species))
+                return "Groundwater porewater row names do not match its species layout.";
+            if(!ctx.state_accessors.get_channel_species_regions||!ctx.state_accessors.apply_channel_species_increments)
+                return "Channel/soil porewater species binding is unavailable.";
+            auto channel_species=ctx.state_accessors.get_channel_species_regions();
+            std::map<std::pair<int,int>,ChannelSpeciesRegion> by_region;
+            for(auto& species:channel_species)if(ownsLink(species.link)) {
+                if(species.row_names.size()!=species.concentration.size()||!(species.volume>0)||
+                   !std::isfinite(species.volume)||!by_region.emplace(std::pair{species.link,species.region},std::move(species)).second)
+                    return "Channel porewater species regions have invalid row, volume, or identity data.";
+            }
+            std::vector<int> channel_row_for_ground(transport_->n_species,-1);
+            if(!by_region.empty()) {
+                const auto& names=by_region.begin()->second.row_names;
+                for(const auto& entry:by_region)if(entry.second.row_names!=names)
+                    return "Channel porewater species regions use inconsistent row names.";
+                std::map<std::string,int> channel_row_by_name;
+                for(std::size_t row=0;row<names.size();++row)
+                    if(!channel_row_by_name.emplace(names[row],int(row)).second)
+                        return "Channel porewater species row names are not unique.";
+                for(int row=0;row<transport_->n_species;++row)if(row!=transport_->temp_row) {
+                    const auto it=channel_row_by_name.find(transport_->row_names[row]);
+                    if(it!=channel_row_by_name.end())channel_row_for_ground[row]=it->second;
+                }
+            }
+            for(const auto& region:regions) {
+                const auto it=by_region.find({region.link,region.region});
+                if(it==by_region.end()||std::abs(it->second.volume-region.volume)>1e-10*std::max(1.,region.volume))
+                    return "Channel heat and porewater species regions do not describe the same finite water stores.";
+                for(int row=0;row<transport_->n_species;++row)if(channel_row_for_ground[row]>=0)
+                    if(!std::isfinite(it->second.concentration[channel_row_for_ground[row]])||it->second.concentration[channel_row_for_ground[row]]<0)
+                        return "Channel porewater species concentration is invalid.";
+            }
+            const bool common_species=std::any_of(channel_row_for_ground.begin(),channel_row_for_ground.end(),[](int row){return row>=0;});
+            if(common_species) {
+                next_porewater.reserve(cells_.size());for(int cell:cells_)next_porewater.push_back(ground_->cells[cell].porewater);
+                std::vector<int> staged_cell(mesh.n_cells(),-1);
+                for(std::size_t k=0;k<cells_.size();++k)staged_cell[cells_[k]]=int(k);
+                for(int cell:cells_) {
+                    const auto& column=ground_->cells[cell].column;const auto& pore=ground_->cells[cell].porewater;
+                    const auto nl=column.theta.size();
+                    if(!pore.active()||pore.n_species!=transport_->n_species||pore.mass.size()!=std::size_t(pore.n_species)*nl||
+                       pore.retention.size()!=pore.mass.size()||pore.reserved_out.size()!=pore.mass.size())
+                        return "Channel/soil porewater layer ownership does not match the active groundwater species rows.";
+                }
+                for(int row=0;row<transport_->n_species;++row) {
+                    if(row==transport_->temp_row||channel_row_for_ground[row]<0)continue;
+                    const int channel_row=channel_row_for_ground[row];
+                    std::vector<ThermalStore> species_stores;species_stores.reserve(regions.size()+cells_.size()*8);
+                    for(const auto& region:regions) {
+                        const auto& c=by_region.at({region.link,region.region});
+                        species_stores.push_back({region.volume,region.volume*c.concentration[channel_row]});
+                    }
+                    std::vector<std::vector<int>> row_store(mesh.n_cells());
+                    for(int cell:cells_) {
+                        const auto& column=ground_->cells[cell].column;const auto& pore=ground_->cells[cell].porewater;
+                        const auto nl=column.theta.size();row_store[cell].assign(nl,-1);
+                        for(std::size_t j=0;j<nl;++j) {
+                            const auto k=std::size_t(row)*nl+j;
+                            const double capacity=column.theta[j]*column.area*(column.depth_edges[j+1]-column.depth_edges[j])+pore.retention[k];
+                            const double active=pore.mass[k]-pore.reserved_out[k];
+                            if(!std::isfinite(capacity)||capacity<0||!std::isfinite(active)||active<0)
+                                return "Channel/soil porewater mass or finite layer capacity is invalid.";
+                            if(capacity>0) {row_store[cell][j]=int(species_stores.size());species_stores.push_back({capacity,active});}
+                        }
+                    }
+                    std::vector<ThermalContact> species_contacts;std::vector<int> contact_links;
+                    for(std::size_t ri=0;ri<regions.size();++ri) {
+                        const auto& region=regions[ri];const auto& material=sedimentFor(ctx,HeatElement::link(region.link));
+                        if(!(material.bed_thickness>0)||!std::isfinite(material.bed_thickness)||
+                           material.solute_diffusivity<0||!std::isfinite(material.solute_diffusivity)||
+                           material.hyporheic_velocity<0||!std::isfinite(material.hyporheic_velocity))
+                            return "Channel porewater contact requires finite nonnegative exchange properties and positive bed thickness.";
+                        const double rate=material.solute_diffusivity/material.bed_thickness+material.hyporheic_velocity;
+                        if(!(rate>0))continue;
+                        const auto range=contact_ranges_[region.link];
+                        for(std::size_t k=range.first;k<range.second;++k) {
+                            const auto& c=contacts_[k];const double along=std::min(region.end,c.end)-std::max(region.begin,c.begin);
+                            if(!(along>0))continue;
+                            const double area=region.bed_area*along/(region.end-region.begin)*c.share;
+                            if(!(area>0))continue;
+                            const auto& column=ground_->cells[c.cell].column;std::vector<double> weight(column.theta.size());double total=0;
+                            for(std::size_t j=0;j<weight.size();++j) {
+                                const double top=mesh.tri_cz[c.cell]-column.depth_edges[j];
+                                const double bottom=mesh.tri_cz[c.cell]-column.depth_edges[j+1];
+                                const double overlap=std::max(0.,std::min(top,c.invert)-std::max(bottom,c.invert-material.bed_thickness));
+                                weight[j]=column.theta[j]*overlap;total+=weight[j];
+                            }
+                            if(!(total>0))continue;
+                            for(std::size_t j=0;j<weight.size();++j)if(weight[j]>0) {
+                                const int target=row_store[c.cell][j];if(target<0)continue;
+                                species_contacts.push_back({int(ri),target,rate*area*weight[j]/total});contact_links.push_back(region.link);
+                            }
+                        }
+                    }
+                    if(species_contacts.empty())continue;
+                    auto species_solution=solveThermalContacts(species_stores,species_contacts,{},dt);
+                    if(!species_solution.error.empty())return "Channel/soil porewater species solve failed: "+species_solution.error;
+                    if(species_increments.empty()) {
+                        species_increments.resize(regions.size());
+                        for(std::size_t ri=0;ri<regions.size();++ri) {
+                            species_increments[ri].link=regions[ri].link;species_increments[ri].region=regions[ri].region;
+                            species_increments[ri].concentration_delta.assign(by_region.at({regions[ri].link,regions[ri].region}).concentration.size(),0);
+                        }
+                    }
+                    for(std::size_t ri=0;ri<regions.size();++ri) {
+                        const double delta=species_solution.temperature[ri]-by_region.at({regions[ri].link,regions[ri].region}).concentration[channel_row];
+                        species_increments[ri].concentration_delta[channel_row]=delta;
+                    }
+                    for(int cell:cells_) {
+                        const auto nl=ground_->cells[cell].column.theta.size();const auto& pore=ground_->cells[cell].porewater;
+                        for(std::size_t j=0;j<nl;++j)if(row_store[cell][j]>=0) {
+                            const auto store=std::size_t(row_store[cell][j]);const auto k=std::size_t(row)*nl+j;
+                            const double delta=species_solution.energy[store]-(pore.mass[k]-pore.reserved_out[k]);
+                            if(delta==0)continue;
+                            if(staged_cell[cell]<0||!next_porewater[staged_cell[cell]].applyContactMassIncrement(row,j,delta))
+                                return "Channel/soil contact would consume a reserved porewater export or create invalid species mass.";
+                        }
+                    }
+                    for(std::size_t ci=0;ci<species_contacts.size();++ci) {
+                        const int link=contact_links[ci];const auto receipt=row*link_owned_.size()+std::size_t(link);
+                        if(!std::isfinite(next_species_receipt[receipt]+species_solution.contact_j[ci]))
+                            return "Channel/soil porewater species receipt overflow.";
+                        next_species_receipt[receipt]+=species_solution.contact_j[ci];
+                    }
+                }
+            }
+        }
         std::vector<double> next_mass(mesh.n_cells(),0);
         // Validate/publish the external canonical channel binding before the
         // nonthrowing soil commit. A refusal leaves both thermal sides intact.
         if(!increments.empty())if(auto error=ctx.state_accessors.apply_channel_thermal_increments(increments);!error.empty())return error;
+        if(!species_increments.empty())if(auto error=ctx.state_accessors.apply_channel_species_increments(species_increments);!error.empty()) {
+            if(!increments.empty()) {
+                auto rollback=increments;for(auto& u:rollback)u.celsius=-u.celsius;
+                if(auto rollback_error=ctx.state_accessors.apply_channel_thermal_increments(rollback);!rollback_error.empty())
+                    return error+" Channel temperature rollback also failed: "+rollback_error;
+            }
+            return error;
+        }
+        if(!species_increments.empty()) {
+            for(std::size_t k=0;k<cells_.size();++k)ground_->cells[cells_[k]].porewater=std::move(next_porewater[k]);
+            channel_species_to_ground_=std::move(next_species_receipt);
+            for(int cell:cells_)ground_->refreshView(cell,*transport_);
+        }
         for(const auto& column:columns)next_mass[column.cell]=commitGroundColumnSystem(column,solved);
         for(const auto& transfer:transfers) {
             const double joules=solved.contact_j[transfer.contact];

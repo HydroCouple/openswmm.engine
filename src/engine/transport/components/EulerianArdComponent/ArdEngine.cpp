@@ -85,6 +85,40 @@ std::string ArdEngine::applyThermalIncrements(SimulationContext& ctx,const std::
     for(const auto& u:updates)state_.cell_phi[row+u.region]+=u.celsius;
     publish(ctx);return {};
 }
+std::vector<ChannelSpeciesRegion> ArdEngine::speciesRegions(const SimulationContext& ctx) const {
+    std::vector<ChannelSpeciesRegion> out;const auto thermal=thermalRegions();
+    if(!initialized_||temp_row_<0)return out;
+    const auto rows=canonicalRows(ctx,network1DEnables(ctx));
+    const auto nc=std::size_t(mesh_.n_cells());out.reserve(thermal.size());
+    for(const auto& t:thermal) {
+        if(t.region<0||std::size_t(t.region)>=nc)continue;
+        ChannelSpeciesRegion region;region.link=t.link;region.region=t.region;region.begin=t.begin;
+        region.end=t.end;region.volume=t.volume;region.row_names=rows.names;region.concentration.resize(state_.n_species);
+        for(int row=0;row<state_.n_species;++row)
+            region.concentration[row]=state_.cell_phi[std::size_t(row)*nc+std::size_t(t.region)];
+        out.push_back(std::move(region));
+    }
+    return out;
+}
+std::string ArdEngine::applySpeciesIncrements(SimulationContext& ctx,const std::vector<ChannelSpeciesIncrement>& updates) {
+    if(!initialized_||temp_row_<0)return "ARD channel species state is unavailable.";
+    const auto nc=std::size_t(mesh_.n_cells());std::vector<unsigned char> seen(nc,0);
+    for(const auto& u:updates) {
+        if(u.region<0||std::size_t(u.region)>=nc||cellLink(std::size_t(u.region))!=u.link||
+           u.concentration_delta.size()!=std::size_t(state_.n_species)||seen[std::size_t(u.region)]++)
+            return "ARD species increment does not match a unique finite channel region.";
+        for(int row=0;row<state_.n_species;++row) {
+            const double delta=u.concentration_delta[row];
+            const double next=state_.cell_phi[std::size_t(row)*nc+std::size_t(u.region)]+delta;
+            if(!std::isfinite(delta)||!std::isfinite(next)||(row!=temp_row_&&next<0))
+                return "ARD species increment is nonfinite or makes a carried mass negative.";
+        }
+        if(u.concentration_delta[temp_row_]!=0)return "ARD species update cannot modify the temperature row.";
+    }
+    for(const auto& u:updates)for(int row=0;row<state_.n_species;++row)if(row!=temp_row_)
+        state_.cell_phi[std::size_t(row)*nc+std::size_t(u.region)]+=u.concentration_delta[row];
+    publish(ctx);return {};
+}
 
 namespace {
 /// CFL number for the advection subcycling. Conservative: the kernels are

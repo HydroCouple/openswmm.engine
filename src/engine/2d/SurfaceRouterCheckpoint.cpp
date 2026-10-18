@@ -375,7 +375,7 @@ std::string SurfaceRouter2D::checkpointBytes(const SimulationContext& ctx,std::s
         std::string cpu;const auto ce=static_cast<ExplicitInertialSolver*>(solver_.get())->checkpointBytes(cpu);if(!ce.empty())return ce;
         Archive state;snapshot.archive(state);state(cpu);
         if(channel_ground_.active()) {
-            std::string profile="routed channel thermal receipts v1";state(profile);
+            std::string profile="routed channel thermal and species receipts v2";state(profile);
             auto channel=channel_ground_;channel.checkpoint(state);
         }
         if(joint_hydraulic_) {
@@ -417,7 +417,7 @@ std::string SurfaceRouter2D::loadCheckpointBytes(SimulationContext& ctx,std::str
         RestartState snapshot(*this,ctx);auto channel=channel_ground_;Archive state(std::move(payload));snapshot.archive(state);std::string cpu,hydraulic;state(cpu);
         if(channel.active()) {
             std::string profile;state(profile);
-            if(profile!="routed channel thermal receipts v1")return "Unsupported routed channel thermal checkpoint profile.";
+            if(profile!="routed channel thermal and species receipts v2")return "Unsupported routed channel thermal/species checkpoint profile.";
             channel.checkpoint(state);
         }
         if(joint_hydraulic_) {state(hydraulic,snapshot.delivery);snapshot.archiveJoint(state);}

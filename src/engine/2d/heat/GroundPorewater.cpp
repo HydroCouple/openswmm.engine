@@ -114,11 +114,17 @@ bool GroundPorewaterColumn::settleOutgoingReservation(int r,std::size_t j,double
     reserved_out[k]=(amount==reserved_out[k])?0:reserved_out[k]-amount;
     return true;
 }
-bool GroundPorewaterColumn::applyContactMassIncrement(int r,std::size_t j,double increment) noexcept {
+bool GroundPorewaterColumn::canApplyContactMassIncrement(int r,std::size_t j,double increment) const noexcept {
     const auto nl=retention.size()/std::size_t(std::max(1,n_species));
-    if(r<0||r>=n_species||j>=nl||mass.size()!=retention.size()||reserved_out.size()!=mass.size()||r==temp_row||!std::isfinite(increment))return false;
-    const auto k=std::size_t(r)*nl+j;const double next=mass[k]+increment;
-    if(!std::isfinite(next)||!std::isfinite(reserved_out[k])||next<reserved_out[k]||reserved_out[k]<0)return false;
-    mass[k]=next;return true;
+    if(r<0||r>=n_species||j>=nl||mass.size()!=retention.size()||reserved_out.size()!=mass.size()||
+       contact_mass.size()!=mass.size()||r==temp_row||!std::isfinite(increment))return false;
+    const auto k=std::size_t(r)*nl+j;const double next=mass[k]+increment,receipt=contact_mass[k]+increment;
+    return std::isfinite(next)&&std::isfinite(reserved_out[k])&&next>=reserved_out[k]&&reserved_out[k]>=0&&
+        std::isfinite(receipt);
+}
+bool GroundPorewaterColumn::applyContactMassIncrement(int r,std::size_t j,double increment) noexcept {
+    if(!canApplyContactMassIncrement(r,j,increment))return false;
+    const auto nl=retention.size()/std::size_t(std::max(1,n_species)),k=std::size_t(r)*nl+j;
+    mass[k]+=increment;contact_mass[k]+=increment;return true;
 }
 } // namespace openswmm::twoD

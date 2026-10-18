@@ -31,6 +31,7 @@ public:
                         double seconds,std::vector<double>& surface_mass);
     const std::vector<double>& channelAtmosphere() const noexcept {return channel_atmospheric_j_;}
     const std::vector<double>& channelToGround() const noexcept {return channel_ground_j_;}
+    const std::vector<double>& channelSpeciesToGround() const noexcept {return channel_species_to_ground_;}
     const std::vector<double>& channelThermalIncrement() const noexcept {return channel_increment_j_;}
     std::string modelIdentity() const;
     void checkpoint(openswmm::detail::CompletedSourceArchive&);
@@ -44,6 +45,6 @@ private:
     std::vector<uint8_t> cell_owned_,link_owned_;
     std::vector<int> cells_;
     std::vector<std::pair<std::size_t,std::size_t>> contact_ranges_;
-    std::vector<double> channel_atmospheric_j_,channel_ground_j_,channel_increment_j_;
+    std::vector<double> channel_atmospheric_j_,channel_ground_j_,channel_increment_j_,channel_species_to_ground_;
 };
 } // namespace openswmm::twoD

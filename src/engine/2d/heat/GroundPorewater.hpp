@@ -25,6 +25,7 @@ struct GroundPorewaterColumn {
     bool canReserveOutgoing(int species,std::size_t layer,double amount) const noexcept;
     bool reserveOutgoing(int species,std::size_t layer,double amount) noexcept;
     bool settleOutgoingReservation(int species,std::size_t layer,double amount) noexcept;
+    bool canApplyContactMassIncrement(int species,std::size_t layer,double increment) const noexcept;
     bool applyContactMassIncrement(int species,std::size_t layer,double increment) noexcept;
 };
 } // namespace openswmm::twoD

@@ -298,6 +298,8 @@ struct StateAccessors {
     std::function<std::vector<ChannelThermalRegion>()> get_channel_thermal_regions;
     // Each region appears once. Validate the complete batch before mutation.
     std::function<std::string(const std::vector<ChannelThermalIncrement>&)> apply_channel_thermal_increments;
+    std::function<std::vector<ChannelSpeciesRegion>()> get_channel_species_regions;
+    std::function<std::string(const std::vector<ChannelSpeciesIncrement>&)> apply_channel_species_increments;
     std::function<std::string()> get_snow_state;
     // Empty result means valid; false validates without publishing.
     std::function<std::string(const std::string&,bool)> set_snow_state;

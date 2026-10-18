@@ -100,6 +100,7 @@ public:
     /// Bind selected finite channel contacts after 1D heat state is seeded.
     void initializeChannelGround(SimulationContext& ctx);
     const ChannelGroundState& channelGround() const noexcept {return channel_ground_;}
+    ChannelGroundState& channelGround() noexcept {return channel_ground_;}
     /// Internal qualification hook: externally owned stage, all cells managed,
     /// wall boundaries, no live 1D exchanges. Does not activate authored ownership.
     void setCommonSourceStage(SimulationContext& ctx, CommonSourceStage& stage);
