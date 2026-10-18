@@ -176,6 +176,66 @@ TEST(MeshHeat, DryBedConductsAndRetainsEnergyWhenRewetted) {
     EXPECT_NEAR(f.state.heat.bed_energy[0]-f.state.heat.initial_bed_energy[0]+f.state.heat.water_j[0],
                 f.state.heat.ground_j[0],1e-5);
 }
+TEST(MeshHeat, LocalBedTracerMatchesFinitePorewaterResidenceDecayWithoutAddingWater) {
+    for(double dt:{1.,60.,900.,7200.}) {
+        LocalHeat f("local-tracer-"+std::to_string(dt));ASSERT_NE(f.model.e,nullptr);
+        f.state.transport.resize(3,2,0);f.state.transport.temp_row=2;f.state.transport.age_row=1;
+        auto& material=f.model.ctx().heat_config.sediment;
+        material.mesh_porosity=.4;material.bed_thickness=.3;material.solute_diffusivity=0;material.hyporheic_velocity=2e-5;
+        ASSERT_TRUE(f.initialize().empty());auto& h=f.state.heat;
+        ASSERT_EQ(h.bed_pore_volume.size(),2);EXPECT_DOUBLE_EQ(h.bed_pore_volume[0],6);
+        const double output=openswmm::twoD::applyLocalBedSpecies(f.mesh(),h,0,0,50,5,dt);
+        const double mean=50./11,expected=mean+6./11*10*std::exp(-.001*(1./5+1./6)*dt);
+        EXPECT_NEAR(output/5,expected,1e-12);EXPECT_NEAR(output+h.bed_carried_mass[0],50,1e-12);
+        EXPECT_NEAR(h.bed_exchange_mass[0],50-output,1e-12);EXPECT_DOUBLE_EQ(h.bed_pore_volume[0],6);
+        // Ordinary sheet cells have no parameterized recirculation.
+        EXPECT_DOUBLE_EQ(openswmm::twoD::applyLocalBedSpecies(f.mesh(),h,1,0,50,5,dt),50);
+        EXPECT_DOUBLE_EQ(h.bed_carried_mass[1],0);
+    }
+}
+TEST(MeshHeat, DrySurfaceRetainsLocalBedTracerAndAgeAndCleanRewettingReturnsItsStoredMass) {
+    LocalHeat f("local-tracer-rewet");ASSERT_NE(f.model.e,nullptr);
+    f.state.transport.resize(3,2,0);f.state.transport.temp_row=2;f.state.transport.age_row=1;
+    f.model.ctx().heat_config.sediment.hyporheic_velocity=.001;
+    ASSERT_TRUE(f.initialize().empty());auto& h=f.state.heat;
+    const double first=openswmm::twoD::applyLocalBedSpecies(f.mesh(),h,0,0,50,5,60);
+    ASSERT_GT(h.bed_carried_mass[0],0);const double stored=h.bed_carried_mass[0];
+    EXPECT_DOUBLE_EQ(openswmm::twoD::applyLocalBedSpecies(f.mesh(),h,0,0,0,0,60),0);
+    EXPECT_DOUBLE_EQ(h.bed_carried_mass[0],stored);
+    ASSERT_TRUE(openswmm::twoD::ageLocalBedPorewater(h,60));
+    EXPECT_DOUBLE_EQ(h.bed_carried_mass[2],60*h.bed_pore_volume[0]);
+    EXPECT_DOUBLE_EQ(h.bed_generated_age[0],60*h.bed_pore_volume[0]);
+    const double returned=openswmm::twoD::applyLocalBedSpecies(f.mesh(),h,0,0,0,5,60);
+    EXPECT_GT(returned,0);EXPECT_NEAR(returned+h.bed_carried_mass[0]+first,50,1e-12);
+}
+TEST(MeshHeat, LocalBedTracerAndAgeRunOnBothActualSpeciesKernelsWithSeparateExchangeReceipts) {
+    for(int pollutants:{1,8}) {
+        std::string extra="[OPTIONS]\nWATER_AGE ON\n[2D_OPTIONS]\nINFILTRATION NO\n"
+                          "[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0\n";
+        for(int p=1;p<pollutants;++p)extra+="P"+std::to_string(p)+" MG/L 0 0 0 0 NO * 0 0\n";
+        extra+="[2D_INITIAL_QUALITY]\n* Dye 10\n";
+        Model m("local-bed-runtime-"+std::to_string(pollutants),extra);ASSERT_NE(m.e,nullptr);
+        ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_MODEL","COUPLED"),SWMM_OK);
+        ASSERT_EQ(swmm_options_set_ext(m.e,"BED_HEAT_MODEL","LOCAL_STORAGE"),SWMM_OK);
+        ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_SURFACE_EXCHANGE","NO"),SWMM_OK);
+        ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_RADIATIVE_EXCHANGE","NO"),SWMM_OK);
+        ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_SOLUTE_DIFFUSIVITY,0),SWMM_OK);
+        ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_HYPORHEIC_VELOCITY,.001),SWMM_OK);
+        ASSERT_EQ(swmm_engine_initialize(m.e),SWMM_OK);ASSERT_EQ(swmm_engine_start(m.e,0),SWMM_OK);
+        auto& router=static_cast<openswmm::SWMMEngine*>(m.e)->surfaceRouter2D();auto& state=router.state();
+        auto& tr=state.transport;auto& h=state.heat;ASSERT_EQ(tr.n_pollut,pollutants);
+        const double initial=tr.cell_mass[0]+tr.cell_mass[1],water=state.volume[0]+state.volume[1];
+        double actual=0;ASSERT_EQ(swmm_coupling_advance_to(m.e,5,&actual),SWMM_OK);
+        EXPECT_GT(h.bed_carried_mass[0],0);EXPECT_DOUBLE_EQ(h.bed_carried_mass[1],0);
+        EXPECT_NEAR(tr.cell_mass[0]+tr.cell_mass[1]+h.bed_carried_mass[0]+h.bed_carried_mass[1],initial,1e-10);
+        EXPECT_NEAR(tr.gained_bed[0]+h.bed_exchange_mass[0]+h.bed_exchange_mass[1],0,1e-12);
+        EXPECT_DOUBLE_EQ(tr.gained_external[0],0);EXPECT_DOUBLE_EQ(state.volume[0]+state.volume[1],water);
+        const auto ar=std::size_t(tr.age_row)*2;const double pores=h.bed_pore_volume[0]+h.bed_pore_volume[1];
+        EXPECT_NEAR(tr.cell_mass[ar]+tr.cell_mass[ar+1]+h.bed_carried_mass[ar]+h.bed_carried_mass[ar+1],5*(water+pores),1e-10);
+        EXPECT_NEAR(h.bed_generated_age[0]+h.bed_generated_age[1],5*pores,1e-12);
+        ASSERT_EQ(swmm_engine_end(m.e),SWMM_OK);
+    }
+}
 TEST(MeshHeat, ConstantRadiationUsesWettedAreaAndIntegratedJoules) {
     LocalHeat f("radiation");ASSERT_NE(f.model.e,nullptr);
     auto& cfg=f.model.ctx().heat_config.radiative;

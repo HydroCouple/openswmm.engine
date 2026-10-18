@@ -21,6 +21,10 @@ struct MeshHeatState {
     std::vector<double> atmospheric_j,radiative_j,sensible_j,ground_j,water_bed_j,water_j,latent_j,evaporated_m3;
     std::vector<int> failures;
     std::vector<unsigned char> hyporheic_eligible;
+    // LOCAL_STORAGE porewater: fixed saturated pore volume, independent of
+    // surface wetness. Temperature remains solely in bed_energy.
+    int bed_species=0,bed_age_row=-1,bed_temp_row=-1;
+    std::vector<double> bed_pore_volume,bed_carried_mass,bed_initial_mass,bed_exchange_mass,bed_generated_age;
     GroundHeatState& groundOwner(int i) {return aquifer_owned[i]?*aquifer_ground:standalone_ground;}
     const GroundHeatState& groundOwner(int i) const {return aquifer_owned[i]?*aquifer_ground:standalone_ground;}
     void refreshBedView(int i);
@@ -54,4 +58,7 @@ double applyMeshHeatCell(const MeshData&,const SolverOptions2D&,MeshHeatState&,i
 // Standalone storage has a fixed saturated pore volume: accepted infiltration
 // displaces an equal volume at its bottom, with finite soil heat exchange.
 void advectStandaloneGround(MeshHeatState&,int cell,double accepted_m3,double donor_celsius) noexcept;
+double applyLocalBedSpecies(const MeshData&,MeshHeatState&,int cell,int species,
+                           double surface_mass,double available_m3,double seconds) noexcept;
+bool ageLocalBedPorewater(MeshHeatState&,double seconds) noexcept;
 } // namespace openswmm::twoD

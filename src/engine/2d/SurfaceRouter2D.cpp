@@ -2508,6 +2508,7 @@ void SurfaceRouter2D::applyAgingAndReactions(SimulationContext& ctx, double dt) 
         for (std::size_t c = 0; c < nt; ++c)
             tr.cell_mass[ar * nt + c] += dt * state_.volume[c];
     }
+    if(!ageLocalBedPorewater(state_.heat,dt))throw std::runtime_error("Local bed porewater age overflow.");
 
     // E4/S4 reaction stage, reusing reactArdStage on a per-cell CONCENTRATION
     // view (mass / volume) of the WET cells: pollutant kdecay (exact

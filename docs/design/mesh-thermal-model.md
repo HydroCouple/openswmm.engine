@@ -186,6 +186,22 @@ run end. Python provides `heat.channel_ground_status()`,
 
 ## Spatial values and diagnostics
 
+The experimental `LOCAL_STORAGE` bed also carries conservative pollutant/MSX
+mass and water age in its fixed saturated porewater volume
+`area * bed_thickness * mesh_porosity`. This is the same porewater already
+included in the local thermal capacity; exchange adds no net water. Initial
+bed tracer mass and age are currently zero. Existing solute diffusion and
+eligible hyporheic velocity drive the finite-pair exchange. A dry overland
+cell stops exchange and retains bed mass; clean rewetting can recover that
+mass. No surface or channel reaction is applied inside this new bed.
+
+Local bed age-volume grows by elapsed seconds times its physical porewater
+volume, at the same end-of-routing split stage as surface aging. Separate
+bed exchange and generated-age receipts distinguish internal mass transfer
+from external sources. Spatial bed initial-condition authoring, public species
+outputs, groundwater-connected tracer partition, restart and full qualification
+remain open; this is not a supported capability declaration for those paths.
+
 `CELL2D <one-based native cell ID>` and `MESH_TAG <region name>` are scopes of
 the existing heat override table and C/Python API. Mesh region tags form a
 separate namespace from network `[TAGS]`. Precedence is global, mesh tag, cell.

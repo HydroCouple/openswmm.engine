@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <gtest/gtest.h>
 #include "2d/heat/PorousHeat.hpp"
+#include "2d/heat/PorewaterTransport.hpp"
+#include "2d/heat/GroundPorewater.hpp"
 #include "2d/subsurface/SubsurfaceData.hpp"
 #include "2d/gw/GwTransportSections.hpp"
 #include <cmath>
@@ -181,6 +183,120 @@ TEST(PorousHeat, LargeBoundaryWithdrawalsAndInternalRedistributionKeepSignedDono
     }
     EXPECT_NEAR(sum(c.energy)-initial,-sum(solved.withdrawn_j),1e-7);
     EXPECT_GT(solved.temperature.front(),-10);EXPECT_NEAR(solved.temperature.back(),40,1e-12);
+}
+TEST(PorewaterTransport, WithdrawingWaterAtLocalConcentrationRetainsTheSorptionStore) {
+    const auto out=advectPorewater({.2,.3},{.1,.2},{.4,.5},{1.2,8},{-.1,-.1},{0,0},{.1,.1});
+    ASSERT_TRUE(out.error.empty())<<out.error;
+    EXPECT_NEAR(out.concentration[0],2,1e-12);EXPECT_NEAR(out.concentration[1],10,1e-12);
+    EXPECT_NEAR(out.mass[0],1,1e-12);EXPECT_NEAR(out.mass[1],7,1e-12);
+    EXPECT_NEAR(sum(out.mass)+sum(out.withdrawn_mass),9.2,1e-12);
+}
+TEST(PorewaterTransport, EvaporationRetainsDryResidueAndRewettingDissolvesItWithoutCreatingMass) {
+    const auto dry=advectPorewater({.1},{0},{0},{3},{-.1},{0},{0});
+    ASSERT_TRUE(dry.error.empty())<<dry.error;ASSERT_EQ(dry.mass.size(),1);EXPECT_DOUBLE_EQ(dry.mass[0],3);
+    EXPECT_DOUBLE_EQ(dry.concentration[0],0);EXPECT_DOUBLE_EQ(dry.withdrawn_mass[0],0);
+    const auto wet=advectPorewater({0},{.2},{0},dry.mass,{.2},{1},{0});
+    ASSERT_TRUE(wet.error.empty())<<wet.error;EXPECT_NEAR(wet.mass[0],4,1e-12);EXPECT_NEAR(wet.concentration[0],20,1e-12);
+}
+TEST(PorewaterTransport, ZeroFinalWaterThroughflowExportsTheFiniteIncomingPacket) {
+    const auto out=advectPorewater({0,0},{0,0},{0,0},{0,0},{1,-1},{7,0},{0,1});
+    ASSERT_TRUE(out.error.empty())<<out.error;
+    EXPECT_NEAR(out.concentration[0],7,1e-12);EXPECT_NEAR(out.concentration[1],7,1e-12);
+    EXPECT_NEAR(sum(out.mass),0,1e-12);EXPECT_NEAR(sum(out.withdrawn_mass),7,1e-12);
+    ASSERT_EQ(out.vertical_mass.size(),1);EXPECT_NEAR(out.vertical_mass[0],7,1e-12);
+}
+TEST(PorewaterTransport, WaterCanEvaporateAfterThroughflowAndLeaveItsSoluteInADryLayer) {
+    const auto out=advectPorewater({0,0},{0,0},{0,0},{0,0},{1,-1},{7,0},{0,0});
+    ASSERT_TRUE(out.error.empty())<<out.error;
+    EXPECT_NEAR(out.mass[0],0,1e-12);EXPECT_NEAR(out.mass[1],7,1e-12);EXPECT_NEAR(out.external_mass,7,1e-12);
+}
+TEST(PorewaterTransport, AContinuousCleanWaterFlushConvergesToTheIndependentResidenceDecay) {
+    double previous=1;
+    for(int steps:{1,10,100,1000}) {
+        std::vector<double> mass{10};const double dt=1./steps;
+        for(int k=0;k<steps;++k) {
+            const auto out=advectPorewater({1},{1},{0},mass,{0},{0},{dt});
+            ASSERT_TRUE(out.error.empty())<<out.error;mass=out.mass;
+        }
+        const double error=std::abs(mass[0]/10-std::exp(-1.));
+        EXPECT_LT(error,previous);previous=error;
+        if(steps==1000)EXPECT_LT(error,.0002);
+    }
+}
+TEST(PorewaterTransport, LargeRedistributionAndExtractionRemainNonnegativeAndConservative) {
+    const auto out=advectPorewater({.04,.16,.2},{.02,.12,.15},{0,.1,.2},{.04,1.6,40},
+                                  {-.08,0,-.03},{0,0,0},{.08,0,.03});
+    ASSERT_TRUE(out.error.empty())<<out.error;
+    for(double value:out.mass)EXPECT_GE(value,0);
+    for(double value:out.concentration){EXPECT_GE(value,0);EXPECT_LE(value,100+1e-12);}
+    EXPECT_NEAR(sum(out.mass)+sum(out.withdrawn_mass),41.64,1e-11);
+}
+TEST(PorewaterTransport, InvalidOrUnpairedTransfersPublishNoPartialSolution) {
+    for(const auto out:{advectPorewater({.1},{.2},{0},{1},{0},{0},{0}),
+                        advectPorewater({.1},{.1},{0},{1},{0},{0},{-1}),
+                        advectPorewater({.1},{.1},{0},{1},{0},{-2},{0})}) {
+        EXPECT_FALSE(out.error.empty());EXPECT_TRUE(out.mass.empty());EXPECT_TRUE(out.concentration.empty());
+    }
+}
+TEST(PorewaterTransport, MixedDryWetAndSorbingColumnsPreserveMassAndConcentrationExtrema) {
+    unsigned seed=1234567;
+    const auto unit=[&](){seed=1664525u*seed+1013904223u;return double(seed%10000)/10000.;};
+    for(int trial=0;trial<128;++trial) {
+        const std::size_t n=1+trial%16;SCOPED_TRACE(trial);
+        std::vector<double> old(n),next(n),retention(n),mass(n),water(n),input(n),withdrawal(n),face(n+1,0);
+        for(std::size_t j=1;j<n;++j)face[j]=2*unit()-1;
+        double initial=0;
+        for(std::size_t j=0;j<n;++j) {
+            old[j]=(trial+int(j))%3?unit():0;next[j]=(trial+int(j))%4?unit():0;
+            retention[j]=(trial+int(j))%2?unit():0;
+            mass[j]=20*unit()*(old[j]+retention[j]);initial+=mass[j];
+            water[j]=next[j]-old[j]+face[j+1]-face[j];
+            input[j]=std::max(0.,water[j])*20*unit();withdrawal[j]=std::max(0.,-water[j]);
+        }
+        const auto out=advectPorewater(old,next,retention,mass,water,input,withdrawal);
+        ASSERT_TRUE(out.error.empty())<<out.error;
+        for(double value:out.mass)EXPECT_GE(value,0);
+        for(double value:out.concentration){EXPECT_GE(value,0);EXPECT_LE(value,20+1e-10);}
+        EXPECT_NEAR(sum(out.mass)+sum(out.withdrawn_mass),initial+sum(input),1e-10*std::max(1.,initial+sum(input)));
+    }
+}
+TEST(GroundPorewater, InitialPartitionPreservesExistingTotalMassWithoutInventingSorbedMass) {
+    ThermalMaterial material;material.porosity=.4;material.grain_density=2600;PorousHeatColumn soil;
+    ASSERT_TRUE(soil.initialize(1,{0,.5,1},material,{.1,.4},{-3,-3}).empty());
+    GroundPorewaterColumn pore;
+    ASSERT_TRUE(pore.initialize(soil,{0,.2},{8,-.6},{1,-.15},{.001,0},-1,1).empty());
+    ASSERT_EQ(pore.mass.size(),4);EXPECT_NEAR(pore.mass[0],1,1e-12);EXPECT_NEAR(pore.mass[1],8,1e-12);
+    EXPECT_DOUBLE_EQ(pore.mass[2],0);EXPECT_DOUBLE_EQ(pore.mass[3],0); // no second heat store
+    EXPECT_NEAR(pore.retention[0],.78,1e-12);EXPECT_NEAR(sum(pore.initial_mass),9,1e-12);
+    const auto zones=pore.zoneMasses(soil,{0,.2});EXPECT_NEAR(zones.first[0],8,1e-12);EXPECT_NEAR(zones.second[0],1,1e-12);
+}
+TEST(GroundPorewater, ALayerCrossingTheTableHasOneMassAndConservesBothDerivedZoneViews) {
+    ThermalMaterial material;PorousHeatColumn soil;
+    ASSERT_TRUE(soil.initialize(1,{0,1},material,{.3},{10}).empty());
+    GroundPorewaterColumn pore;ASSERT_TRUE(pore.initialize(soil,{.2},{4},{2},{.001},-1,-1).empty());
+    ASSERT_EQ(pore.mass.size(),1);EXPECT_NEAR(pore.mass[0],6,1e-12);
+    const auto zones=pore.zoneMasses(soil,{.2});EXPECT_GT(zones.first[0],0);EXPECT_GT(zones.second[0],0);
+    EXPECT_NEAR(zones.first[0]+zones.second[0],6,1e-12);
+    const auto before=pore.mass;ASSERT_TRUE(soil.setMoisture({.2}).empty());
+    const auto shifted=pore.zoneMasses(soil,{.1});EXPECT_NEAR(shifted.first[0]+shifted.second[0],6,1e-12);
+    EXPECT_EQ(pore.mass,before);
+}
+TEST(GroundPorewater, AgeNeverSorbsAndGrowsOnlyByActualPorewaterOnItsOwnerClock) {
+    ThermalMaterial material;PorousHeatColumn soil;
+    ASSERT_TRUE(soil.initialize(2,{0,.5,1},material,{.1,.4},{0,0}).empty());
+    GroundPorewaterColumn pore;ASSERT_TRUE(pore.initialize(soil,{0,.4},{10},{2},{100},0,-1).empty());
+    EXPECT_DOUBLE_EQ(sum(pore.retention),0);const double before=sum(pore.mass);
+    ASSERT_TRUE(pore.generateAge(soil,17));EXPECT_NEAR(sum(pore.mass)-before,17*.5,1e-12);
+    EXPECT_NEAR(sum(pore.generated_age),17*.5,1e-12);
+}
+TEST(GroundPorewater, DryResidueRemainsInTheDerivedPhysicalZoneAndInvalidSeedsAreAtomic) {
+    ThermalMaterial material;PorousHeatColumn soil;
+    ASSERT_TRUE(soil.initialize(1,{0,1},material,{0},{0}).empty());
+    GroundPorewaterColumn pore;ASSERT_TRUE(pore.initialize(soil,{0},{0},{0},{0},-1,-1).empty());pore.mass[0]=3;
+    const auto zones=pore.zoneMasses(soil,{0});EXPECT_DOUBLE_EQ(zones.first[0],0);EXPECT_DOUBLE_EQ(zones.second[0],3);
+    const auto before=pore.mass;
+    EXPECT_FALSE(pore.initialize(soil,{0},{0},{1},{0},-1,-1).empty());EXPECT_EQ(pore.mass,before);
+    EXPECT_FALSE(pore.initialize(soil,{0},{0},{0},{-1},-1,-1).empty());EXPECT_EQ(pore.mass,before);
 }
 TEST(PorousHeat, ClosureMoistureProjectionConservesWaterAcrossMovingAndCollapsedLayers) {
     for(auto closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})

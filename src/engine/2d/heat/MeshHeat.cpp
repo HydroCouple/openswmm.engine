@@ -198,8 +198,41 @@ std::string initializeMeshHeat(SimulationContext& ctx,const MeshData& mesh,Surfa
             h.bed_energy[i]=cap*initial;
         }
         h.initial_bed_energy=h.bed_energy;
+        if(state.transport.n_species>0) {
+            h.bed_species=state.transport.n_species;h.bed_age_row=state.transport.age_row;h.bed_temp_row=state.transport.temp_row;
+            h.bed_pore_volume.resize(n);h.bed_carried_mass.assign(n*h.bed_species,0);
+            h.bed_initial_mass=h.bed_carried_mass;h.bed_exchange_mass=h.bed_carried_mass;h.bed_generated_age.assign(n,0);
+            state.transport.gained_bed.assign(h.bed_species,0);
+            for(std::size_t i=0;i<n;++i) {
+                const auto& sc=sedimentFor(ctx,HeatElement::cell2d(int(i)));
+                h.bed_pore_volume[i]=mesh.tri_area[i]*sc.bed_thickness*sc.mesh_porosity;
+                if(!std::isfinite(h.bed_pore_volume[i]))return "Local bed porewater volume must be finite.";
+            }
+        }
     }
     return {};
+}
+double applyLocalBedSpecies(const MeshData& mesh,MeshHeatState& h,int i,int r,double mass,double volume,double dt) noexcept {
+    if(!h.enabled||!h.bed||h.ground_column||r==h.bed_temp_row||r<0||r>=h.bed_species||!(volume>0)||!(dt>0))return mass;
+    const double pores=h.bed_pore_volume[i];if(!(pores>0))return mass;
+    const auto k=std::size_t(r)*h.bed_pore_volume.size()+i;
+    const auto& sc=sedimentFor(*h.context,HeatElement::cell2d(i));
+    const double q=mesh.tri_area[i]*(sc.solute_diffusivity/sc.bed_thickness+(h.hyporheic_eligible[i]?sc.hyporheic_velocity:0));
+    if(!(q>0))return mass;
+    const auto delta=exchangePair(mass/volume,h.bed_carried_mass[k]/pores,volume,pores,q,dt);
+    const double next=volume*(mass/volume+delta.dc_w),transfer=mass-next,bed=h.bed_carried_mass[k]+transfer;
+    if(!std::isfinite(q)||!std::isfinite(next)||!std::isfinite(bed)||next<0||bed<0||
+       !std::isfinite(h.bed_exchange_mass[k]+transfer)){h.failures[i]=1;return mass;}
+    h.bed_carried_mass[k]=bed;h.bed_exchange_mass[k]+=transfer;return next;
+}
+bool ageLocalBedPorewater(MeshHeatState& h,double dt) noexcept {
+    if(!h.enabled||h.ground_column||h.bed_age_row<0||h.bed_pore_volume.empty())return true;
+    if(!(dt>0)||!std::isfinite(dt))return false;
+    const auto n=h.bed_pore_volume.size(),base=std::size_t(h.bed_age_row)*n;
+    for(std::size_t i=0;i<n;++i)if(!std::isfinite(h.bed_carried_mass[base+i]+dt*h.bed_pore_volume[i])||
+        !std::isfinite(h.bed_generated_age[i]+dt*h.bed_pore_volume[i]))return false;
+    for(std::size_t i=0;i<n;++i){const double generated=dt*h.bed_pore_volume[i];h.bed_carried_mass[base+i]+=generated;h.bed_generated_age[i]+=generated;}
+    return true;
 }
 void MeshHeatState::refreshBedView(int i) {
     if(!ground_column)return;

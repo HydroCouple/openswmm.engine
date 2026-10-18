@@ -305,7 +305,7 @@ private:
     void applyCellSourceRow(int cell, int row, double& mass,
                             const CellSourceStep& source);
     enum class SourceLedger { Infiltration, CouplingOut, Rainfall,
-                              CouplingIn, Exfiltration, Boundary, ExternalIn, ExternalOut, Count };
+                              CouplingIn, Exfiltration, Boundary, ExternalIn, ExternalOut, BedExchange, Count };
     void bookSourceLedger(SourceLedger ledger, int species, double mass) noexcept;
     void flushSourceLedgers();
     int sourceThread() const noexcept;

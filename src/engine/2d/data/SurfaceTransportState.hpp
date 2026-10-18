@@ -106,6 +106,7 @@ struct SurfaceTransportState {
     std::vector<double> lost_infiltration;   ///< left through the bed
     std::vector<double> lost_boundary;       ///< left through an open edge
     std::vector<double> gained_external, lost_external;
+    std::vector<double> gained_bed; ///< signed finite-bed -> surface exchange; empty in compatibility mode
     std::vector<double> lost_coupling;       ///< left through the 1D↔2D exchange
     /// [k * n_species + s] species mass drained through coupling point k this
     /// advance (m³·conc, + = 2D→1D). Reset with `exch_` per advance; S3's
@@ -193,6 +194,7 @@ struct SurfaceTransportState {
         lost_infiltration.assign(ns, 0.0);
         lost_boundary.assign(ns, 0.0);
         gained_external.assign(ns, 0.0); lost_external.assign(ns, 0.0);
+        gained_bed.clear();
         lost_coupling.assign(ns, 0.0);
         exch_mass.assign(ns * static_cast<std::size_t>(
                                   n_coupling_points > 0 ? n_coupling_points

@@ -416,12 +416,12 @@ void ExplicitInertialSolver::flushSourceLedgers() {
     const auto ns = static_cast<std::size_t>(tr.n_species);
     std::vector<double>* ledgers[] = {&tr.lost_infiltration, &tr.lost_coupling,
         &tr.gained_rainfall, &tr.gained_coupling, &tr.gained_exfiltration,
-        &tr.lost_boundary, &tr.gained_external, &tr.lost_external};
+        &tr.lost_boundary, &tr.gained_external, &tr.lost_external, &tr.gained_bed};
     for (std::size_t base = 0; base < source_ledgers_.size(); base += source_ledger_stride_) {
         for (std::size_t k = 0; k < static_cast<std::size_t>(SourceLedger::Count); ++k)
             for (std::size_t r = 0; r < ns; ++r) {
                 double& delta = source_ledgers_[base + k * ns + r];
-                (*ledgers[k])[r] += delta;
+                if(!ledgers[k]->empty())(*ledgers[k])[r] += delta;
                 delta = 0.0;
             }
         double& evap = source_ledgers_[base + static_cast<std::size_t>(SourceLedger::Count) * ns];
@@ -536,6 +536,11 @@ OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::applyCellSourceRow(
     const bool mixed=r==tr.temp_row&&std::size_t(i)<channel_temperature_mixed_.size()&&channel_temperature_mixed_[i];
     if(!mixed) {
         mixCellSourceRow(i,r,mass,source);
+        if(r!=tr.temp_row&&state_->heat.enabled&&state_->heat.bed_species>0) {
+            const double before=mass;
+            mass=applyLocalBedSpecies(*mesh_,state_->heat,i,r,mass,source.available,source.area_dt/mesh_->tri_area[i]);
+            book(SourceLedger::BedExchange,r,mass-before);
+        }
         if(r==tr.temp_row && state_->heat.enabled) {
             const double before=mass;
             mass=applyMeshHeatCell(*mesh_,*opts_,state_->heat,i,mass,source.available,
