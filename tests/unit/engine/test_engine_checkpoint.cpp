@@ -869,6 +869,50 @@ TEST(EngineCheckpoint, CoupledMeshAndGroundThermalStateContinuesAcrossRestart) {
     for(const auto& cell:ground.cells)ASSERT_EQ(cell.failed,0)<<cell.error;
 }
 
+TEST(EngineCheckpoint, WaterTableThermalStateContinuesAcrossRestart) {
+    ThermalSurfaceSession source,target;
+    ASSERT_NO_THROW(source.start("ground-water-table-thermal-source",12,"channel:test",true));
+    ASSERT_NO_THROW(target.start("ground-water-table-thermal-target",12,"channel:test",true));
+    auto& source_router=source.engine.surfaceRouter2D();
+    auto& source_gw=source_router.subsurface();auto& source_transport=source_gw.transport();
+    ASSERT_TRUE(source_gw.heat().active());ASSERT_GE(source_transport.temp_row,0);
+    const int cell=0,row=source_transport.temp_row;
+    const double initial_table=source_gw.state().hg[cell];
+    double initial_energy=0;for(const auto& c:source_gw.heat().cells)
+        initial_energy+=std::accumulate(c.column.energy.begin(),c.column.energy.end(),0.0);
+    constexpr double volume=.002,temperature=25.0;
+    source_gw.bookLinkSeepage(cell,volume);
+    source_gw.bookLinkSeepageMass(cell,row,volume*temperature);
+
+    while(source.engine.context().current_time<43.1)ASSERT_NO_THROW(step(source.engine));
+    EXPECT_DOUBLE_EQ(source_gw.state().lacc[cell],0);
+    EXPECT_NEAR(source_gw.state().led_link,volume,1e-12);
+    EXPECT_GT(source_gw.state().hg[cell],initial_table);
+    double accepted_energy=0;for(const auto& c:source_gw.heat().cells)
+        accepted_energy+=std::accumulate(c.column.energy.begin(),c.column.energy.end(),0.0);
+    EXPECT_NEAR(accepted_energy-initial_energy,volume*temperature*source_gw.heat().water_capacity,
+                1e-7*std::max(1.0,std::abs(accepted_energy)));
+    EXPECT_NEAR(source_gw.state().continuityResidual(),0,1e-9);
+
+    const auto file=root()/"ground-water-table-thermal-restart.chk";
+    ASSERT_EQ(source.engine.saveCheckpoint(file.string()),"");
+    ASSERT_EQ(target.engine.loadCheckpoint(file.string()),"");
+    compare(source.engine,target.engine,"ground-water-table-thermal-restored");
+    int count=0;
+    while(source.engine.context().elapsed_ms<source.engine.context().options.totalDurationMs()) {
+        ASSERT_NO_THROW(step(source.engine));
+        ASSERT_NO_THROW(step(target.engine));
+        if(++count%11==0)compare(source.engine,target.engine,"ground-water-table-thermal-continued");
+    }
+    compare(source.engine,target.engine,"ground-water-table-thermal-final");
+    auto& resumed=target.engine.surfaceRouter2D().subsurface();
+    EXPECT_DOUBLE_EQ(source_gw.state().led_link,resumed.state().led_link);
+    EXPECT_DOUBLE_EQ(source_gw.state().hg[cell],resumed.state().hg[cell]);
+    EXPECT_DOUBLE_EQ(source_gw.heat().cells[cell].advective_j,resumed.heat().cells[cell].advective_j);
+    EXPECT_NEAR(source_gw.state().continuityResidual(),0,1e-9);
+    EXPECT_NEAR(resumed.state().continuityResidual(),0,1e-9);
+}
+
 TEST(EngineCheckpoint, StandaloneLocalBedThermalStateContinuesAcrossRestart) {
     ThermalSurfaceSession a,b;
     ASSERT_NO_THROW(a.start("surface-local-bed-restart-a",12,"channel:test",false,false,false,
