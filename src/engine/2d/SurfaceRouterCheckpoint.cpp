@@ -249,7 +249,7 @@ std::string SurfaceRouter2D::sourceBoundary(const SimulationContext& ctx) const 
     if(joint_hydraulic_) {
         if(state_.nodes_1d!=((node_coupling_points_.empty() && subsurface_.nodeBeds().empty())?nullptr:&ctx.nodes) ||
            state_.node_coupling!=(node_coupling_points_.empty()?nullptr:&node_coupling_points_) ||
-           ((coupling_points_.empty() && subsurface_.nodeBeds().empty()) &&
+           ((coupling_points_.empty() && subsurface_.nodeBeds().empty() && !channel_ground_.active()) &&
             (ctx.n_nodes()!=0 || ctx.n_links()!=0)) || ctx.n_pollutants()!=0)
             return "Joint router checkpoint coupling/receiver layout differs.";
         if(outfall_exchange_.prepared_) return "Joint checkpoint has an unconsumed outfall reservation.";
@@ -316,7 +316,8 @@ void SurfaceRouter2D::attachCommonSourceStage(SimulationContext& ctx,CommonSourc
             transport.n_pollut==0 && transport.n_msx==0 && transport.age_row<0 &&
             transport.temp_row==0 && transport.rowIndex("__TEMPERATURE__")==0;
         if((ramp && ramp[0]=='1') ||
-           ((coupling_points_.empty() && subsurface_.nodeBeds().empty()) && (ctx.n_nodes()!=0 || ctx.n_links()!=0)) ||
+           ((coupling_points_.empty() && subsurface_.nodeBeds().empty() && !channel_ground_.active()) &&
+            (ctx.n_nodes()!=0 || ctx.n_links()!=0)) ||
            ctx.n_pollutants()!=0 ||
            (transport.active() && !temperature_only) || !aquifer_link_shares_.empty())
             throw std::invalid_argument("Joint source attachment requires a supported exchange profile without head ramps or node/link beds.");

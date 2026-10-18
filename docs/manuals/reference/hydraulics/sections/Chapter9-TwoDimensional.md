@@ -2587,9 +2587,13 @@ behaviour it once configured is now described.
   accepts supported in-memory climate sources; active runtime forcing
   overrides and file-backed climate sources are refused. The input-file
   `SAVE HOTSTART` / `USE HOTSTART` commands do not create or restore this joint
-  checkpoint. The current profile does not preserve 1D heat-transport state,
-  so a run with routed channels/conduits and heat transport enabled cannot
-  attach this checkpoint, even when mesh-to-ground hyporheic exchange is active.
+  checkpoint. For the qualified attached 2D session, the engine checkpoint
+  preserves shared 1D node/link temperatures and bed state together with the
+  mesh soil columns and pending thermal receipts. Mapped open conduits using
+  `MESH_CONTACTS` can therefore resume their channel-to-ground hyporheic heat
+  exchange with the same mesh/contact identity. Restore is same-platform into
+  a freshly initialized matching engine and attached mesh session. Direct
+  hydraulic-component checkpoint files do not include thermal state.
 
 <!-- source: docs/manuals/reference/hydraulics/sections/Chapter9-TwoDimensional.md:1443-1471 (retained text); src/engine/2d/solver/ExplicitInertialSolver.cpp:89-114; src/engine/2d/solver/SurfaceSolverFactory.cpp:286-301; src/engine/2d/input/SectionHandlers2D.cpp:311-346 -->
 

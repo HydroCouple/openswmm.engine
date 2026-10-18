@@ -936,19 +936,31 @@ TEST(EngineCheckpoint, ThermalCrossTierContactReceiptSurvivesRestart) {
     compare(source.engine,target.engine,"surface-thermal-cross-tier-final");
 }
 
-TEST(EngineCheckpoint, RoutedChannelHyporheicStateCannotAttachCheckpoint) {
-    ThermalSurfaceSession source;
-    ASSERT_NO_THROW(source.start("surface-thermal-channel-source",12,"channel:test",false,false,false,false,false,true,false));
+TEST(EngineCheckpoint, RoutedChannelHyporheicThermalStateContinuesAcrossEngineCheckpoint) {
+    ThermalSurfaceSession source,target;
+    ASSERT_NO_THROW(source.start("surface-thermal-channel-source",12,"channel:test",false,false,false,false,false,true,true));
+    ASSERT_NO_THROW(target.start("surface-thermal-channel-target",12,"channel:test",false,false,false,false,false,true,true));
     ASSERT_TRUE(source.engine.surfaceRouter2D().channelGround().active());
-    const auto error=source.engine.enableCheckpointing(source.stage);
-    EXPECT_NE(error.find("Hydraulic checkpoint quality, age, heat and structure/control solvers are not qualified."),std::string::npos)<<error;
-    EXPECT_EQ(source.engine.checkpointSessionStatus(),0u);
 
     while(source.engine.context().current_time<43.1)ASSERT_NO_THROW(step(source.engine));
     const auto& channel=source.engine.surfaceRouter2D().channelGround();
     ASSERT_GT(channel.contactCount(0),0u);
     double soil_exchange=0;for(double value:channel.channelToGround())soil_exchange+=value;
     ASSERT_GT(std::abs(soil_exchange),0);
+    ASSERT_EQ(source.engine.context().heat_state.mesh_contact_link,target.engine.context().heat_state.mesh_contact_link);
+    ASSERT_EQ(source.engine.context().heat_state.link_temp.size(),1u);
+
+    const auto checkpoint=root()/"surface-thermal-channel-checkpoint.chk";
+    ASSERT_EQ(source.engine.saveCheckpoint(checkpoint.string()),"");
+    ASSERT_EQ(target.engine.loadCheckpoint(checkpoint.string()),"");
+    compare(source.engine,target.engine,"surface-thermal-channel-restored");
+    int count=0;
+    while(source.engine.context().elapsed_ms<source.engine.context().options.totalDurationMs()) {
+        ASSERT_NO_THROW(step(source.engine));
+        ASSERT_NO_THROW(step(target.engine));
+        if(++count%13==0)compare(source.engine,target.engine,"surface-thermal-channel-continued");
+    }
+    compare(source.engine,target.engine,"surface-thermal-channel-final");
 }
 
 TEST(EngineCheckpoint, MeshThermalSourceIntakeUsesMixedSurfaceTemperature) {

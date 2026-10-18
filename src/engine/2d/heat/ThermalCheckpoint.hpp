@@ -63,13 +63,17 @@ inline void groundHeat(Archive& a,GroundHeatState& h,bool model) {
         return;
     }
     a(h.top_now,h.deep_now);
+    // Ground columns may be initialized lazily on the first accepted thermal
+    // step. Their model identity is frozen separately, so restore the
+    // accepted cell payload into a fresh target whose runtime vector is still
+    // empty.
     a.sequence(h.cells,[&](auto& c){
         auto& col=c.column;auto& p=c.porewater;
         a.fixed(col.theta,col.capacity,col.energy,col.conductivity,c.saturated_water,
                 p.mass,p.contact_mass,p.generated_age);
         a(c.advective_j,c.source_j,c.surface_j,c.deep_j,c.latent_j,c.lateral_j,c.water_contact_j,
           c.channel_contact_j,c.vertical_absolute_j,c.failed,c.error);
-    },true);
+    });
     if(a.reading()) {
         const auto bad=[](const char* reason){throw std::runtime_error(std::string("Invalid thermal ground checkpoint state: ")+reason+".");};
         for(const auto& c:h.cells) {
@@ -117,10 +121,13 @@ inline std::string meshHeatModelIdentity(const MeshHeatState& state) {
 inline void meshHeat(Archive& a,MeshHeatState& h) {
     if(!h.enabled)return;
     a(h.ground_now);
-    a.fixed(h.bed_energy,h.bed_capacity,h.reported_temperature,h.atmospheric_j,h.radiative_j,
-            h.sensible_j,h.ground_j,h.water_bed_j,h.water_j,h.latent_j,h.evaporated_m3,
-            h.failures,h.channel_footprint,h.bed_carried_mass,h.bed_exchange_mass,h.bed_generated_age);
+    a(h.bed_energy,h.bed_capacity,h.reported_temperature,h.atmospheric_j,h.radiative_j,
+      h.sensible_j,h.ground_j,h.water_bed_j,h.water_j,h.latent_j,h.evaporated_m3,
+      h.failures,h.channel_footprint,h.bed_carried_mass,h.bed_exchange_mass,h.bed_generated_age);
     groundHeat(a,h.standalone_ground,false);
+    if(!h.standalone_ground.cells.empty() &&
+       h.standalone_ground.cells.size()!=h.reported_temperature.size())
+        throw std::runtime_error("Thermal ground checkpoint cell shape differs from the mesh.");
     if(a.reading()) {
         const auto bad=[](){throw std::runtime_error("Invalid thermal mesh checkpoint state.");};
         for(const auto* row:{&h.bed_energy,&h.atmospheric_j,&h.radiative_j,&h.sensible_j,&h.ground_j,
@@ -131,6 +138,15 @@ inline void meshHeat(Archive& a,MeshHeatState& h) {
         for(double v:h.evaporated_m3)if(v<0)bad();
         for(int v:h.failures)if(v<0)bad();
         for(double v:h.bed_carried_mass)if(v<0)bad();
+        const auto n=h.reported_temperature.size();
+        for(const auto* row:{&h.atmospheric_j,&h.radiative_j,&h.sensible_j,&h.ground_j,
+            &h.water_bed_j,&h.water_j,&h.latent_j,&h.evaporated_m3})if(row->size()!=n)bad();
+        if(h.failures.size()!=n || (!h.channel_footprint.empty()&&h.channel_footprint.size()!=n) ||
+           h.bed_energy.size()!=h.bed_capacity.size() ||
+           (!h.bed_energy.empty()&&h.bed_energy.size()!=n) ||
+           (!h.bed_carried_mass.empty()&&h.bed_carried_mass.size()!=n*std::size_t(h.bed_species)) ||
+           (!h.bed_exchange_mass.empty()&&h.bed_exchange_mass.size()!=n*std::size_t(h.bed_species)) ||
+           (!h.bed_generated_age.empty()&&h.bed_generated_age.size()!=n))bad();
     }
 }
 } // namespace openswmm::twoD::checkpoint

@@ -215,14 +215,14 @@ public:
      */
     int close() noexcept;
 
-    // Internal same-platform engine-session restart. A qualified 2D
-    // CommonSourceStage attachment includes coupled mesh/ground thermal state
-    // and pending thermal receipts for the mesh-only hydraulic profile.
-    // Checkpoints currently refuse 1D heat-transport state (including routed
-    // channel/ground exchange). Enable at start()'s initial boundary; restore
-    // into an identically initialized fresh session. Session preparation is
-    // internal; public operations require this attachment. External water
-    // drivers require their participant.
+    // Internal same-platform engine-session restart. Engine sessions preserve
+    // shared 1D node/link temperature and bed state. A qualified 2D
+    // CommonSourceStage attachment also preserves mesh/ground thermal state
+    // and routed channel-ground thermal receipts. Direct hydraulic component
+    // checkpoints do not preserve thermal state. Enable at start()'s initial
+    // boundary; restore into an identically initialized fresh session.
+    // Session preparation is internal; public operations require this
+    // attachment. External water drivers require their participant.
     // Private binary-output qualification: initialize(), prepare this mode,
     // start(1), then enable checkpointing. Requires a new output destination.
     std::string prepareOutputCheckpointing();

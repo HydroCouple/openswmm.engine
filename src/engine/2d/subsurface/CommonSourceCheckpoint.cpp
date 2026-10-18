@@ -56,6 +56,8 @@ void meshState(Archive& a,SurfaceStateData& s) {
     if(s.heat.enabled) {
         std::string profile="accepted-boundary mesh thermal state v1";a(profile);
         checkpoint::meshHeat(a,s.heat);
+        if(s.heat.reported_temperature.size()!=s.depth.size())
+            throw std::runtime_error("Thermal mesh checkpoint cell shape differs from its surface.");
     }
     auto& t=s.transport;
     a.fixed(t.cell_mass,t.lost_infiltration,t.lost_boundary,t.gained_external,t.lost_external,t.lost_coupling,

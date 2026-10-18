@@ -383,8 +383,8 @@ void Router::checkCheckpointProfile(const SimulationContext& c) const {
             dw_solver_.n_links_==c.n_links() && c.nodes.count()==c.n_nodes() && c.links.count()==c.n_links(),
             "Hydraulic checkpoint requires an initialized DW routing component.");
     require(c.n_pollutants()==0 && !c.options.water_age &&
-            (!c.options.heat_transport || (c.n_nodes()==0 && c.n_links()==0)) &&
-            (c.n_nodes()==0 || (!c.nodes.coupling_tuple_age && !c.nodes.coupling_tuple_temp)) && c.nodes.conc_n_pollutants==0 &&
+            (!c.options.heat_transport || (c.n_nodes()==0 && c.n_links()==0) || checkpoint_owned_session_) &&
+            (c.n_nodes()==0 || checkpoint_owned_session_ || (!c.nodes.coupling_tuple_age && !c.nodes.coupling_tuple_temp)) && c.nodes.conc_n_pollutants==0 &&
             c.links.conc_n_pollutants==0 && c.nodes.stat_n_pollutants==0 && c.links.stat_n_pollutants==0 &&
             (!structures_ || checkpoint_owned_session_),
             "Hydraulic checkpoint quality, age, heat and structure/control solvers are not qualified.");
