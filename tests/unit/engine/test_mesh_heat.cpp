@@ -148,6 +148,41 @@ TEST(MeshHeat, IsolatedPairMatchesIndependentAnalyticDecayFromOneSecondToTwoHour
         EXPECT_NEAR(f.state.heat.bed_energy[0]-f.state.heat.initial_bed_energy[0],f.state.heat.water_bed_j[0],1e-5);
     }
 }
+TEST(MeshHeat, HyporheicVelocitySpansZeroToStrongFiniteStorageWithClosedEnergy) {
+    // Keep the same finite water/bed capacities while varying only the
+    // hyporheic conductance. The expected values come from the independent
+    // two-capacity solution, so both the zero-velocity limit and a very fast
+    // exchange are checked without reusing the production stepper.
+    constexpr double water_volume=5,initial_water_c=22,initial_bed_c=-4,dt=3600;
+    for(const double velocity:{0.,1e-12,2e-5,.1,1e4}) {
+        LocalHeat f("hyporheic-limits-"+std::to_string(velocity));ASSERT_NE(f.model.e,nullptr);
+        auto& cfg=f.model.ctx().heat_config.sediment;
+        cfg.has_initial_temp=true;cfg.initial_temp=initial_bed_c;cfg.ground_depth=0;
+        cfg.hyporheic_velocity=velocity;
+        ASSERT_TRUE(f.initialize().empty());
+
+        const double rho_cp=f.model.ctx().options.water_density*f.model.ctx().options.water_specific_heat;
+        const double cw=rho_cp*water_volume,cb=f.state.heat.bed_capacity[0];
+        const double initial_energy=cw*initial_water_c+cb*initial_bed_c;
+        const double conductance=cfg.thermal_diffusivity*cfg.sed_density*cfg.sed_specific_heat*50/cfg.bed_thickness+
+                                 rho_cp*velocity*50;
+        const double equilibrium=initial_energy/(cw+cb);
+        const double difference=(initial_water_c-initial_bed_c)*
+            std::exp(-conductance*(1/cw+1/cb)*dt);
+        const double expected_water=equilibrium+cb/(cw+cb)*difference;
+        const double expected_bed=equilibrium-cw/(cw+cb)*difference;
+
+        const double temperature_volume=f.step(0,initial_water_c*water_volume,water_volume,0,dt);
+        EXPECT_NEAR(temperature_volume/water_volume,expected_water,1e-11)<<"v_h="<<velocity;
+        EXPECT_NEAR(f.state.heat.bed_energy[0]/cb,expected_bed,1e-11)<<"v_h="<<velocity;
+        EXPECT_NEAR(rho_cp*temperature_volume+f.state.heat.bed_energy[0],initial_energy,
+                    1e-12*std::max(1.,std::abs(initial_energy)))<<"v_h="<<velocity;
+        EXPECT_NEAR(f.state.heat.water_bed_j[0],f.state.heat.bed_energy[0]-cb*initial_bed_c,1e-5)
+            <<"v_h="<<velocity;
+        EXPECT_NEAR(f.state.heat.water_j[0]+f.state.heat.water_bed_j[0],0,1e-5)
+            <<"v_h="<<velocity;
+    }
+}
 TEST(MeshHeat, ConstantRadiationAndFiniteBedMatchIndependentForcedTwoBodySolution) {
     LocalHeat f("forced-pair");ASSERT_NE(f.model.e,nullptr);
     auto& ctx=f.model.ctx();auto& cfg=ctx.heat_config.sediment;

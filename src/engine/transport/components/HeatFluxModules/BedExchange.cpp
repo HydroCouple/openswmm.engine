@@ -96,6 +96,24 @@ PairStep relaxPair(const BedCoupling& g, double t_w, double t_b,
         if (s > 0.0 && std::isfinite(s)) djdt = s;
     }
 
+    // The isolated two-body limit has a scalar closed form. Use it directly
+    // when no external flux or deep-ground contact is active: the general
+    // spectral matrix formula loses accuracy when hyporheic conductance is
+    // many orders of magnitude larger than either body's capacity per step.
+    // This limit is common for large, intentionally stiff exchange tests and
+    // keeps both temperatures on the same conserved-energy trajectory.
+    if (g.g_bg == 0.0 && djdt == 0.0 && j0 == 0.0) {
+        const double total = g.c_w + g.c_b;
+        const double rate = g.g_wb / g.c_w + g.g_wb / g.c_b;
+        const double difference = (t_w - t_b) * std::expm1(-rate * dt);
+        const double dw = (g.c_b / total) * difference;
+        const double db = -(g.c_w / g.c_b) * dw;
+        if (!std::isfinite(dw) || !std::isfinite(db)) return out;
+        out.dt_w = dw;
+        out.dt_b = db;
+        return out;
+    }
+
     // du/dt = M u + c, u = (T_w - t_w, T_b - t_b), u(0) = 0.
     const double a11 = -(area_m2 * djdt + g.g_wb) / g.c_w;
     const double a12 = g.g_wb / g.c_w;

@@ -323,7 +323,11 @@ double applyMeshHeatCell(const MeshData& mesh,const SolverOptions2D& options,Mes
         const auto step=relaxPair(g,tw,tb,j0,j1,kProbeC,wet,dt);dw=step.dt_w;db=step.dt_b;
         double ib=0;pairIntegrals(g,tw,tb,j0,slope,wet,dt,iw,ib);
         qg=gb*((tground-tb)*dt-ib);
-        qwb=g.g_wb*((tw-tb)*dt+iw-ib);
+        // Define reciprocal bed receipts from the accepted bed-energy
+        // increment and its deep-ground receipt. The equivalent time
+        // integral subtracts two O(g_wb*dt) values and becomes catastrophically
+        // ill-conditioned for stiff hyporheic exchange.
+        qwb=g.c_b*db-qg;
         qa=-wet*(j0*dt+slope*iw);
     } else {
         dw=relaxT(j0,j1,kProbeC,wet,volume,dt,rho,cp);
