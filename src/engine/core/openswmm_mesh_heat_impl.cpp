@@ -3,10 +3,19 @@
 #include <openswmm/engine/openswmm_heat.h>
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/SurfaceRouter2D.hpp"
+#include "../2d/mesh/MeshBuilder.hpp"
+#include "../2d/subsurface/SubsurfaceSections.hpp"
 #include "../transport/components/HeatFluxModules/HeatOverrides.hpp"
+#include "../hydraulics/XSectBatch.hpp"
+#include "../core/SimulationContext.hpp"
+#include "../core/UnitConversion.hpp"
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <numeric>
+#include <set>
+#include <string>
+#include <vector>
 namespace {
 bool thermalResultsReady(const openswmm::SimulationContext& ctx,const openswmm::twoD::SurfaceRouter2D& router) {
     return router.isActive() || ctx.state==openswmm::EngineState::ENDED || ctx.state==openswmm::EngineState::REPORTED;
@@ -21,6 +30,88 @@ const openswmm::twoD::GroundThermalCell* groundCell(const openswmm::twoD::Surfac
 }
 double soilResidual(const openswmm::twoD::GroundThermalCell& c,double energy) {
     return energy-c.initial_j-c.advective_j-c.source_j-c.surface_j-c.deep_j-c.latent_j-c.lateral_j-c.water_contact_j-c.channel_contact_j-c.lid_contact_j;
+}
+int previewChannelGroundMap(const openswmm::SimulationContext& ctx,
+    const openswmm::twoD::SurfaceRouter2D& router,int link,
+    SWMM_ChannelGroundPreview& result,std::vector<SWMM_ChannelGroundContact>& rows) {
+    result={};result.struct_size=sizeof result;result.link=link;rows.clear();
+    const auto reason=[&](const std::string& text){std::strncpy(result.reason,text.c_str(),sizeof(result.reason)-1);};
+    if(ctx.state!=openswmm::EngineState::OPENED&&ctx.state!=openswmm::EngineState::BUILDING)
+        return SWMM_ERR_LIFECYCLE;
+    if(link<0||link>=ctx.n_links())return SWMM_ERR_BADINDEX;
+    const auto& source_mesh=router.mesh();
+    if(source_mesh.n_cells()<=0){reason("The model has no parsed 2D mesh cells.");return SWMM_OK;}
+    if(std::size_t(link)>=ctx.links.xsect_batch_shape.size()||ctx.link_subtypes.conduit_row(link)<0||
+       !openswmm::xsect::isOpen(ctx.links.xsect_batch_shape[link])) {
+        reason("MESH_CONTACTS requires an open conduit; this link is not eligible.");return SWMM_OK;
+    }
+    const int n1=ctx.links.node1[link],n2=ctx.links.node2[link];
+    const auto hasPoint=[&](int n){return n>=0&&std::size_t(n)<ctx.spatial.node_has_xy.size()&&ctx.spatial.node_has_xy[n]&&
+        std::size_t(n)<ctx.spatial.node_x.size()&&std::size_t(n)<ctx.spatial.node_y.size();};
+    if(!hasPoint(n1)||!hasPoint(n2)){reason("Add coordinates for both channel endpoints before previewing mesh contacts.");return SWMM_OK;}
+    if(std::size_t(link)>=ctx.spatial.link_vertices_x.size()||std::size_t(link)>=ctx.spatial.link_vertices_y.size()) {
+        reason("Channel polyline coordinate arrays are unavailable.");return SWMM_OK;
+    }
+    const auto& vx=ctx.spatial.link_vertices_x[link];const auto& vy=ctx.spatial.link_vertices_y[link];
+    if(vx.size()!=vy.size()){reason("Channel polyline coordinate arrays differ.");return SWMM_OK;}
+    const int us=openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    const double coordinate_scale=us==0?.3048:1.0;
+    auto mesh=source_mesh;
+    const double mesh_scale=!router.options().mesh_units_si&&us==0?.3048:1.0;
+    for(double& x:mesh.vx)x*=mesh_scale;
+    for(double& y:mesh.vy)y*=mesh_scale;
+    for(double& z:mesh.vz)z*=mesh_scale;
+    const auto nc=static_cast<std::size_t>(mesh.n_cells());
+    if(mesh.cell_nv.size()!=nc||mesh.cell_v.size()!=nc*openswmm::twoD::kMaxCellVerts||
+       mesh.vx.size()!=mesh.vy.size()||mesh.vx.size()!=mesh.vz.size()) {
+        reason("The parsed mesh connectivity is incomplete; initialize it to validate the mesh.");return SWMM_OK;
+    }
+    for(std::size_t i=0;i<mesh.vx.size();++i)if(!std::isfinite(mesh.vx[i])||!std::isfinite(mesh.vy[i])||!std::isfinite(mesh.vz[i])) {
+        reason("The parsed mesh contains a nonfinite vertex coordinate.");return SWMM_OK;
+    }
+    for(std::size_t c=0;c<nc;++c) {
+        if(mesh.cell_nv[c]<3||mesh.cell_nv[c]>openswmm::twoD::kMaxCellVerts) {
+            reason("The parsed mesh contains a cell with invalid connectivity.");return SWMM_OK;
+        }
+        for(int k=0;k<mesh.cell_nv[c];++k) {
+            const int vertex=mesh.cell_v[c*openswmm::twoD::kMaxCellVerts+std::size_t(k)];
+            if(vertex<0||std::size_t(vertex)>=mesh.vx.size()) {
+                reason("The parsed mesh contains an out-of-range vertex index.");return SWMM_OK;
+            }
+        }
+    }
+    openswmm::twoD::buildMeshTopology(mesh);
+    if(const auto error=openswmm::twoD::validateMesh(mesh);!error.empty()) {
+        reason("The parsed mesh cannot be previewed: "+error);return SWMM_OK;
+    }
+    std::vector<double> x={ctx.spatial.node_x[n1]*coordinate_scale};
+    std::vector<double> y={ctx.spatial.node_y[n1]*coordinate_scale};
+    for(std::size_t p=0;p<vx.size();++p){x.push_back(vx[p]*coordinate_scale);y.push_back(vy[p]*coordinate_scale);}
+    x.push_back(ctx.spatial.node_x[n2]*coordinate_scale);y.push_back(ctx.spatial.node_y[n2]*coordinate_scale);
+    const auto mapping=openswmm::twoD::mapMeshPolyline(mesh,x,y);
+    if(!mapping.error.empty()){reason(mapping.error);return SWMM_OK;}
+    result.length_m=mapping.length;result.covered_length_m=mapping.covered_length;
+    result.uncovered_length_m=std::max(0.0,mapping.length-mapping.covered_length);
+    std::set<int> cells;
+    const double z0=(ctx.nodes.invert_elev[n1]+ctx.links.offset1[link])*.3048;
+    const double z1=(ctx.nodes.invert_elev[n2]+ctx.links.offset2[link])*.3048;
+    for(const auto& interval:mapping.intervals) {
+        cells.insert(interval.cell);
+        const double mid=(interval.begin+interval.end)*.5;
+        const double fraction=mapping.length>0?mid/mapping.length:0;
+        SWMM_ChannelGroundContact contact{};contact.struct_size=sizeof contact;
+        contact.link=link;contact.cell=interval.cell;contact.layer=-1;
+        contact.begin_fraction=interval.begin/mapping.length;contact.end_fraction=interval.end/mapping.length;
+        contact.share=interval.share;contact.invert_m=z0+(z1-z0)*fraction;
+        rows.push_back(contact);
+    }
+    if(rows.size()>std::size_t(std::numeric_limits<int>::max())||cells.size()>std::size_t(std::numeric_limits<int>::max()))
+        return SWMM_ERR_BADPARAM;
+    result.contact_intervals=static_cast<int>(rows.size());result.contact_cells=static_cast<int>(cells.size());
+    result.valid=result.uncovered_length_m<=1e-9*std::max(1.0,result.length_m);
+    reason(result.valid?"Complete XY coverage. Groundwater profile and bed-fit checks still run at initialization.":
+        "Part of this channel lies outside the mesh; initialization will refuse MESH_CONTACTS until coverage is complete.");
+    return SWMM_OK;
 }
 }
 #endif
@@ -90,6 +181,26 @@ int swmm_heat_get_channel_ground_contact(SWMM_Engine engine,int index,SWMM_Chann
     *out=result;return SWMM_OK;
 #else
     return SWMM_ERR_PLUGIN;
+#endif
+}
+
+int swmm_heat_preview_channel_ground_map(SWMM_Engine engine,int link,SWMM_ChannelGroundPreview* out,
+    SWMM_ChannelGroundContact* contacts,int capacity,int* required) {
+    CHECK_HANDLE(engine);
+    if(!out||out->struct_size<sizeof(SWMM_ChannelGroundPreview)||!required||capacity<0||
+       (capacity>0&&!contacts))return SWMM_ERR_BADPARAM;
+#ifdef OPENSWMM_HAS_2D
+    SWMM_ChannelGroundPreview result{};std::vector<SWMM_ChannelGroundContact> rows;
+    const int rc=previewChannelGroundMap(to_engine(engine)->context(),to_engine(engine)->surfaceRouter2D(),link,result,rows);
+    if(rc!=SWMM_OK)return rc;
+    if(rows.size()>std::size_t(std::numeric_limits<int>::max()))return SWMM_ERR_BADPARAM;
+    *required=static_cast<int>(rows.size());*out=result;
+    if(capacity==0&&!contacts)return SWMM_OK;
+    if(capacity<*required)return SWMM_ERR_BADPARAM;
+    if(!rows.empty())std::copy(rows.begin(),rows.end(),contacts);
+    return SWMM_OK;
+#else
+    (void)link;(void)contacts;(void)capacity;return SWMM_ERR_PLUGIN;
 #endif
 }
 

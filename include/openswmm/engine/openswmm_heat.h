@@ -602,6 +602,23 @@ typedef struct SWMM_ChannelGroundContact {
     double begin_fraction,end_fraction,share,invert_m;
 } SWMM_ChannelGroundContact;
 SWMM_ENGINE_API int swmm_heat_get_channel_ground_contact(SWMM_Engine,int index,SWMM_ChannelGroundContact*);
+/** Pre-run, read-only XY coverage preview for one routed channel. Contact
+ * intervals use whole-polyline fractions, have layer=-1, and may be returned
+ * even when valid is false so uncovered geometry remains visible. A valid
+ * result means the complete polyline lies in the mesh; soil-profile, invert,
+ * bed-thickness and thermal-owner checks still run at initialization.
+ * Initialize struct_size and pass contacts=null/capacity=0 to query the
+ * required interval count. If capacity is too small, status and required are
+ * returned but the contact array is left untouched. Only OPENED/BUILDING
+ * engines with a parsed mesh are accepted. */
+typedef struct SWMM_ChannelGroundPreview {
+    unsigned int struct_size;
+    int link,valid,contact_cells,contact_intervals;
+    double length_m,covered_length_m,uncovered_length_m;
+    char reason[256];
+} SWMM_ChannelGroundPreview;
+SWMM_ENGINE_API int swmm_heat_preview_channel_ground_map(SWMM_Engine,int link,
+    SWMM_ChannelGroundPreview*,SWMM_ChannelGroundContact* contacts,int capacity,int* required);
 
 #ifdef __cplusplus
 }

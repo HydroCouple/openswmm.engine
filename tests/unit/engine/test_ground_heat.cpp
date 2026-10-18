@@ -5,12 +5,15 @@
 #include <fstream>
 #include <numeric>
 #include <cmath>
+#include <set>
+#include <vector>
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_heat.h>
 #include <openswmm/engine/openswmm_model.h>
 #include <openswmm/engine/openswmm_gw_transport.h>
 #include <openswmm/engine/openswmm_coupling.h>
 #include <openswmm/engine/openswmm_forcing.h>
+#include <openswmm/engine/openswmm_spatial.h>
 #include <openswmm/engine/openswmm_gw2d.h>
 #include <openswmm/engine/openswmm_hotstart.h>
 #include "core/CompletedSourceArchive.hpp"
@@ -998,6 +1001,69 @@ TEST(GroundHeat, ConfiguredChannelContactsRunOnTheActualSourceClockAndHonorLiveB
         EXPECT_GT(sum(contacts.channelToGround()),paused);
         for(const auto& cell:gw.heat().cells)ASSERT_EQ(cell.failed,0)<<cell.error;
     }
+}
+TEST(GroundHeat, ChannelGroundCoverageCanBePreviewedBeforeInitialization) {
+    Model m("channel-ground-map-preview","SIGMA",.5,false,"",true);
+    ASSERT_NE(m.e,nullptr);
+    ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_GROUND_SOURCE,1),SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_module(m.e,SWMM_HEAT_SEDIMENT_EXCHANGE,1),SWMM_OK);
+
+    SWMM_ChannelGroundPreview preview{};preview.struct_size=sizeof preview;
+    int required=-1;
+    ASSERT_EQ(swmm_heat_preview_channel_ground_map(m.e,0,&preview,nullptr,0,&required),SWMM_OK);
+    ASSERT_TRUE(preview.valid)<<preview.reason;
+    EXPECT_EQ(preview.link,0);
+    EXPECT_EQ(preview.contact_cells,2);
+    EXPECT_EQ(preview.contact_intervals,required);
+    EXPECT_EQ(required,2);
+    EXPECT_NEAR(preview.length_m,8.0,1e-12);
+    EXPECT_NEAR(preview.covered_length_m,8.0,1e-12);
+    EXPECT_DOUBLE_EQ(preview.uncovered_length_m,0.0);
+
+    SWMM_ChannelGroundContact untouched{};untouched.link=77;
+    required=-1;preview.struct_size=sizeof preview;
+    EXPECT_EQ(swmm_heat_preview_channel_ground_map(m.e,0,&preview,&untouched,1,&required),SWMM_ERR_BADPARAM);
+    EXPECT_EQ(required,2);
+    EXPECT_EQ(untouched.link,77);
+    std::vector<SWMM_ChannelGroundContact> mapped(static_cast<std::size_t>(required));
+    preview.struct_size=sizeof preview;
+    ASSERT_EQ(swmm_heat_preview_channel_ground_map(m.e,0,&preview,mapped.data(),int(mapped.size()),&required),SWMM_OK);
+    ASSERT_EQ(mapped.size(),2u);
+    EXPECT_EQ(mapped[0].link,0);EXPECT_EQ(mapped[1].link,0);
+    EXPECT_EQ(mapped[0].layer,-1);EXPECT_EQ(mapped[1].layer,-1);
+    EXPECT_NE(mapped[0].cell,mapped[1].cell);
+    EXPECT_NEAR(mapped[0].begin_fraction,0,1e-12);
+    EXPECT_NEAR(mapped[1].end_fraction,1,1e-12);
+    EXPECT_NEAR(mapped[0].share,1,1e-12);
+    EXPECT_NEAR(mapped[1].share,1,1e-12);
+
+    ASSERT_EQ(swmm_spatial_set_node_coord(m.e,1,12,3),SWMM_OK);
+    preview.struct_size=sizeof preview;required=-1;
+    ASSERT_EQ(swmm_heat_preview_channel_ground_map(m.e,0,&preview,nullptr,0,&required),SWMM_OK);
+    EXPECT_FALSE(preview.valid);
+    EXPECT_NEAR(preview.length_m,11.0,1e-12);
+    EXPECT_NEAR(preview.covered_length_m,9.0,1e-12);
+    EXPECT_NEAR(preview.uncovered_length_m,2.0,1e-12);
+    EXPECT_NE(std::string(preview.reason).find("outside the mesh"),std::string::npos);
+    ASSERT_EQ(swmm_spatial_set_node_coord(m.e,1,9,3),SWMM_OK);
+
+    ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_MODEL","COUPLED"),SWMM_OK);
+    ASSERT_EQ(swmm_options_set_ext(m.e,"BED_HEAT_MODEL","GROUND_COLUMN"),SWMM_OK);
+    ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_SURFACE_EXCHANGE","NO"),SWMM_OK);
+    ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_RADIATIVE_EXCHANGE","NO"),SWMM_OK);
+    ASSERT_EQ(swmm_gw_transport_option_set(m.e,"CONDUCTION","YES"),SWMM_OK);
+    ASSERT_EQ(m.start(),SWMM_OK)<<swmm_get_last_error_msg(m.e);
+    SWMM_ChannelGroundStatus status{};status.struct_size=sizeof status;
+    ASSERT_EQ(swmm_heat_get_channel_ground_status(m.e,&status),SWMM_OK);
+    ASSERT_TRUE(status.initialized);ASSERT_EQ(status.mapped_links,1);
+    std::set<int> actual_cells;
+    for(int i=0;i<status.contact_intervals;++i) {
+        SWMM_ChannelGroundContact actual{};actual.struct_size=sizeof actual;
+        ASSERT_EQ(swmm_heat_get_channel_ground_contact(m.e,i,&actual),SWMM_OK);
+        actual_cells.insert(actual.cell);
+    }
+    EXPECT_EQ(actual_cells.size(),std::size_t(preview.contact_cells));
+    EXPECT_EQ(actual_cells,std::set<int>({mapped[0].cell,mapped[1].cell}));
 }
 TEST(GroundHeat, RoutedSeepageReversesWhileHyporheicHeatRemainsSeparate) {
     for(const auto* solver:{"LEGACY","EULERIAN_ARD","LAGRANGIAN"}) {
