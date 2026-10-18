@@ -18,6 +18,7 @@
 #include "2d/SurfaceRouter2D.hpp"
 #include "2d/subsurface/SubsurfaceSolver.hpp"
 #include "2d/heat/ChannelGround.hpp"
+#include "2d/heat/ThermalCheckpoint.hpp"
 namespace {
 namespace fs=std::filesystem;
 const fs::path out=fs::path(OPENSWMM_GROUND_HEAT_OUT)/"ground_heat";
@@ -157,14 +158,42 @@ TEST(GroundHeat, CommittedLinkHeatCannotBeSpentAgainByAnInterveningFiniteWaterCo
     Model m("reserved-link-heat","CLOSED_FORM",.5,false,
         "* SAT __TEMPERATURE__ 40\n* UNSAT __TEMPERATURE__ 40\n"
         "[GW_TRANSPORT_PARAMS]\n* 2650 880 10000000 0 0 0 0 0 .065\n");
-    ASSERT_NE(m.e,nullptr);
+    Model restored_model("reserved-link-heat-restored","CLOSED_FORM",.5,false,
+        "* SAT __TEMPERATURE__ 40\n* UNSAT __TEMPERATURE__ 40\n"
+        "[GW_TRANSPORT_PARAMS]\n* 2650 880 10000000 0 0 0 0 0 .065\n");
+    ASSERT_NE(m.e,nullptr);ASSERT_NE(restored_model.e,nullptr);
     ASSERT_EQ(swmm_gw_transport_option_set(m.e,"CONDUCTION","YES"),SWMM_OK);
-    ASSERT_EQ(enablePorewater(m),SWMM_OK);auto& gw=m.router().subsurface();auto& state=m.router().state();
+    ASSERT_EQ(swmm_gw_transport_option_set(restored_model.e,"CONDUCTION","YES"),SWMM_OK);
+    ASSERT_EQ(enablePorewater(m),SWMM_OK);ASSERT_EQ(enablePorewater(restored_model),SWMM_OK);
+    auto& gw=m.router().subsurface();auto& state=m.router().state();
+    auto& restored=restored_model.router().subsurface();auto& restored_state=restored_model.router().state();
     const int row=gw.transport().temp_row;const double cp=gw.heat().water_capacity;
     const double draw=std::min(.1,.5*gw.specificYieldOf(0)*gw.state().hg[0]*gw.state().area[0]);
     ASSERT_GT(draw,0);const double before=energy(gw.heat());
     gw.bookLinkSeepage(0,-draw);const double exported=gw.bookLinkGain(0,row,draw)*cp;
     EXPECT_NEAR(exported,draw*40*cp,1e-8);
+    const auto& reserved=gw.heat().cells[0];
+    for(std::size_t j=0;j<reserved.column.energy.size();++j) {
+        EXPECT_NEAR(gw.heat().activeCapacity(0,j),reserved.column.capacity[j]-cp*reserved.reserved_out_water[j],1e-8);
+        EXPECT_GT(gw.heat().activeCapacity(0,j),0);
+        if(reserved.reserved_out_water[j]>0)EXPECT_NEAR(gw.heat().activeTemperature(0,j),40,1e-9);
+    }
+    std::vector<double> layer_capacity(reserved.column.energy.size()),layer_temperature(layer_capacity.size());
+    ASSERT_EQ(swmm_heat_get_ground_layers(m.e,0,SWMM_GROUND_LAYER_CAPACITY,0,int(layer_capacity.size()),layer_capacity.data()),SWMM_OK);
+    ASSERT_EQ(swmm_heat_get_ground_layers(m.e,0,SWMM_GROUND_LAYER_TEMPERATURE,0,int(layer_temperature.size()),layer_temperature.data()),SWMM_OK);
+    for(std::size_t j=0;j<layer_capacity.size();++j) {
+        EXPECT_DOUBLE_EQ(layer_capacity[j],gw.heat().activeCapacity(0,j));
+        EXPECT_DOUBLE_EQ(layer_temperature[j],gw.heat().activeTemperature(0,j));
+    }
+    double bulk_capacity=0,bulk_temperature=0;
+    ASSERT_EQ(swmm_heat_get_ground_values(m.e,SWMM_GROUND_HEAT_CAPACITY,0,1,&bulk_capacity),SWMM_OK);
+    ASSERT_EQ(swmm_heat_get_ground_values(m.e,SWMM_GROUND_HEAT_TEMPERATURE,0,1,&bulk_temperature),SWMM_OK);
+    EXPECT_NEAR(bulk_capacity,std::accumulate(layer_capacity.begin(),layer_capacity.end(),0.),1e-8);
+    EXPECT_NEAR(bulk_temperature,std::accumulate(reserved.column.energy.begin(),reserved.column.energy.end(),0.)/bulk_capacity,1e-12);
+    openswmm::detail::CompletedSourceArchive saved;gw.checkpoint(saved,false);
+    openswmm::detail::CompletedSourceArchive input(saved.bytes());restored.checkpoint(input,false);input.finish();
+    EXPECT_EQ(restored.heat().cells[0].reserved_out_water,reserved.reserved_out_water);
+    EXPECT_EQ(restored.heat().cells[0].column.energy,reserved.column.energy);
     // A large but finite bath approaches a controlled 10 degC boundary.
     // This deliberately isolates the real face/link -> contact -> GW-gather
     // ordering without changing any accepted hydraulic transfer.
@@ -172,14 +201,22 @@ TEST(GroundHeat, CommittedLinkHeatCannotBeSpentAgainByAnInterveningFiniteWaterCo
     const double bath_before=10*volume;
     const double bath_after=openswmm::twoD::applyMeshHeatCell(m.router().mesh(),m.router().options(),state.heat,0,
         bath_before,volume,0,seconds);
+    const double restored_bath_after=openswmm::twoD::applyMeshHeatCell(restored_model.router().mesh(),
+        restored_model.router().options(),restored_state.heat,0,bath_before,volume,0,seconds);
     ASSERT_EQ(state.heat.failures[0],0)<<gw.heat().cells[0].error;
+    ASSERT_EQ(restored_state.heat.failures[0],0)<<restored.heat().cells[0].error;
+    EXPECT_DOUBLE_EQ(restored_bath_after,bath_after);
+    EXPECT_EQ(restored.heat().cells[0].column.energy,gw.heat().cells[0].column.energy);
     gw.heat().refreshView(0,gw.transport());gw.assignTiers(seconds,1);gw.fireGwCells(0,seconds,state,0);
-    for(const auto& cell:gw.heat().cells) {
+    restored.heat().refreshView(0,restored.transport());restored.assignTiers(seconds,1);
+    restored.fireGwCells(0,seconds,restored_state,0);
+    for(const auto* solver:{&gw,&restored})for(const auto& cell:solver->heat().cells) {
         ASSERT_EQ(cell.failed,0)<<cell.error;
         for(std::size_t j=0;j<cell.column.energy.size();++j) {
             const double temperature=cell.column.energy[j]/cell.column.capacity[j];
             EXPECT_GE(temperature,10-1e-8);EXPECT_LE(temperature,40+1e-8);
         }
+        for(double capacity:cell.reserved_out_water)EXPECT_DOUBLE_EQ(capacity,0);
     }
     const double residual=energy(gw.heat())-before+cp*(bath_after-bath_before)+exported;
     const double energy_scale=std::abs(before)+std::abs(cp*(bath_after-bath_before))+std::abs(exported);
@@ -209,8 +246,16 @@ TEST(GroundHeat, IsothermalAcceptedInfiltrationPreservesAllThreeClosuresAndSigne
 }
 TEST(GroundHeat, PartialCoverageAndDisabledMasterDoNotInventThermalStores) {
     Model partial("partial","CLOSED_FORM",.5,true);ASSERT_NE(partial.e,nullptr);ASSERT_EQ(partial.start(),SWMM_OK);
+    Model partial_restored("partial-restored","CLOSED_FORM",.5,true);
+    ASSERT_NE(partial_restored.e,nullptr);ASSERT_EQ(partial_restored.start(),SWMM_OK);
     const auto& cells=partial.router().subsurface().heat().cells;ASSERT_EQ(cells.size(),2);
     EXPECT_FALSE(cells[0].column.energy.empty());EXPECT_TRUE(cells[1].column.energy.empty());
+    auto runtime=partial.router().subsurface().heat();
+    openswmm::detail::CompletedSourceArchive saved;openswmm::twoD::checkpoint::groundHeat(saved,runtime,false);
+    auto restored=partial_restored.router().subsurface().heat();
+    openswmm::detail::CompletedSourceArchive input(saved.bytes());
+    openswmm::twoD::checkpoint::groundHeat(input,restored,false);input.finish();
+    EXPECT_FALSE(restored.cells[0].reserved_out_water.empty());EXPECT_TRUE(restored.cells[1].reserved_out_water.empty());
     Model off("parent-off");ASSERT_NE(off.e,nullptr);
     ASSERT_EQ(swmm_options_set(off.e,"HEAT_TRANSPORT","NO"),SWMM_OK);ASSERT_EQ(off.start(),SWMM_OK);
     EXPECT_FALSE(off.router().subsurface().heat().active());

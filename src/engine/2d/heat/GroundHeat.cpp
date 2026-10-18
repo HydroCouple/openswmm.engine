@@ -75,6 +75,7 @@ std::string GroundHeatState::initialize(SimulationContext& ctx,const MeshData& m
                 else if(row.zone==GwZone::UNSAT)unsat_temp=row.value;
             }
         if(auto error=cell.column.initialize(water.area[i],edges,material,theta,std::vector<double>(theta.size(),0));!error.empty())return error;
+        cell.reserved_out_water.assign(theta.size(),0);
         const double table_depth=water.zs[i]-water.hg[i];
         for(int j=0;j<options.thermal_layers;++j) {
             const double sat_depth=std::max(0.,edges[j+1]-std::max(edges[j],table_depth));
@@ -122,6 +123,7 @@ std::string GroundHeatState::initializeStandalone(SimulationContext& ctx,const M
         auto& cell=next.cells[i];const double initial=s.has_initial_temp?s.initial_temp:transport::heat::groundTempFor(ctx,s,ground);
         if(auto error=cell.column.initialize(mesh.tri_area[i],edges,material,
             std::vector<double>(o.thermal_layers,s.mesh_porosity),std::vector<double>(o.thermal_layers,initial));!error.empty())return error;
+        cell.reserved_out_water.assign(o.thermal_layers,0);
         cell.saturated_water.resize(o.thermal_layers);
         for(int j=0;j<o.thermal_layers;++j)cell.saturated_water[j]=mesh.tri_area[i]*(edges[j+1]-edges[j])*s.mesh_porosity;
         cell.initial_j=total(cell.column.energy);cell.surface_owned=true;
@@ -140,16 +142,24 @@ double GroundHeatState::zoneTemperature(int i,bool saturated) const {
     const auto& cell=cells[i];const auto& c=cell.column;double volume=0,mass=0;
     for(std::size_t j=0;j<c.energy.size();++j) {
         const double v=saturated?cell.saturated_water[j]:c.theta[j]*c.area*(c.depth_edges[j+1]-c.depth_edges[j])-cell.saturated_water[j];
-        volume+=v;mass+=v*c.energy[j]/c.capacity[j];
+        volume+=v;mass+=v*activeTemperature(i,j);
     }
     return volume>0?mass/volume:c.energy.empty()?0:
-        c.energy[saturated?c.energy.size()-1:0]/c.capacity[saturated?c.capacity.size()-1:0];
+        activeTemperature(i,saturated?c.energy.size()-1:0);
+}
+double GroundHeatState::activeCapacity(int i,std::size_t j) const noexcept {
+    const auto& cell=cells[i];
+    const double reserved=j<cell.reserved_out_water.size()?cell.reserved_out_water[j]:0;
+    return cell.column.capacity[j]-cell.column.material.water_heat_capacity*reserved;
+}
+double GroundHeatState::activeTemperature(int i,std::size_t j) const noexcept {
+    return cells[i].column.energy[j]/activeCapacity(i,j);
 }
 void GroundHeatState::refreshView(int i,SubsurfaceTransportState& tr) const {
     if(!active()||tr.temp_row<0)return;
     const auto& cell=cells[i];const auto& c=cell.column;double sat=0,unsat=0;
     for(std::size_t j=0;j<c.energy.size();++j) {
-        const double t=c.energy[j]/c.capacity[j],vw=c.theta[j]*c.area*(c.depth_edges[j+1]-c.depth_edges[j]);
+        const double t=activeTemperature(i,j),vw=c.theta[j]*c.area*(c.depth_edges[j+1]-c.depth_edges[j]);
         sat+=cell.saturated_water[j]*t;unsat+=(vw-cell.saturated_water[j])*t;
     }
     tr.sat_mass[tr.idx(tr.temp_row,i)]=sat;tr.unsat_mass[tr.idx(tr.temp_row,i)]=unsat;

@@ -211,7 +211,12 @@ interpretation. The bulk arrays become derived views and add no mass store.
 Accepted water transfers use paired physical layer donors, and soil ET retains
 solute while carrying age. Only the existing groundwater decay and explicit
 species removals act on this soil mass. Generated age-volume has its own
-continuity receipt. Reciprocal overland/channel species contacts and complete
+continuity receipt. An accepted groundwater export immediately debits its
+producer-time sensible energy and reserves the matching per-layer water heat
+capacity until the aquifer gather updates the moisture profile. Intervening
+surface, routed-channel and lateral thermal contacts use that active capacity;
+the reservation is included in thermal checkpoints and released after the
+gather. Reciprocal overland/channel species contacts and complete
 pending-export/contact ownership are still being qualified; the existing
 channel tracer guard remains in place.
 

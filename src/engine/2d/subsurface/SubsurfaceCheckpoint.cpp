@@ -65,7 +65,7 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
         a.sequence(lid_receipts_,[&](auto& rows){a.sequence(rows,[&](auto& r){a(r.start,r.end,r.down,r.up);});},true);
     }
     if(heat_.active()) {
-        std::string profile="accepted-boundary porous thermal state v2";a(profile);
+        std::string profile="accepted-boundary porous thermal state v3";a(profile);
         checkpoint::groundHeat(a,heat_,false);
         a.fixed(heat_link_out_volume_,heat_preset_out_j_,heat_preset_out_water_,heat_node_out_volume_,
                 heat_node_gathered_out_,porewater_preset_out_,heat_pending_left_,heat_pending_right_,heat_dt_);
@@ -73,6 +73,27 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
             &heat_node_out_volume_,&heat_node_gathered_out_,&porewater_preset_out_,&heat_pending_left_,
             &heat_pending_right_,&heat_dt_})for(double v:*row)if(!std::isfinite(v))
                 throw std::runtime_error("Nonfinite pending thermal checkpoint receipt.");
+        if(a.reading()) {
+            const auto nl=std::size_t(heat_.config->options.thermal_layers),nc=std::size_t(state_.n_cells);
+            if(!nl||heat_preset_out_j_.size()!=nc*nl||heat_preset_out_water_.size()!=nc*nl||
+               heat_.cells.size()!=nc)throw std::runtime_error("Pending thermal export checkpoint shape differs from its physical layers.");
+            for(std::size_t i=0;i<nc;++i) {
+                const auto& cell=heat_.cells[i];
+                if(cell.column.energy.empty()) {
+                    for(std::size_t j=0;j<nl;++j)if(heat_preset_out_j_[i*nl+j]!=0||heat_preset_out_water_[i*nl+j]!=0)
+                        throw std::runtime_error("Unowned groundwater cell has a pending thermal export.");
+                    if(!cell.reserved_out_water.empty())throw std::runtime_error("Unowned groundwater cell has a thermal capacity reservation.");
+                    continue;
+                }
+                if(cell.reserved_out_water.size()!=nl)throw std::runtime_error("Thermal heat-capacity reservation checkpoint shape differs from its physical layers.");
+                for(std::size_t j=0;j<nl;++j) {
+                    const auto k=i*nl+j;
+                    if(heat_preset_out_water_[k]!=cell.reserved_out_water[j]||
+                       !std::isfinite(heat_.activeCapacity(int(i),j))||!(heat_.activeCapacity(int(i),j)>0))
+                        throw std::runtime_error("Pending thermal export does not match its reserved layer heat capacity.");
+                }
+            }
+        }
         if(a.reading()&&!porewater_preset_out_.empty()) {
             const auto nl=std::size_t(heat_.config->options.thermal_layers),nc=std::size_t(state_.n_cells);
             std::size_t ns=0;for(const auto& cell:heat_.cells)ns=std::max(ns,std::size_t(cell.porewater.n_species));

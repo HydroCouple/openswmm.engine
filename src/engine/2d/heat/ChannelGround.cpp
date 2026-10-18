@@ -140,7 +140,7 @@ double ChannelGroundState::bedTemperature(int link,double begin,double end) cons
             const double overlap=std::max(0.,std::min(column.depth_edges[j+1],depth+material.bed_thickness)-
                                              std::max(column.depth_edges[j],depth));
             const double weight=along*contact.share*overlap/((column.depth_edges[j+1]-column.depth_edges[j])*column.area);
-            energy+=weight*column.energy[j];capacity+=weight*column.capacity[j];
+            energy+=weight*column.energy[j];capacity+=weight*ground_->activeCapacity(contact.cell,j);
         }
     }
     return capacity>0?double(energy/capacity):missing;

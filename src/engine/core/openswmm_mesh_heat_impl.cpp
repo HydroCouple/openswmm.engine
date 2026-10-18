@@ -11,10 +11,13 @@ namespace {
 bool thermalResultsReady(const openswmm::SimulationContext& ctx,const openswmm::twoD::SurfaceRouter2D& router) {
     return router.isActive() || ctx.state==openswmm::EngineState::ENDED || ctx.state==openswmm::EngineState::REPORTED;
 }
-const openswmm::twoD::GroundThermalCell* groundCell(const openswmm::twoD::SurfaceRouter2D& router,int i) {
+const openswmm::twoD::GroundHeatState* groundOwner(const openswmm::twoD::SurfaceRouter2D& router,int i) {
     const auto& h=router.state().heat;
     const auto& owner=h.ground_column?h.groundOwner(i):router.subsurface().heat();
-    return std::size_t(i)<owner.cells.size()&&!owner.cells[i].column.energy.empty()?&owner.cells[i]:nullptr;
+    return std::size_t(i)<owner.cells.size()&&!owner.cells[i].column.energy.empty()?&owner:nullptr;
+}
+const openswmm::twoD::GroundThermalCell* groundCell(const openswmm::twoD::SurfaceRouter2D& router,int i) {
+    const auto* owner=groundOwner(router,i);return owner?&owner->cells[i]:nullptr;
 }
 double soilResidual(const openswmm::twoD::GroundThermalCell& c,double energy) {
     return energy-c.initial_j-c.advective_j-c.source_j-c.surface_j-c.deep_j-c.latent_j-c.lateral_j-c.water_contact_j-c.channel_contact_j;
@@ -207,7 +210,8 @@ int swmm_heat_get_ground_values(SWMM_Engine engine,int kind,int first,int count,
         if(!cell){out[k]=std::numeric_limits<double>::quiet_NaN();continue;}
         const auto& c=*cell;const auto& column=c.column;
         const double energy=std::accumulate(column.energy.begin(),column.energy.end(),0.);
-        const double capacity=std::accumulate(column.capacity.begin(),column.capacity.end(),0.);
+        const auto* owner=groundOwner(router,first+k);
+        double capacity=0;for(std::size_t j=0;j<column.energy.size();++j)capacity+=owner->activeCapacity(first+k,j);
         switch(kind) {
             case SWMM_GROUND_HEAT_ENERGY:out[k]=energy;break;
             case SWMM_GROUND_HEAT_CAPACITY:out[k]=capacity;break;
@@ -244,6 +248,7 @@ int swmm_heat_get_ground_layers(SWMM_Engine engine,int cell,int kind,int first,i
     if(cell<0||cell>=router.mesh().n_cells())return SWMM_ERR_BADINDEX;
     if(!thermalResultsReady(to_engine(engine)->context(),router))return SWMM_ERR_LIFECYCLE;
     const auto* c=groundCell(router,cell);if(!c)return SWMM_ERR_LIFECYCLE;
+    const auto* owner=groundOwner(router,cell);
     const int n=int(c->column.energy.size());if(first>n||count>n-first)return SWMM_ERR_BADINDEX;
     const auto& column=c->column;
     for(int k=0;k<count;++k) {
@@ -251,9 +256,9 @@ int swmm_heat_get_ground_layers(SWMM_Engine engine,int cell,int kind,int first,i
         switch(kind) {
             case SWMM_GROUND_LAYER_TOP:out[k]=column.depth_edges[j];break;
             case SWMM_GROUND_LAYER_BOTTOM:out[k]=column.depth_edges[j+1];break;
-            case SWMM_GROUND_LAYER_TEMPERATURE:out[k]=column.energy[j]/column.capacity[j];break;
+            case SWMM_GROUND_LAYER_TEMPERATURE:out[k]=column.energy[j]/owner->activeCapacity(cell,j);break;
             case SWMM_GROUND_LAYER_ENERGY:out[k]=column.energy[j];break;
-            case SWMM_GROUND_LAYER_CAPACITY:out[k]=column.capacity[j];break;
+            case SWMM_GROUND_LAYER_CAPACITY:out[k]=owner->activeCapacity(cell,j);break;
             case SWMM_GROUND_LAYER_MOISTURE:out[k]=column.theta[j];break;
             case SWMM_GROUND_LAYER_CONDUCTIVITY:out[k]=column.conductivity[j];break;
             default:out[k]=c->saturated_water[j];break;

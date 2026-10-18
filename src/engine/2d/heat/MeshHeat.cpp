@@ -89,7 +89,12 @@ GroundColumnAssembly appendGroundColumnSystem(const MeshData& mesh,const SolverO
     if(channel_area<0||channel_area>c.area||!std::isfinite(channel_area))throw std::runtime_error("Channel thermal footprint exceeds its soil cell area.");
     GroundColumnAssembly a;a.owner=&owner;a.mesh_heat=h;a.cell=i;a.mass=mass;a.volume=volume;a.evaporated=evaporated;a.seconds=dt;
     a.first_store=int(stores.size());a.soil_count=int(c.energy.size());
-    for(const auto& store:c.stores())stores.push_back(store);
+    for(std::size_t j=0;j<c.energy.size();++j) {
+        const double capacity=owner.activeCapacity(i,j);
+        if(!(capacity>0)||!std::isfinite(capacity))
+            throw std::runtime_error("Accepted groundwater export leaves no active thermal capacity in its soil layer.");
+        stores.push_back({capacity,c.energy[j]});
+    }
     a.first_contact=contacts.size();
     if(o.conduction)for(auto contact:c.contacts()) {contact.a+=a.first_store;contact.b+=a.first_store;contacts.push_back(contact);}
     a.vertical_count=contacts.size()-a.first_contact;
@@ -241,7 +246,7 @@ void MeshHeatState::refreshBedView(int i) {
     double e=0,cap=0;
     for(std::size_t j=0;j<c.energy.size();++j) {
         const double fraction=std::clamp((thickness-c.depth_edges[j])/(c.depth_edges[j+1]-c.depth_edges[j]),0.,1.);
-        e+=fraction*c.energy[j];cap+=fraction*c.capacity[j];
+        e+=fraction*c.energy[j];cap+=fraction*groundOwner(i).activeCapacity(i,j);
     }
     bed_energy[i]=e;bed_capacity[i]=cap;
 }

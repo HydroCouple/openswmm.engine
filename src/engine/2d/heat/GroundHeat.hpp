@@ -10,6 +10,10 @@ struct GroundThermalCell {
     PorousHeatColumn column;
     GroundPorewaterColumn porewater;
     std::vector<double> saturated_water;
+    // Water already accepted out of this column but not yet applied to its
+    // hydraulic moisture profile. Its sensible energy is debited at the
+    // producing face; reserve its heat capacity from intervening contacts.
+    std::vector<double> reserved_out_water;
     double initial_j=0,advective_j=0,source_j=0,surface_j=0,deep_j=0,latent_j=0,lateral_j=0,water_contact_j=0,channel_contact_j=0;
     double vertical_absolute_j=0,geo_flux=.065;
     bool surface_owned=false;
@@ -25,6 +29,8 @@ struct GroundHeatState {
     int top_series=-1,deep_series=-1;
     bool active() const noexcept {return !cells.empty();}
     void clear(){*this={};}
+    double activeCapacity(int cell,std::size_t layer) const noexcept;
+    double activeTemperature(int cell,std::size_t layer) const noexcept;
     std::string initialize(SimulationContext&,const MeshData&,const SubsurfaceState&,
                           const SubsurfaceTransportState&,const GwTransportData&,const std::vector<uint8_t>& coverage);
     std::string initializeStandalone(SimulationContext&,const MeshData&,const GwTransportData&,const std::vector<unsigned char>& owned);

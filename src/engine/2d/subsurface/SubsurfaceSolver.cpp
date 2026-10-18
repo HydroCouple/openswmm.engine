@@ -2022,7 +2022,7 @@ void SubsurfaceSolver::fireLateralHeatFace(int e,double dt) {
     for(const auto& s:face.slices) {
         const double height=std::min(s.high,table)-s.low;if(!(height>0))continue;
         const double g=edges_->xi[e]*height/(face.distance_left/a.conductivity[s.left]+face.distance_right/b.conductivity[s.right]);
-        const double joules=dt*g*(a.energy[s.left]/a.capacity[s.left]-b.energy[s.right]/b.capacity[s.right]);
+        const double joules=dt*g*(heat_.activeTemperature(l,s.left)-heat_.activeTemperature(r,s.right));
         if(!std::isfinite(joules))throw std::runtime_error("Nonfinite saturated lateral thermal contact; check material properties and step size.");
         heat_pending_left_[std::size_t(e)*nz+s.left]-=joules;
         heat_pending_right_[std::size_t(e)*nz+s.right]+=joules;
@@ -2074,12 +2074,16 @@ void SubsurfaceSolver::bookPresetHeatOut(int i,double volume,double temperature_
     const auto base=std::size_t(i)*heat_.config->options.thermal_layers;
     const double total=std::accumulate(sat.begin(),sat.end(),0.);if(!(total>0))return;
     const double target=heat_.water_capacity*temperature_volume;double sum=0;std::size_t last=0;
-    const auto receipt=[&](std::size_t j){return c.energy[j]*((volume*(sat[j]/total)*heat_.water_capacity)/c.capacity[j]);};
+    if(cell.reserved_out_water.size()!=n){cell.failed=1;return;}
+    const auto receipt=[&](std::size_t j){return heat_.activeTemperature(i,j)*
+        (volume*(sat[j]/total)*heat_.water_capacity);};
     for(std::size_t j=0;j<n;++j)if(sat[j]>0) {
-        last=j;const double energy=receipt(j);sum+=energy;
+        last=j;const double energy=receipt(j);
+        const double reserved_water=cell.reserved_out_water[j]+volume*(sat[j]/total);
+        const double active_capacity=c.capacity[j]-c.material.water_heat_capacity*reserved_water;sum+=energy;
         if(!std::isfinite(energy)||!std::isfinite(heat_preset_out_j_[base+j]+energy)||
            !std::isfinite(heat_preset_out_water_[base+j]+volume*(sat[j]/total))||
-           !std::isfinite(c.energy[j]-energy)){cell.failed=1;return;}
+           !std::isfinite(c.energy[j]-energy)||!(active_capacity>0)||!std::isfinite(active_capacity)) {cell.failed=1;return;}
     }
     const double correction=target-sum;
     if(!std::isfinite(target)||!std::isfinite(correction)||
@@ -2094,6 +2098,7 @@ void SubsurfaceSolver::bookPresetHeatOut(int i,double volume,double temperature_
         // intervening surface/ground contact cannot spend that packet again.
         heat_preset_out_j_[base+j]+=part;
         heat_preset_out_water_[base+j]+=volume*(sat[j]/total);
+        cell.reserved_out_water[j]+=volume*(sat[j]/total);
         cell.column.energy[j]-=reserved;
         cell.advective_j-=reserved;
     }
@@ -2106,7 +2111,7 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
     try {
         gatherLateralHeat(i);
         const int r=tr_.temp_row;const auto k=tr_.idx(r,i);const double cp=heat_.water_capacity;
-        const double top=column.energy.front()/column.capacity.front();
+        const double top=heat_.activeTemperature(i,0);
         const double source=f.source_mass&&std::size_t(r)<f.source_mass->size()?(*f.source_mass)[r]:0;
         const double lateral=gatherLateralMass(i,r),infil=consumePending(tr_.xacc_from_surface[k]);
         const double link_in=consumePending(tr_.lacc_mass[k]),node_in=gatherNodeMass(i,r);
@@ -2148,6 +2153,7 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
         withdrawal.front()+=excess_volume+f.et+f.dunne;water.back()-=f.deep;withdrawal.back()+=f.deep;
         const auto advected=advectPorousColumn(column,moisture,water,energy,withdrawal);
         if(!advected.error.empty())throw std::runtime_error(advected.error);
+        std::fill(cell.reserved_out_water.begin(),cell.reserved_out_water.end(),0);
         double donor=0;for(std::size_t j=0;j<weights.size();++j)donor+=weights[j]/weight*advected.temperature[j];
         const double link_out=link_packet?booked_link:implicit_link_volume*donor;
         const double node_out=node_volume*donor,source_out=f.source_out*donor;

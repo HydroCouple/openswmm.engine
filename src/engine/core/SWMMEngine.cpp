@@ -7186,6 +7186,7 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
 
         const auto& aquifer_heat = surface_router_.subsurface().heat();
         std::vector<const twoD::GroundThermalCell*> cells(n, nullptr);
+        std::vector<const twoD::GroundHeatState*> owners(n, nullptr);
         std::vector<const twoD::PorousHeatColumn*> columns(n, nullptr);
         int layers = 0;
         for (std::size_t i = 0; i < n; ++i) {
@@ -7199,6 +7200,7 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                 owner = &aquifer_heat;
             }
             if (!owner || i >= owner->cells.size() || owner->cells[i].column.energy.empty()) continue;
+            owners[i] = owner;
             cells[i] = &owner->cells[i];
             columns[i] = &owner->cells[i].column;
             layers = std::max(layers, static_cast<int>(columns[i]->energy.size()));
@@ -7221,13 +7223,14 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                 double total_energy = 0.0, total_capacity = 0.0;
                 for (std::size_t j = 0; j < column.energy.size(); ++j) {
                     const auto k = j * n + i;
+                    const double capacity = owners[i]->activeCapacity(static_cast<int>(i), j);
                     snap.thermal2d_ground_layer_center_m[k] =
                         0.5 * (column.depth_edges[j + 1] + column.depth_edges[j]);
                     snap.thermal2d_ground_layer_energy[k] = column.energy[j];
-                    snap.thermal2d_ground_layer_capacity[k] = column.capacity[j];
-                    snap.thermal2d_ground_layer_temperature[k] = column.energy[j] / column.capacity[j];
+                    snap.thermal2d_ground_layer_capacity[k] = capacity;
+                    snap.thermal2d_ground_layer_temperature[k] = column.energy[j] / capacity;
                     total_energy += column.energy[j];
-                    total_capacity += column.capacity[j];
+                    total_capacity += capacity;
                 }
                 if (total_capacity > 0.0) {
                     snap.thermal2d_ground_energy[i] = total_energy;

@@ -62,6 +62,7 @@ inline void groundHeat(Archive& a,GroundHeatState& h,bool model) {
         },true);
         return;
     }
+    std::string runtime_profile="ground heat runtime v2";a(runtime_profile);
     a(h.top_now,h.deep_now);
     // Ground columns may be initialized lazily on the first accepted thermal
     // step. Their model identity is frozen separately, so restore the
@@ -69,7 +70,7 @@ inline void groundHeat(Archive& a,GroundHeatState& h,bool model) {
     // empty.
     a.sequence(h.cells,[&](auto& c){
         auto& col=c.column;auto& p=c.porewater;
-        a.fixed(col.theta,col.capacity,col.energy,col.conductivity,c.saturated_water,
+        a.fixed(col.theta,col.capacity,col.energy,col.conductivity,c.saturated_water,c.reserved_out_water,
                 p.mass,p.contact_mass,p.reserved_out,p.generated_age);
         a(c.advective_j,c.source_j,c.surface_j,c.deep_j,c.latent_j,c.lateral_j,c.water_contact_j,
           c.channel_contact_j,c.vertical_absolute_j,c.failed,c.error);
@@ -79,11 +80,12 @@ inline void groundHeat(Archive& a,GroundHeatState& h,bool model) {
         for(const auto& c:h.cells) {
             const auto& col=c.column;
             if(col.theta.empty()&&col.depth_edges.empty()&&col.capacity.empty()&&col.energy.empty()&&
-               col.conductivity.empty()&&c.saturated_water.empty()&&c.porewater.mass.empty()&&
+               col.conductivity.empty()&&c.saturated_water.empty()&&c.reserved_out_water.empty()&&c.porewater.mass.empty()&&
                c.porewater.n_species==0)continue;
             if(col.theta.size()+1!=col.depth_edges.size()||col.capacity.size()!=col.theta.size()||
                col.energy.size()!=col.theta.size()||col.conductivity.size()!=col.theta.size()||
-               c.saturated_water.size()!=col.theta.size()||c.porewater.mass.size()!=c.porewater.n_species*col.theta.size()||
+               c.saturated_water.size()!=col.theta.size()||c.reserved_out_water.size()!=col.theta.size()||
+               c.porewater.mass.size()!=c.porewater.n_species*col.theta.size()||
                c.porewater.reserved_out.size()!=c.porewater.mass.size()) {
                 throw std::runtime_error("Invalid thermal ground checkpoint layer shapes (layers="+
                     std::to_string(col.theta.size())+", edges="+std::to_string(col.depth_edges.size())+
@@ -97,7 +99,10 @@ inline void groundHeat(Archive& a,GroundHeatState& h,bool model) {
                 if(!std::isfinite(col.theta[j])||col.theta[j]<0||col.theta[j]>col.material.porosity||
                    !(col.capacity[j]>0)||!std::isfinite(col.capacity[j])||!std::isfinite(col.energy[j])||
                    !(col.conductivity[j]>0)||!std::isfinite(col.conductivity[j])||
-                   !std::isfinite(c.saturated_water[j])||c.saturated_water[j]<0)bad("invalid layer thermodynamic value");
+                   !std::isfinite(c.saturated_water[j])||c.saturated_water[j]<0||
+                   !std::isfinite(c.reserved_out_water[j])||c.reserved_out_water[j]<0||
+                   !(col.capacity[j]-col.material.water_heat_capacity*c.reserved_out_water[j]>0))
+                    bad("invalid layer thermodynamic value or outgoing heat-capacity reservation");
             const auto& p=c.porewater;
             if(p.mass.size()!=p.reserved_out.size())bad("invalid porewater reservation shape");
             for(std::size_t k=0;k<p.mass.size();++k)
