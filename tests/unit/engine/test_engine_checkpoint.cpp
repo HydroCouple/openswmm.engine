@@ -680,7 +680,8 @@ struct ThermalSurfaceSession {
     SWMMEngine engine;
     void start(const std::string& name,double surface_temperature=12,
                const std::string& channel_tag="channel:test",bool dry_surface=false,
-               bool atmospheric_exchange=false,bool temperature_timeseries=false) {
+               bool atmospheric_exchange=false,bool temperature_timeseries=false,
+               bool lateral_conduction=false,bool heterogeneous_ground=false) {
         const auto p=root()/name;
         std::string deck=
             "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
@@ -708,6 +709,8 @@ struct ThermalSurfaceSession {
            swmm_gw_transport_option_set(&engine,"SURFACE_THERMAL_BC","ADIABATIC")!=SWMM_OK ||
            swmm_gw_transport_option_set(&engine,"DEEP_THERMAL_BC","ADIABATIC")!=SWMM_OK)
             throw std::runtime_error("thermal surface configuration failed");
+        if(lateral_conduction&&swmm_gw_transport_option_set(&engine,"LATERAL_CONDUCTION","YES")!=SWMM_OK)
+            throw std::runtime_error("thermal lateral conduction configuration failed");
         auto& ctx=engine.context();ctx.options.num_threads=1;
         ctx.heat_config.global_temp[static_cast<int>(HeatSource::INITIAL_STATE)]=surface_temperature;
         auto& router=engine.surfaceRouter2D();auto& mesh=router.mesh();
@@ -716,6 +719,10 @@ struct ThermalSurfaceSession {
         mesh.set_triangle(0,0,1,2);mesh.set_triangle(1,1,3,2);mesh.mannings_n={.03,.03};
         mesh.tri_init_depth=dry_surface?std::vector<double>{0,0}:std::vector<double>{.04,.03};
         mesh.tri_tag={channel_tag,"floodplain"};
+        if(heterogeneous_ground)for(int cell=0;cell<2;++cell)for(int zone:{SWMM_GW_ZONE_SAT,SWMM_GW_ZONE_UNSAT})
+            if(swmm_gw_init_quality_set(&engine,SWMM_GW_SCOPE_CELL,nullptr,cell,zone,-1,
+                                        "__TEMPERATURE__",cell==0?10:20)!=SWMM_OK)
+                throw std::runtime_error("thermal initial layer temperatures configuration failed");
         auto& options=router.options();options.mesh_units_si=true;options.num_threads=1;
         options.momentum=twoD::Momentum2D::LOCAL_INERTIAL;options.max_timestep=.2;
         options.coupling_sync=1;options.rainfall_mode=twoD::RainfallMode::SYSTEM;
@@ -878,6 +885,40 @@ TEST(EngineCheckpoint, ThermalPendingLinkReceiptSurvivesRestart) {
     const auto& source_heat=source.engine.surfaceRouter2D().subsurface().heat();
     const auto& target_heat=target.engine.surfaceRouter2D().subsurface().heat();
     EXPECT_DOUBLE_EQ(source_heat.cells[cell].advective_j,target_heat.cells[cell].advective_j);
+}
+
+TEST(EngineCheckpoint, ThermalCrossTierContactReceiptSurvivesRestart) {
+    ThermalSurfaceSession source,target;
+    ASSERT_NO_THROW(source.start("surface-thermal-cross-tier-source",12,"channel:test",false,false,false,true,true));
+    ASSERT_NO_THROW(target.start("surface-thermal-cross-tier-target",12,"channel:test",false,false,false,true,true));
+    auto& gw=source.engine.surfaceRouter2D().subsurface();
+    ASSERT_EQ(gw.state().n_cells,2);
+    const auto total=[](const auto& cells) {
+        double value=0;for(const auto& cell:cells)for(double energy:cell.column.energy)value+=energy;return value;
+    };
+    const double initial=total(gw.heat().cells);
+    gw.state().dt_cell[0]=.1;gw.state().dt_cell[1]=.8;gw.assignTiers(.1,4);
+    ASSERT_EQ(gw.state().tier[0],0);ASSERT_EQ(gw.state().tier[1],3);
+    gw.fireGwFaces(0,.1);
+    const double left_pending=gw.pendingHeat(0),right_pending=gw.pendingHeat(1);
+    ASSERT_GT(std::abs(left_pending)+std::abs(right_pending),0);
+    EXPECT_NEAR(total(gw.heat().cells)+left_pending+right_pending,initial,1e-5);
+
+    const auto file=root()/"surface-thermal-cross-tier-pending.chk";
+    ASSERT_EQ(source.engine.saveCheckpoint(file.string()),"");
+    ASSERT_EQ(target.engine.loadCheckpoint(file.string()),"");
+    auto& restored=target.engine.surfaceRouter2D().subsurface();
+    EXPECT_DOUBLE_EQ(restored.pendingHeat(0),left_pending);
+    EXPECT_DOUBLE_EQ(restored.pendingHeat(1),right_pending);
+    compare(source.engine,target.engine,"surface-thermal-cross-tier-restored");
+
+    int count=0;
+    while(source.engine.context().elapsed_ms<source.engine.context().options.totalDurationMs()) {
+        ASSERT_NO_THROW(step(source.engine));
+        ASSERT_NO_THROW(step(target.engine));
+        if(++count%9==0)compare(source.engine,target.engine,"surface-thermal-cross-tier-continued");
+    }
+    compare(source.engine,target.engine,"surface-thermal-cross-tier-final");
 }
 
 TEST(EngineCheckpoint, ThermalCheckpointModelMismatchLeavesTargetThermalStateUnchanged) {
