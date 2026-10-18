@@ -356,6 +356,7 @@ TEST(MeshHeat, FullMarcherAppliesHyporheicExchangeOnlyOnChannelTaggedCells) {
     auto& state=static_cast<openswmm::SWMMEngine*>(m.e)->surfaceRouter2D().state();
     const int row=state.transport.temp_row;ASSERT_GE(row,0);ASSERT_TRUE(state.heat.bed);
     const double rho_cp=m.ctx().options.water_density*m.ctx().options.water_specific_heat;
+    const auto initial_volume=state.volume;
     std::vector<double> initial_water(2),initial_bed=state.heat.bed_energy;
     for(int i=0;i<2;++i) {
         const double volume=state.volume[i];ASSERT_GT(volume,0);
@@ -379,6 +380,8 @@ TEST(MeshHeat, FullMarcherAppliesHyporheicExchangeOnlyOnChannelTaggedCells) {
         EXPECT_NEAR(state.heat.ground_j[i],0,1e-9);
         EXPECT_GT(volume,0);
     }
+    EXPECT_NEAR(std::accumulate(state.volume.begin(),state.volume.end(),0.),
+                std::accumulate(initial_volume.begin(),initial_volume.end(),0.),1e-12);
     EXPECT_GT(std::abs(water_delta[0]),std::abs(water_delta[1]));
     EXPECT_EQ(state.heat.failures[0],0);
     EXPECT_EQ(state.heat.failures[1],0);
