@@ -325,6 +325,7 @@ from ._enums import (
     # Transport processes — heat, water age, reactions
     HeatFluxModule, HeatShortwaveMode, HeatRadiativeParam, HeatSolarParam,
     HeatCloudParam, HeatSourceKind, HeatSedimentParam, HeatAttr, HeatOverrideScope,
+    GroundHeatValue, GroundHeatLayerValue, ChannelGroundValue,
     WaterAgeSource,
     ReactionScope, ReactionExprForm,
     # Street inlets
@@ -400,7 +401,8 @@ __all__ = [
     # --- Enumerations: transport processes ---
     "HeatFluxModule", "HeatShortwaveMode", "HeatRadiativeParam", "HeatSolarParam",
     "HeatCloudParam", "HeatSourceKind", "HeatSedimentParam", "HeatAttr",
-    "HeatOverrideScope", "WaterAgeSource",
+    "HeatOverrideScope", "GroundHeatValue", "GroundHeatLayerValue",
+    "ChannelGroundValue", "WaterAgeSource",
     "ReactionScope", "ReactionExprForm",
     # --- Enumerations: street inlets ---
     "InletType", "GrateType", "ThroatType", "InletCurveKind",

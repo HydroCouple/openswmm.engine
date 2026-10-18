@@ -7,6 +7,7 @@ from openswmm.engine import (
     XSectShape, FlowUnits, RouteModel, WarnCode, ObjectType,
     HeatFluxModule, HeatShortwaveMode, HeatRadiativeParam, HeatSolarParam,
     HeatCloudParam, HeatSourceKind, WaterAgeSource,
+    GroundHeatValue, GroundHeatLayerValue, ChannelGroundValue,
     ReactionScope, ReactionExprForm,
 )
 
@@ -218,6 +219,25 @@ class TestHeatFluxModule(unittest.TestCase):
 
     def test_member_count(self):
         self.assertEqual(len(HeatFluxModule), 4)
+
+
+class TestGroundHeatValues(unittest.TestCase):
+    """Pin Python selectors to the public soil and channel heat C enums."""
+
+    def test_soil_values(self):
+        self.assertEqual(GroundHeatValue.ENERGY, 0)
+        self.assertEqual(GroundHeatValue.LID_CONTACT, 15)
+        self.assertEqual(len(GroundHeatValue), 16)
+
+    def test_layer_values(self):
+        self.assertEqual(GroundHeatLayerValue.TOP, 0)
+        self.assertEqual(GroundHeatLayerValue.SATURATED_WATER, 7)
+        self.assertEqual(len(GroundHeatLayerValue), 8)
+
+    def test_channel_values(self):
+        self.assertEqual(ChannelGroundValue.BED_TEMPERATURE, 0)
+        self.assertEqual(ChannelGroundValue.INTERVAL_COUNT, 4)
+        self.assertEqual(len(ChannelGroundValue), 5)
 
 
 # ---------------------------------------------------------------------------
