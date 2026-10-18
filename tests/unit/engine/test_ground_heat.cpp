@@ -1047,6 +1047,108 @@ TEST(GroundHeat, LateralGroundwaterThermalAdvectionConvergesUnderTimeRefinement)
     }
     EXPECT_LE(max_temperature_difference,.05);
 }
+TEST(GroundHeat, LateralGroundwaterThermalAdvectionIsInvariantUnderUniformSpatialRefinement) {
+    struct Result {
+        std::array<std::vector<double>,2> temperature;
+        std::array<double,2> advective{};
+        double initial_energy=0,final_energy=0,initial_water=0,final_water=0,transferred_water=0;
+        std::string error;
+    };
+    struct EngineGuard {
+        SWMM_Engine engine=swmm_engine_create();bool running=false;
+        ~EngineGuard(){if(engine){if(running)swmm_engine_end(engine);swmm_engine_close(engine);swmm_engine_destroy(engine);}}
+    };
+    const auto run=[](bool refined)->Result {
+        Result result;const int cells=refined?4:2;
+        const std::string suffix=refined?"fine":"coarse";
+        const fs::path file=out/("lateral-advection-spatial-"+suffix+".inp");fs::create_directories(out);
+        std::ofstream input(file);
+        if(!input){result.error="could not create spatial-refinement input";return result;}
+        input<<"[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
+            "START_DATE 01/01/2026\nEND_DATE 01/01/2026\nEND_TIME 00:10:00\nROUTING_STEP 5\nREPORT_STEP 00:01:00\n"
+            "[JUNCTIONS]\nJ1 -2 4 0 0 0\n[OUTFALLS]\nO1 -2.5 FREE NO\n"
+            "[CONDUITS]\nC1 J1 O1 30 .013 0 0 0\n[XSECTIONS]\nC1 RECT_OPEN 1 2 0 0 1\n"
+            "[COORDINATES]\nJ1 40 0\nO1 70 0\n"
+            "[2D_OPTIONS]\nREPORT_2D NO\nMAX_TIMESTEP 5\nLTS_TIERS 1\nEVAPORATION NO\nINFILTRATION NO\n"
+            "[2D_VERTICES]\n";
+        if(refined)
+            input<<"0 0 0\n10 0 0\n20 0 0\n0 5 0\n10 5 0\n20 5 0\n0 10 0\n10 10 0\n20 10 0\n"
+                "[2D_QUADS]\n0 1 4 3 .03 left\n3 4 7 6 .03 left\n1 2 5 4 .03 right\n4 5 8 7 .03 right\n";
+        else
+            input<<"0 0 0\n10 0 0\n20 0 0\n20 10 0\n10 10 0\n0 10 0\n"
+                "[2D_QUADS]\n0 1 4 5 .03 left\n1 2 3 4 .03 right\n";
+        input<<"[2D_AQUIFER_OPTIONS]\nNODE_ENROLMENT ROWS\nGW_ET NONE\nM_LAYERS 4\nCLOSURE CLOSED_FORM\n"
+            "[2D_AQUIFER]\n";
+        for(int i=0;i<cells;++i)input<<"CELL "<<(i+1)<<" 1 1 .45 .1 2 HG0 "<<(i<(refined?2:1)?.9:.5)<<"\n";
+        input<<"[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION NO\nDISPERSION YES\n"
+            "[GW_TRANSPORT_PARAMS]\n* 2650 880 2 0 0.5 0 0 0 .065\n"
+            "[GW_INITIAL_QUALITY]\n";
+        for(int i=0;i<cells;++i) {
+            const double temperature=i<(refined?2:1)?10:20;
+            input<<"CELL "<<(i+1)<<" SAT __TEMPERATURE__ "<<temperature<<"\n"
+                <<"CELL "<<(i+1)<<" UNSAT __TEMPERATURE__ "<<temperature<<"\n";
+        }
+        input.close();
+        EngineGuard guard;if(!guard.engine){result.error="engine create failed";return result;}
+        const fs::path report=out/("lateral-advection-spatial-"+suffix+".rpt");
+        if(swmm_engine_open(guard.engine,file.string().c_str(),report.string().c_str(),nullptr,nullptr)!=SWMM_OK) {
+            result.error=swmm_get_last_error_msg(guard.engine);return result;
+        }
+        if(swmm_engine_initialize(guard.engine)!=SWMM_OK||swmm_engine_start(guard.engine,0)!=SWMM_OK) {
+            result.error=swmm_get_last_error_msg(guard.engine);return result;
+        }
+        guard.running=true;
+        auto& router=static_cast<openswmm::SWMMEngine*>(guard.engine)->surfaceRouter2D();
+        auto& gw=router.subsurface();
+        if(gw.heat().cells.size()!=std::size_t(cells)){result.error="unexpected aquifer thermal cell count";return result;}
+        result.initial_energy=energy(gw.heat());result.initial_water=gw.state().storage();
+        openswmm::twoD::InertialEdges edges;edges.build(router.mesh());
+        constexpr double dt=.01;constexpr int steps=10;
+        for(int step=0;step<steps;++step) {
+            gw.state().dt_cell.assign(std::size_t(cells),dt);gw.assignTiers(dt,1);
+            gw.fireGwFaces(0,dt);
+            for(int e=0;e<edges.ne;++e)if((edges.cL[std::size_t(e)]<(refined?2:1))!=
+                                           (edges.cR[std::size_t(e)]<(refined?2:1)))
+                result.transferred_water+=std::abs(gw.state().eacc_L[std::size_t(e)]);
+            gw.fireGwCells(0,dt,router.state(),(step+1)*dt);
+            for(const auto& cell:gw.heat().cells)if(cell.failed){result.error=cell.error;return result;}
+        }
+        result.final_energy=energy(gw.heat());result.final_water=gw.state().storage();
+        const std::size_t layers=gw.heat().cells[0].column.energy.size();
+        for(int region=0;region<2;++region) {
+            std::vector<double> layer_energy(layers),layer_capacity(layers);
+            for(int i=0;i<cells;++i)if((i<(refined?2:1))== (region==0)) {
+                const auto& column=gw.heat().cells[std::size_t(i)].column;
+                result.advective[std::size_t(region)]+=gw.heat().cells[std::size_t(i)].advective_j;
+                for(std::size_t j=0;j<layers;++j) {
+                    layer_energy[j]+=column.energy[j];layer_capacity[j]+=column.capacity[j];
+                }
+            }
+            for(std::size_t j=0;j<layers;++j)
+                result.temperature[std::size_t(region)].push_back(layer_energy[j]/layer_capacity[j]);
+        }
+        return result;
+    };
+    const auto coarse=run(false),fine=run(true);
+    ASSERT_TRUE(coarse.error.empty())<<coarse.error;ASSERT_TRUE(fine.error.empty())<<fine.error;
+    EXPECT_GT(coarse.transferred_water,0);EXPECT_GT(fine.transferred_water,0);
+    EXPECT_NEAR(coarse.transferred_water,fine.transferred_water,1e-10);
+    EXPECT_NEAR(coarse.initial_energy,fine.initial_energy,1e-4);
+    EXPECT_NEAR(coarse.final_energy,coarse.initial_energy,1e-4);
+    EXPECT_NEAR(fine.final_energy,fine.initial_energy,1e-4);
+    EXPECT_NEAR(coarse.final_water,coarse.initial_water,1e-10);
+    EXPECT_NEAR(fine.final_water,fine.initial_water,1e-10);
+    double max_temperature_difference=0;
+    for(std::size_t region=0;region<2;++region) {
+        EXPECT_NEAR(coarse.advective[region],fine.advective[region],
+                    1e-4*std::max(1.,std::abs(coarse.advective[region])));
+        ASSERT_EQ(coarse.temperature[region].size(),fine.temperature[region].size());
+        for(std::size_t layer=0;layer<coarse.temperature[region].size();++layer)
+            max_temperature_difference=std::max(max_temperature_difference,
+                std::abs(coarse.temperature[region][layer]-fine.temperature[region][layer]));
+    }
+    EXPECT_LE(max_temperature_difference,.05);
+}
 TEST(GroundHeat, PendingLateralHeatSurvivesAquiferRetiering) {
     Model m("lateral-retier","CLOSED_FORM",1,false,
         "CELL 1 SAT __TEMPERATURE__ 10\nCELL 2 SAT __TEMPERATURE__ 20\n"
