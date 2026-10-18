@@ -947,7 +947,7 @@ TEST(GroundHeat, MechanicalDispersionCarriesTemperatureWithoutAddingNetWater) {
     EXPECT_NEAR(gw.state().storage(),initial_water,1e-10);
     EXPECT_NEAR(energy(gw.heat()),initial_energy,1e-6);
 }
-TEST(GroundHeat, SkewedHeterogeneousFaceCarriesAcceptedGroundwaterHeatConservatively) {
+TEST(GroundHeat, SkewedHeterogeneousFaceCarriesAdvectionAndDispersiveHeatConservatively) {
     struct EngineGuard {
         SWMM_Engine engine=swmm_engine_create();bool running=false;
         ~EngineGuard(){if(engine){if(running)swmm_engine_end(engine);swmm_engine_close(engine);swmm_engine_destroy(engine);}}
@@ -963,7 +963,8 @@ TEST(GroundHeat, SkewedHeterogeneousFaceCarriesAcceptedGroundwaterHeatConservati
         "[2D_QUADS]\n0 1 2 3 .03 left\n1 4 5 2 .03 right\n"
         "[2D_AQUIFER_OPTIONS]\nNODE_ENROLMENT ROWS\nGW_ET NONE\nM_LAYERS 4\nCLOSURE CLOSED_FORM\n"
         "[2D_AQUIFER]\nCELL 1 36 1 .45 .1 2 HG0 .9\nCELL 2 36 1 .45 .1 2 HG0 .5\n"
-        "[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION NO\nDISPERSION NO\n"
+        "[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION NO\nDISPERSION YES\n"
+        "[GW_TRANSPORT_PARAMS]\n* 2650 880 2 0 0.5 0 0 0 .065\n"
         "[GW_INITIAL_QUALITY]\nCELL 1 SAT __TEMPERATURE__ 10\nCELL 1 UNSAT __TEMPERATURE__ 10\n"
         "CELL 2 SAT __TEMPERATURE__ 20\nCELL 2 UNSAT __TEMPERATURE__ 20\n";
     ASSERT_NE(guard.engine,nullptr);
@@ -989,7 +990,11 @@ TEST(GroundHeat, SkewedHeterogeneousFaceCarriesAcceptedGroundwaterHeatConservati
     const double initial_water=gw.state().storage(),initial_energy=energy(gw.heat());
     gw.fireGwFaces(0,dt);
     EXPECT_NEAR(-gw.state().eacc_L[0],expected_volume,1e-12);
-    const double expected_temperature_volume=expected_volume*10;
+    const double temp_left=tr.sat_mass[tr.idx(tr.temp_row,0)]/gw.satVolume(0);
+    const double temp_right=tr.sat_mass[tr.idx(tr.temp_row,1)]/gw.satVolume(1);
+    const double alpha=.5*(tr.alpha_L[0]+tr.alpha_L[1]);
+    const double expected_temperature_volume=expected_volume*temp_left+
+        alpha*expected_volume/centroid_distance*(temp_left-temp_right);
     const std::size_t mass_index=std::size_t(tr.temp_row)*std::size_t(edges.ne);
     EXPECT_NEAR(-tr.sacc_L[mass_index],expected_temperature_volume,1e-12);
     gw.fireGwCells(0,dt,router.state(),dt);
