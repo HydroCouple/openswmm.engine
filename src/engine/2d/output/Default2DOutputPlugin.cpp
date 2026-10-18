@@ -1010,12 +1010,15 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
         writeThermalFace(ds_heat_water_temp_, snap.thermal2d_water_temperature);
         writeThermalFace(ds_heat_bed_temp_, snap.thermal2d_bed_temperature);
         writeThermalFace(ds_heat_bed_energy_, snap.thermal2d_bed_energy);
+        writeThermalFace(ds_heat_bed_initial_energy_, snap.thermal2d_bed_initial_energy);
         writeThermalFace(ds_heat_bed_capacity_, snap.thermal2d_bed_capacity);
         writeThermalFace(ds_heat_bed_pore_volume_, snap.thermal2d_bed_pore_volume);
         writeThermalFace(ds_heat_bed_age_generation_, snap.thermal2d_bed_age_generation);
         if (n_heat_bed_species_ > 0) {
             if (snap.thermal2d_bed_species_count != static_cast<int>(n_heat_bed_species_) ||
                 snap.thermal2d_bed_species_concentration.size() !=
+                    static_cast<std::size_t>(n_heat_bed_species_ * n_faces_) ||
+                snap.thermal2d_bed_species_initial_amount.size() !=
                     static_cast<std::size_t>(n_heat_bed_species_ * n_faces_) ||
                 snap.thermal2d_bed_species_exchange.size() !=
                     static_cast<std::size_t>(n_heat_bed_species_ * n_faces_)) {
@@ -1025,6 +1028,8 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
             }
             extendAndWrite3D(ds_heat_bed_species_conc_, snap.thermal2d_bed_species_concentration.data(),
                 n_heat_bed_species_, n_faces_);
+            extendAndWrite3D(ds_heat_bed_species_initial_amount_,
+                snap.thermal2d_bed_species_initial_amount.data(), n_heat_bed_species_, n_faces_);
             extendAndWrite3D(ds_heat_bed_species_exchange_, snap.thermal2d_bed_species_exchange.data(),
                 n_heat_bed_species_, n_faces_);
         }
@@ -1114,6 +1119,12 @@ void Default2DOutputPlugin::createThermalDatasets(const SimulationSnapshot& snap
         ds_heat_bed_energy_ = createFace("Mesh2_face_bed_energy", "mesh bed sensible energy relative to 0 Celsius", "J");
         ds_heat_bed_capacity_ = createFace("Mesh2_face_bed_heat_capacity", "mesh bed heat capacity", "J K-1");
     }
+    if (snap.thermal2d_bed_initial_energy.size() == static_cast<std::size_t>(n_faces_)) {
+        ds_heat_bed_initial_energy_ = createFace("Mesh2_face_bed_initial_energy",
+            "initial local mesh-bed sensible energy relative to 0 Celsius", "J");
+        writeStringAttr(ds_heat_bed_initial_energy_, "cell_methods",
+                        "time: point (constant initial condition)");
+    }
     if (snap.thermal2d_bed_pore_volume.size() == static_cast<std::size_t>(n_faces_))
         ds_heat_bed_pore_volume_ = createFace("Mesh2_face_bed_porewater_volume", "local mesh bed fixed porewater volume", "m3");
     const auto bed_species_size = static_cast<std::size_t>(std::max(0, snap.thermal2d_bed_species_count));
@@ -1121,11 +1132,12 @@ void Default2DOutputPlugin::createThermalDatasets(const SimulationSnapshot& snap
         snap.thermal2d_bed_species_names.size() == bed_species_size &&
         snap.thermal2d_bed_species_units.size() == bed_species_size &&
         snap.thermal2d_bed_species_concentration.size() == bed_species_size * n_faces_ &&
+        snap.thermal2d_bed_species_initial_amount.size() == bed_species_size * n_faces_ &&
         snap.thermal2d_bed_species_exchange.size() == bed_species_size * n_faces_) {
         n_heat_bed_species_ = static_cast<hsize_t>(bed_species_size);
         const hsize_t zero3[3]{0, n_heat_bed_species_, n_faces_};
         const hsize_t chunk3[3]{1, n_heat_bed_species_, std::min<hsize_t>(n_faces_, 4096)};
-        auto createBedSpecies = [&](const char* name, const char* label, const char* layout, bool exchange_amount) {
+        auto createBedSpecies = [&](const char* name, const char* label, const char* layout, bool amount) {
             hid_t ds = createUnlimitedDataset(name, 3, zero3, chunk3);
             writeStringAttr(ds, "long_name", label);
             writeStringAttr(ds, "units", "1");
@@ -1137,15 +1149,21 @@ void Default2DOutputPlugin::createThermalDatasets(const SimulationSnapshot& snap
                 if (row) { names += ","; units += ","; }
                 names += snap.thermal2d_bed_species_names[row];
                 units += snap.thermal2d_bed_species_units[row];
-                if (exchange_amount) units += " m3";
+                if (amount) units += " m3";
             }
             writeStringAttr(ds, "species_names", names.c_str());
             writeStringAttr(ds, "species_units", units.c_str());
+            if (amount)
+                writeStringAttr(ds, "cell_methods",
+                                "time: point (constant initial-condition amount)");
             return ds;
         };
         ds_heat_bed_species_conc_ = createBedSpecies(
             "Mesh2_face_bed_species_conc", "local bed porewater species concentration",
             "[time, species, face]; concentration in bed porewater; age in hours", false);
+        ds_heat_bed_species_initial_amount_ = createBedSpecies(
+            "Mesh2_face_bed_species_initial_amount", "initial local bed porewater species amount",
+            "[time, species, face]; initial concentration multiplied by fixed porewater volume; age in hour m3", true);
         ds_heat_bed_species_exchange_ = createBedSpecies(
             "Mesh2_face_bed_species_exchange", "cumulative signed surface/bed species exchange amount",
             "[time, species, face]; positive from surface water into bed; age in hour m3", true);
@@ -1266,7 +1284,7 @@ void Default2DOutputPlugin::createThermalDatasets(const SimulationSnapshot& snap
         ds_heat_lid_capacity_ = createLidState("Mesh2_lid_layer_heat_capacity", "mesh-connected LID physical-layer heat capacity", "J K-1", "Zero for a physical cell with zero heat capacity");
         ds_heat_lid_ground_contact_ = createLidState("Mesh2_lid_layer_ground_contact_energy", "cumulative signed ground-contact energy received by each mesh-connected LID physical layer", "J", "Signed cumulative receipt; positive into the LID layer");
     }
-    writeStringAttr(file_id_, "thermal_result_schema_version", "5");
+    writeStringAttr(file_id_, "thermal_result_schema_version", "6");
 }
 
 // Snow fields follow the rainfall report selection. They carry their actual
@@ -1589,7 +1607,7 @@ void Default2DOutputPlugin::checkpointWriteStatus(herr_t status) {
 }
 
 std::vector<hid_t*> Default2DOutputPlugin::checkpointDatasets() {
-    std::vector<hid_t*> ids{&ds_time_, &ds_face_depth_, &ds_face_head_, &ds_face_grad_hx_, &ds_face_grad_hy_, &ds_face_grad_hx_lim_, &ds_face_grad_hy_lim_, &ds_face_rainfall_, &ds_face_coupling_flux_, &ds_face_net_source_, &ds_face_infil_rate_, &ds_face_infil_cum_, &ds_face_rain_cum_, &ds_face_species_conc_, &ds_face_buildup_, &ds_gw_sat_conc_, &ds_gw_unsat_conc_, &ds_gw_species_ledger_, &ds_gw_ledger_, &ds_gw_bed_exchange_, &ds_gw_theta_, &ds_heat_water_temp_, &ds_heat_bed_temp_, &ds_heat_bed_energy_, &ds_heat_bed_capacity_, &ds_heat_bed_pore_volume_, &ds_heat_bed_species_conc_, &ds_heat_bed_species_exchange_, &ds_heat_bed_age_generation_, &ds_heat_surface_budget_, &ds_heat_evaporation_, &ds_heat_ground_temp_, &ds_heat_ground_energy_, &ds_heat_ground_capacity_, &ds_heat_layer_temp_, &ds_heat_layer_energy_, &ds_heat_layer_capacity_, &ds_heat_ground_budget_, &ds_heat_lid_temp_, &ds_heat_lid_energy_, &ds_heat_lid_capacity_, &ds_heat_lid_ground_contact_, &ds_face_vx_, &ds_face_vy_, &ds_face_continuity_err_, &ds_edge_flux_, &ds_node_head_, &ds_node_depth_, &ds_face_max_depth_, &ds_face_max_velocity_, &ds_face_max_continuity_err_};
+    std::vector<hid_t*> ids{&ds_time_, &ds_face_depth_, &ds_face_head_, &ds_face_grad_hx_, &ds_face_grad_hy_, &ds_face_grad_hx_lim_, &ds_face_grad_hy_lim_, &ds_face_rainfall_, &ds_face_coupling_flux_, &ds_face_net_source_, &ds_face_infil_rate_, &ds_face_infil_cum_, &ds_face_rain_cum_, &ds_face_species_conc_, &ds_face_buildup_, &ds_gw_sat_conc_, &ds_gw_unsat_conc_, &ds_gw_species_ledger_, &ds_gw_ledger_, &ds_gw_bed_exchange_, &ds_gw_theta_, &ds_heat_water_temp_, &ds_heat_bed_temp_, &ds_heat_bed_energy_, &ds_heat_bed_initial_energy_, &ds_heat_bed_capacity_, &ds_heat_bed_pore_volume_, &ds_heat_bed_species_conc_, &ds_heat_bed_species_initial_amount_, &ds_heat_bed_species_exchange_, &ds_heat_bed_age_generation_, &ds_heat_surface_budget_, &ds_heat_evaporation_, &ds_heat_ground_temp_, &ds_heat_ground_energy_, &ds_heat_ground_capacity_, &ds_heat_layer_temp_, &ds_heat_layer_energy_, &ds_heat_layer_capacity_, &ds_heat_ground_budget_, &ds_heat_lid_temp_, &ds_heat_lid_energy_, &ds_heat_lid_capacity_, &ds_heat_lid_ground_contact_, &ds_face_vx_, &ds_face_vy_, &ds_face_continuity_err_, &ds_edge_flux_, &ds_node_head_, &ds_node_depth_, &ds_face_max_depth_, &ds_face_max_velocity_, &ds_face_max_continuity_err_};
     for (auto& id : ds_gw_face_) ids.push_back(&id);
     for (auto& id : ds_snow_) ids.push_back(&id);
     return ids;
@@ -1624,9 +1642,11 @@ void Default2DOutputPlugin::closeDatasets() noexcept {
     closeDS(ds_heat_water_temp_);
     closeDS(ds_heat_bed_temp_);
     closeDS(ds_heat_bed_energy_);
+    closeDS(ds_heat_bed_initial_energy_);
     closeDS(ds_heat_bed_capacity_);
     closeDS(ds_heat_bed_pore_volume_);
     closeDS(ds_heat_bed_species_conc_);
+    closeDS(ds_heat_bed_species_initial_amount_);
     closeDS(ds_heat_bed_species_exchange_);
     closeDS(ds_heat_bed_age_generation_);
     closeDS(ds_heat_surface_budget_);

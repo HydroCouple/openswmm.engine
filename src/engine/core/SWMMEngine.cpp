@@ -7171,16 +7171,27 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                 snap.thermal2d_bed_capacity.clear();
                 snap.thermal2d_bed_temperature.clear();
             }
+            snap.thermal2d_bed_initial_energy = heat.bed && !heat.ground_column &&
+                heat.initial_bed_energy.size() == n
+                    ? heat.initial_bed_energy : std::vector<double>{};
             snap.thermal2d_bed_species_count = 0;
             snap.thermal2d_bed_species_names.clear();
             snap.thermal2d_bed_species_units.clear();
             snap.thermal2d_bed_pore_volume.clear();
             snap.thermal2d_bed_species_concentration.clear();
+            snap.thermal2d_bed_species_initial_amount.clear();
             snap.thermal2d_bed_species_exchange.clear();
             snap.thermal2d_bed_age_generation.clear();
+            if (heat.bed && !heat.ground_column && heat.bed_pore_volume.size() == n) {
+                snap.thermal2d_bed_pore_volume.assign(n, missing);
+                for (std::size_t cell = 0; cell < n; ++cell)
+                    if (std::isfinite(heat.bed_pore_volume[cell]) && heat.bed_pore_volume[cell] >= 0.0)
+                        snap.thermal2d_bed_pore_volume[cell] = heat.bed_pore_volume[cell];
+            }
             if (heat.bed && !heat.ground_column && heat.bed_species > 0 &&
                 heat.bed_pore_volume.size() == n &&
                 heat.bed_carried_mass.size() == n * static_cast<std::size_t>(heat.bed_species) &&
+                heat.bed_initial_mass.size() == heat.bed_carried_mass.size() &&
                 heat.bed_exchange_mass.size() == heat.bed_carried_mass.size() &&
                 transport.row_names.size() == static_cast<std::size_t>(heat.bed_species)) {
                 std::vector<int> bed_rows;
@@ -7194,8 +7205,8 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                             ? surface_species_units_[static_cast<std::size_t>(row)] : std::string{"1"});
                 }
                 snap.thermal2d_bed_species_count = static_cast<int>(bed_rows.size());
-                snap.thermal2d_bed_pore_volume.assign(n, missing);
                 snap.thermal2d_bed_species_concentration.assign(bed_rows.size() * n, missing);
+                snap.thermal2d_bed_species_initial_amount.assign(bed_rows.size() * n, missing);
                 snap.thermal2d_bed_species_exchange.assign(bed_rows.size() * n, missing);
                 if (heat.bed_age_row >= 0 && heat.bed_age_row < heat.bed_species)
                     snap.thermal2d_bed_age_generation.assign(n, missing);
@@ -7209,6 +7220,8 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                         const double scale = row == heat.bed_age_row ? 1.0 / 3600.0 : 1.0;
                         snap.thermal2d_bed_species_concentration[out_row * n + cell] =
                             scale * heat.bed_carried_mass[source] / pore_volume;
+                        snap.thermal2d_bed_species_initial_amount[out_row * n + cell] =
+                            scale * heat.bed_initial_mass[source];
                         snap.thermal2d_bed_species_exchange[out_row * n + cell] =
                             scale * heat.bed_exchange_mass[source];
                     }
@@ -7229,11 +7242,13 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
             snap.thermal2d_bed_energy.clear();
             snap.thermal2d_bed_capacity.clear();
             snap.thermal2d_bed_temperature.clear();
+            snap.thermal2d_bed_initial_energy.clear();
             snap.thermal2d_bed_species_count = 0;
             snap.thermal2d_bed_species_names.clear();
             snap.thermal2d_bed_species_units.clear();
             snap.thermal2d_bed_pore_volume.clear();
             snap.thermal2d_bed_species_concentration.clear();
+            snap.thermal2d_bed_species_initial_amount.clear();
             snap.thermal2d_bed_species_exchange.clear();
             snap.thermal2d_bed_age_generation.clear();
             snap.thermal2d_surface_budget.clear();

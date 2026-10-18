@@ -450,6 +450,13 @@ struct SimulationSnapshot {
     std::vector<double> gw2d_et_potential;
     std::vector<double> gw2d_et_stress;
     std::vector<double> gw2d_et_refresh;
+
+    // Appended for plugin-ABI compatibility: initial finite local-bed stores.
+    /// Initial local-storage bed sensible energy, constant `[face]` over time.
+    std::vector<double> thermal2d_bed_initial_energy;
+    /// Initial finite bed-porewater amount, species-major `[species, face]`;
+    /// age is converted from seconds to hours, matching the reported species.
+    std::vector<double> thermal2d_bed_species_initial_amount;
 };
 
 } /* namespace openswmm */

@@ -135,6 +135,21 @@ TEST(MeshHeat, NewLocalCapacityContainsSolidAndPorewaterAndSignedInitialEnergy) 
     EXPECT_DOUBLE_EQ(f.state.heat.bed_capacity[0],expected);
     EXPECT_DOUBLE_EQ(f.state.heat.bed_energy[0],-3*expected);
 }
+TEST(MeshHeat, LocalBedPorewaterVolumeIsAvailableWithoutQualityTransport) {
+    LocalHeat f("local-bed-pore-volume-no-quality");ASSERT_NE(f.model.e,nullptr);
+    auto& cfg=f.model.ctx().heat_config.sediment;
+    cfg.mesh_porosity=.25;cfg.bed_thickness=.2;
+    ASSERT_TRUE(f.initialize().empty());
+
+    const auto& heat=f.state.heat;
+    ASSERT_EQ(f.state.transport.n_species,0);
+    ASSERT_EQ(heat.bed_pore_volume.size(),static_cast<std::size_t>(f.mesh().n_cells()));
+    EXPECT_TRUE(heat.bed_carried_mass.empty());
+    EXPECT_TRUE(heat.bed_initial_mass.empty());
+    EXPECT_TRUE(heat.bed_exchange_mass.empty());
+    for(std::size_t cell=0;cell<static_cast<std::size_t>(f.mesh().n_cells());++cell)
+        EXPECT_DOUBLE_EQ(heat.bed_pore_volume[cell],f.mesh().tri_area[cell]*cfg.bed_thickness*cfg.mesh_porosity);
+}
 TEST(MeshHeat, IsolatedPairMatchesIndependentAnalyticDecayFromOneSecondToTwoHours) {
     for(const double dt:{1.,60.,900.,7200.}) {
         LocalHeat f("pair"+std::to_string(int(dt)));ASSERT_NE(f.model.e,nullptr);

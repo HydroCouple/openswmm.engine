@@ -301,16 +301,20 @@ std::string initializeMeshHeat(SimulationContext& ctx,const MeshData& mesh,Surfa
             h.bed_energy[i]=cap*initial;
         }
         h.initial_bed_energy=h.bed_energy;
+        // The fixed local-bed pore volume is a physical storage property,
+        // even when quality transport is disabled. Quality mass arrays below
+        // are optional, but the result interface must still expose this store.
+        h.bed_pore_volume.resize(n);
+        for(std::size_t i=0;i<n;++i) {
+            const auto& sc=sedimentFor(ctx,HeatElement::cell2d(int(i)));
+            h.bed_pore_volume[i]=mesh.tri_area[i]*sc.bed_thickness*sc.mesh_porosity;
+            if(!std::isfinite(h.bed_pore_volume[i]))return "Local bed porewater volume must be finite.";
+        }
         if(state.transport.n_species>0) {
             h.bed_species=state.transport.n_species;h.bed_age_row=state.transport.age_row;h.bed_temp_row=state.transport.temp_row;
-            h.bed_pore_volume.resize(n);h.bed_carried_mass.assign(n*h.bed_species,0);
+            h.bed_carried_mass.assign(n*h.bed_species,0);
             h.bed_initial_mass=h.bed_carried_mass;h.bed_exchange_mass=h.bed_carried_mass;h.bed_generated_age.assign(n,0);
             state.transport.gained_bed.assign(h.bed_species,0);
-            for(std::size_t i=0;i<n;++i) {
-                const auto& sc=sedimentFor(ctx,HeatElement::cell2d(int(i)));
-                h.bed_pore_volume[i]=mesh.tri_area[i]*sc.bed_thickness*sc.mesh_porosity;
-                if(!std::isfinite(h.bed_pore_volume[i]))return "Local bed porewater volume must be finite.";
-            }
         }
     }
     return {};

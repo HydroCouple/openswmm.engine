@@ -253,9 +253,11 @@ void Default2DOutputPlugin::validateCheckpoint(hid_t file, const SimulationConte
         };
         if (name == "Mesh2_face_water_temperature") markMissing(snap.thermal2d_water_temperature);
         else if (name == "Mesh2_face_bed_temperature") markMissing(snap.thermal2d_bed_temperature);
+        else if (name == "Mesh2_face_bed_initial_energy") markMissing(snap.thermal2d_bed_initial_energy);
         else if (name == "Mesh2_face_bed_porewater_volume") markMissing(snap.thermal2d_bed_pore_volume);
         else if (name == "Mesh2_face_bed_age_generation") markMissing(snap.thermal2d_bed_age_generation);
         else if (name == "Mesh2_face_bed_species_conc") markMissing(snap.thermal2d_bed_species_concentration);
+        else if (name == "Mesh2_face_bed_species_initial_amount") markMissing(snap.thermal2d_bed_species_initial_amount);
         else if (name == "Mesh2_face_bed_species_exchange") markMissing(snap.thermal2d_bed_species_exchange);
         else if (name == "Mesh2_face_soil_temperature") markMissing(snap.thermal2d_ground_temperature);
         else if (name == "Mesh2_face_soil_energy") markMissing(snap.thermal2d_ground_energy);
