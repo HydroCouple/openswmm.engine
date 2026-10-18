@@ -32,7 +32,9 @@
 
 #include <cmath>
 #include <charconv>
+#include <array>
 #include <optional>
+#include <utility>
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/data/MeshData.hpp"
 #include "../2d/data/SolverOptions2D.hpp"
@@ -1113,6 +1115,30 @@ struct HeatSnapshot {
     double shortwave, cloud;
     Thermal2DAuthoring thermal_2d;
 };
+
+using EngineContext = openswmm::SimulationContext;
+struct ConfigurationSnapshot {
+    SWMM_Engine owner = nullptr;
+    decltype(std::declval<EngineContext>().options) options;
+    decltype(std::declval<EngineContext>().climate_state) climate;
+    decltype(std::declval<EngineContext>().snowpacks.config) snow;
+    decltype(std::declval<EngineContext>().snowpacks.meteorology) meteorology;
+    openswmm::HeatConfigData heat;
+    decltype(std::declval<EngineContext>().process_component_specs) components;
+    std::array<std::array<double,12>,4> monthly_adjustments{};
+    double shortwave_now = 0.0, cloud_now = 0.0;
+    Thermal2DAuthoring thermal_2d;
+
+    ConfigurationSnapshot(SWMM_Engine engine, const EngineContext& ctx)
+        : owner(engine), options(ctx.options), climate(ctx.climate_state),
+          snow(ctx.snowpacks.config), meteorology(ctx.snowpacks.meteorology),
+          heat(ctx.heat_config), components(ctx.process_component_specs),
+          shortwave_now(ctx.heat_state.shortwave_now), cloud_now(ctx.heat_state.cloud_now),
+          thermal_2d(ctx) {
+        const double* source[]={ctx.adjust_temp,ctx.adjust_evap,ctx.adjust_rain,ctx.adjust_hydcon};
+        for(int row=0;row<4;++row)std::copy_n(source[row],12,monthly_adjustments[row].begin());
+    }
+};
 }
 SWMM_ENGINE_API SWMM_HeatSnapshot swmm_heat_snapshot_create(SWMM_Engine engine) {
     if(!engine)return nullptr;
@@ -1141,6 +1167,52 @@ SWMM_ENGINE_API int swmm_heat_snapshot_restore(SWMM_Engine engine, SWMM_HeatSnap
 }
 SWMM_ENGINE_API void swmm_heat_snapshot_destroy(SWMM_HeatSnapshot snapshot) {
     delete static_cast<HeatSnapshot*>(snapshot);
+}
+
+SWMM_ENGINE_API SWMM_ConfigSnapshot swmm_config_snapshot_create(SWMM_Engine engine) {
+    if(!engine)return nullptr;
+    const auto& ctx=to_engine(engine)->context();
+    if(ctx.state!=openswmm::EngineState::BUILDING && ctx.state!=openswmm::EngineState::OPENED)return nullptr;
+    try { return new ConfigurationSnapshot(engine,ctx); }
+    catch(...) { return nullptr; }
+}
+
+SWMM_ENGINE_API int swmm_config_snapshot_restore(SWMM_Engine engine, SWMM_ConfigSnapshot opaque) {
+    CHECK_HANDLE(engine);
+    if(!opaque)return SWMM_ERR_BADPARAM;
+    const auto& saved=*static_cast<ConfigurationSnapshot*>(opaque);
+    if(saved.owner!=engine)return SWMM_ERR_BADPARAM;
+    struct RestoreContext { const ConfigurationSnapshot* saved; } restore{&saved};
+    return swmm_hydrothermal_edit_atomic(engine,[](SWMM_Engine target,void* user)->int {
+        const auto& source=*static_cast<RestoreContext*>(user)->saved;
+        auto& ctx=to_engine(target)->context();
+        // Prepare every potentially allocating copy before publishing. The
+        // enclosing transaction restores its own draft if any copy fails.
+        auto options=source.options;
+        auto climate=source.climate;
+        auto snow=source.snow;
+        auto meteorology=source.meteorology;
+        auto heat=source.heat;
+        auto components=source.components;
+        auto thermal2d=source.thermal_2d;
+        ctx.options=std::move(options);
+        ctx.climate_state=std::move(climate);
+        ctx.snowpacks.config=std::move(snow);
+        ctx.snowpacks.meteorology=std::move(meteorology);
+        ctx.heat_config=std::move(heat);
+        ctx.process_component_specs=std::move(components);
+        double* destination[]={ctx.adjust_temp,ctx.adjust_evap,ctx.adjust_rain,ctx.adjust_hydcon};
+        for(int row=0;row<4;++row)std::copy(source.monthly_adjustments[row].begin(),
+            source.monthly_adjustments[row].end(),destination[row]);
+        ctx.heat_state.shortwave_now=source.shortwave_now;
+        ctx.heat_state.cloud_now=source.cloud_now;
+        thermal2d.restore(ctx);
+        return SWMM_OK;
+    },&restore);
+}
+
+SWMM_ENGINE_API void swmm_config_snapshot_destroy(SWMM_ConfigSnapshot snapshot) {
+    delete static_cast<ConfigurationSnapshot*>(snapshot);
 }
 
 SWMM_ENGINE_API int swmm_heat_get_authoring_flags(SWMM_Engine engine, unsigned* flags) {

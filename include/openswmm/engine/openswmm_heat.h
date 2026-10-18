@@ -96,6 +96,16 @@ SWMM_ENGINE_API SWMM_HeatSnapshot swmm_heat_snapshot_create(SWMM_Engine engine);
 SWMM_ENGINE_API int swmm_heat_snapshot_restore(SWMM_Engine engine, SWMM_HeatSnapshot snapshot);
 SWMM_ENGINE_API void swmm_heat_snapshot_destroy(SWMM_HeatSnapshot snapshot);
 
+/** Exact pre-run authoring memento spanning simulation options, monthly
+ * climate adjustments, climate/snow/UEB, heat (including 2D thermal/GW
+ * authoring), shared site state and process-component registrations. It owns
+ * no engine; restore requires the same editable engine used to create it.
+ * The snapshot is reusable for Undo and Redo. */
+typedef void* SWMM_ConfigSnapshot;
+SWMM_ENGINE_API SWMM_ConfigSnapshot swmm_config_snapshot_create(SWMM_Engine engine);
+SWMM_ENGINE_API int swmm_config_snapshot_restore(SWMM_Engine engine, SWMM_ConfigSnapshot snapshot);
+SWMM_ENGINE_API void swmm_config_snapshot_destroy(SWMM_ConfigSnapshot snapshot);
+
 
 /** Authored status and reset for ground/initial bed temperature. */
 SWMM_ENGINE_API int swmm_heat_sediment_temperature_configured(SWMM_Engine engine,

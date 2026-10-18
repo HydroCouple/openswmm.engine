@@ -52,6 +52,8 @@
 #include <openswmm/engine/openswmm_climate.h>
 #include <openswmm/engine/openswmm_coupling.h>
 #include <openswmm/engine/openswmm_heat.h>
+#include <openswmm/engine/openswmm_gw2d.h>
+#include <openswmm/engine/openswmm_gw_transport.h>
 #include <openswmm/engine/openswmm_model.h>
 #include <openswmm/engine/openswmm_process_components.h>
 #include <openswmm/engine/openswmm_snow.h>
@@ -367,7 +369,12 @@ TEST(HydrothermalConfig, AtomicEditRefusesInvalidInputsAndRunningEngines) {
     Combo c;
     e = openDeck("atomic_initialized", deck(c));
     ASSERT_NE(e, nullptr);
+    SWMM_ConfigSnapshot snapshot=swmm_config_snapshot_create(e);
+    ASSERT_NE(snapshot,nullptr);
     ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    EXPECT_EQ(swmm_config_snapshot_create(e),nullptr);
+    EXPECT_EQ(swmm_config_snapshot_restore(e,snapshot),SWMM_ERR_LIFECYCLE);
+    swmm_config_snapshot_destroy(snapshot);
     bool called = false;
     EXPECT_EQ(swmm_hydrothermal_edit_atomic(e, [](SWMM_Engine, void* user) -> int {
         *static_cast<bool*>(user) = true; return SWMM_OK;
@@ -399,6 +406,66 @@ TEST(HydrothermalConfig, HeatSnapshotRestoresExactlyAndRefusesForeignEngine) {
     swmm_heat_snapshot_destroy(snap);
     swmm_engine_destroy(other);
     swmm_engine_destroy(e);
+}
+
+TEST(HydrothermalConfig, FullConfigurationSnapshotRestoresSharedEditorStateAndIsReusable) {
+    SWMM_Engine e=buildingEngine();
+    SWMM_Engine other=buildingEngine();
+    ASSERT_TRUE(e&&other);
+    char unitsBefore[64]{};
+    ASSERT_EQ(swmm_options_get(e,"FLOW_UNITS",unitsBefore,sizeof unitsBefore),SWMM_OK);
+    double rainAdjustments[12];
+    for(int i=0;i<12;++i)rainAdjustments[i]=.75+.01*i;
+    ASSERT_EQ(swmm_climate_set_adjust_rainfall(e,rainAdjustments,12),SWMM_OK);
+    // Include monthly factors in the expected state before taking the memento.
+    const std::string authored=hydrothermalState(e);
+    SWMM_ConfigSnapshot snapshot=swmm_config_snapshot_create(e);
+    ASSERT_NE(snapshot,nullptr);
+
+    ASSERT_EQ(writeEverything(e),SWMM_OK);
+    ASSERT_EQ(swmm_options_set(e,"FLOW_UNITS","CMS"),SWMM_OK);
+    EXPECT_EQ(swmm_config_snapshot_restore(other,snapshot),SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_config_snapshot_restore(e,nullptr),SWMM_ERR_BADPARAM);
+    EXPECT_NE(hydrothermalState(e),authored);
+    ASSERT_EQ(swmm_config_snapshot_restore(e,snapshot),SWMM_OK);
+    EXPECT_EQ(hydrothermalState(e),authored);
+    char unitsAfter[64]{};
+    ASSERT_EQ(swmm_options_get(e,"FLOW_UNITS",unitsAfter,sizeof unitsAfter),SWMM_OK);
+    EXPECT_STREQ(unitsAfter,unitsBefore);
+    double rainAfter[12]{};
+    ASSERT_EQ(swmm_climate_get_adjust_rainfall(e,rainAfter,12),SWMM_OK);
+    for(int i=0;i<12;++i)EXPECT_DOUBLE_EQ(rainAfter[i],rainAdjustments[i]);
+    // Undo and Redo use the same snapshots repeatedly; restoring must not
+    // consume any of the authored values held in the memento.
+    ASSERT_EQ(writeEverything(e),SWMM_OK);
+    ASSERT_EQ(swmm_config_snapshot_restore(e,snapshot),SWMM_OK);
+    EXPECT_EQ(hydrothermalState(e),authored);
+    swmm_config_snapshot_destroy(snapshot);
+    swmm_engine_destroy(other);
+    swmm_engine_destroy(e);
+}
+
+TEST(HydrothermalConfig, FullConfigurationSnapshotRestoresMeshAndGroundwaterAuthoring) {
+    Combo c;
+    SWMM_Engine e=openDeck("configuration_snapshot_mesh",deck(c));
+    ASSERT_NE(e,nullptr);
+    SWMM_ConfigSnapshot snapshot=swmm_config_snapshot_create(e);
+    ASSERT_NE(snapshot,nullptr);
+    char value[128]{};
+    ASSERT_EQ(swmm_gw2d_option_get(e,"MODE",value,sizeof value),SWMM_OK);
+    EXPECT_STREQ(value,"MESH");
+    ASSERT_EQ(swmm_gw2d_option_set(e,"MODE","PER_SUBCATCH"),SWMM_OK);
+    ASSERT_EQ(swmm_gw_transport_option_set(e,"TRANSPORT_TEMPERATURE","NO"),SWMM_OK);
+    ASSERT_EQ(swmm_gw2d_option_get(e,"MODE",value,sizeof value),SWMM_OK);
+    EXPECT_STREQ(value,"PER_SUBCATCH");
+    ASSERT_EQ(swmm_config_snapshot_restore(e,snapshot),SWMM_OK);
+    ASSERT_EQ(swmm_gw2d_option_get(e,"MODE",value,sizeof value),SWMM_OK);
+    EXPECT_STREQ(value,"MESH");
+    char enabled[32]{};
+    ASSERT_EQ(swmm_gw_transport_option_get(e,"TRANSPORT_TEMPERATURE",enabled,sizeof enabled),SWMM_OK);
+    EXPECT_STREQ(enabled,"YES");
+    swmm_config_snapshot_destroy(snapshot);
+    closeDeck(e);
 }
 
 TEST(HydrothermalConfig, NewHeatSettersRefuseInvalidInput) {
