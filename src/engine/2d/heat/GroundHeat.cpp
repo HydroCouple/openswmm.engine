@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "GroundHeat.hpp"
+#include "../../hydrology/surface/MeshSnow.hpp"
 #include "../data/MeshData.hpp"
 #include "../subsurface/SubsurfaceData.hpp"
 #include "../subsurface/SubsurfaceTransportState.hpp"
@@ -155,6 +156,29 @@ double GroundHeatState::activeCapacity(int i,std::size_t j) const noexcept {
 double GroundHeatState::activeTemperature(int i,std::size_t j) const noexcept {
     return cells[i].column.energy[j]/activeCapacity(i,j);
 }
+bool GroundHeatState::snowContactEnabled(int i) const noexcept {
+    return i>=0&&std::size_t(i)<cells.size()&&snow_owner&&config&&config->options.conduction&&
+        !cells[i].column.energy.empty()&&snow_owner->groundContactEnabled(i);
+}
+double GroundHeatState::snowContactFraction(int i) const noexcept {
+    return snowContactEnabled(i)?std::clamp(snow_owner->groundContactFraction(i),0.,1.):0.;
+}
+bool GroundHeatState::appendSnowContact(int i,double area,std::vector<ThermalBoundary>& bc) const {
+    if(!snowContactEnabled(i)||!(area>0)||!std::isfinite(area))return false;
+    const auto& c=cells[i].column;const auto& o=config->options;
+    if(c.depth_edges.size()<2||c.conductivity.empty())throw std::runtime_error("UEB/soil contact has no top soil layer.");
+    const double resistance=.5*(c.depth_edges[1]-c.depth_edges[0])/c.conductivity[0]+o.surface_resistance;
+    const double temperature=snow_owner->groundContactSurfaceTemperature(i);
+    if(!(resistance>0)||!std::isfinite(resistance)||!std::isfinite(temperature))throw std::runtime_error("UEB/soil contact has invalid resistance or temperature.");
+    const double conductance=area/resistance;
+    if(!(conductance>0)||!std::isfinite(conductance))throw std::runtime_error("UEB/soil contact conductance is invalid.");
+    bc.push_back({0,conductance,temperature,0});
+    return true;
+}
+std::string GroundHeatState::applySnowContactEnergy(int i,double soil_j) {
+    if(!snowContactEnabled(i))return "Reciprocal UEB/soil contact was committed without matching contact ownership.";
+    return snow_owner->applyGroundContactEnergy(i,soil_j);
+}
 void GroundHeatState::refreshView(int i,SubsurfaceTransportState& tr) const {
     if(!active()||tr.temp_row<0)return;
     const auto& cell=cells[i];const auto& c=cell.column;double sat=0,unsat=0;
@@ -187,11 +211,17 @@ std::string GroundHeatState::conduct(int i,double dt) {
     auto& cell=cells[i];auto& c=cell.column;const auto& o=config->options;
     if(c.energy.empty()||!o.conduction||cell.surface_owned)return {};
     if(o.surface_thermal_bc=="SURFACE_WATER")return "SURFACE_WATER thermal boundary requires a reciprocal mesh ground-column contact.";
-    std::vector<ThermalBoundary> bc;const auto top_count=boundaries(i,1,bc);
+    std::vector<ThermalBoundary> bc;const double snow_fraction=snowContactFraction(i);
+    const auto top_count=boundaries(i,1-snow_fraction,bc);
+    const int snow_boundary=appendSnowContact(i,c.area*snow_fraction,bc)?int(bc.size()-1):-1;
     auto solved=solveThermalContacts(c.stores(),c.contacts(),bc,dt);
     if(!solved.error.empty())return solved.error;
     for(std::size_t b=0;b<solved.boundary_j.size();++b) {
-        if(b<top_count)cell.surface_j+=solved.boundary_j[b];else cell.deep_j+=solved.boundary_j[b];
+        const double receipt=solved.boundary_j[b];
+        if(int(b)==snow_boundary) {
+            cell.surface_j+=receipt;
+            if(auto error=applySnowContactEnergy(i,receipt);!error.empty())return error;
+        } else if(b<top_count)cell.surface_j+=receipt;else cell.deep_j+=receipt;
     }
     for(double energy:solved.contact_j)cell.vertical_absolute_j+=std::abs(energy);
     c.energy=std::move(solved.energy);return {};

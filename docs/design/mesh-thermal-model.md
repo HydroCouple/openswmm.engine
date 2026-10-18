@@ -6,9 +6,10 @@ transport and existing 1D/lumped heat calculations retain their behavior.
 `HEAT_TRANSPORT` and mesh temperature transport must also be enabled. Child
 settings remain saved when a parent is off.
 
-The current coupled runtime is experimental. Restart and reciprocal snow/LID
-ownership are not yet qualified. The fixed-grid ground and shared surface-column
-paths have focused numerical/runtime tests; the full release matrix remains open. Active unsupported
+The current coupled runtime is experimental. Reciprocal UEB/soil exchange is
+implemented on qualified mesh ground columns; its broader transition and restart
+matrix and reciprocal LID ownership are not yet qualified. The fixed-grid ground
+and shared surface-column paths have focused numerical/runtime tests; the full release matrix remains open. Active unsupported
 owner combinations are refused. Query `swmm_heat_get_2d_status` for the actual
 activation and qualification reason; a saved switch is not runtime evidence.
 
@@ -53,6 +54,32 @@ No unsaturated lateral conduction is implied. The default is off.
 `HEAT_RADIATIVE_EXCHANGE AUTO|YES|NO` inherit the existing global modules at
 `AUTO`. Explicit choices apply only to the mesh. The radiation evaluator uses
 the existing shared weather/solar inputs and mesh element forcing.
+
+## UEB snow/soil contact
+
+An assigned UEB snow cell exchanges heat with the fixed-grid ground column when
+`CONDUCTION YES` owns a thermal soil column for that cell. The contact uses the
+accepted UEB surface temperature and a finite soil resistance consisting of the
+configured `SURFACE_RESISTANCE` plus the half-thickness resistance of the top
+soil layer. The thermal solve adds the signed receipt to soil and applies the
+exact opposite joules to UEB energy (converting J to kJ/m²); the UEB energy
+ledger and soil surface receipt therefore close as a pair.
+
+On the modeled contact fraction, UEB's authored `QG` ground-heat flux and the
+soil's prescribed top boundary are suppressed so the same footprint has one
+owner. Uncovered soil retains its configured top boundary, while an UEB cell
+without an active soil contact retains `QG`. Snow coverage is time-averaged over
+the accepted UEB interval for the contact footprint, including snow depletion
+and melt-out. Degree-day snow remains an external-boundary case and does not
+receive reciprocal energy. The existing UEB state includes a lumped active-soil
+energy reference; the exchange updates that accepted state while the mesh soil
+column remains the spatially resolved store, so validation must continue to
+cover melt/rewet timing and the combined-domain energy budget.
+
+Mesh-snow checkpoints store the contact ownership mask and cumulative signed
+contact energy, and reject restoration under a changed mask. This does not yet
+qualify full engine-session restart with coupled UEB/soil exchange or the wider
+runtime/backend matrix.
 
 The hydrological solver remains the only owner of evaporated water. Mesh latent
 cooling uses its accepted evaporation volume, including water limitation. It
@@ -162,8 +189,8 @@ processes retain their own switches.
 
 This is a heat-only experimental capability. Conservative bed tracer/age
 partitioning, complete footprint/atmospheric ownership, wider geometry/transfer
-refinement, reciprocal snow/LID, restart and GUI release qualification remain
-open. Active unqualified bed tracer/age combinations are refused. Inspect the
+refinement, broader UEB/soil transition testing, reciprocal LID, restart and GUI
+release qualification remain open. Active unqualified bed tracer/age combinations are refused. Inspect the
 canonical soil/layer results for its storage; old prescribed-bed fields are
 not an additional mapped-soil energy budget.
 

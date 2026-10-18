@@ -1419,10 +1419,9 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         if(auto error=state_.snow.initialize(ctx,geometry);!error.empty())throw std::runtime_error(error);
         state_.snow_catch.assign(mesh_.n_cells(),1);
     }
-    if(state_.snow.hasUeb()&&subsurface_.heat().active())
-        throw std::runtime_error("[2D ground heat] Reciprocal UEB snow/soil energy ownership is awaiting qualification.");
     if(auto error=initializeMeshHeat(ctx,mesh_,state_,options_,&subsurface_.heat(),&subsurface_.coverage());!error.empty())
         throw std::runtime_error("[2D heat] "+error);
+    configureSnowGroundContacts();
     if(state_.heat.ground_column&&subsurface_.heat().active())
         if(auto error=subsurface_.initPorewater();!error.empty())throw std::runtime_error("[2D porewater] "+error);
     if(subsurface_.heat().active()&&gw_.options.conduction&&gw_.options.surface_thermal_bc=="SURFACE_WATER")
@@ -1487,6 +1486,29 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     reconstructVertexRenderDepths(mesh_, state_, options_.dry_depth,
                                   options_.num_threads, render_eta_);
     render_dirty_ = false;
+}
+
+void SurfaceRouter2D::configureSnowGroundContacts() {
+    if(!state_.snow.active())return;
+    const std::size_t n=mesh_.n_cells();
+    std::vector<unsigned char> mask(n,0);
+    auto& mesh_heat=state_.heat;
+    auto& aquifer=subsurface_.heat();
+    if(mesh_heat.ground_column) {
+        mesh_heat.standalone_ground.snow_owner=&state_.snow;
+        if(mesh_heat.aquifer_ground)mesh_heat.aquifer_ground->snow_owner=&state_.snow;
+    }
+    if(aquifer.active())aquifer.snow_owner=&state_.snow;
+    for(std::size_t i=0;i<n;++i) {
+        if(!state_.snow.owns(int(i))||state_.snow.kind(int(i))!=surface::SnowKind::Ueb)continue;
+        GroundHeatState* owner=nullptr;
+        if(mesh_heat.ground_column)owner=&mesh_heat.groundOwner(int(i));
+        else if(aquifer.active())owner=&aquifer;
+        if(owner&&owner->config&&owner->config->options.conduction&&i<owner->cells.size()&&
+           !owner->cells[i].column.energy.empty())mask[i]=1;
+    }
+    if(auto error=state_.snow.setGroundContactMask(mask);!error.empty())
+        throw std::runtime_error("[2D ground heat] "+error);
 }
 
 

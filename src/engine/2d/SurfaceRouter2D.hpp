@@ -506,6 +506,7 @@ private:
         const std::function<void()>* before_install = nullptr,
         double* inspect_source_end = nullptr);
     void attachCommonSourceStage(SimulationContext&, CommonSourceStage&, Router*);
+    void configureSnowGroundContacts();
     void checkJointRoutingStep(const SimulationContext&, double dt, double start) const;
     Router* joint_hydraulic_ = nullptr; // externally owned, stable lifetime
     static double couplingSyncSpan(const SimulationContext&, const SolverOptions2D&);

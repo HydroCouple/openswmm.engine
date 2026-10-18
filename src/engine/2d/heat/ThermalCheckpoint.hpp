@@ -60,6 +60,9 @@ inline void groundHeat(Archive& a,GroundHeatState& h,bool model) {
                 c.initial_j,c.geo_flux,c.surface_owned);
             auto& p=c.porewater;a(p.n_species,p.age_row,p.temp_row,p.retention,p.initial_mass);
         },true);
+        std::vector<unsigned char> snow_contact(h.cells.size());
+        for(std::size_t i=0;i<snow_contact.size();++i)snow_contact[i]=h.snowContactEnabled(int(i));
+        a(snow_contact);
         return;
     }
     std::string runtime_profile="ground heat runtime v2";a(runtime_profile);

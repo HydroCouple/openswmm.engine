@@ -120,8 +120,12 @@ GroundColumnAssembly appendGroundColumnSystem(const MeshData& mesh,const SolverO
     }
     a.contact_count=contacts.size()-a.first_contact;a.first_boundary=boundaries.size();
     std::vector<ThermalBoundary> ground;
-    a.top_count=owner.boundaries(i,(1-a.wet/c.area)*(1-channel_area/c.area),ground);a.ground_count=ground.size();
+    const double snow_fraction=owner.snowContactFraction(i);
+    const double bare_fraction=(1-a.wet/c.area)*(1-channel_area/c.area);
+    a.top_count=owner.boundaries(i,bare_fraction*(1-snow_fraction),ground);a.ground_count=ground.size();
     for(auto boundary:ground){boundary.store+=a.first_store;boundaries.push_back(boundary);}
+    const double snow_area=std::max(0.,c.area-a.wet)*(1-channel_area/c.area)*snow_fraction;
+    if(owner.appendSnowContact(i,snow_area,boundaries))a.snow_boundary=int(boundaries.size()-1);
     a.atmosphere=boundaries.size();
     if(a.water>=0)boundaries.push_back({a.water,a.wet*a.slope,a.temperature,-a.wet*a.flux0.total()});
     return a;
@@ -137,6 +141,14 @@ double commitGroundColumnSystem(const GroundColumnAssembly& a,const ThermalSolut
     for(std::size_t k=0;k<a.ground_count;++k) {
         const double j=solved.boundary_j[a.first_boundary+k];
         if(k<a.top_count)cell.surface_j+=j;else {cell.deep_j+=j;if(h)h->ground_j[a.cell]+=j;}
+    }
+    if(a.snow_boundary>=0) {
+        const double j=solved.boundary_j[std::size_t(a.snow_boundary)];
+        cell.surface_j+=j;
+        if(auto error=owner.applySnowContactEnergy(a.cell,j);!error.empty()) {
+            cell.failed=1;try{cell.error=error;}catch(...){}
+            if(h)h->failures[a.cell]=1;
+        }
     }
     for(int j=0;j<a.soil_count;++j)c.energy[j]=solved.energy[a.first_store+j];
     if(h)h->refreshBedView(a.cell);
@@ -156,7 +168,6 @@ std::string initializeMeshHeat(SimulationContext& ctx,const MeshData& mesh,Surfa
     if(!(ctx.options.water_density>0)||!(ctx.options.water_specific_heat>0)||
        !std::isfinite(ctx.options.water_density)||!std::isfinite(ctx.options.water_specific_heat))
         return "WATER_DENSITY and WATER_SPECIFIC_HEAT_CAPACITY must be finite and positive.";
-    if(state.snow.hasUeb())return "Reciprocal UEB snow/soil energy ownership is awaiting qualification.";
     if(options.bed_heat_model==1 && ctx.twod_io.aquifer_state && ctx.twod_io.aquifer_state->active)
         return "LOCAL_STORAGE cannot overlap an active aquifer; use GROUND_COLUMN after porous thermal coupling is qualified.";
     auto& h=state.heat;h.context=&ctx;h.enabled=true;h.bed=options.bed_heat_model>0;

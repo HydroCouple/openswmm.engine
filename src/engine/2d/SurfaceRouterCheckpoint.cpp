@@ -343,6 +343,7 @@ void SurfaceRouter2D::attachCommonSourceStage(SimulationContext& ctx,CommonSourc
     if(hydraulic)identity.sequence(points,[&](auto& p){identity(p.cell_idx,p.vertex_idx,p.node_idx,p.cd,p.area,p.is_outfall,p.has_flap_gate,p.area_authored);});
     auto model=sourceRouterModel(ctx)+identity.bytes();
     model+=channel_ground_.modelIdentity();
+    configureSnowGroundContacts();
     cpu->setCommonSourceStage(stage);cpu->joint_checkpoint_=hydraulic!=nullptr;
     joint_hydraulic_=hydraulic;common_stage_=&stage;source_context_=&ctx;source_router_model_=std::move(model);source_boundary_ready_=true;
 }

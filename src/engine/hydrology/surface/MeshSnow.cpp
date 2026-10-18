@@ -27,8 +27,9 @@ std::string MeshSnow::initialize(SimulationContext& ctx,const std::vector<MeshSn
     next.geometry_=geometry;next.step_=config.step>0?config.step:ctx.snowpacks.config.step;
     next.pack_.assign(n,-1);next.kind_.resize(n);next.site_.resize(n);next.held_.resize(n);
     next.precipitation_.assign(n,-1);next.catch_.assign(n,-1);next.liquid_rate_.assign(n,0);
-    next.exposed_.assign(n,1);next.output_.resize(n);next.ledger_.resize(n);next.degree_day_.init(n);
+    next.exposed_.assign(n,1);next.ground_contact_.assign(n,0);next.output_.resize(n);next.ledger_.resize(n);next.degree_day_.init(n);
     auto& dd=next.degree_day_.state();dd.tipm=ctx.options.snow_ati_wt;dd.rnm=ctx.options.snow_nrg_ratio;
+    next.parameters_=ctx.snowpacks.config.parameters;
     const int units=ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
     for(int i=0;i<n;++i) {
         const auto row=resolveMeshSnowRow(config,i,geometry[i].tag);
@@ -95,6 +96,54 @@ std::string MeshSnow::advance(SimulationContext& ctx,double start,double end,con
     if(auto error=candidate.advanceInPlace(ctx,start,end,rain,catch_factor);!error.empty())return error;
     *this=std::move(candidate);return {};
 }
+std::string MeshSnow::setGroundContactMask(const std::vector<unsigned char>& mask) {
+    if(mask.size()!=pack_.size())return "Mesh snow ground-contact mask shape differs from the mesh.";
+    for(std::size_t i=0;i<mask.size();++i) {
+        if(mask[i]>1)return "Mesh snow ground-contact mask is not Boolean.";
+        if(mask[i]&&(!owns(int(i))||kind_[i]!=SnowKind::Ueb))
+            return "Reciprocal mesh ground contact is only supported for assigned UEB cells.";
+    }
+    ground_contact_=mask;
+    return {};
+}
+std::string MeshSnow::applyGroundContactEnergy(int cell,double soil_j) {
+    if(!std::isfinite(soil_j))return "Nonfinite reciprocal UEB/soil contact energy.";
+    if(!groundContactEnabled(cell)||!owns(cell)||kind_[cell]!=SnowKind::Ueb)
+        return "Reciprocal UEB/soil energy was sent to a cell without contact ownership.";
+    if(soil_j==0)return {};
+    auto& held=held_[cell];auto& output=output_[cell];auto& book=ledger_[cell];
+    auto& point=held.accepted.point;
+    const double area=geometry_[cell].area;
+    const double represented_fraction=held.accepted.cover>0?held.accepted.cover:1.;
+    if(!(area>0)||!(represented_fraction>0)||!std::isfinite(point.energy))
+        return "UEB contact cell has no finite energy storage area.";
+    const double snow_j=-soil_j;
+    const double delta_kj_m2=snow_j/(1000.*area*represented_fraction);
+    const double old_bulk=ueb::bulkTemperature(point,parameters_);
+    const double next_energy=point.energy+delta_kj_m2;
+    if(!std::isfinite(delta_kj_m2)||!std::isfinite(next_energy))return "Reciprocal UEB/soil contact overflows snow energy.";
+    auto next_point=point;next_point.energy=next_energy;
+    const double next_bulk=ueb::bulkTemperature(next_point,parameters_);
+    const double delta_temperature=next_bulk-old_bulk;
+    const double next_surface=point.history.empty()?std::min(0.,next_bulk):point.history.back().surface+delta_temperature;
+    const double delta_total=snow_j/1000.;
+    const double next_contact=book.ground_contact_energy+delta_total;
+    const double next_net=book.net_energy+delta_total,next_stored=book.stored_energy+delta_total;
+    const double residual=book.initial_energy+next_net-next_stored;
+    if(!std::isfinite(next_bulk)||!std::isfinite(next_surface)||!std::isfinite(next_contact)||
+       !std::isfinite(next_net)||!std::isfinite(next_stored)||
+       std::abs(residual)>1e-8*std::max({1.,std::abs(book.initial_energy),std::abs(next_net)}))
+        return "Reciprocal UEB/soil energy balance failed.";
+    if(!next_point.history.empty()) {
+        next_point.history.back().bulk=next_bulk;
+        next_point.history.back().surface=next_surface;
+    }
+    point=std::move(next_point);
+    output.T_C=next_bulk;output.Ts_C=next_surface;output.energy_kJm2=point.energy;
+    book.ground_contact_energy=next_contact;book.net_energy=next_net;book.stored_energy=next_stored;
+    if(held.pending())ueb::closeHeld(held);
+    return {};
+}
 std::string MeshSnow::advanceInPlace(SimulationContext& ctx,double start,double end,
     const std::vector<double>& rain,const std::vector<double>& catch_factor) {
     const auto& config=ctx.snowpacks.config;
@@ -106,9 +155,16 @@ std::string MeshSnow::advanceInPlace(SimulationContext& ctx,double start,double 
         auto& held=held_[i];auto& result=output_[i];auto& book=ledger_[i];
         result.melt_m=result.throughfall_m=result.sublim_m=0;
         if(precipitation_[i]!=rain[i]||catch_[i]!=catch_factor[i])ueb::closeHeld(held);
+        const bool ground_contact=groundContactEnabled(i)&&kind_[i]==SnowKind::Ueb;
+        if(ground_contact&&held.pending())ueb::closeHeld(held);
         double at=start,covered_seconds=0;
         while(at<end-1e-9) {
+            // Contact flux is resolved against the accepted snow cover for
+            // this forcing segment. Do not reuse a look-ahead prediction if
+            // a previous segment changed the covered area.
+            if(ground_contact&&held.pending())ueb::closeHeld(held);
             const double date=ctx.options.start_date+at/86400.;
+            double prescribed_qg=site_[i].ground_heat;
             const double boundary=(std::floor((at+1e-7)/step_)+1)*step_;
             double horizon=std::min(boundary-at,ctx.options.totalDurationMs()/1000.-at);
             if(!ctx.snowpacks.meteorology.empty()) {
@@ -123,7 +179,12 @@ std::string MeshSnow::advanceInPlace(SimulationContext& ctx,double start,double 
                     ueb::Forcing forcing;
                     if(auto error=climate::resolveUebForcing(ctx,date,horizon,geometry_[i].slope,geometry_[i].aspect,forcing,site_[i].pressure);!error.empty())return error;
                     forcing.precipitation=rain[i]*horizon;forcing.snow_catch=catch_factor[i];
-                    if(auto error=ueb::prepareHeld(held,config.parameters,site_[i],forcing,full_cover);!error.empty())return error;
+                    auto site=site_[i];
+                    const bool modeled_contact=ground_contact&&(held.accepted.cover>0||
+                        (forcing.precipitation>0&&forcing.snow_fraction>0));
+                    if(modeled_contact)site.ground_heat=0;
+                    prescribed_qg=site.ground_heat;
+                    if(auto error=ueb::prepareHeld(held,config.parameters,site,forcing,full_cover);!error.empty())return error;
                 }
                 dt=std::min(dt,held.duration-held.elapsed);
                 ueb::LumpedFluxes flux;
@@ -135,6 +196,7 @@ std::string MeshSnow::advanceInPlace(SimulationContext& ctx,double start,double 
                 result.T_C=ueb::bulkTemperature(held.accepted.point,config.parameters);
                 result.Ts_C=held.accepted.point.history.empty()?std::min(0.,result.T_C):held.accepted.point.history.back().surface;
                 book.precipitation+=(flux.rain+flux.snow)*geometry_[i].area;book.net_energy+=flux.net_energy*geometry_[i].area;
+                book.prescribed_ground_energy+=prescribed_qg*flux.active_fraction*dt*geometry_[i].area/1000.;
             } else {
                 climate::RadiationState weather;
                 if(auto error=climate::resolveRadiation(ctx,date,dt,weather);!error.empty())return error;
@@ -167,19 +229,21 @@ std::string MeshSnow::advanceInPlace(SimulationContext& ctx,double start,double 
 namespace {
 void archiveMeshSnowState(detail::CompletedSourceArchive& a,double& completed,
     std::vector<ueb::HeldState>& held,snow::SnowSoA& dd,std::vector<double>& rain,
-    std::vector<double>& catch_factor,std::vector<double>& rate,std::vector<double>& exposed,std::vector<SnowOutputs>& output,std::vector<MeshSnowLedger>& ledger) {
+    std::vector<double>& catch_factor,std::vector<double>& rate,std::vector<double>& exposed,std::vector<SnowOutputs>& output,
+    std::vector<MeshSnowLedger>& ledger,bool contact_profile) {
     a(completed);a.fixed(rain,catch_factor,rate,exposed);
     a.sequence(held,[&](auto& column){archiveHeldSnow(a,column);},true);
     archiveDegreeDaySnow(a,dd);
     a.sequence(output,[&](auto& s){a(s.melt_m,s.throughfall_m,s.sublim_m,s.swe_m,s.cover_frac,s.Ts_C,s.T_C,s.albedo,s.energy_kJm2);},true);
-    a.sequence(ledger,[&](auto& b){a(b.initial,b.precipitation,b.raw_precipitation,b.liquid,b.sublimation,b.stored,b.net_energy,b.initial_energy,b.stored_energy);},true);
+    a.sequence(ledger,[&](auto& b){a(b.initial,b.precipitation,b.raw_precipitation,b.liquid,b.sublimation,b.stored,b.net_energy,b.initial_energy,b.stored_energy);if(contact_profile)a(b.prescribed_ground_energy,b.ground_contact_energy);},true);
 }
 }
 std::string MeshSnow::saveCheckpoint() const {
     if(!active())return {};
     auto copy=*this;detail::CompletedSourceArchive archive;
-    std::string magic="OpenSWMM mesh snow 2";archive(magic,copy.identity_,copy.last_seconds_,copy.forcing_);
-    archiveMeshSnowState(archive,copy.completed_,copy.held_,copy.degree_day_.state(),copy.precipitation_,copy.catch_,copy.liquid_rate_,copy.exposed_,copy.output_,copy.ledger_);
+    std::string magic="OpenSWMM mesh snow 3";archive(magic,copy.identity_,copy.last_seconds_,copy.forcing_);
+    archive(copy.ground_contact_);
+    archiveMeshSnowState(archive,copy.completed_,copy.held_,copy.degree_day_.state(),copy.precipitation_,copy.catch_,copy.liquid_rate_,copy.exposed_,copy.output_,copy.ledger_,true);
     return archive.bytes();
 }
 std::string MeshSnow::restoreCheckpoint(const std::string& bytes,bool seed) {
@@ -202,15 +266,21 @@ std::string MeshSnow::restoreCheckpoint(const std::string& bytes,bool seed) {
         } else {
             detail::CompletedSourceArchive archive(bytes);std::string magic,identity;archive(magic,identity,next.last_seconds_,next.forcing_);
             for(double value:next.forcing_)if(!std::isfinite(value))return "Invalid mesh snow checkpoint forcing.";
-            if(magic!="OpenSWMM mesh snow 2"||identity!=identity_)return "Mesh snow checkpoint configuration or geometry differs.";
-            archiveMeshSnowState(archive,next.completed_,next.held_,next.degree_day_.state(),next.precipitation_,next.catch_,next.liquid_rate_,next.exposed_,next.output_,next.ledger_);archive.finish();
+            const bool contact_profile=magic=="OpenSWMM mesh snow 3";
+            if((!contact_profile&&magic!="OpenSWMM mesh snow 2")||identity!=identity_)return "Mesh snow checkpoint configuration or geometry differs.";
+            if(contact_profile) {
+                std::vector<unsigned char> mask;archive(mask);
+                if(mask!=next.ground_contact_)return "Mesh snow checkpoint ground-contact ownership differs.";
+            } else if(std::any_of(next.ground_contact_.begin(),next.ground_contact_.end(),[](auto v){return v!=0;}))
+                return "Mesh snow checkpoint predates reciprocal UEB/soil contact state.";
+            archiveMeshSnowState(archive,next.completed_,next.held_,next.degree_day_.state(),next.precipitation_,next.catch_,next.liquid_rate_,next.exposed_,next.output_,next.ledger_,contact_profile);archive.finish();
         }
         if(!std::isfinite(next.last_seconds_)||next.last_seconds_<0||next.last_seconds_>next.completed_||!std::isfinite(next.completed_)||next.completed_<0)return "Invalid mesh snow checkpoint clock.";
         for(int i:next.active_cells_) {
             auto& out=next.output_[i];auto& book=next.ledger_[i];
             for(double v:{out.swe_m,out.melt_m,out.throughfall_m,out.cover_frac,book.initial,book.precipitation,book.raw_precipitation,book.liquid,book.stored,next.liquid_rate_[i]})
                 if(!std::isfinite(v)||v<0)return "Invalid mesh snow checkpoint inventory.";
-            if(!std::isfinite(next.exposed_[i])||next.exposed_[i]<0||next.exposed_[i]>1||!std::isfinite(out.sublim_m)||!std::isfinite(book.sublimation)||!std::isfinite(book.net_energy)||
+            if(!std::isfinite(next.exposed_[i])||next.exposed_[i]<0||next.exposed_[i]>1||!std::isfinite(out.sublim_m)||!std::isfinite(book.sublimation)||!std::isfinite(book.net_energy)||!std::isfinite(book.prescribed_ground_energy)||!std::isfinite(book.ground_contact_energy)||
                !std::isfinite(next.precipitation_[i])||next.precipitation_[i]<-1||
                !std::isfinite(next.catch_[i])||next.catch_[i]<-1||out.cover_frac>1||
                std::abs(out.swe_m*geometry_[i].area-book.stored)>1e-10*std::max(1.,book.stored)) {

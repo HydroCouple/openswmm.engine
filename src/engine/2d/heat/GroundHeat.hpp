@@ -4,6 +4,7 @@
 #include "GroundPorewater.hpp"
 #include <cstdint>
 namespace openswmm {struct SimulationContext;}
+namespace openswmm::surface {class MeshSnow;}
 namespace openswmm::twoD {
 struct MeshData;struct GwTransportData;struct SubsurfaceTransportState;
 struct GroundThermalCell {
@@ -22,6 +23,7 @@ struct GroundThermalCell {
 };
 struct GroundHeatState {
     SimulationContext* context=nullptr;
+    surface::MeshSnow* snow_owner=nullptr; // borrowed mesh snow state for reciprocal UEB contact
     const GwTransportData* config=nullptr;
     std::vector<GroundThermalCell> cells;
     double top_now=0,deep_now=0;
@@ -31,6 +33,10 @@ struct GroundHeatState {
     void clear(){*this={};}
     double activeCapacity(int cell,std::size_t layer) const noexcept;
     double activeTemperature(int cell,std::size_t layer) const noexcept;
+    bool snowContactEnabled(int cell) const noexcept;
+    double snowContactFraction(int cell) const noexcept;
+    bool appendSnowContact(int cell,double area,std::vector<ThermalBoundary>&) const;
+    std::string applySnowContactEnergy(int cell,double soil_j);
     std::string initialize(SimulationContext&,const MeshData&,const SubsurfaceState&,
                           const SubsurfaceTransportState&,const GwTransportData&,const std::vector<uint8_t>& coverage);
     std::string initializeStandalone(SimulationContext&,const MeshData&,const GwTransportData&,const std::vector<unsigned char>& owned);
