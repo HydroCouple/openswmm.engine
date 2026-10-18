@@ -1818,7 +1818,7 @@ TEST(SnowEngineIntegration, UebContactStopsAtMeltOutAndWetAreaOwnsTheSurface) {
           "SHORTWAVE TIMESERIES sw\nLONGWAVE TIMESERIES lw\n"
           "[RAINGAGES]\nRG INTENSITY 1:00 1 TIMESERIES rain\n"
           "[TIMESERIES]\nair 01/01/2026 00:00 35\nair 01/01/2026 12:00 35\n"
-          "rain 01/01/2026 00:00 0\nrain 01/01/2026 12:00 0\n"
+          "rain 01/01/2026 00:00 0.1\nrain 01/01/2026 12:00 0.1\n"
           "sw 01/01/2026 00:00 900\nsw 01/01/2026 12:00 900\n"
           "lw 01/01/2026 00:00 400\nlw 01/01/2026 12:00 400\n"
           "[SNOWPACKS]\nSP PERVIOUS 1 2 0 .1 10 0 0\n"
@@ -1840,9 +1840,9 @@ TEST(SnowEngineIntegration, UebContactStopsAtMeltOutAndWetAreaOwnsTheSurface) {
     auto& engine=*static_cast<SWMMEngine*>(handle);auto& router=engine.surfaceRouter2D();auto& snow=router.state().snow;
     ASSERT_EQ(snow.kind(0),surface::SnowKind::Ueb);ASSERT_GT(snow.outputs()[0].swe_m,0);
     ASSERT_EQ(swmm_engine_start(handle,0),SWMM_OK)<<swmm_get_last_error_msg(handle);
-    double elapsed=0,previous_soil_j=0,previous_contact_kj=0;
+    double elapsed=0,previous_soil_j=0,previous_contact_kj=0,previous_precipitation=0;
     double previous_cover=snow.outputs()[0].cover_frac;
-    int count=0;bool melted=false,contact_stopped=false,wet_snowless=false,external_resumed=false;
+    int count=0;bool melted=false,contact_stopped=false,wet_snowless=false,external_resumed=false,rain_on_snow=false;
     do {
         ASSERT_EQ(swmm_engine_step(handle,&elapsed),SWMM_OK)<<swmm_get_last_error_msg(handle);
         ASSERT_LT(++count,10000);
@@ -1850,6 +1850,7 @@ TEST(SnowEngineIntegration, UebContactStopsAtMeltOutAndWetAreaOwnsTheSurface) {
         const auto& book=snow.ledgers()[0];
         EXPECT_NEAR(book.energyResidual(),0,1e-5);
         const double cover=snow.outputs()[0].cover_frac;
+        if(cover>0&&book.precipitation>previous_precipitation)rain_on_snow=true;
         if(previous_cover>0&&cover<=0)melted=true;
         if(melted&&previous_cover<=0&&cover<=0) {
             EXPECT_NEAR(book.ground_contact_energy,previous_contact_kj,1e-9);
@@ -1860,9 +1861,11 @@ TEST(SnowEngineIntegration, UebContactStopsAtMeltOutAndWetAreaOwnsTheSurface) {
             } else if(soil_j-previous_soil_j>0)external_resumed=true;
         }
         previous_cover=cover;previous_soil_j=soil_j;previous_contact_kj=book.ground_contact_energy;
+        previous_precipitation=book.precipitation;
     } while(elapsed>0);
     EXPECT_TRUE(melted)<<"hot forcing did not deplete the assigned UEB pack";
     EXPECT_TRUE(contact_stopped)<<"snow/soil contact continued after the snow cover disappeared";
+    EXPECT_TRUE(rain_on_snow)<<"the forcing did not exercise rain through an active UEB snow cover";
     EXPECT_TRUE(wet_snowless||external_resumed)
         <<"neither ponded-water ownership nor a dry external boundary followed melt-out";
     ASSERT_EQ(swmm_engine_end(handle),SWMM_OK);
