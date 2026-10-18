@@ -673,6 +673,104 @@ TEST(GroundHeat, RoutedSeepageReversesWhileHyporheicHeatRemainsSeparate) {
         EXPECT_NEAR(gw.state().continuityResidual(),0,1e-8);
     }
 }
+TEST(GroundHeat, RoutedMeshContactReplacesThePrescribedBedStoreAcrossNetworkSolvers) {
+    for(const auto* solver:{"LEGACY","EULERIAN_ARD","LAGRANGIAN"}) {
+        SCOPED_TRACE(solver);
+        Model m(std::string("channel-ground-owner-")+solver,"SIGMA",.5,false,
+            "[DWF]\nJ1 FLOW .01\n[TRANSPORT_OPTIONS]\nTARGET_DX 2\n",true);
+        ASSERT_NE(m.e,nullptr);
+        ASSERT_EQ(swmm_options_set(m.e,"QUALITY_SOLVER",solver),SWMM_OK);
+        ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_GROUND_SOURCE,1),SWMM_OK);
+        ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_HYPORHEIC_VELOCITY,2e-5),SWMM_OK);
+        ASSERT_EQ(swmm_heat_set_module(m.e,SWMM_HEAT_SEDIMENT_EXCHANGE,1),SWMM_OK);
+        ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_MODEL","COUPLED"),SWMM_OK);
+        ASSERT_EQ(swmm_options_set_ext(m.e,"BED_HEAT_MODEL","GROUND_COLUMN"),SWMM_OK);
+        ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_SURFACE_EXCHANGE","NO"),SWMM_OK);
+        ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_RADIATIVE_EXCHANGE","NO"),SWMM_OK);
+        ASSERT_EQ(swmm_gw_transport_option_set(m.e,"CONDUCTION","NO"),SWMM_OK);
+        ASSERT_EQ(m.start(),SWMM_OK);
+
+        auto& ctx=static_cast<openswmm::SWMMEngine*>(m.e)->context();
+        auto& router=m.router();auto& gw=router.subsurface();auto& contact=router.channelGround();
+        ASSERT_TRUE(contact.active());ASSERT_EQ(ctx.heat_state.mesh_contact_link.size(),1);
+        ASSERT_TRUE(ctx.heat_state.mesh_contact_link[0]);
+        double actual=0;
+        ASSERT_EQ(swmm_coupling_advance_to(m.e,5.,&actual),SWMM_OK)<<swmm_get_last_error_msg(m.e);
+
+        // Give the superseded prescribed bed store a deliberately different
+        // temperature. A mapped mesh-ground contact must spend the aquifer
+        // slice only; LEGACY/LARD link beds and ARD cell beds stay dormant.
+        ASSERT_TRUE(!ctx.bed_state.link_temp.empty()||!ctx.bed_state.cell_temp.empty());
+        std::fill(ctx.bed_state.link_temp.begin(),ctx.bed_state.link_temp.end(),-40.);
+        std::fill(ctx.bed_state.cell_temp.begin(),ctx.bed_state.cell_temp.end(),-40.);
+        const auto prescribed_link_bed=ctx.bed_state.link_temp;
+        const auto prescribed_cell_bed=ctx.bed_state.cell_temp;
+        auto regions=ctx.state_accessors.get_channel_thermal_regions();ASSERT_FALSE(regions.empty());
+        std::vector<openswmm::ChannelThermalIncrement> warm;warm.reserve(regions.size());
+        for(const auto& region:regions)warm.push_back({region.link,region.region,35-region.temperature});
+        ASSERT_TRUE(ctx.state_accessors.apply_channel_thermal_increments(warm).empty());
+
+        struct SoilBudget {double energy=0,advective=0,other=0,channel=0;};
+        const auto budget=[&]() {
+            SoilBudget result;
+            for(const auto& cell:gw.heat().cells) {
+                result.energy+=sum(cell.column.energy);result.advective+=cell.advective_j;
+                result.channel+=cell.channel_contact_j;
+                result.other+=cell.source_j+cell.surface_j+cell.deep_j+cell.latent_j+
+                              cell.lateral_j+cell.water_contact_j;
+            }
+            return result;
+        };
+        const auto soil_before=budget();
+        const double contact_before=sum(contact.channelToGround());
+        ASSERT_EQ(swmm_coupling_advance_to(m.e,10.,&actual),SWMM_OK)<<swmm_get_last_error_msg(m.e);
+        EXPECT_EQ(ctx.bed_state.link_temp,prescribed_link_bed);
+        EXPECT_EQ(ctx.bed_state.cell_temp,prescribed_cell_bed);
+        const double soil_contact=sum(contact.channelToGround())-contact_before;
+        const auto soil_after=budget();
+        const double d_energy=soil_after.energy-soil_before.energy;
+        const double d_receipts=(soil_after.advective-soil_before.advective)+
+            (soil_after.other-soil_before.other)+(soil_after.channel-soil_before.channel);
+        const double budget_scale=std::max(1.,std::abs(soil_after.advective-soil_before.advective)+
+            std::abs(soil_after.other-soil_before.other)+std::abs(soil_after.channel-soil_before.channel));
+        EXPECT_GT(soil_contact,0);
+        EXPECT_NEAR(soil_after.channel-soil_before.channel,soil_contact,1e-6*budget_scale);
+        EXPECT_LE(std::abs(d_energy-d_receipts),1e-6*budget_scale);
+        for(const auto& cell:gw.heat().cells)ASSERT_EQ(cell.failed,0)<<cell.error;
+
+        // The explicit PRESCRIBED mode remains the old finite bed model on a
+        // channel without a mesh contact; the ownership switch is per link.
+        Model prescribed(std::string("channel-prescribed-owner-")+solver,"SIGMA",.5,false,
+            "[DWF]\nJ1 FLOW .01\n[TRANSPORT_OPTIONS]\nTARGET_DX 2\n");
+        ASSERT_NE(prescribed.e,nullptr);
+        ASSERT_EQ(swmm_options_set(prescribed.e,"QUALITY_SOLVER",solver),SWMM_OK);
+        ASSERT_EQ(swmm_heat_set_sediment(prescribed.e,SWMM_HEAT_SED_GROUND_SOURCE,0),SWMM_OK);
+        ASSERT_EQ(swmm_heat_set_module(prescribed.e,SWMM_HEAT_SEDIMENT_EXCHANGE,1),SWMM_OK);
+        ASSERT_EQ(swmm_options_set_ext(prescribed.e,"HEAT_MODEL","COUPLED"),SWMM_OK);
+        ASSERT_EQ(swmm_options_set_ext(prescribed.e,"BED_HEAT_MODEL","GROUND_COLUMN"),SWMM_OK);
+        ASSERT_EQ(swmm_options_set_ext(prescribed.e,"HEAT_SURFACE_EXCHANGE","NO"),SWMM_OK);
+        ASSERT_EQ(swmm_options_set_ext(prescribed.e,"HEAT_RADIATIVE_EXCHANGE","NO"),SWMM_OK);
+        ASSERT_EQ(swmm_gw_transport_option_set(prescribed.e,"CONDUCTION","NO"),SWMM_OK);
+        ASSERT_EQ(prescribed.start(),SWMM_OK);
+        ASSERT_FALSE(prescribed.router().channelGround().active());
+        auto& prescribed_ctx=static_cast<openswmm::SWMMEngine*>(prescribed.e)->context();
+        ASSERT_EQ(swmm_coupling_advance_to(prescribed.e,5.,&actual),SWMM_OK);
+        ASSERT_TRUE(!prescribed_ctx.bed_state.link_temp.empty()||!prescribed_ctx.bed_state.cell_temp.empty());
+        std::fill(prescribed_ctx.bed_state.link_temp.begin(),prescribed_ctx.bed_state.link_temp.end(),-40.);
+        std::fill(prescribed_ctx.bed_state.cell_temp.begin(),prescribed_ctx.bed_state.cell_temp.end(),-40.);
+        const auto prescribed_link_before=prescribed_ctx.bed_state.link_temp;
+        const auto prescribed_cell_before=prescribed_ctx.bed_state.cell_temp;
+        auto prescribed_regions=prescribed_ctx.state_accessors.get_channel_thermal_regions();
+        ASSERT_FALSE(prescribed_regions.empty());
+        std::vector<openswmm::ChannelThermalIncrement> prescribed_warm;prescribed_warm.reserve(prescribed_regions.size());
+        for(const auto& region:prescribed_regions)
+            prescribed_warm.push_back({region.link,region.region,35-region.temperature});
+        ASSERT_TRUE(prescribed_ctx.state_accessors.apply_channel_thermal_increments(prescribed_warm).empty());
+        ASSERT_EQ(swmm_coupling_advance_to(prescribed.e,10.,&actual),SWMM_OK);
+        EXPECT_TRUE(prescribed_ctx.bed_state.link_temp!=prescribed_link_before||
+                    prescribed_ctx.bed_state.cell_temp!=prescribed_cell_before);
+    }
+}
 TEST(GroundHeat, RoutedChannelPollutantAndAgeExchangeWithSharedPorewaterConservatively) {
     for(const auto* solver:{"LEGACY","EULERIAN_ARD","LAGRANGIAN"}) {
         SCOPED_TRACE(solver);
