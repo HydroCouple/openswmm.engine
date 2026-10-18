@@ -26,6 +26,7 @@
 #include "2d/heat/MeshHeat.hpp"
 #include "2d/heat/LidNodeHeat.hpp"
 #include "2d/heat/ThermalCheckpoint.hpp"
+#include "2d/solver/InertialEdges.hpp"
 namespace {
 namespace fs=std::filesystem;
 const fs::path out=fs::path(OPENSWMM_GROUND_HEAT_OUT)/"ground_heat";
@@ -865,6 +866,47 @@ TEST(GroundHeat, SaturatedLateralConductionUsesTheFaceClockAndRetainsCrossTierPe
     EXPECT_NEAR(gw.pendingHeat(0)+gw.pendingHeat(1),0,1e-7);
     EXPECT_GT(gw.heat().zoneTemperature(0,true),10);EXPECT_LT(gw.heat().zoneTemperature(1,true),20);
     EXPECT_NEAR(gw.heat().cells[0].lateral_j+gw.heat().cells[1].lateral_j,0,1e-6);
+}
+TEST(GroundHeat, AcceptedLateralGroundwaterFlowCarriesTheDonorTemperatureEnergy) {
+    Model m("lateral-thermal-advection","CLOSED_FORM",.5,false,
+        "[2D_AQUIFER]\nCELL 1 36 1 .45 .1 2 HG0 .9\nCELL 2 36 1 .45 .1 2 HG0 .5\n"
+        "[GW_INITIAL_QUALITY]\nCELL 1 SAT __TEMPERATURE__ 10\nCELL 1 UNSAT __TEMPERATURE__ 10\n"
+        "CELL 2 SAT __TEMPERATURE__ 20\nCELL 2 UNSAT __TEMPERATURE__ 20\n");
+    ASSERT_NE(m.e,nullptr);ASSERT_EQ(m.start(),SWMM_OK);
+    auto& router=m.router();auto& gw=router.subsurface();auto& tr=gw.transport();
+    const int row=tr.temp_row;ASSERT_GE(row,0);ASSERT_EQ(gw.heat().cells.size(),2u);
+    EXPECT_DOUBLE_EQ(gw.heat().zoneTemperature(0,true),10);
+    EXPECT_DOUBLE_EQ(gw.heat().zoneTemperature(1,true),20);
+    EXPECT_FALSE(gw.heat().config->options.conduction);
+
+    openswmm::twoD::InertialEdges edges;edges.build(router.mesh());
+    int face=-1;
+    for(int e=0;e<edges.ne;++e)if(edges.cL[std::size_t(e)]==0&&edges.cR[std::size_t(e)]==1)face=e;
+    ASSERT_GE(face,0);ASSERT_EQ(gw.state().eacc_L.size(),std::size_t(edges.ne));
+    constexpr double dt=.1;gw.state().dt_cell[0]=gw.state().dt_cell[1]=dt;gw.assignTiers(dt,1);
+    const double initial_water=gw.state().storage(),initial_energy=energy(gw.heat());
+    gw.fireGwFaces(0,dt);
+    const double signed_volume=gw.state().eacc_L[std::size_t(face)];
+    ASSERT_NE(signed_volume,0);
+    const int donor=signed_volume<0?0:1,receiver=1-donor;
+    const double volume=std::abs(signed_volume);
+    const auto mass_index=std::size_t(row)*std::size_t(edges.ne)+std::size_t(face);
+    const double donor_temp_volume=donor==0?-tr.sacc_L[mass_index]:-tr.sacc_R[mass_index];
+    const double donor_temperature=donor==0?10:20;
+    const double expected_j=gw.heat().water_capacity*volume*donor_temperature;
+    EXPECT_NEAR(donor_temp_volume,volume*donor_temperature,1e-12);
+
+    gw.fireGwCells(0,dt,router.state(),dt);
+    for(const auto& cell:gw.heat().cells)ASSERT_EQ(cell.failed,0)<<cell.error;
+    EXPECT_NEAR(gw.heat().cells[donor].advective_j,-expected_j,1e-6);
+    EXPECT_NEAR(gw.heat().cells[receiver].advective_j,expected_j,1e-6);
+    EXPECT_NEAR(gw.heat().cells[0].advective_j+gw.heat().cells[1].advective_j,0,1e-6);
+    EXPECT_NEAR(energy(gw.heat()),initial_energy,1e-6);
+    EXPECT_NEAR(gw.state().storage(),initial_water,1e-10);
+    for(const auto& cell:gw.heat().cells)for(std::size_t j=0;j<cell.column.energy.size();++j) {
+        const double temperature=cell.column.energy[j]/cell.column.capacity[j];
+        EXPECT_GE(temperature,10-1e-9);EXPECT_LE(temperature,20+1e-9);
+    }
 }
 TEST(GroundHeat, PendingLateralHeatSurvivesAquiferRetiering) {
     Model m("lateral-retier","CLOSED_FORM",1,false,
