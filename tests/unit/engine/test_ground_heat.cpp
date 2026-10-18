@@ -908,6 +908,53 @@ TEST(GroundHeat, AcceptedLateralGroundwaterFlowCarriesTheDonorTemperatureEnergy)
         EXPECT_GE(temperature,10-1e-9);EXPECT_LE(temperature,20+1e-9);
     }
 }
+TEST(GroundHeat, LateralGroundwaterThermalAdvectionConvergesUnderTimeRefinement) {
+    const std::string extra="[2D_AQUIFER]\nCELL 1 36 1 .45 .1 2 HG0 .9\nCELL 2 36 1 .45 .1 2 HG0 .5\n"
+        "[GW_INITIAL_QUALITY]\nCELL 1 SAT __TEMPERATURE__ 10\nCELL 1 UNSAT __TEMPERATURE__ 10\n"
+        "CELL 2 SAT __TEMPERATURE__ 20\nCELL 2 UNSAT __TEMPERATURE__ 20\n";
+    Model coarse("lateral-advection-coarse","CLOSED_FORM",.5,false,extra);
+    Model fine("lateral-advection-fine","CLOSED_FORM",.5,false,extra);
+    ASSERT_NE(coarse.e,nullptr);ASSERT_NE(fine.e,nullptr);
+    ASSERT_EQ(coarse.start(),SWMM_OK);ASSERT_EQ(fine.start(),SWMM_OK);
+    struct Result {double initial_energy=0,final_energy=0,initial_water=0,final_water=0;
+        std::array<double,2> advective{};std::vector<std::vector<double>> temperature;};
+    const auto run=[](Model& model,double dt,int steps) {
+        Result result;auto& gw=model.router().subsurface();
+        result.initial_energy=energy(gw.heat());result.initial_water=gw.state().storage();
+        for(int step=0;step<steps;++step) {
+            gw.state().dt_cell[0]=gw.state().dt_cell[1]=dt;gw.assignTiers(dt,1);
+            gw.fireGwFaces(0,dt);gw.fireGwCells(0,dt,model.router().state(),(step+1)*dt);
+            for(const auto& cell:gw.heat().cells)EXPECT_EQ(cell.failed,0)<<cell.error;
+        }
+        result.final_energy=energy(gw.heat());result.final_water=gw.state().storage();
+        for(int i=0;i<2;++i) {
+            result.advective[std::size_t(i)]=gw.heat().cells[std::size_t(i)].advective_j;
+            std::vector<double> column;
+            for(std::size_t j=0;j<gw.heat().cells[std::size_t(i)].column.energy.size();++j) {
+                const auto& c=gw.heat().cells[std::size_t(i)].column;
+                column.push_back(c.energy[j]/c.capacity[j]);
+            }
+            result.temperature.push_back(std::move(column));
+        }
+        return result;
+    };
+    const auto one=run(coarse,.1,1),ten=run(fine,.01,10);
+    EXPECT_NEAR(one.final_energy,one.initial_energy,1e-6);
+    EXPECT_NEAR(ten.final_energy,ten.initial_energy,1e-6);
+    EXPECT_NEAR(one.final_water,one.initial_water,1e-10);
+    EXPECT_NEAR(ten.final_water,ten.initial_water,1e-10);
+    EXPECT_NEAR(one.advective[0]+one.advective[1],0,1e-6);
+    EXPECT_NEAR(ten.advective[0]+ten.advective[1],0,1e-6);
+    double max_temperature_difference=0;
+    for(std::size_t i=0;i<2;++i) {
+        EXPECT_NEAR(one.advective[i],ten.advective[i],1e-4*std::max(1.,std::abs(one.advective[i])));
+        ASSERT_EQ(one.temperature[i].size(),ten.temperature[i].size());
+        for(std::size_t j=0;j<one.temperature[i].size();++j)
+            max_temperature_difference=std::max(max_temperature_difference,
+                std::abs(one.temperature[i][j]-ten.temperature[i][j]));
+    }
+    EXPECT_LE(max_temperature_difference,.05);
+}
 TEST(GroundHeat, PendingLateralHeatSurvivesAquiferRetiering) {
     Model m("lateral-retier","CLOSED_FORM",1,false,
         "CELL 1 SAT __TEMPERATURE__ 10\nCELL 2 SAT __TEMPERATURE__ 20\n"
