@@ -55,6 +55,7 @@
 #include <openswmm/engine/openswmm_model.h>
 #include <openswmm/engine/openswmm_process_components.h>
 #include <openswmm/engine/openswmm_snow.h>
+#include <openswmm/engine/openswmm_snow2d.h>
 
 #include "2d/SurfaceRouter2D.hpp"
 #include "2d/subsurface/SubsurfaceData.hpp"
@@ -787,4 +788,59 @@ TEST(HydrothermalConfig, AquiferRowsMatchingNoCellAreRefused) {
         EXPECT_NE(std::string(msg ? msg : "").find("no mesh cell matches"), std::string::npos) << (msg ? msg : "");
         closeDeck(e);
     }
+}
+
+TEST(HydrothermalConfig, MeshPackOverrideRunsUebAndHonorsPartialSnowCoverage) {
+    const std::string pack = " .02 .06 32 .1 6 .6 0\n";
+    std::ostringstream s;
+    s << "[OPTIONS]\nIGNORE_GROUNDWATER YES\nIGNORE_QUALITY YES\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
+         "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 02:00:00\n"
+         "WET_STEP 00:05:00\nDRY_STEP 00:05:00\nROUTING_STEP 30\nREPORT_STEP 00:05:00\n"
+         "[TEMPERATURE]\nTIMESERIES air\nSNOWMELT_MODEL DEGREE_DAY\nSNOW_STEP 01:00\n"
+         "SITE 45 -120 -8 1000\nSHORTWAVE TIMESERIES sw\nLONGWAVE TIMESERIES lw\n"
+         "[RAINGAGES]\nRG INTENSITY 0:05 1 TIMESERIES rain\n"
+         "[TIMESERIES]\nrain 01/01/2026 00:00 0\nrain 01/01/2026 03:00 0\n"
+         "air 01/01/2026 00:00 45\nair 01/01/2026 03:00 45\n"
+         "sw 01/01/2026 00:00 400\nsw 01/01/2026 03:00 400\n"
+         "lw 01/01/2026 00:00 300\nlw 01/01/2026 03:00 300\n"
+         "[SNOWPACKS]\n";
+    for (const char* name : {"DD", "UU"})
+        s << name << " PLOWABLE" << pack << name << " IMPERVIOUS" << pack << name << " PERVIOUS" << pack;
+    s << "UU UEB 0 1 0 .1 MODEL UEB\n"
+         "[2D_OPTIONS]\nMAX_TIMESTEP 30\nREPORT_2D NO\nINFILTRATION NO\nEVAPORATION NO\n"
+         "[2D_SNOW_DEFAULTS]\n* SNOWPACK DD\n"
+         "[2D_SNOW]\nCELL 2 SNOWPACK UU\nCELL 3 SNOWPACK NONE\n"
+         "[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n0 10 0\n-10 10 0\n"
+         "[2D_TRIANGLES]\n0 1 2 .03\n0 2 3 .03\n0 3 4 .03\n[REPORT]\nINPUT NO\n";
+    SWMM_Engine e = openDeck("mesh_ueb_pack_override", s.str());
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK) << swmm_get_last_error_msg(e);
+    const auto& snow = static_cast<openswmm::SWMMEngine*>(e)->surfaceRouter2D().state().snow;
+    ASSERT_TRUE(snow.active());
+    ASSERT_EQ(snow.geometry().size(), 3u);
+    EXPECT_TRUE(snow.owns(0));
+    EXPECT_TRUE(snow.owns(1));
+    EXPECT_FALSE(snow.owns(2));
+    EXPECT_EQ(snow.kind(0), openswmm::surface::SnowKind::DegreeDay);
+    EXPECT_EQ(snow.kind(1), openswmm::surface::SnowKind::Ueb);
+
+    ASSERT_EQ(swmm_engine_start(e, 0), SWMM_OK);
+    double elapsed = 0.0;
+    int status = SWMM_OK;
+    while ((status = swmm_engine_step(e, &elapsed)) == SWMM_OK && elapsed > 0.0) {}
+    ASSERT_EQ(status, SWMM_OK) << swmm_get_last_error_msg(e);
+    SWMM_SnowState states[3]{};
+    SWMM_MeshSnowLedger ledgers[3]{};
+    ASSERT_EQ(swmm_snow2d_get_states(e, 0, 3, states), SWMM_OK);
+    ASSERT_EQ(swmm_snow2d_get_ledgers(e, 0, 3, ledgers), SWMM_OK);
+    EXPECT_EQ(states[0].model, SWMM_SNOW_DEGREE_DAY);
+    EXPECT_EQ(states[1].model, SWMM_SNOW_UEB);
+    EXPECT_EQ(states[2].model, SWMM_SNOW_DEFAULT);
+    EXPECT_TRUE(std::isnan(states[0].energy_kjm2));
+    EXPECT_TRUE(std::isfinite(states[1].energy_kjm2));
+    EXPECT_NEAR(ledgers[0].residual_m3, 0.0, 1e-9);
+    EXPECT_NEAR(ledgers[1].residual_m3, 0.0, 1e-9);
+    EXPECT_TRUE(std::isnan(ledgers[2].residual_m3));
+    swmm_engine_end(e);
+    closeDeck(e);
 }
