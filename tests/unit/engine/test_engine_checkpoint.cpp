@@ -683,7 +683,8 @@ struct ThermalSurfaceSession {
                const std::string& channel_tag="channel:test",bool dry_surface=false,
                bool atmospheric_exchange=false,bool temperature_timeseries=false,
                bool lateral_conduction=false,bool heterogeneous_ground=false,
-               bool mapped_channel=false,bool enable_checkpoint=true) {
+               bool mapped_channel=false,bool enable_checkpoint=true,
+               bool ueb_snow=false) {
         const auto p=root()/name;
         std::string deck=
             "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
@@ -734,6 +735,17 @@ struct ThermalSurfaceSession {
         mesh.set_triangle(0,0,1,2);mesh.set_triangle(1,1,3,2);mesh.mannings_n={.03,.03};
         mesh.tri_init_depth=dry_surface?std::vector<double>{0,0}:std::vector<double>{.04,.03};
         mesh.tri_tag={channel_tag,"floodplain"};
+        if(ueb_snow) {
+            auto& c=engine.context();c.options.ignore_snow_melt=false;
+            c.snowpack_names.try_add("Snow");c.snowpacks.names={"Snow"};
+            c.snowpacks.plowable=c.snowpacks.impervious=c.snowpacks.pervious={
+                std::array<double,7>{1,2,0,.1,100,10,0}};
+            c.snowpacks.removal={std::array<double,6>{}};c.snowpacks.removal_subcatch={""};
+            c.snowpacks.config.model=surface::SnowKind::Ueb;c.snowpacks.config.step=60;
+            c.snowpacks.config.monthly_range.fill(10.);
+            c.snowpacks.config.site=surface::ClimateSite{45,-120,-8,1000};
+            c.snowpacks.mesh_config.defaults["*"].pack="Snow";
+        }
         if(heterogeneous_ground)for(int cell=0;cell<2;++cell)for(int zone:{SWMM_GW_ZONE_SAT,SWMM_GW_ZONE_UNSAT})
             if(swmm_gw_init_quality_set(&engine,SWMM_GW_SCOPE_CELL,nullptr,cell,zone,-1,
                                         "__TEMPERATURE__",cell==0?10:20)!=SWMM_OK)
@@ -5396,6 +5408,7 @@ TEST(EngineCheckpoint, ManagedSnowOwnersAndMeshResumeAcceptedWaterWithoutDoubleC
             for(const auto& book:snow.ledgers()){EXPECT_NEAR(book.residual(),0,1e-9);if(model==surface::SnowKind::Ueb)EXPECT_NEAR(book.energyResidual(),0,1e-6);}
             EXPECT_EQ(snow.saveCheckpoint(),b.surfaceRouter2D().state().snow.saveCheckpoint());
         }
+
 #ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
         if(output==2) {
             ASSERT_EQ(a.end(),0);ASSERT_EQ(b.end(),0);
@@ -5406,5 +5419,41 @@ TEST(EngineCheckpoint, ManagedSnowOwnersAndMeshResumeAcceptedWaterWithoutDoubleC
         }
 #endif
     }
+}
+TEST(EngineCheckpoint, UebGroundContactRestoresAcceptedEnergyExactly) {
+    const std::string name="ueb-ground-contact-restart";
+    ThermalSurfaceSession a,b;
+    ASSERT_NO_THROW(a.start(name+"-a",8,"channel:test",true,false,false,false,false,false,true,true));
+    ASSERT_NO_THROW(b.start(name+"-b",8,"channel:test",true,false,false,false,false,false,true,true));
+    auto& sa=a.engine.surfaceRouter2D().state().snow;
+    auto& sb=b.engine.surfaceRouter2D().state().snow;
+    ASSERT_TRUE(sa.active());ASSERT_TRUE(sb.active());
+    ASSERT_EQ(sa.kind(0),surface::SnowKind::Ueb);ASSERT_EQ(sb.kind(0),surface::SnowKind::Ueb);
+    ASSERT_GT(sa.outputs()[0].cover_frac,0);ASSERT_GT(sb.outputs()[0].cover_frac,0);
+    auto& ground=a.engine.surfaceRouter2D().subsurface().heat();
+    auto& resumed_ground=b.engine.surfaceRouter2D().subsurface().heat();
+    ASSERT_TRUE(a.engine.surfaceRouter2D().state().heat.enabled);
+    ASSERT_GE(a.engine.surfaceRouter2D().state().transport.temp_row,0);
+    ASSERT_TRUE(ground.active());ASSERT_TRUE(resumed_ground.active());
+    ASSERT_TRUE(ground.config->options.conduction);ASSERT_TRUE(resumed_ground.config->options.conduction);
+    ASSERT_FALSE(ground.cells[0].column.energy.empty());ASSERT_FALSE(resumed_ground.cells[0].column.energy.empty());
+    ASSERT_TRUE(sa.groundContactEnabled(0));ASSERT_TRUE(sb.groundContactEnabled(0));
+    ASSERT_TRUE(ground.snowContactEnabled(0));ASSERT_TRUE(resumed_ground.snowContactEnabled(0));
+    EXPECT_GT(std::abs(sa.outputs()[0].Ts_C-ground.activeTemperature(0,0)),1e-6)
+        << "snow surface=" << sa.outputs()[0].Ts_C << " soil=" << ground.activeTemperature(0,0);
+    while(a.engine.context().current_time<43.1)ASSERT_NO_THROW(step(a.engine));
+    EXPECT_EQ(ground.cells[0].failed,0)<<ground.cells[0].error;
+    EXPECT_NE(ground.cells[0].surface_j,0);
+    ASSERT_NE(sa.ledgers()[0].ground_contact_energy,0);
+    EXPECT_NEAR(sa.ledgers()[0].energyResidual(),0,1e-6);
+    const auto path=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(path.string()),"");
+    ASSERT_EQ(b.engine.loadCheckpoint(path.string()),"");compare(a.engine,b.engine,name+"-restored");
+    while(a.engine.context().current_time<83.1)ASSERT_NO_THROW(step(a.engine));
+    while(b.engine.context().current_time<83.1)ASSERT_NO_THROW(step(b.engine));
+    compare(a.engine,b.engine,name+"-continued");
+    EXPECT_EQ(sa.saveCheckpoint(),sb.saveCheckpoint());
+    EXPECT_EQ(ground.cells[0].column.energy,resumed_ground.cells[0].column.energy);
+    EXPECT_EQ(ground.cells[0].surface_j,resumed_ground.cells[0].surface_j);
+    EXPECT_NEAR(sa.ledgers()[0].energyResidual(),0,1e-6);
 }
 #endif

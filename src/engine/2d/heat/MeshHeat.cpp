@@ -183,6 +183,7 @@ std::string initializeMeshHeat(SimulationContext& ctx,const MeshData& mesh,Surfa
     h.reported_temperature.assign(n,ctx.heat_config.global_temp[static_cast<int>(HeatSource::INITIAL_STATE)]);
     for(auto* row:{&h.atmospheric_j,&h.radiative_j,&h.sensible_j,&h.ground_j,&h.water_bed_j,&h.water_j,&h.latent_j,&h.evaporated_m3})row->assign(n,0);
     h.failures.assign(n,0);
+    h.ground_column_seconds.assign(n,0);
     if(h.ground_column) {
         if(!ctx.twod_io.gw)return "Ground-column boundary configuration is unavailable.";
         h.aquifer_ground=aquifer;h.aquifer_owned.assign(n,0);std::vector<unsigned char> standalone(n,1);
@@ -285,6 +286,7 @@ void advectStandaloneGround(MeshHeatState& h,int i,double volume,double donor) n
 }
 void prepareMeshHeat(SimulationContext& ctx,SurfaceStateData& state,double dt) {
     if(!state.heat.enabled)return;
+    std::fill(state.heat.ground_column_seconds.begin(),state.heat.ground_column_seconds.end(),0);
     if(state.heat.surface_inherits)state.heat.surface=ctx.heat_config.surface_exchange;
     if(state.heat.radiative_inherits)state.heat.radiative=ctx.heat_config.radiative_exchange;
     if(state.heat.radiative)climate::updateSolarForcing(ctx,dt,true);
@@ -296,6 +298,10 @@ double applyMeshHeatCell(const MeshData& mesh,const SolverOptions2D& options,Mes
     if(!h.enabled||!(dt>0))return mass;
     const auto& ctx=*h.context;const auto elem=HeatElement::cell2d(i);
     if(h.ground_column) {
+        if(std::size_t(i)<h.ground_column_seconds.size()) {
+            auto& applied=h.ground_column_seconds[i];applied+=dt;
+            if(!std::isfinite(applied)){applied=0;h.failures[i]=1;}
+        }
         try {
             const double updated=groundColumnStep(mesh,options,h,i,mass,volume,evaporated,dt);
             if(!(volume>0)) {
@@ -363,5 +369,23 @@ double applyMeshHeatCell(const MeshData& mesh,const SolverOptions2D& options,Mes
     h.sensible_j[i]+=received(flux0.sensible,flux1.sensible);
     h.reported_temperature[i]=tw+dw;
     return updated;
+}
+void advanceDryGroundColumns(const MeshData& mesh,const SolverOptions2D& options,
+                             SurfaceStateData& state,double seconds) noexcept {
+    auto& h=state.heat;
+    if(!h.enabled||!h.ground_column||!(seconds>0))return;
+    const int temp_row=state.transport.temp_row;
+    for(int i=0;i<mesh.n_cells();++i) {
+        if(i>=int(state.volume.size())||state.volume[i]>0)continue;
+        const double applied=std::size_t(i)<h.ground_column_seconds.size()?h.ground_column_seconds[i]:0.;
+        const double remaining=seconds-applied;
+        if(!(remaining>std::numeric_limits<double>::epsilon()*std::max(1.,seconds)))continue;
+        double mass=0;
+        if(temp_row>=0&&temp_row<state.transport.n_species)
+            mass=state.transport.cell_mass[state.transport.idx(temp_row,i)];
+        mass=applyMeshHeatCell(mesh,options,h,i,mass,0,0,remaining);
+        if(temp_row>=0&&temp_row<state.transport.n_species)
+            state.transport.cell_mass[state.transport.idx(temp_row,i)]=mass;
+    }
 }
 } // namespace openswmm::twoD

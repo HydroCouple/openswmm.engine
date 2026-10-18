@@ -20,6 +20,10 @@ struct MeshHeatState {
     std::vector<double> bed_energy,initial_bed_energy,bed_capacity,reported_temperature;
     std::vector<double> atmospheric_j,radiative_j,sensible_j,ground_j,water_bed_j,water_j,latent_j,evaporated_m3;
     std::vector<int> failures;
+    // Seconds already advanced during the current router interval. Surface
+    // temperature rows update stores inside the marcher; dry columns receive
+    // only the remaining interval after routing completes.
+    std::vector<double> ground_column_seconds;
     std::vector<unsigned char> hyporheic_eligible;
     // LOCAL_STORAGE porewater: fixed saturated pore volume, independent of
     // surface wetness. Temperature remains solely in bed_energy.
@@ -52,6 +56,9 @@ double commitGroundColumnSystem(const GroundColumnAssembly&,const ThermalSolutio
 std::string initializeMeshHeat(SimulationContext&,const MeshData&,SurfaceStateData&,const SolverOptions2D&,
     GroundHeatState* aquifer=nullptr,const std::vector<uint8_t>* coverage=nullptr);
 void prepareMeshHeat(SimulationContext&,SurfaceStateData&,double seconds);
+// Complete ground-column conduction for dry cells that did not reach a
+// temperature source row during the hydraulic march.
+void advanceDryGroundColumns(const MeshData&,const SolverOptions2D&,SurfaceStateData&,double seconds) noexcept;
 // Called before intensive source sinks: the accepted evaporating water must
 // receive its thermal update before it leaves, including complete drying.
 double applyMeshHeatCell(const MeshData&,const SolverOptions2D&,MeshHeatState&,int cell,double temperature_volume,

@@ -46,6 +46,7 @@ public:
     // here would retain contact after a melt-out at the interval boundary.
     double groundContactFraction(int cell) const {return groundContactEnabled(cell)?output_.at(cell).cover_frac:0.;}
     double groundContactSurfaceTemperature(int cell) const {return output_.at(cell).Ts_C;}
+    const std::vector<unsigned char>& groundContactMask() const {return ground_contact_;}
     const std::vector<ueb::HeldState>& columns() const {return held_;}
 private:
     std::string advanceInPlace(SimulationContext&,double,double,const std::vector<double>&,const std::vector<double>&);

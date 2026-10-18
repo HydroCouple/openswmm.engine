@@ -15,6 +15,7 @@
 #include "mesh/VertexReconstruction.hpp"
 #include "mesh/VfrClosure.hpp"
 #include "mesh/QuadVfr.hpp"
+#include "heat/MeshHeat.hpp"
 #include "solver/SurfaceFluxCalculator.hpp"
 #include "solver/ExplicitInertialSolver.hpp"
 #include "subsurface/CommonSourceStage.hpp"
@@ -1810,6 +1811,11 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
         perf::ScopedTimer tm_adv(perf::sec_2d_advance);
         solver_->advance(sim_time_, sim_time_ + dt);  // always reaches target
     }
+    advanceDryGroundColumns(mesh_,options_,state_,dt);
+    if(state_.heat.ground_column&&subsurface_.heat().active())
+        for(std::size_t i=0;i<state_.heat.aquifer_owned.size();++i)
+            if(state_.heat.aquifer_owned[i])
+                subsurface_.heat().refreshView(int(i),subsurface_.transport());
     if(state_.heat.enabled && std::any_of(state_.heat.failures.begin(),state_.heat.failures.end(),
                                          [](int failed){return failed!=0;}))
         throw std::runtime_error("[2D heat] Nonfinite thermal update; refine the thermal step or check forcing/material values.");

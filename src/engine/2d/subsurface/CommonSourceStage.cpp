@@ -191,9 +191,12 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
     auto mesh_snow=surface.snow;
     if(mesh_snow.active()) {
         if(!surface.snow_context)return "Mesh snow has no weather owner.";
+        const auto ground_contact=mesh_snow.groundContactMask();
         auto geometry=mesh_snow.geometry();
         for(std::size_t i=0;i<geometry.size();++i)geometry[i].area=preview.mesh_weather_area[i];
         if(auto error=mesh_snow.initialize(*surface.snow_context,geometry);!error.empty())return error;
+        if(ground_contact.size()==geometry.size())
+            if(auto error=mesh_snow.setGroundContactMask(ground_contact);!error.empty())return error;
     }
     const auto partition_error=sources.configureSpatialCoverage(fractions);
     if(!partition_error.empty())return partition_error;

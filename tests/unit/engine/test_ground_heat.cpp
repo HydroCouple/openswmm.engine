@@ -18,6 +18,7 @@
 #include "2d/SurfaceRouter2D.hpp"
 #include "2d/subsurface/SubsurfaceSolver.hpp"
 #include "2d/heat/ChannelGround.hpp"
+#include "2d/heat/MeshHeat.hpp"
 #include "2d/heat/ThermalCheckpoint.hpp"
 namespace {
 namespace fs=std::filesystem;
@@ -91,6 +92,48 @@ TEST(GroundHeat, MeshLidGroundContactRefusesHeatUntilItsWaterRouteIsQualified) {
     EXPECT_NE(swmm_engine_initialize(engine),SWMM_OK);
     EXPECT_NE(std::string(swmm_get_last_error_msg(engine)).find("Mesh LID bottom exchange currently requires water-only routing."),std::string::npos);
     swmm_engine_close(engine);swmm_engine_destroy(engine);
+}
+TEST(GroundHeat, DryGroundColumnsAdvanceOnlyTheUnprocessedRouterInterval) {
+    Model split("dry-ground-remainder-split"),reference("dry-ground-remainder-reference");
+    ASSERT_NE(split.e,nullptr);ASSERT_NE(reference.e,nullptr);
+    for(auto* model:{&split,&reference}) {
+        ASSERT_EQ(swmm_gw_transport_option_set(model->e,"CONDUCTION","YES"),SWMM_OK);
+        ASSERT_EQ(swmm_gw_transport_option_set(model->e,"SURFACE_THERMAL_BC","FIXED 10"),SWMM_OK);
+        ASSERT_EQ(enablePorewater(*model),SWMM_OK);
+        ASSERT_TRUE(model->router().state().heat.ground_column);
+        ASSERT_TRUE(model->router().subsurface().heat().config->options.conduction);
+    }
+    auto& split_router=split.router();auto& split_state=split_router.state();
+    auto& reference_router=reference.router();auto& reference_state=reference_router.state();
+    ASSERT_EQ(split_state.volume.size(),2u);ASSERT_EQ(reference_state.volume.size(),2u);
+    const int row=split_state.transport.temp_row;ASSERT_GE(row,0);
+    for(int cell=0;cell<2;++cell) {
+        split_state.volume[cell]=reference_state.volume[cell]=0;
+        split_state.transport.cell_mass[split_state.transport.idx(row,cell)]=0;
+        reference_state.transport.cell_mass[reference_state.transport.idx(row,cell)]=0;
+    }
+    auto& split_heat=split_router.subsurface().heat();auto& reference_heat=reference_router.subsurface().heat();
+    auto& split_context=static_cast<openswmm::SWMMEngine*>(split.e)->context();
+    auto& reference_context=static_cast<openswmm::SWMMEngine*>(reference.e)->context();
+    split_heat.prepare();reference_heat.prepare();
+    openswmm::twoD::prepareMeshHeat(split_context,split_state,60);
+    openswmm::twoD::prepareMeshHeat(reference_context,reference_state,60);
+    const double mass=split_state.transport.cell_mass[split_state.transport.idx(row,0)];
+    openswmm::twoD::applyMeshHeatCell(split_router.mesh(),split_router.options(),split_state.heat,0,mass,0,0,20);
+    openswmm::twoD::advanceDryGroundColumns(split_router.mesh(),split_router.options(),split_state,60);
+    const double reference_mass=reference_state.transport.cell_mass[reference_state.transport.idx(row,0)];
+    openswmm::twoD::applyMeshHeatCell(reference_router.mesh(),reference_router.options(),reference_state.heat,0,reference_mass,0,0,20);
+    openswmm::twoD::applyMeshHeatCell(reference_router.mesh(),reference_router.options(),reference_state.heat,0,reference_mass,0,0,40);
+    const double second_mass=reference_state.transport.cell_mass[reference_state.transport.idx(row,1)];
+    openswmm::twoD::applyMeshHeatCell(reference_router.mesh(),reference_router.options(),reference_state.heat,1,second_mass,0,0,60);
+    for(int cell=0;cell<2;++cell) {
+        EXPECT_EQ(split_heat.cells[cell].column.energy,reference_heat.cells[cell].column.energy);
+        EXPECT_DOUBLE_EQ(split_state.heat.ground_column_seconds[cell],60);
+        EXPECT_DOUBLE_EQ(reference_state.heat.ground_column_seconds[cell],60);
+        EXPECT_EQ(split_heat.cells[cell].failed,0)<<split_heat.cells[cell].error;
+        EXPECT_EQ(reference_heat.cells[cell].failed,0)<<reference_heat.cells[cell].error;
+    }
+    EXPECT_NE(split_heat.cells[0].surface_j,0);
 }
 TEST(GroundHeat, ExplicitGroundPorewaterUsesAcceptedWellDonorsAndBooksItsAgeClock) {
     for(const auto* closure:{"CLOSED_FORM","ENSLAVED","SIGMA"}) {
