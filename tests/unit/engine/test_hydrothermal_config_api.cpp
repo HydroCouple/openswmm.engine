@@ -677,8 +677,12 @@ TEST(HydrothermalConfig, AuthoredChannelBedReachesTheSolverAfterSaveAndReopen) {
     EXPECT_LT(on.ca, off.ca - 0.1);
     EXPECT_GT(on.ca, 6.0);
     EXPECT_DOUBLE_EQ(on.ca, on.cb);
-    // The per-link velocity reaches the solver for CB alone. Its direction
-    // is not asserted here: it awaits an independent bed solution (P1).
+    // The per-link velocity reaches the solver for CB alone. The isolated
+    // finite water/bed/ground law has an independent direction and energy
+    // benchmark in test_bed_exchange.cpp. This four-hour system run also has
+    // evolving hydraulics and weather forcing, so its net direction remains
+    // an integrated project-level qualification rather than a monotonicity
+    // assertion on the isolated contact law.
     EXPECT_DOUBLE_EQ(hyporheic.ca, on.ca);
     EXPECT_NE(hyporheic.cb, on.cb);
 }
