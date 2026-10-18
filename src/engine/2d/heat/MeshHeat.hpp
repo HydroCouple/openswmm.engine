@@ -48,6 +48,7 @@ struct GroundColumnAssembly {
         double area=0;
         LidNodeThermalGraph graph;
         std::vector<double> physical_energy;
+        std::vector<double> physical_ground_contact_j;
         std::vector<std::size_t> vertical_contacts;
         std::size_t ground_contact=std::numeric_limits<std::size_t>::max();
     };

@@ -29,6 +29,11 @@ std::string buildLidNodeThermalGraph(const LidNodeState& state,double mobile_wat
         return "Nonfinite or negative Richards LID thermal water.";
     if(!state.thermal_energy.empty()&&state.thermal_energy.size()!=state.cells.size())
         return "LID thermal energy shape differs from its physical layers.";
+    if(!state.thermal_ground_contact_j.empty()&&state.thermal_ground_contact_j.size()!=state.cells.size())
+        return "LID ground-contact receipt shape differs from its physical layers.";
+    if(std::any_of(state.thermal_ground_contact_j.begin(),state.thermal_ground_contact_j.end(),
+        [](double value){return !std::isfinite(value);}))
+        return "LID ground-contact receipt contains a nonfinite value.";
 
     LidNodeThermalGraph next;std::vector<double> thickness,area,conductivity;
     thickness.reserve(state.cells.size());area.reserve(state.cells.size());conductivity.reserve(state.cells.size());

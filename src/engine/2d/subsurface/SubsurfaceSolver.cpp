@@ -2137,7 +2137,7 @@ std::string SubsurfaceSolver::conductGroundWithLids(int i,double dt) {
     const auto& options=heat_.config->options;
     const double initial=ctx.heat_config.global_temp[static_cast<int>(HeatSource::INITIAL_STATE)];
     constexpr double ft2_to_m2=.09290304;
-    struct LidOwner {int row=-1;double area=0;LidNodeThermalGraph graph;};
+    struct LidOwner {int row=-1;double area=0;std::size_t ground_contact=std::numeric_limits<std::size_t>::max();LidNodeThermalGraph graph;};
     std::vector<LidOwner> lids;lids.reserve(beds.size());
     double occupied=0;
     for(const int b:beds) {
@@ -2153,6 +2153,11 @@ std::string SubsurfaceSolver::conductGroundWithLids(int i,double dt) {
         if(auto error=buildLidNodeThermalGraph(state,0,heat_.water_capacity,
             ctx.heat_config.conduction,initial,owner.graph);!error.empty())return error;
         if(!ctx.heat_config.layer_conduction)owner.graph.contacts.clear();
+        if(!state.thermal_ground_contact_j.empty()&&
+           (state.thermal_ground_contact_j.size()!=state.cells.size()||
+            std::any_of(state.thermal_ground_contact_j.begin(),state.thermal_ground_contact_j.end(),
+                        [](double x){return !std::isfinite(x); })))
+            return "Mesh LID ground-contact receipt shape or value is invalid.";
         occupied+=owner.area;
         if(!std::isfinite(occupied)||occupied>soil.area*(1+1e-12))
             return "Mesh LID thermal footprints overlap beyond their groundwater cell area.";
@@ -2203,7 +2208,7 @@ std::string SubsurfaceSolver::conductGroundWithLids(int i,double dt) {
             ThermalContact contact;
             if(auto error=buildLidNodeGroundThermalContact(owner.graph,stores.size(),ground_offset,
                 owner.area,soil.area,soil.depth_edges[1]-soil.depth_edges[0],soil.conductivity.front(),0,contact);!error.empty())return error;
-            contact.a+=int(offsets[k]);contacts.push_back(contact);vertical_contact.push_back(0);
+            contact.a+=int(offsets[k]);lids[k].ground_contact=contacts.size();contacts.push_back(contact);vertical_contact.push_back(0);
         }
         (void)ground_offset;
     } else if(lid_store_count==0)return {};
@@ -2220,6 +2225,17 @@ std::string SubsurfaceSolver::conductGroundWithLids(int i,double dt) {
         lid_energy[k].assign(solved.energy.begin()+offset,solved.energy.begin()+offset+count);
         lid_states.push_back(ctx.node_subtypes.storages.lid_state[lids[k].row]);
         if(auto error=publishLidNodeThermalEnergy(lid_states.back(),lids[k].graph,lid_energy[k]);!error.empty())return error;
+        auto& receipts=lid_states.back().thermal_ground_contact_j;
+        if(receipts.empty())receipts.assign(lid_states.back().cells.size(),0.0);
+        if(receipts.size()!=lid_states.back().cells.size())return "Mesh LID ground-contact receipt shape differs from its physical layers.";
+        if(lids[k].ground_contact!=std::numeric_limits<std::size_t>::max()) {
+            if(lids[k].ground_contact>=solved.contact_j.size()||lids[k].graph.cells.empty())
+                return "Mesh LID ground-contact receipt does not match the solved contact graph.";
+            const auto physical=lids[k].graph.cells.back();
+            const double next=receipts[physical]-solved.contact_j[lids[k].ground_contact];
+            if(!std::isfinite(next))return "Mesh LID ground-contact receipt overflow.";
+            receipts[physical]=next;
+        }
     }
     double lid_contact_j=0,vertical_j=0;
     for(std::size_t k=0;k<solved.contact_j.size();++k) {

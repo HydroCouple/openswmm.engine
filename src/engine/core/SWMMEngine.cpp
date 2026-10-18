@@ -7276,6 +7276,7 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
         snap.thermal2d_lid_layer_temperature.clear();
         snap.thermal2d_lid_layer_energy.clear();
         snap.thermal2d_lid_layer_capacity.clear();
+        snap.thermal2d_lid_layer_ground_contact_j.clear();
         const auto& storage = ctx_.node_subtypes.storages;
         const double initial_lid_temperature = ctx_.heat_config.global_temp[
             static_cast<int>(HeatSource::INITIAL_STATE)];
@@ -7316,6 +7317,8 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                         ? energy / capacity : missing);
                     snap.thermal2d_lid_layer_energy.push_back(energy);
                     snap.thermal2d_lid_layer_capacity.push_back(capacity);
+                    snap.thermal2d_lid_layer_ground_contact_j.push_back(
+                        lid.thermal_ground_contact_j.empty()?0.0:lid.thermal_ground_contact_j[physical]);
                 }
             }
         }

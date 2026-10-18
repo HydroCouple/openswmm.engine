@@ -116,6 +116,13 @@ GroundColumnAssembly appendGroundColumnSystem(const MeshData& mesh,const SolverO
                 for(std::size_t k=0;k<draft.graph.cells.size();++k)
                     draft.physical_energy[draft.graph.cells[k]]=draft.graph.stores[k].energy;
             }
+            draft.physical_ground_contact_j=state.thermal_ground_contact_j;
+            if(draft.physical_ground_contact_j.empty())
+                draft.physical_ground_contact_j.assign(state.cells.size(),0.0);
+            else if(draft.physical_ground_contact_j.size()!=state.cells.size()||
+                    std::any_of(draft.physical_ground_contact_j.begin(),draft.physical_ground_contact_j.end(),
+                                [](double x){return !std::isfinite(x);}))
+                throw std::runtime_error("Mesh LID ground-contact receipt shape or value is invalid.");
             lid_area+=binding.area;a.lids.push_back(std::move(draft));
         }
     }
@@ -181,6 +188,16 @@ GroundColumnAssembly appendGroundColumnSystem(const MeshData& mesh,const SolverO
 }
 double commitGroundColumnSystem(GroundColumnAssembly& a,const ThermalSolution& solved) noexcept {
     auto& owner=*a.owner;auto& cell=owner.cells[a.cell];auto& c=cell.column;auto* h=a.mesh_heat;
+    for(const auto& lid:a.lids) {
+        if(lid.physical_ground_contact_j.size()!=lid.graph.physical_thickness_m.size()||
+           (lid.ground_contact!=std::numeric_limits<std::size_t>::max()&&
+            (lid.graph.cells.empty()||lid.graph.cells.back()>=lid.physical_ground_contact_j.size()||
+             lid.ground_contact>=solved.contact_j.size()||
+             !std::isfinite(lid.physical_ground_contact_j[lid.graph.cells.back()]-solved.contact_j[lid.ground_contact])))) {
+            cell.failed=1;try{cell.error="Invalid solved Mesh LID ground-contact receipt.";}catch(...){}
+            if(h)h->failures[a.cell]=1;return a.mass;
+        }
+    }
     for(auto& lid:a.lids) {
         for(std::size_t k=0;k<lid.graph.cells.size();++k) {
             const auto index=lid.graph.cells[k];const double energy=solved.energy[std::size_t(lid.first_store)+k];
@@ -213,8 +230,11 @@ double commitGroundColumnSystem(GroundColumnAssembly& a,const ThermalSolution& s
         auto& state=owner.context->node_subtypes.storages.lid_state[std::size_t(lid.row)];
         state.thermal_energy.swap(lid.physical_energy);
         for(const auto index:lid.vertical_contacts)cell.vertical_absolute_j+=std::abs(solved.contact_j[index]);
-        if(lid.ground_contact!=std::numeric_limits<std::size_t>::max())
+        if(lid.ground_contact!=std::numeric_limits<std::size_t>::max()) {
             cell.lid_contact_j+=solved.contact_j[lid.ground_contact];
+            lid.physical_ground_contact_j[lid.graph.cells.back()]-=solved.contact_j[lid.ground_contact];
+        }
+        state.thermal_ground_contact_j.swap(lid.physical_ground_contact_j);
     }
     for(int j=0;j<a.soil_count;++j)c.energy[j]=solved.energy[a.first_store+j];
     if(h)h->refreshBedView(a.cell);

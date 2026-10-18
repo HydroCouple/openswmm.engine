@@ -57,6 +57,7 @@ struct LidNodeState {
     std::vector<LidPortTransfer> quality_ports;
     std::vector<double> quality_outlet_conc; // [link * pollutant + pollutant], NaN means mobile
     std::vector<double> thermal_energy; // canonical J per physical cell; never a dry-temperature display value
+    std::vector<double> thermal_ground_contact_j; // cumulative signed soil-contact receipt, positive into each LID cell
     double quality_old_mobile = 0.0;
     double mobile_delta = 0.0; // accepted port balance in the current hydraulic iteration
     std::vector<double> port_delta; // accepted link exchange volumes, reset each hydraulic iteration

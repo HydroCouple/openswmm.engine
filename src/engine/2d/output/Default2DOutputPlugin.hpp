@@ -344,6 +344,7 @@ private:
     hid_t   ds_heat_lid_temp_       = H5I_INVALID_HID;
     hid_t   ds_heat_lid_energy_     = H5I_INVALID_HID;
     hid_t   ds_heat_lid_capacity_   = H5I_INVALID_HID;
+    hid_t   ds_heat_lid_ground_contact_ = H5I_INVALID_HID;
     void createThermalDatasets(const SimulationSnapshot& snap);
     hid_t ds_face_vx_              = H5I_INVALID_HID;
     hid_t ds_face_vy_              = H5I_INVALID_HID;

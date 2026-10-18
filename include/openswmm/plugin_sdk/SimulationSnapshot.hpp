@@ -406,6 +406,7 @@ struct SimulationSnapshot {
     std::vector<double> thermal2d_lid_layer_temperature;
     std::vector<double> thermal2d_lid_layer_energy;
     std::vector<double> thermal2d_lid_layer_capacity;
+    std::vector<double> thermal2d_lid_layer_ground_contact_j;
 
     std::vector<double> surface_edge_flux;      ///< Normal flux through each edge, flat [tri*3+edge]
     std::vector<double> surface_vert_head;      ///< Reconstructed head at vertices (m) — SOLVER field (dry-cell head = bed)

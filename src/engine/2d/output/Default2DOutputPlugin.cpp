@@ -990,7 +990,8 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
             snap.thermal2d_lid_layer_area_m2.size() == n_lid &&
             snap.thermal2d_lid_layer_temperature.size() == n_lid &&
             snap.thermal2d_lid_layer_energy.size() == n_lid &&
-            snap.thermal2d_lid_layer_capacity.size() == n_lid;
+            snap.thermal2d_lid_layer_capacity.size() == n_lid &&
+            snap.thermal2d_lid_layer_ground_contact_j.size() == n_lid;
         if (!lid_shape_ok) {
             last_error_ = "Mesh LID thermal output snapshot has inconsistent layer mappings or state arrays.";
             state_ = PluginState::ERROR;
@@ -1037,6 +1038,7 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
             extendAndWrite2D(ds_heat_lid_temp_, snap.thermal2d_lid_layer_temperature.data(), n_heat_lid_layers_);
             extendAndWrite2D(ds_heat_lid_energy_, snap.thermal2d_lid_layer_energy.data(), n_heat_lid_layers_);
             extendAndWrite2D(ds_heat_lid_capacity_, snap.thermal2d_lid_layer_capacity.data(), n_heat_lid_layers_);
+            extendAndWrite2D(ds_heat_lid_ground_contact_, snap.thermal2d_lid_layer_ground_contact_j.data(), n_heat_lid_layers_);
         }
     }
 
@@ -1205,8 +1207,9 @@ void Default2DOutputPlugin::createThermalDatasets(const SimulationSnapshot& snap
         ds_heat_lid_temp_ = createLidState("Mesh2_lid_layer_temperature", "mesh-connected LID physical-layer temperature", "degree_Celsius", "NaN means the physical cell currently has zero heat capacity");
         ds_heat_lid_energy_ = createLidState("Mesh2_lid_layer_energy", "mesh-connected LID physical-layer sensible energy relative to 0 Celsius", "J", "Zero for a physical cell with zero heat capacity");
         ds_heat_lid_capacity_ = createLidState("Mesh2_lid_layer_heat_capacity", "mesh-connected LID physical-layer heat capacity", "J K-1", "Zero for a physical cell with zero heat capacity");
+        ds_heat_lid_ground_contact_ = createLidState("Mesh2_lid_layer_ground_contact_energy", "cumulative signed ground-contact energy received by each mesh-connected LID physical layer", "J", "Signed cumulative receipt; positive into the LID layer");
     }
-    writeStringAttr(file_id_, "thermal_result_schema_version", "3");
+    writeStringAttr(file_id_, "thermal_result_schema_version", "4");
 }
 
 // Snow fields follow the rainfall report selection. They carry their actual
@@ -1529,7 +1532,7 @@ void Default2DOutputPlugin::checkpointWriteStatus(herr_t status) {
 }
 
 std::vector<hid_t*> Default2DOutputPlugin::checkpointDatasets() {
-    std::vector<hid_t*> ids{&ds_time_, &ds_face_depth_, &ds_face_head_, &ds_face_grad_hx_, &ds_face_grad_hy_, &ds_face_grad_hx_lim_, &ds_face_grad_hy_lim_, &ds_face_rainfall_, &ds_face_coupling_flux_, &ds_face_net_source_, &ds_face_infil_rate_, &ds_face_infil_cum_, &ds_face_rain_cum_, &ds_face_species_conc_, &ds_face_buildup_, &ds_gw_sat_conc_, &ds_gw_unsat_conc_, &ds_gw_species_ledger_, &ds_gw_ledger_, &ds_gw_bed_exchange_, &ds_gw_theta_, &ds_heat_water_temp_, &ds_heat_bed_temp_, &ds_heat_bed_energy_, &ds_heat_bed_capacity_, &ds_heat_surface_budget_, &ds_heat_evaporation_, &ds_heat_ground_temp_, &ds_heat_ground_energy_, &ds_heat_ground_capacity_, &ds_heat_layer_temp_, &ds_heat_layer_energy_, &ds_heat_layer_capacity_, &ds_heat_ground_budget_, &ds_heat_lid_temp_, &ds_heat_lid_energy_, &ds_heat_lid_capacity_, &ds_face_vx_, &ds_face_vy_, &ds_face_continuity_err_, &ds_edge_flux_, &ds_node_head_, &ds_node_depth_, &ds_face_max_depth_, &ds_face_max_velocity_, &ds_face_max_continuity_err_};
+    std::vector<hid_t*> ids{&ds_time_, &ds_face_depth_, &ds_face_head_, &ds_face_grad_hx_, &ds_face_grad_hy_, &ds_face_grad_hx_lim_, &ds_face_grad_hy_lim_, &ds_face_rainfall_, &ds_face_coupling_flux_, &ds_face_net_source_, &ds_face_infil_rate_, &ds_face_infil_cum_, &ds_face_rain_cum_, &ds_face_species_conc_, &ds_face_buildup_, &ds_gw_sat_conc_, &ds_gw_unsat_conc_, &ds_gw_species_ledger_, &ds_gw_ledger_, &ds_gw_bed_exchange_, &ds_gw_theta_, &ds_heat_water_temp_, &ds_heat_bed_temp_, &ds_heat_bed_energy_, &ds_heat_bed_capacity_, &ds_heat_surface_budget_, &ds_heat_evaporation_, &ds_heat_ground_temp_, &ds_heat_ground_energy_, &ds_heat_ground_capacity_, &ds_heat_layer_temp_, &ds_heat_layer_energy_, &ds_heat_layer_capacity_, &ds_heat_ground_budget_, &ds_heat_lid_temp_, &ds_heat_lid_energy_, &ds_heat_lid_capacity_, &ds_heat_lid_ground_contact_, &ds_face_vx_, &ds_face_vy_, &ds_face_continuity_err_, &ds_edge_flux_, &ds_node_head_, &ds_node_depth_, &ds_face_max_depth_, &ds_face_max_velocity_, &ds_face_max_continuity_err_};
     for (auto& id : ds_gw_face_) ids.push_back(&id);
     for (auto& id : ds_snow_) ids.push_back(&id);
     return ids;
@@ -1577,6 +1580,7 @@ void Default2DOutputPlugin::closeDatasets() noexcept {
     closeDS(ds_heat_lid_temp_);
     closeDS(ds_heat_lid_energy_);
     closeDS(ds_heat_lid_capacity_);
+    closeDS(ds_heat_lid_ground_contact_);
     closeDS(ds_face_vx_);
     closeDS(ds_face_vy_);
     closeDS(ds_face_continuity_err_);

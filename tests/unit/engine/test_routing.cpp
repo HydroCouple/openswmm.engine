@@ -2100,6 +2100,9 @@ TEST(HydraulicCheckpoint, NodeLidThermalEnergySurvivesRestore) {
     source.thermal_energy.resize(source.cells.size());
     for(std::size_t i=0;i<source.thermal_energy.size();++i)
         source.thermal_energy[i]=(static_cast<double>(i)-1.5)*1234.5;
+    source.thermal_ground_contact_j.resize(source.cells.size());
+    for(std::size_t i=0;i<source.thermal_ground_contact_j.size();++i)
+        source.thermal_ground_contact_j[i]=857.375+static_cast<double>(i)*31.25;
     const auto path=hydraulicArtifacts()/"lid-thermal-state.chk";
     ASSERT_EQ(ra.saveCheckpoint(a,path.string()),"");
 
@@ -2111,10 +2114,15 @@ TEST(HydraulicCheckpoint, NodeLidThermalEnergySurvivesRestore) {
     const auto after=hydraulicArtifacts()/"lid-thermal-state-after.chk";
     ASSERT_EQ(rb.saveCheckpoint(b,before.string()),"");
     EXPECT_FALSE(rb.loadCheckpoint(b,corrupt.string()).empty());
+    const auto corrupt_contact=hydraulicArtifacts()/"lid-thermal-contact-corrupt.chk";
+    hydraulicFile(corrupt_contact,hydraulicStateDouble(hydraulicBytes(path),source.thermal_ground_contact_j.front(),
+        std::numeric_limits<double>::quiet_NaN()));
+    EXPECT_FALSE(rb.loadCheckpoint(b,corrupt_contact.string()).empty());
     ASSERT_EQ(rb.saveCheckpoint(b,after.string()),"");
     EXPECT_EQ(hydraulicBytes(before),hydraulicBytes(after));
     ASSERT_EQ(rb.loadCheckpoint(b,path.string()),"");
     EXPECT_EQ(b.node_subtypes.storages.lid_state[0].thermal_energy,source.thermal_energy);
+    EXPECT_EQ(b.node_subtypes.storages.lid_state[0].thermal_ground_contact_j,source.thermal_ground_contact_j);
     const auto restored=hydraulicArtifacts()/"lid-thermal-state-restored.chk";
     ASSERT_EQ(rb.saveCheckpoint(b,restored.string()),"");
     EXPECT_EQ(hydraulicBytes(path),hydraulicBytes(restored));
@@ -2129,6 +2137,15 @@ TEST(HydraulicCheckpoint, InvalidNodeLidThermalEnergyIsRefusedBeforePublication)
     EXPECT_EQ(hydraulicBytes(path),"preserve prior checkpoint");
     energy.assign(c.node_subtypes.storages.lid_state[0].cells.size(),0);
     energy[0]=std::numeric_limits<double>::quiet_NaN();
+    EXPECT_FALSE(r.saveCheckpoint(c,path.string()).empty());
+    EXPECT_EQ(hydraulicBytes(path),"preserve prior checkpoint");
+    energy.assign(c.node_subtypes.storages.lid_state[0].cells.size(),0);
+    auto& receipt=c.node_subtypes.storages.lid_state[0].thermal_ground_contact_j;
+    receipt={1};
+    EXPECT_FALSE(r.saveCheckpoint(c,path.string()).empty());
+    EXPECT_EQ(hydraulicBytes(path),"preserve prior checkpoint");
+    receipt.assign(c.node_subtypes.storages.lid_state[0].cells.size(),0);
+    receipt[0]=std::numeric_limits<double>::quiet_NaN();
     EXPECT_FALSE(r.saveCheckpoint(c,path.string()).empty());
     EXPECT_EQ(hydraulicBytes(path),"preserve prior checkpoint");
 }
