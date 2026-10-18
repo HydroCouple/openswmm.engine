@@ -1303,7 +1303,10 @@ TEST(GroundHeat, MultipleRoutedChannelsShareOneGroundCellAndOneFiniteSoilStore) 
         "[XSECTIONS]\nC2 RECT_OPEN .5 .1 0 0 1\n"
         "[COORDINATES]\nJ2 1 1\nO2 4 1\n"
         "[DWF]\nJ1 FLOW .01\nJ2 FLOW .01\n";
-    Model m("channel-shared-ground-cell","CLOSED_FORM",.5,false,extra,true);ASSERT_NE(m.e,nullptr);
+    for(const auto* solver:{"LEGACY","EULERIAN_ARD","LAGRANGIAN"}) {
+    SCOPED_TRACE(solver);
+    Model m(std::string("channel-shared-ground-cell-")+solver,"CLOSED_FORM",.5,false,extra,true);ASSERT_NE(m.e,nullptr);
+    ASSERT_EQ(swmm_options_set(m.e,"QUALITY_SOLVER",solver),SWMM_OK);
     ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_GROUND_SOURCE,1),SWMM_OK);
     ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_HYPORHEIC_VELOCITY,2e-5),SWMM_OK);
     ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_BED_THICKNESS,.1),SWMM_OK);
@@ -1362,6 +1365,7 @@ TEST(GroundHeat, MultipleRoutedChannelsShareOneGroundCellAndOneFiniteSoilStore) 
     EXPECT_NEAR(energy(gw.heat())-initial_soil,first_receipt+second_receipt,1e-6);
     EXPECT_NEAR(channel_energy()-initial_channel+first_receipt+second_receipt,0,1e-6);
     EXPECT_NEAR(sum(contacts.channelAtmosphere()),0,1e-12);
+    }
 }
 TEST(GroundHeat, MappedChannelBedMustFitInsideItsActualAquiferProfile) {
     Model m("channel-bed-depth","CLOSED_FORM",.5,false,"",true);ASSERT_NE(m.e,nullptr);
