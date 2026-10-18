@@ -1687,6 +1687,28 @@ TEST(MeshSnow, SubNanosecondIntervalPreservesAcceptedSnowCoverage) {
     EXPECT_DOUBLE_EQ(snow.groundContactFraction(0),1);
 }
 
+TEST(MeshSnow, SnowfallReestablishesGroundContactAfterMeltOut) {
+    SimulationContext ctx;ctx.options.ignore_snow_melt=false;ctx.options.start_date=datetime::encodeDate(2026,1,1);
+    ctx.options.end_date=ctx.options.start_date+2./24;ctx.snowpack_names.add("SP");ctx.snowpacks.names={"SP"};
+    ctx.snowpacks.config.model=surface::SnowKind::Ueb;ctx.snowpacks.config.site=surface::ClimateSite{45,-120,-8,1000};
+    ctx.snowpacks.pervious={std::array<double,7>{.02,.06,32,.1,.1,0,0}};ctx.snowpacks.mesh_config.defaults["*"].pack="SP";
+    std::istringstream met("01/01/2026 00:00 15 50 1 800 400\n01/01/2026 01:00 -5 50 1 0 250\n01/01/2026 02:00 -5 50 1 0 250\n");
+    ASSERT_TRUE(ctx.snowpacks.meteorology.read(met).empty());
+    surface::MeshSnow snow;ASSERT_TRUE(snow.initialize(ctx,{{"grass",50,0,0}}).empty());
+    ASSERT_TRUE(snow.setGroundContactMask({1}).empty());
+    ASSERT_TRUE(snow.advance(ctx,0,3600,{0},{1}).empty());
+    ASSERT_DOUBLE_EQ(snow.outputs()[0].cover_frac,0);
+    EXPECT_DOUBLE_EQ(snow.groundContactFraction(0),0);
+    ASSERT_TRUE(snow.advance(ctx,3600,7200,{1e-5},{1}).empty());
+    ASSERT_GT(snow.outputs()[0].swe_m,0);
+    EXPECT_DOUBLE_EQ(snow.outputs()[0].cover_frac,1);
+    EXPECT_DOUBLE_EQ(snow.groundContactFraction(0),1);
+    ASSERT_TRUE(snow.applyGroundContactEnergy(0,1000).empty());
+    EXPECT_NEAR(snow.ledgers()[0].energyResidual(),0,1e-8);
+    EXPECT_NEAR(snow.ledgers()[0].ground_contact_energy,-1,1e-12);
+    EXPECT_NEAR(snow.ledgers()[0].residual(),0,1e-9);
+}
+
 TEST(SharedRadiation, IntervalTemperatureIgnoresRunAheadCursorAndRuntimeOverridesWinOverMet) {
     SimulationContext ctx;const double start=datetime::encodeDate(2026,1,1);ctx.options.start_date=start;ctx.options.end_date=start+1;
     ctx.tables.tables.resize(1);auto& table=ctx.tables.tables[0];table.id="air";table.x={start,start+1./24};table.y={32,50};

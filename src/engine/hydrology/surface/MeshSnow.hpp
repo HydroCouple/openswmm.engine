@@ -41,7 +41,10 @@ public:
     const std::vector<SnowOutputs>& outputs() const {return output_;}
     const std::vector<MeshSnowLedger>& ledgers() const {return ledger_;}
     bool groundContactEnabled(int cell) const {return cell>=0&&std::size_t(cell)<ground_contact_.size()&&ground_contact_[cell]!=0;}
-    double groundContactFraction(int cell) const {return groundContactEnabled(cell)?1.-exposed_.at(cell):0.;}
+    // Contact on the next thermal interval follows the accepted end-state
+    // cover. exposed_ is an interval average for the ET source, so using it
+    // here would retain contact after a melt-out at the interval boundary.
+    double groundContactFraction(int cell) const {return groundContactEnabled(cell)?output_.at(cell).cover_frac:0.;}
     double groundContactSurfaceTemperature(int cell) const {return output_.at(cell).Ts_C;}
     const std::vector<ueb::HeldState>& columns() const {return held_;}
 private:
