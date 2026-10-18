@@ -2587,7 +2587,9 @@ behaviour it once configured is now described.
   accepts supported in-memory climate sources; active runtime forcing
   overrides and file-backed climate sources are refused. The input-file
   `SAVE HOTSTART` / `USE HOTSTART` commands do not create or restore this joint
-  checkpoint.
+  checkpoint. The current profile does not preserve 1D heat-transport state,
+  so a run with routed channels/conduits and heat transport enabled cannot
+  attach this checkpoint, even when mesh-to-ground hyporheic exchange is active.
 
 <!-- source: docs/manuals/reference/hydraulics/sections/Chapter9-TwoDimensional.md:1443-1471 (retained text); src/engine/2d/solver/ExplicitInertialSolver.cpp:89-114; src/engine/2d/solver/SurfaceSolverFactory.cpp:286-301; src/engine/2d/input/SectionHandlers2D.cpp:311-346 -->
 
