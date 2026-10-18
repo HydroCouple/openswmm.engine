@@ -128,6 +128,8 @@ TEST(GroundHeat, MeshRichardsLidSharesReciprocalHeatWithItsGroundColumn) {
     ASSERT_EQ(swmm_coupling_advance_to(engine,5.,&actual),SWMM_OK)<<swmm_get_last_error_msg(engine);
     EXPECT_DOUBLE_EQ(actual,5.);
     ASSERT_FALSE(lid.thermal_energy.empty());
+    EXPECT_FALSE(lid.quality_transfers.empty());
+    EXPECT_EQ(lid.quality_old_water.size(),lid.cells.size());
     const auto& ground=router.subsurface().heat().cells[0];
     ASSERT_EQ(ground.failed,0)<<ground.error;
     EXPECT_GT(ground.lid_contact_j,0);
@@ -150,6 +152,102 @@ TEST(GroundHeat, MeshRichardsLidSharesReciprocalHeatWithItsGroundColumn) {
         <<" node energy delta="<<(node_final-node_initial);
     ASSERT_EQ(swmm_engine_end(engine),SWMM_OK);
     swmm_engine_close(engine);swmm_engine_destroy(engine);
+}
+TEST(GroundHeat, MeshRichardsLidAcceptedWaterMovesItsProducerSensibleHeat) {
+    const auto file=out/"mesh-lid-accepted-heat.inp";fs::create_directories(out);
+    std::ofstream(file)<<"[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
+        "START_DATE 01/01/2026\nEND_DATE 01/01/2026\nEND_TIME 00:10:00\nROUTING_STEP 5\nREPORT_STEP 00:01:00\n"
+        "[STORAGE]\nS -2 2 1 FUNCTIONAL 0 0 100 0 0\n[COORDINATES]\nS 1 3\n"
+        "[2D_OPTIONS]\nREPORT_2D NO\nMAX_TIMESTEP 5\nLTS_TIERS 1\nEVAPORATION NO\nINFILTRATION NO\n"
+        "[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n[2D_TRIANGLES]\n0 1 2 .03 .1 floodplain\n"
+        "[2D_AQUIFER_OPTIONS]\nNODE_ENROLMENT ROWS\nGW_ET NONE\nM_LAYERS 4\nCLOSURE CLOSED_FORM\n"
+        "[2D_AQUIFER]\n* 36 1 .45 .1 2 HG0 .5\n[2D_AQUIFER_NODE]\nS 1 KC 3600 DC .1 AREA 1\n"
+        "[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION NO\n"
+        "SURFACE_THERMAL_BC ADIABATIC\nDEEP_THERMAL_BC ADIABATIC\n"
+        "[LID_CONTROLS]\nStack NODE\nStack SURFACE 6 .1\nStack MEDIA 12 .45 .2 .08 2 10 3\n"
+        "Stack AGGREGATE 6 .4 100\nStack BOTTOM 0 0\n[LID_NODES]\nS Stack 10 BOTTOM MESH_AQUIFER\n"
+        "[LID_RICHARDS]\nStack OPTIONS 4 1e-7 1e-5 30\n"
+        "Stack 2 .03 2 1.6 .5 .0001\nStack 3 .03 2 1.6 .5 .0001\n"
+        "[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ -3\n* UNSAT __TEMPERATURE__ -3\n";
+    struct EngineGuard {
+        SWMM_Engine engine=nullptr;bool started=false;
+        ~EngineGuard(){if(engine){if(started)swmm_engine_end(engine);swmm_engine_close(engine);swmm_engine_destroy(engine);}}
+    } guard{swmm_engine_create()};
+    SWMM_Engine engine=guard.engine;ASSERT_NE(engine,nullptr);
+    ASSERT_EQ(swmm_engine_open(engine,file.string().c_str(),(out/"mesh-lid-accepted-heat.rpt").string().c_str(),nullptr,nullptr),SWMM_OK)
+        <<swmm_get_last_error_msg(engine);
+    for(const auto& pair:{std::pair{"HEAT_MODEL","COUPLED"},{"BED_HEAT_MODEL","GROUND_COLUMN"},
+                         {"HEAT_SURFACE_EXCHANGE","NO"},{"HEAT_RADIATIVE_EXCHANGE","NO"}})
+        ASSERT_EQ(swmm_options_set_ext(engine,pair.first,pair.second),SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(engine),SWMM_OK)<<swmm_get_last_error_msg(engine);
+    ASSERT_EQ(swmm_heat_set_module(engine,SWMM_HEAT_LAYER_CONDUCTION,0),SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(engine,0),SWMM_OK)<<swmm_get_last_error_msg(engine);guard.started=true;
+    auto& ctx=static_cast<openswmm::SWMMEngine*>(engine)->context();
+    auto& router=static_cast<openswmm::SWMMEngine*>(engine)->surfaceRouter2D();
+    auto& lid=ctx.node_subtypes.storages.lid_state[ctx.node_subtypes.storage_row(0)];
+    ASSERT_TRUE(lid.richards);
+    const double cp=router.subsurface().heat().water_capacity;
+    const double initial=ctx.heat_config.global_temp[static_cast<int>(openswmm::HeatSource::INITIAL_STATE)];
+    openswmm::twoD::LidNodeThermalGraph before_graph;
+    ASSERT_TRUE(openswmm::twoD::buildLidNodeThermalGraph(lid,0,cp,ctx.heat_config.conduction,initial,before_graph).empty());
+    ASSERT_GT(before_graph.cells.size(),1u);
+    lid.thermal_energy.assign(lid.cells.size(),0.0);
+    std::vector<double> expected(lid.cells.size(),0.0);
+    const auto old_water_ft3=lid.richards_water;
+    std::vector<double> water_m3(lid.cells.size(),0.0),matrix_bulk_m3(lid.cells.size(),0.0);
+    const double matrix_capacity_density=ctx.heat_config.conduction.sed_density*
+        ctx.heat_config.conduction.sed_specific_heat;
+    for(std::size_t i=0;i<lid.cells.size();++i) {
+        if(lid.cells[i].kind!=openswmm::LidNodeLayerKind::Surface) {
+            water_m3[i]=old_water_ft3[i]*.028316846592;
+            matrix_bulk_m3[i]=lid.cells[i].geometric_volume*.028316846592;
+        }
+    }
+    for(std::size_t k=0;k<before_graph.cells.size();++k) {
+        const auto physical=before_graph.cells[k];
+        const double seeded_temperature=(k%2==0)?18.0:-9.0;
+        expected[physical]=before_graph.stores[k].capacity*seeded_temperature;
+        lid.thermal_energy[physical]=expected[physical];
+    }
+    const auto capacity=[&](int physical) {
+        const auto i=std::size_t(physical);
+        return water_m3[i]*cp+std::max(0.0,matrix_bulk_m3[i]-water_m3[i])*matrix_capacity_density;
+    };
+    double actual=0;
+    ASSERT_EQ(swmm_coupling_advance_to(engine,5.,&actual),SWMM_OK)<<swmm_get_last_error_msg(engine);
+    ASSERT_DOUBLE_EQ(actual,5.);
+    ASSERT_FALSE(lid.quality_transfers.empty());
+    ASSERT_TRUE(lid.quality_ports.empty());
+    ASSERT_EQ(lid.quality_old_water.size(),lid.cells.size());
+    const double node_temperature=ctx.heat_state.node_temp.at(0);
+    bool internal_layer_transfer=false;
+    for(const auto& transfer:lid.quality_transfers) {
+        if(transfer.volume==0||(transfer.from==-2&&transfer.to==-1))continue;
+        ASSERT_GE(transfer.volume,0.0);
+        const int from=transfer.from>=1?transfer.from:-1;
+        const int to=transfer.to>=1?transfer.to:-1;
+        if(from>=0&&to>=0)internal_layer_transfer=true;
+        double source_temperature=node_temperature;
+        if(from>=0) {
+            ASSERT_GT(capacity(from),0.0);
+            source_temperature=expected[std::size_t(from)]/capacity(from);
+        }
+        else if(transfer.from==-5)source_temperature=router.subsurface().heat().zoneTemperature(0,true);
+        const double joules=transfer.volume*.028316846592*cp*source_temperature;
+        if(from>=0)expected[std::size_t(from)]-=joules;
+        if(to>=0)expected[std::size_t(to)]+=joules;
+        if(from>=0)water_m3[std::size_t(from)]-=transfer.volume*.028316846592;
+        if(to>=0)water_m3[std::size_t(to)]+=transfer.volume*.028316846592;
+    }
+    ASSERT_TRUE(internal_layer_transfer)<<"The accepted interval must exercise inter-layer Richards advection.";
+    for(std::size_t i=0;i<expected.size();++i)
+        EXPECT_NEAR(lid.thermal_energy[i],expected[i],1e-8*std::max(1.0,std::abs(expected[i])))
+            <<"physical LID layer "<<i;
+    EXPECT_TRUE(lid.thermal_ground_contact_j.empty()||
+        std::all_of(lid.thermal_ground_contact_j.begin(),lid.thermal_ground_contact_j.end(),[](double v){return v==0;}));
+    EXPECT_DOUBLE_EQ(router.subsurface().heat().cells[0].lid_contact_j,0.0);
+    ASSERT_EQ(swmm_engine_end(engine),SWMM_OK);guard.started=false;
+    ASSERT_EQ(swmm_engine_close(engine),SWMM_OK);swmm_engine_destroy(engine);guard.engine=nullptr;
 }
 TEST(GroundHeat, DryGroundColumnsAdvanceOnlyTheUnprocessedRouterInterval) {
     Model split("dry-ground-remainder-split"),reference("dry-ground-remainder-reference");

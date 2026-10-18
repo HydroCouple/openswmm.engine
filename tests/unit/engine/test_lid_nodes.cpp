@@ -173,17 +173,26 @@ TEST(LidNodes, AcceptedWaterReceiptsCarryProducerTemperatureSensibleEnergy) {
     ConductionConfig material;LidNodeThermalGraph graph;
     ASSERT_TRUE(twoD::buildLidNodeThermalGraph(state,2,4.184e6,material,-5,graph).empty());
     const double before=graph.stores[0].energy+graph.stores[1].energy;
+    const double cp=4.184e6;
+    const double internal=.01*cp*(-5.0); // the surface donor starts at -5 C
+    const double after_internal=graph.stores[1].energy+internal;
+    const double media_water=graph.physical_water_m3[1]+.01;
+    const double media_capacity=media_water*cp+
+        (graph.physical_matrix_bulk_m3[1]-media_water)*graph.physical_matrix_capacity_density[1];
+    const double media_temperature=after_internal/media_capacity;
+    const double external_in=.002*cp*10.0;
+    const double external_out=.003*cp*media_temperature;
     const std::vector<LidThermalWaterTransfer> transfers={
-        {0,1,.01,0},       // internal LID redistribution uses the old donor temperature
+        {0,1,.01,0},       // internal LID transfer uses the donor temperature at this packet
         {-1,0,.002,10},    // prescribed exterior source uses its producer temperature
-        {1,-1,.003,0}};    // export to the ground carries the same donor-time sensible heat
+        {1,-1,.003,0}};    // later export uses the updated layer temperature and capacity
     std::vector<double> energy;double external=0;
-    ASSERT_TRUE(twoD::transferLidNodeThermalEnergy(graph,state.cells.size(),4.184e6,
+    ASSERT_TRUE(twoD::transferLidNodeThermalEnergy(graph,state.cells.size(),cp,
         transfers,energy,external).empty());
     ASSERT_EQ(energy.size(),2u);
-    EXPECT_NEAR(energy[0],graph.stores[0].energy+(.01*4.184e6*5)+(.002*4.184e6*10),1e-8);
-    EXPECT_NEAR(energy[1],graph.stores[1].energy-(.01*4.184e6*5)+(.003*4.184e6*5),1e-8);
-    EXPECT_NEAR(external,.002*4.184e6*10+.003*4.184e6*5,1e-8);
+    EXPECT_NEAR(energy[0],graph.stores[0].energy-internal+external_in,1e-8);
+    EXPECT_NEAR(energy[1],after_internal-external_out,1e-8);
+    EXPECT_NEAR(external,external_in-external_out,1e-8);
     EXPECT_NEAR(std::accumulate(energy.begin(),energy.end(),0.0),before+external,1e-8);
 }
 TEST(LidNodes, InvalidAcceptedThermalTransferLeavesOutputsUntouched) {

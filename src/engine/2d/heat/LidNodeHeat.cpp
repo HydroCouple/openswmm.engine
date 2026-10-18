@@ -2,6 +2,7 @@
 #include "LidNodeHeat.hpp"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <utility>
 
 namespace openswmm::twoD {
@@ -40,6 +41,10 @@ std::string buildLidNodeThermalGraph(const LidNodeState& state,double mobile_wat
     next.physical_thickness_m.resize(state.cells.size());
     next.physical_area_m2.resize(state.cells.size());
     next.physical_conductivity.resize(state.cells.size());
+    next.physical_water_m3.resize(state.cells.size());
+    next.physical_water_limit_m3.resize(state.cells.size());
+    next.physical_matrix_bulk_m3.resize(state.cells.size());
+    next.physical_matrix_capacity_density.resize(state.cells.size());
     for(std::size_t i=0;i<state.cells.size();++i) {
         const auto& cell=state.cells[i];
         if(!std::isfinite(cell.top)||!std::isfinite(cell.bottom)||!(cell.top>cell.bottom)||
@@ -66,12 +71,17 @@ std::string buildLidNodeThermalGraph(const LidNodeState& state,double mobile_wat
         // Match the existing LID conduction mixture: water and the remaining
         // bulk layer share heat capacity and conductivity in proportion.
         const double solid=cell.kind==LidNodeLayerKind::Surface?0:std::max(0.,bulk-water);
-        const double capacity=water*water_heat_capacity+solid*material.sed_density*material.sed_specific_heat;
+        const double matrix_capacity_density=cell.kind==LidNodeLayerKind::Surface?0:
+            material.sed_density*material.sed_specific_heat;
+        const double capacity=water*water_heat_capacity+solid*matrix_capacity_density;
         const double saturation=cell.kind==LidNodeLayerKind::Surface?1:std::clamp(water/bulk,0.,1.);
         const double lambda=saturation*material.water_conductivity+(1-saturation)*material.sed_conductivity;
         if(!std::isfinite(capacity)||capacity<0||!positive(lambda))
             return "Invalid LID thermal layer capacity or conductivity.";
         next.physical_thickness_m[i]=dz;next.physical_area_m2[i]=a;next.physical_conductivity[i]=lambda;
+        next.physical_water_m3[i]=water;next.physical_water_limit_m3[i]=bulk;
+        next.physical_matrix_bulk_m3[i]=cell.kind==LidNodeLayerKind::Surface?0:bulk;
+        next.physical_matrix_capacity_density[i]=matrix_capacity_density;
         thickness.push_back(dz);area.push_back(a);conductivity.push_back(lambda);
         if(capacity>0) {
             const double energy=state.thermal_energy.empty()?capacity*initial_celsius:state.thermal_energy[i];
@@ -133,16 +143,39 @@ std::string publishLidNodeThermalEnergy(LidNodeState& state,const LidNodeThermal
 std::string transferLidNodeThermalEnergy(const LidNodeThermalGraph& graph,std::size_t cell_count,
     double water_heat_capacity,const std::vector<LidThermalWaterTransfer>& transfers,
     std::vector<double>& physical_energy,double& external_j) {
-    if(graph.cells.size()!=graph.stores.size()||!positive(water_heat_capacity))
+    if(graph.cells.size()!=graph.stores.size()||!positive(water_heat_capacity)||
+       graph.physical_water_m3.size()!=cell_count||graph.physical_water_limit_m3.size()!=cell_count||
+       graph.physical_matrix_bulk_m3.size()!=cell_count||graph.physical_matrix_capacity_density.size()!=cell_count)
         return "Invalid LID thermal transfer graph or water heat capacity.";
     std::vector<std::size_t> store_of(cell_count,graph.cells.size());
-    std::vector<double> next(cell_count,0);
+    std::vector<double> next(cell_count,0),water=graph.physical_water_m3;
     for(std::size_t i=0;i<graph.cells.size();++i) {
         const auto cell=graph.cells[i];
         if(cell>=cell_count||(i>0&&cell<=graph.cells[i-1])||
            !positive(graph.stores[i].capacity)||!std::isfinite(graph.stores[i].energy))
             return "Invalid LID thermal transfer store layout.";
         store_of[cell]=i;next[cell]=graph.stores[i].energy;
+    }
+    const auto capacity=[&](std::size_t i) {
+        return water[i]*water_heat_capacity+
+            std::max(0.0,graph.physical_matrix_bulk_m3[i]-water[i])*graph.physical_matrix_capacity_density[i];
+    };
+    for(std::size_t i=0;i<cell_count;++i) {
+        if(!nonnegative(water[i])||!nonnegative(graph.physical_water_limit_m3[i])||
+           water[i]>graph.physical_water_limit_m3[i]*(1+1e-10)||
+           !nonnegative(graph.physical_matrix_bulk_m3[i])||
+           !nonnegative(graph.physical_matrix_capacity_density[i])||
+           graph.physical_matrix_bulk_m3[i]>graph.physical_water_limit_m3[i]*(1+1e-12))
+            return "Invalid LID thermal transfer water capacity layout.";
+        const double initial_capacity=capacity(i);
+        if(!nonnegative(initial_capacity))return "Invalid LID thermal transfer capacity.";
+        if(store_of[i]<graph.cells.size()) {
+            const double stored_capacity=graph.stores[store_of[i]].capacity;
+            if(!(initial_capacity>0)||!std::isfinite(stored_capacity)||
+               std::abs(initial_capacity-stored_capacity)>1e-12*std::max(1.0,initial_capacity))
+                return "LID thermal transfer store capacity does not match its physical water state.";
+        } else if(initial_capacity>0)
+            return "LID thermal transfer graph omits an active physical heat store.";
     }
     double external=0;
     for(const auto& transfer:transfers) {
@@ -155,21 +188,42 @@ std::string transferLidNodeThermalEnergy(const LidNodeThermalGraph& graph,std::s
         double temperature=transfer.source_temperature_c;
         if(transfer.from_cell>=0) {
             const auto from=static_cast<std::size_t>(transfer.from_cell);
-            if(from>=cell_count||store_of[from]>=graph.cells.size())
+            const double donor_capacity=from<cell_count?capacity(from):0.0;
+            const double water_tolerance=64*std::numeric_limits<double>::epsilon()*
+                std::max({1.0,from<cell_count?water[from]:0.0,transfer.volume_m3});
+            if(from>=cell_count||store_of[from]>=graph.cells.size()||!(donor_capacity>0)||
+               transfer.volume_m3>water[from]+water_tolerance)
                 return "LID thermal donor has no active heat capacity.";
-            const auto& donor=graph.stores[store_of[from]];
-            temperature=donor.energy/donor.capacity;
+            temperature=next[from]/donor_capacity;
         } else if(!std::isfinite(temperature))
             return "Nonfinite external LID water temperature.";
         const double joules=transfer.volume_m3*water_heat_capacity*temperature;
         if(!std::isfinite(joules))return "LID thermal water receipt overflow.";
-        if(transfer.from_cell>=0)next[static_cast<std::size_t>(transfer.from_cell)]-=joules;
+        if(transfer.from_cell>=0) {
+            const auto from=static_cast<std::size_t>(transfer.from_cell);
+            next[from]-=joules;water[from]-=transfer.volume_m3;
+            if(water[from]<0&&water[from]>=-64*std::numeric_limits<double>::epsilon())water[from]=0;
+        }
         else external+=joules;
-        if(transfer.to_cell>=0)next[static_cast<std::size_t>(transfer.to_cell)]+=joules;
+        if(transfer.to_cell>=0) {
+            const auto to=static_cast<std::size_t>(transfer.to_cell);
+            const double receiver_water=water[to]+transfer.volume_m3;
+            const double water_tolerance=64*std::numeric_limits<double>::epsilon()*
+                std::max({1.0,water[to],transfer.volume_m3,graph.physical_water_limit_m3[to]});
+            if(receiver_water>graph.physical_water_limit_m3[to]+water_tolerance)
+                return "LID thermal receiver exceeds its physical water capacity.";
+            water[to]=receiver_water;next[to]+=joules;
+        }
         else external-=joules;
         if(!std::isfinite(external))return "LID external thermal receipt overflow.";
+        if((transfer.from_cell>=0&&!std::isfinite(next[static_cast<std::size_t>(transfer.from_cell)]))||
+           (transfer.to_cell>=0&&!std::isfinite(next[static_cast<std::size_t>(transfer.to_cell)])))
+            return "LID thermal transfer energy overflow.";
     }
-    for(double energy:next)if(!std::isfinite(energy))return "LID thermal transfer energy overflow.";
+    for(std::size_t i=0;i<next.size();++i) {
+        if(!std::isfinite(next[i]))return "LID thermal transfer energy overflow.";
+        if(!(capacity(i)>0)&&next[i]!=0)return "LID thermal energy remains without water or matrix capacity.";
+    }
     physical_energy.swap(next);external_j=external;return {};
 }
 } // namespace openswmm::twoD

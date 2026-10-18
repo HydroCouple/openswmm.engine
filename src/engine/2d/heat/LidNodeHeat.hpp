@@ -16,6 +16,10 @@ struct LidNodeThermalGraph {
     std::vector<ThermalStore> stores;
     std::vector<ThermalContact> contacts;
     std::vector<double> physical_thickness_m,physical_area_m2,physical_conductivity;
+    // Water and matrix geometry are kept in physical-cell layout so accepted
+    // packets can update donor capacity and temperature in producer order.
+    std::vector<double> physical_water_m3,physical_water_limit_m3;
+    std::vector<double> physical_matrix_bulk_m3,physical_matrix_capacity_density;
 };
 
 // Accepted hydraulic transfer. Cell indices are physical top-to-bottom LID
@@ -51,8 +55,10 @@ std::string publishLidNodeThermalEnergy(LidNodeState&, const LidNodeThermalGraph
     const std::vector<double>& energy);
 
 // Convert accepted water receipts to sensible energy at producer temperature.
-// external_j is signed positive into the LID owner. This is a pure transaction:
-// outputs are replaced only after every packet validates.
+// Internal donor temperature and capacity are updated after every ordered
+// packet, so split transfers use the state at their accepted time. external_j
+// is signed positive into the LID owner. This is a pure transaction: outputs
+// are replaced only after every packet validates.
 std::string transferLidNodeThermalEnergy(const LidNodeThermalGraph&,
     std::size_t physical_cell_count,double water_heat_capacity,
     const std::vector<LidThermalWaterTransfer>&,
