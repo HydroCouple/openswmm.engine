@@ -766,6 +766,59 @@ TEST(MeshHeat, FullMarcherHyporheicReceiptsAreInvariantAcrossUniformChannelRefin
     EXPECT_NEAR(coarse->bed_j,refined->bed_j,1e-5);
 }
 
+TEST(MeshHeat, FullMarcherHonorsHeterogeneousCellHyporheicRatesAndReciprocalReceipts) {
+    const std::string two_channel_cells=
+        "[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n0 10 0\n\n"
+        "[2D_TRIANGLES]\n0 1 2 .03 .1 channel:burned\n0 2 3 .03 .1 channel:tributary\n\n";
+    Model m("marcher-hyporheic-heterogeneous","",two_channel_cells);
+    ASSERT_NE(m.e,nullptr);
+    for(const auto& setting:{std::pair{"HEAT_MODEL","COUPLED"},
+                             std::pair{"BED_HEAT_MODEL","LOCAL_STORAGE"},
+                             std::pair{"HEAT_SURFACE_EXCHANGE","NO"},
+                             std::pair{"HEAT_RADIATIVE_EXCHANGE","NO"}})
+        ASSERT_EQ(swmm_options_set_ext(m.e,setting.first,setting.second),SWMM_OK);
+    auto& ctx=m.ctx();
+    auto& sediment=ctx.heat_config.sediment;
+    sediment.has_initial_temp=true;sediment.initial_temp=-5;sediment.ground_depth=0;
+    constexpr int cellScope=6;
+    constexpr double slowVelocity=1.0e-12,fastVelocity=.1;
+    ASSERT_EQ(swmm_heat_set_element_override(m.e,SWMM_HEAT_ATTR_HYPORHEIC_VELOCITY,
+                                              cellScope,"1",slowVelocity),SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_element_override(m.e,SWMM_HEAT_ATTR_HYPORHEIC_VELOCITY,
+                                              cellScope,"2",fastVelocity),SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(m.e),SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(m.e,0),SWMM_OK);
+    auto& state=static_cast<openswmm::SWMMEngine*>(m.e)->surfaceRouter2D().state();
+    const int row=state.transport.temp_row;
+    ASSERT_GE(row,0);ASSERT_TRUE(state.heat.enabled);ASSERT_TRUE(state.heat.bed);
+    ASSERT_EQ(state.heat.hyporheic_eligible.size(),2u);
+    const double rhoCp=ctx.options.water_density*ctx.options.water_specific_heat;
+    std::array<double,2> initial_water_j{},initial_bed_j{};
+    for(int cell=0;cell<2;++cell) {
+        ASSERT_GT(state.volume[cell],0);
+        EXPECT_EQ(state.heat.hyporheic_eligible[cell],1);
+        state.transport.cell_mass[state.transport.idx(row,cell)]=22*state.volume[cell];
+        initial_water_j[cell]=rhoCp*22*state.volume[cell];
+        initial_bed_j[cell]=state.heat.bed_energy[cell];
+    }
+    double elapsed=0;
+    ASSERT_EQ(swmm_engine_step(m.e,&elapsed),SWMM_OK);ASSERT_GT(elapsed,0);
+    ASSERT_EQ(swmm_engine_end(m.e),SWMM_OK);
+
+    std::array<double,2> contact_receipt{};
+    for(int cell=0;cell<2;++cell) {
+        const double final_mass=state.transport.cell_mass[state.transport.idx(row,cell)];
+        const double water_delta=rhoCp*final_mass-initial_water_j[cell];
+        const double bed_delta=state.heat.bed_energy[cell]-initial_bed_j[cell];
+        contact_receipt[cell]=state.heat.water_bed_j[cell];
+        EXPECT_NEAR(water_delta+bed_delta,0,1e-5)<<"cell "<<cell;
+        EXPECT_NEAR(contact_receipt[cell],bed_delta,1e-5)<<"cell "<<cell;
+        EXPECT_GT(contact_receipt[cell],0)<<"cell "<<cell;
+        EXPECT_EQ(state.heat.failures[cell],0);
+    }
+    EXPECT_GT(std::abs(contact_receipt[1]),std::abs(contact_receipt[0]));
+}
+
 TEST(MeshHeat, RuntimeHeatUsesConfiguredCapacityAndExactPowerReceipt) {
     Model m("runtime-capacity");ASSERT_NE(m.e,nullptr);
     ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_MODEL","COUPLED"),SWMM_OK);
