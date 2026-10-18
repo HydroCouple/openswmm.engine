@@ -2574,7 +2574,17 @@ behaviour it once configured is now described.
 - **Frozen 1D heads within a batch.** With `COUPLING_SYNC` > 0 the 1D
   heads a 2D advance sees are held for the batch. The error grows with
   the span.
-- **Hot start files do not carry 2D state.**
+- **Hot start files do not carry 2D state.** Neither the native nor EPA
+  SWMM5 hot start format stores mesh water, aquifer columns, bed or soil heat,
+  or queued surface–groundwater exchange. When coupled mesh/ground heat is
+  active, the engine refuses hot start save and restore so a partial restart
+  cannot silently discard that state.
+- **Coupled thermal continuation uses an engine checkpoint.** The supported
+  engine-session route is `SWMMEngine::saveCheckpoint` and
+  `SWMMEngine::loadCheckpoint`, with the same attached 2D common-source stage
+  kept alive for the session. Restore requires a freshly initialized matching
+  model and matching mesh/contact identity. The input-file `SAVE HOTSTART` /
+  `USE HOTSTART` commands do not create or restore this joint checkpoint.
 
 <!-- source: docs/manuals/reference/hydraulics/sections/Chapter9-TwoDimensional.md:1443-1471 (retained text); src/engine/2d/solver/ExplicitInertialSolver.cpp:89-114; src/engine/2d/solver/SurfaceSolverFactory.cpp:286-301; src/engine/2d/input/SectionHandlers2D.cpp:311-346 -->
 

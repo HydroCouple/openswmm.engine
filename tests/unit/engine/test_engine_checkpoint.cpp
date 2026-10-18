@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <gtest/gtest.h>
 #include "core/SWMMEngine.hpp"
+#include "core/HotStartManager.hpp"
 #include "core/CompletedSourceArchive.hpp"
 #include "core/CheckpointInspection.hpp"
 #include "core/DateTime.hpp"
@@ -677,7 +678,8 @@ struct ThermalSurfaceSession {
     runoff::SourceWaterDriver sources;
     twoD::CommonSourceStage stage;
     SWMMEngine engine;
-    void start(const std::string& name,double surface_temperature=12) {
+    void start(const std::string& name,double surface_temperature=12,
+               const std::string& channel_tag="channel:test") {
         const auto p=root()/name;
         write(p.string()+".inp",
             "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
@@ -705,7 +707,7 @@ struct ThermalSurfaceSession {
         mesh.resize_vertices(4);mesh.resize_triangles(2);
         mesh.vx={0,4,0,4};mesh.vy={0,0,2,2};mesh.vz={.5,.5,.5,.5};
         mesh.set_triangle(0,0,1,2);mesh.set_triangle(1,1,3,2);mesh.mannings_n={.03,.03};
-        mesh.tri_init_depth={.04,.03};mesh.tri_tag={"channel:test","floodplain"};
+        mesh.tri_init_depth={.04,.03};mesh.tri_tag={channel_tag,"floodplain"};
         auto& options=router.options();options.mesh_units_si=true;options.num_threads=1;
         options.momentum=twoD::Momentum2D::LOCAL_INERTIAL;options.max_timestep=.2;
         options.coupling_sync=1;options.rainfall_mode=twoD::RainfallMode::SYSTEM;
@@ -843,6 +845,68 @@ TEST(EngineCheckpoint, ThermalCheckpointModelMismatchLeavesTargetThermalStateUnc
     double soil_after=0;for(const auto& cell:after_ground.cells)soil_after+=sum(cell.column.energy);
     EXPECT_DOUBLE_EQ(soil_after,soil_before);
     EXPECT_DOUBLE_EQ(target.engine.context().current_time,0);
+}
+
+TEST(EngineCheckpoint, ThermalHyporheicTagMismatchLeavesTargetStateUnchanged) {
+    ThermalSurfaceSession source,target;
+    ASSERT_NO_THROW(source.start("surface-thermal-tag-source"));
+    ASSERT_NO_THROW(target.start("surface-thermal-tag-target",12,"channel:other"));
+    for(int i=0;i<12;++i)ASSERT_NO_THROW(step(source.engine));
+    const auto file=root()/"surface-thermal-tag-mismatch.chk";
+    ASSERT_EQ(source.engine.saveCheckpoint(file.string()),"");
+
+    const auto& before=target.engine.surfaceRouter2D().state().heat;
+    const auto& before_ground=target.engine.surfaceRouter2D().subsurface().heat();
+    const auto bed=before.bed_energy;
+    std::vector<double> soil;
+    for(const auto& cell:before_ground.cells)soil.insert(soil.end(),cell.column.energy.begin(),cell.column.energy.end());
+    EXPECT_FALSE(target.engine.loadCheckpoint(file.string()).empty());
+    EXPECT_DOUBLE_EQ(target.engine.context().current_time,0);
+    EXPECT_EQ(target.engine.surfaceRouter2D().state().heat.bed_energy,bed);
+    std::vector<double> after_soil;
+    for(const auto& cell:target.engine.surfaceRouter2D().subsurface().heat().cells)
+        after_soil.insert(after_soil.end(),cell.column.energy.begin(),cell.column.energy.end());
+    EXPECT_EQ(after_soil,soil);
+}
+
+TEST(EngineCheckpoint, CoupledThermalStateRefusesIncompleteHotstartFormats) {
+    ThermalSurfaceSession session;
+    ASSERT_NO_THROW(session.start("surface-thermal-hotstart-refusal"));
+    auto& ctx=session.engine.context();
+    auto& router=session.engine.surfaceRouter2D();
+    const double time_before=ctx.current_time;
+    const auto bed_before=router.state().heat.bed_energy;
+    std::vector<double> soil_before;
+    for(const auto& cell:router.subsurface().heat().cells)
+        soil_before.insert(soil_before.end(),cell.column.energy.begin(),cell.column.energy.end());
+
+    const auto native_path=root()/"surface-thermal-refused-native.hsf";
+    const auto legacy_path=root()/"surface-thermal-refused-legacy.hsf";
+    std::error_code ec;
+    std::filesystem::remove(native_path,ec);ec.clear();
+    std::filesystem::remove(legacy_path,ec);
+
+    EXPECT_EQ(HotStartManager::save(ctx,native_path.string()),nullptr);
+    EXPECT_NE(HotStartManager::last_io_error().find("thermal energy"),std::string::npos);
+    EXPECT_EQ(HotStartManager::save(ctx,nullptr,nullptr,native_path.string()),nullptr);
+    EXPECT_NE(HotStartManager::last_io_error().find("thermal energy"),std::string::npos);
+    HotStartFile native_file;
+    EXPECT_EQ(HotStartManager::apply(native_file,ctx),-1);
+    EXPECT_NE(HotStartManager::last_io_error().find("thermal energy"),std::string::npos);
+
+    EXPECT_EQ(HotStartManager::save_legacy_routing(legacy_path.string(),ctx),-1);
+    EXPECT_NE(HotStartManager::last_io_error().find("thermal energy"),std::string::npos);
+    EXPECT_EQ(HotStartManager::apply_legacy_routing(legacy_path.string(),ctx),-1);
+    EXPECT_NE(HotStartManager::last_io_error().find("thermal energy"),std::string::npos);
+
+    EXPECT_FALSE(std::filesystem::exists(native_path));
+    EXPECT_FALSE(std::filesystem::exists(legacy_path));
+    EXPECT_DOUBLE_EQ(ctx.current_time,time_before);
+    EXPECT_EQ(router.state().heat.bed_energy,bed_before);
+    std::vector<double> soil_after;
+    for(const auto& cell:router.subsurface().heat().cells)
+        soil_after.insert(soil_after.end(),cell.column.energy.begin(),cell.column.energy.end());
+    EXPECT_EQ(soil_after,soil_before);
 }
 
 TEST(EngineCheckpoint, SurfaceAttachmentGuardsAreRetryableAtInitialBoundary) {
