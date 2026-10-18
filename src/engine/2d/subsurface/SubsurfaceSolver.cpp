@@ -249,7 +249,7 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh,
                                          SubsurfaceConfig& cfg,
                                          std::vector<std::string>& warnings) {
     state_ = SubsurfaceState{};
-    heat_.clear();heat_link_out_volume_.clear();
+    heat_.clear();heat_link_out_volume_.clear();heat_preset_out_j_.clear();heat_preset_out_water_.clear();heat_node_out_volume_.clear();heat_node_gathered_out_.clear();
     heat_faces_.clear();heat_pending_left_.clear();heat_pending_right_.clear();heat_dt_.clear();
     if (cfg.empty()) return {};
 
@@ -598,7 +598,10 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
                 const auto ne = static_cast<std::size_t>(E.ne);
                 for (int s = 0; s < tr_.n_species; ++s) {
                     const double m_don = tr_.sat_mass[tr_.idx(s, static_cast<int>(don))];
-                    if (m_don == 0.0) continue;
+                    if (m_don == 0.0) {
+                        if(heat_.active()&&s==tr_.temp_row)bookPresetHeatOut(int(don),std::abs(vol),0);
+                        continue;
+                    }
                     // T7.2: only the DISSOLVED share travels — what is
                     // sorbed on the grains stays with the cell. That single
                     // multiplier is the whole of retardation here, which is
@@ -607,6 +610,7 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
                         tr_.dissolvedFraction(s, static_cast<int>(don),
                                               state_.theta_s[don]);
                     double dm = std::abs(vol) * (m_don / vd) * mob;
+                    if(heat_.active()&&s==tr_.temp_row)bookPresetHeatOut(int(don),std::abs(vol),dm);
                     // Never export more than the donor holds (the water's
                     // own positivity share bounds the volume the same way);
                     // the signed temperature row has no floor.
@@ -888,6 +892,7 @@ void SubsurfaceSolver::sampleNodeExchange(const NodeData* nodes, double dt, doub
                 tr_.nacc_mass[static_cast<std::size_t>(sp) * nb + b] += v_2d * c;
             }
         }
+        if(heat_.active()&&vol>0)heat_node_out_volume_[b]+=vol;
         state_.nacc[b] += vol;                       // gathered at the GW firing
         if(lid_receipts_enabled_) {
             node_pending_down_[b]+=std::max(0.,-vol);node_pending_up_[b]+=std::max(0.,vol);
@@ -1053,6 +1058,7 @@ double SubsurfaceSolver::gatherNode(int i) noexcept {
     for (std::size_t b = 0; b < node_beds_.size(); ++b) {
         if (node_beds_[b].cell != i) continue;
         const double take = consumePending(state_.nacc[b]);
+        if(heat_.active())heat_node_gathered_out_[b]=consumePending(heat_node_out_volume_[b]);
         if(lid_receipts_enabled_) {consumePending(node_pending_down_[b]);consumePending(node_pending_up_[b]);}
         if (b < bed_gathered_.size()) bed_gathered_[b] = take;
         v += take;
@@ -1069,7 +1075,7 @@ void SubsurfaceSolver::initTransport(const RowLayoutLite& rows,
                                      const std::vector<double>& pollut_decay,
                                      std::vector<std::string>& warnings) {
     tr_.clear();
-    heat_.clear();heat_link_out_volume_.clear();
+    heat_.clear();heat_link_out_volume_.clear();heat_preset_out_j_.clear();heat_preset_out_water_.clear();heat_node_out_volume_.clear();heat_node_gathered_out_.clear();
     heat_faces_.clear();heat_pending_left_.clear();heat_pending_right_.clear();heat_dt_.clear();
     if (!state_.active || rows.n_species <= 0) return;
     const int ne = options_.per_subcatch ? 0
@@ -2012,7 +2018,7 @@ double SubsurfaceSolver::pendingHeat(int i) const noexcept {
     return total;
 }
 std::string SubsurfaceSolver::initHeat(SimulationContext& ctx,const GwTransportData& config) {
-    heat_.clear();heat_link_out_volume_.clear();
+    heat_.clear();heat_link_out_volume_.clear();heat_preset_out_j_.clear();heat_preset_out_water_.clear();heat_node_out_volume_.clear();heat_node_gathered_out_.clear();
     heat_faces_.clear();heat_pending_left_.clear();heat_pending_right_.clear();heat_dt_.clear();
     if(config.options.thermal_model!="POROUS_EQUILIBRIUM"||tr_.temp_row<0)return {};
     if(config.options.thermal_model=="POROUS_EQUILIBRIUM" && tr_.temp_row>=0 && options_.per_subcatch)
@@ -2020,11 +2026,35 @@ std::string SubsurfaceSolver::initHeat(SimulationContext& ctx,const GwTransportD
     if(auto error=heat_.initialize(ctx,*mesh_,state_,tr_,config,covered_);!error.empty())return error;
     if(heat_.active()) {
         heat_link_out_volume_.assign(state_.n_cells,0);
+        heat_preset_out_j_.assign(std::size_t(state_.n_cells)*config.options.thermal_layers,0);
+        heat_preset_out_water_.assign(heat_preset_out_j_.size(),0);
+        heat_node_out_volume_.assign(node_beds_.size(),0);heat_node_gathered_out_=heat_node_out_volume_;
         for(int i=0;i<state_.n_cells;++i)heat_.refreshView(i,tr_);
         if(auto error=initLateralHeat();!error.empty())return error;
         refreshDtCell(*mesh_,*edges_);
     }
     return {};
+}
+
+void SubsurfaceSolver::bookPresetHeatOut(int i,double volume,double temperature_volume) noexcept {
+    if(!heat_.active()||!(volume>0)||i<0||std::size_t(i)>=heat_.cells.size())return;
+    auto& cell=heat_.cells[i];const auto& c=cell.column;const auto& sat=cell.saturated_water;
+    const auto n=c.energy.size();if(!n)return;
+    const auto base=std::size_t(i)*heat_.config->options.thermal_layers;
+    const double total=std::accumulate(sat.begin(),sat.end(),0.);if(!(total>0))return;
+    const double target=heat_.water_capacity*temperature_volume;double sum=0;std::size_t last=0;
+    const auto receipt=[&](std::size_t j){return c.energy[j]*((volume*(sat[j]/total)*heat_.water_capacity)/c.capacity[j]);};
+    for(std::size_t j=0;j<n;++j)if(sat[j]>0) {
+        last=j;const double energy=receipt(j);sum+=energy;
+        if(!std::isfinite(energy)||!std::isfinite(heat_preset_out_j_[base+j]+energy)||
+           !std::isfinite(heat_preset_out_water_[base+j]+volume*(sat[j]/total))){cell.failed=1;return;}
+    }
+    const double correction=target-sum;
+    if(!std::isfinite(target)||!std::isfinite(correction)||!std::isfinite(heat_preset_out_j_[base+last]+receipt(last)+correction)){cell.failed=1;return;}
+    for(std::size_t j=0;j<n;++j)if(sat[j]>0) {
+        heat_preset_out_j_[base+j]+=receipt(j);heat_preset_out_water_[base+j]+=volume*(sat[j]/total);
+    }
+    heat_preset_out_j_[base+last]+=correction;
 }
 
 void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
@@ -2033,62 +2063,73 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
     try {
         gatherLateralHeat(i);
         const int r=tr_.temp_row;const auto k=tr_.idx(r,i);const double cp=heat_.water_capacity;
-        const double tsat=heat_.zoneTemperature(i,true);
-        const double top=column.energy.front()/column.capacity.front(),bottom=column.energy.back()/column.capacity.back();
+        const double top=column.energy.front()/column.capacity.front();
         const double source=f.source_mass&&std::size_t(r)<f.source_mass->size()?(*f.source_mass)[r]:0;
         const double lateral=gatherLateralMass(i,r),infil=consumePending(tr_.xacc_from_surface[k]);
         const double link_in=consumePending(tr_.lacc_mass[k]),node_in=gatherNodeMass(i,r);
-        const bool link_packet=heat_link_out_volume_[i]>0;
-        const double booked_link=consumePending(tr_.lout_mass[k]);heat_link_out_volume_[i]=0;
-        const double link_out=link_packet?booked_link:std::max(0.,-f.link)*tsat;
-        const double node_out=std::max(0.,f.node_out)*tsat,source_out=f.source_out*tsat;
-        const double deep=f.deep*bottom,et=f.et*top,dunne=f.dunne*top;
+        const bool link_packet=consumePending(heat_link_out_volume_[i])>0;
+        const double booked_link=consumePending(tr_.lout_mass[k]);
+        const double implicit_link_volume=link_packet?0:std::max(0.,-f.link);
+        double node_volume=0;
+        for(std::size_t b=0;b<node_beds_.size();++b)if(node_beds_[b].cell==i)node_volume+=heat_node_gathered_out_[b];
+        node_volume=std::max(node_volume,std::max(0.,f.node_out));
         const double refund=f.refund_mass?(*f.refund_mass)[r]:0;
-        const double excess=(f.reject-f.paired_refund)*top;
+        const double excess_volume=f.reject-f.paired_refund;
+        double heater_j=0;
+        if(std::size_t(i)<runtime_sources_.cells.size())for(auto index:runtime_sources_.cells[i]) {
+            const auto& row=runtime_sources_.rows[index];if(f.v_sat0+f.source_in>0)heater_j+=row.heat*f.runtime_dt;
+        }
+        std::vector<double> moisture,new_sat;
+        if(auto error=projectGroundMoisture(state_,i,f.hg_final,column.depth_edges,moisture,&new_sat);!error.empty())throw std::runtime_error(error);
+        auto weights=cell.saturated_water;double weight=std::accumulate(weights.begin(),weights.end(),0.);
+        if(!(weight>0)){weights=new_sat;weight=std::accumulate(weights.begin(),weights.end(),0.);}
+        if(!(weight>0)){std::fill(weights.begin(),weights.end(),0);weights.back()=1;weight=1;}
+        const auto base=std::size_t(i)*heat_.config->options.thermal_layers;
+        std::vector<double> preset(weights.size()),preset_water(weights.size());double preset_total=0,preset_water_total=0;
+        for(std::size_t j=0;j<weights.size();++j) {
+            preset[j]=consumePending(heat_preset_out_j_[base+j]);preset_total+=preset[j];
+            preset_water[j]=consumePending(heat_preset_out_water_[base+j]);preset_water_total+=preset_water[j];
+        }
+        const double body_water=f.lateral-f.node_out+f.link+f.source_in-f.source_out;
+        // Already committed face/link exports keep their producer-time layer
+        // receipts. New wells/node/top/deep outputs share the implicit donor
+        // solution, rather than debiting every layer at a bulk mean.
+        const double incoming_j=cp*(source+lateral+link_in-(link_packet?booked_link:0)+node_in)+preset_total;
+        std::vector<double> water(weights.size()),energy(weights.size()),withdrawal(weights.size());
+        for(std::size_t j=0;j<weights.size();++j) {
+            const double share=weights[j]/weight;
+            water[j]=(body_water+preset_water_total)*share-preset_water[j];energy[j]=incoming_j*share-preset[j];
+            withdrawal[j]=(node_volume+f.source_out+implicit_link_volume)*share;
+        }
+        water.front()+=f.infil_in-f.reject-f.et-f.dunne;energy.front()+=cp*(infil-refund);
+        withdrawal.front()+=excess_volume+f.et+f.dunne;water.back()-=f.deep;withdrawal.back()+=f.deep;
+        const auto advected=advectPorousColumn(column,moisture,water,energy,withdrawal);
+        if(!advected.error.empty())throw std::runtime_error(advected.error);
+        double donor=0;for(std::size_t j=0;j<weights.size();++j)donor+=weights[j]/weight*advected.temperature[j];
+        const double link_out=link_packet?booked_link:implicit_link_volume*donor;
+        const double node_out=node_volume*donor,source_out=f.source_out*donor;
+        const double et=f.et*advected.temperature.front(),dunne=f.dunne*advected.temperature.front();
+        const double excess=excess_volume*advected.temperature.front(),deep=f.deep*advected.temperature.back();
         tr_.gained_source[r]+=source;tr_.net_lateral[r]+=lateral;tr_.gained_infil[r]+=infil;
         tr_.gained_link[r]+=link_in;tr_.lost_link[r]+=link_out;tr_.gained_node[r]+=node_in;
         tr_.lost_node[r]+=node_out;tr_.lost_deep[r]+=deep;tr_.lost_source[r]+=source_out;
         tr_.lost_et[r]+=et;tr_.lost_dunne[r]+=refund+excess+dunne;
-        if(f.dunne_mass) {
-            (*f.dunne_mass)[r]=dunne;(*f.excess_mass)[r]=excess;
-        } else tr_.xacc_to_surface[k]+=excess+dunne;
-        if(node_out!=0 && !tr_.node_out_mass.empty()) {
-            double drawn=0;for(std::size_t b=0;b<node_beds_.size();++b)if(node_beds_[b].cell==i)drawn+=std::max(0.,bed_gathered_[b]);
+        if(f.dunne_mass){(*f.dunne_mass)[r]=dunne;(*f.excess_mass)[r]=excess;}
+        else tr_.xacc_to_surface[k]+=excess+dunne;
+        if(node_volume>0&&!tr_.node_out_mass.empty()) {
             const auto nn=tr_.node_out_mass.size()/tr_.n_species;
-            if(drawn>0)for(std::size_t b=0;b<node_beds_.size();++b)if(node_beds_[b].cell==i) {
+            for(std::size_t b=0;b<node_beds_.size();++b)if(node_beds_[b].cell==i) {
                 const int node=node_beds_[b].node;
-                if(node>=0&&std::size_t(node)<nn)tr_.node_out_mass[std::size_t(r)*nn+node]+=node_out*std::max(0.,bed_gathered_[b])/drawn;
+                if(node>=0&&std::size_t(node)<nn)tr_.node_out_mass[std::size_t(r)*nn+node]+=donor*heat_node_gathered_out_[b];
             }
         }
-        double heater_j=0;
         if(std::size_t(i)<runtime_sources_.cells.size())for(auto index:runtime_sources_.cells[i]) {
             auto& row=runtime_sources_.rows[index];const double requested=std::max(0.,-row.flow)*f.runtime_dt;
-            row.receipt.requested_mass[r]-=requested*tsat;
+            row.receipt.requested_mass[r]-=requested*donor;
             if(f.requested_source_out>0)row.receipt.applied_mass[r]-=requested/f.requested_source_out*source_out;
-            if(f.v_sat0+f.source_in>0)heater_j+=row.heat*f.runtime_dt;
         }
-        std::vector<double> moisture,new_sat;
-        if(auto error=projectGroundMoisture(state_,i,f.hg_final,column.depth_edges,moisture,&new_sat);!error.empty())
-            throw std::runtime_error(error);
-        // Integrated lateral/node/well contacts retain their hydraulic
-        // saturated-zone resolution. Top/deep transfers are localized at
-        // their physical boundary. No geometric handover is a heat source.
-        auto weights=cell.saturated_water;
-        double weight=std::accumulate(weights.begin(),weights.end(),0.);
-        if(!(weight>0)){weights=new_sat;weight=std::accumulate(weights.begin(),weights.end(),0.);}
-        if(!(weight>0)){std::fill(weights.begin(),weights.end(),0);weights.back()=1;weight=1;}
-        const double body_water=f.lateral-f.node_out+f.link+f.source_in-f.source_out;
-        const double body_j=cp*(source+lateral+link_in-link_out+node_in-node_out-source_out);
-        std::vector<double> water(weights.size()),energy(weights.size());
-        for(std::size_t j=0;j<weights.size();++j){water[j]=body_water*weights[j]/weight;energy[j]=body_j*weights[j]/weight;}
-        water.front()+=f.infil_in-f.reject-f.et-f.dunne;
-        energy.front()+=cp*(infil-refund-excess-et-dunne);
-        water.back()-=f.deep;energy.back()-=cp*deep;
-        const auto advected=advectPorousColumn(column,moisture,water,energy);
-        if(!advected.error.empty())throw std::runtime_error(advected.error);
-        cell.saturated_water=std::move(new_sat);
-        cell.advective_j+=advected.external_j-heater_j;cell.source_j+=heater_j;
-        if(heat_.config->options.soil_et_heat=="LATENT_SURFACE" && f.et>0) {
+        cell.saturated_water=std::move(new_sat);cell.advective_j+=advected.external_j-heater_j;cell.source_j+=heater_j;
+        if(heat_.config->options.soil_et_heat=="LATENT_SURFACE"&&f.et>0) {
             const double latent=-heat_.density*f.et*transport::heat::latentHeatOfVaporization(top);
             column.energy.front()+=latent;cell.latent_j+=latent;
         }

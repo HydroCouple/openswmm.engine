@@ -155,6 +155,33 @@ TEST(PorousHeat, UnpairedWaterIsRefusedAtomically) {
     const auto r=advectPorousColumn(c,{.3,.3},{0,0},{0,0});
     EXPECT_FALSE(r.error.empty());EXPECT_EQ(c.energy,energy);EXPECT_EQ(c.theta,theta);EXPECT_EQ(c.capacity,capacity);
 }
+TEST(PorousHeat, ImplicitExternalWithdrawalsUseLayerTemperaturesAndPreserveExtrema) {
+    ThermalMaterial m;PorousHeatColumn c;
+    ASSERT_TRUE(c.initialize(1,{0,.5,1},m,{.4,.4},{0,40}).empty());const double initial=sum(c.energy);
+    const auto solved=advectPorousColumn(c,{.38,.38},{-.01,-.01},{0,0},{.01,.01});
+    ASSERT_TRUE(solved.error.empty())<<solved.error;
+    EXPECT_NEAR(c.energy[0]/c.capacity[0],0,1e-12);EXPECT_NEAR(c.energy[1]/c.capacity[1],40,1e-12);
+    EXPECT_NEAR(sum(c.energy)-initial,-.01*4184000.*40,1e-6);
+    EXPECT_NEAR(solved.external_j,-sum(solved.withdrawn_j),1e-8);
+    const auto energy=c.energy,theta=c.theta;
+    EXPECT_FALSE(advectPorousColumn(c,{.38,.38},{0,0},{0,0},{-.01,0}).error.empty());
+    EXPECT_EQ(c.energy,energy);EXPECT_EQ(c.theta,theta);
+}
+TEST(PorousHeat, LargeBoundaryWithdrawalsAndInternalRedistributionKeepSignedDonorsConservative) {
+    ThermalMaterial m;PorousHeatColumn c;
+    ASSERT_TRUE(c.initialize(1,{0,.1,.5,1},m,{.4,.4,.4},{-10,5,40}).empty());
+    const double initial=sum(c.energy);
+    // More than the top layer's initial .04 m3 is withdrawn. Accepted
+    // redistribution supplies it from below; the implicit donor must remain
+    // finite and bounded without restricting or inventing hydraulic water.
+    const auto solved=advectPorousColumn(c,{.2,.3,.3},{-.08,0,-.03},{0,0,0},{.08,0,.03});
+    ASSERT_TRUE(solved.error.empty())<<solved.error;
+    for(std::size_t j=0;j<c.energy.size();++j) {
+        EXPECT_GE(c.energy[j]/c.capacity[j],-10-1e-12);EXPECT_LE(c.energy[j]/c.capacity[j],40+1e-12);
+    }
+    EXPECT_NEAR(sum(c.energy)-initial,-sum(solved.withdrawn_j),1e-7);
+    EXPECT_GT(solved.temperature.front(),-10);EXPECT_NEAR(solved.temperature.back(),40,1e-12);
+}
 TEST(PorousHeat, ClosureMoistureProjectionConservesWaterAcrossMovingAndCollapsedLayers) {
     for(auto closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})
         for(double hg:{0.,.1,.75,1.,1.999999,2.}) {

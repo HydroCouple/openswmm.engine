@@ -141,10 +141,10 @@ std::vector<ThermalContact> PorousHeatColumn::contacts() const {
     return result;
 }
 ThermalAdvection advectPorousColumn(PorousHeatColumn& column,const std::vector<double>& moisture,
-    const std::vector<double>& external_water,const std::vector<double>& external_j) {
+    const std::vector<double>& external_water,const std::vector<double>& external_j,const std::vector<double>& withdrawal) {
     ThermalAdvection out;
     const auto n=column.theta.size();
-    if(!n || moisture.size()!=n||external_water.size()!=n||external_j.size()!=n) {
+    if(!n || moisture.size()!=n||external_water.size()!=n||external_j.size()!=n||(!withdrawal.empty()&&withdrawal.size()!=n)) {
         out.error="Thermal advection layer shapes differ.";return out;
     }
     auto next=column;
@@ -164,6 +164,10 @@ ThermalAdvection advectPorousColumn(PorousHeatColumn& column,const std::vector<d
         out.error="Accepted groundwater transfers do not close the fixed-grid water balance.";return out;
     }
     const double cp=column.material.water_heat_capacity;
+    if(!withdrawal.empty())for(std::size_t j=0;j<n;++j) {
+        if(withdrawal[j]<0||!std::isfinite(withdrawal[j])){out.error="Invalid accepted thermal withdrawal volume.";return out;}
+        diagonal[j]+=cp*withdrawal[j];
+    }
     for(std::size_t j=1;j<n;++j) {
         const double coefficient=cp*std::abs(water[j]);
         if(water[j]>=0){diagonal[j-1]+=coefficient;lower[j]-=coefficient;}
@@ -175,11 +179,14 @@ ThermalAdvection advectPorousColumn(PorousHeatColumn& column,const std::vector<d
         const double f=lower[j]/diagonal[j-1];diagonal[j]-=f*upper[j-1];rhs[j]-=f*rhs[j-1];
     }
     std::vector<double> temperature(n);
+    out.withdrawn_j.assign(n,0);
     for(std::size_t k=n;k-->0;) {
         if(!(diagonal[k]>0)||!std::isfinite(diagonal[k])) {out.error="Invalid implicit thermal advection capacity.";return out;}
         temperature[k]=(rhs[k]-(k+1<n?upper[k]*temperature[k+1]:0))/diagonal[k];
         if(!std::isfinite(temperature[k])) {out.error="Nonfinite thermal advection solution.";return out;}
-        next.energy[k]=column.energy[k]+external_j[k];
+        const double withdrawn=withdrawal.empty()?0:cp*withdrawal[k]*temperature[k];
+        out.withdrawn_j[k]=withdrawn;out.external_j-=withdrawn;
+        next.energy[k]=column.energy[k]+external_j[k]-withdrawn;
     }
     out.vertical_water.reserve(n-1);out.vertical_j.reserve(n-1);
     for(std::size_t j=1;j<n;++j) {
@@ -187,6 +194,8 @@ ThermalAdvection advectPorousColumn(PorousHeatColumn& column,const std::vector<d
         next.energy[j-1]-=joules;next.energy[j]+=joules;
         out.vertical_water.push_back(water[j]);out.vertical_j.push_back(joules);
     }
+    for(double value:next.energy)if(!std::isfinite(value)){out.error="Nonfinite accepted thermal energy receipt.";return out;}
+    out.temperature=std::move(temperature);
     column=std::move(next);return out;
 }
 std::string projectGroundMoisture(const SubsurfaceState& s,int i,double hg,const std::vector<double>& edges,

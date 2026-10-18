@@ -209,7 +209,7 @@ public:
         const auto k = tr_.idx(species, cell);
         const double mob = tr_.dissolvedFraction(species, cell, state_.theta_s[u]);
         double m = vol * (tr_.sat_mass[k] / v) * mob;
-        if(heat_.active() && species==tr_.temp_row)heat_link_out_volume_[u]+=vol;
+        if(heat_.active() && species==tr_.temp_row){heat_link_out_volume_[u]+=vol;bookPresetHeatOut(cell,vol,m);}
         if (!tr_.signedRow(species)) {
             const double avail = std::max(0.0, tr_.sat_mass[k] * mob - tr_.lout_mass[k]);
             m = std::min(m, avail);
@@ -534,6 +534,10 @@ private:
     SubsurfaceTransportState tr_;   ///< T7.1
     GroundHeatState heat_;
     std::vector<double> heat_link_out_volume_;
+    std::vector<double> heat_preset_out_j_; // [cell*thermal_layers+layer], accepted producer-time exports
+    std::vector<double> heat_preset_out_water_; // paired physical layer volumes, including source-interval splits
+    std::vector<double> heat_node_out_volume_,heat_node_gathered_out_; // gross accepted exports per hydraulic bed
+    void bookPresetHeatOut(int cell,double volume,double temperature_volume) noexcept;
     struct ThermalFaceSlice {int left=0,right=0;double low=0,high=0;};
     struct ThermalFace {double distance_left=0,distance_right=0;std::vector<ThermalFaceSlice> slices;};
     std::vector<ThermalFace> heat_faces_;

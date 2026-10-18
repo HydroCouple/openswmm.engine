@@ -45,7 +45,7 @@ struct PorousHeatColumn {
 };
 struct ThermalAdvection {
     std::string error;
-    std::vector<double> vertical_water,vertical_j;
+    std::vector<double> vertical_water,vertical_j,temperature,withdrawn_j;
     double external_j=0,water_residual=0;
 };
 // Fixed-grid flux reconstruction from accepted physical external transfers
@@ -54,7 +54,8 @@ struct ThermalAdvection {
 // net flux satisfying each fixed layer's water balance (piston attribution
 // for a bulk closure). External energy is the actual paired donor receipt.
 ThermalAdvection advectPorousColumn(PorousHeatColumn&,const std::vector<double>& new_moisture,
-    const std::vector<double>& external_water_m3,const std::vector<double>& external_j);
+    const std::vector<double>& external_water_m3,const std::vector<double>& external_j,
+    const std::vector<double>& implicit_withdrawal_m3={});
 // Conservative geometric projection. Bulk closures use uniform unsaturated
 // theta; SIGMA uses overlaps of accepted stretching hydraulic layers. The
 // thermal depth grid itself never moves. Optional sat_water is SI m3/layer.

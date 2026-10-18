@@ -381,3 +381,101 @@ TEST(GroundHeat, ChannelContactsCanRunWithoutAnOverlandTemperatureRow) {
     EXPECT_NEAR(energy(m.router().subsurface().heat())-initial,sum(contacts.channelToGround()),1e-5);
     EXPECT_FALSE(m.router().state().heat.enabled);EXPECT_TRUE(m.router().state().heat.bed_energy.empty());
 }
+TEST(GroundHeat, HeterogeneousWellWithdrawalUsesPhysicalLayerDonorsWithoutCreatingNewExtrema) {
+    for(const auto* closure:{"CLOSED_FORM","ENSLAVED","SIGMA"})for(const auto temperatures:{std::pair{0.,40.},std::pair{-10.,0.}}) {
+        SCOPED_TRACE(closure);const double cold=temperatures.first,warm=temperatures.second;
+        const std::string initial="CELL 1 SAT __TEMPERATURE__ "+std::to_string(cold)+
+            "\nCELL 1 UNSAT __TEMPERATURE__ "+std::to_string(cold)+
+            "\nCELL 1 LAYER 16 __TEMPERATURE__ "+std::to_string(warm)+
+            "\nCELL 2 SAT __TEMPERATURE__ "+std::to_string(cold)+
+            "\nCELL 2 UNSAT __TEMPERATURE__ "+std::to_string(cold)+"\n";
+        Model m(std::string("layer-donor-")+closure+std::to_string(cold),closure,1,false,initial);ASSERT_NE(m.e,nullptr);
+        ASSERT_EQ(m.start(),SWMM_OK);auto& gw=m.router().subsurface();const double before=energy(gw.heat());
+        const int ns=gw.transport().n_species,row=gw.transport().temp_row;
+        std::vector<double> concentrations(ns,0),rates(ns,0);
+        ASSERT_EQ(swmm_coupling_set_source(m.e,"well",1,0,-.001,0,concentrations.data(),rates.data(),ns,1.),SWMM_OK);
+        double actual=0;ASSERT_EQ(swmm_coupling_advance_to(m.e,1.,&actual),SWMM_OK);
+        const auto& cell=gw.heat().cells[0];ASSERT_EQ(cell.failed,0)<<cell.error;
+        for(std::size_t j=0;j<cell.column.energy.size();++j) {
+            const double t=cell.column.energy[j]/cell.column.capacity[j];
+            EXPECT_GE(t,cold-1e-9);EXPECT_LE(t,warm+1e-9);
+        }
+        const double exported=gw.transport().lost_source[row]*4184000.;
+        EXPECT_NEAR(before-energy(gw.heat()),exported,1e-5);
+        int c=0;SWMM_CouplingReceipt receipt{};std::vector<double> requested(ns),applied(ns);
+        ASSERT_EQ(swmm_coupling_get_receipts(m.e,1,"well",&c,1,&receipt,requested.data(),applied.data(),ns),SWMM_OK);
+        EXPECT_NEAR(-applied[row]*4184000.,exported,1e-6);
+    }
+}
+TEST(GroundHeat, ZeroMeanLinkPacketsRetainSignedLayerDonorsAcrossSourceSubintervals) {
+    for(const auto* closure:{"CLOSED_FORM","ENSLAVED","SIGMA"}) {
+        SCOPED_TRACE(closure);
+        std::string initial="* SAT __TEMPERATURE__ -10\n* UNSAT __TEMPERATURE__ -10\n";
+        for(int layer=9;layer<=16;++layer)initial+="CELL 1 LAYER "+std::to_string(layer)+" __TEMPERATURE__ 10\n";
+        // A zero-flow authored source still divides the cell firing at its
+        // forcing knots. Pending layer receipts must follow the same split.
+        initial+="[TIMESERIES]\nS 0:00:00 0\nS 0:00:01 0\nS 0:00:02 0\n"
+                 "[GW_SOURCES]\nS CELL 1 FLOW S\n";
+        Model m(std::string("zero-link-")+closure,closure,2,false,initial);ASSERT_NE(m.e,nullptr);
+        ASSERT_EQ(m.start(),SWMM_OK);auto& gw=m.router().subsurface();auto& tr=gw.transport();
+        const int row=tr.temp_row;ASSERT_NEAR(tr.sat_mass[tr.idx(row,0)],0,1e-12);
+        const double before=energy(gw.heat());constexpr double volume=.01;
+        gw.bookLinkSeepage(0,-volume);const double packet=gw.bookLinkGain(0,row,volume);
+        EXPECT_NEAR(packet,0,1e-14);gw.assignTiers(2,1);gw.fireGwCells(0,2,m.router().state(),0);
+        for(const auto& cell:gw.heat().cells) {
+            ASSERT_EQ(cell.failed,0)<<cell.error;
+            for(std::size_t j=0;j<cell.column.energy.size();++j) {
+                const double t=cell.column.energy[j]/cell.column.capacity[j];
+                EXPECT_GE(t,-10-1e-9);EXPECT_LE(t,10+1e-9);
+            }
+        }
+        EXPECT_NEAR(energy(gw.heat())-before,-packet*4184000.,1e-5);
+        EXPECT_DOUBLE_EQ(tr.lout_mass[tr.idx(row,0)],0);EXPECT_NEAR(tr.lost_link[row],packet,1e-14);
+    }
+}
+TEST(GroundHeat, ZeroMeanLateralPacketsDebitActualLayersAndCloseAcrossTiers) {
+    for(const auto* closure:{"CLOSED_FORM","ENSLAVED","SIGMA"}) {
+        SCOPED_TRACE(closure);
+        std::string initial="* SAT __TEMPERATURE__ -10\n* UNSAT __TEMPERATURE__ -10\n";
+        for(int layer=9;layer<=16;++layer)initial+="CELL 1 LAYER "+std::to_string(layer)+" __TEMPERATURE__ 10\n";
+        initial+="[2D_AQUIFER]\nCELL 2 36 1 .45 .1 2 HG0 .5\n";
+        Model m(std::string("zero-face-")+closure,closure,1,false,initial);ASSERT_NE(m.e,nullptr);
+        ASSERT_EQ(m.start(),SWMM_OK);auto& gw=m.router().subsurface();auto& tr=gw.transport();
+        ASSERT_NEAR(tr.sat_mass[tr.idx(tr.temp_row,0)],0,1e-12);
+        const double before=energy(gw.heat());gw.state().dt_cell[0]=.1;gw.state().dt_cell[1]=.8;gw.assignTiers(.1,4);
+        for(int step=0;step<16;++step) {
+            gw.fireGwFaces(0,.1);gw.fireGwCells(0,.1,m.router().state(),step*.1);
+            if(step%8==7)gw.fireGwCells(3,.8,m.router().state(),(step-7)*.1);
+            double pending=0;for(double value:tr.sacc_L)pending+=value;for(double value:tr.sacc_R)pending+=value;
+            EXPECT_NEAR(energy(gw.heat())+4184000.*pending,before,2e-5);
+            for(const auto& cell:gw.heat().cells) {
+                ASSERT_EQ(cell.failed,0)<<cell.error;
+                for(std::size_t j=0;j<cell.column.energy.size();++j) {
+                    const double t=cell.column.energy[j]/cell.column.capacity[j];
+                    EXPECT_GE(t,-10-1e-9);EXPECT_LE(t,10+1e-9);
+                }
+            }
+        }
+        EXPECT_NEAR(gw.state().continuityResidual(),0,1e-8);
+    }
+}
+TEST(GroundHeat, NodeFlowReversalKeepsGrossOutgoingHeatWhenAcceptedWaterNetsToZero) {
+    Model m("node-gross-heat","CLOSED_FORM",.5,false,
+        "* SAT __TEMPERATURE__ 10\n* UNSAT __TEMPERATURE__ 10\n"
+        "[2D_AQUIFER_NODE]\nJ1 1 KC 3600 DC .1 AREA 1\n");
+    ASSERT_NE(m.e,nullptr);ASSERT_EQ(m.start(),SWMM_OK);auto& gw=m.router().subsurface();
+    auto& tr=gw.transport();const int row=tr.temp_row;openswmm::NodeData nodes;nodes.resize(2);
+    const double head=gw.state().z_bed[0]+gw.state().hg[0],length=m.router().options().len_1d_to_2d;
+    nodes.invert_elev[0]=(head+.25)/length;nodes.depth[0]=0;nodes.volume[0]=100;
+    std::vector<double> concentrations(2*tr.n_species,0);concentrations[row]=20;
+    gw.setNodeRowConc(concentrations.data(),tr.n_species);gw.assignTiers(1,1);
+    const double before=energy(gw.heat());
+    gw.sampleNodeExchange(&nodes,.5);const double incoming=-gw.nodeExchangeVolumes()[0];ASSERT_GT(incoming,0);
+    nodes.invert_elev[0]=(head-.25)/length;gw.sampleNodeExchange(&nodes,.5);
+    ASSERT_NEAR(gw.nodeExchangeVolumes()[0],0,1e-12);
+    gw.fireGwCells(0,1,m.router().state(),0);gw.setNodeRowConc(nullptr,0);
+    for(const auto& cell:gw.heat().cells)ASSERT_EQ(cell.failed,0)<<cell.error;
+    EXPECT_GT(tr.lost_node[row],0);EXPECT_NEAR(tr.gained_node[row],incoming*20,1e-12);
+    EXPECT_NEAR(gw.nodeExchangeMass()[std::size_t(row)*2],tr.lost_node[row],1e-12);
+    EXPECT_NEAR(energy(gw.heat())-before,4184000.*(tr.gained_node[row]-tr.lost_node[row]),1e-5);
+}
