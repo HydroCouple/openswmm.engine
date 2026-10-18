@@ -199,6 +199,7 @@ public:
     double infilFactorUsed(int i) const { return infil_factor_used_[static_cast<std::size_t>(i)]; }
 
     const RunoffSoA& soa() const { return soa_; }
+    RunoffSoA& soa() { return soa_; }  ///< Hot start restores the ponded depths.
     void checkpoint(detail::CompletedSourceArchive&,bool model); // internal accepted-boundary IO
     void validateCheckpoint(const RunoffSolver& model) const;
     /// Completed water still waiting for next interval's inter-subarea route.

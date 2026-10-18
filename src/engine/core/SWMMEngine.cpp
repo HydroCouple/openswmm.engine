@@ -1202,8 +1202,12 @@ int SWMMEngine::initialize() noexcept {
             std::unique_ptr<HotStartFile> hs(HotStartManager::open(hs_path));
             rc = hs ? HotStartManager::apply(*hs, ctx_, [this](const std::string& m) { ctx_.warnings.push_back(m); }) : 1;
         } else {
+            // The runoff section is held until init_modules() has built the
+            // hydrology and quality state it restores (legacy readRunoff runs
+            // after subcatch_initState for the same reason).
             rc = HotStartManager::apply_legacy_routing(hs_path, ctx_,
-                [this](const std::string& m) { ctx_.warnings.push_back(m); });
+                [this](const std::string& m) { ctx_.warnings.push_back(m); },
+                &hotstart_runoff_);
         }
         if (rc != 0) {
             set_error(CFFI_ERR_HOTSTART,
@@ -5761,6 +5765,183 @@ void SWMMEngine::computeFinalQualityMassBalance() noexcept {
 }
 
 // ============================================================================
+// Legacy hotstart runoff section (hotstart.c saveRunoff / readRunoff)
+// ============================================================================
+
+namespace {
+/// Legacy infil_getState slots per method; v6's InfilBank packs the same
+/// values in another order. Horton slot 2 carries Fmh, which legacy neither
+/// writes nor reads (its x[2] stays 0), so a legacy file restores Fmh = 0
+/// exactly as legacy horton_setState leaves it.
+void infilToLegacy(int model, const double v6[6], double lg[6]) {
+    std::fill(lg, lg + 6, 0.0);
+    switch (static_cast<InfilModel>(model)) {
+        case InfilModel::HORTON: case InfilModel::MOD_HORTON:
+            lg[0] = v6[0]; lg[1] = v6[1]; lg[2] = v6[2]; break;
+        case InfilModel::GREEN_AMPT: case InfilModel::MOD_GREEN_AMPT:
+            // legacy {IMD, F, Fu, Sat, T}; v6 {IMD, F, Fu, T, sat}
+            lg[0] = v6[0]; lg[1] = v6[1]; lg[2] = v6[2]; lg[3] = v6[4]; lg[4] = v6[3]; break;
+        case InfilModel::CURVE_NUM:
+            // legacy {S, P, F, T, Se, f}; v6 {S, Se, P, F, f, T}
+            lg[0] = v6[0]; lg[1] = v6[2]; lg[2] = v6[3]; lg[3] = v6[5]; lg[4] = v6[1]; lg[5] = v6[4]; break;
+        default: break;
+    }
+}
+void infilFromLegacy(int model, const double lg[6], double v6[6]) {
+    std::fill(v6, v6 + 6, 0.0);
+    switch (static_cast<InfilModel>(model)) {
+        case InfilModel::HORTON: case InfilModel::MOD_HORTON:
+            v6[0] = lg[0]; v6[1] = lg[1]; v6[2] = lg[2]; break;
+        case InfilModel::GREEN_AMPT: case InfilModel::MOD_GREEN_AMPT:
+            // legacy grnampt_setState: Sat = (char)x[3]
+            v6[0] = lg[0]; v6[1] = lg[1]; v6[2] = lg[2]; v6[3] = lg[4];
+            v6[4] = static_cast<char>(lg[3]) != 0 ? 1.0 : 0.0; break;
+        case InfilModel::CURVE_NUM:
+            v6[0] = lg[0]; v6[1] = lg[4]; v6[2] = lg[1]; v6[3] = lg[2]; v6[4] = lg[5]; v6[5] = lg[3]; break;
+        default: break;
+    }
+}
+} // namespace
+
+/// Normalizer of land use @p lu's buildup of pollutant @p p on subcatchment
+/// @p i: the per-unit store times this is legacy's landFactor buildup mass.
+static double buildupNorm(const SimulationContext& ctx, const landuse::LanduseSolver& ls,
+                          std::size_t ui, int lu, int p) {
+    const int nlu = ctx.n_landuses(), np = ctx.n_pollutants();
+    const auto cov = ui * static_cast<std::size_t>(nlu) + static_cast<std::size_t>(lu);
+    const double frac = cov < ctx.subcatches.coverage.size() ? ctx.subcatches.coverage[cov] / 100.0 : 0.0;
+    if (frac <= 0.0) return 0.0;
+    const auto& bp = ls.buildup_params[static_cast<std::size_t>(lu * np + p)];
+    return bp.normalizer == 0 ? frac * ctx.subcatches.area[ui] : frac * ctx.subcatches.curb_length[ui];
+}
+
+std::vector<double> SWMMEngine::legacyRunoffSection() const {
+    const int nsc = ctx_.n_subcatches(), np = ctx_.n_pollutants(), nlu = ctx_.n_landuses();
+    std::vector<double> x;
+    x.reserve(HotStartManager::legacy_runoff_size(ctx_, nlu));
+    const auto& sub = ctx_.subcatches;
+    const auto& soa = runoff_.soa();
+    const auto& gw = groundwater_.state();
+    const auto& sn = snow_.state();
+    for (int i = 0; i < nsc; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        x.push_back(soa.depth_imperv0[ui]);
+        x.push_back(soa.depth_imperv1[ui]);
+        x.push_back(soa.depth_perv[ui]);
+        x.push_back(sub.runoff[ui]);
+        int model = 0; double v6[6], lg[6];
+        runoff_.infil_get_state(i, model, v6);
+        infilToLegacy(model, v6, lg);
+        x.insert(x.end(), lg, lg + 6);
+        if (ui < sub.gw_aquifer.size() && sub.gw_aquifer[ui] >= 0) {
+            // legacy gwater_getState: theta, water table elevation, flow, maxInfilVol
+            x.push_back(gw.theta[ui]);
+            x.push_back(gw.bottom_elev[ui] + gw.lower_depth[ui]);
+            x.push_back(gw.gw_flow[ui]);
+            x.push_back(gw.max_infil_vol[ui]);
+        }
+        if (ui < sub.snowpack.size() && sub.snowpack[ui] >= 0) {
+            for (int j = 0; j < snow::N_SUBAREAS; ++j) {
+                const auto pk = ui * snow::N_SUBAREAS + static_cast<std::size_t>(j);
+                const bool has = pk < sn.wsnow.size();
+                x.push_back(has ? sn.wsnow[pk] : 0.0);
+                x.push_back(has ? sn.fw[pk] : 0.0);
+                x.push_back(has ? sn.coldc[pk] : 0.0);
+                x.push_back(has ? sn.ati[pk] : 0.0);
+                x.push_back(has ? sn.awe[pk] : 0.0);
+            }
+        }
+        if (np > 0) {
+            for (int p = 0; p < np; ++p) x.push_back(sub.conc[ui * np + p]);
+            for (int p = 0; p < np; ++p) x.push_back(sub.ponded_qual[ui * np + p]);
+            for (int lu = 0; lu < nlu; ++lu) {
+                for (int p = 0; p < np; ++p) {
+                    const auto bu = surface_quality_.bu_idx(i, lu, p);
+                    x.push_back(bu < surface_quality_.buildup.size()
+                        ? surface_quality_.buildup[bu] * buildupNorm(ctx_, landuse_solver_, ui, lu, p) : 0.0);
+                }
+                // legacy lastSwept is a date: StartDateTime - SweepDays0 until swept
+                const auto sw = ui * static_cast<std::size_t>(nlu) + static_cast<std::size_t>(lu);
+                x.push_back(sw < sub.sweep_last_date.size() ? sub.sweep_last_date[sw]
+                          : sw < sub.sweep_last_swept.size() ? ctx_.options.start_date - sub.sweep_last_swept[sw]
+                          : ctx_.options.start_date);
+            }
+        }
+    }
+    return x;
+}
+
+void SWMMEngine::applyLegacyRunoffSection() noexcept {
+    const int nsc = ctx_.n_subcatches(), np = ctx_.n_pollutants(), nlu = ctx_.n_landuses();
+    if (hotstart_runoff_.size() != HotStartManager::legacy_runoff_size(ctx_, nlu)) {
+        hotstart_runoff_.clear();
+        return;
+    }
+    auto& sub = ctx_.subcatches;
+    auto& soa = runoff_.soa();
+    auto& gw = groundwater_.state();
+    auto& sn = snow_.state();
+    const double* x = hotstart_runoff_.data();
+    for (int i = 0; i < nsc; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        soa.depth_imperv0[ui] = *x++;
+        soa.depth_imperv1[ui] = *x++;
+        soa.depth_perv[ui]    = *x++;
+        sub.runoff[ui]        = *x++;
+        sub.ponded_depth[ui] = soa.depth_imperv0[ui] * soa.frac_imperv0[ui] +
+                               soa.depth_imperv1[ui] * soa.frac_imperv1[ui] +
+                               soa.depth_perv[ui] * (1.0 - soa.imperv_pct[ui]);
+        int model = 0; double v6[6];
+        runoff_.infil_get_state(i, model, v6);
+        infilFromLegacy(model, x, v6);
+        runoff_.infil_set_state(i, model, v6);
+        x += 6;
+        if (ui < sub.gw_aquifer.size() && sub.gw_aquifer[ui] >= 0) {
+            // legacy gwater_setState
+            gw.theta[ui] = x[0];
+            gw.lower_depth[ui] = x[1] - gw.bottom_elev[ui];
+            gw.old_flow[ui] = x[2];
+            if (x[3] != -1.0e10) gw.max_infil_vol[ui] = x[3];
+            x += 4;
+        }
+        if (ui < sub.snowpack.size() && sub.snowpack[ui] >= 0) {
+            for (int j = 0; j < snow::N_SUBAREAS; ++j, x += 5) {
+                const auto pk = ui * snow::N_SUBAREAS + static_cast<std::size_t>(j);
+                if (pk >= sn.wsnow.size()) continue;
+                sn.wsnow[pk] = x[0]; sn.fw[pk] = x[1]; sn.coldc[pk] = x[2];
+                sn.ati[pk] = x[3];   sn.awe[pk] = x[4];
+            }
+        }
+        if (np > 0) {
+            for (int p = 0; p < np; ++p) sub.conc[ui * np + p] = sub.conc_old[ui * np + p] = *x++;
+            for (int p = 0; p < np; ++p) sub.ponded_qual[ui * np + p] = *x++;
+            for (int lu = 0; lu < nlu; ++lu) {
+                for (int p = 0; p < np; ++p, ++x) {
+                    const auto bu = surface_quality_.bu_idx(i, lu, p);
+                    const double norm = buildupNorm(ctx_, landuse_solver_, ui, lu, p);
+                    if (bu < surface_quality_.buildup.size())
+                        surface_quality_.buildup[bu] = norm > 0.0 ? *x / norm : 0.0;
+                }
+                const auto sw = ui * static_cast<std::size_t>(nlu) + static_cast<std::size_t>(lu);
+                if (sw < sub.sweep_last_swept.size()) {
+                    sub.sweep_last_date.resize(sub.sweep_last_swept.size(), ctx_.options.start_date);
+                    sub.sweep_last_date[sw] = *x;
+                    sub.sweep_last_swept[sw] = ctx_.options.start_date - *x;
+                }
+                ++x;
+            }
+        }
+    }
+    // legacy massbal_open runs after readRunoff: the initial load is what
+    // the hot start left on the land, ponded mass included.
+    if (np > 0) {
+        computeFinalQualityMassBalance();
+        ctx_.mass_balance.qual_init_buildup = ctx_.mass_balance.qual_final_buildup;
+    }
+    hotstart_runoff_.clear();
+}
+
+// ============================================================================
 // postOutputSnapshot() — post snapshot to IO thread if output is due
 // ============================================================================
 
@@ -7282,7 +7463,10 @@ int SWMMEngine::end() noexcept {
         if (lid_restart) {
             std::unique_ptr<HotStartFile> hs(HotStartManager::save(ctx_, sp));
             rc = hs ? 0 : 1;
-        } else rc = HotStartManager::save_legacy_routing(sp, ctx_);
+        } else {
+            const auto runoff = legacyRunoffSection();
+            rc = HotStartManager::save_legacy_routing(sp, ctx_, &runoff);
+        }
         if (rc != 0) {
             ctx_.warnings.push_back(
                 "SAVE HOTSTART: " + HotStartManager::last_io_error());
@@ -7961,6 +8145,7 @@ void SWMMEngine::init_modules() noexcept {
     { perf::ScopedTimer _pt(perf::sec_init_hydraulics); initHydraulics(); }
     { perf::ScopedTimer _pt(perf::sec_init_hydrology);  initHydrology();  }
     { perf::ScopedTimer _pt(perf::sec_init_quality);    initQuality();    }
+    if (!hotstart_runoff_.empty()) applyLegacyRunoffSection();
     { perf::ScopedTimer _pt(perf::sec_init_geometry);   initGeometry();   }
     initMassBalance();
 
@@ -9979,7 +10164,9 @@ void SWMMEngine::initMassBalance() noexcept {
     // Initial stored pollutant mass, from the concentrations initQuality()
     // seeded out of [POLLUTANTS] Cinit. Legacy: massbal_open() sums
     // Node[j].newQual[p] * Node[j].newVolume + Link[j].newQual[p] * link volume
-    // into QualTotals[p].initStorage.
+    // into QualTotals[p].initStorage — with the same legacy-convention node
+    // volume as routing_init_storage above (a hot-started DW junction's
+    // depth-derived volume is not in legacy's newVolume).
     {
         const int np = ctx_.n_pollutants();
         for (int p = 0; p < np; ++p) {
@@ -9990,7 +10177,7 @@ void SWMMEngine::initMassBalance() noexcept {
                 const auto idx = static_cast<std::size_t>(j) *
                                  static_cast<std::size_t>(np) + up;
                 if (idx < ctx_.nodes.conc.size())
-                    m += ctx_.nodes.conc[idx] * ctx_.nodes.volume[j] + lidnode::heldMass(ctx_,j,p);
+                    m += ctx_.nodes.conc[idx] * reportedNodeVolume(j) + lidnode::heldMass(ctx_,j,p);
             }
             for (int j = 0; j < ctx_.n_links(); ++j) {
                 const auto uj  = static_cast<std::size_t>(j);
@@ -10002,12 +10189,14 @@ void SWMMEngine::initMassBalance() noexcept {
         }
     }
 
-    // Record initial runoff storage
+    // Record initial runoff storage: ponded depth x subarea area in ft²,
+    // as computeFinalStorage() and legacy subcatch_getStorage(). Only a hot
+    // start begins with water ponded.
     for (int j = 0; j < ctx_.n_subcatches(); ++j) {
-        // Initial surface storage approximated from initial depth * area
+        if (ownsSpatialSource(j)) continue;
         auto uj = static_cast<std::size_t>(j);
         ctx_.mass_balance.runoff_init_store +=
-            ctx_.subcatches.ponded_depth[uj] * ctx_.subcatches.area[uj];
+            ctx_.subcatches.ponded_depth[uj] * runoff_.soa().area[uj];
     }
     // Initial water in LID units (InitSat + wilting-point soil moisture) is
     // part of runoff storage, mirroring the final-storage accounting.

@@ -1556,10 +1556,27 @@ int HotStartManager::apply(HotStartFile& hs,
 // OBJECT INDEX. Mirrors legacy hotstart.c initializeFromHotstartFile() +
 // readRouting(); see also hotstart_is_valid() for the stamp/version logic.
 
+std::size_t HotStartManager::legacy_runoff_size(const SimulationContext& ctx,
+                                                int n_land) {
+    const auto& sub = ctx.subcatches;
+    const auto np = static_cast<std::size_t>(std::max(ctx.n_pollutants(), 0));
+    std::size_t n = 0;
+    for (int i = 0; i < ctx.n_subcatches(); ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        n += 4 + 6;
+        if (ui < sub.gw_aquifer.size() && sub.gw_aquifer[ui] >= 0) n += 4;
+        if (ui < sub.snowpack.size()   && sub.snowpack[ui]   >= 0) n += 15;
+        if (np > 0)
+            n += 2 * np + static_cast<std::size_t>(std::max(n_land, 0)) * (np + 1);
+    }
+    return n;
+}
+
 int HotStartManager::apply_legacy_routing(
         const std::string& path,
         SimulationContext& ctx,
-        std::function<void(const std::string&)> warn_cb) {
+        std::function<void(const std::string&)> warn_cb,
+        std::vector<double>* runoff) {
     if(meshLidRestartUnsupported(ctx)) {
         tl_last_io_error="Mesh LID hotstart requires the R5 joint owner restart extension";return 1;
     }
@@ -1641,7 +1658,30 @@ int HotStartManager::apply_legacy_routing(
         return 3;
     }
 
-    if (nSub > 0) {
+    // Legacy initializeFromHotstartFile refuses a land-use count that differs
+    // from the model's: the runoff section is positional per land use.
+    if (runoff && version >= 3 && nLand != ctx.n_landuses()) {
+        tl_last_io_error = "Hotstart land use count mismatch (file " +
+            std::to_string(nLand) + " vs model " +
+            std::to_string(ctx.n_landuses()) + ")";
+        return 3;
+    }
+
+    if (runoff) {
+        runoff->clear();
+        if (version >= 3 && nSub > 0) {
+            runoff->resize(legacy_runoff_size(ctx, nLand));
+            file.read(reinterpret_cast<char*>(runoff->data()),
+                      static_cast<std::streamsize>(runoff->size() * sizeof(double)));
+            if (!file) {
+                tl_last_io_error =
+                    "Hotstart runoff section truncated in '" + path + "'";
+                return 1;
+            }
+        }
+    }
+
+    if (nSub > 0 && (!runoff || version < 3)) {
         // Routing state IS applied below; subcatchment runoff/infiltration/
         // groundwater/snowpack/buildup state in the file is skipped, not
         // applied — a continuation run is hydraulically hot-started but its
@@ -1652,7 +1692,7 @@ int HotStartManager::apply_legacy_routing(
         if (warn_cb) warn_cb(msg);
     }
 
-    if (version >= 3 && nSub > 0) {
+    if (!runoff && version >= 3 && nSub > 0) {
         // Skip the readRunoff() section. All fields legacy wrote here are
         // 8-byte doubles (saveRunoff). Per subcatchment: 3 sub-area ponded
         // depths + total runoff (4), infiltration state (6), +4 if it has
@@ -1756,7 +1796,8 @@ int HotStartManager::apply_legacy_routing(
 // ============================================================================
 
 int HotStartManager::save_legacy_routing(const std::string& path,
-                                         const SimulationContext& ctx) {
+                                         const SimulationContext& ctx,
+                                         const std::vector<double>* runoff) {
     if(meshLidRestartUnsupported(ctx)) {
         tl_last_io_error="Mesh LID hotstart requires the R5 joint owner restart extension";return 1;
     }
@@ -1772,7 +1813,7 @@ int HotStartManager::save_legacy_routing(const std::string& path,
     file.write(stamp, 15);                          // NUL not written (strlen)
 
     const int32_t nSub   = ctx.n_subcatches();
-    const int32_t nLand  = 0;                       // land uses (unused here)
+    const int32_t nLand  = runoff ? ctx.n_landuses() : 0;
     const int32_t nNodes = ctx.n_nodes();
     const int32_t nLinks = ctx.n_links();
     const int32_t nPollut = ctx.n_pollutants();
@@ -1782,6 +1823,16 @@ int HotStartManager::save_legacy_routing(const std::string& path,
         !write_pod(file, nPollut) || !write_pod(file, flowUnits)) {
         tl_last_io_error = "Hotstart header write failed for '" + path + "'";
         return 1;
+    }
+
+    // --- runoff state (legacy saveRunoff), all double, before the routing.
+    if (runoff) {
+        if (runoff->size() != legacy_runoff_size(ctx, nLand)) {
+            tl_last_io_error = "Hotstart runoff section has the wrong size for '" + path + "'";
+            return 1;
+        }
+        file.write(reinterpret_cast<const char*>(runoff->data()),
+                   static_cast<std::streamsize>(runoff->size() * sizeof(double)));
     }
 
     const auto& nodes = ctx.nodes;

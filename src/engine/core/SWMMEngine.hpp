@@ -453,6 +453,7 @@ private:
     // Computational modules (batch-oriented, SoA)
     Router                       router_;       ///< Hydraulic routing (owns XSectGroups)
     runoff::RunoffSolver         runoff_;       ///< Subcatchment runoff (batch nonlinear reservoir)
+    std::vector<double>          hotstart_runoff_; ///< USE HOTSTART runoff section, applied in init_modules()
     climate::ClimateFileReader   climate_file_; ///< Climate file reader (temp/evap/wind from file)
     snow::SnowSolver             snow_;         ///< Snowmelt (batch over subcatch×subareas)
     int                          last_melt_doy_ = -1;  ///< Day the seasonal melt coeffs were last set (legacy climate.c LastDay)
@@ -879,6 +880,12 @@ private:
      * @brief Compute final quality buildup mass for quality mass balance.
      */
     void computeFinalQualityMassBalance() noexcept;
+    /// Legacy hotstart.c saveRunoff: every subcatchment's runoff state as
+    /// the doubles legacy writes (HotStartManager::legacy_runoff_size()).
+    std::vector<double> legacyRunoffSection() const;
+    /// Legacy readRunoff: apply hotstart_runoff_ once hydrology and quality
+    /// are initialised, and restate the initial buildup from it.
+    void applyLegacyRunoffSection() noexcept;
 
     /**
      * @brief Post a snapshot to the IO thread if output is due.

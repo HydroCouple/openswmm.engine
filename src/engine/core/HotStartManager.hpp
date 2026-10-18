@@ -371,12 +371,29 @@ public:
      * @param ctx     Allocated target context; node/link/pollutant counts must
      *                match the file.
      * @param warn_cb Optional warning callback.
+     * @param runoff  When given, receives the file's runoff section
+     *                (legacy_runoff_size() doubles) for the caller to apply
+     *                once the hydrology and quality state exist; when null the
+     *                section is skipped with a warning.
      * @returns 0 on success; non-zero error code otherwise (description in
      *          last_io_error()).
      */
     static int apply_legacy_routing(const std::string& path,
                                     SimulationContext& ctx,
-                                    std::function<void(const std::string&)> warn_cb = {});
+                                    std::function<void(const std::string&)> warn_cb = {},
+                                    std::vector<double>* runoff = nullptr);
+
+    /**
+     * @brief Number of doubles in legacy's runoff section (hotstart.c
+     *        saveRunoff) for the current model with @p n_land land uses.
+     *
+     * @details Per subcatchment: 3 sub-area ponded depths + runoff (4),
+     *          infiltration state (6), +4 with groundwater, +15 with a
+     *          snowpack, and when pollutants exist runoff and ponded quality
+     *          (2 per pollutant) plus per land use the buildup of each
+     *          pollutant and the date it was last swept.
+     */
+    static std::size_t legacy_runoff_size(const SimulationContext& ctx, int n_land);
 
     /**
      * @brief Write the current routing state as a legacy EPA SWMM5 `.hsf`
@@ -393,11 +410,17 @@ public:
      *
      * @param path  Absolute path for the `.hsf` file.
      * @param ctx   Source context (final routing state).
+     * @param runoff Legacy runoff section (legacy_runoff_size() doubles for
+     *               the model's land uses), written between the header and
+     *               the routing records. Null writes no runoff section and
+     *               zero land uses, which only a model without subcatchments
+     *               can read back.
      * @returns 0 on success; non-zero on file-open/write error
      *          (description in last_io_error()).
      */
     static int save_legacy_routing(const std::string& path,
-                                   const SimulationContext& ctx);
+                                   const SimulationContext& ctx,
+                                   const std::vector<double>* runoff = nullptr);
 
     // -----------------------------------------------------------------------
     // Flush (write-back modifications)
