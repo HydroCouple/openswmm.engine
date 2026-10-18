@@ -1063,6 +1063,63 @@ TEST(EngineCheckpoint, MeshThermalRejectedIntakeRefundConservesEnergyAcrossLtsSo
     EXPECT_TRUE(session.stage.returns().empty());
 }
 
+TEST(EngineCheckpoint, PendingThermalIntakeRefundSurvivesCommonSourceRestart) {
+    ThermalSurfaceSession source,target;
+    ASSERT_NO_THROW(source.start("surface-thermal-refund-restart-source"));
+    ASSERT_NO_THROW(target.start("surface-thermal-refund-restart-target"));
+    auto& source_surface=source.engine.surfaceRouter2D().state();
+    auto& source_gw=source.engine.surfaceRouter2D().subsurface();
+    source_surface.rainfall[0]=.001;
+    ASSERT_EQ(source.stage.advance(0,1),"");
+    ASSERT_FALSE(source.stage.receipts().empty());
+    source_gw.bookLinkSeepage(0,4);
+    source_gw.bookLinkSeepageMass(0,source_surface.transport.temp_row,4*27);
+    source_gw.assignTiers(1,1);
+    source_gw.fireGwCells(0,1,source_surface,0,1);
+    ASSERT_FALSE(source_gw.sourceReturns().empty());
+    bool has_thermal_refund=false;
+    for(const auto& returned:source_gw.sourceReturns())
+        if(returned.kind==twoD::SurfaceReturnKind::NUMERICAL_REFUND&&returned.mass[0]!=0)has_thermal_refund=true;
+    ASSERT_TRUE(has_thermal_refund);
+
+    const auto checkpoint=root()/"surface-thermal-pending-refund.source-checkpoint";
+    ASSERT_EQ(source.stage.saveCheckpoint(checkpoint.string()),"");
+    ASSERT_EQ(target.stage.loadCheckpoint(checkpoint.string()),"");
+    auto& target_surface=target.engine.surfaceRouter2D().state();
+    auto& target_gw=target.engine.surfaceRouter2D().subsurface();
+    const auto source_copy=root()/"surface-thermal-pending-refund-source-copy.source-checkpoint";
+    const auto target_copy=root()/"surface-thermal-pending-refund-target-copy.source-checkpoint";
+    ASSERT_EQ(source.stage.saveCheckpoint(source_copy.string()),"");
+    ASSERT_EQ(target.stage.saveCheckpoint(target_copy.string()),"");
+    EXPECT_EQ(bytes(source_copy),bytes(target_copy));
+    ASSERT_EQ(source_gw.sourceReturns().size(),target_gw.sourceReturns().size());
+    for(std::size_t i=0;i<source_gw.sourceReturns().size();++i) {
+        EXPECT_EQ(source_gw.sourceReturns()[i].kind,target_gw.sourceReturns()[i].kind);
+        EXPECT_DOUBLE_EQ(source_gw.sourceReturns()[i].available_at,target_gw.sourceReturns()[i].available_at);
+        EXPECT_DOUBLE_EQ(source_gw.sourceReturns()[i].volume,target_gw.sourceReturns()[i].volume);
+        EXPECT_EQ(source_gw.sourceReturns()[i].mass,target_gw.sourceReturns()[i].mass);
+    }
+
+    ASSERT_EQ(source.stage.advance(1,2),"");
+    ASSERT_EQ(target.stage.advance(1,2),"");
+    EXPECT_TRUE(source_gw.sourceReturns().empty());
+    EXPECT_TRUE(target_gw.sourceReturns().empty());
+    ASSERT_FALSE(source.stage.returns().empty());
+    ASSERT_EQ(source.stage.returns().size(),target.stage.returns().size());
+    EXPECT_EQ(source_surface.transport.gained_exfiltration,target_surface.transport.gained_exfiltration);
+    for(std::size_t i=0;i<source.stage.returns().size();++i) {
+        EXPECT_DOUBLE_EQ(source.stage.returns()[i].volume,target.stage.returns()[i].volume);
+        EXPECT_EQ(source.stage.returns()[i].mass,target.stage.returns()[i].mass);
+    }
+    ASSERT_EQ(source.stage.advance(2,3),"");
+    ASSERT_EQ(target.stage.advance(2,3),"");
+    EXPECT_TRUE(source.stage.returns().empty());
+    EXPECT_TRUE(target.stage.returns().empty());
+    ASSERT_EQ(source.stage.saveCheckpoint(source_copy.string()),"");
+    ASSERT_EQ(target.stage.saveCheckpoint(target_copy.string()),"");
+    EXPECT_EQ(bytes(source_copy),bytes(target_copy));
+}
+
 TEST(EngineCheckpoint, ThermalCheckpointModelMismatchLeavesTargetThermalStateUnchanged) {
     ThermalSurfaceSession source,target;
     ASSERT_NO_THROW(source.start("surface-thermal-mismatch-source"));
