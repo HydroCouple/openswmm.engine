@@ -477,7 +477,7 @@ if(OPENSWMM_BUILD_2D)
     # Collect 2D source files. The explicit local-inertial LTS marcher is the
     # only integrator (D2 retirement, 2026-07-29): no SUNDIALS, no hypre, no
     # global linear solve anywhere in the 2D module.
-    file(GLOB_RECURSE OPENSWMM_2D_SOURCES
+    file(GLOB_RECURSE OPENSWMM_2D_SOURCES CONFIGURE_DEPENDS
         RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
         2d/data/*.cpp
         2d/gw/*.cpp
