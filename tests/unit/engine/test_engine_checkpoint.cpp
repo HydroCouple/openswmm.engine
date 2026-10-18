@@ -999,18 +999,24 @@ TEST(EngineCheckpoint, MeshRichardsLidThermalEnergyContinuesAcrossRestart) {
             value+=std::abs(receipt.down)+std::abs(receipt.up);
         return value;
     };
-    while(source.engine.context().current_time<43.1)ASSERT_NO_THROW(step(source.engine));
+    const auto mapped_cell=router.subsurface().nodeBeds().front().cell;
+    ASSERT_GE(mapped_cell,0);
+    // Mesh-LID heat forces a groundwater co-advance on every accepted
+    // routing step. A queued LID receipt is valid between cell firings, but
+    // must be settled before the engine publishes a checkpoint boundary.
+    while(source.engine.context().current_time<43.1) {
+        ASSERT_NO_THROW(step(source.engine));
+        EXPECT_DOUBLE_EQ(pendingMagnitude(router.subsurface()),0);
+        EXPECT_DOUBLE_EQ(router.subsurface().cellCompletedTime(mapped_cell),
+                         source.engine.context().current_time);
+    }
     const double accepted_lid_water=std::accumulate(router.subsurface().richardsBedDownCumulative().begin(),
                               router.subsurface().richardsBedDownCumulative().end(),0.0)+
               std::accumulate(router.subsurface().richardsBedUpCumulative().begin(),
                               router.subsurface().richardsBedUpCumulative().end(),0.0);
     ASSERT_GT(accepted_lid_water,0)<<"No Richards water transfer was exercised.";
-    // The engine checkpoints only at a completed routing boundary. Mesh LID
-    // Richards receipts and their mapped groundwater cell settle to that same
-    // time before the boundary is published; the direct groundwater archive
-    // suite covers a receipt queued between cell firings.
     EXPECT_DOUBLE_EQ(pendingMagnitude(router.subsurface()),0);
-    EXPECT_DOUBLE_EQ(router.subsurface().cellCompletedTime(0),source.engine.context().current_time);
+    EXPECT_DOUBLE_EQ(router.subsurface().cellCompletedTime(mapped_cell),source.engine.context().current_time);
     ASSERT_FALSE(lid.thermal_energy.empty());
     EXPECT_NE(lid.thermal_energy,initial_lid_energy);
     std::size_t mapped_cells=0;
