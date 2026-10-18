@@ -545,7 +545,8 @@ typedef enum SWMM_GroundHeatValue {
     SWMM_GROUND_HEAT_RESIDUAL=11,
     SWMM_GROUND_HEAT_NORMALIZED_RESIDUAL=12, /**< dimensionless, absolute-energy scaled. */
     SWMM_GROUND_HEAT_PENDING_LATERAL=13, /**< J awaiting this cell's LTS gather; add to stored energy for domain totals. */
-    SWMM_GROUND_HEAT_CHANNEL_CONTACT=14 /**< J, routed channel water -> soil. */
+    SWMM_GROUND_HEAT_CHANNEL_CONTACT=14, /**< J, routed channel water -> soil. */
+    SWMM_GROUND_HEAT_LID_CONTACT=15 /**< J, mesh-connected LID -> soil. */
 } SWMM_GroundHeatValue;
 SWMM_ENGINE_API int swmm_heat_get_ground_values(SWMM_Engine,int kind,int first_cell,int count,double* values);
 /** Fixed thermal depth grid, independent of hydraulic sigma layers. */

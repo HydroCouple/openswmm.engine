@@ -413,9 +413,10 @@ public:
     const std::vector<double>& richardsBedUpCumulative() const noexcept { return richards_up_cum_; }
     // Hydraulic columns book completed intervals; groundwater consumes them
     // only at its own firing. Gross reservations cannot cancel each other.
-    struct PendingLidBed { double start=0,end=0,down=0,up=0; };
+    struct PendingLidBed { double start=0,end=0,down=0,up=0,down_j=0,up_j=0; bool heat_applied=false; };
     std::string configureLidReceipts(const std::vector<int>& beds,const std::vector<int>& mobile={});
     std::string retainLidReceipts(double start,double end,const std::vector<RichardsBedReceipt>&);
+    std::string completeLidThermalInterval(SimulationContext&);
     bool lidReceiptsEnabled() const noexcept { return lid_receipts_enabled_; }
     double pendingLidDown(int cell) const noexcept;
     double pendingLidUp(int cell) const noexcept;
@@ -489,6 +490,7 @@ private:
         /// column's own balance, which makes it exact for every closure
         /// rather than only for closure A's explicit `θ_bot·ΔL`.
         double handover = 0.0;
+        double lid_in_j = 0.0;               ///< accepted LID sensible heat entering this cell
         double et = 0.0;                     ///< out of the column
         double deep = 0.0;
         double dt = 0.0;                     ///< T7.2: the firing's own step (s), for decay
@@ -542,6 +544,7 @@ private:
     std::vector<double> heat_node_out_volume_,heat_node_gathered_out_; // gross accepted exports per hydraulic bed
     std::vector<double> porewater_preset_out_; // [species*n_cells*layers + cell*layers + layer]
     void bookPresetHeatOut(int cell,double volume,double temperature_volume) noexcept;
+    std::string conductGroundWithLids(int cell,double seconds);
     void bookPresetPorewaterOut(int cell,int species,double mass) noexcept;
     double saturatedPorewaterMobileMass(int cell,int species) const noexcept;
     struct ThermalFaceSlice {int left=0,right=0;double low=0,high=0;};

@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
+#include <limits>
 #include <string>
 #include <vector>
 #include "GroundHeat.hpp"
+#include "LidNodeHeat.hpp"
 namespace openswmm { struct SimulationContext; }
 namespace openswmm::twoD {
-struct MeshData;struct SurfaceStateData;struct SolverOptions2D;
+struct MeshData;struct SurfaceStateData;struct SolverOptions2D;struct GwNodeBed;
 // Empty in compatibility mode. Bed energy survives surface drying.
 struct MeshHeatState {
     SimulationContext* context=nullptr; // owning engine; never serialized
@@ -41,10 +43,19 @@ struct MeshAtmosphericFlux {
 // A column's portion of one shared finite thermal system. Index ranges let
 // a multi-owner solve reuse exactly the same mesh physics and receipts.
 struct GroundColumnAssembly {
+    struct LidEnergy {
+        int row=-1,first_store=0;
+        double area=0;
+        LidNodeThermalGraph graph;
+        std::vector<double> physical_energy;
+        std::vector<std::size_t> vertical_contacts;
+        std::size_t ground_contact=std::numeric_limits<std::size_t>::max();
+    };
     GroundHeatState* owner=nullptr;
     MeshHeatState* mesh_heat=nullptr;
     int cell=-1,first_store=0,soil_count=0,water=-1;
     std::size_t first_contact=0,vertical_count=0,contact_count=0,first_boundary=0,top_count=0,ground_count=0,atmosphere=0;
+    std::vector<LidEnergy> lids;
     int snow_boundary=-1;
     double mass=0,volume=0,evaporated=0,seconds=0,wet=0,temperature=0,slope=0,water_initial_j=0;
     MeshAtmosphericFlux flux0,flux1;
@@ -52,9 +63,11 @@ struct GroundColumnAssembly {
 GroundColumnAssembly appendGroundColumnSystem(const MeshData&,const SolverOptions2D&,GroundHeatState&,int cell,
     MeshHeatState*,double temperature_volume,double volume,double evaporated,double seconds,double channel_area,
     std::vector<ThermalStore>&,std::vector<ThermalContact>&,std::vector<ThermalBoundary>&);
-double commitGroundColumnSystem(const GroundColumnAssembly&,const ThermalSolution&) noexcept;
+double commitGroundColumnSystem(GroundColumnAssembly&,const ThermalSolution&) noexcept;
 std::string initializeMeshHeat(SimulationContext&,const MeshData&,SurfaceStateData&,const SolverOptions2D&,
     GroundHeatState* aquifer=nullptr,const std::vector<uint8_t>* coverage=nullptr);
+std::string configureGroundLidOwners(SimulationContext&,const MeshData&,GroundHeatState&,
+    const std::vector<GwNodeBed>&);
 void prepareMeshHeat(SimulationContext&,SurfaceStateData&,double seconds);
 // Complete ground-column conduction for dry cells that did not reach a
 // temperature source row during the hydraulic march.

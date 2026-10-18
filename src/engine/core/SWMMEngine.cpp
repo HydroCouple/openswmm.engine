@@ -7215,7 +7215,7 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
             snap.thermal2d_ground_layer_temperature.assign(layer_size, missing);
             snap.thermal2d_ground_layer_energy.assign(layer_size, missing);
             snap.thermal2d_ground_layer_capacity.assign(layer_size, missing);
-            snap.thermal2d_ground_budget.assign(n * 11, missing);
+            snap.thermal2d_ground_budget.assign(n * 12, missing);
             for (std::size_t i = 0; i < n; ++i) {
                 if (!cells[i]) continue;
                 const auto& cell = *cells[i];
@@ -7241,11 +7241,11 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                     cell.source_j - cell.surface_j - cell.deep_j - cell.latent_j -
                     cell.lateral_j - cell.water_contact_j - cell.channel_contact_j;
                 const double pending = surface_router_.subsurface().pendingHeat(static_cast<int>(i));
-                const double values[11] = {cell.initial_j, cell.advective_j, cell.source_j,
+                const double values[12] = {cell.initial_j, cell.advective_j, cell.source_j,
                     cell.surface_j, cell.deep_j, cell.latent_j, cell.lateral_j,
-                    cell.water_contact_j, cell.channel_contact_j, residual, pending};
-                std::copy(values, values + 11, snap.thermal2d_ground_budget.begin() +
-                    static_cast<std::ptrdiff_t>(i * 11));
+                    cell.water_contact_j, cell.channel_contact_j, residual, pending, cell.lid_contact_j};
+                std::copy(values, values + 12, snap.thermal2d_ground_budget.begin() +
+                    static_cast<std::ptrdiff_t>(i * 12));
             }
         } else {
             snap.thermal2d_layer_count = 0;

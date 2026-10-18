@@ -8,10 +8,9 @@
 #include <vector>
 
 namespace openswmm::twoD {
-// Experimental finite-volume thermal graph for the custom [LID_NODES]
-// storage layers. It is intentionally not attached to a runtime owner yet:
-// mesh-LID heat remains refused until accepted water, thermal, and restart
-// receipts are integrated together.
+// Finite-volume thermal graph for the custom [LID_NODES] storage layers.
+// Runtime owners advance it with accepted water/heat receipts and persist its
+// energy through the hydraulic and thermal checkpoints.
 struct LidNodeThermalGraph {
     std::vector<std::size_t> cells; // compact thermal-store index -> LID cell
     std::vector<ThermalStore> stores;

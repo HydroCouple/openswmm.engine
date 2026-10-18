@@ -25,8 +25,8 @@ twoD::RichardsBedAcceptance acceptNodes(SimulationContext& ctx,twoD::SubsurfaceS
         return fail("Invalid Richards node owner interval/evaporation.");
     if(ctx.n_pollutants()>0 || ctx.options.water_age || ctx.reactions.configured)
         return fail("Joint Richards node adoption requires water-only routing.");
-    if(ctx.options.heat_transport)
-        return fail("Mesh LID bottom heat exchange is unavailable: reciprocal LID/ground thermal receipts are not yet qualified.");
+    if(ctx.options.heat_transport&&!gw.heat().active())
+        return fail("Mesh LID heat requires an active porous-ground thermal owner.");
     if(!ctx.nodes.aquifer2d_bed.empty() && ctx.nodes.aquifer2d_bed.size()!=std::size_t(ctx.n_nodes()))
         return fail("Invalid Richards node aquifer ownership layout.");
     auto nodes=input;std::sort(nodes.begin(),nodes.end());

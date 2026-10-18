@@ -1003,7 +1003,7 @@ TEST(Output2DWriter, CoupledGroundHeatFieldsAndBudgetsEndToEnd) {
     EXPECT_EQ(time[1], 4u);
     EXPECT_EQ(time[2], 2u);
     EXPECT_EQ(file.dsAttr("ground_heat_budget", "terms"),
-        "initial_j,advective_j,source_j,surface_boundary_j,deep_boundary_j,latent_j,lateral_net_j,water_contact_j,channel_contact_j,residual_j,pending_lateral_j");
+        "initial_j,advective_j,source_j,surface_boundary_j,deep_boundary_j,latent_j,lateral_net_j,water_contact_j,channel_contact_j,residual_j,pending_lateral_j,lid_contact_j");
     const auto energy = file.readAll("Mesh2_face_soil_energy");
     const auto capacity = file.readAll("Mesh2_face_soil_heat_capacity");
     const auto temperature = file.readAll("Mesh2_face_soil_temperature");
@@ -1016,7 +1016,7 @@ TEST(Output2DWriter, CoupledGroundHeatFieldsAndBudgetsEndToEnd) {
     const auto budget_dims = file.dims("ground_heat_budget");
     const auto budget = file.readAll("ground_heat_budget");
     ASSERT_EQ(budget_dims.size(), 3u);
-    ASSERT_EQ(budget_dims[2], 11u);
+    ASSERT_EQ(budget_dims[2], 12u);
     for (hsize_t t = 0; t < budget_dims[0]; ++t)
         for (hsize_t c = 0; c < budget_dims[1]; ++c)
             EXPECT_NEAR(budget[(t * budget_dims[1] + c) * budget_dims[2] + 9], 0.0, 1e-5);
@@ -1302,8 +1302,8 @@ TEST(Output2DThermal, WritesOnlySelectedInitializedThermalStateAndSignedBudgets)
         snap.thermal2d_ground_layer_temperature = {5.0, std::numeric_limits<double>::quiet_NaN(), 7.0, std::numeric_limits<double>::quiet_NaN()};
         snap.thermal2d_ground_layer_energy = {50.0, std::numeric_limits<double>::quiet_NaN(), 70.0, std::numeric_limits<double>::quiet_NaN()};
         snap.thermal2d_ground_layer_capacity = {10.0, std::numeric_limits<double>::quiet_NaN(), 10.0, std::numeric_limits<double>::quiet_NaN()};
-        snap.thermal2d_ground_budget_terms = 11;
-        snap.thermal2d_ground_budget.assign(22, 0.0);
+        snap.thermal2d_ground_budget_terms = 12;
+        snap.thermal2d_ground_budget.assign(24, 0.0);
         snap.thermal2d_ground_budget[9] = -1.25;
         ASSERT_EQ(writer.update(snap), 0);
         ASSERT_EQ(writer.finalize(ctx), 0);
@@ -1322,7 +1322,7 @@ TEST(Output2DThermal, WritesOnlySelectedInitializedThermalStateAndSignedBudgets)
         EXPECT_EQ(file.dims("Mesh2_face_water_temperature"), (std::vector<hsize_t>{1, 2}));
         EXPECT_EQ(file.dims("Mesh2_face_soil_layer_temperature"), (std::vector<hsize_t>{1, 2, 2}));
         EXPECT_EQ(file.dims("mesh_heat_budget"), (std::vector<hsize_t>{1, 2, 6}));
-        EXPECT_EQ(file.dims("ground_heat_budget"), (std::vector<hsize_t>{1, 2, 11}));
+        EXPECT_EQ(file.dims("ground_heat_budget"), (std::vector<hsize_t>{1, 2, 12}));
         const auto water = file.readAll("Mesh2_face_water_temperature");
         ASSERT_EQ(water.size(), 2u);
         EXPECT_DOUBLE_EQ(water[0], 12.5);

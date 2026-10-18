@@ -24,7 +24,7 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
         throw std::runtime_error("Richards joint owner checkpoints require the R5 restart extension.");
     auto& s=state_;auto& t=tr_;auto& o=options_;
     if(model) {
-        if(lid_receipts_enabled_) {std::string profile="completed LID bed receipts v1";a(profile,richards_bed_owned_,mobile_lid_bed_);}
+        if(lid_receipts_enabled_) {std::string profile="completed LID bed receipts v2";a(profile,richards_bed_owned_,mobile_lid_bed_);}
         a(s.active,s.n_cells,s.m_layers);
     a.fixed(s.Ks,s.zs,s.theta_s,s.theta_r,s.alpha,s.psi_b,s.lambda,s.vg_n,s.vg_L,s.c_loss,s.soil_char,
             s.closure,s.area,s.z_bed);
@@ -59,10 +59,13 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
     a.sequence(source_receipts_,[&](auto& rows){a.sequence(rows,[&](auto& r){intake(a,r);});},true);
     a.sequence(source_returns_,[&](auto& r){returned(a,r);});
     if(lid_receipts_enabled_) {
+        std::string lid_receipt_profile="accepted LID heat receipt state v3";a(lid_receipt_profile);
+        if(a.reading()&&lid_receipt_profile!="accepted LID heat receipt state v3")
+            throw std::runtime_error("Unsupported completed LID heat receipt checkpoint profile.");
         a.fixed(cell_completed_,richards_down_cum_,richards_up_cum_,lid_booked_end_,lid_bed_factor_,node_pending_down_,node_pending_up_);
         a.sequence(lid_bed_diagnostics_,[&](auto& d){a(d.start,d.end,d.groundwater_time,d.lid_head,d.groundwater_head,
             d.requested_down,d.requested_up,d.reserved_down,d.reserved_up,d.accepted_down,d.accepted_up);},true);
-        a.sequence(lid_receipts_,[&](auto& rows){a.sequence(rows,[&](auto& r){a(r.start,r.end,r.down,r.up);});},true);
+        a.sequence(lid_receipts_,[&](auto& rows){a.sequence(rows,[&](auto& r){a(r.start,r.end,r.down,r.up,r.down_j,r.up_j,r.heat_applied);});},true);
     }
     if(heat_.active()) {
         std::string profile="accepted-boundary porous thermal state v3";a(profile);
@@ -131,8 +134,11 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
                 double previous=0,down=0,up=0;
                 for(const auto& r:lid_receipts_[b]) {
                     nonnegative(r.start);nonnegative(r.end);nonnegative(r.down);nonnegative(r.up);
-                    if(r.start<previous || r.end<=r.start || r.end>lid_booked_end_[b] ||
-                       r.end<=cell_completed_[node_beds_[b].cell] || (r.down==0 && r.up==0))fail();
+                    if(!std::isfinite(r.down_j)||!std::isfinite(r.up_j)||
+                       (r.down==0&&r.down_j!=0)||(r.up==0&&r.up_j!=0))fail();
+                    if(!r.heat_applied||r.start<previous || r.end<=r.start || r.end>lid_booked_end_[b] ||
+                       r.end<=cell_completed_[node_beds_[b].cell] ||
+                       (r.down==0 && r.up==0 && !heat_.active()))fail();
                     previous=r.end;down+=r.down;up+=r.up;
                 }
                 if(down>richards_down_cum_[b] || up>richards_up_cum_[b] ||

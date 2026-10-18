@@ -7,11 +7,15 @@ transport and existing 1D/lumped heat calculations retain their behavior.
 settings remain saved when a parent is off.
 
 The current coupled runtime is experimental. Reciprocal UEB/soil exchange is
-implemented on qualified mesh ground columns; its broader transition and restart
-matrix and reciprocal LID ownership are not yet qualified. The fixed-grid ground
-and shared surface-column paths have focused numerical/runtime tests; the full release matrix remains open. Active unsupported
-owner combinations are refused. Query `swmm_heat_get_2d_status` for the actual
-activation and qualification reason; a saved switch is not runtime evidence.
+implemented on qualified mesh ground columns. Mesh-connected Richards LIDs now
+own persistent layer energy and join the same implicit solve as their mapped
+ground column; accepted LID/aquifer water carries its producer-time sensible
+heat. This route requires an active porous-ground heat owner and a resolved
+`MESH_AQUIFER` bed. Legacy, non-Richards and other LID bottoms retain their
+existing behavior and do not acquire mesh-layer heat. The broader release
+matrix remains open. Active unsupported owner combinations are refused. Query
+`swmm_heat_get_2d_status` for actual 2D activation; a saved switch is not runtime
+evidence.
 
 `[GW_TRANSPORT_OPTIONS] THERMAL_MODEL POROUS_EQUILIBRIUM` explicitly selects
 finite soil-plus-water storage beneath an active spatial aquifer. Its default
@@ -181,18 +185,28 @@ thermal sides unchanged.
 
 The accepted contact joules enter soil and leave channel water with opposite
 signs. `SWMM_GROUND_HEAT_CHANNEL_CONTACT` exposes the soil receipt separately
-from overland-water exchange. Mapped bed geometry requires reinitialization;
+from overland-water exchange. Mesh Richards LID layers exchange heat through
+the series resistance of the LID bottom half-layer and the soil top half-layer;
+the contact area is the resolved overlap of the LID footprint, aquifer bed and
+mesh cell. `SWMM_GROUND_HEAT_LID_CONTACT` and the `lid_contact_j` ground-budget
+term report the signed soil-side receipt. `CONDUCTION` controls LID-to-soil
+contact, while `LAYER_CONDUCTION` controls conduction between LID layers.
+Mapped bed geometry requires reinitialization;
 live bed OFF stops these contacts while retaining soil energy, and ON resumes
 prepared contacts. A selector that was dormant at initialization cannot lazily
 allocate a new contact model during a run. Independent atmospheric/ground
 processes retain their own switches.
 
-This is a heat-only experimental capability. Conservative bed tracer/age
-partitioning, complete footprint/atmospheric ownership, wider geometry/transfer
-refinement, broader UEB/soil transition testing, reciprocal LID, restart and GUI
-release qualification remain open. Active unqualified bed tracer/age combinations are refused. Inspect the
-canonical soil/layer results for its storage; old prescribed-bed fields are
-not an additional mapped-soil energy budget.
+Mesh Richards LID thermal state and pending water/energy receipts participate in
+the qualified engine-session checkpoint. Native hotstarts and direct hydraulic
+component checkpoints do not carry this 2D thermal state. Heat-only operation
+is supported; water-age, pollutant/MSX, reaction, non-Mesh Richards heat, and
+unqualified hydraulic ownership combinations remain unavailable. Conservative
+bed tracer/age partitioning, complete footprint/atmospheric ownership, wider
+geometry/transfer refinement, broader UEB/soil transition testing, and GUI
+release qualification remain open. Inspect the canonical soil/layer results
+for storage; old prescribed-bed fields are not an additional mapped-soil energy
+budget.
 
 `swmm_heat_get_channel_ground_status` distinguishes a saved source choice,
 initialized mapping counts, and live exchange activity. Parent OFF retains

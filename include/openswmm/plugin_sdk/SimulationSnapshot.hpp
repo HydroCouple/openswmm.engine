@@ -370,7 +370,7 @@ struct SimulationSnapshot {
     bool thermal2d_active = false;
     int thermal2d_layer_count = 0;
     int thermal2d_surface_budget_terms = 6;
-    int thermal2d_ground_budget_terms = 11;
+    int thermal2d_ground_budget_terms = 12;
     std::vector<double> thermal2d_water_temperature; ///< degC, face
     std::vector<double> thermal2d_bed_temperature;   ///< degC, face
     std::vector<double> thermal2d_bed_energy;        ///< J, face
@@ -388,7 +388,7 @@ struct SimulationSnapshot {
     std::vector<double> thermal2d_ground_layer_energy;
     std::vector<double> thermal2d_ground_layer_capacity;
     /// [face, term]: initial, advective, source, surface, deep, latent,
-    /// lateral, water contact, channel contact, residual, pending lateral.
+    /// lateral, water contact, channel contact, residual, pending lateral, LID contact.
     std::vector<double> thermal2d_ground_budget;
 
     std::vector<double> surface_edge_flux;      ///< Normal flux through each edge, flat [tri*3+edge]

@@ -26,6 +26,7 @@
 #include "2d/subsurface/SourceResultHistory.hpp"
 #include "2d/subsurface/EngineSourceResultHistory.hpp"
 #include "2d/subsurface/EngineSourceResultStream.hpp"
+#include "2d/heat/LidNodeHeat.hpp"
 #include "io/CheckpointFile.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
 #include <openswmm/engine/openswmm_coupling.h>
@@ -684,7 +685,7 @@ struct ThermalSurfaceSession {
                bool atmospheric_exchange=false,bool temperature_timeseries=false,
                bool lateral_conduction=false,bool heterogeneous_ground=false,
                bool mapped_channel=false,bool enable_checkpoint=true,
-               bool ueb_snow=false) {
+               bool ueb_snow=false,bool mesh_richards_lid=false) {
         const auto p=root()/name;
         std::string deck=
             "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
@@ -695,6 +696,15 @@ struct ThermalSurfaceSession {
             "[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION YES\nDISPERSION NO\n"
             "SOIL_ET_HEAT SENSIBLE_ONLY\nSURFACE_THERMAL_BC ADIABATIC\nDEEP_THERMAL_BC ADIABATIC\n"
             "[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ 8\n* UNSAT __TEMPERATURE__ 8\n";
+        if(mesh_richards_lid)deck+=
+            "[STORAGE]\nLID 0 .024 .01 FUNCTIONAL 0 0 100 0 0\n"
+            "[COORDINATES]\nLID .2 .5\n"
+            "[2D_AQUIFER_NODE]\nLID 1 KC 3600 DC .1 AREA 1\n"
+            "[LID_CONTROLS]\nStack NODE\nStack SURFACE 6 .1\n"
+            "Stack MEDIA 12 .45 .2 .08 2 10 3\nStack AGGREGATE 6 .4 100\n"
+            "Stack BOTTOM 0 0\n[LID_NODES]\nLID Stack 1 BOTTOM MESH_AQUIFER\n"
+            "[LID_RICHARDS]\nStack OPTIONS 4 1e-7 1e-5 30\n"
+            "Stack 2 .03 2 1.6 .5 .0001\nStack 3 .03 2 1.6 .5 .0001\n";
         if(temperature_timeseries)deck+=
             "[TEMPERATURE]\nTIMESERIES AirTemp\nHUMIDITY 50\n"
             "WINDSPEED MONTHLY 5 5 5 5 5 5 5 5 5 5 5 5\n"
@@ -707,6 +717,8 @@ struct ThermalSurfaceSession {
                   "[XSECTIONS]\nC1 RECT_OPEN .5 .1 0 0 1\n"
                   "[COORDINATES]\nJ1 .2 .5\nO1 3.8 .5\n[DWF]\nJ1 FLOW .01\n";
         }
+        if(mesh_richards_lid)deck.replace(deck.find("IGNORE_QUALITY YES"),
+            std::string("IGNORE_QUALITY YES").size(),"IGNORE_QUALITY NO");
         write(p.string()+".inp",deck);
         if(engine.open((p.string()+".inp").c_str(),(p.string()+".rpt").c_str(),nullptr))
             throw std::runtime_error("thermal surface open: "+engine.context().error_message);
@@ -735,6 +747,10 @@ struct ThermalSurfaceSession {
         mesh.set_triangle(0,0,1,2);mesh.set_triangle(1,1,3,2);mesh.mannings_n={.03,.03};
         mesh.tri_init_depth=dry_surface?std::vector<double>{0,0}:std::vector<double>{.04,.03};
         mesh.tri_tag={channel_tag,"floodplain"};
+        if(mesh_richards_lid) {
+            mesh.tri_coupled_node={ctx.node_names.find("LID"),-1};
+            mesh.tri_coupling_cd={0,0};mesh.tri_coupling_area={1,1};
+        }
         if(ueb_snow) {
             auto& c=engine.context();c.options.ignore_snow_melt=false;
             c.snowpack_names.try_add("Snow");c.snowpacks.names={"Snow"};
@@ -806,7 +822,7 @@ TEST(EngineCheckpoint, CoupledMeshAndGroundThermalStateContinuesAcrossRestart) {
     double ground_before=0;for(const auto& cell:router.subsurface().heat().cells)
         for(double value:cell.column.energy)ground_before+=value;
     while(a.engine.context().current_time<43.1)ASSERT_NO_THROW(step(a.engine));
-    auto& state=router.state();auto& ground=router.subsurface().heat();
+    auto& ground=router.subsurface().heat();
     double initial=0;for(const auto& cell:ground.cells)for(double value:cell.column.energy)initial+=value;
     ASSERT_GT(initial,0);EXPECT_GT(std::abs(initial-ground_before),1e-8);
     const auto file=root()/"surface-thermal-restart.chk";ASSERT_EQ(a.engine.saveCheckpoint(file.string()),"");
@@ -819,6 +835,57 @@ TEST(EngineCheckpoint, CoupledMeshAndGroundThermalStateContinuesAcrossRestart) {
     }
     compare(a.engine,b.engine,"surface-thermal-restart-final");
     for(const auto& cell:ground.cells)ASSERT_EQ(cell.failed,0)<<cell.error;
+}
+
+TEST(EngineCheckpoint, MeshRichardsLidThermalEnergyContinuesAcrossRestart) {
+    ThermalSurfaceSession source,target;
+    ASSERT_NO_THROW(source.start("surface-thermal-lid-source",12,"channel:test",false,
+        false,false,false,false,false,true,false,true));
+    ASSERT_NO_THROW(target.start("surface-thermal-lid-target",12,"channel:test",false,
+        false,false,false,false,false,true,false,true));
+    const auto seed_lid=[](SWMMEngine& engine) {
+        auto& ctx=engine.context();auto& router=engine.surfaceRouter2D();
+        const int row=ctx.node_subtypes.storage_row(ctx.node_names.find("LID"));
+        if(row<0)throw std::runtime_error("Mesh LID checkpoint fixture has no storage owner.");
+        auto& state=ctx.node_subtypes.storages.lid_state[std::size_t(row)];
+        state.thermal_energy.clear();
+        twoD::LidNodeThermalGraph graph;
+        auto& ground=router.subsurface().heat();
+        if(auto error=twoD::buildLidNodeThermalGraph(state,0,ground.water_capacity,
+            ctx.heat_config.conduction,30,graph);!error.empty())throw std::runtime_error(error);
+        state.thermal_energy.assign(state.cells.size(),0);
+        for(std::size_t k=0;k<graph.cells.size();++k)
+            state.thermal_energy[graph.cells[k]]=graph.stores[k].capacity*30;
+    };
+    seed_lid(source.engine);seed_lid(target.engine);
+    auto& router=source.engine.surfaceRouter2D();
+    ASSERT_TRUE(router.subsurface().heat().active());
+    auto& context=source.engine.context();
+    const int row=context.node_subtypes.storage_row(context.node_names.find("LID"));
+    ASSERT_GE(row,0);
+    auto& lid=context.node_subtypes.storages.lid_state[std::size_t(row)];
+    ASSERT_TRUE(lid.richards);
+    while(source.engine.context().current_time<43.1)ASSERT_NO_THROW(step(source.engine));
+    ASSERT_FALSE(lid.thermal_energy.empty());
+    std::size_t mapped_cells=0;
+    for(const auto& owners:router.subsurface().heat().lid_owners)if(!owners.empty())++mapped_cells;
+    EXPECT_EQ(mapped_cells,1u);
+    EXPECT_GT(std::accumulate(lid.thermal_energy.begin(),lid.thermal_energy.end(),0.0),0);
+    const auto checkpoint=root()/"surface-thermal-lid-checkpoint.chk";
+    ASSERT_EQ(source.engine.saveCheckpoint(checkpoint.string()),"");
+    ASSERT_EQ(target.engine.loadCheckpoint(checkpoint.string()),"");
+    compare(source.engine,target.engine,"surface-thermal-lid-restored");
+    auto& target_context=target.engine.context();
+    const int target_row=target_context.node_subtypes.storage_row(target_context.node_names.find("LID"));
+    ASSERT_GE(target_row,0);
+    EXPECT_EQ(lid.thermal_energy,target_context.node_subtypes.storages.lid_state[std::size_t(target_row)].thermal_energy);
+    int steps=0;
+    while(source.engine.context().elapsed_ms<source.engine.context().options.totalDurationMs()) {
+        ASSERT_NO_THROW(step(source.engine));
+        ASSERT_NO_THROW(step(target.engine));
+        if(++steps%11==0)compare(source.engine,target.engine,"surface-thermal-lid-continued");
+    }
+    compare(source.engine,target.engine,"surface-thermal-lid-final");
 }
 
 TEST(EngineCheckpoint, DrySurfaceThermalStateContinuesAcrossRestart) {

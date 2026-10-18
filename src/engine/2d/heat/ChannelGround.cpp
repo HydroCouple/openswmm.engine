@@ -369,7 +369,7 @@ std::string ChannelGroundState::advance(const SolverOptions2D& options,const std
             channel_species_to_ground_=std::move(next_species_receipt);
             for(int cell:cells_)ground_->refreshView(cell,*transport_);
         }
-        for(const auto& column:columns)next_mass[column.cell]=commitGroundColumnSystem(column,solved);
+        for(auto& column:columns)next_mass[column.cell]=commitGroundColumnSystem(column,solved);
         for(const auto& transfer:transfers) {
             const double joules=solved.contact_j[transfer.contact];
             ground_->cells[transfer.cell].channel_contact_j+=joules;channel_ground_j_[transfer.link]+=joules;

@@ -19,6 +19,7 @@
 #include "2d/subsurface/SubsurfaceSolver.hpp"
 #include "2d/heat/ChannelGround.hpp"
 #include "2d/heat/MeshHeat.hpp"
+#include "2d/heat/LidNodeHeat.hpp"
 #include "2d/heat/ThermalCheckpoint.hpp"
 namespace {
 namespace fs=std::filesystem;
@@ -60,9 +61,12 @@ struct Model {
 double sum(const std::vector<double>& x){return std::accumulate(x.begin(),x.end(),0.);}
 double energy(const openswmm::twoD::GroundHeatState& h){double e=0;for(const auto& c:h.cells)e+=sum(c.column.energy);return e;}
 double poreMass(const openswmm::twoD::GroundHeatState& h,int species) {
-    double mass=0;for(const auto& cell:h.cells)if(cell.porewater.active()) {
-        const auto nl=cell.column.theta.size();for(std::size_t j=0;j<nl;++j)mass+=cell.porewater.mass[std::size_t(species)*nl+j];
-    }return mass;
+    double mass=0;
+    for(const auto& cell:h.cells)if(cell.porewater.active()) {
+        const auto nl=cell.column.theta.size();
+        for(std::size_t j=0;j<nl;++j)mass+=cell.porewater.mass[std::size_t(species)*nl+j];
+    }
+    return mass;
 }
 int enablePorewater(Model& m) {
     for(const auto& pair:{std::pair{"HEAT_MODEL","COUPLED"},{"BED_HEAT_MODEL","GROUND_COLUMN"},
@@ -73,24 +77,78 @@ int enablePorewater(Model& m) {
 const std::string porewater_species="[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0\n"
     "[OPTIONS]\nWATER_AGE ON\n[GW_INITIAL_QUALITY]\n* SAT Dye 10\n* UNSAT Dye 10\n";
 }
-TEST(GroundHeat, MeshLidGroundContactRefusesHeatUntilItsWaterRouteIsQualified) {
+TEST(GroundHeat, MeshRichardsLidSharesReciprocalHeatWithItsGroundColumn) {
     const auto file=out/"mesh-lid-ground-heat-refusal.inp";fs::create_directories(out);
     std::ofstream(file)<<"[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
         "START_DATE 01/01/2026\nEND_DATE 01/01/2026\nEND_TIME 00:10:00\nROUTING_STEP 5\nREPORT_STEP 00:01:00\n"
-        "[STORAGE]\nS -2 2 1 FUNCTIONAL 0 0 100 0 0\n[OUTFALLS]\nO -2 FREE NO\n"
-        "[CONDUITS]\nC1 S O 30 .013 0 0 0\n[XSECTIONS]\nC1 RECT_OPEN 1 2 0 0 1\n"
-        "[COORDINATES]\nS 1 3\nO 9 3\n[2D_OPTIONS]\nREPORT_2D NO\nMAX_TIMESTEP 5\nLTS_TIERS 1\nEVAPORATION NO\nINFILTRATION NO\n"
+        "[STORAGE]\nS -2 2 1 FUNCTIONAL 0 0 100 0 0\n"
+        "[COORDINATES]\nS 1 3\n[2D_OPTIONS]\nREPORT_2D NO\nMAX_TIMESTEP 5\nLTS_TIERS 1\nEVAPORATION NO\nINFILTRATION NO\n"
         "[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n[2D_TRIANGLES]\n0 1 2 .03 .1 floodplain\n"
         "[2D_AQUIFER_OPTIONS]\nNODE_ENROLMENT ROWS\nGW_ET NONE\nM_LAYERS 4\nCLOSURE CLOSED_FORM\n"
         "[2D_AQUIFER]\n* 36 1 .45 .1 2 HG0 .5\n[2D_AQUIFER_NODE]\nS 1 KC 3600 DC .1 AREA 1\n"
-        "[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION NO\n"
+        "[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION YES\n"
+        "SURFACE_THERMAL_BC ADIABATIC\nDEEP_THERMAL_BC ADIABATIC\n"
         "[LID_CONTROLS]\nStack NODE\nStack SURFACE 6 .1\nStack MEDIA 12 .45 .2 .08 2 10 3\n"
-        "Stack AGGREGATE 6 .4 100\nStack BOTTOM .5 0\n[LID_NODES]\nS Stack 10 BOTTOM MESH_AQUIFER\n";
+        "Stack AGGREGATE 6 .4 100\nStack BOTTOM 0 0\n[LID_NODES]\nS Stack 10 BOTTOM MESH_AQUIFER\n"
+        "[LID_RICHARDS]\nStack OPTIONS 4 1e-7 1e-5 30\n"
+        "Stack 2 .03 2 1.6 .5 .0001\nStack 3 .03 2 1.6 .5 .0001\n"
+        "[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ -3\n* UNSAT __TEMPERATURE__ -3\n";
     SWMM_Engine engine=swmm_engine_create();ASSERT_NE(engine,nullptr);
-    ASSERT_EQ(swmm_engine_open(engine,file.string().c_str(),(out/"mesh-lid-ground-heat-refusal.rpt").string().c_str(),nullptr,nullptr),SWMM_OK)
+    ASSERT_EQ(swmm_engine_open(engine,file.string().c_str(),(out/"mesh-lid-ground-heat.rpt").string().c_str(),nullptr,nullptr),SWMM_OK)
         <<swmm_get_last_error_msg(engine);
-    EXPECT_NE(swmm_engine_initialize(engine),SWMM_OK);
-    EXPECT_NE(std::string(swmm_get_last_error_msg(engine)).find("reciprocal LID/ground thermal receipts are not yet qualified."),std::string::npos);
+    for(const auto& pair:{std::pair{"HEAT_MODEL","COUPLED"},{"BED_HEAT_MODEL","GROUND_COLUMN"},
+                         {"HEAT_SURFACE_EXCHANGE","NO"},{"HEAT_RADIATIVE_EXCHANGE","NO"}})
+        ASSERT_EQ(swmm_options_set_ext(engine,pair.first,pair.second),SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_module(engine,SWMM_HEAT_LAYER_CONDUCTION,1),SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(engine),SWMM_OK)<<swmm_get_last_error_msg(engine);
+    ASSERT_EQ(swmm_engine_start(engine,0),SWMM_OK)<<swmm_get_last_error_msg(engine);
+    auto& ctx=static_cast<openswmm::SWMMEngine*>(engine)->context();
+    auto& router=static_cast<openswmm::SWMMEngine*>(engine)->surfaceRouter2D();
+    ASSERT_TRUE(router.subsurface().heat().active());
+    auto& lid=ctx.node_subtypes.storages.lid_state[ctx.node_subtypes.storage_row(0)];
+    ASSERT_TRUE(lid.richards);ASSERT_TRUE(lid.thermal_energy.empty());
+    openswmm::twoD::LidNodeThermalGraph initial_lid;
+    ASSERT_TRUE(openswmm::twoD::buildLidNodeThermalGraph(lid,0,
+        router.subsurface().heat().water_capacity,ctx.heat_config.conduction,
+        ctx.heat_config.global_temp[static_cast<int>(openswmm::HeatSource::INITIAL_STATE)],initial_lid).empty());
+    const double ground_initial=energy(router.subsurface().heat());
+    double lid_initial=0;for(const auto& store:initial_lid.stores)lid_initial+=store.energy;
+    const double cp=router.subsurface().heat().water_capacity;
+    const auto surfaceEnergy=[&](){double value=0;for(int i=0;i<router.mesh().n_cells();++i)
+        if(std::size_t(i)<router.state().heat.reported_temperature.size()&&std::size_t(i)<router.state().volume.size())
+            value+=router.state().volume[std::size_t(i)]*cp*router.state().heat.reported_temperature[std::size_t(i)];
+        return value;};
+    const auto nodeEnergy=[&](){double value=0;for(int n=0;n<ctx.n_nodes();++n)
+        if(std::size_t(n)<ctx.heat_state.node_temp.size())
+            value+=ctx.nodes.volume[std::size_t(n)]*.028316846592*cp*ctx.heat_state.node_temp[std::size_t(n)];
+        return value;};
+    const double surface_initial=surfaceEnergy(),node_initial=nodeEnergy();
+    const double total_initial=ground_initial+lid_initial+surface_initial+node_initial;
+    double actual=0;
+    ASSERT_EQ(swmm_coupling_advance_to(engine,5.,&actual),SWMM_OK)<<swmm_get_last_error_msg(engine);
+    EXPECT_DOUBLE_EQ(actual,5.);
+    ASSERT_FALSE(lid.thermal_energy.empty());
+    const auto& ground=router.subsurface().heat().cells[0];
+    ASSERT_EQ(ground.failed,0)<<ground.error;
+    EXPECT_GT(ground.lid_contact_j,0);
+    const auto& aquifer=router.subsurface();
+    ASSERT_EQ(aquifer.richardsBedDownCumulative().size(),1u);
+    EXPECT_GT(aquifer.richardsBedDownCumulative()[0]+aquifer.richardsBedUpCumulative()[0],0);
+    double reported_lid_contact=0,reported_ground_residual=0;
+    ASSERT_EQ(swmm_heat_get_ground_values(engine,SWMM_GROUND_HEAT_LID_CONTACT,0,1,&reported_lid_contact),SWMM_OK);
+    ASSERT_EQ(swmm_heat_get_ground_values(engine,SWMM_GROUND_HEAT_RESIDUAL,0,1,&reported_ground_residual),SWMM_OK);
+    EXPECT_DOUBLE_EQ(reported_lid_contact,ground.lid_contact_j);
+    EXPECT_NEAR(reported_ground_residual,0,1e-5);
+    const double ground_final=energy(router.subsurface().heat()),lid_final=sum(lid.thermal_energy);
+    const double surface_final=surfaceEnergy(),node_final=nodeEnergy();
+    const double total_final=ground_final+lid_final+surface_final+node_final;
+    EXPECT_NEAR(total_final,total_initial,2e-5)<<"ground delta="<<(ground_final-ground_initial)
+        <<" LID delta="<<(lid_final-lid_initial)<<" advective="<<ground.advective_j
+        <<" source="<<ground.source_j<<" surface="<<ground.surface_j<<" deep="<<ground.deep_j
+        <<" LID contact="<<ground.lid_contact_j<<" water="<<router.state().volume[0]
+        <<" node="<<ctx.nodes.volume[0]<<" surface energy delta="<<(surface_final-surface_initial)
+        <<" node energy delta="<<(node_final-node_initial);
+    ASSERT_EQ(swmm_engine_end(engine),SWMM_OK);
     swmm_engine_close(engine);swmm_engine_destroy(engine);
 }
 TEST(GroundHeat, DryGroundColumnsAdvanceOnlyTheUnprocessedRouterInterval) {

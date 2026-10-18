@@ -5,6 +5,7 @@
 #include "../data/SolverOptions2D.hpp"
 #include "../solver/InertialKernels.hpp"
 #include "../subsurface/SubsurfaceData.hpp"
+#include "../../data/LidNodeData.hpp"
 #include "../gw/GwTransportData.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../transport/components/HeatFluxModules/BedExchange.hpp"
@@ -14,6 +15,7 @@
 #include "../../transport/components/HeatFluxModules/SolarRadiation.hpp"
 #include <algorithm>
 #include <cmath>
+#include <set>
 #include <stdexcept>
 namespace openswmm::twoD {
 namespace {
@@ -76,7 +78,7 @@ double groundColumnStep(const MeshData& mesh,const SolverOptions2D& options,Mesh
     double mass,double volume,double evaporated,double dt) {
     std::vector<ThermalStore> stores;std::vector<ThermalContact> contacts;std::vector<ThermalBoundary> boundaries;
     const double channel=h.channel_footprint.empty()?0:h.channel_footprint[i];
-    const auto assembled=appendGroundColumnSystem(mesh,options,h.groundOwner(i),i,&h,mass,volume,evaporated,dt,channel,stores,contacts,boundaries);
+    auto assembled=appendGroundColumnSystem(mesh,options,h.groundOwner(i),i,&h,mass,volume,evaporated,dt,channel,stores,contacts,boundaries);
     auto solved=solveThermalContacts(stores,contacts,boundaries,dt);
     if(!solved.error.empty())throw std::runtime_error(solved.error);
     return commitGroundColumnSystem(assembled,solved);
@@ -88,6 +90,37 @@ GroundColumnAssembly appendGroundColumnSystem(const MeshData& mesh,const SolverO
     auto& c=owner.cells[i].column;const auto& o=owner.config->options;
     if(channel_area<0||channel_area>c.area||!std::isfinite(channel_area))throw std::runtime_error("Channel thermal footprint exceeds its soil cell area.");
     GroundColumnAssembly a;a.owner=&owner;a.mesh_heat=h;a.cell=i;a.mass=mass;a.volume=volume;a.evaporated=evaporated;a.seconds=dt;
+    static const std::vector<GroundLidThermalOwner> no_lid_owners;
+    const auto& lid_owners=std::size_t(i)<owner.lid_owners.size()?owner.lid_owners[std::size_t(i)]:no_lid_owners;
+    double lid_area=0;
+    if(!lid_owners.empty()) {
+        if(!owner.context)throw std::runtime_error("Mesh LID contact has no simulation context.");
+        const double initial=owner.context->heat_config.global_temp[static_cast<int>(HeatSource::INITIAL_STATE)];
+        for(const auto& binding:lid_owners) {
+            if(binding.row<0||std::size_t(binding.row)>=owner.context->node_subtypes.storages.lid_state.size()||
+               !(binding.area>0)||!std::isfinite(binding.area))
+                throw std::runtime_error("Invalid resolved Mesh LID thermal owner.");
+            const auto& state=owner.context->node_subtypes.storages.lid_state[std::size_t(binding.row)];
+            if(!state.richards)throw std::runtime_error("Mesh LID ground contact requires a Richards layer state.");
+            GroundColumnAssembly::LidEnergy draft;draft.row=binding.row;
+            if(auto error=buildLidNodeThermalGraph(state,0,owner.water_capacity,
+                owner.context->heat_config.conduction,initial,draft.graph);!error.empty())
+                throw std::runtime_error(error);
+            if(!owner.context->heat_config.layer_conduction)draft.graph.contacts.clear();
+            draft.first_store=int(stores.size());
+            draft.area=binding.area;
+            stores.insert(stores.end(),draft.graph.stores.begin(),draft.graph.stores.end());
+            draft.physical_energy=state.thermal_energy;
+            if(draft.physical_energy.empty()) {
+                draft.physical_energy.assign(state.cells.size(),0);
+                for(std::size_t k=0;k<draft.graph.cells.size();++k)
+                    draft.physical_energy[draft.graph.cells[k]]=draft.graph.stores[k].energy;
+            }
+            lid_area+=binding.area;a.lids.push_back(std::move(draft));
+        }
+    }
+    if(!std::isfinite(lid_area)||lid_area+channel_area>c.area*(1+1e-12))
+        throw std::runtime_error("Mesh LID and channel thermal footprints exceed their groundwater cell area.");
     a.first_store=int(stores.size());a.soil_count=int(c.energy.size());
     for(std::size_t j=0;j<c.energy.size();++j) {
         const double capacity=owner.activeCapacity(i,j);
@@ -103,7 +136,8 @@ GroundColumnAssembly appendGroundColumnSystem(const MeshData& mesh,const SolverO
         stores.push_back({owner.water_capacity*volume,a.water_initial_j});
         double eta=0,depth=0;inertial::cellEtaDepth(mesh,options,i,volume,eta,depth);
         a.wet=depth>0?std::clamp(volume/depth,0.,c.area):0;
-        const double contact_area=a.wet*(1-channel_area/c.area);
+        const double exposed_fraction=std::max(0.,1-(channel_area+lid_area)/c.area);
+        const double contact_area=a.wet*exposed_fraction;
         const auto& sc=sedimentFor(*h->context,HeatElement::cell2d(i));
         if(o.conduction&&contact_area>0)contacts.push_back({a.water,a.first_store,contact_area/(.5*(c.depth_edges[1]-c.depth_edges[0])/c.conductivity[0])});
         double pores=0;
@@ -121,17 +155,42 @@ GroundColumnAssembly appendGroundColumnSystem(const MeshData& mesh,const SolverO
     a.contact_count=contacts.size()-a.first_contact;a.first_boundary=boundaries.size();
     std::vector<ThermalBoundary> ground;
     const double snow_fraction=owner.snowContactFraction(i);
-    const double bare_fraction=(1-a.wet/c.area)*(1-channel_area/c.area);
+    const double exposed_fraction=std::max(0.,1-(channel_area+lid_area)/c.area);
+    const double bare_fraction=(1-a.wet/c.area)*exposed_fraction;
     a.top_count=owner.boundaries(i,bare_fraction*(1-snow_fraction),ground);a.ground_count=ground.size();
     for(auto boundary:ground){boundary.store+=a.first_store;boundaries.push_back(boundary);}
-    const double snow_area=std::max(0.,c.area-a.wet)*(1-channel_area/c.area)*snow_fraction;
+    const double snow_area=std::max(0.,c.area-a.wet)*exposed_fraction*snow_fraction;
     if(owner.appendSnowContact(i,snow_area,boundaries))a.snow_boundary=int(boundaries.size()-1);
     a.atmosphere=boundaries.size();
     if(a.water>=0)boundaries.push_back({a.water,a.wet*a.slope,a.temperature,-a.wet*a.flux0.total()});
+    for(auto& lid:a.lids) {
+        for(const auto& vertical:lid.graph.contacts) {
+            lid.vertical_contacts.push_back(contacts.size());
+            contacts.push_back({int(lid.first_store)+vertical.a,int(lid.first_store)+vertical.b,vertical.conductance});
+        }
+        if(o.conduction) {
+            const auto& graph=lid.graph;
+            ThermalContact contact;
+            if(auto error=buildLidNodeGroundThermalContact(graph,stores.size(),a.first_store,
+                lid.area,c.area,c.depth_edges[1]-c.depth_edges[0],
+                c.conductivity.front(),0,contact);!error.empty())throw std::runtime_error(error);
+            contact.a+=lid.first_store;lid.ground_contact=contacts.size();contacts.push_back(contact);
+        }
+    }
     return a;
 }
-double commitGroundColumnSystem(const GroundColumnAssembly& a,const ThermalSolution& solved) noexcept {
+double commitGroundColumnSystem(GroundColumnAssembly& a,const ThermalSolution& solved) noexcept {
     auto& owner=*a.owner;auto& cell=owner.cells[a.cell];auto& c=cell.column;auto* h=a.mesh_heat;
+    for(auto& lid:a.lids) {
+        for(std::size_t k=0;k<lid.graph.cells.size();++k) {
+            const auto index=lid.graph.cells[k];const double energy=solved.energy[std::size_t(lid.first_store)+k];
+            if(index>=lid.physical_energy.size()||!std::isfinite(energy)) {
+                cell.failed=1;try{cell.error="Invalid solved Mesh LID thermal energy layout.";}catch(...){}
+                if(h)h->failures[a.cell]=1;return a.mass;
+            }
+            lid.physical_energy[index]=energy;
+        }
+    }
     double contact=0;
     for(std::size_t k=0;k<a.contact_count;++k) {
         const double j=solved.contact_j[a.first_contact+k];
@@ -149,6 +208,13 @@ double commitGroundColumnSystem(const GroundColumnAssembly& a,const ThermalSolut
             cell.failed=1;try{cell.error=error;}catch(...){}
             if(h)h->failures[a.cell]=1;
         }
+    }
+    for(auto& lid:a.lids) {
+        auto& state=owner.context->node_subtypes.storages.lid_state[std::size_t(lid.row)];
+        state.thermal_energy.swap(lid.physical_energy);
+        for(const auto index:lid.vertical_contacts)cell.vertical_absolute_j+=std::abs(solved.contact_j[index]);
+        if(lid.ground_contact!=std::numeric_limits<std::size_t>::max())
+            cell.lid_contact_j+=solved.contact_j[lid.ground_contact];
     }
     for(int j=0;j<a.soil_count;++j)c.energy[j]=solved.energy[a.first_store+j];
     if(h)h->refreshBedView(a.cell);
@@ -227,6 +293,36 @@ std::string initializeMeshHeat(SimulationContext& ctx,const MeshData& mesh,Surfa
             }
         }
     }
+    return {};
+}
+std::string configureGroundLidOwners(SimulationContext& ctx,const MeshData& mesh,GroundHeatState& owner,
+    const std::vector<GwNodeBed>& beds) {
+    owner.lid_owners.assign(mesh.n_cells(),{});
+    if(!owner.active())return {};
+    constexpr double ft2_to_m2=.09290304;
+    std::vector<double> areas(mesh.n_cells(),0);
+    std::set<int> seen;
+    const auto& storage=ctx.node_subtypes.storages;
+    for(const auto& bed:beds) {
+        if(!bed.exchange||bed.node<0||bed.node>=ctx.n_nodes()||bed.cell<0||bed.cell>=mesh.n_cells())continue;
+        const int row=ctx.node_subtypes.storage_row(bed.node);
+        if(row<0||std::size_t(row)>=storage.lid.size()||std::size_t(row)>=storage.lid_state.size())continue;
+        const auto& config=storage.lid[std::size_t(row)];
+        if(config.control<0||config.bottom!=LidNodeBottom::MeshAquifer)continue;
+        if(!seen.insert(bed.node).second)return "Mesh Richards LID has duplicate resolved groundwater bed owners.";
+        const auto& lid=storage.lid_state[std::size_t(row)];
+        if(!lid.richards||lid.cells.empty())return "Mesh LID heat requires a persistent Richards layer state.";
+        const double bed_area=bed.area>0?bed.area:mesh.tri_area[std::size_t(bed.cell)];
+        const double lid_area=lid.cells.back().area*ft2_to_m2;
+        const double area=std::min({bed_area,lid_area,mesh.tri_area[std::size_t(bed.cell)]});
+        if(!(area>0)||!std::isfinite(area))return "Mesh LID thermal contact has no positive mapped overlap area.";
+        auto& total=areas[std::size_t(bed.cell)];total+=area;
+        if(!std::isfinite(total)||total>mesh.tri_area[std::size_t(bed.cell)]*(1+1e-12))
+            return "Mesh Richards LID footprints overlap beyond their groundwater cell area.";
+        owner.lid_owners[std::size_t(bed.cell)].push_back({bed.node,row,area});
+    }
+    for(auto& rows:owner.lid_owners)
+        std::sort(rows.begin(),rows.end(),[](const auto& a,const auto& b){return a.node<b.node;});
     return {};
 }
 double applyLocalBedSpecies(const MeshData& mesh,MeshHeatState& h,int i,int r,double mass,double volume,double dt) noexcept {

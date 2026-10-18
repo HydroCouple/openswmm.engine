@@ -214,7 +214,9 @@ std::string GroundHeatState::conduct(int i,double dt) {
     std::vector<ThermalBoundary> bc;const double snow_fraction=snowContactFraction(i);
     const auto top_count=boundaries(i,1-snow_fraction,bc);
     const int snow_boundary=appendSnowContact(i,c.area*snow_fraction,bc)?int(bc.size()-1):-1;
-    auto solved=solveThermalContacts(c.stores(),c.contacts(),bc,dt);
+    auto stores=c.stores();
+    for(std::size_t j=0;j<stores.size();++j)stores[j].capacity=activeCapacity(i,j);
+    auto solved=solveThermalContacts(stores,c.contacts(),bc,dt);
     if(!solved.error.empty())return solved.error;
     for(std::size_t b=0;b<solved.boundary_j.size();++b) {
         const double receipt=solved.boundary_j[b];

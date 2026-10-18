@@ -1095,8 +1095,8 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             for(int n=0;n<ctx.n_nodes();++n)if(lidnode::bottomMode(ctx,n)==LidNodeBottom::MeshAquifer) {
                 if(ctx.n_pollutants()>0 || ctx.options.water_age || ctx.reactions.configured)
                     throw std::runtime_error("Mesh LID bottom exchange currently requires water-only routing.");
-                if(ctx.options.heat_transport)
-                    throw std::runtime_error("Mesh LID bottom heat exchange is unavailable: reciprocal LID/ground thermal receipts are not yet qualified.");
+                if(ctx.options.heat_transport&&(!lidnode::richardsMode(ctx,n)||!subsurface_.heat().active()))
+                    throw std::runtime_error("Mesh LID bottom heat requires the supported Richards layer and porous-ground thermal owners.");
                 int bed=-1;
                 for(std::size_t b=0;b<subsurface_.nodeBeds().size();++b) {
                     const auto& row=subsurface_.nodeBeds()[b];
@@ -1424,6 +1424,8 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     }
     if(auto error=initializeMeshHeat(ctx,mesh_,state_,options_,&subsurface_.heat(),&subsurface_.coverage());!error.empty())
         throw std::runtime_error("[2D heat] "+error);
+    if(auto error=configureGroundLidOwners(ctx,mesh_,subsurface_.heat(),subsurface_.nodeBeds());!error.empty())
+        throw std::runtime_error("[2D LID heat] "+error);
     configureSnowGroundContacts();
     if(state_.heat.ground_column&&subsurface_.heat().active())
         if(auto error=subsurface_.initPorewater();!error.empty())throw std::runtime_error("[2D porewater] "+error);
@@ -2336,6 +2338,9 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
             throw std::invalid_argument("Joint outfall advance requires its matching pre-routing reservation.");
         source_boundary_ready_ = false;
     }
+    if(ctx.options.heat_transport&&subsurface_.lidReceiptsEnabled())
+        if(auto error=subsurface_.completeLidThermalInterval(ctx);!error.empty())
+            throw std::runtime_error("[2D LID heat] "+error);
     for(std::size_t b=0;b<subsurface_.nodeBeds().size();++b) {
         const int n=subsurface_.nodeBeds()[b].node;
         if(lidnode::bottomMode(ctx,n)==LidNodeBottom::MeshAquifer && !lidnode::richardsMode(ctx,n))
@@ -2446,7 +2451,8 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
         if (two_way) publishLinkCoupling(ctx);
     }
     const double sync = couplingSyncSpan(ctx, options_);
-    if (pending_dt_ + 0.5 * routing_dt >= sync) {
+    const bool lid_heat_sync=ctx.options.heat_transport&&subsurface_.lidReceiptsEnabled();
+    if (lid_heat_sync || pending_dt_ + 0.5 * routing_dt >= sync) {
         const double span = pending_dt_;
         pending_dt_ = 0.0;
         coAdvanceStep(ctx, span, t);

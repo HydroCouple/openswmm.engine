@@ -65,8 +65,10 @@
 #include "../data/SurfaceStateData.hpp"
 #include "../solver/InertialEdges.hpp"
 #include "../gw/GwTransportData.hpp"   // T7.1
+#include "../heat/LidNodeHeat.hpp"
 #include "../../data/NodeData.hpp"
 #include "../../transport/components/HeatFluxModules/SurfaceExchange.hpp"
+#include "../../core/SimulationContext.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -1029,9 +1031,13 @@ std::string SubsurfaceSolver::nodeWaterBudget(int cell, double interval, NodeWat
     if(state_.area[u]<=0 || state_.zs[u]<=0 || state_.hg[u]>state_.zs[u] ||
        !std::isfinite(state_.lacc[u])) return "Invalid aquifer geometry/pending water in node trial.";
     // Wells/live drivers require their interval reservations in the eventual
-    // scheduling adapter. Do not label a budget complete while omitting them.
-    if (tr_.active() || (u<cell_sources_.size() && !cell_sources_[u].empty()) || !runtime_sources_.rows.empty())
-        return "Node trials require water-only aquifers without unreserved wells/live drivers.";
+    // scheduling adapter. A temperature-only row does not change the water
+    // budget and is qualified by the paired thermal receipt path; all other
+    // transported rows still require their own node adapters.
+    const bool unsupported_transport=tr_.active()&&
+        (tr_.n_pollut>0||tr_.n_msx>0||tr_.age_row>=0||tr_.temp_row<0);
+    if (unsupported_transport || (u<cell_sources_.size() && !cell_sources_[u].empty()) || !runtime_sources_.rows.empty())
+        return "Node trials require water-only or temperature-only aquifers without unreserved wells/live drivers.";
     if(!std::isfinite(state_.Ks[u]) || state_.Ks[u]<0 || !std::isfinite(state_.theta_s[u]) ||
        !std::isfinite(state_.theta_r[u]) || state_.theta_r[u]<0 || state_.theta_s[u]<=state_.theta_r[u] ||
        state_.theta_s[u]>1) return "Invalid aquifer material in node trial.";
@@ -1464,8 +1470,15 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     // Completed hydraulic receipts become ordinary signed cell water only
     // when this groundwater owner reaches their endpoint. Later receipts
     // keep both directional budgets reserved across earlier cell firings.
+    double lid_in_j=0;
     if(lid_receipts_enabled_)for(int b:cell_beds_[u]) {
         auto& pending=lid_receipts_[b];
+        for(const auto& r:pending)if(r.end<=time+dt) {
+            if(heat_.active()&&!r.heat_applied)
+                throw std::runtime_error("Groundwater firing reached a Mesh LID interval before its thermal receipt was applied.");
+            lid_in_j+=r.down_j;
+        }
+        if(!std::isfinite(lid_in_j))throw std::runtime_error("Nonfinite accepted LID heat receipt in groundwater firing.");
         for(const auto& r:pending)if(r.end<=time+dt)state_.nacc[b]+=r.up-r.down;
         std::erase_if(pending,[&](const auto& r){return r.end<=time+dt;});
     }
@@ -1926,6 +1939,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         f.v_uns0   = hu_pre * A;
         f.lateral  = lat_vol;
         f.node_out = state_.qnode_last[u] * dt;
+        f.lid_in_j = lid_in_j;
         f.infil_in = infil_vol;
         f.link     = link_vol;
         f.source_in = source.in; f.source_out = source.out; f.source_mass = &source.mass;
@@ -2105,6 +2119,143 @@ void SubsurfaceSolver::bookPresetHeatOut(int i,double volume,double temperature_
     heat_preset_out_j_[base+last]+=correction;
 }
 
+std::string SubsurfaceSolver::conductGroundWithLids(int i,double dt) {
+    if(!heat_.active()||i<0||std::size_t(i)>=heat_.cells.size())return {};
+    auto& ground=heat_.cells[std::size_t(i)];auto& soil=ground.column;
+    std::vector<int> beds;
+    for(std::size_t b=0;b<node_beds_.size();++b)
+        if(richards_bed_owned_[b]&&node_beds_[b].cell==i)beds.push_back(int(b));
+    if(beds.empty())return heat_.conduct(i,dt);
+    if(!heat_.context||soil.energy.empty())
+        return "Mesh LID contact has no compatible porous soil thermal column.";
+    // MeshHeat/ChannelGround own this same soil column when a surface or open
+    // channel finite contact is configured. Their shared solve carries the
+    // LID stores from GroundHeatState::lid_owners; never advance the contact
+    // again on the groundwater clock.
+    if(ground.surface_owned)return {};
+    auto& ctx=*heat_.context;
+    const auto& options=heat_.config->options;
+    const double initial=ctx.heat_config.global_temp[static_cast<int>(HeatSource::INITIAL_STATE)];
+    constexpr double ft2_to_m2=.09290304;
+    struct LidOwner {int row=-1;double area=0;LidNodeThermalGraph graph;};
+    std::vector<LidOwner> lids;lids.reserve(beds.size());
+    double occupied=0;
+    for(const int b:beds) {
+        const auto& bed=node_beds_[b];const int row=ctx.node_subtypes.storage_row(bed.node);
+        if(row<0)return "Mesh LID thermal contact has no storage node.";
+        auto& state=ctx.node_subtypes.storages.lid_state[row];
+        if(!state.richards||state.cells.empty())return "Mesh LID heat currently requires a Richards layer stack.";
+        LidOwner owner;owner.row=row;
+        const double bed_area=bed.area>0?bed.area:soil.area;
+        const double lid_area=state.cells.back().area*ft2_to_m2;
+        owner.area=std::min({bed_area,lid_area,soil.area});
+        if(!(owner.area>0)||!std::isfinite(owner.area))return "Mesh LID/ground thermal contact has no mapped overlap area.";
+        if(auto error=buildLidNodeThermalGraph(state,0,heat_.water_capacity,
+            ctx.heat_config.conduction,initial,owner.graph);!error.empty())return error;
+        if(!ctx.heat_config.layer_conduction)owner.graph.contacts.clear();
+        occupied+=owner.area;
+        if(!std::isfinite(occupied)||occupied>soil.area*(1+1e-12))
+            return "Mesh LID thermal footprints overlap beyond their groundwater cell area.";
+        lids.push_back(std::move(owner));
+    }
+    const bool soil_conduction=options.conduction;
+    const double snow_fraction=heat_.snowContactFraction(i);
+    if(occupied>0&&snow_fraction>0)
+        return "Mesh LID and reciprocal UEB contacts overlap the same groundwater cell; resolve their surface ownership first.";
+    if(occupied/soil.area+snow_fraction>1+1e-12)
+        return "Mesh LID and snow contacts exceed their groundwater cell area.";
+    if(!ctx.heat_config.layer_conduction&&!soil_conduction)return {};
+    if(soil_conduction&&options.surface_thermal_bc=="SURFACE_WATER"&&occupied<soil.area*(1-1e-12))
+        return "SURFACE_WATER thermal boundary requires a reciprocal mesh ground-column contact.";
+
+    std::vector<ThermalStore> stores;std::vector<ThermalContact> contacts;
+    std::size_t lid_store_count=0;
+    for(const auto& owner:lids)lid_store_count+=owner.graph.stores.size();
+    stores.reserve(lid_store_count+(soil_conduction?soil.energy.size():0));
+    contacts.reserve(lid_store_count+soil.energy.size()+lids.size());
+    std::vector<std::size_t> offsets;offsets.reserve(lids.size());
+    std::vector<unsigned char> vertical_contact;
+    for(const auto& owner:lids) {
+        offsets.push_back(stores.size());
+        stores.insert(stores.end(),owner.graph.stores.begin(),owner.graph.stores.end());
+        for(const auto& c:owner.graph.contacts) {
+            contacts.push_back({int(offsets.back())+c.a,int(offsets.back())+c.b,c.conductance});
+            vertical_contact.push_back(1);
+        }
+    }
+    std::vector<ThermalBoundary> boundaries;std::size_t top_count=0;int snow_boundary=-1;
+    if(soil_conduction) {
+        const int ground_offset=int(stores.size());
+        for(std::size_t j=0;j<soil.energy.size();++j) {
+            const double capacity=heat_.activeCapacity(i,j);
+            if(!(capacity>0)||!std::isfinite(capacity))return "Mesh LID contact found a nonpositive active groundwater heat capacity.";
+            stores.push_back({capacity,soil.energy[j]});
+        }
+        for(const auto& c:soil.contacts()) {
+            contacts.push_back({ground_offset+c.a,ground_offset+c.b,c.conductance});
+            vertical_contact.push_back(1);
+        }
+        const double exposed=std::max(0.,1-occupied/soil.area-snow_fraction);
+        top_count=heat_.boundaries(i,exposed,boundaries);
+        if(heat_.appendSnowContact(i,soil.area*snow_fraction,boundaries))snow_boundary=int(boundaries.size()-1);
+        if(options.conduction)for(std::size_t k=0;k<lids.size();++k) {
+            const auto& owner=lids[k];
+            ThermalContact contact;
+            if(auto error=buildLidNodeGroundThermalContact(owner.graph,stores.size(),ground_offset,
+                owner.area,soil.area,soil.depth_edges[1]-soil.depth_edges[0],soil.conductivity.front(),0,contact);!error.empty())return error;
+            contact.a+=int(offsets[k]);contacts.push_back(contact);vertical_contact.push_back(0);
+        }
+        (void)ground_offset;
+    } else if(lid_store_count==0)return {};
+    if(stores.empty())return {};
+    auto solved=solveThermalContacts(stores,contacts,boundaries,dt);
+    if(!solved.error.empty())return solved.error;
+    // Stage every LID publication first; the ground and snow owners change
+    // only after all graph layouts and the shared implicit solve qualify.
+    std::vector<std::vector<double>> lid_energy(lids.size());
+    std::vector<LidNodeState> lid_states;
+    lid_states.reserve(lids.size());
+    for(std::size_t k=0;k<lids.size();++k) {
+        const auto offset=offsets[k],count=lids[k].graph.cells.size();
+        lid_energy[k].assign(solved.energy.begin()+offset,solved.energy.begin()+offset+count);
+        lid_states.push_back(ctx.node_subtypes.storages.lid_state[lids[k].row]);
+        if(auto error=publishLidNodeThermalEnergy(lid_states.back(),lids[k].graph,lid_energy[k]);!error.empty())return error;
+    }
+    double lid_contact_j=0,vertical_j=0;
+    for(std::size_t k=0;k<solved.contact_j.size();++k) {
+        if(k<vertical_contact.size()&&vertical_contact[k])vertical_j+=std::abs(solved.contact_j[k]);
+        else lid_contact_j+=solved.contact_j[k];
+    }
+    if(soil_conduction) {
+        const std::size_t offset=lid_store_count;
+        std::vector<double> next(solved.energy.begin()+offset,solved.energy.end());
+        double surface_j=0,deep_j=0;
+        for(std::size_t b=0;b<solved.boundary_j.size();++b) {
+            const double receipt=solved.boundary_j[b];
+            if(int(b)==snow_boundary) {
+                if(auto error=heat_.applySnowContactEnergy(i,receipt);!error.empty())return error;
+                surface_j+=receipt;
+            } else if(b<top_count)surface_j+=receipt;else deep_j+=receipt;
+        }
+        ground.surface_j+=surface_j;ground.deep_j+=deep_j;
+        ground.vertical_absolute_j+=vertical_j;
+        ground.lid_contact_j+=lid_contact_j;
+        for(std::size_t k=0;k<lids.size();++k) {
+            auto& current=ctx.node_subtypes.storages.lid_state[lids[k].row];
+            using std::swap;swap(current,lid_states[k]);
+        }
+        soil.energy=std::move(next);
+    } else {
+        // LID-only conduction has no external ground boundary or soil receipt.
+        ground.vertical_absolute_j+=vertical_j;
+        for(std::size_t k=0;k<lids.size();++k) {
+            auto& current=ctx.node_subtypes.storages.lid_state[lids[k].row];
+            using std::swap;swap(current,lid_states[k]);
+        }
+    }
+    return {};
+}
+
 void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
     auto& cell=heat_.cells[i];auto& column=cell.column;
     if(column.energy.empty()||cell.failed)return;
@@ -2142,7 +2293,7 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
         // Already committed face/link exports keep their producer-time layer
         // receipts. New wells/node/top/deep outputs share the implicit donor
         // solution, rather than debiting every layer at a bulk mean.
-        const double incoming_j=cp*(source+lateral+link_in-(link_packet?booked_link:0)+node_in)+preset_total;
+        const double incoming_j=cp*(source+lateral+link_in-(link_packet?booked_link:0)+node_in)+preset_total+f.lid_in_j;
         std::vector<double> water(weights.size()),energy(weights.size()),withdrawal(weights.size());
         for(std::size_t j=0;j<weights.size();++j) {
             const double share=weights[j]/weight;
@@ -2182,7 +2333,7 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
             const double latent=-heat_.density*f.et*transport::heat::latentHeatOfVaporization(top);
             column.energy.front()+=latent;cell.latent_j+=latent;
         }
-        if(auto error=heat_.conduct(i,f.dt);!error.empty())throw std::runtime_error(error);
+        if(auto error=conductGroundWithLids(i,f.dt);!error.empty())throw std::runtime_error(error);
         heat_.refreshView(i,tr_);
     } catch(const std::exception& error) {
         cell.failed=1;try{cell.error=error.what();}catch(...){}

@@ -20,7 +20,7 @@ const openswmm::twoD::GroundThermalCell* groundCell(const openswmm::twoD::Surfac
     const auto* owner=groundOwner(router,i);return owner?&owner->cells[i]:nullptr;
 }
 double soilResidual(const openswmm::twoD::GroundThermalCell& c,double energy) {
-    return energy-c.initial_j-c.advective_j-c.source_j-c.surface_j-c.deep_j-c.latent_j-c.lateral_j-c.water_contact_j-c.channel_contact_j;
+    return energy-c.initial_j-c.advective_j-c.source_j-c.surface_j-c.deep_j-c.latent_j-c.lateral_j-c.water_contact_j-c.channel_contact_j-c.lid_contact_j;
 }
 }
 #endif
@@ -44,7 +44,7 @@ int swmm_heat_get_channel_ground_status(SWMM_Engine engine,SWMM_ChannelGroundSta
         !status.initialized?"Requested; initialize to validate geometry and measure contact counts.":
         !contacts.active()?"No eligible open channel has an initialized mesh contact.":
         !router.isActive()?"Completed contact results are available; the simulation is no longer running.":
-        "Experimental reciprocal channel/soil heat is active; tracer, snow/LID and restart qualification remain open.";
+        "Experimental reciprocal channel/soil heat is active; bed tracer/age and broader snow/footprint qualification remain open.";
     std::strncpy(status.reason,reason,sizeof status.reason-1);
 #else
     std::strcpy(status.reason,"This engine was built without 2D routing.");
@@ -113,7 +113,7 @@ int swmm_heat_get_2d_status(SWMM_Engine engine,SWMM_Heat2DStatus* out) {
         !status.initialized?"Requested; initialize a model with an enabled surface mesh to measure activation.":
         !heat.enabled?"Saved; inactive because no mesh temperature row is available.":
         !heat.surface&&!heat.radiative&&!heat.bed?"Coupled model is initialized; all mesh heat exchanges are off.":
-        "Experimental coupled 2D heat is active; restart and coupled snow/LID owners are not yet qualified.";
+        "Experimental coupled 2D heat is active; broader snow ownership and native hotstart qualification remain open.";
     std::strncpy(status.reason,reason,sizeof status.reason-1);
 #else
     std::strcpy(status.reason,"This engine was built without 2D routing.");
@@ -190,7 +190,7 @@ int swmm_heat_get_ground_status(SWMM_Engine engine,SWMM_GroundHeatStatus* out) {
         !ctx.options.heat_transport?"Saved; inactive because Heat transport is off.":
         !status.initialized?"Requested; initialize to measure thermal storage and activation.":
         !active?"Saved; no active ground thermal owner or temperature row.":
-        "Experimental finite soil heat is active; restart and other-owner contacts remain under qualification.";
+        "Experimental finite soil heat is active; native hotstarts and unsupported contact/transport combinations remain unavailable.";
     std::strncpy(status.reason,reason,sizeof status.reason-1);
 #else
     std::strcpy(status.reason,"This engine was built without 2D routing.");
@@ -199,7 +199,7 @@ int swmm_heat_get_ground_status(SWMM_Engine engine,SWMM_GroundHeatStatus* out) {
 }
 int swmm_heat_get_ground_values(SWMM_Engine engine,int kind,int first,int count,double* out) {
     CHECK_HANDLE(engine);
-    if(kind<0||kind>SWMM_GROUND_HEAT_CHANNEL_CONTACT||first<0||count<0||(count&&!out))return SWMM_ERR_BADPARAM;
+    if(kind<0||kind>SWMM_GROUND_HEAT_LID_CONTACT||first<0||count<0||(count&&!out))return SWMM_ERR_BADPARAM;
 #ifdef OPENSWMM_HAS_2D
     const auto& router=to_engine(engine)->surfaceRouter2D();const int n=router.mesh().n_cells();
     if(first>n||count>n-first)return SWMM_ERR_BADINDEX;
@@ -227,9 +227,10 @@ int swmm_heat_get_ground_values(SWMM_Engine engine,int kind,int first,int count,
             case SWMM_GROUND_HEAT_RESIDUAL:out[k]=soilResidual(c,energy);break;
             case SWMM_GROUND_HEAT_PENDING_LATERAL:out[k]=router.subsurface().pendingHeat(first+k);break;
             case SWMM_GROUND_HEAT_CHANNEL_CONTACT:out[k]=c.channel_contact_j;break;
+            case SWMM_GROUND_HEAT_LID_CONTACT:out[k]=c.lid_contact_j;break;
             default:{
                 double scale=capacity+std::abs(c.initial_j);
-                for(double v:{c.advective_j,c.source_j,c.surface_j,c.deep_j,c.latent_j,c.lateral_j,c.water_contact_j,c.channel_contact_j})scale+=std::abs(v);
+                for(double v:{c.advective_j,c.source_j,c.surface_j,c.deep_j,c.latent_j,c.lateral_j,c.water_contact_j,c.channel_contact_j,c.lid_contact_j})scale+=std::abs(v);
                 for(double v:column.energy)scale+=std::abs(v);
                 out[k]=soilResidual(c,energy)/std::max(1.,scale);break;
             }

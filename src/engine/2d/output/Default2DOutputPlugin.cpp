@@ -1112,11 +1112,11 @@ void Default2DOutputPlugin::createThermalDatasets(const SimulationSnapshot& snap
     }
     if (snap.thermal2d_ground_budget.size() == static_cast<std::size_t>(n_faces_) * snap.thermal2d_ground_budget_terms) {
         ds_heat_ground_budget_ = createBudget("ground_heat_budget", "Ground thermal state and cumulative receipts", snap.thermal2d_ground_budget_terms,
-            "initial_j,advective_j,source_j,surface_boundary_j,deep_boundary_j,latent_j,lateral_net_j,water_contact_j,channel_contact_j,residual_j,pending_lateral_j");
+            "initial_j,advective_j,source_j,surface_boundary_j,deep_boundary_j,latent_j,lateral_net_j,water_contact_j,channel_contact_j,residual_j,pending_lateral_j,lid_contact_j");
         writeStringAttr(ds_heat_ground_budget_, "sign_convention",
             "cumulative signed receipts; contact terms are internal and equal-opposite on paired stores; residual is stored energy minus initial and receipts");
     }
-    writeStringAttr(file_id_, "thermal_result_schema_version", "1");
+    writeStringAttr(file_id_, "thermal_result_schema_version", "2");
 }
 
 // Snow fields follow the rainfall report selection. They carry their actual

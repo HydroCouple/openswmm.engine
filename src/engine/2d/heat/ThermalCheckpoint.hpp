@@ -65,7 +65,7 @@ inline void groundHeat(Archive& a,GroundHeatState& h,bool model) {
         a(snow_contact);
         return;
     }
-    std::string runtime_profile="ground heat runtime v2";a(runtime_profile);
+    std::string runtime_profile="ground heat runtime v3";a(runtime_profile);
     a(h.top_now,h.deep_now);
     // Ground columns may be initialized lazily on the first accepted thermal
     // step. Their model identity is frozen separately, so restore the
@@ -76,7 +76,7 @@ inline void groundHeat(Archive& a,GroundHeatState& h,bool model) {
         a.fixed(col.theta,col.capacity,col.energy,col.conductivity,c.saturated_water,c.reserved_out_water,
                 p.mass,p.contact_mass,p.reserved_out,p.generated_age);
         a(c.advective_j,c.source_j,c.surface_j,c.deep_j,c.latent_j,c.lateral_j,c.water_contact_j,
-          c.channel_contact_j,c.vertical_absolute_j,c.failed,c.error);
+          c.channel_contact_j,c.lid_contact_j,c.vertical_absolute_j,c.failed,c.error);
     });
     if(a.reading()) {
         const auto bad=[](const char* reason){throw std::runtime_error(std::string("Invalid thermal ground checkpoint state: ")+reason+".");};
@@ -85,6 +85,9 @@ inline void groundHeat(Archive& a,GroundHeatState& h,bool model) {
             if(col.theta.empty()&&col.depth_edges.empty()&&col.capacity.empty()&&col.energy.empty()&&
                col.conductivity.empty()&&c.saturated_water.empty()&&c.reserved_out_water.empty()&&c.porewater.mass.empty()&&
                c.porewater.n_species==0)continue;
+            for(double value:{c.initial_j,c.advective_j,c.source_j,c.surface_j,c.deep_j,c.latent_j,
+                c.lateral_j,c.water_contact_j,c.channel_contact_j,c.lid_contact_j,c.vertical_absolute_j})
+                if(!std::isfinite(value))bad("nonfinite thermal ledger value");
             if(col.theta.size()+1!=col.depth_edges.size()||col.capacity.size()!=col.theta.size()||
                col.energy.size()!=col.theta.size()||col.conductivity.size()!=col.theta.size()||
                c.saturated_water.size()!=col.theta.size()||c.reserved_out_water.size()!=col.theta.size()||
