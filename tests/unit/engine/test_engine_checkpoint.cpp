@@ -686,7 +686,7 @@ struct ThermalSurfaceSession {
                bool lateral_conduction=false,bool heterogeneous_ground=false,
                bool mapped_channel=false,bool enable_checkpoint=true,
                bool ueb_snow=false,bool mesh_richards_lid=false,bool mesh_output=false,
-               bool local_storage=false,bool local_storage_quality=false) {
+               bool local_storage=false,bool local_storage_quality=false,bool ground_column_quality=false) {
         local_storage=local_storage||local_storage_quality;
         const auto p=root()/name;
         std::string deck=
@@ -729,6 +729,13 @@ struct ThermalSurfaceSession {
                   "[2D_INITIAL_QUALITY]\n* Dye 10\n"
                   "[2D_INITIAL_BED_QUALITY]\n* Dye 2\n* __WATER_AGE__ 1\n";
         }
+        if(ground_column_quality) {
+            deck.replace(deck.find("IGNORE_QUALITY YES"),std::string("IGNORE_QUALITY YES").size(),"IGNORE_QUALITY NO");
+            deck+="\n[OPTIONS]\nWATER_AGE ON\n[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0\n"
+                  "[2D_OPTIONS]\nTRANSPORT_POLLUTANTS YES\nTRANSPORT_AGE YES\n"
+                  "[2D_INITIAL_QUALITY]\n* Dye 0\n"
+                  "[GW_INITIAL_QUALITY]\n* SAT Dye 10\n* UNSAT Dye 10\n";
+        }
         if(mesh_output) {
             std::filesystem::remove(p.string()+".h5");
             deck+="\n[2D_OPTIONS]\nREPORT_2D YES\nOUTPUT_FILE "+(p.string()+".h5")+
@@ -744,6 +751,8 @@ struct ThermalSurfaceSession {
             throw std::runtime_error("thermal surface configuration failed");
         if(local_storage_quality&&swmm_heat_set_sediment(&engine,SWMM_HEAT_SED_HYPORHEIC_VELOCITY,.001)!=SWMM_OK)
             throw std::runtime_error("local-bed quality exchange configuration failed");
+        if(ground_column_quality&&swmm_heat_set_sediment(&engine,SWMM_HEAT_SED_HYPORHEIC_VELOCITY,.001)!=SWMM_OK)
+            throw std::runtime_error("ground-column quality exchange configuration failed");
         if(!local_storage&&(swmm_gw_transport_option_set(&engine,"THERMAL_MODEL","POROUS_EQUILIBRIUM")!=SWMM_OK ||
            swmm_gw_transport_option_set(&engine,"CONDUCTION","YES")!=SWMM_OK ||
            swmm_gw_transport_option_set(&engine,"SURFACE_THERMAL_BC","ADIABATIC")!=SWMM_OK ||
@@ -948,6 +957,72 @@ TEST(EngineCheckpoint, StandaloneLocalBedQualityStateContinuesAcrossRestart) {
               b.engine.surfaceRouter2D().state().transport.cell_mass);
     EXPECT_EQ(a.engine.surfaceRouter2D().state().transport.gained_bed,
               b.engine.surfaceRouter2D().state().transport.gained_bed);
+}
+
+TEST(EngineCheckpoint, GroundColumnOverlandPorewaterQualityContinuesAcrossRestart) {
+    ThermalSurfaceSession a,b;
+    ASSERT_NO_THROW(a.start("surface-ground-porewater-restart-a",12,"channel:test",false,
+        false,false,false,false,false,true,false,false,false,false,false,true));
+    ASSERT_NO_THROW(b.start("surface-ground-porewater-restart-b",12,"channel:test",false,
+        false,false,false,false,false,true,false,false,false,false,false,true));
+    const auto seed=[](SWMMEngine& engine) {
+        auto& surface=engine.surfaceRouter2D().state();const int dye=surface.transport.rowIndex("Dye");
+        if(dye<0)throw std::runtime_error("2D restart fixture has no dye row.");
+        for(int cell=0;cell<surface.transport.n_cells;++cell)
+            surface.transport.cell_mass[surface.transport.idx(dye,cell)]=0;
+        auto& groundwater=engine.surfaceRouter2D().subsurface();
+        auto& cell=groundwater.heat().cells[0];auto& pore=cell.porewater;
+        const int ground_dye=groundwater.transport().rowIndex("Dye");
+        const auto nl=cell.column.theta.size();
+        if(ground_dye<0||nl==0||pore.retention.size()!=std::size_t(pore.n_species)*nl)
+            throw std::runtime_error("2D restart fixture ground porewater layout differs.");
+        const double bed=engine.context().heat_config.sediment.bed_thickness;bool seeded=false;
+        for(std::size_t layer=0;layer<nl;++layer) {
+            const double overlap=std::max(0.0,std::min(cell.column.depth_edges[layer+1],bed)-cell.column.depth_edges[layer]);
+            if(!(overlap>0))continue;
+            const double capacity=cell.column.theta[layer]*cell.column.area*
+                (cell.column.depth_edges[layer+1]-cell.column.depth_edges[layer])+pore.retention[std::size_t(ground_dye)*nl+layer];
+            if(!(capacity>0))throw std::runtime_error("2D restart fixture has no contacting porewater capacity.");
+            pore.mass[std::size_t(ground_dye)*nl+layer]=10*capacity;seeded=true;
+        }
+        if(!seeded)throw std::runtime_error("2D restart fixture bed does not intersect a groundwater layer.");
+    };
+    seed(a.engine);seed(b.engine);
+    auto& router=a.engine.surfaceRouter2D();auto& ground=router.subsurface();
+    const int dye=router.state().transport.rowIndex("Dye");
+    ASSERT_TRUE(router.state().heat.ground_column);ASSERT_TRUE(router.state().heat.bed);
+    ASSERT_EQ(router.state().heat.bed_species,router.state().transport.n_species);
+    ASSERT_TRUE(ground.heat().active());
+    ASSERT_GE(dye,0);ASSERT_TRUE(ground.heat().cells[0].porewater.active());
+    ASSERT_TRUE(router.state().heat.hyporheic_eligible[0]);
+    while(a.engine.context().current_time<3.1)ASSERT_NO_THROW(step(a.engine));
+    ASSERT_EQ(router.state().heat.failures[0],0);
+    ASSERT_NE(router.state().transport.gained_bed[dye],0)
+        <<"soil="<<ground.heat().cells[0].porewater.mass[std::size_t(dye)*ground.heat().cells[0].column.theta.size()]
+        <<" surfaceVolume="<<router.state().volume[0]
+        <<" rate="<<router.state().heat.context->heat_config.sediment.hyporheic_velocity;
+    ASSERT_NE(ground.transport().gained_contact[dye],0);
+    const auto& source_pore=ground.heat().cells[0].porewater;
+    const auto checkpoint=root()/"surface-ground-porewater-restart.chk";
+    ASSERT_EQ(a.engine.saveCheckpoint(checkpoint.string()),"");
+    ASSERT_EQ(b.engine.loadCheckpoint(checkpoint.string()),"");
+    auto& target_router=b.engine.surfaceRouter2D();auto& target_ground=target_router.subsurface();
+    EXPECT_EQ(router.state().transport.gained_bed,target_router.state().transport.gained_bed);
+    EXPECT_EQ(ground.transport().gained_contact,target_ground.transport().gained_contact);
+    EXPECT_EQ(source_pore.mass,target_ground.heat().cells[0].porewater.mass);
+    EXPECT_EQ(source_pore.contact_mass,target_ground.heat().cells[0].porewater.contact_mass);
+    compare(a.engine,b.engine,"surface-ground-porewater-restored");
+    while(a.engine.context().current_time<20.1) {
+        {ASSERT_NO_THROW(step(a.engine));}
+        {ASSERT_NO_THROW(step(b.engine));}
+    }
+    EXPECT_EQ(router.state().transport.cell_mass,target_router.state().transport.cell_mass);
+    EXPECT_EQ(router.state().transport.gained_bed,target_router.state().transport.gained_bed);
+    EXPECT_EQ(ground.heat().cells[0].porewater.mass,target_ground.heat().cells[0].porewater.mass);
+    EXPECT_EQ(ground.heat().cells[0].porewater.contact_mass,target_ground.heat().cells[0].porewater.contact_mass);
+    EXPECT_EQ(ground.transport().gained_contact,target_ground.transport().gained_contact);
+    EXPECT_NEAR(ground.transport().residual(dye),0,1e-9);
+    EXPECT_NEAR(target_ground.transport().residual(dye),0,1e-9);
 }
 
 #ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST

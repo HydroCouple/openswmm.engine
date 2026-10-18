@@ -51,6 +51,7 @@ public:
         return sources_ ? sources_->creditOutfallReturns(start,end,volumes) : "Source stage is not attached.";
     }
     bool meshOnly() const { return sources_ && sources_->clocks().groups().empty() && donors_.empty(); }
+    bool meshOnlyGroundQuality() const { return mesh_only_ground_quality_; }
     /// Surface-only LOCAL_STORAGE bed profile used to persist mesh heat state
     /// when no groundwater receiver exists. It owns synchronization only;
     /// ordinary mesh source kernels continue to own rainfall and evaporation.
@@ -86,6 +87,7 @@ private:
     bool runtime_boundaries_=false;
     bool runtime_catchment_forcing_=false;
     bool standalone_local_bed_=false;
+    bool mesh_only_ground_quality_=false;
     std::vector<std::vector<std::pair<int,double>>> forcing_contacts_; // source -> cell, m2
     BoundaryData authored_boundary_;
     struct Donor {

@@ -144,6 +144,7 @@ std::string CommonSourceStage::checkpointModel() const {
     }
     if(runtimeBoundariesEnabled()) {auto model=RuntimeWaterCheckpoint::boundaryModel(authored_boundary_,&sources_->context().tables);a(model);}
     auto standalone_local_bed=standalone_local_bed_;a(standalone_local_bed);
+    if(mesh_only_ground_quality_) {std::string profile="mesh-only shared ground quality v1";a(profile);}
     return a.bytes();
 }
 std::string CommonSourceStage::checkpointBytes(std::string& bytes) const {

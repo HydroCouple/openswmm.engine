@@ -51,6 +51,32 @@ bool standaloneLocalBedLayout(const MeshData& mesh,const SurfaceStateData& surfa
         (h.bed_generated_age.empty()||h.bed_generated_age.size()==n)&&
         (!t.active()||t.n_cells==mesh.n_cells())&&rows_supported;
 }
+bool sharedGroundQualityProfile(const runoff::SourceWaterDriver& sources,
+    const SurfaceStateData& surface,const SubsurfaceSolver& gw) {
+    const auto& names=sources.pollutantNames();const auto& a=surface.transport;const auto& b=gw.transport();
+    const auto np=names.size();
+    const bool rows_supported=a.n_species==a.n_pollut+(a.age_row>=0?1:0)+(a.temp_row>=0?1:0)&&
+        a.row_names.size()==std::size_t(a.n_species)&&
+        (a.age_row<0||(a.age_row>=a.n_pollut&&a.age_row<a.n_species&&
+            a.row_names[std::size_t(a.age_row)]=="__WATER_AGE__"))&&
+        (a.temp_row<0||(a.temp_row>=a.n_pollut&&a.temp_row<a.n_species&&
+            a.row_names[std::size_t(a.temp_row)]=="__TEMPERATURE__"))&&
+        (a.age_row<0||a.temp_row<0||a.age_row!=a.temp_row);
+    if(!sources.clocks().groups().empty()||np==0||!gw.active()||!gw.heat().active()||
+       !surface.heat.enabled||!surface.heat.bed||!surface.heat.ground_column||
+       a.n_species<=0||a.n_species!=b.n_species||a.n_pollut!=int(np)||b.n_pollut!=int(np)||
+       a.n_msx!=0||b.n_msx!=0||!rows_supported||a.row_names!=b.row_names||
+       a.n_cells!=gw.state().n_cells||b.n_cells!=gw.state().n_cells||
+       a.cell_mass.size()!=std::size_t(a.n_species)*std::size_t(a.n_cells)||
+       a.gained_bed.size()!=std::size_t(a.n_species)||b.gained_contact.size()!=std::size_t(b.n_species)||
+       b.generated_age.size()!=std::size_t(b.n_species)||
+       a.age_row!=b.age_row||a.temp_row!=b.temp_row||
+       (a.age_row>=0&&(a.age_row>=a.n_species||a.row_names[std::size_t(a.age_row)]!="__WATER_AGE__"))||
+       (a.temp_row>=0&&(a.temp_row>=a.n_species||a.row_names[std::size_t(a.temp_row)]!="__TEMPERATURE__"))||
+       (!a.rain_conc.empty()&&a.rain_conc.size()!=std::size_t(a.n_species)))return false;
+    for(std::size_t p=0;p<np;++p)if(a.row_names[p]!=names[p])return false;
+    return true;
+}
 std::string qualityProfile(const runoff::SourceWaterDriver& sources,
                           const SurfaceStateData& surface,const SubsurfaceSolver& gw,
                           bool standalone_local_bed=false) {
@@ -59,6 +85,7 @@ std::string qualityProfile(const runoff::SourceWaterDriver& sources,
             std::string{}:"Standalone local-bed checkpoint transport layout differs.";
     const auto& names=sources.pollutantNames();const int np=int(names.size());
     const auto& a=surface.transport;const auto& b=gw.transport();
+    if(sharedGroundQualityProfile(sources,surface,gw))return {};
     if(np==0) {
         if(a.n_species==0&&!b.active())return {};
         const bool heat_only=sources.clocks().groups().empty()&&surface.heat.enabled&&gw.heat().active()&&
@@ -94,6 +121,7 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
        !standaloneLocalBedLayout(mesh,surface)))
         return "Inactive groundwater supports checkpoint attachment only for a standalone LOCAL_STORAGE bed with no reviewed source ownership.";
     const auto quality_error=qualityProfile(sources,surface,gw,standalone_local_bed);if(!quality_error.empty())return quality_error;
+    const bool mesh_only_ground_quality=mesh_only&&sharedGroundQualityProfile(sources,surface,gw);
     if(runtime_catchment_forcing && (mesh_only || runtime_water_identity.empty() || sources.clocks().groups().empty()))
         return "Catchment provider forcing requires its explicit reviewed private water profile.";
     if(!runtime_water_identity.empty() && ((!mesh_only && !runtime_catchment_forcing) || !sources.pollutantNames().empty() ||
@@ -239,7 +267,7 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
     cells_=std::move(cells);owned_=std::move(owned);weather_=preview.mesh_weather_area;
     et_contacts_=std::move(et_contacts);
     runtime_water_identity_=runtime_water_identity;runtime_boundaries_=runtime_boundaries;
-    standalone_local_bed_=standalone_local_bed;
+    standalone_local_bed_=standalone_local_bed;mesh_only_ground_quality_=mesh_only_ground_quality;
     runtime_catchment_forcing_=runtime_catchment_forcing;forcing_contacts_=std::move(forcing_contacts);
     if(runtime_boundaries)authored_boundary_=*surface.boundary;
     checkpoint_model_=checkpointModel();

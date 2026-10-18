@@ -62,7 +62,8 @@ std::string ExplicitInertialSolver::checkpointBoundary() const {
         transport.temp_row==0 && transport.rowIndex("__TEMPERATURE__")==0;
     const bool standalone_local_bed_quality=common_stage_->standaloneLocalBed() && state_->heat.enabled &&
         state_->heat.bed && !state_->heat.ground_column;
-    const bool supported_transport=temperature_only||standalone_local_bed_quality;
+    const bool mesh_only_ground_quality=joint_checkpoint_&&common_stage_->meshOnlyGroundQuality();
+    const bool supported_transport=temperature_only||standalone_local_bed_quality||mesh_only_ground_quality;
     if(!joint_checkpoint_ && (state_->nodes_1d || state_->node_coupling))
         return "CPU checkpoint requires a joint hydraulic owner for live 1D coupling.";
     if(state_->node_row_conc && !supported_transport)
@@ -225,6 +226,11 @@ std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const 
         trial.gw_=gw_?&gw:nullptr; trial.state_=&surface; trial.common_stage_=&stage;
         Archive state(std::move(payload)); std::string component; state(component); trial.checkpointState(state); state.finish();
         const auto component_error=stage.loadCheckpointBytes(std::move(component)); if(!component_error.empty()) return component_error;
+        // `gained_contact` is a derived aggregate of the persisted per-layer
+        // contact ledger. Rebuild it on the staged aquifer before installation
+        // so restored continuity diagnostics match the saved porewater state.
+        if(!gw.transport().gained_contact.empty())
+            if(const auto contact_error=gw.refreshPorewaterContactLedger();!contact_error.empty())return contact_error;
         const auto invalid=trial.checkpointBoundary(); if(!invalid.empty()) return invalid;
         if(boundary_slots && trial.bc_slot_!=*boundary_slots)return "Router/CPU checkpoint boundary indices differ.";
         if(router_boundary) {

@@ -581,8 +581,33 @@ OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::applyCellSourceRow(
 }
 
 bool ExplicitInertialSolver::applyCellSources(int i, double dt) {
-    if (common_stage_ && common_stage_->ownsCell(i))
+    if (common_stage_ && common_stage_->ownsCell(i)) {
+        // The common source stage owns mesh-only water bookkeeping, but the
+        // shared surface/ground quality profile still needs its local bed
+        // contact at each accepted 2D cell firing. Keep this finite-store
+        // exchange here so it runs when source-water kernels are bypassed.
+        if (common_stage_->meshOnlyGroundQuality() && species_on_ &&
+            state_->heat.enabled && state_->heat.bed && state_->heat.ground_column &&
+            i >= 0 && std::size_t(i) < state_->heat.aquifer_owned.size() &&
+            state_->heat.aquifer_owned[std::size_t(i)]) {
+            auto& tr = state_->transport;
+            bool changed = false;
+            for (int r = 0; r < tr.n_species && r < state_->heat.bed_species; ++r) {
+                if (r == tr.temp_row) continue;
+                double& mass = tr.cell_mass[tr.idx(r, i)];
+                const double before = mass;
+                mass = applyLocalBedSpecies(*mesh_, state_->heat, i, r, mass,
+                                            state_->volume[i], dt);
+                const double transfer = mass - before;
+                if (transfer != 0.0) {
+                    bookSourceLedger(SourceLedger::BedExchange, r, transfer);
+                    changed = true;
+                }
+            }
+            if (changed && gw_) gw_->heat().refreshView(i, gw_->transport());
+        }
         return common_stage_->runtimeWaterEnabled() && applyRuntimeSources(i,dt);
+    }
     CellSourceStep source;
     if(std::size_t(i)<channel_source_ready_.size()&&channel_source_ready_[i]) {
         source=channel_sources_[i];source.ledger=source_ledgers_.data()+std::size_t(sourceThread())*source_ledger_stride_;

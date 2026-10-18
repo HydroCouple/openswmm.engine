@@ -248,10 +248,12 @@ std::string SurfaceRouter2D::sourceBoundary(const SimulationContext& ctx) const 
         return "Router checkpoint live 1D, land-use quality and external providers are not qualified.";
     if(joint_hydraulic_) {
         const bool standalone_local_bed_quality=common_stage_&&common_stage_->standaloneLocalBed();
+        const bool mesh_only_ground_quality=common_stage_&&common_stage_->meshOnlyGroundQuality();
         if(state_.nodes_1d!=((node_coupling_points_.empty() && subsurface_.nodeBeds().empty())?nullptr:&ctx.nodes) ||
            state_.node_coupling!=(node_coupling_points_.empty()?nullptr:&node_coupling_points_) ||
            ((coupling_points_.empty() && subsurface_.nodeBeds().empty() && !channel_ground_.active()) &&
-            (ctx.n_nodes()!=0 || ctx.n_links()!=0)) || (ctx.n_pollutants()!=0&&!standalone_local_bed_quality))
+            (ctx.n_nodes()!=0 || ctx.n_links()!=0)) ||
+           (ctx.n_pollutants()!=0&&!standalone_local_bed_quality&&!mesh_only_ground_quality))
             return "Joint router checkpoint coupling/receiver layout differs.";
         if(outfall_exchange_.prepared_) return "Joint checkpoint has an unconsumed outfall reservation.";
     }
@@ -318,11 +320,13 @@ void SurfaceRouter2D::attachCommonSourceStage(SimulationContext& ctx,CommonSourc
             transport.temp_row==0 && transport.rowIndex("__TEMPERATURE__")==0;
         const bool standalone_local_bed_quality=stage.standaloneLocalBed() && !subsurface_.active() &&
             state_.heat.enabled && state_.heat.bed && !state_.heat.ground_column;
+        const bool mesh_only_ground_quality=stage.meshOnlyGroundQuality()&&stage.meshOnly();
         if((ramp && ramp[0]=='1') ||
            ((coupling_points_.empty() && subsurface_.nodeBeds().empty() && !channel_ground_.active()) &&
             (ctx.n_nodes()!=0 || ctx.n_links()!=0)) ||
-           (ctx.n_pollutants()!=0&&!standalone_local_bed_quality) ||
-           (transport.active() && !temperature_only&&!standalone_local_bed_quality) || !aquifer_link_shares_.empty())
+           (ctx.n_pollutants()!=0&&!standalone_local_bed_quality&&!mesh_only_ground_quality) ||
+           (transport.active() && !temperature_only&&!standalone_local_bed_quality&&!mesh_only_ground_quality) ||
+           !aquifer_link_shares_.empty())
             throw std::invalid_argument("Joint source attachment requires a supported exchange profile without head ramps or node/link beds.");
     }
     const auto& infiltration_rows=infil_.resolvedRows();
