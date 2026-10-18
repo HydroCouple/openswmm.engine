@@ -92,6 +92,11 @@ std::string MeshSnow::advance(SimulationContext& ctx,double start,double end,con
     if(!active())return {};
     if(!std::isfinite(start)||!std::isfinite(end)||start!=completed_||end<=start||
        rain.size()!=pack_.size()||catch_factor.size()!=pack_.size())return "Invalid mesh snow interval or forcing layout.";
+    // The source scheduler can close an interval with a sub-nanosecond
+    // floating-point remainder at an exact synchronization boundary. The
+    // snow loop intentionally skips such a span; keep the accepted coverage
+    // and fluxes rather than converting the empty interval into a bare cell.
+    if(end-start<=1e-9) {completed_=end;return {};}
     auto candidate=*this;
     if(auto error=candidate.advanceInPlace(ctx,start,end,rain,catch_factor);!error.empty())return error;
     *this=std::move(candidate);return {};

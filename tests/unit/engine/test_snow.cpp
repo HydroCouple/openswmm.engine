@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstddef>
 #include <fstream>
+#include <limits>
 #include <numeric>
 
 #include <openswmm/engine/openswmm_engine.h>
@@ -1659,6 +1660,31 @@ TEST(MeshSnow, ReciprocalGroundContactEnergyClosesAndRestoresWithItsOwnership) {
     surface::MeshSnow wrong_owner;ASSERT_TRUE(wrong_owner.initialize(ctx,geometry).empty());
     ASSERT_TRUE(wrong_owner.setGroundContactMask({0}).empty());
     EXPECT_NE(wrong_owner.restoreCheckpoint(checkpoint),"");
+}
+
+TEST(MeshSnow, SubNanosecondIntervalPreservesAcceptedSnowCoverage) {
+    SimulationContext ctx;ctx.options.ignore_snow_melt=false;ctx.options.start_date=datetime::encodeDate(2026,1,1);
+    ctx.options.end_date=ctx.options.start_date+2./24;ctx.snowpack_names.add("SP");ctx.snowpacks.names={"SP"};
+    ctx.snowpacks.config.model=surface::SnowKind::Ueb;ctx.snowpacks.config.site=surface::ClimateSite{45,-120,-8,1000};
+    ctx.snowpacks.pervious={std::array<double,7>{.02,.06,32,.1,6,0,0}};ctx.snowpacks.mesh_config.defaults["*"].pack="SP";
+    std::istringstream met("01/01/2026 00:00 5 50 0 400 300\n01/01/2026 01:00 5 50 0 400 300\n");
+    ASSERT_TRUE(ctx.snowpacks.meteorology.read(met).empty());
+    surface::MeshSnow snow;ASSERT_TRUE(snow.initialize(ctx,{{"grass",50,0,0}}).empty());
+    ASSERT_TRUE(snow.setGroundContactMask({1}).empty());
+    ASSERT_TRUE(snow.advance(ctx,0,300,{0},{1}).empty());
+    ASSERT_DOUBLE_EQ(snow.groundContactFraction(0),1);
+    const double contact=snow.ledgers()[0].ground_contact_energy;
+    const double energy=snow.outputs()[0].energy_kJm2;
+    const double end=std::nextafter(300.,std::numeric_limits<double>::infinity());
+    ASSERT_LT(end-300.,1e-9);
+    ASSERT_TRUE(snow.advance(ctx,300,end,{0},{1}).empty());
+    EXPECT_EQ(snow.completedEnd(),end);
+    EXPECT_DOUBLE_EQ(snow.lastSeconds(),300);
+    EXPECT_DOUBLE_EQ(snow.groundContactFraction(0),1);
+    EXPECT_DOUBLE_EQ(snow.ledgers()[0].ground_contact_energy,contact);
+    EXPECT_DOUBLE_EQ(snow.outputs()[0].energy_kJm2,energy);
+    ASSERT_TRUE(snow.advance(ctx,end,600,{0},{1}).empty());
+    EXPECT_DOUBLE_EQ(snow.groundContactFraction(0),1);
 }
 
 TEST(SharedRadiation, IntervalTemperatureIgnoresRunAheadCursorAndRuntimeOverridesWinOverMet) {
