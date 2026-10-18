@@ -314,6 +314,53 @@ TEST_F(ClimateConfigCApi, EvaporationPreviewAddsAdjustmentAndPreservesNonMidnigh
     EXPECT_EQ(summary.missing_count, 0);
 }
 
+TEST_F(ClimateConfigCApi, EvaporationPreviewDistinguishesConstantAndMonthlyRatesAtMonthBoundary) {
+    openModel("_climate_preview_constant_monthly.rpt", "_climate_preview_constant_monthly.out");
+    constexpr double jan31 = 43831.0 + 30.0; // 2020-01-31 in SWMM OADate.
+    constexpr double feb3 = jan31 + 3.0;
+    ASSERT_EQ(swmm_options_set_start_date(engine_, jan31), SWMM_OK);
+    ASSERT_EQ(swmm_options_set_end_date(engine_, feb3), SWMM_OK);
+
+    std::array<double, 12> rates{};
+    rates[0] = 0.4;
+    rates[1] = 0.8;
+    std::array<double, 12> adjustments{};
+    adjustments[0] = 0.1;
+    adjustments[1] = 0.2;
+    ASSERT_EQ(swmm_climate_set_evap_monthly(engine_, rates.data(), 12), SWMM_OK);
+    ASSERT_EQ(swmm_climate_set_adjust_evaporation(engine_, adjustments.data(), 12), SWMM_OK);
+
+    std::array<SWMM_EvapPreviewSample, 3> samples{};
+    int count = 0;
+    SWMM_EvapPreviewSummary summary{};
+    char diagnostic[256]{};
+    ASSERT_EQ(swmm_climate_set_evap_type(engine_, SWMM_EVAP_CONSTANT), SWMM_OK);
+    ASSERT_EQ(swmm_climate_preview_evaporation(engine_, jan31, feb3, 1.0,
+        samples.data(), static_cast<int>(samples.size()), &count, &summary,
+        diagnostic, sizeof(diagnostic)), SWMM_OK) << diagnostic;
+    ASSERT_EQ(count, 3);
+    EXPECT_EQ(summary.source_type, SWMM_EVAP_CONSTANT);
+    EXPECT_EQ(summary.available_count, 3);
+    EXPECT_EQ(summary.runtime_forcing_unknown, 1);
+    EXPECT_NEAR(samples[0].source_rate, 0.4, 1.0e-12);
+    EXPECT_NEAR(samples[0].effective_rate, 0.5, 1.0e-12);
+    EXPECT_NEAR(samples[1].source_rate, 0.4, 1.0e-12); // Constant stays constant in February.
+    EXPECT_NEAR(samples[1].effective_rate, 0.6, 1.0e-12); // Monthly adjustment still changes.
+    EXPECT_NEAR(samples[2].effective_rate, 0.6, 1.0e-12);
+
+    ASSERT_EQ(swmm_climate_set_evap_type(engine_, SWMM_EVAP_MONTHLY), SWMM_OK);
+    ASSERT_EQ(swmm_climate_preview_evaporation(engine_, jan31, feb3, 1.0,
+        samples.data(), static_cast<int>(samples.size()), &count, &summary,
+        diagnostic, sizeof(diagnostic)), SWMM_OK) << diagnostic;
+    ASSERT_EQ(count, 3);
+    EXPECT_EQ(summary.source_type, SWMM_EVAP_MONTHLY);
+    EXPECT_NEAR(samples[0].effective_rate, 0.5, 1.0e-12);
+    EXPECT_NEAR(samples[1].source_rate, 0.8, 1.0e-12);
+    EXPECT_NEAR(samples[1].adjustment, 0.2, 1.0e-12);
+    EXPECT_NEAR(samples[1].effective_rate, 1.0, 1.0e-12);
+    EXPECT_NEAR(samples[2].effective_rate, 1.0, 1.0e-12);
+}
+
 TEST_F(ClimateConfigCApi, EvaporationPreviewReportsPanGapsAndHoldsLastValidRate) {
     openModel("_climate_preview_pan.rpt", "_climate_preview_pan.out");
     constexpr double day = 43831.0;
