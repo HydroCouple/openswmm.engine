@@ -1063,6 +1063,92 @@ TEST(EngineCheckpoint, MeshThermalRejectedIntakeRefundConservesEnergyAcrossLtsSo
     EXPECT_TRUE(session.stage.returns().empty());
 }
 
+TEST(EngineCheckpoint, MeshThermalIntakeRefundEnergyClosesAtGlobalAndLtsCadence) {
+    struct Result {
+        double energy_change=0;
+        double incoming_heat=0;
+        double returned_heat=0;
+        double credited_return=0;
+    };
+    const auto run=[](bool staggered,const std::string& name) {
+        ThermalSurfaceSession session;
+        try { session.start(name); }
+        catch(const std::exception& error) {
+            ADD_FAILURE()<<"thermal session setup failed: "<<error.what();
+            return Result{};
+        }
+        auto& surface=session.engine.surfaceRouter2D().state();
+        auto& gw=session.engine.surfaceRouter2D().subsurface();
+        EXPECT_EQ(surface.transport.temp_row,0);
+        surface.rainfall[0]=.001;
+        surface.transport.rain_conc={5};
+        gw.state().dt_cell[0]=staggered?1:.25;
+        gw.state().dt_cell[1]=.25;
+        gw.assignTiers(.25,3);
+        if(staggered) {
+            EXPECT_EQ(gw.state().tier[0],2);
+            EXPECT_EQ(gw.state().tier[1],0);
+        } else {
+            EXPECT_EQ(gw.state().tier[0],0);
+            EXPECT_EQ(gw.state().tier[1],0);
+        }
+
+        const auto total_energy=[&]() {
+            double total=0;
+            for(const auto& cell:gw.heat().cells)
+                total+=std::accumulate(cell.column.energy.begin(),cell.column.energy.end(),0.);
+            return total;
+        };
+        const double energy_before=total_energy();
+        Result result;
+        double intake_temperature_volume=0;
+        bool saw_numerical_refund=false;
+        const double cp=gw.heat().water_capacity;
+        for(int interval=0;interval<4;++interval) {
+            const double start=.25*interval,end=start+.25;
+            EXPECT_EQ(session.stage.advance(start,end),"");
+            for(const auto& receipt:session.stage.receipts())
+                if(receipt.request.kind==twoD::SurfaceDonorKind::MESH) {
+                    intake_temperature_volume+=receipt.mass[0];
+                }
+            // The same accepted link packet is spread over the four common
+            // source intervals. LTS gathers it until its slower cell fires.
+            gw.bookLinkSeepage(0,1);
+            gw.bookLinkSeepageMass(0,surface.transport.temp_row,27);
+            gw.fireGwCells(0,.25,surface,start,end);
+            if(staggered&&interval==3)gw.fireGwCells(2,1,surface,0,end);
+            for(const auto& cell:gw.heat().cells)EXPECT_EQ(cell.failed,0)<<cell.error;
+            for(const auto& returned:gw.sourceReturns())
+                saw_numerical_refund|=returned.kind==twoD::SurfaceReturnKind::NUMERICAL_REFUND;
+        }
+        EXPECT_TRUE(saw_numerical_refund);
+        result.energy_change=total_energy()-energy_before;
+        result.incoming_heat=cp*(intake_temperature_volume+4*27);
+
+        surface.rainfall[0]=0;
+        for(int interval=0;interval<8;++interval) {
+            const double start=1+.25*interval,end=start+.25;
+            EXPECT_EQ(session.stage.advance(start,end),"");
+        }
+        EXPECT_TRUE(gw.sourceReturns().empty());
+        result.credited_return=surface.transport.gained_exfiltration[0];
+        EXPECT_GT(result.credited_return,0);
+        result.returned_heat=cp*result.credited_return;
+        EXPECT_EQ(session.stage.advance(3,3.25),"");
+        EXPECT_TRUE(session.stage.returns().empty());
+        EXPECT_DOUBLE_EQ(surface.transport.gained_exfiltration[0],result.credited_return);
+        return result;
+    };
+
+    const auto global=run(false,"surface-thermal-refund-global");
+    const auto lts=run(true,"surface-thermal-refund-lts");
+    for(const auto& result:{global,lts}) {
+        const double residual=result.energy_change+result.returned_heat-result.incoming_heat;
+        EXPECT_LE(std::abs(residual),1e-8*std::max(1.,std::abs(result.incoming_heat)))
+            << "energy input=" << result.incoming_heat << " J, residual=" << residual << " J";
+    }
+}
+
 TEST(EngineCheckpoint, PendingThermalIntakeRefundSurvivesCommonSourceRestart) {
     ThermalSurfaceSession source,target;
     ASSERT_NO_THROW(source.start("surface-thermal-refund-restart-source"));
