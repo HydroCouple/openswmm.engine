@@ -36,8 +36,18 @@
 
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_climate.h"
+#include "../hydrology/Climate.hpp"
+#include "../hydrology/ClimateFile.hpp"
+#include "DateTime.hpp"
+#include "PathResolver.hpp"
+#include "SimulationContext.hpp"
+#include "UnitConversion.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -62,6 +72,64 @@ int copy_array_in(double* dst, const double* values, int count, int n) {
     if (!values || count != n) return SWMM_ERR_BADPARAM;
     std::copy(values, values + n, dst);
     return SWMM_OK;
+}
+
+void climate_diagnostic(char* out, int capacity, const std::string& message) {
+    if (!out || capacity <= 0) return;
+    const auto n = std::min(message.size(), static_cast<std::size_t>(capacity - 1));
+    std::memcpy(out, message.data(), n);
+    out[n] = '\0';
+}
+
+double lookup_table(const openswmm::Table& table, double date) {
+    const int n = static_cast<int>(table.x.size());
+    if (n <= 0) return 0.0;
+    if (n == 1 || date <= table.x.front()) return table.y.front();
+    if (date > table.x.back()) return table.y.back();
+    const auto upper = std::lower_bound(table.x.begin(), table.x.end(), date);
+    if (upper == table.x.end()) return table.y.back();
+    const auto i = static_cast<std::size_t>(upper - table.x.begin());
+    if (*upper == date || i == 0) return table.y[i];
+    const auto lo = i - 1;
+    const double dx = table.x[i] - table.x[lo];
+    if (std::fabs(dx) < 1.0e-20) return (table.y[lo] + table.y[i]) / 2.0;
+    return table.y[lo] + (date - table.x[lo]) * (table.y[i] - table.y[lo]) / dx;
+}
+
+int month_index(double date) {
+    return std::clamp(openswmm::datetime::monthOfYear(date) - 1, 0, 11);
+}
+
+int table_index(const openswmm::SimulationContext& ctx, const std::string& name) {
+    return name.empty() ? -1 : ctx.find_timeseries(name);
+}
+
+std::string resolved_climate_path(const openswmm::SimulationContext& ctx) {
+    const auto& file = ctx.options.temp_file;
+    if (!file.absolute.empty()) return file.absolute;
+    if (file.original.empty()) return {};
+    return openswmm::io::resolveRelative(file.original,
+                                         openswmm::io::parentDir(ctx.inp_file_path));
+}
+
+bool open_climate_file(const openswmm::SimulationContext& ctx, int unit_system,
+                       const std::string& configured_path, double file_start,
+                       int temp_units, openswmm::climate::ClimateFileReader& reader,
+                       std::string& error) {
+    if (configured_path.empty()) {
+        error = "No climate file is configured for this evaporation source.";
+        return false;
+    }
+    const std::string path = openswmm::io::resolveRelative(
+        configured_path, openswmm::io::parentDir(ctx.inp_file_path));
+    if (!reader.open(path, file_start, unit_system, temp_units)) {
+        error = "The configured climate file could not be opened or its format was not recognized.";
+        return false;
+    }
+    reader.setDayOffset(file_start > 0.0
+        ? std::floor(file_start) - std::floor(ctx.options.start_date)
+        : 0.0);
+    return true;
 }
 
 // Validate every element of an ADC curve is a fraction in [0, 1].
@@ -240,6 +308,336 @@ SWMM_ENGINE_API int swmm_climate_set_evap_timeseries(SWMM_Engine engine, const c
     ctx.options.evap_ts_name = ts_id;
     ctx.options.evap_type = 2;  // TIMESERIES
     return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_climate_preview_evaporation_with_config(
+    SWMM_Engine engine, const SWMM_EvapPreviewConfig* config,
+    double start_date, double end_date,
+    double sample_interval_days, SWMM_EvapPreviewSample* samples, int capacity,
+    int* sample_count, SWMM_EvapPreviewSummary* summary,
+    char* diagnostic, int diagnostic_capacity) {
+    CHECK_HANDLE(engine);
+    if (!sample_count || !summary || !diagnostic || diagnostic_capacity <= 0 ||
+        capacity < 0 || (capacity > 0 && !samples) ||
+        !std::isfinite(start_date) || !std::isfinite(end_date) ||
+        !std::isfinite(sample_interval_days) || sample_interval_days <= 0.0 ||
+        end_date <= start_date)
+        return SWMM_ERR_BADPARAM;
+
+    diagnostic[0] = '\0';
+    const auto& ctx = to_engine(engine)->context();
+    const auto& options = ctx.options;
+    int engine_state = -1;
+    if (swmm_engine_get_state(engine, &engine_state) != SWMM_OK)
+        return SWMM_ERR_BADHANDLE;
+    if (engine_state == SWMM_STATE_RUNNING) {
+        climate_diagnostic(diagnostic, diagnostic_capacity,
+            "Evaporation preview is unavailable while the model is running.");
+        return SWMM_ERR_LIFECYCLE;
+    }
+    if (start_date < options.start_date - 1.0e-10 ||
+        end_date > options.end_date + 1.0e-10) {
+        climate_diagnostic(diagnostic, diagnostic_capacity,
+            "The preview window must fall within the simulation dates.");
+        return SWMM_ERR_BADPARAM;
+    }
+
+    const double count_d = std::ceil((end_date - start_date) / sample_interval_days - 1.0e-12);
+    if (!std::isfinite(count_d) || count_d < 1.0 || count_d > 1000000.0) {
+        climate_diagnostic(diagnostic, diagnostic_capacity,
+            "The preview window produces an unsupported number of samples.");
+        return SWMM_ERR_BADPARAM;
+    }
+    const int needed = static_cast<int>(count_d);
+    *sample_count = needed;
+    if (samples && capacity < needed) {
+        climate_diagnostic(diagnostic, diagnostic_capacity,
+            "The sample buffer is too small for this preview window.");
+        return SWMM_ERR_BADPARAM;
+    }
+
+    const int unit_system = openswmm::ucf::getUnitSystem(
+        static_cast<int>(options.flow_units));
+    int evap_type = options.evap_type;
+    int temp_source = options.temp_source;
+    double evap_monthly[SWMM_CLIMATE_MONTHS]{};
+    double pan_coeff[SWMM_CLIMATE_MONTHS]{};
+    double adjust_evap[SWMM_CLIMATE_MONTHS]{};
+    double adjust_temp[SWMM_CLIMATE_MONTHS]{};
+    for (int month = 0; month < SWMM_CLIMATE_MONTHS; ++month) {
+        evap_monthly[month] = options.evap_values[month];
+        pan_coeff[month] = options.pan_coeff[month];
+        adjust_evap[month] = ctx.adjust_evap[month];
+        adjust_temp[month] = ctx.adjust_temp[month];
+    }
+    std::string evap_ts_name = options.evap_ts_name;
+    std::string temp_ts_name = options.temp_ts_name;
+    std::string climate_path = resolved_climate_path(ctx);
+    double climate_file_start = options.temp_file_start;
+    int climate_file_temp_units = options.temp_units;
+    double latitude = options.snow_lat;
+    double longitude_correction_minutes = options.snow_dtlong;
+    if (config) {
+        evap_type = config->evap_type;
+        temp_source = config->temp_source;
+        evap_ts_name = config->evap_timeseries ? config->evap_timeseries : "";
+        temp_ts_name = config->temp_timeseries ? config->temp_timeseries : "";
+        climate_path = config->climate_file_path ? config->climate_file_path : "";
+        climate_file_start = config->climate_file_start;
+        climate_file_temp_units = config->climate_file_temp_units;
+        latitude = config->latitude;
+        longitude_correction_minutes = config->longitude_correction_minutes;
+        for (int month = 0; month < SWMM_CLIMATE_MONTHS; ++month) {
+            evap_monthly[month] = config->evap_monthly[month];
+            pan_coeff[month] = config->pan_coeff[month];
+            adjust_evap[month] = config->adjust_evaporation[month];
+            adjust_temp[month] = config->adjust_temperature[month];
+            if (!std::isfinite(evap_monthly[month]) || !std::isfinite(pan_coeff[month]) ||
+                !std::isfinite(adjust_evap[month]) || !std::isfinite(adjust_temp[month])) {
+                climate_diagnostic(diagnostic, diagnostic_capacity,
+                    "The draft contains a non-finite climate value.");
+                return SWMM_ERR_BADPARAM;
+            }
+        }
+        if (temp_source < SWMM_TEMP_NONE || temp_source > SWMM_TEMP_FILE ||
+            climate_file_temp_units < -1 || climate_file_temp_units > 2 ||
+            !std::isfinite(climate_file_start) || !std::isfinite(latitude) ||
+            !std::isfinite(longitude_correction_minutes) ||
+            latitude < -90.0 || latitude > 90.0) {
+            climate_diagnostic(diagnostic, diagnostic_capacity,
+                "The draft contains an invalid temperature source or site value.");
+            return SWMM_ERR_BADPARAM;
+        }
+    }
+    if (evap_type < SWMM_EVAP_CONSTANT || evap_type > SWMM_EVAP_FILE) {
+        climate_diagnostic(diagnostic, diagnostic_capacity,
+            "The evaporation source type is invalid.");
+        return SWMM_ERR_BADPARAM;
+    }
+    const int evap_ts = evap_type == SWMM_EVAP_TIMESERIES
+        ? table_index(ctx, evap_ts_name) : -1;
+    const openswmm::Table* evap_table = evap_ts >= 0
+        ? &ctx.tables.tables[static_cast<std::size_t>(evap_ts)] : nullptr;
+
+    openswmm::climate::ClimateFileReader pan_file;
+    openswmm::climate::ClimateFileReader temp_file;
+    bool pan_file_open = false;
+    bool temp_file_open = false;
+    std::string pan_file_error;
+    std::string temp_file_error;
+    if (evap_type == SWMM_EVAP_FILE)
+        pan_file_open = open_climate_file(ctx, unit_system, climate_path,
+            climate_file_start, climate_file_temp_units, pan_file, pan_file_error);
+    if (evap_type == SWMM_EVAP_TEMPERATURE && temp_source == SWMM_TEMP_FILE)
+        temp_file_open = open_climate_file(ctx, unit_system, climate_path,
+            climate_file_start, climate_file_temp_units, temp_file, temp_file_error);
+
+    const int temp_ts_idx = temp_source == SWMM_TEMP_TIMESERIES
+        ? table_index(ctx, temp_ts_name) : -1;
+    const openswmm::Table* temp_table = temp_ts_idx >= 0
+        ? &ctx.tables.tables[static_cast<std::size_t>(temp_ts_idx)] : nullptr;
+
+    // The evaporation time series is initialized once at model start, then
+    // advances in steps at its timestamps. Replaying that cursor locally keeps
+    // this preview read-only and preserves non-midnight simulation starts.
+    double evap_current = 0.0;
+    int evap_next = -1;
+    if (evap_table && !evap_table->x.empty()) {
+        const auto& x = evap_table->x;
+        int initial = 0;
+        if (x.front() < options.start_date) {
+            const auto it = std::lower_bound(x.begin(), x.end(), options.start_date);
+            initial = it == x.end() ? static_cast<int>(x.size()) - 1
+                                    : static_cast<int>(it - x.begin());
+        }
+        evap_current = evap_table->y[static_cast<std::size_t>(initial)];
+        evap_next = initial + 1;
+        while (evap_next >= 0 && evap_next < static_cast<int>(x.size()) &&
+               x[static_cast<std::size_t>(evap_next)] > options.end_date)
+            evap_next = -1;
+    }
+
+    // Hargreaves uses runtime air temperature and a seven-sample moving
+    // average. A daily preview follows the same equation and temperature
+    // conversions, while being explicit that runtime step frequency/forcing
+    // can change the exact result.
+    openswmm::climate::ClimateState hargreaves_state;
+    hargreaves_state.latitude = latitude;
+    hargreaves_state.dtlong = longitude_correction_minutes / 60.0;
+    double file_tmin = 70.0, file_tmax = 70.0;
+    double prev_tmax = 70.0;
+    double last_pan_source = 0.0, last_pan_effective = 0.0;
+    bool pan_rate_seen = false;
+    bool temperature_seen = temp_source == SWMM_TEMP_NONE;
+    double minimum = std::numeric_limits<double>::infinity();
+    double maximum = -std::numeric_limits<double>::infinity();
+    SWMM_EvapPreviewSummary next_summary{};
+    next_summary.source_type = evap_type;
+    next_summary.runtime_forcing_unknown = 1;
+    next_summary.minimum_rate = std::numeric_limits<double>::quiet_NaN();
+    next_summary.maximum_rate = std::numeric_limits<double>::quiet_NaN();
+
+    for (int i = 0; i < needed; ++i) {
+        const double date = start_date + static_cast<double>(i) * sample_interval_days;
+        const int month = month_index(date);
+        double source = 0.0;
+        double adjustment = 0.0;
+        double effective = 0.0;
+        int status = SWMM_EVAP_PREVIEW_AVAILABLE;
+
+        switch (evap_type) {
+            case SWMM_EVAP_CONSTANT:
+            case SWMM_EVAP_MONTHLY: {
+                source = evap_monthly[evap_type == SWMM_EVAP_CONSTANT ? 0 : month];
+                adjustment = adjust_evap[month];
+                effective = source + adjustment;
+                break;
+            }
+            case SWMM_EVAP_TIMESERIES: {
+                if (!evap_table || evap_table->x.empty()) {
+                    status = SWMM_EVAP_PREVIEW_MISSING;
+                } else {
+                    const auto& x = evap_table->x;
+                    while (evap_next >= 0 && evap_next < static_cast<int>(x.size()) &&
+                           x[static_cast<std::size_t>(evap_next)] <= date) {
+                        evap_current = evap_table->y[static_cast<std::size_t>(evap_next)];
+                        ++evap_next;
+                        if (evap_next >= static_cast<int>(x.size()) ||
+                            x[static_cast<std::size_t>(evap_next)] > options.end_date)
+                            evap_next = -1;
+                    }
+                    source = evap_current;
+                    adjustment = adjust_evap[month];
+                    effective = source + adjustment;
+                    if (date < x.front() || date > x.back())
+                        status = SWMM_EVAP_PREVIEW_HELD;
+                }
+                break;
+            }
+            case SWMM_EVAP_FILE: {
+                openswmm::climate::DailyClimateRecord record;
+                const bool has_record = pan_file_open && pan_file.getRecord(date, record);
+                if (has_record && std::isfinite(record.evap)) {
+                    source = record.evap * pan_coeff[month];
+                    adjustment = adjust_evap[month];
+                    effective = source + adjustment;
+                    last_pan_source = source;
+                    last_pan_effective = effective;
+                    pan_rate_seen = true;
+                } else if (pan_rate_seen) {
+                    source = last_pan_source;
+                    effective = last_pan_effective;
+                    status = SWMM_EVAP_PREVIEW_HELD;
+                } else {
+                    status = SWMM_EVAP_PREVIEW_MISSING;
+                }
+                break;
+            }
+            case SWMM_EVAP_TEMPERATURE: {
+                double temperature = 70.0;
+                double range = 0.0;
+                bool available = temp_source == SWMM_TEMP_NONE;
+                bool held = false;
+                if (temp_table && !temp_table->x.empty()) {
+                    temperature = lookup_table(*temp_table, date);
+                    if (unit_system == 1) temperature = (9.0 / 5.0) * temperature + 32.0;
+                    temperature += adjust_temp[month] * (unit_system == 1 ? 9.0 / 5.0 : 1.0);
+                    available = true;
+                    held = date < temp_table->x.front() || date > temp_table->x.back();
+                } else if (temp_source == SWMM_TEMP_FILE && temp_file_open) {
+                    openswmm::climate::DailyClimateRecord record;
+                    const bool has_record = temp_file.getRecord(date, record);
+                    if (has_record) {
+                        if (std::isfinite(record.tmin)) file_tmin = record.tmin;
+                        if (std::isfinite(record.tmax)) file_tmax = record.tmax;
+                        available = std::isfinite(record.tmin) || std::isfinite(record.tmax);
+                        if (!available) held = temperature_seen;
+                    } else {
+                        held = temperature_seen;
+                    }
+                    const double tmin = file_tmin + adjust_temp[month] *
+                        (unit_system == 1 ? 9.0 / 5.0 : 1.0);
+                    const double tmax = file_tmax + adjust_temp[month] *
+                        (unit_system == 1 ? 9.0 / 5.0 : 1.0);
+                    range = tmax - tmin;
+                    if (hargreaves_state.last_temp_doy != openswmm::datetime::dayOfYear(date)) {
+                        prev_tmax = temperature_seen ? hargreaves_state.tmax_daily : tmax;
+                        hargreaves_state.tmin_daily = tmin;
+                        hargreaves_state.tmax_daily = tmax;
+                        hargreaves_state.has_minmax = true;
+                        hargreaves_state.last_temp_doy = openswmm::datetime::dayOfYear(date);
+                        hargreaves_state.prev_tmax = prev_tmax;
+                        openswmm::climate::updateTempTimes(hargreaves_state,
+                            openswmm::datetime::dayOfYear(date));
+                    }
+                    hargreaves_state.tmin_daily = tmin;
+                    hargreaves_state.tmax_daily = tmax;
+                    const double hour = (date - std::floor(date)) * 24.0;
+                    temperature = openswmm::climate::getSubdailyTemp(hargreaves_state, hour);
+                    temperature_seen = temperature_seen || available;
+                }
+                hargreaves_state.temperature = temperature;
+                hargreaves_state.temp_range = range;
+                hargreaves_state.temp_ma.push(temperature, range);
+                source = openswmm::climate::hargreaves(latitude,
+                    openswmm::datetime::dayOfYear(date),
+                    hargreaves_state.temp_ma.avg_temp(),
+                    hargreaves_state.temp_ma.avg_range());
+                if (unit_system == 0) source /= openswmm::climate::MM_PER_INCH;
+                adjustment = adjust_evap[month];
+                effective = source + adjustment;
+                if (!available && temp_source != SWMM_TEMP_NONE)
+                    status = SWMM_EVAP_PREVIEW_MISSING;
+                else if (held)
+                    status = SWMM_EVAP_PREVIEW_HELD;
+                else
+                    status = SWMM_EVAP_PREVIEW_ESTIMATED;
+                // This is a daily estimate, even when a file or time series
+                // has complete weather coverage.
+                if (status == SWMM_EVAP_PREVIEW_AVAILABLE)
+                    status = SWMM_EVAP_PREVIEW_ESTIMATED;
+                break;
+            }
+            default:
+                status = SWMM_EVAP_PREVIEW_MISSING;
+                break;
+        }
+
+        if (!std::isfinite(effective)) {
+            status = SWMM_EVAP_PREVIEW_MISSING;
+        } else if (status != SWMM_EVAP_PREVIEW_MISSING) {
+            minimum = std::min(minimum, effective);
+            maximum = std::max(maximum, effective);
+        }
+        switch (status) {
+            case SWMM_EVAP_PREVIEW_AVAILABLE: ++next_summary.available_count; break;
+            case SWMM_EVAP_PREVIEW_HELD: ++next_summary.held_count; break;
+            case SWMM_EVAP_PREVIEW_MISSING: ++next_summary.missing_count; break;
+            case SWMM_EVAP_PREVIEW_ESTIMATED: ++next_summary.estimated_count; break;
+        }
+        if (samples) samples[i] = {date, source, adjustment, effective, status};
+    }
+
+    if (std::isfinite(minimum)) {
+        next_summary.minimum_rate = minimum;
+        next_summary.maximum_rate = maximum;
+    }
+    *summary = next_summary;
+    if ((evap_type == SWMM_EVAP_FILE && !pan_file_open) ||
+        (evap_type == SWMM_EVAP_TEMPERATURE && temp_source == SWMM_TEMP_FILE && !temp_file_open))
+        climate_diagnostic(diagnostic, diagnostic_capacity,
+            evap_type == SWMM_EVAP_FILE ? pan_file_error : temp_file_error);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_climate_preview_evaporation(
+    SWMM_Engine engine, double start_date, double end_date,
+    double sample_interval_days, SWMM_EvapPreviewSample* samples, int capacity,
+    int* sample_count, SWMM_EvapPreviewSummary* summary,
+    char* diagnostic, int diagnostic_capacity) {
+    return swmm_climate_preview_evaporation_with_config(engine, nullptr,
+        start_date, end_date, sample_interval_days, samples, capacity,
+        sample_count, summary, diagnostic, diagnostic_capacity);
 }
 
 SWMM_ENGINE_API int swmm_climate_get_pan_coeff(SWMM_Engine engine, double* buf, int count) {

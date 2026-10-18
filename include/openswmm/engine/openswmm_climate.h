@@ -89,6 +89,52 @@ typedef enum SWMM_EvapType {
     SWMM_EVAP_FILE        = 4  /**< Pan rate from the external climate file.    */
 } SWMM_EvapType;
 
+/** Availability of one source-rate sample returned by the evaporation preview. */
+typedef enum SWMM_EvapPreviewStatus {
+    SWMM_EVAP_PREVIEW_AVAILABLE = 0, /**< Source and rate are available. */
+    SWMM_EVAP_PREVIEW_HELD = 1,      /**< Engine holds the previous/edge value. */
+    SWMM_EVAP_PREVIEW_MISSING = 2,   /**< No configured source value is available. */
+    SWMM_EVAP_PREVIEW_ESTIMATED = 3  /**< Temperature-derived daily estimate. */
+} SWMM_EvapPreviewStatus;
+
+/** One evaporation source-rate sample; rates use the model's display units. */
+typedef struct SWMM_EvapPreviewSample {
+    double date;          /**< OADate at which the sample is evaluated. */
+    double source_rate;   /**< Rate before the monthly evaporation adjustment. */
+    double adjustment;    /**< Adjustment actually applied at this sample. */
+    double effective_rate;/**< Source plus adjustment, matching climate forcing. */
+    int status;           /**< One of SWMM_EvapPreviewStatus. */
+} SWMM_EvapPreviewSample;
+
+/** Summary counts for one evaporation preview window. */
+typedef struct SWMM_EvapPreviewSummary {
+    int source_type;      /**< One of SWMM_EvapType. */
+    int available_count;
+    int held_count;
+    int missing_count;
+    int estimated_count;
+    int runtime_forcing_unknown; /**< Always 1: live runtime forcing is excluded. */
+    double minimum_rate;  /**< Minimum finite effective rate; NAN if none. */
+    double maximum_rate;  /**< Maximum finite effective rate; NAN if none. */
+} SWMM_EvapPreviewSummary;
+
+/** Draft values for previewing evaporation before the climatology dialog saves. */
+typedef struct SWMM_EvapPreviewConfig {
+    int evap_type;
+    double evap_monthly[SWMM_CLIMATE_MONTHS];
+    double pan_coeff[SWMM_CLIMATE_MONTHS];
+    double adjust_evaporation[SWMM_CLIMATE_MONTHS];
+    const char* evap_timeseries;
+    int temp_source;
+    const char* temp_timeseries;
+    const char* climate_file_path;
+    double climate_file_start;
+    int climate_file_temp_units;
+    double latitude;
+    double longitude_correction_minutes;
+    double adjust_temperature[SWMM_CLIMATE_MONTHS];
+} SWMM_EvapPreviewConfig;
+
 /**
  * @brief Wind-speed data source (matches [TEMPERATURE] WINDSPEED).
  */
@@ -180,6 +226,39 @@ SWMM_ENGINE_API int swmm_climate_set_evap_monthly(SWMM_Engine engine, const doub
 SWMM_ENGINE_API int swmm_climate_get_evap_timeseries(SWMM_Engine engine, char* buf, int buflen);
 /** @brief Assign the evaporation time-series id and set the method to TIMESERIES. */
 SWMM_ENGINE_API int swmm_climate_set_evap_timeseries(SWMM_Engine engine, const char* ts_id);
+
+/** @brief Preview configured evaporation rates without changing engine state.
+ *
+ *  Samples the half-open OADate window [@p start_date, @p end_date), beginning
+ *  at @p start_date and then every @p sample_interval_days. TIMESERIES rates
+ *  follow the runtime's step-and-hold scheduling; climate-file pan rates hold
+ *  the last valid daily value. TEMPERATURE/Hargreaves samples are daily
+ *  estimates because runtime temperature forcing and runoff climate-step
+ *  frequency are not knowable before a run. System and per-subcatchment live
+ *  forcing are excluded and reported by runtime_forcing_unknown.
+ *
+ *  @param samples Caller-allocated output array; may be null only when
+ *                 capacity is zero (count-only query).
+ *  @param capacity Number of available output elements.
+ *  @param sample_count Receives the required/returned number of samples.
+ *  @param summary Receives coverage and effective-rate summary.
+ *  @param diagnostic Caller-owned error buffer, NUL-terminated on return.
+ *  @param diagnostic_capacity Size of diagnostic buffer.
+ *  @returns SWMM_OK, SWMM_ERR_BADPARAM for invalid inputs/source data, or
+ *           SWMM_ERR_LIFECYCLE if the engine is currently running.
+ */
+SWMM_ENGINE_API int swmm_climate_preview_evaporation(
+    SWMM_Engine engine, double start_date, double end_date,
+    double sample_interval_days, SWMM_EvapPreviewSample* samples, int capacity,
+    int* sample_count, SWMM_EvapPreviewSummary* summary,
+    char* diagnostic, int diagnostic_capacity);
+
+/** @brief Preview with an unsaved editor draft. Null @p config uses saved values. */
+SWMM_ENGINE_API int swmm_climate_preview_evaporation_with_config(
+    SWMM_Engine engine, const SWMM_EvapPreviewConfig* config,
+    double start_date, double end_date, double sample_interval_days,
+    SWMM_EvapPreviewSample* samples, int capacity, int* sample_count,
+    SWMM_EvapPreviewSummary* summary, char* diagnostic, int diagnostic_capacity);
 
 /** @brief Get the 12 monthly pan coefficients (used with the FILE method).
  *  @param count Must equal SWMM_CLIMATE_MONTHS. */
@@ -285,10 +364,11 @@ SWMM_ENGINE_API int swmm_climate_get_adjust_temperature(SWMM_Engine engine, doub
 /** @brief Set the 12 monthly temperature adjustments; @p count must equal SWMM_CLIMATE_MONTHS. */
 SWMM_ENGINE_API int swmm_climate_set_adjust_temperature(SWMM_Engine engine, const double* values, int count);
 
-/** @brief Get the 12 monthly evaporation adjustment multipliers (1.0 = none).
+/** @brief Get the 12 monthly evaporation rate adjustments in project rate units.
+ *  These values are added to the configured source rate.
  *  @param count Must equal SWMM_CLIMATE_MONTHS. */
 SWMM_ENGINE_API int swmm_climate_get_adjust_evaporation(SWMM_Engine engine, double* buf, int count);
-/** @brief Set the 12 monthly evaporation adjustment multipliers; @p count must equal SWMM_CLIMATE_MONTHS. */
+/** @brief Set the 12 monthly evaporation rate adjustments; @p count must equal SWMM_CLIMATE_MONTHS. */
 SWMM_ENGINE_API int swmm_climate_set_adjust_evaporation(SWMM_Engine engine, const double* values, int count);
 
 /** @brief Get the 12 monthly rainfall adjustment multipliers (1.0 = none).

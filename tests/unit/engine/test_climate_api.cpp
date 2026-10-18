@@ -24,6 +24,7 @@
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_climate.h>
+#include <openswmm/engine/openswmm_model.h>
 
 #include "core/SWMMEngine.hpp"
 
@@ -274,6 +275,137 @@ TEST_F(ClimateConfigCApi, TimeseriesSettersSwitchSource) {
     EXPECT_EQ(swmm_climate_set_humidity_variable(engine_, SWMM_HUMIDITY_DEWPOINT), SWMM_OK);
     EXPECT_EQ(swmm_climate_get_humidity_variable(engine_, &t), SWMM_OK);
     EXPECT_EQ(t, SWMM_HUMIDITY_DEWPOINT);
+}
+
+TEST_F(ClimateConfigCApi, EvaporationPreviewAddsAdjustmentAndPreservesNonMidnightStepTiming) {
+    openModel("_climate_preview_ts.rpt", "_climate_preview_ts.out");
+    constexpr double day = 43831.0; // 2020-01-01 in SWMM OADate.
+    const double start = day + 30.0 / 1440.0;
+    const double end = start + 3.0 / 24.0;
+    ASSERT_EQ(swmm_options_set_start_date(engine_, start), SWMM_OK);
+    ASSERT_EQ(swmm_options_set_end_date(engine_, end), SWMM_OK);
+    ASSERT_EQ(swmm_climate_set_evap_timeseries(engine_, "TS1"), SWMM_OK);
+    std::array<double, 12> adjustment{};
+    adjustment[0] = 0.25; // CFS decks display evaporation in in/day.
+    ASSERT_EQ(swmm_climate_set_adjust_evaporation(engine_, adjustment.data(), 12), SWMM_OK);
+
+    int count = -1;
+    SWMM_EvapPreviewSummary summary{};
+    char diagnostic[256]{};
+    ASSERT_EQ(swmm_climate_preview_evaporation(engine_, start, end, 1.0 / 24.0,
+        nullptr, 0, &count, &summary, diagnostic, sizeof(diagnostic)), SWMM_OK) << diagnostic;
+    ASSERT_EQ(count, 3);
+    ASSERT_EQ(summary.source_type, SWMM_EVAP_TIMESERIES);
+    ASSERT_EQ(summary.runtime_forcing_unknown, 1);
+    std::array<SWMM_EvapPreviewSample, 3> samples{};
+    ASSERT_EQ(swmm_climate_preview_evaporation(engine_, start, end, 1.0 / 24.0,
+        samples.data(), static_cast<int>(samples.size()), &count, &summary,
+        diagnostic, sizeof(diagnostic)), SWMM_OK) << diagnostic;
+    EXPECT_NEAR(samples[0].date, start, 1.0e-12);
+    EXPECT_NEAR(samples[0].source_rate, 1.0, 1.0e-12); // first entry at/after the model start
+    EXPECT_NEAR(samples[0].adjustment, 0.25, 1.0e-12);
+    EXPECT_NEAR(samples[0].effective_rate, 1.25, 1.0e-12);
+    EXPECT_NEAR(samples[1].source_rate, 1.0, 1.0e-12);
+    EXPECT_NEAR(samples[1].effective_rate, 1.25, 1.0e-12);
+    EXPECT_NEAR(samples[2].source_rate, 0.0, 1.0e-12); // crossed the 02:00 step
+    EXPECT_NEAR(samples[2].effective_rate, 0.25, 1.0e-12);
+    EXPECT_EQ(summary.available_count, 2);
+    EXPECT_EQ(summary.held_count, 1); // series ended; engine holds the last rate
+    EXPECT_EQ(summary.missing_count, 0);
+}
+
+TEST_F(ClimateConfigCApi, EvaporationPreviewReportsPanGapsAndHoldsLastValidRate) {
+    openModel("_climate_preview_pan.rpt", "_climate_preview_pan.out");
+    constexpr double day = 43831.0;
+    ASSERT_EQ(swmm_options_set_end_date(engine_, day + 3.0), SWMM_OK);
+    ASSERT_EQ(swmm_climate_set_evap_type(engine_, SWMM_EVAP_FILE), SWMM_OK);
+    ASSERT_EQ(swmm_file_path_set(engine_, SWMM_FILE_CLIMATE_TEMP, "",
+                                 "pan_evap_preview_gap.dat"), SWMM_OK);
+    std::array<double, 12> adjustment{}; adjustment[0] = 0.05;
+    std::array<double, 12> pan{}; pan.fill(2.0);
+    ASSERT_EQ(swmm_climate_set_adjust_evaporation(engine_, adjustment.data(), 12), SWMM_OK);
+    ASSERT_EQ(swmm_climate_set_pan_coeff(engine_, pan.data(), 12), SWMM_OK);
+
+    std::array<SWMM_EvapPreviewSample, 3> samples{};
+    int count = 0; SWMM_EvapPreviewSummary summary{}; char diagnostic[256]{};
+    ASSERT_EQ(swmm_climate_preview_evaporation(engine_, day, day + 3.0, 1.0,
+        samples.data(), static_cast<int>(samples.size()), &count, &summary,
+        diagnostic, sizeof(diagnostic)), SWMM_OK) << diagnostic;
+    ASSERT_EQ(count, 3);
+    EXPECT_NEAR(samples[0].source_rate, 0.20, 1.0e-12);
+    EXPECT_NEAR(samples[0].adjustment, 0.05, 1.0e-12);
+    EXPECT_NEAR(samples[0].effective_rate, 0.25, 1.0e-12);
+    EXPECT_EQ(samples[1].status, SWMM_EVAP_PREVIEW_HELD);
+    EXPECT_NEAR(samples[1].effective_rate, 0.25, 1.0e-12);
+    EXPECT_DOUBLE_EQ(samples[1].adjustment, 0.0); // no new adjustment while holding
+    EXPECT_NEAR(samples[2].source_rate, 0.60, 1.0e-12);
+    EXPECT_NEAR(samples[2].effective_rate, 0.65, 1.0e-12);
+    EXPECT_EQ(summary.held_count, 1);
+    EXPECT_EQ(summary.missing_count, 0);
+}
+
+TEST_F(ClimateConfigCApi, EvaporationPreviewMarksTemperatureRatesAsEstimates) {
+    openModel("_climate_preview_hargreaves.rpt", "_climate_preview_hargreaves.out");
+    ASSERT_EQ(swmm_climate_set_evap_type(engine_, SWMM_EVAP_TEMPERATURE), SWMM_OK);
+    ASSERT_EQ(swmm_climate_set_temp_source(engine_, SWMM_TEMP_FILE), SWMM_OK);
+    ASSERT_EQ(swmm_file_path_set(engine_, SWMM_FILE_CLIMATE_TEMP, "",
+                                 "pan_evap_preview_gap.dat"), SWMM_OK);
+    std::array<double, 12> adjustment{};
+    ASSERT_EQ(swmm_climate_set_adjust_evaporation(engine_, adjustment.data(), 12), SWMM_OK);
+    double start = 0.0, end = 0.0;
+    ASSERT_EQ(swmm_options_get_start_date(engine_, &start), SWMM_OK);
+    end = start + 2.0;
+    ASSERT_EQ(swmm_options_set_end_date(engine_, end), SWMM_OK);
+    std::array<SWMM_EvapPreviewSample, 2> samples{};
+    int count = 0; SWMM_EvapPreviewSummary summary{}; char diagnostic[256]{};
+    ASSERT_EQ(swmm_climate_preview_evaporation(engine_, start, end, 1.0,
+        samples.data(), static_cast<int>(samples.size()), &count, &summary,
+        diagnostic, sizeof(diagnostic)), SWMM_OK) << diagnostic;
+    ASSERT_EQ(count, 2);
+    EXPECT_EQ(samples[0].status, SWMM_EVAP_PREVIEW_ESTIMATED);
+    EXPECT_GT(samples[0].source_rate, 0.0);
+    EXPECT_EQ(samples[1].status, SWMM_EVAP_PREVIEW_ESTIMATED);
+    EXPECT_EQ(summary.estimated_count, 2);
+    EXPECT_EQ(summary.runtime_forcing_unknown, 1);
+}
+
+TEST_F(ClimateConfigCApi, EvaporationPreviewUsesDraftWithoutChangingSavedClimate) {
+    openModel("_climate_preview_draft.rpt", "_climate_preview_draft.out");
+    double start = 0.0, end = 0.0;
+    ASSERT_EQ(swmm_options_get_start_date(engine_, &start), SWMM_OK);
+    ASSERT_EQ(swmm_options_get_end_date(engine_, &end), SWMM_OK);
+    std::array<double, 12> saved_rates{};
+    std::array<double, 12> saved_adjustments{};
+    ASSERT_EQ(swmm_climate_get_evap_monthly(engine_, saved_rates.data(), 12), SWMM_OK);
+    ASSERT_EQ(swmm_climate_get_adjust_evaporation(engine_, saved_adjustments.data(), 12), SWMM_OK);
+
+    SWMM_EvapPreviewConfig draft{};
+    draft.evap_type = SWMM_EVAP_MONTHLY;
+    draft.temp_source = SWMM_TEMP_NONE;
+    draft.climate_file_temp_units = -1;
+    draft.latitude = 40.5;
+    for (int month = 0; month < 12; ++month) {
+        draft.evap_monthly[month] = 0.0;
+        draft.pan_coeff[month] = 1.0;
+        draft.adjust_evaporation[month] = 0.0;
+        draft.adjust_temperature[month] = 0.0;
+    }
+    draft.adjust_evaporation[0] = 0.25;
+    std::array<SWMM_EvapPreviewSample, 1> samples{};
+    int count = 0; SWMM_EvapPreviewSummary summary{}; char diagnostic[256]{};
+    ASSERT_EQ(swmm_climate_preview_evaporation_with_config(engine_, &draft,
+        start, end, 1.0, samples.data(), static_cast<int>(samples.size()),
+        &count, &summary, diagnostic, sizeof(diagnostic)), SWMM_OK) << diagnostic;
+    ASSERT_EQ(count, 1);
+    EXPECT_DOUBLE_EQ(samples[0].source_rate, 0.0);
+    EXPECT_DOUBLE_EQ(samples[0].adjustment, 0.25);
+    EXPECT_DOUBLE_EQ(samples[0].effective_rate, 0.25);
+
+    std::array<double, 12> after_rates{}, after_adjustments{};
+    ASSERT_EQ(swmm_climate_get_evap_monthly(engine_, after_rates.data(), 12), SWMM_OK);
+    ASSERT_EQ(swmm_climate_get_adjust_evaporation(engine_, after_adjustments.data(), 12), SWMM_OK);
+    EXPECT_EQ(after_rates, saved_rates);
+    EXPECT_EQ(after_adjustments, saved_adjustments);
 }
 
 // ---------------------------------------------------------------------------
