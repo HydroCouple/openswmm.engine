@@ -313,7 +313,7 @@ TEST(GroundHeat, MeshRichardsBottomReceiptUsesSequentialDonorEnergy) {
     lid.richards_water[std::size_t(upper)]-=transfer_ft3;
     lid.quality_transfers={{upper,bottom,transfer_ft3},{bottom,-4,transfer_ft3}};
     openswmm::twoD::RichardsBedReceipt receipt;receipt.node=0;receipt.bed=0;receipt.cell=0;
-    receipt.accepted_down=transfer_m3;
+    receipt.requested_down=receipt.reserved_down=receipt.accepted_down=transfer_m3;
     ASSERT_TRUE(gw.retainLidReceipts(0,5,{receipt}).empty());
     ASSERT_EQ(gw.pendingLidReceipts()[0].size(),1u);
     EXPECT_DOUBLE_EQ(gw.pendingLidReceipts()[0][0].down_j,stale_j);
@@ -330,6 +330,23 @@ TEST(GroundHeat, MeshRichardsBottomReceiptUsesSequentialDonorEnergy) {
         1e-10*std::max(1.0,std::abs(packet_j[1])));
     for(std::size_t i=0;i<expected_energy.size();++i)
         EXPECT_NEAR(lid.thermal_energy[i],expected_energy[i],1e-10*std::max(1.0,std::abs(expected_energy[i])));
+    openswmm::detail::CompletedSourceArchive checkpoint;gw.checkpoint(checkpoint,false);
+    auto restored=gw;openswmm::detail::CompletedSourceArchive restore(checkpoint.bytes());
+    restored.checkpoint(restore,false);restore.finish();
+    ASSERT_EQ(restored.pendingLidReceipts()[0].size(),1u);
+    EXPECT_DOUBLE_EQ(restored.pendingLidReceipts()[0][0].down_j,packet_j[1]);
+    EXPECT_TRUE(restored.pendingLidReceipts()[0][0].heat_applied);
+    const double ground_before=energy(gw.heat());
+    auto uninterrupted_surface=static_cast<openswmm::SWMMEngine*>(engine)->surfaceRouter2D().state();
+    auto resumed_surface=uninterrupted_surface;
+    gw.fireGwCells(0,5,uninterrupted_surface,0,5);
+    restored.fireGwCells(0,5,resumed_surface,0,5);
+    EXPECT_TRUE(gw.pendingLidReceipts()[0].empty());
+    EXPECT_TRUE(restored.pendingLidReceipts()[0].empty());
+    EXPECT_NEAR(energy(gw.heat())-ground_before,packet_j[1],
+        1e-8*std::max(1.0,std::abs(packet_j[1])));
+    EXPECT_DOUBLE_EQ(energy(restored.heat()),energy(gw.heat()));
+    EXPECT_DOUBLE_EQ(restored.state().led_node,gw.state().led_node);
     ASSERT_EQ(swmm_engine_end(engine),SWMM_OK);guard.started=false;
     ASSERT_EQ(swmm_engine_close(engine),SWMM_OK);swmm_engine_destroy(engine);guard.engine=nullptr;
 }
