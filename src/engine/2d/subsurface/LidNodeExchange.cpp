@@ -169,7 +169,7 @@ std::string SubsurfaceSolver::completeLidThermalInterval(SimulationContext& ctx)
         return "Mesh LID thermal exchange has no paired groundwater heat owner.";
     constexpr double ft3_to_m3=.028316846592;
     const double initial=ctx.heat_config.global_temp[static_cast<int>(HeatSource::INITIAL_STATE)];
-    struct Draft {int row=-1,bed=-1;double start=0,end=0;bool has_receipt=false;LidNodeState state;};
+    struct Draft {int row=-1,bed=-1;double start=0,end=0,down_j=0;bool has_receipt=false;LidNodeState state;};
     std::vector<Draft> drafts;
     for(std::size_t b=0;b<node_beds_.size();++b) {
         if(!richards_bed_owned_[b])continue;
@@ -203,8 +203,9 @@ std::string SubsurfaceSolver::completeLidThermalInterval(SimulationContext& ctx)
         const double node_temperature=std::size_t(node)<ctx.heat_state.node_temp.size()?
             ctx.heat_state.node_temp[std::size_t(node)]:initial;
         const double up_temperature=up>0?up_j/(heat_.water_capacity*up):0;
-        std::vector<LidThermalWaterTransfer> transfers;
+        std::vector<LidThermalWaterTransfer> transfers;std::vector<bool> bottom_exports;
         transfers.reserve(source.quality_transfers.size()+source.quality_ports.size());
+        bottom_exports.reserve(source.quality_transfers.size()+source.quality_ports.size());
         for(const auto& t:source.quality_transfers) {
             if(!std::isfinite(t.volume)||t.volume<0)return "Invalid accepted Mesh LID thermal water transfer.";
             if(t.volume==0)continue;
@@ -219,6 +220,7 @@ std::string SubsurfaceSolver::completeLidThermalInterval(SimulationContext& ctx)
             if(t.from==-5)source_temperature=up_temperature;
             if(!std::isfinite(source_temperature))return "Nonfinite external Mesh LID water temperature.";
             transfers.push_back({from,to,t.volume*ft3_to_m3,source_temperature});
+            bottom_exports.push_back(t.to==-4);
         }
         for(const auto& p:source.quality_ports) {
             if(!std::isfinite(p.volume)||p.cell<0||std::size_t(p.cell)>=source.cells.size())
@@ -229,15 +231,28 @@ std::string SubsurfaceSolver::completeLidThermalInterval(SimulationContext& ctx)
                 source_temperature=ctx.heat_state.link_temp[std::size_t(p.link)];
             transfers.push_back({p.volume<0?p.cell:-1,p.volume>0?p.cell:-1,
                 std::abs(p.volume)*ft3_to_m3,source_temperature});
+            bottom_exports.push_back(false);
         }
-        std::vector<double> energy;double external_j=0;
+        std::vector<double> energy,transfer_j;double external_j=0;
         if(auto e=transferLidNodeThermalEnergy(old_graph,source.cells.size(),heat_.water_capacity,
-            transfers,energy,external_j);!e.empty())return e;
+            transfers,energy,external_j,&transfer_j);!e.empty())return e;
+        double down_j=0,down_volume=0;
+        for(std::size_t i=0;i<bottom_exports.size();++i)if(bottom_exports[i]) {
+            down_j+=transfer_j[i];down_volume+=transfers[i].volume_m3;
+        }
+        if(!std::isfinite(down_j)||!std::isfinite(down_volume))return "Nonfinite accepted LID-to-ground thermal receipt.";
+        if(has_receipt) {
+            const double expected_volume=receipt->down;
+            const double scale=std::max({1e-12,std::abs(down_volume),std::abs(expected_volume)});
+            if(std::abs(down_volume-expected_volume)>1e-10*scale)
+                return "Accepted LID bottom-water and thermal transfer receipts differ.";
+        } else if(down_volume>0)
+            return "Accepted LID bottom-water export has no paired groundwater receipt.";
         LidNodeState next=source;next.thermal_energy=std::move(energy);
         LidNodeThermalGraph final_graph;
         if(auto e=buildLidNodeThermalGraph(next,0,heat_.water_capacity,ctx.heat_config.conduction,initial,final_graph);!e.empty())return e;
         (void)external_j; // The paired water owner accounts network/mobile sensible heat.
-        drafts.push_back({row,int(b),start,end,has_receipt,std::move(next)});
+        drafts.push_back({row,int(b),start,end,down_j,has_receipt,std::move(next)});
     }
     for(const auto& d:drafts)if(!d.has_receipt)
         lid_receipts_[d.bed].reserve(lid_receipts_[d.bed].size()+1);
@@ -250,7 +265,7 @@ std::string SubsurfaceSolver::completeLidThermalInterval(SimulationContext& ctx)
             pending.push_back({d.start,d.end,0,0,0,0,true});
             continue;
         }
-        receipt->heat_applied=true;
+        receipt->down_j=d.down_j;receipt->heat_applied=true;
     }
     return {};
 }

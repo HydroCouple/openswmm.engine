@@ -16,6 +16,7 @@
 #include "core/CompletedSourceArchive.hpp"
 #include "core/SWMMEngine.hpp"
 #include "2d/SurfaceRouter2D.hpp"
+#include "2d/subsurface/LidNodeExchange.hpp"
 #include "2d/subsurface/SubsurfaceSolver.hpp"
 #include "2d/heat/ChannelGround.hpp"
 #include "2d/heat/MeshHeat.hpp"
@@ -246,6 +247,82 @@ TEST(GroundHeat, MeshRichardsLidAcceptedWaterMovesItsProducerSensibleHeat) {
     EXPECT_TRUE(lid.thermal_ground_contact_j.empty()||
         std::all_of(lid.thermal_ground_contact_j.begin(),lid.thermal_ground_contact_j.end(),[](double v){return v==0;}));
     EXPECT_DOUBLE_EQ(router.subsurface().heat().cells[0].lid_contact_j,0.0);
+    ASSERT_EQ(swmm_engine_end(engine),SWMM_OK);guard.started=false;
+    ASSERT_EQ(swmm_engine_close(engine),SWMM_OK);swmm_engine_destroy(engine);guard.engine=nullptr;
+}
+TEST(GroundHeat, MeshRichardsBottomReceiptUsesSequentialDonorEnergy) {
+    const auto file=out/"mesh-lid-sequential-bed-energy.inp";fs::create_directories(out);
+    std::ofstream(file)<<"[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
+        "START_DATE 01/01/2026\nEND_DATE 01/01/2026\nEND_TIME 00:10:00\nROUTING_STEP 5\nREPORT_STEP 00:01:00\n"
+        "[STORAGE]\nS -2 2 1 FUNCTIONAL 0 0 100 0 0\n[COORDINATES]\nS 1 3\n"
+        "[2D_OPTIONS]\nREPORT_2D NO\nMAX_TIMESTEP 5\nLTS_TIERS 1\nEVAPORATION NO\nINFILTRATION NO\n"
+        "[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n[2D_TRIANGLES]\n0 1 2 .03 .1 floodplain\n"
+        "[2D_AQUIFER_OPTIONS]\nNODE_ENROLMENT ROWS\nGW_ET NONE\nM_LAYERS 4\nCLOSURE CLOSED_FORM\n"
+        "[2D_AQUIFER]\n* 36 1 .45 .1 2 HG0 .5\n[2D_AQUIFER_NODE]\nS 1 KC 3600 DC .1 AREA 1\n"
+        "[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION NO\n"
+        "SURFACE_THERMAL_BC ADIABATIC\nDEEP_THERMAL_BC ADIABATIC\n"
+        "[LID_CONTROLS]\nStack NODE\nStack SURFACE 6 .1\nStack MEDIA 12 .45 .2 .08 2 10 3\n"
+        "Stack AGGREGATE 6 .4 100\nStack BOTTOM 0 0\n[LID_NODES]\nS Stack 95 BOTTOM MESH_AQUIFER\n"
+        "[LID_RICHARDS]\nStack OPTIONS 4 1e-7 1e-5 30\n"
+        "Stack 2 .03 2 1.6 .5 .0001\nStack 3 .03 2 1.6 .5 .0001\n"
+        "[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ -3\n* UNSAT __TEMPERATURE__ -3\n";
+    struct EngineGuard {
+        SWMM_Engine engine=nullptr;bool started=false;
+        ~EngineGuard(){if(engine){if(started)swmm_engine_end(engine);swmm_engine_close(engine);swmm_engine_destroy(engine);}}
+    } guard{swmm_engine_create()};
+    SWMM_Engine engine=guard.engine;ASSERT_NE(engine,nullptr);
+    ASSERT_EQ(swmm_engine_open(engine,file.string().c_str(),(out/"mesh-lid-sequential-bed-energy.rpt").string().c_str(),nullptr,nullptr),SWMM_OK)
+        <<swmm_get_last_error_msg(engine);
+    for(const auto& pair:{std::pair{"HEAT_MODEL","COUPLED"},{"BED_HEAT_MODEL","GROUND_COLUMN"},
+                         {"HEAT_SURFACE_EXCHANGE","NO"},{"HEAT_RADIATIVE_EXCHANGE","NO"}})
+        ASSERT_EQ(swmm_options_set_ext(engine,pair.first,pair.second),SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(engine),SWMM_OK)<<swmm_get_last_error_msg(engine);
+    ASSERT_EQ(swmm_engine_start(engine,0),SWMM_OK)<<swmm_get_last_error_msg(engine);guard.started=true;
+    auto& ctx=static_cast<openswmm::SWMMEngine*>(engine)->context();
+    auto& gw=static_cast<openswmm::SWMMEngine*>(engine)->surfaceRouter2D().subsurface();
+    ASSERT_TRUE(gw.heat().active());ASSERT_TRUE(gw.lidReceiptsEnabled());
+    auto& lid=ctx.node_subtypes.storages.lid_state[ctx.node_subtypes.storage_row(0)];
+    ASSERT_TRUE(lid.richards);ASSERT_GT(lid.cells.size(),2u);
+    const auto bottom=int(lid.cells.size()-1),upper=1;
+    constexpr double ft3_to_m3=.028316846592,transfer_ft3=1e-5;
+    const double transfer_m3=transfer_ft3*ft3_to_m3,cp=gw.heat().water_capacity;
+    const double initial=ctx.heat_config.global_temp[static_cast<int>(openswmm::HeatSource::INITIAL_STATE)];
+    openswmm::twoD::LidNodeThermalGraph graph;
+    ASSERT_TRUE(openswmm::twoD::buildLidNodeThermalGraph(lid,0,cp,ctx.heat_config.conduction,initial,graph).empty());
+    lid.thermal_energy.assign(lid.cells.size(),0);
+    for(std::size_t k=0;k<graph.cells.size();++k) {
+        const auto physical=graph.cells[k];
+        const double temperature=physical==std::size_t(upper)?25.0:(physical==std::size_t(bottom)?-10.0:4.0);
+        lid.thermal_energy[physical]=graph.stores[k].capacity*temperature;
+    }
+    ASSERT_TRUE(openswmm::twoD::buildLidNodeThermalGraph(lid,0,cp,ctx.heat_config.conduction,initial,graph).empty());
+    ASSERT_GE(graph.physical_water_m3[std::size_t(upper)],transfer_m3);
+    ASSERT_GE(graph.physical_water_m3[std::size_t(bottom)],transfer_m3);
+    const auto bottom_store=std::find(graph.cells.begin(),graph.cells.end(),std::size_t(bottom));
+    ASSERT_NE(bottom_store,graph.cells.end());
+    const auto bottom_index=std::size_t(bottom_store-graph.cells.begin());
+    const double stale_j=transfer_m3*cp*graph.stores[bottom_index].energy/graph.stores[bottom_index].capacity;
+    const std::vector<openswmm::twoD::LidThermalWaterTransfer> transfers{
+        {upper,bottom,transfer_m3,0},{bottom,-1,transfer_m3,0}};
+    std::vector<double> expected_energy,packet_j;double external_j=0;
+    ASSERT_TRUE(openswmm::twoD::transferLidNodeThermalEnergy(graph,lid.cells.size(),cp,
+        transfers,expected_energy,external_j,&packet_j).empty());
+    ASSERT_EQ(packet_j.size(),2u);EXPECT_NE(packet_j[1],stale_j);
+
+    lid.quality_old_water=lid.richards_water;lid.richards_mesh_start=0;lid.richards_completed_time=5;
+    lid.richards_water[std::size_t(upper)]-=transfer_ft3;
+    lid.quality_transfers={{upper,bottom,transfer_ft3},{bottom,-4,transfer_ft3}};
+    openswmm::twoD::RichardsBedReceipt receipt;receipt.node=0;receipt.bed=0;receipt.cell=0;
+    receipt.accepted_down=transfer_m3;
+    ASSERT_TRUE(gw.retainLidReceipts(0,5,{receipt}).empty());
+    ASSERT_EQ(gw.pendingLidReceipts()[0].size(),1u);
+    EXPECT_DOUBLE_EQ(gw.pendingLidReceipts()[0][0].down_j,stale_j);
+    ASSERT_TRUE(gw.completeLidThermalInterval(ctx).empty());
+    EXPECT_TRUE(gw.pendingLidReceipts()[0][0].heat_applied);
+    EXPECT_NEAR(gw.pendingLidReceipts()[0][0].down_j,packet_j[1],
+        1e-10*std::max(1.0,std::abs(packet_j[1])));
+    for(std::size_t i=0;i<expected_energy.size();++i)
+        EXPECT_NEAR(lid.thermal_energy[i],expected_energy[i],1e-10*std::max(1.0,std::abs(expected_energy[i])));
     ASSERT_EQ(swmm_engine_end(engine),SWMM_OK);guard.started=false;
     ASSERT_EQ(swmm_engine_close(engine),SWMM_OK);swmm_engine_destroy(engine);guard.engine=nullptr;
 }

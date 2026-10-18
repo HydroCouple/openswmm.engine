@@ -62,5 +62,6 @@ std::string publishLidNodeThermalEnergy(LidNodeState&, const LidNodeThermalGraph
 std::string transferLidNodeThermalEnergy(const LidNodeThermalGraph&,
     std::size_t physical_cell_count,double water_heat_capacity,
     const std::vector<LidThermalWaterTransfer>&,
-    std::vector<double>& physical_cell_energy,double& external_j);
+    std::vector<double>& physical_cell_energy,double& external_j,
+    std::vector<double>* transfer_j=nullptr);
 } // namespace openswmm::twoD
