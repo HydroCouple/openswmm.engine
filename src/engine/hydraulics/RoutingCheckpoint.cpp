@@ -58,7 +58,7 @@ void publish(const std::string& path,const std::string& bytes) {
 void greenAmpt(Archive& a,GreenAmptState& s) {
     a(s.S,s.Ks,s.IMDmax,s.IMD,s.F,s.Fu,s.Fumax,s.Lu,s.T,s.saturated);
 }
-void lidState(Archive& a,LidNodeState& s,bool mesh) {
+void lidState(Archive& a,LidNodeState& s,bool mesh,bool thermal) {
     a(s.richards); a.fixed(s.richards_water,s.richards_pressure);
     auto& r=s.richards_report;
     a(r.ok,r.error,r.accepted,r.rejected,r.rhs,r.newton,r.min_step,r.bottom_volume,r.evaporation,r.balance);
@@ -69,6 +69,7 @@ void lidState(Archive& a,LidNodeState& s,bool mesh) {
     a.sequence(s.quality_ports,[&](auto& t){a(t.link,t.cell,t.volume);});
     a(s.quality_outlet_conc,s.quality_old_mobile,s.mobile_delta); a.fixed(s.port_delta);
     a.sequence(s.cells,[&](auto& c){a(c.theta);},true);
+    if(thermal)a(s.thermal_energy);
     a(s.held_volume,s.evap_volume,s.captured_flow,s.treated_volume);
     if(mesh && s.richards)a(s.richards_completed_time,s.richards_mesh_start,s.richards_mesh_pending_finish,
         s.richards_mesh_routed,r.bottom_outflow,r.bottom_inflow,r.inflow);
@@ -153,7 +154,7 @@ struct Router::RestartState {
           time(c.current_time),date(c.current_date),elapsed(c.elapsed_ms),old_elapsed(c.old_elapsed_ms),
           next_report(c.next_report_ms),evap(c.climate_state.evap_rate),infil_factor(c.climate_state.infil_factor),
           recovery_factor(c.climate_state.recovery_factor),link_steps(r.lstep_enabled_),link_step_span(r.lstep_rs_) {}
-    void archive(Archive& a) {
+    void archive(Archive& a,bool thermal_lid_state) {
         a.fixed(exports.water_m3, exports.reverse_m3, exports.heat_j, exports.pollutant_amounts);
         a(time,date,elapsed,old_elapsed,next_report,evap,infil_factor,recovery_factor,link_steps,link_step_span);
 #define FIELD(v) a.fixed(nodes.v);
@@ -167,7 +168,8 @@ struct Router::RestartState {
 #undef FIELD
         a.fixed(storages.evap_loss,storages.exfil_loss,storages.exfil_rate,outfalls.head_2d,outfalls.ramp_2d);
         std::size_t lid_row=0;
-        a.sequence(storages.lid_state,[&](auto& s){lidState(a,s,storages.lid[lid_row++].bottom==LidNodeBottom::MeshAquifer);},true);
+        a.sequence(storages.lid_state,[&](auto& s){lidState(a,s,storages.lid[lid_row++].bottom==LidNodeBottom::MeshAquifer,
+            thermal_lid_state);},true);
         a(dw.losses_all_zero_,dw.last_converged_,dw.variable_step_,dw.sim_time_,dw.evap_rate);
         // Scalar fields above; remaining arrays below have initialized model shapes.
         a.fixed(dw.area1_,dw.area2_,dw.area_mid_,dw.hrad_mid_,dw.width_mid_,dw.depth1_,dw.depth2_,dw.depth_mid_,
@@ -233,7 +235,9 @@ struct Router::RestartState {
             require(s.quality_mass.empty() && s.quality_outlet_conc.empty() &&
                     (((time==0 || router.checkpoint_owned_session_) && s.quality_old_water.empty()) || s.quality_old_water.size()==s.cells.size()),
                     "Unqualified hydraulic checkpoint LID quality shape.");
-            finite(s.richards_water);finite(s.richards_pressure);finite(s.port_delta);finite(s.quality_old_water);
+            require(s.thermal_energy.empty() || s.thermal_energy.size()==s.cells.size(),
+                    "Hydraulic checkpoint LID thermal-energy shape differs.");
+            finite(s.richards_water);finite(s.richards_pressure);finite(s.port_delta);finite(s.quality_old_water);finite(s.thermal_energy);
             double held=0;
             for (std::size_t i=0;i<s.cells.size();++i) {
                 const auto& cell=s.cells[i];
@@ -435,6 +439,9 @@ void Router::checkCheckpointProfile(const SimulationContext& c) const {
         require(state.port_delta.size()==state.cells.size() && (!state.richards ||
                 (state.richards_water.size()==state.cells.size() && state.richards_pressure.size()==state.cells.size())),
                 "Hydraulic checkpoint LID cell shape differs.");
+        require(state.thermal_energy.empty() || state.thermal_energy.size()==state.cells.size(),
+                "Hydraulic checkpoint LID thermal-energy shape differs.");
+        finite(state.thermal_energy);
         const int control=c.node_subtypes.storages.lid[r].control;
         if (control>=0) {
             auto stack=lidnode::layers(c,control);
@@ -531,8 +538,8 @@ std::string Router::checkpointBytes(const SimulationContext& c,std::string& resu
         require(&c==checkpoint_context_ && checkpoint_ready_ && c.current_time==checkpoint_time_,
                 "Hydraulic checkpoint requires a completed accepted routing boundary.");
         checkCheckpointProfile(c);require(checkpoint_model_==checkpointModel(c), "Hydraulic checkpoint model changed after attachment.");
-        RestartState s(*this,c);s.validate(*this,c);Archive payload;s.archive(payload);
-        auto bytes=payload.bytes(),model=checkpoint_model_;auto crc=checksum(bytes);std::string magic=magicName;uint32_t version=3;
+        RestartState s(*this,c);s.validate(*this,c);Archive payload;s.archive(payload,true);
+        auto bytes=payload.bytes(),model=checkpoint_model_;auto crc=checksum(bytes);std::string magic=magicName;uint32_t version=4;
         Archive out;out(magic,version,model,crc,bytes);require(out.bytes().size()<=maxBytes,"Hydraulic checkpoint exceeds its size limit.");
         result=out.bytes();return {};
     } catch(const std::exception& e) {return e.what();}
@@ -549,9 +556,13 @@ std::shared_ptr<Router::RestartState> Router::prepareCheckpointBytes(const Simul
     checkCheckpointProfile(c);require(checkpoint_model_==checkpointModel(c), "Hydraulic checkpoint target model changed.");
     require(!bytes.empty() && bytes.size()<=maxBytes,"Hydraulic checkpoint exceeds its size limit.");
     Archive in(std::move(bytes));std::string magic,model,payload;uint32_t version=0,crc=0;in(magic,version,model,crc,payload);in.finish();
-    require(magic==magicName && version==3 && model==checkpoint_model_ && crc==checksum(payload),
+    require(magic==magicName && (version==3 || version==4) && model==checkpoint_model_ && crc==checksum(payload),
             "Hydraulic checkpoint format/model/checksum differs.");
-    auto s=std::make_shared<RestartState>(*this,c);Archive state(std::move(payload));s->archive(state);state.finish();s->validate(*this,c);
+    require(version==4 || version==3,"Hydraulic checkpoint version is unsupported.");
+    if(version==3)for(const auto& lid:c.node_subtypes.storages.lid_state)
+        require(lid.thermal_energy.empty(),"Legacy hydraulic checkpoint cannot restore LID thermal energy.");
+    auto s=std::make_shared<RestartState>(*this,c);Archive state(std::move(payload));
+    s->archive(state,version>=4);state.finish();s->validate(*this,c);
     if(boundary) require(*boundary==std::array<double,6>{s->time,s->date,s->elapsed,s->old_elapsed,s->next_report,s->evap},
                          "Joint hydraulic/surface checkpoint clocks or shared forcing differ.");
     if(delivery)validateJointDelivery(s->nodes,c.coupled_node,*delivery);
