@@ -720,16 +720,19 @@ TEST(GroundHeat, SoilEtAndDeepExtractionCarryTheirActualSignedSensibleEnergy) {
     }
 }
 TEST(GroundHeat, SoilLatentCoolingIsOneSurfaceDebitFromActualSoilEvaporation) {
-    Model m("soil-latent");ASSERT_NE(m.e,nullptr);
-    ASSERT_EQ(swmm_options_set_ext(m.e,"GW_ET","BOUNDARY_ET"),SWMM_OK);
-    ASSERT_EQ(swmm_gw_transport_option_set(m.e,"SOIL_ET_HEAT","LATENT_SURFACE"),SWMM_OK);
-    ASSERT_EQ(m.start(),SWMM_OK);auto& gw=m.router().subsurface();const double initial=energy(gw.heat());
-    gw.assignTiers(.25,1);gw.bookSurfaceEt(0,.25,1e-6,0);gw.fireGwCells(0,.25,m.router().state(),0);
-    double latent=0,advective=0;
-    for(const auto& cell:gw.heat().cells){ASSERT_EQ(cell.failed,0)<<cell.error;latent+=cell.latent_j;advective+=cell.advective_j;}
-    ASSERT_GT(gw.state().led_et,0);
-    EXPECT_NEAR(latent,-1000*gw.state().led_et*(2499e3+2360*3),1e-5);
-    EXPECT_NEAR(energy(gw.heat())-initial,latent+advective,1e-5);
+    for(const auto* closure:{"CLOSED_FORM","ENSLAVED","SIGMA"}) {
+        SCOPED_TRACE(closure);
+        Model m(std::string("soil-latent-")+closure,closure);ASSERT_NE(m.e,nullptr);
+        ASSERT_EQ(swmm_options_set_ext(m.e,"GW_ET","BOUNDARY_ET"),SWMM_OK);
+        ASSERT_EQ(swmm_gw_transport_option_set(m.e,"SOIL_ET_HEAT","LATENT_SURFACE"),SWMM_OK);
+        ASSERT_EQ(m.start(),SWMM_OK);auto& gw=m.router().subsurface();const double initial=energy(gw.heat());
+        gw.assignTiers(.25,1);gw.bookSurfaceEt(0,.25,1e-6,0);gw.fireGwCells(0,.25,m.router().state(),0);
+        double latent=0,advective=0;
+        for(const auto& cell:gw.heat().cells){ASSERT_EQ(cell.failed,0)<<cell.error;latent+=cell.latent_j;advective+=cell.advective_j;}
+        ASSERT_GT(gw.state().led_et,0);
+        EXPECT_NEAR(latent,-1000*gw.state().led_et*(2499e3+2360*3),1e-5);
+        EXPECT_NEAR(energy(gw.heat())-initial,latent+advective,1e-5);
+    }
 }
 TEST(GroundHeat, UnqualifiedHotstartRefusesBeforeReplacingAnExistingFile) {
     Model m("hotstart-refusal");ASSERT_NE(m.e,nullptr);ASSERT_EQ(m.start(),SWMM_OK);
