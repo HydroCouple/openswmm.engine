@@ -573,6 +573,78 @@ TEST(GroundHeat, IsothermalAcceptedInfiltrationPreservesAllThreeClosuresAndSigne
         EXPECT_NEAR(energy(gw.heat())+pending-initial,-3*input*4184000.,1e-5);
     }
 }
+TEST(GroundHeat, SigmaWaterTableRiseAndDrawdownPreserveFixedGridEnergyAndCapacity) {
+    Model m("sigma-water-table-thermal", "SIGMA", .25);ASSERT_NE(m.e,nullptr);
+    ASSERT_EQ(m.start(),SWMM_OK);
+    auto& gw=m.router().subsurface();auto& tr=gw.transport();const int row=tr.temp_row;
+    ASSERT_GE(row,0);ASSERT_TRUE(gw.heat().active());
+    const auto waterStorage=[&]() {
+        double total=0;
+        for(const auto& cell:gw.heat().cells)for(std::size_t j=0;j<cell.column.theta.size();++j)
+            total+=cell.column.theta[j]*cell.column.area*(cell.column.depth_edges[j+1]-cell.column.depth_edges[j]);
+        return total;
+    };
+    const auto tableStorage=[&]() {
+        double total=0;
+        for(int i=0;i<gw.state().n_cells;++i)total+=gw.state().hg[i]*gw.state().area[i];
+        return total;
+    };
+    const auto checkLayers=[&]() {
+        for(const auto& cell:gw.heat().cells)if(!cell.column.energy.empty()) {
+            ASSERT_EQ(cell.failed,0)<<cell.error;
+            const auto& c=cell.column;const auto& material=c.material;
+            for(std::size_t j=0;j<c.theta.size();++j) {
+                const double dz=c.depth_edges[j+1]-c.depth_edges[j];
+                const double expected=c.area*dz*((1-material.porosity)*material.grain_density*
+                    material.grain_specific_heat+c.theta[j]*gw.heat().water_capacity);
+                EXPECT_NEAR(c.capacity[j],expected,1e-10*std::max(1.,expected));
+                EXPECT_NEAR(c.energy[j]/c.capacity[j],-3,1e-7);
+            }
+        }
+    };
+    const double initial_energy=energy(gw.heat()),initial_water=waterStorage(),initial_table=tableStorage();
+    EXPECT_NEAR(initial_water,gw.state().storage(),1e-10);
+    const auto initial_sigma=gw.state().theta_sigma;
+    const double initial_saturated=std::accumulate(gw.heat().cells[0].saturated_water.begin(),
+        gw.heat().cells[0].saturated_water.end(),0.);
+    const double cp=gw.heat().water_capacity;constexpr double phase_volume=1.0,rate=phase_volume/100.;
+    std::vector<double> concentrations(tr.n_species,0),rates(tr.n_species,0);
+    concentrations[row]=-3;
+    ASSERT_EQ(swmm_coupling_set_source(m.e,"rise",1,0,rate,0,concentrations.data(),rates.data(),tr.n_species,100),SWMM_OK);
+    double actual=0;ASSERT_EQ(swmm_coupling_advance_to(m.e,100,&actual),SWMM_OK);EXPECT_DOUBLE_EQ(actual,100);
+    const double rising_water=waterStorage(),rising_table=tableStorage();
+    ASSERT_GT(rising_water,initial_water);
+    EXPECT_NEAR(rising_water,gw.state().storage(),1e-10);
+    ASSERT_GT(rising_table,initial_table+phase_volume*.5);
+    EXPECT_NEAR(gw.state().led_source_in,phase_volume,1e-9);
+    EXPECT_DOUBLE_EQ(gw.state().led_source_out,0);
+    EXPECT_NEAR(gw.state().continuityResidual(),0,1e-9);
+    EXPECT_NEAR(energy(gw.heat())-initial_energy,-3*cp*(rising_water-initial_water),1e-4);
+    double sigma_change=0;for(std::size_t k=0;k<initial_sigma.size();++k)
+        sigma_change+=std::abs(gw.state().theta_sigma[k]-initial_sigma[k]);
+    EXPECT_GT(sigma_change,1e-5);
+    const double rising_saturated=std::accumulate(gw.heat().cells[0].saturated_water.begin(),
+        gw.heat().cells[0].saturated_water.end(),0.);
+    EXPECT_GT(rising_saturated,initial_saturated);
+    for(int i=0;i<gw.state().n_cells;++i) {
+        const auto& cell=gw.heat().cells[std::size_t(i)];
+        EXPECT_NEAR(std::accumulate(cell.saturated_water.begin(),cell.saturated_water.end(),0.),
+            gw.state().area[i]*gw.state().theta_s[i]*gw.state().hg[i],1e-9);
+    }
+    checkLayers();
+
+    std::fill(concentrations.begin(),concentrations.end(),0);
+    ASSERT_EQ(swmm_coupling_set_source(m.e,"drawdown",1,0,-rate,0,concentrations.data(),rates.data(),tr.n_species,200),SWMM_OK);
+    ASSERT_EQ(swmm_coupling_advance_to(m.e,200,&actual),SWMM_OK);EXPECT_DOUBLE_EQ(actual,200);
+    const double drawn_water=waterStorage(),drawn_table=tableStorage();
+    EXPECT_LT(drawn_water,rising_water);EXPECT_LT(drawn_table,rising_table);
+    EXPECT_NEAR(drawn_water,gw.state().storage(),1e-10);
+    EXPECT_GT(gw.state().led_source_out,0);
+    EXPECT_LE(gw.state().led_source_out,phase_volume+1e-12);
+    EXPECT_NEAR(gw.state().continuityResidual(),0,1e-9);
+    EXPECT_NEAR(energy(gw.heat())-initial_energy,-3*cp*(drawn_water-initial_water),1e-4);
+    checkLayers();
+}
 TEST(GroundHeat, PartialCoverageAndDisabledMasterDoNotInventThermalStores) {
     Model partial("partial","CLOSED_FORM",.5,true);ASSERT_NE(partial.e,nullptr);ASSERT_EQ(partial.start(),SWMM_OK);
     Model partial_restored("partial-restored","CLOSED_FORM",.5,true);
