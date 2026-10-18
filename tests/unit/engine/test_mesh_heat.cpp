@@ -18,6 +18,7 @@
 #include "2d/SurfaceRouter2D.hpp"
 #include "transport/components/HeatFluxModules/HeatOverrides.hpp"
 #include "2d/heat/MeshHeat.hpp"
+#include "2d/heat/ThermalCheckpoint.hpp"
 #include "2d/solver/ExplicitInertialSolver.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
 #include <numeric>
@@ -149,6 +150,48 @@ TEST(MeshHeat, LocalBedPorewaterVolumeIsAvailableWithoutQualityTransport) {
     EXPECT_TRUE(heat.bed_exchange_mass.empty());
     for(std::size_t cell=0;cell<static_cast<std::size_t>(f.mesh().n_cells());++cell)
         EXPECT_DOUBLE_EQ(heat.bed_pore_volume[cell],f.mesh().tri_area[cell]*cfg.bed_thickness*cfg.mesh_porosity);
+}
+TEST(MeshHeat, LocalBedEnergyTracerAndAgeRoundTripThroughThermalCheckpointState) {
+    LocalHeat source("local-bed-thermal-checkpoint-source"),target("local-bed-thermal-checkpoint-target");
+    ASSERT_NE(source.model.e,nullptr);ASSERT_NE(target.model.e,nullptr);
+    for(auto* f:{&source,&target}) {
+        f->state.transport.resize(3,2,0);
+        f->state.transport.temp_row=2;
+        f->state.transport.age_row=1;
+        ASSERT_TRUE(f->initialize().empty());
+    }
+    auto& original=source.state.heat;
+    auto& restored=target.state.heat;
+    ASSERT_EQ(original.bed_initial_mass.size(),original.bed_carried_mass.size());
+    ASSERT_EQ(original.bed_species,3);
+    for(std::size_t i=0;i<original.bed_initial_mass.size();++i) {
+        original.bed_initial_mass[i]=restored.bed_initial_mass[i]=10.0+double(i);
+        original.bed_carried_mass[i]=20.0+double(i);
+        original.bed_exchange_mass[i]=-2.0+double(i);
+    }
+    original.bed_energy[0]+=125.0;
+    original.water_j[0]=200.0;
+    original.water_bed_j[0]=-75.0;
+    original.bed_generated_age[0]=3600.0*original.bed_pore_volume[0];
+    ASSERT_EQ(openswmm::twoD::checkpoint::meshHeatModelIdentity(original),
+              openswmm::twoD::checkpoint::meshHeatModelIdentity(restored));
+
+    auto snapshot=original;
+    openswmm::twoD::checkpoint::Archive saved;
+    openswmm::twoD::checkpoint::meshHeat(saved,snapshot);
+    openswmm::twoD::checkpoint::Archive input(saved.bytes());
+    openswmm::twoD::checkpoint::meshHeat(input,restored);
+    input.finish();
+
+    EXPECT_EQ(restored.bed_energy,original.bed_energy);
+    EXPECT_EQ(restored.bed_carried_mass,original.bed_carried_mass);
+    EXPECT_EQ(restored.bed_exchange_mass,original.bed_exchange_mass);
+    EXPECT_EQ(restored.bed_generated_age,original.bed_generated_age);
+    EXPECT_EQ(restored.water_j,original.water_j);
+    EXPECT_EQ(restored.water_bed_j,original.water_bed_j);
+    EXPECT_EQ(restored.bed_initial_mass,original.bed_initial_mass);
+    EXPECT_EQ(openswmm::twoD::checkpoint::meshHeatModelIdentity(original),
+              openswmm::twoD::checkpoint::meshHeatModelIdentity(restored));
 }
 TEST(MeshHeat, IsolatedPairMatchesIndependentAnalyticDecayFromOneSecondToTwoHours) {
     for(const double dt:{1.,60.,900.,7200.}) {
