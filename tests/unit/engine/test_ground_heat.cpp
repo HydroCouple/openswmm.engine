@@ -771,6 +771,33 @@ TEST(GroundHeat, RoutedMeshContactReplacesThePrescribedBedStoreAcrossNetworkSolv
                     prescribed_ctx.bed_state.cell_temp!=prescribed_cell_before);
     }
 }
+TEST(GroundHeat, RoutedMeshContactRefusesPartialChannelCoverageInsteadOfFallingBackSilently) {
+    Model m("channel-ground-partial-coverage", "SIGMA", .5, false,
+        "[DWF]\nJ1 FLOW .01\n[TRANSPORT_OPTIONS]\nTARGET_DX 2\n", true);
+    ASSERT_NE(m.e, nullptr);
+
+    auto& ctx=static_cast<openswmm::SWMMEngine*>(m.e)->context();
+    const int outlet=ctx.node_names.find("O1");
+    ASSERT_GE(outlet,0);
+    // The mesh spans x=[0,10], while this open reach now ends at x=12.
+    // Partial mesh ownership has no qualified mixed prescribed/mesh fallback.
+    ctx.spatial.node_x[outlet]=12.;
+
+    ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_GROUND_SOURCE,1),SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_module(m.e,SWMM_HEAT_SEDIMENT_EXCHANGE,1),SWMM_OK);
+    ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_MODEL","COUPLED"),SWMM_OK);
+    ASSERT_EQ(swmm_options_set_ext(m.e,"BED_HEAT_MODEL","GROUND_COLUMN"),SWMM_OK);
+    ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_SURFACE_EXCHANGE","NO"),SWMM_OK);
+    ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_RADIATIVE_EXCHANGE","NO"),SWMM_OK);
+    ASSERT_EQ(swmm_gw_transport_option_set(m.e,"CONDUCTION","NO"),SWMM_OK);
+
+    EXPECT_NE(swmm_engine_initialize(m.e),SWMM_OK);
+    const char* error=swmm_get_last_error_msg(m.e);
+    ASSERT_NE(error,nullptr);
+    EXPECT_NE(std::string(error).find("outside the mesh"),std::string::npos)<<error;
+    EXPECT_FALSE(m.router().channelGround().active());
+    EXPECT_TRUE(ctx.heat_state.mesh_contact_link.empty());
+}
 TEST(GroundHeat, RoutedChannelPollutantAndAgeExchangeWithSharedPorewaterConservatively) {
     for(const auto* solver:{"LEGACY","EULERIAN_ARD","LAGRANGIAN"}) {
         SCOPED_TRACE(solver);
