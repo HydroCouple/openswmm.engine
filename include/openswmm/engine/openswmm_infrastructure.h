@@ -855,6 +855,18 @@ SWMM_ENGINE_API int swmm_lid_set_storage(SWMM_Engine engine, int idx, double thi
 SWMM_ENGINE_API int swmm_lid_set_drain(SWMM_Engine engine, int idx, double coeff, double expon, double offset);
 
 /**
+ * @brief Underdrain removal of one constituent by a LID control (the
+ *        `[LID_CONTROLS] REMOVALS` row), in percent.
+ * @details @p constituent below the pollutant count names a pollutant;
+ *          pollutant count + m names reaction species m (the convention of
+ *          swmm_buildup_get / swmm_washoff_get). A constituent with no row
+ *          reads 0. The setter is BUILDING/OPENED only; 0 % removes the row.
+ *          Storage-node LIDs use layer treatment and are refused.
+ */
+SWMM_ENGINE_API int swmm_lid_get_removal(SWMM_Engine engine, int idx, int constituent, double* percent);
+SWMM_ENGINE_API int swmm_lid_set_removal(SWMM_Engine engine, int idx, int constituent, double percent);
+
+/**
  * @brief Set the porous-pavement layer properties for a LID control.
  *
  * @details Used by PERM_PAVEMENT (and any LID with a `PAVEMENT` line). The six

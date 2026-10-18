@@ -44,6 +44,7 @@
 #include <openswmm/engine/openswmm_model.h>
 #include <openswmm/engine/openswmm_quality.h>
 #include <openswmm/engine/openswmm_subcatchments.h>
+#include <openswmm/engine/openswmm_infrastructure.h>
 
 #include "core/SWMMEngine.hpp"
 #include "core/SimulationContext.hpp"
@@ -949,4 +950,52 @@ TEST(MsxSurfaceTwin, RemainingBuildupCountsPondedMassLikeLegacy) {
     EXPECT_NEAR(mb.qual_final_buildup[0], 118.677, 6e-4) << "remaining buildup (legacy 118.677)";
     EXPECT_NEAR(mb.qual_runoff_load[0], 1.307, 6e-4) << "surface runoff (legacy 1.307)";
     swmm_engine_close(e); swmm_engine_destroy(e);
+}
+
+// Open item O2 (2026-10-17): LID underdrain removals are editable through the
+// C API for pollutants and reaction species alike (constituent = pollutant
+// count + species index), survive a save, and drive the drain. Before there
+// was no API for either.
+TEST(MsxSurfaceTwin, LidRemovalApiCoversPollutantsAndSpecies) {
+    TwinOpts o; o.routing = "PERVIOUS"; o.pct_routed = "50"; o.lid_controls = kFlowingBioRetention;
+    o.lid_usage = "S1  BC2  1  4000  50  100  100  0  *  J1\n";
+    write("_tw_o2.rxn", rxn_inert());
+    write("_tw_o2.inp", twinDeck(o) + "\n[PROCESS_COMPONENTS]\n" + pc("_tw_o2.rxn") + "\n\n[REPORT]\nINPUT NO\n");
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, "_tw_o2.inp", "_tw_o2.rpt", "_tw_o2.out", nullptr), SWMM_OK);
+    const int lid = swmm_lid_index(e, "BC2");
+    ASSERT_GE(lid, 0);
+    double v = -1.0;
+    ASSERT_EQ(swmm_lid_get_removal(e, lid, 1, &v), SWMM_OK);       // X, no row yet
+    EXPECT_EQ(v, 0.0);
+    ASSERT_EQ(swmm_lid_set_removal(e, lid, 0, 30.0), SWMM_OK);     // TSS
+    ASSERT_EQ(swmm_lid_set_removal(e, lid, 1, 30.0), SWMM_OK);     // X
+    EXPECT_NE(swmm_lid_set_removal(e, lid, 1, 120.0), SWMM_OK);
+    EXPECT_NE(swmm_lid_set_removal(e, lid, 2, 10.0), SWMM_OK);     // no such constituent
+    ASSERT_EQ(swmm_lid_get_removal(e, lid, 1, &v), SWMM_OK);
+    EXPECT_DOUBLE_EQ(v, 30.0);
+    ASSERT_EQ(swmm_model_write(e, "_tw_o2_rt.inp"), SWMM_OK);
+    swmm_engine_close(e); swmm_engine_destroy(e);
+    // The written deck carries both rows, and runs as the R7b twin does.
+    std::ifstream f("_tw_o2_rt.inp"); std::stringstream ss; ss << f.rdbuf();
+    const std::string text = ss.str();
+    const auto at = text.find("REMOVALS");
+    ASSERT_NE(at, std::string::npos);
+    const std::string row = text.substr(at, text.find('\n', at) - at);
+    EXPECT_NE(row.find("TSS"), std::string::npos) << row;
+    EXPECT_NE(row.find(" X "), std::string::npos) << row;
+    SWMM_Engine e2 = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e2, "_tw_o2_rt.inp", "_tw_o2_rt.rpt", "_tw_o2_rt.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_lid_get_removal(e2, swmm_lid_index(e2, "BC2"), 1, &v), SWMM_OK);
+    EXPECT_DOUBLE_EQ(v, 30.0);
+    ASSERT_EQ(swmm_engine_initialize(e2), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e2, 1), SWMM_OK);
+    double t = 0.0;
+    while (swmm_engine_step(e2, &t) == SWMM_OK && t > 0.0) {}
+    swmm_engine_end(e2);
+    const auto& ctx = cpp(e2).context();
+    ASSERT_GT(ctx.mass_balance.qual_bmp_removal[0], 0.0);
+    EXPECT_EQ(ctx.reactions.surface.led_bmp_removal[0], ctx.mass_balance.qual_bmp_removal[0])
+        << "the species drain removal did not apply like the pollutant's";
+    swmm_engine_close(e2); swmm_engine_destroy(e2);
 }

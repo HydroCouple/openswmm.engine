@@ -1132,6 +1132,24 @@ class LIDs:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_lid_set_drain(h, idx, coeff, expon, offset))
 
+    def get_removal(self, int idx, int constituent) -> float:
+        """Underdrain removal (percent) of *constituent* by LID *idx*.
+
+        *constituent* below the pollutant count is a pollutant; pollutant
+        count + m is reaction species m. A constituent with no
+        ``REMOVALS`` entry reads 0.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double pct = 0.0
+        _check(swmm_lid_get_removal(h, idx, constituent, &pct))
+        return pct
+
+    def set_removal(self, int idx, int constituent, double percent) -> None:
+        """Set the underdrain removal (percent, 0-100) of *constituent* by
+        LID *idx*; 0 removes the entry. Before ``start()`` only."""
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_lid_set_removal(h, idx, constituent, percent))
+
     def set_pavement(self, int idx, *,
                      double thick, double void_ratio, double frac_imperv,
                      double ksat, double clog_factor=0.0, double regen_days=0.0) -> None:

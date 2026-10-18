@@ -936,6 +936,8 @@ cdef extern from "openswmm_infrastructure.h":
     cdef int swmm_lid_set_soil(SWMM_Engine e, int idx, double thick, double porosity, double fc, double wp, double ksat, double kslope)
     cdef int swmm_lid_set_storage(SWMM_Engine e, int idx, double thick, double void_frac, double ksat)
     cdef int swmm_lid_set_drain(SWMM_Engine e, int idx, double coeff, double expon, double offset)
+    cdef int swmm_lid_get_removal(SWMM_Engine e, int idx, int constituent, double* percent)
+    cdef int swmm_lid_set_removal(SWMM_Engine e, int idx, int constituent, double percent)
     cdef int swmm_lid_set_pavement(SWMM_Engine e, int idx, double thick, double void_ratio, double frac_imperv, double ksat, double clog_factor, double regen_days)
     cdef int swmm_lid_set_drainmat(SWMM_Engine e, int idx, double thick, double void_frac, double roughness)
     cdef int swmm_lid_get_type(SWMM_Engine e, int idx, int* type)
