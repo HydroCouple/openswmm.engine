@@ -25,6 +25,7 @@
 #include "2d/heat/ChannelGround.hpp"
 #include "2d/heat/MeshHeat.hpp"
 #include "2d/heat/LidNodeHeat.hpp"
+#include "2d/heat/PorousHeat.hpp"
 #include "2d/heat/ThermalCheckpoint.hpp"
 #include "2d/solver/InertialEdges.hpp"
 namespace {
@@ -648,6 +649,61 @@ TEST(GroundHeat, RuntimeWaterTableRiseAndDrawdownPreserveFixedGridEnergyAndCapac
     EXPECT_NEAR(energy(gw.heat())-initial_energy,-3*cp*(drawn_water-initial_water),1e-4);
     checkLayers();
   }
+}
+TEST(GroundHeat, PhysicalRechargeUsesTheAcceptedFixedGridVerticalHeatReceipt) {
+    for(const auto* closure:{"CLOSED_FORM","SIGMA"}) {
+        SCOPED_TRACE(closure);
+        std::string initial;
+        for(int layer=1;layer<=16;++layer)
+            initial+="* LAYER "+std::to_string(layer)+" __TEMPERATURE__ "+
+                std::to_string(22.-2.*layer)+"\n";
+        Model m(std::string("recharge-heat-")+closure,closure,.5,false,initial);ASSERT_NE(m.e,nullptr);
+        ASSERT_EQ(m.start(),SWMM_OK);auto& gw=m.router().subsurface();auto& tr=gw.transport();
+        ASSERT_TRUE(gw.heat().active());
+        // Put the closed-form unsaturated store away from equilibrium so its
+        // physical Darcy recharge is nonzero; align the thermal moisture while
+        // retaining the initialized layer temperatures.
+        if(std::string(closure)=="CLOSED_FORM")for(int i=0;i<gw.state().n_cells;++i) {
+            gw.state().hu[std::size_t(i)]=.1;
+            auto& cell=gw.heat().cells[std::size_t(i)];auto& column=cell.column;
+            std::vector<double> temperature(column.energy.size()),moisture;
+            for(std::size_t j=0;j<temperature.size();++j)temperature[j]=column.energy[j]/column.capacity[j];
+            ASSERT_TRUE(openswmm::twoD::projectGroundMoisture(gw.state(),i,gw.state().hg[std::size_t(i)],
+                column.depth_edges,moisture).empty());
+            ASSERT_TRUE(column.setMoisture(moisture).empty());
+            for(std::size_t j=0;j<temperature.size();++j)column.energy[j]=column.capacity[j]*temperature[j];
+            gw.heat().refreshView(i,tr);
+        }
+        if(std::string(closure)=="CLOSED_FORM")
+            gw.state().led_init_storage=gw.state().led_final_storage=gw.state().storage();
+        const double initial_energy=energy(gw.heat());
+        std::vector<openswmm::twoD::PorousHeatColumn> expected;
+        expected.reserve(gw.heat().cells.size());
+        for(const auto& cell:gw.heat().cells)expected.push_back(cell.column);
+
+        gw.assignTiers(.25,1);gw.fireGwCells(0,.25,m.router().state(),0);
+        ASSERT_GT(std::abs(gw.state().led_recharge),1e-12)<<"q0="<<gw.state().q0_last[0]
+            <<" hu="<<gw.state().hu[0]<<" hg="<<gw.state().hg[0];
+        double expected_energy=0,thermal_movement=0;
+        for(std::size_t i=0;i<gw.heat().cells.size();++i) {
+            const auto& actual=gw.heat().cells[i];ASSERT_EQ(actual.failed,0)<<actual.error;
+            std::vector<double> moisture;
+            ASSERT_TRUE(openswmm::twoD::projectGroundMoisture(gw.state(),int(i),gw.state().hg[i],
+                expected[i].depth_edges,moisture).empty());
+            const std::vector<double> no_external_water(moisture.size(),0),no_external_heat(moisture.size(),0);
+            const auto result=openswmm::twoD::advectPorousColumn(expected[i],moisture,no_external_water,no_external_heat);
+            ASSERT_TRUE(result.error.empty())<<result.error;
+            expected_energy+=sum(expected[i].energy);
+            for(double joules:result.vertical_j)thermal_movement+=std::abs(joules);
+            for(std::size_t j=0;j<actual.column.energy.size();++j) {
+                EXPECT_NEAR(actual.column.energy[j],expected[i].energy[j],1e-6);
+            }
+        }
+        EXPECT_NEAR(energy(gw.heat()),initial_energy,1e-6);
+        EXPECT_NEAR(expected_energy,initial_energy,1e-6);
+        EXPECT_GT(thermal_movement,0);
+        EXPECT_NEAR(gw.state().continuityResidual(),0,1e-9);
+    }
 }
 TEST(GroundHeat, PartialCoverageAndDisabledMasterDoNotInventThermalStores) {
     Model partial("partial","CLOSED_FORM",.5,true);ASSERT_NE(partial.e,nullptr);ASSERT_EQ(partial.start(),SWMM_OK);
