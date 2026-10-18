@@ -1296,6 +1296,73 @@ TEST(GroundHeat, ChannelContactsCanRunWithoutAnOverlandTemperatureRow) {
     EXPECT_NEAR(energy(m.router().subsurface().heat())-initial,sum(contacts.channelToGround()),1e-5);
     EXPECT_FALSE(m.router().state().heat.enabled);EXPECT_TRUE(m.router().state().heat.bed_energy.empty());
 }
+TEST(GroundHeat, MultipleRoutedChannelsShareOneGroundCellAndOneFiniteSoilStore) {
+    const std::string extra=
+        "[JUNCTIONS]\nJ2 -.2 4 0 0 0\n[OUTFALLS]\nO2 -.2 FREE NO\n"
+        "[CONDUITS]\nC2 J2 O2 3 .013 0 0 0\n"
+        "[XSECTIONS]\nC2 RECT_OPEN .5 .1 0 0 1\n"
+        "[COORDINATES]\nJ2 1 1\nO2 4 1\n"
+        "[DWF]\nJ1 FLOW .01\nJ2 FLOW .01\n";
+    Model m("channel-shared-ground-cell","CLOSED_FORM",.5,false,extra,true);ASSERT_NE(m.e,nullptr);
+    ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_GROUND_SOURCE,1),SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_HYPORHEIC_VELOCITY,2e-5),SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_BED_THICKNESS,.1),SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_module(m.e,SWMM_HEAT_SEDIMENT_EXCHANGE,1),SWMM_OK);
+    ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_MODEL","COUPLED"),SWMM_OK);
+    ASSERT_EQ(swmm_options_set_ext(m.e,"BED_HEAT_MODEL","GROUND_COLUMN"),SWMM_OK);
+    ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_SURFACE_EXCHANGE","NO"),SWMM_OK);
+    ASSERT_EQ(swmm_options_set_ext(m.e,"HEAT_RADIATIVE_EXCHANGE","NO"),SWMM_OK);
+    ASSERT_EQ(swmm_gw_transport_option_set(m.e,"CONDUCTION","YES"),SWMM_OK);
+    ASSERT_EQ(m.start(),SWMM_OK)<<swmm_get_last_error_msg(m.e);
+    double actual=0;ASSERT_EQ(swmm_coupling_advance_to(m.e,5.,&actual),SWMM_OK);
+    ASSERT_DOUBLE_EQ(actual,5.);
+
+    auto& router=m.router();auto& contacts=router.channelGround();auto& gw=router.subsurface();
+    ASSERT_TRUE(contacts.active());ASSERT_TRUE(contacts.ownsLink(0));ASSERT_TRUE(contacts.ownsLink(1));
+    ASSERT_GT(contacts.contactCount(0),0u);ASSERT_GT(contacts.contactCount(1),0u);
+    bool first_reach_uses_cell_zero=false,second_reach_uses_only_cell_zero=true;
+    for(const auto& contact:contacts.contacts()) {
+        if(contact.link==0&&contact.cell==0)first_reach_uses_cell_zero=true;
+        if(contact.link==1&&contact.cell!=0)second_reach_uses_only_cell_zero=false;
+    }
+    EXPECT_TRUE(first_reach_uses_cell_zero);
+    EXPECT_TRUE(second_reach_uses_only_cell_zero);
+    ASSERT_EQ(gw.heat().cells[0].column.energy.size(),gw.heat().cells[0].column.capacity.size());
+
+    auto& ctx=static_cast<openswmm::SWMMEngine*>(m.e)->context();
+    constexpr double cp=4184000.;
+    auto regions=ctx.state_accessors.get_channel_thermal_regions();ASSERT_FALSE(regions.empty());
+    std::vector<openswmm::ChannelThermalIncrement> seed;seed.reserve(regions.size());
+    for(const auto& region:regions) {
+        openswmm::ChannelThermalIncrement change;change.link=region.link;change.region=region.region;
+        change.celsius=(region.link==0?25.:15.)-region.temperature;
+        seed.push_back(change);
+    }
+    ASSERT_TRUE(ctx.state_accessors.apply_channel_thermal_increments(seed).empty());
+    const auto channel_energy=[&]() {
+        double sum=0;
+        for(const auto& region:ctx.state_accessors.get_channel_thermal_regions())
+            sum+=cp*region.volume*region.temperature;
+        return sum;
+    };
+    const double initial_soil=energy(gw.heat()),initial_channel=channel_energy();
+    const auto layer_count=gw.heat().cells[0].column.energy.size();
+    const auto receipts_before=contacts.channelToGround();
+    ASSERT_GE(receipts_before.size(),2u);
+    std::vector<openswmm::twoD::SurfaceThermalSample> samples(router.mesh().n_cells());
+    std::vector<double> surface_mass;
+    ASSERT_TRUE(contacts.advance(router.options(),samples,60.,surface_mass).empty());
+
+    const auto& link_receipts=contacts.channelToGround();ASSERT_GE(link_receipts.size(),2u);
+    const double first_receipt=link_receipts[0]-receipts_before[0];
+    const double second_receipt=link_receipts[1]-receipts_before[1];
+    EXPECT_GT(first_receipt,0);
+    EXPECT_GT(second_receipt,0);
+    EXPECT_EQ(gw.heat().cells[0].column.energy.size(),layer_count);
+    EXPECT_NEAR(energy(gw.heat())-initial_soil,first_receipt+second_receipt,1e-6);
+    EXPECT_NEAR(channel_energy()-initial_channel+first_receipt+second_receipt,0,1e-6);
+    EXPECT_NEAR(sum(contacts.channelAtmosphere()),0,1e-12);
+}
 TEST(GroundHeat, MappedChannelBedMustFitInsideItsActualAquiferProfile) {
     Model m("channel-bed-depth","CLOSED_FORM",.5,false,"",true);ASSERT_NE(m.e,nullptr);
     ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_GROUND_SOURCE,1),SWMM_OK);
