@@ -151,7 +151,7 @@ std::string initializeMeshHeat(SimulationContext& ctx,const MeshData& mesh,Surfa
     if(!(ctx.options.water_density>0)||!(ctx.options.water_specific_heat>0)||
        !std::isfinite(ctx.options.water_density)||!std::isfinite(ctx.options.water_specific_heat))
         return "WATER_DENSITY and WATER_SPECIFIC_HEAT_CAPACITY must be finite and positive.";
-    if(state.snow.active())return "Coupled snow/soil thermal ownership is not yet qualified.";
+    if(state.snow.hasUeb())return "Reciprocal UEB snow/soil energy ownership is awaiting qualification.";
     if(options.bed_heat_model==1 && ctx.twod_io.aquifer_state && ctx.twod_io.aquifer_state->active)
         return "LOCAL_STORAGE cannot overlap an active aquifer; use GROUND_COLUMN after porous thermal coupling is qualified.";
     auto& h=state.heat;h.context=&ctx;h.enabled=true;h.bed=options.bed_heat_model>0;

@@ -21,6 +21,7 @@
 #include <numeric>
 
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_heat.h>
 #include <openswmm/engine/openswmm_snow.h>
 #include <openswmm/engine/openswmm_snow2d.h>
 #include <openswmm/engine/openswmm_hotstart.h>
@@ -1707,6 +1708,64 @@ TEST(SnowEngineIntegration, MeshSnowRoutesOnlyLiquidAndSeedsHotStarts) {
         else EXPECT_GT(ledger.stored,ledger.initial);
         if(model=="UEB")EXPECT_NEAR(ledger.energyResidual(),0,1e-6);
         swmm_engine_destroy(handle);
+    }
+}
+
+TEST(SnowEngineIntegration, DegreeDaySnowUsesExternalGroundBoundaryWhileUebRemainsGuarded) {
+    for(const std::string model:{"DEGREE_DAY","UEB"}) {
+        const std::string stem="_mesh_snow_ground_boundary_"+model;
+        SCOPED_TRACE(stem);
+        {
+            std::ofstream f(stem+".inp");
+            f<<"[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
+              "START_DATE 01/01/2026\nEND_DATE 01/01/2026\nSTART_TIME 00:00\nEND_TIME 00:01\n"
+              "WET_STEP 00:01\nDRY_STEP 00:01\nROUTING_STEP 30\nREPORT_STEP 00:01\n"
+              "[TEMPERATURE]\nTIMESERIES air\nSNOWMELT 1.11111111111111 .5 .6 0 45 0\n"
+              "SNOWMELT_MODEL "<<model<<"\nSITE 45 -120 -8 1000\n"
+              "[TIMESERIES]\nair 01/01/2026 00:00 -5\nair 01/01/2026 02:00 -5\n"
+              "[SNOWPACKS]\nSP PERVIOUS 1 2 0 .1 10 0 0\n"
+              "[2D_OPTIONS]\nMAX_TIMESTEP 30\nREPORT_2D NO\nINFILTRATION NO\nEVAPORATION NO\n"
+              "HEAT_MODEL COUPLED\nBED_HEAT_MODEL GROUND_COLUMN\nHEAT_SURFACE_EXCHANGE NO\nHEAT_RADIATIVE_EXCHANGE NO\n"
+              "[2D_SNOW_DEFAULTS]\n* SNOWPACK SP\n[2D_VERTICES]\n0 0 0\n10 0 0\n0 10 0\n"
+              "[2D_TRIANGLES]\n0 1 2 .03\n"
+              "[2D_AQUIFER_OPTIONS]\nNODE_ENROLMENT ROWS\nGW_ET NONE\nM_LAYERS 4\nCLOSURE SIGMA\n"
+              "[2D_AQUIFER]\n* 36 1 .45 .1 2 HG0 .5\n"
+              "[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION YES\n"
+              "SURFACE_THERMAL_BC HEAT_FLUX 5\nDEEP_THERMAL_BC ADIABATIC\n"
+              "[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ -3\n* UNSAT __TEMPERATURE__ -3\n";
+        }
+        SWMM_Engine handle=swmm_engine_create();ASSERT_NE(handle,nullptr);
+        ASSERT_EQ(swmm_engine_open(handle,(stem+".inp").c_str(),(stem+".rpt").c_str(),(stem+".out").c_str(),nullptr),SWMM_OK)
+            <<swmm_get_last_error_msg(handle);
+        if(model=="UEB") {
+            EXPECT_NE(swmm_engine_initialize(handle),SWMM_OK);
+            EXPECT_NE(std::string(swmm_get_last_error_msg(handle)).find("Reciprocal UEB snow/soil energy ownership"),std::string::npos);
+            swmm_engine_close(handle);swmm_engine_destroy(handle);
+            continue;
+        }
+        ASSERT_EQ(swmm_engine_initialize(handle),SWMM_OK)<<swmm_get_last_error_msg(handle);
+        SWMM_GroundHeatStatus ground{};ground.struct_size=sizeof ground;
+        ASSERT_EQ(swmm_heat_get_ground_status(handle,&ground),SWMM_OK);
+        EXPECT_TRUE(ground.initialized);EXPECT_TRUE(ground.conduction_active);EXPECT_EQ(ground.aquifer_cells,1);
+        SWMM_SnowState snow{};ASSERT_EQ(swmm_snow2d_get_states(handle,0,1,&snow),SWMM_OK);
+        EXPECT_EQ(snow.model,SWMM_SNOW_DEGREE_DAY);EXPECT_GT(snow.swe_m,0);EXPECT_TRUE(std::isnan(snow.energy_kjm2));
+        ASSERT_EQ(swmm_engine_start(handle,0),SWMM_OK)<<swmm_get_last_error_msg(handle);
+        double elapsed=0;int count=0;
+        do {
+            ASSERT_EQ(swmm_engine_step(handle,&elapsed),SWMM_OK)<<swmm_get_last_error_msg(handle);
+            ASSERT_LT(++count,100);
+        } while(elapsed>0);
+        ASSERT_EQ(swmm_snow2d_get_states(handle,0,1,&snow),SWMM_OK);
+        EXPECT_GT(snow.swe_m,0);
+        double surface_j=0;
+        ASSERT_EQ(swmm_heat_get_ground_values(handle,SWMM_GROUND_HEAT_SURFACE_ENERGY,0,1,&surface_j),SWMM_OK);
+        EXPECT_NEAR(surface_j,5*50*60,1e-6);
+        double initial_j=0,final_j=0;
+        ASSERT_EQ(swmm_heat_get_ground_values(handle,SWMM_GROUND_HEAT_INITIAL_ENERGY,0,1,&initial_j),SWMM_OK);
+        ASSERT_EQ(swmm_heat_get_ground_values(handle,SWMM_GROUND_HEAT_ENERGY,0,1,&final_j),SWMM_OK);
+        EXPECT_NEAR(final_j-initial_j,surface_j,1e-5);
+        ASSERT_EQ(swmm_engine_end(handle),SWMM_OK);
+        swmm_engine_close(handle);swmm_engine_destroy(handle);
     }
 }
 #endif

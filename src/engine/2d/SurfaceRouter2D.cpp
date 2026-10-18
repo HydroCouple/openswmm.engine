@@ -1419,8 +1419,8 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         if(auto error=state_.snow.initialize(ctx,geometry);!error.empty())throw std::runtime_error(error);
         state_.snow_catch.assign(mesh_.n_cells(),1);
     }
-    if(state_.snow.active()&&subsurface_.heat().active())
-        throw std::runtime_error("[2D ground heat] Reciprocal snow/soil ownership is awaiting qualification.");
+    if(state_.snow.hasUeb()&&subsurface_.heat().active())
+        throw std::runtime_error("[2D ground heat] Reciprocal UEB snow/soil energy ownership is awaiting qualification.");
     if(auto error=initializeMeshHeat(ctx,mesh_,state_,options_,&subsurface_.heat(),&subsurface_.coverage());!error.empty())
         throw std::runtime_error("[2D heat] "+error);
     if(state_.heat.ground_column&&subsurface_.heat().active())

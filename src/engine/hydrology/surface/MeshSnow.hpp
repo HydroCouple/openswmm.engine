@@ -26,6 +26,7 @@ public:
     std::string saveCheckpoint() const;
     std::string restoreCheckpoint(const std::string&,bool seed=false);
     bool active() const {return !active_cells_.empty();}
+    bool hasUeb() const {for(int cell:active_cells_)if(kind_[cell]==SnowKind::Ueb)return true;return false;}
     bool owns(int cell) const {return cell>=0&&cell<int(pack_.size())&&pack_[cell]>=0;}
     double completedEnd() const {return completed_;}
     double lastSeconds() const {return last_seconds_;}

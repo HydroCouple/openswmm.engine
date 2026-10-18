@@ -2418,6 +2418,15 @@ Groundwater
 | GROUNDWATER | YES / ON / NO / OFF / AUTO | AUTO | Process enable for the integrated 2D subsurface. AUTO runs the kernel when any [2D_AQUIFER_OPTIONS], [2D_AQUIFER] or [2D_AQUIFER_NODE] row was authored; NO keeps the rows and runs without the subsurface; YES with no rows warns. |
 | GW_ET | NONE / CAPILLARY_RISE / BOUNDARY_ET / BOTH | NONE | Alias of the [2D_AQUIFER_OPTIONS] key of the same name. A value spelled here is folded into [2D_AQUIFER_OPTIONS] when the model opens and is never stored in two places. |
 
+Heat
+
+| Keyword | Values | Default | Description |
+|---|---|---|---|
+| HEAT_MODEL | TRANSPORT_ONLY / COUPLED | TRANSPORT_ONLY | COUPLED enables the mesh water/bed energy solver. Both modes require [OPTIONS] HEAT_TRANSPORT and an active temperature row; TRANSPORT_ONLY carries temperature without the coupled mesh energy model. |
+| BED_HEAT_MODEL | NONE / LOCAL_STORAGE / GROUND_COLUMN | NONE | Selects no bed store, a finite local bed store, or a ground column. LOCAL_STORAGE cannot overlap an active aquifer; use GROUND_COLUMN for the shared porous thermal column. |
+| HEAT_SURFACE_EXCHANGE | AUTO / YES / NO | AUTO | AUTO inherits the project heat module's surface exchange setting; YES or NO overrides it for the mesh. |
+| HEAT_RADIATIVE_EXCHANGE | AUTO / YES / NO | AUTO | AUTO inherits the project heat module's radiative exchange setting; YES or NO overrides it for the mesh. |
+
 Transport
 
 | Keyword | Values | Default | Description |
@@ -2832,6 +2841,8 @@ SNOW_STEP  DEFAULT / Step
 Remarks:
 [OPTIONS] IGNORE_SNOWMELT YES disables both subcatchment and mesh snow, including when mesh SNOWMELT is YES. Selecting YES does not assign a snowpack. Assign cells through [2D_SNOW_DEFAULTS] or [2D_SNOW]; cells with no resolved pack pass precipitation through without mesh snow processing.
 
+When degree-day mesh snow and 2D ground conduction are both active, the soil column retains its configured top boundary independently of degree-day melt. AIR, FIXED, TIMESERIES, HEAT_FLUX and FLUX_TIMESERIES are soil-side external energy terms; SURFACE_WATER keeps its existing surface-water/soil coupling. Degree-day snow has no energy state, so no combined snow/soil energy closure is reported. A mesh snow assignment that resolves to UEB with active 2D ground heat is refused until reciprocal UEB/soil energy exchange is supported.
+
 This section requires a build with 2D support and has no counterpart in SWMM 5.
 
 <!-- source: src/engine/hydrology/surface/MeshSnowConfig.cpp; src/engine/hydrology/surface/MeshSnow.cpp -->
@@ -3230,7 +3241,9 @@ CONDUCTION             YES / NO
 SURFACE_THERMAL_BC     AIR
 SURFACE_THERMAL_BC     SURFACE_WATER
 SURFACE_THERMAL_BC     FIXED  Temp
+SURFACE_THERMAL_BC     HEAT_FLUX  Flux
 SURFACE_THERMAL_BC     TIMESERIES  Tseries
+SURFACE_THERMAL_BC     FLUX_TIMESERIES  Tseries
 DEEP_THERMAL_BC        GEOTHERMAL_FLUX  Flux   (DEPTH z)
 DEEP_THERMAL_BC        FIXED_TEMP       Temp   (DEPTH z)
 DEEP_THERMAL_BC        TIMESERIES       Tseries  (DEPTH z)
@@ -3248,7 +3261,7 @@ Parameters:
 | TRANSPORT_TEMPERATURE | YES / ON / NO / OFF | YES | Carry temperature in the aquifer. |
 | DISPERSION | YES / ON / NO / OFF | YES | Activate the dispersivities and molecular diffusivity of [GW_TRANSPORT_PARAMS]. |
 | CONDUCTION | YES / ON / NO / OFF | YES | Activate vertical and lateral heat conduction. |
-| SURFACE_THERMAL_BC | AIR / SURFACE_WATER / FIXED Temp / TIMESERIES Tseries | AIR | Temperature at the top of the column when it is not inundated: the air temperature, the surface water, a fixed value (degrees C) or a [TIMESERIES]. |
+| SURFACE_THERMAL_BC | AIR / SURFACE_WATER / FIXED Temp / HEAT_FLUX Flux / TIMESERIES Tseries / FLUX_TIMESERIES Tseries | AIR | Top condition when the column is not inundated: air or surface-water temperature, a fixed value (degrees C), a heat flux (W/m²), or a temperature/flux [TIMESERIES]. |
 | DEEP_THERMAL_BC | GEOTHERMAL_FLUX Flux / FIXED_TEMP Temp / TIMESERIES Tseries, each optionally followed by DEPTH z | GEOTHERMAL_FLUX | Condition at the bottom of the column: a geothermal heat flux (W per sq m), a fixed temperature (degrees C) or a [TIMESERIES]; DEPTH z (>= 0, metres) places it. |
 | THERMAL_MIXING | ARITHMETIC / GEOMETRIC | ARITHMETIC | How the effective thermal conductivity of the soil-water mixture is averaged. |
 | C_DIFF | (0, 1] | 0.4 | Explicit diffusion Courant number bounding the transport step. |
@@ -3256,7 +3269,7 @@ Parameters:
 Remarks:
 FIXED and FIXED_TEMP require a number and GEOTHERMAL_FLUX a number; TIMESERIES requires a series name. DEPTH is read only as the fourth and fifth tokens of a DEEP_THERMAL_BC line. Naming a [GW_*] section preserves its authored configuration for the writer; active support depends on the specific option and aquifer kernel.
 
-The bulk aquifer transport kernel consumes enabled class switches and dispersion settings. CONDUCTION, thermal boundary conditions and the fuller thermal model remain separate implementation gaps; they must not be inferred from parser acceptance. Active named forcing is documented under [GW_SOURCES].
+When [OPTIONS] HEAT_TRANSPORT, [2D_OPTIONS] GROUNDWATER and the porous-equilibrium thermal model are active, CONDUCTION controls heat transfer within the thermal columns and supported boundaries are applied by the selected thermal owner. A parsed key alone does not establish activation: check the parent process, transport temperature state, model selection and surface coupling options. Active named forcing is documented under [GW_SOURCES].
 
 The intended formulation is described in hydrology Chapter 9 (mesh groundwater).
 
