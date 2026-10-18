@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <numeric>
@@ -894,6 +895,115 @@ TEST(GroundHeat, LateralConductionUsesHeterogeneousCellMaterialsAndClosesEnergy)
     EXPECT_NEAR(gw.heat().cells[1].lateral_j,-expected,1e-7);
     EXPECT_NEAR(gw.heat().cells[0].lateral_j+gw.heat().cells[1].lateral_j,0,1e-9);
     EXPECT_NEAR(energy(gw.heat()),initial,2e-5);
+}
+TEST(GroundHeat, HeterogeneousLateralConductionConvergesAcrossSpatialAndTimeRefinement) {
+    struct Run {
+        std::array<double,2> temperature{};
+        double initial_energy=0,final_energy=0;
+        std::string error;
+    };
+    struct EngineGuard {
+        SWMM_Engine engine=swmm_engine_create();
+        bool running=false;
+        ~EngineGuard() {
+            if(engine) {
+                if(running)swmm_engine_end(engine);
+                swmm_engine_close(engine);swmm_engine_destroy(engine);
+            }
+        }
+    };
+    const auto run=[](bool refined,double dt,int steps)->Run {
+        Run result;
+        const int cells=refined?4:2;
+        const std::string suffix=(refined?"fine":"coarse")+std::string("-")+std::to_string(steps);
+        const fs::path file=out/("lateral-refinement-"+suffix+".inp");
+        std::ofstream input(file);
+        if(!input){result.error="could not create test input";return result;}
+        input<<"[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
+            "START_DATE 01/01/2026\nEND_DATE 01/01/2026\nEND_TIME 00:10:00\nROUTING_STEP 5\nREPORT_STEP 00:01:00\n"
+            "[JUNCTIONS]\nJ1 -2 4 0 0 0\n[OUTFALLS]\nO1 -2.5 FREE NO\n"
+            "[CONDUITS]\nC1 J1 O1 30 .013 0 0 0\n[XSECTIONS]\nC1 RECT_OPEN 1 2 0 0 1\n"
+            "[COORDINATES]\nJ1 40 0\nO1 70 0\n"
+            "[2D_OPTIONS]\nREPORT_2D NO\nMAX_TIMESTEP 5\nLTS_TIERS 1\nEVAPORATION NO\nINFILTRATION NO\n"
+            "[2D_VERTICES]\n";
+        if(refined)
+            input<<"0 0 0\n10 0 0\n20 0 0\n0 5 0\n10 5 0\n20 5 0\n0 10 0\n10 10 0\n20 10 0\n"
+                "[2D_QUADS]\n0 1 4 3 .03 left\n3 4 7 6 .03 left\n"
+                "1 2 5 4 .03 right\n4 5 8 7 .03 right\n";
+        else
+            input<<"0 0 0\n10 0 0\n20 0 0\n20 10 0\n10 10 0\n0 10 0\n"
+                "[2D_QUADS]\n0 1 4 5 .03 left\n1 2 3 4 .03 right\n";
+        input<<"[2D_AQUIFER_OPTIONS]\nNODE_ENROLMENT ROWS\nGW_ET NONE\nM_LAYERS 4\nCLOSURE CLOSED_FORM\n"
+            "[2D_AQUIFER]\n* 1 1 .45 .1 2 HG0 1\n"
+            "[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION YES\nLATERAL_CONDUCTION YES\n"
+            "THERMAL_MIXING ARITHMETIC\nTHERMAL_MAX_STEP 50000\nSURFACE_THERMAL_BC ADIABATIC\nDEEP_THERMAL_BC ADIABATIC\n"
+            "[GW_TRANSPORT_PARAMS]\n* 2650 880 10 0 0 0 0 0 .065\n";
+        for(int i=0;i<cells;++i)
+            if(i>=(refined?2:1))input<<"CELL "<<(i+1)<<" 2650 880 100 0 0 0 0 0 .065\n";
+        input<<"[GW_INITIAL_QUALITY]\n";
+        for(int i=0;i<cells;++i) {
+            const double temperature=i<(refined?2:1)?10:20;
+            input<<"CELL "<<(i+1)<<" SAT __TEMPERATURE__ "<<temperature<<"\n"
+                <<"CELL "<<(i+1)<<" UNSAT __TEMPERATURE__ "<<temperature<<"\n";
+        }
+        input.close();
+
+        EngineGuard guard;
+        if(!guard.engine){result.error="engine create failed";return result;}
+        const fs::path report=out/("lateral-refinement-"+suffix+".rpt");
+        if(swmm_engine_open(guard.engine,file.string().c_str(),report.string().c_str(),nullptr,nullptr)!=SWMM_OK) {
+            result.error="engine open failed";return result;
+        }
+        if(swmm_engine_initialize(guard.engine)!=SWMM_OK||swmm_engine_start(guard.engine,0)!=SWMM_OK) {
+            result.error="engine start failed";return result;
+        }
+        guard.running=true;
+        auto& router=static_cast<openswmm::SWMMEngine*>(guard.engine)->surfaceRouter2D();
+        auto& gw=router.subsurface();
+        if(gw.heat().cells.size()!=static_cast<std::size_t>(cells)) {
+            result.error="unexpected thermal cell count";return result;
+        }
+        result.initial_energy=energy(gw.heat());
+        std::fill(gw.state().dt_cell.begin(),gw.state().dt_cell.end(),dt);
+        gw.assignTiers(dt,1);
+        for(int step=0;step<steps;++step) {
+            gw.fireGwFaces(0,dt);
+            gw.fireGwCells(0,dt,router.state(),step*dt);
+            for(const auto& cell:gw.heat().cells)if(cell.failed) {
+                result.error=cell.error.empty()?"thermal cell failed":cell.error;return result;
+            }
+        }
+        result.final_energy=energy(gw.heat());
+        std::array<double,2> group_energy{},group_capacity{};
+        for(int i=0;i<cells;++i) {
+            const int group=i<(refined?2:1)?0:1;
+            const auto& column=gw.heat().cells[std::size_t(i)].column;
+            for(std::size_t layer=0;layer<column.energy.size();++layer) {
+                group_energy[std::size_t(group)]+=column.energy[layer];
+                group_capacity[std::size_t(group)]+=column.capacity[layer];
+            }
+        }
+        for(std::size_t group=0;group<2;++group) {
+            if(!(group_capacity[group]>0)){result.error="empty thermal group";return result;}
+            result.temperature[group]=group_energy[group]/group_capacity[group];
+        }
+        return result;
+    };
+
+    const Run coarse=run(false,50000,100);
+    const Run spatial=run(true,50000,100);
+    const Run temporal=run(false,5000,1000);
+    ASSERT_TRUE(coarse.error.empty())<<coarse.error;
+    ASSERT_TRUE(spatial.error.empty())<<spatial.error;
+    ASSERT_TRUE(temporal.error.empty())<<temporal.error;
+    for(const Run* result:{&coarse,&spatial,&temporal})
+        EXPECT_NEAR(result->final_energy,result->initial_energy,2e-4);
+    for(std::size_t group=0;group<2;++group) {
+        EXPECT_NEAR(coarse.temperature[group],spatial.temperature[group],1e-8);
+        EXPECT_NEAR(coarse.temperature[group],temporal.temperature[group],.05);
+    }
+    EXPECT_GT(coarse.temperature[0],10);
+    EXPECT_LT(coarse.temperature[1],20);
 }
 TEST(GroundHeat, GlobalAndStaggeredLateralConductionCloseAndConvergeSpatially) {
     struct Run {std::vector<std::vector<double>> temperature;double initial=0,final=0,pending=0;};
