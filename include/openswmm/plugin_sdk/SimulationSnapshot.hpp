@@ -375,6 +375,19 @@ struct SimulationSnapshot {
     std::vector<double> thermal2d_bed_temperature;   ///< degC, face
     std::vector<double> thermal2d_bed_energy;        ///< J, face
     std::vector<double> thermal2d_bed_capacity;      ///< J K-1, face
+    /// Local finite-bed porewater species outputs, species-major [species, face].
+    /// Temperature rows are omitted; age is expressed in hours. A cell without
+    /// a local bed pore volume is NaN in each field.
+    int thermal2d_bed_species_count = 0;
+    std::vector<std::string> thermal2d_bed_species_names;
+    std::vector<std::string> thermal2d_bed_species_units;
+    std::vector<double> thermal2d_bed_pore_volume;
+    std::vector<double> thermal2d_bed_species_concentration;
+    /// Cumulative exchange amount, positive from surface water into the bed,
+    /// in the corresponding reported species unit multiplied by m3.
+    std::vector<double> thermal2d_bed_species_exchange;
+    /// Cumulative local bed age generation in hour m3.
+    std::vector<double> thermal2d_bed_age_generation;
     /// [face, term]: radiation, sensible, latent, deep boundary, water->bed,
     /// accepted non-advective water increment. All terms are cumulative J.
     std::vector<double> thermal2d_surface_budget;

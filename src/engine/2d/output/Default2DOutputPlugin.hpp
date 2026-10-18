@@ -332,6 +332,11 @@ private:
     hid_t   ds_heat_bed_temp_       = H5I_INVALID_HID;
     hid_t   ds_heat_bed_energy_     = H5I_INVALID_HID;
     hid_t   ds_heat_bed_capacity_   = H5I_INVALID_HID;
+    hid_t   ds_heat_bed_pore_volume_ = H5I_INVALID_HID;
+    hid_t   ds_heat_bed_species_conc_ = H5I_INVALID_HID;
+    hid_t   ds_heat_bed_species_exchange_ = H5I_INVALID_HID;
+    hid_t   ds_heat_bed_age_generation_ = H5I_INVALID_HID;
+    hsize_t n_heat_bed_species_     = 0;
     hid_t   ds_heat_surface_budget_ = H5I_INVALID_HID;
     hid_t   ds_heat_evaporation_    = H5I_INVALID_HID;
     hid_t   ds_heat_ground_temp_    = H5I_INVALID_HID;
