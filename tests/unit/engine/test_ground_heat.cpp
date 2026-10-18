@@ -718,7 +718,15 @@ TEST(GroundHeat, PartialCoverageAndDisabledMasterDoNotInventThermalStores) {
     openswmm::twoD::checkpoint::groundHeat(input,restored,false);input.finish();
     EXPECT_FALSE(restored.cells[0].reserved_out_water.empty());EXPECT_TRUE(restored.cells[1].reserved_out_water.empty());
     Model off("parent-off");ASSERT_NE(off.e,nullptr);
-    ASSERT_EQ(swmm_options_set(off.e,"HEAT_TRANSPORT","NO"),SWMM_OK);ASSERT_EQ(off.start(),SWMM_OK);
+    ASSERT_EQ(swmm_options_set(off.e,"HEAT_TRANSPORT","NO"),SWMM_OK);
+    ASSERT_EQ(off.start(),SWMM_OK)<<swmm_get_last_error_msg(off.e);
+    SWMM_2DRunStats off_stats{};ASSERT_EQ(swmm_2d_get_run_stats(off.e,&off_stats),SWMM_OK);
+    EXPECT_STREQ(off_stats.backend,"cpu (explicit marcher; plugin not applicable)");
+    const auto& off_warnings=off.router().threadWarnings();
+    const auto groundwater_fallback=std::find_if(off_warnings.begin(),off_warnings.end(),[](const std::string& value) {
+        return value.find("2D groundwater requires the CPU marcher")!=std::string::npos;
+    });
+    EXPECT_NE(groundwater_fallback,off_warnings.end());
     EXPECT_FALSE(off.router().subsurface().heat().active());
     char value[128]{};ASSERT_EQ(swmm_gw_transport_option_get(off.e,"THERMAL_MODEL",value,sizeof value),SWMM_OK);
     EXPECT_STREQ(value,"POROUS_EQUILIBRIUM");
@@ -808,6 +816,20 @@ TEST(GroundHeat, DisabledAquiferKeepsWaterOnlySurfaceHeatConversion) {
     ASSERT_EQ(swmm_coupling_set_source(m.e,"heater",0,0,0,1000,conc.data(),rates.data(),ns,2.),SWMM_OK);
     double actual=0;ASSERT_EQ(swmm_coupling_advance_to(m.e,2.,&actual),SWMM_OK);
     EXPECT_NEAR((t.cell_mass[t.idx(r,0)]+t.cell_mass[t.idx(r,1)]-initial)*4186000.,2000,1e-5);
+}
+TEST(GroundHeat, PorousGroundHeatReportsTheRequiredCpuBackendFallback) {
+    Model m("porous-ground-backend-fallback");ASSERT_NE(m.e,nullptr);
+    ASSERT_EQ(m.start(),SWMM_OK);
+    SWMM_2DRunStats stats{};
+    ASSERT_EQ(swmm_2d_get_run_stats(m.e,&stats),SWMM_OK);
+    EXPECT_STREQ(stats.backend,"cpu (explicit marcher; plugin not applicable)");
+    const auto& warnings=m.router().threadWarnings();
+    const auto warning=std::find_if(warnings.begin(),warnings.end(),[](const std::string& value) {
+        return value.find("2D solver:")!=std::string::npos;
+    });
+    ASSERT_NE(warning,warnings.end());
+    EXPECT_NE(warning->find("plugin not applicable"),std::string::npos);
+    EXPECT_NE(warning->find("CPU marcher"),std::string::npos);
 }
 TEST(GroundHeat, SoluteMolecularDiffusivityDoesNotDuplicateThermalConduction) {
     Model m("no-double-diffusion","CLOSED_FORM",.5,false,

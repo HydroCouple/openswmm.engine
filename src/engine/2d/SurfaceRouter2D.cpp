@@ -912,6 +912,9 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
 
     const bool porous_heat_requested=ctx.options.heat_transport&&options_.groundwater!=0&&!aquifer_cfg_.empty()&&
         gw_.options.thermal_model=="POROUS_EQUILIBRIUM"&&gw_.options.transport_temperature;
+    const bool gw_wanted = options_.groundwater < 0 ? !aquifer_cfg_.empty()
+                                                    : options_.groundwater > 0;
+    const bool groundwater_requested = gw_wanted && !aquifer_cfg_.empty();
     if (!solver_) {
         // The Kokkos plugin covers all-triangle LOCAL_INERTIAL models only
         // (SurfaceSolverFactory R6 gate); everything else runs on the CPU.
@@ -921,7 +924,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         const bool plugin_ok =
             mesh_.n_quads() == 0 &&
             options_.momentum == Momentum2D::LOCAL_INERTIAL &&
-            !state_.transport.active()&&!porous_heat_requested;
+            !state_.transport.active()&&!porous_heat_requested&&!groundwater_requested;
         solver_ = makeSurfaceSolver(options_, &backend_name_,
                                     mesh_.n_triangles(), plugin_ok);
         // Say which solver this run is on. Rides the advisory-warning path
@@ -941,6 +944,8 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             plugin_ok ? "" :
             porous_heat_requested&&!state_.transport.active()
                 ? " — porous-ground heat requires the CPU marcher"
+                : groundwater_requested
+                ? " — 2D groundwater requires the CPU marcher"
                 : state_.transport.active()
                 ? " — the GPU/Kokkos plugin carries no transport rows "
                   "(species / age / temperature); CPU marcher used"
@@ -976,8 +981,6 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // AUTO (the default, and what every deck written before the key means)
     // runs iff rows were authored; NO keeps the rows — they still save — and
     // runs without the subsurface, exactly as INFILTRATION NO does.
-    const bool gw_wanted = options_.groundwater < 0 ? !aquifer_cfg_.empty()
-                                                    : options_.groundwater > 0;
     if (options_.groundwater == 0 && !aquifer_cfg_.empty())
         ctx.warnings.push_back(
             "[2D_OPTIONS] GROUNDWATER NO — the [2D_AQUIFER*] rows are kept "
