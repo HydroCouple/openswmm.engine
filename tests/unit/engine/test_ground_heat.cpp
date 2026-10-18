@@ -90,7 +90,7 @@ TEST(GroundHeat, MeshLidGroundContactRefusesHeatUntilItsWaterRouteIsQualified) {
     ASSERT_EQ(swmm_engine_open(engine,file.string().c_str(),(out/"mesh-lid-ground-heat-refusal.rpt").string().c_str(),nullptr,nullptr),SWMM_OK)
         <<swmm_get_last_error_msg(engine);
     EXPECT_NE(swmm_engine_initialize(engine),SWMM_OK);
-    EXPECT_NE(std::string(swmm_get_last_error_msg(engine)).find("Mesh LID bottom exchange currently requires water-only routing."),std::string::npos);
+    EXPECT_NE(std::string(swmm_get_last_error_msg(engine)).find("reciprocal LID/ground thermal receipts are not yet qualified."),std::string::npos);
     swmm_engine_close(engine);swmm_engine_destroy(engine);
 }
 TEST(GroundHeat, DryGroundColumnsAdvanceOnlyTheUnprocessedRouterInterval) {

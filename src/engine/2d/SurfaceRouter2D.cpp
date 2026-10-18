@@ -1093,8 +1093,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             }
             std::vector<int> porous,mobile;
             for(int n=0;n<ctx.n_nodes();++n)if(lidnode::bottomMode(ctx,n)==LidNodeBottom::MeshAquifer) {
-                if(ctx.n_pollutants()>0 || ctx.options.water_age || ctx.options.heat_transport || ctx.reactions.configured)
+                if(ctx.n_pollutants()>0 || ctx.options.water_age || ctx.reactions.configured)
                     throw std::runtime_error("Mesh LID bottom exchange currently requires water-only routing.");
+                if(ctx.options.heat_transport)
+                    throw std::runtime_error("Mesh LID bottom heat exchange is unavailable: reciprocal LID/ground thermal receipts are not yet qualified.");
                 int bed=-1;
                 for(std::size_t b=0;b<subsurface_.nodeBeds().size();++b) {
                     const auto& row=subsurface_.nodeBeds()[b];
