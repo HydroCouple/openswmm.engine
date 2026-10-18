@@ -381,6 +381,64 @@ TEST(GroundHeat, ChannelContactsCanRunWithoutAnOverlandTemperatureRow) {
     EXPECT_NEAR(energy(m.router().subsurface().heat())-initial,sum(contacts.channelToGround()),1e-5);
     EXPECT_FALSE(m.router().state().heat.enabled);EXPECT_TRUE(m.router().state().heat.bed_energy.empty());
 }
+TEST(GroundHeat, MappedChannelBedMustFitInsideItsActualAquiferProfile) {
+    Model m("channel-bed-depth","CLOSED_FORM",.5,false,"",true);ASSERT_NE(m.e,nullptr);
+    ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_GROUND_SOURCE,1),SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_BED_THICKNESS,2),SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_module(m.e,SWMM_HEAT_SEDIMENT_EXCHANGE,1),SWMM_OK);
+    EXPECT_NE(m.start(),SWMM_OK);
+    EXPECT_FALSE(m.router().channelGround().active());
+}
+TEST(GroundHeat, ChannelContactResultsReportMeasuredTopologyAndReadCanonicalDryBedTemperatures) {
+    for(const auto* solver:{"LEGACY","EULERIAN_ARD","LAGRANGIAN"}) {
+        SCOPED_TRACE(solver);
+        Model m(std::string("channel-results-")+solver,"CLOSED_FORM",.5,false,
+            "[JUNCTIONS]\nJ2 -2 4 0 0 0\n[OUTFALLS]\nO2 -2 FREE NO\n"
+            "[CONDUITS]\nC2 J2 O2 10 .013 0 0 0\n[XSECTIONS]\nC2 RECT_OPEN 1 2 0 0 1\n"
+            "[COORDINATES]\nJ2 40 10\nO2 50 10\n",true);
+        ASSERT_NE(m.e,nullptr);ASSERT_EQ(swmm_options_set(m.e,"QUALITY_SOLVER",solver),SWMM_OK);
+        ASSERT_EQ(swmm_heat_set_element_override(m.e,SWMM_HEAT_ATTR_GROUND_SOURCE,SWMM_HEAT_SCOPE_LINK,"C1",1),SWMM_OK);
+        ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_BED_THICKNESS,.25),SWMM_OK);
+        ASSERT_EQ(swmm_heat_set_module(m.e,SWMM_HEAT_SEDIMENT_EXCHANGE,1),SWMM_OK);
+        SWMM_ChannelGroundStatus status{};status.struct_size=sizeof status;
+        ASSERT_EQ(swmm_heat_get_channel_ground_status(m.e,&status),SWMM_OK);
+        EXPECT_TRUE(status.requested);EXPECT_FALSE(status.initialized);EXPECT_EQ(status.contact_intervals,0);
+        double values[2]={123,456};
+        EXPECT_EQ(swmm_heat_get_channel_ground_values(m.e,SWMM_CHANNEL_GROUND_BED_TEMPERATURE,0,2,values),SWMM_ERR_LIFECYCLE);
+        EXPECT_DOUBLE_EQ(values[0],123);EXPECT_DOUBLE_EQ(values[1],456);
+        ASSERT_EQ(m.start(),SWMM_OK);ASSERT_EQ(swmm_heat_get_channel_ground_status(m.e,&status),SWMM_OK);
+        EXPECT_TRUE(status.initialized);EXPECT_TRUE(status.exchange_active);EXPECT_EQ(status.mapped_links,1);EXPECT_EQ(status.contact_cells,2);
+        ASSERT_GT(status.contact_intervals,0);double chainage=0;
+        for(int index=0;index<status.contact_intervals;++index) {
+            SWMM_ChannelGroundContact contact{};contact.struct_size=sizeof contact;
+            ASSERT_EQ(swmm_heat_get_channel_ground_contact(m.e,index,&contact),SWMM_OK);
+            EXPECT_EQ(contact.link,0);EXPECT_GE(contact.cell,0);EXPECT_LT(contact.cell,2);
+            EXPECT_GE(contact.layer,0);EXPECT_LT(contact.layer,16);EXPECT_NEAR(contact.invert_m,-.2,1e-12);
+            chainage+=(contact.end_fraction-contact.begin_fraction)*contact.share;
+        }
+        EXPECT_NEAR(chainage,1,1e-12);auto& heat=m.router().subsurface().heat();
+        for(int i=0;i<2;++i)for(std::size_t j=0;j<heat.cells[i].column.energy.size();++j)
+            heat.cells[i].column.energy[j]=heat.cells[i].column.capacity[j]*(i==0?10:-10);
+        const double stored=energy(heat);
+        ASSERT_EQ(swmm_heat_get_channel_ground_values(m.e,SWMM_CHANNEL_GROUND_BED_TEMPERATURE,0,2,values),SWMM_OK);
+        EXPECT_NEAR(values[0],5,1e-12);EXPECT_TRUE(std::isnan(values[1]));EXPECT_DOUBLE_EQ(energy(heat),stored);
+        ASSERT_EQ(swmm_heat_get_channel_ground_values(m.e,SWMM_CHANNEL_GROUND_INTERVAL_COUNT,0,1,values),SWMM_OK);
+        EXPECT_DOUBLE_EQ(values[0],status.contact_intervals);
+        values[0]=123;values[1]=456;
+        EXPECT_EQ(swmm_heat_get_channel_ground_values(m.e,SWMM_CHANNEL_GROUND_BED_TEMPERATURE,1,2,values),SWMM_ERR_BADINDEX);
+        EXPECT_DOUBLE_EQ(values[0],123);EXPECT_DOUBLE_EQ(values[1],456);
+        SWMM_ChannelGroundContact invalid{};invalid.struct_size=sizeof invalid;invalid.cell=123;
+        EXPECT_EQ(swmm_heat_get_channel_ground_contact(m.e,status.contact_intervals,&invalid),SWMM_ERR_BADINDEX);
+        EXPECT_EQ(invalid.cell,123);
+        ASSERT_EQ(swmm_heat_set_module(m.e,SWMM_HEAT_SEDIMENT_EXCHANGE,0),SWMM_OK);
+        ASSERT_EQ(swmm_heat_get_channel_ground_status(m.e,&status),SWMM_OK);
+        EXPECT_FALSE(status.exchange_active);EXPECT_EQ(status.mapped_links,1);EXPECT_GT(status.contact_intervals,0);
+        ASSERT_EQ(swmm_engine_end(m.e),SWMM_OK);m.running=false;
+        ASSERT_EQ(swmm_heat_get_channel_ground_status(m.e,&status),SWMM_OK);EXPECT_FALSE(status.exchange_active);
+        EXPECT_EQ(swmm_heat_get_channel_ground_values(m.e,SWMM_CHANNEL_GROUND_BED_TEMPERATURE,0,1,values),SWMM_OK);
+        EXPECT_NEAR(values[0],5,1e-12);
+    }
+}
 TEST(GroundHeat, HeterogeneousWellWithdrawalUsesPhysicalLayerDonorsWithoutCreatingNewExtrema) {
     for(const auto* closure:{"CLOSED_FORM","ENSLAVED","SIGMA"})for(const auto temperatures:{std::pair{0.,40.},std::pair{-10.,0.}}) {
         SCOPED_TRACE(closure);const double cold=temperatures.first,warm=temperatures.second;

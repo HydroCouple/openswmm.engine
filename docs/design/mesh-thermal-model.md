@@ -140,7 +140,7 @@ Mesh contacts require an active spatial `POROUS_EQUILIBRIUM` aquifer. The full
 node/vertices polyline is clipped against every crossed triangle/quad, with
 stable link/cell IDs and along-reach intervals. Shared-edge ownership is split
 only on that interval. Missing coverage, coordinates, out-of-profile invert
-levels and explicit closed-pipe requests receive named errors. Global selection
+levels, beds extending below the aquifer bottom, and explicit closed-pipe requests receive named errors. Global selection
 applies to eligible open channels. Burned channels have already left 1D routing.
 
 Channel water and each contacted soil column advance in one finite implicit
@@ -166,6 +166,23 @@ refinement, reciprocal snow/LID, restart and GUI release qualification remain
 open. Active unqualified bed tracer/age combinations are refused. Inspect the
 canonical soil/layer results for its storage; old prescribed-bed fields are
 not an additional mapped-soil energy budget.
+
+`swmm_heat_get_channel_ground_status` distinguishes a saved source choice,
+initialized mapping counts, and live exchange activity. Parent OFF retains
+the mapping while pausing exchange. `swmm_heat_get_channel_ground_contact`
+returns zero-based link/cell/layer IDs, full-polyline fractions, local edge
+share and SI invert elevation. Contact reads use a caller-supplied index,
+so a UI can load only the range it displays.
+
+`swmm_heat_get_channel_ground_values` exposes the actual soil-derived bed
+temperature, atmosphere-to-channel joules, channel-to-soil joules, water
+thermal increments and interval counts. The bed temperature weights the
+existing soil capacity over the bed's physical depth and reach overlap;
+it remains available when the channel is dry. It is a diagnostic view,
+with no additional capacity or energy store. Unmapped links return NaN;
+invalid ranges leave all outputs untouched and completed results survive
+run end. Python provides `heat.channel_ground_status()`,
+`channel_ground_contact(index)` and `channel_ground_values(kind, first, count)`.
 
 ## Spatial values and diagnostics
 

@@ -2,6 +2,7 @@
 #pragma once
 #include "MeshHeat.hpp"
 #include <cstdint>
+#include <utility>
 namespace openswmm::twoD {
 struct ChannelGroundContact {
     int link=-1,cell=-1,layer=-1;
@@ -18,6 +19,10 @@ public:
     bool ownsLink(int i) const noexcept {return i>=0&&std::size_t(i)<link_owned_.size()&&link_owned_[i];}
     const std::vector<int>& cells() const noexcept {return cells_;}
     const std::vector<ChannelGroundContact>& contacts() const noexcept {return contacts_;}
+    std::size_t contactCount(int link) const noexcept {return ownsLink(link)?contact_ranges_[link].second-contact_ranges_[link].first:0;}
+    // Capacity-weighted temperature of the actual soil beneath this reach.
+    // This is a view of existing soil energy, including while the reach is dry.
+    double bedTemperature(int link,double begin=0,double end=1) const noexcept;
     std::string initialize(SimulationContext&,const MeshData&,GroundHeatState&,SubsurfaceTransportState&,SurfaceStateData&,double coordinate_to_si);
     // Samples are already mixed, before intensive sinks. Returned surface
     // temperature-volume values are published by the caller at that boundary.

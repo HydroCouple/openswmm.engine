@@ -1183,6 +1183,38 @@ class Heat:
         _check(swmm_heat_get_ground_layers(_h(self._solver),cell,kind,first_layer,count,&values[0] if count else NULL))
         return list(values)
 
+    def channel_ground_status(self) -> dict:
+        """Requested channel ground choice and measured mapping/activity counts."""
+        cdef SWMM_ChannelGroundStatus status
+        status.struct_size=sizeof(SWMM_ChannelGroundStatus)
+        _check(swmm_heat_get_channel_ground_status(_h(self._solver),&status))
+        return dict(requested=bool(status.requested),initialized=bool(status.initialized),
+                    exchange_active=bool(status.exchange_active),mapped_links=status.mapped_links,
+                    contact_cells=status.contact_cells,contact_intervals=status.contact_intervals,
+                    experimental=bool(status.experimental),reason=(<bytes>status.reason).decode('utf-8'))
+
+    def channel_ground_values(self, int kind, int first_link, int count) -> list[float]:
+        """Mapped channel fields over zero-based link indices; unmapped links are NaN.
+
+        Kinds 0..4: soil-derived bed temperature (degC), atmosphere-to-channel
+        energy (J), channel-to-soil energy (J), thermal water increment (J),
+        contact interval count (dimensionless). The bed view adds no store.
+        """
+        if count<0:
+            raise ValueError("count must be nonnegative")
+        cdef double[::1] values=array('d',[0.0])*count
+        _check(swmm_heat_get_channel_ground_values(_h(self._solver),kind,first_link,count,&values[0] if count else NULL))
+        return list(values)
+
+    def channel_ground_contact(self, int index) -> dict:
+        """One initialized contact: zero-based indices, chainage fractions and SI invert (m)."""
+        cdef SWMM_ChannelGroundContact contact
+        contact.struct_size=sizeof(SWMM_ChannelGroundContact)
+        _check(swmm_heat_get_channel_ground_contact(_h(self._solver),index,&contact))
+        return dict(link=contact.link,cell=contact.cell,layer=contact.layer,
+                    begin_fraction=contact.begin_fraction,end_fraction=contact.end_fraction,
+                    share=contact.share,invert_m=contact.invert_m)
+
     def snapshot(self) -> HeatSnapshot:
         """Capture heat settings, shared site and component registrations before initialization."""
         return HeatSnapshot(self._solver)

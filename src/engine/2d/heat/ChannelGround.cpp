@@ -15,6 +15,7 @@
 #include <cmath>
 #include <numeric>
 #include <stdexcept>
+#include <limits>
 namespace openswmm::twoD {
 namespace {
 using namespace transport::heat;
@@ -77,8 +78,8 @@ std::string ChannelGroundState::initialize(SimulationContext& ctx,const MeshData
             for(std::size_t p=1;p<cuts.size();++p) {
                 const double begin=cuts[p-1],end=cuts[p],mid=begin+(end-begin)*.5,invert=z0+dz*mid;
                 const double depth=mesh.tri_cz[cell]-invert;
-                if(depth<-1e-9||depth>column.depth_edges.back()+1e-9)
-                    return "Channel '"+name+"': invert lies outside soil depths in mesh cell "+std::to_string(cell+1)+"; adjust the aquifer geometry or select PRESCRIBED.";
+                if(depth<-1e-9||depth+material.bed_thickness>column.depth_edges.back()+1e-9)
+                    return "Channel '"+name+"': invert and full bed thickness must fit inside the soil profile in mesh cell "+std::to_string(cell+1)+"; adjust the aquifer geometry or select PRESCRIBED.";
                 const int layer=std::clamp(int(std::upper_bound(column.depth_edges.begin(),column.depth_edges.end(),depth)-column.depth_edges.begin())-1,
                     0,int(column.energy.size())-1);
                 next.contacts_.push_back({link,cell,layer,begin,end,interval.share,invert});next.cell_owned_[cell]=1;
@@ -99,6 +100,26 @@ std::string ChannelGroundState::initialize(SimulationContext& ctx,const MeshData
     for(int cell:next.cells_)soil.cells[cell].surface_owned=true;
     ctx.heat_state.mesh_contact_link=next.link_owned_;
     *this=std::move(next);return {};
+}
+double ChannelGroundState::bedTemperature(int link,double begin,double end) const noexcept {
+    const double missing=std::numeric_limits<double>::quiet_NaN();
+    if(!ownsLink(link)||!(end>begin)||begin<0||end>1||!std::isfinite(begin)||!std::isfinite(end))return missing;
+    const auto& material=transport::heat::sedimentFor(*context_,HeatElement::link(link));
+    long double energy=0,capacity=0;
+    const auto range=contact_ranges_[link];
+    for(std::size_t k=range.first;k<range.second;++k) {
+        const auto& contact=contacts_[k];
+        const double along=std::min(end,contact.end)-std::max(begin,contact.begin);if(!(along>0))continue;
+        const auto& column=ground_->cells[contact.cell].column;
+        const double depth=mesh_->tri_cz[contact.cell]-contact.invert;
+        for(std::size_t j=0;j<column.energy.size();++j) {
+            const double overlap=std::max(0.,std::min(column.depth_edges[j+1],depth+material.bed_thickness)-
+                                             std::max(column.depth_edges[j],depth));
+            const double weight=along*contact.share*overlap/((column.depth_edges[j+1]-column.depth_edges[j])*column.area);
+            energy+=weight*column.energy[j];capacity+=weight*column.capacity[j];
+        }
+    }
+    return capacity>0?double(energy/capacity):missing;
 }
 std::string ChannelGroundState::advance(const SolverOptions2D& options,const std::vector<SurfaceThermalSample>& samples,
     double dt,std::vector<double>& surface_mass) {

@@ -562,6 +562,36 @@ typedef enum SWMM_GroundHeatLayerValue {
 /** Zero-based cell/layer ranges. Invalid ranges leave all output untouched. */
 SWMM_ENGINE_API int swmm_heat_get_ground_layers(SWMM_Engine,int cell,int kind,int first_layer,int count,double* values);
 
+/** Routed-channel contact configuration and initialized mapping counts.
+ * Initialize struct_size. Counts describe the measured topology, even when
+ * a live parent switch pauses its exchange. All new physics is experimental. */
+typedef struct SWMM_ChannelGroundStatus {
+    unsigned int struct_size;
+    int requested,initialized,exchange_active,mapped_links,contact_cells,contact_intervals,experimental;
+    char reason[256];
+} SWMM_ChannelGroundStatus;
+SWMM_ENGINE_API int swmm_heat_get_channel_ground_status(SWMM_Engine,SWMM_ChannelGroundStatus*);
+/** Zero-based link ranges; unmapped links return NaN. Bed temperature is a
+ * capacity-weighted view of the actual soil under the bed, available dry or
+ * wet. It adds no reservoir and must not be counted as extra soil energy. */
+typedef enum SWMM_ChannelGroundValue {
+    SWMM_CHANNEL_GROUND_BED_TEMPERATURE=0, /**< degC. */
+    SWMM_CHANNEL_GROUND_ATMOSPHERIC_ENERGY=1, /**< J, atmosphere -> channel. */
+    SWMM_CHANNEL_GROUND_TO_SOIL_ENERGY=2, /**< J, channel -> soil. */
+    SWMM_CHANNEL_GROUND_WATER_INCREMENT=3, /**< J, channel thermal change excluding advection. */
+    SWMM_CHANNEL_GROUND_INTERVAL_COUNT=4 /**< dimensionless, mapped chainage/layer intervals. */
+} SWMM_ChannelGroundValue;
+SWMM_ENGINE_API int swmm_heat_get_channel_ground_values(SWMM_Engine,int kind,int first_link,int count,double* values);
+/** One initialized contact interval. Fractions refer to the full polyline;
+ * share divides legitimate common-edge ownership, never an entire reach.
+ * Invert is its representative elevation in metres SI. */
+typedef struct SWMM_ChannelGroundContact {
+    unsigned int struct_size;
+    int link,cell,layer; /**< zero-based indices. */
+    double begin_fraction,end_fraction,share,invert_m;
+} SWMM_ChannelGroundContact;
+SWMM_ENGINE_API int swmm_heat_get_channel_ground_contact(SWMM_Engine,int index,SWMM_ChannelGroundContact*);
+
 #ifdef __cplusplus
 }
 #endif

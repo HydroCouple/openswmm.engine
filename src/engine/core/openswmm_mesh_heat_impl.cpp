@@ -22,6 +22,74 @@ double soilResidual(const openswmm::twoD::GroundThermalCell& c,double energy) {
 }
 #endif
 
+int swmm_heat_get_channel_ground_status(SWMM_Engine engine,SWMM_ChannelGroundStatus* out) {
+    CHECK_HANDLE(engine);if(!out||out->struct_size<sizeof(SWMM_ChannelGroundStatus))return SWMM_ERR_BADPARAM;
+    SWMM_ChannelGroundStatus status{};status.struct_size=sizeof status;
+#ifdef OPENSWMM_HAS_2D
+    const auto& ctx=to_engine(engine)->context();const auto& router=to_engine(engine)->surfaceRouter2D();
+    const auto& contacts=router.channelGround();
+    for(int link=0;link<ctx.n_links();++link) {
+        status.requested|=openswmm::transport::heat::sedimentFor(ctx,openswmm::HeatElement::link(link)).mesh_ground;
+        status.mapped_links+=contacts.ownsLink(link);
+    }
+    status.initialized=thermalResultsReady(ctx,router);status.experimental=status.requested;
+    status.contact_cells=int(contacts.cells().size());status.contact_intervals=int(contacts.contacts().size());
+    status.exchange_active=router.isActive()&&contacts.active()&&ctx.options.heat_transport&&ctx.heat_config.sediment_exchange;
+    const char* reason=!status.requested?"Channels use their prescribed standalone ground configuration.":
+        !ctx.options.heat_transport?"Saved mesh contacts; inactive because Heat transport is off.":
+        !ctx.heat_config.sediment_exchange?"Saved mesh contacts; sediment exchange is off.":
+        !status.initialized?"Requested; initialize to validate geometry and measure contact counts.":
+        !contacts.active()?"No eligible open channel has an initialized mesh contact.":
+        !router.isActive()?"Completed contact results are available; the simulation is no longer running.":
+        "Experimental reciprocal channel/soil heat is active; tracer, snow/LID and restart qualification remain open.";
+    std::strncpy(status.reason,reason,sizeof status.reason-1);
+#else
+    std::strcpy(status.reason,"This engine was built without 2D routing.");
+#endif
+    *out=status;return SWMM_OK;
+}
+
+int swmm_heat_get_channel_ground_values(SWMM_Engine engine,int kind,int first,int count,double* out) {
+    CHECK_HANDLE(engine);
+    if(kind<0||kind>SWMM_CHANNEL_GROUND_INTERVAL_COUNT||first<0||count<0||(count&&!out))return SWMM_ERR_BADPARAM;
+#ifdef OPENSWMM_HAS_2D
+    const auto& ctx=to_engine(engine)->context();const auto& router=to_engine(engine)->surfaceRouter2D();
+    if(first>ctx.n_links()||count>ctx.n_links()-first)return SWMM_ERR_BADINDEX;
+    const auto& contacts=router.channelGround();
+    if(!thermalResultsReady(ctx,router)||!contacts.active())return SWMM_ERR_LIFECYCLE;
+    for(int k=0;k<count;++k) {
+        const int link=first+k;
+        if(!contacts.ownsLink(link)){out[k]=std::numeric_limits<double>::quiet_NaN();continue;}
+        switch(kind) {
+            case SWMM_CHANNEL_GROUND_BED_TEMPERATURE:out[k]=contacts.bedTemperature(link);break;
+            case SWMM_CHANNEL_GROUND_ATMOSPHERIC_ENERGY:out[k]=contacts.channelAtmosphere()[link];break;
+            case SWMM_CHANNEL_GROUND_TO_SOIL_ENERGY:out[k]=contacts.channelToGround()[link];break;
+            case SWMM_CHANNEL_GROUND_WATER_INCREMENT:out[k]=contacts.channelThermalIncrement()[link];break;
+            case SWMM_CHANNEL_GROUND_INTERVAL_COUNT:out[k]=double(contacts.contactCount(link));break;
+        }
+    }
+    return SWMM_OK;
+#else
+    return SWMM_ERR_PLUGIN;
+#endif
+}
+
+int swmm_heat_get_channel_ground_contact(SWMM_Engine engine,int index,SWMM_ChannelGroundContact* out) {
+    CHECK_HANDLE(engine);if(!out||out->struct_size<sizeof(SWMM_ChannelGroundContact))return SWMM_ERR_BADPARAM;
+#ifdef OPENSWMM_HAS_2D
+    const auto& router=to_engine(engine)->surfaceRouter2D();
+    if(!thermalResultsReady(to_engine(engine)->context(),router))return SWMM_ERR_LIFECYCLE;
+    const auto& contacts=router.channelGround().contacts();
+    if(index<0||std::size_t(index)>=contacts.size())return SWMM_ERR_BADINDEX;
+    const auto& c=contacts[index];SWMM_ChannelGroundContact result{};result.struct_size=sizeof result;
+    result.link=c.link;result.cell=c.cell;result.layer=c.layer;
+    result.begin_fraction=c.begin;result.end_fraction=c.end;result.share=c.share;result.invert_m=c.invert;
+    *out=result;return SWMM_OK;
+#else
+    return SWMM_ERR_PLUGIN;
+#endif
+}
+
 int swmm_heat_get_2d_status(SWMM_Engine engine,SWMM_Heat2DStatus* out) {
     CHECK_HANDLE(engine);
     if(!out || out->struct_size<sizeof(SWMM_Heat2DStatus))return SWMM_ERR_BADPARAM;
