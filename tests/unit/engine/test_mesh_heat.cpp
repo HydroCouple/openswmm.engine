@@ -5,6 +5,7 @@
 #include <fstream>
 #include <string>
 #include <cmath>
+#include <optional>
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_2d.h>
 #include <openswmm/engine/openswmm_heat.h>
@@ -487,6 +488,77 @@ TEST(MeshHeat, FullMarcherAppliesHyporheicExchangeOnlyOnChannelTaggedCells) {
     EXPECT_GT(std::abs(water_delta[0]),std::abs(water_delta[1]));
     EXPECT_EQ(state.heat.failures[0],0);
     EXPECT_EQ(state.heat.failures[1],0);
+}
+
+TEST(MeshHeat, FullMarcherHyporheicReceiptsAreInvariantAcrossUniformChannelRefinement) {
+    const std::string refined_mesh=
+        "[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n0 10 0\n5 0 0\n\n"
+        "[2D_TRIANGLES]\n"
+        "0 4 2 .03 .1 channel:burned\n"
+        "4 1 2 .03 .1 channel:burned\n"
+        "0 2 3 .03 .1 forest\n\n";
+    struct Result {
+        double water_temperature=0,bed_temperature=0,water_volume=0;
+        double water_j=0,bed_j=0,contact_j=0;
+    };
+    const auto run=[](const std::string& id,const std::string& mesh_section)->std::optional<Result> {
+        Model m(id,"",mesh_section);if(!m.e)return {};
+        for(const auto& setting:{std::pair{"HEAT_MODEL","COUPLED"},
+                                 std::pair{"BED_HEAT_MODEL","LOCAL_STORAGE"},
+                                 std::pair{"HEAT_SURFACE_EXCHANGE","NO"},
+                                 std::pair{"HEAT_RADIATIVE_EXCHANGE","NO"}})
+            if(swmm_options_set_ext(m.e,setting.first,setting.second)!=SWMM_OK)return {};
+        auto& ctx=static_cast<openswmm::SWMMEngine*>(m.e)->context();
+        ctx.heat_config.sediment.has_initial_temp=true;
+        ctx.heat_config.sediment.initial_temp=-5;
+        ctx.heat_config.sediment.ground_depth=0;
+        ctx.heat_config.sediment.hyporheic_velocity=.01;
+        if(swmm_engine_initialize(m.e)!=SWMM_OK||swmm_engine_start(m.e,0)!=SWMM_OK)return {};
+        auto& state=static_cast<openswmm::SWMMEngine*>(m.e)->surfaceRouter2D().state();
+        const int row=state.transport.temp_row;
+        if(row<0||!state.heat.enabled||!state.heat.bed)return {};
+        const double rho_cp=ctx.options.water_density*ctx.options.water_specific_heat;
+        double initial_water_j=0,initial_bed_j=0,capacity=0,initial_volume=0;
+        for(int i=0;i<ctx.twod_io.mesh->n_cells();++i) {
+            if(ctx.twod_io.mesh->tri_tag[i]!="channel:burned")continue;
+            const double volume=state.volume[i];if(!(volume>0))return {};
+            state.transport.cell_mass[state.transport.idx(row,i)]=22*volume;
+            initial_water_j+=rho_cp*22*volume;initial_volume+=volume;
+            initial_bed_j+=state.heat.bed_energy[i];capacity+=state.heat.bed_capacity[i];
+        }
+        if(!(initial_volume>0)||!(capacity>0))return {};
+        double elapsed=0;
+        if(swmm_engine_step(m.e,&elapsed)!=SWMM_OK||!(elapsed>0)||swmm_engine_end(m.e)!=SWMM_OK)return {};
+        Result result;double final_water_j=0,final_bed_j=0,final_capacity=0,final_mass=0;
+        for(int i=0;i<ctx.twod_io.mesh->n_cells();++i) {
+            if(ctx.twod_io.mesh->tri_tag[i]!="channel:burned")continue;
+            const double volume=state.volume[i];
+            final_water_j+=rho_cp*state.transport.cell_mass[state.transport.idx(row,i)];
+            final_mass+=state.transport.cell_mass[state.transport.idx(row,i)];
+            result.water_volume+=volume;
+            final_bed_j+=state.heat.bed_energy[i];final_capacity+=state.heat.bed_capacity[i];
+            result.contact_j+=state.heat.water_bed_j[i];
+        }
+        result.water_temperature=final_mass/result.water_volume;
+        result.bed_temperature=final_bed_j/final_capacity;
+        result.water_j=final_water_j-initial_water_j;
+        result.bed_j=final_bed_j-initial_bed_j;
+        return result;
+    };
+
+    const auto coarse=run("marcher-hyporheic-refine-coarse","");
+    const auto refined=run("marcher-hyporheic-refine-fine",refined_mesh);
+    ASSERT_TRUE(coarse.has_value());ASSERT_TRUE(refined.has_value());
+    EXPECT_NEAR(coarse->water_volume,5.0,1e-12);
+    EXPECT_NEAR(refined->water_volume,5.0,1e-12);
+    EXPECT_NEAR(coarse->water_j+coarse->bed_j,0,1e-5);
+    EXPECT_NEAR(refined->water_j+refined->bed_j,0,1e-5);
+    EXPECT_NEAR(coarse->water_j,-coarse->contact_j,1e-5);
+    EXPECT_NEAR(refined->water_j,-refined->contact_j,1e-5);
+    EXPECT_NEAR(coarse->water_temperature,refined->water_temperature,1e-8);
+    EXPECT_NEAR(coarse->bed_temperature,refined->bed_temperature,1e-8);
+    EXPECT_NEAR(coarse->water_j,refined->water_j,1e-5);
+    EXPECT_NEAR(coarse->bed_j,refined->bed_j,1e-5);
 }
 
 TEST(MeshHeat, RuntimeHeatUsesConfiguredCapacityAndExactPowerReceipt) {
