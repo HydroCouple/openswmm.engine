@@ -977,6 +977,9 @@ TEST(EngineCheckpoint, MeshRichardsLidThermalEnergyContinuesAcrossRestart) {
     };
     seed_lid(source.engine);seed_lid(target.engine);
     auto& router=source.engine.surfaceRouter2D();
+    const auto initial_lid_energy=source.engine.context().node_subtypes.storages.lid_state[
+        std::size_t(source.engine.context().node_subtypes.storage_row(
+            source.engine.context().node_names.find("LID")))].thermal_energy;
     ASSERT_TRUE(router.subsurface().heat().active());
     auto& context=source.engine.context();
     for(auto* engine:{&source.engine,&target.engine}) {
@@ -991,8 +994,25 @@ TEST(EngineCheckpoint, MeshRichardsLidThermalEnergyContinuesAcrossRestart) {
     ASSERT_GE(row,0);
     auto& lid=context.node_subtypes.storages.lid_state[std::size_t(row)];
     ASSERT_TRUE(lid.richards);
+    const auto pendingMagnitude=[](const twoD::SubsurfaceSolver& groundwater) {
+        double value=0;for(const auto& rows:groundwater.pendingLidReceipts())for(const auto& receipt:rows)
+            value+=std::abs(receipt.down)+std::abs(receipt.up);
+        return value;
+    };
     while(source.engine.context().current_time<43.1)ASSERT_NO_THROW(step(source.engine));
+    const double accepted_lid_water=std::accumulate(router.subsurface().richardsBedDownCumulative().begin(),
+                              router.subsurface().richardsBedDownCumulative().end(),0.0)+
+              std::accumulate(router.subsurface().richardsBedUpCumulative().begin(),
+                              router.subsurface().richardsBedUpCumulative().end(),0.0);
+    ASSERT_GT(accepted_lid_water,0)<<"No Richards water transfer was exercised.";
+    // The engine checkpoints only at a completed routing boundary. Mesh LID
+    // Richards receipts and their mapped groundwater cell settle to that same
+    // time before the boundary is published; the direct groundwater archive
+    // suite covers a receipt queued between cell firings.
+    EXPECT_DOUBLE_EQ(pendingMagnitude(router.subsurface()),0);
+    EXPECT_DOUBLE_EQ(router.subsurface().cellCompletedTime(0),source.engine.context().current_time);
     ASSERT_FALSE(lid.thermal_energy.empty());
+    EXPECT_NE(lid.thermal_energy,initial_lid_energy);
     std::size_t mapped_cells=0;
     for(const auto& owners:router.subsurface().heat().lid_owners)if(!owners.empty())++mapped_cells;
     EXPECT_EQ(mapped_cells,1u);
@@ -1000,15 +1020,27 @@ TEST(EngineCheckpoint, MeshRichardsLidThermalEnergyContinuesAcrossRestart) {
     const auto checkpoint=root()/"surface-thermal-lid-checkpoint.chk";
     ASSERT_EQ(source.engine.saveCheckpoint(checkpoint.string()),"");
     ASSERT_EQ(target.engine.loadCheckpoint(checkpoint.string()),"");
+    auto& target_context=target.engine.context();
+    const int target_row=target_context.node_subtypes.storage_row(target_context.node_names.find("LID"));
+    ASSERT_GE(target_row,0);
+    const auto& target_lid=target_context.node_subtypes.storages.lid_state[std::size_t(target_row)];
+    EXPECT_EQ(lid.quality_transfers.size(),target_lid.quality_transfers.size());
+    EXPECT_EQ(lid.quality_ports.size(),target_lid.quality_ports.size());
+    EXPECT_EQ(lid.richards_water,target_lid.richards_water);
+    EXPECT_EQ(lid.quality_old_water,target_lid.quality_old_water);
+    EXPECT_EQ(lid.thermal_energy,target_lid.thermal_energy);
+    detail::CompletedSourceArchive source_groundwater_archive,target_groundwater_archive;
+    router.subsurface().checkpoint(source_groundwater_archive,false);
+    target.engine.surfaceRouter2D().subsurface().checkpoint(target_groundwater_archive,false);
+    EXPECT_EQ(source_groundwater_archive.bytes(),target_groundwater_archive.bytes());
 #ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
     compareMesh(source.engine,target.engine,"surface-thermal-lid-output-restored");
 #else
     compare(source.engine,target.engine,"surface-thermal-lid-restored");
 #endif
-    auto& target_context=target.engine.context();
-    const int target_row=target_context.node_subtypes.storage_row(target_context.node_names.find("LID"));
-    ASSERT_GE(target_row,0);
     EXPECT_EQ(lid.thermal_energy,target_context.node_subtypes.storages.lid_state[std::size_t(target_row)].thermal_energy);
+    EXPECT_DOUBLE_EQ(pendingMagnitude(router.subsurface()),0);
+    EXPECT_DOUBLE_EQ(pendingMagnitude(target.engine.surfaceRouter2D().subsurface()),0);
     int steps=0;
     while(source.engine.context().elapsed_ms<source.engine.context().options.totalDurationMs()) {
         ASSERT_NO_THROW(step(source.engine));
