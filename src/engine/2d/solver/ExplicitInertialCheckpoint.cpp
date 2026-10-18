@@ -60,16 +60,19 @@ std::string ExplicitInertialSolver::checkpointBoundary() const {
     const bool temperature_only=joint_checkpoint_ && transport.active() && transport.n_species==1 &&
         transport.n_pollut==0 && transport.n_msx==0 && transport.age_row<0 &&
         transport.temp_row==0 && transport.rowIndex("__TEMPERATURE__")==0;
+    const bool standalone_local_bed_quality=common_stage_->standaloneLocalBed() && state_->heat.enabled &&
+        state_->heat.bed && !state_->heat.ground_column;
+    const bool supported_transport=temperature_only||standalone_local_bed_quality;
     if(!joint_checkpoint_ && (state_->nodes_1d || state_->node_coupling))
         return "CPU checkpoint requires a joint hydraulic owner for live 1D coupling.";
-    if(state_->node_row_conc && !temperature_only)
+    if(state_->node_row_conc && !supported_transport)
         return "CPU checkpoint live node-row providers are not qualified.";
     if(!exch_head_slope_.empty())return "CPU checkpoint live head-slope providers are not qualified.";
     if(!common_stage_->runtimeBoundariesEnabled() && !bc_cell_.empty())
         return "CPU checkpoint live external boundary providers are not qualified.";
     if(joint_checkpoint_) {
         if(bool(state_->nodes_1d)!=bool(state_->node_coupling) ||
-           (transport.active() && !temperature_only) ||
+           (transport.active() && !supported_transport) ||
            node_drawn_.size()!=(state_->nodes_1d?std::size_t(state_->nodes_1d->count()):0) ||
            exch_.size()!=(state_->node_coupling?state_->node_coupling->size():0))
             return "Joint CPU checkpoint coupling layout differs.";

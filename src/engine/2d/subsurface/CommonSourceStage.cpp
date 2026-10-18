@@ -36,13 +36,20 @@ bool standaloneLocalBedLayout(const MeshData& mesh,const SurfaceStateData& surfa
     const auto& h=surface.heat;const auto& t=surface.transport;
     const auto n=static_cast<std::size_t>(mesh.n_cells());
     const auto ns=static_cast<std::size_t>(t.n_species);
+    const bool rows_supported=t.n_species>=0&&t.n_pollut>=0&&t.n_msx==0&&t.n_species==
+        t.n_pollut+(t.age_row>=0?1:0)+(t.temp_row>=0?1:0)&&
+        t.row_names.size()==ns&&
+        (t.age_row<0||(t.age_row>=t.n_pollut&&t.age_row<t.n_species&&
+            t.row_names[static_cast<std::size_t>(t.age_row)]=="__WATER_AGE__"))&&
+        (t.temp_row<0||(t.temp_row>=t.n_pollut&&t.temp_row<t.n_species&&
+            t.row_names[static_cast<std::size_t>(t.temp_row)]=="__TEMPERATURE__"))&&
+        (t.age_row<0||t.temp_row<0||t.age_row!=t.temp_row);
     return h.enabled&&h.bed&&!h.ground_column&&h.bed_capacity.size()==n&&h.bed_energy.size()==n&&
         h.initial_bed_energy.size()==n&&h.reported_temperature.size()==n&&h.bed_pore_volume.size()==n&&
         h.bed_species==t.n_species&&h.bed_temp_row==t.temp_row&&h.bed_age_row==t.age_row&&
         h.bed_carried_mass.size()==ns*n&&h.bed_initial_mass.size()==ns*n&&h.bed_exchange_mass.size()==ns*n&&
         (h.bed_generated_age.empty()||h.bed_generated_age.size()==n)&&
-        (!t.active()||t.n_cells==mesh.n_cells())&&t.n_pollut==0&&t.n_msx==0&&t.age_row<0&&
-        (t.n_species==0||(t.n_species==1&&t.temp_row==0&&t.row_names==std::vector<std::string>{"__TEMPERATURE__"}));
+        (!t.active()||t.n_cells==mesh.n_cells())&&rows_supported;
 }
 std::string qualityProfile(const runoff::SourceWaterDriver& sources,
                           const SurfaceStateData& surface,const SubsurfaceSolver& gw,

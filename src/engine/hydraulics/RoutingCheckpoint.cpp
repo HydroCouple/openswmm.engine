@@ -391,10 +391,12 @@ void Router::checkCheckpointProfile(const SimulationContext& c) const {
             dw_solver_.groups_==&groups_ && dw_solver_.n_nodes_==c.n_nodes() &&
             dw_solver_.n_links_==c.n_links() && c.nodes.count()==c.n_nodes() && c.links.count()==c.n_links(),
             "Hydraulic checkpoint requires an initialized DW routing component.");
-    require(c.n_pollutants()==0 && !c.options.water_age &&
+    const bool no_hydraulic_quality_state=c.n_nodes()==0 && c.n_links()==0 && c.n_subcatches()==0;
+    require((no_hydraulic_quality_state || (c.n_pollutants()==0 && !c.options.water_age &&
+            c.nodes.conc_n_pollutants==0 && c.links.conc_n_pollutants==0 &&
+            c.nodes.stat_n_pollutants==0 && c.links.stat_n_pollutants==0)) &&
             (!c.options.heat_transport || (c.n_nodes()==0 && c.n_links()==0) || checkpoint_owned_session_) &&
-            (c.n_nodes()==0 || checkpoint_owned_session_ || (!c.nodes.coupling_tuple_age && !c.nodes.coupling_tuple_temp)) && c.nodes.conc_n_pollutants==0 &&
-            c.links.conc_n_pollutants==0 && c.nodes.stat_n_pollutants==0 && c.links.stat_n_pollutants==0 &&
+            (c.n_nodes()==0 || checkpoint_owned_session_ || (!c.nodes.coupling_tuple_age && !c.nodes.coupling_tuple_temp)) &&
             (!structures_ || checkpoint_owned_session_),
             "Hydraulic checkpoint quality, age, heat and structure/control solvers are not qualified.");
     require(c.nodes.aquifer2d_bed.empty() || c.nodes.aquifer2d_bed.size()==std::size_t(c.n_nodes()),

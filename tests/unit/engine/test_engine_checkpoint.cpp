@@ -686,7 +686,8 @@ struct ThermalSurfaceSession {
                bool lateral_conduction=false,bool heterogeneous_ground=false,
                bool mapped_channel=false,bool enable_checkpoint=true,
                bool ueb_snow=false,bool mesh_richards_lid=false,bool mesh_output=false,
-               bool local_storage=false) {
+               bool local_storage=false,bool local_storage_quality=false) {
+        local_storage=local_storage||local_storage_quality;
         const auto p=root()/name;
         std::string deck=
             "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
@@ -721,6 +722,13 @@ struct ThermalSurfaceSession {
         }
         if(mesh_richards_lid)deck.replace(deck.find("IGNORE_QUALITY YES"),
             std::string("IGNORE_QUALITY YES").size(),"IGNORE_QUALITY NO");
+        if(local_storage_quality) {
+            deck.replace(deck.find("IGNORE_QUALITY YES"),std::string("IGNORE_QUALITY YES").size(),"IGNORE_QUALITY NO");
+            deck+="\n[OPTIONS]\nWATER_AGE ON\n[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0\n"
+                  "[2D_OPTIONS]\nTRANSPORT_POLLUTANTS YES\nTRANSPORT_AGE YES\n"
+                  "[2D_INITIAL_QUALITY]\n* Dye 10\n"
+                  "[2D_INITIAL_BED_QUALITY]\n* Dye 2\n* __WATER_AGE__ 1\n";
+        }
         if(mesh_output) {
             std::filesystem::remove(p.string()+".h5");
             deck+="\n[2D_OPTIONS]\nREPORT_2D YES\nOUTPUT_FILE "+(p.string()+".h5")+
@@ -734,6 +742,8 @@ struct ThermalSurfaceSession {
            swmm_options_set_ext(&engine,"HEAT_SURFACE_EXCHANGE",atmospheric_exchange?"YES":"NO")!=SWMM_OK ||
            swmm_options_set_ext(&engine,"HEAT_RADIATIVE_EXCHANGE","NO")!=SWMM_OK)
             throw std::runtime_error("thermal surface configuration failed");
+        if(local_storage_quality&&swmm_heat_set_sediment(&engine,SWMM_HEAT_SED_HYPORHEIC_VELOCITY,.001)!=SWMM_OK)
+            throw std::runtime_error("local-bed quality exchange configuration failed");
         if(!local_storage&&(swmm_gw_transport_option_set(&engine,"THERMAL_MODEL","POROUS_EQUILIBRIUM")!=SWMM_OK ||
            swmm_gw_transport_option_set(&engine,"CONDUCTION","YES")!=SWMM_OK ||
            swmm_gw_transport_option_set(&engine,"SURFACE_THERMAL_BC","ADIABATIC")!=SWMM_OK ||
@@ -883,6 +893,56 @@ TEST(EngineCheckpoint, StandaloneLocalBedThermalStateContinuesAcrossRestart) {
     compare(a.engine,b.engine,"surface-local-bed-restart-final");
     EXPECT_EQ(a.engine.surfaceRouter2D().state().heat.bed_energy,
               b.engine.surfaceRouter2D().state().heat.bed_energy);
+}
+
+TEST(EngineCheckpoint, StandaloneLocalBedQualityStateContinuesAcrossRestart) {
+    ThermalSurfaceSession a,b;
+    ASSERT_NO_THROW(a.start("surface-local-bed-quality-restart-a",12,"channel:test",false,false,false,
+                            false,false,false,true,false,false,false,true,true));
+    ASSERT_NO_THROW(b.start("surface-local-bed-quality-restart-b",12,"channel:test",false,false,false,
+                            false,false,false,true,false,false,false,true,true));
+    auto& router=a.engine.surfaceRouter2D();
+    ASSERT_TRUE(router.state().heat.enabled);ASSERT_TRUE(router.state().heat.bed);
+    ASSERT_FALSE(router.state().heat.ground_column);ASSERT_FALSE(router.subsurface().active());
+    const auto& tr=router.state().transport;const auto& heat=router.state().heat;
+    ASSERT_EQ(tr.n_pollut,1);ASSERT_EQ(tr.n_msx,0);ASSERT_GE(tr.age_row,0);ASSERT_GE(tr.temp_row,0);
+    ASSERT_EQ(heat.bed_temp_row,tr.temp_row);ASSERT_EQ(heat.bed_age_row,tr.age_row);
+    const int dye=tr.rowIndex("Dye");ASSERT_GE(dye,0);
+    ASSERT_EQ(heat.bed_carried_mass.size(),std::size_t(tr.n_species*tr.n_cells));
+    const auto dyeMass=[&](const SWMMEngine& engine) {
+        const auto& r=engine.surfaceRouter2D();const auto& s=r.state();const auto row=s.transport.rowIndex("Dye");
+        double value=0;for(int cell=0;cell<r.mesh().n_cells();++cell)
+            value+=s.heat.bed_carried_mass[std::size_t(row*r.mesh().n_cells()+cell)];
+        return value;
+    };
+    const auto ageMass=[&](const SWMMEngine& engine) {
+        const auto& r=engine.surfaceRouter2D();const auto& s=r.state();double value=0;
+        for(int cell=0;cell<r.mesh().n_cells();++cell)
+            value+=s.heat.bed_carried_mass[std::size_t(s.heat.bed_age_row*r.mesh().n_cells()+cell)];
+        return value;
+    };
+    ASSERT_GT(dyeMass(a.engine),0);const double age_initial=ageMass(a.engine);
+    while(a.engine.context().current_time<43.1)ASSERT_NO_THROW(step(a.engine));
+    EXPECT_NE(ageMass(a.engine),age_initial);
+    double generated_age=0;for(double value:a.engine.surfaceRouter2D().state().heat.bed_generated_age)generated_age+=value;
+    EXPECT_GT(generated_age,0);
+    const auto checkpoint=root()/"surface-local-bed-quality-restart.chk";
+    ASSERT_EQ(a.engine.saveCheckpoint(checkpoint.string()),"");
+    ASSERT_EQ(b.engine.loadCheckpoint(checkpoint.string()),"");
+    compare(a.engine,b.engine,"surface-local-bed-quality-restart-restored");
+    EXPECT_EQ(a.engine.surfaceRouter2D().state().heat.bed_carried_mass,
+              b.engine.surfaceRouter2D().state().heat.bed_carried_mass);
+    int count=0;
+    while(a.engine.context().elapsed_ms<a.engine.context().options.totalDurationMs()) {
+        ASSERT_NO_THROW(step(a.engine));
+        ASSERT_NO_THROW(step(b.engine));
+        if(++count%11==0)compare(a.engine,b.engine,"surface-local-bed-quality-restart-continued");
+    }
+    compare(a.engine,b.engine,"surface-local-bed-quality-restart-final");
+    EXPECT_EQ(a.engine.surfaceRouter2D().state().heat.bed_carried_mass,
+              b.engine.surfaceRouter2D().state().heat.bed_carried_mass);
+    EXPECT_EQ(a.engine.surfaceRouter2D().state().transport.cell_mass,
+              b.engine.surfaceRouter2D().state().transport.cell_mass);
 }
 
 #ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
