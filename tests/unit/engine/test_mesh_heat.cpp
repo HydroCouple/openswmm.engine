@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Reviewed 2D thermal plan: domain-scoped authoring and numerical/runtime gates.
 #include <gtest/gtest.h>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -307,6 +308,71 @@ TEST(MeshHeat, LocalBedHyporheicIsInvariantUnderUniformSpatialAndTimeRefinement)
     EXPECT_NEAR(coarse_one.bed_j,coarse_many.bed_j,1e-5);
     EXPECT_NEAR(coarse_one.water_j,refined_many.water_j,1e-5);
     EXPECT_NEAR(coarse_one.bed_j,refined_many.bed_j,1e-5);
+}
+
+TEST(MeshHeat, HeterogeneousCellHyporheicOverridesMatchIndependentPairsAcrossTimeRefinement) {
+    const std::string two_channel_cells=
+        "[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n0 10 0\n\n"
+        "[2D_TRIANGLES]\n0 1 2 .03 .1 channel:burned\n0 2 3 .03 .1 channel:tributary\n\n";
+    LocalHeat coarse("heterogeneous-hyporheic-one",two_channel_cells),
+              refined("heterogeneous-hyporheic-many",two_channel_cells);
+    constexpr int cellScope=6;
+    constexpr double slowVelocity=1.0e-12, fastVelocity=.1;
+    for(LocalHeat* f:{&coarse,&refined}) {
+        ASSERT_NE(f->model.e,nullptr);
+        auto& sediment=f->model.ctx().heat_config.sediment;
+        sediment.has_initial_temp=true;sediment.initial_temp=-4;
+        sediment.ground_depth=0; // isolate the water/bed hyporheic pair
+        ASSERT_EQ(swmm_heat_set_element_override(f->model.e,SWMM_HEAT_ATTR_HYPORHEIC_VELOCITY,
+                                                  cellScope,"1",slowVelocity),SWMM_OK);
+        ASSERT_EQ(swmm_heat_set_element_override(f->model.e,SWMM_HEAT_ATTR_HYPORHEIC_VELOCITY,
+                                                  cellScope,"2",fastVelocity),SWMM_OK);
+        ASSERT_TRUE(f->initialize().empty());
+        ASSERT_EQ(f->state.heat.hyporheic_eligible.size(),2u);
+        EXPECT_EQ(f->state.heat.hyporheic_eligible[0],1);
+        EXPECT_EQ(f->state.heat.hyporheic_eligible[1],1);
+    }
+
+    constexpr double volume=5,waterTemperature=22,initialBedTemperature=-4,totalSeconds=3600;
+    struct Result { double water=0,waterJ=0,bedJ=0,receipt=0; };
+    const double rhoCp=coarse.model.ctx().options.water_density*coarse.model.ctx().options.water_specific_heat;
+    const auto run=[&](LocalHeat& f,int steps) {
+        std::array<Result,2> results{};
+        for(int cell=0;cell<2;++cell) {
+            double mass=waterTemperature*volume;
+            for(int step=0;step<steps;++step)
+                mass=f.step(cell,mass,volume,0,totalSeconds/steps);
+            auto& heat=f.state.heat;
+            results[cell].water=mass/volume;
+            results[cell].waterJ=heat.water_j[cell];
+            results[cell].bedJ=heat.bed_energy[cell]-heat.initial_bed_energy[cell];
+            results[cell].receipt=heat.water_bed_j[cell];
+        }
+        return results;
+    };
+    const auto one=run(coarse,1),many=run(refined,60);
+    const double velocities[]{slowVelocity,fastVelocity};
+    for(int cell=0;cell<2;++cell) {
+        const auto& sediment=openswmm::transport::heat::sedimentFor(
+            coarse.model.ctx(),openswmm::HeatElement::cell2d(cell));
+        const double capacity=coarse.state.heat.bed_capacity[cell];
+        const double waterCapacity=rhoCp*volume;
+        const double conductance=sediment.thermal_diffusivity*sediment.sed_density*
+            sediment.sed_specific_heat*50/sediment.bed_thickness+rhoCp*velocities[cell]*50;
+        const double initialEnergy=waterCapacity*waterTemperature+capacity*initialBedTemperature;
+        const double equilibrium=initialEnergy/(waterCapacity+capacity);
+        const double difference=(waterTemperature-initialBedTemperature)*
+            std::exp(-conductance*(1/waterCapacity+1/capacity)*totalSeconds);
+        const double expectedWater=equilibrium+capacity/(waterCapacity+capacity)*difference;
+        EXPECT_NEAR(one[cell].water,expectedWater,1e-11)<<"cell "<<cell;
+        EXPECT_NEAR(many[cell].water,expectedWater,1e-11)<<"cell "<<cell;
+        EXPECT_NEAR(one[cell].water,many[cell].water,1e-11)<<"cell "<<cell;
+        EXPECT_NEAR(one[cell].waterJ+one[cell].bedJ,0,1e-5)<<"cell "<<cell;
+        EXPECT_NEAR(many[cell].waterJ+many[cell].bedJ,0,1e-5)<<"cell "<<cell;
+        EXPECT_NEAR(one[cell].waterJ+one[cell].receipt,0,1e-5)<<"cell "<<cell;
+        EXPECT_NEAR(many[cell].waterJ+many[cell].receipt,0,1e-5)<<"cell "<<cell;
+    }
+    EXPECT_GT(one[0].water,one[1].water);
 }
 
 TEST(MeshHeat, ConstantRadiationAndFiniteBedMatchIndependentForcedTwoBodySolution) {
