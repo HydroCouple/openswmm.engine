@@ -25,8 +25,12 @@ namespace fs=std::filesystem;
 const fs::path out=fs::path(OPENSWMM_MESH_HEAT_OUT)/"mesh_heat";
 struct Model {
     SWMM_Engine e=nullptr;
-    Model(const std::string& id,const std::string& extra="") {
+    Model(const std::string& id,const std::string& extra="",const std::string& mesh_section="") {
         fs::create_directories(out);
+        const std::string default_mesh=
+            "[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n0 10 0\n\n"
+            "[2D_TRIANGLES]\n0 1 2 .03 .1 channel:burned\n0 2 3 .03 .1 forest\n\n";
+        const std::string& mesh=mesh_section.empty()?default_mesh:mesh_section;
         // Scratch inputs follow the parity harness convention: an older
         // binary cannot parse fixtures deliberately exercising new syntax.
         const auto file=out/("_"+id+".inp");
@@ -39,8 +43,7 @@ struct Model {
             "[COORDINATES]\nJ1 40 0\nO1 70 0\n\n[TAGS]\nNODE J1 forest\n\n"
             "[2D_OPTIONS]\nREPORT_2D NO\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
             "EVAPORATION NO\n\n"
-            "[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n0 10 0\n\n"
-            "[2D_TRIANGLES]\n0 1 2 .03 .1 channel:burned\n0 2 3 .03 .1 forest\n\n"
+            << mesh
             << extra;
         e=swmm_engine_create();
         if(swmm_engine_open(e,file.string().c_str(),(out/(id+".rpt")).string().c_str(),
@@ -92,12 +95,14 @@ struct LocalHeat {
     Model model;
     openswmm::twoD::SurfaceStateData state;
     openswmm::twoD::SolverOptions2D options;
-    LocalHeat(const std::string& id):model(id) {
+    LocalHeat(const std::string& id,const std::string& mesh_section=""):model(id,"",mesh_section) {
         if(model.e)openswmm::twoD::buildMeshTopology(*model.ctx().twod_io.mesh);
         options.coupled_heat=true;options.bed_heat_model=1;
         options.heat_surface=0;options.heat_radiative=0;
         options.cell_closure=openswmm::twoD::CellClosure2D::FLAT;
-        state.resize(2,4);state.transport.temp_row=0;
+        if(model.e&&model.ctx().twod_io.mesh)
+            state.resize(model.ctx().twod_io.mesh->n_cells(),model.ctx().twod_io.mesh->n_vertices());
+        state.transport.temp_row=0;
     }
     const openswmm::twoD::MeshData& mesh(){return *model.ctx().twod_io.mesh;}
     std::string initialize(){return openswmm::twoD::initializeMeshHeat(model.ctx(),mesh(),state,options);}
@@ -183,6 +188,68 @@ TEST(MeshHeat, HyporheicVelocitySpansZeroToStrongFiniteStorageWithClosedEnergy) 
             <<"v_h="<<velocity;
     }
 }
+
+TEST(MeshHeat, LocalBedHyporheicIsInvariantUnderUniformSpatialAndTimeRefinement) {
+    const std::string refined_mesh=
+        "[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n0 10 0\n5 0 0\n\n"
+        "[2D_TRIANGLES]\n"
+        "0 4 2 .03 .1 channel:burned\n"
+        "4 1 2 .03 .1 channel:burned\n"
+        "0 2 3 .03 .1 forest\n\n";
+    LocalHeat coarse_one_model("uniform-hyporheic-coarse-one"),
+              coarse_many_model("uniform-hyporheic-coarse-many"),
+              refined_one_model("uniform-hyporheic-refined-one",refined_mesh),
+              refined_many_model("uniform-hyporheic-refined-many",refined_mesh);
+    for(LocalHeat* f:{&coarse_one_model,&coarse_many_model,&refined_one_model,&refined_many_model}) {
+        ASSERT_NE(f->model.e,nullptr);
+        auto& sediment=f->model.ctx().heat_config.sediment;
+        sediment.has_initial_temp=true;sediment.initial_temp=-5;
+        sediment.ground_depth=0;sediment.hyporheic_velocity=.01;
+        ASSERT_TRUE(f->initialize().empty());
+    }
+
+    struct Result {double water_c=0,bed_c=0,water_j=0,bed_j=0,volume=0;};
+    const auto run=[](LocalHeat& f,int steps) {
+        Result result;
+        const auto& mesh=f.mesh();auto& heat=f.state.heat;
+        const double rho_cp=f.model.ctx().options.water_density*f.model.ctx().options.water_specific_heat;
+        constexpr double depth=.1,initial_temperature=22,total_seconds=3600;
+        double final_mass=0,final_bed_energy=0,bed_capacity=0;
+        for(int i=0;i<mesh.n_cells();++i) {
+            if(mesh.tri_tag[i]!="channel:burned")continue;
+            const double area=mesh.tri_area[i],volume=area*depth;
+            const double initial_mass=initial_temperature*volume;
+            double mass=initial_mass;
+            for(int k=0;k<steps;++k)mass=f.step(i,mass,volume,0,total_seconds/steps);
+            result.water_j+=rho_cp*(mass-initial_mass);
+            result.bed_j+=heat.bed_energy[i]-heat.initial_bed_energy[i];
+            result.volume+=volume;final_mass+=mass;
+            final_bed_energy+=heat.bed_energy[i];bed_capacity+=heat.bed_capacity[i];
+        }
+        result.water_c=final_mass/result.volume;
+        result.bed_c=final_bed_energy/bed_capacity;
+        return result;
+    };
+
+    ASSERT_EQ(coarse_one_model.mesh().n_cells(),2);ASSERT_EQ(refined_many_model.mesh().n_cells(),3);
+    const auto coarse_one=run(coarse_one_model,1),coarse_many=run(coarse_many_model,60);
+    const auto refined_one=run(refined_one_model,1),refined_many=run(refined_many_model,60);
+    for(const auto& result:{coarse_one,coarse_many,refined_one,refined_many}) {
+        EXPECT_DOUBLE_EQ(result.volume,5.0);
+        EXPECT_NEAR(result.water_j+result.bed_j,0,1e-6);
+    }
+    EXPECT_NEAR(coarse_one.water_c,coarse_many.water_c,1e-11);
+    EXPECT_NEAR(coarse_one.bed_c,coarse_many.bed_c,1e-11);
+    EXPECT_NEAR(coarse_one.water_c,refined_one.water_c,1e-11);
+    EXPECT_NEAR(coarse_one.bed_c,refined_one.bed_c,1e-11);
+    EXPECT_NEAR(coarse_one.water_c,refined_many.water_c,1e-11);
+    EXPECT_NEAR(coarse_one.bed_c,refined_many.bed_c,1e-11);
+    EXPECT_NEAR(coarse_one.water_j,coarse_many.water_j,1e-5);
+    EXPECT_NEAR(coarse_one.bed_j,coarse_many.bed_j,1e-5);
+    EXPECT_NEAR(coarse_one.water_j,refined_many.water_j,1e-5);
+    EXPECT_NEAR(coarse_one.bed_j,refined_many.bed_j,1e-5);
+}
+
 TEST(MeshHeat, ConstantRadiationAndFiniteBedMatchIndependentForcedTwoBodySolution) {
     LocalHeat f("forced-pair");ASSERT_NE(f.model.e,nullptr);
     auto& ctx=f.model.ctx();auto& cfg=ctx.heat_config.sediment;
