@@ -1529,7 +1529,7 @@ TEST(UebConfiguration, MeshAssignmentPrecedenceRoundTripAndAtomicEdit) {
 }
 TEST(MeshSnow, UniformPlaneMatchesPointKernelAndConservesWaterAtDifferentConsumerSteps) {
     SimulationContext ctx;ctx.options.ignore_snow_melt=false;ctx.options.start_date=datetime::encodeDate(2026,1,1);
-    ctx.options.end_date=ctx.options.start_date+2./24;ctx.snowpack_names.add("SP");ctx.snowpacks.names={"SP"};
+    ctx.options.end_date=ctx.options.start_date+4./24;ctx.snowpack_names.add("SP");ctx.snowpacks.names={"SP"};
     ctx.snowpacks.config.model=surface::SnowKind::Ueb;ctx.snowpacks.config.site=surface::ClimateSite{45,-120,-8,1000};
     ctx.snowpacks.pervious={std::array<double,7>{.02,.06,32,.1,6,.6,0}};
     ctx.snowpacks.mesh_config.defaults["*"].pack="SP";
@@ -1712,21 +1712,21 @@ TEST(MeshSnow, SnowfallReestablishesGroundContactAfterMeltOut) {
 
 TEST(MeshSnow, UebPartialCoverUsesProjectPerviousCurveAndBalancesContact) {
     SimulationContext ctx;ctx.options.ignore_snow_melt=false;ctx.options.start_date=datetime::encodeDate(2026,1,1);
-    ctx.options.end_date=ctx.options.start_date+2./24;ctx.snowpack_names.add("SP");ctx.snowpacks.names={"SP"};
+    ctx.options.end_date=ctx.options.start_date+4./24;ctx.snowpack_names.add("SP");ctx.snowpacks.names={"SP"};
     ctx.snowpacks.config.model=surface::SnowKind::Ueb;ctx.snowpacks.config.site=surface::ClimateSite{45,-120,-8,1000};
     ctx.snowpacks.pervious={std::array<double,7>{.02,.06,32,.1,.1,0,0}};ctx.snowpacks.mesh_config.defaults["*"].pack="SP";
     const std::array<double,10> adc{0,.2,.35,.48,.59,.69,.78,.85,.91,.96};
     for(int i=0;i<10;++i)ctx.options.adc_perv[i]=adc[i];
-    std::istringstream met("01/01/2026 00:00 15 50 1 800 400\n01/01/2026 01:00 -5 50 1 0 250\n01/01/2026 02:00 -5 50 1 0 250\n");
+    std::istringstream met("01/01/2026 00:00 15 50 1 800 400\n01/01/2026 01:00 15 50 1 800 400\n01/01/2026 02:00 15 50 1 800 400\n01/01/2026 03:00 15 50 1 800 400\n01/01/2026 04:00 15 50 1 800 400\n");
     ASSERT_TRUE(ctx.snowpacks.meteorology.read(met).empty());
     surface::MeshSnow snow;ASSERT_TRUE(snow.initialize(ctx,{{"grass",50,0,0}}).empty());
     ASSERT_EQ(snow.depletionCurve()[5],adc[5]);ASSERT_TRUE(snow.setGroundContactMask({1}).empty());
 
-    double time=0;bool found_partial=false;
-    for(;time<3600&&!found_partial;time+=30) {
+    double time=0;bool found_partial=false,melted_after_partial=false;
+    for(;time<4*3600&&!melted_after_partial;time+=30) {
         ASSERT_TRUE(snow.advance(ctx,time,time+30,{0},{1}).empty());
         const double cover=snow.outputs()[0].cover_frac;
-        if(cover>0&&cover<1) {
+        if(cover>0&&cover<1&&!found_partial) {
             found_partial=true;
             EXPECT_DOUBLE_EQ(snow.groundContactFraction(0),cover);
             const auto contact_error=snow.applyGroundContactEnergy(0,-1000);
@@ -1734,10 +1734,14 @@ TEST(MeshSnow, UebPartialCoverUsesProjectPerviousCurveAndBalancesContact) {
             EXPECT_NEAR(snow.ledgers()[0].ground_contact_energy,1,1e-12);
             EXPECT_NEAR(snow.ledgers()[0].energyResidual(),0,1e-8);
         }
+        if(found_partial&&cover==0)melted_after_partial=true;
     }
     ASSERT_TRUE(found_partial)<<"Warm UEB forcing did not pass through fractional cover before melt-out.";
+    ASSERT_TRUE(melted_after_partial)<<"Warm UEB forcing did not melt the ADC-covered pack out.";
+    EXPECT_DOUBLE_EQ(snow.groundContactFraction(0),0);
     EXPECT_NEAR(snow.ledgers()[0].residual(),0,1e-9);
     EXPECT_NEAR(snow.ledgers()[0].energyResidual(),0,1e-6);
+    EXPECT_NE(snow.ledgers()[0].geometry_energy,0);
     auto changed=ctx;changed.options.adc_perv[5]=.7;
     surface::MeshSnow other_curve;ASSERT_TRUE(other_curve.initialize(changed,{{"grass",50,0,0}}).empty());
     ASSERT_TRUE(other_curve.setGroundContactMask({1}).empty());
