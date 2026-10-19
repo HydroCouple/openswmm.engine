@@ -534,39 +534,6 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             return true;
         }), coupling_points_.end());
 
-    // Live in-marcher exchange points: the marcher evaluates the orifice law
-    // per 2D substep against live surface heads, so every non-outfall coupling
-    // point becomes a SINGLE-CELL point (the lowest-bed incident cell, where
-    // water pools — the wet/dry ramp then reflects the real pond, not an
-    // incidentally-dry neighbour). Built and published on the state BEFORE
-    // solver_->initialize(). Outfall coupling stays on the batch-accumulated
-    // injection path.
-    {
-        node_coupling_points_.clear();
-        for (const auto& cp : coupling_points_) {
-            if (cp.is_outfall) continue;
-            CouplingPoint sc = cp;
-            if (cp.vertex_idx >= 0) {
-                const int v  = cp.vertex_idx;
-                const int s  = mesh_.vert_stencil_ptr[v];
-                const int e  = mesh_.vert_stencil_ptr[v + 1];
-                int    lo    = cp.cell_idx;
-                double zlo   = (lo >= 0) ? mesh_.tri_cz[lo] : 1.0e300;
-                for (int k = s; k < e; ++k) {
-                    const int t = mesh_.vert_stencil_idx[k];
-                    if (mesh_.tri_cz[t] < zlo) { zlo = mesh_.tri_cz[t]; lo = t; }
-                }
-                sc.cell_idx   = lo;
-                sc.vertex_idx = -1;
-            }
-            node_coupling_points_.push_back(sc);
-        }
-        if (!node_coupling_points_.empty()) {
-            state_.node_coupling = &node_coupling_points_;
-            state_.nodes_1d      = &ctx.nodes;
-        }
-    }
-
     // Auto-align ponded storage on 2D-coupled junctions with the 2D surface.
     //
     // A coupled junction must be able to surcharge above its crown so the 1D
@@ -594,11 +561,34 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // convert by squaring the length factor (len_2d_to_1d² ≈ 10.764).
     const double area_2d_to_1d = options_.len_2d_to_1d * options_.len_2d_to_1d;
 
-    // Mutable: the COUPLING_AREA AUTO derivation below rewrites cp.area for
-    // points whose input did not author an explicit area.
+    // Largest conduit area at each node, SI m² (xsect_a_full is 1D ft²). Feeds
+    // the exchange-area sanity warning and COUPLING_AREA AUTO below.
+    std::vector<double> a_pipe_max_m2(static_cast<std::size_t>(ctx.n_nodes()), 0.0);
+    for (int l = 0; l < ctx.n_links(); ++l) {
+        const auto ul = static_cast<std::size_t>(l);
+        for (const int n : {ctx.links.node1[ul], ctx.links.node2[ul]}) {
+            if (n < 0) continue;
+            auto& a = a_pipe_max_m2[static_cast<std::size_t>(n)];
+            a = std::max(a, ctx.links.xsect_a_full[ul]);
+        }
+    }
+    for (auto& a : a_pipe_max_m2) a *= options_.len_1d_to_2d * options_.len_1d_to_2d;
+
+    // Mutable: the COUPLING_AREA AUTO derivation below rewrites cp.area.
     for (auto& cp : coupling_points_) {
         if (cp.is_outfall) continue;
         auto ni = static_cast<std::size_t>(cp.node_idx);
+        const double a_pipe_max = a_pipe_max_m2[ni];
+
+        // COUPLING_AREA AUTO: derive the exchange area from the largest
+        // connected conduit. Applies to EVERY junction point — the option
+        // is the escape hatch for files that baked in a constant default
+        // (GUI mappers wrote 2.0 m², 10–300× above the pipes on real
+        // models, driving the fill-and-spill churn the warning below
+        // describes), and those tokens are indistinguishable from intent.
+        // Authored values govern whenever AUTO is not requested.
+        if (options_.coupling_area_auto && a_pipe_max > 0.0)
+            cp.area = std::clamp(1.25 * a_pipe_max, 0.05, 2.0);
 
         // First time we touch this node: warn about any overridden user values
         // and reset ponded_area before accumulating the auto footprint. A node
@@ -627,27 +617,9 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             // faster than the pipe can convey it — the node then fills within
             // a window and spills straight back (drain/spill churn: spiky
             // lateral inflows, large node continuity "errors", and 2D solver
-            // grind at the coupling stencils). xsect_a_full is 1D ft²; convert
-            // to the SI m² of cp.area. Skipped when no conduit area is
+            // grind at the coupling stencils). Skipped when no conduit area is
             // resolved yet (a_max == 0) — the guard, not the warning, is load-
             // bearing.
-            double a_pipe_max = 0.0;
-            for (int l = 0; l < ctx.n_links(); ++l) {
-                auto ul = static_cast<std::size_t>(l);
-                if (ctx.links.node1[ul] == cp.node_idx
-                    || ctx.links.node2[ul] == cp.node_idx)
-                    a_pipe_max = std::max(a_pipe_max, ctx.links.xsect_a_full[ul]);
-            }
-            a_pipe_max *= options_.len_1d_to_2d * options_.len_1d_to_2d; // ft²→m²
-            // COUPLING_AREA AUTO: derive the exchange area from the largest
-            // connected conduit. Applies to EVERY junction point — the option
-            // is the escape hatch for files that baked in a constant default
-            // (GUI mappers wrote 2.0 m², 10–300× above the pipes on real
-            // models, driving the fill-and-spill churn the warning below
-            // describes), and those tokens are indistinguishable from intent.
-            // Authored values govern whenever AUTO is not requested.
-            if (options_.coupling_area_auto && a_pipe_max > 0.0)
-                cp.area = std::clamp(1.25 * a_pipe_max, 0.05, 2.0);
             if (a_pipe_max > 0.0 && cp.area > 10.0 * a_pipe_max) {
                 char abuf[320];
                 std::snprintf(abuf, sizeof(abuf),
@@ -680,6 +652,40 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             foot_m2 = mesh_.tri_area[cp.cell_idx];
         }
         ctx.nodes.ponded_area[ni] += foot_m2 * area_2d_to_1d;
+    }
+
+    // Live in-marcher exchange points: the marcher evaluates the orifice law
+    // per 2D substep against live surface heads, so every non-outfall coupling
+    // point becomes a SINGLE-CELL point (the lowest-bed incident cell, where
+    // water pools — the wet/dry ramp then reflects the real pond, not an
+    // incidentally-dry neighbour). Copied AFTER the COUPLING_AREA AUTO pass
+    // above so the live exchange sees the derived areas, and published on the
+    // state BEFORE solver_->initialize(). Outfall coupling stays on the
+    // batch-accumulated injection path.
+    {
+        node_coupling_points_.clear();
+        for (const auto& cp : coupling_points_) {
+            if (cp.is_outfall) continue;
+            CouplingPoint sc = cp;
+            if (cp.vertex_idx >= 0) {
+                const int v  = cp.vertex_idx;
+                const int s  = mesh_.vert_stencil_ptr[v];
+                const int e  = mesh_.vert_stencil_ptr[v + 1];
+                int    lo    = cp.cell_idx;
+                double zlo   = (lo >= 0) ? mesh_.tri_cz[lo] : 1.0e300;
+                for (int k = s; k < e; ++k) {
+                    const int t = mesh_.vert_stencil_idx[k];
+                    if (mesh_.tri_cz[t] < zlo) { zlo = mesh_.tri_cz[t]; lo = t; }
+                }
+                sc.cell_idx   = lo;
+                sc.vertex_idx = -1;
+            }
+            node_coupling_points_.push_back(sc);
+        }
+        if (!node_coupling_points_.empty()) {
+            state_.node_coupling = &node_coupling_points_;
+            state_.nodes_1d      = &ctx.nodes;
+        }
     }
 
     // C3b: vertical-datum-consistency guard for 1D↔2D coupling.

@@ -116,6 +116,7 @@ std::string build_model(double area_token, bool auto_area) {
 struct RunResult {
     bool   ok = false;
     double received_1d = 0.0;
+    double received_first_2min = 0.0;   ///< 1D receipt while the drain is area-limited
     double given_2d_net = 0.0;
     double cont_2d = 0.0;
     std::string rpt_text;
@@ -162,8 +163,11 @@ RunResult run(const fs::path& dir, const std::string& tag, double area_token,
         prev = elapsed;
         double lat = 0.0;
         if (dt_s > 0.0 &&
-            swmm_node_get_lateral_inflow(eng, j1, &lat) == SWMM_OK)
+            swmm_node_get_lateral_inflow(eng, j1, &lat) == SWMM_OK) {
             r.received_1d += lat * dt_s;
+            if (elapsed * 86400.0 <= 120.0 + 1.0e-6)
+                r.received_first_2min += lat * dt_s;
+        }
     }
     swmm_engine_end(eng);
 
@@ -227,6 +231,26 @@ TEST_F(WindowlessCoupling2DTest, AutoAreaRederivesOversizedDefaults) {
     EXPECT_EQ(drv.rpt_text.find("has exchange AREA"), std::string::npos)
         << "AUTO should rederive the baked-in oversized area";
     ASSERT_GT(drv.given_2d_net, 1.0) << "AUTO run produced no exchange";
+}
+
+// The AUTO-derived area must reach the LIVE exchange, not just silence the
+// warning: the AUTO run drains like an explicit row authored at the derived
+// area (1.25 × the 0.3 m pipe's 0.0707 m²) and unlike the 0.001 m² token it
+// replaced — a token small enough that its orifice cannot keep up with the
+// rain, so the two-minute receipt separates the areas.
+TEST_F(WindowlessCoupling2DTest, AutoAreaReachesLiveExchange) {
+    const double a_auto = 1.25 * 0.25 * 3.14159265358979323846 * 0.3 * 0.3;
+    RunResult tiny = run(dir_, "auto_live_tiny", 0.001, false);
+    RunResult drv  = run(dir_, "auto_live_auto", 0.001, true);
+    RunResult ref  = run(dir_, "auto_live_ref", a_auto, false);
+    ASSERT_TRUE(tiny.ok && drv.ok && ref.ok);
+    ASSERT_GT(ref.received_first_2min, 0.1) << "fixture produced no early exchange";
+    EXPECT_GT(std::fabs(tiny.received_first_2min - ref.received_first_2min),
+              0.5 * ref.received_first_2min)
+        << "fixture does not discriminate the 0.001 m² token from the derived area";
+    EXPECT_NEAR(drv.received_first_2min, ref.received_first_2min,
+                0.01 * ref.received_first_2min)
+        << "AUTO run should drain like an explicit derived-area row";
 }
 
 // The exchange conductance is non-negative everywhere and matches −∂Q/∂h_1d

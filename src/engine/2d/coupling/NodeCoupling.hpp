@@ -63,8 +63,9 @@ struct CouplingPoint {
     bool is_outfall;    ///< True if the SWMM node is an outfall
     bool has_flap_gate; ///< True if outfall has a flap gate
     /// True when the input authored an explicit AREA token for this point;
-    /// false = defaulted, eligible for the COUPLING_AREA AUTO derivation
-    /// (clamp(1.25 × largest connected conduit area, 0.05, 2.0) m²).
+    /// false = defaulted. COUPLING_AREA AUTO (clamp(1.25 × largest connected
+    /// conduit area, 0.05, 2.0) m²) replaces the area of every junction point
+    /// either way — mapper-written default tokens look authored.
     bool area_authored = true;
 };
 

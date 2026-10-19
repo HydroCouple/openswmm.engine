@@ -425,7 +425,7 @@ struct SolverOptions2D {
     double exchange_relax = 1.0;
     /// [2D_OPTIONS] COUPLING_AREA AUTO: derive exchange area at coupling-point
     /// resolve from the largest connected conduit (clamp(1.25·A_conduit,
-    /// 0.05, 2.0) m²) for rows that did not author an explicit area.
+    /// 0.05, 2.0) m²) for every junction coupling point, authored or not.
     bool   coupling_area_auto = false;
 
     /// [2D_OPTIONS] COUPLING_IN_FLOODING: book the 1D→2D spill into the 1D
