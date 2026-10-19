@@ -1301,12 +1301,13 @@ int SWMMEngine::initialize() noexcept {
                 }
                 pending_hotstart_checkpoint_ = hs->engine_checkpoint;
                 full_engine_restore = true;
-            } else if (!lid_restart) {
+            } else {
+                // Node LIDs too: their cells exist since lidnode::initialize
+                // and init_modules() leaves them alone, while the 2D router,
+                // the aquifer, infiltration and groundwater are only built
+                // there (an earlier apply dropped them without a word).
                 deferred_hotstart = std::move(hs);
                 hotstart_deferred_ = true;
-            } else {
-                rc = HotStartManager::apply(*hs, ctx_,
-                    [this](const std::string& m) { ctx_.warnings.push_back(m); });
             }
         } else {
             if (lid_restart)
@@ -1434,8 +1435,9 @@ int SWMMEngine::initialize() noexcept {
         }
     }
 
-    // [FILES] USE HOTSTART, native file, no node LIDs (see the dispatch
-    // above): the same call swmm_hotstart_apply() makes, at the same point.
+    // [FILES] USE HOTSTART, native file without a full engine checkpoint
+    // (see the dispatch above): the same call swmm_hotstart_apply() makes,
+    // at the same point.
     // As on the [FILES] path above, any shortfall is an error.
     if (deferred_hotstart) {
         const int rc = HotStartManager::apply(*deferred_hotstart, ctx_,

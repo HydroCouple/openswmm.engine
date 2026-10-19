@@ -768,6 +768,51 @@ TEST(GwTransportKernel, FilesNativeHotStartCarriesTheAquiferSpeciesAcrossARestar
     finish(r2);
 }
 
+// The same restart in a model whose storage node carries a LID. The native
+// file was applied before init_modules() whenever node LIDs were present,
+// so the aquifer, which does not exist yet then, was dropped without a word.
+TEST(GwTransportKernel, FilesNativeHotStartWithANodeLidCarriesTheAquifer) {
+    const std::string lid =
+        "[STORAGE]\nS1 -1.0 0.75 0 FUNCTIONAL 0 0 100 0 0\n\n"   // depth = layer sum
+        "[WEIRS]\nW1 S1 J1 TRANSVERSE 0.8 1.84 NO 0 0 NO\n\n"
+        "[XSECTIONS]\nW1 RECT_OPEN 0.2 0.2 0 0\n\n"
+        "[LID_CONTROLS]\nTrain NODE\nTrain SURFACE 150 .1\n"
+        "Train MEDIA 300 .45 .20 .08 125 75 75\nTrain AGGREGATE 300 .40 2500\n"
+        "Train BOTTOM 0 0\n\n"
+        "[LID_NODES]\nS1 Train 10\n\n"
+        "[LID_NODE_OUTLETS]\nW1 1 BOTTOM\n\n";
+    const fs::path hsf = fs::absolute(kOutDir / "gw_species_files_lid.hsf");
+    fs::remove(hsf);
+
+    double sat0 = 0.0, uns0 = 0.0;
+    {
+        Deck r = open("hs_files_lid_write", deck(Mesh::Tri, lid +
+            "[FILES]\nSAVE HOTSTART \"" + hsf.string() + "\" NATIVE\n\n"));
+        ASSERT_TRUE(r.opened);
+        ASSERT_TRUE(run(r));
+        ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
+        r.started = false;
+        const auto& t = r.eng->surfaceRouter2D().subsurface().transport();
+        sat0 = t.sat_mass[t.idx(0, 0)];
+        uns0 = t.unsat_mass[t.idx(0, 0)];
+        finish(r);
+    }
+    EXPECT_GT(sat0, 0.0);
+
+    Deck r2 = open("hs_files_lid_read", deck(Mesh::Tri, lid +
+        "[FILES]\nUSE HOTSTART \"" + hsf.string() + "\"\n\n"));
+    ASSERT_TRUE(r2.opened);
+    ASSERT_EQ(swmm_engine_initialize(r2.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r2.e, 1), SWMM_OK);
+    r2.started = true;
+    const auto& t2 = r2.eng->surfaceRouter2D().subsurface().transport();
+    EXPECT_NEAR(t2.sat_mass[t2.idx(0, 0)], sat0, 1.0e-9 * std::fabs(sat0))
+        << "the [FILES] restart did not resume the saturated store";
+    EXPECT_NEAR(t2.unsat_mass[t2.idx(0, 0)], uns0, 1.0e-9 * std::fabs(uns0) + 1.0e-12)
+        << "the [FILES] restart did not resume the column store";
+    finish(r2);
+}
+
 // ---------------------------------------------------------------------------
 // T7.5 — the results file carries the tuple.
 // ---------------------------------------------------------------------------

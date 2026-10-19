@@ -917,6 +917,24 @@ TEST(HotstartFormatRunTest, StorageNodeLidModelTakesLegacyFilesWithAWarning) {
     ASSERT_EQ(runEngine(deckFrom(base, dir, "lid_use_native", "USE HOTSTART " + q(a) + "\n"), w),
               SWMM_OK);
     EXPECT_FALSE(hasWarning(w, "carries no LID state"));
+
+    // With node LIDs too, the [FILES] row equals swmm_hotstart_open + _apply
+    // right after initialize(): applied before init_modules() it lost what
+    // the modules built afterwards.
+    const std::string threaded = "THREADS 1\n";
+    std::string single = base;
+    replaceOnce(single, "[OPTIONS]\n", "[OPTIONS]\n" + threaded);
+    const fs::path via_files = deckFrom(single, dir, "lid_native_files", "USE HOTSTART " + q(a) + "\n");
+    const fs::path via_capi  = deckFrom(single, dir, "lid_native_capi", "");
+    const fs::path cold      = deckFrom(single, dir, "lid_native_cold", "");
+    ASSERT_EQ(runDeck(via_files), SWMM_OK);
+    ASSERT_EQ(runDeck(via_capi, a), SWMM_OK);
+    ASSERT_EQ(runDeck(cold), SWMM_OK);
+    auto out = [](fs::path p) { return slurpBinary(p.replace_extension(".out")); };
+    ASSERT_FALSE(out(via_files).empty());
+    EXPECT_EQ(out(via_files), out(via_capi))
+        << "[FILES] USE HOTSTART of a native file differs from the C API restart";
+    EXPECT_NE(out(via_files), out(cold)) << "the native restart was not applied";
 }
 
 // A dated SAVE HOTSTART row is written from the state at the end of the first
