@@ -45,6 +45,7 @@
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_2d.h>
+#include <openswmm/engine/openswmm_massbalance.h>
 #include <openswmm/engine/openswmm_nodes.h>
 
 namespace fs = std::filesystem;
@@ -64,7 +65,8 @@ const char* const kTwoPhaseInflow =
     "IN_TS   0:40   0.0\n";
 
 std::string build_junction_model(const std::string& extra_2d_options,
-                                 const std::string& inflow_ts = kTwoPhaseInflow) {
+                                 const std::string& inflow_ts = kTwoPhaseInflow,
+                                 const std::string& end_time = "00:40:00") {
     return
         "[OPTIONS]\n"
         "FLOW_UNITS           CMS\n"
@@ -72,7 +74,7 @@ std::string build_junction_model(const std::string& extra_2d_options,
         "START_DATE           01/01/2026\n"
         "START_TIME           00:00:00\n"
         "END_DATE             01/01/2026\n"
-        "END_TIME             00:40:00\n"
+        "END_TIME             " + end_time + "\n"
         "REPORT_STEP          00:01:00\n"
         "ROUTING_STEP         1\n"
         "ALLOW_PONDING        NO\n"
@@ -134,16 +136,20 @@ struct RunResult {
     double cont_2d = 0.0;
     double cont_routing = 0.0;
     double spilled_1d_to_2d = 0.0;  // cumulative 1D→2D exchange (m³)
+    // 1D routing ledger (m³) and J1's booked volume at the end of the run.
+    double rt_external_in = 0.0, rt_outfall_out = 0.0, rt_coupling_out = 0.0,
+           rt_final_storage = 0.0, j1_volume_end = 0.0;
 };
 
 RunResult run_junction_model(const fs::path& dir, const std::string& tag,
                              const std::string& extra_2d_options,
-                             const std::string& inflow_ts = kTwoPhaseInflow) {
+                             const std::string& inflow_ts = kTwoPhaseInflow,
+                             const std::string& end_time = "00:40:00") {
     RunResult r;
     const fs::path inp = dir / (tag + ".inp");
     const fs::path rpt = dir / (tag + ".rpt");
     const fs::path out = dir / (tag + ".out");
-    { std::ofstream f(inp); f << build_junction_model(extra_2d_options, inflow_ts); }
+    { std::ofstream f(inp); f << build_junction_model(extra_2d_options, inflow_ts, end_time); }
 
     SWMM_Engine eng = swmm_engine_create();
     if (swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
@@ -179,7 +185,12 @@ RunResult run_junction_model(const fs::path& dir, const std::string& tag,
         }
     }
 
+    swmm_node_get_volume(eng, j1, &r.j1_volume_end);
     swmm_engine_end(eng);
+    swmm_get_routing_total(eng, SWMM_ROUTING_EXTERNAL, &r.rt_external_in);
+    swmm_get_routing_total(eng, SWMM_ROUTING_OUTFLOW, &r.rt_outfall_out);
+    swmm_get_routing_total(eng, SWMM_ROUTING_COUPLING_OUT, &r.rt_coupling_out);
+    swmm_get_routing_total(eng, SWMM_ROUTING_FINAL_STORAGE, &r.rt_final_storage);
     swmm_2d_get_mass_balance(eng, nullptr, nullptr, nullptr, &r.spilled_1d_to_2d,
                              nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
     swmm_2d_get_continuity_error(eng, &r.cont_2d);
@@ -268,4 +279,38 @@ TEST_F(JunctionCoupling2DTest, SpillDrawsTheWholePond) {
     EXPECT_GT(r.spilled_1d_to_2d, 0.6)
         << "the spill drew less than the pond holds";
     EXPECT_LT(std::abs(r.cont_2d), 0.05) << "2D continuity: " << r.cont_2d;
+}
+
+// ALLOW_PONDING is NO, but a coupled junction still ponds, so its pond is
+// stored water: ending the run while J1 holds one, the final stored volume
+// must include it. Reported storage counted a pond only under ALLOW_PONDING,
+// which read the whole pond as a +5.9 % routing continuity error here (the
+// −2.3 % left once it is counted is the dynamic wave's own node-continuity
+// error during the 12 s fill of this fixture).
+TEST_F(JunctionCoupling2DTest, CoupledPondCountsAsStorage) {
+    const std::string surcharge =
+        "IN_TS   0:00   0.10\n"
+        "IN_TS   0:40   0.10\n";
+    RunResult r = run_junction_model(dir_, "junction_pond_at_end", "", surcharge,
+                                     "00:03:00");
+    ASSERT_TRUE(r.ok) << "coupled junction run failed";
+    std::ofstream csv(dir_ / "junction_pond_at_end_massbalance.csv");
+    csv << "metric,value\n"
+        << "peak_j1_depth_m," << r.peak_j1_depth << "\n"
+        << "continuity_routing_frac," << r.cont_routing << "\n"
+        << "external_in_m3," << r.rt_external_in << "\n"
+        << "outfall_out_m3," << r.rt_outfall_out << "\n"
+        << "coupling_out_m3," << r.rt_coupling_out << "\n"
+        << "spilled_1d_to_2d_m3," << r.spilled_1d_to_2d << "\n"
+        << "final_storage_m3," << r.rt_final_storage << "\n"
+        << "j1_volume_end_m3," << r.j1_volume_end << "\n";
+    EXPECT_GT(r.peak_j1_depth, 1.0) << "fixture never ponded J1";
+    ASSERT_GT(r.j1_volume_end, 0.1) << "J1 holds no pond at the end";
+    // Routing totals are 1D-internal ft³; node volume is project m³.
+    constexpr double kFt3PerM3 = 35.314666721488590;
+    EXPECT_GT(r.rt_final_storage, r.j1_volume_end * kFt3PerM3)
+        << "final stored volume (" << r.rt_final_storage / kFt3PerM3
+        << " m³) does not include J1's pond (" << r.j1_volume_end << " m³)";
+    EXPECT_LT(std::abs(r.cont_routing), 0.03)
+        << "routing continuity error " << r.cont_routing;
 }

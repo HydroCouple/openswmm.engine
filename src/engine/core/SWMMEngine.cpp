@@ -10664,8 +10664,11 @@ double SWMMEngine::reportedNodeVolume(int i, double depth,
     // what keeps the flooding term out of the mass balance for these nodes:
     // updateRoutingMassBalance books overflow as a loss only while the volume
     // is at or below full, which is exactly the ponded/not-ponded distinction.
-    if (ctx_.options.allow_ponding && ctx_.nodes.ponded_area[ui] > 0.0 &&
-        depth > fd)
+    // A 2D-coupled node ponds whatever ALLOW_PONDING says (DynamicWave's
+    // is_coupled exception), so its pond is reported the same way.
+    const bool can_pond = ctx_.options.allow_ponding ||
+        (ui < ctx_.coupled_node.size() && ctx_.coupled_node[ui] != 0);
+    if (can_pond && ctx_.nodes.ponded_area[ui] > 0.0 && depth > fd)
         return volume;
 
     // Legacy convention: a plain junction contributes ZERO to reported
