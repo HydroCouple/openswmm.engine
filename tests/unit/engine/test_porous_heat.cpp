@@ -5,6 +5,7 @@
 #include "2d/heat/GroundPorewater.hpp"
 #include "2d/subsurface/SubsurfaceData.hpp"
 #include "2d/gw/GwTransportSections.hpp"
+#include <array>
 #include <cmath>
 #include <numeric>
 using namespace openswmm::twoD;
@@ -118,6 +119,64 @@ TEST(PorousHeat, DailySurfaceSignalHasAnalyticalAttenuationAndPhaseAtDepth) {
         const double z=(sample[a]+.5)/n,expected=amplitude*std::exp(-z/delta);
         EXPECT_NEAR(std::hypot(sine[a],cosine[a]),expected,.03*expected);
         EXPECT_NEAR(std::atan2(-cosine[a],sine[a]),z/delta,.02*2*pi);
+    }
+}
+TEST(PorousHeat, Vs2dhSaturatedColumnMatchesPublishedOgataBanksProfile) {
+    // USGS WRI 96-4230, test problem 1, table 1 (DOI: 10.3133/wri964230).
+    // The reference is a
+    // saturated 1-D column with a constant heated inflow.  Its published
+    // normalized temperatures are the Ogata-Banks continuous-step solution;
+    // the benchmark uses the listed hydraulic velocity, porosity, solid and
+    // water heat capacities, and longitudinal thermal dispersivity.
+    constexpr int n=240,steps=1600;
+    constexpr double length=60,dt=107.65/16,dx=length/n,phi=.5,theta=.5;
+    constexpr double darcy_flux=1.389e-4,alpha_l=10;
+    constexpr double cs=2.08e6,cw=4.2e6;
+    ThermalMaterial material;material.porosity=phi;material.grain_density=2080;
+    material.grain_specific_heat=1000;material.grain_conductivity=2.92;
+    material.water_heat_capacity=cw;
+    std::vector<double> moisture(n,theta),initial(n,20);
+    PorousHeatColumn column;
+    ASSERT_TRUE(column.initialize(1,depths(n,length),material,moisture,initial).empty());
+    const double volume=darcy_flux*dt;
+    const double effective_capacity=(1-phi)*cs+theta*cw;
+    const double dispersive_conductivity=alpha_l*darcy_flux*cw;
+    const double conductivity=material.conductivity(theta)+dispersive_conductivity;
+    ASSERT_NEAR(column.capacity.front()/dx,effective_capacity,1e-9);
+    ASSERT_GT(effective_capacity,0);ASSERT_GT(conductivity,dispersive_conductivity);
+    std::vector<double> external_water(n,0),external_energy(n,0),withdrawal(n,0);
+    for(int k=0;k<steps;++k) {
+        external_water.front()=volume;external_water.back()=-volume;
+        external_energy.front()=cw*volume*21;
+        withdrawal.back()=volume;
+        const auto adv=advectPorousColumn(column,moisture,external_water,external_energy,withdrawal);
+        ASSERT_TRUE(adv.error.empty())<<adv.error;
+        EXPECT_NEAR(adv.water_residual,0,1e-14);
+
+        std::vector<ThermalContact> contacts;contacts.reserve(n-1);
+        for(int i=1;i<n;++i)contacts.push_back({i-1,i,conductivity/dx});
+        const std::vector<ThermalBoundary> boundary={{0,2*conductivity/dx,21,0}};
+        const auto diff=solveThermalContacts(column.stores(),contacts,boundary,dt);
+        ASSERT_TRUE(diff.error.empty())<<diff.error;
+        column.energy=diff.energy;
+        std::fill(external_water.begin(),external_water.end(),0);
+        std::fill(external_energy.begin(),external_energy.end(),0);
+        std::fill(withdrawal.begin(),withdrawal.end(),0);
+    }
+    const std::array<double,6> positions={0,8,16,24,32,56};
+    const std::array<double,6> expected={1,.29815,.02441,.00047,0,0};
+    for(std::size_t k=0;k<positions.size();++k) {
+        const double x=positions[k];double temperature=21;
+        if(x>0) {
+            const double centered=x/dx-.5;
+            const auto lo=static_cast<std::size_t>(std::floor(centered));
+            const double fraction=centered-lo;
+            temperature=column.energy[lo]/column.capacity[lo]*(1-fraction)+
+                column.energy[lo+1]/column.capacity[lo+1]*fraction;
+        }
+        const double normalized=(temperature-20)/(21-20);
+        EXPECT_NEAR(normalized,expected[k],k==0?1e-12:.003)
+            <<"depth="<<x<<" m, VS2DH table value="<<expected[k];
     }
 }
 TEST(PorousHeat, MultipleFiniteOwnersShareTheGroundWithoutDuplicatingItsCapacity) {
