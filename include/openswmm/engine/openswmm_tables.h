@@ -334,6 +334,41 @@ SWMM_ENGINE_API int swmm_pattern_remove(SWMM_Engine engine, int idx);
  */
 SWMM_ENGINE_API int swmm_pattern_rename(SWMM_Engine engine, int idx, const char* newId);
 
+/**
+ * @brief Rename a timeseries or curve; rewrites every name-based reference
+ *        to it (gages, external inflows, outfall stage data, climate options,
+ *        snow radiation series, storage/divider/pump/inlet curves and 2D
+ *        boundary series/rating curves). Index-based references follow on
+ *        their own.
+ *
+ * @details Uniqueness is kind-scoped and case-insensitive, as in
+ *          swmm_timeseries_add / swmm_curve_add: a curve and a timeseries may
+ *          share a name. Control-rule text is stored verbatim and is not
+ *          rewritten.
+ *
+ * @param engine  Engine handle (SWMM_STATE_BUILDING or SWMM_STATE_OPENED).
+ * @param idx     Zero-based table index.
+ * @param newId   New null-terminated identifier.
+ * @returns SWMM_OK on success (also when @p newId equals the current id);
+ *          SWMM_ERR_BADPARAM if @p newId is empty or names another table of
+ *          the same kind; SWMM_ERR_LIFECYCLE if not editable;
+ *          SWMM_ERR_BADINDEX if @p idx is out of range.
+ */
+SWMM_ENGINE_API int swmm_table_rename(SWMM_Engine engine, int idx, const char* newId);
+
+/**
+ * @brief Change a curve's type (STORAGE … PUMP5) in place, keeping its points
+ *        and every reference to it.
+ *
+ * @param engine  Engine handle (SWMM_STATE_BUILDING or SWMM_STATE_OPENED).
+ * @param idx     Zero-based table index of a curve.
+ * @param type    New curve type code (1 = STORAGE … 11 = PUMP5).
+ * @returns SWMM_OK on success; SWMM_ERR_BADPARAM if @p idx is a timeseries or
+ *          @p type is not a curve type; SWMM_ERR_LIFECYCLE if not editable;
+ *          SWMM_ERR_BADINDEX if @p idx is out of range.
+ */
+SWMM_ENGINE_API int swmm_table_set_type(SWMM_Engine engine, int idx, int type);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

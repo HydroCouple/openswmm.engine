@@ -30,6 +30,9 @@
 #include "../edit/ObjectDeleter.hpp"
 #include "../../../include/openswmm/engine/openswmm_tables.h"
 #include "StringCase.hpp"
+#ifdef OPENSWMM_HAS_2D
+#include "../2d/SurfaceRouter2D.hpp"
+#endif
 
 namespace {
 
@@ -45,6 +48,47 @@ void for_each_pattern_name_ref(openswmm::SimulationContext& ctx, F&& fn) {
     for (auto& s : ctx.dwf_inflows.pat4)           fn(s);
     for (auto& s : ctx.aquifers.upper_evap_pat)    fn(s);
     fn(ctx.options.evap_recovery_pat);
+}
+
+// Visit every name-based reference to a timeseries (@p timeseries true) or to
+// a curve (false) with @p fn(std::string& slot). Most table references are
+// indices that follow a rename by themselves; these name copies are what the
+// .inp writer and deferred resolution read, so a rename must rewrite them.
+template <class F>
+void for_each_table_name_ref(openswmm::SWMMEngine& eng, bool timeseries, F&& fn) {
+    auto& ctx = eng.context();
+    using openswmm::OutfallType;
+    auto& O = ctx.node_subtypes.outfalls;
+    for (int r = 0; r < O.count(); ++r) {
+        const auto ur = static_cast<std::size_t>(r);
+        if (ur >= O.param_name.size()) break;
+        const bool ts = O.bc_type[ur] == OutfallType::TIMESERIES;
+        const bool tidal = O.bc_type[ur] == OutfallType::TIDAL;
+        if ((timeseries && ts) || (!timeseries && tidal)) fn(O.param_name[ur]);
+    }
+    if (timeseries) {
+        for (auto& s : ctx.gages.ts_name)          fn(s);
+        for (auto& s : ctx.ext_inflows.ts_name)    fn(s);
+        fn(ctx.options.evap_ts_name);
+        fn(ctx.options.temp_ts_name);
+        fn(ctx.options.humidity_ts_name);
+        fn(ctx.snowpacks.config.shortwave.series);
+        fn(ctx.snowpacks.config.longwave.series);
+    } else {
+        for (auto& s : ctx.node_subtypes.storages.curve_name) fn(s);
+        for (auto& s : ctx.node_subtypes.dividers.curve_name) fn(s);
+        for (auto& s : ctx.links.pump_curve_name)             fn(s);
+        for (auto& s : ctx.inlets.curve_id)                   fn(s);
+    }
+#ifdef OPENSWMM_HAS_2D
+    auto& b = eng.surfaceRouter2D().boundary();
+    if (timeseries) {
+        for (auto& s : b.edge_bc_tseries_name)      fn(s);
+        for (auto& s : b.edge_bc_flow_tseries_name) fn(s);
+    } else {
+        for (auto& s : b.edge_bc_rating_curve_name) fn(s);
+    }
+#endif
 }
 
 } // namespace
@@ -294,6 +338,51 @@ SWMM_ENGINE_API int swmm_pattern_remove(SWMM_Engine engine, int idx) {
 
     // Same code path as swmm_pattern_delete, minus the impact report.
     openswmm::edit::delete_pattern(ctx, idx);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_table_rename(SWMM_Engine engine, int idx, const char* newId) {
+    CHECK_HANDLE(engine);
+    if (!newId || newId[0] == '\0') return SWMM_ERR_BADPARAM;
+    auto* eng = to_engine(engine);
+    auto& ctx = eng->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_tables());
+
+    const auto u = static_cast<std::size_t>(idx);
+    const bool timeseries = ctx.tables.tables[u].type == openswmm::TableType::TIMESERIES;
+    const std::string next = newId;
+    if (ctx.tables.tables[u].id == next) return SWMM_OK;
+
+    // Kind-scoped, case-insensitive uniqueness, as swmm_timeseries_add /
+    // swmm_curve_add enforce (a curve and a timeseries may share a name).
+    const int clash = ctx.tables.find_by_kind(next, timeseries);
+    if (clash >= 0 && clash != idx) return SWMM_ERR_BADPARAM;
+
+    const std::string prev = ctx.tables.tables[u].id;
+    ctx.tables.tables[u].id = next;
+    ctx.tables.rebuild_index();
+
+    for_each_table_name_ref(*eng, timeseries, [&](std::string& slot) {
+        if (!slot.empty() && openswmm::ieq(slot, prev)) slot = next;
+    });
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_table_set_type(SWMM_Engine engine, int idx, int type) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_tables());
+    const auto u = static_cast<std::size_t>(idx);
+    const auto ts = openswmm::TableType::TIMESERIES;
+    // Curve-to-curve only: a timeseries is a different object kind, and the
+    // kind-scoped name index (find_by_kind) must stay valid.
+    if (ctx.tables.tables[u].type == ts || type == static_cast<int>(ts)
+        || type < static_cast<int>(openswmm::TableType::CURVE_STORAGE)
+        || type > static_cast<int>(openswmm::TableType::CURVE_PUMP5))
+        return SWMM_ERR_BADPARAM;
+    ctx.tables.tables[u].type = static_cast<openswmm::TableType>(type);
     return SWMM_OK;
 }
 
