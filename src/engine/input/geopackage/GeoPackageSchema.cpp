@@ -1383,6 +1383,23 @@ CREATE INDEX IF NOT EXISTS idx_mesh2d_vc_node
 )SQL";
 static_assert(sizeof(MESH_2D_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
 
+// [2D_NODE_COUPLING]: per-node coupling type, a node attribute kept with or
+// without a mesh. params holds the authored KEY=VALUE tokens as written in
+// the section (empty when none).
+static const char* NODE_2D_COUPLING_DDL = R"SQL(
+CREATE TABLE IF NOT EXISTS node_2d_coupling (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    node_id         TEXT NOT NULL,
+    coupling_type   TEXT NOT NULL,
+    params          TEXT NOT NULL DEFAULT '',
+    UNIQUE(simulation_id, node_id),
+    FOREIGN KEY (simulation_id, node_id)
+        REFERENCES nodes(simulation_id, node_id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+)SQL";
+
 // Repeated-row [2D_TRIANGLE_NODE_MAP]: one table row per coupling row, as
 // the model holds them (several nodes may couple to one triangle). Files
 // written before this were keyed by triangle alone; create_schema() rebuilds
@@ -1479,6 +1496,7 @@ void create_schema(sqlite3* db) {
     add_missing("mesh_2d_vertex_coupling", "coupling_area_set", "INTEGER");
     add_missing("mesh_2d_triangle_coupling", "coupling_cd_set", "INTEGER");
     add_missing("mesh_2d_triangle_coupling", "coupling_area_set", "INTEGER");
+    exec(db, NODE_2D_COUPLING_DDL);
     exec(db, "CREATE TABLE IF NOT EXISTS surface_ownership_2d_input (simulation_id TEXT PRIMARY KEY, sections TEXT NOT NULL)");
 }
 

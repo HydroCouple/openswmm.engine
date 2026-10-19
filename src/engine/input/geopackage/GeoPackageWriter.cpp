@@ -11,6 +11,7 @@
 #include "GpkgUtils.hpp"
 #include "GpkgGeometry.hpp"
 
+#include "core/NodeCoupling2D.hpp"
 #include "core/SimulationContext.hpp"
 #include "core/UnitConversion.hpp"
 #include "data/StorageGeometry.hpp"
@@ -1267,6 +1268,30 @@ static void write_lid_controls(sqlite3* db, const SimulationContext& ctx,
     }
 }
 
+// [2D_NODE_COUPLING] rows: node, type token, authored KEY=VALUE text. Node
+// data, written whether or not a mesh is loaded. Older files lacking the
+// table gain it through create_schema().
+static void write_node_coupling_2d(sqlite3* db, const SimulationContext& ctx,
+                                   const std::string& sim) {
+    auto del = prepare(db, "DELETE FROM node_2d_coupling WHERE simulation_id=?");
+    bind_text(del.get(), 1, sim);
+    if (sqlite3_step(del.get()) != SQLITE_DONE)
+        throw std::runtime_error("Cannot replace 2D node coupling rows");
+    const auto& rows = ctx.node_coupling_2d;
+    auto stmt = prepare(db, "INSERT INTO node_2d_coupling "
+                            "(simulation_id, node_id, coupling_type, params) VALUES (?,?,?,?)");
+    for (int r = 0; r < rows.count(); ++r) {
+        sqlite3_reset(stmt.get());
+        sqlite3_clear_bindings(stmt.get());
+        bind_text(stmt.get(), 1, sim);
+        bind_text(stmt.get(), 2, ctx.node_names.name_of(rows.node[static_cast<std::size_t>(r)]));
+        bind_text(stmt.get(), 3, nodecoupling2d::typeToken(rows.type[static_cast<std::size_t>(r)]));
+        bind_text(stmt.get(), 4, nodecoupling2d::formatParams(ctx, r));
+        if (sqlite3_step(stmt.get()) != SQLITE_DONE)
+            throw std::runtime_error("Cannot write 2D node coupling row");
+    }
+}
+
 static void write_lid_nodes(sqlite3* db, const SimulationContext& ctx, const std::string& sim) {
     // Replace this simulation's complete stack, including deleted rows.
     for (const char* table : {"lid_richards_materials", "lid_richards_options", "lid_layer_treatment", "lid_node_outlets", "lid_nodes", "lid_node_layers"}) {
@@ -2260,6 +2285,7 @@ void write_model(sqlite3* db, const SimulationContext& ctx,
     write_streets(db, ctx, simulation_id);
     write_inlets(db, ctx, simulation_id);
     write_inlet_usage(db, ctx, simulation_id);
+    write_node_coupling_2d(db, ctx, simulation_id);
     write_controls(db, ctx, simulation_id);
 
     // Part E — 2D mesh model definition + solver options. No-ops when the

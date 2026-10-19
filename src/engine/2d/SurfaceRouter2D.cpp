@@ -23,6 +23,7 @@
 #include "solver/SurfaceSolverFactory.hpp"
 #endif
 #include "../core/DateTime.hpp"
+#include "../core/NodeCoupling2D.hpp"
 #include "../hydrology/LidNodeAquifer.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
@@ -518,6 +519,68 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     coupling_points_ = buildCouplingPoints(mesh_, ctx);
     for (auto& cp : coupling_points_)
         if (!cp.cd_authored) cp.cd = options_.coupling_cd;
+
+    // [2D_NODE_COUPLING]: a node's coupling type decides whether its map rows
+    // couple at all. Rows are checked against the node class here (a node's
+    // type can change after the row was read), map rows naming a NONE node
+    // are dropped with one warning, and a node AUTHORED as coupleable that no
+    // map row names is reported — a stale mapping — without failing the run.
+    {
+        const auto& rows = ctx.node_coupling_2d;
+        std::vector<int> row_of_node(static_cast<std::size_t>(ctx.n_nodes()), -1);
+        for (int r = 0; r < rows.count(); ++r) {
+            const int n = rows.node[static_cast<std::size_t>(r)];
+            const auto why =
+                nodecoupling2d::checkType(ctx, n, rows.type[static_cast<std::size_t>(r)]);
+            if (!why.empty())
+                throw std::runtime_error("[2D_NODE_COUPLING] node '" +
+                                         ctx.node_names.name_of(n) + "': " + why);
+            row_of_node[static_cast<std::size_t>(n)] = r;
+        }
+        auto type_of = [&](int n) {
+            const int r = row_of_node[static_cast<std::size_t>(n)];
+            return r >= 0 ? rows.type[static_cast<std::size_t>(r)]
+                          : nodecoupling2d::defaultType(ctx, n);
+        };
+        auto first_names = [&](const std::vector<int>& nodes) {
+            std::string s;
+            for (std::size_t i = 0; i < nodes.size() && i < 8; ++i)
+                s += (i ? ", " : "") + ctx.node_names.name_of(nodes[i]);
+            return nodes.size() > 8 ? s + ", ..." : s;
+        };
+
+        std::vector<int> ignored;
+        std::vector<std::uint8_t> mapped(static_cast<std::size_t>(ctx.n_nodes()), 0);
+        coupling_points_.erase(std::remove_if(coupling_points_.begin(), coupling_points_.end(),
+            [&](const CouplingPoint& cp) {
+                if (type_of(cp.node_idx) != NodeCoupling2DType::NONE) {
+                    mapped[static_cast<std::size_t>(cp.node_idx)] = 1;
+                    return false;
+                }
+                if (std::find(ignored.begin(), ignored.end(), cp.node_idx) == ignored.end())
+                    ignored.push_back(cp.node_idx);
+                return true;
+            }), coupling_points_.end());
+        if (!ignored.empty())
+            ctx.warnings.push_back(
+                "WARNING: 2D map rows ignored for " + std::to_string(ignored.size()) +
+                " node(s) that are not coupleable ([2D_NODE_COUPLING] type NONE, "
+                "explicit or the inlet/virtual-junction default): " + first_names(ignored));
+
+        std::vector<int> unmapped;
+        for (int r = 0; r < rows.count(); ++r) {
+            const int n = rows.node[static_cast<std::size_t>(r)];
+            if (rows.type[static_cast<std::size_t>(r)] != NodeCoupling2DType::NONE &&
+                !mapped[static_cast<std::size_t>(n)])
+                unmapped.push_back(n);
+        }
+        if (!unmapped.empty())
+            ctx.warnings.push_back(
+                "WARNING: " + std::to_string(unmapped.size()) +
+                " node(s) authored as coupleable in [2D_NODE_COUPLING] have no "
+                "[2D_VERTEX_NODE_MAP] / [2D_TRIANGLE_NODE_MAP] row and do not "
+                "couple: " + first_names(unmapped));
+    }
 
     // Imported/generated maps may include unused outfalls. They cannot
     // exchange through the hydraulic network; omit their mappings before

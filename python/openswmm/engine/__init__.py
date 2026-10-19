@@ -317,7 +317,7 @@ from ._enums import (
     ForcingMode, ForcingTarget, ForcingType, ForcingPersist, PatternType,
     # 2D surface routing
     SurfaceForcingMode, SurfaceBoundaryType,
-    SurfaceInfilMethod, SurfaceInfilDest,
+    SurfaceInfilMethod, SurfaceInfilDest, NodeCoupling2DType,
     # Nodes / editing
     DividerType, RefType,
     # Tables / model files
@@ -395,7 +395,7 @@ __all__ = [
     "ForcingMode", "ForcingTarget", "ForcingType", "ForcingPersist", "PatternType",
     # --- Enumerations: 2D surface routing ---
     "SurfaceForcingMode", "SurfaceBoundaryType",
-    "SurfaceInfilMethod", "SurfaceInfilDest",
+    "SurfaceInfilMethod", "SurfaceInfilDest", "NodeCoupling2DType",
     "DividerType", "RefType",
     "TableType", "FilePathRole", "UserFlagType",
     # --- Enumerations: transport processes ---

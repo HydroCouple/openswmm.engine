@@ -53,6 +53,7 @@
 #include "AtomicOutputFile.hpp"
 #include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "Constants.hpp"
+#include "NodeCoupling2D.hpp"
 #include "PathResolver.hpp"
 #include "SimulationContext.hpp"
 #include "../data/StorageGeometry.hpp"
@@ -3731,6 +3732,18 @@ int writeInpFile(const SimulationContext&  ctx_internal,
                               : std::make_error_code(std::errc::io_error);
         note("Cannot serialize model output '" + path + "': " + ec.message());
         return -1;
+    }
+    // [2D_NODE_COUPLING] — node data, written whether or not a mesh exists
+    // (a model is flagged before it is meshed: the flag filters the mapper).
+    if (ctx.node_coupling_2d.count() > 0) {
+        if (swmm5) {
+            note("SWMM 5 export omits [2D_NODE_COUPLING]");
+        } else {
+            sec(f, "2D_NODE_COUPLING");
+            std::fprintf(f, ";;%-14s %-8s %s\n", "Node", "Type", "KEY=VALUE ...");
+            for (int r = 0; r < ctx.node_coupling_2d.count(); ++r)
+                std::fprintf(f, "%s\n", nodecoupling2d::formatRow(ctx, r).c_str());
+        }
     }
     if (!swmm5 && !write2DSections(f, ctx, dst_dir, force_abs_paths, warnings, opts))
         return -1;

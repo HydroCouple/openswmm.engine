@@ -32,6 +32,7 @@
 #include "../input/InputReader.hpp"
 #include "../input/PostParseResolver.hpp"
 #include "../core/InpWriter.hpp"
+#include "../core/NodeCoupling2D.hpp"
 #include "../core/SimulationContext.hpp"
 
 // Section handler includes
@@ -117,6 +118,8 @@ void DefaultInputPlugin::register_builtin_handlers() {
     registry_.register_builtin("2D_SNOW_OPTIONS", input::handle_mesh_snow_options);
     registry_.register_builtin("2D_SNOW_DEFAULTS", input::handle_mesh_snow_defaults);
     registry_.register_builtin("2D_SNOW", input::handle_mesh_snow_cells);
+    // Per-node 1D↔2D coupling type: node data, read with or without a mesh.
+    registry_.register_builtin("2D_NODE_COUPLING", nodecoupling2d::readSection);
 
     // Inflows / loading
     registry_.register_builtin("INFLOWS",       input::handle_inflows);

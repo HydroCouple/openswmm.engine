@@ -835,6 +835,17 @@ class SurfaceBoundaryType(IntEnum):
     RATING_CURVE = 4
 
 
+class NodeCoupling2DType(IntEnum):
+    """Per-node 1D-2D coupling structure type. Mirrors ``SWMM_NodeCoupling2DType``."""
+
+    NONE = 0
+    MANHOLE = 1
+    GRATE = 2
+    CURB = 3
+    OPEN = 4
+    OUTFALL = 5
+
+
 class SurfaceInfilMethod(IntEnum):
     """Per-cell 2D infiltration method. Mirrors ``SWMM_INFIL2D_*``."""
 

@@ -944,6 +944,27 @@ class SurfaceBoundaryType(IntEnum):
     RATING_CURVE = 4
 
 
+class NodeCoupling2DType(IntEnum):
+    """Per-node 1D-2D coupling structure type (C{[2D_NODE_COUPLING]}).
+
+    Mirrors C{SWMM_NodeCoupling2DType} in C{openswmm_2d.h}.
+
+    @cvar NONE: Not coupleable; map rows naming the node are ignored.
+    @cvar MANHOLE: Manhole (default for junctions and dividers).
+    @cvar GRATE: Grate inlet.
+    @cvar CURB: Curb opening.
+    @cvar OPEN: Open-top storage under the mesh (storage default).
+    @cvar OUTFALL: Tailwater and discharge delivery (outfall default).
+    """
+
+    NONE = 0
+    MANHOLE = 1
+    GRATE = 2
+    CURB = 3
+    OPEN = 4
+    OUTFALL = 5
+
+
 class SurfaceInfilMethod(IntEnum):
     """Per-cell 2D infiltration method (C{[2D_INFILTRATION*]}).
 

@@ -16,6 +16,7 @@
 #include "GpkgUtils.hpp"
 #include "GpkgGeometry.hpp"
 
+#include "core/NodeCoupling2D.hpp"
 #include "core/SimulationContext.hpp"
 #include "core/UnitConversion.hpp"
 #include "data/NodeData.hpp"
@@ -1876,6 +1877,28 @@ static void read_inlets(sqlite3* db, SimulationContext& ctx, const std::string& 
     }
 }
 
+// [2D_NODE_COUPLING] rows, replayed through the section parser so the type /
+// key / value rules are the .inp ones. The node FK makes an unknown node
+// impossible in a well-formed file; one that still slips through is an error
+// rather than a row left on the parse-time deferral list.
+static void read_node_coupling_2d(sqlite3* db, SimulationContext& ctx,
+                                  const std::string& sim_id) {
+    if (!table_exists(db, "node_2d_coupling")) return;
+    auto stmt = prepare(db, "SELECT node_id, coupling_type, params FROM node_2d_coupling "
+                            "WHERE simulation_id = ? ORDER BY fid");
+    bind_text(stmt.get(), 1, sim_id);
+    std::vector<std::string> lines;
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW)
+        lines.push_back(column_text(stmt.get(), 0) + " " + column_text(stmt.get(), 1) +
+                        " " + column_text(stmt.get(), 2));
+    const auto deferred_before = ctx.deferred_section_rows.size();
+    nodecoupling2d::readSection(ctx, lines);
+    for (auto i = deferred_before; i < ctx.deferred_section_rows.size(); ++i)
+        ctx.errors.push_back("node_2d_coupling names an unknown node: " +
+                             ctx.deferred_section_rows[i].second);
+    ctx.deferred_section_rows.resize(deferred_before);
+}
+
 static void read_inlet_usage(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
     if (!table_exists(db, "inlet_usage")) return;
     auto stmt = prepare(db,
@@ -2238,6 +2261,7 @@ int read_model(sqlite3* db, SimulationContext& ctx,
         read_streets(db, ctx, simulation_id);
         read_inlets(db, ctx, simulation_id);
         read_inlet_usage(db, ctx, simulation_id);
+        read_node_coupling_2d(db, ctx, simulation_id);
         read_controls(db, ctx, simulation_id);
 
         // Part E — 2D mesh model definition. Options keys (2D_*) were

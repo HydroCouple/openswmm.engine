@@ -47,6 +47,7 @@ from ._enums import (
     SurfaceForcingMode,
     ForcingPersist,
     SurfaceBoundaryType,
+    NodeCoupling2DType,
     SurfaceInfilMethod,
     SurfaceInfilDest,
 )
@@ -452,6 +453,34 @@ class Surface2D:
     ) -> tuple[int, int, float, float]:
         """Read one authored row: C{(tri_idx, node_idx, cd, area)};
         C{node_idx} is C{-1} if unresolved."""
+        ...
+
+    # ====================================================================
+    # Per-node coupling type ([2D_NODE_COUPLING])
+    # ====================================================================
+
+    def get_node_coupling_type(self, node_idx: int) -> tuple[NodeCoupling2DType, bool]:
+        """Effective coupling type and whether it is authored (else the class default)."""
+        ...
+
+    def get_node_coupling_default_type(self, node_idx: int) -> NodeCoupling2DType:
+        """Class default coupling type of a node."""
+        ...
+
+    def set_node_coupling_type(self, node_idx: int, coupling_type: int) -> None:
+        """Author a node's coupling type (drops parameters that do not apply)."""
+        ...
+
+    def reset_node_coupling(self, node_idx: int) -> None:
+        """Remove a node's [2D_NODE_COUPLING] row."""
+        ...
+
+    def get_node_coupling_param(self, node_idx: int, key: str) -> str:
+        """Authored parameter token, or "" when not authored."""
+        ...
+
+    def set_node_coupling_param(self, node_idx: int, key: str, value: object) -> None:
+        """Author a parameter from its token; None or "" clears it."""
         ...
 
     # ====================================================================

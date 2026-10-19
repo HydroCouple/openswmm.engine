@@ -104,6 +104,7 @@
 #include "../data/InitialQualityData.hpp"
 #include "../data/InflowData.hpp"
 #include "../data/InfraData.hpp"
+#include "../data/NodeCoupling2DData.hpp"
 #include "../hydraulics/Transect.hpp"
 #include "../data/HydrologyData.hpp"
 #include "../data/ForcingData.hpp"
@@ -1090,6 +1091,15 @@ struct SimulationContext {
     std::vector<std::string> errors;
 
     /**
+     * @brief [2D_NODE_COUPLING] rows: per-node coupling structure type and its
+     *        authored parameters (model data, kept with or without a mesh).
+     * @details Nodes without a row take their class default
+     *          (core/NodeCoupling2D.hpp). Keyed by node index; delete_node
+     *          drops and renumbers.
+     */
+    NodeCoupling2DRows node_coupling_2d;
+
+    /**
      * @brief Per-node flag: 1 if the node is a 2D-coupled junction (a non-outfall
      *        coupling point), else 0. Empty when the 2D module is inactive.
      * @details Populated by SurfaceRouter2D::initialize from the coupling map.
@@ -1949,6 +1959,7 @@ struct SimulationContext {
         // join rows or append its rules to the freshly parsed rule store.
         node_subtypes.clear();
         link_subtypes.clear();
+        node_coupling_2d.clear();
         control_rules = ControlRuleStore{};
         subcatches = SubcatchData{};
         gages      = GageData{};

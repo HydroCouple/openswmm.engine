@@ -528,6 +528,10 @@ if(OPENSWMM_BUILD_2D)
     # Remap 1D↔2D pushes through.
     add_gtest_unit(test_engine_2d_triangle_coupling_rows
                    test_2d_triangle_coupling_rows.cpp)
+    # [2D_NODE_COUPLING] per-node coupling type: parse, defaults, validation,
+    # C API, node delete, .inp/GeoPackage round trip, router filter.
+    add_gtest_unit(test_engine_2d_node_coupling_section
+                   test_2d_node_coupling_section.cpp)
     # 1D↔2D coupling unit-system equivalence — runs the same physical coupled
     # model in CMS and CFS and asserts matching 2D depths/continuity. Guards the
     # always-feet⇄metres coupling factors (the 1D side is always feet-internal).

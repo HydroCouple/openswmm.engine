@@ -538,6 +538,8 @@ CascadeResult delete_node(SimulationContext& ctx, int node_idx) {
     // Drop this node's subtype row and shift the side-table join keys for nodes
     // after node_idx (mirrors the base-array index shift just done above).
     ctx.node_subtypes.erase_node(node_idx, ctx.nodes.count());
+    // [2D_NODE_COUPLING] row for this node, and the index shift after it.
+    ctx.node_coupling_2d.erase_node(node_idx);
 
     // --- Step 6: renumber cross-references for nodes with index > node_idx ---
     renumber_refs(ctx.links.node1, node_idx);
