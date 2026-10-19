@@ -34,8 +34,8 @@
  *
  * ### [COVERAGES] format
  * ```
- * ;; Subcatch  LandUse  Percent
- * S1           Residential  60.0
+ * ;; Subcatch  LandUse  Percent  [LandUse  Percent ...]
+ * S1           Residential  60.0  Commercial  40.0
  * ```
  *
  * ### [BUILDUP] format
@@ -256,16 +256,39 @@ void handle_coverages(SimulationContext& ctx, const std::vector<std::string>& li
 
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.size() < 3) continue;
-        // Subcatch  LandUse  Percent
+        if (tok.empty()) continue;
+        // Subcatch  LandUse  Percent  [LandUse  Percent ...]
+        // Legacy subcatch_readLanduseParams (subcatch.c): every pair is read,
+        // the last value for a repeated land use wins, and an unknown name,
+        // a land use without a percent or a bad number is an error.
+        if (tok.size() < 3) {
+            ctx.errors.push_back(format_error(ERR_ITEMS, ""));
+            continue;
+        }
 
         const int sub_idx = ctx.subcatch_names.find(tok[0]);
-        if (sub_idx < 0) continue;
+        if (sub_idx < 0) {
+            ctx.errors.push_back(format_error(ERR_NAME, tok[0]));
+            continue;
+        }
 
-        const int lu_idx = ctx.landuse_names.find(tok[1]);
-        if (lu_idx < 0) continue;
-
-        ctx.subcatches.coverage[sub_idx * n_landuses + lu_idx] = to_double(tok[2]);
+        for (std::size_t k = 1; k < tok.size(); k += 2) {
+            const int lu_idx = ctx.landuse_names.find(tok[k]);
+            if (lu_idx < 0) {
+                ctx.errors.push_back(format_error(ERR_NAME, tok[k]));
+                break;
+            }
+            if (k + 1 >= tok.size()) {
+                ctx.errors.push_back(format_error(ERR_ITEMS, ""));
+                break;
+            }
+            double pct = 0.0;
+            if (!parse_double_strict(tok[k + 1], pct)) {
+                ctx.errors.push_back(format_error(ERR_NUMBER, tok[k + 1]));
+                break;
+            }
+            ctx.subcatches.coverage[sub_idx * n_landuses + lu_idx] = pct;
+        }
     }
 }
 

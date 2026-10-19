@@ -23,6 +23,10 @@ retroactive.
 
 ## [Unreleased]
 
+### Hot-start follow-ups and land-use parity (2026-10-19)
+
+- **`[COVERAGES]` reads every land use on a line.** `S1 RES 60 COM 40` set only RES; COM was dropped without a message. Every pair is read now, as in EPA SWMM, and a line naming an unknown subcatchment or land use (ERROR 209), a land use without a percent (ERROR 203) or a percent that is not a number (ERROR 211) is an error, as it is there. These lines were skipped silently before.
+
 ### `SAVE HOTSTART` format keyword (2026-10-18)
 
 - **`[FILES] SAVE HOTSTART "f" [date time] LEGACY|NATIVE`.** An optional trailing keyword picks the file format. NATIVE writes the OpenSWMM file `swmm_hotstart_save` writes, so a deck alone can now restart water age, reaction species, the aquifer with its species and the 2D surface state saved with it, storage-node LID cells and snow. A row without the keyword is unchanged in meaning and in written text: the SWMM 5 `.hsf`, or native when storage nodes carry LID units. LEGACY forces the SWMM 5 file and warns when that drops LID state. SWMM 5 export omits the keyword; EPA SWMM 5 itself ignores it, but on a dated row then saves at the end of the run.

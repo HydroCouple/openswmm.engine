@@ -260,6 +260,47 @@ TEST_F(QualityRoundtripTest, CoveragesAndLoadingsSurviveInpRoundtrip) {
 }
 
 // ============================================================================
+// [COVERAGES] reads every land-use pair of a line, as legacy
+// subcatch_readLanduseParams does, and raises its errors
+// ============================================================================
+
+TEST_F(QualityRoundtripTest, CoverageLineWithSeveralLandUsesReadsEveryPair) {
+    std::string text = quality_model();
+    const std::string two_lines = "S1  Res  60\nS1  Com  40\n";
+    text.replace(text.find(two_lines), two_lines.size(), "S1  Res  60  Com  40\n");
+    open_model("cov_pairs", text);
+
+    const int s1 = swmm_subcatch_index(engine, "S1");
+    double v = -1.0;
+    ASSERT_EQ(swmm_subcatch_get_coverage(engine, s1, swmm_landuse_index(engine, "Res"), &v), SWMM_OK);
+    EXPECT_DOUBLE_EQ(v, 60.0);
+    ASSERT_EQ(swmm_subcatch_get_coverage(engine, s1, swmm_landuse_index(engine, "Com"), &v), SWMM_OK);
+    EXPECT_DOUBLE_EQ(v, 40.0);
+}
+
+TEST_F(QualityRoundtripTest, CoverageErrorsMatchLegacy) {
+    const struct { const char* line; const char* error; } cases[] = {
+        {"S1  Res  60  Bogus  40\n", "ERROR 209"},   // undefined land use
+        {"Sx  Res  60\n",            "ERROR 209"},   // undefined subcatchment
+        {"S1  Res  60  Com\n",       "ERROR 203"},   // land use with no percent
+        {"S1  Res  sixty\n",         "ERROR 211"},   // percent not a number
+    };
+    int n = 0;
+    for (const auto& c : cases) {
+        std::string text = quality_model();
+        const std::string two_lines = "S1  Res  60\nS1  Com  40\n";
+        text.replace(text.find(two_lines), two_lines.size(), c.line);
+        const fs::path inp = kArtifactDir / ("cov_error_" + std::to_string(n++) + ".inp");
+        write_file(inp, text);
+        SWMM_Engine e = swmm_engine_create();
+        EXPECT_NE(swmm_engine_open(e, inp.string().c_str(), "", "", nullptr), SWMM_OK) << c.line;
+        const std::string msg = swmm_get_last_error_msg(e);
+        EXPECT_NE(msg.find(c.error), std::string::npos) << c.line << " gave: " << msg;
+        swmm_engine_destroy(e);
+    }
+}
+
+// ============================================================================
 // Loadings setter + bulk coverage getter
 // ============================================================================
 
