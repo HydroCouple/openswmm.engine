@@ -77,7 +77,20 @@ inline void computeQuadVfr(MeshData& mesh, int t);
 
 
 void buildMeshTopology(MeshData& mesh) {
+    (void)buildMeshTopologyCancellable(mesh, {});
+}
+
+bool buildMeshTopologyCancellable(MeshData& mesh, const std::function<bool(int)>& progress) {
     const int nt = mesh.n_triangles();
+    const auto cancelled = [&](int value) { return progress && progress(value); };
+    const auto report = [&](int start, int width, int cell, int count) {
+        if (!progress) return false;
+        const int stride = std::max(1, count / 100);
+        if ((cell + 1) % stride != 0 && cell + 1 != count) return false;
+        const int pct = count > 0 ? start + width * (cell + 1) / count : start + width;
+        return cancelled(pct);
+    };
+    if (cancelled(0)) return false;
 
     // --- 1. Build edge-neighbour adjacency ---
 
@@ -91,6 +104,7 @@ void buildMeshTopology(MeshData& mesh) {
         for (int k = 0; k < kMaxCellVerts; ++k)
             mesh.cell_nbr[static_cast<std::size_t>(MeshData::slot(t, k))] =
                 (k < nv) ? -1 : -2;
+        if (report(0, 10, t, nt)) return false;
     }
 
     for (int t = 0; t < nt; ++t) {
@@ -113,6 +127,7 @@ void buildMeshTopology(MeshData& mesh) {
                     MeshData::slot(first.cell_idx, first.local_edge))] = t;
             }
         }
+        if (report(10, 25, t, nt)) return false;
     }
 
     // --- 2. Compute cell geometry ---
@@ -168,11 +183,15 @@ void buildMeshTopology(MeshData& mesh) {
             mesh.tri_cz[t] = 0.25 * (z[0] + z[1] + z[2] + z[3]);
             mesh.tri_area[t] = area;
         }
+        if (report(35, 25, t, nt)) return false;
     }
     // Quad VFR side data (needs the connectivity + z only; sized on first quad).
     mesh.quad_vfr_z.clear();
     mesh.quad_vfr_a.clear();
-    for (int t = 0; t < nt; ++t) computeQuadVfr(mesh, t);
+    for (int t = 0; t < nt; ++t) {
+        computeQuadVfr(mesh, t);
+        if (report(60, 5, t, nt)) return false;
+    }
 
     // --- 3. Compute edge geometry ---
 
@@ -233,11 +252,21 @@ void buildMeshTopology(MeshData& mesh) {
             mesh.edge_dist_c[idx] =
                 to_mid_x * mesh.edge_nx[idx] + to_mid_y * mesh.edge_ny[idx];
         }
+        if (report(65, 35, t, nt)) return false;
     }
+    return !cancelled(100);
 }
 
 
 std::string validateMesh(const MeshData& mesh) {
+    bool cancelled = false;
+    return validateMeshCancellable(mesh, {}, cancelled);
+}
+
+std::string validateMeshCancellable(const MeshData& mesh,
+                                    const std::function<bool(int)>& progress,
+                                    bool& cancelled) {
+    cancelled = false;
     int nv_total = mesh.n_vertices();
     int nt = mesh.n_triangles();
 
@@ -245,6 +274,13 @@ std::string validateMesh(const MeshData& mesh) {
     if (nt < 1) return "Mesh must have at least 1 cell";
 
     for (int t = 0; t < nt; ++t) {
+        if (progress) {
+            const int stride = std::max(1, nt / 100);
+            if ((t % stride == 0 || t + 1 == nt) && progress(100 * t / nt)) {
+                cancelled = true;
+                return {};
+            }
+        }
         const int nv = mesh.cell_vertex_count(t);
         const char* kind = (nv == 4) ? "Quad " : "Triangle ";
         if (nv != 3 && nv != 4) {
@@ -303,6 +339,10 @@ std::string validateMesh(const MeshData& mesh) {
         }
     }
 
+    if (progress && progress(100)) {
+        cancelled = true;
+        return {};
+    }
     return {};
 }
 

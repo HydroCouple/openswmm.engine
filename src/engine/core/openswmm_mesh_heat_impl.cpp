@@ -11,9 +11,9 @@
 #include "../core/UnitConversion.hpp"
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <numeric>
-#include <set>
 #include <string>
 #include <vector>
 namespace {
@@ -33,8 +33,11 @@ double soilResidual(const openswmm::twoD::GroundThermalCell& c,double energy) {
 }
 int previewChannelGroundMap(const openswmm::SimulationContext& ctx,
     const openswmm::twoD::SurfaceRouter2D& router,int link,
-    SWMM_ChannelGroundPreview& result,std::vector<SWMM_ChannelGroundContact>& rows) {
+    SWMM_ChannelGroundPreview& result,std::vector<SWMM_ChannelGroundContact>& rows,
+    int first_contact,int max_contacts,const std::function<bool(int,int)>& progress) {
     result={};result.struct_size=sizeof result;result.link=link;rows.clear();
+    const auto cancelled=[&](int stage,int pct){return progress&&progress(stage,pct);};
+    if(cancelled(SWMM_HEAT_PREVIEW_STAGE_MESH,0))return SWMM_ERR_CANCELLED;
     const auto reason=[&](const std::string& text){std::strncpy(result.reason,text.c_str(),sizeof(result.reason)-1);};
     if(ctx.state!=openswmm::EngineState::OPENED&&ctx.state!=openswmm::EngineState::BUILDING)
         return SWMM_ERR_LIFECYCLE;
@@ -57,18 +60,28 @@ int previewChannelGroundMap(const openswmm::SimulationContext& ctx,
     const int us=openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
     const double coordinate_scale=us==0?.3048:1.0;
     auto mesh=source_mesh;
+    if(cancelled(SWMM_HEAT_PREVIEW_STAGE_MESH,1))return SWMM_ERR_CANCELLED;
     const double mesh_scale=!router.options().mesh_units_si&&us==0?.3048:1.0;
-    for(double& x:mesh.vx)x*=mesh_scale;
-    for(double& y:mesh.vy)y*=mesh_scale;
-    for(double& z:mesh.vz)z*=mesh_scale;
+    const std::size_t vertex_count=mesh.vx.size();
+    const std::size_t vertex_stride=std::max<std::size_t>(1,vertex_count/100);
+    for(std::size_t i=0;i<vertex_count;++i) {
+        mesh.vx[i]*=mesh_scale;mesh.vy[i]*=mesh_scale;mesh.vz[i]*=mesh_scale;
+        if((i%vertex_stride==0||i+1==vertex_count)&&cancelled(SWMM_HEAT_PREVIEW_STAGE_MESH,
+            1+int(19*(i+1)/std::max<std::size_t>(1,vertex_count))))return SWMM_ERR_CANCELLED;
+    }
     const auto nc=static_cast<std::size_t>(mesh.n_cells());
     if(mesh.cell_nv.size()!=nc||mesh.cell_v.size()!=nc*openswmm::twoD::kMaxCellVerts||
        mesh.vx.size()!=mesh.vy.size()||mesh.vx.size()!=mesh.vz.size()) {
         reason("The parsed mesh connectivity is incomplete; initialize it to validate the mesh.");return SWMM_OK;
     }
-    for(std::size_t i=0;i<mesh.vx.size();++i)if(!std::isfinite(mesh.vx[i])||!std::isfinite(mesh.vy[i])||!std::isfinite(mesh.vz[i])) {
-        reason("The parsed mesh contains a nonfinite vertex coordinate.");return SWMM_OK;
+    for(std::size_t i=0;i<mesh.vx.size();++i) {
+        if(!std::isfinite(mesh.vx[i])||!std::isfinite(mesh.vy[i])||!std::isfinite(mesh.vz[i])) {
+            reason("The parsed mesh contains a nonfinite vertex coordinate.");return SWMM_OK;
+        }
+        if((i%vertex_stride==0||i+1==vertex_count)&&cancelled(SWMM_HEAT_PREVIEW_STAGE_MESH,
+            20+int(10*(i+1)/std::max<std::size_t>(1,vertex_count))))return SWMM_ERR_CANCELLED;
     }
+    const std::size_t cell_stride=std::max<std::size_t>(1,nc/100);
     for(std::size_t c=0;c<nc;++c) {
         if(mesh.cell_nv[c]<3||mesh.cell_nv[c]>openswmm::twoD::kMaxCellVerts) {
             reason("The parsed mesh contains a cell with invalid connectivity.");return SWMM_OK;
@@ -79,24 +92,34 @@ int previewChannelGroundMap(const openswmm::SimulationContext& ctx,
                 reason("The parsed mesh contains an out-of-range vertex index.");return SWMM_OK;
             }
         }
+        if((c%cell_stride==0||c+1==nc)&&cancelled(SWMM_HEAT_PREVIEW_STAGE_MESH,
+            30+int(10*(c+1)/std::max<std::size_t>(1,nc))))return SWMM_ERR_CANCELLED;
     }
-    openswmm::twoD::buildMeshTopology(mesh);
-    if(const auto error=openswmm::twoD::validateMesh(mesh);!error.empty()) {
+    if(!openswmm::twoD::buildMeshTopologyCancellable(mesh,[&](int pct){
+        return cancelled(SWMM_HEAT_PREVIEW_STAGE_MESH,40+pct*4/5);
+    }))return SWMM_ERR_CANCELLED;
+    bool validation_cancelled=false;
+    if(const auto error=openswmm::twoD::validateMeshCancellable(mesh,[&](int pct){
+        return cancelled(SWMM_HEAT_PREVIEW_STAGE_MESH,80+pct/5);
+    },validation_cancelled);validation_cancelled)return SWMM_ERR_CANCELLED;
+    else if(!error.empty()) {
         reason("The parsed mesh cannot be previewed: "+error);return SWMM_OK;
     }
     std::vector<double> x={ctx.spatial.node_x[n1]*coordinate_scale};
     std::vector<double> y={ctx.spatial.node_y[n1]*coordinate_scale};
     for(std::size_t p=0;p<vx.size();++p){x.push_back(vx[p]*coordinate_scale);y.push_back(vy[p]*coordinate_scale);}
     x.push_back(ctx.spatial.node_x[n2]*coordinate_scale);y.push_back(ctx.spatial.node_y[n2]*coordinate_scale);
-    const auto mapping=openswmm::twoD::mapMeshPolyline(mesh,x,y);
+    if(cancelled(SWMM_HEAT_PREVIEW_STAGE_MAPPING,0))return SWMM_ERR_CANCELLED;
+    const auto mapping=openswmm::twoD::mapMeshPolyline(mesh,x,y,[&](int pct){
+        return cancelled(SWMM_HEAT_PREVIEW_STAGE_MAPPING,pct);
+    },static_cast<std::size_t>(first_contact),static_cast<std::size_t>(max_contacts),true);
+    if(mapping.cancelled)return SWMM_ERR_CANCELLED;
     if(!mapping.error.empty()){reason(mapping.error);return SWMM_OK;}
     result.length_m=mapping.length;result.covered_length_m=mapping.covered_length;
     result.uncovered_length_m=std::max(0.0,mapping.length-mapping.covered_length);
-    std::set<int> cells;
     const double z0=(ctx.nodes.invert_elev[n1]+ctx.links.offset1[link])*.3048;
     const double z1=(ctx.nodes.invert_elev[n2]+ctx.links.offset2[link])*.3048;
     for(const auto& interval:mapping.intervals) {
-        cells.insert(interval.cell);
         const double mid=(interval.begin+interval.end)*.5;
         const double fraction=mapping.length>0?mid/mapping.length:0;
         SWMM_ChannelGroundContact contact{};contact.struct_size=sizeof contact;
@@ -105,9 +128,11 @@ int previewChannelGroundMap(const openswmm::SimulationContext& ctx,
         contact.share=interval.share;contact.invert_m=z0+(z1-z0)*fraction;
         rows.push_back(contact);
     }
-    if(rows.size()>std::size_t(std::numeric_limits<int>::max())||cells.size()>std::size_t(std::numeric_limits<int>::max()))
+    if(mapping.interval_count>std::size_t(std::numeric_limits<int>::max())||
+       mapping.contact_cells>std::size_t(std::numeric_limits<int>::max()))
         return SWMM_ERR_BADPARAM;
-    result.contact_intervals=static_cast<int>(rows.size());result.contact_cells=static_cast<int>(cells.size());
+    result.contact_intervals=static_cast<int>(mapping.interval_count);
+    result.contact_cells=static_cast<int>(mapping.contact_cells);
     result.valid=result.uncovered_length_m<=1e-9*std::max(1.0,result.length_m);
     reason(result.valid?"Complete XY coverage. Groundwater profile and bed-fit checks still run at initialization.":
         "Part of this channel lies outside the mesh; initialization will refuse MESH_CONTACTS until coverage is complete.");
@@ -184,24 +209,48 @@ int swmm_heat_get_channel_ground_contact(SWMM_Engine engine,int index,SWMM_Chann
 #endif
 }
 
-int swmm_heat_preview_channel_ground_map(SWMM_Engine engine,int link,SWMM_ChannelGroundPreview* out,
-    SWMM_ChannelGroundContact* contacts,int capacity,int* required) {
-    CHECK_HANDLE(engine);
-    if(!out||out->struct_size<sizeof(SWMM_ChannelGroundPreview)||!required||capacity<0||
+namespace {
+int previewChannelGroundMapApi(SWMM_Engine engine,int link,SWMM_ChannelGroundPreview* out,
+    int first,SWMM_ChannelGroundContact* contacts,int capacity,int* required,
+    SWMM_CancelCallback callback,void* user_data,bool allow_partial) {
+    if(!out||out->struct_size<sizeof(SWMM_ChannelGroundPreview)||!required||first<0||capacity<0||
        (capacity>0&&!contacts))return SWMM_ERR_BADPARAM;
 #ifdef OPENSWMM_HAS_2D
     SWMM_ChannelGroundPreview result{};std::vector<SWMM_ChannelGroundContact> rows;
-    const int rc=previewChannelGroundMap(to_engine(engine)->context(),to_engine(engine)->surfaceRouter2D(),link,result,rows);
+    const auto progress=[&](int stage,int pct){return callback&&callback(engine,stage,pct,user_data)!=0;};
+    const int rc=previewChannelGroundMap(to_engine(engine)->context(),to_engine(engine)->surfaceRouter2D(),
+        link,result,rows,first,capacity,progress);
     if(rc!=SWMM_OK)return rc;
-    if(rows.size()>std::size_t(std::numeric_limits<int>::max()))return SWMM_ERR_BADPARAM;
-    *required=static_cast<int>(rows.size());*out=result;
-    if(capacity==0&&!contacts)return SWMM_OK;
-    if(capacity<*required)return SWMM_ERR_BADPARAM;
+    if(allow_partial&&first>result.contact_intervals)return SWMM_ERR_BADINDEX;
+    *required=result.contact_intervals;*out=result;
+    if(!allow_partial&&capacity<*required&&(capacity>0||contacts))return SWMM_ERR_BADPARAM;
     if(!rows.empty())std::copy(rows.begin(),rows.end(),contacts);
     return SWMM_OK;
 #else
-    (void)link;(void)contacts;(void)capacity;return SWMM_ERR_PLUGIN;
+    (void)link;(void)first;(void)contacts;(void)capacity;(void)callback;(void)user_data;(void)allow_partial;
+    return SWMM_ERR_PLUGIN;
 #endif
+}
+} // namespace
+
+int swmm_heat_preview_channel_ground_map(SWMM_Engine engine,int link,SWMM_ChannelGroundPreview* out,
+    SWMM_ChannelGroundContact* contacts,int capacity,int* required) {
+    CHECK_HANDLE(engine);
+    return previewChannelGroundMapApi(engine,link,out,0,contacts,capacity,required,nullptr,nullptr,false);
+}
+
+int swmm_heat_preview_channel_ground_map_with_progress(SWMM_Engine engine,int link,
+    SWMM_ChannelGroundPreview* out,SWMM_ChannelGroundContact* contacts,int capacity,int* required,
+    SWMM_CancelCallback callback,void* user_data) {
+    CHECK_HANDLE(engine);
+    return previewChannelGroundMapApi(engine,link,out,0,contacts,capacity,required,callback,user_data,false);
+}
+
+int swmm_heat_preview_channel_ground_map_page(SWMM_Engine engine,int link,
+    SWMM_ChannelGroundPreview* out,int first,SWMM_ChannelGroundContact* contacts,int capacity,
+    int* required,SWMM_CancelCallback callback,void* user_data) {
+    CHECK_HANDLE(engine);
+    return previewChannelGroundMapApi(engine,link,out,first,contacts,capacity,required,callback,user_data,true);
 }
 
 int swmm_heat_get_2d_status(SWMM_Engine engine,SWMM_Heat2DStatus* out) {

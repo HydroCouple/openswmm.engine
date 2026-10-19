@@ -37,6 +37,7 @@
 #define OPENSWMM_ENGINE_2D_MESH_BUILDER_HPP
 
 #include "../data/MeshData.hpp"
+#include <functional>
 
 namespace openswmm::twoD {
 
@@ -49,6 +50,8 @@ namespace openswmm::twoD {
  * @param mesh The mesh data with vx/vy/vz and tri_v0/v1/v2 already populated.
  */
 void buildMeshTopology(MeshData& mesh);
+/** Cancellable equivalent; progress receives integer percent and returns true to cancel. */
+bool buildMeshTopologyCancellable(MeshData& mesh, const std::function<bool(int)>& progress);
 
 /**
  * @brief Validate mesh data for consistency.
@@ -58,6 +61,10 @@ void buildMeshTopology(MeshData& mesh);
  * @return Empty string if valid, or a description of the first error found.
  */
 std::string validateMesh(const MeshData& mesh);
+/** Cancellable validator. `cancelled` is set when progress returns true. */
+std::string validateMeshCancellable(const MeshData& mesh,
+                                    const std::function<bool(int)>& progress,
+                                    bool& cancelled);
 
 /**
  * @brief Recompute Z-derived per-triangle / per-edge geometry for triangles

@@ -619,6 +619,29 @@ typedef struct SWMM_ChannelGroundPreview {
 } SWMM_ChannelGroundPreview;
 SWMM_ENGINE_API int swmm_heat_preview_channel_ground_map(SWMM_Engine,int link,
     SWMM_ChannelGroundPreview*,SWMM_ChannelGroundContact* contacts,int capacity,int* required);
+enum {
+    SWMM_HEAT_PREVIEW_STAGE_MESH = 1,
+    SWMM_HEAT_PREVIEW_STAGE_MAPPING = 2
+};
+/**
+ * Cancellable variant of the read-only channel-contact preview. The callback
+ * may be invoked during mesh indexing and channel mapping. If it returns
+ * nonzero, the function returns SWMM_ERR_CANCELLED and leaves `out`,
+ * `contacts`, and `required` unchanged.
+ */
+SWMM_ENGINE_API int swmm_heat_preview_channel_ground_map_with_progress(
+    SWMM_Engine,int link,SWMM_ChannelGroundPreview*,SWMM_ChannelGroundContact*,
+    int capacity,int* required,SWMM_CancelCallback callback,void* user_data);
+/**
+ * Bounded, cancellable contact page. `first` is a zero-based interval offset;
+ * at most `capacity` rows are copied while `required` reports the total count.
+ * The summary counts describe the complete mapping. On cancellation, all
+ * output arguments remain unchanged.
+ */
+SWMM_ENGINE_API int swmm_heat_preview_channel_ground_map_page(
+    SWMM_Engine,int link,SWMM_ChannelGroundPreview*,int first,
+    SWMM_ChannelGroundContact*,int capacity,int* required,
+    SWMM_CancelCallback callback,void* user_data);
 
 #ifdef __cplusplus
 }

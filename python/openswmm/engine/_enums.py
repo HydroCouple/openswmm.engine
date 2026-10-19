@@ -64,6 +64,7 @@ class ErrorCode(IntEnum):
     @cvar CRS: Coordinate reference system error.
     @cvar NUMERICAL: Numerical error (e.g., divergence).
     @cvar DEPENDENCY: Object has dependents that block the requested operation.
+    @cvar CANCELLED: A caller cancelled a cancellable read-only operation.
     @cvar INTERNAL: Internal/unspecified error.
     """
 
@@ -83,6 +84,7 @@ class ErrorCode(IntEnum):
     CRS = 13
     NUMERICAL = 14
     DEPENDENCY = 15
+    CANCELLED = 16
     INTERNAL = 99
 
 

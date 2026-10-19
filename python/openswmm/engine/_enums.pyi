@@ -76,6 +76,7 @@ class ErrorCode(IntEnum):
     CRS = 13
     NUMERICAL = 14
     DEPENDENCY = 15
+    CANCELLED = 16
     INTERNAL = 99
 
 

@@ -9,6 +9,7 @@
 #include <cmath>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_heat.h>
@@ -105,6 +106,12 @@ int enablePorewater(Model& m) {
 }
 const std::string porewater_species="[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0\n"
     "[OPTIONS]\nWATER_AGE ON\n[GW_INITIAL_QUALITY]\n* SAT Dye 10\n* UNSAT Dye 10\n";
+struct PreviewCancelAt {int stage=0,progress=0;bool seen=false;};
+int cancelPreviewAt(SWMM_Engine,int stage,int progress,void* data) {
+    auto& target=*static_cast<PreviewCancelAt*>(data);
+    if(stage==target.stage&&progress>=target.progress){target.seen=true;return 1;}
+    return 0;
+}
 }
 TEST(GroundHeat, MeshRichardsLidSharesReciprocalHeatWithItsGroundColumn) {
     const auto file=out/"mesh-lid-ground-heat-refusal.inp";fs::create_directories(out);
@@ -1825,6 +1832,23 @@ TEST(GroundHeat, ChannelGroundCoverageCanBePreviewedBeforeInitialization) {
     EXPECT_NEAR(mapped[0].share,1,1e-12);
     EXPECT_NEAR(mapped[1].share,1,1e-12);
 
+    SWMM_ChannelGroundContact pageContact{};
+    SWMM_ChannelGroundPreview page{};page.struct_size=sizeof page;
+    int pageTotal=-1;
+    ASSERT_EQ(swmm_heat_preview_channel_ground_map_page(m.e,0,&page,1,&pageContact,1,
+        &pageTotal,nullptr,nullptr),SWMM_OK);
+    EXPECT_EQ(pageTotal,2);
+    EXPECT_EQ(page.contact_intervals,2);
+    EXPECT_EQ(page.contact_cells,2);
+    EXPECT_EQ(pageContact.cell,mapped[1].cell);
+    EXPECT_DOUBLE_EQ(pageContact.begin_fraction,mapped[1].begin_fraction);
+
+    page.struct_size=sizeof page;page.link=88;pageTotal=456;
+    EXPECT_EQ(swmm_heat_preview_channel_ground_map_page(m.e,0,&page,3,&pageContact,1,
+        &pageTotal,nullptr,nullptr),SWMM_ERR_BADINDEX);
+    EXPECT_EQ(page.link,88);
+    EXPECT_EQ(pageTotal,456);
+
     ASSERT_EQ(swmm_spatial_set_node_coord(m.e,1,12,3),SWMM_OK);
     preview.struct_size=sizeof preview;required=-1;
     ASSERT_EQ(swmm_heat_preview_channel_ground_map(m.e,0,&preview,nullptr,0,&required),SWMM_OK);
@@ -1852,6 +1876,31 @@ TEST(GroundHeat, ChannelGroundCoverageCanBePreviewedBeforeInitialization) {
     }
     EXPECT_EQ(actual_cells.size(),std::size_t(preview.contact_cells));
     EXPECT_EQ(actual_cells,std::set<int>({mapped[0].cell,mapped[1].cell}));
+}
+TEST(GroundHeat, ChannelGroundPreviewCancellationIsResponsiveAndLeavesOutputsUntouched) {
+    Model m("channel-ground-map-cancel","SIGMA",.5,false,"",true);
+    ASSERT_NE(m.e,nullptr);
+    ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_GROUND_SOURCE,1),SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_module(m.e,SWMM_HEAT_SEDIMENT_EXCHANGE,1),SWMM_OK);
+
+    for(const auto& [stage,pct]:{std::pair{SWMM_HEAT_PREVIEW_STAGE_MESH,40},
+                                 std::pair{SWMM_HEAT_PREVIEW_STAGE_MAPPING,25}}) {
+        PreviewCancelAt target{stage,pct,false};
+        SWMM_ChannelGroundPreview preview{};preview.struct_size=sizeof preview;preview.link=77;
+        SWMM_ChannelGroundContact contact{};contact.link=88;contact.cell=99;
+        int required=123;
+        const int rc=stage==SWMM_HEAT_PREVIEW_STAGE_MAPPING
+            ?swmm_heat_preview_channel_ground_map_page(m.e,0,&preview,0,&contact,1,
+                &required,cancelPreviewAt,&target)
+            :swmm_heat_preview_channel_ground_map_with_progress(m.e,0,&preview,&contact,1,
+                &required,cancelPreviewAt,&target);
+        EXPECT_EQ(rc,SWMM_ERR_CANCELLED);
+        EXPECT_TRUE(target.seen);
+        EXPECT_EQ(preview.link,77);
+        EXPECT_EQ(contact.link,88);
+        EXPECT_EQ(contact.cell,99);
+        EXPECT_EQ(required,123);
+    }
 }
 TEST(GroundHeat, RoutedSeepageReversesWhileHyporheicHeatRemainsSeparate) {
     for(const auto* solver:{"LEGACY","EULERIAN_ARD","LAGRANGIAN"}) {
