@@ -310,6 +310,15 @@ public:
      */
     static HotStartFile* open(const std::string& path);
 
+    /**
+     * @brief True when `path` starts with the native `OPENSWMM_HS_V1` magic.
+     *
+     * @details Reads the first 16 bytes only; no validation. A missing,
+     *          short or legacy (`SWMM5-HOTSTART…`) file returns false.
+     *          `[FILES] USE HOTSTART` dispatches on this.
+     */
+    static bool is_native_file(const std::string& path);
+
     // -----------------------------------------------------------------------
     // Apply
     // -----------------------------------------------------------------------
@@ -400,10 +409,13 @@ public:
      *        (SAVE HOTSTART), byte-format-compatible with legacy readRouting()
      *        and apply_legacy_routing() above.
      *
-     * @details Mirrors legacy hotstart.c saveHotstart()+saveRouting() for the
-     *          "SWMM5-HOTSTART4" version: 15-char stamp + object counts
-     *          (nSub, nLand, nNodes, nLinks, nPollut, flowUnits as int32), then
-     *          per node `depth, latFlow[, storage hrt], qual[]` and per link
+     * @details Mirrors legacy hotstart.c saveHotstart()+saveRunoff()+
+     *          saveRouting() for the "SWMM5-HOTSTART4" version: 15-char stamp +
+     *          object counts (nSub, nLand, nNodes, nLinks, nPollut, flowUnits
+     *          as int32), then one double record per subcatchment (ponded
+     *          depths, runoff, infiltration, groundwater, snowpack, quality,
+     *          buildup — the `runoff` argument), then per node
+     *          `depth, latFlow[, storage hrt], qual[]` and per link
      *          `flow, depth, setting, qual[]` — all float, internal units
      *          (ft, cfs). Storage residence time is preserved when quality
      *          state is allocated, and otherwise written as zero.

@@ -100,8 +100,9 @@ typedef void* SWMM_HotStart;
  * runtime `swmm_hotstart_save()` function below, which writes a single
  * hot-start file at the current sim time.
  *
- * Each entry is a `{path, datetime}` pair.  A `datetime` of `0.0`
- * means "no datetime — save at end of run" (matches legacy semantics).
+ * Each entry is a `{path, datetime, format}` triple.  A `datetime` of `0.0`
+ * means "no datetime — save at end of run" (matches legacy semantics);
+ * `format` is one of `SWMM_HOTSTART_FORMAT_*` (default AUTO).
  *
  * The legacy singular `swmm_files_set("HOTSTART_SAVE_PATH", …)` /
  * `_DATETIME` keys remain as slot-0 sugar.
@@ -164,6 +165,65 @@ SWMM_ENGINE_API int swmm_hotstart_saves_set_path(
  */
 SWMM_ENGINE_API int swmm_hotstart_saves_set_datetime(
     SWMM_Engine engine, int idx, double datetime);
+
+/**
+ * @brief File formats a `SAVE HOTSTART` entry can write.
+ *
+ * @details In the `.inp` the format is an optional keyword after the path
+ *          and optional datetime: `SAVE HOTSTART "f.hsf" [date time]
+ *          LEGACY|NATIVE`. A row without one is AUTO, the behaviour of
+ *          every earlier file: the legacy SWMM5 `.hsf` routing format, or
+ *          the native format when the model has node LIDs.
+ *          `USE HOTSTART` reads either; it goes by the file's own stamp.
+ *          NATIVE also carries what the legacy format has no room for
+ *          (see swmm_hotstart_legacy_omits()); legacy SWMM 5 cannot read it.
+ */
+#define SWMM_HOTSTART_FORMAT_AUTO    0  /**< Legacy, or native with node LIDs */
+#define SWMM_HOTSTART_FORMAT_LEGACY  1  /**< EPA SWMM5 `.hsf`                 */
+#define SWMM_HOTSTART_FORMAT_NATIVE  2  /**< OPENSWMM_HS_V1                   */
+
+/**
+ * @brief Get the file format of the i-th `SAVE HOTSTART` entry.
+ * @param engine  Engine handle.
+ * @param idx     Slot index.
+ * @param format  [out] One of `SWMM_HOTSTART_FORMAT_*`.
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM if `idx` is out of range.
+ */
+SWMM_ENGINE_API int swmm_hotstart_saves_get_format(
+    SWMM_Engine engine, int idx, int* format);
+
+/**
+ * @brief Set the file format of an existing `SAVE HOTSTART` entry.
+ * @param engine  Engine handle.
+ * @param idx     Slot index.
+ * @param format  One of `SWMM_HOTSTART_FORMAT_*`.
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM if `idx` or `format` is out of range.
+ */
+SWMM_ENGINE_API int swmm_hotstart_saves_set_format(
+    SWMM_Engine engine, int idx, int format);
+
+/** @brief Bits of swmm_hotstart_legacy_omits(). */
+#define SWMM_HOTSTART_OMITS_WATER_AGE        0x1  /**< `[OPTIONS] WATER_AGE YES`  */
+#define SWMM_HOTSTART_OMITS_REACTION_SPECIES 0x2  /**< reactions-component species */
+#define SWMM_HOTSTART_OMITS_AQUIFER          0x4  /**< 2D aquifer rows            */
+#define SWMM_HOTSTART_OMITS_NODE_LIDS        0x8  /**< LID units at storage nodes */
+
+/**
+ * @brief Which of this model's state a legacy SWMM5 hot-start file has no
+ *        place for, and only a native file keeps.
+ *
+ * @details Reads the parsed model, so it answers before initialize(); a
+ *          front end can use it to suggest NATIVE for a new `SAVE HOTSTART`
+ *          row. Zero means nothing in the model needs the native format.
+ *          `[POLLUTANTS]` concentrations are in both formats. Neither format
+ *          holds everything: the native one has no link control settings,
+ *          node lateral inflows, storage residence times, or subcatchment
+ *          ponded depths and buildup.
+ * @param engine  Engine handle.
+ * @param flags   [out] OR of `SWMM_HOTSTART_OMITS_*`.
+ * @returns SWMM_OK; SWMM_ERR_BADPARAM if `flags` is NULL.
+ */
+SWMM_ENGINE_API int swmm_hotstart_legacy_omits(SWMM_Engine engine, int* flags);
 
 /**
  * @brief Append a new `SAVE HOTSTART` entry.

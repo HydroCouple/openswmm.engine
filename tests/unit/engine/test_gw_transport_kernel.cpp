@@ -724,6 +724,50 @@ TEST(GwTransportKernel, HotStartCarriesTheAquiferSpeciesAcrossARestart) {
     finish(r2);
 }
 
+// The same restart through the deck alone: `[FILES] SAVE HOTSTART … NATIVE`
+// writes the V5/V6 blocks, and `USE HOTSTART` reads the file's stamp and
+// applies it once the aquifer exists. Without NATIVE the row writes the
+// legacy format and this test fails on the stamp — that is the falsifier.
+TEST(GwTransportKernel, FilesNativeHotStartCarriesTheAquiferSpeciesAcrossARestart) {
+    const fs::path hsf = fs::absolute(kOutDir / "gw_species_files.hsf");
+    fs::remove(hsf);
+
+    double sat0 = 0.0, uns0 = 0.0, infil0 = 0.0;
+    {
+        Deck r = open("hs_files_write", deck(Mesh::Tri,
+            "[FILES]\nSAVE HOTSTART \"" + hsf.string() + "\" NATIVE\n\n"));
+        ASSERT_TRUE(r.opened);
+        ASSERT_TRUE(run(r));
+        // end() writes the [FILES] save, after the 2D finalize — so the
+        // reference values are read after it too.
+        ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
+        r.started = false;
+        const auto& t = r.eng->surfaceRouter2D().subsurface().transport();
+        sat0   = t.sat_mass[t.idx(0, 0)];
+        uns0   = t.unsat_mass[t.idx(0, 0)];
+        infil0 = t.gained_infil[0];
+        finish(r);
+    }
+    std::string stamp(14, '\0');
+    { std::ifstream f(hsf, std::ios::binary); f.read(stamp.data(), 14); }
+    ASSERT_EQ(stamp, "OPENSWMM_HS_V1") << "SAVE HOTSTART … NATIVE did not write a native file";
+    EXPECT_GT(sat0, 0.0);
+
+    Deck r2 = open("hs_files_read", deck(Mesh::Tri,
+        "[FILES]\nUSE HOTSTART \"" + hsf.string() + "\"\n\n"));
+    ASSERT_TRUE(r2.opened);
+    ASSERT_EQ(swmm_engine_initialize(r2.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r2.e, 1), SWMM_OK);
+    r2.started = true;
+    const auto& t2 = r2.eng->surfaceRouter2D().subsurface().transport();
+    EXPECT_NEAR(t2.sat_mass[t2.idx(0, 0)], sat0, 1.0e-9 * std::fabs(sat0))
+        << "the [FILES] restart did not resume the saturated store";
+    EXPECT_NEAR(t2.unsat_mass[t2.idx(0, 0)], uns0, 1.0e-9 * std::fabs(uns0) + 1.0e-12)
+        << "the [FILES] restart did not resume the column store";
+    EXPECT_NEAR(t2.gained_infil[0], infil0, 1.0e-9 * std::fabs(infil0) + 1.0e-12);
+    finish(r2);
+}
+
 // ---------------------------------------------------------------------------
 // T7.5 — the results file carries the tuple.
 // ---------------------------------------------------------------------------

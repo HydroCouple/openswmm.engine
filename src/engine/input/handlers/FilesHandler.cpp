@@ -104,6 +104,18 @@ void handle_files(SimulationContext& ctx, const std::vector<std::string>& lines)
                 HotstartSaveEntry entry;
                 entry.path = path;
                 entry.datetime = parse_optional_datetime(tok, 3);
+                // Optional trailing format keyword, after the datetime if
+                // there is one: `SAVE HOTSTART f [date time] LEGACY|NATIVE`.
+                // It must trail: legacy SWMM 5 reads a datetime only from a
+                // five-token row and ignores later tokens, so a four- or
+                // six-token row still opens there. Anything else in that
+                // position is ignored, as before.
+                const std::size_t fmt_at = (tok.size() >= 6) ? 5 : 3;
+                if (tok.size() == fmt_at + 1) {
+                    const std::string fmt = Tokenizer::to_upper(tok[fmt_at]);
+                    if      (fmt == "LEGACY") entry.format = HotstartFormat::LEGACY;
+                    else if (fmt == "NATIVE") entry.format = HotstartFormat::NATIVE;
+                }
                 files.hotstart_saves.push_back(std::move(entry));
             } else {  // USE
                 files.hotstart_use_path = path;

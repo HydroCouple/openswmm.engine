@@ -959,6 +959,7 @@ CREATE TABLE IF NOT EXISTS hotstart_slots (
     num_pollutants  INTEGER NOT NULL,
     captured_at     TEXT,                                -- ISO8601; NULL until populated
     status          TEXT NOT NULL DEFAULT 'pending',     -- 'pending' | 'populated'
+    save_format     TEXT CHECK(save_format IN ('LEGACY','NATIVE')), -- SAVE keyword; NULL = AUTO
     PRIMARY KEY (simulation_id, slot_name),
     FOREIGN KEY (simulation_id)
         REFERENCES simulations(simulation_id)
@@ -1422,6 +1423,15 @@ void create_schema(sqlite3* db) {
     exec(db, PART_B_DDL);
     exec(db, PART_C_DDL);
     exec(db, PART_D_DDL);
+    // Older databases lack the SAVE HOTSTART format column; their rows
+    // read back as AUTO (NULL), which is what they meant.
+    bool has_save_format = false;
+    auto hs_columns = prepare(db, "PRAGMA table_info(hotstart_slots)");
+    while (sqlite3_step(hs_columns.get()) == SQLITE_ROW)
+        has_save_format |= column_text(hs_columns.get(), 1) == "save_format";
+    hs_columns.reset();
+    if (!has_save_format)
+        exec(db, "ALTER TABLE hotstart_slots ADD COLUMN save_format TEXT CHECK(save_format IN ('LEGACY','NATIVE'))");
     exec(db, MESH_2D_DDL);
     exec(db, "CREATE TABLE IF NOT EXISTS surface_ownership_2d_input (simulation_id TEXT PRIMARY KEY, sections TEXT NOT NULL)");
 }

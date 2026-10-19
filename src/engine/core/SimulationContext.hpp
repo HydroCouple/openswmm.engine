@@ -184,6 +184,11 @@ enum class FileMode {
     USE
 };
 
+/// File format a `SAVE HOTSTART` row writes. Values match the C API's
+/// `SWMM_HOTSTART_FORMAT_*`. AUTO is the behaviour of a row with no format
+/// keyword: legacy SWMM5 `.hsf`, or native when node LIDs need it.
+enum class HotstartFormat { AUTO = 0, LEGACY = 1, NATIVE = 2 };
+
 /**
  * @brief Configuration parsed from the `[FILES]` section.
  *
@@ -209,6 +214,8 @@ struct HotstartSaveEntry {
     /// Optional `SAVE HOTSTART` datetime as a SWMM decimal day.
     /// `0.0` means "no datetime — write at end of run".
     double       datetime = 0.0;
+    /// Optional trailing `LEGACY` / `NATIVE` keyword on the row.
+    HotstartFormat format = HotstartFormat::AUTO;
 };
 
 struct FilesSpec {

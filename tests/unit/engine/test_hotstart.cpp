@@ -924,6 +924,70 @@ USE HOTSTART ")" << hs.path() << "\"\n";
     EXPECT_EQ(engine.close(), 0);
 }
 
+// The runoff section rides between the header and the routing records, and
+// the reader hands it back unchanged (or skips it, with a warning, when the
+// caller takes none). Files go to tests/unit/engine/data/hotstart_format/
+// for review.
+static std::string reviewPath(const std::string& name) {
+    fs::create_directories("hotstart_format");
+    return (fs::absolute("hotstart_format") / name).string();
+}
+
+TEST(HotStartLegacyRoutingTest, SaveWritesTheSubcatchmentSectionItsReaderReturns) {
+    const std::string hs = reviewPath("bare_context_legacy.hsf");
+    SimulationContext ctx = make_legacy_routing_context();
+    ctx.nodes.depth = {1.5, 2.5, 0.25};
+    ctx.links.flow  = {3.0, 4.0};
+    std::vector<double> runoff(HotStartManager::legacy_runoff_size(ctx, 1));
+    for (std::size_t k = 0; k < runoff.size(); ++k) runoff[k] = 0.5 + static_cast<double>(k);
+    ASSERT_EQ(HotStartManager::save_legacy_routing(hs, ctx, &runoff), 0)
+        << HotStartManager::last_io_error();
+
+    // 15-char stamp + 6 int32; S1 (groundwater) 4+6+4 + quality 2*1 +
+    // buildup 1*(1+1) doubles, S2 (snowpack) 4+6+15+2+2; node floats
+    // 2+1 (J1), 2+1+1 (storage ST1, HRT), 2+1 (OUT1); link floats 2*(3+1).
+    ASSERT_EQ(runoff.size(), 18u + 29u);
+    const std::size_t want = 15 + 6 * 4 + (18 + 29) * 8 + (3 + 4 + 3 + 8) * 4;
+    EXPECT_EQ(fs::file_size(hs), want);
+    std::ifstream f(hs, std::ios::binary);
+    f.seekg(15);
+    int32_t counts[6] = {};
+    f.read(reinterpret_cast<char*>(counts), sizeof counts);
+    EXPECT_EQ(counts[0], 2);   // subcatchments
+    EXPECT_EQ(counts[1], 1);   // land uses
+
+    auto back = make_legacy_routing_context();
+    std::vector<double> read_back;
+    ASSERT_EQ(HotStartManager::apply_legacy_routing(hs, back, {}, &read_back), 0)
+        << HotStartManager::last_io_error();
+    EXPECT_EQ(read_back, runoff);
+    EXPECT_DOUBLE_EQ(back.nodes.depth[1], 2.5);
+    EXPECT_DOUBLE_EQ(back.links.flow[1], 4.0);
+
+    auto skipped = make_legacy_routing_context();
+    std::vector<std::string> warnings;
+    ASSERT_EQ(HotStartManager::apply_legacy_routing(hs, skipped,
+                  [&](const std::string& m) { warnings.push_back(m); }), 0)
+        << HotStartManager::last_io_error();
+    EXPECT_DOUBLE_EQ(skipped.nodes.depth[1], 2.5);
+    ASSERT_EQ(warnings.size(), 1u);   // subcatchment state skipped
+}
+
+// A file with the subcatchment section missing — what the writer produced
+// before 2026-10-18 — is refused with a reason, not misread.
+TEST(HotStartLegacyRoutingTest, FileWithoutTheSubcatchmentSectionIsRefusedWithAReason) {
+    const std::string hs = reviewPath("missing_subcatchment_section.hsf");
+    SimulationContext ctx = make_legacy_routing_context();
+    ASSERT_EQ(HotStartManager::save_legacy_routing(hs, ctx), 0);   // no section
+
+    std::vector<double> runoff;
+    std::vector<std::string> warnings;
+    EXPECT_NE(HotStartManager::apply_legacy_routing(hs, ctx,
+                  [&](const std::string& m) { warnings.push_back(m); }, &runoff), 0);
+    EXPECT_FALSE(HotStartManager::last_io_error().empty());
+    EXPECT_TRUE(warnings.empty()) << "no skip warning for a file that is refused";
+}
+
 // O3: SAVE HOTSTART writes legacy's runoff section and USE HOTSTART applies
 // it. Before, the file declared the subcatchments but carried no runoff
 // records, so neither v6 nor legacy could read it, and a legacy file's

@@ -34,6 +34,7 @@
 
 #include "../../core/DateTime.hpp"
 #include "../../core/FilePathPair.hpp"
+#include "../../core/HotStartManager.hpp"
 #include "../../core/SimulationContext.hpp"
 
 #include <cstdio>
@@ -254,12 +255,14 @@ void insert_hotstart_slot_row(sqlite3*            db,
                                int                 format_version,
                                const std::string&  flow_units,
                                int                 num_pollut,
-                               const std::string&  status) {
+                               const std::string&  status,
+                               HotstartFormat      save_format = HotstartFormat::AUTO) {
     auto stmt = prepare(db,
         "INSERT INTO hotstart_slots "
         "(simulation_id, slot_name, direction, save_datetime, "
-        " format_version, flow_units, num_pollutants, captured_at, status) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        " format_version, flow_units, num_pollutants, captured_at, status, "
+        " save_format) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     bind_text(stmt.get(), 1, sim);
     bind_text(stmt.get(), 2, slot_name);
     bind_text(stmt.get(), 3, direction);
@@ -272,6 +275,10 @@ void insert_hotstart_slot_row(sqlite3*            db,
     if (status == "populated") bind_text(stmt.get(), 8, oadateToIso(save_datetime));
     else                       sqlite3_bind_null(stmt.get(), 8);
     bind_text(stmt.get(), 9, status);
+    // NULL = AUTO, so a row written for an older .gpkg reads back unchanged.
+    if      (save_format == HotstartFormat::LEGACY) bind_text(stmt.get(), 10, "LEGACY");
+    else if (save_format == HotstartFormat::NATIVE) bind_text(stmt.get(), 10, "NATIVE");
+    else                                            sqlite3_bind_null(stmt.get(), 10);
     sqlite3_step(stmt.get());
 }
 
@@ -486,6 +493,11 @@ void writeHotstartUseSlot(sqlite3* db, const SimulationContext& ctx,
     if (!fileExists(path)) {
         throw GpkgError("hotstart USE file not readable: '" + path + "'");
     }
+    if (HotStartManager::is_native_file(path)) {
+        throw GpkgError("hotstart USE file '" + path + "' is a native "
+                        "OpenSWMM hotstart; a GeoPackage can embed only the "
+                        "legacy SWMM5 format");
+    }
     formats::HotstartSnapshot snap;
     auto r = formats::parseHotstartHsf(path, snap);
     if (!r.ok) throw GpkgError("hotstart parse failed: " + r.error);
@@ -506,8 +518,10 @@ void writeHotstartSaveSlots(sqlite3* db, const SimulationContext& ctx,
         const std::string slot_name = "save_" + std::to_string(slot_idx++);
         if (save.path.empty()) continue;
         const std::string path = fopenToken(save.path);
-        if (!fileExists(path)) {
-            // Pending: parent row only, no state.
+        // Pending: parent row only, no state. A native file from an earlier
+        // run is also left out: the state tables hold the legacy layout only,
+        // and the run that follows writes the file again.
+        if (!fileExists(path) || HotStartManager::is_native_file(path)) {
             insert_hotstart_slot_row(db, sim, slot_name, "SAVE",
                                       save.datetime,
                                       /*format_version=*/4,
@@ -515,7 +529,7 @@ void writeHotstartSaveSlots(sqlite3* db, const SimulationContext& ctx,
                                           static_cast<int>(
                                               ctx.options.flow_units)),
                                       ctx.n_pollutants(),
-                                      "pending");
+                                      "pending", save.format);
             continue;
         }
         formats::HotstartSnapshot snap;
@@ -529,7 +543,7 @@ void writeHotstartSaveSlots(sqlite3* db, const SimulationContext& ctx,
                                   snap.header.file_version,
                                   flowUnitsToken(snap.header.flow_units),
                                   snap.header.num_pollut,
-                                  "populated");
+                                  "populated", save.format);
         insert_hotstart_state(db, sim, slot_name, ctx, snap);
     }
 }

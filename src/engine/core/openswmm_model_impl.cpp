@@ -46,6 +46,7 @@
 // [2D_OPTIONS] key routing for swmm_options_get_ext / swmm_options_set_ext
 // (is2DOptionKey / format2DOptionValue / parse2DOptionsLine).
 #include "../2d/input/SectionHandlers2D.hpp"
+#include "../../../include/openswmm/engine/openswmm_gw2d.h"   // swmm_hotstart_legacy_omits
 #endif
 
 #include <cstdio>
@@ -733,6 +734,49 @@ SWMM_ENGINE_API int swmm_hotstart_saves_set_datetime(
     auto* e = hs_save_at(engine, idx);
     if (!e) return SWMM_ERR_BADPARAM;
     e->datetime = datetime;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_hotstart_saves_get_format(
+    SWMM_Engine engine, int idx, int* format)
+{
+    CHECK_HANDLE(engine);
+    if (!format) return SWMM_ERR_BADPARAM;
+    auto* e = hs_save_at(engine, idx);
+    if (!e) return SWMM_ERR_BADPARAM;
+    *format = static_cast<int>(e->format);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_hotstart_saves_set_format(
+    SWMM_Engine engine, int idx, int format)
+{
+    CHECK_HANDLE(engine);
+    if (format < SWMM_HOTSTART_FORMAT_AUTO || format > SWMM_HOTSTART_FORMAT_NATIVE)
+        return SWMM_ERR_BADPARAM;
+    auto* e = hs_save_at(engine, idx);
+    if (!e) return SWMM_ERR_BADPARAM;
+    e->format = static_cast<openswmm::HotstartFormat>(format);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_hotstart_legacy_omits(SWMM_Engine engine, int* flags)
+{
+    CHECK_HANDLE(engine);
+    if (!flags) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    int f = 0;
+    if (ctx.options.water_age) f |= SWMM_HOTSTART_OMITS_WATER_AGE;
+    if (ctx.reactions.n_species() > 0) f |= SWMM_HOTSTART_OMITS_REACTION_SPECIES;
+#ifdef OPENSWMM_HAS_2D
+    int rows = 0;
+    if (swmm_gw2d_row_count(engine, &rows) == SWMM_OK && rows > 0)
+        f |= SWMM_HOTSTART_OMITS_AQUIFER;
+#endif
+    const auto& lids = ctx.node_subtypes.storages.lid;
+    if (std::any_of(lids.begin(), lids.end(), [](const auto& c) { return c.control >= 0; }))
+        f |= SWMM_HOTSTART_OMITS_NODE_LIDS;
+    *flags = f;
     return SWMM_OK;
 }
 

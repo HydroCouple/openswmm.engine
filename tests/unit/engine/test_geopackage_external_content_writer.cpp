@@ -379,3 +379,84 @@ TEST(GpkgExternalContentWriter, UseDirectionMissingFileThrows) {
     EXPECT_THROW(write_external_content(db.get(), ctx, sim),
                  openswmm::gpkg::GpkgError);
 }
+
+// ---------------------------------------------------------------------------
+// SAVE HOTSTART format keyword → hotstart_slots.save_format (NULL = AUTO).
+// A native file already on disk cannot be embedded (the state tables hold
+// the legacy layout), so its slot stays pending instead of failing the save.
+// ---------------------------------------------------------------------------
+
+TEST(GpkgExternalContentWriter, HotstartSaveFormatIsStoredAndNativeFileStaysPending) {
+    const std::string sim = "sim1";
+    auto db = freshDb("hotstart_save_format");
+    plantMinimalModel(db.get(), sim);
+
+    const fs::path native = testDir() / "save_format_native.hsf";
+    {   // only the stamp is read; the rest need not be a valid file
+        std::ofstream o(native, std::ios::binary);
+        o.write("OPENSWMM_HS_V1\0", 16);
+        o.write("not-a-real-body", 15);
+    }
+    SimulationContext ctx;
+    openswmm::HotstartSaveEntry a, n, l;
+    a.path = (testDir() / "save_format_auto_missing.hsf").string();
+    n.path = native.string();
+    n.format = openswmm::HotstartFormat::NATIVE;
+    l.path = (testDir() / "save_format_legacy_missing.hsf").string();
+    l.format = openswmm::HotstartFormat::LEGACY;
+    ctx.files.hotstart_saves = {a, n, l};
+
+    ASSERT_NO_THROW(write_external_content(db.get(), ctx, sim));
+
+    EXPECT_EQ(countWhere(db.get(),
+        "SELECT COUNT(*) FROM hotstart_slots WHERE slot_name='save_0' "
+        " AND save_format IS NULL AND status='pending'"), 1);
+    EXPECT_EQ(countWhere(db.get(),
+        "SELECT COUNT(*) FROM hotstart_slots WHERE slot_name='save_1' "
+        " AND save_format='NATIVE' AND status='pending'"), 1);
+    EXPECT_EQ(countWhere(db.get(),
+        "SELECT COUNT(*) FROM hotstart_slots WHERE slot_name='save_2' "
+        " AND save_format='LEGACY'"), 1);
+    EXPECT_EQ(countWhere(db.get(),
+        "SELECT COUNT(*) FROM hotstart_node_state WHERE slot_name='save_1'"), 0);
+}
+
+TEST(GpkgExternalContentWriter, NativeUseHotstartFileIsRefusedByName) {
+    const std::string sim = "sim1";
+    auto db = freshDb("hotstart_use_native");
+    plantMinimalModel(db.get(), sim);
+    const fs::path native = testDir() / "use_native.hsf";
+    {
+        std::ofstream o(native, std::ios::binary);
+        o.write("OPENSWMM_HS_V1\0", 16);
+    }
+    SimulationContext ctx;
+    ctx.files.hotstart_use_path = native.string();
+    try {
+        write_external_content(db.get(), ctx, sim);
+        FAIL() << "a native USE file was embedded";
+    } catch (const openswmm::gpkg::GpkgError& e) {
+        EXPECT_NE(std::string(e.what()).find("native"), std::string::npos) << e.what();
+    }
+}
+
+TEST(GpkgExternalContentWriter, OlderDatabaseGainsTheSaveFormatColumn) {
+    const fs::path path = testDir() / "hotstart_slots_pre_format.gpkg";
+    std::error_code ec;
+    fs::remove(path, ec);
+    auto db = open_database(path.string());
+    // hotstart_slots as written before the format keyword existed.
+    exec(db.get(),
+        "CREATE TABLE hotstart_slots (simulation_id TEXT NOT NULL, "
+        "slot_name TEXT NOT NULL, direction TEXT NOT NULL, save_datetime REAL, "
+        "format_version INTEGER NOT NULL, flow_units TEXT, "
+        "num_pollutants INTEGER NOT NULL, captured_at TEXT, "
+        "status TEXT NOT NULL DEFAULT 'pending', "
+        "PRIMARY KEY (simulation_id, slot_name))");
+    create_schema(db.get());
+    EXPECT_EQ(countWhere(db.get(),
+        "SELECT COUNT(*) FROM pragma_table_info('hotstart_slots') "
+        "WHERE name='save_format'"), 1);
+    // …and a second pass does not try to add it again.
+    EXPECT_NO_THROW(create_schema(db.get()));
+}

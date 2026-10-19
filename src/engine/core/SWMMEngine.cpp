@@ -1187,21 +1187,40 @@ int SWMMEngine::initialize() noexcept {
     // DW solver seeds area_mid_ from the hot-started link depths, and before the
     // old_net_inflow seeding below (which reads the hot-started link flows).
     bool hotstart_loaded = false;
-    if (!ctx_.files.hotstart_use_path.empty()) {
-        const std::string& hs_path =
-            !ctx_.files.hotstart_use_path.absolute.empty()
-                ? ctx_.files.hotstart_use_path.absolute
-                : ctx_.files.hotstart_use_path.original;
-        // Read the legacy EPA SWMM5 `.hsf` routing state (the format SAVE writes
-        // and the de-facto interchange format). Native OPENSWMM_HS_V1 files are
-        // applied via the C-API swmm_hotstart_apply path instead.
-        const bool lid_restart = std::any_of(ctx_.node_subtypes.storages.lid.begin(), ctx_.node_subtypes.storages.lid.end(),
-            [](const auto& c) { return c.control >= 0; });
+    // The file's own stamp picks the reader: legacy EPA SWMM5 `.hsf` routing
+    // state, or native OPENSWMM_HS_V1. A native file in a model with node
+    // LIDs is applied here, as before. In any other model it is applied at
+    // the end of initialize() instead — where swmm_hotstart_apply() runs —
+    // because the 2D router and aquifer do not exist until init_modules(),
+    // and an apply now would skip their blocks without a word.
+    const std::string& hs_path =
+        !ctx_.files.hotstart_use_path.absolute.empty()
+            ? ctx_.files.hotstart_use_path.absolute
+            : ctx_.files.hotstart_use_path.original;
+    const bool lid_restart = std::any_of(ctx_.node_subtypes.storages.lid.begin(), ctx_.node_subtypes.storages.lid.end(),
+        [](const auto& c) { return c.control >= 0; });
+    const bool hs_native = !ctx_.files.hotstart_use_path.empty()
+                           && HotStartManager::is_native_file(hs_path);
+    std::unique_ptr<HotStartFile> deferred_hotstart;
+    hotstart_deferred_ = hs_native && !lid_restart;
+    if (hotstart_deferred_) {
+        deferred_hotstart.reset(HotStartManager::open(hs_path));
+        if (!deferred_hotstart) {
+            set_error(CFFI_ERR_HOTSTART,
+                      ("USE HOTSTART: " + HotStartManager::last_io_error()).c_str());
+            return CFFI_ERR_HOTSTART;
+        }
+    }
+    if (!ctx_.files.hotstart_use_path.empty() && !deferred_hotstart) {
         int rc = 0;
-        if (lid_restart) {
+        if (hs_native) {
             std::unique_ptr<HotStartFile> hs(HotStartManager::open(hs_path));
             rc = hs ? HotStartManager::apply(*hs, ctx_, [this](const std::string& m) { ctx_.warnings.push_back(m); }) : 1;
         } else {
+            if (lid_restart)
+                ctx_.warnings.push_back("USE HOTSTART: '" + hs_path +
+                    "' is a legacy SWMM5 file, which carries no LID state; "
+                    "LID units start from their initial conditions.");
             // The runoff section is held until init_modules() has built the
             // hydrology and quality state it restores (legacy readRunoff runs
             // after subcatch_initState for the same reason).
@@ -1319,6 +1338,22 @@ int SWMMEngine::initialize() noexcept {
         } else {
             if (n1 >= 0) ctx_.nodes.inflow[static_cast<std::size_t>(n1)]  -= q;
             if (n2 >= 0) ctx_.nodes.outflow[static_cast<std::size_t>(n2)] -= q;
+        }
+    }
+
+    // [FILES] USE HOTSTART, native file, no node LIDs (see the dispatch
+    // above): the same call swmm_hotstart_apply() makes, at the same point.
+    // As on the [FILES] path above, any shortfall is an error.
+    if (deferred_hotstart) {
+        const int rc = HotStartManager::apply(*deferred_hotstart, ctx_,
+            &runoff_solver(), &gw_solver(),
+            [this](const std::string& m) { ctx_.warnings.push_back(m); });
+        if (rc != 0) {
+            std::string why = HotStartManager::last_io_error();
+            if (why.empty() && !deferred_hotstart->warnings.empty())
+                why = deferred_hotstart->warnings.front();
+            set_error(CFFI_ERR_HOTSTART, ("USE HOTSTART: " + why).c_str());
+            return CFFI_ERR_HOTSTART;
         }
     }
 
@@ -1574,6 +1609,9 @@ int SWMMEngine::start(int save_results) noexcept {
     for (int j = 0; j < ctx_.n_nodes(); ++j)
         ctx_.nodes.stat_total_inflow_vol[static_cast<std::size_t>(j)] =
             ctx_.nodes.volume[static_cast<std::size_t>(j)];
+
+    // No dated SAVE HOTSTART row has been written in this run yet.
+    hotstart_save_done_.assign(ctx_.files.hotstart_saves.size(), 0);
 
     ctx_.state = EngineState::RUNNING;
     return SWMM_OK;
@@ -2016,6 +2054,23 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
 
     if (avg_out_due && !avg_exact) {
         accumulateAvgResults();
+    }
+
+    // SAVE HOTSTART rows with a datetime: written once, from the state at
+    // the end of the first step that reaches it — legacy swmm_step calls
+    // hotstart_save() after routing and saveResults. (Legacy compares the
+    // elapsed milliseconds with the absolute date, so it fires within the
+    // first minute of the run; the date is honoured here.)
+    for (std::size_t k = 0; k < ctx_.files.hotstart_saves.size(); ++k) {
+        const auto& entry = ctx_.files.hotstart_saves[k];
+        if (entry.datetime == 0.0 || k >= hotstart_save_done_.size() ||
+            hotstart_save_done_[k])
+            continue;
+        const double due_ms =
+            (entry.datetime - ctx_.options.start_date) * 86400000.0;
+        if (ctx_.elapsed_ms + 1.0 < due_ms) continue;
+        hotstart_save_done_[k] = 1;
+        writeHotstartSave(entry);
     }
 
     // Keep a one-step API prescription through the output snapshot, then
@@ -7447,29 +7502,25 @@ int SWMMEngine::end() noexcept {
 
     ctx_.finalize_max_stats();
 
-    // SAVE HOTSTART (end-of-run entries): write the final routing state to each
+    // SAVE HOTSTART (end-of-run entries): write the final state to each
     // SAVE HOTSTART file with no datetime suffix, matching legacy swmm_end →
-    // hotstart_save (swmm5.c). Datetime-suffixed intermediate saves are a
-    // follow-up (not exercised by the QA suite). Legacy .hsf format so the file
-    // round-trips through USE HOTSTART (apply_legacy_routing).
-    for (const auto& entry : ctx_.files.hotstart_saves) {
-        if (entry.datetime != 0.0) continue;   // intermediate save — not yet
-        const std::string& sp = !entry.path.absolute.empty()
-            ? entry.path.absolute : entry.path.original;
-        if (sp.empty()) continue;
-        const bool lid_restart = std::any_of(ctx_.node_subtypes.storages.lid.begin(), ctx_.node_subtypes.storages.lid.end(),
-            [](const auto& c) { return c.control >= 0; });
-        int rc = 0;
-        if (lid_restart) {
-            std::unique_ptr<HotStartFile> hs(HotStartManager::save(ctx_, sp));
-            rc = hs ? 0 : 1;
-        } else {
-            const auto runoff = legacyRunoffSection();
-            rc = HotStartManager::save_legacy_routing(sp, ctx_, &runoff);
-        }
-        if (rc != 0) {
-            ctx_.warnings.push_back(
-                "SAVE HOTSTART: " + HotStartManager::last_io_error());
+    // hotstart_close (hotstart.c). Dated rows were written by step() when
+    // the clock reached them; one the run never reached is reported, not
+    // written.
+    for (std::size_t k = 0; k < ctx_.files.hotstart_saves.size(); ++k) {
+        const auto& entry = ctx_.files.hotstart_saves[k];
+        if (entry.datetime == 0.0) {
+            writeHotstartSave(entry);
+        } else if (k >= hotstart_save_done_.size() || !hotstart_save_done_[k]) {
+            int y = 0, mo = 0, d = 0, h = 0, mi = 0, sec = 0;
+            datetime::decodeDate(entry.datetime, y, mo, d);
+            datetime::decodeTime(entry.datetime, h, mi, sec);
+            char when[32];
+            std::snprintf(when, sizeof when, "%02d/%02d/%04d %02d:%02d:%02d",
+                          mo, d, y, h, mi, sec);
+            ctx_.warnings.push_back("SAVE HOTSTART: '" +
+                (!entry.path.absolute.empty() ? entry.path.absolute : entry.path.original) +
+                "' was not written; the run ended before its save time " + when + ".");
         }
     }
 
@@ -7483,6 +7534,39 @@ int SWMMEngine::end() noexcept {
 
     ctx_.state = EngineState::ENDED;
     return SWMM_OK;
+}
+
+// ============================================================================
+// writeHotstartSave() — one SAVE HOTSTART row, end of run or dated
+// ============================================================================
+//
+// A row's LEGACY / NATIVE keyword picks the format; without one (AUTO) it is
+// legacy .hsf, or native when node LIDs need it. Either round-trips through
+// USE HOTSTART, which reads the file's stamp.
+
+void SWMMEngine::writeHotstartSave(const HotstartSaveEntry& entry) {
+    const std::string& sp = !entry.path.absolute.empty()
+        ? entry.path.absolute : entry.path.original;
+    if (sp.empty()) return;
+    const bool lid_restart = std::any_of(ctx_.node_subtypes.storages.lid.begin(), ctx_.node_subtypes.storages.lid.end(),
+        [](const auto& c) { return c.control >= 0; });
+    const bool native = entry.format == HotstartFormat::NATIVE
+        || (entry.format == HotstartFormat::AUTO && lid_restart);
+    int rc = 0;
+    if (native) {
+        std::unique_ptr<HotStartFile> hs(HotStartManager::save(ctx_, sp));
+        rc = hs ? 0 : 1;
+    } else {
+        if (lid_restart)
+            ctx_.warnings.push_back("SAVE HOTSTART: '" + sp +
+                "' is LEGACY; a legacy SWMM5 file carries no LID state.");
+        const auto runoff = legacyRunoffSection();
+        rc = HotStartManager::save_legacy_routing(sp, ctx_, &runoff);
+    }
+    if (rc != 0) {
+        ctx_.warnings.push_back(
+            "SAVE HOTSTART: " + HotStartManager::last_io_error());
+    }
 }
 
 // ============================================================================
@@ -9149,7 +9233,9 @@ void SWMMEngine::initQuality() noexcept {
         // USE HOTSTART has already restored routing quality before module
         // initialization. Saved concentrations override Cinit and per-element
         // seeds, including at dry elements (legacy hotstart.c readRouting).
-        if (np > 0 && ctx_.files.hotstart_use_path.empty()) {
+        // A deferred native file is applied after this, as the C API applies
+        // one, so the seed runs first exactly as it does there.
+        if (np > 0 && (ctx_.files.hotstart_use_path.empty() || hotstart_deferred_)) {
             // Legacy qualrout.c: static const double ZeroDepth = 0.003281 (1 mm).
             constexpr double zero_depth = 0.003281;
             for (int i = 0; i < ctx_.n_nodes(); ++i) {

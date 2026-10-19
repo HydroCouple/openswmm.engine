@@ -1305,6 +1305,13 @@ HotStartFile* HotStartManager::open(const std::string& path) {
     return hs;
 }
 
+bool HotStartManager::is_native_file(const std::string& path) {
+    std::ifstream file(openswmm::io::utf8_path(path), std::ios::binary);
+    char magic[16] = {};
+    file.read(magic, 16);
+    return file && std::memcmp(magic, "OPENSWMM_HS_V1", 15) == 0;
+}
+
 // ============================================================================
 // HotStartManager::apply()
 // ============================================================================
@@ -1791,8 +1798,9 @@ int HotStartManager::apply_legacy_routing(
 // ============================================================================
 // HotStartManager::save_legacy_routing()
 //
-// Op-for-op transliteration of legacy hotstart.c saveHotstart()+saveRouting()
-// for the "SWMM5-HOTSTART4" format (hotstart.c:327-353, 358-399).
+// Op-for-op transliteration of legacy hotstart.c saveHotstart()+saveRunoff()+
+// saveRouting() for the "SWMM5-HOTSTART4" format (hotstart.c:327-353,
+// 492-561, 358-399).
 // ============================================================================
 
 int HotStartManager::save_legacy_routing(const std::string& path,

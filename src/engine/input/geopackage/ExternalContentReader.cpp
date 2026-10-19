@@ -383,11 +383,19 @@ void hydrateRoutingInterface(sqlite3* db, SimulationContext& ctx,
 
 void hydrateHotstart(sqlite3* db, SimulationContext& ctx,
                      const std::string& sim, const std::string& scratch) {
-    // Each row in hotstart_slots becomes one scratch HSF file.
-    auto stmt = prepare(db,
+    // Each row in hotstart_slots becomes one scratch HSF file. Files older
+    // than the SAVE HOTSTART format column read it as NULL (AUTO).
+    bool has_save_format = false;
+    {
+        auto cols = prepare(db, "PRAGMA table_info(hotstart_slots)");
+        while (sqlite3_step(cols.get()) == SQLITE_ROW)
+            has_save_format |= column_text(cols.get(), 1) == "save_format";
+    }
+    auto stmt = prepare(db, std::string(
         "SELECT slot_name, direction, save_datetime, format_version, "
-        "       flow_units, num_pollutants, status "
-        "FROM hotstart_slots WHERE simulation_id=? ORDER BY slot_name");
+        "       flow_units, num_pollutants, status, ")
+        + (has_save_format ? "save_format " : "NULL ")
+        + "FROM hotstart_slots WHERE simulation_id=? ORDER BY slot_name");
     bind_text(stmt.get(), 1, sim);
 
     struct SlotMeta {
@@ -395,6 +403,7 @@ void hydrateHotstart(sqlite3* db, SimulationContext& ctx,
         double save_datetime = 0.0;
         int    format_version = 4;
         int    num_pollutants = 0;
+        HotstartFormat save_format = HotstartFormat::AUTO;
     };
     std::vector<SlotMeta> slots;
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
@@ -414,6 +423,9 @@ void hydrateHotstart(sqlite3* db, SimulationContext& ctx,
         s.flow_units     = fu ? fu : "CFS";
         s.num_pollutants = sqlite3_column_int(stmt.get(), 5);
         s.status         = st ? st : "pending";
+        const std::string sf = column_text(stmt.get(), 7);
+        if      (sf == "LEGACY") s.save_format = HotstartFormat::LEGACY;
+        else if (sf == "NATIVE") s.save_format = HotstartFormat::NATIVE;
         slots.push_back(std::move(s));
     }
 
@@ -560,6 +572,7 @@ void hydrateHotstart(sqlite3* db, SimulationContext& ctx,
             openswmm::HotstartSaveEntry entry;
             entry.path     = std::string{};
             entry.datetime = s.save_datetime;
+            entry.format   = s.save_format;
             bindSlot(entry.path,
                       "<gpkg:hotstart_slots:" + s.name + ">",
                       scratch_path);

@@ -23,6 +23,15 @@ retroactive.
 
 ## [Unreleased]
 
+### `SAVE HOTSTART` format keyword (2026-10-18)
+
+- **`[FILES] SAVE HOTSTART "f" [date time] LEGACY|NATIVE`.** An optional trailing keyword picks the file format. NATIVE writes the OpenSWMM file `swmm_hotstart_save` writes, so a deck alone can now restart water age, reaction species, the aquifer with its species and the 2D surface state saved with it, storage-node LID cells and snow. A row without the keyword is unchanged in meaning and in written text: the SWMM 5 `.hsf`, or native when storage nodes carry LID units. LEGACY forces the SWMM 5 file and warns when that drops LID state. SWMM 5 export omits the keyword; EPA SWMM 5 itself ignores it, but on a dated row then saves at the end of the run.
+- **`USE HOTSTART` reads either format by the file's stamp.** A native file in a model without storage-node LIDs is applied at the end of `initialize()`, the point and call `swmm_hotstart_apply` uses, because the 2D router and aquifer do not exist earlier (an apply before `init_modules()` skipped their blocks without a warning). Two cases that were errors now run: a native file in a model without storage-node LIDs, and a SWMM 5 file in a model with them (with a warning that LID state starts cold).
+- **API.** `swmm_hotstart_saves_get_format` / `_set_format` and `SWMM_HOTSTART_FORMAT_AUTO|LEGACY|NATIVE`; Python `save_schedule.get_format(i)` / `set_format(i, fmt)`, with `insert` keeping every row's format. `swmm_hotstart_saves_add` is unchanged (AUTO).
+- **GeoPackage.** `hotstart_slots.save_format` (NULL = AUTO) is added, and to older files on save. A native SAVE file already on disk is recorded as a pending slot instead of failing the save; a native USE file is refused with a message that names the format (it failed before with a parse error).
+- **Dated `SAVE HOTSTART` rows are written.** A row with a date and time writes its file from the state at the end of the first time step that reaches that moment; a row the run never reaches is reported and not written. Dated rows used to be ignored. EPA SWMM 5.3 compares the elapsed milliseconds with the date and so writes such a file within the first minute of the run.
+- **`swmm_hotstart_legacy_omits`** (Python `save_schedule.legacy_omits()`) reports which of a model's state only a native file keeps: water age, reaction species, the 2D aquifer, storage-node LIDs. Neither format holds everything: the native file has no link control settings, node lateral inflows, storage residence times or subcatchment buildup.
+
 ### Water-quality physics review fixes (2026-10-15)
 
 - **Aquifer inbound species units.** Node-bed recharge and leaking-conduit seepage booked their species mass in concentration × ft³ into the concentration × m³ aquifer store, so recharge carried 35.3× its water's concentration while both ledgers still closed. Mass now rides the 2D volume at both seams. Aquifer decks with node beds or seeping conduits and quality change.

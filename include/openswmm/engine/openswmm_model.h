@@ -145,6 +145,7 @@ typedef enum SWMM_InpProfile {
  *          `SLOT`, a virtual junction becomes an ordinary junction, and an
  *          inlet junction becomes an ordinary junction plus an [INLET_USAGE]
  *          row on its approach conduit (same design, same capture node).
+ *          A `SAVE HOTSTART` row loses its LEGACY / NATIVE format keyword.
  *          Each substitution is appended to the engine's warning list
  *          (swmm_get_warning_count / swmm_get_warning_at). The file is a run
  *          artifact: the model held by the engine is not changed.

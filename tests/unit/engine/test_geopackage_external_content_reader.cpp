@@ -337,3 +337,38 @@ TEST(GpkgExternalContentReader, EmptyScratchDirSkipsHydration) {
     EXPECT_TRUE(rctx.options.temp_file.empty());
     EXPECT_TRUE(rctx.files.inflows_path.empty());
 }
+
+// ---------------------------------------------------------------------------
+// SAVE HOTSTART format keyword survives write → read; NULL reads as AUTO.
+// ---------------------------------------------------------------------------
+
+TEST(GpkgExternalContentReader, HotstartSaveFormatRoundTrip) {
+    const std::string sim = "sim1";
+    const std::string stem = "hotstart_save_format";
+    auto db = freshDb(stem);
+    plantMinimalModel(db.get(), sim);
+    {
+        SimulationContext wctx;
+        openswmm::HotstartSaveEntry a, n, l;
+        a.path = (testDir() / "rt_auto.hsf").string();
+        n.path = (testDir() / "rt_native.hsf").string();
+        n.format = openswmm::HotstartFormat::NATIVE;
+        l.path = (testDir() / "rt_legacy.hsf").string();
+        l.format = openswmm::HotstartFormat::LEGACY;
+        l.datetime = 46036.5;
+        for (const auto* e : {&a, &n, &l}) {
+            std::error_code ec;
+            fs::remove(e->path.str(), ec);   // pending slots: no file on disk
+        }
+        wctx.files.hotstart_saves = {a, n, l};
+        ASSERT_NO_THROW(write_external_content(db.get(), wctx, sim));
+    }
+    SimulationContext rctx;
+    const std::string scratch = scratchDirFor(dbPathFor(stem));
+    ASSERT_NO_THROW(read_external_content(db.get(), rctx, sim, scratch));
+    ASSERT_EQ(rctx.files.hotstart_saves.size(), 3u);
+    EXPECT_EQ(rctx.files.hotstart_saves[0].format, openswmm::HotstartFormat::AUTO);
+    EXPECT_EQ(rctx.files.hotstart_saves[1].format, openswmm::HotstartFormat::NATIVE);
+    EXPECT_EQ(rctx.files.hotstart_saves[2].format, openswmm::HotstartFormat::LEGACY);
+    EXPECT_DOUBLE_EQ(rctx.files.hotstart_saves[2].datetime, 46036.5);
+}

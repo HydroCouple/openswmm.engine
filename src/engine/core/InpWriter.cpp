@@ -3605,17 +3605,27 @@ int writeInpFile(const SimulationContext&  ctx_internal,
             if (save.path.empty()) continue;
             const std::string tok = emit_path_token(save.path, dst_dir,
                                                      force_abs_paths, warnings);
+            // Trailing format keyword only when one was chosen, so rows
+            // without it round-trip unchanged. SWMM 5 export drops it: on
+            // a dated row legacy would otherwise ignore the datetime.
+            const char* fmt = "";
+            if (save.format == HotstartFormat::LEGACY) fmt = " LEGACY";
+            if (save.format == HotstartFormat::NATIVE) fmt = " NATIVE";
+            if (swmm5 && *fmt) {
+                note("[FILES] SAVE HOTSTART format keyword omitted (SWMM 5.x profile)");
+                fmt = "";
+            }
             if (save.datetime > 0.0) {
                 char date_buf[16], time_buf[16];
                 fmt_date(date_buf, save.datetime);
                 fmt_time(time_buf, save.datetime);
-                std::fprintf(f, "%-13s %-10s \"%s\" %s %s\n",
+                std::fprintf(f, "%-13s %-10s \"%s\" %s %s%s\n",
                               "SAVE", "HOTSTART",
                               tok.c_str(),
-                              date_buf, time_buf);
+                              date_buf, time_buf, fmt);
             } else {
-                std::fprintf(f, "%-13s %-10s \"%s\"\n", "SAVE", "HOTSTART",
-                              tok.c_str());
+                std::fprintf(f, "%-13s %-10s \"%s\"%s\n", "SAVE", "HOTSTART",
+                              tok.c_str(), fmt);
             }
         }
     }

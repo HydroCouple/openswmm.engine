@@ -447,6 +447,8 @@ private:
     bool                   lenient_open_ = false;  ///< permissive open (see setter)
     bool                   metadata_only_ = false; ///< parse-only handle cannot initialize a run
     bool                   plugins_prepare_attempted_ = false;  ///< start() reached prepare_all (report file may be open)
+    bool                   hotstart_deferred_ = false;  ///< initialize(): a native USE HOTSTART waits for the end of initialize()
+    std::vector<char>      hotstart_save_done_;  ///< per SAVE HOTSTART row: its dated save was written this run
     PluginFactory          plugins_;   ///< Phase 4: plugin loader + lifecycle
     IOThread               io_thread_; ///< Phase 5: writer thread
 
@@ -891,6 +893,13 @@ private:
      * @brief Post a snapshot to the IO thread if output is due.
      */
     void postOutputSnapshot(double dt_step) noexcept;
+
+    /**
+     * @brief Write one SAVE HOTSTART row's file from the current state, in
+     *        the format the row names (AUTO: legacy, or native with node
+     *        LIDs). A failure becomes a warning, as legacy treats it.
+     */
+    void writeHotstartSave(const HotstartSaveEntry& entry);
 
     /**
      * @brief Deep-copy the active 2D surface state into a snapshot.

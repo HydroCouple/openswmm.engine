@@ -306,16 +306,20 @@ Identifies optional interface files used or saved by a run.
 Formats:
 USE / SAVE    RAINFALL        Fname        
 USE / SAVE    RUNOFF        Fname        
-USE / SAVE    HOTSTART        Fname        
+USE           HOTSTART        Fname
+SAVE          HOTSTART        Fname   (Date Time)   (LEGACY / NATIVE)
 USE / SAVE    RDII            Fname
 USE      INFLOWS                Fname
 SAVE    OUTFLOWS                Fname
 
 Parameters:
 Fname     is the name of an interface file.
+Date Time  is the optional date (month/day/year) and time (hours:minutes:seconds) at which a Hot Start file is saved: the file is written from the state at the end of the first time step that reaches that moment, and not at all if the run ends first. Without it the file is saved at the end of the run.
+LEGACY / NATIVE  (OpenSWMM extension) is the optional file format of a saved Hot Start file. LEGACY is the EPA SWMM 5 format, which holds subcatchment, node and link state; OpenSWMM applies only its node and link state when it reads one. NATIVE is the OpenSWMM format, which also holds water age, reaction species, LID units at storage nodes and the 2D aquifer, but not link control settings, node lateral inflows or subcatchment buildup — see @ref engine_manual_ch3_files. Without the keyword a SWMM 5 file is written, or a native one when the model has LID units at storage nodes.
 
 Remarks:
 Refer to @ref engine_manual_ch3_files for a description of interface files. Rainfall, Runoff, and RDII files can either be used or saved in a run, but not both. A run can both use and save a Hot Start file (with different names).
+USE HOTSTART reads either format, recognising it from the file itself. The format keyword must follow the date and time when both are given. EPA SWMM 5 ignores the keyword, so a row carrying it still opens there, but it then also ignores a date and time on the same row and saves at the end of the run; export to SWMM 5 omits the keyword. A NATIVE file cannot be read by EPA SWMM 5. A GeoPackage stores the format choice but embeds only SWMM 5 format Hot Start files.
 Enclose the external file name in double quotes if it contains spaces and include its full path if it resides in a different directory than the SWMM input file. 
 
  

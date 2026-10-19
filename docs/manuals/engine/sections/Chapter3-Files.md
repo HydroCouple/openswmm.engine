@@ -164,7 +164,9 @@ Hot start files can be used to avoid the initial numerical instabilities that so
 
 It is also possible to both use and save a hot start file in a single run, starting off the run with one file and saving the ending results to another. The resulting file can then serve as the initial conditions for a subsequent run if need be. This technique can be used to divide up extremely long continuous simulations into more manageable pieces.
 
-Hot start files are named in the [FILES] section — see @ref engine_manual_sect_FILES. A file saved mid-run rather than at the end holds only node, link and groundwater state.
+Hot start files are named in the [FILES] section — see @ref engine_manual_sect_FILES. A SAVE HOTSTART line that gives a date and time writes its file when the simulation clock first reaches that moment, from the state at the end of that time step; the file holds the same state as one saved at the end of a run. If the run ends before that moment the file is not written and the report warns. (EPA SWMM 5.3 writes such a file within the first minute of the run instead, whatever date is given.)
+
+OpenSWMM writes two hot start formats. The EPA SWMM 5 format is the default and holds everything listed above, and OpenSWMM applies all of it when it reads one. The native OpenSWMM format, selected with the NATIVE keyword on a SAVE HOTSTART line (and used automatically when storage nodes carry LID units), holds the node depths and link flows and depths, the runoff, infiltration, groundwater and snowpack state of each subcatchment, water age, the concentrations of pollutants and of reaction species, the state of LID units in storage nodes, and the 2D aquifer with the species it carries and the 2D surface state saved with it. It does not hold link control settings, node lateral inflows, storage residence times, or subcatchment ponded depths and buildup, which the EPA SWMM 5 format does. A USE HOTSTART line reads either format. EPA SWMM 5 cannot read a native file.
 
 ## RDII Files
 
