@@ -38,6 +38,7 @@
 #define OPENSWMM_GEOPACKAGE_FORMAT_TYPES_HPP
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -142,6 +143,9 @@ struct HotstartNodeState {
     double depth          = 0.0;
     double lateral_inflow = 0.0;
     double overflow       = 0.0;
+    /// Storage residence time; in the file only for storage nodes of a v4 file.
+    bool   has_hrt        = false;
+    double hrt            = 0.0;
     /// Pollutant concentration array (length = HotstartHeader::num_pollut).
     std::vector<double> concentration;
 };
@@ -165,6 +169,25 @@ struct HotstartSnapshot {
     std::vector<HotstartSubcatchState> subcatch_state;  // size == header.num_subcatch
     std::vector<HotstartNodeState>     node_state;      // size == header.num_nodes
     std::vector<HotstartLinkState>     link_state;      // size == header.num_links
+    /// The subcatchment (runoff) section of a v3+ file, verbatim: its length
+    /// depends on the model, so it is kept as bytes, not decoded.
+    std::string                        runoff_raw;
+    /// Everything after the link records (e.g. the reaction-species trailer),
+    /// verbatim.
+    std::string                        tail_raw;
+};
+
+/**
+ * @brief What the model says about a file's layout that the file does not.
+ * @details The runoff section of a v3+ file has no length of its own: it
+ *          depends on which subcatchments have groundwater or a snowpack and
+ *          on the land-use count in the header. A v4 file also carries one
+ *          extra float (residence time) per storage node.
+ */
+struct HsfLayout {
+    int n_subcatch = 0;                                  ///< the model's count
+    std::function<std::size_t(int n_landuses)> runoff_doubles; ///< runoff section length
+    std::vector<char> storage;                           ///< per node: is a storage node
 };
 
 // ============================================================================

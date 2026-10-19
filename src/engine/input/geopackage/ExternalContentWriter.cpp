@@ -291,8 +291,8 @@ void insert_hotstart_state(sqlite3*                       db,
     {
         auto stmt = prepare(db,
             "INSERT INTO hotstart_node_state "
-            "(simulation_id, slot_name, node_id, depth, lateral_inflow, overflow) "
-            "VALUES (?, ?, ?, ?, ?, ?)");
+            "(simulation_id, slot_name, node_id, depth, lateral_inflow, overflow, hrt) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)");
         for (std::size_t i = 0; i < snap.node_state.size(); ++i) {
             if (static_cast<int>(i) >= ctx.node_names.size()) break;
             const auto& s = snap.node_state[i];
@@ -303,6 +303,8 @@ void insert_hotstart_state(sqlite3*                       db,
             bind_double(stmt.get(), 4, s.depth);
             bind_double(stmt.get(), 5, s.lateral_inflow);
             bind_double(stmt.get(), 6, s.overflow);
+            if (s.has_hrt) bind_double(stmt.get(), 7, s.hrt);
+            else           sqlite3_bind_null(stmt.get(), 7);
             sqlite3_step(stmt.get());
         }
     }
@@ -376,7 +378,37 @@ void insert_hotstart_state(sqlite3*                       db,
             }
         }
     }
-    // Subcatch runoff state is out of scope for IO-6e (see HotstartFormat.hpp).
+    // The subcatchment section and any trailer ride on the slot row as they
+    // are in the file (their layout depends on the model, not on names).
+    {
+        auto stmt = prepare(db,
+            "UPDATE hotstart_slots SET num_subcatch=?, num_landuses=?, "
+            "runoff_section=?, tail_section=? WHERE simulation_id=? AND slot_name=?");
+        bind_int(stmt.get(), 1, snap.runoff_raw.empty() ? 0 : snap.header.num_subcatch);
+        bind_int(stmt.get(), 2, snap.header.num_landuses);
+        auto bind_bytes = [&](int col, const std::string& b) {
+            if (b.empty()) sqlite3_bind_null(stmt.get(), col);
+            else bind_blob(stmt.get(), col, b.data(), static_cast<int>(b.size()));
+        };
+        bind_bytes(3, snap.runoff_raw);
+        bind_bytes(4, snap.tail_raw);
+        bind_text(stmt.get(), 5, sim);
+        bind_text(stmt.get(), 6, slot);
+        sqlite3_step(stmt.get());
+    }
+}
+
+// The model's side of a legacy file's layout (see formats::HsfLayout).
+formats::HsfLayout hsfLayout(const SimulationContext& ctx) {
+    formats::HsfLayout layout;
+    layout.n_subcatch = ctx.n_subcatches();
+    layout.runoff_doubles = [&ctx](int n_landuses) {
+        return HotStartManager::legacy_runoff_size(ctx, n_landuses);
+    };
+    layout.storage.assign(ctx.nodes.type.size(), 0);
+    for (std::size_t i = 0; i < ctx.nodes.type.size(); ++i)
+        layout.storage[i] = ctx.nodes.type[i] == NodeType::STORAGE;
+    return layout;
 }
 
 // -------------------------------------------------------------------------
@@ -499,7 +531,7 @@ void writeHotstartUseSlot(sqlite3* db, const SimulationContext& ctx,
                         "legacy SWMM5 format");
     }
     formats::HotstartSnapshot snap;
-    auto r = formats::parseHotstartHsf(path, snap);
+    auto r = formats::parseHotstartHsf(path, snap, hsfLayout(ctx));
     if (!r.ok) throw GpkgError("hotstart parse failed: " + r.error);
 
     insert_hotstart_slot_row(db, sim, "use", "USE",
@@ -533,7 +565,7 @@ void writeHotstartSaveSlots(sqlite3* db, const SimulationContext& ctx,
             continue;
         }
         formats::HotstartSnapshot snap;
-        auto r = formats::parseHotstartHsf(path, snap);
+        auto r = formats::parseHotstartHsf(path, snap, hsfLayout(ctx));
         if (!r.ok) {
             throw GpkgError("hotstart SAVE parse failed for '" + path
                               + "': " + r.error);

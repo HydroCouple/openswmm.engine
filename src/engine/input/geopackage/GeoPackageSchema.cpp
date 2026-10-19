@@ -960,6 +960,10 @@ CREATE TABLE IF NOT EXISTS hotstart_slots (
     captured_at     TEXT,                                -- ISO8601; NULL until populated
     status          TEXT NOT NULL DEFAULT 'pending',     -- 'pending' | 'populated'
     save_format     TEXT CHECK(save_format IN ('LEGACY','NATIVE')), -- SAVE keyword; NULL = AUTO
+    num_subcatch    INTEGER,                             -- header count; NULL = 0
+    num_landuses    INTEGER,                             -- header count; NULL = 0
+    runoff_section  BLOB,                                -- subcatchment section, verbatim
+    tail_section    BLOB,                                -- bytes after the links, verbatim
     PRIMARY KEY (simulation_id, slot_name),
     FOREIGN KEY (simulation_id)
         REFERENCES simulations(simulation_id)
@@ -974,6 +978,7 @@ CREATE TABLE IF NOT EXISTS hotstart_node_state (
     depth           REAL NOT NULL,
     lateral_inflow  REAL,
     overflow        REAL,
+    hrt             REAL,                                -- storage residence time (v4)
     PRIMARY KEY (simulation_id, slot_name, node_id),
     FOREIGN KEY (simulation_id, slot_name)
         REFERENCES hotstart_slots(simulation_id, slot_name)
@@ -1423,15 +1428,24 @@ void create_schema(sqlite3* db) {
     exec(db, PART_B_DDL);
     exec(db, PART_C_DDL);
     exec(db, PART_D_DDL);
-    // Older databases lack the SAVE HOTSTART format column; their rows
-    // read back as AUTO (NULL), which is what they meant.
-    bool has_save_format = false;
-    auto hs_columns = prepare(db, "PRAGMA table_info(hotstart_slots)");
-    while (sqlite3_step(hs_columns.get()) == SQLITE_ROW)
-        has_save_format |= column_text(hs_columns.get(), 1) == "save_format";
-    hs_columns.reset();
-    if (!has_save_format)
-        exec(db, "ALTER TABLE hotstart_slots ADD COLUMN save_format TEXT CHECK(save_format IN ('LEGACY','NATIVE'))");
+    // Older databases lack the newer hot-start columns. Their rows read back
+    // as they were written: format AUTO (NULL), no subcatchment section, no
+    // trailer, no residence times.
+    auto add_missing = [&](const char* table, const char* column, const char* type) {
+        bool has = false;
+        auto cols = prepare(db, std::string("PRAGMA table_info(") + table + ")");
+        while (sqlite3_step(cols.get()) == SQLITE_ROW)
+            has |= column_text(cols.get(), 1) == column;
+        cols.reset();
+        if (!has)
+            exec(db, std::string("ALTER TABLE ") + table + " ADD COLUMN " + column + " " + type);
+    };
+    add_missing("hotstart_slots", "save_format", "TEXT CHECK(save_format IN ('LEGACY','NATIVE'))");
+    add_missing("hotstart_slots", "num_subcatch", "INTEGER");
+    add_missing("hotstart_slots", "num_landuses", "INTEGER");
+    add_missing("hotstart_slots", "runoff_section", "BLOB");
+    add_missing("hotstart_slots", "tail_section", "BLOB");
+    add_missing("hotstart_node_state", "hrt", "REAL");
     exec(db, MESH_2D_DDL);
     exec(db, "CREATE TABLE IF NOT EXISTS surface_ownership_2d_input (simulation_id TEXT PRIMARY KEY, sections TEXT NOT NULL)");
 }

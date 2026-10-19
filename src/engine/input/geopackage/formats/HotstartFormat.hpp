@@ -33,14 +33,11 @@
  *            (`volume`, `target_setting`, `time_open`, `time_closed`)
  *            have no HSF counterpart and round-trip through HSF as 0.0.
  *
- *          The subcatchment-runoff portion of the legacy file
- *          (saveRunoff/readRunoff) carries conditional fields whose
- *          presence depends on per-subcatchment groundwater / snowpack
- *          configuration. That portion is **out of scope for IO-6e**;
- *          this slice covers the routing-state half so the GeoPackage
- *          materialiser can round-trip a USE-direction hot-start used to
- *          seed routing-only restart scenarios. A follow-up slice
- *          extends to runoff state when the subcatchment editor lands.
+ *          - The subcatchment-runoff section (saveRunoff/readRunoff),
+ *            whose length depends on the model (`HsfLayout`), and anything
+ *            after the link records (an OpenSWMM trailer) are carried
+ *            verbatim, so a file round-trips byte for byte. A v4 file's
+ *            per-storage-node residence time float is decoded.
  *
  *          Endianness: HSF is written little-endian on all SWMM5
  *          platforms.  We rely on the SWMM5 convention (no byte-swapping)
@@ -66,23 +63,26 @@ namespace openswmm::gpkg::formats {
  * @brief Parse an HSF v4 file into a `HotstartSnapshot`.
  *
  * @details Populates `header.{num_*,flow_units,file_version,file_stamp}`,
- *          `node_state[]`, and `link_state[]`. `subcatch_state[]` is left
- *          empty (see header doc — runoff state is out of scope for this
- *          slice).
+ *          `node_state[]`, `link_state[]`, `runoff_raw` and `tail_raw`.
+ *          A file with subcatchments needs `layout` (the model's
+ *          subcatchment count must match the file's); v1/v2 files with
+ *          subcatchments are refused.
  *
  * @param path      Filesystem path to the HSF file.
  * @param snapshot  Output snapshot (existing content is overwritten).
  */
 FormatResult parseHotstartHsf(const std::string&  path,
-                               HotstartSnapshot&  snapshot);
+                               HotstartSnapshot&  snapshot,
+                               const HsfLayout&   layout = {});
 
 /**
  * @brief Write a `HotstartSnapshot` to an HSF v4 file at `path`.
  *
  * @details Header counts must already match the lengths of the per-object
  *          state vectors; mismatches return a `FormatResult` with `ok=false`
- *          rather than writing a corrupt file. Subcatchment runoff state
- *          is not written — the slice's scope is routing-only round-trip.
+ *          rather than writing a corrupt file. `runoff_raw` and `tail_raw`
+ *          are written as they are; without `runoff_raw` the subcatchment
+ *          count is written as 0.
  */
 FormatResult writeHotstartHsf(const std::string&        path,
                                const HotstartSnapshot&   snapshot);

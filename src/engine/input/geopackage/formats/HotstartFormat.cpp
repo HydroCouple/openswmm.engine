@@ -64,7 +64,8 @@ bool writeFloat(std::FILE* fp, float v) {
 } // namespace
 
 FormatResult parseHotstartHsf(const std::string&  path,
-                               HotstartSnapshot&  snapshot) {
+                               HotstartSnapshot&  snapshot,
+                               const HsfLayout&   layout) {
     std::FILE* fp = openswmm::io::fopen_utf8(path, "rb");
     if (!fp) return fail("could not open '" + path + "' for reading");
 
@@ -102,17 +103,27 @@ FormatResult parseHotstartHsf(const std::string&  path,
     snapshot.header.num_pollut   = nPo;
     snapshot.header.flow_units   = fu;
 
-    // --- Skip subcatch runoff state (out of scope for this slice).
-    //     The runoff portion is conditional on per-subcatchment
-    //     groundwater / snowpack configuration and cannot be skipped
-    //     by byte-count alone. For now we refuse files that contain a
-    //     non-zero subcatch count when version >= 3 — callers should
-    //     prepare HSF files without runoff state, or wait for the
-    //     follow-up slice.
-    if (snapshot.header.file_version >= 3 && nSub > 0) {
-        std::fclose(fp);
-        return fail("HSF carries runoff state (nSubcatch > 0); IO-6e "
-                    "supports routing state only — see HotstartFormat.hpp");
+    // --- Subcatchment (runoff) section, verbatim. Its length comes from
+    //     the model (legacy readRunoff reads it against the project), so the
+    //     model's subcatchment count must match the file's.
+    snapshot.runoff_raw.clear();
+    if (nSub > 0) {
+        if (nSub != layout.n_subcatch) {
+            std::fclose(fp);
+            return fail("the file has " + std::to_string(nSub) +
+                        " subcatchments, the model " +
+                        std::to_string(layout.n_subcatch));
+        }
+        if (snapshot.header.file_version < 3 || !layout.runoff_doubles) {
+            std::fclose(fp);
+            return fail("HSF v" + std::to_string(snapshot.header.file_version) +
+                        " subcatchment state is not supported");
+        }
+        snapshot.runoff_raw.resize(layout.runoff_doubles(nLu) * sizeof(double));
+        if (!readBytes(fp, snapshot.runoff_raw.data(), snapshot.runoff_raw.size())) {
+            std::fclose(fp);
+            return fail("truncated subcatchment state");
+        }
     }
 
     // --- Node state ---
@@ -129,6 +140,19 @@ FormatResult parseHotstartHsf(const std::string&  path,
         s.depth          = depth;
         s.lateral_inflow = lat;
         s.overflow       = 0.0;          // not in HSF v4
+        // v4: storage nodes carry their residence time next (legacy
+        // saveRouting writes it between the inflow and the quality).
+        const auto ui = static_cast<std::size_t>(i);
+        if (snapshot.header.file_version >= 4 && ui < layout.storage.size() &&
+            layout.storage[ui]) {
+            float hrt = 0.0f;
+            if (!readFloat(fp, hrt)) {
+                std::fclose(fp);
+                return fail("truncated storage residence time");
+            }
+            s.has_hrt = true;
+            s.hrt     = hrt;
+        }
         s.concentration.resize(static_cast<std::size_t>(nPo));
         for (int j = 0; j < nPo; ++j) {
             float q = 0.0f;
@@ -173,6 +197,12 @@ FormatResult parseHotstartHsf(const std::string&  path,
         snapshot.link_state.push_back(std::move(s));
     }
 
+    // --- Whatever follows the links (an OpenSWMM trailer), verbatim.
+    snapshot.tail_raw.clear();
+    char buf[4096];
+    for (std::size_t n; (n = std::fread(buf, 1, sizeof buf, fp)) > 0;)
+        snapshot.tail_raw.append(buf, n);
+
     std::fclose(fp);
     return ok();
 }
@@ -202,16 +232,18 @@ FormatResult writeHotstartHsf(const std::string&        path,
     std::FILE* fp = openswmm::io::fopen_utf8(path, "wb");
     if (!fp) return fail("could not open '" + path + "' for writing");
 
-    // Stamp (v4).
-    if (!writeBytes(fp, HSF_STAMP_V4, HSF_STAMP_LEN)) {
+    // Stamp: the file's own version (v4 when unknown).
+    std::string stamp = HSF_STAMP_V4;
+    if (h.file_version >= 2 && h.file_version <= 4)
+        stamp[14] = static_cast<char>('0' + h.file_version);
+    if (!writeBytes(fp, stamp.data(), HSF_STAMP_LEN)) {
         std::fclose(fp);
         return fail("write failed (stamp)");
     }
-    // Counts. We always write nSubcatch=0 — this slice's writer does not
-    // emit runoff state; readers that load the file will skip the runoff
-    // block trivially when nSubcatch==0.
-    const int32_t zero = 0;
-    if (!writeInt32(fp, zero) ||                              // nSubcatch
+    // Counts. The subcatchment count goes with its section: without the
+    // section it is written as 0, which readers take as "no runoff state".
+    const int32_t n_sub = snapshot.runoff_raw.empty() ? 0 : h.num_subcatch;
+    if (!writeInt32(fp, n_sub) ||
         !writeInt32(fp, h.num_landuses) ||
         !writeInt32(fp, h.num_nodes)    ||
         !writeInt32(fp, h.num_links)    ||
@@ -220,11 +252,16 @@ FormatResult writeHotstartHsf(const std::string&        path,
         std::fclose(fp);
         return fail("write failed (counts)");
     }
+    if (!writeBytes(fp, snapshot.runoff_raw.data(), snapshot.runoff_raw.size())) {
+        std::fclose(fp);
+        return fail("write failed (subcatchment state)");
+    }
 
     // Node state.
     for (const auto& n : snapshot.node_state) {
         if (!writeFloat(fp, static_cast<float>(n.depth)) ||
-            !writeFloat(fp, static_cast<float>(n.lateral_inflow))) {
+            !writeFloat(fp, static_cast<float>(n.lateral_inflow)) ||
+            (n.has_hrt && !writeFloat(fp, static_cast<float>(n.hrt)))) {
             std::fclose(fp);
             return fail("write failed (node state)");
         }
@@ -250,6 +287,10 @@ FormatResult writeHotstartHsf(const std::string&        path,
                 return fail("write failed (link quality)");
             }
         }
+    }
+    if (!writeBytes(fp, snapshot.tail_raw.data(), snapshot.tail_raw.size())) {
+        std::fclose(fp);
+        return fail("write failed (trailer)");
     }
 
     std::fclose(fp);
