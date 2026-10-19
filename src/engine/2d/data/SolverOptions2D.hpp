@@ -421,7 +421,9 @@ struct SolverOptions2D {
     /// multiplying through. Refused negative at parse: anti-diffusion is not
     /// a modelling case.
     double dispersion     = 0.0;
-    /// Optional EMA sub-relaxation of per-substep coupling exchange (1 = off).
+    /// Unused: no input sets it and no solver path reads it. Kept only
+    /// because the common-source checkpoint fingerprint hashes it (removing
+    /// it would refuse existing native checkpoints).
     double exchange_relax = 1.0;
     /// [2D_OPTIONS] COUPLING_AREA AUTO: derive exchange area at coupling-point
     /// resolve from the largest connected conduit (clamp(1.25·A_conduit,
