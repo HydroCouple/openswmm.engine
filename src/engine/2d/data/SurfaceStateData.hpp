@@ -85,6 +85,12 @@ struct SurfaceStateData {
     /// What a 1D→2D spill or outfall discharge arrives at.
     const std::vector<double>*        node_row_conc   = nullptr;
     const std::vector<CouplingPoint>* node_coupling   = nullptr;  ///< non-outfall points
+    /// Per-node volume (1D ft³) at which a coupled node's pond starts: what
+    /// the active 1D router books at the rim — `rpt_full_volume` under DW (0
+    /// for a plain junction), `full_volume` otherwise (FV holds MIN_SURFAREA ×
+    /// full depth below the pond). A 1D→2D spill may only draw volume above
+    /// it. Null falls back to `full_volume`.
+    const std::vector<double>*        node_pond_base  = nullptr;
 
     /// S1 — overland species transport. `transport.active()` is false (and
     /// every marcher species branch is skipped) unless the router sized it,

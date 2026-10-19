@@ -686,6 +686,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         if (!node_coupling_points_.empty()) {
             state_.node_coupling = &node_coupling_points_;
             state_.nodes_1d      = &ctx.nodes;
+            state_.node_pond_base =
+                (ctx.options.routing_model == RoutingModel::DYNWAVE)
+                    ? &ctx.nodes.rpt_full_volume
+                    : &ctx.nodes.full_volume;
         }
     }
 

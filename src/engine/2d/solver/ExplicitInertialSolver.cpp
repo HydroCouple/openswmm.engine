@@ -1973,18 +1973,23 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
                 // that is a large, one-signed transfer of water from the 1D
                 // system to the 2D surface with nothing to stop it.
                 //
-                // `full_volume` is the node's own capacity; SWMM's ponded
-                // branch stores ponded water as volume ABOVE it
-                // (commitNodeDepthState: volume = max(old + dV, full_volume)),
-                // so the difference is exactly the ponded share. Coupled
-                // junctions always pond — SurfaceRouter2D assigns them the
-                // 2D-cell footprint as ponded_area and DynamicWave lets
-                // is_coupled bypass ALLOW_PONDING — so this budget is the
-                // right one and is non-zero whenever there is water to give.
+                // The pond is the volume above what the 1D router books at
+                // the rim (node_pond_base): DW stores ponded water ABOVE
+                // rpt_full_volume (commitNodeDepthState: volume =
+                // max(old + dV, rpt_full_volume)) — 0 for a plain junction —
+                // while FV holds full_volume = MIN_SURFAREA × full depth
+                // below its pond. Subtracting full_volume under DW withheld
+                // the first MIN_SURFAREA × full depth of every pond from the
+                // spill. Coupled junctions always pond — SurfaceRouter2D
+                // assigns them the 2D-cell footprint as ponded_area and
+                // DynamicWave lets is_coupled bypass ALLOW_PONDING — so this
+                // budget is non-zero whenever there is water to give.
                 const auto ni = static_cast<std::size_t>(cp.node_idx);
+                const double pond_base =
+                    state_->node_pond_base ? (*state_->node_pond_base)[ni]
+                                           : state_->nodes_1d->full_volume[ni];
                 const double ponded_1d =
-                    std::max(0.0, state_->nodes_1d->volume[ni] -
-                                      state_->nodes_1d->full_volume[ni]);
+                    std::max(0.0, state_->nodes_1d->volume[ni] - pond_base);
                 const double avail =
                     ponded_1d * opts_->vol_1d_to_2d - node_drawn_[ni];
                 if (avail <= 0.0) continue;

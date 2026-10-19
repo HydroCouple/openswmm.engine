@@ -298,7 +298,9 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
     if (nn > 0) {
         devRefresh(d_node_invert_, state.nodes_1d->invert_elev);
         devRefresh(d_node_fulldepth_, state.nodes_1d->full_depth);
-        devRefresh(d_node_fullvol_, state.nodes_1d->full_volume);
+        // The spill budget's pond base (see SurfaceStateData::node_pond_base).
+        devRefresh(d_node_fullvol_, state.node_pond_base ? *state.node_pond_base
+                                                         : state.nodes_1d->full_volume);
     }
 
     // Tier-0 pins: BC cells + coupling cells (fastest-changing forcing).
