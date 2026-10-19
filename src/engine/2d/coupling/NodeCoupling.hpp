@@ -67,6 +67,9 @@ struct CouplingPoint {
     /// conduit area, 0.05, 2.0) m²) replaces the area of every junction point
     /// either way — mapper-written default tokens look authored.
     bool area_authored = true;
+    /// True when the input authored this point's CD; false = the router
+    /// substitutes [2D_OPTIONS] COUPLING_CD.
+    bool cd_authored = true;
 };
 
 /**

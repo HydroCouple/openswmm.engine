@@ -61,8 +61,11 @@ namespace {
 
 // Same physical fixture as test_2d_coupling_conservation, on the marcher path.
 // `area_token`: the authored exchange area; `auto_area`: adds COUPLING_AREA AUTO;
-// `sur_depth`: J1's surcharge depth.
-std::string build_model(double area_token, bool auto_area, double sur_depth = 0.0) {
+// `sur_depth`: J1's surcharge depth; `coupling_cd`: [2D_OPTIONS] COUPLING_CD;
+// `row_tail`: replaces the map row's "CD AREA" tokens when given.
+std::string build_model(double area_token, bool auto_area, double sur_depth = 0.0,
+                        const std::string& coupling_cd = "0.7",
+                        const char* row_tail = nullptr) {
     std::ostringstream m;
     m <<
         "[OPTIONS]\n"
@@ -94,7 +97,7 @@ std::string build_model(double area_token, bool auto_area, double sur_depth = 0.
         "LTS_TIERS        4\n"
         "MAX_TIMESTEP     30\n"
         "DRY_DEPTH        0.002\n"
-        "COUPLING_CD      0.7\n"
+        "COUPLING_CD      " << coupling_cd << "\n"
         "REPORT_2D        NO\n";
     if (auto_area) m << "COUPLING_AREA    AUTO\n";
     m <<
@@ -110,7 +113,9 @@ std::string build_model(double area_token, bool auto_area, double sur_depth = 0.
         "0     2   3   0.03\n"
         "\n"
         "[2D_VERTEX_NODE_MAP]\n"
-        "0         J1    0.7  " << area_token << "\n";
+        "0         J1    ";
+    if (row_tail) m << row_tail << "\n";
+    else          m << "0.7  " << area_token << "\n";
     return m.str();
 }
 
@@ -124,12 +129,15 @@ struct RunResult {
 };
 
 RunResult run(const fs::path& dir, const std::string& tag, double area_token,
-              bool auto_area, double sur_depth = 0.0) {
+              bool auto_area, double sur_depth = 0.0,
+              const std::string& coupling_cd = "0.7",
+              const char* row_tail = nullptr) {
     RunResult r;
     const fs::path inp = dir / (tag + ".inp");
     const fs::path rpt = dir / (tag + ".rpt");
     const fs::path out = dir / (tag + ".out");
-    { std::ofstream f(inp); f << build_model(area_token, auto_area, sur_depth); }
+    { std::ofstream f(inp);
+      f << build_model(area_token, auto_area, sur_depth, coupling_cd, row_tail); }
 
     SWMM_Engine eng = swmm_engine_create();
     if (swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
@@ -252,6 +260,23 @@ TEST_F(WindowlessCoupling2DTest, AutoAreaReachesLiveExchange) {
     EXPECT_NEAR(drv.received_first_2min, ref.received_first_2min,
                 0.01 * ref.received_first_2min)
         << "AUTO run should drain like an explicit derived-area row";
+}
+
+// A map row without a CD token takes [2D_OPTIONS] COUPLING_CD: it must run
+// bit-identically to the same row authoring that CD, and differently from
+// the 0.65 every unauthored row used to get. (AUTO sizes the area, since a
+// row cannot author AREA without authoring CD.)
+TEST_F(WindowlessCoupling2DTest, CouplingCdAppliesToRowsWithoutCd) {
+    RunResult dflt = run(dir_, "cd_from_option", 1.0, true, 0.0, "0.9", "");
+    RunResult expl = run(dir_, "cd_authored_09", 1.0, true, 0.0, "0.9", "0.9");
+    RunResult old  = run(dir_, "cd_authored_065", 1.0, true, 0.0, "0.9", "0.65");
+    ASSERT_TRUE(dflt.ok && expl.ok && old.ok);
+    ASSERT_GT(expl.received_1d, 1.0) << "fixture produced no exchange";
+    EXPECT_EQ(dflt.received_first_2min, expl.received_first_2min)
+        << "a row without CD must use COUPLING_CD";
+    EXPECT_EQ(dflt.received_1d, expl.received_1d);
+    EXPECT_NE(dflt.received_first_2min, old.received_first_2min)
+        << "fixture does not discriminate CD 0.9 from 0.65";
 }
 
 // A coupled node's SurDepth is ignored (it ponds from the rim and the

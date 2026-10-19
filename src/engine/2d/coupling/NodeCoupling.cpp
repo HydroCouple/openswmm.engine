@@ -404,6 +404,9 @@ std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
         cp.area_authored =
             v < static_cast<int>(mesh.vert_coupling_area_set.size()) &&
             mesh.vert_coupling_area_set[static_cast<std::size_t>(v)] != 0;
+        cp.cd_authored =
+            v < static_cast<int>(mesh.vert_coupling_cd_set.size()) &&
+            mesh.vert_coupling_cd_set[static_cast<std::size_t>(v)] != 0;
 
         // Find the triangle that contains this vertex (use first one)
         // The coupling flux is distributed to triangles sharing this vertex
@@ -435,6 +438,7 @@ std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
         cp.cd = row.cd;
         cp.area = row.area;
         cp.area_authored = row.area_set;
+        cp.cd_authored = row.cd_set;
 
         auto ui = static_cast<std::size_t>(node_idx);
         cp.is_outfall = (ctx.nodes.type[ui] == NodeType::OUTFALL);

@@ -417,6 +417,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             row.node      = indexed ? mesh_.tri_coupled_node[t] : -1;
             row.node_name = mesh_.tri_coupled_node_name[t];
             row.cd        = mesh_.tri_coupling_cd[t];
+            row.cd_set    = true;   // the arrays carry an explicit value
             row.area      = mesh_.tri_coupling_area[t];
             mesh_.tri_couplings.push_back(std::move(row));
         }
@@ -511,8 +512,12 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // consumers (output snapshots, first inject) must not read zeros.
     reconstructVertexHeads(mesh_, state_, options_.num_threads);
 
-    // Build coupling point descriptors
+    // Build coupling point descriptors. A point whose map row did not author
+    // a CD takes [2D_OPTIONS] COUPLING_CD (resolved here, after every input
+    // section and API edit has landed, so section order does not matter).
     coupling_points_ = buildCouplingPoints(mesh_, ctx);
+    for (auto& cp : coupling_points_)
+        if (!cp.cd_authored) cp.cd = options_.coupling_cd;
 
     // Imported/generated maps may include unused outfalls. They cannot
     // exchange through the hydraulic network; omit their mappings before

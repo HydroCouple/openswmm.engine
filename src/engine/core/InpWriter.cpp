@@ -1032,6 +1032,21 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
         return {};
     };
 
+    // One map row: the CD and AREA columns only when authored, so a reload
+    // keeps COUPLING_CD and the area defaults in charge of the rest. CD and
+    // AREA are positional — an authored AREA under a defaulted CD writes the
+    // CD the run would use (COUPLING_CD).
+    auto map_row = [&o](FILE* out, int idx, const std::string& node, double cd,
+                        bool cd_set, double area, bool area_set) {
+        if (area_set)
+            std::fprintf(out, "%-8d %-16s %-10.6g %.12g\n", idx, node.c_str(),
+                         cd_set ? cd : o.coupling_cd, area);
+        else if (cd_set)
+            std::fprintf(out, "%-8d %-16s %.6g\n", idx, node.c_str(), cd);
+        else
+            std::fprintf(out, "%-8d %s\n", idx, node.c_str());
+    };
+
     // ---- [2D_VERTEX_NODE_MAP] -------------------------------------------------
     {
         bool any = false;
@@ -1046,9 +1061,10 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
                 const std::string cn = node_name_for(
                     mesh.vert_coupled_node_name[i], mesh.vert_coupled_node[i]);
                 if (cn.empty()) continue;
-                std::fprintf(f, "%-8d %-16s %-10.6g %.12g\n", i, cn.c_str(),
-                             mesh.vert_coupling_cd[i],
-                             mesh.vert_coupling_area[i]);
+                map_row(f, i, cn, mesh.vert_coupling_cd[i],
+                        mesh.vert_coupling_cd_set[i] != 0,
+                        mesh.vert_coupling_area[i],
+                        mesh.vert_coupling_area_set[i] != 0);
             }
         }
     }
@@ -1067,8 +1083,8 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
                 const std::string cn = node_name_for(row.node_name, row.node);
                 if (cn.empty()) continue;
                 if (row.tri < 0 || row.tri >= nt) continue;
-                std::fprintf(f, "%-8d %-16s %-10.6g %.12g\n", row.tri,
-                             cn.c_str(), row.cd, row.area);
+                map_row(f, row.tri, cn, row.cd, row.cd_set, row.area,
+                        row.area_set);
             }
         } else {
             bool any = false;

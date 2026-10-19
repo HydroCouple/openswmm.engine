@@ -775,7 +775,10 @@ std::string parse2DVertexNodeMapLine(const std::vector<std::string>& tokens,
     // Optional discharge coefficient
     if (tokens.size() >= 3) {
         double cd = tryParseDouble(tokens[2], ok);
-        if (ok) mesh.vert_coupling_cd[vidx] = cd;
+        if (ok) {
+            mesh.vert_coupling_cd[vidx] = cd;
+            mesh.vert_coupling_cd_set[vidx] = 1;
+        }
     }
 
     // Optional exchange area
@@ -819,7 +822,10 @@ std::string parse2DTriangleNodeMapLine(const std::vector<std::string>& tokens,
 
     if (tokens.size() >= 3) {
         double cd = tryParseDouble(tokens[2], ok);
-        if (ok) row.cd = cd;
+        if (ok) {
+            row.cd = cd;
+            row.cd_set = true;
+        }
     }
 
     if (tokens.size() >= 4) {

@@ -476,8 +476,13 @@ int swmm_2d_set_vertex_coupled_node(SWMM_Engine engine, int vertex_idx,
 
     auto& m = router2d.mesh();
     if (!node_name || node_name[0] == '\0') {
+        // A cleared coupling forgets its row: defaults, nothing authored.
         m.vert_coupled_node_name[vertex_idx].clear();
         m.vert_coupled_node[vertex_idx] = -1;
+        m.vert_coupling_cd[vertex_idx]       = 0.65;
+        m.vert_coupling_cd_set[vertex_idx]   = 0;
+        m.vert_coupling_area[vertex_idx]     = 1.0;
+        m.vert_coupling_area_set[vertex_idx] = 0;
     } else {
         m.vert_coupled_node_name[vertex_idx] = node_name;
         // Resolve against the live model now; -1 (unknown) is tolerated —
@@ -506,7 +511,9 @@ int swmm_2d_add_triangle_coupling(SWMM_Engine engine, int tri_idx,
     // stored name regardless (same rule as swmm_2d_set_vertex_coupled_node).
     row.node = eng->context().node_names.find(node_name);
     row.cd   = cd;
+    row.cd_set = true;
     row.area = area;
+    row.area_set = true;
     m.tri_couplings.push_back(std::move(row));
 
     // Keep the legacy per-triangle mirror coherent (last row wins).
@@ -578,6 +585,7 @@ int swmm_2d_set_vertex_coupling_cd(SWMM_Engine engine, int vertex_idx,
     if (!(cd > 0.0)) return SWMM_ERR_BADPARAM;
 
     router2d.mesh().vert_coupling_cd[vertex_idx] = cd;
+    router2d.mesh().vert_coupling_cd_set[vertex_idx] = 1;
     return SWMM_OK;
 }
 
@@ -600,6 +608,7 @@ int swmm_2d_set_vertex_coupling_area(SWMM_Engine engine, int vertex_idx,
     if (!(area > 0.0)) return SWMM_ERR_BADPARAM;
 
     router2d.mesh().vert_coupling_area[vertex_idx] = area;
+    router2d.mesh().vert_coupling_area_set[vertex_idx] = 1;
     return SWMM_OK;
 }
 
