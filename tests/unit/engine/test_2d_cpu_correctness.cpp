@@ -32,6 +32,12 @@ struct ExplicitInertialSolverTestAccess {
     static void markActiveFaces(ExplicitInertialSolver& s) {
         for(int e:s.active_faces_)s.q_[e]=e+1.;
     }
+    static void transferFaceVolume(ExplicitInertialSolver& s,int edge,double volume,double dt) {
+        const int a=s.edges_.cL[edge],b=s.edges_.cR[edge];
+        s.facc_L_[edge]-=volume;s.facc_R_[edge]+=volume;
+        s.bookFaceSpecies(edge,a,b,volume,0.,dt,true);
+        s.accumulators_pending_=true;s.settleAccumulators();
+    }
 };
 }
 namespace {
@@ -67,6 +73,46 @@ TEST(Cpu2DCorrectness,MacroLandingPublishesAllConservedState) {
         solver.advance(t,2*t);EXPECT_NEAR(sum(s.volume),v,1e-9);EXPECT_NEAR(sum(s.transport.cell_mass),mass,1e-9);
         solver.finalize();EXPECT_NEAR(sum(s.volume),v,1e-9);
     }
+}
+TEST(Cpu2DCorrectness,CshChannelHeatAdvectionMatchesAcceptedMeshFaceTransfer) {
+    // CSHComponent commit 6d95455e6b655a7842041c108e66ad4ab7f4b7aa,
+    // examples/Versteeg/case1/case1_hybrid.inp: with transient storage off,
+    // the receiving element's heat capacity is rho_w*cp*V. Reducing its
+    // computeDTDt advection term to a single inflow Q at temperature T_in,
+    // with no outflow, dispersion or surface flux, gives d(V*T)/dt=Q*T_in.
+    // Use the example's V=area*length=1*0.2 m3 and Q=0.1 m3/s, then compare
+    // that independent finite-volume balance with the production mesh-face
+    // transport accumulator. This is a source-equation comparison, not a
+    // whole CSH executable trajectory comparison.
+    auto m=grid(1);auto s=state(m,0);auto o=options();o.dispersion=0;
+    constexpr double initial_volume=.2,initial_temperature=10.,source_temperature=20.;
+    constexpr double q=.1,dt=.2,transfer=q*dt;
+    s.volume.assign(2,initial_volume);
+    s.transport.resize(1,2,0);s.transport.temp_row=0;s.transport.row_names={"__TEMPERATURE__"};
+    s.transport.cell_mass[0]=initial_volume*initial_temperature;
+    s.transport.cell_mass[1]=initial_volume*source_temperature;
+    ExplicitInertialSolver solver;solver.initialize(m,s,o);
+    const auto& edges=ExplicitInertialSolverTestAccess::edges(solver);
+    ASSERT_EQ(edges.ne,1);
+    const int source=edges.cL[0],receiver=edges.cR[0];
+    s.transport.cell_mass[s.transport.idx(0,source)]=initial_volume*source_temperature;
+    s.transport.cell_mass[s.transport.idx(0,receiver)]=initial_volume*initial_temperature;
+    ExplicitInertialSolverTestAccess::transferFaceVolume(solver,0,transfer,dt);
+
+    const double expected_temperature=(initial_volume*initial_temperature+
+        transfer*source_temperature)/(initial_volume+transfer);
+    EXPECT_NEAR(s.volume[source],initial_volume-transfer,1e-14);
+    EXPECT_NEAR(s.volume[receiver],initial_volume+transfer,1e-14);
+    EXPECT_NEAR(s.transport.cell_mass[s.transport.idx(0,source)]/s.volume[source],
+                source_temperature,1e-13);
+    EXPECT_NEAR(s.transport.cell_mass[s.transport.idx(0,receiver)]/s.volume[receiver],
+                expected_temperature,1e-13);
+    const double rho_cp=1000.*4184.;
+    const double receiver_heat_change=rho_cp*(s.transport.cell_mass[s.transport.idx(0,receiver)]-
+        initial_volume*initial_temperature);
+    EXPECT_NEAR(receiver_heat_change,rho_cp*transfer*source_temperature,1e-8);
+    EXPECT_NEAR(s.transport.cell_mass[0]+s.transport.cell_mass[1],
+                initial_volume*(initial_temperature+source_temperature),1e-14);
 }
 TEST(Cpu2DCorrectness,FlowAndHeldSinksShareAvailableWater) {
     for(bool quad:{false,true})for(int tiers:{1,4})for(int mode:{0,1,2}){
