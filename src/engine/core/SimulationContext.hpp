@@ -310,6 +310,13 @@ struct StateAccessors {
     std::function<std::string()> get_snow_state;
     // Empty result means valid; false validates without publishing.
     std::function<std::string(const std::string&,bool)> set_snow_state;
+    /// Subcatchment surface state for the native hot start (V16): subarea
+    /// ponded depths, groundwater flow, and the pollutant and reaction
+    /// species surface stores, keyed by name. Same contract as the snow
+    /// pair: an empty result from the setter means valid; false validates
+    /// without applying.
+    std::function<std::string()> get_surface_state;
+    std::function<std::string(const std::string&,bool)> set_surface_state;
     /// Read infiltration model id and the 6-double infiltration state into
     /// the caller-provided buffers. `out_infil` must point to a 6-element array.
     std::function<bool(int subcatch_index, int& out_model, double* out_infil)> get_infil_state;

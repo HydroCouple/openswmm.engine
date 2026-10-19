@@ -23,6 +23,11 @@ retroactive.
 
 ## [Unreleased]
 
+### Native hot start subcatchment state (2026-10-19)
+
+- **The native hot start file keeps the subcatchment surface.** A NATIVE `SAVE HOTSTART` file (and `swmm_hotstart_save`) held no subarea ponded depths and no pollutant or reaction-species buildup, ponded mass or runoff quality, so a continuation restarted the surface dry and clean. A version 16 block now carries them by name, with each land use's last sweep and the groundwater outflow, without rounding. Older native files still load, with a warning that their subcatchments start from the initial surface state.
+- **A native hot start's continuity starts from the restored state.** Both ways of applying a native file (`USE HOTSTART`, `swmm_hotstart_apply`) run after `initialize()` has opened the mass balance, so every initial term, from stored routing volume to snow cover, groundwater and buildup, was the cold start's. On a snowmelt deck split mid-run, runoff continuity read −126 % against −0.005 % for the same split in the EPA SWMM 5 format. The mass balance now reopens from the applied state.
+
 ### Hot-start follow-ups and land-use parity (2026-10-19)
 
 - **`[COVERAGES]` reads every land use on a line.** `S1 RES 60 COM 40` set only RES; COM was dropped without a message. Every pair is read now, as in EPA SWMM, and a line naming an unknown subcatchment or land use (ERROR 209), a land use without a percent (ERROR 203) or a percent that is not a number (ERROR 211) is an error, as it is there. These lines were skipped silently before.
@@ -65,7 +70,7 @@ retroactive.
 - **LID underdrain removals are editable through the API.** `swmm_lid_get_removal` / `swmm_lid_set_removal` (Python `lids.get_removal` / `set_removal`) read and write the `REMOVALS` percent of a pollutant or, at index pollutant count + m, of reaction species m. There was no API for LID removals before.
 - **SAVE / USE HOTSTART carry the subcatchments, in legacy's layout.** The `.hsf` file SAVE HOTSTART wrote declared the model's subcatchments but held none of their state, so neither v6 nor legacy SWMM could read it back on any model with subcatchments (v6 failed to initialize, legacy reported ERROR 333). The file now carries legacy's runoff section: ponded depth of each subarea, runoff, infiltration, groundwater and snowpack state, runoff and ponded quality, and each land use's buildup and last-swept date. USE HOTSTART now applies that section instead of skipping it, so a continuation keeps its ponded water, soil state and buildup. On a deck split at 2 h, v6 and legacy each read the other's file and give legacy's continuation (initial buildup 118.846 lb, initial runoff storage 0.039 in). The initial stored routing mass also uses legacy's node volumes, as the flow ledger beside it does.
 - **SAVE / USE HOTSTART carry reaction species.** The `.hsf` file now ends with a block after legacy's routing records (legacy stops reading before it) holding each species' node and link concentrations and, with species buildup or washoff, its surface state: buildup per land use, washoff concentration and ponded mass. USE HOTSTART restores it by species name and warns for a species the model lacks. A run split at a hot start then continues the species as it continues the pollutants.
-- Not yet: the reaction-species ledger, the species coupling queue and these two pending transfers are not part of hotstart or managed checkpoints, and the native hot start format does not carry species surface state.
+- Not yet: the reaction-species ledger, the species coupling queue and these two pending transfers are not part of hotstart or managed checkpoints.
 
 ### Rain gage control rules (2026-10-14)
 

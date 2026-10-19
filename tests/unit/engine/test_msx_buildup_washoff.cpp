@@ -1002,12 +1002,17 @@ TEST(MsxSurfaceTwin, LidRemovalApiCoversPollutantsAndSpecies) {
 
 // ---------------------------------------------------------------------------
 // O3: a run split at a hot start keeps the reaction species' network and
-// surface state. SAVE HOTSTART appends it after legacy's routing records
-// (legacy stops reading there); USE HOTSTART restores it by species name.
-// With X twinning TSS, the continuation washes off what TSS does.
+// surface state, in both file formats. The legacy layout carries it after
+// legacy's routing records (legacy stops reading there); the native format
+// in its V16 surface block. With X twinning TSS, the continuation washes off
+// what TSS does. On the run-on deck the continuation's first run-on is built
+// from the restored runoff and washoff concentrations, so S1's load reaches
+// S2 and J1 as TSS's does (the hot start keeps no pending run-on of its own,
+// exactly as legacy: oldRunoff/oldQual come from the restored state).
 // ---------------------------------------------------------------------------
-TEST(MsxSurfaceTwin, HotstartCarriesSpeciesState) {
-    write("_hs_x.rxn", rxn_inert());
+namespace {
+void checkSpeciesHotstart(const std::string& base, const std::string& tag, const char* format, int nsc) {
+    SCOPED_TRACE(tag + (format[0] ? " NATIVE" : " legacy"));
     auto split = [](std::string body, const char* t0, const char* t1, const std::string& files) {
         auto rep = [&](const std::string& a, const std::string& b) {
             const auto k = body.find(a);
@@ -1017,22 +1022,26 @@ TEST(MsxSurfaceTwin, HotstartCarriesSpeciesState) {
         rep("END_TIME             03:00:00", std::string("END_TIME             ") + t1);
         return body + "\n[FILES]\n" + files + "\n";
     };
-    const std::string base = deck("", std::string(kPollut) + bw({"TSS", "X"}), pc("_hs_x.rxn"));
-
-    DeckRun a = run("_hs_x1", split(base, "00:00:00", "02:00:00", "SAVE HOTSTART \"_hs_x.hsf\""), false);
+    const std::string hs = tag + ".hs";
+    DeckRun a = run(tag + "1", split(base, "00:00:00", "02:00:00",
+                                     "SAVE HOTSTART \"" + hs + "\" " + format), false);
     ASSERT_TRUE(a.ok);
     const auto end1 = cpp(a.e).context().reactions;   // copy, before end() writes the file
     close(a);
     ASSERT_GT(end1.surface.buildup[0], 0.0);
 
-    write("_hs_x2.inp", split(base, "02:00:00", "03:00:00", "USE HOTSTART \"_hs_x.hsf\""));
+    write(tag + "2.inp", split(base, "02:00:00", "03:00:00", "USE HOTSTART \"" + hs + "\""));
     SWMM_Engine e = swmm_engine_create();
-    ASSERT_EQ(swmm_engine_open(e, "_hs_x2.inp", "_hs_x2.rpt", "_hs_x2.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e, (tag + "2.inp").c_str(), (tag + "2.rpt").c_str(),
+                               (tag + "2.out").c_str(), nullptr), SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
     const auto& ctx = cpp(e).context();
     const auto& rx = ctx.reactions;
-    for (const auto& w : ctx.warnings) EXPECT_EQ(w.find("species"), std::string::npos) << w;
+    for (const auto& w : ctx.warnings) {
+        EXPECT_EQ(w.find("species"), std::string::npos) << w;
+        EXPECT_EQ(w.find("lacks"), std::string::npos) << w;
+    }
     EXPECT_EQ(rx.msx_node_conc, end1.msx_node_conc);
     EXPECT_EQ(rx.msx_link_conc, end1.msx_link_conc);
     EXPECT_EQ(rx.surface.buildup, end1.surface.buildup);
@@ -1042,10 +1051,54 @@ TEST(MsxSurfaceTwin, HotstartCarriesSpeciesState) {
     EXPECT_GT(tss_init, 0.0);
     EXPECT_NEAR(rx.surface.led_init_buildup[0], tss_init, 1e-12 * tss_init);
 
-    double elapsed = 0.0;
-    do { ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK); } while (elapsed > 0.0);
-    const double tss_load = ctx.subcatches.total_load[0];
-    EXPECT_GT(tss_load, 0.0);
-    EXPECT_NEAR(rx.surface.led_subcatch_load[rx.surface.sidx(0, 0)], tss_load, 1e-12 * tss_load);
+    // The twin rule through the restart: J1's X follows J1's TSS step by
+    // step. Near, not equal: the legacy layout keeps network pollutant
+    // concentrations as legacy does, in single precision (and TSS buildup as
+    // mass, one ulp), while the species block is double. The native format
+    // keeps both in double.
+    const double tol = format[0] ? 1e-12 : 1e-6;
+    const int j1 = ctx.node_names.find("J1");
+    const auto uj = static_cast<std::size_t>(j1);
+    const int np = ctx.n_pollutants(), nm = rx.n_species();
+    double elapsed = 0.0, tss_peak = 0.0;
+    int steps = 0;
+    do {
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK);
+        const double t = ctx.nodes.conc[uj * np], x = rx.msx_node_conc[uj * nm];
+        tss_peak = std::max(tss_peak, t);
+        ASSERT_NEAR(x, t, tol * std::max(std::abs(t), 1e-30)) << "J1 at step " << steps;
+        ++steps;
+    } while (elapsed > 0.0);
+    EXPECT_GT(tss_peak, 0.0);
+    for (int sc = 0; sc < nsc; ++sc) {
+        const double tss_load = ctx.subcatches.total_load[static_cast<std::size_t>(sc) * np];
+        EXPECT_GT(tss_load, 0.0) << sc;
+        EXPECT_NEAR(rx.surface.led_subcatch_load[rx.surface.sidx(sc, 0)], tss_load, tol * tss_load) << sc;
+    }
     swmm_engine_end(e); swmm_engine_close(e); swmm_engine_destroy(e);
+}
+} // namespace
+
+TEST(MsxSurfaceTwin, HotstartCarriesSpeciesState) {
+    write("_hs_x.rxn", rxn_inert());
+    const std::string base = deck("", std::string(kPollut) + bw({"TSS", "X"}), pc("_hs_x.rxn"));
+    checkSpeciesHotstart(base, "_hs_x", "", 1);
+    checkSpeciesHotstart(base, "_hs_xn", "NATIVE", 1);
+}
+
+TEST(MsxSurfaceTwin, HotstartCarriesSpeciesRunon) {
+    write("_hs_r.rxn", rxn_inert());
+    std::string body = deck("", std::string(kPollut) + bw({"TSS", "X"}), pc("_hs_r.rxn"));
+    auto rep = [&](const std::string& a, const std::string& b) {
+        const auto at = body.find(a); ASSERT_NE(at, std::string::npos) << a;
+        body.replace(at, a.size(), b);
+    };
+    rep("S1  RG1  J1  10.0  50   500  0.5  0\n",
+        "S1  RG1  S2  10.0  50   500  0.5  0\nS2  RG1  J1  2.0  100   200  0.5  0\n");
+    rep("S1  0.01  0.1  0.05  0.05  25  OUTLET\n",
+        "S1  0.01  0.1  0.05  0.05  25  OUTLET\nS2  0.01  0.1  0.05  0.05  0  OUTLET\n");
+    rep("S1  3.0  0.5  4.0  7  0\n", "S1  3.0  0.5  4.0  7  0\nS2  3.0  0.5  4.0  7  0\n");
+    rep("\n[COVERAGES]\nS1  LU1  100\n", "\n[COVERAGES]\nS1  LU1  100\nS2  LU1  100\n");
+    checkSpeciesHotstart(body, "_hs_r", "", 2);
+    checkSpeciesHotstart(body, "_hs_rn", "NATIVE", 2);
 }

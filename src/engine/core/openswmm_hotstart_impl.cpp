@@ -169,7 +169,11 @@ SWMM_ENGINE_API int swmm_hotstart_apply(SWMM_Engine engine, SWMM_HotStart hs) {
         }
     );
 
-    return result<0?SWMM_ERR_HOTSTART:SWMM_OK;
+    if (result < 0) return SWMM_ERR_HOTSTART;
+    // The run's mass balance opened at initialize(); it now starts from the
+    // applied state.
+    eng->reopenMassBalance();
+    return SWMM_OK;
 }
 
 // ----------------------------------------------------------------------------
