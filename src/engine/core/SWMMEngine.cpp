@@ -2940,9 +2940,20 @@ void SWMMEngine::stepRunoff(double dt_routing) {
                         if (ui < ctx_.subcatches.rainfall.size() &&
                             ctx_.subcatches.rainfall[ui] > MIN_RUNOFF_FTS)
                             continue;
-                        // legacy: no sweeping with snow on plowable imperv.
+                        // legacy surfqual.c: no sweeping while the plowable
+                        // pack holds more than MIN_TOTAL_DEPTH of snow
+                        // (wsnow[IMPERV0]). A UEB-driven subcatchment has no
+                        // legacy counterpart and keeps the net-water test.
                         int sp = ctx_.subcatches.snowpack[ui];
-                        if (sp >= 0 && ctx_.subcatches.snow_net_imperv[ui] > 0.0) continue;
+                        if (sp >= 0) {
+                            constexpr double MIN_TOTAL_DEPTH = 0.004167; // ft
+                            const auto& sn = snow_.state();
+                            const bool ueb = ui < sn.external.size() && sn.external[ui];
+                            if (ueb ? ctx_.subcatches.snow_net_imperv[ui] > 0.0
+                                    : sn.wsnow[ui * snow::N_SUBAREAS + snow::SNOW_PLOWABLE]
+                                          > MIN_TOTAL_DEPTH)
+                                continue;
+                        }
                         for (int lu = 0; lu < nlu; ++lu) {
                             auto ulu = static_cast<std::size_t>(lu);
                             double interval = ctx_.landuses.sweep_interval[ulu];

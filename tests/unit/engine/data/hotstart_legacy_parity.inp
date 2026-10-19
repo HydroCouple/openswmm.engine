@@ -98,13 +98,10 @@ RES     3              0.5           2
 COM     1              0.7           0.9
 
 [COVERAGES]
-;; One pair per line: the engine reads only the first pair of a line,
-;; legacy reads them all. COM (swept within the run) stays off the snow
-;; subcatchments: the engine sweeps under snow, legacy does not. Both are
-;; recorded in the 2026-10-18 hotstart handoff.
-S1      RES  100
-S2      RES  40
-S2      COM  60
+;; Several pairs on a line (legacy reads them all), and COM, swept daily,
+;; on the snow subcatchment S1 (no sweeping while its plowable pack holds snow).
+S1      RES  60   COM  40
+S2      RES  40   COM  60
 S3      RES  100
 
 [BUILDUP]
