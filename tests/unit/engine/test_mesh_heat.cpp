@@ -213,6 +213,69 @@ TEST(MeshHeat, IsolatedPairMatchesIndependentAnalyticDecayFromOneSecondToTwoHour
         EXPECT_NEAR(f.state.heat.bed_energy[0]-f.state.heat.initial_bed_energy[0],f.state.heat.water_bed_j[0],1e-5);
     }
 }
+TEST(MeshHeat, RoutedChannelBedMatchesPinnedHtsHeatBalanceTerms) {
+    // Reference: HydroCouple/HTSComponent commit
+    // 1999b57d2298c7fdf91c0620143b73268f344410,
+    // examples/kuparuk_river1/kuparuk_river1.inp, element E1. The row supplies
+    // W=12.3 m, L=100 m, depth=0.388054 m, Tbed=Tground=10.86 C,
+    // Qmain=0.084005823 m3/s, ground depth=0.117546 m, and alpha=6.10e-7 m2/s.
+    // This isolates HTS's channel/bed conduction, main-channel advection, and
+    // deep-ground conduction terms in one 2D mesh cell; longitudinal channel
+    // transport and atmospheric terms are outside this cell-level comparison.
+    constexpr double area=12.3*100.,depth=.388054,ground_depth=.117546;
+    constexpr double q_main=.084005823,alpha=6.10e-7;
+    constexpr double reference_temperature=10.86,initial_water_temperature=11.86,dt=1800.;
+    const std::string reference_mesh=
+        "[2D_VERTICES]\n0 0 0\n1230 0 0\n0 2 0\n\n"
+        "[2D_TRIANGLES]\n0 1 2 .03 .1 channel:hts-reference\n\n";
+    LocalHeat f("hts-channel-reference",reference_mesh);ASSERT_NE(f.model.e,nullptr);
+    auto& cfg=f.model.ctx().heat_config.sediment;
+    cfg.mesh_porosity=0; // HTS E1's bed capacity uses rho_s*c_s*volume.
+    cfg.sed_density=1670;cfg.sed_specific_heat=1807;
+    cfg.thermal_diffusivity=alpha;cfg.bed_thickness=depth;cfg.ground_depth=ground_depth;
+    cfg.ground_temp=reference_temperature;cfg.has_ground_temp=true;
+    cfg.initial_temp=reference_temperature;cfg.has_initial_temp=true;
+    cfg.hyporheic_velocity=q_main/area; // maps HTS Qmain to v_hyp*A_bed.
+    ASSERT_TRUE(f.initialize().empty());
+    ASSERT_EQ(f.mesh().n_cells(),1);
+    EXPECT_NEAR(f.mesh().tri_area[0],area,1e-12);
+
+    const double rho=f.model.ctx().options.water_density,cp=f.model.ctx().options.water_specific_heat;
+    const double volume=area*depth,rho_cp=rho*cp;
+    const double cw=rho_cp*volume;
+    const double cb=cfg.sed_density*cfg.sed_specific_heat*volume;
+    const double g_wb=alpha*cfg.sed_density*cfg.sed_specific_heat*area/depth+rho_cp*q_main;
+    const double g_bg=alpha*cfg.sed_density*cfg.sed_specific_heat*area/ground_depth;
+    ASSERT_NEAR(f.state.heat.bed_capacity[0],cb,1e-6);
+
+    // Independently integrate the mapped HTS temperature ODE with RK4.
+    // The runtime implementation solves the same finite water/bed pair
+    // analytically, so this reference also checks the full accepted 2D step.
+    const auto derivative=[&](double tw,double tb) {
+        return std::array<double,2>{-g_wb*(tw-tb)/cw,
+            (g_wb*(tw-tb)+g_bg*(reference_temperature-tb))/cb};
+    };
+    double tw=initial_water_temperature,tb=reference_temperature;
+    constexpr double h=.25;
+    for(double elapsed=0;elapsed<dt;elapsed+=h) {
+        const auto k1=derivative(tw,tb);
+        const auto k2=derivative(tw+.5*h*k1[0],tb+.5*h*k1[1]);
+        const auto k3=derivative(tw+.5*h*k2[0],tb+.5*h*k2[1]);
+        const auto k4=derivative(tw+h*k3[0],tb+h*k3[1]);
+        tw+=h*(k1[0]+2*k2[0]+2*k3[0]+k4[0])/6;
+        tb+=h*(k1[1]+2*k2[1]+2*k3[1]+k4[1])/6;
+    }
+
+    const double updated_temperature_volume=f.step(0,initial_water_temperature*volume,volume,0,dt);
+    EXPECT_NEAR(updated_temperature_volume/volume,tw,2e-10);
+    EXPECT_NEAR(f.state.heat.bed_energy[0]/cb,tb,2e-10);
+    const double water_delta=cw*(tw-initial_water_temperature);
+    const double bed_delta=cb*(tb-reference_temperature);
+    EXPECT_NEAR(f.state.heat.water_j[0],water_delta,1e-3);
+    EXPECT_NEAR(f.state.heat.water_bed_j[0],-water_delta,1e-3);
+    EXPECT_NEAR(f.state.heat.ground_j[0],bed_delta+water_delta,1e-3);
+    EXPECT_NEAR(water_delta+bed_delta-f.state.heat.ground_j[0],0,1e-3);
+}
 TEST(MeshHeat, HyporheicVelocitySpansZeroToStrongFiniteStorageWithClosedEnergy) {
     // Keep the same finite water/bed capacities while varying only the
     // hyporheic conductance. The expected values come from the independent
