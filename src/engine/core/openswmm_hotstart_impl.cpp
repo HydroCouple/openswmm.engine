@@ -90,6 +90,10 @@ SWMM_ENGINE_API int swmm_hotstart_save(SWMM_Engine engine, const char* path) {
         return SWMM_ERR_LIFECYCLE;
     }
 
+    if(ctx.options.heat_transport) {
+        return eng->saveNativeHotstart(path)==""?SWMM_OK:SWMM_ERR_HOTSTART;
+    }
+
     // Dispatch through state-IO plugins. The first plugin whose write_state()
     // succeeds wins; if none is registered (shouldn't happen — SWMMEngine
     // injects DefaultStateIOPlugin in open()), fall back to HotStartManager
@@ -147,6 +151,11 @@ SWMM_ENGINE_API int swmm_hotstart_apply(SWMM_Engine engine, SWMM_HotStart hs) {
     }
 
     openswmm::HotStartFile* file = to_hs(hs);
+
+    if(!file->engine_checkpoint.empty()) {
+        const auto error=eng->queueHotstartCheckpoint(file->engine_checkpoint);
+        return error.empty()?SWMM_OK:SWMM_ERR_HOTSTART;
+    }
 
     // Gap #54: apply V2 format including infiltration + GW state
     const int result = openswmm::HotStartManager::apply(

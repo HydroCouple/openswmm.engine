@@ -1281,15 +1281,21 @@ int SWMMEngine::initialize() noexcept {
             !ctx_.files.hotstart_use_path.absolute.empty()
                 ? ctx_.files.hotstart_use_path.absolute
                 : ctx_.files.hotstart_use_path.original;
-        // Read the legacy EPA SWMM5 `.hsf` routing state (the format SAVE writes
-        // and the de-facto interchange format). Native OPENSWMM_HS_V1 files are
-        // applied via the C-API swmm_hotstart_apply path instead.
-        const bool lid_restart = std::any_of(ctx_.node_subtypes.storages.lid.begin(), ctx_.node_subtypes.storages.lid.end(),
-            [](const auto& c) { return c.control >= 0; });
+        // Native OpenSWMM V15 files carry a full engine checkpoint and are
+        // restored after all owners are initialized. Earlier native versions
+        // remain record-based; EPA files retain their routing-only reader.
         int rc = 0;
-        if (lid_restart) {
+        bool full_engine_restore=false;
+        if(HotStartManager::is_native_file(hs_path)) {
             std::unique_ptr<HotStartFile> hs(HotStartManager::open(hs_path));
-            rc = hs ? HotStartManager::apply(*hs, ctx_, [this](const std::string& m) { ctx_.warnings.push_back(m); }) : 1;
+            if(!hs)rc=1;
+            else if(!hs->engine_checkpoint.empty()) {
+                if(!pending_hotstart_checkpoint_.empty()) {
+                    set_error(CFFI_ERR_HOTSTART,"USE HOTSTART: more than one full engine checkpoint was supplied");
+                    return CFFI_ERR_HOTSTART;
+                }
+                else {pending_hotstart_checkpoint_=hs->engine_checkpoint;full_engine_restore=true;}
+            } else rc=HotStartManager::apply(*hs,ctx_,[this](const std::string& m){ctx_.warnings.push_back(m);});
         } else {
             rc = HotStartManager::apply_legacy_routing(hs_path, ctx_,
                 [this](const std::string& m) { ctx_.warnings.push_back(m); });
@@ -1300,36 +1306,38 @@ int SWMMEngine::initialize() noexcept {
             return CFFI_ERR_HOTSTART;
         }
         hotstart_loaded = true;
-        // Recompute derived state from the applied depths/flows so continuity,
-        // the area_mid_ seeding in init_modules(), and the old_net_inflow seeding
-        // below all start from the hot-started state (legacy initNodes / initLinks).
-        const int us_hs = ucf::getUnitSystem(
-            static_cast<int>(ctx_.options.flow_units));
-        for (int i = 0; i < ctx_.n_nodes(); ++i) {
-            auto ui = static_cast<std::size_t>(i);
-            double y = ctx_.nodes.depth[ui];
-            ctx_.nodes.old_depth[ui] = y;
-            ctx_.nodes.head[ui]      = ctx_.nodes.invert_elev[ui] + y;
-            double vol = node::getVolume(ctx_.nodes, i, y, &ctx_.tables, us_hs,
-                                         &ctx_.node_subtypes);
-            ctx_.nodes.volume[ui]     = vol;
-            ctx_.nodes.old_volume[ui] = vol;
-        }
-        for (int j = 0; j < ctx_.n_links(); ++j) {
-            auto uj = static_cast<std::size_t>(j);
-            ctx_.links.old_flow[uj] = ctx_.links.flow[uj];
-            if (ctx_.links.type[uj] == LinkType::CONDUIT) {
-                double y = ctx_.links.depth[uj];
-                ctx_.links.old_depth[uj] = y;
-                XSectParams xs = link::buildXSectParams(ctx_.links, uj,
-                                                        &ctx_.transect_tables);
-                const int cr = ctx_.link_subtypes.conduit_row(j);
-                const auto& CD = ctx_.link_subtypes.conduits;
-                int barrels = std::max((cr >= 0) ? CD.barrels[static_cast<std::size_t>(cr)] : 1, 1);
-                double len = (cr >= 0) ? CD.true_length[static_cast<std::size_t>(cr)] : 0.0;
-                double vol = xsect::getAofY(xs, y) * len * barrels;
-                ctx_.links.volume[uj]     = vol;
-                ctx_.links.old_volume[uj] = vol;
+        if(!full_engine_restore) {
+            // Recompute derived state from the applied depths/flows so continuity,
+            // the area_mid_ seeding in init_modules(), and the old_net_inflow seeding
+            // below all start from the hot-started state (legacy initNodes / initLinks).
+            const int us_hs = ucf::getUnitSystem(
+                static_cast<int>(ctx_.options.flow_units));
+            for (int i = 0; i < ctx_.n_nodes(); ++i) {
+                auto ui = static_cast<std::size_t>(i);
+                double y = ctx_.nodes.depth[ui];
+                ctx_.nodes.old_depth[ui] = y;
+                ctx_.nodes.head[ui]      = ctx_.nodes.invert_elev[ui] + y;
+                double vol = node::getVolume(ctx_.nodes, i, y, &ctx_.tables, us_hs,
+                                             &ctx_.node_subtypes);
+                ctx_.nodes.volume[ui]     = vol;
+                ctx_.nodes.old_volume[ui] = vol;
+            }
+            for (int j = 0; j < ctx_.n_links(); ++j) {
+                auto uj = static_cast<std::size_t>(j);
+                ctx_.links.old_flow[uj] = ctx_.links.flow[uj];
+                if (ctx_.links.type[uj] == LinkType::CONDUIT) {
+                    double y = ctx_.links.depth[uj];
+                    ctx_.links.old_depth[uj] = y;
+                    XSectParams xs = link::buildXSectParams(ctx_.links, uj,
+                                                            &ctx_.transect_tables);
+                    const int cr = ctx_.link_subtypes.conduit_row(j);
+                    const auto& CD = ctx_.link_subtypes.conduits;
+                    int barrels = std::max((cr >= 0) ? CD.barrels[static_cast<std::size_t>(cr)] : 1, 1);
+                    double len = (cr >= 0) ? CD.true_length[static_cast<std::size_t>(cr)] : 0.0;
+                    double vol = xsect::getAofY(xs, y) * len * barrels;
+                    ctx_.links.volume[uj]     = vol;
+                    ctx_.links.old_volume[uj] = vol;
+                }
             }
         }
     }
@@ -1661,6 +1669,24 @@ int SWMMEngine::start(int save_results) noexcept {
             ctx_.nodes.volume[static_cast<std::size_t>(j)];
 
     ctx_.state = EngineState::RUNNING;
+    const bool wants_native_hotstart=!pending_hotstart_checkpoint_.empty() ||
+        (ctx_.options.heat_transport && !ctx_.files.hotstart_saves.empty());
+    if(wants_native_hotstart) {
+        hotstart_checkpoint_error_=prepareNativeHotstartCheckpointing();
+        if(!hotstart_checkpoint_error_.empty()) {
+            if(!pending_hotstart_checkpoint_.empty()) {
+                set_error(CFFI_ERR_HOTSTART,hotstart_checkpoint_error_.c_str());
+                return CFFI_ERR_HOTSTART;
+            }
+        } else if(!pending_hotstart_checkpoint_.empty()) {
+            auto snapshot=std::move(pending_hotstart_checkpoint_);
+            const auto error=loadCheckpointBytes(std::move(snapshot));
+            if(!error.empty()) {
+                set_error(CFFI_ERR_HOTSTART,error.c_str());
+                return CFFI_ERR_HOTSTART;
+            }
+        }
+    }
     return SWMM_OK;
 }
 
@@ -7520,6 +7546,27 @@ int SWMMEngine::end() noexcept {
         return SWMM_ERR_WRONG_STATE;
     }
 
+    // Native thermal hotstarts use the last accepted full engine checkpoint.
+    // Capture before teardown's partial 2D flush so clocks, water and energy
+    // describe the same accepted boundary.
+    if(ctx_.state==EngineState::RUNNING && ctx_.options.heat_transport) {
+        std::string snapshot,error;
+        if(checkpoint_enabled_)error=checkpointBytes(snapshot,false);
+        else error=hotstart_checkpoint_error_.empty()
+            ? "full engine checkpointing was not attached at the initial boundary"
+            : hotstart_checkpoint_error_;
+        for(const auto& entry:ctx_.files.hotstart_saves) {
+            if(entry.datetime!=0.0)continue;
+            const std::string& path=!entry.path.absolute.empty()?entry.path.absolute:entry.path.original;
+            if(path.empty())continue;
+            if(error.empty()) {
+                std::unique_ptr<HotStartFile> saved(HotStartManager::save_with_engine_checkpoint(
+                    ctx_,&runoff_,&groundwater_,path,snapshot));
+                if(!saved)ctx_.warnings.push_back("SAVE HOTSTART: "+HotStartManager::last_io_error());
+            } else ctx_.warnings.push_back("SAVE HOTSTART: coupled heat state was not saved: "+error);
+        }
+    }
+
 #ifdef OPENSWMM_HAS_2D
     // Histories close at the last accepted engine checkpoint. Teardown may
     // flush a remaining surface batch, outside the accepted-step timeline.
@@ -7616,6 +7663,7 @@ int SWMMEngine::end() noexcept {
     // follow-up (not exercised by the QA suite). Legacy .hsf format so the file
     // round-trips through USE HOTSTART (apply_legacy_routing).
     for (const auto& entry : ctx_.files.hotstart_saves) {
+        if(ctx_.options.heat_transport)continue; // handled at the accepted boundary above
         if (entry.datetime != 0.0) continue;   // intermediate save — not yet
         const std::string& sp = !entry.path.absolute.empty()
             ? entry.path.absolute : entry.path.original;
@@ -7757,6 +7805,8 @@ int SWMMEngine::close() noexcept {
     checkpoint_output_ = false;
     binary_output_plugin_ = nullptr;
     checkpoint_model_.clear();
+    pending_hotstart_checkpoint_.clear();
+    hotstart_checkpoint_error_.clear();
 #ifdef OPENSWMM_HAS_2D
     checkpoint_surface_output_ = false;
     runtime_water_driver_ = nullptr;

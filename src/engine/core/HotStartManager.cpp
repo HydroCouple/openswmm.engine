@@ -323,6 +323,12 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
         buf.write(hs.snow_state.data(),static_cast<std::streamsize>(hs.snow_state.size()));
         if(!buf.good())return false;
     }
+    if (hs.header.version >= 15u) {
+        if(hs.engine_checkpoint.empty() || hs.engine_checkpoint.size()>512u*1024u*1024u ||
+           !write_pod(buf,static_cast<uint32_t>(hs.engine_checkpoint.size())))return false;
+        buf.write(hs.engine_checkpoint.data(),static_cast<std::streamsize>(hs.engine_checkpoint.size()));
+        if(!buf.good())return false;
+    }
     // Compute CRC32 over the body
     const std::string body = buf.str();
     const uint32_t crc = crc32(
@@ -393,7 +399,7 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
 
     // Header
     if (!read_pod(is, hs.header.version))    return false;
-    if (hs.header.version < 1u || hs.header.version > 14u) {
+    if (hs.header.version < 1u || hs.header.version > 15u) {
         tl_last_io_error = "Unsupported hot start version " +
                            std::to_string(hs.header.version) + " in '" + path + "'";
         return false;
@@ -573,6 +579,11 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
         uint32_t size=0;
         if(!read_pod(is,size)||size>64u*1024u*1024u||size>file_size)return false;
         hs.snow_state.resize(size);is.read(hs.snow_state.data(),size);if(!is.good())return false;
+    }
+    if(hs.header.version>=15u) {
+        uint32_t size=0;
+        if(!read_pod(is,size)||size==0||size>512u*1024u*1024u||size>file_size)return false;
+        hs.engine_checkpoint.resize(size);is.read(hs.engine_checkpoint.data(),size);if(!is.good())return false;
     }
     hs.path = path;
     return true;
@@ -1177,16 +1188,27 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
                                     const runoff::RunoffSolver* runoff_solver,
                                     const groundwater::GWSolver* gw_solver,
                                     const std::string& path) {
+    return save_with_engine_checkpoint(ctx,runoff_solver,gw_solver,path,{});
+}
+
+HotStartFile* HotStartManager::save_with_engine_checkpoint(const SimulationContext& ctx,
+                                    const runoff::RunoffSolver* runoff_solver,
+                                    const groundwater::GWSolver* gw_solver,
+                                    const std::string& path,
+                                    const std::string& engine_checkpoint) {
     tl_last_io_error.clear();
-    if(coupledThermalRestartUnsupported(ctx)) {
+    if(engine_checkpoint.empty() && coupledThermalRestartUnsupported(ctx)) {
         tl_last_io_error="Coupled mesh/ground heat hotstart requires its thermal energy restart extension";return nullptr;
     }
-    if(meshLidRestartUnsupported(ctx)) {
+    if(engine_checkpoint.empty() && meshLidRestartUnsupported(ctx)) {
         tl_last_io_error="Mesh LID hotstart requires the R5 joint owner restart extension";return nullptr;
     }
-    if(ctx.runtime_coupling_used) {
+    if(engine_checkpoint.empty() && ctx.runtime_coupling_used) {
         tl_last_io_error="Hotstart cannot preserve runtime 2D coupling prescriptions and receipts";
         return nullptr;
+    }
+    if(engine_checkpoint.size()>512u*1024u*1024u) {
+        tl_last_io_error="Native engine hotstart checkpoint exceeds the 512 MiB limit";return nullptr;
     }
 
     auto* hs = new HotStartFile();
@@ -1296,6 +1318,10 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
         if(ctx.state_accessors.get_snow_state)hs->snow_state=ctx.state_accessors.get_snow_state();
         if(!hs->snow_state.empty())hs->header.version=14u;
     }catch(const std::exception& e){tl_last_io_error=e.what();delete hs;return nullptr;}
+    if(!engine_checkpoint.empty()) {
+        hs->engine_checkpoint=engine_checkpoint;
+        hs->header.version=15u;
+    }
     if (!write_file(*hs, path)) {
         delete hs;
         return nullptr;
@@ -1319,6 +1345,14 @@ HotStartFile* HotStartManager::open(const std::string& path) {
     return hs;
 }
 
+bool HotStartManager::is_native_file(const std::string& path) noexcept {
+    std::ifstream file(openswmm::io::utf8_path(path),std::ios::binary);
+    char magic[16]{};
+    file.read(magic,sizeof(magic));
+    return file.gcount()==static_cast<std::streamsize>(sizeof(magic)) &&
+           std::memcmp(magic,"OPENSWMM_HS_V1",15)==0;
+}
+
 // ============================================================================
 // HotStartManager::apply()
 // ============================================================================
@@ -1327,6 +1361,10 @@ int HotStartManager::apply(HotStartFile& hs,
                            SimulationContext& ctx,
                            std::function<void(const std::string&)> warn_cb) {
     hs.warnings.clear();
+    if(!hs.engine_checkpoint.empty()) {
+        tl_last_io_error="Native V15 engine checkpoint must be restored through SWMMEngine start; partial hotstart apply is refused";
+        hs.warnings.push_back(tl_last_io_error);if(warn_cb)warn_cb(tl_last_io_error);return -1;
+    }
     if(coupledThermalRestartUnsupported(ctx)) {
         tl_last_io_error="Coupled mesh/ground heat hotstart requires its thermal energy restart extension";
         hs.warnings.push_back(tl_last_io_error);if(warn_cb)warn_cb(tl_last_io_error);return -1;

@@ -14,6 +14,7 @@
 #include <openswmm/engine/openswmm_snow.h>
 #include <openswmm/engine/openswmm_2d.h>
 #include <openswmm/engine/openswmm_heat.h>
+#include <openswmm/engine/openswmm_hotstart.h>
 #include <openswmm/engine/openswmm_gw_transport.h>
 #include "hydrology/surface/SnowCheckpoint.hpp"
 #include <atomic>
@@ -680,6 +681,8 @@ struct ThermalSurfaceSession {
     runoff::SourceWaterDriver sources;
     twoD::CommonSourceStage stage;
     SWMMEngine engine;
+    std::string native_hotstart_save,native_hotstart_use;
+    std::string native_hotstart_apply;
     void start(const std::string& name,double surface_temperature=12,
                const std::string& channel_tag="channel:test",bool dry_surface=false,
                bool atmospheric_exchange=false,bool temperature_timeseries=false,
@@ -695,6 +698,11 @@ struct ThermalSurfaceSession {
             "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:03:00\n"
             "ROUTING_STEP 1\nREPORT_STEP 00:00:10\nIGNORE_2D NO\nIGNORE_QUALITY YES\n"
             "[2D_OPTIONS]\nREPORT_2D NO\nMAX_TIMESTEP .2\nLTS_TIERS 1\nEVAPORATION NO\nINFILTRATION NO\n";
+        if(!native_hotstart_save.empty()||!native_hotstart_use.empty()) {
+            deck+="\n[FILES]\n";
+            if(!native_hotstart_use.empty())deck+="USE HOTSTART \""+native_hotstart_use+"\"\n";
+            if(!native_hotstart_save.empty())deck+="SAVE HOTSTART \""+native_hotstart_save+"\"\n";
+        }
         if(!local_storage)deck+=
             "[2D_AQUIFER_OPTIONS]\nNODE_ENROLMENT ROWS\nGW_ET NONE\nM_LAYERS 4\nCLOSURE "+closure+"\n"
             "[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION YES\nDISPERSION NO\n"
@@ -803,22 +811,41 @@ struct ThermalSurfaceSession {
             twoD::GwAquiferRow row;row.Ks=.000001*3600/.0254;row.zs=2/.3048;row.hg0=1/.3048;row.alpha=2*.3048;config.rows.push_back(row);
         }
         if(engine.initialize())throw std::runtime_error("thermal surface initialize: "+ctx.error_message);
+        if(!native_hotstart_apply.empty()) {
+            SWMM_HotStart hotstart=nullptr;
+            if(swmm_hotstart_open(native_hotstart_apply.c_str(),&hotstart)!=SWMM_OK)
+                throw std::runtime_error("thermal native hotstart open failed");
+            const int applied=swmm_hotstart_apply(&engine,hotstart);
+            swmm_hotstart_close(hotstart);
+            if(applied!=SWMM_OK)throw std::runtime_error("thermal native hotstart queue failed");
+        }
         if(lid_layer_conduction&&swmm_heat_set_module(&engine,SWMM_HEAT_LAYER_CONDUCTION,1)!=SWMM_OK)
             throw std::runtime_error("mesh LID layer conduction configuration failed");
         if(mesh_output)if(auto error=engine.prepareSurfaceOutputCheckpointing();!error.empty())
             throw std::runtime_error("thermal mesh output checkpoint setup: "+error);
         if(engine.start(0))throw std::runtime_error("thermal surface start: "+ctx.error_message);
-        if(auto error=sources.initialize(ctx,{},{});!error.empty())throw std::runtime_error(error);
-        twoD::SurfaceOwnershipPreview preview;preview.mesh_weather_area=mesh.tri_area;
-        if(auto error=stage.initialize(mesh,router.state(),options,router.subsurface(),sources,preview,true);!error.empty())
-            throw std::runtime_error(error);
-        if(enable_checkpoint)if(auto error=engine.enableCheckpointing(stage);!error.empty())throw std::runtime_error(error+
-            " [nodes="+std::to_string(ctx.n_nodes())+", links="+std::to_string(ctx.n_links())+
-            ", mesh="+std::to_string(mesh.n_cells())+", stageCells="+std::to_string(stage.cells().size())+
-            ", match="+std::to_string(stage.matches(&mesh,&router.state(),&router.subsurface()))+
-            ", infilRows="+std::to_string(router.infil().resolvedRows().size())+
-            ", recharge="+std::to_string(router.subcatchRecharge().size())+
-            ", quality="+std::to_string(router.surfaceQuality().active())+"]");
+        if((engine.checkpointSessionStatus()&SWMM_CHECKPOINT_SESSION_ATTACHED)==0) {
+            if(auto error=sources.initialize(ctx,{},{});!error.empty())throw std::runtime_error(error);
+            twoD::SurfaceOwnershipPreview preview;preview.mesh_weather_area=mesh.tri_area;
+            if(auto error=stage.initialize(mesh,router.state(),options,router.subsurface(),sources,preview,true);!error.empty())
+                throw std::runtime_error(error);
+            if(enable_checkpoint)if(auto error=engine.enableCheckpointing(stage);!error.empty())throw std::runtime_error(error+
+                " [nodes="+std::to_string(ctx.n_nodes())+", links="+std::to_string(ctx.n_links())+
+                ", mesh="+std::to_string(mesh.n_cells())+", stageCells="+std::to_string(stage.cells().size())+
+                ", match="+std::to_string(stage.matches(&mesh,&router.state(),&router.subsurface()))+
+                ", infilRows="+std::to_string(router.infil().resolvedRows().size())+
+                ", recharge="+std::to_string(router.subcatchRecharge().size())+
+                ", quality="+std::to_string(router.surfaceQuality().active())+"]");
+        }
+    }
+    void startNativeHotstart(const std::string& name,const std::string& path,bool save) {
+        if(save)native_hotstart_save=path;
+        else native_hotstart_use=path;
+        start(name);
+    }
+    void startNativeHotstartApi(const std::string& name,const std::string& path) {
+        native_hotstart_apply=path;
+        start(name);
     }
 };
 }
@@ -1741,6 +1768,46 @@ TEST(EngineCheckpoint, CoupledThermalStateRefusesIncompleteHotstartFormats) {
     for(const auto& cell:router.subsurface().heat().cells)
         soil_after.insert(soil_after.end(),cell.column.energy.begin(),cell.column.energy.end());
     EXPECT_EQ(soil_after,soil_before);
+}
+
+TEST(EngineCheckpoint, CoupledThermalNativeHotstartRestoresFullAcceptedEngineState) {
+    const auto path=root()/"surface-thermal-native.hsf";
+    std::error_code ec;std::filesystem::remove(path,ec);
+    ThermalSurfaceSession source,target,target_api;
+    ASSERT_NO_THROW(source.startNativeHotstart("surface-thermal-native-source",path.string(),true));
+    for(int i=0;i<12;++i)ASSERT_NO_THROW(step(source.engine));
+    const double saved_time=source.engine.context().current_time;
+    ASSERT_EQ(swmm_hotstart_save(&source.engine,path.string().c_str()),SWMM_OK);
+    {
+        std::unique_ptr<HotStartFile> saved(HotStartManager::open(path.string()));
+        ASSERT_TRUE(saved) << HotStartManager::last_io_error();
+        EXPECT_EQ(saved->header.version,15u);
+        EXPECT_FALSE(saved->engine_checkpoint.empty());
+    }
+
+    ASSERT_NO_THROW(target.startNativeHotstart("surface-thermal-native-target",path.string(),false));
+    ASSERT_NO_THROW(target_api.startNativeHotstartApi("surface-thermal-native-target-api",path.string()));
+    EXPECT_DOUBLE_EQ(target.engine.context().current_time,saved_time);
+    EXPECT_DOUBLE_EQ(target_api.engine.context().current_time,saved_time);
+    compare(source.engine,target.engine,"surface-thermal-native-hotstart");
+    compare(source.engine,target_api.engine,"surface-thermal-native-hotstart-api");
+    for(int i=0;i<8;++i) {
+        ASSERT_NO_THROW(step(source.engine));
+        ASSERT_NO_THROW(step(target.engine));
+        ASSERT_NO_THROW(step(target_api.engine));
+    }
+    compare(source.engine,target.engine,"surface-thermal-native-hotstart-resume");
+    compare(source.engine,target_api.engine,"surface-thermal-native-hotstart-api-resume");
+
+    // [FILES] SAVE HOTSTART writes the same complete V15 state at end-of-run,
+    // before teardown flushes a final partial mesh batch.
+    ASSERT_EQ(source.engine.end(),SWMM_OK);
+    std::unique_ptr<HotStartFile> scheduled(HotStartManager::open(path.string()));
+    ASSERT_TRUE(scheduled) << HotStartManager::last_io_error();
+    EXPECT_EQ(scheduled->header.version,15u);
+    EXPECT_FALSE(scheduled->engine_checkpoint.empty());
+    ASSERT_EQ(target.engine.end(),SWMM_OK);
+    ASSERT_EQ(target_api.engine.end(),SWMM_OK);
 }
 
 TEST(EngineCheckpoint, SurfaceAttachmentGuardsAreRetryableAtInitialBoundary) {

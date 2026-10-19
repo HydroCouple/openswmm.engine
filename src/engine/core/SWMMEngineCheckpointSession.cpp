@@ -194,4 +194,27 @@ std::string SWMMEngine::startCheckpointSession(int output,const std::string& sou
         throw;
     }
 }
+
+std::string SWMMEngine::prepareNativeHotstartCheckpointing() {
+    try {
+        require(ctx_.state==EngineState::RUNNING && ctx_.current_time==0 && !checkpoint_enabled_,
+                "Prepare native hotstart checkpointing at the initial running boundary.");
+#ifdef OPENSWMM_HAS_2D
+        if(surface_router_.isActive()) {
+            auto resources=std::make_shared<CheckpointSessionResources>();
+            auto& router=surface_router_;
+            checked(resources->sources.initialize(ctx_,{},{},&lid_,false));
+            twoD::SurfaceOwnershipPreview preview;
+            preview.mesh_weather_area=router.mesh().tri_area;
+            checked(resources->stage.initialize(router.mesh(),router.state(),router.options(),
+                router.subsurface(),resources->sources,preview,true));
+            checked(enableCheckpointing(resources->stage));
+            checkpoint_session_resources_=std::move(resources);
+            return {};
+        }
+#endif
+        checked(enableCheckpointing());
+        return {};
+    } catch(const std::exception& e) {return e.what();}
+}
 }

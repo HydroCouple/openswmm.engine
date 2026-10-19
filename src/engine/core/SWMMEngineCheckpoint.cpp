@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Caleb Buahin
 #include "SWMMEngine.hpp"
+#include "HotStartManager.hpp"
 #include "../hydrology/surface/NativeSnow.hpp"
 #include "../hydrology/surface/SnowCheckpoint.hpp"
 #include "CompletedSourceArchive.hpp"
@@ -45,6 +46,7 @@ void require(bool ok,const char* message) { if(!ok)throw std::runtime_error(mess
 template<class T> void finite(const T& v) {
     if constexpr(std::is_floating_point_v<T>) require(std::isfinite(v),"Nonfinite engine checkpoint field.");
 }
+
 template<class T> void finite(const std::vector<T>& v) { for(const auto& x:v)finite(x); }
 template<class T,std::size_t N> void finite(const std::array<T,N>& v) { for(const auto& x:v)finite(x); }
 template<class T> void field(Archive& a,T& v) { a(v);finite(v); }
@@ -328,6 +330,25 @@ void checkGreenAmpt(const GreenAmptState& g,const GreenAmptState& model) {
             "Engine exfiltration material differs.");
     require(g.IMD>=0 && g.IMD<=g.IMDmax && g.F>=0 && g.Fu>=0,"Invalid engine exfiltration inventory.");
 }
+}
+
+std::string SWMMEngine::queueHotstartCheckpoint(std::string checkpoint) {
+    try {
+        require(ctx_.state==EngineState::INITIALIZED && !checkpoint.empty() &&
+                pending_hotstart_checkpoint_.empty(),
+                "Queue a nonempty native engine hotstart after initialize and before start.");
+        pending_hotstart_checkpoint_=std::move(checkpoint);
+        return {};
+    } catch(const std::exception& e) {return e.what();}
+}
+
+std::string SWMMEngine::saveNativeHotstart(const std::string& path) const {
+    std::string snapshot;
+    const auto error=checkpointBytes(snapshot,false);
+    if(!error.empty())return error;
+    std::unique_ptr<HotStartFile> saved(HotStartManager::save_with_engine_checkpoint(
+        ctx_,&runoff_,&groundwater_,path,snapshot));
+    return saved?std::string{}:HotStartManager::last_io_error();
 }
 
 struct SWMMEngine::RestartState {
@@ -720,7 +741,10 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
             plugins_.report_plugins().size()==(rpt_path_.empty()?0u:1u) &&
             (rpt_path_.empty() || dynamic_cast<DefaultReportPlugin*>(plugins_.report_plugins().front())),
             "Binary output checkpoint supports only the built-in binary writer.");
-    require(ctx_.rdii_assigns.count()==0 && !ctx_.files.has_any() &&
+    require(ctx_.rdii_assigns.count()==0 &&
+            ctx_.files.rainfall_mode==FileMode::NONE && ctx_.files.runoff_mode==FileMode::NONE &&
+            ctx_.files.rdii_mode==FileMode::NONE && ctx_.files.inflows_path.empty() &&
+            ctx_.files.outflows_path.empty() &&
             !runoff_iface_file_ && ctx_.process_component_specs.empty(),
             "Engine checkpoint does not recover RDII, interface files, providers or process components.");
 #ifdef OPENSWMM_HAS_2D

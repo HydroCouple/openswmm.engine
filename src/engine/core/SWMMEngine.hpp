@@ -227,6 +227,10 @@ public:
     // start(1), then enable checkpointing. Requires a new output destination.
     std::string prepareOutputCheckpointing();
     std::string enableCheckpointing();
+    /// Queue a native V15 full-engine hotstart for restoration during start().
+    std::string queueHotstartCheckpoint(std::string checkpoint);
+    /// Write a native V15 hotstart from the current accepted checkpoint boundary.
+    std::string saveNativeHotstart(const std::string& path) const;
 #ifdef OPENSWMM_HAS_2D
     // Separate single-file mesh output qualification; initialize(), prepare,
     // start(0), then attach the common source checkpoint stage.
@@ -541,6 +545,9 @@ private:
     bool checkpoint_output_ = false;
     DefaultOutputPlugin* binary_output_plugin_ = nullptr; // owned by PluginFactory
     std::string checkpoint_model_;
+    std::string pending_hotstart_checkpoint_;
+    std::string hotstart_checkpoint_error_;
+    std::string prepareNativeHotstartCheckpointing();
     void checkCheckpointProfile(bool attaching_surface = false) const;
     std::string enableCheckpointingImpl(
 #ifdef OPENSWMM_HAS_2D
