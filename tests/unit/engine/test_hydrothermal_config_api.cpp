@@ -902,8 +902,10 @@ TEST(HydrothermalConfig, MeshPackOverrideRunsUebAndHonorsPartialSnowCoverage) {
     ASSERT_EQ(status, SWMM_OK) << swmm_get_last_error_msg(e);
     SWMM_SnowState states[3]{};
     SWMM_MeshSnowLedger ledgers[3]{};
+    double geometry_energy[3]{};
     ASSERT_EQ(swmm_snow2d_get_states(e, 0, 3, states), SWMM_OK);
     ASSERT_EQ(swmm_snow2d_get_ledgers(e, 0, 3, ledgers), SWMM_OK);
+    ASSERT_EQ(swmm_snow2d_get_geometry_energy(e, 0, 3, geometry_energy), SWMM_OK);
     EXPECT_EQ(states[0].model, SWMM_SNOW_DEGREE_DAY);
     EXPECT_EQ(states[1].model, SWMM_SNOW_UEB);
     EXPECT_EQ(states[2].model, SWMM_SNOW_DEFAULT);
@@ -911,7 +913,10 @@ TEST(HydrothermalConfig, MeshPackOverrideRunsUebAndHonorsPartialSnowCoverage) {
     EXPECT_TRUE(std::isfinite(states[1].energy_kjm2));
     EXPECT_NEAR(ledgers[0].residual_m3, 0.0, 1e-9);
     EXPECT_NEAR(ledgers[1].residual_m3, 0.0, 1e-9);
+    EXPECT_DOUBLE_EQ(geometry_energy[1], snow.ledgers()[1].geometry_energy);
     EXPECT_TRUE(std::isnan(ledgers[2].residual_m3));
+    EXPECT_TRUE(std::isnan(geometry_energy[0]));
+    EXPECT_TRUE(std::isnan(geometry_energy[2]));
     swmm_engine_end(e);
     closeDeck(e);
 }

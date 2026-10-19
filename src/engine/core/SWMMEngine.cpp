@@ -7723,7 +7723,7 @@ int SWMMEngine::report() noexcept {
             const auto& b=meshSnow.ledgers()[i];total.initial+=b.initial;total.precipitation+=b.precipitation;
             total.raw_precipitation+=b.raw_precipitation;total.liquid+=b.liquid;total.sublimation+=b.sublimation;total.stored+=b.stored;
             if(meshSnow.kind(i)==surface::SnowKind::Ueb) {
-                energy=true;total.initial_energy+=b.initial_energy;total.net_energy+=b.net_energy;
+                energy=true;total.initial_energy+=b.initial_energy;total.net_energy+=b.net_energy;total.geometry_energy+=b.geometry_energy;
                 total.stored_energy+=b.stored_energy;energyResidual+=b.energyResidual();
             }
         }
@@ -7733,7 +7733,8 @@ int SWMMEngine::report() noexcept {
             {"Mesh snow liquid surface input (m3)",total.liquid},{"Mesh snow sublimation (m3)",total.sublimation},
             {"Mesh snow stored water (m3)",total.stored},{"Mesh snow water residual (m3)",total.residual()}});
         if(energy)rows.insert(rows.end(),{{"Mesh UEB initial energy (kJ)",total.initial_energy},
-            {"Mesh UEB net energy input (kJ)",total.net_energy},{"Mesh UEB stored energy (kJ)",total.stored_energy},
+            {"Mesh UEB net energy input (kJ)",total.net_energy},{"Mesh UEB depletion remapping (kJ)",total.geometry_energy},
+            {"Mesh UEB stored energy (kJ)",total.stored_energy},
             {"Mesh UEB energy residual (kJ)",energyResidual}});
     }
 #endif

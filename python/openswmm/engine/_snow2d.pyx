@@ -35,6 +35,7 @@ cdef extern from "openswmm/engine/openswmm_snow2d.h":
     int swmm_snow2d_apply_configuration(SWMM_Engine,const char*,const char*,const char*,char*,int)
     int swmm_snow2d_get_states(SWMM_Engine,int,int,SWMM_SnowState*)
     int swmm_snow2d_get_ledgers(SWMM_Engine,int,int,SWMM_MeshSnowLedger*)
+    int swmm_snow2d_get_geometry_energy(SWMM_Engine,int,int,double*)
 
 class MeshSnow:
     """Mesh snow assignments and independent accepted cell snapshots."""
@@ -83,14 +84,22 @@ class MeshSnow:
         cdef int count=0
         cdef SWMM_Engine h=_h(self)
         cdef SWMM_MeshSnowLedger* values=NULL
+        cdef double* geometry=NULL
         _check(swmm_2d_cell_count(h,&count))
         if not count:return []
         values=<SWMM_MeshSnowLedger*>malloc(count*sizeof(SWMM_MeshSnowLedger))
         if values==NULL:raise MemoryError()
+        geometry=<double*>malloc(count*sizeof(double))
+        if geometry==NULL:
+            free(values)
+            raise MemoryError()
         try:
             _check(swmm_snow2d_get_ledgers(h,0,count,values))
-            return [{'completed_s': values[i].completed_s, 'initial_m3': values[i].initial_m3, 'raw_precipitation_m3': values[i].raw_precipitation_m3, 'precipitation_m3': values[i].precipitation_m3, 'liquid_m3': values[i].liquid_m3, 'sublimation_m3': values[i].sublimation_m3, 'stored_m3': values[i].stored_m3, 'residual_m3': values[i].residual_m3, 'net_energy_kj': values[i].net_energy_kj, 'initial_energy_kj': values[i].initial_energy_kj, 'stored_energy_kj': values[i].stored_energy_kj, 'energy_residual_kj': values[i].energy_residual_kj} for i in range(count)]
-        finally:free(values)
+            _check(swmm_snow2d_get_geometry_energy(h,0,count,geometry))
+            return [{'completed_s': values[i].completed_s, 'initial_m3': values[i].initial_m3, 'raw_precipitation_m3': values[i].raw_precipitation_m3, 'precipitation_m3': values[i].precipitation_m3, 'liquid_m3': values[i].liquid_m3, 'sublimation_m3': values[i].sublimation_m3, 'stored_m3': values[i].stored_m3, 'residual_m3': values[i].residual_m3, 'net_energy_kj': values[i].net_energy_kj, 'initial_energy_kj': values[i].initial_energy_kj, 'stored_energy_kj': values[i].stored_energy_kj, 'energy_residual_kj': values[i].energy_residual_kj, 'geometry_energy_kj': geometry[i]} for i in range(count)]
+        finally:
+            free(geometry)
+            free(values)
 
     @property
     def options(self):

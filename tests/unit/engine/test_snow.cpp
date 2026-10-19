@@ -1699,7 +1699,8 @@ TEST(MeshSnow, SnowfallReestablishesGroundContactAfterMeltOut) {
     ASSERT_TRUE(snow.advance(ctx,0,3600,{0},{1}).empty());
     ASSERT_DOUBLE_EQ(snow.outputs()[0].cover_frac,0);
     EXPECT_DOUBLE_EQ(snow.groundContactFraction(0),0);
-    ASSERT_TRUE(snow.advance(ctx,3600,7200,{1e-5},{1}).empty());
+    const auto rewet_error=snow.advance(ctx,3600,7200,{1e-5},{1});
+    ASSERT_TRUE(rewet_error.empty())<<rewet_error;
     ASSERT_GT(snow.outputs()[0].swe_m,0);
     EXPECT_DOUBLE_EQ(snow.outputs()[0].cover_frac,1);
     EXPECT_DOUBLE_EQ(snow.groundContactFraction(0),1);
@@ -1707,6 +1708,40 @@ TEST(MeshSnow, SnowfallReestablishesGroundContactAfterMeltOut) {
     EXPECT_NEAR(snow.ledgers()[0].energyResidual(),0,1e-8);
     EXPECT_NEAR(snow.ledgers()[0].ground_contact_energy,-1,1e-12);
     EXPECT_NEAR(snow.ledgers()[0].residual(),0,1e-9);
+}
+
+TEST(MeshSnow, UebPartialCoverUsesProjectPerviousCurveAndBalancesContact) {
+    SimulationContext ctx;ctx.options.ignore_snow_melt=false;ctx.options.start_date=datetime::encodeDate(2026,1,1);
+    ctx.options.end_date=ctx.options.start_date+2./24;ctx.snowpack_names.add("SP");ctx.snowpacks.names={"SP"};
+    ctx.snowpacks.config.model=surface::SnowKind::Ueb;ctx.snowpacks.config.site=surface::ClimateSite{45,-120,-8,1000};
+    ctx.snowpacks.pervious={std::array<double,7>{.02,.06,32,.1,.1,0,0}};ctx.snowpacks.mesh_config.defaults["*"].pack="SP";
+    const std::array<double,10> adc{0,.2,.35,.48,.59,.69,.78,.85,.91,.96};
+    for(int i=0;i<10;++i)ctx.options.adc_perv[i]=adc[i];
+    std::istringstream met("01/01/2026 00:00 15 50 1 800 400\n01/01/2026 01:00 -5 50 1 0 250\n01/01/2026 02:00 -5 50 1 0 250\n");
+    ASSERT_TRUE(ctx.snowpacks.meteorology.read(met).empty());
+    surface::MeshSnow snow;ASSERT_TRUE(snow.initialize(ctx,{{"grass",50,0,0}}).empty());
+    ASSERT_EQ(snow.depletionCurve()[5],adc[5]);ASSERT_TRUE(snow.setGroundContactMask({1}).empty());
+
+    double time=0;bool found_partial=false;
+    for(;time<3600&&!found_partial;time+=30) {
+        ASSERT_TRUE(snow.advance(ctx,time,time+30,{0},{1}).empty());
+        const double cover=snow.outputs()[0].cover_frac;
+        if(cover>0&&cover<1) {
+            found_partial=true;
+            EXPECT_DOUBLE_EQ(snow.groundContactFraction(0),cover);
+            const auto contact_error=snow.applyGroundContactEnergy(0,-1000);
+            ASSERT_TRUE(contact_error.empty())<<contact_error;
+            EXPECT_NEAR(snow.ledgers()[0].ground_contact_energy,1,1e-12);
+            EXPECT_NEAR(snow.ledgers()[0].energyResidual(),0,1e-8);
+        }
+    }
+    ASSERT_TRUE(found_partial)<<"Warm UEB forcing did not pass through fractional cover before melt-out.";
+    EXPECT_NEAR(snow.ledgers()[0].residual(),0,1e-9);
+    EXPECT_NEAR(snow.ledgers()[0].energyResidual(),0,1e-6);
+    auto changed=ctx;changed.options.adc_perv[5]=.7;
+    surface::MeshSnow other_curve;ASSERT_TRUE(other_curve.initialize(changed,{{"grass",50,0,0}}).empty());
+    ASSERT_TRUE(other_curve.setGroundContactMask({1}).empty());
+    EXPECT_FALSE(other_curve.restoreCheckpoint(snow.saveCheckpoint()).empty());
 }
 
 TEST(SharedRadiation, IntervalTemperatureIgnoresRunAheadCursorAndRuntimeOverridesWinOverMet) {
@@ -1751,14 +1786,21 @@ TEST(SnowEngineIntegration, MeshSnowRoutesOnlyLiquidAndSeedsHotStarts) {
         ASSERT_EQ(swmm_engine_start(handle,0),SWMM_OK);double elapsed=0;int count=0;
         do {
             ASSERT_EQ(swmm_engine_step(handle,&elapsed),SWMM_OK)<<swmm_get_last_error_msg(handle);ASSERT_LT(++count,2000);
-            SWMM_SnowState state{};SWMM_MeshSnowLedger reported{};
+            SWMM_SnowState state{};SWMM_MeshSnowLedger reported{};double geometry_energy=0;
             ASSERT_EQ(swmm_snow2d_get_states(handle,0,1,&state),SWMM_OK);
             ASSERT_EQ(swmm_snow2d_get_ledgers(handle,0,1,&reported),SWMM_OK);
+            ASSERT_EQ(swmm_snow2d_get_geometry_energy(handle,0,1,&geometry_energy),SWMM_OK);
             EXPECT_EQ(state.model,model=="UEB"?SWMM_SNOW_UEB:SWMM_SNOW_DEGREE_DAY);
             EXPECT_EQ(state.swe_m,router.state().snow.outputs()[0].swe_m);
             EXPECT_EQ(reported.completed_s,router.state().snow.completedEnd());EXPECT_NEAR(reported.residual_m3,0,1e-10);
-            if(model=="DEGREE_DAY")EXPECT_TRUE(std::isnan(state.energy_kjm2));else EXPECT_TRUE(std::isfinite(state.energy_kjm2));
+            if(model=="DEGREE_DAY") {
+                EXPECT_TRUE(std::isnan(state.energy_kjm2));EXPECT_TRUE(std::isnan(geometry_energy));
+            } else {
+                EXPECT_TRUE(std::isfinite(state.energy_kjm2));
+                EXPECT_DOUBLE_EQ(geometry_energy,router.state().snow.ledgers()[0].geometry_energy);
+            }
             const auto previous=state.swe_m;EXPECT_EQ(swmm_snow2d_get_states(handle,1,1,&state),SWMM_ERR_BADPARAM);EXPECT_EQ(state.swe_m,previous);
+            EXPECT_EQ(swmm_snow2d_get_geometry_energy(handle,1,1,&geometry_energy),SWMM_ERR_BADPARAM);
             if(count==1) {
                 ASSERT_EQ(swmm_hotstart_save(handle,(stem+".hsf").c_str()),SWMM_OK)<<swmm_hotstart_last_io_error();
                 SWMM_HotStart hs=nullptr;ASSERT_EQ(swmm_hotstart_open((stem+".hsf").c_str(),&hs),SWMM_OK);

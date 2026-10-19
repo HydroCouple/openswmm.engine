@@ -3,6 +3,7 @@
 #include "MeshSnowConfig.hpp"
 #include "UebHeld.hpp"
 #include "DegreeDaySnow.hpp"
+#include <array>
 namespace openswmm {struct SimulationContext;}
 namespace openswmm::surface {
 struct MeshSnowGeometry {
@@ -11,14 +12,14 @@ struct MeshSnowGeometry {
 };
 struct MeshSnowLedger {
     double initial=0,precipitation=0,raw_precipitation=0,liquid=0,sublimation=0,stored=0; // m3
-    double net_energy=0,initial_energy=0,stored_energy=0; // kJ; point cells have no depletion remapping
+    double net_energy=0,geometry_energy=0,initial_energy=0,stored_energy=0; // kJ; geometry is UEB cover/depth remapping
     double prescribed_ground_energy=0,ground_contact_energy=0; // kJ; signed positive into UEB
-    double energyResidual() const {return initial_energy+net_energy-stored_energy;}
+    double energyResidual() const {return initial_energy+net_energy+geometry_energy-stored_energy;}
     double residual() const {return initial+precipitation-liquid-sublimation-stored;}
 };
 // Point snow on the remaining mesh weather footprint. Named pack PERVIOUS
-// initial values seed each cell; mesh snow does not inherit subcatch plowing
-// or ADC. UEB and degree-day call the same kernels as native subcatchments.
+// initial values seed each cell; UEB uses the project pervious ADC curve but
+// mesh snow does not inherit subcatch plowing or snow state.
 class MeshSnow {
 public:
     std::string initialize(SimulationContext&,const std::vector<MeshSnowGeometry>&);
@@ -34,6 +35,7 @@ public:
     double completedEnd() const {return completed_;}
     double lastSeconds() const {return last_seconds_;}
     SnowKind kind(int cell) const {return kind_.at(cell);}
+    const std::array<double,10>& depletionCurve() const {return depletion_curve_;}
     const std::vector<double>& liquidRates() const {return liquid_rate_;}
     const std::vector<double>& exposedFractions() const {return exposed_;}
     const std::string& configurationIdentity() const {return identity_;}
@@ -51,7 +53,9 @@ public:
 private:
     std::string advanceInPlace(SimulationContext&,double,double,const std::vector<double>&,const std::vector<double>&);
     std::string identity_;
+    std::string legacy_identity_;
     ueb::Parameters parameters_;
+    std::array<double,10> depletion_curve_{};
     std::array<double,4> forcing_{};
     double completed_=0,last_seconds_=0,step_=3600;
     std::vector<int> active_cells_,pack_;

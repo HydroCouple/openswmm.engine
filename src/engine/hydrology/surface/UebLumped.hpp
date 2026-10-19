@@ -6,7 +6,8 @@
 namespace openswmm::surface::ueb {
 // The point state describes the snow-covered part; water is the average over
 // the entire element. Curves contain the SWMM ordinates at 0, .1, ... .9,
-// with an implicit final ordinate of 1. Mesh elements use a curve of ones.
+// with an implicit final ordinate of 1. Mesh elements use the project
+// pervious-area curve, matching their UEB snowpack ownership.
 struct LumpedState {
     State point;
     double water=0, maximum=0, cover=0;

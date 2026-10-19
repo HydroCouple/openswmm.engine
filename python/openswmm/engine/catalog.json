@@ -23832,10 +23832,11 @@
    "name": "ledgers",
    "form": "method",
    "python": "MeshSnow.ledgers",
-   "doc": "Number of cells (triangles + quads) — same value as ::swmm_2d_triangle_count.",
+   "doc": "Accepted mesh snow water and energy ledgers by cell. UEB records cover/depth remapping as geometry_energy_kj; non-UEB cells return NaN for that term.",
    "c": [
     "swmm_2d_cell_count",
-    "swmm_snow2d_get_ledgers"
+    "swmm_snow2d_get_ledgers",
+    "swmm_snow2d_get_geometry_energy"
    ],
    "returns": "list[dict[str, float]]",
    "params": []
