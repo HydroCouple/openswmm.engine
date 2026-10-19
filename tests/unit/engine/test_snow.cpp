@@ -1692,9 +1692,12 @@ TEST(MeshSnow, SnowfallReestablishesGroundContactAfterMeltOut) {
     ctx.options.end_date=ctx.options.start_date+2./24;ctx.snowpack_names.add("SP");ctx.snowpacks.names={"SP"};
     ctx.snowpacks.config.model=surface::SnowKind::Ueb;ctx.snowpacks.config.site=surface::ClimateSite{45,-120,-8,1000};
     ctx.snowpacks.pervious={std::array<double,7>{.02,.06,32,.1,.1,0,0}};ctx.snowpacks.mesh_config.defaults["*"].pack="SP";
+    const std::array<double,10> adc{0,.2,.35,.48,.59,.69,.78,.85,.91,.96};
+    for(int i=0;i<10;++i)ctx.options.adc_perv[i]=adc[i];
     std::istringstream met("01/01/2026 00:00 15 50 1 800 400\n01/01/2026 01:00 -5 50 1 0 250\n01/01/2026 02:00 -5 50 1 0 250\n");
     ASSERT_TRUE(ctx.snowpacks.meteorology.read(met).empty());
     surface::MeshSnow snow;ASSERT_TRUE(snow.initialize(ctx,{{"grass",50,0,0}}).empty());
+    EXPECT_EQ(snow.depletionCurve()[5],adc[5]);
     ASSERT_TRUE(snow.setGroundContactMask({1}).empty());
     ASSERT_TRUE(snow.advance(ctx,0,3600,{0},{1}).empty());
     ASSERT_DOUBLE_EQ(snow.outputs()[0].cover_frac,0);
