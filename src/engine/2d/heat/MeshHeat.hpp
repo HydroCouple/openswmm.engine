@@ -70,9 +70,10 @@ std::string initializeMeshHeat(SimulationContext&,const MeshData&,SurfaceStateDa
 std::string configureGroundLidOwners(SimulationContext&,const MeshData&,GroundHeatState&,
     const std::vector<GwNodeBed>&);
 void prepareMeshHeat(SimulationContext&,SurfaceStateData&,double seconds);
-// Complete ground-column conduction for dry cells that did not reach a
-// temperature source row during the hydraulic march.
-void advanceDryGroundColumns(const MeshData&,const SolverOptions2D&,SurfaceStateData&,double seconds) noexcept;
+// Complete the unprocessed part of the ground-column thermal interval after
+// the hydraulic march. The surface owns this conduction only when it has a
+// temperature row; otherwise the groundwater clock owns it.
+void advanceRemainingGroundColumns(const MeshData&,const SolverOptions2D&,SurfaceStateData&,double seconds) noexcept;
 // Called before intensive source sinks: the accepted evaporating water must
 // receive its thermal update before it leaves, including complete drying.
 double applyMeshHeatCell(const MeshData&,const SolverOptions2D&,MeshHeatState&,int cell,double temperature_volume,

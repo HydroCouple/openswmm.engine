@@ -687,7 +687,7 @@ struct ThermalSurfaceSession {
                bool mapped_channel=false,bool enable_checkpoint=true,
                bool ueb_snow=false,bool mesh_richards_lid=false,bool mesh_output=false,
                bool local_storage=false,bool local_storage_quality=false,bool ground_column_quality=false,
-               const std::string& closure="CLOSED_FORM") {
+               const std::string& closure="CLOSED_FORM",bool lid_layer_conduction=false) {
         local_storage=local_storage||local_storage_quality;
         const auto p=root()/name;
         std::string deck=
@@ -803,6 +803,8 @@ struct ThermalSurfaceSession {
             twoD::GwAquiferRow row;row.Ks=.000001*3600/.0254;row.zs=2/.3048;row.hg0=1/.3048;row.alpha=2*.3048;config.rows.push_back(row);
         }
         if(engine.initialize())throw std::runtime_error("thermal surface initialize: "+ctx.error_message);
+        if(lid_layer_conduction&&swmm_heat_set_module(&engine,SWMM_HEAT_LAYER_CONDUCTION,1)!=SWMM_OK)
+            throw std::runtime_error("mesh LID layer conduction configuration failed");
         if(mesh_output)if(auto error=engine.prepareSurfaceOutputCheckpointing();!error.empty())
             throw std::runtime_error("thermal mesh output checkpoint setup: "+error);
         if(engine.start(0))throw std::runtime_error("thermal surface start: "+ctx.error_message);
@@ -1084,14 +1086,14 @@ TEST(EngineCheckpoint, MeshRichardsLidThermalEnergyContinuesAcrossRestart) {
     ThermalSurfaceSession source,target;
 #ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
     ASSERT_NO_THROW(source.start("surface-thermal-lid-source",12,"channel:test",false,
-        false,false,false,false,false,true,false,true,true));
+        false,false,false,false,false,true,false,true,true,false,false,false,"CLOSED_FORM",true));
     ASSERT_NO_THROW(target.start("surface-thermal-lid-target",12,"channel:test",false,
-        false,false,false,false,false,true,false,true,true));
+        false,false,false,false,false,true,false,true,true,false,false,false,"CLOSED_FORM",true));
 #else
     ASSERT_NO_THROW(source.start("surface-thermal-lid-source",12,"channel:test",false,
-        false,false,false,false,false,true,false,true));
+        false,false,false,false,false,true,false,true,false,false,false,"CLOSED_FORM",true));
     ASSERT_NO_THROW(target.start("surface-thermal-lid-target",12,"channel:test",false,
-        false,false,false,false,false,true,false,true));
+        false,false,false,false,false,true,false,true,false,false,false,"CLOSED_FORM",true));
 #endif
     const auto seed_lid=[](SWMMEngine& engine) {
         auto& ctx=engine.context();auto& router=engine.surfaceRouter2D();
@@ -1147,6 +1149,27 @@ TEST(EngineCheckpoint, MeshRichardsLidThermalEnergyContinuesAcrossRestart) {
               std::accumulate(router.subsurface().richardsBedUpCumulative().begin(),
                               router.subsurface().richardsBedUpCumulative().end(),0.0);
     ASSERT_GT(accepted_lid_water,0)<<"No Richards water transfer was exercised.";
+    auto& source_ground=router.subsurface().heat();
+    ASSERT_LT(std::size_t(mapped_cell),source_ground.cells.size());
+    ASSERT_TRUE(context.heat_config.layer_conduction);
+    ASSERT_TRUE(source_ground.config&&source_ground.config->options.conduction);
+    ASSERT_TRUE(router.state().heat.enabled&&router.state().heat.ground_column);
+    ASSERT_EQ(source_ground.lid_owners[std::size_t(mapped_cell)].size(),1u);
+    ASSERT_EQ(lid.thermal_ground_contact_j.size(),lid.cells.size())
+        <<"surface temperature row="<<router.state().transport.temp_row
+        <<", mesh heat="<<router.state().heat.enabled
+        <<", mesh ground column="<<router.state().heat.ground_column
+        <<", aquifer-owned="<<router.state().heat.aquifer_owned[std::size_t(mapped_cell)]
+        <<", surface-owned="<<source_ground.cells[std::size_t(mapped_cell)].surface_owned
+        <<", surface volume="<<router.state().volume[std::size_t(mapped_cell)]
+        <<", cell failure="<<source_ground.cells[std::size_t(mapped_cell)].failed;
+    const double lid_ground_contact_j=std::accumulate(lid.thermal_ground_contact_j.begin(),
+                                                       lid.thermal_ground_contact_j.end(),0.0);
+    const double ground_lid_contact_j=source_ground.cells[std::size_t(mapped_cell)].lid_contact_j;
+    ASSERT_GT(std::abs(ground_lid_contact_j),0.0)
+        <<"The accepted Richards interval must exercise reciprocal LID-to-ground conduction.";
+    EXPECT_NEAR(lid_ground_contact_j+ground_lid_contact_j,0.0,
+        1e-12*std::max(1.0,std::abs(ground_lid_contact_j)));
     EXPECT_DOUBLE_EQ(pendingMagnitude(router.subsurface()),0);
     EXPECT_DOUBLE_EQ(router.subsurface().cellCompletedTime(mapped_cell),source.engine.context().current_time);
     ASSERT_FALSE(lid.thermal_energy.empty());
@@ -1162,11 +1185,16 @@ TEST(EngineCheckpoint, MeshRichardsLidThermalEnergyContinuesAcrossRestart) {
     const int target_row=target_context.node_subtypes.storage_row(target_context.node_names.find("LID"));
     ASSERT_GE(target_row,0);
     const auto& target_lid=target_context.node_subtypes.storages.lid_state[std::size_t(target_row)];
+    const auto& target_ground=target.engine.surfaceRouter2D().subsurface().heat();
+    ASSERT_LT(std::size_t(mapped_cell),target_ground.cells.size());
     EXPECT_EQ(lid.quality_transfers.size(),target_lid.quality_transfers.size());
     EXPECT_EQ(lid.quality_ports.size(),target_lid.quality_ports.size());
     EXPECT_EQ(lid.richards_water,target_lid.richards_water);
     EXPECT_EQ(lid.quality_old_water,target_lid.quality_old_water);
     EXPECT_EQ(lid.thermal_energy,target_lid.thermal_energy);
+    EXPECT_EQ(lid.thermal_ground_contact_j,target_lid.thermal_ground_contact_j);
+    EXPECT_DOUBLE_EQ(source_ground.cells[std::size_t(mapped_cell)].lid_contact_j,
+                     target_ground.cells[std::size_t(mapped_cell)].lid_contact_j);
     detail::CompletedSourceArchive source_groundwater_archive,target_groundwater_archive;
     router.subsurface().checkpoint(source_groundwater_archive,false);
     target.engine.surfaceRouter2D().subsurface().checkpoint(target_groundwater_archive,false);
@@ -1190,6 +1218,9 @@ TEST(EngineCheckpoint, MeshRichardsLidThermalEnergyContinuesAcrossRestart) {
 #else
     compare(source.engine,target.engine,"surface-thermal-lid-final");
 #endif
+    EXPECT_EQ(lid.thermal_ground_contact_j,target_lid.thermal_ground_contact_j);
+    EXPECT_DOUBLE_EQ(source_ground.cells[std::size_t(mapped_cell)].lid_contact_j,
+                     target_ground.cells[std::size_t(mapped_cell)].lid_contact_j);
 }
 
 TEST(EngineCheckpoint, DrySurfaceThermalStateContinuesAcrossRestart) {

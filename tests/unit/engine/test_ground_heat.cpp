@@ -412,7 +412,7 @@ TEST(GroundHeat, DryGroundColumnsAdvanceOnlyTheUnprocessedRouterInterval) {
     openswmm::twoD::prepareMeshHeat(reference_context,reference_state,60);
     const double mass=split_state.transport.cell_mass[split_state.transport.idx(row,0)];
     openswmm::twoD::applyMeshHeatCell(split_router.mesh(),split_router.options(),split_state.heat,0,mass,0,0,20);
-    openswmm::twoD::advanceDryGroundColumns(split_router.mesh(),split_router.options(),split_state,60);
+    openswmm::twoD::advanceRemainingGroundColumns(split_router.mesh(),split_router.options(),split_state,60);
     const double reference_mass=reference_state.transport.cell_mass[reference_state.transport.idx(row,0)];
     openswmm::twoD::applyMeshHeatCell(reference_router.mesh(),reference_router.options(),reference_state.heat,0,reference_mass,0,0,20);
     openswmm::twoD::applyMeshHeatCell(reference_router.mesh(),reference_router.options(),reference_state.heat,0,reference_mass,0,0,40);
@@ -426,6 +426,29 @@ TEST(GroundHeat, DryGroundColumnsAdvanceOnlyTheUnprocessedRouterInterval) {
         EXPECT_EQ(reference_heat.cells[cell].failed,0)<<reference_heat.cells[cell].error;
     }
     EXPECT_NE(split_heat.cells[0].surface_j,0);
+}
+TEST(GroundHeat, GroundColumnConductionRunsWithoutSurfaceTemperatureTransport) {
+    Model model("ground-column-without-surface-temperature","CLOSED_FORM",.5,false,
+                "[2D_OPTIONS]\nTRANSPORT_TEMPERATURE NO\n");
+    ASSERT_NE(model.e,nullptr);
+    for(const auto& pair:{std::pair{"HEAT_MODEL","COUPLED"},{"BED_HEAT_MODEL","GROUND_COLUMN"},
+                         {"HEAT_SURFACE_EXCHANGE","NO"},{"HEAT_RADIATIVE_EXCHANGE","NO"}})
+        ASSERT_EQ(swmm_options_set_ext(model.e,pair.first,pair.second),SWMM_OK);
+    ASSERT_EQ(swmm_gw_transport_option_set(model.e,"CONDUCTION","YES"),SWMM_OK);
+    ASSERT_EQ(swmm_gw_transport_option_set(model.e,"SURFACE_THERMAL_BC","FIXED 10"),SWMM_OK);
+    ASSERT_EQ(model.start(),SWMM_OK)<<swmm_get_last_error_msg(model.e);
+
+    auto& router=model.router();
+    auto& ground=router.subsurface().heat();
+    ASSERT_LT(router.state().transport.temp_row,0);
+    ASSERT_FALSE(ground.cells[0].surface_owned);
+    const double initial=energy(ground);
+    double actual=0;
+    ASSERT_EQ(swmm_coupling_advance_to(model.e,5,&actual),SWMM_OK)<<swmm_get_last_error_msg(model.e);
+    EXPECT_DOUBLE_EQ(actual,5);
+    EXPECT_NE(energy(ground),initial);
+    EXPECT_NE(ground.cells[0].surface_j,0);
+    EXPECT_EQ(ground.cells[0].failed,0)<<ground.cells[0].error;
 }
 TEST(GroundHeat, ExplicitGroundPorewaterUsesAcceptedWellDonorsAndBooksItsAgeClock) {
     for(const auto* closure:{"CLOSED_FORM","ENSLAVED","SIGMA"}) {

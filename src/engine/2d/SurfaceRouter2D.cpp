@@ -1891,7 +1891,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
     }
     if(auto error=subsurface_.refreshPorewaterContactLedger();!error.empty())
         throw std::runtime_error("[2D porewater] "+error);
-    advanceDryGroundColumns(mesh_,options_,state_,dt);
+    advanceRemainingGroundColumns(mesh_,options_,state_,dt);
     if(state_.heat.ground_column&&subsurface_.heat().active())
         for(std::size_t i=0;i<state_.heat.aquifer_owned.size();++i)
             if(state_.heat.aquifer_owned[i])

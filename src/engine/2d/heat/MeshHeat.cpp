@@ -283,7 +283,11 @@ std::string initializeMeshHeat(SimulationContext& ctx,const MeshData& mesh,Surfa
             const bool covered=ctx.twod_io.aquifer_state&&ctx.twod_io.aquifer_state->active&&
                 coverage&&i<coverage->size()&&(*coverage)[i];
             if(aquifer&&aquifer->active()&&!aquifer->cells[i].column.energy.empty()) {
-                h.aquifer_owned[i]=1;standalone[i]=0;aquifer->cells[i].surface_owned=true;
+                h.aquifer_owned[i]=1;standalone[i]=0;
+                // The overland marcher owns this shared column only when it
+                // has an active surface-temperature row. Without one, leave
+                // conduction to the groundwater clock (including LID contact).
+                aquifer->cells[i].surface_owned=state.transport.temp_row>=0;
             } else if(covered)return "GROUND_COLUMN over an aquifer requires POROUS_EQUILIBRIUM and groundwater temperature transport.";
         }
         if(auto error=h.standalone_ground.initializeStandalone(ctx,mesh,*ctx.twod_io.gw,standalone);!error.empty())return error;
@@ -565,22 +569,22 @@ double applyMeshHeatCell(const MeshData& mesh,const SolverOptions2D& options,Mes
     h.reported_temperature[i]=tw+dw;
     return updated;
 }
-void advanceDryGroundColumns(const MeshData& mesh,const SolverOptions2D& options,
-                             SurfaceStateData& state,double seconds) noexcept {
+void advanceRemainingGroundColumns(const MeshData& mesh,const SolverOptions2D& options,
+                                   SurfaceStateData& state,double seconds) noexcept {
     auto& h=state.heat;
     if(!h.enabled||!h.ground_column||!(seconds>0))return;
     const int temp_row=state.transport.temp_row;
     for(int i=0;i<mesh.n_cells();++i) {
-        if(i>=int(state.volume.size())||state.volume[i]>0)continue;
+        if(i>=int(state.volume.size()))continue;
+        // Without a surface temperature row, the groundwater clock owns
+        // conduction. Do not invent an overland water temperature here.
+        if(temp_row<0)continue;
         const double applied=std::size_t(i)<h.ground_column_seconds.size()?h.ground_column_seconds[i]:0.;
         const double remaining=seconds-applied;
         if(!(remaining>std::numeric_limits<double>::epsilon()*std::max(1.,seconds)))continue;
-        double mass=0;
-        if(temp_row>=0&&temp_row<state.transport.n_species)
-            mass=state.transport.cell_mass[state.transport.idx(temp_row,i)];
-        mass=applyMeshHeatCell(mesh,options,h,i,mass,0,0,remaining);
-        if(temp_row>=0&&temp_row<state.transport.n_species)
-            state.transport.cell_mass[state.transport.idx(temp_row,i)]=mass;
+        double mass=state.transport.cell_mass[state.transport.idx(temp_row,i)];
+        mass=applyMeshHeatCell(mesh,options,h,i,mass,state.volume[i],0,remaining);
+        state.transport.cell_mass[state.transport.idx(temp_row,i)]=mass;
     }
 }
 } // namespace openswmm::twoD
