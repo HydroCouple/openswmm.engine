@@ -599,8 +599,9 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             if (ctx.nodes.sur_depth[ni] > 0.0) {
                 ctx.warnings.push_back(
                     "WARNING: 2D-coupled node '" + nname
-                    + "' has sur_depth > 0 — surcharge gate uses invert + "
-                      "full_depth + sur_depth as the spill threshold (z_top).");
+                    + "' has sur_depth > 0 — ignored while the node is "
+                      "2D-coupled: ponding and the exchange gate start at the "
+                      "rim (invert + full_depth).");
             }
             if (ctx.nodes.ponded_area[ni] > 0.0) {
                 ctx.warnings.push_back(

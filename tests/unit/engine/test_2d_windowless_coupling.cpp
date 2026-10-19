@@ -60,8 +60,9 @@ using namespace openswmm::twoD;
 namespace {
 
 // Same physical fixture as test_2d_coupling_conservation, on the marcher path.
-// `area_token`: the authored exchange area; `auto_area`: adds COUPLING_AREA AUTO.
-std::string build_model(double area_token, bool auto_area) {
+// `area_token`: the authored exchange area; `auto_area`: adds COUPLING_AREA AUTO;
+// `sur_depth`: J1's surcharge depth.
+std::string build_model(double area_token, bool auto_area, double sur_depth = 0.0) {
     std::ostringstream m;
     m <<
         "[OPTIONS]\n"
@@ -77,7 +78,7 @@ std::string build_model(double area_token, bool auto_area) {
         "ALLOW_PONDING        NO\n"
         "\n"
         "[JUNCTIONS]\n"
-        "J1      0.0   1.0       0          0         0\n"
+        "J1      0.0   1.0       0          " << sur_depth << "         0\n"
         "\n"
         "[OUTFALLS]\n"
         "O1     -0.5    FREE  NO\n"
@@ -123,12 +124,12 @@ struct RunResult {
 };
 
 RunResult run(const fs::path& dir, const std::string& tag, double area_token,
-              bool auto_area) {
+              bool auto_area, double sur_depth = 0.0) {
     RunResult r;
     const fs::path inp = dir / (tag + ".inp");
     const fs::path rpt = dir / (tag + ".rpt");
     const fs::path out = dir / (tag + ".out");
-    { std::ofstream f(inp); f << build_model(area_token, auto_area); }
+    { std::ofstream f(inp); f << build_model(area_token, auto_area, sur_depth); }
 
     SWMM_Engine eng = swmm_engine_create();
     if (swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
@@ -251,6 +252,19 @@ TEST_F(WindowlessCoupling2DTest, AutoAreaReachesLiveExchange) {
     EXPECT_NEAR(drv.received_first_2min, ref.received_first_2min,
                 0.01 * ref.received_first_2min)
         << "AUTO run should drain like an explicit derived-area row";
+}
+
+// A coupled node's SurDepth is ignored (it ponds from the rim and the
+// exchange gate opens at the rim), and the warning has to say so rather than
+// describe a sur_depth-raised spill threshold that does not exist.
+TEST_F(WindowlessCoupling2DTest, SurDepthWarningDescribesTheRim) {
+    RunResult r = run(dir_, "sur_depth_warning", 1.0, false, 0.5);
+    ASSERT_TRUE(r.ok);
+    EXPECT_NE(r.rpt_text.find("has sur_depth > 0 — ignored while the node is 2D-coupled"),
+              std::string::npos)
+        << "sur_depth warning missing or stale";
+    EXPECT_EQ(r.rpt_text.find("full_depth + sur_depth as the spill threshold"),
+              std::string::npos);
 }
 
 // The exchange conductance is non-negative everywhere and matches −∂Q/∂h_1d
