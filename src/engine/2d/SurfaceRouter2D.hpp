@@ -604,6 +604,9 @@ private:
     /// Stable storage that state_.node_coupling points at; built once in
     /// initialize().
     std::vector<CouplingPoint> node_coupling_points_;
+    /// COUPLING_HEAD VERTEX / STENCIL_WET_MEAN sampling cells of the live
+    /// points, each point's run at [head_begin, head_end).
+    std::vector<int> coupling_head_cells_;
     /// S4: published 1D node row values `[node * n_species + s]` (pollutant
     /// conc, MSX conc, age, temperature), refreshed once per batch by
     /// publishNodeRows(); state_.node_row_conc points here.

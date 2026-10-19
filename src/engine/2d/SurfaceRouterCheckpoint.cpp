@@ -234,7 +234,9 @@ std::string SurfaceRouter2D::sourceRouterModel(const SimulationContext& ctx) con
     for(int g=0;g<ctx.n_gages();++g) {auto name=ctx.gage_names.name_of(g);a(name);}
     if(joint_hydraulic_) {
         auto points=coupling_points_;
-        a.sequence(points,[&](auto& p){a(p.cell_idx,p.vertex_idx,p.node_idx,p.cd,p.area,p.is_outfall,p.has_flap_gate,p.area_authored);});
+        a.sequence(points,[&](auto& p){a(p.cell_idx,p.vertex_idx,p.node_idx,p.cd,p.area,p.is_outfall,p.has_flap_gate,p.area_authored);
+            // WEIR_ORIFICE structure joins only when used: legacy identities are unchanged.
+            if(p.law)a(p.law,p.geo.z_crest,p.geo.l_weir,p.geo.a_orif,p.coef.c_w,p.coef.c_sw,p.coef.c_oi,p.coef.c_oo,p.coef.h_eps);});
     }
     return a.bytes();
 }
@@ -347,7 +349,8 @@ void SurfaceRouter2D::attachCommonSourceStage(SimulationContext& ctx,CommonSourc
     if(infil_cum_applied_.empty())infil_cum_applied_.assign(mesh_.n_cells(),0.0);
     // Construct the joint identity before installing any attachment pointers.
     auto points=coupling_points_;Archive identity;
-    if(hydraulic)identity.sequence(points,[&](auto& p){identity(p.cell_idx,p.vertex_idx,p.node_idx,p.cd,p.area,p.is_outfall,p.has_flap_gate,p.area_authored);});
+    if(hydraulic)identity.sequence(points,[&](auto& p){identity(p.cell_idx,p.vertex_idx,p.node_idx,p.cd,p.area,p.is_outfall,p.has_flap_gate,p.area_authored);
+        if(p.law)identity(p.law,p.geo.z_crest,p.geo.l_weir,p.geo.a_orif,p.coef.c_w,p.coef.c_sw,p.coef.c_oi,p.coef.c_oo,p.coef.h_eps);});
     auto model=sourceRouterModel(ctx)+identity.bytes();
     model+=channel_ground_.modelIdentity();
     configureSnowGroundContacts();

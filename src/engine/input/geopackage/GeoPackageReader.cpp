@@ -210,6 +210,18 @@ static void apply_option_2d(SimulationContext& ctx, const std::string& key,
     else if (key == "2D_ADVECTION")     o->advection = (val == "YES");
     else if (key == "2D_COUPLING_AREA") o->coupling_area_auto = (val == "AUTO");
     else if (key == "2D_COUPLING_IN_FLOODING") o->coupling_in_flooding = (val == "YES");
+    else if (key == "2D_COUPLING_LAW")
+        o->coupling_law = (val == "WEIR_ORIFICE") ? twoD::CouplingLaw2D::WEIR_ORIFICE
+                                                  : twoD::CouplingLaw2D::ORIFICE;
+    else if (key == "2D_COUPLING_HEAD")
+        o->coupling_head = (val == "VERTEX")           ? twoD::CouplingHead2D::VERTEX
+                         : (val == "STENCIL_WET_MEAN") ? twoD::CouplingHead2D::STENCIL_WET_MEAN
+                                                       : twoD::CouplingHead2D::CELL;
+    else if (key == "2D_COUPLING_COEFFS") {
+        double preset = 0.0;
+        if (nodecoupling2d::parseValue(NodeCoupling2DKey::COEFFS, val, preset).empty())
+            o->coupling_coeffs = static_cast<int>(preset);
+    }
     else if (key == "2D_MOMENTUM_EQUATION")
         o->momentum = (val == "FULL_SWE")       ? twoD::Momentum2D::FULL_SWE
                     : (val == "DIFFUSIVE_WAVE") ? twoD::Momentum2D::DIFFUSIVE_WAVE

@@ -91,6 +91,9 @@ struct SurfaceStateData {
     /// full depth below the pond). A 1D→2D spill may only draw volume above
     /// it. Null falls back to `full_volume`.
     const std::vector<double>*        node_pond_base  = nullptr;
+    /// Head-sampling cell lists of the coupling points (COUPLING_HEAD VERTEX /
+    /// STENCIL_WET_MEAN), indexed by CouplingPoint::head_begin/head_end.
+    const std::vector<int>*           coupling_head_cells = nullptr;
 
     /// S1 — overland species transport. `transport.active()` is false (and
     /// every marcher species branch is skipped) unless the router sized it,

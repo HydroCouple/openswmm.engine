@@ -1855,6 +1855,14 @@ static void write_options_2d(sqlite3* db, const SimulationContext& ctx,
     insert("2D_ADVECTION",         o.advection ? "YES" : "NO");
     insert("2D_COUPLING_AREA",     o.coupling_area_auto ? "AUTO" : "DEFAULT");
     insert("2D_COUPLING_IN_FLOODING", o.coupling_in_flooding ? "YES" : "NO");
+    if (o.coupling_law != twoD::CouplingLaw2D::ORIFICE)
+        insert("2D_COUPLING_LAW", "WEIR_ORIFICE");
+    if (o.coupling_head != twoD::CouplingHead2D::CELL)
+        insert("2D_COUPLING_HEAD", o.coupling_head == twoD::CouplingHead2D::VERTEX
+                                       ? "VERTEX" : "STENCIL_WET_MEAN");
+    if (o.coupling_coeffs != 0)
+        insert("2D_COUPLING_COEFFS",
+               nodecoupling2d::formatValue(NodeCoupling2DKey::COEFFS, o.coupling_coeffs));
     insert("2D_MOMENTUM_EQUATION",
            o.momentum == twoD::Momentum2D::FULL_SWE       ? "FULL_SWE"
          : o.momentum == twoD::Momentum2D::DIFFUSIVE_WAVE ? "DIFFUSIVE_WAVE"

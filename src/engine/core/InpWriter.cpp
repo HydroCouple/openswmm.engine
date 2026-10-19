@@ -791,6 +791,17 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx,
                  o.coupling_area_auto ? "AUTO" : "DEFAULT");
     if (o.dispersion > 0.0)   // S2: default 0 is omitted (option-default rule)
         std::fprintf(f, "%-22s %.12g\n", "DISPERSION", o.dispersion);
+    // Exchange law / head sampling / coefficient preset — defaults omitted.
+    if (o.coupling_law != twoD::CouplingLaw2D::ORIFICE)
+        std::fprintf(f, "%-22s %s\n", "COUPLING_LAW", "WEIR_ORIFICE");
+    if (o.coupling_head != twoD::CouplingHead2D::CELL)
+        std::fprintf(f, "%-22s %s\n", "COUPLING_HEAD",
+                     o.coupling_head == twoD::CouplingHead2D::VERTEX ? "VERTEX"
+                                                                     : "STENCIL_WET_MEAN");
+    if (o.coupling_coeffs != 0)
+        std::fprintf(f, "%-22s %s\n", "COUPLING_COEFFS",
+                     nodecoupling2d::formatValue(NodeCoupling2DKey::COEFFS,
+                                                 o.coupling_coeffs).c_str());
     {
         static const char* sBackend2D[] = {"CPU","AUTO","OMP","CUDA","HIP","SYCL"};
         const int bi = static_cast<int>(o.backend);

@@ -132,6 +132,10 @@ std::string CommonSourceStage::checkpointModel() const {
       o.requested_threads,o.mesh_units_si,o.mesh_scaled_to_si,o.mesh_to_si_factor,o.pending_rows_drained,
       o.bc_flow_to_si_applied);
     a(o.infil_default_method,o.infil_destination,o.gw_et);
+    // Exchange law options join the identity only when set, so a legacy
+    // model's checkpoint identity is unchanged.
+    if(o.coupling_law!=CouplingLaw2D::ORIFICE||o.coupling_head!=CouplingHead2D::CELL||o.coupling_coeffs!=0)
+        a(o.coupling_law,o.coupling_head,o.coupling_coeffs);
     a(t.n_species,t.n_cells,t.n_pollut,t.n_msx,t.age_row,t.temp_row,t.row_names,t.rain_conc,t.bc_conc);
     a.sequence(t.bc_quality_rows,[&](auto& b){a(b.slot,b.species,b.conc);});
     auto owned=owned_;auto weather=weather_;auto cells=cells_;auto donors=donors_;auto et=et_contacts_;

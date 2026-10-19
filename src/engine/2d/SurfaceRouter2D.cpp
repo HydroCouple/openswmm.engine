@@ -580,6 +580,15 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                 " node(s) authored as coupleable in [2D_NODE_COUPLING] have no "
                 "[2D_VERTEX_NODE_MAP] / [2D_TRIANGLE_NODE_MAP] row and do not "
                 "couple: " + first_names(unmapped));
+
+        // Exchange law, structure and coefficients of every junction point
+        // (the ORIFICE law keeps its map-row cd/area and returns early).
+        for (auto& cp : coupling_points_) {
+            if (cp.is_outfall) continue;
+            resolveExchangeStructure(cp, mesh_, ctx, options_,
+                                     row_of_node[static_cast<std::size_t>(cp.node_idx)],
+                                     type_of(cp.node_idx), mesh_to_si);
+        }
     }
 
     // Imported/generated maps may include unused outfalls. They cannot
@@ -655,7 +664,9 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         // models, driving the fill-and-spill churn the warning below
         // describes), and those tokens are indistinguishable from intent.
         // Authored values govern whenever AUTO is not requested.
-        if (options_.coupling_area_auto && a_pipe_max > 0.0)
+        // WEIR_ORIFICE points size from their structure instead.
+        if (options_.coupling_area_auto && a_pipe_max > 0.0 &&
+            cp.law == static_cast<int8_t>(CouplingLaw2D::ORIFICE))
             cp.area = std::clamp(1.25 * a_pipe_max, 0.05, 2.0);
 
         // First time we touch this node: warn about any overridden user values
@@ -733,9 +744,58 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // batch-accumulated injection path.
     {
         node_coupling_points_.clear();
+        coupling_head_cells_.clear();
+        // COUPLING_HEAD sampling cells. VERTEX: the cells around the mapped
+        // vertex. STENCIL_WET_MEAN: the cells whose centroid lies within
+        // max(structure diameter, cell size) of the point (a manhole-area
+        // average), gathered outward from the point's own cells.
+        std::vector<char> seen(static_cast<std::size_t>(mesh_.n_cells()), 0);
+        auto add_head_cells = [&](const CouplingPoint& cp, int cell) {
+            std::vector<int> start;
+            if (cp.vertex_idx >= 0)
+                for (int k = mesh_.vert_stencil_ptr[cp.vertex_idx];
+                     k < mesh_.vert_stencil_ptr[cp.vertex_idx + 1]; ++k)
+                    start.push_back(mesh_.vert_stencil_idx[k]);
+            else
+                start.push_back(cell);
+            if (options_.coupling_head == CouplingHead2D::VERTEX) {
+                if (cp.vertex_idx >= 0)
+                    coupling_head_cells_.insert(coupling_head_cells_.end(), start.begin(), start.end());
+                return;
+            }
+            constexpr double kPi = 3.14159265358979323846;
+            const double cx = cp.vertex_idx >= 0 ? mesh_.vx[cp.vertex_idx] : mesh_.tri_cx[cell];
+            const double cy = cp.vertex_idx >= 0 ? mesh_.vy[cp.vertex_idx] : mesh_.tri_cy[cell];
+            const double d_struct =
+                cp.law == static_cast<int8_t>(CouplingLaw2D::WEIR_ORIFICE)
+                    ? cp.geo.l_weir / kPi : 2.0 * std::sqrt(cp.area / kPi);
+            const double r = std::max(d_struct, std::sqrt(mesh_.tri_area[cell]));
+            constexpr std::size_t kMaxCells = 256;
+            std::vector<int> queue = start, marked = start;
+            for (int c : start) seen[static_cast<std::size_t>(c)] = 1;
+            for (std::size_t q = 0; q < queue.size() && q < kMaxCells; ++q) {
+                const int c = queue[q];
+                for (int k = 0; k < mesh_.cell_vertex_count(c); ++k) {
+                    const int nb = mesh_.cell_neighbour(c, k);
+                    if (nb < 0 || seen[static_cast<std::size_t>(nb)]) continue;
+                    seen[static_cast<std::size_t>(nb)] = 1;
+                    marked.push_back(nb);
+                    const double dx = mesh_.tri_cx[nb] - cx, dy = mesh_.tri_cy[nb] - cy;
+                    if (dx * dx + dy * dy <= r * r) queue.push_back(nb);
+                }
+            }
+            for (int c : marked) seen[static_cast<std::size_t>(c)] = 0;
+            if (queue.size() > kMaxCells) queue.resize(kMaxCells);
+            coupling_head_cells_.insert(coupling_head_cells_.end(), queue.begin(), queue.end());
+        };
         for (const auto& cp : coupling_points_) {
             if (cp.is_outfall) continue;
             CouplingPoint sc = cp;
+            if (options_.coupling_head != CouplingHead2D::CELL) {
+                sc.head_begin = static_cast<int>(coupling_head_cells_.size());
+                add_head_cells(cp, cp.cell_idx);
+                sc.head_end = static_cast<int>(coupling_head_cells_.size());
+            }
             if (cp.vertex_idx >= 0) {
                 const int v  = cp.vertex_idx;
                 const int s  = mesh_.vert_stencil_ptr[v];
@@ -751,6 +811,8 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             }
             node_coupling_points_.push_back(sc);
         }
+        state_.coupling_head_cells =
+            coupling_head_cells_.empty() ? nullptr : &coupling_head_cells_;
         if (!node_coupling_points_.empty()) {
             state_.node_coupling = &node_coupling_points_;
             state_.nodes_1d      = &ctx.nodes;

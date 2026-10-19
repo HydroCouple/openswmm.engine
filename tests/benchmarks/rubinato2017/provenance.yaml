@@ -1,0 +1,42 @@
+benchmark: rubinato2017
+type: observed
+verification_class: observed
+description: >
+  Steady and unsteady sewer/surface flow exchange through a 1/6-scale
+  manhole (no lid) linking a 75 mm pipe to an 8 m x 4 m shallow flume.
+  Transcribed reference data used by the 1D-2D exchange-law tests and the
+  rubinato-2017 benchmark corpus.
+
+swmm_target: src/engine/2d/coupling/ExchangeLaw.hpp (COUPLING_LAW WEIR_ORIFICE)
+
+source:
+  - author: "Rubinato, M., Martins, R., Kesserwani, G., Leandro, J., Djordjević, S., Shucksmith, J."
+    year: 2017
+    title: "Experimental calibration and validation of sewer/surface flow exchange equations in steady and unsteady flow conditions"
+    journal: Journal of Hydrology
+    volume: 552
+    pages: 421-432
+    doi: 10.1016/j.jhydrol.2017.06.024
+    license: CC-BY-4.0
+
+files:
+  table1_unsteady_tests.csv: Table 1 (test id, Q3max/Q1, surcharge duration), Q1 = 8.15 l/s.
+  table2_steady_exchange.csv: >
+    Table 2, all 36 steady rows (S1 15, S2 5, S3 8, S4 8). S1 has no pipe
+    head (non-surcharged sewer); S4 has no surface depth (dry floodplain).
+    Checked row by row against the rendered page, 2026-10-19.
+  table3_coefficients.csv: Table 3 coefficients and R^2 (S1 has no H_Mho value).
+  rig_geometry.yaml: Rig dimensions from §3.1 and Figs 1-2.
+
+notes: >
+  Scenario meaning: S1 surface->sewer free weir (Eq. 1); S2 surface->sewer
+  submerged weir, h_p > Z_crest (Eq. 2); S3 sewer->surface over a WET
+  floodplain (orifice, Eq. 4); S4 sewer->surface over a DRY floodplain
+  (orifice, Eq. 4). Eq. 3 (surface->sewer submerged orifice) was not
+  calibrated. Table 3 coefficients are slopes of linear fits of Q_e on the
+  equation terms, with intercepts of about -0.10, +0.03, -2.46 and -3.80 l/s
+  for S1-S4: the zero-intercept equations with these coefficients do not
+  reproduce the measured Q_e (see plans/1D2D_FINE_SCALE_COUPLING_PLAN, §0R R2).
+  Body text "flow depths between 77mm and 191mm" is a typo for 7.7-19.1 mm
+  (Table 2 and the Froude numbers agree on metres). Figure 11 is not yet
+  digitised; check the article's supplementary data first.

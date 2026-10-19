@@ -168,10 +168,30 @@ inline double wetVertexEta(const MeshData& mesh, const SurfaceStateData& state,
 inline double couplingHead2D(const CouplingPoint& cp, const MeshData& mesh,
                              const SurfaceStateData& state,
                              const SolverOptions2D& opts) noexcept {
+    // COUPLING_HEAD VERTEX / STENCIL_WET_MEAN: wet-depth-weighted η over the
+    // point's sampling cells, the coupling cell when all are dry.
+    if (cp.head_end > cp.head_begin && state.coupling_head_cells) {
+        const auto& cells = *state.coupling_head_cells;
+        double num = 0.0, den = 0.0;
+        for (int k = cp.head_begin; k < cp.head_end; ++k) {
+            const int t = cells[static_cast<std::size_t>(k)];
+            const double h = state.depth[t];
+            if (!(h >= opts.dry_depth)) continue;
+            num += h * state.head[t];
+            den += h;
+        }
+        return (den > 0.0) ? num / den : state.head[cp.cell_idx];
+    }
     if (cp.vertex_idx < 0) return state.head[cp.cell_idx];
     if (opts.cell_closure == CellClosure2D::VFR)
         return wetVertexEta(mesh, state, cp.vertex_idx, opts.dry_depth);
     return vertexHeadAt(mesh, state, cp.vertex_idx);
+}
+
+/// Hermite smoothstep ramp over [0, dry_depth] on the source-side depth.
+inline double sourceWetRamp(double d, double dry_depth) noexcept {
+    const double t = std::min(1.0, std::max(0.0, d / dry_depth));
+    return t * t * (3.0 - 2.0 * t);
 }
 
 } // anonymous namespace
@@ -250,6 +270,15 @@ double computeNodeCouplingQ(const CouplingPoint& cp,
     }
     const double depth_1d_avail = nodes.depth[ni] * opts.len_1d_to_2d;
 
+    // WEIR_ORIFICE: the regime-aware law on the point's structure; it is zero
+    // below the crest on its own, so neither the rim gate nor the area ramp of
+    // the legacy orifice applies. The source-side wet ramp still does.
+    if (cp.law == static_cast<int8_t>(CouplingLaw2D::WEIR_ORIFICE)) {
+        const double Q = exchange::exchange(cp.geo, cp.coef, h_2d, h_1d).q;
+        return Q * sourceWetRamp(Q > 0.0 ? depth_2d_avail : depth_1d_avail,
+                                 opts.dry_depth);
+    }
+
     // Capped-pipe gate at the crown (= surcharge / slot-engagement threshold).
     const double crown = (nodes.invert_elev[ni] + nodes.full_depth[ni])
                          * opts.len_1d_to_2d;
@@ -291,6 +320,15 @@ double computeNodeCouplingDQdh1d(const CouplingPoint& cp,
     const auto ni = static_cast<std::size_t>(cp.node_idx);
     const double h_2d = couplingHead2D(cp, mesh, state, opts);
     const double h_1d = nodes.head[ni] * opts.len_1d_to_2d;
+
+    if (cp.law == static_cast<int8_t>(CouplingLaw2D::WEIR_ORIFICE)) {
+        const double depth_1d = nodes.depth[ni] * opts.len_1d_to_2d;
+        const double depth_2d = (cp.cell_idx >= 0) ? state.depth[cp.cell_idx] : 0.0;
+        const double G = exchange::exchange(cp.geo, cp.coef, h_2d, h_1d).g *
+                         sourceWetRamp(std::max(depth_1d, depth_2d), opts.dry_depth);
+        return (G > 0.0) ? G : 0.0;
+    }
+
     const double a = std::abs(h_2d - h_1d);
 
     const double crown =

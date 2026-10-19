@@ -119,6 +119,36 @@ enum class RainfallMode : int8_t {
 };
 
 /**
+ * @brief 1D↔2D exchange law at junction coupling points ([2D_OPTIONS]
+ *        COUPLING_LAW; a node's [2D_NODE_COUPLING] LAW overrides it).
+ *
+ * ORIFICE is the legacy two-way orifice on the map row's CD/AREA (with the
+ * rim gate and the AREA→2·AREA ramp). WEIR_ORIFICE is the regime-aware law
+ * of coupling/ExchangeLaw.hpp on the node's structure geometry.
+ */
+enum class CouplingLaw2D : int8_t {
+    ORIFICE      = 0,
+    WEIR_ORIFICE = 1
+};
+
+/**
+ * @brief Where the 2D head driving a junction exchange is read
+ *        ([2D_OPTIONS] COUPLING_HEAD).
+ *
+ * CELL (default) is the coupling cell (the lowest-bed cell around a vertex
+ * point). VERTEX is the wet-depth-weighted η over the cells around the mapped
+ * vertex. STENCIL_WET_MEAN is the wet-depth-weighted η over the cells whose
+ * centroid lies within max(structure size, cell size) of the point — the
+ * manhole-area average Rubinato et al. (2017) found best in unsteady runs.
+ * Both fall back to the coupling cell when every cell is dry.
+ */
+enum class CouplingHead2D : int8_t {
+    CELL             = 0,
+    VERTEX           = 1,
+    STENCIL_WET_MEAN = 2
+};
+
+/**
  * @brief Compute backend for the 2D marcher (mirrors fv::Backend).
  *
  * AUTO (default) lets SurfaceSolverFactory pick: a device plugin (cuda, hip,
@@ -260,6 +290,14 @@ struct SolverOptions2D {
     double coupling_sync     = 0.0;
 
     double coupling_cd       = 0.65;    ///< Default discharge coefficient
+    /// [2D_OPTIONS] COUPLING_LAW ORIFICE|WEIR_ORIFICE (default ORIFICE).
+    CouplingLaw2D  coupling_law  = CouplingLaw2D::ORIFICE;
+    /// [2D_OPTIONS] COUPLING_HEAD CELL|VERTEX|STENCIL_WET_MEAN (default CELL).
+    CouplingHead2D coupling_head = CouplingHead2D::CELL;
+    /// [2D_OPTIONS] COUPLING_COEFFS — WEIR_ORIFICE coefficient preset
+    /// (NodeCoupling2DCoeffs: DEFAULT|RUBINATO2017|RUBINATO2017_LOWER|
+    /// RUBINATO2017_UPPER); a node's COEFFS / CW / CSW / COI / COO override.
+    int            coupling_coeffs = 0;
     bool   report_2d         = true;    ///< Write 2D results to output
 
     // ---- Results-file size controls (plans/2D_OUTPUT_FLOAT32_AND_VARIABLE_SELECTION_PLAN) ----
