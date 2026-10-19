@@ -400,6 +400,126 @@ TEST_F(GeoPackageMesh2DTest, CouplingMapsRoundTrip) {
 }
 
 // ---------------------------------------------------------------------------
+// Repeated-row triangle coupling (two nodes on one triangle) and the CD/AREA
+// authored flags survive the round trip.
+// ---------------------------------------------------------------------------
+
+TEST_F(GeoPackageMesh2DTest, RepeatedTriangleRowsAndAuthoredFlagsRoundTrip) {
+    makeUnitSquareMesh();
+    mesh_.vert_coupled_node_name[0] = "J1";       // CD authored, AREA defaulted
+    mesh_.vert_coupling_cd[0]       = 0.7;
+    mesh_.vert_coupling_cd_set[0]   = 1;
+    mesh_.vert_coupled_node_name[2] = "J3";       // nothing authored
+    twoD::MeshData::TriCouplingRow a, b;
+    a.tri = 1; a.node_name = "J1"; a.cd = 0.6; a.cd_set = true; a.area = 1.5; a.area_set = true;
+    b.tri = 1; b.node_name = "J3";                // defaults, unauthored
+    mesh_.tri_couplings = {a, b};
+
+    auto ctx = build_ctx_out();
+    {
+        auto db = create_db();
+        write_model(db.get(), ctx, kSimId);
+    }
+    auto ctx_in = build_ctx_in();
+    {
+        auto db = open_database(db_path_, SQLITE_OPEN_READONLY);
+        ASSERT_EQ(read_model(db.get(), ctx_in, kSimId, ""), 0);
+    }
+
+    EXPECT_EQ(mesh_in_.vert_coupling_cd_set[0], 1);
+    EXPECT_EQ(mesh_in_.vert_coupling_area_set[0], 0);
+    EXPECT_EQ(mesh_in_.vert_coupling_cd_set[2], 0);
+    EXPECT_EQ(mesh_in_.vert_coupling_area_set[2], 0);
+    ASSERT_EQ(mesh_in_.tri_couplings.size(), 2u) << "a second node on one triangle was dropped";
+    EXPECT_EQ(mesh_in_.tri_couplings[0].node_name, "J1");
+    EXPECT_DOUBLE_EQ(mesh_in_.tri_couplings[0].cd, 0.6);
+    EXPECT_DOUBLE_EQ(mesh_in_.tri_couplings[0].area, 1.5);
+    EXPECT_TRUE(mesh_in_.tri_couplings[0].cd_set);
+    EXPECT_TRUE(mesh_in_.tri_couplings[0].area_set);
+    EXPECT_EQ(mesh_in_.tri_couplings[1].node_name, "J3");
+    EXPECT_FALSE(mesh_in_.tri_couplings[1].cd_set);
+    EXPECT_FALSE(mesh_in_.tri_couplings[1].area_set);
+}
+
+// A file whose triangle-coupling table is keyed by triangle alone is rebuilt
+// on the next save, keeping its rows; rows written before the authored-flag
+// columns read back as authored.
+TEST_F(GeoPackageMesh2DTest, OldTriangleCouplingTableMigrates) {
+    makeUnitSquareMesh();
+    mesh_.vert_coupled_node_name[0] = "J1";
+    mesh_.vert_coupling_cd[0]       = 0.7;
+    auto ctx = build_ctx_out();
+    {
+        auto db = create_db();
+        write_model(db.get(), ctx, kSimId);
+        // Recreate the pre-repeated-row table with one row, flags absent.
+        exec(db.get(), "PRAGMA foreign_keys=OFF");
+        exec(db.get(), "DROP TABLE mesh_2d_triangle_coupling");
+        exec(db.get(), "CREATE TABLE mesh_2d_triangle_coupling ("
+                       "fid INTEGER PRIMARY KEY AUTOINCREMENT, simulation_id TEXT NOT NULL, "
+                       "tri_idx INTEGER NOT NULL, node_id TEXT NOT NULL, "
+                       "coupling_cd REAL NOT NULL DEFAULT 0.65, "
+                       "coupling_area REAL NOT NULL DEFAULT 1.0, "
+                       "UNIQUE(simulation_id, tri_idx), "
+                       "FOREIGN KEY (simulation_id, tri_idx) REFERENCES "
+                       "mesh_2d_triangles(simulation_id, tri_idx) ON DELETE CASCADE ON UPDATE CASCADE, "
+                       "FOREIGN KEY (simulation_id, node_id) REFERENCES "
+                       "nodes(simulation_id, node_id) ON DELETE CASCADE ON UPDATE CASCADE)");
+        exec(db.get(), "INSERT INTO mesh_2d_triangle_coupling "
+                       "(simulation_id, tri_idx, node_id, coupling_cd, coupling_area) "
+                       "VALUES ('run_1', 1, 'J3', 0.55, 4.0)");
+        exec(db.get(), "UPDATE mesh_2d_vertex_coupling SET coupling_cd_set=NULL, "
+                       "coupling_area_set=NULL");
+        exec(db.get(), "PRAGMA foreign_keys=ON");
+    }
+    {
+        auto db = open_database(db_path_);
+        create_schema(db.get());   // what a save does first
+        auto sql = prepare(db.get(), "SELECT sql FROM sqlite_master WHERE type='table' "
+                                     "AND name='mesh_2d_triangle_coupling'");
+        ASSERT_EQ(sqlite3_step(sql.get()), SQLITE_ROW);
+        EXPECT_EQ(column_text(sql.get(), 0).find("UNIQUE(simulation_id, tri_idx)"),
+                  std::string::npos);
+        sql.reset();
+        EXPECT_EQ(count_rows(db.get(), "mesh_2d_triangle_coupling"), 1) << "migration lost the row";
+        exec(db.get(), "INSERT INTO mesh_2d_triangle_coupling "
+                       "(simulation_id, tri_idx, node_id) VALUES ('run_1', 1, 'J1')");
+    }
+    auto ctx_in = build_ctx_in();
+    {
+        auto db = open_database(db_path_, SQLITE_OPEN_READONLY);
+        ASSERT_EQ(read_model(db.get(), ctx_in, kSimId, ""), 0);
+    }
+    EXPECT_EQ(mesh_in_.vert_coupling_cd_set[0], 1) << "NULL flag must read as authored";
+    EXPECT_EQ(mesh_in_.vert_coupling_area_set[0], 1);
+    ASSERT_EQ(mesh_in_.tri_couplings.size(), 2u);
+    EXPECT_EQ(mesh_in_.tri_couplings[0].node_name, "J3");
+    EXPECT_DOUBLE_EQ(mesh_in_.tri_couplings[0].cd, 0.55);
+    EXPECT_TRUE(mesh_in_.tri_couplings[0].cd_set);
+    EXPECT_EQ(mesh_in_.tri_couplings[1].node_name, "J1");
+}
+
+TEST_F(GeoPackageMesh2DTest, OptionsRoundTripFloodingMomentumBackend) {
+    makeUnitSquareMesh();
+    opts_.coupling_in_flooding = true;
+    opts_.momentum = twoD::Momentum2D::DIFFUSIVE_WAVE;
+    opts_.backend  = twoD::Backend2D::CPU;
+    auto ctx = build_ctx_out();
+    {
+        auto db = create_db();
+        write_model(db.get(), ctx, kSimId);
+    }
+    auto ctx_in = build_ctx_in();
+    {
+        auto db = open_database(db_path_, SQLITE_OPEN_READONLY);
+        ASSERT_EQ(read_model(db.get(), ctx_in, kSimId, ""), 0);
+    }
+    EXPECT_TRUE(opts_in_.coupling_in_flooding);
+    EXPECT_EQ(opts_in_.momentum, twoD::Momentum2D::DIFFUSIVE_WAVE);
+    EXPECT_EQ(opts_in_.backend, twoD::Backend2D::CPU);
+}
+
+// ---------------------------------------------------------------------------
 // Post-initialize save: mesh in SI is un-scaled back to authored units
 // ---------------------------------------------------------------------------
 

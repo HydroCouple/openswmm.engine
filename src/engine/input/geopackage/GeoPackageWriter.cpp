@@ -1829,6 +1829,23 @@ static void write_options_2d(sqlite3* db, const SimulationContext& ctx,
     insert("2D_FROUDE_MAX",        fmt_g17(o.froude_max));
     insert("2D_ADVECTION",         o.advection ? "YES" : "NO");
     insert("2D_COUPLING_AREA",     o.coupling_area_auto ? "AUTO" : "DEFAULT");
+    insert("2D_COUPLING_IN_FLOODING", o.coupling_in_flooding ? "YES" : "NO");
+    insert("2D_MOMENTUM_EQUATION",
+           o.momentum == twoD::Momentum2D::FULL_SWE       ? "FULL_SWE"
+         : o.momentum == twoD::Momentum2D::DIFFUSIVE_WAVE ? "DIFFUSIVE_WAVE"
+                                                          : "LOCAL_INERTIAL");
+    {
+        const char* backend = "AUTO";
+        switch (o.backend) {
+            case twoD::Backend2D::CPU:  backend = "CPU";  break;
+            case twoD::Backend2D::OMP:  backend = "OMP";  break;
+            case twoD::Backend2D::CUDA: backend = "CUDA"; break;
+            case twoD::Backend2D::HIP:  backend = "HIP";  break;
+            case twoD::Backend2D::SYCL: backend = "SYCL"; break;
+            case twoD::Backend2D::AUTO: break;
+        }
+        insert("2D_BACKEND", backend);
+    }
     insert("2D_REPORT_2D",         o.report_2d ? "YES" : "NO");
     // Results-file size controls (same tokens as the .inp grammar).
     insert("2D_OUTPUT_PRECISION",
@@ -2028,8 +2045,8 @@ static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx,
     {
         auto stmt = prepare(db,
             "INSERT INTO mesh_2d_vertex_coupling "
-            "(simulation_id, vertex_idx, node_id, coupling_cd, coupling_area) "
-            "VALUES (?,?,?,?,?)");
+            "(simulation_id, vertex_idx, node_id, coupling_cd, coupling_area, "
+            "coupling_cd_set, coupling_area_set) VALUES (?,?,?,?,?,?,?)");
         for (int i = 0; i < nv; ++i) {
             const std::string cn = node_name_for(mesh.vert_coupled_node_name[i],
                                                  mesh.vert_coupled_node[i]);
@@ -2041,26 +2058,46 @@ static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx,
             bind_text(stmt.get(), 3, cn);
             bind_double(stmt.get(), 4, mesh.vert_coupling_cd[i]);
             bind_double(stmt.get(), 5, mesh.vert_coupling_area[i] * f2);
+            bind_int(stmt.get(), 6, mesh.vert_coupling_cd_set[i] != 0);
+            bind_int(stmt.get(), 7, mesh.vert_coupling_area_set[i] != 0);
             step_or_throw(db, stmt.get(), "mesh_2d_vertex_coupling insert failed");
         }
     }
     {
+        // Every row of the repeated-row form; the per-triangle arrays only
+        // when no rows exist (meshes that never built them hold one explicit
+        // value per triangle).
         auto stmt = prepare(db,
             "INSERT INTO mesh_2d_triangle_coupling "
-            "(simulation_id, tri_idx, node_id, coupling_cd, coupling_area) "
-            "VALUES (?,?,?,?,?)");
-        for (int t = 0; t < nt; ++t) {
-            const std::string cn = node_name_for(mesh.tri_coupled_node_name[t],
-                                                 mesh.tri_coupled_node[t]);
-            if (cn.empty()) continue;
+            "(simulation_id, tri_idx, node_id, coupling_cd, coupling_area, "
+            "coupling_cd_set, coupling_area_set) VALUES (?,?,?,?,?,?,?)");
+        auto insert_row = [&](int t, const std::string& cn, double cd, double area,
+                              bool cd_set, bool area_set) {
             sqlite3_reset(stmt.get());
             sqlite3_clear_bindings(stmt.get());
             bind_text(stmt.get(), 1, sim_id);
             bind_int(stmt.get(), 2, t);
             bind_text(stmt.get(), 3, cn);
-            bind_double(stmt.get(), 4, mesh.tri_coupling_cd[t]);
-            bind_double(stmt.get(), 5, mesh.tri_coupling_area[t] * f2);
+            bind_double(stmt.get(), 4, cd);
+            bind_double(stmt.get(), 5, area * f2);
+            bind_int(stmt.get(), 6, cd_set);
+            bind_int(stmt.get(), 7, area_set);
             step_or_throw(db, stmt.get(), "mesh_2d_triangle_coupling insert failed");
+        };
+        if (!mesh.tri_couplings.empty()) {
+            for (const auto& row : mesh.tri_couplings) {
+                const std::string cn = node_name_for(row.node_name, row.node);
+                if (cn.empty() || row.tri < 0 || row.tri >= nt) continue;
+                insert_row(row.tri, cn, row.cd, row.area, row.cd_set, row.area_set);
+            }
+        } else {
+            for (int t = 0; t < nt; ++t) {
+                const std::string cn = node_name_for(mesh.tri_coupled_node_name[t],
+                                                     mesh.tri_coupled_node[t]);
+                if (cn.empty()) continue;
+                insert_row(t, cn, mesh.tri_coupling_cd[t], mesh.tri_coupling_area[t],
+                           true, true);
+            }
         }
     }
 
