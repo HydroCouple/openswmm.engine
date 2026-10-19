@@ -914,6 +914,10 @@ private:
      */
     void writeHotstartSave(const HotstartSaveEntry& entry);
 
+    /// Write every dated SAVE HOTSTART row the clock has reached and that has
+    /// not been written this run.
+    void writeDueHotstartSaves();
+
     /**
      * @brief Deep-copy the active 2D surface state into a snapshot.
      * @details No-op when the 2D module is inactive. Shared by the

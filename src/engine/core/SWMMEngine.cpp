@@ -1723,6 +1723,14 @@ int SWMMEngine::start(int save_results) noexcept {
                 set_error(CFFI_ERR_HOTSTART,error.c_str());
                 return CFFI_ERR_HOTSTART;
             }
+            // The run resumes at the saved time: a dated row due by then was
+            // the saving run's to write, so it does not fire again.
+            for (std::size_t k = 0; k < hotstart_save_done_.size(); ++k) {
+                const auto& entry = ctx_.files.hotstart_saves[k];
+                hotstart_save_done_[k] = entry.datetime != 0.0 &&
+                    ctx_.elapsed_ms + 1.0 >=
+                        (entry.datetime - ctx_.options.start_date) * 86400000.0;
+            }
         }
     }
     return SWMM_OK;
@@ -2167,22 +2175,10 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         accumulateAvgResults();
     }
 
-    // SAVE HOTSTART rows with a datetime: written once, from the state at
-    // the end of the first step that reaches it — legacy swmm_step calls
-    // hotstart_save() after routing and saveResults. (Legacy compares the
-    // elapsed milliseconds with the absolute date, so it fires within the
-    // first minute of the run; the date is honoured here.)
-    for (std::size_t k = 0; k < ctx_.files.hotstart_saves.size(); ++k) {
-        const auto& entry = ctx_.files.hotstart_saves[k];
-        if (entry.datetime == 0.0 || k >= hotstart_save_done_.size() ||
-            hotstart_save_done_[k])
-            continue;
-        const double due_ms =
-            (entry.datetime - ctx_.options.start_date) * 86400000.0;
-        if (ctx_.elapsed_ms + 1.0 < due_ms) continue;
-        hotstart_save_done_[k] = 1;
-        writeHotstartSave(entry);
-    }
+    // Dated SAVE HOTSTART rows: legacy swmm_step calls hotstart_save()
+    // after routing and saveResults. With engine checkpointing on (coupled
+    // heat) the save needs the accepted step boundary, so it waits for it.
+    if (!checkpoint_enabled_) writeDueHotstartSaves();
 
     // Keep a one-step API prescription through the output snapshot, then
     // expire it before callbacks can prescribe the following routing step.
@@ -2218,6 +2214,7 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
             if(!error.empty())throw std::runtime_error(error);
         }
 #endif
+        writeDueHotstartSaves();
     }
     if (elapsed_time) *elapsed_time = ctx_.current_time / hydraulics::TimestepController::SEC_PER_DAY;
     return SWMM_OK;
@@ -7941,6 +7938,24 @@ int SWMMEngine::end() noexcept {
 // A row's LEGACY / NATIVE keyword picks the format; without one (AUTO) it is
 // legacy .hsf, or native when node LIDs need it. Either round-trips through
 // USE HOTSTART, which reads the file's stamp.
+
+void SWMMEngine::writeDueHotstartSaves() {
+    // Each dated row is written once, from the state at the end of the first
+    // step that reaches its time. (Legacy compares the elapsed milliseconds
+    // with the absolute date, so it fires within the first minute of the
+    // run; the date is honoured here.)
+    for (std::size_t k = 0; k < ctx_.files.hotstart_saves.size(); ++k) {
+        const auto& entry = ctx_.files.hotstart_saves[k];
+        if (entry.datetime == 0.0 || k >= hotstart_save_done_.size() ||
+            hotstart_save_done_[k])
+            continue;
+        const double due_ms =
+            (entry.datetime - ctx_.options.start_date) * 86400000.0;
+        if (ctx_.elapsed_ms + 1.0 < due_ms) continue;
+        hotstart_save_done_[k] = 1;
+        writeHotstartSave(entry);
+    }
+}
 
 void SWMMEngine::writeHotstartSave(const HotstartSaveEntry& entry) {
     const std::string& sp = !entry.path.absolute.empty()

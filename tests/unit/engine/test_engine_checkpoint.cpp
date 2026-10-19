@@ -683,6 +683,7 @@ struct ThermalSurfaceSession {
     SWMMEngine engine;
     std::string native_hotstart_save,native_hotstart_use;
     std::string native_hotstart_apply;
+    std::string extra_files;   // more [FILES] rows
     void start(const std::string& name,double surface_temperature=12,
                const std::string& channel_tag="channel:test",bool dry_surface=false,
                bool atmospheric_exchange=false,bool temperature_timeseries=false,
@@ -698,10 +699,11 @@ struct ThermalSurfaceSession {
             "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:03:00\n"
             "ROUTING_STEP 1\nREPORT_STEP 00:00:10\nIGNORE_2D NO\nIGNORE_QUALITY YES\n"
             "[2D_OPTIONS]\nREPORT_2D NO\nMAX_TIMESTEP .2\nLTS_TIERS 1\nEVAPORATION NO\nINFILTRATION NO\n";
-        if(!native_hotstart_save.empty()||!native_hotstart_use.empty()) {
+        if(!native_hotstart_save.empty()||!native_hotstart_use.empty()||!extra_files.empty()) {
             deck+="\n[FILES]\n";
             if(!native_hotstart_use.empty())deck+="USE HOTSTART \""+native_hotstart_use+"\"\n";
             if(!native_hotstart_save.empty())deck+="SAVE HOTSTART \""+native_hotstart_save+"\"\n";
+            deck+=extra_files;
         }
         if(!local_storage)deck+=
             "[2D_AQUIFER_OPTIONS]\nNODE_ENROLMENT ROWS\nGW_ET NONE\nM_LAYERS 4\nCLOSURE "+closure+"\n"
@@ -1808,6 +1810,42 @@ TEST(EngineCheckpoint, CoupledThermalNativeHotstartRestoresFullAcceptedEngineSta
     EXPECT_FALSE(scheduled->engine_checkpoint.empty());
     ASSERT_EQ(target.engine.end(),SWMM_OK);
     ASSERT_EQ(target_api.engine.end(),SWMM_OK);
+}
+
+// A native hot start that restores a full engine checkpoint starts the run
+// at the saved time. A dated SAVE HOTSTART row due before that time was the
+// saving run's to write; it must not fire again on the first step and
+// overwrite its file with later state. A row due after it still fires, and
+// is written: a coupled-heat save needs the step's accepted checkpoint
+// boundary, which dated rows used to fire before.
+TEST(EngineCheckpoint, RestoredRunWritesOnlyTheDatedSavesStillAhead) {
+    const auto path=root()/"surface-thermal-dated.hsf";
+    const auto early=root()/"surface-thermal-dated-early.hsf";
+    const auto late=root()/"surface-thermal-dated-late.hsf";
+    std::error_code ec;
+    for(const auto& p:{path,early,late})std::filesystem::remove(p,ec);
+    ThermalSurfaceSession source,target;
+    ASSERT_NO_THROW(source.startNativeHotstart("surface-thermal-dated-source",path.string(),true));
+    for(int i=0;i<12;++i)ASSERT_NO_THROW(step(source.engine));
+    const double saved_ms=source.engine.context().elapsed_ms;
+    ASSERT_GT(saved_ms,5000.0);
+    ASSERT_LT(saved_ms,30000.0);
+    ASSERT_EQ(swmm_hotstart_save(&source.engine,path.string().c_str()),SWMM_OK);
+
+    target.extra_files="SAVE HOTSTART \""+early.string()+"\" 01/01/2026 00:00:05\n"
+                       "SAVE HOTSTART \""+late.string()+"\" 01/01/2026 00:00:30\n";
+    ASSERT_NO_THROW(target.startNativeHotstart("surface-thermal-dated-target",path.string(),false));
+    EXPECT_DOUBLE_EQ(target.engine.context().elapsed_ms,saved_ms);
+    while(target.engine.context().elapsed_ms<40000.0)ASSERT_NO_THROW(step(target.engine));
+    EXPECT_FALSE(std::filesystem::exists(early))
+        << "the row due before the restored time was written again";
+    EXPECT_TRUE(std::filesystem::exists(late));
+    ASSERT_EQ(target.engine.end(),SWMM_OK);
+    for(const auto& w:target.engine.context().warnings) {
+        EXPECT_EQ(w.find("was not written"),std::string::npos) << w;
+        EXPECT_EQ(w.find("was not saved"),std::string::npos) << w;   // needs the accepted boundary
+    }
+    ASSERT_EQ(source.engine.end(),SWMM_OK);
 }
 
 TEST(EngineCheckpoint, SurfaceAttachmentGuardsAreRetryableAtInitialBoundary) {
