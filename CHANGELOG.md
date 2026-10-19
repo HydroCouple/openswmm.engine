@@ -27,6 +27,7 @@ retroactive.
 
 - **`[COVERAGES]` reads every land use on a line.** `S1 RES 60 COM 40` set only RES; COM was dropped without a message. Every pair is read now, as in EPA SWMM, and a line naming an unknown subcatchment or land use (ERROR 209), a land use without a percent (ERROR 203) or a percent that is not a number (ERROR 211) is an error, as it is there. These lines were skipped silently before.
 - **Street sweeping under snow follows EPA SWMM.** A subcatchment is not swept while its plowable snow holds more than 0.05 in of water, as in EPA SWMM. The engine instead skipped sweeping whenever melt or rain reached the impervious area, so it swept under a dormant pack and skipped sweeping during rain on bare pavement. UEB-driven subcatchments keep the previous test. The hot-start parity test against EPA SWMM 5.3 now covers a swept land use on a snow subcatchment.
+- **`SAVE HOTSTART` rows are checked like EPA SWMM's.** A word other than LEGACY or NATIVE in the format keyword's place is ignored with a warning naming it (it was ignored silently). A row of five items must give a valid date and time, or it is ERROR 213, as in EPA SWMM; `SAVE HOTSTART f 01/15/2026 NATIVE` was read as a save at midnight, and `SAVE HOTSTART f NATIVE x` as an end-of-run save, both in the default format.
 
 ### `SAVE HOTSTART` format keyword (2026-10-18)
 

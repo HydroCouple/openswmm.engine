@@ -484,8 +484,10 @@ TEST(FilesHandlerTest, SaveHotstartFormatKeywordTrailsPathAndDatetime) {
         "SAVE HOTSTART \"dated.hsf\" 01/15/2026 12:30:00 legacy",
         "SAVE HOTSTART \"dated_plain.hsf\" 01/15/2026 12:30:00",
         "SAVE HOTSTART \"odd.hsf\" SOMETHING",
+        "SAVE HOTSTART \"typo.hsf\" 01/15/2026 12:30:00 NATVE",
     });
-    ASSERT_EQ(ctx.files.hotstart_saves.size(), 5u);
+    ASSERT_EQ(ctx.files.hotstart_saves.size(), 6u);
+    EXPECT_TRUE(ctx.errors.empty());
     const auto& s = ctx.files.hotstart_saves;
     EXPECT_EQ(s[0].format, HotstartFormat::AUTO);
     EXPECT_EQ(s[1].format, HotstartFormat::NATIVE);
@@ -494,10 +496,43 @@ TEST(FilesHandlerTest, SaveHotstartFormatKeywordTrailsPathAndDatetime) {
     EXPECT_GT(s[2].datetime, 0.0);
     EXPECT_EQ(s[2].datetime, s[3].datetime) << "the keyword moved the save time";
     EXPECT_EQ(s[3].format, HotstartFormat::AUTO);
-    // Any other trailing token is ignored, exactly as before the keyword.
+    // Any other token in the keyword's place is ignored, as legacy ignores
+    // it, but now with a warning that names it.
     EXPECT_EQ(s[4].format, HotstartFormat::AUTO);
     EXPECT_EQ(s[4].path, "odd.hsf");
     EXPECT_EQ(s[4].datetime, 0.0);
+    EXPECT_EQ(s[5].format, HotstartFormat::AUTO);
+    EXPECT_EQ(s[5].datetime, s[2].datetime);
+    ASSERT_EQ(ctx.warnings.size(), 2u);
+    EXPECT_NE(ctx.warnings[0].find("'SOMETHING'"), std::string::npos) << ctx.warnings[0];
+    EXPECT_NE(ctx.warnings[1].find("'NATVE'"), std::string::npos) << ctx.warnings[1];
+    EXPECT_EQ(ctx.warning_code, 101);
+}
+
+// Legacy iface.c reads a datetime only from a five-token row and rejects one
+// whose date or time does not parse (ERR_DATETIME). Such a row used to be
+// read as an end-of-run or midnight save in the default format.
+TEST(FilesHandlerTest, FiveTokenSaveHotstartRowNeedsADateAndATime) {
+    const struct { const char* row; const char* bad; } cases[] = {
+        {"SAVE HOTSTART \"a.hsf\" NATIVE extra",        "NATIVE"},
+        {"SAVE HOTSTART \"b.hsf\" 01/15/2026 NATIVE",   "NATIVE"},
+        {"SAVE HOTSTART \"c.hsf\" 15/2026 12:30:00",    "15/2026"},
+    };
+    for (const auto& c : cases) {
+        SimulationContext ctx;
+        openswmm::input::handle_files(ctx, {c.row});
+        EXPECT_TRUE(ctx.files.hotstart_saves.empty()) << c.row;
+        ASSERT_EQ(ctx.errors.size(), 1u) << c.row;
+        EXPECT_NE(ctx.errors[0].find("ERROR 2"), std::string::npos) << ctx.errors[0];
+        EXPECT_NE(ctx.errors[0].find(c.bad), std::string::npos) << ctx.errors[0];
+    }
+    // A valid date and time, decimal hours included, still parse.
+    SimulationContext ok;
+    openswmm::input::handle_files(ok, {"SAVE HOTSTART \"d.hsf\" 01/15/2026 12:30",
+                                       "SAVE HOTSTART \"e.hsf\" 01/15/2026 0"});
+    EXPECT_TRUE(ok.errors.empty());
+    ASSERT_EQ(ok.files.hotstart_saves.size(), 2u);
+    EXPECT_GT(ok.files.hotstart_saves[1].datetime, 0.0);
 }
 
 TEST_F(FilesApiTest, HotstartSavesFormatGetSetAndRange) {
