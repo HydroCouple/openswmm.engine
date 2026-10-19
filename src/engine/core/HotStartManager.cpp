@@ -48,6 +48,7 @@
 #include <algorithm>
 #include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "SimulationContext.hpp"
+#include "../transport/components/ReactionModule/ReactionLegacyBinding.hpp"   // ensureMsxState
 #include "../hydrology/Runoff.hpp"
 #include "../hydrology/Groundwater.hpp"
 #ifdef OPENSWMM_HAS_2D
@@ -1563,6 +1564,9 @@ int HotStartManager::apply(HotStartFile& hs,
 // OBJECT INDEX. Mirrors legacy hotstart.c initializeFromHotstartFile() +
 // readRouting(); see also hotstart_is_valid() for the stamp/version logic.
 
+/// Marks the reaction species trailer after a legacy-layout body.
+static constexpr char kSpeciesTrailerTag[15] = {'O','P','E','N','S','W','M','M','-','H','S','M','S','X','1'};
+
 std::size_t HotStartManager::legacy_runoff_size(const SimulationContext& ctx,
                                                 int n_land) {
     const auto& sub = ctx.subcatches;
@@ -1583,7 +1587,8 @@ int HotStartManager::apply_legacy_routing(
         const std::string& path,
         SimulationContext& ctx,
         std::function<void(const std::string&)> warn_cb,
-        std::vector<double>* runoff) {
+        std::vector<double>* runoff,
+        LegacySpeciesTrailer* species) {
     if(meshLidRestartUnsupported(ctx)) {
         tl_last_io_error="Mesh LID hotstart requires the R5 joint owner restart extension";return 1;
     }
@@ -1788,11 +1793,114 @@ int HotStartManager::apply_legacy_routing(
         }
     }
 
+    // --- reaction species trailer (v6 only; legacy stops reading above) ---
+    if (species) {
+        *species = LegacySpeciesTrailer{};
+        char tag[15] = {};
+        file.read(tag, 15);
+        if (file && std::memcmp(tag, kSpeciesTrailerTag, 15) == 0) {
+            int32_t ns = 0, nn = 0, nl = 0, surf = 0;
+            bool ok = read_pod(file, ns) && ns >= 0 && ns < 100000;
+            std::vector<std::string> names(ok ? static_cast<std::size_t>(ns) : 0u);
+            for (auto& n : names) ok = ok && read_string(file, n);
+            ok = ok && read_pod(file, nn) && read_pod(file, nl);
+            ok = ok && nn == nNodes && nl == nLinks;
+            const auto uns = static_cast<std::size_t>(std::max(ns, 0));
+            std::vector<double> node(ok ? static_cast<std::size_t>(nn) * uns : 0u);
+            std::vector<double> link(ok ? static_cast<std::size_t>(nl) * uns : 0u);
+            if (ok) {
+                file.read(reinterpret_cast<char*>(node.data()), static_cast<std::streamsize>(node.size() * sizeof(double)));
+                file.read(reinterpret_cast<char*>(link.data()), static_cast<std::streamsize>(link.size() * sizeof(double)));
+                ok = static_cast<bool>(file) && read_pod(file, surf);
+            }
+            if (ok && surf == 1) {
+                int32_t nsc = 0, nlu = 0;
+                ok = read_pod(file, nsc) && read_pod(file, nlu) && nsc >= 0 && nlu >= 0;
+                if (ok) {
+                    species->n_subcatch = nsc;
+                    species->n_landuses = nlu;
+                    const auto a = static_cast<std::size_t>(nsc) * uns;
+                    species->washoff.resize(a);
+                    species->ponded.resize(a);
+                    species->buildup.resize(a * static_cast<std::size_t>(nlu));
+                    for (auto* v : {&species->washoff, &species->ponded, &species->buildup})
+                        file.read(reinterpret_cast<char*>(v->data()), static_cast<std::streamsize>(v->size() * sizeof(double)));
+                    ok = static_cast<bool>(file);
+                }
+            }
+            if (!ok) {
+                tl_last_io_error = "Hotstart reaction species block is malformed in '" + path + "'";
+                return 1;
+            }
+            species->species = names;
+
+            // Network concentrations, by name, before init_modules() so every
+            // engine seeds from them (ensureMsxState fills once, when unsized).
+            auto& rx = ctx.reactions;
+            const int nm = rx.configured ? rx.n_species() : 0;
+            const auto unm = static_cast<std::size_t>(nm);
+            std::vector<int> col(uns, -1);
+            for (std::size_t s = 0; s < uns; ++s) {
+                col[s] = nm > 0 ? rx.find_species(names[s]) : -1;
+                if (col[s] < 0 && warn_cb)
+                    warn_cb("USE HOTSTART: reaction species '" + names[s] +
+                            "' is not in the current model; its state is skipped");
+            }
+            if (nm > 0) {
+                transport::ensureMsxState(ctx);
+                for (std::size_t s = 0; s < uns; ++s) {
+                    if (col[s] < 0) continue;
+                    const auto m = static_cast<std::size_t>(col[s]);
+                    for (std::size_t e = 0; e < static_cast<std::size_t>(nn); ++e)
+                        if (e * unm + m < rx.msx_node_conc.size())
+                            rx.msx_node_conc[e * unm + m] = node[e * uns + s];
+                    for (std::size_t e = 0; e < static_cast<std::size_t>(nl); ++e)
+                        if (e * unm + m < rx.msx_link_conc.size())
+                            rx.msx_link_conc[e * unm + m] = link[e * uns + s];
+                }
+            }
+        } else if (file && warn_cb) {
+            warn_cb("USE HOTSTART: unrecognised data after the routing records was ignored");
+        }
+    }
+
     (void)flowUnits;
     (void)nLand;
     (void)warn_cb;
     tl_last_io_error.clear();
     return 0;
+}
+
+bool HotStartManager::apply_species_surface(
+        const LegacySpeciesTrailer& tr, SimulationContext& ctx,
+        const std::function<void(const std::string&)>& warn) {
+    auto& s = ctx.reactions.surface;
+    if (tr.n_landuses < 0 || !s.active()) return false;
+    if (tr.n_subcatch != ctx.n_subcatches() || tr.n_landuses != s.n_landuses) {
+        if (warn) warn("USE HOTSTART: reaction species surface state skipped "
+                       "(subcatchment or land use count differs from the model)");
+        return false;
+    }
+    const auto uns = tr.species.size();
+    const int nlu = tr.n_landuses;
+    for (std::size_t k = 0; k < uns; ++k) {
+        const int m = ctx.reactions.find_species(tr.species[k]);
+        if (m < 0 || m >= s.n_species) continue;
+        for (int sc = 0; sc < tr.n_subcatch; ++sc) {
+            const auto src = static_cast<std::size_t>(sc) * uns + k;
+            const auto dst = s.sidx(sc, m);
+            if (dst < s.washoff_conc.size()) s.washoff_conc[dst] = tr.washoff[src];
+            if (dst < s.washoff_conc_old.size()) s.washoff_conc_old[dst] = tr.washoff[src];
+            if (dst < s.ponded_qual.size()) s.ponded_qual[dst] = tr.ponded[src];
+            for (int lu = 0; lu < nlu; ++lu) {
+                const auto b = (static_cast<std::size_t>(sc) * static_cast<std::size_t>(nlu) +
+                                static_cast<std::size_t>(lu)) * uns + k;
+                const auto d = s.bu_idx(sc, lu, m);
+                if (d < s.buildup.size()) s.buildup[d] = tr.buildup[b];
+            }
+        }
+    }
+    return true;
 }
 
 // ============================================================================
@@ -1878,6 +1986,34 @@ int HotStartManager::save_legacy_routing(const std::string& path,
             float q = (qi < links.conc.size())
                 ? static_cast<float>(links.conc[qi]) : 0.0f;
             write_pod(file, q);
+        }
+    }
+
+    // --- reaction species trailer: legacy reads no further than the links,
+    //     so this is invisible to it (hotstart.c initializeFromHotstartFile).
+    const auto& rx = ctx.reactions;
+    const int nm = rx.configured ? rx.n_species() : 0;
+    const auto unm = static_cast<std::size_t>(nm);
+    if (nm > 0 && rx.msx_node_conc.size() == static_cast<std::size_t>(nNodes) * unm &&
+        rx.msx_link_conc.size() == static_cast<std::size_t>(nLinks) * unm) {
+        file.write(kSpeciesTrailerTag, 15);
+        write_pod(file, static_cast<int32_t>(nm));
+        for (int m = 0; m < nm; ++m) write_string(file, rx.species_name[static_cast<std::size_t>(m)]);
+        write_pod(file, nNodes);
+        write_pod(file, nLinks);
+        file.write(reinterpret_cast<const char*>(rx.msx_node_conc.data()),
+                   static_cast<std::streamsize>(rx.msx_node_conc.size() * sizeof(double)));
+        file.write(reinterpret_cast<const char*>(rx.msx_link_conc.data()),
+                   static_cast<std::streamsize>(rx.msx_link_conc.size() * sizeof(double)));
+        const auto& s = rx.surface;
+        const bool surf = s.active() && s.n_species == nm && s.n_subcatch == nSub;
+        write_pod(file, static_cast<int32_t>(surf ? 1 : 0));
+        if (surf) {
+            write_pod(file, static_cast<int32_t>(s.n_subcatch));
+            write_pod(file, static_cast<int32_t>(s.n_landuses));
+            for (const auto* v : {&s.washoff_conc, &s.ponded_qual, &s.buildup})
+                file.write(reinterpret_cast<const char*>(v->data()),
+                           static_cast<std::streamsize>(v->size() * sizeof(double)));
         }
     }
 

@@ -53,6 +53,7 @@
 #define OPENSWMM_ENGINE_SWMM_ENGINE_HPP
 
 #include "SimulationContext.hpp"
+#include "HotStartManager.hpp"
 #include "../plugins/PluginFactory.hpp"
 #include "../output/IOThread.hpp"
 #include "../hydraulics/Routing.hpp"
@@ -456,6 +457,7 @@ private:
     Router                       router_;       ///< Hydraulic routing (owns XSectGroups)
     runoff::RunoffSolver         runoff_;       ///< Subcatchment runoff (batch nonlinear reservoir)
     std::vector<double>          hotstart_runoff_; ///< USE HOTSTART runoff section, applied in init_modules()
+    LegacySpeciesTrailer         hotstart_species_; ///< USE HOTSTART species surface block, applied in init_modules()
     climate::ClimateFileReader   climate_file_; ///< Climate file reader (temp/evap/wind from file)
     snow::SnowSolver             snow_;         ///< Snowmelt (batch over subcatch×subareas)
     int                          last_melt_doy_ = -1;  ///< Day the seasonal melt coeffs were last set (legacy climate.c LastDay)

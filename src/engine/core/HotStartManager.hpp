@@ -259,6 +259,24 @@ struct HotStartFile {
  *
  * @ingroup engine_hotstart
  */
+/**
+ * @brief Reaction species carried after legacy's `.hsf` routing records.
+ *
+ * @details Legacy hotstart.c stops reading after the link records, so the
+ *          trailer is invisible to it. Network concentrations are applied as
+ *          the file is read; the surface block waits here until
+ *          msxsurf::initState() has sized the store (apply_species_surface()).
+ *          Species are matched by name.
+ */
+struct LegacySpeciesTrailer {
+    std::vector<std::string> species;
+    int n_subcatch = 0;
+    int n_landuses = -1;              ///< -1: the file has no surface block
+    std::vector<double> washoff;      ///< [sc * ns + s] washoff concentration
+    std::vector<double> ponded;       ///< [sc * ns + s] ponded mass
+    std::vector<double> buildup;      ///< [(sc * nlu + lu) * ns + s], per normalizer unit
+};
+
 class HotStartManager {
 public:
     HotStartManager() = delete;
@@ -390,7 +408,18 @@ public:
     static int apply_legacy_routing(const std::string& path,
                                     SimulationContext& ctx,
                                     std::function<void(const std::string&)> warn_cb = {},
-                                    std::vector<double>* runoff = nullptr);
+                                    std::vector<double>* runoff = nullptr,
+                                    LegacySpeciesTrailer* species = nullptr);
+
+    /**
+     * @brief Apply the trailer's surface block to the reaction species'
+     *        surface store, by species name.
+     * @returns false (with a warning) when the land-use or subcatchment
+     *          count differs from the model's; nothing is applied then.
+     */
+    static bool apply_species_surface(const LegacySpeciesTrailer& tr,
+                                      SimulationContext& ctx,
+                                      const std::function<void(const std::string&)>& warn);
 
     /**
      * @brief Number of doubles in legacy's runoff section (hotstart.c

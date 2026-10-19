@@ -999,3 +999,53 @@ TEST(MsxSurfaceTwin, LidRemovalApiCoversPollutantsAndSpecies) {
         << "the species drain removal did not apply like the pollutant's";
     swmm_engine_close(e2); swmm_engine_destroy(e2);
 }
+
+// ---------------------------------------------------------------------------
+// O3: a run split at a hot start keeps the reaction species' network and
+// surface state. SAVE HOTSTART appends it after legacy's routing records
+// (legacy stops reading there); USE HOTSTART restores it by species name.
+// With X twinning TSS, the continuation washes off what TSS does.
+// ---------------------------------------------------------------------------
+TEST(MsxSurfaceTwin, HotstartCarriesSpeciesState) {
+    write("_hs_x.rxn", rxn_inert());
+    auto split = [](std::string body, const char* t0, const char* t1, const std::string& files) {
+        auto rep = [&](const std::string& a, const std::string& b) {
+            const auto k = body.find(a);
+            if (k != std::string::npos) body.replace(k, a.size(), b);
+        };
+        rep("START_TIME           00:00:00", std::string("START_TIME           ") + t0);
+        rep("END_TIME             03:00:00", std::string("END_TIME             ") + t1);
+        return body + "\n[FILES]\n" + files + "\n";
+    };
+    const std::string base = deck("", std::string(kPollut) + bw({"TSS", "X"}), pc("_hs_x.rxn"));
+
+    DeckRun a = run("_hs_x1", split(base, "00:00:00", "02:00:00", "SAVE HOTSTART \"_hs_x.hsf\""), false);
+    ASSERT_TRUE(a.ok);
+    const auto end1 = cpp(a.e).context().reactions;   // copy, before end() writes the file
+    close(a);
+    ASSERT_GT(end1.surface.buildup[0], 0.0);
+
+    write("_hs_x2.inp", split(base, "02:00:00", "03:00:00", "USE HOTSTART \"_hs_x.hsf\""));
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, "_hs_x2.inp", "_hs_x2.rpt", "_hs_x2.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+    const auto& ctx = cpp(e).context();
+    const auto& rx = ctx.reactions;
+    for (const auto& w : ctx.warnings) EXPECT_EQ(w.find("species"), std::string::npos) << w;
+    EXPECT_EQ(rx.msx_node_conc, end1.msx_node_conc);
+    EXPECT_EQ(rx.msx_link_conc, end1.msx_link_conc);
+    EXPECT_EQ(rx.surface.buildup, end1.surface.buildup);
+    EXPECT_EQ(rx.surface.washoff_conc, end1.surface.washoff_conc);
+    EXPECT_EQ(rx.surface.ponded_qual, end1.surface.ponded_qual);
+    const double tss_init = ctx.mass_balance.qual_init_buildup[0];
+    EXPECT_GT(tss_init, 0.0);
+    EXPECT_NEAR(rx.surface.led_init_buildup[0], tss_init, 1e-12 * tss_init);
+
+    double elapsed = 0.0;
+    do { ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK); } while (elapsed > 0.0);
+    const double tss_load = ctx.subcatches.total_load[0];
+    EXPECT_GT(tss_load, 0.0);
+    EXPECT_NEAR(rx.surface.led_subcatch_load[rx.surface.sidx(0, 0)], tss_load, 1e-12 * tss_load);
+    swmm_engine_end(e); swmm_engine_close(e); swmm_engine_destroy(e);
+}

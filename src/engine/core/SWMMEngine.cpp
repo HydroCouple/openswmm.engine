@@ -1226,7 +1226,7 @@ int SWMMEngine::initialize() noexcept {
             // after subcatch_initState for the same reason).
             rc = HotStartManager::apply_legacy_routing(hs_path, ctx_,
                 [this](const std::string& m) { ctx_.warnings.push_back(m); },
-                &hotstart_runoff_);
+                &hotstart_runoff_, &hotstart_species_);
         }
         if (rc != 0) {
             set_error(CFFI_ERR_HOTSTART,
@@ -8230,6 +8230,17 @@ void SWMMEngine::init_modules() noexcept {
     { perf::ScopedTimer _pt(perf::sec_init_hydrology);  initHydrology();  }
     { perf::ScopedTimer _pt(perf::sec_init_quality);    initQuality();    }
     if (!hotstart_runoff_.empty()) applyLegacyRunoffSection();
+    if (hotstart_species_.n_landuses >= 0) {
+        // after msxsurf::initState, which sized the store and booked the
+        // cold initial buildup: the hot start replaces both.
+        if (HotStartManager::apply_species_surface(hotstart_species_, ctx_,
+                [this](const std::string& m) { ctx_.warnings.push_back(m); })) {
+            auto& s = ctx_.reactions.surface;
+            for (int m = 0; m < s.n_species; ++m)
+                s.led_init_buildup[static_cast<std::size_t>(m)] = msxsurf::remainingBuildup(ctx_, m);
+        }
+        hotstart_species_ = LegacySpeciesTrailer{};
+    }
     { perf::ScopedTimer _pt(perf::sec_init_geometry);   initGeometry();   }
     initMassBalance();
 
