@@ -144,8 +144,10 @@ double netRadiativeFluxOut(double t_water_c, double t_air_c,
 
 double radiativeFluxOut(const SimulationContext& ctx,
                         const HeatElement& elem, double t_w) noexcept {
-    if (!ctx.options.heat_transport || !ctx.heat_config.radiative_exchange)
-        return 0.0;
+    return radiativeFluxOut(ctx,elem,t_w,ctx.heat_config.radiative_exchange);
+}
+double radiativeFluxOut(const SimulationContext& ctx,const HeatElement& elem,double t_w,bool enabled) noexcept {
+    if(!ctx.options.heat_transport || !enabled)return 0.0;
 
     // H6a. `shortwave_now` is resolved once per step by `updateSolarForcing`
     // at every binding prologue; this call is const and only reads it.

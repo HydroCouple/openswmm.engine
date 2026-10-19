@@ -130,6 +130,7 @@ typedef enum SWMM_ErrorCode {
     SWMM_ERR_CRS         = 13,
     SWMM_ERR_NUMERICAL   = 14,
     SWMM_ERR_DEPENDENCY  = 15,  /**< Object has dependents that would be affected by deletion. */
+    SWMM_ERR_CANCELLED   = 16,  /**< A caller cancelled a cancellable read-only operation. */
     SWMM_ERR_INTERNAL    = 99
 } SWMM_ErrorCode;
 

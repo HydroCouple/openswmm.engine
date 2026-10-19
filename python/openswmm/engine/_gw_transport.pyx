@@ -133,7 +133,10 @@ class GroundwaterTransportOptions(EngineView, MutableMapping):
     """Native GW_TRANSPORT_OPTIONS text keys; values preserve INP spelling."""
     _keys = ('TRANSPORT_POLLUTANTS', 'TRANSPORT_MSX', 'TRANSPORT_AGE',
              'TRANSPORT_TEMPERATURE', 'DISPERSION', 'CONDUCTION',
-             'SURFACE_THERMAL_BC', 'DEEP_THERMAL_BC', 'THERMAL_MIXING', 'C_DIFF')
+             'SURFACE_THERMAL_BC', 'DEEP_THERMAL_BC', 'THERMAL_MIXING', 'C_DIFF',
+             'THERMAL_MODEL', 'THERMAL_LAYERS', 'LATERAL_CONDUCTION', 'THERMAL_MAX_STEP',
+             'WATER_THERMAL_CONDUCTIVITY', 'AIR_THERMAL_CONDUCTIVITY',
+             'SURFACE_THERMAL_RESISTANCE', 'SOIL_ET_HEAT')
     def __len__(self):
         return len(self._keys)
     def __iter__(self):

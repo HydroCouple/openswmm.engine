@@ -40,7 +40,7 @@
  *   2D_INFILTRATION, 2D_MESH_FILE (external mode) or 2D_VERTICES,
  *   2D_TRIANGLES, 2D_QUADS, 2D_VERTEX_NODE_MAP, 2D_TRIANGLE_NODE_MAP,
  *   2D_BOUNDARY_CONDITIONS, 2D_EDGE_CONVEYANCE (inline mode),
- *   2D_INITIAL_QUALITY, 2D_BOUNDARY_QUALITY
+ *   2D_INITIAL_QUALITY, 2D_INITIAL_BED_QUALITY, 2D_BOUNDARY_QUALITY
  *
  * @ingroup engine_core
  *
@@ -567,7 +567,7 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
         std::fprintf(f, "%-24s %s\n", "TRANSPORT_AGE",         o.transport_age         ? "YES" : "NO");
         std::fprintf(f, "%-24s %s\n", "TRANSPORT_TEMPERATURE", o.transport_temperature ? "YES" : "NO");
         std::fprintf(f, "%-24s %s\n", "DISPERSION",            o.dispersion ? "YES" : "NO");
-        std::fprintf(f, "%-24s %s\n", "CONDUCTION",            o.conduction ? "YES" : "NO");
+        if(o.thermal_authored.count("CONDUCTION"))std::fprintf(f, "%-24s %s\n", "CONDUCTION", o.conduction ? "YES" : "NO");
         std::fprintf(f, "%-24s %s%s%s\n", "SURFACE_THERMAL_BC",
                      o.surface_thermal_bc.c_str(),
                      o.surface_thermal_arg.empty() ? "" : " ",
@@ -587,7 +587,19 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
                              o.deep_thermal_bc.c_str(),
                              o.deep_thermal_arg.c_str());
         }
-        std::fprintf(f, "%-24s %s\n", "THERMAL_MIXING", o.thermal_mixing.c_str());
+        if(o.thermal_authored.count("THERMAL_MIXING"))std::fprintf(f, "%-24s %s\n", "THERMAL_MIXING", o.thermal_mixing.c_str());
+        if(o.deep_thermal_bc=="ADIABATIC")std::fprintf(f,"%-24s ADIABATIC\n","DEEP_THERMAL_BC");
+        if(o.thermal_authored.count("THERMAL_MODEL"))std::fprintf(f,"%-24s %s\n","THERMAL_MODEL",o.thermal_model.c_str());
+        if(o.thermal_authored.count("THERMAL_LAYERS"))std::fprintf(f,"%-24s %d\n","THERMAL_LAYERS",o.thermal_layers);
+        if(o.thermal_authored.count("LATERAL_CONDUCTION"))std::fprintf(f,"%-24s %s\n","LATERAL_CONDUCTION",o.lateral_conduction?"YES":"NO");
+        if(o.thermal_authored.count("SOIL_ET_HEAT"))std::fprintf(f,"%-24s %s\n","SOIL_ET_HEAT",o.soil_et_heat.c_str());
+        for(const auto* key:{"THERMAL_MAX_STEP","WATER_THERMAL_CONDUCTIVITY","AIR_THERMAL_CONDUCTIVITY","SURFACE_THERMAL_RESISTANCE"})
+            if(o.thermal_authored.count(key)) {
+                const double value=std::strcmp(key,"THERMAL_MAX_STEP")==0?o.thermal_max_step:
+                    std::strcmp(key,"WATER_THERMAL_CONDUCTIVITY")==0?o.water_conductivity:
+                    std::strcmp(key,"AIR_THERMAL_CONDUCTIVITY")==0?o.air_conductivity:o.surface_resistance;
+                std::fprintf(f,"%-24s %.17g\n",key,value);
+            }
         std::fprintf(f, "%-24s %.12g\n", "C_DIFF", o.c_diff);
     }
 
@@ -816,6 +828,10 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx,
         std::fprintf(f, "%-22s %s\n", "INFIL_DEFAULT_METHOD", o.infil_default_method.c_str());
     if (!o.infil_destination.empty() && o.infil_destination != "LOST")
         std::fprintf(f, "%-22s %s\n", "INFIL_DESTINATION", o.infil_destination.c_str());
+    if(o.heat_model_authored)std::fprintf(f,"%-22s %s\n","HEAT_MODEL",o.coupled_heat?"COUPLED":"TRANSPORT_ONLY");
+    if(o.bed_heat_authored)std::fprintf(f,"%-22s %s\n","BED_HEAT_MODEL",o.bed_heat_model==0?"NONE":o.bed_heat_model==1?"LOCAL_STORAGE":"GROUND_COLUMN");
+    if(o.heat_surface_authored)std::fprintf(f,"%-22s %s\n","HEAT_SURFACE_EXCHANGE",o.heat_surface<0?"AUTO":o.heat_surface?"YES":"NO");
+    if(o.heat_radiative_authored)std::fprintf(f,"%-22s %s\n","HEAT_RADIATIVE_EXCHANGE",o.heat_radiative<0?"AUTO":o.heat_radiative?"YES":"NO");
     if (o.evaporation != 1)
         std::fprintf(f, "%-22s %s\n", "EVAPORATION", o.evaporation == 0 ? "NO" : "CLIMATE");
     if (!o.transport_pollutants)  std::fprintf(f, "%-22s NO\n", "TRANSPORT_POLLUTANTS");
@@ -1129,6 +1145,18 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
         sec(f, "2D_INITIAL_QUALITY");
         std::fprintf(f, ";;%-6s %-16s %-12s %s\n", "SCOPE", "NAME", "SPECIES", "CONC");
         for (const auto& r : *tio.pending_iq) {
+            if (r.all)
+                std::fprintf(f, "%-8s %-16s %-12s %.12g\n", "*", "", r.species.c_str(), r.conc);
+            else if (r.tri >= 0)
+                std::fprintf(f, "%-8s %-16d %-12s %.12g\n", "CELL", r.tri + 1, r.species.c_str(), r.conc);
+            else
+                std::fprintf(f, "%-8s %-16s %-12s %.12g\n", "TAG", r.tag.c_str(), r.species.c_str(), r.conc);
+        }
+    }
+    if (tio.pending_ibq && !tio.pending_ibq->empty()) {
+        sec(f, "2D_INITIAL_BED_QUALITY");
+        std::fprintf(f, ";;%-6s %-16s %-12s %s\n", "SCOPE", "NAME", "SPECIES", "CONC");
+        for (const auto& r : *tio.pending_ibq) {
             if (r.all)
                 std::fprintf(f, "%-8s %-16s %-12s %.12g\n", "*", "", r.species.c_str(), r.conc);
             else if (r.tri >= 0)

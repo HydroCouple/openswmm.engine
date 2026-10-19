@@ -216,14 +216,22 @@ public:
      */
     int close() noexcept;
 
-    // Internal, same-platform water-only hydraulic session restart. Enable at
-    // start()'s initial boundary; restore into an identically initialized fresh
-    // session. Session preparation is internal; public operations require this
+    // Internal same-platform engine-session restart. Engine sessions preserve
+    // shared 1D node/link temperature and bed state. A qualified 2D
+    // CommonSourceStage attachment also preserves mesh/ground thermal state
+    // and routed channel-ground thermal receipts. Direct hydraulic component
+    // checkpoints do not preserve thermal state. Enable at start()'s initial
+    // boundary; restore into an identically initialized fresh session.
+    // Session preparation is internal; public operations require this
     // attachment. External water drivers require their participant.
     // Private binary-output qualification: initialize(), prepare this mode,
     // start(1), then enable checkpointing. Requires a new output destination.
     std::string prepareOutputCheckpointing();
     std::string enableCheckpointing();
+    /// Queue a native V15 full-engine hotstart for restoration during start().
+    std::string queueHotstartCheckpoint(std::string checkpoint);
+    /// Write a native V15 hotstart from the current accepted checkpoint boundary.
+    std::string saveNativeHotstart(const std::string& path) const;
 #ifdef OPENSWMM_HAS_2D
     // Separate single-file mesh output qualification; initialize(), prepare,
     // start(0), then attach the common source checkpoint stage.
@@ -542,6 +550,9 @@ private:
     bool checkpoint_output_ = false;
     DefaultOutputPlugin* binary_output_plugin_ = nullptr; // owned by PluginFactory
     std::string checkpoint_model_;
+    std::string pending_hotstart_checkpoint_;
+    std::string hotstart_checkpoint_error_;
+    std::string prepareNativeHotstartCheckpointing();
     void checkCheckpointProfile(bool attaching_surface = false) const;
     std::string enableCheckpointingImpl(
 #ifdef OPENSWMM_HAS_2D

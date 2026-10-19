@@ -31,7 +31,9 @@
 #include "2d/data/PendingRows2D.hpp"
 #include "2d/data/Serialize2D.hpp"
 #include "2d/data/Report2DVars.hpp"
+#ifdef OPENSWMM_HAS_2D
 #include "2d/subsurface/SubsurfaceSections.hpp"
+#endif
 
 #include <cmath>
 #include <cstdio>
@@ -2236,6 +2238,7 @@ void write_model(sqlite3* db, const SimulationContext& ctx,
         auto remove=prepare(db,"DELETE FROM surface_ownership_2d_input WHERE simulation_id=?");
         bind_text(remove.get(),1,simulation_id);
         if(sqlite3_step(remove.get())!=SQLITE_DONE)throw GpkgError(sqlite3_errmsg(db));
+#ifdef OPENSWMM_HAS_2D
         if(ctx.twod_io.aquifer&&!ctx.twod_io.aquifer->surface_owners.empty()){
             std::string sections;const std::vector<std::string> empty;
             twoD::writeSubsurfaceSections(*ctx.twod_io.aquifer,
@@ -2245,6 +2248,7 @@ void write_model(sqlite3* db, const SimulationContext& ctx,
             bind_text(insert.get(),1,simulation_id);bind_text(insert.get(),2,sections);
             if(sqlite3_step(insert.get())!=SQLITE_DONE)throw GpkgError(sqlite3_errmsg(db));
         }
+#endif
     }
 
     // Slice IO-7 — fan out every external-file reference (timeseries

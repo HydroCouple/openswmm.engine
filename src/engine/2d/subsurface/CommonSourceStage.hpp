@@ -6,6 +6,7 @@
 #include "../../hydrology/SourceWaterDriver.hpp"
 #include <functional>
 
+namespace openswmm { struct SimulationContext; }
 namespace openswmm::twoD {
 struct MeshData; struct SurfaceStateData; struct SolverOptions2D; class SubsurfaceSolver;
 enum class SurfaceEtOwner { MESH, PERVIOUS, IMPERVIOUS, LID };
@@ -32,7 +33,8 @@ public:
                            const std::string& runtime_water_identity = {}, bool runtime_boundaries = false,
                            bool runtime_catchment_forcing = false);
     bool matches(const MeshData* m,const SurfaceStateData* s,const SubsurfaceSolver* g) const {
-        return mesh_==m && surface_==s && gw_==g && mesh_;
+        return mesh_==m && surface_==s && mesh_ &&
+            (gw_==g || (standalone_local_bed_ && !g && gw_));
     }
     std::string advance(double start, double end);
     bool ownsCell(int cell) const { return cell >= 0 && cell < int(owned_.size()) && owned_[cell]; }
@@ -49,6 +51,12 @@ public:
         return sources_ ? sources_->creditOutfallReturns(start,end,volumes) : "Source stage is not attached.";
     }
     bool meshOnly() const { return sources_ && sources_->clocks().groups().empty() && donors_.empty(); }
+    bool meshOnlyGroundQuality() const { return mesh_only_ground_quality_; }
+    /// Surface-only LOCAL_STORAGE bed profile used to persist mesh heat state
+    /// when no groundwater receiver exists. It owns synchronization only;
+    /// ordinary mesh source kernels continue to own rainfall and evaporation.
+    bool standaloneLocalBed() const { return standalone_local_bed_; }
+    void synchronizeSurfaceLedgers(const ::openswmm::SimulationContext&);
     // Initial internal qualification profile. External program state is not
     // recovered by its immutable replay identity. No authored/public activation.
     bool runtimeWaterEnabled() const { return !runtime_water_identity_.empty(); }
@@ -78,6 +86,8 @@ private:
     std::string runtime_water_identity_;
     bool runtime_boundaries_=false;
     bool runtime_catchment_forcing_=false;
+    bool standalone_local_bed_=false;
+    bool mesh_only_ground_quality_=false;
     std::vector<std::vector<std::pair<int,double>>> forcing_contacts_; // source -> cell, m2
     BoundaryData authored_boundary_;
     struct Donor {

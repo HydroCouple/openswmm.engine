@@ -399,6 +399,7 @@ SWMM_ENGINE_API const char* swmm_error_message(int code) {
         case SWMM_ERR_HOTSTART:  return "Hot start file error";
         case SWMM_ERR_CRS:       return "Coordinate reference system error";
         case SWMM_ERR_NUMERICAL: return "Numerical instability (fatal)";
+        case SWMM_ERR_CANCELLED: return "Operation cancelled by caller";
         case SWMM_ERR_INTERNAL:  return "Internal engine error";
         // Virtual-junction rule codes (ErrorCodes.hpp ERR_VJ_*)
         case 609: return "Virtual junction must connect exactly two conduits";

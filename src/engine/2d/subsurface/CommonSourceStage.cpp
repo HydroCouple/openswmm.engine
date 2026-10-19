@@ -17,6 +17,11 @@ namespace openswmm::twoD {
 namespace {
 constexpr double ft2=.3048*.3048,ft3=ft2*.3048;
 bool closeArea(double a,double b) { return std::abs(a-b)<=1e-8*std::max(1.0,std::max(a,b)); }
+bool validTransportMass(const std::vector<double>& mass,int temp_row) {
+    for(std::size_t s=0;s<mass.size();++s)
+        if(!std::isfinite(mass[s]) || (int(s)!=temp_row && mass[s]<0))return false;
+    return true;
+}
 using Key=std::tuple<SurfaceDonorKind,std::string,int>;
 Key key(const SurfaceIntakeRequest& r) { return {r.kind,r.source,r.unit}; }
 double bottomTotal(const runoff::SourceWaterDriver& s,int sc) {
@@ -27,11 +32,69 @@ double bottomTotal(const runoff::SourceWaterDriver& s,int sc) {
     }
     return v;
 }
+bool standaloneLocalBedLayout(const MeshData& mesh,const SurfaceStateData& surface) {
+    const auto& h=surface.heat;const auto& t=surface.transport;
+    const auto n=static_cast<std::size_t>(mesh.n_cells());
+    const auto ns=static_cast<std::size_t>(t.n_species);
+    const bool rows_supported=t.n_species>=0&&t.n_pollut>=0&&t.n_msx==0&&t.n_species==
+        t.n_pollut+(t.age_row>=0?1:0)+(t.temp_row>=0?1:0)&&
+        t.row_names.size()==ns&&
+        (t.age_row<0||(t.age_row>=t.n_pollut&&t.age_row<t.n_species&&
+            t.row_names[static_cast<std::size_t>(t.age_row)]=="__WATER_AGE__"))&&
+        (t.temp_row<0||(t.temp_row>=t.n_pollut&&t.temp_row<t.n_species&&
+            t.row_names[static_cast<std::size_t>(t.temp_row)]=="__TEMPERATURE__"))&&
+        (t.age_row<0||t.temp_row<0||t.age_row!=t.temp_row);
+    return h.enabled&&h.bed&&!h.ground_column&&h.bed_capacity.size()==n&&h.bed_energy.size()==n&&
+        h.initial_bed_energy.size()==n&&h.reported_temperature.size()==n&&h.bed_pore_volume.size()==n&&
+        h.bed_species==t.n_species&&h.bed_temp_row==t.temp_row&&h.bed_age_row==t.age_row&&
+        h.bed_carried_mass.size()==ns*n&&h.bed_initial_mass.size()==ns*n&&h.bed_exchange_mass.size()==ns*n&&
+        (h.bed_generated_age.empty()||h.bed_generated_age.size()==n)&&
+        (!t.active()||t.n_cells==mesh.n_cells())&&rows_supported;
+}
+bool sharedGroundQualityProfile(const runoff::SourceWaterDriver& sources,
+    const SurfaceStateData& surface,const SubsurfaceSolver& gw) {
+    const auto& names=sources.pollutantNames();const auto& a=surface.transport;const auto& b=gw.transport();
+    const auto np=names.size();
+    const bool rows_supported=a.n_species==a.n_pollut+(a.age_row>=0?1:0)+(a.temp_row>=0?1:0)&&
+        a.row_names.size()==std::size_t(a.n_species)&&
+        (a.age_row<0||(a.age_row>=a.n_pollut&&a.age_row<a.n_species&&
+            a.row_names[std::size_t(a.age_row)]=="__WATER_AGE__"))&&
+        (a.temp_row<0||(a.temp_row>=a.n_pollut&&a.temp_row<a.n_species&&
+            a.row_names[std::size_t(a.temp_row)]=="__TEMPERATURE__"))&&
+        (a.age_row<0||a.temp_row<0||a.age_row!=a.temp_row);
+    if(!sources.clocks().groups().empty()||np==0||!gw.active()||!gw.heat().active()||
+       !surface.heat.enabled||!surface.heat.bed||!surface.heat.ground_column||
+       a.n_species<=0||a.n_species!=b.n_species||a.n_pollut!=int(np)||b.n_pollut!=int(np)||
+       a.n_msx!=0||b.n_msx!=0||!rows_supported||a.row_names!=b.row_names||
+       a.n_cells!=gw.state().n_cells||b.n_cells!=gw.state().n_cells||
+       a.cell_mass.size()!=std::size_t(a.n_species)*std::size_t(a.n_cells)||
+       a.gained_bed.size()!=std::size_t(a.n_species)||b.gained_contact.size()!=std::size_t(b.n_species)||
+       b.generated_age.size()!=std::size_t(b.n_species)||
+       a.age_row!=b.age_row||a.temp_row!=b.temp_row||
+       (a.age_row>=0&&(a.age_row>=a.n_species||a.row_names[std::size_t(a.age_row)]!="__WATER_AGE__"))||
+       (a.temp_row>=0&&(a.temp_row>=a.n_species||a.row_names[std::size_t(a.temp_row)]!="__TEMPERATURE__"))||
+       (!a.rain_conc.empty()&&a.rain_conc.size()!=std::size_t(a.n_species)))return false;
+    for(std::size_t p=0;p<np;++p)if(a.row_names[p]!=names[p])return false;
+    return true;
+}
 std::string qualityProfile(const runoff::SourceWaterDriver& sources,
-                          const SurfaceStateData& surface,const SubsurfaceSolver& gw) {
+                          const SurfaceStateData& surface,const SubsurfaceSolver& gw,
+                          bool standalone_local_bed=false) {
+    if(standalone_local_bed)
+        return surface.heat.bed&&surface.heat.enabled&&!surface.heat.ground_column?
+            std::string{}:"Standalone local-bed checkpoint transport layout differs.";
     const auto& names=sources.pollutantNames();const int np=int(names.size());
     const auto& a=surface.transport;const auto& b=gw.transport();
-    if(np==0) return a.n_species>0 || b.active() ? "Common source stage quality/age/heat/MSX is not qualified." : "";
+    if(sharedGroundQualityProfile(sources,surface,gw))return {};
+    if(np==0) {
+        if(a.n_species==0&&!b.active())return {};
+        const bool heat_only=sources.clocks().groups().empty()&&surface.heat.enabled&&gw.heat().active()&&
+            a.n_pollut==0&&a.n_msx==0&&a.age_row<0&&a.temp_row==0&&a.n_species==1&&
+            a.row_names==std::vector<std::string>{"__TEMPERATURE__"}&&
+            b.n_pollut==0&&b.n_msx==0&&b.age_row<0&&b.temp_row==0&&b.n_species==1&&
+            b.row_names==std::vector<std::string>{"__TEMPERATURE__"};
+        return heat_only?std::string{}:"Common source stage quality/age/heat/MSX is not qualified.";
+    }
     if(a.n_species!=np || a.n_pollut!=np || a.n_msx!=0 || a.age_row>=0 || a.temp_row>=0 || a.row_names!=names ||
        b.n_species!=np || b.n_pollut!=np || b.n_msx!=0 || b.age_row>=0 || b.temp_row>=0 || b.row_names!=names ||
        a.n_cells!=gw.state().n_cells || b.n_cells!=gw.state().n_cells ||
@@ -50,9 +113,15 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
     const std::string& runtime_water_identity,bool runtime_boundaries,bool runtime_catchment_forcing) {
     if(mesh_) return "Common source stage already initialized.";
     if(runtime_catchment_forcing&&sources.snow().active())return "Runtime catchment providers require phase-aware snow forcing receipts.";
-    if(!gw.active() || !preview.valid() || preview.cancelled || preview.mesh_weather_area.size()!=mesh.tri_area.size())
+    if(!preview.valid() || preview.cancelled || preview.mesh_weather_area.size()!=mesh.tri_area.size())
         return "Common source stage requires a valid reviewed mesh/receiver snapshot.";
-    const auto quality_error=qualityProfile(sources,surface,gw);if(!quality_error.empty())return quality_error;
+    const bool standalone_local_bed=!gw.active();
+    if(standalone_local_bed&&(!mesh_only||!sources.clocks().groups().empty()||!preview.objects.empty()||
+       !preview.shares.empty()||!runtime_water_identity.empty()||runtime_boundaries||runtime_catchment_forcing||
+       !standaloneLocalBedLayout(mesh,surface)))
+        return "Inactive groundwater supports checkpoint attachment only for a standalone LOCAL_STORAGE bed with no reviewed source ownership.";
+    const auto quality_error=qualityProfile(sources,surface,gw,standalone_local_bed);if(!quality_error.empty())return quality_error;
+    const bool mesh_only_ground_quality=mesh_only&&sharedGroundQualityProfile(sources,surface,gw);
     if(runtime_catchment_forcing && (mesh_only || runtime_water_identity.empty() || sources.clocks().groups().empty()))
         return "Catchment provider forcing requires its explicit reviewed private water profile.";
     if(!runtime_water_identity.empty() && ((!mesh_only && !runtime_catchment_forcing) || !sources.pollutantNames().empty() ||
@@ -62,14 +131,14 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
         return "Runtime boundaries require the initial water profile and authored boundary model.";
     if(surface.runtime_sources.active() || surface.runtime_forcings.active() || gw.runtimeSources().active())
         return "Common source stage runtime coupling providers are not qualified.";
-    if(surface.volume.size()!=mesh.tri_area.size() || gw.state().n_cells!=mesh.n_cells())
+    if(surface.volume.size()!=mesh.tri_area.size() || (!standalone_local_bed&&gw.state().n_cells!=mesh.n_cells()))
         return "Common source stage mesh/receiver sizes differ.";
     for(const auto& g:sources.clocks().groups()) if(g.completed_end!=0 || !g.pending.empty())
         return "Common source stage must attach at the initial source clock.";
     const auto& c=sources.context(); const auto& r=sources.runoff().soa();
     if(mesh_only && (!sources.clocks().groups().empty() || !preview.objects.empty() || !preview.shares.empty()))
         return "Mesh-only source stage cannot own private subcatchment sources.";
-    std::vector<Donor> donors;std::vector<bool> owned(mesh.tri_area.size(),mesh_only);
+    std::vector<Donor> donors;std::vector<bool> owned(mesh.tri_area.size(),mesh_only&&!standalone_local_bed);
     std::vector<double> coverage(mesh.tri_area.size(),0);
     std::vector<bool> resolved(c.n_subcatches(),false);
     std::vector<double> fractions(c.n_subcatches(),0);
@@ -144,27 +213,30 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
         et_contacts.push_back(std::move(contacts));
     }
     std::vector<int> cells;
-    for(int i=0;i<mesh.n_cells();++i) if(owned[i]) {
+    for(int i=0;i<mesh.n_cells();++i) {
+        if(!owned[i]&&!standalone_local_bed)continue;
         const double w=preview.mesh_weather_area[i];
         if(!std::isfinite(w) || w<0 || !closeArea(coverage[i]+w,mesh.tri_area[i]))
             return "Reviewed mesh/source weather areas do not close.";
         if(!closeArea(atmospheric_area[i],coverage[i])) return "Reviewed atmospheric components do not close the cell's owned weather area.";
         double contact=w;for(const auto& d:donors) for(const auto& x:d.contacts) if(x.first==i) contact+=x.second;
         if(contact>mesh.tri_area[i]*(1+1e-8)) return "Common source contact areas overbook the cell.";
-        cells.push_back(i);
+        if(owned[i]||standalone_local_bed)cells.push_back(i);
     }
     if(cells.empty()) return "Common source stage has no reviewed receiving cells.";
-    if(gw.sourceReceiptOwnershipBound())return "Aquifer source receipt ownership already bound.";
-    if(!gw.lidReceiptsEnabled() && std::any_of(gw.richards_bed_owned_.begin(),gw.richards_bed_owned_.end(),[](bool x){return x;}))
-        return "Common source ownership must bind before Richards owner firings.";
-    // Both bindings are initial-state operations. Validate receiver queues
-    // before changing the source partition so an invalid attachment is retryable.
-    for(int i:cells) {
-        if(gw.state().xacc_from_surface[i]!=0 || gw.state().xacc_to_surface[i]!=0)
-            return "Common source ownership must bind before pending aquifer exchange.";
-        for(int p=0;p<gw.transport().n_species;++p)
-            if(gw.transport().xacc_from_surface[gw.transport().idx(p,i)]!=0 || gw.transport().xacc_to_surface[gw.transport().idx(p,i)]!=0)
-                return "Common source ownership must bind before pending aquifer mass exchange.";
+    if(!standalone_local_bed) {
+        if(gw.sourceReceiptOwnershipBound())return "Aquifer source receipt ownership already bound.";
+        if(!gw.lidReceiptsEnabled() && std::any_of(gw.richards_bed_owned_.begin(),gw.richards_bed_owned_.end(),[](bool x){return x;}))
+            return "Common source ownership must bind before Richards owner firings.";
+        // Both bindings are initial-state operations. Validate receiver queues
+        // before changing the source partition so an invalid attachment is retryable.
+        for(int i:cells) {
+            if(gw.state().xacc_from_surface[i]!=0 || gw.state().xacc_to_surface[i]!=0)
+                return "Common source ownership must bind before pending aquifer exchange.";
+            for(int p=0;p<gw.transport().n_species;++p)
+                if(gw.transport().xacc_from_surface[gw.transport().idx(p,i)]!=0 || gw.transport().xacc_to_surface[gw.transport().idx(p,i)]!=0)
+                    return "Common source ownership must bind before pending aquifer mass exchange.";
+        }
     }
     if(runtime_boundaries) {
         RuntimeWaterCheckpointBinding binding;binding.identity=runtime_water_identity;binding.authored_boundary=surface.boundary;binding.boundary_tables=&sources.context().tables;
@@ -178,22 +250,35 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
     auto mesh_snow=surface.snow;
     if(mesh_snow.active()) {
         if(!surface.snow_context)return "Mesh snow has no weather owner.";
+        const auto ground_contact=mesh_snow.groundContactMask();
         auto geometry=mesh_snow.geometry();
         for(std::size_t i=0;i<geometry.size();++i)geometry[i].area=preview.mesh_weather_area[i];
         if(auto error=mesh_snow.initialize(*surface.snow_context,geometry);!error.empty())return error;
+        if(ground_contact.size()==geometry.size())
+            if(auto error=mesh_snow.setGroundContactMask(ground_contact);!error.empty())return error;
     }
-    const auto partition_error=sources.configureSpatialCoverage(fractions);
-    if(!partition_error.empty())return partition_error;
-    const auto receipt_error=gw.configureSourceReceipts(cells);if(!receipt_error.empty())return receipt_error;
+    if(!standalone_local_bed) {
+        const auto partition_error=sources.configureSpatialCoverage(fractions);
+        if(!partition_error.empty())return partition_error;
+        const auto receipt_error=gw.configureSourceReceipts(cells);if(!receipt_error.empty())return receipt_error;
+    }
     surface.snow=std::move(mesh_snow);
     mesh_=&mesh;surface_=&surface;options_=&options;gw_=&gw;sources_=&sources;donors_=std::move(donors);
     cells_=std::move(cells);owned_=std::move(owned);weather_=preview.mesh_weather_area;
     et_contacts_=std::move(et_contacts);
     runtime_water_identity_=runtime_water_identity;runtime_boundaries_=runtime_boundaries;
+    standalone_local_bed_=standalone_local_bed;mesh_only_ground_quality_=mesh_only_ground_quality;
     runtime_catchment_forcing_=runtime_catchment_forcing;forcing_contacts_=std::move(forcing_contacts);
     if(runtime_boundaries)authored_boundary_=*surface.boundary;
     checkpoint_model_=checkpointModel();
     return {};
+}
+
+void CommonSourceStage::synchronizeSurfaceLedgers(const SimulationContext& ctx) {
+    if(!standalone_local_bed_)return;
+    mesh_rain_=ctx.mass_balance_2d.rainfall_in;
+    mesh_evap_=ctx.mass_balance_2d.evap_out;
+    mesh_return_=ctx.mass_balance_2d.aquifer_in;
 }
 
 RuntimeWaterCheckpointBinding CommonSourceStage::runtimeWaterBinding(double time) const {
@@ -219,7 +304,9 @@ std::string CommonSourceStage::checkpointBoundary() const {
         return "Checkpoint mesh snow clock does not match the accepted source boundary.";
     for(const auto& group:sources_->clocks().groups())
         if(!group.pending.empty()||group.completed_end!=completedEnd())return "Checkpoint source clocks do not match the accepted boundary.";
-    const auto error=qualityProfile(*sources_,*surface_,*gw_);if(!error.empty())return error;
+    if(standalone_local_bed_&&!standaloneLocalBedLayout(*mesh_,*surface_))
+        return "Standalone local-bed checkpoint transport layout differs.";
+    const auto error=qualityProfile(*sources_,*surface_,*gw_,standalone_local_bed_);if(!error.empty())return error;
     if(!surface_->transport.runtime_bc_conc.empty())return "Checkpoint runtime boundary quality is not qualified.";
     if(runtimeWaterEnabled()) {
         auto surface=surface_->runtime_sources,groundwater=gw_->runtimeSources();auto forcing=surface_->runtime_forcings;
@@ -236,7 +323,7 @@ std::string CommonSourceStage::checkpointBoundary() const {
         }
     } else if(!surface_->runtime_sources.rows.empty()||!surface_->runtime_forcings.rows.empty()||!gw_->runtimeSources().rows.empty())
         return "Checkpoint runtime provider history is not qualified.";
-    for(int cell:cells_) {
+    if(!standalone_local_bed_)for(int cell:cells_) {
         if(gw_->sourceCompletedTime(cell)>completedEnd())return "Checkpoint aquifer firing exceeds the accepted source horizon.";
         for(const auto& receipt:gw_->pendingSourceReceipts(cell))if(receipt.end>completedEnd())
             return "Checkpoint intake exceeds the accepted source horizon.";
@@ -245,8 +332,10 @@ std::string CommonSourceStage::checkpointBoundary() const {
     try {
         detail::CompletedSourceArchive a;sources_->checkpoint(a,false);
         auto source=sources_->waterTrial();detail::CompletedSourceArchive b(a.bytes());source.checkpoint(b,false);b.finish();
-        auto gw=*gw_;detail::CompletedSourceArchive c;gw.checkpoint(c,false);
-        detail::CompletedSourceArchive d(c.bytes());gw.checkpoint(d,false);d.finish();
+        if(!standalone_local_bed_) {
+            auto gw=*gw_;detail::CompletedSourceArchive c;gw.checkpoint(c,false);
+            detail::CompletedSourceArchive d(c.bytes());gw.checkpoint(d,false);d.finish();
+        }
     } catch(const std::exception& e){return e.what();}
     return {};
 }
@@ -254,10 +343,22 @@ std::string CommonSourceStage::checkpointBoundary() const {
 std::string CommonSourceStage::advance(double start,double end) {
     if(!mesh_ || !std::isfinite(end) || end<=start || start!=completedEnd()) return "Invalid common source interval.";
     const double dt=end-start;
+    if(standalone_local_bed_) {
+        auto snow=surface_->snow;
+        if(snow.active()) {
+            if(!surface_->snow_context)return "Mesh snow has no weather owner.";
+            const auto error=snow.advance(*surface_->snow_context,start,end,surface_->rainfall,surface_->snow_catch);
+            if(!error.empty())return error;
+        }
+        surface_->snow=std::move(snow);
+        exchange_.completed_end_=end;++intervals_;return {};
+    }
     for(const auto& g:sources_->clocks().groups()) if(g.completed_end!=start || !g.pending.empty())
         return "Common source clocks do not match the accepted mesh source interval.";
     const auto quality_error=qualityProfile(*sources_,*surface_,*gw_);if(!quality_error.empty())return quality_error;
     const int np=int(sources_->pollutantNames().size());
+    const int ntransport=surface_->transport.n_species;
+    const int temp_row=surface_->transport.temp_row;
     if(runtimeWaterEnabled()) {
         // Boundary face receipts have just advanced, while the router books
         // cumulative edge flux after this source interval. Check descriptors
@@ -280,12 +381,12 @@ std::string CommonSourceStage::advance(double start,double end) {
     std::vector<SurfaceReturnReceipt> ready_returns;
     std::vector<runoff::SourceSurfaceReturn> source_returns;
     std::vector<double> mesh_return(mesh_->n_cells(),0);
-    std::vector<std::vector<double>> mesh_return_mass(mesh_->n_cells(),std::vector<double>(np,0));
+    std::vector<std::vector<double>> mesh_return_mass(mesh_->n_cells(),std::vector<double>(ntransport,0));
     const auto credit=[&](const SurfaceReturnReceipt& r,int source,int type,int unit,int pool,double fraction) {
         if(fraction<=0)return;
         if(source<0) {
             const int cell=r.intake.request.cell;mesh_return[cell]+=r.volume*fraction;
-            for(int p=0;p<np;++p)mesh_return_mass[cell][p]+=r.mass[p]*fraction;
+            for(int p=0;p<ntransport;++p)mesh_return_mass[cell][p]+=r.mass[p]*fraction;
         } else {
             runoff::SourceSurfaceReturn q;q.source=source;q.type=type;q.unit=unit;q.pool=pool;
             q.volume=r.volume*fraction/ft3;q.mass.resize(np);
@@ -295,9 +396,10 @@ std::string CommonSourceStage::advance(double start,double end) {
     };
     for(const auto& r:gw_->sourceReturns())if(r.available_at<=start) {
         const int cell=r.intake.request.cell;
-        if(!ownsCell(cell) || !std::isfinite(r.volume) || r.volume<0 || int(r.mass.size())!=np)
+        if(!ownsCell(cell) || !std::isfinite(r.volume) || r.volume<0 || int(r.mass.size())!=ntransport ||
+           !validTransportMass(r.mass,temp_row))
             return "Invalid paired common source return.";
-        for(double mass:r.mass)if(!std::isfinite(mass) || mass<0 || (r.volume==0 && mass!=0))
+        for(double mass:r.mass)if(r.volume==0 && mass!=0)
             return "Invalid common source return mass.";
         if(r.kind==SurfaceReturnKind::NUMERICAL_REFUND) {
             const auto& original=r.intake.request;
@@ -346,9 +448,9 @@ std::string CommonSourceStage::advance(double start,double end) {
            !std::isfinite(surface_->coupling_flux[i]) || !std::isfinite(surface_->depth[i]))
             return "Common source mesh water/forcing is invalid.";
         if(gw_->state().xacc_to_surface[i]!=0) return "Unpaired generic aquifer return in common source cell.";
-        if(np>0) {
+        if(ntransport>0) {
             if(surface_->coupling_flux[i]!=0) return "Common LID pollutant pairing has no qualified mesh coupling donor.";
-            for(int j=0;j<np;++j) if(gw_->transport().xacc_to_surface[gw_->transport().idx(j,i)]!=0)
+            for(int j=0;j<ntransport;++j) if(gw_->transport().xacc_to_surface[gw_->transport().idx(j,i)]!=0)
                 return "Common LID pollutant pairing needs qualified paired source returns.";
         }
         const double A=mesh_->tri_area[i],w=weather_[i];
@@ -363,14 +465,15 @@ std::string CommonSourceStage::advance(double start,double end) {
         const double cap=(prescribed ? std::max(0.0,infilSink(prescribed->rate,surface_->depth[i],options_->dry_depth)) :
             gw_->sourceInfiltrationCapacity(i,std::max(0.0,surface_->depth[i]),dt))*w*dt;
         const double sum=cap+evap+out,scale=sum>available && sum>0 ? available/sum : 1;
-        MeshTrial trial{i,rain,evap*scale,out*scale,incoming,available,cap,et_rate,std::vector<double>(np,0),std::vector<double>(np,0)};
+        MeshTrial trial{i,rain,evap*scale,out*scale,incoming,available,cap,et_rate,
+            std::vector<double>(ntransport,0),std::vector<double>(ntransport,0)};
         const auto& tr=surface_->transport;
-        for(int p=0;p<np;++p) {
+        for(int p=0;p<ntransport;++p) {
             const double opening=tr.cell_mass[tr.idx(p,i)];
             trial.rain_mass[p]=rain*(tr.rain_conc.empty() ? 0 : tr.rain_conc[p]);
             trial.mass[p]=opening+trial.rain_mass[p]+mesh_return_mass[i][p];
-            if(!std::isfinite(opening) || opening<0 || !std::isfinite(trial.mass[p]))
-                return "Common source mesh pollutant mixture is invalid.";
+            if(!std::isfinite(opening) || (p!=temp_row && opening<0) || !std::isfinite(trial.mass[p]))
+                return "Common source mesh transport mixture is invalid.";
         }
         mesh_index[i]=int(mesh_trials.size());mesh_trials.push_back(std::move(trial));
         if(w>0) requests.push_back({SurfaceDonorKind::MESH,"cell:"+std::to_string(i),-1,i,w,
@@ -488,20 +591,21 @@ std::string CommonSourceStage::advance(double start,double end) {
     }
     std::vector<SurfaceIntakeActual> actual;std::vector<double> consumed(donors_.size(),0),processed(donors_.size(),0);
     std::vector<std::vector<double>> consumed_mass(donors_.size(),std::vector<double>(np,0));
-    std::vector<std::vector<double>> mesh_mass(mesh_trials.size(),std::vector<double>(np,0));
+    std::vector<std::vector<double>> mesh_mass(mesh_trials.size(),std::vector<double>(ntransport,0));
     for(const auto& a:exchange_.awards()) {
         double volume=a.maximum;
-        std::vector<double> mass(np,0);
+            std::vector<double> mass(ntransport,0);
         if(a.request.kind==SurfaceDonorKind::MESH) {
             const int j=mesh_index[a.request.cell];const auto& m=mesh_trials[j];
             // Match ordinary mesh source transport: advective sinks sample the
             // post-arrival mixture before evaporation; evaporation retains solute.
-            for(int p=0;p<np;++p) {
+            for(int p=0;p<ntransport;++p) {
                 mass[p]=m.available>0 ? m.mass[p]*(volume/m.available) : 0;
                 mesh_mass[j][p]+=mass[p];
             }
         } else {
             const int j=donor_index.at(key(a.request));const double taken=std::max(0.0,donorVolume(bounded,j));
+            std::vector<double> mass(np,0);
             if(taken>awarded[j]+1e-12) { exchange_.cancel();return "Bounded source exceeded its shared award."; }
             // Spread actual withdrawal over its original awards. Denied cell
             // capacity never migrates; only FP residue lands on the last share.
@@ -514,6 +618,8 @@ std::string CommonSourceStage::advance(double start,double end) {
                 mass[p]=taken>0 ? transferred*(volume/taken) : 0;
                 consumed_mass[j][p]+=mass[p];
             }
+            actual.push_back({volume,std::move(mass)});
+            continue;
         }
         actual.push_back({volume,std::move(mass)});
     }
@@ -595,7 +701,7 @@ std::string CommonSourceStage::advance(double start,double end) {
         inertial::cellEtaDepth(*mesh_,*options_,m.cell,surface_->volume[m.cell],surface_->head[m.cell],surface_->depth[m.cell]);
         mesh_rain_+=m.rain;mesh_evap_+=m.evap;
         auto& tr=surface_->transport;
-        for(int p=0;p<np;++p) {
+        for(int p=0;p<ntransport;++p) {
             const double taken=mesh_mass[mesh_index[m.cell]][p];
             tr.cell_mass[tr.idx(p,m.cell)]=m.mass[p]-taken;
             tr.gained_rainfall[p]+=m.rain_mass[p];tr.lost_infiltration[p]+=taken;

@@ -31,6 +31,16 @@
 #include "openswmm_api_common.hpp"
 
 #include <cmath>
+#include <charconv>
+#include <array>
+#include <optional>
+#include <utility>
+#ifdef OPENSWMM_HAS_2D
+#include "../2d/data/MeshData.hpp"
+#include "../2d/data/SolverOptions2D.hpp"
+#include "../2d/gw/GwTransportData.hpp"
+#include "../2d/subsurface/SubsurfaceData.hpp"
+#endif
 #include <string>
 #include <vector>
 #include "../../../include/openswmm/engine/openswmm_heat.h"
@@ -42,6 +52,43 @@ namespace {
 using openswmm::HeatConfigData;
 using openswmm::HeatSource;
 using openswmm::ShortwaveMode;
+
+// Authoring only: no runtime thermal state is captured or restored here.
+// Keeping the owning objects in place preserves the context's non-owning views.
+struct Thermal2DAuthoring {
+#ifdef OPENSWMM_HAS_2D
+    std::optional<openswmm::twoD::SolverOptions2D> options;
+    std::optional<openswmm::twoD::GwTransportData> transport;
+    std::optional<openswmm::twoD::SubsurfaceConfig> aquifer;
+    std::optional<std::vector<std::string>> nodes,links;
+    std::optional<std::vector<openswmm::twoD::PendingInitialBedQualityRow>> initial_bed_quality;
+#endif
+    explicit Thermal2DAuthoring(const openswmm::SimulationContext& ctx) {
+#ifdef OPENSWMM_HAS_2D
+        if(ctx.twod_io.options)options=*ctx.twod_io.options;
+        if(ctx.twod_io.gw)transport=*ctx.twod_io.gw;
+        if(ctx.twod_io.aquifer)aquifer=*ctx.twod_io.aquifer;
+        if(ctx.twod_io.aquifer_nodes)nodes=*ctx.twod_io.aquifer_nodes;
+        if(ctx.twod_io.aquifer_links)links=*ctx.twod_io.aquifer_links;
+        if(ctx.twod_io.pending_ibq)initial_bed_quality=*ctx.twod_io.pending_ibq;
+#else
+        (void)ctx;
+#endif
+    }
+    void restore(openswmm::SimulationContext& ctx) {
+#ifdef OPENSWMM_HAS_2D
+        if(options&&ctx.twod_io.options)*ctx.twod_io.options=std::move(*options);
+        if(transport&&ctx.twod_io.gw)*ctx.twod_io.gw=std::move(*transport);
+        if(aquifer&&ctx.twod_io.aquifer)*ctx.twod_io.aquifer=std::move(*aquifer);
+        if(nodes&&ctx.twod_io.aquifer_nodes)*ctx.twod_io.aquifer_nodes=std::move(*nodes);
+        if(links&&ctx.twod_io.aquifer_links)*ctx.twod_io.aquifer_links=std::move(*links);
+        if(initial_bed_quality&&ctx.twod_io.pending_ibq)
+            *ctx.twod_io.pending_ibq=std::move(*initial_bed_quality);
+#else
+        (void)ctx;
+#endif
+    }
+};
 
 /// The parser's own range (`HeatComponent.cpp` kMinTemp/kMaxTemp, used by
 /// `parse_celsius`). Duplicated as a literal here rather than shared,
@@ -117,8 +164,13 @@ SWMM_ENGINE_API int swmm_heat_get_module(SWMM_Engine engine, int module,
 SWMM_ENGINE_API int swmm_heat_set_module(SWMM_Engine engine, int module,
                                          int on) {
     CHECK_HANDLE(engine);
-    auto& cfg = to_engine(engine)->context().heat_config;
+    auto& ctx=to_engine(engine)->context();auto& cfg=ctx.heat_config;
     const bool b = (on != 0);
+    if(module==SWMM_HEAT_SEDIMENT_EXCHANGE&&b&&!cfg.sediment_exchange&&ctx.options.heat_transport&&ctx.heat_state.mesh_contact_link.empty()) {
+        bool mesh=cfg.sediment.mesh_ground;
+        for(const auto& row:cfg.overrides.rows)if(row.attr==openswmm::HeatAttr::SED_GROUND_SOURCE&&row.value==1)mesh=true;
+        if(mesh){CHECK_EDITABLE(ctx);}
+    }
     switch (module) {
         case SWMM_HEAT_SURFACE_EXCHANGE:   cfg.surface_exchange   = b; break;
         case SWMM_HEAT_RADIATIVE_EXCHANGE: cfg.radiative_exchange = b; break;
@@ -659,12 +711,16 @@ static_assert(SWMM_HEAT_ATTR_SEDIMENT_SPECIFIC_HEAT ==
                   static_cast<int>(HeatAttr::SED_THERMAL_DIFFUSIVITY) &&
               SWMM_HEAT_ATTR_LANDCOVER_TEMPERATURE ==
                   static_cast<int>(HeatAttr::LANDCOVER_TEMP) &&
-              SWMM_HEAT_ATTR_SEDIMENT_SPECIFIC_HEAT + 1 ==
+              SWMM_HEAT_ATTR_MESH_POROSITY == static_cast<int>(HeatAttr::SED_MESH_POROSITY) &&
+              SWMM_HEAT_ATTR_GROUND_SOURCE == static_cast<int>(HeatAttr::SED_GROUND_SOURCE) &&
+              SWMM_HEAT_ATTR_GROUND_SOURCE + 1 ==
                   static_cast<int>(HeatAttr::COUNT_),
               "SWMM_HeatAttr must mirror openswmm::HeatAttr");
 static_assert(SWMM_HEAT_SCOPE_TAG == static_cast<int>(HeatScope::TAG) &&
               SWMM_HEAT_SCOPE_NODE == static_cast<int>(HeatScope::NODE) &&
-              SWMM_HEAT_SCOPE_LINK == static_cast<int>(HeatScope::LINK),
+              SWMM_HEAT_SCOPE_LINK == static_cast<int>(HeatScope::LINK) &&
+              SWMM_HEAT_SCOPE_CELL2D == static_cast<int>(HeatScope::CELL2D) &&
+              SWMM_HEAT_SCOPE_MESH_TAG == static_cast<int>(HeatScope::MESH_TAG),
               "SWMM_HeatOverrideScope must mirror openswmm::HeatScope");
 
 /// The GLOBAL sediment parameters that share an override attribute (and so
@@ -678,6 +734,8 @@ int sediment_attr(int param) {
         case SWMM_HEAT_SED_HYPORHEIC_VELOCITY:  return static_cast<int>(HeatAttr::SED_HYPORHEIC_VELOCITY);
         case SWMM_HEAT_SED_DENSITY:             return static_cast<int>(HeatAttr::SED_DENSITY);
         case SWMM_HEAT_SED_SPECIFIC_HEAT:       return static_cast<int>(HeatAttr::SED_SPECIFIC_HEAT);
+        case SWMM_HEAT_SED_MESH_POROSITY:       return static_cast<int>(HeatAttr::SED_MESH_POROSITY);
+        case SWMM_HEAT_SED_GROUND_SOURCE:       return static_cast<int>(HeatAttr::SED_GROUND_SOURCE);
         default:                                return -1;
     }
 }
@@ -690,10 +748,29 @@ std::vector<std::string> reresolve(openswmm::SimulationContext& ctx) {
     ov.rad_link.clear();
     ov.rad_node.clear();
     ov.sed_link.clear();
+    ov.rad_cell.clear();
+    ov.sed_cell.clear();
     return openswmm::transport::heat::resolveHeatOverrides(ctx);
 }
 
 }  // namespace
+
+SWMM_ENGINE_API int swmm_heat_ground_source_configured(SWMM_Engine engine,int* configured) {
+    CHECK_HANDLE(engine);if(!configured)return SWMM_ERR_BADPARAM;
+    *configured=to_engine(engine)->context().heat_config.sediment.ground_source_configured;return SWMM_OK;
+}
+SWMM_ENGINE_API int swmm_heat_clear_ground_source(SWMM_Engine engine) {
+    CHECK_HANDLE(engine);auto& ctx=to_engine(engine)->context();CHECK_EDITABLE(ctx);
+    try {
+        auto before=ctx.heat_config;
+        try {
+            ctx.heat_config.sediment.mesh_ground=false;ctx.heat_config.sediment.ground_source_configured=false;
+            if(reresolve(ctx).empty())return SWMM_OK;
+            ctx.heat_config=std::move(before);return SWMM_ERR_BADPARAM;
+        } catch(...) {ctx.heat_config=std::move(before);throw;}
+    } catch(const std::bad_alloc&) {return SWMM_ERR_NOMEM;}
+      catch(...) {return SWMM_ERR_INTERNAL;}
+}
 
 SWMM_ENGINE_API int swmm_heat_get_sediment(SWMM_Engine engine, int param,
                                            double* value) {
@@ -710,6 +787,8 @@ SWMM_ENGINE_API int swmm_heat_get_sediment(SWMM_Engine engine, int param,
         case SWMM_HEAT_SED_DENSITY:             *value = sd.sed_density;         break;
         case SWMM_HEAT_SED_SPECIFIC_HEAT:       *value = sd.sed_specific_heat;   break;
         case SWMM_HEAT_SED_INITIAL_TEMPERATURE: *value = sd.initial_temp;        break;
+        case SWMM_HEAT_SED_MESH_POROSITY:       *value = sd.mesh_porosity; break;
+        case SWMM_HEAT_SED_GROUND_SOURCE:       *value = sd.mesh_ground?1:0; break;
         default: return SWMM_ERR_BADINDEX;
     }
     return SWMM_OK;
@@ -719,7 +798,7 @@ SWMM_ENGINE_API int swmm_heat_set_sediment(SWMM_Engine engine, int param,
                                            double value) {
     CHECK_HANDLE(engine);
     if (param < SWMM_HEAT_SED_THERMAL_DIFFUSIVITY ||
-        param > SWMM_HEAT_SED_INITIAL_TEMPERATURE)
+        param > SWMM_HEAT_SED_GROUND_SOURCE)
         return SWMM_ERR_BADINDEX;
     if (!std::isfinite(value)) return SWMM_ERR_BADPARAM;
     const int attr = sediment_attr(param);
@@ -727,6 +806,14 @@ SWMM_ENGINE_API int swmm_heat_set_sediment(SWMM_Engine engine, int param,
     if (attr >= 0 && !openswmm::transport::heatAttrValueOk(static_cast<HeatAttr>(attr), value))
         return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
+    if(param==SWMM_HEAT_SED_GROUND_SOURCE){CHECK_EDITABLE(ctx);}
+    if(param==SWMM_HEAT_SED_BED_THICKNESS&&!ctx.heat_state.mesh_contact_link.empty()){CHECK_EDITABLE(ctx);}
+#ifdef OPENSWMM_HAS_2D
+    if(ctx.twod_io.options&&ctx.twod_io.options->coupled_heat&&ctx.twod_io.options->bed_heat_model>0&&
+       (param==SWMM_HEAT_SED_BED_THICKNESS||param==SWMM_HEAT_SED_DENSITY||param==SWMM_HEAT_SED_SPECIFIC_HEAT||
+        param==SWMM_HEAT_SED_MESH_POROSITY||param==SWMM_HEAT_SED_INITIAL_TEMPERATURE||
+        (ctx.twod_io.options->bed_heat_model==2&&(param==SWMM_HEAT_SED_GROUND_DEPTH||param==SWMM_HEAT_SED_THERMAL_DIFFUSIVITY)))) {CHECK_EDITABLE(ctx);}
+#endif
     auto& sd = ctx.heat_config.sediment;
     switch (param) {
         case SWMM_HEAT_SED_THERMAL_DIFFUSIVITY: sd.thermal_diffusivity = value; break;
@@ -741,6 +828,8 @@ SWMM_ENGINE_API int swmm_heat_set_sediment(SWMM_Engine engine, int param,
         case SWMM_HEAT_SED_HYPORHEIC_VELOCITY:  sd.hyporheic_velocity  = value; break;
         case SWMM_HEAT_SED_DENSITY:             sd.sed_density         = value; break;
         case SWMM_HEAT_SED_SPECIFIC_HEAT:       sd.sed_specific_heat   = value; break;
+        case SWMM_HEAT_SED_MESH_POROSITY:       sd.mesh_porosity       = value; break;
+        case SWMM_HEAT_SED_GROUND_SOURCE:       sd.mesh_ground=value!=0;sd.ground_source_configured=true;break;
         case SWMM_HEAT_SED_INITIAL_TEMPERATURE:
             sd.initial_temp     = value;
             sd.has_initial_temp = true;
@@ -818,13 +907,14 @@ SWMM_ENGINE_API int swmm_heat_set_element_override(SWMM_Engine engine, int attr,
     CHECK_EDITABLE(ctx);
     if (attr < 0 || attr >= static_cast<int>(HeatAttr::COUNT_)) return SWMM_ERR_BADINDEX;
     if (scope != SWMM_HEAT_SCOPE_TAG && scope != SWMM_HEAT_SCOPE_NODE &&
-        scope != SWMM_HEAT_SCOPE_LINK)
+        scope != SWMM_HEAT_SCOPE_LINK && scope != SWMM_HEAT_SCOPE_CELL2D && scope != SWMM_HEAT_SCOPE_MESH_TAG)
         return SWMM_ERR_BADPARAM;
     if (name == nullptr || *name == '\0') return SWMM_ERR_BADPARAM;
     const auto a = static_cast<HeatAttr>(attr);
     // The bed zone exists beneath conduits only (parser rule).
     if (openswmm::isSedimentAttr(a) && scope == SWMM_HEAT_SCOPE_NODE)
         return SWMM_ERR_BADPARAM;
+    if(a==HeatAttr::SED_GROUND_SOURCE&&scope!=SWMM_HEAT_SCOPE_TAG&&scope!=SWMM_HEAT_SCOPE_LINK)return SWMM_ERR_BADPARAM;
     if (!openswmm::transport::heatAttrValueOk(a, value)) return SWMM_ERR_BADPARAM;
 
     auto& cfg = ctx.heat_config;
@@ -862,30 +952,44 @@ SWMM_ENGINE_API int swmm_heat_get_effective_element(SWMM_Engine engine,
     int attr, int scope, const char* name, double* value, int* source,
     char* source_name, int source_name_len) {
     CHECK_HANDLE(engine);
-    if (!name || !value || !source || attr<0 || attr>SWMM_HEAT_ATTR_SEDIMENT_SPECIFIC_HEAT
-        || (scope!=SWMM_HEAT_SCOPE_NODE && scope!=SWMM_HEAT_SCOPE_LINK)
+    if (!name || !value || !source || attr<0 || attr>SWMM_HEAT_ATTR_GROUND_SOURCE
+        || (scope!=SWMM_HEAT_SCOPE_NODE && scope!=SWMM_HEAT_SCOPE_LINK && scope!=SWMM_HEAT_SCOPE_CELL2D)
         || (scope==SWMM_HEAT_SCOPE_NODE && attr>=SWMM_HEAT_ATTR_THERMAL_DIFFUSIVITY))
         return SWMM_ERR_BADPARAM;
     const auto& ctx=to_engine(engine)->context();
     const bool link=scope==SWMM_HEAT_SCOPE_LINK;
-    const int index=link?ctx.link_names.find(name):ctx.node_names.find(name);
+    const bool cell=scope==SWMM_HEAT_SCOPE_CELL2D;
+    int index=link?ctx.link_names.find(name):ctx.node_names.find(name);
+    std::string tag;
+    if(cell) {
+#ifdef OPENSWMM_HAS_2D
+        int id=0;const std::string text(name);
+        const auto parsed=std::from_chars(text.data(),text.data()+text.size(),id);
+        const auto* mesh=ctx.twod_io.mesh;
+        if(parsed.ec!=std::errc{}||parsed.ptr!=text.data()+text.size()||!mesh||id<1||id>mesh->n_cells())return SWMM_ERR_BADINDEX;
+        index=id-1;tag=std::size_t(index)<mesh->tri_tag.size()?mesh->tri_tag[index]:"";
+#else
+        return SWMM_ERR_PLUGIN;
+#endif
+    }
     if(index<0)return SWMM_ERR_BADINDEX;
     const auto& tags=link?ctx.links.tags:ctx.nodes.tags;
-    const std::string tag=std::size_t(index)<tags.size()?tags[std::size_t(index)]:"";
+    if(!cell)tag=std::size_t(index)<tags.size()?tags[std::size_t(index)]:"";
     int rc=SWMM_OK;
     if(attr<=SWMM_HEAT_ATTR_EMISS_LANDCOVER)rc=swmm_heat_get_radiative(engine,attr+1,value);
     else if(attr==SWMM_HEAT_ATTR_LANDCOVER_TEMPERATURE)rc=swmm_heat_get_radiative(engine,SWMM_HEAT_RAD_LANDCOVER_TEMPERATURE,value);
     else {
         const int params[]={SWMM_HEAT_SED_THERMAL_DIFFUSIVITY,SWMM_HEAT_SED_SOLUTE_DIFFUSIVITY,
             SWMM_HEAT_SED_BED_THICKNESS,SWMM_HEAT_SED_GROUND_DEPTH,SWMM_HEAT_SED_GROUND_TEMPERATURE,
-            SWMM_HEAT_SED_HYPORHEIC_VELOCITY,SWMM_HEAT_SED_DENSITY,SWMM_HEAT_SED_SPECIFIC_HEAT};
+            SWMM_HEAT_SED_HYPORHEIC_VELOCITY,SWMM_HEAT_SED_DENSITY,SWMM_HEAT_SED_SPECIFIC_HEAT,
+            SWMM_HEAT_SED_MESH_POROSITY,SWMM_HEAT_SED_GROUND_SOURCE};
         rc=swmm_heat_get_sediment(engine,params[attr-SWMM_HEAT_ATTR_THERMAL_DIFFUSIVITY],value);
     }
     if(rc!=SWMM_OK)return rc;
     *source=0;std::string origin="Global";
     for(int pass=0;pass<2;++pass)for(const auto& row:ctx.heat_config.overrides.rows) {
         if(static_cast<int>(row.attr)!=attr)continue;
-        if((pass==0&&row.scope==HeatScope::TAG&&row.name==tag)
+        if((pass==0&&row.scope==(cell?HeatScope::MESH_TAG:HeatScope::TAG)&&row.name==tag)
             ||(pass==1&&static_cast<int>(row.scope)==scope&&row.name==name)) {
             *value=row.value;*source=static_cast<int>(row.scope);origin=row.name;
         }
@@ -910,6 +1014,8 @@ SWMM_ENGINE_API int swmm_hydrothermal_edit_atomic(SWMM_Engine engine,
     if(active)return SWMM_ERR_LIFECYCLE;
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
+    try {
+    Thermal2DAuthoring thermal_2d(ctx);
     double adjustments[4][12];
     double* adjustmentFields[]={ctx.adjust_temp,ctx.adjust_evap,ctx.adjust_rain,ctx.adjust_hydcon};
     for(int i=0;i<4;++i)std::copy_n(adjustmentFields[i],12,adjustments[i]);
@@ -925,6 +1031,7 @@ SWMM_ENGINE_API int swmm_hydrothermal_edit_atomic(SWMM_Engine engine,
     int result = SWMM_ERR_BADPARAM;
     try { result = edit(engine, user); } catch (...) { result = SWMM_ERR_BADPARAM; }
     if (result != SWMM_OK) {
+        thermal_2d.restore(ctx);
         for(int i=0;i<4;++i)std::copy_n(adjustments[i],12,adjustmentFields[i]);
         ctx.options = std::move(options);
         ctx.climate_state = std::move(climate);
@@ -936,6 +1043,8 @@ SWMM_ENGINE_API int swmm_hydrothermal_edit_atomic(SWMM_Engine engine,
         ctx.heat_state.cloud_now = cloud;
     }
     return result;
+    } catch(const std::bad_alloc&) {return SWMM_ERR_NOMEM;}
+      catch(...) {return SWMM_ERR_BADPARAM;}
 }
 SWMM_ENGINE_API int swmm_heat_get_dry_policy(SWMM_Engine engine, int* policy) {
     CHECK_HANDLE(engine);
@@ -964,6 +1073,10 @@ SWMM_ENGINE_API int swmm_heat_sediment_temperature_configured(SWMM_Engine engine
 SWMM_ENGINE_API int swmm_heat_clear_sediment_temperature(SWMM_Engine engine, int param) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
+#ifdef OPENSWMM_HAS_2D
+    if(param==SWMM_HEAT_SED_INITIAL_TEMPERATURE&&ctx.twod_io.options&&
+       ctx.twod_io.options->coupled_heat&&ctx.twod_io.options->bed_heat_model>0){CHECK_EDITABLE(ctx);}
+#endif
     auto& cfg = ctx.heat_config;
     if (param == SWMM_HEAT_SED_GROUND_TEMPERATURE) {
         cfg.sediment.has_ground_temp = false;
@@ -1004,6 +1117,31 @@ struct HeatSnapshot {
     std::vector<openswmm::ProcessComponentSpec> components;
     bool enabled;
     double shortwave, cloud;
+    Thermal2DAuthoring thermal_2d;
+};
+
+using EngineContext = openswmm::SimulationContext;
+struct ConfigurationSnapshot {
+    SWMM_Engine owner = nullptr;
+    decltype(std::declval<EngineContext>().options) options;
+    decltype(std::declval<EngineContext>().climate_state) climate;
+    decltype(std::declval<EngineContext>().snowpacks.config) snow;
+    decltype(std::declval<EngineContext>().snowpacks.meteorology) meteorology;
+    openswmm::HeatConfigData heat;
+    decltype(std::declval<EngineContext>().process_component_specs) components;
+    std::array<std::array<double,12>,4> monthly_adjustments{};
+    double shortwave_now = 0.0, cloud_now = 0.0;
+    Thermal2DAuthoring thermal_2d;
+
+    ConfigurationSnapshot(SWMM_Engine engine, const EngineContext& ctx)
+        : owner(engine), options(ctx.options), climate(ctx.climate_state),
+          snow(ctx.snowpacks.config), meteorology(ctx.snowpacks.meteorology),
+          heat(ctx.heat_config), components(ctx.process_component_specs),
+          shortwave_now(ctx.heat_state.shortwave_now), cloud_now(ctx.heat_state.cloud_now),
+          thermal_2d(ctx) {
+        const double* source[]={ctx.adjust_temp,ctx.adjust_evap,ctx.adjust_rain,ctx.adjust_hydcon};
+        for(int row=0;row<4;++row)std::copy_n(source[row],12,monthly_adjustments[row].begin());
+    }
 };
 }
 SWMM_ENGINE_API SWMM_HeatSnapshot swmm_heat_snapshot_create(SWMM_Engine engine) {
@@ -1011,7 +1149,7 @@ SWMM_ENGINE_API SWMM_HeatSnapshot swmm_heat_snapshot_create(SWMM_Engine engine) 
     const auto& ctx=to_engine(engine)->context();
     if(ctx.state!=openswmm::EngineState::BUILDING && ctx.state!=openswmm::EngineState::OPENED)return nullptr;
     try {return new HeatSnapshot{engine,ctx.heat_config,ctx.snowpacks.config.site,ctx.process_component_specs,
-        ctx.options.heat_transport,ctx.heat_state.shortwave_now,ctx.heat_state.cloud_now};}
+        ctx.options.heat_transport,ctx.heat_state.shortwave_now,ctx.heat_state.cloud_now,Thermal2DAuthoring(ctx)};}
     catch(...) {return nullptr;}
 }
 SWMM_ENGINE_API int swmm_heat_snapshot_restore(SWMM_Engine engine, SWMM_HeatSnapshot snapshot) {
@@ -1022,7 +1160,8 @@ SWMM_ENGINE_API int swmm_heat_snapshot_restore(SWMM_Engine engine, SWMM_HeatSnap
     auto& ctx=to_engine(engine)->context();CHECK_EDITABLE(ctx);
     // Copy before publishing: allocation refusal leaves the live model intact.
     try {
-        auto config=saved.config;auto site=saved.site;auto components=saved.components;
+        auto config=saved.config;auto site=saved.site;auto components=saved.components;auto thermal_2d=saved.thermal_2d;
+        thermal_2d.restore(ctx);
         ctx.heat_config=std::move(config);ctx.snowpacks.config.site=std::move(site);
         ctx.process_component_specs=std::move(components);
         ctx.options.heat_transport=saved.enabled;
@@ -1032,6 +1171,52 @@ SWMM_ENGINE_API int swmm_heat_snapshot_restore(SWMM_Engine engine, SWMM_HeatSnap
 }
 SWMM_ENGINE_API void swmm_heat_snapshot_destroy(SWMM_HeatSnapshot snapshot) {
     delete static_cast<HeatSnapshot*>(snapshot);
+}
+
+SWMM_ENGINE_API SWMM_ConfigSnapshot swmm_config_snapshot_create(SWMM_Engine engine) {
+    if(!engine)return nullptr;
+    const auto& ctx=to_engine(engine)->context();
+    if(ctx.state!=openswmm::EngineState::BUILDING && ctx.state!=openswmm::EngineState::OPENED)return nullptr;
+    try { return new ConfigurationSnapshot(engine,ctx); }
+    catch(...) { return nullptr; }
+}
+
+SWMM_ENGINE_API int swmm_config_snapshot_restore(SWMM_Engine engine, SWMM_ConfigSnapshot opaque) {
+    CHECK_HANDLE(engine);
+    if(!opaque)return SWMM_ERR_BADPARAM;
+    const auto& saved=*static_cast<ConfigurationSnapshot*>(opaque);
+    if(saved.owner!=engine)return SWMM_ERR_BADPARAM;
+    struct RestoreContext { const ConfigurationSnapshot* saved; } restore{&saved};
+    return swmm_hydrothermal_edit_atomic(engine,[](SWMM_Engine target,void* user)->int {
+        const auto& source=*static_cast<RestoreContext*>(user)->saved;
+        auto& ctx=to_engine(target)->context();
+        // Prepare every potentially allocating copy before publishing. The
+        // enclosing transaction restores its own draft if any copy fails.
+        auto options=source.options;
+        auto climate=source.climate;
+        auto snow=source.snow;
+        auto meteorology=source.meteorology;
+        auto heat=source.heat;
+        auto components=source.components;
+        auto thermal2d=source.thermal_2d;
+        ctx.options=std::move(options);
+        ctx.climate_state=std::move(climate);
+        ctx.snowpacks.config=std::move(snow);
+        ctx.snowpacks.meteorology=std::move(meteorology);
+        ctx.heat_config=std::move(heat);
+        ctx.process_component_specs=std::move(components);
+        double* destination[]={ctx.adjust_temp,ctx.adjust_evap,ctx.adjust_rain,ctx.adjust_hydcon};
+        for(int row=0;row<4;++row)std::copy(source.monthly_adjustments[row].begin(),
+            source.monthly_adjustments[row].end(),destination[row]);
+        ctx.heat_state.shortwave_now=source.shortwave_now;
+        ctx.heat_state.cloud_now=source.cloud_now;
+        thermal2d.restore(ctx);
+        return SWMM_OK;
+    },&restore);
+}
+
+SWMM_ENGINE_API void swmm_config_snapshot_destroy(SWMM_ConfigSnapshot snapshot) {
+    delete static_cast<ConfigurationSnapshot*>(snapshot);
 }
 
 SWMM_ENGINE_API int swmm_heat_get_authoring_flags(SWMM_Engine engine, unsigned* flags) {

@@ -82,6 +82,7 @@
 #include "FilePathPair.hpp"
 #include "../data/ArdConfigData.hpp"
 #include "../data/BedZoneData.hpp"
+#include "../data/ChannelThermalData.hpp"
 #include "../data/GageData.hpp"
 #include "../data/HeatData.hpp"
 #include "../data/WaterAgeData.hpp"
@@ -301,6 +302,11 @@ enum class EngineState : int32_t {
  * @ingroup engine_core
  */
 struct StateAccessors {
+    std::function<std::vector<ChannelThermalRegion>()> get_channel_thermal_regions;
+    // Each region appears once. Validate the complete batch before mutation.
+    std::function<std::string(const std::vector<ChannelThermalIncrement>&)> apply_channel_thermal_increments;
+    std::function<std::vector<ChannelSpeciesRegion>()> get_channel_species_regions;
+    std::function<std::string(const std::vector<ChannelSpeciesIncrement>&)> apply_channel_species_increments;
     std::function<std::string()> get_snow_state;
     // Empty result means valid; false validates without publishing.
     std::function<std::string(const std::string&,bool)> set_snow_state;
@@ -345,6 +351,7 @@ class SurfaceRouter2D;
 struct PendingBoundaryRow;
 struct PendingEdgeConveyanceRow;
 struct PendingInitialQualityRow;
+struct PendingInitialBedQualityRow;
 struct PendingBoundaryQualityRow;
 struct GwTransportData;
 class SurfaceQuality2D;   // S7 (2026-09-19)
@@ -972,6 +979,7 @@ struct SimulationContext {
         /// S2/S3: authored [2D_INITIAL_QUALITY] / [2D_BOUNDARY_QUALITY] rows,
         /// retained after initialize() so the InpWriter can round-trip them.
         std::vector<twoD::PendingInitialQualityRow>*  pending_iq = nullptr;
+        std::vector<twoD::PendingInitialBedQualityRow>* pending_ibq = nullptr;
         std::vector<twoD::PendingBoundaryQualityRow>* pending_bq = nullptr;
         /// Per-cell infiltration (track I, plan §5.5). Owned by
         /// SurfaceRouter2D; the [2D_INFILTRATION*] section handlers populate

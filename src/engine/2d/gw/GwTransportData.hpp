@@ -21,15 +21,10 @@
  *        `[GW_SORPTION]`, `[GW_INITIAL_QUALITY]`, `[GW_BOUNDARY_QUALITY]`
  *        and `[GW_SOURCES]`.
  *
- * @details **Authoring only in this release.** The two-zone integrated
- *          groundwater kernel (G1 of the two-zone plan) does not exist yet,
- *          so these rows are parsed, validated against the mesh and the
- *          species registry, held here, round-tripped by the writer and
- *          exposed through `openswmm_gw_transport.h` — and a run emits ONE
- *          warning saying the kernel is not available. That is the
- *          deliberate shape: a user can author, save, reopen and share a
- *          complete subsurface-transport model before the solver lands, and
- *          nothing about the file changes when it does.
+ * @details Authoring state consumed by the two-zone groundwater transport
+ *          kernel. New porous thermal storage requires explicit
+ *          THERMAL_MODEL POROUS_EQUILIBRIUM; dormant legacy conduction
+ *          flags never select that model implicitly.
  *
  *          **Cell-generic** (the tri/quad amendment): every scope is a CELL
  *          index or a TAG, never a "triangle"; an edge is `EDGE 0..nv-1` of
@@ -52,6 +47,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <set>
 #include <unordered_map>
 #include <string>
 #include <vector>
@@ -77,6 +73,13 @@ enum class GwScope : int8_t {
 /// kernel would carry", so a deck that only names the section gets the
 /// full model when the kernel arrives.
 struct GwTransportOptions {
+    // Explicit opt-in; dormant legacy CONDUCTION flags never activate it.
+    std::string thermal_model="WATER_ONLY";
+    int thermal_layers=16;
+    bool lateral_conduction=false;
+    double thermal_max_step=60,water_conductivity=.606,air_conductivity=.025,surface_resistance=.1;
+    std::string soil_et_heat="LATENT_SURFACE";
+    std::set<std::string> thermal_authored;
     bool transport_pollutants  = true;
     bool transport_msx         = true;
     bool transport_age         = true;

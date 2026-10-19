@@ -440,6 +440,17 @@ the cell velocities. Without the latter a model can only start from
 rest, which excludes solutions such as Thacker's oscillating basins
 whose initial state has \f$\mathbf{u} \neq 0\f$.
 
+For a finite local mesh bed, `[2D_INITIAL_BED_QUALITY]` seeds the bed
+porewater separately from the overland water. It uses the same `*`, `TAG`
+and one-based `CELL` scopes and `* < TAG < CELL` precedence as
+`[2D_INITIAL_QUALITY]`; each concentration is multiplied by that cell's
+bed pore volume (area × bed thickness × porosity). Pollutants use their
+declared concentration units, and `__WATER_AGE__` is authored in hours.
+This section requires coupled heat with `BED_HEAT_MODEL LOCAL_STORAGE`.
+Temperature remains owned by the heat state. For groundwater-owned
+`GROUND_COLUMN` porewater, seed `SAT` or `UNSAT` through
+`[GW_INITIAL_QUALITY]` instead.
+
 ### 9.3.1 Quadrilateral cells
 
 The mesh may mix triangles with convex quadrilaterals. Quads are listed
@@ -2275,8 +2286,13 @@ CF/UGRID-aware reader. Four keys shape it:
 | `BUILDUP` | `Mesh2_face_buildup`, when `[2D_COVERAGES]` rows resolved | yes |
 | `GROUNDWATER` | the per-cell `Mesh2_face_gw_*` fields, the groundwater ledger and the node-exchange cumulative, when a mesh aquifer resolved | yes |
 | `GW_DETAILED` | `Mesh2_face_gw_theta_sigma` per layer and face — \f$m\f$ layers × nFace per step | no |
+| `HEAT` | Water, mesh bed, soil, and mesh-connected LID temperature/energy/capacity fields; fixed-grid soil layers; signed cumulative thermal receipts and residuals | no |
 
-*Table 9-4 The fourteen `REPORT_2D_VARIABLES` tokens*
+*Table 9-4 The fifteen `REPORT_2D_VARIABLES` tokens*
+
+`HEAT` is opt-in and writes fields only when the corresponding thermal owner is initialized. Face fields use the `[time, face]` layout; soil-layer fields use `[time, layer, face]`, with the top layer first and a static center-depth field in metres. Mesh-connected LID physical cells are reported on a separate `[time, lid_layer]` axis. The static `Mesh2_lid_layer_*` mapping datasets identify each LID layer's network node, mesh face, physical cell, control, authored layer, elevation bounds, and area. A zero-capacity physical layer has zero energy and capacity and a NaN temperature; this is distinct from an unowned mesh face, which is NaN in face-based fields. `Mesh2_lid_layer_ground_contact_energy` is cumulative signed energy in joules, positive into that LID layer from its mesh-ground contact. It is the equal-and-opposite per-layer counterpart to `ground_heat_budget`'s `lid_contact_j` term. `mesh_heat_budget` and `ground_heat_budget` use `[time, face, term]`, units of joules, and carry named term/sign-convention attributes. Their receipts are cumulative from initialization; internal water/bed and water/channel contacts are signed and cancel in the combined owner balance. The groundwater budget residual is stored energy minus initial energy and the listed cumulative receipts.
+
+When `BED_HEAT_MODEL LOCAL_STORAGE` is active, `HEAT` writes the local bed's initial and current sensible energy, heat capacity, temperature, and fixed porewater volume. With transported species it also writes porewater concentrations, initial species amounts, cumulative surface-to-bed species exchange, and generated bed age. Species dimensions follow each dataset's `species_names` and `species_units` attributes; the temperature row is excluded, age concentration is in hours, amount fields multiply the species units by m³, and exchange is positive from surface water into the bed. Initial energy and initial species amounts are constant since-initialization fields; cells without local bed porewater are NaN. These fields use the model's local finite-bed storage; they do not include groundwater-owned channel contacts. The thermal result schema version is 6. `HEAT` is excluded from `DEFAULT` to preserve existing results-file contents; add it explicitly or select `ALL` to write it.
 
 **`REPORT_2D_SPECIES`** narrows the `SPECIES` group to a list of species
 names (`ALL`, the default, writes every transported species). The
@@ -2571,7 +2587,26 @@ behaviour it once configured is now described.
 - **Frozen 1D heads within a batch.** With `COUPLING_SYNC` > 0 the 1D
   heads a 2D advance sees are held for the batch. The error grows with
   the span.
-- **Hot start files do not carry 2D state.**
+- **Hot start files do not carry 2D state.** Neither the native nor EPA
+  SWMM5 hot start format stores mesh water, aquifer columns, bed or soil heat,
+  or queued surface–groundwater exchange. When coupled mesh/ground heat is
+  active, the engine refuses hot start save and restore so a partial restart
+  cannot silently discard that state.
+- **Coupled thermal continuation uses an engine checkpoint.** The available
+  engine-session route is `SWMMEngine::saveCheckpoint` and
+  `SWMMEngine::loadCheckpoint`, with the same attached 2D common-source stage
+  kept alive for the session. Restore is same-platform and requires a freshly
+  initialized matching model and mesh/contact identity. The checkpoint profile
+  accepts supported in-memory climate sources; active runtime forcing
+  overrides and file-backed climate sources are refused. The input-file
+  `SAVE HOTSTART` / `USE HOTSTART` commands do not create or restore this joint
+  checkpoint. For the qualified attached 2D session, the engine checkpoint
+  preserves shared 1D node/link temperatures and bed state together with the
+  mesh soil columns and pending thermal receipts. Mapped open conduits using
+  `MESH_CONTACTS` can therefore resume their channel-to-ground hyporheic heat
+  exchange with the same mesh/contact identity. Restore is same-platform into
+  a freshly initialized matching engine and attached mesh session. Direct
+  hydraulic-component checkpoint files do not include thermal state.
 
 <!-- source: docs/manuals/reference/hydraulics/sections/Chapter9-TwoDimensional.md:1443-1471 (retained text); src/engine/2d/solver/ExplicitInertialSolver.cpp:89-114; src/engine/2d/solver/SurfaceSolverFactory.cpp:286-301; src/engine/2d/input/SectionHandlers2D.cpp:311-346 -->
 

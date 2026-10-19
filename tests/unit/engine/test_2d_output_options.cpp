@@ -25,6 +25,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -50,6 +51,7 @@
 #include <openswmm/engine/openswmm_2d.h>
 #include <openswmm/engine/openswmm_model.h>
 #include <openswmm/engine/openswmm_forcing.h>
+#include <openswmm/engine/openswmm_heat.h>
 #include <openswmm/engine/openswmm_sq2d.h>
 
 namespace fs = std::filesystem;
@@ -222,14 +224,16 @@ TEST(Output2DOptions, TokenMaskRoundTrip) {
     EXPECT_FALSE(report2d::parseMask("VELOCITY BOGUS", m).empty());
     EXPECT_EQ(swmm_2d_output_variable_mask("BOGUS"), 0u);
     EXPECT_EQ(swmm_2d_output_variable_mask("DEFAULT"), report2d::DEFAULT_MASK);
-    EXPECT_EQ(swmm_2d_output_variable_count(), 14);   // S7: + BUILDUP; G-O: + GROUNDWATER, GW_DETAILED
+    EXPECT_EQ(swmm_2d_output_variable_count(), 15);   // S7/G-O and P9: BUILDUP, GROUNDWATER, GW_DETAILED, HEAT
     EXPECT_STREQ(swmm_2d_output_variable_name(0), "DEPTH");
     EXPECT_STREQ(swmm_2d_output_variable_name(10), "ENVELOPES");
     EXPECT_STREQ(swmm_2d_output_variable_name(11), "BUILDUP");
     EXPECT_STREQ(swmm_2d_output_variable_name(12), "GROUNDWATER");
     EXPECT_STREQ(swmm_2d_output_variable_name(13), "GW_DETAILED");
+    EXPECT_STREQ(swmm_2d_output_variable_name(14), "HEAT");
     EXPECT_NE(report2d::DEFAULT_MASK & report2d::BUILDUP, 0u);
     EXPECT_NE(report2d::DEFAULT_MASK & report2d::GROUNDWATER, 0u);
+    EXPECT_EQ(report2d::DEFAULT_MASK & report2d::HEAT, 0u);
     EXPECT_EQ(report2d::DEFAULT_MASK & report2d::GW_DETAILED, 0u);
     EXPECT_STREQ(swmm_2d_output_variable_text(report2d::MINIMAL_MASK), "MINIMAL");
 
@@ -510,6 +514,173 @@ TEST(Output2DWriter, DeckAgeColumnIsHoursEndToEnd) {
                 << "record " << k << " cell " << c
                 << ": the age column must advance by the elapsed hours";
         }
+}
+
+TEST(Output2DWriter, LocalBedTracerAndAgeAreReportedFromLivePorewaterState) {
+    std::error_code ec;
+    fs::create_directories(kOutDir, ec);
+    const std::string stem = "local_bed_species_h5";
+    const fs::path inp = kOutDir / (stem + ".inp");
+    const fs::path h5 = kOutDir / (stem + ".h5");
+    fs::remove(h5, ec);
+    {
+        std::ofstream f(inp);
+        f << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\n"
+             "HEAT_TRANSPORT YES\nWATER_AGE YES\nWATER_DENSITY 1000\nWATER_SPECIFIC_HEAT_CAPACITY 4184\n"
+             "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:10:00\n"
+             "REPORT_STEP 00:01:00\nWET_STEP 00:01:00\nDRY_STEP 00:01:00\nROUTING_STEP 5\n"
+             "[JUNCTIONS]\nJ1 0 1 0 0 0\n[OUTFALLS]\nO1 -0.5 FREE NO\n"
+             "[CONDUITS]\nC1 J1 O1 30 .013 0 0 0\n[XSECTIONS]\nC1 RECT_OPEN 1 2 0 0 1\n"
+             "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\nDRY_DEPTH .001\n"
+             "REPORT_2D YES\nHEAT_MODEL COUPLED\nBED_HEAT_MODEL LOCAL_STORAGE\n"
+             "HEAT_SURFACE_EXCHANGE NO\nHEAT_RADIATIVE_EXCHANGE NO\n"
+             "OUTPUT_FILE " << stem << ".h5\nOUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES HEAT\n"
+             "[2D_VERTICES]\n0 0 -10\n10 0 -10\n10 10 -10\n0 10 -10\n"
+             "[2D_TRIANGLES]\n0 1 2 .03 .1 channel:test\n0 2 3 .03 .1 floodplain\n"
+             "[2D_INITIAL_QUALITY]\n* Cu 10\n* __WATER_AGE__ 1\n"
+             "[2D_INITIAL_BED_QUALITY]\n* Cu 5\n* __WATER_AGE__ 2\n"
+             "[POLLUTANTS]\nCu MG/L 0 0 0 0\n[REPORT]\nINPUT NO\n";
+    }
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    const fs::path rpt = kOutDir / (stem + ".rpt"), out = kOutDir / (stem + ".out");
+    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_BED_THICKNESS, .3), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_MESH_POROSITY, .4), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_DENSITY, 1000), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_SPECIFIC_HEAT, 1000), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_INITIAL_TEMPERATURE, 5), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_SOLUTE_DIFFUSIVITY, 0), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_HYPORHEIC_VELOCITY, .001), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+    double elapsed = 0.0;
+    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    ASSERT_EQ(swmm_engine_end(e), SWMM_OK);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+
+    H5File file(h5);
+    ASSERT_GE(file.id, 0) << "No local-bed species result was written";
+    ASSERT_TRUE(file.has("Mesh2_face_bed_species_conc"));
+    ASSERT_TRUE(file.has("Mesh2_face_bed_species_exchange"));
+    ASSERT_TRUE(file.has("Mesh2_face_bed_species_initial_amount"));
+    ASSERT_TRUE(file.has("Mesh2_face_bed_porewater_volume"));
+    ASSERT_TRUE(file.has("Mesh2_face_bed_initial_energy"));
+    ASSERT_TRUE(file.has("Mesh2_face_bed_age_generation"));
+    EXPECT_EQ(file.dsAttr("Mesh2_face_bed_species_conc", "species_names"), "Cu,__WATER_AGE__");
+    EXPECT_EQ(file.dsAttr("Mesh2_face_bed_species_conc", "species_units"), "MG/L,hours");
+    EXPECT_EQ(file.dsAttr("Mesh2_face_bed_species_initial_amount", "species_units"),
+              "MG/L m3,hours m3");
+    EXPECT_EQ(file.dsAttr("Mesh2_face_bed_species_initial_amount", "cell_methods"),
+              "time: point (constant initial-condition amount)");
+    EXPECT_EQ(file.dsAttr("Mesh2_face_bed_initial_energy", "units"), "J");
+    EXPECT_EQ(file.dsAttr("Mesh2_face_bed_initial_energy", "cell_methods"),
+              "time: point (constant initial condition)");
+    const auto shape = file.dims("Mesh2_face_bed_species_conc");
+    ASSERT_EQ(shape.size(), 3u);
+    ASSERT_GE(shape[0], 2u);
+    EXPECT_EQ(shape[1], 2u);
+    EXPECT_EQ(shape[2], 2u);
+    const auto pore = file.readAll("Mesh2_face_bed_porewater_volume");
+    const std::size_t last_face = static_cast<std::size_t>(shape[0] - 1) * shape[2];
+    EXPECT_NEAR(pore[last_face], 6.0, 1e-10);
+    EXPECT_NEAR(pore[last_face + 1], 6.0, 1e-10);
+    const auto initial_energy = file.readAll("Mesh2_face_bed_initial_energy");
+    const double expected_initial_energy =
+        ((1.0 - .4) * 1000.0 * 1000.0 + .4 * 1000.0 * 4184.0) * 15.0 * 5.0;
+    EXPECT_NEAR(initial_energy[last_face], expected_initial_energy, 1e-8);
+    EXPECT_NEAR(initial_energy[last_face + 1], expected_initial_energy, 1e-8);
+    const auto initial_amount = file.readAll("Mesh2_face_bed_species_initial_amount");
+    const std::size_t amount_steps = static_cast<std::size_t>(shape[0]) * shape[1] * shape[2];
+    ASSERT_EQ(initial_amount.size(), amount_steps);
+    for (std::size_t step = 0; step < shape[0]; ++step) {
+        const std::size_t base = step * static_cast<std::size_t>(shape[1]) * shape[2];
+        EXPECT_NEAR(initial_amount[base], 30.0, 1e-12);
+        EXPECT_NEAR(initial_amount[base + 1], 30.0, 1e-12);
+        EXPECT_NEAR(initial_amount[base + shape[2]], 12.0, 1e-12);
+        EXPECT_NEAR(initial_amount[base + shape[2] + 1], 12.0, 1e-12);
+    }
+    const auto conc = file.readAll("Mesh2_face_bed_species_conc");
+    const auto exchange = file.readAll("Mesh2_face_bed_species_exchange");
+    const std::size_t last_species = static_cast<std::size_t>(shape[0] - 1) * shape[1] * shape[2];
+    const std::size_t last_initial = static_cast<std::size_t>(shape[0] - 1) * shape[1] * shape[2];
+    EXPECT_GT(conc[last_species], 0.0);
+    EXPECT_DOUBLE_EQ(conc[last_species + 1], 5.0);
+    EXPECT_GT(exchange[last_species], 0.0);
+    EXPECT_DOUBLE_EQ(exchange[last_species + 1], 0.0);
+    const auto age_generation = file.readAll("Mesh2_face_bed_age_generation");
+    EXPECT_GT(age_generation[last_face], 0.0);
+    EXPECT_GT(age_generation[last_face + 1], 0.0);
+    for(std::size_t cell=0;cell<shape[2];++cell) {
+        const double current_cu=conc[last_species+cell]*pore[last_face+cell];
+        EXPECT_NEAR(current_cu-initial_amount[last_initial+cell],exchange[last_species+cell],1e-8);
+        const std::size_t age_index=last_species+shape[2]+cell;
+        const double current_age=conc[age_index]*pore[last_face+cell];
+        EXPECT_NEAR(current_age-initial_amount[last_initial+shape[2]+cell],
+                    age_generation[last_face+cell]+exchange[age_index],1e-8);
+    }
+}
+
+TEST(Output2DWriter, LocalBedThermalStorageIsReportedWithoutQualityTransport) {
+    std::error_code ec;
+    fs::create_directories(kOutDir, ec);
+    const std::string stem = "local_bed_heat_without_quality";
+    const fs::path inp = kOutDir / (stem + ".inp");
+    const fs::path h5 = kOutDir / (stem + ".h5");
+    fs::remove(h5, ec);
+    {
+        std::ofstream f(inp);
+        f << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
+             "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:03:00\n"
+             "REPORT_STEP 00:00:10\nROUTING_STEP 5\n"
+             "[JUNCTIONS]\nJ1 0 1 0 0 0\n[OUTFALLS]\nO1 -0.5 FREE NO\n"
+             "[CONDUITS]\nC1 J1 O1 30 .013 0 0 0\n[XSECTIONS]\nC1 RECT_OPEN 1 2 0 0 1\n"
+             "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\nDRY_DEPTH .001\n"
+             "REPORT_2D YES\nHEAT_MODEL COUPLED\nBED_HEAT_MODEL LOCAL_STORAGE\n"
+             "HEAT_SURFACE_EXCHANGE NO\nHEAT_RADIATIVE_EXCHANGE NO\n"
+             "OUTPUT_FILE " << stem << ".h5\nOUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES HEAT\n"
+             "[2D_VERTICES]\n0 0 -10\n10 0 -10\n10 10 -10\n0 10 -10\n"
+             "[2D_TRIANGLES]\n0 1 2 .03 .1 channel:test\n0 2 3 .03 .1 floodplain\n"
+             "[REPORT]\nINPUT NO\n";
+    }
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    const fs::path rpt = kOutDir / (stem + ".rpt"), out = kOutDir / (stem + ".out");
+    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_BED_THICKNESS, .3), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_MESH_POROSITY, .4), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_DENSITY, 1000), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_SPECIFIC_HEAT, 1000), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_INITIAL_TEMPERATURE, 5), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+    double elapsed = 0.0;
+    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    ASSERT_EQ(swmm_engine_end(e), SWMM_OK);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+
+    H5File file(h5);
+    ASSERT_GE(file.id, 0) << "No local-bed thermal state was written";
+    ASSERT_TRUE(file.has("Mesh2_face_bed_initial_energy"));
+    ASSERT_TRUE(file.has("Mesh2_face_bed_porewater_volume"));
+    EXPECT_FALSE(file.has("Mesh2_face_bed_species_conc"));
+    EXPECT_FALSE(file.has("Mesh2_face_bed_species_initial_amount"));
+    const auto dims = file.dims("Mesh2_face_bed_initial_energy");
+    ASSERT_EQ(dims.size(), 2u);
+    ASSERT_GE(dims[0], 2u);
+    ASSERT_EQ(dims[1], 2u);
+    const auto energy = file.readAll("Mesh2_face_bed_initial_energy");
+    const auto pore = file.readAll("Mesh2_face_bed_porewater_volume");
+    const double expected_energy =
+        ((1.0 - .4) * 1000.0 * 1000.0 + .4 * 1000.0 * 4184.0) * 15.0 * 5.0;
+    for(std::size_t step=0;step<dims[0];++step) {
+        EXPECT_NEAR(energy[step*2],expected_energy,1e-8);
+        EXPECT_NEAR(energy[step*2+1],expected_energy,1e-8);
+        EXPECT_NEAR(pore[step*2],6.0,1e-12);
+        EXPECT_NEAR(pore[step*2+1],6.0,1e-12);
+    }
 }
 
 // A 1 mm, 1-min burst at 00:05 on a dry pan, reported every 5 min.
@@ -945,6 +1116,171 @@ TEST(Output2DWriter, DeckGroundwaterFieldsEndToEnd) {
     }
 }
 
+TEST(Output2DWriter, CoupledGroundHeatFieldsAndBudgetsEndToEnd) {
+    std::error_code ec;
+    fs::create_directories(kOutDir, ec);
+    const std::string stem = "coupled_ground_heat_h5";
+    const fs::path inp = kOutDir / (stem + ".inp");
+    const fs::path h5 = kOutDir / (stem + ".h5");
+    fs::remove(h5, ec);
+    {
+        std::ofstream f(inp);
+        f << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
+             "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:10:00\n"
+             "REPORT_STEP 00:01:00\nWET_STEP 00:01:00\nDRY_STEP 00:01:00\nROUTING_STEP 5\n"
+             "[JUNCTIONS]\nJ1 0 3 0 0 0\n[OUTFALLS]\nO1 -1 FREE NO\n"
+             "[CONDUITS]\nC1 J1 O1 30 .013 0 0 0\n[XSECTIONS]\nC1 RECT_OPEN 1 2 0 0 1\n"
+             "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\nREPORT_2D YES\n"
+             "HEAT_MODEL COUPLED\nBED_HEAT_MODEL GROUND_COLUMN\n"
+             "HEAT_SURFACE_EXCHANGE NO\nHEAT_RADIATIVE_EXCHANGE NO\n"
+             "OUTPUT_FILE " << stem << ".h5\nOUTPUT_PRECISION FLOAT64\n"
+             "REPORT_2D_VARIABLES DEPTH HEAT\n"
+             "[2D_VERTICES]\n0 0 -10\n10 0 -10\n10 10 -10\n0 10 -10\n"
+             "[2D_TRIANGLES]\n0 1 2 .03 .5\n0 2 3 .03 .5\n"
+             "[2D_AQUIFER_OPTIONS]\nCLOSURE SIGMA\nM_LAYERS 4\nGW_ET NONE\n"
+             "[2D_AQUIFER]\n* 36 4 .45 .1 2 HG0 1\n"
+             "[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nTHERMAL_LAYERS 4\n"
+             "CONDUCTION NO\nDISPERSION NO\nSOIL_ET_HEAT SENSIBLE_ONLY\n"
+             "SURFACE_THERMAL_BC ADIABATIC\nDEEP_THERMAL_BC ADIABATIC\n"
+             "[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ -3\n* UNSAT __TEMPERATURE__ -3\n"
+             "[REPORT]\nINPUT NO\n";
+    }
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    const fs::path rpt = kOutDir / (stem + ".rpt"), out = kOutDir / (stem + ".out");
+    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+    double elapsed = 0.0;
+    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    swmm_engine_end(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+
+    H5File file(h5);
+    ASSERT_GE(file.id, 0) << "No thermal mesh result was written";
+    for (const char* name : {"Mesh2_face_water_temperature", "Mesh2_face_bed_temperature",
+                             "Mesh2_face_bed_energy", "Mesh2_face_soil_temperature",
+                             "Mesh2_face_soil_energy", "Mesh2_face_soil_heat_capacity",
+                             "Mesh2_face_soil_layer_temperature", "Mesh2_face_soil_layer_energy",
+                             "Mesh2_face_soil_layer_heat_capacity", "mesh_heat_budget", "ground_heat_budget"})
+        EXPECT_TRUE(file.has(name)) << name;
+    const auto time = file.dims("Mesh2_face_soil_layer_temperature");
+    ASSERT_EQ(time.size(), 3u);
+    ASSERT_GT(time[0], 0u);
+    EXPECT_EQ(time[1], 4u);
+    EXPECT_EQ(time[2], 2u);
+    EXPECT_EQ(file.dsAttr("ground_heat_budget", "terms"),
+        "initial_j,advective_j,source_j,surface_boundary_j,deep_boundary_j,latent_j,lateral_net_j,water_contact_j,channel_contact_j,residual_j,pending_lateral_j,lid_contact_j");
+    const auto energy = file.readAll("Mesh2_face_soil_energy");
+    const auto capacity = file.readAll("Mesh2_face_soil_heat_capacity");
+    const auto temperature = file.readAll("Mesh2_face_soil_temperature");
+    ASSERT_EQ(energy.size(), capacity.size());
+    ASSERT_EQ(energy.size(), temperature.size());
+    for (std::size_t i = 0; i < energy.size(); ++i) {
+        EXPECT_GT(capacity[i], 0.0);
+        EXPECT_NEAR(temperature[i], energy[i] / capacity[i], 1e-8);
+    }
+    const auto budget_dims = file.dims("ground_heat_budget");
+    const auto budget = file.readAll("ground_heat_budget");
+    ASSERT_EQ(budget_dims.size(), 3u);
+    ASSERT_EQ(budget_dims[2], 12u);
+    for (hsize_t t = 0; t < budget_dims[0]; ++t)
+        for (hsize_t c = 0; c < budget_dims[1]; ++c)
+            EXPECT_NEAR(budget[(t * budget_dims[1] + c) * budget_dims[2] + 9], 0.0, 1e-5);
+}
+
+TEST(Output2DWriter, MeshRichardsLidThermalStateMapsToItsReciprocalGroundReceipt) {
+    std::error_code ec;
+    fs::create_directories(kOutDir, ec);
+    const std::string stem = "mesh_richards_lid_heat_h5";
+    const fs::path inp = kOutDir / (stem + ".inp");
+    const fs::path h5 = kOutDir / (stem + ".h5");
+    fs::remove(h5, ec);
+    {
+        std::ofstream f(inp);
+        f << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
+             "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:10:00\n"
+             "REPORT_STEP 00:01:00\nWET_STEP 00:01:00\nDRY_STEP 00:01:00\nROUTING_STEP 5\n"
+             "[STORAGE]\nS -2 2 1 FUNCTIONAL 0 0 100 0 0\n[COORDINATES]\nS 1 3\n"
+             "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\nREPORT_2D YES\n"
+             "HEAT_MODEL COUPLED\nBED_HEAT_MODEL GROUND_COLUMN\n"
+             "HEAT_SURFACE_EXCHANGE NO\nHEAT_RADIATIVE_EXCHANGE NO\n"
+             "OUTPUT_FILE " << stem << ".h5\nOUTPUT_PRECISION FLOAT64\n"
+             "REPORT_2D_VARIABLES DEPTH HEAT\n"
+             "[2D_VERTICES]\n0 0 0\n10 0 0\n0 10 0\n[2D_TRIANGLES]\n0 1 2 .03 .1 floodplain\n"
+             "[2D_AQUIFER_OPTIONS]\nNODE_ENROLMENT ROWS\nGW_ET NONE\nM_LAYERS 4\nCLOSURE CLOSED_FORM\n"
+             "[2D_AQUIFER]\n* 36 1 .45 .1 2 HG0 .5\n"
+             "[2D_AQUIFER_NODE]\nS 1 KC 3600 DC .1 AREA 1\n"
+             "[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION YES\n"
+             "SURFACE_THERMAL_BC ADIABATIC\nDEEP_THERMAL_BC ADIABATIC\n"
+             "[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ -3\n* UNSAT __TEMPERATURE__ -3\n"
+             "[LID_CONTROLS]\nStack NODE\nStack SURFACE 6 .1\n"
+             "Stack MEDIA 12 .45 .2 .08 2 10 3\nStack AGGREGATE 6 .4 100\nStack BOTTOM 0 0\n"
+             "[LID_NODES]\nS Stack 10 BOTTOM MESH_AQUIFER\n"
+             "[LID_RICHARDS]\nStack OPTIONS 4 1e-7 1e-5 30\n"
+             "Stack 2 .03 2 1.6 .5 .0001\nStack 3 .03 2 1.6 .5 .0001\n"
+             "[HEAT_FLUXES]\nLAYER_CONDUCTION ON\n[REPORT]\nINPUT NO\n";
+    }
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    const fs::path rpt = kOutDir / (stem + ".rpt"), out = kOutDir / (stem + ".out");
+    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK) << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK) << swmm_get_last_error_msg(e);
+    double elapsed = 0.0;
+    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    swmm_engine_end(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+
+    H5File file(h5);
+    ASSERT_GE(file.id, 0) << "No 2D thermal result was written";
+    for (const char* name : {"Mesh2_lid_layer_node_id", "Mesh2_lid_layer_node_index",
+                             "Mesh2_lid_layer_face_index", "Mesh2_lid_layer_physical_cell_index",
+                             "Mesh2_lid_layer_authored_index", "Mesh2_lid_layer_temperature",
+                             "Mesh2_lid_layer_energy", "Mesh2_lid_layer_heat_capacity",
+                             "Mesh2_lid_layer_ground_contact_energy",
+                             "ground_heat_budget"})
+        EXPECT_TRUE(file.has(name)) << name;
+    const auto lid_dims = file.dims("Mesh2_lid_layer_temperature");
+    ASSERT_EQ(lid_dims.size(), 2u);
+    ASSERT_GT(lid_dims[0], 0u);
+    ASSERT_GT(lid_dims[1], 0u);
+    EXPECT_EQ(file.dims("Mesh2_lid_layer_node_id"), (std::vector<hsize_t>{lid_dims[1]}));
+    EXPECT_EQ(file.dsAttr("Mesh2_lid_layer_energy", "units"), "J");
+    EXPECT_NE(file.dsAttr("Mesh2_lid_layer_temperature", "layout").find("physical LID cell"), std::string::npos);
+    const auto temperature = file.readAll("Mesh2_lid_layer_temperature");
+    const auto energy = file.readAll("Mesh2_lid_layer_energy");
+    const auto capacity = file.readAll("Mesh2_lid_layer_heat_capacity");
+    const auto lid_contact = file.readAll("Mesh2_lid_layer_ground_contact_energy");
+    ASSERT_EQ(temperature.size(), energy.size());
+    ASSERT_EQ(temperature.size(), capacity.size());
+    ASSERT_EQ(temperature.size(), lid_contact.size());
+    for (std::size_t i = 0; i < energy.size(); ++i) {
+        EXPECT_GE(capacity[i], 0.0);
+        if (capacity[i] > 0.0) EXPECT_NEAR(temperature[i], energy[i] / capacity[i], 1e-8);
+        else EXPECT_TRUE(std::isnan(temperature[i]));
+    }
+    const auto budget_dims = file.dims("ground_heat_budget");
+    const auto budget = file.readAll("ground_heat_budget");
+    const auto layer_faces = file.readAll("Mesh2_lid_layer_face_index");
+    ASSERT_EQ(budget_dims.size(), 3u);
+    bool saw_lid_contact = false;
+    for (hsize_t t = 0; t < budget_dims[0]; ++t) {
+        std::vector<double> layer_contact_by_face(budget_dims[1],0.0);
+        for (hsize_t layer = 0; layer < lid_dims[1]; ++layer)
+            layer_contact_by_face[static_cast<std::size_t>(layer_faces[layer])] += lid_contact[t*lid_dims[1]+layer];
+        for (hsize_t c = 0; c < budget_dims[1]; ++c)
+        {
+            const double soil_receipt=budget[(t * budget_dims[1] + c) * budget_dims[2] + 11];
+            saw_lid_contact |= std::abs(soil_receipt) > 0.0;
+            EXPECT_NEAR(layer_contact_by_face[c],-soil_receipt,1e-6);
+        }
+    }
+    EXPECT_TRUE(saw_lid_contact) << "LID layer output should be paired with its soil-side contact receipt";
+}
+
 TEST(Output2DWriter, Report2DStepThinsTheTimeAxis) {
     SolverOptions2D o;
     o.report_2d_step = 3600.0;   // 12 × the 300 s report step
@@ -1192,4 +1528,191 @@ TEST(Output2DSnow, WritesAcceptedStateWithUnitsMissingValuesAndRainfallSelection
             EXPECT_GT(H5Aexists(ds,"units"),0);EXPECT_GT(H5Aexists(ds,"state_time"),0);H5Dclose(ds);
         }
     }
+}
+
+TEST(Output2DThermal, WritesOnlySelectedInitializedThermalStateAndSignedBudgets) {
+    fs::create_directories(kOutDir);
+    for (const bool selected : {false, true}) {
+        const auto path = kOutDir / (selected ? "thermal.h5" : "thermal-disabled.h5");
+        openswmm::SimulationContext ctx;
+        Default2DOutputPlugin writer(path.string());
+        ASSERT_EQ(writer.initialize({}, nullptr), 0);
+        ASSERT_EQ(writer.prepare(ctx), 0);
+        SolverOptions2D options;
+        options.report_2d_vars = report2d::DEPTH | (selected ? report2d::HEAT : 0u);
+        ASSERT_EQ(writer.configureOutput(options, 60), "");
+        writer.prepareMeshAndDatasets(unitSquare());
+        auto snap = makeSnap(1, .1, .2);
+        snap.surface_species_count = 0;
+        snap.surface_species_conc.clear();
+        snap.thermal2d_active = true;
+        snap.thermal2d_water_temperature = {12.5, std::numeric_limits<double>::quiet_NaN()};
+        snap.thermal2d_bed_temperature = {8.0, 9.0};
+        snap.thermal2d_bed_energy = {80.0, 90.0};
+        snap.thermal2d_bed_initial_energy = {75.0, 85.0};
+        snap.thermal2d_bed_capacity = {10.0, 10.0};
+        snap.thermal2d_bed_species_count = 2;
+        snap.thermal2d_bed_species_names = {"TSS", "__WATER_AGE__"};
+        snap.thermal2d_bed_species_units = {"MG/L", "hours"};
+        snap.thermal2d_bed_pore_volume = {0.2, std::numeric_limits<double>::quiet_NaN()};
+        snap.thermal2d_bed_species_concentration = {1.5, std::numeric_limits<double>::quiet_NaN(),
+                                                     2.5, std::numeric_limits<double>::quiet_NaN()};
+        snap.thermal2d_bed_species_initial_amount = {0.3, std::numeric_limits<double>::quiet_NaN(),
+                                                      0.5, std::numeric_limits<double>::quiet_NaN()};
+        snap.thermal2d_bed_species_exchange = {3.0, std::numeric_limits<double>::quiet_NaN(),
+                                                -4.0, std::numeric_limits<double>::quiet_NaN()};
+        snap.thermal2d_bed_age_generation = {5.0, std::numeric_limits<double>::quiet_NaN()};
+        snap.thermal2d_surface_budget_terms = 6;
+        snap.thermal2d_surface_budget = {1, 2, -3, 4, 5, 6, 7, 8, -9, 10, 11, 12};
+        snap.thermal2d_evaporation_m3 = {.01, .02};
+        snap.thermal2d_ground_temperature = {6.0, std::numeric_limits<double>::quiet_NaN()};
+        snap.thermal2d_ground_energy = {120.0, std::numeric_limits<double>::quiet_NaN()};
+        snap.thermal2d_ground_capacity = {20.0, std::numeric_limits<double>::quiet_NaN()};
+        snap.thermal2d_layer_count = 2;
+        snap.thermal2d_ground_layer_center_m = {.25, std::numeric_limits<double>::quiet_NaN(), .75, std::numeric_limits<double>::quiet_NaN()};
+        snap.thermal2d_ground_layer_temperature = {5.0, std::numeric_limits<double>::quiet_NaN(), 7.0, std::numeric_limits<double>::quiet_NaN()};
+        snap.thermal2d_ground_layer_energy = {50.0, std::numeric_limits<double>::quiet_NaN(), 70.0, std::numeric_limits<double>::quiet_NaN()};
+        snap.thermal2d_ground_layer_capacity = {10.0, std::numeric_limits<double>::quiet_NaN(), 10.0, std::numeric_limits<double>::quiet_NaN()};
+        snap.thermal2d_ground_budget_terms = 12;
+        snap.thermal2d_ground_budget.assign(24, 0.0);
+        snap.thermal2d_ground_budget[9] = -1.25;
+        snap.thermal2d_lid_layer_count = 2;
+        snap.thermal2d_lid_layer_node_index = {3, 3};
+        snap.thermal2d_lid_layer_face_index = {0, 0};
+        snap.thermal2d_lid_layer_physical_index = {1, 2};
+        snap.thermal2d_lid_layer_control_index = {0, 0};
+        snap.thermal2d_lid_layer_authored_index = {1, 2};
+        snap.thermal2d_lid_layer_node_id = {"S", "S"};
+        snap.thermal2d_lid_layer_top_m = {.3, .15};
+        snap.thermal2d_lid_layer_bottom_m = {.15, 0.0};
+        snap.thermal2d_lid_layer_area_m2 = {2.0, 2.0};
+        snap.thermal2d_lid_layer_temperature = {10.0, 12.0};
+        snap.thermal2d_lid_layer_energy = {100.0, 144.0};
+        snap.thermal2d_lid_layer_capacity = {10.0, 12.0};
+        snap.thermal2d_lid_layer_ground_contact_j = {-2.5, 3.25};
+        ASSERT_EQ(writer.update(snap), 0);
+        ASSERT_EQ(writer.finalize(ctx), 0);
+
+        H5File file(path);
+        ASSERT_GE(file.id, 0);
+        EXPECT_EQ(file.has("Mesh2_face_water_temperature"), selected);
+        EXPECT_EQ(file.has("Mesh2_face_bed_temperature"), selected);
+        EXPECT_EQ(file.has("Mesh2_face_bed_initial_energy"), selected);
+        EXPECT_EQ(file.has("Mesh2_face_bed_species_conc"), selected);
+        EXPECT_EQ(file.has("Mesh2_face_bed_species_initial_amount"), selected);
+        EXPECT_EQ(file.has("Mesh2_face_bed_species_exchange"), selected);
+        EXPECT_EQ(file.has("Mesh2_face_bed_porewater_volume"), selected);
+        EXPECT_EQ(file.has("Mesh2_face_bed_age_generation"), selected);
+        EXPECT_EQ(file.has("Mesh2_face_soil_temperature"), selected);
+        EXPECT_EQ(file.has("Mesh2_face_soil_layer_temperature"), selected);
+        EXPECT_EQ(file.has("mesh_heat_budget"), selected);
+        EXPECT_EQ(file.has("ground_heat_budget"), selected);
+        EXPECT_EQ(file.has("Mesh2_lid_layer_temperature"), selected);
+        EXPECT_EQ(file.has("Mesh2_lid_layer_node_id"), selected);
+        EXPECT_EQ(file.has("Mesh2_lid_layer_ground_contact_energy"), selected);
+        EXPECT_EQ(H5Aexists(file.id, "thermal_result_schema_version") > 0, selected);
+        if (!selected) continue;
+
+        EXPECT_EQ(file.dims("Mesh2_face_water_temperature"), (std::vector<hsize_t>{1, 2}));
+        EXPECT_EQ(file.dims("Mesh2_face_soil_layer_temperature"), (std::vector<hsize_t>{1, 2, 2}));
+        EXPECT_EQ(file.dims("mesh_heat_budget"), (std::vector<hsize_t>{1, 2, 6}));
+        EXPECT_EQ(file.dims("ground_heat_budget"), (std::vector<hsize_t>{1, 2, 12}));
+        EXPECT_EQ(file.dims("Mesh2_lid_layer_temperature"), (std::vector<hsize_t>{1, 2}));
+        EXPECT_EQ(file.dims("Mesh2_lid_layer_face_index"), (std::vector<hsize_t>{2}));
+        EXPECT_EQ(file.dims("Mesh2_lid_layer_ground_contact_energy"), (std::vector<hsize_t>{1, 2}));
+        EXPECT_EQ(file.rootAttr("thermal_result_schema_version"), "6");
+        const auto water = file.readAll("Mesh2_face_water_temperature");
+        ASSERT_EQ(water.size(), 2u);
+        EXPECT_DOUBLE_EQ(water[0], 12.5);
+        EXPECT_TRUE(std::isnan(water[1]));
+        EXPECT_EQ(file.dims("Mesh2_face_bed_species_initial_amount"),
+                  (std::vector<hsize_t>{1, 2, 2}));
+        const auto initial_energy = file.readAll("Mesh2_face_bed_initial_energy");
+        ASSERT_EQ(initial_energy.size(), 2u);
+        EXPECT_DOUBLE_EQ(initial_energy[0], 75.0);
+        EXPECT_DOUBLE_EQ(initial_energy[1], 85.0);
+        const auto initial_amount = file.readAll("Mesh2_face_bed_species_initial_amount");
+        ASSERT_EQ(initial_amount.size(), 4u);
+        EXPECT_NEAR(initial_amount[0], 0.3, 1e-7);
+        EXPECT_TRUE(std::isnan(initial_amount[1]));
+        EXPECT_NEAR(initial_amount[2], 0.5, 1e-7);
+        EXPECT_TRUE(std::isnan(initial_amount[3]));
+        const auto soil = file.readAll("Mesh2_face_soil_layer_energy");
+        ASSERT_EQ(soil.size(), 4u);
+        EXPECT_DOUBLE_EQ(soil[0], 50.0);
+        EXPECT_TRUE(std::isnan(soil[1]));
+        const auto budget = file.readAll("mesh_heat_budget");
+        ASSERT_EQ(budget.size(), 12u);
+        EXPECT_DOUBLE_EQ(budget[2], -3.0);
+        EXPECT_EQ(file.dsAttr("mesh_heat_budget", "terms"),
+                  "radiation_j,sensible_j,latent_j,deep_boundary_j,water_to_bed_j,water_thermal_increment_j");
+        EXPECT_EQ(file.dsAttr("Mesh2_face_soil_layer_temperature", "units"), "degree_Celsius");
+        EXPECT_EQ(file.dims("Mesh2_face_bed_species_conc"), (std::vector<hsize_t>{1, 2, 2}));
+        EXPECT_EQ(file.dsAttr("Mesh2_face_bed_species_conc", "species_names"), "TSS,__WATER_AGE__");
+        EXPECT_EQ(file.dsAttr("Mesh2_face_bed_species_conc", "species_units"), "MG/L,hours");
+        EXPECT_EQ(file.dsAttr("Mesh2_face_bed_species_exchange", "location"), "bed porewater");
+        EXPECT_EQ(file.dsAttr("Mesh2_face_bed_species_exchange", "units"), "1");
+        EXPECT_EQ(file.dsAttr("Mesh2_face_bed_species_exchange", "species_units"), "MG/L m3,hours m3");
+        const auto bed_species = file.readAll("Mesh2_face_bed_species_conc");
+        ASSERT_EQ(bed_species.size(), 4u);
+        EXPECT_DOUBLE_EQ(bed_species[0], 1.5);
+        EXPECT_TRUE(std::isnan(bed_species[1]));
+        EXPECT_DOUBLE_EQ(bed_species[2], 2.5);
+        EXPECT_TRUE(std::isnan(bed_species[3]));
+        const auto bed_pore = file.readAll("Mesh2_face_bed_porewater_volume");
+        ASSERT_EQ(bed_pore.size(), 2u);
+        EXPECT_NEAR(bed_pore[0], 0.2, 1e-7);
+        EXPECT_TRUE(std::isnan(bed_pore[1]));
+        const auto lid_temp = file.readAll("Mesh2_lid_layer_temperature");
+        const auto lid_energy = file.readAll("Mesh2_lid_layer_energy");
+        const auto lid_capacity = file.readAll("Mesh2_lid_layer_heat_capacity");
+        const auto lid_contact = file.readAll("Mesh2_lid_layer_ground_contact_energy");
+        ASSERT_EQ(lid_temp.size(), 2u);
+        EXPECT_DOUBLE_EQ(lid_temp[0], 10.0);
+        EXPECT_DOUBLE_EQ(lid_energy[1], 144.0);
+        EXPECT_DOUBLE_EQ(lid_capacity[0], 10.0);
+        EXPECT_DOUBLE_EQ(lid_contact[0], -2.5);
+        EXPECT_DOUBLE_EQ(lid_contact[1], 3.25);
+        EXPECT_EQ(file.dsAttr("Mesh2_lid_layer_temperature", "location"), "LID layer");
+        EXPECT_EQ(file.dsAttr("Mesh2_lid_layer_ground_contact_energy", "units"), "J");
+    }
+}
+
+TEST(Output2DThermal, ReportsLocalBedPhysicalStoresWithoutQualityRows) {
+    fs::create_directories(kOutDir);
+    const auto path = kOutDir / "thermal-local-bed-no-quality.h5";
+    std::error_code ec;
+    fs::remove(path, ec);
+
+    openswmm::SimulationContext ctx;
+    Default2DOutputPlugin writer(path.string());
+    ASSERT_EQ(writer.initialize({}, nullptr), 0);
+    ASSERT_EQ(writer.prepare(ctx), 0);
+    SolverOptions2D options;
+    options.report_2d_vars = report2d::HEAT;
+    options.output_precision = OutputPrecision2D::FLOAT64;
+    ASSERT_EQ(writer.configureOutput(options, 60), "");
+    writer.prepareMeshAndDatasets(unitSquare());
+
+    auto snap = makeSnap(1, .1, .2);
+    snap.thermal2d_active = true;
+    snap.thermal2d_bed_energy = {11.0, 22.0};
+    snap.thermal2d_bed_initial_energy = {10.0, 20.0};
+    snap.thermal2d_bed_capacity = {2.0, 4.0};
+    snap.thermal2d_bed_pore_volume = {.2, .4};
+    ASSERT_EQ(snap.thermal2d_bed_species_count, 0);
+    ASSERT_TRUE(snap.thermal2d_bed_species_initial_amount.empty());
+    ASSERT_EQ(writer.update(snap), 0);
+    ASSERT_EQ(writer.finalize(ctx), 0);
+
+    H5File file(path);
+    ASSERT_GE(file.id, 0);
+    EXPECT_TRUE(file.has("Mesh2_face_bed_initial_energy"));
+    EXPECT_TRUE(file.has("Mesh2_face_bed_porewater_volume"));
+    EXPECT_FALSE(file.has("Mesh2_face_bed_species_conc"));
+    EXPECT_FALSE(file.has("Mesh2_face_bed_species_initial_amount"));
+    EXPECT_EQ(file.readAll("Mesh2_face_bed_initial_energy"),
+              (std::vector<double>{10.0, 20.0}));
+    EXPECT_EQ(file.readAll("Mesh2_face_bed_porewater_volume"),
+              (std::vector<double>{.2, .4}));
 }

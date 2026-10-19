@@ -75,6 +75,19 @@ TEST(GroundwaterEvaporation, UsesRunoffEndpointMonthAheadOfRoutingClock) {
     EXPECT_EQ(datetime::monthOfYear(ctx.current_date), 3);
 }
 
+TEST(GroundwaterEvaporation, SurfaceEvaporationSpendsTheSharedDemandBeforeSoilEt) {
+    for(const double surface : {0.0,4e-7,1e-6}) {
+        SimulationContext ctx;ctx.subcatch_names.add("S1");ctx.subcatches.resize(1);
+        ctx.subcatches.area[0]=100;
+        GWSolver solver;solver.init(1);auto& state=solver.state();
+        state.total_depth[0]=10;state.theta[0]=.2;state.upper_evap_frac[0]=1;
+        const double zero[]={0},perv[]={1},used[]={surface};
+        solver.execute(ctx,60,1e-6,zero,zero,perv,used,1);
+        EXPECT_NEAR(state.upper_evap[0],1e-6-surface,1e-15);
+        EXPECT_NEAR(state.upper_evap[0]+state.lower_evap[0]+surface,1e-6,1e-15);
+    }
+}
+
 TEST(GroundwaterParity, MonthBoundaryAndHourlyHortonMatchLegacySavedResults) {
     const std::string base = "mc_storm_parity/groundwater_month_horton";
     ASSERT_EQ(swmm_run((base + ".inp").c_str(),

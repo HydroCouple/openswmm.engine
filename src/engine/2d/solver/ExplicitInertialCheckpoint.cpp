@@ -52,14 +52,28 @@ void publish(const std::string& path,const std::string& bytes) {
 }
 
 std::string ExplicitInertialSolver::checkpointBoundary() const {
-    if(!initialized_ || !common_stage_ || !gw_ || second_order_ || !checkpoint_ready_ ||
+    if(!initialized_ || !common_stage_ || (!gw_&&!common_stage_->standaloneLocalBed()) || second_order_ || !checkpoint_ready_ ||
        !common_stage_->matches(mesh_,state_,gw_)) return "CPU checkpoint requires an accepted attached first-order source marcher.";
     if(t_last_sync_!=common_stage_->completedEnd() || source_phase_end_!=t_last_sync_)
         return "CPU/source completed clocks differ.";
-    if((!joint_checkpoint_ && (state_->nodes_1d || state_->node_coupling)) || state_->node_row_conc || !exch_head_slope_.empty() || (!common_stage_->runtimeBoundariesEnabled() && !bc_cell_.empty()))
-        return "CPU checkpoint live 1D coupling and external boundary providers are not qualified.";
+    const auto& transport=state_->transport;
+    const bool temperature_only=joint_checkpoint_ && transport.active() && transport.n_species==1 &&
+        transport.n_pollut==0 && transport.n_msx==0 && transport.age_row<0 &&
+        transport.temp_row==0 && transport.rowIndex("__TEMPERATURE__")==0;
+    const bool standalone_local_bed_quality=common_stage_->standaloneLocalBed() && state_->heat.enabled &&
+        state_->heat.bed && !state_->heat.ground_column;
+    const bool mesh_only_ground_quality=joint_checkpoint_&&common_stage_->meshOnlyGroundQuality();
+    const bool supported_transport=temperature_only||standalone_local_bed_quality||mesh_only_ground_quality;
+    if(!joint_checkpoint_ && (state_->nodes_1d || state_->node_coupling))
+        return "CPU checkpoint requires a joint hydraulic owner for live 1D coupling.";
+    if(state_->node_row_conc && !supported_transport)
+        return "CPU checkpoint live node-row providers are not qualified.";
+    if(!exch_head_slope_.empty())return "CPU checkpoint live head-slope providers are not qualified.";
+    if(!common_stage_->runtimeBoundariesEnabled() && !bc_cell_.empty())
+        return "CPU checkpoint live external boundary providers are not qualified.";
     if(joint_checkpoint_) {
-        if(bool(state_->nodes_1d)!=bool(state_->node_coupling) || state_->transport.active() ||
+        if(bool(state_->nodes_1d)!=bool(state_->node_coupling) ||
+           (transport.active() && !supported_transport) ||
            node_drawn_.size()!=(state_->nodes_1d?std::size_t(state_->nodes_1d->count()):0) ||
            exch_.size()!=(state_->node_coupling?state_->node_coupling->size():0))
             return "Joint CPU checkpoint coupling layout differs.";
@@ -204,12 +218,19 @@ std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const 
         if(magic!=magicName || version!=(common_stage_->runtimeBoundariesEnabled()?2u:1u) || endian!=0x01020304 || longBytes!=sizeof(long))
             return "Unsupported CPU checkpoint version/platform.";
         if(crc!=checksum(payload)) return "CPU checkpoint checksum differs.";
-        auto source=common_stage_->sources_->waterTrial(); auto gw=*gw_; auto surface=*state_; auto stage=*common_stage_; auto trial=*this;
+        auto* live_gw=gw_?gw_:common_stage_->gw_;
+        if(!live_gw)return "CPU checkpoint has no matching groundwater state owner.";
+        auto source=common_stage_->sources_->waterTrial(); auto gw=*live_gw; auto surface=*state_; auto stage=*common_stage_; auto trial=*this;
         BoundaryData boundary;if(common_stage_->runtimeBoundariesEnabled()) {boundary=*state_->boundary;surface.boundary=&boundary;}
         stage.sources_=&source; stage.gw_=&gw; stage.surface_=&surface;
-        trial.gw_=&gw; trial.state_=&surface; trial.common_stage_=&stage;
+        trial.gw_=gw_?&gw:nullptr; trial.state_=&surface; trial.common_stage_=&stage;
         Archive state(std::move(payload)); std::string component; state(component); trial.checkpointState(state); state.finish();
         const auto component_error=stage.loadCheckpointBytes(std::move(component)); if(!component_error.empty()) return component_error;
+        // `gained_contact` is a derived aggregate of the persisted per-layer
+        // contact ledger. Rebuild it on the staged aquifer before installation
+        // so restored continuity diagnostics match the saved porewater state.
+        if(!gw.transport().gained_contact.empty())
+            if(const auto contact_error=gw.refreshPorewaterContactLedger();!contact_error.empty())return contact_error;
         const auto invalid=trial.checkpointBoundary(); if(!invalid.empty()) return invalid;
         if(boundary_slots && trial.bc_slot_!=*boundary_slots)return "Router/CPU checkpoint boundary indices differ.";
         if(router_boundary) {
@@ -254,9 +275,11 @@ std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const 
         if(common_stage_->runtimeBoundariesEnabled()) {
             *const_cast<BoundaryData*>(state_->boundary)=std::move(boundary);surface.boundary=state_->boundary;
         }
-        stage.sources_=common_stage_->sources_; stage.gw_=gw_; stage.surface_=state_;
+        stage.sources_=common_stage_->sources_; stage.gw_=live_gw; stage.surface_=state_;
         trial.gw_=gw_; trial.state_=state_; trial.common_stage_=common_stage_;
-        *stage.sources_=std::move(source); *gw_=std::move(gw); *state_=std::move(surface);
+        *stage.sources_=std::move(source); *live_gw=std::move(gw); *state_=std::move(surface);
+        if(state_->heat.enabled)
+            state_->heat.aquifer_ground=state_->heat.ground_column?&live_gw->heat():nullptr;
         *common_stage_=std::move(stage); *this=std::move(trial); return {};
     } catch(const std::exception& e) { return e.what(); }
 }

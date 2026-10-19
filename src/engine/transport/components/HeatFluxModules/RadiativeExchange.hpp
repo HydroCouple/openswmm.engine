@@ -137,6 +137,8 @@ double netRadiativeFluxOut(double t_water_c, double t_air_c,
 /// equilibrium — making the answer depend on which module ran last.
 double radiativeFluxOut(const SimulationContext& ctx,
                         const HeatElement& elem, double t_w) noexcept;
+/// Same evaluator with an explicit domain enable; no global mutation.
+double radiativeFluxOut(const SimulationContext&,const HeatElement&,double,bool enabled) noexcept;
 
 }  // namespace openswmm::transport::heat
 

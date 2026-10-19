@@ -3,16 +3,22 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <numeric>
 #include <set>
 #include <type_traits>
 #include "../data/SurfaceStateData.hpp"
+#include "../heat/LidNodeHeat.hpp"
+#include "../gw/GwTransportData.hpp"
 #include "../solver/InertialEdges.hpp"
+#include "../../core/SimulationContext.hpp"
 
 namespace openswmm::twoD {
 std::string SubsurfaceSolver::configureLidReceipts(const std::vector<int>& beds,const std::vector<int>& mobile) {
     if(beds.empty() && mobile.empty())return {};
-    if(lid_receipts_enabled_ || !richards_clock_valid_ || tr_.active())
-        return "LID receipts require an initial water-only groundwater owner.";
+    const bool unsupported_rows=tr_.n_pollut>0||tr_.n_msx>0||tr_.age_row>=0||
+        (tr_.active()&&tr_.temp_row<0);
+    if(lid_receipts_enabled_ || !richards_clock_valid_ || unsupported_rows)
+        return "LID receipts require an initial groundwater owner with water and optional temperature only.";
     std::set<int> seen;
     auto all=beds;all.insert(all.end(),mobile.begin(),mobile.end());
     for(int b:all) {
@@ -50,8 +56,12 @@ std::string SubsurfaceSolver::retainLidReceipts(double start,double end,const st
         if(r.bed<0 || r.bed>=int(node_beds_.size()) || !richards_bed_owned_[r.bed] ||
            !seen.insert(r.bed).second || node_beds_[r.bed].node!=r.node || node_beds_[r.bed].cell!=r.cell ||
            lid_booked_end_[r.bed]!=start || cell_completed_[r.cell]>start+8*std::numeric_limits<double>::epsilon()*std::max(1.,start) ||
-           !std::isfinite(r.accepted_down) || r.accepted_down<0 || !std::isfinite(r.accepted_up) || r.accepted_up<0)
+           !std::isfinite(r.accepted_down) || r.accepted_down<0 || !std::isfinite(r.accepted_up) || r.accepted_up<0 ||
+           !std::isfinite(r.accepted_down_j) || !std::isfinite(r.accepted_up_j) ||
+           (r.accepted_down==0 && r.accepted_down_j!=0) || (r.accepted_up==0 && r.accepted_up_j!=0))
             return "Invalid, stale or unpaired completed LID receipt.";
+        if(!heat_.active() && (r.accepted_down_j!=0 || r.accepted_up_j!=0))
+            return "LID heat receipt requires an active porous groundwater heat owner.";
         totals[r.cell].first+=r.accepted_down;totals[r.cell].second+=r.accepted_up;
         if(!std::isfinite(richards_down_cum_[r.bed]+r.accepted_down) ||
            !std::isfinite(richards_up_cum_[r.bed]+r.accepted_up))return "LID receipt cumulative overflow.";
@@ -61,17 +71,201 @@ std::string SubsurfaceSolver::retainLidReceipts(double start,double end,const st
         if(amount.first>budget.receiver || amount.second>budget.donor)
             return "Completed LID receipt exceeds the shared groundwater reservation.";
     }
+    std::map<int,std::pair<double,double>> heat_receipts;
+    if(heat_.active()) {
+        if(!heat_.context||!(heat_.water_capacity>0)||!std::isfinite(heat_.water_capacity))
+            return "LID heat receipts require an initialized groundwater energy owner.";
+        const double initial=heat_.context->heat_config.global_temp[static_cast<int>(HeatSource::INITIAL_STATE)];
+        for(const auto& r:rows) {
+            double down_j=r.accepted_down_j,up_j=r.accepted_up_j;
+            if(r.accepted_down>0&&down_j==0) {
+                const int row=heat_.context->node_subtypes.storage_row(r.node);
+                if(row<0)return "Accepted LID heat receipt has no storage-layer owner.";
+                auto old=heat_.context->node_subtypes.storages.lid_state[row];
+                if(old.quality_old_water.size()==old.cells.size())old.richards_water=old.quality_old_water;
+                LidNodeThermalGraph graph;
+                if(auto e=buildLidNodeThermalGraph(old,0,heat_.water_capacity,
+                    heat_.context->heat_config.conduction,initial,graph);!e.empty())return e;
+                const auto bottom=old.cells.size()-1;
+                auto at=std::find(graph.cells.begin(),graph.cells.end(),bottom);
+                if(at==graph.cells.end())return "Accepted LID bottom water has no active thermal donor.";
+                const auto k=std::size_t(at-graph.cells.begin());
+                down_j=r.accepted_down*heat_.water_capacity*graph.stores[k].energy/graph.stores[k].capacity;
+            }
+            if(r.accepted_up>0&&up_j==0)
+                up_j=r.accepted_up*heat_.water_capacity*heat_.zoneTemperature(r.cell,true);
+            if(!std::isfinite(down_j)||!std::isfinite(up_j))return "Nonfinite accepted LID sensible-energy receipt.";
+            heat_receipts[r.bed]={down_j,up_j};
+        }
+    }
     // Allocate before publishing any books. Empty receipts still advance the
     // hydraulic owner clock but do not grow an idle column's queue.
     for(const auto& r:rows)if(r.accepted_down>0 || r.accepted_up>0)
         lid_receipts_[r.bed].reserve(lid_receipts_[r.bed].size()+1);
+    // An accepted aquifer -> LID packet has already left the producer's
+    // physical boundary, even if its water is waiting for a slower groundwater
+    // firing. Reserve its sensible heat and water capacity now so an
+    // intervening surface/contact solve cannot spend the same donor twice.
+    struct HeatSnapshot {int cell=0;GroundThermalCell thermal;std::vector<double> joules,water;};
+    std::vector<HeatSnapshot> snapshots;
+    if(heat_.active()) {
+        std::set<int> cells;
+        for(const auto& r:rows)if(r.accepted_up>0)cells.insert(r.cell);
+        snapshots.reserve(cells.size());
+        const auto layers=std::size_t(heat_.config->options.thermal_layers);
+        for(int cell:cells) {
+            if(cell<0 || std::size_t(cell)>=heat_.cells.size() || heat_.cells[cell].column.energy.empty() ||
+               layers==0 || heat_preset_out_j_.size()!=std::size_t(state_.n_cells)*layers ||
+               heat_preset_out_water_.size()!=heat_preset_out_j_.size())
+                return "Accepted LID heat receipt has no matching groundwater thermal column.";
+            const auto base=std::size_t(cell)*layers;
+            HeatSnapshot snapshot;snapshot.cell=cell;snapshot.thermal=heat_.cells[cell];
+            snapshot.joules.assign(heat_preset_out_j_.begin()+base,heat_preset_out_j_.begin()+base+layers);
+            snapshot.water.assign(heat_preset_out_water_.begin()+base,heat_preset_out_water_.begin()+base+layers);
+            snapshots.push_back(std::move(snapshot));
+        }
+        for(const auto& r:rows)if(r.accepted_up>0) {
+            if(!(heat_.water_capacity>0)||!std::isfinite(heat_.water_capacity)) {
+                for(auto& snapshot:snapshots) {
+                    const auto base=std::size_t(snapshot.cell)*layers;
+                    heat_.cells[snapshot.cell]=std::move(snapshot.thermal);
+                    std::copy(snapshot.joules.begin(),snapshot.joules.end(),heat_preset_out_j_.begin()+base);
+                    std::copy(snapshot.water.begin(),snapshot.water.end(),heat_preset_out_water_.begin()+base);
+                }
+                return "Invalid groundwater heat capacity for accepted LID water.";
+            }
+            const double up_j=heat_receipts.at(r.bed).second;
+            bookPresetHeatOut(r.cell,r.accepted_up,up_j/heat_.water_capacity);
+            const auto sat_total=std::accumulate(heat_.cells[r.cell].saturated_water.begin(),
+                                                 heat_.cells[r.cell].saturated_water.end(),0.0);
+            if(heat_.cells[r.cell].failed || !(sat_total>0)) {
+                for(auto& snapshot:snapshots) {
+                    const auto base=std::size_t(snapshot.cell)*layers;
+                    heat_.cells[snapshot.cell]=std::move(snapshot.thermal);
+                    std::copy(snapshot.joules.begin(),snapshot.joules.end(),heat_preset_out_j_.begin()+base);
+                    std::copy(snapshot.water.begin(),snapshot.water.end(),heat_preset_out_water_.begin()+base);
+                }
+                return "Accepted LID water exceeds the groundwater heat donor capacity.";
+            }
+        }
+    }
     for(const auto& r:rows) {
-        if(r.accepted_down>0 || r.accepted_up>0)lid_receipts_[r.bed].push_back({start,end,r.accepted_down,r.accepted_up});
+        const auto joules=heat_.active()?heat_receipts.at(r.bed):std::pair<double,double>{r.accepted_down_j,r.accepted_up_j};
+        if(r.accepted_down>0 || r.accepted_up>0 || heat_.active())
+            lid_receipts_[r.bed].push_back({start,end,r.accepted_down,r.accepted_up,
+                joules.first,joules.second,!heat_.active()});
         lid_booked_end_[r.bed]=end;
         lid_bed_diagnostics_[r.bed]={start,end,cell_completed_[r.cell],r.lid_head,r.aquifer_head,
             r.requested_down,r.requested_up,r.reserved_down,r.reserved_up,r.accepted_down,r.accepted_up};
         richards_down_cum_[r.bed]+=r.accepted_down;richards_up_cum_[r.bed]+=r.accepted_up;
         bed_exchange_cum_[r.bed]+=r.accepted_up-r.accepted_down;
+    }
+    return {};
+}
+
+std::string SubsurfaceSolver::completeLidThermalInterval(SimulationContext& ctx) {
+    if(!heat_.active())return {};
+    if(!lid_receipts_enabled_||!std::isfinite(heat_.water_capacity)||!(heat_.water_capacity>0))
+        return "Mesh LID thermal exchange has no paired groundwater heat owner.";
+    constexpr double ft3_to_m3=.028316846592;
+    const double initial=ctx.heat_config.global_temp[static_cast<int>(HeatSource::INITIAL_STATE)];
+    struct Draft {int row=-1,bed=-1;double start=0,end=0,down_j=0;bool has_receipt=false;LidNodeState state;};
+    std::vector<Draft> drafts;
+    for(std::size_t b=0;b<node_beds_.size();++b) {
+        if(!richards_bed_owned_[b])continue;
+        const int node=node_beds_[b].node;
+        const int row=ctx.node_subtypes.storage_row(node);
+        if(row<0)return "Mesh Richards heat receipt has no LID state owner.";
+        auto& source=ctx.node_subtypes.storages.lid_state[row];
+        if(!source.richards||!std::isfinite(source.richards_mesh_start)||source.richards_mesh_start<0||
+           !std::isfinite(source.richards_completed_time)||source.richards_completed_time<=source.richards_mesh_start)
+            return "Mesh Richards thermal interval has no completed hydraulic owner clock.";
+        const double start=source.richards_mesh_start,end=source.richards_completed_time;
+        if(lid_booked_end_[b]!=end)return "Mesh Richards thermal interval differs from its accepted groundwater receipt.";
+        auto& pending=lid_receipts_[b];
+        auto receipt=std::find_if(pending.begin(),pending.end(),[&](const auto& r){return r.start==start&&r.end==end;});
+        const bool has_receipt=receipt!=pending.end();
+        if(has_receipt&&receipt->heat_applied)return "Mesh Richards thermal interval was already applied.";
+        const double up=has_receipt?receipt->up:0;
+        const double up_j=has_receipt?receipt->up_j:0;
+        if(source.quality_old_water.size()!=source.cells.size()||
+           (source.thermal_energy.size()>0&&source.thermal_energy.size()!=source.cells.size()))
+            return "Mesh Richards thermal transfer has an invalid accepted-water or energy layout.";
+        LidNodeState old=source;
+        old.richards_water=source.quality_old_water;
+        LidNodeThermalGraph old_graph;
+        if(auto e=buildLidNodeThermalGraph(old,0,heat_.water_capacity,ctx.heat_config.conduction,initial,old_graph);!e.empty())return e;
+        if(source.thermal_energy.empty()) {
+            std::vector<double> seeded(source.cells.size(),0);
+            for(std::size_t k=0;k<old_graph.cells.size();++k)seeded[old_graph.cells[k]]=old_graph.stores[k].energy;
+            old.thermal_energy=std::move(seeded);
+        }
+        const double node_temperature=std::size_t(node)<ctx.heat_state.node_temp.size()?
+            ctx.heat_state.node_temp[std::size_t(node)]:initial;
+        const double up_temperature=up>0?up_j/(heat_.water_capacity*up):0;
+        std::vector<LidThermalWaterTransfer> transfers;std::vector<bool> bottom_exports;
+        transfers.reserve(source.quality_transfers.size()+source.quality_ports.size());
+        bottom_exports.reserve(source.quality_transfers.size()+source.quality_ports.size());
+        for(const auto& t:source.quality_transfers) {
+            if(!std::isfinite(t.volume)||t.volume<0)return "Invalid accepted Mesh LID thermal water transfer.";
+            if(t.volume==0)continue;
+            // The surface/mobile node remains owned by the ordinary network
+            // heat row; only exchange between it and a porous LID layer crosses
+            // into this independent layer-energy store.
+            if(t.from==-2&&t.to==-1)continue;
+            const int from=t.from>=1?t.from:-1;
+            const int to=t.to>=1?t.to:-1;
+            if(from<0&&to<0)continue;
+            double source_temperature=node_temperature;
+            if(t.from==-5)source_temperature=up_temperature;
+            if(!std::isfinite(source_temperature))return "Nonfinite external Mesh LID water temperature.";
+            transfers.push_back({from,to,t.volume*ft3_to_m3,source_temperature});
+            bottom_exports.push_back(t.to==-4);
+        }
+        for(const auto& p:source.quality_ports) {
+            if(!std::isfinite(p.volume)||p.cell<0||std::size_t(p.cell)>=source.cells.size())
+                return "Invalid accepted Mesh LID thermal port.";
+            if(p.volume==0||p.cell==0)continue; // mobile-water port is network-owned
+            double source_temperature=node_temperature;
+            if(p.volume>0&&p.link>=0&&std::size_t(p.link)<ctx.heat_state.link_temp.size())
+                source_temperature=ctx.heat_state.link_temp[std::size_t(p.link)];
+            transfers.push_back({p.volume<0?p.cell:-1,p.volume>0?p.cell:-1,
+                std::abs(p.volume)*ft3_to_m3,source_temperature});
+            bottom_exports.push_back(false);
+        }
+        std::vector<double> energy,transfer_j;double external_j=0;
+        if(auto e=transferLidNodeThermalEnergy(old_graph,source.cells.size(),heat_.water_capacity,
+            transfers,energy,external_j,&transfer_j);!e.empty())return e;
+        double down_j=0,down_volume=0;
+        for(std::size_t i=0;i<bottom_exports.size();++i)if(bottom_exports[i]) {
+            down_j+=transfer_j[i];down_volume+=transfers[i].volume_m3;
+        }
+        if(!std::isfinite(down_j)||!std::isfinite(down_volume))return "Nonfinite accepted LID-to-ground thermal receipt.";
+        if(has_receipt) {
+            const double expected_volume=receipt->down;
+            const double scale=std::max({1e-12,std::abs(down_volume),std::abs(expected_volume)});
+            if(std::abs(down_volume-expected_volume)>1e-10*scale)
+                return "Accepted LID bottom-water and thermal transfer receipts differ.";
+        } else if(down_volume>0)
+            return "Accepted LID bottom-water export has no paired groundwater receipt.";
+        LidNodeState next=source;next.thermal_energy=std::move(energy);
+        LidNodeThermalGraph final_graph;
+        if(auto e=buildLidNodeThermalGraph(next,0,heat_.water_capacity,ctx.heat_config.conduction,initial,final_graph);!e.empty())return e;
+        (void)external_j; // The paired water owner accounts network/mobile sensible heat.
+        drafts.push_back({row,int(b),start,end,down_j,has_receipt,std::move(next)});
+    }
+    for(const auto& d:drafts)if(!d.has_receipt)
+        lid_receipts_[d.bed].reserve(lid_receipts_[d.bed].size()+1);
+    for(auto& d:drafts) {
+        auto& current=ctx.node_subtypes.storages.lid_state[d.row];
+        using std::swap;swap(current,d.state);
+        auto& pending=lid_receipts_[d.bed];
+        auto receipt=std::find_if(pending.begin(),pending.end(),[&](const auto& r){return r.start==d.start&&r.end==d.end;});
+        if(receipt==pending.end()) {
+            pending.push_back({d.start,d.end,0,0,0,0,true});
+            continue;
+        }
+        receipt->down_j=d.down_j;receipt->heat_applied=true;
     }
     return {};
 }
@@ -377,6 +571,7 @@ RichardsBedAcceptance acceptRichardsBedsAcrossSteps(SubsurfaceSolver& gw, Surfac
     for(const int cell:cells) {
         double node=0,lateral=0;
         for(const auto b:gw.cell_beds_[cell])node+=gw.state_.nacc[b];
+        if(!gw.state_.eacc_L.empty())   // PER_SUBCATCH: no lateral accumulators
         for(int p=gw.edges_->cell_ptr[cell];p<gw.edges_->cell_ptr[cell+1];++p) {
             const auto e=gw.edges_->cell_edge[p];
             lateral+=gw.edges_->cell_sign[p]>0?gw.state_.eacc_L[e]:gw.state_.eacc_R[e];

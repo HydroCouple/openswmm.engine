@@ -46,7 +46,7 @@ int cellCheck(SWMMEngine& eng,int d,int cell) {
     auto& r=eng.surfaceRouter2D();
     if(!domainOk(d)) return SWMM_ERR_BADPARAM;
     if(cell<0 || cell>=r.mesh().n_cells()) return SWMM_ERR_BADINDEX;
-    if(d==1 && (!r.subsurface().active() || r.subsurface().state().zs[cell]<=0.0)) return SWMM_ERR_LIFECYCLE;
+    if(d==1 && (!r.subsurface().active() || !r.subsurface().covers(cell) || r.subsurface().state().zs[cell]<=0.0)) return SWMM_ERR_LIFECYCLE;
     return SWMM_OK;
 }
 int edgeCheck(SWMMEngine& eng,int d,int cell,int edge) {
@@ -305,8 +305,8 @@ int swmm_coupling_get_boundary_receipt(SWMM_Engine h,int d,int cell,int edge,SWM
         if(row) {
             receiptOut(row->receipt,*out,req,app);
             const int temp=eng->surfaceRouter2D().subsurface().transport().temp_row;
-            out->requested_heat_j=temp>=0 ? req[temp]*runtimeWaterHeatCapacity : 0.0;
-            out->applied_heat_j=temp>=0 ? app[temp]*runtimeWaterHeatCapacity : 0.0;
+            out->requested_heat_j=temp>=0 ? req[temp]*eng->surfaceRouter2D().options().water_heat_capacity : 0.0;
+            out->applied_heat_j=temp>=0 ? app[temp]*eng->surfaceRouter2D().options().water_heat_capacity : 0.0;
             out->rejected_heat_j=out->requested_heat_j-out->applied_heat_j;
             return SWMM_OK;
         }

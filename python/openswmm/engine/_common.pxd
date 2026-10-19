@@ -1443,6 +1443,58 @@ cdef extern from "openswmm_heat.h":
     int swmm_heat_sediment_temperature_configured(SWMM_Engine, int, int*)
     int swmm_heat_clear_sediment_temperature(SWMM_Engine, int)
     int swmm_heat_get_effective_element(SWMM_Engine, int, int, const char*, double*, int*, char*, int)
+    ctypedef struct SWMM_Heat2DStatus:
+        unsigned int struct_size
+        int requested
+        int initialized
+        int surface_active
+        int radiative_active
+        int bed_active
+        int bed_model
+        int experimental
+        double water_heat_capacity
+        char reason[256]
+    int swmm_heat_get_2d_status(SWMM_Engine,SWMM_Heat2DStatus*)
+    int swmm_heat_get_2d_values(SWMM_Engine,int,int,int,double*)
+    int swmm_heat_ground_source_configured(SWMM_Engine,int*)
+    int swmm_heat_clear_ground_source(SWMM_Engine)
+    ctypedef struct SWMM_GroundHeatStatus:
+        unsigned int struct_size
+        int requested
+        int initialized
+        int aquifer_cells
+        int standalone_cells
+        int thermal_layers
+        int conduction_active
+        int lateral_active
+        int experimental
+        double water_heat_capacity
+        char reason[256]
+    int swmm_heat_get_ground_status(SWMM_Engine,SWMM_GroundHeatStatus*)
+    int swmm_heat_get_ground_values(SWMM_Engine,int,int,int,double*)
+    int swmm_heat_get_ground_layers(SWMM_Engine,int,int,int,int,double*)
+    ctypedef struct SWMM_ChannelGroundStatus:
+        unsigned int struct_size
+        int requested
+        int initialized
+        int exchange_active
+        int mapped_links
+        int contact_cells
+        int contact_intervals
+        int experimental
+        char reason[256]
+    ctypedef struct SWMM_ChannelGroundContact:
+        unsigned int struct_size
+        int link
+        int cell
+        int layer
+        double begin_fraction
+        double end_fraction
+        double share
+        double invert_m
+    int swmm_heat_get_channel_ground_status(SWMM_Engine,SWMM_ChannelGroundStatus*)
+    int swmm_heat_get_channel_ground_values(SWMM_Engine,int,int,int,double*)
+    int swmm_heat_get_channel_ground_contact(SWMM_Engine,int,SWMM_ChannelGroundContact*)
 
     # Toggles
     cdef int swmm_heat_get_enabled(SWMM_Engine e, int* enabled)

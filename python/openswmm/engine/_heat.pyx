@@ -61,6 +61,7 @@ and a refused write does not take effect at all — it raises
 # cython: language_level=3
 
 from collections.abc import Iterator
+from array import array
 from typing import NamedTuple
 
 from ._common cimport *
@@ -650,7 +651,8 @@ class HeatElementOverride(NamedTuple):
     """One per-element heat attribute override row.
 
     :ivar attr: The :class:`HeatAttr` overridden.
-    :ivar scope: :class:`HeatOverrideScope` — ``TAG``, ``NODE`` or ``LINK``.
+    :ivar scope: :class:`HeatOverrideScope` — network ``TAG``/``NODE``/``LINK``
+        or mesh ``CELL2D``/``MESH_TAG``. CELL2D names are one-based file IDs.
     :ivar name: Tag or element name.
     :ivar value: The override value, in the attribute's units.
     """
@@ -689,6 +691,17 @@ class _HeatSediment:
 
     def __iter__(self) -> Iterator[HeatSedimentParam]:
         return iter(HeatSedimentParam)
+
+    @property
+    def ground_source_configured(self) -> bool:
+        """Whether GLOBAL GROUND_SOURCE was explicitly authored, including PRESCRIBED."""
+        cdef int configured
+        _check(swmm_heat_ground_source_configured(_h(self._solver),&configured))
+        return bool(configured)
+
+    def clear_ground_source(self) -> None:
+        """Restore the absent/default PRESCRIBED channel ground selection before a run."""
+        _check(swmm_heat_clear_ground_source(_h(self._solver)))
 
     def __getitem__(self, key) -> float:
         cdef double value = 0.0
@@ -1074,9 +1087,10 @@ class Heat:
         return flags
 
     def effective_element(self, attr, scope, str name) -> HeatElementValue:
-        """Read pre-run NODE/LINK precedence, independent of process activation.
+        """Read NODE/LINK/CELL2D precedence, independent of process activation.
 
-        Source codes are GLOBAL=0, TAG=1, NODE=2, LINK=3, air=4, series=5.
+        Source codes are GLOBAL=0, TAG=1, NODE=2, LINK=3, air=4, series=5,
+        CELL2D=6, MESH_TAG=7 (mesh tags are independent of network tags).
         Dynamic temperatures return NaN and identify their source by name.
         """
         a = _member(HeatAttr, attr)
@@ -1094,6 +1108,112 @@ class Heat:
             if len(origin) < len(buffer) - 1:
                 return HeatElementValue(value, source, origin.decode('utf-8'))
             buffer = bytearray(len(buffer) * 2)
+
+    @property
+    def mesh_status(self) -> dict:
+        """Requested and initialized mesh heat, active modules and capability reason.
+
+        Water heat capacity is J/(m3 K). Experimental status includes any
+        qualification limits; saved switches alone do not imply activation.
+        """
+        cdef SWMM_Heat2DStatus status
+        status.struct_size=sizeof(SWMM_Heat2DStatus)
+        _check(swmm_heat_get_2d_status(_h(self._solver),&status))
+        return dict(requested=bool(status.requested), initialized=bool(status.initialized),
+                    surface_active=bool(status.surface_active),radiative_active=bool(status.radiative_active),
+                    bed_active=bool(status.bed_active),bed_model=status.bed_model,
+                    experimental=bool(status.experimental),water_heat_capacity=status.water_heat_capacity,
+                    reason=(<bytes>status.reason).decode('utf-8'))
+
+    def mesh_values(self, int kind, int first_cell, int count) -> list[float]:
+        """Read a contiguous range of zero-based mesh cells, in SI units.
+
+        Kind matches SWMM_Heat2DValue: water/bed temperature (0/1, degC),
+        bed energy/capacity (2/3, J and J/K), atmospheric/radiation/sensible/
+        latent/deep/water-to-bed/water increment (4..10, J), accepted
+        evaporation (11, m3), thermal residual (12, J). Inactive results
+        raise an engine lifecycle error rather than inventing values.
+        """
+        if count<0:
+            raise ValueError("count must be nonnegative")
+        cdef double[::1] values=array('d',[0.0])*count
+        _check(swmm_heat_get_2d_values(_h(self._solver),kind,first_cell,count,
+                                     &values[0] if count else NULL))
+        return list(values)
+
+    def ground_status(self) -> dict:
+        """Requested and measured finite soil heat, owner counts and capability reason.
+
+        Water heat capacity is J/(m3 K). Canonical storage includes solid
+        grains and porewater. Thermal layers are independent of sigma layers.
+        """
+        cdef SWMM_GroundHeatStatus status
+        status.struct_size=sizeof(SWMM_GroundHeatStatus)
+        _check(swmm_heat_get_ground_status(_h(self._solver),&status))
+        return dict(requested=bool(status.requested),initialized=bool(status.initialized),
+                    aquifer_cells=status.aquifer_cells,standalone_cells=status.standalone_cells,
+                    thermal_layers=status.thermal_layers,conduction_active=bool(status.conduction_active),
+                    lateral_active=bool(status.lateral_active),experimental=bool(status.experimental),
+                    water_heat_capacity=status.water_heat_capacity,reason=(<bytes>status.reason).decode('utf-8'))
+
+    def ground_values(self, int kind, int first_cell, int count) -> list[float]:
+        """Canonical soil values over zero-based mesh cells; unmodeled cells are NaN.
+
+        Kinds 0..14 match SWMM_GroundHeatValue: energy (J), capacity (J/K),
+        mean temperature (degC), initial/advective/source/surface/deep/latent/
+        lateral/water-contact energy (J), residual (J), normalized residual
+        (dimensionless), pending lateral energy (J), channel-contact energy (J). Positive receipts enter soil.
+        """
+        if count<0:
+            raise ValueError("count must be nonnegative")
+        cdef double[::1] values=array('d',[0.0])*count
+        _check(swmm_heat_get_ground_values(_h(self._solver),kind,first_cell,count,&values[0] if count else NULL))
+        return list(values)
+
+    def ground_layers(self, int cell, int kind, int first_layer, int count) -> list[float]:
+        """Fixed depth layers; cell/layer indices are zero based.
+
+        Kinds 0..7: top/bottom depth (m), temperature (degC), energy (J),
+        capacity (J/K), moisture (m3/m3), conductivity (W/(m K)), saturated
+        water (m3). Invalid ranges raise without publishing partial values.
+        """
+        if count<0:
+            raise ValueError("count must be nonnegative")
+        cdef double[::1] values=array('d',[0.0])*count
+        _check(swmm_heat_get_ground_layers(_h(self._solver),cell,kind,first_layer,count,&values[0] if count else NULL))
+        return list(values)
+
+    def channel_ground_status(self) -> dict:
+        """Requested channel ground choice and measured mapping/activity counts."""
+        cdef SWMM_ChannelGroundStatus status
+        status.struct_size=sizeof(SWMM_ChannelGroundStatus)
+        _check(swmm_heat_get_channel_ground_status(_h(self._solver),&status))
+        return dict(requested=bool(status.requested),initialized=bool(status.initialized),
+                    exchange_active=bool(status.exchange_active),mapped_links=status.mapped_links,
+                    contact_cells=status.contact_cells,contact_intervals=status.contact_intervals,
+                    experimental=bool(status.experimental),reason=(<bytes>status.reason).decode('utf-8'))
+
+    def channel_ground_values(self, int kind, int first_link, int count) -> list[float]:
+        """Mapped channel fields over zero-based link indices; unmapped links are NaN.
+
+        Kinds 0..4: soil-derived bed temperature (degC), atmosphere-to-channel
+        energy (J), channel-to-soil energy (J), thermal water increment (J),
+        contact interval count (dimensionless). The bed view adds no store.
+        """
+        if count<0:
+            raise ValueError("count must be nonnegative")
+        cdef double[::1] values=array('d',[0.0])*count
+        _check(swmm_heat_get_channel_ground_values(_h(self._solver),kind,first_link,count,&values[0] if count else NULL))
+        return list(values)
+
+    def channel_ground_contact(self, int index) -> dict:
+        """One initialized contact: zero-based indices, chainage fractions and SI invert (m)."""
+        cdef SWMM_ChannelGroundContact contact
+        contact.struct_size=sizeof(SWMM_ChannelGroundContact)
+        _check(swmm_heat_get_channel_ground_contact(_h(self._solver),index,&contact))
+        return dict(link=contact.link,cell=contact.cell,layer=contact.layer,
+                    begin_fraction=contact.begin_fraction,end_fraction=contact.end_fraction,
+                    share=contact.share,invert_m=contact.invert_m)
 
     def snapshot(self) -> HeatSnapshot:
         """Capture heat settings, shared site and component registrations before initialization."""

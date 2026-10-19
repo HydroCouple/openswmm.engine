@@ -5,6 +5,11 @@
 #include "plugins/DefaultInputPlugin.hpp"
 #include "input/PostParseResolver.hpp"
 #include "hydrology/LidNode.hpp"
+#ifdef OPENSWMM_HAS_2D
+#include "2d/heat/LidNodeHeat.hpp"
+#include "2d/heat/PorousHeat.hpp"
+using namespace openswmm::twoD;
+#endif
 #include "quality/QualityRouting.hpp"
 #include "hydraulics/Node.hpp"
 #include "hydraulics/Exfiltration.hpp"
@@ -74,6 +79,163 @@ TEST(LidNodes, ArbitraryOrderedLayersAndValidation) {
     stack[2].params[1] = 1.1;
     EXPECT_FALSE(lidnode::validateStack(stack).empty());
 }
+#ifdef OPENSWMM_HAS_2D
+TEST(LidNodes, ThermalGraphUsesAcceptedWaterCapacityAndLayerSeriesResistance) {
+    LidNodeState state;
+    state.cells={{.5,1.5,2,2,1,0,0,0,0,0,0,LidNodeLayerKind::Surface,0},
+                 {0,.5,1,2,.45,.2,.2,.08,0,0,0,LidNodeLayerKind::Media,1}};
+    ConductionConfig material;
+    LidNodeThermalGraph graph;
+    constexpr double cpw=4.184e6,initial=-5;
+    ASSERT_TRUE(twoD::buildLidNodeThermalGraph(state,2,cpw,material,initial,graph).empty());
+    ASSERT_EQ(graph.stores.size(),2u);ASSERT_EQ(graph.contacts.size(),1u);
+    const double m3=.028316846592,m2=.09290304,metres=.3048;
+    const double water_surface=2*m3;
+    const double bulk_media=1*m3,water_media=.2*m3;
+    const double expected_surface=water_surface*cpw;
+    const double expected_media=water_media*cpw+(bulk_media-water_media)*material.sed_density*material.sed_specific_heat;
+    EXPECT_NEAR(graph.stores[0].capacity,expected_surface,1e-9);
+    EXPECT_NEAR(graph.stores[1].capacity,expected_media,1e-9);
+    const double lambda_media=.2*material.water_conductivity+.8*material.sed_conductivity;
+    const double g=2*m2/(.5*metres/material.water_conductivity+.25*metres/lambda_media);
+    EXPECT_NEAR(graph.contacts[0].conductance,g,1e-12);
+    EXPECT_NEAR(graph.stores[0].energy/graph.stores[0].capacity,initial,1e-14);
+    EXPECT_NEAR(graph.stores[1].energy/graph.stores[1].capacity,initial,1e-14);
+}
+TEST(LidNodes, ThermalContactIsReciprocalAndDryMatrixContinuesConducting) {
+    LidNodeState state;
+    state.cells={{.5,1.5,2,2,1,0,0,0,0,0,0,LidNodeLayerKind::Surface,0},
+                 {0,.5,1,2,.45,0,.2,.08,0,0,0,LidNodeLayerKind::Media,1},
+                 {-.5,0,1,2,.4,0,0,0,0,0,0,LidNodeLayerKind::Aggregate,2}};
+    ConductionConfig material;LidNodeThermalGraph graph;
+    ASSERT_TRUE(twoD::buildLidNodeThermalGraph(state,0,4.184e6,material,-5,graph).empty());
+    ASSERT_EQ(graph.stores.size(),2u);ASSERT_EQ(graph.contacts.size(),1u);
+    std::vector<ThermalStore> stores=graph.stores;
+    stores.push_back({2e6,24e6});
+    auto contacts=graph.contacts;contacts.push_back({2,1,150});
+    const double before=stores[0].energy+stores[1].energy+stores[2].energy;
+    const auto coupled=solveThermalContacts(stores,contacts,{},3600);
+    ASSERT_TRUE(coupled.error.empty())<<coupled.error;
+    EXPECT_GT(coupled.energy[1]-stores[1].energy,0);
+    EXPECT_LT(coupled.energy[2]-stores[2].energy,0);
+    EXPECT_NEAR(std::accumulate(coupled.energy.begin(),coupled.energy.end(),0.0),before,1e-7);
+    EXPECT_NEAR(coupled.energy[2]-stores[2].energy,-coupled.contact_j.back(),1e-7);
+    EXPECT_NEAR((coupled.energy[0]-stores[0].energy)+(coupled.energy[1]-stores[1].energy),
+                coupled.contact_j.back(),1e-7);
+
+    std::vector<ThermalBoundary> boundary={{0,250,15,0}};
+    const auto dry=solveThermalContacts(graph.stores,graph.contacts,boundary,3600);
+    ASSERT_TRUE(dry.error.empty())<<dry.error;
+    EXPECT_GT(dry.temperature[0],graph.stores[0].energy/graph.stores[0].capacity);
+    EXPECT_GT(dry.temperature[1],graph.stores[1].energy/graph.stores[1].capacity);
+    EXPECT_NEAR(std::accumulate(dry.energy.begin(),dry.energy.end(),0.0)-
+                std::accumulate(graph.stores.begin(),graph.stores.end(),0.0,
+                    [](double x,const ThermalStore& s){return x+s.energy;}),
+                dry.boundary_j[0],1e-7);
+}
+TEST(LidNodes, BottomGroundContactUsesMappedAreaAndBothHalfLayerResistances) {
+    LidNodeState state;
+    state.cells={{.5,1.5,2,2,1,0,0,0,0,0,0,LidNodeLayerKind::Surface,0},
+                 {0,.5,1,2,.45,.2,.2,.08,0,0,0,LidNodeLayerKind::Media,1}};
+    ConductionConfig material;LidNodeThermalGraph graph;
+    ASSERT_TRUE(twoD::buildLidNodeThermalGraph(state,2,4.184e6,material,-5,graph).empty());
+    ThermalContact contact{0,1,7};
+    constexpr double overlap=.1,ground_area=.2,soil_dz=.4,soil_lambda=1.5,interface_resistance=.02;
+    ASSERT_TRUE(twoD::buildLidNodeGroundThermalContact(graph,3,2,overlap,ground_area,
+        soil_dz,soil_lambda,interface_resistance,contact).empty());
+    const double lambda_lid=.2*material.water_conductivity+.8*material.sed_conductivity;
+    const double expected=overlap/(.5*graph.physical_thickness_m.back()/lambda_lid+
+        interface_resistance+.5*soil_dz/soil_lambda);
+    EXPECT_EQ(contact.a,1);EXPECT_EQ(contact.b,2);
+    EXPECT_NEAR(contact.conductance,expected,1e-14);
+
+    auto stores=graph.stores;stores.push_back({3e6,45e6});
+    auto contacts=graph.contacts;contacts.push_back(contact);
+    const double before=std::accumulate(stores.begin(),stores.end(),0.,
+        [](double sum,const ThermalStore& store){return sum+store.energy;});
+    const auto solved=solveThermalContacts(stores,contacts,{},1800);
+    ASSERT_TRUE(solved.error.empty())<<solved.error;
+    EXPECT_NEAR(std::accumulate(solved.energy.begin(),solved.energy.end(),0.),before,1e-7);
+    EXPECT_NEAR(solved.energy[2]-stores[2].energy,solved.contact_j.back(),1e-7);
+    EXPECT_NEAR((solved.energy[0]-stores[0].energy)+(solved.energy[1]-stores[1].energy),
+        -solved.contact_j.back(),1e-7);
+
+    const auto unchanged=contact;
+    EXPECT_FALSE(twoD::buildLidNodeGroundThermalContact(graph,3,2,.201,ground_area,
+        soil_dz,soil_lambda,interface_resistance,contact).empty());
+    EXPECT_EQ(contact.a,unchanged.a);EXPECT_EQ(contact.b,unchanged.b);
+    EXPECT_DOUBLE_EQ(contact.conductance,unchanged.conductance);
+}
+TEST(LidNodes, AcceptedWaterReceiptsCarryProducerTemperatureSensibleEnergy) {
+    LidNodeState state;
+    state.cells={{.5,1.5,2,2,1,0,0,0,0,0,0,LidNodeLayerKind::Surface,0},
+                 {0,.5,1,2,.45,.2,.2,.08,0,0,0,LidNodeLayerKind::Media,1}};
+    ConductionConfig material;LidNodeThermalGraph graph;
+    ASSERT_TRUE(twoD::buildLidNodeThermalGraph(state,2,4.184e6,material,-5,graph).empty());
+    const double before=graph.stores[0].energy+graph.stores[1].energy;
+    const double cp=4.184e6;
+    const double internal=.01*cp*(-5.0); // the surface donor starts at -5 C
+    const double after_internal=graph.stores[1].energy+internal;
+    const double media_water=graph.physical_water_m3[1]+.01;
+    const double media_capacity=media_water*cp+
+        (graph.physical_matrix_bulk_m3[1]-media_water)*graph.physical_matrix_capacity_density[1];
+    const double media_temperature=after_internal/media_capacity;
+    const double external_in=.002*cp*10.0;
+    const double external_out=.003*cp*media_temperature;
+    const std::vector<LidThermalWaterTransfer> transfers={
+        {0,1,.01,0},       // internal LID transfer uses the donor temperature at this packet
+        {-1,0,.002,10},    // prescribed exterior source uses its producer temperature
+        {1,-1,.003,0}};    // later export uses the updated layer temperature and capacity
+    std::vector<double> energy;double external=0;
+    ASSERT_TRUE(twoD::transferLidNodeThermalEnergy(graph,state.cells.size(),cp,
+        transfers,energy,external).empty());
+    ASSERT_EQ(energy.size(),2u);
+    EXPECT_NEAR(energy[0],graph.stores[0].energy-internal+external_in,1e-8);
+    EXPECT_NEAR(energy[1],after_internal-external_out,1e-8);
+    EXPECT_NEAR(external,external_in-external_out,1e-8);
+    EXPECT_NEAR(std::accumulate(energy.begin(),energy.end(),0.0),before+external,1e-8);
+}
+TEST(LidNodes, InvalidAcceptedThermalTransferLeavesOutputsUntouched) {
+    LidNodeState state;state.cells={{0,1,1,1,1,0,0,0,0,0,0,LidNodeLayerKind::Surface,0}};
+    ConductionConfig material;LidNodeThermalGraph graph;
+    ASSERT_TRUE(twoD::buildLidNodeThermalGraph(state,1,4.184e6,material,2,graph).empty());
+    std::vector<double> energy={17};double external=23;
+    const auto error=twoD::transferLidNodeThermalEnergy(graph,1,4.184e6,
+        {{0,1,.001,0}},energy,external);
+    EXPECT_NE(error.find("Invalid accepted LID thermal water transfer"),std::string::npos);
+    EXPECT_EQ(energy,(std::vector<double>{17}));EXPECT_DOUBLE_EQ(external,23);
+}
+TEST(LidNodes, ThermalGraphRefusesUnbookedEnergyWhenSurfaceWaterDisappears) {
+    LidNodeState state;
+    state.cells={{.5,1.5,2,2,1,0,0,0,0,0,0,LidNodeLayerKind::Surface,0},
+                 {0,.5,1,2,.45,.2,.2,.08,0,0,0,LidNodeLayerKind::Media,1}};
+    ConductionConfig material;LidNodeThermalGraph graph;
+    ASSERT_TRUE(twoD::buildLidNodeThermalGraph(state,2,4.184e6,material,4,graph).empty());
+    std::vector<double> energy;for(const auto& store:graph.stores)energy.push_back(store.energy);
+    ASSERT_TRUE(twoD::publishLidNodeThermalEnergy(state,graph,energy).empty());
+    LidNodeThermalGraph dry;
+    EXPECT_NE(twoD::buildLidNodeThermalGraph(state,0,4.184e6,material,4,dry).find(
+        "LID thermal energy remains in a cell with no thermal capacity."),std::string::npos);
+}
+TEST(LidNodes, ThermalGraphRejectsBrokenGeometryWithoutReplacingPublishedGraph) {
+    LidNodeState state;
+    state.cells={{.5,1.5,2,2,1,0,0,0,0,0,0,LidNodeLayerKind::Surface,0},
+                 {-.1,.4,1,2,.45,.2,.2,.08,0,0,0,LidNodeLayerKind::Media,1}};
+    ConductionConfig material;LidNodeThermalGraph graph;
+    graph.cells={42};graph.stores={{10,20}};
+    const auto error=twoD::buildLidNodeThermalGraph(state,2,4.184e6,material,4,graph);
+    EXPECT_NE(error.find("contiguous physical layers"),std::string::npos);
+    ASSERT_EQ(graph.cells.size(),1u);EXPECT_EQ(graph.cells[0],42u);
+    ASSERT_EQ(graph.stores.size(),1u);EXPECT_DOUBLE_EQ(graph.stores[0].energy,20);
+}
+TEST(LidNodes, ThermalPublicationRejectsUnorderedGraphWithoutChangingState) {
+    LidNodeState state;state.cells.resize(2);state.thermal_energy={13,29};
+    LidNodeThermalGraph graph;graph.cells={1,0};graph.stores={{1,13},{1,29}};
+    const auto error=twoD::publishLidNodeThermalEnergy(state,graph,{30,40});
+    EXPECT_NE(error.find("duplicated or out of order"),std::string::npos);
+    EXPECT_EQ(state.thermal_energy,(std::vector<double>{13,29}));
+}
+#endif
 TEST(LidNodes, RejectsDepthMismatchAndDuplicateAssignment) {
     auto c = model();
     c.nodes.full_depth[0] = 4;

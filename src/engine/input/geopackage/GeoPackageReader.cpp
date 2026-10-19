@@ -6,7 +6,9 @@
  */
 
 #include "GeoPackageReader.hpp"
+#ifdef OPENSWMM_HAS_2D
 #include "2d/subsurface/SubsurfaceSections.hpp"
+#endif
 #include <sstream>
 #include "../../core/Constants.hpp"
 #include "ExternalContentReader.hpp"
@@ -2212,6 +2214,9 @@ int read_model(sqlite3* db, SimulationContext& ctx,
             auto row=prepare(db,"SELECT sections FROM surface_ownership_2d_input WHERE simulation_id=?");
             bind_text(row.get(),1,simulation_id);
             if(sqlite3_step(row.get())==SQLITE_ROW){
+#ifndef OPENSWMM_HAS_2D
+                throw GpkgError("Reviewed surface ownership requires a 2D-enabled engine.");
+#else
                 if(!ctx.twod_io.aquifer||!ctx.twod_io.aquifer_nodes||!ctx.twod_io.aquifer_links)
                     throw GpkgError("Reviewed surface ownership requires a 2D-enabled engine.");
                 twoD::SubsurfaceConfig proposed;std::vector<std::string> nodes,links;
@@ -2223,6 +2228,7 @@ int read_model(sqlite3* db, SimulationContext& ctx,
                     else body.push_back(line);
                 }
                 flush();*ctx.twod_io.aquifer=std::move(proposed);*ctx.twod_io.aquifer_nodes=std::move(nodes);*ctx.twod_io.aquifer_links=std::move(links);
+#endif
             }
         }
 
@@ -2231,7 +2237,8 @@ int read_model(sqlite3* db, SimulationContext& ctx,
         // was provided (callers that only need model definition).
         read_external_content(db, ctx, simulation_id, scratch_dir);
         return 0;
-    } catch (const std::exception&) {
+    } catch (const std::exception& error) {
+        ctx.errors.push_back(error.what());
         return -1;
     }
 }

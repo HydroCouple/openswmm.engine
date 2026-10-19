@@ -54,8 +54,10 @@
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/gw/GwTransportSections.hpp"   // U4
 #include "../2d/subsurface/SubsurfaceSections.hpp"   // G1
+#include "../2d/heat/LidNodeHeat.hpp"
 #endif
 #include "../transport/components/HeatFluxModules/HeatOverrides.hpp"  // PE2
+#include "../transport/components/HeatFluxModules/BedExchange.hpp"
 #include "../transport/components/HeatFluxModules/SurfaceExchange.hpp" // dew point -> RH
 #include "../plugins/DefaultInputPlugin.hpp"
 #include "../plugins/ProcessComponentRegistry.hpp"
@@ -153,6 +155,7 @@ void SWMMEngine::wire2DModelIO() noexcept {
     ctx_.twod_io.pending_bc = &surface_router_.pendingBCRows();
     ctx_.twod_io.pending_ec = &surface_router_.pendingEdgeConveyanceRows();
     ctx_.twod_io.pending_iq = &surface_router_.pendingInitialQualityRows();
+    ctx_.twod_io.pending_ibq = &surface_router_.pendingInitialBedQualityRows();
     ctx_.twod_io.pending_bq = &surface_router_.pendingBoundaryQualityRows();
     ctx_.twod_io.infil      = &surface_router_.infil();
     ctx_.twod_io.gw         = &surface_router_.gwTransport();   // U4
@@ -251,6 +254,7 @@ int SWMMEngine::open(const char* inp_path,
                                  surface_router_.pendingBCRows(),
                                  surface_router_.pendingEdgeConveyanceRows(),
                                  surface_router_.pendingInitialQualityRows(),
+                                 surface_router_.pendingInitialBedQualityRows(),
                                  surface_router_.pendingBoundaryQualityRows(),
                                  dip->registry());
         // U4 (2026-09-07): the [GW_*] subsurface-transport authoring
@@ -304,6 +308,7 @@ int SWMMEngine::open(const char* inp_path,
                 &surface_router_.infil(),
                 mf, base_dir, &ctx_.warnings,
                 &surface_router_.pendingInitialQualityRows(),
+                &surface_router_.pendingInitialBedQualityRows(),
                 &surface_router_.pendingBoundaryQualityRows());
             if (!err.empty()) {
                 if (lenient_open_ && !metadata_only_) {
@@ -740,6 +745,81 @@ int SWMMEngine::open(const char* inp_path,
         runoff::RunoffSolver* runoff_ptr = &runoff_;
         groundwater::GWSolver* gw_ptr    = &groundwater_;
 
+        ctx_.state_accessors.get_channel_thermal_regions = [this]() {
+            if(ctx_.options.quality_solver==QualitySolverKind::EULERIAN_ARD&&ard_.initialized())return ard_.thermalRegions();
+            if(ctx_.options.quality_solver==QualitySolverKind::LAGRANGIAN&&lard_.initialized())return lard_.thermalRegions(ctx_);
+            std::vector<ChannelThermalRegion> out;
+            if(!ctx_.options.heat_transport)return out;
+            for(int link=0;link<ctx_.n_links();++link)
+                if(std::size_t(link)<ctx_.heat_state.link_temp.size()&&ctx_.links.volume[link]>0)
+                {
+                    out.push_back({link,0,0,1,ctx_.links.volume[link]*.028316846592,ctx_.heat_state.link_temp[link]});
+                    transport::heat::fillChannelThermalGeometry(ctx_,out.back());
+                }
+            return out;
+        };
+        ctx_.state_accessors.apply_channel_thermal_increments = [this](const std::vector<ChannelThermalIncrement>& updates)->std::string {
+            if(ctx_.options.quality_solver==QualitySolverKind::EULERIAN_ARD&&ard_.initialized())return ard_.applyThermalIncrements(ctx_,updates);
+            if(ctx_.options.quality_solver==QualitySolverKind::LAGRANGIAN&&lard_.initialized())return lard_.applyThermalIncrements(ctx_,updates);
+            for(const auto& u:updates)
+                if(u.link<0||std::size_t(u.link)>=ctx_.heat_state.link_temp.size()||u.region!=0||!std::isfinite(u.celsius)||
+                   !std::isfinite(ctx_.heat_state.link_temp[u.link]+u.celsius))return "Legacy thermal increment has an invalid channel region.";
+            for(const auto& u:updates)ctx_.heat_state.link_temp[u.link]+=u.celsius;
+            return {};
+        };
+        ctx_.state_accessors.get_channel_species_regions = [this]() {
+            if(ctx_.options.quality_solver==QualitySolverKind::EULERIAN_ARD&&ard_.initialized())return ard_.speciesRegions(ctx_);
+            if(ctx_.options.quality_solver==QualitySolverKind::LAGRANGIAN&&lard_.initialized())return lard_.speciesRegions(ctx_);
+            std::vector<ChannelSpeciesRegion> out;
+            if(!ctx_.options.heat_transport)return out;
+            const int np=ctx_.n_pollutants(),age=ctx_.options.water_age?np:-1,temp=np+(age>=0?1:0);
+            for(const auto& thermal:ctx_.state_accessors.get_channel_thermal_regions()) {
+                ChannelSpeciesRegion region;region.link=thermal.link;region.region=thermal.region;
+                region.begin=thermal.begin;region.end=thermal.end;region.volume=thermal.volume;
+                region.concentration.assign(temp+1,0);
+                for(int p=0;p<np;++p)region.row_names.push_back(ctx_.pollutant_names.name_of(p));
+                if(age>=0)region.row_names.emplace_back("__WATER_AGE__");
+                region.row_names.emplace_back("__TEMPERATURE__");
+                for(int p=0;p<np;++p) {
+                    const auto k=std::size_t(thermal.link)*np+p;
+                    if(k<ctx_.links.conc.size())region.concentration[p]=ctx_.links.conc[k];
+                }
+                if(age>=0&&std::size_t(thermal.link)<ctx_.water_age_state.link_age.size())
+                    region.concentration[age]=ctx_.water_age_state.link_age[thermal.link];
+                if(std::size_t(thermal.link)<ctx_.heat_state.link_temp.size())
+                    region.concentration[temp]=ctx_.heat_state.link_temp[thermal.link];
+                out.push_back(std::move(region));
+            }
+            return out;
+        };
+        ctx_.state_accessors.apply_channel_species_increments = [this](const std::vector<ChannelSpeciesIncrement>& updates)->std::string {
+            if(ctx_.options.quality_solver==QualitySolverKind::EULERIAN_ARD&&ard_.initialized())return ard_.applySpeciesIncrements(ctx_,updates);
+            if(ctx_.options.quality_solver==QualitySolverKind::LAGRANGIAN&&lard_.initialized())return lard_.applySpeciesIncrements(ctx_,updates);
+            const int np=ctx_.n_pollutants(),age=ctx_.options.water_age?np:-1,temp=np+(age>=0?1:0),ns=temp+1;
+            for(const auto& u:updates) {
+                if(u.link<0||u.link>=ctx_.n_links()||u.region!=0||u.concentration_delta.size()!=std::size_t(ns))
+                    return "Legacy species increment has an invalid channel region or row count.";
+                if(u.concentration_delta[temp]!=0)return "Legacy species update cannot modify the temperature row.";
+                for(int p=0;p<np;++p) {
+                    const auto k=std::size_t(u.link)*np+p;
+                    if(!std::isfinite(u.concentration_delta[p])||k>=ctx_.links.conc.size()||
+                       !std::isfinite(ctx_.links.conc[k]+u.concentration_delta[p])||ctx_.links.conc[k]+u.concentration_delta[p]<0)
+                        return "Legacy species increment is invalid or makes a pollutant mass negative.";
+                }
+                if(age>=0) {
+                    if(std::size_t(u.link)>=ctx_.water_age_state.link_age.size()||!std::isfinite(u.concentration_delta[age])||
+                       !std::isfinite(ctx_.water_age_state.link_age[u.link]+u.concentration_delta[age])||
+                       ctx_.water_age_state.link_age[u.link]+u.concentration_delta[age]<0)
+                        return "Legacy water-age increment is invalid.";
+                }
+            }
+            for(const auto& u:updates) {
+                for(int p=0;p<np;++p)ctx_.links.conc[std::size_t(u.link)*np+p]+=u.concentration_delta[p];
+                if(age>=0)ctx_.water_age_state.link_age[u.link]+=u.concentration_delta[age];
+            }
+            return {};
+        };
+
         ctx_.state_accessors.get_snow_state = [this]() {
 #ifdef OPENSWMM_HAS_2D
             const auto* mesh=surface_router_.isActive()?&surface_router_.state().snow:nullptr;
@@ -838,6 +918,15 @@ int SWMMEngine::initialize() noexcept {
                   "swmm_engine_initialize: must call open() first");
         return SWMM_ERR_WRONG_STATE;
     }
+
+#ifndef OPENSWMM_HAS_2D
+    if(ctx_.options.heat_transport&&ctx_.heat_config.sediment_exchange)
+        for(int link=0;link<ctx_.n_links();++link)
+            if(transport::heat::sedimentFor(ctx_,HeatElement::link(link)).mesh_ground) {
+                set_error(CFFI_ERR_BADPARAM,"MESH_CONTACTS channel heat requires an engine with 2D routing support.");
+                return CFFI_ERR_BADPARAM;
+            }
+#endif
 
     // Everything from here to init_modules() is the "state seeding" phase —
     // per-node/per-link loops over ctx_. Closed out just before init_modules(),
@@ -1187,12 +1276,6 @@ int SWMMEngine::initialize() noexcept {
     // DW solver seeds area_mid_ from the hot-started link depths, and before the
     // old_net_inflow seeding below (which reads the hot-started link flows).
     bool hotstart_loaded = false;
-    // The file's own stamp picks the reader: legacy EPA SWMM5 `.hsf` routing
-    // state, or native OPENSWMM_HS_V1. A native file in a model with node
-    // LIDs is applied here, as before. In any other model it is applied at
-    // the end of initialize() instead — where swmm_hotstart_apply() runs —
-    // because the 2D router and aquifer do not exist until init_modules(),
-    // and an apply now would skip their blocks without a word.
     const std::string& hs_path =
         !ctx_.files.hotstart_use_path.absolute.empty()
             ? ctx_.files.hotstart_use_path.absolute
@@ -1202,20 +1285,29 @@ int SWMMEngine::initialize() noexcept {
     const bool hs_native = !ctx_.files.hotstart_use_path.empty()
                            && HotStartManager::is_native_file(hs_path);
     std::unique_ptr<HotStartFile> deferred_hotstart;
-    hotstart_deferred_ = hs_native && !lid_restart;
-    if (hotstart_deferred_) {
-        deferred_hotstart.reset(HotStartManager::open(hs_path));
-        if (!deferred_hotstart) {
-            set_error(CFFI_ERR_HOTSTART,
-                      ("USE HOTSTART: " + HotStartManager::last_io_error()).c_str());
-            return CFFI_ERR_HOTSTART;
-        }
-    }
-    if (!ctx_.files.hotstart_use_path.empty() && !deferred_hotstart) {
+    bool full_engine_restore = false;
+    hotstart_deferred_ = false;
+    if (!ctx_.files.hotstart_use_path.empty()) {
         int rc = 0;
         if (hs_native) {
             std::unique_ptr<HotStartFile> hs(HotStartManager::open(hs_path));
-            rc = hs ? HotStartManager::apply(*hs, ctx_, [this](const std::string& m) { ctx_.warnings.push_back(m); }) : 1;
+            if (!hs) {
+                rc = 1;
+            } else if (!hs->engine_checkpoint.empty()) {
+                if (!pending_hotstart_checkpoint_.empty()) {
+                    set_error(CFFI_ERR_HOTSTART,
+                              "USE HOTSTART: more than one full engine checkpoint was supplied");
+                    return CFFI_ERR_HOTSTART;
+                }
+                pending_hotstart_checkpoint_ = hs->engine_checkpoint;
+                full_engine_restore = true;
+            } else if (!lid_restart) {
+                deferred_hotstart = std::move(hs);
+                hotstart_deferred_ = true;
+            } else {
+                rc = HotStartManager::apply(*hs, ctx_,
+                    [this](const std::string& m) { ctx_.warnings.push_back(m); });
+            }
         } else {
             if (lid_restart)
                 ctx_.warnings.push_back("USE HOTSTART: '" + hs_path +
@@ -1233,7 +1325,8 @@ int SWMMEngine::initialize() noexcept {
                       ("USE HOTSTART: " + HotStartManager::last_io_error()).c_str());
             return CFFI_ERR_HOTSTART;
         }
-        hotstart_loaded = true;
+        hotstart_loaded = !deferred_hotstart;
+        if (!full_engine_restore && !deferred_hotstart) {
         // Recompute derived state from the applied depths/flows so continuity,
         // the area_mid_ seeding in init_modules(), and the old_net_inflow seeding
         // below all start from the hot-started state (legacy initNodes / initLinks).
@@ -1266,8 +1359,8 @@ int SWMMEngine::initialize() noexcept {
                 ctx_.links.old_volume[uj] = vol;
             }
         }
+        }
     }
-
     // Initialize output timer + legacy-parity ms clocks
     ctx_.current_date        = ctx_.options.start_date;
     ctx_.current_time        = 0.0;
@@ -1614,6 +1707,24 @@ int SWMMEngine::start(int save_results) noexcept {
     hotstart_save_done_.assign(ctx_.files.hotstart_saves.size(), 0);
 
     ctx_.state = EngineState::RUNNING;
+    const bool wants_native_hotstart=!pending_hotstart_checkpoint_.empty() ||
+        (ctx_.options.heat_transport && !ctx_.files.hotstart_saves.empty());
+    if(wants_native_hotstart) {
+        hotstart_checkpoint_error_=prepareNativeHotstartCheckpointing();
+        if(!hotstart_checkpoint_error_.empty()) {
+            if(!pending_hotstart_checkpoint_.empty()) {
+                set_error(CFFI_ERR_HOTSTART,hotstart_checkpoint_error_.c_str());
+                return CFFI_ERR_HOTSTART;
+            }
+        } else if(!pending_hotstart_checkpoint_.empty()) {
+            auto snapshot=std::move(pending_hotstart_checkpoint_);
+            const auto error=loadCheckpointBytes(std::move(snapshot));
+            if(!error.empty()) {
+                set_error(CFFI_ERR_HOTSTART,error.c_str());
+                return CFFI_ERR_HOTSTART;
+            }
+        }
+    }
     return SWMM_OK;
 }
 
@@ -7286,6 +7397,271 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
             snap.gw2d_bed_exchange_cum.clear(); snap.gw2d_node_names = nullptr;
         }
     }
+
+    // P9: copy the canonical thermal owners into the immutable output
+    // snapshot. Reports use the accepted, cumulative joule receipts already
+    // maintained by the mesh/aquifer kernels; no flux is reconstructed from
+    // report-time temperatures.
+    {
+        const std::size_t n = static_cast<std::size_t>(msh.n_cells());
+        const double missing = std::numeric_limits<double>::quiet_NaN();
+        const auto& heat = st.heat;
+        const auto& transport = st.transport;
+        snap.thermal2d_active = heat.enabled || surface_router_.subsurface().heat().active() ||
+                                transport.temp_row >= 0;
+
+        if (transport.temp_row >= 0 && transport.n_cells == static_cast<int>(n)) {
+            snap.thermal2d_water_temperature.assign(n, missing);
+            for (std::size_t i = 0; i < n; ++i) {
+                const double volume = i < st.volume.size() ? st.volume[i] : 0.0;
+                if (volume > 0.0) {
+                    const auto k = transport.idx(transport.temp_row, static_cast<int>(i));
+                    if (k < transport.cell_mass.size())
+                        snap.thermal2d_water_temperature[i] = transport.cell_mass[k] / volume;
+                } else if (heat.enabled && i < heat.reported_temperature.size()) {
+                    snap.thermal2d_water_temperature[i] = heat.reported_temperature[i];
+                }
+            }
+        } else {
+            snap.thermal2d_water_temperature.clear();
+        }
+
+        if (heat.enabled) {
+            if (heat.bed && heat.bed_energy.size() == n && heat.bed_capacity.size() == n) {
+                snap.thermal2d_bed_energy = heat.bed_energy;
+                snap.thermal2d_bed_capacity = heat.bed_capacity;
+                snap.thermal2d_bed_temperature.assign(n, missing);
+                for (std::size_t i = 0; i < n; ++i)
+                    if (heat.bed_capacity[i] > 0.0)
+                        snap.thermal2d_bed_temperature[i] = heat.bed_energy[i] / heat.bed_capacity[i];
+            } else {
+                snap.thermal2d_bed_energy.clear();
+                snap.thermal2d_bed_capacity.clear();
+                snap.thermal2d_bed_temperature.clear();
+            }
+            snap.thermal2d_bed_initial_energy = heat.bed && !heat.ground_column &&
+                heat.initial_bed_energy.size() == n
+                    ? heat.initial_bed_energy : std::vector<double>{};
+            snap.thermal2d_bed_species_count = 0;
+            snap.thermal2d_bed_species_names.clear();
+            snap.thermal2d_bed_species_units.clear();
+            snap.thermal2d_bed_pore_volume.clear();
+            snap.thermal2d_bed_species_concentration.clear();
+            snap.thermal2d_bed_species_initial_amount.clear();
+            snap.thermal2d_bed_species_exchange.clear();
+            snap.thermal2d_bed_age_generation.clear();
+            if (heat.bed && !heat.ground_column && heat.bed_pore_volume.size() == n) {
+                snap.thermal2d_bed_pore_volume.assign(n, missing);
+                for (std::size_t cell = 0; cell < n; ++cell)
+                    if (std::isfinite(heat.bed_pore_volume[cell]) && heat.bed_pore_volume[cell] >= 0.0)
+                        snap.thermal2d_bed_pore_volume[cell] = heat.bed_pore_volume[cell];
+            }
+            if (heat.bed && !heat.ground_column && heat.bed_species > 0 &&
+                heat.bed_pore_volume.size() == n &&
+                heat.bed_carried_mass.size() == n * static_cast<std::size_t>(heat.bed_species) &&
+                heat.bed_initial_mass.size() == heat.bed_carried_mass.size() &&
+                heat.bed_exchange_mass.size() == heat.bed_carried_mass.size() &&
+                transport.row_names.size() == static_cast<std::size_t>(heat.bed_species)) {
+                std::vector<int> bed_rows;
+                bed_rows.reserve(static_cast<std::size_t>(heat.bed_species));
+                for (int row = 0; row < heat.bed_species; ++row) {
+                    if (row == heat.bed_temp_row) continue;
+                    bed_rows.push_back(row);
+                    snap.thermal2d_bed_species_names.push_back(transport.row_names[static_cast<std::size_t>(row)]);
+                    snap.thermal2d_bed_species_units.push_back(
+                        static_cast<std::size_t>(row) < surface_species_units_.size()
+                            ? surface_species_units_[static_cast<std::size_t>(row)] : std::string{"1"});
+                }
+                snap.thermal2d_bed_species_count = static_cast<int>(bed_rows.size());
+                snap.thermal2d_bed_species_concentration.assign(bed_rows.size() * n, missing);
+                snap.thermal2d_bed_species_initial_amount.assign(bed_rows.size() * n, missing);
+                snap.thermal2d_bed_species_exchange.assign(bed_rows.size() * n, missing);
+                if (heat.bed_age_row >= 0 && heat.bed_age_row < heat.bed_species)
+                    snap.thermal2d_bed_age_generation.assign(n, missing);
+                for (std::size_t cell = 0; cell < n; ++cell) {
+                    const double pore_volume = heat.bed_pore_volume[cell];
+                    if (!(pore_volume > 0.0) || !std::isfinite(pore_volume)) continue;
+                    snap.thermal2d_bed_pore_volume[cell] = pore_volume;
+                    for (std::size_t out_row = 0; out_row < bed_rows.size(); ++out_row) {
+                        const int row = bed_rows[out_row];
+                        const auto source = static_cast<std::size_t>(row) * n + cell;
+                        const double scale = row == heat.bed_age_row ? 1.0 / 3600.0 : 1.0;
+                        snap.thermal2d_bed_species_concentration[out_row * n + cell] =
+                            scale * heat.bed_carried_mass[source] / pore_volume;
+                        snap.thermal2d_bed_species_initial_amount[out_row * n + cell] =
+                            scale * heat.bed_initial_mass[source];
+                        snap.thermal2d_bed_species_exchange[out_row * n + cell] =
+                            scale * heat.bed_exchange_mass[source];
+                    }
+                    if (!snap.thermal2d_bed_age_generation.empty())
+                        snap.thermal2d_bed_age_generation[cell] = heat.bed_generated_age[cell] / 3600.0;
+                }
+            }
+            snap.thermal2d_surface_budget.assign(n * 6, 0.0);
+            const std::vector<double>* terms[] = {&heat.radiative_j, &heat.sensible_j,
+                &heat.latent_j, &heat.ground_j, &heat.water_bed_j, &heat.water_j};
+            for (std::size_t term = 0; term < 6; ++term)
+                if (terms[term]->size() == n)
+                    for (std::size_t i = 0; i < n; ++i)
+                        snap.thermal2d_surface_budget[i * 6 + term] = (*terms[term])[i];
+            snap.thermal2d_evaporation_m3 = heat.evaporated_m3.size() == n
+                ? heat.evaporated_m3 : std::vector<double>{};
+        } else {
+            snap.thermal2d_bed_energy.clear();
+            snap.thermal2d_bed_capacity.clear();
+            snap.thermal2d_bed_temperature.clear();
+            snap.thermal2d_bed_initial_energy.clear();
+            snap.thermal2d_bed_species_count = 0;
+            snap.thermal2d_bed_species_names.clear();
+            snap.thermal2d_bed_species_units.clear();
+            snap.thermal2d_bed_pore_volume.clear();
+            snap.thermal2d_bed_species_concentration.clear();
+            snap.thermal2d_bed_species_initial_amount.clear();
+            snap.thermal2d_bed_species_exchange.clear();
+            snap.thermal2d_bed_age_generation.clear();
+            snap.thermal2d_surface_budget.clear();
+            snap.thermal2d_evaporation_m3.clear();
+        }
+
+        const auto& aquifer_heat = surface_router_.subsurface().heat();
+        std::vector<const twoD::GroundThermalCell*> cells(n, nullptr);
+        std::vector<const twoD::GroundHeatState*> owners(n, nullptr);
+        std::vector<const twoD::PorousHeatColumn*> columns(n, nullptr);
+        int layers = 0;
+        for (std::size_t i = 0; i < n; ++i) {
+            const twoD::GroundHeatState* owner = nullptr;
+            if (heat.ground_column) {
+                if (i < heat.aquifer_owned.size() && heat.aquifer_owned[i] && heat.aquifer_ground)
+                    owner = heat.aquifer_ground;
+                else
+                    owner = &heat.standalone_ground;
+            } else if (aquifer_heat.active()) {
+                owner = &aquifer_heat;
+            }
+            if (!owner || i >= owner->cells.size() || owner->cells[i].column.energy.empty()) continue;
+            owners[i] = owner;
+            cells[i] = &owner->cells[i];
+            columns[i] = &owner->cells[i].column;
+            layers = std::max(layers, static_cast<int>(columns[i]->energy.size()));
+        }
+        if (layers > 0) {
+            snap.thermal2d_layer_count = layers;
+            snap.thermal2d_ground_temperature.assign(n, missing);
+            snap.thermal2d_ground_energy.assign(n, missing);
+            snap.thermal2d_ground_capacity.assign(n, missing);
+            const auto layer_size = static_cast<std::size_t>(layers) * n;
+            snap.thermal2d_ground_layer_center_m.assign(layer_size, missing);
+            snap.thermal2d_ground_layer_temperature.assign(layer_size, missing);
+            snap.thermal2d_ground_layer_energy.assign(layer_size, missing);
+            snap.thermal2d_ground_layer_capacity.assign(layer_size, missing);
+            snap.thermal2d_ground_budget.assign(n * 12, missing);
+            for (std::size_t i = 0; i < n; ++i) {
+                if (!cells[i]) continue;
+                const auto& cell = *cells[i];
+                const auto& column = *columns[i];
+                double total_energy = 0.0, total_capacity = 0.0;
+                for (std::size_t j = 0; j < column.energy.size(); ++j) {
+                    const auto k = j * n + i;
+                    const double capacity = owners[i]->activeCapacity(static_cast<int>(i), j);
+                    snap.thermal2d_ground_layer_center_m[k] =
+                        0.5 * (column.depth_edges[j + 1] + column.depth_edges[j]);
+                    snap.thermal2d_ground_layer_energy[k] = column.energy[j];
+                    snap.thermal2d_ground_layer_capacity[k] = capacity;
+                    snap.thermal2d_ground_layer_temperature[k] = column.energy[j] / capacity;
+                    total_energy += column.energy[j];
+                    total_capacity += capacity;
+                }
+                if (total_capacity > 0.0) {
+                    snap.thermal2d_ground_energy[i] = total_energy;
+                    snap.thermal2d_ground_capacity[i] = total_capacity;
+                    snap.thermal2d_ground_temperature[i] = total_energy / total_capacity;
+                }
+                const double residual = total_energy - cell.initial_j - cell.advective_j -
+                    cell.source_j - cell.surface_j - cell.deep_j - cell.latent_j -
+                    cell.lateral_j - cell.water_contact_j - cell.channel_contact_j;
+                const double pending = surface_router_.subsurface().pendingHeat(static_cast<int>(i));
+                const double values[12] = {cell.initial_j, cell.advective_j, cell.source_j,
+                    cell.surface_j, cell.deep_j, cell.latent_j, cell.lateral_j,
+                    cell.water_contact_j, cell.channel_contact_j, residual, pending, cell.lid_contact_j};
+                std::copy(values, values + 12, snap.thermal2d_ground_budget.begin() +
+                    static_cast<std::ptrdiff_t>(i * 12));
+            }
+        } else {
+            snap.thermal2d_layer_count = 0;
+            snap.thermal2d_ground_temperature.clear();
+            snap.thermal2d_ground_energy.clear();
+            snap.thermal2d_ground_capacity.clear();
+            snap.thermal2d_ground_layer_center_m.clear();
+            snap.thermal2d_ground_layer_temperature.clear();
+            snap.thermal2d_ground_layer_energy.clear();
+            snap.thermal2d_ground_layer_capacity.clear();
+            snap.thermal2d_ground_budget.clear();
+        }
+
+        // Publish the LID-side stores paired with ground_heat_budget's signed
+        // lid_contact_j receipt. Keep the static mapping in the snapshot so
+        // asynchronous output never has to consult mutable simulation state.
+        snap.thermal2d_lid_layer_count = 0;
+        snap.thermal2d_lid_layer_node_index.clear();
+        snap.thermal2d_lid_layer_face_index.clear();
+        snap.thermal2d_lid_layer_physical_index.clear();
+        snap.thermal2d_lid_layer_control_index.clear();
+        snap.thermal2d_lid_layer_authored_index.clear();
+        snap.thermal2d_lid_layer_node_id.clear();
+        snap.thermal2d_lid_layer_top_m.clear();
+        snap.thermal2d_lid_layer_bottom_m.clear();
+        snap.thermal2d_lid_layer_area_m2.clear();
+        snap.thermal2d_lid_layer_temperature.clear();
+        snap.thermal2d_lid_layer_energy.clear();
+        snap.thermal2d_lid_layer_capacity.clear();
+        snap.thermal2d_lid_layer_ground_contact_j.clear();
+        const auto& storage = ctx_.node_subtypes.storages;
+        const double initial_lid_temperature = ctx_.heat_config.global_temp[
+            static_cast<int>(HeatSource::INITIAL_STATE)];
+        for (std::size_t face = 0; face < owners.size(); ++face) {
+            const auto* owner = owners[face];
+            if (!owner || face >= owner->lid_owners.size()) continue;
+            for (const auto& binding : owner->lid_owners[face]) {
+                if (binding.row < 0 || static_cast<std::size_t>(binding.row) >= storage.lid_state.size() ||
+                    static_cast<std::size_t>(binding.row) >= storage.lid.size() ||
+                    binding.node < 0 || binding.node >= ctx_.n_nodes()) continue;
+                const auto& lid = storage.lid_state[static_cast<std::size_t>(binding.row)];
+                twoD::LidNodeThermalGraph graph;
+                if (!twoD::buildLidNodeThermalGraph(lid, 0.0, owner->water_capacity,
+                        ctx_.heat_config.conduction, initial_lid_temperature, graph).empty()) continue;
+                std::vector<double> layer_energy(lid.cells.size(), 0.0);
+                std::vector<double> layer_capacity(lid.cells.size(), 0.0);
+                for (std::size_t k = 0; k < graph.cells.size(); ++k) {
+                    const auto physical = graph.cells[k];
+                    if (physical >= lid.cells.size() || k >= graph.stores.size()) continue;
+                    layer_energy[physical] = graph.stores[k].energy;
+                    layer_capacity[physical] = graph.stores[k].capacity;
+                }
+                for (std::size_t physical = 0; physical < lid.cells.size(); ++physical) {
+                    const auto& cell = lid.cells[physical];
+                    const double capacity = layer_capacity[physical];
+                    const double energy = layer_energy[physical];
+                    if (!std::isfinite(capacity) || !std::isfinite(energy)) continue;
+                    snap.thermal2d_lid_layer_node_index.push_back(binding.node);
+                    snap.thermal2d_lid_layer_face_index.push_back(static_cast<int>(face));
+                    snap.thermal2d_lid_layer_physical_index.push_back(static_cast<int>(physical));
+                    snap.thermal2d_lid_layer_control_index.push_back(storage.lid[static_cast<std::size_t>(binding.row)].control);
+                    snap.thermal2d_lid_layer_authored_index.push_back(cell.layer);
+                    snap.thermal2d_lid_layer_node_id.push_back(ctx_.node_names.name_of(binding.node));
+                    snap.thermal2d_lid_layer_top_m.push_back(cell.top * 0.3048);
+                    snap.thermal2d_lid_layer_bottom_m.push_back(cell.bottom * 0.3048);
+                    snap.thermal2d_lid_layer_area_m2.push_back(graph.physical_area_m2[physical]);
+                    snap.thermal2d_lid_layer_temperature.push_back(capacity > 0.0
+                        ? energy / capacity : missing);
+                    snap.thermal2d_lid_layer_energy.push_back(energy);
+                    snap.thermal2d_lid_layer_capacity.push_back(capacity);
+                    snap.thermal2d_lid_layer_ground_contact_j.push_back(
+                        lid.thermal_ground_contact_j.empty()?0.0:lid.thermal_ground_contact_j[physical]);
+                }
+            }
+        }
+        snap.thermal2d_lid_layer_count = static_cast<int>(snap.thermal2d_lid_layer_energy.size());
+    }
 #else
     (void)snap;
 #endif
@@ -7412,6 +7788,17 @@ int SWMMEngine::end() noexcept {
         return SWMM_ERR_WRONG_STATE;
     }
 
+    // Native thermal hotstarts use the last accepted full engine checkpoint.
+    // Capture before teardown's partial 2D flush so clocks, water and energy
+    // describe the same accepted boundary.
+    if (ctx_.state == EngineState::RUNNING && ctx_.options.heat_transport) {
+        // Save full checkpoints before detaching source histories or finalizing
+        // the surface router. This is the last accepted coupled state.
+        for (const auto& entry : ctx_.files.hotstart_saves) {
+            if (entry.datetime == 0.0) writeHotstartSave(entry);
+        }
+    }
+
 #ifdef OPENSWMM_HAS_2D
     // Histories close at the last accepted engine checkpoint. Teardown may
     // flush a remaining surface batch, outside the accepted-step timeline.
@@ -7510,7 +7897,7 @@ int SWMMEngine::end() noexcept {
     for (std::size_t k = 0; k < ctx_.files.hotstart_saves.size(); ++k) {
         const auto& entry = ctx_.files.hotstart_saves[k];
         if (entry.datetime == 0.0) {
-            writeHotstartSave(entry);
+            if (!ctx_.options.heat_transport) writeHotstartSave(entry);
         } else if (k >= hotstart_save_done_.size() || !hotstart_save_done_[k]) {
             int y = 0, mo = 0, d = 0, h = 0, mi = 0, sec = 0;
             datetime::decodeDate(entry.datetime, y, mo, d);
@@ -7551,10 +7938,31 @@ void SWMMEngine::writeHotstartSave(const HotstartSaveEntry& entry) {
     const bool lid_restart = std::any_of(ctx_.node_subtypes.storages.lid.begin(), ctx_.node_subtypes.storages.lid.end(),
         [](const auto& c) { return c.control >= 0; });
     const bool native = entry.format == HotstartFormat::NATIVE
-        || (entry.format == HotstartFormat::AUTO && lid_restart);
+        || (entry.format == HotstartFormat::AUTO &&
+            (lid_restart || ctx_.options.heat_transport));
     int rc = 0;
     if (native) {
-        std::unique_ptr<HotStartFile> hs(HotStartManager::save(ctx_, sp));
+        std::unique_ptr<HotStartFile> hs;
+        if (ctx_.options.heat_transport) {
+            std::string snapshot;
+            std::string error;
+            if (checkpoint_enabled_) {
+                error = checkpointBytes(snapshot, false);
+            } else {
+                error = hotstart_checkpoint_error_.empty()
+                    ? "full engine checkpointing was not attached at the initial boundary"
+                    : hotstart_checkpoint_error_;
+            }
+            if (!error.empty()) {
+                ctx_.warnings.push_back(
+                    "SAVE HOTSTART: coupled heat state was not saved: " + error);
+                return;
+            }
+            hs.reset(HotStartManager::save_with_engine_checkpoint(
+                ctx_, &runoff_, &groundwater_, sp, snapshot));
+        } else {
+            hs.reset(HotStartManager::save(ctx_, sp));
+        }
         rc = hs ? 0 : 1;
     } else {
         if (lid_restart)
@@ -7647,7 +8055,7 @@ int SWMMEngine::report() noexcept {
             const auto& b=meshSnow.ledgers()[i];total.initial+=b.initial;total.precipitation+=b.precipitation;
             total.raw_precipitation+=b.raw_precipitation;total.liquid+=b.liquid;total.sublimation+=b.sublimation;total.stored+=b.stored;
             if(meshSnow.kind(i)==surface::SnowKind::Ueb) {
-                energy=true;total.initial_energy+=b.initial_energy;total.net_energy+=b.net_energy;
+                energy=true;total.initial_energy+=b.initial_energy;total.net_energy+=b.net_energy;total.geometry_energy+=b.geometry_energy;
                 total.stored_energy+=b.stored_energy;energyResidual+=b.energyResidual();
             }
         }
@@ -7657,7 +8065,8 @@ int SWMMEngine::report() noexcept {
             {"Mesh snow liquid surface input (m3)",total.liquid},{"Mesh snow sublimation (m3)",total.sublimation},
             {"Mesh snow stored water (m3)",total.stored},{"Mesh snow water residual (m3)",total.residual()}});
         if(energy)rows.insert(rows.end(),{{"Mesh UEB initial energy (kJ)",total.initial_energy},
-            {"Mesh UEB net energy input (kJ)",total.net_energy},{"Mesh UEB stored energy (kJ)",total.stored_energy},
+            {"Mesh UEB net energy input (kJ)",total.net_energy},{"Mesh UEB depletion remapping (kJ)",total.geometry_energy},
+            {"Mesh UEB stored energy (kJ)",total.stored_energy},
             {"Mesh UEB energy residual (kJ)",energyResidual}});
     }
 #endif
@@ -7680,6 +8089,8 @@ int SWMMEngine::close() noexcept {
     checkpoint_output_ = false;
     binary_output_plugin_ = nullptr;
     checkpoint_model_.clear();
+    pending_hotstart_checkpoint_.clear();
+    hotstart_checkpoint_error_.clear();
 #ifdef OPENSWMM_HAS_2D
     checkpoint_surface_output_ = false;
     runtime_water_driver_ = nullptr;
@@ -8242,6 +8653,10 @@ void SWMMEngine::init_modules() noexcept {
         hotstart_species_ = LegacySpeciesTrailer{};
     }
     { perf::ScopedTimer _pt(perf::sec_init_geometry);   initGeometry();   }
+#ifdef OPENSWMM_HAS_2D
+    try {surface_router_.initializeChannelGround(ctx_);}
+    catch(const std::exception& e){ctx_.errors.push_back(std::string("Channel ground heat initialization failed: ")+e.what());set_error(CFFI_ERR_BADPARAM,ctx_.errors.back().c_str());}
+#endif
     initMassBalance();
 
     // Allocate forcing arrays to match object counts

@@ -262,13 +262,16 @@ SWMM_ENGINE_API int swmm_hotstart_saves_clear(SWMM_Engine engine);
  * @details Captures the full hydraulic state (node depths, heads, volumes;
  *          link flows, depths; subcatchment runoff and groundwater depths;
  *          user flag values) and writes it to the OPENSWMM_HS_V1 binary format.
+ *          When a qualified thermal engine checkpoint is attached, the file
+ *          uses V15 and includes the complete accepted 1D/2D state.
  *
  * @param engine  Engine handle (must be in SWMM_STATE_STARTED or SWMM_STATE_RUNNING).
  * @param path    File path for the new hot start file.
  * @returns SWMM_OK on success; SWMM_ERR_HOTSTART or SWMM_ERR_IO on failure.
  *
- * @note The saved file can be applied to a *different* model as long as the
- *       object IDs overlap. Missing objects are handled gracefully.
+ * @note Record-based files can be applied to a *different* model as long as
+ *       object IDs overlap. A V15 full-engine restart requires the matching
+ *       initialized model and is restored when the engine starts.
  */
 SWMM_ENGINE_API int swmm_hotstart_save(SWMM_Engine engine, const char* path);
 
@@ -305,10 +308,13 @@ SWMM_ENGINE_API int swmm_hotstart_open(const char* path, SWMM_HotStart* hs);
  *          that do not exist in the target engine generate warnings (not errors).
  *          Objects in the target engine that are absent from the hot start are
  *          left at their default initial conditions.
+ *          A V15 full-engine checkpoint is queued here and restored atomically
+ *          by the subsequent engine start after its 1D and 2D owners initialize.
  *
  * @param engine  Engine handle (must be in SWMM_STATE_INITIALIZED).
  * @param hs      Hot start handle (from swmm_hotstart_open()).
- * @returns SWMM_OK on success. Missing objects are warnings, not errors.
+ * @returns SWMM_OK on success. Missing objects in record-based files are
+ *          warnings, not errors.
  *
  * @note Warnings are accessible via swmm_hotstart_warning_count() and
  *       swmm_hotstart_warning(). If a warning callback is registered, each

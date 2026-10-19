@@ -363,6 +363,64 @@ struct SimulationSnapshot {
     /// is the parallel name list (null when there are no beds).
     std::vector<double>             gw2d_bed_exchange_cum;
     const std::vector<std::string>* gw2d_node_names = nullptr;
+
+    // P9 thermal result contract. Values are copied from accepted runtime
+    // owners on the simulation thread; energy terms are cumulative signed J.
+    // Missing cells/layers are NaN so a report never fabricates a temperature.
+    bool thermal2d_active = false;
+    int thermal2d_layer_count = 0;
+    int thermal2d_surface_budget_terms = 6;
+    int thermal2d_ground_budget_terms = 12;
+    std::vector<double> thermal2d_water_temperature; ///< degC, face
+    std::vector<double> thermal2d_bed_temperature;   ///< degC, face
+    std::vector<double> thermal2d_bed_energy;        ///< J, face
+    std::vector<double> thermal2d_bed_capacity;      ///< J K-1, face
+    /// Local finite-bed porewater species outputs, species-major [species, face].
+    /// Temperature rows are omitted; age is expressed in hours. A cell without
+    /// a local bed pore volume is NaN in each field.
+    int thermal2d_bed_species_count = 0;
+    std::vector<std::string> thermal2d_bed_species_names;
+    std::vector<std::string> thermal2d_bed_species_units;
+    std::vector<double> thermal2d_bed_pore_volume;
+    std::vector<double> thermal2d_bed_species_concentration;
+    /// Cumulative exchange amount, positive from surface water into the bed,
+    /// in the corresponding reported species unit multiplied by m3.
+    std::vector<double> thermal2d_bed_species_exchange;
+    /// Cumulative local bed age generation in hour m3.
+    std::vector<double> thermal2d_bed_age_generation;
+    /// [face, term]: radiation, sensible, latent, deep boundary, water->bed,
+    /// accepted non-advective water increment. All terms are cumulative J.
+    std::vector<double> thermal2d_surface_budget;
+    std::vector<double> thermal2d_evaporation_m3; ///< cumulative accepted evaporation, face
+    std::vector<double> thermal2d_ground_temperature; ///< capacity-weighted degC, face
+    std::vector<double> thermal2d_ground_energy;      ///< J, face
+    std::vector<double> thermal2d_ground_capacity;    ///< J K-1, face
+    /// [layer, face], fixed-grid depth positive downward.
+    std::vector<double> thermal2d_ground_layer_center_m;
+    std::vector<double> thermal2d_ground_layer_temperature;
+    std::vector<double> thermal2d_ground_layer_energy;
+    std::vector<double> thermal2d_ground_layer_capacity;
+    /// [face, term]: initial, advective, source, surface, deep, latent,
+    /// lateral, water contact, channel contact, residual, pending lateral, LID contact.
+    std::vector<double> thermal2d_ground_budget;
+    /// Mesh-connected Richards LID thermal stores, in stable [lid_layer]
+    /// order. Static arrays describe the node/face/physical LID cell mapping;
+    /// time-varying arrays carry accepted canonical energy and capacity.
+    int thermal2d_lid_layer_count = 0;
+    std::vector<int> thermal2d_lid_layer_node_index;
+    std::vector<int> thermal2d_lid_layer_face_index;
+    std::vector<int> thermal2d_lid_layer_physical_index;
+    std::vector<int> thermal2d_lid_layer_control_index;
+    std::vector<int> thermal2d_lid_layer_authored_index;
+    std::vector<std::string> thermal2d_lid_layer_node_id;
+    std::vector<double> thermal2d_lid_layer_top_m;
+    std::vector<double> thermal2d_lid_layer_bottom_m;
+    std::vector<double> thermal2d_lid_layer_area_m2;
+    std::vector<double> thermal2d_lid_layer_temperature;
+    std::vector<double> thermal2d_lid_layer_energy;
+    std::vector<double> thermal2d_lid_layer_capacity;
+    std::vector<double> thermal2d_lid_layer_ground_contact_j;
+
     std::vector<double> surface_edge_flux;      ///< Normal flux through each edge, flat [tri*3+edge]
     std::vector<double> surface_vert_head;      ///< Reconstructed head at vertices (m) — SOLVER field (dry-cell head = bed)
     std::vector<double> surface_vert_depth;     ///< SIGNED vertex depth η_v − z_v (m) — wet-masked, wetted-contact-gated render reconstruction; > 0 where water reaches the vertex, 0 = no-data sentinel (older engines also emitted negatives on the dry side of partially wet cells — readers stay negative-tolerant)
@@ -392,6 +450,13 @@ struct SimulationSnapshot {
     std::vector<double> gw2d_et_potential;
     std::vector<double> gw2d_et_stress;
     std::vector<double> gw2d_et_refresh;
+
+    // Appended for plugin-ABI compatibility: initial finite local-bed stores.
+    /// Initial local-storage bed sensible energy, constant `[face]` over time.
+    std::vector<double> thermal2d_bed_initial_energy;
+    /// Initial finite bed-porewater amount, species-major `[species, face]`;
+    /// age is converted from seconds to hours, matching the reported species.
+    std::vector<double> thermal2d_bed_species_initial_amount;
 };
 
 } /* namespace openswmm */

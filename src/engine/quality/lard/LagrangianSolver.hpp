@@ -186,6 +186,76 @@ inline SpeciesRowLayout rowLayout(const SimulationContext& ctx) {
 
 class LagrangianSolver {
 public:
+    bool initialized() const noexcept {return initialized_;}
+    std::vector<ChannelThermalRegion> thermalRegions(const SimulationContext& ctx) const {
+        std::vector<ChannelThermalRegion> out;const auto layout=rowLayout(ctx);
+        if(!initialized_||layout.temp_row<0)return out;
+        std::vector<double> mean(layout.ns);
+        for(int link=0;link<ctx.n_links();++link) {
+            const double volume=store_.total_volume(link)*.028316846592;
+            if(!(volume>0))continue;store_.mean_conc(link,mean.data());
+            out.push_back({link,0,0,1,volume,mean[layout.temp_row]});
+            transport::heat::fillChannelThermalGeometry(ctx,out.back());
+        }
+        return out;
+    }
+    std::vector<ChannelSpeciesRegion> speciesRegions(const SimulationContext& ctx) const {
+        std::vector<ChannelSpeciesRegion> out;const auto layout=rowLayout(ctx);
+        if(!initialized_||layout.temp_row<0)return out;
+        std::vector<double> mean(layout.ns);
+        for(int link=0;link<ctx.n_links();++link) {
+            const double volume=store_.total_volume(link)*.028316846592;
+            if(!(volume>0))continue;store_.mean_conc(link,mean.data());
+            ChannelSpeciesRegion region;region.link=link;region.region=0;region.volume=volume;
+            for(int p=0;p<layout.np;++p)region.row_names.push_back(ctx.pollutant_names.name_of(p));
+            if(layout.age_row>=0)region.row_names.emplace_back("__WATER_AGE__");
+            if(layout.temp_row>=0)region.row_names.emplace_back("__TEMPERATURE__");
+            if(layout.msx_first>=0)for(int row=layout.msx_first;row<layout.ns;++row)
+                region.row_names.push_back(ctx.reactions.species_name[std::size_t(row-layout.msx_first)]);
+            region.concentration=mean;out.push_back(std::move(region));
+        }
+        return out;
+    }
+    std::string applySpeciesIncrements(SimulationContext& ctx,const std::vector<ChannelSpeciesIncrement>& updates) {
+        const auto layout=rowLayout(ctx);if(!initialized_||layout.temp_row<0)return "LARD channel species state is unavailable.";
+        for(const auto& u:updates) {
+            if(u.link<0||u.link>=ctx.n_links()||u.region!=0||u.concentration_delta.size()!=std::size_t(layout.ns))
+                return "LARD species increment has an invalid channel region or row count.";
+            if(u.concentration_delta[layout.temp_row]!=0)return "LARD species update cannot modify the temperature row.";
+            std::vector<double> mean(layout.ns);store_.mean_conc(u.link,mean.data());
+            for(int k=0;k<store_.count(u.link);++k)for(int row=0;row<layout.ns;++row) {
+                const double delta=u.concentration_delta[row];
+                const double target=mean[row]+delta;
+                const double next=mean[row]>0?store_.seg_conc(u.link,k,row)*target/mean[row]:target;
+                if(!std::isfinite(delta)||!std::isfinite(next)||(row!=layout.temp_row&&next<0))
+                    return "LARD species increment is nonfinite or makes a carried mass negative.";
+            }
+        }
+        // A channel region is a whole reach in LARD. Apply the finite-contact
+        // change proportionally to its current segment concentrations, which
+        // preserves their pattern and keeps every segment nonnegative. The
+        // scaling also makes an inverse rollback restore the original state.
+        for(const auto& u:updates) {
+            std::vector<double> mean(layout.ns);store_.mean_conc(u.link,mean.data());
+            for(int k=0;k<store_.count(u.link);++k)for(int row=0;row<layout.ns;++row)if(row!=layout.temp_row) {
+                const double target=mean[row]+u.concentration_delta[row];
+                const double next=mean[row]>0?store_.seg_conc(u.link,k,row)*target/mean[row]:target;
+                store_.set_seg_conc(u.link,k,row,next);
+            }
+        }
+        publish(ctx,0);return {};
+    }
+    std::string applyThermalIncrements(SimulationContext& ctx,const std::vector<ChannelThermalIncrement>& updates) {
+        const auto layout=rowLayout(ctx);if(!initialized_||layout.temp_row<0)return "LARD channel thermal state is unavailable.";
+        for(const auto& u:updates) {
+            if(u.link<0||u.link>=ctx.n_links()||u.region!=0||!std::isfinite(u.celsius))return "LARD thermal increment has an invalid channel region.";
+            for(int k=0;k<store_.count(u.link);++k)
+                if(!std::isfinite(store_.seg_conc(u.link,k,layout.temp_row)+u.celsius))return "LARD thermal increment is nonfinite.";
+        }
+        for(const auto& u:updates)for(int k=0;k<store_.count(u.link);++k)
+            store_.set_seg_conc(u.link,k,layout.temp_row,store_.seg_conc(u.link,k,layout.temp_row)+u.celsius);
+        publish(ctx,0);return {};
+    }
     /**
      * @brief One routing step of LTD transport. Lazily initializes on the
      *        first call (needs router-set volumes, the ARD precedent).
@@ -794,6 +864,7 @@ private:
 
         for (int l = 0; l < nl; ++l) {
             const auto ul = static_cast<std::size_t>(l);
+            if(ul<ctx.heat_state.mesh_contact_link.size()&&ctx.heat_state.mesh_contact_link[ul])continue;
             if (ctx.links.type[ul] != LinkType::CONDUIT) continue;
             const int cnt = store_.count(l);
             if (cnt <= 0) continue;

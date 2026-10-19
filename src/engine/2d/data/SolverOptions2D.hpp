@@ -194,7 +194,8 @@ enum Var : unsigned {
     BUILDUP      = 1u << 11, ///< S7: Mesh2_face_buildup (when [2D_COVERAGES] rows resolved)
     GROUNDWATER  = 1u << 12, ///< G-O: Mesh2_face_gw_* per-cell fields, groundwater_ledger, groundwater_node_exchange_cum (when a [2D_AQUIFER] resolved)
     GW_DETAILED  = 1u << 13, ///< G-O: Mesh2_face_gw_theta_sigma [time, layer, face] — m × nFace per step
-    ALL_MASK     = (1u << 14) - 1u,
+    HEAT         = 1u << 14, ///< Thermal temperatures, soil layers, and signed cumulative heat budgets
+    ALL_MASK     = (1u << 15) - 1u,
     /// DEFAULT: everything a user renders or plots; solver diagnostics off.
     DEFAULT_MASK = DEPTH | VELOCITY | EDGE_FLUX | NODE_HEAD | SPECIES |
                    RAINFALL | INFILTRATION | ENVELOPES | BUILDUP | GROUNDWATER,
@@ -210,6 +211,15 @@ enum Var : unsigned {
  * typical urban drainage surface routing problems.
  */
 struct SolverOptions2D {
+    // Explicit opt-in. Unauthored fields are omitted by the writer.
+    bool coupled_heat=false,heat_model_authored=false;
+    int heat_surface=-1,heat_radiative=-1; // AUTO inherits network module
+    bool heat_surface_authored=false,heat_radiative_authored=false;
+    int bed_heat_model=0; // NONE, LOCAL_STORAGE, GROUND_COLUMN
+    bool bed_heat_authored=false;
+    // Derived during initialization: legacy runtime-water conversion stays
+    // 4.186 MJ/(m3 K); opt-in coupled heat uses configured water rho*cp.
+    double water_heat_capacity=4186000.0;
     /// [2D_OPTIONS] MOMENTUM_EQUATION — momentum closure (see Momentum2D).
     Momentum2D momentum = Momentum2D::LOCAL_INERTIAL;
     /// [2D_OPTIONS] FRONT_REBUILD AUTO|YES|NO — rebuild the flux-active set

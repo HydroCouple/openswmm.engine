@@ -187,6 +187,25 @@ TEST_F(GeoPackageMesh2DTest, MeshRoundTripMinimal) {
     EXPECT_EQ(mesh_in_.cell_neighbour(0, 0), -1);
 }
 
+#ifndef OPENSWMM_HAS_2D
+TEST_F(GeoPackageMesh2DTest, ReviewedAquiferSectionsRefuseWithout2DModule) {
+    makeUnitSquareMesh();
+    auto ctx=build_ctx_out();
+    {
+        auto db=create_db();
+        write_model(db.get(),ctx,kSimId);
+        exec(db.get(),"INSERT INTO surface_ownership_2d_input (simulation_id, sections) "
+            "VALUES ('run_1','[2D_AQUIFER_OPTIONS]')");
+    }
+    auto ctx_in=build_ctx_in();
+    auto db=open_database(db_path_,SQLITE_OPEN_READONLY);
+    EXPECT_EQ(read_model(db.get(),ctx_in,kSimId,""),-1);
+    ASSERT_FALSE(ctx_in.errors.empty());
+    EXPECT_NE(ctx_in.errors.back().find("Reviewed surface ownership requires a 2D-enabled engine."),
+              std::string::npos);
+}
+#endif
+
 // ---------------------------------------------------------------------------
 // SolverOptions2D round-trip via the options key-value table
 // ---------------------------------------------------------------------------

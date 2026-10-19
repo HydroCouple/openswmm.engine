@@ -86,6 +86,10 @@ namespace openswmm {
  *          temperature. See `has_ground_temp`.
  */
 struct SedimentConfig {
+    bool mesh_ground=false; ///< Explicit routed-channel finite mesh contact; default prescribed ground.
+    bool ground_source_configured=false; ///< Preserve an explicitly authored PRESCRIBED choice.
+    /// Pore fraction of the new mesh bed; legacy 1D capacity is unchanged.
+    double mesh_porosity = 0.30;
     /// Bed thermal diffusivity alpha_sed, m²/s. `HTSComponent` takes this
     /// per element from a coupled model; 1.0e-6 is the usual saturated-sand
     /// value and is what the reference's own test decks carry.

@@ -61,6 +61,12 @@
  *          EOF-4   4      CRC32 of all preceding bytes: uint32_t
  *          ```
  *
+ *          **V15** keeps the compatible record blocks and appends a complete
+ *          accepted engine-session checkpoint. It is used for qualified
+ *          thermal and 2D restarts so water, clocks, thermal stores, and
+ *          accepted exchange receipts restore together. V15 files restore
+ *          only into the matching initialized model through SWMMEngine.
+ *
  *          ### Threading
  *
  *          `HotStartFile` instances are not thread-safe. The C API wraps each
@@ -166,6 +172,7 @@ struct HotStartHeader {
  */
 struct HotStartFile {
     std::string snow_state; ///< V14: native degree-day and UEB accepted/held states
+    std::string engine_checkpoint; ///< V15: complete accepted engine/2D state for qualified native restarts
     HotStartHeader                    header;
     std::vector<HotStartNodeRecord>   nodes;
     std::vector<HotStartLinkRecord>   links;
@@ -313,6 +320,14 @@ public:
                               const groundwater::GWSolver* gw,
                               const std::string& path);
 
+    /// Capture a qualified full engine-session restart in native V15 format.
+    /// `engine_checkpoint` must come from SWMMEngine's accepted-boundary session snapshot.
+    static HotStartFile* save_with_engine_checkpoint(const SimulationContext& ctx,
+                              const runoff::RunoffSolver* runoff,
+                              const groundwater::GWSolver* gw,
+                              const std::string& path,
+                              const std::string& engine_checkpoint);
+
     // -----------------------------------------------------------------------
     // Open
     // -----------------------------------------------------------------------
@@ -335,7 +350,7 @@ public:
      *          short or legacy (`SWMM5-HOTSTART…`) file returns false.
      *          `[FILES] USE HOTSTART` dispatches on this.
      */
-    static bool is_native_file(const std::string& path);
+    static bool is_native_file(const std::string& path) noexcept;
 
     // -----------------------------------------------------------------------
     // Apply

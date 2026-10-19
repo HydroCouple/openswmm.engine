@@ -321,8 +321,7 @@ std::string SourceWaterDriver::initialize(const SimulationContext& c, const std:
     if (state_) return "Source water driver already initialized; restart/import is not qualified.";
     if (c.current_time != 0.0 || c.elapsed_ms != 0.0)
         return "Source water driver requires simulation-start state; hot starts are not qualified.";
-    if (c.options.water_age ||
-        c.options.heat_transport || c.reactions.n_species() > 0)
+    if (!seeds.empty() && (c.options.water_age || c.options.heat_transport || c.reactions.n_species() > 0))
         return "Source water driver does not yet pair age, heat or MSX.";
     const int np = c.options.ignore_quality ? 0 : c.n_pollutants();
     if (hydraulic_returns && np>0) return "Hydraulic source returns require water-only sources.";

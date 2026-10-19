@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -70,6 +71,31 @@ std::string raw(hid_t object, bool attribute) {
     Handle space{attribute ? H5Aget_space(object) : H5Dget_space(object), H5Sclose};
     const auto n = H5Sget_simple_extent_npoints(space.id); const auto width = H5Tget_size(type.id);
     const auto kind = H5Tget_class(type.id);
+    if (!attribute && kind == H5T_STRING && H5Tis_variable_str(type.id) > 0) {
+        require(n >= 0 && std::size_t(n) <= maxBytes / sizeof(char*),
+                "Oversized mesh string result mapping.");
+        std::vector<char*> values(static_cast<std::size_t>(n), nullptr);
+        struct ReclaimStrings {
+            hid_t type;
+            hid_t space;
+            void* values;
+            ~ReclaimStrings() { H5Dvlen_reclaim(type, space, H5P_DEFAULT, values); }
+        } reclaim{type.id, space.id, values.data()};
+        require(H5Dread(object, type.id, H5S_ALL, H5S_ALL, H5P_DEFAULT, values.data()) >= 0,
+                "Cannot read mesh string result mapping.");
+        std::string result;
+        for (const auto* value : values) {
+            const std::size_t length = value ? std::strlen(value) : 0;
+            const auto prefix = std::to_string(length);
+            require(result.size() <= maxBytes && prefix.size() < maxBytes - result.size() &&
+                    length < maxBytes - result.size() - prefix.size(),
+                    "Oversized mesh string result value.");
+            result += prefix; result.push_back(':');
+            if (length) result.append(value, length);
+            result.push_back('\0');
+        }
+        return result;
+    }
     require(n >= 0 && width > 0 && std::size_t(n) <= maxBytes / width &&
             (kind == H5T_FLOAT || kind == H5T_INTEGER || (attribute && kind == H5T_STRING && !H5Tis_variable_str(type.id))),
             "Unsupported or oversized mesh result value.");
@@ -116,14 +142,20 @@ void visitNumbers(hid_t dataset,const std::function<void(double)>& visit={},cons
     // HDF5 also allocates workspace per selected chunk. Bound the reporting
     // axis as well as numeric values when histories use one chunk per report.
     const auto maximum=shape(dataset,true);
-    if(!maximum.empty()&&maximum[0]==H5S_UNLIMITED)tile[0]=std::min<hsize_t>(tile[0],256);
+    const bool series=!maximum.empty()&&maximum[0]==H5S_UNLIMITED;
+    if(series)tile[0]=std::min<hsize_t>(tile[0],256);
     Handle space{H5Dget_space(dataset),H5Sclose};bool done=false;
     while(!done){auto count=tile;hsize_t n=1;for(std::size_t d=0;d<dims.size();++d){count[d]=std::min(tile[d],dims[d]-at[d]);n*=count[d];}
         if(!dims.empty())require(H5Sselect_hyperslab(space.id,H5S_SELECT_SET,at.data(),nullptr,count.data(),nullptr)>=0,"Cannot select mesh checkpoint block.");
         Handle memory{H5Screate_simple(1,&n,nullptr),H5Sclose};std::vector<double> values(n);
         require(H5Dread(dataset,H5T_NATIVE_DOUBLE,memory.id,space.id,H5P_DEFAULT,values.data())>=0,"Cannot read mesh checkpoint block.");
         for(std::size_t j=0;j<values.size();++j) {
-            const double v=values[j];const auto cell=dims.empty()?0:at.back()+j%count.back();
+            const double v=values[j];
+            std::size_t remainder=j,cell=0;
+            std::vector<hsize_t> coordinate(dims.size());
+            for(std::size_t d=dims.size();d-->0;){coordinate[d]=at[d]+remainder%count[d];remainder/=count[d];}
+            const std::size_t begin=series?1:0;
+            for(std::size_t d=begin;d<dims.size();++d)cell=cell*static_cast<std::size_t>(dims[d])+static_cast<std::size_t>(coordinate[d]);
             const bool unavailable=cell<missing.size()&&missing[cell];
             require(std::isfinite(v)||(unavailable&&std::isnan(v)),"Nonfinite mesh checkpoint result.");if(visit)visit(v);
         }
@@ -158,6 +190,8 @@ struct Default2DOutputPlugin::PreparedCheckpoint {
     hsize_t steps = 0, beds = 0, layers = 0;
     double next_due = -1;
     bool groundwater = false;
+    bool heat = false;
+    hsize_t heat_layers = 0, heat_lid_layers = 0;
     std::shared_ptr<const SourceResultHistory> history;
     std::shared_ptr<io::OwnedCheckpointFile> file_copy;
     ~PreparedCheckpoint() {
@@ -184,6 +218,8 @@ void Default2DOutputPlugin::validateCheckpoint(hid_t file, const SimulationConte
             "Mesh checkpoint groundwater presence differs.");
     if (groundwater) reference.createGroundwaterDatasets(snap);
     if (steps>0) reference.createSnowDatasets(snap);
+    if (steps > 0 && reference.want(report2d::HEAT) && snap.thermal2d_active)
+        reference.createThermalDatasets(snap);
     auto expected = links(reference.file_id_), actual = links(file);
     actual.erase("source_history"); require(actual == expected, "Mesh checkpoint dataset selection differs.");
     attributes(reference.file_id_, file);
@@ -210,7 +246,33 @@ void Default2DOutputPlugin::validateCheckpoint(hid_t file, const SimulationConte
                     (model==0&&(field==7||field==8||field==9||field==11||field>=19)));
             }
         }
-        visitNumbers(b.id,{},missing);
+        const auto markMissing = [&](const std::vector<double>& values) {
+            if (values.empty()) return;
+            missing.resize(values.size());
+            for (std::size_t i = 0; i < values.size(); ++i) missing[i] = std::isnan(values[i]);
+        };
+        if (name == "Mesh2_face_water_temperature") markMissing(snap.thermal2d_water_temperature);
+        else if (name == "Mesh2_face_bed_temperature") markMissing(snap.thermal2d_bed_temperature);
+        else if (name == "Mesh2_face_bed_initial_energy") markMissing(snap.thermal2d_bed_initial_energy);
+        else if (name == "Mesh2_face_bed_porewater_volume") markMissing(snap.thermal2d_bed_pore_volume);
+        else if (name == "Mesh2_face_bed_age_generation") markMissing(snap.thermal2d_bed_age_generation);
+        else if (name == "Mesh2_face_bed_species_conc") markMissing(snap.thermal2d_bed_species_concentration);
+        else if (name == "Mesh2_face_bed_species_initial_amount") markMissing(snap.thermal2d_bed_species_initial_amount);
+        else if (name == "Mesh2_face_bed_species_exchange") markMissing(snap.thermal2d_bed_species_exchange);
+        else if (name == "Mesh2_face_soil_temperature") markMissing(snap.thermal2d_ground_temperature);
+        else if (name == "Mesh2_face_soil_energy") markMissing(snap.thermal2d_ground_energy);
+        else if (name == "Mesh2_face_soil_heat_capacity") markMissing(snap.thermal2d_ground_capacity);
+        else if (name == "Mesh2_face_soil_layer_center_depth") markMissing(snap.thermal2d_ground_layer_center_m);
+        else if (name == "Mesh2_face_soil_layer_temperature") markMissing(snap.thermal2d_ground_layer_temperature);
+        else if (name == "Mesh2_face_soil_layer_energy") markMissing(snap.thermal2d_ground_layer_energy);
+        else if (name == "Mesh2_face_soil_layer_heat_capacity") markMissing(snap.thermal2d_ground_layer_capacity);
+        else if (name == "ground_heat_budget") markMissing(snap.thermal2d_ground_budget);
+        else if (name == "Mesh2_lid_layer_temperature") markMissing(snap.thermal2d_lid_layer_temperature);
+        if (H5Tget_class(bt.id) == H5T_FLOAT || H5Tget_class(bt.id) == H5T_INTEGER)
+            visitNumbers(b.id,{},missing);
+        else
+            require(H5Tget_class(bt.id) == H5T_STRING && !series,
+                    "Unsupported mesh checkpoint dataset type.");
         if (!series && name.find("Mesh2_face_max_") != 0)
             require(raw(a.id, false) == raw(b.id, false), "Mesh checkpoint static geometry or aquifer identity differs.");
     }
@@ -292,6 +354,11 @@ void Default2DOutputPlugin::resolveCheckpointDatasets(PreparedCheckpoint& result
     reference.storage_type_ = storage_type_; reference.compression_ = compression_;
     if (result.groundwater) reference.createGroundwaterDatasets(snap);
     if (result.steps>0) reference.createSnowDatasets(snap);
+    if (result.steps > 0 && reference.want(report2d::HEAT) && snap.thermal2d_active)
+        reference.createThermalDatasets(snap);
+    result.heat = reference.heat_created_;
+    result.heat_layers = reference.n_heat_layers_;
+    result.heat_lid_layers = reference.n_heat_lid_layers_;
     const auto targets = checkpointDatasets(), gw = reference.checkpointDatasets();
     result.datasets.reserve(targets.size());
     for (std::size_t k = 0; k < targets.size(); ++k) {
@@ -346,6 +413,8 @@ void Default2DOutputPlugin::adoptCheckpoint(PreparedCheckpoint& prepared) noexce
     if(prepared.file_copy)prepared.file_copy->retain();
     prepared.staging.clear(); n_steps_ = prepared.steps; next_due_days_ = prepared.next_due;
     gw_created_ = prepared.groundwater; n_gw_beds_ = prepared.beds; n_gw_layers_ = prepared.layers;
+    heat_created_ = prepared.heat; n_heat_layers_ = prepared.heat_layers;
+    n_heat_lid_layers_ = prepared.heat_lid_layers;
     source_written_ = std::move(prepared.history);
     state_ = n_steps_ ? PluginState::UPDATING : PluginState::PREPARED;
 }

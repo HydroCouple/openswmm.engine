@@ -70,6 +70,7 @@
 
 #include "../../../hydraulics/fv/FvKernels.hpp"
 #include "../../../hydraulics/fv/NetworkMeshData.hpp"
+#include "../../../data/ChannelThermalData.hpp"
 
 namespace openswmm {
 struct SimulationContext;
@@ -116,6 +117,10 @@ public:
     /// Total species mass currently held (cells + node stores), one entry per
     /// species — the conservation ledger the unit gates check.
     std::vector<double> totalMass(const SimulationContext& ctx) const;
+    std::vector<ChannelThermalRegion> thermalRegions() const;
+    std::string applyThermalIncrements(SimulationContext&,const std::vector<ChannelThermalIncrement>&);
+    std::vector<ChannelSpeciesRegion> speciesRegions(const SimulationContext&) const;
+    std::string applySpeciesIncrements(SimulationContext&,const std::vector<ChannelSpeciesIncrement>&);
 
 private:
     // Continuity-consistent face fluxes from the link/node fields of the

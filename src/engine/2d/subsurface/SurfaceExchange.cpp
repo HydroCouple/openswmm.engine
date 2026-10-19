@@ -85,15 +85,19 @@ std::string SurfaceExchange::plan(const SubsurfaceSolver& gw, double start, doub
 
 std::string SurfaceExchange::commit(SubsurfaceSolver& gw, const std::vector<SurfaceIntakeActual>& actual, const Capacity* prescribed) {
     if (!planned_ || receiver_ != &gw || actual.size() != awards_.size()) return "No matching source interval to settle.";
-    const int ns = gw.transport().active() ? gw.transport().n_species : 0;
+    const auto& transport=gw.transport();
+    const int ns = transport.active() ? transport.n_species : 0;
     std::map<int, long double> totals;
     std::vector<SurfaceIntakeReceipt> receipts;
     for (std::size_t j = 0; j < actual.size(); ++j) {
         const auto& x = actual[j]; const auto& a = awards_[j];
         if (!nonnegative(x.volume) || x.volume > a.maximum || int(x.mass.size()) != ns)
             return "Actual source transfer exceeds its award or has incompatible species.";
-        for (const double m : x.mass) if (!nonnegative(m) || (x.volume == 0 && m != 0))
-            return "Source water and constituent mass must be paired.";
+        for (int s=0;s<ns;++s) {
+            const double mass=x.mass[static_cast<std::size_t>(s)];
+            if(!std::isfinite(mass) || (s!=transport.temp_row && mass<0) || (x.volume==0 && mass!=0))
+                return "Source water and constituent mass must be paired.";
+        }
         const double capacity_volume = prescribed ? (*prescribed)(a.request,end_-start_) :
             gw.sourceInfiltrationCapacity(a.request.cell,a.request.pond,end_-start_)*a.request.area*(end_-start_);
         if (!nonnegative(capacity_volume) || x.volume > capacity_volume)

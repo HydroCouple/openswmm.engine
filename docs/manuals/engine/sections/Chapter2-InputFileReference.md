@@ -604,10 +604,22 @@ p3    time it takes for a fully saturated soil to dry (days). 
 ### Section: [LID_NODES] {#engine_manual_sect_LID_NODES}
 
 A LID node remains an ordinary storage node. Assign a compatible BC, RG, IT,
-PP, or NODE control using `Node Control InitialSaturationPercent` in
-`[LID_NODES]`. The supported routing formulation is `FLOW_ROUTING DYNWAVE`.
+PP, or NODE control in `[LID_NODES]` using
+`Node Control InitialSaturationPercent [BOTTOM CURRENT|SEALED|MESH_AQUIFER]`.
+Omitting the optional bottom fields selects `CURRENT`. The supported routing
+formulation is `FLOW_ROUTING DYNWAVE`.
 The storage's maximum depth must equal the sum of the physical layer
 thicknesses, converted to the node's length units.
+
+`BOTTOM MESH_AQUIFER` is supported for a NODE control with an enabled
+`[LID_RICHARDS]` profile and a resolved `[2D_AQUIFER_NODE]` bed on the active
+mesh aquifer. Accepted bottom water is exchanged with that groundwater owner.
+When coupled 2D heat and ground-column conduction are enabled, each physical
+LID layer has persistent heat capacity and energy, configured vertical layer
+conduction, and a reciprocal bottom contact with the soil column. The signed
+contact energy is included in the mesh heat results when `HEAT` is selected.
+The `CURRENT` and `SEALED` bottom modes retain their existing non-mesh
+ownership behavior.
 
 A NODE control contains any number of ordered physical layers, written from
 top to bottom. MEDIA and AGGREGATE may repeat without a fixed layer limit.
@@ -2422,6 +2434,15 @@ Groundwater
 | GROUNDWATER | YES / ON / NO / OFF / AUTO | AUTO | Process enable for the integrated 2D subsurface. AUTO runs the kernel when any [2D_AQUIFER_OPTIONS], [2D_AQUIFER] or [2D_AQUIFER_NODE] row was authored; NO keeps the rows and runs without the subsurface; YES with no rows warns. |
 | GW_ET | NONE / CAPILLARY_RISE / BOUNDARY_ET / BOTH | NONE | Alias of the [2D_AQUIFER_OPTIONS] key of the same name. A value spelled here is folded into [2D_AQUIFER_OPTIONS] when the model opens and is never stored in two places. |
 
+Heat
+
+| Keyword | Values | Default | Description |
+|---|---|---|---|
+| HEAT_MODEL | TRANSPORT_ONLY / COUPLED | TRANSPORT_ONLY | COUPLED enables the mesh water/bed energy solver. Both modes require [OPTIONS] HEAT_TRANSPORT and an active temperature row; TRANSPORT_ONLY carries temperature without the coupled mesh energy model. |
+| BED_HEAT_MODEL | NONE / LOCAL_STORAGE / GROUND_COLUMN | NONE | Selects no bed store, a finite local bed store, or a ground column. LOCAL_STORAGE cannot overlap an active aquifer; use GROUND_COLUMN for the shared porous thermal column. |
+| HEAT_SURFACE_EXCHANGE | AUTO / YES / NO | AUTO | AUTO inherits the project heat module's surface exchange setting; YES or NO overrides it for the mesh. |
+| HEAT_RADIATIVE_EXCHANGE | AUTO / YES / NO | AUTO | AUTO inherits the project heat module's radiative exchange setting; YES or NO overrides it for the mesh. |
+
 Transport
 
 | Keyword | Values | Default | Description |
@@ -2440,7 +2461,7 @@ Output
 | OUTPUT_FILE | path (one token; quote a path containing spaces) | none | 2D results file (HDF5, CF/UGRID), resolved relative to the input file's directory. When absent no 2D results file is written. |
 | OUTPUT_PRECISION | FLOAT32 (F32, SINGLE) / FLOAT64 (F64, DOUBLE) | FLOAT32 | Storage type of the time-varying datasets and envelopes of the results file. Mesh geometry always stays float64. |
 | OUTPUT_COMPRESSION | 0 .. 9 | 4 | zlib level of the chunked datasets; the byte-shuffle filter precedes it whenever the level is above 0. 0 is none. |
-| REPORT_2D_VARIABLES | DEFAULT / MINIMAL / ALL / NONE, or any list of DEPTH VELOCITY EDGE_FLUX NODE_HEAD SPECIES RAINFALL INFILTRATION COUPLING GRADIENTS CONTINUITY ENVELOPES BUILDUP GROUNDWATER GW_DETAILED | DEFAULT | Dataset groups written to the results file (space- or comma-separated; presets and tokens may be mixed). DEPTH is always included. DEFAULT is DEPTH VELOCITY EDGE_FLUX NODE_HEAD SPECIES RAINFALL INFILTRATION ENVELOPES BUILDUP GROUNDWATER; MINIMAL is DEPTH NODE_HEAD ENVELOPES. Unselected groups are not created in the file. |
+| REPORT_2D_VARIABLES | DEFAULT / MINIMAL / ALL / NONE, or any list of DEPTH VELOCITY EDGE_FLUX NODE_HEAD SPECIES RAINFALL INFILTRATION COUPLING GRADIENTS CONTINUITY ENVELOPES BUILDUP GROUNDWATER GW_DETAILED HEAT | DEFAULT | Dataset groups written to the results file (space- or comma-separated; presets and tokens may be mixed). DEPTH is always included. DEFAULT is DEPTH VELOCITY EDGE_FLUX NODE_HEAD SPECIES RAINFALL INFILTRATION ENVELOPES BUILDUP GROUNDWATER; MINIMAL is DEPTH NODE_HEAD ENVELOPES. HEAT adds optional water, bed, soil, and mesh-connected LID temperature/energy/capacity fields, static LID-to-node/face/physical-layer mapping, signed cumulative LID/ground contact energy, and cumulative energy-budget fields when thermal owners are active. Contact receipts are positive into the LID layer and equal-and-opposite to the soil-side `lid_contact_j` budget. Zero-capacity LID cells report zero energy/capacity and NaN temperature. Unselected groups are not created in the file. |
 | REPORT_2D_SPECIES | ALL, or a list of species names | ALL | Species rows written to the results file. ALL writes every row the transport layout carries. |
 | REPORT_2D_STEP | HH:MM:SS, HH:MM or seconds | 0 | 2D-only report interval. 0 follows [OPTIONS] REPORT_STEP; otherwise it must be a positive multiple of REPORT_STEP (checked at start). |
 
@@ -2579,7 +2600,7 @@ Parameters:
 Path    absolute path, or a path relative to the directory of the input file. Surrounding double quotes are stripped; an unquoted path containing spaces is rejoined from its tokens.
 
 Remarks:
-Only the first FILE line of the section is read. The conventional extension is `.2dm`, but the file is plain input-file text: any of [2D_OPTIONS], [2D_VERTICES], [2D_TRIANGLES], [2D_QUADS], [2D_INITIAL_VELOCITY], [2D_VERTEX_NODE_MAP], [2D_TRIANGLE_NODE_MAP], [2D_BOUNDARY_CONDITIONS], [2D_EDGE_CONVEYANCE], [2D_INITIAL_QUALITY], [2D_BOUNDARY_QUALITY], [2D_INFILTRATION_OPTIONS], [2D_INFILTRATION_DEFAULTS] and [2D_INFILTRATION], with the same grammar as here. It may not contain [2D_MESH_FILE] itself, and it does not carry the aquifer, coverage, loading, curb-length or [GW_*] sections, which stay in the main file.
+Only the first FILE line of the section is read. The conventional extension is `.2dm`, but the file is plain input-file text: any of [2D_OPTIONS], [2D_VERTICES], [2D_TRIANGLES], [2D_QUADS], [2D_INITIAL_VELOCITY], [2D_VERTEX_NODE_MAP], [2D_TRIANGLE_NODE_MAP], [2D_BOUNDARY_CONDITIONS], [2D_EDGE_CONVEYANCE], [2D_INITIAL_QUALITY], [2D_INITIAL_BED_QUALITY], [2D_BOUNDARY_QUALITY], [2D_INFILTRATION_OPTIONS], [2D_INFILTRATION_DEFAULTS] and [2D_INFILTRATION], with the same grammar as here. It may not contain [2D_MESH_FILE] itself, and it does not carry the aquifer, coverage, loading, curb-length or [GW_*] sections, which stay in the main file.
 
 The external file is parsed after the main file. Per section, the external file wins: a section present in both replaces the inline rows rather than adding to them, and its [2D_OPTIONS] values override inline ones. Its own `;; UNITS:` header is honoured (see [2D_VERTICES]). A missing or unreadable file is fatal when the model is opened for a run.
 
@@ -2809,7 +2830,7 @@ P1 .. P5    the method's positional parameters, laid out exactly as in [2D_INFIL
 Dest    LOST (default), SUBCATCH_AQUIFER or AQUIFER_2D.
 
 Remarks:
-The bare cell-index columns in [2D_INFILTRATION] and [2D_SNOW] are 1-based. The sections that spell CELL as a scope keyword ([2D_INITIAL_QUALITY], [2D_AQUIFER], the quality and [GW_*] sections) are 1-based as well, whereas the TRI columns of [2D_INITIAL_VELOCITY], [2D_BOUNDARY_CONDITIONS] and [2D_BOUNDARY_QUALITY] are 0-based. Only the lower bound is checked at parse; a cell beyond the mesh is reported at initialise. A cell row wins over any tag or `*` row of [2D_INFILTRATION_DEFAULTS].
+The bare cell-index columns in [2D_INFILTRATION] and [2D_SNOW] are 1-based. The sections that spell CELL as a scope keyword ([2D_INITIAL_QUALITY], [2D_INITIAL_BED_QUALITY], [2D_AQUIFER], the quality and [GW_*] sections) are 1-based as well, whereas the TRI columns of [2D_INITIAL_VELOCITY], [2D_BOUNDARY_CONDITIONS] and [2D_BOUNDARY_QUALITY] are 0-based. Only the lower bound is checked at parse; a cell beyond the mesh is reported at initialise. A cell row wins over any tag or `*` row of [2D_INFILTRATION_DEFAULTS].
 
 The section may also be placed in the external mesh file, where it replaces the inline rows.
 
@@ -2835,6 +2856,8 @@ SNOW_STEP  DEFAULT / Step
 
 Remarks:
 [OPTIONS] IGNORE_SNOWMELT YES disables both subcatchment and mesh snow, including when mesh SNOWMELT is YES. Selecting YES does not assign a snowpack. Assign cells through [2D_SNOW_DEFAULTS] or [2D_SNOW]; cells with no resolved pack pass precipitation through without mesh snow processing.
+
+When degree-day mesh snow and 2D ground conduction are both active, the soil column retains its configured top boundary independently of degree-day melt. AIR, FIXED, TIMESERIES, HEAT_FLUX and FLUX_TIMESERIES are soil-side external energy terms; SURFACE_WATER keeps its existing surface-water/soil coupling. Degree-day snow has no energy state, so no combined snow/soil energy closure is reported. For assigned UEB cells with an active 2D ground column, modeled contact replaces the pack's prescribed `QG` over the accepted snow-covered contact area. The contact uses UEB surface temperature and the soil top half-layer plus authored surface resistance; accepted soil joules are applied with the opposite sign to the UEB energy ledger. Cells or area without a modeled UEB contact keep their configured external soil boundary.
 
 This section requires a build with 2D support and has no counterpart in SWMM 5.
 
@@ -3117,6 +3140,33 @@ This section has no counterpart in SWMM 5.
 
 <!-- source: src/engine/2d/input/SectionHandlers2D.cpp:1124-1167 (registration 1213-1216); src/engine/2d/SurfaceRouter2D.cpp:1104-1160 -->
 
+### Section: [2D_INITIAL_BED_QUALITY] {#engine_manual_sect_2D_INITIAL_BED_QUALITY}
+
+Purpose:
+Sets initial pollutant or water-age concentration in the finite porewater of a local 2D mesh bed.
+
+Format:
+```
+*          Species  Conc
+TAG name   Species  Conc
+CELL n     Species  Conc
+```
+
+Parameters:
+name    a cell tag from [2D_TRIANGLES] or [2D_QUADS].
+n    1-based unified cell index.
+Species    name of a carried pollutant or reaction species, or `__WATER_AGE__` when water age is on. `__TEMPERATURE__` is not a bed species; bed temperature is initialized by the heat model.
+Conc    concentration in the species' units, or water age in hours. Must be finite and >= 0.
+
+Remarks:
+The same `*`, then TAG, then CELL precedence applies as in [2D_INITIAL_QUALITY]. The seeded mass is concentration × local-bed pore volume (cell area × bed thickness × porosity), and the seed is saved as the bed's initial mass for exchange accounting. This section requires `HEAT_MODEL COUPLED` and `BED_HEAT_MODEL LOCAL_STORAGE`. Groundwater-owned `GROUND_COLUMN` porewater is initialized through [GW_INITIAL_QUALITY]. Unknown species, unmatched tags, out-of-range cells or an inactive local bed are fatal at initialise.
+
+The section may also be placed in the external mesh file. The mesh bed and hyporheic formulation is in @ref hydraulics_ref_ch9_two_dimensional.
+
+This section has no counterpart in SWMM 5.
+
+<!-- source: src/engine/2d/input/SectionHandlers2D.cpp (2D_INITIAL_BED_QUALITY registration); src/engine/2d/SurfaceRouter2D.cpp (local bed porewater initialization) -->
+
 ### Section: [2D_BOUNDARY_QUALITY] {#engine_manual_sect_2D_BOUNDARY_QUALITY}
 
 Purpose:
@@ -3234,7 +3284,9 @@ CONDUCTION             YES / NO
 SURFACE_THERMAL_BC     AIR
 SURFACE_THERMAL_BC     SURFACE_WATER
 SURFACE_THERMAL_BC     FIXED  Temp
+SURFACE_THERMAL_BC     HEAT_FLUX  Flux
 SURFACE_THERMAL_BC     TIMESERIES  Tseries
+SURFACE_THERMAL_BC     FLUX_TIMESERIES  Tseries
 DEEP_THERMAL_BC        GEOTHERMAL_FLUX  Flux   (DEPTH z)
 DEEP_THERMAL_BC        FIXED_TEMP       Temp   (DEPTH z)
 DEEP_THERMAL_BC        TIMESERIES       Tseries  (DEPTH z)
@@ -3252,7 +3304,7 @@ Parameters:
 | TRANSPORT_TEMPERATURE | YES / ON / NO / OFF | YES | Carry temperature in the aquifer. |
 | DISPERSION | YES / ON / NO / OFF | YES | Activate the dispersivities and molecular diffusivity of [GW_TRANSPORT_PARAMS]. |
 | CONDUCTION | YES / ON / NO / OFF | YES | Activate vertical and lateral heat conduction. |
-| SURFACE_THERMAL_BC | AIR / SURFACE_WATER / FIXED Temp / TIMESERIES Tseries | AIR | Temperature at the top of the column when it is not inundated: the air temperature, the surface water, a fixed value (degrees C) or a [TIMESERIES]. |
+| SURFACE_THERMAL_BC | AIR / SURFACE_WATER / FIXED Temp / HEAT_FLUX Flux / TIMESERIES Tseries / FLUX_TIMESERIES Tseries | AIR | Top condition when the column is not inundated: air or surface-water temperature, a fixed value (degrees C), a heat flux (W/m²), or a temperature/flux [TIMESERIES]. |
 | DEEP_THERMAL_BC | GEOTHERMAL_FLUX Flux / FIXED_TEMP Temp / TIMESERIES Tseries, each optionally followed by DEPTH z | GEOTHERMAL_FLUX | Condition at the bottom of the column: a geothermal heat flux (W per sq m), a fixed temperature (degrees C) or a [TIMESERIES]; DEPTH z (>= 0, metres) places it. |
 | THERMAL_MIXING | ARITHMETIC / GEOMETRIC | ARITHMETIC | How the effective thermal conductivity of the soil-water mixture is averaged. |
 | C_DIFF | (0, 1] | 0.4 | Explicit diffusion Courant number bounding the transport step. |
@@ -3260,7 +3312,7 @@ Parameters:
 Remarks:
 FIXED and FIXED_TEMP require a number and GEOTHERMAL_FLUX a number; TIMESERIES requires a series name. DEPTH is read only as the fourth and fifth tokens of a DEEP_THERMAL_BC line. Naming a [GW_*] section preserves its authored configuration for the writer; active support depends on the specific option and aquifer kernel.
 
-The bulk aquifer transport kernel consumes enabled class switches and dispersion settings. CONDUCTION, thermal boundary conditions and the fuller thermal model remain separate implementation gaps; they must not be inferred from parser acceptance. Active named forcing is documented under [GW_SOURCES].
+When [OPTIONS] HEAT_TRANSPORT, [2D_OPTIONS] GROUNDWATER and the porous-equilibrium thermal model are active, CONDUCTION controls heat transfer within the thermal columns and supported boundaries are applied by the selected thermal owner. A parsed key alone does not establish activation: check the parent process, transport temperature state, model selection and surface coupling options. Active named forcing is documented under [GW_SOURCES].
 
 The intended formulation is described in hydrology Chapter 9 (mesh groundwater).
 

@@ -58,7 +58,7 @@ void publish(const std::string& path,const std::string& bytes) {
 void greenAmpt(Archive& a,GreenAmptState& s) {
     a(s.S,s.Ks,s.IMDmax,s.IMD,s.F,s.Fu,s.Fumax,s.Lu,s.T,s.saturated);
 }
-void lidState(Archive& a,LidNodeState& s,bool mesh) {
+void lidState(Archive& a,LidNodeState& s,bool mesh,bool thermal,bool thermal_contact_receipts) {
     a(s.richards); a.fixed(s.richards_water,s.richards_pressure);
     auto& r=s.richards_report;
     a(r.ok,r.error,r.accepted,r.rejected,r.rhs,r.newton,r.min_step,r.bottom_volume,r.evaporation,r.balance);
@@ -69,6 +69,8 @@ void lidState(Archive& a,LidNodeState& s,bool mesh) {
     a.sequence(s.quality_ports,[&](auto& t){a(t.link,t.cell,t.volume);});
     a(s.quality_outlet_conc,s.quality_old_mobile,s.mobile_delta); a.fixed(s.port_delta);
     a.sequence(s.cells,[&](auto& c){a(c.theta);},true);
+    if(thermal)a(s.thermal_energy);
+    if(thermal_contact_receipts)a(s.thermal_ground_contact_j);
     a(s.held_volume,s.evap_volume,s.captured_flow,s.treated_volume);
     if(mesh && s.richards)a(s.richards_completed_time,s.richards_mesh_start,s.richards_mesh_pending_finish,
         s.richards_mesh_routed,r.bottom_outflow,r.bottom_inflow,r.inflow);
@@ -153,7 +155,7 @@ struct Router::RestartState {
           time(c.current_time),date(c.current_date),elapsed(c.elapsed_ms),old_elapsed(c.old_elapsed_ms),
           next_report(c.next_report_ms),evap(c.climate_state.evap_rate),infil_factor(c.climate_state.infil_factor),
           recovery_factor(c.climate_state.recovery_factor),link_steps(r.lstep_enabled_),link_step_span(r.lstep_rs_) {}
-    void archive(Archive& a) {
+    void archive(Archive& a,bool thermal_lid_state,bool thermal_lid_contact_receipts) {
         a.fixed(exports.water_m3, exports.reverse_m3, exports.heat_j, exports.pollutant_amounts);
         a(time,date,elapsed,old_elapsed,next_report,evap,infil_factor,recovery_factor,link_steps,link_step_span);
 #define FIELD(v) a.fixed(nodes.v);
@@ -167,7 +169,8 @@ struct Router::RestartState {
 #undef FIELD
         a.fixed(storages.evap_loss,storages.exfil_loss,storages.exfil_rate,outfalls.head_2d,outfalls.ramp_2d);
         std::size_t lid_row=0;
-        a.sequence(storages.lid_state,[&](auto& s){lidState(a,s,storages.lid[lid_row++].bottom==LidNodeBottom::MeshAquifer);},true);
+        a.sequence(storages.lid_state,[&](auto& s){lidState(a,s,storages.lid[lid_row++].bottom==LidNodeBottom::MeshAquifer,
+            thermal_lid_state,thermal_lid_contact_receipts);},true);
         a(dw.losses_all_zero_,dw.last_converged_,dw.variable_step_,dw.sim_time_,dw.evap_rate);
         // Scalar fields above; remaining arrays below have initialized model shapes.
         a.fixed(dw.area1_,dw.area2_,dw.area_mid_,dw.hrad_mid_,dw.width_mid_,dw.depth1_,dw.depth2_,dw.depth_mid_,
@@ -233,7 +236,13 @@ struct Router::RestartState {
             require(s.quality_mass.empty() && s.quality_outlet_conc.empty() &&
                     (((time==0 || router.checkpoint_owned_session_) && s.quality_old_water.empty()) || s.quality_old_water.size()==s.cells.size()),
                     "Unqualified hydraulic checkpoint LID quality shape.");
-            finite(s.richards_water);finite(s.richards_pressure);finite(s.port_delta);finite(s.quality_old_water);
+            require(s.thermal_energy.empty() || s.thermal_energy.size()==s.cells.size(),
+                    "Hydraulic checkpoint LID thermal-energy shape differs.");
+            require(s.thermal_ground_contact_j.empty() || s.thermal_ground_contact_j.size()==s.cells.size(),
+                    "Hydraulic checkpoint LID ground-contact receipt shape differs.");
+            require(s.thermal_ground_contact_j.empty() || s.thermal_energy.size()==s.cells.size(),
+                    "Hydraulic checkpoint LID ground-contact receipt has no matching thermal state.");
+            finite(s.richards_water);finite(s.richards_pressure);finite(s.port_delta);finite(s.quality_old_water);finite(s.thermal_energy);finite(s.thermal_ground_contact_j);
             double held=0;
             for (std::size_t i=0;i<s.cells.size();++i) {
                 const auto& cell=s.cells[i];
@@ -382,9 +391,12 @@ void Router::checkCheckpointProfile(const SimulationContext& c) const {
             dw_solver_.groups_==&groups_ && dw_solver_.n_nodes_==c.n_nodes() &&
             dw_solver_.n_links_==c.n_links() && c.nodes.count()==c.n_nodes() && c.links.count()==c.n_links(),
             "Hydraulic checkpoint requires an initialized DW routing component.");
-    require(c.n_pollutants()==0 && !c.options.water_age && !c.options.heat_transport &&
-            !c.nodes.coupling_tuple_age && !c.nodes.coupling_tuple_temp && c.nodes.conc_n_pollutants==0 &&
-            c.links.conc_n_pollutants==0 && c.nodes.stat_n_pollutants==0 && c.links.stat_n_pollutants==0 &&
+    const bool no_hydraulic_quality_state=c.n_nodes()==0 && c.n_links()==0 && c.n_subcatches()==0;
+    require((no_hydraulic_quality_state || (c.n_pollutants()==0 && !c.options.water_age &&
+            c.nodes.conc_n_pollutants==0 && c.links.conc_n_pollutants==0 &&
+            c.nodes.stat_n_pollutants==0 && c.links.stat_n_pollutants==0)) &&
+            (!c.options.heat_transport || (c.n_nodes()==0 && c.n_links()==0) || checkpoint_owned_session_) &&
+            (c.n_nodes()==0 || checkpoint_owned_session_ || (!c.nodes.coupling_tuple_age && !c.nodes.coupling_tuple_temp)) &&
             (!structures_ || checkpoint_owned_session_),
             "Hydraulic checkpoint quality, age, heat and structure/control solvers are not qualified.");
     require(c.nodes.aquifer2d_bed.empty() || c.nodes.aquifer2d_bed.size()==std::size_t(c.n_nodes()),
@@ -434,6 +446,13 @@ void Router::checkCheckpointProfile(const SimulationContext& c) const {
         require(state.port_delta.size()==state.cells.size() && (!state.richards ||
                 (state.richards_water.size()==state.cells.size() && state.richards_pressure.size()==state.cells.size())),
                 "Hydraulic checkpoint LID cell shape differs.");
+        require(state.thermal_energy.empty() || state.thermal_energy.size()==state.cells.size(),
+                "Hydraulic checkpoint LID thermal-energy shape differs.");
+        require(state.thermal_ground_contact_j.empty() || state.thermal_ground_contact_j.size()==state.cells.size(),
+                "Hydraulic checkpoint LID ground-contact receipt shape differs.");
+        require(state.thermal_ground_contact_j.empty() || state.thermal_energy.size()==state.cells.size(),
+                "Hydraulic checkpoint LID ground-contact receipt has no matching thermal state.");
+        finite(state.thermal_energy);finite(state.thermal_ground_contact_j);
         const int control=c.node_subtypes.storages.lid[r].control;
         if (control>=0) {
             auto stack=lidnode::layers(c,control);
@@ -530,8 +549,8 @@ std::string Router::checkpointBytes(const SimulationContext& c,std::string& resu
         require(&c==checkpoint_context_ && checkpoint_ready_ && c.current_time==checkpoint_time_,
                 "Hydraulic checkpoint requires a completed accepted routing boundary.");
         checkCheckpointProfile(c);require(checkpoint_model_==checkpointModel(c), "Hydraulic checkpoint model changed after attachment.");
-        RestartState s(*this,c);s.validate(*this,c);Archive payload;s.archive(payload);
-        auto bytes=payload.bytes(),model=checkpoint_model_;auto crc=checksum(bytes);std::string magic=magicName;uint32_t version=3;
+        RestartState s(*this,c);s.validate(*this,c);Archive payload;s.archive(payload,true,true);
+        auto bytes=payload.bytes(),model=checkpoint_model_;auto crc=checksum(bytes);std::string magic=magicName;uint32_t version=5;
         Archive out;out(magic,version,model,crc,bytes);require(out.bytes().size()<=maxBytes,"Hydraulic checkpoint exceeds its size limit.");
         result=out.bytes();return {};
     } catch(const std::exception& e) {return e.what();}
@@ -548,9 +567,15 @@ std::shared_ptr<Router::RestartState> Router::prepareCheckpointBytes(const Simul
     checkCheckpointProfile(c);require(checkpoint_model_==checkpointModel(c), "Hydraulic checkpoint target model changed.");
     require(!bytes.empty() && bytes.size()<=maxBytes,"Hydraulic checkpoint exceeds its size limit.");
     Archive in(std::move(bytes));std::string magic,model,payload;uint32_t version=0,crc=0;in(magic,version,model,crc,payload);in.finish();
-    require(magic==magicName && version==3 && model==checkpoint_model_ && crc==checksum(payload),
+    require(magic==magicName && (version==3 || version==4 || version==5) && model==checkpoint_model_ && crc==checksum(payload),
             "Hydraulic checkpoint format/model/checksum differs.");
-    auto s=std::make_shared<RestartState>(*this,c);Archive state(std::move(payload));s->archive(state);state.finish();s->validate(*this,c);
+    require(version==3 || version==4 || version==5,"Hydraulic checkpoint version is unsupported.");
+    if(version==3)for(const auto& lid:c.node_subtypes.storages.lid_state)
+        require(lid.thermal_energy.empty(),"Legacy hydraulic checkpoint cannot restore LID thermal energy.");
+    if(version<5)for(const auto& lid:c.node_subtypes.storages.lid_state)
+        require(lid.thermal_ground_contact_j.empty(),"Legacy hydraulic checkpoint cannot restore LID ground-contact receipts.");
+    auto s=std::make_shared<RestartState>(*this,c);Archive state(std::move(payload));
+    s->archive(state,version>=4,version>=5);state.finish();s->validate(*this,c);
     if(boundary) require(*boundary==std::array<double,6>{s->time,s->date,s->elapsed,s->old_elapsed,s->next_report,s->evap},
                          "Joint hydraulic/surface checkpoint clocks or shared forcing differ.");
     if(delivery)validateJointDelivery(s->nodes,c.coupled_node,*delivery);

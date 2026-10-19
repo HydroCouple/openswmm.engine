@@ -34,6 +34,9 @@
  *      Setters mutate engine state; the flux modules re-read the config
  *      every step, so a mid-run edit takes effect on the next routing step.
  *      This is the same contract `openswmm_water_age.h` documents.
+ *      New finite mesh/soil stores require model selection, initial state
+ *      and capacity-defining parameters before initialization. Weather and
+ *      flux inputs retain their live-update behavior.
  *
  * @warning `swmm_heat_set_shortwave_mode` with
  *          ::SWMM_HEAT_SW_COMPUTED returns ::SWMM_ERR_BADPARAM unless BOTH
@@ -67,7 +70,8 @@ typedef enum SWMM_HeatFluxModule {
 } SWMM_HeatFluxModule;
 
 /** Pre-run climate/snow/heat transaction. The callback may use only climate,
- * snow-configuration, heat-configuration, HEAT_TRANSPORT, component registrations and climate-file path
+ * snow configuration, heat configuration (including 2D heat and GW/aquifer
+ * authoring), HEAT_TRANSPORT, component registrations and climate-file path
  * setters. Returning an error restores values and provenance. The callback
  * must not change topology, destroy the engine, run, or nest transactions. */
 typedef int (*SWMM_HydrothermalEdit)(SWMM_Engine engine, void* user);
@@ -80,7 +84,7 @@ SWMM_ENGINE_API int swmm_heat_set_dry_policy(SWMM_Engine engine, int policy);
  * soil density, soil specific heat, all SI. */
 SWMM_ENGINE_API int swmm_heat_get_lid_material(SWMM_Engine engine, double values[4]);
 SWMM_ENGINE_API int swmm_heat_clear_solar_site(SWMM_Engine engine);
-/** Exact pre-run memento for heat settings, their shared site and component
+/** Exact pre-run memento for heat settings, 2D heat/GW/aquifer authoring, their shared site and component
  * registrations. Callers must check their authoring identity before Undo. It owns no
  * engine; the caller must ensure the original engine is still open before
  * restoring. Destroy is safe after closing the engine. */
@@ -91,6 +95,16 @@ typedef void* SWMM_HeatSnapshot;
 SWMM_ENGINE_API SWMM_HeatSnapshot swmm_heat_snapshot_create(SWMM_Engine engine);
 SWMM_ENGINE_API int swmm_heat_snapshot_restore(SWMM_Engine engine, SWMM_HeatSnapshot snapshot);
 SWMM_ENGINE_API void swmm_heat_snapshot_destroy(SWMM_HeatSnapshot snapshot);
+
+/** Exact pre-run authoring memento spanning simulation options, monthly
+ * climate adjustments, climate/snow/UEB, heat (including 2D thermal/GW
+ * authoring), shared site state and process-component registrations. It owns
+ * no engine; restore requires the same editable engine used to create it.
+ * The snapshot is reusable for Undo and Redo. */
+typedef void* SWMM_ConfigSnapshot;
+SWMM_ENGINE_API SWMM_ConfigSnapshot swmm_config_snapshot_create(SWMM_Engine engine);
+SWMM_ENGINE_API int swmm_config_snapshot_restore(SWMM_Engine engine, SWMM_ConfigSnapshot snapshot);
+SWMM_ENGINE_API void swmm_config_snapshot_destroy(SWMM_ConfigSnapshot snapshot);
 
 
 /** Authored status and reset for ground/initial bed temperature. */
@@ -385,7 +399,9 @@ typedef enum SWMM_HeatSedimentParam {
     SWMM_HEAT_SED_HYPORHEIC_VELOCITY  = 5, /**< m/s, >= 0. */
     SWMM_HEAT_SED_DENSITY             = 6, /**< kg/m³, > 0. */
     SWMM_HEAT_SED_SPECIFIC_HEAT       = 7, /**< J/kg/K, > 0. */
-    SWMM_HEAT_SED_INITIAL_TEMPERATURE = 8  /**< °C; unset = start at ground temperature. */
+    SWMM_HEAT_SED_INITIAL_TEMPERATURE = 8, /**< °C; unset = start at ground temperature. */
+    SWMM_HEAT_SED_MESH_POROSITY = 9, /**< [0,1], new mesh bed only. */
+    SWMM_HEAT_SED_GROUND_SOURCE = 10 /**< 0 PRESCRIBED, 1 MESH_CONTACTS; routed channels only, pre-run. */
 } SWMM_HeatSedimentParam;
 
 /** @brief Read a `[SEDIMENT_EXCHANGE]` GLOBAL parameter. */
@@ -426,7 +442,9 @@ typedef enum SWMM_HeatAttr {
     SWMM_HEAT_ATTR_GROUND_TEMPERATURE      = 10, /**< °C. */
     SWMM_HEAT_ATTR_HYPORHEIC_VELOCITY      = 11, /**< >= 0. */
     SWMM_HEAT_ATTR_SEDIMENT_DENSITY        = 12, /**< > 0. */
-    SWMM_HEAT_ATTR_SEDIMENT_SPECIFIC_HEAT  = 13  /**< > 0. */
+    SWMM_HEAT_ATTR_SEDIMENT_SPECIFIC_HEAT  = 13, /**< > 0. */
+    SWMM_HEAT_ATTR_MESH_POROSITY = 14, /**< [0,1], new mesh bed only. */
+    SWMM_HEAT_ATTR_GROUND_SOURCE = 15 /**< 0 PRESCRIBED, 1 MESH_CONTACTS; GLOBAL/TAG/LINK only. */
 } SWMM_HeatAttr;
 
 /** @brief Scope of a per-element override row. GLOBAL values are set with
@@ -434,7 +452,9 @@ typedef enum SWMM_HeatAttr {
 typedef enum SWMM_HeatOverrideScope {
     SWMM_HEAT_SCOPE_TAG  = 1, /**< every element carrying the tag. */
     SWMM_HEAT_SCOPE_NODE = 2, /**< one node (radiative attributes only). */
-    SWMM_HEAT_SCOPE_LINK = 3  /**< one link. */
+    SWMM_HEAT_SCOPE_LINK = 3, /**< one link. */
+    SWMM_HEAT_SCOPE_CELL2D = 6, /**< one mesh cell; name is its 1-based file ID. */
+    SWMM_HEAT_SCOPE_MESH_TAG = 7 /**< mesh region tag, independent of network TAG. */
 } SWMM_HeatOverrideScope;
 
 /** @brief Number of per-element override rows (radiative and sediment). */
@@ -460,13 +480,168 @@ SWMM_ENGINE_API int swmm_heat_set_element_override(SWMM_Engine engine, int attr,
 SWMM_ENGINE_API int swmm_heat_remove_element_override(SWMM_Engine engine,
                                                       int index);
 
-/** Read the effective pre-run property for a named NODE or LINK. Source is
- *  GLOBAL=0, TAG=1, NODE=2, LINK=3, air temperature=4 or ground series=5.
+/** Read the effective property for a named NODE, LINK or CELL2D. Source is
+ *  GLOBAL=0, TAG=1, NODE=2, LINK=3, air temperature=4, ground series=5,
+ *  CELL2D=6 or MESH_TAG=7. CELL2D names use one-based native cell IDs.
  *  Dynamic temperatures return NaN; source_name identifies the tag/series.
  *  This reports configuration precedence, independent of process activation. */
 SWMM_ENGINE_API int swmm_heat_get_effective_element(SWMM_Engine engine,
     int attr, int scope, const char* name, double* value, int* source,
     char* source_name, int source_name_len);
+
+/** Requested configuration and measured 2D runtime activation are distinct.
+ * Initialize struct_size before calling. Values apply to the mesh domain.
+ * New coupled physics remains experimental until its restart/owner matrix is
+ * qualified; the reason field states this explicitly. */
+typedef struct SWMM_Heat2DStatus {
+    unsigned int struct_size;
+    int requested, initialized, surface_active, radiative_active, bed_active;
+    int bed_model; /**< 0 NONE, 1 LOCAL_STORAGE, 2 GROUND_COLUMN. */
+    int experimental;
+    double water_heat_capacity; /**< J/(m3 K), shared by transport/heat receipts. */
+    char reason[256];
+} SWMM_Heat2DStatus;
+SWMM_ENGINE_API int swmm_heat_get_2d_status(SWMM_Engine,SWMM_Heat2DStatus*);
+
+/** SI runtime fields, cumulative since initialization. Positive J enters the
+ * named store; WATER_TO_BED is positive water -> bed. Cell indices are zero
+ * based at this bulk API. Bed-only fields are unavailable without a bed. */
+typedef enum SWMM_Heat2DValue {
+    SWMM_HEAT_2D_WATER_TEMPERATURE=0, /**< degC; dry reporting policy only. */
+    SWMM_HEAT_2D_BED_TEMPERATURE=1, /**< degC. */
+    SWMM_HEAT_2D_BED_ENERGY=2, /**< J relative to 0 degC. */
+    SWMM_HEAT_2D_BED_CAPACITY=3, /**< J/K. */
+    SWMM_HEAT_2D_ATMOSPHERIC_ENERGY=4,
+    SWMM_HEAT_2D_RADIATIVE_ENERGY=5,
+    SWMM_HEAT_2D_SENSIBLE_ENERGY=6,
+    SWMM_HEAT_2D_LATENT_ENERGY=7,
+    SWMM_HEAT_2D_DEEP_ENERGY=8,
+    SWMM_HEAT_2D_WATER_TO_BED_ENERGY=9,
+    SWMM_HEAT_2D_WATER_THERMAL_INCREMENT=10, /**< J; excludes water advection. */
+    SWMM_HEAT_2D_ACCEPTED_EVAPORATION=11, /**< m3. */
+    SWMM_HEAT_2D_THERMAL_RESIDUAL=12 /**< J; bed change + water increment - external heat. */
+} SWMM_Heat2DValue;
+SWMM_ENGINE_API int swmm_heat_get_2d_values(SWMM_Engine,int kind,int first_cell,int count,double* values);
+/** Exact authoring state for the new channel ground selector. Clear restores
+ * the absent/default PRESCRIBED choice; both operations are pre-run only. */
+SWMM_ENGINE_API int swmm_heat_ground_source_configured(SWMM_Engine,int* configured);
+SWMM_ENGINE_API int swmm_heat_clear_ground_source(SWMM_Engine);
+
+/** Soil state is canonical solid-plus-water energy, not a second copy of the
+ * transported water-temperature row. Initialize struct_size before reading. */
+typedef struct SWMM_GroundHeatStatus {
+    unsigned int struct_size;
+    int requested,initialized,aquifer_cells,standalone_cells,thermal_layers;
+    int conduction_active,lateral_active,experimental;
+    double water_heat_capacity; /**< J/(m3 K). */
+    char reason[256];
+} SWMM_GroundHeatStatus;
+SWMM_ENGINE_API int swmm_heat_get_ground_status(SWMM_Engine,SWMM_GroundHeatStatus*);
+/** Per-cell canonical fields. Positive receipts enter soil. Unmodeled cells
+ * return NaN; an entirely inactive model returns SWMM_ERR_LIFECYCLE. All
+ * energies are J relative to 0 degC, accumulated since initialization. */
+typedef enum SWMM_GroundHeatValue {
+    SWMM_GROUND_HEAT_ENERGY=0,
+    SWMM_GROUND_HEAT_CAPACITY=1, /**< J/K. */
+    SWMM_GROUND_HEAT_TEMPERATURE=2, /**< capacity-weighted degC. */
+    SWMM_GROUND_HEAT_INITIAL_ENERGY=3,
+    SWMM_GROUND_HEAT_ADVECTIVE_ENERGY=4,
+    SWMM_GROUND_HEAT_SOURCE_ENERGY=5,
+    SWMM_GROUND_HEAT_SURFACE_ENERGY=6,
+    SWMM_GROUND_HEAT_DEEP_ENERGY=7,
+    SWMM_GROUND_HEAT_LATENT_ENERGY=8,
+    SWMM_GROUND_HEAT_LATERAL_ENERGY=9,
+    SWMM_GROUND_HEAT_WATER_CONTACT_ENERGY=10,
+    SWMM_GROUND_HEAT_RESIDUAL=11,
+    SWMM_GROUND_HEAT_NORMALIZED_RESIDUAL=12, /**< dimensionless, absolute-energy scaled. */
+    SWMM_GROUND_HEAT_PENDING_LATERAL=13, /**< J awaiting this cell's LTS gather; add to stored energy for domain totals. */
+    SWMM_GROUND_HEAT_CHANNEL_CONTACT=14, /**< J, routed channel water -> soil. */
+    SWMM_GROUND_HEAT_LID_CONTACT=15 /**< J, mesh-connected LID -> soil. */
+} SWMM_GroundHeatValue;
+SWMM_ENGINE_API int swmm_heat_get_ground_values(SWMM_Engine,int kind,int first_cell,int count,double* values);
+/** Fixed thermal depth grid, independent of hydraulic sigma layers. */
+typedef enum SWMM_GroundHeatLayerValue {
+    SWMM_GROUND_LAYER_TOP=0, /**< depth below terrain, m. */
+    SWMM_GROUND_LAYER_BOTTOM=1, /**< depth below terrain, m. */
+    SWMM_GROUND_LAYER_TEMPERATURE=2, /**< degC. */
+    SWMM_GROUND_LAYER_ENERGY=3, /**< J relative to 0 degC. */
+    SWMM_GROUND_LAYER_CAPACITY=4, /**< J/K. */
+    SWMM_GROUND_LAYER_MOISTURE=5, /**< m3 water per m3 bulk soil. */
+    SWMM_GROUND_LAYER_CONDUCTIVITY=6, /**< W/(m K). */
+    SWMM_GROUND_LAYER_SATURATED_WATER=7 /**< m3. */
+} SWMM_GroundHeatLayerValue;
+/** Zero-based cell/layer ranges. Invalid ranges leave all output untouched. */
+SWMM_ENGINE_API int swmm_heat_get_ground_layers(SWMM_Engine,int cell,int kind,int first_layer,int count,double* values);
+
+/** Routed-channel contact configuration and initialized mapping counts.
+ * Initialize struct_size. Counts describe the measured topology, even when
+ * a live parent switch pauses its exchange. All new physics is experimental. */
+typedef struct SWMM_ChannelGroundStatus {
+    unsigned int struct_size;
+    int requested,initialized,exchange_active,mapped_links,contact_cells,contact_intervals,experimental;
+    char reason[256];
+} SWMM_ChannelGroundStatus;
+SWMM_ENGINE_API int swmm_heat_get_channel_ground_status(SWMM_Engine,SWMM_ChannelGroundStatus*);
+/** Zero-based link ranges; unmapped links return NaN. Bed temperature is a
+ * capacity-weighted view of the actual soil under the bed, available dry or
+ * wet. It adds no reservoir and must not be counted as extra soil energy. */
+typedef enum SWMM_ChannelGroundValue {
+    SWMM_CHANNEL_GROUND_BED_TEMPERATURE=0, /**< degC. */
+    SWMM_CHANNEL_GROUND_ATMOSPHERIC_ENERGY=1, /**< J, atmosphere -> channel. */
+    SWMM_CHANNEL_GROUND_TO_SOIL_ENERGY=2, /**< J, channel -> soil. */
+    SWMM_CHANNEL_GROUND_WATER_INCREMENT=3, /**< J, channel thermal change excluding advection. */
+    SWMM_CHANNEL_GROUND_INTERVAL_COUNT=4 /**< dimensionless, mapped chainage/layer intervals. */
+} SWMM_ChannelGroundValue;
+SWMM_ENGINE_API int swmm_heat_get_channel_ground_values(SWMM_Engine,int kind,int first_link,int count,double* values);
+/** One initialized contact interval. Fractions refer to the full polyline;
+ * share divides legitimate common-edge ownership, never an entire reach.
+ * Invert is its representative elevation in metres SI. */
+typedef struct SWMM_ChannelGroundContact {
+    unsigned int struct_size;
+    int link,cell,layer; /**< zero-based indices. */
+    double begin_fraction,end_fraction,share,invert_m;
+} SWMM_ChannelGroundContact;
+SWMM_ENGINE_API int swmm_heat_get_channel_ground_contact(SWMM_Engine,int index,SWMM_ChannelGroundContact*);
+/** Pre-run, read-only XY coverage preview for one routed channel. Contact
+ * intervals use whole-polyline fractions, have layer=-1, and may be returned
+ * even when valid is false so uncovered geometry remains visible. A valid
+ * result means the complete polyline lies in the mesh; soil-profile, invert,
+ * bed-thickness and thermal-owner checks still run at initialization.
+ * Initialize struct_size and pass contacts=null/capacity=0 to query the
+ * required interval count. If capacity is too small, status and required are
+ * returned but the contact array is left untouched. Only OPENED/BUILDING
+ * engines with a parsed mesh are accepted. */
+typedef struct SWMM_ChannelGroundPreview {
+    unsigned int struct_size;
+    int link,valid,contact_cells,contact_intervals;
+    double length_m,covered_length_m,uncovered_length_m;
+    char reason[256];
+} SWMM_ChannelGroundPreview;
+SWMM_ENGINE_API int swmm_heat_preview_channel_ground_map(SWMM_Engine,int link,
+    SWMM_ChannelGroundPreview*,SWMM_ChannelGroundContact* contacts,int capacity,int* required);
+enum {
+    SWMM_HEAT_PREVIEW_STAGE_MESH = 1,
+    SWMM_HEAT_PREVIEW_STAGE_MAPPING = 2
+};
+/**
+ * Cancellable variant of the read-only channel-contact preview. The callback
+ * may be invoked during mesh indexing and channel mapping. If it returns
+ * nonzero, the function returns SWMM_ERR_CANCELLED and leaves `out`,
+ * `contacts`, and `required` unchanged.
+ */
+SWMM_ENGINE_API int swmm_heat_preview_channel_ground_map_with_progress(
+    SWMM_Engine,int link,SWMM_ChannelGroundPreview*,SWMM_ChannelGroundContact*,
+    int capacity,int* required,SWMM_CancelCallback callback,void* user_data);
+/**
+ * Bounded, cancellable contact page. `first` is a zero-based interval offset;
+ * at most `capacity` rows are copied while `required` reports the total count.
+ * The summary counts describe the complete mapping. On cancellation, all
+ * output arguments remain unchanged.
+ */
+SWMM_ENGINE_API int swmm_heat_preview_channel_ground_map_page(
+    SWMM_Engine,int link,SWMM_ChannelGroundPreview*,int first,
+    SWMM_ChannelGroundContact*,int capacity,int* required,
+    SWMM_CancelCallback callback,void* user_data);
 
 #ifdef __cplusplus
 }

@@ -184,8 +184,12 @@ void validate(SimulationContext& ctx) {
         const auto stack = layers(ctx, cfg.control);
         const auto error = validateStack(stack);
         if (!error.empty()) { ctx.errors.push_back("LID node " + ctx.node_names.name_of(n) + ": " + error); continue; }
-        if (stack.front().flow.enabled && (ctx.options.water_age || ctx.options.heat_transport || ctx.reactions.configured))
-            ctx.errors.push_back("Richards LID node " + ctx.node_names.name_of(n) + ": water age, heat and MSX require porous-cell transport adapters that are not yet supported");
+        const bool mesh_heat = ctx.options.heat_transport && cfg.bottom == LidNodeBottom::MeshAquifer;
+        if (stack.front().flow.enabled &&
+            (ctx.options.water_age || ctx.reactions.configured ||
+             (ctx.options.heat_transport && !mesh_heat)))
+            ctx.errors.push_back("Richards LID node " + ctx.node_names.name_of(n) +
+                ": water age and MSX require porous-cell transport adapters; heat is supported only for a qualified Mesh Richards/groundwater route");
         // Physics review E9/E12 (2026-10-15): reaction species have no layer
         // adapter. They mixed as a plain tank that bypassed retained cells,
         // ports and layer treatment, and capture removed their water but not

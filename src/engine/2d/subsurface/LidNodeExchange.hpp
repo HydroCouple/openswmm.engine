@@ -20,6 +20,10 @@ struct RichardsBedReceipt {
     double lid_head=0, aquifer_head=0; // absolute SI sample heads, before trial
     double requested_down=0, requested_up=0, reserved_down=0, reserved_up=0;
     double accepted_down=0, accepted_up=0, unused_down=0, unused_up=0;
+    // Accepted sensible-energy packets, J, paired with accepted water. Down
+    // is LID -> aquifer; up is aquifer -> LID. They remain separate because
+    // the groundwater owner may settle the corresponding water later.
+    double accepted_down_j=0, accepted_up_j=0;
 };
 struct RichardsBedTrial {
     std::string error;

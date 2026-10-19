@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Caleb Buahin
 #include "SWMMEngine.hpp"
+#include "HotStartManager.hpp"
 #include "../hydrology/surface/NativeSnow.hpp"
 #include "../hydrology/surface/SnowCheckpoint.hpp"
 #include "CompletedSourceArchive.hpp"
@@ -13,6 +14,8 @@
 #include "../plugins/DefaultOutputPlugin.hpp"
 #include "../plugins/DefaultStateIOPlugin.hpp"
 #include "../plugins/DefaultReportPlugin.hpp"
+#include "../data/HeatData.hpp"
+#include "../data/BedZoneData.hpp"
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/subsurface/CommonSourceStage.hpp"
 #include "../2d/subsurface/EngineSourceResultHistory.hpp"
@@ -43,6 +46,7 @@ void require(bool ok,const char* message) { if(!ok)throw std::runtime_error(mess
 template<class T> void finite(const T& v) {
     if constexpr(std::is_floating_point_v<T>) require(std::isfinite(v),"Nonfinite engine checkpoint field.");
 }
+
 template<class T> void finite(const std::vector<T>& v) { for(const auto& x:v)finite(x); }
 template<class T,std::size_t N> void finite(const std::array<T,N>& v) { for(const auto& x:v)finite(x); }
 template<class T> void field(Archive& a,T& v) { a(v);finite(v); }
@@ -50,6 +54,48 @@ template<class T,std::size_t N> void field(Archive& a,T (&v)[N]) { for(auto& x:v
 template<class... T> void fields(Archive& a,T&... v) { (field(a,v),...); }
 template<class T> void stateField(Archive& a,T& v) { field(a,v); }
 template<class T> void stateField(Archive& a,std::vector<T>& v) { a.fixed(v);finite(v); }
+void radiativeConfig(Archive& a,RadiativeConfig& r) {
+    a(r.shortwave_wm2,r.albedo,r.shade_factor,r.sky_view,r.emiss_water,r.emiss_landcover,
+      r.atm_emiss_coeff,r.lw_reflection,r.landcover_temp,r.sw_mode,r.sw_ts_index);
+}
+void sedimentConfig(Archive& a,SedimentConfig& s) {
+    a(s.mesh_ground,s.ground_source_configured,s.mesh_porosity,s.thermal_diffusivity,s.solute_diffusivity,
+      s.bed_thickness,s.ground_depth,s.ground_temp,s.has_ground_temp,s.ground_ts_index,
+      s.hyporheic_velocity,s.sed_density,s.sed_specific_heat,s.initial_temp,s.has_initial_temp);
+}
+void heatConfig(Archive& a,HeatConfigData& h) {
+    a(h.configured,h.radiative_exchange,h.surface_exchange,h.dry_temp_policy,h.layer_conduction,
+      h.conduction.water_conductivity,h.conduction.sed_conductivity,h.conduction.sed_density,
+      h.conduction.sed_specific_heat,h.sediment_exchange);
+    radiativeConfig(a,h.radiative);sedimentConfig(a,h.sediment);
+    a.sequence(h.overrides.rows,[&](auto& row){a(row.attr,row.scope,row.name,row.value);});
+    a.sequence(h.overrides.rad_link,[&](auto& row){radiativeConfig(a,row);},true);
+    a.sequence(h.overrides.rad_node,[&](auto& row){radiativeConfig(a,row);},true);
+    a.sequence(h.overrides.sed_link,[&](auto& row){sedimentConfig(a,row);},true);
+    a.sequence(h.overrides.rad_cell,[&](auto& row){radiativeConfig(a,row);},true);
+    a.sequence(h.overrides.sed_cell,[&](auto& row){sedimentConfig(a,row);},true);
+    a(h.overrides.resolved);
+    auto& solar=h.solar;
+    a(solar.latitude_deg,solar.longitude_deg,solar.timezone_hours,solar.has_latitude,solar.has_longitude,
+      solar.has_timezone,solar.elevation_m,solar.has_elevation,solar.aod380,solar.aod500,
+      solar.precip_water_cm,solar.ozone_cm,solar.ground_albedo);
+    auto& cloud=h.cloud;
+    a(cloud.configured,cloud.use_timeseries,cloud.ts_index,cloud.fraction,cloud.sw_atten_k,
+      cloud.sw_atten_n,cloud.lw_cloud_k);
+    for(double& value:h.global_temp)a(value);
+    for(bool& value:h.configured_source)a(value);
+    a(h.node_over_source,h.node_over_node,h.node_over_temp);
+}
+void heatState(Archive& a,HeatState& h) {
+    a(h.legacy_seeded,h.shortwave_now,h.cloud_now);
+    a(h.mesh_contact_link,h.node_temp_vol_in,h.node_lid_drain_temp_vol_in,h.node_temp,h.link_temp,
+      h.subarea_temp,h.subarea_vol_prev,h.subcatch_runoff_temp,h.subcatch_runon_temp_vol_in,
+      h.subcatch_runon_temp_rate,h.subcatch_outfall_temp_vol,h.subcatch_lid_drain_temp_cfs);
+}
+void bedZoneState(Archive& a,BedZoneState& b) {
+    a(b.n_species,b.seeded,b.cell_n_species,b.cells_seeded);
+    a(b.link_temp,b.link_conc,b.cell_temp,b.cell_conc);
+}
 uint32_t checksum(const std::string& bytes) {
     uint32_t crc=~uint32_t(0);
     for(unsigned char c:bytes) {crc^=c;for(int k=0;k<8;++k)crc=(crc>>1)^((crc&1)?0xedb88320u:0u);}
@@ -286,6 +332,25 @@ void checkGreenAmpt(const GreenAmptState& g,const GreenAmptState& model) {
 }
 }
 
+std::string SWMMEngine::queueHotstartCheckpoint(std::string checkpoint) {
+    try {
+        require(ctx_.state==EngineState::INITIALIZED && !checkpoint.empty() &&
+                pending_hotstart_checkpoint_.empty(),
+                "Queue a nonempty native engine hotstart after initialize and before start.");
+        pending_hotstart_checkpoint_=std::move(checkpoint);
+        return {};
+    } catch(const std::exception& e) {return e.what();}
+}
+
+std::string SWMMEngine::saveNativeHotstart(const std::string& path) const {
+    std::string snapshot;
+    const auto error=checkpointBytes(snapshot,false);
+    if(!error.empty())return error;
+    std::unique_ptr<HotStartFile> saved(HotStartManager::save_with_engine_checkpoint(
+        ctx_,&runoff_,&groundwater_,path,snapshot));
+    return saved?std::string{}:HotStartManager::last_io_error();
+}
+
 struct SWMMEngine::RestartState {
     SimulationContext::MassBalance balance;
     SimulationContext::RoutingStepStats stats;
@@ -302,6 +367,9 @@ struct SWMMEngine::RestartState {
     double runoff_interp;
     std::unique_ptr<SimulationContext> snow_context;
     snow::SnowSolver snow;
+    HeatState heat;
+    BedZoneState bed;
+    bool heat_profile=false;
     std::vector<double> snow_rain,snow_snow;
     std::array<double,6> boundary;
     double controls_remaining;
@@ -331,6 +399,8 @@ struct SWMMEngine::RestartState {
         ENGINE(COPY)
         RUNOFF_ENGINE(COPY)
 #undef COPY
+        heat_profile=e.ctx_.options.heat_transport;
+        if(heat_profile) {heat=e.ctx_.heat_state;bed=e.ctx_.bed_state;}
 #ifdef OPENSWMM_HAS_2D
         spatial=bool(e.source_delivery_);source_totals=e.source_totals_;
 #endif
@@ -393,8 +463,22 @@ struct SWMMEngine::RestartState {
 #define F(v) a(v);
         RUNOFF_ENGINE(F)
 #undef F
-        a.sequence(pid,[&](auto& p){fields(a,p.setpoint,p.e1,p.e2);},true);
-        a.fixed(orifice_area,weir_area);finite(orifice_area);finite(weir_area);
+        if(heat_profile) {
+            // Thermal sessions may materialize control and structure state
+            // after the target's initial boundary. Preserve its accepted
+            // runtime shape and validate it against the compiled model below.
+            a.sequence(pid,[&](auto& p){fields(a,p.setpoint,p.e1,p.e2);});
+            a(orifice_area,weir_area);
+        } else {
+            // Preserve the established water-only checkpoint layout.
+            a.sequence(pid,[&](auto& p){fields(a,p.setpoint,p.e1,p.e2);},true);
+            a.fixed(orifice_area,weir_area);
+        }
+        finite(orifice_area);finite(weir_area);
+        if(heat_profile) {
+            bool thermal=true;a(thermal);require(thermal,"Engine checkpoint thermal profile differs.");
+            heatState(a,heat);bedZoneState(a,bed);
+        }
 #ifdef OPENSWMM_HAS_2D
         if (spatial) fields(a,source_totals);
 #endif
@@ -410,6 +494,44 @@ struct SWMMEngine::RestartState {
         require(climate.evap_rate==boundary[5] && climate.evap_rate>=0 && climate.temp_ma.front>=0 && climate.temp_ma.front<7 &&
                 climate.temp_ma.count>=0 && climate.temp_ma.count<=7,"Invalid engine climate checkpoint.");
         require(climateModel(climate)==climateModel(e.ctx_.climate_state),"Engine climate parameters differ.");
+        require(heat_profile==e.ctx_.options.heat_transport,"Engine thermal checkpoint profile differs.");
+        if(heat_profile) {
+            const auto same_size=[&](const auto& saved,std::size_t model,const char* message) {
+                require(saved.size()==model || (boundary[0]==0 && saved.empty()),message);
+            };
+            require(heat.mesh_contact_link==e.ctx_.heat_state.mesh_contact_link,
+                    "Engine thermal checkpoint mesh-contact ownership differs.");
+            const auto nn=std::size_t(e.ctx_.n_nodes()),nl=std::size_t(e.ctx_.n_links()),ns=std::size_t(e.ctx_.n_subcatches());
+            same_size(heat.node_temp_vol_in,nn,"Engine node heat receipt shape differs.");
+            same_size(heat.node_lid_drain_temp_vol_in,nn,"Engine LID heat receipt shape differs.");
+            same_size(heat.node_temp,nn,"Engine node temperature shape differs.");
+            same_size(heat.link_temp,nl,"Engine link temperature shape differs.");
+            same_size(heat.subarea_temp,ns*std::size_t(HeatState::kNSubArea),"Engine subarea temperature shape differs.");
+            same_size(heat.subarea_vol_prev,ns*std::size_t(HeatState::kNSubArea),"Engine subarea heat-volume shape differs.");
+            same_size(heat.subcatch_runoff_temp,ns,"Engine runoff temperature shape differs.");
+            same_size(heat.subcatch_runon_temp_vol_in,ns,"Engine runon heat receipt shape differs.");
+            same_size(heat.subcatch_runon_temp_rate,ns,"Engine runon heat-rate shape differs.");
+            same_size(heat.subcatch_outfall_temp_vol,ns,"Engine outfall heat receipt shape differs.");
+            same_size(heat.subcatch_lid_drain_temp_cfs,ns,"Engine LID heat receipt shape differs.");
+            require(std::isfinite(heat.shortwave_now) && std::isfinite(heat.cloud_now) &&
+                    heat.cloud_now>=0 && heat.cloud_now<=1,"Invalid engine thermal forcing state.");
+            for(const auto* row:{&heat.node_temp_vol_in,&heat.node_lid_drain_temp_vol_in,&heat.node_temp,&heat.link_temp,
+                    &heat.subarea_temp,&heat.subarea_vol_prev,&heat.subcatch_runoff_temp,&heat.subcatch_runon_temp_vol_in,
+                    &heat.subcatch_runon_temp_rate,&heat.subcatch_outfall_temp_vol,&heat.subcatch_lid_drain_temp_cfs})
+                finite(*row);
+            for(auto owned:heat.mesh_contact_link)require(owned<=1,"Invalid engine thermal contact ownership flag.");
+            const auto& expected_bed=e.ctx_.bed_state;
+            require(bed.n_species==expected_bed.n_species && bed.cell_n_species==expected_bed.cell_n_species &&
+                    (bed.link_temp.size()==expected_bed.link_temp.size() ||
+                     (expected_bed.link_temp.empty() && bed.link_temp.size()==std::size_t(e.ctx_.n_links()))) &&
+                    (bed.cell_temp.size()==expected_bed.cell_temp.size() || expected_bed.cell_temp.empty()) &&
+                    bed.link_conc.size()==bed.link_temp.size()*std::size_t(bed.n_species) &&
+                    bed.cell_conc.size()==bed.cell_temp.size()*std::size_t(bed.cell_n_species),
+                    "Engine bed checkpoint array shape differs.");
+            for(const auto* row:{&bed.link_temp,&bed.link_conc,&bed.cell_temp,&bed.cell_conc})finite(*row);
+            for(double mass:bed.link_conc)require(mass>=0,"Negative engine bed species inventory.");
+            for(double mass:bed.cell_conc)require(mass>=0,"Negative engine bed-cell species inventory.");
+        }
         require(avg.n_steps>=0 && stats.n_steps>=0 && stats.report_steps>=0 && stats.n_non_converged>=0 &&
                 stats.sum_step>=0 && stats.report_time>=0 && stats.steady_time>=0 && stats.sum_iterations>=0 &&
                 (stats.n_steps==0 || stats.sum_iterations>0) && stats.lstep_mode==e.ctx_.routing_stats.lstep_mode,
@@ -501,12 +623,29 @@ struct SWMMEngine::RestartState {
         for(std::size_t i=0;i<exfil.btm_ga.size();++i) {checkGreenAmpt(exfil.btm_ga[i],e.exfil_.state().btm_ga[i]);checkGreenAmpt(exfil.bank_ga[i],e.exfil_.state().bank_ga[i]);}
         std::size_t actions=0;for(const auto& r:e.controls_.rules_)actions+=r.then_actions.size()+r.else_actions.size();
         require(action_count>=0 && action_count<=e.ctx_.n_links() && pending.size()<=actions,"Invalid engine control action count.");
+        if(heat_profile) {
+            std::size_t expected_pid_count=0;
+            for(const auto& rule:e.controls_.rules_)for(const auto* list:{&rule.then_actions,&rule.else_actions})
+                for(const auto& action:*list)if(action.type==controls::ActionType::PID) {
+                    require(action.pid_idx>=0,"Invalid compiled PID action index.");
+                    expected_pid_count=std::max(expected_pid_count,std::size_t(action.pid_idx)+1);
+                }
+            require(pid.size()==expected_pid_count,"Engine PID state shape differs from compiled actions.");
+            for(std::size_t i=0;i<pid.size();++i)
+                require(pid[i].action_idx==static_cast<int>(i) && std::isfinite(pid[i].kp) &&
+                        std::isfinite(pid[i].ki) && std::isfinite(pid[i].kd) &&
+                        std::isfinite(pid[i].setpoint) && std::isfinite(pid[i].e1) &&
+                        std::isfinite(pid[i].e2),"Invalid engine PID state.");
+        }
         for(const auto& p:pending)require(p.link_idx>=0 && p.link_idx<e.ctx_.n_links() && p.rule_idx>=0 && p.rule_idx<static_cast<int>(e.controls_.rules_.size()) &&
                 p.type>=controls::ActionType::NUMERIC && p.type<=controls::ActionType::PID,"Invalid engine pending control action.");
         require(slots.size()<=e.ctx_.links.setting.size(),"Invalid engine control slot shape.");
         for(int slot:slots)require(slot>=-1 && slot<static_cast<int>(pending.size()),"Invalid engine control slot index.");
         for(const auto* row:{&orifice_area,&weir_area})for(double area:*row)
             require(area>=0,"Negative engine structure surface area.");
+        if(heat_profile)require(orifice_area.size()==std::size_t(e.hydstruct_.orifices_.count) &&
+                weir_area.size()==std::size_t(e.hydstruct_.weirs_.count),
+                "Engine structure surface-area shape differs.");
     }
     static bool spatialProfile(const SWMMEngine& e) {
 #ifdef OPENSWMM_HAS_2D
@@ -565,6 +704,7 @@ struct SWMMEngine::RestartState {
         int at=0;for(auto* row:{e.ctx_.max_courant_crit,e.ctx_.max_flow_turns,e.ctx_.max_non_converged,e.ctx_.max_mass_bal_errs})
             for(int i=0;i<SimulationContext::MAX_STATS;++i)row[i]=tops[at++];
         e.ctx_.climate_state=climate;e.ctx_.dt_controls_remaining=controls_remaining;
+        if(heat_profile) {e.ctx_.heat_state=std::move(heat);e.ctx_.bed_state=std::move(bed);}
         e.exfil_.state()=std::move(exfil);e.avg_=std::move(avg);
         for(std::size_t i=0;i<cursors.size();++i)e.ctx_.tables.tables[i].cursor=cursors[i];
         e.controls_.pending_actions_=std::move(pending);e.controls_.action_slots_=std::move(slots);
@@ -588,7 +728,7 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
     require(exchange_target_<0 || advancing_catchments,"Engine session checkpoint does not yet support runtime advance/coupling targets.");
     require(ctx_.state==EngineState::RUNNING && ctx_.error_code==0 && do_routing_ &&
             save_results_==(checkpoint_output_?1:0),
-            "Engine checkpoint requires a running water-only session with its prepared output mode.");
+            "Engine checkpoint requires a running qualified session with its prepared output mode.");
     if(checkpoint_output_)require(binary_output_plugin_ && binary_output_plugin_->checkpoint_fresh_ &&
             binary_output_plugin_->out_file_ && ctx_.plugin_specs.empty() && plugins_.output_plugins().size()==
 #ifdef OPENSWMM_HAS_2D
@@ -601,7 +741,10 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
             plugins_.report_plugins().size()==(rpt_path_.empty()?0u:1u) &&
             (rpt_path_.empty() || dynamic_cast<DefaultReportPlugin*>(plugins_.report_plugins().front())),
             "Binary output checkpoint supports only the built-in binary writer.");
-    require(ctx_.rdii_assigns.count()==0 && !ctx_.files.has_any() &&
+    require(ctx_.rdii_assigns.count()==0 &&
+            ctx_.files.rainfall_mode==FileMode::NONE && ctx_.files.runoff_mode==FileMode::NONE &&
+            ctx_.files.rdii_mode==FileMode::NONE && ctx_.files.inflows_path.empty() &&
+            ctx_.files.outflows_path.empty() &&
             !runoff_iface_file_ && ctx_.process_component_specs.empty(),
             "Engine checkpoint does not recover RDII, interface files, providers or process components.");
 #ifdef OPENSWMM_HAS_2D
@@ -676,6 +819,10 @@ std::string SWMMEngine::checkpointModel() const {
 #define F(v) field(a,o.v);
     OPTIONS(F)
 #undef F
+    if(o.heat_transport) {
+        auto heat=ctx_.heat_config;heatConfig(a,heat);
+        auto mesh_contact_link=ctx_.heat_state.mesh_contact_link;a(mesh_contact_link);
+    }
     auto cm=climateModel(ctx_.climate_state);a(cm);
     auto ext=ctx_.ext_inflows;auto dwf=ctx_.dwf_inflows;auto pat=ctx_.patterns;auto rules=ctx_.control_rules.rule_text;auto events=ctx_.events;
     a(ext.node_idx,ext.node_name,ext.constituent,ext.ts_name,ext.inflow_type,ext.m_factor,ext.s_factor,ext.baseline,ext.pattern_name,
@@ -992,6 +1139,7 @@ std::string SWMMEngine::checkpointBytes(std::string& result,bool include_outputs
         if(surface_router_.runtimeWaterCheckpointing())version+=20;
         if(runtime_water_driver_)version+=40;
 #endif
+        if(ctx_.options.heat_transport)version+=80;
         require(error.empty(),error.c_str());payload(hydraulic);
 #ifdef OPENSWMM_HAS_2D
         if(source_delivery_) {auto bridge=*source_delivery_;Archive a;bridge.checkpoint(a,false,source_stage_->sources());auto bytes=a.bytes();payload(bytes);}
@@ -1256,6 +1404,7 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,const std::st
 #ifdef OPENSWMM_HAS_2D
         if(checkpoint_surface_output_&&!files)expected_version+=6;
 #endif
+        if(ctx_.options.heat_transport)expected_version+=80;
         require(magic==magicName && version==expected_version && model==checkpoint_model_ && crc==checksum(bytes),"Engine checkpoint format/model/checksum differs.");
         RestartState state(*this);Archive payload(std::move(bytes));state.archive(payload);std::string hydraulic;payload(hydraulic);
 #ifdef OPENSWMM_HAS_2D

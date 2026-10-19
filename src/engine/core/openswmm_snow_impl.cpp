@@ -430,4 +430,21 @@ SWMM_ENGINE_API int swmm_snow2d_get_ledgers(SWMM_Engine engine,int first,int cou
     (void)first;(void)count;(void)output;return SWMM_ERR_BADPARAM;
 #endif
 }
+
+SWMM_ENGINE_API int swmm_snow2d_get_geometry_energy(SWMM_Engine engine,int first,int count,double* output) {
+    CHECK_HANDLE(engine);
+#ifdef OPENSWMM_HAS_2D
+    const auto& router=to_engine(engine)->surfaceRouter2D();const auto& snow=router.state().snow;
+    if(!router.isActive()||first<0||count<0||first>router.mesh().n_cells()-count||(count&&!output))return SWMM_ERR_BADPARAM;
+    const double nan=std::numeric_limits<double>::quiet_NaN();
+    for(int k=0;k<count;++k) {
+        const int i=first+k;
+        output[k]=snow.owns(i)&&snow.kind(i)==openswmm::surface::SnowKind::Ueb
+            ?snow.ledgers()[i].geometry_energy:nan;
+    }
+    return SWMM_OK;
+#else
+    (void)first;(void)count;(void)output;return SWMM_ERR_BADPARAM;
+#endif
+}
 }

@@ -64,6 +64,7 @@ class ErrorCode(IntEnum):
     @cvar CRS: Coordinate reference system error.
     @cvar NUMERICAL: Numerical error (e.g., divergence).
     @cvar DEPENDENCY: Object has dependents that block the requested operation.
+    @cvar CANCELLED: A caller cancelled a cancellable read-only operation.
     @cvar INTERNAL: Internal/unspecified error.
     """
 
@@ -83,6 +84,7 @@ class ErrorCode(IntEnum):
     CRS = 13
     NUMERICAL = 14
     DEPENDENCY = 15
+    CANCELLED = 16
     INTERNAL = 99
 
 
@@ -1239,6 +1241,7 @@ class HeatSedimentParam(IntEnum):
     @cvar DENSITY: Bed bulk density, kg/m3, > 0.
     @cvar SPECIFIC_HEAT: Bed specific heat, J/kg/K, > 0.
     @cvar INITIAL_TEMPERATURE: Initial bed temperature, degC.
+    @cvar GROUND_SOURCE: Dimensionless selector: 0 prescribed, 1 finite mesh contacts.
     """
 
     THERMAL_DIFFUSIVITY = 0
@@ -1250,6 +1253,8 @@ class HeatSedimentParam(IntEnum):
     DENSITY = 6
     SPECIFIC_HEAT = 7
     INITIAL_TEMPERATURE = 8
+    MESH_POROSITY = 9
+    GROUND_SOURCE = 10
 
 
 class HeatAttr(IntEnum):
@@ -1273,6 +1278,8 @@ class HeatAttr(IntEnum):
     HYPORHEIC_VELOCITY = 11
     SEDIMENT_DENSITY = 12
     SEDIMENT_SPECIFIC_HEAT = 13
+    MESH_POROSITY = 14
+    GROUND_SOURCE = 15
 
 
 class HeatOverrideScope(IntEnum):
@@ -1281,6 +1288,52 @@ class HeatOverrideScope(IntEnum):
     TAG = 1
     NODE = 2
     LINK = 3
+    CELL2D = 6
+    MESH_TAG = 7
+
+
+class GroundHeatValue(IntEnum):
+    """Canonical soil heat fields returned by :meth:`Heat.ground_values`."""
+
+    ENERGY = 0
+    CAPACITY = 1
+    TEMPERATURE = 2
+    INITIAL_ENERGY = 3
+    ADVECTIVE_ENERGY = 4
+    SOURCE_ENERGY = 5
+    SURFACE_ENERGY = 6
+    DEEP_ENERGY = 7
+    LATENT_ENERGY = 8
+    LATERAL_ENERGY = 9
+    WATER_CONTACT_ENERGY = 10
+    RESIDUAL = 11
+    NORMALIZED_RESIDUAL = 12
+    PENDING_LATERAL = 13
+    CHANNEL_CONTACT = 14
+    LID_CONTACT = 15
+
+
+class GroundHeatLayerValue(IntEnum):
+    """Fixed-depth soil layer fields returned by :meth:`Heat.ground_layers`."""
+
+    TOP = 0
+    BOTTOM = 1
+    TEMPERATURE = 2
+    ENERGY = 3
+    CAPACITY = 4
+    MOISTURE = 5
+    CONDUCTIVITY = 6
+    SATURATED_WATER = 7
+
+
+class ChannelGroundValue(IntEnum):
+    """Mapped channel/soil result fields returned by :class:`Heat`."""
+
+    BED_TEMPERATURE = 0
+    ATMOSPHERIC_ENERGY = 1
+    TO_SOIL_ENERGY = 2
+    WATER_INCREMENT = 3
+    INTERVAL_COUNT = 4
 
 
 class HeatSourceKind(IntEnum):

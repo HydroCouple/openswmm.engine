@@ -2094,6 +2094,61 @@ TEST(HydraulicCheckpoint, NodeLidRetainedMobileBackwaterAndPortsContinueExactly)
         EXPECT_EQ(hydraulicBytes(path),hydraulicBytes(other));
     }
 }
+TEST(HydraulicCheckpoint, NodeLidThermalEnergySurvivesRestore) {
+    auto a=hydraulicModel(0,true,true,true);Router ra;hydraulicInitialize(ra,a);
+    auto& source=a.node_subtypes.storages.lid_state[0];
+    source.thermal_energy.resize(source.cells.size());
+    for(std::size_t i=0;i<source.thermal_energy.size();++i)
+        source.thermal_energy[i]=(static_cast<double>(i)-1.5)*1234.5;
+    source.thermal_ground_contact_j.resize(source.cells.size());
+    for(std::size_t i=0;i<source.thermal_ground_contact_j.size();++i)
+        source.thermal_ground_contact_j[i]=857.375+static_cast<double>(i)*31.25;
+    const auto path=hydraulicArtifacts()/"lid-thermal-state.chk";
+    ASSERT_EQ(ra.saveCheckpoint(a,path.string()),"");
+
+    auto b=hydraulicModel(0,true,true,true);Router rb;hydraulicInitialize(rb,b);
+    const auto corrupt=hydraulicArtifacts()/"lid-thermal-state-corrupt.chk";
+    hydraulicFile(corrupt,hydraulicStateDouble(hydraulicBytes(path),source.thermal_energy.front(),
+        std::numeric_limits<double>::quiet_NaN()));
+    const auto before=hydraulicArtifacts()/"lid-thermal-state-before.chk";
+    const auto after=hydraulicArtifacts()/"lid-thermal-state-after.chk";
+    ASSERT_EQ(rb.saveCheckpoint(b,before.string()),"");
+    EXPECT_FALSE(rb.loadCheckpoint(b,corrupt.string()).empty());
+    const auto corrupt_contact=hydraulicArtifacts()/"lid-thermal-contact-corrupt.chk";
+    hydraulicFile(corrupt_contact,hydraulicStateDouble(hydraulicBytes(path),source.thermal_ground_contact_j.front(),
+        std::numeric_limits<double>::quiet_NaN()));
+    EXPECT_FALSE(rb.loadCheckpoint(b,corrupt_contact.string()).empty());
+    ASSERT_EQ(rb.saveCheckpoint(b,after.string()),"");
+    EXPECT_EQ(hydraulicBytes(before),hydraulicBytes(after));
+    ASSERT_EQ(rb.loadCheckpoint(b,path.string()),"");
+    EXPECT_EQ(b.node_subtypes.storages.lid_state[0].thermal_energy,source.thermal_energy);
+    EXPECT_EQ(b.node_subtypes.storages.lid_state[0].thermal_ground_contact_j,source.thermal_ground_contact_j);
+    const auto restored=hydraulicArtifacts()/"lid-thermal-state-restored.chk";
+    ASSERT_EQ(rb.saveCheckpoint(b,restored.string()),"");
+    EXPECT_EQ(hydraulicBytes(path),hydraulicBytes(restored));
+}
+TEST(HydraulicCheckpoint, InvalidNodeLidThermalEnergyIsRefusedBeforePublication) {
+    auto c=hydraulicModel(0,true,true,true);Router r;hydraulicInitialize(r,c);
+    const auto path=hydraulicArtifacts()/"lid-thermal-invalid.chk";
+    hydraulicFile(path,"preserve prior checkpoint");
+    auto& energy=c.node_subtypes.storages.lid_state[0].thermal_energy;
+    energy={1};
+    EXPECT_FALSE(r.saveCheckpoint(c,path.string()).empty());
+    EXPECT_EQ(hydraulicBytes(path),"preserve prior checkpoint");
+    energy.assign(c.node_subtypes.storages.lid_state[0].cells.size(),0);
+    energy[0]=std::numeric_limits<double>::quiet_NaN();
+    EXPECT_FALSE(r.saveCheckpoint(c,path.string()).empty());
+    EXPECT_EQ(hydraulicBytes(path),"preserve prior checkpoint");
+    energy.assign(c.node_subtypes.storages.lid_state[0].cells.size(),0);
+    auto& receipt=c.node_subtypes.storages.lid_state[0].thermal_ground_contact_j;
+    receipt={1};
+    EXPECT_FALSE(r.saveCheckpoint(c,path.string()).empty());
+    EXPECT_EQ(hydraulicBytes(path),"preserve prior checkpoint");
+    receipt.assign(c.node_subtypes.storages.lid_state[0].cells.size(),0);
+    receipt[0]=std::numeric_limits<double>::quiet_NaN();
+    EXPECT_FALSE(r.saveCheckpoint(c,path.string()).empty());
+    EXPECT_EQ(hydraulicBytes(path),"preserve prior checkpoint");
+}
 TEST(HydraulicCheckpoint, InvalidRestorePreservesFreshStateAndCanRetry) {
     auto a=hydraulicModel(0,true,true,true);Router ra;hydraulicInitialize(ra,a);
     for(int k=0;k<8;++k)hydraulicStep(ra,a,k);

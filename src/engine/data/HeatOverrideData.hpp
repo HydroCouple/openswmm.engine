@@ -77,9 +77,8 @@ enum class HeatElemKind : std::uint8_t {
     LINK     = 1,
     SUBCATCH = 2,
     LID      = 3,
-    /// S4 (D-2DT5): a 2D surface cell. Carries no per-element override
-    /// storage yet (S5 adds the `CELL2D` scope); the accessors' LINK/NODE
-    /// tests fall through to the global, which is the safe answer.
+    /// Surface mesh cell; CELL2D and MESH_TAG overrides are independent
+    /// of the network LINK/NODE/TAG namespaces.
     CELL2D   = 4
 };
 
@@ -108,7 +107,10 @@ enum class HeatScope : std::uint8_t {
     GLOBAL = 0,
     TAG    = 1,
     NODE   = 2,
-    LINK   = 3
+    LINK   = 3,
+    // 4/5 remain reserved for the effective-value API's air/series sources.
+    CELL2D = 6,
+    MESH_TAG = 7
 };
 
 /**
@@ -138,6 +140,8 @@ enum class HeatAttr : int {
     SED_HYPORHEIC_VELOCITY,
     SED_DENSITY,
     SED_SPECIFIC_HEAT,
+    SED_MESH_POROSITY,
+    SED_GROUND_SOURCE,
     COUNT_
 };
 

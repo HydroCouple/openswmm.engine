@@ -7,6 +7,7 @@
  */
 
 #include "SurfaceRouter2D.hpp"
+#include "../transport/components/HeatFluxModules/HeatOverrides.hpp"
 #include "../hydrology/LidNode.hpp"
 #include "../hydraulics/Routing.hpp"
 #include "gw/GwSourceResolver.hpp"
@@ -14,6 +15,7 @@
 #include "mesh/VertexReconstruction.hpp"
 #include "mesh/VfrClosure.hpp"
 #include "mesh/QuadVfr.hpp"
+#include "heat/MeshHeat.hpp"
 #include "solver/SurfaceFluxCalculator.hpp"
 #include "solver/ExplicitInertialSolver.hpp"
 #include "subsurface/CommonSourceStage.hpp"
@@ -206,6 +208,7 @@ void SurfaceRouter2D::prepareForEdit() {
 }
 
 void SurfaceRouter2D::initialize(SimulationContext& ctx) {
+    channel_ground_.clear();ctx.heat_state.mesh_contact_link.clear();
     common_stage_ = nullptr;
     source_context_ = nullptr;
     joint_hydraulic_ = nullptr;
@@ -907,6 +910,11 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         }
     }
 
+    const bool porous_heat_requested=ctx.options.heat_transport&&options_.groundwater!=0&&!aquifer_cfg_.empty()&&
+        gw_.options.thermal_model=="POROUS_EQUILIBRIUM"&&gw_.options.transport_temperature;
+    const bool gw_wanted = options_.groundwater < 0 ? !aquifer_cfg_.empty()
+                                                    : options_.groundwater > 0;
+    const bool groundwater_requested = gw_wanted && !aquifer_cfg_.empty();
     if (!solver_) {
         // The Kokkos plugin covers all-triangle LOCAL_INERTIAL models only
         // (SurfaceSolverFactory R6 gate); everything else runs on the CPU.
@@ -916,7 +924,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         const bool plugin_ok =
             mesh_.n_quads() == 0 &&
             options_.momentum == Momentum2D::LOCAL_INERTIAL &&
-            !state_.transport.active();
+            !state_.transport.active()&&!porous_heat_requested&&!groundwater_requested;
         solver_ = makeSurfaceSolver(options_, &backend_name_,
                                     mesh_.n_triangles(), plugin_ok);
         // Say which solver this run is on. Rides the advisory-warning path
@@ -934,13 +942,23 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             backend_name_.c_str(), closure, options_.lts_tiers,
             mesh_.n_triangles(), mesh_.n_quads(),
             plugin_ok ? "" :
-            state_.transport.active()
+            porous_heat_requested&&!state_.transport.active()
+                ? " — porous-ground heat requires the CPU marcher"
+                : groundwater_requested
+                ? " — 2D groundwater requires the CPU marcher"
+                : state_.transport.active()
                 ? " — the GPU/Kokkos plugin carries no transport rows "
                   "(species / age / temperature); CPU marcher used"
                 : " — the GPU/Kokkos plugin serves all-triangle "
                   "LOCAL_INERTIAL models only");
         thread_warnings_.emplace_back(buf);
     }
+    options_.water_heat_capacity=ctx.options.heat_transport &&
+        ((options_.coupled_heat&&state_.transport.temp_row>=0)||
+         (options_.groundwater!=0&&!aquifer_cfg_.empty()&&gw_.options.thermal_model=="POROUS_EQUILIBRIUM"&&gw_.options.transport_temperature))
+        ? ctx.options.water_density*ctx.options.water_specific_heat : runtimeWaterHeatCapacity;
+    if(!(options_.water_heat_capacity>0) || !std::isfinite(options_.water_heat_capacity))
+        throw std::runtime_error("[2D heat] Water density and specific heat must give a finite positive capacity.");
     solver_->initialize(mesh_, state_, options_);
     if (auto* cpu = dynamic_cast<ExplicitInertialSolver*>(solver_.get())) {
         std::vector<int> cells;
@@ -963,8 +981,6 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // AUTO (the default, and what every deck written before the key means)
     // runs iff rows were authored; NO keeps the rows — they still save — and
     // runs without the subsurface, exactly as INFILTRATION NO does.
-    const bool gw_wanted = options_.groundwater < 0 ? !aquifer_cfg_.empty()
-                                                    : options_.groundwater > 0;
     if (options_.groundwater == 0 && !aquifer_cfg_.empty())
         ctx.warnings.push_back(
             "[2D_OPTIONS] GROUNDWATER NO — the [2D_AQUIFER*] rows are kept "
@@ -1063,15 +1079,27 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             if (!gw_.boundary_quality.empty())
                 throw std::runtime_error("[GW_BOUNDARY_QUALITY] is unsupported: no hydraulic groundwater edge binding exists; use a well/source for operational forcing.");
             for (const auto& row : gw_.initial_quality)
-                if (row.zone == GwZone::LAYER)
+                if (row.zone == GwZone::LAYER && !(gw_.options.thermal_model=="POROUS_EQUILIBRIUM" &&
+                    GL.temp_row>=0 && row.species=="__TEMPERATURE__"))
                     throw std::runtime_error("[GW_INITIAL_QUALITY] LAYER is unsupported by bulk groundwater transport; use SAT or UNSAT explicitly.");
             subsurface_.initTransport(rows, &gw_, pollut_decay, ctx.warnings);
+            if(auto error=subsurface_.initHeat(ctx,gw_);!error.empty())throw std::runtime_error("[2D ground heat] "+error);
             marcher->refreshSubsurfaceRows();
-            subsurface_.setSources(resolveGwSources(ctx, mesh_, gw_, subsurface_.state(), subsurface_.transport()));
+            {
+                auto sources = resolveGwSources(ctx, mesh_, gw_, subsurface_.state(), subsurface_.transport());
+                for (const auto& src : sources)
+                    for (const auto& cell : src.cells)
+                        if (!subsurface_.covers(cell.first))
+                            throw std::runtime_error("[GW_SOURCES] '" + src.name + "' lies on mesh cell " +
+                                std::to_string(cell.first) + ", which has no [2D_AQUIFER] row.");
+                subsurface_.setSources(std::move(sources));
+            }
             std::vector<int> porous,mobile;
             for(int n=0;n<ctx.n_nodes();++n)if(lidnode::bottomMode(ctx,n)==LidNodeBottom::MeshAquifer) {
-                if(ctx.n_pollutants()>0 || ctx.options.water_age || ctx.options.heat_transport || ctx.reactions.configured)
+                if(ctx.n_pollutants()>0 || ctx.options.water_age || ctx.reactions.configured)
                     throw std::runtime_error("Mesh LID bottom exchange currently requires water-only routing.");
+                if(ctx.options.heat_transport&&(!lidnode::richardsMode(ctx,n)||!subsurface_.heat().active()))
+                    throw std::runtime_error("Mesh LID bottom heat requires the supported Richards layer and porous-ground thermal owners.");
                 int bed=-1;
                 for(std::size_t b=0;b<subsurface_.nodeBeds().size();++b) {
                     const auto& row=subsurface_.nodeBeds()[b];
@@ -1097,6 +1125,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             aquifer_link_shares_ = resolveLinkSeepage(ctx, mesh_, aquifer_cfg_,
                                                       aquifer_link_names_,
                                                       mesh_to_si, n_conduits);
+            // A reach over a cell with no aquifer seeps nowhere: like a reach
+            // outside the mesh, that share stays a system loss.
+            aquifer_link_shares_.erase(std::remove_if(aquifer_link_shares_.begin(), aquifer_link_shares_.end(),
+                [this](const GwLinkShare& sh) { return !subsurface_.covers(sh.cell); }), aquifer_link_shares_.end());
             for (const auto& sh : aquifer_link_shares_)
                 if (aquifer_link_ids_.empty() || aquifer_link_ids_.back() != sh.link)
                     aquifer_link_ids_.push_back(sh.link);
@@ -1171,8 +1203,15 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         // Told before resolve() because that is where the destinations are
         // validated.
         infil_.setAquifer2DAvailable(subsurface_.active());
-        infil_.setAquiferOwners(std::vector<uint8_t>(mesh_.n_triangles(),
-            subsurface_.active() && options_.infiltration != 0 ? 1 : 0));
+        {
+            // Only cells a [2D_AQUIFER] row covers have an aquifer to own them.
+            std::vector<uint8_t> owners(mesh_.n_triangles(),
+                subsurface_.active() && options_.infiltration != 0 ? 1 : 0);
+            const auto& covered = subsurface_.coverage();
+            if (covered.size() == owners.size())
+                for (std::size_t i = 0; i < owners.size(); ++i) owners[i] &= covered[i];
+            infil_.setAquiferOwners(std::move(owners));
+        }
         if (options_.infil_destination == "AQUIFER_2D")
             throw std::runtime_error("[2D_OPTIONS] INFIL_DESTINATION AQUIFER_2D is obsolete; remove this option. Aquifer-owned cells compute their receiving capacity.");
         std::string infil_err;
@@ -1386,6 +1425,88 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         if(auto error=state_.snow.initialize(ctx,geometry);!error.empty())throw std::runtime_error(error);
         state_.snow_catch.assign(mesh_.n_cells(),1);
     }
+    if(auto error=initializeMeshHeat(ctx,mesh_,state_,options_,&subsurface_.heat(),&subsurface_.coverage());!error.empty())
+        throw std::runtime_error("[2D heat] "+error);
+    // [2D_INITIAL_BED_QUALITY] seeds the finite LOCAL_STORAGE porewater
+    // reservoir. Resolve after heat initialization because the local bed's
+    // pore volume is owned by that state; surface initial quality above keeps
+    // its existing water-volume semantics.
+    if (!pending_ibq_rows_.empty()) {
+        auto& heat = state_.heat;
+        auto& tr = state_.transport;
+        if (!heat.enabled || !heat.bed || heat.ground_column ||
+            heat.bed_pore_volume.empty() || heat.bed_species <= 0)
+            throw std::runtime_error(
+                "[2D_INITIAL_BED_QUALITY] requires HEAT_MODEL COUPLED and "
+                "BED_HEAT_MODEL LOCAL_STORAGE with finite bed porewater; "
+                "GROUND_COLUMN bed species are authored through [GW_INITIAL_QUALITY].");
+        if (!tr.active())
+            throw std::runtime_error(
+                "[2D_INITIAL_BED_QUALITY] rows are present but the model carries "
+                "no transported species ([POLLUTANTS] empty or IGNORE_QUALITY set).");
+        const int nc = mesh_.n_cells();
+        const auto ns = static_cast<std::size_t>(heat.bed_species);
+        if (heat.bed_pore_volume.size() != static_cast<std::size_t>(nc) ||
+            heat.bed_carried_mass.size() != ns * static_cast<std::size_t>(nc) ||
+            heat.bed_initial_mass.size() != heat.bed_carried_mass.size())
+            throw std::runtime_error(
+                "[2D_INITIAL_BED_QUALITY] local bed porewater state has an invalid shape.");
+        for (int pass = 0; pass < 3; ++pass) {
+            for (const auto& row : pending_ibq_rows_) {
+                const int kind = row.all ? 0 : (row.tri < 0 ? 1 : 2);
+                if (kind != pass) continue;
+                const int sp = tr.rowIndex(row.species);
+                if (sp < 0 || sp >= heat.bed_species || sp == heat.bed_temp_row)
+                    throw std::runtime_error(
+                        "[2D_INITIAL_BED_QUALITY] unknown or unsupported bed species '" +
+                        row.species + "'; use a carried pollutant or __WATER_AGE__, "
+                        "not __TEMPERATURE__.");
+                double concentration = row.conc;
+                if (sp == heat.bed_age_row) concentration *= 3600.0; // deck age is hours
+                auto seed = [&](int cell) {
+                    const auto k = static_cast<std::size_t>(sp) * nc + cell;
+                    heat.bed_carried_mass[k] = concentration * heat.bed_pore_volume[cell];
+                };
+                if (row.all) {
+                    for (int cell = 0; cell < nc; ++cell) seed(cell);
+                } else if (row.tri < 0) {
+                    bool hit = false;
+                    for (int cell = 0; cell < nc; ++cell) {
+                        if (static_cast<std::size_t>(cell) < mesh_.tri_tag.size() &&
+                            mesh_.tri_tag[static_cast<std::size_t>(cell)] == row.tag) {
+                            seed(cell);
+                            hit = true;
+                        }
+                    }
+                    if (!hit)
+                        throw std::runtime_error(
+                            "[2D_INITIAL_BED_QUALITY] TAG '" + row.tag +
+                            "' matches no mesh cell, so this row would seed nothing.");
+                } else {
+                    if (row.tri >= nc)
+                        throw std::runtime_error(
+                            "[2D_INITIAL_BED_QUALITY] CELL " +
+                            std::to_string(row.tri + 1) + " is beyond the mesh (" +
+                            std::to_string(nc) + " cells).");
+                    seed(row.tri);
+                }
+            }
+        }
+        heat.bed_initial_mass = heat.bed_carried_mass;
+    }
+    if(auto error=configureGroundLidOwners(ctx,mesh_,subsurface_.heat(),subsurface_.nodeBeds());!error.empty())
+        throw std::runtime_error("[2D LID heat] "+error);
+    configureSnowGroundContacts();
+    if(state_.heat.ground_column&&subsurface_.heat().active())
+        if(auto error=subsurface_.initPorewater();!error.empty())throw std::runtime_error("[2D porewater] "+error);
+    if(state_.heat.ground_column&&!subsurface_.transport().generated_age.empty()&&
+       (state_.transport.n_species!=subsurface_.transport().n_species||
+        state_.transport.row_names!=subsurface_.transport().row_names))
+        throw std::runtime_error("[2D porewater] Surface and groundwater quality row layouts must match for shared bed contacts.");
+    if(subsurface_.heat().active()&&gw_.options.conduction&&gw_.options.surface_thermal_bc=="SURFACE_WATER")
+        for(const auto& cell:subsurface_.heat().cells)
+            if(!cell.column.energy.empty()&&!cell.surface_owned)
+                throw std::runtime_error("[2D ground heat] SURFACE_WATER requires active HEAT_MODEL COUPLED and BED_HEAT_MODEL GROUND_COLUMN.");
     infil_elapsed_ = 0.0;
     if (infil_.active()) {
         // Publish an initial held rate so the very first substep infiltrates
@@ -1446,6 +1567,46 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     render_dirty_ = false;
 }
 
+void SurfaceRouter2D::configureSnowGroundContacts() {
+    if(!state_.snow.active())return;
+    const std::size_t n=mesh_.n_cells();
+    std::vector<unsigned char> mask(n,0);
+    auto& mesh_heat=state_.heat;
+    auto& aquifer=subsurface_.heat();
+    if(mesh_heat.ground_column) {
+        mesh_heat.standalone_ground.snow_owner=&state_.snow;
+        if(mesh_heat.aquifer_ground)mesh_heat.aquifer_ground->snow_owner=&state_.snow;
+    }
+    if(aquifer.active())aquifer.snow_owner=&state_.snow;
+    for(std::size_t i=0;i<n;++i) {
+        if(!state_.snow.owns(int(i))||state_.snow.kind(int(i))!=surface::SnowKind::Ueb)continue;
+        GroundHeatState* owner=nullptr;
+        if(mesh_heat.ground_column)owner=&mesh_heat.groundOwner(int(i));
+        else if(aquifer.active())owner=&aquifer;
+        if(owner&&owner->config&&owner->config->options.conduction&&i<owner->cells.size()&&
+           !owner->cells[i].column.energy.empty())mask[i]=1;
+    }
+    if(auto error=state_.snow.setGroundContactMask(mask);!error.empty())
+        throw std::runtime_error("[2D ground heat] "+error);
+}
+
+
+void SurfaceRouter2D::initializeChannelGround(SimulationContext& ctx) {
+    bool requested=false;
+    if(ctx.options.heat_transport&&ctx.heat_config.sediment_exchange)
+        for(int link=0;link<ctx.n_links();++link)
+            if(transport::heat::sedimentFor(ctx,HeatElement::link(link)).mesh_ground)requested=true;
+    if(!requested)return;
+    if(!active_)throw std::runtime_error("MESH_CONTACTS channel heat requires an enabled 2D mesh and porous thermal aquifer.");
+    const double coordinate_scale=ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units))==0?.3048:1.;
+    if(auto error=channel_ground_.initialize(ctx,mesh_,subsurface_.heat(),subsurface_.transport(),state_,coordinate_scale);!error.empty())
+        throw std::runtime_error(error);
+    if(channel_ground_.active()) {
+        auto* cpu=dynamic_cast<ExplicitInertialSolver*>(solver_.get());
+        if(!cpu)throw std::runtime_error("MESH_CONTACTS channel heat requires the CPU mesh transport solver.");
+        cpu->setChannelGround(channel_ground_);
+    }
+}
 
 void SurfaceRouter2D::step(SimulationContext& ctx, double dt, double t) {
     if (!active_) return;
@@ -1722,9 +1883,25 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
         }
     }
 
+    prepareMeshHeat(ctx,state_,dt);
+    if(subsurface_.heat().active())subsurface_.heat().prepare();
     {
         perf::ScopedTimer tm_adv(perf::sec_2d_advance);
         solver_->advance(sim_time_, sim_time_ + dt);  // always reaches target
+    }
+    if(auto error=subsurface_.refreshPorewaterContactLedger();!error.empty())
+        throw std::runtime_error("[2D porewater] "+error);
+    advanceRemainingGroundColumns(mesh_,options_,state_,dt);
+    if(state_.heat.ground_column&&subsurface_.heat().active())
+        for(std::size_t i=0;i<state_.heat.aquifer_owned.size();++i)
+            if(state_.heat.aquifer_owned[i])
+                subsurface_.heat().refreshView(int(i),subsurface_.transport());
+    if(state_.heat.enabled && std::any_of(state_.heat.failures.begin(),state_.heat.failures.end(),
+                                         [](int failed){return failed!=0;}))
+        throw std::runtime_error("[2D heat] Nonfinite thermal update; refine the thermal step or check forcing/material values.");
+    for(std::size_t i=0;i<subsurface_.heat().cells.size();++i) {
+        const auto& cell=subsurface_.heat().cells[i];
+        if(cell.failed)throw std::runtime_error("[2D ground heat] Cell "+std::to_string(i+1)+": "+cell.error);
     }
     sim_time_ += dt;
     applyAgingAndReactions(ctx, dt);   // S4: Lie-split after the advance
@@ -1836,6 +2013,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
     // Ledgers every batch (accumulateMassBalance reads coupling_volume as
     // "this batch's exchange", so it MUST run before the queue move below) …
     accumulateMassBalance(ctx, dt);
+    if(common_stage_)common_stage_->synchronizeSurfaceLedgers(ctx);
 
     // G1: the aquifer's node exchange rides the same 1D delivery channel as
     // the surface's — to the node they are the same thing, water arriving
@@ -2237,6 +2415,9 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
             throw std::invalid_argument("Joint outfall advance requires its matching pre-routing reservation.");
         source_boundary_ready_ = false;
     }
+    if(ctx.options.heat_transport&&subsurface_.lidReceiptsEnabled())
+        if(auto error=subsurface_.completeLidThermalInterval(ctx);!error.empty())
+            throw std::runtime_error("[2D LID heat] "+error);
     for(std::size_t b=0;b<subsurface_.nodeBeds().size();++b) {
         const int n=subsurface_.nodeBeds()[b].node;
         if(lidnode::bottomMode(ctx,n)==LidNodeBottom::MeshAquifer && !lidnode::richardsMode(ctx,n))
@@ -2347,7 +2528,8 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
         if (two_way) publishLinkCoupling(ctx);
     }
     const double sync = couplingSyncSpan(ctx, options_);
-    if (pending_dt_ + 0.5 * routing_dt >= sync) {
+    const bool lid_heat_sync=ctx.options.heat_transport&&subsurface_.lidReceiptsEnabled();
+    if (lid_heat_sync || pending_dt_ + 0.5 * routing_dt >= sync) {
         const double span = pending_dt_;
         pending_dt_ = 0.0;
         coAdvanceStep(ctx, span, t);
@@ -2441,6 +2623,7 @@ void SurfaceRouter2D::applyAgingAndReactions(SimulationContext& ctx, double dt) 
         for (std::size_t c = 0; c < nt; ++c)
             tr.cell_mass[ar * nt + c] += dt * state_.volume[c];
     }
+    if(!ageLocalBedPorewater(state_.heat,dt))throw std::runtime_error("Local bed porewater age overflow.");
 
     // E4/S4 reaction stage, reusing reactArdStage on a per-cell CONCENTRATION
     // view (mass / volume) of the WET cells: pollutant kdecay (exact
@@ -2797,7 +2980,7 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     }
 
     // Rainfall inflow (m³): rainfall is m/s after forcings are applied.
-    if (common_stage_) mb.rainfall_in = common_stage_->meshRain();
+    if (common_stage_&&!common_stage_->standaloneLocalBed()) mb.rainfall_in = common_stage_->meshRain();
     else mb.rainfall_in += rain_vol * dt;
 
     // The CPU marcher records the applied evaporation after sharing the

@@ -78,6 +78,7 @@
 #include "../coupling/RuntimeCoupling.hpp"   // T7.1
 
 #include <algorithm>
+#include "../heat/GroundHeat.hpp"
 #include <string>
 #include <vector>
 
@@ -85,6 +86,7 @@ namespace openswmm::detail { class CompletedSourceArchive; }
 
 namespace openswmm {
 struct NodeData;
+struct SimulationContext;
 }  // namespace openswmm
 
 namespace openswmm::twoD {
@@ -154,6 +156,15 @@ public:
     void bookAreaEt(int cell,double dt,double potential,double owner_evaporation,double soil_demand);
 
     bool active() const noexcept { return state_.active; }
+    /// Mesh mode: 1 where a [2D_AQUIFER] row (`*`, TAG or CELL) covers the
+    /// cell. An uncovered cell has no aquifer: no storage, no lateral faces,
+    /// and its infiltration stays with the surface model. All 1 in
+    /// PER_SUBCATCH mode.
+    const std::vector<uint8_t>& coverage() const noexcept { return covered_; }
+    bool covers(int cell) const noexcept {
+        return cell >= 0 && static_cast<std::size_t>(cell) < covered_.size() &&
+               covered_[static_cast<std::size_t>(cell)] != 0;
+    }
     SubsurfaceState&       state()       noexcept { return state_; }
     const SubsurfaceState& state() const noexcept { return state_; }
 
@@ -163,6 +174,14 @@ public:
     /// and inert (`active() == false`) until then.
     SubsurfaceTransportState&       transport()       noexcept { return tr_; }
     const SubsurfaceTransportState& transport() const noexcept { return tr_; }
+    GroundHeatState& heat() noexcept {return heat_;}
+    const GroundHeatState& heat() const noexcept {return heat_;}
+    double pendingHeat(int cell) const noexcept;
+    std::string initHeat(SimulationContext&,const GwTransportData&);
+    std::string initPorewater();
+    /// Rebuild the signed soil-side contact receipt from the canonical layer
+    /// increments after the mesh/channel synchronization has settled.
+    std::string refreshPorewaterContactLedger();
     /// Size the rows and seed both stores from `[GW_INITIAL_QUALITY]`.
     /// Separate from `initialize` because the row layout needs the resolved
     /// `[GW_*]` sections, which the router owns. @p names is the row layout's
@@ -194,11 +213,13 @@ public:
         const auto k = tr_.idx(species, cell);
         const double mob = tr_.dissolvedFraction(species, cell, state_.theta_s[u]);
         double m = vol * (tr_.sat_mass[k] / v) * mob;
+        if(heat_.active() && species==tr_.temp_row){heat_link_out_volume_[u]+=vol;bookPresetHeatOut(cell,vol,m);}
         if (!tr_.signedRow(species)) {
             const double avail = std::max(0.0, tr_.sat_mass[k] * mob - tr_.lout_mass[k]);
             m = std::min(m, avail);
         }
         if (m == 0.0) return 0.0;
+        bookPresetPorewaterOut(cell,species,m);
         tr_.lout_mass[k] += m;
         return m;
     }
@@ -395,9 +416,10 @@ public:
     const std::vector<double>& richardsBedUpCumulative() const noexcept { return richards_up_cum_; }
     // Hydraulic columns book completed intervals; groundwater consumes them
     // only at its own firing. Gross reservations cannot cancel each other.
-    struct PendingLidBed { double start=0,end=0,down=0,up=0; };
+    struct PendingLidBed { double start=0,end=0,down=0,up=0,down_j=0,up_j=0; bool heat_applied=false; };
     std::string configureLidReceipts(const std::vector<int>& beds,const std::vector<int>& mobile={});
     std::string retainLidReceipts(double start,double end,const std::vector<RichardsBedReceipt>&);
+    std::string completeLidThermalInterval(SimulationContext&);
     bool lidReceiptsEnabled() const noexcept { return lid_receipts_enabled_; }
     double pendingLidDown(int cell) const noexcept;
     double pendingLidUp(int cell) const noexcept;
@@ -453,6 +475,7 @@ private:
     /// (G-X4: `+` a leaking conduit filling the cell, `−` a gaining one
     /// drawing from it), `+ recharge` is unsaturated → saturated.
     struct CellFlux {
+        double hg_final=0;
         double runtime_dt=0.0, requested_source_out=0.0;
         double v_sat0 = 0.0, v_uns0 = 0.0;   ///< water volumes BEFORE the firing
         double lateral = 0.0;                ///< gathered, + into the cell
@@ -470,6 +493,7 @@ private:
         /// column's own balance, which makes it exact for every closure
         /// rather than only for closure A's explicit `θ_bot·ΔL`.
         double handover = 0.0;
+        double lid_in_j = 0.0;               ///< accepted LID sensible heat entering this cell
         double et = 0.0;                     ///< out of the column
         double deep = 0.0;
         double dt = 0.0;                     ///< T7.2: the firing's own step (s), for decay
@@ -483,6 +507,8 @@ private:
     /// Move the tuple along @p f. Called at the END of `fireCell`, when every
     /// volume is final.
     void fireCellSpecies(int i, const CellFlux& f) noexcept;
+    void fireGroundHeatSpecies(int i,const CellFlux& f) noexcept;
+    void fireGroundPorewaterSpecies(int i,const CellFlux& f) noexcept;
     /// Gather this cell's lateral side accumulators (m³) and zero them.
     double gatherLateral(int i) noexcept;
     /// T7.1: the same gather for one species' mass.
@@ -514,6 +540,23 @@ private:
     std::vector<std::vector<std::pair<std::size_t,double>>> cell_sources_;
     SubsurfaceState  state_;
     SubsurfaceTransportState tr_;   ///< T7.1
+    GroundHeatState heat_;
+    std::vector<double> heat_link_out_volume_;
+    std::vector<double> heat_preset_out_j_; // [cell*thermal_layers+layer], accepted producer-time exports
+    std::vector<double> heat_preset_out_water_; // paired physical layer volumes, including source-interval splits
+    std::vector<double> heat_node_out_volume_,heat_node_gathered_out_; // gross accepted exports per hydraulic bed
+    std::vector<double> porewater_preset_out_; // [species*n_cells*layers + cell*layers + layer]
+    void bookPresetHeatOut(int cell,double volume,double temperature_volume) noexcept;
+    std::string conductGroundWithLids(int cell,double seconds);
+    void bookPresetPorewaterOut(int cell,int species,double mass) noexcept;
+    double saturatedPorewaterMobileMass(int cell,int species) const noexcept;
+    struct ThermalFaceSlice {int left=0,right=0;double low=0,high=0;};
+    struct ThermalFace {double distance_left=0,distance_right=0;std::vector<ThermalFaceSlice> slices;};
+    std::vector<ThermalFace> heat_faces_;
+    std::vector<double> heat_pending_left_,heat_pending_right_,heat_dt_;
+    std::string initLateralHeat();
+    void fireLateralHeatFace(int edge,double seconds);
+    void gatherLateralHeat(int cell) noexcept;
     GwOptions        options_;
     std::vector<GwNodeBed> node_beds_;
     std::vector<double>    bed_exchange_cum_;   ///< G-O: per bed (m³), cumulative
@@ -565,6 +608,9 @@ private:
     /// Mesh mode: cell → containing subcatchment for the legacy arbitration
     /// (centroid-in-polygon, draft decision 13). −1 = not covered.
     std::vector<int> cell_subcatch_;
+    /// See coverage(). Rebuilt from the rows by every initialize(), so a
+    /// restart reproduces it without a checkpoint field.
+    std::vector<uint8_t> covered_;
 };
 
 }  // namespace openswmm::twoD

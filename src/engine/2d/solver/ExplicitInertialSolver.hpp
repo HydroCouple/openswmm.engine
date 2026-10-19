@@ -61,6 +61,7 @@ namespace openswmm::twoD {
 
 class SubsurfaceSolver;   // G1: the two-zone groundwater kernel, if authored
 class CommonSourceStage;
+class ChannelGroundState;
 class SourceResultHistory;
 class EngineSourceResultHistory;
 
@@ -78,6 +79,7 @@ public:
     void pinExternalSourceCells(const std::vector<int>& cells);
     /// Internal qualification adapter; owned externally and attached at time zero.
     void setCommonSourceStage(CommonSourceStage& stage);
+    void setChannelGround(ChannelGroundState&);
     /// Capture initial state and every finest accepted source interval, after
     /// all due groundwater firings/node sampling; externally owned recorder.
     void setSourceResultHistory(SourceResultHistory& history);
@@ -293,12 +295,17 @@ private:
     // Returns false only when no source bookkeeping or volume change occurred.
     bool applyCellSources(int cell, double dt);
     bool applyRuntimeSources(int cell, double dt);
-    struct CellSourceStep;
+    struct CellSourceStep {
+        double area_dt=0,rain=0,coupling=0,available=0,infil=0,evap=0,out=0,final_volume=0,requested_infil=0;
+        double* ledger=nullptr;
+    };
     bool prepareCellSources(int cell, double dt, CellSourceStep& source);
+    void mixCellSourceRow(int cell,int row,double& mass,const CellSourceStep&);
+    void prepareChannelGround(double seconds);
     void applyCellSourceRow(int cell, int row, double& mass,
                             const CellSourceStep& source);
     enum class SourceLedger { Infiltration, CouplingOut, Rainfall,
-                              CouplingIn, Exfiltration, Boundary, ExternalIn, ExternalOut, Count };
+                              CouplingIn, Exfiltration, Boundary, ExternalIn, ExternalOut, BedExchange, Count };
     void bookSourceLedger(SourceLedger ledger, int species, double mass) noexcept;
     void flushSourceLedgers();
     int sourceThread() const noexcept;
@@ -306,6 +313,9 @@ private:
     // applied evaporation volume. Fold only after the parallel region ends.
     std::vector<double> source_ledgers_;
     std::size_t source_ledger_stride_ = 0;
+    ChannelGroundState* channel_ground_=nullptr;
+    std::vector<CellSourceStep> channel_sources_;
+    std::vector<uint8_t> channel_source_ready_,channel_temperature_mixed_;
     /// False when every booked ΔM is known to have been consumed already —
     /// true after a GLOBAL substep, where every active face fired and then
     /// every active cell gathered both of its sides (faces touching an

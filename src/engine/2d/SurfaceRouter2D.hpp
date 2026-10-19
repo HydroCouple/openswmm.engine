@@ -48,6 +48,7 @@
 #include "gw/GwTransportData.hpp"
 #include "quality/SurfaceQuality2D.hpp"   // S7
 #include "subsurface/SubsurfaceSolver.hpp"   // G1: the two-zone GW kernel
+#include "heat/ChannelGround.hpp"
 #include "infil/Infil2D.hpp"
 #include "mesh/RainfallInterpolator.hpp"
 
@@ -96,6 +97,10 @@ public:
      * @param ctx Simulation context (must have mesh_2d populated from parsing).
      */
     void initialize(SimulationContext& ctx);
+    /// Bind selected finite channel contacts after 1D heat state is seeded.
+    void initializeChannelGround(SimulationContext& ctx);
+    const ChannelGroundState& channelGround() const noexcept {return channel_ground_;}
+    ChannelGroundState& channelGround() noexcept {return channel_ground_;}
     /// Internal qualification hook: externally owned stage, all cells managed,
     /// wall boundaries, no live 1D exchanges. Does not activate authored ownership.
     void setCommonSourceStage(SimulationContext& ctx, CommonSourceStage& stage);
@@ -433,10 +438,14 @@ public:
      */
     using PendingBoundaryRow = twoD::PendingBoundaryRow;
     using PendingInitialQualityRow = twoD::PendingInitialQualityRow;
+    using PendingInitialBedQualityRow = twoD::PendingInitialBedQualityRow;
     using PendingBoundaryQualityRow = twoD::PendingBoundaryQualityRow;
     /// S1/S2: raw [2D_INITIAL_QUALITY] rows, resolved at initialize().
     std::vector<PendingInitialQualityRow>& pendingInitialQualityRows() noexcept {
         return pending_iq_rows_;
+    }
+    std::vector<PendingInitialBedQualityRow>& pendingInitialBedQualityRows() noexcept {
+        return pending_ibq_rows_;
     }
     std::vector<PendingBoundaryQualityRow>& pendingBoundaryQualityRows() noexcept {
         return pending_bq_rows_;
@@ -501,6 +510,7 @@ private:
         const std::function<void()>* before_install = nullptr,
         double* inspect_source_end = nullptr);
     void attachCommonSourceStage(SimulationContext&, CommonSourceStage&, Router*);
+    void configureSnowGroundContacts();
     void checkJointRoutingStep(const SimulationContext&, double dt, double start) const;
     Router* joint_hydraulic_ = nullptr; // externally owned, stable lifetime
     static double couplingSyncSpan(const SimulationContext&, const SolverOptions2D&);
@@ -518,6 +528,7 @@ private:
 
     MeshData         mesh_;
     SurfaceStateData state_;
+    ChannelGroundState channel_ground_;
     SolverOptions2D  options_;
     BoundaryData     boundary_;
     std::vector<std::string> thread_warnings_;   ///< See threadWarnings().
@@ -578,6 +589,7 @@ private:
     /// V-E3 — parse-time scratch for [2D_BOUNDARY_CONDITIONS] rows.
     std::vector<PendingBoundaryRow> pending_bc_rows_;
     std::vector<PendingInitialQualityRow> pending_iq_rows_;   ///< S1/S2
+    std::vector<PendingInitialBedQualityRow> pending_ibq_rows_;
     std::vector<PendingBoundaryQualityRow> pending_bq_rows_;  ///< S2
 
     /// §11A — parse-time scratch for [2D_EDGE_CONVEYANCE] rows.

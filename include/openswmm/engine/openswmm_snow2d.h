@@ -30,6 +30,8 @@ typedef struct SWMM_MeshSnowLedger {
 // and NaN quantities, distinguishing unavailable results from a bare pack.
 SWMM_ENGINE_API int swmm_snow2d_get_states(SWMM_Engine,int first,int count,SWMM_SnowState*);
 SWMM_ENGINE_API int swmm_snow2d_get_ledgers(SWMM_Engine,int first,int count,SWMM_MeshSnowLedger*);
+// UEB cover/depth remapping energy [kJ]. Non-UEB and unassigned cells return NaN.
+SWMM_ENGINE_API int swmm_snow2d_get_geometry_energy(SWMM_Engine,int first,int count,double* energy_kj);
 // Atomic replacement through the same strict parsers as the INP reader.
 // Empty section bodies clear that section. No section headers are supplied.
 SWMM_ENGINE_API int swmm_snow2d_apply_configuration(SWMM_Engine,const char* options,

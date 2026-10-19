@@ -147,6 +147,7 @@ void applyHeatFluxes(SimulationContext& ctx, double dt) {
     const auto& CD = ctx.link_subtypes.conduits;
     for (int j = 0; j < nl; ++j) {
         const auto uj = static_cast<std::size_t>(j);
+        if(uj<ctx.heat_state.mesh_contact_link.size()&&ctx.heat_state.mesh_contact_link[uj])continue;
         if (uj >= hs.link_temp.size()) break;
         const double vol_ft3 = ctx.links.volume[uj];
         if (!(vol_ft3 > 0.0)) continue;

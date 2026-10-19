@@ -254,7 +254,7 @@ private:
     // ---- results-file size controls (configureOutput) ----
     hid_t    storage_type_ = H5T_NATIVE_DOUBLE;  ///< H5T_IEEE_F32LE when FLOAT32
     int      compression_  = 4;                  ///< zlib level; 0 = none
-    unsigned report_vars_  = 0x7FFu;             ///< report2d::ALL_MASK until configured
+    unsigned report_vars_  = 0x7FFu;             ///< legacy direct-writer default until configured
     std::vector<std::string> species_filter_;    ///< empty = every row
     std::vector<int>         species_rows_;      ///< row indices written (resolved on first update)
     double   report_2d_step_days_ = 0.0;         ///< 0 = every update() call
@@ -325,6 +325,34 @@ private:
     hsize_t n_gw_layers_           = 0;
     bool    gw_created_            = false;
     void createGroundwaterDatasets(const SimulationSnapshot& snap);
+    bool    heat_created_           = false;
+    hsize_t n_heat_layers_          = 0;
+    hsize_t n_heat_lid_layers_      = 0;
+    hid_t   ds_heat_water_temp_     = H5I_INVALID_HID;
+    hid_t   ds_heat_bed_temp_       = H5I_INVALID_HID;
+    hid_t   ds_heat_bed_energy_     = H5I_INVALID_HID;
+    hid_t   ds_heat_bed_initial_energy_ = H5I_INVALID_HID;
+    hid_t   ds_heat_bed_capacity_   = H5I_INVALID_HID;
+    hid_t   ds_heat_bed_pore_volume_ = H5I_INVALID_HID;
+    hid_t   ds_heat_bed_species_conc_ = H5I_INVALID_HID;
+    hid_t   ds_heat_bed_species_initial_amount_ = H5I_INVALID_HID;
+    hid_t   ds_heat_bed_species_exchange_ = H5I_INVALID_HID;
+    hid_t   ds_heat_bed_age_generation_ = H5I_INVALID_HID;
+    hsize_t n_heat_bed_species_     = 0;
+    hid_t   ds_heat_surface_budget_ = H5I_INVALID_HID;
+    hid_t   ds_heat_evaporation_    = H5I_INVALID_HID;
+    hid_t   ds_heat_ground_temp_    = H5I_INVALID_HID;
+    hid_t   ds_heat_ground_energy_  = H5I_INVALID_HID;
+    hid_t   ds_heat_ground_capacity_= H5I_INVALID_HID;
+    hid_t   ds_heat_layer_temp_     = H5I_INVALID_HID;
+    hid_t   ds_heat_layer_energy_   = H5I_INVALID_HID;
+    hid_t   ds_heat_layer_capacity_ = H5I_INVALID_HID;
+    hid_t   ds_heat_ground_budget_  = H5I_INVALID_HID;
+    hid_t   ds_heat_lid_temp_       = H5I_INVALID_HID;
+    hid_t   ds_heat_lid_energy_     = H5I_INVALID_HID;
+    hid_t   ds_heat_lid_capacity_   = H5I_INVALID_HID;
+    hid_t   ds_heat_lid_ground_contact_ = H5I_INVALID_HID;
+    void createThermalDatasets(const SimulationSnapshot& snap);
     hid_t ds_face_vx_              = H5I_INVALID_HID;
     hid_t ds_face_vy_              = H5I_INVALID_HID;
     hid_t ds_face_continuity_err_  = H5I_INVALID_HID;

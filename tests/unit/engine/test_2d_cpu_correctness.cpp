@@ -2,6 +2,7 @@
 // Copyright 2026 Caleb Buahin
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <numeric>
 #include "2d/mesh/MeshBuilder.hpp"
@@ -31,6 +32,16 @@ struct ExplicitInertialSolverTestAccess {
     static double discharge(const ExplicitInertialSolver& s,int e) {return s.q_[e];}
     static void markActiveFaces(ExplicitInertialSolver& s) {
         for(int e:s.active_faces_)s.q_[e]=e+1.;
+    }
+    static void bookFaceVolume(ExplicitInertialSolver& s,int edge,double volume,double dt) {
+        const int a=s.edges_.cL[edge],b=s.edges_.cR[edge];
+        s.facc_L_[edge]-=volume;s.facc_R_[edge]+=volume;
+        s.bookFaceSpecies(edge,a,b,volume,0.,dt,true);
+        s.accumulators_pending_=true;
+    }
+    static void settle(ExplicitInertialSolver& s) {s.settleAccumulators();}
+    static void transferFaceVolume(ExplicitInertialSolver& s,int edge,double volume,double dt) {
+        bookFaceVolume(s,edge,volume,dt);settle(s);
     }
 };
 }
@@ -67,6 +78,122 @@ TEST(Cpu2DCorrectness,MacroLandingPublishesAllConservedState) {
         solver.advance(t,2*t);EXPECT_NEAR(sum(s.volume),v,1e-9);EXPECT_NEAR(sum(s.transport.cell_mass),mass,1e-9);
         solver.finalize();EXPECT_NEAR(sum(s.volume),v,1e-9);
     }
+}
+TEST(Cpu2DCorrectness,CshChannelHeatAdvectionMatchesAcceptedMeshFaceTransfer) {
+    // CSHComponent commit 6d95455e6b655a7842041c108e66ad4ab7f4b7aa,
+    // examples/Versteeg/case1/case1_hybrid.inp: with transient storage off,
+    // the receiving element's heat capacity is rho_w*cp*V. Reducing its
+    // computeDTDt advection term to a single inflow Q at temperature T_in,
+    // with no outflow, dispersion or surface flux, gives d(V*T)/dt=Q*T_in.
+    // Use the example's V=area*length=1*0.2 m3 and Q=0.1 m3/s, then compare
+    // that independent finite-volume balance with the production mesh-face
+    // transport accumulator. This is a source-equation comparison, not a
+    // whole CSH executable trajectory comparison.
+    auto m=grid(1);auto s=state(m,0);auto o=options();o.dispersion=0;
+    constexpr double initial_volume=.2,initial_temperature=10.,source_temperature=20.;
+    constexpr double q=.1,dt=.2,transfer=q*dt;
+    s.volume.assign(2,initial_volume);
+    s.transport.resize(1,2,0);s.transport.temp_row=0;s.transport.row_names={"__TEMPERATURE__"};
+    s.transport.cell_mass[0]=initial_volume*initial_temperature;
+    s.transport.cell_mass[1]=initial_volume*source_temperature;
+    ExplicitInertialSolver solver;solver.initialize(m,s,o);
+    const auto& edges=ExplicitInertialSolverTestAccess::edges(solver);
+    ASSERT_EQ(edges.ne,1);
+    const int source=edges.cL[0],receiver=edges.cR[0];
+    s.transport.cell_mass[s.transport.idx(0,source)]=initial_volume*source_temperature;
+    s.transport.cell_mass[s.transport.idx(0,receiver)]=initial_volume*initial_temperature;
+    ExplicitInertialSolverTestAccess::transferFaceVolume(solver,0,transfer,dt);
+
+    const double expected_temperature=(initial_volume*initial_temperature+
+        transfer*source_temperature)/(initial_volume+transfer);
+    EXPECT_NEAR(s.volume[source],initial_volume-transfer,1e-14);
+    EXPECT_NEAR(s.volume[receiver],initial_volume+transfer,1e-14);
+    EXPECT_NEAR(s.transport.cell_mass[s.transport.idx(0,source)]/s.volume[source],
+                source_temperature,1e-13);
+    EXPECT_NEAR(s.transport.cell_mass[s.transport.idx(0,receiver)]/s.volume[receiver],
+                expected_temperature,1e-13);
+    const double rho_cp=1000.*4184.;
+    const double receiver_heat_change=rho_cp*(s.transport.cell_mass[s.transport.idx(0,receiver)]-
+        initial_volume*initial_temperature);
+    EXPECT_NEAR(receiver_heat_change,rho_cp*transfer*source_temperature,1e-8);
+    EXPECT_NEAR(s.transport.cell_mass[0]+s.transport.cell_mass[1],
+                initial_volume*(initial_temperature+source_temperature),1e-14);
+}
+TEST(Cpu2DCorrectness,CshFiveElementHeatAdvectionMatchesIndependentTrajectory) {
+    // Match the five 0.2 m long, 1 m2 CSH elements and Q=0.1 m3/s in
+    // HydroCouple/CSHComponent commit 6d95455e6b655a7842041c108e66ad4ab7f4b7aa,
+    // examples/Versteeg/case1/case1_hybrid.inp. Disable transient storage,
+    // longitudinal dispersion and all heat fluxes. Perturb the upstream
+    // temperature to 20 C (the pinned sample starts every element at 10 C)
+    // and integrate CSH's source advection ODE independently with RK4:
+    // dT_i/dt = Q/V * (T_{i-1} - T_i), with a fixed-temperature inlet.
+    // The 2D comparison uses five 1 m by 0.2 m quads, each with V=0.2 m3,
+    // and the production face donor/gather path at a smaller explicit step.
+    MeshData m;m.resize_vertices(12);
+    for(int y=0;y<=1;++y)for(int x=0;x<=5;++x) {
+        const int v=y*6+x;m.vx[v]=.2*x;m.vy[v]=y;
+    }
+    m.resize_triangles(5);
+    for(int i=0;i<5;++i)m.set_quad(i,i,i+1,7+i,6+i);
+    buildMeshTopology(m);
+
+    auto s=state(m,0);s.volume.assign(5,.2);
+    s.transport.resize(1,5,0);s.transport.temp_row=0;s.transport.row_names={"__TEMPERATURE__"};
+    for(int i=0;i<5;++i)s.transport.cell_mass[i]=.2*10.;
+    auto o=options();o.dispersion=0;
+    ExplicitInertialSolver solver;solver.initialize(m,s,o);
+    const auto& edges=ExplicitInertialSolverTestAccess::edges(solver);
+    ASSERT_EQ(edges.ne,4);
+    std::array<int,4> face{};face.fill(-1);
+    for(int e=0;e<edges.ne;++e) {
+        ASSERT_EQ(edges.cR[e],edges.cL[e]+1);
+        face[std::size_t(edges.cL[e])]=e;
+    }
+    for(int i=0;i<4;++i)ASSERT_GE(face[std::size_t(i)],0);
+
+    constexpr double q=.1,water_volume=.2,inlet_temperature=20.;
+    constexpr double end_time=.2,dt_2d=.001,transfer=q*dt_2d;
+    std::array<double,5> reference{};reference.fill(10.);
+    const auto rate=[&](const std::array<double,5>& t) {
+        std::array<double,5> d{};
+        d[0]=q/water_volume*(inlet_temperature-t[0]);
+        for(int i=1;i<5;++i)d[std::size_t(i)]=q/water_volume*(t[std::size_t(i-1)]-t[std::size_t(i)]);
+        return d;
+    };
+    constexpr double h=.0001;
+    for(double elapsed=0;elapsed<end_time;elapsed+=h) {
+        const auto k1=rate(reference);
+        auto stage=reference;for(int i=0;i<5;++i)stage[std::size_t(i)]+=.5*h*k1[std::size_t(i)];
+        const auto k2=rate(stage);
+        stage=reference;for(int i=0;i<5;++i)stage[std::size_t(i)]+=.5*h*k2[std::size_t(i)];
+        const auto k3=rate(stage);
+        stage=reference;for(int i=0;i<5;++i)stage[std::size_t(i)]+=h*k3[std::size_t(i)];
+        const auto k4=rate(stage);
+        for(int i=0;i<5;++i)reference[std::size_t(i)]+=h*(k1[std::size_t(i)]+
+            2*k2[std::size_t(i)]+2*k3[std::size_t(i)]+k4[std::size_t(i)])/6.;
+    }
+
+    constexpr int nsteps=static_cast<int>(end_time/dt_2d);
+    double boundary_heat_j=0;
+    const double rho_cp=1000.*4184.;
+    for(int step=0;step<nsteps;++step) {
+        const double out_temperature=s.transport.cell_mass[4]/s.volume[4];
+        boundary_heat_j+=rho_cp*transfer*(inlet_temperature-out_temperature);
+        for(int i=0;i<4;++i)
+            ExplicitInertialSolverTestAccess::bookFaceVolume(solver,face[std::size_t(i)],transfer,dt_2d);
+        s.volume[0]+=transfer;s.transport.cell_mass[0]+=transfer*inlet_temperature;
+        s.volume[4]-=transfer;s.transport.cell_mass[4]-=transfer*out_temperature;
+        ExplicitInertialSolverTestAccess::settle(solver);
+    }
+    double initial_temp_volume=0,final_temp_volume=0;
+    for(int i=0;i<5;++i) {
+        const double temperature=s.transport.cell_mass[i]/s.volume[i];
+        EXPECT_NEAR(s.volume[i],water_volume,1e-13)<<"element "<<i;
+        EXPECT_NEAR(temperature,reference[std::size_t(i)],1e-3)<<"element "<<i;
+        initial_temp_volume+=water_volume*10.;final_temp_volume+=s.transport.cell_mass[i];
+    }
+    EXPECT_NEAR(rho_cp*(final_temp_volume-initial_temp_volume),boundary_heat_j,
+                1e-10*std::max(1.,std::abs(boundary_heat_j)));
 }
 TEST(Cpu2DCorrectness,FlowAndHeldSinksShareAvailableWater) {
     for(bool quad:{false,true})for(int tiers:{1,4})for(int mode:{0,1,2}){
