@@ -486,8 +486,8 @@ int setParams(XSectParams& xs, int type, const double p[], double ucf) {
                 if (p[1] < 0.0) return -1;
                 xs.y_full = p[0] / ucf;
                 xs.w_max  = p[1] / ucf;
-                xs.a_full = 1.2692 * xs.y_full * xs.y_full;
-                xs.r_full = 0.3061 * xs.y_full;
+                xs.a_full = 0.8117 * xs.y_full * xs.w_max;
+                xs.r_full = 0.2448 * std::sqrt(xs.y_full * xs.w_max);
             }
             xs.s_full = xs.a_full * std::pow(xs.r_full, 2.0 / 3.0);
             xs.s_max  = xs.s_full;
@@ -508,8 +508,8 @@ int setParams(XSectParams& xs, int type, const double p[], double ucf) {
                 if (p[1] < 0.0) return -1;
                 xs.y_full = p[0] / ucf;
                 xs.w_max  = p[1] / ucf;
-                xs.a_full = 1.2692 * xs.w_max * xs.w_max;
-                xs.r_full = 0.3061 * xs.w_max;
+                xs.a_full = 0.8117 * xs.y_full * xs.w_max;
+                xs.r_full = 0.2448 * std::sqrt(xs.y_full * xs.w_max);
             }
             xs.s_full = xs.a_full * std::pow(xs.r_full, 2.0 / 3.0);
             xs.s_max  = xs.s_full;
