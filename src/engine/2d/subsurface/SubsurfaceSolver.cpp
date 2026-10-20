@@ -3075,10 +3075,12 @@ double SubsurfaceSolver::rawRecharge(int cell,const soil::Params& p,double lengt
 
 std::string SubsurfaceSolver::rk2ProfileError() const {
     if(!active() || options_.per_subcatch || tr_.active() || heat_.active() || !reactors_.empty() ||
-       !node_beds_.empty() || lid_receipts_enabled_ || runtime_sources_.active() || !boundaries_.empty() ||
+       !node_beds_.empty() || lid_receipts_enabled_ || runtime_sources_.active() ||
        std::any_of(source_owned_.begin(),source_owned_.end(),[](bool v){return v;}) ||
        std::any_of(state_.closure.begin(),state_.closure.end(),[](int8_t v){return v!=int8_t(GwClosure::CLOSED_FORM);}))
-        return "Coupled RK2 requires spatial CLOSED_FORM water-only cells without borrowed source, network, thermal or boundary owners.";
+        return "Coupled RK2 requires spatial CLOSED_FORM water-only cells without borrowed source, network or thermal owners.";
+    for(const auto& boundary:boundaries_)if(boundary.head||!boundary.terms.empty())
+        return "Coupled RK2 groundwater boundaries require water-only FLOW forcing; HEAD and quality remain guarded.";
     for(const auto& source:sources_)if(!source.terms.empty())
         return "Coupled RK2 groundwater wells require water-only forcing.";
     for(const auto* values:{&state_.nacc,&state_.lacc})for(double v:*values)if(v!=0)
@@ -3130,9 +3132,16 @@ void SubsurfaceSolver::blendRk2Water(const SubsurfaceSolver& initial,double end)
         &SubsurfaceState::led_node,&SubsurfaceState::led_reject,&SubsurfaceState::led_dunne,
         &SubsurfaceState::led_caprise,&SubsurfaceState::led_et,&SubsurfaceState::led_infil_in,
         &SubsurfaceState::led_link,&SubsurfaceState::led_subcatch_in,&SubsurfaceState::led_final_storage,
-        &SubsurfaceState::led_source_in,&SubsurfaceState::led_source_out}) {
+        &SubsurfaceState::led_source_in,&SubsurfaceState::led_source_out,
+        &SubsurfaceState::led_boundary_in,&SubsurfaceState::led_boundary_out}) {
         s.*member=.5*(b.*member+s.*member);
         if(!std::isfinite(s.*member))throw std::runtime_error("Coupled RK2 groundwater ledger is nonfinite.");
+    }
+    if(boundaries_.size()!=initial.boundaries_.size())throw std::runtime_error("Coupled RK2 boundary shape changed in a stage.");
+    for(std::size_t i=0;i<boundaries_.size();++i)for(auto member:{&GwResolvedBoundary::requested_in,&GwResolvedBoundary::requested_out,
+        &GwResolvedBoundary::applied_in,&GwResolvedBoundary::applied_out}) {
+        auto& value=boundaries_[i].*member;value=.5*(initial.boundaries_[i].*member+value);
+        if(!std::isfinite(value)||value<0)throw std::runtime_error("Coupled RK2 boundary receipt is inadmissible.");
     }
     pending_surface_.clear();std::fill(pending_flag_.begin(),pending_flag_.end(),0);
     for(int i=0;i<s.n_cells;++i)if(covers(i)) {

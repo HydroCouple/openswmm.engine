@@ -201,16 +201,18 @@ def test_layered_chemistry_with_porous_heat(tmp_path, chemistry_layers, thermal_
         cleanup(solver)
 
 
-@pytest.mark.parametrize('timed_well', [False, True])
-def test_water_only_coupled_rk2_advances_through_python(tmp_path, timed_well):
+@pytest.mark.parametrize('forcing', ['none', 'well', 'edge'])
+def test_water_only_coupled_rk2_advances_through_python(tmp_path, forcing):
     well = """
 [TIMESERIES]
 PUMP 01/01/2026 00:00:00 .000001
 PUMP 01/01/2026 00:00:01 .000003
 PUMP 01/01/2026 00:00:02 -.000001
-[GW_SOURCES]
-W CELL 1 FLOW PUMP
-""" if timed_well else ''
+""" if forcing != 'none' else ''
+    if forcing == 'well':
+        well += '[GW_SOURCES]\nW CELL 1 FLOW PUMP\n'
+    elif forcing == 'edge':
+        well += '[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW SERIES PUMP\n'
     options = """
 [OPTIONS]
 END_DATE 01/01/2026
@@ -257,11 +259,13 @@ TRANSPORT_TEMPERATURE NO
         assert gw.active and gw.species == ()
         assert gw.ledger(GroundwaterLedger.INFIL_IN) > 0
         assert gw.ledger(GroundwaterLedger.DEEP) > 0
-        if timed_well:
+        if forcing != 'none':
+            inward = GroundwaterLedger.SOURCE_IN if forcing == 'well' else GroundwaterLedger.BOUNDARY_IN
+            outward = GroundwaterLedger.SOURCE_OUT if forcing == 'well' else GroundwaterLedger.BOUNDARY_OUT
             # Native dated tables use floating-point days. The volume bound
             # includes sub-microsecond calendar rounding at these small flows.
-            assert gw.ledger(GroundwaterLedger.SOURCE_IN) == pytest.approx(3.125e-6, abs=1e-12)
-            assert gw.ledger(GroundwaterLedger.SOURCE_OUT) == pytest.approx(.125e-6, abs=1e-12)
+            assert gw.ledger(inward) == pytest.approx(3.125e-6, abs=1e-12)
+            assert gw.ledger(outward) == pytest.approx(.125e-6, abs=1e-12)
         assert abs(gw.continuity_error) < 1e-9
         assert np.isfinite(gw.cells(GroundwaterVariable.HG)).all()
         stats = solver.surface2d.run_stats

@@ -726,6 +726,17 @@ struct CoupledRkRig {
     double total() const {return totalVolume(state,mesh.n_cells())+gw.state().liveStorage();}
 };
 }
+namespace {
+GwResolvedBoundary rk2FlowEdge(const CoupledRkRig& rig,int cell,const GwSourceSignal& signal) {
+    for(int edge=0;edge<rig.mesh.cell_nv[cell];++edge) {
+        const auto slot=MeshData::slot(cell,edge);
+        if(rig.mesh.cell_nbr[slot]!=-1)continue;
+        GwResolvedBoundary result;result.cell=cell;result.edge=edge;result.signal=signal;
+        result.length=rig.mesh.edge_length[slot];result.distance=rig.mesh.edge_dist_c[slot];return result;
+    }
+    throw std::runtime_error("Test cell has no exterior edge");
+}
+}
 TEST(CoupledGroundwaterRk2, AdvancesActualAquiferWithAnalyticalSecondOrderDeepDrainage) {
     double previous=0;
     for(double dt:{.4,.2,.1,.05}) {
@@ -899,7 +910,10 @@ TEST(CoupledGroundwaterRk2, OptionalOpenmpRechargePreservesStagesRestartAndRollb
     a.gw.setRechargeBackend(backend);b.gw.setRechargeBackend(backend);
     GwResolvedSource well;well.name="omp-reversing";well.cells={{0,1}};
     well.flow.times={0,.17,.43,1};well.flow.values={.002,.006,-.002,.001};
-    for(auto* rig:{&a,&b,&cpu})rig->gw.setSources({well});
+    GwSourceSignal edge;edge.times={0,.13,.67,1};edge.values={.004,-.001,.002,.001};
+    for(auto* rig:{&a,&b,&cpu}) {
+        rig->gw.setSources({well});rig->gw.setBoundaries({rk2FlowEdge(*rig,1,edge)});
+    }
     const auto saved=rk2Output("omp-accepted.chk"),restored=rk2Output("omp-restored.chk"),before=rk2Output("omp-before.chk");
     const double initial=a.total();
     for(int k=0;k<20;++k) {
@@ -915,7 +929,8 @@ TEST(CoupledGroundwaterRk2, OptionalOpenmpRechargePreservesStagesRestartAndRollb
         if(k>=7) {ASSERT_TRUE(b.solver.saveCheckpoint(restored.string()).empty());EXPECT_EQ(rk2File(saved),rk2File(restored));}
     }
     EXPECT_GT(a.gw.rechargeCells(),0u);EXPECT_GT(b.gw.rechargeCells(),0u);
-    EXPECT_NEAR(a.total()+a.gw.state().led_deep,initial+a.gw.state().led_source_in-a.gw.state().led_source_out,1e-10*initial);
+    EXPECT_NEAR(a.total()+a.gw.state().led_deep,initial+a.gw.state().led_source_in-a.gw.state().led_source_out+
+        a.gw.state().led_boundary_in-a.gw.state().led_boundary_out,1e-10*initial);
     GwResolvedSource bad;bad.cells={{0,1}};bad.flow.constant=1e308;a.gw.setSources({bad});
     const auto batches=a.gw.rechargeBatches(),cells=a.gw.rechargeCells();
     const auto state=ExplicitInertialSolverTestAccess::state(a.solver),volume=a.state.volume;
@@ -926,13 +941,15 @@ TEST(CoupledGroundwaterRk2, OptionalOpenmpRechargePreservesStagesRestartAndRollb
 }
 
 TEST(CoupledGroundwaterRk2, AffineWellAndDeepDrainageConvergeAtSecondOrder) {
-    double previous=0;
+    for(bool edge:{false,true}) {
+    SCOPED_TRACE(edge);double previous=0;
     for(double dt:{.4,.2,.1,.05}) {
         CoupledRkRig r;r.init(dt,0,.07);auto& w=r.gw.state();
         for(int i=0;i<w.n_cells;++i)w.hu[i]=w.theta_r[i]*(w.zs[i]-w.hg[i]);
         w.led_init_storage=w.storage();const double initial=r.total();
         GwResolvedSource well;well.name="ramp";well.cells={{0,1}};
-        well.flow.times={0,2};well.flow.values={.003,.009};r.gw.setSources({well});
+        well.flow.times={0,2};well.flow.values={.003,.009};
+        if(edge)r.gw.setBoundaries({rk2FlowEdge(r,0,well.flow)});else r.gw.setSources({well});
         ASSERT_TRUE(r.gw.rk2ProfileError().empty());
         for(int k=0;k<int(2/dt);++k)ASSERT_DOUBLE_EQ(r.solver.advance(k*dt,(k+1)*dt),(k+1)*dt);
         const double yield=w.theta_s[0]-w.theta_r[0],lambda=.07/(2*yield),storage=yield*w.area[0];
@@ -940,12 +957,13 @@ TEST(CoupledGroundwaterRk2, AffineWellAndDeepDrainageConvergeAtSecondOrder) {
         const double exact=.6*decay+.003/storage*(1-decay)/lambda+
             .003/storage*(2/lambda-(1-decay)/(lambda*lambda));
         const double error=std::abs(w.hg[0]-exact);
-        RecordProperty("affine_well_error_"+std::to_string(int(dt*1000)),error);
+        RecordProperty(std::string(edge?"affine_edge_error_":"affine_well_error_")+std::to_string(int(dt*1000)),error);
         EXPECT_LT(error,.00004);if(previous>0)EXPECT_GT(previous/error,3.7);previous=error;
-        EXPECT_NEAR(w.led_source_in,.012,1e-14);
+        EXPECT_NEAR(edge?w.led_boundary_in:w.led_source_in,.012,1e-14);
         EXPECT_NEAR(r.total()+w.led_deep,initial+.012,1e-10*initial);
         EXPECT_NEAR(w.continuityResidual(),0,1e-10*initial);
     }
+}
 }
 
 TEST(CoupledGroundwaterRk2, SignedWellKnotsPreserveGrossBudgetsAndExactCheckpointContinuation) {
@@ -1008,4 +1026,71 @@ TEST(CoupledGroundwaterRk2, LaterWellIntervalFailureRollsBackEarlierAcceptedStag
     EXPECT_EQ(r.gw.state().xacc_to_surface,water.xacc_to_surface);EXPECT_EQ(r.gw.state().xacc_from_surface,water.xacc_from_surface);
     EXPECT_DOUBLE_EQ(r.gw.state().led_source_in,water.led_source_in);EXPECT_DOUBLE_EQ(r.total(),initial);
     r.gw.setSources({});ASSERT_NO_THROW(r.solver.advance(0,.1));EXPECT_NEAR(r.total(),initial,1e-10*initial);
+}
+
+TEST(CoupledGroundwaterRk2, FlowEdgesShareWellStagesAndPreserveRestartDiagnostics) {
+    CoupledRkRig a,b;a.init(.4,.005,.01,.2);b.init(.4,.005,.01,.2);
+    GwResolvedSource well;well.name="well-and-edge";well.cells={{0,1}};
+    well.flow.times={0,.15,.35,.7,1};well.flow.values={.02,.06,-.02,-.04,.02};
+    GwSourceSignal signal;signal.times={0,.31,.83,1};signal.values={.04,-.02,.01,.03};
+    const auto edge=rk2FlowEdge(a,1,signal);
+    a.gw.setSources({well});b.gw.setSources({well});a.gw.setBoundaries({edge});b.gw.setBoundaries({edge});
+    ASSERT_TRUE(a.gw.rk2ProfileError().empty());const double initial=a.total();
+    ASSERT_DOUBLE_EQ(a.solver.advance(0,.45),.45);
+    const auto saved=rk2Output("flow-edge.chk"),restored=rk2Output("flow-edge-restored.chk");
+    ASSERT_TRUE(a.solver.saveCheckpoint(saved.string()).empty());
+    auto changed=edge;changed.signal.values[1]+=.001;b.gw.setBoundaries({changed});
+    ASSERT_TRUE(b.solver.saveCheckpoint(restored.string()).empty());const auto before=rk2File(restored);
+    EXPECT_FALSE(b.solver.loadCheckpoint(saved.string()).empty());
+    ASSERT_TRUE(b.solver.saveCheckpoint(restored.string()).empty());EXPECT_EQ(rk2File(restored),before);
+    b.gw.setBoundaries({edge});ASSERT_TRUE(b.solver.loadCheckpoint(saved.string()).empty());
+    for(double end:{.8,1.}) {
+        ASSERT_DOUBLE_EQ(a.solver.advance(a.gw.cellCompletedTime(0),end),end);
+        ASSERT_DOUBLE_EQ(b.solver.advance(b.gw.cellCompletedTime(0),end),end);
+        ASSERT_TRUE(a.solver.saveCheckpoint(saved.string()).empty());
+        ASSERT_TRUE(b.solver.saveCheckpoint(restored.string()).empty());EXPECT_EQ(rk2File(saved),rk2File(restored));
+    }
+    // Independent signed trapezoids: well +0.0115/-0.015, edge +0.0084/-0.0045 m3.
+    const auto& w=a.gw.state();EXPECT_NEAR(w.led_source_in,.0115,1e-13);EXPECT_NEAR(w.led_source_out,.015,1e-13);
+    EXPECT_NEAR(w.led_boundary_in,.0084,1e-13);EXPECT_NEAR(w.led_boundary_out,.0045,1e-13);
+    const auto& receipt=a.gw.boundaries().front();
+    EXPECT_NEAR(receipt.requested_in,.0084,1e-13);EXPECT_NEAR(receipt.applied_in,.0084,1e-13);
+    EXPECT_NEAR(receipt.requested_out,.0045,1e-13);EXPECT_NEAR(receipt.applied_out,.0045,1e-13);
+    EXPECT_NEAR(a.total()+w.led_deep,initial+.0115+.0084-.015-.0045,1e-10*initial);
+    EXPECT_NEAR(w.continuityResidual(),0,1e-10*initial);
+}
+
+TEST(CoupledGroundwaterRk2, FlowEdgePumpingCapsGrossAcceptedWithdrawals) {
+    CoupledRkRig r;r.init(.2,0,0);const double initial=r.total();
+    GwSourceSignal signal;signal.times={0,.2,.6,1};signal.values={-100,-100,1,1};
+    r.gw.setBoundaries({rk2FlowEdge(r,0,signal)});ASSERT_TRUE(r.gw.rk2ProfileError().empty());
+    ASSERT_DOUBLE_EQ(r.solver.advance(0,1),1);const auto& w=r.gw.state();const auto& receipt=r.gw.boundaries().front();
+    EXPECT_NEAR(receipt.requested_in,.4+.5*(.4/101),1e-12);
+    EXPECT_NEAR(receipt.requested_out,20+.5*(.4*100/101)*100,1e-12);
+    EXPECT_LT(receipt.applied_out,receipt.requested_out);EXPECT_GT(receipt.applied_out,0);
+    EXPECT_DOUBLE_EQ(receipt.applied_out,w.led_boundary_out);EXPECT_DOUBLE_EQ(receipt.applied_in,w.led_boundary_in);
+    for(int cell=0;cell<w.n_cells;++cell) {
+        EXPECT_TRUE(std::isfinite(w.hg[cell]));EXPECT_GE(w.hg[cell],0);EXPECT_LE(w.hg[cell],w.zs[cell]);
+        EXPECT_GE(w.hu[cell],0);EXPECT_LE(w.hu[cell],w.theta_s[cell]*(w.zs[cell]-w.hg[cell])+1e-12);
+    }
+    EXPECT_NEAR(r.total(),initial+w.led_boundary_in-w.led_boundary_out,1e-10*initial);
+    EXPECT_NEAR(w.continuityResidual(),0,1e-10*initial);
+}
+
+TEST(CoupledGroundwaterRk2, LaterFlowEdgeFailureRollsBackReceiptsAndUnqualifiedOwnersRefuse) {
+    CoupledRkRig r,control;r.init(.1,.005,0,.2);control.init(.1,.005,0,.2);
+    GwSourceSignal signal;signal.times={0,.5,4.5};signal.values={.001,.001,1e308};
+    const auto edge=rk2FlowEdge(r,0,signal);r.gw.setBoundaries({edge});control.gw.setBoundaries({edge});
+    for(auto* rig:{&r,&control}) {rig->gw.publishInfiltration(rig->state,.1,0);rig->gw.assignTiers(.1,1);}
+    ASSERT_NO_THROW(ExplicitInertialSolverTestAccess::rk2(control.solver,.5,0));
+    EXPECT_NEAR(control.gw.boundaries().front().applied_in,.0005,1e-14);
+    const auto before=rk2Output("flow-edge-before.chk"),after=rk2Output("flow-edge-after.chk");
+    ASSERT_TRUE(r.solver.saveCheckpoint(before.string()).empty());
+    EXPECT_THROW(ExplicitInertialSolverTestAccess::rk2(r.solver,4.5,0),std::runtime_error);
+    ASSERT_TRUE(r.solver.saveCheckpoint(after.string()).empty());EXPECT_EQ(rk2File(after),rk2File(before));
+    auto head=edge;head.head=true;r.gw.setBoundaries({head});EXPECT_FALSE(r.gw.rk2ProfileError().empty());
+    const auto water=r.gw.state().hg;EXPECT_THROW(r.solver.advance(0,.1),std::runtime_error);EXPECT_EQ(r.gw.state().hg,water);
+    head.head=false;head.terms.resize(1);r.gw.setBoundaries({head});EXPECT_FALSE(r.gw.rk2ProfileError().empty());
+    r.gw.setBoundaries({});const double initial=r.total();ASSERT_NO_THROW(r.solver.advance(0,.1));
+    EXPECT_NEAR(r.total(),initial,1e-10*initial);
 }

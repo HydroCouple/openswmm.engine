@@ -2232,10 +2232,10 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     // A forcing knot or sign reversal splits BOTH owners' stages. Splitting
     // only fireGwCells would compose first-order aquifer substeps inside a
     // surface Heun stage. On each smooth interval the exact mean prescribed
-    // well flow is used by both Euler evaluations and counted once by blending.
+    // well/edge flow is used by both Euler evaluations and counted once by blending.
     std::vector<double> cuts;
-    if(gw_)for(const auto& source:gw_->sources_) {
-        const auto& times=source.flow.timePoints();const auto& values=source.flow.ordinates();
+    const auto add_cuts=[&](const GwSourceSignal& signal) {
+        const auto& times=signal.timePoints();const auto& values=signal.ordinates();
         const auto first=std::upper_bound(times.begin(),times.end(),start);
         for(auto it=first;it!=times.end()&&*it<start+interval;++it)cuts.push_back(*it);
         for(std::size_t j=std::max<std::size_t>(1,first-times.begin());j<times.size()&&times[j-1]<start+interval;++j)
@@ -2243,6 +2243,10 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
             const double zero=times[j-1]+(times[j]-times[j-1])*(-values[j-1])/(values[j]-values[j-1]);
             if(zero>start&&zero<start+interval)cuts.push_back(zero);
         }
+    };
+    if(gw_) {
+        for(const auto& source:gw_->sources_)add_cuts(source.flow);
+        for(const auto& boundary:gw_->boundaries_)add_cuts(boundary.signal);
     }
     if(!cuts.empty()) {
         cuts.push_back(start);cuts.push_back(start+interval);
