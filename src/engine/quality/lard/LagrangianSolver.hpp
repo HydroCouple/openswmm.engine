@@ -677,7 +677,7 @@ public:
                     transport::reactSpeciesBlock(
                         ctx, /*tank=*/false, dt, msx_block_.data(),
                         np > 0 ? msx_poll_.data() : nullptr, 0.0,
-                        seg_temp_c);
+                        seg_temp_c, l);
                     for (int sp = 0; sp < nsp; ++sp)
                         store_.set_seg_conc(l, i, L.msx_first + sp,
                                             msx_block_[
@@ -687,6 +687,7 @@ public:
             }
             for (int n = 0; n < nn; ++n) {
                 const auto un = static_cast<std::size_t>(n);
+                if (!quality::nodeIsReactor(ctx, n) || nodes.volume[un] <= quality::ZERO_VOLUME) continue;
                 for (int sp = 0; sp < nsp; ++sp)
                     msx_block_[static_cast<std::size_t>(sp)] =
                         rx.msx_node_conc[un * static_cast<std::size_t>(
@@ -706,7 +707,7 @@ public:
                 transport::reactSpeciesBlock(
                     ctx, /*tank=*/true, dt, msx_block_.data(),
                     np > 0 ? msx_poll_.data() : nullptr, hrt,
-                    node_temp_c);
+                    node_temp_c, n);
                 for (int sp = 0; sp < nsp; ++sp)
                     rx.msx_node_conc[un * static_cast<std::size_t>(nsp) +
                                      static_cast<std::size_t>(sp)] =

@@ -3545,7 +3545,7 @@ matter.
 
 | Component id | Configuration file | Sections | Status |
 |---|---|---|---|
-| `org.hydrocouple.openswmm.reactions` | `model.rxn` (or embedded in the `.inp`) | `[REACTION_OPTIONS]` `[REACTION_SPECIES]` `[REACTION_COEFFICIENTS]` `[REACTION_TERMS]` `[REACTION_PIPES]` `[REACTION_TANKS]` `[REACTION_QUALITY]`; `[REACTION_SOURCES]` `[REACTION_PARAMETERS]` `[REACTION_PATTERNS]` `[REACTION_REPORT]` `[REACTION_SUBCATCHMENTS]` are recognised and refused until their phases | \status{Implemented} |
+| `org.hydrocouple.openswmm.reactions` | `model.rxn` (or embedded in the `.inp`) | `[REACTION_OPTIONS]` `[REACTION_SPECIES]` `[REACTION_COEFFICIENTS]` `[REACTION_TERMS]` `[REACTION_PIPES]` `[REACTION_TANKS]` `[REACTION_QUALITY]`; `[REACTION_SOURCES]` `[REACTION_PARAMETERS]` `[REACTION_PATTERNS]` `[REACTION_REPORT]` are supported as described below; `[REACTION_SUBCATCHMENTS]` is recognised and refused | \status{Implemented} |
 | `org.hydrocouple.openswmm.transport.ard` | `model.ard` | `[TRANSPORT_OPTIONS]` `[CONDUIT_DISPERSION]` `[TRANSPORT_BOUNDARIES]` `[TRANSPORT_SOURCES]`; `[STORAGE_MIXING]` is refused until phase E2b | \status{Implemented} |
 | `org.hydrocouple.openswmm.transport.lard` | none | none — the Lagrangian engine is selected by `[OPTIONS] QUALITY_SOLVER LAGRANGIAN` (alias `LARD`) and reads no component file; registering this id is refused with "arrives with plan phase T5" | \status{Planned} |
 | `org.hydrocouple.openswmm.heat` | `model.heat` | `[HEAT_SOURCES]` `[HEAT_FLUXES]` `[RADIATIVE_FLUXES]` `[SOLAR_RADIATION]` `[CLOUD_COVER]` `[SEDIMENT_EXCHANGE]` | \status{Implemented} |
@@ -3570,6 +3570,7 @@ COUPLING      NONE / FULL
 RATE_UNITS    SEC / MIN / HR / DAY
 AREA_UNITS    FT2 / M2 / CM2
 TIMESTEP      value
+PATTERN_TIMESTEP value
 ATOL          value
 RTOL          value
 TEMPERATURE   value
@@ -3584,6 +3585,7 @@ Parameters:
 | `RATE_UNITS` | Time unit of every RATE expression. The evaluated rate is multiplied by 1, 1/60, 1/3600 or 1/86400 to give a per-second rate. | SEC, MIN, HR or DAY | HR |
 | `AREA_UNITS` | Area unit recorded for wall-species expressions. | FT2, M2 or CM2 | FT2 |
 | `TIMESTEP` | Reaction step; 0 means follow the quality step. | value, 0 or greater | 0 |
+| `PATTERN_TIMESTEP` | Cyclic source-pattern interval, independent of RATE_UNITS. | seconds, > 0 | 3600 |
 | `ATOL` | Absolute tolerance of the integrator, used for every species that does not carry its own in `[REACTION_SPECIES]`. | value, greater than 0 | 1.0e-6 |
 | `RTOL` | Relative tolerance of the integrator, likewise. | value, greater than 0 | 1.0e-4 |
 | `TEMPERATURE` | Value of the expression variable `TEMP` for an element that has no heat-transport temperature (`HEAT_TRANSPORT OFF`, or before the heat state is seeded). | degrees C, any finite value | 20 |
@@ -3641,7 +3643,7 @@ Parameters:
 
 | Parameter | Meaning | Units / values | Default |
 |---|---|---|---|
-| Kind | PARAMETER: a coefficient that may later be overridden per element. CONSTANT: a fixed value. | PARAMETER or CONSTANT | required |
+| Kind | PARAMETER: a coefficient that may be overridden per node or link. CONSTANT: a fixed value. | PARAMETER or CONSTANT | required |
 | `Name` | Coefficient name, unique among coefficients and species. | text | required |
 | `Value` | Numeric value. | value | required |
 
@@ -3814,94 +3816,85 @@ concentrations are written.
 
 ### Component section: [REACTION_SOURCES] {#engine_manual_sect_REACTION_SOURCES}
 
-Purpose: \status{Planned}
-Reserved for per-element species sources of the reaction system. The tag is
-recognised so that a typo cannot hide behind it, but no row is parsed.
+Purpose: \status{Implemented}
+Adds species load at a named network node through the external mass-rate seam
+shared by LEGACY, EULERIAN_ARD and LAGRANGIAN.
 
 Format:
 ```
-[REACTION_SOURCES]
-;; no row grammar is defined in this release
+CONC   Node   Species   Concentration   [Pattern]
+MASS   Node   Species   MassRate        [Pattern]
 ```
 
-Parameters:
-None. No row is read.
-
-Remarks:
-Presence of the section in a `.rxn` file, or embedded in the `.inp`, is an
-error — "recognised but not yet supported — arrives with plan phase
-R-sources (post-R3)" — and the whole reactions configuration is rejected.
-Until it lands, species mass enters through the transport component's
-`[TRANSPORT_BOUNDARIES]` and `[TRANSPORT_SOURCES]`.
-
-<!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:399,455-468 -->
+`CONC` multiplies the concentration by positive external and dry-weather
+inflow water at that node. It creates no water. `MASS` is a rate in the
+species' declared mass units per **second**, independent of `RATE_UNITS` and
+project flow units. The engine divides it by 28.317 litres/ft³ at the load
+seam. These rows add to any `[INFLOWS]` and `[DWF]` species loads; avoid
+specifying the same intended load in both places. Values must be finite and
+nonnegative. Only BULK species are accepted; duplicate node/species rows,
+unknown nodes, species or patterns, and unsupported source kinds (including
+SETPOINT and FLOWPACED) are errors. Omitted pattern or `*` means constant.
 
 ### Component section: [REACTION_PARAMETERS] {#engine_manual_sect_REACTION_PARAMETERS}
 
-Purpose: \status{Planned}
-Reserved for per-element overrides of PARAMETER coefficients. The tag is
-recognised; no row is parsed.
+Purpose: \status{Implemented}
+Overrides a PARAMETER coefficient on one network element.
 
 Format:
 ```
-[REACTION_PARAMETERS]
-;; no row grammar is defined in this release
+NODE   Node   Parameter   Value
+LINK   Link   Parameter   Value
 ```
 
-Parameters:
-None. No row is read.
-
-Remarks:
-Presence of the section is an error — "arrives with plan phase R-parameters
-(post-R3)" — and the whole reactions configuration is rejected. Until it
-lands, a `[REACTION_COEFFICIENTS]` PARAMETER behaves exactly like a CONSTANT.
-
-<!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:400,455-468 -->
+Values must be finite. CONSTANT coefficients cannot be overridden. Unknown
+references and duplicate element/parameter rows are errors. A missing row uses
+the current global coefficient. Terms and RATE, EQUIL and FORMULA expressions
+all see the element's override. An ARD cell uses its parent link's values; a
+Lagrangian segment uses its link's values. These overrides do not set 2D-cell,
+groundwater or LID-layer coefficients. Rows survive `.rxn` serialization.
 
 ### Component section: [REACTION_PATTERNS] {#engine_manual_sect_REACTION_PATTERNS}
 
-Purpose: \status{Planned}
-Reserved for time patterns applied to reaction sources. The tag is
-recognised; no row is parsed.
+Purpose: \status{Implemented}
+Defines cyclic, piecewise-constant multipliers for reaction node sources.
 
 Format:
 ```
-[REACTION_PATTERNS]
-;; no row grammar is defined in this release
+Pattern   Factor1   [Factor2 ...]
 ```
 
-Parameters:
-None. No row is read.
-
-Remarks:
-Presence of the section is an error — "arrives with plan phase R-sources
-(post-R3)" — and the whole reactions configuration is rejected. A
-time-varying boundary or source is available today as a `TIMESERIES` row of
-`[TRANSPORT_BOUNDARIES]` or `[TRANSPORT_SOURCES]`.
-
-<!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:400,455-468 -->
+Repeating a pattern name appends factors, allowing continuation rows. Factors
+must be finite and nonnegative. `[REACTION_OPTIONS] PATTERN_TIMESTEP` sets the
+interval in **seconds**, default 3600, and must be positive. Factor zero is
+selected at simulation start, subsequent factors at successive intervals,
+then the list wraps. The current inflow-assembly date selects the factor;
+use routing steps that resolve changes. The clock is derived from simulation
+time and needs no mutable pattern cursor. A new hotstart run starts its own
+pattern clock; exact native checkpoint continuation of reaction models is
+not yet supported.
 
 ### Component section: [REACTION_REPORT] {#engine_manual_sect_REACTION_REPORT}
 
-Purpose: \status{Planned}
-Reserved for reaction-system reporting options. The tag is recognised; no row
-is parsed.
+Purpose: \status{Implemented}
+Selects reaction species columns in native output and output plugins using
+the engine's reported species list.
 
 Format:
 ```
-[REACTION_REPORT]
-;; no row grammar is defined in this release
+SPECIES   ALL       YES / NO
+SPECIES   Species   YES / NO
 ```
 
-Parameters:
-None. No row is read.
-
-Remarks:
-Presence of the section is an error — "arrives with plan phase R5" — and the
-whole reactions configuration is rejected. Species results are written with
-the pollutant results under the ordinary `[REPORT]` options.
-
-<!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:401,455-468 -->
+The default is all species. An optional ALL baseline must precede named
+species overrides. Duplicate baselines or species, undeclared species, and
+values other than YES or NO are errors. Selected species retain declaration
+order and trail pollutants, water age and temperature. Hidden species still
+react and participate in other expressions. Their removal from output does
+not change the internal species stride or the selected columns' unit codes.
+Ordinary `[REPORT]` options continue to select nodes, links and subcatchments;
+this section does not independently select elements. The routing continuity
+summary reports BULK species only: a WALL density is not a water-volume mass.
 
 ### Component section: [REACTION_SUBCATCHMENTS] {#engine_manual_sect_REACTION_SUBCATCHMENTS}
 

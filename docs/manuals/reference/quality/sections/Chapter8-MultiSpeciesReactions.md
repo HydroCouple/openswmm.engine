@@ -44,16 +44,16 @@ Its sections are:
 | `[REACTION_PIPES]` | Per-species `RATE`, `EQUIL` or `FORMULA` expressions in conduit scope | @ref engine_manual_sect_REACTION_PIPES | \status{Implemented} |
 | `[REACTION_TANKS]` | The same forms in node scope | @ref engine_manual_sect_REACTION_TANKS | \status{Implemented} |
 | `[REACTION_QUALITY]` | Initial concentrations: `GLOBAL`, `NODE` or `LINK` | @ref engine_manual_sect_REACTION_QUALITY | \status{Implemented} |
-| `[REACTION_SOURCES]` | Species sources at nodes | @ref engine_manual_sect_REACTION_SOURCES | \status{Planned} |
-| `[REACTION_PARAMETERS]` | Per-element overrides of `PARAMETER` coefficients | @ref engine_manual_sect_REACTION_PARAMETERS | \status{Planned} |
-| `[REACTION_PATTERNS]` | Time patterns for sources | @ref engine_manual_sect_REACTION_PATTERNS | \status{Planned} |
-| `[REACTION_REPORT]` | Report selection | @ref engine_manual_sect_REACTION_REPORT | \status{Planned} |
+| `[REACTION_SOURCES]` | Species sources at nodes | @ref engine_manual_sect_REACTION_SOURCES | \status{Implemented} |
+| `[REACTION_PARAMETERS]` | Per-element overrides of `PARAMETER` coefficients | @ref engine_manual_sect_REACTION_PARAMETERS | \status{Implemented} |
+| `[REACTION_PATTERNS]` | Time patterns for sources | @ref engine_manual_sect_REACTION_PATTERNS | \status{Implemented} |
+| `[REACTION_REPORT]` | Report selection | @ref engine_manual_sect_REACTION_REPORT | \status{Implemented} |
 | `[REACTION_SUBCATCHMENTS]` | Subcatchment-scope expressions | @ref engine_manual_sect_REACTION_SUBCATCHMENTS | \status{Planned} |
 
-The five sections marked planned are recognised by name and **refused** with
-the phase that delivers them; a configuration carrying one is rejected as a
-whole (Chapter 11 §11.5). An unknown `[REACTION_*]` name is rejected on the
-same terms.
+`[REACTION_SUBCATCHMENTS]` remains recognised and refused; it is not a
+runoff reactor. The four other formerly reserved sections now have explicit
+network-source, parameter and species-column selection semantics in the input
+reference. Unsupported source kinds and unknown section names are errors.
 
 <!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:394-403, 405-453, 455-479 -->
 
@@ -62,49 +62,40 @@ convenience, but the external file is the intended layout: embedded sections
 are read but are not written back when a model is saved, and the engine warns
 when that is about to happen.
 
-A complete small system — chlorine decaying against a reactive wall material,
-with the by-product it forms:
+A complete small system converts a parent species to a product. Both use
+the same mass units and the yield is one, so A + B is conserved in an
+isolated wet reactor with `COUPLING FULL`:
 
 ```
 [REACTION_OPTIONS]
-SOLVER            RK5
-RTOL              0.001
-ATOL              0.0001
-TIMESTEP          300
+SOLVER RK5
+COUPLING FULL
+RATE_UNITS HR
 
 [REACTION_SPECIES]
-BULK   CL2   MG   0.01   0.0001      ; free chlorine
-BULK   THM   UG   0.01   0.0001      ; trihalomethane by-product
-WALL   BIO   UG   0.01   0.0001      ; attached biomass
+BULK A MG
+BULK B MG
 
 [REACTION_COEFFICIENTS]
-PARAMETER   Kb     0.30      ; bulk decay, 1/day
-PARAMETER   Kw     1.00      ; wall demand
-PARAMETER   Yield  0.20      ; THM formed per unit CL2 consumed
+PARAMETER k 0.30
 
 [REACTION_TERMS]
-Kf     1.5826e-4 * RE^0.88 / D       ; mass-transfer coefficient
+loss k * A
 
 [REACTION_PIPES]
-RATE   CL2   -Kb*CL2 - (4/D)*Kw*Kf/(Kw+Kf)*CL2
-RATE   THM    Yield*Kb*CL2
-FORMULA BIO   Kw*CL2/(Kw+Kf)
+RATE A -loss
+RATE B loss
 
 [REACTION_TANKS]
-RATE   CL2   -Kb*CL2
-RATE   THM    Yield*Kb*CL2
+RATE A -loss
+RATE B loss
 
 [REACTION_QUALITY]
-GLOBAL   CL2   0.8
-LINK     C1    CL2   1.2
+GLOBAL A 1
 ```
 
-Two things in that listing are worth pointing out. `[REACTION_TERMS]`
-defines `Kf` once and both pipe expressions reference it, so the
-mass-transfer closure has a single definition rather than two copies that can
-drift. And the pipe and tank expressions for `CL2` differ deliberately: a
-storage unit has no wall in the sense a pipe does, so the wall-demand term is
-absent from the tank form.
+After one hour without transport, A = exp(-0.30), B = 1 - exp(-0.30).
+The reusable decks under `examples/reactions/` include this analytic case.
 
 ### 8.2.1 Species and coefficient declarations
 
@@ -121,18 +112,16 @@ takes the project mass conversion, `UG` a thousandth of it, anything else is
 carried unconverted. The per-species tolerances, when given, replace the
 global `ATOL` and `RTOL` of `[REACTION_OPTIONS]` for that species alone.
 
-`WALL` species are surface-attached: their concentration is per unit wall
-area, they are not advected, and they enter bulk expressions through the
-area-to-volume ratio. Declaring one has two consequences worth knowing before
-choosing it: the Eulerian engine falls back to the tanks-in-series binding
-for the reaction stage, and the 2D mesh carries no reaction species at all
-(Chapter 10 §10.1).
+`WALL` species remain attached to their own network element under LEGACY;
+they are excluded from dissolved advection, evaporation concentration and
+the BULK water-mass routing ledger. ARD falls back to LEGACY for systems
+containing WALL species. LAGRANGIAN refuses WALL systems. Geometry-dependent
+wall demand remains unqualified because bindings do not populate wall
+area/volume variables, and AREA_UNITS does not supply that missing geometry.
+2D surface transport excludes reaction systems containing WALL species.
 
-A coefficient is declared as `CONSTANT` or `PARAMETER` with a value. In the
-MSX convention a `PARAMETER` may later be overridden per pipe or tank; that
-override section (`[REACTION_PARAMETERS]`) is planned, so in this release
-both kinds are single model-wide values and the distinction is a declaration
-of intent. A coefficient may not share a name with a species or another
+A coefficient is declared as `CONSTANT` or `PARAMETER` with a value. A `PARAMETER` may be overridden on a named node or link through
+`[REACTION_PARAMETERS]`; a `CONSTANT` may not. A coefficient may not share a name with a species or another
 coefficient. `[REACTION_TERMS]` names an intermediate expression evaluated
 before the species expressions that reference it; a term may not share a
 name with a species, a coefficient or another term, and it may use species,
@@ -187,8 +176,9 @@ a node and `[TRANSPORT_SOURCES]` a distributed mass rate along a conduit,
 negative for extraction (Chapter 7 §7.5). On the land surface a reaction
 species may build up and wash off through `[BUILDUP]`, `[WASHOFF]`,
 `[LOADINGS]` and, on the 2D mesh, `[2D_LOADINGS]` (Chapters 3, 4 and 10).
-`[REACTION_SOURCES]` and `[REACTION_PATTERNS]`, the MSX spellings of node
-sources, are planned (Chapter 11 §11.5).
+`[REACTION_SOURCES]` also supplies additive CONC or MASS node loads, and
+`[REACTION_PATTERNS]` supplies their cyclic multipliers. See the input
+reference for exact units, clock origin and supported source kinds.
 
 <!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:297-390, 449-453; src/engine/quality/lard/LagrangianSolver.hpp:359-366; src/engine/quality/MsxSurfaceQuality.hpp:17-50; docs/manuals/reference/quality/sections/Chapter7-AdvectionReactionDispersion.md:226-273 -->
 

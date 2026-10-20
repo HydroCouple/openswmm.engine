@@ -91,6 +91,7 @@ std::string serializeReactionSystem(const SimulationContext& ctx) {
             static_cast<int>(rx.coupling) == 1 ? "FULL" : "NONE");
         row(out, "RATE_UNITS", kRate[static_cast<int>(rx.rate_units)]);
         row(out, "AREA_UNITS", kArea[static_cast<int>(rx.area_units)]);
+        row(out, "PATTERN_TIMESTEP", fmt_double(rx.pattern_timestep));
         row(out, "TIMESTEP",   fmt_double(rx.timestep));
         row(out, "ATOL",       fmt_double(rx.atol));
         row(out, "RTOL",       fmt_double(rx.rtol));
@@ -118,6 +119,34 @@ std::string serializeReactionSystem(const SimulationContext& ctx) {
         for (std::size_t i = 0; i < rx.coef_name.size(); ++i)
             row(out, rx.coef_is_param[i] ? "PARAMETER" : "CONSTANT",
                 rx.coef_name[i], fmt_double(rx.coef_value[i]));
+    }
+
+    if (!rx.source_patterns.empty()) {
+        out += "\n[REACTION_PATTERNS]\n";
+        for (const auto& pattern : rx.source_patterns) {
+            out += pattern.name;
+            for (const auto value : pattern.factors) out += " " + fmt_double(value);
+            out += "\n";
+        }
+    }
+    if (!rx.sources.empty()) {
+        out += "\n[REACTION_SOURCES]\n";
+        for (const auto& r : rx.sources)
+            row(out, r.mass ? "MASS" : "CONC", ctx.node_names.name_of(r.node),
+                rx.species_name[r.species], fmt_double(r.value),
+                r.pattern < 0 ? "*" : rx.source_patterns[r.pattern].name);
+    }
+    if (!rx.parameter_overrides.empty()) {
+        out += "\n[REACTION_PARAMETERS]\n";
+        for (const auto& r : rx.parameter_overrides)
+            row(out, r.link ? "LINK" : "NODE",
+                r.link ? ctx.link_names.name_of(r.element) : ctx.node_names.name_of(r.element),
+                rx.coef_name[r.coefficient], fmt_double(r.value));
+    }
+    if (!rx.report_enabled.empty()) {
+        out += "\n[REACTION_REPORT]\nSPECIES ALL YES\n";
+        for (int m = 0; m < rx.n_species(); ++m)
+            if (!rx.report_enabled[m]) row(out, "SPECIES", rx.species_name[m], "NO");
     }
 
     if (!rx.term_name.empty()) {

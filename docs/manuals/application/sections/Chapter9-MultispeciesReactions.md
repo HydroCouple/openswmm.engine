@@ -90,26 +90,42 @@ carries a temperature computed from a vanishing volume — the 2 °C
 excursion at `J5` at three minutes is that, not a physical result. The
 same caution applies to every concentration during a cold start.
 
-## What this release does not report
+## Species output and remaining limits
 
-`CL2` itself does not appear in Figure 9-1, and it cannot: **the reaction
-system's species are computed but not written to the output file.** The
-section that would select them for reporting, `[REACTION_REPORT]`, is
-\status{Planned} (@ref quality_ref_ch8_msx_reactions "Quality 8, §8.2").
-The output file carries the `[POLLUTANTS]` rows and the reserved rows for
-water age and temperature, and nothing else.
+Reaction species are written as named native result columns after pollutants,
+water age and temperature. The original figure above illustrates the thermal
+rate multiplier; it does not display the species concentrations. Species
+columns are available to the output reader and GUI even when they are absent
+from `[POLLUTANTS]`.
 
-Four other sections of a reaction configuration are also planned and are
-**refused**, not ignored: `[REACTION_SOURCES]`, `[REACTION_PARAMETERS]`,
-`[REACTION_PATTERNS]` and `[REACTION_SUBCATCHMENTS]`. A configuration
-carrying one of them is rejected as a whole, with the phase that will
-deliver it named in the message. That is deliberate — a silently ignored
-source term would be worse than a refused file.
+`[REACTION_REPORT]` can select a subset without changing what the engine
+computes:
 
-So a reaction system today is worth building when the species drive
-something you *can* see, or when you are preparing a model for the release
-that reports them. The quality reference chapter states the same limits
-from the theory side.
+```
+[REACTION_REPORT]
+SPECIES ALL NO
+SPECIES CL2 YES
+```
+
+`[REACTION_SOURCES]` accepts CONC and MASS node loads, optionally modulated by
+cyclic `[REACTION_PATTERNS]`. `[REACTION_PARAMETERS]` overrides PARAMETER
+coefficients on named nodes and links. Their grammar and units are documented
+in the input reference. SETPOINT and FLOWPACED sources are still refused.
+
+`[REACTION_SUBCATCHMENTS]` remains recognised and refused. Surface buildup,
+washoff and rainfall species are supported, but do not provide a runoff
+reactor. LID underdrain removals and source delivery also do not implement
+reaction transport within each porous layer; storage-node LIDs with a
+reaction system remain refused until their layer adapter is available.
+
+LEGACY keeps WALL state attached to its own element; ARD falls back to
+LEGACY for WALL systems and LAGRANGIAN refuses them. No binding supplies
+wall area/volume variables yet, so a geometry-dependent wall-demand model
+is not qualified. LEGACY and LAGRANGIAN tank kinetics are skipped at zero
+and sub-litre water volumes; ARD uses its mass-store threshold of 1e-9 ft³.
+A shared threshold or complete dry/refill equivalence across solvers has not
+been qualified. Exact native checkpoint/output continuation for reaction models
+remains unsupported; hotstart state loading is a separate capability.
 
 ## Where to go next
 

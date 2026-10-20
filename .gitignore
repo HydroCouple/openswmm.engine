@@ -135,3 +135,14 @@ docs/figures/cache/
 
 # Local testing questionnaires
 /*_User_Testing_Questionnaire.docx
+
+# Reusable multispecies verification networks.
+!/examples/reactions/
+/examples/reactions/*
+!/examples/reactions/README.md
+!/examples/reactions/parent_product.inp
+!/examples/reactions/parent_product.rxn
+!/examples/reactions/arrhenius.inp
+!/examples/reactions/arrhenius.rxn
+!/examples/reactions/attached_wall.inp
+!/examples/reactions/attached_wall.rxn

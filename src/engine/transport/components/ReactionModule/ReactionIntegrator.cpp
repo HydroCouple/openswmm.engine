@@ -67,8 +67,8 @@ double unitFactor(ReactionRateUnits u) {
 /// Evaluate all terms (forward-only order) for the current species state.
 void evalTerms(const ReactionData& rx, const double* species,
                const double* hydvar, const double* pollut,
-               std::vector<double>& terms,const std::vector<unsigned char>& needed) {
-    RxEvalEnv env{species, rx.coef_value.data(), terms.data(), hydvar, pollut};
+               std::vector<double>& terms,const std::vector<unsigned char>& needed, const double* coefficients) {
+    RxEvalEnv env{species, coefficients, terms.data(), hydvar, pollut};
     for (std::size_t i = 0; i < rx.term_expr.size(); ++i)
         if(needed[i])terms[i] = evalReactionExpression(rx.token_pool, rx.term_expr[i], env);
 }
@@ -77,9 +77,9 @@ void evalTerms(const ReactionData& rx, const double* species,
 void evalRates(const ReactionData& rx, const std::vector<RxExprSpan>& spans, const double* species,
                const double* hydvar, const double* pollut,
                std::vector<double>& terms,
-               const std::vector<int>& idx, double factor, double* out,const double* kinetic_scale,const std::vector<unsigned char>& needed) {
-    evalTerms(rx, species, hydvar, pollut, terms,needed);
-    RxEvalEnv env{species, rx.coef_value.data(), terms.data(), hydvar, pollut};
+               const std::vector<int>& idx, double factor, double* out,const double* kinetic_scale,const std::vector<unsigned char>& needed, const double* coefficients) {
+    evalTerms(rx, species, hydvar, pollut, terms,needed,coefficients);
+    RxEvalEnv env{species, coefficients, terms.data(), hydvar, pollut};
     for (std::size_t k = 0; k < idx.size(); ++k)
         out[k] = factor * (kinetic_scale?kinetic_scale[idx[k]]:1.) *
                  evalReactionExpression(rx.token_pool,
@@ -195,13 +195,14 @@ void RxWorkspace::init(const ReactionData& rx) {
 RxStepReport ReactionIntegrator::step(const ReactionData& rx, bool tank,
                                       double dt, double* species,
                                       double* hydvar, RxWorkspace& ws,
-                                      const double* pollutants) {
+                                      const double* pollutants, const double* coefficients) {
     return step(rx,tank?rx.tank_form:rx.pipe_form,tank?rx.tank_expr:rx.pipe_expr,
-                dt,species,hydvar,ws,pollutants);
+                dt,species,hydvar,ws,pollutants,nullptr,coefficients);
 }
 RxStepReport ReactionIntegrator::step(const ReactionData& rx,
     const std::vector<ReactionExprForm>& forms,const std::vector<RxExprSpan>& spans,
-    double dt,double* species,double* hydvar,RxWorkspace& ws,const double* pollutants,const double* kinetic_scale) {
+    double dt,double* species,double* hydvar,RxWorkspace& ws,const double* pollutants,const double* kinetic_scale,const double* coefficients) {
+    if (!coefficients) coefficients = rx.coef_value.data();
     RxStepReport rep;
     const int n = rx.n_species();
     if (!rx.compiled || n == 0 || dt <= 0.0) return rep;
@@ -296,7 +297,7 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx,
                     species[ridx[gb + k]] = ws.ytmp_[k];
                 freeze_others(coupled ? static_cast<std::size_t>(-1) : gb);
                 evalRates(rx, spans, species, hydvar, pollutants, ws.terms_, ridx, factor,
-                          ws.rates_.data(),kinetic_scale,ws.term_needed_);
+                          ws.rates_.data(),kinetic_scale,ws.term_needed_,coefficients);
                 for (std::size_t k = 0; k < gn; ++k)
                     out[k] = ws.rates_[gb + k];
             };
@@ -625,8 +626,8 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx,
     const int ne = static_cast<int>(eidx.size());
     if (ne > 0) {
         auto residual = [&](double* out) {
-            evalTerms(rx, species, hydvar, pollutants, ws.terms_,ws.term_needed_);
-            RxEvalEnv env{species, rx.coef_value.data(), ws.terms_.data(),
+            evalTerms(rx, species, hydvar, pollutants, ws.terms_,ws.term_needed_,coefficients);
+            RxEvalEnv env{species, coefficients, ws.terms_.data(),
                           hydvar, pollutants};
             for (int k = 0; k < ne; ++k)
                 out[k] = evalReactionExpression(
@@ -687,8 +688,8 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx,
     // ---- 3. FORMULA: declaration order, current values ------------------
     if (!ws.formula_idx_.empty()) {
         for (const int s : ws.formula_idx_) {
-            evalTerms(rx, species, hydvar, pollutants, ws.terms_,ws.term_needed_);
-            RxEvalEnv env{species, rx.coef_value.data(), ws.terms_.data(),
+            evalTerms(rx, species, hydvar, pollutants, ws.terms_,ws.term_needed_,coefficients);
+            RxEvalEnv env{species, coefficients, ws.terms_.data(),
                           hydvar, pollutants};
             species[s] = evalReactionExpression(
                 rx.token_pool, spans[static_cast<std::size_t>(s)], env);

@@ -265,6 +265,8 @@ SWMM_ENGINE_API int swmm_reaction_option_get(SWMM_Engine engine,
     } else if (k == "AREA_UNITS") {
         static const char* kTok[] = {"FT2", "M2", "CM2"};
         v = kTok[static_cast<int>(rx.area_units)];
+    } else if (k == "PATTERN_TIMESTEP") {
+        v = std::to_string(rx.pattern_timestep);
     } else if (k == "TIMESTEP") {
         v = std::to_string(rx.timestep);
     } else if (k == "ATOL") {
@@ -307,6 +309,7 @@ SWMM_ENGINE_API int swmm_reaction_species_add(SWMM_Engine engine,
     const int old_base = rx.registry_base;
     const int old_n    = rx.n_species();
     rx.species_name.push_back(name);
+    if (!rx.report_enabled.empty()) rx.report_enabled.push_back(1);
     rx.species_is_wall.push_back(is_wall ? 1 : 0);
     rx.species_units.push_back(units);
     rx.species_atol.push_back(atol);
@@ -333,6 +336,8 @@ SWMM_ENGINE_API int swmm_reaction_species_remove(SWMM_Engine engine,
     auto& rx = ctx.reactions;
     CHECK_INDEX(idx >= 0 && idx < rx.n_species());
     for(const auto& law:rx.subsurface_laws)if(law.species==idx)return SWMM_ERR_BADPARAM;
+    for (const auto& source : rx.sources)
+        if (source.species == idx) return SWMM_ERR_BADPARAM;
     // D-RC3: refuse while any compiled expression references the species.
     if (pool_references(rx, openswmm::RxToken::PUSH_SPECIES, idx))
         return SWMM_ERR_BADPARAM;
@@ -344,7 +349,10 @@ SWMM_ENGINE_API int swmm_reaction_species_remove(SWMM_Engine engine,
     const auto u = static_cast<std::size_t>(idx);
     // Erase the row from EVERY index-aligned vector (the D-RC3 hazard).
     for(auto& law:rx.subsurface_laws)if(law.species>idx)--law.species;
+    for (auto& source : rx.sources)
+        if (source.species > idx) --source.species;
     rx.species_name.erase(rx.species_name.begin() + u);
+    if (u < rx.report_enabled.size()) rx.report_enabled.erase(rx.report_enabled.begin() + u);
     rx.species_is_wall.erase(rx.species_is_wall.begin() + u);
     rx.species_units.erase(rx.species_units.begin() + u);
     rx.species_atol.erase(rx.species_atol.begin() + u);
@@ -427,6 +435,10 @@ SWMM_ENGINE_API int swmm_reaction_coeff_remove(SWMM_Engine engine, int idx) {
     auto rx_backup  = ctx.reactions;
     auto reg_backup = ctx.species_registry;
     const auto u = static_cast<std::size_t>(idx);
+    for (const auto& row : rx.parameter_overrides)
+        if (row.coefficient == idx) return SWMM_ERR_BADPARAM;
+    for (auto& row : rx.parameter_overrides)
+        if (row.coefficient > idx) --row.coefficient;
     rx.coef_name.erase(rx.coef_name.begin() + u);
     rx.coef_is_param.erase(rx.coef_is_param.begin() + u);
     rx.coef_value.erase(rx.coef_value.begin() + u);
@@ -557,6 +569,12 @@ SWMM_ENGINE_API int swmm_reaction_option_set(SWMM_Engine engine,
         else if (v == "M2")  rx.area_units = openswmm::ReactionAreaUnits::M2;
         else if (v == "CM2") rx.area_units = openswmm::ReactionAreaUnits::CM2;
         else return SWMM_ERR_BADPARAM;
+    } else if (k == "PATTERN_TIMESTEP") {
+        char* end = nullptr;
+        const double d = std::strtod(value, &end);
+        if (!end || *end != '\0' || end == value || !std::isfinite(d) || d <= 0.0)
+            return SWMM_ERR_BADPARAM;
+        rx.pattern_timestep = d;
     } else if (k == "TIMESTEP") {
         char* end = nullptr;
         const double d = std::strtod(value, &end);

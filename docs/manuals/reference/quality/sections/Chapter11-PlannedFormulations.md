@@ -178,30 +178,17 @@ flux evaluation on cells does not (§10.11).
 
 ## 11.5 Later-Phase `[REACTION_*]` Sections
 
-The reaction component recognises twelve section names (Chapter 8 §8.2).
-Seven are consumed. The other five are **recognised and refused** with the
-phase that delivers them — never silently accepted, because a section that
-parses without effect is a modelling error that looks like a working model:
+The reaction component still refuses `[REACTION_SUBCATCHMENTS]`: surface
+species buildup, washoff and rainfall transport do not implement a wet
+subcatchment reaction domain. Unknown reaction section names are also errors.
 
-| Section | Refusal names phase | Intended meaning |
-|---|---|---|
-| `[REACTION_SOURCES]` | R-sources (post-R3) | Species mass or concentration sources at nodes, in the EPANET-MSX convention |
-| `[REACTION_PARAMETERS]` | R-parameters (post-R3) | Per-conduit and per-node overrides of `PARAMETER` coefficients |
-| `[REACTION_PATTERNS]` | R-sources (post-R3) | Time patterns that modulate sources |
-| `[REACTION_REPORT]` | R5 | Selection of species and elements to report |
-| `[REACTION_SUBCATCHMENTS]` | R6 | Subcatchment-scope expressions — an OpenSWMM extension with no MSX counterpart |
-
-The refusal is an **error**, not a warning: a configuration file carrying any
-of the five is rejected as a whole, so a deck cannot run with half of its
-reaction system honoured. An unknown `[REACTION_*]` name is rejected on the
-same terms, as a probable typo. Two of the planned sections already have
-working substitutes: under the Eulerian ARD component, `[TRANSPORT_BOUNDARIES]`
-and `[TRANSPORT_SOURCES]` (Chapter 7 §7.5) address reaction species at nodes
-and along conduits, including negative rates for extraction, and `[INFLOWS]`
-rows may name a reaction species. `[REACTION_PARAMETERS]` has none — every
-`PARAMETER` coefficient is a single value for the whole model today, which is
-why Chapter 8's declarations subsection treats `PARAMETER` and `CONSTANT` as
-synonyms for now.
+Four formerly reserved sections are implemented: `[REACTION_SOURCES]` for
+CONC/MASS node loads, `[REACTION_PATTERNS]` for cyclic source multipliers,
+`[REACTION_PARAMETERS]` for node/link PARAMETER overrides, and
+`[REACTION_REPORT]` for native species-column selection. Their limits are in
+the input reference. SETPOINT/FLOWPACED sources, geometry-dependent wall
+kinetics, porous LID-layer reaction adapters and exact checkpoint/output
+continuation still require implementation and qualification.
 
 A related refusal belongs in the same list: a `RATE`, `EQUIL` or `FORMULA`
 expression on a **pollutant** in `[REACTION_PIPES]` or `[REACTION_TANKS]` is

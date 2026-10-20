@@ -121,10 +121,12 @@ public:
                              const std::vector<ReactionExprForm>& forms,
                              const std::vector<RxExprSpan>& expressions,double dt,
                              double* species,double* hydvar,RxWorkspace& ws,
-                             const double* pollutants=nullptr,const double* kinetic_scale=nullptr);
+                             const double* pollutants=nullptr,const double* kinetic_scale=nullptr,
+                             const double* coefficients=nullptr);
     static RxStepReport step(const ReactionData& rx, bool tank, double dt,
                              double* species, double* hydvar, RxWorkspace& ws,
-                             const double* pollutants = nullptr);
+                             const double* pollutants = nullptr,
+                             const double* coefficients = nullptr);
 };
 
 }  // namespace openswmm::transport

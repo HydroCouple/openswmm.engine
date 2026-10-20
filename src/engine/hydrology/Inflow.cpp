@@ -695,6 +695,35 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
             }
         }
     }
+    // Reaction sources join the same mass-rate seam as INFLOWS and DWF.
+    // CONC applies to positive external + dry-weather water only; MASS is
+    // declared species mass units/second, converted to concentration*ft3/s.
+    auto& rx = ctx.reactions;
+    if (rx.configured && !rx.sources.empty()) {
+        const auto ns = static_cast<std::size_t>(rx.n_species());
+        const auto want = static_cast<std::size_t>(ctx.n_nodes()) * ns;
+        if (rx.msx_ext_mass_in.size() != want) rx.msx_ext_mass_in.assign(want, 0.0);
+        const double seconds = std::max(0.0, (current_date - ctx.options.start_date) * 86400.0);
+        for (const auto& source : rx.sources) {
+            double factor = 1.0;
+            if (source.pattern >= 0) {
+                const auto& factors = rx.source_patterns[source.pattern].factors;
+                // Round only the floating calendar's sub-microsecond noise
+                // at a pattern boundary before choosing its interval.
+                const double count = static_cast<double>(factors.size());
+                const double period = rx.pattern_timestep * count;
+                const double phase = std::isfinite(period) ? std::fmod(seconds, period) : seconds;
+                const double epsilon = std::min(1.e-6, rx.pattern_timestep * 1.e-6);
+                const double step = std::floor((phase + epsilon) / rx.pattern_timestep);
+                factor = factors[static_cast<std::size_t>(std::fmod(step, count))];
+            }
+            const auto node = static_cast<std::size_t>(source.node);
+            const double water = std::max(0.0, ctx.nodes.ext_inflow[node]) + std::max(0.0, ctx.nodes.dwf_inflow[node]);
+            const double rate = source.value * factor * (source.mass ? 1.0 / 28.317 : water);
+            rx.msx_ext_mass_in[node * ns + static_cast<std::size_t>(source.species)] += rate;
+        }
+    }
+
 }
 
 } // namespace inflow

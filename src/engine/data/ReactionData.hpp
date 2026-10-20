@@ -109,7 +109,31 @@ struct ReactionData {
     std::vector<std::string> coef_name;      ///< cold
     std::vector<uint8_t>     coef_is_param;  ///< 1 = PARAMETER (overridable), 0 = CONSTANT
     std::vector<double>      coef_value;     ///< hot (global values; per-element
-                                             ///< overrides arrive with [REACTION_PARAMETERS])
+                                             ///< overrides use parameter_overrides below)
+
+    /// Sparse authored per-element PARAMETER overrides. Values are gathered
+    /// against the current globals per reactor; no shared coefficient mutation.
+    struct ParameterOverride { bool link; int element, coefficient; double value; };
+    std::vector<ParameterOverride> parameter_overrides;
+    const double* coefficients(bool link, int element, std::vector<double>& scratch) const {
+        if (parameter_overrides.empty() || element < 0) return coef_value.data();
+        scratch = coef_value;
+        for (const auto& row : parameter_overrides)
+            if (row.link == link && row.element == element)
+                scratch[static_cast<std::size_t>(row.coefficient)] = row.value;
+        return scratch.data();
+    }
+
+    struct SourcePattern { std::string name; std::vector<double> factors; };
+    struct Source { bool mass; int node, species, pattern; double value; };
+    double pattern_timestep = 3600.0; ///< seconds, independent of RATE_UNITS
+    std::vector<SourcePattern> source_patterns;
+    std::vector<Source> sources;
+
+    /// Native result selection. Empty means all species (legacy default).
+    /// Selection is retained through species edits and canonical serialization.
+    std::vector<uint8_t> report_enabled;
+    std::vector<int> reported_species;
 
     // ---- [REACTION_TERMS] --------------------------------------------------
     std::vector<std::string> term_name;      ///< cold

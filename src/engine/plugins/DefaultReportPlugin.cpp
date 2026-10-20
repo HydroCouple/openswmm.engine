@@ -1589,6 +1589,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         const auto& led = rx.msx_ledger;
         const int nsp = rx.n_species();
         const auto uns = static_cast<std::size_t>(nsp);
+        std::vector<std::size_t> bulk;
+        for (std::size_t s = 0; s < uns; ++s)
+            if (!rx.species_is_wall[s]) bulk.push_back(s);
         static constexpr double LperFT3 = 28.317;
         auto at = [](const std::vector<double>& v, std::size_t s) {
             return s < v.size() ? v[s] : 0.0;
@@ -1628,17 +1631,17 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             for (int k = 0; k < 8; ++k) vals[s][static_cast<std::size_t>(k)] = raw[static_cast<std::size_t>(k)] * cf;
             vals[s][8] = err;
         }
-        for (std::size_t s1 = 0; s1 < uns; s1 += 5) {
-            const std::size_t s2 = std::min(s1 + 5, uns);
+        for (std::size_t s1 = 0; s1 < bulk.size(); s1 += 5) {
+            const std::size_t s2 = std::min(s1 + 5, bulk.size());
             std::fprintf(f, "\n  **************************");
-            for (std::size_t s = s1; s < s2; ++s) std::fprintf(f, "%14s", rx.species_name[s].c_str());
+            for (std::size_t s = s1; s < s2; ++s) std::fprintf(f, "%14s", rx.species_name[bulk[s]].c_str());
             std::fprintf(f, "\n  Reaction Species Routing  ");
-            for (std::size_t s = s1; s < s2; ++s) std::fprintf(f, "%14s", unit_word[s].c_str());
+            for (std::size_t s = s1; s < s2; ++s) std::fprintf(f, "%14s", unit_word[bulk[s]].c_str());
             std::fprintf(f, "\n  **************************");
             for (std::size_t s = s1; s < s2; ++s) std::fprintf(f, "    ----------");
             for (int k = 0; k < 9; ++k) {
                 std::fprintf(f, "\n  %s", labels[k]);
-                for (std::size_t s = s1; s < s2; ++s) std::fprintf(f, "%14.3f", vals[s][static_cast<std::size_t>(k)]);
+                for (std::size_t s = s1; s < s2; ++s) std::fprintf(f, "%14.3f", vals[bulk[s]][static_cast<std::size_t>(k)]);
             }
             WRITE(f, "");
             WRITE(f, "");

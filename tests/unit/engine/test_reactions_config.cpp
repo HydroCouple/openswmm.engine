@@ -43,8 +43,15 @@
 #include <string>
 
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_edit.h>
 
 #include "core/InpWriter.hpp"
+#include "core/DateTime.hpp"
+#include "hydrology/Inflow.hpp"
+#include "transport/components/ReactionModule/ReactionIntegrator.hpp"
+#include "transport/components/ReactionModule/ReactionLegacyBinding.hpp"
+#include "transport/components/ReactionModule/MsxLegacyTransport.hpp"
+#include <cmath>
 #include "core/SWMMEngine.hpp"
 #include "transport/components/ReactionModule/ReactionsWriter.hpp"
 #include <openswmm/engine/openswmm_reactions.h>
@@ -119,7 +126,11 @@ protected:
     }
     void TearDown() override {
         if (engine_) { swmm_engine_destroy(engine_); engine_ = nullptr; }
+        for (const auto& prefix : cleanup_prefixes_)
+            for (const auto* suffix : {".inp", ".rxn", ".out", ".rpt"})
+                std::remove((prefix + suffix).c_str());
     }
+    std::vector<std::string> cleanup_prefixes_;
     int open_deck(const char* inp, const char* rpt, const char* out) {
         return swmm_engine_open(engine_, inp, rpt, out, nullptr);
     }
@@ -207,7 +218,7 @@ TEST_F(ReactionsConfigTest, PollutantNameCollisionFailsOpen) {
 TEST_F(ReactionsConfigTest, LaterPhaseSectionFailsWithPhaseName) {
     write_rxn("_rx_later.rxn",
               "[REACTION_SPECIES]\nBULK A MG\n"
-              "[REACTION_SOURCES]\nCONC J0 A 1.0\n");
+              "[REACTION_SUBCATCHMENTS]\nRATE A -A\n");
     write_deck("_rx_later.inp",
                "org.hydrocouple.openswmm.reactions  config=\"_rx_later.rxn\"");
     EXPECT_NE(open_deck("_rx_later.inp", "_rx_later.rpt", "_rx_later.out"),
@@ -216,7 +227,7 @@ TEST_F(ReactionsConfigTest, LaterPhaseSectionFailsWithPhaseName) {
     // ("…arrives with plan phase R1…") carries the same phrase, so a bare
     // phrase match passes even when the component never ran at all.
     EXPECT_TRUE(contains(as_cpp_engine(engine_).context().errors,
-                         "[REACTION_SOURCES] is recognized but not yet "
+                         "[REACTION_SUBCATCHMENTS] is recognized but not yet "
                          "supported — arrives with plan phase"));
     std::remove("_rx_later.inp");
     std::remove("_rx_later.rxn");
@@ -629,4 +640,216 @@ TEST_F(ReactionsConfigTest, RainfallConcentrationParsesRoundTripsAndValidates) {
         EXPECT_TRUE(contains(as_cpp_engine(e).context().errors, "[REACTION_RAINFALL]")) << bad;
         swmm_engine_destroy(e);
     }
+}
+
+TEST_F(ReactionsConfigTest, SourcePatternsParametersAndReportRoundTrip) {
+    cleanup_prefixes_.push_back("_rx_extended");
+    const std::string body =
+        "[REACTION_SPECIES]\nBULK A MG\nBULK B UG\n"
+        "[REACTION_COEFFICIENTS]\nPARAMETER k 0.1\n"
+        "[REACTION_PARAMETERS]\nNODE J0 k 0.2\nLINK C1 k 0.3\n"
+        "[REACTION_PATTERNS]\npulse 1 0\npulse 2\n"
+        "[REACTION_SOURCES]\nMASS J0 A 28.317 pulse\nCONC OUT B 3\n"
+        "[REACTION_REPORT]\nSPECIES ALL NO\nSPECIES B YES\n";
+    write_rxn("_rx_extended.rxn", body);
+    write_deck("_rx_extended.inp", "org.hydrocouple.openswmm.reactions config=\"_rx_extended.rxn\"");
+    ASSERT_EQ(open_deck("_rx_extended.inp", "_rx_extended.rpt", "_rx_extended.out"), SWMM_OK);
+    auto& ctx = as_cpp_engine(engine_).context();
+    const auto first = openswmm::transport::serializeReactionSystem(ctx);
+    EXPECT_EQ(ctx.reactions.source_patterns[0].factors, (std::vector<double>{1, 0, 2}));
+    EXPECT_EQ(ctx.reactions.report_enabled, (std::vector<uint8_t>{0, 1}));
+    char error[1024] = {};
+    ASSERT_EQ(swmm_reactions_apply_text(engine_, first.c_str(), error, sizeof(error)), SWMM_OK) << error;
+    EXPECT_EQ(openswmm::transport::serializeReactionSystem(ctx), first);
+    EXPECT_NE(swmm_reaction_species_remove(engine_, 0), SWMM_OK); // source still owns A
+    EXPECT_NE(swmm_reaction_coeff_remove(engine_, 0), SWMM_OK); // override still owns k
+    EXPECT_EQ(openswmm::transport::serializeReactionSystem(ctx), first);
+    std::vector<double> gathered;
+    EXPECT_DOUBLE_EQ(ctx.reactions.coefficients(false, 0, gathered)[0], 0.2);
+    EXPECT_DOUBLE_EQ(ctx.reactions.coefficients(true, 0, gathered)[0], 0.3);
+    EXPECT_DOUBLE_EQ(ctx.reactions.coef_value[0], 0.1);
+}
+
+TEST_F(ReactionsConfigTest, ExtendedSectionsValidateTransactionally) {
+    cleanup_prefixes_.push_back("_rx_validate");
+    write_rxn("_rx_validate.rxn", "[REACTION_SPECIES]\nBULK A MG\nWALL W MG\n"
+        "[REACTION_COEFFICIENTS]\nPARAMETER p 1\nCONSTANT k 1\n");
+    write_deck("_rx_validate.inp", "org.hydrocouple.openswmm.reactions config=\"_rx_validate.rxn\"");
+    ASSERT_EQ(open_deck("_rx_validate.inp", "_rx_validate.rpt", "_rx_validate.out"), SWMM_OK);
+    const auto before = openswmm::transport::serializeReactionSystem(as_cpp_engine(engine_).context());
+    const std::vector<std::string> invalid = {
+        "[REACTION_PARAMETERS]\nNODE J0 k 2\n", // constants cannot be overridden
+        "[REACTION_PARAMETERS]\nNODE missing p 2\n",
+        "[REACTION_PARAMETERS]\nLINK C1 p nan\n",
+        "[REACTION_PARAMETERS]\nNODE J0 p 2\nNODE J0 p 3\n",
+        "[REACTION_PATTERNS]\npulse -1\n",
+        "[REACTION_PATTERNS]\npulse inf\n",
+        "[REACTION_SOURCES]\nMASS J0 W 1\n",
+        "[REACTION_SOURCES]\nMASS J0 A 1 missing\n",
+        "[REACTION_SOURCES]\nSETPOINT J0 A 1\n",
+        "[REACTION_SOURCES]\nCONC J0 A 1\nMASS J0 A 2\n",
+        "[REACTION_REPORT]\nSPECIES missing YES\n",
+        "[REACTION_REPORT]\nSPECIES A MAYBE\n",
+        "[REACTION_REPORT]\nSPECIES A NO\nSPECIES ALL YES\n"};
+    for (const auto& suffix : invalid) {
+        SCOPED_TRACE(suffix);
+        char error[1024] = {};
+        EXPECT_NE(swmm_reactions_apply_text(engine_, (before + suffix).c_str(), error, sizeof(error)), SWMM_OK);
+        EXPECT_NE(error[0], '\0');
+        EXPECT_EQ(openswmm::transport::serializeReactionSystem(as_cpp_engine(engine_).context()), before);
+    }
+}
+
+TEST_F(ReactionsConfigTest, SourceMassUnitsAndPatternClockDoNotAccumulateAcrossSteps) {
+    cleanup_prefixes_.push_back("_rx_source");
+    write_rxn("_rx_source.rxn", "[REACTION_OPTIONS]\nPATTERN_TIMESTEP 60\nRATE_UNITS DAY\n"
+        "[REACTION_SPECIES]\nBULK A UG\n"
+        "[REACTION_PATTERNS]\npulse 1 0 2\n"
+        "[REACTION_SOURCES]\nMASS J0 A 28.317 pulse\n");
+    write_deck("_rx_source.inp", "org.hydrocouple.openswmm.reactions config=\"_rx_source.rxn\"");
+    ASSERT_EQ(open_deck("_rx_source.inp", "_rx_source.rpt", "_rx_source.out"), SWMM_OK);
+    auto& ctx = as_cpp_engine(engine_).context();
+    openswmm::inflow::InflowSolver inflow;
+    inflow.init(ctx);
+    for (int minute = 0; minute < 7; ++minute) {
+        inflow.computeAll(ctx, openswmm::datetime::addSeconds(ctx.options.start_date, minute * 60), 5);
+        EXPECT_NEAR(ctx.reactions.msx_ext_mass_in[0], (std::vector<double>{1, 0, 2})[minute % 3], 1.e-12);
+    }
+    ctx.reactions.sources[0].mass = false;
+    ctx.reactions.sources[0].value = 7;
+    // FLOW rows in the model are absent: a concentration adds no phantom mass.
+    inflow.computeAll(ctx, ctx.options.start_date, 5);
+    EXPECT_DOUBLE_EQ(ctx.reactions.msx_ext_mass_in[0], 0.0);
+}
+
+TEST_F(ReactionsConfigTest, PerElementParameterFeedsTermsRatesEquilibriaAndFormula) {
+    cleanup_prefixes_.push_back("_rx_coef");
+    write_rxn("_rx_coef.rxn", "[REACTION_OPTIONS]\nRATE_UNITS SEC\nATOL 1e-10\nRTOL 1e-8\n"
+        "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\nBULK C MG\n"
+        "[REACTION_COEFFICIENTS]\nPARAMETER k 0.01\n"
+        "[REACTION_PARAMETERS]\nNODE J0 k 0.02\nLINK C1 k 0.03\n"
+        "[REACTION_TERMS]\nloss k * A\n"
+        "[REACTION_TANKS]\nRATE A -loss\nEQUIL B B - k * 100\nFORMULA C k * 1000\n"
+        "[REACTION_PIPES]\nRATE A -loss\nEQUIL B B - k * 100\nFORMULA C k * 1000\n");
+    write_deck("_rx_coef.inp", "org.hydrocouple.openswmm.reactions config=\"_rx_coef.rxn\"");
+    ASSERT_EQ(open_deck("_rx_coef.inp", "_rx_coef.rpt", "_rx_coef.out"), SWMM_OK);
+    auto& rx = as_cpp_engine(engine_).context().reactions;
+    for (int scope = 0; scope < 2; ++scope) {
+        openswmm::transport::RxWorkspace ws; ws.init(rx);
+        double species[] = {10, 0, 0}, hyd[static_cast<int>(openswmm::RxHydVar::COUNT_)] = {};
+        std::vector<double> coefficients;
+        const auto rep = openswmm::transport::ReactionIntegrator::step(rx, scope == 0, 5, species, hyd, ws,
+            nullptr, rx.coefficients(scope != 0, 0, coefficients));
+        ASSERT_TRUE(rep.ok) << rep.error;
+        const double k = scope == 0 ? .02 : .03;
+        EXPECT_NEAR(species[0], 10 * std::exp(-5 * k), 1.e-6);
+        EXPECT_NEAR(species[1], 100 * k, 1.e-7);
+        EXPECT_NEAR(species[2], 1000 * k, 1.e-7);
+    }
+    EXPECT_DOUBLE_EQ(rx.coef_value[0], .01);
+}
+
+TEST_F(ReactionsConfigTest, DryStorageDoesNotExecuteTankFormula) {
+    cleanup_prefixes_.push_back("_rx_dry");
+    write_rxn("_rx_dry.rxn", "[REACTION_SPECIES]\nBULK A MG\n"
+        "[REACTION_TANKS]\nFORMULA A 99\n[REACTION_QUALITY]\nGLOBAL A 7\n");
+    write_deck("_rx_dry.inp", "org.hydrocouple.openswmm.reactions config=\"_rx_dry.rxn\"");
+    ASSERT_EQ(open_deck("_rx_dry.inp", "_rx_dry.rpt", "_rx_dry.out"), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
+    auto& ctx = as_cpp_engine(engine_).context();
+    ctx.nodes.type[0] = openswmm::NodeType::STORAGE;
+    ctx.nodes.volume[0] = 0;
+    ctx.nodes.old_volume[0] = 0;
+    openswmm::transport::reactLegacyNodes(ctx, 5);
+    EXPECT_DOUBLE_EQ(ctx.reactions.msx_node_conc[0], 7);
+    ctx.nodes.volume[0] = 0.01; // below the quality reactor's one-litre threshold
+    openswmm::transport::reactLegacyNodes(ctx, 5);
+    EXPECT_DOUBLE_EQ(ctx.reactions.msx_node_conc[0], 7);
+    ctx.nodes.volume[0] = 1;
+    openswmm::transport::reactLegacyNodes(ctx, 5);
+    EXPECT_DOUBLE_EQ(ctx.reactions.msx_node_conc[0], 99);
+}
+
+TEST_F(ReactionsConfigTest, WallStateStaysAttachedWhileBulkAdvects) {
+    cleanup_prefixes_.push_back("_rx_wall");
+    write_rxn("_rx_wall.rxn", "[REACTION_SPECIES]\nBULK A MG\nWALL W MG\n"
+        "[REACTION_QUALITY]\nGLOBAL A 2\nGLOBAL W 3\nNODE J0 W 11\nLINK C1 W 17\n");
+    write_deck("_rx_wall.inp", "org.hydrocouple.openswmm.reactions config=\"_rx_wall.rxn\"");
+    ASSERT_EQ(open_deck("_rx_wall.inp", "_rx_wall.rpt", "_rx_wall.out"), SWMM_OK);
+    auto& ctx = as_cpp_engine(engine_).context();
+    ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
+    openswmm::transport::ensureMsxState(ctx);
+    const int node = ctx.node_names.find("J0"), link = ctx.link_names.find("C1");
+    ctx.links.flow[link] = 2;
+    ctx.nodes.qual_vol_in[node] = 10;
+    ctx.reactions.msx_ext_mass_in.assign(ctx.n_nodes() * 2, 0);
+    ctx.reactions.msx_ext_mass_in[node * 2] = 100;
+    for (int step = 0; step < 3; ++step) openswmm::transport::routeLegacyMsx(ctx, 5);
+    EXPECT_DOUBLE_EQ(ctx.reactions.msx_node_conc[node * 2 + 1], 11);
+    EXPECT_DOUBLE_EQ(ctx.reactions.msx_link_conc[link * 2 + 1], 17);
+    EXPECT_GT(ctx.reactions.msx_node_conc[node * 2], 2);
+    openswmm::transport::bookMsxSystemOutflow(ctx, node, 2, false, 5);
+    EXPECT_DOUBLE_EQ(ctx.reactions.msx_ledger.outflow[1], 0);
+    EXPECT_DOUBLE_EQ(ctx.reactions.msx_ledger.init[1], 0);
+}
+
+TEST_F(ReactionsConfigTest, ConcentrationSourceUsesExternalWaterAndDryWeatherFlow) {
+    cleanup_prefixes_.push_back("_rx_sourcewater");
+    write_rxn("_rx_sourcewater.rxn", "[REACTION_SPECIES]\nBULK A MG\n"
+        "[REACTION_SOURCES]\nCONC J0 A 7\n");
+    write_deck("_rx_sourcewater.inp", "org.hydrocouple.openswmm.reactions config=\"_rx_sourcewater.rxn\"",
+               "[DWF]\nJ0 FLOW 2\n[INFLOWS]\nJ0 FLOW * FLOW 1 1 3\n");
+    ASSERT_EQ(open_deck("_rx_sourcewater.inp", "_rx_sourcewater.rpt", "_rx_sourcewater.out"), SWMM_OK);
+    auto& ctx = as_cpp_engine(engine_).context();
+    openswmm::inflow::InflowSolver inflow;
+    inflow.init(ctx);
+    inflow.computeAll(ctx, ctx.options.start_date, 5);
+    EXPECT_DOUBLE_EQ(ctx.nodes.ext_inflow[0], 3);
+    EXPECT_DOUBLE_EQ(ctx.nodes.dwf_inflow[0], 2);
+    EXPECT_DOUBLE_EQ(ctx.reactions.msx_ext_mass_in[0], 35);
+    ctx.reactions.sources[0].mass = true;
+    ctx.reactions.sources[0].value = 28.317;
+    // The routing assembler clears water rates before each computeAll call.
+    std::fill(ctx.nodes.ext_inflow.begin(), ctx.nodes.ext_inflow.end(), 0.0);
+    std::fill(ctx.nodes.dwf_inflow.begin(), ctx.nodes.dwf_inflow.end(), 0.0);
+    inflow.computeAll(ctx, ctx.options.start_date, 5);
+    EXPECT_DOUBLE_EQ(ctx.reactions.msx_ext_mass_in[0], 1);
+    EXPECT_DOUBLE_EQ(ctx.nodes.ext_inflow[0], 3); // a mass source adds no water
+}
+
+TEST_F(ReactionsConfigTest, PatternTimestepOptionUsesSecondsAndRejectsNonfiniteValues) {
+    cleanup_prefixes_.push_back("_rx_patternoption");
+    write_rxn("_rx_patternoption.rxn", "[REACTION_SPECIES]\nBULK A MG\n");
+    write_deck("_rx_patternoption.inp", "org.hydrocouple.openswmm.reactions config=\"_rx_patternoption.rxn\"");
+    ASSERT_EQ(open_deck("_rx_patternoption.inp", "_rx_patternoption.rpt", "_rx_patternoption.out"), SWMM_OK);
+    EXPECT_EQ(swmm_reaction_option_set(engine_, "PATTERN_TIMESTEP", "90"), SWMM_OK);
+    char value[64];
+    ASSERT_EQ(swmm_reaction_option_get(engine_, "PATTERN_TIMESTEP", value, sizeof(value)), SWMM_OK);
+    EXPECT_DOUBLE_EQ(std::stod(value), 90);
+    for (const auto* invalid : {"0", "-1", "nan", "inf"})
+        EXPECT_NE(swmm_reaction_option_set(engine_, "PATTERN_TIMESTEP", invalid), SWMM_OK);
+}
+
+TEST_F(ReactionsConfigTest, DeletingGeometryDropsOwnedRowsAndPreservesSurvivingIdentities) {
+    cleanup_prefixes_.push_back("_rx_delete");
+    write_rxn("_rx_delete.rxn", "[REACTION_SPECIES]\nBULK A MG\n"
+        "[REACTION_COEFFICIENTS]\nPARAMETER k 1\n"
+        "[REACTION_PARAMETERS]\nNODE J0 k 2\nNODE OUT k 3\nLINK C1 k 4\n"
+        "[REACTION_SOURCES]\nCONC J0 A 1\nMASS OUT A 28.317\n"
+        "[REACTION_QUALITY]\nNODE J0 A 2\nNODE OUT A 3\nLINK C1 A 4\n");
+    write_deck("_rx_delete.inp", "org.hydrocouple.openswmm.reactions config=\"_rx_delete.rxn\"");
+    ASSERT_EQ(open_deck("_rx_delete.inp", "_rx_delete.rpt", "_rx_delete.out"), SWMM_OK);
+    auto& ctx = as_cpp_engine(engine_).context();
+    ASSERT_EQ(swmm_node_delete(engine_, ctx.node_names.find("J0"), nullptr), SWMM_OK);
+    ASSERT_EQ(ctx.reactions.sources.size(), 1u);
+    EXPECT_EQ(ctx.reactions.sources[0].node, ctx.node_names.find("OUT"));
+    ASSERT_EQ(ctx.reactions.parameter_overrides.size(), 1u);
+    EXPECT_EQ(ctx.reactions.parameter_overrides[0].element, ctx.node_names.find("OUT"));
+    EXPECT_DOUBLE_EQ(ctx.reactions.parameter_overrides[0].value, 3);
+    ASSERT_EQ(ctx.reactions.init_elem_idx.size(), 1u);
+    EXPECT_EQ(ctx.reactions.init_elem_idx[0], ctx.node_names.find("OUT"));
+    const auto text = openswmm::transport::serializeReactionSystem(ctx);
+    EXPECT_EQ(text.find("J0"), std::string::npos);
+    EXPECT_EQ(text.find("C1"), std::string::npos);
+    EXPECT_NE(text.find("OUT"), std::string::npos);
 }

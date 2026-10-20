@@ -101,7 +101,8 @@ void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
                    const double* cell_a, const double* cell_dx, int n_cells,
                    double* node_mass, const double* node_vol, int n_nodes,
                    int n_pollut, int ns_total, double min_store_vol,
-                   int temp_row = -1);
+                   int temp_row = -1, const int* cell_conduit = nullptr,
+                   const int* conduit_link = nullptr);
 
 }  // namespace openswmm::transport
 

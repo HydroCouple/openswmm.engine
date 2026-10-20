@@ -591,3 +591,70 @@ TEST(OutputQualityTest, FlowingRegulatorsKeepTheirAge) {
 }
 
 }  // namespace
+
+TEST(OutputQualityTest, SelectedSpeciesKeepInternalIndicesAndUnitsAcrossQualityEngines) {
+    for (const auto& solver : {"LEGACY", "EULERIAN_ARD", "LAGRANGIAN"}) {
+        SCOPED_TRACE(solver);
+        write_file("_oq_select.rxn",
+            "[REACTION_SPECIES]\nBULK hidden MG\nBULK selected UG\nBULK count COUNT\n"
+            "[REACTION_COEFFICIENTS]\nPARAMETER k 2\n"
+            "[REACTION_PARAMETERS]\nNODE J0 k 3\nLINK C1 k 4\n"
+            "[REACTION_PIPES]\nFORMULA hidden 11\nFORMULA selected k * 7\nFORMULA count hidden * 3\n"
+            "[REACTION_TANKS]\nFORMULA hidden 11\nFORMULA selected k * 7\nFORMULA count hidden * 3\n"
+            "[REACTION_REPORT]\nSPECIES ALL NO\nSPECIES selected YES\nSPECIES count YES\n");
+        write_deck("_oq_select.inp", std::string("QUALITY_SOLVER ") + solver + "\n",
+            "org.hydrocouple.openswmm.reactions config=\"_oq_select.rxn\"", false, true);
+        ASSERT_TRUE(run_deck("_oq_select.inp", "_oq_select.rpt", "_oq_select.out"));
+        SWMM_Output h = swmm_output_open("_oq_select.out");
+        ASSERT_NE(h, nullptr);
+        ASSERT_EQ(swmm_output_get_pollut_count(h), 3);
+        EXPECT_EQ(read_species_ids("_oq_select.out"), (std::vector<std::string>{"TSS", "selected", "count"}));
+        const int period = swmm_output_get_period_count(h) - 1;
+        ASSERT_GE(period, 0);
+        float values[32] = {}; int count = 0;
+        ASSERT_EQ(swmm_output_get_node_attribute(h, 0, period, values, &count), 0);
+        EXPECT_NEAR(values[7], 21, 1.e-5);
+        EXPECT_NEAR(values[8], 33, 1.e-5); // hidden species still participates
+        ASSERT_EQ(swmm_output_get_link_attribute(h, 0, period, values, &count), 0);
+        EXPECT_NEAR(values[6], 28, 1.e-5);
+        EXPECT_NEAR(values[7], 33, 1.e-5);
+        swmm_output_close(h);
+        std::ifstream file("_oq_select.out", std::ios::binary);
+        int hdr[7]; file.read(reinterpret_cast<char*>(hdr), sizeof(hdr));
+        for (int i = 0; i < hdr[3] + hdr[4] + hdr[5] + hdr[6]; ++i) {
+            int length; file.read(reinterpret_cast<char*>(&length), 4); file.seekg(length, std::ios::cur);
+        }
+        int units[3]; file.read(reinterpret_cast<char*>(units), sizeof(units));
+        EXPECT_EQ(units[0], 0); EXPECT_EQ(units[1], 1); EXPECT_EQ(units[2], 2);
+    }
+}
+
+TEST(OutputQualityTest, ReactionSourcesMatchTheEstablishedInflowLoadSeam) {
+    for (const auto* solver : {"LEGACY", "EULERIAN_ARD", "LAGRANGIAN"}) {
+        for (const auto* kind : {"CONC", "MASS"}) {
+            SCOPED_TRACE(std::string(solver) + " " + kind);
+            const bool mass = std::string(kind) == "MASS";
+            write_file("_oq_source.rxn", std::string("[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n") +
+                "[REACTION_SOURCES]\n" + kind + " J0 A 7\n");
+            write_deck("_oq_source.inp", std::string("QUALITY_SOLVER ") + solver + "\n",
+                "org.hydrocouple.openswmm.reactions config=\"_oq_source.rxn\"", false, true);
+            { std::ofstream file("_oq_source.inp", std::ios::app);
+              file << "\n[INFLOWS]\nJ0 FLOW * FLOW 1 1 1\nJ0 B * "
+                   << (mass ? "MASS" : "CONCEN") << " 1 1 7\n"; }
+            ASSERT_TRUE(run_deck("_oq_source.inp", "_oq_source.rpt", "_oq_source.out"));
+            SWMM_Output h = swmm_output_open("_oq_source.out");
+            ASSERT_NE(h, nullptr);
+            const int periods = swmm_output_get_period_count(h);
+            ASSERT_GT(periods, 0);
+            for (int period = 0; period < periods; ++period) {
+                float values[32] = {}; int count = 0;
+                ASSERT_EQ(swmm_output_get_node_attribute(h, 0, period, values, &count), 0);
+                EXPECT_NEAR(values[7], values[8], 1.e-6);
+                EXPECT_GT(values[7], 0);
+                ASSERT_EQ(swmm_output_get_link_attribute(h, 0, period, values, &count), 0);
+                EXPECT_NEAR(values[6], values[7], 1.e-6);
+            }
+            swmm_output_close(h);
+        }
+    }
+}

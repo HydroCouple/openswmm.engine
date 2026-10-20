@@ -89,11 +89,11 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
         led.arm(uns);
         for (int i = 0; i < nn; ++i)
             for (std::size_t s = 0; s < uns; ++s)
-                led.init[s] += rx.msx_node_conc[static_cast<std::size_t>(i) * uns + s] *
+                if (!rx.species_is_wall[s]) led.init[s] += rx.msx_node_conc[static_cast<std::size_t>(i) * uns + s] *
                                ctx.nodes.old_volume[static_cast<std::size_t>(i)];
         for (int j = 0; j < nl; ++j)
             for (std::size_t s = 0; s < uns; ++s)
-                led.init[s] += rx.msx_link_conc[static_cast<std::size_t>(j) * uns + s] *
+                if (!rx.species_is_wall[s]) led.init[s] += rx.msx_link_conc[static_cast<std::size_t>(j) * uns + s] *
                                ctx.links.old_volume[static_cast<std::size_t>(j)];
     }
 
@@ -123,7 +123,7 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
         if (dn < 0 || dn >= nn) continue;
         const auto udn = static_cast<std::size_t>(dn);
         for (std::size_t s = 0; s < uns; ++s)
-            sc.mass_in[udn * uns + s] += q * sc.link_old[uj * uns + s];
+            if (!rx.species_is_wall[s]) sc.mass_in[udn * uns + s] += q * sc.link_old[uj * uns + s];
     }
 
     // ---- 3. Node mixing (mixAtNodes mirror, storage evap factor). External
@@ -162,6 +162,7 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
                 v_exfil = st.exfil_loss[static_cast<std::size_t>(srow)];
         }
         for (std::size_t s = 0; s < uns; ++s) {
+            if (rx.species_is_wall[s]) continue; // attached state never mixes with water
             const double c_old = sc.node_old[ui * uns + s];
             const double ext_rate = has_ext ? rx.msx_ext_mass_in[ui * uns + s] : 0.0;
             const double mass = (sc.mass_in[ui * uns + s] + ext_rate) * dt;
@@ -239,6 +240,7 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
         }
 
         for (std::size_t s = 0; s < uns; ++s) {
+            if (rx.species_is_wall[s]) continue; // attached state never mixes with water
             const double c_old = sc.link_old[uj * uns + s];
             const double c_up  = rx.msx_node_conc[uup * uns + s];
             double c_new;
@@ -301,7 +303,7 @@ void bookMsxSystemOutflow(SimulationContext& ctx, int node, double q,
     if (base + uns > rx.msx_node_conc.size() || led.outflow.size() != uns) return;
     auto& row = flooding ? led.flooding : led.outflow;
     for (std::size_t s = 0; s < uns; ++s)
-        row[s] += q * rx.msx_node_conc[base + s] * dt;
+        if (!rx.species_is_wall[s]) row[s] += q * rx.msx_node_conc[base + s] * dt;
 }
 
 }  // namespace openswmm::transport

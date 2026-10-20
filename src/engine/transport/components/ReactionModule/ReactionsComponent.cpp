@@ -28,6 +28,7 @@
 #include "ReactionsWriter.hpp"   // IO3a save hook
 
 #include <cstdlib>
+#include <algorithm>
 #include <functional>
 #include <cmath>
 
@@ -78,7 +79,7 @@ std::string expr_payload(const std::string& line, std::size_t n_lead) {
 bool to_num(const std::string& s, double& out) {
     char* end = nullptr;
     out = std::strtod(s.c_str(), &end);
-    return end != nullptr && *end == '\0' && end != s.c_str();
+    return end != nullptr && *end == '\0' && end != s.c_str() && std::isfinite(out);
 }
 
 void parseOptions(SimulationContext& ctx, const std::vector<std::string>& lines,
@@ -128,6 +129,9 @@ void parseOptions(SimulationContext& ctx, const std::vector<std::string>& lines,
                 ctx.warnings.push_back("[REACTION_OPTIONS] TIMESTEP " + tok[1] +
                     " is not used: reactions advance with the quality step and "
                     "choose their own substeps within it.");
+        } else if (key == "PATTERN_TIMESTEP") {
+            if (to_num(tok[1], num) && num > 0.0) rx.pattern_timestep = num;
+            else errors.push_back("[REACTION_OPTIONS] bad PATTERN_TIMESTEP '" + tok[1] + "'.");
         } else if (key == "ATOL") {
             if (to_num(tok[1], num) && num > 0.0) rx.atol = num;
             else errors.push_back("[REACTION_OPTIONS] bad ATOL '" + tok[1] + "'.");
@@ -438,6 +442,127 @@ void parseQuality(SimulationContext& ctx, const std::vector<std::string>& lines,
     for (const auto& e : mirrorInitialQualityMsxRows(ctx)) errors.push_back(e);
 }
 
+void parsePatterns(SimulationContext& ctx, const std::vector<std::string>& lines,
+                   std::vector<std::string>& errors) {
+    auto& rx = ctx.reactions;
+    for (const auto& line : lines) {
+        const auto tok = Tokenizer::tokenize(line);
+        if (tok.empty()) continue;
+        if (tok.size() < 2) { errors.push_back("[REACTION_PATTERNS] row needs name factors: '" + line + "'."); continue; }
+        int index = -1;
+        for (int i = 0; i < static_cast<int>(rx.source_patterns.size()); ++i)
+            if (rx.source_patterns[i].name == tok[0]) index = i;
+        if (index < 0) {
+            index = static_cast<int>(rx.source_patterns.size());
+            rx.source_patterns.push_back({tok[0], {}});
+        }
+        for (std::size_t i = 1; i < tok.size(); ++i) {
+            double value;
+            if (!to_num(tok[i], value) || value < 0.0)
+                errors.push_back("[REACTION_PATTERNS] factor must be finite and nonnegative: '" + tok[i] + "'.");
+            else rx.source_patterns[index].factors.push_back(value);
+        }
+    }
+}
+
+void parseSources(SimulationContext& ctx, const std::vector<std::string>& lines,
+                  std::vector<std::string>& errors) {
+    auto& rx = ctx.reactions;
+    for (const auto& line : lines) {
+        const auto tok = Tokenizer::tokenize(line);
+        if (tok.empty()) continue;
+        const auto kind = Tokenizer::to_upper(tok[0]);
+        if ((tok.size() != 4 && tok.size() != 5) || (kind != "CONC" && kind != "MASS")) {
+            errors.push_back("[REACTION_SOURCES] row needs CONC|MASS node species value [pattern]; other source kinds are unsupported: '" + line + "'.");
+            continue;
+        }
+        const int node = ctx.node_names.find(tok[1]), species = rx.find_species(tok[2]);
+        double value;
+        if (node < 0 || species < 0 || !to_num(tok[3], value) || value < 0.0) {
+            errors.push_back("[REACTION_SOURCES] unknown node/species or invalid value: '" + line + "'.");
+            continue;
+        }
+        if (rx.species_is_wall[species]) {
+            errors.push_back("[REACTION_SOURCES] WALL species cannot enter with inflow water."); continue;
+        }
+        int pattern = -1;
+        if (tok.size() == 5 && tok[4] != "*") {
+            for (int i = 0; i < static_cast<int>(rx.source_patterns.size()); ++i)
+                if (rx.source_patterns[i].name == tok[4]) pattern = i;
+            if (pattern < 0) { errors.push_back("[REACTION_SOURCES] unknown pattern '" + tok[4] + "'."); continue; }
+        }
+        bool duplicate = false;
+        for (const auto& row : rx.sources) duplicate |= row.node == node && row.species == species;
+        if (duplicate) { errors.push_back("[REACTION_SOURCES] duplicate node/species: '" + line + "'."); continue; }
+        rx.sources.push_back({kind == "MASS", node, species, pattern, value});
+    }
+}
+
+void parseParameters(SimulationContext& ctx, const std::vector<std::string>& lines,
+                     std::vector<std::string>& errors) {
+    auto& rx = ctx.reactions;
+    for (const auto& line : lines) {
+        const auto tok = Tokenizer::tokenize(line);
+        if (tok.empty()) continue;
+        const auto scope = Tokenizer::to_upper(tok[0]);
+        if (tok.size() != 4 || (scope != "NODE" && scope != "LINK")) {
+            errors.push_back("[REACTION_PARAMETERS] row needs NODE|LINK element parameter value: '" + line + "'.");
+            continue;
+        }
+        const bool link = scope == "LINK";
+        const int element = link ? ctx.link_names.find(tok[1]) : ctx.node_names.find(tok[1]);
+        const int coefficient = rx.find_coef(tok[2]);
+        double value = 0.0;
+        if (element < 0 || coefficient < 0 || !to_num(tok[3], value)) {
+            errors.push_back("[REACTION_PARAMETERS] unknown element/parameter or non-finite value: '" + line + "'.");
+            continue;
+        }
+        if (!rx.coef_is_param[coefficient]) {
+            errors.push_back("[REACTION_PARAMETERS] '" + tok[2] + "' is a CONSTANT, not a PARAMETER.");
+            continue;
+        }
+        bool duplicate = false;
+        for (const auto& row : rx.parameter_overrides)
+            duplicate |= row.link == link && row.element == element && row.coefficient == coefficient;
+        if (duplicate) {
+            errors.push_back("[REACTION_PARAMETERS] duplicate element/parameter: '" + line + "'.");
+            continue;
+        }
+        rx.parameter_overrides.push_back({link, element, coefficient, value});
+    }
+}
+
+void parseReport(SimulationContext& ctx, const std::vector<std::string>& lines,
+                 std::vector<std::string>& errors) {
+    auto& rx = ctx.reactions;
+    rx.report_enabled.assign(static_cast<std::size_t>(rx.n_species()), 1);
+    std::vector<bool> seen(rx.report_enabled.size(), false);
+    bool all_seen = false;
+    for (const auto& line : lines) {
+        const auto tok = Tokenizer::tokenize(line);
+        if (tok.empty()) continue;
+        if (tok.size() != 3 || Tokenizer::to_upper(tok[0]) != "SPECIES" ||
+            (Tokenizer::to_upper(tok[2]) != "YES" && Tokenizer::to_upper(tok[2]) != "NO")) {
+            errors.push_back("[REACTION_REPORT] row needs SPECIES ALL|species YES|NO: '" + line + "'.");
+            continue;
+        }
+        const bool value = Tokenizer::to_upper(tok[2]) == "YES";
+        if (Tokenizer::to_upper(tok[1]) == "ALL") {
+            if (all_seen) errors.push_back("[REACTION_REPORT] duplicate ALL row.");
+            // ALL is a baseline; require it before named overrides.
+            bool named = false; for (const auto v : seen) named |= v;
+            if (named) errors.push_back("[REACTION_REPORT] ALL must precede named species rows.");
+            std::fill(rx.report_enabled.begin(), rx.report_enabled.end(), value);
+            all_seen = true;
+        } else {
+            const int m = rx.find_species(tok[1]);
+            if (m < 0) errors.push_back("[REACTION_REPORT] undeclared species '" + tok[1] + "'.");
+            else if (seen[m]) errors.push_back("[REACTION_REPORT] duplicate species '" + tok[1] + "'.");
+            else { rx.report_enabled[m] = value; seen[m] = true; }
+        }
+    }
+}
+
 /// [REACTION_RAINFALL] (Multispecies Phase 2): `species concentration`, the
 /// species' counterpart of the [POLLUTANTS] Crain column.
 void parseRainfall(SimulationContext& ctx, const std::vector<std::string>& lines,
@@ -540,12 +665,17 @@ void applyReactionSections(SimulationContext& ctx,
     s = config.find("REACTION_RAINFALL");
     if (s) parseRainfall(ctx, *s, errors);
 
+    s = config.find("REACTION_PATTERNS");
+    if (s) parsePatterns(ctx, *s, errors);
+    s = config.find("REACTION_SOURCES");
+    if (s) parseSources(ctx, *s, errors);
+    s = config.find("REACTION_PARAMETERS");
+    if (s) parseParameters(ctx, *s, errors);
+    s = config.find("REACTION_REPORT");
+    if (s) parseReport(ctx, *s, errors);
+
     // Later-phase sections: defined behavior, never silent acceptance.
     const struct { const char* tag; const char* phase; } later[] = {
-        {"REACTION_SOURCES",       "R-sources (post-R3)"},
-        {"REACTION_PARAMETERS",    "R-parameters (post-R3)"},
-        {"REACTION_PATTERNS",      "R-sources (post-R3)"},
-        {"REACTION_REPORT",        "R5"},
         {"REACTION_SUBCATCHMENTS", "R6"},
     };
     for (const auto& l : later) {
@@ -565,6 +695,11 @@ void applyReactionSections(SimulationContext& ctx,
                              "] in reactions config '" + config.source_path +
                              "'.");
     }
+
+    if (ctx.options.quality_solver == QualitySolverKind::LAGRANGIAN &&
+        std::any_of(ctx.reactions.species_is_wall.begin(), ctx.reactions.species_is_wall.end(),
+                    [](uint8_t wall) { return wall != 0; }))
+        errors.push_back("LAGRANGIAN reaction transport does not support attached WALL species; use QUALITY_SOLVER LEGACY.");
 
     if (!errors.empty()) {
         // Transactional: a rejected config leaves NOTHING behind — neither

@@ -92,16 +92,46 @@ See the [transport contracts, examples and limits](docs/design/groundwater-trans
 
 ### 2.4 Multispecies Reactions Across Domains 🔧
 
-**Implemented:** shared reaction-species definitions, bulk/wall declarations, named coefficients and expressions, rate/equilibrium/formula evaluation and selectable integrators. Bindings exist for legacy, ARD and LARD network transport and supported surface processes. Groundwater now has explicit scoped `[REACTION_SUBSURFACE]` reactors for the supported CPU WATER_ONLY bulk/SIGMA and fixed-depth porous SAT/UNSAT profiles, plus SIGMA layer reactions with mapped porous thermal temperatures (Section 2.3). Standard native binary output now includes reaction-species columns; the former statement that species results are never written is obsolete.
+**Implemented:** shared reaction-species definitions, bulk/wall declarations,
+named coefficients and expressions, rate/equilibrium/formula evaluation and
+selectable integrators. Bindings exist for legacy, ARD and LARD network
+transport and supported surface processes. Groundwater has explicit scoped
+`[REACTION_SUBSURFACE]` reactors for the supported CPU profiles described in
+Section 2.3. Standard native binary output includes reaction-species columns.
+
+The 2026-10-19 increment implements four formerly reserved sections:
+
+- `[REACTION_SOURCES]`: additive CONC/MASS node loads through the existing external species-load seam; MASS uses declared mass units per second.
+- `[REACTION_PATTERNS]`: cyclic nonnegative source multipliers, with PATTERN_TIMESTEP in seconds and a simulation-start clock origin.
+- `[REACTION_PARAMETERS]`: node/link PARAMETER overrides used by terms and all expression forms, including ARD parent links and LARD segments.
+- `[REACTION_REPORT]`: species-column selection in native output without altering internal species indexing. Ordinary `[REPORT]` retains element selection.
+
+LEGACY now keeps WALL state attached rather than advecting or evaporatively
+concentrating it as dissolved mass. The dissolved routing ledger excludes
+WALL densities. ARD retains its LEGACY fallback for WALL systems; LARD refuses
+them. LEGACY/LARD tank kinetics skip zero and sub-litre storage volumes.
+Selected output and parameter overrides are checked across all three network
+quality solvers. Reusable [reaction networks](examples/reactions/README.md)
+include parent/product conversion, temperature-dependent decay and attached
+wall decay. The companion benchmark repository adds a `quality/reactions`
+suite with 24 analytic cells across quality solvers, rate units and overrides.
 
 **Remaining work and restrictions:**
 
-- `[REACTION_SOURCES]`, `[REACTION_PARAMETERS]`, `[REACTION_PATTERNS]`, `[REACTION_REPORT]` and `[REACTION_SUBCATCHMENTS]` remain recognized but unsupported and are refused. Native species output does not imply that the report-selection section works.
-- Complete domain-specific reaction, unit and output-continuation qualification, including WALL/BULK behavior and low/zero-volume storage.
-- Extend LID reaction support beyond the current combinations; a shared species definition is not a reactor implementation for every porous layer.
-- Broaden published multispecies benchmarks and reusable example reaction networks.
+- `[REACTION_SUBCATCHMENTS]` is still recognised and refused. Buildup/washoff and rainfall transport do not implement a wet-subcatchment reactor. Source SETPOINT and FLOWPACED kinds remain refused.
+- Complete geometry-dependent WALL/BULK qualification: bindings do not yet populate wall area/volume variables, and AREA_UNITS does not implement that conversion. The added network tests and examples do not qualify every surface or groundwater combination.
+- Implement exact native checkpoint/output continuation for reaction models. Hotstart species-state support is distinct; a new run starts the source-pattern clock again.
+- Implement conservative porous LID-layer species transport and reactor adapters. LID underdrain removals/source delivery already work for supported runoff combinations, but storage-node LIDs with reaction systems remain refused. Required work includes mobile/retained inventories, layer/port transfers, donor limits, dry/refill behavior, mass receipts and restart state before enabling these combinations.
+- Broaden independent chemistry and coupled-domain benchmarks beyond the added analytic network suite. The new benchmark sources and examples are local changes until committed and published.
 
-The [reaction component](src/engine/transport/components/ReactionModule/ReactionsComponent.cpp), [output-quality tests](tests/unit/engine/test_output_quality.cpp) and [multispecies tests](tests/unit/engine/test_msx_parity.cpp) record these distinct capabilities.
+The [reaction component](src/engine/transport/components/ReactionModule/ReactionsComponent.cpp),
+[configuration/qualification tests](tests/unit/engine/test_reactions_config.cpp),
+[output-quality tests](tests/unit/engine/test_output_quality.cpp) and
+[multispecies tests](tests/unit/engine/test_msx_parity.cpp) record these distinct
+capabilities. Source patterns are sampled on the inflow-assembly clock;
+routing steps must resolve their changes. The GUI's Sources tab opens the
+validated File editor for the extended sections; dedicated structured tables
+are not yet provided.
 
 ## 3. Sediment Transport 📋
 

@@ -206,3 +206,23 @@ See also
 * :doc:`process_components` — registering the ``.rxn`` config path.
 * :doc:`quality` — single-species buildup/washoff and treatment.
 * :doc:`error_handling` — what a refused mutation raises.
+
+----
+
+Node sources, parameter overrides and output selection
+=====================================================
+
+The whole-file ``apply_text`` / ``serialize`` surface supports
+``[REACTION_SOURCES]`` (CONC/MASS), ``[REACTION_PATTERNS]`` (cyclic factors),
+``[REACTION_PARAMETERS]`` (NODE/LINK overrides of PARAMETER coefficients),
+and ``[REACTION_REPORT]`` (``SPECIES ALL|name YES|NO``). Structured collection
+wrappers for these sections are not yet provided; use whole-file text.
+The engine manual's input reference specifies grammar and units. MASS loads
+are in declared species mass units per second, independent of RATE_UNITS;
+PATTERN_TIMESTEP is in seconds and defaults to 3600.
+
+Hidden output species continue to react. Native output columns are selected
+without changing the internal species stride. WALL state stays attached under
+LEGACY; LAGRANGIAN refuses WALL systems and ARD falls back to LEGACY. Wet
+subcatchment reactors, porous LID-layer reaction transport and exact native
+checkpoint/output continuation remain unsupported.

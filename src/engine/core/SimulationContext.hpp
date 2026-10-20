@@ -677,6 +677,21 @@ struct SimulationContext {
      */
     std::vector<std::string> reported_species_names;
 
+    /// Rebuild derived output columns after pre-initialization reaction edits.
+    void refreshReportedSpecies() {
+        reported_species_names.clear();
+        for (int p = 0; p < n_pollutants(); ++p)
+            reported_species_names.push_back(pollutant_names.name_of(p));
+        if (options.water_age) reported_species_names.push_back("__WATER_AGE__");
+        if (options.heat_transport) reported_species_names.push_back("__TEMPERATURE__");
+        reactions.reported_species.clear();
+        for (int m = 0; m < reactions.n_species(); ++m) {
+            if (!reactions.report_enabled.empty() && !reactions.report_enabled[m]) continue;
+            reactions.reported_species.push_back(m);
+            reported_species_names.push_back(reactions.species_name[m]);
+        }
+    }
+
     /// Length of reported_species_names (pollutants + age when enabled).
     int n_reported_species() const noexcept {
         return static_cast<int>(reported_species_names.size());
