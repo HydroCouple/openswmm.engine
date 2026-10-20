@@ -637,9 +637,12 @@ void handle_transects(SimulationContext& ctx, const std::vector<std::string>& li
             ctx.transects.x_left_encroachment.push_back(0.0);
             ctx.transects.x_right_encroachment.push_back(0.0);
 
-            double lFactor = (tok.size() > 7) ? to_double(tok[7]) : 1.0;
-            double xFactor = (tok.size() > 8) ? to_double(tok[8]) : 1.0;
-            double yFactor = (tok.size() > 9) ? to_double(tok[9]) : 0.0;
+            // The layout given in the manual has a third placeholder zero
+            // (11 items); its factors start one item later.
+            const std::size_t f = (tok.size() > 10) ? 8 : 7;
+            double lFactor = (tok.size() > f)     ? to_double(tok[f])     : 1.0;
+            double xFactor = (tok.size() > f + 1) ? to_double(tok[f + 1]) : 1.0;
+            double yFactor = (tok.size() > f + 2) ? to_double(tok[f + 2]) : 0.0;
             if (lFactor == 0.0) lFactor = 1.0;
             if (xFactor == 0.0) xFactor = 1.0;
             ctx.transects.length_factor.push_back(lFactor);

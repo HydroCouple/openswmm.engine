@@ -162,6 +162,14 @@ int transect_readParams(int* count, char* tok[], int ntoks)
                 return error_setInpError(ERR_NUMBER, tok[i]);
         }
 
+        // --- the layout given in the manual has three placeholder zeros
+        //     before Lfactor (11 items) instead of two (10 items)
+        if ( ntoks >= 11 ) for ( i = 7; i < 10; i++ )
+        {
+            if ( ! getDouble(tok[i+1], &x[i]) )
+                return error_setInpError(ERR_NUMBER, tok[i+1]);
+        }
+
         // --- update total transect count
         *count = index + 1;
 
