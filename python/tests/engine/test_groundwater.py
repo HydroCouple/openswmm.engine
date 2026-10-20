@@ -521,7 +521,8 @@ PULSE 01/01/2026 00:00:02 {values[2]}
 
 @pytest.mark.parametrize('closure,layered', [('CLOSED_FORM', False), ('ENSLAVED', False), ('SIGMA', False), ('SIGMA', True)])
 @pytest.mark.parametrize('reaction_solver', ['RK5', 'ROS2'])
-def test_groundwater_rk2_symmetric_reaction_split_public_profile(tmp_path, closure, layered, reaction_solver):
+@pytest.mark.parametrize('surface_kinetics', [False, True])
+def test_groundwater_rk2_symmetric_reaction_split_public_profile(tmp_path, closure, layered, reaction_solver, surface_kinetics):
     from openswmm.engine import Solver, GroundwaterSpeciesLedger
     from tests.engine._groundwater_cases import MODEL
     path = tmp_path / 'reactive-rk2.inp'
@@ -569,6 +570,10 @@ BULK B MG
 * UNSAT A RATE -.2*A
 * UNSAT B RATE .2*A
 '''
+    if surface_kinetics:
+        text += '[REACTION_PIPES]\nRATE A -.3*A\nRATE B .3*A\n'
+        # An unrelated disabled pollutant must not block this MSX-only route.
+        text = text.replace('TSS MG/L 0 0 0 0', 'TSS MG/L 0 0 0 86400')
     path.write_text(text)
     solver = Solver(path, path.with_suffix('.rpt'))
     solver.open()
@@ -577,6 +582,7 @@ BULK B MG
         gw = solver.surface2d.groundwater
         assert gw.species == solver.surface2d.species == ('A', 'B')
         initial = gw.species_ledger(0, GroundwaterSpeciesLedger.INIT)
+        surface_initial = solver.surface2d.species_ledger('A')['storage']
         solver.start(False)
         while solver.step().total_seconds() > 0:
             pass
@@ -590,8 +596,97 @@ BULK B MG
         assert a + b == pytest.approx(initial, rel=1e-10)
         for species in range(2):
             assert abs(gw.species_ledger(species, GroundwaterSpeciesLedger.RESIDUAL)) < 1e-8
-        # Surface MSX is passive here; groundwater never borrows pipe kinetics.
-        assert solver.surface2d.concentrations(0) == pytest.approx(np.ones(2), abs=1e-12)
+        # Each domain selects its explicit laws; surface PIPE kinetics are
+        # staged once, with their own signed losses/production.
+        keep = np.exp(-.6) if surface_kinetics else 1
+        assert solver.surface2d.concentrations(0) == pytest.approx(np.full(2, keep), abs=1e-10)
+        for name, expected_initial in [('A', surface_initial), ('B', 0)]:
+            ledger = solver.surface2d.species_ledger(name)
+            accounted = (ledger['storage'] + ledger['reacted'] + ledger['infiltration_out']
+                         - ledger['exfiltration_in'])
+            assert accounted == pytest.approx(expected_initial, abs=1e-8)
+        assert solver.surface2d.species_ledger('A')['reacted'] == pytest.approx(surface_initial * (1-keep), abs=1e-8)
+        assert solver.surface2d.species_ledger('B')['reacted'] == pytest.approx(-surface_initial * (1-keep), abs=1e-8)
         solver.end()
     finally:
         cleanup(solver)
+
+
+def test_groundwater_rk2_surface_decaying_pollutant_drives_msx_and_preserves_age(tmp_path):
+    from openswmm.engine import Solver
+    from tests.engine._groundwater_cases import MODEL
+    previous = None
+    for dt in [.1, .05, .025, .0125]:
+        path = tmp_path / f'surface-precursor-{dt}.inp'
+        text = MODEL.replace('END_TIME 00:10:00', 'END_TIME 00:00:02').replace('ROUTING_STEP 5', 'ROUTING_STEP .1')
+        text = text.replace('TSS MG/L 0 0 0 0', 'TSS MG/L 0 0 0 25920')  # .3/s, authored per day
+        # Surface initial age is authored in hours; the public view is seconds.
+        text += f'''[OPTIONS]
+WATER_AGE ON
+[2D_OPTIONS]
+MOMENTUM_EQUATION FULL_SWE
+RECONSTRUCTION_ORDER 2
+MAX_TIMESTEP {dt}
+LTS_TIERS 1
+TRANSPORT_POLLUTANTS YES
+TRANSPORT_MSX YES
+TRANSPORT_AGE YES
+TRANSPORT_TEMPERATURE NO
+[2D_INITIAL_QUALITY]
+* TSS 2
+* __WATER_AGE__ {5/3600:.17g}
+[2D_AQUIFER_OPTIONS]
+CLOSURE SIGMA
+M_LAYERS 4
+NODE_ENROLMENT ROWS
+LINK_SEEPAGE NONE
+GW_ET NONE
+[2D_AQUIFER]
+* 1e-15 2 .45 .1 2 HG0 .6 C_LOSS 0
+[GW_TRANSPORT_OPTIONS]
+UNSAT_TRANSPORT LAYERED
+TRANSPORT_POLLUTANTS YES
+TRANSPORT_MSX YES
+TRANSPORT_AGE YES
+TRANSPORT_TEMPERATURE NO
+[GW_INITIAL_QUALITY]
+* SAT TSS 2
+* UNSAT TSS 2
+[REACTION_OPTIONS]
+SOLVER RK5
+RATE_UNITS SEC
+COUPLING FULL
+ATOL 1e-13
+RTOL 1e-11
+[REACTION_SPECIES]
+BULK A MG
+BULK B MG
+[REACTION_PIPES]
+RATE A TSS
+'''
+        path.write_text(text)
+        solver = Solver(path, path.with_suffix('.rpt'))
+        solver.open()
+        try:
+            solver.initialize()
+            initial = solver.surface2d.species_ledger('TSS')['storage']
+            solver.start(False)
+            while solver.step().total_seconds() > 0:
+                pass
+            tss, produced, age = (solver.surface2d.concentrations(row) for row in [0, 1, 3])
+            assert tss == pytest.approx(np.full(2, 2*np.exp(-.6)), abs=1e-10)
+            error = max(abs(produced - 2*(1-np.exp(-.6))/.3))
+            assert error < 1e-4
+            if previous is not None:
+                assert previous/error > 3.8
+            previous = error
+            assert age == pytest.approx(np.full(2, 7), abs=1e-10)
+            assert solver.surface2d.species_ledger('__WATER_AGE__')['reacted'] == 0
+            loss = solver.surface2d.species_ledger('TSS')
+            production = solver.surface2d.species_ledger('A')
+            assert loss['storage'] + loss['reacted'] == pytest.approx(initial, abs=1e-8)
+            assert production['storage'] + production['reacted'] == pytest.approx(0, abs=1e-8)
+            assert production['reacted'] < 0
+            solver.end()
+        finally:
+            cleanup(solver)

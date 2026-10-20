@@ -263,6 +263,9 @@ public:
     /// Access surface state (mutable, for forcing).
     SurfaceStateData& state() noexcept { return state_; }
 
+    /// Signed native surface reaction loss for the qualified RK2 owner.
+    double surfaceReactionLoss(int row) const noexcept;
+
     /// Access solver options (read-only).
     const SolverOptions2D& options() const noexcept { return options_; }
 

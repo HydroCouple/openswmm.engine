@@ -362,6 +362,13 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx,
                     break;
                 }
                 if (t + h > dt) h = dt - t;
+                // An invalid law at the accepted state cannot be repaired by
+                // changing the integration interval (notably a DT dependency).
+                // Trial-stage excursions may still use the normal controller.
+                fg(ws.y_.data(),ws.k1_.data());
+                if(!finiteAll(ws.k1_.data(),gn)) {
+                    rep.ok=false;rep.error="non-finite reaction rate at accepted state";break;
+                }
                 bool accepted = false;
                 // Step size for the NEXT substep. The controllers must NOT
                 // write `h` on acceptance: `t += h` below has to advance by
@@ -370,7 +377,6 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx,
 
                 switch (rx.solver) {
                     case ReactionSolverKind::EUL: {
-                        fg(ws.y_.data(), ws.k1_.data());
                         for (std::size_t k = 0; k < gn; ++k)
                             ws.y_[k] += h * ws.k1_[k];
                         accepted = true;
@@ -389,7 +395,6 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx,
                           d1=2825.0/27648.0, d3=18575.0/48384.0, d4=13525.0/55296.0,
                           d5=277.0/14336.0,  d6=0.25;
                         double* y = ws.y_.data();
-                        fg(y, ws.k1_.data());
                         for (std::size_t k = 0; k < gn; ++k)
                             ws.ytmp_[k] = y[k] + h * b21 * ws.k1_[k];
                         fg(ws.ytmp_.data(), ws.k2_.data());
@@ -445,7 +450,6 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx,
                         //    age bound exists rather than caching forever.
                         const int gni = static_cast<int>(gn);
                         double* y = ws.y_.data();
-                        fg(y, ws.k1_.data());               // f(y)
                         const bool refresh_jac =
                             !ws.jac_valid_ || ws.jac_age_ >= kJacMaxAge;
                         if (refresh_jac) {

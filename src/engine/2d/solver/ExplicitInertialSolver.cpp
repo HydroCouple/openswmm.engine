@@ -67,6 +67,7 @@
 #include "../coupling/NodeCoupling.hpp"  // computeNodeCouplingQ (live exchange)
 #include "../../data/NodeData.hpp"
 #include "../../core/SimulationContext.hpp"
+#include "../../transport/components/ReactionModule/ReactionsWriter.hpp"
 #include "../gw/GwTransportData.hpp"
 #include "../heat/ChannelGround.hpp"
 
@@ -89,6 +90,8 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     state_ = &state;
     opts_  = &opts;
     common_stage_ = nullptr;
+    rk_reactions_=nullptr;rk_reaction_rows_.clear();rk_decay_.clear();
+    rk_reacted_.clear();rk_reacted_reported_.clear();rk_reaction_identity_.clear();
     channel_ground_=nullptr;channel_sources_.clear();channel_source_ready_.clear();channel_temperature_mixed_.clear();
     source_history_ = nullptr;
     engine_source_history_ = nullptr;
@@ -2277,6 +2280,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     const double time=cuts.empty()?start:cuts[part],dt=cuts.empty()?interval:cuts[part+1]-time;
     std::unique_ptr<SubsurfaceSolver> part_ground;
     if(gw_) {
+        advanceRk2SurfaceReactions(.5*dt);
         gw_->advanceRk2Reactions(.5*dt);
         // Transport blends against the state after the first reaction half.
         // ground0 remains the untouched whole-call rollback owner.
@@ -2372,6 +2376,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     if(gw_) {
         gw_->blendRk2Water(part_ground?*part_ground:*ground0,time+dt);
         gw_->advanceRk2Reactions(.5*dt);
+        advanceRk2SurfaceReactions(.5*dt);
         source_phase_end_=time+dt;
         gw_->publishRk2Infiltration(*state_,dt,time+dt);
     }
@@ -2388,6 +2393,91 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
         }
         throw;
     }
+}
+
+std::string ExplicitInertialSolver::configureRk2Reactions(const SimulationContext& ctx) {
+    if(!initialized_||!second_order_||!gw_||t_last_sync_!=0)
+        return "RK2 surface reactions require a fresh coupled numerical owner.";
+    const auto& tr=state_->transport;const auto& rx=ctx.reactions;
+    std::vector<double> decay(tr.n_pollut,0);
+    for(int row=0;row<tr.n_pollut;++row) {
+        if(std::size_t(row)>=ctx.pollutants.k_decay.size())return "RK2 surface decay layout differs.";
+        decay[row]=ctx.pollutants.k_decay[row];
+        if(!std::isfinite(decay[row])||decay[row]<0)return "RK2 surface decay is inadmissible.";
+    }
+    const bool kinetics=tr.n_msx>0&&std::any_of(rx.pipe_form.begin(),rx.pipe_form.end(),
+        [](ReactionExprForm form){return form!=ReactionExprForm::NONE;});
+    std::vector<int> rows;
+    if(kinetics) {
+        if(!rx.compiled)return "RK2 surface reactions require compiled PIPE laws.";
+        rows.resize(rx.n_species());
+        for(int species=0;species<rx.n_species();++species) {
+            const int row=tr.rowIndex(rx.species_name[species]);
+            rows[species]=row>=tr.n_pollut&&row<tr.n_pollut+tr.n_msx?row:-1;
+            if(rx.pipe_form[species]!=ReactionExprForm::NONE&&rows[species]<0)
+                return "RK2 surface reaction selects an unavailable BULK species.";
+        }
+        const auto validate=[&](auto&& self,const RxExprSpan& span)->bool {
+            for(int i=span.begin;i<span.begin+span.len;++i) {
+                const auto& token=rx.token_pool[i];
+                if(token.op==RxToken::PUSH_SPECIES&&rows[token.idx]<0)return false;
+                if(token.op==RxToken::PUSH_POLLUT&&token.idx>=tr.n_pollut)return false;
+                if(token.op==RxToken::PUSH_TERM&&!self(self,rx.term_expr[token.idx]))return false;
+                if(token.op==RxToken::PUSH_HYDVAR&&token.idx!=int(RxHydVar::DT)&&token.idx!=int(RxHydVar::TEMP))return false;
+            }
+            return true;
+        };
+        for(int species=0;species<rx.n_species();++species)
+            if(rx.pipe_form[species]!=ReactionExprForm::NONE&&!validate(validate,rx.pipe_expr[species]))
+                return "RK2 surface reactions require enabled BULK/pollutant dependencies and DT/TEMP variables.";
+    }
+    const bool active=kinetics||std::any_of(decay.begin(),decay.end(),[](double k){return k>0;});
+    rk_decay_=std::move(decay);rk_reaction_rows_=std::move(rows);rk_reactions_=kinetics?&rx:nullptr;
+    rk_reaction_identity_=kinetics?transport::serializeReactionSystem(ctx):std::string{};
+    if(kinetics)rk_reaction_workspace_.init(rx);
+    rk_reacted_.assign(active?tr.n_species:0,0);rk_reacted_reported_.assign(active?tr.n_pollut:0,0);
+    return {};
+}
+void ExplicitInertialSolver::advanceRk2SurfaceReactions(double seconds) {
+    if(rk_reacted_.empty()||!(seconds>0))return;
+    auto& tr=state_->transport;auto next=tr.cell_mass;auto loss=rk_reacted_;
+    for(int cell=0;cell<tr.n_cells;++cell) {
+        const double volume=state_->volume[cell];if(!(volume>opts_->dry_depth*mesh_->tri_area[cell]))continue;
+        const auto decay=[&](double interval) {
+            for(int row=0;row<tr.n_pollut;++row)next[tr.idx(row,cell)]*=std::exp(-rk_decay_[row]*interval);
+        };
+        decay(rk_reactions_?.5*seconds:seconds);
+        if(rk_reactions_) {
+            const auto& rx=*rk_reactions_;std::vector<double> aqueous(rx.n_species()),pollutants(tr.n_pollut);
+            for(int species=0;species<rx.n_species();++species)if(rk_reaction_rows_[species]>=0)
+                aqueous[species]=next[tr.idx(rk_reaction_rows_[species],cell)]/volume;
+            for(int row=0;row<tr.n_pollut;++row)pollutants[row]=next[tr.idx(row,cell)]/volume;
+            double vars[int(RxHydVar::COUNT_)]={};vars[int(RxHydVar::TEMP)]=rx.default_temp_c;
+            const auto report=transport::ReactionIntegrator::stepSubcycled(rx,rx.pipe_form,rx.pipe_expr,seconds,
+                aqueous.data(),vars,rk_reaction_workspace_,pollutants.data());
+            if(!report.ok)throw std::runtime_error("RK2 surface reaction: "+report.error);
+            for(int species=0;species<rx.n_species();++species)if(rk_reaction_rows_[species]>=0)
+                next[tr.idx(rk_reaction_rows_[species],cell)]=aqueous[species]*volume;
+            decay(.5*seconds);
+        }
+        for(int row=0;row<tr.n_pollut+tr.n_msx;++row) {
+            const auto k=tr.idx(row,cell);
+            if(!std::isfinite(next[k])||next[k]<0)throw std::runtime_error("Inadmissible RK2 surface reaction inventory.");
+            loss[row]+=tr.cell_mass[k]-next[k];
+            if(!std::isfinite(loss[row]))throw std::runtime_error("Nonfinite RK2 surface reaction ledger.");
+        }
+    }
+    tr.cell_mass=std::move(next);rk_reacted_=std::move(loss);
+}
+void ExplicitInertialSolver::syncRk2ReactionReport(SimulationContext& ctx) {
+    auto next=ctx.mass_balance.qual_routing_reacted;
+    if(next.size()<rk_reacted_reported_.size())throw std::runtime_error("RK2 surface reaction report layout differs.");
+    for(std::size_t row=0;row<rk_reacted_reported_.size();++row) {
+        next[row]+=(rk_reacted_[row]-rk_reacted_reported_[row])*opts_->flow_2d_to_1d;
+        if(!std::isfinite(next[row]))throw std::runtime_error("Nonfinite RK2 surface reaction report.");
+    }
+    ctx.mass_balance.qual_routing_reacted=std::move(next);
+    for(std::size_t row=0;row<rk_reacted_reported_.size();++row)rk_reacted_reported_[row]=rk_reacted_[row];
 }
 
 // FULL_SWE ghost-cell boundary (2D_FULL_SWE plan §2.2 item 9). The ghost

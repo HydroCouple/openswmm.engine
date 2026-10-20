@@ -52,10 +52,11 @@
 
 #include "ISurfaceSolver.hpp"
 #include "InertialEdges.hpp"
+#include "../../transport/components/ReactionModule/ReactionIntegrator.hpp"
 #include "../data/SolverOptions2D.hpp"   // Momentum2D
 
 namespace openswmm::detail { class CompletedSourceArchive; }
-namespace openswmm { class SWMMEngine; }
+namespace openswmm { class SWMMEngine; struct SimulationContext; }
 namespace openswmm::runoff { class SourceWaterDriver; }
 namespace openswmm::twoD {
 
@@ -89,6 +90,11 @@ public:
     std::string loadCheckpoint(const std::string& path);
     /// Bind a saved exact source-history prefix after a marcher restore.
     void resumeSourceResultHistory(SourceResultHistory& history);
+    /// Configure the standalone coupled RK2 surface reaction owner at time zero.
+    std::string configureRk2Reactions(const SimulationContext&);
+    double surfaceReactionLoss(int row) const noexcept {
+        return row>=0&&std::size_t(row)<rk_reacted_.size()?rk_reacted_[row]:0;
+    }
     void finalize() override;
     /// Refresh changed perimeter topology between completed advances.
     void refreshBoundaries();
@@ -125,6 +131,14 @@ private:
                                     double* inspect_source_end = nullptr);
     void refreshSourceResultBoundary();
     double advanceImpl(double current,double target);
+    void advanceRk2SurfaceReactions(double seconds);
+    void syncRk2ReactionReport(SimulationContext&);
+    const ReactionData* rk_reactions_=nullptr; // immutable model config
+    transport::RxWorkspace rk_reaction_workspace_;
+    std::vector<int> rk_reaction_rows_;
+    std::vector<double> rk_decay_,rk_reacted_,rk_reacted_reported_;
+    std::string rk_reaction_identity_;
+
 
     // Recompute η/depth from state volumes for the whole mesh.
     void reconstructAll();

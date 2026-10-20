@@ -709,6 +709,7 @@ namespace openswmm::twoD {
 struct ExplicitInertialSolverTestAccess {
     static void rk2(ExplicitInertialSolver& solver,double dt,double time) {solver.runRk2Step(dt,time);}
     static void prepare(ExplicitInertialSolver& solver) {solver.syncAndRebuild(0);}
+    static void reactionReport(ExplicitInertialSolver& solver,openswmm::SimulationContext& ctx) {solver.syncRk2ReactionReport(ctx);}
     static std::vector<double> state(const ExplicitInertialSolver& s) {
         std::vector<double> values=s.qcx_;values.insert(values.end(),s.qcy_.begin(),s.qcy_.end());
         for(const auto* row:{&s.facc_L_,&s.facc_R_,&s.macc_x_L_,&s.macc_x_R_,&s.bc_accum_,&s.source_ledgers_})
@@ -1871,10 +1872,10 @@ TEST(CoupledGroundwaterRk2, PassiveMovingTableApproachesIndependentUniformDissol
 namespace {
 struct RkReactionSystem {
     SWMM_Engine handle=swmm_engine_new();
-    explicit RkReactionSystem(const std::string& laws,const std::string& solver="RK5") {
+    explicit RkReactionSystem(const std::string& laws,const std::string& solver="RK5",const std::string& pipe="") {
         char error[512]{};
         const auto text="[REACTION_OPTIONS]\nSOLVER "+solver+"\nRATE_UNITS SEC\nCOUPLING FULL\nATOL 1e-13\nRTOL 1e-11\n"
-            "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n[REACTION_SUBSURFACE]\n"+laws;
+            "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n[REACTION_SUBSURFACE]\n"+laws+(pipe.empty()?"":"[REACTION_PIPES]\n"+pipe);
         if(!handle||swmm_reactions_apply_text(handle,text.c_str(),error,sizeof(error))!=SWMM_OK)throw std::runtime_error(error);
     }
     ~RkReactionSystem(){if(handle)swmm_engine_destroy(handle);}
@@ -2074,4 +2075,239 @@ TEST(CoupledGroundwaterRk2, ReactionsExhaustedWorkBudgetPreservesStateAndValidRe
     ASSERT_EQ(r.gw.initReactions(good.context()),"");
     ASSERT_NO_THROW(r.solver.advance(0,.05));
     const auto& t=r.gw.transport();EXPECT_NEAR(t.storage(0)+t.storage(1),t.init_mass[0],t.init_mass[0]*1e-10);
+}
+
+namespace {
+const std::string kRkSurfaceConversion="RATE A -.3*A\nRATE B .3*A\n";
+void seedRkSurfaceReaction(CoupledRkRig& r,RkReactionSystem& system,double concentration=6) {
+    auto& tr=r.state.transport;
+    for(int cell=0;cell<tr.n_cells;++cell)tr.cell_mass[tr.idx(0,cell)]=concentration*r.state.volume[cell];
+    ASSERT_EQ(r.solver.configureRk2Reactions(system.context()),"");
+}
+std::vector<double> reactiveColumnReference(int steps) {
+    // Independent smooth Gardner water + two-species finite-volume ODE.
+    // Stores: SAT, four moving aqueous layers, surface. No production calls.
+    constexpr int stores=6;constexpr double ks=.003,deep=.001,porosity=.45,residual=.1;
+    std::vector<double> y(18);y[0]=.6;y[5]=.2;
+    for(int j=0;j<4;++j)y[j+1]=(.24+.015*j)*(2-y[0])/4;
+    y[6]=2*porosity*y[0];for(int j=1;j<5;++j)y[6+j]=2*y[j];y[11]=6*y[5];
+    const auto rhs=[&](const std::vector<double>& v) {
+        std::vector<double> out(18),theta(4),k(4),flux(5),water(6);
+        const double length=2-v[0];
+        for(int j=0;j<4;++j) {theta[j]=4*v[j+1]/length;k[j]=ks*(theta[j]-residual)/(porosity-residual);}
+        const double table=(k.back()-deep*v[0]/2)/(porosity-theta.back()),grid=-table;
+        flux[0]=ks*(1+(v[5]-std::log((theta[0]-residual)/(porosity-residual))/2)/(.5*length/4));
+        for(int j=1;j<4;++j)flux[j]=k[j-1]-theta[grid>0?j:j-1]*(double(j)/4)*grid;
+        flux[4]=k.back()-theta.back()*grid;
+        out[0]=table;out[5]=-flux[0];for(int j=0;j<4;++j)out[j+1]=flux[j]-flux[j+1];
+        water[0]=porosity*v[0];for(int j=1;j<6;++j)water[j]=v[j];
+        for(int store=0;store<stores;++store) {
+            const double conversion=(store==5?.3:.2)*v[6+store];
+            out[6+store]-=conversion;out[12+store]+=conversion;
+        }
+        for(int species=0;species<2;++species) {
+            const int base=6+6*species;
+            const auto move=[&](int from,int to,double q) {
+                if(q<0){std::swap(from,to);q=-q;}
+                const double amount=q*v[base+from]/water[from];out[base+from]-=amount;out[base+to]+=amount;
+            };
+            move(5,1,flux[0]);for(int j=1;j<4;++j)move(j,j+1,flux[j]);move(4,0,flux[4]);
+            // Default longitudinal dispersivity 1m and molecular 1e-9m2/s.
+            for(int j=1;j<4;++j) {
+                const double face_theta=2*theta[j-1]*theta[j]/(theta[j-1]+theta[j]);
+                const double coefficient=(face_theta*1e-9+std::abs(flux[j]))/(length/4);
+                const double dispersed=coefficient*(v[base+j]/water[j]-v[base+j+1]/water[j+1]);
+                out[base+j]-=dispersed;out[base+j+1]+=dispersed;
+            }
+            out[base]-=deep*v[0]/2*v[base]/water[0];
+        }
+        return out;
+    };
+    const double dt=2./steps;
+    for(int step=0;step<steps;++step) {
+        const auto a=rhs(y);auto v=y;
+        for(int j=0;j<18;++j)v[j]=y[j]+.5*dt*a[j];const auto b=rhs(v);
+        for(int j=0;j<18;++j)v[j]=y[j]+.5*dt*b[j];const auto c=rhs(v);
+        for(int j=0;j<18;++j)v[j]=y[j]+dt*c[j];const auto d=rhs(v);
+        for(int j=0;j<18;++j)y[j]+=dt*(a[j]+2*b[j]+2*c[j]+d[j])/6;
+    }
+    return y;
+}
+}
+TEST(CoupledGroundwaterRk2, SurfaceReactionsAnalyticalConversionAndIndependentDomainLedgers) {
+    for(const std::string integrator:{"RK5","ROS2","BDF2"}) {
+        RkReactionSystem system(kRkConversion,integrator,kRkSurfaceConversion);
+        for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true}) {
+            if(layered&&closure!=GwClosure::SIGMA)continue;
+            CoupledRkRig r;r.init(.05,0,0,.2,"NONE",closure,SoilChar::GARDNER,4);
+            initRkReactions(r,system,layered);seedRkSurfaceReaction(r,system);
+            auto& t=r.state.transport;const double initial=t.totalIncludingLedgers(0);
+            for(int step=0;step<20;++step)ASSERT_NO_THROW(r.solver.advance(.05*step,.05*(step+1)));
+            EXPECT_NEAR(t.totalIncludingLedgers(0)+r.solver.surfaceReactionLoss(0),initial,initial*1e-10);
+            EXPECT_NEAR(t.totalIncludingLedgers(1)+r.solver.surfaceReactionLoss(1),0,initial*1e-10);
+            EXPECT_NEAR(t.totalIncludingLedgers(0),initial*std::exp(-.3),initial*1e-8);
+            EXPECT_NEAR(t.totalIncludingLedgers(0)+t.totalIncludingLedgers(1),initial,initial*1e-10);
+            EXPECT_NEAR(r.solver.surfaceReactionLoss(0)+r.solver.surfaceReactionLoss(1),0,initial*1e-10);
+            for(int row=0;row<2;++row)EXPECT_NEAR(r.gw.transport().residual(row),0,initial*1e-10);
+        }
+    }
+}
+TEST(CoupledGroundwaterRk2, SurfaceReactionsAndMovingLayersConvergeToIndependentCoupledOde) {
+    const auto exact=reactiveColumnReference(20000),refined=reactiveColumnReference(40000);
+    for(int j=0;j<18;++j)ASSERT_NEAR(exact[j],refined[j],1e-11);
+    RkReactionSystem system(kRkConversion,"RK5",kRkSurfaceConversion);double previous=0;
+    for(double dt:{.1,.05,.025,.0125}) {
+        CoupledRkRig r;r.init(dt,.003,.001,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);
+        seedRkSigma(r);initRkReactions(r,system,true);seedRkSurfaceReaction(r,system);
+        const auto surface_initial=r.state.transport.cell_mass;
+        for(int step=0;step<int(std::round(2/dt));++step)ASSERT_NO_THROW(r.solver.advance(dt*step,dt*(step+1)));
+        const auto& w=r.gw.state();const auto& g=r.gw.transport();const auto& s=r.state.transport;
+        std::vector<double> actual{w.hg[0]};
+        for(int j=0;j<4;++j)actual.push_back(w.theta_sigma[std::size_t(j)*w.n_cells]*(w.zs[0]-w.hg[0])/4);
+        actual.push_back(r.state.volume[0]/w.area[0]);
+        for(int row=0;row<2;++row) {
+            actual.push_back(g.sat_mass[g.idx(row,0)]/w.area[0]);
+            for(int j=0;j<4;++j)actual.push_back(g.layer_mass[g.layerIdx(row,j,0)]/w.area[0]);
+            actual.push_back(s.cell_mass[s.idx(row,0)]/w.area[0]);
+            double initial=0;for(int cell=0;cell<s.n_cells;++cell)initial+=surface_initial[s.idx(row,cell)];
+            EXPECT_NEAR(s.totalIncludingLedgers(row)+r.solver.surfaceReactionLoss(row),initial,1e-10);
+            EXPECT_NEAR(g.residual(row),0,1e-10);
+            EXPECT_NEAR(s.lost_infiltration[row],g.gained_infil[row],1e-12);
+        }
+        double error=0;for(int j=0;j<18;++j)error+=std::pow(actual[j]-exact[j],2);error=std::sqrt(error);
+        RecordProperty("surface_reactive_column_"+std::to_string(int(dt*10000)),error);
+        EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;
+    }
+}
+TEST(CoupledGroundwaterRk2, SurfaceReactionCheckpointKeepsSignedLedgersAndRejectsChangedPipeLaw) {
+    // No groundwater laws: refusal must bind the surface owner itself.
+    RkReactionSystem system("","RK5",kRkSurfaceConversion),changed("","RK5","RATE A -.4*A\nRATE B .4*A\n");
+    CoupledRkRig a,b,bad;
+    for(auto* r:{&a,&b,&bad}) {
+        auto& ctx=r==&bad?changed:system;r->init(.025,.003,.001,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);
+        initRkReactions(*r,ctx,true);seedRkSurfaceReaction(*r,ctx);
+    }
+    const auto saved=rk2Output("surface-reactions.chk"),before=rk2Output("surface-reactions-before.chk"),after=rk2Output("surface-reactions-after.chk");
+    for(int step=0;step<40;++step) {
+        ASSERT_NO_THROW(a.solver.advance(.025*step,.025*(step+1)));
+        if(step==12) {
+            ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");ASSERT_EQ(bad.solver.saveCheckpoint(before.string()),"");
+            EXPECT_FALSE(bad.solver.loadCheckpoint(saved.string()).empty());ASSERT_EQ(bad.solver.saveCheckpoint(after.string()),"");
+            EXPECT_EQ(rk2File(before),rk2File(after));ASSERT_EQ(b.solver.loadCheckpoint(saved.string()),"");
+        }else if(step>12)ASSERT_NO_THROW(b.solver.advance(.025*step,.025*(step+1)));
+    }
+    ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(saved),rk2File(after));
+    EXPECT_EQ(a.solver.surfaceReactionLoss(0),b.solver.surfaceReactionLoss(0));
+    EXPECT_EQ(a.solver.surfaceReactionLoss(1),b.solver.surfaceReactionLoss(1));
+}
+TEST(CoupledGroundwaterRk2, SurfaceReactionLaterCellAndLaterKnotFailuresRestoreEveryOwner) {
+    RkReactionSystem good(kRkConversion,"RK5",kRkSurfaceConversion),bad_cell(kRkConversion,"RK5","RATE A -sqrt(A-1)*A\n"),
+        bad_knot(kRkConversion,"RK5","RATE A -sqrt(.1-DT)*A\n");
+    for(bool knot:{false,true}) {
+        auto& ctx=knot?bad_knot:bad_cell;CoupledRkRig r;r.init(.4,0,0,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);
+        initRkReactions(r,ctx,true);
+        if(knot){GwResolvedSource source;source.name="reaction-clock-cuts";source.cells={{0,1}};source.flow.times={0,.1,.4};source.flow.values={0,0,0};r.gw.setSources({source});}
+        seedRkSurfaceReaction(r,ctx);
+        if(!knot)r.state.transport.cell_mass[r.state.transport.idx(0,1)]=.5*r.state.volume[1];
+        ExplicitInertialSolverTestAccess::prepare(r.solver);
+        const auto before=rk2Output("surface-failed-before.chk"),after=rk2Output("surface-failed-after.chk");
+        ASSERT_EQ(r.solver.saveCheckpoint(before.string()),"");
+        EXPECT_THROW(ExplicitInertialSolverTestAccess::rk2(r.solver,.4,0),std::runtime_error);
+        ASSERT_EQ(r.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+        ASSERT_EQ(r.gw.initReactions(good.context()),"");ASSERT_EQ(r.solver.configureRk2Reactions(good.context()),"");
+        ASSERT_NO_THROW(r.solver.advance(0,.4));
+        EXPECT_GT(r.solver.surfaceReactionLoss(0),0);EXPECT_LT(r.solver.surfaceReactionLoss(1),0);
+    }
+}
+TEST(CoupledGroundwaterRk2, SurfaceReactionRejectsUnavailableVariablesBeforeMutation) {
+    RkReactionSystem bad(kRkConversion,"RK5","RATE A -HRT*A\n"),good(kRkConversion,"RK5",kRkSurfaceConversion);
+    CoupledRkRig r;r.init(.05,0,0,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);initRkReactions(r,bad,true);
+    const auto mass=r.state.transport.cell_mass;EXPECT_FALSE(r.solver.configureRk2Reactions(bad.context()).empty());
+    EXPECT_EQ(r.state.transport.cell_mass,mass);EXPECT_DOUBLE_EQ(r.solver.surfaceReactionLoss(0),0);
+    ASSERT_EQ(r.gw.initReactions(good.context()),"");seedRkSurfaceReaction(r,good);
+    ASSERT_NO_THROW(r.solver.advance(0,.05));
+    EXPECT_GT(r.solver.surfaceReactionLoss(0),0);
+}
+TEST(CoupledGroundwaterRk2, SurfaceReactionEulerAndAlgebraicProjectionsRetainTheirOwnOrderAndLedgers) {
+    for(const std::string law:{"FORMULA B 2*A\n","EQUIL B B-2*A\n","RATE A -.3*A\nRATE B .3*A\n"}) {
+        const bool euler=law.find("RATE")==0;RkReactionSystem system(kRkConversion,euler?"EUL":"RK5",law);
+        CoupledRkRig r;r.init(.05,0,0,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);
+        initRkReactions(r,system,true);seedRkSurfaceReaction(r,system);auto& t=r.state.transport;
+        const double initial=t.totalIncludingLedgers(0);
+        for(int step=0;step<20;++step)ASSERT_NO_THROW(r.solver.advance(.05*step,.05*(step+1)));
+        EXPECT_NEAR(t.totalIncludingLedgers(0),euler?initial*std::pow(1-.3*.025,40):initial,initial*1e-10);
+        EXPECT_NEAR(t.totalIncludingLedgers(1),euler?initial-t.totalIncludingLedgers(0):2*initial,initial*1e-10);
+        EXPECT_NEAR(t.totalIncludingLedgers(1)+r.solver.surfaceReactionLoss(1),0,initial*1e-10);
+    }
+}
+TEST(CoupledGroundwaterRk2, SurfaceDecayLeavesAgeUnreactedAndBindsCheckpointIdentity) {
+    RkReactionSystem system("");system.context().pollutants.resize_pollutants(1);system.context().pollutants.k_decay[0]=.3;
+    CoupledRkRig a,b,bad;
+    for(auto* r:{&a,&b,&bad}) {
+        r->init(.05,0,0,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);initRkQuality(*r,true,true,true);seedRkQuality(*r,2);
+        ASSERT_EQ(r->solver.configureRk2Reactions(system.context()),"");
+    }
+    system.context().pollutants.k_decay[0]=.4;ASSERT_EQ(bad.solver.configureRk2Reactions(system.context()),"");
+    system.context().pollutants.k_decay[0]=.3;
+    const auto initial=a.state.transport.totalIncludingLedgers(0);const auto saved=rk2Output("surface-decay.chk");
+    ASSERT_NO_THROW(a.solver.advance(0,.5));ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");
+    EXPECT_FALSE(bad.solver.loadCheckpoint(saved.string()).empty());ASSERT_EQ(b.solver.loadCheckpoint(saved.string()),"");
+    ASSERT_NO_THROW(a.solver.advance(.5,1));
+    ASSERT_NO_THROW(b.solver.advance(.5,1));
+    EXPECT_NEAR(a.state.transport.totalIncludingLedgers(0),initial*std::exp(-.3),initial*1e-12);
+    EXPECT_NEAR(a.state.transport.totalIncludingLedgers(0)+a.solver.surfaceReactionLoss(0),initial,initial*1e-10);
+    EXPECT_DOUBLE_EQ(a.solver.surfaceReactionLoss(1),0);EXPECT_EQ(a.state.transport.cell_mass,b.state.transport.cell_mass);
+    EXPECT_EQ(a.solver.surfaceReactionLoss(0),b.solver.surfaceReactionLoss(0));
+}
+TEST(CoupledGroundwaterRk2, SurfaceStiffReactionsRemainBoundedAndRestartExactly) {
+    RkReactionSystem system(kRkConversion,"ROS2","RATE A -1000*A\nRATE B 1000*A-.2*B\n");
+    CoupledRkRig a,b;
+    for(auto* r:{&a,&b}) {r->init(.05,0,0,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);initRkReactions(*r,system,true);seedRkSurfaceReaction(*r,system);}
+    const double initial=a.state.transport.totalIncludingLedgers(0);const auto saved=rk2Output("surface-stiff.chk"),restored=rk2Output("surface-stiff-restored.chk");
+    ASSERT_NO_THROW(a.solver.advance(0,.05));ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");
+    ASSERT_EQ(b.solver.loadCheckpoint(saved.string()),"");
+    ASSERT_NO_THROW(a.solver.advance(.05,.1));
+    ASSERT_NO_THROW(b.solver.advance(.05,.1));
+    const auto& t=a.state.transport;
+    EXPECT_NEAR(t.totalIncludingLedgers(0),initial*std::exp(-100),initial*1e-8);
+    EXPECT_NEAR(t.totalIncludingLedgers(1),initial*1000/999.8*(std::exp(-.02)-std::exp(-100)),initial*1e-8);
+    for(double mass:t.cell_mass){EXPECT_TRUE(std::isfinite(mass));EXPECT_GE(mass,0);}
+    EXPECT_NEAR(t.totalIncludingLedgers(0)+a.solver.surfaceReactionLoss(0),initial,initial*1e-10);
+    EXPECT_NEAR(t.totalIncludingLedgers(1)+a.solver.surfaceReactionLoss(1),0,initial*1e-10);
+    ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");ASSERT_EQ(b.solver.saveCheckpoint(restored.string()),"");EXPECT_EQ(rk2File(saved),rk2File(restored));
+}
+
+TEST(CoupledGroundwaterRk2, SurfaceDecayReportReceiptsConvertOnceAndSurviveComponentRestart) {
+    RkReactionSystem system("");auto& ctx=system.context();ctx.pollutants.resize_pollutants(1);
+    ctx.pollutants.k_decay[0]=.3;ctx.mass_balance.qual_routing_reacted.assign(1,0);
+    CoupledRkRig a,b;
+    for(auto* r:{&a,&b}) {
+        r->init(.05,0,0,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);
+        r->opts.flow_2d_to_1d=35.31466672148859;
+        initRkQuality(*r,true,false,true);seedRkQuality(*r,2);
+        ASSERT_EQ(r->solver.configureRk2Reactions(ctx),"");
+    }
+    ASSERT_NO_THROW(a.solver.advance(0,.5));
+    ExplicitInertialSolverTestAccess::reactionReport(a.solver,ctx);
+    const double prefix=ctx.mass_balance.qual_routing_reacted[0];
+    EXPECT_NEAR(prefix,a.solver.surfaceReactionLoss(0)*a.opts.flow_2d_to_1d,1e-12);
+    ExplicitInertialSolverTestAccess::reactionReport(a.solver,ctx);EXPECT_DOUBLE_EQ(ctx.mass_balance.qual_routing_reacted[0],prefix);
+    const auto saved=rk2Output("surface-report-receipt.chk");ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");
+    ASSERT_EQ(b.solver.loadCheckpoint(saved.string()),"");
+    ExplicitInertialSolverTestAccess::reactionReport(b.solver,ctx);EXPECT_DOUBLE_EQ(ctx.mass_balance.qual_routing_reacted[0],prefix);
+    ASSERT_NO_THROW(b.solver.advance(.5,1));
+    ExplicitInertialSolverTestAccess::reactionReport(b.solver,ctx);
+    EXPECT_NEAR(ctx.mass_balance.qual_routing_reacted[0],b.solver.surfaceReactionLoss(0)*b.opts.flow_2d_to_1d,1e-12);
+    const auto final=ctx.mass_balance.qual_routing_reacted;
+    ExplicitInertialSolverTestAccess::reactionReport(b.solver,ctx);EXPECT_EQ(ctx.mass_balance.qual_routing_reacted,final);
+}
+
+TEST(CoupledGroundwaterRk2, SessionCpuPolicyBindsCheckpointIdentityWithoutMutatingFreshTarget) {
+    CoupledRkRig a,b;a.init(.05,0,0,.2);b.init(.05,0,0,.2);b.opts.auto_backend_cpu=true;
+    const auto saved=rk2Output("rk2-policy-source.chk"),before=rk2Output("rk2-policy-before.chk"),after=rk2Output("rk2-policy-after.chk");
+    ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");ASSERT_EQ(b.solver.saveCheckpoint(before.string()),"");
+    EXPECT_FALSE(b.solver.loadCheckpoint(saved.string()).empty());ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");
+    EXPECT_EQ(rk2File(before),rk2File(after));
+    b.opts.auto_backend_cpu=false;ASSERT_EQ(b.solver.loadCheckpoint(saved.string()),"");
+    ASSERT_NO_THROW(b.solver.advance(0,.05));
 }

@@ -125,6 +125,7 @@ void ExplicitInertialSolver::checkpointState(Archive& a) {
       accumulators_pending_,front_breach_,h_on_front_,exch_tau_,spill_deficit_,substeps_run_,face_passes_,
       last_steps_,last_dt_,active_frac_min_,active_frac_max_,active_frac_sum_,active_samples_,tier_occupancy_,
       saved_telemetry,telemetry_);
+    if(!rk_reacted_.empty())a.fixed(rk_reacted_,rk_reacted_reported_);
     if(common_stage_&&common_stage_->runtimeBoundariesEnabled())a(bc_cell_,bc_slot_,bc_q_,bc_accum_,wall_ptr_,wall_slot_);
     if(joint_checkpoint_) {
         a.fixed(exch_,node_drawn_);
@@ -302,6 +303,16 @@ std::string ExplicitInertialSolver::rk2CheckpointProfile() const {
     if(tr.active()&&(tr.row_names!=ground.row_names||tr.n_species!=ground.n_species||tr.age_row!=ground.age_row||tr.temp_row>=0))
         return "Coupled RK2 requires matching surface/groundwater species and age rows.";
     for(double mass:tr.cell_mass)if(!std::isfinite(mass)||mass<0)return "RK2 surface transport inventory is inadmissible.";
+    if(!rk_reacted_.empty()) {
+        if(rk_reacted_.size()!=std::size_t(tr.n_species)||rk_reacted_reported_.size()!=std::size_t(tr.n_pollut))
+            return "RK2 surface reaction ledger shape differs.";
+        for(int row=0;row<tr.n_species;++row)
+            if(!std::isfinite(rk_reacted_[row])||(row>=tr.n_pollut+tr.n_msx&&rk_reacted_[row]!=0))
+                return "RK2 surface reaction ledger is inadmissible.";
+        for(int row=0;row<tr.n_pollut;++row)
+            if(!std::isfinite(rk_reacted_reported_[row])||rk_reacted_reported_[row]<0||rk_reacted_reported_[row]>rk_reacted_[row])
+                return "RK2 surface reaction report receipt is inadmissible.";
+    }
     for(const auto* row:{&state_->coupling_flux,&state_->coupling_applied})for(double v:*row)if(v!=0)
         return "RK2 checkpoint cannot recover external coupling receipts.";
     if(source_phase_end_!=t_last_sync_||accumulators_pending_)
@@ -328,6 +339,9 @@ std::string ExplicitInertialSolver::rk2CheckpointModel() const {
       o.requested_threads,o.mesh_units_si,o.mesh_scaled_to_si,o.mesh_to_si_factor,o.pending_rows_drained,
       o.bc_flow_to_si_applied);
     a(o.infil_default_method,o.infil_destination,o.gw_et);
+    if(o.auto_backend_cpu) {
+        std::string policy="RK2 session CPU default v1";a(policy,o.auto_backend_cpu);
+    }
     // Exchange law options join the identity only when set, so a legacy
     // model's checkpoint identity is unchanged.
     if(o.coupling_law!=CouplingLaw2D::ORIFICE||o.coupling_head!=CouplingHead2D::CELL||o.coupling_coeffs!=0)
@@ -338,6 +352,10 @@ std::string ExplicitInertialSolver::rk2CheckpointModel() const {
     if(state_->transport.active()) {
         std::string profile="shared RK2 passive transport and age v1";auto tr=state_->transport;
         a(profile,tr.n_species,tr.n_pollut,tr.n_msx,tr.age_row,tr.temp_row,tr.row_names,tr.rain_conc,tr.bc_conc);
+    }
+    if(!rk_reacted_.empty()) {
+        std::string profile="shared RK2 surface reactions v1",identity=rk_reaction_identity_;
+        auto decay=rk_decay_;auto rows=rk_reaction_rows_;a(profile,identity,decay,rows);
     }
     auto rain=state_->rainfall,evap=state_->evap_rate;a(rain,evap);
     return a.bytes();

@@ -391,6 +391,6 @@ class DomainSources(EngineView):
         with self._owner._operation(<size_t>h):
             row=list(self._owner.surface2d.species).index(species)
             result={}
-            for term,key in enumerate(('storage','external_in','external_out','boundary_in','boundary_out','rainfall_in','infiltration_out','coupling_in','coupling_out','exfiltration_in','age_generated')):
+            for term,key in enumerate(('storage','external_in','external_out','boundary_in','boundary_out','rainfall_in','infiltration_out','coupling_in','coupling_out','exfiltration_in','age_generated','reacted')):
                 _check(swmm_2d_get_species_ledger(h,row,term,&value)); result[key]=value
         return result
