@@ -76,7 +76,7 @@ std::string SubsurfaceSolver::initReactions(SimulationContext& ctx) {
 }
 void SubsurfaceSolver::reactCell(int cell,double dt,double hg) {
     if(!reactions_||reactors_.empty())return;
-    if(heat_.active()){reactPorewaterCell(cell,dt,hg);return;}
+    if(heat_.active()&&tr_.n_layers==0){reactPorewaterCell(cell,dt,hg);return;}
     const auto& rx=*reactions_;const int count=rx.n_species();
     std::vector<int> rows(count);for(int s=0;s<count;++s)rows[s]=tr_.rowIndex(rx.species_name[s]);
     const int stores=tr_.n_layers>0?tr_.n_layers+1:2;

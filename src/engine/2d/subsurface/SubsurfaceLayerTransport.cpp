@@ -16,6 +16,7 @@ void SubsurfaceSolver::fireLayerSpecies(int cell,const CellFlux& f) {
     const double area=state_.area[cell];
     const double dz=water.new_length/layers;
     for(int s=0;s<tr_.n_species;++s) {
+        if(heat_.active() && s==tr_.temp_row)continue; // thermal energy has one fixed-depth owner
         const auto k=tr_.idx(s,cell);
         const bool intensive=s==tr_.age_row||s==tr_.temp_row;
         const double partition=intensive?0:tr_.kd[k]*tr_.rho_b[cell];

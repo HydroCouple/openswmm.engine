@@ -2682,3 +2682,255 @@ TEST(GwCompletion, ActualRoutingDeliversAboveTableConduitQualityToLayers) {
     EXPECT_NEAR(t.residual(0),t.inFlight1D(0),1e-8);
     EXPECT_NEAR(gw.state().continuityResidual(),0,1e-8);finish(r);
 }
+
+namespace {
+std::string mappedPorousDeck(const std::string& extra="",Mesh shape=Mesh::Tri,int sigma=5,int thermal=3) {
+    auto body=layeredDeck("[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION NO\nTHERMAL_LAYERS "+
+        std::to_string(thermal)+"\n\n"+extra,shape);
+    body.insert(body.find("FLOW_UNITS"),"HEAT_TRANSPORT YES\n");
+    const std::string anchor="[2D_AQUIFER_OPTIONS]\n";
+    body.insert(body.find(anchor)+anchor.size(),"M_LAYERS "+std::to_string(sigma)+"\n");return body;
+}
+double totalGroundEnergy(const openswmm::twoD::SubsurfaceSolver& gw) {
+    double total=0;for(const auto& c:gw.heat().cells)for(double e:c.column.energy)total+=e;return total;
+}
+}
+TEST(GwSigmaPorous, UnequalGridsPreserveCanonicalLayerInitialMassAndThermalEnergy) {
+    for(const auto counts:{std::pair<int,int>{5,3},{3,11},{8,2}}) {
+        Deck r=open("mapped_initial_"+std::to_string(counts.first)+"_"+std::to_string(counts.second),mappedPorousDeck(
+            "[GW_INITIAL_QUALITY]\n* SAT TSS 5\n* UNSAT TSS 7\n* LAYER 2 TSS 11\n"
+            "* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n* LAYER "+std::to_string(counts.first)+" __TEMPERATURE__ -5\n"
+            "[GW_SORPTION]\n* TSS 2 0\n",Mesh::Quad,counts.first,counts.second));
+        ASSERT_TRUE(r.opened)<<completionErrors(r);ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
+        auto& gw=r.eng->surfaceRouter2D().subsurface();auto& tr=gw.transport();const auto& w=gw.state();
+        ASSERT_EQ(tr.n_layers,counts.first);ASSERT_EQ(gw.heat().cells[0].column.theta.size(),counts.second);
+        const auto original=tr.layer_mass;double expected_energy=0;
+        for(int cell=0;cell<tr.n_cells;++cell) {
+            const auto& c=gw.heat().cells[cell];const double dz=(w.zs[cell]-w.hg[cell])/tr.n_layers;
+            for(int layer=0;layer<tr.n_layers;++layer) {
+                const double theta=w.theta_sigma[layer*tr.n_cells+cell];
+                const double capacity=w.area[cell]*dz*(theta+tr.kd[tr.idx(0,cell)]*tr.rho_b[cell]);
+                EXPECT_NEAR(tr.layer_mass[tr.layerIdx(0,layer,cell)],capacity*(layer==1?11:7),1e-12);
+                expected_energy+=w.area[cell]*dz*c.column.material.volumetricCapacity(theta)*(layer==counts.first-1?-5:20);
+            }
+            expected_energy+=w.area[cell]*w.hg[cell]*c.column.material.volumetricCapacity(w.theta_s[cell])*20;
+            EXPECT_LE(c.porewater.sigma.overlaps.size(),std::size_t(counts.first+counts.second+1));
+            for(int repeat=0;repeat<30;++repeat) {
+                ASSERT_TRUE(gw.refreshSigmaPorewater(cell).empty());gw.heat().refreshView(cell,tr);
+            }
+            double physical=0;for(std::size_t j=0;j<c.column.theta.size();++j)physical+=c.porewater.mass[j];
+            EXPECT_NEAR(physical,tr.sat_mass[tr.idx(0,cell)]+tr.unsat_mass[tr.idx(0,cell)],1e-10);
+        }
+        EXPECT_NEAR(totalGroundEnergy(gw),expected_energy,1e-5);
+        for(int cell=0;cell<tr.n_cells;++cell)for(int layer=0;layer<tr.n_layers;++layer)
+            EXPECT_DOUBLE_EQ(tr.layer_mass[tr.layerIdx(0,layer,cell)],original[tr.layerIdx(0,layer,cell)]);
+        EXPECT_NEAR(tr.residual(0),0,1e-10);finish(r);
+    }
+}
+
+TEST(GwSigmaPorous, MovingTableConservesUniformSorbingChemistryAndThermalEnergy) {
+    for(const Mesh shape:{Mesh::Tri,Mesh::Quad,Mesh::Mixed})for(const std::string rate:{"0.001","-0.001"}) {
+        Deck r=open(std::string("mapped_uniform_")+meshName(shape)+(rate[0]=='-'?"_out":"_in"),mappedPorousDeck(
+            "[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n"
+            "* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n"
+            "[GW_SORPTION]\n* TSS 2 0\n"
+            "[GW_SOURCES]\nW * FLOW "+rate+" TSS CONC 7 __TEMPERATURE__ CONC 20\n",shape));
+        ASSERT_TRUE(r.opened)<<completionErrors(r);ASSERT_TRUE(run(r))<<completionErrors(r);
+        ASSERT_EQ(swmm_engine_end(r.e),SWMM_OK);r.started=false;
+        const auto& gw=r.eng->surfaceRouter2D().subsurface();const auto& t=gw.transport();const auto& w=gw.state();
+        for(int i=0;i<t.n_cells;++i)for(int layer=0;layer<t.n_layers;++layer) {
+            const double dz=(w.zs[i]-w.hg[i])/t.n_layers,theta=w.theta_sigma[layer*t.n_cells+i];
+            const double capacity=w.area[i]*dz*(theta+t.kd[t.idx(0,i)]*t.rho_b[i]);
+            EXPECT_NEAR(t.layer_mass[t.layerIdx(0,layer,i)],7*capacity,1e-8);
+        }
+        double initial=0,external=0;for(const auto& c:gw.heat().cells) {
+            EXPECT_FALSE(c.failed)<<c.error;initial+=c.initial_j;
+            external+=c.advective_j+c.source_j+c.surface_j+c.deep_j+c.latent_j+c.lateral_j+c.water_contact_j+c.channel_contact_j+c.lid_contact_j;
+            for(std::size_t j=0;j<c.column.energy.size();++j)EXPECT_NEAR(c.column.energy[j]/c.column.capacity[j],20,1e-8);
+        }
+        EXPECT_NEAR(totalGroundEnergy(gw)-initial,external,1e-3);
+        EXPECT_NEAR(t.residual(0),0,1e-8);EXPECT_NEAR(w.continuityResidual(),0,1e-9);finish(r);
+    }
+}
+
+TEST(GwSigmaPorous, PendingFiniteContactMapsOnceAndRestartsWithoutASecondInventory) {
+    const auto body=mappedPorousDeck("[GW_INITIAL_QUALITY]\n* SAT TSS 5\n* UNSAT TSS 7\n",Mesh::Quad);
+    Deck a=open("mapped_contact",body),b=open("mapped_contact_restart",body);
+    ASSERT_TRUE(a.opened);ASSERT_TRUE(b.opened);
+    ASSERT_EQ(swmm_engine_initialize(a.e),SWMM_OK)<<completionErrors(a);
+    ASSERT_EQ(swmm_engine_initialize(b.e),SWMM_OK)<<completionErrors(b);
+    auto& ga=a.eng->surfaceRouter2D().subsurface();auto& gb=b.eng->surfaceRouter2D().subsurface();
+    auto& tr=ga.transport();auto& pore=ga.heat().cells[0].porewater;
+    const double before=tr.storage(0),energy=totalGroundEnergy(ga);
+    ASSERT_TRUE(pore.applyContactMassIncrement(0,0,.14));
+    EXPECT_DOUBLE_EQ(tr.storage(0),before); // accepted receipt is not a second writable store
+    const auto saved=ga.transportRestartState();ASSERT_FALSE(saved.empty());
+    ASSERT_TRUE(gb.restoreTransportRestart(saved,true).empty());EXPECT_EQ(gb.transportRestartState(),saved);
+    ga.heat().refreshView(0,tr);gb.heat().refreshView(0,gb.transport());
+    ASSERT_TRUE(ga.refreshPorewaterContactLedger().empty());ASSERT_TRUE(gb.refreshPorewaterContactLedger().empty());
+    EXPECT_EQ(ga.transportRestartState(),gb.transportRestartState());
+    EXPECT_NEAR(tr.storage(0)-before,.14,1e-12);EXPECT_NEAR(tr.gained_contact[0],.14,1e-12);
+    const auto settled=ga.transportRestartState();ga.heat().refreshView(0,tr);EXPECT_EQ(ga.transportRestartState(),settled);
+    EXPECT_DOUBLE_EQ(totalGroundEnergy(ga),energy);EXPECT_NEAR(tr.residual(0),0,1e-10);
+    const auto no_change=ga.transportRestartState();
+    EXPECT_FALSE(pore.applyContactMassIncrement(0,0,-1e9));EXPECT_EQ(ga.transportRestartState(),no_change);
+    finish(a);finish(b);
+}
+
+TEST(GwSigmaPorous, ColdLayerContactCarriesAgeAndPhysicalJoulesOnce) {
+    auto body=mappedPorousDeck("[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n",Mesh::Quad);
+    body.insert(body.find("FLOW_UNITS"),"WATER_AGE ON\n");
+    Deck r=open("mapped_cold_contact",body);ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
+    auto& router=r.eng->surfaceRouter2D();auto& gw=router.subsurface();const auto& t=gw.transport();
+    const double energy=totalGroundEnergy(gw);std::vector<double> concentration(t.n_species,0);
+    concentration[0]=7;concentration[t.temp_row]=-5;concentration[t.age_row]=4;
+    gw.bookLinkContact(0,.02,concentration,-.25,-.25);
+    gw.assignTiers(.1,1);gw.fireGwCells(0,.1,router.state(),0);
+    EXPECT_NEAR(totalGroundEnergy(gw)-energy,gw.heat().water_capacity*(-5)*.02,1e-5);
+    EXPECT_NEAR(t.gained_link[t.temp_row],-.1,1e-14);EXPECT_NEAR(t.gained_link[t.age_row],.08,1e-14);
+    EXPECT_NEAR(t.residual(0),0,1e-10);EXPECT_NEAR(t.residual(t.age_row),0,1e-10);
+    for(int layer=0;layer<t.n_layers;++layer)EXPECT_TRUE(std::isfinite(t.layer_mass[t.layerIdx(t.temp_row,layer,0)]));
+    finish(r);
+}
+
+TEST(GwSigmaPorous, LayerReactorsUseMappedThermalTemperatureWithAqueousSorptionCapacity) {
+    const std::string chemistry="[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\nCOUPLING FULL\nATOL 1e-12\nRTOL 1e-10\n"
+        "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
+        "[REACTION_SUBSURFACE]\n* SAT A RATE -.001*A*(TEMP+10)/30\n* SAT B RATE .001*A*(TEMP+10)/30\n"
+        "* UNSAT A RATE -.001*A*(TEMP+10)/30\n* UNSAT B RATE .001*A*(TEMP+10)/30\n"
+        "[GW_INITIAL_QUALITY]\n* SAT A 7\n* UNSAT A 7\n* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n";
+    Deck r=open("mapped_reactors",mappedPorousDeck(chemistry));ASSERT_TRUE(r.opened);
+    ASSERT_TRUE(run(r))<<completionErrors(r);ASSERT_EQ(swmm_engine_end(r.e),SWMM_OK);r.started=false;
+    const auto& t=r.eng->surfaceRouter2D().subsurface().transport();const int a=t.rowIndex("A"),b=t.rowIndex("B");ASSERT_GE(a,0);ASSERT_GE(b,0);
+    EXPECT_NEAR(t.ledgeredStorage(a),t.init_mass[a]*std::exp(-.001*r.eng->context().current_time),t.init_mass[a]*1e-8);
+    EXPECT_NEAR(t.ledgeredStorage(a)+t.ledgeredStorage(b),t.init_mass[a],t.init_mass[a]*1e-10);
+    EXPECT_NEAR(t.residual(a),0,1e-9);EXPECT_NEAR(t.residual(b),0,1e-9);finish(r);
+}
+
+TEST(GwSigmaPorous, PendingFaceHeatAndMappedContactContinueExactlyAfterRestore) {
+    const auto body=mappedPorousDeck("[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n"
+        "* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n"
+        "[2D_AQUIFER]\nCELL 1 36 1 .45 .1 2 HG0 .8\n");
+    Deck first=open("mapped_pending_face",body),second=open("mapped_pending_face_restore",body);
+    ASSERT_TRUE(first.opened);ASSERT_TRUE(second.opened);
+    ASSERT_EQ(swmm_engine_initialize(first.e),SWMM_OK)<<completionErrors(first);
+    ASSERT_EQ(swmm_engine_initialize(second.e),SWMM_OK)<<completionErrors(second);
+    auto& a=first.eng->surfaceRouter2D();auto& b=second.eng->surfaceRouter2D();auto& ga=a.subsurface();auto& gb=b.subsurface();
+    ga.assignTiers(.1,1);gb.assignTiers(.1,1);ga.fireGwFaces(0,.1);
+    double promised=0;for(const auto& c:ga.heat().cells)for(double amount:c.porewater.reserved_out)promised+=amount;
+    ASSERT_GT(promised,0);ASSERT_TRUE(ga.heat().cells[0].porewater.applyContactMassIncrement(0,0,.1));
+    const auto saved=ga.transportRestartState();
+    {std::ofstream file(kOutDir/"mapped_pending_face.bin",std::ios::binary);file.write(saved.data(),saved.size());}
+    ASSERT_TRUE(gb.restoreTransportRestart(saved,true).empty());EXPECT_EQ(gb.transportRestartState(),saved);
+    for(int step=0;step<12;++step) {
+        if(step){ga.fireGwFaces(0,.1);gb.fireGwFaces(0,.1);}
+        ga.fireGwCells(0,.1,a.state(),step*.1);gb.fireGwCells(0,.1,b.state(),step*.1);
+        ASSERT_TRUE(ga.refreshPorewaterContactLedger().empty());ASSERT_TRUE(gb.refreshPorewaterContactLedger().empty());
+        EXPECT_EQ(ga.transportRestartState(),gb.transportRestartState())<<step;
+    }
+    EXPECT_NEAR(ga.transport().residual(0),0,1e-9);EXPECT_NEAR(ga.state().continuityResidual(),0,1e-9);
+    Deck fresh=open("mapped_moving_restore_fresh",body);ASSERT_TRUE(fresh.opened);
+    ASSERT_EQ(swmm_engine_initialize(fresh.e),SWMM_OK);
+    auto& gf=fresh.eng->surfaceRouter2D().subsurface();
+    ASSERT_TRUE(gf.restoreTransportRestart(ga.transportRestartState(),true).empty());
+    EXPECT_EQ(gf.transportRestartState(),ga.transportRestartState());
+    finish(first);finish(second);finish(fresh);
+}
+
+TEST(GwSigmaPorous, IncompatibleThermalGridAndUnpairedMappingReceiptsRefuseAtomically) {
+    const std::string quality="[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n";
+    Deck a=open("mapped_identity",mappedPorousDeck(quality,Mesh::Quad,5,3));
+    Deck b=open("mapped_identity_target",mappedPorousDeck(quality,Mesh::Quad,5,3));
+    Deck c=open("mapped_identity_wrong",mappedPorousDeck(quality,Mesh::Quad,5,4));
+    ASSERT_TRUE(a.opened);ASSERT_TRUE(b.opened);ASSERT_TRUE(c.opened);
+    ASSERT_EQ(swmm_engine_initialize(a.e),SWMM_OK);ASSERT_EQ(swmm_engine_initialize(b.e),SWMM_OK);ASSERT_EQ(swmm_engine_initialize(c.e),SWMM_OK);
+    auto& ga=a.eng->surfaceRouter2D().subsurface();auto& gb=b.eng->surfaceRouter2D().subsurface();auto& gc=c.eng->surfaceRouter2D().subsurface();
+    const auto saved=ga.transportRestartState(),target=gb.transportRestartState(),wrong=gc.transportRestartState();
+    EXPECT_FALSE(gc.restoreTransportRestart(saved,true).empty());EXPECT_EQ(gc.transportRestartState(),wrong);
+    auto& pending=ga.heat().cells[0].porewater.sigma.pending;pending[0]+=.1;
+    const auto corrupt=ga.transportRestartState();pending[0]-=.1;
+    EXPECT_FALSE(gb.restoreTransportRestart(corrupt,true).empty());EXPECT_EQ(gb.transportRestartState(),target);
+    auto& cached=ga.heat().cells[0].porewater.mass;const double old=cached[0];cached[0]+=.1;
+    const auto corrupt_view=ga.transportRestartState();cached[0]=old;
+    EXPECT_FALSE(gb.restoreTransportRestart(corrupt_view,true).empty());EXPECT_EQ(gb.transportRestartState(),target);
+    EXPECT_FALSE(gb.restoreTransportRestart(saved.substr(0,saved.size()/2),true).empty());EXPECT_EQ(gb.transportRestartState(),target);
+    finish(a);finish(b);finish(c);
+}
+
+TEST(GwSigmaPorous, FiniteContactsCannotSpendAnAlreadyPromisedConduitExport) {
+    Deck r=open("mapped_protected_export",mappedPorousDeck("[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n",Mesh::Quad));
+    ASSERT_TRUE(r.opened);ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
+    auto& router=r.eng->surfaceRouter2D();auto& gw=router.subsurface();auto& tr=gw.transport();
+    const double volume=.01,amount=gw.bookLinkGain(0,0,volume);ASSERT_GT(amount,0);
+    gw.bookLinkSeepage(0,-volume);
+    auto& pore=gw.heat().cells[0].porewater;const auto nl=gw.heat().cells[0].column.theta.size();
+    double reserved=0;for(std::size_t j=0;j<nl;++j)reserved+=pore.reserved_out[j];
+    EXPECT_NEAR(reserved,amount,1e-14);
+    for(std::size_t j=0;j<nl;++j) {
+        const double available=pore.contactAvailableMass(0,j);
+        ASSERT_TRUE(pore.applyContactMassIncrement(0,j,-.9*available));
+    }
+    gw.heat().refreshView(0,tr);ASSERT_TRUE(gw.refreshPorewaterContactLedger().empty());
+    EXPECT_GE(tr.sat_mass[0],amount);
+    const auto saved=gw.transportRestartState();ASSERT_TRUE(gw.restoreTransportRestart(saved,true).empty());
+    gw.assignTiers(.1,1);gw.fireGwCells(0,.1,router.state(),0);
+    EXPECT_NEAR(tr.lost_link[0],amount,1e-14);EXPECT_NEAR(tr.residual(0),0,1e-9);
+    for(double mass:tr.layer_mass)EXPECT_GE(mass,0);finish(r);
+}
+
+TEST(GwSigmaPorous, LayerSpecificKineticsReadProjectedTemperatureAndRetardation) {
+    const auto body=mappedPorousDeck("[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\nCOUPLING FULL\nATOL 1e-13\nRTOL 1e-11\n"
+        "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
+        "[REACTION_SUBSURFACE]\n* UNSAT A RATE -.01*A*TEMP/20\n* UNSAT B RATE .01*A*TEMP/20\n"
+        "[GW_INITIAL_QUALITY]\n* UNSAT A 7\n* SAT A 7\n* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 10\n* LAYER 2 __TEMPERATURE__ 30\n"
+        "[GW_SORPTION]\n* A 2 0\n* B 2 0\n",Mesh::Quad,5,3);
+    Deck r=open("mapped_local_kinetics",body);ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
+    auto& router=r.eng->surfaceRouter2D();auto& gw=router.subsurface();const auto& tr=gw.transport();const auto& w=gw.state();
+    const int a=tr.rowIndex("A"),b=tr.rowIndex("B");ASSERT_GE(a,0);ASSERT_GE(b,0);
+    std::vector<double> expected(tr.n_layers);double lo=1e30,hi=-1e30;
+    for(int layer=0;layer<tr.n_layers;++layer) {
+        double volume=0,mass=0,temperature=0;
+        ASSERT_EQ(swmm_gw2d_get_layer_quality(r.e,0,layer,tr.temp_row,&volume,&mass,&temperature),SWMM_OK);
+        lo=std::min(lo,temperature);hi=std::max(hi,temperature);
+        const double theta=w.theta_sigma[layer*tr.n_cells];
+        const double scale=theta/(theta+tr.kd[tr.idx(a,0)]*tr.rho_b[0]);
+        expected[layer]=tr.layer_mass[tr.layerIdx(a,layer,0)]*std::exp(-.01*.1*temperature/20*scale);
+    }
+    ASSERT_GT(hi-lo,1);
+    gw.assignTiers(.1,1);gw.fireGwCells(0,.1,router.state(),0);
+    for(int layer=0;layer<tr.n_layers;++layer)EXPECT_NEAR(tr.layer_mass[tr.layerIdx(a,layer,0)],expected[layer],1e-8);
+    EXPECT_NEAR(tr.residual(a),0,1e-9);EXPECT_NEAR(tr.residual(b),0,1e-9);finish(r);
+}
+
+TEST(GwSigmaPorous, UnspecifiedTemperatureUsesTheConfiguredThermalInitialState) {
+    Deck r=open("mapped_thermal_default",mappedPorousDeck("",Mesh::Quad));ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
+    const auto& ctx=r.eng->context();const auto& gw=r.eng->surfaceRouter2D().subsurface();
+    const double expected=ctx.heat_config.global_temp[int(openswmm::HeatSource::INITIAL_STATE)];
+    for(const auto& c:gw.heat().cells)for(std::size_t j=0;j<c.column.energy.size();++j)
+        EXPECT_NEAR(c.column.energy[j]/c.column.capacity[j],expected,1e-12);
+    finish(r);
+}
+
+TEST(GwSigmaPorous, ResultsKeepChemicalAndThermalLayerAxesIndependent) {
+    auto body=mappedPorousDeck("[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n"
+        "* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 10\n",Mesh::Quad,5,3);
+    const auto at=body.find("REPORT_2D NO");ASSERT_NE(at,std::string::npos);
+    body.replace(at,12,"REPORT_2D YES\nOUTPUT_FILE mapped_layers.h5\nOUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES DEPTH GROUNDWATER");
+    Deck r=open("mapped_results",body);ASSERT_TRUE(r.opened);ASSERT_TRUE(run(r))<<completionErrors(r);
+    const auto expected=r.eng->surfaceRouter2D().subsurface().transport().layer_mass;
+    const auto& tr=r.eng->surfaceRouter2D().subsurface().transport();const int ns=tr.n_species,nc=tr.n_cells;
+    finish(r);
+    hid_t file=H5Fopen((kOutDir/"mapped_layers.h5").string().c_str(),H5F_ACC_RDONLY,H5P_DEFAULT);ASSERT_GE(file,0);
+    hid_t dataset=H5Dopen2(file,"Mesh2_face_gw_layer_mass",H5P_DEFAULT);ASSERT_GE(dataset,0);
+    hid_t space=H5Dget_space(dataset);ASSERT_EQ(H5Sget_simple_extent_ndims(space),4);
+    hsize_t dimensions[4]={};H5Sget_simple_extent_dims(space,dimensions,nullptr);
+    EXPECT_EQ(dimensions[1],ns);EXPECT_EQ(dimensions[2],5);EXPECT_EQ(dimensions[3],nc);
+    std::vector<double> values(std::size_t(dimensions[0])*ns*5*nc);
+    ASSERT_GE(H5Dread(dataset,H5T_NATIVE_DOUBLE,H5S_ALL,H5S_ALL,H5P_DEFAULT,values.data()),0);
+    const auto offset=values.size()-expected.size();
+    for(std::size_t k=0;k<expected.size();++k)EXPECT_NEAR(values[offset+k],expected[k],1e-9);
+    H5Sclose(space);H5Dclose(dataset);H5Fclose(file);
+}

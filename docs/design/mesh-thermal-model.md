@@ -27,6 +27,16 @@ their paired sensible heat; geometric water-table handover creates no energy.
 The fixed-grid vertical flux reconstruction uses layer continuity, giving a
 documented piston attribution for bulk hydraulic closures.
 
+`UNSAT_TRANSPORT LAYERED` can combine SIGMA chemistry with these fixed thermal
+layers. A sparse conservative overlap map preserves the chemical inventories
+and thermal energy under their respective owners, including finite surface and
+channel contacts. Layer temperature results and reaction inputs borrow the
+actual thermal field. In this profile, authored `LAYER` temperature values select
+SIGMA layers; their initial thermal energy is projected onto the fixed grid.
+The default BULK profile retains its fixed thermal-layer initialization contract.
+See the [groundwater mapping contract](groundwater-transport.md#sigma-chemistry-with-porous-soil-heat)
+for activation, sorption, pending exports and state-checkpoint qualification.
+
 Porous temperature-volume rows are water-property views of the canonical soil
 energy. They are not extra energy stores. Material density and specific heat in
 `GW_TRANSPORT_PARAMS` describe grains. Conductivity uses arithmetic or geometric

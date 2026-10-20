@@ -84,12 +84,33 @@ std::string GroundHeatState::initialize(SimulationContext& ctx,const MeshData& m
                                       cell.saturated_water[j]*material.water_heat_capacity;
             cell.column.energy[j]=sat_capacity*sat_temp+(cell.column.capacity[j]-sat_capacity)*unsat_temp;
         }
-        for(int pass=0;pass<3;++pass)for(const auto& row:cfg.initial_quality)
+        if(tr.n_layers==0)for(int pass=0;pass<3;++pass)for(const auto& row:cfg.initial_quality)
             if(row.species=="__TEMPERATURE__"&&row.zone==GwZone::LAYER&&int(row.scope)==pass&&targets(row,mesh,i)) {
                 if(row.layer<1||row.layer>options.thermal_layers)return "Thermal LAYER initial target exceeds THERMAL_LAYERS.";
                 const int layer=row.layer-1; // existing file/API LAYER contract is one-based
                 cell.column.energy[layer]=cell.column.capacity[layer]*row.value;
             }
+        if(tr.n_layers>0) {
+            std::vector<double> initial_temperature(tr.n_layers+1,ctx.heat_config.global_temp[int(HeatSource::INITIAL_STATE)]);
+            for(int pass=0;pass<3;++pass)for(int layers=0;layers<2;++layers)for(const auto& row:cfg.initial_quality)
+                if(row.species=="__TEMPERATURE__"&&int(row.scope)==pass&&targets(row,mesh,i)&&
+                   (row.zone==GwZone::LAYER)==bool(layers)) {
+                    if(row.zone==GwZone::SAT)initial_temperature[tr.n_layers]=row.value;
+                    else for(int layer=0;layer<tr.n_layers;++layer)
+                        if(row.zone!=GwZone::LAYER||row.layer==layer+1)initial_temperature[layer]=row.value;
+                }
+            std::fill(cell.column.energy.begin(),cell.column.energy.end(),0);
+            const double dz=table_depth/tr.n_layers;
+            for(int j=0;j<options.thermal_layers;++j)for(int layer=0;layer<=tr.n_layers;++layer) {
+                const bool saturated=layer==tr.n_layers;
+                const double top=saturated?table_depth:dz*layer,bottom=saturated?water.zs[i]:dz*(layer+1);
+                const double overlap=std::max(0.,std::min(bottom,edges[j+1])-std::max(top,edges[j]));
+                if(!(overlap>0))continue;
+                const double moisture=saturated?water.theta_s[i]:water.theta_sigma[std::size_t(layer)*water.n_cells+i];
+                const double temperature=initial_temperature[layer];
+                cell.column.energy[j]+=overlap*water.area[i]*material.volumetricCapacity(moisture)*temperature;
+            }
+        }
         cell.column.initial_energy=cell.column.energy;
         cell.initial_j=total(cell.column.energy);cell.geo_flux=p.geo_flux;
     }
@@ -179,15 +200,22 @@ std::string GroundHeatState::applySnowContactEnergy(int i,double soil_j) {
     if(!snowContactEnabled(i))return "Reciprocal UEB/soil contact was committed without matching contact ownership.";
     return snow_owner->applyGroundContactEnergy(i,soil_j);
 }
-void GroundHeatState::refreshView(int i,SubsurfaceTransportState& tr) const {
+void GroundHeatState::refreshView(int i,SubsurfaceTransportState& tr) {
     if(!active()||tr.temp_row<0)return;
-    const auto& cell=cells[i];const auto& c=cell.column;double sat=0,unsat=0;
+    auto& cell=cells[i];const auto& c=cell.column;double sat=0,unsat=0;
+    if(auto error=cell.porewater.publishSigma(tr,i);!error.empty())throw std::runtime_error(error);
     for(std::size_t j=0;j<c.energy.size();++j) {
         const double t=activeTemperature(i,j),vw=c.theta[j]*c.area*(c.depth_edges[j+1]-c.depth_edges[j]);
         sat+=cell.saturated_water[j]*t;unsat+=(vw-cell.saturated_water[j])*t;
     }
     tr.sat_mass[tr.idx(tr.temp_row,i)]=sat;tr.unsat_mass[tr.idx(tr.temp_row,i)]=unsat;
-    if(cell.porewater.active())for(int r=0;r<tr.n_species;++r)if(r!=tr.temp_row) {
+    if(tr.n_layers>0 && cell.porewater.sigma.active()) {
+        for(int layer=0;layer<tr.n_layers;++layer)tr.layer_mass[tr.layerIdx(tr.temp_row,layer,i)]=0;
+        for(const auto& o:cell.porewater.sigma.overlaps)if(o.reactor<tr.n_layers)
+            tr.layer_mass[tr.layerIdx(tr.temp_row,o.reactor,i)]+=o.water*activeTemperature(i,o.physical);
+        tr.refreshUnsat(tr.temp_row,i);
+    }
+    if(tr.n_layers==0 && cell.porewater.active())for(int r=0;r<tr.n_species;++r)if(r!=tr.temp_row) {
         const auto pair=cell.porewater.zoneMass(c,cell.saturated_water,r);
         tr.sat_mass[tr.idx(r,i)]=pair.first;tr.unsat_mass[tr.idx(r,i)]=pair.second;
     }

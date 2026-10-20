@@ -138,6 +138,7 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
 
     if(st.transfers) {
         auto& r=*st.transfers;r={};r.old_length=L0;r.new_length=L1;
+        r.contacts=st.layer_inflow?*st.layer_inflow:std::vector<double>(m,0);
         r.old_water=w;r.faces.resize(m+1);r.compression.assign(m+1,0);
         r.grid.resize(m+1);
         for(int j=0;j<=m;++j)r.grid[j]=-double(j)*dsig*(L1-L0);

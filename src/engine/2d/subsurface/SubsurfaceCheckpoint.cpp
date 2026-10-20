@@ -148,7 +148,7 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
                 }
             }
         }
-        if(a.reading()&&!porewater_preset_out_.empty()) {
+        if(a.reading()&&tr_.n_layers==0&&!porewater_preset_out_.empty()) {
             const auto nl=std::size_t(heat_.config->options.thermal_layers),nc=std::size_t(state_.n_cells);
             std::size_t ns=0;for(const auto& cell:heat_.cells)ns=std::max(ns,std::size_t(cell.porewater.n_species));
             if(!nl||!ns||porewater_preset_out_.size()!=ns*nc*nl)
@@ -160,6 +160,35 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
                 if(porewater_preset_out_[packet]!=reserved)
                     throw std::runtime_error("Pending porewater export does not match its reserved physical-layer donor.");
             }
+        }
+    }
+    if(a.reading() && tr_.n_layers>0 && heat_.active())for(int cell=0;cell<s.n_cells;++cell)if(covers(cell)) {
+        const auto& pore=heat_.cells[cell].porewater;const auto& m=pore.sigma;const auto ne=m.overlaps.size();
+        if(m.layers!=t.n_layers||m.species!=t.n_species)throw std::runtime_error("SIGMA porous checkpoint owner differs.");
+        for(int row=0;row<t.n_species;++row)if(row!=t.temp_row) {
+            const auto nf=heat_.cells[cell].column.theta.size();
+            for(std::size_t physical=0;physical<nf;++physical) {
+                double value=0,reservation=0;
+                for(std::size_t e=0;e<ne;++e)if(m.overlaps[e].physical==int(physical)) {
+                    value+=m.mass[std::size_t(row)*ne+e];reservation+=m.reserved[std::size_t(row)*ne+e];
+                }
+                const auto k=std::size_t(row)*nf+physical;
+                if(std::abs(value-pore.mass[k])>1e-12*std::max({1.,std::abs(value),std::abs(pore.mass[k])})||
+                   std::abs(reservation-pore.reserved_out[k])>1e-12*std::max(1.,reservation))
+                    throw std::runtime_error("SIGMA porous checkpoint physical view differs from its overlap owner.");
+            }
+            for(int reactor=0;reactor<=t.n_layers;++reactor) {
+                double total=0,capacity=0;for(std::size_t e=0;e<ne;++e)if(m.overlaps[e].reactor==reactor) {
+                    total+=m.mass[std::size_t(row)*ne+e];capacity+=m.capacity[std::size_t(row)*ne+e];
+                }
+                const double native=reactor==t.n_layers?t.sat_mass[t.idx(row,cell)]:t.layer_mass[t.layerIdx(row,reactor,cell)];
+                const double expected=native+m.pending[std::size_t(row)*(t.n_layers+1)+reactor];
+                if(capacity>0 && std::abs(total-expected)>1e-12*std::max({1.,std::abs(total),std::abs(expected)}))
+                    throw std::runtime_error("SIGMA porous checkpoint duplicates or loses canonical mass.");
+            }
+            double held=0;for(std::size_t e=0;e<ne;++e)held+=m.reserved[std::size_t(row)*ne+e];
+            if(std::abs(held-pendingSaturatedMassExport(cell,row))>1e-12*std::max(1.,held))
+                throw std::runtime_error("SIGMA porous checkpoint reservation differs from its producer receipts.");
         }
     }
     if(a.reading()) {

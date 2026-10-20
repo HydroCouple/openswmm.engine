@@ -181,6 +181,8 @@ public:
     double pendingHeat(int cell) const noexcept;
     std::string initHeat(SimulationContext&,const GwTransportData&);
     std::string initPorewater();
+    std::string refreshSigmaPorewater(int cell);
+    void refreshSigmaPorewaterReservations(int cell) noexcept;
     /// Rebuild the signed soil-side contact receipt from the canonical layer
     /// increments after the mesh/channel synchronization has settled.
     std::string refreshPorewaterContactLedger();
@@ -223,6 +225,7 @@ public:
         if (m == 0.0) return 0.0;
         bookPresetPorewaterOut(cell,species,m);
         tr_.lout_mass[k] += m;
+        if(tr_.n_layers>0 && heat_.active())refreshSigmaPorewaterReservations(cell);
         return m;
     }
     /// …and of its unsaturated column store (m³), whatever closure holds it.
@@ -491,6 +494,7 @@ private:
     /// (G-X4: `+` a leaking conduit filling the cell, `−` a gaining one
     /// drawing from it), `+ recharge` is unsaturated → saturated.
     struct CellFlux {
+        double node_in=0; ///< gross node inflow in the layered profile
         double link_out=0; ///< gross outgoing conduit water, separate from net link
         const sigma::ColumnTransfers* column=nullptr;
         double boundary_in=0,boundary_out=0;

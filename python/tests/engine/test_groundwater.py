@@ -155,3 +155,47 @@ def test_subsurface_reaction_text_authoring_is_atomic(tmp_path):
         assert 'A' in gw.species
     finally:
         cleanup(solver)
+
+
+@pytest.mark.parametrize('chemistry_layers,thermal_layers', [(5, 3), (3, 7)])
+def test_layered_chemistry_with_porous_heat(tmp_path, chemistry_layers, thermal_layers):
+    from openswmm.engine import GroundwaterInitialQuality, GroundwaterTransportZone
+    solver = open_model(tmp_path, '[OPTIONS]\nHEAT_TRANSPORT YES\n')
+    try:
+        gw = solver.surface2d.groundwater
+        gw.options['NODE_ENROLMENT'] = 'ROWS'
+        gw.options['CLOSURE'] = 'SIGMA'
+        gw.options['M_LAYERS'] = str(chemistry_layers)
+        gw.add_row(CellScope.GLOBAL, 1e-9, 0.5, 0.45, 0.1, 2)
+        gw.set_row_property(0, 'HG0', 0.2)
+        gw.transport.options['UNSAT_TRANSPORT'] = 'LAYERED'
+        gw.transport.options['THERMAL_MODEL'] = 'POROUS_EQUILIBRIUM'
+        gw.transport.options['THERMAL_LAYERS'] = str(thermal_layers)
+        gw.transport.options['CONDUCTION'] = 'NO'
+        for zone in (GroundwaterTransportZone.SAT, GroundwaterTransportZone.UNSAT):
+            for species, value in [('TSS', 7), ('__TEMPERATURE__', 20)]:
+                gw.transport.set_initial_quality(GroundwaterInitialQuality(
+                    zone=zone, species=species, value=value))
+        gw.transport.set_initial_quality(GroundwaterInitialQuality(
+            zone=GroundwaterTransportZone.LAYER, layer=chemistry_layers,
+            species='__TEMPERATURE__', value=-5))
+        solver.write(tmp_path / 'layered_porous.inp')
+        solver.initialize()
+        temperature = gw.species.index('__TEMPERATURE__')
+        for cell in range(gw.dimensions[0]):
+            for layer in range(chemistry_layers):
+                solute = gw.layer_quality(cell, layer, 0)
+                assert solute['dissolved_concentration'] == pytest.approx(7)
+                heat = gw.layer_quality(cell, layer, temperature)
+                assert np.isfinite(heat['dissolved_concentration'])
+                assert -5 - 1e-10 <= heat['dissolved_concentration'] <= 20 + 1e-10
+        solver.start(False)
+        for _ in range(5):
+            solver.step()
+        assert abs(gw.continuity_error) < 1e-7
+        for cell in range(gw.dimensions[0]):
+            for layer in range(chemistry_layers):
+                assert gw.layer_quality(cell, layer, 0)['total_mass'] >= 0
+        solver.end()
+    finally:
+        cleanup(solver)

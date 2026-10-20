@@ -586,7 +586,12 @@ void SubsurfaceSolver::assignTiers(double dt0, int n_tiers) {
 // ---------------------------------------------------------------------------
 
 void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
-    if (!state_.active || !tierHasFaces(tier)) return;
+    if(!state_.active)return;
+    if(tr_.n_layers>0&&heat_.active())for(int i=0;i<state_.n_cells;++i)if(covers(i)) {
+        if(auto error=refreshSigmaPorewater(i);!error.empty())throw std::runtime_error(error);
+        heat_.refreshView(i,tr_);
+    }
+    if(!tierHasFaces(tier))return;
     const auto& list = faces_by_tier_[static_cast<std::size_t>(tier)];
     const InertialEdges& E = *edges_;
 
@@ -668,7 +673,7 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
                 const auto ne = static_cast<std::size_t>(E.ne);
                 for (int s = 0; s < tr_.n_species; ++s) {
                     const double m_don = tr_.sat_mass[tr_.idx(s, static_cast<int>(don))];
-                    const bool layered_porewater=heat_.active()&&s!=tr_.temp_row&&
+                    const bool layered_porewater=tr_.n_layers==0&&heat_.active()&&s!=tr_.temp_row&&
                         heat_.cells[don].porewater.active();
                     const double mobile_donor=layered_porewater?saturatedPorewaterMobileMass(int(don),s):
                         m_don*tr_.dissolvedFraction(s,static_cast<int>(don),state_.theta_s[don]);
@@ -731,8 +736,8 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
                     for (int s = 0; s < tr_.n_species; ++s) {
                         const double ma = tr_.sat_mass[tr_.idx(s, static_cast<int>(l))];
                         const double mb = tr_.sat_mass[tr_.idx(s, static_cast<int>(r))];
-                        const bool layered_porewater_a=heat_.active()&&s!=tr_.temp_row&&heat_.cells[l].porewater.active();
-                        const bool layered_porewater_b=heat_.active()&&s!=tr_.temp_row&&heat_.cells[r].porewater.active();
+                        const bool layered_porewater_a=tr_.n_layers==0&&heat_.active()&&s!=tr_.temp_row&&heat_.cells[l].porewater.active();
+                        const bool layered_porewater_b=tr_.n_layers==0&&heat_.active()&&s!=tr_.temp_row&&heat_.cells[r].porewater.active();
                         const double mobile_a=layered_porewater_a?saturatedPorewaterMobileMass(int(l),s):
                             ma*tr_.dissolvedFraction(s,static_cast<int>(l),state_.theta_s[l]);
                         const double mobile_b=layered_porewater_b?saturatedPorewaterMobileMass(int(r),s):
@@ -812,6 +817,8 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
             }
         }
     }
+    if(tr_.n_layers>0&&heat_.active())for(int i=0;i<state_.n_cells;++i)if(covers(i))
+        if(auto error=refreshSigmaPorewater(i);!error.empty())throw std::runtime_error(error);
     accumulators_pending_ = true;
 }
 
@@ -1319,8 +1326,6 @@ void SubsurfaceSolver::initTransport(const RowLayoutLite& rows,
 
     if(gw && gw->options.unsat_transport=="LAYERED") {
         if(options_.per_subcatch)throw std::runtime_error("LAYERED groundwater transport requires a spatial SIGMA mesh.");
-        if(gw->options.thermal_model=="POROUS_EQUILIBRIUM")
-            throw std::runtime_error("LAYERED SIGMA chemistry and fixed-depth porous porewater require a shared inventory mapping before they can be combined.");
         for(int i=0;i<state_.n_cells;++i)if(covers(i) &&
             static_cast<GwClosure>(state_.closure[i])!=GwClosure::SIGMA)
             throw std::runtime_error("UNSAT_TRANSPORT LAYERED requires SIGMA on every active aquifer cell.");
@@ -1626,6 +1631,7 @@ void SubsurfaceSolver::bookAreaEt(int cell,double dt,double potential,double eva
 }
 
 void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double time) {
+    if(tr_.n_layers>0&&heat_.active())heat_.refreshView(i,tr_);
     const auto u = static_cast<std::size_t>(i);
     const int  n = state_.n_cells;
     const double A  = std::max(state_.area[u], kTiny);
@@ -2168,6 +2174,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
             f.node_out=0;
             for(std::size_t b=0;b<node_beds_.size();++b)if(node_beds_[b].cell==i)
                 f.node_out+=std::max(0.,bed_gathered_[b]);
+            f.node_in=f.node_out-state_.qnode_last[u]*dt;
         }
         f.lid_in_j = lid_in_j;
         f.infil_in = infil_vol;
@@ -2550,22 +2557,37 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
             preset[j]=consumePending(heat_preset_out_j_[base+j]);preset_total+=preset[j];
             preset_water[j]=consumePending(heat_preset_out_water_[base+j]);preset_water_total+=preset_water[j];
         }
-        const double body_water=f.lateral-f.node_out+f.link+f.source_in-f.source_out+f.boundary_in-f.boundary_out;
+        const double body_water=f.lateral+f.node_in-f.node_out+f.link+f.source_in-f.source_out+f.boundary_in-f.boundary_out;
         // Already committed face/link exports keep their producer-time layer
         // receipts. New wells/node/top/deep outputs share the implicit donor
         // solution, rather than debiting every layer at a bulk mean.
+        double contact_volume=0,contact_node=0,contact_link=0;
+        std::vector<double> contact_water(weights.size(),0),contact_j(weights.size(),0);
+        if(tr_.n_layers>0 && f.column)for(int layer=0;layer<tr_.n_layers;++layer) {
+            const double volume=f.column->contacts[layer]*state_.area[i];contact_volume+=volume;
+            const auto q=tr_.layerIdx(r,layer,i);
+            const double mn=consumePending(tr_.contact_node_mass[q]),ml=consumePending(tr_.contact_link_mass[q]);
+            contact_node+=mn;contact_link+=ml;
+            const double top=f.column->old_length*layer/tr_.n_layers,bottom=f.column->old_length*(layer+1)/tr_.n_layers;
+            for(std::size_t j=0;j<weights.size();++j) {
+                const double overlap=std::max(0.,std::min(bottom,column.depth_edges[j+1])-std::max(top,column.depth_edges[j]));
+                const double share=bottom>top?overlap/(bottom-top):0;
+                contact_water[j]+=volume*share;contact_j[j]+=cp*(mn+ml)*share;
+            }
+        }
         const double incoming_j=cp*(source+edge_mass+edge_heat+lateral+link_in-(link_packet?booked_link:0)+node_in)+preset_total+f.lid_in_j;
         std::vector<double> water(weights.size()),energy(weights.size()),withdrawal(weights.size());
         for(std::size_t j=0;j<weights.size();++j) {
             const double share=weights[j]/weight;
-            water[j]=(body_water+preset_water_total)*share-preset_water[j];energy[j]=incoming_j*share;
+            water[j]=(body_water-contact_volume+preset_water_total)*share-preset_water[j]+contact_water[j];
+            energy[j]=incoming_j*share+contact_j[j];
             withdrawal[j]=(node_volume+f.source_out+f.boundary_out+implicit_link_volume)*share;
         }
         water.front()+=f.infil_in-f.reject-f.et-f.dunne;energy.front()+=cp*(infil-refund);
         withdrawal.front()+=excess_volume+f.et+f.dunne;water.back()-=f.deep;withdrawal.back()+=f.deep;
         const auto advected=advectPorousColumn(column,moisture,water,energy,withdrawal);
         if(!advected.error.empty())throw std::runtime_error(advected.error);
-        std::fill(cell.reserved_out_water.begin(),cell.reserved_out_water.end(),0);
+        for(std::size_t j=0;j<weights.size();++j)cell.reserved_out_water[j]=heat_preset_out_water_[base+j];
         double donor=0;for(std::size_t j=0;j<weights.size();++j)donor+=weights[j]/weight*advected.temperature[j];
         const double link_out=link_packet?booked_link:implicit_link_volume*donor;
         const double node_out=node_volume*donor,source_out=f.source_out*donor;
@@ -2581,7 +2603,7 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
             tr_.boundary_flux_in[r]+=pulse.flux_in[r];tr_.boundary_flux_out[r]+=pulse.flux_out[r];
         }
         tr_.gained_source[r]+=source;tr_.net_lateral[r]+=lateral;tr_.gained_infil[r]+=infil;
-        tr_.gained_link[r]+=link_in;tr_.lost_link[r]+=link_out;tr_.gained_node[r]+=node_in;
+        tr_.gained_link[r]+=link_in+contact_link;tr_.lost_link[r]+=link_out;tr_.gained_node[r]+=node_in+contact_node;
         tr_.lost_node[r]+=node_out;tr_.lost_deep[r]+=deep;tr_.lost_source[r]+=source_out;
         tr_.lost_et[r]+=et;tr_.lost_dunne[r]+=refund+excess+dunne;
         if(f.dunne_mass){(*f.dunne_mass)[r]=dunne;(*f.excess_mass)[r]=excess;}
@@ -2604,6 +2626,7 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
             column.energy.front()+=latent;cell.latent_j+=latent;
         }
         if(auto error=conductGroundWithLids(i,f.dt);!error.empty())throw std::runtime_error(error);
+        if(tr_.n_layers>0)if(auto error=refreshSigmaPorewater(i);!error.empty())throw std::runtime_error(error);
         heat_.refreshView(i,tr_);
     } catch(const std::exception& error) {
         cell.failed=1;try{cell.error=error.what();}catch(...){}
@@ -2611,7 +2634,19 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
 }
 
 void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
-    if(tr_.n_layers>0){fireLayerSpecies(i,f);reactCell(i,f.dt,f.hg_final);return;}
+    if(tr_.n_layers>0) {
+        fireLayerSpecies(i,f);
+        if(heat_.active()) {
+            fireGroundHeatSpecies(i,f);
+            if(heat_.cells[i].failed)throw std::runtime_error(heat_.cells[i].error);
+        }
+        reactCell(i,f.dt,f.hg_final);
+        if(heat_.active()) {
+            if(auto error=refreshSigmaPorewater(i);!error.empty())throw std::runtime_error(error);
+            heat_.refreshView(i,tr_);
+        }
+        return;
+    }
     if(heat_.active()&&heat_.cells[i].porewater.active())fireGroundPorewaterSpecies(i,f);
     if(heat_.active())fireGroundHeatSpecies(i,f);
     const auto k0 = static_cast<std::size_t>(i);

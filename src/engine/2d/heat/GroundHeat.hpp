@@ -46,7 +46,7 @@ struct GroundHeatState {
                           const SubsurfaceTransportState&,const GwTransportData&,const std::vector<uint8_t>& coverage);
     std::string initializeStandalone(SimulationContext&,const MeshData&,const GwTransportData&,const std::vector<unsigned char>& owned);
     void prepare();
-    void refreshView(int cell,SubsurfaceTransportState&) const;
+    void refreshView(int cell,SubsurfaceTransportState&);
     double zoneTemperature(int cell,bool saturated) const;
     // Append physical top/deep boundaries, returning the number of top
     // records. Exposed fraction excludes the finite water contact footprint.

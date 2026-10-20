@@ -1724,7 +1724,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     if(auto error=configureGroundLidOwners(ctx,mesh_,subsurface_.heat(),subsurface_.nodeBeds());!error.empty())
         throw std::runtime_error("[2D LID heat] "+error);
     configureSnowGroundContacts();
-    if((state_.heat.ground_column || !ctx.reactions.subsurface_laws.empty())&&subsurface_.heat().active())
+    if((state_.heat.ground_column || subsurface_.transport().n_layers>0 || !ctx.reactions.subsurface_laws.empty())&&subsurface_.heat().active())
         if(auto error=subsurface_.initPorewater();!error.empty())throw std::runtime_error("[2D porewater] "+error);
     if(state_.heat.ground_column&&!subsurface_.transport().generated_age.empty()&&
        (state_.transport.n_species!=subsurface_.transport().n_species||

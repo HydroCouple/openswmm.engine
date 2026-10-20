@@ -90,7 +90,7 @@ namespace openswmm::twoD::sigma {
 /// transport never reconstructs gravity or replays rejected table trials.
 struct ColumnTransfers {
     double old_length=0,new_length=0,infiltration=0,evaporation=0;
-    std::vector<double> old_water,new_water,faces,compression,support,grid;
+    std::vector<double> old_water,new_water,faces,compression,support,grid,contacts;
 };
 
 /// What one column sweep needs and what it reports back.

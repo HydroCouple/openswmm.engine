@@ -59,6 +59,7 @@ inline void groundHeat(Archive& a,GroundHeatState& h,bool model) {
             material(a,c.column.material);a(c.column.area,c.column.depth_edges,c.column.initial_energy,
                 c.initial_j,c.geo_flux,c.surface_owned);
             auto& p=c.porewater;a(p.n_species,p.age_row,p.temp_row,p.retention,p.initial_mass);
+            if(p.sigma.active()){std::string profile="SIGMA porous overlap v1";a(profile,p.sigma.layers,p.sigma.species);}
         },true);
         std::vector<unsigned char> snow_contact(h.cells.size());
         for(std::size_t i=0;i<snow_contact.size();++i)snow_contact[i]=h.snowContactEnabled(int(i));
@@ -75,6 +76,12 @@ inline void groundHeat(Archive& a,GroundHeatState& h,bool model) {
         auto& col=c.column;auto& p=c.porewater;
         a.fixed(col.theta,col.capacity,col.energy,col.conductivity,c.saturated_water,c.reserved_out_water,
                 p.mass,p.contact_mass,p.reserved_out,p.generated_age);
+        if(p.sigma.active()) {
+            auto& m=p.sigma;std::string profile="SIGMA porous overlap receipts v1";a(profile);
+            if(a.reading()&&profile!="SIGMA porous overlap receipts v1")throw std::runtime_error("Unsupported SIGMA porous overlap checkpoint.");
+            a.sequence(m.overlaps,[&](auto& o){a(o.physical,o.reactor,o.water,o.bulk);});
+            a(m.capacity,m.mass,m.reserved,m.pending);
+        }
         a(c.advective_j,c.source_j,c.surface_j,c.deep_j,c.latent_j,c.lateral_j,c.water_contact_j,
           c.channel_contact_j,c.lid_contact_j,c.vertical_absolute_j,c.failed,c.error);
     });
@@ -111,6 +118,19 @@ inline void groundHeat(Archive& a,GroundHeatState& h,bool model) {
                     bad("invalid layer thermodynamic value or outgoing heat-capacity reservation");
             const auto& p=c.porewater;
             if(p.mass.size()!=p.reserved_out.size())bad("invalid porewater reservation shape");
+            if(p.sigma.active()) {
+                const auto& m=p.sigma;const auto ne=m.overlaps.size();
+                if(m.species!=p.n_species||m.layers<1||m.capacity.size()!=std::size_t(m.species)*ne||
+                   m.mass.size()!=m.capacity.size()||m.reserved.size()!=m.mass.size()||
+                   m.pending.size()!=std::size_t(m.species)*(m.layers+1))bad("SIGMA mapping shape");
+                for(const auto& o:m.overlaps)if(o.physical<0||std::size_t(o.physical)>=col.theta.size()||
+                    o.reactor<0||o.reactor>m.layers||!std::isfinite(o.water)||o.water<0||!std::isfinite(o.bulk)||o.bulk<=0)
+                    bad("SIGMA mapping geometry");
+                for(std::size_t k=0;k<m.mass.size();++k)if(!std::isfinite(m.capacity[k])||m.capacity[k]<0||
+                    !std::isfinite(m.mass[k])||m.mass[k]<0||!std::isfinite(m.reserved[k])||m.reserved[k]<0||m.reserved[k]>m.mass[k])
+                    bad("SIGMA mapping inventory or reservation");
+                for(double delta:m.pending)if(!std::isfinite(delta))bad("SIGMA mapping receipt");
+            }
             for(std::size_t k=0;k<p.mass.size();++k)
                 if(!std::isfinite(p.mass[k])||p.mass[k]<0||!std::isfinite(p.reserved_out[k])||
                    p.reserved_out[k]<0||p.reserved_out[k]>p.mass[k])bad("invalid porewater inventory or outgoing reservation");

@@ -2536,3 +2536,64 @@ TEST(GroundHeat, NodeFlowReversalKeepsGrossOutgoingHeatWhenAcceptedWaterNetsToZe
     EXPECT_NEAR(gw.nodeExchangeMass()[std::size_t(row)*2],tr.lost_node[row],1e-12);
     EXPECT_NEAR(energy(gw.heat())-before,4184000.*(tr.gained_node[row]-tr.lost_node[row]),1e-5);
 }
+
+TEST(GroundHeat, SigmaChemistryAndFixedThermalLayersShareFiniteOverlandContacts) {
+    Model m("sigma-porous-overland", "SIGMA", .5, false, porewater_species+
+        "[GW_TRANSPORT_OPTIONS]\nUNSAT_TRANSPORT LAYERED\nTHERMAL_LAYERS 3\n");
+    ASSERT_NE(m.e,nullptr);
+    for(const auto& pair:{std::pair{"HEAT_MODEL","COUPLED"},{"BED_HEAT_MODEL","GROUND_COLUMN"},
+                         {"HEAT_SURFACE_EXCHANGE","NO"},{"HEAT_RADIATIVE_EXCHANGE","NO"}})
+        ASSERT_EQ(swmm_options_set_ext(m.e,pair.first,pair.second),SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_BED_THICKNESS,.3),SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_SOLUTE_DIFFUSIVITY,0),SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_HYPORHEIC_VELOCITY,.001),SWMM_OK);
+    ASSERT_EQ(m.start(),SWMM_OK)<<swmm_get_last_error_msg(m.e);
+    auto& router=m.router();auto& surface=router.state();auto& gw=router.subsurface();auto& tr=gw.transport();
+    const int dye=surface.transport.rowIndex("Dye"),soil=tr.rowIndex("Dye");ASSERT_GE(dye,0);ASSERT_GE(soil,0);
+    ASSERT_EQ(tr.n_layers,4);ASSERT_EQ(gw.heat().cells[0].column.theta.size(),3);
+    surface.volume[0]=5;surface.depth[0]=.1;surface.head[0]=.1;surface.transport.cell_mass[surface.transport.idx(dye,0)]=0;
+    const double initial=tr.ledgeredStorage(soil),surface_before=surface.transport.gained_bed[dye];
+    double actual=0;ASSERT_EQ(swmm_coupling_advance_to(m.e,5,&actual),SWMM_OK)<<swmm_get_last_error_msg(m.e);
+    const double receipt=tr.gained_contact[soil],surface_receipt=surface.transport.gained_bed[dye]-surface_before;
+    EXPECT_LT(receipt,0);EXPECT_GT(surface_receipt,0);
+    EXPECT_NEAR(receipt+surface_receipt,0,1e-10);EXPECT_NEAR(tr.ledgeredStorage(soil)-initial,receipt,1e-9);
+    EXPECT_NEAR(tr.residual(soil),0,1e-9);EXPECT_NEAR(poreMass(gw.heat(),soil),tr.ledgeredStorage(soil),1e-9);
+    for(int cell=0;cell<tr.n_cells;++cell) {
+        double total=0;for(int layer=0;layer<tr.n_layers;++layer)total+=tr.layer_mass[tr.layerIdx(soil,layer,cell)];
+        EXPECT_DOUBLE_EQ(total,tr.unsat_mass[tr.idx(soil,cell)]);
+    }
+}
+
+TEST(GroundHeat, SigmaChemistryAndFixedThermalLayersShareActualChannelContacts) {
+    for(const auto* solver:{"LEGACY","EULERIAN_ARD","LAGRANGIAN"}) {
+        SCOPED_TRACE(solver);
+        Model m(std::string("sigma-porous-channel-")+solver,"SIGMA",.5,false,porewater_species+
+            "[DWF]\nJ1 FLOW .01\n[GW_TRANSPORT_OPTIONS]\nUNSAT_TRANSPORT LAYERED\nTHERMAL_LAYERS 3\n",true);
+        ASSERT_NE(m.e,nullptr);ASSERT_EQ(swmm_options_set(m.e,"QUALITY_SOLVER",solver),SWMM_OK);
+        ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_GROUND_SOURCE,1),SWMM_OK);
+        ASSERT_EQ(swmm_heat_set_sediment(m.e,SWMM_HEAT_SED_HYPORHEIC_VELOCITY,2e-5),SWMM_OK);
+        ASSERT_EQ(swmm_heat_set_module(m.e,SWMM_HEAT_SEDIMENT_EXCHANGE,1),SWMM_OK);
+        for(const auto& pair:{std::pair{"HEAT_MODEL","COUPLED"},{"BED_HEAT_MODEL","GROUND_COLUMN"},
+                             {"HEAT_SURFACE_EXCHANGE","NO"},{"HEAT_RADIATIVE_EXCHANGE","NO"}})
+            ASSERT_EQ(swmm_options_set_ext(m.e,pair.first,pair.second),SWMM_OK);
+        ASSERT_EQ(m.start(),SWMM_OK)<<swmm_get_last_error_msg(m.e);
+        auto& ctx=static_cast<openswmm::SWMMEngine*>(m.e)->context();auto& gw=m.router().subsurface();auto& tr=gw.transport();
+        const int dye=tr.rowIndex("Dye");ASSERT_GE(dye,0);
+        double actual=0;ASSERT_EQ(swmm_coupling_advance_to(m.e,5,&actual),SWMM_OK)<<swmm_get_last_error_msg(m.e);
+        auto regions=ctx.state_accessors.get_channel_species_regions();ASSERT_FALSE(regions.empty());
+        std::vector<openswmm::ChannelSpeciesIncrement> seed;
+        for(const auto& region:regions) {
+            openswmm::ChannelSpeciesIncrement update;update.link=region.link;update.region=region.region;
+            update.concentration_delta.assign(region.concentration.size(),0);update.concentration_delta[dye]=100-region.concentration[dye];
+            seed.push_back(std::move(update));
+        }
+        ASSERT_TRUE(ctx.state_accessors.apply_channel_species_increments(seed).empty());
+        const auto channel=[&](){double mass=0;for(const auto& region:ctx.state_accessors.get_channel_species_regions())mass+=region.volume*region.concentration[dye];return mass;};
+        const double initial=tr.ledgeredStorage(dye)+channel(),before=channel();std::vector<double> returned;
+        ASSERT_TRUE(m.router().channelGround().advance(m.router().options(),
+            std::vector<openswmm::twoD::SurfaceThermalSample>(m.router().mesh().n_cells()),3600,returned).empty());
+        ASSERT_TRUE(gw.refreshPorewaterContactLedger().empty());
+        EXPECT_NE(channel(),before);EXPECT_NEAR(tr.ledgeredStorage(dye)+channel(),initial,1e-9);
+        EXPECT_NEAR(tr.residual(dye),0,1e-9);EXPECT_NEAR(poreMass(gw.heat(),dye),tr.ledgeredStorage(dye),1e-9);
+    }
+}

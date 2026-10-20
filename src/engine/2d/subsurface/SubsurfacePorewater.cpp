@@ -19,15 +19,59 @@ std::string SubsurfaceSolver::initPorewater() {
             for(int r=0;r<tr_.n_species;++r) {
                 const auto k=tr_.idx(r,i);sat[r]=tr_.sat_mass[k];unsat[r]=tr_.unsat_mass[k];kd[r]=tr_.kd[k];
             }
-            if(auto error=cell.porewater.initialize(cell.column,cell.saturated_water,sat,unsat,kd,tr_.age_row,tr_.temp_row);!error.empty())return error;
+            if(tr_.n_layers>0) {
+                auto& pore=cell.porewater;pore.n_species=tr_.n_species;pore.age_row=tr_.age_row;pore.temp_row=tr_.temp_row;
+                pore.mass.assign(ns*nl,0);pore.retention=pore.mass;pore.reserved_out=pore.mass;pore.contact_mass=pore.mass;
+                pore.generated_age.assign(nl,0);
+                if(auto error=refreshSigmaPorewater(i);!error.empty())return error;
+                pore.initial_mass=pore.mass;
+            } else if(auto error=cell.porewater.initialize(cell.column,cell.saturated_water,sat,unsat,kd,tr_.age_row,tr_.temp_row);!error.empty())return error;
         }
         porewater_preset_out_.assign(ns*nc*nl,0);tr_.generated_age.assign(ns,0);tr_.gained_contact.assign(ns,0);
         for(int i=0;i<state_.n_cells;++i)if(heat_.cells[i].porewater.active())heat_.refreshView(i,tr_);
+        if(tr_.n_layers>0 && tr_.temp_row>=0)tr_.init_mass[tr_.temp_row]=tr_.storage(tr_.temp_row);
         return {};
     } catch(const std::exception& error){return error.what();}
 }
+std::string SubsurfaceSolver::refreshSigmaPorewater(int i) {
+    if(tr_.n_layers<=0||!heat_.active())return {};
+    auto& cell=heat_.cells[i];auto& pore=cell.porewater;
+    if(cell.column.energy.empty())return {};
+    if(auto error=pore.publishSigma(tr_,i);!error.empty())return error;
+    const auto nl=cell.column.theta.size();const int m=tr_.n_layers,ns=tr_.n_species;
+    const double area=state_.area[i],length=state_.zs[i]-state_.hg[i],dz=length/m;
+    std::vector<SigmaPorewaterMap::Overlap> overlaps;
+    for(std::size_t j=0;j<nl;++j)for(int layer=0;layer<=m;++layer) {
+        const double top=layer==m?length:dz*layer,bottom=layer==m?state_.zs[i]:dz*(layer+1);
+        const double overlap=std::max(0.,std::min(bottom,cell.column.depth_edges[j+1])-std::max(top,cell.column.depth_edges[j]));
+        if(!(overlap>0))continue;
+        const double theta=layer==m?state_.theta_s[i]:state_.theta_sigma[std::size_t(layer)*state_.n_cells+i];
+        overlaps.push_back({int(j),layer,area*overlap*theta,area*overlap});
+    }
+    std::vector<double> partition(ns),canonical(std::size_t(ns)*(m+1)),held(ns);
+    for(int s=0;s<ns;++s)if(s!=tr_.temp_row) {
+        partition[s]=s==tr_.age_row?0:tr_.kd[tr_.idx(s,i)]*tr_.rho_b[i];
+        for(int j=0;j<m;++j)canonical[std::size_t(s)*(m+1)+j]=tr_.layer_mass[tr_.layerIdx(s,j,i)];
+        canonical[std::size_t(s)*(m+1)+m]=tr_.sat_mass[tr_.idx(s,i)];held[s]=pendingSaturatedMassExport(i,s);
+    }
+    if(auto error=pore.sigma.configure(m,ns,std::move(overlaps),partition,canonical,held);!error.empty())return error;
+    pore.refreshSigmaView();
+    // The fixed grid's grain capacity is geometric model identity. Derive it
+    // directly, so changing overlap partitions cannot change its last bit.
+    for(int s=0;s<ns;++s)for(std::size_t j=0;j<nl;++j)
+        pore.retention[std::size_t(s)*nl+j]=partition[s]*area*(cell.column.depth_edges[j+1]-cell.column.depth_edges[j]);
+    return {};
+}
+void SubsurfaceSolver::refreshSigmaPorewaterReservations(int cell) noexcept {
+    try {
+        if(auto error=refreshSigmaPorewater(cell);!error.empty()) {
+            heat_.cells[cell].failed=1;heat_.cells[cell].error=error;
+        }
+    }catch(...) {heat_.cells[cell].failed=1;}
+}
 std::string SubsurfaceSolver::refreshPorewaterContactLedger() {
     if(tr_.gained_contact.empty())return {};
+    if(tr_.n_layers>0)for(int i=0;i<state_.n_cells;++i)if(covers(i))heat_.refreshView(i,tr_);
     std::fill(tr_.gained_contact.begin(),tr_.gained_contact.end(),0.0);
     for(int i=0;i<state_.n_cells;++i) {
         const auto& cell=heat_.cells[std::size_t(i)];const auto& pore=cell.porewater;
@@ -46,7 +90,7 @@ std::string SubsurfaceSolver::refreshPorewaterContactLedger() {
     return {};
 }
 void SubsurfaceSolver::bookPresetPorewaterOut(int i,int r,double target) noexcept {
-    if(!heat_.active()||r==tr_.temp_row||!(target>0))return;
+    if(!heat_.active()||tr_.n_layers>0||r==tr_.temp_row||!(target>0))return;
     auto& cell=heat_.cells[i];auto& pore=cell.porewater;if(!pore.active())return;
     const auto& column=cell.column;const auto nl=column.theta.size();const auto row=std::size_t(r)*nl;
     const auto base=(std::size_t(r)*state_.n_cells+i)*nl;
