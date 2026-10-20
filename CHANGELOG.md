@@ -23,6 +23,10 @@ retroactive.
 
 ## [Unreleased]
 
+### Cross-section code-review fixes (2026-10-20)
+
+- **The manual's 11-item X1 transect line is read correctly.** Every X1 line was read in the GUI's 10-item layout, so a line in the manual's layout had its Lfactor read as Wfactor and the section came out scaled; both layouts are recognised now, in both engines. Code review IO-29, #173.
+
 ### Hot-start follow-ups and land-use parity (2026-10-19)
 
 - **`[COVERAGES]` reads every land use on a line.** `S1 RES 60 COM 40` set only RES; COM was dropped without a message. Every pair is read now, as in EPA SWMM, and a line naming an unknown subcatchment or land use (ERROR 209), a land use without a percent (ERROR 203) or a percent that is not a number (ERROR 211) is an error, as it is there. These lines were skipped silently before.
