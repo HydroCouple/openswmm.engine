@@ -40,7 +40,8 @@
 #include "../solver/GwRechargePluginAbi.h"
 #include "../subsurface/SoilCharacteristic.hpp"
 #include "../solver/ISurfaceSolver.hpp"
-#include "ExplicitKokkosSurfaceSolver.hpp"
+#include "GpuPluginSupport.hpp"
+#include <stdexcept>
 
 #include <Kokkos_Core.hpp>
 
@@ -64,6 +65,7 @@ std::mutex g_recharge_mutex;
 // differs — see SurfaceSolverFactory).
 void ensureKokkosInitialized(int requested_threads) {
     std::lock_guard<std::mutex> initialization_lock(g_initialization_mutex);
+    if (Kokkos::is_finalized()) throw std::runtime_error("Kokkos runtime has already been finalized");
     if (!Kokkos::is_initialized() && !Kokkos::is_finalized()) {
         Kokkos::InitializationSettings settings;
         int chosen = 0;
@@ -103,10 +105,9 @@ openswmm_gpu_host_threads(void) {
 
 extern "C" OPENSWMM_GPU_ABI void*
 openswmm_make_gpu_explicit_solver(const OpenSwmmGpuProbe* probe) {
-    ensureKokkosInitialized(probe ? probe->requested_threads : 0);
-    openswmm::twoD::ISurfaceSolver* solver =
-        new openswmm::twoD::gpu::ExplicitKokkosSurfaceSolver();
-    return static_cast<void*>(solver);
+    return openswmm::twoD::gpu::plugin::make([&] {
+        ensureKokkosInitialized(probe ? probe->requested_threads : 0);
+    });
 }
 
 

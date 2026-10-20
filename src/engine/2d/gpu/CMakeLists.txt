@@ -221,6 +221,8 @@ endif()
 # dir, then <engine dir>/gpu) discovers it and `auto` selects it by default.
 # ---------------------------------------------------------------------------
 set(_OPENSWMM_GPU_TARGET "openswmm_gpu_${OPENSWMM_GPU_BACKEND}")
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/GpuContract.cmake)
+openswmm_gpu_contract(${_OPENSWMM_GPU_TARGET})
 
 # Build tree: copy the plugin next to the engine's *built* library, which is the
 # directory the CLI and test executables actually load the engine from (their

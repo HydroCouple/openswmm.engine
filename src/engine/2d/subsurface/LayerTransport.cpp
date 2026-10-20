@@ -19,7 +19,9 @@ LayerTransportResult solveLayerTransport(const std::vector<double>& capacity,
         }
         diagonal[move.from]+=move.capacity;
         if(move.to==move.from+1)lower[move.to]-=move.capacity;
-        else if(move.to==move.from-1)upper[move.to]-=move.capacity;
+        // An external export from store zero also satisfies -1 == from-1.
+        // It contributes only to the donor diagonal, never to upper[-1].
+        else if(move.to>=0&&move.to==move.from-1)upper[move.to]-=move.capacity;
     }
     for(int i=0;i<n;++i) {
         if(diagonal[i]==0) {

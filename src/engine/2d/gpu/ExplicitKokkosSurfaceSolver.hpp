@@ -60,6 +60,7 @@
 #include "../solver/ISurfaceSolver.hpp"
 #include "../solver/InertialEdges.hpp"
 #include "KokkosTypes.hpp"
+#include "KokkosPerfCounters.hpp"
 
 namespace openswmm::twoD::gpu {
 
@@ -84,6 +85,7 @@ public:
 
 private:
     friend struct ExplicitKokkosSurfaceSolverTestAccess;
+    kperf::Counters perf_counters_;
     // Host-side handles (owned by SurfaceRouter2D; outlive the solver).
     MeshData*         mesh_  = nullptr;
     SurfaceStateData* state_ = nullptr;

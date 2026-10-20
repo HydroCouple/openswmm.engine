@@ -514,6 +514,11 @@ struct SolverOptions2D {
     /// constructed there), so a mid-run edit takes effect on the next open.
     Backend2D backend = Backend2D::AUTO;
 
+    /// Per-session AUTO policy, set before initialization through the C API.
+    /// Not an authored option or checkpoint identity. Explicit model/environment
+    /// requests retain precedence; the GUI uses this to avoid plugin discovery.
+    bool auto_backend_cpu = false;
+
     /// Path from [2D_MESH_FILE] FILE token. Empty = mesh is inline in main .inp.
     /// `.absolute` is filled by resolve_external_file_slots() against the source
     /// .inp directory, which is what lets the writer re-anchor a RELATIVE token

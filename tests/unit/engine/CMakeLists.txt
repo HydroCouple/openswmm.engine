@@ -1216,3 +1216,49 @@ if(OPENSWMM_BUILD_2D)
     target_compile_definitions(test_engine_surface_processes PRIVATE
         OPENSWMM_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 endif()
+
+# Loader/runtime safety is hardware independent. The fake CUDA library never
+# allocates a device; it fails deliberately after a matched capability probe.
+if(OPENSWMM_BUILD_2D)
+    add_library(test_gpu_failure_plugin SHARED fake_gpu_plugin.cpp)
+    target_include_directories(test_gpu_failure_plugin PRIVATE "${PROJECT_SOURCE_DIR}/src/engine")
+    target_compile_definitions(test_gpu_failure_plugin PRIVATE OPENSWMM_GPU_PLUGIN_BUILD=1)
+    include("${PROJECT_SOURCE_DIR}/cmake/GpuContract.cmake")
+    openswmm_gpu_contract(test_gpu_failure_plugin)
+    set_target_properties(test_gpu_failure_plugin PROPERTIES OUTPUT_NAME openswmm_gpu_cuda
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/gpu-fakes"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/gpu-fakes")
+    add_gtest_unit(test_engine_2d_backend_safety test_2d_backend_safety.cpp)
+    target_link_libraries(test_engine_2d_backend_safety PRIVATE test_gpu_failure_plugin)
+    if(TARGET openswmm_gpu_omp)
+        add_dependencies(test_engine_2d_backend_safety openswmm_gpu_omp)
+        target_compile_definitions(test_engine_2d_backend_safety PRIVATE
+            OPENSWMM_TEST_OMP_DIRECTORY="$<TARGET_FILE_DIR:openswmm_gpu_omp>")
+    endif()
+    set_tests_properties(test_engine_2d_backend_safety PROPERTIES
+        ENVIRONMENT "OPENSWMM_GPU_PLUGIN_PATH=$<TARGET_FILE_DIR:test_gpu_failure_plugin>"
+        TIMEOUT 60)
+endif()
+
+# These gates must execute the real packed recharge operator. A missing
+# plugin is a failure, not a skipped comparison or a successful CPU fallback.
+if(OPENSWMM_BUILD_2D AND TARGET openswmm_gpu_omp)
+    foreach(_threads IN ITEMS 1 4)
+        add_test(NAME gw_recharge_plugin_${_threads}_threads
+            COMMAND test_engine_gw_transport_kernel --gtest_filter=GwRechargePlugin.*
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data)
+        add_test(NAME gw_rk2_plugin_${_threads}_threads
+            COMMAND test_engine_2d_inertial_marcher
+                --gtest_filter=CoupledGroundwaterRk2.OptionalOpenmpRechargePreservesStagesRestartAndRollback
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data)
+        set_tests_properties(gw_recharge_plugin_${_threads}_threads gw_rk2_plugin_${_threads}_threads PROPERTIES
+            ENVIRONMENT "OPENSWMM_2D_BACKEND=omp;OPENSWMM_GPU_PLUGIN_PATH=$<TARGET_FILE_DIR:openswmm_gpu_omp>;OPENSWMM_GW_TEST_REQUIRE_PLUGIN=1;OPENSWMM_GW_TEST_EXPECT_THREADS=${_threads};OPENSWMM_2D_THREADS=${_threads};OMP_NUM_THREADS=${_threads};OMP_PROC_BIND=false"
+            LABELS "gpu;groundwater" RUN_SERIAL TRUE TIMEOUT 120)
+    endforeach()
+endif()
+
+if(OPENSWMM_BUILD_2D)
+    add_gtest_unit(test_engine_portability_regressions test_portability_regressions.cpp)
+    target_compile_definitions(test_engine_portability_regressions PRIVATE
+        OPENSWMM_PORTABILITY_OUT="${CMAKE_CURRENT_BINARY_DIR}/portability-output")
+endif()

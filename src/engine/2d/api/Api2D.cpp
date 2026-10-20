@@ -99,6 +99,16 @@ int swmm_2d_is_active(SWMM_Engine engine, int* active) {
     return SWMM_OK;
 }
 
+int swmm_2d_set_auto_backend_cpu(SWMM_Engine engine, int enabled) {
+    GET_ENGINE(engine);
+    if (enabled != 0 && enabled != 1) return SWMM_ERR_BADPARAM;
+    using S = openswmm::EngineState;
+    if (eng->context().state != S::OPENED && eng->context().state != S::BUILDING)
+        return SWMM_ERR_LIFECYCLE;
+    eng->surfaceRouter2D().options().auto_backend_cpu = enabled != 0;
+    return SWMM_OK;
+}
+
 int swmm_2d_prepare_for_edit(SWMM_Engine engine) {
     GET_ENGINE(engine);
     CHECK_2D_MESH(eng);

@@ -42,7 +42,9 @@
 
 #include "../solver/GpuPluginAbi.h"
 #include "../solver/ISurfaceSolver.hpp"
-#include "ExplicitKokkosSurfaceSolver.hpp"
+#include "GpuPluginSupport.hpp"
+#include <mutex>
+#include <stdexcept>
 
 #include <Kokkos_Core.hpp>
 #include <cuda_runtime.h>
@@ -50,7 +52,10 @@
 #include <cstring>
 
 namespace {
+std::mutex initialization_mutex;
 void ensureKokkosInitialized() {
+    std::lock_guard<std::mutex> lock(initialization_mutex);
+    if (Kokkos::is_finalized()) throw std::runtime_error("Kokkos runtime has already been finalized");
     if (!Kokkos::is_initialized() && !Kokkos::is_finalized()) {
         Kokkos::initialize();
     }
@@ -85,8 +90,5 @@ openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
 
 extern "C" OPENSWMM_GPU_ABI void*
 openswmm_make_gpu_explicit_solver(const OpenSwmmGpuProbe* /*probe*/) {
-    ensureKokkosInitialized();
-    openswmm::twoD::ISurfaceSolver* solver =
-        new openswmm::twoD::gpu::ExplicitKokkosSurfaceSolver();
-    return static_cast<void*>(solver);
+    return openswmm::twoD::gpu::plugin::make([] { ensureKokkosInitialized(); });
 }

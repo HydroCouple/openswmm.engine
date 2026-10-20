@@ -77,6 +77,13 @@ extern "C" {
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_is_active(SWMM_Engine engine, int* active);
 
+/** Resolve an unoverridden AUTO backend to the built-in CPU marcher for this
+ * session. Valid in BUILDING or OPENED state, including models without a mesh.
+ * enabled must be 0 or 1. Does not edit BACKEND, serialize a model option or
+ * change checkpoint identity. Explicit BACKEND and OPENSWMM_2D_BACKEND requests
+ * retain precedence. Reapply after opening a new model. */
+SWMM_ENGINE_API int swmm_2d_set_auto_backend_cpu(SWMM_Engine engine, int enabled);
+
 /** @brief Make the parsed 2D mesh editable without a full initialize().
  *
  *  The mesh-edit/query setters work as soon as the mesh is parsed (OPENED

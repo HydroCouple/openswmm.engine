@@ -87,7 +87,17 @@ struct Counters {
     std::map<std::string, std::uint64_t> label_id;
 };
 
-inline Counters g;
+// Each solver owns its counters. Only dispatches in its active call scope
+// are attributed to it; calls from unrelated Kokkos clients are ignored.
+inline thread_local Counters* active = nullptr;
+class Scope {
+public:
+    explicit Scope(Counters& counters) : previous_(active) { active = &counters; }
+    ~Scope() { active = previous_; }
+    Scope(const Scope&) = delete;
+private:
+    Counters* previous_;
+};
 
 namespace detail {
 
@@ -96,11 +106,14 @@ using clock = std::chrono::steady_clock;
 /// Dispatch begin/end pairs nest strictly on the calling thread, so a stack
 /// of start times pairs them; the uint64_t Kokkos hands back carries the
 /// kernel id assigned at begin.
-inline std::vector<clock::time_point> dispatch_t0;
-inline std::vector<clock::time_point> fence_t0;
+inline thread_local std::vector<clock::time_point> dispatch_t0;
+inline thread_local std::vector<clock::time_point> fence_t0;
 
 inline void begin_dispatch(const char* name, std::uint32_t /*devid*/,
                            std::uint64_t* kID) {
+    *kID = 0;
+    if (!active) return;
+    auto& g = *active;
     const auto it = g.label_id.find(name);
     std::uint64_t id;
     if (it == g.label_id.end()) {
@@ -116,6 +129,8 @@ inline void begin_dispatch(const char* name, std::uint32_t /*devid*/,
 }
 
 inline void end_dispatch(std::uint64_t kID) {
+    if (!active) return;
+    auto& g = *active;
     if (dispatch_t0.empty()) return;
     const double dt = std::chrono::duration<double>(
         clock::now() - dispatch_t0.back()).count();
@@ -129,10 +144,13 @@ inline void end_dispatch(std::uint64_t kID) {
 inline void begin_fence(const char* /*name*/, std::uint32_t /*devid*/,
                         std::uint64_t* handle) {
     *handle = 0;
+    if (!active) return;
     fence_t0.push_back(clock::now());
 }
 
 inline void end_fence(std::uint64_t /*handle*/) {
+    if (!active) return;
+    auto& g = *active;
     if (fence_t0.empty()) return;
     g.sec_fence += std::chrono::duration<double>(
         clock::now() - fence_t0.back()).count();
@@ -144,6 +162,8 @@ inline void begin_deep_copy(Kokkos_Profiling_SpaceHandle dst, const char*,
                             const void*,
                             Kokkos_Profiling_SpaceHandle src, const char*,
                             const void*, std::uint64_t size) {
+    if (!active) return;
+    auto& g = *active;
     ++g.n_deep_copy;
     const bool dst_host = std::strncmp(dst.name, "Host", 4) == 0;
     const bool src_host = std::strncmp(src.name, "Host", 4) == 0;
@@ -182,10 +202,14 @@ inline void install() {
 }
 
 inline void reset() {
+    if (!active) return;
+    auto& g = *active;
     g = Counters{};
 }
 
 inline void count_advance() {
+    if (!active) return;
+    auto& g = *active;
     if (perf::enabled()) ++g.n_advance;
 }
 
@@ -193,6 +217,8 @@ inline void count_advance() {
 /// by host-side dispatch wall descending. Same key=value contract as
 /// [PERF-FV] / [PERF-LOAD]; tests/benchmarks scripts can scrape it.
 inline void dump() {
+    if (!active) return;
+    auto& g = *active;
     if (!perf::enabled() || g.n_advance == 0) return;
     const double adv = static_cast<double>(g.n_advance);
     std::fprintf(stderr,

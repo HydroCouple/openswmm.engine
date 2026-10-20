@@ -22,6 +22,9 @@
 #include "ISurfaceSolver.hpp"
 #include "ExplicitInertialSolver.hpp"
 #include "GpuPluginAbi.h"
+#include "PluginSurfaceSolver.hpp"
+#include <cstring>
+#include <stdexcept>
 #include "../data/SolverOptions2D.hpp"
 #include "../../core/ThreadInfo.hpp"
 
@@ -86,6 +89,37 @@ std::string this_library_dir() {
         return fs::path(info.dli_fname).parent_path().string();
     return {};
 #endif
+}
+
+// The controlling thread and Kokkos runtime live until process exit. Keep
+// the thread's code mapped even if a dynamic API client releases its handle.
+std::shared_ptr<GpuExecutionOwner> execution_owner() {
+    static const bool pinned = [] {
+#if defined(_WIN32)
+        HMODULE module = nullptr;
+        if (!::GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                 GET_MODULE_HANDLE_EX_FLAG_PIN,
+                                 reinterpret_cast<LPCSTR>(&execution_owner), &module))
+            throw std::runtime_error("Cannot retain accelerator execution module");
+#else
+        Dl_info info{};
+        if (::dladdr(reinterpret_cast<void*>(&execution_owner), &info) && info.dli_fname) {
+            // No dlclose: retain one module reference. An implementation in
+            // the main executable is already resident and may reject dlopen.
+            void* retained = ::dlopen(info.dli_fname, RTLD_NOW | RTLD_LOCAL);
+            if (!retained) {
+                const std::string path(info.dli_fname);
+                if (path.find(".so") != std::string::npos || path.find(".dylib") != std::string::npos)
+                    throw std::runtime_error("Cannot retain accelerator execution module");
+            }
+        } else {
+            throw std::runtime_error("Cannot identify accelerator execution module");
+        }
+#endif
+        return true;
+    }();
+    (void)pinned;
+    return GpuExecutionOwner::shared();
 }
 
 std::string lower(std::string s) {
@@ -154,15 +188,16 @@ using ProbeFn       = int (*)(OpenSwmmGpuProbe*);
 using MakeFn        = void* (*)(const OpenSwmmGpuProbe*);
 using HostThreadsFn = int (*)(void);
 
-// Set an environment variable in this process only if it is not already set.
-// Used for the ABI-v3 thread-count fallback (OPENSWMM_2D_THREADS).
-void setenv_if_unset(const char* name, const std::string& value) {
-    if (std::getenv(name)) return;
-#if defined(_WIN32)
-    _putenv_s(name, value.c_str());
-#else
-    setenv(name, value.c_str(), 0);
+bool compatible_plugin(void* handle, const std::string& path) {
+    using Contract = const char* (*)();
+    auto query = reinterpret_cast<Contract>(platform_sym(handle, "openswmm_gpu_build_contract"));
+#ifdef OPENSWMM_GPU_BUILD_CONTRACT
+    const char* id = query ? query() : nullptr;
+    if (id && std::strncmp(id, OPENSWMM_GPU_BUILD_CONTRACT, sizeof(OPENSWMM_GPU_BUILD_CONTRACT)) == 0)
+        return true;
 #endif
+    std::fprintf(stderr, "[openswmm 2D] rejected incompatible plugin: %s (rebuild with this engine)\n", path.c_str());
+    return false;
 }
 
 // Try to load a specific backend plugin and build its marcher solver. Returns
@@ -170,9 +205,8 @@ void setenv_if_unset(const char* name, const std::string& value) {
 // carries a stale ABI, or does not export the explicit-marcher factory.
 //
 // requested_threads: raw [OPTIONS] THREADS (0 = auto). Host (OpenMP) plugins
-// take it as OpenSwmmGpuProbe::requested_threads (ABI v4); for a v3 plugin it
-// is passed through the OPENSWMM_2D_THREADS environment fallback instead.
-std::unique_ptr<ISurfaceSolver> try_plugin(const std::string& backend,
+// take it as OpenSwmmGpuProbe::requested_threads (ABI v5).
+std::unique_ptr<ISurfaceSolver> try_plugin_on_owner(const std::string& backend,
                                            std::string* chosen,
                                            int requested_threads) {
     for (const auto& dir : search_dirs()) {
@@ -183,15 +217,22 @@ std::unique_ptr<ISurfaceSolver> try_plugin(const std::string& backend,
 
             void* h = load_cached(path.string());
             if (!h) continue;
+            if (!compatible_plugin(h, path.string())) continue;
+            auto destroy = reinterpret_cast<PluginSurfaceSolver::Destroy>(
+                platform_sym(h, "openswmm_destroy_gpu_explicit_solver"));
+            if (!destroy) continue;
             auto probe = reinterpret_cast<ProbeFn>(platform_sym(h, "openswmm_gpu_probe"));
             auto make  = reinterpret_cast<MakeFn>(
                 platform_sym(h, "openswmm_make_gpu_explicit_solver"));
             if (!probe || !make) continue;
             OpenSwmmGpuProbe info{};
             const int rc = probe(&info);
-            const bool abi_current  = info.abi_version == OPENSWMM_GPU_ABI_VERSION;
-            const bool abi_fallback = false; // Older plugins cannot share the RK2 state layout.
-            if (!abi_current && !abi_fallback) continue;
+            if (info.abi_version != OPENSWMM_GPU_ABI_VERSION ||
+                !std::memchr(info.device_name, '\0', sizeof(info.device_name))) continue;
+            const int expected_vendor = backend == "omp" ? OPENSWMM_GPU_VENDOR_OPENMP :
+                backend == "cuda" ? OPENSWMM_GPU_VENDOR_CUDA :
+                backend == "hip" ? OPENSWMM_GPU_VENDOR_HIP : OPENSWMM_GPU_VENDOR_SYCL;
+            if (info.vendor != expected_vendor) continue;
             if (rc != 0 || info.device_count <= 0) {
                 // No usable device behind this plugin — try the next candidate.
                 continue;
@@ -203,23 +244,20 @@ std::unique_ptr<ISurfaceSolver> try_plugin(const std::string& backend,
             const bool host_backend = info.vendor == OPENSWMM_GPU_VENDOR_OPENMP;
             int host_req = requested_threads;
             if (host_backend && host_req == 0) host_req = threadinfo::perfCores();
-            if (host_backend) {
-                if (abi_current) {
-                    info.requested_threads = host_req;
-                } else if (host_req > 0) {
-                    // v3 plugin: no field to carry the request — fall back to
-                    // the environment variable the plugin already honours.
-                    setenv_if_unset("OPENSWMM_2D_THREADS", std::to_string(host_req));
-                    std::fprintf(stderr,
-                        "[openswmm 2D] plugin '%s' predates ABI v4; THREADS = %d "
-                        "passed via OPENSWMM_2D_THREADS (environment fallback).\n",
-                        fname.c_str(), host_req);
-                }
-            }
+            if (host_backend) info.requested_threads = host_req;
 
             void* raw = make(&info);
-            if (!raw) continue;
+            if (!raw) {
+                using Error = const char* (*)();
+                auto error = reinterpret_cast<Error>(platform_sym(h, "openswmm_gpu_last_error"));
+                const char* diagnostic = error ? error() : nullptr;
+                std::fprintf(stderr, "[openswmm 2D] plugin construction failed: %s: %s\n",
+                    path.string().c_str(), diagnostic ? diagnostic : "no diagnostic");
+                continue;
+            }
             auto* solver = static_cast<ISurfaceSolver*>(raw);
+            // Install plugin-owned destruction before any subsequent allocation.
+            std::unique_ptr<ISurfaceSolver, PluginSurfaceSolver::Destroy> guard(solver, destroy);
             const std::string label = backend + " (" + info.device_name + ")";
             if (chosen) *chosen = label;
 
@@ -245,8 +283,24 @@ std::unique_ptr<ISurfaceSolver> try_plugin(const std::string& backend,
             // also gives operators a record of which 2D backend ran.
             std::fprintf(stderr, "[openswmm 2D] using GPU backend: %s\n",
                          label.c_str());
-            return std::unique_ptr<ISurfaceSolver>(solver);
+            auto adapter = std::make_unique<PluginSurfaceSolver>(solver, destroy, execution_owner());
+            guard.release();
+            return adapter;
         }
+    }
+    return nullptr;
+}
+
+std::unique_ptr<ISurfaceSolver> try_plugin(const std::string& backend,
+                                          std::string* chosen, int threads) {
+    try {
+        return execution_owner()->invoke([&] {
+            return try_plugin_on_owner(backend, chosen, threads);
+        });
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[openswmm 2D] plugin %s failed before initialization: %s\n", backend.c_str(), e.what());
+    } catch (...) {
+        std::fprintf(stderr, "[openswmm 2D] plugin %s failed before initialization\n", backend.c_str());
     }
     return nullptr;
 }
@@ -280,7 +334,10 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
     // the model's own [2D_OPTIONS] BACKEND — same precedence as the FV
     // module's OPENSWMM_FV_BACKEND over FV_BACKEND.
     std::string mode = lower(env("OPENSWMM_2D_BACKEND"));
-    if (mode.empty()) mode = backend_name(opts.backend);
+    if (mode.empty()) mode = opts.backend == Backend2D::AUTO && opts.auto_backend_cpu
+        ? "cpu" : backend_name(opts.backend);
+    if (mode != "cpu" && mode != "auto" && mode != "omp" && mode != "cuda" && mode != "hip" && mode != "sycl")
+        throw std::invalid_argument("Invalid OPENSWMM_2D_BACKEND: " + mode);
     if (mode == "cpu") return serial_marcher();
 
     // R6 (2D_TRI_QUAD_MESH_PLAN / 2D_FULL_SWE plan): the Kokkos plugin
@@ -295,7 +352,7 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
         std::fprintf(stderr,
             "[openswmm 2D] backend '%s': the GPU/Kokkos plugin serves only "
             "all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with "
-            "no transport rows (species / age / temperature); "
+            "no transport rows (species / age / temperature) or coupled groundwater/porous heat; "
             "using the CPU marcher for this model.\n",
             mode.empty() ? "auto" : mode.c_str());
         return serial_marcher("cpu (explicit marcher; plugin not applicable)");
@@ -345,7 +402,8 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
 
 GwRechargeBackend makeGwRechargeBackend(const SolverOptions2D& opts,int n_cells) {
     GwRechargeBackend result;
-    auto mode=lower(env("OPENSWMM_2D_BACKEND"));if(mode.empty())mode=backend_name(opts.backend);
+    auto mode=lower(env("OPENSWMM_2D_BACKEND"));
+    if(mode.empty())mode=opts.backend==Backend2D::AUTO&&opts.auto_backend_cpu ? "cpu" : backend_name(opts.backend);
     if(mode=="cpu"){result.diagnostic="CPU requested";return result;}
     if(mode!="omp"&&mode!="auto"&& !mode.empty()) {
         result.diagnostic="Requested backend has no qualified groundwater recharge operator";return result;
@@ -360,17 +418,34 @@ GwRechargeBackend makeGwRechargeBackend(const SolverOptions2D& opts,int n_cells)
     }
     using Capabilities=int (*)(OpenSwmmGwCapabilitiesV1*);
     for(const auto& dir:search_dirs())for(const auto& name:plugin_filenames("omp")) {
-        void* handle=load_cached((fs::path(dir)/name).string());if(!handle)continue;
+        const auto path=(fs::path(dir)/name).string();
+        auto owner=execution_owner();
+        void* handle=nullptr;
+        bool compatible=false;
+        try {compatible=owner->invoke([&] {
+            handle=load_cached(path);
+            return handle&&compatible_plugin(handle,path);
+        });}
+        catch (...) {continue;}
+        if(!compatible)continue;
         auto query=reinterpret_cast<Capabilities>(platform_sym(handle,"openswmm_gw_capabilities_v1"));
         auto evaluate=reinterpret_cast<GwRechargeBackend::Evaluate>(platform_sym(handle,"openswmm_gw_recharge_v1"));
         auto threads=reinterpret_cast<GwRechargeBackend::Threads>(platform_sym(handle,"openswmm_gpu_host_threads"));
         if(!query||!evaluate||!threads)continue;
         OpenSwmmGwCapabilitiesV1 c{};c.struct_size=sizeof(c);
-        if(query(&c)!=0||c.struct_size!=sizeof(c)||c.version!=OPENSWMM_GW_RECHARGE_ABI_VERSION||
+        int query_status=1;
+        try {query_status=owner->invoke([&] {return query(&c);});}
+        catch (...) {continue;}
+        if(query_status!=0||c.struct_size!=sizeof(c)||c.version!=OPENSWMM_GW_RECHARGE_ABI_VERSION||
            c.vendor!=OPENSWMM_GPU_VENDOR_OPENMP||c.execution_kind!=OPENSWMM_GW_EXECUTION_HOST_OPENMP||
            c.operators!=OPENSWMM_GW_OPERATOR_CLOSED_FORM_RECHARGE||c.closures!=1u||c.soil_laws!=15u||
            c.host_owned!=15u||c.time_integrators!=3u||c.canonical_host_restart!=1||c.max_layers!=0||c.species_classes!=0||c.label[127]!=0)continue;
-        result.evaluate=evaluate;result.threads=threads;result.capabilities=c;
+        result.evaluate=[owner,evaluate](const OpenSwmmGwRechargeInputV1* in,int n,double* out,int count) {
+            try {return owner->invoke([&] {return evaluate(in,n,out,count);});}
+            catch (...) {return 1;}
+        };
+        result.threads=[owner,threads] {return owner->invoke([&] {return threads();});};
+        result.capabilities=c;
         result.diagnostic="Only CLOSED_FORM raw recharge is host-parallel; canonical stores and all other operators remain CPU-owned";
         return result;
     }

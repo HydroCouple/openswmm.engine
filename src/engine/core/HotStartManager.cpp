@@ -398,7 +398,11 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
     }
 
     // Validate CRC32 (last 4 bytes)
-    const uint32_t stored_crc = *reinterpret_cast<const uint32_t*>(raw.data() + file_size - 4);
+    // Variable-length strings leave the trailing checksum at arbitrary byte
+    // alignment. Copy its representation instead of dereferencing a cast
+    // pointer (undefined behavior, and a fault on alignment-strict targets).
+    uint32_t stored_crc = 0;
+    std::memcpy(&stored_crc, raw.data() + file_size - sizeof(stored_crc), sizeof(stored_crc));
     const uint32_t computed_crc = crc32(raw.data(), file_size - 4);
     if (stored_crc != computed_crc) {
         tl_last_io_error = "CRC32 checksum mismatch in '" + path

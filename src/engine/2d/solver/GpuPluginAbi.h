@@ -21,17 +21,17 @@
  * @details The GPU backend
  *          ships as a SEPARATE shared library that the core discovers and
  *          dlopen()s at runtime; it is never linked into openswmm_engine.
- *          Communication therefore crosses a plain C ABI so it is robust to
- *          compiler/toolchain differences between the core and the plugin
- *          (which may be built with nvcc/hipcc/icpx against Kokkos).
+ *          Discovery uses C symbols, but solver calls cross a C++ ABI.
+ *          The core requires matching headers, host toolchain and build
+ *          configuration before probing or constructing a solver.
  *
- *          Two symbols form the contract:
+ *          The principal entry points are:
  *            - openswmm_gpu_probe()              — cheap capability query
  *            - openswmm_make_gpu_explicit_solver() — marcher factory
  *
  *          The factory returns an ISurfaceSolver* as a void* (the core casts
- *          it back); ownership transfers to the core, which deletes through
- *          the ISurfaceSolver virtual destructor.
+ *          it back); the core adapter dispatches calls and plugin-owned
+ *          destruction through a single controlling thread.
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
@@ -76,8 +76,11 @@ extern "C" {
  *  v4: OpenSwmmGpuProbe gained requested_threads (core → plugin, appended
  *  so the v3 prefix layout is unchanged) and the optional entry point
  *  openswmm_gpu_host_threads() (plugin → core). */
-/* v6: SurfaceTransportState adds a canonical RK2 age-generation ledger.
- * SurfaceStateData offsets change; all surface plugins must be rebuilt.
+/* v5: reject v3/v4 C++ vtables predating completedSourceTime and the current
+ * state layouts. A matching build contract and plugin-owned destruction are
+ * mandatory. Never accept an older version through a thread-count fallback. */
+/* v6: SurfaceTransportState adds the canonical RK2 age-generation ledger;
+ * SurfaceStateData offsets therefore change. Rebuild every surface plugin.
  * The independent C-only groundwater raw-recharge ABI remains v1. */
 #define OPENSWMM_GPU_ABI_VERSION 6
 
@@ -127,6 +130,13 @@ OPENSWMM_GPU_ABI int openswmm_gpu_probe(OpenSwmmGpuProbe* out);
  * ISurfaceSolver* (as void*) owned by the caller, or NULL.
  */
 OPENSWMM_GPU_ABI void* openswmm_make_gpu_explicit_solver(const OpenSwmmGpuProbe* probe);
+
+/** v5 compatibility check, called BEFORE probe or factory. */
+OPENSWMM_GPU_ABI const char* openswmm_gpu_build_contract(void);
+/** Destroy on the execution owner through the allocating plugin. */
+OPENSWMM_GPU_ABI void openswmm_destroy_gpu_explicit_solver(void* solver);
+/** Last construction error on this controlling thread; plugin-owned text. */
+OPENSWMM_GPU_ABI const char* openswmm_gpu_last_error(void);
 
 /**
  * @brief (v4, optional) Host thread count the plugin's Kokkos runtime is
