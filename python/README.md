@@ -35,6 +35,8 @@ live output reading. Guides document their units, lifecycle and immutable
 snapshot behavior under `python/docs/guide/`. The strict API coverage check is
 `python python/scripts/api_drift_audit.py --strict` from the repository root.
 
+Mesh-only first-order porous-ground checkpoint sessions also support matched BULK MSX/pollutant inventories and optional age, with numerical state or mesh HDF5 output. Live network/catchment chemistry and binary/combined companions retain their separate guards; see the [groundwater guide](docs/guide/groundwater.rst).
+
 After initialization, `solver.surface2d.groundwater.execution_status` reports available and executed groundwater operators, accepted evaluation counts, effective host threads and CPU-owned companions. The optional OpenMP profile computes raw CLOSED_FORM recharge only; the surface backend label does not describe groundwater operator use.
 
 For local validation use the `openswmm` Conda environment. After building and

@@ -20,8 +20,9 @@ struct SurfaceEtReceipt {
 /// Internal completed source-phase adapter. Bind reviewed inside/outside uniform areas;
 /// invoke after accepted face volumes land and before managed source debits.
 /// Conservative pollutants pair actual non-LID/LID withdrawals and the mesh's
-/// remaining weather footprint, with matching pollutant IDs. Age, heat, MSX,
-/// mesh coupling donors are not qualified. Paired refunds and locally owned
+/// remaining weather footprint, with matching pollutant IDs. A separately
+/// qualified mesh-only porous profile carries age, heat and BULK MSX rows.
+/// Private source MSX and mesh coupling donors remain guarded. Paired refunds and locally owned
 /// emergence are consumed once in the next eligible completed interval.
 /// Whole-context snapshots are qualification scaffolding, not runtime activation.
 class CommonSourceStage {
@@ -52,6 +53,8 @@ public:
     }
     bool meshOnly() const { return sources_ && sources_->clocks().groups().empty() && donors_.empty(); }
     bool meshOnlyGroundQuality() const { return mesh_only_ground_quality_; }
+    /// Read-only canonical layout check shared by managed preflight and attachment.
+    static bool supportsMeshGroundQuality(const SimulationContext&,const SurfaceStateData&,const SubsurfaceSolver&);
     /// Surface-only LOCAL_STORAGE bed profile used to persist mesh heat state
     /// when no groundwater receiver exists. It owns synchronization only;
     /// ordinary mesh source kernels continue to own rainfall and evaporation.

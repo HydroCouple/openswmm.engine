@@ -3357,3 +3357,35 @@ TEST(GwRechargePlugin, AutoRetainsScalarUntilIntegratedPerformanceIsQualified) {
     auto backend=openswmm::twoD::makeGwRechargeBackend(options,1000000);
     EXPECT_FALSE(backend.evaluate);EXPECT_NE(backend.diagnostic.find("AUTO retains CPU"),std::string::npos);
 }
+
+TEST(GwCompletion, BulkPorewaterAgeLedgerAndClockSurviveComponentRestore) {
+    GroundwaterBackendOverride cpu("cpu");
+    const auto body=forcingDeck("[OPTIONS]\nWATER_AGE ON\nHEAT_TRANSPORT YES\n[2D_OPTIONS]\nTRANSPORT_AGE YES\n"
+        "[GW_TRANSPORT_OPTIONS]\nTRANSPORT_AGE YES\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION NO\n"
+        "[GW_INITIAL_QUALITY]\n* SAT __WATER_AGE__ 2\n* UNSAT __WATER_AGE__ 1\n");
+    Deck a=open("bulk-pore-age-ledger",body),b=open("bulk-pore-age-restored",body);
+    ASSERT_TRUE(a.opened);ASSERT_TRUE(b.opened);
+    for(auto* r:{&a,&b}) {
+        ASSERT_EQ(swmm_engine_initialize(r->e),SWMM_OK);
+        ASSERT_TRUE(r->eng->surfaceRouter2D().subsurface().initPorewater().empty());
+    }
+    auto& ra=a.eng->surfaceRouter2D();auto& rb=b.eng->surfaceRouter2D();auto& ga=ra.subsurface();auto& gb=rb.subsurface();
+    ASSERT_EQ(ga.transport().n_layers,0);const int age=ga.transport().age_row;ASSERT_GE(age,0);
+    ASSERT_EQ(ga.transport().generated_age.size(),std::size_t(ga.transport().n_species));
+    ga.assignTiers(.1,1);gb.assignTiers(.1,1);
+    for(int tick=0;tick<25;++tick){ga.fireGwFaces(0,.1);ga.fireGwCells(0,.1,ra.state(),tick*.1);}
+    EXPECT_GT(ga.transport().generated_age[age],0);EXPECT_NEAR(ga.transport().residual(age),0,1e-9);
+    const auto saved=ga.transportRestartState();ASSERT_FALSE(saved.empty());
+    const auto before=gb.transportRestartState();const double generated=ga.transport().generated_age[age];
+    ga.transport().generated_age[age]=-1;const auto corrupt=ga.transportRestartState();ga.transport().generated_age[age]=generated;
+    EXPECT_FALSE(gb.restoreTransportRestart(corrupt,true).empty());EXPECT_EQ(gb.transportRestartState(),before);
+    EXPECT_FALSE(gb.restoreTransportRestart({},true).empty());EXPECT_EQ(gb.transportRestartState(),before);
+    ASSERT_TRUE(gb.restoreTransportRestart(saved,true).empty());EXPECT_EQ(gb.transportRestartState(),saved);
+    EXPECT_DOUBLE_EQ(gb.transport().generated_age[age],generated);EXPECT_DOUBLE_EQ(gb.cellCompletedTime(0),ga.cellCompletedTime(0));
+    for(int tick=25;tick<50;++tick) {
+        ga.fireGwFaces(0,.1);gb.fireGwFaces(0,.1);
+        ga.fireGwCells(0,.1,ra.state(),tick*.1);gb.fireGwCells(0,.1,rb.state(),tick*.1);
+        EXPECT_EQ(ga.transportRestartState(),gb.transportRestartState());
+    }
+    finish(a);finish(b);
+}

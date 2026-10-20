@@ -842,11 +842,17 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
     require(lid_drain_q_interp_.empty() || lid_drain_q_interp_.size()==std::size_t(ctx_.n_nodes()),"Engine checkpoint LID-drain shape differs.");
     require(router_.structures_==&hydstruct_,"Engine checkpoint structure solver ownership differs.");
     if(ctx_.reactions.configured) {
-        require(!ctx_.options.water_age && !ctx_.options.heat_transport && ctx_.ard_config.detailed_output_path.empty() && ctx_.reactions.subsurface_laws.empty(),
-            "Reaction checkpoints currently qualify 1D network, wet/dry subcatchment and LID chemistry without heat, age, subsurface laws or ARD detailed output.");
+        bool mesh_reactions=false;
 #ifdef OPENSWMM_HAS_2D
-        require(!surface_router_.isActive(),"Reaction engine checkpoints do not yet qualify 2D surface chemistry.");
+        mesh_reactions=surface_router_.isActive()&&ctx_.n_nodes()==0&&ctx_.n_links()==0&&ctx_.n_subcatches()==0&&
+            surface_router_.state().transport.n_msx>0&&twoD::CommonSourceStage::supportsMeshGroundQuality(
+                ctx_,surface_router_.state(),surface_router_.subsurface());
+        require(!surface_router_.isActive()||mesh_reactions,
+            "Reaction mesh checkpoints require the matched mesh-only porous-ground quality profile without live network or catchment owners.");
 #endif
+        require(ctx_.ard_config.detailed_output_path.empty() && (mesh_reactions||
+            (!ctx_.options.water_age&&!ctx_.options.heat_transport&&ctx_.reactions.subsurface_laws.empty())),
+            "Reaction checkpoints require the qualified 1D profile or mesh-only porous-ground profile; other heat, age, subsurface and ARD detailed-output combinations remain guarded.");
     }
     if(ctx_.routing_stats.sum_iterations>0)for(const auto& lid:ctx_.node_subtypes.storages.lid_state)
         require(lid.quality_old_water.size()==lid.cells.size(),"Engine routed LID previous-water shape differs.");

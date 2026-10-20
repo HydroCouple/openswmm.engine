@@ -6173,3 +6173,79 @@ TEST(EngineCheckpoint, UebGroundContactRestoresAcceptedEnergyExactly) {
     EXPECT_NEAR(sa.ledgers()[0].energyResidual(),0,1e-6);
 }
 #endif
+
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+namespace {
+void startReactiveGroundSession(ThermalSurfaceSession& session,const std::string& name,int chemistry,int thermal,
+                               bool output=true,const std::string& rate=".001",const std::string& unit="MG") {
+    session.extra_input="\n[OPTIONS]\nSTART_DATE 01/31/2026\nSTART_TIME 23:59:30\nEND_DATE 02/01/2026\nEND_TIME 00:02:30\n"
+        "REPORT_START_DATE 01/31/2026\nREPORT_START_TIME 23:59:30\nREPORT_STEP 00:00:07\n"
+        "[2D_OPTIONS]\nTRANSPORT_MSX YES\nREPORT_2D_VARIABLES DEPTH HEAT GROUNDWATER\n"
+        "[2D_AQUIFER_OPTIONS]\nM_LAYERS "+std::to_string(chemistry?chemistry:4)+
+        "\n[GW_TRANSPORT_OPTIONS]\nUNSAT_TRANSPORT "+(chemistry?std::string("LAYERED"):std::string("BULK"))+
+        "\nTHERMAL_LAYERS "+std::to_string(thermal)+
+        "\n[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\nCOUPLING FULL\nATOL 1e-13\nRTOL 1e-11\n"
+        "[REACTION_SPECIES]\nBULK A "+unit+"\nBULK B MG\n[REACTION_SUBSURFACE]\n"
+        "* SAT A RATE -"+rate+"*A\n* SAT B RATE "+rate+"*A\n* UNSAT A RATE -"+rate+"*A\n* UNSAT B RATE "+rate+"*A\n"
+        "[GW_SORPTION]\n* A 2 0\n* B 2 0\n[GW_INITIAL_QUALITY]\n* SAT A 7\n* UNSAT A 11\n"
+        "[GW_SOURCES]\nW * FLOW .000001 A CONC 3 B CONC 1 Dye CONC 3 __WATER_AGE__ CONC 2 __TEMPERATURE__ CONC -4\n";
+    if(chemistry)session.extra_input+="[GW_INITIAL_QUALITY]\n* LAYER 2 A 23\n";
+    session.start(name,12,"channel:test",false,false,false,true,true,false,true,false,false,output,
+                  false,false,true,chemistry?"SIGMA":"CLOSED_FORM");
+}
+double reactiveGroundAmount(SWMMEngine& engine,int a,int b) {
+    const auto& router=engine.surfaceRouter2D();const auto& tr=router.subsurface().transport();const auto& surface=router.state().transport;
+    double amount=tr.ledgeredStorage(a)+tr.ledgeredStorage(b)+tr.lost_deep[a]+tr.lost_deep[b];
+    for(int cell=0;cell<surface.n_cells;++cell)amount+=surface.cell_mass[surface.idx(a,cell)]+surface.cell_mass[surface.idx(b,cell)];
+    return amount;
+}
+}
+TEST(EngineCheckpoint, MeshGroundReactionsPreservePendingContactsLedgersAndOutputAcrossMidnight) {
+    for(const auto grids:{std::pair<int,int>{0,4},{5,3},{3,7}})for(double boundary:{7.1,31.1}) {
+        const auto name="reactive-ground-"+std::to_string(grids.first)+"-"+std::to_string(grids.second)+"-"+std::to_string(boundary);
+        SCOPED_TRACE(name);ThermalSurfaceSession source,target;
+        ASSERT_NO_THROW(startReactiveGroundSession(source,name+"-a",grids.first,grids.second));
+        ASSERT_NO_THROW(startReactiveGroundSession(target,name+"-b",grids.first,grids.second));
+        auto& gw=source.engine.surfaceRouter2D().subsurface();const auto& tr=gw.transport();
+        const int a=tr.rowIndex("A"),b=tr.rowIndex("B");ASSERT_GE(a,0);ASSERT_GE(b,0);
+        const double initial=reactiveGroundAmount(source.engine,a,b);
+        std::vector<double> composition(tr.n_species,0);composition[a]=3;composition[b]=1;
+        composition[tr.rowIndex("Dye")]=7;composition[tr.age_row]=2;composition[tr.temp_row]=-4;
+        const double elevation=gw.state().z_bed[0]+gw.state().zs[0]-.05;
+        gw.bookLinkContact(0,.002,composition,elevation,elevation);
+        while(source.engine.context().current_time<boundary)ASSERT_NO_THROW(step(source.engine));
+        gw.bookLinkContact(0,.00025,composition,elevation,elevation);ASSERT_GT(gw.state().lacc[0],0);
+        const auto saved=root()/(name+".chk");ASSERT_EQ(source.engine.saveCheckpoint(saved.string()),"");
+        ASSERT_EQ(target.engine.loadCheckpoint(saved.string()),"");compareMesh(source.engine,target.engine,name+"-restored");
+        EXPECT_EQ(tr.generated_age,target.engine.surfaceRouter2D().subsurface().transport().generated_age);
+        while(source.engine.context().current_time<83.1) {
+            ASSERT_NO_THROW(step(source.engine));
+            ASSERT_NO_THROW(step(target.engine));
+        }
+        compareMesh(source.engine,target.engine,name+"-continued");
+        EXPECT_GT(tr.lost_reaction[a],0);EXPECT_LT(tr.lost_reaction[b],0);EXPECT_GT(tr.gained_source[a],0);
+        EXPECT_NEAR(reactiveGroundAmount(source.engine,a,b),initial+.00225*4+tr.gained_source[a]+tr.gained_source[b],1e-10*std::max(1.,initial));
+        for(int row:{a,b,tr.age_row})EXPECT_NEAR(tr.residual(row),0,1e-10*std::max(1.,tr.continuityDenominator(row)));
+        EXPECT_NEAR(gw.state().continuityResidual(),0,1e-10*std::max(1.,gw.state().led_init_storage));
+        double residual[2]{};ASSERT_EQ(swmm_heat_get_ground_values(&source.engine,SWMM_GROUND_HEAT_NORMALIZED_RESIDUAL,0,2,residual),SWMM_OK);
+        for(double value:residual)EXPECT_NEAR(value,0,1e-10);
+        ASSERT_EQ(source.engine.end(),SWMM_OK);ASSERT_EQ(target.engine.end(),SWMM_OK);
+        sameMesh(name+"-a",name+"-b",12);
+    }
+}
+TEST(EngineCheckpoint, MeshGroundReactionMismatchAndCorruptionPreserveFreshTargetsAndOutputs) {
+    ThermalSurfaceSession source;ASSERT_NO_THROW(startReactiveGroundSession(source,"reactive-refusal-source",5,3));
+    while(source.engine.context().current_time<9.1)ASSERT_NO_THROW(step(source.engine));
+    const auto good=root()/"reactive-refusal.chk",bad=root()/"reactive-corrupt.chk";
+    ASSERT_EQ(source.engine.saveCheckpoint(good.string()),"");auto corrupt=bytes(good);corrupt[corrupt.size()/2]^=1;write(bad,corrupt);
+    for(int mutation=0;mutation<4;++mutation) {
+        const auto name="reactive-refusal-target-"+std::to_string(mutation);ThermalSurfaceSession target;
+        ASSERT_NO_THROW(startReactiveGroundSession(target,name,mutation==2?6:5,3,true,mutation==0?".002":".001",mutation==1?"UG":"MG"));
+        const auto before=root()/(name+".chk"),output=root()/(name+".h5");ASSERT_EQ(target.engine.saveCheckpoint(before.string()),"");
+        const auto initial=bytes(before),prefix=bytes(output);
+        EXPECT_FALSE(target.engine.loadCheckpoint((mutation==3?bad:good).string()).empty());
+        ASSERT_EQ(target.engine.saveCheckpoint(before.string()),"");EXPECT_EQ(bytes(before),initial);EXPECT_EQ(bytes(output),prefix);
+        if(mutation==3){ASSERT_EQ(target.engine.loadCheckpoint(good.string()),"");compareMesh(source.engine,target.engine,name+"-retry");}
+    }
+}
+#endif

@@ -45,7 +45,10 @@ typedef struct SWMM_CheckpointSessionOptions {
  * Engine owns source arrays/graphs, stage and journal through close/destruction.
  * Reviewed spatial ownership requires the current authoring preview token.
  * Mesh sessions require the qualified CPU aquifer/common-source profile.
- * No external driver, live forcing, heat/quality or plugin recovery is added.
+ * Mesh-only first-order matched BULK MSX/pollutant and porous-ground heat
+ * sessions support NONE or MESH output, with optional age and no live network
+ * or private catchment owners. Other external/live forcing, physics and plugin
+ * recovery combinations retain their separate profile guards.
  * Ordinary initialize keeps its existing ownership guard. No callbacks allowed.
  * Preflight refusal preserves OPENED; failure after initialization closes the
  * engine. Partial fresh outputs may remain; caller owns its private workspace.
@@ -64,7 +67,7 @@ SWMM_ENGINE_API int swmm_checkpoint_session_status(SWMM_Engine, unsigned long* f
 
 /* All engine calls are synchronous and require exclusive access to the handle
  * on its owning thread. Inspect/restore require a matching, explicitly prepared
- * fresh water-only checkpoint session, including source/driver/output ownership.
+ * fresh supported checkpoint session, including source/driver/output ownership.
  * These functions do not prepare that session or enable authored R4 processing.
  * Inspection validates and discards private copies without adopting/publishing
  * state. It may require substantial IO and cannot be interrupted. Publication

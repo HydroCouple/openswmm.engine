@@ -464,7 +464,7 @@ public:
     std::string rk2ProfileError() const;
     void blendRk2Water(const SubsurfaceSolver& initial,double end);
     void publishRk2Infiltration(SurfaceStateData&,double dt,double time);
-    bool needsTransportRestart() const noexcept {return tr_.n_layers>0 || !boundaries_.empty() || !reactors_.empty();}
+    bool needsTransportRestart() const noexcept {return tr_.n_layers>0 || !tr_.generated_age.empty() || !boundaries_.empty() || !reactors_.empty();}
     std::string transportRestartState() const;
     std::string restoreTransportRestart(const std::string& bytes,bool apply);
 

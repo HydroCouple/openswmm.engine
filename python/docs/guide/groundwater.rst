@@ -109,3 +109,26 @@ engine-calendar or output continuation. Requests for accelerated backends
 retain observable CPU fallback; they do not qualify device groundwater.
 See ``docs/design/groundwater-transport.md`` in the engine source for the
 activation and qualification boundaries.
+
+Mesh chemistry checkpoint sessions
+---------------------------------
+
+A first-order mesh-only model with matching surface/groundwater BULK MSX
+rows can use ``solver.checkpoints.start_session(0)`` for numerical state or
+``start_session(2)`` for mesh HDF5 output. The qualified profile requires
+POROUS_EQUILIBRIUM groundwater heat, coupled surface heat and a GROUND_COLUMN
+bed. Passive pollutants and water age are optional; bulk and independently
+layered SIGMA/thermal grids are supported.
+
+Start both engines from the same model before saving and restoring with
+``solver.checkpoints.save(path)`` and ``target.checkpoints.restore(path)``.
+Canonical water, solute, age/contact and soil-energy state, accepted clocks,
+engine calendar and qualified report history continue together. A different
+reaction definition, species units or grid is refused before publication.
+Bulk finite-porewater sessions require the new ledger payload; older files
+cannot supply that omitted history.
+
+This profile excludes live network/catchment owners, WALL species,
+surface-species/buildup report continuation and binary/combined output
+companions. It does not extend the separate water-only RK2 checkpoint
+profile. See the native groundwater transport contracts for the full limits.

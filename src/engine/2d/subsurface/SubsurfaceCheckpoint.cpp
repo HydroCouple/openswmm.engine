@@ -25,9 +25,13 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
     if(!lid_receipts_enabled_ && std::any_of(richards_bed_owned_.begin(),richards_bed_owned_.end(),[](bool owned){return owned;}))
         throw std::runtime_error("Richards joint owner checkpoints require the R5 restart extension.");
     auto& s=state_;auto& t=tr_;auto& o=options_;
+    const bool finite_pore_ledgers=heat_.active()&&std::any_of(heat_.cells.begin(),heat_.cells.end(),
+        [](const auto& cell){return cell.porewater.active();});
+    const char* transport_profile=t.n_layers==0&&boundaries_.empty()&&reactors_.empty()?
+        "bulk finite-porewater ledgers v1":"SIGMA chemistry and groundwater edges v2";
     if(model) {
         if(needsTransportRestart()) {
-            std::string profile="SIGMA chemistry and groundwater edges v2";a(profile,t.n_layers,t.c_diff,transport_units_,reaction_identity_);
+            std::string profile=transport_profile;a(profile,t.n_layers,t.c_diff,transport_units_,reaction_identity_);
             if(mesh_){auto x=mesh_->vx,y=mesh_->vy,z=mesh_->vz;auto nv=mesh_->cell_nv;auto vertices=mesh_->cell_v;
                 a(x,y,z,nv,vertices);}
             a.sequence(boundaries_,[&](auto& b){a(b.cell,b.edge,b.head,b.length,b.distance);signal(a,b.signal);
@@ -77,8 +81,8 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
     a.sequence(source_receipts_,[&](auto& rows){a.sequence(rows,[&](auto& r){intake(a,r);});},true);
     a.sequence(source_returns_,[&](auto& r){returned(a,r);});
     if(needsTransportRestart()) {
-        std::string profile="SIGMA chemistry and groundwater edges v2";a(profile);
-        if(a.reading()&&profile!="SIGMA chemistry and groundwater edges v2")
+        std::string profile=transport_profile;a(profile);
+        if(a.reading()&&profile!=transport_profile)
             throw std::runtime_error("Unsupported groundwater transport restart profile.");
         a(s.led_boundary_in,s.led_boundary_out,source_completed_end_);
         a.fixed(t.layer_mass,t.contact_water,t.contact_node_out,t.contact_link_out,t.contact_node_mass,t.contact_link_mass,t.boundary_in,t.boundary_out,t.boundary_flux_in,t.boundary_flux_out,
@@ -116,6 +120,14 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
                 for(double value:*values)if(!std::isfinite(value))throw std::runtime_error("Nonfinite transport restart receipt.");
             if((!t.generated_age.empty()&&t.generated_age.size()!=std::size_t(t.n_species))||
                t.generated_age.size()!=t.gained_contact.size())throw std::runtime_error("Age restart ledger shape differs.");
+            if((finite_pore_ledgers || (t.n_layers>0&&t.age_row>=0&&
+                std::any_of(cell_completed_.begin(),cell_completed_.end(),[](double time){return time>0;})))&&
+               t.generated_age.size()!=std::size_t(t.n_species))throw std::runtime_error("Finite-porewater generation/contact ledgers are missing.");
+            if(!finite_pore_ledgers&&t.n_layers==0&&!t.generated_age.empty())
+                throw std::runtime_error("Compatibility groundwater has unexpected finite-porewater ledgers.");
+            for(std::size_t row=0;row<t.generated_age.size();++row)
+                if(t.generated_age[row]<0 || (int(row)!=t.age_row&&t.generated_age[row]!=0))
+                    throw std::runtime_error("Invalid age generation ledger.");
         }
     }
     if(lid_receipts_enabled_) {
@@ -323,7 +335,7 @@ std::string SubsurfaceSolver::transportRestartState() const {
 std::string SubsurfaceSolver::restoreTransportRestart(const std::string& bytes,bool apply) {
     try {
         if(bytes.empty()) {
-            if(needsTransportRestart())return "Hotstart lacks groundwater boundary/layer transport state.";
+            if(needsTransportRestart())return "Hotstart lacks groundwater boundary, layer or age transport state.";
             return {};
         }
         if(!needsTransportRestart())return "Hotstart groundwater transport profile differs from this model.";

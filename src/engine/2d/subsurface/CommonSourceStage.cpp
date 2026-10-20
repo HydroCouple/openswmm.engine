@@ -51,21 +51,21 @@ bool standaloneLocalBedLayout(const MeshData& mesh,const SurfaceStateData& surfa
         (h.bed_generated_age.empty()||h.bed_generated_age.size()==n)&&
         (!t.active()||t.n_cells==mesh.n_cells())&&rows_supported;
 }
-bool sharedGroundQualityProfile(const runoff::SourceWaterDriver& sources,
+bool matchingGroundQualityProfile(const SimulationContext& ctx,const std::vector<std::string>& names,
     const SurfaceStateData& surface,const SubsurfaceSolver& gw) {
-    const auto& names=sources.pollutantNames();const auto& a=surface.transport;const auto& b=gw.transport();
+    const auto& a=surface.transport;const auto& b=gw.transport();
     const auto np=names.size();
-    const bool rows_supported=a.n_species==a.n_pollut+(a.age_row>=0?1:0)+(a.temp_row>=0?1:0)&&
+    const bool rows_supported=a.n_species==a.n_pollut+a.n_msx+(a.age_row>=0?1:0)+(a.temp_row>=0?1:0)&&
         a.row_names.size()==std::size_t(a.n_species)&&
-        (a.age_row<0||(a.age_row>=a.n_pollut&&a.age_row<a.n_species&&
+        (a.age_row<0||(a.age_row>=a.n_pollut+a.n_msx&&a.age_row<a.n_species&&
             a.row_names[std::size_t(a.age_row)]=="__WATER_AGE__"))&&
-        (a.temp_row<0||(a.temp_row>=a.n_pollut&&a.temp_row<a.n_species&&
+        (a.temp_row<0||(a.temp_row>=a.n_pollut+a.n_msx&&a.temp_row<a.n_species&&
             a.row_names[std::size_t(a.temp_row)]=="__TEMPERATURE__"))&&
         (a.age_row<0||a.temp_row<0||a.age_row!=a.temp_row);
-    if(!sources.clocks().groups().empty()||np==0||!gw.active()||!gw.heat().active()||
+    if((np==0&&a.n_msx==0)||!gw.active()||!gw.heat().active()||
        !surface.heat.enabled||!surface.heat.bed||!surface.heat.ground_column||
        a.n_species<=0||a.n_species!=b.n_species||a.n_pollut!=int(np)||b.n_pollut!=int(np)||
-       a.n_msx!=0||b.n_msx!=0||!rows_supported||a.row_names!=b.row_names||
+       a.n_msx<0||a.n_msx!=b.n_msx||!rows_supported||a.row_names!=b.row_names||
        a.n_cells!=gw.state().n_cells||b.n_cells!=gw.state().n_cells||
        a.cell_mass.size()!=std::size_t(a.n_species)*std::size_t(a.n_cells)||
        a.gained_bed.size()!=std::size_t(a.n_species)||b.gained_contact.size()!=std::size_t(b.n_species)||
@@ -75,7 +75,19 @@ bool sharedGroundQualityProfile(const runoff::SourceWaterDriver& sources,
        (a.temp_row>=0&&(a.temp_row>=a.n_species||a.row_names[std::size_t(a.temp_row)]!="__TEMPERATURE__"))||
        (!a.rain_conc.empty()&&a.rain_conc.size()!=std::size_t(a.n_species)))return false;
     for(std::size_t p=0;p<np;++p)if(a.row_names[p]!=names[p])return false;
+    if(a.n_msx>0) {
+        // This adds no private network/catchment reaction owner. Both mesh
+        // inventories use the same complete BULK layout and native units.
+        const auto& rx=ctx.reactions;
+        if(ctx.n_nodes()!=0||ctx.n_links()!=0||ctx.n_subcatches()!=0||!rx.compiled||
+           a.n_msx!=rx.n_species()||std::any_of(rx.species_is_wall.begin(),rx.species_is_wall.end(),[](auto v){return v!=0;}))return false;
+        for(int row=0;row<a.n_msx;++row)if(a.row_names[np+row]!=rx.species_name[row])return false;
+    }
     return true;
+}
+bool sharedGroundQualityProfile(const runoff::SourceWaterDriver& sources,
+    const SurfaceStateData& surface,const SubsurfaceSolver& gw) {
+    return sources.clocks().groups().empty()&&matchingGroundQualityProfile(sources.context(),sources.pollutantNames(),surface,gw);
 }
 std::string qualityProfile(const runoff::SourceWaterDriver& sources,
                           const SurfaceStateData& surface,const SubsurfaceSolver& gw,
@@ -106,6 +118,13 @@ std::string qualityProfile(const runoff::SourceWaterDriver& sources,
         return "Common source mesh rainfall concentration is invalid.";
     return {};
 }
+}
+
+bool CommonSourceStage::supportsMeshGroundQuality(const SimulationContext& ctx,
+    const SurfaceStateData& surface,const SubsurfaceSolver& gw) {
+    std::vector<std::string> names;
+    if(!ctx.options.ignore_quality)for(int row=0;row<ctx.n_pollutants();++row)names.push_back(ctx.pollutant_names.name_of(row));
+    return matchingGroundQualityProfile(ctx,names,surface,gw);
 }
 
 std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData& surface,
