@@ -70,7 +70,7 @@ void SubsurfaceSolver::refreshSigmaPorewaterReservations(int cell) noexcept {
     }catch(...) {heat_.cells[cell].failed=1;}
 }
 std::string SubsurfaceSolver::refreshPorewaterContactLedger() {
-    if(tr_.gained_contact.empty())return {};
+    if(!heat_.active()||tr_.gained_contact.empty())return {};
     if(tr_.n_layers>0)for(int i=0;i<state_.n_cells;++i)if(covers(i))heat_.refreshView(i,tr_);
     std::fill(tr_.gained_contact.begin(),tr_.gained_contact.end(),0.0);
     for(int i=0;i<state_.n_cells;++i) {

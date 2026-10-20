@@ -848,11 +848,11 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
             surface_router_.state().transport.n_msx>0&&twoD::CommonSourceStage::supportsMeshGroundQuality(
                 ctx_,surface_router_.state(),surface_router_.subsurface());
         require(!surface_router_.isActive()||mesh_reactions,
-            "Reaction mesh checkpoints require the matched mesh-only porous-ground quality profile without live network or catchment owners.");
+            "Reaction mesh checkpoints require the matched mesh-only ground quality profile without live network or catchment owners.");
 #endif
         require(ctx_.ard_config.detailed_output_path.empty() && (mesh_reactions||
             (!ctx_.options.water_age&&!ctx_.options.heat_transport&&ctx_.reactions.subsurface_laws.empty())),
-            "Reaction checkpoints require the qualified 1D profile or mesh-only porous-ground profile; other heat, age, subsurface and ARD detailed-output combinations remain guarded.");
+            "Reaction checkpoints require the qualified 1D profile or mesh-only ground-quality profile; other heat, age, subsurface and ARD detailed-output combinations remain guarded.");
     }
     if(ctx_.routing_stats.sum_iterations>0)for(const auto& lid:ctx_.node_subtypes.storages.lid_state)
         require(lid.quality_old_water.size()==lid.cells.size(),"Engine routed LID previous-water shape differs.");

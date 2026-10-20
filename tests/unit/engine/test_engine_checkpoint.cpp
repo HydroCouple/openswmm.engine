@@ -1878,10 +1878,12 @@ TEST(EngineCheckpoint, CoupledThermalStateRefusesIncompleteHotstartFormats) {
     EXPECT_EQ(HotStartManager::apply(native_file,ctx),-1);
     EXPECT_NE(HotStartManager::last_io_error().find("thermal energy"),std::string::npos);
 
-    EXPECT_EQ(HotStartManager::save_legacy_routing(legacy_path.string(),ctx),-1);
-    EXPECT_NE(HotStartManager::last_io_error().find("thermal energy"),std::string::npos);
-    EXPECT_EQ(HotStartManager::apply_legacy_routing(legacy_path.string(),ctx),-1);
-    EXPECT_NE(HotStartManager::last_io_error().find("thermal energy"),std::string::npos);
+    // The shared-source cell clocks require the V17 groundwater extension.
+    // Legacy routing refuses that extension before examining the heat owner.
+    EXPECT_EQ(HotStartManager::save_legacy_routing(legacy_path.string(),ctx),1);
+    EXPECT_NE(HotStartManager::last_io_error().find("groundwater"),std::string::npos);
+    EXPECT_EQ(HotStartManager::apply_legacy_routing(legacy_path.string(),ctx),1);
+    EXPECT_NE(HotStartManager::last_io_error().find("groundwater"),std::string::npos);
 
     EXPECT_FALSE(std::filesystem::exists(native_path));
     EXPECT_FALSE(std::filesystem::exists(legacy_path));
@@ -1904,7 +1906,7 @@ TEST(EngineCheckpoint, CoupledThermalNativeHotstartRestoresFullAcceptedEngineSta
     {
         std::unique_ptr<HotStartFile> saved(HotStartManager::open(path.string()));
         ASSERT_TRUE(saved) << HotStartManager::last_io_error();
-        EXPECT_EQ(saved->header.version,15u);
+        EXPECT_EQ(saved->header.version,17u);
         EXPECT_FALSE(saved->engine_checkpoint.empty());
     }
 
@@ -1922,12 +1924,12 @@ TEST(EngineCheckpoint, CoupledThermalNativeHotstartRestoresFullAcceptedEngineSta
     compare(source.engine,target.engine,"surface-thermal-native-hotstart-resume");
     compare(source.engine,target_api.engine,"surface-thermal-native-hotstart-api-resume");
 
-    // [FILES] SAVE HOTSTART writes the same complete V15 state at end-of-run,
+    // [FILES] SAVE HOTSTART writes the same complete V17 state at end-of-run,
     // before teardown flushes a final partial mesh batch.
     ASSERT_EQ(source.engine.end(),SWMM_OK);
     std::unique_ptr<HotStartFile> scheduled(HotStartManager::open(path.string()));
     ASSERT_TRUE(scheduled) << HotStartManager::last_io_error();
-    EXPECT_EQ(scheduled->header.version,15u);
+    EXPECT_EQ(scheduled->header.version,17u);
     EXPECT_FALSE(scheduled->engine_checkpoint.empty());
     ASSERT_EQ(target.engine.end(),SWMM_OK);
     ASSERT_EQ(target_api.engine.end(),SWMM_OK);
@@ -6246,6 +6248,81 @@ TEST(EngineCheckpoint, MeshGroundReactionMismatchAndCorruptionPreserveFreshTarge
         EXPECT_FALSE(target.engine.loadCheckpoint((mutation==3?bad:good).string()).empty());
         ASSERT_EQ(target.engine.saveCheckpoint(before.string()),"");EXPECT_EQ(bytes(before),initial);EXPECT_EQ(bytes(output),prefix);
         if(mutation==3){ASSERT_EQ(target.engine.loadCheckpoint(good.string()),"");compareMesh(source.engine,target.engine,name+"-retry");}
+    }
+}
+#endif
+
+#ifdef OPENSWMM_HAS_2D
+namespace {
+void startAqueousClockSession(SWMMEngine& engine,const std::string& name,int layers,bool msx) {
+    const auto path=root()/name;const std::string species=msx?"A":"Dye";
+    std::string deck=R"([OPTIONS]
+FLOW_UNITS CMS
+FLOW_ROUTING DYNWAVE
+HEAT_TRANSPORT NO
+IGNORE_QUALITY NO
+START_DATE 01/01/2026
+START_TIME 00:00:00
+END_DATE 01/01/2026
+END_TIME 00:00:30
+ROUTING_STEP .2
+REPORT_STEP 00:00:01
+[2D_OPTIONS]
+REPORT_2D NO
+MAX_TIMESTEP .1
+LTS_TIERS 1
+EVAPORATION NO
+TRANSPORT_POLLUTANTS YES
+TRANSPORT_MSX YES
+TRANSPORT_TEMPERATURE NO
+[2D_VERTICES]
+0 0 .5
+4 0 .5
+0 2 .5
+4 2 .5
+[2D_TRIANGLES]
+0 1 2 .03 .04
+1 3 2 .03 .03
+[2D_AQUIFER_OPTIONS]
+NODE_ENROLMENT ROWS
+LINK_SEEPAGE NONE
+GW_ET NONE
+)";
+    deck+="CLOSURE "+std::string(layers?"SIGMA":"CLOSED_FORM")+"\nM_LAYERS "+std::to_string(layers?layers:4)+
+        "\n[2D_AQUIFER]\n* 36 1 .45 .1 2 HG0 .3 C_LOSS .02\n[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL WATER_ONLY\n"
+        "CONDUCTION NO\nDISPERSION NO\nUNSAT_TRANSPORT "+(layers?std::string("LAYERED"):std::string("BULK"))+"\n";
+    if(msx)deck+="[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\n[REACTION_SPECIES]\nBULK A MG\n";
+    else deck+="[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0\n[OPTIONS]\nWATER_AGE ON\n[2D_OPTIONS]\nTRANSPORT_AGE YES\n";
+    deck+="[GW_INITIAL_QUALITY]\n* SAT "+species+" 10\n* UNSAT "+species+" 10\n[GW_SOURCES]\nW CELL 1 FLOW .000001 "+species+" CONC 3\n";
+    write(path.string()+".inp",deck);
+    if(engine.open((path.string()+".inp").c_str(),(path.string()+".rpt").c_str(),nullptr)!=SWMM_OK)
+        throw std::runtime_error(engine.context().error_message);
+    if(auto error=engine.startCheckpointSession(SWMM_CHECKPOINT_OUTPUT_NONE,"",false,"");!error.empty())throw std::runtime_error(error);
+}
+}
+TEST(EngineCheckpoint, AqueousQualitySessionsPreserveAcceptedCellClocksAndPendingContacts) {
+    for(int layers:{0,5})for(bool msx:{false,true}) {
+        const auto name="aqueous-clock-"+std::to_string(layers)+"-"+std::to_string(msx);SCOPED_TRACE(name);SWMMEngine a,b;
+        ASSERT_NO_THROW(startAqueousClockSession(a,name+"-a",layers,msx));
+        ASSERT_NO_THROW(startAqueousClockSession(b,name+"-b",layers,msx));
+        auto& ga=a.surfaceRouter2D().subsurface();auto& gb=b.surfaceRouter2D().subsurface();
+        EXPECT_FALSE(ga.heat().active());EXPECT_EQ(ga.transport().n_msx,msx?1:0);
+        while(a.context().current_time<4.1)ASSERT_NO_THROW(step(a));
+        std::vector<double> composition(ga.transport().n_species,3);if(ga.transport().age_row>=0)composition[ga.transport().age_row]=5;
+        const double elevation=ga.state().z_bed[0]+ga.state().zs[0]-.05;ga.bookLinkContact(0,.0001,composition,elevation,elevation);
+        ASSERT_GT(ga.state().lacc[0],0);ASSERT_GT(ga.cellCompletedTime(0),0);
+        const auto fresh=gb.transportRestartState();ASSERT_FALSE(fresh.empty());
+        EXPECT_FALSE(gb.restoreTransportRestart({},true).empty());EXPECT_EQ(gb.transportRestartState(),fresh);
+        const auto saved=root()/(name+".chk");ASSERT_EQ(a.saveCheckpoint(saved.string()),"");ASSERT_EQ(b.loadCheckpoint(saved.string()),"");
+        for(int cell=0;cell<ga.state().n_cells;++cell)EXPECT_DOUBLE_EQ(gb.cellCompletedTime(cell),ga.cellCompletedTime(cell));
+        compare(a,b,name+"-restored");
+        for(int tick=0;tick<15;++tick) {
+            ASSERT_NO_THROW(step(a));
+            ASSERT_NO_THROW(step(b));
+        }
+        compare(a,b,name+"-continued");
+        for(int row=0;row<ga.transport().n_species;++row)EXPECT_NEAR(ga.transport().residual(row),0,1e-9);
+        EXPECT_NEAR(ga.state().continuityResidual(),0,1e-9);
     }
 }
 #endif

@@ -102,8 +102,8 @@ Execution profiles
 
 Groundwater chemistry, layered transport and porous heat require the CPU
 first-order coupling profile. A standalone CLOSED_FORM water-only mesh can
-use FULL_SWE with RECONSTRUCTION_ORDER 2; network/catchment exchange, aquifer
-edges, time-series wells and active transport/thermal owners remain guarded.
+use FULL_SWE with RECONSTRUCTION_ORDER 2; network/catchment exchange and
+active transport/thermal owners remain guarded.
 Authored water-only wells and HEAD/FLOW edges are supported: shared surface/groundwater
 stages split at knots and sign reversals. HEAD uses absolute elevation; FLOW
 is inward-positive m³/s. Runtime providers and quality
@@ -121,17 +121,21 @@ Mesh chemistry checkpoint sessions
 A first-order mesh-only model with matching surface/groundwater BULK MSX
 rows can use ``solver.checkpoints.start_session(0)`` for numerical state or
 ``start_session(2)`` for mesh HDF5 output. The qualified profile requires
-POROUS_EQUILIBRIUM groundwater heat, coupled surface heat and a GROUND_COLUMN
-bed. Passive pollutants and water age are optional; bulk and independently
-layered SIGMA/thermal grids are supported.
+matching species layouts and either WATER_ONLY with heat disabled, or
+POROUS_EQUILIBRIUM groundwater heat paired with coupled surface heat and a
+GROUND_COLUMN bed. Passive pollutants and water age are optional; bulk and
+SIGMA layer chemistry are supported. With porous heat, chemical and thermal
+layer counts are independent.
 
 Start both engines from the same model before saving and restoring with
 ``solver.checkpoints.save(path)`` and ``target.checkpoints.restore(path)``.
 Canonical water, solute, age/contact and soil-energy state, accepted clocks,
 engine calendar and qualified report history continue together. A different
 reaction definition, species units or grid is refused before publication.
-Bulk finite-porewater sessions require the new ledger payload; older files
-cannot supply that omitted history.
+Bulk finite-porewater sessions require their ledger payload. Shared-source
+transport sessions also require the accepted-cell-clock payload, including
+species-only bulk models. Older exact-session files cannot supply that omitted
+history; raw default bulk state carriers retain their existing behavior.
 
 This profile excludes live network/catchment owners, WALL species,
 surface-species/buildup report continuation and binary/combined output

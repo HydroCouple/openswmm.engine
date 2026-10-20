@@ -10,7 +10,7 @@ from openswmm.engine import (
 from tests.engine._groundwater_cases import cleanup
 
 
-def _open(directory, chemistry, thermal, reactive=True, passive=False, output=0, rate='.001', age=True):
+def _open(directory, chemistry, thermal, reactive=True, passive=False, output=0, rate='.001', age=True, porous=True, unit='MG'):
     directory.mkdir()
     path = directory / 'model.inp'
     reaction = ''
@@ -23,7 +23,7 @@ COUPLING FULL
 ATOL 1e-13
 RTOL 1e-11
 [REACTION_SPECIES]
-BULK A MG
+BULK A {unit}
 BULK B MG
 [REACTION_SUBSURFACE]
 * SAT A RATE -{rate}*A
@@ -44,12 +44,14 @@ Dye MG/L 0 0 0 0 NO * 0 0
 * UNSAT Dye 10
 ''' if passive else ''
     forcing = (' A CONC 3 B CONC 1' if reactive else '') + (' Dye CONC 3' if passive else '')
+    initial_heat = '[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ 8\n* UNSAT __TEMPERATURE__ 8\n' if porous else ''
+    variables = 'DEPTH HEAT GROUNDWATER' if porous else 'DEPTH GROUNDWATER'
     mesh_output = (f'REPORT_2D YES\nOUTPUT_FILE "{directory / "mesh.h5"}"\n'
-                   'OUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES DEPTH HEAT GROUNDWATER\n') if output else 'REPORT_2D NO\n'
+                   f'OUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES {variables}\n') if output else 'REPORT_2D NO\n'
     path.write_text(f'''[OPTIONS]
 FLOW_UNITS CMS
 FLOW_ROUTING DYNWAVE
-HEAT_TRANSPORT YES
+HEAT_TRANSPORT {'YES' if porous else 'NO'}
 WATER_AGE {'ON' if age else 'OFF'}
 START_DATE 01/31/2026
 START_TIME 23:59:30
@@ -67,7 +69,7 @@ EVAPORATION NO
 TRANSPORT_POLLUTANTS YES
 TRANSPORT_MSX YES
 TRANSPORT_AGE {'YES' if age else 'NO'}
-TRANSPORT_TEMPERATURE YES
+TRANSPORT_TEMPERATURE {'YES' if porous else 'NO'}
 {mesh_output}
 [2D_VERTICES]
 0 0 .5
@@ -87,36 +89,43 @@ GW_ET NONE
 * 36 1 .45 .1 2 HG0 .3 C_LOSS .02
 [GW_TRANSPORT_OPTIONS]
 UNSAT_TRANSPORT {'LAYERED' if chemistry else 'BULK'}
-THERMAL_MODEL POROUS_EQUILIBRIUM
+THERMAL_MODEL {'POROUS_EQUILIBRIUM' if porous else 'WATER_ONLY'}
 THERMAL_LAYERS {thermal}
-CONDUCTION YES
+CONDUCTION {'YES' if porous else 'NO'}
 DISPERSION NO
 SURFACE_THERMAL_BC ADIABATIC
 DEEP_THERMAL_BC ADIABATIC
-[GW_INITIAL_QUALITY]
-* SAT __TEMPERATURE__ 8
-* UNSAT __TEMPERATURE__ 8
+{initial_heat}
 [TIMESERIES]
 WELL 01/31/2026 23:59:30 .000001
 WELL 01/31/2026 23:59:39 .000002
 WELL 01/31/2026 23:59:47 .000001
 WELL 02/01/2026 00:01:30 .000001
 [GW_SOURCES]
-W CELL 1 FLOW WELL{forcing} __TEMPERATURE__ CONC -4{' __WATER_AGE__ CONC 2' if age else ''}
+W CELL 1 FLOW WELL{forcing}{' __TEMPERATURE__ CONC -4' if porous else ''}{' __WATER_AGE__ CONC 2' if age else ''}
 {pollutant}
 {reaction}
 ''')
     solver = Solver(path, path.with_suffix('.rpt'))
+    solver.create()
+    capabilities = solver.checkpoints.capabilities
+    if not capabilities & (1 << 4):  # SWMM_CHECKPOINT_SURFACE_PROFILE
+        cleanup(solver)
+        pytest.skip('Mesh checkpoint support is omitted from this build')
+    if output and not capabilities & (1 << 6):  # HDF5-backed SWMM_CHECKPOINT_FILE_PROFILE
+        cleanup(solver)
+        pytest.skip('Mesh HDF5 checkpoint support is omitted from this build')
     solver.open()
-    solver.options.ext['HEAT_MODEL'] = 'COUPLED'
-    solver.options.ext['BED_HEAT_MODEL'] = 'GROUND_COLUMN'
-    solver.options.ext['HEAT_SURFACE_EXCHANGE'] = 'NO'
-    solver.options.ext['HEAT_RADIATIVE_EXCHANGE'] = 'NO'
-    solver.heat.sediment[HeatSedimentParam.HYPORHEIC_VELOCITY] = .001
+    if porous:
+        solver.options.ext['HEAT_MODEL'] = 'COUPLED'
+        solver.options.ext['BED_HEAT_MODEL'] = 'GROUND_COLUMN'
+        solver.options.ext['HEAT_SURFACE_EXCHANGE'] = 'NO'
+        solver.options.ext['HEAT_RADIATIVE_EXCHANGE'] = 'NO'
+        solver.heat.sediment[HeatSedimentParam.HYPORHEIC_VELOCITY] = .001
     return solver
 
 
-def _snapshot(solver, chemistry):
+def _snapshot(solver, chemistry, porous=True):
     surface = solver.surface2d
     gw = surface.groundwater
     values = [surface.get_depths(), gw.cells(GroundwaterVariable.HG), gw.cells(GroundwaterVariable.HU)]
@@ -128,7 +137,8 @@ def _snapshot(solver, chemistry):
                for cell in range(gw.dimensions[0])] if chemistry else []
     values += [np.asarray([gw.species_ledger(row, term) for term in GroundwaterSpeciesLedger])
                for row in range(len(gw.species))]
-    values += [np.asarray(solver.heat.ground_values(GroundHeatValue.ENERGY, 0, gw.dimensions[0]))]
+    if porous:
+        values += [np.asarray(solver.heat.ground_values(GroundHeatValue.ENERGY, 0, gw.dimensions[0]))]
     return values
 
 
@@ -150,9 +160,10 @@ def _amount(solver, names):
 @pytest.mark.parametrize('reactive,passive', [(True, False), (True, True), (False, True)])
 @pytest.mark.parametrize('output', [0, 2])
 @pytest.mark.parametrize('age', [True, False])
-def test_mesh_groundwater_checkpoint_continues_reactions_and_heat(tmp_path, chemistry, thermal, reactive, passive, output, age):
-    source = _open(tmp_path / 'source', chemistry, thermal, reactive, passive, output, age=age)
-    target = _open(tmp_path / 'target', chemistry, thermal, reactive, passive, output, age=age)
+@pytest.mark.parametrize('porous', [True, False])
+def test_mesh_groundwater_checkpoint_continues_reactions_and_heat(tmp_path, chemistry, thermal, reactive, passive, output, age, porous):
+    source = _open(tmp_path / 'source', chemistry, thermal, reactive, passive, output, age=age, porous=porous)
+    target = _open(tmp_path / 'target', chemistry, thermal, reactive, passive, output, age=age, porous=porous)
     try:
         source.checkpoints.start_session(output)
         target.checkpoints.start_session(output)
@@ -164,12 +175,12 @@ def test_mesh_groundwater_checkpoint_continues_reactions_and_heat(tmp_path, chem
         source.checkpoints.save(checkpoint)
         target.checkpoints.restore(checkpoint)
         assert source.elapsed == target.elapsed
-        for a, b in zip(_snapshot(source, chemistry), _snapshot(target, chemistry)):
+        for a, b in zip(_snapshot(source, chemistry, porous), _snapshot(target, chemistry, porous)):
             np.testing.assert_array_equal(a, b)
         while source.step().total_seconds() > 0:
             assert target.step() == source.elapsed
         target.step()
-        for a, b in zip(_snapshot(source, chemistry), _snapshot(target, chemistry)):
+        for a, b in zip(_snapshot(source, chemistry, porous), _snapshot(target, chemistry, porous)):
             np.testing.assert_array_equal(a, b)
         gw = source.surface2d.groundwater
         assert abs(gw.continuity_error) < 1e-9
@@ -183,8 +194,9 @@ def test_mesh_groundwater_checkpoint_continues_reactions_and_heat(tmp_path, chem
             if name != '__TEMPERATURE__':
                 row = gw.species.index(name)
                 assert abs(gw.species_ledger(row, GroundwaterSpeciesLedger.RESIDUAL)) < 1e-8
-        energy = source.heat.ground_values(GroundHeatValue.NORMALIZED_RESIDUAL, 0, gw.dimensions[0])
-        assert np.max(np.abs(energy)) < 1e-10
+        if porous:
+            energy = source.heat.ground_values(GroundHeatValue.NORMALIZED_RESIDUAL, 0, gw.dimensions[0])
+            assert np.max(np.abs(energy)) < 1e-10
         if reactive:
             b = gw.species.index('B')
             assert gw.species_ledger(b, GroundwaterSpeciesLedger.REACTED) < 0
@@ -224,3 +236,30 @@ def test_mesh_groundwater_session_refuses_unqualified_profiles_before_mesh_outpu
         assert not (directory / 'mesh.h5').exists()
     finally:
         cleanup(solver)
+
+
+@pytest.mark.parametrize('porous', [True, False])
+@pytest.mark.parametrize('mutation', ['reaction', 'unit', 'grid'])
+def test_mesh_groundwater_checkpoint_mismatch_preserves_all_target_state(tmp_path, porous, mutation):
+    source = _open(tmp_path / 'source', 5, 3, passive=True, porous=porous)
+    layers = 6 if mutation == 'grid' else 5
+    target = _open(tmp_path / 'target', layers, 3, passive=True, porous=porous,
+                   rate='.002' if mutation == 'reaction' else '.001',
+                   unit='UG' if mutation == 'unit' else 'MG')
+    try:
+        source.checkpoints.start_session(0)
+        target.checkpoints.start_session(0)
+        while source.elapsed.total_seconds() < 8:
+            source.step()
+        checkpoint = tmp_path / 'source.chk'
+        before, after = tmp_path / 'before.chk', tmp_path / 'after.chk'
+        source.checkpoints.save(checkpoint)
+        target.checkpoints.save(before)
+        with pytest.raises(FileError):
+            target.checkpoints.restore(checkpoint)
+        target.checkpoints.save(after)
+        assert before.read_bytes() == after.read_bytes()
+        assert target.elapsed.total_seconds() == 0
+    finally:
+        cleanup(source)
+        cleanup(target)

@@ -28,7 +28,8 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
     const bool finite_pore_ledgers=heat_.active()&&std::any_of(heat_.cells.begin(),heat_.cells.end(),
         [](const auto& cell){return cell.porewater.active();});
     const char* transport_profile=t.n_layers==0&&boundaries_.empty()&&reactors_.empty()?
-        "bulk finite-porewater ledgers v1":"SIGMA chemistry and groundwater edges v2";
+        (finite_pore_ledgers?"bulk finite-porewater ledgers v1":"bulk shared-source transport clocks v1"):
+        "SIGMA chemistry and groundwater edges v2";
     if(model) {
         if(needsTransportRestart()) {
             std::string profile=transport_profile;a(profile,t.n_layers,t.c_diff,transport_units_,reaction_identity_);
@@ -118,6 +119,7 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
             for(const auto* values:{&t.boundary_in,&t.boundary_out,&t.boundary_flux_in,&t.boundary_flux_out,
                 &t.generated_age,&t.gained_contact,&t.lout_mass,&t.link_gain_shortfall,&cell_completed_})
                 for(double value:*values)if(!std::isfinite(value))throw std::runtime_error("Nonfinite transport restart receipt.");
+            for(double time:cell_completed_)if(time<0)throw std::runtime_error("Negative completed groundwater clock.");
             if((!t.generated_age.empty()&&t.generated_age.size()!=std::size_t(t.n_species))||
                t.generated_age.size()!=t.gained_contact.size())throw std::runtime_error("Age restart ledger shape differs.");
             if((finite_pore_ledgers || (t.n_layers>0&&t.age_row>=0&&
@@ -335,7 +337,7 @@ std::string SubsurfaceSolver::transportRestartState() const {
 std::string SubsurfaceSolver::restoreTransportRestart(const std::string& bytes,bool apply) {
     try {
         if(bytes.empty()) {
-            if(needsTransportRestart())return "Hotstart lacks groundwater boundary, layer or age transport state.";
+            if(needsTransportRestart())return "Hotstart lacks groundwater boundary, layer, ledger or shared-source clock state.";
             return {};
         }
         if(!needsTransportRestart())return "Hotstart groundwater transport profile differs from this model.";

@@ -81,9 +81,9 @@ std::string SWMMEngine::startCheckpointSession(int output,const std::string& sou
             (ctx_.reactions.configured||(!ctx_.options.ignore_quality&&ctx_.n_pollutants()>0));
 #endif
         require(mesh_quality||(!ctx_.options.heat_transport&&!ctx_.options.water_age&&(ctx_.options.ignore_quality||ctx_.n_pollutants()==0)),
-            "Managed checkpoint sessions require water-only, supported 1D reactions or mesh-only porous-ground quality.");
+            "Managed checkpoint sessions require water-only, supported 1D reactions or mesh-only matched ground quality.");
         require(!mesh_quality||output==SWMM_CHECKPOINT_OUTPUT_NONE||output==SWMM_CHECKPOINT_OUTPUT_MESH,
-            "Mesh-only porous-ground quality sessions support numerical state or mesh output; combined/binary companions remain guarded.");
+            "Mesh-only matched ground quality sessions support numerical state or mesh output; combined/binary companions remain guarded.");
 #ifndef OPENSWMM_HAS_2D_HDF5_OUTPUT
         require(output<SWMM_CHECKPOINT_OUTPUT_MESH,"Mesh output checkpoints unavailable in this build.");
 #endif
@@ -155,7 +155,7 @@ std::string SWMMEngine::startCheckpointSession(int output,const std::string& sou
         require(initialized==SWMM_OK,ctx_.error_message);
 #ifdef OPENSWMM_HAS_2D
         if(mesh_quality)require(twoD::CommonSourceStage::supportsMeshGroundQuality(ctx_,r.state(),r.subsurface()),
-            "Managed mesh quality requires matched bulk-species layouts and coupled porous-ground thermal owners.");
+            "Managed mesh quality requires matched bulk-species layouts and either WATER_ONLY without heat or paired porous-ground thermal owners.");
         if(output>=SWMM_CHECKPOINT_OUTPUT_COMBINED)checked(prepareCombinedOutputCheckpointing());
         else if(output==SWMM_CHECKPOINT_OUTPUT_BINARY)checked(prepareOutputCheckpointing());
         else if(output==SWMM_CHECKPOINT_OUTPUT_MESH)checked(prepareSurfaceOutputCheckpointing());

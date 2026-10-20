@@ -48,7 +48,8 @@ class Checkpoints(EngineView):
     metadata with raw OLE dates and decimal-string uint64 values. Restore checks
     compatibility again. Save/export require fresh destinations and preserve
     older files. Supported profiles include native water-only/1D reactions and
-    mesh-only matched BULK quality with porous-ground heat and optional age.
+    mesh-only matched BULK quality with optional age and either WATER_ONLY or
+    paired porous-ground heat.
     External drivers and broader coupled owners retain native profile guards.
     """
     @property
