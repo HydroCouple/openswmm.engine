@@ -23,6 +23,10 @@ retroactive.
 
 ## [Unreleased]
 
+### Cross-section code-review fixes (2026-10-20)
+
+- **Invalid cross-section geometry names its conduit.** Geometry the shape rules refuse was reported as ERROR 211 "invalid number" with an empty token; it is reported as a cross-section error naming the conduit now, in both engines. Code review IO-13, #175.
+
 ### Hot-start follow-ups and land-use parity (2026-10-19)
 
 - **`[COVERAGES]` reads every land use on a line.** `S1 RES 60 COM 40` set only RES; COM was dropped without a message. Every pair is read now, as in EPA SWMM, and a line naming an unknown subcatchment or land use (ERROR 209), a land use without a percent (ERROR 203) or a percent that is not a number (ERROR 211) is an error, as it is there. These lines were skipped silently before.
