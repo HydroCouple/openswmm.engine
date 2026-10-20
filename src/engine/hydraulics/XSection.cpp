@@ -474,10 +474,10 @@ int setParams(XSectParams& xs, int type, const double p[], double ucf) {
 
         case XSectShape::HORIZ_ELLIPSE: {
             double code = p[2];
-            if (p[1] == 0.0) code = p[0];
+            if (p[1] == 0.0 && code == 0.0) code = p[0];  // SWMM 5.0 format
             if (code > 0.0) {                        // standard ellipse pipe
                 int idx = static_cast<int>(std::floor(code)) - 1;
-                if (idx < 0 || idx >= xsect_tables::NumCodesEllipse) return -1;
+                if (idx < 0 || idx + 1 != code || idx >= xsect_tables::NumCodesEllipse) return -1;
                 xs.y_full = xsect_tables::MinorAxis_Ellipse[idx] / 12.0;
                 xs.w_max  = xsect_tables::MajorAxis_Ellipse[idx] / 12.0;
                 xs.a_full = xsect_tables::Afull_Ellipse[idx];
@@ -496,10 +496,10 @@ int setParams(XSectParams& xs, int type, const double p[], double ucf) {
         }
         case XSectShape::VERT_ELLIPSE: {
             double code = p[2];
-            if (p[1] == 0.0) code = p[0];
+            if (p[1] == 0.0 && code == 0.0) code = p[0];  // SWMM 5.0 format
             if (code > 0.0) {                        // standard ellipse pipe
                 int idx = static_cast<int>(std::floor(code)) - 1;
-                if (idx < 0 || idx >= xsect_tables::NumCodesEllipse) return -1;
+                if (idx < 0 || idx + 1 != code || idx >= xsect_tables::NumCodesEllipse) return -1;
                 xs.y_full = xsect_tables::MajorAxis_Ellipse[idx] / 12.0;
                 xs.w_max  = xsect_tables::MinorAxis_Ellipse[idx] / 12.0;
                 xs.a_full = xsect_tables::Afull_Ellipse[idx];
@@ -518,10 +518,10 @@ int setParams(XSectParams& xs, int type, const double p[], double ucf) {
         }
         case XSectShape::ARCH: {
             double code = p[2];
-            if (p[1] == 0.0) code = p[0];
+            if (p[1] == 0.0 && code == 0.0) code = p[0];  // SWMM 5.0 format
             if (code > 0.0) {                        // standard arch pipe
                 int idx = static_cast<int>(std::floor(code)) - 1;
-                if (idx < 0 || idx >= xsect_tables::NumCodesArch) return -1;
+                if (idx < 0 || idx + 1 != code || idx >= xsect_tables::NumCodesArch) return -1;
                 xs.y_full = xsect_tables::Yfull_Arch[idx] / 12.0;  // inches
                 xs.w_max  = xsect_tables::Wmax_Arch[idx] / 12.0;
                 xs.a_full = xsect_tables::Afull_Arch[idx];
