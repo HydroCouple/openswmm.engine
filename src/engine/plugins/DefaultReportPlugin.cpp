@@ -37,6 +37,7 @@
 #include "../../../include/openswmm/plugin_sdk/SimulationSnapshot.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../quality/MsxSurfaceQuality.hpp"
+#include "../quality/MsxLidReactions.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../core/DateTime.hpp"
 #include "../hydraulics/Node.hpp"   // node::getVolume — storage volume from its depth-relation
@@ -1094,9 +1095,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 std::fprintf(f, "\n  **************************");
                 for (int p = p1; p < p2; ++p) std::fprintf(f, "    ----------");
                 for (int k = 0; k < 9; ++k) {
-                    if (k == 8 && ctx.reactions.has_subcatch_reactions()) {
+                    if (k == 8 && (ctx.reactions.has_subcatch_reactions() || !ctx.reactions.buildup_laws.empty() || !ctx.reactions.lid_controls.empty())) {
                         for (int row = 0; row < 2; ++row) {
-                            std::fprintf(f, "\n  %s", row == 0 ? "Wet Pool Mass Reacted ...." : "Clamped to Zero (added) ..");
+                            std::fprintf(f, "\n  %s", row == 0 ? (ctx.reactions.buildup_laws.empty() && ctx.reactions.lid_controls.empty() ? "Wet Pool Mass Reacted ...." : "Surface Mass Reacted .....") : "Clamped to Zero (added) ..");
                             for (int p = p1; p < p2; ++p)
                                 std::fprintf(f, "%14.3f", p < np ? 0.0 :
                                     at(row == 0 ? ms_rq.led_reacted : ms_rq.led_reaction_clamped, p - np));
@@ -1110,6 +1111,14 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 WRITE(f, "");
             }
         }
+    }
+
+    if(opt.rpt_continuity && !ctx.reactions.booster_mass.empty()) {
+        std::fprintf(f,"\n  Reaction Booster Injection (declared species mass units)\n");
+        for(int species=0;species<ctx.reactions.n_species();++species)
+            std::fprintf(f,"  %-24s %.10g %s\n",ctx.reactions.species_name[species].c_str(),
+                ctx.reactions.booster_mass[species]*28.317,ctx.reactions.species_units[species].c_str());
+        std::fprintf(f,"\n");
     }
 
     // =====================================================================
@@ -1616,7 +1625,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             double fin = at(led.final_dry, s);
             for (int j = 0; j < ctx.n_nodes(); ++j)
                 fin += at(rx.msx_node_conc, static_cast<std::size_t>(j) * uns + s) *
-                       ctx.nodes.volume[static_cast<std::size_t>(j)];
+                       ctx.nodes.volume[static_cast<std::size_t>(j)]+msxlid::heldMass(ctx,j,int(s));
             for (int j = 0; j < ctx.n_links(); ++j)
                 fin += at(rx.msx_link_conc, static_cast<std::size_t>(j) * uns + s) *
                        ctx.links.volume[static_cast<std::size_t>(j)];

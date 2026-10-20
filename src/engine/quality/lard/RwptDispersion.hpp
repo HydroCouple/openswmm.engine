@@ -76,6 +76,7 @@
 
 #ifndef OPENSWMM_QUALITY_LARD_RWPT_DISPERSION_HPP
 #define OPENSWMM_QUALITY_LARD_RWPT_DISPERSION_HPP
+#include "../../core/CompletedSourceArchive.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -171,6 +172,11 @@ inline double rwpt_hyd_radius(double area, double depth, double diam,
  */
 class RwptDispersion {
 public:
+    void checkpoint(detail::CompletedSourceArchive& a) {
+        a.fixed(zeta_,eta_,seg_idx_);
+        for(double v:zeta_)if(!std::isfinite(v))throw std::runtime_error("Invalid LARD particle position.");
+        for(double v:eta_)if(!std::isfinite(v)||v<0||v>1)throw std::runtime_error("Invalid LARD particle ordinate.");
+    }
     void resize(int n_links, int n_per_link = kRwptParticlesPerLink) {
         nl_ = n_links;
         npart_ = n_per_link;

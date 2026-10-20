@@ -267,6 +267,8 @@ SWMM_ENGINE_API int swmm_reaction_option_get(SWMM_Engine engine,
     } else if (k == "RATE_UNITS") {
         static const char* kTok[] = {"SEC", "MIN", "HR", "DAY"};
         v = kTok[static_cast<int>(rx.rate_units)];
+    } else if(k=="WALL_GEOMETRY") {
+        v=rx.wall_geometry?"YES":"NO";
     } else if (k == "AREA_UNITS") {
         static const char* kTok[] = {"FT2", "M2", "CM2"};
         v = kTok[static_cast<int>(rx.area_units)];
@@ -368,7 +370,13 @@ SWMM_ENGINE_API int swmm_reaction_species_remove(SWMM_Engine engine,
     rx.pipe_expr_src.erase(rx.pipe_expr_src.begin() + u);
     rx.tank_form.erase(rx.tank_form.begin() + u);
     rx.tank_expr_src.erase(rx.tank_expr_src.begin() + u);
+    rx.lid_laws.erase(std::remove_if(rx.lid_laws.begin(),rx.lid_laws.end(),[&](const auto& r){return r.species==idx;}),rx.lid_laws.end());
+    for(auto& row:rx.lid_laws)if(row.species>idx)--row.species;
     rx.subcatch_form.erase(rx.subcatch_form.begin() + u);
+    for(auto* laws:{&rx.wet_laws,&rx.buildup_laws}) {
+        laws->erase(std::remove_if(laws->begin(),laws->end(),[&](const auto& r){return r.species==idx;}),laws->end());
+        for(auto& row:*laws)if(row.species>idx)--row.species;
+    }
     rx.subcatch_expr_src.erase(rx.subcatch_expr_src.begin() + u);
     rx.init_global.erase(rx.init_global.begin() + u);
     if (u < rx.rain_conc.size()) rx.rain_conc.erase(rx.rain_conc.begin() + u);
@@ -574,6 +582,11 @@ SWMM_ENGINE_API int swmm_reaction_option_set(SWMM_Engine engine,
         else if (v == "HR")  rx.rate_units = openswmm::ReactionRateUnits::HR;
         else if (v == "DAY") rx.rate_units = openswmm::ReactionRateUnits::DAY;
         else return SWMM_ERR_BADPARAM;
+    } else if(k=="WALL_GEOMETRY") {
+        if(v!="YES"&&v!="NO")return SWMM_ERR_BADPARAM;
+        auto rx_backup=rx;auto reg_backup=ctx.species_registry;
+        rx.wall_geometry=v=="YES";
+        if(!recompile_or_rollback(ctx,rx_backup,reg_backup))return SWMM_ERR_BADPARAM;
     } else if (k == "AREA_UNITS") {
         if      (v == "FT2") rx.area_units = openswmm::ReactionAreaUnits::FT2;
         else if (v == "M2")  rx.area_units = openswmm::ReactionAreaUnits::M2;

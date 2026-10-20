@@ -705,6 +705,7 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
         if (rx.msx_ext_mass_in.size() != want) rx.msx_ext_mass_in.assign(want, 0.0);
         const double seconds = std::max(0.0, (current_date - ctx.options.start_date) * 86400.0);
         for (const auto& source : rx.sources) {
+            if(source.booster)continue; // applied after the receiving node mixes its water
             double factor = 1.0;
             if (source.pattern >= 0) {
                 const auto& factors = rx.source_patterns[source.pattern].factors;

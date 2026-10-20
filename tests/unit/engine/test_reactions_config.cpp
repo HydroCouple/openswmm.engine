@@ -40,6 +40,8 @@
 
 #include <cstdio>
 #include <fstream>
+#include <sstream>
+#include <iomanip>
 #include <string>
 
 #include <openswmm/engine/openswmm_engine.h>
@@ -50,6 +52,10 @@
 #include "hydrology/Inflow.hpp"
 #include "transport/components/ReactionModule/ReactionIntegrator.hpp"
 #include "transport/components/ReactionModule/ReactionLegacyBinding.hpp"
+#include "transport/components/ReactionModule/ReactionGeometry.hpp"
+#include "quality/MsxLidReactions.hpp"
+#include "quality/MsxSurfaceQuality.hpp"
+#include "core/HotStartManager.hpp"
 #include "transport/components/ReactionModule/MsxLegacyTransport.hpp"
 #include <cmath>
 #include "core/SWMMEngine.hpp"
@@ -685,7 +691,7 @@ TEST_F(ReactionsConfigTest, ExtendedSectionsValidateTransactionally) {
         "[REACTION_PATTERNS]\npulse inf\n",
         "[REACTION_SOURCES]\nMASS J0 W 1\n",
         "[REACTION_SOURCES]\nMASS J0 A 1 missing\n",
-        "[REACTION_SOURCES]\nSETPOINT J0 A 1\n",
+        "[REACTION_SOURCES]\nUNKNOWN J0 A 1\n",
         "[REACTION_SOURCES]\nCONC J0 A 1\nMASS J0 A 2\n",
         "[REACTION_REPORT]\nSPECIES missing YES\n",
         "[REACTION_REPORT]\nSPECIES A MAYBE\n",
@@ -876,4 +882,371 @@ TEST_F(ReactionsConfigTest, SubcatchmentExpressionsRejectUnavailableContextTrans
     ASSERT_EQ(swmm_reaction_species_add(engine_, "extra", 0, "MG", 0, 0), SWMM_OK);
     ASSERT_EQ(swmm_reaction_species_remove(engine_, 2), SWMM_OK);
     EXPECT_EQ(as_cpp_engine(engine_).context().reactions.subcatch_form.size(), 2u);
+}
+
+
+namespace {
+std::string continuationDeck(bool wet=false, const std::string& solver="LEGACY", double rate=.03) {
+    std::string text="[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nQUALITY_SOLVER "+solver+
+        "\nSTART_DATE 01/01/2026\nEND_DATE 01/01/2026\nEND_TIME 00:03:00\n"
+        "ROUTING_STEP .7\nMINIMUM_STEP .001\nVARIABLE_STEP 0\nREPORT_STEP 00:00:03\n"
+        "WET_STEP 00:00:10\nDRY_STEP 00:00:10\nIGNORE_GROUNDWATER YES\nIGNORE_2D YES\n"
+        "[STORAGE]\nS 0 5 1 FUNCTIONAL 0 0 100 0 0\n[OUTFALLS]\nO 0 FREE\n"
+        "[CONDUITS]\nC S O 100 .013 0 0\n[XSECTIONS]\nC CIRCULAR 1 0 0 0 1\n"
+        "[DWF]\nS FLOW .03\n[REACTION_OPTIONS]\nCOUPLING FULL\nRATE_UNITS SEC\nPATTERN_TIMESTEP 17\n"
+        "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n[REACTION_COEFFICIENTS]\nPARAMETER k "+std::to_string(rate)+
+        "\n[REACTION_PIPES]\nRATE A -k*A\nRATE B k*A\n[REACTION_TANKS]\nRATE A -k*A\nRATE B k*A\n"
+        "[REACTION_QUALITY]\nGLOBAL A 1\n[REACTION_PATTERNS]\np 1 0 2\n"
+        "[REACTION_SOURCES]\nMASS S A .2 p\n[REACTION_REPORT]\nSPECIES B NO\n[REPORT]\nNODES ALL\nLINKS ALL\nSUBCATCHMENTS ALL\n";
+    if(solver=="LAGRANGIAN")text.insert(text.find("START_DATE"),"DISPERSION RWPT\nRWPT_SEED 42\nQUALITY_STEP .2\n");
+    if(wet)text+="[RAINGAGES]\nRG INTENSITY 00:01 1 TIMESERIES rain\n[SUBCATCHMENTS]\nSC RG S 1 50 200 .5 0\n"
+        "[SUBAREAS]\nSC .01 .1 .05 .05 25 OUTLET\n[INFILTRATION]\nSC 3 .5 4 7 0\n"
+        "[TIMESERIES]\nrain 01/01/2026 00:00 1\nrain 01/01/2026 00:01 0\n"
+        "[REACTION_RAINFALL]\nA 2\n[REACTION_SUBCATCHMENTS]\nRATE A -k*A\nRATE B k*A\n";
+    return text;
+}
+std::string readContinuationFile(const std::string& path) {
+    std::ifstream file(path,std::ios::binary);return {std::istreambuf_iterator<char>(file),{}};
+}
+void startContinuation(openswmm::SWMMEngine& e,const std::string& prefix,const std::string& text) {
+    std::remove((prefix+".out").c_str());
+    {std::ofstream file(prefix+".inp");file<<text;}
+    if(e.open((prefix+".inp").c_str(),nullptr,(prefix+".out").c_str()) || e.initialize())throw std::runtime_error(e.context().error_message);
+    auto error=e.prepareOutputCheckpointing();if(!error.empty())throw std::runtime_error(error);
+    if(e.start(1))throw std::runtime_error(e.context().error_message);
+    error=e.enableCheckpointing();if(!error.empty())throw std::runtime_error(error);
+}
+void advanceContinuation(openswmm::SWMMEngine& e,double until) {
+    while(e.context().current_time<until) {double elapsed=0;if(e.step(&elapsed))throw std::runtime_error(e.context().error_message);}
+}
+}
+TEST(ReactionContinuation, NetworkAndWetPoolsRestoreClockInventoryLedgerAndBinaryOutput) {
+    for(const std::string solver:{"LEGACY","EULERIAN_ARD","LAGRANGIAN"})
+    for(const std::string method:{"EUL","RK5","ROS2","BDF2"}) for(bool wet:{false,true}) {
+        SCOPED_TRACE(solver);
+        SCOPED_TRACE(method);
+        SCOPED_TRACE(wet);
+        const auto base=std::string("_rx_continuation_")+(wet?"wet":"network")+solver+method;
+        auto model=continuationDeck(wet,solver);
+        model.insert(model.find("COUPLING FULL"),"SOLVER "+method+"\n");
+        openswmm::SWMMEngine source,target;
+        ASSERT_NO_THROW(startContinuation(source,base+"_source",model));
+        ASSERT_NO_THROW(startContinuation(target,base+"_target",model));
+        ASSERT_NO_THROW(advanceContinuation(source,41));
+        ASSERT_EQ(source.saveCheckpoint(base+".chk"),"");
+        ASSERT_EQ(target.loadCheckpoint(base+".chk"),"");
+        EXPECT_EQ(source.context().reactions.msx_node_conc,target.context().reactions.msx_node_conc);
+        EXPECT_EQ(source.context().reactions.surface.ponded_qual,target.context().reactions.surface.ponded_qual);
+        ASSERT_NO_THROW(advanceContinuation(source,150));
+        ASSERT_NO_THROW(advanceContinuation(target,150));
+        EXPECT_EQ(source.context().reactions.msx_node_conc,target.context().reactions.msx_node_conc);
+        EXPECT_EQ(source.context().reactions.msx_link_conc,target.context().reactions.msx_link_conc);
+        EXPECT_EQ(source.context().reactions.msx_ledger.inflow,target.context().reactions.msx_ledger.inflow);
+        EXPECT_EQ(source.context().reactions.msx_ledger.reacted,target.context().reactions.msx_ledger.reacted);
+        EXPECT_EQ(source.context().reactions.surface.led_reacted,target.context().reactions.surface.led_reacted);
+        ASSERT_EQ(source.saveCheckpoint(base+"_a.chk"),"");
+        ASSERT_EQ(target.saveCheckpoint(base+"_b.chk"),"");
+        EXPECT_EQ(readContinuationFile(base+"_a.chk"),readContinuationFile(base+"_b.chk"));
+        ASSERT_EQ(source.end(),0);
+        ASSERT_EQ(target.end(),0);
+        source.close();target.close();
+        EXPECT_EQ(readContinuationFile(base+"_source.out"),readContinuationFile(base+"_target.out"));
+    }
+}
+TEST(ReactionContinuation, ChangedChemistryAndTruncationRefuseWithoutChangingTheFreshSession) {
+    const std::string base="_rx_continuation_refusal";
+    openswmm::SWMMEngine source,changed,target;
+    ASSERT_NO_THROW(startContinuation(source,base+"_source",continuationDeck()));
+    ASSERT_NO_THROW(startContinuation(changed,base+"_changed",continuationDeck(false,"LEGACY",.04)));
+    ASSERT_NO_THROW(startContinuation(target,base+"_target",continuationDeck()));
+    ASSERT_NO_THROW(advanceContinuation(source,31));
+    ASSERT_EQ(source.saveCheckpoint(base+".chk"),"");
+    ASSERT_EQ(changed.saveCheckpoint(base+"_before.chk"),"");
+    EXPECT_FALSE(changed.loadCheckpoint(base+".chk").empty());
+    ASSERT_EQ(changed.saveCheckpoint(base+"_after.chk"),"");
+    EXPECT_EQ(readContinuationFile(base+"_before.chk"),readContinuationFile(base+"_after.chk"));
+    auto truncated=readContinuationFile(base+".chk");truncated.resize(truncated.size()-7);
+    {std::ofstream file(base+"_bad.chk",std::ios::binary);file<<truncated;}
+    ASSERT_EQ(target.saveCheckpoint(base+"_before.chk"),"");
+    EXPECT_FALSE(target.loadCheckpoint(base+"_bad.chk").empty());
+    ASSERT_EQ(target.saveCheckpoint(base+"_after.chk"),"");
+    EXPECT_EQ(readContinuationFile(base+"_before.chk"),readContinuationFile(base+"_after.chk"));
+    EXPECT_EQ(target.loadCheckpoint(base+".chk"),"");
+}
+
+TEST_F(ReactionsConfigTest, WallGeometryExchangeConservesMassAcrossAreaUnitsWetDryAndBarrels) {
+    for(const auto units:{"FT2","M2","CM2"}) {
+        SCOPED_TRACE(units);
+        const double af=std::string(units)=="M2"?.09290304:std::string(units)=="CM2"?929.0304:1.;
+        const std::string tag=std::string("_rx_wall_geometry_")+units;
+        cleanup_prefixes_.push_back(tag);
+        std::ostringstream rate;rate<<std::setprecision(17)<<.01/af;
+        write_rxn((tag+".rxn").c_str(),"[REACTION_OPTIONS]\nWALL_GEOMETRY YES\nCOUPLING FULL\nRATE_UNITS SEC\nAREA_UNITS "+std::string(units)+
+            "\n[REACTION_SPECIES]\nBULK A MG\nWALL W MG\n[REACTION_COEFFICIENTS]\nCONSTANT k "+rate.str()+
+            "\n[REACTION_PIPES]\nRATE A -k*A*AV\nRATE W k*A\n[REACTION_TANKS]\nRATE A -k*A*AV\nRATE W k*A\n"
+            "[REACTION_WALLS]\nNODE J0 "+std::to_string(100*af)+"\n[REACTION_QUALITY]\nGLOBAL A 2\n");
+        write_deck((tag+".inp").c_str(),"org.hydrocouple.openswmm.reactions config=\""+tag+".rxn\"");
+        if(engine_)swmm_engine_destroy(engine_);
+        engine_=swmm_engine_create();
+        ASSERT_EQ(open_deck((tag+".inp").c_str(),(tag+".rpt").c_str(),(tag+".out").c_str()),SWMM_OK);
+        ASSERT_EQ(swmm_engine_initialize(engine_),SWMM_OK);
+        auto& c=as_cpp_engine(engine_).context();auto& r=c.reactions;
+        const int cr=c.link_subtypes.conduit_row(0);
+        ASSERT_GE(cr,0);
+        c.link_subtypes.conduits.barrels[cr]=2;
+        const double full=c.links.xsect_y_full[0];
+        const double length=c.link_subtypes.conduits.true_length[cr];
+        const double full_volume=c.links.xsect_a_full[0]*length*2;
+        const double ref=openswmm::transport::reactionWallArea(c,true,0,true);
+        // Native section geometry uses the engine's rounded pi constant.
+        EXPECT_NEAR(ref,3.141592653589793*full*length*2*af,ref*1.e-9);
+        for(const double fraction:{1.,.5}) {
+            SCOPED_TRACE(fraction);
+            c.links.depth[0]=full*fraction;c.links.volume[0]=full_volume*fraction;
+            const double litres=c.links.volume[0]*28.317;
+            const double before=r.msx_link_conc[0]*litres+r.msx_link_conc[1]*ref;
+            openswmm::transport::reactLegacyLinks(c,10);
+            EXPECT_NEAR(r.msx_link_conc[0]*litres+r.msx_link_conc[1]*ref,before,1.e-9*before);
+            EXPECT_GT(r.msx_link_conc[1],0);
+            if(fraction==1.)EXPECT_NEAR(r.msx_link_conc[0],2*std::exp(-.01/af*ref/litres*10),1.e-8);
+        }
+        const auto wall=r.msx_link_conc[1];c.links.volume[0]=0;c.links.depth[0]=0;
+        openswmm::transport::reactLegacyLinks(c,10);EXPECT_EQ(r.msx_link_conc[1],wall);
+        c.links.volume[0]=full_volume;c.links.depth[0]=full;
+        const double before=r.msx_link_conc[0]*full_volume*28.317+wall*ref;
+        openswmm::transport::reactLegacyLinks(c,10);
+        EXPECT_NEAR(r.msx_link_conc[0]*full_volume*28.317+r.msx_link_conc[1]*ref,before,1.e-9*before);
+        c.nodes.volume[0]=c.nodes.old_volume[0]=100;
+        const double node_before=r.msx_node_conc[0]*100*28.317+r.msx_node_conc[1]*100*af;
+        openswmm::transport::reactLegacyNodes(c,10);
+        EXPECT_NEAR(r.msx_node_conc[0]*100*28.317+r.msx_node_conc[1]*100*af,node_before,node_before*1.e-9);
+        const auto text=openswmm::transport::serializeReactionSystem(c);
+        EXPECT_NE(text.find("[REACTION_WALLS]"),std::string::npos);
+        EXPECT_NE(text.find("WALL_GEOMETRY"),std::string::npos);
+    }
+}
+
+namespace {
+std::string nodeLidChemistry(bool richards=false) {
+    auto text=continuationDeck();
+    auto replace=[&](const std::string& from,const std::string& to){const auto i=text.find(from);if(i==std::string::npos)throw std::runtime_error(from);text.replace(i,from.size(),to);};
+    replace("S 0 5 1 FUNCTIONAL 0 0 100 0 0","S 0 2 1 FUNCTIONAL 0 0 100 0 0");
+    replace("[DWF]\nS FLOW .03\n","");
+    replace("[REACTION_SOURCES]\nMASS S A .2 p\n","");
+    text+="[LID_CONTROLS]\nStack NODE\nStack SURFACE 6 .1\nStack MEDIA 12 .45 .2 .08 2 10 3\nStack AGGREGATE 6 .4 100\nStack BOTTOM .5 0\n[LID_NODES]\nS Stack 10\n"
+          "[REACTION_LIDS]\nCONTROL Stack TRANSPORT\nCONTROL Stack LAYER 0 RATE A -k*A\nCONTROL Stack LAYER 0 RATE B k*A\n";
+    if(richards)text+="[LID_RICHARDS]\nStack OPTIONS 4 1e-7 1e-5 30\nStack 2 .03 2 1.6 .5 .0001\nStack 3 .03 2 1.6 .5 .0001\n";
+    return text;
+}
+}
+TEST(ReactionLidNodes, BulkLayerConversionAndRestartPreserveRetainedAndMobileInventories) {
+    for(bool richards:{false,true}) {
+        SCOPED_TRACE(richards);
+        const auto tag=std::string("_rx_lid_nodes_")+(richards?"richards":"bucket");
+        openswmm::SWMMEngine a,b;
+        ASSERT_NO_THROW(startContinuation(a,tag+"_a",nodeLidChemistry(richards)));
+        ASSERT_NO_THROW(startContinuation(b,tag+"_b",nodeLidChemistry(richards)));
+        ASSERT_FALSE(a.context().reactions.lid.node_mass.empty());
+        double initial=0;for(double x:a.context().reactions.lid.node_mass[0])initial+=x;
+        EXPECT_GT(initial,0);
+        ASSERT_NO_THROW(advanceContinuation(a,20));
+        double product=0;const auto& mass=a.context().reactions.lid.node_mass[0];
+        for(std::size_t i=1;i<mass.size();i+=2)product+=mass[i];
+        EXPECT_GT(product,0);
+        ASSERT_EQ(a.saveCheckpoint(tag+".chk"),"");
+        ASSERT_EQ(b.loadCheckpoint(tag+".chk"),"");
+        EXPECT_EQ(a.context().reactions.lid.node_mass,b.context().reactions.lid.node_mass);
+        ASSERT_NO_THROW(advanceContinuation(a,60));
+        ASSERT_NO_THROW(advanceContinuation(b,60));
+        EXPECT_EQ(a.context().reactions.lid.node_mass,b.context().reactions.lid.node_mass);
+        EXPECT_EQ(a.context().reactions.msx_node_conc,b.context().reactions.msx_node_conc);
+        EXPECT_EQ(a.context().reactions.msx_ledger.reacted,b.context().reactions.msx_ledger.reacted);
+        const auto& c=a.context();const auto& ledger=c.reactions.msx_ledger;
+        EXPECT_NEAR(ledger.reacted[0]+ledger.reacted[1],0,1.e-9);
+    }
+}
+
+namespace {
+std::string fullLidChemistry(const std::string& solver="LEGACY",bool partial=false) {
+    auto text=continuationDeck(true,solver);
+    auto replace=[&](const std::string& from,const std::string& to){const auto i=text.find(from);if(i==std::string::npos)throw std::runtime_error(from);text.replace(i,from.size(),to);};
+    replace("[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n","[REACTION_SPECIES]\nBULK A MG\nBULK B MG\nBULK tracer MG\n");
+    replace("[REACTION_PIPES]\nRATE A -k*A\nRATE B k*A\n[REACTION_TANKS]\nRATE A -k*A\nRATE B k*A\n","");
+    replace("[REACTION_SOURCES]\nMASS S A .2 p\n","");
+    replace("GLOBAL A 1\n","GLOBAL A 1\nGLOBAL tracer 1\n");
+    replace("[REACTION_RAINFALL]\nA 2\n","[REACTION_RAINFALL]\nA 2\ntracer 2\n");
+    text+="[LID_CONTROLS]\nBC BC\nBC SURFACE 6 .1 .1 1 0\nBC SOIL 24 .45 .2 .1 .5 10 3\nBC STORAGE 12 .4 0 0\nBC DRAIN .5 .5 0 0\n"
+          "BC REMOVALS A 10\nBC REMOVALS B 10\nBC REMOVALS tracer 10\n[LID_USAGE]\nSC BC 1 ";
+    text+=partial?"4000":"43560";
+    text+=" 200 50 0 0 * S 0\n[REACTION_LIDS]\nCONTROL BC TRANSPORT\nCONTROL BC LAYER 0 RATE A -k*A\nCONTROL BC LAYER 0 RATE B k*A\n";
+    return text;
+}
+}
+TEST(ReactionLidUnits, FullCoverageLayerMassReceiptsAndRestartAcrossNetworkSolvers) {
+    for(const std::string solver:{"LEGACY","EULERIAN_ARD","LAGRANGIAN"}) {
+        SCOPED_TRACE(solver);
+        const auto tag="_rx_lid_units_"+solver;
+        openswmm::SWMMEngine a,b;
+        ASSERT_NO_THROW(startContinuation(a,tag+"_a",fullLidChemistry(solver)));
+        ASSERT_NO_THROW(startContinuation(b,tag+"_b",fullLidChemistry(solver)));
+        ASSERT_FALSE(a.context().reactions.lid.mass.empty());
+        ASSERT_NO_THROW(advanceContinuation(a,20));
+        const auto& initial=a.context().reactions.lid.mass;
+        double product=0;for(std::size_t i=0;i+2<initial.size();i+=3) {
+            EXPECT_NEAR(initial[i]+initial[i+1],initial[i+2],1.e-9*std::max(1.,initial[i+2]));product+=initial[i+1];
+        }
+        EXPECT_GT(product,0);
+        ASSERT_EQ(a.saveCheckpoint(tag+".chk"),"");
+        ASSERT_EQ(b.loadCheckpoint(tag+".chk"),"");
+        EXPECT_EQ(a.context().reactions.lid.mass,b.context().reactions.lid.mass);
+        ASSERT_NO_THROW(advanceContinuation(a,150));
+        ASSERT_NO_THROW(advanceContinuation(b,150));
+        const auto& c=a.context();const auto& s=c.reactions.surface;
+        EXPECT_EQ(c.reactions.lid.mass,b.context().reactions.lid.mass);
+        EXPECT_EQ(c.reactions.msx_node_conc,b.context().reactions.msx_node_conc);
+        EXPECT_EQ(s.led_reacted,b.context().reactions.surface.led_reacted);
+        EXPECT_GT(s.led_reacted[0],0);EXPECT_GT(s.led_bmp_removal[0]+s.led_bmp_removal[1],0);
+        for(int sp=0;sp<3;++sp) {
+            const double in=s.led_init_buildup[sp]+s.led_buildup[sp]+s.led_wet_deposition[sp]+s.led_reaction_clamped[sp];
+            const double out=s.led_infil_loss[sp]+s.led_bmp_removal[sp]+s.led_runoff_load[sp]+s.led_reacted[sp]+openswmm::msxsurf::remainingBuildup(c,sp);
+            EXPECT_NEAR(in,out,1.e-9*std::max(1.,in));
+        }
+        EXPECT_GT(c.reactions.msx_node_conc[1],0);
+        ASSERT_EQ(a.saveCheckpoint(tag+"_final_a.chk"),"");
+        ASSERT_EQ(b.saveCheckpoint(tag+"_final_b.chk"),"");
+        EXPECT_EQ(readContinuationFile(tag+"_final_a.chk"),readContinuationFile(tag+"_final_b.chk"));
+    }
+}
+TEST(ReactionLidUnits, PartialCoverageRefusesAndDryLayerDoesNotInventOrLoseInventory) {
+    openswmm::SWMMEngine partial;
+    EXPECT_THROW(startContinuation(partial,"_rx_lid_partial",fullLidChemistry("LEGACY",true)),std::runtime_error);
+    EXPECT_NE(partial.context().error_message.find("full subcatchment coverage"),std::string::npos);
+    openswmm::SWMMEngine e;ASSERT_NO_THROW(startContinuation(e,"_rx_lid_zero",fullLidChemistry()));
+    double mass[]={1,0,1};std::vector<double> reacted,clamped;
+    EXPECT_TRUE(openswmm::msxlid::reactPool(e.context(),0,1,0,mass,100,20,reacted,clamped));
+    EXPECT_EQ(mass[0],1);EXPECT_EQ(mass[1],0);
+    EXPECT_TRUE(openswmm::msxlid::reactPool(e.context(),0,1,1.e-20,mass,100,20,reacted,clamped));
+    EXPECT_EQ(mass[0],1);EXPECT_EQ(mass[1],0);
+    std::unique_ptr<openswmm::HotStartFile> state_only(openswmm::HotStartManager::save(e.context(),"_rx_lid_state_only.hsf"));
+    EXPECT_FALSE(state_only);
+    EXPECT_NE(openswmm::HotStartManager::last_io_error().find("full native engine checkpoint"),std::string::npos);
+    EXPECT_EQ(e.saveNativeHotstart("_rx_lid_native.hsf"),"");
+}
+
+#include "transport/components/ReactionModule/ReactionSources.hpp"
+TEST(ReactionSources, BoostersDoseMixedWaterWithoutRemovingMassOrDosingStagnantStorage) {
+    openswmm::SimulationContext c;auto& r=c.reactions;
+    r.species_name={"A"};r.sources.push_back({false,0,0,-1,2,1});
+    EXPECT_DOUBLE_EQ(openswmm::transport::reactionBoosterMass(c,0,0,100,100,10),20);
+    EXPECT_DOUBLE_EQ(openswmm::transport::reactionBoosterMass(c,0,0,100,100,0),0);
+    r.sources[0].booster=2;
+    EXPECT_DOUBLE_EQ(openswmm::transport::reactionBoosterMass(c,0,0,100,100,10),100);
+    EXPECT_DOUBLE_EQ(openswmm::transport::reactionBoosterMass(c,0,0,300,100,10),0);
+    EXPECT_DOUBLE_EQ(openswmm::transport::reactionBoosterMass(c,0,0,0,0,10),0);
+    r.pattern_timestep=17;r.source_patterns.push_back({"p",{1,0,2}});r.sources[0].pattern=0;c.current_time=17;
+    EXPECT_DOUBLE_EQ(openswmm::transport::reactionBoosterMass(c,0,0,0,100,10),0);
+    c.current_time=34;
+    EXPECT_DOUBLE_EQ(openswmm::transport::reactionBoosterMass(c,0,0,100,100,10),300);
+    EXPECT_DOUBLE_EQ(r.booster_mass[0],420);
+}
+TEST(ReactionSources, BothBoostersReachAllSolversAndContinueExactlyWithPatterns) {
+    for(const std::string solver:{"LEGACY","EULERIAN_ARD","LAGRANGIAN"})for(const std::string kind:{"FLOWPACED","SETPOINT"}) {
+        SCOPED_TRACE(solver+kind);
+        auto model=continuationDeck(false,solver,0);
+        auto pos=model.find("MASS S A .2 p");model.replace(pos,std::string("MASS S A .2 p").size(),kind+" S A 2 p");
+        const std::string base="_rx_booster_"+solver+kind;
+        openswmm::SWMMEngine a,b;
+        ASSERT_NO_THROW(startContinuation(a,base+"_a",model));
+        ASSERT_NO_THROW(startContinuation(b,base+"_b",model));
+        ASSERT_NO_THROW(advanceContinuation(a,41));
+        ASSERT_EQ(a.saveCheckpoint(base+".chk"),"");
+        ASSERT_EQ(b.loadCheckpoint(base+".chk"),"");
+        ASSERT_NO_THROW(advanceContinuation(a,100));
+        ASSERT_NO_THROW(advanceContinuation(b,100));
+        ASSERT_EQ(a.context().reactions.booster_mass.size(),2u);
+        EXPECT_GT(a.context().reactions.booster_mass[0],0);
+        openswmm::SWMMEngine reference;
+        auto unboosted=model;const auto source=unboosted.find(kind+" S A 2 p");
+        unboosted.replace(source,(kind+" S A 2 p").size(),kind+" S A 0 p");
+        ASSERT_NO_THROW(startContinuation(reference,base+"_reference",unboosted));
+        ASSERT_NO_THROW(advanceContinuation(reference,100));
+        EXPECT_GT(a.context().reactions.msx_node_conc[0],reference.context().reactions.msx_node_conc[0]);
+        EXPECT_EQ(a.context().reactions.booster_mass,b.context().reactions.booster_mass);
+        ASSERT_EQ(a.saveCheckpoint(base+"_a.chk"),"");
+        ASSERT_EQ(b.saveCheckpoint(base+"_b.chk"),"");
+        EXPECT_EQ(readContinuationFile(base+"_a.chk"),readContinuationFile(base+"_b.chk"));
+        ASSERT_EQ(a.end(),0);
+        ASSERT_EQ(b.end(),0);a.close();b.close();
+        EXPECT_EQ(readContinuationFile(base+"_a.out"),readContinuationFile(base+"_b.out"));
+    }
+}
+TEST(ReactionContinuation, SelectedWetAndDryLanduseInventoriesContinueTogether) {
+    auto model=continuationDeck(true);
+    const auto pos=model.find("[REACTION_SUBCATCHMENTS]");model.erase(pos);
+    model+="[REACTION_SUBCATCHMENTS]\nSUBCATCHMENT SC RATE A -k*A\nSUBCATCHMENT SC RATE B k*A\n"
+           "[LANDUSES]\nUrban 0 0 0\n[COVERAGES]\nSC Urban 100\n[LOADINGS]\nSC A 10\n"
+           "[REACTION_BUILDUP]\nLANDUSE Urban RATE A -k*A\nSUBCATCHMENT SC LANDUSE Urban RATE B k*A\n";
+    openswmm::SWMMEngine a,b;
+    ASSERT_NO_THROW(startContinuation(a,"_rx_surface_both_a",model));
+    ASSERT_NO_THROW(startContinuation(b,"_rx_surface_both_b",model));
+    ASSERT_NO_THROW(advanceContinuation(a,41));
+    ASSERT_EQ(a.saveCheckpoint("_rx_surface_both.chk"),"");
+    ASSERT_EQ(b.loadCheckpoint("_rx_surface_both.chk"),"");
+    ASSERT_NO_THROW(advanceContinuation(a,100));
+    ASSERT_NO_THROW(advanceContinuation(b,100));
+    const auto& s=a.context().reactions.surface;
+    ASSERT_GT(s.buildup.size(),1u);EXPECT_GT(s.buildup[1],0);
+    EXPECT_EQ(s.buildup,b.context().reactions.surface.buildup);
+    EXPECT_EQ(s.ponded_qual,b.context().reactions.surface.ponded_qual);
+    ASSERT_EQ(a.saveCheckpoint("_rx_surface_both_a.chk"),"");
+    ASSERT_EQ(b.saveCheckpoint("_rx_surface_both_b.chk"),"");
+    EXPECT_EQ(readContinuationFile("_rx_surface_both_a.chk"),readContinuationFile("_rx_surface_both_b.chk"));
+}
+TEST(ReactionLidUnits, PavementAndStorageKeepSeparateConservativeReactors) {
+    auto model=fullLidChemistry();
+    model.replace(model.find("200 50 0 0 * S"),std::string("200 50 0 0 * S").size(),"200 100 0 0 * S");
+    model.replace(model.find("rain 01/01/2026 00:00 1"),std::string("rain 01/01/2026 00:00 1").size(),"rain 01/01/2026 00:00 100");
+    model.replace(model.find("BC BC\n"),6,"BC PP\nBC PAVEMENT 3 .2 0 1 0 0 0\n");
+    model+="CONTROL BC LAYER 2 RATE A -2*k*A\nCONTROL BC LAYER 2 RATE B 2*k*A\n"
+           "CONTROL BC LAYER 4 RATE A -0.5*k*A\nCONTROL BC LAYER 4 RATE B 0.5*k*A\n";
+    openswmm::SWMMEngine a,b;
+    ASSERT_NO_THROW(startContinuation(a,"_rx_pavement_a",model));
+    ASSERT_NO_THROW(startContinuation(b,"_rx_pavement_b",model));
+    ASSERT_NO_THROW(advanceContinuation(a,20));
+    EXPECT_GT(a.context().reactions.lid.mass[4],0) << a.context().reactions.lid.old_water[0] << "," << a.context().reactions.lid.old_water[1] << "," << a.context().reactions.lid.old_water[2] << "," << a.context().reactions.lid.old_water[3];
+    ASSERT_EQ(a.saveCheckpoint("_rx_pavement.chk"),"");
+    ASSERT_EQ(b.loadCheckpoint("_rx_pavement.chk"),"");
+    ASSERT_NO_THROW(advanceContinuation(a,150));
+    ASSERT_NO_THROW(advanceContinuation(b,150));
+    const auto& m=a.context().reactions.lid.mass;
+    ASSERT_EQ(m.size(),12u);EXPECT_GT(m[10],0);
+    for(int layer=0;layer<4;++layer)EXPECT_NEAR(m[layer*3]+m[layer*3+1],m[layer*3+2],1e-9*std::max(1.,m[layer*3+2]));
+    EXPECT_EQ(m,b.context().reactions.lid.mass);
+    const auto& c=a.context();const auto& s=c.reactions.surface;
+    for(int sp=0;sp<3;++sp) {
+        const double input=s.led_init_buildup[sp]+s.led_wet_deposition[sp]+s.led_reaction_clamped[sp];
+        const double accounted=openswmm::msxsurf::remainingBuildup(c,sp)+s.led_infil_loss[sp]+s.led_bmp_removal[sp]+s.led_runoff_load[sp]+s.led_reacted[sp];
+        EXPECT_NEAR(input,accounted,1e-9*std::max(1.,input));
+        // Interpolation between adjacent drain rates may retain a partial
+        // interval, but cannot multiply the authored export at every step.
+        const double delivered=c.reactions.msx_ledger.inflow[sp]*28.317*s.mcf[sp];
+        EXPECT_LE(delivered,2*s.led_runoff_load[sp]+1e-12);
+    }
+}
+TEST(ReactionContinuation, ExternalReactionComponentFileUsesTheSameRestartProfile) {
+    auto model=continuationDeck();const auto begin=model.find("[REACTION_OPTIONS]"),end=model.find("[REPORT]");
+    {std::ofstream rx("_rx_external.rxn");rx<<model.substr(begin,end-begin);}
+    model=model.substr(0,begin)+"[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions config=\"_rx_external.rxn\"\n"+model.substr(end);
+    openswmm::SWMMEngine a,b;
+    ASSERT_NO_THROW(startContinuation(a,"_rx_external_a",model));
+    ASSERT_NO_THROW(startContinuation(b,"_rx_external_b",model));
+    ASSERT_NO_THROW(advanceContinuation(a,31));
+    ASSERT_EQ(a.saveCheckpoint("_rx_external.chk"),"");
+    ASSERT_EQ(b.loadCheckpoint("_rx_external.chk"),"");
+    ASSERT_NO_THROW(advanceContinuation(a,100));
+    ASSERT_NO_THROW(advanceContinuation(b,100));
+    EXPECT_EQ(a.context().reactions.msx_node_conc,b.context().reactions.msx_node_conc);
+    ASSERT_EQ(a.end(),0);
+    ASSERT_EQ(b.end(),0);a.close();b.close();
+    EXPECT_EQ(readContinuationFile("_rx_external_a.out"),readContinuationFile("_rx_external_b.out"));
 }

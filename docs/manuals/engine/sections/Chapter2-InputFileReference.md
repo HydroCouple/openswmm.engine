@@ -3569,6 +3569,7 @@ SOLVER        EUL / RK5 / ROS2 / BDF2
 COUPLING      NONE / FULL
 RATE_UNITS    SEC / MIN / HR / DAY
 AREA_UNITS    FT2 / M2 / CM2
+WALL_GEOMETRY YES / NO
 TIMESTEP      value
 PATTERN_TIMESTEP value
 ATOL          value
@@ -3583,7 +3584,8 @@ Parameters:
 | `SOLVER` | Integrator for the RATE species. RK5 is explicit and cheapest for non-stiff kinetics; ROS2 and BDF2 are implicit and are the remedy when RK5 reports its substep cap. | EUL, RK5, ROS2 or BDF2 | RK5 |
 | `COUPLING` | NONE integrates one RATE species at a time with the others frozen at their start-of-step values (EPANET-MSX semantics); FULL integrates all RATE species simultaneously. A system with a single RATE species is always coupled. | NONE or FULL | NONE |
 | `RATE_UNITS` | Time unit of every RATE expression. The evaluated rate is multiplied by 1, 1/60, 1/3600 or 1/86400 to give a per-second rate. | SEC, MIN, HR or DAY | HR |
-| `AREA_UNITS` | Area unit recorded for wall-species expressions. | FT2, M2 or CM2 | FT2 |
+| `AREA_UNITS` | Area basis for WALL geometry and dry buildup density. | FT2, M2 or CM2 | FT2 |
+| `WALL_GEOMETRY` | Enable contact-area geometry and AV. Requires FULL coupling for WALL species. | YES or NO | NO |
 | `TIMESTEP` | Reaction step; 0 means follow the quality step. | value, 0 or greater | 0 |
 | `PATTERN_TIMESTEP` | Cyclic source-pattern interval, independent of RATE_UNITS. | seconds, > 0 | 3600 |
 | `ATOL` | Absolute tolerance of the integrator, used for every species that does not carry its own in `[REACTION_SPECIES]`. | value, greater than 0 | 1.0e-6 |
@@ -3824,6 +3826,8 @@ Format:
 ```
 CONC   Node   Species   Concentration   [Pattern]
 MASS   Node   Species   MassRate        [Pattern]
+FLOWPACED Node Species Concentration   [Pattern]
+SETPOINT  Node Species Concentration   [Pattern]
 ```
 
 `CONC` multiplies the concentration by positive external and dry-weather
@@ -3833,8 +3837,9 @@ project flow units. The engine divides it by 28.317 litres/ft³ at the load
 seam. These rows add to any `[INFLOWS]` and `[DWF]` species loads; avoid
 specifying the same intended load in both places. Values must be finite and
 nonnegative. Only BULK species are accepted; duplicate node/species rows,
-unknown nodes, species or patterns, and unsupported source kinds (including
-SETPOINT and FLOWPACED) are errors. Omitted pattern or `*` means constant.
+unknown nodes, species or patterns, and unknown source kinds are errors. Omitted pattern or `*` means constant.
+
+FLOWPACED adds the specified concentration times arriving water volume to the mixed mass. Retained tank water is not dosed again merely because it remains in storage. SETPOINT adds the deficit needed to raise the complete mixed concentration to its target, only during positive water exchange; concentrations above the target are retained. Both require a physical mixing node and do nothing without arriving water or a wet mixed store. ARD applies its booster after each explicit node exchange, so the next face update uses that concentration. Patterns use the routing interval clock. The continuity report lists actual cumulative booster injection in declared species mass units. These semantics follow the [EPA MSX manual](https://nepis.epa.gov/Exe/ZyPURL.cgi?Dockey=P10188CK.TXT).
 
 ### Component section: [REACTION_PARAMETERS] {#engine_manual_sect_REACTION_PARAMETERS}
 
@@ -3904,7 +3909,10 @@ Defines a separate wet-pool reactor for each non-LID subcatchment.
 Format:
 ```
 RATE / EQUIL / FORMULA   Species   Expression
+SUBCATCHMENT Name RATE / EQUIL / FORMULA Species Expression
 ```
+
+Global rows apply everywhere; a named row overrides that species on that subcatchment. Without global rows, unselected subcatchments retain their ordinary surface-quality closure. Duplicate named subcatchment/species rows are errors.
 
 Only BULK targets and BULK dependencies are supported. Constants, global
 PARAMETER coefficients, terms, `DT` (seconds) and `TEMP` (degrees C) are
@@ -3928,11 +3936,81 @@ overshoots are clamped with separate reaction-loss and clamp-addition rows;
 failed or negative algebraic steps retain the unreacted mixed inventory and
 warn. Reaction mass changes are recorded in runoff quality continuity.
 
-Dry land-use buildup/washoff does not react in this pool. Network pipe/tank
-laws do not substitute for these expressions. Configurations combining this
-scope with subcatchment LID units are refused at initialization until a
-conservative layer adapter is available. Exact reaction checkpoint/output
-continuation remains unsupported; hotstart inventory loading is separate.
+Dry buildup has its own scope below. Network pipe/tank laws do not substitute
+for surface laws. LID units must explicitly opt into their layer adapter.
+Full native checkpoints carry wet/dry inventories in the qualified 1D profile.
+
+### Component section: [REACTION_BUILDUP] {#engine_manual_sect_REACTION_BUILDUP}
+
+Purpose: \status{Implemented}
+React the dry inventory on a covered land-use patch before accrual, sweeping
+and washoff. This is a first-order operator split.
+
+```
+LANDUSE Name RATE / EQUIL / FORMULA Species Expression
+SUBCATCHMENT Name LANDUSE Name RATE / EQUIL / FORMULA Species Expression
+```
+
+A named-subcatchment row overrides a global land-use row for that species.
+Targets/dependencies must be BULK; global coefficients, terms, DT and fallback
+TEMP are available. Values are declared species mass per AREA_UNITS. Each
+species' area/curb normalizer and project mass conversion are applied before
+and after integration, so mixed normalizers share one physical patch area.
+A zero curb normalizer cannot retain reaction products: the solve is refused
+with a warning and original inventory retained. Failed algebraic solves and
+RATE clamps follow wet-pool containment and explicit mass accounting. Reaction
+products persist even without a buildup accrual function. Equal mass-unit,
+unit-yield networks conserve parent plus product; different units require
+explicit conversion in the authored law.
+
+### Component section: [REACTION_WALLS] {#engine_manual_sect_REACTION_WALLS}
+
+```
+NODE / LINK Name ContactArea
+```
+
+Areas must be finite/nonnegative in AREA_UNITS and require WALL_GEOMETRY YES.
+Conduits without an override use actual wetted perimeter times physical length
+times barrel count. Their fixed reference is full-section contact. Storage-node
+WALL tank laws require explicit NODE area; other storage shape is not inferred.
+AV is active contact area / litres of water. WALL density is declared mass /
+reference area. WALL RATE expressions scale by active/reference contact; dry
+and sub-litre geometry-mode pools retain attached mass and skip kinetics.
+WALL EQUIL/FORMULA projections are refused because no conservative wet/dry
+area projection is defined. ARD WALL systems use LEGACY; LARD refuses WALL.
+
+### Component section: [REACTION_LIDS] {#engine_manual_sect_REACTION_LIDS}
+
+```
+CONTROL Name TRANSPORT
+CONTROL Name LAYER Number RATE / EQUIL / FORMULA Species Expression
+```
+
+TRANSPORT opts a control into BULK mobile/retained species inventories; a law
+also opts it in. Layer 0 supplies defaults; a specific layer overrides that
+species. Conventional layers are 1 surface, 2 pavement, 3 soil, 4 storage.
+Storage-node layers use authored stack numbers. Missing layers do not react.
+Only BULK references, global coefficients, terms, DT and beginning-of-step
+published layer TEMP (fallback TEMPERATURE) are supported. Laws apply per
+retained pool and mobile layer share; pipe/tank laws do not replace them.
+
+Storage-node bucket/Richards reactors require LEGACY quality and non-Mesh
+bottoms. Conventional units require full subcatchment coverage (the hydraulic
+0.1% area tolerance) and every unit to opt in; uncovered barrels are permitted.
+Partial capture, covered barrels, WALL species and 2D-owned reactive conventional
+units are refused. Transport consumes accepted hydraulic transfers with donor
+limits, water-only evaporation, separate infiltration/surface/drain receipts,
+BMP removals and dry residual mass. Pools at or below one litre do not react;
+zero-storage throughflow layers transport mass without inventing a reactor.
+Bioretention and permeable-pavement stacks, plus bucket/Richards storage nodes,
+have explicit conservation/restart checks; wider configurations still need
+qualification. State-only and legacy routing hotstarts refuse these inventories;
+use a full native engine checkpoint.
+
+Full reaction continuation currently qualifies native CPU 1D chemistry without
+pollutants, heat/age, active 2D surface chemistry, subsurface laws or detailed
+ARD/LID output. It preserves source clocks, inventories, ledgers and native
+output prefixes; changed chemistry or corrupt state is refused before install.
 
 ### Component section: [HEAT_SOURCES] {#engine_manual_sect_HEAT_SOURCES}
 

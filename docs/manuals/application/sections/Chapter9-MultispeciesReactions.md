@@ -107,26 +107,36 @@ SPECIES ALL NO
 SPECIES CL2 YES
 ```
 
-`[REACTION_SOURCES]` accepts CONC and MASS node loads, optionally modulated by
-cyclic `[REACTION_PATTERNS]`. `[REACTION_PARAMETERS]` overrides PARAMETER
-coefficients on named nodes and links. Their grammar and units are documented
-in the input reference. SETPOINT and FLOWPACED sources are still refused.
+`[REACTION_SOURCES]` accepts CONC, MASS, FLOWPACED and SETPOINT sources,
+optionally modulated by cyclic `[REACTION_PATTERNS]`. MASS uses declared mass
+units per second. FLOWPACED doses arriving water; SETPOINT raises the mixed
+concentration during positive water exchange and never removes species.
+`[REACTION_PARAMETERS]` overrides PARAMETER coefficients on nodes and links.
 
-`[REACTION_SUBCATCHMENTS]` now provides a wet-pool reactor on non-LID
-subcatchments. It mixes retained water with rain and run-on, reacts on the
-runoff cadence, then allocates mass to infiltration, runoff and storage.
-Dry buildup/washoff is separate and does not react in that pool. LID underdrain removals and source delivery also do not implement
-reaction transport within each porous layer; storage-node LIDs with a
-reaction system remain refused until their layer adapter is available.
+`[REACTION_SUBCATCHMENTS]` supplies global or named-subcatchment wet laws.
+Its first-order split mixes retained mass with rain/run-on, reacts, then
+allocates infiltration, runoff and storage. `[REACTION_BUILDUP]` independently
+reacts dry land-use inventories, in declared mass per AREA_UNITS, before
+accrual, sweeping and washoff. Check WET_STEP/DRY_STEP sensitivity.
 
-LEGACY keeps WALL state attached to its own element; ARD falls back to
-LEGACY for WALL systems and LAGRANGIAN refuses them. No binding supplies
-wall area/volume variables yet, so a geometry-dependent wall-demand model
-is not qualified. LEGACY and LAGRANGIAN tank kinetics are skipped at zero
-and sub-litre water volumes; ARD uses its mass-store threshold of 1e-9 ft³.
-A shared threshold or complete dry/refill equivalence across solvers has not
-been qualified. Exact native checkpoint/output continuation for reaction models
-remains unsupported; hotstart state loading is a separate capability.
+`[REACTION_LIDS]` opts controls into separate BULK layer reactors and retained
+inventories. Conventional units require full coverage and every unit to opt
+in. Storage-node bucket/Richards reactors require LEGACY quality and a non-Mesh
+bottom. Partial capture, covered barrels, WALL chemistry and 2D-owned
+conventional units remain refused. Full native checkpoints carry these
+inventories; state-only hotstarts refuse them.
+
+`WALL_GEOMETRY YES` enables AV (AREA_UNITS/litre). Conduits derive contact
+from wetted perimeter, physical length and barrels; storage uses explicit
+`[REACTION_WALLS]` areas. WALL density refers to fixed reference area, with
+wetted-fraction kinetics and retained dry mass. ARD falls back to LEGACY for
+WALL systems; LAGRANGIAN refuses them. LEGACY/LAGRANGIAN tank kinetics skip
+zero/sub-litre water; ARD retains its 1e-9 ft³ store threshold.
+
+Exact native checkpoint/output continuation is checked for CPU 1D network,
+wet/dry subcatchment and qualified LID chemistry. Heat/age, active 2D chemistry,
+subsurface laws, pollutants and detailed ARD/LID result streams remain outside
+this profile. Native hotstart inventory loading has a separate contract.
 
 ## Where to go next
 

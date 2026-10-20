@@ -53,7 +53,7 @@ Its sections are:
 `[REACTION_SUBCATCHMENTS]` supplies an explicit wet-pool scope for non-LID
 subcatchments. Its mix/react/allocate splitting, conservative residual-mass
 closure and restricted expression context are specified in the input
-reference. It does not implement porous-layer or dry-buildup chemistry.
+reference. Separate `[REACTION_LIDS]` and `[REACTION_BUILDUP]` scopes implement the qualified porous-layer and dry-buildup profiles described in the input reference.
 The other formerly reserved sections supply network sources, parameter
 overrides and species-column selection. Unsupported source kinds and unknown
 section names are errors.
@@ -118,9 +118,7 @@ global `ATOL` and `RTOL` of `[REACTION_OPTIONS]` for that species alone.
 `WALL` species remain attached to their own network element under LEGACY;
 they are excluded from dissolved advection, evaporation concentration and
 the BULK water-mass routing ledger. ARD falls back to LEGACY for systems
-containing WALL species. LAGRANGIAN refuses WALL systems. Geometry-dependent
-wall demand remains unqualified because bindings do not populate wall
-area/volume variables, and AREA_UNITS does not supply that missing geometry.
+containing WALL species. LAGRANGIAN refuses WALL systems. `WALL_GEOMETRY YES` enables geometry-aware AV (AREA_UNITS/litre), with conduit wetted contact and explicit storage areas. WALL densities use fixed reference area and wetted-fraction kinetics; dry inventory is retained. WALL EQUIL/FORMULA projections are refused in this mode.
 2D surface transport excludes reaction systems containing WALL species.
 
 A coefficient is declared as `CONSTANT` or `PARAMETER` with a value. A `PARAMETER` may be overridden on a named node or link through
@@ -221,8 +219,7 @@ field rather than to a single constant. Without heat transport it falls back
 to the `[REACTION_OPTIONS] TEMPERATURE` constant.
 
 Species declared `WALL` are surface-attached: their concentrations are per
-unit wall area rather than per unit volume, they are not advected, and they
-appear in bulk expressions through the surface-area-to-volume ratio.
+unit reference wall area rather than per unit volume and are not advected. With WALL_GEOMETRY enabled, bulk expressions may use AV for the contact-area-to-water-volume ratio. AREA_UNITS also defines the independent dry buildup density basis.
 
 Expressions are **compiled at model open**, not interpreted per element per
 step: they are parsed once into a compact form and evaluated by a small stack
@@ -308,3 +305,12 @@ The C API for inspecting and editing a reaction system is declared in
 @ref openswmm_reactions.h, including `swmm_reaction_validate_expression`,
 which compiles an expression against the live model vocabulary without
 changing state — the entry point an editor uses to validate as the user types.
+
+### Qualified continuation and surface reactors
+
+Full native engine checkpoints preserve the source clock, compiled-model identity,
+LEGACY/ARD/LARD runtime, wet/dry inventories, supported LID inventories and native
+output prefixes. Tests compare uninterrupted and restored output bytes. This CPU
+1D profile excludes heat/age, pollutants, active 2D chemistry, subsurface laws and
+detailed ARD/LID output. Partial state hotstarts cannot replace it for porous LIDs.
+See the input reference for selector precedence, layer ownership and split order.

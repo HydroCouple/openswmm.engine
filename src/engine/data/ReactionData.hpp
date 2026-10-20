@@ -88,6 +88,7 @@ struct ReactionData {
     ReactionCoupling   coupling    = ReactionCoupling::NONE;
     ReactionRateUnits  rate_units  = ReactionRateUnits::HR;
     ReactionAreaUnits  area_units  = ReactionAreaUnits::FT2;
+    bool wall_geometry = false; ///< WALL densities use a fixed reference contact area
     double             timestep    = 0.0;   ///< 0 ⇒ follow QUALITY_STEP
     double             atol        = 1.0e-6;
     double             rtol        = 1.0e-4;
@@ -115,6 +116,23 @@ struct ReactionData {
     /// against the current globals per reactor; no shared coefficient mutation.
     struct ParameterOverride { bool link; int element, coefficient; double value; };
     std::vector<ParameterOverride> parameter_overrides;
+    struct WallArea { bool link; int element; double area; }; // declared AREA_UNITS
+    std::vector<WallArea> wall_areas;
+    struct LidLaw { int control=-1,layer=0,species=-1; ReactionExprForm form=ReactionExprForm::NONE; std::string expression; RxExprSpan compiled; };
+    std::vector<int> lid_controls;
+    std::vector<LidLaw> lid_laws;
+    struct LidState {
+        std::vector<std::vector<double>> node_mass,node_outlet;
+        std::vector<double> node_mobile_old;
+        std::vector<int> group_offsets;
+        std::vector<double> mass,old_water,surface_conc,drain_conc; // conventional units, conc*ft3
+        std::vector<double> surface_export,surface_carry; // [subcatchment*species], conc*ft3
+        std::vector<uint8_t> subcatchments;
+    } lid;
+    bool lid_enabled(int control) const {
+        for(int c:lid_controls)if(c==control)return true;
+        return false;
+    }
     const double* coefficients(bool link, int element, std::vector<double>& scratch) const {
         if (parameter_overrides.empty() || element < 0) return coef_value.data();
         scratch = coef_value;
@@ -125,7 +143,8 @@ struct ReactionData {
     }
 
     struct SourcePattern { std::string name; std::vector<double> factors; };
-    struct Source { bool mass; int node, species, pattern; double value; };
+    struct Source { bool mass; int node, species, pattern; double value; int booster=0; }; // 1 FLOWPACED, 2 SETPOINT
+    std::vector<double> booster_mass; // actual cumulative injection, concentration*ft3
     double pattern_timestep = 3600.0; ///< seconds, independent of RATE_UNITS
     std::vector<SourcePattern> source_patterns;
     std::vector<Source> sources;
@@ -153,6 +172,18 @@ struct ReactionData {
     std::vector<ReactionExprForm> tank_form;
     std::vector<std::string>      tank_expr_src;
 
+    struct SurfaceLaw {
+        int subcatchment=-1, landuse=-1, species=-1;
+        ReactionExprForm form=ReactionExprForm::NONE;
+        std::string expression;
+        RxExprSpan compiled;
+    };
+    std::vector<SurfaceLaw> wet_laws, buildup_laws;
+    bool wet_enabled(int sc) const noexcept {
+        for(auto f:subcatch_form)if(f!=ReactionExprForm::NONE)return true;
+        for(const auto& l:wet_laws)if(l.subcatchment==sc)return true;
+        return false;
+    }
     // Wet, non-LID subcatchment pools have their own reactor context.
     std::vector<ReactionExprForm> subcatch_form;
     std::vector<std::string> subcatch_expr_src;
@@ -160,7 +191,7 @@ struct ReactionData {
     bool has_subcatch_reactions() const noexcept {
         for (const auto form : subcatch_form)
             if (form != ReactionExprForm::NONE) return true;
-        return false;
+        return !wet_laws.empty();
     }
 
     // ---- [REACTION_QUALITY] GLOBAL initial values (R1) ---------------------

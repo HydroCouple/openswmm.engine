@@ -32,6 +32,7 @@
 
 #include "../../../core/SimulationContext.hpp"
 #include "ReactionIntegrator.hpp"
+#include "ReactionGeometry.hpp"
 
 namespace openswmm::transport {
 
@@ -160,6 +161,8 @@ void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
             sc.pollut[static_cast<std::size_t>(p)] =
                 cell_phi[static_cast<std::size_t>(p) * unc + ucell];
         hydvar[static_cast<int>(RxHydVar::HRT)] = 0.0;
+        const int link=cell_conduit&&conduit_link?conduit_link[cell_conduit[c]]:-1;
+        hydvar[static_cast<int>(RxHydVar::AV)] = rx.wall_geometry&&link>=0?reactionAreaVolume(ctx,true,link,ctx.links.volume[link]):0;
         // TEMP: the cell's own heat-transport temperature row when the mesh
         // carries one, else the [REACTION_OPTIONS] TEMPERATURE constant.
         hydvar[static_cast<int>(RxHydVar::TEMP)] =
@@ -187,6 +190,7 @@ void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
         const auto und = static_cast<std::size_t>(nd);
         const double vol = node_vol[und];
         if (vol <= min_store_vol) continue;  // no meaningful concentration
+        hydvar[static_cast<int>(RxHydVar::AV)] = rx.wall_geometry?reactionAreaVolume(ctx,false,nd,vol):0.;
         for (int m = 0; m < nm; ++m)
             sc.msx[static_cast<std::size_t>(m)] =
                 node_mass[und * uns + static_cast<std::size_t>(n_pollut + m)] /

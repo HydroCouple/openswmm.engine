@@ -110,17 +110,16 @@ void parseOptions(SimulationContext& ctx, const std::vector<std::string>& lines,
             else if (val == "DAY") rx.rate_units = ReactionRateUnits::DAY;
             else errors.push_back("[REACTION_OPTIONS] unknown RATE_UNITS '" +
                                   tok[1] + "' (SEC|MIN|HR|DAY).");
+        } else if (key == "WALL_GEOMETRY") {
+            if(val=="YES")rx.wall_geometry=true;
+            else if(val=="NO")rx.wall_geometry=false;
+            else errors.push_back("[REACTION_OPTIONS] WALL_GEOMETRY must be YES or NO.");
         } else if (key == "AREA_UNITS") {
             if      (val == "FT2") rx.area_units = ReactionAreaUnits::FT2;
             else if (val == "M2")  rx.area_units = ReactionAreaUnits::M2;
             else if (val == "CM2") rx.area_units = ReactionAreaUnits::CM2;
             else errors.push_back("[REACTION_OPTIONS] unknown AREA_UNITS '" +
                                   tok[1] + "' (FT2|M2|CM2).");
-            // Physics review A3: no wall-area term exists (AV is refused).
-            if (rx.area_units != ReactionAreaUnits::FT2)
-                ctx.warnings.push_back("[REACTION_OPTIONS] AREA_UNITS " + val +
-                    " has no effect: no reaction expression can use a wall "
-                    "area yet.");
         } else if (key == "TIMESTEP") {
             if (to_num(tok[1], num) && num >= 0.0) rx.timestep = num;
             else errors.push_back("[REACTION_OPTIONS] bad TIMESTEP '" + tok[1] + "'.");
@@ -472,13 +471,13 @@ void parseSources(SimulationContext& ctx, const std::vector<std::string>& lines,
         const auto tok = Tokenizer::tokenize(line);
         if (tok.empty()) continue;
         const auto kind = Tokenizer::to_upper(tok[0]);
-        if ((tok.size() != 4 && tok.size() != 5) || (kind != "CONC" && kind != "MASS")) {
-            errors.push_back("[REACTION_SOURCES] row needs CONC|MASS node species value [pattern]; other source kinds are unsupported: '" + line + "'.");
+        if ((tok.size() != 4 && tok.size() != 5) || (kind != "CONC" && kind != "MASS" && kind != "FLOWPACED" && kind != "SETPOINT")) {
+            errors.push_back("[REACTION_SOURCES] row needs CONC|MASS|FLOWPACED|SETPOINT node species value [pattern]: '" + line + "'.");
             continue;
         }
         const int node = ctx.node_names.find(tok[1]), species = rx.find_species(tok[2]);
         double value;
-        if (node < 0 || species < 0 || !to_num(tok[3], value) || value < 0.0) {
+        if (node < 0 || species < 0 || !to_num(tok[3], value) || !std::isfinite(value) || value < 0.0) {
             errors.push_back("[REACTION_SOURCES] unknown node/species or invalid value: '" + line + "'.");
             continue;
         }
@@ -494,7 +493,10 @@ void parseSources(SimulationContext& ctx, const std::vector<std::string>& lines,
         bool duplicate = false;
         for (const auto& row : rx.sources) duplicate |= row.node == node && row.species == species;
         if (duplicate) { errors.push_back("[REACTION_SOURCES] duplicate node/species: '" + line + "'."); continue; }
-        rx.sources.push_back({kind == "MASS", node, species, pattern, value});
+        if((kind=="FLOWPACED"||kind=="SETPOINT") && node<int(ctx.nodes.is_virtual.size()) && ctx.nodes.is_virtual[node]) {
+            errors.push_back("[REACTION_SOURCES] boosters require a physical mixing node, not a virtual splice.");continue;
+        }
+        rx.sources.push_back({kind == "MASS", node, species, pattern, value,kind=="FLOWPACED"?1:kind=="SETPOINT"?2:0});
     }
 }
 
@@ -605,7 +607,7 @@ const std::vector<std::string>& reactionSectionTags() {
         "REACTION_SOURCES",       "REACTION_QUALITY",
         "REACTION_PARAMETERS",    "REACTION_PATTERNS",
         "REACTION_REPORT",        "REACTION_SUBCATCHMENTS",
-        "REACTION_RAINFALL", "REACTION_SUBSURFACE"};
+        "REACTION_RAINFALL", "REACTION_SUBSURFACE", "REACTION_WALLS", "REACTION_LIDS", "REACTION_BUILDUP"};
     return tags;
 }
 
@@ -656,7 +658,36 @@ void applyReactionSections(SimulationContext& ctx,
     ctx.reactions.subcatch_form.assign(static_cast<std::size_t>(ctx.reactions.n_species()), ReactionExprForm::NONE);
     ctx.reactions.subcatch_expr_src.resize(static_cast<std::size_t>(ctx.reactions.n_species()));
     s = config.find("REACTION_SUBCATCHMENTS");
-    if (s) parseExpressions(ctx, *s, 2, errors);
+    if(s) {
+        std::vector<std::string> global;
+        for(const auto& line:*s) {
+            auto t=Tokenizer::tokenize(line);
+            if(t.empty())continue;
+            if(Tokenizer::to_upper(t[0])!="SUBCATCHMENT"){global.push_back(line);continue;}
+            if(t.size()<5){errors.push_back("[REACTION_SUBCATCHMENTS] needs SUBCATCHMENT name form species expression.");continue;}
+            ReactionData::SurfaceLaw law;law.subcatchment=ctx.subcatch_names.find(t[1]);law.species=ctx.reactions.find_species(t[3]);
+            auto form=Tokenizer::to_upper(t[2]);law.form=form=="RATE"?ReactionExprForm::RATE:form=="EQUIL"?ReactionExprForm::EQUIL:form=="FORMULA"?ReactionExprForm::FORMULA:ReactionExprForm::NONE;
+            if(law.subcatchment<0||law.species<0||law.form==ReactionExprForm::NONE){errors.push_back("[REACTION_SUBCATCHMENTS] invalid selector, species or form: "+line);continue;}
+            if(std::any_of(ctx.reactions.wet_laws.begin(),ctx.reactions.wet_laws.end(),[&](const auto& l){return l.subcatchment==law.subcatchment&&l.species==law.species;})){errors.push_back("[REACTION_SUBCATCHMENTS] duplicate selected law.");continue;}
+            law.expression=expr_payload(line,4);ctx.reactions.wet_laws.push_back(std::move(law));
+        }
+        parseExpressions(ctx,global,2,errors);
+    }
+    s=config.find("REACTION_BUILDUP");
+    if(s)for(const auto& line:*s) {
+        auto t=Tokenizer::tokenize(line);if(t.empty())continue;
+        ReactionData::SurfaceLaw law;std::size_t pos=0;
+        auto fail=[&]{errors.push_back("[REACTION_BUILDUP] needs [SUBCATCHMENT name] LANDUSE name RATE|EQUIL|FORMULA BULK-species expression: "+line);};
+        if(Tokenizer::to_upper(t[0])=="SUBCATCHMENT") {
+            if(t.size()<7||(law.subcatchment=ctx.subcatch_names.find(t[1]))<0){fail();continue;}pos=2;
+        }
+        if(t.size()<pos+5||Tokenizer::to_upper(t[pos])!="LANDUSE"||(law.landuse=ctx.landuse_names.find(t[pos+1]))<0){fail();continue;}
+        auto form=Tokenizer::to_upper(t[pos+2]);law.form=form=="RATE"?ReactionExprForm::RATE:form=="EQUIL"?ReactionExprForm::EQUIL:form=="FORMULA"?ReactionExprForm::FORMULA:ReactionExprForm::NONE;
+        law.species=ctx.reactions.find_species(t[pos+3]);
+        if(law.species<0||law.form==ReactionExprForm::NONE){fail();continue;}
+        if(std::any_of(ctx.reactions.buildup_laws.begin(),ctx.reactions.buildup_laws.end(),[&](const auto& l){return l.subcatchment==law.subcatchment&&l.landuse==law.landuse&&l.species==law.species;})){errors.push_back("[REACTION_BUILDUP] duplicate selected law.");continue;}
+        law.expression=expr_payload(line,int(pos+4));ctx.reactions.buildup_laws.push_back(std::move(law));
+    }
     s = config.find("REACTION_SUBSURFACE");
     if(s)parseSubsurface(ctx,*s,errors);
     s = config.find("REACTION_QUALITY");
@@ -677,6 +708,42 @@ void applyReactionSections(SimulationContext& ctx,
     if (s) parseParameters(ctx, *s, errors);
     s = config.find("REACTION_REPORT");
     if (s) parseReport(ctx, *s, errors);
+    s=config.find("REACTION_WALLS");
+    if(s) for(const auto& line:*s) {
+        const auto tok=Tokenizer::tokenize(line);
+        if(tok.empty())continue;
+        double area=0;const bool link=Tokenizer::to_upper(tok[0])=="LINK";
+        const int e=tok.size()==3 ? (link?ctx.link_names.find(tok[1]):ctx.node_names.find(tok[1])) : -1;
+        if(tok.size()!=3 || (!link&&Tokenizer::to_upper(tok[0])!="NODE") || e<0 || !to_num(tok[2],area) || !std::isfinite(area) || area<0) {
+            errors.push_back("[REACTION_WALLS] needs NODE|LINK element nonnegative-area: '"+line+"'.");continue;
+        }
+        auto& rows=ctx.reactions.wall_areas;
+        if(std::any_of(rows.begin(),rows.end(),[&](const auto& r){return r.link==link&&r.element==e;}))
+            errors.push_back("[REACTION_WALLS] duplicate contact area: '"+line+"'.");
+        else rows.push_back({link,e,area});
+    }
+
+    s=config.find("REACTION_LIDS");
+    if(s)for(const auto& line:*s) {
+        const auto t=Tokenizer::tokenize(line);if(t.empty())continue;
+        auto fail=[&](const std::string& why){errors.push_back("[REACTION_LIDS] "+why+": '"+line+"'.");};
+        if(t.size()<3||Tokenizer::to_upper(t[0])!="CONTROL"){fail("needs CONTROL name TRANSPORT or CONTROL name LAYER number RATE|EQUIL|FORMULA species expression");continue;}
+        const int control=ctx.lid_names.find(t[1]);if(control<0){fail("unknown LID control");continue;}
+        if(!ctx.reactions.lid_enabled(control))ctx.reactions.lid_controls.push_back(control);
+        if(t.size()==3&&Tokenizer::to_upper(t[2])=="TRANSPORT")continue;
+        double number=0;
+        if(t.size()<7||Tokenizer::to_upper(t[2])!="LAYER"||!to_num(t[3],number)||number<0||number>10000||number!=std::floor(number)) {fail("invalid layer (0 means every layer)");continue;}
+        ReactionData::LidLaw law;law.control=control;law.layer=int(number);law.species=ctx.reactions.find_species(t[5]);
+        const auto f=Tokenizer::to_upper(t[4]);
+        if(f=="RATE")law.form=ReactionExprForm::RATE;else if(f=="EQUIL")law.form=ReactionExprForm::EQUIL;else if(f=="FORMULA")law.form=ReactionExprForm::FORMULA;else {fail("unknown form");continue;}
+        if(law.species<0||ctx.reactions.species_is_wall[law.species]){fail("target must be BULK");continue;}
+        if(std::any_of(ctx.reactions.lid_laws.begin(),ctx.reactions.lid_laws.end(),[&](const auto& r){return r.control==control&&r.layer==law.layer&&r.species==law.species;})){fail("duplicate layer/species law");continue;}
+        law.expression=expr_payload(line,6);ctx.reactions.lid_laws.push_back(std::move(law));
+    }
+    if(!ctx.reactions.wall_geometry&&ctx.reactions.buildup_laws.empty()&&ctx.reactions.area_units!=ReactionAreaUnits::FT2)
+        ctx.warnings.push_back(std::string("[REACTION_OPTIONS] AREA_UNITS ")+
+            (ctx.reactions.area_units==ReactionAreaUnits::M2?"M2":"CM2")+" has no effect unless WALL_GEOMETRY YES is selected.");
+
 
     // Unknown REACTION_* sections in the file are typos worth failing on.
     for (const auto& sect : config.sections) {
@@ -839,6 +906,29 @@ bool recompileReactionSystem(SimulationContext& ctx,
             errors.push_back("[REACTION_SUBSURFACE] requires a valid BULK species");continue;
         }
         compile_one(law.expression,law.compiled,"[REACTION_SUBSURFACE] '"+rx.species_name[law.species]+"'",2);
+    }
+
+
+    for(auto* laws:{&rx.wet_laws,&rx.buildup_laws})for(auto& law:*laws) {
+        if(law.species<0||law.species>=rx.n_species()||rx.species_is_wall[law.species]){errors.push_back("Surface reactions require a BULK species.");continue;}
+        compile_one(law.expression,law.compiled,"Surface reaction '"+rx.species_name[law.species]+"'",3);
+    }
+    for(auto& law:rx.lid_laws) {
+        if(law.species<0||law.species>=rx.n_species()||rx.species_is_wall[law.species]) {errors.push_back("[REACTION_LIDS] target must be BULK.");continue;}
+        compile_one(law.expression,law.compiled,"[REACTION_LIDS] '"+rx.species_name[law.species]+"'",4);
+        const bool node=law.control>=0&&law.control<int(ctx.lid_controls.node_layers.size())&&!ctx.lid_controls.node_layers[law.control].empty();
+        const int count=node?int(ctx.lid_controls.node_layers[law.control].size()):4;
+        if(law.layer>count)errors.push_back("[REACTION_LIDS] layer exceeds the control's stack.");
+    }
+    if(!rx.wall_geometry&&!rx.wall_areas.empty())errors.push_back("[REACTION_WALLS] requires WALL_GEOMETRY YES.");
+    if(rx.wall_geometry) for(int s=0;s<rx.n_species();++s)if(rx.species_is_wall[s]) {
+        if(rx.coupling!=ReactionCoupling::FULL)errors.push_back("WALL_GEOMETRY requires COUPLING FULL.");
+        if(rx.tank_form[s]!=ReactionExprForm::NONE)for(int node=0;node<ctx.n_nodes();++node)
+            if(ctx.nodes.type[node]==NodeType::STORAGE && std::none_of(rx.wall_areas.begin(),rx.wall_areas.end(),[&](const auto& r){return !r.link&&r.element==node;}))
+                errors.push_back("WALL_GEOMETRY tank reactions require an explicit [REACTION_WALLS] NODE area for '"+ctx.node_names.name_of(node)+"'.");
+        for(auto form:{rx.pipe_form[s],rx.tank_form[s]})
+            if(form==ReactionExprForm::EQUIL||form==ReactionExprForm::FORMULA)
+                errors.push_back("WALL_GEOMETRY supports RATE or NONE for WALL species; algebraic WALL projections have no conservative wet/dry transfer.");
     }
     if (errors.size() != n_errors_in) return false;
     rx.compiled = true;

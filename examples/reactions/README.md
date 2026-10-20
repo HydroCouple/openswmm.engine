@@ -21,8 +21,7 @@ For element-specific kinetics append `NODE Tank k 0.6` or `LINK Pipe k 0.15`
 under `[REACTION_PARAMETERS]` in the parent/product configuration. The
 corresponding element then uses that rate while other elements retain 0.3.
 
-These isolated network examples do not qualify porous LID-layer chemistry
-or exact native checkpoint/output continuation. The analytic
+The analytic
 multispecies suite in `openswmm.engine.benchmarks/suites/quality/reactions`
 runs the parent/product model across network quality solvers and time units.
 
@@ -38,5 +37,17 @@ The scope mixes retained mass with rain/run-on, reacts for the runoff
 interval, and allocates mass to infiltration, runoff and storage. Check
 WET_STEP sensitivity for rapid kinetics. Evaporation retains solute in the
 remaining mass. Pools at or below one litre do not integrate concentrations;
-LID combinations are refused. This example qualifies neither porous LID
-chemistry nor exact checkpoint/output continuation.
+LID units use the separate layer scope demonstrated below.
+
+## Additional qualified examples
+
+- `wall_geometry`: prescribed M2 contact areas with equal-unit bulk/wall exchange; A*water_litres + W*reference_area is constant and bulk A follows an exponential. Uses LEGACY; ARD falls back to it.
+- `dry_buildup`: land-use A→B conversion before accrual/washoff. At one hour, remaining A=1000 exp(-0.3) project mass units and A+B=1000. No rainfall or accrual masks the dry reactor.
+- `lid_layers`: a fully covered bioretention system, deliberately saturated and overloaded to exercise surface and drain exports. A+B=tracer in retained inventories and exported concentrations; this is a conservation example, without an analytic history.
+- `setpoint`: positive clean-water inflow with a 2 mg/L mixed-store target. All three network solvers report Tank A=2.
+
+The engine tests separately qualify full native continuation across network solvers,
+wet/dry inventories, bioretention/permeable-pavement layers and bucket/Richards
+storage nodes. Partial capture, covered barrels, WALL porous chemistry and active
+2D chemistry remain outside these profiles. Examples are numerical verification,
+not calibrated chemical or treatment designs.

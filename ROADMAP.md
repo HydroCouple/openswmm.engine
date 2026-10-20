@@ -127,13 +127,20 @@ wall decay. The companion benchmark repository adds a `quality/reactions`
 suite with 24 analytic cells across quality solvers, rate units and overrides,
 plus three rain-fed wet-pool conservation checks (self-consistency only).
 
+The next increment adds native checkpoint/output continuation for the qualified
+1D chemistry profile, geometry-aware WALL exchange, selective wet laws,
+dry land-use reactors, porous LID inventories and FLOWPACED/SETPOINT boosters.
+The editor has dedicated source, pattern, parameter, wall-area and report tables.
+The companion suite now has 38 cells, including analytic wall, dry-buildup and
+setpoint cases and a rain-fed bioretention conservation case.
+
 **Remaining work and restrictions:**
 
-- Extend wet-pool qualification beyond the supported non-LID mix/react/allocate profile. Dry buildup does not react in that pool; a continuously fed reactor, spatially selective subcatchment laws and porous LID adapters remain separate work. Source SETPOINT and FLOWPACED kinds remain refused.
-- Complete geometry-dependent WALL/BULK qualification: bindings do not yet populate wall area/volume variables, and AREA_UNITS does not implement that conversion. The added network tests and examples do not qualify every surface or groundwater combination.
-- Implement exact native checkpoint/output continuation for reaction models. Hotstart species-state support is distinct; a new run starts the source-pattern clock again.
-- Implement conservative porous LID-layer species transport and reactor adapters. LID underdrain removals/source delivery already work for supported runoff combinations, but storage-node LIDs with reaction systems remain refused. Required work includes mobile/retained inventories, layer/port transfers, donor limits, dry/refill behavior, mass receipts and restart state before enabling these combinations.
-- Broaden independent chemistry and coupled-domain benchmarks beyond the added analytic network suite. The new benchmark sources and examples are local changes until committed and published.
+- Full native reaction continuation currently qualifies CPU 1D network, wet/dry surface and supported LID inventories, with inline rainfall and native output. It excludes heat/age combinations, active 2D surface chemistry, subsurface laws, pollutants and detailed ARD/LID output. State-only hotstarts cannot carry porous LID reaction inventories.
+- `WALL_GEOMETRY YES` supplies AV in AREA_UNITS/litre. Conduits use actual wetted perimeter, physical length and barrels; storage requires explicit contact area. WALL density uses fixed reference area, kinetics scale by wetted fraction, and dry inventory is retained. WALL algebraic projections remain refused; ARD uses LEGACY fallback and LARD refuses WALL.
+- `[REACTION_LIDS]` explicitly opts controls into BULK layer transport. Storage-node bucket/Richards reactors require LEGACY quality and a non-Mesh bottom. Conventional units require full subcatchment coverage and all units to opt in; bioretention and permeable-pavement stacks have conservation/restart checks. Partial capture, covered rain barrels, WALL chemistry and 2D-owned conventional units remain refused.
+- Wet-pool mixing and dry buildup accrual/washoff remain first-order splits. Selective subcatchment laws and separate land-use buildup laws are implemented; exact continuously fed CSTR integration and wider timestep/domain qualification remain future work.
+- Broaden independent chemistry and field benchmarks. Current analytic and conservation cases are numerical qualification, not calibrated or universal chemistry validation. Changes are committed locally; publication requires pushing the repositories.
 
 The [reaction component](src/engine/transport/components/ReactionModule/ReactionsComponent.cpp),
 [configuration/qualification tests](tests/unit/engine/test_reactions_config.cpp),

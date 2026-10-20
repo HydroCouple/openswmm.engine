@@ -25,6 +25,8 @@
  */
 
 #include "MsxSurfaceQuality.hpp"
+#include "MsxLidReactions.hpp"
+#include "../transport/components/ReactionModule/ReactionGeometry.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -280,7 +282,7 @@ void activateForRain(SimulationContext& ctx) noexcept {
     bool rain = false;
     for (int m = 0; m < nm && m < static_cast<int>(rx.rain_conc.size()); ++m)
         rain = rain || rx.rain_conc[static_cast<std::size_t>(m)] > 0.0;
-    if (!rain && !rx.has_subcatch_reactions()) return;
+    if (!rain && !rx.has_subcatch_reactions() && rx.buildup_laws.empty() && rx.lid_controls.empty()) return;
     if (s.n_species != nm || s.n_landuses != std::max(ctx.n_landuses(), 0)) {
         s.resize_params(std::max(ctx.n_landuses(), 0), nm);
         s.init_loading.assign(static_cast<std::size_t>(std::max(ctx.n_subcatches(), 0)) *
@@ -415,6 +417,7 @@ surfacespecies::Block speciesBlock(SimulationContext& ctx, MsxSurfaceData& s, co
     b.led_ponded_lost = &s.led_ponded_lost;
     b.sweep_now = &ctx.subcatches.sweep_now;
     b.sweep_removal = &ctx.landuses.sweep_removal;
+    b.lid_reactor_mask=&ctx.reactions.lid.subcatchments;
     return b;
 }
 
@@ -433,6 +436,9 @@ std::vector<double> reactPondedPools(SimulationContext& ctx, double dt) {
     constexpr double litres_per_ft3 = 28.317;
     for (int sc = 0; sc < ctx.n_subcatches(); ++sc) {
         const auto i = static_cast<std::size_t>(sc);
+        if(!rx.wet_enabled(sc))continue;
+        auto forms=rx.subcatch_form;auto expressions=rx.subcatch_expr;
+        for(const auto& law:rx.wet_laws)if(law.subcatchment==sc){forms[law.species]=law.form;expressions[law.species]=law.compiled;}
         const double lid = i < ctx.subcatches.total_lid_area_ft2.size() ? ctx.subcatches.total_lid_area_ft2[i] : 0.0;
         const double area = ctx.subcatches.area[i] / area_factor - lid;
         if (!(area > 0.0)) continue;
@@ -455,11 +461,11 @@ std::vector<double> reactPondedPools(SimulationContext& ctx, double dt) {
         if (ctx.options.heat_transport && i < ctx.heat_state.subcatch_runoff_temp.size() &&
             std::isfinite(ctx.heat_state.subcatch_runoff_temp[i]))
             variables[static_cast<int>(RxHydVar::TEMP)] = ctx.heat_state.subcatch_runoff_temp[i];
-        const auto report = transport::ReactionIntegrator::step(rx, rx.subcatch_form, rx.subcatch_expr,
+        const auto report = transport::ReactionIntegrator::step(rx, forms, expressions,
             dt, species.data(), variables, workspace);
         bool physical = report.ok;
         for (int m = 0; m < ns && physical; ++m)
-            physical = std::isfinite(species[m]) && (species[m] >= 0.0 || rx.subcatch_form[m] == ReactionExprForm::RATE);
+            physical = std::isfinite(species[m]) && (species[m] >= 0.0 || forms[m] == ReactionExprForm::RATE);
         if (!physical) {
             if (!rx.warned_react_failure) {
                 rx.warned_react_failure = true;
@@ -480,6 +486,52 @@ std::vector<double> reactPondedPools(SimulationContext& ctx, double dt) {
     }
     return mixed;
 }
+// React the inventory present at the beginning of the runoff step, before
+// accrual, sweeping and washoff. Values are declared species mass / AREA_UNITS,
+// independently of each species' authored area/curb buildup normalizer.
+void reactBuildup(SimulationContext& ctx,double dt) {
+    auto& rx=ctx.reactions;auto& s=rx.surface;
+    if(rx.buildup_laws.empty())return;
+    const int ns=rx.n_species();
+    transport::RxWorkspace ws;ws.init(rx);
+    std::vector<double> y(ns),before(ns),normalizer(ns);
+    std::vector<ReactionExprForm> forms(ns);std::vector<RxExprSpan> expr(ns);
+    for(int sc=0;sc<ctx.n_subcatches();++sc)for(int lu=0;lu<s.n_landuses;++lu) {
+        const auto cov=std::size_t(sc)*s.n_landuses+lu;
+        const double fraction=cov<ctx.subcatches.coverage.size()?ctx.subcatches.coverage[cov]/100.:0.;
+        const double area=fraction*ctx.subcatches.area[sc]/ucf::UCF(ucf::LANDAREA,ctx.options)*transport::reactionAreaFactor(rx.area_units);
+        if(!(area>0))continue;
+        std::fill(forms.begin(),forms.end(),ReactionExprForm::NONE);
+        bool any=false;
+        for(int selected:{-1,sc})for(const auto& l:rx.buildup_laws)
+            if(l.landuse==lu&&l.subcatchment==selected){forms[l.species]=l.form;expr[l.species]=l.compiled;any=true;}
+        if(!any)continue;
+        bool supported=true;
+        for(int m=0;m<ns;++m) {
+            const double norm=fraction*(s.bu_normalizer[s.pidx(lu,m)]==0?ctx.subcatches.area[sc]:ctx.subcatches.curb_length[sc]);
+            normalizer[m]=norm;
+            before[m]=y[m]=norm>0?s.buildup[s.bu_idx(sc,lu,m)]*norm/s.mcf[m]/area:0.;
+            // A product cannot be retained with a zero-length curb normalizer.
+            if(forms[m]!=ReactionExprForm::NONE&&!(norm>0))supported=false;
+        }
+        double vars[static_cast<int>(RxHydVar::COUNT_)]={};vars[static_cast<int>(RxHydVar::TEMP)]=rx.default_temp_c;
+        const auto report=supported?transport::ReactionIntegrator::step(rx,forms,expr,dt,y.data(),vars,ws):transport::RxStepReport{};
+        bool physical=supported&&report.ok;
+        for(int m=0;m<ns&&physical;++m)physical=std::isfinite(y[m])&&(y[m]>=0||forms[m]==ReactionExprForm::RATE);
+        if(!physical) {
+            if(!rx.warned_react_failure){rx.warned_react_failure=true;ctx.warnings.push_back("Dry buildup reaction failed or has a zero normalizer; original inventory retained.");}
+            continue;
+        }
+        for(int m=0;m<ns;++m) {
+            const double bounded=std::max(0.,y[m]),factor=area*s.mcf[m];
+            s.led_reacted[m]+=(before[m]-y[m])*factor;
+            s.led_reaction_clamped[m]+=(bounded-y[m])*factor;
+            if(y[m]!=bounded)transport::noteNegativeClamp(ctx,"a dry buildup store");
+            if(normalizer[m]>0)s.buildup[s.bu_idx(sc,lu,m)]=bounded*factor/normalizer[m];
+        }
+    }
+}
+
 }  // namespace
 
 void step(SimulationContext& ctx, double dt_runoff, double old_runoff_time) {
@@ -487,10 +539,14 @@ void step(SimulationContext& ctx, double dt_runoff, double old_runoff_time) {
     if (!s.active() || !(dt_runoff > 0.0)) return;
     const auto p = speciesParams(s);
     auto b = speciesBlock(ctx, s, p);
+    reactBuildup(ctx,dt_runoff);
     std::vector<double> reacted;
+    std::vector<uint8_t> wet_mask(static_cast<std::size_t>(ctx.n_subcatches()));
     if (ctx.reactions.has_subcatch_reactions()) {
         reacted = reactPondedPools(ctx, dt_runoff);
         b.ponded_reacted_mass = &reacted;
+        for(int sc=0;sc<ctx.n_subcatches();++sc)wet_mask[sc]=ctx.reactions.wet_enabled(sc);
+        b.ponded_reactor_mask=&wet_mask;
     }
     surfacespecies::step(ctx, b, dt_runoff, old_runoff_time);
 }
@@ -505,7 +561,7 @@ void bookPostLid(SimulationContext& ctx, double dt_runoff,
 }
 
 void addLidDrain(SimulationContext& ctx, int control, int sc, int node, double drain_cfs,
-                 bool to_perv, bool runoff_load, double dt_runoff) noexcept {
+                 bool to_perv, bool runoff_load, double dt_runoff, const double* source) noexcept {
     auto& s = ctx.reactions.surface;
     if (!s.active() || node < 0 || node >= ctx.n_nodes()) return;
     const int nm = s.n_species;
@@ -517,11 +573,12 @@ void addLidDrain(SimulationContext& ctx, int control, int sc, int node, double d
     for (int m = 0; m < nm; ++m) {
         const auto rk = static_cast<std::size_t>(control) * static_cast<std::size_t>(nm) + static_cast<std::size_t>(m);
         const double rmvl = (control >= 0 && rk < s.lid_rmvl.size()) ? s.lid_rmvl[rk] : 0.0;
-        const double c_src = s.washoff_conc[s.sidx(sc, m)];
+        const double c_src = source?source[m]:s.washoff_conc[s.sidx(sc, m)];
         s.lid_drain_load[static_cast<std::size_t>(node) * static_cast<std::size_t>(nm) + static_cast<std::size_t>(m)] +=
             drain_cfs * c_src * (1.0 - rmvl);
         if (!to_perv) {
             const double w = drain_cfs * c_src * dt_runoff * 28.317 * s.mcf[static_cast<std::size_t>(m)];
+            if(source)s.led_subcatch_load[s.sidx(sc,m)]+=w;
             if (w > 0.0) {
                 s.led_bmp_removal[static_cast<std::size_t>(m)] += rmvl * w;
                 if (runoff_load) s.led_runoff_load[static_cast<std::size_t>(m)] += w * (1.0 - rmvl);
@@ -531,19 +588,20 @@ void addLidDrain(SimulationContext& ctx, int control, int sc, int node, double d
 }
 
 void addLidDrainRunon(SimulationContext& ctx, int control, int sc, int receiver, double drain_cfs,
-                      bool to_perv, bool runoff_load, double dt_runoff) noexcept {
+                      bool to_perv, bool runoff_load, double dt_runoff, const double* source) noexcept {
     auto& s = ctx.reactions.surface;
     if (!s.active() || receiver < 0 || receiver >= ctx.n_subcatches()) return;
     const int nm = s.n_species;
     for (int m = 0; m < nm; ++m) {
         const auto rk = static_cast<std::size_t>(control) * static_cast<std::size_t>(nm) + static_cast<std::size_t>(m);
         const double rmvl = (control >= 0 && rk < s.lid_rmvl.size()) ? s.lid_rmvl[rk] : 0.0;
-        const double c_src = s.washoff_conc[s.sidx(sc, m)];
+        const double c_src = source?source[m]:s.washoff_conc[s.sidx(sc, m)];
         const auto k = s.sidx(receiver, m);
         if (k < s.lid_drain_runon_load.size())
             s.lid_drain_runon_load[k] += (drain_cfs * c_src * 28.317) * (1.0 - rmvl);
         if (!to_perv) {
             const double w = drain_cfs * c_src * dt_runoff * 28.317 * s.mcf[static_cast<std::size_t>(m)];
+            if(source)s.led_subcatch_load[s.sidx(sc,m)]+=w;
             if (w > 0.0) {
                 s.led_bmp_removal[static_cast<std::size_t>(m)] += rmvl * w;
                 if (runoff_load) s.led_runoff_load[static_cast<std::size_t>(m)] += w * (1.0 - rmvl);
@@ -590,6 +648,10 @@ double remainingBuildup(const SimulationContext& ctx, int m) noexcept {
         const auto pk = s.sidx(sc, m);
         if (pk < s.ponded_qual.size()) total += s.ponded_qual[pk] * s.mcf[static_cast<std::size_t>(m)];
     }
+    for(std::size_t k=std::size_t(m);k<ctx.reactions.lid.mass.size();k+=std::size_t(s.n_species))
+        total+=ctx.reactions.lid.mass[k]*28.317*s.mcf[m];
+    for(std::size_t k=std::size_t(m);k<ctx.reactions.lid.surface_carry.size();k+=std::size_t(s.n_species))
+        total+=ctx.reactions.lid.surface_carry[k]*28.317*s.mcf[m];
     if (static_cast<std::size_t>(m) < s.led_ponded_lost.size()) total += s.led_ponded_lost[static_cast<std::size_t>(m)];
     return total;
 }

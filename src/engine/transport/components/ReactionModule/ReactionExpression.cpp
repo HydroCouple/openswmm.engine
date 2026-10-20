@@ -132,7 +132,7 @@ const char* kHydVarDescs[] = {
     "Reynolds number; not yet populated, refused",
     "Shear velocity (ft/s); not yet populated, refused",
     "Darcy-Weisbach friction factor; not yet populated, refused",
-    "Wetted surface area per volume (1/ft); not yet populated, refused",
+    "Wetted contact area per litre (AREA_UNITS/L; WALL_GEOMETRY YES)",
     "Hydraulic residence time (s)",
     "Reaction step (s)",
     "Water temperature (degC; TEMPERATURE option when heat is off)",
@@ -540,8 +540,10 @@ std::string reactionContextDiagnostic(const ReactionData& rx,const std::vector<R
         if(i<0||std::size_t(i)>=pool.size())return "invalid compiled reaction context span";
         const auto& token=pool[i];
         if(token.op==RxToken::PUSH_HYDVAR) {
+            if(token.idx==int(RxHydVar::AV)&&!rx.wall_geometry)
+                return "hydraulic variable 'AV' requires [REACTION_OPTIONS] WALL_GEOMETRY YES";
             const bool ground=token.idx>=int(RxHydVar::GW_THETA);
-            const bool valid=context==3 ? (token.idx==int(RxHydVar::DT)||token.idx==int(RxHydVar::TEMP)):
+            const bool valid=context>=3 ? (token.idx==int(RxHydVar::DT)||token.idx==int(RxHydVar::TEMP)):
                 context==2 ? token.idx>=int(RxHydVar::DT):
                 (reactionHydVarPopulated(token.idx)||(context==1&&ground));
             if(!valid) {
@@ -551,10 +553,10 @@ std::string reactionContextDiagnostic(const ReactionData& rx,const std::vector<R
         }
         if(context==2&&token.op==RxToken::PUSH_SPECIES&&rx.species_is_wall[token.idx])
             return "groundwater reactions cannot depend on WALL species";
-        if(context==3&&token.op==RxToken::PUSH_SPECIES&&rx.species_is_wall[token.idx])
-            return "subcatchment reactions cannot depend on WALL species";
-        if(context==3&&token.op==RxToken::PUSH_POLLUT)
-            return "subcatchment reactions cannot read pollutant concentrations (no local ponded pollutant context)";
+        if(context>=3&&token.op==RxToken::PUSH_SPECIES&&rx.species_is_wall[token.idx])
+            return "wet-pool/LID reactions cannot depend on WALL species";
+        if(context>=3&&token.op==RxToken::PUSH_POLLUT)
+            return "wet-pool/LID reactions cannot read pollutant concentrations (no local pollutant context)";
         if(token.op==RxToken::PUSH_TERM) {
             if(token.idx<0||std::size_t(token.idx)>=rx.term_expr.size())return "invalid reaction term reference";
             const auto error=reactionContextDiagnostic(rx,rx.token_pool,rx.term_expr[token.idx],context);
@@ -565,7 +567,7 @@ std::string reactionContextDiagnostic(const ReactionData& rx,const std::vector<R
 }
 
 bool reactionHydVarPopulated(int idx) {
-    return idx >= static_cast<int>(RxHydVar::HRT) &&
+    return idx >= static_cast<int>(RxHydVar::AV) &&
            idx <= static_cast<int>(RxHydVar::TEMP);
 }
 

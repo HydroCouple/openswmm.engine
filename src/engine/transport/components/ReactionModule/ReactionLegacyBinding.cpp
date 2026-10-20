@@ -32,6 +32,8 @@
 
 #include "../../../core/SimulationContext.hpp"
 #include "ReactionIntegrator.hpp"
+#include "ReactionGeometry.hpp"
+#include "../../../hydrology/LidNode.hpp"
 
 namespace openswmm::transport {
 
@@ -42,7 +44,7 @@ namespace {
 /// the species count changes (model reopen).
 struct BindingScratch {
     RxWorkspace ws;
-    std::vector<double> block, added, coefficients;
+    std::vector<double> block, added, coefficients, wall_scales;
     int sized_for = -1, sized_terms = -1;
     void ensure(const ReactionData& rx) {
         if (sized_for != rx.n_species() || sized_terms != static_cast<int>(rx.term_name.size())) {
@@ -208,6 +210,8 @@ void reactElements(SimulationContext& ctx, double dt, bool tank,
         // through on a volume basis it does not have.
         if (tank && (!quality::nodeIsReactor(ctx, e) ||
                      ue >= volume.size() || volume[ue] <= quality::ZERO_VOLUME)) continue;
+        if(rx.wall_geometry&&(ue>=volume.size()||volume[ue]<=quality::ZERO_VOLUME))continue;
+        if(tank&&lidnode::active(ctx,e)) {const int row=ctx.node_subtypes.storage_row(e);if(row>=0&&rx.lid_enabled(ctx.node_subtypes.storages.lid[row].control))continue;}
 
         // HRT for nodes (treatment-variable parity); zero elsewhere in R4 —
         // full hydraulic-variable population is the ARD binding's job (R6).
@@ -217,6 +221,8 @@ void reactElements(SimulationContext& ctx, double dt, bool tank,
             (ctx.options.heat_transport && ue < elem_temp.size())
                 ? elem_temp[ue]
                 : rx.default_temp_c;
+        hydvar[static_cast<int>(RxHydVar::AV)] = rx.wall_geometry ? reactionAreaVolume(ctx,!tank,e,volume[ue]) : 0.;
+        if(rx.wall_geometry)reactionWallScales(ctx,!tank,e,volume[ue],sc.wall_scales);
 
         for (int s = 0; s < ns; ++s)
             sc.block[static_cast<std::size_t>(s)] =
@@ -226,8 +232,9 @@ void reactElements(SimulationContext& ctx, double dt, bool tank,
             (np > 0) ? &pollutant_conc[ue * static_cast<std::size_t>(np)]
                      : nullptr;
 
-        const auto rep = ReactionIntegrator::step(
-            rx, tank, dt, sc.block.data(), hydvar, sc.ws, pollut, rx.coefficients(!tank, e, sc.coefficients));
+        const auto rep = ReactionIntegrator::step(rx,tank?rx.tank_form:rx.pipe_form,tank?rx.tank_expr:rx.pipe_expr,
+            dt,sc.block.data(),hydvar,sc.ws,pollut,rx.wall_geometry?sc.wall_scales.data():nullptr,
+            rx.coefficients(!tank,e,sc.coefficients));
 
         if (rep.ok) {
             const double v = (ue < volume.size()) ? volume[ue] : 0.0;
@@ -270,6 +277,8 @@ void reactSpeciesBlock(SimulationContext& ctx, bool tank, double dt,
     hydvar[static_cast<int>(RxHydVar::HRT)] = hrt_seconds;
     hydvar[static_cast<int>(RxHydVar::TEMP)] =
         std::isfinite(temp_c) ? temp_c : rx.default_temp_c;
+    if(rx.wall_geometry&&element>=0)hydvar[static_cast<int>(RxHydVar::AV)] = reactionAreaVolume(ctx,!tank,element,
+        tank?ctx.nodes.volume[element]:ctx.links.volume[element]);
     for (int s = 0; s < ns; ++s)
         sc.block[static_cast<std::size_t>(s)] = species_block[s];
     const auto rep = ReactionIntegrator::step(rx, tank, dt,

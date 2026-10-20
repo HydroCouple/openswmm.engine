@@ -44,6 +44,7 @@
 
 #ifndef OPENSWMM_QUALITY_LARD_SEGMENT_STORE_HPP
 #define OPENSWMM_QUALITY_LARD_SEGMENT_STORE_HPP
+#include "../../core/CompletedSourceArchive.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -65,6 +66,13 @@ constexpr double kMergeRtol = 1.0e-4;
 
 class SegmentStore {
 public:
+    void checkpoint(detail::CompletedSourceArchive& a) {
+        a.fixed(head_,count_,vol_,conc_);
+        for(int l=0;l<nl_;++l)if(head_[l]<0||head_[l]>=cap_||count_[l]<0||count_[l]>cap_)
+            throw std::runtime_error("Invalid LARD checkpoint ring.");
+        for(double v:vol_)if(!std::isfinite(v)||v<0)throw std::runtime_error("Invalid LARD checkpoint water volume.");
+        for(double v:conc_)if(!std::isfinite(v))throw std::runtime_error("Nonfinite LARD checkpoint concentration.");
+    }
     void resize(int n_links, int n_species, int cap = kMaxSegmentsPerLink) {
         nl_ = n_links;
         ns_ = n_species;

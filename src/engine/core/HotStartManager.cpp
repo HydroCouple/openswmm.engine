@@ -1086,6 +1086,7 @@ void restoreAquiferBlock(const HotStartFile& hs, SimulationContext& ctx,
 HotStartFile* HotStartManager::save(const SimulationContext& ctx,
                                     const std::string& path) {
     tl_last_io_error.clear();
+    if(!ctx.reactions.lid_controls.empty()) {tl_last_io_error="LID reaction inventories require a full native engine checkpoint";return nullptr;}
     if(coupledThermalRestartUnsupported(ctx)) {
         tl_last_io_error="Coupled mesh/ground heat hotstart requires its thermal energy restart extension";return nullptr;
     }
@@ -1236,6 +1237,7 @@ HotStartFile* HotStartManager::save_with_engine_checkpoint(const SimulationConte
                                     const std::string& path,
                                     const std::string& engine_checkpoint) {
     tl_last_io_error.clear();
+    if(engine_checkpoint.empty()&&!ctx.reactions.lid_controls.empty()) {tl_last_io_error="LID reaction inventories require a full native engine checkpoint";return nullptr;}
     if(engine_checkpoint.empty() && coupledThermalRestartUnsupported(ctx)) {
         tl_last_io_error="Coupled mesh/ground heat hotstart requires its thermal energy restart extension";return nullptr;
     }
@@ -1406,6 +1408,7 @@ int HotStartManager::apply(HotStartFile& hs,
                            SimulationContext& ctx,
                            std::function<void(const std::string&)> warn_cb) {
     hs.warnings.clear();
+    if(!ctx.reactions.lid_controls.empty()&&hs.engine_checkpoint.empty()) {tl_last_io_error="LID reaction inventories require a full native engine checkpoint";hs.warnings.push_back(tl_last_io_error);return -1;}
     if(!hs.engine_checkpoint.empty()) {
         tl_last_io_error="Native V15 engine checkpoint must be restored through SWMMEngine start; partial hotstart apply is refused";
         hs.warnings.push_back(tl_last_io_error);if(warn_cb)warn_cb(tl_last_io_error);return -1;
@@ -1713,6 +1716,7 @@ int HotStartManager::apply_legacy_routing(
         std::function<void(const std::string&)> warn_cb,
         std::vector<double>* runoff,
         LegacySpeciesTrailer* species) {
+    if(!ctx.reactions.lid_controls.empty()) {tl_last_io_error="LID reaction inventories require a full native engine checkpoint";return 1;}
     if(layeredGroundwaterRestart(ctx)) {
         tl_last_io_error="Legacy hotstart cannot restore groundwater boundary/layer transport state; use NATIVE.";return 1;
     }
@@ -2045,6 +2049,7 @@ bool HotStartManager::apply_species_surface(
 int HotStartManager::save_legacy_routing(const std::string& path,
                                          const SimulationContext& ctx,
                                          const std::vector<double>* runoff) {
+    if(!ctx.reactions.lid_controls.empty()) {tl_last_io_error="LID reaction inventories require a full native engine checkpoint";return 1;}
     if(layeredGroundwaterRestart(ctx)) {
         tl_last_io_error="Legacy hotstart cannot preserve groundwater boundary/layer transport state; use NATIVE.";return 1;
     }

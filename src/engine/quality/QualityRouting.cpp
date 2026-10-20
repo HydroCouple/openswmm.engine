@@ -30,6 +30,7 @@
  */
 
 #include "QualityRouting.hpp"
+#include "MsxLidReactions.hpp"
 
 #include "../transport/components/EulerianArdComponent/ArdConfig.hpp"
 #include "../transport/components/ReactionModule/MsxLegacyTransport.hpp"
@@ -580,6 +581,7 @@ void QualitySolver::execute(SimulationContext& ctx, double dt) {
 
     assembleExternalLoads(ctx, dt);
     lidnode::prepareQuality(ctx, dt);
+    msxlid::prepareNodes(ctx,dt);
     const bool coupled_lids = n_pollutants_ > 0 && std::any_of(
         ctx.node_subtypes.storages.lid_state.begin(), ctx.node_subtypes.storages.lid_state.end(),
         [](const auto& state) { return !state.cells.empty(); });
@@ -650,6 +652,7 @@ void QualitySolver::execute(SimulationContext& ctx, double dt) {
     // (G-UT1).
     if (transport::legacyReactionsActive(ctx)) {
         transport::reactLegacyNodes(ctx, dt);
+    msxlid::reactNodes(ctx,dt);
     } else {
         applyDecay(ctx, dt);
     }

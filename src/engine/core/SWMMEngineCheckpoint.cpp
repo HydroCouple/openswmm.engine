@@ -5,6 +5,7 @@
 #include "../hydrology/surface/NativeSnow.hpp"
 #include "../hydrology/surface/SnowCheckpoint.hpp"
 #include "CompletedSourceArchive.hpp"
+#include "ReactionCheckpoint.hpp"
 #include "CheckpointInspection.hpp"
 #include "DateTime.hpp"
 #include "FileIO.hpp"
@@ -370,6 +371,12 @@ struct SWMMEngine::RestartState {
     HeatState heat;
     BedZoneState bed;
     bool heat_profile=false;
+    bool reaction_profile=false;
+    ReactionData reaction;
+    std::string ard_bytes,lard_bytes;
+    bool ard_attempted=false;
+    std::unique_ptr<transport::ArdEngine> prepared_ard;
+    std::unique_ptr<lard::LagrangianSolver> prepared_lard;
     std::vector<double> snow_rain,snow_snow;
     std::array<double,6> boundary;
     double controls_remaining;
@@ -400,6 +407,11 @@ struct SWMMEngine::RestartState {
         RUNOFF_ENGINE(COPY)
 #undef COPY
         heat_profile=e.ctx_.options.heat_transport;
+        reaction_profile=e.ctx_.reactions.configured;
+        if(reaction_profile) {
+            reaction=e.ctx_.reactions;ard_attempted=e.ard_init_attempted_;
+            ard_bytes=e.ard_.checkpointState();lard_bytes=e.lard_.checkpointState();
+        }
         if(heat_profile) {heat=e.ctx_.heat_state;bed=e.ctx_.bed_state;}
 #ifdef OPENSWMM_HAS_2D
         spatial=bool(e.source_delivery_);source_totals=e.source_totals_;
@@ -479,6 +491,11 @@ struct SWMMEngine::RestartState {
             bool thermal=true;a(thermal);require(thermal,"Engine checkpoint thermal profile differs.");
             heatState(a,heat);bedZoneState(a,bed);
         }
+        if(reaction_profile) {
+            detail::reactionState(a,reaction);
+            a(ard_attempted,ard_bytes,lard_bytes);
+            a(subcatch.sweep_last_swept,subcatch.sweep_now,subcatch.sweep_last_date);
+        }
 #ifdef OPENSWMM_HAS_2D
         if (spatial) fields(a,source_totals);
 #endif
@@ -495,6 +512,11 @@ struct SWMMEngine::RestartState {
                 climate.temp_ma.count>=0 && climate.temp_ma.count<=7,"Invalid engine climate checkpoint.");
         require(climateModel(climate)==climateModel(e.ctx_.climate_state),"Engine climate parameters differ.");
         require(heat_profile==e.ctx_.options.heat_transport,"Engine thermal checkpoint profile differs.");
+        if(reaction_profile) {
+            detail::validateReactionState(reaction,e.ctx_);
+            require(subcatch.sweep_last_swept.size()==e.ctx_.subcatches.sweep_last_swept.size(),"Reaction sweeping-clock shape differs.");
+            finite(subcatch.sweep_last_swept);finite(subcatch.sweep_last_date);
+        }
         if(heat_profile) {
             const auto same_size=[&](const auto& saved,std::size_t model,const char* message) {
                 require(saved.size()==model || (boundary[0]==0 && saved.empty()),message);
@@ -705,6 +727,15 @@ struct SWMMEngine::RestartState {
             for(int i=0;i<SimulationContext::MAX_STATS;++i)row[i]=tops[at++];
         e.ctx_.climate_state=climate;e.ctx_.dt_controls_remaining=controls_remaining;
         if(heat_profile) {e.ctx_.heat_state=std::move(heat);e.ctx_.bed_state=std::move(bed);}
+        if(reaction_profile) {
+            e.ctx_.reactions=std::move(reaction);
+            if(prepared_ard)e.ard_=std::move(*prepared_ard);
+            if(prepared_lard)e.lard_=std::move(*prepared_lard);
+            e.ard_init_attempted_=ard_attempted;
+            e.ctx_.subcatches.sweep_last_swept=std::move(subcatch.sweep_last_swept);
+            e.ctx_.subcatches.sweep_now=std::move(subcatch.sweep_now);
+            e.ctx_.subcatches.sweep_last_date=std::move(subcatch.sweep_last_date);
+        }
         e.exfil_.state()=std::move(exfil);e.avg_=std::move(avg);
         for(std::size_t i=0;i<cursors.size();++i)e.ctx_.tables.tables[i].cursor=cursors[i];
         e.controls_.pending_actions_=std::move(pending);e.controls_.action_slots_=std::move(slots);
@@ -745,7 +776,7 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
             ctx_.files.rainfall_mode==FileMode::NONE && ctx_.files.runoff_mode==FileMode::NONE &&
             ctx_.files.rdii_mode==FileMode::NONE && ctx_.files.inflows_path.empty() &&
             ctx_.files.outflows_path.empty() &&
-            !runoff_iface_file_ && ctx_.process_component_specs.empty(),
+            !runoff_iface_file_ && detail::checkpointReactionComponents(ctx_),
             "Engine checkpoint does not recover RDII, interface files, providers or process components.");
 #ifdef OPENSWMM_HAS_2D
     require(!ctx_.runtime_coupling_used || surface_router_.runtimeWaterCheckpointing(),
@@ -810,6 +841,13 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
         require(row->empty(),"Engine checkpoint has unqualified hydrology interpolation state.");
     require(lid_drain_q_interp_.empty() || lid_drain_q_interp_.size()==std::size_t(ctx_.n_nodes()),"Engine checkpoint LID-drain shape differs.");
     require(router_.structures_==&hydstruct_,"Engine checkpoint structure solver ownership differs.");
+    if(ctx_.reactions.configured) {
+        require(!ctx_.options.water_age && !ctx_.options.heat_transport && ctx_.ard_config.detailed_output_path.empty() && ctx_.reactions.subsurface_laws.empty(),
+            "Reaction checkpoints currently qualify 1D network, wet/dry subcatchment and LID chemistry without heat, age, subsurface laws or ARD detailed output.");
+#ifdef OPENSWMM_HAS_2D
+        require(!surface_router_.isActive(),"Reaction engine checkpoints do not yet qualify 2D surface chemistry.");
+#endif
+    }
     if(ctx_.routing_stats.sum_iterations>0)for(const auto& lid:ctx_.node_subtypes.storages.lid_state)
         require(lid.quality_old_water.size()==lid.cells.size(),"Engine routed LID previous-water shape differs.");
     router_.checkCheckpointProfile(ctx_);
@@ -823,6 +861,7 @@ std::string SWMMEngine::checkpointModel() const {
         auto heat=ctx_.heat_config;heatConfig(a,heat);
         auto mesh_contact_link=ctx_.heat_state.mesh_contact_link;a(mesh_contact_link);
     }
+    detail::reactionModel(a,ctx_);
     auto cm=climateModel(ctx_.climate_state);a(cm);
     auto ext=ctx_.ext_inflows;auto dwf=ctx_.dwf_inflows;auto pat=ctx_.patterns;auto rules=ctx_.control_rules.rule_text;auto events=ctx_.events;
     a(ext.node_idx,ext.node_name,ext.constituent,ext.ts_name,ext.inflow_type,ext.m_factor,ext.s_factor,ext.baseline,ext.pattern_name,
@@ -1140,6 +1179,7 @@ std::string SWMMEngine::checkpointBytes(std::string& result,bool include_outputs
         if(runtime_water_driver_)version+=40;
 #endif
         if(ctx_.options.heat_transport)version+=80;
+        if(ctx_.reactions.configured)version+=1000;
         require(error.empty(),error.c_str());payload(hydraulic);
 #ifdef OPENSWMM_HAS_2D
         if(source_delivery_) {auto bridge=*source_delivery_;Archive a;bridge.checkpoint(a,false,source_stage_->sources());auto bytes=a.bytes();payload(bytes);}
@@ -1405,6 +1445,7 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,const std::st
         if(checkpoint_surface_output_&&!files)expected_version+=6;
 #endif
         if(ctx_.options.heat_transport)expected_version+=80;
+        if(ctx_.reactions.configured)expected_version+=1000;
         require(magic==magicName && version==expected_version && model==checkpoint_model_ && crc==checksum(bytes),"Engine checkpoint format/model/checksum differs.");
         RestartState state(*this);Archive payload(std::move(bytes));state.archive(payload);std::string hydraulic;payload(hydraulic);
 #ifdef OPENSWMM_HAS_2D
@@ -1417,6 +1458,13 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,const std::st
         if(checkpoint_surface_output_&&!files)payload(mesh_output);
 #endif
         payload.finish();state.validate(*this);
+        if(state.reaction_profile) {
+            auto staging_context=ctx_;
+            state.prepared_ard=std::make_unique<transport::ArdEngine>();
+            state.prepared_lard=std::make_unique<lard::LagrangianSolver>();
+            state.prepared_ard->restoreCheckpointState(state.ard_bytes,staging_context);
+            state.prepared_lard->restoreCheckpointState(state.lard_bytes,staging_context);
+        }
         if(inspection) {
             summary.engine_seconds=state.boundary[0];summary.engine_date=state.boundary[1];
             summary.start_date=ctx_.options.start_date;summary.report_start_date=ctx_.options.report_start;

@@ -100,15 +100,18 @@
 #include <limits>
 #include <cstdint>
 #include <vector>
+#include "../../core/CompletedSourceArchive.hpp"
 
 #include "../../core/SimulationContext.hpp"
 #include "../../transport/InitialQualitySeeds.hpp"
 #include "../NegativeSources.hpp"
 #include "../QualityRouting.hpp"
 #include "../../transport/components/ReactionModule/ReactionLegacyBinding.hpp"
+#include "../../transport/components/ReactionModule/ReactionGeometry.hpp"
 #include "../../transport/TransportPolicy.hpp"   // E2
 #include "RwptDispersion.hpp"
 #include "SegmentStore.hpp"
+#include "../../transport/components/ReactionModule/ReactionSources.hpp"
 #include "../../core/UnitConversion.hpp"
 #include "../../hydraulics/Node.hpp"
 #include "../../transport/components/HeatFluxModules/BedExchange.hpp"
@@ -186,6 +189,14 @@ inline SpeciesRowLayout rowLayout(const SimulationContext& ctx) {
 
 class LagrangianSolver {
 public:
+    std::string checkpointState() const {
+        auto copy=*this;detail::CompletedSourceArchive a;copy.checkpoint(a);return a.bytes();
+    }
+    void restoreCheckpointState(const std::string& bytes,SimulationContext& ctx) {
+        detail::CompletedSourceArchive a(bytes);bool ready=false;a(ready);
+        if(ready)init(ctx);
+        checkpointFields(a);a.finish();
+    }
     bool initialized() const noexcept {return initialized_;}
     std::vector<ChannelThermalRegion> thermalRegions(const SimulationContext& ctx) const {
         std::vector<ChannelThermalRegion> out;const auto layout=rowLayout(ctx);
@@ -470,6 +481,7 @@ public:
                 // concentrations reached 2.7e30, 2.0e281, then inf, and the
                 // final-storage row went NaN. Below 1e-12 ft^3 there is no
                 // meaningful water and the store keeps its value.
+                if(is_msx&&!zero_bf)m+=transport::reactionBoosterMass(ctx,n,s-L.msx_first,m,denom,v_in+nodes.qual_vol_in[un]*frac);
                 const double st_new =
                     zero_bf ? 0.0
                             : ((denom > 1.0e-12) ? m / denom : st_old);
@@ -782,6 +794,21 @@ public:
     }
 
 private:
+    void checkpoint(detail::CompletedSourceArchive& a) {
+        a(initialized_);checkpointFields(a);
+    }
+    void checkpointFields(detail::CompletedSourceArchive& a) {
+        if(!initialized_)return;
+        store_.checkpoint(a);rwpt_.checkpoint(a);
+        a(substep_counter_,topo_,node_out_links_);a.fixed(flow_sign_,node_mass_in_,node_vol_in_);
+        const int nn=int(node_vol_in_.size()),nl=int(flow_sign_.size());
+        if(topo_.size()!=std::size_t(nn)||node_out_links_.size()!=std::size_t(nn))throw std::runtime_error("Invalid LARD topology shape.");
+        std::vector<bool> seen(nn,false);
+        for(int n:topo_) {if(n<0||n>=nn||seen[n])throw std::runtime_error("Invalid LARD checkpoint topology.");seen[n]=true;}
+        for(const auto& links:node_out_links_)for(int l:links)if(l<0||l>=nl)throw std::runtime_error("Invalid LARD checkpoint link.");
+        for(auto v:flow_sign_)if(v< -1||v>1)throw std::runtime_error("Invalid LARD flow direction.");
+        for(const auto* v:{&node_mass_in_,&node_vol_in_})for(double x:*v)if(!std::isfinite(x))throw std::runtime_error("Nonfinite LARD inflow receipt.");
+    }
     /**
      * @brief Surface + radiative fluxes and the H6b bed pair, LARD spelling.
      *

@@ -1,3 +1,4 @@
+#include "transport/components/ReactionModule/ReactionsWriter.hpp"
 /**
  * @file test_msx_buildup_washoff.cpp
  * @brief BW-MSX (2026-09-19) — the reactions component's (MSX) species build
@@ -1313,5 +1314,57 @@ TEST(WetSubcatchmentReactorProfile, ProductAndConservedSumReachNativeOutputAcros
         EXPECT_GT(subcatch_product, .001);
         EXPECT_GT(node_product, .001);
         swmm_output_close(output);
+    }
+}
+
+TEST_F(WetSubcatchmentReactions, SelectedWetLawsOverrideGlobalsAndRoundTrip) {
+    open("[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n[REACTION_SUBCATCHMENTS]\nRATE A -A\nSUBCATCHMENT S1 RATE A -0.01*A\nSUBCATCHMENT S1 RATE B 0.01*A\n");
+    auto& ctx=cpp(engine).context();auto& s=ctx.reactions.surface;
+    ASSERT_EQ(ctx.reactions.wet_laws.size(),2u);seed(0,10);
+    openswmm::msxsurf::step(ctx,10,0);
+    EXPECT_NEAR(s.ponded_qual[0]/283.17,10*std::exp(-.1),1e-7);
+    EXPECT_NEAR(s.ponded_qual[0]+s.ponded_qual[1],2831.7,1e-8);
+    const auto text=openswmm::transport::serializeReactionSystem(ctx);
+    EXPECT_NE(text.find("SUBCATCHMENT S1 RATE A -0.01*A"),std::string::npos);
+}
+TEST_F(WetSubcatchmentReactions, ContinuouslyFedPoolConvergesAtFirstOrderUnderStepHalving) {
+    open(wetConversion+"[REACTION_RAINFALL]\nA 2\n");
+    auto& ctx=cpp(engine).context();auto& s=ctx.reactions.surface;auto& sc=ctx.subcatches;
+    double prior=0;
+    for(double dt:{8.,4.,2.,1.}) {
+        std::fill(s.ponded_qual.begin(),s.ponded_qual.end(),0.);seed(0,10);
+        double volume=10;
+        for(double time=0;time<64;time+=dt) {
+            sc.old_ponded_depth[0]=volume/100.;volume+=dt;sc.ponded_depth[0]=volume/100.;sc.rainfall[0]=.01;
+            openswmm::msxsurf::step(ctx,dt,time);
+        }
+        const double expected=(100*std::exp(-.64)+200*(1-std::exp(-.64)))/74.;
+        const double error=std::abs(s.ponded_qual[0]/(74*28.317)-expected);
+        if(prior>0)EXPECT_GT(prior/error,1.9);
+        prior=error;
+        EXPECT_NEAR(s.ponded_qual[0]+s.ponded_qual[1],(100+128)*28.317,1e-7);
+    }
+    EXPECT_LT(prior,.0065);
+}
+TEST_F(WetSubcatchmentReactions, DryBuildupConversionRetainsProductAcrossAreaAndProjectUnits) {
+    for(bool metric:{false,true})for(const char* area:{"FT2","M2","CM2"}) {
+        SCOPED_TRACE(area);
+        SCOPED_TRACE(metric);
+        open(std::string("[REACTION_OPTIONS]\nAREA_UNITS ")+area+"\n[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n[REACTION_BUILDUP]\nLANDUSE LU1 RATE A -0.01*A\nSUBCATCHMENT S1 LANDUSE LU1 RATE B 0.01*A\n",metric);
+        auto& ctx=cpp(engine).context();auto& s=ctx.reactions.surface;
+        ASSERT_TRUE(s.active());ASSERT_GT(s.n_landuses,0);ASSERT_EQ(ctx.reactions.buildup_laws.size(),2u);
+        ctx.subcatches.coverage[0]=100;
+        const double norm=ctx.subcatches.area[0];
+        s.buildup[s.bu_idx(0,0,0)]=10/norm;s.buildup[s.bu_idx(0,0,1)]=0;
+        ctx.subcatches.old_ponded_depth[0]=ctx.subcatches.ponded_depth[0]=0;
+        // No accrual or washoff: isolate the authored dry reactor.
+        std::fill(s.bu_type.begin(),s.bu_type.end(),0);std::fill(s.wo_type.begin(),s.wo_type.end(),0);
+        openswmm::msxsurf::step(ctx,10,0);
+        EXPECT_NEAR(s.buildup[0]*norm,10*std::exp(-.1),1e-7);
+        EXPECT_NEAR((s.buildup[0]+s.buildup[1])*norm,10,1e-10);
+        EXPECT_NEAR(s.led_reacted[0]+s.led_reacted[1],0,1e-10);
+        openswmm::msxsurf::step(ctx,10,10);
+        EXPECT_NEAR((s.buildup[0]+s.buildup[1])*norm,10,1e-10);
+        swmm_engine_destroy(engine);engine=nullptr;
     }
 }

@@ -186,7 +186,7 @@ void validate(SimulationContext& ctx) {
         if (!error.empty()) { ctx.errors.push_back("LID node " + ctx.node_names.name_of(n) + ": " + error); continue; }
         const bool mesh_heat = ctx.options.heat_transport && cfg.bottom == LidNodeBottom::MeshAquifer;
         if (stack.front().flow.enabled &&
-            (ctx.options.water_age || ctx.reactions.configured ||
+            (ctx.options.water_age ||
              (ctx.options.heat_transport && !mesh_heat)))
             ctx.errors.push_back("Richards LID node " + ctx.node_names.name_of(n) +
                 ": water age and MSX require porous-cell transport adapters; heat is supported only for a qualified Mesh Richards/groundwater route");
@@ -194,8 +194,10 @@ void validate(SimulationContext& ctx) {
         // adapter. They mixed as a plain tank that bypassed retained cells,
         // ports and layer treatment, and capture removed their water but not
         // their mass, so a decaying species could end above its source.
-        else if (ctx.reactions.configured)
-            ctx.errors.push_back("LID node " + ctx.node_names.name_of(n) + ": reaction species are not yet routed through LID layers (no layer adapter); remove the reactions component or the LID assignment");
+        else if(ctx.reactions.configured&&(!ctx.reactions.lid_enabled(cfg.control)||
+                ctx.options.quality_solver!=QualitySolverKind::LEGACY||cfg.bottom==LidNodeBottom::MeshAquifer||
+                std::any_of(ctx.reactions.species_is_wall.begin(),ctx.reactions.species_is_wall.end(),[](auto v){return v!=0;})))
+            ctx.errors.push_back("LID node "+ctx.node_names.name_of(n)+": reaction species require an explicit [REACTION_LIDS] porous-cell transport adapter, BULK species, LEGACY quality and a non-Mesh bottom");
         const double d = thickness(stack) / rainDepth(ctx);
         if (std::abs(d - ctx.nodes.full_depth[n]) > 1.e-7 * std::max(1.0, d))
             ctx.errors.push_back("LID node " + ctx.node_names.name_of(n) + ": MaxDepth must equal the sum of layer thicknesses");

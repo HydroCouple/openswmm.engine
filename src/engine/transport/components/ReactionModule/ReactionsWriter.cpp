@@ -91,6 +91,7 @@ std::string serializeReactionSystem(const SimulationContext& ctx) {
             static_cast<int>(rx.coupling) == 1 ? "FULL" : "NONE");
         row(out, "RATE_UNITS", kRate[static_cast<int>(rx.rate_units)]);
         row(out, "AREA_UNITS", kArea[static_cast<int>(rx.area_units)]);
+        if(rx.wall_geometry)row(out,"WALL_GEOMETRY","YES");
         row(out, "PATTERN_TIMESTEP", fmt_double(rx.pattern_timestep));
         row(out, "TIMESTEP",   fmt_double(rx.timestep));
         row(out, "ATOL",       fmt_double(rx.atol));
@@ -132,9 +133,18 @@ std::string serializeReactionSystem(const SimulationContext& ctx) {
     if (!rx.sources.empty()) {
         out += "\n[REACTION_SOURCES]\n";
         for (const auto& r : rx.sources)
-            row(out, r.mass ? "MASS" : "CONC", ctx.node_names.name_of(r.node),
+            row(out, r.booster==1 ? "FLOWPACED" : r.booster==2 ? "SETPOINT" : r.mass ? "MASS" : "CONC", ctx.node_names.name_of(r.node),
                 rx.species_name[r.species], fmt_double(r.value),
                 r.pattern < 0 ? "*" : rx.source_patterns[r.pattern].name);
+    }
+    if(!rx.lid_controls.empty()) {
+        out+="\n[REACTION_LIDS]\n";
+        for(int control:rx.lid_controls)row(out,"CONTROL",ctx.lid_names.name_of(control),"TRANSPORT");
+        for(const auto& law:rx.lid_laws)out+="CONTROL "+ctx.lid_names.name_of(law.control)+" LAYER "+std::to_string(law.layer)+" "+form_tok(law.form)+" "+rx.species_name[law.species]+" "+law.expression+"\n";
+    }
+    if(!rx.wall_areas.empty()) {
+        out+="\n[REACTION_WALLS]\n";
+        for(const auto& r:rx.wall_areas)row(out,r.link?"LINK":"NODE",r.link?ctx.link_names.name_of(r.element):ctx.node_names.name_of(r.element),fmt_double(r.area));
     }
     if (!rx.parameter_overrides.empty()) {
         out += "\n[REACTION_PARAMETERS]\n";
@@ -175,6 +185,14 @@ std::string serializeReactionSystem(const SimulationContext& ctx) {
     emit_scope("REACTION_PIPES", rx.pipe_form, rx.pipe_expr_src);
     emit_scope("REACTION_TANKS", rx.tank_form, rx.tank_expr_src);
     emit_scope("REACTION_SUBCATCHMENTS", rx.subcatch_form, rx.subcatch_expr_src);
+    if(!rx.wet_laws.empty()) {
+        if(std::none_of(rx.subcatch_form.begin(),rx.subcatch_form.end(),[](auto f){return f!=ReactionExprForm::NONE;}))out+="\n[REACTION_SUBCATCHMENTS]\n";
+        for(const auto& l:rx.wet_laws)out+="SUBCATCHMENT "+ctx.subcatch_names.name_of(l.subcatchment)+" "+form_tok(l.form)+" "+rx.species_name[l.species]+" "+l.expression+"\n";
+    }
+    if(!rx.buildup_laws.empty()) {
+        out+="\n[REACTION_BUILDUP]\n";
+        for(const auto& l:rx.buildup_laws)out+=(l.subcatchment<0?std::string():"SUBCATCHMENT "+ctx.subcatch_names.name_of(l.subcatchment)+" ")+"LANDUSE "+ctx.landuse_names.name_of(l.landuse)+" "+form_tok(l.form)+" "+rx.species_name[l.species]+" "+l.expression+"\n";
+    }
 
     if(!rx.subsurface_laws.empty()) {
         out+="\n[REACTION_SUBSURFACE]\n";

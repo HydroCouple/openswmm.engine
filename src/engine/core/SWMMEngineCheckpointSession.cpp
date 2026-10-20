@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "SWMMEngine.hpp"
 #include "CheckpointInspection.hpp"
+#include "ReactionCheckpoint.hpp"
 #include "FileIO.hpp"
 #include "../plugins/DefaultInputPlugin.hpp"
 #include "../plugins/DefaultReportPlugin.hpp"
@@ -62,7 +63,7 @@ std::string SWMMEngine::startCheckpointSession(int output,const std::string& sou
         require(source_path.find('\0')==std::string::npos&&detail::checkpointUtf8(source_path),"Invalid source journal path.");
         require(!callbacks_.on_progress&&!callbacks_.on_warning&&!callbacks_.on_step_begin&&!callbacks_.on_step_end,
             "Managed checkpoint sessions cannot recover callbacks.");
-        require(ctx_.plugin_specs.empty()&&ctx_.process_component_specs.empty(),"Managed checkpoint sessions require native inputs and writers.");
+        require(ctx_.plugin_specs.empty()&&detail::checkpointReactionComponents(ctx_),"Managed checkpoint sessions require native inputs and writers.");
         require(plugins_.input_plugins().size()==1&&dynamic_cast<DefaultInputPlugin*>(plugins_.input_plugins().front()),
             "Managed checkpoint sessions require the built-in input reader.");
         require(plugins_.state_io_plugins().size()==1&&dynamic_cast<DefaultStateIOPlugin*>(plugins_.state_io_plugins().front())&&
@@ -72,8 +73,8 @@ std::string SWMMEngine::startCheckpointSession(int output,const std::string& sou
         // Refuse ancillary writers before initialize/start can touch their paths.
         require(!ctx_.files.has_any(),"Managed checkpoint sessions cannot recover interface or hotstart files.");
         for(const auto& path:ctx_.lid_usage.rpt_file)require(path.empty(),"Managed checkpoint sessions cannot append detailed LID reports.");
-        require(!ctx_.options.heat_transport&&!ctx_.options.water_age&&ctx_.reactions.n_species()==0&&(ctx_.options.ignore_quality||ctx_.n_pollutants()==0),
-            "Managed checkpoint sessions require water-only physics.");
+        require(!ctx_.options.heat_transport&&!ctx_.options.water_age&&(ctx_.options.ignore_quality||ctx_.n_pollutants()==0),
+            "Managed checkpoint sessions require water-only or supported reaction physics.");
 #ifndef OPENSWMM_HAS_2D_HDF5_OUTPUT
         require(output<SWMM_CHECKPOINT_OUTPUT_MESH,"Mesh output checkpoints unavailable in this build.");
 #endif
