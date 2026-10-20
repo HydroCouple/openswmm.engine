@@ -436,3 +436,84 @@ GW_ET NONE
     finally:
         for solver in solvers:
             cleanup(solver)
+
+
+@pytest.mark.parametrize('closure,layered', [('CLOSED_FORM', False), ('ENSLAVED', False), ('SIGMA', False), ('SIGMA', True)])
+@pytest.mark.parametrize('forcing', ['well', 'edge', 'head'])
+def test_passive_and_age_coupled_rk2_public_profile(tmp_path, closure, layered, forcing):
+    from openswmm.engine import Solver, GroundwaterSpeciesLedger, GroundwaterZone
+    from tests.engine._groundwater_cases import MODEL
+    if forcing == 'well':
+        forcing_rows = '[GW_SOURCES]\nW CELL 1 FLOW PULSE TSS CONC 7 __WATER_AGE__ CONC 2\n'
+    else:
+        kind = 'HEAD' if forcing == 'head' else 'FLOW'
+        forcing_rows = (f'[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 {kind} SERIES PULSE\n'
+                        '[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 7\n1 0 __WATER_AGE__ CONC 2\n')
+    values = ('-1.1', '-1.8', '-1.1') if forcing == 'head' else ('.00001', '-.00001', '.00001')
+    extra = f'''[OPTIONS]
+WATER_AGE ON
+[2D_OPTIONS]
+MOMENTUM_EQUATION FULL_SWE
+RECONSTRUCTION_ORDER 2
+MAX_TIMESTEP .025
+LTS_TIERS 1
+TRANSPORT_POLLUTANTS YES
+TRANSPORT_MSX NO
+TRANSPORT_AGE YES
+TRANSPORT_TEMPERATURE NO
+[2D_INITIAL_QUALITY]
+* TSS 6
+[2D_AQUIFER_OPTIONS]
+CLOSURE {closure}
+M_LAYERS 4
+NODE_ENROLMENT ROWS
+LINK_SEEPAGE NONE
+GW_ET NONE
+[2D_AQUIFER]
+* 18 2 .45 .1 2 HG0 .6 C_LOSS .5
+[GW_TRANSPORT_OPTIONS]
+UNSAT_TRANSPORT {'LAYERED' if layered else 'BULK'}
+TRANSPORT_POLLUTANTS YES
+TRANSPORT_MSX NO
+TRANSPORT_AGE YES
+TRANSPORT_TEMPERATURE NO
+[GW_INITIAL_QUALITY]
+* SAT TSS 2
+* UNSAT TSS 2
+[TIMESERIES]
+PULSE 01/01/2026 00:00:00 {values[0]}
+PULSE 01/01/2026 00:00:01 {values[1]}
+PULSE 01/01/2026 00:00:02 {values[2]}
+{forcing_rows}'''
+    path = tmp_path / 'passive-rk2.inp'
+    path.write_text(MODEL.replace('END_TIME 00:10:00', 'END_TIME 00:00:02').replace('ROUTING_STEP 5', 'ROUTING_STEP .1') + extra)
+    solver = Solver(path, path.with_suffix('.rpt'))
+    solver.open()
+    try:
+        solver.initialize()
+        surface, gw = solver.surface2d, solver.surface2d.groundwater
+        assert surface.species == gw.species == ('TSS', '__WATER_AGE__')
+        solver.start(False)
+        while solver.step().total_seconds() > 0:
+            pass
+        assert solver.elapsed.total_seconds() == 2
+        for species in range(2):
+            assert np.isfinite(surface.concentrations(species)).all()
+            assert np.all(surface.concentrations(species) >= 0)
+            for zone in (GroundwaterZone.SAT, GroundwaterZone.UNSAT):
+                assert np.isfinite(gw.concentrations(zone, species)).all()
+                assert np.all(gw.concentrations(zone, species) >= 0)
+            assert abs(gw.species_ledger(species, GroundwaterSpeciesLedger.RESIDUAL)) < 1e-8
+        assert gw.species_ledger(0, GroundwaterSpeciesLedger.INFIL_IN) > 0
+        assert gw.species_ledger(1, GroundwaterSpeciesLedger.AGE_GENERATED) > 0
+        assert surface.species_ledger('__WATER_AGE__')['age_generated'] > 0
+        if forcing == 'well':
+            assert gw.species_ledger(0, GroundwaterSpeciesLedger.SOURCE_IN) > 0
+        else:
+            receipt = gw.authored_boundary_receipt(0, 0)
+            assert receipt['advective_in'] > 0 and receipt['advective_out'] > 0
+        if layered:
+            assert all(gw.layer_quality(0, j, 0)['total_mass'] >= 0 for j in range(4))
+        solver.end()
+    finally:
+        cleanup(solver)

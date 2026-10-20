@@ -133,7 +133,7 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
             opts.lts_tiers = 1;
         }
         second_order_ = (opts.reconstruction_order == 2);
-        if (second_order_ && state.transport.active()) {
+        if (second_order_ && state.transport.active() && !opts.groundwater) {
             std::fprintf(stderr,
                 "[openswmm 2D] RECONSTRUCTION_ORDER 2 with overland transport "
                 "is not supported yet; using first order.\n");
@@ -185,6 +185,8 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     // S1: species accumulators, sized only when transport is live so a
     // hydrodynamics-only model allocates nothing here.
     species_on_ = state.transport.active();   // S7: see the member note
+    if(second_order_&&opts.groundwater&&state.transport.age_row>=0)
+        state.transport.generated_age.assign(state.transport.n_species,0);
     if (species_on_) {
         const auto ns = static_cast<std::size_t>(state.transport.n_species);
         sacc_L_.assign(ns * ne, 0.0);
@@ -347,6 +349,11 @@ void ExplicitInertialSolver::refreshSubsurfaceRows() {
 }
 
 double ExplicitInertialSolver::donorConc(int s, int cell) const noexcept {
+    if(rk_transport_stage_) {
+        const auto k=state_->transport.idx(s,cell);
+        return rk_stage_volume_[cell]>0?rk_stage_mass_[k]/rk_stage_volume_[cell]:0;
+    }
+
     const auto& tr = state_->transport;
     const double v = state_->volume[static_cast<std::size_t>(cell)];
     // Guard on V > 0 ONLY — deliberately NOT on the dry-depth threshold.
@@ -558,7 +565,12 @@ OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::applyCellSourceRow(
     }
     // All sinks see the same mixed concentration. Passing cell-local
     // transfers directly to groundwater avoids shared-ledger deltas.
-    const double concentration = source.available > 0.0 ? mass / source.available : 0.0;
+    double concentration = source.available > 0.0 ? mass / source.available : 0.0;
+    if(rk_transport_stage_) {
+        concentration=donorConc(r,i);
+        const double requested=source.infil+source.out+((r==tr.age_row||r==tr.temp_row)?source.evap:0);
+        if(!tr.signedRow(r)&&requested>0)concentration=std::min(concentration,std::max(0.,mass)/requested);
+    }
     const double mi = concentration * source.infil;
     if(r==tr.temp_row&&state_->heat.ground_column)
         advectStandaloneGround(state_->heat,i,source.infil,concentration);
@@ -569,6 +581,7 @@ OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::applyCellSourceRow(
     if (!tr.signedRow(r) && mass < 0.0) mass = 0.0;
     book(SourceLedger::Infiltration, r, mi);
     book(SourceLedger::CouplingOut, r, mc);
+    if(rk_transport_stage_)book(SourceLedger::ExternalOut,r,me);
     if(auto* row=const_cast<RuntimeForcing*>(state_->runtime_forcings.get(3,i))) {
         row->receipt.requested_mass[r]+=concentration*source.requested_infil;
         row->receipt.applied_mass[r]+=mi;
@@ -2217,7 +2230,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     std::map<int, RuntimeReceipt> receipts0;
     if(gw_) {
         if(auto error=gw_->rk2ProfileError();!error.empty())throw std::runtime_error(error);
-        if(common_stage_ || channel_ground_ || state_->transport.active() || state_->heat.enabled ||
+        if(common_stage_ || channel_ground_ || state_->heat.enabled ||
            state_->snow.active() || state_->runtime_sources.active() || state_->runtime_forcings.active() ||
            (state_->node_coupling&&!state_->node_coupling->empty()))
             throw std::runtime_error("Coupled RK2 has an unqualified surface/source owner.");
@@ -2245,8 +2258,9 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
         }
     };
     if(gw_) {
-        for(const auto& source:gw_->sources_)add_cuts(source.flow);
+        for(const auto& source:gw_->sources_) {add_cuts(source.flow);for(const auto& term:source.terms)add_cuts(term.signal);}
         for(const auto& boundary:gw_->boundaries_) {
+            for(const auto& term:boundary.terms)add_cuts(term.signal);
             if(!boundary.head)add_cuts(boundary.signal);
             else if(!boundary.signal.timePoints().empty()) {
                 const int cell=boundary.cell;const auto& water=gw_->state();const double bottom=water.z_bed[cell];
@@ -2274,13 +2288,25 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     rk_bc0_ = bc_accum_; rk_ex0_ = exch_; rk_inf0_ = state_->infil_applied;
     rk_cpl0_ = state_->coupling_applied;
     rk_drawn0_ = node_drawn_;
+    const auto transport0=state_->transport;
     const double evap0 = state_->evap_loss_total;
     for (int stage = 0; stage < 2; ++stage) {
+        rk_transport_stage_=gw_&&species_on_;
+        if(rk_transport_stage_) {rk_stage_mass_=state_->transport.cell_mass;rk_stage_volume_=state_->volume;}
         if(gw_)gw_->publishRk2Infiltration(*state_,dt,time);
         fireFaces(active_faces_, dt, /*global_step=*/true);
         if(gw_)gw_->fireGwFaces(0,dt);
         fireCells(active_cells_, dt, /*tier0=*/true);
         if(gw_)gw_->fireGwRk2Cells(dt,*state_,time);
+        if(rk_transport_stage_&&state_->transport.age_row>=0) {
+            auto& tr=state_->transport;double generated=0;
+            for(int i=0;i<tr.n_cells;++i) {
+                const double production=dt*rk_stage_volume_[i];
+                tr.cell_mass[tr.idx(tr.age_row,i)]+=production;generated+=production;
+            }
+            tr.generated_age[tr.age_row]+=generated;
+        }
+        rk_transport_stage_=false;
     }
     // Parallel over every cell. An INACTIVE cell was not fired by either
     // stage, so its average is the identity (volume, q⃗ and the infiltration
@@ -2304,6 +2330,20 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
                 rk_cpl0_[i] + 0.5 * (state_->coupling_applied[i] - rk_cpl0_[i]);
         }
         if (state_->depth[i] <= opts_->dry_depth) { qcx_[i] = 0.0; qcy_[i] = 0.0; }
+    }
+    auto& tr=state_->transport;
+    for(auto member:{&SurfaceTransportState::cell_mass,&SurfaceTransportState::lost_infiltration,
+        &SurfaceTransportState::lost_boundary,&SurfaceTransportState::gained_external,&SurfaceTransportState::lost_external,
+        &SurfaceTransportState::gained_bed,&SurfaceTransportState::lost_coupling,&SurfaceTransportState::exch_mass,
+        &SurfaceTransportState::exch_spill,&SurfaceTransportState::gained_rainfall,&SurfaceTransportState::gained_boundary,
+        &SurfaceTransportState::gained_coupling,&SurfaceTransportState::gained_exfiltration,&SurfaceTransportState::gained_washoff,
+        &SurfaceTransportState::cell_runoff_vol,&SurfaceTransportState::generated_age}) {
+        auto& now=tr.*member;const auto& before=transport0.*member;
+        if(now.size()!=before.size())throw std::runtime_error("RK2 surface transport shape changed.");
+        for(std::size_t k=0;k<now.size();++k) {
+            now[k]=.5*(before[k]+now[k]);
+            if(!std::isfinite(now[k]))throw std::runtime_error("RK2 surface transport is nonfinite.");
+        }
     }
     if (state_->boundary) for(auto& entry:state_->boundary->receipts) {
         const auto& before=boundary_receipts0.at(entry.first); auto& now=entry.second;

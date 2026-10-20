@@ -46,8 +46,8 @@ Extraction is availability-limited and removes existing dissolved quality.
 Initial LAYER quality is refused by active bulk transport; explicit SIGMA
 LAYERED transport provides separate layer inventories. Hydraulic HEAD/FLOW
 edges bind groundwater boundary quality, and selected porous thermal/reaction
-profiles are implemented. Standalone CPU water-only CLOSED_FORM/ENSLAVED/SIGMA
-aquifers also support coupled surface RK2; chemistry, heat and borrowed owners
+profiles are implemented. Standalone CPU passive pollutant/age CLOSED_FORM/ENSLAVED/SIGMA
+aquifers also support coupled surface RK2; reactions, heat and borrowed owners
 retain first-order coupling. See Hydrology Chapter 9 and
 `docs/design/groundwater-transport.md` for the current contracts and
 qualification limits; the older design below does not establish runtime capability.

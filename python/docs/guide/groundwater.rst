@@ -100,20 +100,27 @@ reference is authored metadata; it does not read or apply the file immediately.
 Execution profiles
 ------------------
 
-Groundwater chemistry, layered transport and porous heat require the CPU
-first-order coupling profile. A standalone CLOSED_FORM/ENSLAVED/SIGMA water-only
-mesh can use FULL_SWE with RECONSTRUCTION_ORDER 2; network/catchment exchange and
-active transport/thermal owners remain guarded.
-Authored water-only wells and HEAD/FLOW edges are supported: shared surface/groundwater
+Groundwater reactions and porous heat require the CPU first-order coupling
+profile. A standalone CLOSED_FORM/ENSLAVED/SIGMA mesh can use FULL_SWE with
+RECONSTRUCTION_ORDER 2 for water, passive pollutants and age, including SIGMA
+LAYERED chemistry. Active surface rows must match groundwater rows. Decay,
+heat, surface MSX and network/catchment owners remain guarded.
+Authored wells and HEAD/FLOW quality edges are supported: shared surface/groundwater
 stages split at knots and sign reversals. HEAD uses absolute elevation; FLOW
-is inward-positive m³/s. Runtime providers and quality
-terms remain guarded. ENSLAVED stages average conserved total water and
+is inward-positive m³/s. Quality knots split the shared stages. Runtime
+providers remain guarded. ENSLAVED stages average conserved total water and
 recover their equilibrium table/column state. SIGMA stages hold starting-state
 ALE velocity and average conserved layer water, deriving moisture and bulk
 UNSAT storage afterward. All three closures may share a mesh. Smooth SIGMA
 drainage and capillary tests retain second temporal order; collapse/rewet and
 donor switching have separate bounds/conservation checks without an order claim.
-SIGMA water-only layers do not enable layered chemistry or heat under RK2.
+Passive stage transport averages canonical mass, pending receipts and ledgers;
+UNSAT layer totals are derived. Explicit age production advances once per
+accepted interval. Reactions and heat require their separate qualification.
+
+Surface age production is reported by
+``surface2d.species_ledger("__WATER_AGE__")["age_generated"]``. Rebuild
+surface plugins for ABI 6; older layouts fall back to CPU.
 
 This profile has an internal numerical component checkpoint, not managed
 engine-calendar or output continuation. Requests for accelerated backends
@@ -149,5 +156,5 @@ history; raw default bulk state carriers retain their existing behavior.
 
 This profile excludes live network/catchment owners, WALL species,
 surface-species/buildup report continuation and binary/combined output
-companions. It does not extend the separate water-only RK2 checkpoint
+companions. It does not extend the separate passive RK2 component checkpoint
 profile. See the native groundwater transport contracts for the full limits.

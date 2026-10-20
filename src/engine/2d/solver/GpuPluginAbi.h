@@ -69,17 +69,17 @@
 extern "C" {
 #endif
 
-/** ABI version. The core refuses a plugin whose abi_version disagrees,
- *  except that a v3 plugin is still accepted through the thread-count
- *  environment fallback (see requested_threads below).
+/** ABI version. The core refuses a plugin whose abi_version disagrees.
  *  v3: CVODE/ARKODE plugin solvers retired (D2, 2026-07-29) — the explicit
  *  marcher factory is the only solver entry, and SurfaceStateData dropped the
  *  active_set pointer, so a v2 plugin would mis-read the struct layout.
  *  v4: OpenSwmmGpuProbe gained requested_threads (core → plugin, appended
  *  so the v3 prefix layout is unchanged) and the optional entry point
  *  openswmm_gpu_host_threads() (plugin → core). */
-#define OPENSWMM_GPU_ABI_VERSION 4
-#define OPENSWMM_GPU_ABI_VERSION_ENV_THREADS_FALLBACK 3
+/* v6: SurfaceTransportState adds a canonical RK2 age-generation ledger.
+ * SurfaceStateData offsets change; all surface plugins must be rebuilt.
+ * The independent C-only groundwater raw-recharge ABI remains v1. */
+#define OPENSWMM_GPU_ABI_VERSION 6
 
 /** GPU vendor / backend identifier reported by a plugin. */
 typedef enum OpenSwmmGpuVendor {

@@ -65,8 +65,8 @@ SIGMA LAYERED transport now owns layer quality; LAYER never aliases bulk
 UNSAT. Hydraulic HEAD/FLOW edges bind groundwater boundary quality. Selected
 layered/porous thermal and scoped reaction profiles are implemented; see
 `docs/design/groundwater-transport.md` for their qualification limits.
-Groundwater chemistry and heat retain first-order coupling; the separate
-standalone CPU water-only CLOSED_FORM/ENSLAVED/SIGMA profile supports RK2.
+Groundwater reactions and heat retain first-order coupling; the separate
+standalone CPU passive pollutant/age CLOSED_FORM/ENSLAVED/SIGMA profile supports RK2.
 The older design below does not establish additional runtime capability.
 
 The design (2026-09-04, amended 2026-09-07 for the mixed

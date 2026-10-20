@@ -46,4 +46,51 @@ LayerTransportResult solveLayerTransport(const std::vector<double>& capacity,
     for(const auto& move:moves)r.transferred.push_back(move.capacity*r.concentration[move.from]);
     return r;
 }
+LayerTransportResult advanceLayerTransportEuler(const std::vector<double>& capacity,
+    const std::vector<double>& initial,const std::vector<double>& rhs,
+    const std::vector<LayerTransportMove>& moves,bool signed_species,const std::vector<double>* donor_available) {
+    LayerTransportResult r;const int n=int(capacity.size());
+    if(n==0||initial.size()!=capacity.size()||rhs.size()!=capacity.size()||(donor_available&&donor_available->size()!=capacity.size())) {
+        r.error="Euler layer transport shape differs";return r;
+    }
+    r.mass=rhs;r.concentration.resize(n);std::vector<double> requested(n,0),remaining(n),scale(n,1);
+    for(int i=0;i<n;++i) {
+        if(!std::isfinite(capacity[i])||capacity[i]<0||!std::isfinite(initial[i])||!std::isfinite(rhs[i])||
+           (!signed_species&&(initial[i]<0||rhs[i]<0))) {
+            r.error="Euler layer transport has inadmissible storage or mass";return r;
+        }
+        r.concentration[i]=capacity[i]>0?initial[i]/capacity[i]:0;
+        remaining[i]=std::min(initial[i],rhs[i]);
+        if(donor_available) {
+            const double available=(*donor_available)[i];
+            if(!std::isfinite(available)||(!signed_species&&available<0)) {r.error="Invalid Euler donor reservation";return r;}
+            remaining[i]=std::min(remaining[i],available);
+        }
+    }
+    for(const auto& move:moves) {
+        if(move.from<0||move.from>=n||move.to<-1||move.to>=n||move.from==move.to||
+           !std::isfinite(move.capacity)||move.capacity<0) {
+            r.error="Invalid Euler layer transfer";return r;
+        }
+        const double amount=move.capacity*r.concentration[move.from];
+        if(!std::isfinite(amount)){r.error="Nonfinite Euler layer transfer";return r;}
+        requested[move.from]+=amount;
+        if(!std::isfinite(requested[move.from])){r.error="Nonfinite Euler donor demand";return r;}
+    }
+    if(!signed_species)for(int i=0;i<n;++i)
+        if(requested[i]>remaining[i])scale[i]=remaining[i]/requested[i];
+    for(const auto& move:moves) {
+        const int from=move.from;
+        double amount=move.capacity*r.concentration[from]*scale[from];
+        if(!signed_species)amount=std::min(amount,remaining[from]);
+        remaining[from]-=amount;r.mass[from]-=amount;
+        if(move.to>=0)r.mass[move.to]+=amount;
+        r.transferred.push_back(amount);
+    }
+    for(double mass:r.mass)if(!std::isfinite(mass)||(!signed_species&&mass<0)) {
+        r.error="Euler layer transport produced inadmissible mass";return r;
+    }
+    return r;
+}
+
 }

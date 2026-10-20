@@ -190,7 +190,7 @@ std::unique_ptr<ISurfaceSolver> try_plugin(const std::string& backend,
             OpenSwmmGpuProbe info{};
             const int rc = probe(&info);
             const bool abi_current  = info.abi_version == OPENSWMM_GPU_ABI_VERSION;
-            const bool abi_fallback = info.abi_version == OPENSWMM_GPU_ABI_VERSION_ENV_THREADS_FALLBACK;
+            const bool abi_fallback = false; // Older plugins cannot share the RK2 state layout.
             if (!abi_current && !abi_fallback) continue;
             if (rc != 0 || info.device_count <= 0) {
                 // No usable device behind this plugin — try the next candidate.

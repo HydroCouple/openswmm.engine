@@ -294,10 +294,15 @@ std::string ExplicitInertialSolver::rk2CheckpointProfile() const {
     if(!initialized_||!second_order_||!gw_||common_stage_||joint_checkpoint_||channel_ground_||
        source_history_||engine_source_history_||engine_source_stream_||!checkpoint_ready_||
        mode_!=Momentum2D::FULL_SWE||opts_->lts_tiers!=1||!bc_cell_.empty()||
-       state_->transport.active()||state_->heat.enabled||state_->snow.active()||
+       state_->heat.enabled||state_->snow.active()||
        state_->runtime_sources.active()||state_->runtime_forcings.active()||
        (state_->node_coupling&&!state_->node_coupling->empty()))
-        return "RK2 checkpoint requires the standalone wall-bounded water-only coupled profile.";
+        return "RK2 checkpoint requires the standalone wall-bounded passive transport/age coupled profile.";
+    const auto& tr=state_->transport;const auto& ground=gw_->transport();
+    if(tr.n_msx>0)return "Coupled RK2 surface MSX requires its separately qualified reaction stage.";
+    if(tr.active()&&(tr.row_names!=ground.row_names||tr.n_species!=ground.n_species||tr.age_row!=ground.age_row||tr.temp_row>=0))
+        return "Coupled RK2 requires matching surface/groundwater passive species and age rows.";
+    for(double mass:tr.cell_mass)if(!std::isfinite(mass)||mass<0)return "RK2 surface transport inventory is inadmissible.";
     for(const auto* row:{&state_->coupling_flux,&state_->coupling_applied})for(double v:*row)if(v!=0)
         return "RK2 checkpoint cannot recover external coupling receipts.";
     if(source_phase_end_!=t_last_sync_||accumulators_pending_)
@@ -331,6 +336,10 @@ std::string ExplicitInertialSolver::rk2CheckpointModel() const {
     if(o.coupling_pond_mode!=CouplingPondMode2D::FOOTPRINT||o.coupling_pond_relax!=0||o.coupling_rim_band>=0||o.coupling_equalize>=0)
         a(o.coupling_pond_mode,o.coupling_pond_relax,o.coupling_rim_band,o.coupling_equalize);
 
+    if(state_->transport.active()) {
+        std::string profile="shared RK2 passive transport and age v1";auto tr=state_->transport;
+        a(profile,tr.n_species,tr.n_pollut,tr.n_msx,tr.age_row,tr.temp_row,tr.row_names,tr.rain_conc,tr.bc_conc);
+    }
     auto rain=state_->rainfall,evap=state_->evap_rate;a(rain,evap);
     return a.bytes();
 }

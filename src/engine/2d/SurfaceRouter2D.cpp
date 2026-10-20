@@ -1764,9 +1764,11 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         auto* cpu=dynamic_cast<ExplicitInertialSolver*>(solver_.get());
         if(options_.momentum!=Momentum2D::FULL_SWE||!cpu||!coupling_points_.empty()||
            !aquifer_link_shares_.empty()||!subcatch_recharge_.empty()||ctx.n_subcatches()!=0)
-            throw std::runtime_error("Coupled groundwater RK2 requires the standalone FULL_SWE water-only profile; network and catchment owners remain unqualified.");
+            throw std::runtime_error("Coupled groundwater RK2 requires the standalone FULL_SWE passive transport/age profile; network and catchment owners remain unqualified.");
         if(auto error=cpu->rk2CheckpointProfile();!error.empty())throw std::runtime_error(error);
-        ctx.warnings.push_back("Coupled groundwater SSP-RK2: CLOSED_FORM/ENSLAVED/SIGMA water-only CPU profile with global stepping and knot-aligned water-only wells and aquifer HEAD/FLOW edges. Singular wetting-front startup is bounded without a second-order claim.");
+        if(state_.transport.active()&&std::any_of(ctx.pollutants.k_decay.begin(),ctx.pollutants.k_decay.end(),[](double rate){return rate!=0;}))
+            throw std::runtime_error("Coupled RK2 surface decay requires its separately qualified reaction stage.");
+        ctx.warnings.push_back("Coupled groundwater SSP-RK2: CLOSED_FORM/ENSLAVED/SIGMA passive transport/age CPU profile with global stepping and knot-aligned water-only wells and aquifer HEAD/FLOW edges. Singular wetting-front startup is bounded without a second-order claim.");
     }
     infil_elapsed_ = 0.0;
     if (infil_.active()) {
@@ -2952,7 +2954,7 @@ void SurfaceRouter2D::applyAgingAndReactions(SimulationContext& ctx, double dt) 
     // age-VOLUME, so += dt·V advances the mean age of every cell's water by
     // dt at constant volume. Dry cells hold ~0 volume and stay put. Lie-split
     // after the advance like the ARD engine's aging stage.
-    if (tr.age_row >= 0) {
+    if (tr.age_row >= 0 && !(subsurface_.active()&&options_.momentum==Momentum2D::FULL_SWE&&options_.reconstruction_order==2)) {
         const auto ar = static_cast<std::size_t>(tr.age_row);
         for (std::size_t c = 0; c < nt; ++c)
             tr.cell_mass[ar * nt + c] += dt * state_.volume[c];

@@ -75,6 +75,12 @@ void meshStateImpl(Archive& a,SurfaceStateData& s) {
     a.fixed(t.cell_mass,t.lost_infiltration,t.lost_boundary,t.gained_external,t.lost_external,t.lost_coupling,
             t.exch_mass,t.exch_spill,t.gained_rainfall,t.gained_boundary,t.gained_coupling,
             t.gained_exfiltration,t.gained_washoff,t.cell_runoff_vol,t.coupling_src);
+    if(!t.generated_age.empty()) {
+        a.fixed(t.generated_age);
+        if(t.generated_age.size()!=std::size_t(t.n_species))throw std::runtime_error("RK2 surface age ledger shape differs.");
+        for(int row=0;row<t.n_species;++row)if(!std::isfinite(t.generated_age[row])||t.generated_age[row]<0||
+            (row!=t.age_row&&t.generated_age[row]!=0))throw std::runtime_error("Invalid RK2 surface age generation ledger.");
+    }
     { // Validate mesh state on save and restore.
         for(const auto* values:{&s.depth,&s.head,&s.volume,&s.grad_hx,&s.grad_hy,&s.grad_hx_lim,
             &s.grad_hy_lim,&s.vert_head,&s.vert_depth_signed,&s.face_vx,&s.face_vy,&s.cell_continuity_err,

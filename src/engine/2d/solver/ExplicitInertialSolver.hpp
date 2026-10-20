@@ -200,6 +200,8 @@ private:
     /// (eta, h, u, v) per cell, refreshed at every face pass, and the SSP-RK2
     /// stage buffers. Empty at order 1.
     bool                 second_order_ = false;
+    bool rk_transport_stage_ = false;
+    std::vector<double> rk_stage_mass_,rk_stage_volume_; // scratch beginning-state donor views
     /// gex_/gey_: eta gradients in [0, n), depth gradients in [n, 2*n).
     /// The second block supplies the face bed (eta - h) only for order 2.
     std::vector<double>  gex_, gey_, gux_, guy_, gvx_, gvy_;

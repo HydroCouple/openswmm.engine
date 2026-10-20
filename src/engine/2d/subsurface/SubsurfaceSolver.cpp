@@ -1375,6 +1375,9 @@ void SubsurfaceSolver::initTransport(const RowLayoutLite& rows,
             tr_.refreshUnsat(species,i);
     }
 
+    if(opts_&&opts_->reconstruction_order==2&&tr_.age_row>=0) {
+        tr_.generated_age.assign(tr_.n_species,0);tr_.gained_contact.assign(tr_.n_species,0);
+    }
     for (int s = 0; s < tr_.n_species; ++s)
         tr_.init_mass[static_cast<std::size_t>(s)] = tr_.storage(s);
 }
@@ -2219,6 +2222,13 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         // inside its ALE sweep.
         f.handover = (state_.hu[u] * A - f.v_uns0) - f.infil_in + f.et +
                      f.recharge + f.reject;
+        f.grid_volume=A*(hg0-hg1);
+        if(opts_&&opts_->reconstruction_order==2&&cl==GwClosure::ENSLAVED&&ens_dunne<0&&ens_short<0&&hg1>0&&hg1<zs) {
+            // Equilibrium water is nonlinear in table height. The accepted
+            // projection is not an Euler transport velocity: evaluate its
+            // tangent at the beginning state, as for the SIGMA ALE stage.
+            f.grid_volume=-dV_sat/Sy;f.handover=(ts-Sy)*f.grid_volume;
+        }
         fireCellSpecies(i, f);
     }
 
@@ -2689,6 +2699,7 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
     // the cell). The denominators are the post-arrival water volumes; every
     // sink in this firing reads the same pair, because the water update
     // decided all of them simultaneously.
+    const bool euler=opts_&&opts_->reconstruction_order==2;
     const double v_sat = f.v_sat0 + f.lateral + std::max(f.link, 0.0) + f.source_in + f.boundary_in;
     const double v_uns = f.v_uns0 + f.infil_in - f.paired_refund;
     const auto   uc = static_cast<std::size_t>(i);
@@ -2698,7 +2709,7 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
     // divide.
     const double ts_cell  = state_.theta_s[uc];
     const double L_cell   = std::max(state_.zs[uc] - state_.hg[uc], kTiny);
-    const double theta_uns = std::clamp(state_.hu[uc] / L_cell,
+    const double theta_uns = std::clamp((euler?f.v_uns0/state_.area[uc]:state_.hu[uc]) / L_cell,
                                         state_.theta_r[uc], ts_cell);
 
     for (int s = 0; s < tr_.n_species; ++s) {
@@ -2718,10 +2729,30 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
         // remembered at each of the eight channels below.
         const double mob_sat = tr_.dissolvedFraction(s, i, ts_cell);
         const double mob_uns = tr_.dissolvedFraction(s, i, theta_uns);
+        const double old_sat=msat,old_uns=muns;
+        const double partition=(s==tr_.age_row||s==tr_.temp_row)?0:tr_.kd[k]*tr_.rho_b[i];
+        const double handover=euler?f.handover+partition*f.grid_volume:f.handover;
+        const double sat_available=std::max(0.,old_sat-pendingSaturatedMassExport(i,s));
+        // Simultaneous old-state Euler exports share each beginning donor.
+        const double sat_request=old_sat*(
+            (std::max(0.,-f.recharge)+f.deep+f.source_out+f.boundary_out+f.dunne)*mob_sat+std::max(0.,handover)*mob_sat)/
+            std::max(f.v_sat0,kTiny);
+        const double uns_request=old_uns*(
+            (std::max(0.,f.recharge)+f.reject)*mob_uns+std::max(0.,-handover)*mob_uns+
+            ((s==tr_.age_row||s==tr_.temp_row)?f.et:0))/std::max(f.v_uns0,kTiny);
+        const double sat_scale=sat_request>sat_available&&sat_request>0?sat_available/sat_request:1;
+        const double uns_scale=uns_request>old_uns&&uns_request>0?old_uns/uns_request:1;
+        double sat_remaining=sat_available,uns_remaining=old_uns;
         auto take = [&](double& m, double vol, double v_store,
                         double mob) -> double {
             if (!(vol > 0.0) || !(v_store > 0.0) || m == 0.0) return 0.0;
             double dm = vol * (m / v_store) * mob;
+            if(euler) {
+                const bool saturated=&m==&msat;const double volume=saturated?f.v_sat0:f.v_uns0;
+                auto& remaining=saturated?sat_remaining:uns_remaining;
+                dm=volume>0?vol*(saturated?old_sat:old_uns)/volume*mob*(saturated?sat_scale:uns_scale):0;
+                dm=std::min(dm,remaining);remaining-=dm;
+            }
             if (!tr_.signedRow(s) && dm > m) dm = m;
             m -= dm;
             return dm;
@@ -2802,15 +2833,15 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
         //      the same boundary with no flux behind it. Without this the
         //      TOTAL still conserves — the gate would pass — while the two
         //      zones quietly end up holding each other's solute.
-        if (f.handover > 0.0) {
+        if (handover > 0.0) {
             // The moving boundary carries the water's whole content across,
             // sorbed included: the grains themselves change zone when the
             // table passes them. `mob = 1`.
-            const double dm = take(msat, f.handover, v_sat, 1.0);
+            const double dm = take(msat, handover, v_sat, euler?mob_sat:1.0);
             muns += dm;
             tr_.internal_recharge[us] -= dm;
-        } else if (f.handover < 0.0) {
-            const double dm = take(muns, -f.handover, v_uns, 1.0);
+        } else if (handover < 0.0) {
+            const double dm = take(muns, -handover, v_uns, euler?mob_uns:1.0);
             msat += dm;
             tr_.internal_recharge[us] += dm;
         }
@@ -2924,6 +2955,10 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
         }
         tr_.lost_dunne[us] += up;
 
+        if(euler&&s==tr_.age_row) {
+            const double production=f.dt*(f.v_sat0+f.v_uns0);
+            msat+=f.dt*f.v_sat0;muns+=f.dt*f.v_uns0;tr_.generated_age[us]+=production;
+        }
         // (8) T7.2: first-order decay, on the TOTAL mass of both zones —
         //     dissolved and sorbed alike, the usual assumption for a
         //     partitioning solute whose reaction does not care which phase
@@ -3102,11 +3137,11 @@ double SubsurfaceSolver::rawRecharge(int cell,const soil::Params& p,double lengt
 }
 
 std::string SubsurfaceSolver::rk2ProfileError() const {
-    if(!active() || options_.per_subcatch || tr_.active() || heat_.active() || !reactors_.empty() ||
+    if(!active() || options_.per_subcatch || heat_.active() || !reactors_.empty() || tr_.temp_row>=0 ||
        !node_beds_.empty() || lid_receipts_enabled_ || runtime_sources_.active() ||
        std::any_of(source_owned_.begin(),source_owned_.end(),[](bool v){return v;}) ||
        std::any_of(state_.closure.begin(),state_.closure.end(),[](int8_t v){return v!=int8_t(GwClosure::CLOSED_FORM)&&v!=int8_t(GwClosure::ENSLAVED)&&v!=int8_t(GwClosure::SIGMA);}))
-        return "Coupled RK2 requires spatial CLOSED_FORM/ENSLAVED/SIGMA water-only cells without borrowed source, network or thermal owners.";
+        return "Coupled RK2 requires spatial CLOSED_FORM/ENSLAVED/SIGMA passive cells without borrowed source, network, reaction or thermal owners.";
     for(int i=0;i<state_.n_cells;++i)if(covers(i)&&state_.closure[i]==int8_t(GwClosure::ENSLAVED)) {
         const double equilibrium=soil::equilibriumStorage(paramsOf(i),state_.zs[i]-state_.hg[i]);
         if(!std::isfinite(state_.hu[i])||!std::isfinite(equilibrium)||
@@ -3125,10 +3160,23 @@ std::string SubsurfaceSolver::rk2ProfileError() const {
         if(!std::isfinite(state_.hu[i])||std::abs(state_.hu[i]-water)>1e-12*std::max(1.,std::abs(water)))
             return "Coupled RK2 SIGMA bulk water differs from its layer inventories.";
     }
-    for(const auto& boundary:boundaries_)if(!boundary.terms.empty())
-        return "Coupled RK2 groundwater boundaries require water-only forcing; quality remains guarded.";
-    for(const auto& source:sources_)if(!source.terms.empty())
-        return "Coupled RK2 groundwater wells require water-only forcing.";
+    if(tr_.active()) {
+        if(tr_.sat_mass.size()!=std::size_t(tr_.n_species)*state_.n_cells||tr_.unsat_mass.size()!=tr_.sat_mass.size()||
+           tr_.layer_mass.size()!=std::size_t(tr_.n_layers)*tr_.sat_mass.size())
+            return "Coupled RK2 groundwater transport shape differs.";
+        for(const auto* mass:{&tr_.sat_mass,&tr_.unsat_mass,&tr_.layer_mass})for(double v:*mass)
+            if(!std::isfinite(v)||v<0)return "Coupled RK2 groundwater transport inventory is inadmissible.";
+        if(std::any_of(tr_.decay.begin(),tr_.decay.end(),[](double v){return v!=0;}))
+            return "Coupled RK2 groundwater decay requires its separately qualified reaction stage.";
+    }
+    for(const auto& source:sources_)for(const auto& term:source.terms)
+        if(term.row<0||term.row>=tr_.n_species)return "Coupled RK2 well species layout differs.";
+    for(const auto& boundary:boundaries_) {
+        for(const auto& term:boundary.terms)if(term.row<0||term.row>=tr_.n_species)
+            return "Coupled RK2 boundary species layout differs.";
+        for(const auto* values:{&boundary.mass_in,&boundary.mass_out,&boundary.flux_in,&boundary.flux_out})
+            if(values->size()!=std::size_t(tr_.n_species))return "Coupled RK2 boundary receipt shape differs.";
+    }
     for(const auto* values:{&state_.nacc,&state_.lacc})for(double v:*values)if(v!=0)
         return "Coupled RK2 cannot consume an unstaged external node/link receipt.";
     return {};
@@ -3232,6 +3280,23 @@ void SubsurfaceSolver::blendRk2Water(const SubsurfaceSolver& initial,double end)
         auto& value=boundaries_[i].*member;value=.5*(initial.boundaries_[i].*member+value);
         if(!std::isfinite(value)||value<0)throw std::runtime_error("Coupled RK2 boundary receipt is inadmissible.");
     }
+    auto& t=tr_;const auto& old=initial.tr_;
+    for(auto member:{&SubsurfaceTransportState::sat_mass,&SubsurfaceTransportState::unsat_mass,
+        &SubsurfaceTransportState::layer_mass,&SubsurfaceTransportState::sacc_L,&SubsurfaceTransportState::sacc_R,
+        &SubsurfaceTransportState::xacc_from_surface,&SubsurfaceTransportState::xacc_to_surface,
+        &SubsurfaceTransportState::nacc_mass,&SubsurfaceTransportState::lacc_mass,&SubsurfaceTransportState::lout_mass,
+        &SubsurfaceTransportState::node_out_mass,&SubsurfaceTransportState::lost_deep,&SubsurfaceTransportState::lost_node,
+        &SubsurfaceTransportState::lost_link,&SubsurfaceTransportState::lost_dunne,&SubsurfaceTransportState::lost_et,
+        &SubsurfaceTransportState::gained_infil,&SubsurfaceTransportState::gained_node,&SubsurfaceTransportState::gained_link,
+        &SubsurfaceTransportState::net_lateral,&SubsurfaceTransportState::gained_source,&SubsurfaceTransportState::lost_source,
+        &SubsurfaceTransportState::boundary_in,&SubsurfaceTransportState::boundary_out,
+        &SubsurfaceTransportState::boundary_flux_in,&SubsurfaceTransportState::boundary_flux_out,
+        &SubsurfaceTransportState::lost_reaction,&SubsurfaceTransportState::generated_age,
+        &SubsurfaceTransportState::gained_contact,&SubsurfaceTransportState::internal_recharge})blend(t.*member,old.*member);
+    for(int species=0;species<t.n_species;++species)for(int i=0;i<t.n_cells;++i)
+        if(t.n_layers)t.refreshUnsat(species,i);
+    for(std::size_t i=0;i<boundaries_.size();++i)for(auto member:{&GwResolvedBoundary::mass_in,&GwResolvedBoundary::mass_out,
+        &GwResolvedBoundary::flux_in,&GwResolvedBoundary::flux_out})blend(boundaries_[i].*member,initial.boundaries_[i].*member);
     pending_surface_.clear();std::fill(pending_flag_.begin(),pending_flag_.end(),0);
     for(int i=0;i<s.n_cells;++i)if(covers(i)) {
         if(!std::isfinite(s.hg[i]) || !std::isfinite(s.hu[i]) || !std::isfinite(s.xacc_to_surface[i]) ||

@@ -43,7 +43,7 @@ physics when evaluating an optimization.
 | `FULL_SWE`, order 2, water only | Limited surface/depth/velocity reconstruction and SSP-RK2; global one-tier stepping |
 | Order 2 with multiple tiers | Tiers reduced to one with a diagnostic |
 | Order 2 with active surface transport | Falls back to first order with a diagnostic; prior tier reduction is not undone |
-| Active second-order RK2 with groundwater | Standalone CPU water-only CLOSED_FORM/ENSLAVED/SIGMA with authored wells and HEAD/FLOW edges; transport/heat/network owners remain guarded (Hydrology §9.11) |
+| Active second-order RK2 with groundwater | Standalone CPU passive pollutant/age CLOSED_FORM/ENSLAVED/SIGMA with authored wells and HEAD/FLOW edges; reactions/heat/network owners remain guarded (Hydrology §9.11) |
 | Local inertial or diffusive momentum | Their own first-order face laws; order 2 does not enable MUSCL for these closures |
 | `FULL_SWE` with CFL above 0.5 | CFL reduced to 0.5 with a diagnostic |
 
@@ -261,7 +261,7 @@ timing ratios. The reviewed component builds use O3/native CPU with fast
 math disabled and floating-point contraction disabled. Changing arithmetic
 settings requires a new correctness comparison.
 
-The remaining boundaries are groundwater chemistry/heat and borrowed-owner support for RK2,
+The remaining boundaries are groundwater reactions/heat and borrowed-owner support for RK2,
 long-period damping, mesh-dependent stability, production-catchment
 accuracy and hardware portability. The planned CPU review is complete;
 future optimization should follow a measured deployment bottleneck.

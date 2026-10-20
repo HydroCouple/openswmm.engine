@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "SubsurfaceSolver.hpp"
 #include "../data/MeshData.hpp"
+#include "../data/SolverOptions2D.hpp"
 #include "../solver/InertialEdges.hpp"
 #include "../heat/ThermalCheckpoint.hpp"
 #include "../../core/CompletedSourceArchive.hpp"
@@ -27,7 +28,8 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
     auto& s=state_;auto& t=tr_;auto& o=options_;
     const bool finite_pore_ledgers=heat_.active()&&std::any_of(heat_.cells.begin(),heat_.cells.end(),
         [](const auto& cell){return cell.porewater.active();});
-    const char* transport_profile=t.n_layers==0&&boundaries_.empty()&&reactors_.empty()?
+    const bool rk2_transport=opts_&&opts_->reconstruction_order==2&&t.active();
+    const char* transport_profile=rk2_transport?"RK2 groundwater transport ledgers v1":t.n_layers==0&&boundaries_.empty()&&reactors_.empty()?
         (finite_pore_ledgers?"bulk finite-porewater ledgers v1":"bulk shared-source transport clocks v1"):
         "SIGMA chemistry and groundwater edges v2";
     if(model) {
@@ -125,7 +127,7 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
             if((finite_pore_ledgers || (t.n_layers>0&&t.age_row>=0&&
                 std::any_of(cell_completed_.begin(),cell_completed_.end(),[](double time){return time>0;})))&&
                t.generated_age.size()!=std::size_t(t.n_species))throw std::runtime_error("Finite-porewater generation/contact ledgers are missing.");
-            if(!finite_pore_ledgers&&t.n_layers==0&&!t.generated_age.empty())
+            if(!rk2_transport&&!finite_pore_ledgers&&t.n_layers==0&&!t.generated_age.empty())
                 throw std::runtime_error("Compatibility groundwater has unexpected finite-porewater ledgers.");
             for(std::size_t row=0;row<t.generated_age.size();++row)
                 if(t.generated_age[row]<0 || (int(row)!=t.age_row&&t.generated_age[row]!=0))

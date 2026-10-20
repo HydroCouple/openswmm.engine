@@ -535,6 +535,7 @@ private:
         /// column's own balance, which makes it exact for every closure
         /// rather than only for closure A's explicit `θ_bot·ΔL`.
         double handover = 0.0;
+        double grid_volume = 0.0; ///< swept soil volume; beginning-state tangent in smooth RK stages
         double lid_in_j = 0.0;               ///< accepted LID sensible heat entering this cell
         double et = 0.0;                     ///< out of the column
         double deep = 0.0;
