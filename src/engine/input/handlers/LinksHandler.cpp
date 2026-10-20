@@ -432,14 +432,14 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
             continue;
         }
         // Legacy xsect_setParams (xsect.c:233) refuses Geom1 <= 0 for every
-        // shape but DUMMY, and link.c:250 reports it as ERR_NUMBER with an
-        // empty token. (CUSTOM's own Geom1 test is link.c:226.)
+        // shape but DUMMY, and link.c:250 reports it as ERR_XSECT naming
+        // the link. (CUSTOM's own Geom1 test is link.c:226.)
         if (ctx.links.xsect_shape[idx] != XsectShape::IRREGULAR &&
             ctx.links.xsect_shape[idx] != XsectShape::STREET_XSECT &&
             ctx.links.xsect_shape[idx] != XsectShape::CUSTOM &&
             ctx.links.xsect_shape[idx] != XsectShape::DUMMY &&
             !(to_double(tok[2]) > 0.0)) {
-            ctx.errors.push_back(format_error(ERR_NUMBER, ""));
+            ctx.errors.push_back(format_error(ERR_XSECT, tok[0]));
             continue;
         }
 
