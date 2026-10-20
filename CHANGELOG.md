@@ -23,6 +23,10 @@ retroactive.
 
 ## [Unreleased]
 
+### FV substep acceptance tie (2026-10-20)
+
+- **FV substep acceptance no longer turns on a floating-point tie.** A step far past CFL saturates the positivity limiter, which clamps outflow to `vol/dt` and caps the Courant number at exactly 1, so the post-step census returns exactly `cfl*dt` whatever step was taken. With the default `cfl` equal to `kStepAcceptRatio` (both 0.5) the acceptance test was the exact tie `0.5*dt >= 0.5*dt`, resolved by the last bit. On the pressurized head-loss fixture the substeps to steady flow ran 204, 2975, 204, 4196, 6701 and 204 across slot celerities 700–1500 — non-monotone by 30×, because an oversized accepted first step injected a water hammer the following substeps then resolved. The comparison carries a small relative margin (`kStepAcceptEps`), so the degenerate case rejects deterministically and the retry ladder descends to an admissible step; the sweep flattens to 204–207 over c = 100..2000. Also fixes `PressCensus.substepCountIsCelerityInvariantAndFarBelowExplicit`, which failed on a clean `swmm6_rel` checkout: the assertion was right and the solver at fault.
+
 ### Hot-start follow-ups and land-use parity (2026-10-19)
 
 - **`[COVERAGES]` reads every land use on a line.** `S1 RES 60 COM 40` set only RES; COM was dropped without a message. Every pair is read now, as in EPA SWMM, and a line naming an unknown subcatchment or land use (ERROR 209), a land use without a percent (ERROR 203) or a percent that is not a number (ERROR 211) is an error, as it is there. These lines were skipped silently before.
