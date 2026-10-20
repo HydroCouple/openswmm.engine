@@ -1,0 +1,36 @@
+[TITLE]
+IO-12 arch pipe with a size code that is not a whole number
+
+[OPTIONS]
+FLOW_UNITS     CFS
+FLOW_ROUTING   DYNWAVE
+START_DATE     01/01/2020
+START_TIME     00:00:00
+END_DATE       01/01/2020
+END_TIME       01:00:00
+REPORT_STEP    00:15:00
+ROUTING_STEP   5
+
+[JUNCTIONS]
+;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
+J1     100   10        0          0         0
+
+[OUTFALLS]
+O1     99    FREE
+
+[CONDUITS]
+;Name  From  To  Length  N      Z1  Z2  Q0  Qmax
+C1     J1    O1  1000    0.013  0   0   0   0
+
+[XSECTIONS]
+;Link  Shape          Geom1  Geom2  Geom3  Geom4
+;12.5 is not one of the arch size codes
+C1     ARCH           4.5    7.0    12.5   0
+
+[INFLOWS]
+J1     FLOW  ""  FLOW  1.0  1.0  1
+
+[REPORT]
+INPUT  YES
+NODES  ALL
+LINKS  ALL
