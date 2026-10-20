@@ -1,10 +1,6 @@
 # OpenSWMM Engine
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/HydroCouple/openswmm.engine/develop/docs/images/hydrocouple_logo.png" alt="OpenSWMM" width="120">
-</p>
-
-**Open Storm Water Management Model — Next-Generation Computational Engine**
+**The Open-Source Storm Water Management Model (SWMM2D) — Next-Generation Computational Engine**
 
 [![Unit Testing](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing.yml)
 [![Unit Testing Python](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing_python.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing_python.yml)
@@ -18,290 +14,75 @@
 [![Python](https://img.shields.io/pypi/pyversions/openswmm.svg)](https://pypi.org/project/openswmm)
 [![Wheel](https://img.shields.io/pypi/wheel/openswmm.svg)](https://pypi.org/project/openswmm)
 
-## Documentation
+OpenSWMM is an open-source hydrology, hydraulic, and water-quality engine built on EPA SWMM. It provides a reentrant C++20 implementation, a public C API, Python bindings, and a command-line solver. The legacy SWMM 5.x solver and output reader remain available alongside the new engine.
 
-| | Site | Contents |
-|---|---|---|
-| **C / C++ Engine** | **[hydrocouple.org/openswmm.engine](https://hydrocouple.org/openswmm.engine)** | Full C API reference, hydrology / hydraulics / water-quality reference manuals, engine manual (input format, files, reports, C API), architecture notes. |
-| **Python Bindings** | **[hydrocouple.org/openswmm.engine/python](https://hydrocouple.org/openswmm.engine/python)** | Quickstart, per-domain user guide, Cython API reference, SWMM 5 → v6 migration. |
-| **SWMMVis (GUI)** | **[hydrocouple.org/openswmm.gui](https://www.hydrocouple.org/openswmm.gui/)** | The graphical application: map canvas, layers and CRS, every editor, running simulations, plots and animation, 2D meshing, tutorials, reference tables and error codes. |
+[Engine documentation](https://hydrocouple.org/openswmm.engine) · [Python documentation](https://hydrocouple.org/openswmm.engine/python) · [SWMMVis GUI](https://github.com/HydroCouple/openswmm.gui)
 
-The sites cross-link from their top navigation.
+## Current implementation
 
----
+The source version is **6.0.0-alpha.4**. The following summarizes the implementation as of **October 19, 2026**; feature availability depends on the build and selected solver.
 
-## Overview
+- **Engine and interfaces:** independent simulation handles, structure-of-arrays state, domain-specific C APIs, Python model building and editing, runtime forcing and controls, and plugin-based input/output.
+- **Hydrology:** rainfall-runoff, infiltration, conventional LID controls, two-zone subcatchment groundwater, degree-day and UEB energy-balance snow, temperature-dependent RDII abstraction recovery, and runtime climate and potential evapotranspiration forcing.
+- **1D hydraulics:** steady, kinematic-wave and dynamic-wave routing, plus explicit finite-volume Saint-Venant routing (`FLOW_ROUTING FV`). Dynamic-wave extensions include semi-implicit node continuity, Anderson acceleration, and dynamic Preissmann slots. Street/inlet capture, variable-speed pumps and additional storage geometries are supported.
+- **2D surface flow and groundwater:** a local-inertial finite-volume surface solver with local time stepping, conservative exchange with the 1D network, per-node coupling types and a weir/orifice exchange law. Explicit two-zone groundwater runs on the mesh with surface/network exchange and bulk species, age and temperature transport. Active mesh groundwater uses the CPU marcher.
+- **Water quality:** legacy routing, Eulerian advection-reaction-dispersion (ARD), Lagrangian parcel transport (LARD), multispecies reaction expressions and integrators, treatment expressions, and water age. Solver and process combinations have different support limits.
+- **Heat transport:** network and watershed temperature calculations, surface energy exchange, radiation and sediment exchange. The **experimental coupled mesh thermal model** adds porous-ground heat storage and transport, channel/ground contact, reciprocal UEB snow/soil exchange, and supported mesh-connected Richards LID heat exchange. See the [thermal implementation notes](docs/design/mesh-thermal-model.md) for activation and qualification limits.
+- **LIDs as storage nodes:** layered controls connected through ordinary hydraulic links, independent outlet controls, layer treatment, and classical or Richards-column flow. See the [storage-node LID manual](docs/manuals/engine/sections/Chapter6-LidStorageNodes.md) for routing and transport restrictions.
+- **Persistence and coupling:** SWMM input files, optional GeoPackage and HDF5 model I/O, binary and 2D HDF5 results, and hot-start/checkpoint support, including native coupled thermal state for supported configurations. Optional [HydroCouple components](docs/COMPONENT_ENGINE.md) provide metadata inspection and qualified CPU 1D execution and outfall transfers.
 
-OpenSWMM Engine is a community-driven, open-source continuation of the EPA Storm Water Management Model — a dynamic hydrology, hydraulic, and water-quality simulator for urban runoff. The project preserves the SWMM legacy under QA/QC and builds the community needed for long-term maintenance, working with ASCE/EWRI and the Water Environment Federation. Planned development direction and recorded design studies live in the [Roadmap](ROADMAP.md).
+Kokkos OpenMP, CUDA, HIP and SYCL surface-solver plugins load separately from the core engine. The default source build includes the OpenMP plugin; device backends need their matching toolchains. Groundwater, transport and coupled heat configurations can require the CPU path; backend support is not interchangeable. See the [2D CPU implementation and qualification](docs/manuals/engine/sections/Chapter7-TwoDimensionalCpu.md).
 
-## What's New in v6.0.0
-
-### Architecture & Performance
-
-- **Data-Oriented Design** — Core state refactored to Structure-of-Arrays for cache efficiency and SIMD-friendly batches.
-- **Reentrant Engine** — All simulation state lives behind an opaque `SWMM_Engine` handle; multiple independent simulations can run in the same process.
-- **Plugin-Based I/O** — Output and report writing dispatch through plugin interfaces on a dedicated I/O thread.
-- **Portable Parallel Backends** — Kokkos-based GPU/threaded plugin backends (OpenMP, CUDA, HIP, SYCL) for the 2D solver, shipped as separately loaded plugins so the base build carries no GPU dependency.
-- **C++20 Codebase** — Modern C++20 implementation; the legacy EPA SWMM 5.x solver is preserved unmodified in `src/legacy/`.
-
-### Process Formulation Enhancements
-
-#### Hydrology
-
-- **Two-Zone Groundwater Model** — Each subcatchment carries an independent aquifer with an upper unsaturated and lower saturated zone integrated as batched ODE systems (moisture accounting, percolation, deep percolation, evapotranspiration from both zones), with user-definable lateral flow to drainage nodes and channels. Aquifer parameters are readable and writable at runtime through the C API and Python bindings.
-- **Physics-Based RDII Initial Abstraction Recovery** — RDII initial abstraction evolves as an exponential depletion/recovery process with additive base + thermal recovery rates and frozen-ground suppression. Seasonal RDII variation emerges from temperature dynamics on a single RTK set per sewershed — no monthly parameter tables required. Configured via the new `[RDII_DECAY]` input section.
-
-  $$IA_{avail}(t+\Delta t) = IA_{max} - \bigl(IA_{max} - IA_{avail}(t)\bigr) \cdot e^{-k_{rec}(T)\,\Delta t}, \quad k_{rec}(T) = k_0 + k_T \cdot e^{\,\theta(T - T_{ref})}$$
-
-- **Runtime Climate Forcing & Per-Subcatchment PET** — Air temperature, wind speed, evaporation, and rainfall can be prescribed while a simulation is running, and potential evapotranspiration can be prescribed per subcatchment, overriding climate-derived rates for surface, LID, and groundwater losses.
-- **Consistent Snow / Rain Partitioning** — A single precipitation-split path applies the gage snow catch factor everywhere, correcting legacy inconsistencies in snow-season models.
-- *Work plan:* **Spatially Explicit Groundwater** — a fully coupled two-layer subsurface kernel on the 2D finite-volume mesh (unsaturated and saturated depths joined at a moving water table, selectable soil characteristics, lateral Darcy exchange between cells), enabling saturation-excess overland flow, return flow, head-driven pipe ↔ aquifer exchange, and capillary rise — processes the per-subcatchment aquifer cannot represent ([Roadmap §5.2](ROADMAP.md)).
-
-#### Hydraulics
-
-- **Semi-Implicit Node Continuity** — Single-equation free-surface/surcharge formulation that removes the legacy two-branch discontinuity. Enabled via `NODE_CONTINUITY SEMI_IMPLICIT` (default).
-- **Anderson Acceleration for Picard Iteration** — Depth-2 mixing of residual history cuts iteration counts 25–50% on stiff surcharge transitions with safe fall-back to standard Picard. Enabled via `ANDERSON_ACCEL YES`.
-- **Dynamic Preissmann Slot** — Geometry-dependent slot width replaces the fixed-width slot at the free-surface / pressurized transition, improving stability for rapidly filling or draining conduits.
-- **Explicit Finite-Volume 1D Routing** — A Godunov-type conservation-form Saint-Venant solver (`FLOW_ROUTING FV`) alongside dynamic wave: hydrostatic reconstruction, HLL fluxes, optional MUSCL/SSP-RK2, local time stepping, and a slot folded into the cross-section closure so mixed free-surface/pressurized flow needs no regime switching. Routing continuity error of 0.000% on the EPA reference model at every mesh resolution.
-- **1D/2D Coupled Overland Flow** — Explicit local-inertial finite-volume 2D solver with mass-conservative 1D↔2D exchange, mesh generation from digital terrain data, per-cell parameter surfaces, and validation against the SWASHES analytic benchmark set. Surcharge re-routes over terrain, and lateral groundwater exchanges are tracked explicitly.
-- **HEC-22 Inlet Analysis, Variable-Speed Pumps, New Storage Shapes** — Street inlet capture with grate and curb inlets, Type 5 pump curves with speed scaling, and conical/pyramidal storage shapes with elliptical and rectangular bases.
-- *In development:* **Spatially Explicit Inlets** — promotes inlets to mode-switching junction nodes that capture street flow when gutter spread exceeds a threshold and revert to passive junctions otherwise ([Roadmap §1.3](ROADMAP.md)).
-
-#### Water Quality
-
-- **Eulerian ADE Transport on the FV Mesh** — Cell-resolved advection-dispersion transport riding the finite-volume hydraulic mesh: species fluxes upwinded on the contact speed for exact mass conservation, first-order upwind / MUSCL / QUICKEST-ULTIMATE reconstructions with flux-corrected transport limiting, and implicit longitudinal dispersion (`FV_DISPERSION`).
-- **Treatment Expression Engine** — Node treatment expressions compiled once at start and evaluated from a cached expression VM.
-- *Work plan:* **Multispecies Lagrangian Advection–Reaction–Dispersion (LARD)** — a selectable quality engine combining EPANET-style Lagrangian time-driven parcel transport, an EPANET-MSX-equivalent multispecies reaction system (bulk and wall species, user-defined rate ODEs and equilibrium DAEs, EUL/RK5/ROS2 integrators with adaptive error control), random-walk particle-tracking dispersion, and built-in water age. Independent of the hydraulic discretization, so it runs under dynamic wave and kinematic wave as well; the reaction system is written once and shared across pipe, overland, and groundwater transport ([Roadmap §2](ROADMAP.md)).
-- *Work plan:* **Heat Transport** — a thermal module for stormwater temperature dynamics: surface energy balance for catchment-scale water temperature (solar radiation, long-wave exchange, evaporation, conduction), 1D longitudinal heat transport in pipes and channels coupled to the ADE solver, groundwater coupling for subsurface heat exchange and baseflow temperature, and simplified thermal stratification in detention basins ([Roadmap §4](ROADMAP.md)).
-
-#### LID
-
-- **Full SWMM 5.x LID Controls** — Bio-retention cells, permeable pavement, green roofs, infiltration trenches, rain gardens, and the rest of the SWMM 5.x LID set, with LID controls and usage fully editable through the C API and Python bindings (including delete cascades that keep LID usage, drain-to, and snowpack references consistent).
-- *Work plan:* **LID as Storage Nodes** — Maps LID layers (surface, media, gravel) onto extended storage nodes using a reduced-physics kinematic Richards ODE, replacing the one-way hydrological cascade with hydraulically mediated LID trains: head-dependent flow between units, backpressure from saturated downstream units, and control structures between LIDs ([Roadmap §6](ROADMAP.md)).
-
-### New C API
-
-A domain-split C API replaces the monolithic legacy interface — separate headers per domain (engine lifecycle, model building, nodes, links, subcatchments, gages, pollutants, tables, inflows, controls, infrastructure, spatial data, quality, mass balance, callbacks, hot start, statistics, and optional GeoPackage I/O) under `include/openswmm/engine/`. Full reference at the [C engine documentation site](https://hydrocouple.org/openswmm.engine).
-
-### Optional native HydroCouple components
-
-The [generic engine component](docs/COMPONENT_ENGINE.md) exposes configured
-metadata and CPU 1D execution, including standard MSX pollutant output and
-conservative outfall transfers to custom receivers. The existing FVQual
-outfall adapter below remains separately available.
-
-`OPENSWMM_WITH_HYDROCOUPLE=ON` builds `openswmm_model_component` under
-`build/components`. It depends on the HydroCouple interface headers and
-nlohmann-json, and uses only the public engine C API. It does not link
-HydroCoupleSDK. Supply the same ABI 4 interface checkout and C++ toolchain as
-the host; the default interface revision is pinned in `cmake/FetchHydroCouple.cmake`.
-With vcpkg, include the `hydrocouple` manifest feature for nlohmann-json, or
-provide its installed CMake package through `CMAKE_PREFIX_PATH`.
+## Quick start with Python
 
 ```sh
-cmake -S . -B build-hc -DOPENSWMM_WITH_HYDROCOUPLE=ON \
-  -DFETCHCONTENT_SOURCE_DIR_HYDROCOUPLE=/path/to/HydroCouple \
-  -DCMAKE_PREFIX_PATH=/path/to/dependencies
-cmake --build build-hc --target openswmm_model_component
-```
-
-The `openswmm.model` component hosts native runoff and a 1D network in
-`network_only` mode, disabling native 2D before initialization. Its required
-local JSON setup declares the physical epoch, exact elapsed exchange times,
-external outfalls, receiving mesh geometry, normalized mapping weights and
-temperature/species basis. `outfall_transfers` supplies already-debited
-interval amounts to one direct FVQual receiver. A matching acknowledgment is
-required before another advance and at finish. Native boundary audits,
-packets and acknowledgments remain available when a receiver fails.
-
-`swmm_node_get_export_receipt` exposes cumulative SI water/reversed water,
-native heat and pollutant amounts booked at the native continuity seam before
-report filtering. Legacy MG/L and UG/L amounts use kg; count amounts retain
-counts and are refused by this wrapper. Native heat availability is explicit;
-fixed-temperature assumptions must be declared. Internal routed/2D-owned
-outfalls, MSX or non-LEGACY quality, reversal, adapted packet connections and
-multiple receiving components are outside the qualified path. The ledger is
-included in hydraulic checkpoints (older incompatible payloads are rejected). Coordinated coupled restart and receiving-stage feedback remain
-separate work.
-
-The sibling FVQual repository's `verification/swmm_coupling.py` qualifies actual
-Composer hosting, native API parity, failure cleanup, independent instances
-and exact recorded replay. Its `examples/swmm_reservoir/README.md` describes the
-synthetic heat/species case and six-hour Bellinge review. The Bellinge receiving
-basin, physical mapping and inlet temperature remain synthetic assumptions.
-
-### Python Bindings — Full Modeling Workflows
-
-The Python API is not just a solver wrapper — it supports the complete modeling lifecycle in code:
-
-- **Domain Delineation & Model Building** — `ModelBuilder` constructs a complete model from scratch (no `.inp` required): network topology (nodes, links, subcatchments, gages), spatial geometry (coordinates, vertices, polygons, CRS), then `validate()` and `write()` an `.inp` or hand off directly `to_solver()`. Generate models from databases or GeoJSON, build synthetic test networks, or treat topology as a decision variable in optimization loops.
-- **Parameterization** — Every domain is readable and writable programmatically: cross-sections, infiltration, aquifers and groundwater, LID controls and usage, land uses, buildup/washoff and treatment, inflows, RDII, transects, streets and inlets, control rules, climate, and simulation options.
-- **Runtime Interaction** — Step-by-step simulation control with runtime forcing (rainfall, climate, PET, inflows, boundary heads), live control of pumps, orifices, and weirs, state inspection at every step, and hot-start save/load for checkpointing and operational forecasting.
-- **Results Analysis** — Bulk NumPy access to time series, a binary output reader, node/link/subcatchment statistics, mass balance and continuity accounting, scenario comparison, and plotting utilities.
-
-```python
-from openswmm.engine import ModelBuilder, NodeType, LinkType, XSectShape
-
-m = ModelBuilder()                              # no .inp required
-
-j1  = m.add_node("J1",  NodeType.JUNCTION)      # delineate the domain
-out = m.add_node("OUT", NodeType.OUTFALL)
-c1  = m.add_link("C1",  LinkType.CONDUIT)
-m.set_link_nodes(c1, j1, out)
-
-m.set_node_invert(j1, 100.0)                    # parameterize
-m.set_node_max_depth(j1, 5.0)
-m.set_node_invert(out, 99.0)
-m.set_link_length(c1, 300.0)
-m.set_link_roughness(c1, 0.013)
-m.set_link_xsect(c1, XSectShape.CIRCULAR, 1.0)
-
-m.validate()
-m.finalize()
-m.write("model.inp")                            # dump for inspection, or…
-solver = m.to_solver()                          # …run it directly
-```
-
-The solver returned by `to_solver()` behaves identically to one constructed from a parsed `.inp` — every domain class, forcing hook, control rule, and output reader works. See the [per-domain Python guide](https://hydrocouple.org/openswmm.engine/python) for all of the above.
-
-### Additional Features
-
-- **Hot Start API** — Save, load, modify, and query hot-start files through a stable C ABI.
-- **CRS Support** — Coordinate reference systems specified in `[OPTIONS]`.
-- **User Flags** — Typed `[USER_FLAGS]` / `[USER_FLAG_VALUES]` sections attach custom metadata (boolean, integer, real, string) to nodes, links, subcatchments, or gages.
-- **Extension Options** — Unrecognized `[OPTIONS]` keys are preserved and exposed to plugins at runtime.
-- **Plugin SDK** — Header-only SDK for input, output, and report plugins; the `IPluginComponentInfo` entry point advertises capabilities and supports custom `.inp` section handlers via `SectionRegistry`.
-- **GeoPackage I/O** — Optional SQLite-based spatial backing store for inputs, results, observed series, and topology in a single `.gpkg` file.
-
-## Quick Start
-
-```bash
-# C / C++ engine
-git clone https://github.com/HydroCouple/openswmm.engine.git
-cd openswmm.engine
-git clone https://github.com/microsoft/vcpkg.git && ./vcpkg/bootstrap-vcpkg.sh
-export VCPKG_ROOT=$(pwd)/vcpkg
-
-cmake --preset=Linux            # or Windows / Darwin (see Building from Source)
-cmake --build build --config Release
-
-# Python bindings (PyPI)
 pip install openswmm
 ```
 
 ```python
-from openswmm.engine import Solver, Nodes, Links
+from openswmm.engine import Solver, Nodes
 
-with Solver("model.inp", "model.rpt", "model.out") as s:
-    nodes, links = Nodes(s), Links(s)
-    while s.step():
+with Solver("model.inp", "model.rpt", "model.out") as solver:
+    nodes = Nodes(solver)
+    while solver.step():
         depth = nodes.get_depth("J1")
-        flow  = links.get_flow("C1")
 ```
 
-Forcing, model building, hot-start, bulk NumPy access, mass balance, and statistics are covered in the [Python docs](https://hydrocouple.org/openswmm.engine/python).
+Use a node ID from your model in place of `J1`. The [Python guide](https://hydrocouple.org/openswmm.engine/python) covers model construction, parameter editing, runtime forcing, results and checkpointing. Published packages may lag the source implementation described above.
 
-## Building from Source
+## Build from source
 
-### Prerequisites
+Requires **CMake 3.21+**, **C17/C++20 compilers**, **Ninja** for the Linux/macOS presets, and **vcpkg**. Dependencies and optional features are declared in [vcpkg.json](vcpkg.json).
 
-| Requirement | Version |
-|---|---|
-| CMake | 3.21+ |
-| C compiler | C17 (GCC 10+, Clang 12+, MSVC 19.29+) |
-| C++ compiler | C++20 (GCC 10+, Clang 14+, MSVC 19.29+) |
-| vcpkg | 2025.02.14 |
-| Ninja | recommended on Linux/macOS |
-| Python | 3.10 – 3.13 (bindings only) |
+```sh
+git clone https://github.com/HydroCouple/openswmm.engine.git
+cd openswmm.engine
+git clone https://github.com/microsoft/vcpkg.git vcpkg
+./vcpkg/bootstrap-vcpkg.sh
+export VCPKG_ROOT="$PWD/vcpkg"
 
-### Dependencies
-
-All third-party libraries are resolved through the vcpkg manifest ([`vcpkg.json`](vcpkg.json)) — nothing needs to be installed by hand. What gets pulled in depends on which features and CMake options are active:
-
-| Dependency | Needed for | Default build | Controlled by |
-|---|---|---|---|
-| SQLite3 (rtree) | GeoPackage I/O | included | `-DOPENSWMM_WITH_GEOPACKAGE=ON` (default) / vcpkg feature `geopackage` |
-| HDF5 | 2D module output (CF-1.11 / UGRID-1.0) | included | `-DOPENSWMM_BUILD_2D=ON` (default) / vcpkg feature `2d`; `-DOPENSWMM_2D_HDF5_OUTPUT=OFF` builds 2D without it (`[2D_OPTIONS] OUTPUT_FILE` is then ignored with a warning; results via the `swmm_2d_*` API — used by the WebAssembly build) |
-| Kokkos (OpenMP) | GPU/threaded 2D surface-solver plugin | included | `-DOPENSWMM_BUILD_GPU_PLUGIN=ON` (default) / vcpkg feature `gpu` |
-| GoogleTest | unit + regression tests | optional | `-DOPENSWMM_BUILD_TESTS=ON` / `*-tests` presets / vcpkg feature `tests` |
-| Google Benchmark | performance benchmarks | optional | `-DOPENSWMM_BUILD_BENCHMARKS=ON` / vcpkg feature `benchmarks` |
-| Kokkos (CUDA / HIP / SYCL) | GPU device backends for the 2D plugin | optional | vcpkg features `gpu-cuda` / `gpu-hip` / `gpu-sycl` + `-DOPENSWMM_GPU_BACKEND=cuda\|hip\|sycl` (requires the matching CUDA / ROCm / oneAPI toolkit) |
-| Python + Cython + NumPy | Python bindings | optional | `-DOPENSWMM_BUILD_PYTHON=ON` or `pip install ./python` (NumPy ≥ 1.21 at runtime) |
-
-The GPU plugin is a standalone shared library loaded at runtime (`openswmm_gpu_omp` / `_cuda` / `_hip` / `_sycl`) — it is never linked into the core engine, so builds and wheels without it stay Kokkos-free.
-
-### Configure, Build, Test
-
-```bash
-cmake --preset=Linux                       # release build (Windows / Linux / Darwin)
-cmake --build build --config Release
-
-cmake --preset=Linux-tests                 # debug build with unit + regression tests
-cmake --build build
-ctest --test-dir build --output-on-failure
+cmake --preset=Linux
+cmake --build --preset=Linux
+./build/linux/bin/Release/openswmm model.inp model.rpt model.out
 ```
 
-Available presets: `Windows`, `Linux`, `Darwin` (+ `-debug`, `-tests`, `-tests-release` variants) and `Windows-cuda` for a CUDA-backend GPU plugin build. See [`CMakePresets.json`](CMakePresets.json) for the full matrix.
+Use `Darwin` on macOS or `Windows` from a Visual Studio Developer Prompt; on Windows, bootstrap vcpkg with `bootstrap-vcpkg.bat` and set `VCPKG_ROOT` in that shell. Build folders follow the platform preset. The legacy executable is `openswmm-legacy`.
 
-### Python Bindings from Source
+To build and run the test suite:
 
-```bash
-pip install ./python            # scikit-build-core + Cython; builds the engine automatically
-python -m pytest python/tests   # optional
+```sh
+cmake --preset=Linux-tests
+cmake --build --preset=Linux-tests
+ctest --test-dir build/linux-tests --output-on-failure
 ```
 
-## Glossary
+Platform presets also provide `-debug` and `-tests-release` variants. See [CMakePresets.json](CMakePresets.json) and [CMake options](CMakeLists.txt) for optional 2D, GPU, GeoPackage, HDF5, Python and HydroCouple builds. For Python source builds, use `pip install ./python`.
 
-Brief definitions of the domain terms used throughout this README. Full treatment lives in the [reference manuals](https://hydrocouple.org/openswmm.engine).
+## Documentation
 
-- **RDII** — Rainfall-Dependent Inflow & Infiltration. Stormwater that enters sanitary or combined sewers through cracks, joints, defective laterals, and roof / foundation drains during and after rainfall.
-- **RTK** — The triplet `(R, T, K)` that parameterises a SWMM synthetic unit hydrograph for RDII: `R` is the long-term fraction of rainfall that becomes RDII, `T` is the time to peak (hours), and `K` is the ratio of base time to peak time.
-- **IA (Initial Abstraction)** — Rainfall depth absorbed by the catchment before any RDII response begins (interception, surface storage, soil wetting). Recovers between events.
-- **DWF** — Dry-Weather Flow. Base sanitary flow plus infiltration unrelated to rainfall, typically specified as an average value with diurnal / day-of-week / monthly patterns.
-- **LID** — Low-Impact Development. Distributed green-infrastructure controls (bio-retention cells, permeable pavement, green roofs, infiltration trenches, rain gardens) that intercept, store, and infiltrate runoff at the source.
-- **ADE** — Advection-Dispersion Equation. The transport equation governing constituent movement by bulk flow (advection) and spreading by velocity shear and turbulence (dispersion).
-- **MSX** — EPANET Multi-Species Extension. The reference specification for user-defined multispecies reaction networks (rate ODEs, equilibrium DAEs, bulk and wall species) that the planned LARD reaction system is equivalent to.
-- **PET** — Potential Evapotranspiration. The evaporative demand applied to surface, LID, and groundwater moisture stores.
-- **CRS** — Coordinate Reference System. The geodetic / projected coordinate frame (e.g. `EPSG:4326`) the model's spatial data is expressed in.
-- **Dynamic Wave Routing** — Full Saint-Venant momentum solver for link flow, used for backwater, surcharge, and pressurized conditions.
-- **Preissmann Slot** — A narrow virtual slot added to a closed conduit's cross-section so that pressurized flow can be solved with the same free-surface equations. The dynamic slot adjusts width with geometry to smooth the surface ↔ pressure transition.
-- **Surcharge** — A pipe flowing full and under pressure (HGL above the crown), typically caused by downstream backwater or capacity exceedance.
-- **Picard Iteration** — Fixed-point iteration used inside the dynamic-wave timestep to converge implicit node depths. Anderson Acceleration is a residual-history accelerator on top of Picard.
-- **Hot Start** — A saved end-of-run state (depths, volumes, IA, snow, GW) that initialises a subsequent simulation, letting long runs be split into checkpoints or warm runs into operational forecasts.
-- **HEC-22** — FHWA Hydraulic Engineering Circular No. 22, the design reference whose grate and curb-opening capture equations are used by the inlet-analysis module.
-- **GeoPackage** — OGC standard for a SQLite-based, single-file container holding spatial features and tabular data with full CRS metadata.
-
-## Project Structure
-
-```
-openswmm.engine/
-├── include/openswmm/
-│   ├── engine/           # New engine public C API headers
-│   └── legacy/           # Legacy SWMM 5.x public headers
-├── src/
-│   ├── engine/           # New C++20 engine implementation
-│   │   ├── input/geopackage/  # Optional GeoPackage I/O
-│   │   └── 2d/                # 2D overland-flow solver, 1D/2D coupling, GPU plugin backends
-│   ├── legacy/           # Original EPA SWMM 5.x solver and output reader
-│   ├── plugin_sdk/       # Header-only plugin SDK
-│   └── cli/              # Command-line interface
-├── tests/                # Unit, regression, and benchmark suites
-├── python/               # Cython bindings (scikit-build-core)
-├── docs/                 # Doxygen config and technical manuals
-└── .github/workflows/    # CI/CD pipelines
-```
-
-## Libraries Built
-
-| Target | Description |
-|---|---|
-| `openswmm_legacy_engine` | Original EPA SWMM 5.x solver (shared) |
-| `openswmm_legacy_output` | Original SWMM binary output reader (shared) |
-| `openswmm_engine` | New refactored C++20 engine (shared) |
-| `openswmm_geopackage` | GeoPackage I/O (static, optional — requires SQLite3) |
-| `openswmm_gpu_omp` / `_cuda` / `_hip` / `_sycl` | Kokkos 2D surface-solver plugins (shared, optional, loaded at runtime) |
-| `openswmm_plugin_sdk` | Header-only plugin SDK (INTERFACE) |
-| `openswmm` | Command-line executable |
+- [Engine manual](docs/manuals/engine/engine_manual.md): input sections, files, reports and programmatic interfaces.
+- [Reference manuals](https://hydrocouple.org/openswmm.engine): process formulations, numerical methods and API reference.
+- [Release notes](docs/releases/RELEASE_NOTES_6.0.0-alpha.4.md) and [roadmap](ROADMAP.md): release history and development direction.
 
 ## Contributing
 
