@@ -202,6 +202,14 @@ int link_readXsectParams(char* tok[], int ntoks)
         if ( i < 0 ) return error_setInpError(ERR_NAME, tok[2]);
         Link[j].xsect.type = k;
         Link[j].xsect.transect = i;
+
+        // --- parse number of barrels if present (Tsect 0 0 0 Barrels)
+        if ( Link[j].type == CONDUIT && ntoks >= 7 )
+        {
+            i = atoi(tok[6]);
+            if ( i <= 0 ) return error_setInpError(ERR_NUMBER, tok[6]);
+            Conduit[Link[j].subIndex].barrels = i;
+        }
         return 0;
     }
 
