@@ -23,6 +23,10 @@ retroactive.
 
 ## [Unreleased]
 
+### Cross-section code-review fixes (2026-10-20)
+
+- **The Preissmann slot area rises monotonically with head.** Under `SURCHARGE_METHOD SLOT` the area assigned to a conduit shrank between about 1.29 and 1.78 diameters of head, so a closed system filled from one end lost volume, in both engines. Code review CON-18, #171.
+
 ### Hot-start follow-ups and land-use parity (2026-10-19)
 
 - **`[COVERAGES]` reads every land use on a line.** `S1 RES 60 COM 40` set only RES; COM was dropped without a message. Every pair is read now, as in EPA SWMM, and a line naming an unknown subcatchment or land use (ERROR 209), a land use without a percent (ERROR 203) or a percent that is not a number (ERROR 211) is an error, as it is there. These lines were skipped silently before.
