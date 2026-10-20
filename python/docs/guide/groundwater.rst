@@ -129,7 +129,7 @@ See ``docs/design/groundwater-transport.md`` in the engine source for the
 activation and qualification boundaries.
 
 Mesh chemistry checkpoint sessions
----------------------------------
+----------------------------------
 
 A first-order mesh-only model with matching surface/groundwater transport
 rows can use ``solver.checkpoints.start_session(0)`` for numerical state or

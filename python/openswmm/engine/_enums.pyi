@@ -1443,3 +1443,28 @@ class TraceTerminal(IntEnum):
     RETAINED = 3
     UNRESOLVED = 4
     CIRCULATION = 5
+
+
+class EvapPreviewStatus(IntEnum):
+    """Codes matching native SWMM_EvapPreviewStatus."""
+    AVAILABLE = 0
+    HELD = 1
+    MISSING = 2
+    ESTIMATED = 3
+
+
+class Heat2DValue(IntEnum):
+    """Codes matching native SWMM_Heat2DValue."""
+    WATER_TEMPERATURE = 0
+    BED_TEMPERATURE = 1
+    BED_ENERGY = 2
+    BED_CAPACITY = 3
+    ATMOSPHERIC_ENERGY = 4
+    RADIATIVE_ENERGY = 5
+    SENSIBLE_ENERGY = 6
+    LATENT_ENERGY = 7
+    DEEP_ENERGY = 8
+    WATER_TO_BED_ENERGY = 9
+    WATER_THERMAL_INCREMENT = 10
+    ACCEPTED_EVAPORATION = 11
+    THERMAL_RESIDUAL = 12

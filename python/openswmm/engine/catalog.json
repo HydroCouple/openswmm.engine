@@ -226,6 +226,8 @@
     ]
    },
    "c": [
+    "swmm_config_snapshot_create",
+    "swmm_config_snapshot_destroy",
     "swmm_engine_get_state",
     "swmm_heat_snapshot_create",
     "swmm_heat_snapshot_destroy"
@@ -2559,6 +2561,43 @@
    ],
    "type": "List[float]",
    "access": "rw"
+  },
+  {
+   "path": "climate.preview_evaporation",
+   "target": "climate",
+   "name": "preview_evaporation",
+   "form": "method",
+   "python": "Climate.preview_evaporation",
+   "doc": "Read-only evaporation preview over [start, end), in display rate units.",
+   "c": [
+    "swmm_climate_preview_evaporation",
+    "swmm_climate_preview_evaporation_with_config",
+    "swmm_file_path_get"
+   ],
+   "returns": "dict",
+   "params": [
+    {
+     "name": "start",
+     "type": "datetime | float",
+     "required": true
+    },
+    {
+     "name": "end",
+     "type": "datetime | float",
+     "required": true
+    },
+    {
+     "name": "interval_days",
+     "type": "float",
+     "required": true
+    },
+    {
+     "name": "config",
+     "type": "Mapping[str, Any] | None",
+     "required": false,
+     "keyword_only": true
+    }
+   ]
   },
   {
    "path": "climate.snow_temp",
@@ -8560,6 +8599,47 @@
    ]
   },
   {
+   "path": "heat.preview_channel_ground_map",
+   "target": "heat",
+   "name": "preview_channel_ground_map",
+   "form": "method",
+   "python": "Heat.preview_channel_ground_map",
+   "doc": "Pre-run XY coverage for a link ID or index; does not initialize heat.",
+   "c": [
+    "swmm_heat_preview_channel_ground_map",
+    "swmm_heat_preview_channel_ground_map_page",
+    "swmm_heat_preview_channel_ground_map_with_progress",
+    "swmm_link_count",
+    "swmm_link_index"
+   ],
+   "returns": "dict",
+   "params": [
+    {
+     "name": "link",
+     "type": "int | str",
+     "required": true
+    },
+    {
+     "name": "first",
+     "type": "int | None",
+     "required": false,
+     "keyword_only": true
+    },
+    {
+     "name": "limit",
+     "type": "int",
+     "required": false,
+     "keyword_only": true
+    },
+    {
+     "name": "progress",
+     "type": "Callable[[int, int], bool] | None",
+     "required": false,
+     "keyword_only": true
+    }
+   ]
+  },
+  {
    "target": "heat.radiative",
    "form": "item",
    "python": "_HeatRadiative[]",
@@ -8801,10 +8881,17 @@
    "name": "snapshot",
    "form": "method",
    "python": "Heat.snapshot",
-   "doc": "Capture heat settings, shared site and component registrations before initialization.",
+   "doc": "Capture pre-run settings; complete=True also captures climate and snow.",
    "c": [],
    "returns": "HeatSnapshot",
-   "params": []
+   "params": [
+    {
+     "name": "complete",
+     "type": "bool",
+     "required": false,
+     "keyword_only": true
+    }
+   ]
   },
   {
    "path": "heat.solar.clear",
@@ -9017,6 +9104,7 @@
    "python": "HeatSnapshot.close",
    "doc": "Release the memento without accessing the original engine.",
    "c": [
+    "swmm_config_snapshot_destroy",
     "swmm_heat_snapshot_destroy"
    ],
    "returns": "None",
@@ -9030,6 +9118,7 @@
    "python": "HeatSnapshot.restore",
    "doc": "Restore to the original authoring session, refusing stale snapshots.",
    "c": [
+    "swmm_config_snapshot_restore",
     "swmm_heat_snapshot_restore"
    ],
    "returns": "None",
@@ -22850,6 +22939,20 @@
    "units": "m3"
   },
   {
+   "path": "surface2d.initial_bed_quality",
+   "target": "surface2d",
+   "name": "initial_bed_quality",
+   "form": "property",
+   "python": "Surface2D.initial_bed_quality",
+   "doc": "Authored [2D_INITIAL_BED_QUALITY] rows (InitialQuality2D).",
+   "c": [
+    "swmm_2d_get_initial_bed_quality",
+    "swmm_2d_initial_bed_quality_count"
+   ],
+   "type": "tuple[InitialQuality2D, ...]",
+   "access": "r"
+  },
+  {
    "path": "surface2d.initial_quality",
    "target": "surface2d",
    "name": "initial_quality",
@@ -23301,6 +23404,25 @@
    ]
   },
   {
+   "path": "surface2d.remove_initial_bed_quality",
+   "target": "surface2d",
+   "name": "remove_initial_bed_quality",
+   "form": "method",
+   "python": "Surface2D.remove_initial_bed_quality",
+   "doc": "Remove an initial bed-quality row; later rows shift down.",
+   "c": [
+    "swmm_2d_remove_initial_bed_quality"
+   ],
+   "returns": "None",
+   "params": [
+    {
+     "name": "index",
+     "type": "int",
+     "required": true
+    }
+   ]
+  },
+  {
    "path": "surface2d.remove_initial_quality",
    "target": "surface2d",
    "name": "remove_initial_quality",
@@ -23387,6 +23509,25 @@
    ],
    "type": "dict[str, Any]",
    "access": "r"
+  },
+  {
+   "path": "surface2d.set_auto_backend_cpu",
+   "target": "surface2d",
+   "name": "set_auto_backend_cpu",
+   "form": "method",
+   "python": "Surface2D.set_auto_backend_cpu",
+   "doc": "Prefer CPU for unoverridden AUTO before initialization.",
+   "c": [
+    "swmm_2d_set_auto_backend_cpu"
+   ],
+   "returns": "None",
+   "params": [
+    {
+     "name": "enabled",
+     "type": "bool",
+     "required": false
+    }
+   ]
   },
   {
    "path": "surface2d.set_boundary_quality",
@@ -23776,6 +23917,42 @@
     {
      "name": "until_seconds",
      "type": "float | None",
+     "required": false,
+     "keyword_only": true
+    }
+   ]
+  },
+  {
+   "path": "surface2d.set_initial_bed_quality",
+   "target": "surface2d",
+   "name": "set_initial_bed_quality",
+   "form": "method",
+   "python": "Surface2D.set_initial_bed_quality",
+   "doc": "Add or replace an initial bed-porewater concentration row (species units, >= 0).",
+   "c": [
+    "swmm_2d_set_initial_bed_quality"
+   ],
+   "returns": "None",
+   "params": [
+    {
+     "name": "species",
+     "type": "str",
+     "required": true
+    },
+    {
+     "name": "conc",
+     "type": "float",
+     "required": true
+    },
+    {
+     "name": "tag",
+     "type": "str | None",
+     "required": false,
+     "keyword_only": true
+    },
+    {
+     "name": "cell",
+     "type": "int | None",
      "required": false,
      "keyword_only": true
     }
@@ -24764,6 +24941,58 @@
     {
      "name": "key",
      "type": "int | str",
+     "required": true
+    }
+   ]
+  },
+  {
+   "path": "tables.rename",
+   "target": "tables",
+   "name": "rename",
+   "form": "method",
+   "python": "Tables.rename",
+   "doc": "Rename a table before initialization, preserving its references.",
+   "c": [
+    "swmm_table_count",
+    "swmm_table_index",
+    "swmm_table_rename"
+   ],
+   "returns": "None",
+   "params": [
+    {
+     "name": "key",
+     "type": "Union[int, str]",
+     "required": true
+    },
+    {
+     "name": "new_id",
+     "type": "str",
+     "required": true
+    }
+   ]
+  },
+  {
+   "path": "tables.set_type",
+   "target": "tables",
+   "name": "set_type",
+   "form": "method",
+   "python": "Tables.set_type",
+   "doc": "Change a curve's TableType, preserving points and references.",
+   "c": [
+    "swmm_table_count",
+    "swmm_table_index",
+    "swmm_table_set_type"
+   ],
+   "returns": "None",
+   "params": [
+    {
+     "name": "key",
+     "type": "Union[int, str]",
+     "required": true
+    },
+    {
+     "name": "kind",
+     "type": "TableType | int",
      "required": true
     }
    ]
@@ -27450,6 +27679,12 @@
    "CANCELLED": 16,
    "INTERNAL": 99
   },
+  "EvapPreviewStatus": {
+   "AVAILABLE": 0,
+   "HELD": 1,
+   "MISSING": 2,
+   "ESTIMATED": 3
+  },
   "EvapType": {
    "CONSTANT": 0,
    "MONTHLY": 1,
@@ -27658,6 +27893,21 @@
   "GwfType": {
    "LATERAL": 0,
    "DEEP": 1
+  },
+  "Heat2DValue": {
+   "WATER_TEMPERATURE": 0,
+   "BED_TEMPERATURE": 1,
+   "BED_ENERGY": 2,
+   "BED_CAPACITY": 3,
+   "ATMOSPHERIC_ENERGY": 4,
+   "RADIATIVE_ENERGY": 5,
+   "SENSIBLE_ENERGY": 6,
+   "LATENT_ENERGY": 7,
+   "DEEP_ENERGY": 8,
+   "WATER_TO_BED_ENERGY": 9,
+   "WATER_THERMAL_INCREMENT": 10,
+   "ACCEPTED_EVAPORATION": 11,
+   "THERMAL_RESIDUAL": 12
   },
   "HeatAttr": {
    "ALBEDO": 0,

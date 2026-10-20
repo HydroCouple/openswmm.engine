@@ -62,6 +62,8 @@ and a refused write does not take effect at all — it raises
 
 from collections.abc import Iterator
 from array import array
+from operator import index
+from libcpp.vector cimport vector
 from typing import NamedTuple
 
 from ._common cimport *
@@ -809,6 +811,15 @@ cdef int _hydrothermal_edit(SWMM_Engine engine, void* user) noexcept with gil:
         return int(ErrorCode.BADPARAM)
 
 
+cdef int _preview_progress(SWMM_Engine engine, int stage, int percent, void* user) noexcept with gil:
+    context = <object>user
+    try:
+        return bool(context[0](stage, percent))
+    except BaseException as error:
+        context[1] = error
+        return 1
+
+
 cdef class HeatSnapshot:
     """Owned pre-run heat memento; lifecycle and structural edits invalidate it.
 
@@ -818,8 +829,9 @@ cdef class HeatSnapshot:
     cdef SWMM_HeatSnapshot _snapshot
     cdef object _owner
     cdef long long _generation
+    cdef bint _complete
 
-    def __init__(self, solver):
+    def __init__(self, solver, *, complete=False):
         if self._snapshot != NULL:
             raise RuntimeError("HeatSnapshot is already initialized")
         cdef SWMM_Engine handle = _h(solver)
@@ -829,7 +841,11 @@ cdef class HeatSnapshot:
             _check(int(ErrorCode.LIFECYCLE))
         self._owner = solver
         self._generation = solver.generation
-        self._snapshot = swmm_heat_snapshot_create(handle)
+        self._complete = bool(complete)
+        if self._complete:
+            self._snapshot = swmm_config_snapshot_create(handle)
+        else:
+            self._snapshot = swmm_heat_snapshot_create(handle)
         if self._snapshot == NULL:
             raise MemoryError("Cannot capture heat configuration")
 
@@ -840,14 +856,20 @@ cdef class HeatSnapshot:
         if self._generation != self._owner.generation:
             raise StaleObjectError("HeatSnapshot was invalidated by a lifecycle or structural edit")
         cdef SWMM_Engine handle = _h(self._owner)
-        _check(swmm_heat_snapshot_restore(handle, self._snapshot))
+        if self._complete:
+            _check(swmm_config_snapshot_restore(handle, self._snapshot))
+        else:
+            _check(swmm_heat_snapshot_restore(handle, self._snapshot))
         self._owner._bump_generation()
         self._generation = self._owner.generation
 
     def close(self) -> None:
         """Release the memento without accessing the original engine."""
         if self._snapshot != NULL:
-            swmm_heat_snapshot_destroy(self._snapshot)
+            if self._complete:
+                swmm_config_snapshot_destroy(self._snapshot)
+            else:
+                swmm_heat_snapshot_destroy(self._snapshot)
             self._snapshot = NULL
         self._owner = None
 
@@ -861,7 +883,10 @@ cdef class HeatSnapshot:
 
     def __dealloc__(self):
         if self._snapshot != NULL:
-            swmm_heat_snapshot_destroy(self._snapshot)
+            if self._complete:
+                swmm_config_snapshot_destroy(self._snapshot)
+            else:
+                swmm_heat_snapshot_destroy(self._snapshot)
 
 
 # =============================================================================
@@ -1215,9 +1240,77 @@ class Heat:
                     begin_fraction=contact.begin_fraction,end_fraction=contact.end_fraction,
                     share=contact.share,invert_m=contact.invert_m)
 
-    def snapshot(self) -> HeatSnapshot:
-        """Capture heat settings, shared site and component registrations before initialization."""
-        return HeatSnapshot(self._solver)
+    def preview_channel_ground_map(self, link, *, first=None, limit=256, progress=None):
+        """Pre-run XY coverage for a link ID or index; does not initialize heat.
+
+        Omit first for all contacts, or give a zero-based offset and page limit.
+        Summary counts and required always describe the full mapping. Contacts
+        use layer=-1; valid means complete XY coverage, not thermal suitability.
+        progress(stage, percent) may return True to cancel (EngineError code
+        CANCELLED). Stages are 1=mesh and 2=mapping. It must not mutate or close
+        the engine; callback exceptions are re-raised after native unwinding.
+        """
+        if progress is not None and not callable(progress):
+            raise TypeError("progress must be callable")
+        cdef SWMM_Engine handle = _h(self._solver)
+        cdef int link_index = _resolve_index(handle, link, swmm_link_index, swmm_link_count, "Link")
+        cdef int offset = 0 if first is None else index(first)
+        cdef int capacity = 0 if first is None else index(limit)
+        if offset < 0 or capacity < 0:
+            raise ValueError("first and limit must be nonnegative")
+        cdef int required = 0, rc, i, copied
+        cdef SWMM_ChannelGroundPreview preview
+        preview.struct_size = sizeof(SWMM_ChannelGroundPreview)
+        cdef vector[SWMM_ChannelGroundContact] contacts
+        cdef SWMM_CancelCallback callback = NULL
+        context = [progress, None]
+        if progress is not None:
+            callback = _preview_progress
+        with self._solver._operation(<size_t>handle):
+            if first is not None:
+                contacts.resize(capacity)
+                with nogil:
+                    rc = swmm_heat_preview_channel_ground_map_page(handle, link_index, &preview,
+                        offset, contacts.data(), capacity, &required, callback, <void*>context)
+            else:
+                with nogil:
+                    if callback == NULL:
+                        rc = swmm_heat_preview_channel_ground_map(handle, link_index, &preview, NULL, 0, &required)
+                    else:
+                        rc = swmm_heat_preview_channel_ground_map_with_progress(handle, link_index,
+                            &preview, NULL, 0, &required, callback, <void*>context)
+                if context[1] is not None:
+                    raise context[1]
+                _check(rc)
+                capacity = required
+                contacts.resize(capacity)
+                with nogil:
+                    if callback == NULL:
+                        rc = swmm_heat_preview_channel_ground_map(handle, link_index, &preview,
+                            contacts.data(), capacity, &required)
+                    else:
+                        rc = swmm_heat_preview_channel_ground_map_with_progress(handle, link_index,
+                            &preview, contacts.data(), capacity, &required, callback, <void*>context)
+            if context[1] is not None:
+                raise context[1]
+            _check(rc)
+        copied = min(capacity, required - offset)
+        return dict(link=preview.link, valid=bool(preview.valid), contact_cells=preview.contact_cells,
+                    contact_intervals=preview.contact_intervals, length_m=preview.length_m,
+                    covered_length_m=preview.covered_length_m, uncovered_length_m=preview.uncovered_length_m,
+                    reason=(<bytes>preview.reason).decode('utf-8'), required=required, first=offset,
+                    contacts=tuple(dict(link=contacts[i].link, cell=contacts[i].cell, layer=contacts[i].layer,
+                        begin_fraction=contacts[i].begin_fraction, end_fraction=contacts[i].end_fraction,
+                        share=contacts[i].share, invert_m=contacts[i].invert_m) for i in range(copied)))
+
+    def snapshot(self, *, complete=False) -> HeatSnapshot:
+        """Capture pre-run settings; complete=True also captures climate and snow.
+
+        Complete snapshots include hydrothermal options, 2D/ground thermal
+        authoring, shared site and component registrations. Restore explicitly;
+        leaving the context manager only releases the snapshot.
+        """
+        return HeatSnapshot(self._solver, complete=complete)
 
     def edit_atomic(self, callback):
         """Apply callback(solver) before initialization, rolling back on any exception.

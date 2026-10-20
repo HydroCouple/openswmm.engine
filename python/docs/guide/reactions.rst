@@ -210,7 +210,7 @@ See also
 ----
 
 Node sources, parameter overrides and output selection
-=====================================================
+======================================================
 
 The whole-file ``apply_text`` / ``serialize`` surface supports
 ``[REACTION_SOURCES]`` (CONC/MASS), ``[REACTION_PATTERNS]`` (cyclic factors),

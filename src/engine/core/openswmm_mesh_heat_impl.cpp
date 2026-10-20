@@ -96,7 +96,7 @@ int previewChannelGroundMap(const openswmm::SimulationContext& ctx,
             30+int(10*(c+1)/std::max<std::size_t>(1,nc))))return SWMM_ERR_CANCELLED;
     }
     if(!openswmm::twoD::buildMeshTopologyCancellable(mesh,[&](int pct){
-        return cancelled(SWMM_HEAT_PREVIEW_STAGE_MESH,40+pct*4/5);
+        return cancelled(SWMM_HEAT_PREVIEW_STAGE_MESH,40+pct*2/5);
     }))return SWMM_ERR_CANCELLED;
     bool validation_cancelled=false;
     if(const auto error=openswmm::twoD::validateMeshCancellable(mesh,[&](int pct){

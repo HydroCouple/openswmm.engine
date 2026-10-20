@@ -47,7 +47,24 @@ raise :class:`EngineError` (lifecycle) otherwise.
 
 # cython: language_level=3
 
+from datetime import datetime
+from operator import index
+from libcpp.vector cimport vector
 from ._common cimport *
+from ._dates import datetime_to_oadate
+from ._enums import EvapType, EvapPreviewStatus
+from ._exceptions import raise_for_code
+
+
+cdef int _evap_preview(SWMM_Engine h, SWMM_EvapPreviewConfig* config,
+                       double start, double end, double interval,
+                       SWMM_EvapPreviewSample* samples, int capacity, int* count,
+                       SWMM_EvapPreviewSummary* summary, char* diagnostic) noexcept nogil:
+    if config == NULL:
+        return swmm_climate_preview_evaporation(h, start, end, interval,
+            samples, capacity, count, summary, diagnostic, 4096)
+    return swmm_climate_preview_evaporation_with_config(h, config, start, end,
+        interval, samples, capacity, count, summary, diagnostic, 4096)
 
 
 cdef inline SWMM_Engine _ch(solver):
@@ -386,3 +403,84 @@ class Climate:
     def adjust_conductivity(self, values) -> None:
         # Values <= 0 are stored as 1.0 by the engine (legacy behaviour).
         _write_arr(_ch(self._solver), swmm_climate_set_adjust_conductivity, values, 12)
+
+    def preview_evaporation(self, start, end, double interval_days, *, config=None):
+        """Read-only evaporation preview over [start, end), in display rate units.
+
+        Dates accept OADate floats or naive datetimes; interval_days is in days.
+        A partial config mapping overrides SWMM_EvapPreviewConfig fields for this
+        preview only. Monthly arrays must contain twelve values. Results contain
+        samples, summary and diagnostic; live runtime forcing is excluded.
+        """
+        cdef SWMM_Engine handle = _ch(self._solver)
+        cdef double first = datetime_to_oadate(start) if isinstance(start, datetime) else float(start)
+        cdef double last = datetime_to_oadate(end) if isinstance(end, datetime) else float(end)
+        cdef SWMM_EvapPreviewConfig draft
+        cdef SWMM_EvapPreviewConfig* draft_ptr = NULL
+        cdef SWMM_EvapPreviewSummary summary
+        cdef vector[SWMM_EvapPreviewSample] samples
+        cdef char diagnostic[4096]
+        cdef char absolute[4096]
+        cdef char original[4096]
+        cdef int count = 0, rc, i
+        cdef bytes evap_ts, temp_ts, climate_path
+        diagnostic[0] = 0
+        if config is not None:
+            values = dict(config)
+            known = {'evap_type', 'evap_monthly', 'pan_coeff', 'adjust_evaporation',
+                     'evap_timeseries', 'temp_source', 'temp_timeseries',
+                     'climate_file_path', 'climate_file_start', 'climate_file_temp_units',
+                     'latitude', 'longitude_correction_minutes', 'adjust_temperature'}
+            unknown = values.keys() - known
+            if unknown:
+                raise ValueError(f"Unknown evaporation preview fields: {sorted(unknown)}")
+            _check(swmm_file_path_get(handle, <SWMM_FilePathRole>7, b'', absolute, 4096, original, 4096))
+            draft.evap_type = index(values.get('evap_type', self.evap_type))
+            draft.temp_source = index(values.get('temp_source', self.temp_source))
+            draft.climate_file_start = values.get('climate_file_start', self.temp_file_start)
+            draft.climate_file_temp_units = index(values.get('climate_file_temp_units', self.temp_units))
+            draft.latitude = values.get('latitude', self.latitude)
+            draft.longitude_correction_minutes = values.get('longitude_correction_minutes', self.longitude_correction)
+            arrays = []
+            for name in ('evap_monthly', 'pan_coeff', 'adjust_evaporation', 'adjust_temperature'):
+                array_values = list(values.get(name, getattr(self, name)))
+                if len(array_values) != 12:
+                    raise ValueError(f"{name} must contain twelve values")
+                arrays.append(array_values)
+            for i in range(12):
+                draft.evap_monthly[i] = arrays[0][i]
+                draft.pan_coeff[i] = arrays[1][i]
+                draft.adjust_evaporation[i] = arrays[2][i]
+                draft.adjust_temperature[i] = arrays[3][i]
+            strings = [values.get('evap_timeseries', self.evap_timeseries),
+                       values.get('temp_timeseries', self.temp_timeseries),
+                       values.get('climate_file_path', (<bytes>absolute).decode('utf-8'))]
+            if any('\0' in value for value in strings):
+                raise ValueError("Preview source strings must not contain NUL")
+            evap_ts, temp_ts, climate_path = [value.encode('utf-8') for value in strings]
+            draft.evap_timeseries = evap_ts
+            draft.temp_timeseries = temp_ts
+            draft.climate_file_path = climate_path
+            draft_ptr = &draft
+        with self._solver._operation(<size_t>handle):
+            with nogil:
+                rc = _evap_preview(handle, draft_ptr, first, last, interval_days,
+                                   NULL, 0, &count, &summary, diagnostic)
+            if rc:
+                raise_for_code(rc, (<bytes>diagnostic).decode('utf-8'))
+            samples.resize(count)
+            with nogil:
+                rc = _evap_preview(handle, draft_ptr, first, last, interval_days,
+                                   samples.data(), count, &count, &summary, diagnostic)
+            if rc:
+                raise_for_code(rc, (<bytes>diagnostic).decode('utf-8'))
+        return dict(
+            samples=tuple(dict(date=samples[i].date, source_rate=samples[i].source_rate,
+                               adjustment=samples[i].adjustment, effective_rate=samples[i].effective_rate,
+                               status=EvapPreviewStatus(samples[i].status)) for i in range(count)),
+            summary=dict(source_type=EvapType(summary.source_type),
+                         available_count=summary.available_count, held_count=summary.held_count,
+                         missing_count=summary.missing_count, estimated_count=summary.estimated_count,
+                         runtime_forcing_unknown=bool(summary.runtime_forcing_unknown),
+                         minimum_rate=summary.minimum_rate, maximum_rate=summary.maximum_rate),
+            diagnostic=(<bytes>diagnostic).decode('utf-8'))
