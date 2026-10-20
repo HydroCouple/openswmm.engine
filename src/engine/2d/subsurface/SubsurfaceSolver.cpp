@@ -2217,8 +2217,17 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     const double deficit_before = std::max(0.0, ts * L0 - hu_pre);
     const double deficit_after = std::max(0.0, ts * std::max(0.0, zs - hg1) - state_.hu[u]);
     const double expected = std::max(0.0, deficit_before - infil_vol / A);
-    if (deficit_after > expected && deficit_after > kTiny)
-        state_.wetting_front[u] *= expected / deficit_after;
+    if (deficit_after > expected && deficit_after > kTiny) {
+        if(cl==GwClosure::CLOSED_FORM && opts_ && opts_->reconstruction_order==2) {
+            // SSP stages require the drying derivative at the old front and
+            // old deficit. The finite ratio used by the first-order held
+            // intake route contributes its own O(dt^2) subflow and cannot be
+            // composed as a forward-Euler RK stage.
+            const double front0=std::max(0.,state_.wetting_front[u]-infil_vol/A);
+            const double drying=deficit_after-expected;
+            if(deficit_before>kTiny)state_.wetting_front[u]=std::max(0.,state_.wetting_front[u]-front0*drying/deficit_before);
+        } else state_.wetting_front[u] *= expected / deficit_after;
+    }
     if (state_.infil_interval[u] > 0.0)
         publishCellInfiltration(i, surf, state_.infil_interval[u], time + dt);
 }
@@ -3023,6 +3032,79 @@ void SubsurfaceSolver::settle(SurfaceStateData& surf) {
     (void)surf;
     compactPending();
     accumulators_pending_ = false;
+}
+
+
+std::string SubsurfaceSolver::rk2ProfileError() const {
+    if(!active() || options_.per_subcatch || tr_.active() || heat_.active() || !reactors_.empty() ||
+       !node_beds_.empty() || lid_receipts_enabled_ || runtime_sources_.active() || !boundaries_.empty() ||
+       std::any_of(source_owned_.begin(),source_owned_.end(),[](bool v){return v;}) ||
+       std::any_of(state_.closure.begin(),state_.closure.end(),[](int8_t v){return v!=int8_t(GwClosure::CLOSED_FORM);}))
+        return "Coupled RK2 requires spatial CLOSED_FORM water-only cells without borrowed source, network, thermal or boundary owners.";
+    for(const auto& source:sources_)if(!source.flow.timePoints().empty() || !source.terms.empty())
+        return "Coupled RK2 groundwater wells require constant water-only forcing.";
+    for(const auto* values:{&state_.nacc,&state_.lacc})for(double v:*values)if(v!=0)
+        return "Coupled RK2 cannot consume an unstaged external node/link receipt.";
+    return {};
+}
+
+void SubsurfaceSolver::publishRk2Infiltration(SurfaceStateData& surface,double dt,double time) {
+    for(int i=0;i<state_.n_cells;++i)if(covers(i)) {
+        const auto p=paramsOf(i);const double length=state_.zs[i]-state_.hg[i];
+        const double pond=std::max(0.,surface.depth[i]);double rate=0;
+        if(length>0) {
+            const double theta=std::clamp(state_.hu[i]/length,p.theta_r,p.theta_s);
+            const double saturation=std::clamp((theta-p.theta_r)/(p.theta_s-p.theta_r),1e-6,1.);
+            const double drive=(pond+soil::suctionAtSaturation(p,saturation))*(p.theta_s-theta);
+            // The held-interval Green-Ampt integral is an exact scalar
+            // subflow, not a forward-Euler derivative. Smooth SSP stages use
+            // its instantaneous rate. At an unadvanced front the derivative
+            // is singular; retain the finite integral as a bounded startup,
+            // without claiming second order across that singular event.
+            const double front=state_.wetting_front[i];
+            rate=front>0?p.Ks*(1+drive/front):frontIntake(0,drive,p.Ks,dt)/dt;
+        }
+        const double room=infiltrationHeadroom(i);
+        rate=std::min(rate,room/(state_.area[i]*dt));
+        if(!std::isfinite(rate)||rate<0)throw std::runtime_error("Coupled RK2 infiltration rate is inadmissible.");
+        state_.infil_capacity[i]=rate;state_.infil_remaining[i]=room;
+        state_.infil_refresh[i]=time;state_.infil_interval[i]=dt;surface.infil_rate[i]=rate;
+    }
+}
+
+void SubsurfaceSolver::blendRk2Water(const SubsurfaceSolver& initial,double end) {
+    if(auto error=rk2ProfileError();!error.empty())throw std::runtime_error(error);
+    auto& s=state_;const auto& b=initial.state_;
+    const auto blend=[](auto& now,const auto& before) {
+        if(now.size()!=before.size())throw std::runtime_error("Coupled RK2 groundwater shape changed in a stage.");
+        for(std::size_t i=0;i<now.size();++i)now[i]=.5*(before[i]+now[i]);
+    };
+    // hg and hu are linear water inventories for CLOSED_FORM. Averaging a
+    // moisture/equilibrium view would not conserve water for other closures.
+    blend(s.hg,b.hg);blend(s.hu,b.hu);blend(s.wetting_front,b.wetting_front);
+    blend(s.eacc_L,b.eacc_L);blend(s.eacc_R,b.eacc_R);
+    blend(s.xacc_from_surface,b.xacc_from_surface);blend(s.xacc_to_surface,b.xacc_to_surface);
+    blend(s.et_pending,b.et_pending);blend(s.reject_cumulative,b.reject_cumulative);
+    blend(s.dunne_cumulative,b.dunne_cumulative);blend(s.et_potential_cumulative,b.et_potential_cumulative);
+    blend(s.et_surface_cumulative,b.et_surface_cumulative);blend(s.et_soil_cumulative,b.et_soil_cumulative);
+    blend(s.et_unused_cumulative,b.et_unused_cumulative);
+    for(auto member:{&SubsurfaceState::led_recharge,&SubsurfaceState::led_lateral,&SubsurfaceState::led_deep,
+        &SubsurfaceState::led_node,&SubsurfaceState::led_reject,&SubsurfaceState::led_dunne,
+        &SubsurfaceState::led_caprise,&SubsurfaceState::led_et,&SubsurfaceState::led_infil_in,
+        &SubsurfaceState::led_link,&SubsurfaceState::led_subcatch_in,&SubsurfaceState::led_final_storage,
+        &SubsurfaceState::led_source_in,&SubsurfaceState::led_source_out}) {
+        s.*member=.5*(b.*member+s.*member);
+        if(!std::isfinite(s.*member))throw std::runtime_error("Coupled RK2 groundwater ledger is nonfinite.");
+    }
+    pending_surface_.clear();std::fill(pending_flag_.begin(),pending_flag_.end(),0);
+    for(int i=0;i<s.n_cells;++i)if(covers(i)) {
+        if(!std::isfinite(s.hg[i]) || !std::isfinite(s.hu[i]) || !std::isfinite(s.xacc_to_surface[i]) ||
+           !std::isfinite(s.xacc_from_surface[i]) || s.hg[i]<0 || s.hg[i]>s.zs[i] || s.hu[i]<0 ||
+           s.hu[i]>s.theta_s[i]*(s.zs[i]-s.hg[i])+1e-12)
+            throw std::runtime_error("Coupled RK2 groundwater state is inadmissible.");
+        cell_completed_[i]=end;
+        if(s.xacc_to_surface[i]>0)markPendingSurface(i);
+    }
 }
 
 }  // namespace openswmm::twoD

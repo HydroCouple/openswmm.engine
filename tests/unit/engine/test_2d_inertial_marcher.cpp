@@ -44,6 +44,9 @@
 
 #include <gtest/gtest.h>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <cstdlib>
 #include <numeric>
 #include <vector>
 
@@ -54,6 +57,7 @@
 #include "2d/mesh/MeshBuilder.hpp"
 #include "2d/solver/ExplicitInertialSolver.hpp"
 #include "2d/solver/InertialKernels.hpp"
+#include "2d/subsurface/SubsurfaceSolver.hpp"
 
 using namespace openswmm::twoD;
 
@@ -691,5 +695,196 @@ TEST(InertialMarcher, ThinCrestRetentionVfrFace) {
         EXPECT_GT(crossed, 0.0)
             << "expected the legacy centroid zface to leak across the crest";
         solver.finalize();
+    }
+}
+
+
+namespace openswmm::twoD {
+struct ExplicitInertialSolverTestAccess {
+    static void rk2(ExplicitInertialSolver& solver,double dt,double time) {solver.runRk2Step(dt,time);}
+    static std::vector<double> state(const ExplicitInertialSolver& s) {
+        std::vector<double> values=s.qcx_;values.insert(values.end(),s.qcy_.begin(),s.qcy_.end());
+        for(const auto* row:{&s.facc_L_,&s.facc_R_,&s.macc_x_L_,&s.macc_x_R_,&s.bc_accum_,&s.source_ledgers_})
+            values.insert(values.end(),row->begin(),row->end());
+        values.insert(values.end(),{double(s.substeps_run_),double(s.last_steps_),s.t_last_sync_,s.source_phase_end_});return values;
+    }
+};
+}
+namespace {
+struct CoupledRkRig {
+    MeshData mesh=makeGridMesh(1,1,4.,[](double,double){return 0.;});
+    SurfaceStateData state=makeState(mesh);SolverOptions2D opts;ExplicitInertialSolver solver;SubsurfaceSolver gw;
+    void init(double dt,double ks,double deep,double pond=0,const std::string& et="AUTO") {
+        opts.momentum=Momentum2D::FULL_SWE;opts.reconstruction_order=2;opts.lts_tiers=1;opts.max_timestep=dt;
+        seedSurface(mesh,opts,state,pond);solver.initialize(mesh,state,opts);
+        SubsurfaceConfig cfg;cfg.options.authored=true;cfg.options.closure=GwClosure::CLOSED_FORM;cfg.options.node_auto=false;cfg.options.gw_et=et;
+        GwAquiferRow row;row.Ks=ks;row.zs=2;row.hg0=.6;row.c_loss=deep;cfg.rows={row};
+        std::vector<std::string> warnings;ASSERT_TRUE(gw.initialize(mesh,solver.inertialEdges(),opts,{},0,cfg,warnings).empty());
+        ASSERT_TRUE(gw.rk2ProfileError().empty());solver.setSubsurface(&gw);
+    }
+    double total() const {return totalVolume(state,mesh.n_cells())+gw.state().liveStorage();}
+};
+}
+TEST(CoupledGroundwaterRk2, AdvancesActualAquiferWithAnalyticalSecondOrderDeepDrainage) {
+    double previous=0;
+    for(double dt:{.4,.2,.1,.05}) {
+        CoupledRkRig r;r.init(dt,0,.07);auto& w=r.gw.state();
+        for(int i=0;i<w.n_cells;++i)w.hu[i]=w.theta_r[i]*(w.zs[i]-w.hg[i]);
+        w.led_init_storage=w.storage();const double initial=r.total();
+        for(int k=0;k<int(2/dt);++k)ASSERT_DOUBLE_EQ(r.solver.advance(k*dt,(k+1)*dt),(k+1)*dt);
+        const double exact=.6*std::exp(-.07*2/(2*(.45-.1)));
+        const double error=std::abs(w.hg[0]-exact);RecordProperty("error_"+std::to_string(int(dt*1000)),error);EXPECT_LT(error,.00004);
+        if(previous>0)EXPECT_GT(previous/error,3.8);previous=error;
+        EXPECT_NEAR(r.total()+w.led_deep,initial,1e-10*initial);
+        EXPECT_NEAR(w.continuityResidual(),0,1e-10*initial);EXPECT_DOUBLE_EQ(r.gw.cellCompletedTime(0),2);
+    }
+}
+TEST(CoupledGroundwaterRk2, SurfaceInfiltrationAndAquiferAdvanceTogetherAndRefine) {
+    const auto trajectory=[](double dt) {
+        CoupledRkRig r;r.init(dt,.005,.0005,.2);
+        auto& water=r.gw.state();
+        for(int i=0;i<water.n_cells;++i) {water.hu[i]=.35*(water.zs[i]-water.hg[i]);water.wetting_front[i]=.1;}
+        water.led_init_storage=water.storage();const double initial=r.total();
+        r.gw.publishInfiltration(r.state,dt,0);
+        const int steps=int(std::round(2/dt));
+        for(int k=0;k<steps;++k)r.solver.advance(k*dt,(k+1)*dt);
+        const auto& w=r.gw.state();EXPECT_GT(w.led_infil_in,0);EXPECT_GT(w.led_recharge,0);
+        EXPECT_NEAR(r.total()+w.led_deep,initial,1e-10*initial);
+        EXPECT_NEAR(w.continuityResidual(),0,1e-10*initial);
+        return std::vector<double>{r.state.volume[0],w.hg[0],w.hu[0]};
+    };
+    const auto reference=trajectory(.003125);double previous=0;
+    for(double dt:{.4,.2,.1}) {
+        const auto result=trajectory(dt);double square=0;
+        for(int j=0;j<3;++j)square+=(result[j]-reference[j])*(result[j]-reference[j]);
+        const double error=std::sqrt(square);RecordProperty("error_"+std::to_string(int(dt*1000)),error);if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;
+    }
+}
+TEST(CoupledGroundwaterRk2, NonfiniteTrialRollsBackSurfaceGroundwaterMomentumAndReceipts) {
+    CoupledRkRig r;r.init(.1,.005,0,.2);
+    GwResolvedSource source;source.cells={{0,1}};source.flow.constant=1e308;r.gw.setSources({source});
+    r.gw.publishInfiltration(r.state,.1,0);r.gw.assignTiers(.1,1);
+    const auto solver=ExplicitInertialSolverTestAccess::state(r.solver),volume=r.state.volume;
+    const auto water=r.gw.state();const double initial=r.total();
+    EXPECT_THROW(ExplicitInertialSolverTestAccess::rk2(r.solver,4,0),std::runtime_error);
+    EXPECT_EQ(ExplicitInertialSolverTestAccess::state(r.solver),solver);EXPECT_EQ(r.state.volume,volume);
+    EXPECT_EQ(r.gw.state().hg,water.hg);EXPECT_EQ(r.gw.state().hu,water.hu);
+    EXPECT_EQ(r.gw.state().xacc_to_surface,water.xacc_to_surface);EXPECT_EQ(r.gw.state().xacc_from_surface,water.xacc_from_surface);
+    EXPECT_DOUBLE_EQ(r.gw.state().led_source_in,water.led_source_in);EXPECT_DOUBLE_EQ(r.total(),initial);
+    r.gw.setSources({});ASSERT_NO_THROW(r.solver.advance(0,.1));EXPECT_NEAR(r.total(),initial,1e-10*initial);
+}
+
+
+namespace {
+std::filesystem::path rk2Output(const std::string& file) {
+    const char* location=std::getenv("SWMM_RK2_TEST_OUT");
+    const auto root=std::filesystem::path(location?location:"tests/output/coupled_gw_rk2");
+    std::filesystem::create_directories(root);return root/file;
+}
+std::string rk2File(const std::filesystem::path& path) {
+    std::ifstream file(path,std::ios::binary);return {std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
+}
+}
+TEST(CoupledGroundwaterRk2, CompletedCheckpointResumesAllOwnedStateExactly) {
+    CoupledRkRig a,b;a.init(.05,.005,.0005,.2);b.init(.05,.005,.0005,.2);
+    a.gw.publishInfiltration(a.state,.05,0);b.gw.publishInfiltration(b.state,.05,0);
+    const auto saved=rk2Output("accepted.chk"),restored=rk2Output("restored.chk");
+    for(int k=0;k<7;++k) {
+        a.solver.advance(k*.05,(k+1)*.05);
+        ASSERT_TRUE(a.solver.saveCheckpoint(saved.string()).empty())<<k;
+    }
+    ASSERT_TRUE(a.solver.saveCheckpoint(saved.string()).empty());
+    ASSERT_TRUE(b.solver.loadCheckpoint(saved.string()).empty());
+    ASSERT_TRUE(b.solver.saveCheckpoint(restored.string()).empty());EXPECT_EQ(rk2File(saved),rk2File(restored));
+    for(int k=7;k<20;++k) {
+        a.solver.advance(k*.05,(k+1)*.05);b.solver.advance(k*.05,(k+1)*.05);
+        ASSERT_TRUE(a.solver.saveCheckpoint(saved.string()).empty());ASSERT_TRUE(b.solver.saveCheckpoint(restored.string()).empty());
+        EXPECT_EQ(rk2File(saved),rk2File(restored))<<k;
+    }
+}
+TEST(CoupledGroundwaterRk2, CorruptAndIncompatibleCheckpointRefusalIsAtomicAndRetryWorks) {
+    CoupledRkRig a,b;a.init(.05,.005,.0005,.2);b.init(.05,.005,.0005,.2);
+    a.solver.advance(0,.05);
+    const auto saved=rk2Output("good.chk"),bad=rk2Output("corrupt.chk"),before=rk2Output("fresh.chk"),after=rk2Output("refused.chk");
+    ASSERT_TRUE(a.solver.saveCheckpoint(saved.string()).empty());ASSERT_TRUE(b.solver.saveCheckpoint(before.string()).empty());
+    auto bytes=rk2File(saved);ASSERT_GT(bytes.size(),32);bytes[bytes.size()/2]^=1;
+    {std::ofstream file(bad,std::ios::binary);file.write(bytes.data(),bytes.size());}
+    EXPECT_FALSE(b.solver.loadCheckpoint(bad.string()).empty());ASSERT_TRUE(b.solver.saveCheckpoint(after.string()).empty());
+    EXPECT_EQ(rk2File(before),rk2File(after));
+    const double conductivity=b.gw.state().Ks[0];b.gw.state().Ks[0]*=2;
+    EXPECT_FALSE(b.solver.loadCheckpoint(saved.string()).empty());b.gw.state().Ks[0]=conductivity;
+    ASSERT_TRUE(b.solver.saveCheckpoint(after.string()).empty());EXPECT_EQ(rk2File(before),rk2File(after));
+    ASSERT_TRUE(b.solver.loadCheckpoint(saved.string()).empty());
+    ASSERT_TRUE(b.solver.saveCheckpoint(after.string()).empty());EXPECT_EQ(rk2File(saved),rk2File(after));
+}
+TEST(CoupledGroundwaterRk2, SingularIntakeStartupAndBoundedWellsConserveThroughWettingAndDrying) {
+    for(double flow:{100.,-100.}) {
+        CoupledRkRig r;r.init(.025,.005,.0005,.2);const double initial=r.total();
+        GwResolvedSource source;source.cells={{0,1}};source.flow.constant=flow;r.gw.setSources({source});
+        for(int k=0;k<20;++k) {
+            ASSERT_NO_THROW(r.solver.advance(k*.025,(k+1)*.025));const auto& w=r.gw.state();
+            EXPECT_NEAR(r.total()+w.led_deep+w.led_et-w.led_source_in+w.led_source_out,initial,1e-10*std::max(1.,r.total()));
+            EXPECT_NEAR(w.continuityResidual(),0,1e-10*std::max(1.,w.led_init_storage));
+            for(int i=0;i<w.n_cells;++i){EXPECT_GE(w.hg[i],0);EXPECT_LE(w.hg[i],w.zs[i]);EXPECT_GE(w.hu[i],0);EXPECT_GE(r.state.volume[i],0);}
+        }
+        if(flow>0)EXPECT_GT(r.gw.state().led_dunne,0);else {EXPECT_GT(r.gw.state().led_source_out,0);EXPECT_LT(r.gw.state().led_source_out,50);}
+    }
+}
+
+TEST(CoupledGroundwaterRk2, UnsupportedOwnersRefuseBeforeAnyNumericalMutation) {
+    CoupledRkRig r;r.init(.05,.005,0,.2);const auto before=r.state.volume;
+    r.gw.state().closure[0]=int8_t(GwClosure::SIGMA);
+    EXPECT_FALSE(r.gw.rk2ProfileError().empty());EXPECT_THROW(ExplicitInertialSolverTestAccess::rk2(r.solver,.05,0),std::runtime_error);
+    r.gw.state().closure[0]=int8_t(GwClosure::CLOSED_FORM);
+    GwResolvedSource source;source.cells={{0,1}};source.flow.times={0,1};source.flow.values={1,-1};r.gw.setSources({source});
+    EXPECT_FALSE(r.gw.rk2ProfileError().empty());EXPECT_THROW(ExplicitInertialSolverTestAccess::rk2(r.solver,.05,0),std::runtime_error);
+    r.gw.setSources({});r.state.heat.enabled=true;
+    EXPECT_THROW(ExplicitInertialSolverTestAccess::rk2(r.solver,.05,0),std::runtime_error);r.state.heat.enabled=false;
+    EXPECT_EQ(r.state.volume,before);EXPECT_DOUBLE_EQ(r.gw.cellCompletedTime(0),0);
+}
+
+TEST(CoupledGroundwaterRk2, FailedAdvanceRestoresTheWholeCallBeforeRetry) {
+    CoupledRkRig r;r.init(.05,.005,0,.2);
+    GwResolvedSource source;source.cells={{0,1}};source.flow.constant=1e308;r.gw.setSources({source});
+    const auto before=rk2Output("advance-before.chk"),after=rk2Output("advance-after.chk");
+    ASSERT_TRUE(r.solver.saveCheckpoint(before.string()).empty());
+    EXPECT_THROW(r.solver.advance(0,4),std::runtime_error);
+    ASSERT_TRUE(r.solver.saveCheckpoint(after.string()).empty());EXPECT_EQ(rk2File(before),rk2File(after));
+    r.gw.setSources({});const double initial=r.total();ASSERT_NO_THROW(r.solver.advance(0,.05));EXPECT_NEAR(r.total(),initial,1e-10*initial);
+}
+
+TEST(CoupledGroundwaterRk2, LateralDarcyRelaxationMatchesAnAnalyticalNonlinearDonorSolution) {
+    double previous=0;
+    for(double dt:{.8,.4,.2,.1}) {
+        CoupledRkRig r;r.init(dt,.005,0,0,"NONE");auto& w=r.gw.state();
+        w.hg[0]=.8;w.hg[1]=.4;
+        for(int i=0;i<2;++i)w.hu[i]=w.theta_r[i]*(w.zs[i]-w.hg[i]);
+        w.led_init_storage=w.storage();const double initial=r.total();
+        const auto& edges=r.solver.inertialEdges();ASSERT_EQ(edges.ne,1);
+        const double c=.005*edges.xi[0]*edges.inv_dx[0]/((.45-.1)*w.area[0]);
+        const double attenuation=std::exp(-c*1.2*8),difference=1.2*.4*attenuation/(1.2+.4*(1-attenuation));
+        for(int k=0;k<int(std::round(8/dt));++k)r.solver.advance(k*dt,(k+1)*dt);
+        const double error=std::abs(w.hg[0]-(1.2+difference)/2);
+        RecordProperty("error_"+std::to_string(int(dt*1000)),error);EXPECT_LT(error,1e-4);
+        if(previous>0)EXPECT_GT(previous/error,3.8);previous=error;
+        EXPECT_NEAR(w.hg[0]+w.hg[1],1.2,1e-12);EXPECT_NEAR(r.total(),initial,1e-10*initial);
+        EXPECT_NEAR(w.continuityResidual(),0,1e-10*initial);
+    }
+}
+TEST(CoupledGroundwaterRk2, FullStepAndTwoHalfStepsDifferAtThirdLocalOrder) {
+    double previous=0;
+    for(double dt:{.4,.2,.1,.05,.025}) {
+        CoupledRkRig full,half;full.init(.4,.005,.0005,.2);half.init(.4,.005,.0005,.2);
+        for(auto* r:{&full,&half}) {
+            auto& w=r->gw.state();for(int i=0;i<w.n_cells;++i){w.hu[i]=.35*(w.zs[i]-w.hg[i]);w.wetting_front[i]=.1;}
+            w.led_init_storage=w.storage();
+        }
+        full.solver.advance(0,dt);half.solver.advance(0,dt/2);half.solver.advance(dt/2,dt);
+        double error=0;
+        for(int i=0;i<2;++i)error+=std::abs(full.state.volume[i]-half.state.volume[i])+std::abs(full.gw.state().hg[i]-half.gw.state().hg[i]);
+        RecordProperty("difference_"+std::to_string(int(dt*1000)),error);
+        // Keep the coarse measurements; require the unchanged local-order
+        // gate on four successive steps in the asymptotic range.
+        if(previous>0&&dt<=.1)EXPECT_GT(previous/error,7.);previous=error;
     }
 }

@@ -626,10 +626,11 @@ it is \f$m \times\f$ the cell count per step and off by default.
 | Return flow | `DUNNE YES` (default) | Table-at-ground excess to the surface | \status{Implemented} |
 | Return flow | `DUNNE NO` | Compatibility only; rejection still returns | \status{Implemented} |
 | ET | `GW_ET NONE`, `CAPILLARY_RISE`, `BOUNDARY_ET`, `BOTH` | §9.8 | \status{Implemented} |
+| Time stepping | Standalone CLOSED_FORM water-only FULL_SWE SSP-RK2 | Global tier, rollback and exact component checkpoint; transport/heat/network owners remain guarded | \status{Experimental} |
 | Time stepping | Shared tier ladder, height `LTS_TIERS` | §9.9 | \status{Implemented} |
 | Time stepping | Runtime tier count reaching the slowest cell (D-N1) | `requiredTiers()` exists; the marcher does not grow the ladder | \status{Planned} |
 | Verification law | Broadbridge–White | Exact Richards benchmark in the test harness; not selectable | \status{Retired} |
-| Backend | GPU or OpenMP plugin marchers | The kernel runs on the CPU explicit marcher only; refused otherwise | \status{Planned} |
+| Backend | GPU or OpenMP plugin marchers | The kernel runs on the built-in CPU owner; plugin requests report CPU fallback. Accelerated groundwater kernels remain unqualified | \status{Planned} |
 
 <!-- source: src/engine/2d/subsurface/SoilCharacteristic.hpp:62-72; src/engine/2d/subsurface/SigmaColumn.hpp:131-132; src/engine/2d/subsurface/SubsurfaceData.hpp:58-60, :107-140; src/engine/2d/subsurface/SubsurfaceSolver.cpp:252-254, :391-400; src/engine/2d/subsurface/SubsurfaceSolver.hpp:268-273; src/engine/2d/solver/ExplicitInertialSolver.cpp:812-815; src/engine/2d/SurfaceRouter2D.cpp:905-910 (backend refusal); plans/TWO_ZONE_GROUNDWATER_EXPLICIT_LTS_PLAN_2026-08-15.md:88-90, :196-283 -->
 

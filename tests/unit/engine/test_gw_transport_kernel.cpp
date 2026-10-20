@@ -42,6 +42,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <numeric>
@@ -60,6 +61,7 @@
 #include <hdf5.h>
 
 #include "core/SWMMEngine.hpp"
+#include "core/CompletedSourceArchive.hpp"
 #include "2d/SurfaceRouter2D.hpp"
 #include "2d/subsurface/SubsurfaceSolver.hpp"
 #include "2d/subsurface/GroundwaterDispersion.hpp"
@@ -3115,4 +3117,88 @@ TEST(GwIntegrated, InteriorLayerInjectionPreservesUniformQualityThroughCompressi
         EXPECT_NEAR(t.residual(0),0,1e-9);EXPECT_NEAR(w.continuityResidual(),0,1e-9);
         finish(r);
     }
+}
+
+
+TEST(GwIntegrated, FullEngineAdvancesTheQualifiedWaterOnlyRk2Profile) {
+    const std::string body="[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2026\n"
+        "START_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:00:02\nREPORT_STEP 00:00:01\nROUTING_STEP .1\n"
+        "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nMOMENTUM_EQUATION FULL_SWE\nRECONSTRUCTION_ORDER 2\n"
+        "LTS_TIERS 1\nMAX_TIMESTEP .05\nREPORT_2D NO\nEVAPORATION NO\n"
+        "[2D_VERTICES]\n0 0 0\n4 0 0\n4 4 0\n0 4 0\n[2D_TRIANGLES]\n0 1 2 .03 .2\n0 2 3 .03 .2\n"
+        "[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\nNODE_ENROLMENT ROWS\nLINK_SEEPAGE NONE\nGW_ET NONE\n"
+        "[2D_AQUIFER]\n* 18 2 .45 .1 2 HG0 .6 C_LOSS .5\n";
+    Deck r=open("qualified-water-rk2",body);ASSERT_TRUE(r.opened)<<completionErrors(r);
+    ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
+    const double initial=r.eng->surfaceRouter2D().subsurface().storage();
+    ASSERT_EQ(swmm_engine_start(r.e,0),SWMM_OK);r.started=true;
+    double elapsed=0;int status=SWMM_OK;
+    do {status=swmm_engine_step(r.e,&elapsed);}while(status==SWMM_OK&&elapsed>0);
+    ASSERT_EQ(status,SWMM_OK)<<completionErrors(r);
+    const auto& gw=r.eng->surfaceRouter2D().subsurface();EXPECT_GT(gw.state().led_infil_in,0);
+    EXPECT_GT(gw.state().led_deep,0);EXPECT_NE(gw.state().storage(),initial);
+    EXPECT_NEAR(gw.state().continuityResidual(),0,1e-9);EXPECT_DOUBLE_EQ(gw.cellCompletedTime(0),2);
+    finish(r);
+}
+
+
+namespace {
+struct GroundwaterBackendOverride {
+    std::string previous;bool present=false;
+    static void set(const char* value) {
+#ifdef _WIN32
+        _putenv_s("OPENSWMM_2D_BACKEND",value?value:"");
+#else
+        if(value)setenv("OPENSWMM_2D_BACKEND",value,1);else unsetenv("OPENSWMM_2D_BACKEND");
+#endif
+    }
+    explicit GroundwaterBackendOverride(const char* value) {
+        if(const char* old=std::getenv("OPENSWMM_2D_BACKEND")){present=true;previous=old;}set(value);
+    }
+    ~GroundwaterBackendOverride(){set(present?previous.c_str():nullptr);}
+};
+}
+TEST(GwIntegrated, BackendRequestsKeepGroundwaterOnTheObservableCpuOwnerWithoutDroppingPhysics) {
+    for(int profile=0;profile<3;++profile) {
+        std::string reference;
+        for(const char* backend:{"cpu","omp","cuda","hip","sycl"}) {
+            SCOPED_TRACE(std::to_string(profile)+"/"+backend);GroundwaterBackendOverride select(backend);
+            const std::string extra="[GW_SOURCES]\nW CELL 1 FLOW .001 TSS CONC 3\n"
+                "[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n";
+            const auto body=profile==0?forcingDeck(extra):profile==1?layeredDeck(extra):mappedPorousDeck(extra);
+            Deck r=open("backend-"+std::to_string(profile)+"-"+backend,body);ASSERT_TRUE(r.opened)<<completionErrors(r);
+            ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
+            SWMM_2DRunStats stats{};ASSERT_EQ(swmm_2d_get_run_stats(r.e,&stats),SWMM_OK);
+            EXPECT_EQ(std::string(stats.backend).find("cpu"),0u)<<stats.backend;
+            ASSERT_EQ(swmm_engine_start(r.e,0),SWMM_OK);r.started=true;
+            double elapsed=0;int status=SWMM_OK;do{status=swmm_engine_step(r.e,&elapsed);}while(status==SWMM_OK&&elapsed>0);
+            ASSERT_EQ(status,SWMM_OK)<<completionErrors(r);
+            const auto& gw=r.eng->surfaceRouter2D().subsurface();const auto& tr=gw.transport();
+            EXPECT_GT(gw.state().led_source_in,0);EXPECT_GT(tr.gained_source[0],0);
+            EXPECT_NEAR(gw.state().continuityResidual(),0,1e-9);EXPECT_NEAR(tr.residual(0),0,1e-8);
+            auto copy=gw;openswmm::detail::CompletedSourceArchive archive;copy.checkpoint(archive,false);
+            const auto state=archive.bytes();ASSERT_FALSE(state.empty());
+            if(reference.empty())reference=state;else EXPECT_EQ(state,reference);
+            finish(r);
+        }
+    }
+}
+TEST(GwIntegrated, AvailableOpenmpPluginIsExecutedByASurfaceOnlyPositiveControl) {
+    GroundwaterBackendOverride select("omp");
+    const std::string body="[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2026\n"
+        "START_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:00:02\nREPORT_STEP 00:00:01\nROUTING_STEP .1\n"
+        "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP .05\nREPORT_2D NO\nEVAPORATION NO\n"
+        "[2D_VERTICES]\n0 0 0\n4 0 0\n4 4 0\n0 4 0\n[2D_TRIANGLES]\n0 1 2 .03 .2\n0 2 3 .03 .2\n";
+    Deck r=open("openmp-surface-positive-control",body);ASSERT_TRUE(r.opened)<<completionErrors(r);
+    ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
+    SWMM_2DRunStats stats{};ASSERT_EQ(swmm_2d_get_run_stats(r.e,&stats),SWMM_OK);
+    if(std::string(stats.backend).find("omp")!=0){finish(r);GTEST_SKIP()<<"Kokkos OpenMP plugin unavailable; accelerated execution is unqualified.";}
+    RecordProperty("executed_backend",stats.backend);
+    const auto& surface=r.eng->surfaceRouter2D().state();const double initial=std::accumulate(surface.volume.begin(),surface.volume.end(),0.);
+    ASSERT_EQ(swmm_engine_start(r.e,0),SWMM_OK);r.started=true;
+    double elapsed=0;int status=SWMM_OK;do{status=swmm_engine_step(r.e,&elapsed);}while(status==SWMM_OK&&elapsed>0);
+    ASSERT_EQ(status,SWMM_OK)<<completionErrors(r);
+    EXPECT_NEAR(std::accumulate(surface.volume.begin(),surface.volume.end(),0.),initial,1e-10);
+    ASSERT_EQ(swmm_2d_get_run_stats(r.e,&stats),SWMM_OK);EXPECT_GT(stats.steps,0);
+    finish(r);
 }

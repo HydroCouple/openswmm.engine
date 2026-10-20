@@ -96,3 +96,16 @@ reference is authored metadata; it does not read or apply the file immediately.
 
 .. automodule:: openswmm.engine._gw_transport
    :members:
+
+Execution profiles
+------------------
+
+Groundwater chemistry, layered transport and porous heat require the CPU
+first-order coupling profile. A standalone CLOSED_FORM water-only mesh can
+use FULL_SWE with RECONSTRUCTION_ORDER 2; network/catchment exchange, aquifer
+edges, time-series wells and active transport/thermal owners remain guarded.
+This profile has an internal numerical component checkpoint, not managed
+engine-calendar or output continuation. Requests for accelerated backends
+retain observable CPU fallback; they do not qualify device groundwater.
+See ``docs/design/groundwater-transport.md`` in the engine source for the
+activation and qualification boundaries.

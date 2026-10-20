@@ -34,6 +34,7 @@
 #include "../subsurface/EngineSourceResultStream.hpp"
 
 #include <algorithm>
+#include <memory>
 #include <cmath>
 #if defined(SWMM_USE_OPENMP)
 #include <omp.h>
@@ -2209,7 +2210,25 @@ void ExplicitInertialSolver::computeLimitedGradientsSwe() {
 // U² = U¹ + Δt·L(U¹), Uⁿ⁺¹ = ½(U⁰ + U²). The per-advance ledgers that both
 // stages incremented (boundary ∫F dt, coupling ∫Q dt, infiltration applied)
 // are reset to their trapezoidal value, ½·(stage-1 + stage-2) increments.
-void ExplicitInertialSolver::runRk2Step(double dt) {
+void ExplicitInertialSolver::runRk2Step(double dt,double time) {
+    std::unique_ptr<ExplicitInertialSolver> marcher0;
+    std::unique_ptr<SurfaceStateData> surface0;
+    std::unique_ptr<SubsurfaceSolver> ground0;
+    std::map<int, RuntimeReceipt> receipts0;
+    if(gw_) {
+        if(auto error=gw_->rk2ProfileError();!error.empty())throw std::runtime_error(error);
+        if(common_stage_ || channel_ground_ || state_->transport.active() || state_->heat.enabled ||
+           state_->snow.active() || state_->runtime_sources.active() || state_->runtime_forcings.active() ||
+           (state_->node_coupling&&!state_->node_coupling->empty()))
+            throw std::runtime_error("Coupled RK2 has an unqualified surface/source owner.");
+        // Capture every owned numerical field. Borrowed owners are refused
+        // above; the boundary receipt map is the sole writable borrowed view.
+        marcher0=std::make_unique<ExplicitInertialSolver>(*this);
+        surface0=std::make_unique<SurfaceStateData>(*state_);
+        ground0=std::make_unique<SubsurfaceSolver>(*gw_);
+        if(state_->boundary)receipts0=state_->boundary->receipts;
+    }
+    try {
     const int nt = mesh_->n_triangles();
     // Member buffers: vector assignment reuses capacity, so no per-step
     // allocation (F6).
@@ -2223,8 +2242,11 @@ void ExplicitInertialSolver::runRk2Step(double dt) {
     rk_drawn0_ = node_drawn_;
     const double evap0 = state_->evap_loss_total;
     for (int stage = 0; stage < 2; ++stage) {
+        if(gw_)gw_->publishRk2Infiltration(*state_,dt,time);
         fireFaces(active_faces_, dt, /*global_step=*/true);
+        if(gw_)gw_->fireGwFaces(0,dt);
         fireCells(active_cells_, dt, /*tier0=*/true);
+        if(gw_)gw_->fireGwCells(0,dt,*state_,time);
     }
     // Parallel over every cell. An INACTIVE cell was not fired by either
     // stage, so its average is the identity (volume, q⃗ and the infiltration
@@ -2268,9 +2290,23 @@ void ExplicitInertialSolver::runRk2Step(double dt) {
     for (std::size_t k = 0; k < node_drawn_.size(); ++k)
         node_drawn_[k] = rk_drawn0_[k] + 0.5 * (node_drawn_[k] - rk_drawn0_[k]);
     state_->evap_loss_total = evap0 + 0.5 * (state_->evap_loss_total - evap0);
+    if(gw_) {
+        gw_->blendRk2Water(*ground0,time+dt);
+        source_phase_end_=time+dt;
+        gw_->publishRk2Infiltration(*state_,dt,time+dt);
+    }
     accumulators_pending_ = false;
     substeps_run_ += 2;
     last_steps_   += 2;
+    } catch(...) {
+        if(marcher0) {
+            *this=std::move(*marcher0);
+            *state_=std::move(*surface0);
+            *gw_=std::move(*ground0);
+            if(state_->boundary)state_->boundary->receipts=std::move(receipts0);
+        }
+        throw;
+    }
 }
 
 // FULL_SWE ghost-cell boundary (2D_FULL_SWE plan §2.2 item 9). The ghost
@@ -2492,6 +2528,21 @@ void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub, double time) {
 }
 
 double ExplicitInertialSolver::advance(double t_current, double t_target) {
+    if(!(second_order_&&gw_))return advanceImpl(t_current,t_target);
+    if(auto error=rk2CheckpointProfile();!error.empty())throw std::runtime_error(error);
+    if(!std::isfinite(t_current)||!std::isfinite(t_target)||t_current!=t_last_sync_||t_target<t_current)
+        throw std::invalid_argument("Coupled RK2 requires its accepted completed clock.");
+    auto marcher=*this;auto surface=*state_;auto ground=*gw_;
+    std::map<int,RuntimeReceipt> receipts;if(state_->boundary)receipts=state_->boundary->receipts;
+    try {return advanceImpl(t_current,t_target);}
+    catch(...) {
+        *this=std::move(marcher);*state_=std::move(surface);*gw_=std::move(ground);
+        if(state_->boundary)state_->boundary->receipts=std::move(receipts);
+        throw;
+    }
+}
+
+double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
     if (common_stage_ && (!checkpoint_ready_ || !std::isfinite(t_current) || !std::isfinite(t_target) ||
         t_current != t_last_sync_ || t_current != common_stage_->completedEnd() || t_target < t_current))
         throw std::invalid_argument("Common source marcher requires its accepted completed clock.");
@@ -2553,7 +2604,7 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
 
         if (nsub_full * dt0_ <= remaining) {
             // Full macro cycle fits (dt0_ <= remaining here, so no clamp).
-            if (second_order_) runRk2Step(dt0_);      // K == 1: one global step
+            if (second_order_) runRk2Step(dt0_,t);      // K == 1: one global step
             else               runMacroCycle(dt0_, nsub_full, t);
             t += nsub_full * dt0_;
             last_dt_ = dt0_;
@@ -2583,7 +2634,15 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
         {
             // Sub-ulp residue (macro landing shortfall): land without
             // firing physics on a span below any numerical significance.
-            if (!common_stage_ && remaining <= dt0_ * 1.0e-9) {
+            const double clock_ulp=8*std::numeric_limits<double>::epsilon()*std::max({1.,std::abs(t),std::abs(t_target)});
+            if (!common_stage_ && remaining <= dt0_ * 1.0e-9 &&
+                (!(second_order_&&gw_)||remaining<=clock_ulp)) {
+                if(second_order_&&gw_) {
+                    // Numerical landing only: no physical interval is replayed.
+                    // Both owners adopt the same representable accepted clock.
+                    source_phase_end_=t_target;gw_->source_firing_end_=t_target;
+                    for(int i=0;i<gw_->state_.n_cells;++i)if(gw_->covers(i))gw_->cell_completed_[i]=t_target;
+                }
                 t = t_target;
                 break;
             }
@@ -2593,7 +2652,7 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
             const double dt_tail = remaining / nt;
             const int Kgw = static_cast<int>(cells_by_tier_.size());
             for (int s = 0; s < nt; ++s) {
-                if (second_order_) { runRk2Step(dt_tail); continue; }
+                if (second_order_) { runRk2Step(dt_tail,t+s*dt_tail); continue; }
                 fireFaces(active_faces_, dt_tail, /*global_step=*/true);
                 // G-X1 (2026-09-19): the tail fires the aquifer too. It
                 // used to fire the surface lists only, so on a deck whose

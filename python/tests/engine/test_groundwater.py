@@ -199,3 +199,50 @@ def test_layered_chemistry_with_porous_heat(tmp_path, chemistry_layers, thermal_
         solver.end()
     finally:
         cleanup(solver)
+
+
+def test_water_only_coupled_rk2_advances_through_python(tmp_path):
+    solver = open_model(tmp_path, """
+[OPTIONS]
+END_DATE 01/01/2026
+END_TIME 00:00:02
+REPORT_STEP 00:00:01
+[2D_OPTIONS]
+MOMENTUM_EQUATION FULL_SWE
+RECONSTRUCTION_ORDER 2
+MAX_TIMESTEP .05
+LTS_TIERS 1
+TRANSPORT_POLLUTANTS NO
+TRANSPORT_MSX NO
+TRANSPORT_AGE NO
+TRANSPORT_TEMPERATURE NO
+[2D_AQUIFER_OPTIONS]
+CLOSURE CLOSED_FORM
+NODE_ENROLMENT ROWS
+LINK_SEEPAGE NONE
+GW_ET NONE
+[2D_AQUIFER]
+* 18 2 .45 .1 2 HG0 .6 C_LOSS .5
+[GW_TRANSPORT_OPTIONS]
+TRANSPORT_POLLUTANTS NO
+TRANSPORT_MSX NO
+TRANSPORT_AGE NO
+TRANSPORT_TEMPERATURE NO
+""")
+    try:
+        solver.initialize()
+        solver.start(False)
+        while solver.step().total_seconds() > 0:
+            pass
+        gw = solver.surface2d.groundwater
+        assert gw.active and gw.species == ()
+        assert gw.ledger(GroundwaterLedger.INFIL_IN) > 0
+        assert gw.ledger(GroundwaterLedger.DEEP) > 0
+        assert abs(gw.continuity_error) < 1e-9
+        assert np.isfinite(gw.cells(GroundwaterVariable.HG)).all()
+        stats = solver.surface2d.run_stats
+        assert stats['backend'].startswith('cpu')
+        assert stats['steps'] > 0
+        solver.end()
+    finally:
+        cleanup(solver)

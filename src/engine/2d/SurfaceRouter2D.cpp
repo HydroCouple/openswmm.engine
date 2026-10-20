@@ -1212,8 +1212,6 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             "[2D_OPTIONS] GROUNDWATER NO — the [2D_AQUIFER*] rows are kept "
             "but no subsurface runs this simulation.");
     if (gw_wanted && !aquifer_cfg_.empty()) {
-        if (options_.reconstruction_order == 2)
-            throw std::runtime_error("[2D_AQUIFER] groundwater is not advanced by the RK2 surface route; select RECONSTRUCTION_ORDER 1 for coupled groundwater runs.");
         auto* marcher = dynamic_cast<ExplicitInertialSolver*>(solver_.get());
         if (marcher == nullptr)
             throw std::runtime_error(
@@ -1734,6 +1732,14 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         for(const auto& cell:subsurface_.heat().cells)
             if(!cell.column.energy.empty()&&!cell.surface_owned)
                 throw std::runtime_error("[2D ground heat] SURFACE_WATER requires active HEAT_MODEL COUPLED and BED_HEAT_MODEL GROUND_COLUMN.");
+    if(subsurface_.active()&&options_.reconstruction_order==2) {
+        auto* cpu=dynamic_cast<ExplicitInertialSolver*>(solver_.get());
+        if(options_.momentum!=Momentum2D::FULL_SWE||!cpu||!coupling_points_.empty()||
+           !aquifer_link_shares_.empty()||!subcatch_recharge_.empty()||ctx.n_subcatches()!=0)
+            throw std::runtime_error("Coupled groundwater RK2 requires the standalone FULL_SWE water-only profile; network and catchment owners remain unqualified.");
+        if(auto error=cpu->rk2CheckpointProfile();!error.empty())throw std::runtime_error(error);
+        ctx.warnings.push_back("Coupled groundwater SSP-RK2: CLOSED_FORM water-only CPU profile with global stepping and constant wells. Singular wetting-front startup is bounded without a second-order claim.");
+    }
     infil_elapsed_ = 0.0;
     if (infil_.active()) {
         // Publish an initial held rate so the very first substep infiltrates

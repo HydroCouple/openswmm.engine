@@ -2,6 +2,7 @@
 #include "ExplicitInertialSolver.hpp"
 #include "../subsurface/CommonSourceStage.hpp"
 #include "../subsurface/SubsurfaceSolver.hpp"
+#include "../heat/MeshCheckpointState.hpp"
 #include "../data/MeshData.hpp"
 #include "../data/SurfaceStateData.hpp"
 #include "../data/BoundaryData.hpp"
@@ -124,7 +125,7 @@ void ExplicitInertialSolver::checkpointState(Archive& a) {
       accumulators_pending_,front_breach_,h_on_front_,exch_tau_,spill_deficit_,substeps_run_,face_passes_,
       last_steps_,last_dt_,active_frac_min_,active_frac_max_,active_frac_sum_,active_samples_,tier_occupancy_,
       saved_telemetry,telemetry_);
-    if(common_stage_->runtimeBoundariesEnabled())a(bc_cell_,bc_slot_,bc_q_,bc_accum_,wall_ptr_,wall_slot_);
+    if(common_stage_&&common_stage_->runtimeBoundariesEnabled())a(bc_cell_,bc_slot_,bc_q_,bc_accum_,wall_ptr_,wall_slot_);
     if(joint_checkpoint_) {
         a.fixed(exch_,node_drawn_);
         for(double v:exch_) if(!std::isfinite(v)) throw std::runtime_error("Nonfinite joint CPU exchange.");
@@ -188,6 +189,7 @@ std::string ExplicitInertialSolver::saveCheckpoint(const std::string& path) cons
 }
 
 std::string ExplicitInertialSolver::checkpointBytes(std::string& bytes) const {
+    if(second_order_&&!common_stage_)return rk2CheckpointBytes(bytes);
     try {
         const auto error=checkpointBoundary(); if(!error.empty()) return error;
         std::string component; const auto state_error=common_stage_->checkpointBytes(component);
@@ -208,6 +210,11 @@ std::string ExplicitInertialSolver::loadCheckpoint(const std::string& path) {
 std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const std::array<double,10>* router_boundary,const std::vector<double>* pending_outfalls,
     const std::function<void(const runoff::SourceWaterDriver&)>* validate_source,
     const std::function<void()>* before_install,const std::vector<int>* boundary_slots,double* inspect_source_end) {
+    if(second_order_&&!common_stage_) {
+        if(router_boundary||pending_outfalls||validate_source||before_install||boundary_slots||inspect_source_end)
+            return "Standalone RK2 checkpoint cannot restore borrowed router/source owners.";
+        return loadRk2CheckpointBytes(std::move(bytes));
+    }
     try {
         const auto error=checkpointBoundary(); if(!error.empty()) return error;
         if(t_last_sync_!=0 || common_stage_->intervals()!=0 || source_history_ || engine_source_history_)
@@ -283,4 +290,83 @@ std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const 
         *common_stage_=std::move(stage); *this=std::move(trial); return {};
     } catch(const std::exception& e) { return e.what(); }
 }
+std::string ExplicitInertialSolver::rk2CheckpointProfile() const {
+    if(!initialized_||!second_order_||!gw_||common_stage_||joint_checkpoint_||channel_ground_||
+       source_history_||engine_source_history_||engine_source_stream_||!checkpoint_ready_||
+       mode_!=Momentum2D::FULL_SWE||opts_->lts_tiers!=1||!bc_cell_.empty()||
+       state_->transport.active()||state_->heat.enabled||state_->snow.active()||
+       state_->runtime_sources.active()||state_->runtime_forcings.active()||
+       (state_->node_coupling&&!state_->node_coupling->empty()))
+        return "RK2 checkpoint requires the standalone wall-bounded water-only coupled profile.";
+    for(const auto* row:{&state_->coupling_flux,&state_->coupling_applied})for(double v:*row)if(v!=0)
+        return "RK2 checkpoint cannot recover external coupling receipts.";
+    if(source_phase_end_!=t_last_sync_||accumulators_pending_)
+        return "RK2 checkpoint requires a completed numerical boundary.";
+    for(int i=0;i<gw_->state_.n_cells;++i)if(gw_->covers(i)&&gw_->cell_completed_[i]!=t_last_sync_)
+        return "RK2 surface and groundwater clocks differ.";
+    return gw_->rk2ProfileError();
+}
+std::string ExplicitInertialSolver::rk2CheckpointModel() const {
+    Archive a;auto m=*mesh_;auto o=*opts_;auto gw=*gw_;gw.checkpoint(a,true);
+    a(m.vx,m.vy,m.vz,m.vtag,m.cell_nv,m.cell_v,m.cell_nbr,m.tri_area,m.tri_cx,m.tri_cy,m.tri_cz,m.edge_length,
+      m.edge_nx,m.edge_ny,m.edge_mx,m.edge_my,m.edge_mz,m.edge_dist_c,m.quad_vfr_z,m.quad_vfr_a,
+      m.edge_conveyance,m.mannings_n,m.tri_init_depth,m.tri_init_u,m.tri_init_v,m.tri_tag,m.vert_stencil_ptr,
+      m.vert_stencil_idx,m.vert_stencil_wt,m.vert_coupled_node,m.tri_coupled_node,m.vert_coupling_cd,
+      m.vert_coupling_area,m.vert_coupling_area_set,m.tri_coupling_cd,m.tri_coupling_area,
+      m.vert_coupled_node_name,m.tri_coupled_node_name);
+    a(o.momentum,o.front_rebuild,o.reconstruction_order,o.max_timestep,o.dry_depth,o.limiter_epsilon,
+      o.flux_dh_eps,o.coupling_sync,o.coupling_cd,o.report_2d,o.output_compression,o.report_2d_vars,
+      o.report_2d_step,o.infiltration,o.infil_step,o.evaporation,o.transport_pollutants,o.transport_msx,
+      o.transport_age,o.transport_temperature,o.groundwater,o.rainfall_mode,o.cell_closure,
+      o.face_reconstruction,o.vfr_min_wet_frac,o.theta,o.cfl_number,o.h_move,o.lts_tiers,o.froude_max,
+      o.advection,o.exchange_beta,o.dispersion,o.exchange_relax,o.coupling_area_auto,o.coupling_in_flooding,
+      o.backend,o.len_1d_to_2d,o.len_2d_to_1d,o.vol_1d_to_2d,o.flow_1d_to_2d,o.flow_2d_to_1d,o.num_threads,
+      o.requested_threads,o.mesh_units_si,o.mesh_scaled_to_si,o.mesh_to_si_factor,o.pending_rows_drained,
+      o.bc_flow_to_si_applied);
+    a(o.infil_default_method,o.infil_destination,o.gw_et);
+    // Exchange law options join the identity only when set, so a legacy
+    // model's checkpoint identity is unchanged.
+    if(o.coupling_law!=CouplingLaw2D::ORIFICE||o.coupling_head!=CouplingHead2D::CELL||o.coupling_coeffs!=0)
+        a(o.coupling_law,o.coupling_head,o.coupling_coeffs);
+    if(o.coupling_pond_mode!=CouplingPondMode2D::FOOTPRINT||o.coupling_pond_relax!=0||o.coupling_rim_band>=0||o.coupling_equalize>=0)
+        a(o.coupling_pond_mode,o.coupling_pond_relax,o.coupling_rim_band,o.coupling_equalize);
+
+    auto rain=state_->rainfall,evap=state_->evap_rate;a(rain,evap);
+    return a.bytes();
+}
+std::string ExplicitInertialSolver::rk2CheckpointBytes(std::string& bytes) const {
+    try {
+        if(auto error=rk2CheckpointProfile();!error.empty())return error;
+        auto trial=*this;auto surface=*state_;auto gw=*gw_;Archive state;
+        auto model=rk2CheckpointModel();state(model);checkpoint::meshState(state,surface);
+        gw.checkpoint(state,false);state(gw.cell_completed_);trial.checkpointState(state);
+        std::string magic=magicName,payload=state.bytes();
+        uint32_t version=3,endian=0x01020304,longBytes=sizeof(long),crc=checksum(payload);
+        Archive file;file(magic,version,endian,longBytes,payload,crc);
+        if(file.bytes().size()>maxBytes)return "RK2 checkpoint exceeds its size limit.";
+        bytes=file.bytes();return {};
+    } catch(const std::exception& e){return e.what();}
+}
+std::string ExplicitInertialSolver::loadRk2CheckpointBytes(std::string bytes) {
+    try {
+        if(auto error=rk2CheckpointProfile();!error.empty())return error;
+        if(t_last_sync_!=0||active_samples_!=0)return "RK2 restore requires a fresh numerical owner.";
+        if(bytes.empty()||bytes.size()>maxBytes)return "RK2 checkpoint exceeds its size limit.";
+        Archive file(std::move(bytes));std::string magic,payload;
+        uint32_t version=0,endian=0,longBytes=0,crc=0;file(magic,version,endian,longBytes,payload,crc);file.finish();
+        if(magic!=magicName||version!=3||endian!=0x01020304||longBytes!=sizeof(long))
+            return "Unsupported RK2 checkpoint version/platform.";
+        if(crc!=checksum(payload))return "RK2 checkpoint checksum differs.";
+        Archive state(std::move(payload));std::string model;state(model);
+        if(model!=rk2CheckpointModel())return "RK2 checkpoint mesh, options, groundwater or held forcing differs.";
+        auto trial=*this;auto surface=*state_;auto gw=*gw_;
+        trial.state_=&surface;trial.gw_=&gw;
+        checkpoint::meshState(state,surface);gw.checkpoint(state,false);state.fixed(gw.cell_completed_);
+        trial.checkpointState(state);state.finish();
+        if(auto error=trial.rk2CheckpointProfile();!error.empty())return error;
+        trial.state_=state_;trial.gw_=gw_;
+        *state_=std::move(surface);*gw_=std::move(gw);*this=std::move(trial);return {};
+    } catch(const std::exception& e){return e.what();}
+}
+
 }

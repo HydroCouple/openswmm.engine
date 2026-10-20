@@ -47,7 +47,7 @@ OpenMP, CUDA, HIP and SYCL surface plugins load separately from the core. Active
 
 - Published inundation benchmarks and measured catchment case studies beyond the analytic SWASHES suite.
 - Long-period damping, mesh-dependent stability and production-scale accuracy studies.
-- Qualification of additional process/backend combinations, including groundwater and transport under the RK2 surface route; current groundwater runs require first-order reconstruction.
+- Qualification of additional process/backend combinations, including groundwater transport under the RK2 surface route. Standalone CLOSED_FORM water-only groundwater now supports CPU SSP-RK2; chemistry, layers, heat and borrowed source/network owners retain first-order requirements.
 - Further large-mesh performance work where deployment measurements justify it.
 
 The implicit CVODE/ARKODE 2D integrators are retired; they are not an alternative operational route.
@@ -87,7 +87,7 @@ See the [surface-quality reference](docs/manuals/reference/quality/sections/Chap
 - CPU integration/regression and heterogeneous/plume refinement qualification are in progress. Tensor dispersion now uses transverse dispersivity, skew correction, harmonic normal resistance and the solute `C_DIFF` bound; passing local flux/conservation tests does not establish universal field validity.
 - Attached mesh-only CPU SIGMA/porous engine checkpoints now qualify passive pollutant/age/heat state and groundwater HDF5 continuation, including pending contacts, independent grids and groundwater edge outputs. Full-session network chemistry and surface-species/buildup output continuation retain their guards.
 - Joint conduit/node/well/edge donor tests, unequal-clock pending cold-contact/heat restart and a heterogeneous skewed-mesh diffusion refinement case now pass on CPU. Deliberate boundary-debit and compression-transfer faults are detected. Complete the broader coupled network-chemistry/output restart and application qualification matrix. The SIGMA/porous overlap mapping is implemented and selected CPU profiles are tested; default BULK retains its historical saturated-contact approximation.
-- Coupled groundwater still requires first-order surface reconstruction on CPU. True coupled RK2 stages, rollback and measured order remain a separate milestone; so do explicitly qualified accelerated groundwater profiles on actual hardware.
+- Standalone CLOSED_FORM water-only CPU groundwater now supports coupled FULL_SWE SSP-RK2 with whole-call rollback, measured smooth temporal order, nonlinear donor/startup checks and exact component checkpoint continuation. SIGMA/ENSLAVED, groundwater chemistry/heat, network/catchment owners, time-series wells and aquifer edges remain guarded under RK2. Accelerated groundwater kernels and their capability contract remain unfinished; available Kokkos OpenMP surface checks and observable CPU fallback do not qualify groundwater acceleration.
 
 See the [transport contracts, examples and limits](docs/design/groundwater-transport.md), [kernel tests](tests/unit/engine/test_gw_transport_kernel.cpp) and [SIGMA conservation tests](tests/unit/engine/test_sigma_conservation.cpp). The new work is a development implementation, not a declaration that every groundwater completion gate has passed.
 

@@ -453,12 +453,17 @@ public:
     double storage() const noexcept { return state_.storage(); }
     void checkpoint(detail::CompletedSourceArchive&,bool model); // internal accepted-boundary IO
     std::string initReactions(SimulationContext& ctx);
+    /// Initial coupled SSP-RK2 profile: spatial CLOSED_FORM water only, constant wells.
+    std::string rk2ProfileError() const;
+    void blendRk2Water(const SubsurfaceSolver& initial,double end);
+    void publishRk2Infiltration(SurfaceStateData&,double dt,double time);
     bool needsTransportRestart() const noexcept {return tr_.n_layers>0 || !boundaries_.empty() || !reactors_.empty();}
     std::string transportRestartState() const;
     std::string restoreTransportRestart(const std::string& bytes,bool apply);
 
 private:
     friend class CommonSourceStage;
+    friend class ExplicitInertialSolver;
     friend RichardsBedAcceptance acceptRichardsBedsAtFiring(SubsurfaceSolver&, SurfaceStateData&,
         double, double, const std::vector<RichardsBedOwner>&);
     friend RichardsBedAcceptance acceptRichardsBedsForTier(SubsurfaceSolver&, SurfaceStateData&,

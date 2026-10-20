@@ -2,6 +2,7 @@
 #include "CommonSourceStage.hpp"
 #include "SubsurfaceSolver.hpp"
 #include "../heat/ThermalCheckpoint.hpp"
+#include "../heat/MeshCheckpointState.hpp"
 #include "../data/MeshData.hpp"
 #include "../data/SurfaceStateData.hpp"
 #include "../data/SolverOptions2D.hpp"
@@ -41,7 +42,7 @@ bool validTransportMass(const std::vector<double>& mass,int temp_row) {
         if(!std::isfinite(mass[s]) || (int(s)!=temp_row && mass[s]<0))return false;
     return true;
 }
-void meshState(Archive& a,SurfaceStateData& s) {
+void meshStateImpl(Archive& a,SurfaceStateData& s) {
     a.fixed(s.depth,s.head,s.volume,s.grad_hx,s.grad_hy,s.grad_hx_lim,s.grad_hy_lim,s.vert_head,
             s.vert_depth_signed,s.face_vx,s.face_vy,s.cell_continuity_err,s.edge_flux,s.rainfall,s.evap_rate,
             s.infil_rate,s.infil_applied,s.coupling_flux,s.coupling_applied,s.net_source,s.rainfall_forced,
@@ -112,6 +113,8 @@ void publish(const std::string& path,const std::string& bytes) {
     if(error){std::filesystem::remove(part);throw std::runtime_error("Cannot publish source checkpoint: "+error.message());}
 }
 }
+void checkpoint::meshState(Archive& a,SurfaceStateData& s) {meshStateImpl(a,s);}
+using checkpoint::meshState;
 std::string CommonSourceStage::checkpointModel() const {
     Archive a;auto source=sources_->waterTrial();auto gw=*gw_;auto m=*mesh_;auto o=*options_;auto t=surface_->transport;
     source.checkpoint(a,true);gw.checkpoint(a,true);

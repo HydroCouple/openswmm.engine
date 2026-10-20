@@ -83,8 +83,8 @@ public:
     /// Capture initial state and every finest accepted source interval, after
     /// all due groundwater firings/node sampling; externally owned recorder.
     void setSourceResultHistory(SourceResultHistory& history);
-    /// Internal accepted CPU surface/source boundary, not a whole-engine hotstart.
-    /// First order, no live 1D coupling or external boundary providers.
+    /// Internal accepted CPU source boundary or standalone water-only RK2
+    /// component checkpoint; not a whole-engine hotstart. Borrowed owners are guarded.
     std::string saveCheckpoint(const std::string& path) const;
     std::string loadCheckpoint(const std::string& path);
     /// Bind a saved exact source-history prefix after a marcher restore.
@@ -113,6 +113,10 @@ private:
     friend class SurfaceRouter2D;
     friend class openswmm::SWMMEngine;
     std::string checkpointBytes(std::string& bytes) const;
+    std::string rk2CheckpointProfile() const;
+    std::string rk2CheckpointModel() const;
+    std::string rk2CheckpointBytes(std::string&) const;
+    std::string loadRk2CheckpointBytes(std::string);
     std::string loadCheckpointBytes(std::string bytes, const std::array<double,10>* router_boundary = nullptr,
                                     const std::vector<double>* pending_outfalls = nullptr,
         const std::function<void(const runoff::SourceWaterDriver&)>* validate_source = nullptr,
@@ -120,6 +124,7 @@ private:
                                     const std::vector<int>* boundary_slots = nullptr,
                                     double* inspect_source_end = nullptr);
     void refreshSourceResultBoundary();
+    double advanceImpl(double current,double target);
 
     // Recompute η/depth from state volumes for the whole mesh.
     void reconstructAll();
@@ -206,7 +211,7 @@ private:
     /// One SSP-RK2 (Heun) step of length dt over the active lists: two
     /// forward-Euler substeps averaged with the start state; the ledgers
     /// that accumulated over both stages are halved to the trapezoidal value.
-    void runRk2Step(double dt);
+    void runRk2Step(double dt,double time);
     /// FRONT_REBUILD: frontier_[i] = 1 for an active cell with at least one
     /// inactive neighbour (the outer ring of the halo). When such a cell
     /// crosses the activation depth the front has used up the halo, and the

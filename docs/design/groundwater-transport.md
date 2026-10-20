@@ -1,6 +1,6 @@
 # Spatial groundwater transport
 
-This development implementation extends the CPU, first-order mesh aquifer. It does not apply to conventional subcatchment `[GROUNDWATER]` aquifers. Build from the current source; published packages may lag these interfaces.
+This development implementation extends the CPU mesh aquifer. Groundwater chemistry and heat use first-order coupling; the restricted water-only SSP-RK2 profile below has separate qualification. It does not apply to conventional subcatchment `[GROUNDWATER]` aquifers. Build from the current source; published packages may lag these interfaces.
 
 ## Supported profiles
 
@@ -12,7 +12,17 @@ This development implementation extends the CPU, first-order mesh aquifer. It do
 | Aquifer reactions | `[REACTION_SUBSURFACE]` | Explicit SAT/UNSAT/LAYER expressions using the shared reaction integrator |
 | Porous soil heat | `THERMAL_MODEL POROUS_EQUILIBRIUM` | Fixed-depth thermal/porewater owner; boundary water, species and physical joules are booked once |
 
-LAYERED chemistry can use `THERMAL_MODEL WATER_ONLY` or `POROUS_EQUILIBRIUM`. With porous heat, SIGMA owns solute/age mass and fixed physical layers own thermal energy; a sparse conservative overlap map connects their independently chosen layer counts. Bulk porous SAT/UNSAT reactions retain their fixed-depth inventory owner. LAYERED requires spatial `MODE MESH`. Coupled surface reconstruction order 2 and accelerated groundwater execution remain unsupported. An automatic backend request can select CPU; an explicitly incompatible backend is refused.
+LAYERED chemistry can use `THERMAL_MODEL WATER_ONLY` or `POROUS_EQUILIBRIUM`. With porous heat, SIGMA owns solute/age mass and fixed physical layers own thermal energy; a sparse conservative overlap map connects their independently chosen layer counts. Bulk porous SAT/UNSAT reactions retain their fixed-depth inventory owner. LAYERED requires spatial `MODE MESH`. Coupled surface reconstruction order 2 remains unsupported for these transport/thermal profiles. Groundwater execution uses the built-in CPU owner; requests for OMP/CUDA/HIP/SYCL fall back explicitly, and `swmm_2d_get_run_stats` reports the executed backend. Such fallback does not qualify an accelerated groundwater implementation.
+
+## Restricted water-only SSP-RK2
+
+A standalone spatial `CLOSED_FORM` aquifer can advance with `MOMENTUM_EQUATION FULL_SWE` and `RECONSTRUCTION_ORDER 2` on the CPU. Set `NODE_ENROLMENT ROWS` without exchange rows and `LINK_SEEPAGE NONE`. This profile requires no active groundwater or surface species/age/heat, aquifer boundaries, subcatchments, network exchange points, runtime providers, snow or borrowed common-source/channel owners. Wells must have constant water-only flow. The marcher uses one global tier; unsupported profiles fail before execution.
+
+Both stages advance surface and groundwater water together. The accepted convex blend includes SAT/UNSAT water, pending surface returns, wetting-front state and cumulative transfer ledgers. A rejected trial or failed advance restores the complete owned numerical state, including momentum, clocks and receipts. Smooth stages evaluate instantaneous intake and drying recovery; reusing their held-interval finite subflows would reduce coupled temporal order. At the singular initial wetting front a finite Green-Ampt startup retains bounded intake, without claiming second-order accuracy across that event.
+
+Tests measure approximately fourfold error reduction for analytical deep drainage and nonlinear lateral Darcy relaxation, and factors 3.85/3.91 for smooth coupled infiltration under timestep halving. Full-step/two-half-step differences approach third local order on four fine steps; the coarsest measurement is retained as pre-asymptotic evidence. Large injection/extraction and singular startup conserve water and stay admissible.
+
+The internal standalone CPU component checkpoint has a separate versioned RK2 profile. It preserves surface water/momentum, aquifer stores, pending returns, scheduling and accepted numerical clocks. Restore validates geometry, options, constant wells and held weather before installation. Corrupt or incompatible state is refused atomically, with valid retry supported. This component checkpoint does not include the full engine calendar, reports or output writers; managed engine/source checkpoint attachment remains refused for RK2.
 
 ## Hydraulic edges and quality
 
@@ -111,6 +121,6 @@ Integrated CPU gates additionally cover 20 combinations of conduit/node/well/edg
 
 A matched-interface diffusion eigenmode uses discontinuous porosity and diffusivity on a smoothly skewed mesh. Refining from 8 to 16 to 32 cells per axis reduces area-weighted concentration errors from `4.14e-4` to `1.12e-4` to `2.81e-5`; the closed species residual stays below `4e-16`. This specific smooth, aligned-interface case does not establish the same order for arbitrary distorted meshes or tensor discontinuities. The seven targeted groundwater/heat/source/ET suites pass 238 tests in the strict-floating-point CPU build.
 
-CPU integrated qualification remains in progress. The complete contact/donor and heterogeneous/plume qualification matrix, full-session network chemistry/reactive continuation, coupled RK2 stage/rollback/order verification and accelerated groundwater profiles remain open. Synthetic conservation tests do not establish universal field validity.
+CPU integrated qualification remains in progress. Broader contact/application and heterogeneous-plume cases, full-session network chemistry/reactive continuation, RK2 transport/heat/layered and borrowed-owner transactions, and accelerated groundwater kernels remain open. The Kokkos OpenMP surface comparison passes at one and four host threads, and 15 groundwater/backend-request combinations retain exact CPU canonical state with observable fallback. CUDA/HIP/SYCL groundwater execution is unqualified; no matching device runner is configured in the inspected repository workflows. Synthetic conservation tests do not establish universal field validity.
 
 See the [kernel tests](../../tests/unit/engine/test_gw_transport_kernel.cpp), [SIGMA conservation tests](../../tests/unit/engine/test_sigma_conservation.cpp), [authoring tests](../../tests/unit/engine/test_gw_transport_authoring.cpp), and [roadmap](../../ROADMAP.md).
