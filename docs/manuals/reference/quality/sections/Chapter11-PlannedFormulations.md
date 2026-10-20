@@ -60,13 +60,14 @@ native units per species, including when surface transport is disabled.
 Native restart version 7 retains source-species ledgers; new readers retain
 version 1–6 support.
 
-These implemented paths do not complete the original design. Initial LAYER
-quality and @ref engine_manual_sect_GW_BOUNDARY_QUALITY are explicitly refused
-when active groundwater cannot execute them; LAYER never aliases UNSAT and a
-boundary row never masquerades as a successful inert forcing. Coupled surface
-RK2 is also explicitly unsupported. The fuller per-layer transport,
-conduction and reaction-scope design below remains distinct from bulk
-transport and operational named wells.
+These implemented paths do not complete the original design. Explicit
+SIGMA LAYERED transport now owns layer quality; LAYER never aliases bulk
+UNSAT. Hydraulic HEAD/FLOW edges bind groundwater boundary quality. Selected
+layered/porous thermal and scoped reaction profiles are implemented; see
+`docs/design/groundwater-transport.md` for their qualification limits.
+Groundwater chemistry and heat retain first-order coupling; the separate
+standalone CPU water-only CLOSED_FORM/ENSLAVED/SIGMA profile supports RK2.
+The older design below does not establish additional runtime capability.
 
 The design (2026-09-04, amended 2026-09-07 for the mixed
 triangle/quadrilateral mesh) is retained here as the broader design, not as a

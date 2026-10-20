@@ -202,7 +202,7 @@ def test_layered_chemistry_with_porous_heat(tmp_path, chemistry_layers, thermal_
 
 
 @pytest.mark.parametrize('forcing', ['none', 'well', 'edge', 'head'])
-@pytest.mark.parametrize('closure', ['CLOSED_FORM', 'ENSLAVED'])
+@pytest.mark.parametrize('closure', ['CLOSED_FORM', 'ENSLAVED', 'SIGMA'])
 def test_water_only_coupled_rk2_advances_through_python(tmp_path, forcing, closure):
     well = """
 [TIMESERIES]
@@ -267,12 +267,19 @@ TRANSPORT_TEMPERATURE NO
         assert solver.elapsed.total_seconds() == 2
         gw = solver.surface2d.groundwater
         assert gw.active and gw.species == ()
-        if closure == 'ENSLAVED':
+        if closure in ('ENSLAVED', 'SIGMA'):
             status = gw.execution_status
             assert status['available_operators'] == 0
             assert status['executed_operators'] == 0
             assert status['accepted_cells'] == 0
             assert status['recharge_backend'] == 'cpu'
+        if closure == 'SIGMA':
+            for cell in range(gw.dimensions[0]):
+                theta = gw.column(cell)
+                assert np.isfinite(theta).all()
+                assert np.all(theta >= .1 - 1e-13) and np.all(theta <= .45 + 1e-13)
+                length = 2 - gw.cell(cell, GroundwaterVariable.HG)
+                assert gw.cell(cell, GroundwaterVariable.HU) == pytest.approx(float(np.sum(theta)) * length / len(theta), abs=1e-13)
         assert gw.ledger(GroundwaterLedger.INFIL_IN) > 0
         assert gw.ledger(GroundwaterLedger.DEEP) > 0
         if forcing == 'head':

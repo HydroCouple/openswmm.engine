@@ -1609,10 +1609,10 @@ the cell momentum update.
 Requested second order reduces `LTS_TIERS` to 1 with a notice. Active
 surface transport falls back to first order with a notice; the tier
 reduction occurs before that fallback, so request order 1 explicitly
-when transport should retain multiple tiers. Groundwater attached to an
-active second-order RK2 route is rejected at initialization, because the
-RK2 surface route does not advance groundwater. These are implementation
-limits, not recommendations to discard the corresponding physics.
+when transport should retain multiple tiers. Standalone CPU water-only CLOSED_FORM/ENSLAVED/SIGMA groundwater supports
+the shared RK2 transaction, authored wells and HEAD/FLOW edges. Groundwater
+chemistry/heat and network/catchment/runtime owners remain guarded; see
+Hydrology §9.11 and the groundwater transport design for the exact profile.
 
 Implementation: `src/engine/2d/solver/SweKernels.hpp` — `faceFlux`
 (first order), `faceFluxReconBed` (second order; `faceFluxRecon` retains the constant-bed compatibility entry point), `hllcFlux`, `waveSpeeds`,
@@ -2577,8 +2577,8 @@ behaviour it once configured is now described.
   `DIFFUSIVE_WAVE` the penalty is quadratic in the cell size (9-43).
 - **Second-order feature limits.** `RECONSTRUCTION_ORDER 2` runs in
   global-step mode and falls back to first order when overland transport
-  is active. An active RK2 route with groundwater is rejected at
-  initialization (§9.5.10). Long-period damping remains, and the
+  is active. Groundwater RK2 has a standalone CPU water-only profile;
+  chemistry/heat and borrowed owners remain guarded (§9.5.10). Long-period damping remains, and the
   shoreline fallback does not establish uniform second-order convergence
   on arbitrary meshes.
 - **The Kokkos backends serve one configuration.** All-triangle meshes

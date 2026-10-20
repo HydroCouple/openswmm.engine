@@ -118,7 +118,7 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
     const double dsig = 1.0 / static_cast<double>(m);
     const double L0   = std::max(st.L_old, 0.0);
     const double L1   = std::max(st.L_new, 0.0);
-    const double Ldot = (L1 - L0) / st.dt;
+    const double Ldot = st.forward_euler ? st.grid_rate : (L1 - L0) / st.dt;
 
     st.dt_limit = columnDtLimit(p, theta, m, stride, L0, Ldot, 1.0, st.capillary);
 
@@ -141,7 +141,7 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
         r.contacts=st.layer_inflow?*st.layer_inflow:std::vector<double>(m,0);
         r.old_water=w;r.faces.resize(m+1);r.compression.assign(m+1,0);
         r.grid.resize(m+1);
-        for(int j=0;j<=m;++j)r.grid[j]=-double(j)*dsig*(L1-L0);
+        for(int j=0;j<=m;++j)r.grid[j]=st.forward_euler ? -double(j)*dsig*Ldot*st.dt : -double(j)*dsig*(L1-L0);
     }
 
     auto psiOf = [&](double th) {

@@ -100,6 +100,16 @@ double harmonic(double a, double b) noexcept {
     return 2.0 * a * b / (a + b);
 }
 
+// A conserved-water division may put a derived theta one ulp beyond a
+// physical endpoint. Normalize only that roundoff; authored state stays
+// strictly validated and a material stage excursion still rejects the trial.
+double rk2SigmaView(double theta,double lower,double upper) {
+    const double roundoff=16*std::numeric_limits<double>::epsilon();
+    if(!std::isfinite(theta)||theta<lower-roundoff||theta>upper+roundoff)
+        throw std::runtime_error("Coupled RK2 SIGMA derived water content exceeds roundoff bounds.");
+    return std::clamp(theta,lower,upper);
+}
+
 // Exact Green-Ampt intake over a held interval with frozen suction/moisture.
 // Solving its integral removes the singular instantaneous rate at F=0.
 double frontIntake(double F, double B, double Ks, double dt) noexcept {
@@ -1641,6 +1651,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     const double ts = state_.theta_s[u];
     const soil::Params p = paramsOf(i);
     const auto cl = static_cast<GwClosure>(state_.closure[u]);
+    const bool sigma_stage=cl==GwClosure::SIGMA&&opts_&&opts_->reconstruction_order==2;
 
     const double hg0 = state_.hg[u];
     const double hu_pre = state_.hu[u];   // T7.1: the column store this firing starts from
@@ -1763,8 +1774,8 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     // from the ledger, like recharge.
     if (cl != GwClosure::ENSLAVED) {
         if (q0 > 0.0) {
-            const double give = std::max(state_.hu[u] - state_.theta_r[u] * L0,
-                                         0.0) / dt;
+            double give = std::max(state_.hu[u] - state_.theta_r[u] * L0,0.0) / dt;
+            if(sigma_stage)give=std::min(give,std::max(0.,theta_bot-state_.theta_r[u])*L0/state_.m_layers/dt);
             q0 = std::min(q0, give);
         } else if (q0 < 0.0) {
             // Already delivered node/pipe withdrawals cannot be refunded
@@ -1868,8 +1879,11 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
                                   - soil::equilibriumStorage(p,zs)) * A;
     const double requested_source_out = source.out;
     const double combined_out=source.out+boundary_out;
+    // A bounded SIGMA sweep can reduce its proposed recharge. External
+    // withdrawals cannot spend that unaccepted column-to-table transfer.
+    const double saturated_credit=other_sat-(sigma_stage?std::max(0.,q0)*A*dt:0.);
     const double accepted_scale=combined_out>0 ?
-        std::min(1.,std::max(0.,drainable+other_sat+source.in+boundary_in-future_lid_up)/combined_out):1.;
+        std::min(1.,std::max(0.,drainable+saturated_credit+source.in+boundary_in-future_lid_up)/combined_out):1.;
     source.out*=accepted_scale;boundary_out*=accepted_scale;
     for(auto& pulse:boundary_pulses) {
         auto& boundary=boundaries_[pulse.boundary];
@@ -1996,15 +2010,22 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         original.resize(state_.m_layers);trial.resize(state_.m_layers);
         for(int j=0;j<state_.m_layers;++j) original[j]=state_.theta_sigma[static_cast<std::size_t>(j)*n+u];
         sigma::ColumnStep cs;
+        // Smooth RK stages evaluate ALE fluxes at the starting state. The
+        // bounded table solve below settles capacity constraints without
+        // replacing that Euler velocity by an endpoint-dependent subflow.
+        const bool euler=sigma_stage;
+        const double grid_rate=-(hg1-hg0)/dt;
         double external=(saturated_exchange+source.in-source.out+boundary_in-boundary_out)/A-state_.qdeep_last[u]*dt;
         const double tolerance=1e-15*std::max({1.0,zs,std::abs(external)});
         const auto evaluate=[&](double h,bool capture=false) {
             trial=original;cs={};cs.L_old=L0;cs.L_new=std::max(0.0,zs-h);cs.dt=dt;
+            cs.forward_euler=euler;cs.grid_rate=grid_rate;
             cs.q_in=q_in;cs.q_et=q_et;cs.q0_phys=q0;cs.handover_theta=ts-Sy;
             if(tr_.n_layers>0)cs.layer_inflow=&contact_depth;
             if(capture)cs.transfers=&column_transfers;
             cs.wilting_suction=options_.wilting_suction;cs.capillary=options_.capillary_diff;
             sigma::advanceColumn(p,trial.data(),state_.m_layers,1,cs);
+            if(euler)for(double& theta:trial)theta=rk2SigmaView(theta,p.theta_r,p.theta_s);
             // ts * delta_h = external + the actual column-to-table water.
             const double balance = ts*(h-hg0)-external-
                 (cs.f_bot+cs.overflow_to_sat-cs.deficit_from_sat)*dt;
@@ -3084,13 +3105,25 @@ std::string SubsurfaceSolver::rk2ProfileError() const {
     if(!active() || options_.per_subcatch || tr_.active() || heat_.active() || !reactors_.empty() ||
        !node_beds_.empty() || lid_receipts_enabled_ || runtime_sources_.active() ||
        std::any_of(source_owned_.begin(),source_owned_.end(),[](bool v){return v;}) ||
-       std::any_of(state_.closure.begin(),state_.closure.end(),[](int8_t v){return v!=int8_t(GwClosure::CLOSED_FORM)&&v!=int8_t(GwClosure::ENSLAVED);}))
-        return "Coupled RK2 requires spatial CLOSED_FORM/ENSLAVED water-only cells without borrowed source, network or thermal owners.";
+       std::any_of(state_.closure.begin(),state_.closure.end(),[](int8_t v){return v!=int8_t(GwClosure::CLOSED_FORM)&&v!=int8_t(GwClosure::ENSLAVED)&&v!=int8_t(GwClosure::SIGMA);}))
+        return "Coupled RK2 requires spatial CLOSED_FORM/ENSLAVED/SIGMA water-only cells without borrowed source, network or thermal owners.";
     for(int i=0;i<state_.n_cells;++i)if(covers(i)&&state_.closure[i]==int8_t(GwClosure::ENSLAVED)) {
         const double equilibrium=soil::equilibriumStorage(paramsOf(i),state_.zs[i]-state_.hg[i]);
         if(!std::isfinite(state_.hu[i])||!std::isfinite(equilibrium)||
            std::abs(state_.hu[i]-equilibrium)>1e-12*std::max(1.,std::abs(equilibrium)))
             return "Coupled RK2 ENSLAVED cells require their actual equilibrium storage.";
+    }
+    for(int i=0;i<state_.n_cells;++i)if(covers(i)&&state_.closure[i]==int8_t(GwClosure::SIGMA)) {
+        if(state_.m_layers<=0||state_.theta_sigma.size()!=std::size_t(state_.m_layers)*state_.n_cells)
+            return "Coupled RK2 SIGMA layer shape differs.";
+        for(int j=0;j<state_.m_layers;++j) {
+            const double theta=state_.theta_sigma[std::size_t(j)*state_.n_cells+i];
+            if(!std::isfinite(theta)||theta<state_.theta_r[i]||theta>state_.theta_s[i])
+                return "Coupled RK2 SIGMA water content is inadmissible.";
+        }
+        const double water=sigma::columnStorage(&state_.theta_sigma[i],state_.m_layers,state_.n_cells,state_.zs[i]-state_.hg[i]);
+        if(!std::isfinite(state_.hu[i])||std::abs(state_.hu[i]-water)>1e-12*std::max(1.,std::abs(water)))
+            return "Coupled RK2 SIGMA bulk water differs from its layer inventories.";
     }
     for(const auto& boundary:boundaries_)if(!boundary.terms.empty())
         return "Coupled RK2 groundwater boundaries require water-only forcing; quality remains guarded.";
@@ -3105,7 +3138,9 @@ void SubsurfaceSolver::publishRk2Infiltration(SurfaceStateData& surface,double d
     for(int i=0;i<state_.n_cells;++i)if(covers(i)) {
         const auto p=paramsOf(i);const double length=state_.zs[i]-state_.hg[i];
         const double pond=std::max(0.,surface.depth[i]);double rate=0;
-        if(length>0) {
+        if(length>0&&state_.closure[i]==int8_t(GwClosure::SIGMA)) {
+            rate=sourceInfiltrationCapacity(i,pond,dt);
+        } else if(length>0) {
             const double theta=std::clamp(state_.hu[i]/length,p.theta_r,p.theta_s);
             const double saturation=std::clamp((theta-p.theta_r)/(p.theta_s-p.theta_r),1e-6,1.);
             const double suction=state_.closure[i]==int8_t(GwClosure::ENSLAVED)?length:soil::suctionAtSaturation(p,saturation);
@@ -3155,6 +3190,21 @@ void SubsurfaceSolver::blendRk2Water(const SubsurfaceSolver& initial,double end)
             if(std::abs(water(h)-target)>32*std::numeric_limits<double>::epsilon()*std::max(1.,std::abs(target)))
                 throw std::runtime_error("Coupled RK2 equilibrium storage inversion failed.");
             s.hg[i]=h;s.hu[i]=soil::equilibriumStorage(p,zs-h);
+        } else if(covers(i)&&s.closure[i]==int8_t(GwClosure::SIGMA)) {
+            const double old_length=b.zs[i]-b.hg[i],new_length=s.zs[i]-s.hg[i];
+            const double height=.5*(b.hg[i]+s.hg[i]),dz=(s.zs[i]-height)/s.m_layers;
+            double water=0;
+            for(int j=0;j<s.m_layers;++j) {
+                const auto k=std::size_t(j)*s.n_cells+i;
+                // This is the same conserved-water blend with its common
+                // factors cancelled. Avoid dividing by a near-zero length
+                // obtained by subtracting the averaged table from zs.
+                const double amount=b.theta_sigma[k]*old_length+s.theta_sigma[k]*new_length;
+                const double length=old_length+new_length;
+                s.theta_sigma[k]=rk2SigmaView(length>0?amount/length:s.theta_s[i],s.theta_r[i],s.theta_s[i]);
+                water+=s.theta_sigma[k]*dz;
+            }
+            s.hg[i]=height;s.hu[i]=water;
         } else {
             // Both CLOSED_FORM stores are linear canonical inventories.
             s.hg[i]=.5*(b.hg[i]+s.hg[i]);s.hu[i]=.5*(b.hu[i]+s.hu[i]);

@@ -704,6 +704,7 @@ TEST(InertialMarcher, ThinCrestRetentionVfrFace) {
 namespace openswmm::twoD {
 struct ExplicitInertialSolverTestAccess {
     static void rk2(ExplicitInertialSolver& solver,double dt,double time) {solver.runRk2Step(dt,time);}
+    static void prepare(ExplicitInertialSolver& solver) {solver.syncAndRebuild(0);}
     static std::vector<double> state(const ExplicitInertialSolver& s) {
         std::vector<double> values=s.qcx_;values.insert(values.end(),s.qcy_.begin(),s.qcy_.end());
         for(const auto* row:{&s.facc_L_,&s.facc_R_,&s.macc_x_L_,&s.macc_x_R_,&s.bc_accum_,&s.source_ledgers_})
@@ -717,12 +718,13 @@ struct CoupledRkRig {
     MeshData mesh=makeGridMesh(1,1,4.,[](double,double){return 0.;});
     SurfaceStateData state=makeState(mesh);SolverOptions2D opts;ExplicitInertialSolver solver;SubsurfaceSolver gw;
     void init(double dt,double ks,double deep,double pond=0,const std::string& et="AUTO",
-              GwClosure closure=GwClosure::CLOSED_FORM,SoilChar law=SoilChar::RUSSO) {
+              GwClosure closure=GwClosure::CLOSED_FORM,SoilChar law=SoilChar::RUSSO,
+              int layers=8,bool capillary=false) {
         opts.momentum=Momentum2D::FULL_SWE;opts.reconstruction_order=2;opts.lts_tiers=1;opts.max_timestep=dt;
         seedSurface(mesh,opts,state,pond);solver.initialize(mesh,state,opts);
-        SubsurfaceConfig cfg;cfg.options.authored=true;cfg.options.closure=closure;cfg.options.soil_char=law;cfg.options.node_auto=false;cfg.options.gw_et=et;
+        SubsurfaceConfig cfg;cfg.options.authored=true;cfg.options.closure=closure;cfg.options.soil_char=law;cfg.options.m_layers=layers;cfg.options.capillary_diff=capillary;cfg.options.node_auto=false;cfg.options.gw_et=et;
         GwAquiferRow row;row.Ks=ks;row.zs=2;row.hg0=.6;row.c_loss=deep;cfg.rows={row};
-        std::vector<std::string> warnings;ASSERT_TRUE(gw.initialize(mesh,solver.inertialEdges(),opts,{},0,cfg,warnings).empty());
+        std::vector<std::string> warnings;ASSERT_EQ(gw.initialize(mesh,solver.inertialEdges(),opts,{},0,cfg,warnings),"");
         ASSERT_TRUE(gw.rk2ProfileError().empty());solver.setSubsurface(&gw);
     }
     double total() const {return totalVolume(state,mesh.n_cells())+gw.state().liveStorage();}
@@ -1393,5 +1395,251 @@ TEST(CoupledGroundwaterRk2, EnslavedFullStepAndTwoHalfStepsHaveThirdLocalOrder) 
         RecordProperty("enslaved_local_difference_"+std::to_string(int(dt*10000)),error);
         // Keep the coarse result, with four finer steps testing local order.
         EXPECT_GT(error,0);if(previous>0&&dt<=.025)EXPECT_GT(previous/error,7.);previous=error;
+    }
+}
+
+
+namespace {
+void seedRkSigma(CoupledRkRig& rig) {
+    auto& w=rig.gw.state();
+    for(int cell=0;cell<w.n_cells;++cell) {
+        for(int layer=0;layer<w.m_layers;++layer)w.theta_sigma[std::size_t(layer)*w.n_cells+cell]=.24+.015*layer;
+        w.hu[cell]=sigma::columnStorage(&w.theta_sigma[cell],w.m_layers,w.n_cells,w.zs[cell]-w.hg[cell]);
+    }
+    w.led_init_storage=w.storage();
+}
+std::vector<double> sigmaGardnerReference(double deep,int steps) {
+    constexpr int m=4;constexpr double ks=.003,porosity=.45,residual=.1;
+    std::vector<double> y(m+2);y[0]=.6;y.back()=.2;
+    for(int j=0;j<m;++j)y[j+1]=(.24+.015*j)*(2-y[0])/m;
+    const auto rate=[&](const std::vector<double>& state) {
+        std::vector<double> out(m+2),theta(m),conductivity(m),flux(m+1);
+        const double length=2-state[0];
+        for(int j=0;j<m;++j) {
+            theta[j]=m*state[j+1]/length;
+            if(!(theta[j]>residual&&theta[j]<porosity))throw std::runtime_error("Independent smooth SIGMA oracle reached a layer bound");
+            conductivity[j]=ks*(theta[j]-residual)/(porosity-residual);
+        }
+        const double table=(conductivity.back()-deep*state[0]/2)/(porosity-theta.back()),grid=-table;
+        const double suction=-std::log((theta[0]-residual)/(porosity-residual))/2;
+        flux[0]=ks*(1+(state.back()+suction)/(.5*length/m));
+        if(!(state.back()>0))throw std::runtime_error("Independent smooth SIGMA oracle exhausted surface water");
+        for(int j=1;j<m;++j)flux[j]=conductivity[j-1]-theta[grid>0?j:j-1]*(double(j)/m)*grid;
+        flux[m]=conductivity.back()-theta.back()*grid;
+        out[0]=table;out.back()=-flux[0];
+        for(int j=0;j<m;++j)out[j+1]=flux[j]-flux[j+1];
+        return out;
+    };
+    const double dt=2./steps;
+    for(int step=0;step<steps;++step) {
+        const auto a=rate(y);auto trial=y;
+        for(std::size_t j=0;j<y.size();++j)trial[j]=y[j]+dt*.5*a[j];const auto b=rate(trial);
+        for(std::size_t j=0;j<y.size();++j)trial[j]=y[j]+dt*.5*b[j];const auto c=rate(trial);
+        for(std::size_t j=0;j<y.size();++j)trial[j]=y[j]+dt*c[j];const auto d=rate(trial);
+        for(std::size_t j=0;j<y.size();++j)y[j]+=dt*(a[j]+2*b[j]+2*c[j]+d[j])/6;
+    }
+    return y;
+}
+}
+TEST(CoupledGroundwaterRk2, SigmaLayerTableAndSurfaceConvergeToIndependentGardnerSystem) {
+    for(double deep:{0.,.01}) {
+        SCOPED_TRACE(deep);const auto reference=sigmaGardnerReference(deep,20000),refined=sigmaGardnerReference(deep,40000);
+        for(std::size_t j=0;j<reference.size();++j)ASSERT_NEAR(reference[j],refined[j],1e-12);
+        double previous=0;
+        for(double dt:{.2,.1,.05,.025}) {
+            CoupledRkRig r;r.init(dt,.003,deep,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);
+            ASSERT_TRUE(r.gw.rk2ProfileError().empty());seedRkSigma(r);const double initial=r.total();
+            for(int k=0;k<int(std::round(2/dt));++k)ASSERT_NO_THROW(r.solver.advance(k*dt,(k+1)*dt));
+            const auto& w=r.gw.state();std::vector<double> actual{w.hg[0]};
+            for(int j=0;j<w.m_layers;++j)actual.push_back(w.theta_sigma[std::size_t(j)*w.n_cells]*(w.zs[0]-w.hg[0])/w.m_layers);
+            actual.push_back(r.state.volume[0]/w.area[0]);double error=0;
+            for(std::size_t j=0;j<actual.size();++j)error+=std::pow(actual[j]-reference[j],2);
+            error=std::sqrt(error);RecordProperty(std::string(deep>0?"sigma_falling_error_":"sigma_rising_error_")+std::to_string(int(dt*1000)),error);
+            EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;
+            EXPECT_NEAR(r.total()+w.led_deep,initial,1e-10*initial);EXPECT_NEAR(w.continuityResidual(),0,1e-10*initial);
+            EXPECT_NEAR(w.hu[0],sigma::columnStorage(w.theta_sigma.data(),w.m_layers,w.n_cells,w.zs[0]-w.hg[0]),1e-13);
+            if(deep>0)EXPECT_LT(w.hg[0],.6);else EXPECT_GT(w.hg[0],.6);
+        }
+    }
+}
+TEST(CoupledGroundwaterRk2, SigmaBlendUsesCanonicalLayerWaterAndDerivedBulkStorage) {
+    for(SoilChar law:{SoilChar::RUSSO,SoilChar::GARDNER,SoilChar::BROOKS_COREY,SoilChar::VAN_GENUCHTEN})for(int layers:{2,4,8}) {
+        SCOPED_TRACE(int(law));
+        SCOPED_TRACE(layers);
+        CoupledRkRig r;r.init(.1,0,0,0,"NONE",GwClosure::SIGMA,law,layers);
+        ASSERT_TRUE(r.gw.rk2ProfileError().empty());auto& w=r.gw.state();
+        for(int cell=0;cell<w.n_cells;++cell) {
+            w.hg[cell]=.1;
+            for(int j=0;j<layers;++j)w.theta_sigma[std::size_t(j)*w.n_cells+cell]=.2+.01*j;
+            w.hu[cell]=sigma::columnStorage(&w.theta_sigma[cell],layers,w.n_cells,1.9);
+        }
+        const auto before=r.gw;
+        for(int cell=0;cell<w.n_cells;++cell) {
+            w.hg[cell]=1.4;
+            for(int j=0;j<layers;++j)w.theta_sigma[std::size_t(j)*w.n_cells+cell]=.35-.01*j;
+            w.hu[cell]=sigma::columnStorage(&w.theta_sigma[cell],layers,w.n_cells,.6);
+        }
+        const double target=.5*(before.state().storage()+w.storage());
+        ASSERT_NO_THROW(r.gw.blendRk2Water(before,.1));EXPECT_NEAR(w.storage(),target,2e-14);
+        for(int cell=0;cell<w.n_cells;++cell)for(int j=0;j<layers;++j) {
+            const double expected=.5*((.2+.01*j)*1.9/layers+(.35-.01*j)*.6/layers);
+            const double actual=w.theta_sigma[std::size_t(j)*w.n_cells+cell]*(w.zs[cell]-w.hg[cell])/layers;
+            EXPECT_NEAR(actual,expected,2e-16);
+        }
+        for(double thickness:{1e-4,1e-6,1e-8,1e-10}) {
+            for(int cell=0;cell<w.n_cells;++cell) {
+                w.hg[cell]=w.zs[cell];w.hu[cell]=0;
+                for(int j=0;j<layers;++j)w.theta_sigma[std::size_t(j)*w.n_cells+cell]=w.theta_s[cell];
+            }
+            const auto saturated=r.gw;
+            for(int cell=0;cell<w.n_cells;++cell) {
+                w.hg[cell]=w.zs[cell]-thickness;w.hu[cell]=w.theta_s[cell]*(w.zs[cell]-w.hg[cell]);
+            }
+            const double water=.5*(w.storage()+saturated.state().storage());
+            ASSERT_NO_THROW(r.gw.blendRk2Water(saturated,.2));EXPECT_NEAR(w.storage(),water,2e-14);
+            for(int cell=0;cell<w.n_cells;++cell)for(int j=0;j<layers;++j)
+                EXPECT_NEAR(w.theta_sigma[std::size_t(j)*w.n_cells+cell],w.theta_s[cell],1e-15);
+        }
+    }
+}
+
+TEST(CoupledGroundwaterRk2, SigmaFullStepAndTwoHalfStepsHaveThirdLocalOrder) {
+    double previous=0;
+    for(double dt:{.2,.1,.05,.025}) {
+        CoupledRkRig full,half;
+        for(auto* r:{&full,&half}) {
+            r->init(.4,.003,.01,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);
+            ASSERT_TRUE(r->gw.rk2ProfileError().empty());seedRkSigma(*r);
+        }
+        full.solver.advance(0,dt);half.solver.advance(0,dt/2);half.solver.advance(dt/2,dt);
+        double difference=std::abs(full.gw.state().hg[0]-half.gw.state().hg[0])+std::abs(full.state.volume[0]-half.state.volume[0]);
+        for(int j=0;j<4;++j) {
+            const auto amount=[&](const CoupledRkRig& r){const auto& w=r.gw.state();return w.theta_sigma[std::size_t(j)*w.n_cells]*(w.zs[0]-w.hg[0])/4;};
+            difference+=std::abs(amount(full)-amount(half));
+        }
+        RecordProperty("sigma_local_difference_"+std::to_string(int(dt*1000)),difference);
+        EXPECT_GT(difference,0);if(previous>0)EXPECT_GT(previous/difference,7.);previous=difference;
+    }
+}
+TEST(CoupledGroundwaterRk2, SigmaBoundsCollapseAndRewetRetainEveryAcceptedWaterAmount) {
+    for(SoilChar law:{SoilChar::RUSSO,SoilChar::GARDNER,SoilChar::BROOKS_COREY,SoilChar::VAN_GENUCHTEN})for(bool capillary:{false,true})for(int initial_state:{0,1,2}) {
+        SCOPED_TRACE(int(law));
+        SCOPED_TRACE(capillary);
+        SCOPED_TRACE(initial_state);
+        CoupledRkRig r;r.init(.025,.0001,.0002,.005,"NONE",GwClosure::SIGMA,law,4,capillary);
+        ASSERT_TRUE(r.gw.rk2ProfileError().empty());auto& w=r.gw.state();
+        if(initial_state>0)for(int i=0;i<w.n_cells;++i) {
+            w.hg[i]=initial_state==1?w.zs[i]:0;w.hu[i]=initial_state==1?0:w.theta_r[i]*w.zs[i];
+            for(int j=0;j<w.m_layers;++j)w.theta_sigma[std::size_t(j)*w.n_cells+i]=initial_state==1?w.theta_s[i]:w.theta_r[i];
+        }
+        w.led_init_storage=w.storage();const double initial=r.total();
+        ExplicitInertialSolverTestAccess::prepare(r.solver);
+        for(int step=0;step<20;++step) {
+            GwResolvedSource well;well.cells={{0,1}};well.flow.constant=step<5?(initial_state==2?-100.:100.):(step<10?(initial_state==2?100.:-100.):(step<15?.02:-.02));
+            r.gw.setSources({well});ASSERT_NO_THROW(ExplicitInertialSolverTestAccess::rk2(r.solver,.025,step*.025));
+            EXPECT_NEAR(r.total()+w.led_deep+w.led_source_out,initial+w.led_source_in,1e-10*std::max(initial,r.total()));
+            EXPECT_NEAR(w.continuityResidual(),0,1e-10*std::max(initial,r.total()));
+            for(int i=0;i<w.n_cells;++i) {
+                EXPECT_GE(w.hg[i],0);EXPECT_LE(w.hg[i],w.zs[i]);EXPECT_GE(r.state.volume[i],0);
+                EXPECT_NEAR(w.hu[i],sigma::columnStorage(&w.theta_sigma[i],w.m_layers,w.n_cells,w.zs[i]-w.hg[i]),1e-13);
+                for(int j=0;j<w.m_layers;++j){const double theta=w.theta_sigma[std::size_t(j)*w.n_cells+i];EXPECT_GE(theta,w.theta_r[i]-1e-13);EXPECT_LE(theta,w.theta_s[i]+1e-13);}
+            }
+        }
+        EXPECT_GT(w.led_dunne,0);EXPECT_GT(w.led_source_out,0);
+        if(initial_state==1)EXPECT_LT(w.hg[0],w.zs[0]);
+        if(initial_state==2)EXPECT_GT(w.led_infil_in,0);
+    }
+}
+TEST(CoupledGroundwaterRk2, SigmaForcingMixedClosuresAndRestartKeepTheWholeTransaction) {
+    for(SoilChar law:{SoilChar::RUSSO,SoilChar::GARDNER,SoilChar::BROOKS_COREY,SoilChar::VAN_GENUCHTEN})for(bool head:{false,true})for(int companion:{-1,0,1}) {
+        SCOPED_TRACE(int(law));
+        SCOPED_TRACE(head);
+        SCOPED_TRACE(companion);
+        CoupledRkRig a,b;
+        for(auto* r:{&a,&b}) {
+            r->init(.025,.0001,.0002,.1,"NONE",GwClosure::SIGMA,law,4,head);ASSERT_TRUE(r->gw.rk2ProfileError().empty());
+            seedRkSigma(*r);auto& w=r->gw.state();
+            if(companion>=0) {
+                w.closure[1]=int8_t(companion);
+                if(companion==int(GwClosure::ENSLAVED)){soil::Params p;p.law=law;w.hu[1]=soil::equilibriumStorage(p,w.zs[1]-w.hg[1]);}
+            }
+            w.led_init_storage=w.storage();
+            GwResolvedSource well;well.name="sigma-knots";well.cells={{0,1}};well.flow.times={0,.13,.27,.5};well.flow.values={.02,-.03,.01,.02};r->gw.setSources({well});
+            GwSourceSignal signal;signal.times={0,.09,.31,.5};signal.values={.01,-.01,.02,.01};auto edge=rk2FlowEdge(*r,1,signal);edge.head=head;
+            if(head){const double bottom=w.z_bed[1];edge.signal.values={bottom+1.1,bottom+.2,bottom+2.5,bottom+.8};}
+            r->gw.setBoundaries({edge});
+        }
+        const auto prefix="sigma-"+std::to_string(int(law))+"-"+std::to_string(head)+"-"+std::to_string(companion);
+        const auto saved=rk2Output(prefix+"-accepted.chk"),after=rk2Output(prefix+"-after.chk"),fresh=rk2Output(prefix+"-fresh.chk");
+        const double initial=a.total();
+        for(int step=0;step<20;++step) {
+            ASSERT_NO_THROW(a.solver.advance(step*.025,(step+1)*.025));
+            if(step==7) {
+                ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");ASSERT_EQ(b.solver.saveCheckpoint(fresh.string()),"");
+                b.gw.state().alpha[0]*=2;EXPECT_FALSE(b.solver.loadCheckpoint(saved.string()).empty());b.gw.state().alpha[0]/=2;
+                ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(fresh),rk2File(after));ASSERT_EQ(b.solver.loadCheckpoint(saved.string()),"");
+            } else if(step>7)ASSERT_NO_THROW(b.solver.advance(step*.025,(step+1)*.025));
+        }
+        ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(saved),rk2File(after));
+        const auto& w=a.gw.state();EXPECT_GT(w.led_boundary_in,0);EXPECT_GT(w.led_boundary_out,0);
+        EXPECT_NEAR(a.total()+w.led_deep+w.led_source_out+w.led_boundary_out,initial+w.led_source_in+w.led_boundary_in,1e-10*initial);
+        GwResolvedSource bad;bad.cells={{0,1}};bad.flow.times={.5,.61,.83,9};bad.flow.values={.01,.02,1e308,1e308};a.gw.setSources({bad});
+        ASSERT_EQ(a.solver.saveCheckpoint(fresh.string()),"");EXPECT_THROW(a.solver.advance(.5,9),std::runtime_error);
+        ASSERT_EQ(a.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(fresh),rk2File(after));
+        a.gw.setSources({});ASSERT_NO_THROW(a.solver.advance(.5,.525));
+    }
+}
+TEST(CoupledGroundwaterRk2, SigmaInvalidLayerAndBulkStatesRefuseWithoutMutationAndCanRetry) {
+    for(int mutation=0;mutation<5;++mutation) {
+        CoupledRkRig r;r.init(.05,.0001,.0002,.1,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);
+        ASSERT_TRUE(r.gw.rk2ProfileError().empty());auto& w=r.gw.state();const auto layer=w.theta_sigma;const auto bulk=w.hu;
+        if(mutation==0)w.theta_sigma[0]=1;else if(mutation==1)w.theta_sigma[0]=std::numeric_limits<double>::quiet_NaN();
+        else if(mutation==2)w.theta_sigma.pop_back();else if(mutation==3)w.hu[0]+=.001;
+        else w.theta_sigma[0]=std::nextafter(w.theta_s[0],1.);
+        const auto volume=r.state.volume,clock=ExplicitInertialSolverTestAccess::state(r.solver);
+        EXPECT_FALSE(r.gw.rk2ProfileError().empty());EXPECT_THROW(r.solver.advance(0,.05),std::runtime_error);
+        EXPECT_EQ(r.state.volume,volume);EXPECT_EQ(ExplicitInertialSolverTestAccess::state(r.solver),clock);
+        w.theta_sigma=layer;w.hu=bulk;ASSERT_NO_THROW(r.solver.advance(0,.05));
+    }
+}
+
+TEST(CoupledGroundwaterRk2, SigmaCapillaryTransportRetainsSecondTemporalOrder) {
+    const auto trajectory=[](double dt,bool capillary) {
+        CoupledRkRig r;r.init(dt,.003,.01,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4,capillary);
+        if(!r.gw.rk2ProfileError().empty())throw std::runtime_error(r.gw.rk2ProfileError());seedRkSigma(r);
+        const double initial=r.total();
+        for(int step=0;step<int(std::round(2/dt));++step)r.solver.advance(step*dt,(step+1)*dt);
+        const auto& w=r.gw.state();EXPECT_NEAR(r.total()+w.led_deep,initial,1e-10*initial);
+        std::vector<double> result{w.hg[0],r.state.volume[0]/w.area[0]};
+        for(int j=0;j<4;++j)result.push_back(w.theta_sigma[std::size_t(j)*w.n_cells]*(w.zs[0]-w.hg[0])/4);
+        return result;
+    };
+    const auto reference=trajectory(.0015625,true),plain=trajectory(.0015625,false);
+    double change=0;for(std::size_t i=0;i<plain.size();++i)change+=std::abs(plain[i]-reference[i]);EXPECT_GT(change,1e-8);
+    double previous=0;
+    for(double dt:{.2,.1,.05,.025}) {
+        const auto actual=trajectory(dt,true);double error=0;
+        for(std::size_t i=0;i<actual.size();++i)error+=std::pow(actual[i]-reference[i],2);
+        error=std::sqrt(error);RecordProperty("sigma_capillary_error_"+std::to_string(int(dt*1000)),error);
+        EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;
+    }
+}
+TEST(CoupledGroundwaterRk2, AtmosphericWaterLedgerAndRefreshClockAreAcceptedOnce) {
+    for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(SoilChar law:{SoilChar::RUSSO,SoilChar::GARDNER,SoilChar::BROOKS_COREY,SoilChar::VAN_GENUCHTEN}) {
+        SCOPED_TRACE(int(closure));
+        SCOPED_TRACE(int(law));
+        CoupledRkRig r;r.init(.02,.0001,.0002,.001,"BOUNDARY_ET",closure,law,4,true);
+        ASSERT_TRUE(r.gw.rk2ProfileError().empty());if(closure==GwClosure::SIGMA)seedRkSigma(r);
+        r.opts.evaporation=true;std::fill(r.state.evap_rate.begin(),r.state.evap_rate.end(),.002);
+        std::fill(r.gw.state().wetting_front.begin(),r.gw.state().wetting_front.end(),.1);
+        auto& w=r.gw.state();const double initial=r.total();
+        for(int step=0;step<100;++step)ASSERT_NO_THROW(r.solver.advance(step*.02,(step+1)*.02));
+        EXPECT_GT(w.led_et,0);EXPECT_GT(r.state.evap_loss_total,0);
+        EXPECT_NEAR(r.total()+w.led_deep+w.led_et+r.state.evap_loss_total,initial,1e-10*initial);
+        for(int cell=0;cell<w.n_cells;++cell) {
+            EXPECT_NEAR(w.et_potential_cumulative[cell],.004*w.area[cell],1e-12);
+            EXPECT_NEAR(w.et_potential_cumulative[cell],w.et_surface_cumulative[cell]+w.et_soil_cumulative[cell]+w.et_unused_cumulative[cell]+w.et_pending[cell],1e-12);
+            EXPECT_DOUBLE_EQ(w.et_refresh[cell],2.);
+        }
     }
 }
