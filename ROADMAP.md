@@ -251,7 +251,15 @@ The version column distinguishes released baselines from later source milestones
 
 **Implemented:** input-file, GeoPackage and optional HDF5 model persistence; binary and 2D HDF5 results; native/legacy hot-start handling with per-save format selection and dated saves. Legacy hot starts with subcatchments can be embedded in GeoPackage without losing their runoff/trailer bytes. Native save/use includes reaction state and qualified coupled thermal engine state at accepted step boundaries.
 
-**Remaining work:** qualify restart across the full surface/GW/snow/LID/transport/backend matrix, output continuation and relocated packages. Managed water-only sessions, direct component checkpoints and coupled thermal engine checkpoints have different contracts; they are not interchangeable. Coordinated multi-component restart remains open.
+Mesh-output checkpoint capture now settles HDF5's unused allocation tail before
+recording a result prefix. Exact fresh-header identity checks, corruption rejection
+and atomic multi-output publication remain intact. An isolated macOS CPU build
+with HDF5 2.1.1 passes **174 engine checkpoint checks and 31 mesh-output checks**,
+including initial/resumed reports, compression, groundwater/thermal/Richards LID
+stores, source histories, damaged companions and relocated bundles. See the
+[mesh-checkpoint verification record](tests/verification/mesh_checkpoint_2026-10-20/README.md).
+
+**Remaining work:** extend qualification beyond the tested CPU surface/GW/snow/LID/thermal configurations to additional physical cases, platforms/backends and transport combinations. Managed water-only sessions, direct component checkpoints and coupled thermal engine checkpoints have different contracts; they are not interchangeable. Coordinated multi-component restart remains open.
 
 See the [file reference](docs/manuals/engine/sections/Chapter3-Files.md), [hot-start implementation](src/engine/core/HotStartManager.cpp) and [checkpoint tests](tests/unit/engine/test_engine_checkpoint.cpp).
 

@@ -18,6 +18,8 @@
 #include <openswmm/engine/openswmm_gw_transport.h>
 #include "hydrology/surface/SnowCheckpoint.hpp"
 #include <atomic>
+#include <chrono>
+#include <thread>
 #include <future>
 #include "output/OutputReader.hpp"
 #include <openswmm/plugin_sdk/IOutputPlugin.hpp>
@@ -3033,6 +3035,42 @@ TEST(EngineCheckpoint, MappedSigmaMeshOutputContinuesIndependentLayerAxesAndRepo
         }
         H5Fclose(file);
     }
+}
+
+TEST(EngineCheckpoint, MeshFreshOutputRestoresAnInitialCheckpointWithoutChangingItsHeader) {
+    SurfaceSession a,b;
+    ASSERT_NO_THROW(startClosedSpatial(a,"mesh-fresh-settle-a",2,.7,true,true,false,2));
+    ASSERT_NO_THROW(startClosedSpatial(b,"mesh-fresh-settle-b",2,.7,true,true,false,2));
+    const auto header=bytes(root()/"mesh-fresh-settle-b.h5");
+    const auto checkpoint=root()/"mesh-fresh-settle.chk";
+    ASSERT_EQ(a.engine.saveCheckpoint(checkpoint.string()),"");
+    const auto before=root()/"mesh-fresh-settle-before.chk";
+    ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");
+    EXPECT_EQ(bytes(root()/"mesh-fresh-settle-b.h5"),header);
+    ASSERT_EQ(b.engine.loadCheckpoint(checkpoint.string()),"");
+    compare(a.engine,b.engine,"mesh-fresh-settle-restored");
+}
+TEST(EngineCheckpoint, MeshOutputContinuationIsIndependentOfWallClockDelay) {
+    SurfaceSession a,b;
+    ASSERT_NO_THROW(startClosedSpatial(a,"mesh-wall-clock-a",2,.7,true,true,false,2));
+    ASSERT_NO_THROW(startClosedSpatial(b,"mesh-wall-clock-b",2,.7,true,true,false,2));
+    while(a.engine.context().current_time<7.1)ASSERT_NO_THROW(step(a.engine));
+    const auto checkpoint=root()/"mesh-wall-clock.chk";
+    ASSERT_EQ(a.engine.saveCheckpoint(checkpoint.string()),"");
+    ASSERT_EQ(b.engine.loadCheckpoint(checkpoint.string()),"");
+    while(a.engine.context().current_time<16.1)ASSERT_NO_THROW(step(a.engine));
+    // Continuation must preserve physical state and reported values across
+    // wall-clock delays. HDF5 compression/allocation bytes are not a data identity.
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    while(b.engine.context().current_time<16.1)ASSERT_NO_THROW(step(b.engine));
+    compareMesh(a.engine,b.engine,"mesh-wall-clock-continued");
+    while(a.engine.context().elapsed_ms<a.engine.context().options.totalDurationMs()) {
+        ASSERT_NO_THROW(step(a.engine));
+        ASSERT_NO_THROW(step(b.engine));
+    }
+    ASSERT_EQ(a.engine.end(),0);
+    ASSERT_EQ(b.engine.end(),0);
+    sameMesh("mesh-wall-clock-a","mesh-wall-clock-b",5);
 }
 
 TEST(EngineCheckpoint, MeshOutputContinuesCadenceGroundwaterAndCurrentNodeLIDStores) {

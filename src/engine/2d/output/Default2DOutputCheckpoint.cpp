@@ -204,7 +204,10 @@ struct Default2DOutputPlugin::PreparedCheckpoint {
 };
 
 std::string Default2DOutputPlugin::fileBytes() const {
-    require(!checkpoint_write_failed_ && file_id_ >= 0 && H5Fflush(file_id_, H5F_SCOPE_GLOBAL) >= 0, "Cannot flush mesh results.");
+    // HDF5 can reclaim an unused allocation tail after its first flush.
+    // Settle that EOF/superblock update before capturing bytes, so another
+    // read-only checkpoint does not invalidate the exact fresh-header guard.
+    require(!checkpoint_write_failed_ && file_id_ >= 0 && H5Fflush(file_id_, H5F_SCOPE_GLOBAL) >= 0 && H5Fflush(file_id_, H5F_SCOPE_GLOBAL) >= 0, "Cannot flush mesh results.");
     return readFile(io::utf8_path(h5_path_));
 }
 
