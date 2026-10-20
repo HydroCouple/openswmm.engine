@@ -693,6 +693,7 @@ struct ThermalSurfaceSession {
     std::string native_hotstart_save,native_hotstart_use;
     std::string native_hotstart_apply;
     std::string extra_files;   // more [FILES] rows
+    std::string extra_input;
     void start(const std::string& name,double surface_temperature=12,
                const std::string& channel_tag="channel:test",bool dry_surface=false,
                bool atmospheric_exchange=false,bool temperature_timeseries=false,
@@ -750,7 +751,8 @@ struct ThermalSurfaceSession {
                   "[2D_INITIAL_BED_QUALITY]\n* Dye 2\n* __WATER_AGE__ 1\n";
         }
         if(ground_column_quality) {
-            deck.replace(deck.find("IGNORE_QUALITY YES"),std::string("IGNORE_QUALITY YES").size(),"IGNORE_QUALITY NO");
+            const auto ignored=deck.find("IGNORE_QUALITY YES");
+            if(ignored!=std::string::npos)deck.replace(ignored,std::string("IGNORE_QUALITY YES").size(),"IGNORE_QUALITY NO");
             deck+="\n[OPTIONS]\nWATER_AGE ON\n[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0\n"
                   "[2D_OPTIONS]\nTRANSPORT_POLLUTANTS YES\nTRANSPORT_AGE YES\n"
                   "[2D_INITIAL_QUALITY]\n* Dye 0\n"
@@ -761,6 +763,7 @@ struct ThermalSurfaceSession {
             deck+="\n[2D_OPTIONS]\nREPORT_2D YES\nOUTPUT_FILE "+(p.string()+".h5")+
                 "\nOUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES DEPTH HEAT\n";
         }
+        deck+=extra_input;
         write(p.string()+".inp",deck);
         if(engine.open((p.string()+".inp").c_str(),(p.string()+".rpt").c_str(),nullptr))
             throw std::runtime_error("thermal surface open: "+engine.context().error_message);
@@ -859,6 +862,27 @@ struct ThermalSurfaceSession {
         start(name);
     }
 };
+void startMappedSigmaSession(ThermalSurfaceSession& session,const std::string& name,
+                            int chemistry=5,int thermal=3,bool output=false,
+                            const std::string& network_solver="",bool checkpoint=true,bool edge_boundary=false) {
+    session.extra_input=
+        "\n[OPTIONS]\nSTART_DATE 01/31/2026\nSTART_TIME 23:59:30\n"
+        "END_DATE 02/01/2026\nEND_TIME 00:02:30\n"
+        "REPORT_START_DATE 01/31/2026\nREPORT_START_TIME 23:59:30\nREPORT_STEP 00:00:07\n"
+        "[2D_AQUIFER_OPTIONS]\nM_LAYERS "+std::to_string(chemistry)+
+        "\n[GW_TRANSPORT_OPTIONS]\nUNSAT_TRANSPORT LAYERED\nTHERMAL_LAYERS "+std::to_string(thermal)+
+        "\n[GW_SORPTION]\n* Dye 2 0\n"
+        "[GW_INITIAL_QUALITY]\n* LAYER 2 Dye 23\n";
+    if(edge_boundary)session.extra_input+=
+        "[2D_VERTICES]\n0 0 .5\n4 0 .5\n0 2 .5\n4 2 .5\n"
+        "[2D_TRIANGLES]\n0 1 2 .03 .04\n1 3 2 .03 .03\n"
+        "[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 1 FLOW CONST .000001\n"
+        "[GW_BOUNDARY_QUALITY]\n1 1 Dye CONC 3\n1 1 __TEMPERATURE__ CONC -4\n1 1 __WATER_AGE__ CONC 2\n";
+    if(output)session.extra_input+="[2D_OPTIONS]\nREPORT_2D_VARIABLES DEPTH HEAT GROUNDWATER\n";
+    if(!network_solver.empty())session.extra_input+="[OPTIONS]\nQUALITY_SOLVER "+network_solver+"\n";
+    session.start(name,12,"channel:test",false,false,false,true,true,!network_solver.empty(),
+                  checkpoint,false,false,output,false,false,true,"SIGMA");
+}
 }
 
 TEST(EngineCheckpoint, SurfaceSessionRestoresActualEngineRainfallPidLidAndPendingBatches) {
@@ -1115,6 +1139,92 @@ TEST(EngineCheckpoint, GroundColumnOverlandPorewaterQualityContinuesAcrossRestar
     EXPECT_EQ(ground.transport().gained_contact,target_ground.transport().gained_contact);
     EXPECT_NEAR(ground.transport().residual(dye),0,1e-9);
     EXPECT_NEAR(target_ground.transport().residual(dye),0,1e-9);
+}
+
+TEST(EngineCheckpoint, MappedSigmaChemistryContinuesFullSessionAcrossMidnightWithPendingContact) {
+    for(double boundary:{7.1,31.1}) {
+        const auto name="mapped-session-"+std::to_string(boundary);SCOPED_TRACE(name);
+        ThermalSurfaceSession source,target;
+        ASSERT_NO_THROW(startMappedSigmaSession(source,name+"-a"));
+        ASSERT_NO_THROW(startMappedSigmaSession(target,name+"-b"));
+        auto& router=source.engine.surfaceRouter2D();auto& gw=router.subsurface();auto& tr=gw.transport();
+        ASSERT_EQ(tr.n_layers,5);ASSERT_EQ(gw.heat().cells[0].column.theta.size(),3);
+        ASSERT_TRUE(gw.heat().cells[0].porewater.sigma.active());
+        const int dye=tr.rowIndex("Dye");ASSERT_GE(dye,0);
+        const auto surface_mass=[&] {
+            double mass=0;const auto& t=router.state().transport;
+            for(int cell=0;cell<t.n_cells;++cell)mass+=t.cell_mass[t.idx(dye,cell)];
+            return mass;
+        };
+        const double initial_mass=tr.ledgeredStorage(dye)+surface_mass();
+        const double initial_table=gw.state().hg[0];
+        // An accepted, cold leakage packet moves the table before the saved
+        // boundary; a second packet is still waiting at that boundary.
+        std::vector<double> concentration(tr.n_species,0);
+        concentration[dye]=7;concentration[tr.temp_row]=-4;concentration[tr.age_row]=2;
+        gw.bookLinkContact(0,.002,concentration,-.25,-.25);
+        while(source.engine.context().current_time<boundary)ASSERT_NO_THROW(step(source.engine));
+        ASSERT_NE(gw.state().hg[0],initial_table);
+        ASSERT_NE(tr.gained_contact[dye],0);
+        gw.bookLinkContact(0,.00025,concentration,-.25,-.25);
+        ASSERT_NE(gw.state().lacc[0],0);
+        const auto path=root()/(name+".chk");ASSERT_EQ(source.engine.saveCheckpoint(path.string()),"");
+        ASSERT_EQ(target.engine.loadCheckpoint(path.string()),"");compare(source.engine,target.engine,name+"-restored");
+        while(source.engine.context().current_time<83.1) {
+            ASSERT_NO_THROW(step(source.engine));
+            ASSERT_NO_THROW(step(target.engine));
+            EXPECT_EQ(tr.layer_mass,target.engine.surfaceRouter2D().subsurface().transport().layer_mass);
+        }
+        compare(source.engine,target.engine,name+"-continued");
+        EXPECT_EQ(gw.state().lacc[0],0);
+        EXPECT_NEAR(tr.gained_contact[dye]+router.state().transport.gained_bed[dye],0,1e-10*std::max(1.,initial_mass));
+        EXPECT_NEAR(tr.ledgeredStorage(dye)+surface_mass(),initial_mass+.00225*7,1e-10*std::max(1.,initial_mass));
+        EXPECT_LE(std::abs(tr.residual(dye)),1e-10*std::max(1.,tr.continuityDenominator(dye)));
+        EXPECT_LE(std::abs(tr.residual(tr.age_row)),1e-10*std::max(1.,tr.continuityDenominator(tr.age_row)));
+        EXPECT_LE(std::abs(gw.state().continuityResidual()),1e-10*std::max(1.,gw.state().led_init_storage));
+        double thermal_residual[2]{};
+        ASSERT_EQ(swmm_heat_get_ground_values(&source.engine,SWMM_GROUND_HEAT_NORMALIZED_RESIDUAL,0,2,thermal_residual),SWMM_OK);
+        for(double value:thermal_residual)EXPECT_NEAR(value,0,1e-10);
+    }
+}
+
+TEST(EngineCheckpoint, MappedSigmaNetworkChemistryKeepsUnqualifiedSessionGuard) {
+    for(const std::string solver:{"LEGACY","EULERIAN_ARD","LAGRANGIAN"}) {
+        SCOPED_TRACE(solver);ThermalSurfaceSession session;
+        ASSERT_NO_THROW(startMappedSigmaSession(session,"mapped-network-guard-"+solver,5,3,false,solver,false));
+        auto& engine=session.engine;auto& router=engine.surfaceRouter2D();
+        ASSERT_TRUE(router.channelGround().active());
+        const auto before=router.subsurface().transportRestartState();
+        const auto nodes=engine.context().nodes.conc,links=engine.context().links.conc;
+        const auto error=engine.enableCheckpointing(session.stage);
+        EXPECT_NE(error.find("Hydraulic checkpoint quality"),std::string::npos)<<error;
+        EXPECT_EQ(router.subsurface().transportRestartState(),before);
+        EXPECT_EQ(engine.context().nodes.conc,nodes);EXPECT_EQ(engine.context().links.conc,links);
+        EXPECT_EQ(engine.context().current_time,0);
+        EXPECT_EQ(engine.checkpointSessionStatus()&SWMM_CHECKPOINT_SESSION_ATTACHED,0u);
+    }
+}
+
+TEST(EngineCheckpoint, MappedSigmaFullSessionRefusesChangedGridsAndTruncationWithoutMutation) {
+    ThermalSurfaceSession source;
+    ASSERT_NO_THROW(startMappedSigmaSession(source,"mapped-refusal-source"));
+    while(source.engine.context().current_time<31.1)ASSERT_NO_THROW(step(source.engine));
+    const auto good=root()/"mapped-refusal-good.chk",bad=root()/"mapped-refusal-truncated.chk";
+    ASSERT_EQ(source.engine.saveCheckpoint(good.string()),"");auto truncated=bytes(good);truncated.resize(truncated.size()-7);write(bad,truncated);
+    for(int variant=0;variant<3;++variant) {
+        const auto name="mapped-refusal-"+std::to_string(variant);SCOPED_TRACE(name);
+        ThermalSurfaceSession target;
+        ASSERT_NO_THROW(startMappedSigmaSession(target,name,variant==1?6:5,variant==2?4:3));
+        const auto before=root()/(name+"-before.chk"),after=root()/(name+"-after.chk");
+        ASSERT_EQ(target.engine.saveCheckpoint(before.string()),"");
+        EXPECT_FALSE(target.engine.loadCheckpoint((variant==0?bad:good).string()).empty());
+        ASSERT_EQ(target.engine.saveCheckpoint(after.string()),"");EXPECT_EQ(bytes(before),bytes(after));
+        EXPECT_EQ(target.engine.context().current_time,0);
+        if(variant==0) {
+            ASSERT_EQ(target.engine.loadCheckpoint(good.string()),"");
+            compare(source.engine,target.engine,name+"-retry");
+        }
+    }
 }
 
 #ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
@@ -2897,6 +3007,34 @@ void sameMesh(const std::string& a,const std::string& b,int periods) {
     H5Fclose(x);H5Fclose(y);
 }
 }
+TEST(EngineCheckpoint, MappedSigmaMeshOutputContinuesIndependentLayerAxesAndReportCalendar) {
+    for(const auto counts:{std::pair{5,3},std::pair{3,7}})for(double boundary:{0.,31.1}) {
+        const auto name="mapped-output-"+std::to_string(counts.first)+"-"+std::to_string(counts.second)+"-"+std::to_string(boundary);
+        SCOPED_TRACE(name);ThermalSurfaceSession source,target;
+        ASSERT_NO_THROW(startMappedSigmaSession(source,name+"-a",counts.first,counts.second,true,"",true,true));
+        ASSERT_NO_THROW(startMappedSigmaSession(target,name+"-b",counts.first,counts.second,true,"",true,true));
+        while(source.engine.context().current_time<boundary)ASSERT_NO_THROW(step(source.engine));
+        const auto path=root()/(name+".chk");ASSERT_EQ(source.engine.saveCheckpoint(path.string()),"");
+        ASSERT_EQ(target.engine.loadCheckpoint(path.string()),"");compareMesh(source.engine,target.engine,name+"-restored");
+        while(source.engine.context().current_time<83.1) {
+            ASSERT_NO_THROW(step(source.engine));
+            ASSERT_NO_THROW(step(target.engine));
+        }
+        compareMesh(source.engine,target.engine,name+"-continued");
+        ASSERT_EQ(source.engine.end(),0);ASSERT_EQ(target.engine.end(),0);
+        sameMesh(name+"-a",name+"-b",12);
+        hid_t file=H5Fopen((root()/(name+"-a.h5")).string().c_str(),H5F_ACC_RDONLY,H5P_DEFAULT);ASSERT_GE(file,0);
+        for(const auto dataset:{std::pair{"Mesh2_face_gw_layer_mass",counts.first},std::pair{"Mesh2_face_gw_layer_conc",counts.first},
+                               std::pair{"Mesh2_face_soil_layer_temperature",counts.second}}) {
+            hid_t data=H5Dopen2(file,dataset.first,H5P_DEFAULT);ASSERT_GE(data,0)<<dataset.first;
+            hid_t space=H5Dget_space(data);hsize_t dims[4]{};const int rank=H5Sget_simple_extent_dims(space,dims,nullptr);
+            ASSERT_GE(rank,3);EXPECT_EQ(dims[rank-2],dataset.second)<<dataset.first;
+            H5Sclose(space);H5Dclose(data);
+        }
+        H5Fclose(file);
+    }
+}
+
 TEST(EngineCheckpoint, MeshOutputContinuesCadenceGroundwaterAndCurrentNodeLIDStores) {
     for(int lid=0;lid<3;++lid)for(int format=1;format<5;++format)for(double boundary:{0.,2.1,3.,7.1}) {
         const auto name="mesh-closed-"+std::to_string(lid)+"-"+std::to_string(format)+"-"+std::to_string(boundary);SCOPED_TRACE(name);
@@ -2982,6 +3120,12 @@ std::string changeMesh(const std::string& original,const std::string& name,int k
         case 16:{hid_t g=H5Gcreate2(h5,"source_history",H5P_DEFAULT,H5P_DEFAULT,H5P_DEFAULT);H5Lcreate_external("absent-external-file.h5","history",g,"boundaries",H5P_DEFAULT,H5P_DEFAULT);H5Gclose(g);break;}
         case 17:change("Mesh2_face_gw_bed_elev",1,true);break;
         case 18:change("groundwater_ledger",std::numeric_limits<double>::infinity());break;
+        case 19:change("Mesh2_face_gw_layer_mass",std::numeric_limits<double>::quiet_NaN());break;
+        case 20:change("Mesh2_face_gw_layer_conc",std::numeric_limits<double>::infinity());break;
+        case 21:{hid_t d=H5Dopen2(h5,"Mesh2_face_gw_layer_mass",H5P_DEFAULT);H5Adelete(d,"species_units");H5Dclose(d);break;}
+        case 22:{hid_t d=H5Dopen2(h5,"Mesh2_face_gw_layer_mass",H5P_DEFAULT);hsize_t dims[4]={wire.count,3,4,2};H5Dset_extent(d,dims);H5Dclose(d);break;}
+        case 23:{hid_t d=H5Dopen2(h5,"Mesh2_face_gw_layer_conc",H5P_DEFAULT);H5Adelete(d,"species_names");H5Dclose(d);break;}
+        case 24:change("Mesh2_face_et_stress",std::numeric_limits<double>::infinity());break;
         }
         H5Fclose(h5);wire.image=bytes(file);break;
     }
@@ -2991,6 +3135,24 @@ std::string changeMesh(const std::string& original,const std::string& name,int k
     sum=crc(payload);detail::CompletedSourceArchive out;out(magic,version,model,sum,payload);return out.bytes();
 }
 }
+TEST(EngineCheckpoint, MappedSigmaOutputRefusesCorruptChemistryBeforePublishingOrInstallingState) {
+    ThermalSurfaceSession source;
+    ASSERT_NO_THROW(startMappedSigmaSession(source,"mapped-output-refusal-source",5,3,true));
+    while(source.engine.context().current_time<31.1)ASSERT_NO_THROW(step(source.engine));
+    const auto good=root()/"mapped-output-refusal-good.chk";ASSERT_EQ(source.engine.saveCheckpoint(good.string()),"");
+    for(int kind=19;kind<25;++kind) {
+        const auto name="mapped-output-refusal-"+std::to_string(kind);SCOPED_TRACE(name);ThermalSurfaceSession target;
+        ASSERT_NO_THROW(startMappedSigmaSession(target,name,5,3,true));
+        const auto before=root()/(name+"-before.chk"),bad=root()/(name+"-bad.chk"),output=root()/(name+".h5");
+        ASSERT_EQ(target.engine.saveCheckpoint(before.string()),"");const auto saved=bytes(before),header=bytes(output);
+        write(bad,changeMesh(bytes(good),name,kind));EXPECT_FALSE(target.engine.loadCheckpoint(bad.string()).empty());
+        ASSERT_EQ(target.engine.saveCheckpoint(before.string()),"");EXPECT_EQ(bytes(before),saved);EXPECT_EQ(bytes(output),header);
+        ASSERT_EQ(target.engine.loadCheckpoint(good.string()),"");compareMesh(source.engine,target.engine,name+"-retry");
+        ASSERT_EQ(target.engine.end(),0);
+    }
+    ASSERT_EQ(source.engine.end(),0);
+}
+
 TEST(EngineCheckpoint, MeshOutputMalformedPrefixesPreserveFreshEngineAndPermitRetry) {
     SurfaceSession a;ASSERT_NO_THROW(startClosedSpatial(a,"mesh-invalid-source",2,.31,true,true,false,1));
     while(a.engine.context().current_time<9.1)ASSERT_NO_THROW(step(a.engine));

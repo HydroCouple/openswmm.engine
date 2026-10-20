@@ -302,6 +302,11 @@ water-temperature continuity table is not a soil-plus-water energy budget.
 New selectors and finite material/capacity changes require reinitialization;
 existing weather and AUTO-inherited heat module switches remain live. Atomic
 hydrothermal authoring edits and heat snapshots include the mesh and aquifer
-configuration. Native hotstart writes/loads explicitly refuse active new thermal
-stores until the thermal state extension is qualified; an existing destination
-is preserved. All of these capabilities remain experimental.
+configuration. Standalone hotstart save/apply refuses active thermal stores;
+an existing destination is preserved. The attached mesh-only CPU engine
+checkpoint profile additionally qualifies SIGMA layered pollutant/age chemistry
+with independent porous thermal layers, pending cold contacts and groundwater
+HDF5 output across a report-calendar restart. Full-session network chemistry
+and surface-species/buildup output continuation retain their guards; see the
+[groundwater restart profile](groundwater-transport.md#results-and-restart).
+All of these capabilities remain experimental.
