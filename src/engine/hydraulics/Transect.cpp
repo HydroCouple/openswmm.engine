@@ -439,7 +439,8 @@ bool buildFromStore(const TransectStore& ts, int index, double ucf_length,
     // transform the raw [TRANSECTS] GR data BEFORE building the tables:
     //   Station = x * Xfactor / UCF(LENGTH)          (mult, then divide)
     //   Elev    = (y + Yfactor) / UCF(LENGTH),  Yfactor = x9 / UCF
-    //   Xbank   = (xbank / UCF) * Xfactor            (divide, then mult)
+    //   Xbank   = xbank * Xfactor / UCF(LENGTH)      (as the stations, so
+    //             getFlow's exact Station == Xbank test finds the banks)
     // The elevation OFFSET (x9, e.g. 799/798 in extran8a) is the load-
     // bearing part: legacy builds every slice area/width/hrad at the
     // real bed elevation (~800 ft), so `y - yhi` rounds at that
@@ -452,8 +453,8 @@ bool buildFromStore(const TransectStore& ts, int index, double ucf_length,
     const double yFactor = ts.y_factor[ut] / ucf_length;   // x9 / UCF
     for (auto& s : td.stations)   s = s * xFactor / ucf_length;
     for (auto& e : td.elevations) e = (e + yFactor) / ucf_length;
-    td.x_left_bank  = (ts.x_left_bank[ut]  / ucf_length) * xFactor;
-    td.x_right_bank = (ts.x_right_bank[ut] / ucf_length) * xFactor;
+    td.x_left_bank  = ts.x_left_bank[ut]  * xFactor / ucf_length;
+    td.x_right_bank = ts.x_right_bank[ut] * xFactor / ucf_length;
     buildTables(td);
     return true;
 }

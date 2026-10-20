@@ -377,8 +377,8 @@ int  setParams(int j, char* id, double x[])
     if ( Lfactor == 0.0 ) Lfactor = 1.0;
     Xfactor = x[8];                              // station location multiplier
     if ( Xfactor == 0.0 ) Xfactor = 1.0;
-    Xleftbank *= Xfactor;                        // adjusted left bank
-    Xrightbank *= Xfactor;                       // adjusted right bank
+    Xleftbank = x[3] * Xfactor / UCF(LENGTH);    // adjusted left bank
+    Xrightbank = x[4] * Xfactor / UCF(LENGTH);   // adjusted right bank
     Yfactor = x[9] / UCF(LENGTH);                // elevation offset
     Nstations = 0;
     return 0;
