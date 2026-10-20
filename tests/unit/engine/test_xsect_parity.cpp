@@ -184,6 +184,89 @@ const std::vector<double>& areaFractions() {
 
 } // namespace
 
+// NUM-03: parity alone cannot catch a formula copied incorrectly into both
+// engines. Check each implementation independently against circular-segment A/P.
+class XSectRectRound : public ::testing::TestWithParam<bool> {
+protected:
+    LegacyTXsect legacy{};
+    XSectParams refactored{};
+
+    void setGeometry(double width, double radius) {
+        double p[4] = {0.75 * width, width, radius, 0.0};
+        ASSERT_TRUE(xsect_setParams(&legacy,
+            static_cast<int>(XSectShape::RECT_ROUND), p, 1.0));
+        double q[4] = {0.75 * width, width, radius, 0.0};
+        ASSERT_EQ(xsect::setParams(refactored,
+            static_cast<int>(XSectShape::RECT_ROUND), q, 1.0), 0);
+    }
+
+    double radiusAt(double depth) {
+        return GetParam() ? xsect::getRofY(refactored, depth)
+                          : xsect_getRofY(&legacy, depth);
+    }
+};
+
+TEST_P(XSectRectRound, RoundBottomMatchesSegmentGeometry) {
+    for (double width : {0.4, 4.0, 40.0}) {
+        for (double radiusRatio : {0.0, 0.5, 0.625, 1.0}) {
+            ASSERT_NO_FATAL_FAILURE(setGeometry(width, radiusRatio * width));
+            const double r = radiusRatio == 0.0 ? width / 2.0 : radiusRatio * width;
+            const double topAngle = 2.0 * std::asin(width / (2.0 * r));
+            for (double fraction : {0.001, 0.1, 0.25, 0.5, 0.75, 1.0}) {
+                SCOPED_TRACE(::testing::Message() << "width=" << width
+                    << " radius/width=" << radiusRatio << " angle fraction=" << fraction);
+                // For a semicircular bottom, fraction=0.5 is theta=pi/2,
+                // where the old misplaced parenthesis returned zero.
+                const double angle = fraction * topAngle;
+                const double depth = r * (1.0 - std::cos(angle / 2.0));
+                const double area = r * r * (angle - std::sin(angle)) / 2.0;
+                const double perimeter = r * angle;
+                EXPECT_NEAR(radiusAt(depth), area / perimeter, 1e-10 * r);
+                EXPECT_GT(radiusAt(depth), 0.0);
+            }
+        }
+    }
+}
+
+TEST_P(XSectRectRound, DryDepthHasZeroRadius) {
+    ASSERT_NO_FATAL_FAILURE(setGeometry(4.0, 0.0));
+    EXPECT_DOUBLE_EQ(radiusAt(0.0), 0.0);
+    EXPECT_DOUBLE_EQ(radiusAt(-0.1), 0.0);
+}
+
+TEST_P(XSectRectRound, RadiusIsContinuousAtTopOfRoundBottom) {
+    for (double r : {2.0, 2.5, 4.0}) {
+        ASSERT_NO_FATAL_FAILURE(setGeometry(4.0, r));
+        const double angle = 2.0 * std::asin(2.0 / r);
+        const double depth = r * (1.0 - std::cos(angle / 2.0));
+        const double expected = r * r * (angle - std::sin(angle)) / 2.0 / (r * angle);
+        for (double offset : {-1e-7 * r, 0.0, 1e-7 * r}) {
+            EXPECT_NEAR(radiusAt(depth + offset), expected, 1e-6 * r);
+        }
+    }
+}
+
+TEST_P(XSectRectRound, RectangularPartMatchesAreaOverWettedPerimeter) {
+    for (double r : {2.0, 2.5, 4.0}) {
+        ASSERT_NO_FATAL_FAILURE(setGeometry(4.0, r));
+        const double angle = 2.0 * std::asin(2.0 / r);
+        const double bottomDepth = r * (1.0 - std::cos(angle / 2.0));
+        const double bottomArea = r * r * (angle - std::sin(angle)) / 2.0;
+        for (double depth : {bottomDepth + 0.1, 2.5, 3.0}) {
+            const double wallDepth = depth - bottomDepth;
+            const double area = bottomArea + 4.0 * wallDepth;
+            // At the crown, include the closed top in the wetted perimeter.
+            const double perimeter = r * angle + 2.0 * wallDepth + (depth == 3.0 ? 4.0 : 0.0);
+            EXPECT_NEAR(radiusAt(depth), area / perimeter, 1e-8 * r);
+        }
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(Engines, XSectRectRound, ::testing::Bool(),
+    [](const ::testing::TestParamInfo<bool>& info) {
+        return info.param ? "Refactored600" : "Legacy530";
+    });
+
 // ============================================================================
 // Getter parity — seed both sides from legacy setParams.
 // ============================================================================
