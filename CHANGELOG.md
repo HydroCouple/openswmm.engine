@@ -23,6 +23,10 @@ retroactive.
 
 ## [Unreleased]
 
+### Cross-section code-review fixes (2026-10-20)
+
+- **Custom elliptical pipes get the area of their own axes.** A HORIZ_ELLIPSE or VERT_ELLIPSE with custom dimensions (size code 0) was scaled by the standard ellipse's factors of its height alone, so a 2 × 6 ft ellipse had the area of a 2 × 3.17 ft one and routing lost the difference, in both engines. Code review CON-17, #170.
+
 ### Hot-start follow-ups and land-use parity (2026-10-19)
 
 - **`[COVERAGES]` reads every land use on a line.** `S1 RES 60 COM 40` set only RES; COM was dropped without a message. Every pair is read now, as in EPA SWMM, and a line naming an unknown subcatchment or land use (ERROR 209), a land use without a percent (ERROR 203) or a percent that is not a number (ERROR 211) is an error, as it is there. These lines were skipped silently before.

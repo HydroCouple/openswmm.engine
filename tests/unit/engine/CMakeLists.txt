@@ -213,6 +213,8 @@ add_gtest_unit(test_engine_transect_table_stability test_transect_table_stabilit
 add_gtest_unit(test_engine_street_xsect_api  test_street_xsect_api.cpp)
 # Standalone cross-section geometry API + SWMM_XSectShape enum parity guard.
 add_gtest_unit(test_engine_xsect_api         test_xsect_api.cpp)
+# Custom elliptical pipes take the area of their own axes (code review CON-17, #170).
+add_gtest_unit(test_engine_xsect_custom_ellipse test_xsect_custom_ellipse.cpp)
 # Portable cross-section kernels (plan §5.1): the public accessors route through
 # the moved bodies, and an evaluator over INDEPENDENT copies of the geometry
 # tables reproduces the host one at ULP zero — the device-rebinding claim,
