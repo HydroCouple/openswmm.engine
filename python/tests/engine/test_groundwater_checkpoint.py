@@ -10,7 +10,7 @@ from openswmm.engine import (
 from tests.engine._groundwater_cases import cleanup
 
 
-def _open(directory, chemistry, thermal, reactive=True, passive=False, output=0, rate='.001', age=True, porous=True, unit='MG'):
+def _open(directory, chemistry, thermal, reactive=True, passive=False, output=0, rate='.001', age=True, porous=True, unit='MG', boundary=None):
     directory.mkdir()
     path = directory / 'model.inp'
     reaction = ''
@@ -44,6 +44,27 @@ Dye MG/L 0 0 0 0 NO * 0 0
 * UNSAT Dye 10
 ''' if passive else ''
     forcing = (' A CONC 3 B CONC 1' if reactive else '') + (' Dye CONC 3' if passive else '')
+    edge = ''
+    if boundary:
+        values = ('.000001', '-.000001', '.000001') if boundary == 'FLOW' else ('.05', '-.45', '0')
+        rows = [('A', 3), ('B', 1)] if reactive else []
+        if passive:
+            rows.append(('Dye', 3))
+        if porous:
+            rows.append(('__TEMPERATURE__', -4))
+        if age:
+            rows.append(('__WATER_AGE__', 2))
+        quality = ''.join(f'1 1 {name} CONC {value}\n' for name, value in rows)
+        edge = f'''[TIMESERIES]
+EDGE 01/31/2026 23:59:30 {values[0]}
+EDGE 01/31/2026 23:59:39 {values[1]}
+EDGE 01/31/2026 23:59:47 {values[2]}
+EDGE 02/01/2026 00:01:30 {values[2]}
+[2D_AQUIFER_BOUNDARIES]
+CELL 1 EDGE 1 {boundary} SERIES EDGE
+[GW_BOUNDARY_QUALITY]
+{quality}1 1 A MASSFLUX .000002
+'''
     initial_heat = '[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ 8\n* UNSAT __TEMPERATURE__ 8\n' if porous else ''
     variables = 'DEPTH HEAT GROUNDWATER' if porous else 'DEPTH GROUNDWATER'
     mesh_output = (f'REPORT_2D YES\nOUTPUT_FILE "{directory / "mesh.h5"}"\n'
@@ -105,6 +126,7 @@ WELL 02/01/2026 00:01:30 .000001
 W CELL 1 FLOW WELL{forcing}{' __TEMPERATURE__ CONC -4' if porous else ''}{' __WATER_AGE__ CONC 2' if age else ''}
 {pollutant}
 {reaction}
+{edge}
 ''')
     solver = Solver(path, path.with_suffix('.rpt'))
     solver.create()
@@ -139,6 +161,10 @@ def _snapshot(solver, chemistry, porous=True):
                for row in range(len(gw.species))]
     if porous:
         values += [np.asarray(solver.heat.ground_values(GroundHeatValue.ENERGY, 0, gw.dimensions[0]))]
+    for edge in range(len(gw.authored_boundaries)):
+        values.append(np.asarray(list(gw.authored_boundary_receipt(edge).values())))
+        values += [np.asarray(list(gw.authored_boundary_receipt(edge, row).values()))
+                   for row in range(len(gw.species))]
     return values
 
 
@@ -162,13 +188,27 @@ def _amount(solver, names):
 @pytest.mark.parametrize('age', [True, False])
 @pytest.mark.parametrize('porous', [True, False])
 def test_mesh_groundwater_checkpoint_continues_reactions_and_heat(tmp_path, chemistry, thermal, reactive, passive, output, age, porous):
-    source = _open(tmp_path / 'source', chemistry, thermal, reactive, passive, output, age=age, porous=porous)
-    target = _open(tmp_path / 'target', chemistry, thermal, reactive, passive, output, age=age, porous=porous)
+    _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, age, porous)
+
+
+@pytest.mark.parametrize('chemistry,thermal', [(0, 4), (5, 3), (3, 7)])
+@pytest.mark.parametrize('passive', [True, False])
+@pytest.mark.parametrize('output', [0, 2])
+@pytest.mark.parametrize('porous', [True, False])
+@pytest.mark.parametrize('boundary', ['FLOW', 'HEAD'])
+def test_reactive_edge_session_preserves_reversals_fluxes_and_reports(tmp_path, chemistry, thermal, passive, output, porous, boundary):
+    _continue_session(tmp_path, chemistry, thermal, True, passive, output, True, porous, boundary)
+
+
+def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, age, porous, boundary=None):
+    source = _open(tmp_path / 'source', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary)
+    target = _open(tmp_path / 'target', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary)
     try:
         source.checkpoints.start_session(output)
         target.checkpoints.start_session(output)
         names = ('A', 'B') if reactive else (('Dye',) if passive else ())
         initial_amount = _amount(source, names)
+        initial_dye = _amount(source, ('Dye',)) if passive else 0.0
         while source.elapsed.total_seconds() < 8:
             assert source.step().total_seconds() > 0
         checkpoint = tmp_path / 'accepted.chk'
@@ -188,9 +228,29 @@ def test_mesh_groundwater_checkpoint_continues_reactions_and_heat(tmp_path, chem
         # Independent trapezoidal integral of the explicitly dated well series.
         water_input = 1.5e-6 * 9 + 1.5e-6 * 8 + 1e-6 * 58
         assert gw.ledger(GroundwaterLedger.SOURCE_IN) == pytest.approx(water_input, rel=1e-10, abs=1e-12)
+        edge_input = 0.0
+        imposed = 0.0
+        if boundary:
+            receipt = gw.authored_boundary_receipt(0)
+            assert receipt['accepted_in'] > 0
+            assert receipt['accepted_out'] > 0
+            assert receipt['accepted_in'] == receipt['requested_in']
+            assert receipt['accepted_out'] == receipt['requested_out']
+            edge_input = receipt['accepted_in']
+            if boundary == 'FLOW':
+                # Two linear sign reversals, then 58 seconds of positive flow.
+                assert edge_input == pytest.approx(62.25e-6, abs=1e-12)
+                assert receipt['accepted_out'] == pytest.approx(4.25e-6, abs=1e-12)
+            # Native mg/s/m becomes (mg/L)*m3 once; exterior edge length is 2 m.
+            imposed = .000002 * .001 * 2 * 75
+            a = gw.species.index('A')
+            assert gw.authored_boundary_receipt(0, a)['flux_in'] == pytest.approx(imposed, rel=1e-10, abs=1e-14)
         concentration = 4 if reactive else (3 if passive else 0)
-        assert _amount(source, names) == pytest.approx(initial_amount + concentration * water_input,
+        assert _amount(source, names) == pytest.approx(initial_amount + concentration * (water_input + edge_input) + imposed,
                                                      rel=1e-10, abs=1e-10)
+        if passive:
+            assert _amount(source, ('Dye',)) == pytest.approx(initial_dye + 3 * (water_input + edge_input),
+                                                            rel=1e-10, abs=1e-10)
         for name in gw.species:
             if name != '__TEMPERATURE__':
                 row = gw.species.index(name)
@@ -260,6 +320,34 @@ def test_mesh_groundwater_checkpoint_mismatch_preserves_all_target_state(tmp_pat
             target.checkpoints.restore(checkpoint)
         target.checkpoints.save(after)
         assert before.read_bytes() == after.read_bytes()
+        assert target.elapsed.total_seconds() == 0
+    finally:
+        cleanup(source)
+        cleanup(target)
+
+
+@pytest.mark.parametrize('porous', [True, False])
+@pytest.mark.parametrize('boundary', ['FLOW', 'HEAD'])
+def test_reactive_edge_changed_forcing_preserves_target_and_mesh_output(tmp_path, porous, boundary):
+    source = _open(tmp_path / 'source', 5, 3, passive=True, output=2, porous=porous, boundary=boundary)
+    target = _open(tmp_path / 'target', 5, 3, passive=True, output=2, porous=porous, boundary=boundary)
+    try:
+        # Keep the edge/schema/species fixed, but change its future forcing.
+        target.surface2d.groundwater.set_authored_boundary(0, 1, boundary, value=.000001 if boundary == 'FLOW' else -.1)
+        source.checkpoints.start_session(2)
+        target.checkpoints.start_session(2)
+        while source.elapsed.total_seconds() < 8:
+            source.step()
+        checkpoint, before, after = [tmp_path / name for name in ('source.chk', 'before.chk', 'after.chk')]
+        source.checkpoints.save(checkpoint)
+        target.checkpoints.save(before)
+        mesh = tmp_path / 'target/mesh.h5'
+        prefix = mesh.read_bytes()
+        with pytest.raises(FileError):
+            target.checkpoints.restore(checkpoint)
+        assert mesh.read_bytes() == prefix
+        target.checkpoints.save(after)
+        assert after.read_bytes() == before.read_bytes()
         assert target.elapsed.total_seconds() == 0
     finally:
         cleanup(source)

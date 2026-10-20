@@ -132,7 +132,10 @@ Start both engines from the same model before saving and restoring with
 ``solver.checkpoints.save(path)`` and ``target.checkpoints.restore(path)``.
 Canonical water, solute, age/contact and soil-energy state, accepted clocks,
 engine calendar and qualified report history continue together. A different
-reaction definition, species units or grid is refused before publication.
+reaction definition, species units, grid or authored edge forcing is refused
+before publication. Reactive HEAD/FLOW edge reversals, simultaneous well
+forcing, imposed species fluxes and their gross receipts also continue with
+exact groundwater report history in the named profile.
 Bulk finite-porewater sessions require their ledger payload. Shared-source
 transport sessions also require the accepted-cell-clock payload, including
 species-only bulk models. Older exact-session files cannot supply that omitted
