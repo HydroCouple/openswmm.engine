@@ -236,6 +236,9 @@ public:
     void reopenMassBalance() noexcept;
     /// Write a native V15 hotstart from the current accepted checkpoint boundary.
     std::string saveNativeHotstart(const std::string& path) const;
+    /// True when a full engine checkpoint is attached, so a hot start of a
+    /// heat model can be the V15 file; without one it is record-based.
+    bool hotstartCheckpointAttached() const noexcept { return checkpoint_enabled_; }
 #ifdef OPENSWMM_HAS_2D
     // Separate single-file mesh output qualification; initialize(), prepare,
     // start(0), then attach the common source checkpoint stage.

@@ -8177,16 +8177,12 @@ void SWMMEngine::writeHotstartSave(const HotstartSaveEntry& entry) {
     int rc = 0;
     if (native) {
         std::unique_ptr<HotStartFile> hs;
-        if (ctx_.options.heat_transport) {
+        // As swmm_hotstart_save: the V15 file when a full engine checkpoint
+        // is attached, otherwise the record-based one (which refuses coupled
+        // mesh/ground heat with its own message).
+        if (ctx_.options.heat_transport && checkpoint_enabled_) {
             std::string snapshot;
-            std::string error;
-            if (checkpoint_enabled_) {
-                error = checkpointBytes(snapshot, false);
-            } else {
-                error = hotstart_checkpoint_error_.empty()
-                    ? "full engine checkpointing was not attached at the initial boundary"
-                    : hotstart_checkpoint_error_;
-            }
+            const std::string error = checkpointBytes(snapshot, false);
             if (!error.empty()) {
                 ctx_.warnings.push_back(
                     "SAVE HOTSTART: coupled heat state was not saved: " + error);

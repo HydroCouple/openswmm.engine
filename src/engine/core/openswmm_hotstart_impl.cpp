@@ -90,7 +90,10 @@ SWMM_ENGINE_API int swmm_hotstart_save(SWMM_Engine engine, const char* path) {
         return SWMM_ERR_LIFECYCLE;
     }
 
-    if(ctx.options.heat_transport) {
+    // A heat model with a full engine checkpoint attached writes the V15
+    // file; without one it writes the record-based file like any other
+    // model (which refuses coupled mesh/ground heat with a message).
+    if(ctx.options.heat_transport && eng->hotstartCheckpointAttached()) {
         return eng->saveNativeHotstart(path)==""?SWMM_OK:SWMM_ERR_HOTSTART;
     }
 
