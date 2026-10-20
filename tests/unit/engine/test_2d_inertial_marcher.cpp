@@ -837,7 +837,7 @@ TEST(CoupledGroundwaterRk2, UnsupportedOwnersRefuseBeforeAnyNumericalMutation) {
     r.gw.state().closure[0]=int8_t(GwClosure::SIGMA);
     EXPECT_FALSE(r.gw.rk2ProfileError().empty());EXPECT_THROW(ExplicitInertialSolverTestAccess::rk2(r.solver,.05,0),std::runtime_error);
     r.gw.state().closure[0]=int8_t(GwClosure::CLOSED_FORM);
-    GwResolvedSource source;source.cells={{0,1}};source.flow.times={0,1};source.flow.values={1,-1};r.gw.setSources({source});
+    GwResolvedSource source;source.cells={{0,1}};source.terms.resize(1);r.gw.setSources({source});
     EXPECT_FALSE(r.gw.rk2ProfileError().empty());EXPECT_THROW(ExplicitInertialSolverTestAccess::rk2(r.solver,.05,0),std::runtime_error);
     r.gw.setSources({});r.state.heat.enabled=true;
     EXPECT_THROW(ExplicitInertialSolverTestAccess::rk2(r.solver,.05,0),std::runtime_error);r.state.heat.enabled=false;
@@ -897,6 +897,9 @@ TEST(CoupledGroundwaterRk2, OptionalOpenmpRechargePreservesStagesRestartAndRollb
     auto backend=makeGwRechargeBackend(a.opts,a.mesh.n_cells());
     if(!backend.evaluate){ASSERT_FALSE(std::getenv("OPENSWMM_GW_TEST_REQUIRE_PLUGIN"));GTEST_SKIP()<<backend.diagnostic;}
     a.gw.setRechargeBackend(backend);b.gw.setRechargeBackend(backend);
+    GwResolvedSource well;well.name="omp-reversing";well.cells={{0,1}};
+    well.flow.times={0,.17,.43,1};well.flow.values={.002,.006,-.002,.001};
+    for(auto* rig:{&a,&b,&cpu})rig->gw.setSources({well});
     const auto saved=rk2Output("omp-accepted.chk"),restored=rk2Output("omp-restored.chk"),before=rk2Output("omp-before.chk");
     const double initial=a.total();
     for(int k=0;k<20;++k) {
@@ -912,7 +915,7 @@ TEST(CoupledGroundwaterRk2, OptionalOpenmpRechargePreservesStagesRestartAndRollb
         if(k>=7) {ASSERT_TRUE(b.solver.saveCheckpoint(restored.string()).empty());EXPECT_EQ(rk2File(saved),rk2File(restored));}
     }
     EXPECT_GT(a.gw.rechargeCells(),0u);EXPECT_GT(b.gw.rechargeCells(),0u);
-    EXPECT_NEAR(a.total()+a.gw.state().led_deep,initial,1e-10*initial);
+    EXPECT_NEAR(a.total()+a.gw.state().led_deep,initial+a.gw.state().led_source_in-a.gw.state().led_source_out,1e-10*initial);
     GwResolvedSource bad;bad.cells={{0,1}};bad.flow.constant=1e308;a.gw.setSources({bad});
     const auto batches=a.gw.rechargeBatches(),cells=a.gw.rechargeCells();
     const auto state=ExplicitInertialSolverTestAccess::state(a.solver),volume=a.state.volume;
@@ -920,4 +923,89 @@ TEST(CoupledGroundwaterRk2, OptionalOpenmpRechargePreservesStagesRestartAndRollb
     EXPECT_EQ(a.gw.rechargeBatches(),batches);EXPECT_EQ(a.gw.rechargeCells(),cells);
     EXPECT_EQ(a.state.volume,volume);EXPECT_EQ(ExplicitInertialSolverTestAccess::state(a.solver),state);
     a.gw.setSources({});ASSERT_NO_THROW(a.solver.advance(1,1.05));
+}
+
+TEST(CoupledGroundwaterRk2, AffineWellAndDeepDrainageConvergeAtSecondOrder) {
+    double previous=0;
+    for(double dt:{.4,.2,.1,.05}) {
+        CoupledRkRig r;r.init(dt,0,.07);auto& w=r.gw.state();
+        for(int i=0;i<w.n_cells;++i)w.hu[i]=w.theta_r[i]*(w.zs[i]-w.hg[i]);
+        w.led_init_storage=w.storage();const double initial=r.total();
+        GwResolvedSource well;well.name="ramp";well.cells={{0,1}};
+        well.flow.times={0,2};well.flow.values={.003,.009};r.gw.setSources({well});
+        ASSERT_TRUE(r.gw.rk2ProfileError().empty());
+        for(int k=0;k<int(2/dt);++k)ASSERT_DOUBLE_EQ(r.solver.advance(k*dt,(k+1)*dt),(k+1)*dt);
+        const double yield=w.theta_s[0]-w.theta_r[0],lambda=.07/(2*yield),storage=yield*w.area[0];
+        const double decay=std::exp(-lambda*2);
+        const double exact=.6*decay+.003/storage*(1-decay)/lambda+
+            .003/storage*(2/lambda-(1-decay)/(lambda*lambda));
+        const double error=std::abs(w.hg[0]-exact);
+        RecordProperty("affine_well_error_"+std::to_string(int(dt*1000)),error);
+        EXPECT_LT(error,.00004);if(previous>0)EXPECT_GT(previous/error,3.7);previous=error;
+        EXPECT_NEAR(w.led_source_in,.012,1e-14);
+        EXPECT_NEAR(r.total()+w.led_deep,initial+.012,1e-10*initial);
+        EXPECT_NEAR(w.continuityResidual(),0,1e-10*initial);
+    }
+}
+
+TEST(CoupledGroundwaterRk2, SignedWellKnotsPreserveGrossBudgetsAndExactCheckpointContinuation) {
+    CoupledRkRig a,b;a.init(.4,.005,.01,.2);b.init(.4,.005,.01,.2);
+    GwResolvedSource well;well.name="reversing";well.cells={{0,1}};
+    well.flow.times={0,.15,.35,.7,1};well.flow.values={.02,.06,-.02,-.04,.02};
+    GwResolvedSource other;other.name="asynchronous";other.cells={{1,1}};
+    other.flow.times={0,.21,.49,1};other.flow.values={.01,.03,0,.01};
+    a.gw.setSources({well,other});b.gw.setSources({well,other});
+    ASSERT_TRUE(a.gw.rk2ProfileError().empty());const double initial=a.total();
+    ASSERT_DOUBLE_EQ(a.solver.advance(0,.45),.45);
+    const auto saved=rk2Output("timed-well.chk"),restored=rk2Output("timed-well-restored.chk");
+    ASSERT_TRUE(a.solver.saveCheckpoint(saved.string()).empty());
+    auto changed=well;changed.flow.values[1]+=.001;b.gw.setSources({changed,other});
+    ASSERT_TRUE(b.solver.saveCheckpoint(restored.string()).empty());const auto before=rk2File(restored);
+    EXPECT_FALSE(b.solver.loadCheckpoint(saved.string()).empty());
+    ASSERT_TRUE(b.solver.saveCheckpoint(restored.string()).empty());EXPECT_EQ(rk2File(restored),before);
+    b.gw.setSources({well,other});ASSERT_TRUE(b.solver.loadCheckpoint(saved.string()).empty());
+    for(double end:{.8,1.}) {
+        ASSERT_DOUBLE_EQ(a.solver.advance(a.gw.cellCompletedTime(0),end),end);
+        ASSERT_DOUBLE_EQ(b.solver.advance(b.gw.cellCompletedTime(0),end),end);
+        ASSERT_TRUE(a.solver.saveCheckpoint(saved.string()).empty());
+        ASSERT_TRUE(b.solver.saveCheckpoint(restored.string()).empty());EXPECT_EQ(rk2File(saved),rk2File(restored));
+    }
+    // Independent trapezoids split where the prescribed straight lines cross zero.
+    const double incoming=.006+.5*.15*.06+.5*.1*.02+.21*.02+.28*.015+.51*.005;
+    const double outgoing=.5*.05*.02+.35*.03+.5*.2*.04;
+    const auto& w=a.gw.state();EXPECT_NEAR(w.led_source_in,incoming,1e-13);EXPECT_NEAR(w.led_source_out,outgoing,1e-13);
+    EXPECT_NEAR(a.total()+w.led_deep,initial+incoming-outgoing,1e-10*initial);
+    EXPECT_NEAR(w.continuityResidual(),0,1e-10*initial);
+}
+
+TEST(CoupledGroundwaterRk2, OversubscribedTimedWellRemainsBoundedAndConservative) {
+    CoupledRkRig r;r.init(.2,0,0);const double initial=r.total();
+    GwResolvedSource well;well.name="pump-cycle";well.cells={{0,1}};
+    well.flow.times={0,.2,.6,1};well.flow.values={-100,-100,1,1};r.gw.setSources({well});
+    ASSERT_TRUE(r.gw.rk2ProfileError().empty());ASSERT_DOUBLE_EQ(r.solver.advance(0,1),1);
+    const auto& w=r.gw.state();const double positive=.4+.5*(.4/101);
+    EXPECT_NEAR(w.led_source_in,positive,1e-12);EXPECT_GT(w.led_source_out,0);EXPECT_LT(w.led_source_out,40);
+    for(int cell=0;cell<w.n_cells;++cell) {
+        EXPECT_TRUE(std::isfinite(w.hg[cell]));EXPECT_GE(w.hg[cell],0);EXPECT_LE(w.hg[cell],w.zs[cell]);
+        EXPECT_GE(w.hu[cell],0);EXPECT_LE(w.hu[cell],w.theta_s[cell]*(w.zs[cell]-w.hg[cell])+1e-12);
+    }
+    EXPECT_NEAR(r.total(),initial+w.led_source_in-w.led_source_out,1e-10*initial);
+    EXPECT_NEAR(w.continuityResidual(),0,1e-10*initial);
+}
+
+TEST(CoupledGroundwaterRk2, LaterWellIntervalFailureRollsBackEarlierAcceptedStages) {
+    CoupledRkRig r,control;r.init(.1,.005,0,.2);control.init(.1,.005,0,.2);
+    GwResolvedSource well;well.name="overflow";well.cells={{0,1}};
+    well.flow.times={0,.5,4.5};well.flow.values={.001,.001,1e308};r.gw.setSources({well});control.gw.setSources({well});
+    for(auto* rig:{&r,&control}) {rig->gw.publishInfiltration(rig->state,.1,0);rig->gw.assignTiers(.1,1);}
+    ASSERT_NO_THROW(ExplicitInertialSolverTestAccess::rk2(control.solver,.5,0));
+    EXPECT_NEAR(control.gw.state().led_source_in,.0005,1e-14);
+    const auto numerical=ExplicitInertialSolverTestAccess::state(r.solver),volume=r.state.volume;
+    const auto water=r.gw.state();const double initial=r.total();
+    EXPECT_THROW(ExplicitInertialSolverTestAccess::rk2(r.solver,4.5,0),std::runtime_error);
+    EXPECT_EQ(ExplicitInertialSolverTestAccess::state(r.solver),numerical);EXPECT_EQ(r.state.volume,volume);
+    EXPECT_EQ(r.gw.state().hg,water.hg);EXPECT_EQ(r.gw.state().hu,water.hu);
+    EXPECT_EQ(r.gw.state().xacc_to_surface,water.xacc_to_surface);EXPECT_EQ(r.gw.state().xacc_from_surface,water.xacc_from_surface);
+    EXPECT_DOUBLE_EQ(r.gw.state().led_source_in,water.led_source_in);EXPECT_DOUBLE_EQ(r.total(),initial);
+    r.gw.setSources({});ASSERT_NO_THROW(r.solver.advance(0,.1));EXPECT_NEAR(r.total(),initial,1e-10*initial);
 }

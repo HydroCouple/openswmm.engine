@@ -104,6 +104,10 @@ Groundwater chemistry, layered transport and porous heat require the CPU
 first-order coupling profile. A standalone CLOSED_FORM water-only mesh can
 use FULL_SWE with RECONSTRUCTION_ORDER 2; network/catchment exchange, aquifer
 edges, time-series wells and active transport/thermal owners remain guarded.
+Authored water-only well series are supported: shared surface/groundwater
+stages split at knots and sign reversals. Runtime providers and well quality
+terms remain guarded.
+
 This profile has an internal numerical component checkpoint, not managed
 engine-calendar or output continuation. Requests for accelerated backends
 retain observable CPU fallback; they do not qualify device groundwater.

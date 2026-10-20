@@ -201,8 +201,17 @@ def test_layered_chemistry_with_porous_heat(tmp_path, chemistry_layers, thermal_
         cleanup(solver)
 
 
-def test_water_only_coupled_rk2_advances_through_python(tmp_path):
-    solver = open_model(tmp_path, """
+@pytest.mark.parametrize('timed_well', [False, True])
+def test_water_only_coupled_rk2_advances_through_python(tmp_path, timed_well):
+    well = """
+[TIMESERIES]
+PUMP 01/01/2026 00:00:00 .000001
+PUMP 01/01/2026 00:00:01 .000003
+PUMP 01/01/2026 00:00:02 -.000001
+[GW_SOURCES]
+W CELL 1 FLOW PUMP
+""" if timed_well else ''
+    options = """
 [OPTIONS]
 END_DATE 01/01/2026
 END_TIME 00:00:02
@@ -228,16 +237,31 @@ TRANSPORT_POLLUTANTS NO
 TRANSPORT_MSX NO
 TRANSPORT_AGE NO
 TRANSPORT_TEMPERATURE NO
-""")
+""" + well
+    from openswmm.engine import Solver
+    from tests.engine._groundwater_cases import MODEL
+    path = tmp_path / 'model.inp'
+    # Set the base INP clock before parsing; repeated OPTIONS sections can
+    # retain the original cached duration, and OLE date edits floor seconds.
+    path.write_text(MODEL.replace('END_TIME 00:10:00', 'END_TIME 00:00:02')
+                    .replace('ROUTING_STEP 5', 'ROUTING_STEP .1') + options)
+    solver = Solver(path, path.with_suffix('.rpt'))
+    solver.open()
     try:
         solver.initialize()
         solver.start(False)
         while solver.step().total_seconds() > 0:
             pass
+        assert solver.elapsed.total_seconds() == 2
         gw = solver.surface2d.groundwater
         assert gw.active and gw.species == ()
         assert gw.ledger(GroundwaterLedger.INFIL_IN) > 0
         assert gw.ledger(GroundwaterLedger.DEEP) > 0
+        if timed_well:
+            # Native dated tables use floating-point days. The volume bound
+            # includes sub-microsecond calendar rounding at these small flows.
+            assert gw.ledger(GroundwaterLedger.SOURCE_IN) == pytest.approx(3.125e-6, abs=1e-12)
+            assert gw.ledger(GroundwaterLedger.SOURCE_OUT) == pytest.approx(.125e-6, abs=1e-12)
         assert abs(gw.continuity_error) < 1e-9
         assert np.isfinite(gw.cells(GroundwaterVariable.HG)).all()
         stats = solver.surface2d.run_stats

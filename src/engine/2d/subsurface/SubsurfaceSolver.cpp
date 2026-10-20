@@ -3079,8 +3079,8 @@ std::string SubsurfaceSolver::rk2ProfileError() const {
        std::any_of(source_owned_.begin(),source_owned_.end(),[](bool v){return v;}) ||
        std::any_of(state_.closure.begin(),state_.closure.end(),[](int8_t v){return v!=int8_t(GwClosure::CLOSED_FORM);}))
         return "Coupled RK2 requires spatial CLOSED_FORM water-only cells without borrowed source, network, thermal or boundary owners.";
-    for(const auto& source:sources_)if(!source.flow.timePoints().empty() || !source.terms.empty())
-        return "Coupled RK2 groundwater wells require constant water-only forcing.";
+    for(const auto& source:sources_)if(!source.terms.empty())
+        return "Coupled RK2 groundwater wells require water-only forcing.";
     for(const auto* values:{&state_.nacc,&state_.lacc})for(double v:*values)if(v!=0)
         return "Coupled RK2 cannot consume an unstaged external node/link receipt.";
     return {};

@@ -2210,7 +2210,7 @@ void ExplicitInertialSolver::computeLimitedGradientsSwe() {
 // U² = U¹ + Δt·L(U¹), Uⁿ⁺¹ = ½(U⁰ + U²). The per-advance ledgers that both
 // stages incremented (boundary ∫F dt, coupling ∫Q dt, infiltration applied)
 // are reset to their trapezoidal value, ½·(stage-1 + stage-2) increments.
-void ExplicitInertialSolver::runRk2Step(double dt,double time) {
+void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     std::unique_ptr<ExplicitInertialSolver> marcher0;
     std::unique_ptr<SurfaceStateData> surface0;
     std::unique_ptr<SubsurfaceSolver> ground0;
@@ -2229,6 +2229,30 @@ void ExplicitInertialSolver::runRk2Step(double dt,double time) {
         if(state_->boundary)receipts0=state_->boundary->receipts;
     }
     try {
+    // A forcing knot or sign reversal splits BOTH owners' stages. Splitting
+    // only fireGwCells would compose first-order aquifer substeps inside a
+    // surface Heun stage. On each smooth interval the exact mean prescribed
+    // well flow is used by both Euler evaluations and counted once by blending.
+    std::vector<double> cuts;
+    if(gw_)for(const auto& source:gw_->sources_) {
+        const auto& times=source.flow.timePoints();const auto& values=source.flow.ordinates();
+        const auto first=std::upper_bound(times.begin(),times.end(),start);
+        for(auto it=first;it!=times.end()&&*it<start+interval;++it)cuts.push_back(*it);
+        for(std::size_t j=std::max<std::size_t>(1,first-times.begin());j<times.size()&&times[j-1]<start+interval;++j)
+            if((values[j-1]<0&&values[j]>0)||(values[j-1]>0&&values[j]<0)) {
+            const double zero=times[j-1]+(times[j]-times[j-1])*(-values[j-1])/(values[j]-values[j-1]);
+            if(zero>start&&zero<start+interval)cuts.push_back(zero);
+        }
+    }
+    if(!cuts.empty()) {
+        cuts.push_back(start);cuts.push_back(start+interval);
+        std::sort(cuts.begin(),cuts.end());cuts.erase(std::unique(cuts.begin(),cuts.end()),cuts.end());
+    }
+    const std::size_t parts=cuts.empty()?1:cuts.size()-1;
+    for(std::size_t part=0;part<parts;++part) {
+    const double time=cuts.empty()?start:cuts[part],dt=cuts.empty()?interval:cuts[part+1]-time;
+    std::unique_ptr<SubsurfaceSolver> part_ground;
+    if(gw_&&part>0)part_ground=std::make_unique<SubsurfaceSolver>(*gw_);
     const int nt = mesh_->n_triangles();
     // Member buffers: vector assignment reuses capacity, so no per-step
     // allocation (F6).
@@ -2291,13 +2315,14 @@ void ExplicitInertialSolver::runRk2Step(double dt,double time) {
         node_drawn_[k] = rk_drawn0_[k] + 0.5 * (node_drawn_[k] - rk_drawn0_[k]);
     state_->evap_loss_total = evap0 + 0.5 * (state_->evap_loss_total - evap0);
     if(gw_) {
-        gw_->blendRk2Water(*ground0,time+dt);
+        gw_->blendRk2Water(part_ground?*part_ground:*ground0,time+dt);
         source_phase_end_=time+dt;
         gw_->publishRk2Infiltration(*state_,dt,time+dt);
     }
     accumulators_pending_ = false;
     substeps_run_ += 2;
     last_steps_   += 2;
+    }
     } catch(...) {
         if(marcher0) {
             *this=std::move(*marcher0);
