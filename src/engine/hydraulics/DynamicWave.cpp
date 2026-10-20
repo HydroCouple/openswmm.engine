@@ -188,6 +188,30 @@ static inline double conveyArea(double a, double a_full) {
     return (a > a_full) ? a_full : a;
 }
 
+/**
+ * @brief Area of the static Sjoberg Preissmann slot above the crown at depth y.
+ *
+ * @details The integral of getSlotWidth() from the crown to y (Simpson's rule
+ * on the Sjoberg formula up to 1.78 y_full, 1% of w_max above), so the slot
+ * area grows with depth and matches the width given to node continuity. Same
+ * as legacy dwflow.c getSlotArea().
+ */
+static double slotArea(double y, double y_full, double w_max) {
+    const int n = 8;
+    const double eta = std::min(y / y_full, 1.78);
+    const double dx = (eta - 1.0) / n;
+    double sum = 0.0;
+    for (int i = 0; i <= n; ++i) {
+        const double f = std::exp(-std::pow(1.0 + i * dx, 2.4));
+        if (i == 0 || i == n) sum += f;
+        else if (i % 2 == 1) sum += 4.0 * f;
+        else sum += 2.0 * f;
+    }
+    double a = y_full * w_max * 0.5423 * sum * dx / 3.0;
+    if (y > 1.78 * y_full) a += (y - 1.78 * y_full) * 0.01 * w_max;
+    return a;
+}
+
 // ============================================================================
 // Dynamic Preissmann Slot (DPS) — geometry override (head-first formulation)
 // Sharior et al. (2023) Eqs. 14, 15, 19 — applied in link-node form.
@@ -2446,17 +2470,17 @@ void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
             // is numerically the same and leaves the kernel values in place.
             if (depth1_[uj] > yf) {
                 const double wSlot = getSlotWidth(depth1_[uj], yf, wm, shape);
-                area1_[uj] = af + (depth1_[uj] - yf) * wSlot;
+                area1_[uj] = af + (wSlot > 0.0 ? slotArea(depth1_[uj], yf, wm) : 0.0);
                 hrad1_[uj] = rf;
             }
             if (depth2_[uj] > yf) {
                 const double wSlot = getSlotWidth(depth2_[uj], yf, wm, shape);
-                area2_[uj] = af + (depth2_[uj] - yf) * wSlot;
+                area2_[uj] = af + (wSlot > 0.0 ? slotArea(depth2_[uj], yf, wm) : 0.0);
             }
             const double yMid = depth_mid_[uj];
             if (yMid > yf) {
                 const double wSlot = getSlotWidth(yMid, yf, wm, shape);
-                area_mid_[uj] = af + (yMid - yf) * wSlot;
+                area_mid_[uj] = af + (wSlot > 0.0 ? slotArea(yMid, yf, wm) : 0.0);
                 if (wSlot > 0.0) width_mid_[uj] = wSlot;
                 hrad_mid_[uj] = rf;
             }

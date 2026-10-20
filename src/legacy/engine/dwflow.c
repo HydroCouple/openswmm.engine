@@ -61,6 +61,7 @@ static double findLocalLosses(int link, double a1, double a2, double aMid,
 static double getWidth(TXsect* xsect, double y);
 static double getSlotWidth(TXsect* xsect, double y);
 static double getArea(TXsect* xsect, double y, double wSlot);
+static double getSlotArea(TXsect* xsect, double y);
 static double getConveyArea(TXsect* xsect, double a);
 static double getHydRad(TXsect* xsect, double y);
 
@@ -694,8 +695,41 @@ double getArea(TXsect* xsect, double y, double wSlot)
 //  Purpose: computes area of flow cross-section in a conduit.
 //
 {
-    if ( y >= xsect->yFull ) return xsect->aFull + (y - xsect->yFull) * wSlot;
+    if ( y >= xsect->yFull )
+        return xsect->aFull + (wSlot > 0.0 ? getSlotArea(xsect, y) : 0.0);
     return xsect_getAofY(xsect, y);
+}
+
+//=============================================================================
+
+double getSlotArea(TXsect* xsect, double y)
+//
+//  Input:   xsect = ptr. to conduit cross section
+//           y     = flow depth (ft), >= full depth
+//  Output:  returns area of Preissmann slot above the crown (ft2)
+//  Purpose: integrates the slot width of getSlotWidth() from the crown to
+//           depth y (Simpson's rule on the Sjoberg formula up to 1.78 times
+//           the full depth, 1% of max. width above), so that the slot area
+//           grows with depth and matches the width used by node continuity.
+//
+{
+    int    i;
+    int    n = 8;
+    double eta = MIN(y / xsect->yFull, 1.78);
+    double dx = (eta - 1.0) / n;
+    double f, sum = 0.0, a;
+
+    for (i = 0; i <= n; i++)
+    {
+        f = exp(-pow(1.0 + i * dx, 2.4));
+        if ( i == 0 || i == n ) sum += f;
+        else if ( i % 2 == 1 ) sum += 4.0 * f;
+        else sum += 2.0 * f;
+    }
+    a = xsect->yFull * xsect->wMax * 0.5423 * sum * dx / 3.0;
+    if ( y > 1.78 * xsect->yFull )
+        a += (y - 1.78 * xsect->yFull) * 0.01 * xsect->wMax;
+    return a;
 }
 
 //=============================================================================
