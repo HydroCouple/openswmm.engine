@@ -1,0 +1,46 @@
+[TITLE]
+IO-11 two irregular channels in one conduit vs one channel with half the flow
+
+[OPTIONS]
+FLOW_UNITS     CFS
+FLOW_ROUTING   DYNWAVE
+START_DATE     01/01/2020
+START_TIME     00:00:00
+END_DATE       01/01/2020
+END_TIME       02:00:00
+REPORT_STEP    00:15:00
+ROUTING_STEP   5
+
+[JUNCTIONS]
+;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
+J1     100   10        0          0         0
+J2     100   10        0          0         0
+
+[OUTFALLS]
+O1     99    FREE
+O2     99    FREE
+
+[CONDUITS]
+;Name  From  To  Length  N     Z1  Z2  Q0  Qmax
+C1     J1    O1  1000    0.03  0   0   0   0
+C2     J2    O2  1000    0.03  0   0   0   0
+
+[XSECTIONS]
+;Link  Shape      Tsect  -  -  -  Barrels   (the layout the GUI writes)
+C1     IRREGULAR  T1     0  0  0  2
+C2     IRREGULAR  T1     0  0  0  1
+
+[INFLOWS]
+;C1 (2 barrels) gets 20 cfs, C2 (1 barrel) gets 10 cfs
+J1     FLOW  ""  FLOW  1.0  1.0  20
+J2     FLOW  ""  FLOW  1.0  1.0  10
+
+[TRANSECTS]
+NC  0.05  0.05  0.03
+X1  T1  4  10  30  0  0  0  0  0
+GR  105 0   100 10   100 30   105 40
+
+[REPORT]
+INPUT  YES
+NODES  ALL
+LINKS  ALL
