@@ -44,6 +44,7 @@ static double  Xrightbank;             // station where right overbank begins
 static double  Xfactor;                // multiplier for station spacing
 static double  Yfactor;                // factor added to station elevations
 static double  Lfactor;                // main channel/flood plain length
+static int     LastSlice;              // slice that ends the last sub-section
 
 //-----------------------------------------------------------------------------
 //  External functions (declared in funcs.h)   
@@ -252,6 +253,10 @@ void  transect_validate(int j)
     Nstations++;
     Station[Nstations] = Station[Nstations-1];
     Elev[Nstations] = Elev[0];
+
+    // --- the right end wall belongs to the last sub-section, as the
+    //     left end wall belongs to the first one
+    LastSlice = Nstations;
 
     // --- create geometry tables
     Transect[j].nTbl = N_TRANSECT_TBL;
@@ -560,7 +565,7 @@ double getFlow(int k, double a, double wp, int findFlow)
     if ( findFlow == FALSE)
     {
         // --- flow needs updating if we are at last station
-        if ( k == Nstations - 1 ) findFlow = TRUE;
+        if ( k == LastSlice ) findFlow = TRUE;
 
         // --- flow needs updating if we are at end of left overbank and
         //     there is a change in Manning's n and section not vertical
@@ -682,6 +687,9 @@ void  transect_createStreetTransect(TStreet* street)
         Nstations = 8;
         street->transect.nTbl = N_TRANSECT_TBL;
     }
+
+    // --- the last slice (crown or right sidewalk) forms its own sub-section
+    LastSlice = Nstations - 1;
 
     // --- assign Manning's N to street
     Nchannel = street->roughness;

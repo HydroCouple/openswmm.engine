@@ -105,9 +105,13 @@ void buildTables(TransectData& td, bool add_end_walls) {
         Nsta = N - 1;
     }
 
+    // A transect's right end wall belongs to its last sub-section, as the left
+    // end wall belongs to the first; a street keeps its last slice separate.
+    const int lastSlice = add_end_walls ? Nsta : Nsta - 1;
+
     auto getFlow = [&](int k, double a, double wp, bool findFlow) -> double {
         if (!findFlow) {
-            if (k == Nsta - 1) {
+            if (k == lastSlice) {
                 findFlow = true;
             } else if (X[static_cast<size_t>(k)] == xLeftBank) {
                 if (nLeft != nChannel &&
