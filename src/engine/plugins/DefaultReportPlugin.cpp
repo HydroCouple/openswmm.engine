@@ -844,17 +844,6 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
                          (ctx.cheb_sections.size() == 1 ? "" : "s"));
         }
 
-        if (rm == 2) { // DYNWAVE
-            int sm = opt.surcharge_method;
-            const char* sm_name = (sm >= 0 && sm <= 2) ? SurchargeWords[sm] : "EXTRAN";
-            std::fprintf(f, "\n  Surcharge Method ......... %s", sm_name);
-            const char* nc_name = (opt.node_continuity == NodeContinuity::SEMI_IMPLICIT)
-                                  ? "SEMI_IMPLICIT" : "EXPLICIT";
-            std::fprintf(f, "\n  Node Continuity .......... %s", nc_name);
-            std::fprintf(f, "\n  Anderson Acceleration .... %s",
-                         opt.anderson_accel ? "YES" : "NO");
-        }
-
         // Unsteady friction (issue #156): applies to DW and FV alike.
         if ((rm == 2 || rm == 3) && opt.unsteady_friction != 0) {
             std::fprintf(f, "\n  Unsteady Friction ........ VITKOVSKY (k3 = %g)",
