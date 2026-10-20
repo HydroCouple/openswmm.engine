@@ -1423,6 +1423,7 @@ class ReactionScope(IntEnum):
     TERM = 0
     PIPE = 1
     TANK = 2
+    SUBSURFACE = 3
 
 
 class ReactionExprForm(IntEnum):
@@ -1718,6 +1719,8 @@ class GroundwaterLedger(IntEnum):
     SOURCE_IN = 11
     SOURCE_OUT = 12
     REJECT = 13
+    BOUNDARY_IN = 14
+    BOUNDARY_OUT = 15
 
 
 class GroundwaterZone(IntEnum):
@@ -1743,6 +1746,11 @@ class GroundwaterSpeciesLedger(IntEnum):
     RESIDUAL = 12
     SOURCE_IN = 13
     SOURCE_OUT = 14
+    BOUNDARY_IN = 15
+    BOUNDARY_OUT = 16
+    BOUNDARY_FLUX_IN = 17
+    BOUNDARY_FLUX_OUT = 18
+    AGE_GENERATED = 19
 
 
 class GroundwaterTransportZone(IntEnum):

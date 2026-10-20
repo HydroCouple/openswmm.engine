@@ -8,6 +8,8 @@
 #include "GeoPackageReader.hpp"
 #ifdef OPENSWMM_HAS_2D
 #include "2d/subsurface/SubsurfaceSections.hpp"
+#include "2d/gw/GwTransportSections.hpp"
+#include "2d/gw/GwTransportData.hpp"
 #endif
 #include <sstream>
 #include "../../core/Constants.hpp"
@@ -2296,15 +2298,16 @@ int read_model(sqlite3* db, SimulationContext& ctx,
 #else
                 if(!ctx.twod_io.aquifer||!ctx.twod_io.aquifer_nodes||!ctx.twod_io.aquifer_links)
                     throw GpkgError("Reviewed surface ownership requires a 2D-enabled engine.");
-                twoD::SubsurfaceConfig proposed;std::vector<std::string> nodes,links;
+                twoD::SubsurfaceConfig proposed;twoD::GwTransportData groundwater;std::vector<std::string> nodes,links;
                 input::SectionRegistry registry;twoD::registerSubsurfaceSections(proposed,nodes,links,registry);
+                twoD::registerGwTransportSections(groundwater,registry);
                 std::istringstream lines(column_text(row.get(),0));std::string line,section;std::vector<std::string> body;
-                auto flush=[&]{if(!section.empty()){if(!registry.has(section))throw GpkgError("Unknown reviewed aquifer section: "+section);registry.dispatch(section,ctx,body);if(ctx.error_code)throw GpkgError(ctx.error_message);}body.clear();};
+                auto flush=[&]{if(section.starts_with("REACTION_")){ctx.embedded_component_sections.emplace_back(section,body);body.clear();return;}if(!section.empty()){if(!registry.has(section))throw GpkgError("Unknown reviewed aquifer section: "+section);registry.dispatch(section,ctx,body);if(ctx.error_code)throw GpkgError(ctx.error_message);}body.clear();};
                 while(std::getline(lines,line)){
                     if(!line.empty()&&line.front()=='['){flush();const auto end=line.find(']');if(end==std::string::npos)throw GpkgError("Invalid reviewed aquifer section.");section=line.substr(1,end-1);}
                     else body.push_back(line);
                 }
-                flush();*ctx.twod_io.aquifer=std::move(proposed);*ctx.twod_io.aquifer_nodes=std::move(nodes);*ctx.twod_io.aquifer_links=std::move(links);
+                flush();if(ctx.twod_io.gw)*ctx.twod_io.gw=std::move(groundwater);*ctx.twod_io.aquifer=std::move(proposed);*ctx.twod_io.aquifer_nodes=std::move(nodes);*ctx.twod_io.aquifer_links=std::move(links);
 #endif
             }
         }

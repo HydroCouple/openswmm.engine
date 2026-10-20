@@ -457,6 +457,14 @@ struct SimulationSnapshot {
     /// Initial finite bed-porewater amount, species-major `[species, face]`;
     /// age is converted from seconds to hours, matching the reported species.
     std::vector<double> thermal2d_bed_species_initial_amount;
+    // Additive groundwater completion output, absent for compatibility BULK profiles.
+    int gw2d_transport_layers=0,gw2d_boundary_count=0;
+    std::vector<double> gw2d_layer_mass,gw2d_layer_concentration; // [species,layer,face]
+    std::vector<double> gw2d_boundary_water; // [boundary,4]: requested in/out, accepted in/out
+    std::vector<double> gw2d_boundary_species; // [species,boundary,4]: advective in/out, imposed in/out
+    std::vector<int> gw2d_boundary_cell_edge; // [boundary,2], zero-based
+    std::vector<double> gw2d_transport_ledger; // [species,20], append-only public SPL terms
+
 };
 
 } /* namespace openswmm */

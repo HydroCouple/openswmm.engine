@@ -36,6 +36,7 @@
 
 #include "../../core/SWMMEngine.hpp"
 #include "../subsurface/SubsurfaceSections.hpp"
+#include "../subsurface/GroundwaterConcentration.hpp"
 #include "../subsurface/SubsurfaceSolver.hpp"
 #include "../../core/UnitConversion.hpp"
 
@@ -96,6 +97,55 @@ bool ieq(const char* a, const char* b) {
     if (!gw.active()) return SWMM_ERR_LIFECYCLE
 
 extern "C" {
+
+SWMM_ENGINE_API int swmm_gw2d_boundary_count(SWMM_Engine engine) {
+    AQ_CFG(engine);return static_cast<int>(cfg.boundaries.size());
+}
+SWMM_ENGINE_API int swmm_gw2d_boundary_get(SWMM_Engine engine,int index,
+    SWMM_GwBoundary* row,char* series,int length) {
+    AQ_CFG(engine);
+    if(index<0||index>=int(cfg.boundaries.size()))return SWMM_ERR_BADINDEX;
+    if(!row||!series||length<=0)return SWMM_ERR_BADPARAM;
+    const auto& b=cfg.boundaries[index];
+    if(b.series.size()>=std::size_t(length))return SWMM_ERR_BADPARAM;
+    *row={b.cell,b.edge,b.head?SWMM_GW2D_BOUNDARY_HEAD:SWMM_GW2D_BOUNDARY_FLOW,b.value};
+    copy_to(b.series,series,length);return SWMM_OK;
+}
+SWMM_ENGINE_API int swmm_gw2d_boundary_set(SWMM_Engine engine,const SWMM_GwBoundary* row,const char* series) {
+    AQ_CFG(engine);AQ_EDITABLE(eng);
+    if(!row||row->cell<0||row->edge<0||row->edge>3||!std::isfinite(row->value)||
+       (row->kind!=SWMM_GW2D_BOUNDARY_HEAD&&row->kind!=SWMM_GW2D_BOUNDARY_FLOW))return SWMM_ERR_BADPARAM;
+    const std::string name=series?series:"";
+    if(name.find_first_of("\r\n\"")!=std::string::npos)return SWMM_ERR_BADPARAM;
+    openswmm::twoD::GwBoundaryRow replacement{row->cell,row->edge,row->kind==SWMM_GW2D_BOUNDARY_HEAD,row->value,name};
+    auto next=cfg.boundaries;
+    const auto old=std::find_if(next.begin(),next.end(),[&](const auto& b){return b.cell==row->cell&&b.edge==row->edge;});
+    if(old==next.end())next.push_back(std::move(replacement));else *old=std::move(replacement);
+    cfg.boundaries.swap(next);cfg.options.authored=true;return SWMM_OK;
+}
+SWMM_ENGINE_API int swmm_gw2d_boundary_remove(SWMM_Engine engine,int index) {
+    AQ_CFG(engine);AQ_EDITABLE(eng);
+    if(index<0||index>=int(cfg.boundaries.size()))return SWMM_ERR_BADINDEX;
+    cfg.boundaries.erase(cfg.boundaries.begin()+index);return SWMM_OK;
+}
+SWMM_ENGINE_API int swmm_gw2d_boundary_water(SWMM_Engine engine,int index,
+    double* requested_in,double* requested_out,double* applied_in,double* applied_out) {
+    AQ_SOLVER(engine);
+    if(index<0||index>=int(gw.boundaries().size()))return SWMM_ERR_BADINDEX;
+    if(!requested_in||!requested_out||!applied_in||!applied_out)return SWMM_ERR_BADPARAM;
+    const auto& b=gw.boundaries()[index];
+    *requested_in=b.requested_in;*requested_out=b.requested_out;
+    *applied_in=b.applied_in;*applied_out=b.applied_out;return SWMM_OK;
+}
+SWMM_ENGINE_API int swmm_gw2d_boundary_species(SWMM_Engine engine,int index,int species,
+    double* advective_in,double* advective_out,double* imposed_in,double* imposed_out) {
+    AQ_SOLVER(engine);
+    if(index<0||index>=int(gw.boundaries().size())||species<0||species>=gw.transport().n_species)return SWMM_ERR_BADINDEX;
+    if(!advective_in||!advective_out||!imposed_in||!imposed_out)return SWMM_ERR_BADPARAM;
+    const auto& b=gw.boundaries()[index];
+    *advective_in=b.mass_in[species];*advective_out=b.mass_out[species];
+    *imposed_in=b.flux_in[species];*imposed_out=b.flux_out[species];return SWMM_OK;
+}
 
 // ---------------------------------------------------------------------------
 // [2D_AQUIFER_OPTIONS]
@@ -649,7 +699,7 @@ SWMM_ENGINE_API int swmm_gw2d_get_ledger(SWMM_Engine engine, int term,
         case SWMM_GW2D_LED_LATERAL:      *value = st.led_lateral; break;
         case SWMM_GW2D_LED_DEEP:         *value = st.led_deep; break;
         case SWMM_GW2D_LED_NODE:         *value = st.led_node; break;
-        case SWMM_GW2D_LED_REJECT: return st.led_reject;
+        case SWMM_GW2D_LED_REJECT: *value=st.led_reject; break;
         case SWMM_GW2D_LED_DUNNE:        *value = st.led_dunne; break;
         case SWMM_GW2D_LED_CAPRISE:      *value = st.led_caprise; break;
         case SWMM_GW2D_LED_ET:           *value = st.led_et; break;
@@ -658,6 +708,8 @@ SWMM_ENGINE_API int swmm_gw2d_get_ledger(SWMM_Engine engine, int term,
         case SWMM_GW2D_LED_STORAGE:      *value = liveStorage(gw); break;
         case SWMM_GW2D_LED_SOURCE_IN: *value = st.led_source_in; break;
         case SWMM_GW2D_LED_SOURCE_OUT: *value = st.led_source_out; break;
+        case SWMM_GW2D_LED_BOUNDARY_IN: *value=st.led_boundary_in;break;
+        case SWMM_GW2D_LED_BOUNDARY_OUT: *value=st.led_boundary_out;break;
         case SWMM_GW2D_LED_LINK:         *value = st.led_link; break;   // G-X3
         default: return SWMM_ERR_BADPARAM;
     }
@@ -698,14 +750,26 @@ SWMM_ENGINE_API int swmm_gw2d_get_cell_conc(SWMM_Engine engine, int zone,
         return SWMM_ERR_BADINDEX;
     const int n = std::min(len, tr.n_cells);
     for (int c = 0; c < n; ++c) {
-        const double v = (zone == SWMM_GW2D_ZONE_SAT) ? gw.satVolume(c)
-                                                      : gw.unsatVolume(c);
-        const auto k = tr.idx(species, c);
-        const double m = (zone == SWMM_GW2D_ZONE_SAT) ? tr.sat_mass[k]
-                                                      : tr.unsat_mass[k];
-        out[c] = (v > 0.0) ? m / v : 0.0;
+        out[c]=openswmm::twoD::groundwaterZoneConcentration(gw,c,species,zone==SWMM_GW2D_ZONE_SAT);
     }
     if (written) *written = n;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gw2d_get_layer_quality(SWMM_Engine engine,int cell,
+        int layer,int species,double* water,double* mass,double* concentration) {
+    AQ_SOLVER(engine);
+    if(!water||!mass||!concentration)return SWMM_ERR_BADPARAM;
+    const auto& tr=gw.transport();const auto& st=gw.state();
+    if(tr.n_layers==0)return SWMM_ERR_BADPARAM;
+    if(!gw.covers(cell)||layer<0||layer>=tr.n_layers||species<0||species>=tr.n_species)
+        return SWMM_ERR_BADINDEX;
+    const double bulk=st.area[cell]*(st.zs[cell]-st.hg[cell])/tr.n_layers;
+    const double volume=bulk*st.theta_sigma[std::size_t(layer)*st.n_cells+cell];
+    const double stored=tr.layer_mass[tr.layerIdx(species,layer,cell)];
+    const double partition=(species==tr.age_row||species==tr.temp_row)?0:tr.kd[tr.idx(species,cell)]*tr.rho_b[cell];
+    const double capacity=volume+partition*bulk;
+    *water=volume;*mass=stored;*concentration=capacity>0?stored/capacity:0;
     return SWMM_OK;
 }
 
@@ -733,6 +797,11 @@ SWMM_ENGINE_API int swmm_gw2d_get_species_ledger(SWMM_Engine engine,
         case SWMM_GW2D_SPL_REACTED:     *value = tr.lost_reaction[u]; break;
         case SWMM_GW2D_SPL_SOURCE_IN: *value = tr.gained_source[u]; break;
         case SWMM_GW2D_SPL_SOURCE_OUT: *value = tr.lost_source[u]; break;
+        case SWMM_GW2D_SPL_BOUNDARY_IN: *value=tr.boundary_in[u];break;
+        case SWMM_GW2D_SPL_BOUNDARY_OUT: *value=tr.boundary_out[u];break;
+        case SWMM_GW2D_SPL_BOUNDARY_FLUX_IN: *value=tr.boundary_flux_in[u];break;
+        case SWMM_GW2D_SPL_BOUNDARY_FLUX_OUT: *value=tr.boundary_flux_out[u];break;
+        case SWMM_GW2D_SPL_AGE_GENERATED: *value=tr.generated_age.empty()?0:tr.generated_age[u];break;
         case SWMM_GW2D_SPL_RESIDUAL:    *value = tr.residual(species); break;
         default: return SWMM_ERR_BADPARAM;
     }

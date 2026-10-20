@@ -56,7 +56,12 @@
 
 #include "../../../data/ReactionTokens.hpp"
 
+namespace openswmm {struct ReactionData;}
 namespace openswmm::transport {
+
+/// context: 0=network, 1=shared term definition, 2=groundwater.
+std::string reactionContextDiagnostic(const ReactionData&,const std::vector<RxToken>&,
+    const RxExprSpan&,int context);
 
 using openswmm::RxToken;
 using openswmm::RxExprSpan;

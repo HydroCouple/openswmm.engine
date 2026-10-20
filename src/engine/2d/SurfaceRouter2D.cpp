@@ -1302,14 +1302,15 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                             static_cast<std::size_t>(p) < ctx.pollutants.k_decay.size(); ++p)
                 pollut_decay[static_cast<std::size_t>(p)] =
                     ctx.pollutants.k_decay[static_cast<std::size_t>(p)];
-            if (!gw_.boundary_quality.empty())
-                throw std::runtime_error("[GW_BOUNDARY_QUALITY] is unsupported: no hydraulic groundwater edge binding exists; use a well/source for operational forcing.");
             for (const auto& row : gw_.initial_quality)
-                if (row.zone == GwZone::LAYER && !(gw_.options.thermal_model=="POROUS_EQUILIBRIUM" &&
+                if (row.zone == GwZone::LAYER && gw_.options.unsat_transport!="LAYERED" && !(gw_.options.thermal_model=="POROUS_EQUILIBRIUM" &&
                     GL.temp_row>=0 && row.species=="__TEMPERATURE__"))
                     throw std::runtime_error("[GW_INITIAL_QUALITY] LAYER is unsupported by bulk groundwater transport; use SAT or UNSAT explicitly.");
             subsurface_.initTransport(rows, &gw_, pollut_decay, ctx.warnings);
+            subsurface_.setBoundaries(resolveGwBoundaries(ctx,mesh_,aquifer_cfg_,gw_,
+                subsurface_.state(),subsurface_.transport(),subsurface_.coverage(),options_.water_heat_capacity));
             if(auto error=subsurface_.initHeat(ctx,gw_);!error.empty())throw std::runtime_error("[2D ground heat] "+error);
+            if(auto error=subsurface_.initReactions(ctx);!error.empty())throw std::runtime_error(error);
             marcher->refreshSubsurfaceRows();
             {
                 auto sources = resolveGwSources(ctx, mesh_, gw_, subsurface_.state(), subsurface_.transport());
@@ -1723,7 +1724,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     if(auto error=configureGroundLidOwners(ctx,mesh_,subsurface_.heat(),subsurface_.nodeBeds());!error.empty())
         throw std::runtime_error("[2D LID heat] "+error);
     configureSnowGroundContacts();
-    if(state_.heat.ground_column&&subsurface_.heat().active())
+    if((state_.heat.ground_column || !ctx.reactions.subsurface_laws.empty())&&subsurface_.heat().active())
         if(auto error=subsurface_.initPorewater();!error.empty())throw std::runtime_error("[2D porewater] "+error);
     if(state_.heat.ground_column&&!subsurface_.transport().generated_age.empty()&&
        (state_.transport.n_species!=subsurface_.transport().n_species||
@@ -1992,10 +1993,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
         outfall_state_changed_ = false;
     }
     publishNodeRows(ctx);
-    if (subsurface_.active() && subsurface_.transport().active())
-        subsurface_.setNodeRowConc(node_row_conc_.empty() ? nullptr
-                                                          : node_row_conc_.data(),
-                                   state_.transport.n_species);
+    if(subsurface_.active())subsurface_.publishNodeConcentrations(ctx);
 
     // Rainfall / forcings on a coarse cadence: gage values change at the gage
     // timestep (minutes), and the per-cell interpolation apply is O(nt) — per
@@ -2457,7 +2455,7 @@ double SurfaceRouter2D::linkRowConc(const SimulationContext& ctx, int link,
     // leaking pipe delivered water without its species.
     if (s >= tr.n_pollut && s < tr.n_pollut + tr.n_msx) {
         const auto ns = static_cast<std::size_t>(ctx.reactions.n_species());
-        const auto k = ul * ns + static_cast<std::size_t>(s - tr.n_pollut);
+        const auto k = ul * ns + static_cast<std::size_t>(ctx.reactions.find_species(tr.row_names[s]));
         return (k < ctx.reactions.msx_link_conc.size()) ? ctx.reactions.msx_link_conc[k] : 0.0;
     }
     if (s < tr.n_pollut) {
@@ -2518,7 +2516,7 @@ void SurfaceRouter2D::flushAquiferNodeSpecies(SimulationContext& ctx) {
                 auto& mq = ctx.reactions.msx_coupling_queue;
                 if (mq.size() != static_cast<std::size_t>(ctx.n_nodes()) * nsp_all)
                     mq.assign(static_cast<std::size_t>(ctx.n_nodes()) * nsp_all, 0.0);
-                const std::size_t k = ni * nsp_all + static_cast<std::size_t>(sp - gtr.n_pollut);
+                const std::size_t k = ni * nsp_all + static_cast<std::size_t>(ctx.reactions.find_species(gtr.row_names[sp]));
                 if (k < mq.size()) mq[k] += m;
             }
         }
@@ -2555,6 +2553,7 @@ void SurfaceRouter2D::flushAquiferNodeSpecies(SimulationContext& ctx) {
                 if (nv[ni] >= 0.0) continue;
                 const double v_1d = -nv[ni] * options_.flow_2d_to_1d;
                 for (std::size_t m = 0; m < ns; ++m) {
+                    if(gtr.rowIndex(rx.species_name[m])<0)continue;
                     const std::size_t k = ni * ns + m;
                     if (k < rx.msx_node_conc.size()) led.seepage[m] += v_1d * rx.msx_node_conc[k];
                 }
@@ -2610,7 +2609,7 @@ void SurfaceRouter2D::publishLinkCoupling(SimulationContext& ctx) {
             const auto c = static_cast<std::size_t>(sh.cell);
             h_gw_m += sh.weight * (gw.z_bed[c] + gw.hg[c]);
             w_sum  += sh.weight;
-            const double Sy = std::max(gw.theta_s[c] - gw.theta_r[c], 1.0e-3);
+            const double Sy = subsurface_.specificYieldOf(int(c));
             const double avail = gw.hg[c] * Sy * gw.area[c];       // m³
             // What is LEFT of this cell's share: `lacc` holds every volume
             // booked since its last firing (negative while the conduit
@@ -2620,12 +2619,14 @@ void SurfaceRouter2D::publishLinkCoupling(SimulationContext& ctx) {
             // aquifer then had no channel to refund through, and created
             // the water instead) — the node exchange's per-batch budget,
             // here expressed with the accumulator itself (G-X1 rule 2).
-            double left = kLinkFaceShare * avail + gw.lacc[c];
+            int consumers=0;
+            for(const auto& share:aquifer_link_shares_)if(share.cell==int(c))++consumers;
+            double left=std::min(kLinkFaceShare*avail+std::min(0.,gw.lacc[c]),
+                subsurface_.unreservedDrainableWater(int(c)))/std::max(1,consumers);
             if(subsurface_.lidReceiptsEnabled()) {
                 SubsurfaceSolver::NodeWaterBudget budget;
                 if(auto e=subsurface_.nodeWaterBudget(int(c),std::max(ctx.options.routing_step,1.e-6),budget);!e.empty())
                     throw std::runtime_error(e);
-                int consumers=0;for(const auto& share:aquifer_link_shares_)if(share.cell==int(c))++consumers;
                 left=std::min(left,budget.donor/std::max(1,consumers));
             }
             if (sh.weight > 0.0)
@@ -2755,7 +2756,14 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
             const int barrels = std::max(CD.barrels[ucr], 1);
             const double vol_2d =
                 rate * barrels * routing_dt * options_.vol_1d_to_2d * sh.weight;
-            subsurface_.bookLinkSeepage(sh.cell, vol_2d);
+            const bool layered_contact=rate>0 && subsurface_.transport().n_layers>0;
+            if(layered_contact) {
+                const auto& gtr=subsurface_.transport();std::vector<double> concentration(gtr.n_species);
+                for(int sp=0;sp<gtr.n_species;++sp)concentration[sp]=linkRowConc(ctx,sh.link,sp,gtr);
+                for(const auto& contact:sh.contacts)
+                    subsurface_.bookLinkContact(sh.cell,vol_2d*contact.weight/sh.weight,
+                                               concentration,contact.begin,contact.end);
+            } else subsurface_.bookLinkSeepage(sh.cell, vol_2d);
             // T7.4: …and its quality, for a LEAKING conduit. The 1D
             // quality solver already debits this mass as the conduit's
             // exfiltration loss (`qual_routing_seep`), so handing it over
@@ -2765,7 +2773,7 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
             //     Review F22 (2026-10-15): in the aquifer's conc·m³, i.e.
             //     on `vol_2d`. Booking `rate·barrels·dt·weight` (ft³) made a
             //     leaking pipe deliver 35.31× its own concentration.
-            if (rate > 0.0 && subsurface_.transport().active()) {
+            if (rate > 0.0 && !layered_contact && subsurface_.transport().active()) {
                 const auto& gtr = subsurface_.transport();
                 for (int sp = 0; sp < gtr.n_species; ++sp) {
                     const double c = linkRowConc(ctx, sh.link, sp, gtr);
@@ -2806,8 +2814,8 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
                         const double me = fr[e] * m1;
                         if (sp < gtr.n_pollut && sp < np_1d)
                             q1d.mass[un * static_cast<std::size_t>(np_1d) + static_cast<std::size_t>(sp)] += me;
-                        else if (sp >= gtr.n_pollut && sp < gtr.n_pollut + gtr.n_msx && sp - gtr.n_pollut < ns_1d)
-                            q1d.msx[un * static_cast<std::size_t>(ns_1d) + static_cast<std::size_t>(sp - gtr.n_pollut)] += me;
+                        else if (sp >= gtr.n_pollut && sp < gtr.n_pollut + gtr.n_msx && ctx.reactions.find_species(gtr.row_names[sp]) < ns_1d)
+                            q1d.msx[un * static_cast<std::size_t>(ns_1d) + static_cast<std::size_t>(ctx.reactions.find_species(gtr.row_names[sp]))] += me;
                         else if (sp == gtr.age_row) q1d.age_vol[un] += me;
                         else if (sp == gtr.temp_row) q1d.temp_vol[un] += me;
                     }

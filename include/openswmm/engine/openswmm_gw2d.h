@@ -78,6 +78,30 @@ extern "C" {
 #define SWMM_GW2D_CLOSURE_ENSLAVED    1
 #define SWMM_GW2D_CLOSURE_SIGMA       2
 
+/* ---- Exterior hydraulic boundaries ------------------------------------- */
+#define SWMM_GW2D_BOUNDARY_HEAD 0
+#define SWMM_GW2D_BOUNDARY_FLOW 1
+/** Authored HEAD is project-length elevation; FLOW is total signed m3/s,
+ * positive into the aquifer. cell/edge are zero-based. A nonempty series
+ * supplied to set/get replaces the constant value. Edits require BUILDING/OPENED. */
+typedef struct SWMM_GwBoundary {
+    int cell, edge, kind;
+    double value;
+} SWMM_GwBoundary;
+SWMM_ENGINE_API int swmm_gw2d_boundary_count(SWMM_Engine engine);
+SWMM_ENGINE_API int swmm_gw2d_boundary_get(SWMM_Engine engine,int index,
+    SWMM_GwBoundary* row,char* series,int series_len);
+SWMM_ENGINE_API int swmm_gw2d_boundary_set(SWMM_Engine engine,
+    const SWMM_GwBoundary* row,const char* series);
+SWMM_ENGINE_API int swmm_gw2d_boundary_remove(SWMM_Engine engine,int index);
+/** Runtime totals, in SI m3; getters leave outputs unchanged on error. */
+SWMM_ENGINE_API int swmm_gw2d_boundary_water(SWMM_Engine engine,int index,
+    double* requested_in,double* requested_out,double* applied_in,double* applied_out);
+/** Runtime totals in native concentration*m3 (age s*m3, temperature degC*m3).
+ * advective in/out and independently imposed flux in/out are separate. */
+SWMM_ENGINE_API int swmm_gw2d_boundary_species(SWMM_Engine engine,int index,int species,
+    double* advective_in,double* advective_out,double* imposed_in,double* imposed_out);
+
 /* ---- Per-cell state selectors ------------------------------------------- */
 
 #define SWMM_GW2D_VAR_HG        0   /**< saturated thickness (m) */
@@ -126,6 +150,8 @@ extern "C" {
 #define SWMM_GW2D_LED_INIT_STORAGE  8
 #define SWMM_GW2D_LED_STORAGE       9   /**< storage NOW, incl. accumulators */
 #define SWMM_GW2D_LED_SOURCE_IN     11  /**< Named source injection, m3. */
+#define SWMM_GW2D_LED_BOUNDARY_IN   14  /**< Gross boundary inflow; included in LATERAL. */
+#define SWMM_GW2D_LED_BOUNDARY_OUT  15  /**< Gross boundary outflow; included in LATERAL. */
 #define SWMM_GW2D_LED_SOURCE_OUT    12  /**< Actual availability-limited extraction, m3. */
 #define SWMM_GW2D_LED_LINK          10  /**< G-X3: conduit seepage delivered in */
 
@@ -150,6 +176,11 @@ extern "C" {
 #define SWMM_GW2D_SPL_REACTED     11
 #define SWMM_GW2D_SPL_SOURCE_IN   13  /**< Native concentration times m3. */
 #define SWMM_GW2D_SPL_SOURCE_OUT  14  /**< Extracted dissolved species. */
+#define SWMM_GW2D_SPL_BOUNDARY_IN 15
+#define SWMM_GW2D_SPL_BOUNDARY_OUT 16
+#define SWMM_GW2D_SPL_BOUNDARY_FLUX_IN 17
+#define SWMM_GW2D_SPL_BOUNDARY_FLUX_OUT 18
+#define SWMM_GW2D_SPL_AGE_GENERATED 19
 #define SWMM_GW2D_SPL_RESIDUAL    12  /**< storage + out - in - init */
 
 /** How many species rows the aquifer transports (0 when it carries none). */
@@ -161,11 +192,18 @@ SWMM_ENGINE_API int swmm_gw2d_species_name(SWMM_Engine engine, int species,
                                            char* buf, int buflen);
 
 /** Per-cell CONCENTRATION of one species in one zone, in the species' own
- *  units (mass / m3 of that zone's water). A zone with no water reports 0.
+ *  units. BULK retains total inventory / water volume (zero when dry).
+ *  LAYERED uses aqueous plus sorption capacity for a dissolved equivalent.
  *  Writes at most @p len values and sets @p written. */
 SWMM_ENGINE_API int swmm_gw2d_get_cell_conc(SWMM_Engine engine, int zone,
                                             int species, double* out, int len,
                                             int* written);
+
+/** Canonical SIGMA chemistry, zero-based layer and species. Outputs are
+ * unchanged on error; BULK chemistry returns SWMM_ERR_BADPARAM. Mass uses
+ * native concentration times m3, water uses m3, concentration is dissolved. */
+SWMM_ENGINE_API int swmm_gw2d_get_layer_quality(SWMM_Engine engine,int cell,
+        int layer,int species,double* water,double* mass,double* concentration);
 
 /** One term of one species' cumulative ledger — see SWMM_GW2D_SPL_*. */
 SWMM_ENGINE_API int swmm_gw2d_get_species_ledger(SWMM_Engine engine,

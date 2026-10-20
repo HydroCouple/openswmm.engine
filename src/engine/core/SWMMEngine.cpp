@@ -54,6 +54,7 @@
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/gw/GwTransportSections.hpp"   // U4
 #include "../2d/subsurface/SubsurfaceSections.hpp"   // G1
+#include "../2d/subsurface/GroundwaterConcentration.hpp"
 #include "../2d/heat/LidNodeHeat.hpp"
 #endif
 #include "../transport/components/HeatFluxModules/HeatOverrides.hpp"  // PE2
@@ -924,6 +925,9 @@ int SWMMEngine::initialize() noexcept {
     }
 
 #ifndef OPENSWMM_HAS_2D
+    if(!ctx_.reactions.subsurface_laws.empty()) {
+        set_error(SWMM_ERR_PLUGIN,"REACTION_SUBSURFACE requires a 2D-enabled groundwater engine.");return SWMM_ERR_PLUGIN;
+    }
     if(ctx_.options.heat_transport&&ctx_.heat_config.sediment_exchange)
         for(int link=0;link<ctx_.n_links();++link)
             if(transport::heat::sedimentFor(ctx_,HeatElement::link(link)).mesh_ground) {
@@ -7538,18 +7542,48 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                 const auto& tr = gw.transport();
                 snap.gw2d_species_count = tr.active() ? tr.n_species : 0;
                 snap.gw2d_species_names = tr.active() ? &tr.row_names : nullptr;
+                snap.gw2d_transport_layers=tr.n_layers;
+                snap.gw2d_layer_mass=tr.layer_mass;snap.gw2d_layer_concentration.assign(tr.layer_mass.size(),0);
+                for(int sp=0;sp<tr.n_species;++sp)for(int layer=0;layer<tr.n_layers;++layer)for(int cell=0;cell<g.n_cells;++cell) {
+                    const double bulk=g.area[cell]*std::max(0.,g.zs[cell]-g.hg[cell])/tr.n_layers;
+                    const double partition=(sp==tr.age_row||sp==tr.temp_row)?0:tr.kd[tr.idx(sp,cell)]*tr.rho_b[cell];
+                    const double capacity=bulk*(g.theta_sigma[std::size_t(layer)*g.n_cells+cell]+partition);
+                    const auto k=tr.layerIdx(sp,layer,cell);
+                    if(capacity>0)snap.gw2d_layer_concentration[k]=tr.layer_mass[k]/capacity;
+                }
+                const auto& boundaries=gw.boundaries();snap.gw2d_boundary_count=int(boundaries.size());
+                snap.gw2d_boundary_water.clear();snap.gw2d_boundary_cell_edge.clear();
+                snap.gw2d_boundary_species.assign(std::size_t(tr.n_species)*boundaries.size()*4,0);
+                for(std::size_t row=0;row<boundaries.size();++row) {
+                    const auto& edge=boundaries[row];
+                    snap.gw2d_boundary_water.insert(snap.gw2d_boundary_water.end(),{edge.requested_in,edge.requested_out,edge.applied_in,edge.applied_out});
+                    snap.gw2d_boundary_cell_edge.insert(snap.gw2d_boundary_cell_edge.end(),{edge.cell,edge.edge});
+                    for(int sp=0;sp<tr.n_species;++sp) {
+                        auto* values=&snap.gw2d_boundary_species[(std::size_t(sp)*boundaries.size()+row)*4];
+                        values[0]=edge.mass_in[sp];values[1]=edge.mass_out[sp];values[2]=edge.flux_in[sp];values[3]=edge.flux_out[sp];
+                    }
+                }
+                snap.gw2d_transport_ledger.clear();
+                if(gw.needsTransportRestart()&&tr.active()) {
+                    snap.gw2d_transport_ledger.assign(std::size_t(tr.n_species)*20,0);
+                    for(int sp=0;sp<tr.n_species;++sp) {
+                        auto* values=&snap.gw2d_transport_ledger[std::size_t(sp)*20];
+                        values[15]=tr.boundary_in[sp];values[16]=tr.boundary_out[sp];
+                        values[17]=tr.boundary_flux_in[sp];values[18]=tr.boundary_flux_out[sp];
+                        values[19]=tr.generated_age.empty()?0:tr.generated_age[sp];
+                    }
+                }
+
                 if (tr.active()) {
                     const auto nn = static_cast<std::size_t>(tr.n_species) *
                                     static_cast<std::size_t>(n);
                     snap.gw2d_sat_conc.assign(nn, 0.0);
                     snap.gw2d_unsat_conc.assign(nn, 0.0);
                     for (int c = 0; c < n; ++c) {
-                        const double vs = gw.satVolume(c);
-                        const double vu = gw.unsatVolume(c);
                         for (int sp = 0; sp < tr.n_species; ++sp) {
                             const auto k = tr.idx(sp, c);
-                            if (vs > 0.0) snap.gw2d_sat_conc[k]   = tr.sat_mass[k] / vs;
-                            if (vu > 0.0) snap.gw2d_unsat_conc[k] = tr.unsat_mass[k] / vu;
+                            snap.gw2d_sat_conc[k]=twoD::groundwaterZoneConcentration(gw,c,sp,true);
+                            snap.gw2d_unsat_conc[k]=twoD::groundwaterZoneConcentration(gw,c,sp,false);
                         }
                     }
                     snap.gw2d_species_ledger.assign(
@@ -7572,6 +7606,7 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                         d[12] = tr.residual(sp);
                         d[13] = tr.gained_source[u];
                         d[14] = tr.lost_source[u];
+                        if(!snap.gw2d_transport_ledger.empty())std::copy(d,d+15,&snap.gw2d_transport_ledger[u*20]);
                     }
                 } else {
                     snap.gw2d_sat_conc.clear();
@@ -7594,6 +7629,10 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
             snap.gw2d_node_names = surface_router_.aquiferNodeNames().empty()
                                        ? nullptr : &surface_router_.aquiferNodeNames();
         } else {
+            snap.gw2d_transport_layers=0;snap.gw2d_boundary_count=0;
+            snap.gw2d_layer_mass.clear();snap.gw2d_layer_concentration.clear();
+            snap.gw2d_boundary_water.clear();snap.gw2d_boundary_species.clear();
+            snap.gw2d_boundary_cell_edge.clear();snap.gw2d_transport_ledger.clear();
             snap.gw2d_infil_capacity.clear();
             snap.gw2d_infil_remaining.clear();
             snap.gw2d_infil_refresh.clear();
@@ -9091,6 +9130,10 @@ void SWMMEngine::initHydraulics() noexcept {
     //     open fails gracefully, exactly like a 1D validation error.
     try {
         surface_router_.initialize(ctx_);
+        if(!ctx_.options.ignore_2d&&surface_router_.options().groundwater!=0&&
+            !surface_router_.subsurface().active()&&
+            (!ctx_.reactions.subsurface_laws.empty()||!surface_router_.aquiferConfig().boundaries.empty()))
+            throw std::runtime_error("Groundwater edge forcing and REACTION_SUBSURFACE require an active resolved mesh aquifer.");
         for(int n=0;n<ctx_.n_nodes();++n)if(lidnode::bottomMode(ctx_,n)==LidNodeBottom::MeshAquifer &&
             (!surface_router_.isActive() || !surface_router_.subsurface().active() ||
              n>=int(ctx_.nodes.aquifer2d_bed.size()) || !ctx_.nodes.aquifer2d_bed[n]))

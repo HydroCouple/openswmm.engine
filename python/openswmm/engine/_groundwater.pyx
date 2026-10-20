@@ -15,6 +15,19 @@ from ._enums import (CellScope, GroundwaterVariable, GroundwaterLedger,
                      GroundwaterZone, GroundwaterSpeciesLedger)
 
 cdef extern from "openswmm/engine/openswmm_gw2d.h":
+    ctypedef struct SWMM_GwBoundary:
+        int cell
+        int edge
+        int kind
+        double value
+    int swmm_gw2d_boundary_count(SWMM_Engine) nogil
+    int swmm_gw2d_boundary_get(SWMM_Engine,int,SWMM_GwBoundary*,char*,int) nogil
+    int swmm_gw2d_boundary_set(SWMM_Engine,const SWMM_GwBoundary*,const char*) nogil
+    int swmm_gw2d_boundary_remove(SWMM_Engine,int) nogil
+    int swmm_gw2d_boundary_water(SWMM_Engine,int,double*,double*,double*,double*) nogil
+    int swmm_gw2d_boundary_species(SWMM_Engine,int,int,double*,double*,double*,double*) nogil
+    int swmm_gw2d_get_layer_quality(SWMM_Engine,int,int,int,double*,double*,double*) nogil
+
     int swmm_gw2d_species_count(SWMM_Engine engine, int* count) nogil
     int swmm_gw2d_species_name(SWMM_Engine engine, int species, char* buf, int buflen) nogil
     int swmm_gw2d_get_cell_conc(SWMM_Engine engine, int zone, int species, double* out, int len, int* written) nogil
@@ -412,8 +425,52 @@ class Groundwater(EngineView):
     def source_receipt(self, source_id='external', cell=0):
         return self.sources.source_receipt(source_id, cell)
 
+    @property
+    def authored_boundaries(self):
+        """Exterior edge forcing. HEAD uses project elevation units; FLOW is total inward m3/s."""
+        cdef int count=0,index
+        cdef char series[8192]
+        cdef SWMM_GwBoundary row
+        count=swmm_gw2d_boundary_count(_h(self))
+        if count<0:raise RuntimeError("Unable to read authored groundwater boundaries")
+        result=[]
+        for index in range(count):
+            _check(swmm_gw2d_boundary_get(_h(self),index,&row,series,sizeof(series)))
+            result.append({'cell':row.cell,'edge':row.edge,'kind':'HEAD' if row.kind==0 else 'FLOW',
+                           'value':row.value,'series':series.decode('utf-8')})
+        return tuple(result)
+
+    def set_authored_boundary(self,int cell,int edge,kind,double value=0,series=''):
+        """Set before initialize. Chemistry is authored through groundwater transport boundary quality."""
+        cdef SWMM_GwBoundary row
+        selected=str(kind).upper()
+        if selected not in ('HEAD','FLOW'):raise ValueError('kind must be HEAD or FLOW')
+        row.cell=cell;row.edge=edge;row.kind=0 if selected=='HEAD' else 1;row.value=value
+        cdef bytes name=str(series).encode('utf-8')
+        _check(swmm_gw2d_boundary_set(_h(self),&row,name))
+
+    def remove_authored_boundary(self,int index):
+        _check(swmm_gw2d_boundary_remove(_h(self),index))
+
+    def authored_boundary_receipt(self,int index,species=None):
+        """Gross requested/accepted water or native advective/imposed species amounts."""
+        cdef double a=0,b=0,c=0,d=0
+        cdef int row
+        if species is None:
+            _check(swmm_gw2d_boundary_water(_h(self),index,&a,&b,&c,&d))
+            return {'requested_in':a,'requested_out':b,'accepted_in':c,'accepted_out':d}
+        row=int(species)
+        _check(swmm_gw2d_boundary_species(_h(self),index,row,&a,&b,&c,&d))
+        return {'advective_in':a,'advective_out':b,'flux_in':c,'flux_out':d}
+
+    def layer_quality(self,int cell,int layer,int species):
+        """Canonical SIGMA inventory; layer is zero-based. Dry retained mass is reported explicitly."""
+        cdef double water=0,mass=0,concentration=0
+        _check(swmm_gw2d_get_layer_quality(_h(self),cell,layer,species,&water,&mass,&concentration))
+        return {'water_m3':water,'total_mass':mass,'dissolved_concentration':concentration}
+
     def concentrations(self, zone, int species):
-        """Per-cell species mass per m³ of zone water; dry zones report zero."""
+        """Per-cell zone concentration. BULK uses total inventory/water; LAYERED uses aqueous plus sorption capacity."""
         cdef SWMM_Engine h = _h(self)
         cdef int n=0, written=0, selected=int(GroundwaterZone(zone))
         _check(swmm_gw2d_get_dimensions(h, &n, NULL))

@@ -28,6 +28,8 @@
 #include "ReactionsWriter.hpp"   // IO3a save hook
 
 #include <cstdlib>
+#include <functional>
+#include <cmath>
 
 #include "../../../core/SimulationContext.hpp"
 #include "../../../input/Tokenizer.hpp"
@@ -248,6 +250,43 @@ void parseTerms(SimulationContext& ctx, const std::vector<std::string>& lines,
     }
 }
 
+void parseSubsurface(SimulationContext& ctx,const std::vector<std::string>& lines,
+                      std::vector<std::string>& errors) {
+    auto& rx=ctx.reactions;
+    for(const auto& line:lines) {
+        const auto tokens=Tokenizer::tokenize(line);if(tokens.empty())continue;
+        const auto fail=[&](const std::string& why){errors.push_back("[REACTION_SUBSURFACE] "+why+" — "+line);};
+        std::size_t at=0;ReactionData::SubsurfaceLaw law;
+        const auto number=[&](int& value) {
+            if(at>=tokens.size())return false;
+            double n=0;if(!to_num(tokens[at++],n)||!std::isfinite(n)||n<1||n>2147483647||n!=std::floor(n))return false;
+            value=int(n)-1;return true;
+        };
+        if(tokens[at]=="*")++at;
+        else if(Tokenizer::to_upper(tokens[at])=="TAG") {
+            law.scope=1;if(++at>=tokens.size()){fail("TAG needs a name");continue;}law.tag=tokens[at++];
+        } else if(Tokenizer::to_upper(tokens[at])=="CELL") {
+            law.scope=2;++at;if(!number(law.cell)){fail("CELL needs a positive index");continue;}
+        } else {fail("scope must be *, TAG or CELL");continue;}
+        if(at>=tokens.size()){fail("missing SAT, UNSAT or LAYER");continue;}
+        const auto zone=Tokenizer::to_upper(tokens[at++]);
+        if(zone=="SAT")law.zone=0;
+        else if(zone=="UNSAT")law.zone=1;
+        else if(zone=="LAYER") {law.zone=2;if(!number(law.layer)){fail("LAYER needs a positive index");continue;}}
+        else {fail("zone must be SAT, UNSAT or LAYER");continue;}
+        if(tokens.size()<at+3){fail("needs SPECIES RATE|EQUIL|FORMULA EXPRESSION");continue;}
+        law.species=rx.find_species(tokens[at++]);
+        if(law.species<0){fail("species must be a declared MSX BULK species");continue;}
+        if(rx.species_is_wall[law.species]){fail("groundwater WALL species are unsupported");continue;}
+        const auto form=Tokenizer::to_upper(tokens[at++]);
+        if(form=="RATE")law.form=ReactionExprForm::RATE;
+        else if(form=="EQUIL")law.form=ReactionExprForm::EQUIL;
+        else if(form=="FORMULA")law.form=ReactionExprForm::FORMULA;
+        else {fail("unknown reaction form");continue;}
+        law.expression=expr_payload(line,at);rx.subsurface_laws.push_back(std::move(law));
+    }
+}
+
 void parseExpressions(SimulationContext& ctx,
                       const std::vector<std::string>& lines, bool tanks,
                       std::vector<std::string>& errors) {
@@ -441,7 +480,7 @@ const std::vector<std::string>& reactionSectionTags() {
         "REACTION_SOURCES",       "REACTION_QUALITY",
         "REACTION_PARAMETERS",    "REACTION_PATTERNS",
         "REACTION_REPORT",        "REACTION_SUBCATCHMENTS",
-        "REACTION_RAINFALL"};
+        "REACTION_RAINFALL", "REACTION_SUBSURFACE"};
     return tags;
 }
 
@@ -489,6 +528,8 @@ void applyReactionSections(SimulationContext& ctx,
         ctx.reactions.tank_expr_src.resize(
             static_cast<std::size_t>(ctx.reactions.n_species()));
     }
+    s = config.find("REACTION_SUBSURFACE");
+    if(s)parseSubsurface(ctx,*s,errors);
     s = config.find("REACTION_QUALITY");
     if (s) parseQuality(ctx, *s, errors);
     else
@@ -629,13 +670,13 @@ bool recompileReactionSystem(SimulationContext& ctx,
 
     const std::size_t n_errors_in = errors.size();
     auto compile_one = [&](const std::string& src_expr, RxExprSpan& span,
-                           const std::string& where) {
+                           const std::string& where,int context=0) {
         int col = 0;
         std::string err = compileReactionExpression(
             src_expr, sym, rx.token_pool, span, col);
         // Physics review A1: refuse what would silently read zero.
         if (err.empty())
-            err = unpopulatedHydVarDiagnostic(src_expr, rx.token_pool, span, col);
+            err = reactionContextDiagnostic(rx,rx.token_pool,span,context);
         if (!err.empty())
             errors.push_back(where + " (col " + std::to_string(col) +
                              "): " + err + ".");
@@ -644,7 +685,7 @@ bool recompileReactionSystem(SimulationContext& ctx,
     for (std::size_t i = 0; i < rx.term_name.size(); ++i) {
         sym.max_term = static_cast<int>(i);   // forward-only rule
         compile_one(rx.term_expr_src[i], rx.term_expr[i],
-                    "[REACTION_TERMS] '" + rx.term_name[i] + "'");
+                    "[REACTION_TERMS] '" + rx.term_name[i] + "'",1);
     }
     sym.max_term = static_cast<int>(rx.term_name.size());
     for (int sidx = 0; sidx < rx.n_species(); ++sidx) {
@@ -655,6 +696,12 @@ bool recompileReactionSystem(SimulationContext& ctx,
         if (rx.tank_form[us] != ReactionExprForm::NONE)
             compile_one(rx.tank_expr_src[us], rx.tank_expr[us],
                         "[REACTION_TANKS] '" + rx.species_name[us] + "'");
+    }
+    for(auto& law:rx.subsurface_laws) {
+        if(law.species<0||law.species>=rx.n_species()||rx.species_is_wall[law.species]) {
+            errors.push_back("[REACTION_SUBSURFACE] requires a valid BULK species");continue;
+        }
+        compile_one(law.expression,law.compiled,"[REACTION_SUBSURFACE] '"+rx.species_name[law.species]+"'",2);
     }
     if (errors.size() != n_errors_in) return false;
     rx.compiled = true;

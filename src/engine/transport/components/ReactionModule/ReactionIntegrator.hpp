@@ -80,6 +80,7 @@ public:
 private:
     friend class ReactionIntegrator;
     int n_ = 0;                       ///< n_species
+    std::vector<unsigned char> term_needed_; ///< reachable terms for this reactor context
     std::vector<double> terms_;       ///< term value cache
     std::vector<double> y_, y0_, ytmp_, rates_, err_;
     std::vector<double> k1_, k2_, k3_, k4_, k5_, k6_;   ///< RK5 stages
@@ -114,6 +115,13 @@ public:
      *                dt by this call).
      * @param ws      Workspace initialized against `rx`.
      */
+    // Explicit reactor context. Expressions and forms refer to the same
+    // compiled token pool; groundwater never borrows pipe/tank laws.
+    static RxStepReport step(const ReactionData& rx,
+                             const std::vector<ReactionExprForm>& forms,
+                             const std::vector<RxExprSpan>& expressions,double dt,
+                             double* species,double* hydvar,RxWorkspace& ws,
+                             const double* pollutants=nullptr,const double* kinetic_scale=nullptr);
     static RxStepReport step(const ReactionData& rx, bool tank, double dt,
                              double* species, double* hydvar, RxWorkspace& ws,
                              const double* pollutants = nullptr);

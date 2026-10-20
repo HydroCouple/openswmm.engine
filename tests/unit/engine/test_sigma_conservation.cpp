@@ -194,3 +194,73 @@ TEST(SigmaConservation, PumpingAtLowTablesCannotOverdrawResidualStorage) {
         EXPECT_LE(r.gw.state().led_source_out,10);
     }
 }
+
+#include "2d/subsurface/LayerTransport.hpp"
+TEST(SigmaConservation, AcceptedReceiptsReproduceEveryLayerWithoutChangingTheHydraulicAnswer) {
+    for(double new_length:{0.,.05,.8,1.,1.2}) {
+        soil::Params p;p.theta_s=.45;p.theta_r=.1;p.Ks=.01;
+        std::vector<double> original{.12,.2,.31,.44},plain=original,recorded=original;
+        sigma::ColumnStep a;a.L_old=1;a.L_new=new_length;a.dt=.1;a.q_in=.02;a.q_et=.003;a.q0_phys=.001;
+        auto b=a;sigma::ColumnTransfers transfers;b.transfers=&transfers;
+        sigma::advanceColumn(p,plain.data(),4,1,a);sigma::advanceColumn(p,recorded.data(),4,1,b);
+        EXPECT_EQ(plain,recorded);EXPECT_DOUBLE_EQ(a.f_bot,b.f_bot);
+        ASSERT_EQ(transfers.faces.size(),5);ASSERT_EQ(transfers.support.size(),5);
+        for(int j=0;j<4;++j) {
+            const double reconstructed=transfers.old_water[j]+transfers.faces[j]-transfers.faces[j+1]
+                +transfers.compression[j]-transfers.compression[j+1]+transfers.support[j]-transfers.support[j+1];
+            EXPECT_NEAR(reconstructed,transfers.new_water[j],1e-15);
+        }
+        EXPECT_NEAR(transfers.compression.back(),b.overflow_to_sat*b.dt,1e-15);
+        EXPECT_NEAR(transfers.support.back(),-b.deficit_from_sat*b.dt,1e-15);
+    }
+}
+TEST(SigmaConservation, LayerTransportPreservesUniformConcentrationAndExactInventory) {
+    // One accepted downward transfer from a 1 m3 store into a 2 m3 store.
+    auto r=solveLayerTransport({.75,2.25},{7,14},{{0,1,.25}});
+    ASSERT_TRUE(r.error.empty())<<r.error;
+    EXPECT_NEAR(r.concentration[0],7,1e-14);EXPECT_NEAR(r.concentration[1],7,1e-14);
+    EXPECT_NEAR(r.mass[0]+r.mass[1],21,1e-14);
+    // A strong withdrawal remains nonnegative without clipping or lost mass.
+    auto drained=solveLayerTransport({0.,0.},{7,0},{{0,1,1},{1,-1,1}});
+    ASSERT_TRUE(drained.error.empty())<<drained.error;
+    EXPECT_NEAR(drained.transferred.back(),7,1e-14);
+    EXPECT_DOUBLE_EQ(drained.mass[0],0);EXPECT_DOUBLE_EQ(drained.mass[1],0);
+}
+TEST(SigmaConservation, DryLayerRetainsMassAndSignedTemperatureIsNotClipped) {
+    auto dry=solveLayerTransport({0.},{3.},{});
+    ASSERT_TRUE(dry.error.empty());EXPECT_DOUBLE_EQ(dry.mass[0],3);
+    auto rewet=solveLayerTransport({2.},dry.mass,{});
+    ASSERT_TRUE(rewet.error.empty());EXPECT_DOUBLE_EQ(rewet.concentration[0],1.5);
+    auto cold=solveLayerTransport({1.,1.},{-2.,-2.},{{0,1,.5}},true);
+    ASSERT_TRUE(cold.error.empty());EXPECT_LT(cold.mass[0],0);EXPECT_LT(cold.mass[1],0);
+    EXPECT_NEAR(cold.mass[0]+cold.mass[1],-4,1e-14);
+    EXPECT_FALSE(solveLayerTransport({1.},{-1.},{}).error.empty());
+}
+
+TEST(SigmaConservation, ImplicitLayerBreakthroughConvergesToIndependentRetardedColumnSolution) {
+    for(double retardation:{1.,3.}) {
+        std::vector<double> errors;
+        for(int refinements:{20,40,80}) {
+            const double end=2*retardation,dt=end/refinements;
+            std::vector<double> mass(4,0),capacity(4,retardation);
+            for(int step=0;step<refinements;++step) {
+                auto rhs=mass;rhs[0]+=dt;std::vector<openswmm::twoD::LayerTransportMove> moves;
+                for(int j=0;j<4;++j)moves.push_back({j,j==3?-1:j+1,dt});
+                const auto result=openswmm::twoD::solveLayerTransport(capacity,rhs,moves);
+                ASSERT_TRUE(result.error.empty())<<result.error;mass=result.mass;
+            }
+            double error=0;
+            // Four well-mixed equal-volume reactors: exact step response is
+            // a Poisson tail. Sorption multiplies residence time by R.
+            double sum=0,term=1;
+            for(int j=0;j<4;++j) {
+                if(j)term*=2./j;sum+=term;
+                const double expected=1-std::exp(-2.)*sum;
+                error+=std::abs(mass[j]/retardation-expected);
+            }
+            errors.push_back(error/4);
+        }
+        EXPECT_LT(errors.back(),.02);
+        EXPECT_GT(errors[0]/errors[1],1.8);EXPECT_GT(errors[1]/errors[2],1.8);
+    }
+}

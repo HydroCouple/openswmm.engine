@@ -8,41 +8,48 @@
 #include <stdexcept>
 #include <unordered_map>
 namespace openswmm::twoD {
+GwSourceSignal resolveGwSignal(SimulationContext& ctx,double value,const std::string& name,
+    std::unordered_map<std::string,GwSourceSignal>& cache,const char* label) {
+    auto error=[&](const std::string& message){throw std::runtime_error(std::string(label)+" "+message);};
+
+    if(name.empty()){if(!std::isfinite(value))error("nonfinite constant value");GwSourceSignal out;out.constant=value;return out;}
+    if(auto i=cache.find(name);i!=cache.end())return i->second;
+    const int index=ctx.find_timeseries(name);if(index<0)error("unknown series '"+name+"'");
+    auto&table=ctx.tables.tables[static_cast<std::size_t>(index)];
+    GwSourceSignal out;
+    auto append=[&](double x,double y){
+        const double t=(x-ctx.options.start_date)*86400.;
+        if(!std::isfinite(t)||!std::isfinite(y)||(!out.times.empty()&&t<=out.times.back()))
+            error("series '"+name+"' needs finite, strictly increasing times and finite values");
+        out.times.push_back(t);out.values.push_back(y);
+    };
+    if(table.is_file_based) {
+        if(table.num_cols!=1)error("source series '"+name+"' must have one value column");
+        for(std::size_t row=0;row<table.total_rows;) {
+            if(!table_load_cache(table,row))error("cannot read source series '"+name+"'");
+            const auto&block=table.cache;
+            if(row<block.file_row_start||row>=block.file_row_start+block.x.size())error("invalid source series cache '"+name+"'");
+            const auto offset=row-block.file_row_start;
+            for(std::size_t j=offset;j<block.x.size();++j){if(j>=block.y.size())error("short source series '"+name+"'");append(block.x[j],block.y[j]);++row;}
+        }
+    } else {
+        if(table.x.size()!=table.y.size())error("source series '"+name+"' must have one value column");
+        for(std::size_t j=0;j<table.x.size();++j)append(table.x[j],table.y[j]);
+    }
+    if(out.times.empty())error("source series '"+name+"' is empty");
+    auto shared=std::make_shared<GwSourceSeries>();
+    shared->times=std::move(out.times);shared->values=std::move(out.values);
+    shared->hasNegative=std::any_of(shared->values.begin(),shared->values.end(),[](double v){return v<0;});
+    out.series=std::move(shared);cache.emplace(name,out);return out;
+
+}
 std::vector<GwResolvedSource> resolveGwSources(SimulationContext&ctx,const MeshData&mesh,
     const GwTransportData&gw,const SubsurfaceState&state,const SubsurfaceTransportState&tr) {
     std::vector<GwResolvedSource> result;
     auto error=[](const std::string&s){throw std::runtime_error("[GW_SOURCES] "+s);};
     std::unordered_map<std::string,GwSourceSignal> cache;
-    auto signal=[&](double value,const std::string&name) {
-        if(name.empty()){if(!std::isfinite(value))error("nonfinite constant value");GwSourceSignal out;out.constant=value;return out;}
-        if(auto i=cache.find(name);i!=cache.end())return i->second;
-        const int index=ctx.find_timeseries(name);if(index<0)error("unknown series '"+name+"'");
-        auto&table=ctx.tables.tables[static_cast<std::size_t>(index)];
-        GwSourceSignal out;
-        auto append=[&](double x,double y){
-            const double t=(x-ctx.options.start_date)*86400.;
-            if(!std::isfinite(t)||!std::isfinite(y)||(!out.times.empty()&&t<=out.times.back()))
-                error("series '"+name+"' needs finite, strictly increasing times and finite values");
-            out.times.push_back(t);out.values.push_back(y);
-        };
-        if(table.is_file_based) {
-            if(table.num_cols!=1)error("source series '"+name+"' must have one value column");
-            for(std::size_t row=0;row<table.total_rows;) {
-                if(!table_load_cache(table,row))error("cannot read source series '"+name+"'");
-                const auto&block=table.cache;
-                if(row<block.file_row_start||row>=block.file_row_start+block.x.size())error("invalid source series cache '"+name+"'");
-                const auto offset=row-block.file_row_start;
-                for(std::size_t j=offset;j<block.x.size();++j){if(j>=block.y.size())error("short source series '"+name+"'");append(block.x[j],block.y[j]);++row;}
-            }
-        } else {
-            if(table.x.size()!=table.y.size())error("source series '"+name+"' must have one value column");
-            for(std::size_t j=0;j<table.x.size();++j)append(table.x[j],table.y[j]);
-        }
-        if(out.times.empty())error("source series '"+name+"' is empty");
-        auto shared=std::make_shared<GwSourceSeries>();
-        shared->times=std::move(out.times);shared->values=std::move(out.values);
-        shared->hasNegative=std::any_of(shared->values.begin(),shared->values.end(),[](double v){return v<0;});
-        out.series=std::move(shared);cache.emplace(name,out);return out;
+    auto signal=[&](double value,const std::string& name) {
+        return resolveGwSignal(ctx,value,name,cache,"[GW_SOURCES]");
     };
     std::unordered_map<std::string,std::vector<int>> cellsByTag;
     std::vector<int> activeCells;

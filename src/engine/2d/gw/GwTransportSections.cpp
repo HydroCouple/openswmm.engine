@@ -158,6 +158,14 @@ std::string parseGwTransportOptionsLine(const std::vector<std::string>& tokens,
     const std::string& k = tokens[0];
     const std::string& v = tokens[1];
 
+    if(iequals(k,"UNSAT_TRANSPORT")) {
+        if(tokens.size()!=2)return "[GW_TRANSPORT_OPTIONS] UNSAT_TRANSPORT needs one value";
+        if(iequals(v,"BULK"))o.unsat_transport="BULK";
+        else if(iequals(v,"LAYERED"))o.unsat_transport="LAYERED";
+        else return "[GW_TRANSPORT_OPTIONS] UNSAT_TRANSPORT expects BULK or LAYERED";
+        return {};
+    }
+
     if(iequals(k,"THERMAL_MODEL")) {
         if(iequals(v,"WATER_ONLY"))o.thermal_model="WATER_ONLY";
         else if(iequals(v,"POROUS_EQUILIBRIUM"))o.thermal_model="POROUS_EQUILIBRIUM";

@@ -36,6 +36,7 @@
 namespace openswmm::twoD {
 
 void SubsurfaceState::resize(int n, int m) {
+    led_boundary_in=led_boundary_out=0;
     n_cells  = n < 0 ? 0 : n;
     m_layers = m < 1 ? 1 : m;
     const auto nn = static_cast<std::size_t>(n_cells);

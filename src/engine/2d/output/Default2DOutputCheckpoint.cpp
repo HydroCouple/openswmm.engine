@@ -61,7 +61,7 @@ std::set<std::string> links(hid_t file) {
 }
 std::vector<hsize_t> shape(hid_t dataset, bool maximum = false) {
     Handle space{H5Dget_space(dataset), H5Sclose}; const int rank = H5Sget_simple_extent_ndims(space.id);
-    require(rank >= 0 && rank <= 3, "Invalid mesh dataset rank.");
+    require(rank >= 0 && rank <= 4, "Invalid mesh dataset rank.");
     std::vector<hsize_t> dims(rank), max(rank);
     require(H5Sget_simple_extent_dims(space.id, dims.data(), max.data()) >= 0, "Cannot inspect mesh dimensions.");
     return maximum ? max : dims;
@@ -121,8 +121,8 @@ bool storage(hid_t a, hid_t b) {
     const auto layout=H5Pget_layout(a);
     if(layout!=H5Pget_layout(b) || layout==H5D_VIRTUAL || H5Pget_external_count(b)!=0)return false;
     if(layout==H5D_CHUNKED) {
-        hsize_t ac[3]{},bc[3]{};const auto rank=H5Pget_chunk(a,3,ac);
-        if(rank<1 || rank!=H5Pget_chunk(b,3,bc) || !std::equal(ac,ac+rank,bc))return false;
+        hsize_t ac[4]{},bc[4]{};const auto rank=H5Pget_chunk(a,4,ac);
+        if(rank<1 || rank!=H5Pget_chunk(b,4,bc) || !std::equal(ac,ac+rank,bc))return false;
     }
     const auto count=H5Pget_nfilters(a);if(count<0 || count!=H5Pget_nfilters(b))return false;
     for(int k=0;k<count;++k) {

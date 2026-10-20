@@ -562,6 +562,7 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
     {
         const auto& o = gw->options;
         sec(f, "GW_TRANSPORT_OPTIONS");
+        if(o.unsat_transport!="BULK")std::fprintf(f,"%-24s %s\n","UNSAT_TRANSPORT",o.unsat_transport.c_str());
         std::fprintf(f, ";;%-22s %s\n", "Parameter", "Value");
         std::fprintf(f, "%-24s %s\n", "TRANSPORT_POLLUTANTS",  o.transport_pollutants  ? "YES" : "NO");
         std::fprintf(f, "%-24s %s\n", "TRANSPORT_MSX",         o.transport_msx         ? "YES" : "NO");
@@ -580,7 +581,7 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
         // want of a value, making the saved file unloadable.
         if (!o.deep_thermal_arg.empty()) {
             if (o.deep_depth > 0.0)
-                std::fprintf(f, "%-24s %s %s DEPTH %.12g\n", "DEEP_THERMAL_BC",
+                std::fprintf(f, "%-24s %s %s DEPTH %.17g\n", "DEEP_THERMAL_BC",
                              o.deep_thermal_bc.c_str(),
                              o.deep_thermal_arg.c_str(), o.deep_depth);
             else
@@ -601,7 +602,7 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
                     std::strcmp(key,"AIR_THERMAL_CONDUCTIVITY")==0?o.air_conductivity:o.surface_resistance;
                 std::fprintf(f,"%-24s %.17g\n",key,value);
             }
-        std::fprintf(f, "%-24s %.12g\n", "C_DIFF", o.c_diff);
+        std::fprintf(f, "%-24s %.17g\n", "C_DIFF", o.c_diff);
     }
 
     if (!gw->params.empty()) {
@@ -612,8 +613,8 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
         for (const auto& r : gw->params) {
             scope_col(r.scope, r.tag, r.cell, sc, sizeof sc);
             std::fprintf(f,
-                "%-16s %-9.12g %-7.12g %-9.12g %-7.12g %-8.12g %-8.12g "
-                "%-9.12g %-9.12g %.12g\n",
+                "%-16s %-9.17g %-7.17g %-9.17g %-7.17g %-8.17g %-8.17g "
+                "%-9.17g %-9.17g %.17g\n",
                 sc, r.rho_s, r.c_s, r.lambda_s, r.a_s, r.alpha_L, r.alpha_T,
                 r.D_m, r.D_v, r.geo_flux);
         }
@@ -626,10 +627,10 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
         for (const auto& r : gw->sorption) {
             scope_col(r.scope, r.tag, r.cell, sc, sizeof sc);
             if (r.decay >= 0.0)
-                std::fprintf(f, "%-16s %-16s %-12.12g %.12g\n", sc,
+                std::fprintf(f, "%-16s %-16s %-12.17g %.17g\n", sc,
                              r.species.c_str(), r.kd, r.decay);
             else
-                std::fprintf(f, "%-16s %-16s %-12.12g -\n", sc,
+                std::fprintf(f, "%-16s %-16s %-12.17g -\n", sc,
                              r.species.c_str(), r.kd);
         }
     }
@@ -653,7 +654,7 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
                     std::snprintf(zone, sizeof zone, "LAYER %d", r.layer);
                 else
                     std::snprintf(zone, sizeof zone, "%s", twoD::gwZoneToken(r.zone));
-                std::fprintf(f, "%-16s %-14s %-16s %.12g\n", sc, zone,
+                std::fprintf(f, "%-16s %-14s %-16s %.17g\n", sc, zone,
                              r.species.c_str(), r.value);
             }
         }
@@ -669,7 +670,7 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
                 std::fprintf(f, "%-8d %-6d %-16s %-10s %s\n", r.cell + 1, r.edge,
                              r.species.c_str(), r.kind.c_str(), r.ts_name.c_str());
             else
-                std::fprintf(f, "%-8d %-6d %-16s %-10s %.12g\n", r.cell + 1, r.edge,
+                std::fprintf(f, "%-8d %-6d %-16s %-10s %.17g\n", r.cell + 1, r.edge,
                              r.species.c_str(), r.kind.c_str(), r.value);
         }
     }
@@ -681,7 +682,7 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
         for (const auto& r : gw->sources) {
             char loc[128];
             if (r.by_xy)
-                std::snprintf(loc, sizeof loc, "XY %.12g %.12g", r.x, r.y);
+                std::snprintf(loc, sizeof loc, "XY %.17g %.17g", r.x, r.y);
             else if (r.scope == twoD::GwScope::TAG)
                 std::snprintf(loc, sizeof loc, "TAG %s", r.tag.c_str());
             else if (r.scope == twoD::GwScope::GLOBAL)
@@ -690,19 +691,34 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
                 std::snprintf(loc, sizeof loc, "CELL %d", r.cell + 1);
             std::fprintf(f, "%-14s %-16s FLOW ", r.name.c_str(), loc);
             if (!r.flow_ts.empty()) std::fprintf(f, "%-12s", r.flow_ts.c_str());
-            else                    std::fprintf(f, "%-12.12g", r.flow);
+            else                    std::fprintf(f, "%-12.17g", r.flow);
             if (r.scale != 1.0) std::fprintf(f, " SCALE %.17g", r.scale);
             for (const auto& t : r.species) {
                 if (!t.ts_name.empty())
                     std::fprintf(f, " %s %s %s", t.species.c_str(),
                                  t.kind.c_str(), t.ts_name.c_str());
                 else
-                    std::fprintf(f, " %s %s %.12g", t.species.c_str(),
+                    std::fprintf(f, " %s %s %.17g", t.species.c_str(),
                                  t.kind.c_str(), t.value);
             }
             std::fprintf(f, "\n");
         }
     }
+}
+
+std::string groundwaterSections(const SimulationContext& ctx) {
+#ifdef OPENSWMM_HAS_2D
+    FILE* file=std::tmpfile();if(!file)throw std::runtime_error("Cannot stage groundwater sections.");
+    struct Close {FILE* file;~Close(){std::fclose(file);}} close{file};
+    emitGwTransportSections(file,ctx);
+    if(std::fflush(file)!=0 || std::ferror(file))throw std::runtime_error("Cannot serialize groundwater sections.");
+    std::rewind(file);std::string result;char buffer[8192];std::size_t count=0;
+    while((count=std::fread(buffer,1,sizeof buffer,file))>0)result.append(buffer,count);
+    if(std::ferror(file))throw std::runtime_error("Cannot read staged groundwater sections.");
+    return result;
+#else
+    (void)ctx;return {};
+#endif
 }
 
 // Reference tokens always use final paths. Only physical writes are redirected.

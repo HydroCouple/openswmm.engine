@@ -123,6 +123,9 @@ std::string parseAquiferLinkLine(const std::vector<std::string>& tokens,
                                  std::vector<std::string>& names);
 
 /// Register the four handlers against @p registry, writing into @p cfg.
+std::string parseAquiferBoundaryLine(const std::vector<std::string>& tokens,
+                                      std::vector<GwBoundaryRow>& rows);
+
 void registerSubsurfaceSections(SubsurfaceConfig& cfg,
                                 std::vector<std::string>& node_names,
                                 std::vector<std::string>& link_names,

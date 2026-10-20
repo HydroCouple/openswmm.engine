@@ -26,6 +26,8 @@
 #include "core/SimulationContext.hpp"
 #include "data/NodeData.hpp"
 #include "2d/data/MeshData.hpp"
+#include "2d/subsurface/SubsurfaceData.hpp"
+#include "2d/gw/GwTransportData.hpp"
 #include "2d/data/SolverOptions2D.hpp"
 #include "2d/data/BoundaryData.hpp"
 #include "2d/data/PendingRows2D.hpp"
@@ -655,3 +657,29 @@ TEST_F(GeoPackageMesh2DTest, NodeDeleteCascadesCoupling) {
         EXPECT_EQ(count_rows(db.get(), "mesh_2d_vertices"), 4);
     }
 }
+
+#ifdef OPENSWMM_HAS_2D
+TEST_F(GeoPackageMesh2DTest, GroundwaterLayersAndHydraulicEdgeRoundTripWithoutSurfaceOwners) {
+    makeUnitSquareMesh();auto ctx=build_ctx_out();
+    twoD::SubsurfaceConfig aquifer;twoD::GwTransportData quality;
+    std::vector<std::string> nodes,links;
+    aquifer.options.authored=true;aquifer.options.closure=twoD::GwClosure::SIGMA;
+    aquifer.rows.emplace_back();aquifer.rows.back().Ks=.12345678901234567;
+    aquifer.boundaries.push_back({0,0,false,.00012345678901234567,{}});
+    quality.options.authored=true;quality.options.unsat_transport="LAYERED";
+    twoD::GwInitialQualityRow initial;initial.zone=twoD::GwZone::LAYER;initial.layer=2;
+    initial.species="TSS";initial.value=7.123456789012345;quality.initial_quality.push_back(initial);
+    ctx.twod_io.aquifer=&aquifer;ctx.twod_io.aquifer_nodes=&nodes;ctx.twod_io.aquifer_links=&links;ctx.twod_io.gw=&quality;
+    {auto db=create_db();write_model(db.get(),ctx,kSimId);}
+    auto restored=build_ctx_in();twoD::SubsurfaceConfig aquifer_in;twoD::GwTransportData quality_in;
+    restored.twod_io.aquifer=&aquifer_in;restored.twod_io.aquifer_nodes=&nodes;
+    restored.twod_io.aquifer_links=&links;restored.twod_io.gw=&quality_in;
+    {auto db=open_database(db_path_,SQLITE_OPEN_READONLY);ASSERT_EQ(read_model(db.get(),restored,kSimId,""),0);}
+    ASSERT_EQ(aquifer_in.rows.size(),1);ASSERT_EQ(aquifer_in.boundaries.size(),1);
+    EXPECT_DOUBLE_EQ(aquifer_in.rows[0].Ks,aquifer.rows[0].Ks);
+    EXPECT_DOUBLE_EQ(aquifer_in.boundaries[0].value,aquifer.boundaries[0].value);
+    EXPECT_EQ(quality_in.options.unsat_transport,"LAYERED");
+    ASSERT_EQ(quality_in.initial_quality.size(),1);EXPECT_EQ(quality_in.initial_quality[0].layer,2);
+    EXPECT_DOUBLE_EQ(quality_in.initial_quality[0].value,initial.value);
+}
+#endif

@@ -105,6 +105,7 @@ struct ClassEnables {
     bool age          = false;
     bool temperature  = false;
     bool msx_has_wall = false;
+    bool msx_bulk_only = false;
     int  total() const noexcept { return n_pollut + n_msx + (age ? 1 : 0) + (temperature ? 1 : 0); }
 };
 

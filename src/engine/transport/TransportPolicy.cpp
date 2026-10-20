@@ -32,6 +32,7 @@
 #include "../2d/subsurface/SubsurfaceData.hpp"   // T7.1
 
 #include <cstdio>
+#include <algorithm>
 
 namespace openswmm::transport {
 
@@ -121,10 +122,8 @@ ClassEnables groundwaterEnables(const SimulationContext& ctx) noexcept {
     const bool tt = !g || g->options.transport_temperature;
     e.n_pollut     = (q && tp) ? ctx.n_pollutants() : 0;
     e.msx_has_wall = reactionsHaveWall(ctx);
-    // WALL species are a pipe-surface concept; the aquifer refuses them for
-    // the same reason the 2D surface does.
-    e.n_msx        = (q && tm && reactionsActive(ctx) && !e.msx_has_wall)
-                         ? ctx.reactions.n_species() : 0;
+    e.msx_bulk_only=true;
+    e.n_msx=(q&&tm&&reactionsActive(ctx))?int(std::count(ctx.reactions.species_is_wall.begin(),ctx.reactions.species_is_wall.end(),uint8_t(0))):0;
     e.age          = ta && ctx.options.water_age;
     e.temperature  = tt && ctx.options.heat_transport;
     return e;
@@ -139,8 +138,10 @@ RowLayout canonicalRows(const SimulationContext& ctx, const ClassEnables& e) {
     L.ns       = e.total();
     L.names.reserve(static_cast<std::size_t>(L.ns));
     for (int p = 0; p < L.n_pollut; ++p) L.names.push_back(ctx.pollutant_names.name_of(p));
-    for (int m = 0; m < L.n_msx; ++m)
-        L.names.push_back(ctx.reactions.species_name[static_cast<std::size_t>(m)]);
+    for(int m=0,added=0;added<L.n_msx&&m<ctx.reactions.n_species();++m) {
+        if(e.msx_bulk_only&&ctx.reactions.species_is_wall[m])continue;
+        L.names.push_back(ctx.reactions.species_name[m]);++added;
+    }
     if (e.age)         L.names.push_back("__WATER_AGE__");
     if (e.temperature) L.names.push_back("__TEMPERATURE__");
     return L;
@@ -214,10 +215,10 @@ Matrix resolve(const SimulationContext& ctx, const Draft* draft) {
 
             Cell& msx = m.at(Domain::GROUNDWATER, SpeciesClass::MSX);
             if (!reactionsActive(ctx))                unavailable(msx, "no reactions component");
-            else if (planned ? msxWall : e.msx_has_wall) unavailable(msx, "WALL species have no subsurface transport");
+            else if (std::count(ctx.reactions.species_is_wall.begin(),ctx.reactions.species_is_wall.end(),uint8_t(0))==0) unavailable(msx,"no BULK species for subsurface transport");
             else if (ignoreQ)                         disabled(msx, "IGNORE_QUALITY");
             else if (g && !g->options.transport_msx)  disabled(msx, "TRANSPORT_MSX NO");
-            else                                      enabled(msx, planned ? nm : e.n_msx);
+            else                                      enabled(msx, planned ? int(std::count(ctx.reactions.species_is_wall.begin(),ctx.reactions.species_is_wall.end(),uint8_t(0))) : e.n_msx);
 
             Cell& age = m.at(Domain::GROUNDWATER, SpeciesClass::AGE);
             if (!ageOn)               unavailable(age, "WATER_AGE OFF");

@@ -34,6 +34,9 @@
 #include "2d/data/Report2DVars.hpp"
 #ifdef OPENSWMM_HAS_2D
 #include "2d/subsurface/SubsurfaceSections.hpp"
+#include "2d/gw/GwTransportData.hpp"
+#include "core/InpWriter.hpp"
+#include "transport/components/ReactionModule/ReactionsWriter.hpp"
 #endif
 
 #include <cmath>
@@ -2316,11 +2319,14 @@ void write_model(sqlite3* db, const SimulationContext& ctx,
         bind_text(remove.get(),1,simulation_id);
         if(sqlite3_step(remove.get())!=SQLITE_DONE)throw GpkgError(sqlite3_errmsg(db));
 #ifdef OPENSWMM_HAS_2D
-        if(ctx.twod_io.aquifer&&!ctx.twod_io.aquifer->surface_owners.empty()){
+        if(ctx.twod_io.aquifer&&(!ctx.twod_io.aquifer->empty()||
+            !ctx.twod_io.aquifer->boundaries.empty()||(ctx.twod_io.gw&&!ctx.twod_io.gw->empty()))){
             std::string sections;const std::vector<std::string> empty;
             twoD::writeSubsurfaceSections(*ctx.twod_io.aquifer,
                 ctx.twod_io.aquifer_nodes?*ctx.twod_io.aquifer_nodes:empty,
                 ctx.twod_io.aquifer_links?*ctx.twod_io.aquifer_links:empty,sections,true);
+            sections+=inp_writer::groundwaterSections(ctx);
+            if(!ctx.reactions.subsurface_laws.empty())sections+=transport::serializeReactionSystem(ctx);
             auto insert=prepare(db,"INSERT INTO surface_ownership_2d_input VALUES (?,?)");
             bind_text(insert.get(),1,simulation_id);bind_text(insert.get(),2,sections);
             if(sqlite3_step(insert.get())!=SQLITE_DONE)throw GpkgError(sqlite3_errmsg(db));
