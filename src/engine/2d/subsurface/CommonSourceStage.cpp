@@ -62,10 +62,11 @@ bool matchingGroundQualityProfile(const SimulationContext& ctx,const std::vector
         (a.temp_row<0||(a.temp_row>=a.n_pollut+a.n_msx&&a.temp_row<a.n_species&&
             a.row_names[std::size_t(a.temp_row)]=="__TEMPERATURE__"))&&
         (a.age_row<0||a.temp_row<0||a.age_row!=a.temp_row);
+    if(np==0&&a.n_msx==0&&(ctx.n_nodes()!=0||ctx.n_links()!=0||ctx.n_subcatches()!=0))return false;
     const bool porous=gw.heat().active()&&surface.heat.enabled&&surface.heat.bed&&surface.heat.ground_column;
     const bool aqueous=ctx.n_nodes()==0&&ctx.n_links()==0&&ctx.n_subcatches()==0&&
         !ctx.options.heat_transport&&!gw.heat().active()&&!surface.heat.enabled&&a.temp_row<0&&b.temp_row<0;
-    if((np==0&&a.n_msx==0)||!gw.active()||(!porous&&!aqueous)||
+    if(!gw.active()||(!porous&&!aqueous)||
        a.n_species<=0||a.n_species!=b.n_species||a.n_pollut!=int(np)||b.n_pollut!=int(np)||
        a.n_msx<0||a.n_msx!=b.n_msx||!rows_supported||a.row_names!=b.row_names||
        a.n_cells!=gw.state().n_cells||b.n_cells!=gw.state().n_cells||
@@ -74,8 +75,10 @@ bool matchingGroundQualityProfile(const SimulationContext& ctx,const std::vector
        (a.age_row>=0&&(a.age_row>=a.n_species||a.row_names[std::size_t(a.age_row)]!="__WATER_AGE__"))||
        (a.temp_row>=0&&(a.temp_row>=a.n_species||a.row_names[std::size_t(a.temp_row)]!="__TEMPERATURE__"))||
        (!a.rain_conc.empty()&&a.rain_conc.size()!=std::size_t(a.n_species)))return false;
-    if(porous&&(a.gained_bed.size()!=std::size_t(a.n_species)||b.gained_contact.size()!=std::size_t(b.n_species)||
-        b.generated_age.size()!=std::size_t(b.n_species)))return false;
+    const bool only_temperature=a.n_species==1&&a.temp_row==0;
+    if(porous&&(a.gained_bed.size()!=std::size_t(a.n_species)||
+        b.generated_age.size()!=b.gained_contact.size()||
+        ((!only_temperature||!b.generated_age.empty())&&b.generated_age.size()!=std::size_t(b.n_species))))return false;
     if(aqueous&&(!a.gained_bed.empty()||(!b.generated_age.empty()&&b.generated_age.size()!=std::size_t(b.n_species))||
         b.generated_age.size()!=b.gained_contact.size()))return false;
     for(std::size_t p=0;p<np;++p)if(a.row_names[p]!=names[p])return false;

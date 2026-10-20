@@ -4,7 +4,7 @@ import pytest
 import shutil
 import subprocess
 from openswmm.engine import (
-    Solver, GroundwaterVariable, GroundwaterZone, GroundwaterSpeciesLedger,
+    Solver, GroundwaterVariable, GroundwaterZone, GroundwaterSpeciesLedger, GroundwaterLedger,
     GroundHeatValue, HeatSedimentParam, FileError,
 )
 from tests.engine._groundwater_cases import cleanup
@@ -157,7 +157,7 @@ def _amount(solver, names):
 
 
 @pytest.mark.parametrize('chemistry,thermal', [(0, 4), (5, 3), (3, 7)])
-@pytest.mark.parametrize('reactive,passive', [(True, False), (True, True), (False, True)])
+@pytest.mark.parametrize('reactive,passive', [(True, False), (True, True), (False, True), (False, False)])
 @pytest.mark.parametrize('output', [0, 2])
 @pytest.mark.parametrize('age', [True, False])
 @pytest.mark.parametrize('porous', [True, False])
@@ -167,7 +167,7 @@ def test_mesh_groundwater_checkpoint_continues_reactions_and_heat(tmp_path, chem
     try:
         source.checkpoints.start_session(output)
         target.checkpoints.start_session(output)
-        names = ('A', 'B') if reactive else ('Dye',)
+        names = ('A', 'B') if reactive else (('Dye',) if passive else ())
         initial_amount = _amount(source, names)
         while source.elapsed.total_seconds() < 8:
             assert source.step().total_seconds() > 0
@@ -187,7 +187,8 @@ def test_mesh_groundwater_checkpoint_continues_reactions_and_heat(tmp_path, chem
         assert source.elapsed.total_seconds() == 75
         # Independent trapezoidal integral of the explicitly dated well series.
         water_input = 1.5e-6 * 9 + 1.5e-6 * 8 + 1e-6 * 58
-        concentration = 4 if reactive else 3
+        assert gw.ledger(GroundwaterLedger.SOURCE_IN) == pytest.approx(water_input, rel=1e-10, abs=1e-12)
+        concentration = 4 if reactive else (3 if passive else 0)
         assert _amount(source, names) == pytest.approx(initial_amount + concentration * water_input,
                                                      rel=1e-10, abs=1e-10)
         for name in gw.species:

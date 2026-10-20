@@ -118,13 +118,14 @@ activation and qualification boundaries.
 Mesh chemistry checkpoint sessions
 ---------------------------------
 
-A first-order mesh-only model with matching surface/groundwater BULK MSX
+A first-order mesh-only model with matching surface/groundwater transport
 rows can use ``solver.checkpoints.start_session(0)`` for numerical state or
 ``start_session(2)`` for mesh HDF5 output. The qualified profile requires
 matching species layouts and either WATER_ONLY with heat disabled, or
 POROUS_EQUILIBRIUM groundwater heat paired with coupled surface heat and a
-GROUND_COLUMN bed. Passive pollutants and water age are optional; bulk and
-SIGMA layer chemistry are supported. With porous heat, chemical and thermal
+GROUND_COLUMN bed. BULK MSX species, passive pollutants and water age are
+optional; age-only and heat-only models need no dummy pollutant. Bulk and
+SIGMA layer transport are supported. With porous heat, chemical and thermal
 layer counts are independent.
 
 Start both engines from the same model before saving and restoring with

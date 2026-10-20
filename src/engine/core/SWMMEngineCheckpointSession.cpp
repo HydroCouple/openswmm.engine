@@ -78,7 +78,8 @@ std::string SWMMEngine::startCheckpointSession(int output,const std::string& sou
         mesh_quality=!ctx_.options.ignore_2d&&surface_router_.mesh().n_cells()>0&&ctx_.n_nodes()==0&&
             ctx_.n_links()==0&&ctx_.n_subcatches()==0&&surface_router_.aquiferConfig().surface_owners.empty()&&
             surface_router_.options().reconstruction_order==1&&
-            (ctx_.reactions.configured||(!ctx_.options.ignore_quality&&ctx_.n_pollutants()>0));
+            (ctx_.reactions.configured||ctx_.options.water_age||ctx_.options.heat_transport||
+             (!ctx_.options.ignore_quality&&ctx_.n_pollutants()>0));
 #endif
         require(mesh_quality||(!ctx_.options.heat_transport&&!ctx_.options.water_age&&(ctx_.options.ignore_quality||ctx_.n_pollutants()==0)),
             "Managed checkpoint sessions require water-only, supported 1D reactions or mesh-only matched ground quality.");

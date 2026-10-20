@@ -24,6 +24,7 @@
 #include "core/SWMMEngine.hpp"
 #include "2d/SurfaceRouter2D.hpp"
 #include "2d/subsurface/LidNodeExchange.hpp"
+#include "2d/subsurface/CommonSourceStage.hpp"
 #include "2d/subsurface/SubsurfaceSolver.hpp"
 #include "2d/heat/ChannelGround.hpp"
 #include "2d/heat/MeshHeat.hpp"
@@ -2595,5 +2596,33 @@ TEST(GroundHeat, SigmaChemistryAndFixedThermalLayersShareActualChannelContacts) 
         ASSERT_TRUE(gw.refreshPorewaterContactLedger().empty());
         EXPECT_NE(channel(),before);EXPECT_NEAR(tr.ledgeredStorage(dye)+channel(),initial,1e-9);
         EXPECT_NEAR(tr.residual(dye),0,1e-9);EXPECT_NEAR(poreMass(gw.heat(),dye),tr.ledgeredStorage(dye),1e-9);
+    }
+}
+
+TEST(GroundHeat, TemperatureOnlySigmaKeepsEnergyWithItsThermalOwnerAcrossRestart) {
+    for(int thermal:{3,7}) {
+        const auto extra="[GW_TRANSPORT_OPTIONS]\nUNSAT_TRANSPORT LAYERED\nTHERMAL_LAYERS "+std::to_string(thermal)+"\n";
+        Model source("temperature-only-sigma-source-"+std::to_string(thermal),"SIGMA",.5,false,extra);
+        Model target("temperature-only-sigma-target-"+std::to_string(thermal),"SIGMA",.5,false,extra);
+        ASSERT_NE(source.e,nullptr);ASSERT_NE(target.e,nullptr);
+        ASSERT_EQ(enablePorewater(source),SWMM_OK);ASSERT_EQ(enablePorewater(target),SWMM_OK);
+        auto& gw=source.router().subsurface();auto& restored=target.router().subsurface();
+        ASSERT_EQ(gw.transport().n_species,1);ASSERT_EQ(gw.transport().temp_row,0);
+        ASSERT_GT(gw.transport().n_layers,0);
+        // This fixture has live network nodes: scalar managed admission remains mesh-only.
+        EXPECT_FALSE(openswmm::twoD::CommonSourceStage::supportsMeshGroundQuality(
+            static_cast<openswmm::SWMMEngine*>(source.e)->context(),source.router().state(),gw));
+        for(const auto& cell:gw.heat().cells) {
+            ASSERT_EQ(cell.porewater.sigma.layers,gw.transport().n_layers);
+            ASSERT_EQ(cell.porewater.sigma.species,1);
+            EXPECT_LT(sum(cell.column.energy),0);
+            for(double mass:cell.porewater.sigma.mass)EXPECT_DOUBLE_EQ(mass,0);
+            for(double mass:cell.porewater.mass)EXPECT_DOUBLE_EQ(mass,0);
+        }
+        const auto saved=gw.transportRestartState();ASSERT_FALSE(saved.empty());
+        ASSERT_EQ(restored.restoreTransportRestart(saved,true),"");
+        EXPECT_EQ(restored.transportRestartState(),saved);
+        EXPECT_DOUBLE_EQ(energy(restored.heat()),energy(gw.heat()));
+        for(const auto& cell:restored.heat().cells)for(double mass:cell.porewater.mass)EXPECT_DOUBLE_EQ(mass,0);
     }
 }

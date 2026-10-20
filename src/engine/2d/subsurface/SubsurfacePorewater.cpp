@@ -9,7 +9,9 @@
 #include <stdexcept>
 namespace openswmm::twoD {
 std::string SubsurfaceSolver::initPorewater() {
-    if(!heat_.active()||tr_.n_species-(tr_.temp_row>=0?1:0)<=0)return {};
+    // A temperature-only SIGMA column still needs its overlap geometry for
+    // energy views and restart; temperature mass remains owned by heat_.
+    if(!heat_.active()||(tr_.n_layers==0&&tr_.n_species-(tr_.temp_row>=0?1:0)<=0))return {};
     try {
         const auto nl=std::size_t(heat_.config->options.thermal_layers),nc=std::size_t(state_.n_cells),ns=std::size_t(tr_.n_species);
         if(!nc||ns>std::numeric_limits<std::size_t>::max()/nc/nl)return "Ground porewater layer count exceeds the addressable state size.";

@@ -21,7 +21,7 @@ struct SurfaceEtReceipt {
 /// invoke after accepted face volumes land and before managed source debits.
 /// Conservative pollutants pair actual non-LID/LID withdrawals and the mesh's
 /// remaining weather footprint, with matching pollutant IDs. A separately
-/// qualified mesh-only matched profile carries age and BULK MSX rows with
+/// qualified mesh-only matched profile carries optional age and BULK MSX rows with
 /// WATER_ONLY or paired porous heat owners.
 /// Private source MSX and mesh coupling donors remain guarded. Paired refunds and locally owned
 /// emergence are consumed once in the next eligible completed interval.

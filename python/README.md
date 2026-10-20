@@ -35,7 +35,7 @@ live output reading. Guides document their units, lifecycle and immutable
 snapshot behavior under `python/docs/guide/`. The strict API coverage check is
 `python python/scripts/api_drift_audit.py --strict` from the repository root.
 
-Mesh-only first-order groundwater checkpoint sessions support matched BULK MSX/pollutant inventories and optional age, using WATER_ONLY or paired porous heat, with numerical state or mesh HDF5 output. Live network/catchment chemistry and binary/combined companions retain their separate guards; see the [groundwater guide](docs/guide/groundwater.rst).
+Mesh-only first-order groundwater checkpoint sessions support matched optional BULK MSX/pollutant inventories, age-only and heat-only layouts, using WATER_ONLY or paired porous heat, with numerical state or mesh HDF5 output. Live network/catchment chemistry and binary/combined companions retain their separate guards; see the [groundwater guide](docs/guide/groundwater.rst).
 
 After initialization, `solver.surface2d.groundwater.execution_status` reports available and executed groundwater operators, accepted evaluation counts, effective host threads and CPU-owned companions. The optional OpenMP profile computes raw CLOSED_FORM recharge only; the surface backend label does not describe groundwater operator use.
 
