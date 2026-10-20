@@ -72,6 +72,15 @@ public:
 std::filesystem::path root() {
     const auto* env=std::getenv("SWMM_R4_SESSION_OUT");
     auto p=env ? std::filesystem::path(env) : std::filesystem::path(__FILE__).parent_path()/"engine_checkpoint_out";
+    // The tests write fixed names here and some refuse an existing
+    // destination, so a previous run's files made them fail. The default
+    // folder starts empty once per run and keeps this run's files for review;
+    // a folder given in SWMM_R4_SESSION_OUT is never emptied.
+    static const bool emptied=[&]{
+        if(!env){std::error_code ec;std::filesystem::remove_all(p,ec);}
+        return true;
+    }();
+    (void)emptied;
     std::filesystem::create_directories(p);return p;
 }
 std::string bytes(const std::filesystem::path& p) {
