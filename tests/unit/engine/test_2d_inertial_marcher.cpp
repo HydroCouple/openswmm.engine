@@ -53,6 +53,7 @@
 #include <vector>
 
 #include "2d/data/BoundaryData.hpp"
+#include "2d/input/SectionHandlers2D.hpp"
 #include "2d/data/MeshData.hpp"
 #include "2d/data/SolverOptions2D.hpp"
 #include "2d/data/SurfaceStateData.hpp"
@@ -1881,13 +1882,14 @@ struct RkReactionSystem {
     ~RkReactionSystem(){if(handle)swmm_engine_destroy(handle);}
     openswmm::SimulationContext& context(){return reinterpret_cast<openswmm::SWMMEngine*>(handle)->context();}
 };
-void initRkReactions(CoupledRkRig& r,RkReactionSystem& system,bool layered,double kd=0) {
-    RowLayoutLite rows;rows.n_species=2;rows.n_msx=2;rows.names={"A","B"};
+void initRkReactions(CoupledRkRig& r,RkReactionSystem& system,bool layered,double kd=0,bool temperature=false) {
+    RowLayoutLite rows;rows.n_species=temperature?3:2;rows.n_msx=2;rows.names={"A","B"};
+    if(temperature){rows.temp_row=2;rows.names.push_back("__TEMPERATURE__");}
     GwTransportData data;data.options.unsat_transport=layered?"LAYERED":"BULK";
     std::vector<std::string> warnings;r.gw.initTransport(rows,&data,{},warnings);
     auto& t=r.gw.transport();auto& w=r.gw.state();
-    for(int species=0;species<2;++species)for(int i=0;i<w.n_cells;++i) {
-        const auto k=t.idx(species,i);t.kd[k]=kd;const double partition=kd*t.rho_b[i],concentration=species==0?2:0;
+    for(int species=0;species<rows.n_species;++species)for(int i=0;i<w.n_cells;++i) {
+        const auto k=t.idx(species,i);t.kd[k]=species==rows.temp_row?0:kd;const double partition=t.kd[k]*t.rho_b[i],concentration=species==0?2:0;
         t.sat_mass[k]=concentration*w.area[i]*w.hg[i]*(w.theta_s[i]+partition);
         if(layered) {
             for(int j=0;j<t.n_layers;++j)t.layer_mass[t.layerIdx(species,j,i)]=concentration*w.area[i]*(w.zs[i]-w.hg[i])/t.n_layers*
@@ -1895,10 +1897,10 @@ void initRkReactions(CoupledRkRig& r,RkReactionSystem& system,bool layered,doubl
             t.refreshUnsat(species,i);
         }else t.unsat_mass[k]=concentration*w.area[i]*(w.hu[i]+partition*(w.zs[i]-w.hg[i]));
     }
-    for(int species=0;species<2;++species)t.init_mass[species]=t.storage(species);
+    for(int species=0;species<rows.n_species;++species)t.init_mass[species]=t.storage(species);
     ASSERT_EQ(r.gw.initReactions(system.context()),"");
-    r.state.transport.resize(2,r.mesh.n_cells(),0);r.state.transport.n_pollut=0;
-    r.state.transport.n_msx=2;r.state.transport.row_names={"A","B"};r.opts.groundwater=1;
+    r.state.transport.resize(rows.n_species,r.mesh.n_cells(),0);r.state.transport.n_pollut=0;
+    r.state.transport.n_msx=2;r.state.transport.temp_row=rows.temp_row;r.state.transport.row_names=rows.names;r.opts.groundwater=1;
     r.solver.initialize(r.mesh,r.state,r.opts);r.solver.setSubsurface(&r.gw);
     ASSERT_EQ(r.gw.rk2ProfileError(),"");
 }
@@ -2084,13 +2086,14 @@ void seedRkSurfaceReaction(CoupledRkRig& r,RkReactionSystem& system,double conce
     for(int cell=0;cell<tr.n_cells;++cell)tr.cell_mass[tr.idx(0,cell)]=concentration*r.state.volume[cell];
     ASSERT_EQ(r.solver.configureRk2Reactions(system.context()),"");
 }
-std::vector<double> reactiveColumnReference(int steps) {
+std::vector<double> reactiveColumnReference(int steps,bool temperature=false) {
     // Independent smooth Gardner water + two-species finite-volume ODE.
     // Stores: SAT, four moving aqueous layers, surface. No production calls.
     constexpr int stores=6;constexpr double ks=.003,deep=.001,porosity=.45,residual=.1;
     std::vector<double> y(18);y[0]=.6;y[5]=.2;
     for(int j=0;j<4;++j)y[j+1]=(.24+.015*j)*(2-y[0])/4;
-    y[6]=2*porosity*y[0];for(int j=1;j<5;++j)y[6+j]=2*y[j];y[11]=6*y[5];
+    const double initial=temperature?-2:2;
+    y[6]=initial*porosity*y[0];for(int j=1;j<5;++j)y[6+j]=initial*y[j];y[11]=6*y[5];
     const auto rhs=[&](const std::vector<double>& v) {
         std::vector<double> out(18),theta(4),k(4),flux(5),water(6);
         const double length=2-v[0];
@@ -2102,7 +2105,7 @@ std::vector<double> reactiveColumnReference(int steps) {
         out[0]=table;out[5]=-flux[0];for(int j=0;j<4;++j)out[j+1]=flux[j]-flux[j+1];
         water[0]=porosity*v[0];for(int j=1;j<6;++j)water[j]=v[j];
         for(int store=0;store<stores;++store) {
-            const double conversion=(store==5?.3:.2)*v[6+store];
+            const double conversion=temperature?0:(store==5?.3:.2)*v[6+store];
             out[6+store]-=conversion;out[12+store]+=conversion;
         }
         for(int species=0;species<2;++species) {
@@ -2310,4 +2313,211 @@ TEST(CoupledGroundwaterRk2, SessionCpuPolicyBindsCheckpointIdentityWithoutMutati
     EXPECT_EQ(rk2File(before),rk2File(after));
     b.opts.auto_backend_cpu=false;ASSERT_EQ(b.solver.loadCheckpoint(saved.string()),"");
     ASSERT_NO_THROW(b.solver.advance(0,.05));
+}
+
+namespace {
+void seedRkTemperature(CoupledRkRig& r,double ground,double surface) {
+    auto& t=r.gw.transport();const auto& w=r.gw.state();const int row=t.temp_row;
+    ASSERT_GE(row,0);
+    for(int cell=0;cell<w.n_cells;++cell) {
+        t.sat_mass[t.idx(row,cell)]=ground*w.area[cell]*w.hg[cell]*w.theta_s[cell];
+        if(t.n_layers) {
+            for(int j=0;j<t.n_layers;++j)t.layer_mass[t.layerIdx(row,j,cell)]=ground*w.area[cell]*(w.zs[cell]-w.hg[cell])/t.n_layers*
+                w.theta_sigma[std::size_t(j)*w.n_cells+cell];
+            t.refreshUnsat(row,cell);
+        }else t.unsat_mass[t.idx(row,cell)]=ground*w.area[cell]*w.hu[cell];
+        r.state.transport.cell_mass[r.state.transport.idx(r.state.transport.temp_row,cell)]=surface*r.state.volume[cell];
+    }
+    t.init_mass[row]=t.storage(row);
+}
+void initRkTemperature(CoupledRkRig& r,bool layered,double ground=-2,double surface=6) {
+    RowLayoutLite rows;rows.n_species=1;rows.temp_row=0;rows.names={"__TEMPERATURE__"};
+    GwTransportData data;data.options.unsat_transport=layered?"LAYERED":"BULK";
+    std::vector<std::string> warnings;r.gw.initTransport(rows,&data,{},warnings);
+    r.state.transport.resize(1,r.mesh.n_cells(),0);auto& t=r.state.transport;
+    t.n_pollut=0;t.temp_row=0;t.row_names=rows.names;r.opts.groundwater=1;r.opts.coupled_heat=false;
+    seedRkTemperature(r,ground,surface);r.solver.initialize(r.mesh,r.state,r.opts);r.solver.setSubsurface(&r.gw);
+    ASSERT_EQ(r.gw.rk2ProfileError(),"");
+}
+}
+TEST(CoupledGroundwaterRk2, WaterTemperatureStirredAquiferCrossesZeroAtSecondOrder) {
+    for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true}) {
+        if(layered&&closure!=GwClosure::SIGMA)continue;double previous=0;
+        for(double dt:{.4,.2,.1,.05}) {
+            CoupledRkRig r;r.init(dt,0,0,.2,"NONE",closure,SoilChar::GARDNER,4);initRkTemperature(r,layered,-.2,-.2);
+            auto& t=r.gw.transport();const auto& w=r.gw.state();
+            GwResolvedSource source;source.name="temperature-mixing";source.cells={{0,1}};source.flow.constant=.1;
+            GwResolvedSourceTerm term;term.row=0;term.signal.constant=7;source.terms={term};r.gw.setSources({source});
+            GwSourceSignal flow;flow.constant=-.1;auto edge=rk2FlowEdge(r,0,flow);
+            edge.mass_in.assign(1,0);edge.mass_out.assign(1,0);edge.flux_in.assign(1,0);edge.flux_out.assign(1,0);r.gw.setBoundaries({edge});
+            const double capacity=w.area[0]*w.hg[0]*w.theta_s[0];
+            for(int step=0;step<int(std::round(2/dt));++step)ASSERT_NO_THROW(r.solver.advance(dt*step,dt*(step+1)));
+            const double expected=7-7.2*std::exp(-.1*2/capacity),actual=t.sat_mass[0]/capacity;
+            const double error=std::abs(actual-expected);EXPECT_GT(actual,0);EXPECT_LT(error,1e-4);
+            RecordProperty("temperature_mixing_"+std::to_string(int(closure))+"_"+std::to_string(layered)+"_"+std::to_string(int(dt*1000)),error);
+            if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;
+            EXPECT_NEAR(t.residual(0),0,1e-10*std::max(1.,std::abs(t.init_mass[0])));
+            EXPECT_NEAR(w.continuityResidual(),0,1e-10);
+        }
+    }
+}
+TEST(CoupledGroundwaterRk2, WaterTemperatureMovingLayersMatchIndependentSignedTransportOde) {
+    const auto exact=reactiveColumnReference(20000,true),refined=reactiveColumnReference(40000,true);
+    for(int j=0;j<18;++j)ASSERT_NEAR(exact[j],refined[j],1e-11);
+    double previous=0;
+    for(double dt:{.1,.05,.025,.0125}) {
+        CoupledRkRig r;r.init(dt,.003,.001,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);seedRkSigma(r);initRkTemperature(r,true);
+        const double initial=r.state.transport.totalIncludingLedgers(0);
+        for(int step=0;step<int(std::round(2/dt));++step)ASSERT_NO_THROW(r.solver.advance(dt*step,dt*(step+1)));
+        const auto& w=r.gw.state();const auto& t=r.gw.transport();std::vector<double> actual{w.hg[0]};
+        for(int j=0;j<4;++j)actual.push_back(w.theta_sigma[std::size_t(j)*w.n_cells]*(w.zs[0]-w.hg[0])/4);
+        actual.push_back(r.state.volume[0]/w.area[0]);actual.push_back(t.sat_mass[0]/w.area[0]);
+        for(int j=0;j<4;++j)actual.push_back(t.layer_mass[t.layerIdx(0,j,0)]/w.area[0]);
+        actual.push_back(r.state.transport.cell_mass[0]/w.area[0]);
+        double error=0;for(int j=0;j<12;++j)error+=std::pow(actual[j]-exact[j],2);error=std::sqrt(error);
+        RecordProperty("water_temperature_column_"+std::to_string(int(dt*10000)),error);
+        EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;
+        EXPECT_NEAR(t.residual(0),0,1e-10);
+        EXPECT_NEAR(r.state.transport.totalIncludingLedgers(0),initial,1e-10);
+        EXPECT_NEAR(r.state.transport.lost_infiltration[0],t.gained_infil[0],1e-12);
+    }
+}
+TEST(CoupledGroundwaterRk2, WaterTemperatureSetsEachDomainsActualReactionTemperature) {
+    const std::string ground="* SAT A RATE -.2*exp(.01*TEMP)*A\n* SAT B RATE .2*exp(.01*TEMP)*A\n* UNSAT A RATE -.2*exp(.01*TEMP)*A\n* UNSAT B RATE .2*exp(.01*TEMP)*A\n";
+    RkReactionSystem system(ground,"RK5","RATE A -.2*exp(.01*TEMP)*A\nRATE B .2*exp(.01*TEMP)*A\n");
+    for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true}) {
+        if(layered&&closure!=GwClosure::SIGMA)continue;
+        for(double cold:{-5.,10.}) {
+            CoupledRkRig r;r.init(.05,0,0,.2,"NONE",closure,SoilChar::GARDNER,4);
+            initRkReactions(r,system,layered,0,true);seedRkTemperature(r,cold,5-cold);seedRkSurfaceReaction(r,system);
+            const double ground_initial=r.gw.transport().init_mass[0],surface_initial=r.state.transport.totalIncludingLedgers(0);
+            for(int step=0;step<20;++step)ASSERT_NO_THROW(r.solver.advance(.05*step,.05*(step+1)));
+            EXPECT_NEAR(r.gw.transport().storage(0),ground_initial*std::exp(-.2*std::exp(.01*cold)),ground_initial*1e-8);
+            EXPECT_NEAR(r.state.transport.totalIncludingLedgers(0),surface_initial*std::exp(-.2*std::exp(.01*(5-cold))),surface_initial*1e-8);
+            EXPECT_DOUBLE_EQ(r.solver.surfaceReactionLoss(2),0);EXPECT_DOUBLE_EQ(r.gw.transport().lost_reaction[2],0);
+            EXPECT_NEAR(r.gw.transport().residual(2),0,1e-10);
+        }
+    }
+}
+TEST(CoupledGroundwaterRk2, WaterTemperatureColdForcingRestartsExactlyAndBindsHeatMode) {
+    CoupledRkRig a,b,bad;
+    for(auto* r:{&a,&b,&bad}) {
+        r->init(.025,.0001,.0002,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);initRkTemperature(*r,true);
+        GwResolvedSource source;source.name="cold-well";source.cells={{0,1}};source.flow.times={0,.2,.6,1};source.flow.values={.01,-.01,.02,0};
+        GwResolvedSourceTerm term;term.row=0;term.signal.constant=-5;source.terms={term};r->gw.setSources({source});
+        GwSourceSignal flow;flow.times={0,.3,.7,1};flow.values={.001,-.001,.001,0};auto edge=rk2FlowEdge(*r,0,flow);
+        GwBoundaryTerm quality;quality.row=0;quality.signal.constant=-8;edge.terms={quality};
+        edge.mass_in.assign(1,0);edge.mass_out.assign(1,0);edge.flux_in.assign(1,0);edge.flux_out.assign(1,0);r->gw.setBoundaries({edge});
+    }
+    bad.opts.water_heat_capacity*=2;
+    const auto saved=rk2Output("cold-temperature.chk"),before=rk2Output("cold-temperature-before.chk"),after=rk2Output("cold-temperature-after.chk");
+    for(int step=0;step<40;++step) {
+        ASSERT_NO_THROW(a.solver.advance(.025*step,.025*(step+1)));
+        if(step==9) {
+            ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");ASSERT_EQ(bad.solver.saveCheckpoint(before.string()),"");
+            EXPECT_FALSE(bad.solver.loadCheckpoint(saved.string()).empty());ASSERT_EQ(bad.solver.saveCheckpoint(after.string()),"");
+            EXPECT_EQ(rk2File(before),rk2File(after));ASSERT_EQ(b.solver.loadCheckpoint(saved.string()),"");
+        }else if(step>9)ASSERT_NO_THROW(b.solver.advance(.025*step,.025*(step+1)));
+    }
+    EXPECT_LT(a.gw.boundaries()[0].mass_in[0],0);
+    ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(saved),rk2File(after));
+    EXPECT_NEAR(a.gw.transport().residual(0),0,1e-10);
+    bad.opts.water_heat_capacity=a.opts.water_heat_capacity;bad.opts.coupled_heat=true;
+    EXPECT_THROW(bad.solver.advance(0,.025),std::runtime_error);
+}
+TEST(CoupledGroundwaterRk2, WaterTemperatureLaterFailureRollsBackAllSignedStoresAndReceipts) {
+    CoupledRkRig r;r.init(.1,.005,0,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);initRkTemperature(r,true);
+    GwResolvedSource source;source.name="cold-overflow";source.cells={{0,1}};source.flow.times={0,.5,4.5};source.flow.values={.001,.001,1e308};
+    GwResolvedSourceTerm term;term.row=0;term.signal.constant=-3;source.terms={term};r.gw.setSources({source});
+    ExplicitInertialSolverTestAccess::prepare(r.solver);const auto before=rk2Output("cold-failure-before.chk"),after=rk2Output("cold-failure-after.chk");
+    ASSERT_EQ(r.solver.saveCheckpoint(before.string()),"");
+    EXPECT_THROW(ExplicitInertialSolverTestAccess::rk2(r.solver,4.5,0),std::runtime_error);
+    ASSERT_EQ(r.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+    source.flow.times.clear();source.flow.values.clear();source.flow.constant=.001;r.gw.setSources({source});
+    ASSERT_NO_THROW(r.solver.advance(0,.1));
+    EXPECT_NEAR(r.gw.transport().residual(0),0,1e-10);
+}
+
+TEST(InertialMarcher, SignedTemperatureAuthoringKeepsChemistryAndAgeNonnegative) {
+    std::vector<SurfaceRouter2D::PendingInitialQualityRow> initial;
+    std::vector<SurfaceRouter2D::PendingBoundaryQualityRow> boundary;
+    ASSERT_EQ(parse2DInitialQualityLine({"*","__TEMPERATURE__","-4"},initial),"");
+    ASSERT_EQ(parse2DBoundaryQualityLine({"1","0","__TEMPERATURE__","-7"},boundary),"");
+    EXPECT_DOUBLE_EQ(initial[0].conc,-4);EXPECT_DOUBLE_EQ(boundary[0].conc,-7);
+    for(const std::string species:{"TSS","A","__WATER_AGE__"}) {
+        EXPECT_FALSE(parse2DInitialQualityLine({"*",species,"-1"},initial).empty());
+        EXPECT_FALSE(parse2DBoundaryQualityLine({"1","0",species,"-1"},boundary).empty());
+    }
+    for(const std::string value:{"nan","inf","1e309"}) {
+        EXPECT_FALSE(parse2DInitialQualityLine({"*","__TEMPERATURE__",value},initial).empty());
+        EXPECT_FALSE(parse2DBoundaryQualityLine({"1","0","__TEMPERATURE__",value},boundary).empty());
+    }
+    EXPECT_EQ(initial.size(),1);EXPECT_EQ(boundary.size(),1);
+}
+
+TEST(CoupledGroundwaterRk2, WaterTemperatureImposedHeatFluxHasIndependentJoulesAndNoWater) {
+    constexpr double cp=4186000;
+    for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true}) {
+        if(layered&&closure!=GwClosure::SIGMA)continue;
+        for(double power:{-10000.,10000.}) {
+            CoupledRkRig r;r.init(.1,0,0,.2,"NONE",closure,SoilChar::GARDNER,4);initRkTemperature(r,layered,-2,-2);
+            const double initial=r.gw.transport().storage(0);GwSourceSignal flow;auto edge=rk2FlowEdge(r,0,flow);
+            GwBoundaryTerm term;term.row=0;term.flux=true;term.scale=edge.length/cp;term.signal.constant=power;edge.terms={term};
+            edge.mass_in.assign(1,0);edge.mass_out.assign(1,0);edge.flux_in.assign(1,0);edge.flux_out.assign(1,0);r.gw.setBoundaries({edge});
+            for(int step=0;step<20;++step)ASSERT_NO_THROW(r.solver.advance(.1*step,.1*(step+1)));
+            const auto& t=r.gw.transport();const auto& boundary=r.gw.boundaries()[0];
+            EXPECT_NEAR(cp*(t.storage(0)-initial),power*edge.length*2,1e-6);
+            EXPECT_DOUBLE_EQ(boundary.applied_in,0);EXPECT_DOUBLE_EQ(boundary.applied_out,0);
+            EXPECT_DOUBLE_EQ(boundary.mass_in[0],0);EXPECT_DOUBLE_EQ(boundary.mass_out[0],0);
+            EXPECT_NEAR(cp*(boundary.flux_in[0]-boundary.flux_out[0]),power*edge.length*2,1e-6);
+            EXPECT_NEAR(t.residual(0),0,1e-10);
+        }
+    }
+}
+TEST(CoupledGroundwaterRk2, WaterTemperatureEtKeepsSignedSensibleExportsAndUniformWetStores) {
+    for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true}) {
+        if(layered&&closure!=GwClosure::SIGMA)continue;
+        for(double temperature:{-3.,5.})for(double pond:{0.,.01}) {
+            CoupledRkRig r;r.init(.05,0,0,pond,"BOTH",closure,SoilChar::GARDNER,4);initRkTemperature(r,layered,temperature,temperature);
+            r.state.evap_rate.assign(r.mesh.n_cells(),1e-4);
+            const double surface_initial=r.state.transport.totalIncludingLedgers(0);
+            for(int step=0;step<40;++step)ASSERT_NO_THROW(r.solver.advance(.05*step,.05*(step+1)));
+            const auto& w=r.gw.state();const auto& t=r.gw.transport();const auto& s=r.state.transport;
+            EXPECT_GT(w.led_et+r.state.evap_loss_total,0);
+            EXPECT_NEAR(t.lost_et[0],temperature*w.led_et,1e-8);
+            EXPECT_NEAR(t.residual(0),0,1e-10);
+            EXPECT_NEAR(s.totalIncludingLedgers(0),surface_initial,1e-10);
+            for(int cell=0;cell<w.n_cells;++cell) {
+                const double sat=w.area[cell]*w.hg[cell]*w.theta_s[cell],unsat=w.area[cell]*w.hu[cell];
+                if(sat>1e-10)EXPECT_NEAR(t.sat_mass[t.idx(0,cell)]/sat,temperature,1e-5);
+                if(unsat>1e-10)EXPECT_NEAR(t.unsat_mass[t.idx(0,cell)]/unsat,temperature,1e-5);
+            }
+        }
+    }
+}
+
+TEST(CoupledGroundwaterRk2, WaterTemperatureHeaterAndKineticsUseOnePhysicalSecondOrderClock) {
+    const std::string ground="* SAT A RATE -.2*exp(.01*TEMP)*A\n* SAT B RATE .2*exp(.01*TEMP)*A\n* UNSAT A RATE -.2*exp(.01*TEMP)*A\n* UNSAT B RATE .2*exp(.01*TEMP)*A\n";
+    RkReactionSystem system(ground);constexpr double cp=4186000;
+    for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true}) {
+        if(layered&&closure!=GwClosure::SIGMA)continue;double previous=0;
+        for(double dt:{.4,.2,.1,.05}) {
+            CoupledRkRig r;r.init(dt,0,0,0,"NONE",closure,SoilChar::GARDNER,4);
+            initRkReactions(r,system,layered,0,true);seedRkTemperature(r,-2,6);r.gw.transport().dispersion_on=false;
+            auto& t=r.gw.transport();const double initial=t.sat_mass[0],volume=r.gw.state().area[0]*r.gw.state().hg[0]*r.gw.state().theta_s[0];
+            GwSourceSignal flow;auto edge=rk2FlowEdge(r,0,flow);GwBoundaryTerm term;term.row=2;term.flux=true;
+            term.scale=edge.length/cp;term.signal.constant=cp*volume*5/edge.length;edge.terms={term};
+            edge.mass_in.assign(3,0);edge.mass_out.assign(3,0);edge.flux_in.assign(3,0);edge.flux_out.assign(3,0);r.gw.setBoundaries({edge});
+            for(int step=0;step<int(std::round(2/dt));++step)ASSERT_NO_THROW(r.solver.advance(dt*step,dt*(step+1)));
+            EXPECT_NEAR(r.solver.last_step_size(),dt,1e-14);
+            const double integrated=.2*std::exp(-.02)*std::expm1(.1)/.05;
+            const double error=std::abs(t.sat_mass[0]-initial*std::exp(-integrated))/initial;
+            RecordProperty("heated_kinetics_"+std::to_string(int(closure))+"_"+std::to_string(layered)+"_"+std::to_string(int(dt*1000)),error);
+            EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;
+            EXPECT_NEAR(t.sat_mass[t.idx(2,0)]/volume,8,1e-10);
+            EXPECT_NEAR(t.storage(0)+t.storage(1),t.init_mass[0],1e-10);
+            EXPECT_DOUBLE_EQ(t.lost_reaction[2],0);
+            for(int row=0;row<3;++row)EXPECT_NEAR(t.residual(row),0,1e-10);
+        }
+    }
 }

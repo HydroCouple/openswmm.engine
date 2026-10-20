@@ -2234,6 +2234,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     if(gw_) {
         if(auto error=gw_->rk2ProfileError();!error.empty())throw std::runtime_error(error);
         if(common_stage_ || channel_ground_ || state_->heat.enabled ||
+           (gw_->transport().temp_row>=0&&(state_->transport.temp_row!=gw_->transport().temp_row||opts_->coupled_heat)) ||
            state_->snow.active() || state_->runtime_sources.active() || state_->runtime_forcings.active() ||
            (state_->node_coupling&&!state_->node_coupling->empty()))
             throw std::runtime_error("Coupled RK2 has an unqualified surface/source owner.");
@@ -2452,7 +2453,8 @@ void ExplicitInertialSolver::advanceRk2SurfaceReactions(double seconds) {
             for(int species=0;species<rx.n_species();++species)if(rk_reaction_rows_[species]>=0)
                 aqueous[species]=next[tr.idx(rk_reaction_rows_[species],cell)]/volume;
             for(int row=0;row<tr.n_pollut;++row)pollutants[row]=next[tr.idx(row,cell)]/volume;
-            double vars[int(RxHydVar::COUNT_)]={};vars[int(RxHydVar::TEMP)]=rx.default_temp_c;
+            double vars[int(RxHydVar::COUNT_)]={};
+            vars[int(RxHydVar::TEMP)]=tr.temp_row>=0?next[tr.idx(tr.temp_row,cell)]/volume:rx.default_temp_c;
             const auto report=transport::ReactionIntegrator::stepSubcycled(rx,rx.pipe_form,rx.pipe_expr,seconds,
                 aqueous.data(),vars,rk_reaction_workspace_,pollutants.data());
             if(!report.ok)throw std::runtime_error("RK2 surface reaction: "+report.error);

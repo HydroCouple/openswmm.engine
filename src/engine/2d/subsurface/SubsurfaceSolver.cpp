@@ -2750,8 +2750,12 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
             if(euler) {
                 const bool saturated=&m==&msat;const double volume=saturated?f.v_sat0:f.v_uns0;
                 auto& remaining=saturated?sat_remaining:uns_remaining;
-                dm=volume>0?vol*(saturated?old_sat:old_uns)/volume*mob*(saturated?sat_scale:uns_scale):0;
-                dm=std::min(dm,remaining);remaining-=dm;
+                dm=volume>0?vol*(saturated?old_sat:old_uns)/volume*mob*
+                    (tr_.signedRow(s)?1:(saturated?sat_scale:uns_scale)):0;
+                // A signed temperature-volume has no nonnegative mass
+                // budget. Water already bounds the physical donor; min on
+                // two negatives would empty the whole cold store.
+                if(!tr_.signedRow(s)){dm=std::min(dm,remaining);remaining-=dm;}
             }
             if (!tr_.signedRow(s) && dm > m) dm = m;
             m -= dm;
@@ -2781,7 +2785,8 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
         //     was carrying when it left the surface cell.
         const double in_m = consumePending(tr_.xacc_from_surface[k]);
         if (in_m != 0.0) {
-            muns += f.refund_mass ? std::max(0.0,in_m-(*f.refund_mass)[us]) : in_m;
+            const double accepted=f.refund_mass?in_m-(*f.refund_mass)[us]:in_m;
+            muns+=(f.refund_mass&&!tr_.signedRow(s))?std::max(0.,accepted):accepted;
             tr_.gained_infil[us] += in_m;
         }
 
@@ -3137,7 +3142,7 @@ double SubsurfaceSolver::rawRecharge(int cell,const soil::Params& p,double lengt
 }
 
 std::string SubsurfaceSolver::rk2ProfileError() const {
-    if(!active() || options_.per_subcatch || heat_.active() || tr_.temp_row>=0 ||
+    if(!active() || options_.per_subcatch || heat_.active() ||
        !node_beds_.empty() || lid_receipts_enabled_ || runtime_sources_.active() ||
        std::any_of(source_owned_.begin(),source_owned_.end(),[](bool v){return v;}) ||
        std::any_of(state_.closure.begin(),state_.closure.end(),[](int8_t v){return v!=int8_t(GwClosure::CLOSED_FORM)&&v!=int8_t(GwClosure::ENSLAVED)&&v!=int8_t(GwClosure::SIGMA);}))
@@ -3164,8 +3169,12 @@ std::string SubsurfaceSolver::rk2ProfileError() const {
         if(tr_.sat_mass.size()!=std::size_t(tr_.n_species)*state_.n_cells||tr_.unsat_mass.size()!=tr_.sat_mass.size()||
            tr_.layer_mass.size()!=std::size_t(tr_.n_layers)*tr_.sat_mass.size())
             return "Coupled RK2 groundwater transport shape differs.";
-        for(const auto* mass:{&tr_.sat_mass,&tr_.unsat_mass,&tr_.layer_mass})for(double v:*mass)
-            if(!std::isfinite(v)||v<0)return "Coupled RK2 groundwater transport inventory is inadmissible.";
+        for(const auto* mass:{&tr_.sat_mass,&tr_.unsat_mass,&tr_.layer_mass}) {
+            const auto stride=std::size_t(tr_.n_cells)*(mass==&tr_.layer_mass?tr_.n_layers:1);
+            for(std::size_t k=0;k<mass->size();++k)
+                if(!std::isfinite((*mass)[k])||(int(k/stride)!=tr_.temp_row&&(*mass)[k]<0))
+                    return "Coupled RK2 groundwater transport inventory is inadmissible.";
+        }
         if(std::any_of(tr_.decay.begin(),tr_.decay.end(),[](double v){return !std::isfinite(v)||v<0;}))
             return "Coupled RK2 groundwater decay is inadmissible.";
     }

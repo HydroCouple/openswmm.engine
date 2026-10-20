@@ -1114,6 +1114,8 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                         "' — declare it in [POLLUTANTS] / the reactions "
                         "component, or name __WATER_AGE__ / __TEMPERATURE__ "
                         "with that option on.");
+                if(!std::isfinite(r.conc)||(r.conc<0&&!tr.signedRow(sp)))
+                    throw std::runtime_error("[2D_BOUNDARY_QUALITY] negative values require the active temperature row; all values must be finite.");
                 // S4b: the age row is authored in HOURS like the 1D
                 // [INITIAL_QUALITY] / water-age sources and carried in
                 // seconds internally (D-A21).
@@ -1597,6 +1599,8 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             return tr.rowIndex(name);   // S4: any carried row; -1 if absent
         };
         auto seed = [&](int sp, int c, double conc) {
+            if(!std::isfinite(conc)||(conc<0&&!tr.signedRow(sp)))
+                throw std::runtime_error("[2D_INITIAL_QUALITY] negative values require the active temperature row; all values must be finite.");
             // S4b: `__WATER_AGE__` is authored in hours (the 1D convention,
             // InitialQualitySeeds::initialAgeSecondsFor) and stored in seconds.
             if (sp == tr.age_row) conc *= 3600.0;

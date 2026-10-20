@@ -300,9 +300,15 @@ std::string ExplicitInertialSolver::rk2CheckpointProfile() const {
        (state_->node_coupling&&!state_->node_coupling->empty()))
         return "RK2 checkpoint requires the standalone wall-bounded transport/age coupled profile.";
     const auto& tr=state_->transport;const auto& ground=gw_->transport();
-    if(tr.active()&&(tr.row_names!=ground.row_names||tr.n_species!=ground.n_species||tr.age_row!=ground.age_row||tr.temp_row>=0))
+    if(tr.active()&&(tr.row_names!=ground.row_names||tr.n_species!=ground.n_species||tr.age_row!=ground.age_row||tr.temp_row!=ground.temp_row))
         return "Coupled RK2 requires matching surface/groundwater species and age rows.";
-    for(double mass:tr.cell_mass)if(!std::isfinite(mass)||mass<0)return "RK2 surface transport inventory is inadmissible.";
+    if(ground.temp_row>=0&&(tr.temp_row<0||opts_->coupled_heat))
+        return "RK2 water temperature requires matching surface rows and HEAT_MODEL TRANSPORT_ONLY.";
+    if(tr.n_cells<0||tr.n_species<0||tr.cell_mass.size()!=std::size_t(tr.n_cells)*std::size_t(tr.n_species))
+        return "RK2 surface transport shape differs.";
+    for(std::size_t k=0;k<tr.cell_mass.size();++k)
+        if(!std::isfinite(tr.cell_mass[k])||(int(k/std::size_t(tr.n_cells))!=tr.temp_row&&tr.cell_mass[k]<0))
+            return "RK2 surface transport inventory is inadmissible.";
     if(!rk_reacted_.empty()) {
         if(rk_reacted_.size()!=std::size_t(tr.n_species)||rk_reacted_reported_.size()!=std::size_t(tr.n_pollut))
             return "RK2 surface reaction ledger shape differs.";
@@ -352,6 +358,7 @@ std::string ExplicitInertialSolver::rk2CheckpointModel() const {
     if(state_->transport.active()) {
         std::string profile="shared RK2 passive transport and age v1";auto tr=state_->transport;
         a(profile,tr.n_species,tr.n_pollut,tr.n_msx,tr.age_row,tr.temp_row,tr.row_names,tr.rain_conc,tr.bc_conc);
+        if(tr.temp_row>=0)a(o.coupled_heat,o.water_heat_capacity);
     }
     if(!rk_reacted_.empty()) {
         std::string profile="shared RK2 surface reactions v1",identity=rk_reaction_identity_;

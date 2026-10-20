@@ -690,3 +690,196 @@ RATE A TSS
             solver.end()
         finally:
             cleanup(solver)
+
+
+def _rk2_water_temperature_text(closure, layered, kinetics=False, forcing=None):
+    from tests.engine._groundwater_cases import MODEL
+    text = MODEL.replace('END_TIME 00:10:00', 'END_TIME 00:00:02').replace('ROUTING_STEP 5', 'ROUTING_STEP .1')
+    text += f'''[OPTIONS]
+HEAT_TRANSPORT YES
+[2D_OPTIONS]
+MOMENTUM_EQUATION FULL_SWE
+RECONSTRUCTION_ORDER 2
+MAX_TIMESTEP .025
+LTS_TIERS 1
+HEAT_MODEL TRANSPORT_ONLY
+TRANSPORT_POLLUTANTS NO
+TRANSPORT_MSX {'YES' if kinetics else 'NO'}
+TRANSPORT_AGE NO
+TRANSPORT_TEMPERATURE YES
+[2D_INITIAL_QUALITY]
+* __TEMPERATURE__ -4
+{'* A 1' if kinetics else ''}
+[2D_AQUIFER_OPTIONS]
+CLOSURE {closure}
+M_LAYERS 4
+NODE_ENROLMENT ROWS
+LINK_SEEPAGE NONE
+GW_ET NONE
+[2D_AQUIFER]
+* {'1e-15' if kinetics else '18'} 2 .45 .1 2 HG0 .6 C_LOSS 0
+[GW_TRANSPORT_OPTIONS]
+UNSAT_TRANSPORT {'LAYERED' if layered else 'BULK'}
+THERMAL_MODEL WATER_ONLY
+TRANSPORT_POLLUTANTS NO
+TRANSPORT_MSX {'YES' if kinetics else 'NO'}
+TRANSPORT_AGE NO
+TRANSPORT_TEMPERATURE YES
+[GW_INITIAL_QUALITY]
+* SAT __TEMPERATURE__ -2
+* UNSAT __TEMPERATURE__ -2
+'''
+    if kinetics:
+        text += '''* SAT A 2
+* UNSAT A 2
+[REACTION_OPTIONS]
+SOLVER RK5
+RATE_UNITS SEC
+COUPLING FULL
+ATOL 1e-13
+RTOL 1e-11
+[REACTION_SPECIES]
+BULK A MG
+BULK B MG
+[REACTION_PIPES]
+RATE A -.2*exp(.01*TEMP)*A
+RATE B .2*exp(.01*TEMP)*A
+[REACTION_SUBSURFACE]
+* SAT A RATE -.2*exp(.01*TEMP)*A
+* SAT B RATE .2*exp(.01*TEMP)*A
+* UNSAT A RATE -.2*exp(.01*TEMP)*A
+* UNSAT B RATE .2*exp(.01*TEMP)*A
+'''
+    if forcing == 'heat':
+        text += '[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST 0\n[GW_BOUNDARY_QUALITY]\n1 0 __TEMPERATURE__ HEATFLUX -100\n'
+    elif forcing:
+        values = ('-1.1', '-1.8', '-1.1') if forcing == 'head' else ('.00001', '-.00001', '.00001')
+        text += f'''[TIMESERIES]
+COLD 01/01/2026 00:00:00 {values[0]}
+COLD 01/01/2026 00:00:01 {values[1]}
+COLD 01/01/2026 00:00:02 {values[2]}
+'''
+        if forcing == 'well':
+            text += '[GW_SOURCES]\nW CELL 1 FLOW COLD __TEMPERATURE__ CONC -8\n'
+        else:
+            text += f'''[2D_AQUIFER_BOUNDARIES]
+CELL 1 EDGE 0 {'HEAD' if forcing == 'head' else 'FLOW'} SERIES COLD
+[GW_BOUNDARY_QUALITY]
+1 0 __TEMPERATURE__ CONC -8
+'''
+    return text
+
+
+@pytest.mark.parametrize('closure,layered', [('CLOSED_FORM', False), ('ENSLAVED', False), ('SIGMA', False), ('SIGMA', True)])
+def test_groundwater_rk2_water_temperature_drives_actual_local_reactions(tmp_path, closure, layered):
+    from openswmm.engine import Solver, GroundwaterSpeciesLedger, GroundwaterZone
+    path = tmp_path / 'water-temperature-reactions.inp'
+    path.write_text(_rk2_water_temperature_text(closure, layered, kinetics=True))
+    solver = Solver(path, path.with_suffix('.rpt'))
+    solver.open()
+    try:
+        solver.initialize()
+        gw = solver.surface2d.groundwater
+        assert gw.species == solver.surface2d.species == ('A', 'B', '__TEMPERATURE__')
+        initial = gw.species_ledger(0, GroundwaterSpeciesLedger.INIT)
+        solver.start(False)
+        while solver.step().total_seconds() > 0:
+            pass
+        assert solver.surface2d.concentrations(2) == pytest.approx(np.full(2, -4), abs=1e-10)
+        assert gw.concentrations(GroundwaterZone.SAT, 2) == pytest.approx(np.full(2, -2), abs=1e-10)
+        assert solver.surface2d.concentrations(0) == pytest.approx(np.full(2, np.exp(-.4*np.exp(-.04))), rel=1e-8)
+        assert gw.species_ledger(0, GroundwaterSpeciesLedger.STORAGE) == pytest.approx(initial*np.exp(-.4*np.exp(-.02)), rel=1e-8)
+        assert abs(gw.species_ledger(2, GroundwaterSpeciesLedger.RESIDUAL)) < 1e-8
+        assert solver.surface2d.species_ledger('__TEMPERATURE__')['reacted'] == 0
+        solver.end()
+    finally:
+        cleanup(solver)
+
+
+@pytest.mark.parametrize('closure,layered', [('CLOSED_FORM', False), ('ENSLAVED', False), ('SIGMA', False), ('SIGMA', True)])
+@pytest.mark.parametrize('forcing', ['well', 'edge', 'head', 'heat'])
+def test_groundwater_rk2_water_temperature_cold_forcing_keeps_signed_receipts(tmp_path, closure, layered, forcing):
+    from openswmm.engine import Solver, GroundwaterSpeciesLedger, GroundwaterZone
+    path = tmp_path / 'water-temperature-forcing.inp'
+    path.write_text(_rk2_water_temperature_text(closure, layered, forcing=forcing))
+    solver = Solver(path, path.with_suffix('.rpt'))
+    solver.open()
+    try:
+        solver.initialize()
+        gw = solver.surface2d.groundwater
+        assert gw.species == solver.surface2d.species == ('__TEMPERATURE__',)
+        solver.start(False)
+        while solver.step().total_seconds() > 0:
+            pass
+        temperature = gw.concentrations(GroundwaterZone.SAT, 0)
+        assert np.all(np.isfinite(temperature))
+        assert np.all(temperature >= -8-1e-4)
+        assert np.all(temperature <= -2+1e-4)
+        assert gw.species_ledger(0, GroundwaterSpeciesLedger.STORAGE) < 0
+        assert abs(gw.species_ledger(0, GroundwaterSpeciesLedger.RESIDUAL)) < 1e-8
+        if forcing == 'well':
+            assert gw.species_ledger(0, GroundwaterSpeciesLedger.SOURCE_IN) < 0
+        elif forcing == 'heat':
+            receipt = gw.authored_boundary_receipt(0, 0)
+            # Local edge 1 spans the 10 m by 10 m diagonal: joules = W/m × length × seconds.
+            assert receipt['flux_out']*4186000 == pytest.approx(100*np.hypot(10, 10)*2, abs=1e-6)
+            assert receipt['advective_in'] == 0
+            assert receipt['advective_out'] == 0
+            assert gw.authored_boundary_receipt(0)['accepted_in'] == 0
+            assert gw.authored_boundary_receipt(0)['accepted_out'] == 0
+        else:
+            assert gw.authored_boundary_receipt(0, 0)['advective_in'] < 0
+        if layered:
+            assert gw.layer_quality(0, 0, 0)['total_mass'] < 0
+        assert solver.surface2d.species_ledger('__TEMPERATURE__')['reacted'] == 0
+        solver.end()
+    finally:
+        cleanup(solver)
+
+
+def test_groundwater_rk2_water_temperature_and_age_keep_separate_canonical_rows(tmp_path):
+    from openswmm.engine import Solver, GroundwaterZone
+    text = _rk2_water_temperature_text('SIGMA', True, kinetics=True)
+    text = text.replace('HEAT_TRANSPORT YES', 'WATER_AGE ON\nHEAT_TRANSPORT YES')
+    text = text.replace('TRANSPORT_AGE NO', 'TRANSPORT_AGE YES')
+    text = text.replace('* __TEMPERATURE__ -4', f'* __WATER_AGE__ {5/3600:.17g}\n* __TEMPERATURE__ -4')
+    path = tmp_path / 'water-temperature-age.inp'
+    path.write_text(text)
+    solver = Solver(path, path.with_suffix('.rpt'))
+    solver.open()
+    try:
+        solver.initialize()
+        gw = solver.surface2d.groundwater
+        assert gw.species == solver.surface2d.species == ('A', 'B', '__WATER_AGE__', '__TEMPERATURE__')
+        solver.start(False)
+        while solver.step().total_seconds() > 0:
+            pass
+        assert solver.surface2d.concentrations(2) == pytest.approx(np.full(2, 7), abs=1e-10)
+        assert gw.concentrations(GroundwaterZone.SAT, 2) == pytest.approx(np.full(2, 2), abs=1e-10)
+        assert solver.surface2d.concentrations(3) == pytest.approx(np.full(2, -4), abs=1e-10)
+        assert gw.concentrations(GroundwaterZone.UNSAT, 3) == pytest.approx(np.full(2, -2), abs=1e-10)
+        for species in ['__WATER_AGE__', '__TEMPERATURE__']:
+            assert solver.surface2d.species_ledger(species)['reacted'] == 0
+        assert solver.surface2d.species_ledger('__TEMPERATURE__')['age_generated'] == 0
+        solver.end()
+    finally:
+        cleanup(solver)
+
+
+@pytest.mark.parametrize('kind', ['initial', 'boundary'])
+def test_reserved_temperature_spelling_does_not_make_a_chemical_row_signed(tmp_path, kind):
+    from openswmm.engine import Solver, ParseError
+    from tests.engine._groundwater_cases import MODEL
+    text = MODEL.replace('TSS MG/L 0 0 0 0', '__TEMPERATURE__ MG/L 0 0 0 0')
+    text += ('[2D_INITIAL_QUALITY]\n* __TEMPERATURE__ -4\n' if kind == 'initial'
+             else '[2D_BOUNDARY_QUALITY]\n0 0 __TEMPERATURE__ -4\n')
+    path = tmp_path / f'chemical-name-{kind}.inp'
+    path.write_text(text)
+    solver = Solver(path, path.with_suffix('.rpt'))
+    solver.open()
+    try:
+        # Heat is off: the carried row is a pollutant, despite its spelling.
+        with pytest.raises(ParseError):
+            solver.initialize()
+    finally:
+        cleanup(solver)
