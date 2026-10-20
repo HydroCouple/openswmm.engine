@@ -902,12 +902,15 @@ cdef class Surface2D:
         @type tri_idx: int
         @param node_name: Target 1D node id; must be non-empty.
         @type node_name: str
-        @param cd: Discharge coefficient; must be > 0 (default 0.65).
+        @param cd: Discharge coefficient; must be > 0, or NaN for a row
+            that does not author one (C{[2D_OPTIONS] COUPLING_CD} applies).
         @type cd: float
-        @param area: Effective exchange area in m^2; must be > 0.
+        @param area: Effective exchange area in mesh length units^2; must
+            be > 0, or NaN for a row that does not author one (the node's
+            2D coupling structure applies).
         @type area: float
         @raise EngineError: If the C API rejects the row (bad triangle
-            index, empty name, or non-positive cd/area).
+            index, empty name, or a non-positive cd/area).
         """
         cdef bytes b = (node_name or "").encode('utf-8')
         _check(swmm_2d_add_triangle_coupling(self._h(), tri_idx, b,
