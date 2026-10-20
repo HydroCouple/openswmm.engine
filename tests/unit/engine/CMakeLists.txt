@@ -320,6 +320,8 @@ add_gtest_unit(test_engine_pattern_mutation  test_pattern_mutation_api.cpp)
 add_gtest_unit(test_engine_table_rename  test_table_rename_api.cpp)
 add_gtest_unit(test_engine_transect_mutation test_transect_mutation_api.cpp)
 add_gtest_unit(test_engine_transect_inp_parser test_transect_inp_parser.cpp)
+# Transect right end wall in the wetted perimeter (code review NUM-24, #169).
+add_gtest_unit(test_engine_transect_right_wall test_transect_right_wall.cpp)
 add_gtest_unit(test_engine_da4_api          test_da4_engine_api.cpp)
 add_gtest_unit(test_engine_controls         test_controls.cpp)
 add_gtest_unit(test_engine_control_rule_validate test_control_rule_validate_api.cpp)

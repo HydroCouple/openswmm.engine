@@ -23,6 +23,10 @@ retroactive.
 
 ## [Unreleased]
 
+### Cross-section code-review fixes (2026-10-20)
+
+- **A transect's right end wall counts in the wetted perimeter.** Only the left wall was added when an end station lies below the full height, so a section and its mirror image routed differently, in both engines. Code review NUM-24, #169.
+
 ### Hot-start follow-ups and land-use parity (2026-10-19)
 
 - **`[COVERAGES]` reads every land use on a line.** `S1 RES 60 COM 40` set only RES; COM was dropped without a message. Every pair is read now, as in EPA SWMM, and a line naming an unknown subcatchment or land use (ERROR 209), a land use without a percent (ERROR 203) or a percent that is not a number (ERROR 211) is an error, as it is there. These lines were skipped silently before.
