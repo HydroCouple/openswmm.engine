@@ -731,7 +731,7 @@ typedef struct
 {
    double        length;          // conduit length (ft)
    double        roughness;       // Manning's n
-   char          barrels;         // number of barrels
+   int           barrels;         // number of barrels
    //-----------------------------
    double        modLength;       // modified conduit length (ft)
    double        roughFactor;     // roughness factor for DW routing

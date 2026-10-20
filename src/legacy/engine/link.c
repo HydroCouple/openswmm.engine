@@ -255,7 +255,7 @@ int link_readXsectParams(char* tok[], int ntoks)
         {
             i = atoi(tok[6]);
             if ( i <= 0 ) return error_setInpError(ERR_NUMBER, tok[6]);
-            else Conduit[Link[j].subIndex].barrels = (char)i;
+            else Conduit[Link[j].subIndex].barrels = i;
         }
 
         // --- parse culvert code if present
