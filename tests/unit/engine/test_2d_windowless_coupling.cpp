@@ -279,6 +279,21 @@ TEST_F(WindowlessCoupling2DTest, CouplingCdAppliesToRowsWithoutCd) {
         << "fixture does not discriminate CD 0.9 from 0.65";
 }
 
+// COUPLING_CD 0 (which the GUI could write) must not shut the rows without a
+// CD: they keep the 0.65 they ran at before the option was applied, with a
+// warning.
+TEST_F(WindowlessCoupling2DTest, NonPositiveCouplingCdKeepsTheDefault) {
+    RunResult zero = run(dir_, "cd_option_zero", 1.0, true, 0.0, "0", "");
+    RunResult ref  = run(dir_, "cd_option_zero_ref", 1.0, true, 0.0, "0.9", "0.65");
+    ASSERT_TRUE(zero.ok && ref.ok);
+    ASSERT_GT(ref.received_1d, 1.0) << "fixture produced no exchange";
+    EXPECT_EQ(zero.received_1d, ref.received_1d)
+        << "rows without CD must fall back to 0.65";
+    EXPECT_NE(zero.rpt_text.find("COUPLING_CD 0 is not a discharge coefficient"),
+              std::string::npos)
+        << "fallback warning missing";
+}
+
 // A coupled node's SurDepth is ignored (it ponds from the rim and the
 // exchange gate opens at the rim), and the warning has to say so rather than
 // describe a sur_depth-raised spill threshold that does not exist.

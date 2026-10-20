@@ -518,9 +518,22 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // Build coupling point descriptors. A point whose map row did not author
     // a CD takes [2D_OPTIONS] COUPLING_CD (resolved here, after every input
     // section and API edit has landed, so section order does not matter).
+    // COUPLING_CD <= 0 would shut every such row; until the option was
+    // applied those rows ran at 0.65 (and the GUI could write a 0), so a
+    // non-positive value keeps 0.65 with a warning.
     coupling_points_ = buildCouplingPoints(mesh_, ctx);
+    const double cd_default = options_.coupling_cd > 0.0 ? options_.coupling_cd : 0.65;
+    std::size_t cd_fallbacks = 0;
     for (auto& cp : coupling_points_)
-        if (!cp.cd_authored) cp.cd = options_.coupling_cd;
+        if (!cp.cd_authored) { cp.cd = cd_default; ++cd_fallbacks; }
+    if (!(options_.coupling_cd > 0.0) && cd_fallbacks > 0) {
+        char buf[200];
+        std::snprintf(buf, sizeof(buf),
+                      "2D_OPTIONS COUPLING_CD %g is not a discharge coefficient; "
+                      "%zu coupling point(s) without a CD use 0.65.",
+                      options_.coupling_cd, cd_fallbacks);
+        ctx.warnings.push_back(buf);
+    }
 
     // [2D_NODE_COUPLING]: a node's coupling type decides whether its map rows
     // couple at all. Rows are checked against the node class here (a node's
