@@ -139,3 +139,8 @@ docs/figures/cache/
 
 # Local testing questionnaires
 /*_User_Testing_Questionnaire.docx
+
+# Test run artifacts. The suites write their reports, binary outputs and the
+# models they author here at run time; nothing under it is a fixture, and
+# swmm6_rel tracks none of it.
+/tests/output/
