@@ -24,6 +24,7 @@
  */
 
 #include "ReactionExpression.hpp"
+#include "../../../data/ReactionData.hpp"
 
 #include <cctype>
 #include <cmath>
@@ -123,7 +124,7 @@ const FuncDef* findFunc(const std::string& ident) {
 /// the GUI through reactionHydVarInfo — one copy of the truth). Meanings and
 /// units per ReactionTokens.hpp.
 const char* kHydVarNames[] = {"D", "Q", "U", "RE", "US", "FF", "AV",
-                              "HRT", "DT", "TEMP"};
+                              "HRT", "DT", "TEMP", "GW_THETA", "GW_POROSITY", "GW_SE", "GW_DEPTH_M"};
 const char* kHydVarDescs[] = {
     "Depth (ft); not yet populated, refused",
     "Flow (cfs); not yet populated, refused",
@@ -135,6 +136,10 @@ const char* kHydVarDescs[] = {
     "Hydraulic residence time (s)",
     "Reaction step (s)",
     "Water temperature (degC; TEMPERATURE option when heat is off)",
+    "Groundwater water content (dimensionless; groundwater only)",
+    "Groundwater porosity (dimensionless; groundwater only)",
+    "Groundwater effective saturation (dimensionless; groundwater only)",
+    "Groundwater reactor centre depth (m; groundwater only)",
 };
 static_assert(sizeof(kHydVarNames) / sizeof(kHydVarNames[0]) ==
                   static_cast<std::size_t>(RxHydVar::COUNT_),
@@ -529,9 +534,34 @@ bool reactionHydVarInfo(int idx, const char** name, const char** description) {
     return true;
 }
 
+std::string reactionContextDiagnostic(const ReactionData& rx,const std::vector<RxToken>& pool,
+    const RxExprSpan& span,int context) {
+    for(int i=span.begin;i<span.begin+span.len;++i) {
+        if(i<0||std::size_t(i)>=pool.size())return "invalid compiled reaction context span";
+        const auto& token=pool[i];
+        if(token.op==RxToken::PUSH_HYDVAR) {
+            const bool ground=token.idx>=int(RxHydVar::GW_THETA);
+            const bool valid=context==2 ? token.idx>=int(RxHydVar::DT):
+                (reactionHydVarPopulated(token.idx)||(context==1&&ground));
+            if(!valid) {
+                const char* name=nullptr;reactionHydVarInfo(token.idx,&name,nullptr);
+                return "hydraulic variable '"+std::string(name?name:"unknown")+"' is unavailable in this reaction context";
+            }
+        }
+        if(context==2&&token.op==RxToken::PUSH_SPECIES&&rx.species_is_wall[token.idx])
+            return "groundwater reactions cannot depend on WALL species";
+        if(token.op==RxToken::PUSH_TERM) {
+            if(token.idx<0||std::size_t(token.idx)>=rx.term_expr.size())return "invalid reaction term reference";
+            const auto error=reactionContextDiagnostic(rx,rx.token_pool,rx.term_expr[token.idx],context);
+            if(!error.empty())return error;
+        }
+    }
+    return {};
+}
+
 bool reactionHydVarPopulated(int idx) {
     return idx >= static_cast<int>(RxHydVar::HRT) &&
-           idx < static_cast<int>(RxHydVar::COUNT_);
+           idx <= static_cast<int>(RxHydVar::TEMP);
 }
 
 std::string unpopulatedHydVarDiagnostic(const std::string& src,

@@ -156,6 +156,9 @@ struct MeshData {
 
     // Coupling parameters (per vertex/triangle coupling point)
     std::vector<double> vert_coupling_cd;       ///< Discharge coefficient (default 0.65)
+    /// 1 when the coupling CD was authored (a [2D_VERTEX_NODE_MAP] CD token or
+    /// an API edit). Coupling points without one take [2D_OPTIONS] COUPLING_CD.
+    std::vector<uint8_t> vert_coupling_cd_set;
     std::vector<double> vert_coupling_area;     ///< Effective exchange area (m²)
     /// 1 when the [2D_VERTEX_NODE_MAP] row authored an explicit AREA token.
     /// Rows without one keep the 1.0 default value but are eligible for the
@@ -181,6 +184,8 @@ struct MeshData {
         int         node = -1;    ///< SWMM node index (-1 until resolved)
         std::string node_name;    ///< Deferred name (cleared after resolve)
         double      cd   = 0.65;  ///< Discharge coefficient
+        bool        cd_set = false;   ///< True when CD was authored; otherwise
+                                      ///< [2D_OPTIONS] COUPLING_CD applies.
         double      area = 1.0;   ///< Effective exchange area
         bool        area_set = false; ///< True when the row authored an
                                       ///< explicit AREA token (COUPLING_AREA
@@ -261,6 +266,7 @@ struct MeshData {
         vert_coupled_node.resize(n, -1);
         vert_coupled_node_name.resize(n);
         vert_coupling_cd.resize(n, 0.65);
+        vert_coupling_cd_set.resize(n, 0);
         vert_coupling_area.resize(n, 1.0);
         vert_coupling_area_set.resize(n, 0);
     }

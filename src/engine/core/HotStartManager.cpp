@@ -71,6 +71,13 @@ bool meshLidRestartUnsupported(const SimulationContext& ctx) {
         return c.control>=0 && c.bottom==LidNodeBottom::MeshAquifer;
     });
 }
+bool layeredGroundwaterRestart(const SimulationContext& ctx) {
+#ifdef OPENSWMM_HAS_2D
+    return ctx.twod_io.surface_router && ctx.twod_io.surface_router->subsurface().needsTransportRestart();
+#else
+    (void)ctx;return false;
+#endif
+}
 bool coupledThermalRestartUnsupported(const SimulationContext& ctx) {
 #ifdef OPENSWMM_HAS_2D
     const auto* router=ctx.twod_io.surface_router;
@@ -325,9 +332,22 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
         if(!buf.good())return false;
     }
     if (hs.header.version >= 15u) {
-        if(hs.engine_checkpoint.empty() || hs.engine_checkpoint.size()>512u*1024u*1024u ||
+        // From V16 the engine checkpoint is optional (size 0 = none).
+        if((hs.engine_checkpoint.empty() && hs.header.version < 16u) || hs.engine_checkpoint.size()>512u*1024u*1024u ||
            !write_pod(buf,static_cast<uint32_t>(hs.engine_checkpoint.size())))return false;
         buf.write(hs.engine_checkpoint.data(),static_cast<std::streamsize>(hs.engine_checkpoint.size()));
+        if(!buf.good())return false;
+    }
+    if (hs.header.version >= 16u) {
+        if(hs.surface_state.size()>256u*1024u*1024u ||
+           !write_pod(buf,static_cast<uint32_t>(hs.surface_state.size())))return false;
+        buf.write(hs.surface_state.data(),static_cast<std::streamsize>(hs.surface_state.size()));
+        if(!buf.good())return false;
+    }
+    if(hs.header.version>=17u) {
+        if(hs.gw_transport_state.size()>64u*1024u*1024u ||
+            !write_pod(buf,static_cast<uint32_t>(hs.gw_transport_state.size())))return false;
+        buf.write(hs.gw_transport_state.data(),static_cast<std::streamsize>(hs.gw_transport_state.size()));
         if(!buf.good())return false;
     }
     // Compute CRC32 over the body
@@ -400,7 +420,7 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
 
     // Header
     if (!read_pod(is, hs.header.version))    return false;
-    if (hs.header.version < 1u || hs.header.version > 15u) {
+    if (hs.header.version < 1u || hs.header.version > 17u) {
         tl_last_io_error = "Unsupported hot start version " +
                            std::to_string(hs.header.version) + " in '" + path + "'";
         return false;
@@ -583,8 +603,20 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
     }
     if(hs.header.version>=15u) {
         uint32_t size=0;
-        if(!read_pod(is,size)||size==0||size>512u*1024u*1024u||size>file_size)return false;
-        hs.engine_checkpoint.resize(size);is.read(hs.engine_checkpoint.data(),size);if(!is.good())return false;
+        if(!read_pod(is,size)||(size==0&&hs.header.version<16u)||size>512u*1024u*1024u||size>file_size)return false;
+        hs.engine_checkpoint.resize(size);
+        if(size>0){is.read(hs.engine_checkpoint.data(),size);if(!is.good())return false;}
+    }
+    if(hs.header.version>=16u) {
+        uint32_t size=0;
+        if(!read_pod(is,size)||size>256u*1024u*1024u||size>file_size)return false;
+        hs.surface_state.resize(size);
+        if(size>0){is.read(hs.surface_state.data(),size);if(!is.good())return false;}
+    }
+    if(hs.header.version>=17u) {
+        uint32_t size=0;
+        if(!read_pod(is,size)||size==0||size>64u*1024u*1024u||size>file_size)return false;
+        hs.gw_transport_state.resize(size);is.read(hs.gw_transport_state.data(),size);if(!is.good())return false;
     }
     hs.path = path;
     return true;
@@ -1172,6 +1204,12 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
     try {
         if(ctx.state_accessors.get_snow_state)hs->snow_state=ctx.state_accessors.get_snow_state();
         if(!hs->snow_state.empty())hs->header.version=14u;
+        if(ctx.state_accessors.get_surface_state)hs->surface_state=ctx.state_accessors.get_surface_state();
+        if(!hs->surface_state.empty())hs->header.version=16u;
+#ifdef OPENSWMM_HAS_2D
+        if(ctx.twod_io.surface_router)hs->gw_transport_state=ctx.twod_io.surface_router->subsurface().transportRestartState();
+        if(!hs->gw_transport_state.empty())hs->header.version=17u;
+#endif
     }catch(const std::exception& e){tl_last_io_error=e.what();delete hs;return nullptr;}
     if (!write_file(*hs, path)) {
         delete hs;
@@ -1318,10 +1356,16 @@ HotStartFile* HotStartManager::save_with_engine_checkpoint(const SimulationConte
     try {
         if(ctx.state_accessors.get_snow_state)hs->snow_state=ctx.state_accessors.get_snow_state();
         if(!hs->snow_state.empty())hs->header.version=14u;
+        if(ctx.state_accessors.get_surface_state)hs->surface_state=ctx.state_accessors.get_surface_state();
+        if(!hs->surface_state.empty())hs->header.version=16u;
+#ifdef OPENSWMM_HAS_2D
+        if(ctx.twod_io.surface_router)hs->gw_transport_state=ctx.twod_io.surface_router->subsurface().transportRestartState();
+        if(!hs->gw_transport_state.empty())hs->header.version=17u;
+#endif
     }catch(const std::exception& e){tl_last_io_error=e.what();delete hs;return nullptr;}
     if(!engine_checkpoint.empty()) {
         hs->engine_checkpoint=engine_checkpoint;
-        hs->header.version=15u;
+        hs->header.version=std::max(hs->header.version,15u);
     }
     if (!write_file(*hs, path)) {
         delete hs;
@@ -1377,6 +1421,19 @@ int HotStartManager::apply(HotStartFile& hs,
             tl_last_io_error=error;hs.warnings.push_back(error);if(warn_cb)warn_cb(error);return -1;
         }
     }
+    if(!hs.surface_state.empty()) {
+        const std::string error=ctx.state_accessors.set_surface_state?
+            ctx.state_accessors.set_surface_state(hs.surface_state,false):"Subcatchment surface state accessor is unavailable.";
+        if(!error.empty()) {
+            tl_last_io_error=error;hs.warnings.push_back(error);if(warn_cb)warn_cb(error);return -1;
+        }
+    }
+#ifdef OPENSWMM_HAS_2D
+    if(ctx.twod_io.surface_router) {
+        const auto error=ctx.twod_io.surface_router->subsurface().restoreTransportRestart(hs.gw_transport_state,false);
+        if(!error.empty()){tl_last_io_error=error;hs.warnings.push_back(error);if(warn_cb)warn_cb(error);return -1;}
+    } else if(!hs.gw_transport_state.empty()){tl_last_io_error="Groundwater transport hotstart requires its spatial model.";return -1;}
+#endif
     if(meshLidRestartUnsupported(ctx)) {
         tl_last_io_error="Mesh LID hotstart requires the R5 joint owner restart extension";
         hs.warnings.push_back(tl_last_io_error);if(warn_cb)warn_cb(tl_last_io_error);return 1;
@@ -1562,6 +1619,24 @@ int HotStartManager::apply(HotStartFile& hs,
         if(!error.empty()){tl_last_io_error=error;return -1;}
         emit_warning("Hot start lacks snow state: assigned native and mesh snowpacks start bare; future snow forcing is retained.");
     }
+    if(!hs.surface_state.empty()) {
+        const auto error=ctx.state_accessors.set_surface_state(hs.surface_state,true);
+        if(!error.empty()){tl_last_io_error=error;return -1;}
+    } else if(ctx.state_accessors.set_surface_state && ctx.n_subcatches()>0) {
+        // A file from before V16 is still usable, so this is a warning, not
+        // a missing object (emit_warning counts those, and USE HOTSTART
+        // refuses a file with any).
+        const std::string msg="Hot start lacks subcatchment surface state (version " + std::to_string(hs.header.version) +
+                              " file): ponded water and buildup start from the model's initial conditions.";
+        hs.warnings.push_back(msg);
+        if(warn_cb)warn_cb(msg);
+    }
+#ifdef OPENSWMM_HAS_2D
+    if(ctx.twod_io.surface_router&&!hs.gw_transport_state.empty()) {
+        const auto error=ctx.twod_io.surface_router->subsurface().restoreTransportRestart(hs.gw_transport_state,true);
+        if(!error.empty()){tl_last_io_error=error;return -1;}
+    }
+#endif
     return missing;
 }
 
@@ -1638,6 +1713,9 @@ int HotStartManager::apply_legacy_routing(
         std::function<void(const std::string&)> warn_cb,
         std::vector<double>* runoff,
         LegacySpeciesTrailer* species) {
+    if(layeredGroundwaterRestart(ctx)) {
+        tl_last_io_error="Legacy hotstart cannot restore groundwater boundary/layer transport state; use NATIVE.";return 1;
+    }
     if (coupledThermalRestartUnsupported(ctx)) {
         tl_last_io_error = "Legacy hotstart has no coupled mesh/ground thermal energy";
         return -1;
@@ -1967,6 +2045,9 @@ bool HotStartManager::apply_species_surface(
 int HotStartManager::save_legacy_routing(const std::string& path,
                                          const SimulationContext& ctx,
                                          const std::vector<double>* runoff) {
+    if(layeredGroundwaterRestart(ctx)) {
+        tl_last_io_error="Legacy hotstart cannot preserve groundwater boundary/layer transport state; use NATIVE.";return 1;
+    }
     if (coupledThermalRestartUnsupported(ctx)) {
         tl_last_io_error = "Legacy hotstart cannot preserve coupled mesh/ground thermal energy";
         return -1;

@@ -575,6 +575,21 @@ if(OPENSWMM_BUILD_2D)
     # Remap 1D↔2D pushes through.
     add_gtest_unit(test_engine_2d_triangle_coupling_rows
                    test_2d_triangle_coupling_rows.cpp)
+    # [2D_NODE_COUPLING] per-node coupling type: parse, defaults, validation,
+    # C API, node delete, .inp/GeoPackage round trip, router filter.
+    add_gtest_unit(test_engine_2d_node_coupling_section
+                   test_2d_node_coupling_section.cpp)
+    # COUPLING_LAW WEIR_ORIFICE: the pure law, the Rubinato (2017) Table 2/3
+    # slopes, and the engine path (structure resolution, conservation).
+    add_gtest_unit(test_engine_2d_exchange_law test_2d_exchange_law.cpp)
+    add_gtest_unit(test_engine_2d_exchange_rubinato_steady
+                   test_2d_exchange_rubinato_steady.cpp)
+    add_gtest_unit(test_engine_2d_weir_orifice_coupling
+                   test_2d_weir_orifice_coupling.cpp)
+    # Coupled-junction ponds (COUPLING_POND_MODE / RIM_BAND) and the
+    # head-equalisation cap: pure geometry, then engine runs.
+    add_gtest_unit(test_engine_2d_pond_continuity test_2d_pond_continuity.cpp)
+    add_gtest_unit(test_engine_2d_coupling_ponds test_2d_coupling_ponds.cpp)
     # 1D↔2D coupling unit-system equivalence — runs the same physical coupled
     # model in CMS and CFS and asserts matching 2D depths/continuity. Guards the
     # always-feet⇄metres coupling factors (the 1D side is always feet-internal).

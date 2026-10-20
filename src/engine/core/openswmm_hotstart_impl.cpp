@@ -90,7 +90,10 @@ SWMM_ENGINE_API int swmm_hotstart_save(SWMM_Engine engine, const char* path) {
         return SWMM_ERR_LIFECYCLE;
     }
 
-    if(ctx.options.heat_transport) {
+    // A heat model with a full engine checkpoint attached writes the V15
+    // file; without one it writes the record-based file like any other
+    // model (which refuses coupled mesh/ground heat with a message).
+    if(ctx.options.heat_transport && eng->hotstartCheckpointAttached()) {
         return eng->saveNativeHotstart(path)==""?SWMM_OK:SWMM_ERR_HOTSTART;
     }
 
@@ -169,7 +172,11 @@ SWMM_ENGINE_API int swmm_hotstart_apply(SWMM_Engine engine, SWMM_HotStart hs) {
         }
     );
 
-    return result<0?SWMM_ERR_HOTSTART:SWMM_OK;
+    if (result < 0) return SWMM_ERR_HOTSTART;
+    // The run's mass balance opened at initialize(); it now starts from the
+    // applied state.
+    eng->reopenMassBalance();
+    return SWMM_OK;
 }
 
 // ----------------------------------------------------------------------------

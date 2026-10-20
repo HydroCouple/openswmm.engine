@@ -115,6 +115,14 @@ struct ReactionData {
     std::vector<std::string> term_name;      ///< cold
     std::vector<std::string> term_expr_src;  ///< cold (compiled in R2)
 
+    struct SubsurfaceLaw {
+        int scope=0,cell=-1,zone=0,layer=-1,species=-1; // scope: global/tag/cell; zone: sat/unsat/layer
+        std::string tag,expression;
+        ReactionExprForm form=ReactionExprForm::NONE;
+        RxExprSpan compiled;
+    };
+    std::vector<SubsurfaceLaw> subsurface_laws;
+
     // ---- [REACTION_PIPES] / [REACTION_TANKS] — dense per species -----------
     std::vector<ReactionExprForm> pipe_form;     ///< size n_species
     std::vector<std::string>      pipe_expr_src; ///< size n_species (cold)

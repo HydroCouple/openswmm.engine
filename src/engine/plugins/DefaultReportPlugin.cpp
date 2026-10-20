@@ -1325,6 +1325,10 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             if (g.led_source_in != 0.0) row2("Named Source Injection ...", g.led_source_in);
             if (g.led_source_out != 0.0) row2("Named Source Extraction ..", g.led_source_out);
             row2("Lateral Net Inflow .......", g.led_lateral);
+            if(g.led_boundary_in!=0||g.led_boundary_out!=0) {
+                row2("  (Edge gross inflow) ....",g.led_boundary_in);
+                row2("  (Edge gross outflow) ...",g.led_boundary_out);
+            }
             row2("Deep Percolation .........", g.led_deep);
             row2("Node Exchange Outflow ....", g.led_node);
             row2("Subsurface ET ............", g.led_et);
@@ -1367,6 +1371,13 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 if (t.gained_source[u] != 0.0) qrow("Named Source Injection ...", t.gained_source[u]);
                 if (t.lost_source[u] != 0.0) qrow("Named Source Extraction ..", t.lost_source[u]);
                 qrow("Lateral Net Inflow .......", t.net_lateral[u]);
+                if(t.boundary_in[u]!=0||t.boundary_out[u]!=0||t.boundary_flux_in[u]!=0||t.boundary_flux_out[u]!=0) {
+                    qrow("  (Edge advective in) ....",t.boundary_in[u]);
+                    qrow("  (Edge advective out) ...",t.boundary_out[u]);
+                    qrow("  (Edge imposed in) ......",t.boundary_flux_in[u]);
+                    qrow("  (Edge imposed out) .....",t.boundary_flux_out[u]);
+                }
+                if(!t.generated_age.empty()&&t.generated_age[u]!=0)qrow("Age Generated ............",t.generated_age[u]);
                 qrow("Deep Percolation .........", t.lost_deep[u]);
                 qrow("Node Exchange Outflow ....", t.lost_node[u]);
                 if (t.lost_link[u] != 0.0)

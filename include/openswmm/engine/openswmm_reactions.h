@@ -49,6 +49,7 @@ extern "C" {
 #define SWMM_RXN_SCOPE_TERM 0
 #define SWMM_RXN_SCOPE_PIPE 1
 #define SWMM_RXN_SCOPE_TANK 2
+#define SWMM_RXN_SCOPE_SUBSURFACE 3 /**< Explicit aquifer expression validation. */
 
 /* Expression forms — mirrors ReactionExprForm. */
 #define SWMM_RXN_FORM_NONE    0

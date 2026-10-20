@@ -136,6 +136,13 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
         w[static_cast<std::size_t>(j)] = th_old[static_cast<std::size_t>(j)] * dz0;
     }
 
+    if(st.transfers) {
+        auto& r=*st.transfers;r={};r.old_length=L0;r.new_length=L1;
+        r.old_water=w;r.faces.resize(m+1);r.compression.assign(m+1,0);
+        r.grid.resize(m+1);
+        for(int j=0;j<=m;++j)r.grid[j]=-double(j)*dsig*(L1-L0);
+    }
+
     auto psiOf = [&](double th) {
         const double span = std::max(p.theta_s - p.theta_r, 1.0e-9);
         const double se = std::clamp((th - p.theta_r) / span, 1.0e-8, 1.0);
@@ -227,6 +234,11 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
 
     // Positivity sharing may reduce the net top export; report actual ET.
     st.et_taken=std::max(0.0,st.f_top-f[0]);
+    if(st.transfers) {
+        auto& r=*st.transfers;r.infiltration=st.f_top*st.dt;r.evaporation=st.et_taken*st.dt;
+        for(int j=0;j<=m;++j)r.faces[j]=f[j]*st.dt;
+    }
+
 
     // ---- 6. Update w, then re-derive θ from the NEW geometry. This is where
     //         the layers compress: same water, new dz.
@@ -249,7 +261,8 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
         w_new[static_cast<std::size_t>(j)] =
             w[static_cast<std::size_t>(j)] +
             st.dt * (f[static_cast<std::size_t>(j)] -
-                     f[static_cast<std::size_t>(j + 1)]);
+                     f[static_cast<std::size_t>(j + 1)]) +
+            (st.layer_inflow ? (*st.layer_inflow)[static_cast<std::size_t>(j)] : 0.0);
     }
 
     const double w_max = p.theta_s * dz1;
@@ -262,10 +275,12 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
         carry = 0.0;
         if (wj > w_max) { carry = wj - w_max; wj = w_max; }
         w_new[static_cast<std::size_t>(j)] = wj;
+        if(st.transfers)st.transfers->compression[j+1]=carry;
     }
     st.overflow_to_sat = carry / st.dt;      // m/s down across the table
 
     // Draw any residual deficit upward from the table (capillary support).
+    if(st.transfers)st.transfers->support=w_new;
     double draw = 0.0;
     for (int j = m - 1; j >= 0; --j) {
         double wj = w_new[static_cast<std::size_t>(j)] - draw;
@@ -273,7 +288,14 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
         if (wj < w_min) { draw = w_min - wj; wj = w_min; }
         w_new[static_cast<std::size_t>(j)] = wj;
     }
-    st.deficit_from_sat = draw / st.dt;      // m/s up across the table
+    st.deficit_from_sat = draw / st.dt;
+    if(st.transfers) {
+        auto& r=*st.transfers;double flux=0;
+        auto before=std::move(r.support);r.support.assign(m+1,0);
+        for(int j=0;j<m;++j){flux-=w_new[j]-before[j];r.support[j+1]=flux;}
+        r.new_water=w_new;
+    }
+      // m/s up across the table
 
     for (int j = 0; j < m; ++j)
         at(theta, j, stride) =

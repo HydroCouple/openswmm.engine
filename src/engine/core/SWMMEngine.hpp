@@ -230,8 +230,15 @@ public:
     std::string enableCheckpointing();
     /// Queue a native V15 full-engine hotstart for restoration during start().
     std::string queueHotstartCheckpoint(std::string checkpoint);
+    /// Reopen the mass balance from the current state. A native hot start is
+    /// applied in INITIALIZED (deck USE, swmm_hotstart_apply), after
+    /// initialize() opened it from the initial conditions.
+    void reopenMassBalance() noexcept;
     /// Write a native V15 hotstart from the current accepted checkpoint boundary.
     std::string saveNativeHotstart(const std::string& path) const;
+    /// True when a full engine checkpoint is attached, so a hot start of a
+    /// heat model can be the V15 file; without one it is record-based.
+    bool hotstartCheckpointAttached() const noexcept { return checkpoint_enabled_; }
 #ifdef OPENSWMM_HAS_2D
     // Separate single-file mesh output qualification; initialize(), prepare,
     // start(0), then attach the common source checkpoint stage.
@@ -903,6 +910,10 @@ private:
     /// Legacy hotstart.c saveRunoff: every subcatchment's runoff state as
     /// the doubles legacy writes (HotStartManager::legacy_runoff_size()).
     std::vector<double> legacyRunoffSection() const;
+    /// Native hot start V16: subcatchment surface state keyed by name
+    /// (StateAccessors::get_surface_state / set_surface_state).
+    std::string nativeSurfaceState() const;
+    std::string applyNativeSurfaceState(const std::string& blob, bool apply);
     /// Legacy readRunoff: apply hotstart_runoff_ once hydrology and quality
     /// are initialised, and restate the initial buildup from it.
     void applyLegacyRunoffSection() noexcept;

@@ -1088,6 +1088,74 @@ SWMM_ENGINE_API unsigned swmm_2d_output_variable_mask(const char* text);
 /** Preset name or token list for @p mask (static buffer, valid until the next call). */
 SWMM_ENGINE_API const char* swmm_2d_output_variable_text(unsigned mask);
 
+
+/* =========================================================================
+ * Per-node 1D↔2D coupling type ([2D_NODE_COUPLING])
+ * =========================================================================
+ * A node attribute of the 1D model, held with or without a mesh: whether a
+ * node may couple to the 2D surface and through what structure. Map rows
+ * ([2D_VERTEX_NODE_MAP] / [2D_TRIANGLE_NODE_MAP]) naming a NONE node are
+ * ignored at initialize. A node without an authored row takes its class
+ * default: junction or divider → MANHOLE, storage → OPEN, outfall → OUTFALL,
+ * inlet or virtual junction → NONE. OUTFALL is legal only on outfalls (an
+ * outfall is OUTFALL or NONE); OPEN only on storage nodes. Setters work in
+ * the BUILDING and OPENED states.
+ */
+
+/** Coupling structure types. */
+typedef enum SWMM_NodeCoupling2DType {
+    SWMM_2D_COUPLING_NONE    = 0,  /**< Not coupleable. */
+    SWMM_2D_COUPLING_MANHOLE = 1,
+    SWMM_2D_COUPLING_GRATE   = 2,
+    SWMM_2D_COUPLING_CURB    = 3,
+    SWMM_2D_COUPLING_OPEN    = 4,  /**< Open-top storage under the mesh. */
+    SWMM_2D_COUPLING_OUTFALL = 5   /**< Tailwater + discharge delivery. */
+} SWMM_NodeCoupling2DType;
+
+/** @brief Effective coupling type of a node.
+ *  @param type     Output: SWMM_NodeCoupling2DType.
+ *  @param authored Output (may be NULL): 1 when the node has a
+ *                  [2D_NODE_COUPLING] row, 0 when @p type is the class default.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_node_get_2d_coupling_type(SWMM_Engine engine, int node_idx,
+                                                   int* type, int* authored);
+
+/** @brief Class default coupling type of a node (what it has without a row).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_node_get_2d_coupling_default_type(SWMM_Engine engine,
+                                                           int node_idx, int* type);
+
+/** @brief Author a node's coupling type. Parameters that do not apply to the
+ *         new type are dropped.
+ *  @return SWMM_ERR_BADPARAM for a type illegal for the node's class.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_node_set_2d_coupling_type(SWMM_Engine engine, int node_idx,
+                                                   int type);
+
+/** @brief Remove a node's [2D_NODE_COUPLING] row (back to the class default).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_node_reset_2d_coupling(SWMM_Engine engine, int node_idx);
+
+/** @brief Read an authored coupling parameter as its section token, e.g.
+ *         key "D" → "1.2", key "CREST" → "MESH_BED". Empty when not authored.
+ *  Keys: D, PERIMETER, AREA, CHAMBER_AREA, LID_OPEN_FRACTION, CREST, COEFFS,
+ *  CW, CSW, COI, COO, LAW, SPREAD, TAILWATER_RELAX. Lengths and areas are in
+ *  project units, TAILWATER_RELAX in seconds.
+ *  @param value     Output buffer (NUL-terminated, truncated to @p value_len).
+ *  @return SWMM_ERR_BADPARAM for an unknown key.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_node_get_2d_coupling_param(SWMM_Engine engine, int node_idx,
+                                                    const char* key, char* value,
+                                                    int value_len);
+
+/** @brief Author a coupling parameter from its section token; NULL or "" clears
+ *         it. A node without a row gets one at its class default type.
+ *  @return SWMM_ERR_BADPARAM for an unknown key, a key that does not apply to
+ *          the node's type, or an invalid value.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_node_set_2d_coupling_param(SWMM_Engine engine, int node_idx,
+                                                    const char* key, const char* value);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

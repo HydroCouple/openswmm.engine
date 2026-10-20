@@ -211,6 +211,7 @@ from ._enums import (
     SurfaceBoundaryType as SurfaceBoundaryType,
     SurfaceInfilMethod as SurfaceInfilMethod,
     SurfaceInfilDest as SurfaceInfilDest,
+    NodeCoupling2DType as NodeCoupling2DType,
     # Nodes / editing
     DividerType as DividerType,
     RefType as RefType,

@@ -54,6 +54,7 @@
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/gw/GwTransportSections.hpp"   // U4
 #include "../2d/subsurface/SubsurfaceSections.hpp"   // G1
+#include "../2d/subsurface/GroundwaterConcentration.hpp"
 #include "../2d/heat/LidNodeHeat.hpp"
 #endif
 #include "../transport/components/HeatFluxModules/HeatOverrides.hpp"  // PE2
@@ -820,6 +821,10 @@ int SWMMEngine::open(const char* inp_path,
             return {};
         };
 
+        ctx_.state_accessors.get_surface_state = [this]() { return nativeSurfaceState(); };
+        ctx_.state_accessors.set_surface_state = [this](const std::string& blob, bool apply) {
+            return applyNativeSurfaceState(blob, apply);
+        };
         ctx_.state_accessors.get_snow_state = [this]() {
 #ifdef OPENSWMM_HAS_2D
             const auto* mesh=surface_router_.isActive()?&surface_router_.state().snow:nullptr;
@@ -920,6 +925,9 @@ int SWMMEngine::initialize() noexcept {
     }
 
 #ifndef OPENSWMM_HAS_2D
+    if(!ctx_.reactions.subsurface_laws.empty()) {
+        set_error(SWMM_ERR_PLUGIN,"REACTION_SUBSURFACE requires a 2D-enabled groundwater engine.");return SWMM_ERR_PLUGIN;
+    }
     if(ctx_.options.heat_transport&&ctx_.heat_config.sediment_exchange)
         for(int link=0;link<ctx_.n_links();++link)
             if(transport::heat::sedimentFor(ctx_,HeatElement::link(link)).mesh_ground) {
@@ -1451,6 +1459,7 @@ int SWMMEngine::initialize() noexcept {
             set_error(CFFI_ERR_HOTSTART, ("USE HOTSTART: " + why).c_str());
             return CFFI_ERR_HOTSTART;
         }
+        reopenMassBalance();
     }
 
     ctx_.state = EngineState::INITIALIZED;
@@ -6048,6 +6057,207 @@ std::vector<double> SWMMEngine::legacyRunoffSection() const {
     return x;
 }
 
+// ============================================================================
+// Native hot start V16 — subcatchment surface state, keyed by name
+// ============================================================================
+//
+// Layout (native endianness, as the rest of the file): tag "OSWSURF1"; the
+// pollutant, land use and reaction species names; then per subcatchment its
+// id, the three subarea ponded depths, its groundwater flow (per area) and
+// maximum infiltration volume when it has groundwater, the pollutants' runoff
+// concentration and ponded mass and each land use's buildup (per normalizer
+// unit, the store's own value, so the round trip is exact), each land use's
+// last-swept date, and the same three quantities for reaction species.
+
+namespace {
+constexpr char kSurfaceBlobTag[8] = {'O','S','W','S','U','R','F','1'};
+struct SurfaceBlobWriter {
+    std::string b;
+    template<class T> void put(const T& v) { b.append(reinterpret_cast<const char*>(&v), sizeof(T)); }
+    void str(const std::string& s) { put(static_cast<uint32_t>(s.size())); b.append(s); }
+};
+struct SurfaceBlobReader {
+    const std::string& b;
+    std::size_t at = 0;
+    bool ok = true;
+    template<class T> T get() {
+        T v{};
+        if (!ok || sizeof(T) > b.size() - at) { ok = false; return v; }
+        std::memcpy(&v, b.data() + at, sizeof(T));
+        at += sizeof(T);
+        return v;
+    }
+    double d() { return get<double>(); }
+    std::string str() {
+        const auto n = get<uint32_t>();
+        if (!ok || n > b.size() - at) { ok = false; return {}; }
+        std::string s = b.substr(at, n);
+        at += n;
+        return s;
+    }
+    std::vector<std::string> names() {
+        const auto n = get<uint32_t>();
+        std::vector<std::string> v;
+        if (!ok || n > b.size()) { ok = false; return v; }
+        for (uint32_t k = 0; k < n && ok; ++k) v.push_back(str());
+        return v;
+    }
+};
+} // namespace
+
+std::string SWMMEngine::nativeSurfaceState() const {
+    const int nsc = ctx_.n_subcatches();
+    if (nsc <= 0) return {};
+    const int np = ctx_.n_pollutants(), nlu = ctx_.n_landuses();
+    const auto& sub = ctx_.subcatches;
+    const auto& soa = runoff_.soa();
+    const auto& gw = groundwater_.state();
+    const auto& ms = ctx_.reactions.surface;
+    const int nm = (ms.active() && ms.n_subcatch == nsc && ms.n_landuses == nlu) ? ms.n_species : 0;
+    const bool pollut_store = np > 0 && nlu > 0 && !surface_quality_.buildup.empty();
+
+    SurfaceBlobWriter w;
+    w.b.append(kSurfaceBlobTag, 8);
+    w.put(static_cast<uint32_t>(np));
+    for (int p = 0; p < np; ++p) w.str(ctx_.pollutant_names.name_of(p));
+    w.put(static_cast<uint32_t>(nlu));
+    for (int lu = 0; lu < nlu; ++lu) w.str(ctx_.landuse_names.name_of(lu));
+    w.put(static_cast<uint32_t>(nm));
+    for (int m = 0; m < nm; ++m) w.str(ctx_.reactions.species_name[static_cast<std::size_t>(m)]);
+    w.put(static_cast<uint32_t>(nsc));
+    for (int i = 0; i < nsc; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        w.str(ctx_.subcatch_names.name_of(i));
+        w.put(soa.depth_imperv0[ui]);
+        w.put(soa.depth_imperv1[ui]);
+        w.put(soa.depth_perv[ui]);
+        const bool has_gw = ui < sub.gw_aquifer.size() && sub.gw_aquifer[ui] >= 0 && ui < gw.gw_flow.size();
+        w.put(static_cast<uint8_t>(has_gw ? 1 : 0));
+        if (has_gw) { w.put(gw.gw_flow[ui]); w.put(gw.max_infil_vol[ui]); }
+        for (int p = 0; p < np; ++p) w.put(sub.conc[ui * np + p]);
+        for (int p = 0; p < np; ++p) w.put(sub.ponded_qual[ui * np + p]);
+        for (int lu = 0; lu < nlu && np > 0; ++lu)
+            for (int p = 0; p < np; ++p)
+                w.put(pollut_store ? surface_quality_.buildup[surface_quality_.bu_idx(i, lu, p)] : 0.0);
+        for (int lu = 0; lu < nlu; ++lu) {
+            const auto sw = ui * static_cast<std::size_t>(nlu) + static_cast<std::size_t>(lu);
+            w.put(sw < sub.sweep_last_date.size() ? sub.sweep_last_date[sw]
+                : sw < sub.sweep_last_swept.size() ? ctx_.options.start_date - sub.sweep_last_swept[sw]
+                : ctx_.options.start_date);
+        }
+        for (int m = 0; m < nm; ++m) w.put(ms.washoff_conc[ms.sidx(i, m)]);
+        for (int m = 0; m < nm; ++m) w.put(ms.ponded_qual[ms.sidx(i, m)]);
+        for (int lu = 0; lu < nlu && nm > 0; ++lu)
+            for (int m = 0; m < nm; ++m) w.put(ms.buildup[ms.bu_idx(i, lu, m)]);
+    }
+    return w.b;
+}
+
+std::string SWMMEngine::applyNativeSurfaceState(const std::string& blob, bool apply) {
+    const std::string bad = "Hot start subcatchment surface state is malformed.";
+    if (blob.size() < 8 || std::memcmp(blob.data(), kSurfaceBlobTag, 8) != 0)
+        return "Hot start subcatchment surface state has an unknown layout.";
+    SurfaceBlobReader r{blob};
+    r.at = 8;
+    const auto pn = r.names(), ln = r.names(), sn = r.names();
+    const auto nsub = r.get<uint32_t>();
+    if (!r.ok) return bad;
+    const int np = ctx_.n_pollutants(), nlu = ctx_.n_landuses();
+    auto& sub = ctx_.subcatches;
+    auto& soa = runoff_.soa();
+    auto& gw = groundwater_.state();
+    auto& ms = ctx_.reactions.surface;
+    const bool msx = ms.active() && ms.n_subcatch == ctx_.n_subcatches() && ms.n_landuses == nlu;
+    auto warn = [&](const std::string& m) { if (apply) ctx_.warnings.push_back("USE HOTSTART: " + m); };
+    auto map = [&](const std::vector<std::string>& names, auto find, const char* kind) {
+        std::vector<int> idx(names.size(), -1);
+        for (std::size_t k = 0; k < names.size(); ++k) {
+            idx[k] = find(names[k]);
+            if (idx[k] < 0) warn(std::string(kind) + " '" + names[k] + "' is not in the model; its surface state is skipped");
+        }
+        return idx;
+    };
+    const auto pmap = map(pn, [&](const std::string& n) { return ctx_.pollutant_names.find(n); }, "pollutant");
+    const auto lmap = map(ln, [&](const std::string& n) { return ctx_.landuse_names.find(n); }, "land use");
+    const auto smap = map(sn, [&](const std::string& n) { return msx ? ctx_.reactions.find_species(n) : -1; }, "reaction species");
+    const std::size_t fp = pn.size(), fl = ln.size(), fs = sn.size();
+    const bool pollut_store = np > 0 && nlu > 0 && !surface_quality_.buildup.empty();
+
+    std::vector<double> conc(fp), pond(fp), bu(fl * fp), sweep(fl), wc(fs), wp(fs), wb(fl * fs);
+    for (uint32_t k = 0; k < nsub; ++k) {
+        const std::string id = r.str();
+        const double d0 = r.d(), d1 = r.d(), dp = r.d();
+        const bool has_gw = r.get<uint8_t>() != 0;
+        double gwf = 0.0, gwmax = 0.0;
+        if (has_gw) { gwf = r.d(); gwmax = r.d(); }
+        for (auto& v : conc) v = r.d();
+        for (auto& v : pond) v = r.d();
+        for (auto& v : bu) v = r.d();
+        for (auto& v : sweep) v = r.d();
+        for (auto& v : wc) v = r.d();
+        for (auto& v : wp) v = r.d();
+        for (auto& v : wb) v = r.d();
+        if (!r.ok) return bad;
+        const int i = ctx_.subcatch_names.find(id);
+        if (i < 0) { warn("subcatchment '" + id + "' is not in the model; its surface state is skipped"); continue; }
+        if (!apply) continue;
+        const auto ui = static_cast<std::size_t>(i);
+        soa.depth_imperv0[ui] = d0;
+        soa.depth_imperv1[ui] = d1;
+        soa.depth_perv[ui]    = dp;
+        sub.ponded_depth[ui] = d0 * soa.frac_imperv0[ui] + d1 * soa.frac_imperv1[ui] +
+                               dp * (1.0 - soa.imperv_pct[ui]);
+        if (has_gw && ui < sub.gw_aquifer.size() && sub.gw_aquifer[ui] >= 0 && ui < gw.gw_flow.size()) {
+            // The saved flow is both ends of the first step's trapezoid.
+            gw.gw_flow[ui] = gw.old_flow[ui] = gwf;
+            gw.max_infil_vol[ui] = gwmax;
+        }
+        for (std::size_t q = 0; q < fp; ++q) {
+            const int p = pmap[q];
+            if (p < 0) continue;
+            const auto k2 = ui * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
+            sub.conc[k2] = sub.conc_old[k2] = conc[q];
+            sub.ponded_qual[k2] = pond[q];
+            for (std::size_t l = 0; l < fl && pollut_store; ++l)
+                if (lmap[l] >= 0) surface_quality_.buildup[surface_quality_.bu_idx(i, lmap[l], p)] = bu[l * fp + q];
+        }
+        for (std::size_t l = 0; l < fl; ++l) {
+            if (lmap[l] < 0) continue;
+            const auto sw = ui * static_cast<std::size_t>(nlu) + static_cast<std::size_t>(lmap[l]);
+            if (sw >= sub.sweep_last_swept.size()) continue;
+            sub.sweep_last_date.resize(sub.sweep_last_swept.size(), ctx_.options.start_date);
+            sub.sweep_last_date[sw] = sweep[l];
+            sub.sweep_last_swept[sw] = ctx_.options.start_date - sweep[l];
+        }
+        for (std::size_t q = 0; q < fs; ++q) {
+            const int m = smap[q];
+            if (m < 0) continue;
+            const auto sk = ms.sidx(i, m);
+            ms.washoff_conc[sk] = wc[q];
+            if (sk < ms.washoff_conc_old.size()) ms.washoff_conc_old[sk] = wc[q];
+            ms.ponded_qual[sk] = wp[q];
+            for (std::size_t l = 0; l < fl; ++l)
+                if (lmap[l] >= 0) ms.buildup[ms.bu_idx(i, lmap[l], m)] = wb[l * fs + q];
+        }
+    }
+    if (r.at != blob.size()) return bad;
+    if (apply) {
+        // The surface the run starts from is the restored one (legacy
+        // massbal_open after readRunoff); reopenMassBalance() then restates
+        // the water ledgers.
+        if (np > 0) {
+            computeFinalQualityMassBalance();
+            ctx_.mass_balance.qual_init_buildup = ctx_.mass_balance.qual_final_buildup;
+        }
+        if (msx)
+            for (int m = 0; m < ms.n_species; ++m)
+                ms.led_init_buildup[static_cast<std::size_t>(m)] = msxsurf::remainingBuildup(ctx_, m);
+    }
+    return {};
+}
+
+void SWMMEngine::reopenMassBalance() noexcept { initMassBalance(); }
+
 void SWMMEngine::applyLegacyRunoffSection() noexcept {
     const int nsc = ctx_.n_subcatches(), np = ctx_.n_pollutants(), nlu = ctx_.n_landuses();
     if (hotstart_runoff_.size() != HotStartManager::legacy_runoff_size(ctx_, nlu)) {
@@ -7333,18 +7543,48 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                 const auto& tr = gw.transport();
                 snap.gw2d_species_count = tr.active() ? tr.n_species : 0;
                 snap.gw2d_species_names = tr.active() ? &tr.row_names : nullptr;
+                snap.gw2d_transport_layers=tr.n_layers;
+                snap.gw2d_layer_mass=tr.layer_mass;snap.gw2d_layer_concentration.assign(tr.layer_mass.size(),0);
+                for(int sp=0;sp<tr.n_species;++sp)for(int layer=0;layer<tr.n_layers;++layer)for(int cell=0;cell<g.n_cells;++cell) {
+                    const double bulk=g.area[cell]*std::max(0.,g.zs[cell]-g.hg[cell])/tr.n_layers;
+                    const double partition=(sp==tr.age_row||sp==tr.temp_row)?0:tr.kd[tr.idx(sp,cell)]*tr.rho_b[cell];
+                    const double capacity=bulk*(g.theta_sigma[std::size_t(layer)*g.n_cells+cell]+partition);
+                    const auto k=tr.layerIdx(sp,layer,cell);
+                    if(capacity>0)snap.gw2d_layer_concentration[k]=tr.layer_mass[k]/capacity;
+                }
+                const auto& boundaries=gw.boundaries();snap.gw2d_boundary_count=int(boundaries.size());
+                snap.gw2d_boundary_water.clear();snap.gw2d_boundary_cell_edge.clear();
+                snap.gw2d_boundary_species.assign(std::size_t(tr.n_species)*boundaries.size()*4,0);
+                for(std::size_t row=0;row<boundaries.size();++row) {
+                    const auto& edge=boundaries[row];
+                    snap.gw2d_boundary_water.insert(snap.gw2d_boundary_water.end(),{edge.requested_in,edge.requested_out,edge.applied_in,edge.applied_out});
+                    snap.gw2d_boundary_cell_edge.insert(snap.gw2d_boundary_cell_edge.end(),{edge.cell,edge.edge});
+                    for(int sp=0;sp<tr.n_species;++sp) {
+                        auto* values=&snap.gw2d_boundary_species[(std::size_t(sp)*boundaries.size()+row)*4];
+                        values[0]=edge.mass_in[sp];values[1]=edge.mass_out[sp];values[2]=edge.flux_in[sp];values[3]=edge.flux_out[sp];
+                    }
+                }
+                snap.gw2d_transport_ledger.clear();
+                if(gw.needsTransportRestart()&&tr.active()) {
+                    snap.gw2d_transport_ledger.assign(std::size_t(tr.n_species)*20,0);
+                    for(int sp=0;sp<tr.n_species;++sp) {
+                        auto* values=&snap.gw2d_transport_ledger[std::size_t(sp)*20];
+                        values[15]=tr.boundary_in[sp];values[16]=tr.boundary_out[sp];
+                        values[17]=tr.boundary_flux_in[sp];values[18]=tr.boundary_flux_out[sp];
+                        values[19]=tr.generated_age.empty()?0:tr.generated_age[sp];
+                    }
+                }
+
                 if (tr.active()) {
                     const auto nn = static_cast<std::size_t>(tr.n_species) *
                                     static_cast<std::size_t>(n);
                     snap.gw2d_sat_conc.assign(nn, 0.0);
                     snap.gw2d_unsat_conc.assign(nn, 0.0);
                     for (int c = 0; c < n; ++c) {
-                        const double vs = gw.satVolume(c);
-                        const double vu = gw.unsatVolume(c);
                         for (int sp = 0; sp < tr.n_species; ++sp) {
                             const auto k = tr.idx(sp, c);
-                            if (vs > 0.0) snap.gw2d_sat_conc[k]   = tr.sat_mass[k] / vs;
-                            if (vu > 0.0) snap.gw2d_unsat_conc[k] = tr.unsat_mass[k] / vu;
+                            snap.gw2d_sat_conc[k]=twoD::groundwaterZoneConcentration(gw,c,sp,true);
+                            snap.gw2d_unsat_conc[k]=twoD::groundwaterZoneConcentration(gw,c,sp,false);
                         }
                     }
                     snap.gw2d_species_ledger.assign(
@@ -7367,6 +7607,7 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                         d[12] = tr.residual(sp);
                         d[13] = tr.gained_source[u];
                         d[14] = tr.lost_source[u];
+                        if(!snap.gw2d_transport_ledger.empty())std::copy(d,d+15,&snap.gw2d_transport_ledger[u*20]);
                     }
                 } else {
                     snap.gw2d_sat_conc.clear();
@@ -7389,6 +7630,10 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
             snap.gw2d_node_names = surface_router_.aquiferNodeNames().empty()
                                        ? nullptr : &surface_router_.aquiferNodeNames();
         } else {
+            snap.gw2d_transport_layers=0;snap.gw2d_boundary_count=0;
+            snap.gw2d_layer_mass.clear();snap.gw2d_layer_concentration.clear();
+            snap.gw2d_boundary_water.clear();snap.gw2d_boundary_species.clear();
+            snap.gw2d_boundary_cell_edge.clear();snap.gw2d_transport_ledger.clear();
             snap.gw2d_infil_capacity.clear();
             snap.gw2d_infil_remaining.clear();
             snap.gw2d_infil_refresh.clear();
@@ -7987,16 +8232,12 @@ void SWMMEngine::writeHotstartSave(const HotstartSaveEntry& entry) {
     int rc = 0;
     if (native) {
         std::unique_ptr<HotStartFile> hs;
-        if (ctx_.options.heat_transport) {
+        // As swmm_hotstart_save: the V15 file when a full engine checkpoint
+        // is attached, otherwise the record-based one (which refuses coupled
+        // mesh/ground heat with its own message).
+        if (ctx_.options.heat_transport && checkpoint_enabled_) {
             std::string snapshot;
-            std::string error;
-            if (checkpoint_enabled_) {
-                error = checkpointBytes(snapshot, false);
-            } else {
-                error = hotstart_checkpoint_error_.empty()
-                    ? "full engine checkpointing was not attached at the initial boundary"
-                    : hotstart_checkpoint_error_;
-            }
+            const std::string error = checkpointBytes(snapshot, false);
             if (!error.empty()) {
                 ctx_.warnings.push_back(
                     "SAVE HOTSTART: coupled heat state was not saved: " + error);
@@ -8905,6 +9146,10 @@ void SWMMEngine::initHydraulics() noexcept {
     //     open fails gracefully, exactly like a 1D validation error.
     try {
         surface_router_.initialize(ctx_);
+        if(!ctx_.options.ignore_2d&&surface_router_.options().groundwater!=0&&
+            !surface_router_.subsurface().active()&&
+            (!ctx_.reactions.subsurface_laws.empty()||!surface_router_.aquiferConfig().boundaries.empty()))
+            throw std::runtime_error("Groundwater edge forcing and REACTION_SUBSURFACE require an active resolved mesh aquifer.");
         for(int n=0;n<ctx_.n_nodes();++n)if(lidnode::bottomMode(ctx_,n)==LidNodeBottom::MeshAquifer &&
             (!surface_router_.isActive() || !surface_router_.subsurface().active() ||
              n>=int(ctx_.nodes.aquifer2d_bed.size()) || !ctx_.nodes.aquifer2d_bed[n]))
@@ -10680,8 +10925,11 @@ double SWMMEngine::reportedNodeVolume(int i, double depth,
     // what keeps the flooding term out of the mass balance for these nodes:
     // updateRoutingMassBalance books overflow as a loss only while the volume
     // is at or below full, which is exactly the ponded/not-ponded distinction.
-    if (ctx_.options.allow_ponding && ctx_.nodes.ponded_area[ui] > 0.0 &&
-        depth > fd)
+    // A 2D-coupled node ponds whatever ALLOW_PONDING says (DynamicWave's
+    // is_coupled exception), so its pond is reported the same way.
+    const bool can_pond = ctx_.options.allow_ponding ||
+        (ui < ctx_.coupled_node.size() && ctx_.coupled_node[ui] != 0);
+    if (can_pond && ctx_.nodes.ponded_area[ui] > 0.0 && depth > fd)
         return volume;
 
     // Legacy convention: a plain junction contributes ZERO to reported

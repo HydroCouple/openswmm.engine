@@ -37,6 +37,7 @@
 #include "../data/SurfaceStateData.hpp"
 #include "../data/BoundaryData.hpp"
 #include "../coupling/NodeCoupling.hpp"   // CouplingPoint
+#include "../coupling/PondModel.hpp"
 #include "../solver/InertialKernels.hpp"
 #include "../../data/NodeData.hpp"
 
@@ -268,8 +269,8 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
     const std::size_t np =
         state.node_coupling ? state.node_coupling->size() : 0;
     {
-        std::vector<int> cell(np), vert(np), node(np);
-        std::vector<double> cd(np), area(np);
+        std::vector<int> cell(np), vert(np), node(np), law(np), hb(np), he(np), eq(np);
+        std::vector<double> cd(np), area(np), geo(3 * np), coef(5 * np);
         for (std::size_t k = 0; k < np; ++k) {
             const auto& cp = (*state.node_coupling)[k];
             cell[k] = cp.cell_idx;
@@ -277,12 +278,33 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
             node[k] = cp.node_idx;
             cd[k]   = cp.cd;
             area[k] = cp.area;
+            law[k]  = cp.law;
+            eq[k]   = cp.equalize ? 1 : 0;
+            hb[k]   = cp.head_begin;
+            he[k]   = cp.head_end;
+            geo[3 * k + 0] = cp.geo.z_crest;
+            geo[3 * k + 1] = cp.geo.l_weir;
+            geo[3 * k + 2] = cp.geo.a_orif;
+            coef[5 * k + 0] = cp.coef.c_w;
+            coef[5 * k + 1] = cp.coef.c_sw;
+            coef[5 * k + 2] = cp.coef.c_oi;
+            coef[5 * k + 3] = cp.coef.c_oo;
+            coef[5 * k + 4] = cp.coef.h_eps;
         }
         d_cp_cell_   = devCopy("cp_cell", cell);
         d_cp_vertex_ = devCopy("cp_vertex", vert);
         d_cp_node_   = devCopy("cp_node", node);
         d_cp_cd_     = devCopy("cp_cd", cd);
         d_cp_area_   = devCopy("cp_area", area);
+        d_cp_law_    = devCopy("cp_law", law);
+        d_cp_eq_     = devCopy("cp_eq", eq);
+        d_cp_head_b_ = devCopy("cp_head_b", hb);
+        d_cp_head_e_ = devCopy("cp_head_e", he);
+        d_cp_geo_    = devCopy("cp_geo", geo);
+        d_cp_coef_   = devCopy("cp_coef", coef);
+        const std::vector<int> head_cells =
+            state.coupling_head_cells ? *state.coupling_head_cells : std::vector<int>{};
+        d_head_cells_ = devCopy("head_cells", head_cells);
     }
     d_exch_ = DView("exch", np);
     exch_host_.assign(np, 0.0);
@@ -295,6 +317,7 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
     d_node_fullvol_   = DView("node_fullvol", nn);
     d_node_invert_    = DView("node_invert", nn);
     d_node_fulldepth_ = DView("node_fulldepth", nn);
+    d_node_pond_area_ = DView("node_pond_area", nn);
     if (nn > 0) {
         devRefresh(d_node_invert_, state.nodes_1d->invert_elev);
         devRefresh(d_node_fulldepth_, state.nodes_1d->full_depth);
@@ -1015,6 +1038,13 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
         auto cp_cell = d_cp_cell_, cp_vertex = d_cp_vertex_,
              cp_node = d_cp_node_;
         auto cp_cd = d_cp_cd_, cp_area = d_cp_area_;
+        auto cp_law = d_cp_law_, cp_hb = d_cp_head_b_, cp_he = d_cp_head_e_;
+        auto head_cells = d_head_cells_;
+        auto cp_geo = d_cp_geo_, cp_coef = d_cp_coef_;
+        auto cp_eq = d_cp_eq_;
+        auto npa = d_node_pond_area_;
+        const double eq_window =
+            state_->node_pond_area_m2 ? state_->coupling_window_s : 0.0;
         auto exch = d_exch_, node_drawn = d_node_drawn_;
         auto coup_app = d_coupling_applied_;
         auto nh = d_node_head_, nd = d_node_depth_, nv = d_node_volume_;
@@ -1039,7 +1069,18 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                     // couplingHead2D: pseudo-Laplacian vertex head (FLAT) /
                     // wet-masked depth-weighted η (VFR) / cell head.
                     double h_2d;
-                    if (vtx < 0) {
+                    if (cp_he(kk) > cp_hb(kk)) {
+                        // COUPLING_HEAD VERTEX / STENCIL_WET_MEAN (couplingHead2D).
+                        double num = 0.0, den = 0.0;
+                        for (int p = cp_hb(kk); p < cp_he(kk); ++p) {
+                            const int t = head_cells(p);
+                            const double h = depth(t);
+                            if (!(h >= dry)) continue;
+                            num += h * head(t);
+                            den += h;
+                        }
+                        h_2d = (den > 0.0) ? num / den : head(ci);
+                    } else if (vtx < 0) {
                         h_2d = head(ci);
                     } else if (vfr) {
                         double num = 0.0, den = 0.0;
@@ -1071,21 +1112,43 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                     }
                     const double depth_1d_avail = nd(ni) * len12;
 
-                    const double crown = (ninv(ni) + nfd(ni)) * len12;
-                    const double h_max = (h_1d > h_2d) ? h_1d : h_2d;
-                    const double A_eff = devEffectiveArea(
-                        h_max, crown, nfd(ni), cp_area(kk),
-                        cp_area(kk) * 2.0);
+                    double Q;
+                    if (cp_law(kk) == 1) {
+                        // WEIR_ORIFICE (computeNodeCouplingQ): no rim gate,
+                        // no area ramp — the law is zero below the crest.
+                        openswmm::twoD::exchange::Geometry g;
+                        g.z_crest = cp_geo(3 * kk + 0);
+                        g.l_weir  = cp_geo(3 * kk + 1);
+                        g.a_orif  = cp_geo(3 * kk + 2);
+                        openswmm::twoD::exchange::Coefficients c;
+                        c.c_w   = cp_coef(5 * kk + 0);
+                        c.c_sw  = cp_coef(5 * kk + 1);
+                        c.c_oi  = cp_coef(5 * kk + 2);
+                        c.c_oo  = cp_coef(5 * kk + 3);
+                        c.h_eps = cp_coef(5 * kk + 4);
+                        Q = openswmm::twoD::exchange::exchange(g, c, h_2d, h_1d).q;
+                    } else {
+                        const double crown = (ninv(ni) + nfd(ni)) * len12;
+                        const double h_max = (h_1d > h_2d) ? h_1d : h_2d;
+                        const double A_eff = devEffectiveArea(
+                            h_max, crown, nfd(ni), cp_area(kk),
+                            cp_area(kk) * 2.0);
 
-                    double Q = devOrificeFlow(h_2d - h_1d, cp_cd(kk), A_eff);
+                        Q = devOrificeFlow(h_2d - h_1d, cp_cd(kk), A_eff);
 
-                    const double CAP_BAND = 0.05;
-                    double ct = (h_max - crown) / CAP_BAND;
-                    ct = (ct < 0.0) ? 0.0 : (ct > 1.0 ? 1.0 : ct);
-                    Q *= ct * ct * (3.0 - 2.0 * ct);
+                        const double CAP_BAND = 0.05;
+                        double ct = (h_max - crown) / CAP_BAND;
+                        ct = (ct < 0.0) ? 0.0 : (ct > 1.0 ? 1.0 : ct);
+                        Q *= ct * ct * (3.0 - 2.0 * ct);
+                    }
 
                     Q *= (Q > 0.0) ? devWetRamp(depth_2d_avail, dry)
                                    : devWetRamp(depth_1d_avail, dry);
+                    if (cp_eq(kk) && eq_window > 0.0) {   // COUPLING_EQUALIZE
+                        const double cap = openswmm::twoD::pond::equalizeCap(
+                            h_2d - h_1d, eq_window, npa(ni), area(ci));
+                        Q = (Q > cap) ? cap : ((Q < -cap) ? -cap : Q);
+                    }
                     if (Q == 0.0) continue;
 
                     if (Q > 0.0) {   // 2D → 1D drain: availability share
@@ -1185,6 +1248,9 @@ void ExplicitKokkosSurfaceSolver::pushNodeState() {
     devRefresh(d_node_head_, state_->nodes_1d->head);
     devRefresh(d_node_depth_, state_->nodes_1d->depth);
     devRefresh(d_node_volume_, state_->nodes_1d->volume);
+    if (state_->node_pond_area_m2 &&
+        state_->node_pond_area_m2->size() == d_node_pond_area_.extent(0))
+        devRefresh(d_node_pond_area_, *state_->node_pond_area_m2);
 }
 
 void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current,

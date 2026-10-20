@@ -8,6 +8,8 @@
 #include "GeoPackageReader.hpp"
 #ifdef OPENSWMM_HAS_2D
 #include "2d/subsurface/SubsurfaceSections.hpp"
+#include "2d/gw/GwTransportSections.hpp"
+#include "2d/gw/GwTransportData.hpp"
 #endif
 #include <sstream>
 #include "../../core/Constants.hpp"
@@ -16,6 +18,7 @@
 #include "GpkgUtils.hpp"
 #include "GpkgGeometry.hpp"
 
+#include "core/NodeCoupling2D.hpp"
 #include "core/SimulationContext.hpp"
 #include "core/UnitConversion.hpp"
 #include "data/NodeData.hpp"
@@ -208,6 +211,37 @@ static void apply_option_2d(SimulationContext& ctx, const std::string& key,
     else if (key == "2D_FROUDE_MAX")    o->froude_max   = std::stod(val);
     else if (key == "2D_ADVECTION")     o->advection = (val == "YES");
     else if (key == "2D_COUPLING_AREA") o->coupling_area_auto = (val == "AUTO");
+    else if (key == "2D_COUPLING_IN_FLOODING") o->coupling_in_flooding = (val == "YES");
+    else if (key == "2D_COUPLING_LAW")
+        o->coupling_law = (val == "WEIR_ORIFICE") ? twoD::CouplingLaw2D::WEIR_ORIFICE
+                                                  : twoD::CouplingLaw2D::ORIFICE;
+    else if (key == "2D_COUPLING_HEAD")
+        o->coupling_head = (val == "VERTEX")           ? twoD::CouplingHead2D::VERTEX
+                         : (val == "STENCIL_WET_MEAN") ? twoD::CouplingHead2D::STENCIL_WET_MEAN
+                                                       : twoD::CouplingHead2D::CELL;
+    else if (key == "2D_COUPLING_POND_MODE")
+        o->coupling_pond_mode = (val == "CHAMBER")  ? twoD::CouplingPondMode2D::CHAMBER
+                              : (val == "TRACKING") ? twoD::CouplingPondMode2D::TRACKING
+                                                    : twoD::CouplingPondMode2D::FOOTPRINT;
+    else if (key == "2D_COUPLING_POND_RELAX") o->coupling_pond_relax = std::stod(val);
+    else if (key == "2D_COUPLING_RIM_BAND")   o->coupling_rim_band = std::stod(val);
+    else if (key == "2D_COUPLING_EQUALIZE")   o->coupling_equalize = (val == "YES") ? 1 : 0;
+    else if (key == "2D_COUPLING_COEFFS") {
+        double preset = 0.0;
+        if (nodecoupling2d::parseValue(NodeCoupling2DKey::COEFFS, val, preset).empty())
+            o->coupling_coeffs = static_cast<int>(preset);
+    }
+    else if (key == "2D_MOMENTUM_EQUATION")
+        o->momentum = (val == "FULL_SWE")       ? twoD::Momentum2D::FULL_SWE
+                    : (val == "DIFFUSIVE_WAVE") ? twoD::Momentum2D::DIFFUSIVE_WAVE
+                                                : twoD::Momentum2D::LOCAL_INERTIAL;
+    else if (key == "2D_BACKEND")
+        o->backend = (val == "CPU")  ? twoD::Backend2D::CPU
+                   : (val == "OMP")  ? twoD::Backend2D::OMP
+                   : (val == "CUDA") ? twoD::Backend2D::CUDA
+                   : (val == "HIP")  ? twoD::Backend2D::HIP
+                   : (val == "SYCL") ? twoD::Backend2D::SYCL
+                                     : twoD::Backend2D::AUTO;
     else if (key == "2D_REPORT_2D")     o->report_2d = (val == "YES");
     else if (key == "2D_OUTPUT_PRECISION")
         o->output_precision = (val == "FLOAT64") ? twoD::OutputPrecision2D::FLOAT64
@@ -1864,6 +1898,28 @@ static void read_inlets(sqlite3* db, SimulationContext& ctx, const std::string& 
     }
 }
 
+// [2D_NODE_COUPLING] rows, replayed through the section parser so the type /
+// key / value rules are the .inp ones. The node FK makes an unknown node
+// impossible in a well-formed file; one that still slips through is an error
+// rather than a row left on the parse-time deferral list.
+static void read_node_coupling_2d(sqlite3* db, SimulationContext& ctx,
+                                  const std::string& sim_id) {
+    if (!table_exists(db, "node_2d_coupling")) return;
+    auto stmt = prepare(db, "SELECT node_id, coupling_type, params FROM node_2d_coupling "
+                            "WHERE simulation_id = ? ORDER BY fid");
+    bind_text(stmt.get(), 1, sim_id);
+    std::vector<std::string> lines;
+    while (sqlite3_step(stmt.get()) == SQLITE_ROW)
+        lines.push_back(column_text(stmt.get(), 0) + " " + column_text(stmt.get(), 1) +
+                        " " + column_text(stmt.get(), 2));
+    const auto deferred_before = ctx.deferred_section_rows.size();
+    nodecoupling2d::readSection(ctx, lines);
+    for (auto i = deferred_before; i < ctx.deferred_section_rows.size(); ++i)
+        ctx.errors.push_back("node_2d_coupling names an unknown node: " +
+                             ctx.deferred_section_rows[i].second);
+    ctx.deferred_section_rows.resize(deferred_before);
+}
+
 static void read_inlet_usage(sqlite3* db, SimulationContext& ctx, const std::string& sim_id) {
     if (!table_exists(db, "inlet_usage")) return;
     auto stmt = prepare(db,
@@ -2068,10 +2124,17 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx,
     // Restored as NAMES (indices stay -1): SurfaceRouter2D::initialize()
     // resolves them against ctx.node_names with the same unknown-node fatal
     // behavior as the inp path.
+    // CD/AREA authored flags: NULL or absent (older files) reads as authored —
+    // those writers stored an explicit value for every row.
+    auto authored = [](sqlite3_stmt* s, int col) {
+        return sqlite3_column_type(s, col) == SQLITE_NULL || column_int(s, col) != 0;
+    };
     if (table_exists(db, "mesh_2d_vertex_coupling")) {
-        auto stmt = prepare(db,
-            "SELECT vertex_idx, node_id, coupling_cd, coupling_area "
-            "FROM mesh_2d_vertex_coupling WHERE simulation_id = ?");
+        const bool flags = column_exists(db, "mesh_2d_vertex_coupling", "coupling_cd_set");
+        auto stmt = prepare(db, std::string(
+            "SELECT vertex_idx, node_id, coupling_cd, coupling_area") +
+            (flags ? ", coupling_cd_set, coupling_area_set" : ", NULL, NULL") +
+            " FROM mesh_2d_vertex_coupling WHERE simulation_id = ?");
         bind_text(stmt.get(), 1, sim_id);
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             const int i = column_int(stmt.get(), 0);
@@ -2079,19 +2142,34 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx,
             mesh.vert_coupled_node_name[i] = column_text(stmt.get(), 1);
             mesh.vert_coupling_cd[i]       = column_double(stmt.get(), 2);
             mesh.vert_coupling_area[i]     = column_double(stmt.get(), 3);
+            mesh.vert_coupling_cd_set[i]   = authored(stmt.get(), 4) ? 1 : 0;
+            mesh.vert_coupling_area_set[i] = authored(stmt.get(), 5) ? 1 : 0;
         }
     }
+    // Every table row becomes a repeated-row coupling (several nodes may share
+    // a triangle); the per-triangle arrays mirror the last row of each.
     if (table_exists(db, "mesh_2d_triangle_coupling")) {
-        auto stmt = prepare(db,
-            "SELECT tri_idx, node_id, coupling_cd, coupling_area "
-            "FROM mesh_2d_triangle_coupling WHERE simulation_id = ?");
+        const bool flags = column_exists(db, "mesh_2d_triangle_coupling", "coupling_cd_set");
+        auto stmt = prepare(db, std::string(
+            "SELECT tri_idx, node_id, coupling_cd, coupling_area") +
+            (flags ? ", coupling_cd_set, coupling_area_set" : ", NULL, NULL") +
+            " FROM mesh_2d_triangle_coupling WHERE simulation_id = ? ORDER BY fid");
         bind_text(stmt.get(), 1, sim_id);
+        mesh.tri_couplings.clear();
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             const int t = column_int(stmt.get(), 0);
             if (t < 0 || t >= mesh.n_triangles()) continue;
-            mesh.tri_coupled_node_name[t] = column_text(stmt.get(), 1);
-            mesh.tri_coupling_cd[t]       = column_double(stmt.get(), 2);
-            mesh.tri_coupling_area[t]     = column_double(stmt.get(), 3);
+            twoD::MeshData::TriCouplingRow row;
+            row.tri       = t;
+            row.node_name = column_text(stmt.get(), 1);
+            row.cd        = column_double(stmt.get(), 2);
+            row.area      = column_double(stmt.get(), 3);
+            row.cd_set    = authored(stmt.get(), 4);
+            row.area_set  = authored(stmt.get(), 5);
+            mesh.tri_coupled_node_name[t] = row.node_name;
+            mesh.tri_coupling_cd[t]       = row.cd;
+            mesh.tri_coupling_area[t]     = row.area;
+            mesh.tri_couplings.push_back(std::move(row));
         }
     }
 
@@ -2204,6 +2282,7 @@ int read_model(sqlite3* db, SimulationContext& ctx,
         read_streets(db, ctx, simulation_id);
         read_inlets(db, ctx, simulation_id);
         read_inlet_usage(db, ctx, simulation_id);
+        read_node_coupling_2d(db, ctx, simulation_id);
         read_controls(db, ctx, simulation_id);
 
         // Part E — 2D mesh model definition. Options keys (2D_*) were
@@ -2219,15 +2298,16 @@ int read_model(sqlite3* db, SimulationContext& ctx,
 #else
                 if(!ctx.twod_io.aquifer||!ctx.twod_io.aquifer_nodes||!ctx.twod_io.aquifer_links)
                     throw GpkgError("Reviewed surface ownership requires a 2D-enabled engine.");
-                twoD::SubsurfaceConfig proposed;std::vector<std::string> nodes,links;
+                twoD::SubsurfaceConfig proposed;twoD::GwTransportData groundwater;std::vector<std::string> nodes,links;
                 input::SectionRegistry registry;twoD::registerSubsurfaceSections(proposed,nodes,links,registry);
+                twoD::registerGwTransportSections(groundwater,registry);
                 std::istringstream lines(column_text(row.get(),0));std::string line,section;std::vector<std::string> body;
-                auto flush=[&]{if(!section.empty()){if(!registry.has(section))throw GpkgError("Unknown reviewed aquifer section: "+section);registry.dispatch(section,ctx,body);if(ctx.error_code)throw GpkgError(ctx.error_message);}body.clear();};
+                auto flush=[&]{if(section.starts_with("REACTION_")){ctx.embedded_component_sections.emplace_back(section,body);body.clear();return;}if(!section.empty()){if(!registry.has(section))throw GpkgError("Unknown reviewed aquifer section: "+section);registry.dispatch(section,ctx,body);if(ctx.error_code)throw GpkgError(ctx.error_message);}body.clear();};
                 while(std::getline(lines,line)){
                     if(!line.empty()&&line.front()=='['){flush();const auto end=line.find(']');if(end==std::string::npos)throw GpkgError("Invalid reviewed aquifer section.");section=line.substr(1,end-1);}
                     else body.push_back(line);
                 }
-                flush();*ctx.twod_io.aquifer=std::move(proposed);*ctx.twod_io.aquifer_nodes=std::move(nodes);*ctx.twod_io.aquifer_links=std::move(links);
+                flush();if(ctx.twod_io.gw)*ctx.twod_io.gw=std::move(groundwater);*ctx.twod_io.aquifer=std::move(proposed);*ctx.twod_io.aquifer_nodes=std::move(nodes);*ctx.twod_io.aquifer_links=std::move(links);
 #endif
             }
         }

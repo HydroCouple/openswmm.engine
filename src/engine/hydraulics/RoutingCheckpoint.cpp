@@ -601,7 +601,8 @@ void Router::validateSessionStorage(const std::shared_ptr<RestartState>& s,const
             require(!routed || lid.quality_old_water.size()==lid.cells.size(),"Engine routed LID previous-water shape differs.");
             volume+=lid.held_volume;
         } else if (nodes.full_depth[n]>0) {
-            volume+=(c.options.allow_ponding && nodes.ponded_area[n]>0 && nodes.depth[n]>nodes.full_depth[n])
+            const bool can_pond=c.options.allow_ponding || (n<c.coupled_node.size() && c.coupled_node[n]!=0);
+            volume+=(can_pond && nodes.ponded_area[n]>0 && nodes.depth[n]>nodes.full_depth[n])
                 ? nodes.volume[n] : nodes.rpt_full_volume[n]*(nodes.depth[n]/nodes.full_depth[n]);
         }
     }

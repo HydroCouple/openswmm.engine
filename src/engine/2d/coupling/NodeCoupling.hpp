@@ -42,6 +42,8 @@
 #include "../data/MeshData.hpp"
 #include "../data/SurfaceStateData.hpp"
 #include "../data/SolverOptions2D.hpp"
+#include "../../data/NodeCoupling2DData.hpp"
+#include "ExchangeLaw.hpp"
 
 // Forward declaration — avoid pulling in full SimulationContext
 namespace openswmm {
@@ -67,6 +69,25 @@ struct CouplingPoint {
     /// conduit area, 0.05, 2.0) m²) replaces the area of every junction point
     /// either way — mapper-written default tokens look authored.
     bool area_authored = true;
+    /// True when the input authored this point's CD; false = the router
+    /// substitutes [2D_OPTIONS] COUPLING_CD.
+    bool cd_authored = true;
+    /// Exchange law resolved for this point (CouplingLaw2D: 0 ORIFICE — the
+    /// legacy path on cd/area — or 1 WEIR_ORIFICE on geo/coef).
+    int8_t law = 0;
+    exchange::Geometry     geo;    ///< WEIR_ORIFICE structure (SI, 2D frame)
+    exchange::Coefficients coef;   ///< WEIR_ORIFICE coefficients
+    /// Chamber plan area above the rim (m²): [2D_NODE_COUPLING] CHAMBER_AREA,
+    /// else the structure's open area (the map-row area under ORIFICE). The
+    /// pond area under COUPLING_POND_MODE CHAMBER, the floor under TRACKING.
+    double chamber_area = 0.0;
+    /// COUPLING_EQUALIZE resolved for this point.
+    bool equalize = false;
+    /// Head-sampling cells [head_begin, head_end) in the router's shared list
+    /// (SurfaceStateData::coupling_head_cells): the wet-depth-weighted η over
+    /// them drives the exchange. Empty = the coupling cell's own head.
+    int head_begin = 0;
+    int head_end   = 0;
 };
 
 /**
@@ -81,6 +102,35 @@ struct CouplingPoint {
  */
 std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
                                                 const SimulationContext& ctx);
+
+/**
+ * @brief Resolve a junction point's exchange law, structure and coefficients
+ *        from its node's [2D_NODE_COUPLING] row, the class preset and the
+ *        global options (plans/1D2D_FINE_SCALE_COUPLING_PLAN §3.1, §3.4–3.5).
+ *
+ * @details Precedence: map-row CD/AREA (when authored) > node row > preset >
+ *          [2D_OPTIONS]. An authored map-row CD sets both orifice
+ *          coefficients; an authored map-row AREA sets the orifice area.
+ *          MANHOLE: L = πD, A = πD²/4 (D default 1.2 m, 4 ft in US units);
+ *          GRATE / CURB: AREA (else the map-row area, else the manhole area)
+ *          and PERIMETER (else 4√A); OPEN: AREA (else the storage area at
+ *          full depth) and PERIMETER (else √(4πA)). LID_OPEN_FRACTION scales
+ *          L and A. Coefficients come from COEFFS (node, else COUPLING_COEFFS):
+ *          DEFAULT 0.540 / ⅔·C_w / 0.167 / 0.160, RUBINATO2017 0.540 / 0.056 /
+ *          0.167 / 0.160, _LOWER 0.493 / 0.055 / 0.160 / 0.159, _UPPER
+ *          0.587 / 0.057 / 0.174 / 0.161; an OPEN node without COEFFS uses
+ *          1.0 throughout; CW / CSW / COI / COO override. The crest follows
+ *          CREST: the node rim (invert + full depth), the coupling bed (vertex
+ *          z or cell centroid z), or their MAX / MIN.
+ *
+ * @param row              The node's row in ctx.node_coupling_2d, or -1.
+ * @param type             The node's effective coupling type.
+ * @param project_len_to_m Project length unit → metres (authored values).
+ */
+void resolveExchangeStructure(CouplingPoint& cp, const MeshData& mesh,
+                              const SimulationContext& ctx,
+                              const SolverOptions2D& opts, int row,
+                              NodeCoupling2DType type, double project_len_to_m);
 
 /**
  * @brief Head sensitivity G = −∂Q/∂h_1d ≥ 0 of the coupling orifice at a

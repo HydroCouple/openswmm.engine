@@ -146,6 +146,15 @@ std::string serializeReactionSystem(const SimulationContext& ctx) {
     emit_scope("REACTION_PIPES", rx.pipe_form, rx.pipe_expr_src);
     emit_scope("REACTION_TANKS", rx.tank_form, rx.tank_expr_src);
 
+    if(!rx.subsurface_laws.empty()) {
+        out+="\n[REACTION_SUBSURFACE]\n";
+        for(const auto& law:rx.subsurface_laws) {
+            std::string scope=law.scope==0?"*":law.scope==1?"TAG \""+law.tag+"\"":"CELL "+std::to_string(law.cell+1);
+            const std::string zone=law.zone==0?"SAT":law.zone==1?"UNSAT":"LAYER "+std::to_string(law.layer+1);
+            out+=scope+" "+zone+" "+rx.species_name[law.species]+" "+form_tok(law.form)+" "+law.expression+"\n";
+        }
+    }
+
     // Initial quality: nonzero GLOBAL rows, then the per-element rows.
     {
         bool any = false;

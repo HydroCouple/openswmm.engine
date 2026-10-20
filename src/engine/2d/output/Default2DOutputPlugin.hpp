@@ -323,6 +323,10 @@ private:
     hid_t   ds_gw_theta_           = H5I_INVALID_HID;
     hsize_t n_gw_beds_             = 0;
     hsize_t n_gw_layers_           = 0;
+    hid_t ds_gw_layer_mass_=H5I_INVALID_HID,ds_gw_layer_conc_=H5I_INVALID_HID;
+    hid_t ds_gw_boundary_water_=H5I_INVALID_HID,ds_gw_boundary_species_=H5I_INVALID_HID;
+    hid_t ds_gw_transport_ledger_=H5I_INVALID_HID;
+    hsize_t n_gw_transport_layers_=0,n_gw_boundaries_=0;
     bool    gw_created_            = false;
     void createGroundwaterDatasets(const SimulationSnapshot& snap);
     bool    heat_created_           = false;
@@ -385,6 +389,7 @@ private:
     void writeStringAttr(hid_t loc, const char* name, const char* value);
     void writeDoubleAttr(hid_t loc, const char* name, double value);
     void extendAndWrite2D(hid_t ds, const double* data, hsize_t n_cols);
+    void extendAndWrite4D(hid_t ds,const double* data,hsize_t a,hsize_t b,hsize_t c);
     void extendAndWrite3D(hid_t ds, const double* data, hsize_t dim1, hsize_t dim2);
     /// Create a fixed [nFace] face dataset (no time dimension) for an envelope.
     hid_t createFaceEnvelopeDataset(const char* name, const char* long_name,

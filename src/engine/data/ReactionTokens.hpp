@@ -50,6 +50,10 @@ enum class RxHydVar : int {
     DT,       ///< reaction step (s)
     TEMP,     ///< local water temperature (degC); [REACTION_OPTIONS]
               ///< TEMPERATURE constant when HEAT_TRANSPORT is off
+    GW_THETA,    ///< water content (dimensionless), groundwater only
+    GW_POROSITY, ///< porosity (dimensionless), groundwater only
+    GW_SE,       ///< effective saturation (dimensionless), groundwater only
+    GW_DEPTH_M,  ///< reactor centre depth below the ground surface (m)
     COUNT_
 };
 

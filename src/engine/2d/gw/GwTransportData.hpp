@@ -73,6 +73,7 @@ enum class GwScope : int8_t {
 /// kernel would carry", so a deck that only names the section gets the
 /// full model when the kernel arrives.
 struct GwTransportOptions {
+    std::string unsat_transport="BULK"; ///< explicit SIGMA chemistry opt-in
     // Explicit opt-in; dormant legacy CONDUCTION flags never activate it.
     std::string thermal_model="WATER_ONLY";
     int thermal_layers=16;

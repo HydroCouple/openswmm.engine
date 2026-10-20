@@ -71,8 +71,10 @@
 #define OPENSWMM_ENGINE_2D_SUBSURFACE_SOLVER_HPP
 
 #include "SigmaColumn.hpp"
+#include "../../transport/components/ReactionModule/ReactionIntegrator.hpp"
 #include "SurfaceExchange.hpp"
 #include "../gw/GwSourceForcing.hpp"
+#include "../gw/GwBoundaryForcing.hpp"
 #include "SubsurfaceData.hpp"
 #include "SubsurfaceTransportState.hpp"
 #include "../coupling/RuntimeCoupling.hpp"   // T7.1
@@ -215,7 +217,7 @@ public:
         double m = vol * (tr_.sat_mass[k] / v) * mob;
         if(heat_.active() && species==tr_.temp_row){heat_link_out_volume_[u]+=vol;bookPresetHeatOut(cell,vol,m);}
         if (!tr_.signedRow(species)) {
-            const double avail = std::max(0.0, tr_.sat_mass[k] * mob - tr_.lout_mass[k]);
+            const double avail = std::max(0.0, tr_.sat_mass[k] * mob - pendingSaturatedMassExport(cell,species));
             m = std::min(m, avail);
         }
         if (m == 0.0) return 0.0;
@@ -282,6 +284,8 @@ public:
                      double accepted_end = -1.0);
     RuntimeSources& runtimeSources() noexcept { return runtime_sources_; }
     const RuntimeSources& runtimeSources() const noexcept { return runtime_sources_; }
+    void setBoundaries(std::vector<GwResolvedBoundary>);
+    const std::vector<GwResolvedBoundary>& boundaries() const noexcept {return boundaries_;}
     void setSources(std::vector<GwResolvedSource> sources);
     /// Flush every pending accumulator into its owner. Mandatory before any
     /// re-tier or active-set change (the stranded-flux hazard).
@@ -324,6 +328,11 @@ public:
     /// SI, its length-weighted share for this cell) at the routing cadence;
     /// the GW cell gathers it at its firing as a saturated-zone inflow.
     void bookLinkSeepage(int cell, double vol_m3) noexcept;
+    /// Accepted leaking reach, with a linear bed elevation over its clipped
+    /// length. Splits water and producer quality at actual SIGMA interfaces.
+    void bookLinkContact(int cell,double volume,const std::vector<double>& concentration,
+                         double elevation_begin,double elevation_end);
+    int contactLayer(int cell,double elevation) const noexcept;
     /// Volume (m³) the subsurface owes the surface twin — Dunne and
     /// exfiltration — drained by the surface at its firing.
     double takeToSurface(int cell) noexcept;
@@ -343,6 +352,7 @@ public:
     /// by the router each batch — what a RECHARGING node's water carries
     /// down its bed. Null (or a zero row count) means the seam moves water
     /// only, which is what every pre-T7.4 deck did.
+    void publishNodeConcentrations(const SimulationContext& ctx);
     void setNodeRowConc(const double* rows, int n_species) noexcept {
         node_row_conc_ = rows;
         node_row_ns_   = n_species;
@@ -406,6 +416,8 @@ public:
     /// silently computes a number the solver never uses under SIGMA or
     /// ENSLAVED, and agrees only for as long as every fixture is closure A.
     double specificYieldOf(int cell) const noexcept;
+    double unreservedDrainableWater(int cell) const noexcept;
+    double pendingSaturatedMassExport(int cell,int species) const noexcept;
     // Internal R5 trial budget in SI, before accepting a new node receipt.
     // Separate ceilings; incoming pending water never finances a withdrawal.
     // Call after atmospheric demand/other accepted channels have been booked.
@@ -437,6 +449,10 @@ public:
     /// Storage now, for the continuity ledger.
     double storage() const noexcept { return state_.storage(); }
     void checkpoint(detail::CompletedSourceArchive&,bool model); // internal accepted-boundary IO
+    std::string initReactions(SimulationContext& ctx);
+    bool needsTransportRestart() const noexcept {return tr_.n_layers>0 || !boundaries_.empty() || !reactors_.empty();}
+    std::string transportRestartState() const;
+    std::string restoreTransportRestart(const std::string& bytes,bool apply);
 
 private:
     friend class CommonSourceStage;
@@ -475,6 +491,10 @@ private:
     /// (G-X4: `+` a leaking conduit filling the cell, `−` a gaining one
     /// drawing from it), `+ recharge` is unsaturated → saturated.
     struct CellFlux {
+        double link_out=0; ///< gross outgoing conduit water, separate from net link
+        const sigma::ColumnTransfers* column=nullptr;
+        double boundary_in=0,boundary_out=0;
+        const std::vector<GwBoundaryPulse>* boundaries=nullptr;
         double hg_final=0;
         double runtime_dt=0.0, requested_source_out=0.0;
         double v_sat0 = 0.0, v_uns0 = 0.0;   ///< water volumes BEFORE the firing
@@ -504,9 +524,22 @@ private:
         std::vector<double>* excess_mass = nullptr;
         double reject = 0.0;                 ///< column rejection, out of the unsaturated zone
     };
+    std::vector<std::string> transport_units_;
+    struct GroundReactor {
+        std::vector<ReactionExprForm> forms;
+        std::vector<RxExprSpan> expressions;
+    };
+    const ReactionData* reactions_=nullptr;
+    transport::RxWorkspace reaction_workspace_;
+    std::vector<GroundReactor> reactors_;
+    std::string reaction_identity_;
+    void reactCell(int cell,double dt,double hg);
+
     /// Move the tuple along @p f. Called at the END of `fireCell`, when every
     /// volume is final.
-    void fireCellSpecies(int i, const CellFlux& f) noexcept;
+    void fireCellSpecies(int i, const CellFlux& f);
+    void fireLayerSpecies(int i, const CellFlux& f);
+    void reactPorewaterCell(int cell,double dt,double hg);
     void fireGroundHeatSpecies(int i,const CellFlux& f) noexcept;
     void fireGroundPorewaterSpecies(int i,const CellFlux& f) noexcept;
     /// Gather this cell's lateral side accumulators (m³) and zero them.
@@ -536,6 +569,8 @@ private:
     void publishCellInfiltration(int, SurfaceStateData&, double interval, double time);
     std::vector<std::vector<std::size_t>> cell_beds_;
     RuntimeSources runtime_sources_;
+    std::vector<GwResolvedBoundary> boundaries_;
+    std::vector<std::vector<std::size_t>> cell_boundaries_;
     std::vector<GwResolvedSource> sources_;
     std::vector<std::vector<std::pair<std::size_t,double>>> cell_sources_;
     SubsurfaceState  state_;
@@ -583,6 +618,7 @@ private:
     /// per-substep one, exactly as the surface's `node_drawn_` ledger.
     std::vector<double>    node_drawn_gw_;
     /// T7.4: the router's published node species rows (not owned).
+    std::vector<double> node_concentrations_;
     const double* node_row_conc_ = nullptr;
     int           node_row_ns_   = 0;
 

@@ -108,7 +108,8 @@ SWMM_ENGINE_API int swmm_gw_transport_option_get(SWMM_Engine engine,
     const std::string k(key);
     auto yn = [](bool b) { return std::string(b ? "YES" : "NO"); };
     std::string v;
-    if(k=="THERMAL_MODEL")v=o.thermal_model;
+    if(k=="UNSAT_TRANSPORT")v=o.unsat_transport;
+    else if(k=="THERMAL_MODEL")v=o.thermal_model;
     else if(k=="THERMAL_LAYERS")v=std::to_string(o.thermal_layers);
     else if(k=="LATERAL_CONDUCTION")v=yn(o.lateral_conduction);
     else if(k=="SOIL_ET_HEAT")v=o.soil_et_heat;
@@ -421,7 +422,7 @@ SWMM_ENGINE_API int swmm_gw_boundary_quality_set(SWMM_Engine engine,
         double value, const char* ts_name) {
     GW_GET(engine);
     GW_EDITABLE(eng);
-    if (!species || !*species || !kind || cell < 0 || edge < 0)
+    if (!species || !*species || !kind || cell < 0 || edge < 0 || !std::isfinite(value))
         return SWMM_ERR_BADPARAM;
     const std::string k(kind);
     if (k != "CONC" && k != "TS" && k != "MASSFLUX" && k != "HEATFLUX")
@@ -444,7 +445,8 @@ SWMM_ENGINE_API int swmm_gw_boundary_quality_set(SWMM_Engine engine,
     r.ts_name = ts_name ? ts_name : "";
     if (k == "TS" && r.ts_name.empty()) return SWMM_ERR_BADPARAM;
     for (auto& e : gw.boundary_quality)
-        if (e.cell == r.cell && e.edge == r.edge && e.species == r.species) {
+        if (e.cell == r.cell && e.edge == r.edge && e.species == r.species &&
+            ((e.kind=="MASSFLUX"||e.kind=="HEATFLUX") == (k=="MASSFLUX"||k=="HEATFLUX"))) {
             e = r;
             gw.options.authored = true;
             return SWMM_OK;

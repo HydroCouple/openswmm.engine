@@ -849,6 +849,17 @@ class SurfaceBoundaryType(IntEnum):
     RATING_CURVE = 4
 
 
+class NodeCoupling2DType(IntEnum):
+    """Per-node 1D-2D coupling structure type. Mirrors ``SWMM_NodeCoupling2DType``."""
+
+    NONE = 0
+    MANHOLE = 1
+    GRATE = 2
+    CURB = 3
+    OPEN = 4
+    OUTFALL = 5
+
+
 class SurfaceInfilMethod(IntEnum):
     """Per-cell 2D infiltration method. Mirrors ``SWMM_INFIL2D_*``."""
 
@@ -1033,6 +1044,7 @@ class HeatSedimentParam(IntEnum):
     SPECIFIC_HEAT = 7
     INITIAL_TEMPERATURE = 8
     MESH_POROSITY = 9
+    GROUND_SOURCE = 10
 
 class HeatAttr(IntEnum):
     """Per-element heat override attributes. Mirrors ``SWMM_HeatAttr``."""
@@ -1051,6 +1063,7 @@ class HeatAttr(IntEnum):
     SEDIMENT_DENSITY = 12
     SEDIMENT_SPECIFIC_HEAT = 13
     MESH_POROSITY = 14
+    GROUND_SOURCE = 15
 
 class HeatOverrideScope(IntEnum):
     """Per-element override scope. Mirrors ``SWMM_HeatOverrideScope``."""
@@ -1128,6 +1141,7 @@ class ReactionScope(IntEnum):
     TERM = 0
     PIPE = 1
     TANK = 2
+    SUBSURFACE = 3
 
 
 class ReactionExprForm(IntEnum):
@@ -1361,6 +1375,8 @@ class GroundwaterLedger(IntEnum):
     SOURCE_IN = 11
     SOURCE_OUT = 12
     REJECT = 13
+    BOUNDARY_IN = 14
+    BOUNDARY_OUT = 15
 
 
 class GroundwaterZone(IntEnum):
@@ -1386,6 +1402,11 @@ class GroundwaterSpeciesLedger(IntEnum):
     RESIDUAL = 12
     SOURCE_IN = 13
     SOURCE_OUT = 14
+    BOUNDARY_IN = 15
+    BOUNDARY_OUT = 16
+    BOUNDARY_FLUX_IN = 17
+    BOUNDARY_FLUX_OUT = 18
+    AGE_GENERATED = 19
 
 
 class GroundwaterTransportZone(IntEnum):

@@ -104,6 +104,7 @@
 #include "../data/InitialQualityData.hpp"
 #include "../data/InflowData.hpp"
 #include "../data/InfraData.hpp"
+#include "../data/NodeCoupling2DData.hpp"
 #include "../hydraulics/Transect.hpp"
 #include "../hydraulics/XSectBoundary.hpp"
 #include "../hydraulics/ChebSection.hpp"
@@ -313,6 +314,13 @@ struct StateAccessors {
     std::function<std::string()> get_snow_state;
     // Empty result means valid; false validates without publishing.
     std::function<std::string(const std::string&,bool)> set_snow_state;
+    /// Subcatchment surface state for the native hot start (V16): subarea
+    /// ponded depths, groundwater flow, and the pollutant and reaction
+    /// species surface stores, keyed by name. Same contract as the snow
+    /// pair: an empty result from the setter means valid; false validates
+    /// without applying.
+    std::function<std::string()> get_surface_state;
+    std::function<std::string(const std::string&,bool)> set_surface_state;
     /// Read infiltration model id and the 6-double infiltration state into
     /// the caller-provided buffers. `out_infil` must point to a 6-element array.
     std::function<bool(int subcatch_index, int& out_model, double* out_infil)> get_infil_state;
@@ -1129,6 +1137,15 @@ struct SimulationContext {
     std::vector<std::string> errors;
 
     /**
+     * @brief [2D_NODE_COUPLING] rows: per-node coupling structure type and its
+     *        authored parameters (model data, kept with or without a mesh).
+     * @details Nodes without a row take their class default
+     *          (core/NodeCoupling2D.hpp). Keyed by node index; delete_node
+     *          drops and renumbers.
+     */
+    NodeCoupling2DRows node_coupling_2d;
+
+    /**
      * @brief Per-node flag: 1 if the node is a 2D-coupled junction (a non-outfall
      *        coupling point), else 0. Empty when the 2D module is inactive.
      * @details Populated by SurfaceRouter2D::initialize from the coupling map.
@@ -1140,6 +1157,18 @@ struct SimulationContext {
      *          instead, so outfalls are NOT flagged here.
      */
     std::vector<std::uint8_t> coupled_node;
+
+    /**
+     * @brief Above-rim pond of each 2D-coupled junction under dynamic wave
+     *        (2D_OPTIONS COUPLING_POND_MODE / COUPLING_RIM_BAND).
+     * @details Set by SurfaceRouter2D::initialize; EMPTY reproduces the legacy
+     *          step onto ponded_area. coupled_pond_area (1D ft²) is the pond
+     *          area A_eq — runtime state under TRACKING, which relaxes it each
+     *          routing step; coupled_pond_band (ft) is the height above the rim
+     *          over which the area ramps in (2d/coupling/PondModel.hpp).
+     */
+    std::vector<double> coupled_pond_area;
+    std::vector<double> coupled_pond_band;
 
     /**
      * @brief Remaining seconds of the current 1D↔2D coupling delivery window.
@@ -1988,6 +2017,7 @@ struct SimulationContext {
         // join rows or append its rules to the freshly parsed rule store.
         node_subtypes.clear();
         link_subtypes.clear();
+        node_coupling_2d.clear();
         control_rules = ControlRuleStore{};
         subcatches = SubcatchData{};
         gages      = GageData{};

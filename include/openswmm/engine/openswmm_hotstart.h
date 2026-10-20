@@ -215,10 +215,10 @@ SWMM_ENGINE_API int swmm_hotstart_saves_set_format(
  * @details Reads the parsed model, so it answers before initialize(); a
  *          front end can use it to suggest NATIVE for a new `SAVE HOTSTART`
  *          row. Zero means nothing in the model needs the native format.
- *          `[POLLUTANTS]` concentrations are in both formats. Neither format
- *          holds everything: the native one has no link control settings,
- *          node lateral inflows, storage residence times, or subcatchment
- *          ponded depths and buildup.
+ *          `[POLLUTANTS]` concentrations and subcatchment ponded depths and
+ *          buildup are in both formats. Neither format holds everything: the
+ *          native one has no link control settings, node lateral inflows or
+ *          storage residence times.
  * @param engine  Engine handle.
  * @param flags   [out] OR of `SWMM_HOTSTART_OMITS_*`.
  * @returns SWMM_OK; SWMM_ERR_BADPARAM if `flags` is NULL.

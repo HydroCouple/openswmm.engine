@@ -42,6 +42,9 @@ struct SimulationContext;
 
 namespace inp_writer {
 
+/// Complete authored aquifer, groundwater chemistry and explicit reactor sections.
+std::string groundwaterSections(const SimulationContext& ctx);
+
 /**
  * @brief Write the full model to a SWMM .inp file.
  *

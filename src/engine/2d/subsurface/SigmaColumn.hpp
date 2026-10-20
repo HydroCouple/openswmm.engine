@@ -80,8 +80,18 @@
 #define OPENSWMM_ENGINE_2D_SIGMA_COLUMN_HPP
 
 #include "SoilCharacteristic.hpp"
+#include <vector>
 
 namespace openswmm::twoD::sigma {
+
+/// Accepted water depths, positive downward at each of m+1 faces. The
+/// nonlinear table solver requests these only for its final accepted sweep.
+/// Separate phase records retain redistribution through compression/support;
+/// transport never reconstructs gravity or replays rejected table trials.
+struct ColumnTransfers {
+    double old_length=0,new_length=0,infiltration=0,evaporation=0;
+    std::vector<double> old_water,new_water,faces,compression,support,grid;
+};
 
 /// What one column sweep needs and what it reports back.
 struct ColumnStep {
@@ -96,6 +106,9 @@ struct ColumnStep {
     double handover_theta = -1.0; ///< <0: actual bottom layer; otherwise paired table storage coefficient
     double q0_phys = 0.0;    ///< physical Darcy flux across the table (m/s)
     bool   capillary = false;///< include the diffusive term
+
+    const std::vector<double>* layer_inflow=nullptr; ///< accepted internal contact water depths (m)
+    ColumnTransfers* transfers=nullptr; ///< optional accepted-sweep receipt
 
     // ---- out ----
     double f_top     = 0.0;  ///< accepted top flux (m/s) — `q_in` after rejection

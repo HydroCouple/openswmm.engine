@@ -336,6 +336,29 @@ std::string parseAquiferLinkLine(const std::vector<std::string>& tokens,
     return {};
 }
 
+std::string parseAquiferBoundaryLine(const std::vector<std::string>& t,
+                                      std::vector<GwBoundaryRow>& rows) {
+    if(t.size()!=7 || !iequals(t[0],"CELL") || !iequals(t[2],"EDGE"))
+        return "expected CELL n EDGE e HEAD|FLOW CONST value|SERIES name";
+    GwBoundaryRow row;
+    int cell=0;
+    if(!inum(t[1],cell) || cell<1 || !inum(t[3],row.edge) || row.edge<0 || row.edge>3)
+        return "CELL must be positive and EDGE must be in [0,3]";
+    row.cell=cell-1;
+    if(iequals(t[4],"HEAD"))row.head=true;
+    else if(!iequals(t[4],"FLOW"))return "boundary kind must be HEAD or FLOW";
+    if(iequals(t[5],"CONST")) {
+        if(!num(t[6],row.value))return "boundary constant must be finite";
+    } else if(iequals(t[5],"SERIES")) {
+        if(t[6].empty())return "boundary SERIES requires a name";
+        row.series=t[6];
+    } else return "boundary forcing must be CONST or SERIES";
+    for(const auto& old:rows)if(old.cell==row.cell && old.edge==row.edge)
+        return "duplicate hydraulic boundary edge";
+    rows.push_back(std::move(row));
+    return {};
+}
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
@@ -350,6 +373,11 @@ void registerSubsurfaceSections(SubsurfaceConfig& cfg,
             if(!error.empty()){ctx.error_code=5;ctx.error_message="[2D_SURFACE_OWNERSHIP] "+error;return;}
         }
     });
+    registry.register_custom("2D_AQUIFER_BOUNDARIES",
+        makeHandler("2D_AQUIFER_BOUNDARIES",
+            [&cfg](const std::vector<std::string>& t) {
+                return parseAquiferBoundaryLine(t,cfg.boundaries);
+            },cfg.options));
     registry.register_custom("2D_AQUIFER_OPTIONS",
         makeHandler("2D_AQUIFER_OPTIONS",
             [&cfg](const std::vector<std::string>& t) {
@@ -841,20 +869,35 @@ std::vector<GwLinkShare> resolveLinkSeepage(SimulationContext& ctx,
             L += std::hypot(px[k] - px[k - 1], py[k] - py[k - 1]);
         if (L <= 0.0) continue;
 
+        // Retain each clipped reach's station interval: a sloping pipe can
+        // cross several soil layers within one cell. Endpoint invert values
+        // are internal feet; authored bed thickness is a project length.
+        const int us=ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+        const double thickness=row?row->dC*(us==0?.3048:1.):0.;
+        const double z0=(ctx.nodes.invert_elev[ctx.links.node1[uj]]+ctx.links.offset1[uj])*.3048-thickness;
+        const double z1=(ctx.nodes.invert_elev[ctx.links.node2[uj]]+ctx.links.offset2[uj])*.3048-thickness;
+        struct ContactClip {int cell;double length,begin,end;};
+        std::vector<ContactClip> contacts;
+        double station=0;
         std::vector<std::pair<int, double>> len_in;   // cell, length
         double sum = 0.0;
         for (std::size_t k = 1; k < px.size(); ++k) {
             const double x0 = px[k - 1], y0 = py[k - 1], x1 = px[k], y1 = py[k];
-            if (std::hypot(x1 - x0, y1 - y0) <= 0.0) continue;
+            const double segment_length=std::hypot(x1-x0,y1-y0);
+            if(segment_length<=0)continue;
             for (const int c : locator.candidates(x0, y0, x1, y1)) {
-                const double len = locator.lengthInside(c, x0, y0, x1, y1);
+                double a=0,b=0;
+                const double len = locator.lengthInside(c, x0, y0, x1, y1,&a,&b);
                 if (len <= 0.0) continue;
                 sum += len;
+                contacts.push_back({c,len,z0+(z1-z0)*(station+a*segment_length)/L,
+                                         z0+(z1-z0)*(station+b*segment_length)/L});
                 auto it = std::find_if(len_in.begin(), len_in.end(),
                                        [c](const std::pair<int, double>& e) { return e.first == c; });
                 if (it == len_in.end()) len_in.emplace_back(c, len);
                 else it->second += len;
             }
+            station+=segment_length;
         }
         if (len_in.empty()) continue;
         ++n_conduits;
@@ -862,6 +905,8 @@ std::vector<GwLinkShare> resolveLinkSeepage(SimulationContext& ctx,
         for (const auto& e : len_in) {
             GwLinkShare sh;
             sh.link = j; sh.cell = e.first; sh.weight = e.second / denom;
+            for(const auto& c:contacts)if(c.cell==e.first)
+                sh.contacts.push_back({c.length/denom,c.begin,c.end});
             out.push_back(sh);
         }
     }
@@ -1076,6 +1121,15 @@ void writeSubsurfaceSections(const SubsurfaceConfig& cfg,
     if(!cfg.surface_owners.empty()){
         out+="\n[2D_SURFACE_OWNERSHIP]\n;;Subcatchment       Representation Distribution\n";
         for(const auto& r:cfg.surface_owners)out+=r.subcatch+" SUBCATCH UNIFORM\n";
+    }
+    if(!cfg.boundaries.empty()) {
+        out+="\n[2D_AQUIFER_BOUNDARIES]\n";
+        for(const auto& b:cfg.boundaries) {
+            out+="CELL "+std::to_string(b.cell+1)+" EDGE "+std::to_string(b.edge);
+            out+=b.head?" HEAD ":" FLOW ";
+            out+=b.series.empty()?"CONST "+fmt(b.value):"SERIES \""+b.series+"\"";
+            out+='\n';
+        }
     }
     if (cfg.empty()) return;
     const GwOptions d{};   // defaults, for the omit-if-unchanged rule

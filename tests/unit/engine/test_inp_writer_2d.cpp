@@ -25,6 +25,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_model.h>
@@ -776,6 +777,70 @@ TEST_F(InpWriter2DTest, CouplingCdAreaApiRoundTrip) {
     ASSERT_EQ(swmm_2d_get_vertex_coupling_area(eng_b_, 0, &area), 0);
     EXPECT_NEAR(cd, 0.55, 1e-12) << "CD edit must survive the save";
     EXPECT_NEAR(area, 3.75, 1e-12) << "AREA edit must survive the save";
+}
+
+// ---------------------------------------------------------------------------
+// Map rows carry only what was authored: a row without CD/AREA tokens is
+// written without them (so COUPLING_CD and the area default keep governing
+// after a reload), and API edits count as authored and survive the save.
+// ---------------------------------------------------------------------------
+
+namespace {
+// Data rows of `section` in an .inp text, comment lines dropped, each split
+// into whitespace tokens.
+std::vector<std::vector<std::string>> section_rows(const std::string& text,
+                                                   const std::string& section) {
+    std::vector<std::vector<std::string>> rows;
+    std::istringstream in(text);
+    std::string line;
+    bool inside = false;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line[0] == '[') { inside = (line.rfind(section, 0) == 0); continue; }
+        if (!inside || line.rfind(";;", 0) == 0) continue;
+        std::istringstream ls(line);
+        std::vector<std::string> tok;
+        for (std::string t; ls >> t;) tok.push_back(t);
+        if (!tok.empty()) rows.push_back(tok);
+    }
+    return rows;
+}
+} // namespace
+
+TEST_F(InpWriter2DTest, CouplingRowsWriteOnlyAuthoredTokens) {
+    const fs::path inp_a = dir_ / "authored_a.inp";
+    write_file(inp_a, replace(k1DBase, "{FLOW_UNITS}", "CMS") +
+                          replace(k2DSections, "0  J1  0.7  2.5", "0  J1"));
+    eng_a_ = open_engine(inp_a);
+
+    // Vertex 0 stays unauthored, vertex 1 gets only an AREA through the API,
+    // vertex 2 is coupled through the API with nothing else, and a triangle
+    // row is added with both values.
+    ASSERT_EQ(swmm_2d_set_vertex_coupled_node(eng_a_, 1, "J1"), 0);
+    ASSERT_EQ(swmm_2d_set_vertex_coupling_area(eng_a_, 1, 3.0), 0);
+    ASSERT_EQ(swmm_2d_set_vertex_coupled_node(eng_a_, 2, "J1"), 0);
+    ASSERT_EQ(swmm_2d_add_triangle_coupling(eng_a_, 1, "J1", 0.55, 1.5), 0);
+
+    const fs::path inp_b = dir_ / "authored_b.inp";
+    ASSERT_EQ(swmm_model_write(eng_a_, inp_b.string().c_str()), 0);
+    const std::string text = read_file(inp_b);
+
+    const auto vrows = section_rows(text, "[2D_VERTEX_NODE_MAP]");
+    ASSERT_EQ(vrows.size(), 3u) << text;
+    EXPECT_EQ(vrows[0], (std::vector<std::string>{"0", "J1"}))
+        << "an unauthored row must not gain CD/AREA tokens";
+    EXPECT_EQ(vrows[1], (std::vector<std::string>{"1", "J1", "0.7", "3"}))
+        << "an API AREA under a defaulted CD writes COUPLING_CD positionally";
+    EXPECT_EQ(vrows[2], (std::vector<std::string>{"2", "J1"}));
+    const auto trows = section_rows(text, "[2D_TRIANGLE_NODE_MAP]");
+    ASSERT_EQ(trows.size(), 1u) << text;
+    EXPECT_EQ(trows[0], (std::vector<std::string>{"1", "J1", "0.55", "1.5"}));
+
+    eng_b_ = open_engine(inp_b);
+    double cd = 0.0, area = 0.0;
+    ASSERT_EQ(swmm_2d_get_vertex_coupling_cd(eng_b_, 1, &cd), 0);
+    ASSERT_EQ(swmm_2d_get_vertex_coupling_area(eng_b_, 1, &area), 0);
+    EXPECT_NEAR(cd, 0.7, 1e-12);
+    EXPECT_NEAR(area, 3.0, 1e-12) << "API AREA edit must survive the save";
 }
 
 // ---------------------------------------------------------------------------

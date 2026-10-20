@@ -90,3 +90,68 @@ def test_groundwater_runtime_mixed_cells(tmp_path, sigma):
         solver.end()
     finally:
         cleanup(solver)
+
+
+def test_authored_edges_and_layer_inventory(tmp_path):
+    from openswmm.engine import GroundwaterBoundary, GroundwaterInitialQuality, GroundwaterTransportZone
+    solver = open_model(tmp_path)
+    try:
+        gw = solver.surface2d.groundwater
+        gw.options['NODE_ENROLMENT'] = 'ROWS'
+        gw.options['CLOSURE'] = 'SIGMA'
+        gw.options['M_LAYERS'] = '4'
+        gw.add_row(CellScope.GLOBAL, 36, 0.5, 0.45, 0.1, 2)
+        gw.set_row_property(0, 'HG0', 0.2)
+        gw.transport.options['TRANSPORT_POLLUTANTS'] = 'YES'
+        gw.transport.options['UNSAT_TRANSPORT'] = 'LAYERED'
+        gw.set_authored_boundary(0, 0, 'FLOW', 1e-6)
+        gw.transport.set_boundary(GroundwaterBoundary(cell=0, edge=0, species='TSS', value=3))
+        gw.transport.set_boundary(GroundwaterBoundary(cell=0, edge=0, species='TSS', kind='MASSFLUX', value=2))
+        assert len(gw.transport.boundaries) == 2
+        assert gw.authored_boundaries[0]['kind'] == 'FLOW'
+        gw.transport.set_initial_quality(GroundwaterInitialQuality(
+            zone=GroundwaterTransportZone.LAYER, layer=2, species='TSS', value=7))
+        with pytest.raises(LifecycleError):
+            gw.layer_quality(0, 1, 0)
+        solver.initialize()
+        assert gw.layer_quality(0, 1, 0)['dissolved_concentration'] == pytest.approx(7)
+        assert gw.layer_quality(0, 0, 0)['dissolved_concentration'] == 0
+        solver.start(False)
+        for _ in range(100):
+            solver.step()
+            if gw.authored_boundary_receipt(0)['accepted_in'] > 0:
+                break
+        assert gw.authored_boundary_receipt(0)['accepted_in'] > 0
+        assert gw.authored_boundary_receipt(0, 0)['flux_in'] > 0
+        with pytest.raises(LifecycleError):
+            gw.remove_authored_boundary(0)
+        solver.end()
+    finally:
+        cleanup(solver)
+
+
+def test_subsurface_reaction_text_authoring_is_atomic(tmp_path):
+    from openswmm.engine import ReactionScope, GroundwaterInitialQuality
+    solver = open_model(tmp_path)
+    try:
+        gw = solver.surface2d.groundwater
+        gw.options['NODE_ENROLMENT'] = 'ROWS'
+        gw.add_row(CellScope.GLOBAL, 36, 0.5, 0.45, 0.1, 2)
+        gw.set_row_property(0, 'HG0', 0.2)
+        rx = solver.reactions
+        rx.apply_text('[REACTION_SPECIES]\nBULK A MG\nWALL W MG/FT2\n'
+                      '[REACTION_TERMS]\nsoil GW_THETA/GW_POROSITY\n'
+                      '[REACTION_SUBSURFACE]\n* SAT A RATE -0.001*A*soil\n')
+        saved = rx.serialize()
+        assert '[REACTION_SUBSURFACE]' in saved
+        assert rx.validate('-A*soil', ReactionScope.SUBSURFACE).valid
+        assert not rx.validate('-A*HRT', ReactionScope.SUBSURFACE).valid
+        with pytest.raises(BadParamError):
+            rx.apply_text(saved.replace('-0.001*A*soil', '-A*HRT'))
+        assert rx.serialize() == saved
+        gw = solver.surface2d.groundwater  # reaction-text replacement invalidates old views
+        gw.transport.set_initial_quality(GroundwaterInitialQuality(species='A', value=7))
+        solver.initialize()
+        assert 'A' in gw.species
+    finally:
+        cleanup(solver)

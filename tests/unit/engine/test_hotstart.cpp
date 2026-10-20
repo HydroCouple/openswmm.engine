@@ -18,11 +18,13 @@
  */
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -1134,6 +1136,121 @@ TEST(HotStartLegacyRoutingTest, SplitRunRestoresRunoffSectionLikeLegacy) {
     EXPECT_GT(e.context().mass_balance.runoff_init_store, 0.0);
     EXPECT_EQ(e.end(), 0);
     EXPECT_EQ(e.close(), 0);
+}
+
+// The native format (SAVE HOTSTART ... NATIVE) carries the same subcatchment
+// surface state in its V16 block, by name and without rounding, and the
+// continuation's ledgers open where the first run's closed. Before, a native
+// file carried no ponded water or buildup, and its apply (after initialize()
+// opened the mass balance) left every initial ledger at the cold start.
+TEST(HotStartLegacyRoutingTest, NativeSplitRunRestoresSurfaceAndLedgers) {
+    TempFile inp1(".inp"), inp2(".inp"), hs(".hs");
+    { std::ofstream f(inp1.path()); f << splitRunDeck("02:00:00", "00:00:00", "SAVE HOTSTART \"" + hs.path() + "\" NATIVE"); }
+    { std::ofstream f(inp2.path()); f << splitRunDeck("03:00:00", "02:00:00", "USE HOTSTART \"" + hs.path() + "\""); }
+
+    struct Snap {
+        std::vector<double> d0, d1, dp, conc, ponded, buildup, theta, lower, gw_flow, max_infil, sweep;
+        double runoff_store = 0, surface = 0, routing = 0, gw = 0;
+    };
+    auto capture = [](const openswmm::SWMMEngine& e) {
+        Snap s;
+        const auto& soa = e.runoff_solver().soa();
+        const auto& g = e.gw_solver().state();
+        const auto& c = e.context();
+        s.d0 = soa.depth_imperv0; s.d1 = soa.depth_imperv1; s.dp = soa.depth_perv;
+        s.conc = c.subcatches.conc; s.ponded = c.subcatches.ponded_qual;
+        s.buildup = e.surfaceQuality().buildup;
+        s.theta = g.theta; s.lower = g.lower_depth; s.gw_flow = g.gw_flow; s.max_infil = g.max_infil_vol;
+        s.sweep = c.subcatches.sweep_last_date;
+        return s;
+    };
+
+    Snap end1;
+    {
+        openswmm::SWMMEngine e;
+        ASSERT_EQ(e.open(inp1.path().c_str(), nullptr, nullptr), 0);
+        ASSERT_EQ(e.initialize(), 0);
+        ASSERT_EQ(e.start(0), 0);
+        double t = 0.0;
+        do { ASSERT_EQ(e.step(&t), 0); } while (t > 0.0);
+        end1 = capture(e);
+        ASSERT_EQ(e.end(), 0);
+        const auto& mb = e.context().mass_balance;
+        end1.runoff_store = mb.runoff_final_store;
+        end1.surface = mb.qual_final_buildup[0] - mb.qual_ponded_lost[0];
+        end1.routing = mb.routing_final_storage;
+        end1.gw = mb.gw_final_storage;
+        EXPECT_EQ(e.close(), 0);
+    }
+    ASSERT_TRUE(HotStartManager::is_native_file(hs.path()));
+    ASSERT_GT(end1.runoff_store, 0.0);
+
+    {
+        openswmm::SWMMEngine e;
+        ASSERT_EQ(e.open(inp2.path().c_str(), nullptr, nullptr), 0);
+        ASSERT_EQ(e.initialize(), 0);
+        for (const auto& w : e.context().warnings)
+            EXPECT_EQ(w.find("lacks subcatchment surface state"), std::string::npos) << w;
+        const Snap st = capture(e);
+        EXPECT_EQ(st.d0, end1.d0);
+        EXPECT_EQ(st.d1, end1.d1);
+        EXPECT_EQ(st.dp, end1.dp);
+        EXPECT_EQ(st.conc, end1.conc);
+        EXPECT_EQ(st.ponded, end1.ponded);
+        EXPECT_EQ(st.buildup, end1.buildup);              // per normalizer: exact
+        EXPECT_EQ(st.theta, end1.theta);
+        EXPECT_EQ(st.lower, end1.lower);
+        EXPECT_EQ(st.gw_flow, end1.gw_flow);
+        EXPECT_EQ(st.max_infil, end1.max_infil);
+        EXPECT_EQ(st.sweep, end1.sweep);
+        const auto& mb = e.context().mass_balance;
+        EXPECT_NEAR(mb.runoff_init_store, end1.runoff_store, 1e-12 * end1.runoff_store);
+        EXPECT_NEAR(mb.qual_init_buildup[0], end1.surface, 1e-12 * end1.surface);
+        EXPECT_NEAR(mb.routing_init_storage, end1.routing, 1e-9 * end1.routing);
+        EXPECT_NEAR(mb.gw_init_storage, end1.gw, 1e-12 * end1.gw);
+        EXPECT_EQ(e.close(), 0);
+    }
+
+    // swmm_hotstart_apply (INITIALIZED, no [FILES] USE) restores the same
+    // surface and reopens the ledgers from it.
+    {
+        TempFile inp3(".inp");
+        { std::ofstream f(inp3.path()); f << splitRunDeck("03:00:00", "02:00:00", ""); }
+        openswmm::SWMMEngine e;
+        ASSERT_EQ(e.open(inp3.path().c_str(), nullptr, nullptr), 0);
+        ASSERT_EQ(e.initialize(), 0);
+        SWMM_HotStart h = nullptr;
+        ASSERT_EQ(swmm_hotstart_open(hs.path().c_str(), &h), SWMM_OK);
+        ASSERT_EQ(swmm_hotstart_apply(static_cast<SWMM_Engine>(&e), h), SWMM_OK);
+        swmm_hotstart_close(h);
+        EXPECT_EQ(capture(e).buildup, end1.buildup);
+        EXPECT_EQ(capture(e).dp, end1.dp);
+        const auto& mb = e.context().mass_balance;
+        EXPECT_NEAR(mb.runoff_init_store, end1.runoff_store, 1e-12 * end1.runoff_store);
+        EXPECT_NEAR(mb.qual_init_buildup[0], end1.surface, 1e-12 * end1.surface);
+        EXPECT_NEAR(mb.routing_init_storage, end1.routing, 1e-9 * end1.routing);
+        EXPECT_NEAR(mb.gw_init_storage, end1.gw, 1e-12 * end1.gw);
+        EXPECT_EQ(e.close(), 0);
+    }
+
+    // A file from before V16 still opens; the continuation is told its
+    // surface starts from the initial conditions.
+    {
+        std::unique_ptr<HotStartFile> f(HotStartManager::open(hs.path()));
+        ASSERT_TRUE(f);
+        ASSERT_EQ(f->header.version, 16u);
+        f->surface_state.clear();
+        f->header.version = 14u;
+        f->dirty = true;
+        ASSERT_TRUE(HotStartManager::flush(*f));
+        openswmm::SWMMEngine e;
+        ASSERT_EQ(e.open(inp2.path().c_str(), nullptr, nullptr), 0);
+        ASSERT_EQ(e.initialize(), 0);
+        const auto& w = e.context().warnings;
+        EXPECT_TRUE(std::any_of(w.begin(), w.end(), [](const std::string& m) {
+            return m.find("lacks subcatchment surface state") != std::string::npos; }));
+        EXPECT_EQ(e.close(), 0);
+    }
 }
 
 } /* legacy-routing regression namespace */

@@ -41,7 +41,7 @@ from collections.abc import MutableMapping
 
 from ._2d cimport *
 from ._enums import (SurfaceForcingMode, ForcingPersist, SurfaceBoundaryType,
-                     SurfaceInfilMethod, SurfaceInfilDest)
+                     SurfaceInfilMethod, SurfaceInfilDest, NodeCoupling2DType)
 
 
 from ._common cimport _check
@@ -956,6 +956,97 @@ cdef class Surface2D:
                                                   &tri_idx, &node_idx,
                                                   &cd, &area))
         return (tri_idx, node_idx, cd, area)
+
+    # ====================================================================
+    # Per-node coupling type ([2D_NODE_COUPLING]) — node data, valid with
+    # or without a mesh
+    # ====================================================================
+
+    def get_node_coupling_type(self, int node_idx):
+        """Return a node's effective coupling type.
+
+        @param node_idx: Node index (0-based).
+        @type node_idx: int
+        @return: Tuple C{(type, authored)}: the L{NodeCoupling2DType} and
+            whether the node has a C{[2D_NODE_COUPLING]} row (C{False} means
+            the type is its class default).
+        @rtype: tuple[NodeCoupling2DType, bool]
+        @raise EngineError: If the C API call fails.
+        """
+        cdef int t = 0
+        cdef int authored = 0
+        _check(swmm_node_get_2d_coupling_type(self._h(), node_idx, &t, &authored))
+        return (NodeCoupling2DType(t), bool(authored))
+
+    def get_node_coupling_default_type(self, int node_idx):
+        """Return a node's class default coupling type (its type without a row).
+
+        @param node_idx: Node index (0-based).
+        @type node_idx: int
+        @rtype: NodeCoupling2DType
+        @raise EngineError: If the C API call fails.
+        """
+        cdef int t = 0
+        _check(swmm_node_get_2d_coupling_default_type(self._h(), node_idx, &t))
+        return NodeCoupling2DType(t)
+
+    def set_node_coupling_type(self, int node_idx, int coupling_type) -> None:
+        """Author a node's coupling type; parameters that do not apply to the
+        new type are dropped.
+
+        @param node_idx: Node index (0-based).
+        @type node_idx: int
+        @param coupling_type: A L{NodeCoupling2DType}.
+        @type coupling_type: int
+        @raise EngineError: If the type is illegal for the node's class
+            (C{OUTFALL} only on outfalls, C{OPEN} only on storage nodes).
+        """
+        _check(swmm_node_set_2d_coupling_type(self._h(), node_idx, coupling_type))
+
+    def reset_node_coupling(self, int node_idx) -> None:
+        """Remove a node's C{[2D_NODE_COUPLING]} row (back to the class default).
+
+        @param node_idx: Node index (0-based).
+        @type node_idx: int
+        @raise EngineError: If the C API call fails.
+        """
+        _check(swmm_node_reset_2d_coupling(self._h(), node_idx))
+
+    def get_node_coupling_param(self, int node_idx, str key) -> str:
+        """Return an authored coupling parameter as its section token.
+
+        Keys: C{D}, C{PERIMETER}, C{AREA}, C{CHAMBER_AREA},
+        C{LID_OPEN_FRACTION}, C{CREST}, C{COEFFS}, C{CW}, C{CSW}, C{COI},
+        C{COO}, C{LAW}, C{SPREAD}, C{TAILWATER_RELAX}.
+
+        @param node_idx: Node index (0-based).
+        @type node_idx: int
+        @param key: Parameter key (case-insensitive).
+        @type key: str
+        @return: The value token, or C{""} when not authored.
+        @rtype: str
+        @raise EngineError: For an unknown key.
+        """
+        cdef bytes bkey = key.encode('utf-8')
+        cdef char buf[128]
+        _check(swmm_node_get_2d_coupling_param(self._h(), node_idx, bkey, buf, 128))
+        return buf.decode('utf-8')
+
+    def set_node_coupling_param(self, int node_idx, str key, value) -> None:
+        """Author a coupling parameter from its section token; C{None} or
+        C{""} clears it. A node without a row gets one at its class default.
+
+        @param node_idx: Node index (0-based).
+        @type node_idx: int
+        @param key: Parameter key (case-insensitive).
+        @type key: str
+        @param value: Value token (numbers may be passed as numbers).
+        @raise EngineError: For an unknown key, a key that does not apply to
+            the node's type, or an invalid value.
+        """
+        cdef bytes bkey = key.encode('utf-8')
+        cdef bytes bval = (str(value) if value is not None else "").encode('utf-8')
+        _check(swmm_node_set_2d_coupling_param(self._h(), node_idx, bkey, bval))
 
     # ====================================================================
     # State (depth/velocity) - per triangle bulk arrays

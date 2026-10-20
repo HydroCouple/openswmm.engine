@@ -78,6 +78,19 @@ cdef extern from "openswmm_2d.h":
                                            int* tri_idx, int* node_idx,
                                            double* cd, double* area)
 
+    # Per-node coupling type ([2D_NODE_COUPLING])
+    int swmm_node_get_2d_coupling_type(void* engine, int node_idx,
+                                        int* type, int* authored)
+    int swmm_node_get_2d_coupling_default_type(void* engine, int node_idx,
+                                                int* type)
+    int swmm_node_set_2d_coupling_type(void* engine, int node_idx, int type)
+    int swmm_node_reset_2d_coupling(void* engine, int node_idx)
+    int swmm_node_get_2d_coupling_param(void* engine, int node_idx,
+                                         const char* key, char* value,
+                                         int value_len)
+    int swmm_node_set_2d_coupling_param(void* engine, int node_idx,
+                                         const char* key, const char* value)
+
     # State — per triangle
     int swmm_2d_get_depth(void* engine, int idx, double* depth)
     int swmm_2d_get_head(void* engine, int idx, double* head)

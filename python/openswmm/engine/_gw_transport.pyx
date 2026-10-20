@@ -131,7 +131,7 @@ class GroundwaterSourceTerm:
 
 class GroundwaterTransportOptions(EngineView, MutableMapping):
     """Native GW_TRANSPORT_OPTIONS text keys; values preserve INP spelling."""
-    _keys = ('TRANSPORT_POLLUTANTS', 'TRANSPORT_MSX', 'TRANSPORT_AGE',
+    _keys = ('UNSAT_TRANSPORT', 'TRANSPORT_POLLUTANTS', 'TRANSPORT_MSX', 'TRANSPORT_AGE',
              'TRANSPORT_TEMPERATURE', 'DISPERSION', 'CONDUCTION',
              'SURFACE_THERMAL_BC', 'DEEP_THERMAL_BC', 'THERMAL_MIXING', 'C_DIFF',
              'THERMAL_MODEL', 'THERMAL_LAYERS', 'LATERAL_CONDUCTION', 'THERMAL_MAX_STEP',

@@ -562,6 +562,12 @@ TEST_F(FilesApiTest, HotstartSavesFormatGetSetAndRange) {
 TEST_F(FilesApiTest, WriterEmitsTheFormatKeywordOnlyWhenChosen) {
     const fs::path dir = "hotstart_format";
     fs::create_directories(dir);
+    // Valid geometry, so the written decks reopen as whole models below.
+    const int l1 = swmm_link_index(engine, "L1");
+    ASSERT_EQ(swmm_link_set_length(engine, l1, 100.0), SWMM_OK);
+    ASSERT_EQ(swmm_link_set_roughness(engine, l1, 0.013), SWMM_OK);
+    ASSERT_EQ(swmm_link_set_xsect(engine, l1, SWMM_XSECT_CIRCULAR, 1.0, 0, 0, 0), SWMM_OK);
+    ASSERT_EQ(swmm_node_set_max_depth(engine, swmm_node_index(engine, "J1"), 5.0), SWMM_OK);
     ASSERT_EQ(swmm_hotstart_saves_add(engine, "auto.hsf", 0.0), SWMM_OK);
     ASSERT_EQ(swmm_hotstart_saves_add(engine, "native.hsf", 0.0), SWMM_OK);
     ASSERT_EQ(swmm_hotstart_saves_add(engine, "legacy.hsf", 46036.5), SWMM_OK);
@@ -606,6 +612,30 @@ TEST_F(FilesApiTest, WriterEmitsTheFormatKeywordOnlyWhenChosen) {
     EXPECT_EQ(old_leg.find("LEGACY"), std::string::npos) << old_leg;
     EXPECT_NE(old_leg.find('/'), std::string::npos) << old_leg;
     EXPECT_EQ(saveRowFor(old, "auto.hsf"), r_auto);
+
+    // Both decks reopen as models: the full one with every row's format and
+    // the dated row's time, the SWMM 5 one with every row back to AUTO.
+    const struct { fs::path inp; int formats[3]; } decks[] = {
+        {full,   {SWMM_HOTSTART_FORMAT_AUTO, SWMM_HOTSTART_FORMAT_NATIVE, SWMM_HOTSTART_FORMAT_LEGACY}},
+        {compat, {SWMM_HOTSTART_FORMAT_AUTO, SWMM_HOTSTART_FORMAT_AUTO,   SWMM_HOTSTART_FORMAT_AUTO}},
+    };
+    for (const auto& d : decks) {
+        SWMM_Engine e = swmm_engine_create();
+        ASSERT_EQ(swmm_engine_open(e, d.inp.string().c_str(), "", "", nullptr), SWMM_OK)
+            << d.inp << ": " << swmm_get_last_error_msg(e);
+        int n = 0;
+        ASSERT_EQ(swmm_hotstart_saves_count(e, &n), SWMM_OK);
+        ASSERT_EQ(n, 3) << d.inp;
+        for (int i = 0; i < 3; ++i) {
+            int f = -1;
+            ASSERT_EQ(swmm_hotstart_saves_get_format(e, i, &f), SWMM_OK);
+            EXPECT_EQ(f, d.formats[i]) << d.inp << " row " << i;
+        }
+        double dt = 0.0;
+        ASSERT_EQ(swmm_hotstart_saves_get_datetime(e, 2, &dt), SWMM_OK);
+        EXPECT_DOUBLE_EQ(dt, 46036.5) << d.inp;
+        swmm_engine_destroy(e);
+    }
 }
 
 // ---------------------------------------------------------------------------

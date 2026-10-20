@@ -113,6 +113,15 @@ void Default2DOutputPlugin::extendAndWrite3D(hid_t ds, const double* data,
     H5Sclose(filespace);
 }
 
+void Default2DOutputPlugin::extendAndWrite4D(hid_t ds,const double* data,hsize_t a,hsize_t b,hsize_t c) {
+    hsize_t dims[4]={n_steps_+1,a,b,c},offset[4]={n_steps_,0,0,0},count[4]={1,a,b,c};
+    checkpointWriteStatus(H5Dset_extent(ds,dims));
+    const hid_t file=H5Dget_space(ds),memory=H5Screate_simple(4,count,nullptr);
+    checkpointWriteStatus(H5Sselect_hyperslab(file,H5S_SELECT_SET,offset,nullptr,count,nullptr));
+    checkpointWriteStatus(H5Dwrite(ds,H5T_NATIVE_DOUBLE,memory,file,H5P_DEFAULT,data));
+    H5Sclose(memory);H5Sclose(file);
+}
+
 void Default2DOutputPlugin::writeDoubleAttr(hid_t loc, const char* name,
                                              double value) {
     hid_t aspace = H5Screate(H5S_SCALAR);
@@ -965,6 +974,11 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
                                  snap.gw2d_species_ledger.data(),
                                  n_gw_species_, kGwSpeciesLedgerTerms);
         }
+        if(ds_gw_layer_mass_>=0)extendAndWrite4D(ds_gw_layer_mass_,snap.gw2d_layer_mass.data(),n_gw_species_,n_gw_transport_layers_,n_faces_);
+        if(ds_gw_layer_conc_>=0)extendAndWrite4D(ds_gw_layer_conc_,snap.gw2d_layer_concentration.data(),n_gw_species_,n_gw_transport_layers_,n_faces_);
+        if(ds_gw_boundary_water_>=0)extendAndWrite3D(ds_gw_boundary_water_,snap.gw2d_boundary_water.data(),n_gw_boundaries_,4);
+        if(ds_gw_boundary_species_>=0)extendAndWrite4D(ds_gw_boundary_species_,snap.gw2d_boundary_species.data(),n_gw_species_,n_gw_boundaries_,4);
+        if(ds_gw_transport_ledger_>=0)extendAndWrite3D(ds_gw_transport_ledger_,snap.gw2d_transport_ledger.data(),n_gw_species_,20);
         if (ds_gw_bed_exchange_ != H5I_INVALID_HID &&
             snap.gw2d_bed_exchange_cum.size() == static_cast<std::size_t>(n_gw_beds_))
             extendAndWrite2D(ds_gw_bed_exchange_, snap.gw2d_bed_exchange_cum.data(), n_gw_beds_);
@@ -1391,6 +1405,9 @@ void Default2DOutputPlugin::createGroundwaterDatasets(const SimulationSnapshot& 
             const std::string ln =
                 std::string("groundwater species concentration in the ") + z.what;
             writeStringAttr(*z.ds, "long_name", ln.c_str());
+            writeStringAttr(*z.ds,"concentration_basis",snap.gw2d_transport_layers>0?
+                "dissolved equivalent: total inventory / (aqueous plus equilibrium-sorbed capacity)":
+                "legacy BULK: total inventory / water volume");
             writeStringAttr(*z.ds, "units", "1");   // per species; see species_units
             writeStringAttr(*z.ds, "mesh", "Mesh2");
             writeStringAttr(*z.ds, "location", "face");
@@ -1471,6 +1488,58 @@ void Default2DOutputPlugin::createGroundwaterDatasets(const SimulationSnapshot& 
             }
             if (!names.empty()) writeStringAttr(ds_gw_bed_exchange_, "node_names", names.c_str());
         }
+    }
+    n_gw_transport_layers_=snap.gw2d_transport_layers;n_gw_boundaries_=snap.gw2d_boundary_count;
+    if(n_gw_transport_layers_>0&&n_gw_species_>0) {
+        hsize_t zero[4]={0,n_gw_species_,n_gw_transport_layers_,n_faces_};
+        hsize_t chunk[4]={1,1,n_gw_transport_layers_,std::min<hsize_t>(n_faces_,4096)};
+        ds_gw_layer_mass_=createUnlimitedDataset("Mesh2_face_gw_layer_mass",4,zero,chunk);
+        ds_gw_layer_conc_=createUnlimitedDataset("Mesh2_face_gw_layer_conc",4,zero,chunk);
+        for(hid_t id:{ds_gw_layer_mass_,ds_gw_layer_conc_}) {
+            writeStringAttr(id,"mesh","Mesh2");writeStringAttr(id,"location","face");
+            writeStringAttr(id,"layout","[time,species,layer,face]; zero-based SIGMA layer, surface downward");
+            if(snap.gw2d_species_names) {
+                std::string names,units;
+                for(hsize_t k=0;k<n_gw_species_;++k) {
+                    if(k){names+=",";units+=",";}
+                    const auto& name=(*snap.gw2d_species_names)[static_cast<std::size_t>(k)];
+                    names+=name;
+                    const auto unit=native_species_units_.find(name);
+                    if(unit!=native_species_units_.end()) {
+                        units+=unit->second;
+                        if(id==ds_gw_layer_mass_)units+=" x m3";
+                    }
+                }
+                writeStringAttr(id,"species_names",names.c_str());
+                writeStringAttr(id,"species_units",units.c_str());
+            }
+        }
+        writeStringAttr(ds_gw_layer_mass_,"quantity","aqueous plus sorbed inventory; dry retained mass remains visible");
+        writeStringAttr(ds_gw_layer_mass_,"units","native concentration x m3");
+        writeStringAttr(ds_gw_layer_conc_,"quantity","dissolved concentration; zero capacity reports zero");
+        writeStringAttr(ds_gw_layer_conc_,"units","native concentration");
+    }
+    if(n_gw_boundaries_>0) {
+        hsize_t zero[3]={0,n_gw_boundaries_,4},chunk[3]={1,n_gw_boundaries_,4};
+        ds_gw_boundary_water_=createUnlimitedDataset("groundwater_boundary_water",3,zero,chunk);
+        writeStringAttr(ds_gw_boundary_water_,"terms","requested_in,requested_out,accepted_in,accepted_out");
+        writeStringAttr(ds_gw_boundary_water_,"layout","[time,boundary,term]; gross cumulative m3");
+        std::string edges;for(std::size_t i=0;i<snap.gw2d_boundary_cell_edge.size();i+=2) {
+            if(i)edges+=",";edges+=std::to_string(snap.gw2d_boundary_cell_edge[i])+":"+std::to_string(snap.gw2d_boundary_cell_edge[i+1]);
+        }
+        writeStringAttr(ds_gw_boundary_water_,"cell_local_edge",edges.c_str());
+        if(n_gw_species_>0) {
+            hsize_t zero4[4]={0,n_gw_species_,n_gw_boundaries_,4},chunk4[4]={1,1,n_gw_boundaries_,4};
+            ds_gw_boundary_species_=createUnlimitedDataset("groundwater_boundary_species",4,zero4,chunk4);
+            writeStringAttr(ds_gw_boundary_species_,"terms","advective_in,advective_out,imposed_in,imposed_out");
+            writeStringAttr(ds_gw_boundary_species_,"layout","[time,species,boundary,term]; gross cumulative native concentration x m3");
+        }
+    }
+    if(!snap.gw2d_transport_ledger.empty()&&n_gw_species_>0) {
+        hsize_t zero[3]={0,n_gw_species_,20},chunk[3]={64,n_gw_species_,20};
+        ds_gw_transport_ledger_=createUnlimitedDataset("groundwater_transport_ledger",3,zero,chunk);
+        writeStringAttr(ds_gw_transport_ledger_,"terms","init,storage,infil_in,node_in,link_in,lateral_net,deep_out,node_out,link_out,dunne_out,et_out,reaction_out,residual,source_in,source_out,boundary_in,boundary_out,boundary_flux_in,boundary_flux_out,age_generated");
+        writeStringAttr(ds_gw_transport_ledger_,"layout","[time,species,term]; append-only SWMM_GW2D_SPL order; native concentration x m3");
     }
     // GW_DETAILED: the σ columns — m × nFace per step, the one large variable.
     n_gw_layers_ = static_cast<hsize_t>(std::max(0, snap.gw2d_m_layers));
@@ -1607,7 +1676,7 @@ void Default2DOutputPlugin::checkpointWriteStatus(herr_t status) {
 }
 
 std::vector<hid_t*> Default2DOutputPlugin::checkpointDatasets() {
-    std::vector<hid_t*> ids{&ds_time_, &ds_face_depth_, &ds_face_head_, &ds_face_grad_hx_, &ds_face_grad_hy_, &ds_face_grad_hx_lim_, &ds_face_grad_hy_lim_, &ds_face_rainfall_, &ds_face_coupling_flux_, &ds_face_net_source_, &ds_face_infil_rate_, &ds_face_infil_cum_, &ds_face_rain_cum_, &ds_face_species_conc_, &ds_face_buildup_, &ds_gw_sat_conc_, &ds_gw_unsat_conc_, &ds_gw_species_ledger_, &ds_gw_ledger_, &ds_gw_bed_exchange_, &ds_gw_theta_, &ds_heat_water_temp_, &ds_heat_bed_temp_, &ds_heat_bed_energy_, &ds_heat_bed_initial_energy_, &ds_heat_bed_capacity_, &ds_heat_bed_pore_volume_, &ds_heat_bed_species_conc_, &ds_heat_bed_species_initial_amount_, &ds_heat_bed_species_exchange_, &ds_heat_bed_age_generation_, &ds_heat_surface_budget_, &ds_heat_evaporation_, &ds_heat_ground_temp_, &ds_heat_ground_energy_, &ds_heat_ground_capacity_, &ds_heat_layer_temp_, &ds_heat_layer_energy_, &ds_heat_layer_capacity_, &ds_heat_ground_budget_, &ds_heat_lid_temp_, &ds_heat_lid_energy_, &ds_heat_lid_capacity_, &ds_heat_lid_ground_contact_, &ds_face_vx_, &ds_face_vy_, &ds_face_continuity_err_, &ds_edge_flux_, &ds_node_head_, &ds_node_depth_, &ds_face_max_depth_, &ds_face_max_velocity_, &ds_face_max_continuity_err_};
+    std::vector<hid_t*> ids{&ds_gw_layer_mass_,&ds_gw_layer_conc_,&ds_gw_boundary_water_,&ds_gw_boundary_species_,&ds_gw_transport_ledger_,&ds_time_, &ds_face_depth_, &ds_face_head_, &ds_face_grad_hx_, &ds_face_grad_hy_, &ds_face_grad_hx_lim_, &ds_face_grad_hy_lim_, &ds_face_rainfall_, &ds_face_coupling_flux_, &ds_face_net_source_, &ds_face_infil_rate_, &ds_face_infil_cum_, &ds_face_rain_cum_, &ds_face_species_conc_, &ds_face_buildup_, &ds_gw_sat_conc_, &ds_gw_unsat_conc_, &ds_gw_species_ledger_, &ds_gw_ledger_, &ds_gw_bed_exchange_, &ds_gw_theta_, &ds_heat_water_temp_, &ds_heat_bed_temp_, &ds_heat_bed_energy_, &ds_heat_bed_initial_energy_, &ds_heat_bed_capacity_, &ds_heat_bed_pore_volume_, &ds_heat_bed_species_conc_, &ds_heat_bed_species_initial_amount_, &ds_heat_bed_species_exchange_, &ds_heat_bed_age_generation_, &ds_heat_surface_budget_, &ds_heat_evaporation_, &ds_heat_ground_temp_, &ds_heat_ground_energy_, &ds_heat_ground_capacity_, &ds_heat_layer_temp_, &ds_heat_layer_energy_, &ds_heat_layer_capacity_, &ds_heat_ground_budget_, &ds_heat_lid_temp_, &ds_heat_lid_energy_, &ds_heat_lid_capacity_, &ds_heat_lid_ground_contact_, &ds_face_vx_, &ds_face_vy_, &ds_face_continuity_err_, &ds_edge_flux_, &ds_node_head_, &ds_node_depth_, &ds_face_max_depth_, &ds_face_max_velocity_, &ds_face_max_continuity_err_};
     for (auto& id : ds_gw_face_) ids.push_back(&id);
     for (auto& id : ds_snow_) ids.push_back(&id);
     return ids;
@@ -1639,6 +1708,7 @@ void Default2DOutputPlugin::closeDatasets() noexcept {
     closeDS(ds_gw_ledger_);
     closeDS(ds_gw_bed_exchange_);
     closeDS(ds_gw_theta_);
+    closeDS(ds_gw_layer_mass_);closeDS(ds_gw_layer_conc_);closeDS(ds_gw_boundary_water_);closeDS(ds_gw_boundary_species_);closeDS(ds_gw_transport_ledger_);
     closeDS(ds_heat_water_temp_);
     closeDS(ds_heat_bed_temp_);
     closeDS(ds_heat_bed_energy_);

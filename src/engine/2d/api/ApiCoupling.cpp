@@ -156,6 +156,8 @@ int swmm_coupling_apply_frame(SWMM_Engine h,const SWMM_CouplingFrame* f) {
                 else {auto& tuple=(*concentrations)[slot];tuple.clear();
                     if(in.species_count)tuple.assign(in.concentrations,in.concentrations+in.species_count);}
             } else {
+                for(const auto& authored:router.aquiferConfig().boundaries)
+                    if(authored.cell==in.cell&&authored.edge==in.edge)return SWMM_ERR_BADPARAM;
                 auto& store=editSources(1); const auto id=boundaryId(in.cell,in.edge);
                 const auto* old=store.find(id,in.cell);
                 if(old && old->enabled && old->owner!=owner) return SWMM_ERR_BADPARAM;

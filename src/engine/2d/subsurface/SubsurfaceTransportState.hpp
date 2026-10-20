@@ -34,12 +34,10 @@
  *
  *          **Two bulk stores, one per zone.** `sat_mass` rides the saturated
  *          water `h_g·θ_s·A`; `unsat_mass` rides the column store `h_u·A`,
- *          whatever closure produced it. The plan's third store, the
- *          per-layer `layer_mass` for closure B, is **T7.2's**: it is a
- *          resolution refinement, and a bulk unsaturated store already
- *          conserves exactly — which is what T7.1 is for. Under closure B
- *          the bulk store means the column is treated as well mixed for
- *          transport while its WATER stays σ-resolved.
+ *          whatever closure produced it. Explicit LAYERED transport instead
+ *          owns species-major `layer_mass` on the accepted SIGMA column;
+ *          `unsat_mass` is then only its derived sum. Default BULK retains
+ *          the existing well-mixed unsaturated approximation.
  *
  *          The temperature row remains a liquid-water temperature-volume,
  *          exactly as on the surface. The separate ground thermal columns
@@ -71,6 +69,7 @@ namespace openswmm::twoD {
  */
 struct SubsurfaceTransportState {
     // ---- rows (TransportPolicy's layout, copied at initialize) ------------
+    double c_diff=0.4; ///< explicit solute diffusion safety factor
     int n_species = 0;
     int n_cells   = 0;
     int n_pollut  = 0;
@@ -99,6 +98,23 @@ struct SubsurfaceTransportState {
     // rather than a factor sprinkled through them.
     std::vector<double> sat_mass;     ///< [s*n_cells+c] in the saturated water
     std::vector<double> unsat_mass;   ///< [s*n_cells+c] in the column store
+    // In LAYERED mode this is the canonical unsaturated inventory. The
+    // public bulk field above is its derived sum, never a second owner.
+    int n_layers=0;
+    std::vector<double> layer_mass; ///< [(s*n_layers+j)*n_cells+c]
+    // Above-table receiving slots are fixed at producer time. Water is a
+    // routing split of nacc/lacc, not additional storage. The paired masses
+    // live here instead of nacc_mass/lacc_mass until the owner fires.
+    std::vector<double> contact_water; ///< [j*n_cells+c], SI m3
+    std::vector<double> contact_node_out,contact_link_out; ///< gross promised water, per bed/cell
+    std::vector<double> contact_node_mass,contact_link_mass; ///< layerIdx
+    std::size_t layerIdx(int s,int j,int c) const noexcept {
+        return (std::size_t(s)*n_layers+j)*n_cells+c;
+    }
+    void refreshUnsat(int s,int c) noexcept {
+        double sum=0;for(int j=0;j<n_layers;++j)sum+=layer_mass[layerIdx(s,j,c)];
+        unsat_mass[idx(s,c)]=sum;
+    }
 
     // ---- T7.2 resolved parameters ----------------------------------------
     /// `[GW_TRANSPORT_PARAMS]` per cell, after `* < TAG < CELL` resolution.
@@ -178,6 +194,7 @@ struct SubsurfaceTransportState {
     std::vector<double> gained_link;     ///< from a leaking conduit (T7.4 seam)
     std::vector<double> net_lateral;     ///< net across the domain edge (0 on a closed mesh)
     std::vector<double> gained_source, lost_source; ///< wells, native concentration x m3
+    std::vector<double> boundary_in,boundary_out,boundary_flux_in,boundary_flux_out; ///< gross split of net_lateral
     std::vector<double> lost_reaction;   ///< T7.2: first-order decay
     std::vector<double> generated_age,gained_contact; ///< explicit finite-porewater model only; empty in compatibility mode
     /// Mass in both stores at the start of the run — the conservation gate's
@@ -221,6 +238,8 @@ struct SubsurfaceTransportState {
         gained_link.assign(ns, 0.0);
         net_lateral.assign(ns, 0.0);
         gained_source.assign(ns, 0.0); lost_source.assign(ns, 0.0);
+        boundary_in.assign(ns,0);boundary_out.assign(ns,0);
+        boundary_flux_in.assign(ns,0);boundary_flux_out.assign(ns,0);
         lost_reaction.assign(ns, 0.0);          // T7.2
         generated_age.clear();gained_contact.clear();
         init_mass.assign(ns, 0.0);
@@ -251,6 +270,9 @@ struct SubsurfaceTransportState {
                           static_cast<std::size_t>(n_cells);
         for (int c = 0; c < n_cells; ++c)
             m += lacc_mass[base + static_cast<std::size_t>(c)];
+        for(int j=0;j<n_layers;++j)for(int c=0;c<n_cells;++c) {
+            const auto k=layerIdx(s,j,c);m+=contact_node_mass[k]+contact_link_mass[k];
+        }
         return m;
     }
 

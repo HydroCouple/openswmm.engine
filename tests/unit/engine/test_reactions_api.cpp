@@ -193,10 +193,15 @@ TEST_F(ReactionsApiTest, FunctionVocabularyMatchesTheCompiler) {
     EXPECT_EQ(n_binary, 3);
 
     const int nh = swmm_reaction_hydvar_count();
-    EXPECT_EQ(nh, 10);  // D Q U RE US FF AV HRT DT TEMP
+    EXPECT_EQ(nh, 14);  // Existing IDs retain their order; groundwater variables append.
     char hname[16], hdesc[128];
     ASSERT_EQ(swmm_reaction_hydvar_get(0, hname, 16, hdesc, 128), SWMM_OK);
     EXPECT_STREQ(hname, "D");
+    ASSERT_EQ(swmm_reaction_hydvar_get(10,hname,16,hdesc,128),SWMM_OK);
+    EXPECT_STREQ(hname,"GW_THETA");
+    ASSERT_EQ(swmm_reaction_hydvar_get(13,hname,16,hdesc,128),SWMM_OK);
+    EXPECT_STREQ(hname,"GW_DEPTH_M");
+    ASSERT_EQ(swmm_reaction_hydvar_get(0,hname,16,hdesc,128),SWMM_OK);
     EXPECT_NE(std::string(hdesc).find("Depth"), std::string::npos);
     EXPECT_EQ(swmm_reaction_hydvar_get(nh, hname, 16, hdesc, 128),
               SWMM_ERR_BADINDEX);

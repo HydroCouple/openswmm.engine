@@ -120,6 +120,8 @@ struct GwLinkShare {
     int    link   = -1;   ///< 1D link index (a conduit)
     int    cell   = -1;   ///< mesh cell
     double weight = 0.0;  ///< length fraction in (0, 1]
+    struct Contact {double weight,begin,end;}; ///< full-length fraction, SI bed elevations
+    std::vector<Contact> contacts;
 };
 
 /// One (subcatchment, cell) infiltration share (plans/INFILTRATION_TO_2D_
@@ -292,6 +294,7 @@ struct SubsurfaceState {
     double led_final_storage = 0.0;
     double led_source_in = 0.0, led_source_out = 0.0; ///< wells, m3; separate from node/link exchange
 
+    double led_boundary_in=0,led_boundary_out=0; ///< gross split of led_lateral; not counted twice
     bool active = false;         ///< the kernel ran this simulation
 
     void resize(int n, int m);
@@ -335,17 +338,27 @@ struct GwUnitFactors {
     double area   = 1.0;   ///< ft² → m²,    or m² → m²
 };
 
+/// An authored exterior hydraulic edge. Values remain in project units
+/// (HEAD) or SI total m3/s (FLOW); runtime signals are resolved separately.
+struct GwBoundaryRow {
+    int cell = -1, edge = -1;
+    bool head = false;
+    double value = 0.0;
+    std::string series;
+};
+
 /// Everything the parser fills, before resolution onto cells.
 struct SubsurfaceConfig {
     GwOptions                 options;
     std::vector<GwAquiferRow> rows;
     std::vector<GwNodeBed>    node_beds;
+    std::vector<GwBoundaryRow> boundaries;
     std::vector<GwLinkRow>    link_rows;   ///< G-X4: [2D_AQUIFER_LINKS]
     std::vector<SurfaceOwnerRecord> surface_owners; ///< Explicit SUBCATCH UNIFORM records; not aquifer activation.
 
     bool empty() const noexcept {
         return !options.authored && rows.empty() && node_beds.empty() &&
-               link_rows.empty();
+               link_rows.empty() && boundaries.empty();
     }
     void clear() { *this = SubsurfaceConfig{}; }
 };

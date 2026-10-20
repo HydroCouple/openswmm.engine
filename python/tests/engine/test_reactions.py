@@ -183,7 +183,8 @@ class TestReactionStatics(unittest.TestCase):
         names = [hv.name for hv in Reactions.hydraulic_variables()]
         self.assertEqual(
             names,
-            ["D", "Q", "U", "RE", "US", "FF", "AV", "HRT", "DT", "TEMP"])
+            ["D", "Q", "U", "RE", "US", "FF", "AV", "HRT", "DT", "TEMP",
+             "GW_THETA", "GW_POROSITY", "GW_SE", "GW_DEPTH_M"])
 
     def test_functions_need_no_solver(self):
         functions = Reactions.functions()

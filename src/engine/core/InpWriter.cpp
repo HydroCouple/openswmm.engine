@@ -53,6 +53,7 @@
 #include "AtomicOutputFile.hpp"
 #include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "Constants.hpp"
+#include "NodeCoupling2D.hpp"
 #include "PathResolver.hpp"
 #include "SimulationContext.hpp"
 #include "../data/StorageGeometry.hpp"
@@ -561,6 +562,7 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
     {
         const auto& o = gw->options;
         sec(f, "GW_TRANSPORT_OPTIONS");
+        if(o.unsat_transport!="BULK")std::fprintf(f,"%-24s %s\n","UNSAT_TRANSPORT",o.unsat_transport.c_str());
         std::fprintf(f, ";;%-22s %s\n", "Parameter", "Value");
         std::fprintf(f, "%-24s %s\n", "TRANSPORT_POLLUTANTS",  o.transport_pollutants  ? "YES" : "NO");
         std::fprintf(f, "%-24s %s\n", "TRANSPORT_MSX",         o.transport_msx         ? "YES" : "NO");
@@ -579,7 +581,7 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
         // want of a value, making the saved file unloadable.
         if (!o.deep_thermal_arg.empty()) {
             if (o.deep_depth > 0.0)
-                std::fprintf(f, "%-24s %s %s DEPTH %.12g\n", "DEEP_THERMAL_BC",
+                std::fprintf(f, "%-24s %s %s DEPTH %.17g\n", "DEEP_THERMAL_BC",
                              o.deep_thermal_bc.c_str(),
                              o.deep_thermal_arg.c_str(), o.deep_depth);
             else
@@ -600,7 +602,7 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
                     std::strcmp(key,"AIR_THERMAL_CONDUCTIVITY")==0?o.air_conductivity:o.surface_resistance;
                 std::fprintf(f,"%-24s %.17g\n",key,value);
             }
-        std::fprintf(f, "%-24s %.12g\n", "C_DIFF", o.c_diff);
+        std::fprintf(f, "%-24s %.17g\n", "C_DIFF", o.c_diff);
     }
 
     if (!gw->params.empty()) {
@@ -611,8 +613,8 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
         for (const auto& r : gw->params) {
             scope_col(r.scope, r.tag, r.cell, sc, sizeof sc);
             std::fprintf(f,
-                "%-16s %-9.12g %-7.12g %-9.12g %-7.12g %-8.12g %-8.12g "
-                "%-9.12g %-9.12g %.12g\n",
+                "%-16s %-9.17g %-7.17g %-9.17g %-7.17g %-8.17g %-8.17g "
+                "%-9.17g %-9.17g %.17g\n",
                 sc, r.rho_s, r.c_s, r.lambda_s, r.a_s, r.alpha_L, r.alpha_T,
                 r.D_m, r.D_v, r.geo_flux);
         }
@@ -625,10 +627,10 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
         for (const auto& r : gw->sorption) {
             scope_col(r.scope, r.tag, r.cell, sc, sizeof sc);
             if (r.decay >= 0.0)
-                std::fprintf(f, "%-16s %-16s %-12.12g %.12g\n", sc,
+                std::fprintf(f, "%-16s %-16s %-12.17g %.17g\n", sc,
                              r.species.c_str(), r.kd, r.decay);
             else
-                std::fprintf(f, "%-16s %-16s %-12.12g -\n", sc,
+                std::fprintf(f, "%-16s %-16s %-12.17g -\n", sc,
                              r.species.c_str(), r.kd);
         }
     }
@@ -652,7 +654,7 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
                     std::snprintf(zone, sizeof zone, "LAYER %d", r.layer);
                 else
                     std::snprintf(zone, sizeof zone, "%s", twoD::gwZoneToken(r.zone));
-                std::fprintf(f, "%-16s %-14s %-16s %.12g\n", sc, zone,
+                std::fprintf(f, "%-16s %-14s %-16s %.17g\n", sc, zone,
                              r.species.c_str(), r.value);
             }
         }
@@ -668,7 +670,7 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
                 std::fprintf(f, "%-8d %-6d %-16s %-10s %s\n", r.cell + 1, r.edge,
                              r.species.c_str(), r.kind.c_str(), r.ts_name.c_str());
             else
-                std::fprintf(f, "%-8d %-6d %-16s %-10s %.12g\n", r.cell + 1, r.edge,
+                std::fprintf(f, "%-8d %-6d %-16s %-10s %.17g\n", r.cell + 1, r.edge,
                              r.species.c_str(), r.kind.c_str(), r.value);
         }
     }
@@ -680,7 +682,7 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
         for (const auto& r : gw->sources) {
             char loc[128];
             if (r.by_xy)
-                std::snprintf(loc, sizeof loc, "XY %.12g %.12g", r.x, r.y);
+                std::snprintf(loc, sizeof loc, "XY %.17g %.17g", r.x, r.y);
             else if (r.scope == twoD::GwScope::TAG)
                 std::snprintf(loc, sizeof loc, "TAG %s", r.tag.c_str());
             else if (r.scope == twoD::GwScope::GLOBAL)
@@ -689,19 +691,34 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
                 std::snprintf(loc, sizeof loc, "CELL %d", r.cell + 1);
             std::fprintf(f, "%-14s %-16s FLOW ", r.name.c_str(), loc);
             if (!r.flow_ts.empty()) std::fprintf(f, "%-12s", r.flow_ts.c_str());
-            else                    std::fprintf(f, "%-12.12g", r.flow);
+            else                    std::fprintf(f, "%-12.17g", r.flow);
             if (r.scale != 1.0) std::fprintf(f, " SCALE %.17g", r.scale);
             for (const auto& t : r.species) {
                 if (!t.ts_name.empty())
                     std::fprintf(f, " %s %s %s", t.species.c_str(),
                                  t.kind.c_str(), t.ts_name.c_str());
                 else
-                    std::fprintf(f, " %s %s %.12g", t.species.c_str(),
+                    std::fprintf(f, " %s %s %.17g", t.species.c_str(),
                                  t.kind.c_str(), t.value);
             }
             std::fprintf(f, "\n");
         }
     }
+}
+
+std::string groundwaterSections(const SimulationContext& ctx) {
+#ifdef OPENSWMM_HAS_2D
+    FILE* file=std::tmpfile();if(!file)throw std::runtime_error("Cannot stage groundwater sections.");
+    struct Close {FILE* file;~Close(){std::fclose(file);}} close{file};
+    emitGwTransportSections(file,ctx);
+    if(std::fflush(file)!=0 || std::ferror(file))throw std::runtime_error("Cannot serialize groundwater sections.");
+    std::rewind(file);std::string result;char buffer[8192];std::size_t count=0;
+    while((count=std::fread(buffer,1,sizeof buffer,file))>0)result.append(buffer,count);
+    if(std::ferror(file))throw std::runtime_error("Cannot read staged groundwater sections.");
+    return result;
+#else
+    (void)ctx;return {};
+#endif
 }
 
 // Reference tokens always use final paths. Only physical writes are redirected.
@@ -790,6 +807,26 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx,
                  o.coupling_area_auto ? "AUTO" : "DEFAULT");
     if (o.dispersion > 0.0)   // S2: default 0 is omitted (option-default rule)
         std::fprintf(f, "%-22s %.12g\n", "DISPERSION", o.dispersion);
+    // Exchange law / head sampling / coefficient preset — defaults omitted.
+    if (o.coupling_law != twoD::CouplingLaw2D::ORIFICE)
+        std::fprintf(f, "%-22s %s\n", "COUPLING_LAW", "WEIR_ORIFICE");
+    if (o.coupling_head != twoD::CouplingHead2D::CELL)
+        std::fprintf(f, "%-22s %s\n", "COUPLING_HEAD",
+                     o.coupling_head == twoD::CouplingHead2D::VERTEX ? "VERTEX"
+                                                                     : "STENCIL_WET_MEAN");
+    if (o.coupling_pond_mode != twoD::CouplingPondMode2D::FOOTPRINT)
+        std::fprintf(f, "%-22s %s\n", "COUPLING_POND_MODE",
+                     o.coupling_pond_mode == twoD::CouplingPondMode2D::CHAMBER ? "CHAMBER" : "TRACKING");
+    if (o.coupling_pond_relax > 0.0)
+        std::fprintf(f, "%-22s %.12g\n", "COUPLING_POND_RELAX", o.coupling_pond_relax);
+    if (o.coupling_rim_band >= 0.0)
+        std::fprintf(f, "%-22s %.12g\n", "COUPLING_RIM_BAND", o.coupling_rim_band);
+    if (o.coupling_equalize >= 0)
+        std::fprintf(f, "%-22s %s\n", "COUPLING_EQUALIZE", o.coupling_equalize ? "YES" : "NO");
+    if (o.coupling_coeffs != 0)
+        std::fprintf(f, "%-22s %s\n", "COUPLING_COEFFS",
+                     nodecoupling2d::formatValue(NodeCoupling2DKey::COEFFS,
+                                                 o.coupling_coeffs).c_str());
     {
         static const char* sBackend2D[] = {"CPU","AUTO","OMP","CUDA","HIP","SYCL"};
         const int bi = static_cast<int>(o.backend);
@@ -1032,6 +1069,21 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
         return {};
     };
 
+    // One map row: the CD and AREA columns only when authored, so a reload
+    // keeps COUPLING_CD and the area defaults in charge of the rest. CD and
+    // AREA are positional — an authored AREA under a defaulted CD writes the
+    // CD the run would use (COUPLING_CD).
+    auto map_row = [&o](FILE* out, int idx, const std::string& node, double cd,
+                        bool cd_set, double area, bool area_set) {
+        if (area_set)
+            std::fprintf(out, "%-8d %-16s %-10.6g %.12g\n", idx, node.c_str(),
+                         cd_set ? cd : o.coupling_cd, area);
+        else if (cd_set)
+            std::fprintf(out, "%-8d %-16s %.6g\n", idx, node.c_str(), cd);
+        else
+            std::fprintf(out, "%-8d %s\n", idx, node.c_str());
+    };
+
     // ---- [2D_VERTEX_NODE_MAP] -------------------------------------------------
     {
         bool any = false;
@@ -1046,9 +1098,10 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
                 const std::string cn = node_name_for(
                     mesh.vert_coupled_node_name[i], mesh.vert_coupled_node[i]);
                 if (cn.empty()) continue;
-                std::fprintf(f, "%-8d %-16s %-10.6g %.12g\n", i, cn.c_str(),
-                             mesh.vert_coupling_cd[i],
-                             mesh.vert_coupling_area[i]);
+                map_row(f, i, cn, mesh.vert_coupling_cd[i],
+                        mesh.vert_coupling_cd_set[i] != 0,
+                        mesh.vert_coupling_area[i],
+                        mesh.vert_coupling_area_set[i] != 0);
             }
         }
     }
@@ -1067,8 +1120,8 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
                 const std::string cn = node_name_for(row.node_name, row.node);
                 if (cn.empty()) continue;
                 if (row.tri < 0 || row.tri >= nt) continue;
-                std::fprintf(f, "%-8d %-16s %-10.6g %.12g\n", row.tri,
-                             cn.c_str(), row.cd, row.area);
+                map_row(f, row.tri, cn, row.cd, row.cd_set, row.area,
+                        row.area_set);
             }
         } else {
             bool any = false;
@@ -3715,6 +3768,18 @@ int writeInpFile(const SimulationContext&  ctx_internal,
                               : std::make_error_code(std::errc::io_error);
         note("Cannot serialize model output '" + path + "': " + ec.message());
         return -1;
+    }
+    // [2D_NODE_COUPLING] — node data, written whether or not a mesh exists
+    // (a model is flagged before it is meshed: the flag filters the mapper).
+    if (ctx.node_coupling_2d.count() > 0) {
+        if (swmm5) {
+            note("SWMM 5 export omits [2D_NODE_COUPLING]");
+        } else {
+            sec(f, "2D_NODE_COUPLING");
+            std::fprintf(f, ";;%-14s %-8s %s\n", "Node", "Type", "KEY=VALUE ...");
+            for (int r = 0; r < ctx.node_coupling_2d.count(); ++r)
+                std::fprintf(f, "%s\n", nodecoupling2d::formatRow(ctx, r).c_str());
+        }
     }
     if (!swmm5 && !write2DSections(f, ctx, dst_dir, force_abs_paths, warnings, opts))
         return -1;

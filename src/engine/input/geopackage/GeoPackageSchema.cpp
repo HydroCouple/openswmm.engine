@@ -1380,7 +1380,31 @@ CREATE TABLE IF NOT EXISTS mesh_2d_vertex_coupling (
 );
 CREATE INDEX IF NOT EXISTS idx_mesh2d_vc_node
     ON mesh_2d_vertex_coupling(simulation_id, node_id);
+)SQL";
+static_assert(sizeof(MESH_2D_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
 
+// [2D_NODE_COUPLING]: per-node coupling type, a node attribute kept with or
+// without a mesh. params holds the authored KEY=VALUE tokens as written in
+// the section (empty when none).
+static const char* NODE_2D_COUPLING_DDL = R"SQL(
+CREATE TABLE IF NOT EXISTS node_2d_coupling (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    node_id         TEXT NOT NULL,
+    coupling_type   TEXT NOT NULL,
+    params          TEXT NOT NULL DEFAULT '',
+    UNIQUE(simulation_id, node_id),
+    FOREIGN KEY (simulation_id, node_id)
+        REFERENCES nodes(simulation_id, node_id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+)SQL";
+
+// Repeated-row [2D_TRIANGLE_NODE_MAP]: one table row per coupling row, as
+// the model holds them (several nodes may couple to one triangle). Files
+// written before this were keyed by triangle alone; create_schema() rebuilds
+// those in place.
+static const char* MESH_2D_TRI_COUPLING_DDL = R"SQL(
 CREATE TABLE IF NOT EXISTS mesh_2d_triangle_coupling (
     fid             INTEGER PRIMARY KEY AUTOINCREMENT,
     simulation_id   TEXT NOT NULL,
@@ -1388,7 +1412,6 @@ CREATE TABLE IF NOT EXISTS mesh_2d_triangle_coupling (
     node_id         TEXT NOT NULL,
     coupling_cd     REAL NOT NULL DEFAULT 0.65,
     coupling_area   REAL NOT NULL DEFAULT 1.0,
-    UNIQUE(simulation_id, tri_idx),
     FOREIGN KEY (simulation_id, tri_idx)
         REFERENCES mesh_2d_triangles(simulation_id, tri_idx)
         ON DELETE CASCADE ON UPDATE CASCADE,
@@ -1399,7 +1422,6 @@ CREATE TABLE IF NOT EXISTS mesh_2d_triangle_coupling (
 CREATE INDEX IF NOT EXISTS idx_mesh2d_tc_node
     ON mesh_2d_triangle_coupling(simulation_id, node_id);
 )SQL";
-static_assert(sizeof(MESH_2D_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
 
 // ============================================================================
 // Implementation
@@ -1447,6 +1469,34 @@ void create_schema(sqlite3* db) {
     add_missing("hotstart_slots", "tail_section", "BLOB");
     add_missing("hotstart_node_state", "hrt", "REAL");
     exec(db, MESH_2D_DDL);
+    // An older triangle-coupling table is keyed by triangle alone and would
+    // refuse a second node on the same triangle: rebuild it without that
+    // key, keeping its rows.
+    {
+        std::string sql;
+        auto old = prepare(db, "SELECT sql FROM sqlite_master WHERE type='table' "
+                               "AND name='mesh_2d_triangle_coupling'");
+        if (sqlite3_step(old.get()) == SQLITE_ROW) sql = column_text(old.get(), 0);
+        old.reset();
+        if (sql.find("UNIQUE(simulation_id, tri_idx),") != std::string::npos) {
+            exec(db, "ALTER TABLE mesh_2d_triangle_coupling RENAME TO mesh_2d_triangle_coupling_v1");
+            exec(db, MESH_2D_TRI_COUPLING_DDL);
+            exec(db, "INSERT INTO mesh_2d_triangle_coupling "
+                     "(fid, simulation_id, tri_idx, node_id, coupling_cd, coupling_area) "
+                     "SELECT fid, simulation_id, tri_idx, node_id, coupling_cd, coupling_area "
+                     "FROM mesh_2d_triangle_coupling_v1");
+            exec(db, "DROP TABLE mesh_2d_triangle_coupling_v1");
+        }
+    }
+    exec(db, MESH_2D_TRI_COUPLING_DDL);
+    // Whether CD / AREA were authored (1) or are defaults (0). NULL — files
+    // written before these columns — reads as authored: their writers stored
+    // an explicit value for every row.
+    add_missing("mesh_2d_vertex_coupling", "coupling_cd_set", "INTEGER");
+    add_missing("mesh_2d_vertex_coupling", "coupling_area_set", "INTEGER");
+    add_missing("mesh_2d_triangle_coupling", "coupling_cd_set", "INTEGER");
+    add_missing("mesh_2d_triangle_coupling", "coupling_area_set", "INTEGER");
+    exec(db, NODE_2D_COUPLING_DDL);
     exec(db, "CREATE TABLE IF NOT EXISTS surface_ownership_2d_input (simulation_id TEXT PRIMARY KEY, sections TEXT NOT NULL)");
 }
 

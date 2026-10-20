@@ -111,7 +111,7 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i,const CellFlux& f) noexc
             // slice without consuming it before the heat owner uses it.
             double pending=heat_preset_out_water_[water_base+j];preset_water[j]=consumePending(pending);preset_volume+=preset_water[j];
         }
-        const double body=f.lateral-f.node_out+f.link+f.source_in-f.source_out;
+        const double body=f.lateral-f.node_out+f.link+f.source_in-f.source_out+f.boundary_in-f.boundary_out;
         for(std::size_t j=0;j<nl;++j)water[j]=(body+preset_volume)*weights[j]-preset_water[j];
         water.front()+=f.infil_in-f.reject-f.et-f.dunne;water.back()-=f.deep;
         double node_volume=0;
@@ -122,6 +122,10 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i,const CellFlux& f) noexc
         for(int r=0;r<tr_.n_species;++r)if(r!=tr_.temp_row) {
             const auto k=tr_.idx(r,i),row=std::size_t(r)*nl,base=(std::size_t(r)*state_.n_cells+i)*nl;
             const double source=f.source_mass&&std::size_t(r)<f.source_mass->size()?(*f.source_mass)[r]:0;
+            double edge_mass=0,edge_flux=0,edge_requested=0;
+            if(f.boundaries)for(const auto& pulse:*f.boundaries) {
+                edge_mass+=pulse.mass[r];edge_flux+=pulse.flux_in[r];edge_requested+=pulse.flux_out[r];
+            }
             const double lateral=gatherLateralMass(i,r),infil=consumePending(tr_.xacc_from_surface[k]);
             const double link_in=consumePending(tr_.lacc_mass[k]),booked_link=consumePending(tr_.lout_mass[k]),node_in=gatherNodeMass(i,r);
             const double refund=f.refund_mass?(*f.refund_mass)[r]:0;
@@ -131,9 +135,9 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i,const CellFlux& f) noexc
                 mass[j]=next.mass[row+j];retention[j]=next.retention[row+j];
                 preset[j]=consumePending(porewater_preset_out_[base+j]);preset_mass+=preset[j];
             }
-            const double incoming=source+lateral+link_in-(link_packet?booked_link:0)+node_in+preset_mass;
+            const double incoming=source+edge_mass+edge_flux+lateral+link_in-(link_packet?booked_link:0)+node_in+preset_mass;
             for(std::size_t j=0;j<nl;++j) {
-                input[j]=incoming*weights[j]-preset[j];withdrawal[j]=(node_volume+f.source_out+implicit_link_volume)*weights[j];
+                input[j]=incoming*weights[j]-preset[j];withdrawal[j]=(node_volume+f.source_out+f.boundary_out+implicit_link_volume)*weights[j];
             }
             input.front()+=infil-refund;withdrawal.front()+=excess_volume+f.dunne+(r==tr_.age_row?f.et:0);withdrawal.back()+=f.deep;
             auto advected=advectPorewater(old_water,new_water,retention,mass,water,input,withdrawal);
@@ -142,6 +146,13 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i,const CellFlux& f) noexc
             const double link_out=link_packet?booked_link:implicit_link_volume*donor,node_out=node_volume*donor,source_out=f.source_out*donor;
             const double dunne=f.dunne*advected.concentration.front(),excess=excess_volume*advected.concentration.front();
             const double et=r==tr_.age_row?f.et*advected.concentration.front():0,deep=f.deep*advected.concentration.back();
+            const double edge_out=f.boundary_out*donor;
+            tr_.boundary_in[r]+=edge_mass;tr_.boundary_out[r]+=edge_out;tr_.boundary_flux_in[r]+=edge_flux;
+            tr_.net_lateral[r]+=edge_mass+edge_flux-edge_out;
+            if(f.boundaries)for(const auto& pulse:*f.boundaries) {
+                auto& edge=boundaries_[pulse.boundary];edge.mass_in[r]+=pulse.mass[r];
+                edge.mass_out[r]+=pulse.out*donor;edge.flux_in[r]+=pulse.flux_in[r];
+            }
             tr_.gained_source[r]+=source;tr_.net_lateral[r]+=lateral;tr_.gained_infil[r]+=infil;
             tr_.gained_link[r]+=link_in;tr_.lost_link[r]+=link_out;tr_.gained_node[r]+=node_in;
             tr_.lost_node[r]+=node_out;tr_.lost_source[r]+=source_out;tr_.lost_deep[r]+=deep;
@@ -163,22 +174,24 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i,const CellFlux& f) noexc
             // Independent MASS sinks keep their existing saturated dissolved
             // availability rule. Their accepted mass is removed once from
             // the physical layers and exactly matched by provider receipts.
-            if(std::size_t(i)<runtime_sources_.cells.size()) {
-                double requested=0,available=0;
+            if(edge_requested>0||std::size_t(i)<runtime_sources_.cells.size()) {
+                double requested=edge_requested,available=0;
                 std::vector<double> dissolved(nl);
                 for(std::size_t j=0;j<nl;++j) {
                     const double cap=new_water[j]+retention[j];
                     dissolved[j]=cap>0?advected.mass[j]/cap*new_sat[j]:0;available+=dissolved[j];
                 }
-                for(auto index:runtime_sources_.cells[i])requested+=std::max(0.,-runtime_sources_.rows[index].rates[r])*f.runtime_dt;
+                if(std::size_t(i)<runtime_sources_.cells.size())for(auto index:runtime_sources_.cells[i])requested+=std::max(0.,-runtime_sources_.rows[index].rates[r])*f.runtime_dt;
                 if(!std::isfinite(requested)||!std::isfinite(available))throw std::runtime_error("Ground porewater species removal receipt overflow.");
                 const double accepted=std::min(requested,available),scale=requested>0?accepted/requested:0;
                 if(available>0&&accepted>0)for(std::size_t j=0;j<nl;++j)advected.mass[j]-=accepted*(dissolved[j]/available);
-                for(auto index:runtime_sources_.cells[i]) {
+                if(std::size_t(i)<runtime_sources_.cells.size())for(auto index:runtime_sources_.cells[i]) {
                     auto& source_row=runtime_sources_.rows[index];const double wanted=std::max(0.,-source_row.rates[r])*f.runtime_dt;
                     source_row.receipt.requested_mass[r]-=wanted;source_row.receipt.applied_mass[r]-=wanted*scale;
                 }
-                tr_.lost_source[r]+=accepted;
+                tr_.lost_source[r]+=accepted-edge_requested*scale;
+                tr_.net_lateral[r]-=edge_requested*scale;tr_.boundary_flux_out[r]+=edge_requested*scale;
+                if(f.boundaries)for(const auto& pulse:*f.boundaries)boundaries_[pulse.boundary].flux_out[r]+=pulse.flux_out[r]*scale;
             }
             const double decay=r==tr_.age_row?0:tr_.decay[k],keep=decay>0?std::exp(-decay*f.dt):1;
             for(std::size_t j=0;j<nl;++j) {

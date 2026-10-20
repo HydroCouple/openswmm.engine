@@ -119,6 +119,53 @@ enum class RainfallMode : int8_t {
 };
 
 /**
+ * @brief 1D↔2D exchange law at junction coupling points ([2D_OPTIONS]
+ *        COUPLING_LAW; a node's [2D_NODE_COUPLING] LAW overrides it).
+ *
+ * ORIFICE is the legacy two-way orifice on the map row's CD/AREA (with the
+ * rim gate and the AREA→2·AREA ramp). WEIR_ORIFICE is the regime-aware law
+ * of coupling/ExchangeLaw.hpp on the node's structure geometry.
+ */
+enum class CouplingLaw2D : int8_t {
+    ORIFICE      = 0,
+    WEIR_ORIFICE = 1
+};
+
+/**
+ * @brief Where the 2D head driving a junction exchange is read
+ *        ([2D_OPTIONS] COUPLING_HEAD).
+ *
+ * CELL (default) is the coupling cell (the lowest-bed cell around a vertex
+ * point). VERTEX is the wet-depth-weighted η over the cells around the mapped
+ * vertex. STENCIL_WET_MEAN is the wet-depth-weighted η over the cells whose
+ * centroid lies within max(structure size, cell size) of the point — the
+ * manhole-area average Rubinato et al. (2017) found best in unsteady runs.
+ * Both fall back to the coupling cell when every cell is dry.
+ */
+enum class CouplingHead2D : int8_t {
+    CELL             = 0,
+    VERTEX           = 1,
+    STENCIL_WET_MEAN = 2
+};
+
+/**
+ * @brief Above-rim storage of a 2D-coupled junction under dynamic wave
+ *        ([2D_OPTIONS] COUPLING_POND_MODE; plan §4.2).
+ *
+ * FOOTPRINT (default): the pond spreads over the 2D-cell footprint (the
+ * median-dual area of the coupling cells) — the same water the stencil cells
+ * hold, so it is stored twice. CHAMBER: the pond is the structure's chamber
+ * area only; all ponded water lives on the mesh. TRACKING: the pond area
+ * relaxes from the chamber area toward the currently wet footprint over
+ * COUPLING_POND_RELAX, conserving the held volume as it changes.
+ */
+enum class CouplingPondMode2D : int8_t {
+    FOOTPRINT = 0,
+    CHAMBER   = 1,
+    TRACKING  = 2
+};
+
+/**
  * @brief Compute backend for the 2D marcher (mirrors fv::Backend).
  *
  * AUTO (default) lets SurfaceSolverFactory pick: a device plugin (cuda, hip,
@@ -260,6 +307,27 @@ struct SolverOptions2D {
     double coupling_sync     = 0.0;
 
     double coupling_cd       = 0.65;    ///< Default discharge coefficient
+    /// [2D_OPTIONS] COUPLING_LAW ORIFICE|WEIR_ORIFICE (default ORIFICE).
+    CouplingLaw2D  coupling_law  = CouplingLaw2D::ORIFICE;
+    /// [2D_OPTIONS] COUPLING_HEAD CELL|VERTEX|STENCIL_WET_MEAN (default CELL).
+    CouplingHead2D coupling_head = CouplingHead2D::CELL;
+    /// [2D_OPTIONS] COUPLING_COEFFS — WEIR_ORIFICE coefficient preset
+    /// (NodeCoupling2DCoeffs: DEFAULT|RUBINATO2017|RUBINATO2017_LOWER|
+    /// RUBINATO2017_UPPER); a node's COEFFS / CW / CSW / COI / COO override.
+    int            coupling_coeffs = 0;
+    /// [2D_OPTIONS] COUPLING_POND_MODE FOOTPRINT|CHAMBER|TRACKING.
+    CouplingPondMode2D coupling_pond_mode = CouplingPondMode2D::FOOTPRINT;
+    /// [2D_OPTIONS] COUPLING_POND_RELAX — TRACKING relaxation time (s);
+    /// 0 = five routing steps.
+    double coupling_pond_relax = 0.0;
+    /// [2D_OPTIONS] COUPLING_RIM_BAND — height (m) above the rim over which
+    /// the pond area ramps in (C¹). < 0 = the mode default: 0 under FOOTPRINT
+    /// (the legacy step), 0.05 under CHAMBER / TRACKING.
+    double coupling_rim_band = -1.0;
+    /// [2D_OPTIONS] COUPLING_EQUALIZE YES|NO — cap each junction exchange so
+    /// one coupling window cannot carry the 1D and 2D heads past each other.
+    /// -1 = per law (on under WEIR_ORIFICE, off under ORIFICE).
+    int8_t coupling_equalize = -1;
     bool   report_2d         = true;    ///< Write 2D results to output
 
     // ---- Results-file size controls (plans/2D_OUTPUT_FLOAT32_AND_VARIABLE_SELECTION_PLAN) ----
@@ -421,7 +489,9 @@ struct SolverOptions2D {
     /// multiplying through. Refused negative at parse: anti-diffusion is not
     /// a modelling case.
     double dispersion     = 0.0;
-    /// Optional EMA sub-relaxation of per-substep coupling exchange (1 = off).
+    /// Unused: no input sets it and no solver path reads it. Kept only
+    /// because the common-source checkpoint fingerprint hashes it (removing
+    /// it would refuse existing native checkpoints).
     double exchange_relax = 1.0;
     /// [2D_OPTIONS] COUPLING_AREA AUTO: derive exchange area at coupling-point
     /// resolve from the largest connected conduit (clamp(1.25·A_conduit,

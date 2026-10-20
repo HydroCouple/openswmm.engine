@@ -120,7 +120,7 @@ SWMM_ENGINE_API int swmm_reaction_validate_expression(SWMM_Engine engine,
     if (col_out) *col_out = -1;
     if (!expr) return SWMM_ERR_BADPARAM;
     if (scope != SWMM_RXN_SCOPE_TERM && scope != SWMM_RXN_SCOPE_PIPE &&
-        scope != SWMM_RXN_SCOPE_TANK)
+        scope != SWMM_RXN_SCOPE_TANK && scope != SWMM_RXN_SCOPE_SUBSURFACE)
         return SWMM_ERR_BADPARAM;
 
     const auto& ctx = to_engine(engine)->context();
@@ -142,7 +142,13 @@ SWMM_ENGINE_API int swmm_reaction_validate_expression(SWMM_Engine engine,
         expr, sym, pool, span, col);
     // Physics review A1: the editor refuses what the load refuses.
     if (err.empty())
-        err = openswmm::transport::unpopulatedHydVarDiagnostic(expr, pool, span, col);
+        err = openswmm::transport::reactionContextDiagnostic(rx,pool,span,
+            scope==SWMM_RXN_SCOPE_SUBSURFACE?2:scope==SWMM_RXN_SCOPE_TERM?1:0);
+    if(!err.empty()) {
+        int precise=-1;
+        openswmm::transport::unpopulatedHydVarDiagnostic(expr,pool,span,precise);
+        if(precise>0)col=precise;
+    }
     if (err.empty()) return SWMM_OK;
 
     if (errbuf && buflen > 0) copy_to_buf(err, errbuf, buflen);
@@ -326,6 +332,7 @@ SWMM_ENGINE_API int swmm_reaction_species_remove(SWMM_Engine engine,
     CHECK_GEOMETRY(ctx);
     auto& rx = ctx.reactions;
     CHECK_INDEX(idx >= 0 && idx < rx.n_species());
+    for(const auto& law:rx.subsurface_laws)if(law.species==idx)return SWMM_ERR_BADPARAM;
     // D-RC3: refuse while any compiled expression references the species.
     if (pool_references(rx, openswmm::RxToken::PUSH_SPECIES, idx))
         return SWMM_ERR_BADPARAM;
@@ -336,6 +343,7 @@ SWMM_ENGINE_API int swmm_reaction_species_remove(SWMM_Engine engine,
     const int old_n    = rx.n_species();
     const auto u = static_cast<std::size_t>(idx);
     // Erase the row from EVERY index-aligned vector (the D-RC3 hazard).
+    for(auto& law:rx.subsurface_laws)if(law.species>idx)--law.species;
     rx.species_name.erase(rx.species_name.begin() + u);
     rx.species_is_wall.erase(rx.species_is_wall.begin() + u);
     rx.species_units.erase(rx.species_units.begin() + u);
