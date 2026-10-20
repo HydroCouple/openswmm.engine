@@ -44,12 +44,14 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <numeric>
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_gw2d.h>
+#include <openswmm/engine/openswmm_heat.h>
 #include <openswmm/engine/openswmm_2d.h>
 #include <openswmm/engine/openswmm_model.h>
 #include <openswmm/engine/openswmm_reactions.h>
@@ -2933,4 +2935,184 @@ TEST(GwSigmaPorous, ResultsKeepChemicalAndThermalLayerAxesIndependent) {
     const auto offset=values.size()-expected.size();
     for(std::size_t k=0;k<expected.size();++k)EXPECT_NEAR(values[offset+k],expected[k],1e-9);
     H5Sclose(space);H5Dclose(dataset);H5Fclose(file);
+}
+
+TEST(GwIntegrated, ConduitNodeWellAndEdgesShareOneFiniteDonor) {
+    fs::create_directories(kOutDir);
+    std::ofstream metrics(kOutDir/"joint_donor_matrix.csv");ASSERT_TRUE(metrics.good());metrics.precision(17);
+    metrics<<"profile,sorption,node_first,node_water,link_water,well_water,edge_water,water_residual,species_residual\n";
+    for(int profile=0;profile<5;++profile)for(bool sorption:{false,true})for(bool node_first:{false,true}) {
+        const auto name="joint-donor-"+std::to_string(profile)+"-"+std::to_string(sorption)+"-"+std::to_string(node_first);
+        SCOPED_TRACE(name);
+        const std::string extra="[2D_AQUIFER_NODE]\nJ1 1 KC 360000 DC .05 AREA 100\n"
+            "[GW_SOURCES]\nW CELL 1 FLOW -10\n"
+            "[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST -20\nCELL 1 EDGE 2 FLOW CONST -30\n"
+            "[GW_INITIAL_QUALITY]\nCELL 1 SAT TSS 7\nCELL 1 UNSAT TSS 7\n"
+            "* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n"
+            "[GW_SORPTION]\n* TSS "+std::string(sorption?"2":"0")+" 0\n";
+        auto body=profile==4?mappedPorousDeck(extra,Mesh::Quad):profile==3?layeredDeck(extra,Mesh::Quad):forcingDeck(extra,.3,Mesh::Quad);
+        if(profile==1||profile==2) {
+            const auto at=body.find("CLOSURE CLOSED_FORM");ASSERT_NE(at,std::string::npos);
+            body.replace(at,19,profile==1?"CLOSURE ENSLAVED":"CLOSURE SIGMA");
+        }
+        // Temperature rows are authored only for the active porous profile.
+        if(profile!=4) {
+            const auto at=body.find("* SAT __TEMPERATURE__ 20\n");ASSERT_NE(at,std::string::npos);
+            body.erase(at,std::string("* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n").size());
+        }
+        Deck r=open(name,body);ASSERT_TRUE(r.opened)<<completionErrors(r);
+        ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
+        auto& router=r.eng->surfaceRouter2D();auto& gw=router.subsurface();auto& tr=gw.transport();auto& water=gw.state();
+        const double initial_water=water.storage(),initial_mass=tr.storage(0),initial_donor=gw.unreservedDrainableWater(0);
+        ASSERT_GT(initial_donor,0);auto nodes=r.eng->context().nodes;
+        nodes.depth[0]=0;nodes.volume[0]=0;nodes.inflow[0]=0;
+        auto sample=[&] {gw.resetNodeExchangeVolumes();gw.sampleNodeExchange(&nodes,1,1);};
+        if(node_first)sample();
+        const double link_water=.25*gw.unreservedDrainableWater(0);ASSERT_GT(link_water,0);
+        const double link_mass=gw.bookLinkGain(0,0,link_water);ASSERT_GT(link_mass,0);
+        if(tr.temp_row>=0)gw.bookLinkGain(0,tr.temp_row,link_water);
+        gw.bookLinkSeepage(0,-link_water);
+        if(!node_first)sample();
+        const double node_water=std::accumulate(water.nacc.begin(),water.nacc.end(),0.);
+        ASSERT_GT(node_water,0);EXPECT_LE(link_water+node_water,initial_donor*(1+1e-12));
+        gw.assignTiers(1,1);ASSERT_NO_THROW(gw.fireGwCells(0,1,router.state(),0));
+        double requested_in,requested_a,in_a,out_a,requested_b,out_b;
+        ASSERT_EQ(swmm_gw2d_boundary_water(r.e,0,&requested_in,&requested_a,&in_a,&out_a),SWMM_OK);
+        ASSERT_EQ(swmm_gw2d_boundary_water(r.e,1,&requested_in,&requested_b,&in_a,&out_b),SWMM_OK);
+        EXPECT_DOUBLE_EQ(requested_a,20);EXPECT_DOUBLE_EQ(requested_b,30);
+        ASSERT_GT(water.led_source_out,0);EXPECT_LT(water.led_source_out,10);
+        EXPECT_NEAR(out_a,2*water.led_source_out,1e-10);EXPECT_NEAR(out_b,3*water.led_source_out,1e-10);
+        EXPECT_NEAR(water.led_node,node_water,1e-10);EXPECT_NEAR(water.led_link,-link_water,1e-10);
+        EXPECT_NEAR(tr.lost_link[0],link_mass,1e-10);
+        double node_mass=0;const auto& delivery=gw.nodeExchangeMass();
+        for(int n=0;n<r.eng->context().n_nodes();++n)node_mass+=delivery[n];
+        EXPECT_NEAR(tr.lost_node[0],node_mass,1e-10);
+        const double water_out=node_water+link_water+water.led_source_out+out_a+out_b+water.led_deep;
+        EXPECT_NEAR(water.storage()+water_out,initial_water,1e-10*std::max(1.,initial_water));
+        EXPECT_NEAR(tr.ledgeredStorage(0)+tr.lost_link[0]+tr.lost_node[0]+tr.lost_source[0]+tr.boundary_out[0]+tr.lost_deep[0],
+                    initial_mass,1e-10*std::max(1.,initial_mass));
+        EXPECT_NEAR(tr.residual(0),0,1e-10*std::max(1.,initial_mass));
+        EXPECT_NEAR(water.continuityResidual(),0,1e-10*std::max(1.,initial_water));
+        for(double value:tr.layer_mass)if(tr.temp_row<0)EXPECT_GE(value,0);
+        for(int cell=0;cell<tr.n_cells;++cell)EXPECT_GE(tr.sat_mass[tr.idx(0,cell)],0);
+        if(profile==4) {double residual=0;ASSERT_EQ(swmm_heat_get_ground_values(r.e,SWMM_GROUND_HEAT_NORMALIZED_RESIDUAL,0,1,&residual),SWMM_OK);EXPECT_NEAR(residual,0,1e-10);}
+        metrics<<profile<<","<<sorption<<","<<node_first<<","<<node_water<<","<<link_water<<","<<water.led_source_out<<","<<out_a+out_b
+               <<","<<water.continuityResidual()<<","<<tr.residual(0)<<"\n";
+        finish(r);
+    }
+}
+
+TEST(GwIntegrated, UnequalGroundwaterClocksPreservePendingColdContactsAndExactRestart) {
+    for(const auto shape:{Mesh::Tri,Mesh::Quad,Mesh::Mixed}) {
+        SCOPED_TRACE(meshName(shape));
+        auto body=mappedPorousDeck("[OPTIONS]\nWATER_AGE ON\n[2D_OPTIONS]\nTRANSPORT_AGE YES\n"
+            "[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n"
+            "CELL 2 SAT TSS 2\nCELL 2 SAT __TEMPERATURE__ 5\nCELL 2 UNSAT __TEMPERATURE__ 5\n"
+            "[GW_TRANSPORT_OPTIONS]\nDISPERSION YES\nCONDUCTION YES\nLATERAL_CONDUCTION YES\n"
+            "SURFACE_THERMAL_BC ADIABATIC\nDEEP_THERMAL_BC ADIABATIC\n"
+            "[GW_TRANSPORT_PARAMS]\n* - - - - 0 0 .002 - -\n"
+            "[2D_AQUIFER]\nCELL 1 36 1 .45 .1 2 HG0 .8\n",shape);
+        const auto conductivity=body.find("*  0.000000001  1.0");ASSERT_NE(conductivity,std::string::npos);
+        body.replace(conductivity,std::string("*  0.000000001  1.0").size(),"*  3.6  1.0");
+        if(shape==Mesh::Quad) {
+            const auto a=body.find("[2D_VERTICES]"),b=body.find("[2D_INFILTRATION_DEFAULTS]");
+            ASSERT_NE(a,std::string::npos);ASSERT_NE(b,std::string::npos);
+            body.replace(a,b-a,"[2D_VERTICES]\n0 0 0\n5 0 0\n10 0 0\n0 10 0\n5 10 0\n10 10 0\n"
+                "[2D_QUADS]\n0 1 4 3 .03 0\n1 2 5 4 .03 0\n");
+        }
+        Deck a=open(std::string("unequal-clock-")+meshName(shape),body),b=open(std::string("unequal-clock-restored-")+meshName(shape),body);
+        ASSERT_TRUE(a.opened)<<completionErrors(a);ASSERT_TRUE(b.opened)<<completionErrors(b);
+        ASSERT_EQ(swmm_engine_initialize(a.e),SWMM_OK)<<completionErrors(a);
+        ASSERT_EQ(swmm_engine_initialize(b.e),SWMM_OK)<<completionErrors(b);
+        auto& ra=a.eng->surfaceRouter2D();auto& rb=b.eng->surfaceRouter2D();auto& ga=ra.subsurface();auto& gb=rb.subsurface();
+        for(auto* gw:{&ga,&gb}) {
+            for(int cell=0;cell<gw->state().n_cells;++cell)gw->state().dt_cell[cell]=cell==0?.4:cell==1?.05:.1;
+            gw->assignTiers(.05,4);ASSERT_EQ(gw->state().tier[0],3);ASSERT_EQ(gw->state().tier[1],0);
+        }
+        const double energy_before=totalGroundEnergy(ga),mass_before=ga.transport().storage(0);double incoming=0;
+        for(int tick=1;tick<=32;++tick) {
+            auto produce=[&](auto& gw) {
+                for(int tier=0;tier<4;++tier)if(tick%(1<<tier)==0)gw.fireGwFaces(tier,.05*(1<<tier));
+                const auto& t=gw.transport();std::vector<double> c(t.n_species,0);c[0]=3;c[t.age_row]=2;c[t.temp_row]=-4;
+                gw.bookLinkContact(0,.0001,c,gw.state().z_bed[0]+gw.state().zs[0]-.05,gw.state().z_bed[0]+gw.state().zs[0]-.05);
+            };
+            ASSERT_NO_THROW(produce(ga));incoming+=.0001;
+            if(tick==7) {
+                const auto saved=ga.transportRestartState();ASSERT_TRUE(gb.restoreTransportRestart(saved,true).empty());
+                EXPECT_EQ(saved,gb.transportRestartState());
+                double pending=0;for(int cell=0;cell<ga.state().n_cells;++cell)pending+=std::abs(ga.pendingHeat(cell));
+                EXPECT_GT(pending,0);
+            } else if(tick>7)ASSERT_NO_THROW(produce(gb));
+            for(int tier=0;tier<4;++tier)if(tick%(1<<tier)==0) {
+                const double dt=.05*(1<<tier),start=tick*.05-dt;
+                ASSERT_NO_THROW(ga.fireGwCells(tier,dt,ra.state(),start));
+                if(tick>=7)ASSERT_NO_THROW(gb.fireGwCells(tier,dt,rb.state(),start));
+            }
+            if(tick>=7)EXPECT_EQ(ga.transportRestartState(),gb.transportRestartState())<<tick;
+        }
+        EXPECT_NEAR(ga.transport().ledgeredStorage(0),mass_before+3*incoming,1e-10*std::max(1.,mass_before));
+        double pending_heat=0;for(int cell=0;cell<ga.state().n_cells;++cell)pending_heat+=ga.pendingHeat(cell);
+        EXPECT_NEAR(totalGroundEnergy(ga)+pending_heat,energy_before-4*incoming*ga.heat().water_capacity,1e-10*std::max(1.,std::abs(energy_before)));
+        for(int row:{0,ga.transport().age_row})EXPECT_NEAR(ga.transport().residual(row),0,1e-10*std::max(1.,ga.transport().continuityDenominator(row)));
+        EXPECT_NEAR(ga.state().continuityResidual(),0,1e-10*std::max(1.,ga.state().led_init_storage));
+        finish(a);finish(b);
+    }
+}
+
+TEST(GwIntegrated, HeterogeneousSkewedDiffusionConvergesToMatchedInterfaceEigenmode) {
+    fs::create_directories(kOutDir);
+    std::ofstream metrics(kOutDir/"heterogeneous_skewed_refinement.csv");ASSERT_TRUE(metrics.good());metrics.precision(17);
+    metrics<<"cells_per_axis,steps,dt,l2_error,ratio,water_residual,species_residual\n";
+    const double pi=std::acos(-1.),t=std::acos(std::sqrt(3./8)),kr=2*t,kl=4*t,amplitude=std::cos(2*t)/std::cos(t),lambda=.04*kr*kr;
+    const auto eigen=[&](double x){return x<.5?std::cos(kl*x):amplitude*std::cos(kr*(1-x));};
+    double previous=0;
+    for(int n:{8,16,32}) {
+        const double dx=1./n;auto body=forcingDeck("[GW_TRANSPORT_PARAMS]\n* - - - - 0 0 .01 - -\n");
+        std::ostringstream mesh;mesh.precision(17);mesh<<"[2D_VERTICES]\n";
+        for(int y=0;y<=n;++y)for(int x=0;x<=n;++x) {
+            const double u=x*dx,v=y*dx;
+            mesh<<u+.04*std::sin(2*pi*u)*std::sin(pi*v)<<" "<<v+.03*std::sin(2*pi*v)*std::sin(pi*u)<<" 0\n";
+        }
+        mesh<<"[2D_QUADS]\n";
+        for(int y=0;y<n;++y)for(int x=0;x<n;++x) {const int v=y*(n+1)+x;mesh<<v<<" "<<v+1<<" "<<v+n+2<<" "<<v+n+1<<" .03 0\n";}
+        const auto a=body.find("[2D_VERTICES]"),b=body.find("[2D_INFILTRATION_DEFAULTS]");ASSERT_NE(a,std::string::npos);ASSERT_NE(b,std::string::npos);body.replace(a,b-a,mesh.str());
+        body+="[2D_AQUIFER]\n";
+        for(int y=0;y<n;++y)for(int x=0;x<n;++x)body+="CELL "+std::to_string(y*n+x+1)+" .000000001 1 "+(x<n/2?std::string(".30"):std::string(".45"))+" .1 2 HG0 .3\n";
+        Deck r=open("heterogeneous-skewed-"+std::to_string(n),body);ASSERT_TRUE(r.opened)<<completionErrors(r);
+        ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
+        auto& router=r.eng->surfaceRouter2D();auto& gw=router.subsurface();auto& tr=gw.transport();const auto& grid=router.mesh();
+        for(int cell=0;cell<tr.n_cells;++cell) {const double x=grid.tri_cx[cell];tr.D_m[cell]=x<.5?.01:.04;tr.sat_mass[tr.idx(0,cell)]=(1+.2*eigen(x))*gw.satVolume(cell);}
+        tr.init_mass[0]=tr.storage(0);const int steps=int(std::ceil(1/(.05*dx*dx/.04)));const double dt=1./steps;
+        gw.assignTiers(dt,1);
+        for(int step=0;step<steps;++step) {gw.fireGwFaces(0,dt);gw.fireGwCells(0,dt,router.state(),step*dt);}
+        double square=0,area=0;
+        for(int cell=0;cell<tr.n_cells;++cell) {const double exact=1+.2*std::exp(-lambda)*eigen(grid.tri_cx[cell]);const double error=tr.sat_mass[tr.idx(0,cell)]/gw.satVolume(cell)-exact;square+=error*error*grid.tri_area[cell];area+=grid.tri_area[cell];}
+        const double error=std::sqrt(square/area);metrics<<n<<","<<steps<<","<<dt<<","<<error<<","<<(previous>0?previous/error:0)<<","<<gw.state().continuityResidual()<<","<<tr.residual(0)<<"\n";
+        EXPECT_LT(error,.002);if(previous>0)EXPECT_GT(previous/error,1.7);
+        EXPECT_NEAR(tr.residual(0),0,1e-10);EXPECT_NEAR(gw.state().continuityResidual(),0,1e-10);previous=error;finish(r);
+    }
+}
+
+
+TEST(GwIntegrated, InteriorLayerInjectionPreservesUniformQualityThroughCompressionCascade) {
+    for(const int layer:{1,2,4})for(const double volume:{.02,.1,.5,1.,2.,3.,4.,10.,100.}) {
+        SCOPED_TRACE(std::to_string(layer)+"/"+std::to_string(volume));
+        Deck r=open("interior-compression-"+std::to_string(layer)+"-"+std::to_string(volume),layeredDeck(
+            "[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n",Mesh::Quad));
+        ASSERT_TRUE(r.opened);ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
+        auto& router=r.eng->surfaceRouter2D();auto& gw=router.subsurface();const auto& t=gw.transport();const auto& w=gw.state();
+        ASSERT_GT(t.n_layers,layer);
+        const double elevation=w.z_bed[0]+w.zs[0]-(layer+.5)*(w.zs[0]-w.hg[0])/t.n_layers;
+        std::vector<double> composition(t.n_species,0);composition[0]=7;
+        const double initial=t.storage(0);gw.bookLinkContact(0,volume,composition,elevation,elevation);
+        gw.assignTiers(.1,1);ASSERT_NO_THROW(gw.fireGwCells(0,.1,router.state(),0));
+        for(int j=0;j<t.n_layers;++j) {
+            const double water=w.area[0]*(w.zs[0]-w.hg[0])/t.n_layers*w.theta_sigma[j*t.n_cells];
+            EXPECT_NEAR(t.layer_mass[t.layerIdx(0,j,0)],7*water,1e-9);
+        }
+        EXPECT_NEAR(t.sat_mass[0],7*gw.satVolume(0),1e-9);
+        EXPECT_NEAR(t.ledgeredStorage(0)+t.lost_dunne[0],initial+7*volume,1e-9);
+        EXPECT_NEAR(t.residual(0),0,1e-9);EXPECT_NEAR(w.continuityResidual(),0,1e-9);
+        finish(r);
+    }
 }
