@@ -1,0 +1,38 @@
+[TITLE]
+CRASH-02: no conduits; [XSECTIONS] placed above [WEIRS]
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+END_DATE             01/01/2020
+END_TIME             02:00:00
+REPORT_STEP          00:15:00
+ROUTING_STEP         5
+
+[STORAGE]
+;;Name  Elev  MaxDepth  InitDepth  Shape       Coeff  Expon  Const
+SU1     100   10        0          FUNCTIONAL  0      0      1000
+
+[OUTFALLS]
+;;Name  Elev  Type
+O1      95    FREE
+
+[XSECTIONS]
+;; Sections may appear in any order; this one comes before [WEIRS].
+;;Link  Shape      Geom1  Geom2  Geom3  Geom4
+W1      RECT_OPEN  3      5      0      0
+
+[WEIRS]
+;;Name  From  To  Type        CrestHt  Cd    Gated
+W1      SU1   O1  TRANSVERSE  0        3.33  NO
+
+[INFLOWS]
+;; A constant 5 cfs: at steady state the weir passes 5 cfs.
+;;Node  Constituent  Tseries  Type  Mfactor  Sfactor  Baseline
+SU1     FLOW         ""       FLOW  1.0      1.0      5.0
+
+[REPORT]
+NODES ALL
+LINKS ALL

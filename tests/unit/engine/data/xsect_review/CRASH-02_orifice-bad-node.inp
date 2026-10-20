@@ -1,0 +1,34 @@
+[TITLE]
+CRASH-02: no conduits; the orifice row names an undefined node
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+END_DATE             01/01/2020
+END_TIME             01:00:00
+REPORT_STEP          00:15:00
+ROUTING_STEP         5
+
+[STORAGE]
+;;Name  Elev  MaxDepth  InitDepth  Shape       Coeff  Expon  Const
+S1      0     10        2          FUNCTIONAL  0      0      1000
+
+[OUTFALLS]
+;;Name  Elev  Type
+O1      0     FREE
+
+[ORIFICES]
+;; "O1x" is a typo for O1, so this row is rejected (ERROR 209) and the
+;; orifice's own data are never stored.
+;;Name  From  To   Type  Offset  Cd    Gated
+OR1     S1    O1x  SIDE  0       0.65  NO
+
+[XSECTIONS]
+;; Standard section order: this row comes after the orifice's row.
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4
+OR1     CIRCULAR  0.5    0      0      0
+
+[REPORT]
+NODES ALL
