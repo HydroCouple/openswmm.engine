@@ -15,6 +15,19 @@ from ._enums import (CellScope, GroundwaterVariable, GroundwaterLedger,
                      GroundwaterZone, GroundwaterSpeciesLedger)
 
 cdef extern from "openswmm/engine/openswmm_gw2d.h":
+    ctypedef struct SWMM_GwExecutionStatus:
+        unsigned int struct_size
+        int active
+        unsigned int available_operators
+        unsigned int executed_operators
+        unsigned int host_owned_operations
+        int effective_threads
+        unsigned long long accepted_batches
+        unsigned long long accepted_cells
+        char recharge_backend[16]
+        char profile[128]
+        char detail[256]
+    int swmm_gw2d_get_execution_status(SWMM_Engine,SWMM_GwExecutionStatus*) nogil
     ctypedef struct SWMM_GwBoundary:
         int cell
         int edge
@@ -311,6 +324,23 @@ class Groundwater(EngineView):
         cdef int active=0
         _check(swmm_gw2d_is_active(_h(self), &active))
         return bool(active)
+
+    @property
+    def execution_status(self):
+        """Actual recharge execution, distinct from the surface backend.
+
+        Only raw CLOSED_FORM recharge may use the host OpenMP extension.
+        Water/receipts, transport, reactions and heat remain host-owned.
+        Runtime counters are diagnostics, not persisted simulation inventories.
+        """
+        cdef SWMM_GwExecutionStatus status
+        status.struct_size=sizeof(SWMM_GwExecutionStatus)
+        _check(swmm_gw2d_get_execution_status(_h(self),&status))
+        return dict(active=bool(status.active),available_operators=status.available_operators,
+                    executed_operators=status.executed_operators,host_owned_operations=status.host_owned_operations,
+                    effective_threads=status.effective_threads,accepted_batches=status.accepted_batches,
+                    accepted_cells=status.accepted_cells,recharge_backend=(<bytes>status.recharge_backend).decode('utf-8','replace'),
+                    profile=(<bytes>status.profile).decode('utf-8','replace'),detail=(<bytes>status.detail).decode('utf-8','replace'))
 
     @property
     def dimensions(self):

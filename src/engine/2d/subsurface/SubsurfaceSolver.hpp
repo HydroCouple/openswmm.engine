@@ -71,6 +71,7 @@
 #define OPENSWMM_ENGINE_2D_SUBSURFACE_SOLVER_HPP
 
 #include "SigmaColumn.hpp"
+#include "../solver/GwRechargeBackend.hpp"
 #include "../../transport/components/ReactionModule/ReactionIntegrator.hpp"
 #include "SurfaceExchange.hpp"
 #include "../gw/GwSourceForcing.hpp"
@@ -158,6 +159,12 @@ public:
     void bookAreaEt(int cell,double dt,double potential,double owner_evaporation,double soil_demand);
 
     bool active() const noexcept { return state_.active; }
+    void setRechargeBackend(GwRechargeBackend backend) {recharge_backend_=std::move(backend);}
+    const GwRechargeBackend& rechargeBackend() const noexcept {return recharge_backend_;}
+    uint64_t rechargeBatches() const noexcept {return recharge_batches_;}
+    uint64_t rechargeCells() const noexcept {return recharge_cells_;}
+    int rechargeThreads() const noexcept {return recharge_backend_.threads?recharge_backend_.threads():0;}
+
     /// Mesh mode: 1 where a [2D_AQUIFER] row (`*`, TAG or CELL) covers the
     /// cell. An uncovered cell has no aquifer: no storage, no lateral faces,
     /// and its infiltration stays with the surface model. All 1 in
@@ -634,6 +641,14 @@ private:
     const MeshData*      mesh_  = nullptr;
     const InertialEdges* edges_ = nullptr;
     const SolverOptions2D* opts_ = nullptr;
+
+    GwRechargeBackend recharge_backend_;
+    std::vector<OpenSwmmGwRechargeInputV1> recharge_inputs_;
+    std::vector<double> recharge_values_;
+    std::vector<int> recharge_slots_;
+    uint64_t recharge_batches_=0,recharge_cells_=0;
+    void prepareRechargeBatch(const std::vector<int>&);
+    double rawRecharge(int cell,const soil::Params&,double length) const noexcept;
 
     std::vector<std::vector<int>> cells_by_tier_;
     std::vector<std::vector<int>> faces_by_tier_;

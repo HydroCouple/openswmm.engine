@@ -43,6 +43,7 @@
  */
 
 #include <gtest/gtest.h>
+#include "2d/solver/SurfaceSolverFactory.hpp"
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -887,4 +888,36 @@ TEST(CoupledGroundwaterRk2, FullStepAndTwoHalfStepsDifferAtThirdLocalOrder) {
         // gate on four successive steps in the asymptotic range.
         if(previous>0&&dt<=.1)EXPECT_GT(previous/error,7.);previous=error;
     }
+}
+
+TEST(CoupledGroundwaterRk2, OptionalOpenmpRechargePreservesStagesRestartAndRollback) {
+    // This hardware gate is run with OPENSWMM_2D_BACKEND=omp. Ordinary CPU
+    // suites do not require a separately installed optional plugin.
+    CoupledRkRig a,b,cpu;a.init(.05,.005,.0005,.2);b.init(.05,.005,.0005,.2);cpu.init(.05,.005,.0005,.2);
+    auto backend=makeGwRechargeBackend(a.opts,a.mesh.n_cells());
+    if(!backend.evaluate){ASSERT_FALSE(std::getenv("OPENSWMM_GW_TEST_REQUIRE_PLUGIN"));GTEST_SKIP()<<backend.diagnostic;}
+    a.gw.setRechargeBackend(backend);b.gw.setRechargeBackend(backend);
+    const auto saved=rk2Output("omp-accepted.chk"),restored=rk2Output("omp-restored.chk"),before=rk2Output("omp-before.chk");
+    const double initial=a.total();
+    for(int k=0;k<20;++k) {
+        a.solver.advance(k*.05,(k+1)*.05);cpu.solver.advance(k*.05,(k+1)*.05);
+        EXPECT_EQ(a.state.volume,cpu.state.volume);EXPECT_EQ(a.gw.state().hg,cpu.gw.state().hg);EXPECT_EQ(a.gw.state().hu,cpu.gw.state().hu);
+        ASSERT_TRUE(a.solver.saveCheckpoint(saved.string()).empty());
+        if(k==7) {
+            ASSERT_TRUE(cpu.solver.saveCheckpoint(before.string()).empty());
+            EXPECT_FALSE(cpu.solver.loadCheckpoint(saved.string()).empty());
+            ASSERT_TRUE(cpu.solver.saveCheckpoint(restored.string()).empty());EXPECT_EQ(rk2File(before),rk2File(restored));
+            ASSERT_TRUE(b.solver.loadCheckpoint(saved.string()).empty());EXPECT_EQ(b.gw.rechargeCells(),0u);
+        } else if(k>7)b.solver.advance(k*.05,(k+1)*.05);
+        if(k>=7) {ASSERT_TRUE(b.solver.saveCheckpoint(restored.string()).empty());EXPECT_EQ(rk2File(saved),rk2File(restored));}
+    }
+    EXPECT_GT(a.gw.rechargeCells(),0u);EXPECT_GT(b.gw.rechargeCells(),0u);
+    EXPECT_NEAR(a.total()+a.gw.state().led_deep,initial,1e-10*initial);
+    GwResolvedSource bad;bad.cells={{0,1}};bad.flow.constant=1e308;a.gw.setSources({bad});
+    const auto batches=a.gw.rechargeBatches(),cells=a.gw.rechargeCells();
+    const auto state=ExplicitInertialSolverTestAccess::state(a.solver),volume=a.state.volume;
+    EXPECT_THROW(a.solver.advance(1,5),std::runtime_error);
+    EXPECT_EQ(a.gw.rechargeBatches(),batches);EXPECT_EQ(a.gw.rechargeCells(),cells);
+    EXPECT_EQ(a.state.volume,volume);EXPECT_EQ(ExplicitInertialSolverTestAccess::state(a.solver),state);
+    a.gw.setSources({});ASSERT_NO_THROW(a.solver.advance(1,1.05));
 }

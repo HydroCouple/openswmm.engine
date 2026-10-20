@@ -98,6 +98,21 @@ bool ieq(const char* a, const char* b) {
 
 extern "C" {
 
+SWMM_ENGINE_API int swmm_gw2d_get_execution_status(SWMM_Engine engine,SWMM_GwExecutionStatus* status) {
+    AQ_SOLVER(engine);
+    if(!status||status->struct_size!=sizeof(*status))return SWMM_ERR_BADPARAM;
+    SWMM_GwExecutionStatus result{};result.struct_size=sizeof(result);result.active=1;
+    const auto& backend=gw.rechargeBackend();
+    result.available_operators=backend.evaluate?backend.capabilities.operators:0;
+    result.executed_operators=gw.rechargeCells()>0?SWMM_GW2D_OP_CLOSED_FORM_RECHARGE:0;
+    result.host_owned_operations=15u;result.effective_threads=backend.evaluate?gw.rechargeThreads():0;
+    result.accepted_batches=gw.rechargeBatches();result.accepted_cells=gw.rechargeCells();
+    copy_to(backend.evaluate?"omp":"cpu",result.recharge_backend,sizeof(result.recharge_backend));
+    copy_to(backend.evaluate?backend.capabilities.label:"CPU groundwater operators",result.profile,sizeof(result.profile));
+    copy_to(backend.diagnostic,result.detail,sizeof(result.detail));
+    *status=result;return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_gw2d_boundary_count(SWMM_Engine engine) {
     AQ_CFG(engine);return static_cast<int>(cfg.boundaries.size());
 }

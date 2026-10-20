@@ -46,7 +46,16 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
         a(t.n_species,t.n_cells,t.n_pollut,t.n_msx,t.age_row,t.temp_row,t.dispersion_on);
     a.fixed(t.row_names,t.alpha_L,t.alpha_T,t.D_m,t.rho_b,t.kd,t.decay);
         auto thermal=checkpoint::groundHeatModelIdentity(heat_);a(thermal);
+        if(recharge_backend_.evaluate) {
+            std::string operator_profile="host OpenMP CLOSED_FORM recharge v1";a(operator_profile);
+        }
         return;
+    }
+    if(a.reading()) {
+        // Operator caches/counters are process-local diagnostics. Canonical
+        // state is restored below; the next batch recomputes its pure inputs.
+        recharge_inputs_.clear();recharge_values_.clear();std::fill(recharge_slots_.begin(),recharge_slots_.end(),-1);
+        recharge_batches_=recharge_cells_=0;
     }
     a.fixed(s.hg,s.hu,s.theta_sigma,s.q0_last,s.qnode_last,s.qlat_last,s.qdeep_last,s.qet_last,s.dunne_last,
             s.qplus_last,s.infil_capacity,s.infil_remaining,s.infil_refresh,s.infil_interval,s.wetting_front,

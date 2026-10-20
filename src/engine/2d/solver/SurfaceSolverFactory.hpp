@@ -56,6 +56,7 @@
 
 #include <memory>
 #include <string>
+#include "GwRechargeBackend.hpp"
 
 namespace openswmm::twoD {
 
@@ -87,6 +88,10 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
                                                   std::string* chosen = nullptr,
                                                   int n_cells = 0,
                                                   bool plugin_capable = true);
+
+/// Optional stateless host recharge operator. Surface/water/transfer ownership
+/// stays with the built-in marcher; absent/unsupported extensions select CPU.
+GwRechargeBackend makeGwRechargeBackend(const SolverOptions2D&,int n_cells);
 
 } // namespace openswmm::twoD
 

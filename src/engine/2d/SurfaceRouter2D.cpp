@@ -1749,6 +1749,17 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         for(const auto& cell:subsurface_.heat().cells)
             if(!cell.column.energy.empty()&&!cell.surface_owned)
                 throw std::runtime_error("[2D ground heat] SURFACE_WATER requires active HEAT_MODEL COUPLED and BED_HEAT_MODEL GROUND_COLUMN.");
+    if(subsurface_.active()) {
+        bool closed_form=false;
+        const auto& water=subsurface_.state();
+        for(int i=0;i<water.n_cells;++i)closed_form|=subsurface_.covers(i)&&water.closure[i]==int8_t(GwClosure::CLOSED_FORM);
+        GwRechargeBackend backend;
+        if(closed_form)backend=makeGwRechargeBackend(options_,water.n_cells);
+        else backend.diagnostic="No CLOSED_FORM cells; groundwater operators use CPU";
+        subsurface_.setRechargeBackend(std::move(backend));
+        if(subsurface_.rechargeBackend().evaluate)
+            ctx.warnings.push_back("Groundwater raw recharge: Kokkos OpenMP host operator available; water, receipts, transport, reactions and heat remain CPU-owned.");
+    }
     if(subsurface_.active()&&options_.reconstruction_order==2) {
         auto* cpu=dynamic_cast<ExplicitInertialSolver*>(solver_.get());
         if(options_.momentum!=Momentum2D::FULL_SWE||!cpu||!coupling_points_.empty()||

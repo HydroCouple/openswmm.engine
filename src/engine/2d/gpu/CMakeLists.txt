@@ -55,10 +55,14 @@ if(OPENSWMM_GPU_BACKEND STREQUAL "stub")
 elseif(OPENSWMM_GPU_BACKEND STREQUAL "omp")
 
     find_package(Kokkos REQUIRED)
+    if(NOT Kokkos_ENABLE_OPENMP)
+        message(FATAL_ERROR "OPENSWMM_GPU_BACKEND=omp requires a Kokkos OpenMP build")
+    endif()
 
     add_library(openswmm_gpu_omp SHARED
         GpuPluginOmp.cpp
         ExplicitKokkosSurfaceSolver.cpp
+        ../subsurface/SoilCharacteristic.cpp
         ../solver/InertialEdges.cpp)
     target_include_directories(openswmm_gpu_omp PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../solver

@@ -35,6 +35,8 @@ live output reading. Guides document their units, lifecycle and immutable
 snapshot behavior under `python/docs/guide/`. The strict API coverage check is
 `python python/scripts/api_drift_audit.py --strict` from the repository root.
 
+After initialization, `solver.surface2d.groundwater.execution_status` reports available and executed groundwater operators, accepted evaluation counts, effective host threads and CPU-owned companions. The optional OpenMP profile computes raw CLOSED_FORM recharge only; the surface backend label does not describe groundwater operator use.
+
 For local validation use the `openswmm` Conda environment. After building and
 installing to a staging prefix, run
 `conda run -n openswmm python python/scripts/test_staged_package.py STAGE python/tests --ignore=python/tests/typing`.

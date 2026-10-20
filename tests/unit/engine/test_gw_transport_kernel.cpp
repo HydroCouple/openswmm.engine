@@ -66,6 +66,7 @@
 #include "2d/subsurface/SubsurfaceSolver.hpp"
 #include "2d/subsurface/GroundwaterDispersion.hpp"
 #include "2d/subsurface/SubsurfaceSections.hpp"
+#include "2d/solver/SurfaceSolverFactory.hpp"
 #include "transport/TransportPolicy.hpp"
 
 namespace fs = std::filesystem;
@@ -3201,4 +3202,158 @@ TEST(GwIntegrated, AvailableOpenmpPluginIsExecutedByASurfaceOnlyPositiveControl)
     EXPECT_NEAR(std::accumulate(surface.volume.begin(),surface.volume.end(),0.),initial,1e-10);
     ASSERT_EQ(swmm_2d_get_run_stats(r.e,&stats),SWMM_OK);EXPECT_GT(stats.steps,0);
     finish(r);
+}
+
+
+TEST(GwRechargePlugin, AllSoilLawsMatchScalarPhysicsAndMalformedInputsAreAtomic) {
+    GroundwaterBackendOverride select("omp");openswmm::twoD::SolverOptions2D options;
+    auto backend=openswmm::twoD::makeGwRechargeBackend(options,100000);
+    if(!backend.evaluate) {
+        ASSERT_FALSE(std::getenv("OPENSWMM_GW_TEST_REQUIRE_PLUGIN"))<<backend.diagnostic;
+        GTEST_SKIP()<<backend.diagnostic;
+    }
+    std::vector<OpenSwmmGwRechargeInputV1> input;std::vector<double> expected;
+    for(int material:{0,1})for(int law=0;law<4;++law)for(double ks:{0.,1e-6,.01})for(double length:{1e-12,1e-4,.1,1.,10.})
+    for(double fraction:{0.,.1,.35,.45}) {
+        OpenSwmmGwRechargeInputV1 v{};v.struct_size=sizeof(v);v.law=law;v.Ks=ks;v.theta_s=.45;v.theta_r=.1;
+        v.alpha=material?1.3:2;v.psi_b=material?.15:.2;v.lambda=material?.6:.4;v.vg_n=material?2.1:1.6;v.vg_L=material?-.3:.5;
+        if(material){v.theta_s=.55;v.theta_r=.08;}v.length=length;v.hu=fraction*length;
+        openswmm::twoD::soil::Params p;p.law=static_cast<openswmm::twoD::SoilChar>(law);p.Ks=ks;
+        p.theta_s=v.theta_s;p.theta_r=v.theta_r;p.alpha=v.alpha;p.psi_b=v.psi_b;p.lambda=v.lambda;p.vg_n=v.vg_n;p.vg_L=v.vg_L;
+        expected.push_back(openswmm::twoD::soil::rechargeQ0(p,length,v.hu));input.push_back(v);
+    }
+    std::vector<double> actual(input.size(),-123.);ASSERT_EQ(backend.evaluate(input.data(),int(input.size()),actual.data(),4),0);
+    for(std::size_t i=0;i<actual.size();++i)EXPECT_NEAR(actual[i],expected[i],1e-12*std::max(1.,std::abs(expected[i])))<<i;
+    RecordProperty("evaluated_inputs",input.size());
+    ASSERT_GT(backend.threads(),0);RecordProperty("effective_threads",backend.threads());
+    if(const char* value=std::getenv("OPENSWMM_GW_TEST_EXPECT_THREADS"))EXPECT_EQ(backend.threads(),std::atoi(value));
+    for(int mutation=0;mutation<4;++mutation) {
+        auto bad=input;if(mutation==0)bad.back().struct_size=0;
+        if(mutation==1)bad.back().law=4;if(mutation==2)bad.back().hu=-1;
+        if(mutation==3)bad.back().alpha=std::numeric_limits<double>::quiet_NaN();
+        std::fill(actual.begin(),actual.end(),-123.);
+        EXPECT_NE(backend.evaluate(bad.data(),int(bad.size()),actual.data(),4),0);
+        EXPECT_TRUE(std::all_of(actual.begin(),actual.end(),[](double x){return x==-123.;}));
+    }
+}
+
+TEST(GwRechargePlugin, ActualStatusAndSourceKnotsPreserveCanonicalCpuState) {
+    std::string body=forcingDeck("[OPTIONS]\nEND_DATE 01/01/2026\nEND_TIME 00:00:10\n"
+        "[TIMESERIES]\nPULSE 0:00:00 .002\nPULSE 0:00:01 -.001\nPULSE 0:00:02 .003\nPULSE 0:00:04 -.002\nPULSE 0:00:10 .001\n"
+        "[GW_SOURCES]\nW CELL 1 FLOW PULSE TSS CONC 3\n");
+    const auto conductivity=body.find("*  0.000000001  1.0");ASSERT_NE(conductivity,std::string::npos);
+    body.replace(conductivity,std::string("*  0.000000001  1.0").size(),"*  36.0  1.0");
+    std::string reference;
+    for(const char* mode:{"cpu","omp"}) {
+        GroundwaterBackendOverride select(mode);Deck r=open(std::string("recharge-knots-")+mode,body);ASSERT_TRUE(r.opened);
+        ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
+        SWMM_GwExecutionStatus status{};status.struct_size=sizeof(status);
+        ASSERT_EQ(swmm_gw2d_get_execution_status(r.e,&status),SWMM_OK);
+        if(std::string(mode)=="omp"&&status.available_operators==0) {
+            finish(r);ASSERT_FALSE(std::getenv("OPENSWMM_GW_TEST_REQUIRE_PLUGIN"));GTEST_SKIP()<<status.detail;
+        }
+        EXPECT_EQ(status.executed_operators,0u);EXPECT_EQ(status.accepted_batches,0u);
+        ASSERT_EQ(swmm_engine_start(r.e,0),SWMM_OK);r.started=true;double elapsed=0;int code;
+        do{code=swmm_engine_step(r.e,&elapsed);}while(code==SWMM_OK&&elapsed>0);
+        ASSERT_EQ(code,SWMM_OK)<<completionErrors(r);
+        ASSERT_EQ(swmm_gw2d_get_execution_status(r.e,&status),SWMM_OK);
+        EXPECT_EQ(status.host_owned_operations,15u);
+        if(std::string(mode)=="omp") {EXPECT_GT(status.accepted_batches,0u);EXPECT_GT(status.accepted_cells,0u);EXPECT_GT(status.effective_threads,0);EXPECT_EQ(status.executed_operators,1u);}
+        else {EXPECT_EQ(status.accepted_batches,0u);EXPECT_EQ(status.executed_operators,0u);}
+        const auto& gw=r.eng->surfaceRouter2D().subsurface();auto copy=gw;openswmm::detail::CompletedSourceArchive a;copy.checkpoint(a,false);
+        if(reference.empty())reference=a.bytes();else EXPECT_EQ(reference,a.bytes());
+        EXPECT_NEAR(gw.state().continuityResidual(),0,1e-9);EXPECT_NEAR(gw.transport().residual(0),0,1e-8);
+        auto unchanged=status;unchanged.struct_size=0;status=unchanged;
+        EXPECT_EQ(swmm_gw2d_get_execution_status(r.e,&status),SWMM_ERR_BADPARAM);
+        EXPECT_EQ(std::memcmp(&status,&unchanged,sizeof(status)),0);
+        finish(r);
+    }
+}
+namespace {
+int invalidRechargeOutput(const OpenSwmmGwRechargeInputV1*,int n,double* output,int) {
+    for(int i=0;i<n;++i)output[i]=std::numeric_limits<double>::quiet_NaN();return 0;
+}
+}
+TEST(GwRechargePlugin, NonfinitePluginOutputIsDiscardedBeforeAnyPhysicalUpdate) {
+    GroundwaterBackendOverride cpu("cpu");const auto body=forcingDeck("[GW_SOURCES]\nW CELL 1 FLOW .001 TSS CONC 3\n");
+    Deck a=open("recharge-bad-output",body),b=open("recharge-cpu-control",body);ASSERT_TRUE(a.opened);ASSERT_TRUE(b.opened);
+    ASSERT_EQ(swmm_engine_initialize(a.e),SWMM_OK);ASSERT_EQ(swmm_engine_initialize(b.e),SWMM_OK);
+    auto& ga=a.eng->surfaceRouter2D().subsurface();auto& gb=b.eng->surfaceRouter2D().subsurface();
+    openswmm::twoD::GwRechargeBackend bad;bad.evaluate=invalidRechargeOutput;bad.threads=+[]{return 4;};ga.setRechargeBackend(bad);
+    for(auto* r:{&a,&b}) {
+        ASSERT_EQ(swmm_engine_start(r->e,0),SWMM_OK);r->started=true;double elapsed=0;int code;
+        do{code=swmm_engine_step(r->e,&elapsed);}while(code==SWMM_OK&&elapsed>0);ASSERT_EQ(code,SWMM_OK);
+    }
+    EXPECT_FALSE(ga.rechargeBackend().evaluate);EXPECT_EQ(ga.rechargeBatches(),0u);
+    SWMM_GwExecutionStatus status{};status.struct_size=sizeof(status);ASSERT_EQ(swmm_gw2d_get_execution_status(a.e,&status),SWMM_OK);
+    EXPECT_EQ(status.effective_threads,0);EXPECT_EQ(std::string(status.recharge_backend),"cpu");
+    auto ca=ga,cb=gb;openswmm::detail::CompletedSourceArchive sa,sb;ca.checkpoint(sa,false);cb.checkpoint(sb,false);
+    EXPECT_EQ(sa.bytes(),sb.bytes());finish(a);finish(b);
+}
+
+TEST(GwRechargePlugin, PendingRestartIsExactAndCrossOperatorRefusalIsAtomic) {
+    GroundwaterBackendOverride select("omp");
+    const auto body=forcingDeck("[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST .0001\n"
+        "[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 3\n");
+    Deck a=open("recharge-restart",body),b=open("recharge-restored",body);
+    ASSERT_TRUE(a.opened);ASSERT_TRUE(b.opened);
+    ASSERT_EQ(swmm_engine_initialize(a.e),SWMM_OK);ASSERT_EQ(swmm_engine_initialize(b.e),SWMM_OK);
+    auto& ra=a.eng->surfaceRouter2D();auto& rb=b.eng->surfaceRouter2D();auto& ga=ra.subsurface();auto& gb=rb.subsurface();
+    if(!ga.rechargeBackend().evaluate){finish(a);finish(b);ASSERT_FALSE(std::getenv("OPENSWMM_GW_TEST_REQUIRE_PLUGIN"));GTEST_SKIP();}
+    ga.assignTiers(.1,1);gb.assignTiers(.1,1);
+    for(int step=0;step<24;++step) {
+        ga.fireGwFaces(0,.1);
+        if(step==7) {
+            const auto saved=ga.transportRestartState();ASSERT_FALSE(saved.empty());
+            const auto fresh=gb.transportRestartState();const auto backend=gb.rechargeBackend();
+            gb.setRechargeBackend({});const auto cpu=gb.transportRestartState();
+            EXPECT_FALSE(gb.restoreTransportRestart(saved,true).empty());EXPECT_EQ(gb.transportRestartState(),cpu);
+            gb.setRechargeBackend(backend);EXPECT_EQ(gb.transportRestartState(),fresh);
+            EXPECT_FALSE(gb.restoreTransportRestart(saved.substr(0,saved.size()/2),true).empty());
+            EXPECT_EQ(gb.transportRestartState(),fresh);
+            ASSERT_TRUE(gb.restoreTransportRestart(saved,true).empty());EXPECT_EQ(gb.transportRestartState(),saved);
+            EXPECT_EQ(gb.rechargeBatches(),0u);EXPECT_EQ(gb.rechargeCells(),0u);
+        } else if(step>7)gb.fireGwFaces(0,.1);
+        ga.fireGwCells(0,.1,ra.state(),step*.1);
+        if(step>=7) {
+            gb.fireGwCells(0,.1,rb.state(),step*.1);
+            EXPECT_EQ(ga.transportRestartState(),gb.transportRestartState())<<step;
+        }
+    }
+    EXPECT_GT(gb.rechargeCells(),0u);EXPECT_NEAR(ga.transport().residual(0),0,1e-8);
+    EXPECT_NEAR(ga.state().continuityResidual(),0,1e-9);finish(a);finish(b);
+}
+
+TEST(GwRechargePlugin, HostReactiveAndPorousOwnersPreserveCpuCanonicalState) {
+    const std::string laws="* SAT A RATE -.001*A\n* SAT B RATE .001*A\n"
+        "* UNSAT A RATE -.001*A\n* UNSAT B RATE .001*A\n";
+    for(bool porous:{false,true}) {
+        auto body=porousReactorDeck(laws);
+        if(!porous) {
+            const auto at=body.find("THERMAL_MODEL POROUS_EQUILIBRIUM");ASSERT_NE(at,std::string::npos);
+            body.replace(at,std::string("THERMAL_MODEL POROUS_EQUILIBRIUM").size(),"THERMAL_MODEL WATER_ONLY");
+        }
+        std::string reference;
+        for(const char* mode:{"cpu","omp"}) {
+            GroundwaterBackendOverride select(mode);Deck r=open(std::string("recharge-host-")+mode+(porous?"-porous":"-bulk"),body);
+            ASSERT_TRUE(r.opened)<<completionErrors(r);ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
+            auto& gw=r.eng->surfaceRouter2D().subsurface();
+            if(std::string(mode)=="omp"&&!gw.rechargeBackend().evaluate){finish(r);ASSERT_FALSE(std::getenv("OPENSWMM_GW_TEST_REQUIRE_PLUGIN"));GTEST_SKIP();}
+            ASSERT_TRUE(run(r))<<completionErrors(r);ASSERT_EQ(swmm_engine_end(r.e),SWMM_OK);r.started=false;
+            const auto& tr=gw.transport();const int a=tr.rowIndex("A"),b=tr.rowIndex("B");ASSERT_GE(a,0);ASSERT_GE(b,0);
+            const double initial=tr.init_mass[a];
+            EXPECT_NEAR(tr.ledgeredStorage(a)+tr.ledgeredStorage(b),initial,initial*1e-10);
+            EXPECT_GT(tr.ledgeredStorage(b),0);EXPECT_NEAR(tr.residual(a),0,1e-8);EXPECT_NEAR(tr.residual(b),0,1e-8);
+            auto copy=gw;openswmm::detail::CompletedSourceArchive state;copy.checkpoint(state,false);
+            if(reference.empty())reference=state.bytes();else {EXPECT_EQ(reference,state.bytes());EXPECT_GT(gw.rechargeCells(),0u);}
+            finish(r);
+        }
+    }
+}
+
+TEST(GwRechargePlugin, AutoRetainsScalarUntilIntegratedPerformanceIsQualified) {
+    GroundwaterBackendOverride select(nullptr);openswmm::twoD::SolverOptions2D options;
+    options.backend=openswmm::twoD::Backend2D::AUTO;
+    auto backend=openswmm::twoD::makeGwRechargeBackend(options,1000000);
+    EXPECT_FALSE(backend.evaluate);EXPECT_NE(backend.diagnostic.find("AUTO retains CPU"),std::string::npos);
 }

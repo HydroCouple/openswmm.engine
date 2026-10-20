@@ -31,7 +31,7 @@ The source version is **6.0.0-alpha.4**. The following summarizes the implementa
 - **LIDs as storage nodes:** layered controls connected through ordinary hydraulic links, independent outlet controls, layer treatment, and classical or Richards-column flow. See the [storage-node LID manual](docs/manuals/engine/sections/Chapter6-LidStorageNodes.md) for routing and transport restrictions.
 - **Persistence and coupling:** SWMM input files, optional GeoPackage and HDF5 model I/O, binary and 2D HDF5 results, and hot-start/checkpoint support, including native coupled thermal state for supported configurations. Optional [HydroCouple components](docs/COMPONENT_ENGINE.md) provide metadata inspection and qualified CPU 1D execution and outfall transfers.
 
-Kokkos OpenMP, CUDA, HIP and SYCL surface-solver plugins load separately from the core engine. The default source build includes the OpenMP plugin; device backends need their matching toolchains. Groundwater, transport and coupled heat configurations can require the CPU path; backend support is not interchangeable. See the [2D CPU implementation and qualification](docs/manuals/engine/sections/Chapter7-TwoDimensionalCpu.md).
+Kokkos OpenMP, CUDA, HIP and SYCL surface-solver plugins load separately from the core engine. The default source build includes the OpenMP plugin; device backends need their matching toolchains. An optional host OpenMP operator computes raw CLOSED_FORM groundwater recharge; water, transport, reactions and heat retain CPU ownership. Other groundwater acceleration remains outstanding; backend support is not interchangeable. See the [2D CPU implementation and qualification](docs/manuals/engine/sections/Chapter7-TwoDimensionalCpu.md).
 
 ## Quick start with Python
 

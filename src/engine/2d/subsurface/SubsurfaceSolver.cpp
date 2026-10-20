@@ -389,6 +389,8 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh,
     pending_surface_.clear();
     accumulators_pending_ = false;
     state_.active = true;
+    recharge_backend_={};recharge_inputs_.clear();recharge_values_.clear();recharge_slots_.assign(n,-1);
+    recharge_batches_=recharge_cells_=0;
     // Seed the tier lists so the kernel is usable BEFORE the first
     // syncAndRebuild. dt0 is not known yet, so everything starts on the
     // finest rung — conservative, and it means a solver that is initialized
@@ -1737,7 +1739,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     } else if (cl == GwClosure::ENSLAVED) {
         q0 = q_in - q_et;
     } else if (L0 > 0.0) {
-        q0 = soil::rechargeQ0(p, std::max(L0, kTiny), state_.hu[u]);
+        q0 = rawRecharge(i,p,std::max(L0,kTiny));
         // G-X4 (2026-09-20): …and when the FLOOR binds, the pairing above is
         // the floored number, not the raw content. A column already at θ_s
         // just under the table (θ_s − θ_bot → 0) otherwise loses
@@ -2949,6 +2951,7 @@ void SubsurfaceSolver::fireGwCells(int tier, double dt, SurfaceStateData& surf, 
 }
 void SubsurfaceSolver::fireGwCellList(const std::vector<int>& cells, double dt, SurfaceStateData& surf,
                                     double time, double accepted_end) {
+    prepareRechargeBatch(cells);
     for (const int i : cells) {
         const auto u = static_cast<std::size_t>(i);
         const bool exact=accepted_end>=0 && (source_owned_[u] || lid_receipts_enabled_);
@@ -3034,6 +3037,41 @@ void SubsurfaceSolver::settle(SurfaceStateData& surf) {
     accumulators_pending_ = false;
 }
 
+
+void SubsurfaceSolver::prepareRechargeBatch(const std::vector<int>& cells) {
+    if(!recharge_backend_.evaluate)return;
+    recharge_inputs_.clear();
+    for(int cell:cells) {
+        recharge_slots_[cell]=-1;
+        if(state_.closure[cell]!=int8_t(GwClosure::CLOSED_FORM))continue;
+        const double length=state_.zs[cell]-state_.hg[cell];if(!(length>0))continue;
+        const auto p=paramsOf(cell);OpenSwmmGwRechargeInputV1 v{};v.struct_size=sizeof(v);v.law=int(p.law);
+        v.Ks=p.Ks;v.theta_s=p.theta_s;v.theta_r=p.theta_r;v.alpha=p.alpha;v.psi_b=p.psi_b;
+        v.lambda=p.lambda;v.vg_n=p.vg_n;v.vg_L=p.vg_L;v.length=std::max(length,kTiny);v.hu=state_.hu[cell];
+        recharge_slots_[cell]=int(recharge_inputs_.size());recharge_inputs_.push_back(v);
+    }
+    if(recharge_inputs_.empty())return;
+    recharge_values_.resize(recharge_inputs_.size());
+    const int rc=recharge_backend_.evaluate(recharge_inputs_.data(),int(recharge_inputs_.size()),recharge_values_.data(),opts_?opts_->num_threads:1);
+    if(rc!=0||std::any_of(recharge_values_.begin(),recharge_values_.end(),[](double x){return !std::isfinite(x);})) {
+        std::fill(recharge_slots_.begin(),recharge_slots_.end(),-1);recharge_backend_.evaluate=nullptr;
+        recharge_backend_.diagnostic="Recharge extension failed validation; outputs discarded and CPU computation retained";
+        return;
+    }
+    ++recharge_batches_;recharge_cells_+=recharge_inputs_.size();
+}
+double SubsurfaceSolver::rawRecharge(int cell,const soil::Params& p,double length) const noexcept {
+    const int slot=recharge_backend_.evaluate&&std::size_t(cell)<recharge_slots_.size()?recharge_slots_[cell]:-1;
+    // Source/boundary knots can advance a cell more than once in a batch.
+    // Only the exact immutable input may consume the cached pure result.
+    if(slot>=0&&std::size_t(slot)<recharge_values_.size()&&std::size_t(slot)<recharge_inputs_.size()) {
+        const auto& v=recharge_inputs_[slot];
+        if(v.length==length&&v.hu==state_.hu[cell]&&v.law==int(p.law)&&v.Ks==p.Ks&&
+           v.theta_s==p.theta_s&&v.theta_r==p.theta_r&&v.alpha==p.alpha&&v.psi_b==p.psi_b&&
+           v.lambda==p.lambda&&v.vg_n==p.vg_n&&v.vg_L==p.vg_L)return recharge_values_[slot];
+    }
+    return soil::rechargeQ0(p,length,state_.hu[cell]);
+}
 
 std::string SubsurfaceSolver::rk2ProfileError() const {
     if(!active() || options_.per_subcatch || tr_.active() || heat_.active() || !reactors_.empty() ||

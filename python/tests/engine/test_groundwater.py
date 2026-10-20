@@ -246,3 +246,139 @@ TRANSPORT_TEMPERATURE NO
         solver.end()
     finally:
         cleanup(solver)
+
+
+@pytest.mark.parametrize('mode', ['cpu', 'omp', 'cuda', 'hip', 'sycl'])
+def test_groundwater_execution_status_lifecycle_and_actual_use(tmp_path, monkeypatch, mode):
+    monkeypatch.setenv('OPENSWMM_2D_BACKEND', mode)
+    solver = open_model(tmp_path, """
+[OPTIONS]
+END_DATE 01/01/2026
+END_TIME 00:00:02
+[2D_AQUIFER_OPTIONS]
+CLOSURE CLOSED_FORM
+NODE_ENROLMENT ROWS
+LINK_SEEPAGE NONE
+GW_ET NONE
+[2D_AQUIFER]
+* 36 1 .45 .1 2 HG0 .3
+""")
+    try:
+        gw = solver.surface2d.groundwater
+        with pytest.raises(LifecycleError):
+            _ = gw.execution_status
+        solver.initialize()
+        initial = gw.execution_status
+        assert initial['active']
+        assert initial['executed_operators'] == 0
+        assert initial['accepted_cells'] == 0
+        if mode in ('cpu', 'cuda', 'hip', 'sycl'):
+            assert initial['available_operators'] == 0
+            assert initial['recharge_backend'] == 'cpu'
+        solver.start(False)
+        while solver.step().total_seconds() > 0:
+            pass
+        status = gw.execution_status
+        assert status['host_owned_operations'] == 15
+        if initial['available_operators']:
+            assert mode == 'omp'
+            assert status['recharge_backend'] == 'omp'
+            assert status['executed_operators'] == 1
+            assert status['accepted_batches'] > 0
+            assert status['accepted_cells'] > 0
+            assert status['effective_threads'] > 0
+        else:
+            assert status['executed_operators'] == 0
+            assert status['accepted_cells'] == 0
+        assert initial['accepted_cells'] == 0  # returned dictionaries are snapshots
+        assert abs(gw.continuity_error) < 1e-9
+        solver.end()
+        solver.close()
+        with pytest.raises(StaleObjectError):
+            _ = gw.execution_status
+    finally:
+        cleanup(solver)
+
+
+def test_openmp_recharge_and_surface_owners_match_sequential_engines(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from openswmm.engine import Solver
+    from tests.engine._groundwater_cases import MODEL
+
+    monkeypatch.setenv('OPENSWMM_2D_BACKEND', 'omp')
+    # Both owners share the optional Kokkos runtime but keep separate stores.
+    model = MODEL.replace('[2D_QUADS]\n0 1 2 3 0.03 0.1 PAN',
+                          '0 1 2 0.03 0.1 PAN\n0 2 3 0.03 0.1 PAN')
+    extra = """
+[OPTIONS]
+END_DATE 01/01/2026
+END_TIME 00:00:02
+ROUTING_STEP .1
+[2D_OPTIONS]
+LTS_TIERS 1
+MAX_TIMESTEP .001
+TRANSPORT_POLLUTANTS NO
+TRANSPORT_MSX NO
+TRANSPORT_AGE NO
+TRANSPORT_TEMPERATURE NO
+"""
+    aquifer = """
+[2D_AQUIFER_OPTIONS]
+CLOSURE CLOSED_FORM
+NODE_ENROLMENT ROWS
+LINK_SEEPAGE NONE
+GW_ET NONE
+[2D_AQUIFER]
+* 36 1 .45 .1 2 HG0 .3
+"""
+    solvers = []
+
+    def create(name, ground):
+        path = tmp_path / (name + '.inp')
+        path.write_text(model + extra + (aquifer if ground else ''))
+        solver = Solver(path, path.with_suffix('.rpt'))
+        solvers.append(solver)
+        solver.open()
+        solver.initialize()
+        return solver
+
+    def snapshot(solver, ground):
+        values = [solver.surface2d.get_depths()]
+        if ground:
+            gw = solver.surface2d.groundwater
+            values += [gw.cells(GroundwaterVariable.HG), gw.cells(GroundwaterVariable.HU)]
+            assert abs(gw.continuity_error) < 1e-9
+            assert gw.execution_status['executed_operators'] == 1
+        return values
+
+    try:
+        pair = [create('parallel-surface', False), create('parallel-ground', True)]
+        if (not pair[0].surface2d.run_stats['backend'].startswith('omp') or
+                pair[1].surface2d.groundwater.execution_status['available_operators'] == 0):
+            pytest.skip('Optional Kokkos OpenMP plugin unavailable; concurrent host profile unqualified')
+        for solver in pair:
+            solver.start(False)
+        barrier = Barrier(2)
+
+        def advance(solver):
+            for _ in range(20):
+                barrier.wait(timeout=10)
+                solver.step()
+
+        with ThreadPoolExecutor(2) as pool:
+            list(pool.map(advance, pair))
+        for index, ground in enumerate((False, True)):
+            observed = snapshot(pair[index], ground)
+            control = create('sequential-' + str(index), ground)
+            control.start(False)
+            for _ in range(20):
+                control.step()
+            expected = snapshot(control, ground)
+            for actual, reference in zip(observed, expected):
+                np.testing.assert_array_equal(actual, reference)
+            control.end()
+            pair[index].end()
+    finally:
+        for solver in solvers:
+            cleanup(solver)

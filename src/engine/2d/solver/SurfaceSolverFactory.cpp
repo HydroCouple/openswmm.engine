@@ -343,6 +343,41 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
     return serial_marcher();
 }
 
+GwRechargeBackend makeGwRechargeBackend(const SolverOptions2D& opts,int n_cells) {
+    GwRechargeBackend result;
+    auto mode=lower(env("OPENSWMM_2D_BACKEND"));if(mode.empty())mode=backend_name(opts.backend);
+    if(mode=="cpu"){result.diagnostic="CPU requested";return result;}
+    if(mode!="omp"&&mode!="auto"&& !mode.empty()) {
+        result.diagnostic="Requested backend has no qualified groundwater recharge operator";return result;
+    }
+    // Surface mesh-size thresholds do not establish a benefit for this
+    // separate packed operator. Keep AUTO scalar until integrated workloads
+    // qualify a selection policy; explicit OMP remains available for testing.
+    (void)n_cells;
+    if(mode!="omp") {
+        result.diagnostic="Raw recharge requires explicit OMP; AUTO retains CPU pending integrated performance qualification";
+        return result;
+    }
+    using Capabilities=int (*)(OpenSwmmGwCapabilitiesV1*);
+    for(const auto& dir:search_dirs())for(const auto& name:plugin_filenames("omp")) {
+        void* handle=load_cached((fs::path(dir)/name).string());if(!handle)continue;
+        auto query=reinterpret_cast<Capabilities>(platform_sym(handle,"openswmm_gw_capabilities_v1"));
+        auto evaluate=reinterpret_cast<GwRechargeBackend::Evaluate>(platform_sym(handle,"openswmm_gw_recharge_v1"));
+        auto threads=reinterpret_cast<GwRechargeBackend::Threads>(platform_sym(handle,"openswmm_gpu_host_threads"));
+        if(!query||!evaluate||!threads)continue;
+        OpenSwmmGwCapabilitiesV1 c{};c.struct_size=sizeof(c);
+        if(query(&c)!=0||c.struct_size!=sizeof(c)||c.version!=OPENSWMM_GW_RECHARGE_ABI_VERSION||
+           c.vendor!=OPENSWMM_GPU_VENDOR_OPENMP||c.execution_kind!=OPENSWMM_GW_EXECUTION_HOST_OPENMP||
+           c.operators!=OPENSWMM_GW_OPERATOR_CLOSED_FORM_RECHARGE||c.closures!=1u||c.soil_laws!=15u||
+           c.host_owned!=15u||c.time_integrators!=3u||c.canonical_host_restart!=1||c.max_layers!=0||c.species_classes!=0||c.label[127]!=0)continue;
+        result.evaluate=evaluate;result.threads=threads;result.capabilities=c;
+        result.diagnostic="Only CLOSED_FORM raw recharge is host-parallel; canonical stores and all other operators remain CPU-owned";
+        return result;
+    }
+    result.diagnostic="No compatible Kokkos OpenMP recharge extension found; CPU used";
+    return result;
+}
+
 } // namespace openswmm::twoD
 
 #endif // OPENSWMM_HAS_2D
