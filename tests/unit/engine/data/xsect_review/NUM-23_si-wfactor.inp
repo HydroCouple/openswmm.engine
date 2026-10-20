@@ -1,0 +1,52 @@
+[TITLE]
+NUM-23: SI transect with a station width factor (Wfactor) of 1.5
+T1: stations 0/10/30/40 m, banks 10/30, Wfactor 1.5. T2: the same section with the stations
+already multiplied (0/15/45/60 m, banks 15/45). n = 0.10 / 0.10 / 0.03.
+
+[OPTIONS]
+FLOW_UNITS CMS
+FLOW_ROUTING DYNWAVE
+START_DATE 01/01/2020
+START_TIME 00:00:00
+END_DATE 01/01/2020
+END_TIME 01:00:00
+REPORT_STEP 00:15:00
+ROUTING_STEP 5
+
+[JUNCTIONS]
+;Name Elev MaxDepth InitDepth SurDepth Aponded
+J1 30 5 0 0 0
+J2 30 5 0 0 0
+
+[OUTFALLS]
+O1 29.7 FREE
+O2 29.7 FREE
+
+[CONDUITS]
+;Name From To Length N InOffset OutOffset InitFlow MaxFlow
+C1 J1 O1 300 0.03 0 0 0 0
+C2 J2 O2 300 0.03 0 0 0 0
+
+[XSECTIONS]
+;Link Shape Transect Geom2 Geom3 Geom4 Barrels
+C1 IRREGULAR T1 0 0 0 1
+C2 IRREGULAR T2 0 0 0 1
+
+[INFLOWS]
+;Node Constituent TimeSeries Type Mfactor Sfactor Baseline
+J1 FLOW "" FLOW 1.0 1.0 5
+J2 FLOW "" FLOW 1.0 1.0 5
+
+[TRANSECTS]
+;X1 Name Nsta Xleft Xright 0 0 Lfactor Wfactor Eoffset
+NC 0.10 0.10 0.03
+X1 T1 4 10 30 0 0 0 1.5 0
+GR 32 0 30 10 30 30 32 40
+NC 0.10 0.10 0.03
+X1 T2 4 15 45 0 0 0 0 0
+GR 32 0 30 15 30 45 32 60
+
+[REPORT]
+INPUT YES
+NODES ALL
+LINKS ALL

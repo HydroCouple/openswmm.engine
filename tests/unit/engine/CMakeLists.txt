@@ -320,6 +320,8 @@ add_gtest_unit(test_engine_pattern_mutation  test_pattern_mutation_api.cpp)
 add_gtest_unit(test_engine_table_rename  test_table_rename_api.cpp)
 add_gtest_unit(test_engine_transect_mutation test_transect_mutation_api.cpp)
 add_gtest_unit(test_engine_transect_inp_parser test_transect_inp_parser.cpp)
+# Transect bank stations in SI with a width factor (code review NUM-23, #168).
+add_gtest_unit(test_engine_transect_si_width_factor test_transect_si_width_factor.cpp)
 add_gtest_unit(test_engine_da4_api          test_da4_engine_api.cpp)
 add_gtest_unit(test_engine_controls         test_controls.cpp)
 add_gtest_unit(test_engine_control_rule_validate test_control_rule_validate_api.cpp)
