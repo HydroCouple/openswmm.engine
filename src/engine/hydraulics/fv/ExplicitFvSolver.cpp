@@ -366,30 +366,50 @@ double ExplicitFvSolver::refreshConduitGeometry(int conduit,
         // 0 by construction — nothing left the conduit.
     }
 
-    // A face section shared between two conduits (the width-step average) that
-    // was built from this conduit's OLD geometry is now stale. Rather than
-    // rebuild the average, hand those faces back their own cell's section:
-    // buildNetworkMesh declines to average whenever either side carries a
-    // compiled boundary (two per-link boundaries have no meaningful average),
-    // and every run-time geometry change installs one — so this reproduces
-    // exactly what a full rebuild would produce for the new state rather than
-    // settling for something weaker. The C-property holds for ANY consistent
-    // per-face choice, so well-balancedness is untouched; the interface merely
-    // drops to first order in the width step, as it already does everywhere
-    // else a compiled boundary meets a different section.
+    // Faces. buildNetworkMesh assigns face sections in two passes: every face
+    // takes its adjacent cell's section — the LEFT cell's, or the right one's
+    // at an upstream boundary (NetworkMeshData::deriveFaceGeom) — and then both
+    // faces at a clean degree-2 node between two different sections get one
+    // section-averaged geometry, unless either side carries a compiled
+    // boundary. Every run-time change installs a compiled boundary
+    // (Router::refreshConduitGeometry builds it from the polygon), so after it
+    // no averaged pair can involve this conduit, and a full rebuild's result
+    // is reproduced exactly by:
+    //   * re-deriving every face that touches one of this conduit's cells, and
+    //   * giving the PARTNER face at each of its degree-2 end nodes — the
+    //     neighbouring conduit's boundary face, which carried the averaged
+    //     section — its own cell's section back.
+    // Faces are found through cell OWNERSHIP (this conduit's contiguous cell
+    // range), never by comparing a section index with a conduit index: sections
+    // are shared between conduits with identical geometry, so the two index
+    // spaces differ, and the cells above already point at sec_new. Faces of
+    // every other conduit — including ones still sharing sec_old, and averaged
+    // pairs at nodes this conduit does not touch — are left as they are. The
+    // C-property holds for ANY consistent per-face choice, so well-balancedness
+    // is untouched; the interface merely drops to first order in the width
+    // step, as it does everywhere else a compiled boundary meets a section.
+    const auto ownsCell = [&](int c) { return c >= c0 && c < c0 + nc; };
+    const auto cellRule = [&](std::size_t uf) {
+        const int c = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf] : mesh_->face_cr[uf];
+        return (c >= 0) ? mesh_->cell_geom[static_cast<std::size_t>(c)] : mesh_->face_geom[uf];
+    };
     const int nfaces = mesh_->n_faces();
     for (int f = 0; f < nfaces; ++f) {
         const auto uf = static_cast<std::size_t>(f);
-        const int gf = mesh_->face_geom[uf];
-        if (gf < mesh_->n_conduits()) continue;      // a real conduit section
-        const int cl = mesh_->face_cl[uf];
-        const int cr = mesh_->face_cr[uf];
-        const bool touches =
-            (cl >= 0 && mesh_->cell_geom[static_cast<std::size_t>(cl)] == conduit) ||
-            (cr >= 0 && mesh_->cell_geom[static_cast<std::size_t>(cr)] == conduit);
-        if (!touches) continue;
-        const int own = (cl >= 0) ? cl : cr;
-        if (own >= 0) mesh_->face_geom[uf] = mesh_->cell_geom[static_cast<std::size_t>(own)];
+        if (!ownsCell(mesh_->face_cl[uf]) && !ownsCell(mesh_->face_cr[uf])) continue;
+        mesh_->face_geom[uf] = cellRule(uf);
+        const int node = mesh_->face_node[uf];
+        if (node < 0) continue;                       // interior or spliced face
+        const auto un = static_cast<std::size_t>(node);
+        const int nb = mesh_->node_face_ptr[un];
+        const int ne = mesh_->node_face_ptr[un + 1];
+        if (ne - nb != 2) continue;                   // averaging needs degree 2
+        for (int k = nb; k < ne; ++k) {
+            const int fp = mesh_->node_face_idx[static_cast<std::size_t>(k)];
+            if (fp != f)
+                mesh_->face_geom[static_cast<std::size_t>(fp)] =
+                    cellRule(static_cast<std::size_t>(fp));
+        }
     }
 
     // Every cached quantity derived from the section is now wrong: depths and

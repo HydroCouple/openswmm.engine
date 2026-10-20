@@ -34,6 +34,10 @@
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_links.h>
 
+// White-box: the face-section tests below read the solver's live mesh.
+#include "core/SWMMEngine.hpp"
+#include "hydraulics/fv/NetworkMeshData.hpp"
+
 namespace fs = std::filesystem;
 
 namespace {
@@ -444,5 +448,259 @@ TEST(LinkPolygonRuntime, GetPolygonRoundTripsTheInstalledBoundary) {
         }
         EXPECT_TRUE(found) << "vertex " << i << " did not round-trip";
     }
+    EXPECT_EQ(swmm_engine_end(r.e), 0);
+}
+
+
+// ---------------------------------------------------------------------------
+// Face sections after a run-time change (PR #157 review, item 1).
+// ---------------------------------------------------------------------------
+//
+// mesh.geom is indexed by SECTION, shared between conduits of identical
+// geometry, so a run-time change gives the conduit a section of its own and
+// must re-point the FACES that reconstruct in it. A full rebuild assigns face
+// sections in two passes — each face takes its adjacent cell's section (the
+// left cell's, else the right's), then the two faces at a clean degree-2 node
+// between DIFFERENT sections share one averaged section unless either side
+// carries a compiled boundary. A run-time change always installs one, so what
+// these tests demand is exactly the rebuild result for the new state:
+//   * every face touching the changed conduit's cells follows the cell rule;
+//   * the neighbour's face at a degree-2 node it shared with that conduit
+//     gets its own section back (the average was built from the old shape);
+//   * every other face, and every other conduit's cells, are untouched.
+// The defect these pin re-pointed the cells but tested `cell_geom == conduit`
+// (a section index against a conduit index), so no face was ever updated.
+
+namespace {
+
+using Mesh = openswmm::fv::NetworkMeshData;
+
+const Mesh& meshOf(SWMM_Engine e) {
+    return static_cast<openswmm::SWMMEngine*>(e)->router().fvMesh();
+}
+
+/// NetworkMeshBuilder's first pass (deriveFaceGeom) for one face.
+int cellRule(const Mesh& m, int f) {
+    const auto uf = static_cast<std::size_t>(f);
+    const int c = (m.face_cl[uf] >= 0) ? m.face_cl[uf] : m.face_cr[uf];
+    return m.cell_geom[static_cast<std::size_t>(c)];
+}
+
+int conduitRow(const Mesh& m, int link) {
+    for (int r = 0; r < m.n_conduits(); ++r)
+        if (m.conduit_link[static_cast<std::size_t>(r)] == link) return r;
+    return -1;
+}
+
+bool ownsCell(const Mesh& m, int r, int c) {
+    const auto ur = static_cast<std::size_t>(r);
+    return c >= m.conduit_cell_begin[ur] &&
+           c < m.conduit_cell_begin[ur] + m.conduit_cell_count[ur];
+}
+
+bool touches(const Mesh& m, int r, int f) {
+    const auto uf = static_cast<std::size_t>(f);
+    return ownsCell(m, r, m.face_cl[uf]) || ownsCell(m, r, m.face_cr[uf]);
+}
+
+/// The other face at f's node when that node is clean degree-2, else -1.
+int partner(const Mesh& m, int f) {
+    const int node = m.face_node[static_cast<std::size_t>(f)];
+    if (node < 0) return -1;
+    const auto un = static_cast<std::size_t>(node);
+    const int nb = m.node_face_ptr[un], ne = m.node_face_ptr[un + 1];
+    if (ne - nb != 2) return -1;
+    for (int k = nb; k < ne; ++k) {
+        const int fp = m.node_face_idx[static_cast<std::size_t>(k)];
+        if (fp != f) return fp;
+    }
+    return -1;
+}
+
+struct MeshSnapshot {
+    std::vector<int> face_geom, cell_geom, conduit_section;
+    explicit MeshSnapshot(const Mesh& m)
+        : face_geom(m.face_geom), cell_geom(m.cell_geom),
+          conduit_section(m.conduit_section) {}
+};
+
+/// Everything a run-time change of conduit row r must (and must not) do,
+/// checked against the mesh as it stood just before the change.
+void expectRebuildEquivalent(const Mesh& m, const MeshSnapshot& before, int r) {
+    const auto ur = static_cast<std::size_t>(r);
+    const int sec = m.conduit_section[ur];
+    EXPECT_NE(sec, before.conduit_section[ur]) << "the conduit kept its old section";
+    for (int c = 0; c < m.n_cells(); ++c) {
+        const auto uc = static_cast<std::size_t>(c);
+        if (ownsCell(m, r, c))
+            EXPECT_EQ(m.cell_geom[uc], sec) << "cell " << c << " of the changed conduit";
+        else
+            EXPECT_EQ(m.cell_geom[uc], before.cell_geom[uc]) << "unrelated cell " << c;
+    }
+    for (int q = 0; q < m.n_conduits(); ++q)
+        if (q != r)
+            EXPECT_EQ(m.conduit_section[static_cast<std::size_t>(q)],
+                      before.conduit_section[static_cast<std::size_t>(q)])
+                << "unrelated conduit row " << q << " was re-pointed";
+
+    std::vector<bool> affected(static_cast<std::size_t>(m.n_faces()), false);
+    for (int f = 0; f < m.n_faces(); ++f) {
+        if (!touches(m, r, f)) continue;
+        affected[static_cast<std::size_t>(f)] = true;
+        const int fp = partner(m, f);
+        if (fp >= 0) affected[static_cast<std::size_t>(fp)] = true;
+    }
+    for (int f = 0; f < m.n_faces(); ++f) {
+        const auto uf = static_cast<std::size_t>(f);
+        if (affected[uf])
+            EXPECT_EQ(m.face_geom[uf], cellRule(m, f))
+                << "face " << f << " does not reconstruct in its cell's section";
+        else
+            EXPECT_EQ(m.face_geom[uf], before.face_geom[uf])
+                << "unrelated face " << f << " was changed";
+    }
+}
+
+/// A chain J0 -C0- J1 -C1- J2 ... of circular conduits with the given
+/// diameters, steady inflow at J0, free outfall at the end.
+std::string writeChain(const std::string& name, const std::vector<double>& diam) {
+    const std::string path = outDir() + "/" + name + ".inp";
+    std::ofstream os(path);
+    os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         FV\n"
+          "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+          "END_DATE             01/01/2026\nEND_TIME             02:00:00\n"
+          "REPORT_STEP          00:05:00\nROUTING_STEP         5\n"
+          "ALLOW_PONDING        NO\n\n[JUNCTIONS]\n";
+    const std::size_t n = diam.size();
+    for (std::size_t i = 0; i < n; ++i)
+        os << "J" << i << "  " << 40.0 - 0.4 * static_cast<double>(i) << "  12.0  0  0  0\n";
+    os << "\n[OUTFALLS]\nO1  " << 40.0 - 0.4 * static_cast<double>(n) << "  FREE  NO\n\n[CONDUITS]\n";
+    for (std::size_t i = 0; i < n; ++i)
+        os << "C" << i << "  J" << i << "  " << (i + 1 < n ? "J" + std::to_string(i + 1) : std::string("O1"))
+           << "  200.0  0.013  0  0  0\n";
+    os << "\n[XSECTIONS]\n";
+    for (std::size_t i = 0; i < n; ++i)
+        os << "C" << i << "  CIRCULAR  " << diam[i] << "  0  0  0  1\n";
+    os << "\n[INFLOWS]\nJ0  FLOW  \"\"  FLOW  1.0  1.0  12.0\n\n"
+          "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\nCONTROLS  NO\n";
+    return path;
+}
+
+void openChain(FvRun& r, const std::string& name, const std::vector<double>& diam) {
+    ASSERT_NO_FATAL_FAILURE(r.open(writeChain(name, diam), name));
+}
+
+}  // namespace
+
+TEST(LinkPolygonRuntime, FacesFollowTheNewSectionWhenTheOldOneWasShared) {
+    // Both conduits are 4 ft circles, so they share ONE section and no face
+    // is averaged. Changing C0 must give its cells and faces a section of their
+    // own while C1 keeps the shared one.
+    FvRun r;
+    ASSERT_NO_FATAL_FAILURE(openChain(r, "faces_shared", {4.0, 4.0}));
+    ASSERT_NO_FATAL_FAILURE(stepTo(r.e, 0.01));
+    const Mesh& m = meshOf(r.e);
+    const int c0 = conduitRow(m, r.link), c1 = conduitRow(m, swmm_link_index(r.e, "C1"));
+    ASSERT_GE(c0, 0);
+    ASSERT_GE(c1, 0);
+    ASSERT_EQ(m.conduit_section[static_cast<std::size_t>(c0)],
+              m.conduit_section[static_cast<std::size_t>(c1)])
+        << "precondition: identical conduits must share a section";
+
+    const MeshSnapshot before(m);
+    std::vector<double> x, y;
+    sedimentedCircle(4.0, 0.1, 40, x, y);
+    double displaced = 0.0;
+    ASSERT_EQ(swmm_link_set_polygon(r.e, r.link, x.data(), y.data(),
+                                    static_cast<int>(x.size()), 0, &displaced), SWMM_OK);
+    expectRebuildEquivalent(m, before, c0);
+    EXPECT_EQ(m.conduit_section[static_cast<std::size_t>(c1)],
+              before.conduit_section[static_cast<std::size_t>(c1)]);
+    EXPECT_EQ(swmm_engine_end(r.e), 0);
+}
+
+TEST(LinkPolygonRuntime, AveragedFacesRevertOnlyAtTheChangedConduitsNodes) {
+    // 4, 3 and 2 ft circles: three distinct sections, and an averaged face
+    // pair at each degree-2 junction (J1 between C0/C1, J2 between C1/C2).
+    // Changing C0 must dissolve the J1 average — C1's face gets C1's own
+    // section back — and leave the J2 average, which C0 does not touch, alone.
+    FvRun r;
+    ASSERT_NO_FATAL_FAILURE(openChain(r, "faces_distinct", {4.0, 3.0, 2.0}));
+    ASSERT_NO_FATAL_FAILURE(stepTo(r.e, 0.01));
+    const Mesh& m = meshOf(r.e);
+    const int c0 = conduitRow(m, r.link);
+    ASSERT_GE(c0, 0);
+
+    int averaged = 0;
+    for (int f = 0; f < m.n_faces(); ++f)
+        if (m.face_geom[static_cast<std::size_t>(f)] != cellRule(m, f)) ++averaged;
+    ASSERT_EQ(averaged, 4) << "precondition: two averaged pairs (J1 and J2)";
+
+    const MeshSnapshot before(m);
+    std::vector<double> x, y;
+    sedimentedCircle(4.0, 0.1, 40, x, y);
+    double displaced = 0.0;
+    ASSERT_EQ(swmm_link_set_polygon(r.e, r.link, x.data(), y.data(),
+                                    static_cast<int>(x.size()), 0, &displaced), SWMM_OK);
+    expectRebuildEquivalent(m, before, c0);
+
+    int still_averaged = 0;
+    for (int f = 0; f < m.n_faces(); ++f)
+        if (m.face_geom[static_cast<std::size_t>(f)] != cellRule(m, f)) ++still_averaged;
+    EXPECT_EQ(still_averaged, 2) << "only the J2 pair, which C0 does not touch, stays averaged";
+    EXPECT_EQ(swmm_engine_end(r.e), 0);
+}
+
+TEST(LinkPolygonRuntime, FaceSectionsStayConsistentAcrossRepeatedUpdates) {
+    FvRun r;
+    ASSERT_NO_FATAL_FAILURE(openChain(r, "faces_repeat", {4.0, 3.0}));
+    ASSERT_NO_FATAL_FAILURE(stepTo(r.e, 0.01));
+    const Mesh& m = meshOf(r.e);
+    const int c0 = conduitRow(m, r.link);
+    ASSERT_GE(c0, 0);
+    std::vector<double> x, y;
+    for (int k = 0; k < 5; ++k) {
+        const MeshSnapshot before(m);
+        sedimentedCircle(4.0, 0.05 + 0.05 * k, 40, x, y);
+        double displaced = 0.0;
+        ASSERT_EQ(swmm_link_set_polygon(r.e, r.link, x.data(), y.data(),
+                                        static_cast<int>(x.size()), 0, &displaced),
+                  SWMM_OK) << "update " << k;
+        SCOPED_TRACE("update " + std::to_string(k));
+        expectRebuildEquivalent(m, before, c0);
+        double t = 0.0;
+        ASSERT_EQ(swmm_engine_step(r.e, &t), 0);
+    }
+    EXPECT_EQ(swmm_engine_end(r.e), 0);
+}
+
+TEST(LinkPolygonRuntime, RoutingContinuesCleanlyAfterAFaceSectionChange) {
+    // After the change the network has to keep routing on the corrected faces:
+    // finite state everywhere, the face assignment not drifting during the
+    // run, and flow still reaching the outfall.
+    FvRun r;
+    ASSERT_NO_FATAL_FAILURE(openChain(r, "faces_continue", {4.0, 3.0}));
+    ASSERT_NO_FATAL_FAILURE(stepTo(r.e, 0.02));
+    const Mesh& m = meshOf(r.e);
+    std::vector<double> x, y;
+    sedimentedCircle(4.0, 0.15, 40, x, y);
+    double displaced = 0.0;
+    ASSERT_EQ(swmm_link_set_polygon(r.e, r.link, x.data(), y.data(),
+                                    static_cast<int>(x.size()), 0, &displaced), SWMM_OK);
+    const std::vector<int> faces_after_change = m.face_geom;
+
+    ASSERT_NO_FATAL_FAILURE(stepTo(r.e, 0.06));
+    EXPECT_EQ(m.face_geom, faces_after_change) << "routing changed the face assignment";
+    for (const char* id : {"C0", "C1"}) {
+        const int j = swmm_link_index(r.e, id);
+        double q = 0.0, d = 0.0;
+        ASSERT_EQ(swmm_link_get_flow(r.e, j, &q), SWMM_OK);
+        ASSERT_EQ(swmm_link_get_depth(r.e, j, &d), SWMM_OK);
+        EXPECT_TRUE(std::isfinite(q) && std::isfinite(d)) << id;
+        EXPECT_GE(d, 0.0) << id;
+    }
+    double q1 = 0.0;
+    ASSERT_EQ(swmm_link_get_flow(r.e, swmm_link_index(r.e, "C1"), &q1), SWMM_OK);
+    EXPECT_GT(q1, 0.5) << "the 1 cfs inflow no longer reaches the downstream conduit";
     EXPECT_EQ(swmm_engine_end(r.e), 0);
 }
