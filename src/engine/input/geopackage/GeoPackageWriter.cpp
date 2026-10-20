@@ -1860,6 +1860,12 @@ static void write_options_2d(sqlite3* db, const SimulationContext& ctx,
     if (o.coupling_head != twoD::CouplingHead2D::CELL)
         insert("2D_COUPLING_HEAD", o.coupling_head == twoD::CouplingHead2D::VERTEX
                                        ? "VERTEX" : "STENCIL_WET_MEAN");
+    if (o.coupling_pond_mode != twoD::CouplingPondMode2D::FOOTPRINT)
+        insert("2D_COUPLING_POND_MODE",
+               o.coupling_pond_mode == twoD::CouplingPondMode2D::CHAMBER ? "CHAMBER" : "TRACKING");
+    if (o.coupling_pond_relax > 0.0) insert("2D_COUPLING_POND_RELAX", fmt_g17(o.coupling_pond_relax));
+    if (o.coupling_rim_band >= 0.0)  insert("2D_COUPLING_RIM_BAND", fmt_g17(o.coupling_rim_band));
+    if (o.coupling_equalize >= 0)    insert("2D_COUPLING_EQUALIZE", o.coupling_equalize ? "YES" : "NO");
     if (o.coupling_coeffs != 0)
         insert("2D_COUPLING_COEFFS",
                nodecoupling2d::formatValue(NodeCoupling2DKey::COEFFS, o.coupling_coeffs));

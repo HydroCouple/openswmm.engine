@@ -507,6 +507,10 @@ TEST_F(GeoPackageMesh2DTest, OptionsRoundTripFloodingMomentumBackend) {
     opts_.coupling_law    = twoD::CouplingLaw2D::WEIR_ORIFICE;
     opts_.coupling_head   = twoD::CouplingHead2D::STENCIL_WET_MEAN;
     opts_.coupling_coeffs = 3;   // RUBINATO2017_UPPER
+    opts_.coupling_pond_mode  = twoD::CouplingPondMode2D::CHAMBER;
+    opts_.coupling_pond_relax = 15.0;
+    opts_.coupling_rim_band   = 0.02;
+    opts_.coupling_equalize   = 1;
     auto ctx = build_ctx_out();
     {
         auto db = create_db();
@@ -523,6 +527,10 @@ TEST_F(GeoPackageMesh2DTest, OptionsRoundTripFloodingMomentumBackend) {
     EXPECT_EQ(opts_in_.coupling_law, twoD::CouplingLaw2D::WEIR_ORIFICE);
     EXPECT_EQ(opts_in_.coupling_head, twoD::CouplingHead2D::STENCIL_WET_MEAN);
     EXPECT_EQ(opts_in_.coupling_coeffs, 3);
+    EXPECT_EQ(opts_in_.coupling_pond_mode, twoD::CouplingPondMode2D::CHAMBER);
+    EXPECT_DOUBLE_EQ(opts_in_.coupling_pond_relax, 15.0);
+    EXPECT_DOUBLE_EQ(opts_in_.coupling_rim_band, 0.02);
+    EXPECT_EQ(opts_in_.coupling_equalize, 1);
 }
 
 // ---------------------------------------------------------------------------

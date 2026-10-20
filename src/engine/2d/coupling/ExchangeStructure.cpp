@@ -39,9 +39,15 @@ void resolveExchangeStructure(CouplingPoint& cp, const MeshData& mesh,
     };
 
     double v = 0.0;
+    const double f = project_len_to_m, f2 = f * f;
     cp.law = authored(Key::LAW, v) ? static_cast<int8_t>(v)
                                    : static_cast<int8_t>(opts.coupling_law);
-    if (cp.law != static_cast<int8_t>(CouplingLaw2D::WEIR_ORIFICE)) return;
+    const bool weir_orifice = cp.law == static_cast<int8_t>(CouplingLaw2D::WEIR_ORIFICE);
+    cp.equalize = opts.coupling_equalize >= 0 ? opts.coupling_equalize != 0 : weir_orifice;
+    const bool chamber_node = authored(Key::CHAMBER_AREA, v);
+    const double chamber_val = v * f2;
+    cp.chamber_area = chamber_node ? chamber_val : cp.area;
+    if (!weir_orifice) return;
 
     // ---- Coefficients ----------------------------------------------------
     const bool coeffs_authored = authored(Key::COEFFS, v);
@@ -67,7 +73,6 @@ void resolveExchangeStructure(CouplingPoint& cp, const MeshData& mesh,
     if (cp.cd_authored) c.c_oi = c.c_oo = cp.cd;   // legacy map-row CD
 
     // ---- Geometry (SI) ---------------------------------------------------
-    const double f = project_len_to_m, f2 = f * f;
     constexpr double kPi = 3.14159265358979323846;
     // Default manhole: 1.2 m, or 4 ft in US units.
     const double d_default = (f == 1.0) ? 1.2 : 4.0 * f;
@@ -105,6 +110,7 @@ void resolveExchangeStructure(CouplingPoint& cp, const MeshData& mesh,
             break;
     }
     if (cp.area_authored) area = cp.area;          // legacy map-row AREA
+    cp.chamber_area = chamber_node ? chamber_val : area;
     const double lid = authored(Key::LID_OPEN_FRACTION, v) ? v : 1.0;
     cp.geo.a_orif = area * lid;
     cp.geo.l_weir = perim * lid;

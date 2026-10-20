@@ -7,6 +7,7 @@
  */
 
 #include "NodeCoupling.hpp"
+#include "PondModel.hpp"
 #include "../mesh/VertexReconstruction.hpp"  // vertexHeadAt (on-demand single-vertex head)
 #include "../../core/SimulationContext.hpp"
 
@@ -251,6 +252,17 @@ double computeNodeCouplingQ(const CouplingPoint& cp,
     // trend slope × time-in-batch, in the 2D metre frame.
     const double h_1d = nodes.head[ni] * opts.len_1d_to_2d + h1d_offset_m;
 
+    // COUPLING_EQUALIZE: no single coupling window may carry the two heads
+    // past each other (the 1D head is held for the window; the 2D cell
+    // responds live). The cap's derivative never enters G.
+    auto equalized = [&](double q) {
+        if (!cp.equalize || !state.node_pond_area_m2 || !(state.coupling_window_s > 0.0))
+            return q;
+        const double cap = pond::equalizeCap(h_2d - h_1d, state.coupling_window_s,
+                                             (*state.node_pond_area_m2)[ni], mesh.tri_area[ci]);
+        return std::clamp(q, -cap, cap);
+    };
+
     // Live max-over-stencil source depth: the wet/dry self-limiter below uses it
     // so the drain ramps to zero as the cell dries (no overshoot / negativity).
     double depth_2d_avail;
@@ -275,8 +287,8 @@ double computeNodeCouplingQ(const CouplingPoint& cp,
     // the legacy orifice applies. The source-side wet ramp still does.
     if (cp.law == static_cast<int8_t>(CouplingLaw2D::WEIR_ORIFICE)) {
         const double Q = exchange::exchange(cp.geo, cp.coef, h_2d, h_1d).q;
-        return Q * sourceWetRamp(Q > 0.0 ? depth_2d_avail : depth_1d_avail,
-                                 opts.dry_depth);
+        return equalized(Q * sourceWetRamp(Q > 0.0 ? depth_2d_avail : depth_1d_avail,
+                                           opts.dry_depth));
     }
 
     // Capped-pipe gate at the crown (= surcharge / slot-engagement threshold).
@@ -302,7 +314,7 @@ double computeNodeCouplingQ(const CouplingPoint& cp,
         return t * t * (3.0 - 2.0 * t);
     };
     Q *= (Q > 0.0) ? wetRamp(depth_2d_avail) : wetRamp(depth_1d_avail);
-    return Q;
+    return equalized(Q);
 }
 
 

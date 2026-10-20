@@ -798,6 +798,15 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx,
         std::fprintf(f, "%-22s %s\n", "COUPLING_HEAD",
                      o.coupling_head == twoD::CouplingHead2D::VERTEX ? "VERTEX"
                                                                      : "STENCIL_WET_MEAN");
+    if (o.coupling_pond_mode != twoD::CouplingPondMode2D::FOOTPRINT)
+        std::fprintf(f, "%-22s %s\n", "COUPLING_POND_MODE",
+                     o.coupling_pond_mode == twoD::CouplingPondMode2D::CHAMBER ? "CHAMBER" : "TRACKING");
+    if (o.coupling_pond_relax > 0.0)
+        std::fprintf(f, "%-22s %.12g\n", "COUPLING_POND_RELAX", o.coupling_pond_relax);
+    if (o.coupling_rim_band >= 0.0)
+        std::fprintf(f, "%-22s %.12g\n", "COUPLING_RIM_BAND", o.coupling_rim_band);
+    if (o.coupling_equalize >= 0)
+        std::fprintf(f, "%-22s %s\n", "COUPLING_EQUALIZE", o.coupling_equalize ? "YES" : "NO");
     if (o.coupling_coeffs != 0)
         std::fprintf(f, "%-22s %s\n", "COUPLING_COEFFS",
                      nodecoupling2d::formatValue(NodeCoupling2DKey::COEFFS,

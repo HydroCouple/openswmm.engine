@@ -232,6 +232,11 @@ std::string SurfaceRouter2D::sourceRouterModel(const SimulationContext& ctx) con
     a(o.start_date,o.total_duration_ms,o.flow_units,o.routing_step,o.wet_step,o.report_step,
       o.ignore_quality,o.ignore_snow_melt,o.ignore_2d,o.water_age,o.heat_transport,x,y,step,sync);
     for(int g=0;g<ctx.n_gages();++g) {auto name=ctx.gage_names.name_of(g);a(name);}
+    // Pond / equalisation options join only when set (legacy identity unchanged).
+    if(options_.coupling_pond_mode!=CouplingPondMode2D::FOOTPRINT||options_.coupling_rim_band>=0||
+       options_.coupling_pond_relax!=0||options_.coupling_equalize>=0)
+        {auto pm=options_.coupling_pond_mode;auto band=options_.coupling_rim_band;
+         auto relax=options_.coupling_pond_relax;auto eq=options_.coupling_equalize;a(pm,band,relax,eq);}
     if(joint_hydraulic_) {
         auto points=coupling_points_;
         a.sequence(points,[&](auto& p){a(p.cell_idx,p.vertex_idx,p.node_idx,p.cd,p.area,p.is_outfall,p.has_flap_gate,p.area_authored);
@@ -244,6 +249,10 @@ std::string SurfaceRouter2D::sourceBoundary(const SimulationContext& ctx) const 
     if(!active_ || !common_stage_ || !source_boundary_ready_ || &ctx!=source_context_ ||
        !common_stage_->matches(&mesh_,&state_,&subsurface_) || int(common_stage_->cells().size())!=mesh_.n_cells())
         return "Router checkpoint requires an accepted attached all-cell source boundary.";
+    // TRACKING relaxes each coupled pond area in time; the checkpoint does not
+    // carry that state yet, so refuse rather than restore a different pond.
+    if(!pond_track_ptr_.empty())
+        return "Router checkpoint does not carry COUPLING_POND_MODE TRACKING pond state.";
     if((!joint_hydraulic_ && (ctx.n_nodes()!=0 || ctx.n_links()!=0 || !coupling_points_.empty())) || !aquifer_link_shares_.empty() ||
        !subcatch_recharge_.empty() || !cell_subcatch_.empty() || surface_quality_.active() || (runtimeActive() && !runtimeWaterCheckpointing()) ||
        !ramp_prev_head_.empty() || (!joint_hydraulic_ && (outfall_state_changed_ || !window_outfall_accum_.empty())))

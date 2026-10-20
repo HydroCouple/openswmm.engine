@@ -94,6 +94,11 @@ struct SurfaceStateData {
     /// Head-sampling cell lists of the coupling points (COUPLING_HEAD VERTEX /
     /// STENCIL_WET_MEAN), indexed by CouplingPoint::head_begin/head_end.
     const std::vector<int>*           coupling_head_cells = nullptr;
+    /// COUPLING_EQUALIZE inputs, published by the router before each advance:
+    /// every coupled node's 1D surface area (m²) and the advance window (s)
+    /// over which the 1D heads are held.
+    const std::vector<double>*        node_pond_area_m2   = nullptr;
+    double                            coupling_window_s   = 0.0;
 
     /// S1 — overland species transport. `transport.active()` is false (and
     /// every marcher species branch is skipped) unless the router sized it,

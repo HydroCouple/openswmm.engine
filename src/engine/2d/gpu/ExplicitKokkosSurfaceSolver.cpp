@@ -37,6 +37,7 @@
 #include "../data/SurfaceStateData.hpp"
 #include "../data/BoundaryData.hpp"
 #include "../coupling/NodeCoupling.hpp"   // CouplingPoint
+#include "../coupling/PondModel.hpp"
 #include "../solver/InertialKernels.hpp"
 #include "../../data/NodeData.hpp"
 
@@ -268,7 +269,7 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
     const std::size_t np =
         state.node_coupling ? state.node_coupling->size() : 0;
     {
-        std::vector<int> cell(np), vert(np), node(np), law(np), hb(np), he(np);
+        std::vector<int> cell(np), vert(np), node(np), law(np), hb(np), he(np), eq(np);
         std::vector<double> cd(np), area(np), geo(3 * np), coef(5 * np);
         for (std::size_t k = 0; k < np; ++k) {
             const auto& cp = (*state.node_coupling)[k];
@@ -278,6 +279,7 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
             cd[k]   = cp.cd;
             area[k] = cp.area;
             law[k]  = cp.law;
+            eq[k]   = cp.equalize ? 1 : 0;
             hb[k]   = cp.head_begin;
             he[k]   = cp.head_end;
             geo[3 * k + 0] = cp.geo.z_crest;
@@ -295,6 +297,7 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
         d_cp_cd_     = devCopy("cp_cd", cd);
         d_cp_area_   = devCopy("cp_area", area);
         d_cp_law_    = devCopy("cp_law", law);
+        d_cp_eq_     = devCopy("cp_eq", eq);
         d_cp_head_b_ = devCopy("cp_head_b", hb);
         d_cp_head_e_ = devCopy("cp_head_e", he);
         d_cp_geo_    = devCopy("cp_geo", geo);
@@ -314,6 +317,7 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
     d_node_fullvol_   = DView("node_fullvol", nn);
     d_node_invert_    = DView("node_invert", nn);
     d_node_fulldepth_ = DView("node_fulldepth", nn);
+    d_node_pond_area_ = DView("node_pond_area", nn);
     if (nn > 0) {
         devRefresh(d_node_invert_, state.nodes_1d->invert_elev);
         devRefresh(d_node_fulldepth_, state.nodes_1d->full_depth);
@@ -1037,6 +1041,10 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
         auto cp_law = d_cp_law_, cp_hb = d_cp_head_b_, cp_he = d_cp_head_e_;
         auto head_cells = d_head_cells_;
         auto cp_geo = d_cp_geo_, cp_coef = d_cp_coef_;
+        auto cp_eq = d_cp_eq_;
+        auto npa = d_node_pond_area_;
+        const double eq_window =
+            state_->node_pond_area_m2 ? state_->coupling_window_s : 0.0;
         auto exch = d_exch_, node_drawn = d_node_drawn_;
         auto coup_app = d_coupling_applied_;
         auto nh = d_node_head_, nd = d_node_depth_, nv = d_node_volume_;
@@ -1136,6 +1144,11 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
 
                     Q *= (Q > 0.0) ? devWetRamp(depth_2d_avail, dry)
                                    : devWetRamp(depth_1d_avail, dry);
+                    if (cp_eq(kk) && eq_window > 0.0) {   // COUPLING_EQUALIZE
+                        const double cap = openswmm::twoD::pond::equalizeCap(
+                            h_2d - h_1d, eq_window, npa(ni), area(ci));
+                        Q = (Q > cap) ? cap : ((Q < -cap) ? -cap : Q);
+                    }
                     if (Q == 0.0) continue;
 
                     if (Q > 0.0) {   // 2D → 1D drain: availability share
@@ -1235,6 +1248,9 @@ void ExplicitKokkosSurfaceSolver::pushNodeState() {
     devRefresh(d_node_head_, state_->nodes_1d->head);
     devRefresh(d_node_depth_, state_->nodes_1d->depth);
     devRefresh(d_node_volume_, state_->nodes_1d->volume);
+    if (state_->node_pond_area_m2 &&
+        state_->node_pond_area_m2->size() == d_node_pond_area_.extent(0))
+        devRefresh(d_node_pond_area_, *state_->node_pond_area_m2);
 }
 
 void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current,

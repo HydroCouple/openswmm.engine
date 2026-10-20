@@ -77,6 +77,12 @@ struct CouplingPoint {
     int8_t law = 0;
     exchange::Geometry     geo;    ///< WEIR_ORIFICE structure (SI, 2D frame)
     exchange::Coefficients coef;   ///< WEIR_ORIFICE coefficients
+    /// Chamber plan area above the rim (m²): [2D_NODE_COUPLING] CHAMBER_AREA,
+    /// else the structure's open area (the map-row area under ORIFICE). The
+    /// pond area under COUPLING_POND_MODE CHAMBER, the floor under TRACKING.
+    double chamber_area = 0.0;
+    /// COUPLING_EQUALIZE resolved for this point.
+    bool equalize = false;
     /// Head-sampling cells [head_begin, head_end) in the router's shared list
     /// (SurfaceStateData::coupling_head_cells): the wet-depth-weighted η over
     /// them drives the exchange. Empty = the coupling cell's own head.

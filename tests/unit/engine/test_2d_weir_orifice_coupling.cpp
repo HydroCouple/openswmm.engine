@@ -304,7 +304,8 @@ TEST(WeirOrificeCoupling, OptionsRoundTripThroughInp) {
     const fs::path inp = kOut / "options_in.inp", out = kOut / "options_out.inp";
     { std::ofstream f(inp);
       f << deck("COUPLING_LAW WEIR_ORIFICE\nCOUPLING_HEAD STENCIL_WET_MEAN\n"
-                "COUPLING_COEFFS rubinato2017\n", ""); }
+                "COUPLING_COEFFS rubinato2017\nCOUPLING_POND_MODE TRACKING\n"
+                "COUPLING_POND_RELAX 20\nCOUPLING_RIM_BAND 0.03\nCOUPLING_EQUALIZE NO\n", ""); }
     SWMM_Engine e = swmm_engine_create();
     ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), "", "", nullptr), SWMM_OK);
     ASSERT_EQ(swmm_model_write(e, out.string().c_str()), SWMM_OK);
@@ -320,6 +321,17 @@ TEST(WeirOrificeCoupling, OptionsRoundTripThroughInp) {
     EXPECT_STREQ(buf, "STENCIL_WET_MEAN");
     ASSERT_EQ(swmm_options_get_ext(e2, "COUPLING_COEFFS", buf, 64), SWMM_OK);
     EXPECT_STREQ(buf, "RUBINATO2017");
+    ASSERT_EQ(swmm_options_get_ext(e2, "COUPLING_POND_MODE", buf, 64), SWMM_OK);
+    EXPECT_STREQ(buf, "TRACKING");
+    ASSERT_EQ(swmm_options_get_ext(e2, "COUPLING_POND_RELAX", buf, 64), SWMM_OK);
+    EXPECT_STREQ(buf, "20");
+    ASSERT_EQ(swmm_options_get_ext(e2, "COUPLING_RIM_BAND", buf, 64), SWMM_OK);
+    EXPECT_STREQ(buf, "0.03");
+    ASSERT_EQ(swmm_options_get_ext(e2, "COUPLING_EQUALIZE", buf, 64), SWMM_OK);
+    EXPECT_STREQ(buf, "NO");
+    EXPECT_EQ(swmm_options_set_ext(e2, "COUPLING_EQUALIZE", "DEFAULT"), SWMM_OK);
+    ASSERT_EQ(swmm_options_get_ext(e2, "COUPLING_EQUALIZE", buf, 64), SWMM_OK);
+    EXPECT_STREQ(buf, "DEFAULT");
     EXPECT_EQ(swmm_options_set_ext(e2, "COUPLING_LAW", "WEIR"), SWMM_ERR_BADPARAM);
     swmm_engine_close(e2);
     swmm_engine_destroy(e2);
@@ -330,7 +342,8 @@ TEST(WeirOrificeCoupling, OptionsRoundTripThroughInp) {
 // round-off. Skipped where the plugin is not built or not found (set
 // OPENSWMM_GPU_PLUGIN_PATH to the plugin directory).
 TEST(WeirOrificeCoupling, KokkosBackendMatchesCpu) {
-    const std::string opts = "COUPLING_LAW WEIR_ORIFICE\nCOUPLING_HEAD STENCIL_WET_MEAN\n";
+    const std::string opts = "COUPLING_LAW WEIR_ORIFICE\nCOUPLING_HEAD STENCIL_WET_MEAN\n"
+                             "COUPLING_POND_MODE TRACKING\nCOUPLING_EQUALIZE YES\n";
     plattest::setEnvVar("OPENSWMM_2D_BACKEND", "cpu");
     LiveRun cpu = run("wo_backend_cpu", opts, "J1 MANHOLE D=0.6\n");
     plattest::setEnvVar("OPENSWMM_2D_BACKEND", "omp");

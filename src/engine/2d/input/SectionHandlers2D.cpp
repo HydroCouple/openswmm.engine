@@ -266,6 +266,26 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
         else
             return "Unknown COUPLING_HEAD: " + val +
                    " (expected CELL|VERTEX|STENCIL_WET_MEAN)";
+    } else if (iequals(key, "COUPLING_POND_MODE")) {
+        if      (iequals(val, "FOOTPRINT")) opts.coupling_pond_mode = CouplingPondMode2D::FOOTPRINT;
+        else if (iequals(val, "CHAMBER"))   opts.coupling_pond_mode = CouplingPondMode2D::CHAMBER;
+        else if (iequals(val, "TRACKING"))  opts.coupling_pond_mode = CouplingPondMode2D::TRACKING;
+        else
+            return "Unknown COUPLING_POND_MODE: " + val + " (expected FOOTPRINT|CHAMBER|TRACKING)";
+    } else if (iequals(key, "COUPLING_POND_RELAX")) {
+        const double v = tryParseDouble(val, ok);
+        if (!ok || v < 0.0) return "Invalid COUPLING_POND_RELAX value (expected seconds >= 0)";
+        opts.coupling_pond_relax = v;
+    } else if (iequals(key, "COUPLING_RIM_BAND")) {
+        if (iequals(val, "DEFAULT")) { opts.coupling_rim_band = -1.0; return {}; }
+        const double v = tryParseDouble(val, ok);
+        if (!ok || v < 0.0) return "Invalid COUPLING_RIM_BAND value (expected metres >= 0)";
+        opts.coupling_rim_band = v;
+    } else if (iequals(key, "COUPLING_EQUALIZE")) {
+        if      (iequals(val, "YES"))     opts.coupling_equalize = 1;
+        else if (iequals(val, "NO"))      opts.coupling_equalize = 0;
+        else if (iequals(val, "DEFAULT")) opts.coupling_equalize = -1;
+        else return "Unknown COUPLING_EQUALIZE: " + val + " (expected YES|NO|DEFAULT)";
     } else if (iequals(key, "COUPLING_COEFFS")) {
         double preset = 0.0;
         const std::string err = nodecoupling2d::parseValue(
@@ -452,6 +472,7 @@ bool is2DOptionKey(const std::string& key) {
         "THETA", "CFL_NUMBER", "H_MOVE",
         "LTS_TIERS", "FROUDE_MAX", "ADVECTION", "COUPLING_AREA",
         "COUPLING_IN_FLOODING", "COUPLING_LAW", "COUPLING_HEAD", "COUPLING_COEFFS",
+        "COUPLING_POND_MODE", "COUPLING_POND_RELAX", "COUPLING_RIM_BAND", "COUPLING_EQUALIZE",
         "BACKEND",
         "OUTPUT_PRECISION", "OUTPUT_COMPRESSION", "REPORT_2D_VARIABLES",
         "REPORT_2D_SPECIES", "REPORT_2D_STEP",
@@ -538,6 +559,14 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
                                                                        : "CELL";
     if (iequals(key, "COUPLING_COEFFS"))
         return nodecoupling2d::formatValue(NodeCoupling2DKey::COEFFS, opts.coupling_coeffs);
+    if (iequals(key, "COUPLING_POND_MODE"))
+        return opts.coupling_pond_mode == CouplingPondMode2D::CHAMBER  ? "CHAMBER"
+             : opts.coupling_pond_mode == CouplingPondMode2D::TRACKING ? "TRACKING" : "FOOTPRINT";
+    if (iequals(key, "COUPLING_POND_RELAX")) return fmt_g(opts.coupling_pond_relax);
+    if (iequals(key, "COUPLING_RIM_BAND"))
+        return opts.coupling_rim_band < 0.0 ? "DEFAULT" : fmt_g(opts.coupling_rim_band);
+    if (iequals(key, "COUPLING_EQUALIZE"))
+        return opts.coupling_equalize < 0 ? "DEFAULT" : (opts.coupling_equalize ? "YES" : "NO");
     if (iequals(key, "BACKEND")) {
         switch (opts.backend) {
             case Backend2D::CPU:  return "CPU";

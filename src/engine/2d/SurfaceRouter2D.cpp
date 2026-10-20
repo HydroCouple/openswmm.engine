@@ -22,8 +22,10 @@
 #ifdef OPENSWMM_HAS_2D
 #include "solver/SurfaceSolverFactory.hpp"
 #endif
+#include "../core/Constants.hpp"
 #include "../core/DateTime.hpp"
 #include "../core/NodeCoupling2D.hpp"
+#include "coupling/PondModel.hpp"
 #include "../hydrology/LidNodeAquifer.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
@@ -732,6 +734,76 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             foot_m2 = mesh_.tri_area[cp.cell_idx];
         }
         ctx.nodes.ponded_area[ni] += foot_m2 * area_2d_to_1d;
+    }
+
+    // Above-rim pond of the coupled junctions (plan §4.2). FOOTPRINT with no
+    // rim band is the legacy step onto ponded_area: nothing is published and
+    // the dynamic wave is untouched. Otherwise the pond area ramps in over the
+    // band ABOVE the rim, and is the footprint (FOOTPRINT), the chamber
+    // (CHAMBER), or relaxes from the chamber toward the wet footprint
+    // (TRACKING, updated each routing step in updateTrackingPonds).
+    ctx.coupled_pond_area.clear();
+    ctx.coupled_pond_band.clear();
+    pond_track_ptr_.clear();
+    pond_track_cell_.clear();
+    pond_track_share_.clear();
+    pond_chamber_ft2_.clear();
+    {
+        const auto mode = options_.coupling_pond_mode;
+        const double band_m = options_.coupling_rim_band >= 0.0
+            ? options_.coupling_rim_band
+            : (mode == CouplingPondMode2D::FOOTPRINT ? 0.0 : 0.05);
+        const bool configured = mode != CouplingPondMode2D::FOOTPRINT || band_m > 0.0;
+        if (configured && ctx.options.routing_model != RoutingModel::DYNWAVE) {
+            ctx.warnings.push_back(
+                "WARNING: COUPLING_POND_MODE / COUPLING_RIM_BAND apply to dynamic "
+                "wave routing; coupled junctions keep the footprint step.");
+        } else if (configured) {
+            const auto n = static_cast<std::size_t>(ctx.n_nodes());
+            std::vector<double> chamber_m2(n, 0.0);
+            for (const auto& cp : coupling_points_)
+                if (!cp.is_outfall) {
+                    auto& c = chamber_m2[static_cast<std::size_t>(cp.node_idx)];
+                    c = std::max(c, cp.chamber_area);
+                }
+            ctx.coupled_pond_area.assign(n, 0.0);
+            ctx.coupled_pond_band.assign(n, band_m * options_.len_2d_to_1d);
+            pond_chamber_ft2_.assign(n, 0.0);
+            for (std::size_t i = 0; i < n; ++i) {
+                if (!ctx.coupled_node[i]) continue;
+                const double chamber = chamber_m2[i] > 0.0 ? chamber_m2[i] * area_2d_to_1d
+                                                           : ctx.nodes.ponded_area[i];
+                pond_chamber_ft2_[i] = chamber;
+                ctx.coupled_pond_area[i] = (mode == CouplingPondMode2D::FOOTPRINT)
+                                               ? ctx.nodes.ponded_area[i] : chamber;
+            }
+            if (mode == CouplingPondMode2D::TRACKING) {
+                // Each coupled node tracks the median-dual share of the cells
+                // around its coupling points (the footprint, cell by cell).
+                std::vector<std::vector<std::pair<int, double>>> cells(n);
+                for (const auto& cp : coupling_points_) {
+                    if (cp.is_outfall) continue;
+                    auto& list = cells[static_cast<std::size_t>(cp.node_idx)];
+                    if (cp.vertex_idx >= 0) {
+                        for (int k = mesh_.vert_stencil_ptr[cp.vertex_idx];
+                             k < mesh_.vert_stencil_ptr[cp.vertex_idx + 1]; ++k) {
+                            const int c = mesh_.vert_stencil_idx[k];
+                            list.emplace_back(c, mesh_.tri_area[c] / mesh_.cell_vertex_count(c));
+                        }
+                    } else {
+                        list.emplace_back(cp.cell_idx, mesh_.tri_area[cp.cell_idx]);
+                    }
+                }
+                pond_track_ptr_.assign(n + 1, 0);
+                for (std::size_t i = 0; i < n; ++i) {
+                    for (const auto& [c, share] : cells[i]) {
+                        pond_track_cell_.push_back(c);
+                        pond_track_share_.push_back(share);
+                    }
+                    pond_track_ptr_[i + 1] = static_cast<int>(pond_track_cell_.size());
+                }
+            }
+        }
     }
 
     // Live in-marcher exchange points: the marcher evaluates the orifice law
@@ -1772,6 +1844,70 @@ void SurfaceRouter2D::updateOutfallsPreRouting(SimulationContext& ctx, double dt
         throw std::invalid_argument("Joint outfall preparation requires its tracked hydraulic interval and an unused reservation.");
     updateOutfallBoundaries(coupling_points_, mesh_, state_, ctx, options_);
     outfall_exchange_.prepare(mesh_, state_, options_, ctx, dt);
+    // Pre-routing too (before the hydraulic state rolls): the routing step
+    // about to run starts from the relaxed pond.
+    updateTrackingPonds(ctx, dt);
+}
+
+
+// COUPLING_POND_MODE TRACKING: each coupled pond area relaxes toward the
+// currently wet footprint around the node (floored at its chamber area),
+//   A_eq ← A_eq + (Δt/τ)(A_target − A_eq),  τ = COUPLING_POND_RELAX or 5 Δt,
+// and a ponded node's depth is re-derived so it still holds the same pond
+// volume — the area change moves the head, never the water.
+void SurfaceRouter2D::updateTrackingPonds(SimulationContext& ctx, double dt) {
+    if (pond_track_ptr_.empty() || !(dt > 0.0)) return;
+    const double tau = options_.coupling_pond_relax > 0.0 ? options_.coupling_pond_relax : 5.0 * dt;
+    const double alpha = std::min(1.0, dt / tau);
+    const double m2_to_ft2 = options_.len_2d_to_1d * options_.len_2d_to_1d;
+    const auto n = pond_track_ptr_.size() - 1;
+    for (std::size_t i = 0; i < n; ++i) {
+        if (pond_track_ptr_[i] == pond_track_ptr_[i + 1]) continue;
+        double wet = 0.0;
+        for (int k = pond_track_ptr_[i]; k < pond_track_ptr_[i + 1]; ++k)
+            if (state_.depth[pond_track_cell_[static_cast<std::size_t>(k)]] >= options_.dry_depth)
+                wet += pond_track_share_[static_cast<std::size_t>(k)];
+        const double target = std::max(pond_chamber_ft2_[i], wet * m2_to_ft2);
+        const double a_old = ctx.coupled_pond_area[i];
+        const double a_new = a_old + alpha * (target - a_old);
+        if (a_new == a_old) continue;
+        const double band = ctx.coupled_pond_band[i];
+        const double x = ctx.nodes.depth[i] - ctx.nodes.full_depth[i];
+        if (x > 0.0) {
+            const double v = pond::volume(x, a_old, band);
+            ctx.nodes.depth[i] = ctx.nodes.full_depth[i] + pond::depthForVolume(v, a_new, band);
+            ctx.nodes.head[i]  = ctx.nodes.invert_elev[i] + ctx.nodes.depth[i];
+        }
+        ctx.coupled_pond_area[i] = a_new;
+    }
+}
+
+
+// COUPLING_EQUALIZE: each coupled node's 1D surface area for the advance about
+// to run (the pond area at its current depth, floored at MIN_SURFAREA; the
+// conduit ends DW adds on top only make the true area larger, so the cap
+// errs tight), and the window over which the 1D heads are held.
+void SurfaceRouter2D::publishEqualizeAreas(const SimulationContext& ctx, double window) {
+    state_.node_pond_area_m2 = nullptr;
+    state_.coupling_window_s = window;
+    if (std::none_of(node_coupling_points_.begin(), node_coupling_points_.end(),
+                     [](const CouplingPoint& cp) { return cp.equalize; }))
+        return;
+    const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    const double ucf_len = ucf::Ucf[ucf::LENGTH][us];
+    const double min_sa = ctx.options.min_surf_area > 0.0
+        ? ctx.options.min_surf_area / (ucf_len * ucf_len) : constants::MIN_SURFAREA;
+    const double ft2_to_m2 = options_.len_1d_to_2d * options_.len_1d_to_2d;
+    node_pond_area_m2_.assign(static_cast<std::size_t>(ctx.n_nodes()), 0.0);
+    for (const auto& cp : node_coupling_points_) {
+        const auto i = static_cast<std::size_t>(cp.node_idx);
+        const double x = ctx.nodes.depth[i] - ctx.nodes.full_depth[i];
+        const double pond_ft2 = (i < ctx.coupled_pond_area.size())
+            ? pond::area(x, ctx.coupled_pond_area[i], ctx.coupled_pond_band[i])
+            : (x > 0.0 ? ctx.nodes.ponded_area[i] : 0.0);
+        node_pond_area_m2_[i] = std::max(min_sa, pond_ft2) * ft2_to_m2;
+    }
+    state_.node_pond_area_m2 = &node_pond_area_m2_;
 }
 
 
@@ -2026,6 +2162,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
 
     prepareMeshHeat(ctx,state_,dt);
     if(subsurface_.heat().active())subsurface_.heat().prepare();
+    publishEqualizeAreas(ctx, dt);
     {
         perf::ScopedTimer tm_adv(perf::sec_2d_advance);
         solver_->advance(sim_time_, sim_time_ + dt);  // always reaches target

@@ -149,6 +149,23 @@ enum class CouplingHead2D : int8_t {
 };
 
 /**
+ * @brief Above-rim storage of a 2D-coupled junction under dynamic wave
+ *        ([2D_OPTIONS] COUPLING_POND_MODE; plan §4.2).
+ *
+ * FOOTPRINT (default): the pond spreads over the 2D-cell footprint (the
+ * median-dual area of the coupling cells) — the same water the stencil cells
+ * hold, so it is stored twice. CHAMBER: the pond is the structure's chamber
+ * area only; all ponded water lives on the mesh. TRACKING: the pond area
+ * relaxes from the chamber area toward the currently wet footprint over
+ * COUPLING_POND_RELAX, conserving the held volume as it changes.
+ */
+enum class CouplingPondMode2D : int8_t {
+    FOOTPRINT = 0,
+    CHAMBER   = 1,
+    TRACKING  = 2
+};
+
+/**
  * @brief Compute backend for the 2D marcher (mirrors fv::Backend).
  *
  * AUTO (default) lets SurfaceSolverFactory pick: a device plugin (cuda, hip,
@@ -298,6 +315,19 @@ struct SolverOptions2D {
     /// (NodeCoupling2DCoeffs: DEFAULT|RUBINATO2017|RUBINATO2017_LOWER|
     /// RUBINATO2017_UPPER); a node's COEFFS / CW / CSW / COI / COO override.
     int            coupling_coeffs = 0;
+    /// [2D_OPTIONS] COUPLING_POND_MODE FOOTPRINT|CHAMBER|TRACKING.
+    CouplingPondMode2D coupling_pond_mode = CouplingPondMode2D::FOOTPRINT;
+    /// [2D_OPTIONS] COUPLING_POND_RELAX — TRACKING relaxation time (s);
+    /// 0 = five routing steps.
+    double coupling_pond_relax = 0.0;
+    /// [2D_OPTIONS] COUPLING_RIM_BAND — height (m) above the rim over which
+    /// the pond area ramps in (C¹). < 0 = the mode default: 0 under FOOTPRINT
+    /// (the legacy step), 0.05 under CHAMBER / TRACKING.
+    double coupling_rim_band = -1.0;
+    /// [2D_OPTIONS] COUPLING_EQUALIZE YES|NO — cap each junction exchange so
+    /// one coupling window cannot carry the 1D and 2D heads past each other.
+    /// -1 = per law (on under WEIR_ORIFICE, off under ORIFICE).
+    int8_t coupling_equalize = -1;
     bool   report_2d         = true;    ///< Write 2D results to output
 
     // ---- Results-file size controls (plans/2D_OUTPUT_FLOAT32_AND_VARIABLE_SELECTION_PLAN) ----

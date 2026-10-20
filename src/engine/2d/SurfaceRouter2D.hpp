@@ -607,6 +607,18 @@ private:
     /// COUPLING_HEAD VERTEX / STENCIL_WET_MEAN sampling cells of the live
     /// points, each point's run at [head_begin, head_end).
     std::vector<int> coupling_head_cells_;
+    /// COUPLING_POND_MODE TRACKING: per node, the cells (CSR over nodes) whose
+    /// wet area its pond tracks, with each cell's median-dual share (m²), and
+    /// the chamber area floor (1D ft²).
+    std::vector<int>    pond_track_ptr_;
+    std::vector<int>    pond_track_cell_;
+    std::vector<double> pond_track_share_;
+    std::vector<double> pond_chamber_ft2_;
+    /// COUPLING_EQUALIZE: each coupled node's 1D surface area (m²) for the
+    /// coming advance, published on the state.
+    std::vector<double> node_pond_area_m2_;
+    void updateTrackingPonds(SimulationContext& ctx, double dt);
+    void publishEqualizeAreas(const SimulationContext& ctx, double window);
     /// S4: published 1D node row values `[node * n_species + s]` (pollutant
     /// conc, MSX conc, age, temperature), refreshed once per batch by
     /// publishNodeRows(); state_.node_row_conc points here.

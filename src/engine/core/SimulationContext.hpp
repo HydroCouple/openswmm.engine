@@ -1113,6 +1113,18 @@ struct SimulationContext {
     std::vector<std::uint8_t> coupled_node;
 
     /**
+     * @brief Above-rim pond of each 2D-coupled junction under dynamic wave
+     *        (2D_OPTIONS COUPLING_POND_MODE / COUPLING_RIM_BAND).
+     * @details Set by SurfaceRouter2D::initialize; EMPTY reproduces the legacy
+     *          step onto ponded_area. coupled_pond_area (1D ft²) is the pond
+     *          area A_eq — runtime state under TRACKING, which relaxes it each
+     *          routing step; coupled_pond_band (ft) is the height above the rim
+     *          over which the area ramps in (2d/coupling/PondModel.hpp).
+     */
+    std::vector<double> coupled_pond_area;
+    std::vector<double> coupled_pond_band;
+
+    /**
      * @brief Remaining seconds of the current 1D↔2D coupling delivery window.
      * @details Set by SurfaceRouter2D::fireAdvanceWindow to the length of the
      *          2D advance window whose junction-exchange volumes it just moved

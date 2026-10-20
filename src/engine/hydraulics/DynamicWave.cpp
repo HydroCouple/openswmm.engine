@@ -63,6 +63,7 @@
 #include "ForceMain.hpp"
 #include "Culvert.hpp"
 #include "AquiferLinkExchange.hpp"   // G-X4
+#include "../2d/coupling/PondModel.hpp"   // coupled-junction pond area
 #include "../core/Constants.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
@@ -1557,6 +1558,13 @@ void DWSolver::initNodeStates(SimulationContext& ctx) {
                  t.ponded_area > 0.0)
                     ? t.ponded_area
                     : 0.0;
+            // A 2D-coupled junction with a configured pond (COUPLING_POND_MODE
+            // CHAMBER / TRACKING or a COUPLING_RIM_BAND): its area A_eq ramps
+            // in C¹ over the band above the rim instead of stepping onto it.
+            if (ui < ctx.coupled_pond_area.size() && ctx.coupled_node[ui])
+                xnode_.new_surf_area[ui] = twoD::pond::area(
+                    nodes.depth[ui] - t.full_depth, ctx.coupled_pond_area[ui],
+                    ctx.coupled_pond_band[ui]);
         } else {
             xnode_.new_surf_area[ui] = node_can_pond
                 ? node::getPondedArea(nodes, i, nodes.depth[ui], &ctx.tables, unit_sys, &ctx.node_subtypes)

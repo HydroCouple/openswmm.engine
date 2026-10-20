@@ -217,6 +217,13 @@ static void apply_option_2d(SimulationContext& ctx, const std::string& key,
         o->coupling_head = (val == "VERTEX")           ? twoD::CouplingHead2D::VERTEX
                          : (val == "STENCIL_WET_MEAN") ? twoD::CouplingHead2D::STENCIL_WET_MEAN
                                                        : twoD::CouplingHead2D::CELL;
+    else if (key == "2D_COUPLING_POND_MODE")
+        o->coupling_pond_mode = (val == "CHAMBER")  ? twoD::CouplingPondMode2D::CHAMBER
+                              : (val == "TRACKING") ? twoD::CouplingPondMode2D::TRACKING
+                                                    : twoD::CouplingPondMode2D::FOOTPRINT;
+    else if (key == "2D_COUPLING_POND_RELAX") o->coupling_pond_relax = std::stod(val);
+    else if (key == "2D_COUPLING_RIM_BAND")   o->coupling_rim_band = std::stod(val);
+    else if (key == "2D_COUPLING_EQUALIZE")   o->coupling_equalize = (val == "YES") ? 1 : 0;
     else if (key == "2D_COUPLING_COEFFS") {
         double preset = 0.0;
         if (nodecoupling2d::parseValue(NodeCoupling2DKey::COEFFS, val, preset).empty())

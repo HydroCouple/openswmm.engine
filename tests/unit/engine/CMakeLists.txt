@@ -539,6 +539,10 @@ if(OPENSWMM_BUILD_2D)
                    test_2d_exchange_rubinato_steady.cpp)
     add_gtest_unit(test_engine_2d_weir_orifice_coupling
                    test_2d_weir_orifice_coupling.cpp)
+    # Coupled-junction ponds (COUPLING_POND_MODE / RIM_BAND) and the
+    # head-equalisation cap: pure geometry, then engine runs.
+    add_gtest_unit(test_engine_2d_pond_continuity test_2d_pond_continuity.cpp)
+    add_gtest_unit(test_engine_2d_coupling_ponds test_2d_coupling_ponds.cpp)
     # 1D↔2D coupling unit-system equivalence — runs the same physical coupled
     # model in CMS and CFS and asserts matching 2D depths/continuity. Guards the
     # always-feet⇄metres coupling factors (the 1D side is always feet-internal).

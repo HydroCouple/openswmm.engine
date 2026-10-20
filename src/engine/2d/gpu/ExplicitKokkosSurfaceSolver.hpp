@@ -144,8 +144,9 @@ private:
     DView d_cp_cd_, d_cp_area_;
     // WEIR_ORIFICE per point: law, structure {z_crest, l_weir, a_orif} and
     // coefficients {c_w, c_sw, c_oi, c_oo, h_eps}; COUPLING_HEAD cell runs.
-    IView d_cp_law_, d_cp_head_b_, d_cp_head_e_, d_head_cells_;
+    IView d_cp_law_, d_cp_head_b_, d_cp_head_e_, d_head_cells_, d_cp_eq_;
     DView d_cp_geo_, d_cp_coef_;
+    DView d_node_pond_area_;   ///< COUPLING_EQUALIZE 1D area per node (m²)
     DView d_exch_, d_node_drawn_;
     DView d_node_head_, d_node_depth_, d_node_volume_;
     DView d_node_invert_, d_node_fulldepth_;
