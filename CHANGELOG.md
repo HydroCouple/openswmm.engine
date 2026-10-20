@@ -23,6 +23,10 @@ retroactive.
 
 ## [Unreleased]
 
+### Floating-point contraction policy (2026-10-20)
+
+- **The legacy bit-parity contract is enforced by the build.** `-ffp-contract=off` was applied only under `OPENSWMM_ENGINE_FORCE_OPTIMIZED`, which defaults OFF, so a default build had no contraction control on the engine, the legacy engine or the tests: the compiler could fuse `a*b + c` into an FMA in one inlining context and not another, and the same source expression differed by 1–2 ulp depending on where it was inlined. Five parity assertions failed on that alone and had been carried as "pre-existing ulp noise" (two in `test_engine_xsect_kernels_parity`, three in `test_engine_xsect_parity`, among them new code against new code and the committed golden hash); all five pass with the flags, and the golden matches its committed value again. The flags are now unconditional on the engine, the legacy engine and every test translation unit — the hot geometry kernels are header-inline, so each test TU compiles its own copy under its own flags. On Bellinge (1015 conduits) the legacy engine is byte-identical; DYNWAVE differs in 174 of ~45 M stored values (worst relative 4.5e-6 on a 1e-10 quantity) with the only report change the day-of-maximum column on permanently dry junctions; FV, a chaotic explicit scheme outside the parity contract, shifts materially (~26 % of values). Cost about 7 % wall time on Bellinge DYNWAVE.
+
 ### Hot-start follow-ups and land-use parity (2026-10-19)
 
 - **`[COVERAGES]` reads every land use on a line.** `S1 RES 60 COM 40` set only RES; COM was dropped without a message. Every pair is read now, as in EPA SWMM, and a line naming an unknown subcatchment or land use (ERROR 209), a land use without a percent (ERROR 203) or a percent that is not a number (ERROR 211) is an error, as it is there. These lines were skipped silently before.
