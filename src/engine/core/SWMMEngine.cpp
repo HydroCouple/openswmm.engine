@@ -940,6 +940,10 @@ int SWMMEngine::initialize() noexcept {
         set_error(SWMM_ERR_BADPARAM, "LAGRANGIAN reaction transport does not support attached WALL species; use QUALITY_SOLVER LEGACY.");
         return SWMM_ERR_BADPARAM;
     }
+    if (ctx_.reactions.has_subcatch_reactions() && ctx_.lid_usage.count() > 0) {
+        set_error(SWMM_ERR_BADPARAM, "[REACTION_SUBCATCHMENTS] wet-pool reactions require non-LID subcatchments; porous LID reaction transport is unsupported.");
+        return SWMM_ERR_BADPARAM;
+    }
     ctx_.refreshReportedSpecies();
 
     // Everything from here to init_modules() is the "state seeding" phase —

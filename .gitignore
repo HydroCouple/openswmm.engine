@@ -146,3 +146,5 @@ docs/figures/cache/
 !/examples/reactions/arrhenius.rxn
 !/examples/reactions/attached_wall.inp
 !/examples/reactions/attached_wall.rxn
+!/examples/reactions/wet_pool.inp
+!/examples/reactions/wet_pool.rxn

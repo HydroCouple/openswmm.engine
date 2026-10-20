@@ -1424,6 +1424,7 @@ class ReactionScope(IntEnum):
     PIPE = 1
     TANK = 2
     SUBSURFACE = 3
+    SUBCATCHMENT = 4
 
 
 class ReactionExprForm(IntEnum):

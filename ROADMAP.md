@@ -106,6 +106,15 @@ The 2026-10-19 increment implements four formerly reserved sections:
 - `[REACTION_PARAMETERS]`: node/link PARAMETER overrides used by terms and all expression forms, including ARD parent links and LARD segments.
 - `[REACTION_REPORT]`: species-column selection in native output without altering internal species indexing. Ordinary `[REPORT]` retains element selection.
 
+The 2026-10-20 increment adds `[REACTION_SUBCATCHMENTS]` for BULK wet pools
+on non-LID subcatchments. It mixes rain/run-on with retained mass, integrates
+its own expressions, then allocates mass to infiltration, runoff and storage.
+It uses conservative residual-mass storage, records reaction/clamp amounts,
+and exposes the scope through C/Python and File editing. Constants, global
+parameters, terms, DT and beginning-of-step runoff TEMP are supported;
+WALL/pollutant dependencies and other hydraulic inputs are refused. Existing
+surface-quality closure remains unchanged without explicit subcatchment laws.
+
 LEGACY now keeps WALL state attached rather than advecting or evaporatively
 concentrating it as dissolved mass. The dissolved routing ledger excludes
 WALL densities. ARD retains its LEGACY fallback for WALL systems; LARD refuses
@@ -114,11 +123,12 @@ Selected output and parameter overrides are checked across all three network
 quality solvers. Reusable [reaction networks](examples/reactions/README.md)
 include parent/product conversion, temperature-dependent decay and attached
 wall decay. The companion benchmark repository adds a `quality/reactions`
-suite with 24 analytic cells across quality solvers, rate units and overrides.
+suite with 24 analytic cells across quality solvers, rate units and overrides,
+plus three rain-fed wet-pool conservation checks (self-consistency only).
 
 **Remaining work and restrictions:**
 
-- `[REACTION_SUBCATCHMENTS]` is still recognised and refused. Buildup/washoff and rainfall transport do not implement a wet-subcatchment reactor. Source SETPOINT and FLOWPACED kinds remain refused.
+- Extend wet-pool qualification beyond the supported non-LID mix/react/allocate profile. Dry buildup does not react in that pool; a continuously fed reactor, spatially selective subcatchment laws and porous LID adapters remain separate work. Source SETPOINT and FLOWPACED kinds remain refused.
 - Complete geometry-dependent WALL/BULK qualification: bindings do not yet populate wall area/volume variables, and AREA_UNITS does not implement that conversion. The added network tests and examples do not qualify every surface or groundwater combination.
 - Implement exact native checkpoint/output continuation for reaction models. Hotstart species-state support is distinct; a new run starts the source-pattern clock again.
 - Implement conservative porous LID-layer species transport and reactor adapters. LID underdrain removals/source delivery already work for supported runoff combinations, but storage-node LIDs with reaction systems remain refused. Required work includes mobile/retained inventories, layer/port transfers, donor limits, dry/refill behavior, mass receipts and restart state before enabling these combinations.

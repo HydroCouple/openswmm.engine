@@ -3545,7 +3545,7 @@ matter.
 
 | Component id | Configuration file | Sections | Status |
 |---|---|---|---|
-| `org.hydrocouple.openswmm.reactions` | `model.rxn` (or embedded in the `.inp`) | `[REACTION_OPTIONS]` `[REACTION_SPECIES]` `[REACTION_COEFFICIENTS]` `[REACTION_TERMS]` `[REACTION_PIPES]` `[REACTION_TANKS]` `[REACTION_QUALITY]`; `[REACTION_SOURCES]` `[REACTION_PARAMETERS]` `[REACTION_PATTERNS]` `[REACTION_REPORT]` are supported as described below; `[REACTION_SUBCATCHMENTS]` is recognised and refused | \status{Implemented} |
+| `org.hydrocouple.openswmm.reactions` | `model.rxn` (or embedded in the `.inp`) | `[REACTION_OPTIONS]` `[REACTION_SPECIES]` `[REACTION_COEFFICIENTS]` `[REACTION_TERMS]` `[REACTION_PIPES]` `[REACTION_TANKS]` `[REACTION_QUALITY]`; `[REACTION_SOURCES]` `[REACTION_PARAMETERS]` `[REACTION_PATTERNS]` `[REACTION_REPORT]` are supported as described below; `[REACTION_SUBCATCHMENTS]` supplies wet non-LID pool laws | \status{Implemented} |
 | `org.hydrocouple.openswmm.transport.ard` | `model.ard` | `[TRANSPORT_OPTIONS]` `[CONDUIT_DISPERSION]` `[TRANSPORT_BOUNDARIES]` `[TRANSPORT_SOURCES]`; `[STORAGE_MIXING]` is refused until phase E2b | \status{Implemented} |
 | `org.hydrocouple.openswmm.transport.lard` | none | none — the Lagrangian engine is selected by `[OPTIONS] QUALITY_SOLVER LAGRANGIAN` (alias `LARD`) and reads no component file; registering this id is refused with "arrives with plan phase T5" | \status{Planned} |
 | `org.hydrocouple.openswmm.heat` | `model.heat` | `[HEAT_SOURCES]` `[HEAT_FLUXES]` `[RADIATIVE_FLUXES]` `[SOLAR_RADIATION]` `[CLOUD_COVER]` `[SEDIMENT_EXCHANGE]` | \status{Implemented} |
@@ -3898,25 +3898,41 @@ summary reports BULK species only: a WALL density is not a water-volume mass.
 
 ### Component section: [REACTION_SUBCATCHMENTS] {#engine_manual_sect_REACTION_SUBCATCHMENTS}
 
-Purpose: \status{Planned}
-Reserved for reaction expressions in the subcatchment (runoff) scope. The tag
-is recognised; no row is parsed.
+Purpose: \status{Implemented}
+Defines a separate wet-pool reactor for each non-LID subcatchment.
 
 Format:
 ```
-[REACTION_SUBCATCHMENTS]
-;; no row grammar is defined in this release
+RATE / EQUIL / FORMULA   Species   Expression
 ```
 
-Parameters:
-None. No row is read.
+Only BULK targets and BULK dependencies are supported. Constants, global
+PARAMETER coefficients, terms, `DT` (seconds) and `TEMP` (degrees C) are
+available. With heat enabled TEMP is the beginning-of-step published runoff
+temperature; otherwise it is the configured fallback. Other hydraulic
+variables, pollutant references and WALL references (including through terms)
+are refused. NODE/LINK parameter overrides do not affect this scope.
 
-Remarks:
-Presence of the section is an error — "arrives with plan phase R6" — and the
-whole reactions configuration is rejected. Reactions run in the pipe and tank
-scopes only.
+Each runoff step mixes retained ponded mass with rainfall and run-on inputs,
+integrates that pool over the runoff interval, then allocates its mass to
+infiltration, runoff and retained storage. Closing storage carries the
+remaining **mass**; evaporation removes water without removing solute. This
+is a first-order split batch model: incoming mass is mixed before reacting
+for the full interval. Resolve kinetic and forcing time scales with WET_STEP
+and check timestep sensitivity. It is not an exact continuously fed CSTR.
 
-<!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:401,455-468 -->
+Zero-volume pools do not react. Pools at or below one litre retain and route
+their mass without integrating concentrations. Dry residual mass is booked
+as remaining dry mass through the existing ponded-loss ledger. RATE
+overshoots are clamped with separate reaction-loss and clamp-addition rows;
+failed or negative algebraic steps retain the unreacted mixed inventory and
+warn. Reaction mass changes are recorded in runoff quality continuity.
+
+Dry land-use buildup/washoff does not react in this pool. Network pipe/tank
+laws do not substitute for these expressions. Configurations combining this
+scope with subcatchment LID units are refused at initialization until a
+conservative layer adapter is available. Exact reaction checkpoint/output
+continuation remains unsupported; hotstart inventory loading is separate.
 
 ### Component section: [HEAT_SOURCES] {#engine_manual_sect_HEAT_SOURCES}
 

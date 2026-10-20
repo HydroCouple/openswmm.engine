@@ -148,6 +148,8 @@ struct MsxSurfaceData {
     std::vector<double> led_bmp_removal;
     std::vector<double> led_wet_deposition; ///< rainfall concentration × rain volume
     std::vector<double> led_infil_loss;     ///< infiltrated from ponded water and LID units
+    std::vector<double> led_reacted; ///< signed wet-pool reaction loss, user mass
+    std::vector<double> led_reaction_clamped; ///< numerical addition after a negative RATE
     std::vector<double> led_ponded_lost;    ///< ponded mass written off when a surface dried
     std::vector<double> led_subcatch_load; ///< [sc * n_species + m], per-subcatchment total (report)
 
@@ -198,6 +200,8 @@ struct MsxSurfaceData {
         led_wet_deposition.assign(nm, 0.0);
         led_infil_loss.assign(nm, 0.0);
         led_ponded_lost.assign(nm, 0.0);
+        led_reacted.assign(nm, 0.0);
+        led_reaction_clamped.assign(nm, 0.0);
         led_subcatch_load.assign(static_cast<std::size_t>(nsc) * nm, 0.0);
     }
 };

@@ -42,6 +42,8 @@
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_model.h>
+#include <openswmm/engine/openswmm_output.h>
+#include "core/UnitConversion.hpp"
 #include <openswmm/engine/openswmm_quality.h>
 #include <openswmm/engine/openswmm_subcatchments.h>
 #include <openswmm/engine/openswmm_infrastructure.h>
@@ -1101,4 +1103,215 @@ TEST(MsxSurfaceTwin, HotstartCarriesSpeciesRunon) {
     rep("\n[COVERAGES]\nS1  LU1  100\n", "\n[COVERAGES]\nS1  LU1  100\nS2  LU1  100\n");
     checkSpeciesHotstart(body, "_hs_r", "", 2);
     checkSpeciesHotstart(body, "_hs_rn", "NATIVE", 2);
+}
+
+namespace {
+class WetSubcatchmentReactions : public ::testing::Test {
+protected:
+    SWMM_Engine engine = nullptr;
+    void open(const std::string& chemistry, bool metric = false) {
+        write("_wet_scope.rxn", "[REACTION_OPTIONS]\nCOUPLING FULL\nRATE_UNITS SEC\nATOL 1e-10\nRTOL 1e-8\n" + chemistry);
+        write("_wet_scope.inp", deck(metric ? "FLOW_UNITS CMS\n" : "", "", pc("_wet_scope.rxn")));
+        engine = swmm_engine_create(); ASSERT_NE(engine, nullptr);
+        ASSERT_EQ(swmm_engine_open(engine, "_wet_scope.inp", "_wet_scope.rpt", "_wet_scope.out", nullptr), SWMM_OK);
+        ASSERT_EQ(swmm_engine_initialize(engine), SWMM_OK);
+        auto& ctx = cpp(engine).context();
+        auto& sc = ctx.subcatches;
+        sc.area[0] = 100 * openswmm::ucf::UCF(openswmm::ucf::LANDAREA, ctx.options);
+        sc.old_ponded_depth[0] = sc.ponded_depth[0] = .1; // 10 ft3
+        sc.rainfall[0] = sc.runon_inflow[0] = sc.runoff[0] = sc.infil_loss[0] = 0;
+    }
+    void TearDown() override {
+        if (engine) swmm_engine_destroy(engine);
+        for (const auto* suffix : {".inp", ".rxn", ".rpt", ".out"}) std::remove((std::string("_wet_scope") + suffix).c_str());
+    }
+    void seed(int species, double concentration, double volume = 10) {
+        auto& s = cpp(engine).context().reactions.surface;
+        s.ponded_qual[species] = concentration * 28.317 * volume;
+        s.led_init_buildup[species] = s.ponded_qual[species] * s.mcf[species];
+    }
+};
+const std::string wetConversion = "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
+    "[REACTION_SUBCATCHMENTS]\nRATE A -0.01 * A\nRATE B 0.01 * A\n";
+}
+
+TEST_F(WetSubcatchmentReactions, CoupledConversionConservesAnIsolatedWetPool) {
+    open(wetConversion); ASSERT_NE(engine, nullptr);
+    ASSERT_EQ(cpp(engine).context().state, openswmm::EngineState::INITIALIZED);
+    auto& ctx = cpp(engine).context(); auto& s = ctx.reactions.surface;
+    seed(0, 10);
+    openswmm::msxsurf::step(ctx, 10, 0);
+    const double litres = 10 * 28.317;
+    EXPECT_NEAR(s.ponded_qual[0] / litres, 10 * std::exp(-.1), 1.e-7);
+    EXPECT_NEAR(s.ponded_qual[1] / litres, 10 * (1 - std::exp(-.1)), 1.e-7);
+    EXPECT_NEAR(s.ponded_qual[0] + s.ponded_qual[1], 10 * litres, 1.e-9);
+    EXPECT_NEAR(s.led_reacted[0] + s.led_reacted[1], 0, 1.e-14);
+    EXPECT_DOUBLE_EQ(s.washoff_conc[0], 0);
+}
+
+TEST_F(WetSubcatchmentReactions, ReactedPoolFeedsInfiltrationRunoffAndEvaporativelyConcentratedStorage) {
+    open("[REACTION_SPECIES]\nBULK A MG\n[REACTION_RAINFALL]\nA 4\n"
+         "[REACTION_SUBCATCHMENTS]\nRATE A -0.01 * A\n");
+    ASSERT_NE(engine, nullptr);
+    ASSERT_EQ(cpp(engine).context().state, openswmm::EngineState::INITIALIZED);
+    auto& ctx = cpp(engine).context(); auto& s = ctx.reactions.surface; auto& sc = ctx.subcatches;
+    seed(0, 2);
+    sc.rainfall[0] = 5.0 / 100 / 10; // 5 ft3 rain in 10 s
+    sc.runon_inflow[0] = 3.0 / 10;
+    s.runon_qual_rate[0] = 6 * 28.317 * 3 / 10; // 3 ft3 run-on at 6 mg/L
+    sc.infil_loss[0] = 2.0 / 100 / 10;
+    sc.runoff[0] = 4.0 / 10;
+    sc.ponded_depth[0] = 11.0 / 100; // one ft3 evaporated; evaporation removes no solute
+    const double input_mass = (2 * 10 + 4 * 5 + 6 * 3) * 28.317;
+    const double reacted_mass = input_mass * std::exp(-.1);
+    openswmm::msxsurf::step(ctx, 10, 0);
+    openswmm::msxsurf::bookPostLid(ctx, 10, std::vector<double>(1, 0));
+    EXPECT_NEAR(s.washoff_conc[0], reacted_mass / (18 * 28.317), 1.e-8);
+    EXPECT_NEAR(s.ponded_qual[0], reacted_mass * 12 / 18, 1.e-6);
+    const double cf = s.mcf[0];
+    EXPECT_NEAR(s.led_infil_loss[0], reacted_mass * 2 / 18 * cf, 1.e-12);
+    EXPECT_NEAR(s.led_runoff_load[0], reacted_mass * 4 / 18 * cf, 1.e-12);
+    EXPECT_NEAR(s.led_reacted[0] + s.led_infil_loss[0] + s.led_runoff_load[0] + s.ponded_qual[0] * cf,
+                input_mass * cf, 1.e-12);
+}
+
+TEST_F(WetSubcatchmentReactions, DryAndSubLitrePoolsDoNotExecuteFormulaOrInventMass) {
+    open("[REACTION_SPECIES]\nBULK A MG\n[REACTION_SUBCATCHMENTS]\nFORMULA A 99\n");
+    ASSERT_NE(engine, nullptr);
+    ASSERT_EQ(cpp(engine).context().state, openswmm::EngineState::INITIALIZED);
+    auto& ctx = cpp(engine).context(); auto& s = ctx.reactions.surface;
+    ctx.subcatches.old_ponded_depth[0] = ctx.subcatches.ponded_depth[0] = 0;
+    s.ponded_qual[0] = 47;
+    openswmm::msxsurf::step(ctx, 10, 0);
+    EXPECT_DOUBLE_EQ(s.ponded_qual[0], 0);
+    EXPECT_DOUBLE_EQ(s.led_ponded_lost[0], 47 * s.mcf[0]);
+    EXPECT_DOUBLE_EQ(s.led_reacted[0], 0);
+    ctx.subcatches.old_ponded_depth[0] = ctx.subcatches.ponded_depth[0] = 1.e-20;
+    s.ponded_qual[0] = 1;
+    openswmm::msxsurf::step(ctx, 10, 10);
+    EXPECT_DOUBLE_EQ(s.ponded_qual[0], 1);
+    EXPECT_DOUBLE_EQ(s.led_reacted[0], 0);
+    ctx.subcatches.old_ponded_depth[0] = ctx.subcatches.ponded_depth[0] = .1;
+    s.ponded_qual[0] = 0;
+    openswmm::msxsurf::step(ctx, 10, 20);
+    EXPECT_NEAR(s.ponded_qual[0], 99 * 10 * 28.317, 1.e-9);
+}
+
+TEST_F(WetSubcatchmentReactions, FailedAlgebraicStepLeavesTheMixedInventoryUnchanged) {
+    open("[REACTION_SPECIES]\nBULK A MG\n[REACTION_SUBCATCHMENTS]\nFORMULA A SQRT(-1)\n");
+    ASSERT_NE(engine, nullptr);
+    ASSERT_EQ(cpp(engine).context().state, openswmm::EngineState::INITIALIZED);
+    auto& ctx = cpp(engine).context(); auto& s = ctx.reactions.surface;
+    seed(0, 2);
+    openswmm::msxsurf::step(ctx, 10, 0);
+    EXPECT_DOUBLE_EQ(s.ponded_qual[0], 2 * 10 * 28.317);
+    EXPECT_DOUBLE_EQ(s.led_reacted[0], 0);
+    bool warned = false;
+    for (const auto& w : ctx.warnings) warned |= w.find("unreacted mixed pool retained") != std::string::npos;
+    EXPECT_TRUE(warned);
+}
+
+TEST_F(WetSubcatchmentReactions, NumericalClampHasAnExplicitMassAdditionLedger) {
+    open("[REACTION_SPECIES]\nBULK A MG\n"
+         "[REACTION_SUBCATCHMENTS]\nRATE A -A\n");
+    ASSERT_NE(engine, nullptr);
+    ASSERT_EQ(cpp(engine).context().state, openswmm::EngineState::INITIALIZED);
+    auto& ctx = cpp(engine).context(); auto& s = ctx.reactions.surface;
+    ctx.reactions.solver = openswmm::ReactionSolverKind::EUL;
+    seed(0, 2); const double initial = s.ponded_qual[0] * s.mcf[0];
+    openswmm::msxsurf::step(ctx, 10, 0);
+    EXPECT_DOUBLE_EQ(s.ponded_qual[0], 0);
+    EXPECT_NEAR(s.led_reacted[0], initial * 10, 1.e-14);
+    EXPECT_NEAR(s.led_reaction_clamped[0], initial * 9, 1.e-14);
+    EXPECT_NEAR(initial + s.led_reaction_clamped[0] - s.led_reacted[0], 0, 1.e-14);
+}
+
+TEST_F(WetSubcatchmentReactions, AlgebraicFormsAndBeginningOfStepTemperatureUseTheirOwnScope) {
+    open("[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
+         "[REACTION_SUBCATCHMENTS]\nEQUIL A A - TEMP\nFORMULA B 2 * A\n");
+    ASSERT_NE(engine, nullptr);
+    ASSERT_EQ(cpp(engine).context().state, openswmm::EngineState::INITIALIZED);
+    auto& ctx = cpp(engine).context(); auto& s = ctx.reactions.surface;
+    ctx.reactions.default_temp_c = 25;
+    openswmm::msxsurf::step(ctx, 10, 0);
+    EXPECT_NEAR(s.ponded_qual[0] / (10 * 28.317), 25, 1.e-7);
+    EXPECT_NEAR(s.ponded_qual[1] / (10 * 28.317), 50, 1.e-7);
+    ctx.options.heat_transport = true;
+    ctx.heat_state.subcatch_runoff_temp.assign(1, 12);
+    openswmm::msxsurf::step(ctx, 10, 10);
+    EXPECT_NEAR(s.ponded_qual[0] / (10 * 28.317), 12, 1.e-7);
+}
+
+TEST_F(WetSubcatchmentReactions, DeclaredMassBasisSurvivesProjectUnitChanges) {
+    const std::string chemistry = "[REACTION_SPECIES]\nBULK A UG\n"
+        "[REACTION_SUBCATCHMENTS]\nRATE A -0.01 * A\n";
+    open(chemistry, true);
+    ASSERT_NE(engine, nullptr);
+    ASSERT_EQ(cpp(engine).context().state, openswmm::EngineState::INITIALIZED);
+    auto& ctx = cpp(engine).context(); auto& s = ctx.reactions.surface;
+    seed(0, 7);
+    openswmm::msxsurf::step(ctx, 10, 0);
+    EXPECT_NEAR(s.ponded_qual[0] / (10 * 28.317), 7 * std::exp(-.1), 1.e-7);
+    EXPECT_NEAR(s.led_reacted[0], (7 * 10 * 28.317 - s.ponded_qual[0]) * s.mcf[0], 1.e-14);
+}
+
+TEST(WetSubcatchmentReactorProfile, LidCombinationIsRefusedAtInitialization) {
+    TwinOpts options; options.lid_controls = kFlowingBioRetention;
+    options.lid_usage = "S1 BC2 1 4000 50 100 100 0 * J1\n";
+    write("_wet_lid.rxn", "[REACTION_SPECIES]\nBULK X MG\n[REACTION_SUBCATCHMENTS]\nRATE X -X\n");
+    write("_wet_lid.inp", twinDeck(options) + "\n[PROCESS_COMPONENTS]\n" + pc("_wet_lid.rxn") + "\n");
+    openswmm::SWMMEngine engine;
+    ASSERT_EQ(engine.open("_wet_lid.inp", "_wet_lid.rpt", "_wet_lid.out"), SWMM_OK);
+    EXPECT_NE(engine.initialize(), SWMM_OK);
+    EXPECT_NE(engine.context().error_message.find("non-LID"), std::string::npos);
+}
+
+TEST(WetSubcatchmentReactorProfile, ProductAndConservedSumReachNativeOutputAcrossNetworkSolvers) {
+    for (const auto* solver : {"LEGACY", "EULERIAN_ARD", "LAGRANGIAN"}) {
+        SCOPED_TRACE(solver);
+        const auto tag = std::string("_wet_output_") + solver;
+        write(tag + ".rxn", "[REACTION_OPTIONS]\nRATE_UNITS HR\nCOUPLING FULL\n"
+            "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\nBULK tracer MG\n"
+            "[REACTION_RAINFALL]\nA 2\ntracer 2\n"
+            "[REACTION_SUBCATCHMENTS]\nRATE A -0.3 * A\nRATE B 0.3 * A\n");
+        std::string body = deck(std::string("QUALITY_SOLVER ") + solver + "\n", "", pc((tag + ".rxn").c_str()));
+        body += "\n[REPORT]\nNODES ALL\nLINKS ALL\nSUBCATCHMENTS ALL\n";
+        DeckRun result = run(tag, body, false);
+        ASSERT_TRUE(result.ok);
+        const auto& s = cpp(result.e).context().reactions.surface;
+        EXPECT_NEAR(s.led_reacted[0] + s.led_reacted[1], 0, 1.e-12);
+        EXPECT_GT(s.led_reacted[0], 0);
+        for (int m = 0; m < 3; ++m) {
+            const double input = s.led_init_buildup[m] + s.led_buildup[m] + s.led_wet_deposition[m] + s.led_reaction_clamped[m];
+            const double output = s.led_sweeping[m] + s.led_infil_loss[m] + s.led_bmp_removal[m] +
+                s.led_runoff_load[m] + s.led_reacted[m] + openswmm::msxsurf::remainingBuildup(cpp(result.e).context(), m);
+            EXPECT_NEAR(input, output, 1.e-10 * std::max(1.0, std::abs(input)));
+        }
+        ASSERT_EQ(swmm_engine_end(result.e), SWMM_OK);
+        ASSERT_EQ(swmm_engine_report(result.e), SWMM_OK);
+        { std::ifstream report(tag + ".rpt"); std::ostringstream text; text << report.rdbuf();
+          EXPECT_NE(text.str().find("Wet Pool Mass Reacted"), std::string::npos);
+          EXPECT_NE(text.str().find("Clamped to Zero (added)"), std::string::npos); }
+        swmm_engine_destroy(result.e); result.e = nullptr;
+        SWMM_Output output = swmm_output_open((tag + ".out").c_str());
+        ASSERT_NE(output, nullptr);
+        ASSERT_EQ(swmm_output_get_pollut_count(output), 3);
+        const int periods = swmm_output_get_period_count(output);
+        ASSERT_GT(periods, 0);
+        double subcatch_product = 0, node_product = 0;
+        for (int period = 0; period < periods; ++period) {
+            float values[32] = {}; int count = 0;
+            ASSERT_EQ(swmm_output_get_subcatch_attribute(output, 0, period, values, &count), 0);
+            ASSERT_GE(count, 11);
+            EXPECT_NEAR(values[8] + values[9], values[10], 2.e-6);
+            subcatch_product = std::max(subcatch_product, double(values[9]));
+            ASSERT_EQ(swmm_output_get_node_attribute(output, 0, period, values, &count), 0);
+            ASSERT_GE(count, 9);
+            EXPECT_NEAR(values[6] + values[7], values[8], 2.e-5);
+            node_product = std::max(node_product, double(values[7]));
+        }
+        EXPECT_GT(subcatch_product, .001);
+        EXPECT_GT(node_product, .001);
+        swmm_output_close(output);
+    }
 }

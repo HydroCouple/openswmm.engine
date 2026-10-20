@@ -49,6 +49,7 @@ extern "C" {
 #define SWMM_RXN_SCOPE_TERM 0
 #define SWMM_RXN_SCOPE_PIPE 1
 #define SWMM_RXN_SCOPE_TANK 2
+#define SWMM_RXN_SCOPE_SUBCATCHMENT 4 /**< Wet non-LID subcatchment pool. */
 #define SWMM_RXN_SCOPE_SUBSURFACE 3 /**< Explicit aquifer expression validation. */
 
 /* Expression forms — mirrors ReactionExprForm. */
@@ -104,7 +105,7 @@ SWMM_ENGINE_API int swmm_reaction_term_get(SWMM_Engine engine, int idx,
         char* name, int name_len, char* expr, int expr_len);
 
 /**
- * @brief Read a species' expression in one scope (PIPE or TANK).
+ * @brief Read a species' expression in one scope (PIPE, TANK or SUBCATCHMENT).
  * @param form [out] SWMM_RXN_FORM_* (NONE when the species has none).
  */
 SWMM_ENGINE_API int swmm_reaction_expr_get(SWMM_Engine engine, int scope,

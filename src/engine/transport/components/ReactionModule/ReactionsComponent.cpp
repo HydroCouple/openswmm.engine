@@ -292,12 +292,12 @@ void parseSubsurface(SimulationContext& ctx,const std::vector<std::string>& line
 }
 
 void parseExpressions(SimulationContext& ctx,
-                      const std::vector<std::string>& lines, bool tanks,
+                      const std::vector<std::string>& lines, int scope,
                       std::vector<std::string>& errors) {
     auto& rx = ctx.reactions;
-    const char* sec = tanks ? "[REACTION_TANKS]" : "[REACTION_PIPES]";
-    auto& forms = tanks ? rx.tank_form : rx.pipe_form;
-    auto& srcs  = tanks ? rx.tank_expr_src : rx.pipe_expr_src;
+    const char* sec = scope == 2 ? "[REACTION_SUBCATCHMENTS]" : scope == 1 ? "[REACTION_TANKS]" : "[REACTION_PIPES]";
+    auto& forms = scope == 2 ? rx.subcatch_form : scope == 1 ? rx.tank_form : rx.pipe_form;
+    auto& srcs  = scope == 2 ? rx.subcatch_expr_src : scope == 1 ? rx.tank_expr_src : rx.pipe_expr_src;
     forms.resize(static_cast<std::size_t>(rx.n_species()), ReactionExprForm::NONE);
     srcs.resize(static_cast<std::size_t>(rx.n_species()));
     for (const auto& line : lines) {
@@ -636,7 +636,7 @@ void applyReactionSections(SimulationContext& ctx,
     s = config.find("REACTION_TERMS");
     if (s) parseTerms(ctx, *s, errors);
     s = config.find("REACTION_PIPES");
-    if (s) parseExpressions(ctx, *s, /*tanks=*/false, errors);
+    if (s) parseExpressions(ctx, *s, /*pipe scope=*/0, errors);
     else {
         ctx.reactions.pipe_form.assign(
             static_cast<std::size_t>(ctx.reactions.n_species()),
@@ -645,7 +645,7 @@ void applyReactionSections(SimulationContext& ctx,
             static_cast<std::size_t>(ctx.reactions.n_species()));
     }
     s = config.find("REACTION_TANKS");
-    if (s) parseExpressions(ctx, *s, /*tanks=*/true, errors);
+    if (s) parseExpressions(ctx, *s, /*tank scope=*/1, errors);
     else {
         ctx.reactions.tank_form.assign(
             static_cast<std::size_t>(ctx.reactions.n_species()),
@@ -653,6 +653,10 @@ void applyReactionSections(SimulationContext& ctx,
         ctx.reactions.tank_expr_src.resize(
             static_cast<std::size_t>(ctx.reactions.n_species()));
     }
+    ctx.reactions.subcatch_form.assign(static_cast<std::size_t>(ctx.reactions.n_species()), ReactionExprForm::NONE);
+    ctx.reactions.subcatch_expr_src.resize(static_cast<std::size_t>(ctx.reactions.n_species()));
+    s = config.find("REACTION_SUBCATCHMENTS");
+    if (s) parseExpressions(ctx, *s, 2, errors);
     s = config.find("REACTION_SUBSURFACE");
     if(s)parseSubsurface(ctx,*s,errors);
     s = config.find("REACTION_QUALITY");
@@ -673,17 +677,6 @@ void applyReactionSections(SimulationContext& ctx,
     if (s) parseParameters(ctx, *s, errors);
     s = config.find("REACTION_REPORT");
     if (s) parseReport(ctx, *s, errors);
-
-    // Later-phase sections: defined behavior, never silent acceptance.
-    const struct { const char* tag; const char* phase; } later[] = {
-        {"REACTION_SUBCATCHMENTS", "R6"},
-    };
-    for (const auto& l : later) {
-        if (config.find(l.tag) != nullptr)
-            errors.push_back(std::string("[") + l.tag +
-                             "] is recognized but not yet supported — "
-                             "arrives with plan phase " + l.phase + ".");
-    }
 
     // Unknown REACTION_* sections in the file are typos worth failing on.
     for (const auto& sect : config.sections) {
@@ -790,6 +783,9 @@ bool recompileReactionSystem(SimulationContext& ctx,
     rx.tank_expr.assign(static_cast<std::size_t>(rx.n_species()),
                         RxExprSpan{});
 
+    rx.subcatch_form.resize(static_cast<std::size_t>(rx.n_species()), ReactionExprForm::NONE);
+    rx.subcatch_expr_src.resize(static_cast<std::size_t>(rx.n_species()));
+    rx.subcatch_expr.assign(static_cast<std::size_t>(rx.n_species()), RxExprSpan{});
     // R4: pollutants are referencable (read-only) in expressions. Build the
     // name list in registry order (pollutants occupy the first registry
     // slots; PUSH_POLLUT idx == pollutant index).
@@ -831,6 +827,12 @@ bool recompileReactionSystem(SimulationContext& ctx,
         if (rx.tank_form[us] != ReactionExprForm::NONE)
             compile_one(rx.tank_expr_src[us], rx.tank_expr[us],
                         "[REACTION_TANKS] '" + rx.species_name[us] + "'");
+        if (rx.subcatch_form[us] != ReactionExprForm::NONE) {
+            if (rx.species_is_wall[us])
+                errors.push_back("[REACTION_SUBCATCHMENTS] requires a BULK species.");
+            else compile_one(rx.subcatch_expr_src[us], rx.subcatch_expr[us],
+                             "[REACTION_SUBCATCHMENTS] '" + rx.species_name[us] + "'", 3);
+        }
     }
     for(auto& law:rx.subsurface_laws) {
         if(law.species<0||law.species>=rx.n_species()||rx.species_is_wall[law.species]) {

@@ -23,10 +23,9 @@
  * @details R1 scope: structure and references are fully validated (species
  *          declared before use, unique names, no collision with pollutant
  *          names, valid forms/kinds/options); expression BODIES are stored
- *          as source and compiled by phase R2's Tier-1 VM. Sections whose
- *          semantics are not implemented ([REACTION_SUBCATCHMENTS]) produce
- *          a precise error rather than being silently
- *          accepted. Embedded [REACTION_*] sections in the legacy .inp are
+ *          as source and compiled by the Tier-1 VM. Pipe, tank and wet
+ *          non-LID subcatchment scopes have separate validated contexts.
+ *          Embedded [REACTION_*] sections in the legacy .inp are
  *          honored with a style warning when no external component is
  *          registered; the external file wins wholesale on conflict
  *          (TRANSPORT_IO_PLUGIN_CONFIG_PLAN §3.2).

@@ -174,6 +174,7 @@ std::string serializeReactionSystem(const SimulationContext& ctx) {
     };
     emit_scope("REACTION_PIPES", rx.pipe_form, rx.pipe_expr_src);
     emit_scope("REACTION_TANKS", rx.tank_form, rx.tank_expr_src);
+    emit_scope("REACTION_SUBCATCHMENTS", rx.subcatch_form, rx.subcatch_expr_src);
 
     if(!rx.subsurface_laws.empty()) {
         out+="\n[REACTION_SUBSURFACE]\n";

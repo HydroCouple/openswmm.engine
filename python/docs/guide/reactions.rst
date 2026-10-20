@@ -224,5 +224,7 @@ PATTERN_TIMESTEP is in seconds and defaults to 3600.
 Hidden output species continue to react. Native output columns are selected
 without changing the internal species stride. WALL state stays attached under
 LEGACY; LAGRANGIAN refuses WALL systems and ARD falls back to LEGACY. Wet
-subcatchment reactors, porous LID-layer reaction transport and exact native
-checkpoint/output continuation remain unsupported.
+non-LID subcatchment pools are available through ``ReactionScope.SUBCATCHMENT``
+and ``[REACTION_SUBCATCHMENTS]``; they have a separate restricted context and
+mix/react/allocate splitting. Porous LID-layer reaction transport and exact
+native checkpoint/output continuation remain unsupported.

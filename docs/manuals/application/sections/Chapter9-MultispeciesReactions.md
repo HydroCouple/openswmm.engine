@@ -112,9 +112,10 @@ cyclic `[REACTION_PATTERNS]`. `[REACTION_PARAMETERS]` overrides PARAMETER
 coefficients on named nodes and links. Their grammar and units are documented
 in the input reference. SETPOINT and FLOWPACED sources are still refused.
 
-`[REACTION_SUBCATCHMENTS]` remains recognised and refused. Surface buildup,
-washoff and rainfall species are supported, but do not provide a runoff
-reactor. LID underdrain removals and source delivery also do not implement
+`[REACTION_SUBCATCHMENTS]` now provides a wet-pool reactor on non-LID
+subcatchments. It mixes retained water with rain and run-on, reacts on the
+runoff cadence, then allocates mass to infiltration, runoff and storage.
+Dry buildup/washoff is separate and does not react in that pool. LID underdrain removals and source delivery also do not implement
 reaction transport within each porous layer; storage-node LIDs with a
 reaction system remain refused until their layer adapter is available.
 

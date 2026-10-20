@@ -48,12 +48,15 @@ Its sections are:
 | `[REACTION_PARAMETERS]` | Per-element overrides of `PARAMETER` coefficients | @ref engine_manual_sect_REACTION_PARAMETERS | \status{Implemented} |
 | `[REACTION_PATTERNS]` | Time patterns for sources | @ref engine_manual_sect_REACTION_PATTERNS | \status{Implemented} |
 | `[REACTION_REPORT]` | Report selection | @ref engine_manual_sect_REACTION_REPORT | \status{Implemented} |
-| `[REACTION_SUBCATCHMENTS]` | Subcatchment-scope expressions | @ref engine_manual_sect_REACTION_SUBCATCHMENTS | \status{Planned} |
+| `[REACTION_SUBCATCHMENTS]` | Wet non-LID subcatchment-pool expressions | @ref engine_manual_sect_REACTION_SUBCATCHMENTS | \status{Implemented} |
 
-`[REACTION_SUBCATCHMENTS]` remains recognised and refused; it is not a
-runoff reactor. The four other formerly reserved sections now have explicit
-network-source, parameter and species-column selection semantics in the input
-reference. Unsupported source kinds and unknown section names are errors.
+`[REACTION_SUBCATCHMENTS]` supplies an explicit wet-pool scope for non-LID
+subcatchments. Its mix/react/allocate splitting, conservative residual-mass
+closure and restricted expression context are specified in the input
+reference. It does not implement porous-layer or dry-buildup chemistry.
+The other formerly reserved sections supply network sources, parameter
+overrides and species-column selection. Unsupported source kinds and unknown
+section names are errors.
 
 <!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:394-403, 405-453, 455-479 -->
 

@@ -59,7 +59,7 @@
 namespace openswmm {struct ReactionData;}
 namespace openswmm::transport {
 
-/// context: 0=network, 1=shared term definition, 2=groundwater.
+/// context: 0=network, 1=shared term definition, 2=groundwater, 3=wet subcatchment.
 std::string reactionContextDiagnostic(const ReactionData&,const std::vector<RxToken>&,
     const RxExprSpan&,int context);
 

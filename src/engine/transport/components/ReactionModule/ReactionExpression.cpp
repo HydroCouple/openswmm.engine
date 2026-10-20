@@ -541,7 +541,8 @@ std::string reactionContextDiagnostic(const ReactionData& rx,const std::vector<R
         const auto& token=pool[i];
         if(token.op==RxToken::PUSH_HYDVAR) {
             const bool ground=token.idx>=int(RxHydVar::GW_THETA);
-            const bool valid=context==2 ? token.idx>=int(RxHydVar::DT):
+            const bool valid=context==3 ? (token.idx==int(RxHydVar::DT)||token.idx==int(RxHydVar::TEMP)):
+                context==2 ? token.idx>=int(RxHydVar::DT):
                 (reactionHydVarPopulated(token.idx)||(context==1&&ground));
             if(!valid) {
                 const char* name=nullptr;reactionHydVarInfo(token.idx,&name,nullptr);
@@ -550,6 +551,10 @@ std::string reactionContextDiagnostic(const ReactionData& rx,const std::vector<R
         }
         if(context==2&&token.op==RxToken::PUSH_SPECIES&&rx.species_is_wall[token.idx])
             return "groundwater reactions cannot depend on WALL species";
+        if(context==3&&token.op==RxToken::PUSH_SPECIES&&rx.species_is_wall[token.idx])
+            return "subcatchment reactions cannot depend on WALL species";
+        if(context==3&&token.op==RxToken::PUSH_POLLUT)
+            return "subcatchment reactions cannot read pollutant concentrations (no local ponded pollutant context)";
         if(token.op==RxToken::PUSH_TERM) {
             if(token.idx<0||std::size_t(token.idx)>=rx.term_expr.size())return "invalid reaction term reference";
             const auto error=reactionContextDiagnostic(rx,rx.token_pool,rx.term_expr[token.idx],context);

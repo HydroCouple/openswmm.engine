@@ -1059,9 +1059,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             const auto um = static_cast<std::size_t>(m);
             const double final_bu = msxsurf::remainingBuildup(ctx, m);
             const double in_  = at(ms_rq.led_init_buildup, m) + at(ms_rq.led_buildup, m) +
-                                at(ms_rq.led_wet_deposition, m);
+                                at(ms_rq.led_wet_deposition, m) + at(ms_rq.led_reaction_clamped, m);
             const double out_ = at(ms_rq.led_sweeping, m) + at(ms_rq.led_infil_loss, m) +
-                                at(ms_rq.led_bmp_removal, m) + at(ms_rq.led_runoff_load, m) + final_bu;
+                                at(ms_rq.led_bmp_removal, m) + at(ms_rq.led_runoff_load, m) + final_bu + at(ms_rq.led_reacted, m);
             double err = 0.0;
             if (std::fabs(in_ - out_) < 0.001) err = 0.0;
             else if (in_ > 0.0)  err = 100.0 * (1.0 - out_ / in_);
@@ -1094,6 +1094,14 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 std::fprintf(f, "\n  **************************");
                 for (int p = p1; p < p2; ++p) std::fprintf(f, "    ----------");
                 for (int k = 0; k < 9; ++k) {
+                    if (k == 8 && ctx.reactions.has_subcatch_reactions()) {
+                        for (int row = 0; row < 2; ++row) {
+                            std::fprintf(f, "\n  %s", row == 0 ? "Wet Pool Mass Reacted ...." : "Clamped to Zero (added) ..");
+                            for (int p = p1; p < p2; ++p)
+                                std::fprintf(f, "%14.3f", p < np ? 0.0 :
+                                    at(row == 0 ? ms_rq.led_reacted : ms_rq.led_reaction_clamped, p - np));
+                        }
+                    }
                     std::fprintf(f, "\n  %s", labels[k]);
                     for (int p = p1; p < p2; ++p)
                         std::fprintf(f, "%14.3f", vals[static_cast<std::size_t>(p)][static_cast<std::size_t>(k)]);

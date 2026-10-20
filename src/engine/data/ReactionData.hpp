@@ -153,6 +153,16 @@ struct ReactionData {
     std::vector<ReactionExprForm> tank_form;
     std::vector<std::string>      tank_expr_src;
 
+    // Wet, non-LID subcatchment pools have their own reactor context.
+    std::vector<ReactionExprForm> subcatch_form;
+    std::vector<std::string> subcatch_expr_src;
+    std::vector<RxExprSpan> subcatch_expr;
+    bool has_subcatch_reactions() const noexcept {
+        for (const auto form : subcatch_form)
+            if (form != ReactionExprForm::NONE) return true;
+        return false;
+    }
+
     // ---- [REACTION_QUALITY] GLOBAL initial values (R1) ---------------------
     std::vector<double> init_global;         ///< size n_species
     /// [REACTION_RAINFALL]: concentration of each species in rainfall, in its

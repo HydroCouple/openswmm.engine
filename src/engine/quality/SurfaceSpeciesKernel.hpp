@@ -43,6 +43,10 @@ struct Block {
     const std::vector<landuse::WashoffParams>* wo_params = nullptr; ///< [lu*n + s]
     std::vector<double>* buildup = nullptr;          ///< [(sc*nlu + lu)*n + s], per normalizer unit
     std::vector<double>* conc = nullptr;             ///< [sc*n + s], washoff concentration
+    /// Optional reacted pool mass [sc*n+s], declared mass units.
+    /// Its presence opts into conservative residual-mass storage; pollutants
+    /// and species without explicit subcatchment laws retain legacy closure.
+    const std::vector<double>* ponded_reacted_mass = nullptr;
     std::vector<double>* ponded_qual = nullptr;      ///< [sc*n + s], concentration mass
     std::vector<double>* runon_qual_rate = nullptr;  ///< [sc*n + s], concentration mass / s
     std::vector<double>* total_load = nullptr;       ///< [sc*n + s], user mass

@@ -35,6 +35,9 @@
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include "SurfaceSpeciesKernel.hpp"
+#include "QualityRouting.hpp"
+#include "../transport/components/ReactionModule/ReactionIntegrator.hpp"
+#include "../transport/components/ReactionModule/ReactionLegacyBinding.hpp"
 
 namespace openswmm::msxsurf {
 
@@ -277,7 +280,7 @@ void activateForRain(SimulationContext& ctx) noexcept {
     bool rain = false;
     for (int m = 0; m < nm && m < static_cast<int>(rx.rain_conc.size()); ++m)
         rain = rain || rx.rain_conc[static_cast<std::size_t>(m)] > 0.0;
-    if (!rain) return;
+    if (!rain && !rx.has_subcatch_reactions()) return;
     if (s.n_species != nm || s.n_landuses != std::max(ctx.n_landuses(), 0)) {
         s.resize_params(std::max(ctx.n_landuses(), 0), nm);
         s.init_loading.assign(static_cast<std::size_t>(std::max(ctx.n_subcatches(), 0)) *
@@ -414,6 +417,69 @@ surfacespecies::Block speciesBlock(SimulationContext& ctx, MsxSurfaceData& s, co
     b.sweep_removal = &ctx.landuses.sweep_removal;
     return b;
 }
+
+// Gather the complete wet pool before the scalar kernel divides its mass
+// among infiltration, runoff and storage. A local copy contains failed steps;
+// only a successful, finite block can change the transport inventory.
+std::vector<double> reactPondedPools(SimulationContext& ctx, double dt) {
+    auto& rx = ctx.reactions;
+    auto& surface = rx.surface;
+    const int ns = rx.n_species();
+    std::vector<double> mixed(surface.ponded_qual.size(), 0.0);
+    std::vector<double> species(static_cast<std::size_t>(ns)), before(species.size());
+    transport::RxWorkspace workspace;
+    workspace.init(rx);
+    const double area_factor = ucf::UCF(ucf::LANDAREA, ctx.options);
+    constexpr double litres_per_ft3 = 28.317;
+    for (int sc = 0; sc < ctx.n_subcatches(); ++sc) {
+        const auto i = static_cast<std::size_t>(sc);
+        const double lid = i < ctx.subcatches.total_lid_area_ft2.size() ? ctx.subcatches.total_lid_area_ft2[i] : 0.0;
+        const double area = ctx.subcatches.area[i] / area_factor - lid;
+        if (!(area > 0.0)) continue;
+        const double rain_volume = std::max(0.0, ctx.subcatches.rainfall[i]) * area * dt;
+        const double volume = ctx.subcatches.old_ponded_depth[i] * area + rain_volume + ctx.subcatches.runon_inflow[i] * dt;
+        if (!(volume > 0.0)) continue; // a dry store is not a reactor
+        const double litres = volume * litres_per_ft3;
+        for (int m = 0; m < ns; ++m) {
+            const auto k = surface.sidx(sc, m);
+            const double rain = m < static_cast<int>(rx.rain_conc.size()) ? rx.rain_conc[m] : 0.0;
+            mixed[k] = surface.ponded_qual[k] + rain * litres_per_ft3 * rain_volume + surface.runon_qual_rate[k] * dt;
+        }
+        if (volume <= quality::ZERO_VOLUME) continue;
+        for (int m = 0; m < ns; ++m)
+            before[m] = species[m] = mixed[surface.sidx(sc, m)] / litres;
+        double variables[static_cast<int>(RxHydVar::COUNT_)] = {};
+        // Explicit thermal coupling: beginning-of-step published runoff
+        // temperature, never a temperature computed later on this step.
+        variables[static_cast<int>(RxHydVar::TEMP)] = rx.default_temp_c;
+        if (ctx.options.heat_transport && i < ctx.heat_state.subcatch_runoff_temp.size() &&
+            std::isfinite(ctx.heat_state.subcatch_runoff_temp[i]))
+            variables[static_cast<int>(RxHydVar::TEMP)] = ctx.heat_state.subcatch_runoff_temp[i];
+        const auto report = transport::ReactionIntegrator::step(rx, rx.subcatch_form, rx.subcatch_expr,
+            dt, species.data(), variables, workspace);
+        bool physical = report.ok;
+        for (int m = 0; m < ns && physical; ++m)
+            physical = std::isfinite(species[m]) && (species[m] >= 0.0 || rx.subcatch_form[m] == ReactionExprForm::RATE);
+        if (!physical) {
+            if (!rx.warned_react_failure) {
+                rx.warned_react_failure = true;
+                ctx.warnings.push_back("Subcatchment reaction step failed at '" + ctx.subcatch_names.name_of(sc) +
+                    "' (unreacted mixed pool retained): " + (report.ok ? "negative algebraic concentration" : report.error));
+            }
+            continue;
+        }
+        for (int m = 0; m < ns; ++m) {
+            const double raw = species[m];
+            const double clamped = std::max(0.0, raw);
+            const double factor = litres * surface.mcf[m];
+            surface.led_reacted[m] += (before[m] - raw) * factor;
+            surface.led_reaction_clamped[m] += (clamped - raw) * factor;
+            if (clamped != raw) transport::noteNegativeClamp(ctx, "a wet subcatchment pool");
+            mixed[surface.sidx(sc, m)] = clamped * litres;
+        }
+    }
+    return mixed;
+}
 }  // namespace
 
 void step(SimulationContext& ctx, double dt_runoff, double old_runoff_time) {
@@ -421,6 +487,11 @@ void step(SimulationContext& ctx, double dt_runoff, double old_runoff_time) {
     if (!s.active() || !(dt_runoff > 0.0)) return;
     const auto p = speciesParams(s);
     auto b = speciesBlock(ctx, s, p);
+    std::vector<double> reacted;
+    if (ctx.reactions.has_subcatch_reactions()) {
+        reacted = reactPondedPools(ctx, dt_runoff);
+        b.ponded_reacted_mass = &reacted;
+    }
     surfacespecies::step(ctx, b, dt_runoff, old_runoff_time);
 }
 

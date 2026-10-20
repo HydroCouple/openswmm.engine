@@ -545,17 +545,24 @@ void step(SimulationContext& ctx, Block& b, double dt_runoff,
                                       dt_runoff
                                 : 0.0;
                         double w_total_pq  = w_mass_pq + w_rain_pq + w_runon_pq;
-                        double c_ponded_pq = w_total_pq / v_inflow_pq;  // mg/ft3
+                        double c_ponded_pq = b.ponded_reacted_mass ? 0.0 : w_total_pq / v_inflow_pq;  // mg/ft3
+                        if (b.ponded_reacted_mass) {
+                            w_total_pq = (*b.ponded_reacted_mass)[sq_idx];
+                        }
 
                         // Mass lost to infiltration
-                        double w_infil_pq = std::min(c_ponded_pq * v_infil_pq, w_total_pq);
+                        double w_infil_pq = b.ponded_reacted_mass
+                            ? w_total_pq * std::clamp(v_infil_pq / v_inflow_pq, 0.0, 1.0)
+                            : std::min(c_ponded_pq * v_infil_pq, w_total_pq);
                         w_total_pq -= w_infil_pq;
                         // Ledger booking → user mass (legacy INFIL_LOAD, lbs/kg)
                         if (w_infil_pq > 0.0 && up < (*b.led_infil_loss).size())
                             (*b.led_infil_loss)[up] += w_infil_pq * mcf_p;
 
                         // Mass carried out with runoff outflow
-                        double w_outflow_pq = std::min(c_ponded_pq * v_outflow_pq, w_total_pq);
+                        double w_outflow_pq = b.ponded_reacted_mass
+                            ? std::min((w_total_pq + w_infil_pq) * std::clamp(v_outflow_pq / v_inflow_pq, 0.0, 1.0), w_total_pq)
+                            : std::min(c_ponded_pq * v_outflow_pq, w_total_pq);
                         w_total_pq -= w_outflow_pq;
 
                         // legacy reduces the ponded outflow load by the land
@@ -584,7 +591,7 @@ void step(SimulationContext& ctx, Block& b, double dt_runoff,
                         // the pool to nothing: a subcatchment shed its
                         // rainfall-borne load the instant the rain stopped
                         // instead of releasing it down the recession.
-                        (*b.ponded_qual)[sq_idx] = std::max(
+                        (*b.ponded_qual)[sq_idx] = b.ponded_reacted_mass ? std::max(w_total_pq, 0.0) : std::max(
                             c_ponded_pq * ctx.subcatches.ponded_depth[ui] *
                                 area_ft2_pq,
                             0.0);

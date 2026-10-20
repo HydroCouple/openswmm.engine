@@ -178,9 +178,10 @@ flux evaluation on cells does not (§10.11).
 
 ## 11.5 Later-Phase `[REACTION_*]` Sections
 
-The reaction component still refuses `[REACTION_SUBCATCHMENTS]`: surface
-species buildup, washoff and rainfall transport do not implement a wet
-subcatchment reaction domain. Unknown reaction section names are also errors.
+`[REACTION_SUBCATCHMENTS]` now implements a conservative wet-pool scope on
+non-LID subcatchments. Dry land-use reactions, porous LID layers and a
+continuously fed reactor formulation remain future work. Unknown reaction
+section names are errors.
 
 Four formerly reserved sections are implemented: `[REACTION_SOURCES]` for
 CONC/MASS node loads, `[REACTION_PATTERNS]` for cyclic source multipliers,

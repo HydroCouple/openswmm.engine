@@ -297,7 +297,7 @@ class ReactionSpecies:
         """Return this species' expression in one scope.
 
         :param scope: :class:`~openswmm.engine.ReactionScope` ``PIPE`` or
-            ``TANK`` (species expressions exist only in those two scopes).
+            ``TANK`` or ``SUBCATCHMENT``.
         :returns: ``(form, expression)`` where *form* is a
             :class:`~openswmm.engine.ReactionExprForm`. ``form`` is ``NONE``
             and ``expression`` is ``""`` when the species has no expression
@@ -319,7 +319,7 @@ class ReactionSpecies:
         (or anything it would invalidate) fails to compile the change is
         rolled back and refused.
 
-        :param scope: :class:`~openswmm.engine.ReactionScope` ``PIPE`` or ``TANK``.
+        :param scope: :class:`~openswmm.engine.ReactionScope` ``PIPE``, ``TANK`` or ``SUBCATCHMENT``.
         :param form: :class:`~openswmm.engine.ReactionExprForm` — ``RATE``
             (``dC/dt = f(...)``), ``EQUIL`` (``0 = f(...)``), ``FORMULA``
             (``C = f(...)``), or ``NONE`` to clear the scope.

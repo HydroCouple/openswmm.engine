@@ -215,20 +215,19 @@ TEST_F(ReactionsConfigTest, PollutantNameCollisionFailsOpen) {
 }
 
 // ---------------------------------------------------------------------------
-TEST_F(ReactionsConfigTest, LaterPhaseSectionFailsWithPhaseName) {
+TEST_F(ReactionsConfigTest, SubcatchmentScopeParsesAndRoundTrips) {
     write_rxn("_rx_later.rxn",
               "[REACTION_SPECIES]\nBULK A MG\n"
               "[REACTION_SUBCATCHMENTS]\nRATE A -A\n");
     write_deck("_rx_later.inp",
                "org.hydrocouple.openswmm.reactions  config=\"_rx_later.rxn\"");
-    EXPECT_NE(open_deck("_rx_later.inp", "_rx_later.rpt", "_rx_later.out"),
-              SWMM_OK);
-    // Name the SECTION, not just the phrase: the planned-id diagnostic
-    // ("…arrives with plan phase R1…") carries the same phrase, so a bare
-    // phrase match passes even when the component never ran at all.
-    EXPECT_TRUE(contains(as_cpp_engine(engine_).context().errors,
-                         "[REACTION_SUBCATCHMENTS] is recognized but not yet "
-                         "supported — arrives with plan phase"));
+    ASSERT_EQ(open_deck("_rx_later.inp", "_rx_later.rpt", "_rx_later.out"), SWMM_OK);
+    const auto& ctx = as_cpp_engine(engine_).context();
+    EXPECT_TRUE(ctx.reactions.has_subcatch_reactions());
+    const auto text = openswmm::transport::serializeReactionSystem(ctx);
+    EXPECT_NE(text.find("[REACTION_SUBCATCHMENTS]"), std::string::npos);
+    char error[1024] = {};
+    EXPECT_EQ(swmm_reactions_check_text(engine_, text.c_str(), error, sizeof(error)), SWMM_OK) << error;
     std::remove("_rx_later.inp");
     std::remove("_rx_later.rxn");
 }
@@ -852,4 +851,29 @@ TEST_F(ReactionsConfigTest, DeletingGeometryDropsOwnedRowsAndPreservesSurvivingI
     EXPECT_EQ(text.find("J0"), std::string::npos);
     EXPECT_EQ(text.find("C1"), std::string::npos);
     EXPECT_NE(text.find("OUT"), std::string::npos);
+}
+
+TEST_F(ReactionsConfigTest, SubcatchmentExpressionsRejectUnavailableContextTransactionally) {
+    cleanup_prefixes_.push_back("_rx_wet_context");
+    write_rxn("_rx_wet_context.rxn", "[REACTION_SPECIES]\nBULK A MG\nWALL W MG\n"
+        "[REACTION_TERMS]\nwall_term W\nhrt_term HRT\n");
+    write_deck("_rx_wet_context.inp", "org.hydrocouple.openswmm.reactions config=\"_rx_wet_context.rxn\"");
+    ASSERT_EQ(open_deck("_rx_wet_context.inp", "_rx_wet_context.rpt", "_rx_wet_context.out"), SWMM_OK);
+    const auto before = openswmm::transport::serializeReactionSystem(as_cpp_engine(engine_).context());
+    for (const auto* expression : {"W", "wall_term", "HRT", "hrt_term", "D", "GW_THETA", "TSS"}) {
+        SCOPED_TRACE(expression);
+        char error[1024] = {}; int column = -1;
+        EXPECT_NE(swmm_reaction_validate_expression(engine_, SWMM_RXN_SCOPE_SUBCATCHMENT, expression, error, sizeof(error), &column), SWMM_OK);
+        EXPECT_NE(swmm_reaction_expr_set(engine_, SWMM_RXN_SCOPE_SUBCATCHMENT, 0, SWMM_RXN_FORM_RATE, expression), SWMM_OK);
+        EXPECT_EQ(openswmm::transport::serializeReactionSystem(as_cpp_engine(engine_).context()), before);
+    }
+    EXPECT_NE(swmm_reaction_expr_set(engine_, SWMM_RXN_SCOPE_SUBCATCHMENT, 1, SWMM_RXN_FORM_RATE, "-W"), SWMM_OK);
+    ASSERT_EQ(swmm_reaction_expr_set(engine_, SWMM_RXN_SCOPE_SUBCATCHMENT, 0, SWMM_RXN_FORM_RATE, "-A * DT / 100"), SWMM_OK);
+    int form = 0; char expr[128];
+    ASSERT_EQ(swmm_reaction_expr_get(engine_, SWMM_RXN_SCOPE_SUBCATCHMENT, 0, &form, expr, sizeof(expr)), SWMM_OK);
+    EXPECT_EQ(form, SWMM_RXN_FORM_RATE);
+    EXPECT_STREQ(expr, "-A * DT / 100");
+    ASSERT_EQ(swmm_reaction_species_add(engine_, "extra", 0, "MG", 0, 0), SWMM_OK);
+    ASSERT_EQ(swmm_reaction_species_remove(engine_, 2), SWMM_OK);
+    EXPECT_EQ(as_cpp_engine(engine_).context().reactions.subcatch_form.size(), 2u);
 }
