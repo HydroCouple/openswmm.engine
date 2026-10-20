@@ -38,7 +38,7 @@ class TestErrorCode(unittest.TestCase):
             self.assertEqual(ErrorCode[name].value, val)
 
     def test_member_count(self):
-        self.assertEqual(len(ErrorCode), 18)
+        self.assertEqual(len(ErrorCode), 19)
 
 
 # ---------------------------------------------------------------------------
