@@ -13,6 +13,7 @@
 
 #include <cmath>
 #include <algorithm>
+#include <limits>
 
 namespace openswmm::twoD {
 
@@ -507,7 +508,8 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
                               const MeshData& mesh,
                               const SurfaceStateData& state,
                               SimulationContext& ctx,
-                              const SolverOptions2D& opts) {
+                              const SolverOptions2D& opts,
+                              double dt) {
     auto& nodes = ctx.nodes;
 
     // C4 refactor: this routine no longer writes nodes.head/depth directly.
@@ -517,11 +519,8 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
     // and let Outfall::setAllOutfallDepths apply the max(h_standard, h_2d)
     // override on every iteration. See docs/1D_2D_COUPLING_GATE_REVIEW.md §6.
     //
-    // The flap-gate decision is also moved into setAllOutfallDepths so it
-    // can see the just-computed h_standard for that iteration. To express
-    // "flap closed" without coupling the modules, we cache the raw h_2d
-    // here; setAllOutfallDepths checks the node's flap-gate flag and the
-    // current h_standard to decide whether to apply the override.
+    // A flap gate does not suppress the override (it only zeroes reverse
+    // link flow), so the raw h_2d is cached for gated outfalls too.
     //
     // Wet/dry gating: the tailwater override must engage only when the 2D
     // cell is genuinely wet, otherwise the outfall reverts to its legacy
@@ -551,6 +550,8 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
                                 (d - opts.dry_depth) / opts.dry_depth));
         return t * t * (3.0 - 2.0 * t);  // smoothstep, C¹ continuous
     };
+    std::vector<double> target;   // per outfall row, 1D length; NaN = unmapped
+    std::vector<double> relax(ctx.node_subtypes.outfalls.head_2d.size(), 0.0);
     for (const auto& cp : cps) {
         if (!cp.is_outfall) continue;
 
@@ -569,6 +570,11 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
         // The deepest stencil cell is where outfall water genuinely pools, and
         // its head is a real water surface — dry cells (head = own bed) can
         // never fake a tailwater.
+        //
+        // COUPLING_HEAD VERTEX / STENCIL_WET_MEAN (plan §6 O3): the stage is
+        // the wet-depth-weighted η over the point's sampling cells instead of
+        // the deepest cell's — that one is a maximum, biased high around a
+        // vertex carved to the invert. Wetness still comes from the deepest.
         double h_2d, depth_2d;
         if (cp.vertex_idx >= 0) {
             const int v = cp.vertex_idx;
@@ -587,6 +593,17 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
             h_2d     = state.head[cp.cell_idx];
             depth_2d = state.depth[cp.cell_idx];  // == head - tri_cz by reconstruction
         }
+        if (cp.head_end > cp.head_begin && state.coupling_head_cells) {
+            const auto& cells = *state.coupling_head_cells;
+            double num = 0.0, den = 0.0;
+            for (int k = cp.head_begin; k < cp.head_end; ++k) {
+                const int t = cells[static_cast<std::size_t>(k)];
+                if (!(state.depth[t] >= opts.dry_depth)) continue;
+                num += state.depth[t] * state.head[t];
+                den += state.depth[t];
+            }
+            if (den > 0.0) h_2d = num / den;
+        }
         // h_2d is SI (metres). The 1D consumer (Outfall::setAllOutfallDepths)
         // always compares against h_standard in feet (1D US internal units),
         // so convert back here (opts.len_2d_to_1d ≈ 3.281 always). Cache into the
@@ -595,9 +612,25 @@ void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
         const int orow = ctx.node_subtypes.outfall_row(cp.node_idx);
         if (orow >= 0) {
             auto ur = static_cast<std::size_t>(orow);
-            ctx.node_subtypes.outfalls.head_2d[ur] = h_2d * opts.len_2d_to_1d;
+            if (target.empty())
+                target.assign(ctx.node_subtypes.outfalls.head_2d.size(),
+                              std::numeric_limits<double>::quiet_NaN());
+            target[ur] = h_2d * opts.len_2d_to_1d;   // several points: the last wins
+            relax[ur]  = cp.tw_relax;
             ctx.node_subtypes.outfalls.ramp_2d[ur] = wetRamp(depth_2d);
         }
+    }
+    // TAILWATER_RELAX τ (plan §6 O2): h_tw ← h_tw + (Δt/τ)(h_2d − h_tw), once
+    // per outfall, breaking the discharge → cell rise → tailwater → discharge
+    // loop on small cells. The cached head is the state; the first call (still
+    // the -1e30 sentinel) starts it at the surface.
+    for (std::size_t ur = 0; ur < target.size(); ++ur) {
+        if (std::isnan(target[ur])) continue;
+        double& h_tw = ctx.node_subtypes.outfalls.head_2d[ur];
+        if (relax[ur] > 0.0 && dt > 0.0 && h_tw > -1.0e29)
+            h_tw += std::min(1.0, dt / relax[ur]) * (target[ur] - h_tw);
+        else
+            h_tw = target[ur];
     }
 }
 

@@ -50,6 +50,9 @@
 #include "../2d/data/MeshData.hpp"
 #include "../2d/subsurface/SubsurfaceData.hpp"   // G-O: 2D Aquifer Continuity
 #include "../2d/subsurface/SubsurfaceTransportState.hpp"  // T7.5: its quality twin
+#ifdef OPENSWMM_HAS_2D
+#include "../2d/SurfaceRouter2D.hpp"   // 2D Outfall Tailwater Summary
+#endif
 
 #include <version.h>
 
@@ -2413,6 +2416,44 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             }
             std::fprintf(f, "  (%s; a reactions species declared in UG or as a count keeps its own unit)\n",
                          si_report ? "kg" : "lbs");
+            WRITE(f, "");
+            WRITE(f, "");
+        }
+    }
+
+    // 2D Outfall Tailwater Summary (plan 1D2D fine-scale §6 O5/O8): for each
+    // outfall coupled to the 2D surface, how long the surface set its stage
+    // (engaged) and drowned its outlet crown (submerged), the highest stage
+    // it imposed, and the water that flowed back into the network through it.
+    if (const auto* router = ctx.twod_io.surface_router) {
+        const auto& ex = router->outfallExchange();
+        bool header = false;
+        for (int j = 0; j < ctx.n_nodes(); ++j) {
+            double engaged = 0, submerged = 0, max_stage = 0;
+            if (!ex.tailwater(j, engaged, submerged, max_stage)) continue;
+            if (!header) {
+                WRITE(f, "****************************");
+                WRITE(f, "2D Outfall Tailwater Summary");
+                WRITE(f, "****************************");
+                std::fprintf(f, "\n");
+                std::fprintf(f, "\n  ------------------------------------------------------------------------");
+                std::fprintf(f, "\n                          Hours        Hours          Max       Reverse");
+                std::fprintf(f, "\n                       Tailwater    Submerged    Tailwater        Volume");
+                std::fprintf(f, "\n  Outfall Node            Engaged      (crown)    %9s    %10s",
+                             len_word, vol_word);
+                std::fprintf(f, "\n  ------------------------------------------------------------------------");
+                header = true;
+            }
+            const auto uj = static_cast<std::size_t>(j);
+            const double reverse_ft3 = uj < ctx.outfall_exports.reverse_m3.size()
+                ? ctx.outfall_exports.reverse_m3[uj] / 0.028316846592 : 0.0;
+            std::fprintf(f, "\n  %-20s %10.2f   %10.2f", ctx.node_names.name_of(j).c_str(),
+                         engaged / 3600.0, submerged / 3600.0);
+            if (max_stage > -1.0e29) std::fprintf(f, "   %10.3f", max_stage * len_ucf);
+            else                     std::fprintf(f, "   %10s", "-");
+            std::fprintf(f, "    %10.3f", reverse_ft3 * Vcf);
+        }
+        if (header) {
             WRITE(f, "");
             WRITE(f, "");
         }

@@ -284,6 +284,13 @@ public:
     const CommonSourceStage* commonSourceStage() const noexcept { return common_stage_; }
     bool runtimeWaterCheckpointing() const noexcept;
     bool runtimeBoundaryCheckpointing() const noexcept;
+    /// Joint checkpoints of a model with coupled outfalls carry each one's
+    /// tailwater record — a distinct checkpoint version.
+    bool outfallTailwaterCheckpointing() const noexcept {
+        return joint_hydraulic_ && !outfall_exchange_.points_.empty();
+    }
+    /// Coupled-outfall delivery and tailwater records (report).
+    const OutfallExchange& outfallExchange() const noexcept { return outfall_exchange_; }
     std::string validateRuntimeWater(const RuntimeSources&,const RuntimeSources&,const RuntimeForcings&,double time,const BoundaryData* boundary=nullptr) const;
     bool runtimeActive() const noexcept {
         return state_.runtime_sources.active() || subsurface_.runtimeSources().active() ||

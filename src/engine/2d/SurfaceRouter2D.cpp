@@ -597,11 +597,20 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                 "couple: " + first_names(unmapped));
 
         // Exchange law, structure and coefficients of every junction point
-        // (the ORIFICE law keeps its map-row cd/area and returns early).
+        // (the ORIFICE law keeps its map-row cd/area and returns early); an
+        // outfall's SPREAD (project length → m) and TAILWATER_RELAX (s).
         for (auto& cp : coupling_points_) {
-            if (cp.is_outfall) continue;
-            resolveExchangeStructure(cp, mesh_, ctx, options_,
-                                     row_of_node[static_cast<std::size_t>(cp.node_idx)],
+            const int row = row_of_node[static_cast<std::size_t>(cp.node_idx)];
+            if (cp.is_outfall) {
+                if (row < 0) continue;
+                const auto& p = rows.params[static_cast<std::size_t>(row)];
+                const double spread = p[static_cast<std::size_t>(NodeCoupling2DKey::SPREAD)];
+                const double relax  = p[static_cast<std::size_t>(NodeCoupling2DKey::TAILWATER_RELAX)];
+                if (spread > 0.0) cp.spread = spread * mesh_to_si;
+                if (relax > 0.0)  cp.tw_relax = relax;
+                continue;
+            }
+            resolveExchangeStructure(cp, mesh_, ctx, options_, row,
                                      type_of(cp.node_idx), mesh_to_si);
         }
     }
@@ -873,8 +882,16 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             if (queue.size() > kMaxCells) queue.resize(kMaxCells);
             coupling_head_cells_.insert(coupling_head_cells_.end(), queue.begin(), queue.end());
         };
-        for (const auto& cp : coupling_points_) {
-            if (cp.is_outfall) continue;
+        for (auto& cp : coupling_points_) {
+            if (cp.is_outfall) {
+                // An outfall's tailwater samples the same way (plan §6 O3).
+                if (options_.coupling_head != CouplingHead2D::CELL) {
+                    cp.head_begin = static_cast<int>(coupling_head_cells_.size());
+                    add_head_cells(cp, cp.cell_idx);
+                    cp.head_end = static_cast<int>(coupling_head_cells_.size());
+                }
+                continue;
+            }
             CouplingPoint sc = cp;
             if (options_.coupling_head != CouplingHead2D::CELL) {
                 sc.head_begin = static_cast<int>(coupling_head_cells_.size());
@@ -1862,7 +1879,8 @@ void SurfaceRouter2D::updateOutfallsPreRouting(SimulationContext& ctx, double dt
          joint_hydraulic_->checkpoint_time_ != ctx.current_time ||
          joint_hydraulic_->checkpoint_step_end_ != ctx.current_time + dt))
         throw std::invalid_argument("Joint outfall preparation requires its tracked hydraulic interval and an unused reservation.");
-    updateOutfallBoundaries(coupling_points_, mesh_, state_, ctx, options_);
+    updateOutfallBoundaries(coupling_points_, mesh_, state_, ctx, options_, dt);
+    outfall_exchange_.recordTailwater(ctx, dt);
     outfall_exchange_.prepare(mesh_, state_, options_, ctx, dt);
     // Pre-routing too (before the hydraulic state rolls): the routing step
     // about to run starts from the relaxed pond.

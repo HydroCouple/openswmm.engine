@@ -403,11 +403,12 @@ void setAllOutfallDepths(SimulationContext& ctx, double dt_routing) {
         // (which deadlocked the pipe), and the wet/dry transition stays
         // C¹ to avoid step-to-step chatter.
         //
-        // Flap-gate logic (matches the original updateOutfallBoundaries
-        // intent): when the raw tailwater h_2d would *raise* the stage
-        // above h_standard, a closed flap gate prevents the 2D side from
-        // pushing water back into the pipe network, so we skip the
-        // override and leave h_standard intact.
+        // A flap gate does not hide the tailwater (plan 1D2D fine-scale §6
+        // O1): a drowned gated outfall sees the 2D stage like any other, and
+        // the gate only zeroes reverse link flow (DW flow limits, structure
+        // flapGateBlocks, the FV gate mask). It used to skip the override
+        // whenever h_2d rose above h_standard, so a drowned gated outfall
+        // discharged as if free.
         //
         // See docs/1D_2D_COUPLING_GATE_REVIEW.md §6 (C4, C5).
         // Mutable 2D head from the outfall side-table; -1e30 sentinel (no override)
@@ -420,16 +421,12 @@ void setAllOutfallDepths(SimulationContext& ctx, double dt_routing) {
             ? ctx.node_subtypes.outfalls.ramp_2d[static_cast<std::size_t>(orow)]
             : 0.0;
         if (h_2d > z_inv && ramp_2d > 0.0) {
-            bool flap_closed = (ost.has_flap != 0)
-                               && (h_2d > h_standard);
-            if (!flap_closed) {
-                // Blend free (h_standard) → tailwater (h_2d) by wetness.
-                // ramp=1 reproduces the legacy max(h_standard, h_2d).
-                double h_blend = h_standard + ramp_2d * std::max(0.0, h_2d - h_standard);
-                if (h_blend > h_standard) {
-                    h_standard = h_blend;
-                    depth      = h_standard - z_inv;
-                }
+            // Blend free (h_standard) → tailwater (h_2d) by wetness.
+            // ramp=1 reproduces the legacy max(h_standard, h_2d).
+            double h_blend = h_standard + ramp_2d * std::max(0.0, h_2d - h_standard);
+            if (h_blend > h_standard) {
+                h_standard = h_blend;
+                depth      = h_standard - z_inv;
             }
         }
 

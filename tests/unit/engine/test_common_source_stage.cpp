@@ -2217,8 +2217,9 @@ std::string outfallMutant(const std::string& file,int change) {
     reader(magic,version,endian,longBytes,model,payload,crc);reader.finish();
     const auto cursor=payload.find("OpenSWMM CPU surface/source boundary")-2*sizeof(uint64_t);
     A tail(payload.substr(cursor));std::string cpu,hydraulic;double delivery,dt,total0,total1;bool changed,prepared;
-    std::vector<double> points,pending,reserved,r0,r1,limits,heads,ramps;
-    tail(cpu,hydraulic,delivery,points,changed,pending,reserved,dt,prepared,r0,total0,r1,total1,limits,heads,ramps);tail.finish();
+    std::vector<double> points,pending,reserved,r0,r1,limits,heads,ramps,tw_engaged,tw_submerged,tw_max;
+    tail(cpu,hydraulic,delivery,points,changed,pending,reserved,dt,prepared,r0,total0,r1,total1,
+         tw_engaged,tw_submerged,tw_max,limits,heads,ramps);tail.finish();
     if(change==0)pending[0]+=1;
     if(change==1)pending[0]=std::numeric_limits<double>::infinity();
     if(change==2)total0+=1;
@@ -2233,7 +2234,9 @@ std::string outfallMutant(const std::string& file,int change) {
     if(change==11)points[0]=std::numeric_limits<double>::quiet_NaN();
     if(change==12)pending.clear();
     if(change==13)version=1;
-    A suffix;suffix(cpu,hydraulic,delivery,points,changed,pending,reserved,dt,prepared,r0,total0,r1,total1,limits,heads,ramps);
+    if(change==15)tw_engaged[0]=-1;   // outfall tailwater record
+    A suffix;suffix(cpu,hydraulic,delivery,points,changed,pending,reserved,dt,prepared,r0,total0,r1,total1,
+                    tw_engaged,tw_submerged,tw_max,limits,heads,ramps);
     payload=payload.substr(0,cursor)+suffix.bytes();
     if(change==14) {
         A prefix(payload);double clock;std::vector<double> infil,coupling;prefix(clock,infil,coupling);
@@ -2251,7 +2254,7 @@ TEST(CommonSourceStage, JointOutfallCheckpointRejectsSpentBudgetsAndMismatchedRe
     ASSERT_NE(a.router.state().coupling_applied[0],0);
     const auto good=restartPath("outfall-good"),bad=restartPath("outfall-mutant"),before=restartPath("outfall-before");
     ASSERT_EQ(a.router.saveCheckpoint(a.source.context,good.string()),"");const auto bytes=restartBytes(good);
-    for(int variant=0;variant<15;++variant) {
+    for(int variant=0;variant<16;++variant) {
         SCOPED_TRACE(variant);RouterSourceModel target;target.setup(Momentum2D::LOCAL_INERTIAL,GwClosure::CLOSED_FORM,false,2.3,1,0,false,4);
         ASSERT_FALSE(HasFatalFailure());ASSERT_EQ(target.router.saveCheckpoint(target.source.context,before.string()),"");const auto initial=restartBytes(before);
         const auto mutant=outfallMutant(bytes,variant);std::ofstream(bad,std::ios::binary).write(mutant.data(),mutant.size());

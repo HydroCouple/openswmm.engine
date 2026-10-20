@@ -88,6 +88,11 @@ struct CouplingPoint {
     /// them drives the exchange. Empty = the coupling cell's own head.
     int head_begin = 0;
     int head_end   = 0;
+    /// Outfalls ([2D_NODE_COUPLING] OUTFALL row): SPREAD radius (m; 0 = the
+    /// point's own cells) over which a discharge is delivered, and
+    /// TAILWATER_RELAX time (s; 0 = the tailwater follows the surface).
+    double spread   = 0.0;
+    double tw_relax = 0.0;
 };
 
 /**
@@ -266,12 +271,14 @@ void scatterCouplingToYdot(const MeshData& mesh,
  * @param state 2D surface state.
  * @param ctx   Simulation context.
  * @param opts  2D solver options (for unit-system coupling factors).
+ * @param dt    Routing step about to run (s), for TAILWATER_RELAX.
  */
 void updateOutfallBoundaries(const std::vector<CouplingPoint>& cps,
                               const MeshData& mesh,
                               const SurfaceStateData& state,
                               SimulationContext& ctx,
-                              const SolverOptions2D& opts);
+                              const SolverOptions2D& opts,
+                              double dt);
 
 
 } // namespace openswmm::twoD
