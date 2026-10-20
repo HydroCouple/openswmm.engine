@@ -258,8 +258,8 @@ int xsect_setParams(TXsect *xsect, int type, double p[], double ucf)
         xsect->wMax  = xsect->yFull;
         xsect->aFull = PI / 4.0 * xsect->yFull * xsect->yFull;
         xsect->rFull = 0.2500 * xsect->yFull;
-        xsect->sFull = xsect->aFull * pow(xsect->rFull, 0.63);
-        xsect->sMax  = 1.06949 * xsect->sFull;
+        xsect->sFull = xsect->aFull * pow(xsect->rFull, 2./3.);
+        xsect->sMax  = 1.08 * xsect->sFull;
         xsect->ywMax = 0.5 * xsect->yFull;
 
         // --- save C-factor or roughness in rBot position

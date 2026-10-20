@@ -265,8 +265,8 @@ int setParams(XSectParams& xs, int type, const double p[], double ucf) {
             xs.yw_max = d / 2.0;
             xs.a_full = PI / 4.0 * d * d;
             xs.r_full = d / 4.0;
-            xs.s_full = xs.a_full * std::pow(xs.r_full, 0.63);  // Hazen-Williams
-            xs.s_max  = 1.06949 * xs.s_full;
+            xs.s_full = xs.a_full * std::pow(xs.r_full, 2.0 / 3.0);
+            xs.s_max  = 1.08 * xs.s_full;
             xs.r_bot  = p[1];   // C-factor / roughness stored in rBot
             return 0;
         }
