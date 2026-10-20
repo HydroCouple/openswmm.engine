@@ -2220,7 +2220,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     const double deficit_after = std::max(0.0, ts * std::max(0.0, zs - hg1) - state_.hu[u]);
     const double expected = std::max(0.0, deficit_before - infil_vol / A);
     if (deficit_after > expected && deficit_after > kTiny) {
-        if(cl==GwClosure::CLOSED_FORM && opts_ && opts_->reconstruction_order==2) {
+        if((cl==GwClosure::CLOSED_FORM||cl==GwClosure::ENSLAVED) && opts_ && opts_->reconstruction_order==2) {
             // SSP stages require the drying derivative at the old front and
             // old deficit. The finite ratio used by the first-order held
             // intake route contributes its own O(dt^2) subflow and cannot be
@@ -3084,8 +3084,14 @@ std::string SubsurfaceSolver::rk2ProfileError() const {
     if(!active() || options_.per_subcatch || tr_.active() || heat_.active() || !reactors_.empty() ||
        !node_beds_.empty() || lid_receipts_enabled_ || runtime_sources_.active() ||
        std::any_of(source_owned_.begin(),source_owned_.end(),[](bool v){return v;}) ||
-       std::any_of(state_.closure.begin(),state_.closure.end(),[](int8_t v){return v!=int8_t(GwClosure::CLOSED_FORM);}))
-        return "Coupled RK2 requires spatial CLOSED_FORM water-only cells without borrowed source, network or thermal owners.";
+       std::any_of(state_.closure.begin(),state_.closure.end(),[](int8_t v){return v!=int8_t(GwClosure::CLOSED_FORM)&&v!=int8_t(GwClosure::ENSLAVED);}))
+        return "Coupled RK2 requires spatial CLOSED_FORM/ENSLAVED water-only cells without borrowed source, network or thermal owners.";
+    for(int i=0;i<state_.n_cells;++i)if(covers(i)&&state_.closure[i]==int8_t(GwClosure::ENSLAVED)) {
+        const double equilibrium=soil::equilibriumStorage(paramsOf(i),state_.zs[i]-state_.hg[i]);
+        if(!std::isfinite(state_.hu[i])||!std::isfinite(equilibrium)||
+           std::abs(state_.hu[i]-equilibrium)>1e-12*std::max(1.,std::abs(equilibrium)))
+            return "Coupled RK2 ENSLAVED cells require their actual equilibrium storage.";
+    }
     for(const auto& boundary:boundaries_)if(!boundary.terms.empty())
         return "Coupled RK2 groundwater boundaries require water-only forcing; quality remains guarded.";
     for(const auto& source:sources_)if(!source.terms.empty())
@@ -3102,7 +3108,8 @@ void SubsurfaceSolver::publishRk2Infiltration(SurfaceStateData& surface,double d
         if(length>0) {
             const double theta=std::clamp(state_.hu[i]/length,p.theta_r,p.theta_s);
             const double saturation=std::clamp((theta-p.theta_r)/(p.theta_s-p.theta_r),1e-6,1.);
-            const double drive=(pond+soil::suctionAtSaturation(p,saturation))*(p.theta_s-theta);
+            const double suction=state_.closure[i]==int8_t(GwClosure::ENSLAVED)?length:soil::suctionAtSaturation(p,saturation);
+            const double drive=(pond+suction)*(p.theta_s-theta);
             // The held-interval Green-Ampt integral is an exact scalar
             // subflow, not a forward-Euler derivative. Smooth SSP stages use
             // its instantaneous rate. At an unadvanced front the derivative
@@ -3126,9 +3133,34 @@ void SubsurfaceSolver::blendRk2Water(const SubsurfaceSolver& initial,double end)
         if(now.size()!=before.size())throw std::runtime_error("Coupled RK2 groundwater shape changed in a stage.");
         for(std::size_t i=0;i<now.size();++i)now[i]=.5*(before[i]+now[i]);
     };
-    // hg and hu are linear water inventories for CLOSED_FORM. Averaging a
-    // moisture/equilibrium view would not conserve water for other closures.
-    blend(s.hg,b.hg);blend(s.hu,b.hu);blend(s.wetting_front,b.wetting_front);
+    if(s.hg.size()!=b.hg.size()||s.hu.size()!=b.hu.size())
+        throw std::runtime_error("Coupled RK2 groundwater shape changed in a stage.");
+    for(int i=0;i<s.n_cells;++i) {
+        if(covers(i)&&s.closure[i]==int8_t(GwClosure::ENSLAVED)) {
+            const auto p=paramsOf(i);const double zs=s.zs[i],ts=s.theta_s[i];
+            const double target=.5*((ts*b.hg[i]+b.hu[i])+(ts*s.hg[i]+s.hu[i]));
+            const auto water=[&](double h){return ts*h+soil::equilibriumStorage(p,zs-h);};
+            double lo=0,hi=zs;
+            if(!std::isfinite(target))throw std::runtime_error("Nonfinite coupled RK2 equilibrium storage.");
+            if(target<=water(lo))hi=lo;
+            else if(target>=water(hi))lo=hi;
+            else for(int iteration=0;iteration<80;++iteration) {
+                const double middle=lo+.5*(hi-lo);
+                if(middle==lo||middle==hi)break;
+                if(water(middle)>target)hi=middle;else lo=middle;
+            }
+            // Invert the conserved water, not an arithmetic table-height or
+            // moisture average. A flat capillary fringe maps to saturation.
+            const double h=std::abs(water(lo)-target)<=std::abs(water(hi)-target)?lo:hi;
+            if(std::abs(water(h)-target)>32*std::numeric_limits<double>::epsilon()*std::max(1.,std::abs(target)))
+                throw std::runtime_error("Coupled RK2 equilibrium storage inversion failed.");
+            s.hg[i]=h;s.hu[i]=soil::equilibriumStorage(p,zs-h);
+        } else {
+            // Both CLOSED_FORM stores are linear canonical inventories.
+            s.hg[i]=.5*(b.hg[i]+s.hg[i]);s.hu[i]=.5*(b.hu[i]+s.hu[i]);
+        }
+    }
+    blend(s.wetting_front,b.wetting_front);
     blend(s.eacc_L,b.eacc_L);blend(s.eacc_R,b.eacc_R);
     blend(s.xacc_from_surface,b.xacc_from_surface);blend(s.xacc_to_surface,b.xacc_to_surface);
     blend(s.et_pending,b.et_pending);blend(s.reject_cumulative,b.reject_cumulative);

@@ -463,7 +463,7 @@ public:
     double storage() const noexcept { return state_.storage(); }
     void checkpoint(detail::CompletedSourceArchive&,bool model); // internal accepted-boundary IO
     std::string initReactions(SimulationContext& ctx);
-    /// Coupled SSP-RK2: spatial CLOSED_FORM water only, authored wells and HEAD/FLOW edges.
+    /// Coupled SSP-RK2: spatial CLOSED_FORM/ENSLAVED water only, authored wells and HEAD/FLOW edges.
     std::string rk2ProfileError() const;
     void blendRk2Water(const SubsurfaceSolver& initial,double end);
     void publishRk2Infiltration(SurfaceStateData&,double dt,double time);

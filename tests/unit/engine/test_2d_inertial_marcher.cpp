@@ -716,10 +716,11 @@ namespace {
 struct CoupledRkRig {
     MeshData mesh=makeGridMesh(1,1,4.,[](double,double){return 0.;});
     SurfaceStateData state=makeState(mesh);SolverOptions2D opts;ExplicitInertialSolver solver;SubsurfaceSolver gw;
-    void init(double dt,double ks,double deep,double pond=0,const std::string& et="AUTO") {
+    void init(double dt,double ks,double deep,double pond=0,const std::string& et="AUTO",
+              GwClosure closure=GwClosure::CLOSED_FORM,SoilChar law=SoilChar::RUSSO) {
         opts.momentum=Momentum2D::FULL_SWE;opts.reconstruction_order=2;opts.lts_tiers=1;opts.max_timestep=dt;
         seedSurface(mesh,opts,state,pond);solver.initialize(mesh,state,opts);
-        SubsurfaceConfig cfg;cfg.options.authored=true;cfg.options.closure=GwClosure::CLOSED_FORM;cfg.options.node_auto=false;cfg.options.gw_et=et;
+        SubsurfaceConfig cfg;cfg.options.authored=true;cfg.options.closure=closure;cfg.options.soil_char=law;cfg.options.node_auto=false;cfg.options.gw_et=et;
         GwAquiferRow row;row.Ks=ks;row.zs=2;row.hg0=.6;row.c_loss=deep;cfg.rows={row};
         std::vector<std::string> warnings;ASSERT_TRUE(gw.initialize(mesh,solver.inertialEdges(),opts,{},0,cfg,warnings).empty());
         ASSERT_TRUE(gw.rk2ProfileError().empty());solver.setSubsurface(&gw);
@@ -1231,4 +1232,166 @@ TEST(CoupledGroundwaterRk2, LaterHeadFailureRestoresEveryPriorStageAndReceipt) {
     ASSERT_TRUE(r.solver.saveCheckpoint(after.string()).empty());EXPECT_EQ(rk2File(before),rk2File(after));
     signal.constant=base+.6;signal.times.clear();signal.values.clear();r.gw.setBoundaries(rk2HeadEdges(r,signal));
     ASSERT_NO_THROW(r.solver.advance(0,.1));EXPECT_NEAR(r.gw.state().continuityResidual(),0,1e-9);
+}
+
+
+namespace {
+double enslavedGardnerDrainageReference(int steps) {
+    const double dt=2./steps;
+    const auto rate=[](double h){return -.07*h/(2*.35*(-std::expm1(-2*(2-h))));};
+    double h=.6;
+    for(int k=0;k<steps;++k) {
+        const double a=rate(h),b=rate(h+.5*dt*a),c=rate(h+.5*dt*b),d=rate(h+dt*c);
+        h+=dt*(a+2*b+2*c+d)/6;
+    }
+    return h;
+}
+}
+TEST(CoupledGroundwaterRk2, EnslavedNonlinearStorageDrainageConvergesAtSecondOrder) {
+    const double reference=enslavedGardnerDrainageReference(20000);
+    ASSERT_NEAR(reference,enslavedGardnerDrainageReference(40000),1e-13);
+    double previous=0;
+    for(double dt:{.4,.2,.1,.05}) {
+        CoupledRkRig r;r.init(dt,0,.07,0,"NONE",GwClosure::ENSLAVED,SoilChar::GARDNER);
+        ASSERT_TRUE(r.gw.rk2ProfileError().empty());const double initial=r.total();
+        for(int k=0;k<int(std::round(2/dt));++k)r.solver.advance(k*dt,(k+1)*dt);
+        const auto& w=r.gw.state();const double error=std::abs(w.hg[0]-reference);
+        RecordProperty("enslaved_drainage_error_"+std::to_string(int(dt*1000)),error);
+        EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GT(previous/error,3.7);previous=error;
+        EXPECT_NEAR(r.total()+w.led_deep,initial,1e-10*initial);
+        EXPECT_NEAR(w.continuityResidual(),0,1e-10*initial);
+        EXPECT_DOUBLE_EQ(r.gw.cellCompletedTime(0),2);
+    }
+}
+TEST(CoupledGroundwaterRk2, EnslavedBlendConservesWaterAndRecoversEquilibriumForEverySoilLaw) {
+    for(SoilChar law:{SoilChar::RUSSO,SoilChar::GARDNER,SoilChar::BROOKS_COREY,SoilChar::VAN_GENUCHTEN}) {
+        SCOPED_TRACE(int(law));
+        for(const auto heads:{std::pair{.1,1.1},std::pair{0.,2.},std::pair{1.85,1.95}}) {
+            CoupledRkRig r;r.init(.1,0,0,0,"NONE",GwClosure::ENSLAVED,law);
+            ASSERT_TRUE(r.gw.rk2ProfileError().empty());soil::Params p;p.law=law;
+            auto& w=r.gw.state();
+            for(int i=0;i<w.n_cells;++i){w.hg[i]=heads.first;w.hu[i]=soil::equilibriumStorage(p,w.zs[i]-w.hg[i]);}
+            const auto initial=r.gw;
+            for(int i=0;i<w.n_cells;++i){w.hg[i]=heads.second;w.hu[i]=soil::equilibriumStorage(p,w.zs[i]-w.hg[i]);}
+            const double target=.5*(w.storage()+initial.state().storage());
+            ASSERT_NO_THROW(r.gw.blendRk2Water(initial,.1));
+            EXPECT_NEAR(w.storage(),target,2e-14);
+            for(int i=0;i<w.n_cells;++i) {
+                EXPECT_DOUBLE_EQ(w.hu[i],soil::equilibriumStorage(p,w.zs[i]-w.hg[i]));
+                EXPECT_GE(w.hg[i],0);EXPECT_LE(w.hg[i],w.zs[i]);
+                if(heads.first==.1)EXPECT_GT(std::abs(w.hg[i]-.5*(heads.first+heads.second)),1e-4);
+            }
+        }
+    }
+}
+TEST(CoupledGroundwaterRk2, EnslavedSurfaceIntakeAndTableRemainConservativeAndRefine) {
+    const auto trajectory=[](double dt) {
+        CoupledRkRig r;r.init(dt,.005,.0005,.2,"NONE",GwClosure::ENSLAVED,SoilChar::GARDNER);
+        if(!r.gw.rk2ProfileError().empty())throw std::runtime_error(r.gw.rk2ProfileError());
+        auto& w=r.gw.state();std::fill(w.wetting_front.begin(),w.wetting_front.end(),.1);
+        const double initial=r.total();soil::Params p;p.law=SoilChar::GARDNER;
+        for(int k=0;k<int(std::round(2/dt));++k)r.solver.advance(k*dt,(k+1)*dt);
+        EXPECT_GT(w.led_infil_in,0);EXPECT_NEAR(r.total()+w.led_deep,initial,1e-10*initial);
+        EXPECT_NEAR(w.continuityResidual(),0,1e-10*initial);
+        for(int i=0;i<w.n_cells;++i)EXPECT_DOUBLE_EQ(w.hu[i],soil::equilibriumStorage(p,w.zs[i]-w.hg[i]));
+        return std::vector<double>{r.state.volume[0],w.hg[0],w.hu[0]};
+    };
+    std::vector<double> reference;ASSERT_NO_THROW(reference=trajectory(.0015625));double previous=0;
+    for(double dt:{.2,.1,.05,.025,.0125}) {
+        const auto actual=trajectory(dt);double error=0;
+        for(std::size_t i=0;i<actual.size();++i)error+=std::pow(actual[i]-reference[i],2);
+        error=std::sqrt(error);RecordProperty("enslaved_intake_error_"+std::to_string(int(dt*1000)),error);
+        // Retain the coarse result; require the frozen rate on four finer steps.
+        EXPECT_LT(error,1e-4);if(previous>0&&dt<=.05)EXPECT_GT(previous/error,3.5);previous=error;
+    }
+}
+
+TEST(CoupledGroundwaterRk2, EnslavedForcingRestartAndLateFailureRollbackPreserveEveryOwnedState) {
+    for(SoilChar law:{SoilChar::RUSSO,SoilChar::GARDNER,SoilChar::BROOKS_COREY,SoilChar::VAN_GENUCHTEN})for(bool head:{false,true}) {
+        SCOPED_TRACE(int(law));
+        SCOPED_TRACE(head);
+        CoupledRkRig a,b;a.init(.05,.005,.001,.1,"NONE",GwClosure::ENSLAVED,law);b.init(.05,.005,.001,.1,"NONE",GwClosure::ENSLAVED,law);
+        ASSERT_TRUE(a.gw.rk2ProfileError().empty());ASSERT_TRUE(b.gw.rk2ProfileError().empty());
+        // A second closure shares the same stage transaction and lateral face.
+        if(!head)for(auto* rig:{&a,&b}) {
+            auto& w=rig->gw.state();w.closure[1]=int8_t(GwClosure::CLOSED_FORM);w.hu[1]=.25*(w.zs[1]-w.hg[1]);
+            w.led_init_storage=w.storage();
+        }
+        GwResolvedSource well;well.name="enslaved-reversing";well.cells={{0,1}};
+        well.flow.times={0,.17,.43,1};well.flow.values={.02,.06,-.02,.01};
+        GwSourceSignal edge;edge.times={0,.13,.67,1};edge.values={.01,-.01,.02,.01};
+        for(auto* rig:{&a,&b}) {
+            auto boundary=rk2FlowEdge(*rig,1,edge);boundary.head=head;
+            if(head) {const double bottom=rig->gw.state().z_bed[1];boundary.signal.values={bottom+1.1,bottom+.2,bottom+2.5,bottom+.8};}
+            rig->gw.setSources({well});rig->gw.setBoundaries({boundary});
+        }
+        const auto prefix="enslaved-"+std::to_string(int(law))+"-"+std::to_string(head);
+        const auto saved=rk2Output(prefix+"-accepted.chk"),after=rk2Output(prefix+"-after.chk"),fresh=rk2Output(prefix+"-fresh.chk");
+        const double initial=a.total();
+        for(int k=0;k<20;++k) {
+            ASSERT_NO_THROW(a.solver.advance(k*.05,(k+1)*.05));
+            ASSERT_TRUE(a.solver.saveCheckpoint(saved.string()).empty());
+            if(k==7) {
+                ASSERT_TRUE(b.solver.saveCheckpoint(fresh.string()).empty());
+                const auto closure=b.gw.state().closure[0];b.gw.state().closure[0]=int8_t(GwClosure::CLOSED_FORM);
+                EXPECT_FALSE(b.solver.loadCheckpoint(saved.string()).empty());b.gw.state().closure[0]=closure;
+                ASSERT_TRUE(b.solver.saveCheckpoint(after.string()).empty());EXPECT_EQ(rk2File(fresh),rk2File(after));
+                ASSERT_TRUE(b.solver.loadCheckpoint(saved.string()).empty());
+            } else if(k>7)ASSERT_NO_THROW(b.solver.advance(k*.05,(k+1)*.05));
+            if(k>=7) {ASSERT_TRUE(b.solver.saveCheckpoint(after.string()).empty());EXPECT_EQ(rk2File(saved),rk2File(after));}
+        }
+        const auto& w=a.gw.state();
+        EXPECT_GT(w.led_boundary_in,0);EXPECT_GT(w.led_boundary_out,0);
+        EXPECT_NEAR(a.total()+w.led_deep+w.led_source_out+w.led_boundary_out,
+                    initial+w.led_source_in+w.led_boundary_in,1e-10*initial);
+        EXPECT_NEAR(w.continuityResidual(),0,1e-10*initial);
+        GwResolvedSource bad;bad.cells={{0,1}};bad.flow.times={1,1.13,1.67,9};bad.flow.values={.01,.02,1e308,1e308};
+        a.gw.setSources({bad});ASSERT_TRUE(a.solver.saveCheckpoint(fresh.string()).empty());
+        EXPECT_THROW(a.solver.advance(1,9),std::runtime_error);
+        ASSERT_TRUE(a.solver.saveCheckpoint(after.string()).empty());EXPECT_EQ(rk2File(fresh),rk2File(after));
+        a.gw.setSources({well});ASSERT_NO_THROW(a.solver.advance(1,1.05));
+    }
+}
+TEST(CoupledGroundwaterRk2, EnslavedBoundsAndInvalidEquilibriumHaveExplicitConservationAndRefusal) {
+    for(SoilChar law:{SoilChar::RUSSO,SoilChar::GARDNER,SoilChar::BROOKS_COREY,SoilChar::VAN_GENUCHTEN})for(double flow:{100.,-100.}) {
+        SCOPED_TRACE(int(law));
+        SCOPED_TRACE(flow);
+        CoupledRkRig r;r.init(.025,.005,.0005,0,"NONE",GwClosure::ENSLAVED,law);
+        ASSERT_TRUE(r.gw.rk2ProfileError().empty());auto& w=r.gw.state();const double initial=r.total();
+        GwResolvedSource source;source.cells={{0,1}};source.flow.constant=flow;r.gw.setSources({source});
+        soil::Params p;p.law=law;
+        for(int k=0;k<20;++k) {
+            ASSERT_NO_THROW(r.solver.advance(k*.025,(k+1)*.025));
+            EXPECT_NEAR(r.total()+w.led_deep+w.led_source_out,initial+w.led_source_in,1e-10*std::max(initial,r.total()));
+            EXPECT_NEAR(w.continuityResidual(),0,1e-10*std::max(initial,r.total()));
+            for(int i=0;i<w.n_cells;++i) {
+                EXPECT_GE(w.hg[i],0);EXPECT_LE(w.hg[i],w.zs[i]);EXPECT_GE(r.state.volume[i],0);
+                EXPECT_DOUBLE_EQ(w.hu[i],soil::equilibriumStorage(p,w.zs[i]-w.hg[i]));
+            }
+        }
+        if(flow>0)EXPECT_GT(w.led_dunne,0);else EXPECT_LT(w.led_source_out,50);
+        const auto volume=r.state.volume;const auto clocks=ExplicitInertialSolverTestAccess::state(r.solver);
+        w.hu[0]+=.001;
+        EXPECT_FALSE(r.gw.rk2ProfileError().empty());EXPECT_THROW(r.solver.advance(.5,.525),std::runtime_error);
+        EXPECT_EQ(r.state.volume,volume);EXPECT_EQ(ExplicitInertialSolverTestAccess::state(r.solver),clocks);
+    }
+}
+
+TEST(CoupledGroundwaterRk2, EnslavedFullStepAndTwoHalfStepsHaveThirdLocalOrder) {
+    double previous=0;
+    for(double dt:{.1,.05,.025,.0125,.00625}) {
+        CoupledRkRig full,half;
+        for(auto* rig:{&full,&half}) {
+            rig->init(.4,.005,.0005,.2,"NONE",GwClosure::ENSLAVED,SoilChar::GARDNER);
+            ASSERT_TRUE(rig->gw.rk2ProfileError().empty());
+            std::fill(rig->gw.state().wetting_front.begin(),rig->gw.state().wetting_front.end(),.1);
+        }
+        full.solver.advance(0,dt);half.solver.advance(0,dt/2);half.solver.advance(dt/2,dt);
+        double error=0;
+        for(int i=0;i<full.gw.state().n_cells;++i)error+=std::abs(full.state.volume[i]-half.state.volume[i])+
+            std::abs(full.gw.state().hg[i]-half.gw.state().hg[i]);
+        RecordProperty("enslaved_local_difference_"+std::to_string(int(dt*10000)),error);
+        // Keep the coarse result, with four finer steps testing local order.
+        EXPECT_GT(error,0);if(previous>0&&dt<=.025)EXPECT_GT(previous/error,7.);previous=error;
+    }
 }

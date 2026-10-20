@@ -101,13 +101,15 @@ Execution profiles
 ------------------
 
 Groundwater chemistry, layered transport and porous heat require the CPU
-first-order coupling profile. A standalone CLOSED_FORM water-only mesh can
-use FULL_SWE with RECONSTRUCTION_ORDER 2; network/catchment exchange and
+first-order coupling profile. A standalone CLOSED_FORM/ENSLAVED water-only
+mesh can use FULL_SWE with RECONSTRUCTION_ORDER 2; network/catchment exchange and
 active transport/thermal owners remain guarded.
 Authored water-only wells and HEAD/FLOW edges are supported: shared surface/groundwater
 stages split at knots and sign reversals. HEAD uses absolute elevation; FLOW
 is inward-positive m³/s. Runtime providers and quality
-terms remain guarded.
+terms remain guarded. ENSLAVED stages average conserved total water and
+recover their equilibrium table/column state; mixed CLOSED_FORM/ENSLAVED
+cells are supported. SIGMA remains guarded under RK2.
 
 This profile has an internal numerical component checkpoint, not managed
 engine-calendar or output continuation. Requests for accelerated backends

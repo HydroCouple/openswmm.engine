@@ -202,7 +202,8 @@ def test_layered_chemistry_with_porous_heat(tmp_path, chemistry_layers, thermal_
 
 
 @pytest.mark.parametrize('forcing', ['none', 'well', 'edge', 'head'])
-def test_water_only_coupled_rk2_advances_through_python(tmp_path, forcing):
+@pytest.mark.parametrize('closure', ['CLOSED_FORM', 'ENSLAVED'])
+def test_water_only_coupled_rk2_advances_through_python(tmp_path, forcing, closure):
     well = """
 [TIMESERIES]
 PUMP 01/01/2026 00:00:00 .000001
@@ -222,7 +223,7 @@ PUMP 01/01/2026 00:00:02 -1.5
 CELL 1 EDGE 0 HEAD SERIES PUMP
 '''
 
-    options = """
+    options = f"""
 [OPTIONS]
 END_DATE 01/01/2026
 END_TIME 00:00:02
@@ -237,7 +238,7 @@ TRANSPORT_MSX NO
 TRANSPORT_AGE NO
 TRANSPORT_TEMPERATURE NO
 [2D_AQUIFER_OPTIONS]
-CLOSURE CLOSED_FORM
+CLOSURE {closure}
 NODE_ENROLMENT ROWS
 LINK_SEEPAGE NONE
 GW_ET NONE
@@ -266,6 +267,12 @@ TRANSPORT_TEMPERATURE NO
         assert solver.elapsed.total_seconds() == 2
         gw = solver.surface2d.groundwater
         assert gw.active and gw.species == ()
+        if closure == 'ENSLAVED':
+            status = gw.execution_status
+            assert status['available_operators'] == 0
+            assert status['executed_operators'] == 0
+            assert status['accepted_cells'] == 0
+            assert status['recharge_backend'] == 'cpu'
         assert gw.ledger(GroundwaterLedger.INFIL_IN) > 0
         assert gw.ledger(GroundwaterLedger.DEEP) > 0
         if forcing == 'head':
