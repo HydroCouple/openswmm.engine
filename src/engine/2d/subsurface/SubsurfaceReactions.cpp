@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Caleb Buahin
 #include "SubsurfaceSolver.hpp"
+#include "../data/SolverOptions2D.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../transport/components/ReactionModule/ReactionsWriter.hpp"
 #include <algorithm>
@@ -119,8 +120,11 @@ void SubsurfaceSolver::reactCell(int cell,double dt,double hg) {
             (state_.theta_s[cell]-state_.theta_r[cell]),0.,1.);
         variables[int(RxHydVar::GW_DEPTH_M)]=zone==0?length+.5*hg:
             tr_.n_layers>0?(zone-.5)*length/tr_.n_layers:.5*length;
-        const auto report=transport::ReactionIntegrator::step(rx,reactor.forms,reactor.expressions,dt,
-            aqueous.data(),variables,reaction_workspace_,pollutants.data(),scale.data());
+        const auto report=opts_&&opts_->reconstruction_order==2?
+            transport::ReactionIntegrator::stepSubcycled(rx,reactor.forms,reactor.expressions,dt,
+                aqueous.data(),variables,reaction_workspace_,pollutants.data(),scale.data()):
+            transport::ReactionIntegrator::step(rx,reactor.forms,reactor.expressions,dt,
+                aqueous.data(),variables,reaction_workspace_,pollutants.data(),scale.data());
         if(!report.ok)throw std::runtime_error("[REACTION_SUBSURFACE] "+report.error);
         for(int s=0;s<count;++s) {
             if(rows[s]<0)continue;
@@ -215,6 +219,36 @@ void SubsurfaceSolver::reactPorewaterCell(int cell,double dt,double hg) {
     pore.mass=std::move(staged);
     for(int s=0;s<count;++s)if(rows[s]>=0)tr_.lost_reaction[rows[s]]+=ledger[s];
     heat_.refreshView(cell,tr_);
+}
+
+bool SubsurfaceSolver::hasRk2Reactions() const noexcept {
+    return !reactors_.empty()||std::any_of(tr_.decay.begin(),tr_.decay.end(),[](double rate){return rate>0;});
+}
+void SubsurfaceSolver::advanceRk2Reactions(double seconds) {
+    if(!hasRk2Reactions()||!(seconds>0))return;
+    if(!std::isfinite(seconds))throw std::runtime_error("Nonfinite coupled reaction interval.");
+    for(int cell=0;cell<state_.n_cells;++cell)if(covers(cell)) {
+        const auto decay=[&](double interval) {
+            for(int species=0;species<tr_.n_species;++species) {
+                if(species==tr_.age_row||species==tr_.temp_row)continue;
+                const auto k=tr_.idx(species,cell);const double rate=tr_.decay[k];if(!(rate>0))continue;
+                const double keep=std::exp(-rate*interval);double removed=0;
+                const auto apply=[&](double& mass) {removed+=mass*(1-keep);mass*=keep;};
+                apply(tr_.sat_mass[k]);
+                if(tr_.n_layers) {
+                    for(int layer=0;layer<tr_.n_layers;++layer)apply(tr_.layer_mass[tr_.layerIdx(species,layer,cell)]);
+                    tr_.refreshUnsat(species,cell);
+                } else apply(tr_.unsat_mass[k]);
+                tr_.lost_reaction[species]+=removed;
+            }
+        };
+        // A decaying precursor can drive another species' RATE law. Keep
+        // this composition symmetric too; duplicate decay ownership was
+        // already refused when the groundwater reaction context was bound.
+        decay(reactors_.empty()?seconds:.5*seconds);
+        reactCell(cell,seconds,state_.hg[cell]);
+        if(!reactors_.empty())decay(.5*seconds);
+    }
 }
 
 }

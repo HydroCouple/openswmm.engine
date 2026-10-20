@@ -467,6 +467,8 @@ public:
     std::string rk2ProfileError() const;
     void blendRk2Water(const SubsurfaceSolver& initial,double end);
     void publishRk2Infiltration(SurfaceStateData&,double dt,double time);
+    bool hasRk2Reactions() const noexcept;
+    void advanceRk2Reactions(double seconds);
     bool needsTransportRestart() const noexcept {
         return tr_.n_layers>0 || !tr_.generated_age.empty() || !boundaries_.empty() || !reactors_.empty() ||
             (tr_.active()&&std::any_of(source_owned_.begin(),source_owned_.end(),[](bool owned){return owned;}));

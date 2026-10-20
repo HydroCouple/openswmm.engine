@@ -65,6 +65,7 @@ namespace openswmm::transport {
 /// adaptivity (substepping) is internal and only reported.
 struct RxStepReport {
     bool ok            = true;
+    bool interval_limit = false; ///< work/floor limit: caller may retry a smaller interval
     int  substeps      = 0;   ///< RATE substeps actually taken
     int  newton_iters  = 0;   ///< EQUIL + implicit-solver Newton iterations
     std::string error;        ///< set when !ok
@@ -118,6 +119,15 @@ public:
     // Explicit reactor context. Expressions and forms refer to the same
     // compiled token pool; groundwater never borrows pipe/tank laws.
     static RxStepReport step(const ReactionData& rx,
+                             const std::vector<ReactionExprForm>& forms,
+                             const std::vector<RxExprSpan>& expressions,double dt,
+                             double* species,double* hydvar,RxWorkspace& ws,
+                             const double* pollutants=nullptr,const double* kinetic_scale=nullptr,
+                             const double* coefficients=nullptr);
+    // Opt-in transactional retry for an owned interval. Only a work/floor limit
+    // permits bisection; invalid laws and Newton failures retain their error.
+    // Tolerances are unchanged, and failure restores every supplied species.
+    static RxStepReport stepSubcycled(const ReactionData& rx,
                              const std::vector<ReactionExprForm>& forms,
                              const std::vector<RxExprSpan>& expressions,double dt,
                              double* species,double* hydvar,RxWorkspace& ws,

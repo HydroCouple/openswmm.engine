@@ -142,7 +142,7 @@ void SubsurfaceSolver::fireLayerSpecies(int cell,const CellFlux& f) {
             else if(moves[j].from==sat&&moves[j].to==sat-1)internal-=result.transferred[j];
         }
         tr_.internal_recharge[s]+=internal;
-        if(tr_.decay[k]>0&&!intensive) {
+        if(!euler&&tr_.decay[k]>0&&!intensive) {
             const double keep=std::exp(-tr_.decay[k]*f.dt);
             double removed=tr_.sat_mass[k]*(1-keep);tr_.sat_mass[k]*=keep;
             for(int j=0;j<layers;++j) {

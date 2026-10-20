@@ -1764,11 +1764,14 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         auto* cpu=dynamic_cast<ExplicitInertialSolver*>(solver_.get());
         if(options_.momentum!=Momentum2D::FULL_SWE||!cpu||!coupling_points_.empty()||
            !aquifer_link_shares_.empty()||!subcatch_recharge_.empty()||ctx.n_subcatches()!=0)
-            throw std::runtime_error("Coupled groundwater RK2 requires the standalone FULL_SWE passive transport/age profile; network and catchment owners remain unqualified.");
+            throw std::runtime_error("Coupled groundwater RK2 requires the standalone FULL_SWE transport/age profile; network and catchment owners remain unqualified.");
         if(auto error=cpu->rk2CheckpointProfile();!error.empty())throw std::runtime_error(error);
-        if(state_.transport.active()&&std::any_of(ctx.pollutants.k_decay.begin(),ctx.pollutants.k_decay.end(),[](double rate){return rate!=0;}))
+        if(state_.transport.n_msx>0&&std::any_of(ctx.reactions.pipe_form.begin(),ctx.reactions.pipe_form.end(),
+            [](ReactionExprForm form){return form!=ReactionExprForm::NONE;}))
+            throw std::runtime_error("Coupled RK2 surface MSX kinetics require their separately qualified reaction stage.");
+        if(state_.transport.n_pollut>0&&std::any_of(ctx.pollutants.k_decay.begin(),ctx.pollutants.k_decay.end(),[](double rate){return rate!=0;}))
             throw std::runtime_error("Coupled RK2 surface decay requires its separately qualified reaction stage.");
-        ctx.warnings.push_back("Coupled groundwater SSP-RK2: CLOSED_FORM/ENSLAVED/SIGMA passive transport/age CPU profile with global stepping and knot-aligned water-only wells and aquifer HEAD/FLOW edges. Singular wetting-front startup is bounded without a second-order claim.");
+        ctx.warnings.push_back("Coupled groundwater SSP-RK2: CLOSED_FORM/ENSLAVED/SIGMA transport/age CPU profile with symmetric groundwater reactions, global stepping and knot-aligned wells and aquifer HEAD/FLOW edges. Singular wetting-front startup is bounded without a second-order claim.");
     }
     infil_elapsed_ = 0.0;
     if (infil_.active()) {

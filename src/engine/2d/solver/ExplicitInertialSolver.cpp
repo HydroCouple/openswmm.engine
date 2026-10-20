@@ -2276,7 +2276,12 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     for(std::size_t part=0;part<parts;++part) {
     const double time=cuts.empty()?start:cuts[part],dt=cuts.empty()?interval:cuts[part+1]-time;
     std::unique_ptr<SubsurfaceSolver> part_ground;
-    if(gw_&&part>0)part_ground=std::make_unique<SubsurfaceSolver>(*gw_);
+    if(gw_) {
+        gw_->advanceRk2Reactions(.5*dt);
+        // Transport blends against the state after the first reaction half.
+        // ground0 remains the untouched whole-call rollback owner.
+        if(part>0||gw_->hasRk2Reactions())part_ground=std::make_unique<SubsurfaceSolver>(*gw_);
+    }
     const int nt = mesh_->n_triangles();
     // Member buffers: vector assignment reuses capacity, so no per-step
     // allocation (F6).
@@ -2366,6 +2371,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     state_->evap_loss_total = evap0 + 0.5 * (state_->evap_loss_total - evap0);
     if(gw_) {
         gw_->blendRk2Water(part_ground?*part_ground:*ground0,time+dt);
+        gw_->advanceRk2Reactions(.5*dt);
         source_phase_end_=time+dt;
         gw_->publishRk2Infiltration(*state_,dt,time+dt);
     }

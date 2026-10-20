@@ -626,7 +626,7 @@ it is \f$m \times\f$ the cell count per step and off by default.
 | Return flow | `DUNNE YES` (default) | Table-at-ground excess to the surface | \status{Implemented} |
 | Return flow | `DUNNE NO` | Compatibility only; rejection still returns | \status{Implemented} |
 | ET | `GW_ET NONE`, `CAPILLARY_RISE`, `BOUNDARY_ET`, `BOTH` | §9.8 | \status{Implemented} |
-| Time stepping | Standalone CLOSED_FORM/ENSLAVED/SIGMA passive transport/age FULL_SWE SSP-RK2 | Global tier, conserved equilibrium-water blends for ENSLAVED and layer-water blends with starting-state ALE velocity for SIGMA, knot-aligned water-only wells and HEAD/FLOW edges, canonical bulk/layer species and age ledgers, rollback and exact component checkpoint; reactions/heat/network owners remain guarded | \status{Experimental} |
+| Time stepping | Standalone CLOSED_FORM/ENSLAVED/SIGMA transport/age FULL_SWE SSP-RK2 | Global tier, conserved equilibrium-water blends for ENSLAVED and layer-water blends with starting-state ALE velocity for SIGMA, knot-aligned wells and HEAD/FLOW quality edges, canonical bulk/layer species and age ledgers, symmetric groundwater reactions, rollback and exact component checkpoint; surface reactions/heat/network owners remain guarded | \status{Experimental} |
 | Time stepping | Shared tier ladder, height `LTS_TIERS` | §9.9 | \status{Implemented} |
 | Time stepping | Runtime tier count reaching the slowest cell (D-N1) | `requiredTiers()` exists; the marcher does not grow the ladder | \status{Planned} |
 | Verification law | Broadbridge–White | Exact Richards benchmark in the test harness; not selectable | \status{Retired} |

@@ -297,11 +297,10 @@ std::string ExplicitInertialSolver::rk2CheckpointProfile() const {
        state_->heat.enabled||state_->snow.active()||
        state_->runtime_sources.active()||state_->runtime_forcings.active()||
        (state_->node_coupling&&!state_->node_coupling->empty()))
-        return "RK2 checkpoint requires the standalone wall-bounded passive transport/age coupled profile.";
+        return "RK2 checkpoint requires the standalone wall-bounded transport/age coupled profile.";
     const auto& tr=state_->transport;const auto& ground=gw_->transport();
-    if(tr.n_msx>0)return "Coupled RK2 surface MSX requires its separately qualified reaction stage.";
     if(tr.active()&&(tr.row_names!=ground.row_names||tr.n_species!=ground.n_species||tr.age_row!=ground.age_row||tr.temp_row>=0))
-        return "Coupled RK2 requires matching surface/groundwater passive species and age rows.";
+        return "Coupled RK2 requires matching surface/groundwater species and age rows.";
     for(double mass:tr.cell_mass)if(!std::isfinite(mass)||mass<0)return "RK2 surface transport inventory is inadmissible.";
     for(const auto* row:{&state_->coupling_flux,&state_->coupling_applied})for(double v:*row)if(v!=0)
         return "RK2 checkpoint cannot recover external coupling receipts.";

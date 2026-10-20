@@ -62,6 +62,8 @@
 #include "2d/subsurface/SubsurfaceSolver.hpp"
 #include "2d/gw/GwTransportData.hpp"
 #include "2d/subsurface/LayerTransport.hpp"
+#include "core/SWMMEngine.hpp"
+#include <openswmm/engine/openswmm_reactions.h>
 
 using namespace openswmm::twoD;
 
@@ -1864,4 +1866,212 @@ TEST(CoupledGroundwaterRk2, PassiveMovingTableApproachesIndependentUniformDissol
             EXPECT_LT(error,1e-3);if(previous>1e-9&&error>1e-9)EXPECT_GT(previous/error,3.5);previous=error;
         }
     }
+}
+
+namespace {
+struct RkReactionSystem {
+    SWMM_Engine handle=swmm_engine_new();
+    explicit RkReactionSystem(const std::string& laws,const std::string& solver="RK5") {
+        char error[512]{};
+        const auto text="[REACTION_OPTIONS]\nSOLVER "+solver+"\nRATE_UNITS SEC\nCOUPLING FULL\nATOL 1e-13\nRTOL 1e-11\n"
+            "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n[REACTION_SUBSURFACE]\n"+laws;
+        if(!handle||swmm_reactions_apply_text(handle,text.c_str(),error,sizeof(error))!=SWMM_OK)throw std::runtime_error(error);
+    }
+    ~RkReactionSystem(){if(handle)swmm_engine_destroy(handle);}
+    openswmm::SimulationContext& context(){return reinterpret_cast<openswmm::SWMMEngine*>(handle)->context();}
+};
+void initRkReactions(CoupledRkRig& r,RkReactionSystem& system,bool layered,double kd=0) {
+    RowLayoutLite rows;rows.n_species=2;rows.n_msx=2;rows.names={"A","B"};
+    GwTransportData data;data.options.unsat_transport=layered?"LAYERED":"BULK";
+    std::vector<std::string> warnings;r.gw.initTransport(rows,&data,{},warnings);
+    auto& t=r.gw.transport();auto& w=r.gw.state();
+    for(int species=0;species<2;++species)for(int i=0;i<w.n_cells;++i) {
+        const auto k=t.idx(species,i);t.kd[k]=kd;const double partition=kd*t.rho_b[i],concentration=species==0?2:0;
+        t.sat_mass[k]=concentration*w.area[i]*w.hg[i]*(w.theta_s[i]+partition);
+        if(layered) {
+            for(int j=0;j<t.n_layers;++j)t.layer_mass[t.layerIdx(species,j,i)]=concentration*w.area[i]*(w.zs[i]-w.hg[i])/t.n_layers*
+                (w.theta_sigma[std::size_t(j)*w.n_cells+i]+partition);
+            t.refreshUnsat(species,i);
+        }else t.unsat_mass[k]=concentration*w.area[i]*(w.hu[i]+partition*(w.zs[i]-w.hg[i]));
+    }
+    for(int species=0;species<2;++species)t.init_mass[species]=t.storage(species);
+    ASSERT_EQ(r.gw.initReactions(system.context()),"");
+    r.state.transport.resize(2,r.mesh.n_cells(),0);r.state.transport.n_pollut=0;
+    r.state.transport.n_msx=2;r.state.transport.row_names={"A","B"};r.opts.groundwater=1;
+    r.solver.initialize(r.mesh,r.state,r.opts);r.solver.setSubsurface(&r.gw);
+    ASSERT_EQ(r.gw.rk2ProfileError(),"");
+}
+const std::string kRkConversion="* SAT A RATE -.2*A\n* SAT B RATE .2*A\n* UNSAT A RATE -.2*A\n* UNSAT B RATE .2*A\n";
+}
+TEST(CoupledGroundwaterRk2, ReactionsSymmetricSplitMatchesIndependentAffineStirredReactor) {
+    RkReactionSystem system(kRkConversion);
+    for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true}) {
+        if(layered&&closure!=GwClosure::SIGMA)continue;
+        for(double kd:{0.,.001}) {
+            SCOPED_TRACE(int(closure));
+            SCOPED_TRACE(layered);
+            SCOPED_TRACE(kd);double previous=0;
+            for(double dt:{.1,.05,.025,.0125}) {
+                CoupledRkRig r;r.init(dt,0,0,0,"NONE",closure,SoilChar::GARDNER,4);initRkReactions(r,system,layered,kd);
+                auto& t=r.gw.transport();const auto& w=r.gw.state();
+                GwResolvedSource source;source.name="reactive-mixing";source.cells={{0,1}};source.flow.constant=.1;
+                GwResolvedSourceTerm term;term.row=0;term.signal.constant=7;source.terms={term};r.gw.setSources({source});
+                GwSourceSignal flow;flow.constant=-.1;auto edge=rk2FlowEdge(r,0,flow);
+                for(auto* receipt:{&edge.mass_in,&edge.mass_out,&edge.flux_in,&edge.flux_out})receipt->assign(2,0);r.gw.setBoundaries({edge});
+                const double volume=w.area[0]*w.hg[0]*w.theta_s[0];
+                const double capacity=w.area[0]*w.hg[0]*(w.theta_s[0]+kd*t.rho_b[0]);
+                const double rate=(.1+.2*volume)/capacity,steady=.7/rate;
+                const double exact_a=steady+(2*capacity-steady)*std::exp(-rate*2);
+                const double exact_total=7*capacity+(2*capacity-7*capacity)*std::exp(-.1*2/capacity);
+                for(int step=0;step<int(std::round(2/dt));++step)ASSERT_NO_THROW(r.solver.advance(step*dt,(step+1)*dt));
+                const double error=std::hypot(t.sat_mass[t.idx(0,0)]-exact_a,t.sat_mass[t.idx(1,0)]-(exact_total-exact_a));
+                RecordProperty("reaction_mixing_"+std::to_string(int(closure))+"_"+std::to_string(layered)+"_"+std::to_string(int(kd*1000))+"_"+std::to_string(int(dt*10000)),error);
+                EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;
+                for(int species=0;species<2;++species)EXPECT_NEAR(t.residual(species),0,1e-10*std::max(1.,t.init_mass[0]));
+                EXPECT_NEAR(t.lost_reaction[0]+t.lost_reaction[1],0,1e-10*std::max(1.,t.init_mass[0]));
+            }
+        }
+    }
+}
+
+TEST(CoupledGroundwaterRk2, ReactionsConvertAIntoBAtActualRetardedCapacity) {
+    for(const std::string solver:{"RK5","ROS2","BDF2"}) {
+        RkReactionSystem system(kRkConversion,solver);
+        for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true}) {
+            if(layered&&closure!=GwClosure::SIGMA)continue;
+            SCOPED_TRACE(solver);
+            SCOPED_TRACE(int(closure));
+            SCOPED_TRACE(layered);
+            CoupledRkRig r;r.init(.05,0,0,0,"NONE",closure,SoilChar::GARDNER,4);initRkReactions(r,system,layered,.001);
+            const auto initial=r.gw.transport();const auto& w=r.gw.state();
+            for(int step=0;step<20;++step)ASSERT_NO_THROW(r.solver.advance(step*.05,(step+1)*.05));
+            const auto& t=r.gw.transport();
+            for(int i=0;i<w.n_cells;++i) {
+                const double partition=t.kd[t.idx(0,i)]*t.rho_b[i];
+                const double sat_keep=std::exp(-.2*w.theta_s[i]/(w.theta_s[i]+partition));
+                EXPECT_NEAR(t.sat_mass[t.idx(0,i)],initial.sat_mass[initial.idx(0,i)]*sat_keep,initial.init_mass[0]*1e-8);
+                if(layered)for(int j=0;j<t.n_layers;++j) {
+                    const double theta=w.theta_sigma[std::size_t(j)*w.n_cells+i];
+                    const auto k=t.layerIdx(0,j,i);const double expected=initial.layer_mass[k]*std::exp(-.2*theta/(theta+partition));
+                    EXPECT_NEAR(t.layer_mass[k],expected,initial.init_mass[0]*1e-8);
+                } else {
+                    const double theta=w.hu[i]/(w.zs[i]-w.hg[i]);
+                    EXPECT_NEAR(t.unsat_mass[t.idx(0,i)],initial.unsat_mass[t.idx(0,i)]*std::exp(-.2*theta/(theta+partition)),initial.init_mass[0]*1e-8);
+                }
+            }
+            EXPECT_NEAR(t.storage(0)+t.storage(1),initial.init_mass[0],initial.init_mass[0]*1e-10);
+            for(int species=0;species<2;++species)EXPECT_NEAR(t.residual(species),0,initial.init_mass[0]*1e-10);
+        }
+    }
+}
+TEST(CoupledGroundwaterRk2, ReactionsRestartAndChangedLawRefusalKeepTheWholeNumericalOwner) {
+    RkReactionSystem system(kRkConversion),changed("* SAT A RATE -.3*A\n* SAT B RATE .3*A\n* UNSAT A RATE -.3*A\n* UNSAT B RATE .3*A\n");
+    for(bool layered:{false,true}) {
+        CoupledRkRig a,b,bad;
+        for(auto* r:{&a,&b,&bad}) {
+            r->init(.025,.0001,.0002,.1,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);
+            initRkReactions(*r,r==&bad?changed:system,layered,.001);
+        }
+        const auto saved=rk2Output("reaction-quality.chk"),before=rk2Output("reaction-before.chk"),after=rk2Output("reaction-after.chk");
+        for(int step=0;step<20;++step) {
+            ASSERT_NO_THROW(a.solver.advance(step*.025,(step+1)*.025));
+            if(step==7) {
+                ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");ASSERT_EQ(bad.solver.saveCheckpoint(before.string()),"");
+                EXPECT_FALSE(bad.solver.loadCheckpoint(saved.string()).empty());ASSERT_EQ(bad.solver.saveCheckpoint(after.string()),"");
+                EXPECT_EQ(rk2File(before),rk2File(after));ASSERT_EQ(b.solver.loadCheckpoint(saved.string()),"");
+            }else if(step>7)ASSERT_NO_THROW(b.solver.advance(step*.025,(step+1)*.025));
+        }
+        ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(saved),rk2File(after));
+    }
+}
+TEST(CoupledGroundwaterRk2, ReactionsLaterCellFailureRestoresEarlierCellsAndCanRetry) {
+    RkReactionSystem bad("* SAT A RATE -.2*A\n* SAT B RATE .2*A\n* UNSAT A RATE -SQRT(GW_THETA-.2)*A\n* UNSAT B RATE SQRT(GW_THETA-.2)*A\n"),good(kRkConversion);
+    CoupledRkRig r;r.init(.05,0,0,0,"NONE",GwClosure::CLOSED_FORM,SoilChar::GARDNER,4);
+    auto& w=r.gw.state();w.hu[0]=.3*(w.zs[0]-w.hg[0]);w.hu[1]=.1*(w.zs[1]-w.hg[1]);w.led_init_storage=w.storage();
+    initRkReactions(r,bad,false);
+    const auto before=rk2Output("reaction-failed-before.chk"),after=rk2Output("reaction-failed-after.chk");
+    ASSERT_EQ(r.solver.saveCheckpoint(before.string()),"");EXPECT_THROW(r.solver.advance(0,.05),std::runtime_error);
+    ASSERT_EQ(r.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+    ASSERT_EQ(r.gw.initReactions(good.context()),"");ASSERT_NO_THROW(r.solver.advance(0,.05));
+    EXPECT_GT(r.gw.transport().lost_reaction[0],0);EXPECT_LT(r.gw.transport().lost_reaction[1],0);
+}
+TEST(CoupledGroundwaterRk2, ReactionsTotalMassDecayIsAppliedOnceAndDoesNotDecayWaterAge) {
+    for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true}) {
+        if(layered&&closure!=GwClosure::SIGMA)continue;
+        CoupledRkRig r;r.init(.05,0,0,0,"NONE",closure,SoilChar::GARDNER,4);initRkQuality(r,layered,true,true);seedRkQuality(r,2,.001);
+        auto& t=r.gw.transport();for(int i=0;i<t.n_cells;++i)t.decay[t.idx(0,i)]=.3;
+        const auto initial=t.init_mass;const double water=r.gw.state().storage();
+        for(int step=0;step<20;++step)ASSERT_NO_THROW(r.solver.advance(step*.05,(step+1)*.05));
+        EXPECT_NEAR(t.storage(0),initial[0]*std::exp(-.3),1e-12*initial[0]);
+        EXPECT_NEAR(t.lost_reaction[0],initial[0]*(1-std::exp(-.3)),1e-12*initial[0]);
+        EXPECT_NEAR(t.storage(1),initial[1]+water,1e-12*initial[1]);EXPECT_DOUBLE_EQ(t.lost_reaction[1],0);
+    }
+}
+
+TEST(CoupledGroundwaterRk2, ReactionsEulerRetainsItsDeclaredFirstOrderAndOnePhysicalInterval) {
+    RkReactionSystem system(kRkConversion,"EUL");CoupledRkRig r;
+    r.init(.05,0,0,0,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);initRkReactions(r,system,true);
+    const double initial=r.gw.transport().init_mass[0];
+    for(int step=0;step<20;++step)ASSERT_NO_THROW(r.solver.advance(step*.05,(step+1)*.05));
+    const auto& t=r.gw.transport();const double expected=initial*std::pow(1-.2*.025,40);
+    EXPECT_NEAR(t.storage(0),expected,initial*1e-12);EXPECT_NEAR(t.storage(0)+t.storage(1),initial,initial*1e-12);
+}
+TEST(CoupledGroundwaterRk2, ReactionsFormulaAndEquilibriumPreserveTheirOwnProductionLedgers) {
+    for(const std::string form:{"FORMULA 2*A","EQUIL B-2*A"}) {
+        RkReactionSystem system("* SAT B "+form+"\n* UNSAT B "+form+"\n");CoupledRkRig r;
+        r.init(.05,0,0,0,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);initRkReactions(r,system,true,.001);
+        const double initial=r.gw.transport().init_mass[0];
+        for(int step=0;step<20;++step)ASSERT_NO_THROW(r.solver.advance(step*.05,(step+1)*.05));
+        const auto& t=r.gw.transport();EXPECT_NEAR(t.storage(0),initial,initial*1e-10);
+        EXPECT_NEAR(t.storage(1),2*initial,initial*1e-10);EXPECT_NEAR(t.lost_reaction[1],-2*initial,initial*1e-10);
+        EXPECT_NEAR(t.residual(0),0,initial*1e-10);EXPECT_NEAR(t.residual(1),0,initial*1e-10);
+    }
+}
+
+TEST(CoupledGroundwaterRk2, ReactionsStiffRosenbrockConversionRetainsBoundsAndExactRestart) {
+    RkReactionSystem system("* SAT A RATE -1000*A\n* SAT B RATE 1000*A-.2*B\n* UNSAT A RATE -1000*A\n* UNSAT B RATE 1000*A-.2*B\n","ROS2");
+    CoupledRkRig a,b;
+    for(auto* r:{&a,&b}) {r->init(.05,0,0,0,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);initRkReactions(*r,system,true);}
+    const double initial=a.gw.transport().init_mass[0];
+    ASSERT_NO_THROW(a.solver.advance(0,.05));const auto saved=rk2Output("stiff-reactor.chk"),restored=rk2Output("stiff-reactor-restored.chk");
+    ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");ASSERT_EQ(b.solver.loadCheckpoint(saved.string()),"");
+    ASSERT_NO_THROW(a.solver.advance(.05,.1));
+    ASSERT_NO_THROW(b.solver.advance(.05,.1));
+    const auto& t=a.gw.transport();
+    EXPECT_NEAR(t.storage(0),initial*std::exp(-100),initial*1e-8);
+    EXPECT_NEAR(t.storage(1),initial*1000/999.8*(std::exp(-.02)-std::exp(-100)),initial*1e-8);
+    for(const auto* mass:{&t.sat_mass,&t.layer_mass})for(double value:*mass){EXPECT_TRUE(std::isfinite(value));EXPECT_GE(value,0);}
+    for(int species=0;species<2;++species)EXPECT_NEAR(t.residual(species),0,initial*1e-10);
+    ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");ASSERT_EQ(b.solver.saveCheckpoint(restored.string()),"");EXPECT_EQ(rk2File(saved),rk2File(restored));
+}
+
+TEST(CoupledGroundwaterRk2, ReactionsDecayingPrecursorAndAnotherSpeciesLawRemainSymmetric) {
+    RkReactionSystem system("* SAT B RATE A\n* UNSAT B RATE A\n");
+    double previous=0;
+    for(double dt:{.1,.05,.025,.0125}) {
+        CoupledRkRig r;r.init(dt,0,0,0,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);
+        initRkReactions(r,system,true);auto& t=r.gw.transport();
+        for(int cell=0;cell<t.n_cells;++cell)t.decay[t.idx(0,cell)]=.3;
+        const double initial=t.init_mass[0];
+        for(int step=0;step<int(std::round(1/dt));++step)r.solver.advance(step*dt,(step+1)*dt);
+        EXPECT_NEAR(t.storage(0),initial*std::exp(-.3),initial*1e-12);
+        const double error=std::abs(t.storage(1)-initial*(1-std::exp(-.3))/.3);
+        RecordProperty("precursor_"+std::to_string(int(dt*10000)),error);
+        EXPECT_LT(error,initial*1e-5);if(previous>0)EXPECT_GT(previous/error,3.8);previous=error;
+        for(int row=0;row<2;++row)EXPECT_NEAR(t.residual(row),0,initial*1e-10);
+    }
+}
+
+TEST(CoupledGroundwaterRk2, ReactionsExhaustedWorkBudgetPreservesStateAndValidRetry) {
+    RkReactionSystem bad("* SAT A RATE -1e5*A\n* UNSAT A RATE -1e5*A\n","ROS2"),good(kRkConversion);
+    CoupledRkRig r;r.init(.05,0,0,0,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);
+    initRkReactions(r,bad,true);
+    const auto before=rk2Output("reaction-cap-before.chk"),after=rk2Output("reaction-cap-after.chk");
+    ASSERT_EQ(r.solver.saveCheckpoint(before.string()),"");
+    try {r.solver.advance(0,.05);FAIL()<<"Expected the bounded reaction work budget to fail";}
+    catch(const std::runtime_error& error) {EXPECT_NE(std::string(error.what()).find("substep cap"),std::string::npos)<<error.what();}
+    ASSERT_EQ(r.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+    ASSERT_EQ(r.gw.initReactions(good.context()),"");
+    ASSERT_NO_THROW(r.solver.advance(0,.05));
+    const auto& t=r.gw.transport();EXPECT_NEAR(t.storage(0)+t.storage(1),t.init_mass[0],t.init_mass[0]*1e-10);
 }

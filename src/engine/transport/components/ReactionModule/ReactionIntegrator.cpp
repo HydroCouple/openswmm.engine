@@ -192,6 +192,31 @@ void RxWorkspace::init(const ReactionData& rx) {
 // step
 // ===========================================================================
 
+RxStepReport ReactionIntegrator::stepSubcycled(const ReactionData& rx,
+    const std::vector<ReactionExprForm>& forms,const std::vector<RxExprSpan>& spans,
+    double dt,double* species,double* hydvar,RxWorkspace& ws,const double* pollutants,
+    const double* kinetic_scale,const double* coefficients) {
+    const auto integrate=[&](auto&& self,double interval,int remaining)->RxStepReport {
+        const std::vector<double> initial(species,species+rx.n_species());
+        auto report=step(rx,forms,spans,interval,species,hydvar,ws,pollutants,kinetic_scale,coefficients);
+        if(report.ok)return report;
+        std::copy(initial.begin(),initial.end(),species);
+        if(!report.interval_limit||remaining==0)return report;
+        auto first=self(self,.5*interval,remaining-1);
+        RxStepReport result=first;
+        if(first.ok) {
+            result=self(self,.5*interval,remaining-1);
+            result.substeps+=first.substeps;result.newton_iters+=first.newton_iters;
+        }
+        result.substeps+=report.substeps;result.newton_iters+=report.newton_iters;
+        if(!result.ok)std::copy(initial.begin(),initial.end(),species);
+        return result;
+    };
+    auto report=integrate(integrate,dt,8);
+    hydvar[static_cast<int>(RxHydVar::DT)]=dt;
+    return report;
+}
+
 RxStepReport ReactionIntegrator::step(const ReactionData& rx, bool tank,
                                       double dt, double* species,
                                       double* hydvar, RxWorkspace& ws,
@@ -309,6 +334,7 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx,
             while (t < dt && rep.ok) {
                 if (++guard > kMaxSubsteps) {
                     rep.ok = false;
+                    rep.interval_limit = true;
                     // Name the remedy. RK5 is the default and is
                     // stability-limited at roughly lambda_fast*dt/3.3
                     // substeps, so this is the cap an explicit solver hits
@@ -329,6 +355,7 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx,
                 }
                 if (h < h_min) {
                     rep.ok = false;
+                    rep.interval_limit = true;
                     rep.error = "reaction step size collapsed below the "
                                 "floor (stiffness beyond the solver — see "
                                 "D-R7 escape hatch)";

@@ -2682,7 +2682,7 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
             fireGroundHeatSpecies(i,f);
             if(heat_.cells[i].failed)throw std::runtime_error(heat_.cells[i].error);
         }
-        reactCell(i,f.dt,f.hg_final);
+        if(!opts_||opts_->reconstruction_order!=2)reactCell(i,f.dt,f.hg_final);
         if(heat_.active()) {
             if(auto error=refreshSigmaPorewater(i);!error.empty())throw std::runtime_error(error);
             heat_.refreshView(i,tr_);
@@ -2966,7 +2966,7 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
         //     never to age or temperature: `__WATER_AGE__` grows with time
         //     by construction and a temperature does not decay.
         const double kdec = tr_.decay.empty() ? 0.0 : tr_.decay[k];
-        if (kdec > 0.0 && f.dt > 0.0 && s != tr_.age_row && s != tr_.temp_row) {
+        if (!euler && kdec > 0.0 && f.dt > 0.0 && s != tr_.age_row && s != tr_.temp_row) {
             const double keep = std::exp(-kdec * f.dt);
             const double gone = (msat + muns) * (1.0 - keep);
             msat *= keep;
@@ -2974,7 +2974,7 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
             tr_.lost_reaction[us] += gone;
         }
     }
-    reactCell(i,f.dt,f.hg_final);
+    if(!opts_||opts_->reconstruction_order!=2)reactCell(i,f.dt,f.hg_final);
 }
 
 void SubsurfaceSolver::setBoundaries(std::vector<GwResolvedBoundary> rows) {
@@ -3137,11 +3137,11 @@ double SubsurfaceSolver::rawRecharge(int cell,const soil::Params& p,double lengt
 }
 
 std::string SubsurfaceSolver::rk2ProfileError() const {
-    if(!active() || options_.per_subcatch || heat_.active() || !reactors_.empty() || tr_.temp_row>=0 ||
+    if(!active() || options_.per_subcatch || heat_.active() || tr_.temp_row>=0 ||
        !node_beds_.empty() || lid_receipts_enabled_ || runtime_sources_.active() ||
        std::any_of(source_owned_.begin(),source_owned_.end(),[](bool v){return v;}) ||
        std::any_of(state_.closure.begin(),state_.closure.end(),[](int8_t v){return v!=int8_t(GwClosure::CLOSED_FORM)&&v!=int8_t(GwClosure::ENSLAVED)&&v!=int8_t(GwClosure::SIGMA);}))
-        return "Coupled RK2 requires spatial CLOSED_FORM/ENSLAVED/SIGMA passive cells without borrowed source, network, reaction or thermal owners.";
+        return "Coupled RK2 requires spatial CLOSED_FORM/ENSLAVED/SIGMA cells without borrowed source, network or thermal owners.";
     for(int i=0;i<state_.n_cells;++i)if(covers(i)&&state_.closure[i]==int8_t(GwClosure::ENSLAVED)) {
         const double equilibrium=soil::equilibriumStorage(paramsOf(i),state_.zs[i]-state_.hg[i]);
         if(!std::isfinite(state_.hu[i])||!std::isfinite(equilibrium)||
@@ -3166,8 +3166,8 @@ std::string SubsurfaceSolver::rk2ProfileError() const {
             return "Coupled RK2 groundwater transport shape differs.";
         for(const auto* mass:{&tr_.sat_mass,&tr_.unsat_mass,&tr_.layer_mass})for(double v:*mass)
             if(!std::isfinite(v)||v<0)return "Coupled RK2 groundwater transport inventory is inadmissible.";
-        if(std::any_of(tr_.decay.begin(),tr_.decay.end(),[](double v){return v!=0;}))
-            return "Coupled RK2 groundwater decay requires its separately qualified reaction stage.";
+        if(std::any_of(tr_.decay.begin(),tr_.decay.end(),[](double v){return !std::isfinite(v)||v<0;}))
+            return "Coupled RK2 groundwater decay is inadmissible.";
     }
     for(const auto& source:sources_)for(const auto& term:source.terms)
         if(term.row<0||term.row>=tr_.n_species)return "Coupled RK2 well species layout differs.";

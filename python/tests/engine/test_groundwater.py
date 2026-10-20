@@ -517,3 +517,81 @@ PULSE 01/01/2026 00:00:02 {values[2]}
         solver.end()
     finally:
         cleanup(solver)
+
+
+@pytest.mark.parametrize('closure,layered', [('CLOSED_FORM', False), ('ENSLAVED', False), ('SIGMA', False), ('SIGMA', True)])
+@pytest.mark.parametrize('reaction_solver', ['RK5', 'ROS2'])
+def test_groundwater_rk2_symmetric_reaction_split_public_profile(tmp_path, closure, layered, reaction_solver):
+    from openswmm.engine import Solver, GroundwaterSpeciesLedger
+    from tests.engine._groundwater_cases import MODEL
+    path = tmp_path / 'reactive-rk2.inp'
+    text = MODEL.replace('END_TIME 00:10:00', 'END_TIME 00:00:02').replace('ROUTING_STEP 5', 'ROUTING_STEP .1')
+    text += f'''[2D_OPTIONS]
+MOMENTUM_EQUATION FULL_SWE
+RECONSTRUCTION_ORDER 2
+MAX_TIMESTEP .05
+LTS_TIERS 1
+TRANSPORT_POLLUTANTS NO
+TRANSPORT_MSX YES
+TRANSPORT_AGE NO
+TRANSPORT_TEMPERATURE NO
+[2D_INITIAL_QUALITY]
+* A 1
+[2D_AQUIFER_OPTIONS]
+CLOSURE {closure}
+M_LAYERS 4
+NODE_ENROLMENT ROWS
+LINK_SEEPAGE NONE
+GW_ET NONE
+[2D_AQUIFER]
+* 1e-15 2 .45 .1 2 HG0 .6 C_LOSS 0
+[GW_TRANSPORT_OPTIONS]
+UNSAT_TRANSPORT {'LAYERED' if layered else 'BULK'}
+TRANSPORT_POLLUTANTS NO
+TRANSPORT_MSX YES
+TRANSPORT_AGE NO
+TRANSPORT_TEMPERATURE NO
+[GW_INITIAL_QUALITY]
+* SAT A 2
+* UNSAT A 2
+[REACTION_OPTIONS]
+SOLVER {reaction_solver}
+RATE_UNITS SEC
+COUPLING FULL
+ATOL 1e-13
+RTOL 1e-11
+[REACTION_SPECIES]
+BULK A MG
+BULK B MG
+[REACTION_SUBSURFACE]
+* SAT A RATE -.2*A
+* SAT B RATE .2*A
+* UNSAT A RATE -.2*A
+* UNSAT B RATE .2*A
+'''
+    path.write_text(text)
+    solver = Solver(path, path.with_suffix('.rpt'))
+    solver.open()
+    try:
+        solver.initialize()
+        gw = solver.surface2d.groundwater
+        assert gw.species == solver.surface2d.species == ('A', 'B')
+        initial = gw.species_ledger(0, GroundwaterSpeciesLedger.INIT)
+        solver.start(False)
+        while solver.step().total_seconds() > 0:
+            pass
+        assert solver.elapsed.total_seconds() == 2
+        a = gw.species_ledger(0, GroundwaterSpeciesLedger.STORAGE)
+        b = gw.species_ledger(1, GroundwaterSpeciesLedger.STORAGE)
+        # Authored aquifers require positive KS; the public fixture uses a
+        # measured negligible transfer, while native gates use exactly zero.
+        assert gw.ledger(GroundwaterLedger.INFIL_IN) < 1e-8
+        assert a == pytest.approx(initial * np.exp(-.4), rel=1e-8)
+        assert a + b == pytest.approx(initial, rel=1e-10)
+        for species in range(2):
+            assert abs(gw.species_ledger(species, GroundwaterSpeciesLedger.RESIDUAL)) < 1e-8
+        # Surface MSX is passive here; groundwater never borrows pipe kinetics.
+        assert solver.surface2d.concentrations(0) == pytest.approx(np.ones(2), abs=1e-12)
+        solver.end()
+    finally:
+        cleanup(solver)
