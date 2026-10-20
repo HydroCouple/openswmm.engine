@@ -564,7 +564,11 @@ struct XsectEval {
                                   const double* table, int n_items) const {
         double alpha = a / xs.a_full;
         double delta = 1.0 / static_cast<double>(n_items - 1);
-        int i = static_cast<int>(alpha / delta);
+        // alpha outside 0-1, or NaN, cannot be converted to a table index
+        int i;
+        if (!(alpha > 0.0))  i = 0;
+        else if (alpha > 1.0) i = n_items - 2;
+        else                 i = static_cast<int>(alpha / delta);
         if (i >= n_items - 1) i = n_items - 2;
         double dSdA = (table[i + 1] - table[i]) / delta;
         return dSdA * xs.s_full / xs.a_full;
@@ -1426,7 +1430,7 @@ struct XsectEval {
 
                 // Initial estimate from equivalent circular conduit.
                 double y0 = 1.01 * std::pow(q2g / xs.y_full, 0.25);
-                if (y0 >= xs.y_full) y0 = 0.97 * xs.y_full;
+                if (!(y0 < xs.y_full)) y0 = 0.97 * xs.y_full;   // also NaN
 
                 // Ratio of conduit area to equivalent circular area.
                 double r = xs.a_full / (PI / 4.0 * xs.y_full * xs.y_full);
