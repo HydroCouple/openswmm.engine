@@ -190,7 +190,9 @@ int link_readXsectParams(char* tok[], int ntoks)
     if ( k < 0 ) return error_setInpError(ERR_KEYWORD, tok[1]);
 
     // --- assign default number of barrels to conduit
-    if ( Link[j].type == CONDUIT ) Conduit[Link[j].subIndex].barrels = 1;
+    //     (Link[j].ID is set when the link's own data line is read; until
+    //     then its type and sub-index are only the zeroed defaults)
+    if ( Link[j].ID && Link[j].type == CONDUIT ) Conduit[Link[j].subIndex].barrels = 1;
 
     // --- assume link is not a culvert
     Link[j].xsect.culvertCode = 0;
@@ -251,7 +253,7 @@ int link_readXsectParams(char* tok[], int ntoks)
         }
 
         // --- parse number of barrels if present
-        if ( Link[j].type == CONDUIT && ntoks >= 7 )
+        if ( Link[j].ID && Link[j].type == CONDUIT && ntoks >= 7 )
         {
             i = atoi(tok[6]);
             if ( i <= 0 ) return error_setInpError(ERR_NUMBER, tok[6]);
