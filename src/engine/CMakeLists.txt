@@ -242,45 +242,6 @@ else()
     message(STATUS "OpenSWMM Engine: fast kernels OFF — bit-exact vs legacy (shipping default)")
 endif()
 
-# ---- Floating-point reproducibility (ALWAYS ON) ----
-# The legacy bit-parity contract is enforced here, not merely declared.
-#
-# Without -ffp-contract=off the compiler is free to fuse `a*b + c` into a
-# single FMA in one inlining context and not in another, so the SAME source
-# expression yields results 1-2 ulp apart depending on where it was inlined.
-# That is not hypothetical: it was breaking five assertions across
-# test_engine_xsect_parity and test_engine_xsect_kernels_parity, including
-# comparisons of NEW code against NEW code (perlink_tabulated vs
-# perlink_tabulated_pair; XsectEval::getAofY vs xsect::getAofY), and the
-# committed golden hash in XSectBitExact.GoldenHashCircularKernels. All five
-# go green with contraction disabled, and the golden matches its committed
-# value again — i.e. the golden was right and the build had drifted.
-#
-# These flags used to be applied ONLY under OPENSWMM_ENGINE_FORCE_OPTIMIZED
-# (below), which defaults OFF — so a default build had no contraction control
-# at all and the parity the project depends on as its primary verification
-# instrument was not actually being enforced.
-#
-# Verified on Bellinge (1015 conduits, 180 MB output): the pure legacy engine
-# is byte-identical, DYNWAVE differs in 174 float values out of ~45 M (worst
-# relative 4.5e-6, on a quantity of magnitude 1e-10), and XSECT_GEOMETRY EXACT
-# in 3465 (worst 2.0e-5). In both the only report change is the day-of-maximum
-# column on junctions whose maximum depth is 0.00 ft — an arbitrary tie-break
-# on a permanently dry node. FV output shifts materially (~26% of values,
-# continuity -2.989% -> -3.124%), which is FV being a chaotic explicit
-# substepping scheme where ANY bit-level change compounds; FV is deliberately
-# outside the bit-parity contract (see specifications.md).
-#
-# MSVC is deliberately not handled: its contraction control is coarser
-# (/fp:strict would disable far more than FMA fusion) and was not measured.
-# openswmm_engine_internal (the MSVC-only static mirror) is created further
-# down this file and is therefore not reachable from here; it is covered by the
-# MSVC caveat above rather than by a guard that could never fire.
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
-    target_compile_options(openswmm_engine PRIVATE
-        -fno-fast-math -ffp-contract=off -fno-math-errno)
-endif()
-
 # ---- Force-optimized override (for Debug parent builds) ----
 # When the engine is consumed as a subdirectory by a parent project that's
 # in Debug mode (e.g. a GUI under active development), CMAKE_BUILD_TYPE=Debug

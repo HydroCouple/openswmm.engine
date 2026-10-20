@@ -1592,41 +1592,6 @@ retroactive.
 
 ### Fixed
 
-- **The legacy bit-parity contract is now enforced by the build, not merely
-  declared.** `-ffp-contract=off` was applied only under
-  `OPENSWMM_ENGINE_FORCE_OPTIMIZED`, which defaults **OFF**, so a default build
-  had no floating-point contraction control at all — not on the engine, not on
-  the legacy engine, not on the tests. The compiler was free to fuse `a*b + c`
-  into an FMA in one inlining context and not another, making the SAME source
-  expression differ by 1–2 ulp depending on where it was inlined.
-
-  Five assertions were failing on that alone, and had been carried as
-  "pre-existing ulp noise" for months: two in
-  `test_engine_xsect_kernels_parity`, three in `test_engine_xsect_parity` —
-  including comparisons of new code against **new** code
-  (`perlink_tabulated` vs `perlink_tabulated_pair`, `XsectEval::getAofY` vs
-  `xsect::getAofY`) and the committed golden hash. All five now pass, and the
-  golden matches its committed value again, which shows the golden was correct
-  and the build had drifted away from it.
-
-  The flags are now unconditional on the engine, the legacy engine, and all
-  test translation units. The test-side application matters independently: the
-  hot geometry kernels are header-inline, so each test TU compiles its own copy
-  under its own flags.
-
-  Verified on Bellinge (1015 conduits, 180 MB output): the **legacy engine is
-  byte-identical**; DYNWAVE differs in 174 float values out of ~45 M (worst
-  relative 4.5e-6, on a quantity of magnitude 1e-10) and `XSECT_GEOMETRY EXACT`
-  in 3465 (worst 2.0e-5), with the only report change in either being the
-  day-of-maximum column on junctions whose maximum depth is 0.00 ft — an
-  arbitrary tie-break on a permanently dry node.
-
-  **FV results do shift materially** (~26% of stored values; routing continuity
-  −2.989% → −3.124% on a 4 h Bellinge window). That is FV being a chaotic
-  explicit substepping scheme in which any bit-level change compounds, not a
-  defect in the flags; FV is deliberately outside the bit-parity contract.
-  Cost measured at roughly 7% wall time on Bellinge DYNWAVE.
-
 - **`test_engine_2d_surface` no longer fails in every default build.** The
   engine compiles its 2D sources only under `OPENSWMM_BUILD_2D`, but the test
   executable was created unconditionally, so a default build produced a target
