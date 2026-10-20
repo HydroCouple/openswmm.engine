@@ -296,6 +296,9 @@ public:
     const RuntimeSources& runtimeSources() const noexcept { return runtime_sources_; }
     void setBoundaries(std::vector<GwResolvedBoundary>);
     const std::vector<GwResolvedBoundary>& boundaries() const noexcept {return boundaries_;}
+    // One forward-Euler evaluation within the owned shared RK2 transaction.
+    // Prescribed forcing is integrated without additional water substeps.
+    void fireGwRk2Cells(double dt, SurfaceStateData&, double time);
     void setSources(std::vector<GwResolvedSource> sources);
     /// Flush every pending accumulator into its owner. Mandatory before any
     /// re-tier or active-set change (the stranded-flux hazard).

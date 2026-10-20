@@ -2231,8 +2231,8 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     try {
     // A forcing knot or sign reversal splits BOTH owners' stages. Splitting
     // only fireGwCells would compose first-order aquifer substeps inside a
-    // surface Heun stage. On each smooth interval the exact mean prescribed
-    // well/edge flow is used by both Euler evaluations and counted once by blending.
+    // surface Heun stage. Each Euler evaluation integrates prescribed
+    // forcing with its held aquifer state; blending counts the interval once.
     std::vector<double> cuts;
     const auto add_cuts=[&](const GwSourceSignal& signal) {
         const auto& times=signal.timePoints();const auto& values=signal.ordinates();
@@ -2246,7 +2246,13 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     };
     if(gw_) {
         for(const auto& source:gw_->sources_)add_cuts(source.flow);
-        for(const auto& boundary:gw_->boundaries_)add_cuts(boundary.signal);
+        for(const auto& boundary:gw_->boundaries_) {
+            if(!boundary.head)add_cuts(boundary.signal);
+            else if(!boundary.signal.timePoints().empty()) {
+                const int cell=boundary.cell;const auto& water=gw_->state();const double bottom=water.z_bed[cell];
+                appendGwBoundaryCuts(boundary,start,start+interval,bottom+water.hg[cell],bottom,water.zs[cell],cuts);
+            }
+        }
     }
     if(!cuts.empty()) {
         cuts.push_back(start);cuts.push_back(start+interval);
@@ -2274,7 +2280,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
         fireFaces(active_faces_, dt, /*global_step=*/true);
         if(gw_)gw_->fireGwFaces(0,dt);
         fireCells(active_cells_, dt, /*tier0=*/true);
-        if(gw_)gw_->fireGwCells(0,dt,*state_,time);
+        if(gw_)gw_->fireGwRk2Cells(dt,*state_,time);
     }
     // Parallel over every cell. An INACTIVE cell was not fired by either
     // stage, so its average is the identity (volume, q⃗ and the infiltration

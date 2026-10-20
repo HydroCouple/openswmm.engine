@@ -1766,7 +1766,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
            !aquifer_link_shares_.empty()||!subcatch_recharge_.empty()||ctx.n_subcatches()!=0)
             throw std::runtime_error("Coupled groundwater RK2 requires the standalone FULL_SWE water-only profile; network and catchment owners remain unqualified.");
         if(auto error=cpu->rk2CheckpointProfile();!error.empty())throw std::runtime_error(error);
-        ctx.warnings.push_back("Coupled groundwater SSP-RK2: CLOSED_FORM water-only CPU profile with global stepping and knot-aligned water-only wells/FLOW edges. Singular wetting-front startup is bounded without a second-order claim.");
+        ctx.warnings.push_back("Coupled groundwater SSP-RK2: CLOSED_FORM water-only CPU profile with global stepping and knot-aligned water-only wells and aquifer HEAD/FLOW edges. Singular wetting-front startup is bounded without a second-order claim.");
     }
     infil_elapsed_ = 0.0;
     if (infil_.active()) {

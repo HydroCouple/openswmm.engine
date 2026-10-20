@@ -201,7 +201,7 @@ def test_layered_chemistry_with_porous_heat(tmp_path, chemistry_layers, thermal_
         cleanup(solver)
 
 
-@pytest.mark.parametrize('forcing', ['none', 'well', 'edge'])
+@pytest.mark.parametrize('forcing', ['none', 'well', 'edge', 'head'])
 def test_water_only_coupled_rk2_advances_through_python(tmp_path, forcing):
     well = """
 [TIMESERIES]
@@ -213,6 +213,15 @@ PUMP 01/01/2026 00:00:02 -.000001
         well += '[GW_SOURCES]\nW CELL 1 FLOW PUMP\n'
     elif forcing == 'edge':
         well += '[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW SERIES PUMP\n'
+    elif forcing == 'head':
+        well = '''[TIMESERIES]
+PUMP 01/01/2026 00:00:00 -1.4
+PUMP 01/01/2026 00:00:01 -1.2
+PUMP 01/01/2026 00:00:02 -1.5
+[2D_AQUIFER_BOUNDARIES]
+CELL 1 EDGE 0 HEAD SERIES PUMP
+'''
+
     options = """
 [OPTIONS]
 END_DATE 01/01/2026
@@ -259,7 +268,10 @@ TRANSPORT_TEMPERATURE NO
         assert gw.active and gw.species == ()
         assert gw.ledger(GroundwaterLedger.INFIL_IN) > 0
         assert gw.ledger(GroundwaterLedger.DEEP) > 0
-        if forcing != 'none':
+        if forcing == 'head':
+            assert gw.ledger(GroundwaterLedger.BOUNDARY_IN) > 0
+            assert gw.ledger(GroundwaterLedger.BOUNDARY_OUT) > 0
+        elif forcing != 'none':
             inward = GroundwaterLedger.SOURCE_IN if forcing == 'well' else GroundwaterLedger.BOUNDARY_IN
             outward = GroundwaterLedger.SOURCE_OUT if forcing == 'well' else GroundwaterLedger.BOUNDARY_OUT
             # Native dated tables use floating-point days. The volume bound

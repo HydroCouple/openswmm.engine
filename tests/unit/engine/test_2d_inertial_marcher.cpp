@@ -45,6 +45,7 @@
 #include <gtest/gtest.h>
 #include "2d/solver/SurfaceSolverFactory.hpp"
 #include <cmath>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <cstdlib>
@@ -904,7 +905,8 @@ TEST(CoupledGroundwaterRk2, FullStepAndTwoHalfStepsDifferAtThirdLocalOrder) {
 TEST(CoupledGroundwaterRk2, OptionalOpenmpRechargePreservesStagesRestartAndRollback) {
     // This hardware gate is run with OPENSWMM_2D_BACKEND=omp. Ordinary CPU
     // suites do not require a separately installed optional plugin.
-    CoupledRkRig a,b,cpu;a.init(.05,.005,.0005,.2);b.init(.05,.005,.0005,.2);cpu.init(.05,.005,.0005,.2);
+    for(bool head:{false,true}) {
+    SCOPED_TRACE(head);CoupledRkRig a,b,cpu;a.init(.05,.005,.0005,.2);b.init(.05,.005,.0005,.2);cpu.init(.05,.005,.0005,.2);
     auto backend=makeGwRechargeBackend(a.opts,a.mesh.n_cells());
     if(!backend.evaluate){ASSERT_FALSE(std::getenv("OPENSWMM_GW_TEST_REQUIRE_PLUGIN"));GTEST_SKIP()<<backend.diagnostic;}
     a.gw.setRechargeBackend(backend);b.gw.setRechargeBackend(backend);
@@ -912,9 +914,14 @@ TEST(CoupledGroundwaterRk2, OptionalOpenmpRechargePreservesStagesRestartAndRollb
     well.flow.times={0,.17,.43,1};well.flow.values={.002,.006,-.002,.001};
     GwSourceSignal edge;edge.times={0,.13,.67,1};edge.values={.004,-.001,.002,.001};
     for(auto* rig:{&a,&b,&cpu}) {
-        rig->gw.setSources({well});rig->gw.setBoundaries({rk2FlowEdge(*rig,1,edge)});
+        auto boundary=rk2FlowEdge(*rig,1,edge);boundary.head=head;
+        if(head) {
+            const double bottom=rig->gw.state().z_bed[1];boundary.signal.values={bottom+1,bottom+.2,bottom+2.5,bottom+.8};
+        }
+        rig->gw.setSources({well});rig->gw.setBoundaries({boundary});
     }
-    const auto saved=rk2Output("omp-accepted.chk"),restored=rk2Output("omp-restored.chk"),before=rk2Output("omp-before.chk");
+    const std::string prefix=head?"omp-head":"omp-flow";
+    const auto saved=rk2Output(prefix+"-accepted.chk"),restored=rk2Output(prefix+"-restored.chk"),before=rk2Output(prefix+"-before.chk");
     const double initial=a.total();
     for(int k=0;k<20;++k) {
         a.solver.advance(k*.05,(k+1)*.05);cpu.solver.advance(k*.05,(k+1)*.05);
@@ -938,6 +945,7 @@ TEST(CoupledGroundwaterRk2, OptionalOpenmpRechargePreservesStagesRestartAndRollb
     EXPECT_EQ(a.gw.rechargeBatches(),batches);EXPECT_EQ(a.gw.rechargeCells(),cells);
     EXPECT_EQ(a.state.volume,volume);EXPECT_EQ(ExplicitInertialSolverTestAccess::state(a.solver),state);
     a.gw.setSources({});ASSERT_NO_THROW(a.solver.advance(1,1.05));
+}
 }
 
 TEST(CoupledGroundwaterRk2, AffineWellAndDeepDrainageConvergeAtSecondOrder) {
@@ -1088,9 +1096,139 @@ TEST(CoupledGroundwaterRk2, LaterFlowEdgeFailureRollsBackReceiptsAndUnqualifiedO
     ASSERT_TRUE(r.solver.saveCheckpoint(before.string()).empty());
     EXPECT_THROW(ExplicitInertialSolverTestAccess::rk2(r.solver,4.5,0),std::runtime_error);
     ASSERT_TRUE(r.solver.saveCheckpoint(after.string()).empty());EXPECT_EQ(rk2File(after),rk2File(before));
-    auto head=edge;head.head=true;r.gw.setBoundaries({head});EXPECT_FALSE(r.gw.rk2ProfileError().empty());
+    auto head=edge;head.head=true;head.terms.resize(1);r.gw.setBoundaries({head});EXPECT_FALSE(r.gw.rk2ProfileError().empty());
     const auto water=r.gw.state().hg;EXPECT_THROW(r.solver.advance(0,.1),std::runtime_error);EXPECT_EQ(r.gw.state().hg,water);
     head.head=false;head.terms.resize(1);r.gw.setBoundaries({head});EXPECT_FALSE(r.gw.rk2ProfileError().empty());
     r.gw.setBoundaries({});const double initial=r.total();ASSERT_NO_THROW(r.solver.advance(0,.1));
     EXPECT_NEAR(r.total(),initial,1e-10*initial);
+}
+
+
+TEST(CoupledGroundwaterRk2, ConstantHeadEdgesConvergeToTheExactUnconfinedSolution) {
+    for(double head:{.2,1.}) {
+        double previous=0;
+        for(double dt:{.8,.4,.2,.1}) {
+            SCOPED_TRACE(head);
+            SCOPED_TRACE(dt);CoupledRkRig r;r.init(dt,.02,0,0,"NONE");auto& w=r.gw.state();
+            for(int cell=0;cell<w.n_cells;++cell)w.hu[cell]=w.theta_r[cell]*(w.zs[cell]-w.hg[cell]);
+            w.led_init_storage=w.storage();const double initial=r.total();GwSourceSignal signal;signal.constant=w.z_bed[0]+head;
+            auto first=rk2FlowEdge(r,0,signal),second=rk2FlowEdge(r,1,signal);first.head=second.head=true;
+            ASSERT_DOUBLE_EQ(first.length,second.length);ASSERT_DOUBLE_EQ(first.distance,second.distance);
+            r.gw.setBoundaries({first,second});ASSERT_TRUE(r.gw.rk2ProfileError().empty());
+            const double k=.02*.5*first.length/(first.distance*(.45-.1)*w.area[0]);
+            const double ratio=(.6-head)/(.6+head)*std::exp(-2*head*k*8);
+            const double exact=head*(1+ratio)/(1-ratio);
+            for(int tick=0;tick<int(std::round(8/dt));++tick)r.solver.advance(tick*dt,(tick+1)*dt);
+            const double error=std::abs(w.hg[0]-exact);EXPECT_LT(error,1e-4);
+            RecordProperty("head_"+std::to_string(int(head*10))+"_error_"+std::to_string(int(dt*1000)),error);
+            if(previous>0)EXPECT_GT(previous/error,3.7);previous=error;
+            EXPECT_DOUBLE_EQ(w.hg[0],w.hg[1]);
+            EXPECT_NEAR(r.total(),initial+w.led_boundary_in-w.led_boundary_out,1e-10*initial);
+            EXPECT_NEAR(w.continuityResidual(),0,1e-10*initial);
+        }
+    }
+}
+
+namespace {
+GwSourceSignal rk2HeadCycle(double bottom) {
+    GwSourceSignal signal;signal.times={0,.25,.75,1};signal.values={bottom+1,bottom-.25,bottom+2.5,bottom+.4};return signal;
+}
+std::vector<GwResolvedBoundary> rk2HeadEdges(const CoupledRkRig& rig,const GwSourceSignal& signal) {
+    auto a=rk2FlowEdge(rig,0,signal),b=rk2FlowEdge(rig,1,signal);a.head=b.head=true;return {a,b};
+}
+std::array<long double,3> headCycleReference(double length,double distance,double area,int steps=800000) {
+    // Independent normalized-height ODE: pressure head is clipped at the
+    // bottom, wetted thickness at [0,2]. No production forcing/integrator calls.
+    const long double scale=.02L*.5L*length/distance,storage=.35L*area;
+    const auto rhs=[&](long double t,long double h) {
+        const long double prescribed=t<=.25L?1-5*t:t<=.75L?-.25L+5.5L*(t-.25L):2.5L-8.4L*(t-.75L);
+        const long double outside=std::max(0.L,prescribed),wet=std::min(2.L,outside);
+        const long double q=scale*(h+wet)*(outside-h);
+        return std::array<long double,3>{q/storage,std::max(0.L,q),std::max(0.L,-q)};
+    };
+    std::array<long double,3> result{.6L,0,0};const long double dt=1.L/steps;
+    for(int n=0;n<steps;++n) {
+        const long double t=n*dt;const auto a=rhs(t,result[0]),b=rhs(t+dt/2,result[0]+dt*a[0]/2),
+            c=rhs(t+dt/2,result[0]+dt*b[0]/2),d=rhs(t+dt,result[0]+dt*c[0]);
+        for(int row=0;row<3;++row)result[row]+=dt*(a[row]+2*b[row]+2*c[row]+d[row])/6;
+    }
+    return result;
+}
+void residualGround(CoupledRkRig& rig) {
+    auto& w=rig.gw.state();for(int cell=0;cell<w.n_cells;++cell)w.hu[cell]=w.theta_r[cell]*(w.zs[cell]-w.hg[cell]);
+    w.led_init_storage=w.storage();
+}
+}
+
+TEST(CoupledGroundwaterRk2, TimedClippedHeadEdgesMatchAnIndependentScalarReference) {
+    double previous=0;
+    for(double dt:{.05,.025,.0125,.00625,.003125,.0015625}) {
+        SCOPED_TRACE(dt);CoupledRkRig r;r.init(dt,.02,0,0,"NONE");residualGround(r);auto& w=r.gw.state();
+        const auto edges=rk2HeadEdges(r,rk2HeadCycle(w.z_bed[0]));r.gw.setBoundaries(edges);
+        const double initial=r.total();const auto reference=headCycleReference(edges[0].length,edges[0].distance,w.area[0]);
+        if(dt==.05) {
+            const auto refined=headCycleReference(edges[0].length,edges[0].distance,w.area[0],1600000);
+            for(int row=0;row<3;++row)EXPECT_NEAR(double(reference[row]),double(refined[row]),1e-13);
+        }
+        for(int tick=0;tick<int(std::round(1/dt));++tick)r.solver.advance(tick*dt,(tick+1)*dt);
+        const auto& receipt=r.gw.boundaries()[0];const double storage=.35*w.area[0];
+        const double error=std::max({std::abs(w.hg[0]-double(reference[0])),
+            std::abs(receipt.applied_in-double(reference[1]))/storage,std::abs(receipt.applied_out-double(reference[2]))/storage});
+        RecordProperty("head_cycle_error_"+std::to_string(int(dt*1e6)),error);EXPECT_LT(error,1e-4);
+        // Keep coarse event/cancellation errors as evidence. The four
+        // finest steps qualify the asymptotic rate; monotone coarse error
+        // reduction across head reversals/clipping is not asserted.
+        if(dt<=.00625)EXPECT_GT(previous/error,3.5);previous=error;
+        EXPECT_GT(receipt.applied_in,0);EXPECT_GT(receipt.applied_out,0);
+        EXPECT_NEAR(r.total(),initial+w.led_boundary_in-w.led_boundary_out,1e-10*initial);
+        EXPECT_NEAR(w.continuityResidual(),0,1e-10*initial);
+    }
+}
+
+TEST(CoupledGroundwaterRk2, TimedHeadCheckpointRefusalIsAtomicAndContinuationIsExact) {
+    CoupledRkRig a,b;a.init(.05,.02,0,0,"NONE");b.init(.05,.02,0,0,"NONE");residualGround(a);residualGround(b);
+    const auto edges=rk2HeadEdges(a,rk2HeadCycle(a.gw.state().z_bed[0]));a.gw.setBoundaries(edges);b.gw.setBoundaries(edges);
+    ASSERT_DOUBLE_EQ(a.solver.advance(0,.37),.37);
+    const auto saved=rk2Output("head-cycle.chk"),restored=rk2Output("head-cycle-restored.chk");
+    ASSERT_TRUE(a.solver.saveCheckpoint(saved.string()).empty());auto changed=edges;changed[0].signal.values[1]+=.001;b.gw.setBoundaries(changed);
+    ASSERT_TRUE(b.solver.saveCheckpoint(restored.string()).empty());const auto before=rk2File(restored);
+    EXPECT_FALSE(b.solver.loadCheckpoint(saved.string()).empty());
+    ASSERT_TRUE(b.solver.saveCheckpoint(restored.string()).empty());EXPECT_EQ(rk2File(restored),before);
+    b.gw.setBoundaries(edges);ASSERT_TRUE(b.solver.loadCheckpoint(saved.string()).empty());
+    for(double end:{.71,1.}) {
+        ASSERT_DOUBLE_EQ(a.solver.advance(a.gw.cellCompletedTime(0),end),end);
+        ASSERT_DOUBLE_EQ(b.solver.advance(b.gw.cellCompletedTime(0),end),end);
+        ASSERT_TRUE(a.solver.saveCheckpoint(saved.string()).empty());
+        ASSERT_TRUE(b.solver.saveCheckpoint(restored.string()).empty());EXPECT_EQ(rk2File(saved),rk2File(restored));
+    }
+}
+
+TEST(CoupledGroundwaterRk2, HeadDrivenSaturationAndDrainageConserveAcrossBoundedEvents) {
+    for(double height:{-5.,10.}) {
+        SCOPED_TRACE(height);CoupledRkRig r;r.init(.05,.1,0,0,"NONE");residualGround(r);auto& w=r.gw.state();
+        GwSourceSignal signal;signal.constant=w.z_bed[0]+height;r.gw.setBoundaries(rk2HeadEdges(r,signal));const double initial=r.total();
+        ASSERT_NO_THROW(r.solver.advance(0,2));
+        if(height>0)EXPECT_GT(w.led_dunne,0);else EXPECT_GT(w.led_boundary_out,0);
+        for(int cell=0;cell<w.n_cells;++cell) {
+            EXPECT_TRUE(std::isfinite(w.hg[cell]));EXPECT_GE(w.hg[cell],0);EXPECT_LE(w.hg[cell],w.zs[cell]);
+            EXPECT_GE(w.hu[cell],0);EXPECT_LE(w.hu[cell],w.theta_s[cell]*(w.zs[cell]-w.hg[cell])+1e-12);
+        }
+        EXPECT_NEAR(r.total(),initial+w.led_boundary_in-w.led_boundary_out,1e-10*initial);
+        EXPECT_NEAR(w.continuityResidual(),0,1e-10*initial);
+    }
+}
+
+TEST(CoupledGroundwaterRk2, LaterHeadFailureRestoresEveryPriorStageAndReceipt) {
+    CoupledRkRig r,control;r.init(.1,1,0,0,"NONE");control.init(.1,1,0,0,"NONE");residualGround(r);residualGround(control);
+    GwSourceSignal signal;const double base=r.gw.state().z_bed[0];signal.times={0,.5,4.5};signal.values={base+.6,base+.6,1e308};
+    GwResolvedSource well;well.name="head-failure-control";well.cells={{0,1}};well.flow.constant=.001;
+    for(auto* rig:{&r,&control}) {
+        rig->gw.setBoundaries(rk2HeadEdges(*rig,signal));rig->gw.setSources({well});rig->gw.publishInfiltration(rig->state,.1,0);rig->gw.assignTiers(.1,1);
+    }
+    ASSERT_NO_THROW(ExplicitInertialSolverTestAccess::rk2(control.solver,.5,0));EXPECT_NEAR(control.gw.state().led_source_in,.0005,1e-14);
+    const auto before=rk2Output("head-overflow-before.chk"),after=rk2Output("head-overflow-after.chk");
+    ASSERT_TRUE(r.solver.saveCheckpoint(before.string()).empty());EXPECT_THROW(ExplicitInertialSolverTestAccess::rk2(r.solver,4.5,0),std::runtime_error);
+    ASSERT_TRUE(r.solver.saveCheckpoint(after.string()).empty());EXPECT_EQ(rk2File(before),rk2File(after));
+    signal.constant=base+.6;signal.times.clear();signal.values.clear();r.gw.setBoundaries(rk2HeadEdges(r,signal));
+    ASSERT_NO_THROW(r.solver.advance(0,.1));EXPECT_NEAR(r.gw.state().continuityResidual(),0,1e-9);
 }

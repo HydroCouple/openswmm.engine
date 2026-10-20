@@ -2937,6 +2937,13 @@ void SubsurfaceSolver::setSources(std::vector<GwResolvedSource> sources) {
             if (cell.first>=0 && cell.first<state_.n_cells)
                 cell_sources_[static_cast<std::size_t>(cell.first)].push_back({row,cell.second});
 }
+void SubsurfaceSolver::fireGwRk2Cells(double dt,SurfaceStateData& surface,double time) {
+    source_firing_end_=time+dt;
+    if(!active()||!tierHasCells(0))return;
+    const auto& cells=cells_by_tier_[0];prepareRechargeBatch(cells);
+    for(int cell:cells)fireCell(cell,dt,surface,time);
+    if(!tier_firings_.empty())++tier_firings_[0];
+}
 void SubsurfaceSolver::fireGwCells(int tier, double dt, SurfaceStateData& surf, double time,
                                    double accepted_end) {
     if (state_.active && tierHasCells(tier))
@@ -3079,8 +3086,8 @@ std::string SubsurfaceSolver::rk2ProfileError() const {
        std::any_of(source_owned_.begin(),source_owned_.end(),[](bool v){return v;}) ||
        std::any_of(state_.closure.begin(),state_.closure.end(),[](int8_t v){return v!=int8_t(GwClosure::CLOSED_FORM);}))
         return "Coupled RK2 requires spatial CLOSED_FORM water-only cells without borrowed source, network or thermal owners.";
-    for(const auto& boundary:boundaries_)if(boundary.head||!boundary.terms.empty())
-        return "Coupled RK2 groundwater boundaries require water-only FLOW forcing; HEAD and quality remain guarded.";
+    for(const auto& boundary:boundaries_)if(!boundary.terms.empty())
+        return "Coupled RK2 groundwater boundaries require water-only forcing; quality remains guarded.";
     for(const auto& source:sources_)if(!source.terms.empty())
         return "Coupled RK2 groundwater wells require water-only forcing.";
     for(const auto* values:{&state_.nacc,&state_.lacc})for(double v:*values)if(v!=0)
