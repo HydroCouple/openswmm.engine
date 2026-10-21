@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Managed, water-only checkpoint sessions and immutable inspection metadata."""
+"""Managed checkpoint sessions and immutable inspection metadata."""
 import os
 import json
 from libc.stdlib cimport malloc, free
@@ -47,8 +47,10 @@ class Checkpoints(EngineView):
     Calls require the engine's owning thread. Inspection returns schema-1 JSON
     metadata with raw OLE dates and decimal-string uint64 values. Restore checks
     compatibility again. Save/export require fresh destinations and preserve
-    older files. Supported sessions are water-only; external drivers, live
-    forcing, heat/quality and plugin recovery are unsupported.
+    older files. Supported profiles include native water-only/1D reactions and
+    mesh-only matched transport with optional BULK quality/age and either
+    WATER_ONLY or paired porous-ground heat, including age-only/heat-only layouts.
+    External drivers and broader coupled owners retain native profile guards.
     """
     @property
     def capabilities(self):

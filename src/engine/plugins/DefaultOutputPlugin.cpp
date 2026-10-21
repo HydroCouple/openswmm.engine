@@ -83,7 +83,8 @@ int msxUnitCode(const openswmm::SimulationContext& ctx, int p) {
     const auto& rx = ctx.reactions;
     int m = p - ctx.n_pollutants() - (ctx.options.water_age ? 1 : 0)
             - (ctx.options.heat_transport ? 1 : 0);
-    if (m < 0 || m >= rx.n_species()) return 0;
+    if (m < 0 || static_cast<std::size_t>(m) >= rx.reported_species.size()) return 0;
+    m = rx.reported_species[static_cast<std::size_t>(m)];
     std::string u = rx.species_units[static_cast<std::size_t>(m)];
     for (auto& c : u) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
     if (u.size() > 2 && u.compare(u.size() - 2, 2, "/L") == 0) u.erase(u.size() - 2);

@@ -273,3 +273,10 @@ cdef extern from "openswmm_surface_ownership.h":
         SWMM_SurfaceOwnerProgress progress, void* user) nogil
     int swmm_surface_owner_replace(void* engine, const int* rows, int count,
         const char* token, char* diagnostics, int diagnostic_capacity) nogil
+
+cdef extern from "openswmm_2d.h":
+    int swmm_2d_initial_bed_quality_count(void* engine, int* count)
+    int swmm_2d_get_initial_bed_quality(void* engine, int index, int* scope, char* tag, int tag_len, int* cell, char* species, int species_len, double* conc)
+    int swmm_2d_set_initial_bed_quality(void* engine, int scope, const char* tag, int cell, const char* species, double conc)
+    int swmm_2d_remove_initial_bed_quality(void* engine, int index)
+    int swmm_2d_set_auto_backend_cpu(void* engine, int enabled)

@@ -8,6 +8,7 @@
 #include <array>
 #include <cmath>
 #include <numeric>
+#include <limits>
 using namespace openswmm::twoD;
 namespace {
 constexpr double pi=3.14159265358979323846;
@@ -62,6 +63,161 @@ TEST(PorousHeat, UniformDryInsulatedColumnAndArbitraryContactGraphDoNotDrift) {
         c.energy=r.energy;
     }
     EXPECT_NEAR(sum(c.energy),sum(original),1e-6);
+}
+TEST(PorousHeat, MidpointFinitePairHasSecondOrderDecayAndReciprocalReceipts) {
+    double previous=1;
+    for(int steps:{8,16,32,64}) {
+        std::vector<ThermalStore> stores={{2000,-2000},{3000,60000}};
+        for(int k=0;k<steps;++k) {
+            const auto out=solveThermalContactsRk2(stores,{{0,1,1}},{},600./steps);
+            ASSERT_TRUE(out.error.empty())<<out.error;
+            EXPECT_NEAR(sum(out.energy),58000,1e-7);
+            EXPECT_NEAR(out.energy[0]-stores[0].energy,-out.contact_j[0],1e-7);
+            EXPECT_NEAR(out.energy[1]-stores[1].energy,out.contact_j[0],1e-7);
+            for(int i=0;i<2;++i)stores[i].energy=out.energy[i];
+        }
+        const double exact=11.6-.6*21*std::exp(-.5);
+        const double error=std::abs(stores[0].energy/stores[0].capacity-exact)/21;
+        EXPECT_LT(error,1e-4);
+        if(steps>8)EXPECT_GT(previous/error,3.5);
+        RecordProperty("pair_error_"+std::to_string(steps),error);previous=error;
+    }
+}
+TEST(PorousHeat, MidpointRobinAndPowerBoundaryHaveIndependentSecondOrderSolution) {
+    double previous=1;
+    for(int steps:{8,16,32,64}) {
+        std::vector<ThermalStore> stores={{2000,20000}};double receipt=0;
+        for(int k=0;k<steps;++k) {
+            // T' = (-7-T+3)/2000; T(0)=10, T(infinity)=-4.
+            const auto out=solveThermalContactsRk2(stores,{},{{0,1,-7,3}},600./steps);
+            ASSERT_TRUE(out.error.empty())<<out.error;
+            receipt+=out.boundary_j[0];stores[0].energy=out.energy[0];
+        }
+        EXPECT_NEAR(stores[0].energy-20000,receipt,1e-7);
+        const double error=std::abs(stores[0].energy/2000-(-4+14*std::exp(-.3)))/14;
+        EXPECT_LT(error,1e-4);
+        if(steps>8)EXPECT_GT(previous/error,3.5);
+        RecordProperty("robin_error_"+std::to_string(steps),error);previous=error;
+    }
+}
+TEST(PorousHeat, MidpointStiffContactsSubdivideWithoutOvershootOrEnergyCreation) {
+    const std::vector<ThermalStore> stores={{2,-8},{3,18}};
+    const auto out=solveThermalContactsRk2(stores,{{0,1,100}},{},20);
+    ASSERT_TRUE(out.error.empty())<<out.error;
+    for(double t:out.temperature){EXPECT_GE(t,-4);EXPECT_LE(t,6);EXPECT_NEAR(t,2,1e-11);}
+    EXPECT_NEAR(sum(out.energy),10,1e-7);
+    EXPECT_NEAR(out.energy[0]+8,-out.contact_j[0],1e-7);
+    EXPECT_NEAR(out.energy[1]-18,out.contact_j[0],1e-7);
+    EXPECT_GT(out.iterations,1);
+}
+TEST(PorousHeat, MidpointArbitraryColdGraphRetainsUniformFieldAndPhysicalBoundaryBudget) {
+    const std::vector<ThermalStore> stores={{1000,-7000},{2000,-14000},{4000,-28000},{3000,-21000}};
+    const std::vector<ThermalContact> contacts={{0,1,20},{0,3,5},{1,2,17},{2,3,30},{1,3,2}};
+    const auto uniform=solveThermalContactsRk2(stores,contacts,{},2000);
+    ASSERT_TRUE(uniform.error.empty())<<uniform.error;
+    for(double t:uniform.temperature)EXPECT_NEAR(t,-7,1e-11);
+    EXPECT_NEAR(sum(uniform.energy),-70000,1e-7);
+    const auto forced=solveThermalContactsRk2(stores,contacts,{{0,3,12,0},{3,0,0,-4}},500);
+    ASSERT_TRUE(forced.error.empty())<<forced.error;
+    EXPECT_NEAR(sum(forced.energy)+70000,sum(forced.boundary_j),1e-7);
+    EXPECT_NEAR(forced.boundary_j[1],-2000,1e-7);
+    auto energy=std::vector<double>{-7000,-14000,-28000,-21000};
+    for(std::size_t k=0;k<contacts.size();++k){energy[contacts[k].a]-=forced.contact_j[k];energy[contacts[k].b]+=forced.contact_j[k];}
+    energy[0]+=forced.boundary_j[0];energy[3]+=forced.boundary_j[1];
+    for(int i=0;i<4;++i)EXPECT_NEAR(energy[i],forced.energy[i],1e-7);
+}
+TEST(PorousHeat, MidpointRefusesInvalidOrExcessiveWorkWithoutPartialPublication) {
+    const double nan=std::numeric_limits<double>::quiet_NaN(),inf=std::numeric_limits<double>::infinity();
+    const auto refused=[](const ThermalSolution& out){EXPECT_FALSE(out.error.empty());EXPECT_TRUE(out.energy.empty());EXPECT_TRUE(out.temperature.empty());EXPECT_TRUE(out.contact_j.empty());EXPECT_TRUE(out.boundary_j.empty());};
+    for(double dt:{0.,-1.,nan,inf})refused(solveThermalContactsRk2({{1,1}},{},{},dt));
+    for(double cap:{0.,-1.,nan,inf})refused(solveThermalContactsRk2({{cap,1}},{},{},1));
+    for(double energy:{nan,inf})refused(solveThermalContactsRk2({{1,energy}},{},{},1));
+    for(const auto& c:std::vector<ThermalContact>{{0,2,1},{-1,1,1},{0,0,1},{0,1,-1},{0,1,nan},{0,1,inf}})
+        refused(solveThermalContactsRk2({{1,1},{1,2}},{c},{},1));
+    for(const auto& b:std::vector<ThermalBoundary>{{-1,1,0,0},{1,1,0,0},{0,-1,0,0},{0,nan,0,0},{0,1,nan,0},{0,1,0,inf}})
+        refused(solveThermalContactsRk2({{1,1}},{},{b},1));
+    const std::vector<ThermalStore> stores={{1,1},{2,4}};
+    refused(solveThermalContactsRk2(stores,{{0,1,1e9}},{},1));
+    refused(solveThermalContactsRk2(stores,{},{{0,0,0,1e308}},100));
+    EXPECT_DOUBLE_EQ(stores[0].energy,1);EXPECT_DOUBLE_EQ(stores[1].energy,4);
+    const auto empty=solveThermalContactsRk2({}, {}, {},1);EXPECT_TRUE(empty.error.empty());EXPECT_TRUE(empty.energy.empty());
+}
+TEST(PorousHeat, MovingWaterTangentMatchesIndependentSigmaAndAlignedBulkIntegrals) {
+    PorousHeatColumn column;ThermalMaterial material;
+    ASSERT_TRUE(column.initialize(2,{0,.5,1,1.5,2},material,{.2,.28,.36,.4},{1,2,3,4}).empty());
+    std::vector<double> actual;
+    ASSERT_EQ(projectGroundWaterIncrement(column,1.2,.03,{.12,.18},{.004,-.001},actual),"");
+    const std::vector<double> expected={1./600,-.010,-.009666666666666667,0};
+    for(int j=0;j<4;++j)EXPECT_NEAR(actual[j],expected[j],1e-12);
+    EXPECT_NEAR(sum(actual),2*(.004-.001-.4*.03),1e-12);
+    ASSERT_TRUE(column.initialize(2,{0,.6,1.2,2},material,{.25,.25,.4},{-3,-3,-3}).empty());
+    for(double sign:{-1.,1.}) {
+        ASSERT_EQ(projectGroundWaterIncrement(column,1.2,sign*.02,{.3},{sign*.006},actual),"");
+        EXPECT_NEAR(actual[0],sign*.001,1e-12);
+        EXPECT_NEAR(actual[1],sign*.001+(sign<0?.006:0),1e-12);
+        EXPECT_NEAR(actual[2],sign>0?-.006:0,1e-12);
+        EXPECT_NEAR(sum(actual),-sign*.004,1e-12);
+    }
+}
+TEST(PorousHeat, EulerThroughflowUsesBeginningDonorsAndPairedPhysicalJoules) {
+    PorousHeatColumn column;ThermalMaterial material;
+    ASSERT_TRUE(column.initialize(1,{0,.5,1},material,{.2,.4},{-2,4}).empty());
+    const auto before=column.energy;const double cp=material.water_heat_capacity,q=.01;
+    const auto out=advectPorousColumnEuler(column,{.2,.4},{0,0},{q,-q},{cp*q*3,0},{0,q},{-2,4});
+    ASSERT_TRUE(out.error.empty())<<out.error;
+    EXPECT_NEAR(column.energy[0]-before[0],cp*q*(3-(-2)),1e-7);
+    EXPECT_NEAR(column.energy[1]-before[1],cp*q*(-2-4),1e-7);
+    EXPECT_NEAR(out.vertical_j[0],cp*q*(-2),1e-7);
+    EXPECT_NEAR(out.withdrawn_j[1],cp*q*4,1e-7);
+    EXPECT_EQ(out.temperature,(std::vector<double>{-2,4}));
+    EXPECT_NEAR(sum(column.energy)-sum(before),out.external_j,1e-7);
+}
+TEST(PorousHeat, EulerThermalCascadeUnderHeunHasIndependentSecondOrderSolution) {
+    double previous=1;
+    for(double dt:{125.,62.5,31.25,15.625,7.8125}) {
+        PorousHeatColumn column;ThermalMaterial material;
+        ASSERT_TRUE(column.initialize(1,{0,.5,1},material,{.2,.4},{-2,-2}).empty());
+        const double cp=material.water_heat_capacity,q=.0001;
+        const double a=cp*q/column.capacity[0],b=cp*q/column.capacity[1];
+        double external=0;
+        for(int step=0;step<int(1000/dt);++step) {
+            const auto before=column.energy;double stage_receipt=0;
+            for(int stage=0;stage<2;++stage) {
+                const std::vector<double> temp={column.energy[0]/column.capacity[0],column.energy[1]/column.capacity[1]};
+                const auto out=advectPorousColumnEuler(column,{.2,.4},{0,0},{q*dt,-q*dt},{cp*q*dt*7,0},{0,q*dt},temp);
+                ASSERT_TRUE(out.error.empty())<<out.error;stage_receipt+=out.external_j;
+            }
+            for(int j=0;j<2;++j)column.energy[j]=.5*(before[j]+column.energy[j]);
+            external+=.5*stage_receipt;
+        }
+        const std::vector<double> exact={7-9*std::exp(-a*1000),7-9*(b*std::exp(-a*1000)-a*std::exp(-b*1000))/(b-a)};
+        double error=0;
+        for(int j=0;j<2;++j)error=std::max(error,std::abs(column.energy[j]/column.capacity[j]-exact[j])/9);
+        // Retain the coarse observation; the four fine steps qualify the
+        // frozen accuracy bound without relaxing its tolerance.
+        if(dt<=62.5)EXPECT_LT(error,1e-4);
+        if(dt<125)EXPECT_GT(previous/error,3.5);previous=error;
+        RecordProperty("cascade_error_"+std::to_string(int(dt*1000)),error);
+        EXPECT_NEAR(sum(column.energy)+2*sum(column.capacity),external,1e-7);
+    }
+}
+TEST(PorousHeat, EulerAndWaterTangentRefusalLeaveColumnAndOutputsUnchanged) {
+    PorousHeatColumn column;ThermalMaterial material;
+    ASSERT_TRUE(column.initialize(1,{0,.5,1},material,{.2,.4},{-2,4}).empty());
+    const auto energy=column.energy,theta=column.theta,capacity=column.capacity;
+    const double nan=std::numeric_limits<double>::quiet_NaN();
+    auto refuse=[&](const ThermalAdvection& out){EXPECT_FALSE(out.error.empty());EXPECT_TRUE(out.temperature.empty());EXPECT_TRUE(out.vertical_j.empty());EXPECT_EQ(column.energy,energy);EXPECT_EQ(column.theta,theta);EXPECT_EQ(column.capacity,capacity);};
+    refuse(advectPorousColumnEuler(column,{.2,.4},{0,0},{.1,0},{0,0},{0,0},{-2,4}));
+    refuse(advectPorousColumnEuler(column,{.2,.4},{0,0},{0,0},{0,0},{0,-1},{-2,4}));
+    refuse(advectPorousColumnEuler(column,{.2,.4},{0,0},{0,0},{0,nan},{0,0},{-2,4}));
+    refuse(advectPorousColumnEuler(column,{.2,.4},{0,0},{0,0},{0,0},{0,0},{nan,4}));
+    refuse(advectPorousColumnEuler(column,{.2,.5},{0,0},{0,0},{0,0},{0,0},{-2,4}));
+    refuse(advectPorousColumnEuler(column,{.2,.4},{0},{0,0},{0,0},{0,0},{-2,4}));
+    std::vector<double> output={17,18};
+    for(double length:{0.,-1.,2.,nan}){EXPECT_FALSE(projectGroundWaterIncrement(column,length,.01,{.1},{.001},output).empty());EXPECT_EQ(output,(std::vector<double>{17,18}));}
+    EXPECT_FALSE(projectGroundWaterIncrement(column,.5,.01,{.3},{.001},output).empty());
+    EXPECT_FALSE(projectGroundWaterIncrement(column,.5,.01,{.1},{nan},output).empty());
+    EXPECT_EQ(output,(std::vector<double>{17,18}));
 }
 TEST(PorousHeat, SlabSineModeRefinesAgainstAnalyticalDiffusion) {
     double previous=1;
@@ -242,6 +398,58 @@ TEST(PorousHeat, LargeBoundaryWithdrawalsAndInternalRedistributionKeepSignedDono
     }
     EXPECT_NEAR(sum(c.energy)-initial,-sum(solved.withdrawn_j),1e-7);
     EXPECT_GT(solved.temperature.front(),-10);EXPECT_NEAR(solved.temperature.back(),40,1e-12);
+}
+TEST(PorewaterTransport, EulerRetardedFlushUnderHeunMatchesIndependentResidenceDecay) {
+    double previous=0;
+    for(double dt:{.4,.2,.1,.05}) {
+        double mass=6,external=0;
+        for(int step=0;step<int(std::round(2/dt));++step) {
+            const double before=mass;double receipt=0;
+            for(int stage=0;stage<2;++stage) {
+                const auto out=advectPorewaterEuler({1},{2},{mass},{0},{0},{.1*7*dt},{.1*dt});
+                ASSERT_TRUE(out.error.empty())<<out.error;mass=out.mass[0];receipt+=out.external_mass;
+            }
+            mass=.5*(before+mass);external+=.5*receipt;
+        }
+        const double exact=21-15*std::exp(-.1*2/3),error=std::abs(mass-exact)/21;
+        EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;
+        RecordProperty("pore_flush_"+std::to_string(int(dt*1000)),error);
+        EXPECT_NEAR(mass-6,external,1e-10);
+    }
+}
+TEST(PorewaterTransport, EulerThroughflowKeepsOldAqueousDonorsAndSorptionMass) {
+    const auto out=advectPorewaterEuler({.2,.4},{1,0},{2.4,1.6},{0,0},{.1,-.1},{0,0},{0,.1});
+    ASSERT_TRUE(out.error.empty())<<out.error;
+    EXPECT_NEAR(out.mass[0],2.2,1e-12);EXPECT_NEAR(out.mass[1],1.4,1e-12);
+    EXPECT_NEAR(out.vertical_mass[0],.2,1e-12);EXPECT_NEAR(out.withdrawn_mass[1],.4,1e-12);
+    EXPECT_NEAR(sum(out.mass)-4,out.external_mass,1e-12);
+    EXPECT_NEAR(out.concentration[0],2,1e-12);EXPECT_NEAR(out.concentration[1],4,1e-12);
+}
+TEST(PorewaterTransport, EulerFiniteDonorDoesNotSpendNewInputsOrInventDryVolume) {
+    const auto out=advectPorewaterEuler({.1},{0},{1},{0},{0},{2},{1});
+    ASSERT_TRUE(out.error.empty())<<out.error;
+    EXPECT_NEAR(out.withdrawn_mass[0],1,1e-12);EXPECT_NEAR(out.mass[0],2,1e-12);
+    EXPECT_NEAR(out.concentration[0],1,1e-12);EXPECT_NEAR(out.external_mass,1,1e-12);
+    const auto dry=advectPorewaterEuler({0},{0},{3},{0},{0},{2},{0});
+    ASSERT_TRUE(dry.error.empty())<<dry.error;EXPECT_DOUBLE_EQ(dry.mass[0],5);EXPECT_DOUBLE_EQ(dry.concentration[0],0);
+}
+TEST(PorewaterTransport, EulerSettlesReservedPacketOnceAndPreservesItsDonorConcentration) {
+    const auto out=advectPorewaterEuler({1},{1},{4},{-.5},{-.5},{-.5},{.25},{.25},{.5});
+    ASSERT_TRUE(out.error.empty())<<out.error;
+    EXPECT_NEAR(out.mass[0],3,1e-12);EXPECT_NEAR(out.concentration[0],2,1e-12);
+    EXPECT_NEAR(out.withdrawn_mass[0],.5,1e-12);EXPECT_NEAR(out.external_mass,-1,1e-12);
+}
+TEST(PorewaterTransport, EulerMalformedWaterOrReservationPublishesNoPartialMass) {
+    const double nan=std::numeric_limits<double>::quiet_NaN();
+    const auto refused=[](const PorewaterAdvection& out){EXPECT_FALSE(out.error.empty());EXPECT_TRUE(out.mass.empty());EXPECT_TRUE(out.concentration.empty());EXPECT_TRUE(out.withdrawn_mass.empty());EXPECT_TRUE(out.vertical_mass.empty());};
+    refused(advectPorewaterEuler({1},{0},{2},{0},{1},{0},{0}));
+    refused(advectPorewaterEuler({1},{0},{2},{0},{0},{0},{0},{2},{0}));
+    refused(advectPorewaterEuler({1},{0},{2},{0},{0},{0},{0},{0},{3}));
+    refused(advectPorewaterEuler({1},{-1},{2},{0},{0},{0},{0}));
+    refused(advectPorewaterEuler({1},{0},{2},{nan},{0},{0},{0}));
+    refused(advectPorewaterEuler({1},{0},{2},{0},{0},{-3},{0}));
+    refused(advectPorewaterEuler({1},{0},{2},{0},{0},{0},{-1}));
+    refused(advectPorewaterEuler({1},{0},{2},{0},{0},{0},{0},{0,0}));
 }
 TEST(PorewaterTransport, WithdrawingWaterAtLocalConcentrationRetainsTheSorptionStore) {
     const auto out=advectPorewater({.2,.3},{.1,.2},{.4,.5},{1.2,8},{-.1,-.1},{0,0},{.1,.1});

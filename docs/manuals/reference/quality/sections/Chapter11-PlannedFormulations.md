@@ -60,13 +60,14 @@ native units per species, including when surface transport is disabled.
 Native restart version 7 retains source-species ledgers; new readers retain
 version 1–6 support.
 
-These implemented paths do not complete the original design. Initial LAYER
-quality and @ref engine_manual_sect_GW_BOUNDARY_QUALITY are explicitly refused
-when active groundwater cannot execute them; LAYER never aliases UNSAT and a
-boundary row never masquerades as a successful inert forcing. Coupled surface
-RK2 is also explicitly unsupported. The fuller per-layer transport,
-conduction and reaction-scope design below remains distinct from bulk
-transport and operational named wells.
+These implemented paths do not complete the original design. Explicit
+SIGMA LAYERED transport now owns layer quality; LAYER never aliases bulk
+UNSAT. Hydraulic HEAD/FLOW edges bind groundwater boundary quality. Selected
+layered/porous thermal and scoped reaction profiles are implemented; see
+`docs/design/groundwater-transport.md` for their qualification limits.
+Groundwater reactions and heat retain first-order coupling; the separate
+standalone CPU passive pollutant/age CLOSED_FORM/ENSLAVED/SIGMA profile supports RK2.
+The older design below does not establish additional runtime capability.
 
 The design (2026-09-04, amended 2026-09-07 for the mixed
 triangle/quadrilateral mesh) is retained here as the broader design, not as a
@@ -178,30 +179,18 @@ flux evaluation on cells does not (§10.11).
 
 ## 11.5 Later-Phase `[REACTION_*]` Sections
 
-The reaction component recognises twelve section names (Chapter 8 §8.2).
-Seven are consumed. The other five are **recognised and refused** with the
-phase that delivers them — never silently accepted, because a section that
-parses without effect is a modelling error that looks like a working model:
+`[REACTION_SUBCATCHMENTS]` now implements a conservative wet-pool scope on
+non-LID subcatchments. Dry land-use reactions, porous LID layers and a
+continuously fed reactor formulation remain future work. Unknown reaction
+section names are errors.
 
-| Section | Refusal names phase | Intended meaning |
-|---|---|---|
-| `[REACTION_SOURCES]` | R-sources (post-R3) | Species mass or concentration sources at nodes, in the EPANET-MSX convention |
-| `[REACTION_PARAMETERS]` | R-parameters (post-R3) | Per-conduit and per-node overrides of `PARAMETER` coefficients |
-| `[REACTION_PATTERNS]` | R-sources (post-R3) | Time patterns that modulate sources |
-| `[REACTION_REPORT]` | R5 | Selection of species and elements to report |
-| `[REACTION_SUBCATCHMENTS]` | R6 | Subcatchment-scope expressions — an OpenSWMM extension with no MSX counterpart |
-
-The refusal is an **error**, not a warning: a configuration file carrying any
-of the five is rejected as a whole, so a deck cannot run with half of its
-reaction system honoured. An unknown `[REACTION_*]` name is rejected on the
-same terms, as a probable typo. Two of the planned sections already have
-working substitutes: under the Eulerian ARD component, `[TRANSPORT_BOUNDARIES]`
-and `[TRANSPORT_SOURCES]` (Chapter 7 §7.5) address reaction species at nodes
-and along conduits, including negative rates for extraction, and `[INFLOWS]`
-rows may name a reaction species. `[REACTION_PARAMETERS]` has none — every
-`PARAMETER` coefficient is a single value for the whole model today, which is
-why Chapter 8's declarations subsection treats `PARAMETER` and `CONSTANT` as
-synonyms for now.
+Four formerly reserved sections are implemented: `[REACTION_SOURCES]` for
+CONC/MASS node loads, `[REACTION_PATTERNS]` for cyclic source multipliers,
+`[REACTION_PARAMETERS]` for node/link PARAMETER overrides, and
+`[REACTION_REPORT]` for native species-column selection. Their limits are in
+the input reference. SETPOINT/FLOWPACED sources, geometry-dependent wall
+kinetics, porous LID-layer reaction adapters and exact checkpoint/output
+continuation still require implementation and qualification.
 
 A related refusal belongs in the same list: a `RATE`, `EQUIL` or `FORMULA`
 expression on a **pollutant** in `[REACTION_PIPES]` or `[REACTION_TANKS]` is

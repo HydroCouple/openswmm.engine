@@ -144,3 +144,16 @@ docs/figures/cache/
 # models they author here at run time; nothing under it is a fixture, and
 # swmm6_rel tracks none of it.
 /tests/output/
+
+# Reusable multispecies verification networks.
+!/examples/reactions/
+/examples/reactions/*
+!/examples/reactions/README.md
+!/examples/reactions/parent_product.inp
+!/examples/reactions/parent_product.rxn
+!/examples/reactions/arrhenius.inp
+!/examples/reactions/arrhenius.rxn
+!/examples/reactions/attached_wall.inp
+!/examples/reactions/attached_wall.rxn
+!/examples/reactions/wet_pool.inp
+!/examples/reactions/wet_pool.rxn

@@ -96,3 +96,65 @@ reference is authored metadata; it does not read or apply the file immediately.
 
 .. automodule:: openswmm.engine._gw_transport
    :members:
+
+Execution profiles
+------------------
+
+Groundwater reactions and porous heat require the CPU first-order coupling
+profile. A standalone CLOSED_FORM/ENSLAVED/SIGMA mesh can use FULL_SWE with
+RECONSTRUCTION_ORDER 2 for water, passive pollutants and age, including SIGMA
+LAYERED chemistry. Active surface rows must match groundwater rows. Decay,
+heat, surface MSX and network/catchment owners remain guarded.
+Authored wells and HEAD/FLOW quality edges are supported: shared surface/groundwater
+stages split at knots and sign reversals. HEAD uses absolute elevation; FLOW
+is inward-positive m³/s. Quality knots split the shared stages. Runtime
+providers remain guarded. ENSLAVED stages average conserved total water and
+recover their equilibrium table/column state. SIGMA stages hold starting-state
+ALE velocity and average conserved layer water, deriving moisture and bulk
+UNSAT storage afterward. All three closures may share a mesh. Smooth SIGMA
+drainage and capillary tests retain second temporal order; collapse/rewet and
+donor switching have separate bounds/conservation checks without an order claim.
+Passive stage transport averages canonical mass, pending receipts and ledgers;
+UNSAT layer totals are derived. Explicit age production advances once per
+accepted interval. Reactions and heat require their separate qualification.
+
+Surface age production is reported by
+``surface2d.species_ledger("__WATER_AGE__")["age_generated"]``. Rebuild
+surface plugins for ABI 6; older layouts fall back to CPU.
+
+This profile has an internal numerical component checkpoint, not managed
+engine-calendar or output continuation. Requests for accelerated backends
+retain observable CPU fallback; they do not qualify device groundwater.
+See ``docs/design/groundwater-transport.md`` in the engine source for the
+activation and qualification boundaries.
+
+Mesh chemistry checkpoint sessions
+----------------------------------
+
+A first-order mesh-only model with matching surface/groundwater transport
+rows can use ``solver.checkpoints.start_session(0)`` for numerical state or
+``start_session(2)`` for mesh HDF5 output. The qualified profile requires
+matching species layouts and either WATER_ONLY with heat disabled, or
+POROUS_EQUILIBRIUM groundwater heat paired with coupled surface heat and a
+GROUND_COLUMN bed. BULK MSX species, passive pollutants and water age are
+optional; age-only and heat-only models need no dummy pollutant. Bulk and
+SIGMA layer transport are supported. With porous heat, chemical and thermal
+layer counts are independent.
+
+Start both engines from the same model before saving and restoring with
+``solver.checkpoints.save(path)`` and ``target.checkpoints.restore(path)``.
+Canonical water, solute, age/contact and soil-energy state, accepted clocks,
+engine calendar and qualified report history continue together. A different
+reaction definition, species units, grid or authored edge forcing is refused
+before publication. Reactive HEAD/FLOW edge reversals, simultaneous well
+forcing, imposed species fluxes and their gross receipts also continue with
+exact groundwater report history in the named profile.
+Bulk finite-porewater sessions require their ledger payload. Shared-source
+transport sessions also require the accepted-cell-clock payload, including
+species-only bulk models. Older exact-session files cannot supply that omitted
+history; raw default bulk state carriers retain their existing behavior.
+
+This profile excludes live network/catchment owners, WALL species,
+surface-species/buildup report continuation and binary/combined output
+companions. It does not extend the separate passive RK2 component checkpoint
+profile. See the native groundwater transport contracts for the full limits.

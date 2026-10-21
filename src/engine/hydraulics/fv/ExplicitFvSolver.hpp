@@ -63,6 +63,17 @@ public:
     ExplicitFvSolver(const ExplicitFvSolver&) = delete;
     ExplicitFvSolver& operator=(const ExplicitFvSolver&) = delete;
 
+    /// Native-only P0.5 experiment. No input keyword, binding, GUI control or
+    /// backend ABI change. advance() rejects unqualified feature combinations.
+    void enablePressureStorageCandidate(const NonlinearPressureStorage::Controls& controls = {}) {
+        pressure_candidate_ = true;
+        pressure_controls_ = controls;
+    }
+    const NonlinearPressureStorage::Result& pressureCandidateResult() const noexcept {
+        return pressure_result_;
+    }
+    long pressureCandidateRejections() const noexcept { return pressure_rejections_; }
+
     void   initialize(NetworkMeshData& mesh, NetworkStateData& state,
                       const FvOptions& opts) override;
     double advance(double t_current, double t_target,
@@ -101,6 +112,19 @@ public:
     /// Signed positive INTO the node. The Router glue turns this into the node
     /// inflow/outflow rates the reporting and mass-balance paths expect.
     const std::vector<double>& node_exchange() const noexcept { return node_exch_; }
+
+    /// Signed numerical continuity carry (ft³). Positive carry is already
+    /// included in node_volume; an inventory audit adds only negative carry
+    /// to that published volume. Read-only: does not add physical storage.
+    const std::vector<double>& node_continuity_carry() const noexcept {
+        return node_carry_;
+    }
+
+    /// Mask from the most recent pressure classification. Historical if no
+    /// pressure pass ran; use with current regime/forcing when auditing it.
+    const std::vector<std::uint8_t>& pressure_folded_nodes() const noexcept {
+        return press_.foldedNodes();
+    }
 
     /// Per-node conduit-face exchange VOLUME split into arriving and departing
     /// magnitudes (ft³) over the last advance(). SWMM's node ledger is not a
@@ -193,6 +217,8 @@ public:
     }
 
 private:
+    double advanceImpl(double t_current, double t_target, const FvStepForcing& forcing);
+    void validatePressureCandidate(const FvStepForcing& forcing) const;
     // -- substep pipeline ---------------------------------------------------
     void   refreshDepths();
     void   refreshNodeAreas();
@@ -548,7 +574,7 @@ private:
 
     /// One forward-Euler substep of the whole operator: reconstruct, flux,
     /// positivity-limit, transport, then the cell and node updates.
-    void   takeSubstep(double dt, const FvStepForcing& forcing);
+    bool   takeSubstep(double dt, const FvStepForcing& forcing);
 
     // -- implicit pressurized head update (slot program R2a) ----------------
     /// Any active closed-section cell at/above band entry? Cheap early-exit
@@ -563,6 +589,10 @@ private:
     PressurizedHeadSolver press_;
     /// Did classify() find implicit work for the substep in flight?
     bool   press_step_ = false;
+    bool pressure_candidate_ = false;
+    NonlinearPressureStorage::Controls pressure_controls_;
+    NonlinearPressureStorage::Result pressure_result_;
+    long pressure_rejections_ = 0;
 
     /// Snapshot / average for SSP-RK2. `rkSave` records Uⁿ and the ledger
     /// totals; `rkAverage` forms ½(Uⁿ + U⁽²⁾) and halves the ledger deltas the

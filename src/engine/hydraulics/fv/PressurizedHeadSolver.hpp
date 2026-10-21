@@ -101,6 +101,7 @@
 #include "FvKernels.hpp"
 #include "INetworkSolver.hpp"
 #include "NetworkMeshData.hpp"
+#include "NonlinearPressureStorage.hpp"
 
 namespace openswmm::fv {
 
@@ -180,6 +181,18 @@ public:
     /// write the folded junctions' heads (ceiling/floor clamped, with a
     /// one-shot Dirichlet re-solve for violating rows).
     void solve(const PressurizedView& v, double dt);
+
+    /// Guarded P0.5 adapter: same classification, coefficients and face ledger
+    /// as solve(), actual conserved old areas and nonlinear SLOT storage.
+    /// No face flux or node head is published unless the whole solve succeeds.
+    /// TPA and physical node active sets are not supported by this candidate.
+    NonlinearPressureStorage::Result solveCandidate(
+        const PressurizedView& v, double dt,
+        const NonlinearPressureStorage::Controls& controls);
+    /// Recheck the ORIGINAL equations and pressure face laws after the real
+    /// limiter/cell/node update. Does not repair/overwrite the endpoint.
+    bool verifyCandidateEndpoint(const PressurizedView& v, double dt,
+                                const NonlinearPressureStorage::Controls& controls);
 
     /// Post-update pass: a pressurized cell's momentum state is slaved to
     /// the solved face discharges (Q_i = mean of its two face fluxes in the
@@ -323,6 +336,7 @@ private:
     std::vector<double> cg_r_, cg_p_, cg_ap_, cg_z_;
 
     void buildComponents();
+    void prepare(const PressurizedView& v, double dt);
     void assembleRhs(const PressurizedView& v, double dt);
     void solveComponent(int comp, const PressurizedView& v, double dt);
     void backSubstitute(const PressurizedView& v);
@@ -338,6 +352,10 @@ private:
     std::vector<double> diag_, rhs_;
     std::vector<std::uint8_t> unk_dirichlet_;  ///< demoted rows (2nd pass)
     std::vector<double>       unk_dirvalue_;
+    NonlinearPressureStorage candidate_;
+    std::vector<NonlinearPressureStorage::Row> candidate_rows_;
+    std::vector<NonlinearPressureStorage::Edge> candidate_edges_;
+    std::vector<double> candidate_head_, candidate_residual_, candidate_budget_;
 };
 
 } // namespace openswmm::fv

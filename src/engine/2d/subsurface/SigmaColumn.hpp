@@ -90,15 +90,17 @@ namespace openswmm::twoD::sigma {
 /// transport never reconstructs gravity or replays rejected table trials.
 struct ColumnTransfers {
     double old_length=0,new_length=0,infiltration=0,evaporation=0;
-    std::vector<double> old_water,new_water,faces,compression,support,grid;
+    std::vector<double> old_water,new_water,faces,compression,support,grid,contacts;
 };
 
 /// What one column sweep needs and what it reports back.
 struct ColumnStep {
     // ---- in ----
     double L_old   = 1.0;    ///< column thickness before the table moved (m)
-    double L_new   = 1.0;    ///< …and after (m). `L̇ = (L_new − L_old)/dt`.
+    double L_new   = 1.0;    ///< …and after (m). Default `L̇ = (L_new − L_old)/dt`.
     double dt      = 1.0;    ///< the cell's tier step (s)
+    bool forward_euler = false; ///< hold the old-state ALE velocity in an RK stage
+    double grid_rate = 0.0; ///< supplied Ldot for forward_euler; geometry still uses L_new
     double q_in    = 0.0;    ///< infiltration offered at the top (m/s, ≥ 0)
     double wilting_suction=150.0; ///< SI suction magnitude; one top-boundary stress evaluation
     double et_stress=0.0;

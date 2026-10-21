@@ -295,6 +295,29 @@ cdef class Tables:
         _check(swmm_table_get_type(_h(self._solver), i, &v))
         return TableType(v)
 
+    def rename(self, key, str new_id) -> None:
+        """Rename a table before initialization, preserving its references.
+
+        IDs must be unique within their curve or timeseries namespace.
+        Other generation-checked structural views must be reacquired after editing.
+        """
+        if '\0' in new_id:
+            raise ValueError("new_id must not contain NUL")
+        cdef int index = _resolve_table(self._solver, key)
+        cdef bytes encoded = new_id.encode('utf-8')
+        _check(swmm_table_rename(_h(self._solver), index, encoded))
+        self._solver._bump_generation()
+
+    def set_type(self, key, kind) -> None:
+        """Change a curve's TableType, preserving points and references.
+
+        Conversion to or from TIMESERIES is refused. Edit before initialization.
+        """
+        cdef int index = _resolve_table(self._solver, key)
+        cdef int value = TableType(kind)
+        _check(swmm_table_set_type(_h(self._solver), index, value))
+        self._solver._bump_generation()
+
     # ---- Creation -----------------------------------------------
 
     def add_timeseries(self, str ts_id) -> TimeSeries:

@@ -2,6 +2,7 @@
 // Copyright 2026 Caleb Buahin
 #include "SubsurfaceSolver.hpp"
 #include "LayerTransport.hpp"
+#include "../data/SolverOptions2D.hpp"
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -14,18 +15,21 @@ void SubsurfaceSolver::fireLayerSpecies(int cell,const CellFlux& f) {
     const auto& water=*f.column;
     const int layers=tr_.n_layers,sat=layers;
     const double area=state_.area[cell];
-    const double dz=water.new_length/layers;
+    const bool euler=opts_&&opts_->reconstruction_order==2;
+    const double dz=(euler?water.old_length:water.new_length)/layers;
     for(int s=0;s<tr_.n_species;++s) {
+        if(heat_.active() && s==tr_.temp_row)continue; // thermal energy has one fixed-depth owner
         const auto k=tr_.idx(s,cell);
         const bool intensive=s==tr_.age_row||s==tr_.temp_row;
         const double partition=intensive?0:tr_.kd[k]*tr_.rho_b[cell];
         std::vector<double> capacity(layers+1),rhs(layers+1);
         for(int j=0;j<layers;++j) {
-            capacity[j]=area*(water.new_water[j]+partition*dz);
+            capacity[j]=area*((euler?water.old_water[j]:water.new_water[j])+partition*dz);
             rhs[j]=tr_.layer_mass[tr_.layerIdx(s,j,cell)];
         }
-        capacity[sat]=area*f.hg_final*(state_.theta_s[cell]+partition);
-        rhs[sat]=tr_.sat_mass[k];
+        capacity[sat]=(euler?f.v_sat0/state_.theta_s[cell]:area*f.hg_final)*(state_.theta_s[cell]+partition);
+        rhs[sat]=tr_.sat_mass[k];const auto initial=rhs;auto donor_available=initial;
+        donor_available[sat]=std::max(0.,initial[sat]-pendingSaturatedMassExport(cell,s));
         const double lateral=gatherLateralMass(cell,s);
         rhs[sat]+=lateral;tr_.net_lateral[s]+=lateral;
         const double infil=consumePending(tr_.xacc_from_surface[k]);
@@ -63,6 +67,7 @@ void SubsurfaceSolver::fireLayerSpecies(int cell,const CellFlux& f) {
         const double requested=requested_flux+requested_source;
         const double scale=tr_.signedRow(s)||requested<=0?1:std::min(1.,std::max(0.,available)/requested);
         rhs[sat]-=requested*scale;
+        if(euler)donor_available[sat]=std::max(0.,donor_available[sat]-prepaid_link-requested*scale);
         tr_.net_lateral[s]-=requested_flux*scale;tr_.boundary_flux_out[s]+=requested_flux*scale;
         tr_.lost_source[s]+=requested_source*scale;
         if(f.boundaries)for(const auto& pulse:*f.boundaries)
@@ -83,8 +88,8 @@ void SubsurfaceSolver::fireLayerSpecies(int cell,const CellFlux& f) {
             face(j,partition*water.grid[j]);
         }
         if(tr_.dispersion_on && dz>0)for(int j=1;j<layers;++j) {
-            const double a=state_.theta_sigma[std::size_t(j-1)*state_.n_cells+cell];
-            const double b=state_.theta_sigma[std::size_t(j)*state_.n_cells+cell];
+            const double a=euler?water.old_water[j-1]/dz:state_.theta_sigma[std::size_t(j-1)*state_.n_cells+cell];
+            const double b=euler?water.old_water[j]/dz:state_.theta_sigma[std::size_t(j)*state_.n_cells+cell];
             const double theta=(a>0&&b>0)?2*a*b/(a+b):0;
             const double velocity=theta>0?std::abs(water.faces[j])/(f.dt*theta):0;
             const double coefficient=area*theta*(tr_.D_m[cell]+tr_.alpha_L[cell]*velocity)*f.dt/dz;
@@ -103,7 +108,8 @@ void SubsurfaceSolver::fireLayerSpecies(int cell,const CellFlux& f) {
             for(int j=0;j<=layers;++j)rhs[j]+=f.dt*capacity[j];
             tr_.generated_age[s]+=production;
         }
-        const auto result=solveLayerTransport(capacity,rhs,moves,tr_.signedRow(s));
+        const auto result=euler?advanceLayerTransportEuler(capacity,initial,rhs,moves,tr_.signedRow(s),&donor_available):
+            solveLayerTransport(capacity,rhs,moves,tr_.signedRow(s));
         if(!result.error.empty())throw std::runtime_error("SIGMA chemistry: "+result.error);
         tr_.sat_mass[k]=result.mass[sat];
         for(int j=0;j<layers;++j)tr_.layer_mass[tr_.layerIdx(s,j,cell)]=result.mass[j];
@@ -136,7 +142,7 @@ void SubsurfaceSolver::fireLayerSpecies(int cell,const CellFlux& f) {
             else if(moves[j].from==sat&&moves[j].to==sat-1)internal-=result.transferred[j];
         }
         tr_.internal_recharge[s]+=internal;
-        if(tr_.decay[k]>0&&!intensive) {
+        if(!euler&&tr_.decay[k]>0&&!intensive) {
             const double keep=std::exp(-tr_.decay[k]*f.dt);
             double removed=tr_.sat_mass[k]*(1-keep);tr_.sat_mass[k]*=keep;
             for(int j=0;j<layers;++j) {

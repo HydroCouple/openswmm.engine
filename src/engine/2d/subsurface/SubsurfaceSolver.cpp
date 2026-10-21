@@ -100,6 +100,16 @@ double harmonic(double a, double b) noexcept {
     return 2.0 * a * b / (a + b);
 }
 
+// A conserved-water division may put a derived theta one ulp beyond a
+// physical endpoint. Normalize only that roundoff; authored state stays
+// strictly validated and a material stage excursion still rejects the trial.
+double rk2SigmaView(double theta,double lower,double upper) {
+    const double roundoff=16*std::numeric_limits<double>::epsilon();
+    if(!std::isfinite(theta)||theta<lower-roundoff||theta>upper+roundoff)
+        throw std::runtime_error("Coupled RK2 SIGMA derived water content exceeds roundoff bounds.");
+    return std::clamp(theta,lower,upper);
+}
+
 // Exact Green-Ampt intake over a held interval with frozen suction/moisture.
 // Solving its integral removes the singular instantaneous rate at F=0.
 double frontIntake(double F, double B, double Ks, double dt) noexcept {
@@ -389,6 +399,8 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh,
     pending_surface_.clear();
     accumulators_pending_ = false;
     state_.active = true;
+    recharge_backend_={};recharge_inputs_.clear();recharge_values_.clear();recharge_slots_.assign(n,-1);
+    recharge_batches_=recharge_cells_=0;
     // Seed the tier lists so the kernel is usable BEFORE the first
     // syncAndRebuild. dt0 is not known yet, so everything starts on the
     // finest rung — conservative, and it means a solver that is initialized
@@ -586,7 +598,12 @@ void SubsurfaceSolver::assignTiers(double dt0, int n_tiers) {
 // ---------------------------------------------------------------------------
 
 void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
-    if (!state_.active || !tierHasFaces(tier)) return;
+    if(!state_.active)return;
+    if(tr_.n_layers>0&&heat_.active())for(int i=0;i<state_.n_cells;++i)if(covers(i)) {
+        if(auto error=refreshSigmaPorewater(i);!error.empty())throw std::runtime_error(error);
+        heat_.refreshView(i,tr_);
+    }
+    if(!tierHasFaces(tier))return;
     const auto& list = faces_by_tier_[static_cast<std::size_t>(tier)];
     const InertialEdges& E = *edges_;
 
@@ -668,7 +685,7 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
                 const auto ne = static_cast<std::size_t>(E.ne);
                 for (int s = 0; s < tr_.n_species; ++s) {
                     const double m_don = tr_.sat_mass[tr_.idx(s, static_cast<int>(don))];
-                    const bool layered_porewater=heat_.active()&&s!=tr_.temp_row&&
+                    const bool layered_porewater=tr_.n_layers==0&&heat_.active()&&s!=tr_.temp_row&&
                         heat_.cells[don].porewater.active();
                     const double mobile_donor=layered_porewater?saturatedPorewaterMobileMass(int(don),s):
                         m_don*tr_.dissolvedFraction(s,static_cast<int>(don),state_.theta_s[don]);
@@ -731,8 +748,8 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
                     for (int s = 0; s < tr_.n_species; ++s) {
                         const double ma = tr_.sat_mass[tr_.idx(s, static_cast<int>(l))];
                         const double mb = tr_.sat_mass[tr_.idx(s, static_cast<int>(r))];
-                        const bool layered_porewater_a=heat_.active()&&s!=tr_.temp_row&&heat_.cells[l].porewater.active();
-                        const bool layered_porewater_b=heat_.active()&&s!=tr_.temp_row&&heat_.cells[r].porewater.active();
+                        const bool layered_porewater_a=tr_.n_layers==0&&heat_.active()&&s!=tr_.temp_row&&heat_.cells[l].porewater.active();
+                        const bool layered_porewater_b=tr_.n_layers==0&&heat_.active()&&s!=tr_.temp_row&&heat_.cells[r].porewater.active();
                         const double mobile_a=layered_porewater_a?saturatedPorewaterMobileMass(int(l),s):
                             ma*tr_.dissolvedFraction(s,static_cast<int>(l),state_.theta_s[l]);
                         const double mobile_b=layered_porewater_b?saturatedPorewaterMobileMass(int(r),s):
@@ -812,6 +829,8 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
             }
         }
     }
+    if(tr_.n_layers>0&&heat_.active())for(int i=0;i<state_.n_cells;++i)if(covers(i))
+        if(auto error=refreshSigmaPorewater(i);!error.empty())throw std::runtime_error(error);
     accumulators_pending_ = true;
 }
 
@@ -1319,8 +1338,6 @@ void SubsurfaceSolver::initTransport(const RowLayoutLite& rows,
 
     if(gw && gw->options.unsat_transport=="LAYERED") {
         if(options_.per_subcatch)throw std::runtime_error("LAYERED groundwater transport requires a spatial SIGMA mesh.");
-        if(gw->options.thermal_model=="POROUS_EQUILIBRIUM")
-            throw std::runtime_error("LAYERED SIGMA chemistry and fixed-depth porous porewater require a shared inventory mapping before they can be combined.");
         for(int i=0;i<state_.n_cells;++i)if(covers(i) &&
             static_cast<GwClosure>(state_.closure[i])!=GwClosure::SIGMA)
             throw std::runtime_error("UNSAT_TRANSPORT LAYERED requires SIGMA on every active aquifer cell.");
@@ -1358,6 +1375,9 @@ void SubsurfaceSolver::initTransport(const RowLayoutLite& rows,
             tr_.refreshUnsat(species,i);
     }
 
+    if(opts_&&opts_->reconstruction_order==2&&tr_.age_row>=0) {
+        tr_.generated_age.assign(tr_.n_species,0);tr_.gained_contact.assign(tr_.n_species,0);
+    }
     for (int s = 0; s < tr_.n_species; ++s)
         tr_.init_mass[static_cast<std::size_t>(s)] = tr_.storage(s);
 }
@@ -1626,6 +1646,7 @@ void SubsurfaceSolver::bookAreaEt(int cell,double dt,double potential,double eva
 }
 
 void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double time) {
+    if(tr_.n_layers>0&&heat_.active())heat_.refreshView(i,tr_);
     const auto u = static_cast<std::size_t>(i);
     const int  n = state_.n_cells;
     const double A  = std::max(state_.area[u], kTiny);
@@ -1633,6 +1654,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     const double ts = state_.theta_s[u];
     const soil::Params p = paramsOf(i);
     const auto cl = static_cast<GwClosure>(state_.closure[u]);
+    const bool sigma_stage=cl==GwClosure::SIGMA&&opts_&&opts_->reconstruction_order==2;
 
     const double hg0 = state_.hg[u];
     const double hu_pre = state_.hu[u];   // T7.1: the column store this firing starts from
@@ -1731,7 +1753,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     } else if (cl == GwClosure::ENSLAVED) {
         q0 = q_in - q_et;
     } else if (L0 > 0.0) {
-        q0 = soil::rechargeQ0(p, std::max(L0, kTiny), state_.hu[u]);
+        q0 = rawRecharge(i,p,std::max(L0,kTiny));
         // G-X4 (2026-09-20): …and when the FLOOR binds, the pairing above is
         // the floored number, not the raw content. A column already at θ_s
         // just under the table (θ_s − θ_bot → 0) otherwise loses
@@ -1755,8 +1777,8 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     // from the ledger, like recharge.
     if (cl != GwClosure::ENSLAVED) {
         if (q0 > 0.0) {
-            const double give = std::max(state_.hu[u] - state_.theta_r[u] * L0,
-                                         0.0) / dt;
+            double give = std::max(state_.hu[u] - state_.theta_r[u] * L0,0.0) / dt;
+            if(sigma_stage)give=std::min(give,std::max(0.,theta_bot-state_.theta_r[u])*L0/state_.m_layers/dt);
             q0 = std::min(q0, give);
         } else if (q0 < 0.0) {
             // Already delivered node/pipe withdrawals cannot be refunded
@@ -1860,8 +1882,11 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
                                   - soil::equilibriumStorage(p,zs)) * A;
     const double requested_source_out = source.out;
     const double combined_out=source.out+boundary_out;
+    // A bounded SIGMA sweep can reduce its proposed recharge. External
+    // withdrawals cannot spend that unaccepted column-to-table transfer.
+    const double saturated_credit=other_sat-(sigma_stage?std::max(0.,q0)*A*dt:0.);
     const double accepted_scale=combined_out>0 ?
-        std::min(1.,std::max(0.,drainable+other_sat+source.in+boundary_in-future_lid_up)/combined_out):1.;
+        std::min(1.,std::max(0.,drainable+saturated_credit+source.in+boundary_in-future_lid_up)/combined_out):1.;
     source.out*=accepted_scale;boundary_out*=accepted_scale;
     for(auto& pulse:boundary_pulses) {
         auto& boundary=boundaries_[pulse.boundary];
@@ -1988,15 +2013,22 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         original.resize(state_.m_layers);trial.resize(state_.m_layers);
         for(int j=0;j<state_.m_layers;++j) original[j]=state_.theta_sigma[static_cast<std::size_t>(j)*n+u];
         sigma::ColumnStep cs;
+        // Smooth RK stages evaluate ALE fluxes at the starting state. The
+        // bounded table solve below settles capacity constraints without
+        // replacing that Euler velocity by an endpoint-dependent subflow.
+        const bool euler=sigma_stage;
+        const double grid_rate=-(hg1-hg0)/dt;
         double external=(saturated_exchange+source.in-source.out+boundary_in-boundary_out)/A-state_.qdeep_last[u]*dt;
         const double tolerance=1e-15*std::max({1.0,zs,std::abs(external)});
         const auto evaluate=[&](double h,bool capture=false) {
             trial=original;cs={};cs.L_old=L0;cs.L_new=std::max(0.0,zs-h);cs.dt=dt;
+            cs.forward_euler=euler;cs.grid_rate=grid_rate;
             cs.q_in=q_in;cs.q_et=q_et;cs.q0_phys=q0;cs.handover_theta=ts-Sy;
             if(tr_.n_layers>0)cs.layer_inflow=&contact_depth;
             if(capture)cs.transfers=&column_transfers;
             cs.wilting_suction=options_.wilting_suction;cs.capillary=options_.capillary_diff;
             sigma::advanceColumn(p,trial.data(),state_.m_layers,1,cs);
+            if(euler)for(double& theta:trial)theta=rk2SigmaView(theta,p.theta_r,p.theta_s);
             // ts * delta_h = external + the actual column-to-table water.
             const double balance = ts*(h-hg0)-external-
                 (cs.f_bot+cs.overflow_to_sat-cs.deficit_from_sat)*dt;
@@ -2044,7 +2076,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
                     throw std::runtime_error("SIGMA table/column water settlement did not converge.");
             }
         }
-        if(tr_.n_layers>0)evaluate(hg1,true);
+        if(tr_.n_layers>0||(heat_.active()&&sigma_stage))evaluate(hg1,true);
         for(int j=0;j<state_.m_layers;++j) state_.theta_sigma[static_cast<std::size_t>(j)*n+u]=trial[j];
         rejected=cs.rejected;state_.et_stress[u]=et_boundary?cs.et_stress:std::numeric_limits<double>::quiet_NaN();
         state_.qet_last[u]=cs.et_taken;state_.led_et+=cs.et_taken*A*dt;
@@ -2157,7 +2189,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     // so mass can never travel on a volume the water gave back.
     if (tr_.active()) {
         CellFlux f;
-        if(tr_.n_layers>0)f.column=&column_transfers;
+        if(tr_.n_layers>0||(heat_.active()&&sigma_stage))f.column=&column_transfers;
         f.boundary_in=boundary_in;f.boundary_out=boundary_out;f.boundaries=&boundary_pulses;
         f.hg_final=hg1;f.runtime_dt=dt; f.requested_source_out=requested_source_out;
         f.v_sat0   = hg0 * ts * A;
@@ -2168,6 +2200,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
             f.node_out=0;
             for(std::size_t b=0;b<node_beds_.size();++b)if(node_beds_[b].cell==i)
                 f.node_out+=std::max(0.,bed_gathered_[b]);
+            f.node_in=f.node_out-state_.qnode_last[u]*dt;
         }
         f.lid_in_j = lid_in_j;
         f.infil_in = infil_vol;
@@ -2189,6 +2222,13 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         // inside its ALE sweep.
         f.handover = (state_.hu[u] * A - f.v_uns0) - f.infil_in + f.et +
                      f.recharge + f.reject;
+        f.grid_volume=A*(hg0-hg1);
+        if(opts_&&opts_->reconstruction_order==2&&cl==GwClosure::ENSLAVED&&ens_dunne<0&&ens_short<0&&hg1>0&&hg1<zs) {
+            // Equilibrium water is nonlinear in table height. The accepted
+            // projection is not an Euler transport velocity: evaluate its
+            // tangent at the beginning state, as for the SIGMA ALE stage.
+            f.grid_volume=-dV_sat/Sy;f.handover=(ts-Sy)*f.grid_volume;
+        }
         fireCellSpecies(i, f);
     }
 
@@ -2210,8 +2250,17 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     const double deficit_before = std::max(0.0, ts * L0 - hu_pre);
     const double deficit_after = std::max(0.0, ts * std::max(0.0, zs - hg1) - state_.hu[u]);
     const double expected = std::max(0.0, deficit_before - infil_vol / A);
-    if (deficit_after > expected && deficit_after > kTiny)
-        state_.wetting_front[u] *= expected / deficit_after;
+    if (deficit_after > expected && deficit_after > kTiny) {
+        if((cl==GwClosure::CLOSED_FORM||cl==GwClosure::ENSLAVED) && opts_ && opts_->reconstruction_order==2) {
+            // SSP stages require the drying derivative at the old front and
+            // old deficit. The finite ratio used by the first-order held
+            // intake route contributes its own O(dt^2) subflow and cannot be
+            // composed as a forward-Euler RK stage.
+            const double front0=std::max(0.,state_.wetting_front[u]-infil_vol/A);
+            const double drying=deficit_after-expected;
+            if(deficit_before>kTiny)state_.wetting_front[u]=std::max(0.,state_.wetting_front[u]-front0*drying/deficit_before);
+        } else state_.wetting_front[u] *= expected / deficit_after;
+    }
     if (state_.infil_interval[u] > 0.0)
         publishCellInfiltration(i, surf, state_.infil_interval[u], time + dt);
 }
@@ -2513,10 +2562,39 @@ std::string SubsurfaceSolver::conductGroundWithLids(int i,double dt) {
     return {};
 }
 
+std::string SubsurfaceSolver::groundWaterIncrement(int i,const CellFlux& f,std::vector<double>& output) const {
+    const auto& column=heat_.cells[i].column;const double area=state_.area[i];
+    const double length=state_.zs[i]-state_.hg[i];
+    if(!(length>0)) {
+        // The collapsed-column start is a bounded geometric event, not a
+        // differentiable stretching coordinate. Retain its accepted water.
+        std::vector<double> moisture;
+        if(auto error=projectGroundMoisture(state_,i,f.hg_final,column.depth_edges,moisture);!error.empty())return error;
+        std::vector<double> next(moisture.size());
+        for(std::size_t j=0;j<next.size();++j)
+            next[j]=(moisture[j]-column.theta[j])*area*(column.depth_edges[j+1]-column.depth_edges[j]);
+        output=std::move(next);return {};
+    }
+    std::vector<double> old_water,delta_water;
+    if(state_.closure[i]==int8_t(GwClosure::SIGMA)) {
+        if(!f.column||f.column->old_water.size()!=std::size_t(state_.m_layers)||
+           f.column->new_water.size()!=f.column->old_water.size())
+            return "RK2 porous heat requires the accepted hydraulic layer transfers.";
+        old_water=f.column->old_water;delta_water.resize(old_water.size());
+        for(std::size_t j=0;j<old_water.size();++j)delta_water[j]=f.column->new_water[j]-old_water[j];
+    } else {
+        old_water={f.v_uns0/area};
+        delta_water={(f.infil_in-f.reject-f.et-f.recharge+f.handover)/area};
+    }
+    return projectGroundWaterIncrement(column,length,f.grid_volume/area,old_water,delta_water,output);
+}
 void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
     auto& cell=heat_.cells[i];auto& column=cell.column;
     if(column.energy.empty()||cell.failed)return;
     try {
+        const bool euler=opts_&&opts_->reconstruction_order==2;
+        std::vector<double> donor_temperature;
+        if(euler)for(std::size_t j=0;j<column.energy.size();++j)donor_temperature.push_back(heat_.activeTemperature(i,j));
         gatherLateralHeat(i);
         const int r=tr_.temp_row;const auto k=tr_.idx(r,i);const double cp=heat_.water_capacity;
         const double top=heat_.activeTemperature(i,0);
@@ -2550,22 +2628,40 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
             preset[j]=consumePending(heat_preset_out_j_[base+j]);preset_total+=preset[j];
             preset_water[j]=consumePending(heat_preset_out_water_[base+j]);preset_water_total+=preset_water[j];
         }
-        const double body_water=f.lateral-f.node_out+f.link+f.source_in-f.source_out+f.boundary_in-f.boundary_out;
+        const double body_water=f.lateral+f.node_in-f.node_out+f.link+f.source_in-f.source_out+f.boundary_in-f.boundary_out;
         // Already committed face/link exports keep their producer-time layer
         // receipts. New wells/node/top/deep outputs share the implicit donor
         // solution, rather than debiting every layer at a bulk mean.
+        double contact_volume=0,contact_node=0,contact_link=0;
+        std::vector<double> contact_water(weights.size(),0),contact_j(weights.size(),0);
+        if(tr_.n_layers>0 && f.column)for(int layer=0;layer<tr_.n_layers;++layer) {
+            const double volume=f.column->contacts[layer]*state_.area[i];contact_volume+=volume;
+            const auto q=tr_.layerIdx(r,layer,i);
+            const double mn=consumePending(tr_.contact_node_mass[q]),ml=consumePending(tr_.contact_link_mass[q]);
+            contact_node+=mn;contact_link+=ml;
+            const double top=f.column->old_length*layer/tr_.n_layers,bottom=f.column->old_length*(layer+1)/tr_.n_layers;
+            for(std::size_t j=0;j<weights.size();++j) {
+                const double overlap=std::max(0.,std::min(bottom,column.depth_edges[j+1])-std::max(top,column.depth_edges[j]));
+                const double share=bottom>top?overlap/(bottom-top):0;
+                contact_water[j]+=volume*share;contact_j[j]+=cp*(mn+ml)*share;
+            }
+        }
         const double incoming_j=cp*(source+edge_mass+edge_heat+lateral+link_in-(link_packet?booked_link:0)+node_in)+preset_total+f.lid_in_j;
         std::vector<double> water(weights.size()),energy(weights.size()),withdrawal(weights.size());
         for(std::size_t j=0;j<weights.size();++j) {
             const double share=weights[j]/weight;
-            water[j]=(body_water+preset_water_total)*share-preset_water[j];energy[j]=incoming_j*share;
+            water[j]=(body_water-contact_volume+preset_water_total)*share-preset_water[j]+contact_water[j];
+            energy[j]=incoming_j*share+contact_j[j];
             withdrawal[j]=(node_volume+f.source_out+f.boundary_out+implicit_link_volume)*share;
         }
         water.front()+=f.infil_in-f.reject-f.et-f.dunne;energy.front()+=cp*(infil-refund);
         withdrawal.front()+=excess_volume+f.et+f.dunne;water.back()-=f.deep;withdrawal.back()+=f.deep;
-        const auto advected=advectPorousColumn(column,moisture,water,energy,withdrawal);
+        std::vector<double> water_change;
+        if(euler)if(auto error=groundWaterIncrement(i,f,water_change);!error.empty())throw std::runtime_error(error);
+        const auto advected=euler?advectPorousColumnEuler(column,moisture,water_change,water,energy,withdrawal,donor_temperature):
+            advectPorousColumn(column,moisture,water,energy,withdrawal);
         if(!advected.error.empty())throw std::runtime_error(advected.error);
-        std::fill(cell.reserved_out_water.begin(),cell.reserved_out_water.end(),0);
+        for(std::size_t j=0;j<weights.size();++j)cell.reserved_out_water[j]=heat_preset_out_water_[base+j];
         double donor=0;for(std::size_t j=0;j<weights.size();++j)donor+=weights[j]/weight*advected.temperature[j];
         const double link_out=link_packet?booked_link:implicit_link_volume*donor;
         const double node_out=node_volume*donor,source_out=f.source_out*donor;
@@ -2581,7 +2677,7 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
             tr_.boundary_flux_in[r]+=pulse.flux_in[r];tr_.boundary_flux_out[r]+=pulse.flux_out[r];
         }
         tr_.gained_source[r]+=source;tr_.net_lateral[r]+=lateral;tr_.gained_infil[r]+=infil;
-        tr_.gained_link[r]+=link_in;tr_.lost_link[r]+=link_out;tr_.gained_node[r]+=node_in;
+        tr_.gained_link[r]+=link_in+contact_link;tr_.lost_link[r]+=link_out;tr_.gained_node[r]+=node_in+contact_node;
         tr_.lost_node[r]+=node_out;tr_.lost_deep[r]+=deep;tr_.lost_source[r]+=source_out;
         tr_.lost_et[r]+=et;tr_.lost_dunne[r]+=refund+excess+dunne;
         if(f.dunne_mass){(*f.dunne_mass)[r]=dunne;(*f.excess_mass)[r]=excess;}
@@ -2603,7 +2699,8 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
             const double latent=-heat_.density*f.et*transport::heat::latentHeatOfVaporization(top);
             column.energy.front()+=latent;cell.latent_j+=latent;
         }
-        if(auto error=conductGroundWithLids(i,f.dt);!error.empty())throw std::runtime_error(error);
+        if(!euler)if(auto error=conductGroundWithLids(i,f.dt);!error.empty())throw std::runtime_error(error);
+        if(tr_.n_layers>0)if(auto error=refreshSigmaPorewater(i);!error.empty())throw std::runtime_error(error);
         heat_.refreshView(i,tr_);
     } catch(const std::exception& error) {
         cell.failed=1;try{cell.error=error.what();}catch(...){}
@@ -2611,7 +2708,19 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
 }
 
 void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
-    if(tr_.n_layers>0){fireLayerSpecies(i,f);reactCell(i,f.dt,f.hg_final);return;}
+    if(tr_.n_layers>0) {
+        fireLayerSpecies(i,f);
+        if(heat_.active()) {
+            fireGroundHeatSpecies(i,f);
+            if(heat_.cells[i].failed)throw std::runtime_error(heat_.cells[i].error);
+        }
+        if(!opts_||opts_->reconstruction_order!=2)reactCell(i,f.dt,f.hg_final);
+        if(heat_.active()) {
+            if(auto error=refreshSigmaPorewater(i);!error.empty())throw std::runtime_error(error);
+            heat_.refreshView(i,tr_);
+        }
+        return;
+    }
     if(heat_.active()&&heat_.cells[i].porewater.active())fireGroundPorewaterSpecies(i,f);
     if(heat_.active())fireGroundHeatSpecies(i,f);
     const auto k0 = static_cast<std::size_t>(i);
@@ -2622,6 +2731,7 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
     // the cell). The denominators are the post-arrival water volumes; every
     // sink in this firing reads the same pair, because the water update
     // decided all of them simultaneously.
+    const bool euler=opts_&&opts_->reconstruction_order==2;
     const double v_sat = f.v_sat0 + f.lateral + std::max(f.link, 0.0) + f.source_in + f.boundary_in;
     const double v_uns = f.v_uns0 + f.infil_in - f.paired_refund;
     const auto   uc = static_cast<std::size_t>(i);
@@ -2631,7 +2741,7 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
     // divide.
     const double ts_cell  = state_.theta_s[uc];
     const double L_cell   = std::max(state_.zs[uc] - state_.hg[uc], kTiny);
-    const double theta_uns = std::clamp(state_.hu[uc] / L_cell,
+    const double theta_uns = std::clamp((euler?f.v_uns0/state_.area[uc]:state_.hu[uc]) / L_cell,
                                         state_.theta_r[uc], ts_cell);
 
     for (int s = 0; s < tr_.n_species; ++s) {
@@ -2651,10 +2761,34 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
         // remembered at each of the eight channels below.
         const double mob_sat = tr_.dissolvedFraction(s, i, ts_cell);
         const double mob_uns = tr_.dissolvedFraction(s, i, theta_uns);
+        const double old_sat=msat,old_uns=muns;
+        const double partition=(s==tr_.age_row||s==tr_.temp_row)?0:tr_.kd[k]*tr_.rho_b[i];
+        const double handover=euler?f.handover+partition*f.grid_volume:f.handover;
+        const double sat_available=std::max(0.,old_sat-pendingSaturatedMassExport(i,s));
+        // Simultaneous old-state Euler exports share each beginning donor.
+        const double sat_request=old_sat*(
+            (std::max(0.,-f.recharge)+f.deep+f.source_out+f.boundary_out+f.dunne)*mob_sat+std::max(0.,handover)*mob_sat)/
+            std::max(f.v_sat0,kTiny);
+        const double uns_request=old_uns*(
+            (std::max(0.,f.recharge)+f.reject)*mob_uns+std::max(0.,-handover)*mob_uns+
+            ((s==tr_.age_row||s==tr_.temp_row)?f.et:0))/std::max(f.v_uns0,kTiny);
+        const double sat_scale=sat_request>sat_available&&sat_request>0?sat_available/sat_request:1;
+        const double uns_scale=uns_request>old_uns&&uns_request>0?old_uns/uns_request:1;
+        double sat_remaining=sat_available,uns_remaining=old_uns;
         auto take = [&](double& m, double vol, double v_store,
                         double mob) -> double {
             if (!(vol > 0.0) || !(v_store > 0.0) || m == 0.0) return 0.0;
             double dm = vol * (m / v_store) * mob;
+            if(euler) {
+                const bool saturated=&m==&msat;const double volume=saturated?f.v_sat0:f.v_uns0;
+                auto& remaining=saturated?sat_remaining:uns_remaining;
+                dm=volume>0?vol*(saturated?old_sat:old_uns)/volume*mob*
+                    (tr_.signedRow(s)?1:(saturated?sat_scale:uns_scale)):0;
+                // A signed temperature-volume has no nonnegative mass
+                // budget. Water already bounds the physical donor; min on
+                // two negatives would empty the whole cold store.
+                if(!tr_.signedRow(s)){dm=std::min(dm,remaining);remaining-=dm;}
+            }
             if (!tr_.signedRow(s) && dm > m) dm = m;
             m -= dm;
             return dm;
@@ -2683,7 +2817,8 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
         //     was carrying when it left the surface cell.
         const double in_m = consumePending(tr_.xacc_from_surface[k]);
         if (in_m != 0.0) {
-            muns += f.refund_mass ? std::max(0.0,in_m-(*f.refund_mass)[us]) : in_m;
+            const double accepted=f.refund_mass?in_m-(*f.refund_mass)[us]:in_m;
+            muns+=(f.refund_mass&&!tr_.signedRow(s))?std::max(0.,accepted):accepted;
             tr_.gained_infil[us] += in_m;
         }
 
@@ -2735,15 +2870,15 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
         //      the same boundary with no flux behind it. Without this the
         //      TOTAL still conserves — the gate would pass — while the two
         //      zones quietly end up holding each other's solute.
-        if (f.handover > 0.0) {
+        if (handover > 0.0) {
             // The moving boundary carries the water's whole content across,
             // sorbed included: the grains themselves change zone when the
             // table passes them. `mob = 1`.
-            const double dm = take(msat, f.handover, v_sat, 1.0);
+            const double dm = take(msat, handover, v_sat, euler?mob_sat:1.0);
             muns += dm;
             tr_.internal_recharge[us] -= dm;
-        } else if (f.handover < 0.0) {
-            const double dm = take(muns, -f.handover, v_uns, 1.0);
+        } else if (handover < 0.0) {
+            const double dm = take(muns, -handover, v_uns, euler?mob_uns:1.0);
             msat += dm;
             tr_.internal_recharge[us] += dm;
         }
@@ -2857,6 +2992,10 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
         }
         tr_.lost_dunne[us] += up;
 
+        if(euler&&s==tr_.age_row) {
+            const double production=f.dt*(f.v_sat0+f.v_uns0);
+            msat+=f.dt*f.v_sat0;muns+=f.dt*f.v_uns0;tr_.generated_age[us]+=production;
+        }
         // (8) T7.2: first-order decay, on the TOTAL mass of both zones —
         //     dissolved and sorbed alike, the usual assumption for a
         //     partitioning solute whose reaction does not care which phase
@@ -2864,7 +3003,7 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
         //     never to age or temperature: `__WATER_AGE__` grows with time
         //     by construction and a temperature does not decay.
         const double kdec = tr_.decay.empty() ? 0.0 : tr_.decay[k];
-        if (kdec > 0.0 && f.dt > 0.0 && s != tr_.age_row && s != tr_.temp_row) {
+        if (!euler && kdec > 0.0 && f.dt > 0.0 && s != tr_.age_row && s != tr_.temp_row) {
             const double keep = std::exp(-kdec * f.dt);
             const double gone = (msat + muns) * (1.0 - keep);
             msat *= keep;
@@ -2872,7 +3011,7 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
             tr_.lost_reaction[us] += gone;
         }
     }
-    reactCell(i,f.dt,f.hg_final);
+    if(!opts_||opts_->reconstruction_order!=2)reactCell(i,f.dt,f.hg_final);
 }
 
 void SubsurfaceSolver::setBoundaries(std::vector<GwResolvedBoundary> rows) {
@@ -2891,6 +3030,30 @@ void SubsurfaceSolver::setSources(std::vector<GwResolvedSource> sources) {
             if (cell.first>=0 && cell.first<state_.n_cells)
                 cell_sources_[static_cast<std::size_t>(cell.first)].push_back({row,cell.second});
 }
+void SubsurfaceSolver::fireGwRk2Cells(double dt,SurfaceStateData& surface,double time) {
+    source_firing_end_=time+dt;
+    if(!active()||!tierHasCells(0))return;
+    const auto& cells=cells_by_tier_[0];prepareRechargeBatch(cells);
+    for(int cell:cells) {
+        fireCell(cell,dt,surface,time);
+        if(heat_.active()&&heat_.cells[cell].failed)
+            throw std::runtime_error(heat_.cells[cell].error.empty()?"Coupled RK2 thermal stage failed.":heat_.cells[cell].error);
+        if(heat_.active()) {
+            if(tr_.n_layers)if(auto error=refreshSigmaPorewater(cell);!error.empty())throw std::runtime_error(error);
+            heat_.refreshView(cell,tr_);
+        }
+    }
+    if(!tier_firings_.empty())++tier_firings_[0];
+}
+void SubsurfaceSolver::advanceRk2Heat(double seconds) {
+    if(!heat_.active()||!(seconds>0))return;
+    if(!std::isfinite(seconds))throw std::runtime_error("Nonfinite coupled thermal interval.");
+    heat_.prepare();
+    for(int i=0;i<state_.n_cells;++i)if(covers(i)) {
+        if(auto error=heat_.conduct(i,seconds,true);!error.empty())throw std::runtime_error(error);
+        heat_.refreshView(i,tr_);
+    }
+}
 void SubsurfaceSolver::fireGwCells(int tier, double dt, SurfaceStateData& surf, double time,
                                    double accepted_end) {
     if (state_.active && tierHasCells(tier))
@@ -2905,6 +3068,7 @@ void SubsurfaceSolver::fireGwCells(int tier, double dt, SurfaceStateData& surf, 
 }
 void SubsurfaceSolver::fireGwCellList(const std::vector<int>& cells, double dt, SurfaceStateData& surf,
                                     double time, double accepted_end) {
+    prepareRechargeBatch(cells);
     for (const int i : cells) {
         const auto u = static_cast<std::size_t>(i);
         const bool exact=accepted_end>=0 && (source_owned_[u] || lid_receipts_enabled_);
@@ -2988,6 +3152,284 @@ void SubsurfaceSolver::settle(SurfaceStateData& surf) {
     (void)surf;
     compactPending();
     accumulators_pending_ = false;
+}
+
+
+void SubsurfaceSolver::prepareRechargeBatch(const std::vector<int>& cells) {
+    if(!recharge_backend_.evaluate)return;
+    recharge_inputs_.clear();
+    for(int cell:cells) {
+        recharge_slots_[cell]=-1;
+        if(state_.closure[cell]!=int8_t(GwClosure::CLOSED_FORM))continue;
+        const double length=state_.zs[cell]-state_.hg[cell];if(!(length>0))continue;
+        const auto p=paramsOf(cell);OpenSwmmGwRechargeInputV1 v{};v.struct_size=sizeof(v);v.law=int(p.law);
+        v.Ks=p.Ks;v.theta_s=p.theta_s;v.theta_r=p.theta_r;v.alpha=p.alpha;v.psi_b=p.psi_b;
+        v.lambda=p.lambda;v.vg_n=p.vg_n;v.vg_L=p.vg_L;v.length=std::max(length,kTiny);v.hu=state_.hu[cell];
+        recharge_slots_[cell]=int(recharge_inputs_.size());recharge_inputs_.push_back(v);
+    }
+    if(recharge_inputs_.empty())return;
+    recharge_values_.resize(recharge_inputs_.size());
+    const int rc=recharge_backend_.evaluate(recharge_inputs_.data(),int(recharge_inputs_.size()),recharge_values_.data(),opts_?opts_->num_threads:1);
+    if(rc!=0||std::any_of(recharge_values_.begin(),recharge_values_.end(),[](double x){return !std::isfinite(x);})) {
+        std::fill(recharge_slots_.begin(),recharge_slots_.end(),-1);recharge_backend_.evaluate=nullptr;
+        recharge_backend_.diagnostic="Recharge extension failed validation; outputs discarded and CPU computation retained";
+        return;
+    }
+    ++recharge_batches_;recharge_cells_+=recharge_inputs_.size();
+}
+double SubsurfaceSolver::rawRecharge(int cell,const soil::Params& p,double length) const noexcept {
+    const int slot=recharge_backend_.evaluate&&std::size_t(cell)<recharge_slots_.size()?recharge_slots_[cell]:-1;
+    // Source/boundary knots can advance a cell more than once in a batch.
+    // Only the exact immutable input may consume the cached pure result.
+    if(slot>=0&&std::size_t(slot)<recharge_values_.size()&&std::size_t(slot)<recharge_inputs_.size()) {
+        const auto& v=recharge_inputs_[slot];
+        if(v.length==length&&v.hu==state_.hu[cell]&&v.law==int(p.law)&&v.Ks==p.Ks&&
+           v.theta_s==p.theta_s&&v.theta_r==p.theta_r&&v.alpha==p.alpha&&v.psi_b==p.psi_b&&
+           v.lambda==p.lambda&&v.vg_n==p.vg_n&&v.vg_L==p.vg_L)return recharge_values_[slot];
+    }
+    return soil::rechargeQ0(p,length,state_.hu[cell]);
+}
+
+std::string SubsurfaceSolver::rk2ProfileError() const {
+    if(!active() || options_.per_subcatch ||
+       !node_beds_.empty() || lid_receipts_enabled_ || runtime_sources_.active() ||
+       std::any_of(source_owned_.begin(),source_owned_.end(),[](bool v){return v;}) ||
+       std::any_of(state_.closure.begin(),state_.closure.end(),[](int8_t v){return v!=int8_t(GwClosure::CLOSED_FORM)&&v!=int8_t(GwClosure::ENSLAVED)&&v!=int8_t(GwClosure::SIGMA);}))
+        return "Coupled RK2 requires spatial CLOSED_FORM/ENSLAVED/SIGMA cells without borrowed source, network or thermal owners.";
+    if(heat_.active()) {
+        if(!heat_.config||tr_.n_species<=0||tr_.temp_row<0||tr_.temp_row>=tr_.n_species||
+           heat_.cells.size()!=std::size_t(state_.n_cells)||heat_.snow_owner||
+           heat_.top_series>=0||heat_.deep_series>=0||
+           heat_.config->options.surface_thermal_bc=="AIR"||heat_.config->options.surface_thermal_bc=="SURFACE_WATER"||
+           heat_.config->options.soil_et_heat!="SENSIBLE_ONLY"||
+           (opts_&&opts_->water_heat_capacity!=heat_.water_capacity))
+            return "Coupled RK2 porous heat requires a temperature row, constant boundaries and no borrowed heat owner.";
+        for(int i=0;i<state_.n_cells;++i)if(covers(i)) {
+            const auto& cell=heat_.cells[i];const auto& column=cell.column;const auto n=column.energy.size();
+            if(cell.surface_owned||cell.failed||!n||column.theta.size()!=n||column.capacity.size()!=n||
+               column.depth_edges.size()!=n+1||cell.saturated_water.size()!=n||cell.reserved_out_water.size()!=n)
+                return "Coupled RK2 porous thermal owner shape or status differs.";
+            const auto& pore=cell.porewater;
+            if((tr_.n_layers||tr_.n_species>1)&&!pore.active())return "Coupled RK2 porous transport has no canonical porewater owner.";
+            if(pore.active()) {
+                if(pore.n_species!=tr_.n_species||pore.temp_row!=tr_.temp_row||pore.age_row!=tr_.age_row||
+                   pore.mass.size()!=n*tr_.n_species||pore.retention.size()!=pore.mass.size()||
+                   pore.reserved_out.size()!=pore.mass.size()||pore.contact_mass.size()!=pore.mass.size()||pore.generated_age.size()!=n)
+                    return "Coupled RK2 porous species or ledger shape differs.";
+                for(std::size_t k=0;k<pore.mass.size();++k)
+                    if(!std::isfinite(pore.mass[k])||pore.mass[k]<0||!std::isfinite(pore.retention[k])||pore.retention[k]<0||
+                       !std::isfinite(pore.reserved_out[k])||pore.reserved_out[k]<0||pore.reserved_out[k]>pore.mass[k]||
+                       !std::isfinite(pore.contact_mass[k])||(int(k/n)==tr_.temp_row&&(pore.mass[k]!=0||pore.reserved_out[k]!=0)))
+                        return "Coupled RK2 porous canonical mass or reservation is inadmissible.";
+                for(double v:pore.generated_age)if(!std::isfinite(v)||v<0)return "Coupled RK2 porous age generation is inadmissible.";
+                for(double v:pore.sigma.pending)if(v!=0)return "Coupled RK2 has an unstaged porous contact receipt.";
+            }
+            for(std::size_t j=0;j<n;++j)
+                if(!std::isfinite(column.energy[j])||!std::isfinite(heat_.activeCapacity(i,j))||!(heat_.activeCapacity(i,j)>0))
+                    return "Coupled RK2 porous energy or active capacity is inadmissible.";
+        }
+    }
+    for(int i=0;i<state_.n_cells;++i)if(covers(i)&&state_.closure[i]==int8_t(GwClosure::ENSLAVED)) {
+        const double equilibrium=soil::equilibriumStorage(paramsOf(i),state_.zs[i]-state_.hg[i]);
+        if(!std::isfinite(state_.hu[i])||!std::isfinite(equilibrium)||
+           std::abs(state_.hu[i]-equilibrium)>1e-12*std::max(1.,std::abs(equilibrium)))
+            return "Coupled RK2 ENSLAVED cells require their actual equilibrium storage.";
+    }
+    for(int i=0;i<state_.n_cells;++i)if(covers(i)&&state_.closure[i]==int8_t(GwClosure::SIGMA)) {
+        if(state_.m_layers<=0||state_.theta_sigma.size()!=std::size_t(state_.m_layers)*state_.n_cells)
+            return "Coupled RK2 SIGMA layer shape differs.";
+        for(int j=0;j<state_.m_layers;++j) {
+            const double theta=state_.theta_sigma[std::size_t(j)*state_.n_cells+i];
+            if(!std::isfinite(theta)||theta<state_.theta_r[i]||theta>state_.theta_s[i])
+                return "Coupled RK2 SIGMA water content is inadmissible.";
+        }
+        const double water=sigma::columnStorage(&state_.theta_sigma[i],state_.m_layers,state_.n_cells,state_.zs[i]-state_.hg[i]);
+        if(!std::isfinite(state_.hu[i])||std::abs(state_.hu[i]-water)>1e-12*std::max(1.,std::abs(water)))
+            return "Coupled RK2 SIGMA bulk water differs from its layer inventories.";
+    }
+    if(tr_.active()) {
+        if(tr_.sat_mass.size()!=std::size_t(tr_.n_species)*state_.n_cells||tr_.unsat_mass.size()!=tr_.sat_mass.size()||
+           tr_.layer_mass.size()!=std::size_t(tr_.n_layers)*tr_.sat_mass.size())
+            return "Coupled RK2 groundwater transport shape differs.";
+        for(const auto* mass:{&tr_.sat_mass,&tr_.unsat_mass,&tr_.layer_mass}) {
+            const auto stride=std::size_t(tr_.n_cells)*(mass==&tr_.layer_mass?tr_.n_layers:1);
+            for(std::size_t k=0;k<mass->size();++k)
+                if(!std::isfinite((*mass)[k])||(int(k/stride)!=tr_.temp_row&&(*mass)[k]<0))
+                    return "Coupled RK2 groundwater transport inventory is inadmissible.";
+        }
+        if(std::any_of(tr_.decay.begin(),tr_.decay.end(),[](double v){return !std::isfinite(v)||v<0;}))
+            return "Coupled RK2 groundwater decay is inadmissible.";
+    }
+    for(const auto& source:sources_)for(const auto& term:source.terms)
+        if(term.row<0||term.row>=tr_.n_species)return "Coupled RK2 well species layout differs.";
+    for(const auto& boundary:boundaries_) {
+        for(const auto& term:boundary.terms)if(term.row<0||term.row>=tr_.n_species)
+            return "Coupled RK2 boundary species layout differs.";
+        for(const auto* values:{&boundary.mass_in,&boundary.mass_out,&boundary.flux_in,&boundary.flux_out})
+            if(values->size()!=std::size_t(tr_.n_species))return "Coupled RK2 boundary receipt shape differs.";
+    }
+    for(const auto* values:{&state_.nacc,&state_.lacc})for(double v:*values)if(v!=0)
+        return "Coupled RK2 cannot consume an unstaged external node/link receipt.";
+    return {};
+}
+
+void SubsurfaceSolver::publishRk2Infiltration(SurfaceStateData& surface,double dt,double time) {
+    for(int i=0;i<state_.n_cells;++i)if(covers(i)) {
+        const auto p=paramsOf(i);const double length=state_.zs[i]-state_.hg[i];
+        const double pond=std::max(0.,surface.depth[i]);double rate=0;
+        if(length>0&&state_.closure[i]==int8_t(GwClosure::SIGMA)) {
+            rate=sourceInfiltrationCapacity(i,pond,dt);
+        } else if(length>0) {
+            const double theta=std::clamp(state_.hu[i]/length,p.theta_r,p.theta_s);
+            const double saturation=std::clamp((theta-p.theta_r)/(p.theta_s-p.theta_r),1e-6,1.);
+            const double suction=state_.closure[i]==int8_t(GwClosure::ENSLAVED)?length:soil::suctionAtSaturation(p,saturation);
+            const double drive=(pond+suction)*(p.theta_s-theta);
+            // The held-interval Green-Ampt integral is an exact scalar
+            // subflow, not a forward-Euler derivative. Smooth SSP stages use
+            // its instantaneous rate. At an unadvanced front the derivative
+            // is singular; retain the finite integral as a bounded startup,
+            // without claiming second order across that singular event.
+            const double front=state_.wetting_front[i];
+            rate=front>0?p.Ks*(1+drive/front):frontIntake(0,drive,p.Ks,dt)/dt;
+        }
+        const double room=infiltrationHeadroom(i);
+        rate=std::min(rate,room/(state_.area[i]*dt));
+        if(!std::isfinite(rate)||rate<0)throw std::runtime_error("Coupled RK2 infiltration rate is inadmissible.");
+        state_.infil_capacity[i]=rate;state_.infil_remaining[i]=room;
+        state_.infil_refresh[i]=time;state_.infil_interval[i]=dt;surface.infil_rate[i]=rate;
+    }
+}
+
+void SubsurfaceSolver::blendRk2Water(const SubsurfaceSolver& initial,double end) {
+    if(auto error=rk2ProfileError();!error.empty())throw std::runtime_error(error);
+    auto& s=state_;const auto& b=initial.state_;
+    const auto blend=[](auto& now,const auto& before) {
+        if(now.size()!=before.size())throw std::runtime_error("Coupled RK2 groundwater shape changed in a stage.");
+        for(std::size_t i=0;i<now.size();++i)now[i]=.5*(before[i]+now[i]);
+    };
+    if(s.hg.size()!=b.hg.size()||s.hu.size()!=b.hu.size())
+        throw std::runtime_error("Coupled RK2 groundwater shape changed in a stage.");
+    for(int i=0;i<s.n_cells;++i) {
+        if(covers(i)&&s.closure[i]==int8_t(GwClosure::ENSLAVED)) {
+            const auto p=paramsOf(i);const double zs=s.zs[i],ts=s.theta_s[i];
+            const double target=.5*((ts*b.hg[i]+b.hu[i])+(ts*s.hg[i]+s.hu[i]));
+            const auto water=[&](double h){return ts*h+soil::equilibriumStorage(p,zs-h);};
+            double lo=0,hi=zs;
+            if(!std::isfinite(target))throw std::runtime_error("Nonfinite coupled RK2 equilibrium storage.");
+            if(target<=water(lo))hi=lo;
+            else if(target>=water(hi))lo=hi;
+            else for(int iteration=0;iteration<80;++iteration) {
+                const double middle=lo+.5*(hi-lo);
+                if(middle==lo||middle==hi)break;
+                if(water(middle)>target)hi=middle;else lo=middle;
+            }
+            // Invert the conserved water, not an arithmetic table-height or
+            // moisture average. A flat capillary fringe maps to saturation.
+            const double h=std::abs(water(lo)-target)<=std::abs(water(hi)-target)?lo:hi;
+            if(std::abs(water(h)-target)>32*std::numeric_limits<double>::epsilon()*std::max(1.,std::abs(target)))
+                throw std::runtime_error("Coupled RK2 equilibrium storage inversion failed.");
+            s.hg[i]=h;s.hu[i]=soil::equilibriumStorage(p,zs-h);
+        } else if(covers(i)&&s.closure[i]==int8_t(GwClosure::SIGMA)) {
+            const double old_length=b.zs[i]-b.hg[i],new_length=s.zs[i]-s.hg[i];
+            const double height=.5*(b.hg[i]+s.hg[i]),dz=(s.zs[i]-height)/s.m_layers;
+            double water=0;
+            for(int j=0;j<s.m_layers;++j) {
+                const auto k=std::size_t(j)*s.n_cells+i;
+                // This is the same conserved-water blend with its common
+                // factors cancelled. Avoid dividing by a near-zero length
+                // obtained by subtracting the averaged table from zs.
+                const double amount=b.theta_sigma[k]*old_length+s.theta_sigma[k]*new_length;
+                const double length=old_length+new_length;
+                s.theta_sigma[k]=rk2SigmaView(length>0?amount/length:s.theta_s[i],s.theta_r[i],s.theta_s[i]);
+                water+=s.theta_sigma[k]*dz;
+            }
+            s.hg[i]=height;s.hu[i]=water;
+        } else {
+            // Both CLOSED_FORM stores are linear canonical inventories.
+            s.hg[i]=.5*(b.hg[i]+s.hg[i]);s.hu[i]=.5*(b.hu[i]+s.hu[i]);
+        }
+    }
+    blend(s.wetting_front,b.wetting_front);
+    blend(s.eacc_L,b.eacc_L);blend(s.eacc_R,b.eacc_R);
+    blend(s.xacc_from_surface,b.xacc_from_surface);blend(s.xacc_to_surface,b.xacc_to_surface);
+    blend(s.et_pending,b.et_pending);blend(s.reject_cumulative,b.reject_cumulative);
+    blend(s.dunne_cumulative,b.dunne_cumulative);blend(s.et_potential_cumulative,b.et_potential_cumulative);
+    blend(s.et_surface_cumulative,b.et_surface_cumulative);blend(s.et_soil_cumulative,b.et_soil_cumulative);
+    blend(s.et_unused_cumulative,b.et_unused_cumulative);
+    for(auto member:{&SubsurfaceState::led_recharge,&SubsurfaceState::led_lateral,&SubsurfaceState::led_deep,
+        &SubsurfaceState::led_node,&SubsurfaceState::led_reject,&SubsurfaceState::led_dunne,
+        &SubsurfaceState::led_caprise,&SubsurfaceState::led_et,&SubsurfaceState::led_infil_in,
+        &SubsurfaceState::led_link,&SubsurfaceState::led_subcatch_in,&SubsurfaceState::led_final_storage,
+        &SubsurfaceState::led_source_in,&SubsurfaceState::led_source_out,
+        &SubsurfaceState::led_boundary_in,&SubsurfaceState::led_boundary_out}) {
+        s.*member=.5*(b.*member+s.*member);
+        if(!std::isfinite(s.*member))throw std::runtime_error("Coupled RK2 groundwater ledger is nonfinite.");
+    }
+    if(boundaries_.size()!=initial.boundaries_.size())throw std::runtime_error("Coupled RK2 boundary shape changed in a stage.");
+    for(std::size_t i=0;i<boundaries_.size();++i)for(auto member:{&GwResolvedBoundary::requested_in,&GwResolvedBoundary::requested_out,
+        &GwResolvedBoundary::applied_in,&GwResolvedBoundary::applied_out}) {
+        auto& value=boundaries_[i].*member;value=.5*(initial.boundaries_[i].*member+value);
+        if(!std::isfinite(value)||value<0)throw std::runtime_error("Coupled RK2 boundary receipt is inadmissible.");
+    }
+    auto& t=tr_;const auto& old=initial.tr_;
+    for(auto member:{&SubsurfaceTransportState::sat_mass,&SubsurfaceTransportState::unsat_mass,
+        &SubsurfaceTransportState::layer_mass,&SubsurfaceTransportState::sacc_L,&SubsurfaceTransportState::sacc_R,
+        &SubsurfaceTransportState::xacc_from_surface,&SubsurfaceTransportState::xacc_to_surface,
+        &SubsurfaceTransportState::nacc_mass,&SubsurfaceTransportState::lacc_mass,&SubsurfaceTransportState::lout_mass,
+        &SubsurfaceTransportState::node_out_mass,&SubsurfaceTransportState::lost_deep,&SubsurfaceTransportState::lost_node,
+        &SubsurfaceTransportState::lost_link,&SubsurfaceTransportState::lost_dunne,&SubsurfaceTransportState::lost_et,
+        &SubsurfaceTransportState::gained_infil,&SubsurfaceTransportState::gained_node,&SubsurfaceTransportState::gained_link,
+        &SubsurfaceTransportState::net_lateral,&SubsurfaceTransportState::gained_source,&SubsurfaceTransportState::lost_source,
+        &SubsurfaceTransportState::boundary_in,&SubsurfaceTransportState::boundary_out,
+        &SubsurfaceTransportState::boundary_flux_in,&SubsurfaceTransportState::boundary_flux_out,
+        &SubsurfaceTransportState::lost_reaction,&SubsurfaceTransportState::generated_age,
+        &SubsurfaceTransportState::gained_contact,&SubsurfaceTransportState::internal_recharge})blend(t.*member,old.*member);
+    for(int species=0;species<t.n_species;++species)for(int i=0;i<t.n_cells;++i)
+        if(t.n_layers)t.refreshUnsat(species,i);
+    for(std::size_t i=0;i<boundaries_.size();++i)for(auto member:{&GwResolvedBoundary::mass_in,&GwResolvedBoundary::mass_out,
+        &GwResolvedBoundary::flux_in,&GwResolvedBoundary::flux_out})blend(boundaries_[i].*member,initial.boundaries_[i].*member);
+    if(heat_.active()) {
+        const auto scalar=[](double& now,double before) {
+            now=.5*before+.5*now;
+            if(!std::isfinite(now))throw std::runtime_error("Coupled RK2 thermal inventory or receipt is nonfinite.");
+        };
+        const auto values=[&](auto& now,const auto& before) {
+            if(now.size()!=before.size())throw std::runtime_error("Coupled RK2 thermal shape changed in a stage.");
+            for(std::size_t k=0;k<now.size();++k)scalar(now[k],before[k]);
+        };
+        for(auto member:{&SubsurfaceSolver::heat_link_out_volume_,&SubsurfaceSolver::heat_preset_out_j_,
+            &SubsurfaceSolver::heat_preset_out_water_,&SubsurfaceSolver::heat_node_out_volume_,
+            &SubsurfaceSolver::heat_node_gathered_out_,&SubsurfaceSolver::porewater_preset_out_,
+            &SubsurfaceSolver::heat_pending_left_,&SubsurfaceSolver::heat_pending_right_})values(this->*member,initial.*member);
+        for(int i=0;i<s.n_cells;++i)if(covers(i)) {
+            auto& cell=heat_.cells[i];const auto& before=initial.heat_.cells[i];
+            values(cell.column.energy,before.column.energy);values(cell.reserved_out_water,before.reserved_out_water);
+            auto& pore=cell.porewater;
+            if(pore.active()) {
+                if(!t.n_layers){values(pore.mass,before.porewater.mass);values(pore.reserved_out,before.porewater.reserved_out);}
+                values(pore.contact_mass,before.porewater.contact_mass);values(pore.generated_age,before.porewater.generated_age);
+            }
+            for(auto member:{&GroundThermalCell::advective_j,&GroundThermalCell::source_j,&GroundThermalCell::surface_j,
+                &GroundThermalCell::deep_j,&GroundThermalCell::latent_j,&GroundThermalCell::lateral_j,
+                &GroundThermalCell::water_contact_j,&GroundThermalCell::channel_contact_j,&GroundThermalCell::lid_contact_j,
+                &GroundThermalCell::vertical_absolute_j})scalar(cell.*member,before.*member);
+            std::vector<double> moisture,saturated;
+            if(auto error=projectGroundMoisture(s,i,s.hg[i],cell.column.depth_edges,moisture,&saturated);!error.empty())throw std::runtime_error(error);
+            if(auto error=cell.column.setMoisture(moisture);!error.empty())throw std::runtime_error(error);
+            cell.saturated_water=std::move(saturated);
+            if(t.n_layers)if(auto error=refreshSigmaPorewater(i);!error.empty())throw std::runtime_error(error);
+            heat_.refreshView(i,t);
+        }
+    }
+    pending_surface_.clear();std::fill(pending_flag_.begin(),pending_flag_.end(),0);
+    for(int i=0;i<s.n_cells;++i)if(covers(i)) {
+        if(!std::isfinite(s.hg[i]) || !std::isfinite(s.hu[i]) || !std::isfinite(s.xacc_to_surface[i]) ||
+           !std::isfinite(s.xacc_from_surface[i]) || s.hg[i]<0 || s.hg[i]>s.zs[i] || s.hu[i]<0 ||
+           s.hu[i]>s.theta_s[i]*(s.zs[i]-s.hg[i])+1e-12)
+            throw std::runtime_error("Coupled RK2 groundwater state is inadmissible.");
+        cell_completed_[i]=end;
+        if(s.xacc_to_surface[i]>0)markPendingSurface(i);
+    }
 }
 
 }  // namespace openswmm::twoD

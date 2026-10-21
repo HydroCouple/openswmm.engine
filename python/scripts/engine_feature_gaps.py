@@ -162,6 +162,7 @@ SECTION_API: dict[str, list[str]] = {
     "2D_BOUNDARY_CONDITIONS": [r"^swmm_2d_.*edge_bc"],
     "2D_EDGE_CONVEYANCE": [r"^swmm_2d_.*conveyance"],
     "2D_INITIAL_QUALITY": [r"^swmm_2d_.*(initial_(quality|conc)|cell_conc)"],
+    "2D_INITIAL_BED_QUALITY": [r"^swmm_2d_.*initial_bed_quality"],
     "2D_BOUNDARY_QUALITY": [r"^swmm_2d_.*(bc_conc|boundary_quality)"],
     "2D_INFILTRATION_OPTIONS": [r"^swmm_infil2d_.*option"],
     "2D_INFILTRATION_DEFAULTS": [r"^swmm_infil2d_.*default"],
@@ -173,6 +174,7 @@ SECTION_API: dict[str, list[str]] = {
     "2D_AQUIFER_OPTIONS": [r"^swmm_gw2d_option"],
     "2D_AQUIFER": [r"^swmm_gw2d_"],
     "2D_AQUIFER_NODE": [r"^swmm_gw2d_.*node"],
+    "2D_AQUIFER_BOUNDARIES": [r"^swmm_gw2d_boundary_"],
     "2D_AQUIFER_LINKS": [r"^swmm_gw2d_.*link"],
     # Groundwater transport
     "GW_TRANSPORT_OPTIONS": [r"^swmm_gw_transport_option"],
@@ -203,6 +205,11 @@ SECTION_API: dict[str, list[str]] = {
     "REACTION_SUBCATCHMENTS": [r"^swmm_reactions?_.*(subcatch|scope|expr)", r"^swmm_reactions_(apply_text|serialize)$"],
     "REACTION_SOURCES": [r"^swmm_reactions?_.*source", r"^swmm_reactions_(apply_text|serialize)$"],
     "REACTION_QUALITY": [r"^swmm_reactions?_.*(quality|initial)", r"^swmm_reactions_(apply_text|serialize)$"],
+    # These authored domains are exposed through the transactional text API.
+    "REACTION_BUILDUP": [r"^swmm_reactions_(apply_text|serialize)$"],
+    "REACTION_LIDS": [r"^swmm_reactions_(apply_text|serialize)$"],
+    "REACTION_SUBSURFACE": [r"^swmm_reactions_(apply_text|serialize)$"],
+    "REACTION_WALLS": [r"^swmm_reactions_(apply_text|serialize)$"],
     "REACTION_RAINFALL": [r"^swmm_reaction_rain_conc_", r"^swmm_reactions_(apply_text|serialize)$"],
     "REACTION_PATTERNS": [r"^swmm_reactions?_.*pattern", r"^swmm_reactions_(apply_text|serialize)$"],
     "REACTION_REPORT": [r"^swmm_reactions?_.*report", r"^swmm_reactions_(apply_text|serialize)$"],

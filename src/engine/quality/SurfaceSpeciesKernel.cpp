@@ -44,6 +44,7 @@ void step(SimulationContext& ctx, Block& b, double dt_runoff,
         const double ucf_landarea_sq = ucf::UCF(ucf::LANDAREA, ctx.options);
         for (int i = 0; i < ctx.n_subcatches(); ++i) {
             auto ui = static_cast<std::size_t>(i);
+            const bool reacted_pool=b.ponded_reacted_mass && (!b.ponded_reactor_mask || (*b.ponded_reactor_mask)[ui]);
             // `q` is legacy's Voutflow / tStep — the PRE-LID runoff volume
             // rate. stepSurfaceQuality runs before the LID block subtracts
             // the captured share (A4c precedes A6), exactly as legacy's
@@ -75,7 +76,7 @@ void step(SimulationContext& ctx, Block& b, double dt_runoff,
             {
                 const double lid_ft2_sc = (ui < ctx.subcatches.total_lid_area_ft2.size())
                                         ? ctx.subcatches.total_lid_area_ft2[ui] : 0.0;
-                if (lid_ft2_sc > 0.0) {
+                if (lid_ft2_sc > 0.0 && !(b.lid_reactor_mask&&ui<b.lid_reactor_mask->size()&&(*b.lid_reactor_mask)[ui])) {
                     q_out1 += ctx.subcatches.rainfall[ui] * lid_ft2_sc;
                     if (area_ft2_sc == lid_ft2_sc)
                         q_out1 += ctx.subcatches.runon_rate[ui] * area_ft2_sc;
@@ -545,17 +546,24 @@ void step(SimulationContext& ctx, Block& b, double dt_runoff,
                                       dt_runoff
                                 : 0.0;
                         double w_total_pq  = w_mass_pq + w_rain_pq + w_runon_pq;
-                        double c_ponded_pq = w_total_pq / v_inflow_pq;  // mg/ft3
+                        double c_ponded_pq = reacted_pool ? 0.0 : w_total_pq / v_inflow_pq;  // mg/ft3
+                        if (reacted_pool) {
+                            w_total_pq = (*b.ponded_reacted_mass)[sq_idx];
+                        }
 
                         // Mass lost to infiltration
-                        double w_infil_pq = std::min(c_ponded_pq * v_infil_pq, w_total_pq);
+                        double w_infil_pq = b.ponded_reacted_mass
+                            ? w_total_pq * std::clamp(v_infil_pq / v_inflow_pq, 0.0, 1.0)
+                            : std::min(c_ponded_pq * v_infil_pq, w_total_pq);
                         w_total_pq -= w_infil_pq;
                         // Ledger booking → user mass (legacy INFIL_LOAD, lbs/kg)
                         if (w_infil_pq > 0.0 && up < (*b.led_infil_loss).size())
                             (*b.led_infil_loss)[up] += w_infil_pq * mcf_p;
 
                         // Mass carried out with runoff outflow
-                        double w_outflow_pq = std::min(c_ponded_pq * v_outflow_pq, w_total_pq);
+                        double w_outflow_pq = b.ponded_reacted_mass
+                            ? std::min((w_total_pq + w_infil_pq) * std::clamp(v_outflow_pq / v_inflow_pq, 0.0, 1.0), w_total_pq)
+                            : std::min(c_ponded_pq * v_outflow_pq, w_total_pq);
                         w_total_pq -= w_outflow_pq;
 
                         // legacy reduces the ponded outflow load by the land
@@ -584,7 +592,7 @@ void step(SimulationContext& ctx, Block& b, double dt_runoff,
                         // the pool to nothing: a subcatchment shed its
                         // rainfall-borne load the instant the rain stopped
                         // instead of releasing it down the recession.
-                        (*b.ponded_qual)[sq_idx] = std::max(
+                        (*b.ponded_qual)[sq_idx] = reacted_pool ? std::max(w_total_pq, 0.0) : std::max(
                             c_ponded_pq * ctx.subcatches.ponded_depth[ui] *
                                 area_ft2_pq,
                             0.0);
@@ -598,7 +606,8 @@ void step(SimulationContext& ctx, Block& b, double dt_runoff,
                 // full subcatchment (all runon arrives on the LID surface).
                 if (ui < ctx.subcatches.total_lid_area_ft2.size()) {
                     double lid_ft2 = ctx.subcatches.total_lid_area_ft2[ui];
-                    if (lid_ft2 > 0.0 && dt_runoff > 0.0) {
+                    if (lid_ft2 > 0.0 && dt_runoff > 0.0 &&
+                        !(b.lid_reactor_mask&&ui<b.lid_reactor_mask->size()&&(*b.lid_reactor_mask)[ui])) {
                         constexpr double L_PER_FT3_37 = 28.317;
                         // legacy `vLidRain = Subcatch[j].rainfall * lidArea *
                         // tStep`, and Subcatch[j].rainfall is INTERNAL ft/sec.
@@ -752,6 +761,15 @@ void bookPostLid(SimulationContext& ctx, Block& b, double dt_runoff,
         const auto ui = static_cast<std::size_t>(i);
         if (ctx.subcatches.area[ui] <= 0.0) continue;
 
+        if(b.lid_reactor_mask&&ui<b.lid_reactor_mask->size()&&(*b.lid_reactor_mask)[ui]) {
+            const bool reaches=ctx.subcatches.outlet_node[ui]>=0||ctx.subcatches.outlet_subcatch[ui]==i;
+            for(int sp=0;sp<np;++sp) {
+                const auto k=ui*std::size_t(np)+sp;
+                const double mass=(*b.conc)[k]*ctx.subcatches.runoff[ui]*dt_runoff*28.317*(*b.mcf)[sp];
+                (*b.total_load)[k]+=mass;if(reaches)(*b.led_runoff_load)[sp]+=mass;
+            }
+            continue;
+        }
         const double v_out1 = (ui < ctx.subcatches.washoff_vout1.size())
                             ? ctx.subcatches.washoff_vout1[ui] : 0.0;
         // POST-LID: `runoff` carries the units' effect by now (A6b), and the

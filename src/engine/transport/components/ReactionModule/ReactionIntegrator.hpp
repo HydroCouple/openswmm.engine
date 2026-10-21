@@ -54,6 +54,7 @@
 #define OPENSWMM_ENGINE_TRANSPORT_REACTION_INTEGRATOR_HPP
 
 #include <string>
+#include <span>
 #include <vector>
 
 #include "../../../data/ReactionData.hpp"
@@ -65,9 +66,21 @@ namespace openswmm::transport {
 /// adaptivity (substepping) is internal and only reported.
 struct RxStepReport {
     bool ok            = true;
+    bool interval_limit = false; ///< work/floor limit: caller may retry a smaller interval
     int  substeps      = 0;   ///< RATE substeps actually taken
     int  newton_iters  = 0;   ///< EQUIL + implicit-solver Newton iterations
     std::string error;        ///< set when !ok
+};
+// Several aqueous phase contexts may contribute RATE terms to the same
+// physical inventory. Each scale is phase aqueous volume / shared capacity.
+// All contexts see the same species state at every integrator evaluation.
+// Algebraic phase projections retain their separate existing contract.
+struct RxRateContext {
+    const std::vector<ReactionExprForm>* forms=nullptr;
+    const std::vector<RxExprSpan>* expressions=nullptr;
+    double* hydvar=nullptr;
+    const double* pollutants=nullptr;
+    const double* kinetic_scale=nullptr;
 };
 
 /// Caller-owned scratch; size once per (thread × reaction system). The
@@ -121,10 +134,21 @@ public:
                              const std::vector<ReactionExprForm>& forms,
                              const std::vector<RxExprSpan>& expressions,double dt,
                              double* species,double* hydvar,RxWorkspace& ws,
-                             const double* pollutants=nullptr,const double* kinetic_scale=nullptr);
+                             const double* pollutants=nullptr,const double* kinetic_scale=nullptr,
+                             const double* coefficients=nullptr,std::span<const RxRateContext> contexts={});
+    // Opt-in transactional retry for an owned interval. Only a work/floor limit
+    // permits bisection; invalid laws and Newton failures retain their error.
+    // Tolerances are unchanged, and failure restores every supplied species.
+    static RxStepReport stepSubcycled(const ReactionData& rx,
+                             const std::vector<ReactionExprForm>& forms,
+                             const std::vector<RxExprSpan>& expressions,double dt,
+                             double* species,double* hydvar,RxWorkspace& ws,
+                             const double* pollutants=nullptr,const double* kinetic_scale=nullptr,
+                             const double* coefficients=nullptr,std::span<const RxRateContext> contexts={});
     static RxStepReport step(const ReactionData& rx, bool tank, double dt,
                              double* species, double* hydvar, RxWorkspace& ws,
-                             const double* pollutants = nullptr);
+                             const double* pollutants = nullptr,
+                             const double* coefficients = nullptr);
 };
 
 }  // namespace openswmm::transport

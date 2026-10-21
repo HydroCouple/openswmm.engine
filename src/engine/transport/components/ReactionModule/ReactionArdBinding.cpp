@@ -32,6 +32,7 @@
 
 #include "../../../core/SimulationContext.hpp"
 #include "ReactionIntegrator.hpp"
+#include "ReactionGeometry.hpp"
 
 namespace openswmm::transport {
 
@@ -42,12 +43,15 @@ namespace {
 /// BindingScratch pattern). Re-inited when the species count changes.
 struct ArdScratch {
     RxWorkspace ws;
+    std::vector<double> coefficients;
     std::vector<double> msx;     ///< [n_msx] gathered MSX block
     std::vector<double> pollut;  ///< [n_pollut] gathered pollutant block
+    int sized_terms = -1;
     int sized_species = -1;
     int sized_pollut  = -1;
     void ensure(const ReactionData& rx, int np) {
-        if (sized_species != rx.n_species()) {
+        if (sized_species != rx.n_species() || sized_terms != static_cast<int>(rx.term_name.size())) {
+            sized_terms = static_cast<int>(rx.term_name.size());
             ws.init(rx);
             msx.assign(static_cast<std::size_t>(rx.n_species()), 0.0);
             sized_species = rx.n_species();
@@ -89,7 +93,7 @@ void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
                    const double* cell_a, const double* cell_dx, int n_cells,
                    double* node_mass, const double* node_vol, int n_nodes,
                    int n_pollut, int ns_total, double min_store_vol,
-                   int temp_row) {
+                   int temp_row, const int* cell_conduit, const int* conduit_link) {
     if (dt <= 0.0) return;
 
     const auto unc = static_cast<std::size_t>(n_cells);
@@ -157,6 +161,8 @@ void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
             sc.pollut[static_cast<std::size_t>(p)] =
                 cell_phi[static_cast<std::size_t>(p) * unc + ucell];
         hydvar[static_cast<int>(RxHydVar::HRT)] = 0.0;
+        const int link=cell_conduit&&conduit_link?conduit_link[cell_conduit[c]]:-1;
+        hydvar[static_cast<int>(RxHydVar::AV)] = rx.wall_geometry&&link>=0?reactionAreaVolume(ctx,true,link,ctx.links.volume[link]):0;
         // TEMP: the cell's own heat-transport temperature row when the mesh
         // carries one, else the [REACTION_OPTIONS] TEMPERATURE constant.
         hydvar[static_cast<int>(RxHydVar::TEMP)] =
@@ -166,7 +172,8 @@ void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
 
         const auto rep = ReactionIntegrator::step(
             rx, /*tank=*/false, dt, sc.msx.data(), hydvar, sc.ws,
-            (n_pollut > 0) ? sc.pollut.data() : nullptr);
+            (n_pollut > 0) ? sc.pollut.data() : nullptr,
+            rx.coefficients(true, cell_conduit && conduit_link ? conduit_link[cell_conduit[c]] : -1, sc.coefficients));
         if (rep.ok) {
             if (clampRateSpecies(rx, false, sc.msx.data(), nullptr) > 0.0)
                 noteNegativeClamp(ctx, "a transport cell");
@@ -183,6 +190,7 @@ void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
         const auto und = static_cast<std::size_t>(nd);
         const double vol = node_vol[und];
         if (vol <= min_store_vol) continue;  // no meaningful concentration
+        hydvar[static_cast<int>(RxHydVar::AV)] = rx.wall_geometry?reactionAreaVolume(ctx,false,nd,vol):0.;
         for (int m = 0; m < nm; ++m)
             sc.msx[static_cast<std::size_t>(m)] =
                 node_mass[und * uns + static_cast<std::size_t>(n_pollut + m)] /
@@ -202,7 +210,8 @@ void reactArdStage(SimulationContext& ctx, double dt, double* cell_phi,
 
         const auto rep = ReactionIntegrator::step(
             rx, /*tank=*/true, dt, sc.msx.data(), hydvar, sc.ws,
-            (n_pollut > 0) ? sc.pollut.data() : nullptr);
+            (n_pollut > 0) ? sc.pollut.data() : nullptr,
+            rx.coefficients(false, nd, sc.coefficients));
         if (rep.ok) {
             if (clampRateSpecies(rx, true, sc.msx.data(), nullptr) > 0.0)
                 noteNegativeClamp(ctx, "a node store");

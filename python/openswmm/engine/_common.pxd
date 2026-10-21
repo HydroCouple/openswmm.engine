@@ -723,6 +723,8 @@ cdef extern from "openswmm_tables.h":
     cdef int         swmm_table_count(SWMM_Engine e)
     cdef int         swmm_table_index(SWMM_Engine e, const char* id)
     cdef const char* swmm_table_id(SWMM_Engine e, int idx)
+    int swmm_table_rename(SWMM_Engine, int, const char*)
+    int swmm_table_set_type(SWMM_Engine, int, int)
     cdef int         swmm_table_get_type(SWMM_Engine e, int idx, int* type)
     # Creation
     cdef int swmm_timeseries_add(SWMM_Engine e, const char* id)
@@ -1435,7 +1437,27 @@ cdef extern from "openswmm_xsect.h":
                                              int n, double* out) nogil
 
 
+cdef extern from "openswmm_callbacks.h":
+    ctypedef int (*SWMM_CancelCallback)(SWMM_Engine, int, int, void*) noexcept nogil
+
 cdef extern from "openswmm_heat.h":
+    ctypedef void* SWMM_ConfigSnapshot
+    SWMM_ConfigSnapshot swmm_config_snapshot_create(SWMM_Engine)
+    int swmm_config_snapshot_restore(SWMM_Engine, SWMM_ConfigSnapshot)
+    void swmm_config_snapshot_destroy(SWMM_ConfigSnapshot)
+    ctypedef struct SWMM_ChannelGroundPreview:
+        unsigned int struct_size
+        int link
+        int valid
+        int contact_cells
+        int contact_intervals
+        double length_m
+        double covered_length_m
+        double uncovered_length_m
+        char reason[256]
+    int swmm_heat_preview_channel_ground_map(SWMM_Engine, int, SWMM_ChannelGroundPreview*, SWMM_ChannelGroundContact*, int, int*) nogil
+    int swmm_heat_preview_channel_ground_map_with_progress(SWMM_Engine, int, SWMM_ChannelGroundPreview*, SWMM_ChannelGroundContact*, int, int*, SWMM_CancelCallback, void*) nogil
+    int swmm_heat_preview_channel_ground_map_page(SWMM_Engine, int, SWMM_ChannelGroundPreview*, int, SWMM_ChannelGroundContact*, int, int*, SWMM_CancelCallback, void*) nogil
     ctypedef void* SWMM_HeatSnapshot
     ctypedef int (*SWMM_HydrothermalEdit)(SWMM_Engine, void*) noexcept
     int swmm_hydrothermal_edit_atomic(SWMM_Engine, SWMM_HydrothermalEdit, void*)
@@ -1739,3 +1761,36 @@ cdef inline int _resolve_index(
     raise TypeError(
         f"{obj_name} key must be int or str, got {type(key).__name__}"
     )
+
+cdef extern from "openswmm_climate.h":
+    ctypedef struct SWMM_EvapPreviewSample:
+        double date
+        double source_rate
+        double adjustment
+        double effective_rate
+        int status
+    ctypedef struct SWMM_EvapPreviewSummary:
+        int source_type
+        int available_count
+        int held_count
+        int missing_count
+        int estimated_count
+        int runtime_forcing_unknown
+        double minimum_rate
+        double maximum_rate
+    ctypedef struct SWMM_EvapPreviewConfig:
+        int evap_type
+        double evap_monthly[12]
+        double pan_coeff[12]
+        double adjust_evaporation[12]
+        const char* evap_timeseries
+        int temp_source
+        const char* temp_timeseries
+        const char* climate_file_path
+        double climate_file_start
+        int climate_file_temp_units
+        double latitude
+        double longitude_correction_minutes
+        double adjust_temperature[12]
+    int swmm_climate_preview_evaporation(SWMM_Engine, double, double, double, SWMM_EvapPreviewSample*, int, int*, SWMM_EvapPreviewSummary*, char*, int) nogil
+    int swmm_climate_preview_evaporation_with_config(SWMM_Engine, const SWMM_EvapPreviewConfig*, double, double, double, SWMM_EvapPreviewSample*, int, int*, SWMM_EvapPreviewSummary*, char*, int) nogil

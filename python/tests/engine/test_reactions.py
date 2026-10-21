@@ -729,5 +729,27 @@ class TestReactionText(_ReactionsCase):
                 self.assertIsInstance(repr(view), str)
 
 
+class TestWetSubcatchmentScope(_ReactionsCase):
+    def test_scope_get_set_validate_and_text_roundtrip(self):
+        solver = self.opened_solver()
+        reactions = solver.reactions
+        species = reactions.species[0]
+        self.assertEqual(int(ReactionScope.SUBCATCHMENT), 4)
+        species.set_expression(ReactionScope.SUBCATCHMENT, ReactionExprForm.RATE, "-Kb * X")
+        form, expression = species.get_expression(ReactionScope.SUBCATCHMENT)
+        self.assertEqual(form, ReactionExprForm.RATE)
+        self.assertEqual(expression, "-Kb * X")
+        self.assertTrue(reactions.validate("TEMP * X", ReactionScope.SUBCATCHMENT).valid)
+        for invalid in ("HRT", "D", "TSS", "GW_THETA"):
+            self.assertFalse(reactions.validate(invalid, ReactionScope.SUBCATCHMENT).valid)
+        before = reactions.serialize()
+        self.assertIn("[REACTION_SUBCATCHMENTS]", before)
+        with self.assertRaises(BadParamError):
+            species.set_expression(ReactionScope.SUBCATCHMENT, ReactionExprForm.RATE, "HRT")
+        self.assertEqual(reactions.serialize(), before)
+        reactions.apply_text(before)
+        self.assertEqual(reactions.serialize(), before)
+
+
 if __name__ == "__main__":
     unittest.main()

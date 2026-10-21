@@ -597,11 +597,20 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                 "couple: " + first_names(unmapped));
 
         // Exchange law, structure and coefficients of every junction point
-        // (the ORIFICE law keeps its map-row cd/area and returns early).
+        // (the ORIFICE law keeps its map-row cd/area and returns early); an
+        // outfall's SPREAD (project length → m) and TAILWATER_RELAX (s).
         for (auto& cp : coupling_points_) {
-            if (cp.is_outfall) continue;
-            resolveExchangeStructure(cp, mesh_, ctx, options_,
-                                     row_of_node[static_cast<std::size_t>(cp.node_idx)],
+            const int row = row_of_node[static_cast<std::size_t>(cp.node_idx)];
+            if (cp.is_outfall) {
+                if (row < 0) continue;
+                const auto& p = rows.params[static_cast<std::size_t>(row)];
+                const double spread = p[static_cast<std::size_t>(NodeCoupling2DKey::SPREAD)];
+                const double relax  = p[static_cast<std::size_t>(NodeCoupling2DKey::TAILWATER_RELAX)];
+                if (spread > 0.0) cp.spread = spread * mesh_to_si;
+                if (relax > 0.0)  cp.tw_relax = relax;
+                continue;
+            }
+            resolveExchangeStructure(cp, mesh_, ctx, options_, row,
                                      type_of(cp.node_idx), mesh_to_si);
         }
     }
@@ -873,8 +882,16 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             if (queue.size() > kMaxCells) queue.resize(kMaxCells);
             coupling_head_cells_.insert(coupling_head_cells_.end(), queue.begin(), queue.end());
         };
-        for (const auto& cp : coupling_points_) {
-            if (cp.is_outfall) continue;
+        for (auto& cp : coupling_points_) {
+            if (cp.is_outfall) {
+                // An outfall's tailwater samples the same way (plan §6 O3).
+                if (options_.coupling_head != CouplingHead2D::CELL) {
+                    cp.head_begin = static_cast<int>(coupling_head_cells_.size());
+                    add_head_cells(cp, cp.cell_idx);
+                    cp.head_end = static_cast<int>(coupling_head_cells_.size());
+                }
+                continue;
+            }
             CouplingPoint sc = cp;
             if (options_.coupling_head != CouplingHead2D::CELL) {
                 sc.head_begin = static_cast<int>(coupling_head_cells_.size());
@@ -1097,6 +1114,8 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                         "' — declare it in [POLLUTANTS] / the reactions "
                         "component, or name __WATER_AGE__ / __TEMPERATURE__ "
                         "with that option on.");
+                if(!std::isfinite(r.conc)||(r.conc<0&&!tr.signedRow(sp)))
+                    throw std::runtime_error("[2D_BOUNDARY_QUALITY] negative values require the active temperature row; all values must be finite.");
                 // S4b: the age row is authored in HOURS like the 1D
                 // [INITIAL_QUALITY] / water-age sources and carried in
                 // seconds internally (D-A21).
@@ -1212,8 +1231,6 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             "[2D_OPTIONS] GROUNDWATER NO — the [2D_AQUIFER*] rows are kept "
             "but no subsurface runs this simulation.");
     if (gw_wanted && !aquifer_cfg_.empty()) {
-        if (options_.reconstruction_order == 2)
-            throw std::runtime_error("[2D_AQUIFER] groundwater is not advanced by the RK2 surface route; select RECONSTRUCTION_ORDER 1 for coupled groundwater runs.");
         auto* marcher = dynamic_cast<ExplicitInertialSolver*>(solver_.get());
         if (marcher == nullptr)
             throw std::runtime_error(
@@ -1582,6 +1599,8 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             return tr.rowIndex(name);   // S4: any carried row; -1 if absent
         };
         auto seed = [&](int sp, int c, double conc) {
+            if(!std::isfinite(conc)||(conc<0&&!tr.signedRow(sp)))
+                throw std::runtime_error("[2D_INITIAL_QUALITY] negative values require the active temperature row; all values must be finite.");
             // S4b: `__WATER_AGE__` is authored in hours (the 1D convention,
             // InitialQualitySeeds::initialAgeSecondsFor) and stored in seconds.
             if (sp == tr.age_row) conc *= 3600.0;
@@ -1724,7 +1743,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     if(auto error=configureGroundLidOwners(ctx,mesh_,subsurface_.heat(),subsurface_.nodeBeds());!error.empty())
         throw std::runtime_error("[2D LID heat] "+error);
     configureSnowGroundContacts();
-    if((state_.heat.ground_column || !ctx.reactions.subsurface_laws.empty())&&subsurface_.heat().active())
+    if((state_.heat.ground_column || subsurface_.transport().n_layers>0 || !ctx.reactions.subsurface_laws.empty())&&subsurface_.heat().active())
         if(auto error=subsurface_.initPorewater();!error.empty())throw std::runtime_error("[2D porewater] "+error);
     if(state_.heat.ground_column&&!subsurface_.transport().generated_age.empty()&&
        (state_.transport.n_species!=subsurface_.transport().n_species||
@@ -1734,6 +1753,26 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         for(const auto& cell:subsurface_.heat().cells)
             if(!cell.column.energy.empty()&&!cell.surface_owned)
                 throw std::runtime_error("[2D ground heat] SURFACE_WATER requires active HEAT_MODEL COUPLED and BED_HEAT_MODEL GROUND_COLUMN.");
+    if(subsurface_.active()) {
+        bool closed_form=false;
+        const auto& water=subsurface_.state();
+        for(int i=0;i<water.n_cells;++i)closed_form|=subsurface_.covers(i)&&water.closure[i]==int8_t(GwClosure::CLOSED_FORM);
+        GwRechargeBackend backend;
+        if(closed_form)backend=makeGwRechargeBackend(options_,water.n_cells);
+        else backend.diagnostic="No CLOSED_FORM cells; groundwater operators use CPU";
+        subsurface_.setRechargeBackend(std::move(backend));
+        if(subsurface_.rechargeBackend().evaluate)
+            ctx.warnings.push_back("Groundwater raw recharge: Kokkos OpenMP host operator available; water, receipts, transport, reactions and heat remain CPU-owned.");
+    }
+    if(subsurface_.active()&&options_.reconstruction_order==2) {
+        auto* cpu=dynamic_cast<ExplicitInertialSolver*>(solver_.get());
+        if(options_.momentum!=Momentum2D::FULL_SWE||!cpu||!coupling_points_.empty()||
+           !aquifer_link_shares_.empty()||!subcatch_recharge_.empty()||ctx.n_subcatches()!=0)
+            throw std::runtime_error("Coupled groundwater RK2 requires the standalone FULL_SWE transport/age profile; network and catchment owners remain unqualified.");
+        if(auto error=cpu->configureRk2Reactions(ctx);!error.empty())throw std::runtime_error(error);
+        if(auto error=cpu->rk2CheckpointProfile();!error.empty())throw std::runtime_error(error);
+        ctx.warnings.push_back("Coupled groundwater SSP-RK2: CLOSED_FORM/ENSLAVED/SIGMA transport/age CPU profile with symmetric groundwater/surface reactions, global stepping and knot-aligned wells and aquifer HEAD/FLOW edges. Singular wetting-front startup is bounded without a second-order claim.");
+    }
     infil_elapsed_ = 0.0;
     if (infil_.active()) {
         // Publish an initial held rate so the very first substep infiltrates
@@ -1856,7 +1895,8 @@ void SurfaceRouter2D::updateOutfallsPreRouting(SimulationContext& ctx, double dt
          joint_hydraulic_->checkpoint_time_ != ctx.current_time ||
          joint_hydraulic_->checkpoint_step_end_ != ctx.current_time + dt))
         throw std::invalid_argument("Joint outfall preparation requires its tracked hydraulic interval and an unused reservation.");
-    updateOutfallBoundaries(coupling_points_, mesh_, state_, ctx, options_);
+    updateOutfallBoundaries(coupling_points_, mesh_, state_, ctx, options_, dt);
+    outfall_exchange_.recordTailwater(ctx, dt);
     outfall_exchange_.prepare(mesh_, state_, options_, ctx, dt);
     // Pre-routing too (before the hydraulic state rolls): the routing step
     // about to run starts from the relaxed pond.
@@ -2913,11 +2953,20 @@ void SurfaceRouter2D::applyAgingAndReactions(SimulationContext& ctx, double dt) 
     if (!tr.active() || !(dt > 0.0)) return;
     const auto nt = static_cast<std::size_t>(tr.n_cells);
 
+#ifdef OPENSWMM_HAS_2D
+    if(subsurface_.active()&&options_.momentum==Momentum2D::FULL_SWE&&options_.reconstruction_order==2) {
+        auto* cpu=dynamic_cast<ExplicitInertialSolver*>(solver_.get());
+        if(!cpu)throw std::runtime_error("RK2 surface reaction owner is unavailable.");
+        cpu->syncRk2ReactionReport(ctx);
+        return;
+    }
+#endif
+
     // A1a on the surface: d(age)/dt = 1, exactly — the age row is an
     // age-VOLUME, so += dt·V advances the mean age of every cell's water by
     // dt at constant volume. Dry cells hold ~0 volume and stay put. Lie-split
     // after the advance like the ARD engine's aging stage.
-    if (tr.age_row >= 0) {
+    if (tr.age_row >= 0 && !(subsurface_.active()&&options_.momentum==Momentum2D::FULL_SWE&&options_.reconstruction_order==2)) {
         const auto ar = static_cast<std::size_t>(tr.age_row);
         for (std::size_t c = 0; c < nt; ++c)
             tr.cell_mass[ar * nt + c] += dt * state_.volume[c];
@@ -3021,6 +3070,13 @@ void SurfaceRouter2D::finalize(SimulationContext& ctx) {
     source_boundary_ready_ = false;
 }
 
+
+double SurfaceRouter2D::surfaceReactionLoss(int row) const noexcept {
+#ifdef OPENSWMM_HAS_2D
+    if(const auto* cpu=dynamic_cast<const ExplicitInertialSolver*>(solver_.get()))return cpu->surfaceReactionLoss(row);
+#endif
+    return 0;
+}
 
 double SurfaceRouter2D::totalVolume() const {
     // Volume is the integrated state — sum it directly (for a partly-wet cell

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 #include "PorousHeat.hpp"
+#include "SigmaPorewaterMap.hpp"
 #include <utility>
 namespace openswmm::twoD {
 // Species-major canonical mass in the existing fixed physical soil layers.
@@ -13,6 +14,9 @@ struct GroundPorewaterColumn {
     // only mass - reserved_out; the canonical mass still owns the queued
     // packet until its existing gather consumes it.
     std::vector<double> mass,retention,initial_mass,contact_mass,reserved_out,generated_age;
+    SigmaPorewaterMap sigma;
+    std::string publishSigma(SubsurfaceTransportState&,int cell);
+    void refreshSigmaView();
     bool active() const noexcept {return n_species>0;}
     std::string initialize(const PorousHeatColumn&,const std::vector<double>& saturated_water,
         const std::vector<double>& saturated_mass,const std::vector<double>& unsaturated_mass,

@@ -99,6 +99,16 @@ int swmm_2d_is_active(SWMM_Engine engine, int* active) {
     return SWMM_OK;
 }
 
+int swmm_2d_set_auto_backend_cpu(SWMM_Engine engine, int enabled) {
+    GET_ENGINE(engine);
+    if (enabled != 0 && enabled != 1) return SWMM_ERR_BADPARAM;
+    using S = openswmm::EngineState;
+    if (eng->context().state != S::OPENED && eng->context().state != S::BUILDING)
+        return SWMM_ERR_LIFECYCLE;
+    eng->surfaceRouter2D().options().auto_backend_cpu = enabled != 0;
+    return SWMM_OK;
+}
+
 int swmm_2d_prepare_for_edit(SWMM_Engine engine) {
     GET_ENGINE(engine);
     CHECK_2D_MESH(eng);
@@ -501,7 +511,11 @@ int swmm_2d_add_triangle_coupling(SWMM_Engine engine, int tri_idx,
     CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
     if (!node_name || node_name[0] == '\0') return SWMM_ERR_BADPARAM;
-    if (cd <= 0.0 || area <= 0.0) return SWMM_ERR_BADPARAM;
+    // NaN = not authored (a map row without that token): the row takes
+    // [2D_OPTIONS] COUPLING_CD / the structure's area, and the .inp writer
+    // leaves the token out.
+    const bool cd_set = !std::isnan(cd), area_set = !std::isnan(area);
+    if ((cd_set && !(cd > 0.0)) || (area_set && !(area > 0.0))) return SWMM_ERR_BADPARAM;
 
     auto& m = router2d.mesh();
     openswmm::twoD::MeshData::TriCouplingRow row;
@@ -510,17 +524,17 @@ int swmm_2d_add_triangle_coupling(SWMM_Engine engine, int tri_idx,
     // Resolve now; -1 (unknown) is tolerated — the .inp writer emits the
     // stored name regardless (same rule as swmm_2d_set_vertex_coupled_node).
     row.node = eng->context().node_names.find(node_name);
-    row.cd   = cd;
-    row.cd_set = true;
-    row.area = area;
-    row.area_set = true;
+    if (cd_set) row.cd = cd;
+    row.cd_set = cd_set;
+    if (area_set) row.area = area;
+    row.area_set = area_set;
     m.tri_couplings.push_back(std::move(row));
 
     // Keep the legacy per-triangle mirror coherent (last row wins).
     m.tri_coupled_node_name[tri_idx] = node_name;
     m.tri_coupled_node[tri_idx]      = m.tri_couplings.back().node;
-    m.tri_coupling_cd[tri_idx]       = cd;
-    m.tri_coupling_area[tri_idx]     = area;
+    m.tri_coupling_cd[tri_idx]       = m.tri_couplings.back().cd;
+    m.tri_coupling_area[tri_idx]     = m.tri_couplings.back().area;
     return SWMM_OK;
 }
 

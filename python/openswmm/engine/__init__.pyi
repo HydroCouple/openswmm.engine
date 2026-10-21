@@ -226,7 +226,7 @@ __all__: list[str]
 
 # Native climate, transport, writer and unit-system selectors.
 from ._enums import (
-    EvapType as EvapType, TempSource as TempSource, WindType as WindType, HumidityType as HumidityType, HumidityVar as HumidityVar, HeatElemKind as HeatElemKind, InpProfile as InpProfile, TransportDispersionMode as TransportDispersionMode, UnitSystem as UnitSystem
+    Heat2DValue as Heat2DValue, EvapPreviewStatus as EvapPreviewStatus, EvapType as EvapType, TempSource as TempSource, WindType as WindType, HumidityType as HumidityType, HumidityVar as HumidityVar, HeatElemKind as HeatElemKind, InpProfile as InpProfile, TransportDispersionMode as TransportDispersionMode, UnitSystem as UnitSystem
 )
 
 from ._transport import (Transport as Transport, ThreadInfo as ThreadInfo, EffectiveThreads as EffectiveThreads, TransportCell as TransportCell, TransportRow as TransportRow, ConduitDispersion as ConduitDispersion, transport_domain_name as transport_domain_name, transport_class_name as transport_class_name)

@@ -101,7 +101,8 @@ SWMM_ENGINE_API int swmm_coupling_get_infiltration_receipt(SWMM_Engine, int cell
 /** Surface species ledger terms in native concentration-unit*m3:
  * 0 storage, 1 external in, 2 external out, 3 boundary in, 4 boundary out,
  * 5 rainfall in, 6 infiltration out, 7 native coupling in, 8 native coupling out,
- * 9 exfiltration in. */
+ * 9 exfiltration in, 10 generated water age (RK2 age-volume; otherwise 0),
+ * 11 signed reaction loss (qualified coupled RK2; production is negative; otherwise 0). */
 SWMM_ENGINE_API int swmm_2d_get_species_ledger(SWMM_Engine, int species, int term, double* value);
 
 /** Scalar convenience with the identical tuple/validation/receipt contract. */

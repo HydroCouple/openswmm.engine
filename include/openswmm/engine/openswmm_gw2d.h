@@ -412,6 +412,31 @@ SWMM_ENGINE_API int swmm_gw2d_get_tier_histogram(SWMM_Engine engine,
                                                  long* out, int len,
                                                  int* written);
 
+/* Optional recharge execution status. These flags describe the pure operator,
+ * never full groundwater/device execution. Counters are process-local; component
+ * restore resets them. They exclude rolled-back numerical transactions. */
+#define SWMM_GW2D_OP_CLOSED_FORM_RECHARGE 1u
+#define SWMM_GW2D_HOST_WATER_AND_RECEIPTS 1u
+#define SWMM_GW2D_HOST_TRANSPORT 2u
+#define SWMM_GW2D_HOST_REACTIONS 4u
+#define SWMM_GW2D_HOST_THERMAL 8u
+
+typedef struct SWMM_GwExecutionStatus {
+    unsigned int struct_size; /* set to sizeof(SWMM_GwExecutionStatus) */
+    int active;
+    unsigned int available_operators,executed_operators,host_owned_operations;
+    int effective_threads; /* 0 before host runtime initialization or on CPU */
+    unsigned long long accepted_batches,accepted_cells;
+    char recharge_backend[16]; /* current selection: cpu or omp */
+    char profile[128];
+    char detail[256];
+} SWMM_GwExecutionStatus;
+
+/** Runtime after initialization. Availability is distinct from actual use;
+ * surface backend selection is reported separately by swmm_2d_get_run_stats.
+ * Invalid size/handle/state leaves the caller's record unchanged. */
+SWMM_ENGINE_API int swmm_gw2d_get_execution_status(SWMM_Engine,SWMM_GwExecutionStatus*);
+
 #ifdef __cplusplus
 }
 #endif

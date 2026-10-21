@@ -86,7 +86,8 @@ double clampRateSpecies(const ReactionData& rx, bool tank, double* block,
 void reactSpeciesBlock(SimulationContext& ctx, bool tank, double dt,
                        double* species_block, const double* pollut,
                        double hrt_seconds,
-                       double temp_c = std::numeric_limits<double>::quiet_NaN());
+                       double temp_c = std::numeric_limits<double>::quiet_NaN(),
+                       int element = -1);
 
 /// Node-side step: exact-exponential pollutant decay + MSX tank-scope
 /// integration. Runs where applyDecay() ran (before updateLinkQuality).

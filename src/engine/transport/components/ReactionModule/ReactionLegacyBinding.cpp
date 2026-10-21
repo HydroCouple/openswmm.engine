@@ -32,6 +32,8 @@
 
 #include "../../../core/SimulationContext.hpp"
 #include "ReactionIntegrator.hpp"
+#include "ReactionGeometry.hpp"
+#include "../../../hydrology/LidNode.hpp"
 
 namespace openswmm::transport {
 
@@ -42,10 +44,11 @@ namespace {
 /// the species count changes (model reopen).
 struct BindingScratch {
     RxWorkspace ws;
-    std::vector<double> block, added;
-    int sized_for = -1;
+    std::vector<double> block, added, coefficients, wall_scales;
+    int sized_for = -1, sized_terms = -1;
     void ensure(const ReactionData& rx) {
-        if (sized_for != rx.n_species()) {
+        if (sized_for != rx.n_species() || sized_terms != static_cast<int>(rx.term_name.size())) {
+            sized_terms = static_cast<int>(rx.term_name.size());
             ws.init(rx);
             block.assign(static_cast<std::size_t>(rx.n_species()), 0.0);
             added.assign(static_cast<std::size_t>(rx.n_species()), 0.0);
@@ -205,7 +208,10 @@ void reactElements(SimulationContext& ctx, double dt, bool tank,
         // nothing reacts there — the pollutant path's KD1 gate). Reacting
         // its concentration in tank scope removed mass from water passing
         // through on a volume basis it does not have.
-        if (tank && !quality::nodeIsReactor(ctx, e)) continue;
+        if (tank && (!quality::nodeIsReactor(ctx, e) ||
+                     ue >= volume.size() || volume[ue] <= quality::ZERO_VOLUME)) continue;
+        if(rx.wall_geometry&&(ue>=volume.size()||volume[ue]<=quality::ZERO_VOLUME))continue;
+        if(tank&&lidnode::active(ctx,e)) {const int row=ctx.node_subtypes.storage_row(e);if(row>=0&&rx.lid_enabled(ctx.node_subtypes.storages.lid[row].control))continue;}
 
         // HRT for nodes (treatment-variable parity); zero elsewhere in R4 —
         // full hydraulic-variable population is the ARD binding's job (R6).
@@ -215,6 +221,8 @@ void reactElements(SimulationContext& ctx, double dt, bool tank,
             (ctx.options.heat_transport && ue < elem_temp.size())
                 ? elem_temp[ue]
                 : rx.default_temp_c;
+        hydvar[static_cast<int>(RxHydVar::AV)] = rx.wall_geometry ? reactionAreaVolume(ctx,!tank,e,volume[ue]) : 0.;
+        if(rx.wall_geometry)reactionWallScales(ctx,!tank,e,volume[ue],sc.wall_scales);
 
         for (int s = 0; s < ns; ++s)
             sc.block[static_cast<std::size_t>(s)] =
@@ -224,8 +232,9 @@ void reactElements(SimulationContext& ctx, double dt, bool tank,
             (np > 0) ? &pollutant_conc[ue * static_cast<std::size_t>(np)]
                      : nullptr;
 
-        const auto rep = ReactionIntegrator::step(
-            rx, tank, dt, sc.block.data(), hydvar, sc.ws, pollut);
+        const auto rep = ReactionIntegrator::step(rx,tank?rx.tank_form:rx.pipe_form,tank?rx.tank_expr:rx.pipe_expr,
+            dt,sc.block.data(),hydvar,sc.ws,pollut,rx.wall_geometry?sc.wall_scales.data():nullptr,
+            rx.coefficients(!tank,e,sc.coefficients));
 
         if (rep.ok) {
             const double v = (ue < volume.size()) ? volume[ue] : 0.0;
@@ -234,13 +243,13 @@ void reactElements(SimulationContext& ctx, double dt, bool tank,
             if (book)
                 for (int s = 0; s < ns; ++s) {
                     const auto us = static_cast<std::size_t>(s);
-                    led.reacted[us] += (msx_conc[base + us] - sc.block[us]) * v;
+                    if (!rx.species_is_wall[us]) led.reacted[us] += (msx_conc[base + us] - sc.block[us]) * v;
                 }
             if (clampRateSpecies(rx, tank, sc.block.data(), sc.added.data()) > 0.0) {
                 noteNegativeClamp(ctx, what);
                 if (book)
                     for (int s = 0; s < ns; ++s)
-                        led.clamped[static_cast<std::size_t>(s)] += sc.added[static_cast<std::size_t>(s)] * v;
+                        if (!rx.species_is_wall[static_cast<std::size_t>(s)]) led.clamped[static_cast<std::size_t>(s)] += sc.added[static_cast<std::size_t>(s)] * v;
             }
             for (int s = 0; s < ns; ++s)
                 msx_conc[base + static_cast<std::size_t>(s)] = sc.block[static_cast<std::size_t>(s)];
@@ -258,7 +267,7 @@ void reactElements(SimulationContext& ctx, double dt, bool tank,
 
 void reactSpeciesBlock(SimulationContext& ctx, bool tank, double dt,
                        double* species_block, const double* pollut,
-                       double hrt_seconds, double temp_c) {
+                       double hrt_seconds, double temp_c, int element) {
     auto& rx = ctx.reactions;
     const int ns = rx.n_species();
     if (ns == 0) return;
@@ -268,11 +277,13 @@ void reactSpeciesBlock(SimulationContext& ctx, bool tank, double dt,
     hydvar[static_cast<int>(RxHydVar::HRT)] = hrt_seconds;
     hydvar[static_cast<int>(RxHydVar::TEMP)] =
         std::isfinite(temp_c) ? temp_c : rx.default_temp_c;
+    if(rx.wall_geometry&&element>=0)hydvar[static_cast<int>(RxHydVar::AV)] = reactionAreaVolume(ctx,!tank,element,
+        tank?ctx.nodes.volume[element]:ctx.links.volume[element]);
     for (int s = 0; s < ns; ++s)
         sc.block[static_cast<std::size_t>(s)] = species_block[s];
     const auto rep = ReactionIntegrator::step(rx, tank, dt,
                                               sc.block.data(), hydvar,
-                                              sc.ws, pollut);
+                                              sc.ws, pollut, rx.coefficients(!tank, element, sc.coefficients));
     if (rep.ok) {
         if (clampRateSpecies(rx, tank, sc.block.data(), nullptr) > 0.0)
             noteNegativeClamp(ctx, "a LARD element");

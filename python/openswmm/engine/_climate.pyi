@@ -1,6 +1,7 @@
 """Type stubs for :mod:`openswmm.engine._climate`."""
 
-from typing import List, Sequence
+from datetime import datetime
+from typing import Any, List, Mapping, Sequence
 
 from ._solver import Solver
 
@@ -48,3 +49,6 @@ class Climate:
     adjust_evaporation: List[float]
     adjust_rainfall: List[float]
     adjust_conductivity: List[float]
+
+    def preview_evaporation(self, start: datetime | float, end: datetime | float,
+                            interval_days: float, *, config: Mapping[str, Any] | None = ...) -> dict: ...

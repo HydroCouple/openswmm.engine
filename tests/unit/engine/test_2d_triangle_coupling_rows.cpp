@@ -24,8 +24,10 @@
 
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_model.h>
@@ -320,6 +322,41 @@ TEST_F(TriangleCouplingRowsTest, ClearRemovesRowsAndLegacyMirror) {
     const fs::path out = dir_ / "api_clear_out.inp";
     ASSERT_EQ(swmm_model_write(eng_, out.string().c_str()), 0);
     EXPECT_EQ(count_triangle_map_rows(read_file(out)), 1);
+}
+
+// A NaN CD / AREA adds a row that does not author it: the written row leaves
+// the token out (an AREA without a CD writes COUPLING_CD in the CD column,
+// as the section form requires), so the structure presets keep governing.
+TEST_F(TriangleCouplingRowsTest, ApiNanLeavesTokensUnauthored) {
+    const fs::path inp = dir_ / "api_nan.inp";
+    write_file(inp, std::string(k1DBase) + k2DMesh);
+    eng_ = open_engine(inp);
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    ASSERT_EQ(swmm_2d_add_triangle_coupling(eng_, 0, "J1", nan, nan), 0);
+    ASSERT_EQ(swmm_2d_add_triangle_coupling(eng_, 1, "J2", 0.8, nan), 0);
+    ASSERT_EQ(swmm_2d_add_triangle_coupling(eng_, 1, "O1", nan, 3.5), 0);
+    const fs::path out = dir_ / "api_nan_out.inp";
+    ASSERT_EQ(swmm_model_write(eng_, out.string().c_str()), 0);
+    const std::string text = read_file(out);
+    const auto sec = text.find("[2D_TRIANGLE_NODE_MAP]");
+    ASSERT_NE(sec, std::string::npos);
+    std::istringstream rows(text.substr(sec));
+    std::string line;
+    std::vector<std::vector<std::string>> data;
+    while (std::getline(rows, line)) {
+        std::istringstream ls(line);
+        std::vector<std::string> tok;
+        for (std::string t; ls >> t;) tok.push_back(t);
+        if (tok.empty() || tok[0][0] == ';' || tok[0][0] == '[') continue;
+        data.push_back(tok);
+        if (data.size() == 3) break;
+    }
+    ASSERT_EQ(data.size(), 3u);
+    EXPECT_EQ(data[0], (std::vector<std::string>{"0", "J1"}));
+    EXPECT_EQ(data[1], (std::vector<std::string>{"1", "J2", "0.8"}));
+    ASSERT_EQ(data[2].size(), 4u);
+    EXPECT_EQ(data[2][1], "O1");
+    EXPECT_EQ(data[2][3], "3.5");
 }
 
 // ---------------------------------------------------------------------------

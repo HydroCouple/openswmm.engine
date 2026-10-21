@@ -93,6 +93,11 @@ endif()
 # ---- Alias targets ----
 add_library(openswmm::engine ALIAS openswmm_engine)
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/GpuContract.cmake)
+openswmm_gpu_contract(openswmm_engine)
+find_package(Threads REQUIRED)
+target_link_libraries(openswmm_engine PRIVATE Threads::Threads)
+
 # ---- Output name ----
 set_target_properties(openswmm_engine PROPERTIES
     OUTPUT_NAME   "openswmm.engine"
@@ -413,6 +418,8 @@ add_custom_command(TARGET openswmm_engine POST_BUILD
 if(MSVC AND OPENSWMM_BUILD_UNIT_TESTS)
     add_library(openswmm_engine_internal STATIC ${OPENSWMM_ENGINE_SOURCES})
     add_library(openswmm::engine_internal ALIAS openswmm_engine_internal)
+    openswmm_gpu_contract(openswmm_engine_internal)
+    target_link_libraries(openswmm_engine_internal PRIVATE Threads::Threads)
 
     target_compile_features(openswmm_engine_internal PUBLIC cxx_std_20)
     target_compile_definitions(openswmm_engine_internal

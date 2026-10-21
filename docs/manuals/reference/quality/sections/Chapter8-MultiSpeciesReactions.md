@@ -45,16 +45,19 @@ Its sections are:
 | `[REACTION_TANKS]` | The same forms in node scope | @ref engine_manual_sect_REACTION_TANKS | \status{Implemented} |
 | `[REACTION_QUALITY]` | Initial concentrations: `GLOBAL`, `NODE` or `LINK` | @ref engine_manual_sect_REACTION_QUALITY | \status{Implemented} |
 | `[REACTION_RAINFALL]` | Rainfall concentration per species, the counterpart of the `[POLLUTANTS]` Crain column | @ref engine_manual_sect_REACTION_RAINFALL | \status{Implemented} |
-| `[REACTION_SOURCES]` | Species sources at nodes | @ref engine_manual_sect_REACTION_SOURCES | \status{Planned} |
-| `[REACTION_PARAMETERS]` | Per-element overrides of `PARAMETER` coefficients | @ref engine_manual_sect_REACTION_PARAMETERS | \status{Planned} |
-| `[REACTION_PATTERNS]` | Time patterns for sources | @ref engine_manual_sect_REACTION_PATTERNS | \status{Planned} |
-| `[REACTION_REPORT]` | Report selection | @ref engine_manual_sect_REACTION_REPORT | \status{Planned} |
-| `[REACTION_SUBCATCHMENTS]` | Subcatchment-scope expressions | @ref engine_manual_sect_REACTION_SUBCATCHMENTS | \status{Planned} |
+| `[REACTION_SOURCES]` | Species sources at nodes | @ref engine_manual_sect_REACTION_SOURCES | \status{Implemented} |
+| `[REACTION_PARAMETERS]` | Per-element overrides of `PARAMETER` coefficients | @ref engine_manual_sect_REACTION_PARAMETERS | \status{Implemented} |
+| `[REACTION_PATTERNS]` | Time patterns for sources | @ref engine_manual_sect_REACTION_PATTERNS | \status{Implemented} |
+| `[REACTION_REPORT]` | Report selection | @ref engine_manual_sect_REACTION_REPORT | \status{Implemented} |
+| `[REACTION_SUBCATCHMENTS]` | Wet non-LID subcatchment-pool expressions | @ref engine_manual_sect_REACTION_SUBCATCHMENTS | \status{Implemented} |
 
-The five sections marked planned are recognised by name and **refused** with
-the phase that delivers them; a configuration carrying one is rejected as a
-whole (Chapter 11 §11.5). An unknown `[REACTION_*]` name is rejected on the
-same terms.
+`[REACTION_SUBCATCHMENTS]` supplies an explicit wet-pool scope for non-LID
+subcatchments. Its mix/react/allocate splitting, conservative residual-mass
+closure and restricted expression context are specified in the input
+reference. Separate `[REACTION_LIDS]` and `[REACTION_BUILDUP]` scopes implement the qualified porous-layer and dry-buildup profiles described in the input reference.
+The other formerly reserved sections supply network sources, parameter
+overrides and species-column selection. Unsupported source kinds and unknown
+section names are errors.
 
 <!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:394-403, 405-453, 455-479 -->
 
@@ -63,49 +66,40 @@ convenience, but the external file is the intended layout: embedded sections
 are read but are not written back when a model is saved, and the engine warns
 when that is about to happen.
 
-A complete small system — chlorine decaying against a reactive wall material,
-with the by-product it forms:
+A complete small system converts a parent species to a product. Both use
+the same mass units and the yield is one, so A + B is conserved in an
+isolated wet reactor with `COUPLING FULL`:
 
 ```
 [REACTION_OPTIONS]
-SOLVER            RK5
-RTOL              0.001
-ATOL              0.0001
-TIMESTEP          300
+SOLVER RK5
+COUPLING FULL
+RATE_UNITS HR
 
 [REACTION_SPECIES]
-BULK   CL2   MG   0.01   0.0001      ; free chlorine
-BULK   THM   UG   0.01   0.0001      ; trihalomethane by-product
-WALL   BIO   UG   0.01   0.0001      ; attached biomass
+BULK A MG
+BULK B MG
 
 [REACTION_COEFFICIENTS]
-PARAMETER   Kb     0.30      ; bulk decay, 1/day
-PARAMETER   Kw     1.00      ; wall demand
-PARAMETER   Yield  0.20      ; THM formed per unit CL2 consumed
+PARAMETER k 0.30
 
 [REACTION_TERMS]
-Kf     1.5826e-4 * RE^0.88 / D       ; mass-transfer coefficient
+loss k * A
 
 [REACTION_PIPES]
-RATE   CL2   -Kb*CL2 - (4/D)*Kw*Kf/(Kw+Kf)*CL2
-RATE   THM    Yield*Kb*CL2
-FORMULA BIO   Kw*CL2/(Kw+Kf)
+RATE A -loss
+RATE B loss
 
 [REACTION_TANKS]
-RATE   CL2   -Kb*CL2
-RATE   THM    Yield*Kb*CL2
+RATE A -loss
+RATE B loss
 
 [REACTION_QUALITY]
-GLOBAL   CL2   0.8
-LINK     C1    CL2   1.2
+GLOBAL A 1
 ```
 
-Two things in that listing are worth pointing out. `[REACTION_TERMS]`
-defines `Kf` once and both pipe expressions reference it, so the
-mass-transfer closure has a single definition rather than two copies that can
-drift. And the pipe and tank expressions for `CL2` differ deliberately: a
-storage unit has no wall in the sense a pipe does, so the wall-demand term is
-absent from the tank form.
+After one hour without transport, A = exp(-0.30), B = 1 - exp(-0.30).
+The reusable decks under `examples/reactions/` include this analytic case.
 
 ### 8.2.1 Species and coefficient declarations
 
@@ -122,18 +116,14 @@ takes the project mass conversion, `UG` a thousandth of it, anything else is
 carried unconverted. The per-species tolerances, when given, replace the
 global `ATOL` and `RTOL` of `[REACTION_OPTIONS]` for that species alone.
 
-`WALL` species are surface-attached: their concentration is per unit wall
-area, they are not advected, and they enter bulk expressions through the
-area-to-volume ratio. Declaring one has two consequences worth knowing before
-choosing it: the Eulerian engine falls back to the tanks-in-series binding
-for the reaction stage, and the 2D mesh carries no reaction species at all
-(Chapter 10 §10.1).
+`WALL` species remain attached to their own network element under LEGACY;
+they are excluded from dissolved advection, evaporation concentration and
+the BULK water-mass routing ledger. ARD falls back to LEGACY for systems
+containing WALL species. LAGRANGIAN refuses WALL systems. `WALL_GEOMETRY YES` enables geometry-aware AV (AREA_UNITS/litre), with conduit wetted contact and explicit storage areas. WALL densities use fixed reference area and wetted-fraction kinetics; dry inventory is retained. WALL EQUIL/FORMULA projections are refused in this mode.
+2D surface transport excludes reaction systems containing WALL species.
 
-A coefficient is declared as `CONSTANT` or `PARAMETER` with a value. In the
-MSX convention a `PARAMETER` may later be overridden per pipe or tank; that
-override section (`[REACTION_PARAMETERS]`) is planned, so in this release
-both kinds are single model-wide values and the distinction is a declaration
-of intent. A coefficient may not share a name with a species or another
+A coefficient is declared as `CONSTANT` or `PARAMETER` with a value. A `PARAMETER` may be overridden on a named node or link through
+`[REACTION_PARAMETERS]`; a `CONSTANT` may not. A coefficient may not share a name with a species or another
 coefficient. `[REACTION_TERMS]` names an intermediate expression evaluated
 before the species expressions that reference it; a term may not share a
 name with a species, a coefficient or another term, and it may use species,
@@ -188,8 +178,9 @@ a node and `[TRANSPORT_SOURCES]` a distributed mass rate along a conduit,
 negative for extraction (Chapter 7 §7.5). On the land surface a reaction
 species may build up and wash off through `[BUILDUP]`, `[WASHOFF]`,
 `[LOADINGS]` and, on the 2D mesh, `[2D_LOADINGS]` (Chapters 3, 4 and 10).
-`[REACTION_SOURCES]` and `[REACTION_PATTERNS]`, the MSX spellings of node
-sources, are planned (Chapter 11 §11.5).
+`[REACTION_SOURCES]` also supplies additive CONC or MASS node loads, and
+`[REACTION_PATTERNS]` supplies their cyclic multipliers. See the input
+reference for exact units, clock origin and supported source kinds.
 
 <!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:297-390, 449-453; src/engine/quality/lard/LagrangianSolver.hpp:359-366; src/engine/quality/MsxSurfaceQuality.hpp:17-50; docs/manuals/reference/quality/sections/Chapter7-AdvectionReactionDispersion.md:226-273 -->
 
@@ -229,8 +220,7 @@ field rather than to a single constant. Without heat transport it falls back
 to the `[REACTION_OPTIONS] TEMPERATURE` constant.
 
 Species declared `WALL` are surface-attached: their concentrations are per
-unit wall area rather than per unit volume, they are not advected, and they
-appear in bulk expressions through the surface-area-to-volume ratio.
+unit reference wall area rather than per unit volume and are not advected. With WALL_GEOMETRY enabled, bulk expressions may use AV for the contact-area-to-water-volume ratio. AREA_UNITS also defines the independent dry buildup density basis.
 
 Expressions are **compiled at model open**, not interpreted per element per
 step: they are parsed once into a compact form and evaluated by a small stack
@@ -316,3 +306,12 @@ The C API for inspecting and editing a reaction system is declared in
 @ref openswmm_reactions.h, including `swmm_reaction_validate_expression`,
 which compiles an expression against the live model vocabulary without
 changing state — the entry point an editor uses to validate as the user types.
+
+### Qualified continuation and surface reactors
+
+Full native engine checkpoints preserve the source clock, compiled-model identity,
+LEGACY/ARD/LARD runtime, wet/dry inventories, supported LID inventories and native
+output prefixes. Tests compare uninterrupted and restored output bytes. This CPU
+1D profile excludes heat/age, pollutants, active 2D chemistry, subsurface laws and
+detailed ARD/LID output. Partial state hotstarts cannot replace it for porous LIDs.
+See the input reference for selector precedence, layer ownership and split order.

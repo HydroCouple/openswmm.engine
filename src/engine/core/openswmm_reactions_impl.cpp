@@ -120,7 +120,8 @@ SWMM_ENGINE_API int swmm_reaction_validate_expression(SWMM_Engine engine,
     if (col_out) *col_out = -1;
     if (!expr) return SWMM_ERR_BADPARAM;
     if (scope != SWMM_RXN_SCOPE_TERM && scope != SWMM_RXN_SCOPE_PIPE &&
-        scope != SWMM_RXN_SCOPE_TANK && scope != SWMM_RXN_SCOPE_SUBSURFACE)
+        scope != SWMM_RXN_SCOPE_TANK && scope != SWMM_RXN_SCOPE_SUBSURFACE &&
+        scope != SWMM_RXN_SCOPE_SUBCATCHMENT)
         return SWMM_ERR_BADPARAM;
 
     const auto& ctx = to_engine(engine)->context();
@@ -143,7 +144,7 @@ SWMM_ENGINE_API int swmm_reaction_validate_expression(SWMM_Engine engine,
     // Physics review A1: the editor refuses what the load refuses.
     if (err.empty())
         err = openswmm::transport::reactionContextDiagnostic(rx,pool,span,
-            scope==SWMM_RXN_SCOPE_SUBSURFACE?2:scope==SWMM_RXN_SCOPE_TERM?1:0);
+            scope==SWMM_RXN_SCOPE_SUBCATCHMENT?3:scope==SWMM_RXN_SCOPE_SUBSURFACE?2:scope==SWMM_RXN_SCOPE_TERM?1:0);
     if(!err.empty()) {
         int precise=-1;
         openswmm::transport::unpopulatedHydVarDiagnostic(expr,pool,span,precise);
@@ -230,12 +231,16 @@ SWMM_ENGINE_API int swmm_reaction_expr_get(SWMM_Engine engine, int scope,
     const auto& rx = to_engine(engine)->context().reactions;
     CHECK_INDEX(species_idx >= 0 && species_idx < rx.n_species());
     if (!form || !expr || expr_len <= 0) return SWMM_ERR_BADPARAM;
-    if (scope != SWMM_RXN_SCOPE_PIPE && scope != SWMM_RXN_SCOPE_TANK)
+    if (scope != SWMM_RXN_SCOPE_PIPE && scope != SWMM_RXN_SCOPE_TANK &&
+        scope != SWMM_RXN_SCOPE_SUBCATCHMENT)
         return SWMM_ERR_BADPARAM;
     const auto u = static_cast<std::size_t>(species_idx);
     if (scope == SWMM_RXN_SCOPE_PIPE) {
         *form = static_cast<int>(rx.pipe_form[u]);
         copy_to_buf(rx.pipe_expr_src[u], expr, expr_len);
+    } else if (scope == SWMM_RXN_SCOPE_SUBCATCHMENT) {
+        *form = static_cast<int>(rx.subcatch_form[u]);
+        copy_to_buf(rx.subcatch_expr_src[u], expr, expr_len);
     } else {
         *form = static_cast<int>(rx.tank_form[u]);
         copy_to_buf(rx.tank_expr_src[u], expr, expr_len);
@@ -262,9 +267,13 @@ SWMM_ENGINE_API int swmm_reaction_option_get(SWMM_Engine engine,
     } else if (k == "RATE_UNITS") {
         static const char* kTok[] = {"SEC", "MIN", "HR", "DAY"};
         v = kTok[static_cast<int>(rx.rate_units)];
+    } else if(k=="WALL_GEOMETRY") {
+        v=rx.wall_geometry?"YES":"NO";
     } else if (k == "AREA_UNITS") {
         static const char* kTok[] = {"FT2", "M2", "CM2"};
         v = kTok[static_cast<int>(rx.area_units)];
+    } else if (k == "PATTERN_TIMESTEP") {
+        v = std::to_string(rx.pattern_timestep);
     } else if (k == "TIMESTEP") {
         v = std::to_string(rx.timestep);
     } else if (k == "ATOL") {
@@ -307,6 +316,7 @@ SWMM_ENGINE_API int swmm_reaction_species_add(SWMM_Engine engine,
     const int old_base = rx.registry_base;
     const int old_n    = rx.n_species();
     rx.species_name.push_back(name);
+    if (!rx.report_enabled.empty()) rx.report_enabled.push_back(1);
     rx.species_is_wall.push_back(is_wall ? 1 : 0);
     rx.species_units.push_back(units);
     rx.species_atol.push_back(atol);
@@ -315,6 +325,8 @@ SWMM_ENGINE_API int swmm_reaction_species_add(SWMM_Engine engine,
     rx.pipe_expr_src.emplace_back();
     rx.tank_form.push_back(openswmm::ReactionExprForm::NONE);
     rx.tank_expr_src.emplace_back();
+    rx.subcatch_form.push_back(openswmm::ReactionExprForm::NONE);
+    rx.subcatch_expr_src.emplace_back();
     rx.init_global.push_back(0.0);
     rx.rain_conc.resize(static_cast<std::size_t>(rx.n_species()) - 1, 0.0);
     rx.rain_conc.push_back(0.0);
@@ -333,6 +345,8 @@ SWMM_ENGINE_API int swmm_reaction_species_remove(SWMM_Engine engine,
     auto& rx = ctx.reactions;
     CHECK_INDEX(idx >= 0 && idx < rx.n_species());
     for(const auto& law:rx.subsurface_laws)if(law.species==idx)return SWMM_ERR_BADPARAM;
+    for (const auto& source : rx.sources)
+        if (source.species == idx) return SWMM_ERR_BADPARAM;
     // D-RC3: refuse while any compiled expression references the species.
     if (pool_references(rx, openswmm::RxToken::PUSH_SPECIES, idx))
         return SWMM_ERR_BADPARAM;
@@ -344,7 +358,10 @@ SWMM_ENGINE_API int swmm_reaction_species_remove(SWMM_Engine engine,
     const auto u = static_cast<std::size_t>(idx);
     // Erase the row from EVERY index-aligned vector (the D-RC3 hazard).
     for(auto& law:rx.subsurface_laws)if(law.species>idx)--law.species;
+    for (auto& source : rx.sources)
+        if (source.species > idx) --source.species;
     rx.species_name.erase(rx.species_name.begin() + u);
+    if (u < rx.report_enabled.size()) rx.report_enabled.erase(rx.report_enabled.begin() + u);
     rx.species_is_wall.erase(rx.species_is_wall.begin() + u);
     rx.species_units.erase(rx.species_units.begin() + u);
     rx.species_atol.erase(rx.species_atol.begin() + u);
@@ -353,6 +370,14 @@ SWMM_ENGINE_API int swmm_reaction_species_remove(SWMM_Engine engine,
     rx.pipe_expr_src.erase(rx.pipe_expr_src.begin() + u);
     rx.tank_form.erase(rx.tank_form.begin() + u);
     rx.tank_expr_src.erase(rx.tank_expr_src.begin() + u);
+    rx.lid_laws.erase(std::remove_if(rx.lid_laws.begin(),rx.lid_laws.end(),[&](const auto& r){return r.species==idx;}),rx.lid_laws.end());
+    for(auto& row:rx.lid_laws)if(row.species>idx)--row.species;
+    rx.subcatch_form.erase(rx.subcatch_form.begin() + u);
+    for(auto* laws:{&rx.wet_laws,&rx.buildup_laws}) {
+        laws->erase(std::remove_if(laws->begin(),laws->end(),[&](const auto& r){return r.species==idx;}),laws->end());
+        for(auto& row:*laws)if(row.species>idx)--row.species;
+    }
+    rx.subcatch_expr_src.erase(rx.subcatch_expr_src.begin() + u);
     rx.init_global.erase(rx.init_global.begin() + u);
     if (u < rx.rain_conc.size()) rx.rain_conc.erase(rx.rain_conc.begin() + u);
     // Per-element initial rows for the species vanish with it; higher
@@ -427,6 +452,10 @@ SWMM_ENGINE_API int swmm_reaction_coeff_remove(SWMM_Engine engine, int idx) {
     auto rx_backup  = ctx.reactions;
     auto reg_backup = ctx.species_registry;
     const auto u = static_cast<std::size_t>(idx);
+    for (const auto& row : rx.parameter_overrides)
+        if (row.coefficient == idx) return SWMM_ERR_BADPARAM;
+    for (auto& row : rx.parameter_overrides)
+        if (row.coefficient > idx) --row.coefficient;
     rx.coef_name.erase(rx.coef_name.begin() + u);
     rx.coef_is_param.erase(rx.coef_is_param.begin() + u);
     rx.coef_value.erase(rx.coef_value.begin() + u);
@@ -497,7 +526,8 @@ SWMM_ENGINE_API int swmm_reaction_expr_set(SWMM_Engine engine, int scope,
     CHECK_GEOMETRY(ctx);
     auto& rx = ctx.reactions;
     CHECK_INDEX(species_idx >= 0 && species_idx < rx.n_species());
-    if (scope != SWMM_RXN_SCOPE_PIPE && scope != SWMM_RXN_SCOPE_TANK)
+    if (scope != SWMM_RXN_SCOPE_PIPE && scope != SWMM_RXN_SCOPE_TANK &&
+        scope != SWMM_RXN_SCOPE_SUBCATCHMENT)
         return SWMM_ERR_BADPARAM;
     if (form < SWMM_RXN_FORM_NONE || form > SWMM_RXN_FORM_FORMULA)
         return SWMM_ERR_BADPARAM;
@@ -507,10 +537,10 @@ SWMM_ENGINE_API int swmm_reaction_expr_set(SWMM_Engine engine, int scope,
     auto rx_backup  = ctx.reactions;
     auto reg_backup = ctx.species_registry;
     const auto u = static_cast<std::size_t>(species_idx);
-    auto& forms = (scope == SWMM_RXN_SCOPE_PIPE) ? rx.pipe_form
-                                                 : rx.tank_form;
-    auto& srcs  = (scope == SWMM_RXN_SCOPE_PIPE) ? rx.pipe_expr_src
-                                                 : rx.tank_expr_src;
+    auto& forms = scope == SWMM_RXN_SCOPE_SUBCATCHMENT ? rx.subcatch_form :
+                  scope == SWMM_RXN_SCOPE_PIPE ? rx.pipe_form : rx.tank_form;
+    auto& srcs = scope == SWMM_RXN_SCOPE_SUBCATCHMENT ? rx.subcatch_expr_src :
+                 scope == SWMM_RXN_SCOPE_PIPE ? rx.pipe_expr_src : rx.tank_expr_src;
     forms[u] = static_cast<openswmm::ReactionExprForm>(form);
     srcs[u]  = (form == SWMM_RXN_FORM_NONE) ? std::string() : expr;
     if (!recompile_or_rollback(ctx, rx_backup, reg_backup))
@@ -552,11 +582,22 @@ SWMM_ENGINE_API int swmm_reaction_option_set(SWMM_Engine engine,
         else if (v == "HR")  rx.rate_units = openswmm::ReactionRateUnits::HR;
         else if (v == "DAY") rx.rate_units = openswmm::ReactionRateUnits::DAY;
         else return SWMM_ERR_BADPARAM;
+    } else if(k=="WALL_GEOMETRY") {
+        if(v!="YES"&&v!="NO")return SWMM_ERR_BADPARAM;
+        auto rx_backup=rx;auto reg_backup=ctx.species_registry;
+        rx.wall_geometry=v=="YES";
+        if(!recompile_or_rollback(ctx,rx_backup,reg_backup))return SWMM_ERR_BADPARAM;
     } else if (k == "AREA_UNITS") {
         if      (v == "FT2") rx.area_units = openswmm::ReactionAreaUnits::FT2;
         else if (v == "M2")  rx.area_units = openswmm::ReactionAreaUnits::M2;
         else if (v == "CM2") rx.area_units = openswmm::ReactionAreaUnits::CM2;
         else return SWMM_ERR_BADPARAM;
+    } else if (k == "PATTERN_TIMESTEP") {
+        char* end = nullptr;
+        const double d = std::strtod(value, &end);
+        if (!end || *end != '\0' || end == value || !std::isfinite(d) || d <= 0.0)
+            return SWMM_ERR_BADPARAM;
+        rx.pattern_timestep = d;
     } else if (k == "TIMESTEP") {
         char* end = nullptr;
         const double d = std::strtod(value, &end);

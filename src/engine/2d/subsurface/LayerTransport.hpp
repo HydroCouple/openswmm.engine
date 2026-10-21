@@ -20,5 +20,12 @@ struct LayerTransportResult {
 LayerTransportResult solveLayerTransport(const std::vector<double>& capacity,
     const std::vector<double>& rhs,const std::vector<LayerTransportMove>& moves,
     bool signed_species=false);
+/** Forward-Euler stage evaluated from beginning inventories/storage. All
+ * outgoing moves from a donor share one finite beginning-mass budget;
+ * incoming receipts never finance another export in the same stage. */
+LayerTransportResult advanceLayerTransportEuler(const std::vector<double>& capacity,
+    const std::vector<double>& initial,const std::vector<double>& rhs,
+    const std::vector<LayerTransportMove>& moves,bool signed_species=false,
+    const std::vector<double>* donor_available=nullptr);
 }
 #endif

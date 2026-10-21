@@ -11,13 +11,17 @@
 namespace openswmm::twoD {
 void OutfallExchange::initialize(const MeshData& mesh,
         const std::vector<CouplingPoint>& cps, SimulationContext& ctx) {
-    points_.clear();
+    points_.clear(); nodes_.clear();
     pending_.clear(); prepared_dt_ = 0; prepared_ = false;
     ctx.surface_outfall_link_limit.clear();
     degree_.assign(ctx.n_nodes(), 0);
     node_area_.assign(ctx.n_nodes(), 0);
     node_reserved_.assign(ctx.n_nodes(), 0);
+    tw_engaged_s_.assign(ctx.n_nodes(), 0);
+    tw_submerged_s_.assign(ctx.n_nodes(), 0);
+    tw_max_.assign(ctx.n_nodes(), -1.0e30);
     std::vector<int> users(mesh.n_cells(), 0);
+    std::vector<char> seen;
     for (std::size_t k = 0; k < cps.size(); ++k) {
         const auto& cp = cps[k];
         if (!cp.is_outfall) continue;
@@ -30,6 +34,35 @@ void OutfallExchange::initialize(const MeshData& mesh,
         for (int c : p.cells) { ++users.at(c); p.area += mesh.tri_area[c]; }
         node_area_.at(p.node) += p.area;
         p.reserved.resize(p.cells.size());
+        // SPREAD r (plan §6 O4): the cells whose centroid lies within r of
+        // the point, gathered outward from its own cells, receive its
+        // discharge; withdrawals keep the own cells' budget.
+        if (cp.spread > 0) {
+            if (seen.empty()) seen.assign(static_cast<std::size_t>(mesh.n_cells()), 0);
+            const double cx = cp.vertex_idx >= 0 ? mesh.vx[cp.vertex_idx] : mesh.tri_cx[cp.cell_idx];
+            const double cy = cp.vertex_idx >= 0 ? mesh.vy[cp.vertex_idx] : mesh.tri_cy[cp.cell_idx];
+            p.spread = p.cells;
+            p.bed_ref = -std::numeric_limits<double>::infinity();
+            std::vector<int> marked = p.cells;
+            for (int c : p.cells) {
+                seen[static_cast<std::size_t>(c)] = 1;
+                p.bed_ref = std::max(p.bed_ref, mesh.tri_cz[c]);
+            }
+            for (std::size_t q = 0; q < p.spread.size(); ++q) {
+                const int c = p.spread[q];
+                for (int e = 0; e < mesh.cell_vertex_count(c); ++e) {
+                    const int nb = mesh.cell_neighbour(c, e);
+                    if (nb < 0 || seen[static_cast<std::size_t>(nb)]) continue;
+                    seen[static_cast<std::size_t>(nb)] = 1;
+                    marked.push_back(nb);
+                    const double dx = mesh.tri_cx[nb] - cx, dy = mesh.tri_cy[nb] - cy;
+                    if (dx * dx + dy * dy <= cp.spread * cp.spread) p.spread.push_back(nb);
+                }
+            }
+            for (int c : marked) seen[static_cast<std::size_t>(c)] = 0;
+        }
+        if (std::find(nodes_.begin(), nodes_.end(), p.node) == nodes_.end())
+            nodes_.push_back(p.node);
         points_.push_back(std::move(p));
     }
     if (points_.empty()) return;
@@ -86,16 +119,28 @@ bool OutfallExchange::apply(const MeshData& mesh, SurfaceStateData& state,
         if (volume == 0) continue;
         if (-volume > p.total + 1e-10 * std::max(1.0, p.total))
             throw std::runtime_error("1D outfall exceeded its reserved surface water budget.");
+        // SPREAD: a discharge lands on the own cells plus every cell in the
+        // radius that is wet or no higher than the highest own cell (area-
+        // weighted); a withdrawal draws on the own cells' reservations.
+        std::vector<int> recv;
+        if (volume > 0 && !p.spread.empty())
+            for (std::size_t j = 0; j < p.spread.size(); ++j) {
+                const int c = p.spread[j];
+                if (j < p.cells.size() || state.depth[c] >= opts.dry_depth ||
+                    mesh.tri_cz[c] <= p.bed_ref)
+                    recv.push_back(c);
+            }
+        const std::vector<int>& cells = recv.empty() ? p.cells : recv;
         double total_weight = volume < 0 ? p.total : 0;
-        if (volume > 0) for (int c : p.cells) total_weight += mesh.tri_area[c];
+        if (volume > 0) for (int c : cells) total_weight += mesh.tri_area[c];
         if (!(total_weight > 0))
             throw std::runtime_error("Nonzero outfall exchange without a usable surface budget.");
         double remaining = std::fabs(volume), applied = 0;
         std::size_t last = 0;
-        for (std::size_t j = 0; j < p.cells.size(); ++j)
-            if ((volume < 0 ? p.reserved[j] : mesh.tri_area[p.cells[j]]) > 0) last = j;
-        for (std::size_t j = 0; j < p.cells.size(); ++j) {
-            const int c = p.cells[j];
+        for (std::size_t j = 0; j < cells.size(); ++j)
+            if ((volume < 0 ? p.reserved[j] : mesh.tri_area[cells[j]]) > 0) last = j;
+        for (std::size_t j = 0; j < cells.size(); ++j) {
+            const int c = cells[j];
             const double weight = volume < 0 ? p.reserved[j] : mesh.tri_area[c];
             if (!(weight > 0)) continue;
             double take = j == last ? remaining : std::min(remaining,
@@ -166,10 +211,37 @@ bool OutfallExchange::apply(const MeshData& mesh, SurfaceStateData& state,
     return changed;
 }
 
+void OutfallExchange::recordTailwater(const SimulationContext& ctx, double dt) {
+    if (!(dt > 0)) return;
+    for (const int n : nodes_) {
+        const int row = ctx.node_subtypes.outfall_row(n);
+        if (row < 0) continue;
+        const auto ur = static_cast<std::size_t>(row), un = static_cast<std::size_t>(n);
+        const double h = ctx.node_subtypes.outfalls.head_2d[ur];
+        const double z = ctx.nodes.invert_elev[un];
+        // The predicate Outfall::setAllOutfallDepths applies the override on.
+        if (!(ctx.node_subtypes.outfalls.ramp_2d[ur] > 0 && h > z)) continue;
+        tw_engaged_s_[un] += dt;
+        if (h >= z + ctx.nodes.full_depth[un]) tw_submerged_s_[un] += dt;
+        tw_max_[un] = std::max(tw_max_[un], h);
+    }
+}
+
+bool OutfallExchange::tailwater(int node, double& engaged_s, double& submerged_s,
+                                double& max_stage) const {
+    if (std::find(nodes_.begin(), nodes_.end(), node) == nodes_.end()) return false;
+    const auto un = static_cast<std::size_t>(node);
+    engaged_s = tw_engaged_s_[un];
+    submerged_s = tw_submerged_s_[un];
+    max_stage = tw_max_[un];
+    return true;
+}
+
 void OutfallExchange::checkpoint(detail::CompletedSourceArchive& a) {
     a.fixed(pending_, node_reserved_);
     a(prepared_dt_, prepared_);
     for (auto& p : points_) { a.fixed(p.reserved); a(p.total); }
+    if (!points_.empty()) a.fixed(tw_engaged_s_, tw_submerged_s_, tw_max_);
 }
 
 void OutfallExchange::validateCheckpoint(const SolverOptions2D& opts,
@@ -190,6 +262,7 @@ void OutfallExchange::validateCheckpoint(const SolverOptions2D& opts,
             if (!std::isfinite(v) || v < 0) throw std::runtime_error("Invalid outfall checkpoint reservation.");
             total += v; donors.at(p.cells[j]) = 1;
         }
+        for (int c : p.spread) donors.at(c) = 1;   // SPREAD receivers book receipts too
         if (!std::isfinite(total) || total != p.total || (prepared_dt_ == 0 && total != 0))
             throw std::runtime_error("Outfall checkpoint reservation totals differ.");
         reserved[p.node] += total;
@@ -200,6 +273,11 @@ void OutfallExchange::validateCheckpoint(const SolverOptions2D& opts,
     }
     if (reserved != node_reserved_ || (!points_.empty() && limits != saved_limits))
         throw std::runtime_error("Outfall checkpoint donor limits differ from their reservations.");
+    for (std::size_t n = 0; n < tw_engaged_s_.size(); ++n)
+        if (!std::isfinite(tw_engaged_s_[n]) || tw_engaged_s_[n] < 0 ||
+            !std::isfinite(tw_submerged_s_[n]) || tw_submerged_s_[n] < 0 ||
+            tw_submerged_s_[n] > tw_engaged_s_[n] || std::isnan(tw_max_[n]))
+            throw std::runtime_error("Invalid outfall checkpoint tailwater record.");
     for (std::size_t k = 0; k < accumulated.size(); ++k) {
         if (!std::isfinite(accumulated[k]) || (!mapped[k] && accumulated[k] != 0) || (!changed && accumulated[k] != 0))
             throw std::runtime_error("Invalid outfall checkpoint point receipt.");

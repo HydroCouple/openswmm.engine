@@ -336,7 +336,9 @@ int swmm_gw2d_get_runtime_boundary_flow(SWMM_Engine h,int cell,int edge,double* 
 int swmm_2d_get_species_ledger(SWMM_Engine h,int s,int term,double* value) {
     auto* eng=reinterpret_cast<SWMMEngine*>(h); int rc=readReady(eng,0); if(rc) return rc;
     const auto& tr=eng->surfaceRouter2D().state().transport;
-    if(!value || s<0 || s>=tr.n_species || term<0 || term>9) return SWMM_ERR_BADPARAM;
+    if(!value || s<0 || s>=tr.n_species || term<0 || term>11) return SWMM_ERR_BADPARAM;
+    if(term==10) { *value=tr.generated_age.empty()?0:tr.generated_age[s]; return SWMM_OK; }
+    if(term==11) { *value=eng->surfaceRouter2D().surfaceReactionLoss(s); return SWMM_OK; }
     if(term==0) { *value=0.0; for(int c=0;c<tr.n_cells;++c) *value+=tr.cell_mass[tr.idx(s,c)]; }
     else {
         const std::vector<double>* rows[]={&tr.gained_external,&tr.lost_external,&tr.gained_boundary,&tr.lost_boundary,

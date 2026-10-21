@@ -24,6 +24,7 @@
  */
 
 #include "MsxLegacyTransport.hpp"
+#include "ReactionSources.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -32,6 +33,8 @@
 #include "ReactionLegacyBinding.hpp"
 #include "../../../core/SimulationContext.hpp"
 #include "../../../quality/QualityRouting.hpp"
+#include "../../../quality/MsxLidReactions.hpp"
+#include "../../../hydrology/LidNode.hpp"
 
 namespace openswmm::transport {
 
@@ -60,6 +63,27 @@ MsxScratch& scratch() {
 }
 }  // namespace
 
+void armMsxRoutingLedger(SimulationContext& ctx) {
+    auto& rx=ctx.reactions;ensureMsxState(ctx);
+    const int nn=ctx.n_nodes(),nl=ctx.n_links();const auto uns=std::size_t(rx.n_species());
+    // Review B14 (2026-10-15): arm the species routing ledger on the first
+    // routed step, opening it with the stored mass exactly as the pollutant
+    // ledger's initMassBalance does (concentration × volume, nodes + links).
+    auto& led = rx.msx_ledger;
+    if (!led.armed || led.init.size() != uns) {
+        led.arm(uns);
+        for (int i = 0; i < nn; ++i)
+            for (std::size_t s = 0; s < uns; ++s)
+                if (!rx.species_is_wall[s]) led.init[s] += rx.msx_node_conc[static_cast<std::size_t>(i) * uns + s] *
+                               ctx.nodes.old_volume[static_cast<std::size_t>(i)]+msxlid::heldMass(ctx,i,int(s));
+        for (int j = 0; j < nl; ++j)
+            for (std::size_t s = 0; s < uns; ++s)
+                if (!rx.species_is_wall[s]) led.init[s] += rx.msx_link_conc[static_cast<std::size_t>(j) * uns + s] *
+                               ctx.links.old_volume[static_cast<std::size_t>(j)];
+    }
+
+}
+
 void routeLegacyMsx(SimulationContext& ctx, double dt) {
     auto& rx = ctx.reactions;
     const int nsp = rx.n_species();
@@ -81,21 +105,7 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
     sc.ensure(static_cast<std::size_t>(nn), static_cast<std::size_t>(nl),
               uns);
 
-    // Review B14 (2026-10-15): arm the species routing ledger on the first
-    // routed step, opening it with the stored mass exactly as the pollutant
-    // ledger's initMassBalance does (concentration × volume, nodes + links).
-    auto& led = rx.msx_ledger;
-    if (!led.armed || led.init.size() != uns) {
-        led.arm(uns);
-        for (int i = 0; i < nn; ++i)
-            for (std::size_t s = 0; s < uns; ++s)
-                led.init[s] += rx.msx_node_conc[static_cast<std::size_t>(i) * uns + s] *
-                               ctx.nodes.old_volume[static_cast<std::size_t>(i)];
-        for (int j = 0; j < nl; ++j)
-            for (std::size_t s = 0; s < uns; ++s)
-                led.init[s] += rx.msx_link_conc[static_cast<std::size_t>(j) * uns + s] *
-                               ctx.links.old_volume[static_cast<std::size_t>(j)];
-    }
+    armMsxRoutingLedger(ctx);auto& led=rx.msx_ledger;
 
     // ---- 1. Old-state snapshots (post-reaction: the react stages ran
     //         earlier in execute(), so transport moves this step's reacted
@@ -122,8 +132,13 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
                                                    : ctx.links.node1[uj];
         if (dn < 0 || dn >= nn) continue;
         const auto udn = static_cast<std::size_t>(dn);
-        for (std::size_t s = 0; s < uns; ++s)
-            sc.mass_in[udn * uns + s] += q * sc.link_old[uj * uns + s];
+        const int source=ctx.links.flow[uj]>=0?ctx.links.node1[uj]:ctx.links.node2[uj];
+        for (std::size_t s = 0; s < uns; ++s)if(!rx.species_is_wall[s]) {
+            double concentration=sc.link_old[uj*uns+s];
+            if(quality::linkTakesUpstreamValue(ctx,j)&&(lidnode::active(ctx,source)||lidnode::active(ctx,dn)))concentration=msxlid::outlet(ctx,source,j,int(s),sc.node_old[source*uns+s]);
+            const double rate=q*concentration;
+            sc.mass_in[udn*uns+s]+=rate-msxlid::receive(ctx,dn,j,q*dt,int(s),rate,dt);
+        }
     }
 
     // ---- 3. Node mixing (mixAtNodes mirror, storage evap factor). External
@@ -138,7 +153,7 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
                          static_cast<std::size_t>(nn) * uns;
     for (int i = 0; i < nn; ++i) {
         const auto ui = static_cast<std::size_t>(i);
-        const double v_old = ctx.nodes.old_volume[ui];
+        const double v_old = msxlid::mobileWater(ctx,i,ctx.nodes.old_volume[ui]);
         const double v_in  = ctx.nodes.qual_vol_in[ui];
         const double q_in  = (dt > 0.0) ? v_in / dt : 0.0;
         const bool zero_bf = ctx.options.outfall_backflow_zero &&
@@ -148,7 +163,7 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
         // re-derived — a species IS a concentration, so both carry over
         // exactly as they do for a pollutant.
         const bool reactor = quality::nodeIsReactor(ctx, i);
-        const bool dry     = quality::nodeIsDry(ctx, i, q_in);
+        const bool dry     = quality::nodeIsDry(ctx, i, q_in)&&!lidnode::active(ctx,i);
         // Review B1 (2026-10-15): a species concentrates with the water it
         // is dissolved in, exactly as a pollutant does (mixAtNodes).
         const double f_evap = reactor ? quality::storageEvapFactor(ctx, i) : 1.0;
@@ -160,8 +175,10 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
             const auto& st = ctx.node_subtypes.storages;
             if (srow >= 0 && static_cast<std::size_t>(srow) < st.exfil_loss.size())
                 v_exfil = st.exfil_loss[static_cast<std::size_t>(srow)];
+            if(srow>=0&&rx.lid_enabled(st.lid[srow].control))v_exfil=std::max(0.,v_exfil-st.lid_state[srow].richards_bottom_loss);
         }
         for (std::size_t s = 0; s < uns; ++s) {
+            if (rx.species_is_wall[s]) continue; // attached state never mixes with water
             const double c_old = sc.node_old[ui * uns + s];
             const double ext_rate = has_ext ? rx.msx_ext_mass_in[ui * uns + s] : 0.0;
             const double mass = (sc.mass_in[ui * uns + s] + ext_rate) * dt;
@@ -178,6 +195,7 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
                 else if (zero_bf)          c = 0.0;
                 else if (ctx.nodes.depth[ui] > ZERO_DEPTH) c = c_old;
                 else                       c = 0.0;
+                if(q_in>LEGACY_ZERO)c+=reactionBoosterMass(ctx,i,int(s),std::max(c,0.)*v_in,v_in,v_in)/v_in;
                 rx.msx_node_conc[ui * uns + s] = std::max(c, 0.0);
                 continue;
             }
@@ -193,6 +211,8 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
                 c_new = (c1 * v_old + mass) / (v_old + v_in);
                 c_new = std::min(c_new, c_max);
             }
+            const double mixed=v_old+v_in;
+            if(!dry&&mixed>1e-12)c_new+=reactionBoosterMass(ctx,i,int(s),std::max(c_new,0.)*mixed,mixed,v_in)/mixed;
             if (dry) {
                 led.final_dry[s] += c_new * ctx.nodes.volume[ui];
                 c_new = 0.0;
@@ -239,8 +259,9 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
         }
 
         for (std::size_t s = 0; s < uns; ++s) {
+            if (rx.species_is_wall[s]) continue; // attached state never mixes with water
             const double c_old = sc.link_old[uj * uns + s];
-            const double c_up  = rx.msx_node_conc[uup * uns + s];
+            const double c_up  = msxlid::outlet(ctx,up,j,int(s),rx.msx_node_conc[uup * uns + s]);
             double c_new;
             if (passthrough) {
                 c_new = c_up;
@@ -301,7 +322,7 @@ void bookMsxSystemOutflow(SimulationContext& ctx, int node, double q,
     if (base + uns > rx.msx_node_conc.size() || led.outflow.size() != uns) return;
     auto& row = flooding ? led.flooding : led.outflow;
     for (std::size_t s = 0; s < uns; ++s)
-        row[s] += q * rx.msx_node_conc[base + s] * dt;
+        if (!rx.species_is_wall[s]) row[s] += q * rx.msx_node_conc[base + s] * dt;
 }
 
 }  // namespace openswmm::transport

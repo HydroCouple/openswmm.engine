@@ -24,6 +24,8 @@
  */
 
 #include "ArdEngine.hpp"
+#include "../ReactionModule/ReactionSources.hpp"
+#include "../../../core/CompletedSourceArchive.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -1175,6 +1177,24 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
         node_vol_[ur] += dv;
     }
 
+    // Booster stage follows accepted node exchanges. It changes mass only;
+    // the next explicit face update uses the resulting mixed concentration.
+    if(!ctx.reactions.sources.empty())for(int nd=0;nd<nn;++nd) {
+        if(mesh_.node_kind[nd]==fv::kNodeVirtual)continue;
+        double arriving=std::max(0.,load_frac*ctx.nodes.qual_vol_in[nd]);
+        for(int p=mesh_.node_face_ptr[nd];p<mesh_.node_face_ptr[nd+1];++p) {
+            const auto f=mesh_.node_face_idx[p];arriving+=dt_sub*std::max(0.,mesh_.node_face_sign[p]*face_q_[f]);
+        }
+        for(int j=0;j<n_struct;++j) {
+            const auto link=mesh_.struct_link[j];const double q=ctx.links.flow[link];
+            if((q>=0?mesh_.struct_n2[j]:mesh_.struct_n1[j])==nd)arriving+=std::abs(q)*dt_sub;
+        }
+        for(int m=0;m<nm_;++m) {
+            auto& mass=node_mass_[std::size_t(nd)*uns+ctx.n_pollutants()+m];
+            mass+=reactionBoosterMass(ctx,nd,m,mass,node_vol_[nd],arriving);
+        }
+    }
+
     // 5c. E5a distributed sources: internal rate r (conc·ft³/s) spread over
     //     the conduit's cells ∝ dx ⇒ Δconc per cell = r·dt/(L·a) — dx
     //     cancels. Dry cells are skipped and their share is NOT delivered
@@ -1342,7 +1362,8 @@ void ArdEngine::step(SimulationContext& ctx, double dt) {
         ctx, dt, state_.cell_phi.data(), state_.cell_a.data(),
         mesh_.cell_dx.data(), mesh_.n_cells(), node_mass_.data(),
         node_vol_.data(), static_cast<int>(node_vol_.size()),
-        ctx.n_pollutants(), state_.n_species, kMinStoreVol, temp_row_);
+        ctx.n_pollutants(), state_.n_species, kMinStoreVol, temp_row_,
+        mesh_.cell_conduit.data(), mesh_.conduit_link.data());
 
     // H6b-ARD: bed/channel SOLUTE exchange, per cell, in the same Lie-split
     // slot as the other source stages — after reactions so the bed sees the
@@ -1861,3 +1882,34 @@ std::vector<double> ArdEngine::totalMass(const SimulationContext& ctx) const {
 }
 
 }  // namespace openswmm::transport
+
+namespace openswmm::transport {
+namespace {
+template<class A,class S> void ardRestartFields(A& a,S& s) {
+    a.fixed(s.cell_a,s.cell_q,s.cell_h,s.node_volume,s.node_head,s.node_surf_area,s.node_overflow,s.node_overflow_vol,s.cell_phi);
+}
+}
+std::string ArdEngine::checkpointState() const {
+    if(detail_active_)throw std::runtime_error("ARD detailed output cannot continue from a checkpoint.");
+    detail::CompletedSourceArchive a;auto ready=initialized_;a(ready);
+    if(ready) {
+        auto state=state_;auto mass=node_mass_,volume=node_vol_,flux=face_q_;
+        auto warnings=warnings_;auto warned=warned_cfl_clamp_;
+        ardRestartFields(a,state);a(mass,volume,flux,warnings,warned);
+    }
+    return a.bytes();
+}
+void ArdEngine::restoreCheckpointState(const std::string& bytes,SimulationContext& ctx) {
+    detail::CompletedSourceArchive a(bytes);bool ready=false;a(ready);
+    if(ready) {
+        if(!ctx.ard_config.detailed_output_path.empty() || !init(ctx))
+            throw std::runtime_error("Cannot initialize staged ARD checkpoint transport.");
+        ardRestartFields(a,state_);a.fixed(node_mass_,node_vol_,face_q_);a(warnings_,warned_cfl_clamp_);
+        for(const auto* v:{&state_.cell_a,&state_.cell_q,&state_.cell_h,&state_.node_volume,&state_.node_head,
+             &state_.node_surf_area,&state_.node_overflow,&state_.node_overflow_vol,&state_.cell_phi,&node_mass_,&node_vol_,&face_q_})
+            for(double value:*v)if(!std::isfinite(value))throw std::runtime_error("Nonfinite ARD checkpoint state.");
+        for(double value:node_vol_)if(value<0)throw std::runtime_error("Negative ARD checkpoint volume.");
+    }
+    a.finish();
+}
+}

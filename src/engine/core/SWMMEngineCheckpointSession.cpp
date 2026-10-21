@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "SWMMEngine.hpp"
 #include "CheckpointInspection.hpp"
+#include "ReactionCheckpoint.hpp"
 #include "FileIO.hpp"
 #include "../plugins/DefaultInputPlugin.hpp"
 #include "../plugins/DefaultReportPlugin.hpp"
@@ -62,7 +63,7 @@ std::string SWMMEngine::startCheckpointSession(int output,const std::string& sou
         require(source_path.find('\0')==std::string::npos&&detail::checkpointUtf8(source_path),"Invalid source journal path.");
         require(!callbacks_.on_progress&&!callbacks_.on_warning&&!callbacks_.on_step_begin&&!callbacks_.on_step_end,
             "Managed checkpoint sessions cannot recover callbacks.");
-        require(ctx_.plugin_specs.empty()&&ctx_.process_component_specs.empty(),"Managed checkpoint sessions require native inputs and writers.");
+        require(ctx_.plugin_specs.empty()&&detail::checkpointReactionComponents(ctx_),"Managed checkpoint sessions require native inputs and writers.");
         require(plugins_.input_plugins().size()==1&&dynamic_cast<DefaultInputPlugin*>(plugins_.input_plugins().front()),
             "Managed checkpoint sessions require the built-in input reader.");
         require(plugins_.state_io_plugins().size()==1&&dynamic_cast<DefaultStateIOPlugin*>(plugins_.state_io_plugins().front())&&
@@ -72,8 +73,18 @@ std::string SWMMEngine::startCheckpointSession(int output,const std::string& sou
         // Refuse ancillary writers before initialize/start can touch their paths.
         require(!ctx_.files.has_any(),"Managed checkpoint sessions cannot recover interface or hotstart files.");
         for(const auto& path:ctx_.lid_usage.rpt_file)require(path.empty(),"Managed checkpoint sessions cannot append detailed LID reports.");
-        require(!ctx_.options.heat_transport&&!ctx_.options.water_age&&ctx_.reactions.n_species()==0&&(ctx_.options.ignore_quality||ctx_.n_pollutants()==0),
-            "Managed checkpoint sessions require water-only physics.");
+        bool mesh_quality=false;
+#ifdef OPENSWMM_HAS_2D
+        mesh_quality=!ctx_.options.ignore_2d&&surface_router_.mesh().n_cells()>0&&ctx_.n_nodes()==0&&
+            ctx_.n_links()==0&&ctx_.n_subcatches()==0&&surface_router_.aquiferConfig().surface_owners.empty()&&
+            surface_router_.options().reconstruction_order==1&&
+            (ctx_.reactions.configured||ctx_.options.water_age||ctx_.options.heat_transport||
+             (!ctx_.options.ignore_quality&&ctx_.n_pollutants()>0));
+#endif
+        require(mesh_quality||(!ctx_.options.heat_transport&&!ctx_.options.water_age&&(ctx_.options.ignore_quality||ctx_.n_pollutants()==0)),
+            "Managed checkpoint sessions require water-only, supported 1D reactions or mesh-only matched ground quality.");
+        require(!mesh_quality||output==SWMM_CHECKPOINT_OUTPUT_NONE||output==SWMM_CHECKPOINT_OUTPUT_MESH,
+            "Mesh-only matched ground quality sessions support numerical state or mesh output; combined/binary companions remain guarded.");
 #ifndef OPENSWMM_HAS_2D_HDF5_OUTPUT
         require(output<SWMM_CHECKPOINT_OUTPUT_MESH,"Mesh output checkpoints unavailable in this build.");
 #endif
@@ -144,6 +155,8 @@ std::string SWMMEngine::startCheckpointSession(int output,const std::string& sou
 #endif
         require(initialized==SWMM_OK,ctx_.error_message);
 #ifdef OPENSWMM_HAS_2D
+        if(mesh_quality)require(twoD::CommonSourceStage::supportsMeshGroundQuality(ctx_,r.state(),r.subsurface()),
+            "Managed mesh quality requires matched bulk-species layouts and either WATER_ONLY without heat or paired porous-ground thermal owners.");
         if(output>=SWMM_CHECKPOINT_OUTPUT_COMBINED)checked(prepareCombinedOutputCheckpointing());
         else if(output==SWMM_CHECKPOINT_OUTPUT_BINARY)checked(prepareOutputCheckpointing());
         else if(output==SWMM_CHECKPOINT_OUTPUT_MESH)checked(prepareSurfaceOutputCheckpointing());

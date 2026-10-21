@@ -37,16 +37,24 @@
  */
 
 #include "../solver/GpuPluginAbi.h"
+#include "../solver/GwRechargePluginAbi.h"
+#include "../subsurface/SoilCharacteristic.hpp"
 #include "../solver/ISurfaceSolver.hpp"
-#include "ExplicitKokkosSurfaceSolver.hpp"
+#include "GpuPluginSupport.hpp"
+#include <stdexcept>
 
 #include <Kokkos_Core.hpp>
 
 #include <cstdlib>
+#include <cmath>
+#include <atomic>
+#include <mutex>
 #include <cstring>
 
 namespace {
-int g_host_threads = 0;   // threads Kokkos was initialised with (0 = not yet)
+std::atomic<int> g_host_threads{0}; // effective runtime threads (0 = not initialized)
+std::mutex g_initialization_mutex;
+std::mutex g_recharge_mutex;
 
 // Thread-count precedence (THREAD_LIMITS_AND_OVERSUBSCRIPTION_PLAN §5.2):
 //   1. OPENSWMM_2D_THREADS env         — operator A/B override, always wins
@@ -56,6 +64,8 @@ int g_host_threads = 0;   // threads Kokkos was initialised with (0 = not yet)
 // fixes the count for every later one (the core warns when a later request
 // differs — see SurfaceSolverFactory).
 void ensureKokkosInitialized(int requested_threads) {
+    std::lock_guard<std::mutex> initialization_lock(g_initialization_mutex);
+    if (Kokkos::is_finalized()) throw std::runtime_error("Kokkos runtime has already been finalized");
     if (!Kokkos::is_initialized() && !Kokkos::is_finalized()) {
         Kokkos::InitializationSettings settings;
         int chosen = 0;
@@ -90,13 +100,53 @@ openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
 
 extern "C" OPENSWMM_GPU_ABI int
 openswmm_gpu_host_threads(void) {
-    return g_host_threads;
+    return g_host_threads.load();
 }
 
 extern "C" OPENSWMM_GPU_ABI void*
 openswmm_make_gpu_explicit_solver(const OpenSwmmGpuProbe* probe) {
-    ensureKokkosInitialized(probe ? probe->requested_threads : 0);
-    openswmm::twoD::ISurfaceSolver* solver =
-        new openswmm::twoD::gpu::ExplicitKokkosSurfaceSolver();
-    return static_cast<void*>(solver);
+    return openswmm::twoD::gpu::plugin::make([&] {
+        ensureKokkosInitialized(probe ? probe->requested_threads : 0);
+    });
+}
+
+
+extern "C" OPENSWMM_GPU_ABI int
+openswmm_gw_capabilities_v1(OpenSwmmGwCapabilitiesV1* out) {
+    if(!out||out->struct_size!=sizeof(*out))return 1;
+    std::memset(out,0,sizeof(*out));out->struct_size=sizeof(*out);
+    out->version=OPENSWMM_GW_RECHARGE_ABI_VERSION;out->vendor=OPENSWMM_GPU_VENDOR_OPENMP;
+    out->execution_kind=OPENSWMM_GW_EXECUTION_HOST_OPENMP;
+    out->operators=OPENSWMM_GW_OPERATOR_CLOSED_FORM_RECHARGE;
+    out->closures=1u;out->soil_laws=15u;out->host_owned=15u;
+    out->time_integrators=3u;out->canonical_host_restart=1;
+    std::strncpy(out->label,"Kokkos OpenMP CLOSED_FORM recharge; host-owned water/receipts/quality/heat",sizeof(out->label)-1);
+    return 0;
+}
+extern "C" OPENSWMM_GPU_ABI int
+openswmm_gw_recharge_v1(const OpenSwmmGwRechargeInputV1* input,int count,double* output,int threads) {
+    if(count<0||(count>0&&(!input||!output)))return 1;
+    for(int i=0;i<count;++i) {
+        const auto& v=input[i];
+        if(v.struct_size!=sizeof(v)||v.law<0||v.law>3||
+           !std::isfinite(v.Ks)||v.Ks<0||!std::isfinite(v.theta_s)||!std::isfinite(v.theta_r)||
+           v.theta_r<0||v.theta_s<=v.theta_r||v.theta_s>1||
+           !std::isfinite(v.alpha)||v.alpha<=0||!std::isfinite(v.psi_b)||v.psi_b<=0||
+           !std::isfinite(v.lambda)||v.lambda<=0||!std::isfinite(v.vg_n)||v.vg_n<=1||
+           !std::isfinite(v.vg_L)||!std::isfinite(v.length)||v.length<=0||!std::isfinite(v.hu)||v.hu<0)return 1;
+    }
+    if(count==0)return 0;
+    try {
+        std::lock_guard<std::mutex> recharge_lock(g_recharge_mutex);
+        ensureKokkosInitialized(threads);
+        Kokkos::parallel_for("OpenSWMM CLOSED_FORM groundwater recharge",Kokkos::RangePolicy<Kokkos::OpenMP>(0,count),[=](int i) {
+            const auto& v=input[i];openswmm::twoD::soil::Params p;
+            p.law=static_cast<openswmm::twoD::SoilChar>(v.law);p.Ks=v.Ks;p.theta_s=v.theta_s;p.theta_r=v.theta_r;
+            p.alpha=v.alpha;p.psi_b=v.psi_b;p.lambda=v.lambda;p.vg_n=v.vg_n;p.vg_L=v.vg_L;
+            output[i]=openswmm::twoD::soil::rechargeQ0(p,v.length,v.hu);
+        });
+        Kokkos::fence();
+        for(int i=0;i<count;++i)if(!std::isfinite(output[i]))return 2;
+        return 0;
+    } catch(...) {return 2;}
 }

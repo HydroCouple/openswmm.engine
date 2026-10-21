@@ -52,10 +52,11 @@
 
 #include "ISurfaceSolver.hpp"
 #include "InertialEdges.hpp"
+#include "../../transport/components/ReactionModule/ReactionIntegrator.hpp"
 #include "../data/SolverOptions2D.hpp"   // Momentum2D
 
 namespace openswmm::detail { class CompletedSourceArchive; }
-namespace openswmm { class SWMMEngine; }
+namespace openswmm { class SWMMEngine; struct SimulationContext; }
 namespace openswmm::runoff { class SourceWaterDriver; }
 namespace openswmm::twoD {
 
@@ -83,12 +84,17 @@ public:
     /// Capture initial state and every finest accepted source interval, after
     /// all due groundwater firings/node sampling; externally owned recorder.
     void setSourceResultHistory(SourceResultHistory& history);
-    /// Internal accepted CPU surface/source boundary, not a whole-engine hotstart.
-    /// First order, no live 1D coupling or external boundary providers.
+    /// Internal accepted CPU source boundary or standalone water-only RK2
+    /// component checkpoint; not a whole-engine hotstart. Borrowed owners are guarded.
     std::string saveCheckpoint(const std::string& path) const;
     std::string loadCheckpoint(const std::string& path);
     /// Bind a saved exact source-history prefix after a marcher restore.
     void resumeSourceResultHistory(SourceResultHistory& history);
+    /// Configure the standalone coupled RK2 surface reaction owner at time zero.
+    std::string configureRk2Reactions(const SimulationContext&);
+    double surfaceReactionLoss(int row) const noexcept {
+        return row>=0&&std::size_t(row)<rk_reacted_.size()?rk_reacted_[row]:0;
+    }
     void finalize() override;
     /// Refresh changed perimeter topology between completed advances.
     void refreshBoundaries();
@@ -113,6 +119,10 @@ private:
     friend class SurfaceRouter2D;
     friend class openswmm::SWMMEngine;
     std::string checkpointBytes(std::string& bytes) const;
+    std::string rk2CheckpointProfile() const;
+    std::string rk2CheckpointModel() const;
+    std::string rk2CheckpointBytes(std::string&) const;
+    std::string loadRk2CheckpointBytes(std::string);
     std::string loadCheckpointBytes(std::string bytes, const std::array<double,10>* router_boundary = nullptr,
                                     const std::vector<double>* pending_outfalls = nullptr,
         const std::function<void(const runoff::SourceWaterDriver&)>* validate_source = nullptr,
@@ -120,6 +130,15 @@ private:
                                     const std::vector<int>* boundary_slots = nullptr,
                                     double* inspect_source_end = nullptr);
     void refreshSourceResultBoundary();
+    double advanceImpl(double current,double target);
+    void advanceRk2SurfaceReactions(double seconds);
+    void syncRk2ReactionReport(SimulationContext&);
+    const ReactionData* rk_reactions_=nullptr; // immutable model config
+    transport::RxWorkspace rk_reaction_workspace_;
+    std::vector<int> rk_reaction_rows_;
+    std::vector<double> rk_decay_,rk_reacted_,rk_reacted_reported_;
+    std::string rk_reaction_identity_;
+
 
     // Recompute η/depth from state volumes for the whole mesh.
     void reconstructAll();
@@ -195,6 +214,8 @@ private:
     /// (eta, h, u, v) per cell, refreshed at every face pass, and the SSP-RK2
     /// stage buffers. Empty at order 1.
     bool                 second_order_ = false;
+    bool rk_transport_stage_ = false;
+    std::vector<double> rk_stage_mass_,rk_stage_volume_; // scratch beginning-state donor views
     /// gex_/gey_: eta gradients in [0, n), depth gradients in [n, 2*n).
     /// The second block supplies the face bed (eta - h) only for order 2.
     std::vector<double>  gex_, gey_, gux_, guy_, gvx_, gvy_;
@@ -206,7 +227,7 @@ private:
     /// One SSP-RK2 (Heun) step of length dt over the active lists: two
     /// forward-Euler substeps averaged with the start state; the ledgers
     /// that accumulated over both stages are halved to the trapezoidal value.
-    void runRk2Step(double dt);
+    void runRk2Step(double dt,double time);
     /// FRONT_REBUILD: frontier_[i] = 1 for an active cell with at least one
     /// inactive neighbour (the outer ring of the halo). When such a cell
     /// crosses the activation depth the front has used up the halo, and the

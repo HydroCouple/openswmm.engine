@@ -37,7 +37,8 @@
 #include "PerfTimers.hpp"
 #include "UnitConversion.hpp"
 #include "../quality/SurfaceSpeciesKernel.hpp"
-#include "../quality/MsxSurfaceQuality.hpp"   // BW-MSX: species buildup / washoff
+#include "../quality/MsxSurfaceQuality.hpp"
+#include "../quality/MsxLidReactions.hpp"   // BW-MSX: species buildup / washoff
 #include "../hydrology/Gage.hpp"
 #include "../hydrology/surface/SnowCheckpoint.hpp"
 #include "../hydraulics/Link.hpp"
@@ -568,9 +569,7 @@ int SWMMEngine::open(const char* inp_path,
         // listed; the name is the contract, as for the reserved rows. Order
         // is the [REACTION_SPECIES] order (ctx_.reactions index m), which
         // is also the msx_*_conc stride the snapshot reads below.
-        for (int m = 0; m < ctx_.reactions.n_species(); ++m)
-            ctx_.reported_species_names.push_back(
-                ctx_.reactions.species_name[static_cast<std::size_t>(m)]);
+        ctx_.refreshReportedSpecies();
     }
 
     // Warn about unknown/skipped sections. Route through push_report_warning so
@@ -935,6 +934,18 @@ int SWMMEngine::initialize() noexcept {
                 return CFFI_ERR_BADPARAM;
             }
 #endif
+
+    if (ctx_.options.quality_solver == QualitySolverKind::LAGRANGIAN &&
+        std::any_of(ctx_.reactions.species_is_wall.begin(), ctx_.reactions.species_is_wall.end(),
+                    [](uint8_t wall) { return wall != 0; })) {
+        set_error(SWMM_ERR_BADPARAM, "LAGRANGIAN reaction transport does not support attached WALL species; use QUALITY_SOLVER LEGACY.");
+        return SWMM_ERR_BADPARAM;
+    }
+    if (ctx_.reactions.has_subcatch_reactions() && ctx_.lid_usage.count() > 0 && ctx_.reactions.lid_controls.empty()) {
+        set_error(SWMM_ERR_BADPARAM, "[REACTION_SUBCATCHMENTS] wet-pool reactions require non-LID subcatchments; porous LID reaction transport is unsupported.");
+        return SWMM_ERR_BADPARAM;
+    }
+    ctx_.refreshReportedSpecies();
 
     // Everything from here to init_modules() is the "state seeding" phase —
     // per-node/per-link loops over ctx_. Closed out just before init_modules(),
@@ -1385,6 +1396,10 @@ int SWMMEngine::initialize() noexcept {
     // Initialize all computational modules (batch SoA setup)
     init_modules();
 
+#ifdef OPENSWMM_HAS_2D
+    if(surface_router_.isActive()&&std::any_of(ctx_.reactions.lid.subcatchments.begin(),ctx_.reactions.lid.subcatchments.end(),[](auto v){return v!=0;}))
+        ctx_.errors.push_back("Reactive conventional LIDs require ordinary runoff ownership; 2D source-owner species receipts are not implemented.");
+#endif
     // A mesh the finite-volume solver cannot build is a fatal model error, not
     // a warning: there is no fallback routing, so continuing would produce a
     // plausible-looking report describing a network that never moved water.
@@ -2363,7 +2378,7 @@ void SWMMEngine::stepRunoff(double dt_routing) {
         // quality — it is what carries the drain into the network at all.
         std::fill(ctx_.nodes.lid_drain_inflow.begin(),
                   ctx_.nodes.lid_drain_inflow.end(), 0.0);
-        if (ctx_.n_pollutants() > 0 || ctx_.options.water_age ||
+        if (ctx_.n_pollutants() > 0 || ctx_.reactions.n_species() > 0 || ctx_.options.water_age ||
             ctx_.options.heat_transport) {
             // legacy lid_addDrainInflow interpolates the drain's water AND
             // its load between the previous and current runoff steps at
@@ -3155,6 +3170,7 @@ void SWMMEngine::stepRunoff(double dt_routing) {
         // A4: LID layer ages, immediately after the depths this step
         // produced — the same slot A3's watershed update occupies relative
         // to the runoff solver.
+        if(!ctx_.options.ignore_quality)msxlid::routeUnits(ctx_,lid_,dt_runoff);
         transport::routeLidLayerAge(ctx_, lid_, dt_runoff);
         // H5b: and the temperature column, on the same clock. Separate
         // entry point rather than a species loop inside one routine: the
@@ -3397,7 +3413,7 @@ void SWMMEngine::stepRunoff(double dt_routing) {
                                 }
                             }
                             msxsurf::addLidDrainRunon(ctx_, g.control_idx[uu], sc, runon_sc, drain_cfs,
-                                                      g.to_perv[uu] != 0, is_runoff_load_r, dt_runoff);
+                                                      g.to_perv[uu] != 0, is_runoff_load_r, dt_runoff,msxlid::drainValues(ctx_,t,u,g.control_idx[uu]));
                             dest_node = -1;   // the node receives this water later, as runoff
                         }
                         if (dest_node >= 0 && dest_node < ctx_.n_nodes()) {
@@ -3521,7 +3537,7 @@ void SWMMEngine::stepRunoff(double dt_routing) {
                             msxsurf::addLidDrain(ctx_, g.control_idx[uu], sc, dest_node, drain_cfs,
                                                  g.to_perv[uu] != 0,
                                                  g.drain_node[uu] >= 0 || g.drain_subcatch[uu] == sc,
-                                                 dt_runoff);
+                                                 dt_runoff,msxlid::drainValues(ctx_,t,u,g.control_idx[uu]));
                         }
                     }
                 }
@@ -3568,7 +3584,7 @@ void SWMMEngine::stepRunoff(double dt_routing) {
 
         // A6c'. The QUALITY half of the same deferral: legacy books the
         // washoff mass against the POST-LID volumes, which only exist here.
-        if (!ctx_.options.ignore_quality) bookWashoffLoads(dt_runoff);
+        if (!ctx_.options.ignore_quality) {msxlid::publishUnits(ctx_,dt_runoff);bookWashoffLoads(dt_runoff);}
 
         // A7. Street sweeping moved into the surface kernel (Multispecies
         //     Phase 2, S7 parity): planned at the step's start by the A4b'
@@ -7105,10 +7121,11 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                     // pollutant column. No old/new blend (there is no
                     // msx_node_conc_old) and no dry mask (pollutants carry
                     // none either: a residual concentration is reported).
-                    for (std::size_t m = 0; m < unm; ++m) {
+                    for (std::size_t r = 0; r < rx.reported_species.size(); ++r) {
+                        const auto m = static_cast<std::size_t>(rx.reported_species[r]);
                         const std::size_t src = n * unm + m;
                         if (src < rx.msx_node_conc.size())
-                            snap.node_quality[n * nr_s + msx_i0 + m] =
+                            snap.node_quality[n * nr_s + msx_i0 + r] =
                                 rx.msx_node_conc[src];
                     }
                 }
@@ -7169,10 +7186,11 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                         snap.link_quality[l * nr_s + temp_i] =
                             ctx_.heat_state.link_temp[l];
                     // E1: MSX species — see the node loop.
-                    for (std::size_t m = 0; m < unm; ++m) {
+                    for (std::size_t r = 0; r < rx.reported_species.size(); ++r) {
+                        const auto m = static_cast<std::size_t>(rx.reported_species[r]);
                         const std::size_t src = l * unm + m;
                         if (src < rx.msx_link_conc.size())
-                            snap.link_quality[l * nr_s + msx_i0 + m] =
+                            snap.link_quality[l * nr_s + msx_i0 + r] =
                                 rx.msx_link_conc[src];
                     }
                 }
@@ -7261,11 +7279,12 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                     // inside the same has_runoff gate. Decks without
                     // [BUILDUP]/[WASHOFF] rows for MSX species leave the
                     // arrays empty and the column reads 0.
-                    for (std::size_t m = 0; m < unm; ++m) {
+                    for (std::size_t r = 0; r < rx.reported_species.size(); ++r) {
+                        const auto m = static_cast<std::size_t>(rx.reported_species[r]);
                         const std::size_t src = s * unm + m;
                         if (src < rx.surface.washoff_conc.size() &&
                             src < rx.surface.washoff_conc_old.size())
-                            snap.subcatch_quality[s * nr_s + msx_i0 + m] =
+                            snap.subcatch_quality[s * nr_s + msx_i0 + r] =
                                 f1_ro_q * rx.surface.washoff_conc_old[src] +
                                 f_ro_q * rx.surface.washoff_conc[src];
                     }
@@ -10225,6 +10244,8 @@ void SWMMEngine::initQuality() noexcept {
     // [LOADINGS] row or the buildup function at DRY_DAYS (legacy
     // landuse_getInitBuildup), like the pollutant block above.
     if (!ctx_.options.ignore_quality) msxsurf::initState(ctx_);
+    if(!ctx_.options.ignore_quality)msxlid::initialize(ctx_);
+    if(!ctx_.options.ignore_quality)msxlid::initializeUnits(ctx_,lid_);
 }
 
 // ============================================================================

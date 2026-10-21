@@ -77,6 +77,13 @@ extern "C" {
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_is_active(SWMM_Engine engine, int* active);
 
+/** Resolve an unoverridden AUTO backend to the built-in CPU marcher for this
+ * session. Valid in BUILDING or OPENED state, including models without a mesh.
+ * enabled must be 0 or 1. Does not edit BACKEND, serialize a model option or
+ * change checkpoint identity. Explicit BACKEND and OPENSWMM_2D_BACKEND requests
+ * retain precedence. Reapply after opening a new model. */
+SWMM_ENGINE_API int swmm_2d_set_auto_backend_cpu(SWMM_Engine engine, int enabled);
+
 /** @brief Make the parsed 2D mesh editable without a full initialize().
  *
  *  The mesh-edit/query setters work as soon as the mesh is parsed (OPENED
@@ -385,10 +392,15 @@ SWMM_ENGINE_API int swmm_2d_set_vertex_coupled_node(SWMM_Engine engine,
  *
  *  @param tri_idx   Triangle index in `[0, triangle_count)`.
  *  @param node_name SWMM node id (must be non-empty).
- *  @param cd        Discharge coefficient; must be > 0 (engine default 0.65).
- *  @param area      Effective exchange area, m²; must be > 0.
+ *  @param cd        Discharge coefficient; must be > 0, or NaN for a row
+ *                   that does not author one ([2D_OPTIONS] COUPLING_CD
+ *                   applies and the `.inp` row omits the token).
+ *  @param area      Effective exchange area in mesh length units² (the same
+ *                   convention as swmm_2d_set_vertex_coupling_area); must be
+ *                   > 0, or NaN for a row that does not author one (the
+ *                   node's 2D coupling structure, or the default, applies).
  *  @return SWMM_OK; SWMM_ERR_BADINDEX on bad triangle; SWMM_ERR_BADPARAM on
- *          empty name / non-positive cd or area.
+ *          empty name / a non-positive (non-NaN) cd or area.
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_add_triangle_coupling(SWMM_Engine engine,
                                                     int tri_idx,
@@ -415,7 +427,8 @@ SWMM_ENGINE_API int swmm_2d_triangle_coupling_rows(SWMM_Engine engine,
  *  @param tri_idx   Output triangle index.
  *  @param node_idx  Output SWMM node index (-1 if unresolved).
  *  @param cd        Output discharge coefficient.
- *  @param area      Output exchange area (m²).
+ *  @param area      Output exchange area (mesh length units² before
+ *                   initialize, m² after — as for vertex areas).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_triangle_coupling_row(SWMM_Engine engine,
                                                         int row_idx,

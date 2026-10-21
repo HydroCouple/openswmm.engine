@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "SubsurfaceSolver.hpp"
 #include "../data/MeshData.hpp"
+#include "../data/SolverOptions2D.hpp"
 #include "../solver/InertialEdges.hpp"
 #include "../heat/ThermalCheckpoint.hpp"
 #include "../../core/CompletedSourceArchive.hpp"
@@ -25,9 +26,15 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
     if(!lid_receipts_enabled_ && std::any_of(richards_bed_owned_.begin(),richards_bed_owned_.end(),[](bool owned){return owned;}))
         throw std::runtime_error("Richards joint owner checkpoints require the R5 restart extension.");
     auto& s=state_;auto& t=tr_;auto& o=options_;
+    const bool finite_pore_ledgers=heat_.active()&&std::any_of(heat_.cells.begin(),heat_.cells.end(),
+        [](const auto& cell){return cell.porewater.active();});
+    const bool rk2_transport=opts_&&opts_->reconstruction_order==2&&t.active();
+    const char* transport_profile=rk2_transport?"RK2 groundwater transport ledgers v1":t.n_layers==0&&boundaries_.empty()&&reactors_.empty()?
+        (finite_pore_ledgers?"bulk finite-porewater ledgers v1":"bulk shared-source transport clocks v1"):
+        "SIGMA chemistry and groundwater edges v2";
     if(model) {
         if(needsTransportRestart()) {
-            std::string profile="SIGMA chemistry and groundwater edges v2";a(profile,t.n_layers,t.c_diff,transport_units_,reaction_identity_);
+            std::string profile=transport_profile;a(profile,t.n_layers,t.c_diff,transport_units_,reaction_identity_);
             if(mesh_){auto x=mesh_->vx,y=mesh_->vy,z=mesh_->vz;auto nv=mesh_->cell_nv;auto vertices=mesh_->cell_v;
                 a(x,y,z,nv,vertices);}
             a.sequence(boundaries_,[&](auto& b){a(b.cell,b.edge,b.head,b.length,b.distance);signal(a,b.signal);
@@ -46,7 +53,16 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
         a(t.n_species,t.n_cells,t.n_pollut,t.n_msx,t.age_row,t.temp_row,t.dispersion_on);
     a.fixed(t.row_names,t.alpha_L,t.alpha_T,t.D_m,t.rho_b,t.kd,t.decay);
         auto thermal=checkpoint::groundHeatModelIdentity(heat_);a(thermal);
+        if(recharge_backend_.evaluate) {
+            std::string operator_profile="host OpenMP CLOSED_FORM recharge v1";a(operator_profile);
+        }
         return;
+    }
+    if(a.reading()) {
+        // Operator caches/counters are process-local diagnostics. Canonical
+        // state is restored below; the next batch recomputes its pure inputs.
+        recharge_inputs_.clear();recharge_values_.clear();std::fill(recharge_slots_.begin(),recharge_slots_.end(),-1);
+        recharge_batches_=recharge_cells_=0;
     }
     a.fixed(s.hg,s.hu,s.theta_sigma,s.q0_last,s.qnode_last,s.qlat_last,s.qdeep_last,s.qet_last,s.dunne_last,
             s.qplus_last,s.infil_capacity,s.infil_remaining,s.infil_refresh,s.infil_interval,s.wetting_front,
@@ -68,8 +84,8 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
     a.sequence(source_receipts_,[&](auto& rows){a.sequence(rows,[&](auto& r){intake(a,r);});},true);
     a.sequence(source_returns_,[&](auto& r){returned(a,r);});
     if(needsTransportRestart()) {
-        std::string profile="SIGMA chemistry and groundwater edges v2";a(profile);
-        if(a.reading()&&profile!="SIGMA chemistry and groundwater edges v2")
+        std::string profile=transport_profile;a(profile);
+        if(a.reading()&&profile!=transport_profile)
             throw std::runtime_error("Unsupported groundwater transport restart profile.");
         a(s.led_boundary_in,s.led_boundary_out,source_completed_end_);
         a.fixed(t.layer_mass,t.contact_water,t.contact_node_out,t.contact_link_out,t.contact_node_mass,t.contact_link_mass,t.boundary_in,t.boundary_out,t.boundary_flux_in,t.boundary_flux_out,
@@ -105,8 +121,17 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
             for(const auto* values:{&t.boundary_in,&t.boundary_out,&t.boundary_flux_in,&t.boundary_flux_out,
                 &t.generated_age,&t.gained_contact,&t.lout_mass,&t.link_gain_shortfall,&cell_completed_})
                 for(double value:*values)if(!std::isfinite(value))throw std::runtime_error("Nonfinite transport restart receipt.");
+            for(double time:cell_completed_)if(time<0)throw std::runtime_error("Negative completed groundwater clock.");
             if((!t.generated_age.empty()&&t.generated_age.size()!=std::size_t(t.n_species))||
                t.generated_age.size()!=t.gained_contact.size())throw std::runtime_error("Age restart ledger shape differs.");
+            if((finite_pore_ledgers || (t.n_layers>0&&t.age_row>=0&&
+                std::any_of(cell_completed_.begin(),cell_completed_.end(),[](double time){return time>0;})))&&
+               t.generated_age.size()!=std::size_t(t.n_species))throw std::runtime_error("Finite-porewater generation/contact ledgers are missing.");
+            if(!rk2_transport&&!finite_pore_ledgers&&t.n_layers==0&&!t.generated_age.empty())
+                throw std::runtime_error("Compatibility groundwater has unexpected finite-porewater ledgers.");
+            for(std::size_t row=0;row<t.generated_age.size();++row)
+                if(t.generated_age[row]<0 || (int(row)!=t.age_row&&t.generated_age[row]!=0))
+                    throw std::runtime_error("Invalid age generation ledger.");
         }
     }
     if(lid_receipts_enabled_) {
@@ -148,7 +173,7 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
                 }
             }
         }
-        if(a.reading()&&!porewater_preset_out_.empty()) {
+        if(a.reading()&&tr_.n_layers==0&&!porewater_preset_out_.empty()) {
             const auto nl=std::size_t(heat_.config->options.thermal_layers),nc=std::size_t(state_.n_cells);
             std::size_t ns=0;for(const auto& cell:heat_.cells)ns=std::max(ns,std::size_t(cell.porewater.n_species));
             if(!nl||!ns||porewater_preset_out_.size()!=ns*nc*nl)
@@ -160,6 +185,35 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
                 if(porewater_preset_out_[packet]!=reserved)
                     throw std::runtime_error("Pending porewater export does not match its reserved physical-layer donor.");
             }
+        }
+    }
+    if(a.reading() && tr_.n_layers>0 && heat_.active())for(int cell=0;cell<s.n_cells;++cell)if(covers(cell)) {
+        const auto& pore=heat_.cells[cell].porewater;const auto& m=pore.sigma;const auto ne=m.overlaps.size();
+        if(m.layers!=t.n_layers||m.species!=t.n_species)throw std::runtime_error("SIGMA porous checkpoint owner differs.");
+        for(int row=0;row<t.n_species;++row)if(row!=t.temp_row) {
+            const auto nf=heat_.cells[cell].column.theta.size();
+            for(std::size_t physical=0;physical<nf;++physical) {
+                double value=0,reservation=0;
+                for(std::size_t e=0;e<ne;++e)if(m.overlaps[e].physical==int(physical)) {
+                    value+=m.mass[std::size_t(row)*ne+e];reservation+=m.reserved[std::size_t(row)*ne+e];
+                }
+                const auto k=std::size_t(row)*nf+physical;
+                if(std::abs(value-pore.mass[k])>1e-12*std::max({1.,std::abs(value),std::abs(pore.mass[k])})||
+                   std::abs(reservation-pore.reserved_out[k])>1e-12*std::max(1.,reservation))
+                    throw std::runtime_error("SIGMA porous checkpoint physical view differs from its overlap owner.");
+            }
+            for(int reactor=0;reactor<=t.n_layers;++reactor) {
+                double total=0,capacity=0;for(std::size_t e=0;e<ne;++e)if(m.overlaps[e].reactor==reactor) {
+                    total+=m.mass[std::size_t(row)*ne+e];capacity+=m.capacity[std::size_t(row)*ne+e];
+                }
+                const double native=reactor==t.n_layers?t.sat_mass[t.idx(row,cell)]:t.layer_mass[t.layerIdx(row,reactor,cell)];
+                const double expected=native+m.pending[std::size_t(row)*(t.n_layers+1)+reactor];
+                if(capacity>0 && std::abs(total-expected)>1e-12*std::max({1.,std::abs(total),std::abs(expected)}))
+                    throw std::runtime_error("SIGMA porous checkpoint duplicates or loses canonical mass.");
+            }
+            double held=0;for(std::size_t e=0;e<ne;++e)held+=m.reserved[std::size_t(row)*ne+e];
+            if(std::abs(held-pendingSaturatedMassExport(cell,row))>1e-12*std::max(1.,held))
+                throw std::runtime_error("SIGMA porous checkpoint reservation differs from its producer receipts.");
         }
     }
     if(a.reading()) {
@@ -285,7 +339,7 @@ std::string SubsurfaceSolver::transportRestartState() const {
 std::string SubsurfaceSolver::restoreTransportRestart(const std::string& bytes,bool apply) {
     try {
         if(bytes.empty()) {
-            if(needsTransportRestart())return "Hotstart lacks groundwater boundary/layer transport state.";
+            if(needsTransportRestart())return "Hotstart lacks groundwater boundary, layer, ledger or shared-source clock state.";
             return {};
         }
         if(!needsTransportRestart())return "Hotstart groundwater transport profile differs from this model.";

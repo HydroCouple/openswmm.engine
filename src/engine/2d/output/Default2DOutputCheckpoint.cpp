@@ -188,6 +188,7 @@ struct Default2DOutputPlugin::PreparedCheckpoint {
     hid_t file = H5I_INVALID_HID;
     std::vector<std::pair<hid_t*, hid_t>> datasets;
     hsize_t steps = 0, beds = 0, layers = 0;
+    hsize_t gw_species = 0, gw_transport_layers = 0, gw_boundaries = 0;
     double next_due = -1;
     bool groundwater = false;
     bool heat = false;
@@ -203,17 +204,21 @@ struct Default2DOutputPlugin::PreparedCheckpoint {
 };
 
 std::string Default2DOutputPlugin::fileBytes() const {
-    require(!checkpoint_write_failed_ && file_id_ >= 0 && H5Fflush(file_id_, H5F_SCOPE_GLOBAL) >= 0, "Cannot flush mesh results.");
+    // HDF5 can reclaim an unused allocation tail after its first flush.
+    // Settle that EOF/superblock update before capturing bytes, so another
+    // read-only checkpoint does not invalidate the exact fresh-header guard.
+    require(!checkpoint_write_failed_ && file_id_ >= 0 && H5Fflush(file_id_, H5F_SCOPE_GLOBAL) >= 0 && H5Fflush(file_id_, H5F_SCOPE_GLOBAL) >= 0, "Cannot flush mesh results.");
     return readFile(io::utf8_path(h5_path_));
 }
 
 void Default2DOutputPlugin::validateCheckpoint(hid_t file, const SimulationContext& ctx,
     double next_report_ms, const SimulationSnapshot& snap, hsize_t steps, double next_due, bool groundwater) const {
-    require(checkpoint_fresh_ && !checkpoint_header_.empty() && n_species_ == 0 && n_buildup_ == 0 && n_gw_species_ == 0,
-            "Mesh checkpoint supports its prepared water-only writer.");
+    require(checkpoint_fresh_ && !checkpoint_header_.empty() && n_species_ == 0 && n_buildup_ == 0,
+            "Mesh checkpoint requires its prepared writer without surface species or buildup output.");
     Default2DOutputPlugin reference(""); reference.file_id_ = openImage(checkpoint_header_);
     reference.n_faces_ = n_faces_; reference.report_vars_ = report_vars_;
     reference.storage_type_ = storage_type_; reference.compression_ = compression_;
+    reference.native_species_units_ = native_species_units_;
     require(groundwater == (steps > 0 && want(report2d::GROUNDWATER) && snap.gw2d_active),
             "Mesh checkpoint groundwater presence differs.");
     if (groundwater) reference.createGroundwaterDatasets(snap);
@@ -268,6 +273,12 @@ void Default2DOutputPlugin::validateCheckpoint(hid_t file, const SimulationConte
         else if (name == "Mesh2_face_soil_layer_heat_capacity") markMissing(snap.thermal2d_ground_layer_capacity);
         else if (name == "ground_heat_budget") markMissing(snap.thermal2d_ground_budget);
         else if (name == "Mesh2_lid_layer_temperature") markMissing(snap.thermal2d_lid_layer_temperature);
+        // These diagnostics are unavailable until their first applicable
+        // refresh/firing, and may remain so when infiltration or ET is off.
+        // Their historical availability cannot be inferred from the current
+        // snapshot. NaN is the missing marker; infinity is still invalid.
+        else if (name == "Mesh2_face_gw_infil_capacity" || name == "Mesh2_face_gw_infil_refresh" ||
+                 name == "Mesh2_face_et_stress") missing.assign(n_faces_,1);
         if (H5Tget_class(bt.id) == H5T_FLOAT || H5Tget_class(bt.id) == H5T_INTEGER)
             visitNumbers(b.id,{},missing);
         else
@@ -352,6 +363,7 @@ void Default2DOutputPlugin::resolveCheckpointDatasets(PreparedCheckpoint& result
     Default2DOutputPlugin reference(""); reference.file_id_ = openImage(checkpoint_header_);
     reference.n_faces_ = n_faces_; reference.report_vars_ = report_vars_;
     reference.storage_type_ = storage_type_; reference.compression_ = compression_;
+    reference.native_species_units_ = native_species_units_;
     if (result.groundwater) reference.createGroundwaterDatasets(snap);
     if (result.steps>0) reference.createSnowDatasets(snap);
     if (result.steps > 0 && reference.want(report2d::HEAT) && snap.thermal2d_active)
@@ -368,6 +380,9 @@ void Default2DOutputPlugin::resolveCheckpointDatasets(PreparedCheckpoint& result
         require(id >= 0, "Cannot reopen mesh checkpoint dataset."); result.datasets.emplace_back(targets[k], id);
     }
     result.beds = reference.n_gw_beds_; result.layers = reference.n_gw_layers_;
+    result.gw_species = reference.n_gw_species_;
+    result.gw_transport_layers = reference.n_gw_transport_layers_;
+    result.gw_boundaries = reference.n_gw_boundaries_;
  }
 
 std::string Default2DOutputPlugin::captureFileCheckpoint(const SimulationContext& ctx,double next,const SimulationSnapshot& snap,
@@ -413,6 +428,8 @@ void Default2DOutputPlugin::adoptCheckpoint(PreparedCheckpoint& prepared) noexce
     if(prepared.file_copy)prepared.file_copy->retain();
     prepared.staging.clear(); n_steps_ = prepared.steps; next_due_days_ = prepared.next_due;
     gw_created_ = prepared.groundwater; n_gw_beds_ = prepared.beds; n_gw_layers_ = prepared.layers;
+    n_gw_species_ = prepared.gw_species; n_gw_transport_layers_ = prepared.gw_transport_layers;
+    n_gw_boundaries_ = prepared.gw_boundaries;
     heat_created_ = prepared.heat; n_heat_layers_ = prepared.heat_layers;
     n_heat_lid_layers_ = prepared.heat_lid_layers;
     source_written_ = std::move(prepared.history);

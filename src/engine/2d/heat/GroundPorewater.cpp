@@ -125,6 +125,22 @@ bool GroundPorewaterColumn::canApplyContactMassIncrement(int r,std::size_t j,dou
 bool GroundPorewaterColumn::applyContactMassIncrement(int r,std::size_t j,double increment) noexcept {
     if(!canApplyContactMassIncrement(r,j,increment))return false;
     const auto nl=retention.size()/std::size_t(std::max(1,n_species)),k=std::size_t(r)*nl+j;
+    if(sigma.active()&&!sigma.apply(r,int(j),increment))return false;
     mass[k]+=increment;contact_mass[k]+=increment;return true;
 }
+void GroundPorewaterColumn::refreshSigmaView() {
+    if(!sigma.active())return;
+    std::fill(mass.begin(),mass.end(),0);std::fill(reserved_out.begin(),reserved_out.end(),0);
+    const auto nl=retention.size()/std::size_t(n_species),ne=sigma.overlaps.size();
+    for(int s=0;s<n_species;++s)for(std::size_t e=0;e<ne;++e) {
+        const auto k=std::size_t(s)*nl+sigma.overlaps[e].physical,q=std::size_t(s)*ne+e;
+        mass[k]+=sigma.mass[q];reserved_out[k]+=sigma.reserved[q];
+    }
+}
+std::string GroundPorewaterColumn::publishSigma(SubsurfaceTransportState& tr,int cell) {
+    if(!sigma.active())return {};
+    if(auto error=sigma.publish(tr,cell);!error.empty())return error;
+    refreshSigmaView();return {};
+}
+
 } // namespace openswmm::twoD

@@ -41,6 +41,33 @@ namespace openswmm::edit {
 // Internal helpers
 // ============================================================================
 
+// Reaction configuration stores resolved node/link indices just like inflows.
+// Drop rows owned by the deleted element and shift surviving identities.
+static void erase_reaction_element(SimulationContext& ctx, bool link, int deleted) {
+    auto& rx = ctx.reactions;
+    rx.parameter_overrides.erase(std::remove_if(rx.parameter_overrides.begin(), rx.parameter_overrides.end(),
+        [&](const auto& row) { return row.link == link && row.element == deleted; }), rx.parameter_overrides.end());
+    for (auto& row : rx.parameter_overrides)
+        if (row.link == link && row.element > deleted) --row.element;
+    rx.wall_areas.erase(std::remove_if(rx.wall_areas.begin(),rx.wall_areas.end(),[&](const auto& r){return r.link==link&&r.element==deleted;}),rx.wall_areas.end());
+    for(auto& r:rx.wall_areas)if(r.link==link&&r.element>deleted)--r.element;
+    if (!link) {
+        rx.sources.erase(std::remove_if(rx.sources.begin(), rx.sources.end(),
+            [&](const auto& row) { return row.node == deleted; }), rx.sources.end());
+        for (auto& row : rx.sources) if (row.node > deleted) --row.node;
+    }
+    for (std::size_t k = rx.init_elem_idx.size(); k-- > 0;) {
+        if ((rx.init_elem_is_link[k] != 0) != link) continue;
+        if (rx.init_elem_idx[k] > deleted) --rx.init_elem_idx[k];
+        else if (rx.init_elem_idx[k] == deleted) {
+            rx.init_elem_idx.erase(rx.init_elem_idx.begin() + k);
+            rx.init_elem_is_link.erase(rx.init_elem_is_link.begin() + k);
+            rx.init_elem_species.erase(rx.init_elem_species.begin() + k);
+            rx.init_elem_value.erase(rx.init_elem_value.begin() + k);
+        }
+    }
+}
+
 // Decrement all elements > deleted_idx, leaving -1 (sentinel) alone.
 static void renumber_refs(std::vector<int>& refs, int deleted_idx) {
     for (auto& r : refs) {
@@ -532,6 +559,7 @@ CascadeResult delete_node(SimulationContext& ctx, int node_idx) {
     }
 
     // --- Step 5: erase SoA row (base + subtype side-table) ---
+    erase_reaction_element(ctx, false, node_idx);
     erase_node_spatial(ctx, node_idx);
     ctx.node_names.remove_at(node_idx);
     ctx.nodes.erase_at(node_idx);
@@ -593,6 +621,7 @@ CascadeResult delete_link(SimulationContext& ctx, int link_idx) {
     }
 
     // --- Step 3: erase SoA row ---
+    erase_reaction_element(ctx, true, link_idx);
     erase_link_spatial(ctx, link_idx);
     ctx.lid_node_outlets.erase(std::remove_if(ctx.lid_node_outlets.begin(), ctx.lid_node_outlets.end(),
         [link_idx](const auto& a) { return a.link == link_idx; }), ctx.lid_node_outlets.end());
@@ -621,6 +650,10 @@ CascadeResult delete_link(SimulationContext& ctx, int link_idx) {
 
 CascadeResult delete_subcatch(SimulationContext& ctx, int sc_idx) {
     CascadeResult result;
+    for(auto* laws:{&ctx.reactions.wet_laws,&ctx.reactions.buildup_laws}) {
+        laws->erase(std::remove_if(laws->begin(),laws->end(),[&](const auto& l){return l.subcatchment==sc_idx;}),laws->end());
+        for(auto& l:*laws)if(l.subcatchment>sc_idx)--l.subcatchment;
+    }
 
     // --- Step 1: nullify outlet_subcatch references ---
     const int nsc = ctx.n_subcatches();
@@ -1437,6 +1470,11 @@ CascadeResult delete_lid(SimulationContext& ctx, int lid_idx) {
         e(L.names); e(L.lid_type); e(L.surface); e(L.soil); e(L.pavement);
         e(L.storage); e(L.drain); e(L.drainmat); e(L.removals); e(L.removals_by_name); e(L.node_layers);
     }
+    auto& reaction=ctx.reactions;
+    reaction.lid_controls.erase(std::remove(reaction.lid_controls.begin(),reaction.lid_controls.end(),lid_idx),reaction.lid_controls.end());
+    for(auto& control:reaction.lid_controls)if(control>lid_idx)--control;
+    reaction.lid_laws.erase(std::remove_if(reaction.lid_laws.begin(),reaction.lid_laws.end(),[&](const auto& law){return law.control==lid_idx;}),reaction.lid_laws.end());
+    for(auto& law:reaction.lid_laws)if(law.control>lid_idx)--law.control;
     ctx.lid_names.remove_at(lid_idx);
 
     // --- Step 3: renumber ---
@@ -1595,6 +1633,9 @@ CascadeResult analyze_landuse_impact(const SimulationContext& ctx, int landuse_i
 CascadeResult delete_landuse(SimulationContext& ctx, int landuse_idx) {
     CascadeResult result;
     scan_landuse_refs(ctx, landuse_idx, result);
+    auto& laws=ctx.reactions.buildup_laws;
+    laws.erase(std::remove_if(laws.begin(),laws.end(),[&](const auto& l){return l.landuse==landuse_idx;}),laws.end());
+    for(auto& l:laws)if(l.landuse>landuse_idx)--l.landuse;
 
     const int np = ctx.n_pollutants();
 

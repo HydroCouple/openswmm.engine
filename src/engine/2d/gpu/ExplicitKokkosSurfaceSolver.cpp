@@ -133,6 +133,7 @@ KOKKOS_INLINE_FUNCTION double devWetRamp(double d, double dry_depth) {
 void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
                                              SurfaceStateData& state,
                                              SolverOptions2D& opts) {
+    kperf::Scope performance_scope(perf_counters_);
     // Direct plugin users must receive the same restriction as the factory.
     if (opts.momentum != Momentum2D::LOCAL_INERTIAL || state.transport.active())
         throw std::invalid_argument("Kokkos marcher requires local-inertial water-only flow");
@@ -1322,6 +1323,7 @@ void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current,
 
 double ExplicitKokkosSurfaceSolver::advance(double t_current,
                                             double t_target) {
+    kperf::Scope performance_scope(perf_counters_);
     if (!initialized_ || t_target <= t_current) return t_target;
     kperf::count_advance();
 
@@ -1415,6 +1417,7 @@ double ExplicitKokkosSurfaceSolver::advance(double t_current,
 // ===========================================================================
 
 void ExplicitKokkosSurfaceSolver::reinitialize(double /*t0*/) {
+    kperf::Scope performance_scope(perf_counters_);
     if (!initialized_) return;
     // External state edit: volumes authoritative; momentum + pending stale.
     devRefresh(d_volume_, state_->volume);
@@ -1427,6 +1430,7 @@ void ExplicitKokkosSurfaceSolver::reinitialize(double /*t0*/) {
 }
 
 void ExplicitKokkosSurfaceSolver::resyncFromVolumes(double /*t0*/) {
+    kperf::Scope performance_scope(perf_counters_);
     if (!initialized_) return;
     devRefresh(d_volume_, state_->volume);
     reconstructAllDev();
@@ -1435,6 +1439,7 @@ void ExplicitKokkosSurfaceSolver::resyncFromVolumes(double /*t0*/) {
 }
 
 void ExplicitKokkosSurfaceSolver::finalize() {
+    kperf::Scope performance_scope(perf_counters_);
     if (!initialized_) return;
     kperf::dump();
     if (!telemetry_path_.empty() && !telemetry_.empty()) {

@@ -71,6 +71,7 @@
 #define OPENSWMM_ENGINE_2D_SUBSURFACE_SOLVER_HPP
 
 #include "SigmaColumn.hpp"
+#include "../solver/GwRechargeBackend.hpp"
 #include "../../transport/components/ReactionModule/ReactionIntegrator.hpp"
 #include "SurfaceExchange.hpp"
 #include "../gw/GwSourceForcing.hpp"
@@ -158,6 +159,12 @@ public:
     void bookAreaEt(int cell,double dt,double potential,double owner_evaporation,double soil_demand);
 
     bool active() const noexcept { return state_.active; }
+    void setRechargeBackend(GwRechargeBackend backend) {recharge_backend_=std::move(backend);}
+    const GwRechargeBackend& rechargeBackend() const noexcept {return recharge_backend_;}
+    uint64_t rechargeBatches() const noexcept {return recharge_batches_;}
+    uint64_t rechargeCells() const noexcept {return recharge_cells_;}
+    int rechargeThreads() const noexcept {return recharge_backend_.threads?recharge_backend_.threads():0;}
+
     /// Mesh mode: 1 where a [2D_AQUIFER] row (`*`, TAG or CELL) covers the
     /// cell. An uncovered cell has no aquifer: no storage, no lateral faces,
     /// and its infiltration stays with the surface model. All 1 in
@@ -181,6 +188,8 @@ public:
     double pendingHeat(int cell) const noexcept;
     std::string initHeat(SimulationContext&,const GwTransportData&);
     std::string initPorewater();
+    std::string refreshSigmaPorewater(int cell);
+    void refreshSigmaPorewaterReservations(int cell) noexcept;
     /// Rebuild the signed soil-side contact receipt from the canonical layer
     /// increments after the mesh/channel synchronization has settled.
     std::string refreshPorewaterContactLedger();
@@ -223,6 +232,7 @@ public:
         if (m == 0.0) return 0.0;
         bookPresetPorewaterOut(cell,species,m);
         tr_.lout_mass[k] += m;
+        if(tr_.n_layers>0 && heat_.active())refreshSigmaPorewaterReservations(cell);
         return m;
     }
     /// …and of its unsaturated column store (m³), whatever closure holds it.
@@ -286,6 +296,10 @@ public:
     const RuntimeSources& runtimeSources() const noexcept { return runtime_sources_; }
     void setBoundaries(std::vector<GwResolvedBoundary>);
     const std::vector<GwResolvedBoundary>& boundaries() const noexcept {return boundaries_;}
+    // One forward-Euler evaluation within the owned shared RK2 transaction.
+    // Prescribed forcing is integrated without additional water substeps.
+    void fireGwRk2Cells(double dt, SurfaceStateData&, double time);
+    void advanceRk2Heat(double seconds);
     void setSources(std::vector<GwResolvedSource> sources);
     /// Flush every pending accumulator into its owner. Mandatory before any
     /// re-tier or active-set change (the stranded-flux hazard).
@@ -450,12 +464,22 @@ public:
     double storage() const noexcept { return state_.storage(); }
     void checkpoint(detail::CompletedSourceArchive&,bool model); // internal accepted-boundary IO
     std::string initReactions(SimulationContext& ctx);
-    bool needsTransportRestart() const noexcept {return tr_.n_layers>0 || !boundaries_.empty() || !reactors_.empty();}
+    /// Coupled SSP-RK2: spatial CLOSED_FORM/ENSLAVED/SIGMA water only, authored wells and HEAD/FLOW edges.
+    std::string rk2ProfileError() const;
+    void blendRk2Water(const SubsurfaceSolver& initial,double end);
+    void publishRk2Infiltration(SurfaceStateData&,double dt,double time);
+    bool hasRk2Reactions() const noexcept;
+    void advanceRk2Reactions(double seconds);
+    bool needsTransportRestart() const noexcept {
+        return tr_.n_layers>0 || !tr_.generated_age.empty() || !boundaries_.empty() || !reactors_.empty() ||
+            (tr_.active()&&std::any_of(source_owned_.begin(),source_owned_.end(),[](bool owned){return owned;}));
+    }
     std::string transportRestartState() const;
     std::string restoreTransportRestart(const std::string& bytes,bool apply);
 
 private:
     friend class CommonSourceStage;
+    friend class ExplicitInertialSolver;
     friend RichardsBedAcceptance acceptRichardsBedsAtFiring(SubsurfaceSolver&, SurfaceStateData&,
         double, double, const std::vector<RichardsBedOwner>&);
     friend RichardsBedAcceptance acceptRichardsBedsForTier(SubsurfaceSolver&, SurfaceStateData&,
@@ -491,6 +515,7 @@ private:
     /// (G-X4: `+` a leaking conduit filling the cell, `−` a gaining one
     /// drawing from it), `+ recharge` is unsaturated → saturated.
     struct CellFlux {
+        double node_in=0; ///< gross node inflow in the layered profile
         double link_out=0; ///< gross outgoing conduit water, separate from net link
         const sigma::ColumnTransfers* column=nullptr;
         double boundary_in=0,boundary_out=0;
@@ -513,6 +538,7 @@ private:
         /// column's own balance, which makes it exact for every closure
         /// rather than only for closure A's explicit `θ_bot·ΔL`.
         double handover = 0.0;
+        double grid_volume = 0.0; ///< swept soil volume; beginning-state tangent in smooth RK stages
         double lid_in_j = 0.0;               ///< accepted LID sensible heat entering this cell
         double et = 0.0;                     ///< out of the column
         double deep = 0.0;
@@ -541,6 +567,7 @@ private:
     void fireLayerSpecies(int i, const CellFlux& f);
     void reactPorewaterCell(int cell,double dt,double hg);
     void fireGroundHeatSpecies(int i,const CellFlux& f) noexcept;
+    std::string groundWaterIncrement(int cell,const CellFlux&,std::vector<double>&) const;
     void fireGroundPorewaterSpecies(int i,const CellFlux& f) noexcept;
     /// Gather this cell's lateral side accumulators (m³) and zero them.
     double gatherLateral(int i) noexcept;
@@ -625,6 +652,14 @@ private:
     const MeshData*      mesh_  = nullptr;
     const InertialEdges* edges_ = nullptr;
     const SolverOptions2D* opts_ = nullptr;
+
+    GwRechargeBackend recharge_backend_;
+    std::vector<OpenSwmmGwRechargeInputV1> recharge_inputs_;
+    std::vector<double> recharge_values_;
+    std::vector<int> recharge_slots_;
+    uint64_t recharge_batches_=0,recharge_cells_=0;
+    void prepareRechargeBatch(const std::vector<int>&);
+    double rawRecharge(int cell,const soil::Params&,double length) const noexcept;
 
     std::vector<std::vector<int>> cells_by_tier_;
     std::vector<std::vector<int>> faces_by_tier_;

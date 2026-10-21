@@ -1,0 +1,45 @@
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+Note: Google Test filter = EngineCheckpoint.MeshFreshOutputRestoresAnInitialCheckpointWithoutChangingItsHeader
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from EngineCheckpoint
+[ RUN      ] EngineCheckpoint.MeshFreshOutputRestoresAnInitialCheckpointWithoutChangingItsHeader
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+/tmp/openswmm-mesh-checkpoint-20261020/source/tests/unit/engine/test_engine_checkpoint.cpp:3049: Failure
+Expected equality of these values:
+  bytes(root()/"mesh-fresh-settle-b.h5")
+    Which is: "\x89HDF\r\n\x1A\n\x2\b\b\x1\0\0\0\0\0\0\0\0\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xEF" "7\0\0\0\0\0\00\0\0\0\0\0\0\0n?\x1C" "1OHDR\x2!\x94" "F\xD7j\x94" "F\xD7j\x94" "F\xD7j\x94" "F\xD7j\x18\ ... [binary payload rendering omitted; see raw log SHA256 in checks.json] ... _rainfall\xCD$\0\0\0\0\0\0\x1\0\x13Mesh2_face_rain_cumP&\0\0\0\0\0\0\x1\0\x15Mesh2_face_infil_rate\xA4'\0\0\0\0\0\0\0\0"
+  header
+    Which is: "\x89HDF\r\n\x1A\n\x2\b\b\x1\0\0\0\0\0\0\0\0\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xEF;\0\0\0\0\0\00\0\0\0\0\0\0\0S\x81\x84zOHDR\x2!\x94" "F\xD7j\x94" "F\xD7j\x94" "F\xD7j\x94" "F\xD7j\x18\x1\ ... [binary payload rendering omitted; see raw log SHA256 in checks.json] ... 0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"
+With diff:
+@@ -1,5 +1,5 @@
+ \x89HDF\r
+ \x1A
+-\x2\b\b\x1\0\0\0\0\0\0\0\0\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xEF" "7\0\0\0\0\0\00\0\0\0\0\0\0\0n?\x1C" "1OHDR\x2!\x94" "F\xD7j\x94" "F\xD7j\x94" "F\xD7j\x94" "F\xD7j\x18\x1\x10\x10\0\0\x80\x2\0\0\0\0\0\00\0\0\0\0\0\0\0
++\x2\b\b\x1\0\0\0\0\0\0\0\0\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xEF;\0\0\0\0\0\00\0\0\0\0\0\0\0S\x81\x84zOHDR\x2!\x94" "F\xD7j\x94" "F\xD7j\x94" "F\xD7j\x94" "F\xD7j\x18\x1\x10\x10\0\0\x80\x2\0\0\0\0\0\00\0\0\0\0\0\0\0
+ \x2\0\x1\0\0\x10\x10\0\0\xCF\x3\0\0\0\0\0\0\xA2\0\0\0\0\0\0\0\f2\0\0\x3\0\f\0\b\0\x4\0\0Conventions\0\x13\0\0\0\x11\0\0\0\x2\0\0\0CF-1.11 UGRID-1.0\f>\0\0\x3\0\x6\0\b\0\x4\0\0title\0\x13\0\0\0#\0\0\0\x2\0\0\0OpenSWMM 2D Surface Routing Results\f7\0\0\x3\0\f\0\b\0\x4\0\0institution\0\x13\0\0\0\x16\0\0\0\x2\0\0\0OpenSWMM / HydroCouple\f/\0\0\x3\0\a\0\b\0\x4\0\0source\0\x13\0\0\0\x13\0\0\0\x2\0\0\0OpenSWMM Engine 6.0\0\0\0\0Q\xB0\x9B+OHDR\x2!\x94" "F\xD7j\x94" "F\xD7j\x94" "F\xD7j\x94" "F\xD7j\0\x1\x1\x4\0\0\x2\0\0\0\x3\f\0\x1\x10\b\0\0\x4\0\0\0\0\0 \0\x5\x2\0\x1\x3
+ \x10\x10\0\0\xB0\x2\0\0\0\0\0\0\x1F\x1\0\0\0\0\0\0\x15\x12\0\x4\0\0\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\f\x89\0\0\x3\0
+@@ -42,3 +42,3 @@
+ \0\b\0\x4\0\0long_name\0\x13\0\0\0\x1F\0\0\0\x2\0\0\0maximum cell velocity magnitude\f \0\0\x3\0\x6\0\b\0\x4\0\0units\0\x13\0\0\0\x5\0\0\0\x2\0\0\0m s-1\f\x1F\0\0\x3\0\x5\0\b\0\x4\0\0mesh\0\x13\0\0\0\x5\0\0\0\x2\0\0\0Mesh2\f\"\0\0\x3\0\t\0\b\0\x4\0\0location\0\x13\0\0\0\x4\0\0\0\x2\0\0\0face\f/\0\0\x3\0\r\0\b\0\x4\0\0cell_methods\0\x13\0\0\0\r\0\0\0\x2\0\0\0time: maximum\xA5|
+ \x88" "FHDB\0\0\x18\0\0\0\0\0\0\0\x2\0\0\xF2\x91\xBE\xB5\x1\0\x14Mesh2_face_infil_cum\xF7(\0\0\0\0\0\0\x1\0\rMesh2_face_vxL*\0\0\0\0\0\0\x1\0\rMesh2_face_vy\xA6+\0\0\0\0\0\0\x1\0\xFMesh2_edge_flux\0- ... [binary payload rendering omitted; see raw log SHA256 in checks.json] ... de_xs\x6\0\0\0\0\0\0\x1\0\fMesh2_node_y\xC4\a\0\0\0\0\0\0\x1\0\fMesh2_node_z\x17\t\0\0\0\0\0\0\x1\0\x10Mesh2_face_nodesj
+-\0\0\0\0\0\0\x1\0\fMesh2_face_x\xC1\v\0\0\0\0\0\0\x1\0\fMesh2_face_y\x14\r\0\0\0\0\0\0\x1\0\fMesh2_face_zg\xE\0\0\0\0\0\0\x1\0\x15Mesh2_face_mannings_n\x92\x1A\0\0\0\0\0\0\x1\0\xFMesh2_face_area\xC2\x1B\0\0\0\0\0\0\x1\0\x11Mesh2_edge_length\xE2\x1C\0\0\0\0\0\0\x1\0\rMesh2_edge_nx\a\x1E\0\0\0\0\0\0\x1\0\rMesh2_edge_nyE\x1F\0\0\0\0\0\0\x1\0\x4time\x83 \0\0\0\0\0\0\x1\0\x10Mesh2_face_depth\xAE!\0\0\0\0\0\0\x1\0\xFMesh2_face_headK#\0\0\0\0\0\0\x1\0\x13Mesh2_face_rainfall\xCD$\0\0\0\0\0\0\x1\0\x13Mesh2_face_rain_cumP&\0\0\0\0\0\0\x1\0\x15Mesh2_face_infil_rate\xA4'\0\0\0\0\0\0\0\0
++\0\0\0\0\0\0\x1\0\fMesh2_face_x\xC1\v\0\0\0\0\0\0\x1\0\fMesh2_face_y\x14\r\0\0\0\0\0\0\x1\0\fMesh2_face_zg\xE\0\0\0\0\0\0\x1\0\x15Mesh2_face_mannings_n\x92\x1A\0\0\0\0\0\0\x1\0\xFMesh2_face_area\xC2\ ... [binary payload rendering omitted; see raw log SHA256 in checks.json] ... \0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0
+
+
+/tmp/openswmm-mesh-checkpoint-20261020/source/tests/unit/engine/test_engine_checkpoint.cpp:3050: Failure
+Expected equality of these values:
+  b.engine.loadCheckpoint(checkpoint.string())
+    Which is: "Mesh restore requires its fresh result header."
+  ""
+
+[  FAILED  ] EngineCheckpoint.MeshFreshOutputRestoresAnInitialCheckpointWithoutChangingItsHeader (54 ms)
+[----------] 1 test from EngineCheckpoint (54 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (54 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] EngineCheckpoint.MeshFreshOutputRestoresAnInitialCheckpointWithoutChangingItsHeader
+
+ 1 FAILED TEST

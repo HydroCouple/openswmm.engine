@@ -30,6 +30,11 @@ struct ThermalSolution {
 // are never modified, including on numerical refusal.
 ThermalSolution solveThermalContacts(const std::vector<ThermalStore>&,
     const std::vector<ThermalContact>&,const std::vector<ThermalBoundary>&,double seconds);
+// Implicit midpoint with conservative receipts and bounded monotone
+// subdivision for stiff contact graphs. Boundary data is held for seconds.
+// This does not advance moisture, advection or a borrowed thermal owner.
+ThermalSolution solveThermalContactsRk2(const std::vector<ThermalStore>&,
+    const std::vector<ThermalContact>&,const std::vector<ThermalBoundary>&,double seconds);
 
 struct PorousHeatColumn {
     ThermalMaterial material;
@@ -56,6 +61,21 @@ struct ThermalAdvection {
 ThermalAdvection advectPorousColumn(PorousHeatColumn&,const std::vector<double>& new_moisture,
     const std::vector<double>& external_water_m3,const std::vector<double>& external_j,
     const std::vector<double>& implicit_withdrawal_m3={});
+// Forward-Euler energy derivative for shared RK stages. water_change is
+// the beginning-state fixed-grid water tangent integrated over the stage;
+// endpoint moisture only derives the next capacity. Donor temperatures
+// exclude already reserved outgoing water and are returned for paired
+// withdrawal receipts. No column mutation on refusal.
+ThermalAdvection advectPorousColumnEuler(PorousHeatColumn&,const std::vector<double>& new_moisture,
+    const std::vector<double>& water_change_m3,const std::vector<double>& external_water_m3,
+    const std::vector<double>& external_j,const std::vector<double>& withdrawal_m3,
+    const std::vector<double>& donor_temperature);
+// Tangent of the overlap projection from equal stretching hydraulic layers
+// to fixed physical layers. Water depths are per hydraulic layer. Moving
+// interface jumps belong to the receiving fixed layer at an aligned edge.
+std::string projectGroundWaterIncrement(const PorousHeatColumn&,double unsaturated_length,
+    double length_change,const std::vector<double>& old_water_depth,
+    const std::vector<double>& water_depth_change,std::vector<double>& fixed_water_change);
 // Conservative geometric projection. Bulk closures use uniform unsaturated
 // theta; SIGMA uses overlaps of accepted stretching hydraulic layers. The
 // thermal depth grid itself never moves. Optional sat_water is SI m3/layer.

@@ -59,7 +59,7 @@
 namespace openswmm {struct ReactionData;}
 namespace openswmm::transport {
 
-/// context: 0=network, 1=shared term definition, 2=groundwater.
+/// context: 0=network, 1=shared term definition, 2=groundwater, 3=wet subcatchment.
 std::string reactionContextDiagnostic(const ReactionData&,const std::vector<RxToken>&,
     const RxExprSpan&,int context);
 
@@ -120,8 +120,8 @@ int reactionHydVarCount();
 bool reactionHydVarInfo(int idx, const char** name, const char** description);
 
 /// Physics review A1 (2026-10-15): whether any engine fills hydraulic
-/// variable @p idx. D, Q, U, RE, US, FF and AV are not filled by any
-/// binding yet; HRT, DT and TEMP are.
+/// variable @p idx. D, Q, U, RE, US and FF remain unavailable. AV requires
+/// WALL_GEOMETRY; HRT, DT and TEMP have their documented reactor contexts.
 bool reactionHydVarPopulated(int idx);
 
 /// Diagnostic for the first unpopulated hydraulic variable the compiled

@@ -415,7 +415,7 @@ __all__ = [
 
 # Native climate, transport, writer and unit-system selectors.
 from ._enums import (
-    EvapType as EvapType, TempSource as TempSource, WindType as WindType, HumidityType as HumidityType, HumidityVar as HumidityVar, HeatElemKind as HeatElemKind, InpProfile as InpProfile, TransportDispersionMode as TransportDispersionMode, UnitSystem as UnitSystem
+    Heat2DValue as Heat2DValue, EvapPreviewStatus as EvapPreviewStatus, EvapType as EvapType, TempSource as TempSource, WindType as WindType, HumidityType as HumidityType, HumidityVar as HumidityVar, HeatElemKind as HeatElemKind, InpProfile as InpProfile, TransportDispersionMode as TransportDispersionMode, UnitSystem as UnitSystem
 )
 __all__ += ['EvapType', 'TempSource', 'WindType', 'HumidityType', 'HumidityVar', 'HeatElemKind', 'InpProfile', 'TransportDispersionMode', 'UnitSystem']
 
@@ -477,3 +477,5 @@ from ._lid_nodes import LidNodeLayer as LidNodeLayer, LidNodeLayerKind as LidNod
 if HAS_2D:
     from ._coupling import Coupling, DomainSources, RuntimeSource, SourceReceipt, BoundaryReceipt, CouplingFrame, RuntimeBoundary, RuntimeForcing, RuntimeClear
     __all__ += ["Coupling", "DomainSources", "RuntimeSource", "SourceReceipt", "BoundaryReceipt", "CouplingFrame", "RuntimeBoundary", "RuntimeForcing", "RuntimeClear"]
+
+__all__ += ['EvapPreviewStatus', 'Heat2DValue']

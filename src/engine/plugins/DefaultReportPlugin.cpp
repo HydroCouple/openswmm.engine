@@ -37,6 +37,7 @@
 #include "../../../include/openswmm/plugin_sdk/SimulationSnapshot.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../quality/MsxSurfaceQuality.hpp"
+#include "../quality/MsxLidReactions.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../core/DateTime.hpp"
 #include "../hydraulics/Node.hpp"   // node::getVolume — storage volume from its depth-relation
@@ -49,6 +50,9 @@
 #include "../2d/data/MeshData.hpp"
 #include "../2d/subsurface/SubsurfaceData.hpp"   // G-O: 2D Aquifer Continuity
 #include "../2d/subsurface/SubsurfaceTransportState.hpp"  // T7.5: its quality twin
+#ifdef OPENSWMM_HAS_2D
+#include "../2d/SurfaceRouter2D.hpp"   // 2D Outfall Tailwater Summary
+#endif
 
 #include <version.h>
 
@@ -1080,9 +1084,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             const auto um = static_cast<std::size_t>(m);
             const double final_bu = msxsurf::remainingBuildup(ctx, m);
             const double in_  = at(ms_rq.led_init_buildup, m) + at(ms_rq.led_buildup, m) +
-                                at(ms_rq.led_wet_deposition, m);
+                                at(ms_rq.led_wet_deposition, m) + at(ms_rq.led_reaction_clamped, m);
             const double out_ = at(ms_rq.led_sweeping, m) + at(ms_rq.led_infil_loss, m) +
-                                at(ms_rq.led_bmp_removal, m) + at(ms_rq.led_runoff_load, m) + final_bu;
+                                at(ms_rq.led_bmp_removal, m) + at(ms_rq.led_runoff_load, m) + final_bu + at(ms_rq.led_reacted, m);
             double err = 0.0;
             if (std::fabs(in_ - out_) < 0.001) err = 0.0;
             else if (in_ > 0.0)  err = 100.0 * (1.0 - out_ / in_);
@@ -1115,6 +1119,14 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 std::fprintf(f, "\n  **************************");
                 for (int p = p1; p < p2; ++p) std::fprintf(f, "    ----------");
                 for (int k = 0; k < 9; ++k) {
+                    if (k == 8 && (ctx.reactions.has_subcatch_reactions() || !ctx.reactions.buildup_laws.empty() || !ctx.reactions.lid_controls.empty())) {
+                        for (int row = 0; row < 2; ++row) {
+                            std::fprintf(f, "\n  %s", row == 0 ? (ctx.reactions.buildup_laws.empty() && ctx.reactions.lid_controls.empty() ? "Wet Pool Mass Reacted ...." : "Surface Mass Reacted .....") : "Clamped to Zero (added) ..");
+                            for (int p = p1; p < p2; ++p)
+                                std::fprintf(f, "%14.3f", p < np ? 0.0 :
+                                    at(row == 0 ? ms_rq.led_reacted : ms_rq.led_reaction_clamped, p - np));
+                        }
+                    }
                     std::fprintf(f, "\n  %s", labels[k]);
                     for (int p = p1; p < p2; ++p)
                         std::fprintf(f, "%14.3f", vals[static_cast<std::size_t>(p)][static_cast<std::size_t>(k)]);
@@ -1123,6 +1135,14 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 WRITE(f, "");
             }
         }
+    }
+
+    if(opt.rpt_continuity && !ctx.reactions.booster_mass.empty()) {
+        std::fprintf(f,"\n  Reaction Booster Injection (declared species mass units)\n");
+        for(int species=0;species<ctx.reactions.n_species();++species)
+            std::fprintf(f,"  %-24s %.10g %s\n",ctx.reactions.species_name[species].c_str(),
+                ctx.reactions.booster_mass[species]*28.317,ctx.reactions.species_units[species].c_str());
+        std::fprintf(f,"\n");
     }
 
     // =====================================================================
@@ -1610,6 +1630,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         const auto& led = rx.msx_ledger;
         const int nsp = rx.n_species();
         const auto uns = static_cast<std::size_t>(nsp);
+        std::vector<std::size_t> bulk;
+        for (std::size_t s = 0; s < uns; ++s)
+            if (!rx.species_is_wall[s]) bulk.push_back(s);
         static constexpr double LperFT3 = 28.317;
         auto at = [](const std::vector<double>& v, std::size_t s) {
             return s < v.size() ? v[s] : 0.0;
@@ -1626,7 +1649,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             double fin = at(led.final_dry, s);
             for (int j = 0; j < ctx.n_nodes(); ++j)
                 fin += at(rx.msx_node_conc, static_cast<std::size_t>(j) * uns + s) *
-                       ctx.nodes.volume[static_cast<std::size_t>(j)];
+                       ctx.nodes.volume[static_cast<std::size_t>(j)]+msxlid::heldMass(ctx,j,int(s));
             for (int j = 0; j < ctx.n_links(); ++j)
                 fin += at(rx.msx_link_conc, static_cast<std::size_t>(j) * uns + s) *
                        ctx.links.volume[static_cast<std::size_t>(j)];
@@ -1649,17 +1672,17 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             for (int k = 0; k < 8; ++k) vals[s][static_cast<std::size_t>(k)] = raw[static_cast<std::size_t>(k)] * cf;
             vals[s][8] = err;
         }
-        for (std::size_t s1 = 0; s1 < uns; s1 += 5) {
-            const std::size_t s2 = std::min(s1 + 5, uns);
+        for (std::size_t s1 = 0; s1 < bulk.size(); s1 += 5) {
+            const std::size_t s2 = std::min(s1 + 5, bulk.size());
             std::fprintf(f, "\n  **************************");
-            for (std::size_t s = s1; s < s2; ++s) std::fprintf(f, "%14s", rx.species_name[s].c_str());
+            for (std::size_t s = s1; s < s2; ++s) std::fprintf(f, "%14s", rx.species_name[bulk[s]].c_str());
             std::fprintf(f, "\n  Reaction Species Routing  ");
-            for (std::size_t s = s1; s < s2; ++s) std::fprintf(f, "%14s", unit_word[s].c_str());
+            for (std::size_t s = s1; s < s2; ++s) std::fprintf(f, "%14s", unit_word[bulk[s]].c_str());
             std::fprintf(f, "\n  **************************");
             for (std::size_t s = s1; s < s2; ++s) std::fprintf(f, "    ----------");
             for (int k = 0; k < 9; ++k) {
                 std::fprintf(f, "\n  %s", labels[k]);
-                for (std::size_t s = s1; s < s2; ++s) std::fprintf(f, "%14.3f", vals[s][static_cast<std::size_t>(k)]);
+                for (std::size_t s = s1; s < s2; ++s) std::fprintf(f, "%14.3f", vals[bulk[s]][static_cast<std::size_t>(k)]);
             }
             WRITE(f, "");
             WRITE(f, "");
@@ -2414,6 +2437,44 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             }
             std::fprintf(f, "  (%s; a reactions species declared in UG or as a count keeps its own unit)\n",
                          si_report ? "kg" : "lbs");
+            WRITE(f, "");
+            WRITE(f, "");
+        }
+    }
+
+    // 2D Outfall Tailwater Summary (plan 1D2D fine-scale §6 O5/O8): for each
+    // outfall coupled to the 2D surface, how long the surface set its stage
+    // (engaged) and drowned its outlet crown (submerged), the highest stage
+    // it imposed, and the water that flowed back into the network through it.
+    if (const auto* router = ctx.twod_io.surface_router) {
+        const auto& ex = router->outfallExchange();
+        bool header = false;
+        for (int j = 0; j < ctx.n_nodes(); ++j) {
+            double engaged = 0, submerged = 0, max_stage = 0;
+            if (!ex.tailwater(j, engaged, submerged, max_stage)) continue;
+            if (!header) {
+                WRITE(f, "****************************");
+                WRITE(f, "2D Outfall Tailwater Summary");
+                WRITE(f, "****************************");
+                std::fprintf(f, "\n");
+                std::fprintf(f, "\n  ------------------------------------------------------------------------");
+                std::fprintf(f, "\n                          Hours        Hours          Max       Reverse");
+                std::fprintf(f, "\n                       Tailwater    Submerged    Tailwater        Volume");
+                std::fprintf(f, "\n  Outfall Node            Engaged      (crown)    %9s    %10s",
+                             len_word, vol_word);
+                std::fprintf(f, "\n  ------------------------------------------------------------------------");
+                header = true;
+            }
+            const auto uj = static_cast<std::size_t>(j);
+            const double reverse_ft3 = uj < ctx.outfall_exports.reverse_m3.size()
+                ? ctx.outfall_exports.reverse_m3[uj] / 0.028316846592 : 0.0;
+            std::fprintf(f, "\n  %-20s %10.2f   %10.2f", ctx.node_names.name_of(j).c_str(),
+                         engaged / 3600.0, submerged / 3600.0);
+            if (max_stage > -1.0e29) std::fprintf(f, "   %10.3f", max_stage * len_ucf);
+            else                     std::fprintf(f, "   %10s", "-");
+            std::fprintf(f, "    %10.3f", reverse_ft3 * Vcf);
+        }
+        if (header) {
             WRITE(f, "");
             WRITE(f, "");
         }

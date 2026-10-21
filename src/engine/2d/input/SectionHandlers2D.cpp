@@ -1243,12 +1243,10 @@ std::string parse2DInitialQualityLine(
     r.species = tokens[at];
     bool okc = false;
     r.conc = tryParseDouble(tokens[at + 1], okc);
-    // Refused, not clamped: a negative initial concentration is not a
-    // modelling case, and a non-finite one is a typo that would otherwise
-    // become NaN mass across the mesh.
-    if (!okc || !std::isfinite(r.conc) || r.conc < 0.0)
-        return "[2D_INITIAL_QUALITY] CONC must be a finite non-negative "
-               "number, got '" + tokens[at + 1] + "'";
+    // Celsius is signed; pollutant, reaction-species and age values remain
+    // nonnegative. Never clamp an invalid authored value into another state.
+    if (!okc || !std::isfinite(r.conc) || (r.conc < 0.0&&!iequals(r.species,"__TEMPERATURE__")))
+        return "[2D_INITIAL_QUALITY] CONC must be finite and non-negative except for __TEMPERATURE__, got '" + tokens[at + 1] + "'";
     rows.push_back(std::move(r));
     return {};
 }
@@ -1315,9 +1313,8 @@ std::string parse2DBoundaryQualityLine(
     r.species = tokens[2];
     bool okc = false;
     r.conc = tryParseDouble(tokens[3], okc);
-    if (!okc || !std::isfinite(r.conc) || r.conc < 0.0)
-        return "[2D_BOUNDARY_QUALITY] CONC must be a finite non-negative "
-               "number, got '" + tokens[3] + "'";
+    if (!okc || !std::isfinite(r.conc) || (r.conc < 0.0&&!iequals(r.species,"__TEMPERATURE__")))
+        return "[2D_BOUNDARY_QUALITY] CONC must be finite and non-negative except for __TEMPERATURE__, got '" + tokens[3] + "'";
     rows.push_back(std::move(r));
     return {};
 }

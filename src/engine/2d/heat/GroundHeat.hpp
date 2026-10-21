@@ -46,13 +46,13 @@ struct GroundHeatState {
                           const SubsurfaceTransportState&,const GwTransportData&,const std::vector<uint8_t>& coverage);
     std::string initializeStandalone(SimulationContext&,const MeshData&,const GwTransportData&,const std::vector<unsigned char>& owned);
     void prepare();
-    void refreshView(int cell,SubsurfaceTransportState&) const;
+    void refreshView(int cell,SubsurfaceTransportState&);
     double zoneTemperature(int cell,bool saturated) const;
     // Append physical top/deep boundaries, returning the number of top
     // records. Exposed fraction excludes the finite water contact footprint.
     std::size_t boundaries(int cell,double exposed_fraction,std::vector<ThermalBoundary>&) const;
     // Called after accepted water advection. A surface-owned column advances
     // its conduction with its finite water contact instead, never twice.
-    std::string conduct(int cell,double seconds);
+    std::string conduct(int cell,double seconds,bool midpoint=false);
 };
 } // namespace openswmm::twoD

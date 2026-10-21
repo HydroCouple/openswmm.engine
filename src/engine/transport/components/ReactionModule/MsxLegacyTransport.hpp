@@ -72,6 +72,7 @@ namespace openswmm::transport {
 
 /// Advect the MSX element state one routing step on the LEGACY CSTR path.
 /// No-op unless a reaction system with at least one species is configured.
+void armMsxRoutingLedger(SimulationContext& ctx);
 void routeLegacyMsx(SimulationContext& ctx, double dt);
 
 /// Review D1/F21: drain `ReactionData::msx_coupling_queue` (species mass

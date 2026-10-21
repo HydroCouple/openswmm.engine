@@ -48,6 +48,7 @@ struct ExplicitInertialSolverTestAccess {
 } // namespace openswmm::twoD
 namespace openswmm::twoD::gpu {
 struct ExplicitKokkosSurfaceSolverTestAccess {
+    static long advances(const ExplicitKokkosSurfaceSolver &s) { return s.perf_counters_.n_advance; }
     static int coarse(ExplicitKokkosSurfaceSolver &s) {
         s.pushForcings();
         s.syncAndRebuild(0.0);
@@ -415,12 +416,27 @@ void externalVolumeResync() {
     compare(a.volume, b.volume, "external transfer CPU/Kokkos parity", 2e-9);
     std::cout << "External volume resync PASS\n";
 }
+void perModelCounters() {
+    if (!openswmm::perf::enabled()) return;
+    auto m=mesh(2);auto a=state(m,.1),b=state(m,.2);auto o=options();
+    gpu::ExplicitKokkosSurfaceSolver x,y;x.initialize(m,a,o);y.initialize(m,b,o);
+    x.advance(0,.1);y.advance(0,.1);x.advance(.1,.2);
+    require(gpu::ExplicitKokkosSurfaceSolverTestAccess::advances(x)==2,"first model counters");
+    require(gpu::ExplicitKokkosSurfaceSolverTestAccess::advances(y)==1,"second model counters");
+    std::cout << "Per-model performance attribution PASS\n";
+}
 int main(int argc, char **argv) {
     Kokkos::initialize(argc, argv);
     std::cout << "Execution space: " << gpu::ExecSpace::name()
               << ", concurrency=" << gpu::ExecSpace().concurrency() << std::endl;
     int rc = 0;
     try {
+#ifdef OPENSWMM_GPU_EXECSPACE_OPENMP
+        require(std::string(gpu::ExecSpace::name()) == "OpenMP", "OpenMP execution space required");
+        if (const char* n = std::getenv("OMP_NUM_THREADS"))
+            require(gpu::ExecSpace().concurrency() == std::atoi(n), "requested OpenMP concurrency was not active");
+#endif
+        perModelCounters();
         frozenTier();
         unsupported();
         marcher();

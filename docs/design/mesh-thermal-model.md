@@ -27,6 +27,16 @@ their paired sensible heat; geometric water-table handover creates no energy.
 The fixed-grid vertical flux reconstruction uses layer continuity, giving a
 documented piston attribution for bulk hydraulic closures.
 
+`UNSAT_TRANSPORT LAYERED` can combine SIGMA chemistry with these fixed thermal
+layers. A sparse conservative overlap map preserves the chemical inventories
+and thermal energy under their respective owners, including finite surface and
+channel contacts. Layer temperature results and reaction inputs borrow the
+actual thermal field. In this profile, authored `LAYER` temperature values select
+SIGMA layers; their initial thermal energy is projected onto the fixed grid.
+The default BULK profile retains its fixed thermal-layer initialization contract.
+See the [groundwater mapping contract](groundwater-transport.md#sigma-chemistry-with-porous-soil-heat)
+for activation, sorption, pending exports and state-checkpoint qualification.
+
 Porous temperature-volume rows are water-property views of the canonical soil
 energy. They are not extra energy stores. Material density and specific heat in
 `GW_TRANSPORT_PARAMS` describe grains. Conductivity uses arithmetic or geometric
@@ -151,6 +161,18 @@ this actual contact and never treats a sampled water temperature as a reservoir.
 AIR uses `SURFACE_THERMAL_RESISTANCE`; fixed/series temperatures, flux/flux-series,
 adiabatic and geothermal boundaries use the existing project series system.
 Missing temperature-series coverage is a runtime error.
+
+The internal contact library also provides an implicit-midpoint operator with
+equal/opposite cumulative joule receipts. Bounded subdivision preserves
+nonnegative conductive propagation weights for stiff graphs. Independent finite
+pair and Robin/power references demonstrate second-order time convergence;
+signed-temperature, stiff-contact and invalid-input tests cover conservation
+and atomic refusal. A restricted porous CPU RK2 route now uses this primitive in
+symmetric half steps around shared water/energy transport. It requires surface
+`HEAT_MODEL TRANSPORT_ONLY`, sensible-only soil ET and constant thermal
+boundaries. Optional chemical/age rows share the canonical RK2 transaction; pure RATE phase contributions use one physical pore concentration. The finite surface/channel/LID/snow owners above retain backward
+Euler. See the [groundwater RK2 profiles](groundwater-transport.md#porous-ssp-rk2)
+for activation, energy budgets, convergence and remaining restrictions.
 
 Balanced hyporheic recirculation adds no net water. It is eligible by default
 only on `channel:*` cells created by channel burning. A positive explicit
@@ -292,6 +314,11 @@ water-temperature continuity table is not a soil-plus-water energy budget.
 New selectors and finite material/capacity changes require reinitialization;
 existing weather and AUTO-inherited heat module switches remain live. Atomic
 hydrothermal authoring edits and heat snapshots include the mesh and aquifer
-configuration. Native hotstart writes/loads explicitly refuse active new thermal
-stores until the thermal state extension is qualified; an existing destination
-is preserved. All of these capabilities remain experimental.
+configuration. Standalone hotstart save/apply refuses active thermal stores;
+an existing destination is preserved. The attached mesh-only CPU engine
+checkpoint profile additionally qualifies SIGMA layered pollutant/age chemistry
+with independent porous thermal layers, pending cold contacts and groundwater
+HDF5 output across a report-calendar restart. Full-session network chemistry
+and surface-species/buildup output continuation retain their guards; see the
+[groundwater restart profile](groundwater-transport.md#results-and-restart).
+All of these capabilities remain experimental.

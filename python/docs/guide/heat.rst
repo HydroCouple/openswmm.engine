@@ -298,3 +298,39 @@ Boolean fields and the four ``surface_classes`` entries accept only 0/1;
 classes are ordered POLLUTANTS, MSX, AGE, TEMPERATURE. ``groundwater`` is
 -1 (automatic), 0 (off), or 1 (on). This is a plan for transport, rather than
 proof of initialized runtime activity or local heat-flux support.
+
+Complete snapshots and mapping previews
+=======================================
+
+``heat.snapshot(complete=True)`` additionally captures climate, snow,
+hydrothermal options and 2D/ground thermal authoring configuration. Its
+ownership, explicit ``restore()``, lifecycle and structural invalidation rules
+match the default heat snapshot described above.
+
+``heat.preview_channel_ground_map(link, first=None, limit=256, progress=None)``
+returns pre-run XY coverage for a link ID or index. Omit ``first`` to return
+all contacts, or provide a zero-based offset and a page limit (zero is allowed
+for a summary query). ``required`` and summary counts describe the complete
+mapping; ``contacts`` contains the requested rows. Rows have ``layer=-1``.
+``valid`` means complete XY coverage; soil ownership, invert and thermal
+configuration still require validation during initialization.
+
+An optional ``progress(stage, percent)`` callback runs synchronously with
+stages 1 (mesh) and 2 (mapping), and percentages in 0..100. Return true to cancel;
+this raises an ``EngineError`` with ``ErrorCode.CANCELLED``. Callback exceptions
+are re-raised unchanged. Callbacks must not mutate or close the engine.
+
+For initialized 2D thermal arrays, ``Heat2DValue`` names the field codes accepted
+by ``heat.mesh_values``. With 2D support, ``surface2d.initial_bed_quality`` and
+``set_initial_bed_quality(species, conc, tag=None, cell=None)`` expose authored
+bed-porewater concentrations using the same scope and species units as surface
+initial quality. ``remove_initial_bed_quality(index)`` removes one row.
+``surface2d.set_auto_backend_cpu(enabled=True)`` sets a pre-run session policy
+for unoverridden AUTO; explicit backend/environment choices take precedence.
+The policy is not serialized and must be reapplied after opening a model.
+
+``tables.rename(key, new_id)`` preserves table references and enforces
+case-insensitive uniqueness within each curve/timeseries namespace.
+``tables.set_type(key, TableType.CURVE_RATING)`` changes a curve's type while
+preserving points and references; conversions to or from TIMESERIES are
+refused. Both edits require an authoring state and advance solver generation.

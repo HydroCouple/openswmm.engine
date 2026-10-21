@@ -241,7 +241,8 @@ std::string SurfaceRouter2D::sourceRouterModel(const SimulationContext& ctx) con
         auto points=coupling_points_;
         a.sequence(points,[&](auto& p){a(p.cell_idx,p.vertex_idx,p.node_idx,p.cd,p.area,p.is_outfall,p.has_flap_gate,p.area_authored);
             // WEIR_ORIFICE structure joins only when used: legacy identities are unchanged.
-            if(p.law)a(p.law,p.geo.z_crest,p.geo.l_weir,p.geo.a_orif,p.coef.c_w,p.coef.c_sw,p.coef.c_oi,p.coef.c_oo,p.coef.h_eps);});
+            if(p.law)a(p.law,p.geo.z_crest,p.geo.l_weir,p.geo.a_orif,p.coef.c_w,p.coef.c_sw,p.coef.c_oi,p.coef.c_oo,p.coef.h_eps);
+            if(p.spread>0||p.tw_relax>0)a(p.spread,p.tw_relax);});
     }
     return a.bytes();
 }
@@ -407,6 +408,7 @@ std::string SurfaceRouter2D::checkpointBytes(const SimulationContext& ctx,std::s
         uint32_t version=joint_hydraulic_?2:1,endian=0x01020304,longBytes=sizeof(long),crc=checksum(payload);
         if(runtimeWaterCheckpointing())version+=2;
         if(runtimeBoundaryCheckpointing())version+=2;
+        if(outfallTailwaterCheckpointing())version+=8;   // coupled outfalls carry their tailwater record
         Archive file;file(magic,version,endian,longBytes,model,payload,crc);
         if(file.bytes().size()>maxBytes)return "Router checkpoint exceeds its size limit.";
         result=file.bytes();return {};
@@ -431,7 +433,7 @@ std::string SurfaceRouter2D::loadCheckpointBytes(SimulationContext& ctx,std::str
         if(bytes.empty() || bytes.size()>maxBytes)return "Router checkpoint exceeds its size limit.";
         Archive file(std::move(bytes));std::string magic,model,payload;uint32_t version=0,endian=0,longBytes=0,crc=0;
         file(magic,version,endian,longBytes,model,payload,crc);file.finish();
-        if(magic!=(joint_hydraulic_?jointMagic:magicName) || version!=(joint_hydraulic_?2u:1u)+(runtimeWaterCheckpointing()?2u:0u)+(runtimeBoundaryCheckpointing()?2u:0u) || endian!=0x01020304 || longBytes!=sizeof(long)) return "Unsupported router checkpoint version/platform.";
+        if(magic!=(joint_hydraulic_?jointMagic:magicName) || version!=(joint_hydraulic_?2u:1u)+(runtimeWaterCheckpointing()?2u:0u)+(runtimeBoundaryCheckpointing()?2u:0u)+(outfallTailwaterCheckpointing()?8u:0u) || endian!=0x01020304 || longBytes!=sizeof(long)) return "Unsupported router checkpoint version/platform.";
         if(model!=source_router_model_) return "Router checkpoint report/weather model differs.";
         if(crc!=checksum(payload)) return "Router checkpoint checksum differs.";
         RestartState snapshot(*this,ctx);auto channel=channel_ground_;Archive state(std::move(payload));snapshot.archive(state);std::string cpu,hydraulic;state(cpu);

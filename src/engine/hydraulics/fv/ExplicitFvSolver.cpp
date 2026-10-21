@@ -12,6 +12,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+#include <stdexcept>
+#include <string>
 
 #include "FvKernels.hpp"
 #include "../HydClosureKernels.hpp"
@@ -3299,7 +3301,7 @@ PressurizedView ExplicitFvSolver::pressView(const FvStepForcing& forcing) {
     return pv;
 }
 
-void ExplicitFvSolver::takeSubstep(double dt, const FvStepForcing& forcing) {
+bool ExplicitFvSolver::takeSubstep(double dt, const FvStepForcing& forcing) {
     if (tpa_) updateTpaFlags();   // once per substep, before reconstruction;
                                   // rolled back with the state on rejection
     reconstructState();
@@ -3325,7 +3327,10 @@ void ExplicitFvSolver::takeSubstep(double dt, const FvStepForcing& forcing) {
         // downstream — limiter, transport, cell and node updates —
         // integrates the solved discharges with no further branching.
         PressurizedView pv = pressView(forcing);
-        press_.solve(pv, dt);
+        if (pressure_candidate_) {
+            pressure_result_ = press_.solveCandidate(pv, dt, pressure_controls_);
+            if (!pressure_result_.converged()) return false;
+        } else press_.solve(pv, dt);
     }
     limitPositivity(dt);
     reconstructScalars(dt);   // AFTER limiting: the species must ride on the
@@ -3338,6 +3343,10 @@ void ExplicitFvSolver::takeSubstep(double dt, const FvStepForcing& forcing) {
         // residue, or the instability re-enters through the predictor.
         PressurizedView pv = pressView(forcing);
         press_.finalizeCells(pv);
+        if (pressure_candidate_ && !press_.verifyCandidateEndpoint(pv, dt, pressure_controls_)) {
+            pressure_result_.status = NonlinearPressureStorage::Status::EndpointResidualFailure;
+            return false;
+        }
     }
     // Same-substep column-separation floor (issue #156 R4d). The entry/exit
     // rule at the TOP of this function applies the floor to the state the
@@ -3364,6 +3373,7 @@ void ExplicitFvSolver::takeSubstep(double dt, const FvStepForcing& forcing) {
         }
     }
     dispersionSolve(dt);
+    return true;
 }
 
 void ExplicitFvSolver::rkSave() {
@@ -4298,6 +4308,64 @@ void ExplicitFvSolver::settleAccumulators() {
 
 double ExplicitFvSolver::advance(double t_current, double t_target,
                                  const FvStepForcing& forcing) {
+    if (!pressure_candidate_ || !mesh_ || t_target <= t_current)
+        return advanceImpl(t_current, t_target, forcing);
+    validatePressureCandidate(forcing);
+    pressure_rejections_ = 0;
+    // Routing-window transaction in the restricted water-only experiment.
+    // Rejected work remains in work counters; physical state and accepted
+    // receipts are restored even if earlier substeps in this window succeeded.
+    const auto state = *state_;
+    const auto carry = node_carry_, exchange = node_exch_, incoming = node_in_, outgoing = node_out_;
+    const auto flood = flood_vol_, qint = cell_q_int_, dummy = dummy_vol_;
+    const auto inlet = inlet_control_, published = node_pub_;
+    const double last = last_h_, minimum = min_h_, cached = dt_cache_;
+    const double simulated = sim_time_, suggested = suggested_h_;
+    const long total = total_steps_, previous_steps = last_nsteps_;
+    try {
+        const double reached = advanceImpl(t_current, t_target, forcing);
+        if (reached != t_target)
+            throw std::runtime_error("Nonlinear pressure-storage candidate did not finish its routing window.");
+        return reached;
+    } catch (...) {
+        *state_ = state;
+        node_carry_ = carry; node_exch_ = exchange; node_in_ = incoming; node_out_ = outgoing;
+        flood_vol_ = flood; cell_q_int_ = qint; dummy_vol_ = dummy;
+        inlet_control_ = inlet; node_pub_ = published;
+        last_h_ = last; min_h_ = minimum; dt_cache_ = cached;
+        sim_time_ = simulated; suggested_h_ = suggested;
+        total_steps_ = total; last_nsteps_ = previous_steps;
+        std::fill(face_lat_spill_.begin(), face_lat_spill_.end(), 0.0);
+        refreshDepths();
+        *state_ = state; // preserve caller-visible derived fields as well
+        state_clean_ = false;
+        lists_valid_ = false;
+        census_count_ = 0;
+        throw;
+    }
+}
+
+void ExplicitFvSolver::validatePressureCandidate(const FvStepForcing& forcing) const {
+    bool supported = opts_.pressurized_implicit && !tpa_ && state_->n_species == 0 &&
+        opts_.time_integration == TimeIntegration::EULER && opts_.order == 1 &&
+        !opts_.lts && !opts_.compaction && opts_.unsteady_friction == 0 &&
+        mesh_->struct_link.empty() && !forcing.refresh && !step_sink_;
+    for (const auto& geometry : mesh_->geom) supported = supported && !geometry.is_open;
+    for (int face = 0; face < mesh_->n_faces(); ++face)
+        supported = supported && mesh_->face_gate[face] == 0 && mesh_->face_culvert[face] < 0;
+    for (int node = 0; node < mesh_->n_nodes(); ++node)
+        supported = supported && mesh_->node_kind[node] != kNodeStorage &&
+            !mesh_->node_can_pond[node] &&
+            (!forcing.node_source_max || !std::isfinite(forcing.node_source_max[node]));
+    for (int conduit = 0; conduit < mesh_->n_conduits(); ++conduit)
+        supported = supported && (!forcing.conduit_loss || forcing.conduit_loss[conduit] == 0.0);
+    if (!supported) throw std::invalid_argument(
+        "Nonlinear pressure-storage candidate supports only closed SLOT, global first-order Euler, "
+        "water-only routing without structures, gates/culverts, storage/ponding, UF, losses, compaction or callbacks.");
+}
+
+double ExplicitFvSolver::advanceImpl(double t_current, double t_target,
+                                     const FvStepForcing& forcing) {
     if (!mesh_ || t_target <= t_current) return t_target;
     forcing_ = &forcing;
 
@@ -4573,6 +4641,7 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
         // what keeps compaction transparency (§6.10) intact.
         for (int attempt = 0;; ++attempt) {
             saveState();
+            bool pressure_ok = true;
             if (opts_.time_integration == TimeIntegration::RK2) {
                 // Heun / SSP-RK2 applied to the WHOLE operator, friction
                 // included. Two forward steps at the same Δt, averaged:
@@ -4586,9 +4655,23 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
                 takeSubstep(dt, forcing);
                 rkAverage(forcing);
             } else {
-                takeSubstep(dt, forcing);
+                pressure_ok = takeSubstep(dt, forcing);
             }
 
+            if (pressure_candidate_) {
+                const double post = pressure_ok ? censusDt(anyPressurizedCell()) : 0.0;
+                if (pressure_ok && post >= kStepAcceptRatio * dt) break;
+                restoreState();
+                ++pressure_rejections_;
+                if (attempt >= kMaxStepRetries || dt <= kMinSubstep)
+                    throw std::runtime_error("Nonlinear pressure-storage step rejected after bounded retries; "
+                        "status=" + std::to_string(static_cast<int>(pressure_result_.status)) +
+                        ", reached=" + std::to_string(t));
+                dt = pressure_ok ? std::max(std::min(0.5 * dt, 0.9 * post), kMinSubstep)
+                                 : std::max(0.5 * dt, kMinSubstep);
+                dt = std::min(dt, remaining);
+                continue;
+            }
             if (attempt >= kMaxStepRetries || dt <= kMinSubstep) break;
             // Post-step census on the state actually reached — membership is
             // memoryless, so re-derive it (a cell may have crossed the crown

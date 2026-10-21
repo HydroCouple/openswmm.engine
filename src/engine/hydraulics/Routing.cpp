@@ -28,6 +28,7 @@
 #include "Routing.hpp"
 #include <type_traits>
 #include "fv/ExplicitFvSolver.hpp"
+#include "fv/CheckedNetworkAdvance.hpp"
 #include "fv/NetworkMeshBuilder.hpp"
 #include "fv/NetworkSolverFactory.hpp"
 #include "../core/Constants.hpp"
@@ -1603,7 +1604,7 @@ int Router::stepFv(SimulationContext& ctx, double dt,
         };
     }
 
-    fv_solver_->advance(0.0, dt, forcing);
+    fv::advanceNetworkChecked(*fv_solver_, 0.0, dt, forcing);
     publishFv(ctx, dt);
     return static_cast<int>(fv_solver_->last_num_steps());
 }

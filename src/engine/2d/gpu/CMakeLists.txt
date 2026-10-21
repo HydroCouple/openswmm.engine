@@ -55,10 +55,14 @@ if(OPENSWMM_GPU_BACKEND STREQUAL "stub")
 elseif(OPENSWMM_GPU_BACKEND STREQUAL "omp")
 
     find_package(Kokkos REQUIRED)
+    if(NOT Kokkos_ENABLE_OPENMP)
+        message(FATAL_ERROR "OPENSWMM_GPU_BACKEND=omp requires a Kokkos OpenMP build")
+    endif()
 
     add_library(openswmm_gpu_omp SHARED
         GpuPluginOmp.cpp
         ExplicitKokkosSurfaceSolver.cpp
+        ../subsurface/SoilCharacteristic.cpp
         ../solver/InertialEdges.cpp)
     target_include_directories(openswmm_gpu_omp PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../solver
@@ -217,6 +221,8 @@ endif()
 # dir, then <engine dir>/gpu) discovers it and `auto` selects it by default.
 # ---------------------------------------------------------------------------
 set(_OPENSWMM_GPU_TARGET "openswmm_gpu_${OPENSWMM_GPU_BACKEND}")
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/GpuContract.cmake)
+openswmm_gpu_contract(${_OPENSWMM_GPU_TARGET})
 
 # Build tree: copy the plugin next to the engine's *built* library, which is the
 # directory the CLI and test executables actually load the engine from (their

@@ -90,8 +90,10 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # Modern feature options with namespacing
 option(OPENSWMM_BUILD_TESTS       "Build all tests (unit + regression). Convenience flag." OFF)
 option(OPENSWMM_BUILD_UNIT_TESTS  "Build unit tests only" OFF)
+option(OPENSWMM_BUILD_GPU_TESTS "Build Kokkos parity tests against the current engine (requires unit tests and GPU plugin)" OFF)
 option(OPENSWMM_BUILD_REGRESSION_TESTS "Build regression tests only" OFF)
 option(OPENSWMM_BUILD_BENCHMARKS  "Build Google Benchmark performance tests" OFF)
+option(OPENSWMM_BUILD_FV_BASELINE "Build the native implicit-FV feasibility baseline driver" OFF)
 option(OPENSWMM_INSTALL           "Install openswmm libraries" ON)
 option(OPENSWMM_BUILD_PYTHON      "Build Python bindings" OFF)
 option(OPENSWMM_WITH_GEOPACKAGE   "Build GeoPackage I/O library (requires sqlite3)" ON)
@@ -431,6 +433,17 @@ endif()
 if(OPENSWMM_BUILD_BENCHMARKS)
     find_package(benchmark CONFIG REQUIRED)
     add_subdirectory(tests/benchmarks)
+endif()
+
+if(OPENSWMM_BUILD_GPU_TESTS)
+    if(NOT OPENSWMM_BUILD_UNIT_TESTS)
+        message(FATAL_ERROR "OPENSWMM_BUILD_GPU_TESTS requires OPENSWMM_BUILD_UNIT_TESTS")
+    endif()
+    add_subdirectory(tests/gpu)
+endif()
+
+if(OPENSWMM_BUILD_FV_BASELINE)
+    add_subdirectory(tests/verification/fv_implicit_phase0)
 endif()
 
 # Optional Python bindings (Cython extensions compiled via scikit-build).

@@ -902,12 +902,15 @@ cdef class Surface2D:
         @type tri_idx: int
         @param node_name: Target 1D node id; must be non-empty.
         @type node_name: str
-        @param cd: Discharge coefficient; must be > 0 (default 0.65).
+        @param cd: Discharge coefficient; must be > 0, or NaN for a row
+            that does not author one (C{[2D_OPTIONS] COUPLING_CD} applies).
         @type cd: float
-        @param area: Effective exchange area in m^2; must be > 0.
+        @param area: Effective exchange area in mesh length units^2; must
+            be > 0, or NaN for a row that does not author one (the node's
+            2D coupling structure applies).
         @type area: float
         @raise EngineError: If the C API rejects the row (bad triangle
-            index, empty name, or non-positive cd/area).
+            index, empty name, or a non-positive cd/area).
         """
         cdef bytes b = (node_name or "").encode('utf-8')
         _check(swmm_2d_add_triangle_coupling(self._h(), tri_idx, b,
@@ -1729,6 +1732,48 @@ cdef class Surface2D:
     def remove_initial_quality(self, int index):
         """Remove an initial-quality row; later rows shift down."""
         _check(swmm_2d_remove_initial_quality(self._h(), index))
+
+    @property
+    def initial_bed_quality(self):
+        """Authored [2D_INITIAL_BED_QUALITY] rows (:class:`InitialQuality2D`)."""
+        cdef void* h = self._h()
+        cdef int count = 0, index, scope = 0, cell = -1
+        cdef double conc = 0
+        cdef char tag[512]
+        cdef char species[512]
+        _check(swmm_2d_initial_bed_quality_count(h, &count))
+        rows = []
+        for index in range(count):
+            _check(swmm_2d_get_initial_bed_quality(h, index, &scope, tag, 512, &cell,
+                                               species, 512, &conc))
+            rows.append(InitialQuality2D(scope, tag.decode('utf-8'), cell,
+                                         species.decode('utf-8'), conc))
+        return tuple(rows)
+
+    def set_initial_bed_quality(self, str species, double conc, *, tag=None, cell=None):
+        """Add or replace an initial bed-porewater concentration row (species units, >= 0).
+
+        Give ``cell`` (0-based) or ``tag``; neither means the ``*`` row.
+        Edit before initialization.
+        """
+        cdef int scope = 2 if cell is not None else (1 if tag else 0)
+        cdef bytes t = (tag or '').encode('utf-8')
+        cdef bytes sp = species.encode('utf-8')
+        _check(swmm_2d_set_initial_bed_quality(self._h(), scope, t,
+                                           cell if cell is not None else -1, sp, conc))
+
+    def remove_initial_bed_quality(self, int index):
+        """Remove an initial bed-quality row; later rows shift down."""
+        _check(swmm_2d_remove_initial_bed_quality(self._h(), index))
+
+    def set_auto_backend_cpu(self, enabled=True):
+        """Prefer CPU for unoverridden AUTO before initialization.
+
+        Explicit backend and environment choices take precedence. This session
+        policy is not serialized; reapply it after opening a model.
+        """
+        from operator import index
+        _check(swmm_2d_set_auto_backend_cpu(self._h(), index(enabled)))
 
     @property
     def boundary_quality(self):

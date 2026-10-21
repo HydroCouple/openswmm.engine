@@ -99,6 +99,10 @@ public:
     void step(SimulationContext& ctx, double dt);
 
     bool initialized() const noexcept { return initialized_; }
+    std::string checkpointState() const;
+    // Decode only into a fresh staging engine; caller installs after every
+    // physical/output record has passed validation. Detailed writers excluded.
+    void restoreCheckpointState(const std::string&, SimulationContext&);
     const std::vector<std::string>& warnings() const noexcept { return warnings_; }
 
     /**

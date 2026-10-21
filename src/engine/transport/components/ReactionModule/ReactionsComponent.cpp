@@ -28,6 +28,7 @@
 #include "ReactionsWriter.hpp"   // IO3a save hook
 
 #include <cstdlib>
+#include <algorithm>
 #include <functional>
 #include <cmath>
 
@@ -78,7 +79,7 @@ std::string expr_payload(const std::string& line, std::size_t n_lead) {
 bool to_num(const std::string& s, double& out) {
     char* end = nullptr;
     out = std::strtod(s.c_str(), &end);
-    return end != nullptr && *end == '\0' && end != s.c_str();
+    return end != nullptr && *end == '\0' && end != s.c_str() && std::isfinite(out);
 }
 
 void parseOptions(SimulationContext& ctx, const std::vector<std::string>& lines,
@@ -109,17 +110,16 @@ void parseOptions(SimulationContext& ctx, const std::vector<std::string>& lines,
             else if (val == "DAY") rx.rate_units = ReactionRateUnits::DAY;
             else errors.push_back("[REACTION_OPTIONS] unknown RATE_UNITS '" +
                                   tok[1] + "' (SEC|MIN|HR|DAY).");
+        } else if (key == "WALL_GEOMETRY") {
+            if(val=="YES")rx.wall_geometry=true;
+            else if(val=="NO")rx.wall_geometry=false;
+            else errors.push_back("[REACTION_OPTIONS] WALL_GEOMETRY must be YES or NO.");
         } else if (key == "AREA_UNITS") {
             if      (val == "FT2") rx.area_units = ReactionAreaUnits::FT2;
             else if (val == "M2")  rx.area_units = ReactionAreaUnits::M2;
             else if (val == "CM2") rx.area_units = ReactionAreaUnits::CM2;
             else errors.push_back("[REACTION_OPTIONS] unknown AREA_UNITS '" +
                                   tok[1] + "' (FT2|M2|CM2).");
-            // Physics review A3: no wall-area term exists (AV is refused).
-            if (rx.area_units != ReactionAreaUnits::FT2)
-                ctx.warnings.push_back("[REACTION_OPTIONS] AREA_UNITS " + val +
-                    " has no effect: no reaction expression can use a wall "
-                    "area yet.");
         } else if (key == "TIMESTEP") {
             if (to_num(tok[1], num) && num >= 0.0) rx.timestep = num;
             else errors.push_back("[REACTION_OPTIONS] bad TIMESTEP '" + tok[1] + "'.");
@@ -128,6 +128,9 @@ void parseOptions(SimulationContext& ctx, const std::vector<std::string>& lines,
                 ctx.warnings.push_back("[REACTION_OPTIONS] TIMESTEP " + tok[1] +
                     " is not used: reactions advance with the quality step and "
                     "choose their own substeps within it.");
+        } else if (key == "PATTERN_TIMESTEP") {
+            if (to_num(tok[1], num) && num > 0.0) rx.pattern_timestep = num;
+            else errors.push_back("[REACTION_OPTIONS] bad PATTERN_TIMESTEP '" + tok[1] + "'.");
         } else if (key == "ATOL") {
             if (to_num(tok[1], num) && num > 0.0) rx.atol = num;
             else errors.push_back("[REACTION_OPTIONS] bad ATOL '" + tok[1] + "'.");
@@ -288,12 +291,12 @@ void parseSubsurface(SimulationContext& ctx,const std::vector<std::string>& line
 }
 
 void parseExpressions(SimulationContext& ctx,
-                      const std::vector<std::string>& lines, bool tanks,
+                      const std::vector<std::string>& lines, int scope,
                       std::vector<std::string>& errors) {
     auto& rx = ctx.reactions;
-    const char* sec = tanks ? "[REACTION_TANKS]" : "[REACTION_PIPES]";
-    auto& forms = tanks ? rx.tank_form : rx.pipe_form;
-    auto& srcs  = tanks ? rx.tank_expr_src : rx.pipe_expr_src;
+    const char* sec = scope == 2 ? "[REACTION_SUBCATCHMENTS]" : scope == 1 ? "[REACTION_TANKS]" : "[REACTION_PIPES]";
+    auto& forms = scope == 2 ? rx.subcatch_form : scope == 1 ? rx.tank_form : rx.pipe_form;
+    auto& srcs  = scope == 2 ? rx.subcatch_expr_src : scope == 1 ? rx.tank_expr_src : rx.pipe_expr_src;
     forms.resize(static_cast<std::size_t>(rx.n_species()), ReactionExprForm::NONE);
     srcs.resize(static_cast<std::size_t>(rx.n_species()));
     for (const auto& line : lines) {
@@ -438,6 +441,130 @@ void parseQuality(SimulationContext& ctx, const std::vector<std::string>& lines,
     for (const auto& e : mirrorInitialQualityMsxRows(ctx)) errors.push_back(e);
 }
 
+void parsePatterns(SimulationContext& ctx, const std::vector<std::string>& lines,
+                   std::vector<std::string>& errors) {
+    auto& rx = ctx.reactions;
+    for (const auto& line : lines) {
+        const auto tok = Tokenizer::tokenize(line);
+        if (tok.empty()) continue;
+        if (tok.size() < 2) { errors.push_back("[REACTION_PATTERNS] row needs name factors: '" + line + "'."); continue; }
+        int index = -1;
+        for (int i = 0; i < static_cast<int>(rx.source_patterns.size()); ++i)
+            if (rx.source_patterns[i].name == tok[0]) index = i;
+        if (index < 0) {
+            index = static_cast<int>(rx.source_patterns.size());
+            rx.source_patterns.push_back({tok[0], {}});
+        }
+        for (std::size_t i = 1; i < tok.size(); ++i) {
+            double value;
+            if (!to_num(tok[i], value) || value < 0.0)
+                errors.push_back("[REACTION_PATTERNS] factor must be finite and nonnegative: '" + tok[i] + "'.");
+            else rx.source_patterns[index].factors.push_back(value);
+        }
+    }
+}
+
+void parseSources(SimulationContext& ctx, const std::vector<std::string>& lines,
+                  std::vector<std::string>& errors) {
+    auto& rx = ctx.reactions;
+    for (const auto& line : lines) {
+        const auto tok = Tokenizer::tokenize(line);
+        if (tok.empty()) continue;
+        const auto kind = Tokenizer::to_upper(tok[0]);
+        if ((tok.size() != 4 && tok.size() != 5) || (kind != "CONC" && kind != "MASS" && kind != "FLOWPACED" && kind != "SETPOINT")) {
+            errors.push_back("[REACTION_SOURCES] row needs CONC|MASS|FLOWPACED|SETPOINT node species value [pattern]: '" + line + "'.");
+            continue;
+        }
+        const int node = ctx.node_names.find(tok[1]), species = rx.find_species(tok[2]);
+        double value;
+        if (node < 0 || species < 0 || !to_num(tok[3], value) || !std::isfinite(value) || value < 0.0) {
+            errors.push_back("[REACTION_SOURCES] unknown node/species or invalid value: '" + line + "'.");
+            continue;
+        }
+        if (rx.species_is_wall[species]) {
+            errors.push_back("[REACTION_SOURCES] WALL species cannot enter with inflow water."); continue;
+        }
+        int pattern = -1;
+        if (tok.size() == 5 && tok[4] != "*") {
+            for (int i = 0; i < static_cast<int>(rx.source_patterns.size()); ++i)
+                if (rx.source_patterns[i].name == tok[4]) pattern = i;
+            if (pattern < 0) { errors.push_back("[REACTION_SOURCES] unknown pattern '" + tok[4] + "'."); continue; }
+        }
+        bool duplicate = false;
+        for (const auto& row : rx.sources) duplicate |= row.node == node && row.species == species;
+        if (duplicate) { errors.push_back("[REACTION_SOURCES] duplicate node/species: '" + line + "'."); continue; }
+        if((kind=="FLOWPACED"||kind=="SETPOINT") && node<int(ctx.nodes.is_virtual.size()) && ctx.nodes.is_virtual[node]) {
+            errors.push_back("[REACTION_SOURCES] boosters require a physical mixing node, not a virtual splice.");continue;
+        }
+        rx.sources.push_back({kind == "MASS", node, species, pattern, value,kind=="FLOWPACED"?1:kind=="SETPOINT"?2:0});
+    }
+}
+
+void parseParameters(SimulationContext& ctx, const std::vector<std::string>& lines,
+                     std::vector<std::string>& errors) {
+    auto& rx = ctx.reactions;
+    for (const auto& line : lines) {
+        const auto tok = Tokenizer::tokenize(line);
+        if (tok.empty()) continue;
+        const auto scope = Tokenizer::to_upper(tok[0]);
+        if (tok.size() != 4 || (scope != "NODE" && scope != "LINK")) {
+            errors.push_back("[REACTION_PARAMETERS] row needs NODE|LINK element parameter value: '" + line + "'.");
+            continue;
+        }
+        const bool link = scope == "LINK";
+        const int element = link ? ctx.link_names.find(tok[1]) : ctx.node_names.find(tok[1]);
+        const int coefficient = rx.find_coef(tok[2]);
+        double value = 0.0;
+        if (element < 0 || coefficient < 0 || !to_num(tok[3], value)) {
+            errors.push_back("[REACTION_PARAMETERS] unknown element/parameter or non-finite value: '" + line + "'.");
+            continue;
+        }
+        if (!rx.coef_is_param[coefficient]) {
+            errors.push_back("[REACTION_PARAMETERS] '" + tok[2] + "' is a CONSTANT, not a PARAMETER.");
+            continue;
+        }
+        bool duplicate = false;
+        for (const auto& row : rx.parameter_overrides)
+            duplicate |= row.link == link && row.element == element && row.coefficient == coefficient;
+        if (duplicate) {
+            errors.push_back("[REACTION_PARAMETERS] duplicate element/parameter: '" + line + "'.");
+            continue;
+        }
+        rx.parameter_overrides.push_back({link, element, coefficient, value});
+    }
+}
+
+void parseReport(SimulationContext& ctx, const std::vector<std::string>& lines,
+                 std::vector<std::string>& errors) {
+    auto& rx = ctx.reactions;
+    rx.report_enabled.assign(static_cast<std::size_t>(rx.n_species()), 1);
+    std::vector<bool> seen(rx.report_enabled.size(), false);
+    bool all_seen = false;
+    for (const auto& line : lines) {
+        const auto tok = Tokenizer::tokenize(line);
+        if (tok.empty()) continue;
+        if (tok.size() != 3 || Tokenizer::to_upper(tok[0]) != "SPECIES" ||
+            (Tokenizer::to_upper(tok[2]) != "YES" && Tokenizer::to_upper(tok[2]) != "NO")) {
+            errors.push_back("[REACTION_REPORT] row needs SPECIES ALL|species YES|NO: '" + line + "'.");
+            continue;
+        }
+        const bool value = Tokenizer::to_upper(tok[2]) == "YES";
+        if (Tokenizer::to_upper(tok[1]) == "ALL") {
+            if (all_seen) errors.push_back("[REACTION_REPORT] duplicate ALL row.");
+            // ALL is a baseline; require it before named overrides.
+            bool named = false; for (const auto v : seen) named |= v;
+            if (named) errors.push_back("[REACTION_REPORT] ALL must precede named species rows.");
+            std::fill(rx.report_enabled.begin(), rx.report_enabled.end(), value);
+            all_seen = true;
+        } else {
+            const int m = rx.find_species(tok[1]);
+            if (m < 0) errors.push_back("[REACTION_REPORT] undeclared species '" + tok[1] + "'.");
+            else if (seen[m]) errors.push_back("[REACTION_REPORT] duplicate species '" + tok[1] + "'.");
+            else { rx.report_enabled[m] = value; seen[m] = true; }
+        }
+    }
+}
+
 /// [REACTION_RAINFALL] (Multispecies Phase 2): `species concentration`, the
 /// species' counterpart of the [POLLUTANTS] Crain column.
 void parseRainfall(SimulationContext& ctx, const std::vector<std::string>& lines,
@@ -480,7 +607,7 @@ const std::vector<std::string>& reactionSectionTags() {
         "REACTION_SOURCES",       "REACTION_QUALITY",
         "REACTION_PARAMETERS",    "REACTION_PATTERNS",
         "REACTION_REPORT",        "REACTION_SUBCATCHMENTS",
-        "REACTION_RAINFALL", "REACTION_SUBSURFACE"};
+        "REACTION_RAINFALL", "REACTION_SUBSURFACE", "REACTION_WALLS", "REACTION_LIDS", "REACTION_BUILDUP"};
     return tags;
 }
 
@@ -511,7 +638,7 @@ void applyReactionSections(SimulationContext& ctx,
     s = config.find("REACTION_TERMS");
     if (s) parseTerms(ctx, *s, errors);
     s = config.find("REACTION_PIPES");
-    if (s) parseExpressions(ctx, *s, /*tanks=*/false, errors);
+    if (s) parseExpressions(ctx, *s, /*pipe scope=*/0, errors);
     else {
         ctx.reactions.pipe_form.assign(
             static_cast<std::size_t>(ctx.reactions.n_species()),
@@ -520,13 +647,46 @@ void applyReactionSections(SimulationContext& ctx,
             static_cast<std::size_t>(ctx.reactions.n_species()));
     }
     s = config.find("REACTION_TANKS");
-    if (s) parseExpressions(ctx, *s, /*tanks=*/true, errors);
+    if (s) parseExpressions(ctx, *s, /*tank scope=*/1, errors);
     else {
         ctx.reactions.tank_form.assign(
             static_cast<std::size_t>(ctx.reactions.n_species()),
             ReactionExprForm::NONE);
         ctx.reactions.tank_expr_src.resize(
             static_cast<std::size_t>(ctx.reactions.n_species()));
+    }
+    ctx.reactions.subcatch_form.assign(static_cast<std::size_t>(ctx.reactions.n_species()), ReactionExprForm::NONE);
+    ctx.reactions.subcatch_expr_src.resize(static_cast<std::size_t>(ctx.reactions.n_species()));
+    s = config.find("REACTION_SUBCATCHMENTS");
+    if(s) {
+        std::vector<std::string> global;
+        for(const auto& line:*s) {
+            auto t=Tokenizer::tokenize(line);
+            if(t.empty())continue;
+            if(Tokenizer::to_upper(t[0])!="SUBCATCHMENT"){global.push_back(line);continue;}
+            if(t.size()<5){errors.push_back("[REACTION_SUBCATCHMENTS] needs SUBCATCHMENT name form species expression.");continue;}
+            ReactionData::SurfaceLaw law;law.subcatchment=ctx.subcatch_names.find(t[1]);law.species=ctx.reactions.find_species(t[3]);
+            auto form=Tokenizer::to_upper(t[2]);law.form=form=="RATE"?ReactionExprForm::RATE:form=="EQUIL"?ReactionExprForm::EQUIL:form=="FORMULA"?ReactionExprForm::FORMULA:ReactionExprForm::NONE;
+            if(law.subcatchment<0||law.species<0||law.form==ReactionExprForm::NONE){errors.push_back("[REACTION_SUBCATCHMENTS] invalid selector, species or form: "+line);continue;}
+            if(std::any_of(ctx.reactions.wet_laws.begin(),ctx.reactions.wet_laws.end(),[&](const auto& l){return l.subcatchment==law.subcatchment&&l.species==law.species;})){errors.push_back("[REACTION_SUBCATCHMENTS] duplicate selected law.");continue;}
+            law.expression=expr_payload(line,4);ctx.reactions.wet_laws.push_back(std::move(law));
+        }
+        parseExpressions(ctx,global,2,errors);
+    }
+    s=config.find("REACTION_BUILDUP");
+    if(s)for(const auto& line:*s) {
+        auto t=Tokenizer::tokenize(line);if(t.empty())continue;
+        ReactionData::SurfaceLaw law;std::size_t pos=0;
+        auto fail=[&]{errors.push_back("[REACTION_BUILDUP] needs [SUBCATCHMENT name] LANDUSE name RATE|EQUIL|FORMULA BULK-species expression: "+line);};
+        if(Tokenizer::to_upper(t[0])=="SUBCATCHMENT") {
+            if(t.size()<7||(law.subcatchment=ctx.subcatch_names.find(t[1]))<0){fail();continue;}pos=2;
+        }
+        if(t.size()<pos+5||Tokenizer::to_upper(t[pos])!="LANDUSE"||(law.landuse=ctx.landuse_names.find(t[pos+1]))<0){fail();continue;}
+        auto form=Tokenizer::to_upper(t[pos+2]);law.form=form=="RATE"?ReactionExprForm::RATE:form=="EQUIL"?ReactionExprForm::EQUIL:form=="FORMULA"?ReactionExprForm::FORMULA:ReactionExprForm::NONE;
+        law.species=ctx.reactions.find_species(t[pos+3]);
+        if(law.species<0||law.form==ReactionExprForm::NONE){fail();continue;}
+        if(std::any_of(ctx.reactions.buildup_laws.begin(),ctx.reactions.buildup_laws.end(),[&](const auto& l){return l.subcatchment==law.subcatchment&&l.landuse==law.landuse&&l.species==law.species;})){errors.push_back("[REACTION_BUILDUP] duplicate selected law.");continue;}
+        law.expression=expr_payload(line,int(pos+4));ctx.reactions.buildup_laws.push_back(std::move(law));
     }
     s = config.find("REACTION_SUBSURFACE");
     if(s)parseSubsurface(ctx,*s,errors);
@@ -540,20 +700,50 @@ void applyReactionSections(SimulationContext& ctx,
     s = config.find("REACTION_RAINFALL");
     if (s) parseRainfall(ctx, *s, errors);
 
-    // Later-phase sections: defined behavior, never silent acceptance.
-    const struct { const char* tag; const char* phase; } later[] = {
-        {"REACTION_SOURCES",       "R-sources (post-R3)"},
-        {"REACTION_PARAMETERS",    "R-parameters (post-R3)"},
-        {"REACTION_PATTERNS",      "R-sources (post-R3)"},
-        {"REACTION_REPORT",        "R5"},
-        {"REACTION_SUBCATCHMENTS", "R6"},
-    };
-    for (const auto& l : later) {
-        if (config.find(l.tag) != nullptr)
-            errors.push_back(std::string("[") + l.tag +
-                             "] is recognized but not yet supported — "
-                             "arrives with plan phase " + l.phase + ".");
+    s = config.find("REACTION_PATTERNS");
+    if (s) parsePatterns(ctx, *s, errors);
+    s = config.find("REACTION_SOURCES");
+    if (s) parseSources(ctx, *s, errors);
+    s = config.find("REACTION_PARAMETERS");
+    if (s) parseParameters(ctx, *s, errors);
+    s = config.find("REACTION_REPORT");
+    if (s) parseReport(ctx, *s, errors);
+    s=config.find("REACTION_WALLS");
+    if(s) for(const auto& line:*s) {
+        const auto tok=Tokenizer::tokenize(line);
+        if(tok.empty())continue;
+        double area=0;const bool link=Tokenizer::to_upper(tok[0])=="LINK";
+        const int e=tok.size()==3 ? (link?ctx.link_names.find(tok[1]):ctx.node_names.find(tok[1])) : -1;
+        if(tok.size()!=3 || (!link&&Tokenizer::to_upper(tok[0])!="NODE") || e<0 || !to_num(tok[2],area) || !std::isfinite(area) || area<0) {
+            errors.push_back("[REACTION_WALLS] needs NODE|LINK element nonnegative-area: '"+line+"'.");continue;
+        }
+        auto& rows=ctx.reactions.wall_areas;
+        if(std::any_of(rows.begin(),rows.end(),[&](const auto& r){return r.link==link&&r.element==e;}))
+            errors.push_back("[REACTION_WALLS] duplicate contact area: '"+line+"'.");
+        else rows.push_back({link,e,area});
     }
+
+    s=config.find("REACTION_LIDS");
+    if(s)for(const auto& line:*s) {
+        const auto t=Tokenizer::tokenize(line);if(t.empty())continue;
+        auto fail=[&](const std::string& why){errors.push_back("[REACTION_LIDS] "+why+": '"+line+"'.");};
+        if(t.size()<3||Tokenizer::to_upper(t[0])!="CONTROL"){fail("needs CONTROL name TRANSPORT or CONTROL name LAYER number RATE|EQUIL|FORMULA species expression");continue;}
+        const int control=ctx.lid_names.find(t[1]);if(control<0){fail("unknown LID control");continue;}
+        if(!ctx.reactions.lid_enabled(control))ctx.reactions.lid_controls.push_back(control);
+        if(t.size()==3&&Tokenizer::to_upper(t[2])=="TRANSPORT")continue;
+        double number=0;
+        if(t.size()<7||Tokenizer::to_upper(t[2])!="LAYER"||!to_num(t[3],number)||number<0||number>10000||number!=std::floor(number)) {fail("invalid layer (0 means every layer)");continue;}
+        ReactionData::LidLaw law;law.control=control;law.layer=int(number);law.species=ctx.reactions.find_species(t[5]);
+        const auto f=Tokenizer::to_upper(t[4]);
+        if(f=="RATE")law.form=ReactionExprForm::RATE;else if(f=="EQUIL")law.form=ReactionExprForm::EQUIL;else if(f=="FORMULA")law.form=ReactionExprForm::FORMULA;else {fail("unknown form");continue;}
+        if(law.species<0||ctx.reactions.species_is_wall[law.species]){fail("target must be BULK");continue;}
+        if(std::any_of(ctx.reactions.lid_laws.begin(),ctx.reactions.lid_laws.end(),[&](const auto& r){return r.control==control&&r.layer==law.layer&&r.species==law.species;})){fail("duplicate layer/species law");continue;}
+        law.expression=expr_payload(line,6);ctx.reactions.lid_laws.push_back(std::move(law));
+    }
+    if(!ctx.reactions.wall_geometry&&ctx.reactions.buildup_laws.empty()&&ctx.reactions.area_units!=ReactionAreaUnits::FT2)
+        ctx.warnings.push_back(std::string("[REACTION_OPTIONS] AREA_UNITS ")+
+            (ctx.reactions.area_units==ReactionAreaUnits::M2?"M2":"CM2")+" has no effect unless WALL_GEOMETRY YES is selected.");
+
 
     // Unknown REACTION_* sections in the file are typos worth failing on.
     for (const auto& sect : config.sections) {
@@ -565,6 +755,11 @@ void applyReactionSections(SimulationContext& ctx,
                              "] in reactions config '" + config.source_path +
                              "'.");
     }
+
+    if (ctx.options.quality_solver == QualitySolverKind::LAGRANGIAN &&
+        std::any_of(ctx.reactions.species_is_wall.begin(), ctx.reactions.species_is_wall.end(),
+                    [](uint8_t wall) { return wall != 0; }))
+        errors.push_back("LAGRANGIAN reaction transport does not support attached WALL species; use QUALITY_SOLVER LEGACY.");
 
     if (!errors.empty()) {
         // Transactional: a rejected config leaves NOTHING behind — neither
@@ -655,6 +850,9 @@ bool recompileReactionSystem(SimulationContext& ctx,
     rx.tank_expr.assign(static_cast<std::size_t>(rx.n_species()),
                         RxExprSpan{});
 
+    rx.subcatch_form.resize(static_cast<std::size_t>(rx.n_species()), ReactionExprForm::NONE);
+    rx.subcatch_expr_src.resize(static_cast<std::size_t>(rx.n_species()));
+    rx.subcatch_expr.assign(static_cast<std::size_t>(rx.n_species()), RxExprSpan{});
     // R4: pollutants are referencable (read-only) in expressions. Build the
     // name list in registry order (pollutants occupy the first registry
     // slots; PUSH_POLLUT idx == pollutant index).
@@ -696,12 +894,41 @@ bool recompileReactionSystem(SimulationContext& ctx,
         if (rx.tank_form[us] != ReactionExprForm::NONE)
             compile_one(rx.tank_expr_src[us], rx.tank_expr[us],
                         "[REACTION_TANKS] '" + rx.species_name[us] + "'");
+        if (rx.subcatch_form[us] != ReactionExprForm::NONE) {
+            if (rx.species_is_wall[us])
+                errors.push_back("[REACTION_SUBCATCHMENTS] requires a BULK species.");
+            else compile_one(rx.subcatch_expr_src[us], rx.subcatch_expr[us],
+                             "[REACTION_SUBCATCHMENTS] '" + rx.species_name[us] + "'", 3);
+        }
     }
     for(auto& law:rx.subsurface_laws) {
         if(law.species<0||law.species>=rx.n_species()||rx.species_is_wall[law.species]) {
             errors.push_back("[REACTION_SUBSURFACE] requires a valid BULK species");continue;
         }
         compile_one(law.expression,law.compiled,"[REACTION_SUBSURFACE] '"+rx.species_name[law.species]+"'",2);
+    }
+
+
+    for(auto* laws:{&rx.wet_laws,&rx.buildup_laws})for(auto& law:*laws) {
+        if(law.species<0||law.species>=rx.n_species()||rx.species_is_wall[law.species]){errors.push_back("Surface reactions require a BULK species.");continue;}
+        compile_one(law.expression,law.compiled,"Surface reaction '"+rx.species_name[law.species]+"'",3);
+    }
+    for(auto& law:rx.lid_laws) {
+        if(law.species<0||law.species>=rx.n_species()||rx.species_is_wall[law.species]) {errors.push_back("[REACTION_LIDS] target must be BULK.");continue;}
+        compile_one(law.expression,law.compiled,"[REACTION_LIDS] '"+rx.species_name[law.species]+"'",4);
+        const bool node=law.control>=0&&law.control<int(ctx.lid_controls.node_layers.size())&&!ctx.lid_controls.node_layers[law.control].empty();
+        const int count=node?int(ctx.lid_controls.node_layers[law.control].size()):4;
+        if(law.layer>count)errors.push_back("[REACTION_LIDS] layer exceeds the control's stack.");
+    }
+    if(!rx.wall_geometry&&!rx.wall_areas.empty())errors.push_back("[REACTION_WALLS] requires WALL_GEOMETRY YES.");
+    if(rx.wall_geometry) for(int s=0;s<rx.n_species();++s)if(rx.species_is_wall[s]) {
+        if(rx.coupling!=ReactionCoupling::FULL)errors.push_back("WALL_GEOMETRY requires COUPLING FULL.");
+        if(rx.tank_form[s]!=ReactionExprForm::NONE)for(int node=0;node<ctx.n_nodes();++node)
+            if(ctx.nodes.type[node]==NodeType::STORAGE && std::none_of(rx.wall_areas.begin(),rx.wall_areas.end(),[&](const auto& r){return !r.link&&r.element==node;}))
+                errors.push_back("WALL_GEOMETRY tank reactions require an explicit [REACTION_WALLS] NODE area for '"+ctx.node_names.name_of(node)+"'.");
+        for(auto form:{rx.pipe_form[s],rx.tank_form[s]})
+            if(form==ReactionExprForm::EQUIL||form==ReactionExprForm::FORMULA)
+                errors.push_back("WALL_GEOMETRY supports RATE or NONE for WALL species; algebraic WALL projections have no conservative wet/dry transfer.");
     }
     if (errors.size() != n_errors_in) return false;
     rx.compiled = true;

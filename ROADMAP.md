@@ -47,7 +47,7 @@ OpenMP, CUDA, HIP and SYCL surface plugins load separately from the core. Active
 
 - Published inundation benchmarks and measured catchment case studies beyond the analytic SWASHES suite.
 - Long-period damping, mesh-dependent stability and production-scale accuracy studies.
-- Qualification of additional process/backend combinations, including groundwater and transport under the RK2 surface route; current groundwater runs require first-order reconstruction.
+- Qualification of additional process/backend combinations, including groundwater transport under the RK2 surface route. Standalone CLOSED_FORM/ENSLAVED/SIGMA water, pollutants/MSX, age and transported water temperature now support CPU SSP-RK2, including SIGMA layer chemistry and symmetric groundwater reactions; porous heat, chemical/age inventories and reactions also support restricted RK2 under constant thermal boundaries. Finite heat contacts and borrowed source/network owners retain first-order requirements.
 - Further large-mesh performance work where deployment measurements justify it.
 
 The implicit CVODE/ARKODE 2D integrators are retired; they are not an alternative operational route.
@@ -80,28 +80,76 @@ See the [surface-quality reference](docs/manuals/reference/quality/sections/Chap
 
 ### 2.3 Groundwater Transport 🔧
 
-**Implemented:** the CPU mesh aquifer carries pollutant/reaction-species mass, age and temperature through saturated/unsaturated stores. Exterior hydraulic HEAD/FLOW edges now bind `[GW_BOUNDARY_QUALITY]` composition and independent native mass/physical heat fluxes, with gross requested/accepted receipts and availability limits. Explicit `UNSAT_TRANSPORT LAYERED` enables canonical SIGMA layer inventories and LAYER initial conditions. `[REACTION_SUBSURFACE]` binds scoped SAT/UNSAT/LAYER expressions to the shared reaction integrator. LAYERED node/conduit leakage enters the actual receiving layer; sloping reaches split at layer/table intersections. Porous SAT/UNSAT reactors use the existing fixed-depth inventory, thermal temperature and protected outgoing reservations. C/Python, INP/GeoPackage, native V17 state and HDF5 layer/edge results support these profiles; the GUI adds staged boundary editing, layer assignment and layer-result selection.
+**Implemented:** the CPU mesh aquifer carries pollutant/reaction-species mass, age and temperature through saturated/unsaturated stores. Exterior hydraulic HEAD/FLOW edges now bind `[GW_BOUNDARY_QUALITY]` composition and independent native mass/physical heat fluxes, with gross requested/accepted receipts and availability limits. Explicit `UNSAT_TRANSPORT LAYERED` enables canonical SIGMA layer inventories and LAYER initial conditions. `[REACTION_SUBSURFACE]` binds scoped SAT/UNSAT/LAYER expressions to the shared reaction integrator. LAYERED node/conduit leakage enters the actual receiving layer; sloping reaches split at layer/table intersections. Porous SAT/UNSAT reactors use the existing fixed-depth inventory, thermal temperature and protected outgoing reservations. SIGMA chemistry can also share porous soil heat through a conservative overlap map: chemistry and thermal layer counts remain independent, layer reactions use projected temperature, and fixed physical layers retain sole energy ownership. C/Python, INP/GeoPackage, native V17 state and HDF5 layer/edge results support these profiles; the GUI adds staged boundary editing, layer assignment and layer-result selection.
 
 **Qualification and remaining work:**
 
 - CPU integration/regression and heterogeneous/plume refinement qualification are in progress. Tensor dispersion now uses transverse dispersivity, skew correction, harmonic normal resistance and the solute `C_DIFF` bound; passing local flux/conservation tests does not establish universal field validity.
-- Complete the joint contact/donor and coupled pending-transfer/output restart matrix, and the shared mapping needed to combine moving SIGMA layer chemistry with fixed-depth porous heat/porewater. That combination remains refused; default BULK retains its historical saturated-contact approximation.
-- Coupled groundwater still requires first-order surface reconstruction on CPU. True coupled RK2 stages, rollback and measured order remain a separate milestone; so do explicitly qualified accelerated groundwater profiles on actual hardware.
+- Attached mesh-only CPU bulk or SIGMA engine checkpoints now qualify matched optional BULK MSX/pollutant chemistry, age-only and heat-only layouts, WATER_ONLY or paired porous heat, and groundwater HDF5 continuation, including pending contacts, accepted cell clocks and independent grids. Managed sessions support numerical state or mesh output for this profile; reactive hydraulic/quality HEAD/FLOW edge continuation now also qualifies bulk and independent SIGMA/thermal grids, signed water forcing, imposed mass fluxes and atomic forcing-identity refusal. Full-session network chemistry and surface-species/buildup output continuation retain their guards.
+- Joint conduit/node/well/edge donor tests, unequal-clock pending cold-contact/heat restart and a heterogeneous skewed-mesh diffusion refinement case now pass on CPU. Deliberate boundary-debit and compression-transfer faults are detected. Complete the broader coupled network-chemistry/output restart and application qualification matrix. The SIGMA/porous overlap mapping is implemented and selected CPU profiles are tested; default BULK retains its historical saturated-contact approximation.
+- Standalone CLOSED_FORM/ENSLAVED/SIGMA water-only CPU groundwater now supports coupled FULL_SWE SSP-RK2 with whole-call rollback, measured smooth temporal order, nonlinear donor/startup checks and exact component checkpoint continuation. Authored water-only wells and HEAD/FLOW edges now split shared RK2 stages at knots and reversals, with second-order smooth forcing and exact checkpoint/refusal checks. ENSLAVED blends invert conserved equilibrium water, with second-order smooth drainage/intake and exact mixed-closure component restart checks. SIGMA stages now hold starting-state ALE velocity and blend conserved layer water; independent smooth Gardner and capillary trajectories, all-law dry/collapse/rewet bounds, mixed-closure restart and rollback checks pass. No second-order claim applies across donor or saturation switching. Passive pollutants and age now share the accepted RK2 mass transaction in bulk or SIGMA layers, with beginning-state donor budgets, sorbed grain handover, explicit age production and exact component continuation. Smooth retarded mixing and shared-column refinement gates pass. Groundwater decay and SAT/UNSAT/LAYER MSX reactions now use symmetric half steps, actual aqueous/sorption capacities and transactional bounded work-limit retries. Retarded conversion, affine mixing refinement, stiff kinetics, signed production, exact reaction restart and failure/retry gates qualify this named profile; EUL and algebraic/non-smooth laws do not gain a universal second-order claim. Surface BULK PIPE kinetics and pollutant decay now share the symmetric transaction, with signed native reaction ledgers, exact component continuation and once-only report receipts. Coupled surface/layer reactive-dispersive refinements approach second temporal order; invalid accepted-state laws fail atomically. Signed water-temperature advection/dispersion now uses the same RK2 transaction with WATER_ONLY and HEAT_MODEL TRANSPORT_ONLY, including actual-temperature kinetics, cold forcing, sensible ET and exact component continuation. Cold Celsius authoring and mode/capacity refusal are checked. Temperature-only porous soil heat now uses beginning-state fixed-grid water/energy derivatives and symmetric midpoint conduction, including explicit lateral heat, sensible ET and exact component continuation. An independent moving four-layer water/three-layer energy ODE gives second-order errors from 4.00e-6 to 6.22e-8; 40 public closure/forcing/capacity cases pass. Porous chemical/age inventories now share that transaction: BULK owns fixed-depth pore mass, LAYERED retains canonical SIGMA mass, and pure RATE phase contributions integrate one shared physical concentration. Sorption, actual-temperature kinetics, stiff reactions, age, elemental/energy ledgers, exact component restart and later-knot failure rollback pass. Independent coupled moving water/energy/chemistry/age refinements fall from about 1.31e-5 to 2.04e-7 in BULK and 1.30e-5 to 2.03e-7 in LAYERED. EUL and algebraic laws retain their declared accuracy limits. Latent/atmospheric/thermal-series forcing, finite heat contacts, runtime providers and network/catchment owners remain guarded under RK2. An optional versioned host OpenMP operator computes raw CLOSED_FORM recharge, with separate C/Python availability/use/thread diagnostics and explicit CPU ownership of water, receipts, transport, reactions and heat. Full groundwater/transport acceleration and CUDA/HIP/SYCL execution remain outstanding; surface alignment and CPU fallback checks do not qualify those profiles.
 
 See the [transport contracts, examples and limits](docs/design/groundwater-transport.md), [kernel tests](tests/unit/engine/test_gw_transport_kernel.cpp) and [SIGMA conservation tests](tests/unit/engine/test_sigma_conservation.cpp). The new work is a development implementation, not a declaration that every groundwater completion gate has passed.
 
 ### 2.4 Multispecies Reactions Across Domains 🔧
 
-**Implemented:** shared reaction-species definitions, bulk/wall declarations, named coefficients and expressions, rate/equilibrium/formula evaluation and selectable integrators. Bindings exist for legacy, ARD and LARD network transport and supported surface processes. Groundwater now has explicit scoped `[REACTION_SUBSURFACE]` reactors for the supported CPU WATER_ONLY bulk/SIGMA and fixed-depth porous SAT/UNSAT profiles (Section 2.3). Standard native binary output now includes reaction-species columns; the former statement that species results are never written is obsolete.
+**Implemented:** shared reaction-species definitions, bulk/wall declarations,
+named coefficients and expressions, rate/equilibrium/formula evaluation and
+selectable integrators. Bindings exist for legacy, ARD and LARD network
+transport and supported surface processes. Groundwater has explicit scoped
+`[REACTION_SUBSURFACE]` reactors for the supported CPU profiles described in
+Section 2.3. Standard native binary output includes reaction-species columns.
+
+The 2026-10-19 increment implements four formerly reserved sections:
+
+- `[REACTION_SOURCES]`: additive CONC/MASS node loads through the existing external species-load seam; MASS uses declared mass units per second.
+- `[REACTION_PATTERNS]`: cyclic nonnegative source multipliers, with PATTERN_TIMESTEP in seconds and a simulation-start clock origin.
+- `[REACTION_PARAMETERS]`: node/link PARAMETER overrides used by terms and all expression forms, including ARD parent links and LARD segments.
+- `[REACTION_REPORT]`: species-column selection in native output without altering internal species indexing. Ordinary `[REPORT]` retains element selection.
+
+The 2026-10-20 increment adds `[REACTION_SUBCATCHMENTS]` for BULK wet pools
+on non-LID subcatchments. It mixes rain/run-on with retained mass, integrates
+its own expressions, then allocates mass to infiltration, runoff and storage.
+It uses conservative residual-mass storage, records reaction/clamp amounts,
+and exposes the scope through C/Python and File editing. Constants, global
+parameters, terms, DT and beginning-of-step runoff TEMP are supported;
+WALL/pollutant dependencies and other hydraulic inputs are refused. Existing
+surface-quality closure remains unchanged without explicit subcatchment laws.
+
+LEGACY now keeps WALL state attached rather than advecting or evaporatively
+concentrating it as dissolved mass. The dissolved routing ledger excludes
+WALL densities. ARD retains its LEGACY fallback for WALL systems; LARD refuses
+them. LEGACY/LARD tank kinetics skip zero and sub-litre storage volumes.
+Selected output and parameter overrides are checked across all three network
+quality solvers. Reusable [reaction networks](examples/reactions/README.md)
+include parent/product conversion, temperature-dependent decay and attached
+wall decay. The companion benchmark repository adds a `quality/reactions`
+suite with 24 analytic cells across quality solvers, rate units and overrides,
+plus three rain-fed wet-pool conservation checks (self-consistency only).
+
+The next increment adds native checkpoint/output continuation for the qualified
+1D chemistry profile, geometry-aware WALL exchange, selective wet laws,
+dry land-use reactors, porous LID inventories and FLOWPACED/SETPOINT boosters.
+The editor has dedicated source, pattern, parameter, wall-area and report tables.
+The companion suite now has 38 cells, including analytic wall, dry-buildup and
+setpoint cases and a rain-fed bioretention conservation case.
 
 **Remaining work and restrictions:**
 
-- `[REACTION_SOURCES]`, `[REACTION_PARAMETERS]`, `[REACTION_PATTERNS]`, `[REACTION_REPORT]` and `[REACTION_SUBCATCHMENTS]` remain recognized but unsupported and are refused. Native species output does not imply that the report-selection section works.
-- Complete domain-specific reaction, unit and output-continuation qualification, including WALL/BULK behavior and low/zero-volume storage.
-- Extend LID reaction support beyond the current combinations; a shared species definition is not a reactor implementation for every porous layer.
-- Broaden published multispecies benchmarks and reusable example reaction networks.
+- Full native reaction continuation currently qualifies CPU 1D network, wet/dry surface and supported LID inventories, with inline rainfall and native output. That 1D profile excludes heat/age combinations, active 2D surface chemistry, subsurface laws, pollutants and detailed ARD/LID output. A separate mesh-only first-order profile supports matched optional BULK MSX/pollutant inventories, age and porous heat, including age-only and heat-only layouts, without live network or private catchment owners (Section 2.3). State-only hotstarts cannot carry porous LID reaction inventories.
+- `WALL_GEOMETRY YES` supplies AV in AREA_UNITS/litre. Conduits use actual wetted perimeter, physical length and barrels; storage requires explicit contact area. WALL density uses fixed reference area, kinetics scale by wetted fraction, and dry inventory is retained. WALL algebraic projections remain refused; ARD uses LEGACY fallback and LARD refuses WALL.
+- `[REACTION_LIDS]` explicitly opts controls into BULK layer transport. Storage-node bucket/Richards reactors require LEGACY quality and a non-Mesh bottom. Conventional units require full subcatchment coverage and all units to opt in; bioretention and permeable-pavement stacks have conservation/restart checks. Partial capture, covered rain barrels, WALL chemistry and 2D-owned conventional units remain refused.
+- Wet-pool mixing and dry buildup accrual/washoff remain first-order splits. Selective subcatchment laws and separate land-use buildup laws are implemented; exact continuously fed CSTR integration and wider timestep/domain qualification remain future work.
+- Broaden independent chemistry and field benchmarks. Current analytic and conservation cases are numerical qualification, not calibrated or universal chemistry validation. Changes are committed locally; publication requires pushing the repositories.
 
-The [reaction component](src/engine/transport/components/ReactionModule/ReactionsComponent.cpp), [output-quality tests](tests/unit/engine/test_output_quality.cpp) and [multispecies tests](tests/unit/engine/test_msx_parity.cpp) record these distinct capabilities.
+The [reaction component](src/engine/transport/components/ReactionModule/ReactionsComponent.cpp),
+[configuration/qualification tests](tests/unit/engine/test_reactions_config.cpp),
+[output-quality tests](tests/unit/engine/test_output_quality.cpp) and
+[multispecies tests](tests/unit/engine/test_msx_parity.cpp) record these distinct
+capabilities. Source patterns are sampled on the inflow-assembly clock;
+routing steps must resolve their changes. The GUI's Sources tab opens the
+validated File editor for the extended sections; dedicated structured tables
+are not yet provided.
 
 ## 3. Sediment Transport 📋
 
@@ -203,7 +251,15 @@ The version column distinguishes released baselines from later source milestones
 
 **Implemented:** input-file, GeoPackage and optional HDF5 model persistence; binary and 2D HDF5 results; native/legacy hot-start handling with per-save format selection and dated saves. Legacy hot starts with subcatchments can be embedded in GeoPackage without losing their runoff/trailer bytes. Native save/use includes reaction state and qualified coupled thermal engine state at accepted step boundaries.
 
-**Remaining work:** qualify restart across the full surface/GW/snow/LID/transport/backend matrix, output continuation and relocated packages. Managed water-only sessions, direct component checkpoints and coupled thermal engine checkpoints have different contracts; they are not interchangeable. Coordinated multi-component restart remains open.
+Mesh-output checkpoint capture now settles HDF5's unused allocation tail before
+recording a result prefix. Exact fresh-header identity checks, corruption rejection
+and atomic multi-output publication remain intact. An isolated macOS CPU build
+with HDF5 2.1.1 passes **174 engine checkpoint checks and 31 mesh-output checks**,
+including initial/resumed reports, compression, groundwater/thermal/Richards LID
+stores, source histories, damaged companions and relocated bundles. See the
+[mesh-checkpoint verification record](tests/verification/mesh_checkpoint_2026-10-20/README.md).
+
+**Remaining work:** extend qualification beyond the tested CPU surface/GW/snow/LID/thermal configurations to additional physical cases, platforms/backends and transport combinations. Managed water-only sessions, direct component checkpoints and coupled thermal engine checkpoints have different contracts; they are not interchangeable. Coordinated multi-component restart remains open.
 
 See the [file reference](docs/manuals/engine/sections/Chapter3-Files.md), [hot-start implementation](src/engine/core/HotStartManager.cpp) and [checkpoint tests](tests/unit/engine/test_engine_checkpoint.cpp).
 
