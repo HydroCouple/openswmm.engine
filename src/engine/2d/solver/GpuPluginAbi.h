@@ -82,7 +82,9 @@ extern "C" {
 /* v6: SurfaceTransportState adds the canonical RK2 age-generation ledger;
  * SurfaceStateData offsets therefore change. Rebuild every surface plugin.
  * The independent C-only groundwater raw-recharge ABI remains v1. */
-#define OPENSWMM_GPU_ABI_VERSION 6
+/* v7: SurfaceStateData adds accepted runtime-forcing rainfall receipts.
+ * Rebuild surface plugins; independent raw groundwater recharge remains v1. */
+#define OPENSWMM_GPU_ABI_VERSION 7
 
 /** GPU vendor / backend identifier reported by a plugin. */
 typedef enum OpenSwmmGpuVendor {

@@ -1263,7 +1263,8 @@ def test_groundwater_rk2_surface_runtime_provider_has_public_receipts_and_expiry
         view = solver.surface2d
         caps = solver.coupling.capabilities
         assert caps['surface_sources'] and caps['surface_water_heat'] and caps['atomic_frames']
-        assert not caps['groundwater_sources'] and not caps['surface_boundaries'] and not caps['paired_infiltration']
+        assert not caps['groundwater_sources'] and not caps['surface_boundaries']
+        assert caps['paired_infiltration'] and caps['rainfall_quality']
         with pytest.raises(PluginError):
             view.groundwater.set_water_source(0, .001, concentrations={'__TEMPERATURE__': -8})
         initial = view.species_ledger('__TEMPERATURE__')['storage'] + view.groundwater.species_ledger(0, L.STORAGE)
@@ -1278,6 +1279,90 @@ def test_groundwater_rk2_surface_runtime_provider_has_public_receipts_and_expiry
         final = view.species_ledger('__TEMPERATURE__')['storage'] + view.groundwater.species_ledger(0, L.STORAGE)
         assert final-initial == pytest.approx(-8*.002*.735, abs=1e-10)
         assert np.all(np.isfinite(view.concentrations(0)))
+        solver.end()
+    finally:
+        cleanup(solver)
+
+
+@pytest.mark.parametrize('closure,layered', [('CLOSED_FORM', False), ('ENSLAVED', False), ('SIGMA', False), ('SIGMA', True)])
+def test_groundwater_rk2_runtime_rain_expiry_uses_accepted_public_rain_reports(tmp_path, closure, layered):
+    from openswmm.engine import Solver, RuntimeForcing, GroundwaterSpeciesLedger as L, GroundwaterLedger as W
+    text = _rk2_water_temperature_text(closure, layered).replace('* 18 2', '* 1e-15 2')
+    path = tmp_path / 'accepted-runtime-rain-rk2.inp'
+    path.write_text(text)
+    solver = Solver(path, path.with_suffix('.rpt'))
+    solver.open()
+    try:
+        solver.initialize()
+        solver.start(False)
+        view = solver.surface2d
+        initial_water = view.total_volume + view.groundwater.ledger(W.STORAGE)
+        initial_heat = view.species_ledger('__TEMPERATURE__')['storage'] + view.groundwater.species_ledger(0, L.STORAGE)
+        area = sum(view.get_triangle_area(i) for i in range(2))
+        provider = solver.coupling.for_provider('rk2rain')
+        provider.surface.set_forcings((RuntimeForcing('rainfall', -1, .0001, concentrations={'__TEMPERATURE__': -8}, until_seconds=.735),))
+        solver.advance_to(2)
+        expected = area*.0001*.735
+        assert view.total_volume + view.groundwater.ledger(W.STORAGE)-initial_water == pytest.approx(expected, abs=1e-10)
+        final_heat = view.species_ledger('__TEMPERATURE__')['storage'] + view.groundwater.species_ledger(0, L.STORAGE)
+        assert final_heat-initial_heat == pytest.approx(-8*expected, abs=1e-10)
+        assert sum(view.get_rain_volume_bulk()) == pytest.approx(expected, abs=1e-10)
+        assert view.get_mass_balance()['rainfall_in'] == pytest.approx(expected, abs=1e-10)
+        assert solver.coupling.capabilities['rainfall_quality']
+        assert solver.coupling.capabilities['paired_infiltration']
+        solver.end()
+    finally:
+        cleanup(solver)
+
+@pytest.mark.parametrize('closure,layered', [('CLOSED_FORM', False), ('ENSLAVED', False), ('SIGMA', False), ('SIGMA', True)])
+@pytest.mark.parametrize('soil_et', ['SENSIBLE_ONLY', 'LATENT_SURFACE'])
+def test_groundwater_rk2_mixed_runtime_forcings_keep_public_water_and_physical_heat(tmp_path, closure, layered, soil_et):
+    from openswmm.engine import Solver, RuntimeForcing, GroundHeatValue as H, GroundwaterSpeciesLedger as L, GroundwaterLedger as W
+    text = _rk2_water_temperature_text(closure, layered).replace('* 18 2', '* 1e-15 2').replace('GW_ET NONE', 'GW_ET BOUNDARY_ET').replace(
+        'HEAT_MODEL TRANSPORT_ONLY', '''HEAT_MODEL COUPLED
+BED_HEAT_MODEL GROUND_COLUMN
+HEAT_SURFACE_EXCHANGE NO
+HEAT_RADIATIVE_EXCHANGE NO''').replace('THERMAL_MODEL WATER_ONLY', f'''THERMAL_MODEL POROUS_EQUILIBRIUM
+THERMAL_LAYERS 3
+CONDUCTION YES
+LATERAL_CONDUCTION NO
+SOIL_ET_HEAT {soil_et}
+SURFACE_THERMAL_BC SURFACE_WATER
+DEEP_THERMAL_BC ADIABATIC
+DISPERSION NO''').replace('HEAT_TRANSPORT YES', 'HEAT_TRANSPORT YES\nWATER_DENSITY 1000\nWATER_SPECIFIC_HEAT_CAPACITY 4186', 1)
+    path = tmp_path / 'mixed-forcing-finite-rk2.inp'
+    path.write_text(text)
+    solver = Solver(path, path.with_suffix('.rpt'))
+    solver.open()
+    try:
+        solver.initialize()
+        surface, gw, heat = solver.surface2d, solver.surface2d.groundwater, solver.heat
+        initial_water = surface.total_volume + gw.ledger(W.STORAGE)
+        initial_energy = sum(heat.ground_values(H.ENERGY, 0, 2)) + 4186000*surface.species_ledger('__TEMPERATURE__')['storage']
+        area = sum(surface.get_triangle_area(i) for i in range(2))
+        solver.start(False)
+        provider = solver.coupling.for_provider('mixed')
+        provider.surface.set_forcings((
+            RuntimeForcing('rainfall', -1, .0001, concentrations={'__TEMPERATURE__': -8}, until_seconds=.735),
+            RuntimeForcing('evaporation', -1, .00002, until_seconds=1.237),
+            RuntimeForcing('infiltration', 0, .00003, until_seconds=1.537),
+        ))
+        solver.advance_to(2)
+        water = surface.total_volume + gw.ledger(W.STORAGE) + surface.get_mass_balance()['evap_out'] + gw.ledger(W.ET)
+        expected_rain = area*.0001*.735
+        assert water == pytest.approx(initial_water+expected_rain, abs=1e-10*max(initial_water, 1))
+        assert sum(surface.get_rain_volume_bulk()) == pytest.approx(expected_rain, abs=1e-10)
+        assert sum(heat.mesh_values(11, 0, 2)) == pytest.approx(surface.get_mass_balance()['evap_out'], abs=1e-12)
+        receipt = provider.surface.infiltration_receipt(0)
+        assert receipt.applied_m3 > 0
+        assert receipt.applied_m3 == pytest.approx(.00003*surface.get_triangle_area(0)*1.537, abs=1e-12)
+        assert receipt.applied_heat_j == pytest.approx(4186000*receipt.applied_species['__TEMPERATURE__'], abs=1e-8)
+        ledger = surface.species_ledger('__TEMPERATURE__')
+        final_energy = sum(heat.ground_values(H.ENERGY, 0, 2)) + 4186000*ledger['storage']
+        sensible_out = 4186000*(ledger['external_out']+gw.species_ledger(0, L.ET_OUT))
+        latent = sum(heat.ground_values(H.LATENT_ENERGY, 0, 2))
+        assert final_energy+sensible_out-latent == pytest.approx(initial_energy+4186000*ledger['rainfall_in'], abs=1e-10*max(abs(initial_energy), 1))
+        assert np.max(np.abs(heat.ground_values(H.NORMALIZED_RESIDUAL, 0, 2))) < 1e-10
         solver.end()
     finally:
         cleanup(solver)

@@ -2153,6 +2153,9 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
                 report_rain_cum_[i] = state_.rainfall_force_val[i] * span;
             else if (state_.rainfall_forced[i] == 2)
                 report_rain_cum_[i] += state_.rainfall_force_val[i] * span;
+            if(options_.reconstruction_order==2&&subsurface_.active()&&!state_.runtime_forcings.rows.empty())
+                if(const auto* forcing=state_.runtime_forcings.get(1,int(i)))
+                    report_rain_cum_[i]=forcing->mode==2?report_rain_cum_[i]+forcing->rate*span:forcing->rate*span;
             const double area = common_stage_ ? common_stage_->meshWeatherArea(int(i)) : mesh_.tri_area[i];
             if (common_stage_) report_rain_cum_[i] = std::max(0.0, report_rain_cum_[i]);
             report_rain_cum_[i] = rain_cum_[i] + report_rain_cum_[i] * area;
@@ -3302,8 +3305,13 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
         const double area = mesh_.tri_area[ui];
         const double weather_area = common_stage_ ? common_stage_->meshWeatherArea(i) : area;
         const double rain_rate = common_stage_ ? std::max(0.0, state_.runtime_forcings.rate(1,i,state_.rainfall[ui])) : state_.rainfall[ui];
-        rain_vol += (state_.snow.owns(i)?state_.liquidRainfall(i):rain_rate) * weather_area;
-        rain_cum_[ui] += rain_rate * weather_area * dt;
+        if(!state_.rk2_rain_pending.empty()) {
+            const double accepted=state_.rk2_rain_pending[ui];rain_vol+=accepted/dt;rain_cum_[ui]+=accepted;
+            state_.rk2_rain_pending[ui]=0;
+        } else {
+            rain_vol += (state_.snow.owns(i)?state_.liquidRainfall(i):rain_rate) * weather_area;
+            rain_cum_[ui] += rain_rate * weather_area * dt;
+        }
         evap_vol += evapSink(state_.exposedEvaporation(i), state_.depth[ui],
                              options_.dry_depth) * area;
         if (do_infil) {

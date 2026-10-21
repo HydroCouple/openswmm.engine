@@ -454,15 +454,18 @@ OPENSWMM_SOURCE_INLINE bool ExplicitInertialSolver::prepareCellSources(int i, do
     const double area = mesh_->tri_area[i];
     const double area_dt = area * dt;
     const double rain = std::max(0.0, state_->liquidRainfall(i)) * area_dt;
+    if(!state_->rk2_rain_pending.empty())state_->rk2_rain_pending[i]+=rain;
     const double coupling = state_->coupling_flux[i] * area_dt;
     const double requested_infil = std::max(0.0,
         infilSink(state_->runtime_forcings.rate(3,i,state_->infil_rate[i]), state_->depth[i], opts_->dry_depth)) * area_dt;
+    const double evap_demand=second_order_&&gw_?
+        state_->runtime_forcings.rate(2,i,opts_->evaporation!=0?state_->evap_rate[i]:0):state_->exposedEvaporation(i);
     const double requested_evap = std::max(0.0,
-        evapSink(state_->exposedEvaporation(i), state_->depth[i], opts_->dry_depth)) * area_dt;
+        evapSink(evap_demand, state_->depth[i], opts_->dry_depth)) * area_dt;
     const double back = gw_ ? gw_->takeToSurface(i) : 0.0;
     if (rain == 0.0 && coupling == 0.0 && requested_infil == 0.0 &&
         requested_evap == 0.0 && back == 0.0 && !state_->heat.enabled) {
-        if(gw_)gw_->bookSurfaceEt(i,dt,state_->exposedEvaporation(i),0.0);
+        if(gw_)gw_->bookSurfaceEt(i,dt,evap_demand,0.0);
         return false;
     }
 
@@ -470,13 +473,24 @@ OPENSWMM_SOURCE_INLINE bool ExplicitInertialSolver::prepareCellSources(int i, do
     const double available = std::max(0.0, state_->volume[i] + incoming);
     const double requested_out = std::max(-coupling, 0.0);
     const double requested = requested_infil + requested_evap + requested_out;
-    const double scale = requested > available && requested > 0.0
-        ? available / requested : 1.0;
+    double donor_water=available;
+    if(rk_transport_stage_&&!state_->rk2_rain_pending.empty()) {
+        double exported=0;
+        for(int p=edges_.cell_ptr[i];p<edges_.cell_ptr[i+1];++p) {
+            const int edge=edges_.cell_edge[p];
+            const double receipt=edges_.cell_sign[p]>0?facc_L_[edge]:facc_R_[edge];
+            exported+=std::max(0.,-receipt);
+        }
+        donor_water=std::min(available,std::max(0.,rk_stage_volume_[i]-exported));
+    }
+    const double scale = requested > donor_water && requested > 0.0
+        ? donor_water / requested : 1.0;
     // Proportional sharing gives all held sinks the same satisfaction ratio.
     const double infil = gw_ ? gw_->acceptSurfaceInfiltration(i, requested_infil * scale, state_->runtime_forcings.get(3,i)!=nullptr)
                              : requested_infil * scale;
     const double evap = requested_evap * scale;
-    if(gw_)gw_->bookSurfaceEt(i,dt,state_->exposedEvaporation(i),evap);
+    if(rk_transport_stage_&&state_->heat.enabled)state_->heat.evaporated_m3[i]+=evap;
+    if(gw_)gw_->bookSurfaceEt(i,dt,evap_demand,evap);
     const double out = requested_out * scale;
     if(gw_ && gw_->heat().active() && state_->transport.temp_row<0) {
         // Without a surface temperature state, surface water is an external
@@ -641,7 +655,7 @@ bool ExplicitInertialSolver::applyCellSources(int i, double dt) {
 
 #undef OPENSWMM_SOURCE_INLINE
 
-std::string rk2SurfaceRuntimeProfile(const SurfaceStateData&);
+std::string rk2SurfaceRuntimeProfile(const SurfaceStateData&,const SubsurfaceSolver* =nullptr);
 namespace {
 void advanceRk2RuntimeSources(SurfaceStateData& state,const SolverOptions2D& options,double seconds) {
     if(!state.runtime_sources.active())return;
@@ -908,7 +922,7 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
         // even while dry. Lazy settlement would book atmospheric demand only
         // after the aquifer step and leave a half-blended ET backlog.
         if (state_->depth[i] >= thresh || state_->coupling_flux[i] != 0.0 ||
-            pin_t0_[i] || state_->heat.enabled || (second_order_&&gw_&&gw_->covers(i)))
+            pin_t0_[i] || state_->heat.enabled || (second_order_&&gw_&&(gw_->covers(i)||!state_->runtime_sources.rows.empty()||!state_->runtime_forcings.rows.empty())))
             next[i] = 1;
     }
 
@@ -1691,6 +1705,9 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
     const bool   perot   = !qcx_.empty() && !swe;
     const bool   species = species_on_;
     const bool   front   = front_rebuild_;
+    // Keep each owned-side physical face receipt until this cell has
+    // debited its beginning donor budget. The neighbour owns the other side.
+    const bool preserve_face_water=rk_transport_stage_&&!state_->rk2_rain_pending.empty();
     const double dry     = opts_->dry_depth;
 
     int front_breached = 0;
@@ -1709,14 +1726,14 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
             const int e = ed.cell_edge[p];
             if (ed.cell_sign[p] > 0) {
                 flux_m3 += facc_L_[e];
-                facc_L_[e] = 0.0;
+                if(!preserve_face_water)facc_L_[e] = 0.0;
                 if constexpr (swe) {
                     dmx += macc_x_L_[e]; macc_x_L_[e] = 0.0;
                     dmy += macc_y_L_[e]; macc_y_L_[e] = 0.0;
                 }
             } else {
                 flux_m3 += facc_R_[e];
-                facc_R_[e] = 0.0;
+                if(!preserve_face_water)facc_R_[e] = 0.0;
                 if constexpr (swe) {
                     dmx += macc_x_R_[e]; macc_x_R_[e] = 0.0;
                     dmy += macc_y_R_[e]; macc_y_R_[e] = 0.0;
@@ -1778,6 +1795,9 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
         } else {
             state_->volume[i] = std::max(0.0, state_->volume[i] + flux_m3);
             applyCellSources(i, dt_c);
+        }
+        if(preserve_face_water)for(int p=ed.cell_ptr[i];p<ed.cell_ptr[i+1];++p) {
+            const int edge=ed.cell_edge[p];if(ed.cell_sign[p]>0)facc_L_[edge]=0;else facc_R_[edge]=0;
         }
         inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],
                                state_->head[i], state_->depth[i]);
@@ -2301,6 +2321,8 @@ std::string ExplicitInertialSolver::rk2ThermalProfileError() const {
        (!h.channel_footprint.empty()&&h.channel_footprint.size()!=n))
         return "RK2 finite heat requires matched porous GROUND_COLUMN owners without evaporating surface atmospheric exchange.";
     for(std::size_t i=0;i<n;++i) {
+        if(h.surface&&(!std::isfinite(state_->runtime_forcings.rate(2,int(i),0))||state_->runtime_forcings.rate(2,int(i),0)>0))
+            return "RK2 sensible atmosphere cannot own latent surface evaporation.";
         if(!gw_->covers(int(i))||!h.aquifer_owned[i]||!gw_->heat().cells[i].surface_owned||h.failures[i]||
            !std::isfinite(h.ground_column_seconds[i])||h.ground_column_seconds[i]<0||
            (!h.channel_footprint.empty()&&h.channel_footprint[i]!=0)||
@@ -2381,10 +2403,12 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     if(gw_) {
         if(auto error=gw_->rk2ProfileError();!error.empty())throw std::runtime_error(error);
         if(auto error=rk2ThermalProfileError();!error.empty())throw std::runtime_error(error);
-        if(auto error=rk2SurfaceRuntimeProfile(*state_);!error.empty())throw std::runtime_error(error);
+        if(auto error=rk2SurfaceRuntimeProfile(*state_,gw_);!error.empty())throw std::runtime_error(error);
+        if(!state_->runtime_forcings.rows.empty()&&!bc_cell_.empty())
+            throw std::runtime_error("RK2 runtime weather requires wall-bounded surface owners.");
         if(common_stage_ || channel_ground_ ||
            (gw_->transport().temp_row>=0&&(state_->transport.temp_row!=gw_->transport().temp_row||(opts_->coupled_heat&&!state_->heat.enabled))) ||
-           state_->snow.active() || state_->runtime_forcings.active() ||
+           state_->snow.active() ||
            (state_->node_coupling&&!state_->node_coupling->empty()))
             throw std::runtime_error("Coupled RK2 has an unqualified surface/source owner.");
         // Capture every owned numerical field. Borrowed owners are refused
@@ -2395,6 +2419,8 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
         if(state_->boundary)receipts0=state_->boundary->receipts;
     }
     try {
+    if(gw_&&!state_->runtime_forcings.rows.empty()&&state_->rk2_rain_pending.empty())
+        state_->rk2_rain_pending.assign(state_->volume.size(),0);
     // A forcing knot or sign reversal splits BOTH owners' stages. Splitting
     // only fireGwCells would compose first-order aquifer substeps inside a
     // surface Heun stage. Each Euler evaluation integrates prescribed
@@ -2412,6 +2438,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     };
     if(gw_) {
         for(const auto& row:state_->runtime_sources.rows)if(row.enabled&&row.until>start&&row.until<start+interval)cuts.push_back(row.until);
+        for(const auto& row:state_->runtime_forcings.rows)if(row.enabled&&row.until>start&&row.until<start+interval)cuts.push_back(row.until);
         gw_->heat().appendRk2Cuts(start,start+interval,cuts);
         for(const auto& source:gw_->sources_) {add_cuts(source.flow);for(const auto& term:source.terms)add_cuts(term.signal);}
         for(const auto& boundary:gw_->boundaries_) {
@@ -2431,7 +2458,8 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     for(std::size_t part=0;part<parts;++part) {
     const double time=cuts.empty()?start:cuts[part],dt=cuts.empty()?interval:cuts[part+1]-time;
     std::unique_ptr<SubsurfaceSolver> part_ground;
-    if(gw_)state_->runtime_sources.expire(time);const auto runtime0=state_->runtime_sources;
+    if(gw_){state_->runtime_sources.expire(time);state_->runtime_forcings.expire(time);}
+    const auto runtime0=state_->runtime_sources;const auto forcing0=state_->runtime_forcings;const auto rain_pending0=state_->rk2_rain_pending;
     if(gw_) {
         advanceRk2RuntimeSources(*state_,*opts_,.5*dt);if(runtime0.active())reconstructAll();
         advanceRk2BedContact(.5*dt);
@@ -2453,10 +2481,27 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     rk_bc0_ = bc_accum_; rk_ex0_ = exch_; rk_inf0_ = state_->infil_applied;
     rk_cpl0_ = state_->coupling_applied;
     rk_drawn0_ = node_drawn_;
-    const auto transport0=state_->transport;
+    const auto transport0=state_->transport;const auto heat_evap0=state_->heat.evaporated_m3;
     const double evap0 = state_->evap_loss_total;
     for (int stage = 0; stage < 2; ++stage) {
-        rk_transport_stage_=gw_&&species_on_;
+        if(gw_&&!forcing0.rows.empty())for(int i=0;i<mesh_->n_cells();++i) {
+            const double area_dt=mesh_->tri_area[i]*dt,rain=std::max(0.,state_->liquidRainfall(i))*area_dt;
+            if(!std::isfinite(rain)||!std::isfinite(state_->volume[i])||!std::isfinite(state_->volume[i]+rain)||
+               !std::isfinite(state_->rk2_rain_pending[i]+rain)||
+               !std::isfinite(state_->runtime_forcings.rate(2,i,opts_->evaporation!=0?state_->evap_rate[i]:0)*area_dt)||
+               !std::isfinite(state_->runtime_forcings.rate(3,i,state_->infil_rate[i])*area_dt))
+                throw std::runtime_error("Nonfinite RK2 runtime forcing water proposal.");
+            const auto* quality=state_->runtime_forcings.get(4,i);
+            if(!quality||quality->concentrations.empty())quality=state_->runtime_forcings.get(1,i);
+            const auto& concentrations=quality&&!quality->concentrations.empty()?quality->concentrations:state_->transport.rain_conc;
+            for(int row=0;row<state_->transport.n_species;++row) {
+                const double mass=state_->transport.cell_mass[state_->transport.idx(row,i)];
+                const double incoming=std::size_t(row)<concentrations.size()?rain*concentrations[row]:0;
+                if(!std::isfinite(mass)||!std::isfinite(incoming)||!std::isfinite(mass+incoming))
+                    throw std::runtime_error("Nonfinite RK2 runtime rainfall quality proposal.");
+            }
+        }
+        rk_transport_stage_=gw_&&(species_on_||!forcing0.rows.empty());
         if(rk_transport_stage_) {rk_stage_mass_=state_->transport.cell_mass;rk_stage_volume_=state_->volume;}
         if(gw_)gw_->publishRk2Infiltration(*state_,dt,time);
         fireFaces(active_faces_, dt, /*global_step=*/true);
@@ -2510,6 +2555,18 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
             if(!std::isfinite(now[k]))throw std::runtime_error("RK2 surface transport is nonfinite.");
         }
     }
+    for(std::size_t i=0;i<state_->heat.evaporated_m3.size();++i)
+        state_->heat.evaporated_m3[i]=heat_evap0[i]+.5*(state_->heat.evaporated_m3[i]-heat_evap0[i]);
+    for(std::size_t i=0;i<state_->rk2_rain_pending.size();++i)
+        state_->rk2_rain_pending[i]=rain_pending0[i]+.5*(state_->rk2_rain_pending[i]-rain_pending0[i]);
+    for(std::size_t k=0;k<forcing0.rows.size();++k) {
+        auto& now=state_->runtime_forcings.rows[k].receipt;const auto& old=forcing0.rows[k].receipt;
+        const auto blend=[](double& value,double before){value=before+.5*(value-before);};
+        blend(now.requested,old.requested);blend(now.applied,old.applied);blend(now.water_in,old.water_in);blend(now.water_out,old.water_out);
+        blend(now.heat_requested,old.heat_requested);blend(now.heat_applied,old.heat_applied);
+        for(std::size_t r=0;r<now.applied_mass.size();++r){blend(now.requested_mass[r],old.requested_mass[r]);blend(now.applied_mass[r],old.applied_mass[r]);}
+        if(forcing0.rows[k].enabled&&forcing0.rows[k].channel==3){now.last_dt=dt;now.last_flow=(now.applied-old.applied)/dt;}
+    }
     if (state_->boundary) for(auto& entry:state_->boundary->receipts) {
         const auto& before=boundary_receipts0.at(entry.first); auto& now=entry.second;
         const auto blend=[](double a,double b){return a+0.5*(b-a);};
@@ -2540,7 +2597,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
             auto& receipt=state_->runtime_sources.rows[k].receipt;
             receipt.last_dt=dt;receipt.last_flow=(receipt.applied-runtime0.rows[k].receipt.applied)/dt;
         }
-        state_->runtime_sources.expire(time+dt);
+        state_->runtime_sources.expire(time+dt);state_->runtime_forcings.expire(time+dt);
         source_phase_end_=time+dt;
         gw_->publishRk2Infiltration(*state_,dt,time+dt);
     }

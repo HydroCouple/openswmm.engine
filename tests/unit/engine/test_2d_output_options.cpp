@@ -55,6 +55,7 @@
 #include <openswmm/engine/openswmm_forcing.h>
 #include <openswmm/engine/openswmm_heat.h>
 #include <openswmm/engine/openswmm_sq2d.h>
+#include <openswmm/engine/openswmm_coupling.h>
 
 namespace fs = std::filesystem;
 using namespace openswmm::twoD;
@@ -1744,4 +1745,31 @@ TEST(Output2DSourceHistory, IdenticalAcceptedHistoryDoesNotDependOnWallClockCrea
     const auto a=write("deterministic-history-a.h5");std::this_thread::sleep_for(std::chrono::milliseconds(1100));
     const auto b=write("deterministic-history-b.h5");const auto x=resultBytes(a),y=resultBytes(b);ASSERT_FALSE(x.empty());
     EXPECT_EQ(x.size(),y.size());EXPECT_TRUE(x==y)<<"Identical accepted history must retain exact file bytes across wall-clock seconds.";
+}
+
+TEST(Output2DWriter, RuntimeRk2RainExpiryPreservesAcceptedMassBalanceAndCellHdfHistory) {
+    fs::create_directories(kOutDir);const auto inp=kOutDir/"runtime_rk2_rain.inp",h5=kOutDir/"runtime_rk2_rain.h5";fs::remove(h5);
+    {
+        std::ofstream f(inp);f<<"[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:00:03\nREPORT_START_TIME 00:00:01\nREPORT_STEP 00:00:01\nROUTING_STEP .4\nVARIABLE_STEP 0\n"
+          "[POLLUTANTS]\nTSS MG/L 0 0 0 0\n[JUNCTIONS]\nJ1 -2 4 0 0 0\n[OUTFALLS]\nO1 -2.5 FREE NO\n[CONDUITS]\nC1 J1 O1 30 .013 0 0 0\n[XSECTIONS]\nC1 CIRCULAR .5 0 0 0 1\n"
+          "[2D_OPTIONS]\nMOMENTUM_EQUATION FULL_SWE\nRECONSTRUCTION_ORDER 2\nLTS_TIERS 1\nMAX_TIMESTEP .1\nREPORT_2D YES\nREPORT_2D_STEP 00:00:01\nOUTPUT_PRECISION FLOAT64\nOUTPUT_FILE runtime_rk2_rain.h5\n"
+          "[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n0 10 0\n[2D_TRIANGLES]\n0 1 2 .03 .1\n0 2 3 .03 .1\n"
+          "[2D_AQUIFER_OPTIONS]\nCLOSURE SIGMA\nM_LAYERS 4\nNODE_ENROLMENT ROWS\nLINK_SEEPAGE NONE\nGW_ET NONE\n[2D_AQUIFER]\n* 1e-15 2 .45 .1 2 HG0 .6 C_LOSS 0\n"
+          "[GW_TRANSPORT_OPTIONS]\nUNSAT_TRANSPORT LAYERED\nTRANSPORT_POLLUTANTS YES\nDISPERSION NO\n[REPORT]\nINPUT NO\n";
+    }
+    struct Engine {SWMM_Engine e=swmm_engine_create();~Engine(){swmm_engine_close(e);swmm_engine_destroy(e);}} engine;
+    const auto rpt=kOutDir/"runtime_rk2_rain.rpt",out=kOutDir/"runtime_rk2_rain.out";
+    ASSERT_EQ(swmm_engine_open(engine.e,inp.string().c_str(),rpt.string().c_str(),out.string().c_str(),nullptr),SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(engine.e),SWMM_OK);ASSERT_EQ(swmm_engine_start(engine.e,1),SWMM_OK);
+    double concentration=0;SWMM_CouplingForcing forcing{sizeof(SWMM_CouplingForcing),1,-1,1,.0001,.735,1,&concentration};
+    SWMM_CouplingFrame frame{};frame.struct_size=sizeof(frame);frame.version=SWMM_COUPLING_FRAME_VERSION;frame.provider="rain-report";frame.forcing_count=1;frame.forcings=&forcing;
+    ASSERT_EQ(swmm_coupling_apply_frame(engine.e,&frame),SWMM_OK);double actual=0;
+    ASSERT_EQ(swmm_engine_advance_to(engine.e,3,&actual),SWMM_OK);EXPECT_NEAR(actual,3,1e-12);
+    double volume[2]={};ASSERT_EQ(swmm_2d_get_rain_volume_bulk(engine.e,volume),SWMM_OK);
+    for(double value:volume)EXPECT_NEAR(value,50*.0001*.735,1e-12);
+    ASSERT_EQ(swmm_engine_end(engine.e),SWMM_OK);H5File file(h5);
+    ASSERT_TRUE(file.has("Mesh2_face_rain_cum"));const auto times=file.readAll("time"),cum=file.readAll("Mesh2_face_rain_cum"),rain=file.readAll("mass_balance_2d/rainfall_in");
+    ASSERT_FALSE(times.empty());ASSERT_EQ(cum.size(),2*times.size());ASSERT_FALSE(rain.empty());
+    for(double value:cum)EXPECT_NEAR(value,50*.0001*.735,1e-10);
+    for(double value:rain)EXPECT_NEAR(value,100*.0001*.735,1e-10);
 }

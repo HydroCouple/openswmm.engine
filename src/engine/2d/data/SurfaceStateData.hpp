@@ -250,6 +250,9 @@ struct SurfaceStateData {
     /// (not in core's MassBalance2D, owned by another work stream) and folded
     /// into the API-level totals by Api2D.cpp.
     double evap_loss_total = 0.0;
+    /// Accepted RK2 rainfall awaiting one router/report consumption (m3/cell).
+    /// Empty preserves the historical no-runtime-forcing profile.
+    std::vector<double> rk2_rain_pending;
 
     // -----------------------------------------------------------------------
     // Lifecycle
@@ -284,6 +287,7 @@ struct SurfaceStateData {
         coupling_native.clear();
         runtime_sources = {};
         runtime_forcings = {};
+        rk2_rain_pending.clear();
         net_source.assign(nt, 0.0);
 
         rainfall_forced.assign(nt, 0);

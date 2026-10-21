@@ -13,6 +13,7 @@
 #include <set>
 using namespace openswmm::twoD;
 extern "C" int openswmm_test_probe_count();
+extern "C" int openswmm_test_factory_count();
 namespace {
 struct Env {
     std::string key,value; bool existed;
@@ -153,3 +154,10 @@ TEST(BackendSafety, ConcurrentRealPluginModelsRetainSeparateState) {
     for(auto& task:tasks)EXPECT_NO_THROW(task.get());
 }
 #endif
+
+TEST(BackendSafety, PriorSurfaceAbiIsRejectedBeforeFactoryConstruction) {
+    Env backend("OPENSWMM_2D_BACKEND","cuda"),old("OPENSWMM_TEST_OLD_GPU_ABI","1"),stale("OPENSWMM_TEST_STALE_GPU",nullptr);
+    SolverOptions2D options;std::string label;const int factories=openswmm_test_factory_count(),probes=openswmm_test_probe_count();
+    auto solver=makeSurfaceSolver(options,&label,1);ASSERT_TRUE(solver);EXPECT_EQ(label.substr(0,3),"cpu");
+    EXPECT_GT(openswmm_test_probe_count(),probes);EXPECT_EQ(openswmm_test_factory_count(),factories);
+}
