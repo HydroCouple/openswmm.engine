@@ -25,6 +25,7 @@
  */
 
 #include "Hdf5Util.hpp"
+#include "../Hdf5ObjectCreation.hpp"
 
 #include <cstring>
 #include <vector>
@@ -123,7 +124,7 @@ Handle make_group(hid_t loc, const std::string& name) {
     // Intermediate groups on demand, so "nodes/junctions" needs one call.
     Handle lcpl(H5Pcreate(H5P_LINK_CREATE), Handle::Kind::Plist);
     if (lcpl) H5Pset_create_intermediate_group(lcpl.get(), 1);
-    return Handle(H5Gcreate2(loc, name.c_str(),
+    return Handle(io::createHdf5Group(loc, name.c_str(),
                              lcpl ? lcpl.get() : H5P_DEFAULT,
                              H5P_DEFAULT, H5P_DEFAULT),
                   Handle::Kind::Group);

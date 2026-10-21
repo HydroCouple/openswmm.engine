@@ -10,6 +10,7 @@
 
 #include "Default2DOutputPlugin.hpp"
 #include "../../io/Hdf5Mutex.hpp"
+#include "../../io/Hdf5ObjectCreation.hpp"
 #include "../subsurface/SourceResultHistory.hpp"
 #include "../subsurface/SubsurfaceData.hpp"   // G-O: the aquifer ledger at finalize
 #include "../../core/SimulationContext.hpp"
@@ -71,7 +72,7 @@ hid_t Default2DOutputPlugin::createUnlimitedDataset(const char* name, int rank,
     // Storage type follows OUTPUT_PRECISION unless the caller forces one; the
     // memory type on every write stays H5T_NATIVE_DOUBLE and HDF5 converts, so
     // no buffer copies.
-    hid_t ds = H5Dcreate2(file_id_, name, type >= 0 ? type : storage_type_,
+    hid_t ds = io::createHdf5Dataset(file_id_, name, type >= 0 ? type : storage_type_,
                            space, H5P_DEFAULT, plist, H5P_DEFAULT);
     H5Pclose(plist);
     H5Sclose(space);
@@ -138,7 +139,7 @@ hid_t Default2DOutputPlugin::createFaceEnvelopeDataset(const char* name,
     // Fixed [nFace] dataset — no time dimension, no chunking. Overwritten in
     // place each update(); since envelopes are monotone the last write is final.
     hid_t space = H5Screate_simple(1, &n_faces_, nullptr);
-    hid_t ds = H5Dcreate2(file_id_, name, storage_type_, space,
+    hid_t ds = io::createHdf5Dataset(file_id_, name, storage_type_, space,
                            H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
     writeStringAttr(ds, "long_name", long_name);
     writeStringAttr(ds, "units", units);
@@ -213,7 +214,7 @@ void Default2DOutputPlugin::writeMeshTopology(const SimulationContext& ctx) {
 int Default2DOutputPlugin::prepare(const SimulationContext& ctx) {
     std::lock_guard<std::recursive_mutex> lock(io::resultHdf5Mutex());
     // Create HDF5 file (truncate if exists)
-    file_id_ = H5Fcreate(h5_path_.c_str(), checkpoint_fresh_ ? H5F_ACC_EXCL : H5F_ACC_TRUNC,
+    file_id_ = io::createHdf5File(h5_path_.c_str(), checkpoint_fresh_ ? H5F_ACC_EXCL : H5F_ACC_TRUNC,
                         H5P_DEFAULT, H5P_DEFAULT);
     if (file_id_ < 0) {
         last_error_ = "Default2DOutputPlugin: cannot create file '" + h5_path_ + "'";
@@ -299,7 +300,7 @@ void Default2DOutputPlugin::writeCrsVariable() {
     if (file_id_ == H5I_INVALID_HID) return;
 
     hid_t space = H5Screate(H5S_SCALAR);
-    hid_t ds = H5Dcreate2(file_id_, "crs", H5T_NATIVE_INT, space,
+    hid_t ds = io::createHdf5Dataset(file_id_, "crs", H5T_NATIVE_INT, space,
                            H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
     if (ds < 0) {
         H5Sclose(space);
@@ -350,7 +351,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
     // --- Mesh2 topology variable (UGRID convention) ---
     {
         hid_t space = H5Screate(H5S_SCALAR);
-        hid_t ds = H5Dcreate2(file_id, "Mesh2", H5T_NATIVE_INT, space,
+        hid_t ds = io::createHdf5Dataset(file_id, "Mesh2", H5T_NATIVE_INT, space,
                                 H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
 
         writeStringAttrFn(ds, "cf_role", "mesh_topology");
@@ -373,7 +374,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         hid_t space = H5Screate_simple(1, &dim, nullptr);
 
         // Mesh2_node_x
-        hid_t ds_x = H5Dcreate2(file_id, "Mesh2_node_x", H5T_NATIVE_DOUBLE,
+        hid_t ds_x = io::createHdf5Dataset(file_id, "Mesh2_node_x", H5T_NATIVE_DOUBLE,
                                   space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         writeStatusFn(H5Dwrite(ds_x, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.vx.data()));
         writeStringAttrFn(ds_x, "standard_name", "projection_x_coordinate");
@@ -382,7 +383,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         H5Dclose(ds_x);
 
         // Mesh2_node_y
-        hid_t ds_y = H5Dcreate2(file_id, "Mesh2_node_y", H5T_NATIVE_DOUBLE,
+        hid_t ds_y = io::createHdf5Dataset(file_id, "Mesh2_node_y", H5T_NATIVE_DOUBLE,
                                   space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         writeStatusFn(H5Dwrite(ds_y, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.vy.data()));
         writeStringAttrFn(ds_y, "standard_name", "projection_y_coordinate");
@@ -391,7 +392,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         H5Dclose(ds_y);
 
         // Mesh2_node_z (elevation)
-        hid_t ds_z = H5Dcreate2(file_id, "Mesh2_node_z", H5T_NATIVE_DOUBLE,
+        hid_t ds_z = io::createHdf5Dataset(file_id, "Mesh2_node_z", H5T_NATIVE_DOUBLE,
                                   space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         writeStatusFn(H5Dwrite(ds_z, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.vz.data()));
         writeStringAttrFn(ds_z, "standard_name", "altitude");
@@ -412,7 +413,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
             dcpl = H5Pcreate(H5P_DATASET_CREATE);
             H5Pset_fill_value(dcpl, H5T_NATIVE_INT, &fill);
         }
-        hid_t ds = H5Dcreate2(file_id, "Mesh2_face_nodes", H5T_NATIVE_INT,
+        hid_t ds = io::createHdf5Dataset(file_id, "Mesh2_face_nodes", H5T_NATIVE_INT,
                                 space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
         if (dcpl != H5P_DEFAULT) H5Pclose(dcpl);
 
@@ -447,7 +448,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
     if (stride > 3) {
         hsize_t dim = n_faces;
         hid_t space = H5Screate_simple(1, &dim, nullptr);
-        hid_t ds = H5Dcreate2(file_id, "Mesh2_face_nv", H5T_NATIVE_INT8,
+        hid_t ds = io::createHdf5Dataset(file_id, "Mesh2_face_nv", H5T_NATIVE_INT8,
                                 space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         std::vector<int8_t> nv(n_faces);
         for (hsize_t i = 0; i < n_faces; ++i)
@@ -465,28 +466,28 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         hsize_t dim = n_faces;
         hid_t space = H5Screate_simple(1, &dim, nullptr);
 
-        hid_t ds_cx = H5Dcreate2(file_id, "Mesh2_face_x", H5T_NATIVE_DOUBLE,
+        hid_t ds_cx = io::createHdf5Dataset(file_id, "Mesh2_face_x", H5T_NATIVE_DOUBLE,
                                    space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         writeStatusFn(H5Dwrite(ds_cx, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.tri_cx.data()));
         writeStringAttrFn(ds_cx, "units", "m");
         writeStringAttrFn(ds_cx, "openswmm_crs", "crs");
         H5Dclose(ds_cx);
 
-        hid_t ds_cy = H5Dcreate2(file_id, "Mesh2_face_y", H5T_NATIVE_DOUBLE,
+        hid_t ds_cy = io::createHdf5Dataset(file_id, "Mesh2_face_y", H5T_NATIVE_DOUBLE,
                                    space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         writeStatusFn(H5Dwrite(ds_cy, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.tri_cy.data()));
         writeStringAttrFn(ds_cy, "units", "m");
         writeStringAttrFn(ds_cy, "openswmm_crs", "crs");
         H5Dclose(ds_cy);
 
-        hid_t ds_cz = H5Dcreate2(file_id, "Mesh2_face_z", H5T_NATIVE_DOUBLE,
+        hid_t ds_cz = io::createHdf5Dataset(file_id, "Mesh2_face_z", H5T_NATIVE_DOUBLE,
                                    space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         writeStatusFn(H5Dwrite(ds_cz, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.tri_cz.data()));
         writeStringAttrFn(ds_cz, "units", "m");
         H5Dclose(ds_cz);
 
         // Manning's n
-        hid_t ds_n = H5Dcreate2(file_id, "Mesh2_face_mannings_n", H5T_NATIVE_DOUBLE,
+        hid_t ds_n = io::createHdf5Dataset(file_id, "Mesh2_face_mannings_n", H5T_NATIVE_DOUBLE,
                                   space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         writeStatusFn(H5Dwrite(ds_n, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.mannings_n.data()));
         writeStringAttrFn(ds_n, "long_name", "Manning roughness coefficient");
@@ -496,7 +497,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         H5Dclose(ds_n);
 
         // Face area
-        hid_t ds_a = H5Dcreate2(file_id, "Mesh2_face_area", H5T_NATIVE_DOUBLE,
+        hid_t ds_a = io::createHdf5Dataset(file_id, "Mesh2_face_area", H5T_NATIVE_DOUBLE,
                                   space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         writeStatusFn(H5Dwrite(ds_a, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.tri_area.data()));
         writeStringAttrFn(ds_a, "long_name", "face planimetric area");
@@ -530,7 +531,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         const std::vector<double> nx_p  = packed(mesh.edge_nx);
         const std::vector<double> ny_p  = packed(mesh.edge_ny);
 
-        hid_t ds_len = H5Dcreate2(file_id, "Mesh2_edge_length", H5T_NATIVE_DOUBLE,
+        hid_t ds_len = io::createHdf5Dataset(file_id, "Mesh2_edge_length", H5T_NATIVE_DOUBLE,
                                     space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         writeStatusFn(H5Dwrite(ds_len, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
                  len_p.data()));
@@ -540,7 +541,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         writeStringAttrFn(ds_len, "location", "edge");
         H5Dclose(ds_len);
 
-        hid_t ds_nx = H5Dcreate2(file_id, "Mesh2_edge_nx", H5T_NATIVE_DOUBLE,
+        hid_t ds_nx = io::createHdf5Dataset(file_id, "Mesh2_edge_nx", H5T_NATIVE_DOUBLE,
                                    space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         writeStatusFn(H5Dwrite(ds_nx, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
                  nx_p.data()));
@@ -550,7 +551,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         writeStringAttrFn(ds_nx, "location", "edge");
         H5Dclose(ds_nx);
 
-        hid_t ds_ny = H5Dcreate2(file_id, "Mesh2_edge_ny", H5T_NATIVE_DOUBLE,
+        hid_t ds_ny = io::createHdf5Dataset(file_id, "Mesh2_edge_ny", H5T_NATIVE_DOUBLE,
                                    space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         writeStatusFn(H5Dwrite(ds_ny, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
                  ny_p.data()));
@@ -1220,7 +1221,7 @@ void Default2DOutputPlugin::createThermalDatasets(const SimulationSnapshot& snap
         if (snap.thermal2d_ground_layer_center_m.size() == layer_size) {
             const hsize_t dims[2]{n_heat_layers_, n_faces_};
             hid_t space = H5Screate_simple(2, dims, nullptr);
-            hid_t ds = H5Dcreate2(file_id_, "Mesh2_face_soil_layer_center_depth", storage_type_, space,
+            hid_t ds = io::createHdf5Dataset(file_id_, "Mesh2_face_soil_layer_center_depth", storage_type_, space,
                                   H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
             checkpointWriteStatus(H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
                                           snap.thermal2d_ground_layer_center_m.data()));
@@ -1243,7 +1244,7 @@ void Default2DOutputPlugin::createThermalDatasets(const SimulationSnapshot& snap
         auto createStatic = [&](const char* name, const char* label, const char* units,
                                 hid_t file_type, hid_t memory_type, const void* values) {
             hid_t space = H5Screate_simple(1, dims, nullptr);
-            hid_t ds = H5Dcreate2(file_id_, name, file_type, space,
+            hid_t ds = io::createHdf5Dataset(file_id_, name, file_type, space,
                                   H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
             checkpointWriteStatus(H5Dwrite(ds, memory_type, H5S_ALL, H5S_ALL,
                                            H5P_DEFAULT, values));
@@ -1267,7 +1268,7 @@ void Default2DOutputPlugin::createThermalDatasets(const SimulationSnapshot& snap
         H5Tset_size(string_type, H5T_VARIABLE);
         H5Tset_cset(string_type, H5T_CSET_UTF8);
         hid_t string_space = H5Screate_simple(1, dims, nullptr);
-        hid_t node_names = H5Dcreate2(file_id_, "Mesh2_lid_layer_node_id", string_type,
+        hid_t node_names = io::createHdf5Dataset(file_id_, "Mesh2_lid_layer_node_id", string_type,
                                       string_space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         std::vector<const char*> node_name_values;
         node_name_values.reserve(n_lid);
@@ -1365,7 +1366,7 @@ void Default2DOutputPlugin::createGroundwaterDatasets(const SimulationSnapshot& 
     // reader needs for Mesh2_face_gw_theta_sigma and _hu.
     if (snap.gw2d_bed_elev.size() == static_cast<std::size_t>(n_faces_)) {
         hid_t space = H5Screate_simple(1, &n_faces_, nullptr);
-        hid_t ds = H5Dcreate2(file_id_, "Mesh2_face_gw_bed_elev", H5T_NATIVE_DOUBLE, space,
+        hid_t ds = io::createHdf5Dataset(file_id_, "Mesh2_face_gw_bed_elev", H5T_NATIVE_DOUBLE, space,
                                H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         checkpointWriteStatus(H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, snap.gw2d_bed_elev.data()));
         writeStringAttr(ds, "long_name", "aquifer bottom elevation (cell bed minus soil column thickness)");
@@ -1377,7 +1378,7 @@ void Default2DOutputPlugin::createGroundwaterDatasets(const SimulationSnapshot& 
     }
     if (snap.gw2d_closure.size() == static_cast<std::size_t>(n_faces_)) {
         hid_t space = H5Screate_simple(1, &n_faces_, nullptr);
-        hid_t ds = H5Dcreate2(file_id_, "Mesh2_face_gw_closure", H5T_NATIVE_INT, space,
+        hid_t ds = io::createHdf5Dataset(file_id_, "Mesh2_face_gw_closure", H5T_NATIVE_INT, space,
                                H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         checkpointWriteStatus(H5Dwrite(ds, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, snap.gw2d_closure.data()));
         writeStringAttr(ds, "long_name", "resolved unsaturated-zone closure per cell");
@@ -1590,13 +1591,13 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
     // Write the global 2D mass balance once, now that all terms are final.
     if (file_id_ != H5I_INVALID_HID && ctx.mass_balance_2d.active) {
         const auto& mb = ctx.mass_balance_2d;
-        hid_t grp = H5Gcreate2(file_id_, "/mass_balance_2d",
+        hid_t grp = io::createHdf5Group(file_id_, "/mass_balance_2d",
                                 H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         checkpointWriteStatus(grp>=0?0:-1);
         if (grp >= 0) {
             auto writeScalar = [this](hid_t loc, const char* name, double v) {
                 hid_t space = H5Screate(H5S_SCALAR);
-                hid_t ds = H5Dcreate2(loc, name, H5T_NATIVE_DOUBLE, space,
+                hid_t ds = io::createHdf5Dataset(loc, name, H5T_NATIVE_DOUBLE, space,
                                        H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
                 checkpointWriteStatus(H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &v));
                 writeStringAttr(ds, "units", "m3");
@@ -1626,13 +1627,13 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
     if (file_id_ != H5I_INVALID_HID && ctx.twod_io.aquifer_state &&
         ctx.twod_io.aquifer_state->active) {
         const auto& g = *ctx.twod_io.aquifer_state;
-        hid_t grp = H5Gcreate2(file_id_, "/groundwater_2d",
+        hid_t grp = io::createHdf5Group(file_id_, "/groundwater_2d",
                                 H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         checkpointWriteStatus(grp>=0?0:-1);
         if (grp >= 0) {
             auto writeScalar = [this](hid_t loc, const char* name, double v) {
                 hid_t space = H5Screate(H5S_SCALAR);
-                hid_t ds = H5Dcreate2(loc, name, H5T_NATIVE_DOUBLE, space,
+                hid_t ds = io::createHdf5Dataset(loc, name, H5T_NATIVE_DOUBLE, space,
                                        H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
                 checkpointWriteStatus(H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &v));
                 writeStringAttr(ds, "units", "m3");

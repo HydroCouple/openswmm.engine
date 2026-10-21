@@ -20,11 +20,13 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -1715,4 +1717,31 @@ TEST(Output2DThermal, ReportsLocalBedPhysicalStoresWithoutQualityRows) {
               (std::vector<double>{10.0, 20.0}));
     EXPECT_EQ(file.readAll("Mesh2_face_bed_porewater_volume"),
               (std::vector<double>{.2, .4}));
+}
+
+namespace {
+std::string resultBytes(const fs::path& path) {
+    std::ifstream file(path,std::ios::binary);
+    return {std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
+}
+}
+TEST(Output2DWriter, IdenticalReportsDoNotDependOnWallClockCreationTime) {
+    SolverOptions2D options;options.output_precision=OutputPrecision2D::FLOAT64;options.output_compression=3;
+    const auto a=writeFile("deterministic-a",options,0,3,1./86400);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    const auto b=writeFile("deterministic-b",options,0,3,1./86400);
+    const auto x=resultBytes(a),y=resultBytes(b);ASSERT_FALSE(x.empty());
+    EXPECT_EQ(x.size(),y.size());EXPECT_TRUE(x==y)<<"Identical reports must retain exact file bytes across wall-clock seconds.";
+}
+TEST(Output2DSourceHistory, IdenticalAcceptedHistoryDoesNotDependOnWallClockCreationTime) {
+    fs::create_directories(kOutDir);SourceOutputModel model;model.setup();model.step(0,1);
+    const auto write=[&](const char* name) {
+        const auto path=kOutDir/name;Default2DOutputPlugin writer(path.string());
+        EXPECT_EQ(writer.prepare(model.context),0);writer.prepareMeshAndDatasets(model.mesh);
+        writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(model.history));
+        EXPECT_EQ(writer.update(makeSnap(0,.08,.08)),0);EXPECT_EQ(writer.finalize(model.context),0);return path;
+    };
+    const auto a=write("deterministic-history-a.h5");std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    const auto b=write("deterministic-history-b.h5");const auto x=resultBytes(a),y=resultBytes(b);ASSERT_FALSE(x.empty());
+    EXPECT_EQ(x.size(),y.size());EXPECT_TRUE(x==y)<<"Identical accepted history must retain exact file bytes across wall-clock seconds.";
 }

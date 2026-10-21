@@ -3,6 +3,7 @@
 #include "../../io/Hdf5Mutex.hpp"
 #include "EngineSourceResultHistory.hpp"
 #ifdef OPENSWMM_HAS_HDF5_MODEL
+#include "../../io/Hdf5ObjectCreation.hpp"
 #include "../../io/hdf5/Hdf5Util.hpp"
 #include <algorithm>
 #include <atomic>
@@ -36,7 +37,7 @@ struct QuietErrors {
 void require(bool valid,const char* error){if(!valid)throw std::runtime_error(error);}
 struct PublicationFile {
     hid_t id=-1;
-    explicit PublicationFile(const std::string& path):id(H5Fcreate(path.c_str(),H5F_ACC_EXCL,H5P_DEFAULT,H5P_DEFAULT)){}
+    explicit PublicationFile(const std::string& path):id(io::createHdf5File(path.c_str(),H5F_ACC_EXCL,H5P_DEFAULT,H5P_DEFAULT)){}
     ~PublicationFile(){if(id>=0)H5Fclose(id);}
     void close(){require(H5Fclose(id)>=0,"Cannot close source result publication file.");id=-1;}
 };
@@ -68,7 +69,7 @@ std::size_t length(hid_t dataset) {
 void names(hid_t group,const char* name,const std::vector<std::string>& values) {
     require(values.size()<=maxNames,"Too many source result names.");auto type=stringType();
     hsize_t dim=values.size();Handle space(H5Screate_simple(1,&dim,nullptr),Handle::Kind::Space);
-    Handle d(H5Dcreate2(group,name,type.get(),space.get(),H5P_DEFAULT,H5P_DEFAULT,H5P_DEFAULT),Handle::Kind::Dataset);
+    Handle d(io::createHdf5Dataset(group,name,type.get(),space.get(),H5P_DEFAULT,H5P_DEFAULT,H5P_DEFAULT),Handle::Kind::Dataset);
     std::vector<char> bytes(values.size()*nameBytes,0);
     for(std::size_t i=0;i<values.size();++i) {
         require(values[i].size()<nameBytes,"Source result name too long.");std::memcpy(bytes.data()+i*nameBytes,values[i].data(),values[i].size());
@@ -92,7 +93,7 @@ void writeTable(hid_t root,const std::string& name,const SourceResultTable& t) {
     auto group=h5io::make_group(root,name);require(group.ok(),"Cannot create source result table.");
     for(std::size_t c=0;c<t.columns.size();++c) {
         hsize_t dim=t.columns[c].size();Handle space(H5Screate_simple(1,&dim,nullptr),Handle::Kind::Space);
-        Handle d(H5Dcreate2(group.get(),t.fields[c].c_str(),H5T_IEEE_F64LE,space.get(),H5P_DEFAULT,H5P_DEFAULT,H5P_DEFAULT),Handle::Kind::Dataset);
+        Handle d(io::createHdf5Dataset(group.get(),t.fields[c].c_str(),H5T_IEEE_F64LE,space.get(),H5P_DEFAULT,H5P_DEFAULT,H5P_DEFAULT),Handle::Kind::Dataset);
         require(d.ok()&&(dim==0||H5Dwrite(d.get(),H5T_NATIVE_DOUBLE,H5S_ALL,H5S_ALL,H5P_DEFAULT,t.columns[c].data())>=0),"Cannot write source result column.");
         attribute(d.get(),"units",t.units[c]);
     }
@@ -112,7 +113,7 @@ void readTable(hid_t root,const std::string& name,SourceResultTable& t,std::size
 }
 void boundary(hid_t group,const std::string& bytes) {
     hsize_t dim=bytes.size();Handle space(H5Screate_simple(1,&dim,nullptr),Handle::Kind::Space);
-    Handle d(H5Dcreate2(group,"checkpoint_match",H5T_STD_U8LE,space.get(),H5P_DEFAULT,H5P_DEFAULT,H5P_DEFAULT),Handle::Kind::Dataset);
+    Handle d(io::createHdf5Dataset(group,"checkpoint_match",H5T_STD_U8LE,space.get(),H5P_DEFAULT,H5P_DEFAULT,H5P_DEFAULT),Handle::Kind::Dataset);
     require(d.ok()&&H5Dwrite(d.get(),H5T_NATIVE_UCHAR,H5S_ALL,H5S_ALL,H5P_DEFAULT,bytes.data())>=0,"Cannot write source checkpoint match.");
 }
 std::string boundary(hid_t group) {
