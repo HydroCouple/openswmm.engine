@@ -54,8 +54,11 @@ attributes and schema continue exactly; file allocation addresses may differ.
 Water-only networks without shared exchanges additionally use the existing
 hydraulic checkpoint owner alongside RK2 mesh/aquifer state. Node/link stores
 and native calendars resume together. Network quality and shared
-network/catchment owners, source journals, binary/combined output, file-based
-radiation and external provider programs remain outside this managed profile.
+network/catchment owners, source journals, binary/combined output and external
+provider programs remain outside this managed profile. Immutable hourly
+``MET_FILE`` caches qualify: initialize both sessions with identical weather
+rows; every cached value is bound, including future hours. Later file removal
+or edits cannot change an initialized session. Native weather cadence is retained.
 See the engine groundwater transport profile for activation and thermal limits.
 
 Direct sources

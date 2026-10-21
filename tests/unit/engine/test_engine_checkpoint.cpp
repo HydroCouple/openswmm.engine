@@ -6735,7 +6735,51 @@ TEST(EngineCheckpoint, ManagedRk2PendingBatchPreservesTheAuthoredCouplingCadence
     }
     EXPECT_EQ(source.surfaceRouter2D().options().coupling_sync,.7);
 }
-TEST(EngineCheckpoint, ManagedRk2FileRadiationRemainsExplicitlyUnqualified) {
+namespace {
+std::string rk2MetText(double last_shortwave=800) {
+    return "01/31/2026 23:00 4 40 1 200 300\n02/01/2026 00:00 9 75 3 "+std::to_string(last_shortwave)+" 375\n02/01/2026 01:00 -2 60 2 100 290\n";
+}
+std::string rk2MetHeat() {
+    return managedRk2Quality("SIGMA",true,true,true,true)+
+        "[2D_OPTIONS]\nHEAT_MODEL COUPLED\nBED_HEAT_MODEL GROUND_COLUMN\nHEAT_SURFACE_EXCHANGE YES\nHEAT_RADIATIVE_EXCHANGE YES\nEVAPORATION CLIMATE\n[EVAPORATION]\nCONSTANT 18\n[GW_TRANSPORT_OPTIONS]\nSURFACE_THERMAL_BC SURFACE_WATER\n";
+}
+}
+TEST(EngineCheckpoint, ManagedRk2CachedMeteorologyOwnsHourlyWeatherAcrossMidnightWithoutReread) {
+    for(bool heat:{false,true}) {
+        const auto name="managed-rk2-met-owned-"+std::to_string(heat),met=name+".met";write(root()/met,rk2MetText());SWMMEngine a,b;
+        const auto configure=[&](SWMMEngine& e){e.context().snowpacks.config.met_file.original=met;};
+        const auto extra=(heat?rk2MetHeat():std::string())+"[OPTIONS]\nWET_STEP 00:00:01\nDRY_STEP 00:00:01\n";
+        ASSERT_NO_THROW(startManagedRk2Session(a,name+"-a",extra,SWMM_CHECKPOINT_OUTPUT_NONE,configure));
+        ASSERT_NO_THROW(startManagedRk2Session(b,name+"-b",extra,SWMM_CHECKPOINT_OUTPUT_NONE,configure));
+        ASSERT_EQ(a.context().snowpacks.meteorology.records().size(),3u);std::filesystem::remove(root()/met);
+        double actual=0;ASSERT_EQ(swmm_coupling_advance_to(&a,1.237,&actual),SWMM_OK);
+        const auto saved=root()/(name+".chk");ASSERT_EQ(a.saveCheckpoint(saved.string()),"");
+        ASSERT_EQ(b.loadCheckpoint(saved.string()),"");compare(a,b,name+"-restored");
+        while(a.context().current_time<4.7) {
+            ASSERT_NO_THROW(step(a));
+            ASSERT_NO_THROW(step(b));compare(a,b,name+"-continued");
+        }
+        EXPECT_NEAR(a.context().climate_state.temperature,48.2,1e-10);
+        if(heat) {
+            EXPECT_DOUBLE_EQ(a.context().climate_state.radiation.shortwave,800);
+            EXPECT_DOUBLE_EQ(a.context().climate_state.radiation.longwave,375);
+            EXPECT_TRUE(a.context().climate_state.radiation.shared_heat_forcing);
+        }
+    }
+}
+TEST(EngineCheckpoint, ManagedRk2ChangedCachedWeatherRejectsBeforeTargetMutation) {
+    for(bool heat:{false,true})for(bool future:{false,true}) {
+        const auto name="managed-rk2-met-changed-"+std::to_string(heat)+std::to_string(future),met=name+".met";write(root()/met,rk2MetText());SWMMEngine a,b;
+        const auto configure=[&](SWMMEngine& e){e.context().snowpacks.config.met_file.original=met;};const auto extra=(heat?rk2MetHeat():std::string())+"[OPTIONS]\nWET_STEP 00:00:01\nDRY_STEP 00:00:01\n";
+        ASSERT_NO_THROW(startManagedRk2Session(a,name+"-a",extra,SWMM_CHECKPOINT_OUTPUT_NONE,configure));
+        auto text=rk2MetText(future?800:801);if(future)text.replace(text.find("100 290"),7,"101 290");write(root()/met,text);
+        ASSERT_NO_THROW(startManagedRk2Session(b,name+"-b",extra,SWMM_CHECKPOINT_OUTPUT_NONE,configure));
+        ASSERT_NO_THROW(step(a));const auto saved=root()/(name+".chk"),before=root()/(name+"-before.chk");
+        ASSERT_EQ(a.saveCheckpoint(saved.string()),"");ASSERT_EQ(b.saveCheckpoint(before.string()),"");const auto initial=bytes(before);
+        EXPECT_FALSE(b.loadCheckpoint(saved.string()).empty());ASSERT_EQ(b.saveCheckpoint(before.string()),"");EXPECT_EQ(bytes(before),initial);
+    }
+}
+TEST(EngineCheckpoint, ManagedRk2FileRadiationRefusesUnreadableCache) {
     SWMMEngine engine;
     const auto configure=[](SWMMEngine& e){e.context().snowpacks.config.met_file.original="unqualified-met.csv";};
     EXPECT_THROW(startManagedRk2Session(engine,"managed-rk2-met-refusal","",SWMM_CHECKPOINT_OUTPUT_NONE,configure),std::runtime_error);

@@ -106,8 +106,8 @@ std::string SWMMEngine::startCheckpointSession(int output,const std::string& sou
             require(!r.aquiferConfig().empty()&&r.options().groundwater!=0&&!r.aquiferConfig().options.per_subcatch,
                 "Managed surface sessions require the mesh aquifer/common-source profile.");
             if(r.options().reconstruction_order==2)
-                require(ctx_.n_subcatches()==0&&owners.empty()&&source_path.empty()&&ctx_.snowpacks.config.met_file.empty(),
-                    "Managed RK2 requires the mesh/aquifer owner without catchment, source journal or file-based radiation; any network must have no shared exchanges.");
+                require(ctx_.n_subcatches()==0&&owners.empty()&&source_path.empty(),
+                    "Managed RK2 requires the mesh/aquifer owner without catchment or source journal; any network must have no shared exchanges.");
             if(!owners.empty()) {
                 const auto preview=twoD::resolveSurfaceOwnership(ctx_,r.mesh(),r.options(),r.aquiferConfig(),owners);
                 reviewed(preview);require(!token.empty()&&token==preview.token,"Reviewed ownership token is stale; preview the current model again.");

@@ -812,8 +812,8 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
         require(std::isfinite(next) && (next==-1 || next>=ctx_.current_time),"Water driver cursor is behind the engine.");
     }
     if(surface_router_.isActive()) {
-        if(surface_router_.options().reconstruction_order==2)require(ctx_.snowpacks.config.met_file.empty(),
-            "Managed RK2 requires in-memory native weather; file-based radiation is not captured.");
+        if(surface_router_.options().reconstruction_order==2)require(ctx_.snowpacks.config.met_file.empty()||!ctx_.snowpacks.meteorology.empty(),
+            "Managed RK2 requires its initialized immutable hourly meteorology cache.");
         require(ctx_.events.empty(),"Surface session checkpoint does not yet recover skipped routing events.");
         require(surface_router_.options_.output_file.empty() || checkpoint_surface_output_,
                 "Surface session checkpoint requires its prepared mesh output mode.");
@@ -949,7 +949,8 @@ std::string SWMMEngine::checkpointModel() const {
     auto hydraulic=router_.checkpointModel(ctx_);a(hydraulic);
 #ifdef OPENSWMM_HAS_2D
     if(source_delivery_) {auto bridge=*source_delivery_;bridge.checkpoint(a,true,source_stage_->sources());}
-    if(surface_router_.isActive()&&surface_router_.options().reconstruction_order==2&&ctx_.options.heat_transport) {
+    if(surface_router_.isActive()&&surface_router_.options().reconstruction_order==2&&
+       (ctx_.options.heat_transport||!ctx_.snowpacks.meteorology.empty())) {
         std::string profile="managed RK2 shared radiation model v1";auto identity=surface::snowModelIdentity(ctx_,snow_.state());a(profile,identity);
     }
     if(runtime_water_driver_) {auto identity=runtime_water_driver_->identity();a(identity);}
