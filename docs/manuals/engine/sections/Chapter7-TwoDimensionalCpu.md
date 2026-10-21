@@ -43,7 +43,7 @@ physics when evaluating an optimization.
 | `FULL_SWE`, order 2, water only | Limited surface/depth/velocity reconstruction and SSP-RK2; global one-tier stepping |
 | Order 2 with multiple tiers | Tiers reduced to one with a diagnostic |
 | Order 2 with active surface transport | Falls back to first order with a diagnostic; prior tier reduction is not undone |
-| Active second-order RK2 with groundwater | Standalone CPU pollutant/MSX/age/water-temperature CLOSED_FORM/ENSLAVED/SIGMA with symmetric groundwater/surface reactions, authored wells and HEAD/FLOW edges; porous RK2 adds soil energy/conduction and chemical/age inventories under constant, time-series or held AIR thermal boundaries and sensible or latent soil ET; further heat and network owners remain guarded (Hydrology §9.11) |
+| Active second-order RK2 with groundwater | Standalone CPU pollutant/MSX/age/water-temperature CLOSED_FORM/ENSLAVED/SIGMA with symmetric groundwater/surface reactions, authored wells and HEAD/FLOW edges; porous RK2 adds soil energy/conduction and chemical/age inventories under constant, time-series or held AIR thermal boundaries and sensible or latent soil ET; a temperature-only fully covered COUPLED/GROUND_COLUMN finite-contact profile also supports RK2 with surface atmospheric/radiative exchange disabled; further heat and network owners remain guarded (Hydrology §9.11) |
 | Local inertial or diffusive momentum | Their own first-order face laws; order 2 does not enable MUSCL for these closures |
 | `FULL_SWE` with CFL above 0.5 | CFL reduced to 0.5 with a diagnostic |
 

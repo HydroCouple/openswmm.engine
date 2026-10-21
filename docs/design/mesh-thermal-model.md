@@ -170,8 +170,7 @@ signed-temperature, stiff-contact and invalid-input tests cover conservation
 and atomic refusal. A restricted porous CPU RK2 route now uses this primitive in
 symmetric half steps around shared water/energy transport. It requires surface
 `HEAT_MODEL TRANSPORT_ONLY`, sensible or latent soil ET and constant, project-series or held AIR thermal
-boundaries. Latent soil cooling uses accepted ET and beginning donor temperature; thermal series use stage-time lookup and shared knot cuts. Optional chemical/age rows share the canonical RK2 transaction; pure RATE phase contributions use one physical pore concentration. The finite surface/channel/LID/snow owners above retain backward
-Euler. See the [groundwater RK2 profiles](groundwater-transport.md#porous-ssp-rk2)
+boundaries. Latent soil cooling uses accepted ET and beginning donor temperature; thermal series use stage-time lookup and shared knot cuts. Optional chemical/age rows share the canonical RK2 transaction; pure RATE phase contributions use one physical pore concentration. Temperature-only fully covered finite surface/soil contacts also support reciprocal midpoint RK2 with surface atmospheric/radiative exchange disabled, including tiny-water exact-pair integration and atomic restart/rollback. Further finite chemical/age, atmospheric, channel/LID/snow owners retain backward Euler. See the [groundwater RK2 profiles](groundwater-transport.md#porous-ssp-rk2)
 for activation, energy budgets, convergence and remaining restrictions.
 
 Balanced hyporheic recirculation adds no net water. It is eligible by default

@@ -1102,3 +1102,43 @@ AIR 01/01/2026 00:00:02 5
         solver.end()
     finally:
         cleanup(solver)
+
+
+@pytest.mark.parametrize('closure,layered', [('CLOSED_FORM', False), ('ENSLAVED', False), ('SIGMA', False), ('SIGMA', True)])
+@pytest.mark.parametrize('forcing', [None, 'well'])
+def test_groundwater_rk2_finite_surface_soil_contact_keeps_physical_joules(tmp_path, closure, layered, forcing):
+    from openswmm.engine import Solver, GroundHeatValue as H, GroundwaterSpeciesLedger as L
+    text = _rk2_water_temperature_text(closure, layered, forcing=forcing).replace('* 18 2', '* 1e-15 2').replace(
+        'HEAT_MODEL TRANSPORT_ONLY', '''HEAT_MODEL COUPLED
+BED_HEAT_MODEL GROUND_COLUMN
+HEAT_SURFACE_EXCHANGE NO
+HEAT_RADIATIVE_EXCHANGE NO''').replace('THERMAL_MODEL WATER_ONLY', '''THERMAL_MODEL POROUS_EQUILIBRIUM
+THERMAL_LAYERS 3
+CONDUCTION YES
+LATERAL_CONDUCTION NO
+SOIL_ET_HEAT SENSIBLE_ONLY
+SURFACE_THERMAL_BC SURFACE_WATER
+DEEP_THERMAL_BC ADIABATIC
+DISPERSION NO''').replace('HEAT_TRANSPORT YES', 'HEAT_TRANSPORT YES\nWATER_DENSITY 1000\nWATER_SPECIFIC_HEAT_CAPACITY 4186', 1)
+    path = tmp_path / 'finite-surface-soil-rk2.inp'
+    path.write_text(text)
+    solver = Solver(path, path.with_suffix('.rpt'))
+    solver.open()
+    try:
+        solver.initialize()
+        heat = solver.heat
+        gw = solver.surface2d.groundwater
+        initial = sum(heat.ground_values(H.ENERGY, 0, 2)) + 4186000*solver.surface2d.species_ledger('__TEMPERATURE__')['storage']
+        solver.start(False)
+        while solver.step().total_seconds() > 0:
+            pass
+        final = sum(heat.ground_values(H.ENERGY, 0, 2)) + 4186000*solver.surface2d.species_ledger('__TEMPERATURE__')['storage']
+        expected = 4186000*(gw.species_ledger(0, L.SOURCE_IN)-gw.species_ledger(0, L.SOURCE_OUT))
+        assert final-initial == pytest.approx(expected, abs=1e-10*max(abs(initial), 1))
+        assert abs(sum(heat.ground_values(H.WATER_CONTACT_ENERGY, 0, 2))) > 0
+        assert np.max(np.abs(heat.ground_values(H.NORMALIZED_RESIDUAL, 0, 2))) < 1e-10
+        assert abs(gw.continuity_error) < 1e-9
+        assert np.all(np.isfinite(solver.surface2d.concentrations(0)))
+        solver.end()
+    finally:
+        cleanup(solver)

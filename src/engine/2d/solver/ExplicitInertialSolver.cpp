@@ -547,7 +547,7 @@ OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::applyCellSourceRow(
     const bool mixed=r==tr.temp_row&&std::size_t(i)<channel_temperature_mixed_.size()&&channel_temperature_mixed_[i];
     if(!mixed) {
         mixCellSourceRow(i,r,mass,source);
-        if(r!=tr.temp_row&&state_->heat.enabled&&state_->heat.bed_species>0) {
+        if(r!=tr.temp_row&&state_->heat.enabled&&state_->heat.bed_species>0&&!rk_transport_stage_) {
             const double before=mass;
             mass=applyLocalBedSpecies(*mesh_,state_->heat,i,r,mass,source.available,source.area_dt/mesh_->tri_area[i]);
             book(SourceLedger::BedExchange,r,mass-before);
@@ -555,7 +555,7 @@ OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::applyCellSourceRow(
                state_->heat.aquifer_owned[std::size_t(i)])
                 gw_->heat().refreshView(i,gw_->transport());
         }
-        if(r==tr.temp_row && state_->heat.enabled) {
+        if(r==tr.temp_row && state_->heat.enabled && !rk_transport_stage_) {
             const double before=mass;
             mass=applyMeshHeatCell(*mesh_,*opts_,state_->heat,i,mass,source.available,
                                   source.evap,source.area_dt/mesh_->tri_area[i]);
@@ -2225,6 +2225,43 @@ void ExplicitInertialSolver::computeLimitedGradientsSwe() {
     }
 }
 
+std::string ExplicitInertialSolver::rk2ThermalProfileError() const {
+    const auto& h=state_->heat;if(!h.enabled)return {};
+    const auto n=std::size_t(mesh_->n_cells());const auto& tr=state_->transport;
+    if(!gw_||!gw_->heat().active()||!opts_->coupled_heat||opts_->bed_heat_model!=2||!h.context||!h.bed||!h.ground_column||h.surface||h.radiative||
+       tr.n_species!=1||tr.temp_row!=0||tr.gained_external.size()!=1||gw_->transport().n_species!=1||
+       h.bed_species!=1||h.bed_temp_row!=0||gw_->heat().cells.size()!=n||
+       h.context!=gw_->heat().context||h.aquifer_ground!=&gw_->heat()||h.aquifer_owned.size()!=n||
+       h.failures.size()!=n||h.ground_column_seconds.size()!=n||
+       (!h.channel_footprint.empty()&&h.channel_footprint.size()!=n))
+        return "RK2 finite heat requires matched temperature-only porous GROUND_COLUMN owners with surface atmospheric/radiative exchange disabled.";
+    for(std::size_t i=0;i<n;++i) {
+        if(!gw_->covers(int(i))||!h.aquifer_owned[i]||!gw_->heat().cells[i].surface_owned||h.failures[i]||
+           !std::isfinite(h.ground_column_seconds[i])||h.ground_column_seconds[i]<0||
+           (!h.channel_footprint.empty()&&h.channel_footprint[i]!=0)||
+           (i<gw_->heat().lid_owners.size()&&!gw_->heat().lid_owners[i].empty()))
+            return "RK2 finite heat requires complete aquifer coverage without channel, snow or LID thermal owners.";
+    }
+    for(const auto* row:{&h.atmospheric_j,&h.radiative_j,&h.sensible_j,&h.ground_j,&h.water_bed_j,&h.water_j,&h.latent_j,&h.evaporated_m3}) {
+        if(row->size()!=n)return "RK2 finite thermal ledger shape differs.";
+        for(double value:*row)if(!std::isfinite(value))return "RK2 finite thermal ledger is nonfinite.";
+    }
+    return {};
+}
+void ExplicitInertialSolver::advanceRk2Thermal(double seconds,double time) {
+    gw_->advanceRk2Heat(seconds,time);
+    if(!state_->heat.enabled)return;
+    auto& tr=state_->transport;auto& h=state_->heat;
+    for(int i=0;i<mesh_->n_cells();++i) {
+        auto& mass=tr.cell_mass[tr.idx(tr.temp_row,i)];const double before=mass;
+        mass=applyMeshHeatCell(*mesh_,*opts_,h,i,mass,state_->volume[i],0,seconds,true);
+        if(h.failures[i]||gw_->heat().cells[i].failed)throw std::runtime_error(
+            gw_->heat().cells[i].error.empty()?"RK2 finite thermal contact failed.":gw_->heat().cells[i].error);
+        tr.gained_external[tr.temp_row]+=mass-before;
+        gw_->heat().refreshView(i,gw_->transport());
+    }
+}
+
 // SSP-RK2 (Heun) over the global active lists: U¹ = U⁰ + Δt·L(U⁰),
 // U² = U¹ + Δt·L(U¹), Uⁿ⁺¹ = ½(U⁰ + U²). The per-advance ledgers that both
 // stages incremented (boundary ∫F dt, coupling ∫Q dt, infiltration applied)
@@ -2236,8 +2273,9 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     std::map<int, RuntimeReceipt> receipts0;
     if(gw_) {
         if(auto error=gw_->rk2ProfileError();!error.empty())throw std::runtime_error(error);
-        if(common_stage_ || channel_ground_ || state_->heat.enabled ||
-           (gw_->transport().temp_row>=0&&(state_->transport.temp_row!=gw_->transport().temp_row||opts_->coupled_heat)) ||
+        if(auto error=rk2ThermalProfileError();!error.empty())throw std::runtime_error(error);
+        if(common_stage_ || channel_ground_ ||
+           (gw_->transport().temp_row>=0&&(state_->transport.temp_row!=gw_->transport().temp_row||(opts_->coupled_heat&&!state_->heat.enabled))) ||
            state_->snow.active() || state_->runtime_sources.active() || state_->runtime_forcings.active() ||
            (state_->node_coupling&&!state_->node_coupling->empty()))
             throw std::runtime_error("Coupled RK2 has an unqualified surface/source owner.");
@@ -2285,7 +2323,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     const double time=cuts.empty()?start:cuts[part],dt=cuts.empty()?interval:cuts[part+1]-time;
     std::unique_ptr<SubsurfaceSolver> part_ground;
     if(gw_) {
-        gw_->advanceRk2Heat(.5*dt,time+.25*dt);
+        advanceRk2Thermal(.5*dt,time+.25*dt);
         advanceRk2SurfaceReactions(.5*dt);
         gw_->advanceRk2Reactions(.5*dt);
         // Transport blends against the state after the first reaction half.
@@ -2383,7 +2421,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
         gw_->blendRk2Water(part_ground?*part_ground:*ground0,time+dt);
         gw_->advanceRk2Reactions(.5*dt);
         advanceRk2SurfaceReactions(.5*dt);
-        gw_->advanceRk2Heat(.5*dt,time+.75*dt);
+        advanceRk2Thermal(.5*dt,time+.75*dt);
         source_phase_end_=time+dt;
         gw_->publishRk2Infiltration(*state_,dt,time+dt);
     }

@@ -77,7 +77,7 @@ void advanceRemainingGroundColumns(const MeshData&,const SolverOptions2D&,Surfac
 // Called before intensive source sinks: the accepted evaporating water must
 // receive its thermal update before it leaves, including complete drying.
 double applyMeshHeatCell(const MeshData&,const SolverOptions2D&,MeshHeatState&,int cell,double temperature_volume,
-                         double available_m3,double evaporated_m3,double seconds) noexcept;
+                         double available_m3,double evaporated_m3,double seconds,bool midpoint=false) noexcept;
 // Standalone storage has a fixed saturated pore volume: accepted infiltration
 // displaces an equal volume at its bottom, with finite soil heat exchange.
 void advectStandaloneGround(MeshHeatState&,int cell,double accepted_m3,double donor_celsius) noexcept;

@@ -3199,7 +3199,7 @@ std::string SubsurfaceSolver::rk2ProfileError() const {
     if(heat_.active()) {
         if(!heat_.config||tr_.n_species<=0||tr_.temp_row<0||tr_.temp_row>=tr_.n_species||
            heat_.cells.size()!=std::size_t(state_.n_cells)||heat_.snow_owner||
-           heat_.config->options.surface_thermal_bc=="SURFACE_WATER"||
+           (heat_.config->options.surface_thermal_bc=="SURFACE_WATER"&&(!opts_||!opts_->coupled_heat))||
            (heat_.config->options.soil_et_heat!="SENSIBLE_ONLY"&&heat_.config->options.soil_et_heat!="LATENT_SURFACE")||
            (opts_&&opts_->water_heat_capacity!=heat_.water_capacity))
             return "Coupled RK2 porous heat requires a temperature row and no borrowed heat owner.";
@@ -3208,7 +3208,7 @@ std::string SubsurfaceSolver::rk2ProfileError() const {
             return "Coupled RK2 AIR soil boundary requires a finite held climate temperature.";
         for(int i=0;i<state_.n_cells;++i)if(covers(i)) {
             const auto& cell=heat_.cells[i];const auto& column=cell.column;const auto n=column.energy.size();
-            if(cell.surface_owned||cell.failed||!n||column.theta.size()!=n||column.capacity.size()!=n||
+            if((cell.surface_owned&&(!opts_||!opts_->coupled_heat))||cell.failed||!n||column.theta.size()!=n||column.capacity.size()!=n||
                column.depth_edges.size()!=n+1||cell.saturated_water.size()!=n||cell.reserved_out_water.size()!=n)
                 return "Coupled RK2 porous thermal owner shape or status differs.";
             const auto& pore=cell.porewater;

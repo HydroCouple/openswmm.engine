@@ -610,3 +610,10 @@ TEST(PorousHeat, ModelSelectionIsExplicitAndNewDefaultsStayUnauthored) {
     ASSERT_TRUE(parseGwTransportOptionsLine({"DEEP_THERMAL_BC","ADIABATIC"},o).empty());
     EXPECT_EQ(o.deep_thermal_bc,"ADIABATIC");EXPECT_TRUE(o.deep_thermal_arg.empty());
 }
+TEST(PorousHeat, MidpointWorkLimitIsDistinctFromInvalidPhysicsAndReturnsNoPartialState) {
+    const std::vector<ThermalStore> stores{{1,5},{2,-6}};
+    auto work=solveThermalContactsRk2(stores,{{0,1,1e9}},{},1);
+    EXPECT_FALSE(work.error.empty());EXPECT_TRUE(work.interval_limit);EXPECT_TRUE(work.energy.empty());EXPECT_TRUE(work.contact_j.empty());
+    auto invalid=solveThermalContactsRk2(stores,{{0,1,-1}},{},1);
+    EXPECT_FALSE(invalid.error.empty());EXPECT_FALSE(invalid.interval_limit);EXPECT_TRUE(invalid.energy.empty());
+}

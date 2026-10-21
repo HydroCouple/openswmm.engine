@@ -74,12 +74,61 @@ MeshAtmosphericFlux outward(const MeshHeatState& h,int i,double t,double evapora
     }
     return flux;
 }
+ThermalSolution solveColumnMidpoint(const GroundColumnAssembly& a,const std::vector<ThermalStore>& stores,
+    const std::vector<ThermalContact>& contacts,const std::vector<ThermalBoundary>& boundaries,double dt) {
+    auto result=solveThermalContactsRk2(stores,contacts,boundaries,dt);
+    if(!result.interval_limit||a.water<0)return result;
+    // A vanishing water heat capacity makes this one pair arbitrarily fast.
+    // Integrate that pair exactly in symmetric halves around the remaining
+    // soil graph. Invalid graphs and soil work limits retain their refusal.
+    int neighbour=-1;double conductance=0;std::vector<std::size_t> pair,rest_index;
+    std::vector<ThermalContact> rest;
+    for(std::size_t k=0;k<contacts.size();++k) {
+        const auto& c=contacts[k];
+        if(c.conductance>0&&(c.a==a.water||c.b==a.water)) {
+            const int other=c.a==a.water?c.b:c.a;
+            if(neighbour>=0&&neighbour!=other)return result;
+            neighbour=other;conductance+=c.conductance;pair.push_back(k);
+        } else {rest.push_back(c);rest_index.push_back(k);}
+    }
+    if(neighbour<0||!std::isfinite(conductance)||!(.5*dt>0))return result;
+    auto current=stores;
+    const auto exchange=[&](double& receipt) {
+        auto& water=current[std::size_t(a.water)];auto& soil=current[std::size_t(neighbour)];
+        const double small=std::min(water.capacity,soil.capacity),large=std::max(water.capacity,soil.capacity);
+        const double capacity=small/(1+small/large),difference=water.energy/water.capacity-soil.energy/soil.capacity;
+        if(!(capacity>0)||!std::isfinite(difference))return false;
+        receipt=capacity*difference*(-std::expm1(-(.5*dt)*conductance/capacity));
+        water.energy-=receipt;soil.energy+=receipt;
+        return std::isfinite(receipt)&&std::isfinite(water.energy)&&std::isfinite(soil.energy)&&
+            std::isfinite(water.energy/water.capacity)&&std::isfinite(soil.energy/soil.capacity);
+    };
+    const auto refused=[](){ThermalSolution out;out.error="Nonfinite exact surface/soil thermal pair.";return out;};
+    double first=0,last=0;if(!exchange(first))return refused();
+    auto middle=solveThermalContactsRk2(current,rest,boundaries,dt);
+    if(!middle.error.empty())return middle;
+    for(std::size_t j=0;j<current.size();++j)current[j].energy=middle.energy[j];
+    if(!exchange(last)||!std::isfinite(first+last))return refused();
+    const auto receipts=std::move(middle.contact_j);middle.contact_j.assign(contacts.size(),0);
+    for(std::size_t k=0;k<rest_index.size();++k)middle.contact_j[rest_index[k]]=receipts[k];
+    double assigned=0;
+    for(std::size_t k=0;k<pair.size();++k) {
+        const auto index=pair[k];const double value=k+1==pair.size()?first+last-assigned:
+            (first+last)*(contacts[index].conductance/conductance);
+        middle.contact_j[index]=contacts[index].a==a.water?value:-value;assigned+=value;
+    }
+    for(std::size_t j=0;j<current.size();++j) {
+        middle.energy[j]=current[j].energy;middle.temperature[j]=current[j].energy/current[j].capacity;
+    }
+    return middle;
+}
 double groundColumnStep(const MeshData& mesh,const SolverOptions2D& options,MeshHeatState& h,int i,
-    double mass,double volume,double evaporated,double dt) {
+    double mass,double volume,double evaporated,double dt,bool midpoint) {
     std::vector<ThermalStore> stores;std::vector<ThermalContact> contacts;std::vector<ThermalBoundary> boundaries;
     const double channel=h.channel_footprint.empty()?0:h.channel_footprint[i];
     auto assembled=appendGroundColumnSystem(mesh,options,h.groundOwner(i),i,&h,mass,volume,evaporated,dt,channel,stores,contacts,boundaries);
-    auto solved=solveThermalContacts(stores,contacts,boundaries,dt);
+    auto solved=midpoint?solveColumnMidpoint(assembled,stores,contacts,boundaries,dt):
+        solveThermalContacts(stores,contacts,boundaries,dt);
     if(!solved.error.empty())throw std::runtime_error(solved.error);
     return commitGroundColumnSystem(assembled,solved);
 }
@@ -493,7 +542,7 @@ void prepareMeshHeat(SimulationContext& ctx,SurfaceStateData& state,double dt) {
     if(state.heat.ground_column)state.heat.standalone_ground.prepare();
 }
 double applyMeshHeatCell(const MeshData& mesh,const SolverOptions2D& options,MeshHeatState& h,int i,
-                         double mass,double volume,double evaporated,double dt) noexcept {
+                         double mass,double volume,double evaporated,double dt,bool midpoint) noexcept {
     if(!h.enabled||!(dt>0))return mass;
     const auto& ctx=*h.context;const auto elem=HeatElement::cell2d(i);
     if(h.ground_column) {
@@ -502,7 +551,7 @@ double applyMeshHeatCell(const MeshData& mesh,const SolverOptions2D& options,Mes
             if(!std::isfinite(applied)){applied=0;h.failures[i]=1;}
         }
         try {
-            const double updated=groundColumnStep(mesh,options,h,i,mass,volume,evaporated,dt);
+            const double updated=groundColumnStep(mesh,options,h,i,mass,volume,evaporated,dt,midpoint);
             if(!(volume>0)) {
                 if(ctx.heat_config.dry_temp_policy==DryTempPolicy::AIR)h.reported_temperature[i]=airTempCelsius(ctx);
                 else if(ctx.heat_config.dry_temp_policy==DryTempPolicy::DEFAULT)h.reported_temperature[i]=HeatConfigData::kDefaultTemp;

@@ -21,6 +21,7 @@ struct ThermalContact {int a=-1,b=-1;double conductance=0;};
 struct ThermalBoundary {int store=-1;double conductance=0,temperature=0,power=0;};
 struct ThermalSolution {
     std::string error;
+    bool interval_limit=false; // bounded work, distinct from invalid physics
     std::vector<double> energy,temperature,contact_j,boundary_j;
     double algebraic_residual=0;
     int iterations=0;

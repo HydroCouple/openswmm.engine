@@ -3,6 +3,7 @@
 #include "../subsurface/CommonSourceStage.hpp"
 #include "../subsurface/SubsurfaceSolver.hpp"
 #include "../heat/MeshCheckpointState.hpp"
+#include "../heat/ThermalCheckpoint.hpp"
 #include "../data/MeshData.hpp"
 #include "../data/SurfaceStateData.hpp"
 #include "../data/BoundaryData.hpp"
@@ -295,15 +296,16 @@ std::string ExplicitInertialSolver::rk2CheckpointProfile() const {
     if(!initialized_||!second_order_||!gw_||common_stage_||joint_checkpoint_||channel_ground_||
        source_history_||engine_source_history_||engine_source_stream_||!checkpoint_ready_||
        mode_!=Momentum2D::FULL_SWE||opts_->lts_tiers!=1||!bc_cell_.empty()||
-       state_->heat.enabled||state_->snow.active()||
+       state_->snow.active()||
        state_->runtime_sources.active()||state_->runtime_forcings.active()||
        (state_->node_coupling&&!state_->node_coupling->empty()))
         return "RK2 checkpoint requires the standalone wall-bounded transport/age coupled profile.";
+    if(auto error=rk2ThermalProfileError();!error.empty())return error;
     const auto& tr=state_->transport;const auto& ground=gw_->transport();
     if(tr.active()&&(tr.row_names!=ground.row_names||tr.n_species!=ground.n_species||tr.age_row!=ground.age_row||tr.temp_row!=ground.temp_row))
         return "Coupled RK2 requires matching surface/groundwater species and age rows.";
-    if(ground.temp_row>=0&&(tr.temp_row<0||opts_->coupled_heat))
-        return "RK2 water temperature requires matching surface rows and HEAT_MODEL TRANSPORT_ONLY.";
+    if(ground.temp_row>=0&&(tr.temp_row<0||(opts_->coupled_heat&&!state_->heat.enabled)))
+        return "RK2 water temperature requires matching surface rows and a qualified thermal owner.";
     if(tr.n_cells<0||tr.n_species<0||tr.cell_mass.size()!=std::size_t(tr.n_cells)*std::size_t(tr.n_species))
         return "RK2 surface transport shape differs.";
     for(std::size_t k=0;k<tr.cell_mass.size();++k)
@@ -364,6 +366,10 @@ std::string ExplicitInertialSolver::rk2CheckpointModel() const {
         std::string profile="shared RK2 surface reactions v1",identity=rk_reaction_identity_;
         auto decay=rk_decay_;auto rows=rk_reaction_rows_;a(profile,identity,decay,rows);
     }
+    if(state_->heat.enabled) {
+        std::string profile="RK2 finite surface/soil thermal owner v1";
+        auto heat=checkpoint::meshHeatModelIdentity(state_->heat);a(profile,heat);
+    }
     auto rain=state_->rainfall,evap=state_->evap_rate;a(rain,evap);
     return a.bytes();
 }
@@ -394,11 +400,14 @@ std::string ExplicitInertialSolver::loadRk2CheckpointBytes(std::string bytes) {
         if(model!=rk2CheckpointModel())return "RK2 checkpoint mesh, options, groundwater or held forcing differs.";
         auto trial=*this;auto surface=*state_;auto gw=*gw_;
         trial.state_=&surface;trial.gw_=&gw;
+        if(surface.heat.enabled)surface.heat.aquifer_ground=&gw.heat();
         checkpoint::meshState(state,surface);gw.checkpoint(state,false);state.fixed(gw.cell_completed_);
         trial.checkpointState(state);state.finish();
         if(auto error=trial.rk2CheckpointProfile();!error.empty())return error;
         trial.state_=state_;trial.gw_=gw_;
-        *state_=std::move(surface);*gw_=std::move(gw);*this=std::move(trial);return {};
+        *state_=std::move(surface);*gw_=std::move(gw);
+        if(state_->heat.enabled)state_->heat.aquifer_ground=&gw_->heat();
+        *this=std::move(trial);return {};
     } catch(const std::exception& e){return e.what();}
 }
 

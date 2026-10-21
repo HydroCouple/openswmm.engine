@@ -126,12 +126,21 @@ ThermalSolution solveThermalContactsRk2(const std::vector<ThermalStore>& stores,
     long double divisions=1;
     for(std::size_t i=0;i<stores.size();++i)
         divisions=std::max(divisions,std::ceil(static_cast<long double>(dt)*rate[i]/(2.L*stores[i].capacity)));
-    if(!std::isfinite(divisions)||divisions>65536)
-        return refused("Thermal midpoint subdivision limit exceeded; reduce the step.");
+    if(!std::isfinite(divisions)||divisions>65536) {
+        auto out=refused("Thermal midpoint subdivision limit exceeded; reduce the step.");out.interval_limit=true;return out;
+    }
     const int steps=int(divisions);const double half=.5*(dt/steps);
     if(!(half>0))return refused("Thermal midpoint interval is below the representable step.");
     auto current=stores;ThermalSolution out;
     out.contact_j.assign(contacts.size(),0);out.boundary_j.assign(boundaries.size(),0);
+    // Small reciprocal receipts must survive repeated updates of a much
+    // larger soil energy. Keep the original one-step arithmetic unchanged.
+    std::vector<double> energy_correction(steps>1?stores.size():0,0),
+        contact_correction(steps>1?contacts.size():0,0),boundary_correction(steps>1?boundaries.size():0,0);
+    const auto add=[](double& value,double increment,double& correction) {
+        const double adjusted=increment-correction,next=value+adjusted;
+        correction=(next-value)-adjusted;value=next;
+    };
     for(int step=0;step<steps;++step) {
         const auto middle=solveThermalContacts(current,contacts,boundaries,half);
         if(!middle.error.empty())return refused(middle.error.c_str());
@@ -140,12 +149,21 @@ ThermalSolution solveThermalContactsRk2(const std::vector<ThermalStore>& stores,
         // h*sum(G)/(2*C)<=1, both propagation factors are nonnegative.
         for(std::size_t k=0;k<contacts.size();++k) {
             const double joules=2*middle.contact_j[k];const auto& c=contacts[k];
-            current[c.a].energy-=joules;current[c.b].energy+=joules;out.contact_j[k]+=joules;
+            if(steps==1) {current[c.a].energy-=joules;current[c.b].energy+=joules;out.contact_j[k]+=joules;}
+            else {
+                add(current[c.a].energy,-joules,energy_correction[c.a]);
+                add(current[c.b].energy,joules,energy_correction[c.b]);
+                add(out.contact_j[k],joules,contact_correction[k]);
+            }
             if(!std::isfinite(joules)||!std::isfinite(out.contact_j[k]))return refused("Nonfinite thermal contact receipt.");
         }
         for(std::size_t k=0;k<boundaries.size();++k) {
             const double joules=2*middle.boundary_j[k];
-            current[boundaries[k].store].energy+=joules;out.boundary_j[k]+=joules;
+            if(steps==1) {current[boundaries[k].store].energy+=joules;out.boundary_j[k]+=joules;}
+            else {
+                add(current[boundaries[k].store].energy,joules,energy_correction[boundaries[k].store]);
+                add(out.boundary_j[k],joules,boundary_correction[k]);
+            }
             if(!std::isfinite(joules)||!std::isfinite(out.boundary_j[k]))return refused("Nonfinite thermal boundary receipt.");
         }
         for(const auto& store:current)if(!std::isfinite(store.energy)||!std::isfinite(store.energy/store.capacity))
