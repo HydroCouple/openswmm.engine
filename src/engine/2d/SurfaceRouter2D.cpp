@@ -1772,6 +1772,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         if(options_.momentum!=Momentum2D::FULL_SWE||!cpu||!coupling_points_.empty()||
            !aquifer_link_shares_.empty()||!subcatch_recharge_.empty()||ctx.n_subcatches()!=0)
             throw std::runtime_error("Coupled groundwater RK2 requires the standalone FULL_SWE transport/age profile; network and catchment owners remain unqualified.");
+        if(auto error=cpu->configureRk2BoundarySignals(ctx,bc_stage_ts_scale_,bc_flow_scale_);!error.empty())throw std::runtime_error(error);
         if(auto error=cpu->configureRk2Reactions(ctx);!error.empty())throw std::runtime_error(error);
         if(auto error=cpu->rk2CheckpointProfile();!error.empty())throw std::runtime_error(error);
         ctx.warnings.push_back("Coupled groundwater SSP-RK2: CLOSED_FORM/ENSLAVED/SIGMA transport/age CPU profile with symmetric groundwater/surface reactions, global stepping and knot-aligned wells and aquifer HEAD/FLOW edges. Singular wetting-front startup is bounded without a second-order claim.");
@@ -3230,6 +3231,9 @@ void SurfaceRouter2D::resolveBoundaryValues(SimulationContext& ctx, double t) {
                     ctx.find_curve(boundary_.edge_bc_rating_curve_name[idx]);
         }
     }
+
+    // The coupled RK2 owner evaluates immutable signals at its Euler times.
+    if(subsurface_.active()&&options_.reconstruction_order==2)return;
 
     // Timeseries tables are keyed in absolute OADate days (PostParseResolver
     // anchors relative series to start_date), but t is ELAPSED SECONDS from

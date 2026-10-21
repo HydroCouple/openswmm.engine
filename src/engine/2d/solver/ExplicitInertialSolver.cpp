@@ -71,6 +71,7 @@
 #include "../../transport/components/ReactionModule/ReactionsWriter.hpp"
 #include "../../transport/components/HeatFluxModules/SurfaceExchange.hpp"
 #include "../gw/GwTransportData.hpp"
+#include "../gw/GwSourceResolver.hpp"
 #include "../heat/ChannelGround.hpp"
 
 namespace openswmm::twoD {
@@ -92,6 +93,7 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     mesh_  = &mesh;
     state_ = &state;
     opts_  = &opts;
+    rk_boundary_signals_.clear();rk_boundary_anchor_=0;
     common_stage_ = nullptr;
     rk_reactions_=nullptr;rk_reaction_rows_.clear();rk_decay_.clear();
     rk_reacted_.clear();rk_reacted_reported_.clear();rk_reaction_identity_.clear();
@@ -2350,6 +2352,52 @@ void ExplicitInertialSolver::computeLimitedGradientsSwe() {
     }
 }
 
+std::string ExplicitInertialSolver::configureRk2BoundarySignals(SimulationContext& ctx,double stage_scale,double flow_scale) {
+    try {
+        if(!initialized_||!second_order_||!gw_||mode_!=Momentum2D::FULL_SWE||t_last_sync_!=0)
+            return "RK2 surface signals require their fresh standalone numerical owner.";
+        if(!state_->boundary)return {};
+        auto boundary=*state_->boundary;
+        std::vector<Rk2BoundarySignal> signals;
+        std::unordered_map<std::string,GwSourceSignal> cache;
+        for(int slot=0;slot<boundary.size();++slot) {
+            const auto type=BoundaryType(boundary.edge_bc_type.at(slot));
+            for(bool stage:{true,false}) {
+                int& index=stage?boundary.edge_bc_tseries.at(slot):boundary.edge_bc_flow_tseries.at(slot);
+                const auto& name=stage?boundary.edge_bc_tseries_name.at(slot):boundary.edge_bc_flow_tseries_name.at(slot);
+                if(index==-1&&name.empty())continue;
+                if(type!=(stage?BoundaryType::SPECIFIED_STAGE:BoundaryType::SPECIFIED_FLOW))
+                    return "RK2 surface signal does not match its hydraulic boundary kind.";
+                const int resolved=index==-2?ctx.find_timeseries(name):index;
+                if(resolved<0||resolved>=int(ctx.tables.tables.size())||(!name.empty()&&ctx.find_timeseries(name)!=resolved))
+                    return "RK2 surface signal name or table index differs.";
+                const auto& table=ctx.tables.tables[resolved];
+                if(table.type!=TableType::TIMESERIES||table.is_file_based||table.file_handle||table.num_cols!=1)
+                    return "RK2 surface signals require single-column in-memory time series.";
+                const double scale=stage?stage_scale:flow_scale;
+                if(!(scale>0)||!std::isfinite(scale))return "Invalid RK2 surface signal unit conversion.";
+                auto signal=resolveGwSignal(ctx,0,table.id,cache,"[2D boundary RK2]");
+                for(double value:signal.ordinates())if(!std::isfinite(scale*value))return "Nonfinite SI surface boundary signal.";
+                signals.push_back({slot,resolved,stage,scale,table.id,std::move(signal)});index=resolved;
+            }
+        }
+        rk_boundary_signals_=std::move(signals);rk_boundary_anchor_=ctx.options.start_date;
+        *const_cast<BoundaryData*>(state_->boundary)=std::move(boundary);
+        resolveRk2BoundarySignals(0);return {};
+    } catch(const std::exception& e){return e.what();}
+}
+void ExplicitInertialSolver::resolveRk2BoundarySignals(double time) {
+    if(rk_boundary_signals_.empty())return;
+    auto& boundary=*const_cast<BoundaryData*>(state_->boundary);
+    for(const auto& row:rk_boundary_signals_) {
+        if(boundary.runtime_original.count(row.slot))continue;
+        const int index=row.stage?boundary.edge_bc_tseries.at(row.slot):boundary.edge_bc_flow_tseries.at(row.slot);
+        if(index!=row.table)throw std::runtime_error("RK2 surface signal binding differs.");
+        const double value=row.scale*row.signal.at(time);
+        if(!std::isfinite(value))throw std::runtime_error("Nonfinite RK2 evaluated surface boundary.");
+        (row.stage?boundary.edge_bc_head:boundary.edge_bc_flow).at(row.slot)=value;
+    }
+}
 bool ExplicitInertialSolver::surfaceLatentCooling() const noexcept {
     return gw_&&second_order_&&state_->heat.enabled&&state_->heat.surface&&(opts_->evaporation!=0||
         std::any_of(state_->runtime_forcings.rows.begin(),state_->runtime_forcings.rows.end(),[](const auto& row){return row.channel==2;}));
@@ -2451,6 +2499,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start,unsigned th
     std::unique_ptr<SurfaceStateData> surface0;
     std::unique_ptr<SubsurfaceSolver> ground0;
     std::map<int, RuntimeReceipt> receipts0;
+    std::vector<double> boundary_head0,boundary_flow0;
     if(gw_) {
         if(auto error=gw_->rk2ProfileError();!error.empty())throw std::runtime_error(error);
         if(auto error=rk2ThermalProfileError();!error.empty())throw std::runtime_error(error);
@@ -2467,11 +2516,13 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start,unsigned th
         surface0=std::make_unique<SurfaceStateData>(*state_);
         ground0=std::make_unique<SubsurfaceSolver>(*gw_);
         if(state_->boundary)receipts0=state_->boundary->receipts;
+        if(!rk_boundary_signals_.empty()){boundary_head0=state_->boundary->edge_bc_head;boundary_flow0=state_->boundary->edge_bc_flow;}
     }
     const auto restore_trial=[&]() {
         if(marcher0) {
             *this=*marcher0;*state_=*surface0;*gw_=*ground0;
             if(state_->boundary)state_->boundary->receipts=receipts0;
+            if(!boundary_head0.empty()){auto& b=*const_cast<BoundaryData*>(state_->boundary);b.edge_bc_head=boundary_head0;b.edge_bc_flow=boundary_flow0;}
         }
     };
     try {
@@ -2498,6 +2549,19 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start,unsigned th
         for(const auto& row:state_->runtime_forcings.rows)if(row.enabled&&row.until>start&&row.until<start+interval)cuts.push_back(row.until);
         gw_->heat().appendRk2Cuts(start,start+interval,cuts);
         for(const auto& source:gw_->sources_) {add_cuts(source.flow);for(const auto& term:source.terms)add_cuts(term.signal);}
+        for(const auto& row:rk_boundary_signals_) {
+            if(state_->boundary->runtime_original.count(row.slot))continue;
+            const auto& times=row.signal.timePoints();const auto& values=row.signal.ordinates();
+            for(auto it=std::upper_bound(times.begin(),times.end(),start);it!=times.end()&&*it<start+interval;++it)cuts.push_back(*it);
+            if(!row.stage) {
+                for(std::size_t k=1;k<times.size();++k)if((values[k-1]<0&&values[k]>0)||(values[k-1]>0&&values[k]<0)) {
+                    const double scale=std::max(std::abs(values[k-1]),std::abs(values[k]));
+                    const double a=values[k-1]/scale,b=values[k]/scale;
+                    const double zero=times[k-1]+(times[k]-times[k-1])*(-a)/(b-a);
+                    if(zero>start&&zero<start+interval)cuts.push_back(zero);
+                }
+            }
+        }
         for(const auto& boundary:gw_->boundaries_) {
             for(const auto& term:boundary.terms)add_cuts(term.signal);
             if(!boundary.head)add_cuts(boundary.signal);
@@ -2565,6 +2629,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start,unsigned th
         rk_transport_stage_=gw_&&(species_on_||!forcing0.rows.empty()||!bc_cell_.empty());
         if(rk_transport_stage_) {rk_stage_mass_=state_->transport.cell_mass;rk_stage_volume_=state_->volume;}
         if(gw_)gw_->publishRk2Infiltration(*state_,dt,time);
+        resolveRk2BoundarySignals(time+stage*dt);
         fireFaces(active_faces_, dt, /*global_step=*/true);
         if(gw_)gw_->fireGwFaces(0,dt);
         const auto latent_before=latent_cooling?state_->heat.latent_j:std::vector<double>{};
@@ -2693,6 +2758,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start,unsigned th
             *state_=std::move(*surface0);
             *gw_=std::move(*ground0);
             if(state_->boundary)state_->boundary->receipts=std::move(receipts0);
+            if(!boundary_head0.empty()){auto& b=*const_cast<BoundaryData*>(state_->boundary);b.edge_bc_head=std::move(boundary_head0);b.edge_bc_flow=std::move(boundary_flow0);}
         }
         throw;
     }
@@ -3009,10 +3075,13 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
         throw std::invalid_argument("Coupled RK2 requires its accepted completed clock.");
     auto marcher=*this;auto surface=*state_;auto ground=*gw_;
     std::map<int,RuntimeReceipt> receipts;if(state_->boundary)receipts=state_->boundary->receipts;
+    const auto boundary_head=rk_boundary_signals_.empty()?std::vector<double>{}:state_->boundary->edge_bc_head;
+    const auto boundary_flow=rk_boundary_signals_.empty()?std::vector<double>{}:state_->boundary->edge_bc_flow;
     try {return advanceImpl(t_current,t_target);}
     catch(...) {
         *this=std::move(marcher);*state_=std::move(surface);*gw_=std::move(ground);
         if(state_->boundary)state_->boundary->receipts=std::move(receipts);
+        if(!boundary_head.empty()){auto& b=*const_cast<BoundaryData*>(state_->boundary);b.edge_bc_head=boundary_head;b.edge_bc_flow=boundary_flow;}
         throw;
     }
 }
@@ -3284,6 +3353,7 @@ void ExplicitInertialSolver::refreshBoundaries() {
         if(found!=state_->transport.runtime_bc_conc.end())
             for(std::size_t row=0;row<ns;++row) conc[k*ns+row]=found->second[row];
     }
+    resolveRk2BoundarySignals(t_last_sync_);
     cycles_since_rebuild_ = kRebuildEveryCycles;
 }
 

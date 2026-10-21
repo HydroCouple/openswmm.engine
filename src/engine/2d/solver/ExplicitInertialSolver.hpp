@@ -52,6 +52,7 @@
 
 #include "ISurfaceSolver.hpp"
 #include "InertialEdges.hpp"
+#include "../gw/GwSourceForcing.hpp"
 #include "../../transport/components/ReactionModule/ReactionIntegrator.hpp"
 #include "../data/SolverOptions2D.hpp"   // Momentum2D
 
@@ -93,6 +94,8 @@ public:
     void resumeSourceResultHistory(SourceResultHistory& history);
     /// Configure the standalone coupled RK2 surface reaction owner at time zero.
     std::string configureRk2Reactions(const SimulationContext&);
+    std::string configureRk2BoundarySignals(SimulationContext&,double stage_scale,double flow_scale);
+    void resolveRk2BoundarySignals(double time);
     double surfaceReactionLoss(int row) const noexcept {
         return row>=0&&std::size_t(row)<rk_reacted_.size()?rk_reacted_[row]:0;
     }
@@ -238,6 +241,16 @@ private:
     void runRk2Step(double dt,double time);
     void runRk2Step(double dt,double time,unsigned thermal_depth);
     bool surfaceLatentCooling() const noexcept;
+    struct Rk2BoundarySignal {
+        int slot=-1,table=-1;
+        bool stage=false;
+        double scale=1;
+        std::string name;
+        GwSourceSignal signal;
+    };
+    std::vector<Rk2BoundarySignal> rk_boundary_signals_;
+    double rk_boundary_anchor_=0;
+
     /// FRONT_REBUILD: frontier_[i] = 1 for an active cell with at least one
     /// inactive neighbour (the outer ring of the halo). When such a cell
     /// crosses the activation depth the front has used up the halo, and the

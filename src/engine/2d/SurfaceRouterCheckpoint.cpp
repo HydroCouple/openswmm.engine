@@ -52,6 +52,13 @@ void publish(const std::string& path,const std::string& bytes,const char* expect
     std::error_code ec; std::filesystem::rename(part,path,ec);
     if(ec) { std::filesystem::remove(part); throw std::runtime_error("Cannot publish router checkpoint: "+ec.message()); }
 }
+std::string rk2AuthoredBoundaryModel(BoundaryData boundary,const TableData& tables) {
+    for(int slot=0;slot<boundary.size();++slot) {
+        if(boundary.edge_bc_tseries[slot]>=0)boundary.edge_bc_head[slot]=0;
+        if(boundary.edge_bc_flow_tseries[slot]>=0)boundary.edge_bc_flow[slot]=0;
+    }
+    return RuntimeWaterCheckpoint::boundaryModel(boundary,&tables);
+}
 void massBalance(Archive& a,SimulationContext::MassBalance2D& m) {
     a(m.init_storage,m.final_storage,m.external_in,m.external_out,m.rainfall_in,m.coupling_1d_to_2d_in,
       m.coupling_2d_to_1d_out,m.outfall_in,m.outfall_out,m.boundary_in,m.boundary_out,m.evap_out,
@@ -256,7 +263,7 @@ std::string SurfaceRouter2D::sourceRouterModel(const SimulationContext& ctx) con
     if(options_.reconstruction_order==2) {
         auto boundary=boundary_;std::vector<int> overridden;for(const auto& entry:boundary.runtime_original)overridden.push_back(entry.first);
         for(int slot:overridden)boundary.clearRuntime(slot);
-        std::string profile="managed RK2 authored surface boundary model v1",identity=RuntimeWaterCheckpoint::boundaryModel(boundary,&ctx.tables);a(profile,identity);
+        std::string profile="managed RK2 authored surface boundary model v1",identity=rk2AuthoredBoundaryModel(boundary,ctx.tables);a(profile,identity);
     }
     return a.bytes();
 }
@@ -516,7 +523,7 @@ std::string SurfaceRouter2D::loadCheckpointBytes(SimulationContext& ctx,std::str
             binding.boundary=&snapshot.rk2_boundary;binding.boundary_quality=&snapshot.rk2_boundary_quality;
             auto fallback=snapshot.rk2_boundary;std::vector<int> overridden;for(const auto& entry:fallback.runtime_original)overridden.push_back(entry.first);
             for(int slot:overridden)fallback.clearRuntime(slot);
-            if(RuntimeWaterCheckpoint::boundaryModel(fallback,&ctx.tables)!=RuntimeWaterCheckpoint::boundaryModel(boundary_,&ctx.tables))return "Managed RK2 surface boundary authored fallback differs.";
+            if(rk2AuthoredBoundaryModel(fallback,ctx.tables)!=rk2AuthoredBoundaryModel(boundary_,ctx.tables))return "Managed RK2 surface boundary authored fallback differs.";
             std::function<void(const ExplicitInertialSolver&,const SurfaceStateData&,const SubsurfaceSolver&)> validate=[&](const auto& numerical,const auto& surface,const auto& ground) {
                 if(!close(numerical.completedSourceTime(),snapshot.sim_time_)||!close(numerical.t_last_sync_,snapshot.sim_time_))
                     throw std::runtime_error("Managed RK2 numerical/router completed clocks differ.");

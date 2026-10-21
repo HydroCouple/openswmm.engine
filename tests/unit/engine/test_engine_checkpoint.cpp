@@ -6727,3 +6727,22 @@ TEST(EngineCheckpoint, ManagedRk2SurfaceLatentNativeAndCopiedDemandContinueAcros
     }
 }
 #endif
+
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, ManagedRk2AuthoredSurfaceFlowSeriesContinuesAcrossMidnight) {
+    SWMMEngine a,b;const auto extra=managedRk2Quality("SIGMA",true,true,true,true)+
+        "[2D_BOUNDARY_CONDITIONS]\n0 1 TS_FLOW SurfaceFlow\n[2D_BOUNDARY_QUALITY]\n0 1 Dye 3\n0 1 A 1\n0 1 B 0\n0 1 __TEMPERATURE__ -8\n0 1 __WATER_AGE__ 2\n"
+        "[TIMESERIES]\nSurfaceFlow 01/31/2026 23:59:58 -.00001\nSurfaceFlow 01/31/2026 23:59:59 .00002\nSurfaceFlow 02/01/2026 00:00:01 -.00001\nSurfaceFlow 02/01/2026 00:00:03 .00001\n";
+    ASSERT_NO_THROW(startManagedRk2Session(a,"managed-rk2-surface-series-a",extra));
+    ASSERT_NO_THROW(startManagedRk2Session(b,"managed-rk2-surface-series-b",extra));
+    double actual=0;ASSERT_EQ(swmm_coupling_advance_to(&a,.735,&actual),SWMM_OK);
+    const auto saved=root()/"managed-rk2-surface-series.chk";ASSERT_EQ(a.saveCheckpoint(saved.string()),"");
+    ASSERT_EQ(b.loadCheckpoint(saved.string()),"");compare(a,b,"managed-rk2-surface-series-restored");
+    while(a.context().elapsed_ms<a.context().options.totalDurationMs()) {
+        ASSERT_NO_THROW(step(a));
+        ASSERT_NO_THROW(step(b));compare(a,b,"managed-rk2-surface-series-continued");
+    }
+    const auto& receipt=a.surfaceRouter2D().boundary().receipts.at(twoD::MeshData::slot(0,1));
+    EXPECT_GT(receipt.water_in,0);EXPECT_GT(receipt.water_out,0);
+}
+#endif
