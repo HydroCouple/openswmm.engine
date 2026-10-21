@@ -1064,3 +1064,41 @@ DEEP 01/01/2026 00:00:02 50
         solver.end()
     finally:
         cleanup(solver)
+
+
+@pytest.mark.parametrize('closure,layered', [('CLOSED_FORM', False), ('ENSLAVED', False), ('SIGMA', False), ('SIGMA', True)])
+def test_groundwater_rk2_porous_air_boundary_uses_held_project_climate(tmp_path, closure, layered):
+    from openswmm.engine import Solver, GroundHeatValue as H
+    text = _rk2_water_temperature_text(closure, layered).replace('* 18 2', '* 1e-15 2').replace(
+        'THERMAL_MODEL WATER_ONLY', '''THERMAL_MODEL POROUS_EQUILIBRIUM
+THERMAL_LAYERS 3
+CONDUCTION YES
+LATERAL_CONDUCTION NO
+SOIL_ET_HEAT SENSIBLE_ONLY
+SURFACE_THERMAL_BC AIR
+DEEP_THERMAL_BC ADIABATIC
+DISPERSION NO''')
+    text += '''[TEMPERATURE]
+TIMESERIES AIR
+[TIMESERIES]
+AIR 01/01/2026 00:00:00 5
+AIR 01/01/2026 00:00:02 5
+'''
+    path = tmp_path / 'porous-held-air-rk2.inp'
+    path.write_text(text)
+    solver = Solver(path, path.with_suffix('.rpt'))
+    solver.open()
+    try:
+        solver.initialize()
+        solver.start(False)
+        while solver.step().total_seconds() > 0:
+            pass
+        heat = solver.heat
+        assert sum(heat.ground_values(H.SURFACE_ENERGY, 0, 2)) > 0
+        temperature = np.asarray(heat.ground_values(H.TEMPERATURE, 0, 2))
+        assert np.all(temperature > -2) and np.all(temperature < 5)
+        assert np.max(np.abs(heat.ground_values(H.NORMALIZED_RESIDUAL, 0, 2))) < 1e-10
+        assert solver.surface2d.concentrations(0) == pytest.approx(np.full(2, -4), abs=1e-10)
+        solver.end()
+    finally:
+        cleanup(solver)

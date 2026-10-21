@@ -53,6 +53,10 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
         a(t.n_species,t.n_cells,t.n_pollut,t.n_msx,t.age_row,t.temp_row,t.dispersion_on);
     a.fixed(t.row_names,t.alpha_L,t.alpha_T,t.D_m,t.rho_b,t.kd,t.decay);
         auto thermal=checkpoint::groundHeatModelIdentity(heat_);a(thermal);
+        if(rk2_transport&&heat_.active()&&heat_.config->options.surface_thermal_bc=="AIR") {
+            std::string profile="RK2 held AIR soil boundary v1";double air=heat_.context->climate_state.temperature;
+            a(profile,air);
+        }
         if(rk2_transport&&heat_.active()&&(heat_.top_series>=0||heat_.deep_series>=0)) {
             std::string profile="RK2 thermal series identity v1";a(profile,heat_.context->options.start_date);
             for(int series:{heat_.top_series,heat_.deep_series}) {

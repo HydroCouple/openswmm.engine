@@ -185,7 +185,8 @@ void GroundHeatState::prepare() {
 void GroundHeatState::prepareAt(double time) {
     if(!active())return;
     const auto& o=config->options;
-    top_now=boundaryValueAt(*context,o.surface_thermal_bc,o.surface_thermal_arg,top_series,time);
+    top_now=o.surface_thermal_bc=="AIR"?transport::heat::airTempCelsius(*context):
+        boundaryValueAt(*context,o.surface_thermal_bc,o.surface_thermal_arg,top_series,time);
     deep_now=boundaryValueAt(*context,o.deep_thermal_bc,o.deep_thermal_arg,deep_series,time);
     if(!std::isfinite(top_now)||!std::isfinite(deep_now))throw std::runtime_error("Nonfinite ground thermal boundary forcing.");
 }

@@ -3339,3 +3339,49 @@ TEST(CoupledGroundwaterRk2, PorousThermalLaterReactionFailureRestoresEnergyAgeAn
     for(int k=0;k<2;++k){EXPECT_EQ(rx.context().tables[k].cursor.index,1);EXPECT_EQ(rx.context().tables[k].cursor.direction,-1);}
     ASSERT_NO_THROW(r.solver.advance(0,.1));for(int row:{0,1,r.gw.transport().age_row})EXPECT_NEAR(r.gw.transport().residual(row),0,1e-10*std::max(1.,r.gw.transport().init_mass[row]));checkRkPorousLedgers(r);
 }
+TEST(CoupledGroundwaterRk2, PorousHeldAirMatchesSignedAnalyticalRobinRelaxation) {
+    for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true}) {
+        if(layered&&closure!=GwClosure::SIGMA)continue;
+        for(double air:{-5.,7.}){double previous=0;
+            for(double dt:{.4,.2,.1,.05}) {
+                CoupledRkRig r;r.init(dt,0,0,0,"NONE",closure,SoilChar::GARDNER,4);
+                RkPorousOwner owner;owner.initialize(r,layered,1,true,4e6);
+                owner.config.options.surface_thermal_bc="AIR";owner.config.options.surface_resistance=2e-6;
+                owner.context.climate_state.temperature=32+1.8*air;
+                const auto& col=r.gw.heat().cells[0].column;
+                const double g=col.area/(1/col.conductivity[0]+2e-6),rate=g/col.capacity[0];
+                const double initial=rkPorousEnergy(r),date=owner.context.current_date,held=owner.context.climate_state.temperature;
+                for(int step=0;step<int(std::round(2/dt));++step)ASSERT_NO_THROW(r.solver.advance(step*dt,(step+1)*dt));
+                const double exact=air+(-2-air)*std::exp(-rate*2),actual=col.energy[0]/col.capacity[0];
+                const double error=std::abs(actual-exact)/10;EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;
+                RecordProperty("held_air_"+std::to_string(int(closure))+"_"+std::to_string(layered)+"_"+std::to_string(int(air))+"_"+std::to_string(int(dt*1000)),error);
+                double receipt=0;for(const auto& c:r.gw.heat().cells)receipt+=c.surface_j;
+                EXPECT_NEAR(rkPorousEnergy(r)-initial,receipt,1e-10*std::max(1.,std::abs(initial)));
+                EXPECT_DOUBLE_EQ(owner.context.current_date,date);EXPECT_DOUBLE_EQ(owner.context.climate_state.temperature,held);checkRkPorousLedgers(r);
+            }
+        }
+    }
+}
+TEST(CoupledGroundwaterRk2, PorousHeldAirCheckpointBindsWeatherAndInvalidInputLeavesNumericalOwnersUntouched) {
+    for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true}) {
+        if(layered&&closure!=GwClosure::SIGMA)continue;
+        CoupledRkRig a,b;RkPorousOwner oa,ob;
+        const auto init=[&](CoupledRkRig& r,RkPorousOwner& o){
+            r.init(.1,0,0,0,"NONE",closure,SoilChar::GARDNER,4);o.initialize(r,layered,3,true,1e6);
+            o.config.options.surface_thermal_bc="AIR";o.config.options.surface_resistance=2e-6;o.context.climate_state.temperature=44.6;
+        };
+        init(a,oa);init(b,ob);ASSERT_NO_THROW(a.solver.advance(0,.6));
+        const auto saved=rk2Output("held-air-source.chk"),before=rk2Output("held-air-before.chk"),after=rk2Output("held-air-after.chk");
+        ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");ob.context.climate_state.temperature=43;
+        ASSERT_EQ(b.solver.saveCheckpoint(before.string()),"");EXPECT_FALSE(b.solver.loadCheckpoint(saved.string()).empty());
+        ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));ob.context.climate_state.temperature=44.6;
+        ASSERT_EQ(b.solver.loadCheckpoint(saved.string()),"");ASSERT_NO_THROW(a.solver.advance(.6,2));
+        ASSERT_NO_THROW(b.solver.advance(.6,2));
+        ASSERT_EQ(a.solver.saveCheckpoint(before.string()),"");ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+        CoupledRkRig fresh;RkPorousOwner owner;init(fresh,owner);ASSERT_EQ(fresh.solver.saveCheckpoint(before.string()),"");
+        owner.context.climate_state.temperature=std::numeric_limits<double>::quiet_NaN();
+        EXPECT_THROW(fresh.solver.advance(0,.1),std::runtime_error);EXPECT_TRUE(std::isnan(owner.context.climate_state.temperature));
+        owner.context.climate_state.temperature=44.6;ASSERT_EQ(fresh.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+        ASSERT_NO_THROW(fresh.solver.advance(0,.1));checkRkPorousLedgers(fresh);
+    }
+}
