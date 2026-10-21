@@ -66,6 +66,7 @@
 #include "core/CompletedSourceArchive.hpp"
 #include "2d/heat/MeshHeat.hpp"
 #include "core/SWMMEngine.hpp"
+#include "core/DateTime.hpp"
 #include <openswmm/engine/openswmm_reactions.h>
 
 using namespace openswmm::twoD;
@@ -4029,7 +4030,7 @@ void setRkRuntimePair(CoupledRkRig& r,double flow=.2,double until=std::numeric_l
     auto& rows=r.state.runtime_sources;
     for(int cell=0;cell<r.mesh.n_cells();++cell)for(bool sink:{false,true}) {
         RuntimeSource row;row.id=sink?"withdraw":"supply";row.owner="qualified-test";row.cell=cell;row.flow=sink?-flow:flow;row.until=until;
-        row.concentrations.assign(r.state.transport.n_species,0);row.concentrations[0]=7;
+        row.concentrations.assign(r.state.transport.n_species,0);if(!row.concentrations.empty())row.concentrations[0]=7;
         if(r.state.transport.age_row>=0)row.concentrations[r.state.transport.age_row]=3;
         row.rates.assign(r.state.transport.n_species,0);rows.replace(std::move(row));
     }
@@ -4157,7 +4158,7 @@ TEST(CoupledGroundwaterRk2, RuntimeSourceCorruptGrossReceiptRefusesBeforeAnyOwne
 namespace {
 void setRkRain(CoupledRkRig& r,double until=.735) {
     RuntimeForcing row;row.channel=1;row.cell=-1;row.mode=1;row.rate=.01;row.until=until;row.owner="rain-test";
-    row.concentrations.assign(r.state.transport.n_species,0);row.concentrations[0]=7;
+    row.concentrations.assign(r.state.transport.n_species,0);if(!row.concentrations.empty())row.concentrations[0]=7;
     if(r.state.transport.age_row>=0)row.concentrations[r.state.transport.age_row]=3;
     row.receipt.requested_mass.assign(row.concentrations.size(),0);row.receipt.applied_mass.assign(row.concentrations.size(),0);
     r.state.runtime_forcings.replace(std::move(row));r.state.runtime_forcings.rebuild(r.mesh.n_cells());
@@ -5697,4 +5698,136 @@ TEST(CoupledGroundwaterRk2, SurfaceStateSignalInitialOverflowPreservesItsFreshIm
     ASSERT_EQ(r.solver.saveCheckpoint(before.string()),"");context.tables.tables[0].y={-1e308,1e308};
     EXPECT_FALSE(r.solver.configureRk2BoundarySignals(context,1,1).empty());
     ASSERT_EQ(r.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+}
+
+namespace {
+void initOwnedRkSnow(CoupledRkRig& r,openswmm::SimulationContext& ctx,bool ueb=false,bool partial=false,double depth=.1) {
+    ctx.options.ignore_snow_melt=false;ctx.options.heat_transport=false;ctx.options.flow_units=openswmm::FlowUnits::CFS;
+    ctx.options.start_date=openswmm::datetime::encodeDate(2026,1,1);
+    ctx.options.end_date=ctx.options.start_date+10./86400.;ctx.options.total_duration_ms=10000;
+    ctx.climate_state.temperature=ctx.climate_state.temperature_src=41;
+    ctx.climate_state.snow_divt=32;ctx.climate_state.humidity=50;
+    ctx.snowpack_names.add("SP");ctx.snowpacks.names={"SP"};
+    // Manufactured constant melt: native US coefficient *9F *0.3048/43200
+    // gives exactly .005m/s. This is an order gate, not a calibrated snowpack.
+    const double coefficient=.005*43200/(.3048*9);
+    ctx.snowpacks.pervious={std::array<double,7>{coefficient,coefficient,32,0,depth/.0254,0,0}};
+    if(partial)ctx.snowpacks.mesh_config.cells[0].pack="SP";
+    else ctx.snowpacks.mesh_config.defaults["*"].pack="SP";
+    if(ueb) {
+        ctx.snowpacks.config.model=openswmm::surface::SnowKind::Ueb;
+        // Seed drainable free water; a newly warming dry UEB pack retains
+        // its first melt internally rather than immediately producing runoff.
+        ctx.snowpacks.pervious[0][3]=.2;ctx.snowpacks.pervious[0][5]=.01/.0254;
+        ctx.snowpacks.config.site=openswmm::surface::ClimateSite{45,-120,-8,1000};
+        std::istringstream met("01/01/2026 00:00 5 50 1 400 375\n01/01/2026 01:00 5 50 1 400 375\n");
+        if(auto error=ctx.snowpacks.meteorology.read(met);!error.empty())throw std::runtime_error(error);
+    }
+    std::vector<openswmm::surface::MeshSnowGeometry> geometry(r.mesh.n_cells());
+    for(int i=0;i<r.mesh.n_cells();++i)geometry[i].area=r.mesh.tri_area[i];
+    if(auto error=r.state.snow.initialize(ctx,geometry);!error.empty())throw std::runtime_error(error);
+    r.state.snow_context=&ctx;r.state.snow_catch.assign(r.mesh.n_cells(),1);
+}
+double rkSnowStorage(const CoupledRkRig& r) {double volume=0;for(const auto& b:r.state.snow.ledgers())volume+=b.stored;return volume;}
+std::vector<double> rkSnowTrajectory(double dt,bool snow,double duration=2) {
+    CoupledRkRig r;r.init(dt,.005,.0005,.2);openswmm::SimulationContext ctx;
+    auto& water=r.gw.state();for(int i=0;i<water.n_cells;++i){water.hu[i]=.35*(water.zs[i]-water.hg[i]);water.wetting_front[i]=.1;}
+    water.led_init_storage=water.storage();r.gw.publishInfiltration(r.state,dt,0);
+    if(snow)initOwnedRkSnow(r,ctx);const double initial=r.total()+rkSnowStorage(r);
+    for(int k=0;k<int(std::round(duration/dt));++k)r.solver.advance(k*dt,(k+1)*dt);
+    EXPECT_NEAR(r.total()+rkSnowStorage(r)+water.led_deep,initial,1e-10*initial);
+    if(snow) {
+        double liquid=0;for(const auto& b:r.state.snow.ledgers()){liquid+=b.liquid;EXPECT_NEAR(b.residual(),0,1e-10);}
+        EXPECT_NEAR(liquid,.005*duration*std::accumulate(r.mesh.tri_area.begin(),r.mesh.tri_area.end(),0.),1e-10);
+        EXPECT_DOUBLE_EQ(r.state.snow.completedEnd(),r.solver.completedSourceTime());
+    }
+    return {r.state.volume[0],water.hg[0],water.hu[0]};
+}
+}
+TEST(CoupledGroundwaterRk2, OwnedSnowSourceHasFourGlobalRefinementsAndIndependentMeltBudget) {
+    const auto response=[](double dt){auto a=rkSnowTrajectory(dt,true),b=rkSnowTrajectory(dt,false);for(std::size_t i=0;i<a.size();++i)a[i]-=b[i];return a;};
+    const auto reference=response(.00078125);double previous=0;
+    for(double dt:{.1,.05,.025,.0125}) {
+        const auto result=response(dt);double square=0;for(std::size_t i=0;i<result.size();++i)square+=std::pow(result[i]-reference[i],2);
+        const double error=std::sqrt(square);RecordProperty("snow_error_"+std::to_string(int(dt*100000)),error);
+        EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GE(previous/error,3.5);previous=error;
+    }
+}
+TEST(CoupledGroundwaterRk2, OwnedSnowComponentRestoresItsActualPointStateAndRejectsChangedWeather) {
+    CoupledRkRig a,b;a.init(.1,.005,.0005,.2);b.init(.1,.005,.0005,.2);openswmm::SimulationContext ca,cb;
+    ASSERT_NO_THROW(initOwnedRkSnow(a,ca));
+    ASSERT_NO_THROW(initOwnedRkSnow(b,cb));
+    ASSERT_NO_THROW(a.solver.advance(0,.2));const auto saved=rk2Output("snow-owned.chk"),before=rk2Output("snow-before.chk"),after=rk2Output("snow-after.chk");
+    ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");cb.climate_state.temperature+=1;
+    ASSERT_EQ(b.solver.saveCheckpoint(before.string()),"");EXPECT_FALSE(b.solver.loadCheckpoint(saved.string()).empty());
+    ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));cb.climate_state.temperature-=1;
+    ASSERT_EQ(b.solver.loadCheckpoint(saved.string()),"");EXPECT_EQ(a.state.snow.saveCheckpoint(),b.state.snow.saveCheckpoint());
+    ASSERT_NO_THROW(a.solver.advance(.2,1));
+    ASSERT_NO_THROW(b.solver.advance(.2,1));
+    ASSERT_EQ(a.solver.saveCheckpoint(before.string()),"");ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+}
+TEST(CoupledGroundwaterRk2, OwnedSnowRollbackIncludesPointHistoryAfterLaterSourceOverflowAndRetries) {
+    CoupledRkRig r;r.init(.1,0,0,.2,"NONE");openswmm::SimulationContext ctx;ASSERT_NO_THROW(initOwnedRkSnow(r,ctx));setRkRuntimePair(r);
+    r.state.runtime_sources.find("supply",1)->flow=1e308;
+    const auto before=rk2Output("snow-overflow-before.chk"),after=rk2Output("snow-overflow-after.chk");ASSERT_EQ(r.solver.saveCheckpoint(before.string()),"");
+    const auto radiation=ctx.climate_state.radiation;EXPECT_THROW(ExplicitInertialSolverTestAccess::rk2(r.solver,10,0),std::runtime_error);
+    ASSERT_EQ(r.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+    EXPECT_DOUBLE_EQ(ctx.climate_state.radiation.date,radiation.date);EXPECT_DOUBLE_EQ(ctx.climate_state.radiation.shortwave,radiation.shortwave);
+    r.state.runtime_sources.find("supply",1)->flow=.2;ASSERT_NO_THROW(r.solver.advance(0,.1));EXPECT_GT(r.state.snow.ledgers()[0].liquid,0);
+}
+TEST(CoupledGroundwaterRk2, OwnedSnowCoverageProtectsOnlyCoveredCellFromNativeEvaporation) {
+    CoupledRkRig r;r.init(.1,0,0,.2,"NONE");r.opts.evaporation=1;std::fill(r.state.evap_rate.begin(),r.state.evap_rate.end(),.001);
+    openswmm::SimulationContext ctx;ASSERT_NO_THROW(initOwnedRkSnow(r,ctx,false,true));const double initial=r.total()+rkSnowStorage(r);
+    ASSERT_NO_THROW(r.solver.advance(0,.1));double area=0;for(int i=0;i<r.mesh.n_cells();++i)if(!r.state.snow.owns(i))area+=r.mesh.tri_area[i];
+    EXPECT_NEAR(r.state.evap_loss_total,.001*.1*area,1e-12);EXPECT_NEAR(r.total()+rkSnowStorage(r)+r.state.evap_loss_total,initial,1e-10);
+}
+TEST(CoupledGroundwaterRk2, OwnedUebWaterSourceKeepsEnergyAndScratchWeatherInsideItsTransaction) {
+    CoupledRkRig r;r.init(.1,.001,0,.2,"NONE");openswmm::SimulationContext ctx;ASSERT_NO_THROW(initOwnedRkSnow(r,ctx,true));
+    const double initial=r.total()+rkSnowStorage(r);const auto radiation=ctx.climate_state.radiation;
+    ASSERT_NO_THROW(r.solver.advance(0,1));double liquid=0;
+    for(const auto& b:r.state.snow.ledgers()){EXPECT_NEAR(b.residual(),0,1e-10);EXPECT_NEAR(b.energyResidual(),0,1e-8);liquid+=b.liquid;}
+    EXPECT_GT(liquid,0);double sublimation=0;for(const auto& b:r.state.snow.ledgers())sublimation+=b.sublimation;
+    EXPECT_NEAR(r.total()+rkSnowStorage(r)+r.gw.state().led_deep+sublimation,initial,1e-10);
+    EXPECT_DOUBLE_EQ(ctx.climate_state.radiation.date,radiation.date);EXPECT_DOUBLE_EQ(ctx.climate_state.radiation.shortwave,radiation.shortwave);
+}
+
+TEST(CoupledGroundwaterRk2, OwnedSnowSourceHasThirdLocalDifferences) {
+    double previous=0;for(double duration:{.1,.05,.025,.0125}) {
+        auto a=rkSnowTrajectory(duration,true,duration),b=rkSnowTrajectory(duration,false,duration);
+        const auto c=rkSnowTrajectory(.5*duration,true,duration),d=rkSnowTrajectory(.5*duration,false,duration);
+        double square=0;for(std::size_t i=0;i<a.size();++i)square+=std::pow((a[i]-b[i])-(c[i]-d[i]),2);
+        const double error=std::sqrt(square);RecordProperty("snow_local_"+std::to_string(int(duration*100000)),error);
+        if(previous>0)EXPECT_GE(previous/error,6.5);previous=error;
+    }
+}
+TEST(CoupledGroundwaterRk2, OwnedSnowMeltOutAndDrySurfaceConserveAllWater) {
+    for(double pond:{0.,.02}) {
+        CoupledRkRig r;r.init(.025,.001,0,pond,"NONE");r.opts.evaporation=1;
+        std::fill(r.state.evap_rate.begin(),r.state.evap_rate.end(),.001);
+        openswmm::SimulationContext ctx;ASSERT_NO_THROW(initOwnedRkSnow(r,ctx,false,false,.001));
+        const double initial=r.total()+rkSnowStorage(r),snow_initial=rkSnowStorage(r);
+        ASSERT_NO_THROW(r.solver.advance(0,1));double liquid=0;
+        for(const auto& b:r.state.snow.ledgers()){EXPECT_NEAR(b.stored,0,1e-12);EXPECT_NEAR(b.residual(),0,1e-10);liquid+=b.liquid;}
+        EXPECT_NEAR(liquid,snow_initial,1e-10);EXPECT_NEAR(r.total()+rkSnowStorage(r)+r.state.evap_loss_total+r.gw.state().led_deep,initial,1e-10);
+        for(double volume:r.state.volume)EXPECT_GE(volume,0);
+    }
+}
+TEST(CoupledGroundwaterRk2, OwnedSnowValidChecksumClockMutationRefusesBeforeInstallation) {
+    using Archive=openswmm::detail::CompletedSourceArchive;
+    CoupledRkRig a,b;a.init(.1,0,0,.2,"NONE");b.init(.1,0,0,.2,"NONE");openswmm::SimulationContext ca,cb;
+    ASSERT_NO_THROW(initOwnedRkSnow(a,ca));
+    ASSERT_NO_THROW(initOwnedRkSnow(b,cb));
+    ASSERT_NO_THROW(a.solver.advance(0,.2));const auto good=rk2Output("snow-clock-good.chk"),bad=rk2Output("snow-clock-bad.chk"),before=rk2Output("snow-clock-before.chk"),after=rk2Output("snow-clock-after.chk");
+    ASSERT_EQ(a.solver.saveCheckpoint(good.string()),"");std::string magic,payload;uint32_t version=0,endian=0,long_bytes=0,sum=0;
+    Archive in(rk2File(good));in(magic,version,endian,long_bytes,payload,sum);in.finish();const auto snow=a.state.snow.saveCheckpoint();
+    const auto start=payload.find(snow);ASSERT_NE(start,std::string::npos);
+    Archive record(snow);std::string snow_magic,identity;double last=0;std::array<double,4> forcing{};std::vector<unsigned char> contacts;
+    record(snow_magic,identity,last,forcing,contacts);Archive prefix;prefix(snow_magic,identity,last,forcing,contacts);
+    const double wrong=std::nextafter(a.state.snow.completedEnd(),std::numeric_limits<double>::infinity());
+    ASSERT_LT(start+prefix.bytes().size()+sizeof(wrong),payload.size());std::memcpy(payload.data()+start+prefix.bytes().size(),&wrong,sizeof(wrong));
+    sum=~uint32_t(0);for(unsigned char byte:payload){sum^=byte;for(int k=0;k<8;++k)sum=(sum>>1)^((sum&1)?0xedb88320u:0u);}sum=~sum;
+    Archive out;out(magic,version,endian,long_bytes,payload,sum);{std::ofstream file(bad,std::ios::binary);file.write(out.bytes().data(),out.bytes().size());}
+    ASSERT_EQ(b.solver.saveCheckpoint(before.string()),"");EXPECT_EQ(b.solver.loadCheckpoint(bad.string()),"RK2 snow and numerical source clocks differ.");
+    ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+    ASSERT_EQ(b.solver.loadCheckpoint(good.string()),"");EXPECT_EQ(a.state.snow.saveCheckpoint(),b.state.snow.saveCheckpoint());
 }

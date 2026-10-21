@@ -2123,7 +2123,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
         gageRatesToCells(ctx,rates,raw_cells);gageRatesToCells(ctx,caught,caught_cells);
         for(std::size_t i=0;i<state_.snow_catch.size();++i)
             state_.snow_catch[i]=raw_cells[i]>0?caught_cells[i]/raw_cells[i]:1.;
-        if(!common_stage_) {
+        if(!common_stage_&&!(subsurface_.active()&&options_.reconstruction_order==2)) {
             auto rain=state_.rainfall;
             for(int i=0;i<int(rain.size());++i)rain[i]=state_.runtime_forcings.rate(1,i,rain[i]);
             if(auto error=state_.snow.advance(ctx,sim_time_,sim_time_+dt,rain,state_.snow_catch);!error.empty())
@@ -3301,6 +3301,8 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     const bool track_cum =
         do_infil && infil_cum_applied_.size() == static_cast<std::size_t>(nt);
     double rain_vol = 0.0, evap_vol = 0.0, infil_vol = 0.0, storage = 0.0;
+    const bool split_snow=subsurface_.active()&&options_.reconstruction_order==2&&state_.snow.active();
+    double snow_rain_total=0;
     const bool route_aq =
         do_infil && cell_subcatch_.size() == static_cast<std::size_t>(nt) &&
         !subcatch_recharge_.empty();
@@ -3309,7 +3311,10 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
         const double area = mesh_.tri_area[ui];
         const double weather_area = common_stage_ ? common_stage_->meshWeatherArea(i) : area;
         const double rain_rate = common_stage_ ? std::max(0.0, state_.runtime_forcings.rate(1,i,state_.rainfall[ui])) : state_.rainfall[ui];
-        if(!state_.rk2_rain_pending.empty()) {
+        if(split_snow) {
+            rain_cum_[ui]+=rain_rate*weather_area*dt;
+            snow_rain_total+=state_.snow.owns(i)?state_.snow.ledgers()[ui].liquid:rain_cum_[ui];
+        } else if(!state_.rk2_rain_pending.empty()) {
             const double accepted=state_.rk2_rain_pending[ui];rain_vol+=accepted/dt;rain_cum_[ui]+=accepted;
             state_.rk2_rain_pending[ui]=0;
         } else {
@@ -3352,7 +3357,8 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     }
 
     // Rainfall inflow (m³): rainfall is m/s after forcings are applied.
-    if (common_stage_&&!common_stage_->standaloneLocalBed()) mb.rainfall_in = common_stage_->meshRain();
+    if(split_snow)mb.rainfall_in=snow_rain_total;
+    else if (common_stage_&&!common_stage_->standaloneLocalBed()) mb.rainfall_in = common_stage_->meshRain();
     else mb.rainfall_in += rain_vol * dt;
 
     // The CPU marcher records the applied evaporation after sharing the

@@ -179,6 +179,7 @@ int swmm_coupling_apply_frame(SWMM_Engine h,const SWMM_CouplingFrame* f) {
             }
         }
         for(int k=0;k<f->forcing_count;++k) {
+            if(runtime_options.reconstruction_order==2&&router.state().snow.active())return SWMM_ERR_PLUGIN;
             const auto& in=f->forcings[k];
             if(in.struct_size!=sizeof(in) || in.channel<1 || in.channel>4 || in.mode<0 || in.mode>2 ||
                in.cell< -1 || in.cell>=nc || !std::isfinite(in.rate_m_s) || in.rate_m_s<0.0 ||

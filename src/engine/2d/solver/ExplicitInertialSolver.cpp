@@ -458,13 +458,15 @@ void ExplicitInertialSolver::flushSourceLedgers() {
 OPENSWMM_SOURCE_INLINE bool ExplicitInertialSolver::prepareCellSources(int i, double dt, CellSourceStep& source) {
     const double area = mesh_->tri_area[i];
     const double area_dt = area * dt;
-    const double rain = std::max(0.0, state_->liquidRainfall(i)) * area_dt;
+    const bool split_snow=second_order_&&gw_&&state_->snow.owns(i);
+    const double rain = split_snow?0:std::max(0.0, state_->liquidRainfall(i)) * area_dt;
     if(!state_->rk2_rain_pending.empty())state_->rk2_rain_pending[i]+=rain;
     const double coupling = state_->coupling_flux[i] * area_dt;
     const double requested_infil = std::max(0.0,
         infilSink(state_->runtime_forcings.rate(3,i,state_->infil_rate[i]), state_->depth[i], opts_->dry_depth)) * area_dt;
-    const double evap_demand=second_order_&&gw_?
+    double evap_demand=second_order_&&gw_?
         state_->runtime_forcings.rate(2,i,opts_->evaporation!=0?state_->evap_rate[i]:0):state_->exposedEvaporation(i);
+    if(split_snow)evap_demand*=state_->snow.exposedFractions()[i];
     const double requested_evap = std::max(0.0,
         evapSink(evap_demand, state_->depth[i], opts_->dry_depth)) * area_dt;
     const double back = gw_ ? gw_->takeToSurface(i) : 0.0;
@@ -2528,6 +2530,25 @@ void ExplicitInertialSolver::advanceRk2BedContact(double seconds) {
     if(auto error=gw_->refreshPorewaterContactLedger();!error.empty())throw std::runtime_error(error);
 }
 
+void ExplicitInertialSolver::advanceRk2Snow(double seconds,double start) {
+    if(!state_->snow.active())return;
+    auto snow=state_->snow;
+    // Forcing resolution can write radiation diagnostics. Keep that scratch
+    // weather private; the engine retains its own native weather calendar.
+    SimulationContext weather(*state_->snow_context);
+    if(auto error=snow.advance(weather,start,start+seconds,state_->rainfall,state_->snow_catch);!error.empty())
+        throw std::runtime_error(error);
+    auto volume=state_->volume;
+    for(int cell=0;cell<mesh_->n_cells();++cell)if(snow.owns(cell)) {
+        const double liquid=snow.ledgers()[cell].liquid-state_->snow.ledgers()[cell].liquid;
+        if(!std::isfinite(liquid)||liquid<0||!std::isfinite(volume[cell]+liquid))
+            throw std::runtime_error("Nonfinite RK2 snow liquid proposal.");
+        volume[cell]+=liquid;
+    }
+    snow.useAcceptedExposure();
+    state_->snow=std::move(snow);state_->volume=std::move(volume);reconstructAll();
+}
+
 // SSP-RK2 (Heun) over the global active lists: U¹ = U⁰ + Δt·L(U⁰),
 // U² = U¹ + Δt·L(U¹), Uⁿ⁺¹ = ½(U⁰ + U²). The per-advance ledgers that both
 // stages incremented (boundary ∫F dt, coupling ∫Q dt, infiltration applied)
@@ -2546,7 +2567,6 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start,unsigned th
 
         if(common_stage_ || channel_ground_ ||
            (gw_->transport().temp_row>=0&&(state_->transport.temp_row!=gw_->transport().temp_row||(opts_->coupled_heat&&!state_->heat.enabled))) ||
-           state_->snow.active() ||
            (state_->node_coupling&&!state_->node_coupling->empty()))
             throw std::runtime_error("Coupled RK2 has an unqualified surface/source owner.");
         // Capture every owned numerical field. Borrowed owners are refused
@@ -2619,6 +2639,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start,unsigned th
     const double time=cuts.empty()?start:cuts[part],dt=cuts.empty()?interval:cuts[part+1]-time;
     std::unique_ptr<SubsurfaceSolver> part_ground;
     if(gw_){state_->runtime_sources.expire(time);state_->runtime_forcings.expire(time);gw_->runtimeSources().expire(time);}
+    if(gw_)advanceRk2Snow(.5*dt,time);
     const auto runtime0=state_->runtime_sources;const auto forcing0=state_->runtime_forcings;const auto rain_pending0=state_->rk2_rain_pending;
     if(gw_) {
         advanceRk2RuntimeSources(*state_,*opts_,.5*dt);if(runtime0.active())reconstructAll();
@@ -2773,6 +2794,8 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start,unsigned th
         advanceRk2Thermal(.5*dt,time+.75*dt);
         advanceRk2BedContact(.5*dt);
         advanceRk2RuntimeSources(*state_,*opts_,.5*dt);if(runtime0.active())reconstructAll();
+        const double middle=time+.5*dt;
+        advanceRk2Snow(time+dt-middle,middle);
         for(std::size_t k=0;k<runtime0.rows.size();++k)if(runtime0.rows[k].enabled) {
             auto& receipt=state_->runtime_sources.rows[k].receipt;
             receipt.last_dt=dt;receipt.last_flow=(receipt.applied-runtime0.rows[k].receipt.applied)/dt;
@@ -3227,6 +3250,7 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
                     // Numerical landing only: no physical interval is replayed.
                     // Both owners adopt the same representable accepted clock.
                     source_phase_end_=t_target;gw_->source_firing_end_=t_target;
+                    if(state_->snow.active())state_->snow.reanchorCompletedEnd(t_target);
                     for(int i=0;i<gw_->state_.n_cells;++i)if(gw_->covers(i))gw_->cell_completed_[i]=t_target;
                 }
                 t = t_target;

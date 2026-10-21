@@ -38,6 +38,10 @@ public:
     const std::array<double,10>& depletionCurve() const {return depletion_curve_;}
     const std::vector<double>& liquidRates() const {return liquid_rate_;}
     const std::vector<double>& exposedFractions() const {return exposed_;}
+    // Hold accepted cover during a split source operator, without advancing it.
+    void useAcceptedExposure();
+    // Adopt only the driver's representable endpoint after an ulp-sized tail.
+    void reanchorCompletedEnd(double end);
     const std::string& configurationIdentity() const {return identity_;}
     const std::vector<MeshSnowGeometry>& geometry() const {return geometry_;}
     const std::vector<SnowOutputs>& outputs() const {return output_;}

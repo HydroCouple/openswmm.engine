@@ -118,6 +118,15 @@ std::string MeshSnow::advance(SimulationContext& ctx,double start,double end,con
     if(auto error=candidate.advanceInPlace(ctx,start,end,rain,catch_factor);!error.empty())return error;
     *this=std::move(candidate);return {};
 }
+void MeshSnow::useAcceptedExposure() {
+    for(int cell:active_cells_)exposed_[cell]=1-output_[cell].cover_frac;
+}
+void MeshSnow::reanchorCompletedEnd(double end) {
+    const double tolerance=8*std::numeric_limits<double>::epsilon()*std::max({1.,std::abs(end),std::abs(completed_)});
+    if(!std::isfinite(end)||end<0||std::abs(end-completed_)>tolerance)
+        throw std::invalid_argument("Snow source clock is not an ulp-sized driver landing.");
+    completed_=end;
+}
 std::string MeshSnow::setGroundContactMask(const std::vector<unsigned char>& mask) {
     if(mask.size()!=pack_.size())return "Mesh snow ground-contact mask shape differs from the mesh.";
     for(std::size_t i=0;i<mask.size();++i) {

@@ -6812,6 +6812,31 @@ TEST(EngineCheckpoint, ManagedRk2QualityCombinedMismatchPreservesBothOutputPrefi
     EXPECT_FALSE(b.loadCheckpoint(saved.string()).empty());ASSERT_EQ(b.saveCheckpoint(before.string()),"");EXPECT_EQ(bytes(before),initial);EXPECT_EQ(bytes(root()/"managed-rk2-combined-model-b.out"),binary);EXPECT_EQ(bytes(root()/"managed-rk2-combined-model-b.h5"),mesh);
 #endif
 }
+TEST(EngineCheckpoint, ManagedRk2SnowWaterRestoresActualPointOwnerPendingBatchAndAllOutputs) {
+    for(const std::string model:{"DEGREE_DAY","UEB"})for(int output:{0,1,2,3}) {
+#ifndef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+        if(output>=2)continue;
+#endif
+        const auto name="managed-rk2-snow-"+model+std::to_string(output),met=name+".met";SCOPED_TRACE(name);write(root()/met,rk2MetText());SWMMEngine a,b;
+        const auto configure=[&](SWMMEngine& e){e.context().snowpacks.config.met_file.original=met;};
+        const auto extra="[OPTIONS]\nIGNORE_SNOWMELT NO\nWET_STEP 00:00:01\nDRY_STEP 00:00:01\n[TEMPERATURE]\nSNOWMELT_MODEL "+model+"\nSITE 45 -120 -8 1000\n[SNOWPACKS]\nSP PERVIOUS 1 2 0 .1 1000 100 0\n[2D_SNOW_DEFAULTS]\n* SNOWPACK SP\n[2D_OPTIONS]\nCOUPLING_SYNC .7\nREPORT_2D_STEP 00:00:01\nREPORT_2D_VARIABLES DEPTH GROUNDWATER RAINFALL\n";
+        ASSERT_NO_THROW(startManagedRk2Session(a,name+"-a",extra,output,configure));
+        ASSERT_NO_THROW(startManagedRk2Session(b,name+"-b",extra,output,configure));
+        double actual=0;ASSERT_EQ(swmm_coupling_advance_to(&a,1.237,&actual),SWMM_OK);const auto saved=root()/(name+".chk");ASSERT_EQ(a.saveCheckpoint(saved.string()),"");
+        ASSERT_EQ(b.loadCheckpoint(saved.string()),"");EXPECT_EQ(a.surfaceRouter2D().state().snow.saveCheckpoint(),b.surfaceRouter2D().state().snow.saveCheckpoint());
+        compareManagedRk2(a,b,name+"-restored",output>=2);
+        while(a.context().elapsed_ms<a.context().options.totalDurationMs()) {
+            ASSERT_NO_THROW(step(a));
+            ASSERT_NO_THROW(step(b));compareManagedRk2(a,b,name+"-continued",output>=2);
+        }
+        for(const auto& book:a.surfaceRouter2D().state().snow.ledgers()){EXPECT_GT(book.liquid,0);EXPECT_NEAR(book.residual(),0,1e-10);EXPECT_NEAR(book.energyResidual(),0,1e-7);}
+        ASSERT_EQ(a.end(),SWMM_OK);ASSERT_EQ(b.end(),SWMM_OK);
+        if(output==1||output==3)sameBinary(name+"-a",name+"-b",5);
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+        if(output>=2)sameMesh(name+"-a",name+"-b",5);
+#endif
+    }
+}
 TEST(EngineCheckpoint, ManagedRk2FileRadiationRefusesUnreadableCache) {
     SWMMEngine engine;
     const auto configure=[](SWMMEngine& e){e.context().snowpacks.config.met_file.original="unqualified-met.csv";};

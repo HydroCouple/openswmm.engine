@@ -62,6 +62,13 @@ or edits cannot change an initialized session. Native weather cadence is retaine
 Binary output retains the native 1D/system format. Select combined output
 for both native binary and mesh/GW chemical or thermal histories. Both writer
 prefixes and physical state validate before restore publishes any output.
+Owned water-only mesh snow (degree-day or UEB) also supports these four modes.
+The actual point state, accepted cover, signed vapor and liquid/energy ledgers
+resume with the numerical clock, including pending batches and cached weather
+changes at midnight. This profile requires zero surface/GW transport rows,
+native heat disabled and no reciprocal soil contact. Copied weather frames
+are refused before publication. Native weather retains its own cadence;
+snow heat, meltwater chemistry/age/temperature and borrowed owners remain guarded.
 See the engine groundwater transport profile for activation and thermal limits.
 
 Direct sources

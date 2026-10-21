@@ -10,7 +10,7 @@ from openswmm.engine import (
 from tests.engine._groundwater_cases import cleanup
 
 
-def _open(directory, chemistry, thermal, reactive=True, passive=False, output=0, rate='.001', age=True, porous=True, unit='MG', boundary=None, rk2=False, latent=False, authored_surface=None, authored_series=False, network=False, met=False):
+def _open(directory, chemistry, thermal, reactive=True, passive=False, output=0, rate='.001', age=True, porous=True, unit='MG', boundary=None, rk2=False, latent=False, authored_surface=None, authored_series=False, network=False, met=False, snow=None):
     directory.mkdir()
     path = directory / 'model.inp'
     reaction = ''
@@ -67,6 +67,8 @@ CELL 1 EDGE 1 {boundary} SERIES EDGE
 '''
     initial_heat = '[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ 8\n* UNSAT __TEMPERATURE__ 8\n' if porous else ''
     variables = 'DEPTH HEAT GROUNDWATER' if porous else 'DEPTH GROUNDWATER'
+    if snow:
+        variables += ' RAINFALL'
     mesh_output = (f'REPORT_2D YES\nOUTPUT_FILE "{directory / "mesh.h5"}"\n'
                    f'OUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES {variables}\n') if output in (2, 3) else 'REPORT_2D NO\n'
     path.write_text(f'''[OPTIONS]
@@ -162,6 +164,9 @@ SurfaceEdge 02/01/2026 00:01:30 {values[3]}
     if met:
         (directory / 'weather.met').write_text('01/31/2026 23:00 4 40 1 200 300\n02/01/2026 00:00 9 75 3 800 375\n02/01/2026 01:00 -2 60 2 100 290\n')
         path.write_text(path.read_text()+'\n[TEMPERATURE]\nMET_FILE weather.met\n[OPTIONS]\nWET_STEP 00:00:01\nDRY_STEP 00:00:01\n')
+    if snow:
+        assert not (reactive or passive or age or porous)
+        path.write_text(path.read_text()+f'\n[OPTIONS]\nIGNORE_SNOWMELT NO\nWET_STEP 00:00:01\nDRY_STEP 00:00:01\n[TEMPERATURE]\nSNOWMELT_MODEL {snow}\nSITE 45 -120 -8 1000\n[SNOWPACKS]\nSP PERVIOUS 1 2 0 .1 1000 100 0\n[2D_SNOW_DEFAULTS]\n* SNOWPACK SP\n')
     solver = Solver(path, path.with_suffix('.rpt'), path.with_suffix('.out') if output in (1, 3) else None)
     solver.create()
     capabilities = solver.checkpoints.capabilities
@@ -185,7 +190,7 @@ SurfaceEdge 02/01/2026 00:01:30 {values[3]}
     return solver
 
 
-def _snapshot(solver, chemistry, porous=True):
+def _snapshot(solver, chemistry, porous=True, snow=False):
     surface = solver.surface2d
     gw = surface.groundwater
     values = [surface.get_depths(), gw.cells(GroundwaterVariable.HG), gw.cells(GroundwaterVariable.HU)]
@@ -203,6 +208,9 @@ def _snapshot(solver, chemistry, porous=True):
         values.append(np.asarray(list(gw.authored_boundary_receipt(edge).values())))
         values += [np.asarray(list(gw.authored_boundary_receipt(edge, row).values()))
                    for row in range(len(gw.species))]
+    if snow:
+        for rows in (surface.snow.states(), surface.snow.ledgers()):
+            values.append(np.asarray([[row[key] for key in sorted(row)] for row in rows], dtype=float))
     if len(solver.nodes):
         values.append(np.asarray([node.depth for node in solver.nodes]))
         values.append(np.asarray([link.flow for link in solver.links]))
@@ -241,9 +249,9 @@ def test_reactive_edge_session_preserves_reversals_fluxes_and_reports(tmp_path, 
     _continue_session(tmp_path, chemistry, thermal, True, passive, output, True, porous, boundary)
 
 
-def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, age, porous, boundary=None, rk2=False, surface_boundary=None, latent=False, copied_et=False, authored_surface=None, authored_series=False, network=False, met=False):
-    source = _open(tmp_path / 'source', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2, latent=latent, authored_surface=authored_surface, authored_series=authored_series, network=network, met=met)
-    target = _open(tmp_path / 'target', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2, latent=latent, authored_surface=authored_surface, authored_series=authored_series, network=network, met=met)
+def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, age, porous, boundary=None, rk2=False, surface_boundary=None, latent=False, copied_et=False, authored_surface=None, authored_series=False, network=False, met=False, snow=None):
+    source = _open(tmp_path / 'source', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2, latent=latent, authored_surface=authored_surface, authored_series=authored_series, network=network, met=met, snow=snow)
+    target = _open(tmp_path / 'target', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2, latent=latent, authored_surface=authored_surface, authored_series=authored_series, network=network, met=met, snow=snow)
     try:
         source.checkpoints.start_session(output)
         target.checkpoints.start_session(output)
@@ -279,13 +287,13 @@ def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, a
         assert source.elapsed == target.elapsed
         if surface_boundary or authored_surface:
             assert source.surface2d.boundary_receipt(0, 1) == target.surface2d.boundary_receipt(0, 1)
-        for a, b in zip(_snapshot(source, chemistry, porous), _snapshot(target, chemistry, porous)):
+        for a, b in zip(_snapshot(source, chemistry, porous, snow=bool(snow)), _snapshot(target, chemistry, porous, snow=bool(snow))):
             np.testing.assert_array_equal(a, b)
         if rk2:
             while source.elapsed.total_seconds() < 75:
                 assert source.step().total_seconds() > 0
                 assert target.step() == source.elapsed
-            for a, b in zip(_snapshot(source, chemistry, porous), _snapshot(target, chemistry, porous)):
+            for a, b in zip(_snapshot(source, chemistry, porous, snow=bool(snow)), _snapshot(target, chemistry, porous, snow=bool(snow))):
                 np.testing.assert_array_equal(a, b)
             # Settle the explicit public boundary while still RUNNING;
             # the following terminal step transitions the engine to ENDED.
@@ -297,8 +305,17 @@ def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, a
             while source.step().total_seconds() > 0:
                 assert target.step() == source.elapsed
             target.step()
-        for a, b in zip(_snapshot(source, chemistry, porous), _snapshot(target, chemistry, porous)):
+        for a, b in zip(_snapshot(source, chemistry, porous, snow=bool(snow)), _snapshot(target, chemistry, porous, snow=bool(snow))):
             np.testing.assert_array_equal(a, b)
+        if snow:
+            for row in source.surface2d.snow.ledgers():
+                assert abs(row['residual_m3']) < 1e-10
+                if snow == 'UEB':
+                    assert abs(row['energy_residual_kj']) < 1e-7
+                else:
+                    assert np.isnan(row['energy_residual_kj'])
+                assert row['liquid_m3'] > 0
+                assert row['completed_s'] == 75
         gw = source.surface2d.groundwater
         assert abs(gw.continuity_error) < 1e-9
         assert source.elapsed.total_seconds() == 75
@@ -568,3 +585,28 @@ def test_managed_rk2_cached_meteorology_continues_after_file_removal(tmp_path, c
 def test_mesh_groundwater_binary_companions_continue_complete_accepted_history(tmp_path, chemistry, thermal, output, porous, rk2):
     _continue_session(tmp_path, chemistry, thermal, True, True, output, True, porous, rk2=rk2,
                       latent=porous and rk2, met=rk2)
+
+
+@pytest.mark.parametrize('model', ['DEGREE_DAY', 'UEB'])
+@pytest.mark.parametrize('chemistry,thermal', [(0, 4), (5, 3)])
+@pytest.mark.parametrize('output', [0, 1, 2, 3])
+def test_managed_rk2_owned_snow_continues_point_water_energy_and_history(tmp_path, model, chemistry, thermal, output):
+    _continue_session(tmp_path, chemistry, thermal, False, False, output, False, False,
+                      rk2=True, met=True, snow=model)
+
+
+def test_managed_rk2_owned_snow_refuses_copied_weather_without_changing_point_or_receipts(tmp_path):
+    solver = _open(tmp_path / 'source', 0, 4, False, False, 0, age=False, porous=False,
+                   rk2=True, met=True, snow='DEGREE_DAY')
+    from openswmm.engine import RuntimeForcing, PluginError
+    try:
+        solver.checkpoints.start_session(0)
+        solver.advance_to(.1237)  # Leave a real pending native/mesh interval.
+        before, after = tmp_path / 'before.chk', tmp_path / 'after.chk'
+        solver.checkpoints.save(before)
+        with pytest.raises(PluginError):
+            solver.coupling.surface.set_forcings([RuntimeForcing('rainfall', rate_m_s=.001)])
+        solver.checkpoints.save(after)
+        assert before.read_bytes() == after.read_bytes()
+    finally:
+        cleanup(solver)

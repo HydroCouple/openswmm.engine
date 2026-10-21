@@ -12,6 +12,8 @@
 #include "../coupling/Rk2RuntimeSources.hpp"
 #include "../../data/NodeData.hpp"
 #include "../../core/CompletedSourceArchive.hpp"
+#include "../../core/SimulationContext.hpp"
+#include "../../hydrology/surface/SnowCheckpoint.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -87,6 +89,28 @@ std::string validateRk2Sources(const RuntimeSources& sources,int cells,int speci
 }
 std::string rk2SurfaceRuntimeProfile(const SurfaceStateData& surface,const SubsurfaceSolver* ground) {
     const auto& tr=surface.transport;
+    if(surface.snow.active()) {
+        if(!surface.snow_context||surface.snow_context->options.heat_transport||tr.n_species||surface.heat.enabled||
+           !surface.runtime_forcings.rows.empty()||!surface.rk2_rain_pending.empty()||
+           surface.snow.geometry().size()!=surface.volume.size()||surface.snow_catch.size()!=surface.volume.size()||
+           (ground&&(ground->transport().n_species||ground->heat().active()))||
+           std::any_of(surface.snow.groundContactMask().begin(),surface.snow.groundContactMask().end(),[](auto value){return value!=0;}))
+            return "RK2 snow requires an owned water-only source without coupled heat, transport or copied weather.";
+        for(double value:surface.snow_catch)if(!std::isfinite(value)||value<0)return "Invalid RK2 snow catch factor.";
+        for(int cell=0;cell<int(surface.volume.size());++cell)if(surface.snow.owns(cell)&&
+            surface.snow.exposedFractions()[cell]!=1-surface.snow.outputs()[cell].cover_frac)
+            return "RK2 snow exposure differs from accepted cover.";
+        const auto& weather=surface.snow_context->climate_state;
+        for(double value:{weather.temperature,weather.humidity,weather.wind_speed,weather.gamma,weather.snow_divt})
+            if(!std::isfinite(value))return "Nonfinite RK2 snow weather.";
+        for(const auto& book:surface.snow.ledgers()) {
+            for(double value:{book.initial,book.precipitation,book.raw_precipitation,book.liquid,book.stored})
+                if(!std::isfinite(value)||value<0)return "Invalid RK2 snow water ledger.";
+            for(double value:{book.net_energy,book.geometry_energy,book.initial_energy,book.stored_energy,
+                              book.prescribed_ground_energy,book.ground_contact_energy,book.sublimation})
+                if(!std::isfinite(value))return "Nonfinite RK2 snow energy ledger.";
+        }
+    }
     if(auto error=validateRk2Sources(surface.runtime_sources,int(surface.volume.size()),tr.n_species,tr.temp_row,tr.age_row);!error.empty())return error;
     std::set<std::pair<int,int>> forcing_keys;
     for(const auto& row:surface.runtime_forcings.rows) {
@@ -537,9 +561,10 @@ std::string ExplicitInertialSolver::rk2CheckpointProfile() const {
     if(!initialized_||!second_order_||!gw_||common_stage_||joint_checkpoint_||channel_ground_||
        source_history_||engine_source_history_||engine_source_stream_||!checkpoint_ready_||
        mode_!=Momentum2D::FULL_SWE||opts_->lts_tiers!=1||
-       state_->snow.active()||
        (state_->node_coupling&&!state_->node_coupling->empty()))
         return "RK2 checkpoint requires the standalone global transport/age coupled profile.";
+    if(state_->snow.active()&&state_->snow.completedEnd()!=source_phase_end_)
+        return "RK2 snow and numerical source clocks differ.";
     if(auto error=validateRk2SurfaceBoundary(*mesh_,*state_);!error.empty())return error;
     if(state_->boundary) {
         const auto& b=*state_->boundary;std::size_t matched=0;
@@ -685,6 +710,15 @@ std::string ExplicitInertialSolver::rk2CheckpointModel(const Rk2CheckpointBindin
             a(temperature,humidity,wind,shortwave,cloud,shared,longwave,ctx.options.water_density,ctx.options.wind_func_coeff_a,
               ctx.options.wind_func_coeff_b,ctx.options.pressure_ratio);
         }
+    }
+    if(state_->snow.active()) {
+        const auto& ctx=*state_->snow_context;
+        const auto& climate=binding&&binding->climate?*binding->climate:ctx.climate_state;
+        std::string policy="RK2 symmetric owned snow water source v1",identity=state_->snow.configurationIdentity();
+        auto forcing=surface::snowForcingIdentity(ctx);auto packs=ctx.snowpacks.pervious;
+        auto anchor=ctx.options.start_date;auto duration=ctx.options.totalDurationMs();auto units=ctx.options.flow_units;
+        auto temperature=climate.temperature,humidity=climate.humidity,wind=climate.wind_speed,gamma=climate.gamma,division=climate.snow_divt;
+        a(policy,identity,forcing,packs,anchor,duration,units,temperature,humidity,wind,gamma,division);
     }
     if(o.evaporation==0&&std::any_of(state_->evap_rate.begin(),state_->evap_rate.end(),[](double value){return value!=0;})) {
         std::string evaporation="RK2 inactive native evaporation gate v1";a(evaporation);
