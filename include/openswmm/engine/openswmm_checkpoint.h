@@ -45,11 +45,13 @@ typedef struct SWMM_CheckpointSessionOptions {
  * Engine owns source arrays/graphs, stage and journal through close/destruction.
  * Reviewed spatial ownership requires the current authoring preview token.
  * Mesh sessions require the qualified CPU aquifer/common-source profile.
- * Mesh-only first-order matched transport sessions support optional BULK
- * MSX/pollutants, age-only or heat-only layouts, WATER_ONLY or paired porous-ground
- * heat, NONE or MESH output and no live network
- * or private catchment owners. Other external/live forcing, physics and plugin
- * recovery combinations retain their separate profile guards.
+ * Qualified matched mesh transport supports first-order or RK2 advancement,
+ * numerical/binary/mesh/combined output, and the documented ground profiles.
+ * Native LEGACY pollutant networks without catchments, LIDs, treatment, native
+ * heat/age or reactions can retain quality with first-order shared mesh exchange
+ * or an independent RK2 mesh. Shared RK2 network exchange remains refused.
+ * Other external/live forcing, physics and plugin recovery combinations retain
+ * their separate profile guards.
  * Ordinary initialize keeps its existing ownership guard. No callbacks allowed.
  * Preflight refusal preserves OPENED; failure after initialization closes the
  * engine. Partial fresh outputs may remain; caller owns its private workspace.

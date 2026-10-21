@@ -6,6 +6,7 @@
 #include "subsurface/CommonSourceStage.hpp"
 #include "../core/CompletedSourceArchive.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/QualityCheckpoint.hpp"
 #include "../core/DateTime.hpp"
 #include "../hydraulics/Routing.hpp"
 #include "../hydrology/LidNode.hpp"
@@ -314,11 +315,15 @@ std::string SurfaceRouter2D::sourceBoundary(const SimulationContext& ctx) const 
     if(joint_hydraulic_) {
         const bool standalone_local_bed_quality=common_stage_&&common_stage_->standaloneLocalBed();
         const bool mesh_only_ground_quality=common_stage_&&common_stage_->meshOnlyGroundQuality();
+        const bool network_quality=detail::checkpointNetworkPollutants(ctx)&&common_stage_->meshOnly();
+        if(network_quality&&(state_.node_row_conc!=&node_row_conc_||
+            node_row_conc_.size()!=std::size_t(ctx.n_nodes())*ctx.n_pollutants()))
+            return "Joint checkpoint requires the owned native pollutant row publisher.";
         if(state_.nodes_1d!=((node_coupling_points_.empty() && subsurface_.nodeBeds().empty())?nullptr:&ctx.nodes) ||
            state_.node_coupling!=(node_coupling_points_.empty()?nullptr:&node_coupling_points_) ||
            ((coupling_points_.empty() && subsurface_.nodeBeds().empty() && !channel_ground_.active()) &&
             (ctx.n_nodes()!=0 || ctx.n_links()!=0)) ||
-           (ctx.n_pollutants()!=0&&!standalone_local_bed_quality&&!mesh_only_ground_quality))
+           (ctx.n_pollutants()!=0&&!standalone_local_bed_quality&&!mesh_only_ground_quality&&!network_quality))
             return "Joint router checkpoint coupling/receiver layout differs.";
         if(outfall_exchange_.prepared_) return "Joint checkpoint has an unconsumed outfall reservation.";
     }
@@ -386,11 +391,17 @@ void SurfaceRouter2D::attachCommonSourceStage(SimulationContext& ctx,CommonSourc
         const bool standalone_local_bed_quality=stage.standaloneLocalBed() && !subsurface_.active() &&
             state_.heat.enabled && state_.heat.bed && !state_.heat.ground_column;
         const bool mesh_only_ground_quality=stage.meshOnlyGroundQuality()&&stage.meshOnly();
+        const bool network_quality=detail::checkpointNetworkPollutants(ctx)&&stage.meshOnly()&&
+            transport.n_pollut==ctx.n_pollutants()&&transport.n_species==ctx.n_pollutants()&&
+            transport.n_msx==0&&transport.age_row<0&&transport.temp_row<0;
+        if(network_quality&&(state_.node_row_conc!=&node_row_conc_||
+            node_row_conc_.size()!=std::size_t(ctx.n_nodes())*ctx.n_pollutants()))
+            throw std::invalid_argument("Joint attachment requires the owned native pollutant row publisher.");
         if((ramp && ramp[0]=='1') ||
            ((coupling_points_.empty() && subsurface_.nodeBeds().empty() && !channel_ground_.active()) &&
             (ctx.n_nodes()!=0 || ctx.n_links()!=0)) ||
-           (ctx.n_pollutants()!=0&&!standalone_local_bed_quality&&!mesh_only_ground_quality) ||
-           (transport.active() && !temperature_only&&!standalone_local_bed_quality&&!mesh_only_ground_quality) ||
+           (ctx.n_pollutants()!=0&&!standalone_local_bed_quality&&!mesh_only_ground_quality&&!network_quality) ||
+           (transport.active() && !temperature_only&&!standalone_local_bed_quality&&!mesh_only_ground_quality&&!network_quality) ||
            !aquifer_link_shares_.empty())
             throw std::invalid_argument("Joint source attachment requires a supported exchange profile without head ramps or node/link beds.");
     }

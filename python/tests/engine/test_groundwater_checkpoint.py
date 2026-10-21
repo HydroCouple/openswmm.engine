@@ -161,6 +161,11 @@ SurfaceEdge 02/01/2026 00:01:30 {values[3]}
         path.write_text(path.read_text()+'\n[EVAPORATION]\nCONSTANT 18\n')
     if network:
         path.write_text(path.read_text()+"\n[STORAGE]\nS 0 3 1 FUNCTIONAL 20 1 100 0 0\n[OUTFALLS]\nO 0 FIXED .4 NO\n[CONDUITS]\nC S O 30 .013 .75 0 0 0\n[XSECTIONS]\nC CIRCULAR .3 0 0 0\n[2D_OPTIONS]\nCOUPLING_SYNC .7\n")
+    if network == 'shared':
+        path.write_text(path.read_text().replace('S 0 3 1 FUNCTIONAL', 'S 0 .4 .3 FUNCTIONAL')+
+                        '\n[2D_VERTEX_NODE_MAP]\n0 S .7 .01\n')
+        if passive:
+            path.write_text(path.read_text()+'[2D_INITIAL_QUALITY]\n* Dye 9\n')
     if met:
         (directory / 'weather.met').write_text('01/31/2026 23:00 4 40 1 200 300\n02/01/2026 00:00 9 75 3 800 375\n02/01/2026 01:00 -2 60 2 100 290\n')
         path.write_text(path.read_text()+'\n[TEMPERATURE]\nMET_FILE weather.met\n[OPTIONS]\nWET_STEP 00:00:01\nDRY_STEP 00:00:01\n')

@@ -13,6 +13,7 @@
 #include "../../data/NodeData.hpp"
 #include "../../core/CompletedSourceArchive.hpp"
 #include "../../core/SimulationContext.hpp"
+#include "../../core/QualityCheckpoint.hpp"
 #include "../../hydrology/surface/SnowCheckpoint.hpp"
 #include <algorithm>
 #include <atomic>
@@ -199,7 +200,19 @@ std::string ExplicitInertialSolver::checkpointBoundary() const {
     const bool standalone_local_bed_quality=common_stage_->standaloneLocalBed() && state_->heat.enabled &&
         state_->heat.bed && !state_->heat.ground_column;
     const bool mesh_only_ground_quality=joint_checkpoint_&&common_stage_->meshOnlyGroundQuality();
-    const bool supported_transport=temperature_only||standalone_local_bed_quality||mesh_only_ground_quality;
+    const bool network_quality=joint_checkpoint_&&common_stage_->meshOnly()&&
+        detail::checkpointNetworkPollutants(common_stage_->sources().context())&&
+        transport.n_pollut==int(common_stage_->sources().pollutantNames().size())&&
+        transport.n_species==transport.n_pollut&&transport.n_msx==0&&transport.age_row<0&&transport.temp_row<0;
+    const bool supported_transport=temperature_only||standalone_local_bed_quality||mesh_only_ground_quality||network_quality;
+    if(network_quality&&state_->node_row_conc) {
+        if(!state_->nodes_1d||state_->node_row_conc->size()!=std::size_t(state_->nodes_1d->count())*transport.n_species)
+            return "Joint native pollutant row cache shape differs.";
+        for(double value:*state_->node_row_conc)if(!std::isfinite(value)||value<0)
+            return "Invalid joint native pollutant row cache.";
+        // publishNodeRows rebuilds this view from the actual native owner
+        // before every hydraulic/source interval; it carries no private state.
+    }
     if(!joint_checkpoint_ && (state_->nodes_1d || state_->node_coupling))
         return "CPU checkpoint requires a joint hydraulic owner for live 1D coupling.";
     if(state_->node_row_conc && !supported_transport)

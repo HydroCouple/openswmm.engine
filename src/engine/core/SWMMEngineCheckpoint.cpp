@@ -6,6 +6,7 @@
 #include "../hydrology/surface/SnowCheckpoint.hpp"
 #include "CompletedSourceArchive.hpp"
 #include "ReactionCheckpoint.hpp"
+#include "QualityCheckpoint.hpp"
 #include "CheckpointInspection.hpp"
 #include "DateTime.hpp"
 #include "FileIO.hpp"
@@ -893,6 +894,7 @@ std::string SWMMEngine::checkpointModel() const {
         auto mesh_contact_link=ctx_.heat_state.mesh_contact_link;a(mesh_contact_link);
     }
     detail::reactionModel(a,ctx_);
+    detail::networkPollutantModel(a,ctx_);
     auto cm=climateModel(ctx_.climate_state);a(cm);
     auto ext=ctx_.ext_inflows;auto dwf=ctx_.dwf_inflows;auto pat=ctx_.patterns;auto rules=ctx_.control_rules.rule_text;auto events=ctx_.events;
     a(ext.node_idx,ext.node_name,ext.constituent,ext.ts_name,ext.inflow_type,ext.m_factor,ext.s_factor,ext.baseline,ext.pattern_name,

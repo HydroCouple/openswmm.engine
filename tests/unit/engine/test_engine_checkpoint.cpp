@@ -6437,8 +6437,8 @@ TEST(EngineCheckpoint, ManagedRk2IndependentNetworkMismatchPreservesTarget) {
     ASSERT_EQ(a.saveCheckpoint(good.string()),"");ASSERT_EQ(b.saveCheckpoint(before.string()),"");const auto initial=bytes(before);
     EXPECT_FALSE(b.loadCheckpoint(good.string()).empty());ASSERT_EQ(b.saveCheckpoint(before.string()),"");EXPECT_EQ(bytes(before),initial);
 }
-TEST(EngineCheckpoint, ManagedRk2IndependentNetworkStillRefusesSharedExchangeAndQuality) {
-    for(const auto& extra:{std::string("[2D_TRIANGLE_NODE_MAP]\n0 S 0 1\n"),std::string("[OPTIONS]\nIGNORE_QUALITY NO\n[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0\n")}) {
+TEST(EngineCheckpoint, ManagedRk2IndependentNetworkStillRefusesSharedExchangeAndUnsupportedQuality) {
+    for(const auto& extra:{std::string("[2D_TRIANGLE_NODE_MAP]\n0 S 0 1\n"),std::string("[OPTIONS]\nIGNORE_QUALITY NO\nQUALITY_SOLVER EULERIAN_ARD\n[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0\n")}) {
         SWMMEngine engine;const auto name="managed-rk2-independent-refusal-"+std::to_string(extra.size());
         EXPECT_THROW(startManagedRk2Session(engine,name,independentRk2Network()+extra),std::runtime_error);
     }
@@ -6908,5 +6908,180 @@ TEST(EngineCheckpoint, ManagedRk2AuthoredSurfaceFlowSeriesContinuesAcrossMidnigh
     }
     const auto& receipt=a.surfaceRouter2D().boundary().receipts.at(twoD::MeshData::slot(0,1));
     EXPECT_GT(receipt.water_in,0);EXPECT_GT(receipt.water_out,0);
+}
+#endif
+
+namespace {
+std::string networkPollutantDeck(bool connected=false,bool mesh=false,double decay=.03) {
+    std::string text="[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nIGNORE_QUALITY NO\nSTART_DATE 01/31/2026\nSTART_TIME 23:59:58\nEND_DATE 02/01/2026\nEND_TIME 00:00:03\nREPORT_START_DATE 01/31/2026\nREPORT_START_TIME 23:59:58\nROUTING_STEP .1\nREPORT_STEP 00:00:01\nSKIP_STEADY_STATE NO\n[STORAGE]\nS 0 3 .6 FUNCTIONAL 0 0 20 0 0\n[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0 2\nTracer UG/L 0 0 0 "+std::to_string(decay)+" NO * 0 0 7\n[INFLOWS]\nS FLOW Q FLOW 1 1 0\nS Dye D CONCEN 1 1 0\nS Tracer T CONCEN 1 1 0\n[TIMESERIES]\nQ 01/31/2026 23:59:58 .001\nQ 02/01/2026 00:00:03 .001\nD 01/31/2026 23:59:58 3\nD 02/01/2026 00:00:03 3\nT 01/31/2026 23:59:58 5\nT 02/01/2026 00:00:03 5\n";
+    text+="[OUTFALLS]\nO 0 FIXED .1 NO\n";
+    text+="[CONDUITS]\nC S O 30 .013 "+std::string(connected?".2":"2")+" 0 0 0\n[XSECTIONS]\nC CIRCULAR .15 0 0 0\n";
+    if(!connected) {
+        text.replace(text.find("O 0 FIXED .1"),std::string("O 0 FIXED .1").size(),"O 0 FIXED 0");
+        text.replace(text.find("FLOW_UNITS CMS"),std::string("FLOW_UNITS CMS").size(),"FLOW_UNITS CFS");
+    }
+    if(!connected)text.erase(text.find("[CONDUITS]"));
+    if(mesh)text.replace(text.find("S 0 3 .6"),std::string("S 0 3 .6").size(),"S 0 .2 .15");
+    if(mesh)text+="[2D_OPTIONS]\nREPORT_2D NO\nMAX_TIMESTEP .02\nLTS_TIERS 1\nCOUPLING_SYNC .17\nTRANSPORT_POLLUTANTS YES\nEVAPORATION NO\n[2D_VERTICES]\n0 0 .5\n4 0 .5\n0 2 .5\n4 2 .5\n[2D_TRIANGLES]\n0 1 2 .03 .04\n1 3 2 .03 .03\n[2D_VERTEX_NODE_MAP]\n0 S .7 .01\n[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\nNODE_ENROLMENT ROWS\nLINK_SEEPAGE NONE\nGW_ET NONE\n[2D_AQUIFER]\n* 36 1 .45 .1 2 HG0 .3 C_LOSS .02\n[2D_INITIAL_QUALITY]\n* Dye 9\n* Tracer 11\n[GW_INITIAL_QUALITY]\n* SAT Dye 2\n* UNSAT Dye 4\n* SAT Tracer 3\n* UNSAT Tracer 5\n";
+    return text;
+}
+void startNetworkPollutants(SWMMEngine& e,const std::string& name,int output=0,bool connected=false,bool mesh=false,double decay=.03) {
+    const auto input=root()/(name+".inp"),report=root()/(name+".rpt"),binary=root()/(name+".out");
+    auto text=networkPollutantDeck(connected,mesh,decay);
+    if(output>=2)text+="[2D_OPTIONS]\nREPORT_2D YES\nOUTPUT_PRECISION FLOAT64\nREPORT_2D_STEP 00:00:01\nREPORT_2D_VARIABLES DEPTH GROUNDWATER\nOUTPUT_FILE \""+(root()/(name+".h5")).string()+"\"\n";
+    write(input,text);if(e.open(input.string().c_str(),report.string().c_str(),(output==1||output==3)?binary.string().c_str():nullptr))throw std::runtime_error(e.context().error_message);
+    if(auto error=e.startCheckpointSession(output,{},false,{});!error.empty())throw std::runtime_error(error);
+}
+}
+TEST(EngineCheckpoint, NetworkPollutantsClosedStoragePreservesIndependentMassAndCurrentOldQuality) {
+    for(int output:{0,1}) {
+        const auto name="network-quality-storage-"+std::to_string(output);SWMMEngine a,b;
+        ASSERT_NO_THROW(startNetworkPollutants(a,name+"-a",output));
+        ASSERT_NO_THROW(startNetworkPollutants(b,name+"-b",output));
+        // Native DW has a trapezoidal startup with no preceding inflow.
+        // Freeze the filling reference after that first step; CFS is exact.
+        ASSERT_NO_THROW(step(a));
+        const auto& initial=a.context();const int node=initial.node_names.find("S"),row=node*initial.n_pollutants();
+        const double mass=initial.nodes.conc[row]*initial.nodes.volume[node],origin=initial.current_time;
+        EXPECT_GT(mass,0);
+        while(a.context().current_time<1.237)ASSERT_NO_THROW(step(a));
+        const auto file=root()/(name+".chk");ASSERT_EQ(a.saveCheckpoint(file.string()),"");ASSERT_EQ(b.loadCheckpoint(file.string()),"");
+        compare(a,b,name+"-restored");
+        while(a.context().elapsed_ms<a.context().options.totalDurationMs()) {
+            ASSERT_NO_THROW(step(a));
+            ASSERT_NO_THROW(step(b));compare(a,b,name+"-continued");
+            const auto& c=a.context();EXPECT_EQ(c.nodes.conc,b.context().nodes.conc);EXPECT_EQ(c.nodes.conc_old,b.context().nodes.conc_old);
+            EXPECT_NEAR(c.nodes.conc[row]*c.nodes.volume[node],mass+3*.001*(c.current_time-origin),1e-9);
+        }
+        ASSERT_EQ(a.end(),0);ASSERT_EQ(b.end(),0);
+        if(output==1)EXPECT_TRUE(bytes(root()/(name+"-a.out"))==bytes(root()/(name+"-b.out")));
+    }
+}
+TEST(EngineCheckpoint, NetworkPollutantsConduitContinuesLoadsStatisticsAndBinaryHistory) {
+    SWMMEngine a,b;
+    ASSERT_NO_THROW(startNetworkPollutants(a,"network-quality-conduit-a",1,true));
+    ASSERT_NO_THROW(startNetworkPollutants(b,"network-quality-conduit-b",1,true));
+    while(a.context().current_time<1.237)ASSERT_NO_THROW(step(a));
+    const auto file=root()/"network-quality-conduit.chk";ASSERT_EQ(a.saveCheckpoint(file.string()),"");ASSERT_EQ(b.loadCheckpoint(file.string()),"");
+    while(a.context().elapsed_ms<a.context().options.totalDurationMs()) {
+        ASSERT_NO_THROW(step(a));
+        ASSERT_NO_THROW(step(b));compare(a,b,"network-quality-conduit-continued");
+        EXPECT_EQ(a.context().links.conc,b.context().links.conc);EXPECT_EQ(a.context().links.conc_old,b.context().links.conc_old);EXPECT_EQ(a.context().links.stat_total_load,b.context().links.stat_total_load);
+    }
+    ASSERT_EQ(a.end(),0);ASSERT_EQ(b.end(),0);
+    EXPECT_TRUE(bytes(root()/"network-quality-conduit-a.out")==bytes(root()/"network-quality-conduit-b.out"));
+}
+TEST(EngineCheckpoint, NetworkPollutantsChangedUnitsDecayAndInitialIdentityPreserveFreshTargetAndOutput) {
+    SWMMEngine source;ASSERT_NO_THROW(startNetworkPollutants(source,"network-quality-identity-source",1,true));
+    while(source.context().current_time<1.237)ASSERT_NO_THROW(step(source));
+    const auto good=root()/"network-quality-identity.chk";ASSERT_EQ(source.saveCheckpoint(good.string()),"");
+    for(int change=0;change<4;++change) {
+        const auto name="network-quality-identity-"+std::to_string(change);SWMMEngine target;
+        auto text=networkPollutantDeck(true,false,change==0?.04:.03);
+        if(change==1)text.replace(text.find("Dye MG/L"),std::string("Dye MG/L").size(),"Dye UG/L");
+        if(change==2)text+="[INITIAL_QUALITY]\nNODE S Dye 12\n";
+        if(change==3) {const auto p=text.find("Dye MG/L"),q=text.find("[INFLOWS]",p);text.replace(p,q-p,"Tracer UG/L 0 0 0 .03 NO * 0 0 7\nDye MG/L 0 0 0 0 NO * 0 0 2\n");}
+        write(root()/(name+".inp"),text);
+        ASSERT_EQ(target.open((root()/(name+".inp")).string().c_str(),(root()/(name+".rpt")).string().c_str(),(root()/(name+".out")).string().c_str()),0);
+        ASSERT_EQ(target.startCheckpointSession(1,{},false,{}),"");
+        const auto before=root()/(name+"-before.chk"),after=root()/(name+"-after.chk");ASSERT_EQ(target.saveCheckpoint(before.string()),"");const auto prefix=bytes(root()/(name+".out"));
+        EXPECT_FALSE(target.loadCheckpoint(good.string()).empty());ASSERT_EQ(target.saveCheckpoint(after.string()),"");
+        EXPECT_TRUE(bytes(before)==bytes(after));EXPECT_TRUE(prefix==bytes(root()/(name+".out")));
+    }
+}
+TEST(EngineCheckpoint, NetworkPollutantsValidChecksumNegativeConcentrationIsAtomicAndAllowsRetry) {
+    SWMMEngine a,b;
+    ASSERT_NO_THROW(startNetworkPollutants(a,"network-quality-corrupt-a"));
+    ASSERT_NO_THROW(startNetworkPollutants(b,"network-quality-corrupt-b"));
+    while(a.context().current_time<1.237)ASSERT_NO_THROW(step(a));
+    const auto good=root()/"network-quality-corrupt-good.chk",bad=root()/"network-quality-corrupt-bad.chk",before=root()/"network-quality-corrupt-before.chk",after=root()/"network-quality-corrupt-after.chk";
+    ASSERT_EQ(a.saveCheckpoint(good.string()),"");using Archive=detail::CompletedSourceArchive;
+    std::string magic,model,payload;uint32_t version=0,sum=0;Archive file(bytes(good));file(magic,version,model,sum,payload);file.finish();
+    const std::string hydraulic_magic="OpenSWMM accepted DW hydraulic boundary";
+    const auto tag=payload.find(hydraulic_magic);ASSERT_NE(tag,std::string::npos);ASSERT_GE(tag,16u);
+    const auto at=tag-16;uint64_t size=0;std::memcpy(&size,payload.data()+at,sizeof(size));ASSERT_LE(size,payload.size()-at-8);
+    auto hydraulic=payload.substr(at+8,size);std::string hm,hmodel,body;uint32_t hv=0,hsum=0;Archive in(hydraulic);in(hm,hv,hmodel,hsum,body);in.finish();
+    const auto node=a.context().node_names.find("S");const double value=a.context().nodes.conc[node*a.context().n_pollutants()];
+    const std::string needle(reinterpret_cast<const char*>(&value),sizeof(value));const auto position=body.find(needle);
+    ASSERT_NE(position,std::string::npos);ASSERT_EQ(body.find(needle,position+1),std::string::npos);
+    const double negative=-value;std::memcpy(body.data()+position,&negative,sizeof(negative));hsum=crc(body);Archive hout;hout(hm,hv,hmodel,hsum,body);
+    Archive record;auto encoded=hout.bytes();record(encoded);payload.replace(at,size+8,record.bytes());sum=crc(payload);Archive out;out(magic,version,model,sum,payload);write(bad,out.bytes());
+    ASSERT_EQ(b.saveCheckpoint(before.string()),"");EXPECT_FALSE(b.loadCheckpoint(bad.string()).empty());ASSERT_EQ(b.saveCheckpoint(after.string()),"");EXPECT_TRUE(bytes(before)==bytes(after));
+    ASSERT_EQ(b.loadCheckpoint(good.string()),"");compare(a,b,"network-quality-corrupt-retry");
+}
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, NetworkPollutantsFirstOrderSharedMeshOwnsPhysicalQueuesAndRestart) {
+    for(int output:{0,1,2,3}) {
+#ifndef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+        if(output>=2)continue;
+#endif
+        const auto name="network-quality-shared-"+std::to_string(output);SWMMEngine a,b;
+        ASSERT_NO_THROW(startNetworkPollutants(a,name+"-a",output,true,true,0));
+        ASSERT_NO_THROW(startNetworkPollutants(b,name+"-b",output,true,true,0));
+        while(a.context().current_time<1.237)ASSERT_NO_THROW(step(a));
+        const auto file=root()/(name+".chk");ASSERT_EQ(a.saveCheckpoint(file.string()),"");ASSERT_EQ(b.loadCheckpoint(file.string()),"");
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+        if(output>=2)compareMesh(a,b,name+"-restored");else
+#endif
+        compare(a,b,name+"-restored");
+        bool transferred=false;
+        while(a.context().elapsed_ms<a.context().options.totalDurationMs()) {
+            ASSERT_NO_THROW(step(a));
+            ASSERT_NO_THROW(step(b));
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+            if(output>=2)compareMesh(a,b,name+"-continued");else
+#endif
+            compare(a,b,name+"-continued");
+            EXPECT_EQ(a.context().nodes.conc,b.context().nodes.conc);EXPECT_EQ(a.context().nodes.coupling_qual_queue,b.context().nodes.coupling_qual_queue);
+            const auto& tr=a.surfaceRouter2D().state().transport;transferred|=tr.lost_coupling[0]!=0||tr.gained_coupling[0]!=0;
+        }
+        EXPECT_TRUE(transferred);
+        ASSERT_EQ(a.end(),0);ASSERT_EQ(b.end(),0);
+        if(output==1||output==3)sameBinary(name+"-a",name+"-b",5);
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+        if(output>=2)sameMesh(name+"-a",name+"-b",5);
+#endif
+    }
+}
+#endif
+
+
+TEST(EngineCheckpoint, NetworkPollutantsSignedNativeLoadsContinueAcrossReversal) {
+    const auto text0=networkPollutantDeck(true);auto text=text0;
+    text.replace(text.find("S Dye D CONCEN"),std::string("S Dye D CONCEN").size(),"S Dye D MASS");
+    const auto begin=text.find("D 01/31/2026"),end=text.find("T 01/31/2026",begin);
+    text.replace(begin,end-begin,"D 01/31/2026 23:59:58 -10\nD 02/01/2026 00:00:00 -10\nD 02/01/2026 00:00:01 20\nD 02/01/2026 00:00:03 20\n");
+    SWMMEngine a,b;int id=0;
+    for(auto* e:{&a,&b}) {
+        const auto name="network-quality-signed-"+std::to_string(id++);
+        write(root()/(name+".inp"),text);
+        ASSERT_EQ(e->open((root()/(name+".inp")).string().c_str(),(root()/(name+".rpt")).string().c_str(),(root()/(name+".out")).string().c_str()),0);
+        ASSERT_EQ(e->startCheckpointSession(1,{},false,{}),"");
+    }
+    while(a.context().current_time<1.237)ASSERT_NO_THROW(step(a));
+    ASSERT_LT(a.context().mass_balance.qual_routing_ex_in[0],0);
+    const auto good=root()/"network-quality-signed.chk";ASSERT_EQ(a.saveCheckpoint(good.string()),"");ASSERT_EQ(b.loadCheckpoint(good.string()),"");
+    bool positive=false,negative=false;
+    while(a.context().elapsed_ms<a.context().options.totalDurationMs()) {
+        const double before=a.context().mass_balance.qual_routing_ex_in[0];
+        ASSERT_NO_THROW(step(a));
+        ASSERT_NO_THROW(step(b));compare(a,b,"network-quality-signed-continued");
+        const double delta=a.context().mass_balance.qual_routing_ex_in[0]-before;
+        positive|=delta>0;negative|=delta<0;
+    }
+    EXPECT_TRUE(positive);EXPECT_TRUE(negative);
+    ASSERT_EQ(a.end(),0);ASSERT_EQ(b.end(),0);sameBinary("network-quality-signed-0","network-quality-signed-1",5);
+}
+
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, NetworkPollutantsRefuseBorrowedOrMissingRowPublisherAtomically) {
+    SWMMEngine e;ASSERT_NO_THROW(startNetworkPollutants(e,"network-quality-publisher",0,true,true,0));
+    auto& state=e.surfaceRouter2D().state();const auto* owned=state.node_row_conc;ASSERT_NE(owned,nullptr);
+    auto borrowed=*owned;const auto before=root()/"network-quality-publisher-before.chk",after=root()/"network-quality-publisher-after.chk",bad=root()/"network-quality-publisher-bad.chk";
+    ASSERT_EQ(e.saveCheckpoint(before.string()),"");
+    for(const auto* replacement:{static_cast<const std::vector<double>*>(&borrowed),static_cast<const std::vector<double>*>(nullptr)}) {
+        state.node_row_conc=replacement;EXPECT_FALSE(e.saveCheckpoint(bad.string()).empty());EXPECT_FALSE(std::filesystem::exists(bad));
+        state.node_row_conc=owned;ASSERT_EQ(e.saveCheckpoint(after.string()),"");EXPECT_TRUE(bytes(before)==bytes(after));
+    }
 }
 #endif

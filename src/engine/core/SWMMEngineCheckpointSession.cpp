@@ -2,6 +2,7 @@
 #include "SWMMEngine.hpp"
 #include "CheckpointInspection.hpp"
 #include "ReactionCheckpoint.hpp"
+#include "QualityCheckpoint.hpp"
 #include "FileIO.hpp"
 #include "../plugins/DefaultInputPlugin.hpp"
 #include "../plugins/DefaultReportPlugin.hpp"
@@ -81,8 +82,8 @@ std::string SWMMEngine::startCheckpointSession(int output,const std::string& sou
             (ctx_.reactions.configured||ctx_.options.water_age||ctx_.options.heat_transport||
              (!ctx_.options.ignore_quality&&ctx_.n_pollutants()>0));
 #endif
-        require(mesh_quality||(!ctx_.options.heat_transport&&!ctx_.options.water_age&&(ctx_.options.ignore_quality||ctx_.n_pollutants()==0)),
-            "Managed checkpoint sessions require water-only, supported 1D reactions or mesh-only matched ground quality.");
+        require(mesh_quality||detail::checkpointNetworkPollutants(ctx_)||(!ctx_.options.heat_transport&&!ctx_.options.water_age&&(ctx_.options.ignore_quality||ctx_.n_pollutants()==0)),
+            "Managed checkpoint sessions require water-only, qualified native network pollutants, supported 1D reactions or mesh-only matched ground quality.");
         require(!mesh_quality||output<=SWMM_CHECKPOINT_OUTPUT_COMBINED,
             "Mesh-only matched ground quality sessions support numerical, binary, mesh or combined output.");
 #ifndef OPENSWMM_HAS_2D_HDF5_OUTPUT

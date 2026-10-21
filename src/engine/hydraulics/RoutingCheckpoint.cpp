@@ -3,6 +3,7 @@
 #include "Routing.hpp"
 #include "../core/CompletedSourceArchive.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/QualityCheckpoint.hpp"
 #include "../core/DateTime.hpp"
 #include "../hydrology/LidNode.hpp"
 #include "Node.hpp"
@@ -154,7 +155,13 @@ struct Router::RestartState {
           outfalls(c.node_subtypes.outfalls),conduits(c.link_subtypes.conduits),exports(c.outfall_exports),dw(r.dw_solver_),
           time(c.current_time),date(c.current_date),elapsed(c.elapsed_ms),old_elapsed(c.old_elapsed_ms),
           next_report(c.next_report_ms),evap(c.climate_state.evap_rate),infil_factor(c.climate_state.infil_factor),
-          recovery_factor(c.climate_state.recovery_factor),link_steps(r.lstep_enabled_),link_step_span(r.lstep_rs_) {}
+          recovery_factor(c.climate_state.recovery_factor),link_steps(r.lstep_enabled_),link_step_span(r.lstep_rs_) {
+        // This no-LID profile has no old drain load. Native routing creates
+        // the zero history on its first step; canonicalize it on private
+        // snapshots so a fresh target has the same fixed archive shape.
+        if(detail::checkpointNetworkPollutants(c)&&nodes.lid_drain_qual_load_old.empty())
+            nodes.lid_drain_qual_load_old.assign(std::size_t(c.n_nodes())*c.n_pollutants(),0.);
+    }
     void archive(Archive& a,bool thermal_lid_state,bool thermal_lid_contact_receipts) {
         a.fixed(exports.water_m3, exports.reverse_m3, exports.heat_j, exports.pollutant_amounts);
         a(time,date,elapsed,old_elapsed,next_report,evap,infil_factor,recovery_factor,link_steps,link_step_span);
@@ -198,6 +205,21 @@ struct Router::RestartState {
         require(dw.surcharge_method!=dynwave::SurchargeMethod::DYNAMIC_SLOT ||
                 (router.checkpoint_owned_session_ ? dw.sim_time_<=time+1.e-11*std::max(1.,time) : close(dw.sim_time_,time)),
                 "Hydraulic/DPS completed clocks differ.");
+        if(detail::checkpointNetworkPollutants(c)) {
+            const auto np=std::size_t(c.n_pollutants()),nn=std::size_t(c.n_nodes()),nl=std::size_t(c.n_links());
+            require(nodes.conc_n_pollutants==int(np)&&links.conc_n_pollutants==int(np)&&
+                    nodes.stat_n_pollutants==int(np)&&links.stat_n_pollutants==int(np)&&
+                    nodes.conc.size()==nn*np&&nodes.conc_old.size()==nn*np&&
+                    links.conc.size()==nl*np&&links.conc_old.size()==nl*np&&
+                    nodes.stat_total_load.size()==nn*np&&links.stat_total_load.size()==nl*np,
+                    "Network pollutant checkpoint layout differs.");
+            require(nodes.lid_drain_qual_load_old.size()==nn*np&&
+                    std::all_of(nodes.lid_drain_qual_load_old.begin(),nodes.lid_drain_qual_load_old.end(),[](double v){return v==0;})&&
+                    std::all_of(nodes.lid_drain_qual_load.begin(),nodes.lid_drain_qual_load.end(),[](double v){return v==0;}),
+                    "Unexpected LID pollutant history without a LID owner.");
+            for(const auto* row:{&nodes.conc,&nodes.conc_old,&links.conc,&links.conc_old,
+                                 &nodes.stat_total_load,&links.stat_total_load})nonnegative(*row);
+        }
 #define FINITE(v) finite(nodes.v);
         NODE_STATE(FINITE)
 #undef FINITE
@@ -392,7 +414,7 @@ void Router::checkCheckpointProfile(const SimulationContext& c) const {
             dw_solver_.n_links_==c.n_links() && c.nodes.count()==c.n_nodes() && c.links.count()==c.n_links(),
             "Hydraulic checkpoint requires an initialized DW routing component.");
     const bool no_hydraulic_quality_state=c.n_nodes()==0 && c.n_links()==0 && c.n_subcatches()==0;
-    require((no_hydraulic_quality_state || (c.n_pollutants()==0 && !c.options.water_age &&
+    require((no_hydraulic_quality_state || (checkpoint_owned_session_&&detail::checkpointNetworkPollutants(c)) || (c.n_pollutants()==0 && !c.options.water_age &&
             c.nodes.conc_n_pollutants==0 && c.links.conc_n_pollutants==0 &&
             c.nodes.stat_n_pollutants==0 && c.links.stat_n_pollutants==0)) &&
             (!c.options.heat_transport || (c.n_nodes()==0 && c.n_links()==0) || checkpoint_owned_session_) &&
@@ -482,6 +504,7 @@ std::string Router::checkpointModel(const SimulationContext& c) const {
 #define FIELD(v) a(cd.v);
     CONDUIT_MODEL(FIELD)
 #undef FIELD
+    detail::networkPollutantModel(a,c);
     a(ns,ls,coupled,nodes.aquifer2d_bed,out.node_idx,out.bc_type,out.param,out.param_name,out.has_flap_gate,out.route_to,out.link_idx,out.link_offset);
     for(int n=0;n<c.n_nodes();++n) {auto name=c.node_names.name_of(n);a(name);}
     for(int j=0;j<c.n_links();++j) {auto name=c.link_names.name_of(j);a(name);}
