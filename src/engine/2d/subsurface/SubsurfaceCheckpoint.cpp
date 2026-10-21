@@ -22,7 +22,8 @@ void signal(detail::CompletedSourceArchive& a,GwSourceSignal& s) {
     auto times=s.timePoints(),values=s.ordinates();a(s.constant,times,values);
 }
 }
-void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) {
+void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) {checkpoint(a,model,nullptr);}
+void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model,const double* held_air) {
     if(!lid_receipts_enabled_ && std::any_of(richards_bed_owned_.begin(),richards_bed_owned_.end(),[](bool owned){return owned;}))
         throw std::runtime_error("Richards joint owner checkpoints require the R5 restart extension.");
     auto& s=state_;auto& t=tr_;auto& o=options_;
@@ -54,7 +55,7 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) 
     a.fixed(t.row_names,t.alpha_L,t.alpha_T,t.D_m,t.rho_b,t.kd,t.decay);
         auto thermal=checkpoint::groundHeatModelIdentity(heat_);a(thermal);
         if(rk2_transport&&heat_.active()&&heat_.config->options.surface_thermal_bc=="AIR") {
-            std::string profile="RK2 held AIR soil boundary v1";double air=heat_.context->climate_state.temperature;
+            std::string profile="RK2 held AIR soil boundary v1";double air=held_air?*held_air:heat_.context->climate_state.temperature;
             a(profile,air);
         }
         if(rk2_transport&&heat_.active()&&(heat_.top_series>=0||heat_.deep_series>=0)) {

@@ -77,7 +77,7 @@ std::string SWMMEngine::startCheckpointSession(int output,const std::string& sou
 #ifdef OPENSWMM_HAS_2D
         mesh_quality=!ctx_.options.ignore_2d&&surface_router_.mesh().n_cells()>0&&ctx_.n_nodes()==0&&
             ctx_.n_links()==0&&ctx_.n_subcatches()==0&&surface_router_.aquiferConfig().surface_owners.empty()&&
-            surface_router_.options().reconstruction_order==1&&
+            (surface_router_.options().reconstruction_order==1||surface_router_.options().reconstruction_order==2)&&
             (ctx_.reactions.configured||ctx_.options.water_age||ctx_.options.heat_transport||
              (!ctx_.options.ignore_quality&&ctx_.n_pollutants()>0));
 #endif
@@ -105,6 +105,9 @@ std::string SWMMEngine::startCheckpointSession(int output,const std::string& sou
         if(surface) {
             require(!r.aquiferConfig().empty()&&r.options().groundwater!=0&&!r.aquiferConfig().options.per_subcatch,
                 "Managed surface sessions require the mesh aquifer/common-source profile.");
+            if(r.options().reconstruction_order==2)
+                require(ctx_.n_nodes()==0&&ctx_.n_links()==0&&ctx_.n_subcatches()==0&&owners.empty()&&source_path.empty()&&ctx_.snowpacks.config.met_file.empty(),
+                    "Managed RK2 currently requires the standalone mesh/aquifer owner without network, catchment, source journal or file-based radiation.");
             if(!owners.empty()) {
                 const auto preview=twoD::resolveSurfaceOwnership(ctx_,r.mesh(),r.options(),r.aquiferConfig(),owners);
                 reviewed(preview);require(!token.empty()&&token==preview.token,"Reviewed ownership token is stale; preview the current model again.");
@@ -155,7 +158,7 @@ std::string SWMMEngine::startCheckpointSession(int output,const std::string& sou
 #endif
         require(initialized==SWMM_OK,ctx_.error_message);
 #ifdef OPENSWMM_HAS_2D
-        if(mesh_quality)require(twoD::CommonSourceStage::supportsMeshGroundQuality(ctx_,r.state(),r.subsurface()),
+        if(mesh_quality&&r.options().reconstruction_order==1)require(twoD::CommonSourceStage::supportsMeshGroundQuality(ctx_,r.state(),r.subsurface()),
             "Managed mesh quality requires matched bulk-species layouts and either WATER_ONLY without heat or paired porous-ground thermal owners.");
         if(output>=SWMM_CHECKPOINT_OUTPUT_COMBINED)checked(prepareCombinedOutputCheckpointing());
         else if(output==SWMM_CHECKPOINT_OUTPUT_BINARY)checked(prepareOutputCheckpointing());
@@ -167,7 +170,9 @@ std::string SWMMEngine::startCheckpointSession(int output,const std::string& sou
         // Own before non-owning attachments are installed, including failures.
         checkpoint_session_resources_=resources;
 #ifdef OPENSWMM_HAS_2D
-        if(r.isActive()) {
+        if(r.isActive()&&r.options().reconstruction_order==2) {
+            checked(enableCheckpointing());
+        } else if(r.isActive()) {
             twoD::SurfaceOwnershipPreview preview;std::vector<int> seeds;std::vector<std::pair<int,double>> areas;
             const bool spatial=!owners.empty();
             if(spatial) {

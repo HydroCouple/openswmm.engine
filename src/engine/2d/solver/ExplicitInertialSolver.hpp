@@ -59,6 +59,7 @@ namespace openswmm::detail { class CompletedSourceArchive; }
 namespace openswmm { class SWMMEngine; struct SimulationContext; }
 namespace openswmm::runoff { class SourceWaterDriver; }
 namespace openswmm::twoD {
+struct Rk2CheckpointBinding;
 
 class SubsurfaceSolver;   // G1: the two-zone groundwater kernel, if authored
 class CommonSourceStage;
@@ -121,8 +122,12 @@ private:
     std::string checkpointBytes(std::string& bytes) const;
     std::string rk2CheckpointProfile() const;
     std::string rk2CheckpointModel() const;
+    std::string rk2CheckpointModel(const Rk2CheckpointBinding*) const;
     std::string rk2CheckpointBytes(std::string&) const;
     std::string loadRk2CheckpointBytes(std::string);
+    std::string loadRk2CheckpointBytes(std::string,const Rk2CheckpointBinding*,
+        const std::function<void(const ExplicitInertialSolver&,const SurfaceStateData&,const SubsurfaceSolver&)>*,
+        const std::function<void()>*,bool inspect);
     std::string loadCheckpointBytes(std::string bytes, const std::array<double,10>* router_boundary = nullptr,
                                     const std::vector<double>* pending_outfalls = nullptr,
         const std::function<void(const runoff::SourceWaterDriver&)>* validate_source = nullptr,

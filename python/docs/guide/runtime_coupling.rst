@@ -28,8 +28,15 @@ binding and retain accepted water, species and sensible-heat receipts. HEAD is
 an absolute elevation; runtime FLOW is outward-positive total m³/s. Runtime
 surface boundary frames and borrowed network/catchment owners
 remain unavailable in that profile. Check capabilities for the active model.
-Component checkpoints bind copied prescriptions and retain accepted receipts;
-external provider programs and full RK2 engine/session continuation are separate.
+Component checkpoints bind copied prescriptions and retain accepted receipts.
+Managed standalone RK2 checkpoint sessions additionally own the engine calendar,
+native in-memory weather, pending coupling batches and copied prescriptions.
+Numerical-only (``0``) and mesh-HDF5 (``2``) output modes qualify, including
+matching chemistry/age and the supported thermal owners. Restore into a fresh
+session with no existing runtime prescriptions. Scientific HDF5 values,
+attributes and schema continue exactly; file allocation addresses may differ.
+Network/catchment owners, source journals, binary/combined output, file-based
+radiation and external provider programs remain outside this managed profile.
 See the engine groundwater transport profile for activation and thermal limits.
 
 Direct sources

@@ -463,6 +463,7 @@ public:
     /// Storage now, for the continuity ledger.
     double storage() const noexcept { return state_.storage(); }
     void checkpoint(detail::CompletedSourceArchive&,bool model); // internal accepted-boundary IO
+    void checkpoint(detail::CompletedSourceArchive&,bool model,const double* held_air);
     std::string initReactions(SimulationContext& ctx);
     /// Coupled SSP-RK2: spatial CLOSED_FORM/ENSLAVED/SIGMA water only, authored wells and HEAD/FLOW edges.
     std::string rk2ProfileError() const;

@@ -6326,3 +6326,358 @@ TEST(EngineCheckpoint, AqueousQualitySessionsPreserveAcceptedCellClocksAndPendin
     }
 }
 #endif
+
+#ifdef OPENSWMM_HAS_2D
+namespace {
+void startManagedRk2Session(SWMMEngine& engine,const std::string& name,const std::string& extra="",int output=SWMM_CHECKPOINT_OUTPUT_NONE,
+    const std::function<void(SWMMEngine&)>& configure={}) {
+    const auto path=root()/name;
+    std::string deck=R"([OPTIONS]
+FLOW_UNITS CMS
+FLOW_ROUTING DYNWAVE
+HEAT_TRANSPORT NO
+IGNORE_QUALITY YES
+IGNORE_2D NO
+START_DATE 01/31/2026
+START_TIME 23:59:58
+END_DATE 02/01/2026
+END_TIME 00:00:03
+REPORT_START_DATE 01/31/2026
+REPORT_START_TIME 23:59:58
+ROUTING_STEP .2
+REPORT_STEP 00:00:01
+[2D_OPTIONS]
+MOMENTUM_EQUATION FULL_SWE
+RECONSTRUCTION_ORDER 2
+REPORT_2D NO
+MAX_TIMESTEP .05
+LTS_TIERS 1
+EVAPORATION NO
+TRANSPORT_POLLUTANTS NO
+TRANSPORT_MSX NO
+TRANSPORT_AGE NO
+TRANSPORT_TEMPERATURE NO
+[2D_VERTICES]
+0 0 .5
+4 0 .5
+0 2 .5
+4 2 .5
+[2D_TRIANGLES]
+0 1 2 .03 .04
+1 3 2 .03 .03
+[2D_AQUIFER_OPTIONS]
+CLOSURE CLOSED_FORM
+NODE_ENROLMENT ROWS
+LINK_SEEPAGE NONE
+GW_ET NONE
+[2D_AQUIFER]
+* 36 1 .45 .1 2 HG0 .3 C_LOSS .02
+)";
+    if(output==SWMM_CHECKPOINT_OUTPUT_MESH)deck+="[2D_OPTIONS]\nREPORT_2D YES\nOUTPUT_FILE "+path.string()+".h5\nOUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES DEPTH GROUNDWATER\n";
+    deck+=extra;write(path.string()+".inp",deck);
+    if(engine.open((path.string()+".inp").c_str(),(path.string()+".rpt").c_str(),nullptr)!=SWMM_OK)throw std::runtime_error(engine.context().error_message);
+    if(configure)configure(engine);
+    if(auto error=engine.startCheckpointSession(output,"",false,"");!error.empty())throw std::runtime_error(error);
+}
+}
+TEST(EngineCheckpoint, ManagedRk2WaterSessionRestoresActualNumericalOwnerAndCalendar) {
+    SWMMEngine a,b;
+
+    ASSERT_NO_THROW(startManagedRk2Session(a,"managed-rk2-water-a"));
+
+    ASSERT_NO_THROW(startManagedRk2Session(b,"managed-rk2-water-b"));
+    ASSERT_EQ(a.surfaceRouter2D().options().reconstruction_order,2);ASSERT_FALSE(a.surfaceRouter2D().commonSourceAttached());
+    while(a.context().current_time<2.3)
+    ASSERT_NO_THROW(step(a));const auto saved=root()/"managed-rk2-water.chk";
+    ASSERT_EQ(a.saveCheckpoint(saved.string()),"");ASSERT_EQ(b.loadCheckpoint(saved.string()),"");compare(a,b,"managed-rk2-water-restored");
+    while(a.context().elapsed_ms<a.context().options.totalDurationMs()) {
+    ASSERT_NO_THROW(step(a));
+
+    ASSERT_NO_THROW(step(b));compare(a,b,"managed-rk2-water-continued");}
+    EXPECT_NEAR(a.surfaceRouter2D().subsurface().state().continuityResidual(),0,1e-10);
+}
+#endif
+
+#ifdef OPENSWMM_HAS_2D
+namespace {
+std::string invalidManagedRk2Volume(std::string data) {
+            const std::string router_magic="OpenSWMM managed standalone RK2 router boundary",cpu_magic="OpenSWMM CPU surface/source boundary";
+            auto router=nested(data,router_magic).second,router_payload=surfacePayload(router),cpu=nested(router_payload,cpu_magic).second;
+            detail::CompletedSourceArchive in(cpu);std::string cm,cp;uint32_t cv=0,ce=0,cl=0,cc=0;in(cm,cv,ce,cl,cp,cc);in.finish();
+            detail::CompletedSourceArchive body(cp);std::string numerical_model;std::vector<double> depth,head,volume;body(numerical_model,depth,head,volume);if(volume.size()!=2)throw std::runtime_error("Unexpected managed RK2 fixture cell count");
+            const auto location=sizeof(uint64_t)+numerical_model.size()+2*(sizeof(uint64_t)+2*sizeof(double))+sizeof(uint64_t);
+            if(location+sizeof(double)>cp.size())throw std::runtime_error("Missing managed RK2 fixture volume");double nan=std::numeric_limits<double>::quiet_NaN();std::memcpy(cp.data()+location,&nan,sizeof(nan));cc=crc(cp);
+            detail::CompletedSourceArchive changed;changed(cm,cv,ce,cl,cp,cc);
+            router_payload=replaceNested(router_payload,cpu_magic,changed.bytes());router=withSurfacePayload(router,router_payload);data=replaceNested(data,router_magic,router);
+    return data;
+}
+
+std::string managedRk2Quality(const std::string& closure,bool layered,bool temperature,bool porous,bool reactions) {
+    std::string text="\n[2D_AQUIFER_OPTIONS]\nCLOSURE "+closure+"\nM_LAYERS 4\n[GW_TRANSPORT_OPTIONS]\nUNSAT_TRANSPORT "+(layered?std::string("LAYERED"):std::string("BULK"))+"\nTHERMAL_MODEL "+(porous?std::string("POROUS_EQUILIBRIUM"):std::string("WATER_ONLY"))+"\nTHERMAL_LAYERS 3\nCONDUCTION "+(porous?std::string("YES"):std::string("NO"))+"\nDISPERSION NO\nSURFACE_THERMAL_BC ADIABATIC\nDEEP_THERMAL_BC ADIABATIC\n";
+    if(temperature)text+="[OPTIONS]\nHEAT_TRANSPORT YES\nWATER_DENSITY 1000\nWATER_SPECIFIC_HEAT_CAPACITY 4186\n[2D_OPTIONS]\nHEAT_MODEL TRANSPORT_ONLY\nTRANSPORT_TEMPERATURE YES\n[GW_TRANSPORT_OPTIONS]\nTRANSPORT_TEMPERATURE YES\n[2D_INITIAL_QUALITY]\n* __TEMPERATURE__ -4\n[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ -2\n* UNSAT __TEMPERATURE__ -2\n";
+    if(reactions)text+="[OPTIONS]\nIGNORE_QUALITY NO\nWATER_AGE ON\n[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0\n[2D_OPTIONS]\nTRANSPORT_POLLUTANTS YES\nTRANSPORT_MSX YES\nTRANSPORT_AGE YES\n[GW_TRANSPORT_OPTIONS]\nTRANSPORT_POLLUTANTS YES\nTRANSPORT_MSX YES\nTRANSPORT_AGE YES\n[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\nCOUPLING FULL\nATOL 1e-13\nRTOL 1e-11\n[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n[REACTION_PIPES]\nRATE A -.02*A\nRATE B .02*A\n[REACTION_SUBSURFACE]\n* SAT A RATE -.01*A\n* SAT B RATE .01*A\n* UNSAT A RATE -.01*A\n* UNSAT B RATE .01*A\n[GW_SORPTION]\n* A 2 0\n* B 2 0\n[2D_INITIAL_QUALITY]\n* Dye 3\n* A 2\n* __WATER_AGE__ .001\n[GW_INITIAL_QUALITY]\n* SAT Dye 4\n* UNSAT Dye 5\n* SAT A 7\n* UNSAT A 11\n* SAT __WATER_AGE__ 2\n* UNSAT __WATER_AGE__ 3\n[GW_SOURCES]\nW * FLOW .000001 Dye CONC 3 A CONC 1 B CONC 0 __WATER_AGE__ CONC 2\n";
+    return text;
+}
+void compareManagedRk2(SWMMEngine& a,SWMMEngine& b,const std::string& name,bool mesh) {
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+    if(mesh){compareMesh(a,b,name);return;}
+#else
+    (void)mesh;
+#endif
+    compare(a,b,name);
+}
+void continueManagedRk2Pair(SWMMEngine& a,SWMMEngine& b,const std::string& name,bool mesh=false) {
+    while(a.context().current_time<2.3)step(a);
+    const auto saved=root()/(name+".chk");if(auto error=a.saveCheckpoint(saved.string());!error.empty())throw std::runtime_error(error);
+    if(auto error=b.loadCheckpoint(saved.string());!error.empty())throw std::runtime_error(error);
+    compareManagedRk2(a,b,name+"-restored",mesh);
+    while(a.context().elapsed_ms<a.context().options.totalDurationMs()){step(a);step(b);compareManagedRk2(a,b,name+"-continued",mesh);}
+}
+}
+TEST(EngineCheckpoint, ManagedRk2AqueousAgeAndReactionsContinueAcrossMidnight) {
+    for(const auto& closure:{"CLOSED_FORM","ENSLAVED","SIGMA"})for(bool layered:{false,true}) {
+        if(layered&&std::string(closure)!="SIGMA")continue;const auto name="managed-rk2-reactive-"+std::string(closure)+std::to_string(layered);SCOPED_TRACE(name);
+        SWMMEngine a,b;const auto extra=managedRk2Quality(closure,layered,false,false,true);
+
+    ASSERT_NO_THROW(startManagedRk2Session(a,name+"-a",extra));
+
+    ASSERT_NO_THROW(startManagedRk2Session(b,name+"-b",extra));
+
+    ASSERT_NO_THROW(continueManagedRk2Pair(a,b,name));const auto& tr=a.surfaceRouter2D().subsurface().transport();
+        for(int row=0;row<tr.n_species;++row)EXPECT_NEAR(tr.residual(row),0,1e-10*std::max(1.,tr.init_mass[row]));EXPECT_GT(tr.generated_age[tr.age_row],0);
+        EXPECT_GT(a.context().current_date,datetime::addSeconds(a.context().options.start_date,2));
+    }
+}
+TEST(EngineCheckpoint, ManagedRk2WaterAndPorousTemperatureOwnersContinueExactly) {
+    for(const auto& closure:{"CLOSED_FORM","ENSLAVED","SIGMA"})for(bool layered:{false,true})for(bool porous:{false,true}) {
+        if(layered&&std::string(closure)!="SIGMA")continue;const auto name="managed-rk2-thermal-"+std::string(closure)+std::to_string(layered)+std::to_string(porous);SCOPED_TRACE(name);
+        SWMMEngine a,b;const auto extra=managedRk2Quality(closure,layered,true,porous,false);
+
+    ASSERT_NO_THROW(startManagedRk2Session(a,name+"-a",extra));
+
+    ASSERT_NO_THROW(startManagedRk2Session(b,name+"-b",extra));
+
+    ASSERT_NO_THROW(continueManagedRk2Pair(a,b,name));EXPECT_EQ(a.surfaceRouter2D().subsurface().heat().active(),porous);
+    }
+}
+TEST(EngineCheckpoint, ManagedRk2CopiedProvidersAndExpiryAreOwnedAcrossContinuation) {
+    for(bool porous:{false,true}) {
+        const auto name="managed-rk2-providers-"+std::to_string(porous);SWMMEngine a,b;const auto extra=managedRk2Quality("SIGMA",true,true,porous,false);
+
+    ASSERT_NO_THROW(startManagedRk2Session(a,name+"-a",extra));
+
+    ASSERT_NO_THROW(startManagedRk2Session(b,name+"-b",extra));
+        unsigned flags=0;ASSERT_EQ(swmm_coupling_capabilities(&a,&flags),SWMM_OK);ASSERT_EQ(flags&(1|2|4|16|32|64|128|256|512),unsigned(1|2|4|16|32|64|128|256|512));
+        double concentration=-8,rate=0;SWMM_CouplingSource source[2]{{sizeof(SWMM_CouplingSource),"surface",0,0,.001,0,1.735,1,&concentration,&rate},{sizeof(SWMM_CouplingSource),"well",1,1,.001,4186,1.237,1,&concentration,&rate}};
+        SWMM_CouplingForcing forcing{sizeof(forcing),1,-1,1,.0001,1.537,1,&concentration};
+        int edge=-1;const auto& mesh=a.surfaceRouter2D().mesh();
+        for(int k=0;k<mesh.cell_vertex_count(0);++k)if(mesh.cell_neighbour(0,k)<0){edge=k;break;}ASSERT_GE(edge,0);
+        SWMM_CouplingBoundary boundary{sizeof(boundary),1,0,edge,2,-.0001,1,&concentration};
+        SWMM_CouplingFrame frame{sizeof(frame),1,"managed",2,source,1,&boundary,1,&forcing,0,nullptr};ASSERT_EQ(swmm_coupling_apply_frame(&a,&frame),SWMM_OK);
+        double actual=0;ASSERT_EQ(swmm_coupling_advance_to(&a,1,&actual),SWMM_OK);ASSERT_EQ(actual,1);
+        const auto saved=root()/(name+".chk");ASSERT_EQ(a.saveCheckpoint(saved.string()),"");ASSERT_EQ(b.loadCheckpoint(saved.string()),"");compare(a,b,name+"-restored");
+        while(a.context().elapsed_ms<a.context().options.totalDurationMs()){
+    ASSERT_NO_THROW(step(a));
+
+    ASSERT_NO_THROW(step(b));compare(a,b,name+"-continued");}
+        for(const auto& row:a.surfaceRouter2D().state().runtime_sources.rows)EXPECT_FALSE(row.enabled);
+        for(const auto& row:a.surfaceRouter2D().subsurface().runtimeSources().rows)if(row.boundary_edge<0)EXPECT_FALSE(row.enabled);
+    }
+}
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+namespace {
+void sameManagedRk2HdfGroup(hid_t x,hid_t y) {
+    H5G_info_t gx{},gy{};ASSERT_GE(H5Gget_info(x,&gx),0);ASSERT_GE(H5Gget_info(y,&gy),0);ASSERT_EQ(gx.nlinks,gy.nlinks);
+    for(hsize_t k=0;k<gx.nlinks;++k) {
+        const auto length=H5Lget_name_by_idx(x,".",H5_INDEX_NAME,H5_ITER_INC,k,nullptr,0,H5P_DEFAULT);ASSERT_GE(length,0);
+        std::string name(std::size_t(length)+1,'\0');ASSERT_GE(H5Lget_name_by_idx(x,".",H5_INDEX_NAME,H5_ITER_INC,k,name.data(),name.size(),H5P_DEFAULT),0);name.resize(std::size_t(length));SCOPED_TRACE(name);
+        ASSERT_GT(H5Lexists(y,name.c_str(),H5P_DEFAULT),0);H5O_info_t ox{},oy{};
+        ASSERT_GE(H5Oget_info_by_name(x,name.c_str(),&ox,H5O_INFO_BASIC,H5P_DEFAULT),0);ASSERT_GE(H5Oget_info_by_name(y,name.c_str(),&oy,H5O_INFO_BASIC,H5P_DEFAULT),0);ASSERT_EQ(ox.type,oy.type);
+        if(ox.type==H5O_TYPE_GROUP) {
+            hid_t a=H5Gopen2(x,name.c_str(),H5P_DEFAULT),b=H5Gopen2(y,name.c_str(),H5P_DEFAULT);ASSERT_GE(a,0);ASSERT_GE(b,0);sameManagedRk2HdfGroup(a,b);H5Gclose(a);H5Gclose(b);continue;
+        }
+        ASSERT_EQ(ox.type,H5O_TYPE_DATASET);hid_t a=H5Dopen2(x,name.c_str(),H5P_DEFAULT),b=H5Dopen2(y,name.c_str(),H5P_DEFAULT);ASSERT_GE(a,0);ASSERT_GE(b,0);
+        hid_t at=H5Dget_type(a),bt=H5Dget_type(b),as=H5Dget_space(a),bs=H5Dget_space(b);ASSERT_GT(H5Tequal(at,bt),0);ASSERT_GT(H5Sextent_equal(as,bs),0);
+        const auto count=H5Sget_simple_extent_npoints(as);ASSERT_GE(count,0);
+        if(H5Tis_variable_str(at)>0) {
+            std::vector<char*> av(std::size_t(count),nullptr),bv(std::size_t(count),nullptr);
+            ASSERT_GE(H5Dread(a,at,H5S_ALL,H5S_ALL,H5P_DEFAULT,av.data()),0);ASSERT_GE(H5Dread(b,bt,H5S_ALL,H5S_ALL,H5P_DEFAULT,bv.data()),0);
+            for(std::size_t i=0;i<av.size();++i)EXPECT_STREQ(av[i],bv[i]);H5Dvlen_reclaim(at,as,H5P_DEFAULT,av.data());H5Dvlen_reclaim(bt,bs,H5P_DEFAULT,bv.data());
+        } else {
+            ASSERT_NE(H5Tget_class(at),H5T_VLEN);std::vector<unsigned char> av(std::size_t(count)*H5Tget_size(at)),bv(av.size());
+            ASSERT_GE(H5Dread(a,at,H5S_ALL,H5S_ALL,H5P_DEFAULT,av.data()),0);ASSERT_GE(H5Dread(b,bt,H5S_ALL,H5S_ALL,H5P_DEFAULT,bv.data()),0);EXPECT_EQ(av,bv);
+        }
+        H5Sclose(as);H5Sclose(bs);H5Tclose(at);H5Tclose(bt);H5Dclose(a);H5Dclose(b);
+    }
+}
+}
+TEST(EngineCheckpoint, ManagedRk2NativeMeshHistoryPreservesReportCalendarAcrossMidnight) {
+    for(bool thermal:{false,true}) {
+        const auto name="managed-rk2-mesh-"+std::to_string(thermal);SWMMEngine a,b;auto extra=managedRk2Quality("SIGMA",true,thermal,thermal,!thermal);
+        if(thermal)extra+="[2D_OPTIONS]\nREPORT_2D_VARIABLES DEPTH HEAT GROUNDWATER\n";
+
+    ASSERT_NO_THROW(startManagedRk2Session(a,name+"-a",extra,SWMM_CHECKPOINT_OUTPUT_MESH));
+
+    ASSERT_NO_THROW(startManagedRk2Session(b,name+"-b",extra,SWMM_CHECKPOINT_OUTPUT_MESH));
+
+    ASSERT_NO_THROW(continueManagedRk2Pair(a,b,name,true));
+        ASSERT_EQ(a.end(),SWMM_OK);ASSERT_EQ(b.end(),SWMM_OK);
+        hid_t x=H5Fopen((root()/(name+"-a.h5")).string().c_str(),H5F_ACC_RDONLY,H5P_DEFAULT),y=H5Fopen((root()/(name+"-b.h5")).string().c_str(),H5F_ACC_RDONLY,H5P_DEFAULT);
+        ASSERT_GE(x,0);ASSERT_GE(y,0);sameManagedRk2HdfGroup(x,y);H5Fclose(x);H5Fclose(y);
+    }
+}
+#endif
+#endif
+
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, ManagedRk2PreparedWeatherRestoresAirAndSharedRadiationWithoutChangingTheFreshModel) {
+    for(bool atmosphere:{false,true}) {
+        const auto name="managed-rk2-weather-"+std::to_string(atmosphere);SWMMEngine a,b;
+        auto extra=managedRk2Quality("SIGMA",true,true,true,false)+
+            "[TEMPERATURE]\nTIMESERIES AirTemp\nHUMIDITY 50\nWINDSPEED MONTHLY 5 5 5 5 5 5 5 5 5 5 5 5\n[TIMESERIES]\nAirTemp 01/31/2026 23:59:58 5\nAirTemp 02/01/2026 00:00:00 35\nAirTemp 02/01/2026 00:00:03 15\n";
+        if(atmosphere)extra+="[2D_OPTIONS]\nHEAT_MODEL COUPLED\nBED_HEAT_MODEL GROUND_COLUMN\nHEAT_SURFACE_EXCHANGE YES\nHEAT_RADIATIVE_EXCHANGE YES\n[GW_TRANSPORT_OPTIONS]\nSURFACE_THERMAL_BC SURFACE_WATER\n";
+        else extra+="[GW_TRANSPORT_OPTIONS]\nSURFACE_THERMAL_BC AIR\n";
+        const auto configure=[&](SWMMEngine& e) {
+            if(!atmosphere)return;
+            auto& config=e.context().snowpacks.config;config.site=surface::ClimateSite{45,-120,-8,1000};config.monthly_range.fill(10.);
+            config.shortwave.authored=config.longwave.authored=true;
+        };
+
+    ASSERT_NO_THROW(startManagedRk2Session(a,name+"-a",extra,SWMM_CHECKPOINT_OUTPUT_NONE,configure));
+
+    ASSERT_NO_THROW(startManagedRk2Session(b,name+"-b",extra,SWMM_CHECKPOINT_OUTPUT_NONE,configure));
+        const double old_air=b.context().climate_state.temperature;while(a.context().current_time<2.3)
+    ASSERT_NO_THROW(step(a));EXPECT_NE(a.context().climate_state.temperature,old_air);
+        if(atmosphere){EXPECT_TRUE(a.context().climate_state.radiation.shared_heat_forcing);EXPECT_GT(a.context().climate_state.radiation.longwave,0);}
+        const auto saved=root()/(name+".chk");ASSERT_EQ(a.saveCheckpoint(saved.string()),"");ASSERT_EQ(b.loadCheckpoint(saved.string()),"");
+        EXPECT_EQ(a.context().climate_state.temperature,b.context().climate_state.temperature);EXPECT_EQ(a.context().climate_state.radiation.longwave,b.context().climate_state.radiation.longwave);compare(a,b,name+"-restored");
+        while(a.context().elapsed_ms<a.context().options.totalDurationMs()){
+    ASSERT_NO_THROW(step(a));
+
+    ASSERT_NO_THROW(step(b));compare(a,b,name+"-continued");}
+    }
+}
+TEST(EngineCheckpoint, ManagedRk2CorruptClockAndNumericalStateRefuseAtomicallyWithValidRetry) {
+    SWMMEngine source;const auto extra=managedRk2Quality("SIGMA",true,true,true,false);
+
+    ASSERT_NO_THROW(startManagedRk2Session(source,"managed-rk2-corrupt-source",extra));
+    while(source.context().current_time<1.3)
+    ASSERT_NO_THROW(step(source));const auto good=root()/"managed-rk2-corrupt-good.chk";ASSERT_EQ(source.saveCheckpoint(good.string()),"");
+    detail::CompletedSourceArchive input(bytes(good));std::string magic,model,payload;uint32_t version,sum;input(magic,version,model,sum,payload);input.finish();
+    for(int kind:{0,1,2,3}) {
+        const auto name="managed-rk2-corrupt-"+std::to_string(kind);SWMMEngine target;
+
+    ASSERT_NO_THROW(startManagedRk2Session(target,name,extra));
+        auto data=payload;
+        if(kind==0){double nan=std::numeric_limits<double>::quiet_NaN();std::memcpy(data.data(),&nan,sizeof(nan));}
+        if(kind==1){double mismatch=1;std::memcpy(data.data()+sizeof(double),&mismatch,sizeof(mismatch));}
+        if(kind==2)data=invalidManagedRk2Volume(data);
+        if(kind==3)data+="extra";
+        sum=crc(data);detail::CompletedSourceArchive out;out(magic,version,model,sum,data);const auto bad=root()/(name+"-bad.chk"),before=root()/(name+"-before.chk"),after=root()/(name+"-after.chk");write(bad,out.bytes());
+        ASSERT_EQ(target.saveCheckpoint(before.string()),"");EXPECT_FALSE(target.loadCheckpoint(bad.string()).empty());ASSERT_EQ(target.saveCheckpoint(after.string()),"");EXPECT_EQ(bytes(before),bytes(after));
+        ASSERT_EQ(target.loadCheckpoint(good.string()),"");compare(source,target,name+"-retry");
+    }
+}
+TEST(EngineCheckpoint, ManagedRk2ChangedProjectAndExistingRuntimeOwnerAreNotReboundByRestore) {
+    SWMMEngine source,changed,active;const auto extra=managedRk2Quality("SIGMA",true,true,true,false);
+
+    ASSERT_NO_THROW(startManagedRk2Session(source,"managed-rk2-model-source",extra));
+
+    ASSERT_NO_THROW(startManagedRk2Session(changed,"managed-rk2-model-changed",extra+"[GW_TRANSPORT_OPTIONS]\nTHERMAL_LAYERS 4\n"));
+
+    ASSERT_NO_THROW(startManagedRk2Session(active,"managed-rk2-model-active",extra));while(source.context().current_time<1.3)
+    ASSERT_NO_THROW(step(source));
+    const auto good=root()/"managed-rk2-model-good.chk";ASSERT_EQ(source.saveCheckpoint(good.string()),"");
+    double concentration=-8,rate=0;ASSERT_EQ(swmm_coupling_set_source(&active,"already-owned",0,0,.001,0,&concentration,&rate,1,0),SWMM_OK);
+    for(auto* target:{&changed,&active}) {
+        const auto before=root()/(target==&changed?"managed-rk2-changed-before.chk":"managed-rk2-active-before.chk"),after=root()/(target==&changed?"managed-rk2-changed-after.chk":"managed-rk2-active-after.chk");
+        ASSERT_EQ(target->saveCheckpoint(before.string()),"");EXPECT_FALSE(target->loadCheckpoint(good.string()).empty());ASSERT_EQ(target->saveCheckpoint(after.string()),"");EXPECT_EQ(bytes(before),bytes(after));
+    }
+}
+#endif
+
+#if defined(OPENSWMM_HAS_2D) && defined(OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST)
+TEST(EngineCheckpoint, ManagedRk2InvalidNumericalOwnerCannotPublishAValidMeshPrefix) {
+    SWMMEngine source,target;const auto extra=managedRk2Quality("SIGMA",true,true,true,false);
+    ASSERT_NO_THROW(startManagedRk2Session(source,"managed-rk2-output-atomic-source",extra,SWMM_CHECKPOINT_OUTPUT_MESH));
+    ASSERT_NO_THROW(startManagedRk2Session(target,"managed-rk2-output-atomic-target",extra,SWMM_CHECKPOINT_OUTPUT_MESH));
+    while(source.context().current_time<2.3)ASSERT_NO_THROW(step(source));
+    const auto good=root()/"managed-rk2-output-atomic-good.chk",bad=root()/"managed-rk2-output-atomic-bad.chk",before=root()/"managed-rk2-output-atomic-before.chk",after=root()/"managed-rk2-output-atomic-after.chk";
+    ASSERT_EQ(source.saveCheckpoint(good.string()),"");detail::CompletedSourceArchive in(bytes(good));std::string magic,model,payload;uint32_t version=0,sum=0;in(magic,version,model,sum,payload);in.finish();
+    payload=invalidManagedRk2Volume(payload);sum=crc(payload);detail::CompletedSourceArchive out;out(magic,version,model,sum,payload);write(bad,out.bytes());
+    ASSERT_EQ(target.saveCheckpoint(before.string()),"");const auto destination=root()/"managed-rk2-output-atomic-target.h5";const auto prior=bytes(destination);
+    EXPECT_FALSE(target.loadCheckpoint(bad.string()).empty());ASSERT_EQ(target.saveCheckpoint(after.string()),"");EXPECT_TRUE(bytes(before)==bytes(after));EXPECT_TRUE(bytes(destination)==prior);
+    ASSERT_EQ(target.loadCheckpoint(good.string()),"");compareMesh(source,target,"managed-rk2-output-atomic-retry");
+    while(source.context().elapsed_ms<source.context().options.totalDurationMs()) {
+        ASSERT_NO_THROW(step(source));
+        ASSERT_NO_THROW(step(target));compareMesh(source,target,"managed-rk2-output-atomic-continued");
+    }
+}
+#endif
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, ManagedRk2CorruptCopiedPrescriptionRefusesBeforeReplayAndAllowsRetry) {
+    SWMMEngine source,target;
+    ASSERT_NO_THROW(startManagedRk2Session(source,"managed-rk2-replay-source"));
+    ASSERT_NO_THROW(startManagedRk2Session(target,"managed-rk2-replay-target"));
+    SWMM_CouplingSource supply{sizeof(supply),"supply",0,0,.001,0,0,0,nullptr,nullptr};SWMM_CouplingFrame frame{sizeof(frame),1,"replay",1,&supply,0,nullptr,0,nullptr,0,nullptr};ASSERT_EQ(swmm_coupling_apply_frame(&source,&frame),SWMM_OK);
+    while(source.context().current_time<1.3)ASSERT_NO_THROW(step(source));
+    const auto good=root()/"managed-rk2-replay-good.chk",bad=root()/"managed-rk2-replay-bad.chk",before=root()/"managed-rk2-replay-before.chk",after=root()/"managed-rk2-replay-after.chk";ASSERT_EQ(source.saveCheckpoint(good.string()),"");
+    detail::CompletedSourceArchive in(bytes(good));std::string magic,model,payload;uint32_t version=0,sum=0;in(magic,version,model,sum,payload);in.finish();
+    const std::string router_magic="OpenSWMM managed standalone RK2 router boundary";auto router=nested(payload,router_magic).second,body=surfacePayload(router);const auto marker=body.find("managed RK2 copied prescriptions v1");ASSERT_NE(marker,std::string::npos);
+    const auto id=body.find("provider/replay/supply",marker);ASSERT_NE(id,std::string::npos);body[id]='x';router=withSurfacePayload(router,body);payload=replaceNested(payload,router_magic,router);sum=crc(payload);detail::CompletedSourceArchive out;out(magic,version,model,sum,payload);write(bad,out.bytes());
+    ASSERT_EQ(target.saveCheckpoint(before.string()),"");EXPECT_FALSE(target.loadCheckpoint(bad.string()).empty());ASSERT_EQ(target.saveCheckpoint(after.string()),"");EXPECT_TRUE(bytes(before)==bytes(after));
+    ASSERT_EQ(target.loadCheckpoint(good.string()),"");compare(source,target,"managed-rk2-replay-retry");
+}
+#endif
+
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, ManagedRk2MalformedForcingDescriptorsRefuseBeforeIndexedReplay) {
+    SWMMEngine source;
+    ASSERT_NO_THROW(startManagedRk2Session(source,"managed-rk2-forcing-source"));
+    SWMM_CouplingForcing rain{sizeof(rain),1,0,1,.001,5,0,nullptr};
+    SWMM_CouplingFrame frame{sizeof(frame),1,"weather",0,nullptr,0,nullptr,1,&rain,0,nullptr};
+    ASSERT_EQ(swmm_coupling_apply_frame(&source,&frame),SWMM_OK);
+    while(source.context().current_time<1.3)ASSERT_NO_THROW(step(source));
+    const auto good=root()/"managed-rk2-forcing-good.chk";ASSERT_EQ(source.saveCheckpoint(good.string()),"");
+    detail::CompletedSourceArchive input(bytes(good));std::string magic,model,payload;uint32_t version=0,sum=0;input(magic,version,model,sum,payload);input.finish();
+    const std::string router_magic="OpenSWMM managed standalone RK2 router boundary",record="managed RK2 copied prescriptions v1";
+    for(int kind=0;kind<3;++kind) {
+        const auto name="managed-rk2-forcing-corrupt-"+std::to_string(kind);SWMMEngine target;
+        ASSERT_NO_THROW(startManagedRk2Session(target,name));
+        auto router=nested(payload,router_magic).second,body=surfacePayload(router);const auto marker=body.find(record);ASSERT_NE(marker,std::string::npos);
+        const auto offset=marker+record.size()+3*sizeof(uint64_t);ASSERT_LT(offset+2*sizeof(int),body.size());
+        int value=kind==0?0:kind==1?5:999;std::memcpy(body.data()+offset+(kind==2?sizeof(int):0),&value,sizeof(value));
+        router=withSurfacePayload(router,body);auto changed=replaceNested(payload,router_magic,router);sum=crc(changed);detail::CompletedSourceArchive out;out(magic,version,model,sum,changed);
+        const auto bad=root()/(name+"-bad.chk"),before=root()/(name+"-before.chk"),after=root()/(name+"-after.chk");write(bad,out.bytes());
+        ASSERT_EQ(target.saveCheckpoint(before.string()),"");EXPECT_EQ(target.loadCheckpoint(bad.string()),"Invalid RK2 runtime forcing prescription or paired groundwater owner.");
+        ASSERT_EQ(target.saveCheckpoint(after.string()),"");EXPECT_TRUE(bytes(before)==bytes(after));
+        ASSERT_EQ(target.loadCheckpoint(good.string()),"");compare(source,target,name+"-retry");
+    }
+}
+TEST(EngineCheckpoint, ManagedRk2PendingBatchPreservesTheAuthoredCouplingCadence) {
+    SWMMEngine source,target;
+    const std::string extra="[2D_OPTIONS]\nCOUPLING_SYNC .7\n";
+    ASSERT_NO_THROW(startManagedRk2Session(source,"managed-rk2-pending-source",extra));
+    ASSERT_NO_THROW(startManagedRk2Session(target,"managed-rk2-pending-target",extra));
+    ASSERT_NO_THROW(step(source));
+    EXPECT_GT(source.context().current_time,0);
+    EXPECT_EQ(source.surfaceRouter2D().subsurface().cellCompletedTime(0),0);
+    const auto saved=root()/"managed-rk2-pending.chk";
+    ASSERT_EQ(source.saveCheckpoint(saved.string()),"");
+    ASSERT_EQ(target.loadCheckpoint(saved.string()),"");
+    compare(source,target,"managed-rk2-pending-restored");
+    while(source.context().elapsed_ms<source.context().options.totalDurationMs()) {
+        ASSERT_NO_THROW(step(source));
+        ASSERT_NO_THROW(step(target));
+        compare(source,target,"managed-rk2-pending-continued");
+    }
+    EXPECT_EQ(source.surfaceRouter2D().options().coupling_sync,.7);
+}
+TEST(EngineCheckpoint, ManagedRk2FileRadiationRemainsExplicitlyUnqualified) {
+    SWMMEngine engine;
+    const auto configure=[](SWMMEngine& e){e.context().snowpacks.config.met_file.original="unqualified-met.csv";};
+    EXPECT_THROW(startManagedRk2Session(engine,"managed-rk2-met-refusal","",SWMM_CHECKPOINT_OUTPUT_NONE,configure),std::runtime_error);
+    EXPECT_EQ(engine.context().current_time,0);
+    EXPECT_FALSE(std::filesystem::exists(root()/"managed-rk2-met-refusal.h5"));
+}
+#endif

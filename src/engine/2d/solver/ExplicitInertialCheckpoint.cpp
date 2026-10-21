@@ -438,8 +438,10 @@ std::string ExplicitInertialSolver::rk2CheckpointProfile() const {
         return "RK2 surface and groundwater clocks differ.";
     return gw_->rk2ProfileError();
 }
-std::string ExplicitInertialSolver::rk2CheckpointModel() const {
-    Archive a;auto m=*mesh_;auto o=*opts_;auto gw=*gw_;gw.checkpoint(a,true);
+std::string ExplicitInertialSolver::rk2CheckpointModel() const {return rk2CheckpointModel(nullptr);}
+std::string ExplicitInertialSolver::rk2CheckpointModel(const Rk2CheckpointBinding* binding) const {
+    Archive a;auto m=*mesh_;auto o=*opts_;auto gw=*gw_;
+    gw.checkpoint(a,true,binding&&binding->climate?&binding->climate->temperature:nullptr);
     a(m.vx,m.vy,m.vz,m.vtag,m.cell_nv,m.cell_v,m.cell_nbr,m.tri_area,m.tri_cx,m.tri_cy,m.tri_cz,m.edge_length,
       m.edge_nx,m.edge_ny,m.edge_mx,m.edge_my,m.edge_mz,m.edge_dist_c,m.quad_vfr_z,m.quad_vfr_a,
       m.edge_conveyance,m.mannings_n,m.tri_init_depth,m.tri_init_u,m.tri_init_v,m.tri_tag,m.vert_stencil_ptr,
@@ -483,18 +485,21 @@ std::string ExplicitInertialSolver::rk2CheckpointModel() const {
         if(state_->heat.surface||state_->heat.radiative) {
             std::string atmosphere="RK2 nonlinear atmospheric midpoint v1";a(atmosphere);
             auto& ctx=*state_->heat.context;
-            a(ctx.climate_state.temperature,ctx.climate_state.humidity,ctx.climate_state.wind_speed,
-              ctx.heat_state.shortwave_now,ctx.heat_state.cloud_now,ctx.climate_state.radiation.shared_heat_forcing,
-              ctx.climate_state.radiation.longwave,ctx.options.water_density,ctx.options.wind_func_coeff_a,
+            const auto& climate=binding&&binding->climate?*binding->climate:ctx.climate_state;
+            const auto& heat=binding&&binding->heat?*binding->heat:ctx.heat_state;
+            auto temperature=climate.temperature,humidity=climate.humidity,wind=climate.wind_speed;
+            auto shortwave=heat.shortwave_now,cloud=heat.cloud_now,longwave=climate.radiation.longwave;
+            auto shared=climate.radiation.shared_heat_forcing;
+            a(temperature,humidity,wind,shortwave,cloud,shared,longwave,ctx.options.water_density,ctx.options.wind_func_coeff_a,
               ctx.options.wind_func_coeff_b,ctx.options.pressure_ratio);
         }
     }
     if(o.evaporation==0&&std::any_of(state_->evap_rate.begin(),state_->evap_rate.end(),[](double value){return value!=0;})) {
         std::string evaporation="RK2 inactive native evaporation gate v1";a(evaporation);
     }
-    auto runtime=state_->runtime_sources;rk2SurfaceRuntimeArchive(a,runtime,mesh_->n_cells(),true);
-    auto ground_runtime=gw_->runtimeSources();rk2SurfaceRuntimeArchive(a,ground_runtime,mesh_->n_cells(),true,true);
-    auto forcing=*state_;rk2ForcingArchive(a,forcing,true);
+    auto runtime=binding&&binding->surface?*binding->surface:state_->runtime_sources;rk2SurfaceRuntimeArchive(a,runtime,mesh_->n_cells(),true);
+    auto ground_runtime=binding&&binding->groundwater?*binding->groundwater:gw_->runtimeSources();rk2SurfaceRuntimeArchive(a,ground_runtime,mesh_->n_cells(),true,true);
+    auto forcing=*state_;if(binding&&binding->forcing)forcing.runtime_forcings=*binding->forcing;rk2ForcingArchive(a,forcing,true);
     auto rain=state_->rainfall,evap=state_->evap_rate;a(rain,evap);
     return a.bytes();
 }
@@ -512,7 +517,10 @@ std::string ExplicitInertialSolver::rk2CheckpointBytes(std::string& bytes) const
         bytes=file.bytes();return {};
     } catch(const std::exception& e){return e.what();}
 }
-std::string ExplicitInertialSolver::loadRk2CheckpointBytes(std::string bytes) {
+std::string ExplicitInertialSolver::loadRk2CheckpointBytes(std::string bytes) {return loadRk2CheckpointBytes(std::move(bytes),nullptr,nullptr,nullptr,false);}
+std::string ExplicitInertialSolver::loadRk2CheckpointBytes(std::string bytes,const Rk2CheckpointBinding* binding,
+    const std::function<void(const ExplicitInertialSolver&,const SurfaceStateData&,const SubsurfaceSolver&)>* validate,
+    const std::function<void()>* before_install,bool inspect) {
     try {
         if(auto error=rk2CheckpointProfile();!error.empty())return error;
         if(t_last_sync_!=0||active_samples_!=0)return "RK2 restore requires a fresh numerical owner.";
@@ -523,18 +531,80 @@ std::string ExplicitInertialSolver::loadRk2CheckpointBytes(std::string bytes) {
             return "Unsupported RK2 checkpoint version/platform.";
         if(crc!=checksum(payload))return "RK2 checkpoint checksum differs.";
         Archive state(std::move(payload));std::string model;state(model);
-        if(model!=rk2CheckpointModel())return "RK2 checkpoint mesh, options, groundwater or held forcing differs.";
+        if(!binding&&model!=rk2CheckpointModel())return "RK2 checkpoint mesh, options, groundwater or held forcing differs.";
         auto trial=*this;auto surface=*state_;auto gw=*gw_;
+        if(binding) {
+            if(binding->surface)surface.runtime_sources=*binding->surface;
+            if(binding->groundwater)gw.runtimeSources()=*binding->groundwater;
+            if(binding->forcing)surface.runtime_forcings=*binding->forcing;
+            // Managed descriptors are untrusted input. Admit their immutable
+            // layout before a mutable enabled flag can rebuild indexed tables.
+            for(auto* store:{&surface.runtime_sources,&gw.runtimeSources()})for(auto& row:store->rows) {
+                const auto count=store==&surface.runtime_sources?surface.transport.n_species:gw.transport().n_species;
+                row.receipt.requested_mass.assign(count,0);row.receipt.applied_mass.assign(count,0);
+            }
+            for(auto& row:surface.runtime_forcings.rows) {
+                row.receipt.requested_mass.assign(surface.transport.n_species,0);row.receipt.applied_mass.assign(surface.transport.n_species,0);
+            }
+            if(auto error=rk2SurfaceRuntimeProfile(surface,&gw);!error.empty())return error;
+            if(auto error=gw.rk2ProfileError();!error.empty())return error;
+        }
         trial.state_=&surface;trial.gw_=&gw;
         if(surface.heat.enabled)surface.heat.aquifer_ground=&gw.heat();
-        checkpoint::meshState(state,surface);gw.checkpoint(state,false);state.fixed(gw.cell_completed_);
+        checkpoint::meshState(state,surface);
+        if(binding&&model!=trial.rk2CheckpointModel(binding))return "Managed RK2 checkpoint project, prescriptions or prepared weather differs.";
+        gw.checkpoint(state,false);state.fixed(gw.cell_completed_);
         trial.checkpointState(state);rk2SurfaceRuntimeArchive(state,surface.runtime_sources,mesh_->n_cells(),false);rk2ForcingArchive(state,surface,false);rk2SurfaceRuntimeArchive(state,gw.runtimeSources(),mesh_->n_cells(),false,true);state.finish();
         if(auto error=trial.rk2CheckpointProfile();!error.empty())return error;
+        if(validate)(*validate)(trial,surface,gw);
+        if(inspect)return {};
+        if(before_install)(*before_install)();
         trial.state_=state_;trial.gw_=gw_;
         *state_=std::move(surface);*gw_=std::move(gw);
         if(state_->heat.enabled)state_->heat.aquifer_ground=&gw_->heat();
         *this=std::move(trial);return {};
     } catch(const std::exception& e){return e.what();}
+}
+
+void rk2ManagedRuntimeModel(Archive& a,RuntimeSources& surface,RuntimeSources& ground,RuntimeForcings& forcing,int /*cells*/) {
+    std::string profile="managed RK2 copied prescriptions v1";a(profile);
+    if(profile!="managed RK2 copied prescriptions v1")throw std::runtime_error("Unsupported managed RK2 prescription record.");
+    const auto sources=[&](RuntimeSources& store) {
+        a.sequence(store.rows,[&](auto& row) {
+            a(row.id,row.owner,row.cell,row.boundary_edge,row.boundary_head);
+            if(!std::isfinite(row.boundary_head))a(row.flow);
+            a(row.heat,row.until,row.concentrations,row.rates);
+            if(a.reading())row.enabled=false;
+        });
+        if(a.reading()) {
+            store.index.clear();store.cells.clear();
+        }
+    };
+    sources(surface);sources(ground);
+    a.sequence(forcing.rows,[&](auto& row){a(row.channel,row.cell,row.mode,row.rate,row.until,row.owner,row.concentrations);if(a.reading())row.enabled=false;});
+    if(a.reading()) {
+        forcing.index.clear();forcing.cells.clear();
+    }
+}
+std::string validateRk2ReplayIds(const RuntimeSources& surface,const RuntimeSources& ground,const RuntimeForcings& forcing,double completed) {
+    const auto owner=[](const std::string& value){return value.find('/')==std::string::npos&&value.find('\0')==std::string::npos;};
+    const auto receipt=[&](const RuntimeReceipt& r) {
+        return r.last_dt<=completed&&(r.last_dt!=0||r.last_flow==0)&&
+            std::abs(r.last_flow)*r.last_dt<=r.water_in+r.water_out+1e-12*std::max(1.,r.water_in+r.water_out);
+    };
+    for(const auto* store:{&surface,&ground})for(const auto& row:store->rows) {
+        if(!owner(row.owner)||row.id.find('\0')!=std::string::npos||!receipt(row.receipt)||
+           (row.enabled&&row.until<=completed))return "Invalid managed RK2 source owner, expiry or completed receipt.";
+        if(row.boundary_edge<0) {
+            const auto prefix=row.owner.empty()?std::string{}:"provider/"+row.owner+"/";
+            if(row.id.rfind(prefix,0)!=0)return "Managed RK2 provider source identity differs.";
+            const auto local=row.id.substr(prefix.size());
+            if(local.empty()||local.rfind("provider/",0)==0||local.rfind("boundary/",0)==0)return "Invalid managed RK2 local source identity.";
+        }
+    }
+    for(const auto& row:forcing.rows)if(!owner(row.owner)||!receipt(row.receipt)||(row.enabled&&row.until<=completed))
+        return "Invalid managed RK2 forcing owner, expiry or completed receipt.";
+    return {};
 }
 
 }

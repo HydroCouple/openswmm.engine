@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "SurfaceRouter2D.hpp"
 #include "solver/ExplicitInertialSolver.hpp"
+#include "coupling/Rk2RuntimeSources.hpp"
 #include "subsurface/CommonSourceStage.hpp"
 #include "../core/CompletedSourceArchive.hpp"
 #include "../core/SimulationContext.hpp"
@@ -22,6 +23,7 @@ using Archive=detail::CompletedSourceArchive;
 constexpr uint64_t maxBytes=64*1024*1024;
 constexpr const char* magicName="OpenSWMM source router boundary";
 constexpr const char* jointMagic="OpenSWMM joint DW surface/source boundary";
+constexpr const char* rk2Magic="OpenSWMM managed standalone RK2 router boundary";
 bool close(double a,double b) { return std::abs(a-b)<=1e-12*std::max({1.0,std::abs(a),std::abs(b)}); }
 uint32_t checksum(const std::string& bytes) {
     uint32_t crc=~uint32_t(0);
@@ -84,6 +86,8 @@ struct SurfaceRouter2D::RestartState {
     std::vector<int> boundary_slots;
     double boundary_in=0,boundary_out=0;
     OutfallData feedback;
+    bool rk2=false;int rk2_cells=0;
+    RuntimeSources rk2_surface,rk2_ground;RuntimeForcings rk2_forcing;
     RestartState(const SurfaceRouter2D& r,const SimulationContext& c) {
 #define COPY(v) v=r.v;
         ROUTER_FIELDS(COPY)
@@ -96,6 +100,8 @@ struct SurfaceRouter2D::RestartState {
         old_elapsed_ms=c.old_elapsed_ms;next_report_ms=c.next_report_ms;
         evap_rate=c.climate_state.evap_rate;rainfall=c.gages.rainfall;mb=c.mass_balance_2d;delivery=c.coupling_delivery_remaining;
         runtime_water=r.runtimeWaterCheckpointing();runtime_used=c.runtime_coupling_used;
+        rk2=r.standaloneRk2Checkpointing();rk2_cells=r.mesh_.n_cells();
+        if(rk2){rk2_surface=r.state_.runtime_sources;rk2_ground=r.subsurface_.runtimeSources();rk2_forcing=r.state_.runtime_forcings;}
         boundary_water=r.runtimeBoundaryCheckpointing();boundary_slots=r.bc_nonwall_slots_;
         boundary_in=r.prev_boundary_in_;boundary_out=r.prev_boundary_out_;
     }
@@ -108,6 +114,7 @@ struct SurfaceRouter2D::RestartState {
         if(snow_profile)a(snow_delivery_adjustment);
         if(runtime_water)a(runtime_used);
         if(boundary_water)a(boundary_slots,boundary_in,boundary_out);
+        if(rk2)rk2ManagedRuntimeModel(a,rk2_surface,rk2_ground,rk2_forcing,rk2_cells);
     }
     void archiveJoint(Archive& a) {
         a(window_outfall_accum_,outfall_state_changed_);exchange.checkpoint(a);
@@ -246,7 +253,39 @@ std::string SurfaceRouter2D::sourceRouterModel(const SimulationContext& ctx) con
     }
     return a.bytes();
 }
+bool SurfaceRouter2D::standaloneRk2Checkpointing() const noexcept {
+    return source_context_&&options_.reconstruction_order==2&&!common_stage_;
+}
+std::string SurfaceRouter2D::standaloneRk2Boundary(const SimulationContext& ctx) const {
+    const auto* cpu=dynamic_cast<const ExplicitInertialSolver*>(solver_.get());
+    if(!active_||!cpu||options_.momentum!=Momentum2D::FULL_SWE||options_.reconstruction_order!=2||
+       &ctx!=source_context_||common_stage_||!joint_hydraulic_||channel_ground_.active()||ctx.n_nodes()!=0||ctx.n_links()!=0||
+       ctx.n_subcatches()!=0||!aquiferConfig().surface_owners.empty()||!coupling_points_.empty()||!pond_track_ptr_.empty()||
+       !subcatch_recharge_.empty()||!cell_subcatch_.empty()||surface_quality_.active()||!aquifer_link_shares_.empty()||
+       pending_dt_<0||!close(ctx.current_time,sim_time_+pending_dt_)||!close(cpu->completedSourceTime(),sim_time_))
+        return "Managed RK2 requires its completed standalone CPU aquifer/router boundary without borrowed owners.";
+    if(auto error=cpu->rk2CheckpointProfile();!error.empty())return error;
+    if(auto error=validateRk2ReplayIds(state_.runtime_sources,subsurface_.runtimeSources(),state_.runtime_forcings,sim_time_);!error.empty())return error;
+    for(const auto* values:{&state_.rainfall,&state_.evap_rate})for(double value:*values)
+        if(!std::isfinite(value)||value<0)return "Managed RK2 native forcing is inadmissible.";
+    double incoming=0,outgoing=0;
+    for(const auto& row:state_.runtime_sources.rows){incoming+=row.receipt.water_in;outgoing+=row.receipt.water_out;}
+    if(!close(incoming,ctx.mass_balance_2d.external_in)||!close(outgoing,ctx.mass_balance_2d.external_out)||
+       !close(ctx.mass_balance_2d.final_storage,totalVolume()))return "Managed RK2 accepted surface receipts differ from the router.";
+    if(source_router_model_!=sourceRouterModel(ctx))return "Managed RK2 router project changed after attachment.";
+    return {};
+}
+void SurfaceRouter2D::attachStandaloneRk2Checkpoint(SimulationContext& ctx) {
+    if(source_context_||common_stage_||!joint_hydraulic_||joint_hydraulic_->checkpoint_context_!=&ctx||sim_time_!=0||pending_dt_!=0||ctx.current_time!=0)
+        throw std::invalid_argument("Attach the standalone RK2 session at its fresh initial boundary.");
+    auto model=sourceRouterModel(ctx);source_context_=&ctx;source_router_model_=std::move(model);
+    if(auto error=standaloneRk2Boundary(ctx);!error.empty()) {
+        source_context_=nullptr;source_router_model_.clear();throw std::invalid_argument(error);
+    }
+    source_boundary_ready_=true;
+}
 std::string SurfaceRouter2D::sourceBoundary(const SimulationContext& ctx) const {
+    if(standaloneRk2Checkpointing())return standaloneRk2Boundary(ctx);
     if(!active_ || !common_stage_ || !source_boundary_ready_ || &ctx!=source_context_ ||
        !common_stage_->matches(&mesh_,&state_,&subsurface_) || int(common_stage_->cells().size())!=mesh_.n_cells())
         return "Router checkpoint requires an accepted attached all-cell source boundary.";
@@ -306,7 +345,7 @@ void SurfaceRouter2D::setJointSourceStage(SimulationContext& ctx,CommonSourceSta
     attachCommonSourceStage(ctx,stage,&hydraulic);
 }
 void SurfaceRouter2D::checkJointRoutingStep(const SimulationContext& ctx,double dt,double start) const {
-    if(joint_hydraulic_ && (joint_hydraulic_->checkpoint_context_!=&ctx ||
+    if(joint_hydraulic_ && !standaloneRk2Checkpointing() && (joint_hydraulic_->checkpoint_context_!=&ctx ||
        !joint_hydraulic_->checkpoint_step_finished_ || joint_hydraulic_->checkpoint_time_!=start ||
        joint_hydraulic_->checkpoint_step_end_!=start+dt || ctx.current_time!=start || dt>ctx.options.routing_step))
         throw std::invalid_argument("Joint surface advance requires its completed hydraulic step and routing duration.");
@@ -379,7 +418,7 @@ void SurfaceRouter2D::resumeSourceResultHistory(SourceResultHistory& history) {
 }
 std::string SurfaceRouter2D::saveCheckpoint(const SimulationContext& ctx,const std::string& path) const {
     try {
-        if(joint_hydraulic_ && joint_hydraulic_->checkpoint_owned_session_)
+        if(standaloneRk2Checkpointing()||(joint_hydraulic_ && joint_hydraulic_->checkpoint_owned_session_))
             return "Engine-owned surface restart requires the engine session checkpoint.";
         std::string bytes;const auto error=checkpointBytes(ctx,bytes);if(!error.empty())return error;
         publish(path,bytes,joint_hydraulic_?jointMagic:magicName);return {};
@@ -393,7 +432,8 @@ std::string SurfaceRouter2D::checkpointBytes(const SimulationContext& ctx,std::s
         if(joint_hydraulic_)for(std::size_t c=0;c<state_.coupling_applied.size();++c)
             if(state_.coupling_applied[c]!=(snapshot.exchange.pending_.empty()?0:snapshot.exchange.pending_[c]))
                 return "Joint outfall receipts differ from undrained surface coupling.";
-        std::string cpu;const auto ce=static_cast<ExplicitInertialSolver*>(solver_.get())->checkpointBytes(cpu);if(!ce.empty())return ce;
+        std::string cpu;const auto* numerical=static_cast<ExplicitInertialSolver*>(solver_.get());
+        const auto ce=standaloneRk2Checkpointing()?numerical->rk2CheckpointBytes(cpu):numerical->checkpointBytes(cpu);if(!ce.empty())return ce;
         Archive state;snapshot.archive(state);state(cpu);
         if(channel_ground_.active()) {
             std::string profile="routed channel thermal and species receipts v2";state(profile);
@@ -404,7 +444,7 @@ std::string SurfaceRouter2D::checkpointBytes(const SimulationContext& ctx,std::s
             std::string hydraulic;const auto he=joint_hydraulic_->checkpointBytes(ctx,hydraulic);if(!he.empty())return he;
             state(hydraulic,snapshot.delivery);snapshot.archiveJoint(state);
         }
-        auto payload=state.bytes(),model=source_router_model_;auto magic=std::string(joint_hydraulic_?jointMagic:magicName);
+        auto payload=state.bytes(),model=source_router_model_;auto magic=std::string(standaloneRk2Checkpointing()?rk2Magic:joint_hydraulic_?jointMagic:magicName);
         uint32_t version=joint_hydraulic_?2:1,endian=0x01020304,longBytes=sizeof(long),crc=checksum(payload);
         if(runtimeWaterCheckpointing())version+=2;
         if(runtimeBoundaryCheckpointing())version+=2;
@@ -416,7 +456,7 @@ std::string SurfaceRouter2D::checkpointBytes(const SimulationContext& ctx,std::s
 }
 std::string SurfaceRouter2D::loadCheckpoint(SimulationContext& ctx,const std::string& path) {
     try {
-        if(joint_hydraulic_ && joint_hydraulic_->checkpoint_owned_session_)
+        if(standaloneRk2Checkpointing()||(joint_hydraulic_ && joint_hydraulic_->checkpoint_owned_session_))
             return "Engine-owned surface restart requires the engine session checkpoint.";
         return loadCheckpointBytes(ctx,readFile(path));
     }
@@ -426,14 +466,15 @@ std::string SurfaceRouter2D::loadCheckpointBytes(SimulationContext& ctx,std::str
     const std::array<double,6>* engine_boundary,const std::vector<double>* engine_rainfall,
     const double* engine_storage,bool engine_routed,
     const std::function<void(const runoff::SourceWaterDriver&)>* validate_source,
-    const std::function<void()>* before_install,double* inspect_source_end) {
+    const std::function<void()>* before_install,double* inspect_source_end,
+    const climate::ClimateState* prepared_climate,const HeatState* prepared_heat) {
     try {
         const auto error=sourceBoundary(ctx);if(!error.empty())return error;
         if(sim_time_!=0 || pending_dt_!=0 || ctx.current_time!=0) return "Router checkpoint restore requires a fresh attached router.";
         if(bytes.empty() || bytes.size()>maxBytes)return "Router checkpoint exceeds its size limit.";
         Archive file(std::move(bytes));std::string magic,model,payload;uint32_t version=0,endian=0,longBytes=0,crc=0;
         file(magic,version,endian,longBytes,model,payload,crc);file.finish();
-        if(magic!=(joint_hydraulic_?jointMagic:magicName) || version!=(joint_hydraulic_?2u:1u)+(runtimeWaterCheckpointing()?2u:0u)+(runtimeBoundaryCheckpointing()?2u:0u)+(outfallTailwaterCheckpointing()?8u:0u) || endian!=0x01020304 || longBytes!=sizeof(long)) return "Unsupported router checkpoint version/platform.";
+        if(magic!=(standaloneRk2Checkpointing()?rk2Magic:joint_hydraulic_?jointMagic:magicName) || version!=(joint_hydraulic_?2u:1u)+(runtimeWaterCheckpointing()?2u:0u)+(runtimeBoundaryCheckpointing()?2u:0u)+(outfallTailwaterCheckpointing()?8u:0u) || endian!=0x01020304 || longBytes!=sizeof(long)) return "Unsupported router checkpoint version/platform.";
         if(model!=source_router_model_) return "Router checkpoint report/weather model differs.";
         if(crc!=checksum(payload)) return "Router checkpoint checksum differs.";
         RestartState snapshot(*this,ctx);auto channel=channel_ground_;Archive state(std::move(payload));snapshot.archive(state);std::string cpu,hydraulic;state(cpu);
@@ -457,6 +498,30 @@ std::string SurfaceRouter2D::loadCheckpointBytes(SimulationContext& ctx,std::str
         if(joint_hydraulic_) {
             prepared=joint_hydraulic_->prepareCheckpointBytes(ctx,std::move(hydraulic),&clock,&snapshot.delivery,&snapshot.feedback);
             if(engine_storage && clock[0]>0)Router::validateSessionStorage(prepared,ctx,*engine_storage,engine_routed);
+        }
+        if(standaloneRk2Checkpointing()) {
+            if(validate_source)return "Managed RK2 cannot install a borrowed source driver.";
+            if(!state_.runtime_sources.rows.empty()||!subsurface_.runtimeSources().rows.empty()||!state_.runtime_forcings.rows.empty()||ctx.runtime_coupling_used)
+                return "Managed RK2 restore requires fresh copied prescription owners.";
+            Rk2CheckpointBinding binding;binding.climate=prepared_climate?prepared_climate:&ctx.climate_state;
+            binding.heat=prepared_heat?prepared_heat:&ctx.heat_state;
+            binding.surface=&snapshot.rk2_surface;binding.groundwater=&snapshot.rk2_ground;binding.forcing=&snapshot.rk2_forcing;
+            std::function<void(const ExplicitInertialSolver&,const SurfaceStateData&,const SubsurfaceSolver&)> validate=[&](const auto& numerical,const auto& surface,const auto& ground) {
+                if(!close(numerical.completedSourceTime(),snapshot.sim_time_)||!close(numerical.t_last_sync_,snapshot.sim_time_))
+                    throw std::runtime_error("Managed RK2 numerical/router completed clocks differ.");
+                double volume=0,incoming=0,outgoing=0;for(double water:surface.volume)volume+=water;
+                for(const auto& row:surface.runtime_sources.rows){incoming+=row.receipt.water_in;outgoing+=row.receipt.water_out;}
+                if(!close(volume,snapshot.mb.final_storage)||!close(incoming,snapshot.mb.external_in)||!close(outgoing,snapshot.mb.external_out))
+                    throw std::runtime_error("Managed RK2 physical/router accepted receipts differ.");
+                for(const auto* values:{&surface.rainfall,&surface.evap_rate})for(double value:*values)
+                    if(!std::isfinite(value)||value<0)throw std::runtime_error("Invalid managed RK2 native forcing.");
+                if(auto error=validateRk2ReplayIds(surface.runtime_sources,ground.runtimeSources(),surface.runtime_forcings,snapshot.sim_time_);!error.empty())throw std::runtime_error(error);
+            };
+            const auto ce=static_cast<ExplicitInertialSolver*>(solver_.get())->loadRk2CheckpointBytes(std::move(cpu),&binding,&validate,before_install,inspect_source_end!=nullptr);
+            if(!ce.empty())return ce;
+            if(inspect_source_end){*inspect_source_end=snapshot.sim_time_;return {};}
+            if(joint_hydraulic_)joint_hydraulic_->installCheckpoint(ctx,std::move(prepared));
+            snapshot.install(*this,ctx);return {};
         }
         const auto ce=static_cast<ExplicitInertialSolver*>(solver_.get())->loadCheckpointBytes(std::move(cpu),&expected,snapshot.exchange.pending_.empty()?nullptr:&snapshot.exchange.pending_,validate_source,before_install,snapshot.boundary_water && !snapshot.bc_nonwall_dirty_?&snapshot.boundary_slots:nullptr,inspect_source_end);if(!ce.empty())return ce;
         if(inspect_source_end)return {};

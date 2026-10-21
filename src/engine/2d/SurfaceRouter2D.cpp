@@ -2895,7 +2895,7 @@ void SurfaceRouter2D::flushPendingBatch(SimulationContext& ctx) {
 }
 
 bool SurfaceRouter2D::runtimeWaterCheckpointing() const noexcept {
-    return common_stage_ && common_stage_->runtimeWaterEnabled();
+    return standaloneRk2Checkpointing() || (common_stage_ && common_stage_->runtimeWaterEnabled());
 }
 bool SurfaceRouter2D::runtimeBoundaryCheckpointing() const noexcept {
     return common_stage_ && common_stage_->runtimeBoundariesEnabled();
@@ -3187,7 +3187,7 @@ void SurfaceRouter2D::reportRainfall(const SimulationContext& ctx, double report
 bool SurfaceRouter2D::runtimeCpuAvailable() const noexcept {
     return active_ && dynamic_cast<const ExplicitInertialSolver*>(solver_.get()) &&
         (options_.momentum!=Momentum2D::FULL_SWE ||
-         (options_.reconstruction_order==2&&subsurface_.active()&&!common_stage_&&!joint_hydraulic_));
+         (options_.reconstruction_order==2&&subsurface_.active()&&!common_stage_&&(!joint_hydraulic_||standaloneRk2Checkpointing())));
 }
 
 void SurfaceRouter2D::invalidateBoundaryIndex() {

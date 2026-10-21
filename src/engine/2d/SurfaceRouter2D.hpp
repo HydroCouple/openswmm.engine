@@ -66,6 +66,7 @@
 namespace openswmm::runoff { class SourceWaterDriver; }
 namespace openswmm {
 struct SimulationContext;
+struct HeatState;namespace climate {struct ClimateState;}
 class Router;
 class SWMMEngine;
 }
@@ -518,8 +519,12 @@ private:
         const double* engine_storage = nullptr, bool engine_routed = false,
         const std::function<void(const runoff::SourceWaterDriver&)>* validate_source = nullptr,
         const std::function<void()>* before_install = nullptr,
-        double* inspect_source_end = nullptr);
+        double* inspect_source_end = nullptr,
+        const climate::ClimateState* prepared_climate = nullptr,const HeatState* prepared_heat = nullptr);
     void attachCommonSourceStage(SimulationContext&, CommonSourceStage&, Router*);
+    bool standaloneRk2Checkpointing() const noexcept;
+    void attachStandaloneRk2Checkpoint(SimulationContext&);
+    std::string standaloneRk2Boundary(const SimulationContext&) const;
     void configureSnowGroundContacts();
     void checkJointRoutingStep(const SimulationContext&, double dt, double start) const;
     Router* joint_hydraulic_ = nullptr; // externally owned, stable lifetime

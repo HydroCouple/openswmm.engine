@@ -10,7 +10,7 @@ from openswmm.engine import (
 from tests.engine._groundwater_cases import cleanup
 
 
-def _open(directory, chemistry, thermal, reactive=True, passive=False, output=0, rate='.001', age=True, porous=True, unit='MG', boundary=None):
+def _open(directory, chemistry, thermal, reactive=True, passive=False, output=0, rate='.001', age=True, porous=True, unit='MG', boundary=None, rk2=False):
     directory.mkdir()
     path = directory / 'model.inp'
     reaction = ''
@@ -128,6 +128,8 @@ W CELL 1 FLOW WELL{forcing}{' __TEMPERATURE__ CONC -4' if porous else ''}{' __WA
 {reaction}
 {edge}
 ''')
+    if rk2:
+        path.write_text(path.read_text()+'\n[2D_OPTIONS]\nMOMENTUM_EQUATION FULL_SWE\nRECONSTRUCTION_ORDER 2\nLTS_TIERS 1\n')
     solver = Solver(path, path.with_suffix('.rpt'))
     solver.create()
     capabilities = solver.checkpoints.capabilities
@@ -200,9 +202,9 @@ def test_reactive_edge_session_preserves_reversals_fluxes_and_reports(tmp_path, 
     _continue_session(tmp_path, chemistry, thermal, True, passive, output, True, porous, boundary)
 
 
-def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, age, porous, boundary=None):
-    source = _open(tmp_path / 'source', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary)
-    target = _open(tmp_path / 'target', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary)
+def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, age, porous, boundary=None, rk2=False):
+    source = _open(tmp_path / 'source', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2)
+    target = _open(tmp_path / 'target', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2)
     try:
         source.checkpoints.start_session(output)
         target.checkpoints.start_session(output)
@@ -213,6 +215,13 @@ def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, a
             assert source.step().total_seconds() > 0
         checkpoint = tmp_path / 'accepted.chk'
         source.checkpoints.save(checkpoint)
+        if rk2:
+            before, after = tmp_path / 'inspection-before.chk', tmp_path / 'inspection-after.chk'
+            target.checkpoints.save(before)
+            assert isinstance(target.checkpoints.inspect(checkpoint), dict)
+            assert target.elapsed.total_seconds() == 0
+            target.checkpoints.save(after)
+            assert before.read_bytes() == after.read_bytes()
         target.checkpoints.restore(checkpoint)
         assert source.elapsed == target.elapsed
         for a, b in zip(_snapshot(source, chemistry, porous), _snapshot(target, chemistry, porous)):
@@ -352,3 +361,11 @@ def test_reactive_edge_changed_forcing_preserves_target_and_mesh_output(tmp_path
     finally:
         cleanup(source)
         cleanup(target)
+
+
+@pytest.mark.parametrize('chemistry,thermal', [(0, 4), (5, 3), (3, 7)])
+@pytest.mark.parametrize('porous', [False, True])
+@pytest.mark.parametrize('output', [0, 2])
+@pytest.mark.parametrize('boundary', [None, 'FLOW', 'HEAD'])
+def test_managed_rk2_groundwater_session_continues_calendar_quality_heat_and_history(tmp_path, chemistry, thermal, porous, output, boundary):
+    _continue_session(tmp_path, chemistry, thermal, True, True, output, True, porous, boundary, rk2=True)

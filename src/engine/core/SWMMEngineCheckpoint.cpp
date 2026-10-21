@@ -371,6 +371,7 @@ struct SWMMEngine::RestartState {
     HeatState heat;
     BedZoneState bed;
     bool heat_profile=false;
+    bool rk2_profile=false;
     bool reaction_profile=false;
     ReactionData reaction;
     std::string ard_bytes,lard_bytes;
@@ -407,6 +408,9 @@ struct SWMMEngine::RestartState {
         RUNOFF_ENGINE(COPY)
 #undef COPY
         heat_profile=e.ctx_.options.heat_transport;
+#ifdef OPENSWMM_HAS_2D
+        rk2_profile=e.surface_router_.standaloneRk2Checkpointing();
+#endif
         reaction_profile=e.ctx_.reactions.configured;
         if(reaction_profile) {
             reaction=e.ctx_.reactions;ard_attempted=e.ard_init_attempted_;
@@ -438,6 +442,13 @@ struct SWMMEngine::RestartState {
         fields(a,negsrc.clamp_events,negsrc.shortfall_mass,negsrc.age_clamp_events,negsrc.first_node,negsrc.first_clamp_recorded,negsrc.api_warned);
         for(auto& x:tops)fields(a,x.obj_type,x.index,x.value);
         climateState(a,climate);
+        if(rk2_profile) {
+            std::string profile="managed RK2 native radiation state v1";a(profile);
+            require(profile=="managed RK2 native radiation state v1","Unsupported managed RK2 radiation record.");
+            auto& r=climate.radiation;
+            a(r.shortwave,r.longwave,r.cosine,r.horizontal,r.transmittance,r.cloud,r.temperature,r.humidity,r.wind,r.pressure,
+              r.declination,r.hour_angle,r.latitude,r.date,r.seconds,r.shortwave_source,r.longwave_source,r.shared_heat_forcing);
+        }
         a.sequence(cursors,[&](auto& c){a(c.index,c.direction);},true);
         a.sequence(exfil.btm_ga,[&](auto& g){greenAmpt(a,g);},true);
         a.sequence(exfil.bank_ga,[&](auto& g){greenAmpt(a,g);},true);
@@ -512,6 +523,13 @@ struct SWMMEngine::RestartState {
                 climate.temp_ma.count>=0 && climate.temp_ma.count<=7,"Invalid engine climate checkpoint.");
         require(climateModel(climate)==climateModel(e.ctx_.climate_state),"Engine climate parameters differ.");
         require(heat_profile==e.ctx_.options.heat_transport,"Engine thermal checkpoint profile differs.");
+        if(rk2_profile) {
+            const auto& r=climate.radiation;
+            for(double value:{r.shortwave,r.longwave,r.cosine,r.horizontal,r.transmittance,r.cloud,r.temperature,r.humidity,r.wind,r.pressure,
+                              r.declination,r.hour_angle,r.latitude,r.date,r.seconds})require(std::isfinite(value),"Nonfinite managed RK2 radiation state.");
+            require(int(r.shortwave_source)>=0&&int(r.shortwave_source)<=3&&int(r.longwave_source)>=0&&int(r.longwave_source)<=3,
+                    "Invalid managed RK2 radiation provenance.");
+        }
         if(reaction_profile) {
             detail::validateReactionState(reaction,e.ctx_);
             require(subcatch.sweep_last_swept.size()==e.ctx_.subcatches.sweep_last_swept.size(),"Reaction sweeping-clock shape differs.");
@@ -756,7 +774,11 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
 #ifdef OPENSWMM_HAS_2D
     advancing_catchments=step_active_ && source_stage_ && source_stage_->runtimeCatchmentForcingEnabled();
 #endif
-    require(exchange_target_<0 || advancing_catchments,"Engine session checkpoint does not yet support runtime advance/coupling targets.");
+    bool advancing_rk2=false;
+#ifdef OPENSWMM_HAS_2D
+    advancing_rk2=surface_router_.standaloneRk2Checkpointing();
+#endif
+    require(exchange_target_<0 || advancing_catchments || advancing_rk2,"Engine session checkpoint does not yet support runtime advance/coupling targets.");
     require(ctx_.state==EngineState::RUNNING && ctx_.error_code==0 && do_routing_ &&
             save_results_==(checkpoint_output_?1:0),
             "Engine checkpoint requires a running qualified session with its prepared output mode.");
@@ -790,6 +812,8 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
         require(std::isfinite(next) && (next==-1 || next>=ctx_.current_time),"Water driver cursor is behind the engine.");
     }
     if(surface_router_.isActive()) {
+        if(surface_router_.options().reconstruction_order==2)require(ctx_.snowpacks.config.met_file.empty(),
+            "Managed RK2 requires in-memory native weather; file-based radiation is not captured.");
         require(ctx_.events.empty(),"Surface session checkpoint does not yet recover skipped routing events.");
         require(surface_router_.options_.output_file.empty() || checkpoint_surface_output_,
                 "Surface session checkpoint requires its prepared mesh output mode.");
@@ -806,7 +830,7 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
 #else
         require(!checkpoint_surface_output_,"Mesh output checkpoint support is unavailable.");
 #endif
-        require(attaching_surface || (surface_router_.joint_hydraulic_==&router_ &&
+        require(attaching_surface || surface_router_.standaloneRk2Checkpointing() || (surface_router_.joint_hydraulic_==&router_ &&
                 surface_router_.common_stage_ && (surface_router_.common_stage_->meshOnly() ||
                  (source_delivery_ && source_stage_==surface_router_.common_stage_))),
                 "Surface session checkpoint requires its explicitly attached common stage and engine-owned hydraulic router.");
@@ -924,6 +948,9 @@ std::string SWMMEngine::checkpointModel() const {
     auto hydraulic=router_.checkpointModel(ctx_);a(hydraulic);
 #ifdef OPENSWMM_HAS_2D
     if(source_delivery_) {auto bridge=*source_delivery_;bridge.checkpoint(a,true,source_stage_->sources());}
+    if(surface_router_.isActive()&&surface_router_.options().reconstruction_order==2&&ctx_.options.heat_transport) {
+        std::string profile="managed RK2 shared radiation model v1";auto identity=surface::snowModelIdentity(ctx_,snow_.state());a(profile,identity);
+    }
     if(runtime_water_driver_) {auto identity=runtime_water_driver_->identity();a(identity);}
 #endif
     require(a.bytes().size()<=maxBytes,"Engine checkpoint model exceeds its size limit.");return a.bytes();
@@ -1089,6 +1116,7 @@ std::string SWMMEngine::enableCheckpointingImpl(
                 "Enable engine checkpointing at start's initial session boundary.");
         router_.checkpoint_owned_session_=true;
 #ifdef OPENSWMM_HAS_2D
+        const bool rk2_attachment=!stage&&surface_router_.isActive()&&surface_router_.options_.reconstruction_order==2;
         router_.checkpoint_aquifer_session_=stage && !surface_router_.subsurface_.nodeBeds().empty();
         require(!stage || own_sources || stage->meshOnly(),"Private catchment ownership requires explicit spatial-source attachment.");
         std::unique_ptr<runoff::SourceWaterDeliveryBridge> bridge;
@@ -1117,7 +1145,7 @@ std::string SWMMEngine::enableCheckpointingImpl(
             Archive initial,matching;authored.checkpoint(initial,false);expected.checkpoint(matching,false);
             require(initial.bytes()==matching.bytes(),"Spatial source initial water differs from the live engine.");
         }
-        checkCheckpointProfile(stage!=nullptr);
+        checkCheckpointProfile(stage!=nullptr||rk2_attachment);
 #else
         checkCheckpointProfile();
 #endif
@@ -1129,6 +1157,13 @@ std::string SWMMEngine::enableCheckpointingImpl(
         router_.enableCheckpointing(ctx_);
 #ifdef OPENSWMM_HAS_2D
         if(stage)surface_router_.setJointSourceStage(ctx_,*stage,router_);
+        else if(rk2_attachment) {
+            // This router has no 1D physical stores in the standalone profile,
+            // but its accepted engine calendar still requires owned recovery.
+            surface_router_.joint_hydraulic_=&router_;
+            try {surface_router_.attachStandaloneRk2Checkpoint(ctx_);}
+            catch(...) {surface_router_.joint_hydraulic_=nullptr;throw;}
+        }
 #endif
 #ifdef OPENSWMM_HAS_2D
         if(bridge) {
@@ -1566,7 +1601,7 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,const std::st
             }
             auto error=surface_router_.loadCheckpointBytes(ctx_,std::move(hydraulic),&state.boundary,&state.gages.rainfall,
                 &state.balance.routing_final_storage,state.stats.sum_iterations>0,bridge?&validate_source:nullptr,
-                before_install&&!inspection?&before_install:nullptr,inspection?&summary.completed_source_seconds.emplace():nullptr);
+                before_install&&!inspection?&before_install:nullptr,inspection?&summary.completed_source_seconds.emplace():nullptr,&state.climate,&state.heat);
             require(error.empty(),error.c_str());
             if(inspection) {
                 if(prepared_stream)require(*summary.completed_source_seconds==prepared_stream->latest.source_end,"Inspected source clocks differ.");
