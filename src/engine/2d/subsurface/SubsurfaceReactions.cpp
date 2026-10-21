@@ -5,6 +5,7 @@
 #include "../../core/SimulationContext.hpp"
 #include "../../transport/components/ReactionModule/ReactionsWriter.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <stdexcept>
 #include <functional>
@@ -150,6 +151,9 @@ void SubsurfaceSolver::reactPorewaterCell(int cell,double dt,double hg) {
     const auto& column=thermal.column;const auto nl=column.theta.size();
     const auto& rx=*reactions_;const int count=rx.n_species();
     const double table=state_.zs[cell]-hg,area=column.area;
+    bool shared_rates=opts_&&opts_->reconstruction_order==2;
+    if(shared_rates)for(int zone=0;zone<2;++zone)for(auto form:reactors_[std::size_t(cell)*2+zone].forms)
+        if(form!=ReactionExprForm::NONE&&form!=ReactionExprForm::RATE)shared_rates=false;
     std::vector<int> rows(count);for(int s=0;s<count;++s)rows[s]=tr_.rowIndex(rx.species_name[s]);
     auto staged=pore.mass;std::vector<double> ledger(count,0);
     for(std::size_t j=0;j<nl;++j) {
@@ -171,6 +175,51 @@ void SubsurfaceSolver::reactPorewaterCell(int cell,double dt,double hg) {
             if(!std::isfinite(original[s])||original[s]<0)
                 throw std::runtime_error("[REACTION_SUBSURFACE] invalid available porous inventory.");
             staged[k]=pore.reserved_out[k]; // accepted producer packets never react a second time
+        }
+        if(shared_rates) {
+            std::vector<double> aqueous(count),pollutants(tr_.n_pollut);
+            std::vector<ReactionExprForm> forms(count,ReactionExprForm::NONE);
+            std::vector<RxExprSpan> expressions(count);
+            std::array<std::array<double,int(RxHydVar::COUNT_)>,2> variables{};
+            std::array<std::vector<double>,2> scales;
+            std::vector<transport::RxRateContext> contexts;contexts.reserve(2);
+            for(int s=0;s<count;++s)if(rows[s]>=0&&active_capacity[s]>0)aqueous[s]=original[s]/active_capacity[s];
+            for(int r=0;r<tr_.n_pollut;++r) {
+                const auto k=std::size_t(r)*nl+j;
+                const double cap=std::max(0.,water-reserved_water)+pore.retention[k];
+                pollutants[r]=cap>0?pore.contactAvailableMass(r,j)/cap:0;
+            }
+            for(int zone=0;zone<2;++zone) {
+                const double phase_bulk=zone==0?sat_bulk:bulk-sat_bulk;
+                const double phase_water=zone==0?active_sat:std::max(0.,water-sat);
+                const double full_water=zone==0?sat:water-sat;
+                const double theta=phase_bulk>0?full_water/phase_bulk:0;
+                if(phase_bulk>0&&(!std::isfinite(theta)||theta<state_.theta_r[cell]-1e-12||theta>state_.theta_s[cell]+1e-12))
+                    throw std::runtime_error("[REACTION_SUBSURFACE] invalid porous phase moisture.");
+                if(!(phase_water>0))continue;
+                auto& vars=variables[zone];scales[zone].resize(count);
+                vars[int(RxHydVar::TEMP)]=heat_.activeTemperature(cell,j);
+                vars[int(RxHydVar::GW_THETA)]=theta;vars[int(RxHydVar::GW_POROSITY)]=state_.theta_s[cell];
+                vars[int(RxHydVar::GW_SE)]=std::clamp((theta-state_.theta_r[cell])/(state_.theta_s[cell]-state_.theta_r[cell]),0.,1.);
+                vars[int(RxHydVar::GW_DEPTH_M)]=zone==0?.5*(std::max(top,table)+bottom):.5*(top+std::min(bottom,table));
+                const auto& reactor=reactors_[std::size_t(cell)*2+zone];
+                for(int s=0;s<count;++s) {
+                    scales[zone][s]=active_capacity[s]>0?phase_water/active_capacity[s]:0;
+                    if(reactor.forms[s]==ReactionExprForm::RATE){forms[s]=ReactionExprForm::RATE;expressions[s]=reactor.expressions[s];}
+                }
+                contexts.push_back({&reactor.forms,&reactor.expressions,vars.data(),pollutants.data(),scales[zone].data()});
+            }
+            if(!contexts.empty()) {
+                const auto report=transport::ReactionIntegrator::stepSubcycled(rx,forms,expressions,dt,
+                    aqueous.data(),variables[0].data(),reaction_workspace_,pollutants.data(),nullptr,nullptr,contexts);
+                if(!report.ok)throw std::runtime_error("[REACTION_SUBSURFACE] "+report.error);
+            }
+            for(int s=0;s<count;++s)if(rows[s]>=0) {
+                const double changed=forms[s]==ReactionExprForm::RATE?aqueous[s]*active_capacity[s]:original[s];
+                if(!std::isfinite(changed)||changed<0)throw std::runtime_error("[REACTION_SUBSURFACE] inadmissible porous reactor inventory.");
+                staged[std::size_t(rows[s])*nl+j]+=changed;ledger[s]+=original[s]-changed;
+            }
+            continue;
         }
         for(int zone=0;zone<2;++zone) {
             const double phase_bulk=zone==0?sat_bulk:bulk-sat_bulk;
@@ -202,8 +251,11 @@ void SubsurfaceSolver::reactPorewaterCell(int cell,double dt,double hg) {
                     (state_.theta_s[cell]-state_.theta_r[cell]),0.,1.);
                 variables[int(RxHydVar::GW_DEPTH_M)]=zone==0?.5*(std::max(top,table)+bottom):.5*(top+std::min(bottom,table));
                 const auto& reactor=reactors_[std::size_t(cell)*2+zone];
-                const auto report=transport::ReactionIntegrator::step(rx,reactor.forms,reactor.expressions,dt,
-                    aqueous.data(),variables,reaction_workspace_,pollutants.data(),scale.data());
+                const auto report=opts_&&opts_->reconstruction_order==2?
+                    transport::ReactionIntegrator::stepSubcycled(rx,reactor.forms,reactor.expressions,dt,
+                        aqueous.data(),variables,reaction_workspace_,pollutants.data(),scale.data()):
+                    transport::ReactionIntegrator::step(rx,reactor.forms,reactor.expressions,dt,
+                        aqueous.data(),variables,reaction_workspace_,pollutants.data(),scale.data());
                 if(!report.ok)throw std::runtime_error("[REACTION_SUBSURFACE] "+report.error);
             }
             for(int s=0;s<count;++s)if(rows[s]>=0) {
@@ -234,11 +286,21 @@ void SubsurfaceSolver::advanceRk2Reactions(double seconds) {
                 const auto k=tr_.idx(species,cell);const double rate=tr_.decay[k];if(!(rate>0))continue;
                 const double keep=std::exp(-rate*interval);double removed=0;
                 const auto apply=[&](double& mass) {removed+=mass*(1-keep);mass*=keep;};
-                apply(tr_.sat_mass[k]);
-                if(tr_.n_layers) {
-                    for(int layer=0;layer<tr_.n_layers;++layer)apply(tr_.layer_mass[tr_.layerIdx(species,layer,cell)]);
-                    tr_.refreshUnsat(species,cell);
-                } else apply(tr_.unsat_mass[k]);
+                if(heat_.active()&&!tr_.n_layers) {
+                    auto& pore=heat_.cells[cell].porewater;const auto n=heat_.cells[cell].column.theta.size();
+                    for(std::size_t j=0;j<n;++j) {
+                        const auto index=std::size_t(species)*n+j;const double held=pore.reserved_out[index];
+                        double active=pore.mass[index]-held;
+                        if(!std::isfinite(active)||active<0)throw std::runtime_error("Invalid porous reaction donor reservation.");
+                        apply(active);pore.mass[index]=held+active;
+                    }
+                } else {
+                    apply(tr_.sat_mass[k]);
+                    if(tr_.n_layers) {
+                        for(int layer=0;layer<tr_.n_layers;++layer)apply(tr_.layer_mass[tr_.layerIdx(species,layer,cell)]);
+                        tr_.refreshUnsat(species,cell);
+                    } else apply(tr_.unsat_mass[k]);
+                }
                 tr_.lost_reaction[species]+=removed;
             }
         };
@@ -248,6 +310,10 @@ void SubsurfaceSolver::advanceRk2Reactions(double seconds) {
         decay(reactors_.empty()?seconds:.5*seconds);
         reactCell(cell,seconds,state_.hg[cell]);
         if(!reactors_.empty())decay(.5*seconds);
+        if(heat_.active()) {
+            if(tr_.n_layers)if(auto error=refreshSigmaPorewater(cell);!error.empty())throw std::runtime_error(error);
+            heat_.refreshView(cell,tr_);
+        }
     }
 }
 

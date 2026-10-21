@@ -77,7 +77,19 @@ void evalTerms(const ReactionData& rx, const double* species,
 void evalRates(const ReactionData& rx, const std::vector<RxExprSpan>& spans, const double* species,
                const double* hydvar, const double* pollut,
                std::vector<double>& terms,
-               const std::vector<int>& idx, double factor, double* out,const double* kinetic_scale,const std::vector<unsigned char>& needed, const double* coefficients) {
+               const std::vector<int>& idx, double factor, double* out,const double* kinetic_scale,const std::vector<unsigned char>& needed, const double* coefficients,
+               std::span<const RxRateContext> contexts) {
+    if(!contexts.empty()) {
+        std::fill_n(out,idx.size(),0.);
+        for(const auto& context:contexts) {
+            evalTerms(rx,species,context.hydvar,context.pollutants,terms,needed,coefficients);
+            RxEvalEnv env{species,coefficients,terms.data(),context.hydvar,context.pollutants};
+            for(std::size_t k=0;k<idx.size();++k)if((*context.forms)[idx[k]]==ReactionExprForm::RATE)
+                out[k]+=factor*context.kinetic_scale[idx[k]]*
+                    evalReactionExpression(rx.token_pool,(*context.expressions)[idx[k]],env);
+        }
+        return;
+    }
     evalTerms(rx, species, hydvar, pollut, terms,needed,coefficients);
     RxEvalEnv env{species, coefficients, terms.data(), hydvar, pollut};
     for (std::size_t k = 0; k < idx.size(); ++k)
@@ -195,10 +207,10 @@ void RxWorkspace::init(const ReactionData& rx) {
 RxStepReport ReactionIntegrator::stepSubcycled(const ReactionData& rx,
     const std::vector<ReactionExprForm>& forms,const std::vector<RxExprSpan>& spans,
     double dt,double* species,double* hydvar,RxWorkspace& ws,const double* pollutants,
-    const double* kinetic_scale,const double* coefficients) {
+    const double* kinetic_scale,const double* coefficients,std::span<const RxRateContext> contexts) {
     const auto integrate=[&](auto&& self,double interval,int remaining)->RxStepReport {
         const std::vector<double> initial(species,species+rx.n_species());
-        auto report=step(rx,forms,spans,interval,species,hydvar,ws,pollutants,kinetic_scale,coefficients);
+        auto report=step(rx,forms,spans,interval,species,hydvar,ws,pollutants,kinetic_scale,coefficients,contexts);
         if(report.ok)return report;
         std::copy(initial.begin(),initial.end(),species);
         if(!report.interval_limit||remaining==0)return report;
@@ -214,6 +226,7 @@ RxStepReport ReactionIntegrator::stepSubcycled(const ReactionData& rx,
     };
     auto report=integrate(integrate,dt,8);
     hydvar[static_cast<int>(RxHydVar::DT)]=dt;
+    for(const auto& context:contexts)if(context.hydvar)context.hydvar[static_cast<int>(RxHydVar::DT)]=dt;
     return report;
 }
 
@@ -226,12 +239,30 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx, bool tank,
 }
 RxStepReport ReactionIntegrator::step(const ReactionData& rx,
     const std::vector<ReactionExprForm>& forms,const std::vector<RxExprSpan>& spans,
-    double dt,double* species,double* hydvar,RxWorkspace& ws,const double* pollutants,const double* kinetic_scale,const double* coefficients) {
+    double dt,double* species,double* hydvar,RxWorkspace& ws,const double* pollutants,const double* kinetic_scale,const double* coefficients,
+    std::span<const RxRateContext> contexts) {
     if (!coefficients) coefficients = rx.coef_value.data();
     RxStepReport rep;
     const int n = rx.n_species();
     if (!rx.compiled || n == 0 || dt <= 0.0) return rep;
     if(forms.size()!=std::size_t(n)||spans.size()!=std::size_t(n)){rep.ok=false;rep.error="Reaction context shape differs from species";return rep;}
+    if(!contexts.empty()) {
+        for(int s=0;s<n;++s)if(forms[s]!=ReactionExprForm::NONE&&forms[s]!=ReactionExprForm::RATE) {
+            rep.ok=false;rep.error="Shared reaction contexts support RATE terms only";return rep;
+        }
+        for(const auto& context:contexts) {
+            if(kinetic_scale||!context.forms||!context.expressions||!context.hydvar||!context.kinetic_scale||
+               context.forms->size()!=std::size_t(n)||context.expressions->size()!=std::size_t(n)) {
+                rep.ok=false;rep.error="Shared reaction context shape or scale differs";return rep;
+            }
+            for(int s=0;s<n;++s)if(((*context.forms)[s]!=ReactionExprForm::NONE&&(*context.forms)[s]!=ReactionExprForm::RATE)||
+                !std::isfinite(context.kinetic_scale[s])||context.kinetic_scale[s]<0||
+                ((*context.forms)[s]==ReactionExprForm::RATE&&forms[s]!=ReactionExprForm::RATE)) {
+                rep.ok=false;rep.error="Shared reaction context has incompatible forms or weights";return rep;
+            }
+        }
+        for(const auto& context:contexts)context.hydvar[static_cast<int>(RxHydVar::DT)]=dt;
+    }
 
     hydvar[static_cast<int>(RxHydVar::DT)] = dt;
     const double factor = unitFactor(rx.rate_units);
@@ -253,6 +284,8 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx,
             if(rx.token_pool[i].op==RxToken::PUSH_TERM)ws.term_needed_[rx.token_pool[i].idx]=1;
     };
     for(int s=0;s<n;++s)if(forms[s]!=ReactionExprForm::NONE)mark(spans[s]);
+    for(const auto& context:contexts)for(int s=0;s<n;++s)
+        if((*context.forms)[s]==ReactionExprForm::RATE)mark((*context.expressions)[s]);
     for(int term=int(rx.term_expr.size())-1;term>=0;--term)if(ws.term_needed_[term])mark(rx.term_expr[term]);
 
     // Build and factor I - scale*J into ws.lu_, reusing the existing
@@ -322,7 +355,7 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx,
                     species[ridx[gb + k]] = ws.ytmp_[k];
                 freeze_others(coupled ? static_cast<std::size_t>(-1) : gb);
                 evalRates(rx, spans, species, hydvar, pollutants, ws.terms_, ridx, factor,
-                          ws.rates_.data(),kinetic_scale,ws.term_needed_,coefficients);
+                          ws.rates_.data(),kinetic_scale,ws.term_needed_,coefficients,contexts);
                 for (std::size_t k = 0; k < gn; ++k)
                     out[k] = ws.rates_[gb + k];
             };

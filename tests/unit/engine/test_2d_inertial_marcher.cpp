@@ -1873,10 +1873,10 @@ TEST(CoupledGroundwaterRk2, PassiveMovingTableApproachesIndependentUniformDissol
 namespace {
 struct RkReactionSystem {
     SWMM_Engine handle=swmm_engine_new();
-    explicit RkReactionSystem(const std::string& laws,const std::string& solver="RK5",const std::string& pipe="") {
+    explicit RkReactionSystem(const std::string& laws,const std::string& solver="RK5",const std::string& pipe="",const std::string& terms="") {
         char error[512]{};
         const auto text="[REACTION_OPTIONS]\nSOLVER "+solver+"\nRATE_UNITS SEC\nCOUPLING FULL\nATOL 1e-13\nRTOL 1e-11\n"
-            "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n[REACTION_SUBSURFACE]\n"+laws+(pipe.empty()?"":"[REACTION_PIPES]\n"+pipe);
+            "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"+(terms.empty()?"":"[REACTION_TERMS]\n"+terms)+"[REACTION_SUBSURFACE]\n"+laws+(pipe.empty()?"":"[REACTION_PIPES]\n"+pipe);
         if(!handle||swmm_reactions_apply_text(handle,text.c_str(),error,sizeof(error))!=SWMM_OK)throw std::runtime_error(error);
     }
     ~RkReactionSystem(){if(handle)swmm_engine_destroy(handle);}
@@ -2550,6 +2550,42 @@ struct RkPorousOwner {
         ASSERT_EQ(r.gw.rk2ProfileError(),"");
     }
 };
+const std::string kRkPorousConversion="* SAT A RATE -.2*exp(.01*TEMP)*A\n* SAT B RATE .2*exp(.01*TEMP)*A\n"
+    "* UNSAT A RATE -.2*exp(.01*TEMP)*A\n* UNSAT B RATE .2*exp(.01*TEMP)*A\n";
+const std::string kRkPorousSurfaceConversion="RATE A -.3*exp(.01*TEMP)*A\nRATE B .3*exp(.01*TEMP)*A\n";
+void initRkPorousQuality(CoupledRkRig& r,RkPorousOwner& owner,RkReactionSystem& system,
+    bool layered,bool age=false,double kd=0,double temperature=-2,int thermal_layers=3,bool conduction=false) {
+    owner.initialize(r,layered,thermal_layers,conduction);
+    auto& ctx=system.context();ctx.options.heat_transport=true;ctx.options.water_density=1000;ctx.options.water_specific_heat=4186;
+    for(auto& row:owner.config.initial_quality)row.value=temperature;
+    owner.config.options.transport_msx=true;owner.config.options.transport_age=age;
+    for(const auto& name:{"A","B"}){GwSorptionRow row;row.species=name;row.kd=kd*1000;owner.config.sorption.push_back(row);}
+    RowLayoutLite rows;rows.n_msx=2;rows.names={"A","B"};
+    if(age){rows.age_row=2;rows.names.push_back("__WATER_AGE__");}
+    rows.temp_row=int(rows.names.size());rows.names.push_back("__TEMPERATURE__");rows.n_species=int(rows.names.size());
+    std::vector<std::string> warnings;r.gw.initTransport(rows,&owner.config,{},warnings);
+    auto& tr=r.gw.transport();const auto& w=r.gw.state();
+    for(int species=0;species<rows.n_species;++species)for(int cell=0;cell<w.n_cells;++cell) {
+        const auto index=tr.idx(species,cell);const double partition=tr.kd[index]*tr.rho_b[cell];
+        const double concentration=species==0?2:species==rows.age_row?5:species==rows.temp_row?temperature:0;
+        tr.sat_mass[index]=concentration*w.area[cell]*w.hg[cell]*(w.theta_s[cell]+partition);
+        if(layered) {
+            for(int j=0;j<tr.n_layers;++j)tr.layer_mass[tr.layerIdx(species,j,cell)]=concentration*w.area[cell]*(w.zs[cell]-w.hg[cell])/tr.n_layers*
+                (w.theta_sigma[std::size_t(j)*w.n_cells+cell]+partition);
+            tr.refreshUnsat(species,cell);
+        } else tr.unsat_mass[index]=concentration*w.area[cell]*(w.hu[cell]+partition*(w.zs[cell]-w.hg[cell]));
+    }
+    for(int species=0;species<rows.n_species;++species)tr.init_mass[species]=tr.storage(species);
+    ASSERT_EQ(r.gw.initHeat(ctx,owner.config),"");ASSERT_EQ(r.gw.initPorewater(),"");ASSERT_EQ(r.gw.initReactions(ctx),"");
+    auto& surface=r.state.transport;surface.resize(rows.n_species,r.mesh.n_cells(),0);
+    surface.n_pollut=0;surface.n_msx=2;surface.age_row=rows.age_row;surface.temp_row=rows.temp_row;surface.row_names=rows.names;
+    for(int species=0;species<rows.n_species;++species)for(int cell=0;cell<w.n_cells;++cell) {
+        const double concentration=species==0?2:species==rows.age_row?5:species==rows.temp_row?temperature:0;
+        surface.cell_mass[surface.idx(species,cell)]=concentration*r.state.volume[cell];
+    }
+    r.solver.initialize(r.mesh,r.state,r.opts);r.solver.setSubsurface(&r.gw);
+    ASSERT_EQ(r.solver.configureRk2Reactions(ctx),"");ASSERT_EQ(r.gw.rk2ProfileError(),"");
+}
 double rkPorousEnergy(const CoupledRkRig& r) {
     double value=0;for(const auto& cell:r.gw.heat().cells)value+=std::accumulate(cell.column.energy.begin(),cell.column.energy.end(),0.);
     return value;
@@ -2561,7 +2597,7 @@ void checkRkPorousLedgers(const CoupledRkRig& r) {
         EXPECT_NEAR(energy-c.initial_j,net,1e-10*std::max({1.,std::abs(c.initial_j),std::abs(net)}));
     }
 }
-std::vector<double> porousColumnReference(int steps) {
+std::vector<double> porousColumnReference(int steps,bool chemistry=false,bool layered=false,double partition=0) {
     // Independent continuous Gardner water/energy ODE. Differentiate the
     // overlap integrals with dual numbers, rather than calling the staged
     // projection or reconstructing an accepted numerical water packet.
@@ -2586,12 +2622,22 @@ std::vector<double> porousColumnReference(int steps) {
         }
         return result;
     };
-    std::vector<double> y(10);y[0]=.6;y[5]=.2;y[6]=6*y[5];
+    const int ground_stores=layered?5:3,width=ground_stores+1;
+    std::vector<double> y(chemistry?10+3*width:10);y[0]=.6;y[5]=.2;y[6]=6*y[5];
     for(int k=0;k<4;++k)y[k+1]=(.24+.015*k)*(2-y[0])/4;
     const auto initial_water=water(y,std::vector<double>(10));
     for(int j=0;j<3;++j)y[7+j]=-2*(grain*dx+initial_water[j][0]);
+    if(chemistry)for(int row=0;row<3;++row) {
+        const int base=10+row*width;
+        for(int j=0;j<ground_stores;++j) {
+            const double bulk=layered?(j==4?y[0]:(2-y[0])/4):dx;
+            const double aqueous=layered?(j==4?phi*y[0]:y[j+1]):initial_water[j][0];
+            y[base+j]=row==0?2*(aqueous+partition*bulk):row==2?5*aqueous:0;
+        }
+        y[base+ground_stores]=(row==0?6:row==2?5:0)*y[5];
+    }
     const auto rhs=[&](const std::vector<double>& v) {
-        std::vector<double> out(10);std::array<double,4> theta{},conductivity{};std::array<double,5> flux{};
+        std::vector<double> out(v.size());std::array<double,4> theta{},conductivity{};std::array<double,5> flux{};
         const double length=2-v[0];
         for(int k=0;k<4;++k){theta[k]=4*v[k+1]/length;conductivity[k]=ks*(theta[k]-residual)/(phi-residual);}
         out[0]=(conductivity[3]-deep*v[0]/2)/(phi-theta[3]);const double grid=-out[0];
@@ -2607,22 +2653,55 @@ std::vector<double> porousColumnReference(int steps) {
         }
         external[0]=flux[0];external[2]=-deep*v[0]/2;
         out[6]=-flux[0]*v[6]/v[5];out[7]+=flux[0]*v[6]/v[5];out[9]+=external[2]*temperature[2];
-        double vertical=0;
+        double vertical=0;std::array<double,2> vertical_flow{};
         for(int j=0;j<2;++j) {
             vertical+=external[j]-fixed[j][1];
+            vertical_flow[j]=vertical;
             const double advective=vertical*(vertical>=0?temperature[j]:temperature[j+1]);
             const double contact=(temperature[j]-temperature[j+1])/(cp*(.5*dx/lambda[j]+.5*dx/lambda[j+1]));
             out[7+j]-=advective+contact;out[8+j]+=advective+contact;
+        }
+        if(chemistry) {
+            std::vector<double> aqueous(ground_stores),bulk(ground_stores),local_temperature(ground_stores);
+            for(int j=0;j<ground_stores;++j) {
+                if(layered) {
+                    const double top=j==4?length:length*j/4,bottom=j==4?2:length*(j+1)/4;
+                    bulk[j]=bottom-top;aqueous[j]=j==4?phi*v[0]:v[j+1];
+                    for(int k=0;k<3;++k)local_temperature[j]+=temperature[k]*std::max(0.,std::min(bottom,dx*(k+1))-std::max(top,dx*k))/bulk[j];
+                } else {bulk[j]=dx;aqueous[j]=fixed[j][0];local_temperature[j]=temperature[j];}
+            }
+            for(int row=0;row<3;++row) {
+                const int base=10+row*width;std::vector<double> concentration(width);
+                const double retained=row==2?0:partition;
+                for(int j=0;j<ground_stores;++j)concentration[j]=v[base+j]/(aqueous[j]+retained*bulk[j]);
+                concentration[ground_stores]=v[base+ground_stores]/v[5];
+                const auto move=[&](int from,int to,double q) {
+                    if(q<0){std::swap(from,to);q=-q;}
+                    const double amount=q*concentration[from];out[base+from]-=amount;out[base+to]+=amount;
+                };
+                move(ground_stores,0,flux[0]);
+                if(layered) {
+                    for(int j=1;j<=4;++j){move(j-1,j,flux[j]);move(j-1,j,-retained*(double(j)/4)*grid);}
+                } else for(int j=0;j<2;++j)move(j,j+1,vertical_flow[j]);
+                out[base+ground_stores-1]-=deep*v[0]/2*concentration[ground_stores-1];
+            }
+            for(int j=0;j<ground_stores;++j) {
+                const double converted=.2*std::exp(.01*local_temperature[j])*aqueous[j]/(aqueous[j]+partition*bulk[j])*v[10+j];
+                out[10+j]-=converted;out[10+width+j]+=converted;out[10+2*width+j]+=aqueous[j];
+            }
+            const double surface_conversion=.3*std::exp(.01*v[6]/v[5])*v[10+ground_stores];
+            out[10+ground_stores]-=surface_conversion;out[10+width+ground_stores]+=surface_conversion;
+            out[10+2*width+ground_stores]+=v[5];
         }
         return out;
     };
     const double dt=2./steps;
     for(int step=0;step<steps;++step) {
         const auto a=rhs(y);auto v=y;
-        for(int k=0;k<10;++k)v[k]=y[k]+.5*dt*a[k];const auto b=rhs(v);
-        for(int k=0;k<10;++k)v[k]=y[k]+.5*dt*b[k];const auto c=rhs(v);
-        for(int k=0;k<10;++k)v[k]=y[k]+dt*c[k];const auto d=rhs(v);
-        for(int k=0;k<10;++k)y[k]+=dt*(a[k]+2*b[k]+2*c[k]+d[k])/6;
+        for(std::size_t k=0;k<y.size();++k)v[k]=y[k]+.5*dt*a[k];const auto b=rhs(v);
+        for(std::size_t k=0;k<y.size();++k)v[k]=y[k]+.5*dt*b[k];const auto c=rhs(v);
+        for(std::size_t k=0;k<y.size();++k)v[k]=y[k]+dt*c[k];const auto d=rhs(v);
+        for(std::size_t k=0;k<y.size();++k)y[k]+=dt*(a[k]+2*b[k]+2*c[k]+d[k])/6;
     }
     return y;
 }
@@ -2827,4 +2906,244 @@ TEST(CoupledGroundwaterRk2, PorousHeterogeneousLateralHeatMatchesIndependentPair
             EXPECT_NEAR(r.gw.heat().cells[0].lateral_j+r.gw.heat().cells[1].lateral_j,0,1e-7);checkRkPorousLedgers(r);
         }
     }
+}
+TEST(CoupledGroundwaterRk2, PorousReactiveCanonicalInventoriesRespectSorptionTemperatureAndAge) {
+    for(const std::string integrator:{"RK5","ROS2","BDF2"}) {
+        RkReactionSystem system(kRkPorousConversion,integrator,kRkPorousSurfaceConversion);
+        for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true}) {
+            if(layered&&closure!=GwClosure::SIGMA)continue;
+            for(double kd:{0.,.001})for(double temperature:{-3.,5.}) {
+                SCOPED_TRACE(integrator);
+                SCOPED_TRACE(int(closure));
+                SCOPED_TRACE(layered);
+                SCOPED_TRACE(kd);
+                SCOPED_TRACE(temperature);
+                CoupledRkRig r;r.init(.05,0,0,.1,"NONE",closure,SoilChar::GARDNER,4);
+                RkPorousOwner owner;initRkPorousQuality(r,owner,system,layered,true,kd,temperature);
+                const auto& w=r.gw.state();const auto& tr=r.gw.transport();
+                const auto& cell=r.gw.heat().cells[0];std::vector<double> initial,eta;
+                if(layered) {
+                    const double partition=tr.kd[tr.idx(0,0)]*tr.rho_b[0];
+                    initial.push_back(tr.sat_mass[tr.idx(0,0)]);eta.push_back(w.theta_s[0]/(w.theta_s[0]+partition));
+                    for(int j=0;j<tr.n_layers;++j) {
+                        const double theta=w.theta_sigma[std::size_t(j)*w.n_cells];
+                        initial.push_back(tr.layer_mass[tr.layerIdx(0,j,0)]);eta.push_back(theta/(theta+partition));
+                    }
+                } else for(std::size_t j=0;j<cell.column.theta.size();++j) {
+                    const double water=cell.column.theta[j]*cell.column.area*(cell.column.depth_edges[j+1]-cell.column.depth_edges[j]);
+                    initial.push_back(cell.porewater.mass[j]);eta.push_back(water/(water+cell.porewater.retention[j]));
+                }
+                const double initial_water=w.storage(),surface_water=totalVolume(r.state,r.mesh.n_cells());
+                const auto surface_initial=r.state.transport.cell_mass;
+                for(int step=0;step<40;++step)ASSERT_NO_THROW(r.solver.advance(step*.05,(step+1)*.05));
+                for(int i=0;i<w.n_cells;++i)for(std::size_t j=0;j<initial.size();++j) {
+                    const double expected=initial[j]*std::exp(-.2*std::exp(.01*temperature)*eta[j]*2);
+                    const double a=layered?(j==0?tr.sat_mass[tr.idx(0,i)]:tr.layer_mass[tr.layerIdx(0,int(j)-1,i)]):
+                        r.gw.heat().cells[i].porewater.mass[j];
+                    const double b=layered?(j==0?tr.sat_mass[tr.idx(1,i)]:tr.layer_mass[tr.layerIdx(1,int(j)-1,i)]):
+                        r.gw.heat().cells[i].porewater.mass[initial.size()+j];
+                    EXPECT_NEAR(a,expected,1e-8*std::max(1.,initial[j]));
+                    EXPECT_NEAR(a+b,initial[j],1e-10*std::max(1.,initial[j]));
+                }
+                EXPECT_NEAR(tr.storage(tr.age_row),7*initial_water,1e-10*initial_water);
+                EXPECT_NEAR(tr.generated_age[tr.age_row],2*initial_water,1e-10*initial_water);
+                for(int species:{0,1,tr.age_row})EXPECT_NEAR(tr.residual(species),0,1e-10*std::max(1.,tr.init_mass[species]));
+                EXPECT_DOUBLE_EQ(tr.lost_reaction[tr.temp_row],0);EXPECT_DOUBLE_EQ(tr.lost_reaction[tr.age_row],0);
+                const auto& surface=r.state.transport;
+                EXPECT_NEAR(surface.generated_age[surface.age_row],2*surface_water,1e-10);
+                for(int i=0;i<w.n_cells;++i) {
+                    EXPECT_NEAR(surface.cell_mass[surface.idx(0,i)],surface_initial[surface.idx(0,i)]*std::exp(-.3*std::exp(.01*temperature)*2),1e-8);
+                    EXPECT_NEAR(surface.cell_mass[surface.idx(surface.age_row,i)],7*r.state.volume[i],1e-10);
+                    for(std::size_t j=0;j<r.gw.heat().cells[i].column.energy.size();++j)
+                        EXPECT_NEAR(r.gw.heat().cells[i].column.energy[j]/r.gw.heat().cells[i].column.capacity[j],temperature,1e-10);
+                }
+                checkRkPorousLedgers(r);
+            }
+        }
+    }
+}
+TEST(CoupledGroundwaterRk2, PorousReactiveMovingColumnMatchesIndependentWaterEnergyMassAndAgeOde) {
+    constexpr double kd=.001,partition=kd*2650*(1-.45),cp=4186000;
+    for(bool layered:{false,true}) {
+        const auto exact=porousColumnReference(20000,true,layered,partition),refined=porousColumnReference(40000,true,layered,partition);
+        for(std::size_t k=0;k<exact.size();++k)ASSERT_NEAR(exact[k],refined[k],1e-10);
+        RkReactionSystem system(kRkPorousConversion,"RK5",kRkPorousSurfaceConversion);double previous=0;
+        for(double dt:{.1,.05,.025,.0125}) {
+            CoupledRkRig r;r.init(dt,.003,.001,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);seedRkSigma(r);
+            RkPorousOwner owner;initRkPorousQuality(r,owner,system,layered,true,kd,-2,3,true);
+            auto& surface=r.state.transport;const auto& w=r.gw.state();const auto& tr=r.gw.transport();
+            owner.config.params[0].lambda_s=2e5;
+            for(int cell=0;cell<w.n_cells;++cell) {
+                auto& column=r.gw.heat().cells[cell].column;column.material.grain_conductivity=2e5;
+                ASSERT_EQ(column.setMoisture(column.theta),"");
+                surface.cell_mass[surface.idx(0,cell)]=6*r.state.volume[cell];
+                surface.cell_mass[surface.idx(surface.temp_row,cell)]=6*r.state.volume[cell];
+            }
+            ASSERT_NEAR(tr.kd[0]*tr.rho_b[0],partition,1e-14);
+            const auto surface_mass=[&](int row){double result=0;for(int i=0;i<surface.n_cells;++i)result+=surface.cell_mass[surface.idx(row,i)];return result;};
+            const double initial_mass=tr.storage(0)+tr.storage(1)+surface_mass(0)+surface_mass(1);
+            const double initial_age=tr.storage(tr.age_row)+surface_mass(surface.age_row);
+            const double initial_energy=rkPorousEnergy(r)+cp*surface_mass(surface.temp_row),area=w.area[0];
+            for(int step=0;step<int(std::round(2/dt));++step)ASSERT_NO_THROW(r.solver.advance(step*dt,(step+1)*dt));
+            std::vector<double> actual={w.hg[0]};
+            for(int j=0;j<4;++j)actual.push_back(w.theta_sigma[std::size_t(j)*w.n_cells]*(2-w.hg[0])/4);
+            actual.push_back(r.state.volume[0]/area);actual.push_back(surface.cell_mass[surface.idx(surface.temp_row,0)]/area);
+            for(double energy:r.gw.heat().cells[0].column.energy)actual.push_back(energy/(area*cp));
+            for(int row:{0,1,tr.age_row}) {
+                if(layered) {
+                    for(int j=0;j<tr.n_layers;++j)actual.push_back(tr.layer_mass[tr.layerIdx(row,j,0)]/area);
+                    actual.push_back(tr.sat_mass[tr.idx(row,0)]/area);
+                } else {
+                    const auto& pore=r.gw.heat().cells[0].porewater;const auto n=r.gw.heat().cells[0].column.theta.size();
+                    for(std::size_t j=0;j<n;++j)actual.push_back(pore.mass[std::size_t(row)*n+j]/area);
+                }
+                actual.push_back(surface.cell_mass[surface.idx(row,0)]/area);
+            }
+            ASSERT_EQ(actual.size(),exact.size());double error=0;
+            for(std::size_t k=0;k<exact.size();++k)error+=std::pow(actual[k]-exact[k],2);error=std::sqrt(error);
+            EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;
+            RecordProperty("porous_reactive_column_"+std::to_string(layered)+"_"+std::to_string(int(dt*10000)),error);
+            EXPECT_NEAR(tr.storage(0)+tr.storage(1)+surface_mass(0)+surface_mass(1)+tr.lost_deep[0]+tr.lost_deep[1],initial_mass,1e-10*initial_mass);
+            EXPECT_NEAR(tr.storage(tr.age_row)+surface_mass(surface.age_row)+tr.lost_deep[tr.age_row]-tr.generated_age[tr.age_row]-surface.generated_age[surface.age_row],initial_age,1e-10*initial_age);
+            EXPECT_NEAR(rkPorousEnergy(r)+cp*(surface_mass(surface.temp_row)+tr.lost_deep[tr.temp_row]),initial_energy,1e-10*std::max(1.,std::abs(initial_energy)));
+            for(int row:{0,1,tr.age_row})EXPECT_NEAR(tr.residual(row),0,1e-10*std::max(1.,tr.init_mass[row]));
+            checkRkPorousLedgers(r);
+        }
+    }
+}
+TEST(CoupledGroundwaterRk2, PorousSharedRateUsesEachPhaseVariablesAndAllReachableTerms) {
+    RkReactionSystem system("* SAT A RATE -.2*SAT_RATE\n* SAT B RATE .2*SAT_RATE\n* UNSAT A RATE -.3*A\n* UNSAT B RATE .3*A\n",
+        "RK5","","SAT_RATE SQRT(GW_THETA-.3)*A\n");
+    ASSERT_EQ(system.context().reactions.subsurface_laws.size(),4);
+    CoupledRkRig r;r.init(.05,0,0,0,"NONE",GwClosure::CLOSED_FORM,SoilChar::GARDNER,4);
+    RkPorousOwner owner;initRkPorousQuality(r,owner,system,false,true,.001,-2,1);
+    const auto& cell=r.gw.heat().cells[0];const double water=cell.column.theta[0]*cell.column.area*2;
+    const double sat=cell.saturated_water[0],capacity=water+cell.porewater.retention[0],initial=cell.porewater.mass[0];
+    // SAT_RATE is valid in SAT and unreachable in UNSAT, whose selected
+    // expression does not use that term. Both contributions see one C_A.
+    const double rate=(.2*std::sqrt(.45-.3)*sat+.3*(water-sat))/capacity;
+    for(int step=0;step<40;++step)ASSERT_NO_THROW(r.solver.advance(step*.05,(step+1)*.05));
+    for(const auto& current:r.gw.heat().cells) {
+        EXPECT_NEAR(current.porewater.mass[0],initial*std::exp(-rate*2),1e-8*initial);
+        EXPECT_NEAR(current.porewater.mass[0]+current.porewater.mass[1],initial,1e-10*initial);
+    }
+}
+TEST(CoupledGroundwaterRk2, PorousDecayingPrecursorUsesCanonicalMassAndSymmetricReactionClock) {
+    RkReactionSystem system("* SAT B RATE .2*A\n* UNSAT B RATE .2*A\n");
+    for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true}) {
+        if(layered&&closure!=GwClosure::SIGMA)continue;double previous=0;
+        for(double dt:{.4,.2,.1,.05}) {
+            CoupledRkRig r;r.init(dt,0,0,0,"NONE",closure,SoilChar::GARDNER,4);
+            RkPorousOwner owner;initRkPorousQuality(r,owner,system,layered,false,.001);
+            auto& tr=r.gw.transport();const auto& w=r.gw.state();std::vector<double> initial,eta;
+            for(int cell=0;cell<w.n_cells;++cell)tr.decay[tr.idx(0,cell)]=.3;
+            if(layered) {
+                const double partition=tr.kd[0]*tr.rho_b[0];
+                initial.push_back(tr.sat_mass[0]);eta.push_back(w.theta_s[0]/(w.theta_s[0]+partition));
+                for(int j=0;j<tr.n_layers;++j){const double theta=w.theta_sigma[std::size_t(j)*w.n_cells];initial.push_back(tr.layer_mass[tr.layerIdx(0,j,0)]);eta.push_back(theta/(theta+partition));}
+            } else {
+                const auto& c=r.gw.heat().cells[0];
+                for(std::size_t j=0;j<c.column.theta.size();++j) {
+                    const double water=c.column.theta[j]*c.column.area*(c.column.depth_edges[j+1]-c.column.depth_edges[j]);
+                    initial.push_back(c.porewater.mass[j]);eta.push_back(water/(water+c.porewater.retention[j]));
+                }
+            }
+            for(int step=0;step<int(std::round(2/dt));++step)ASSERT_NO_THROW(r.solver.advance(step*dt,(step+1)*dt));
+            double error=0;
+            for(std::size_t j=0;j<initial.size();++j) {
+                const double a=layered?(j==0?tr.sat_mass[0]:tr.layer_mass[tr.layerIdx(0,int(j)-1,0)]):r.gw.heat().cells[0].porewater.mass[j];
+                const double b=layered?(j==0?tr.sat_mass[tr.idx(1,0)]:tr.layer_mass[tr.layerIdx(1,int(j)-1,0)]):r.gw.heat().cells[0].porewater.mass[initial.size()+j];
+                EXPECT_NEAR(a,initial[j]*std::exp(-.6),1e-10*initial[j]);
+                const double exact=initial[j]*.2*eta[j]/.3*(-std::expm1(-.6));error+=std::pow(b-exact,2);
+            }
+            error=std::sqrt(error)/std::accumulate(initial.begin(),initial.end(),0.);
+            EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;
+            RecordProperty("porous_precursor_"+std::to_string(int(closure))+"_"+std::to_string(layered)+"_"+std::to_string(int(dt*1000)),error);
+            for(int row:{0,1})EXPECT_NEAR(tr.residual(row),0,1e-10*std::max(1.,tr.init_mass[row]));
+            EXPECT_DOUBLE_EQ(tr.lost_reaction[tr.temp_row],0);checkRkPorousLedgers(r);
+        }
+    }
+}
+TEST(CoupledGroundwaterRk2, PorousEulerAndAlgebraicLawsKeepTheirDeclaredSingleOwner) {
+    for(const std::string kind:{"EUL","FORMULA","EQUIL"})for(bool layered:{false,true}) {
+        const auto laws=kind=="EUL"?kRkConversion:"* SAT B "+kind+" "+(kind=="FORMULA"?"2*A":"B-2*A")+"\n* UNSAT B "+kind+" "+(kind=="FORMULA"?"2*A":"B-2*A")+"\n";
+        RkReactionSystem system(laws,kind=="EUL"?"EUL":"RK5");
+        CoupledRkRig r;r.init(.05,0,0,.1,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);
+        RkPorousOwner owner;initRkPorousQuality(r,owner,system,layered,true,.001);
+        const double initial=r.gw.transport().init_mass[0];
+        const auto before=r.gw.heat().cells[0].porewater.mass;const auto tr_before=r.gw.transport();
+        for(int step=0;step<40;++step)ASSERT_NO_THROW(r.solver.advance(step*.05,(step+1)*.05));
+        const auto& tr=r.gw.transport();
+        if(kind!="EUL") {
+            EXPECT_NEAR(tr.storage(0),initial,1e-10*initial);EXPECT_NEAR(tr.storage(1),2*initial,1e-10*initial);
+            EXPECT_NEAR(tr.lost_reaction[1],-2*initial,1e-10*initial);
+        } else for(int cell=0;cell<tr.n_cells;++cell) {
+            if(layered) {
+                for(int zone=0;zone<=tr.n_layers;++zone) {
+                    const double theta=zone==0?r.gw.state().theta_s[cell]:r.gw.state().theta_sigma[std::size_t(zone-1)*tr.n_cells+cell];
+                    const double eta=theta/(theta+tr.kd[tr.idx(0,cell)]*tr.rho_b[cell]);
+                    const double old=zone==0?tr_before.sat_mass[tr.idx(0,cell)]:tr_before.layer_mass[tr.layerIdx(0,zone-1,cell)];
+                    const double actual=zone==0?tr.sat_mass[tr.idx(0,cell)]:tr.layer_mass[tr.layerIdx(0,zone-1,cell)];
+                    EXPECT_NEAR(actual,old*std::pow(1-.2*eta*.025,80),1e-10*old);
+                }
+            } else {
+                const auto& c=r.gw.heat().cells[cell];const auto n=c.column.theta.size();
+                for(std::size_t j=0;j<n;++j) {
+                    const double water=c.column.theta[j]*c.column.area*(c.column.depth_edges[j+1]-c.column.depth_edges[j]);
+                    const double eta=water/(water+c.porewater.retention[j]);
+                    EXPECT_NEAR(c.porewater.mass[j],before[j]*std::pow(1-.2*eta*.025,80),1e-10*before[j]);
+                }
+            }
+            EXPECT_NEAR(tr.storage(0)+tr.storage(1),initial,1e-10*initial);
+        }
+        for(int row:{0,1,tr.age_row})EXPECT_NEAR(tr.residual(row),0,1e-10*std::max(1.,tr.init_mass[row]));
+        EXPECT_DOUBLE_EQ(tr.lost_reaction[tr.age_row],0);EXPECT_DOUBLE_EQ(tr.lost_reaction[tr.temp_row],0);
+    }
+}
+TEST(CoupledGroundwaterRk2, PorousStiffReactiveCheckpointRetainsCanonicalMassAndRejectsLawOrSorptionChanges) {
+    const std::string laws="* SAT A RATE -1000*A\n* SAT B RATE 1000*A-.2*B\n* UNSAT A RATE -1000*A\n* UNSAT B RATE 1000*A-.2*B\n";
+    RkReactionSystem system(laws,"ROS2"),changed("* SAT A RATE -1001*A\n* SAT B RATE 1001*A-.2*B\n* UNSAT A RATE -1001*A\n* UNSAT B RATE 1001*A-.2*B\n","ROS2");
+    for(bool layered:{false,true}) {
+        CoupledRkRig a,b,bad_law,bad_kd;RkPorousOwner oa,ob,oc,od;
+        for(auto* rig:{&a,&b,&bad_law,&bad_kd})rig->init(.025,0,0,0,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);
+        initRkPorousQuality(a,oa,system,layered,true,.001);initRkPorousQuality(b,ob,system,layered,true,.001);
+        initRkPorousQuality(bad_law,oc,changed,layered,true,.001);initRkPorousQuality(bad_kd,od,system,layered,true,.002);
+        const auto saved=rk2Output("porous-reactive.chk"),before=rk2Output("porous-reactive-before.chk"),after=rk2Output("porous-reactive-after.chk");
+        const double initial=a.gw.transport().init_mass[0];
+        for(int step=0;step<20;++step) {
+            ASSERT_NO_THROW(a.solver.advance(step*.025,(step+1)*.025));
+            if(step==7) {
+                ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");
+                for(auto* bad:{&bad_law,&bad_kd}) {
+                    ASSERT_EQ(bad->solver.saveCheckpoint(before.string()),"");EXPECT_FALSE(bad->solver.loadCheckpoint(saved.string()).empty());
+                    ASSERT_EQ(bad->solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+                }
+                ASSERT_EQ(b.solver.loadCheckpoint(saved.string()),"");
+            }else if(step>7)ASSERT_NO_THROW(b.solver.advance(step*.025,(step+1)*.025));
+        }
+        ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(saved),rk2File(after));
+        for(int row:{0,1,a.gw.transport().age_row})EXPECT_NEAR(a.gw.transport().residual(row),0,1e-10*std::max(1.,initial));
+        EXPECT_LT(a.gw.transport().storage(0),initial*1e-6);EXPECT_GT(a.gw.transport().storage(1),initial*.9);
+        checkRkPorousLedgers(a);checkRkPorousLedgers(b);
+    }
+}
+TEST(CoupledGroundwaterRk2, PorousLaterKnotReactionFailureRestoresEveryCanonicalOwnerAndCanRetry) {
+    RkReactionSystem system("* SAT A RATE -SQRT(.3-DT)*A\n* SAT B RATE SQRT(.3-DT)*A\n"
+        "* UNSAT A RATE -SQRT(.3-DT)*A\n* UNSAT B RATE SQRT(.3-DT)*A\n");
+    CoupledRkRig r;r.init(.1,.0001,0,.1,"NONE",GwClosure::CLOSED_FORM,SoilChar::GARDNER,4);
+    RkPorousOwner owner;initRkPorousQuality(r,owner,system,false,true,.001);
+    GwResolvedSource source;source.name="porous-cold-cut";source.cells={{0,1}};
+    source.flow.times={0,.5,4.5};source.flow.values={.001,.001,.001};
+    for(int row=0;row<r.gw.transport().n_species;++row) {
+        GwResolvedSourceTerm term;term.row=row;term.signal.constant=row==0?7:row==r.gw.transport().temp_row?-8:row==r.gw.transport().age_row?3:0;
+        source.terms.push_back(term);
+    }
+    r.gw.setSources({source});ExplicitInertialSolverTestAccess::prepare(r.solver);
+    const auto before=rk2Output("porous-reactive-failure-before.chk"),after=rk2Output("porous-reactive-failure-after.chk");
+    ASSERT_EQ(r.solver.saveCheckpoint(before.string()),"");
+    EXPECT_THROW(ExplicitInertialSolverTestAccess::rk2(r.solver,4.5,0),std::runtime_error);
+    ASSERT_EQ(r.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+    ASSERT_NO_THROW(r.solver.advance(0,.1));
+    for(int row:{0,1,r.gw.transport().age_row})EXPECT_NEAR(r.gw.transport().residual(row),0,1e-10*std::max(1.,r.gw.transport().init_mass[row]));
+    checkRkPorousLedgers(r);
 }

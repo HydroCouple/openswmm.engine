@@ -399,6 +399,58 @@ TEST(PorousHeat, LargeBoundaryWithdrawalsAndInternalRedistributionKeepSignedDono
     EXPECT_NEAR(sum(c.energy)-initial,-sum(solved.withdrawn_j),1e-7);
     EXPECT_GT(solved.temperature.front(),-10);EXPECT_NEAR(solved.temperature.back(),40,1e-12);
 }
+TEST(PorewaterTransport, EulerRetardedFlushUnderHeunMatchesIndependentResidenceDecay) {
+    double previous=0;
+    for(double dt:{.4,.2,.1,.05}) {
+        double mass=6,external=0;
+        for(int step=0;step<int(std::round(2/dt));++step) {
+            const double before=mass;double receipt=0;
+            for(int stage=0;stage<2;++stage) {
+                const auto out=advectPorewaterEuler({1},{2},{mass},{0},{0},{.1*7*dt},{.1*dt});
+                ASSERT_TRUE(out.error.empty())<<out.error;mass=out.mass[0];receipt+=out.external_mass;
+            }
+            mass=.5*(before+mass);external+=.5*receipt;
+        }
+        const double exact=21-15*std::exp(-.1*2/3),error=std::abs(mass-exact)/21;
+        EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;
+        RecordProperty("pore_flush_"+std::to_string(int(dt*1000)),error);
+        EXPECT_NEAR(mass-6,external,1e-10);
+    }
+}
+TEST(PorewaterTransport, EulerThroughflowKeepsOldAqueousDonorsAndSorptionMass) {
+    const auto out=advectPorewaterEuler({.2,.4},{1,0},{2.4,1.6},{0,0},{.1,-.1},{0,0},{0,.1});
+    ASSERT_TRUE(out.error.empty())<<out.error;
+    EXPECT_NEAR(out.mass[0],2.2,1e-12);EXPECT_NEAR(out.mass[1],1.4,1e-12);
+    EXPECT_NEAR(out.vertical_mass[0],.2,1e-12);EXPECT_NEAR(out.withdrawn_mass[1],.4,1e-12);
+    EXPECT_NEAR(sum(out.mass)-4,out.external_mass,1e-12);
+    EXPECT_NEAR(out.concentration[0],2,1e-12);EXPECT_NEAR(out.concentration[1],4,1e-12);
+}
+TEST(PorewaterTransport, EulerFiniteDonorDoesNotSpendNewInputsOrInventDryVolume) {
+    const auto out=advectPorewaterEuler({.1},{0},{1},{0},{0},{2},{1});
+    ASSERT_TRUE(out.error.empty())<<out.error;
+    EXPECT_NEAR(out.withdrawn_mass[0],1,1e-12);EXPECT_NEAR(out.mass[0],2,1e-12);
+    EXPECT_NEAR(out.concentration[0],1,1e-12);EXPECT_NEAR(out.external_mass,1,1e-12);
+    const auto dry=advectPorewaterEuler({0},{0},{3},{0},{0},{2},{0});
+    ASSERT_TRUE(dry.error.empty())<<dry.error;EXPECT_DOUBLE_EQ(dry.mass[0],5);EXPECT_DOUBLE_EQ(dry.concentration[0],0);
+}
+TEST(PorewaterTransport, EulerSettlesReservedPacketOnceAndPreservesItsDonorConcentration) {
+    const auto out=advectPorewaterEuler({1},{1},{4},{-.5},{-.5},{-.5},{.25},{.25},{.5});
+    ASSERT_TRUE(out.error.empty())<<out.error;
+    EXPECT_NEAR(out.mass[0],3,1e-12);EXPECT_NEAR(out.concentration[0],2,1e-12);
+    EXPECT_NEAR(out.withdrawn_mass[0],.5,1e-12);EXPECT_NEAR(out.external_mass,-1,1e-12);
+}
+TEST(PorewaterTransport, EulerMalformedWaterOrReservationPublishesNoPartialMass) {
+    const double nan=std::numeric_limits<double>::quiet_NaN();
+    const auto refused=[](const PorewaterAdvection& out){EXPECT_FALSE(out.error.empty());EXPECT_TRUE(out.mass.empty());EXPECT_TRUE(out.concentration.empty());EXPECT_TRUE(out.withdrawn_mass.empty());EXPECT_TRUE(out.vertical_mass.empty());};
+    refused(advectPorewaterEuler({1},{0},{2},{0},{1},{0},{0}));
+    refused(advectPorewaterEuler({1},{0},{2},{0},{0},{0},{0},{2},{0}));
+    refused(advectPorewaterEuler({1},{0},{2},{0},{0},{0},{0},{0},{3}));
+    refused(advectPorewaterEuler({1},{-1},{2},{0},{0},{0},{0}));
+    refused(advectPorewaterEuler({1},{0},{2},{nan},{0},{0},{0}));
+    refused(advectPorewaterEuler({1},{0},{2},{0},{0},{-3},{0}));
+    refused(advectPorewaterEuler({1},{0},{2},{0},{0},{0},{-1}));
+    refused(advectPorewaterEuler({1},{0},{2},{0},{0},{0},{0},{0,0}));
+}
 TEST(PorewaterTransport, WithdrawingWaterAtLocalConcentrationRetainsTheSorptionStore) {
     const auto out=advectPorewater({.2,.3},{.1,.2},{.4,.5},{1.2,8},{-.1,-.1},{0,0},{.1,.1});
     ASSERT_TRUE(out.error.empty())<<out.error;

@@ -1,8 +1,51 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "PorewaterTransport.hpp"
+#include "../subsurface/LayerTransport.hpp"
 #include <algorithm>
 #include <cmath>
 namespace openswmm::twoD {
+PorewaterAdvection advectPorewaterEuler(const std::vector<double>& old_water,
+    const std::vector<double>& retention,const std::vector<double>& mass,
+    const std::vector<double>& change,const std::vector<double>& external_water,
+    const std::vector<double>& external_mass,const std::vector<double>& withdrawal,
+    const std::vector<double>& reserved_water,const std::vector<double>& reserved_mass) {
+    const auto refused=[](const char* message){PorewaterAdvection out;out.error=message;return out;};
+    const auto n=mass.size();
+    if(!n||old_water.size()!=n||retention.size()!=n||change.size()!=n||external_water.size()!=n||
+       external_mass.size()!=n||withdrawal.size()!=n||(!reserved_water.empty()&&reserved_water.size()!=n)||
+       (!reserved_mass.empty()&&reserved_mass.size()!=n))return refused("Euler porewater layer shapes differ.");
+    std::vector<double> capacity(n),initial(n),rhs(n),water(n+1,0);double scale=0;
+    for(std::size_t j=0;j<n;++j) {
+        const double held_water=reserved_water.empty()?0:reserved_water[j],held_mass=reserved_mass.empty()?0:reserved_mass[j];
+        for(double value:{old_water[j],retention[j],mass[j],withdrawal[j],held_water,held_mass})
+            if(!std::isfinite(value)||value<0)return refused("Euler porewater stores and reservations must be finite and nonnegative.");
+        if(held_water>old_water[j]||held_mass>mass[j])return refused("Euler porewater reservation exceeds its physical donor.");
+        if(!std::isfinite(change[j])||!std::isfinite(external_water[j])||!std::isfinite(external_mass[j]))
+            return refused("Nonfinite Euler porewater receipt.");
+        capacity[j]=old_water[j]-held_water+retention[j];initial[j]=mass[j]-held_mass;rhs[j]=mass[j]+external_mass[j];
+        water[j+1]=water[j]+external_water[j]-change[j];scale+=std::abs(external_water[j])+std::abs(change[j]);
+        if(!std::isfinite(water[j+1])||!std::isfinite(scale))return refused("Euler porewater water receipt overflow.");
+    }
+    if(std::abs(water.back())>1e-10*scale+1e-12)return refused("Euler porewater increments do not close the physical water balance.");
+    std::vector<LayerTransportMove> moves;moves.reserve(2*n-1);
+    for(std::size_t j=1;j<n;++j) {
+        const int from=int(water[j]>=0?j-1:j),to=int(water[j]>=0?j:j-1);
+        moves.push_back({from,to,std::abs(water[j])});
+    }
+    for(std::size_t j=0;j<n;++j)moves.push_back({int(j),-1,withdrawal[j]});
+    auto result=advanceLayerTransportEuler(capacity,initial,rhs,moves);
+    if(!result.error.empty())return refused(result.error.c_str());
+    PorewaterAdvection out;out.mass=std::move(result.mass);out.concentration=std::move(result.concentration);
+    out.water_residual=water.back();out.vertical_water.assign(water.begin()+1,water.end()-1);
+    for(std::size_t j=1;j<n;++j)out.vertical_mass.push_back((water[j]>=0?1:-1)*result.transferred[j-1]);
+    for(std::size_t j=0;j<n;++j) {
+        const double amount=result.transferred[n-1+j];out.withdrawn_mass.push_back(amount);
+        if(withdrawal[j]>0)out.concentration[j]=amount/withdrawal[j];
+        out.external_mass+=external_mass[j]-amount;
+        if(!std::isfinite(out.concentration[j])||!std::isfinite(out.external_mass))return refused("Euler porewater accepted receipt overflow.");
+    }
+    return out;
+}
 PorewaterAdvection advectPorewater(const std::vector<double>& old_water,
     const std::vector<double>& new_water,const std::vector<double>& retention,
     const std::vector<double>& mass,const std::vector<double>& external_water,

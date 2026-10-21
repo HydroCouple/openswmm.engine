@@ -935,3 +935,56 @@ DISPERSION NO''')
         solver.end()
     finally:
         cleanup(solver)
+
+
+@pytest.mark.parametrize('closure,layered', [('CLOSED_FORM', False), ('ENSLAVED', False), ('SIGMA', False), ('SIGMA', True)])
+@pytest.mark.parametrize('integrator', ['RK5', 'ROS2', 'BDF2'])
+def test_groundwater_rk2_porous_reactions_keep_pollutant_msx_age_and_temperature_rows(tmp_path, closure, layered, integrator):
+    from openswmm.engine import Solver, GroundHeatValue, GroundwaterSpeciesLedger as L, GroundwaterZone
+    text = _rk2_water_temperature_text(closure, layered, kinetics=True).replace(
+        'THERMAL_MODEL WATER_ONLY', '''THERMAL_MODEL POROUS_EQUILIBRIUM
+THERMAL_LAYERS 3
+CONDUCTION YES
+LATERAL_CONDUCTION NO
+SOIL_ET_HEAT SENSIBLE_ONLY
+SURFACE_THERMAL_BC ADIABATIC
+DEEP_THERMAL_BC ADIABATIC
+DISPERSION NO''').replace('TRANSPORT_POLLUTANTS NO', 'TRANSPORT_POLLUTANTS YES').replace('TRANSPORT_AGE NO', 'TRANSPORT_AGE YES').replace('SOLVER RK5', f'SOLVER {integrator}')
+    text += f'''[OPTIONS]
+WATER_AGE ON
+[2D_INITIAL_QUALITY]
+* TSS 3
+* __WATER_AGE__ {5/3600}
+[GW_INITIAL_QUALITY]
+* SAT TSS 4
+* UNSAT TSS 4
+* SAT __WATER_AGE__ 5
+* UNSAT __WATER_AGE__ 5
+'''
+    path = tmp_path / 'porous-reactive-rk2.inp'
+    path.write_text(text)
+    solver = Solver(path, path.with_suffix('.rpt'))
+    solver.open()
+    try:
+        solver.initialize()
+        gw = solver.surface2d.groundwater
+        assert gw.species == solver.surface2d.species == ('TSS', 'A', 'B', '__WATER_AGE__', '__TEMPERATURE__')
+        initial = gw.species_ledger(1, L.INIT)
+        passive = gw.species_ledger(0, L.INIT)
+        solver.start(False)
+        while solver.step().total_seconds() > 0:
+            pass
+        assert gw.species_ledger(1, L.STORAGE) == pytest.approx(initial*np.exp(-.4*np.exp(-.02)), rel=1e-8)
+        assert gw.species_ledger(1, L.STORAGE) + gw.species_ledger(2, L.STORAGE) == pytest.approx(initial, abs=1e-8)
+        assert gw.species_ledger(0, L.STORAGE) == pytest.approx(passive, abs=1e-8)
+        for row in [0, 1, 2, 3]:
+            assert abs(gw.species_ledger(row, L.RESIDUAL)) < 1e-8
+        for row in [0, 3, 4]:
+            assert gw.species_ledger(row, L.REACTED) == 0
+        assert gw.concentrations(GroundwaterZone.SAT, 3) == pytest.approx(np.full(2, 7), abs=1e-8)
+        assert solver.surface2d.concentrations(3) == pytest.approx(np.full(2, 7), abs=1e-8)
+        assert solver.surface2d.concentrations(1) == pytest.approx(np.full(2, np.exp(-.4*np.exp(-.04))), rel=1e-8)
+        assert np.max(np.abs(solver.heat.ground_values(GroundHeatValue.NORMALIZED_RESIDUAL, 0, 2))) < 1e-10
+        solver.end()
+    finally:
+        cleanup(solver)

@@ -3197,20 +3197,33 @@ std::string SubsurfaceSolver::rk2ProfileError() const {
        std::any_of(state_.closure.begin(),state_.closure.end(),[](int8_t v){return v!=int8_t(GwClosure::CLOSED_FORM)&&v!=int8_t(GwClosure::ENSLAVED)&&v!=int8_t(GwClosure::SIGMA);}))
         return "Coupled RK2 requires spatial CLOSED_FORM/ENSLAVED/SIGMA cells without borrowed source, network or thermal owners.";
     if(heat_.active()) {
-        if(!heat_.config||tr_.n_species!=1||tr_.temp_row!=0||tr_.age_row>=0||tr_.n_pollut||tr_.n_msx||
+        if(!heat_.config||tr_.n_species<=0||tr_.temp_row<0||tr_.temp_row>=tr_.n_species||
            heat_.cells.size()!=std::size_t(state_.n_cells)||heat_.snow_owner||
            heat_.top_series>=0||heat_.deep_series>=0||
            heat_.config->options.surface_thermal_bc=="AIR"||heat_.config->options.surface_thermal_bc=="SURFACE_WATER"||
            heat_.config->options.soil_et_heat!="SENSIBLE_ONLY"||
            (opts_&&opts_->water_heat_capacity!=heat_.water_capacity))
-            return "Coupled RK2 porous heat currently requires temperature-only transport, constant boundaries and no borrowed heat owner.";
+            return "Coupled RK2 porous heat requires a temperature row, constant boundaries and no borrowed heat owner.";
         for(int i=0;i<state_.n_cells;++i)if(covers(i)) {
             const auto& cell=heat_.cells[i];const auto& column=cell.column;const auto n=column.energy.size();
             if(cell.surface_owned||cell.failed||!n||column.theta.size()!=n||column.capacity.size()!=n||
                column.depth_edges.size()!=n+1||cell.saturated_water.size()!=n||cell.reserved_out_water.size()!=n)
                 return "Coupled RK2 porous thermal owner shape or status differs.";
-            for(double mass:cell.porewater.mass)if(mass!=0)
-                return "Coupled RK2 temperature-only porous heat cannot own a chemical porewater inventory.";
+            const auto& pore=cell.porewater;
+            if((tr_.n_layers||tr_.n_species>1)&&!pore.active())return "Coupled RK2 porous transport has no canonical porewater owner.";
+            if(pore.active()) {
+                if(pore.n_species!=tr_.n_species||pore.temp_row!=tr_.temp_row||pore.age_row!=tr_.age_row||
+                   pore.mass.size()!=n*tr_.n_species||pore.retention.size()!=pore.mass.size()||
+                   pore.reserved_out.size()!=pore.mass.size()||pore.contact_mass.size()!=pore.mass.size()||pore.generated_age.size()!=n)
+                    return "Coupled RK2 porous species or ledger shape differs.";
+                for(std::size_t k=0;k<pore.mass.size();++k)
+                    if(!std::isfinite(pore.mass[k])||pore.mass[k]<0||!std::isfinite(pore.retention[k])||pore.retention[k]<0||
+                       !std::isfinite(pore.reserved_out[k])||pore.reserved_out[k]<0||pore.reserved_out[k]>pore.mass[k]||
+                       !std::isfinite(pore.contact_mass[k])||(int(k/n)==tr_.temp_row&&(pore.mass[k]!=0||pore.reserved_out[k]!=0)))
+                        return "Coupled RK2 porous canonical mass or reservation is inadmissible.";
+                for(double v:pore.generated_age)if(!std::isfinite(v)||v<0)return "Coupled RK2 porous age generation is inadmissible.";
+                for(double v:pore.sigma.pending)if(v!=0)return "Coupled RK2 has an unstaged porous contact receipt.";
+            }
             for(std::size_t j=0;j<n;++j)
                 if(!std::isfinite(column.energy[j])||!std::isfinite(heat_.activeCapacity(i,j))||!(heat_.activeCapacity(i,j)>0))
                     return "Coupled RK2 porous energy or active capacity is inadmissible.";
@@ -3391,6 +3404,11 @@ void SubsurfaceSolver::blendRk2Water(const SubsurfaceSolver& initial,double end)
         for(int i=0;i<s.n_cells;++i)if(covers(i)) {
             auto& cell=heat_.cells[i];const auto& before=initial.heat_.cells[i];
             values(cell.column.energy,before.column.energy);values(cell.reserved_out_water,before.reserved_out_water);
+            auto& pore=cell.porewater;
+            if(pore.active()) {
+                if(!t.n_layers){values(pore.mass,before.porewater.mass);values(pore.reserved_out,before.porewater.reserved_out);}
+                values(pore.contact_mass,before.porewater.contact_mass);values(pore.generated_age,before.porewater.generated_age);
+            }
             for(auto member:{&GroundThermalCell::advective_j,&GroundThermalCell::source_j,&GroundThermalCell::surface_j,
                 &GroundThermalCell::deep_j,&GroundThermalCell::latent_j,&GroundThermalCell::lateral_j,
                 &GroundThermalCell::water_contact_j,&GroundThermalCell::channel_contact_j,&GroundThermalCell::lid_contact_j,

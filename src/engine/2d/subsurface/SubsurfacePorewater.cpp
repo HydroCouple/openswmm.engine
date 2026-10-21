@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "SubsurfaceSolver.hpp"
+#include "../data/SolverOptions2D.hpp"
 #include "../heat/PorewaterTransport.hpp"
 #include "../gw/GwTransportData.hpp"
 #include <algorithm>
@@ -141,6 +142,9 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i,const CellFlux& f) noexc
     auto& cell=heat_.cells[i];if(cell.failed||!cell.porewater.active())return;
     try {
         const auto& column=cell.column;const auto nl=column.theta.size();auto next=cell.porewater;
+        const bool euler=opts_&&opts_->reconstruction_order==2;
+        std::vector<double> water_change;
+        if(euler)if(auto error=groundWaterIncrement(i,f,water_change);!error.empty())throw std::runtime_error(error);
         std::vector<double> moisture,new_sat;
         if(auto error=projectGroundMoisture(state_,i,f.hg_final,column.depth_edges,moisture,&new_sat);!error.empty())throw std::runtime_error(error);
         auto new_column=column;if(auto error=new_column.setMoisture(moisture);!error.empty())throw std::runtime_error(error);
@@ -175,10 +179,11 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i,const CellFlux& f) noexc
             const double lateral=gatherLateralMass(i,r),infil=consumePending(tr_.xacc_from_surface[k]);
             const double link_in=consumePending(tr_.lacc_mass[k]),booked_link=consumePending(tr_.lout_mass[k]),node_in=gatherNodeMass(i,r);
             const double refund=f.refund_mass?(*f.refund_mass)[r]:0;
-            std::vector<double> mass(nl),retention(nl),preset(nl),input(nl),withdrawal(nl);
+            std::vector<double> mass(nl),retention(nl),preset(nl),input(nl),withdrawal(nl),reserved(euler?nl:0);
             double preset_mass=0;
             for(std::size_t j=0;j<nl;++j) {
                 mass[j]=next.mass[row+j];retention[j]=next.retention[row+j];
+                if(euler)reserved[j]=next.reserved_out[row+j];
                 preset[j]=consumePending(porewater_preset_out_[base+j]);preset_mass+=preset[j];
             }
             const double incoming=source+edge_mass+edge_flux+lateral+link_in-(link_packet?booked_link:0)+node_in+preset_mass;
@@ -186,7 +191,8 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i,const CellFlux& f) noexc
                 input[j]=incoming*weights[j]-preset[j];withdrawal[j]=(node_volume+f.source_out+f.boundary_out+implicit_link_volume)*weights[j];
             }
             input.front()+=infil-refund;withdrawal.front()+=excess_volume+f.dunne+(r==tr_.age_row?f.et:0);withdrawal.back()+=f.deep;
-            auto advected=advectPorewater(old_water,new_water,retention,mass,water,input,withdrawal);
+            auto advected=euler?advectPorewaterEuler(old_water,retention,mass,water_change,water,input,withdrawal,cell.reserved_out_water,reserved):
+                advectPorewater(old_water,new_water,retention,mass,water,input,withdrawal);
             if(!advected.error.empty())throw std::runtime_error(advected.error);
             double donor=0;for(std::size_t j=0;j<nl;++j)donor+=weights[j]*advected.concentration[j];
             const double link_out=link_packet?booked_link:implicit_link_volume*donor,node_out=node_volume*donor,source_out=f.source_out*donor;
@@ -224,8 +230,18 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i,const CellFlux& f) noexc
                 double requested=edge_requested,available=0;
                 std::vector<double> dissolved(nl);
                 for(std::size_t j=0;j<nl;++j) {
-                    const double cap=new_water[j]+retention[j];
-                    dissolved[j]=cap>0?advected.mass[j]/cap*new_sat[j]:0;available+=dissolved[j];
+                    if(euler) {
+                        double remaining=mass[j]-reserved[j]-advected.withdrawn_mass[j];
+                        if(j>0&&advected.vertical_mass[j-1]<0)remaining+=advected.vertical_mass[j-1];
+                        if(j+1<nl&&advected.vertical_mass[j]>0)remaining-=advected.vertical_mass[j];
+                        const double cap=old_water[j]-cell.reserved_out_water[j]+retention[j];
+                        const double sat=std::max(0.,cell.saturated_water[j]-cell.reserved_out_water[j]);
+                        dissolved[j]=cap>0?std::max(0.,remaining)/cap*sat:0;
+                    } else {
+                        const double cap=new_water[j]+retention[j];
+                        dissolved[j]=cap>0?advected.mass[j]/cap*new_sat[j]:0;
+                    }
+                    available+=dissolved[j];
                 }
                 if(std::size_t(i)<runtime_sources_.cells.size())for(auto index:runtime_sources_.cells[i])requested+=std::max(0.,-runtime_sources_.rows[index].rates[r])*f.runtime_dt;
                 if(!std::isfinite(requested)||!std::isfinite(available))throw std::runtime_error("Ground porewater species removal receipt overflow.");
@@ -239,7 +255,7 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i,const CellFlux& f) noexc
                 tr_.net_lateral[r]-=edge_requested*scale;tr_.boundary_flux_out[r]+=edge_requested*scale;
                 if(f.boundaries)for(const auto& pulse:*f.boundaries)boundaries_[pulse.boundary].flux_out[r]+=pulse.flux_out[r]*scale;
             }
-            const double decay=r==tr_.age_row?0:tr_.decay[k],keep=decay>0?std::exp(-decay*f.dt):1;
+            const double decay=euler||r==tr_.age_row?0:tr_.decay[k],keep=decay>0?std::exp(-decay*f.dt):1;
             for(std::size_t j=0;j<nl;++j) {
                 if(!std::isfinite(advected.mass[j])||advected.mass[j]<0)throw std::runtime_error("Invalid accepted porewater species sink.");
                 tr_.lost_reaction[r]+=advected.mass[j]*(1-keep);next.mass[row+j]=advected.mass[j]*keep;
@@ -247,7 +263,7 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i,const CellFlux& f) noexc
             }
         }
         const double before=std::accumulate(next.generated_age.begin(),next.generated_age.end(),0.);
-        if(!next.generateAge(new_column,f.dt))throw std::runtime_error("Ground porewater age overflow.");
+        if(!next.generateAge(euler?column:new_column,f.dt))throw std::runtime_error("Ground porewater age overflow.");
         if(tr_.age_row>=0)tr_.generated_age[tr_.age_row]+=std::accumulate(next.generated_age.begin(),next.generated_age.end(),0.)-before;
         cell.porewater=std::move(next);
     }catch(const std::exception& error){cell.failed=1;try{cell.error=error.what();}catch(...) {}}
