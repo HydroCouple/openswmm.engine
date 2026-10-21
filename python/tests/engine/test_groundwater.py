@@ -1247,3 +1247,37 @@ DISPERSION NO""").replace('HEAT_TRANSPORT YES', 'HEAT_TRANSPORT YES\nWATER_DENSI
         solver.end()
     finally:
         cleanup(solver)
+
+
+@pytest.mark.parametrize('closure,layered', [('CLOSED_FORM', False), ('ENSLAVED', False), ('SIGMA', False), ('SIGMA', True)])
+def test_groundwater_rk2_surface_runtime_provider_has_public_receipts_and_expiry(tmp_path, closure, layered):
+    from openswmm.engine import Solver, PluginError, GroundwaterSpeciesLedger as L
+    text = _rk2_water_temperature_text(closure, layered).replace('* 18 2', '* 1e-15 2')
+    path = tmp_path / 'surface-provider-rk2.inp'
+    path.write_text(text)
+    solver = Solver(path, path.with_suffix('.rpt'))
+    solver.open()
+    try:
+        solver.initialize()
+        solver.start(False)
+        view = solver.surface2d
+        caps = solver.coupling.capabilities
+        assert caps['surface_sources'] and caps['surface_water_heat'] and caps['atomic_frames']
+        assert not caps['groundwater_sources'] and not caps['surface_boundaries'] and not caps['paired_infiltration']
+        with pytest.raises(PluginError):
+            view.groundwater.set_water_source(0, .001, concentrations={'__TEMPERATURE__': -8})
+        initial = view.species_ledger('__TEMPERATURE__')['storage'] + view.groundwater.species_ledger(0, L.STORAGE)
+        view.set_water_source([0, 1], [.001, .001], concentrations={'__TEMPERATURE__': -8}, until_seconds=.735)
+        solver.advance_to(2)
+        for cell in [0, 1]:
+            receipt = view.source_receipt(cell=cell)
+            assert receipt.applied_m3 == pytest.approx(.001*.735, abs=1e-12)
+            assert receipt.applied_species['__TEMPERATURE__'] == pytest.approx(-8*.001*.735, abs=1e-12)
+        # These source rows are surface-owned; runtime groundwater/forcing
+        # frames still require their separately qualified transaction.
+        final = view.species_ledger('__TEMPERATURE__')['storage'] + view.groundwater.species_ledger(0, L.STORAGE)
+        assert final-initial == pytest.approx(-8*.002*.735, abs=1e-10)
+        assert np.all(np.isfinite(view.concentrations(0)))
+        solver.end()
+    finally:
+        cleanup(solver)

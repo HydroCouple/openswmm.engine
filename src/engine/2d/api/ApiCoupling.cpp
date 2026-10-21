@@ -74,6 +74,14 @@ int swmm_coupling_apply_frame(SWMM_Engine h,const SWMM_CouplingFrame* f) {
        f->source_count<0 || f->boundary_count<0 || f->forcing_count<0 || f->clear_count<0 ||
        (f->source_count && !f->sources) || (f->boundary_count && !f->boundaries) ||
        (f->forcing_count && !f->forcings) || (f->clear_count && !f->clears)) return SWMM_ERR_BADPARAM;
+    // The qualified FULL_SWE RK2 transaction owns copied surface source
+    // rows only. Other domains/channels keep their separate owner guards.
+    const auto& runtime_options=eng->surfaceRouter2D().options();
+    if(runtime_options.momentum==Momentum2D::FULL_SWE) {
+        if(f->boundary_count||f->forcing_count)return SWMM_ERR_PLUGIN;
+        for(int k=0;k<f->source_count;++k)if(f->sources[k].domain!=0)return SWMM_ERR_PLUGIN;
+        for(int k=0;k<f->clear_count;++k)if(f->clears[k].domain!=0)return SWMM_ERR_PLUGIN;
+    }
     try {
         const std::string owner=f->provider ? f->provider : "";
         if(owner.find('/')!=std::string::npos) return SWMM_ERR_BADPARAM;
@@ -361,7 +369,12 @@ int swmm_coupling_capabilities(SWMM_Engine h,unsigned* flags) {
     auto* eng=reinterpret_cast<SWMMEngine*>(h); if(!eng) return SWMM_ERR_BADHANDLE; if(!flags) return SWMM_ERR_BADPARAM;
     *flags=0; auto& r=eng->surfaceRouter2D();
     if(r.runtimeCpuAvailable()) {
-        *flags=1|8|64|128|512;
+        *flags=1|64;
+        if(r.options().momentum==Momentum2D::FULL_SWE) {
+            if(r.state().transport.temp_row>=0)*flags|=4;
+            return SWMM_OK;
+        }
+        *flags|=8|128|512;
         if(r.subsurface().active()) *flags|=2|32|256;
         if(r.state().transport.temp_row>=0) *flags|=4;
         if(r.subsurface().active() && r.subsurface().transport().temp_row>=0) *flags|=16;

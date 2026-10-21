@@ -323,3 +323,5 @@ and surface-species/buildup output continuation retain their guards; see the
 All of these capabilities remain experimental.
 
 The RK2 finite GROUND_COLUMN graph also supports held nonlinear radiative and sensible atmospheric fluxes. Sensible exchange requires `EVAPORATION NO`; latent surface evaporation retains its guard. True fluxes are solved at each bounded midpoint, with separate accepted atmospheric/radiative/sensible joules and held weather identity in component checkpoints. Analytical radiation cooling, an independent coupled reference, wet/dry footprint, exact continuation and failure/work-limit rollback checks qualify this profile; caller weather cadence is unchanged. See [groundwater transport profiles](groundwater-transport.md).
+
+Copied surface runtime sources also participate through symmetric bounded-donor halves and explicit water/species/heat receipts. Runtime groundwater, forcing channels and borrowed owners retain separate guards; component restart binds prescriptions and preserves expired receipts. See the transport profile above.

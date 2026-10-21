@@ -4013,3 +4013,133 @@ TEST(CoupledGroundwaterRk2, AtmosphereSharesReactiveChemicalAgeAndFiniteContactB
         EXPECT_GT(r.gw.transport().lost_reaction[0],0);EXPECT_GT(r.solver.surfaceReactionLoss(0),0);
     }
 }
+
+
+namespace {
+void setRkRuntimePair(CoupledRkRig& r,double flow=.2,double until=std::numeric_limits<double>::infinity()) {
+    auto& rows=r.state.runtime_sources;
+    for(int cell=0;cell<r.mesh.n_cells();++cell)for(bool sink:{false,true}) {
+        RuntimeSource row;row.id=sink?"withdraw":"supply";row.owner="qualified-test";row.cell=cell;row.flow=sink?-flow:flow;row.until=until;
+        row.concentrations.assign(r.state.transport.n_species,0);row.concentrations[0]=7;
+        if(r.state.transport.age_row>=0)row.concentrations[r.state.transport.age_row]=3;
+        row.rates.assign(r.state.transport.n_species,0);rows.replace(std::move(row));
+    }
+    rows.rebuild(r.mesh.n_cells());
+}
+}
+TEST(CoupledGroundwaterRk2, RuntimeSourcePairHasSecondOrderMixingAndSeparateAgeProduction) {
+    for(bool layered:{false,true}) {double previous=0;
+        for(double dt:{.4,.2,.1,.05}) {
+            CoupledRkRig r;r.init(dt,0,0,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);initRkQuality(r,layered,true,true);seedRkQuality(r,2,.001);
+            auto& tr=r.state.transport;for(int i=0;i<tr.n_cells;++i)tr.cell_mass[tr.idx(tr.age_row,i)]=5*r.state.volume[i];setRkRuntimePair(r);
+            const double v=r.state.volume[0],initial=r.total();const double exact=7+(2-7)*std::exp(-.2/v*2),age=3+v/.2+(5-3-v/.2)*std::exp(-.2/v*2);
+            ASSERT_NO_THROW(r.solver.advance(0,2));const double error=std::max(std::abs(tr.cell_mass[0]/v-exact),std::abs(tr.cell_mass[tr.idx(tr.age_row,0)]/v-age))/10;
+            EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;
+            RecordProperty("runtime_pair_"+std::to_string(layered)+"_"+std::to_string(int(dt*1000)),error);EXPECT_NEAR(r.total(),initial,1e-10*initial);
+            for(int i=0;i<tr.n_cells;++i) {
+                const auto& in=r.state.runtime_sources.find("supply",i)->receipt;const auto& out=r.state.runtime_sources.find("withdraw",i)->receipt;
+                EXPECT_NEAR(in.water_in,.4,1e-13);EXPECT_NEAR(out.water_out,.4,1e-13);EXPECT_NEAR(in.applied_mass[0],2.8,1e-12);
+                EXPECT_NEAR(tr.cell_mass[tr.idx(0,i)]-2*v,in.applied_mass[0]+out.applied_mass[0],1e-12);
+                EXPECT_NEAR(tr.cell_mass[tr.idx(tr.age_row,i)]-5*v,in.applied_mass[tr.age_row]+out.applied_mass[tr.age_row]+2*v,1e-11);
+            }
+        }
+    }
+}
+TEST(CoupledGroundwaterRk2, RuntimeSourceExpiryCheckpointContinuesAndBindsPrescription) {
+    CoupledRkRig a,b;for(auto* r:{&a,&b}) {r->init(.1,0,0,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);initRkQuality(*r,true,true,true);seedRkQuality(*r,2,.001);setRkRuntimePair(*r,.2,.735);}
+    ASSERT_NO_THROW(a.solver.advance(0,.6));const auto saved=rk2Output("runtime-rk2-source.chk"),before=rk2Output("runtime-rk2-before.chk"),after=rk2Output("runtime-rk2-after.chk");
+    ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");b.state.runtime_sources.rows[0].flow+=.01;
+    ASSERT_EQ(b.solver.saveCheckpoint(before.string()),"");EXPECT_FALSE(b.solver.loadCheckpoint(saved.string()).empty());ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));b.state.runtime_sources.rows[0].flow-=.01;
+    ASSERT_EQ(b.solver.loadCheckpoint(saved.string()),"");ASSERT_NO_THROW(a.solver.advance(.6,2));
+    ASSERT_NO_THROW(b.solver.advance(.6,2));
+    ASSERT_EQ(a.solver.saveCheckpoint(before.string()),"");ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+    for(const auto& row:a.state.runtime_sources.rows){EXPECT_FALSE(row.enabled);EXPECT_NEAR(row.receipt.water_in+row.receipt.water_out,.2*.735,1e-12);}
+}
+TEST(CoupledGroundwaterRk2, RuntimeSourceLaterOverflowRestoresAllOwnersAndCanRetry) {
+    CoupledRkRig r;r.init(.1,0,0,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);initRkQuality(r,true,true,true);seedRkQuality(r,2,.001);setRkRuntimePair(r);
+    r.state.runtime_sources.find("supply",1)->flow=1e308;const auto before=rk2Output("runtime-overflow-before.chk"),after=rk2Output("runtime-overflow-after.chk");
+    ASSERT_EQ(r.solver.saveCheckpoint(before.string()),"");EXPECT_THROW(ExplicitInertialSolverTestAccess::rk2(r.solver,10,0),std::runtime_error);
+    ASSERT_EQ(r.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));r.state.runtime_sources.find("supply",1)->flow=.2;
+    ASSERT_NO_THROW(r.solver.advance(0,.1));
+}
+TEST(CoupledGroundwaterRk2, RuntimeSourceDryStartUsesBeginningDonorsAndClosesGrossReceipts) {
+    CoupledRkRig r;r.init(.2,0,0,0,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);initRkQuality(r,true,true,true);seedRkQuality(r,2,.001);
+    for(int i=0;i<r.mesh.n_cells();++i)r.state.transport.cell_mass[r.state.transport.idx(0,i)]=1;
+    setRkRuntimePair(r,1);for(auto& row:r.state.runtime_sources.rows)if(row.flow<0)row.flow=-100;
+    ASSERT_NO_THROW(ExplicitInertialSolverTestAccess::rk2(r.solver,.2,0));
+    for(int i=0;i<r.mesh.n_cells();++i) {
+        const auto& in=r.state.runtime_sources.find("supply",i)->receipt;const auto& out=r.state.runtime_sources.find("withdraw",i)->receipt;
+        EXPECT_NEAR(r.state.volume[i],.075,1e-13);EXPECT_NEAR(in.water_in,.2,1e-13);EXPECT_NEAR(out.water_out,.125,1e-13);
+        EXPECT_NEAR(r.state.transport.cell_mass[r.state.transport.idx(0,i)],.775,1e-12);
+        EXPECT_NEAR(1+in.applied_mass[0]+out.applied_mass[0],.775,1e-12);EXPECT_LT(out.requested,out.applied);
+        EXPECT_NEAR(out.last_dt,.2,1e-15);EXPECT_NEAR(out.last_flow,-.125/.2,1e-12);
+    }
+}
+TEST(CoupledGroundwaterRk2, RuntimeSourcesKeepColdWaterAndSignedHeatPowerWithSeparateJoules) {
+    double previous=0;
+    for(double dt:{.4,.2,.1,.05}) {
+        CoupledRkRig r;r.init(dt,0,0,.2,"NONE");RkPorousOwner o;o.initialize(r,false);
+        setRkRuntimePair(r);for(auto& row:r.state.runtime_sources.rows){row.concentrations[0]=-5;if(row.flow>0)row.heat=-1000;}
+        const double v=r.state.volume[0],equilibrium=-5-1000/(4186000*.2),exact=equilibrium+(-2-equilibrium)*std::exp(-.2/v*2);
+        ASSERT_NO_THROW(r.solver.advance(0,2));const double error=std::abs(r.state.transport.cell_mass[0]/v-exact);
+        EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;
+        RecordProperty("runtime_cold_"+std::to_string(int(dt*1000)),error);
+        for(int i=0;i<r.mesh.n_cells();++i) {
+            const auto& in=r.state.runtime_sources.find("supply",i)->receipt;const auto& out=r.state.runtime_sources.find("withdraw",i)->receipt;
+            EXPECT_NEAR(in.heat_requested,-2000,1e-10);EXPECT_NEAR(in.heat_applied,-2000,1e-10);
+            EXPECT_NEAR(r.state.transport.cell_mass[i]+2*v,in.applied_mass[0]+out.applied_mass[0],1e-12);
+        }checkRkPorousLedgers(r);
+    }
+}
+TEST(CoupledGroundwaterRk2, RuntimeSourceOrderAndCompetingChemicalSinksRetainCanonicalBudgets) {
+    CoupledRkRig a,b;for(auto* r:{&a,&b}) {
+        r->init(.1,0,0,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);initRkQuality(*r,true,true,true);seedRkQuality(*r,2,.001);setRkRuntimePair(*r);
+        for(auto& row:r->state.runtime_sources.rows)row.rates[0]=-100;
+    }
+    std::reverse(b.state.runtime_sources.rows.begin(),b.state.runtime_sources.rows.end());b.state.runtime_sources.index.clear();
+    for(std::size_t k=0;k<b.state.runtime_sources.rows.size();++k){const auto& row=b.state.runtime_sources.rows[k];b.state.runtime_sources.index[row.id][row.cell]=k;}b.state.runtime_sources.rebuild(b.mesh.n_cells());
+    ASSERT_NO_THROW(a.solver.advance(0,2));
+    ASSERT_NO_THROW(b.solver.advance(0,2));
+    for(int i=0;i<a.mesh.n_cells();++i) {
+        double delta=0;for(const std::string name:{"supply","withdraw"}) {
+            const auto& ar=a.state.runtime_sources.find(name,i)->receipt;const auto& br=b.state.runtime_sources.find(name,i)->receipt;
+            EXPECT_NEAR(ar.water_in,br.water_in,1e-13);EXPECT_NEAR(ar.water_out,br.water_out,1e-13);delta+=ar.applied_mass[0];
+        }
+        EXPECT_GE(a.state.transport.cell_mass[i],0);EXPECT_NEAR(a.state.transport.cell_mass[i],b.state.transport.cell_mass[i],1e-12);
+        EXPECT_NEAR(a.state.transport.cell_mass[i]-3.2,delta,1e-11);
+    }
+}
+TEST(CoupledGroundwaterRk2, RuntimeSourcesShareFiniteReactiveAgeAndPhysicalEnergyBudgets) {
+    for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true}) {
+        if(layered&&closure!=GwClosure::SIGMA)continue;
+        RkReactionSystem rx(kRkPorousConversion,"RK5",kRkPorousSurfaceConversion);CoupledRkRig r;r.init(.05,0,0,.2,"NONE",closure,SoilChar::GARDNER,4);
+        RkPorousOwner o;initRkFiniteQuality(r,o,rx,layered,3);setRkRuntimePair(r,.01);
+        for(auto& row:r.state.runtime_sources.rows){row.concentrations[r.state.transport.temp_row]=-8;if(row.flow>0)row.heat=-100;}
+        const auto energy=[&]() {double result=rkPorousEnergy(r);const auto& tr=r.state.transport;for(int i=0;i<tr.n_cells;++i)result+=4186000*tr.cell_mass[tr.idx(tr.temp_row,i)];return result;};
+        auto initial=finiteQualityInitial(r);const double before=energy();ASSERT_NO_THROW(r.solver.advance(0,2));const auto& tr=r.state.transport;
+        for(int row=0;row<tr.n_species;++row)initial[row]+=tr.gained_external[row];
+        checkFiniteQualityBudgets(r,initial);
+        double provider_energy=0;for(const auto& source:r.state.runtime_sources.rows)provider_energy+=4186000*source.receipt.applied_mass[tr.temp_row];
+        EXPECT_NEAR(energy()-before,provider_energy,1e-10*std::max(1.,std::abs(before)));
+        for(int row=0;row<tr.n_species;++row) {
+            double accepted=0;for(const auto& source:r.state.runtime_sources.rows)accepted+=source.receipt.applied_mass[row];
+            if(row==tr.temp_row)accepted+=std::accumulate(r.state.heat.water_j.begin(),r.state.heat.water_j.end(),0.)/4186000;
+            EXPECT_NEAR(accepted,tr.gained_external[row]-tr.lost_external[row],1e-10*std::max(1.,std::abs(accepted)));
+        }
+    }
+}
+TEST(CoupledGroundwaterRk2, RuntimeSourceCorruptGrossReceiptRefusesBeforeAnyOwnerIsInstalled) {
+    CoupledRkRig a,b;for(auto* r:{&a,&b}){r->init(.1,0,0,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);initRkQuality(*r,true,true,true);seedRkQuality(*r,2,.001);setRkRuntimePair(*r,.2,.735);}
+    ASSERT_NO_THROW(a.solver.advance(0,.6));const auto saved=rk2Output("runtime-corrupt-source.chk"),bad=rk2Output("runtime-corrupt-gross.chk"),before=rk2Output("runtime-corrupt-before.chk"),after=rk2Output("runtime-corrupt-after.chk");
+    ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");openswmm::detail::CompletedSourceArchive original(rk2File(saved));
+    std::string magic,payload;uint32_t version=0,endian=0,long_bytes=0,crc=0;original(magic,version,endian,long_bytes,payload,crc);original.finish();
+    const std::string marker="RK2 copied surface runtime sources v1";const auto pos=payload.rfind(marker);ASSERT_NE(pos,std::string::npos);
+    // The mutable record is profile, fixed row count, enabled, then requested
+    // and applied water. Change a physical receipt, retaining a valid CRC.
+    const auto offset=pos+marker.size()+sizeof(uint64_t)+sizeof(bool)+sizeof(double);ASSERT_LT(offset+sizeof(double),payload.size());
+    double value=0;std::memcpy(&value,payload.data()+offset,sizeof(value));value+=1;std::memcpy(payload.data()+offset,&value,sizeof(value));
+    crc=~uint32_t(0);for(unsigned char c:payload){crc^=c;for(int k=0;k<8;++k)crc=(crc>>1)^((crc&1)?0xedb88320u:0u);}crc=~crc;
+    openswmm::detail::CompletedSourceArchive corrupted;corrupted(magic,version,endian,long_bytes,payload,crc);std::ofstream(bad,std::ios::binary)<<corrupted.bytes();
+    ASSERT_EQ(b.solver.saveCheckpoint(before.string()),"");const auto error=b.solver.loadCheckpoint(bad.string());EXPECT_NE(error.find("net and gross"),std::string::npos);
+    ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));ASSERT_EQ(b.solver.loadCheckpoint(saved.string()),"");
+}

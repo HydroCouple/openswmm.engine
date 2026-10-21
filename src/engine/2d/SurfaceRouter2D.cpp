@@ -3182,7 +3182,9 @@ void SurfaceRouter2D::reportRainfall(const SimulationContext& ctx, double report
 
 
 bool SurfaceRouter2D::runtimeCpuAvailable() const noexcept {
-    return active_ && options_.momentum != Momentum2D::FULL_SWE && dynamic_cast<const ExplicitInertialSolver*>(solver_.get());
+    return active_ && dynamic_cast<const ExplicitInertialSolver*>(solver_.get()) &&
+        (options_.momentum!=Momentum2D::FULL_SWE ||
+         (options_.reconstruction_order==2&&subsurface_.active()&&!common_stage_&&!joint_hydraulic_));
 }
 
 void SurfaceRouter2D::invalidateBoundaryIndex() {

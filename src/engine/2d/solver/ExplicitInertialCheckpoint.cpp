@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
+#include <set>
 
 namespace openswmm::twoD {
 namespace {
@@ -53,6 +54,51 @@ void publish(const std::string& path,const std::string& bytes) {
 }
 }
 
+// Copied surface prescriptions are owned by the numerical transaction. An
+// external provider's program/callback state is deliberately not represented.
+std::string rk2SurfaceRuntimeProfile(const SurfaceStateData& surface) {
+    const auto& tr=surface.transport;std::set<std::pair<std::string,int>> keys;
+    for(const auto& row:surface.runtime_sources.rows) {
+        const auto ns=std::size_t(tr.n_species);
+        if(row.id.empty()||row.cell<0||std::size_t(row.cell)>=surface.volume.size()||!keys.emplace(row.id,row.cell).second||
+           row.boundary_edge!=-1||!std::isnan(row.boundary_head)||!std::isfinite(row.flow)||!std::isfinite(row.heat)||
+           std::isnan(row.until)||row.until<0||row.concentrations.size()!=ns||row.rates.size()!=ns||
+           row.receipt.requested_mass.size()!=ns||row.receipt.applied_mass.size()!=ns||
+           (row.heat!=0&&tr.temp_row<0))return "Invalid RK2 surface runtime prescription or species shape.";
+        for(int r=0;r<tr.n_species;++r)
+            if(!std::isfinite(row.concentrations[r])||(r!=tr.temp_row&&row.concentrations[r]<0)||
+               !std::isfinite(row.rates[r])||((r==tr.temp_row||r==tr.age_row)&&row.rates[r]!=0)||
+               !std::isfinite(row.receipt.requested_mass[r])||!std::isfinite(row.receipt.applied_mass[r]))
+                return "Invalid RK2 surface runtime species/receipt.";
+        const auto& b=row.receipt;
+        for(double value:{b.requested,b.applied,b.water_in,b.water_out,b.heat_requested,b.heat_applied,b.last_flow,b.last_dt})
+            if(!std::isfinite(value))return "Nonfinite RK2 surface runtime receipt.";
+        if(b.water_in<0||b.water_out<0||b.last_dt<0)return "Negative RK2 surface runtime gross water or interval.";
+        if(std::abs(b.applied-(b.water_in-b.water_out))>1e-12*std::max({1.,b.water_in,b.water_out,std::abs(b.applied)}))
+            return "RK2 surface runtime net and gross water receipts differ.";
+    }
+    return {};
+}
+namespace {
+void rk2SurfaceRuntimeArchive(Archive& a,RuntimeSources& sources,int cells,bool model) {
+    if(sources.rows.empty())return;
+    std::string profile="RK2 copied surface runtime sources v1";a(profile);
+    if(profile!="RK2 copied surface runtime sources v1")throw std::runtime_error("Unsupported RK2 runtime source record.");
+    a.sequence(sources.rows,[&](auto& row) {
+        if(model)a(row.id,row.owner,row.cell,row.flow,row.heat,row.until,row.concentrations,row.rates);
+        else {
+            a(row.enabled);auto& b=row.receipt;
+            a(b.requested,b.applied,b.water_in,b.water_out,b.heat_requested,b.heat_applied,b.last_flow,b.last_dt,b.requested_mass,b.applied_mass);
+        }
+    },true);
+    if(a.reading()) {
+        sources.index.clear();for(std::size_t k=0;k<sources.rows.size();++k) {
+            const auto& row=sources.rows[k];sources.index[row.id][row.cell]=k;
+        }
+        sources.rebuild(cells);
+    }
+}
+}
 std::string ExplicitInertialSolver::checkpointBoundary() const {
     if(!initialized_ || !common_stage_ || (!gw_&&!common_stage_->standaloneLocalBed()) || second_order_ || !checkpoint_ready_ ||
        !common_stage_->matches(mesh_,state_,gw_)) return "CPU checkpoint requires an accepted attached first-order source marcher.";
@@ -297,10 +343,11 @@ std::string ExplicitInertialSolver::rk2CheckpointProfile() const {
        source_history_||engine_source_history_||engine_source_stream_||!checkpoint_ready_||
        mode_!=Momentum2D::FULL_SWE||opts_->lts_tiers!=1||!bc_cell_.empty()||
        state_->snow.active()||
-       state_->runtime_sources.active()||state_->runtime_forcings.active()||
+       state_->runtime_forcings.active()||
        (state_->node_coupling&&!state_->node_coupling->empty()))
         return "RK2 checkpoint requires the standalone wall-bounded transport/age coupled profile.";
     if(auto error=rk2ThermalProfileError();!error.empty())return error;
+    if(auto error=rk2SurfaceRuntimeProfile(*state_);!error.empty())return error;
     const auto& tr=state_->transport;const auto& ground=gw_->transport();
     if(tr.active()&&(tr.row_names!=ground.row_names||tr.n_species!=ground.n_species||tr.age_row!=ground.age_row||tr.temp_row!=ground.temp_row))
         return "Coupled RK2 requires matching surface/groundwater species and age rows.";
@@ -379,6 +426,7 @@ std::string ExplicitInertialSolver::rk2CheckpointModel() const {
               ctx.options.wind_func_coeff_b,ctx.options.pressure_ratio);
         }
     }
+    auto runtime=state_->runtime_sources;rk2SurfaceRuntimeArchive(a,runtime,mesh_->n_cells(),true);
     auto rain=state_->rainfall,evap=state_->evap_rate;a(rain,evap);
     return a.bytes();
 }
@@ -388,6 +436,7 @@ std::string ExplicitInertialSolver::rk2CheckpointBytes(std::string& bytes) const
         auto trial=*this;auto surface=*state_;auto gw=*gw_;Archive state;
         auto model=rk2CheckpointModel();state(model);checkpoint::meshState(state,surface);
         gw.checkpoint(state,false);state(gw.cell_completed_);trial.checkpointState(state);
+        rk2SurfaceRuntimeArchive(state,surface.runtime_sources,mesh_->n_cells(),false);
         std::string magic=magicName,payload=state.bytes();
         uint32_t version=4,endian=0x01020304,longBytes=sizeof(long),crc=checksum(payload);
         Archive file;file(magic,version,endian,longBytes,payload,crc);
@@ -411,7 +460,7 @@ std::string ExplicitInertialSolver::loadRk2CheckpointBytes(std::string bytes) {
         trial.state_=&surface;trial.gw_=&gw;
         if(surface.heat.enabled)surface.heat.aquifer_ground=&gw.heat();
         checkpoint::meshState(state,surface);gw.checkpoint(state,false);state.fixed(gw.cell_completed_);
-        trial.checkpointState(state);state.finish();
+        trial.checkpointState(state);rk2SurfaceRuntimeArchive(state,surface.runtime_sources,mesh_->n_cells(),false);state.finish();
         if(auto error=trial.rk2CheckpointProfile();!error.empty())return error;
         trial.state_=state_;trial.gw_=gw_;
         *state_=std::move(surface);*gw_=std::move(gw);
