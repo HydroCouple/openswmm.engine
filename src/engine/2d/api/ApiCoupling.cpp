@@ -79,14 +79,14 @@ int swmm_coupling_apply_frame(SWMM_Engine h,const SWMM_CouplingFrame* f) {
        (f->source_count && !f->sources) || (f->boundary_count && !f->boundaries) ||
        (f->forcing_count && !f->forcings) || (f->clear_count && !f->clears)) return SWMM_ERR_BADPARAM;
     // The qualified FULL_SWE RK2 transaction owns copied surface source
-    // rows and held weather. Groundwater/boundary owners keep their guards.
+    // rows for both water domains and held weather. Boundary owners keep their guards.
     const auto& runtime_options=eng->surfaceRouter2D().options();
     if(runtime_options.momentum==Momentum2D::FULL_SWE) {
         if(f->boundary_count||(f->forcing_count&&!weatherWallProfile(eng->surfaceRouter2D().boundary())))return SWMM_ERR_PLUGIN;
         for(int k=0;k<f->forcing_count;++k)if(f->forcings[k].channel==2&&f->forcings[k].mode!=0&&
             f->forcings[k].rate_m_s>0&&eng->surfaceRouter2D().state().heat.surface)return SWMM_ERR_PLUGIN;
-        for(int k=0;k<f->source_count;++k)if(f->sources[k].domain!=0)return SWMM_ERR_PLUGIN;
-        for(int k=0;k<f->clear_count;++k)if(f->clears[k].domain!=0)return SWMM_ERR_PLUGIN;
+        for(int k=0;k<f->source_count;++k)if(f->sources[k].domain!=0&&f->sources[k].domain!=1)return SWMM_ERR_PLUGIN;
+        for(int k=0;k<f->clear_count;++k)if(f->clears[k].domain!=0&&f->clears[k].domain!=1)return SWMM_ERR_PLUGIN;
     }
     try {
         const std::string owner=f->provider ? f->provider : "";
@@ -378,6 +378,8 @@ int swmm_coupling_capabilities(SWMM_Engine h,unsigned* flags) {
         *flags=1|64;
         if(r.options().momentum==Momentum2D::FULL_SWE) {
             if(r.state().transport.temp_row>=0)*flags|=4;
+            if(r.subsurface().active())*flags|=2;
+            if(r.subsurface().active()&&r.subsurface().transport().temp_row>=0)*flags|=16;
             if(weatherWallProfile(r.boundary()))*flags|=128|256;
             return SWMM_OK;
         }

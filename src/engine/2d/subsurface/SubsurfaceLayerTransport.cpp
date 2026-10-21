@@ -63,7 +63,8 @@ void SubsurfaceSolver::fireLayerSpecies(int cell,const CellFlux& f) {
         if(f.boundaries)for(const auto& pulse:*f.boundaries)requested_flux+=pulse.flux_out[s];
         if(std::size_t(cell)<runtime_sources_.cells.size())for(auto id:runtime_sources_.cells[cell])
             requested_source+=std::max(0.,-runtime_sources_.rows[id].rates[s])*f.runtime_dt;
-        const double available=rhs[sat]*tr_.dissolvedFraction(s,cell,state_.theta_s[cell]);
+        const double mobile=tr_.dissolvedFraction(s,cell,state_.theta_s[cell]);
+        const double available=euler&&!runtime_sources_.rows.empty()?std::max(0.,donor_available[sat]-prepaid_link-initial[sat]*(1-mobile)):rhs[sat]*mobile;
         const double requested=requested_flux+requested_source;
         const double scale=tr_.signedRow(s)||requested<=0?1:std::min(1.,std::max(0.,available)/requested);
         rhs[sat]-=requested*scale;

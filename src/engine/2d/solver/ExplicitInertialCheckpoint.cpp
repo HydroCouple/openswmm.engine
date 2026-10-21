@@ -8,6 +8,7 @@
 #include "../data/SurfaceStateData.hpp"
 #include "../data/BoundaryData.hpp"
 #include "../coupling/NodeCoupling.hpp"
+#include "../coupling/Rk2RuntimeSources.hpp"
 #include "../../data/NodeData.hpp"
 #include "../../core/CompletedSourceArchive.hpp"
 #include <algorithm>
@@ -54,29 +55,36 @@ void publish(const std::string& path,const std::string& bytes) {
 }
 }
 
-// Copied surface prescriptions are owned by the numerical transaction. An
-// external provider's program/callback state is deliberately not represented.
-std::string rk2SurfaceRuntimeProfile(const SurfaceStateData& surface,const SubsurfaceSolver* ground=nullptr) {
-    const auto& tr=surface.transport;std::set<std::pair<std::string,int>> keys;
-    for(const auto& row:surface.runtime_sources.rows) {
-        const auto ns=std::size_t(tr.n_species);
-        if(row.id.empty()||row.cell<0||std::size_t(row.cell)>=surface.volume.size()||!keys.emplace(row.id,row.cell).second||
+// Copied prescriptions belong to the numerical transaction. External
+// provider programs and callback state are not represented.
+std::string validateRk2Sources(const RuntimeSources& sources,int cells,int species,int temperature,int age,
+                               const std::vector<uint8_t>* coverage) {
+    std::set<std::pair<std::string,int>> keys;
+    for(const auto& row:sources.rows) {
+        const auto ns=std::size_t(species);
+        if(row.id.empty()||row.cell<0||std::size_t(row.cell)>=std::size_t(cells)||!keys.emplace(row.id,row.cell).second||
+           (coverage&&(coverage->size()!=std::size_t(cells)||!(*coverage)[row.cell]))||
            row.boundary_edge!=-1||!std::isnan(row.boundary_head)||!std::isfinite(row.flow)||!std::isfinite(row.heat)||
            std::isnan(row.until)||row.until<0||row.concentrations.size()!=ns||row.rates.size()!=ns||
            row.receipt.requested_mass.size()!=ns||row.receipt.applied_mass.size()!=ns||
-           (row.heat!=0&&tr.temp_row<0))return "Invalid RK2 surface runtime prescription or species shape.";
-        for(int r=0;r<tr.n_species;++r)
-            if(!std::isfinite(row.concentrations[r])||(r!=tr.temp_row&&row.concentrations[r]<0)||
-               !std::isfinite(row.rates[r])||((r==tr.temp_row||r==tr.age_row)&&row.rates[r]!=0)||
+           (row.heat!=0&&temperature<0))return "Invalid RK2 runtime prescription or species shape.";
+        for(int r=0;r<species;++r)
+            if(!std::isfinite(row.concentrations[r])||(r!=temperature&&row.concentrations[r]<0)||
+               !std::isfinite(row.rates[r])||((r==temperature||r==age)&&row.rates[r]!=0)||
                !std::isfinite(row.receipt.requested_mass[r])||!std::isfinite(row.receipt.applied_mass[r]))
-                return "Invalid RK2 surface runtime species/receipt.";
+                return "Invalid RK2 runtime species/receipt.";
         const auto& b=row.receipt;
         for(double value:{b.requested,b.applied,b.water_in,b.water_out,b.heat_requested,b.heat_applied,b.last_flow,b.last_dt})
-            if(!std::isfinite(value))return "Nonfinite RK2 surface runtime receipt.";
-        if(b.water_in<0||b.water_out<0||b.last_dt<0)return "Negative RK2 surface runtime gross water or interval.";
+            if(!std::isfinite(value))return "Nonfinite RK2 runtime receipt.";
+        if(b.water_in<0||b.water_out<0||b.last_dt<0)return "Negative RK2 runtime gross water or interval.";
         if(std::abs(b.applied-(b.water_in-b.water_out))>1e-12*std::max({1.,b.water_in,b.water_out,std::abs(b.applied)}))
-            return "RK2 surface runtime net and gross water receipts differ.";
+            return "RK2 runtime net and gross water receipts differ.";
     }
+    return {};
+}
+std::string rk2SurfaceRuntimeProfile(const SurfaceStateData& surface,const SubsurfaceSolver* ground) {
+    const auto& tr=surface.transport;
+    if(auto error=validateRk2Sources(surface.runtime_sources,int(surface.volume.size()),tr.n_species,tr.temp_row,tr.age_row);!error.empty())return error;
     std::set<std::pair<int,int>> forcing_keys;
     for(const auto& row:surface.runtime_forcings.rows) {
         const auto ns=std::size_t(tr.n_species);const auto& b=row.receipt;
@@ -110,10 +118,11 @@ std::string rk2SurfaceRuntimeProfile(const SurfaceStateData& surface,const Subsu
     return {};
 }
 namespace {
-void rk2SurfaceRuntimeArchive(Archive& a,RuntimeSources& sources,int cells,bool model) {
+void rk2SurfaceRuntimeArchive(Archive& a,RuntimeSources& sources,int cells,bool model,bool groundwater=false) {
     if(sources.rows.empty())return;
-    std::string profile="RK2 copied surface runtime sources v1";a(profile);
-    if(profile!="RK2 copied surface runtime sources v1")throw std::runtime_error("Unsupported RK2 runtime source record.");
+    const std::string expected=groundwater?"RK2 copied groundwater runtime sources v1":"RK2 copied surface runtime sources v1";
+    std::string profile=expected;a(profile);
+    if(profile!=expected)throw std::runtime_error("Unsupported RK2 runtime source record.");
     a.sequence(sources.rows,[&](auto& row) {
         if(model)a(row.id,row.owner,row.cell,row.flow,row.heat,row.until,row.concentrations,row.rates);
         else {
@@ -475,6 +484,7 @@ std::string ExplicitInertialSolver::rk2CheckpointModel() const {
         std::string evaporation="RK2 inactive native evaporation gate v1";a(evaporation);
     }
     auto runtime=state_->runtime_sources;rk2SurfaceRuntimeArchive(a,runtime,mesh_->n_cells(),true);
+    auto ground_runtime=gw_->runtimeSources();rk2SurfaceRuntimeArchive(a,ground_runtime,mesh_->n_cells(),true,true);
     auto forcing=*state_;rk2ForcingArchive(a,forcing,true);
     auto rain=state_->rainfall,evap=state_->evap_rate;a(rain,evap);
     return a.bytes();
@@ -485,7 +495,7 @@ std::string ExplicitInertialSolver::rk2CheckpointBytes(std::string& bytes) const
         auto trial=*this;auto surface=*state_;auto gw=*gw_;Archive state;
         auto model=rk2CheckpointModel();state(model);checkpoint::meshState(state,surface);
         gw.checkpoint(state,false);state(gw.cell_completed_);trial.checkpointState(state);
-        rk2SurfaceRuntimeArchive(state,surface.runtime_sources,mesh_->n_cells(),false);rk2ForcingArchive(state,surface,false);
+        rk2SurfaceRuntimeArchive(state,surface.runtime_sources,mesh_->n_cells(),false);rk2ForcingArchive(state,surface,false);rk2SurfaceRuntimeArchive(state,gw.runtimeSources(),mesh_->n_cells(),false,true);
         std::string magic=magicName,payload=state.bytes();
         uint32_t version=4,endian=0x01020304,longBytes=sizeof(long),crc=checksum(payload);
         Archive file;file(magic,version,endian,longBytes,payload,crc);
@@ -509,7 +519,7 @@ std::string ExplicitInertialSolver::loadRk2CheckpointBytes(std::string bytes) {
         trial.state_=&surface;trial.gw_=&gw;
         if(surface.heat.enabled)surface.heat.aquifer_ground=&gw.heat();
         checkpoint::meshState(state,surface);gw.checkpoint(state,false);state.fixed(gw.cell_completed_);
-        trial.checkpointState(state);rk2SurfaceRuntimeArchive(state,surface.runtime_sources,mesh_->n_cells(),false);rk2ForcingArchive(state,surface,false);state.finish();
+        trial.checkpointState(state);rk2SurfaceRuntimeArchive(state,surface.runtime_sources,mesh_->n_cells(),false);rk2ForcingArchive(state,surface,false);rk2SurfaceRuntimeArchive(state,gw.runtimeSources(),mesh_->n_cells(),false,true);state.finish();
         if(auto error=trial.rk2CheckpointProfile();!error.empty())return error;
         trial.state_=state_;trial.gw_=gw_;
         *state_=std::move(surface);*gw_=std::move(gw);

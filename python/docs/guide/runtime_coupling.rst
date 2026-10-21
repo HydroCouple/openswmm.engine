@@ -14,11 +14,20 @@ pending surface and groundwater work before returning.
 
 Use ``solver.coupling.capabilities`` to inspect the active model. Transport rows
 must be enabled before initialization. Runtime inputs do not create species,
-change the mesh, or enable disabled physics. Groundwater heat here is sensible
-heat in water; soil thermal storage/conduction and thermal Dirichlet/Neumann
-conditions are future solver work. Groundwater sources address the saturated
-zone; layer targeting and top recharge are not exposed by this interface.
-FULL_SWE runtime coupling is explicitly unavailable in capabilities and setters.
+change the mesh, or enable disabled physics. Groundwater sources address the
+saturated zone; layer targeting and top recharge are not exposed by this interface.
+Heat power enters through water and can feed the configured porous thermal
+owner; it does not prescribe a soil temperature or thermal boundary.
+
+The standalone CPU FULL_SWE reconstruction-order-2 groundwater profile accepts
+copied surface and groundwater sources, including optional transported heat,
+and wall-bounded rain/quality, evaporation demand and paired infiltration.
+Source expiry splits the shared transaction, and beginning donors bound each
+Euler stage. Runtime boundary frames and borrowed network/catchment owners
+remain unavailable in that profile. Check capabilities for the active model.
+Component checkpoints bind copied prescriptions and retain accepted receipts;
+external provider programs and full RK2 engine/session continuation are separate.
+See the engine groundwater transport profile for activation and thermal limits.
 
 Direct sources
 ==============

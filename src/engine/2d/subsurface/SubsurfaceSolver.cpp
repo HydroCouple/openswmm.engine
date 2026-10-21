@@ -59,6 +59,7 @@
  */
 
 #include "SubsurfaceSolver.hpp"
+#include "../coupling/Rk2RuntimeSources.hpp"
 #include "GroundwaterDispersion.hpp"
 #include "LayerTransport.hpp"
 
@@ -1696,6 +1697,12 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         std::erase_if(pending,[&](const auto& r){return r.end<=time+dt;});
     }
     // --- gather the accumulated cross-cadence volumes ---------------------
+    const bool runtime_rk2=opts_&&opts_->reconstruction_order==2&&!runtime_sources_.rows.empty();
+    double lateral_out=0;
+    if(runtime_rk2)for(int k=edges_->cell_ptr[u];k<edges_->cell_ptr[u+1];++k) {
+        const auto edge=std::size_t(edges_->cell_edge[k]);
+        lateral_out+=std::max(0.,-(edges_->cell_sign[k]>0?state_.eacc_L[edge]:state_.eacc_R[edge]));
+    }
     const double lat_vol  = gatherLateral(i);                 // m³, + in
     const double node_vol = gatherNode(i);                    // m³, + OUT
     const double future_lid_up=pendingLidUp(i);
@@ -1714,6 +1721,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         contact_depth[j]=v/A;contact_volume+=v;
     }
     const double saturated_exchange=lat_vol-node_vol+link_vol-contact_volume;
+    const double committed_out=lateral_out+std::max(0.,node_vol)+std::max(0.,-link_vol)+std::max(0.,contact_volume)+future_lid_up;
 
     const double q_in = infil_vol / (A * dt);                 // m/s at the top
     state_.qplus_last[u] = q_in;
@@ -1785,7 +1793,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
             // from the aquifer alone. Internal rise spends only the water
             // remaining after those committed signed exchanges.
             const double available = std::max(0.0, Sy * hg0 * A
-                                              + saturated_exchange-future_lid_up);
+                                              + (runtime_rk2?-committed_out:saturated_exchange-future_lid_up));
             // Leave a few ulps so multiply/divide roundoff cannot make
             // the saturated update refund an already delivered node debit.
             const double take = available / (A * dt) * (1.0 - 8.0 * std::numeric_limits<double>::epsilon());
@@ -1795,18 +1803,18 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     if(cl==GwClosure::CLOSED_FORM)q_et=std::min(q_et,std::max(0.0,state_.hu[u]-state_.theta_r[u]*L0-std::max(0.0,q0)*dt)/dt);
     if(cl==GwClosure::ENSLAVED){
         const double donor=std::max(0.0,ts*hg0+soil::equilibriumStorage(p,L0)-soil::equilibriumStorage(p,zs)
-                                       +q_in*dt+(lat_vol-node_vol+link_vol-future_lid_up)/A);
+                                       +(runtime_rk2?-committed_out/A:q_in*dt+(lat_vol-node_vol+link_vol-future_lid_up)/A));
         q_et=std::min(q_et,donor/dt); q0=q_in-q_et;
     }
     state_.q0_last[u] = q0;
 
     // --- 2. saturated explicit FV update ----------------------------------
     double q_deep = state_.c_loss[u] * hg0 / std::max(zs, kTiny);
-    if(lid_receipts_enabled_) {
+    if(lid_receipts_enabled_||runtime_rk2) {
         const double donor=cl==GwClosure::ENSLAVED
             ? std::max(0.,ts*hg0+soil::equilibriumStorage(p,L0)-soil::equilibriumStorage(p,zs))*A
             : Sy*hg0*A;
-        q_deep=std::min(q_deep,std::max(0.,donor+q0*A*dt+saturated_exchange-future_lid_up)/(A*dt));
+        q_deep=std::min(q_deep,std::max(0.,donor+(runtime_rk2?std::min(0.,q0)*A*dt-committed_out:q0*A*dt+saturated_exchange-future_lid_up))/(A*dt));
     }
     state_.qdeep_last[u] = q_deep;
     state_.qlat_last[u]  = lat_vol / dt;
@@ -1854,11 +1862,12 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         for (auto k : runtime_sources_.cells[u]) {
             auto& s=runtime_sources_.rows[k];
             s.receipt.heat_requested += s.heat*dt;
+            if(runtime_rk2&&tr_.temp_row>=0)s.receipt.requested_mass[tr_.temp_row]+=s.heat*dt/opts_->water_heat_capacity;
             if (ts*hg0*A+source.in>0.0 && tr_.temp_row>=0) {
                 const double dm=s.heat*dt/opts_->water_heat_capacity;
                 source.mass[tr_.temp_row] += dm;
                 s.receipt.heat_applied += s.heat*dt;
-                s.receipt.requested_mass[tr_.temp_row] += dm;
+                if(!runtime_rk2)s.receipt.requested_mass[tr_.temp_row] += dm;
                 s.receipt.applied_mass[tr_.temp_row] += dm;
             }
         }
@@ -1886,7 +1895,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     // withdrawals cannot spend that unaccepted column-to-table transfer.
     const double saturated_credit=other_sat-(sigma_stage?std::max(0.,q0)*A*dt:0.);
     const double accepted_scale=combined_out>0 ?
-        std::min(1.,std::max(0.,drainable+saturated_credit+source.in+boundary_in-future_lid_up)/combined_out):1.;
+        std::min(1.,std::max(0.,drainable+(runtime_rk2?std::min(0.,q0)*A*dt-q_deep*A*dt-committed_out:saturated_credit+source.in+boundary_in-future_lid_up))/combined_out):1.;
     source.out*=accepted_scale;boundary_out*=accepted_scale;
     for(auto& pulse:boundary_pulses) {
         auto& boundary=boundaries_[pulse.boundary];
@@ -2920,7 +2929,7 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
             }
         }
         tr_.lost_deep[us] += take(msat, f.deep, v_sat, mob_sat);
-        const double source_conc = v_sat>0.0 ? msat*mob_sat/v_sat : 0.0;
+        const double source_conc = euler&&!runtime_sources_.rows.empty() ? (f.v_sat0>0?old_sat*mob_sat/f.v_sat0:0) : (v_sat>0.0 ? msat*mob_sat/v_sat : 0.0);
         const double source_export = take(msat, f.source_out, v_sat, mob_sat);
         tr_.lost_source[us] += source_export;
         if(static_cast<std::size_t>(i)<runtime_sources_.cells.size())
@@ -2939,12 +2948,12 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
             for(auto k:runtime_sources_.cells[i])
                 requested+=std::max(0.0,-runtime_sources_.rows[k].rates[us])*f.runtime_dt;
             const double scale=requested>0.0
-                ? std::min(1.0,std::max(0.0,msat*mob_sat)/requested) : 1.0;
+                ? std::min(1.0,std::max(0.0,euler&&!runtime_sources_.rows.empty()?sat_remaining-old_sat*(1-mob_sat):msat*mob_sat)/requested) : 1.0;
             for(auto k:runtime_sources_.cells[i]) {
                 auto& row=runtime_sources_.rows[k];
                 const double wanted=std::max(0.0,-row.rates[us])*f.runtime_dt;
                 const double applied=wanted*scale;
-                msat-=applied; tr_.lost_source[us]+=applied;
+                msat-=applied;if(euler&&!runtime_sources_.rows.empty())sat_remaining-=applied; tr_.lost_source[us]+=applied;
                 row.receipt.requested_mass[us]-=wanted;
                 row.receipt.applied_mass[us]-=applied;
             }
@@ -3035,6 +3044,14 @@ void SubsurfaceSolver::fireGwRk2Cells(double dt,SurfaceStateData& surface,double
     if(!active()||!tierHasCells(0))return;
     const auto& cells=cells_by_tier_[0];prepareRechargeBatch(cells);
     for(int cell:cells) {
+        if(std::size_t(cell)<runtime_sources_.cells.size())for(auto k:runtime_sources_.cells[cell]) {
+            const auto& row=runtime_sources_.rows[k];
+            const double water=row.flow*dt,joules=row.heat*dt;
+            if(!std::isfinite(water)||!std::isfinite(joules))throw std::runtime_error("RK2 groundwater source proposal overflow.");
+            for(int r=0;r<tr_.n_species;++r)
+                if(!std::isfinite(std::max(0.,water)*row.concentrations[r]+dt*row.rates[r]))
+                    throw std::runtime_error("RK2 groundwater species proposal overflow.");
+        }
         fireCell(cell,dt,surface,time);
         if(heat_.active()&&heat_.cells[cell].failed)
             throw std::runtime_error(heat_.cells[cell].error.empty()?"Coupled RK2 thermal stage failed.":heat_.cells[cell].error);
@@ -3192,10 +3209,11 @@ double SubsurfaceSolver::rawRecharge(int cell,const soil::Params& p,double lengt
 
 std::string SubsurfaceSolver::rk2ProfileError() const {
     if(!active() || options_.per_subcatch ||
-       !node_beds_.empty() || lid_receipts_enabled_ || runtime_sources_.active() ||
+       !node_beds_.empty() || lid_receipts_enabled_ ||
        std::any_of(source_owned_.begin(),source_owned_.end(),[](bool v){return v;}) ||
        std::any_of(state_.closure.begin(),state_.closure.end(),[](int8_t v){return v!=int8_t(GwClosure::CLOSED_FORM)&&v!=int8_t(GwClosure::ENSLAVED)&&v!=int8_t(GwClosure::SIGMA);}))
         return "Coupled RK2 requires spatial CLOSED_FORM/ENSLAVED/SIGMA cells without borrowed source, network or thermal owners.";
+    if(auto error=validateRk2Sources(runtime_sources_,state_.n_cells,tr_.n_species,tr_.temp_row,tr_.age_row,&covered_);!error.empty())return error;
     if(heat_.active()) {
         if(!heat_.config||tr_.n_species<=0||tr_.temp_row<0||tr_.temp_row>=tr_.n_species||
            heat_.cells.size()!=std::size_t(state_.n_cells)||heat_.snow_owner||
@@ -3377,6 +3395,18 @@ void SubsurfaceSolver::blendRk2Water(const SubsurfaceSolver& initial,double end)
         auto& value=boundaries_[i].*member;value=.5*(initial.boundaries_[i].*member+value);
         if(!std::isfinite(value)||value<0)throw std::runtime_error("Coupled RK2 boundary receipt is inadmissible.");
     }
+    if(runtime_sources_.rows.size()!=initial.runtime_sources_.rows.size())throw std::runtime_error("RK2 groundwater source shape changed.");
+    for(std::size_t k=0;k<runtime_sources_.rows.size();++k) {
+        auto& row=runtime_sources_.rows[k];auto& now=row.receipt;const auto& before=initial.runtime_sources_.rows[k];
+        for(auto member:{&RuntimeReceipt::requested,&RuntimeReceipt::applied,&RuntimeReceipt::water_in,&RuntimeReceipt::water_out,
+                        &RuntimeReceipt::heat_requested,&RuntimeReceipt::heat_applied})now.*member=.5*(before.receipt.*member+now.*member);
+        blend(now.requested_mass,before.receipt.requested_mass);blend(now.applied_mass,before.receipt.applied_mass);
+        if(before.enabled) {
+            now.last_dt=end-initial.cell_completed_[row.cell];
+            now.last_flow=(now.applied-before.receipt.applied)/now.last_dt;
+        }
+    }
+    if(auto error=validateRk2Sources(runtime_sources_,s.n_cells,tr_.n_species,tr_.temp_row,tr_.age_row,&covered_);!error.empty())throw std::runtime_error(error);
     auto& t=tr_;const auto& old=initial.tr_;
     for(auto member:{&SubsurfaceTransportState::sat_mass,&SubsurfaceTransportState::unsat_mass,
         &SubsurfaceTransportState::layer_mass,&SubsurfaceTransportState::sacc_L,&SubsurfaceTransportState::sacc_R,

@@ -236,7 +236,7 @@ void SubsurfaceSolver::fireGroundPorewaterSpecies(int i,const CellFlux& f) noexc
                         if(j+1<nl&&advected.vertical_mass[j]>0)remaining-=advected.vertical_mass[j];
                         const double cap=old_water[j]-cell.reserved_out_water[j]+retention[j];
                         const double sat=std::max(0.,cell.saturated_water[j]-cell.reserved_out_water[j]);
-                        dissolved[j]=cap>0?std::max(0.,remaining)/cap*sat:0;
+                        dissolved[j]=cap>0?(!runtime_sources_.rows.empty()?std::max(0.,remaining-(mass[j]-reserved[j])*(1-sat/cap)):std::max(0.,remaining)/cap*sat):0;
                     } else {
                         const double cap=new_water[j]+retention[j];
                         dissolved[j]=cap>0?advected.mass[j]/cap*new_sat[j]:0;

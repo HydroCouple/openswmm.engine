@@ -25,6 +25,7 @@
  */
 
 #include "ExplicitInertialSolver.hpp"
+#include "../coupling/Rk2RuntimeSources.hpp"
 #include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 
 #include "../subsurface/SubsurfaceSolver.hpp"
@@ -655,7 +656,6 @@ bool ExplicitInertialSolver::applyCellSources(int i, double dt) {
 
 #undef OPENSWMM_SOURCE_INLINE
 
-std::string rk2SurfaceRuntimeProfile(const SurfaceStateData&,const SubsurfaceSolver* =nullptr);
 namespace {
 void advanceRk2RuntimeSources(SurfaceStateData& state,const SolverOptions2D& options,double seconds) {
     if(!state.runtime_sources.active())return;
@@ -2438,6 +2438,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     };
     if(gw_) {
         for(const auto& row:state_->runtime_sources.rows)if(row.enabled&&row.until>start&&row.until<start+interval)cuts.push_back(row.until);
+        for(const auto& row:gw_->runtimeSources().rows)if(row.enabled&&row.until>start&&row.until<start+interval)cuts.push_back(row.until);
         for(const auto& row:state_->runtime_forcings.rows)if(row.enabled&&row.until>start&&row.until<start+interval)cuts.push_back(row.until);
         gw_->heat().appendRk2Cuts(start,start+interval,cuts);
         for(const auto& source:gw_->sources_) {add_cuts(source.flow);for(const auto& term:source.terms)add_cuts(term.signal);}
@@ -2458,7 +2459,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     for(std::size_t part=0;part<parts;++part) {
     const double time=cuts.empty()?start:cuts[part],dt=cuts.empty()?interval:cuts[part+1]-time;
     std::unique_ptr<SubsurfaceSolver> part_ground;
-    if(gw_){state_->runtime_sources.expire(time);state_->runtime_forcings.expire(time);}
+    if(gw_){state_->runtime_sources.expire(time);state_->runtime_forcings.expire(time);gw_->runtimeSources().expire(time);}
     const auto runtime0=state_->runtime_sources;const auto forcing0=state_->runtime_forcings;const auto rain_pending0=state_->rk2_rain_pending;
     if(gw_) {
         advanceRk2RuntimeSources(*state_,*opts_,.5*dt);if(runtime0.active())reconstructAll();
@@ -2597,7 +2598,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
             auto& receipt=state_->runtime_sources.rows[k].receipt;
             receipt.last_dt=dt;receipt.last_flow=(receipt.applied-runtime0.rows[k].receipt.applied)/dt;
         }
-        state_->runtime_sources.expire(time+dt);state_->runtime_forcings.expire(time+dt);
+        state_->runtime_sources.expire(time+dt);state_->runtime_forcings.expire(time+dt);gw_->runtimeSources().expire(time+dt);
         source_phase_end_=time+dt;
         gw_->publishRk2Infiltration(*state_,dt,time+dt);
     }
