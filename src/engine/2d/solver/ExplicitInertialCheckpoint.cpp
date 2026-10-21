@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "ExplicitInertialSolver.hpp"
+#include "InertialKernels.hpp"
 #include "../subsurface/CommonSourceStage.hpp"
 #include "../subsurface/SubsurfaceSolver.hpp"
 #include "../heat/MeshCheckpointState.hpp"
@@ -411,12 +412,29 @@ bool rk2HasSurfaceSeries(const BoundaryData& boundary) {
     }
     return false;
 }
+bool rk2HasSurfaceCurve(const BoundaryData& boundary) {
+    for(std::size_t slot=0;slot<boundary.edge_bc_type.size();++slot) {
+        const auto original=boundary.runtime_original.find(int(slot));
+        const int curve=original==boundary.runtime_original.end()?boundary.edge_bc_rating_curve.at(slot):original->second.rating;
+        if(curve>=0)return true;
+    }
+    return false;
+}
 bool rk2SurfaceDescriptor(int8_t type,int stage,int flow,int rating,const std::string& stage_name,const std::string& flow_name,const std::string& rating_name) {
+    if(type==int8_t(BoundaryType::RATING_CURVE))return rating>=0&&stage==-1&&flow==-1&&stage_name.empty()&&flow_name.empty();
     if(rating!=-1||!rating_name.empty()||stage< -1||flow< -1||
        (stage==-1&&!stage_name.empty())||(flow==-1&&!flow_name.empty()))return false;
-    if(type==int8_t(BoundaryType::WALL))return stage==-1&&flow==-1;
+    if(type==int8_t(BoundaryType::WALL)||type==int8_t(BoundaryType::NORMAL_FLOW))return stage==-1&&flow==-1;
     if(type==int8_t(BoundaryType::SPECIFIED_STAGE))return flow==-1;
     return type==int8_t(BoundaryType::SPECIFIED_FLOW)&&stage==-1;
+}
+bool rk2HasStateBoundary(const BoundaryData& boundary) {
+    for(std::size_t slot=0;slot<boundary.edge_bc_type.size();++slot) {
+        const auto original=boundary.runtime_original.find(int(slot));
+        const auto type=original==boundary.runtime_original.end()?boundary.edge_bc_type[slot]:original->second.type;
+        if(type==int8_t(BoundaryType::NORMAL_FLOW)||type==int8_t(BoundaryType::RATING_CURVE))return true;
+    }
+    return false;
 }
 bool rk2HasAuthoredSurfaceBoundary(const BoundaryData& boundary) {
     for(std::size_t slot=0;slot<boundary.edge_bc_type.size();++slot) {
@@ -441,7 +459,7 @@ std::string validateRk2SurfaceBoundary(const MeshData& mesh,const SurfaceStateDa
     const auto exterior=[&](int slot){return slot>=0&&std::size_t(slot)<n&&MeshData::slot_local(slot)<mesh.cell_vertex_count(MeshData::slot_cell(slot))&&mesh.cell_neighbour(MeshData::slot_cell(slot),MeshData::slot_local(slot))<0;};
     for(std::size_t slot=0;slot<n;++slot) {
         const auto type=BoundaryType(b.edge_bc_type[slot]);
-        if((type!=BoundaryType::WALL&&type!=BoundaryType::SPECIFIED_STAGE&&type!=BoundaryType::SPECIFIED_FLOW)||
+        if((type!=BoundaryType::WALL&&type!=BoundaryType::NORMAL_FLOW&&type!=BoundaryType::SPECIFIED_STAGE&&type!=BoundaryType::SPECIFIED_FLOW&&type!=BoundaryType::RATING_CURVE)||
            (type!=BoundaryType::WALL&&(!exterior(int(slot))||!b.receipts.count(int(slot))))||
            !std::isfinite(b.edge_bc_head[slot])||!std::isfinite(b.edge_bc_flow[slot])||!std::isfinite(b.edge_bed_slope[slot])||!std::isfinite(b.edge_bc_cum_flux[slot])||
            !rk2SurfaceDescriptor(b.edge_bc_type[slot],b.edge_bc_tseries[slot],b.edge_bc_flow_tseries[slot],b.edge_bc_rating_curve[slot],
@@ -451,7 +469,7 @@ std::string validateRk2SurfaceBoundary(const MeshData& mesh,const SurfaceStateDa
     if(b.runtime_original.size()!=b.runtime_owner.size()||b.runtime_original.size()!=tr.runtime_bc_conc.size())return "RK2 surface boundary owner/quality layout differs.";
     for(const auto& [slot,old]:b.runtime_original) {
         const auto owner=b.runtime_owner.find(slot);const auto quality=tr.runtime_bc_conc.find(slot);
-        if(!exterior(slot)||(old.type!=int8_t(BoundaryType::WALL)&&old.type!=int8_t(BoundaryType::SPECIFIED_STAGE)&&old.type!=int8_t(BoundaryType::SPECIFIED_FLOW))||!std::isfinite(old.head)||!std::isfinite(old.flow)||!std::isfinite(old.slope)||
+        if(!exterior(slot)||(old.type!=int8_t(BoundaryType::WALL)&&old.type!=int8_t(BoundaryType::NORMAL_FLOW)&&old.type!=int8_t(BoundaryType::SPECIFIED_STAGE)&&old.type!=int8_t(BoundaryType::SPECIFIED_FLOW)&&old.type!=int8_t(BoundaryType::RATING_CURVE))||!std::isfinite(old.head)||!std::isfinite(old.flow)||!std::isfinite(old.slope)||
            !rk2SurfaceDescriptor(old.type,old.stage_ts,old.flow_ts,old.rating,old.stage_name,old.flow_name,old.rating_name)||
            owner==b.runtime_owner.end()||owner->second.find('/')!=std::string::npos||owner->second.find('\0')!=std::string::npos||
            quality==tr.runtime_bc_conc.end()||quality->second.size()!=ns)
@@ -479,8 +497,8 @@ std::string validateRk2SurfaceBoundary(const MeshData& mesh,const SurfaceStateDa
     return {};
 }
 void rk2SurfaceBoundaryArchive(Archive& a,BoundaryData& b,std::map<int,std::vector<double>>& quality,bool model,int species) {
-    const bool signals=rk2HasSurfaceSeries(b);
-    const std::string expected=signals?"RK2 time-dependent surface boundaries v1":rk2HasAuthoredSurfaceBoundary(b)?"RK2 authored surface boundaries v1":"RK2 copied surface boundaries v1";
+    const bool signals=rk2HasSurfaceSeries(b),curves=rk2HasSurfaceCurve(b),dynamic=signals||curves;
+    const std::string expected=curves?"RK2 rated surface boundaries v1":signals?"RK2 time-dependent surface boundaries v1":rk2HasStateBoundary(b)?"RK2 state-dependent surface boundaries v1":rk2HasAuthoredSurfaceBoundary(b)?"RK2 authored surface boundaries v1":"RK2 copied surface boundaries v1";
     std::string profile=expected;a(profile);if(profile!=expected)throw std::runtime_error("Unsupported RK2 surface boundary record.");
     const auto keys=[&](auto& map,auto fields) {
         std::vector<int> slots;if(!a.reading())for(const auto& entry:map)slots.push_back(entry.first);a(slots);
@@ -492,16 +510,16 @@ void rk2SurfaceBoundaryArchive(Archive& a,BoundaryData& b,std::map<int,std::vect
     };
     if(model) {
         auto head=b.edge_bc_head,flow=b.edge_bc_flow;
-        if(signals&&!a.reading())for(std::size_t slot=0;slot<head.size();++slot) {
+        if(dynamic&&!a.reading())for(std::size_t slot=0;slot<head.size();++slot) {
             if(b.edge_bc_tseries[slot]>=0)head[slot]=0;
-            if(b.edge_bc_flow_tseries[slot]>=0)flow[slot]=0;
+            if(b.edge_bc_flow_tseries[slot]>=0||b.edge_bc_rating_curve[slot]>=0)flow[slot]=0;
         }
         a.fixed(b.edge_bc_type,head,flow,b.edge_bed_slope,b.edge_bc_tseries,b.edge_bc_flow_tseries,b.edge_bc_rating_curve,
                 b.edge_bc_tseries_name,b.edge_bc_flow_tseries_name,b.edge_bc_rating_curve_name);
         if(a.reading()){b.edge_bc_head=std::move(head);b.edge_bc_flow=std::move(flow);}
         keys(b.runtime_original,[&](auto& v){
             auto head=v.head,flow=v.flow;
-            if(signals&&!a.reading()){if(v.stage_ts>=0)head=0;if(v.flow_ts>=0)flow=0;}
+            if(dynamic&&!a.reading()){if(v.stage_ts>=0)head=0;if(v.flow_ts>=0||v.rating>=0)flow=0;}
             a(v.type,head,flow,v.slope,v.stage_ts,v.flow_ts,v.rating,v.stage_name,v.flow_name,v.rating_name);
             if(a.reading()){v.head=head;v.flow=flow;}
         });
@@ -511,7 +529,7 @@ void rk2SurfaceBoundaryArchive(Archive& a,BoundaryData& b,std::map<int,std::vect
         if(a.reading()) {b.receipts.clear();for(int slot:history) {if(slot<0||slot>=b.size()||b.receipts.count(slot))throw std::runtime_error("Invalid RK2 surface boundary history.");b.ensureReceipt(slot,species);}}
     } else {
         a.fixed(b.edge_bc_cum_flux);
-        if(signals)a.fixed(b.edge_bc_head,b.edge_bc_flow);
+        if(dynamic)a.fixed(b.edge_bc_head,b.edge_bc_flow);
         for(auto& [slot,r]:b.receipts)a(r.requested,r.applied,r.water_in,r.water_out,r.heat_requested,r.heat_applied,r.last_flow,r.last_dt,r.requested_mass,r.applied_mass);
     }
 }
@@ -528,16 +546,23 @@ std::string ExplicitInertialSolver::rk2CheckpointProfile() const {
         for(int slot=0;slot<b.size();++slot) {
             const auto original=b.runtime_original.find(slot);
             const auto type=original==b.runtime_original.end()?b.edge_bc_type[slot]:original->second.type;
-            const int table=type==int8_t(BoundaryType::SPECIFIED_STAGE)?
+            const bool curve=type==int8_t(BoundaryType::RATING_CURVE);
+            const int table=curve?(original==b.runtime_original.end()?b.edge_bc_rating_curve[slot]:original->second.rating):
+                type==int8_t(BoundaryType::SPECIFIED_STAGE)?
                 (original==b.runtime_original.end()?b.edge_bc_tseries[slot]:original->second.stage_ts):
                 (original==b.runtime_original.end()?b.edge_bc_flow_tseries[slot]:original->second.flow_ts);
             if(table<0)continue;
             const bool stage=type==int8_t(BoundaryType::SPECIFIED_STAGE);
-            const auto found=std::find_if(rk_boundary_signals_.begin(),rk_boundary_signals_.end(),[&](const auto& row){return row.slot==slot&&row.table==table&&row.stage==stage;});
+            const auto found=std::find_if(rk_boundary_signals_.begin(),rk_boundary_signals_.end(),[&](const auto& row){return row.slot==slot&&row.table==table&&row.stage==stage&&bool(row.curve)==curve;});
             if(found==rk_boundary_signals_.end())return "RK2 surface boundary immutable signal binding differs.";
             ++matched;
             if(original==b.runtime_original.end()) {
-                const double expected=found->scale*found->signal.at(t_last_sync_);
+                double expected=found->scale*found->signal.at(t_last_sync_);
+                if(found->curve) {
+                    const int cell=MeshData::slot_cell(slot);double eta=0,depth=0;
+                    inertial::cellEtaDepth(*mesh_,*opts_,cell,state_->volume.at(cell),eta,depth);
+                    expected=found->scale*table_lookupEx(*found->curve,eta/found->x_scale);
+                }
                 const double actual=(stage?b.edge_bc_head:b.edge_bc_flow)[slot];
                 if(!std::isfinite(expected)||std::abs(expected-actual)>1e-12*std::max({1.,std::abs(expected),std::abs(actual)}))
                     return "RK2 evaluated surface boundary differs from its completed clock.";
@@ -674,12 +699,17 @@ std::string ExplicitInertialSolver::rk2CheckpointModel(const Rk2CheckpointBindin
         auto rows=state_->transport.bc_quality_rows;
         a.sequence(rows,[&](auto& row){a(row.slot,row.species,row.conc);});
     }
+    if(state_->boundary&&rk2HasStateBoundary(*state_->boundary)) {std::string policy="RK2 held state-dependent surface derivatives v1";a(policy);}
     if(!rk_boundary_signals_.empty()) {
-        std::string policy="RK2 immutable surface boundary signals v1";auto anchor=rk_boundary_anchor_;a(policy,anchor);
+        const bool curves=std::any_of(rk_boundary_signals_.begin(),rk_boundary_signals_.end(),[](const auto& row){return bool(row.curve);});
+        std::string policy=curves?"RK2 immutable surface boundary signals v2":"RK2 immutable surface boundary signals v1";
+        auto anchor=rk_boundary_anchor_;a(policy,anchor);
         auto signals=rk_boundary_signals_;
         a.sequence(signals,[&](auto& row){
-            auto times=row.signal.timePoints(),values=row.signal.ordinates();
-            a(row.slot,row.table,row.stage,row.scale,row.name,times,values);
+            bool curve=bool(row.curve);if(curves)a(curve);
+            a(row.slot,row.table,row.stage,row.scale,row.name);
+            if(curve) {auto table=*row.curve;auto scale=row.x_scale;a(scale,table.type,table.x,table.y);}
+            else {auto times=row.signal.timePoints(),values=row.signal.ordinates();a(times,values);}
         });
     }
     auto rain=state_->rainfall,evap=state_->evap_rate;a(rain,evap);

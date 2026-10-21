@@ -2362,6 +2362,24 @@ std::string ExplicitInertialSolver::configureRk2BoundarySignals(SimulationContex
         std::unordered_map<std::string,GwSourceSignal> cache;
         for(int slot=0;slot<boundary.size();++slot) {
             const auto type=BoundaryType(boundary.edge_bc_type.at(slot));
+            if(type==BoundaryType::RATING_CURVE) {
+                int& index=boundary.edge_bc_rating_curve.at(slot);const auto& name=boundary.edge_bc_rating_curve_name.at(slot);
+                const int resolved=index==-2?ctx.find_curve(name):index;
+                if(resolved<0||resolved>=int(ctx.tables.tables.size())||(!name.empty()&&ctx.find_curve(name)!=resolved))
+                    return "RK2 rating curve name or table index differs.";
+                const auto& table=ctx.tables.tables[resolved];
+                if(table.type!=TableType::CURVE_RATING||table.is_file_based||table.file_handle||table.num_cols!=1||
+                   table.x.size()<2||table.x.size()!=table.y.size())
+                    return "RK2 rating requires a single-column in-memory RATING curve with at least two points.";
+                if(!(stage_scale>0)||!std::isfinite(stage_scale)||!(flow_scale>0)||!std::isfinite(flow_scale))
+                    return "Invalid RK2 rating curve unit conversion.";
+                for(std::size_t k=0;k<table.x.size();++k)
+                    if(!std::isfinite(stage_scale*table.x[k])||!std::isfinite(flow_scale*table.y[k])||(k&&table.x[k]<=table.x[k-1]))
+                        return "RK2 rating curve needs finite, strictly increasing stages and finite flows.";
+                Rk2BoundarySignal row;row.slot=slot;row.table=resolved;row.scale=flow_scale;row.name=table.id;
+                row.curve=std::make_shared<Table>(table);row.x_scale=stage_scale;signals.push_back(std::move(row));index=resolved;
+                continue;
+            }
             for(bool stage:{true,false}) {
                 int& index=stage?boundary.edge_bc_tseries.at(slot):boundary.edge_bc_flow_tseries.at(slot);
                 const auto& name=stage?boundary.edge_bc_tseries_name.at(slot):boundary.edge_bc_flow_tseries_name.at(slot);
@@ -2381,9 +2399,23 @@ std::string ExplicitInertialSolver::configureRk2BoundarySignals(SimulationContex
                 signals.push_back({slot,resolved,stage,scale,table.id,std::move(signal)});index=resolved;
             }
         }
+        // Initial interpolation/conversion can fail despite finite ordinates.
+        // Keep the previously configured fresh owner until every row is valid.
+        for(const auto& row:signals) {
+            if(boundary.runtime_original.count(row.slot))continue;
+            double value=row.scale*row.signal.at(0);
+            if(row.curve) {
+                const int cell=MeshData::slot_cell(row.slot);double eta=0,depth=0;
+                inertial::cellEtaDepth(*mesh_,*opts_,cell,state_->volume.at(cell),eta,depth);
+                const double query=eta/row.x_scale;
+                if(!std::isfinite(query))return "Nonfinite initial RK2 rating coordinate.";
+                value=row.scale*table_lookupEx(*row.curve,query);
+            }
+            if(!std::isfinite(value))return "Nonfinite initial RK2 boundary evaluation.";
+            (row.stage?boundary.edge_bc_head:boundary.edge_bc_flow).at(row.slot)=value;
+        }
         rk_boundary_signals_=std::move(signals);rk_boundary_anchor_=ctx.options.start_date;
-        *const_cast<BoundaryData*>(state_->boundary)=std::move(boundary);
-        resolveRk2BoundarySignals(0);return {};
+        *const_cast<BoundaryData*>(state_->boundary)=std::move(boundary);return {};
     } catch(const std::exception& e){return e.what();}
 }
 void ExplicitInertialSolver::resolveRk2BoundarySignals(double time) {
@@ -2391,9 +2423,16 @@ void ExplicitInertialSolver::resolveRk2BoundarySignals(double time) {
     auto& boundary=*const_cast<BoundaryData*>(state_->boundary);
     for(const auto& row:rk_boundary_signals_) {
         if(boundary.runtime_original.count(row.slot))continue;
-        const int index=row.stage?boundary.edge_bc_tseries.at(row.slot):boundary.edge_bc_flow_tseries.at(row.slot);
+        const int index=row.curve?boundary.edge_bc_rating_curve.at(row.slot):row.stage?boundary.edge_bc_tseries.at(row.slot):boundary.edge_bc_flow_tseries.at(row.slot);
         if(index!=row.table)throw std::runtime_error("RK2 surface signal binding differs.");
-        const double value=row.scale*row.signal.at(time);
+        double value=row.scale*row.signal.at(time);
+        if(row.curve) {
+            const int cell=MeshData::slot_cell(row.slot);double eta=0,depth=0;
+            inertial::cellEtaDepth(*mesh_,*opts_,cell,state_->volume.at(cell),eta,depth);
+            const double query=eta/row.x_scale;
+            if(!std::isfinite(query))throw std::runtime_error("Nonfinite RK2 rating coordinate.");
+            value=row.scale*table_lookupEx(*row.curve,query);
+        }
         if(!std::isfinite(value))throw std::runtime_error("Nonfinite RK2 evaluated surface boundary.");
         (row.stage?boundary.edge_bc_head:boundary.edge_bc_flow).at(row.slot)=value;
     }
@@ -2550,7 +2589,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start,unsigned th
         gw_->heat().appendRk2Cuts(start,start+interval,cuts);
         for(const auto& source:gw_->sources_) {add_cuts(source.flow);for(const auto& term:source.terms)add_cuts(term.signal);}
         for(const auto& row:rk_boundary_signals_) {
-            if(state_->boundary->runtime_original.count(row.slot))continue;
+            if(row.curve||state_->boundary->runtime_original.count(row.slot))continue;
             const auto& times=row.signal.timePoints();const auto& values=row.signal.ordinates();
             for(auto it=std::upper_bound(times.begin(),times.end(),start);it!=times.end()&&*it<start+interval;++it)cuts.push_back(*it);
             if(!row.stage) {
@@ -2739,6 +2778,9 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start,unsigned th
             receipt.last_dt=dt;receipt.last_flow=(receipt.applied-runtime0.rows[k].receipt.applied)/dt;
         }
         state_->runtime_sources.expire(time+dt);state_->runtime_forcings.expire(time+dt);gw_->runtimeSources().expire(time+dt);
+        // Publish diagnostic ordinates from the accepted state, after both
+        // symmetric source halves. Curve evaluation is not an extra water step.
+        resolveRk2BoundarySignals(time+dt);
         if(auto error=validateRk2SurfaceBoundary(*mesh_,*state_);!error.empty())throw std::runtime_error(error);
         source_phase_end_=time+dt;
         gw_->publishRk2Infiltration(*state_,dt,time+dt);

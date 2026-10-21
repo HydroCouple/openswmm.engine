@@ -484,7 +484,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         for (std::size_t i = 0; i < boundary_.edge_bc_type.size(); ++i) {
             if (boundary_.edge_bc_type[i]
                     == static_cast<int8_t>(BoundaryType::NORMAL_FLOW)
-                && boundary_.edge_bed_slope[i] <= 0.0)
+                && boundary_.edge_bed_slope[i] == 0.0)
                 ++n_zero_slope;
         }
         if (n_zero_slope > 0) {

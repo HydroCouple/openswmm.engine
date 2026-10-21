@@ -132,6 +132,10 @@ W CELL 1 FLOW WELL{forcing}{' __TEMPERATURE__ CONC -4' if porous else ''}{' __WA
         path.write_text(path.read_text()+'\n[2D_OPTIONS]\nMOMENTUM_EQUATION FULL_SWE\nRECONSTRUCTION_ORDER 2\nLTS_TIERS 1\n')
     if authored_surface:
         kind = 'SPECIFIED_STAGE .56' if authored_surface == 1 else 'SPECIFIED_FLOW -.00001'
+        if authored_surface == 3:
+            kind = 'NORMAL_FLOW -.000001'
+        if authored_surface == 4:
+            kind = 'RATING_CURVE SurfaceRating'
         if authored_series:
             kind = 'TS_STAGE SurfaceEdge' if authored_surface == 1 else 'TS_FLOW SurfaceEdge'
         rows = ([('A', 1), ('B', 0)] if reactive else []) + ([('Dye', 1)] if passive else [])
@@ -141,6 +145,8 @@ W CELL 1 FLOW WELL{forcing}{' __TEMPERATURE__ CONC -4' if porous else ''}{' __WA
             rows.append(('__WATER_AGE__', 1))
         quality = ''.join(f'0 1 {name} {value}\n' for name, value in rows)
         path.write_text(path.read_text()+f'\n[2D_BOUNDARY_CONDITIONS]\n0 1 {kind}\n[2D_BOUNDARY_QUALITY]\n{quality}')
+        if authored_surface == 4:
+            path.write_text(path.read_text()+'[CURVES]\nSurfaceRating RATING .4 -.000025\nSurfaceRating .8 .000015\n')
         if authored_series:
             values = ('.56', '.57', '.555', '.56') if authored_surface == 1 else ('-.00001', '.00002', '-.00001', '-.00001')
             path.write_text(path.read_text()+f'''[TIMESERIES]
@@ -506,3 +512,22 @@ def test_managed_rk2_surface_series_restores_stage_times_and_clear_fallback(tmp_
 def test_managed_rk2_surface_series_shares_latent_weather_expiry_and_reactive_history(tmp_path, chemistry, thermal, output, kind):
     _continue_session(tmp_path, chemistry, thermal, True, True, output, True, True,
                       rk2=True, latent=True, copied_et=True, authored_surface=kind, authored_series=True)
+
+
+@pytest.mark.parametrize('chemistry,thermal', [(0, 4), (5, 3), (3, 7)])
+@pytest.mark.parametrize('porous', [False, True])
+@pytest.mark.parametrize('output', [0, 2])
+@pytest.mark.parametrize('kind', [3, 4])
+@pytest.mark.parametrize('override', [None, False, True])
+def test_managed_rk2_surface_state_boundary_restores_derivatives_and_fallback(tmp_path, chemistry, thermal, porous, output, kind, override):
+    _continue_session(tmp_path, chemistry, thermal, True, True, output, True, porous,
+                      rk2=True, authored_surface=kind,
+                      surface_boundary=None if override is None else (2, override))
+
+
+@pytest.mark.parametrize('chemistry,thermal', [(0, 4), (5, 3), (3, 7)])
+@pytest.mark.parametrize('output', [0, 2])
+@pytest.mark.parametrize('kind', [3, 4])
+def test_managed_rk2_surface_state_boundary_shares_latent_weather_and_reactive_history(tmp_path, chemistry, thermal, output, kind):
+    _continue_session(tmp_path, chemistry, thermal, True, True, output, True, True,
+                      rk2=True, latent=True, copied_et=True, authored_surface=kind)

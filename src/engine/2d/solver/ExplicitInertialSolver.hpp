@@ -57,7 +57,7 @@
 #include "../data/SolverOptions2D.hpp"   // Momentum2D
 
 namespace openswmm::detail { class CompletedSourceArchive; }
-namespace openswmm { class SWMMEngine; struct SimulationContext; }
+namespace openswmm { class SWMMEngine; struct SimulationContext; struct Table; }
 namespace openswmm::runoff { class SourceWaterDriver; }
 namespace openswmm::twoD {
 struct Rk2CheckpointBinding;
@@ -247,6 +247,8 @@ private:
         double scale=1;
         std::string name;
         GwSourceSignal signal;
+        std::shared_ptr<const Table> curve{};
+        double x_scale=1;
     };
     std::vector<Rk2BoundarySignal> rk_boundary_signals_;
     double rk_boundary_anchor_=0;

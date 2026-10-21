@@ -55,7 +55,7 @@ void publish(const std::string& path,const std::string& bytes,const char* expect
 std::string rk2AuthoredBoundaryModel(BoundaryData boundary,const TableData& tables) {
     for(int slot=0;slot<boundary.size();++slot) {
         if(boundary.edge_bc_tseries[slot]>=0)boundary.edge_bc_head[slot]=0;
-        if(boundary.edge_bc_flow_tseries[slot]>=0)boundary.edge_bc_flow[slot]=0;
+        if(boundary.edge_bc_flow_tseries[slot]>=0||boundary.edge_bc_rating_curve[slot]>=0)boundary.edge_bc_flow[slot]=0;
     }
     return RuntimeWaterCheckpoint::boundaryModel(boundary,&tables);
 }
