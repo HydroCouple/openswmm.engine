@@ -2228,14 +2228,15 @@ void ExplicitInertialSolver::computeLimitedGradientsSwe() {
 std::string ExplicitInertialSolver::rk2ThermalProfileError() const {
     const auto& h=state_->heat;if(!h.enabled)return {};
     const auto n=std::size_t(mesh_->n_cells());const auto& tr=state_->transport;
-    if(!gw_||!gw_->heat().active()||!opts_->coupled_heat||opts_->bed_heat_model!=2||!h.context||!h.bed||!h.ground_column||h.surface||h.radiative||
+    if(!gw_||!gw_->heat().active()||!opts_->coupled_heat||opts_->bed_heat_model!=2||!h.context||!h.bed||!h.ground_column||
+       (h.surface&&opts_->evaporation!=0)||
        tr.n_species<=0||tr.temp_row<0||tr.gained_external.size()!=std::size_t(tr.n_species)||tr.gained_bed.size()!=std::size_t(tr.n_species)||
        tr.row_names!=gw_->transport().row_names||tr.n_species!=gw_->transport().n_species||tr.temp_row!=gw_->transport().temp_row||
        tr.age_row!=gw_->transport().age_row||h.bed_species!=tr.n_species||h.bed_temp_row!=tr.temp_row||gw_->heat().cells.size()!=n||
        h.context!=gw_->heat().context||h.aquifer_ground!=&gw_->heat()||h.aquifer_owned.size()!=n||
        h.failures.size()!=n||h.ground_column_seconds.size()!=n||
        (!h.channel_footprint.empty()&&h.channel_footprint.size()!=n))
-        return "RK2 finite heat requires matched porous GROUND_COLUMN owners with surface atmospheric/radiative exchange disabled.";
+        return "RK2 finite heat requires matched porous GROUND_COLUMN owners without evaporating surface atmospheric exchange.";
     for(std::size_t i=0;i<n;++i) {
         if(!gw_->covers(int(i))||!h.aquifer_owned[i]||!gw_->heat().cells[i].surface_owned||h.failures[i]||
            !std::isfinite(h.ground_column_seconds[i])||h.ground_column_seconds[i]<0||

@@ -1205,3 +1205,45 @@ SOLUTE_DIFFUSIVITY GLOBAL .044
         solver.end()
     finally:
         cleanup(solver)
+
+
+@pytest.mark.parametrize('closure,layered', [('CLOSED_FORM', False), ('ENSLAVED', False), ('SIGMA', False), ('SIGMA', True)])
+@pytest.mark.parametrize('sensible', [False, True])
+def test_groundwater_rk2_nonlinear_atmosphere_closes_public_physical_joules(tmp_path, closure, layered, sensible):
+    from openswmm.engine import Solver, GroundHeatValue as H
+    text = _rk2_water_temperature_text(closure, layered).replace('* 18 2', '* 1e-15 2').replace(
+        'HEAT_MODEL TRANSPORT_ONLY', f"""HEAT_MODEL COUPLED
+BED_HEAT_MODEL GROUND_COLUMN
+EVAPORATION NO
+HEAT_SURFACE_EXCHANGE {'YES' if sensible else 'NO'}
+HEAT_RADIATIVE_EXCHANGE YES""").replace('THERMAL_MODEL WATER_ONLY', """THERMAL_MODEL POROUS_EQUILIBRIUM
+THERMAL_LAYERS 3
+CONDUCTION YES
+LATERAL_CONDUCTION NO
+SOIL_ET_HEAT SENSIBLE_ONLY
+SURFACE_THERMAL_BC SURFACE_WATER
+DEEP_THERMAL_BC ADIABATIC
+DISPERSION NO""").replace('HEAT_TRANSPORT YES', 'HEAT_TRANSPORT YES\nWATER_DENSITY 1000\nWATER_SPECIFIC_HEAT_CAPACITY 4186', 1)
+    path = tmp_path / 'finite-atmosphere-rk2.inp'
+    path.write_text(text)
+    solver = Solver(path, path.with_suffix('.rpt'))
+    solver.open()
+    try:
+        solver.initialize()
+        heat = solver.heat
+        initial = sum(heat.ground_values(H.ENERGY, 0, 2)) + 4186000*solver.surface2d.species_ledger('__TEMPERATURE__')['storage']
+        solver.start(False)
+        while solver.step().total_seconds() > 0:
+            pass
+        final = sum(heat.ground_values(H.ENERGY, 0, 2)) + 4186000*solver.surface2d.species_ledger('__TEMPERATURE__')['storage']
+        atmosphere = sum(heat.mesh_values(4, 0, 2))
+        assert abs(atmosphere) > 0
+        assert final-initial == pytest.approx(atmosphere, abs=1e-10*max(abs(initial), 1))
+        assert atmosphere == pytest.approx(sum(heat.mesh_values(5, 0, 2))+sum(heat.mesh_values(6, 0, 2)), abs=1e-10*max(abs(atmosphere), 1))
+        assert heat.mesh_values(7, 0, 2) == [0, 0]
+        assert heat.mesh_values(11, 0, 2) == [0, 0]
+        assert np.max(np.abs(heat.ground_values(H.NORMALIZED_RESIDUAL, 0, 2))) < 1e-10
+        assert np.all(np.isfinite(solver.surface2d.concentrations(0)))
+        solver.end()
+    finally:
+        cleanup(solver)

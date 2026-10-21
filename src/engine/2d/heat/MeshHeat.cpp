@@ -123,12 +123,111 @@ ThermalSolution solveColumnMidpoint(const GroundColumnAssembly& a,const std::vec
     }
     return middle;
 }
+// Nonlinear atmosphere is evaluated at the SAME midpoint as every finite
+// store/contact. The half-step graph is affine in its one atmospheric power;
+// a scaled homogeneous solve gives its response without subtracting energies.
+ThermalSolution solveAtmosphericColumnMidpoint(GroundColumnAssembly& a,
+    const std::vector<ThermalStore>& stores,const std::vector<ThermalContact>& contacts,
+    std::vector<ThermalBoundary> boundaries,double dt) {
+    const auto refused=[](const char* message) {ThermalSolution out;out.error=message;return out;};
+    const auto add=[](double& value,double increment,double& correction) {
+        const double adjusted=increment-correction,next=value+adjusted;
+        correction=(next-value)-adjusted;value=next;
+    };
+    const auto derivative=[&](double t) {
+        return (outward(*a.mesh_heat,a.cell,t+.01,0).total()-outward(*a.mesh_heat,a.cell,t-.01,0).total())/.02;
+    };
+    if(!(dt>0)||!std::isfinite(dt)||a.evaporated!=0)
+        return refused("RK2 atmosphere requires a finite positive interval without surface latent evaporation.");
+    boundaries[a.atmosphere]={a.water,0,0,0};
+    // Validate every store and graph before using indices to form the work bound.
+    auto validated=solveThermalContacts(stores,contacts,boundaries,.5*dt);
+    if(!validated.error.empty())return validated;
+    std::vector<long double> rate(stores.size(),0);
+    for(const auto& c:contacts){rate[c.a]+=c.conductance;rate[c.b]+=c.conductance;}
+    for(const auto& b:boundaries)rate[b.store]+=b.conductance;
+    const double slope=derivative(a.temperature);
+    if(!std::isfinite(slope)||slope<0||!(a.temperature+273.15>0))
+        return refused("Invalid atmospheric temperature, weather or heat-transfer derivative.");
+    rate[a.water]+=2*a.wet*slope;
+    long double divisions=1;
+    for(std::size_t i=0;i<stores.size();++i)
+        divisions=std::max(divisions,std::ceil(static_cast<long double>(dt)*rate[i]/(2.L*stores[i].capacity)));
+    for(;std::isfinite(divisions)&&divisions<=65536;divisions*=2) {
+        const int steps=int(divisions);const double h=dt/steps,half=.5*h;
+        if(!(half>0))return refused("Atmospheric midpoint interval is below the representable step.");
+        auto homogeneous=stores;double capacity=0;
+        for(auto& store:homogeneous){capacity+=store.capacity;store.energy=0;}
+        auto probe_boundaries=boundaries;
+        for(auto& b:probe_boundaries){b.temperature=0;b.power=0;}
+        const double power=capacity/half;
+        if(!(power>0)||!std::isfinite(power))return refused("Unrepresentable atmospheric response power.");
+        probe_boundaries[a.atmosphere].power=power;
+        const auto probe=solveThermalContacts(homogeneous,contacts,probe_boundaries,half);
+        if(!probe.error.empty())return probe;
+        const double response=probe.temperature[a.water]/power;
+        if(!(response>0)||!std::isfinite(response))return refused("Unrepresentable atmospheric midpoint response.");
+        auto current=stores;ThermalSolution out;
+        out.contact_j.assign(contacts.size(),0);out.boundary_j.assign(boundaries.size(),0);
+        std::vector<double> ec(stores.size(),0),cc(contacts.size(),0),bc(boundaries.size(),0);
+        MeshAtmosphericFlux average,correction;bool retry=false;
+        for(int step=0;step<steps;++step) {
+            boundaries[a.atmosphere].power=0;
+            const auto base=solveThermalContacts(current,contacts,boundaries,half);
+            if(!base.error.empty())return base;
+            const double tbase=base.temperature[a.water];
+            const auto equation=[&](double t) {return t-tbase+response*a.wet*outward(*a.mesh_heat,a.cell,t,0).total();};
+            double lo=-273.15+1e-9,hi=std::max(100.,tbase+100.);
+            double flo=equation(lo),fhi=equation(hi);
+            if(!std::isfinite(flo)||!std::isfinite(fhi))return refused("Nonfinite nonlinear atmospheric flux.");
+            if(flo>0||fhi<0){retry=true;break;}
+            for(int iteration=0;iteration<100;++iteration) {
+                const double t=lo+.5*(hi-lo),f=equation(t);
+                if(!std::isfinite(f))return refused("Nonfinite nonlinear atmospheric root.");
+                if(f>0)hi=t;else lo=t;
+                if(hi-lo<=2e-13*std::max(1.,std::abs(t)))break;
+            }
+            const double middle=lo+.5*(hi-lo);const auto flux=outward(*a.mesh_heat,a.cell,middle,0);
+            boundaries[a.atmosphere].power=-a.wet*flux.total();
+            const auto solved=solveThermalContacts(current,contacts,boundaries,half);
+            if(!solved.error.empty())return solved;
+            const double end=2*solved.temperature[a.water]-current[a.water].energy/current[a.water].capacity;
+            double local_slope=0;
+            for(double t:{middle,end,current[a.water].energy/current[a.water].capacity}) {
+                const double value=derivative(t);
+                if(!std::isfinite(value)||value<0)return refused("Invalid atmospheric midpoint derivative.");
+                local_slope=std::max(local_slope,value);
+            }
+            if(!std::isfinite(end))return refused("Nonfinite atmospheric midpoint state.");
+            if(!(end+273.15>0)||local_slope<0||h*(double(rate[a.water])-2*a.wet*slope+a.wet*local_slope)>2*stores[a.water].capacity||
+               std::abs(solved.temperature[a.water]-middle)>1e-10*std::max(1.,std::abs(middle))) {retry=true;break;}
+            for(std::size_t k=0;k<contacts.size();++k) {
+                const double j=2*solved.contact_j[k];const auto& c=contacts[k];
+                add(current[c.a].energy,-j,ec[c.a]);add(current[c.b].energy,j,ec[c.b]);add(out.contact_j[k],j,cc[k]);
+            }
+            for(std::size_t k=0;k<boundaries.size();++k) {
+                const double j=2*solved.boundary_j[k];add(current[boundaries[k].store].energy,j,ec[boundaries[k].store]);add(out.boundary_j[k],j,bc[k]);
+            }
+            add(average.radiation,flux.radiation/steps,correction.radiation);
+            add(average.sensible,flux.sensible/steps,correction.sensible);
+            for(const auto& store:current)if(!std::isfinite(store.energy)||!std::isfinite(store.energy/store.capacity))
+                return refused("Nonfinite atmospheric energy receipt.");
+            out.iterations+=solved.iterations;out.algebraic_residual=std::max(out.algebraic_residual,2*solved.algebraic_residual);
+        }
+        if(retry)continue;
+        for(const auto& store:current){out.energy.push_back(store.energy);out.temperature.push_back(store.energy/store.capacity);}
+        a.slope=0;a.flux0=a.flux1=average;return out;
+    }
+    auto out=refused("Atmospheric midpoint subdivision limit exceeded; reduce the step.");out.interval_limit=true;return out;
+}
 double groundColumnStep(const MeshData& mesh,const SolverOptions2D& options,MeshHeatState& h,int i,
     double mass,double volume,double evaporated,double dt,bool midpoint) {
     std::vector<ThermalStore> stores;std::vector<ThermalContact> contacts;std::vector<ThermalBoundary> boundaries;
     const double channel=h.channel_footprint.empty()?0:h.channel_footprint[i];
     auto assembled=appendGroundColumnSystem(mesh,options,h.groundOwner(i),i,&h,mass,volume,evaporated,dt,channel,stores,contacts,boundaries);
-    auto solved=midpoint?solveColumnMidpoint(assembled,stores,contacts,boundaries,dt):
+    auto solved=midpoint&&assembled.water>=0&&(h.surface||h.radiative)?
+        solveAtmosphericColumnMidpoint(assembled,stores,contacts,boundaries,dt):
+        midpoint?solveColumnMidpoint(assembled,stores,contacts,boundaries,dt):
         solveThermalContacts(stores,contacts,boundaries,dt);
     if(!solved.error.empty())throw std::runtime_error(solved.error);
     return commitGroundColumnSystem(assembled,solved);

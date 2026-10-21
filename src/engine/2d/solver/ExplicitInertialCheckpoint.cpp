@@ -370,6 +370,14 @@ std::string ExplicitInertialSolver::rk2CheckpointModel() const {
         std::string profile=opts_->cell_closure==CellClosure2D::VFR?
             "RK2 finite surface/soil geometric contact v2":"RK2 finite surface/soil thermal owner v1";
         auto heat=checkpoint::meshHeatModelIdentity(state_->heat);a(profile,heat);
+        if(state_->heat.surface||state_->heat.radiative) {
+            std::string atmosphere="RK2 nonlinear atmospheric midpoint v1";a(atmosphere);
+            auto& ctx=*state_->heat.context;
+            a(ctx.climate_state.temperature,ctx.climate_state.humidity,ctx.climate_state.wind_speed,
+              ctx.heat_state.shortwave_now,ctx.heat_state.cloud_now,ctx.climate_state.radiation.shared_heat_forcing,
+              ctx.climate_state.radiation.longwave,ctx.options.water_density,ctx.options.wind_func_coeff_a,
+              ctx.options.wind_func_coeff_b,ctx.options.pressure_ratio);
+        }
     }
     auto rain=state_->rainfall,evap=state_->evap_rate;a(rain,evap);
     return a.bytes();
