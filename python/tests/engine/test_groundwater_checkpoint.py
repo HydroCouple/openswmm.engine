@@ -202,7 +202,7 @@ def test_reactive_edge_session_preserves_reversals_fluxes_and_reports(tmp_path, 
     _continue_session(tmp_path, chemistry, thermal, True, passive, output, True, porous, boundary)
 
 
-def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, age, porous, boundary=None, rk2=False):
+def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, age, porous, boundary=None, rk2=False, surface_boundary=None):
     source = _open(tmp_path / 'source', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2)
     target = _open(tmp_path / 'target', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2)
     try:
@@ -211,8 +211,15 @@ def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, a
         names = ('A', 'B') if reactive else (('Dye',) if passive else ())
         initial_amount = _amount(source, names)
         initial_dye = _amount(source, ('Dye',)) if passive else 0.0
+        if surface_boundary:
+            kind, cleared = surface_boundary
+            quality = {name: (-8 if name == '__TEMPERATURE__' else 2 if name == '__WATER_AGE__' else 3)
+                       for name in source.surface2d.species}
+            source.surface2d.sources.set_boundary(0, 1, kind, .56 if kind == 1 else -.0001, quality)
         while source.elapsed.total_seconds() < 8:
             assert source.step().total_seconds() > 0
+        if surface_boundary and cleared:
+            source.surface2d.sources.clear_boundary(0, 1)
         checkpoint = tmp_path / 'accepted.chk'
         source.checkpoints.save(checkpoint)
         if rk2:
@@ -224,6 +231,8 @@ def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, a
             assert before.read_bytes() == after.read_bytes()
         target.checkpoints.restore(checkpoint)
         assert source.elapsed == target.elapsed
+        if surface_boundary:
+            assert source.surface2d.boundary_receipt(0, 1) == target.surface2d.boundary_receipt(0, 1)
         for a, b in zip(_snapshot(source, chemistry, porous), _snapshot(target, chemistry, porous)):
             np.testing.assert_array_equal(a, b)
         while source.step().total_seconds() > 0:
@@ -255,10 +264,18 @@ def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, a
             a = gw.species.index('A')
             assert gw.authored_boundary_receipt(0, a)['flux_in'] == pytest.approx(imposed, rel=1e-10, abs=1e-14)
         concentration = 4 if reactive else (3 if passive else 0)
-        assert _amount(source, names) == pytest.approx(initial_amount + concentration * (water_input + edge_input) + imposed,
+        surface_input = 0.0
+        surface_dye = 0.0
+        if surface_boundary:
+            receipt = source.surface2d.boundary_receipt(0, 1)
+            assert receipt == target.surface2d.boundary_receipt(0, 1)
+            assert receipt.applied_m3 > 0
+            surface_input = sum(receipt.applied_species[name] for name in names)
+            surface_dye = receipt.applied_species.get('Dye', 0.0)
+        assert _amount(source, names) == pytest.approx(initial_amount + concentration * (water_input + edge_input) + imposed + surface_input,
                                                      rel=1e-10, abs=1e-10)
         if passive:
-            assert _amount(source, ('Dye',)) == pytest.approx(initial_dye + 3 * (water_input + edge_input),
+            assert _amount(source, ('Dye',)) == pytest.approx(initial_dye + 3 * (water_input + edge_input) + surface_dye,
                                                             rel=1e-10, abs=1e-10)
         for name in gw.species:
             if name != '__TEMPERATURE__':
@@ -369,3 +386,44 @@ def test_reactive_edge_changed_forcing_preserves_target_and_mesh_output(tmp_path
 @pytest.mark.parametrize('boundary', [None, 'FLOW', 'HEAD'])
 def test_managed_rk2_groundwater_session_continues_calendar_quality_heat_and_history(tmp_path, chemistry, thermal, porous, output, boundary):
     _continue_session(tmp_path, chemistry, thermal, True, True, output, True, porous, boundary, rk2=True)
+
+
+@pytest.mark.parametrize('chemistry,thermal', [(0, 4), (5, 3), (3, 7)])
+@pytest.mark.parametrize('porous', [False, True])
+@pytest.mark.parametrize('output', [0, 2])
+@pytest.mark.parametrize('kind', [1, 2])
+@pytest.mark.parametrize('cleared', [False, True])
+def test_managed_rk2_surface_boundary_preserves_chemistry_heat_history_and_clear(tmp_path, chemistry, thermal, porous, output, kind, cleared):
+    _continue_session(tmp_path, chemistry, thermal, True, True, output, True, porous,
+                      rk2=True, surface_boundary=(kind, cleared))
+
+
+def test_managed_rk2_surface_boundary_owner_and_invalid_frame_preserve_accepted_session(tmp_path):
+    solver = _open(tmp_path / 'source', 0, 3, True, True, 0, porous=False, rk2=True)
+    try:
+        from openswmm.engine import BadParamError, CouplingFrame, RuntimeBoundary
+        solver.checkpoints.start_session(0)
+        owner = solver.coupling.for_provider('perimeter')
+        other = solver.coupling.for_provider('other')
+        quality = {name: 3 for name in solver.surface2d.species}
+        owner.surface.set_boundary(0, 1, 2, -.0001, quality)
+        solver.advance_to(.735)
+        before, after = tmp_path / 'before.chk', tmp_path / 'after.chk'
+        solver.checkpoints.save(before)
+        with pytest.raises(BadParamError):
+            other.surface.set_boundary(0, 1, 1, .56, quality)
+        with pytest.raises(BadParamError):
+            other.surface.clear_boundary(0, 1)
+        with pytest.raises(BadParamError):
+            owner.apply_frame(CouplingFrame(boundaries=(RuntimeBoundary('surface', 0, 1, 2, -.002, quality),
+                                                        RuntimeBoundary('surface', 0, 0, 2, -.002, quality))))
+        with pytest.raises(BadParamError):
+            owner.surface.set_boundary(0, 1, 2, -.0001, dict(quality, Dye=-1))
+        solver.checkpoints.save(after)
+        assert before.read_bytes() == after.read_bytes()
+        receipt = solver.surface2d.boundary_receipt(0, 1)
+        owner.surface.clear_boundary(0, 1)
+        solver.advance_to(1)
+        assert receipt == solver.surface2d.boundary_receipt(0, 1)
+    finally:
+        cleanup(solver)

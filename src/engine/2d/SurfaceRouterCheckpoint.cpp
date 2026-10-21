@@ -2,6 +2,7 @@
 #include "SurfaceRouter2D.hpp"
 #include "solver/ExplicitInertialSolver.hpp"
 #include "coupling/Rk2RuntimeSources.hpp"
+#include "coupling/RuntimeCouplingCheckpoint.hpp"
 #include "subsurface/CommonSourceStage.hpp"
 #include "../core/CompletedSourceArchive.hpp"
 #include "../core/SimulationContext.hpp"
@@ -86,7 +87,8 @@ struct SurfaceRouter2D::RestartState {
     std::vector<int> boundary_slots;
     double boundary_in=0,boundary_out=0;
     OutfallData feedback;
-    bool rk2=false;int rk2_cells=0;
+    bool rk2=false;int rk2_species=0;
+    BoundaryData rk2_boundary;std::map<int,std::vector<double>> rk2_boundary_quality;
     RuntimeSources rk2_surface,rk2_ground;RuntimeForcings rk2_forcing;
     RestartState(const SurfaceRouter2D& r,const SimulationContext& c) {
 #define COPY(v) v=r.v;
@@ -100,9 +102,9 @@ struct SurfaceRouter2D::RestartState {
         old_elapsed_ms=c.old_elapsed_ms;next_report_ms=c.next_report_ms;
         evap_rate=c.climate_state.evap_rate;rainfall=c.gages.rainfall;mb=c.mass_balance_2d;delivery=c.coupling_delivery_remaining;
         runtime_water=r.runtimeWaterCheckpointing();runtime_used=c.runtime_coupling_used;
-        rk2=r.standaloneRk2Checkpointing();rk2_cells=r.mesh_.n_cells();
-        if(rk2){rk2_surface=r.state_.runtime_sources;rk2_ground=r.subsurface_.runtimeSources();rk2_forcing=r.state_.runtime_forcings;}
-        boundary_water=r.runtimeBoundaryCheckpointing();boundary_slots=r.bc_nonwall_slots_;
+        rk2=r.standaloneRk2Checkpointing();rk2_species=r.state_.transport.n_species;
+        if(rk2){rk2_surface=r.state_.runtime_sources;rk2_ground=r.subsurface_.runtimeSources();rk2_forcing=r.state_.runtime_forcings;rk2_boundary=r.boundary_;rk2_boundary_quality=r.state_.transport.runtime_bc_conc;}
+        boundary_water=r.runtimeBoundaryCheckpointing()||rk2;boundary_slots=r.bc_nonwall_slots_;
         boundary_in=r.prev_boundary_in_;boundary_out=r.prev_boundary_out_;
     }
     void archive(Archive& a) {
@@ -114,7 +116,7 @@ struct SurfaceRouter2D::RestartState {
         if(snow_profile)a(snow_delivery_adjustment);
         if(runtime_water)a(runtime_used);
         if(boundary_water)a(boundary_slots,boundary_in,boundary_out);
-        if(rk2)rk2ManagedRuntimeModel(a,rk2_surface,rk2_ground,rk2_forcing,rk2_cells);
+        if(rk2)rk2ManagedRuntimeModel(a,rk2_surface,rk2_ground,rk2_forcing,rk2_species,&rk2_boundary,&rk2_boundary_quality);
     }
     void archiveJoint(Archive& a) {
         a(window_outfall_accum_,outfall_state_changed_);exchange.checkpoint(a);
@@ -250,6 +252,11 @@ std::string SurfaceRouter2D::sourceRouterModel(const SimulationContext& ctx) con
             // WEIR_ORIFICE structure joins only when used: legacy identities are unchanged.
             if(p.law)a(p.law,p.geo.z_crest,p.geo.l_weir,p.geo.a_orif,p.coef.c_w,p.coef.c_sw,p.coef.c_oi,p.coef.c_oo,p.coef.h_eps);
             if(p.spread>0||p.tw_relax>0)a(p.spread,p.tw_relax);});
+    }
+    if(options_.reconstruction_order==2) {
+        auto boundary=boundary_;std::vector<int> overridden;for(const auto& entry:boundary.runtime_original)overridden.push_back(entry.first);
+        for(int slot:overridden)boundary.clearRuntime(slot);
+        std::string profile="managed RK2 authored surface boundary model v1",identity=RuntimeWaterCheckpoint::boundaryModel(boundary,&ctx.tables);a(profile,identity);
     }
     return a.bytes();
 }
@@ -447,7 +454,7 @@ std::string SurfaceRouter2D::checkpointBytes(const SimulationContext& ctx,std::s
         auto payload=state.bytes(),model=source_router_model_;auto magic=std::string(standaloneRk2Checkpointing()?rk2Magic:joint_hydraulic_?jointMagic:magicName);
         uint32_t version=joint_hydraulic_?2:1,endian=0x01020304,longBytes=sizeof(long),crc=checksum(payload);
         if(runtimeWaterCheckpointing())version+=2;
-        if(runtimeBoundaryCheckpointing())version+=2;
+        if(runtimeBoundaryCheckpointing()||standaloneRk2Checkpointing())version+=2;
         if(outfallTailwaterCheckpointing())version+=8;   // coupled outfalls carry their tailwater record
         Archive file;file(magic,version,endian,longBytes,model,payload,crc);
         if(file.bytes().size()>maxBytes)return "Router checkpoint exceeds its size limit.";
@@ -474,7 +481,7 @@ std::string SurfaceRouter2D::loadCheckpointBytes(SimulationContext& ctx,std::str
         if(bytes.empty() || bytes.size()>maxBytes)return "Router checkpoint exceeds its size limit.";
         Archive file(std::move(bytes));std::string magic,model,payload;uint32_t version=0,endian=0,longBytes=0,crc=0;
         file(magic,version,endian,longBytes,model,payload,crc);file.finish();
-        if(magic!=(standaloneRk2Checkpointing()?rk2Magic:joint_hydraulic_?jointMagic:magicName) || version!=(joint_hydraulic_?2u:1u)+(runtimeWaterCheckpointing()?2u:0u)+(runtimeBoundaryCheckpointing()?2u:0u)+(outfallTailwaterCheckpointing()?8u:0u) || endian!=0x01020304 || longBytes!=sizeof(long)) return "Unsupported router checkpoint version/platform.";
+        if(magic!=(standaloneRk2Checkpointing()?rk2Magic:joint_hydraulic_?jointMagic:magicName) || version!=(joint_hydraulic_?2u:1u)+(runtimeWaterCheckpointing()?2u:0u)+((runtimeBoundaryCheckpointing()||standaloneRk2Checkpointing())?2u:0u)+(outfallTailwaterCheckpointing()?8u:0u) || endian!=0x01020304 || longBytes!=sizeof(long)) return "Unsupported router checkpoint version/platform.";
         if(model!=source_router_model_) return "Router checkpoint report/weather model differs.";
         if(crc!=checksum(payload)) return "Router checkpoint checksum differs.";
         RestartState snapshot(*this,ctx);auto channel=channel_ground_;Archive state(std::move(payload));snapshot.archive(state);std::string cpu,hydraulic;state(cpu);
@@ -506,6 +513,10 @@ std::string SurfaceRouter2D::loadCheckpointBytes(SimulationContext& ctx,std::str
             Rk2CheckpointBinding binding;binding.climate=prepared_climate?prepared_climate:&ctx.climate_state;
             binding.heat=prepared_heat?prepared_heat:&ctx.heat_state;
             binding.surface=&snapshot.rk2_surface;binding.groundwater=&snapshot.rk2_ground;binding.forcing=&snapshot.rk2_forcing;
+            binding.boundary=&snapshot.rk2_boundary;binding.boundary_quality=&snapshot.rk2_boundary_quality;
+            auto fallback=snapshot.rk2_boundary;std::vector<int> overridden;for(const auto& entry:fallback.runtime_original)overridden.push_back(entry.first);
+            for(int slot:overridden)fallback.clearRuntime(slot);
+            if(RuntimeWaterCheckpoint::boundaryModel(fallback,&ctx.tables)!=RuntimeWaterCheckpoint::boundaryModel(boundary_,&ctx.tables))return "Managed RK2 surface boundary authored fallback differs.";
             std::function<void(const ExplicitInertialSolver&,const SurfaceStateData&,const SubsurfaceSolver&)> validate=[&](const auto& numerical,const auto& surface,const auto& ground) {
                 if(!close(numerical.completedSourceTime(),snapshot.sim_time_)||!close(numerical.t_last_sync_,snapshot.sim_time_))
                     throw std::runtime_error("Managed RK2 numerical/router completed clocks differ.");
@@ -513,6 +524,13 @@ std::string SurfaceRouter2D::loadCheckpointBytes(SimulationContext& ctx,std::str
                 for(const auto& row:surface.runtime_sources.rows){incoming+=row.receipt.water_in;outgoing+=row.receipt.water_out;}
                 if(!close(volume,snapshot.mb.final_storage)||!close(incoming,snapshot.mb.external_in)||!close(outgoing,snapshot.mb.external_out))
                     throw std::runtime_error("Managed RK2 physical/router accepted receipts differ.");
+                double boundary_in=0,boundary_out=0;
+                for(const auto& [slot,r]:surface.boundary->receipts) {
+                    boundary_in+=r.water_in;boundary_out+=r.water_out;
+                    if(!close(-r.applied,surface.boundary->edge_bc_cum_flux.at(slot)))throw std::runtime_error("Managed RK2 surface boundary cumulative flux differs from its receipt.");
+                }
+                if(!close(boundary_in,snapshot.mb.boundary_in)||!close(boundary_out,snapshot.mb.boundary_out)||
+                   (!snapshot.bc_nonwall_dirty_&&numerical.bc_slot_!=snapshot.boundary_slots))throw std::runtime_error("Managed RK2 surface boundary physical/router receipts differ.");
                 for(const auto* values:{&surface.rainfall,&surface.evap_rate})for(double value:*values)
                     if(!std::isfinite(value)||value<0)throw std::runtime_error("Invalid managed RK2 native forcing.");
                 if(auto error=validateRk2ReplayIds(surface.runtime_sources,ground.runtimeSources(),surface.runtime_forcings,snapshot.sim_time_);!error.empty())throw std::runtime_error(error);

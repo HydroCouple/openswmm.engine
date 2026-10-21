@@ -236,7 +236,7 @@ void ExplicitInertialSolver::checkpointState(Archive& a) {
       last_steps_,last_dt_,active_frac_min_,active_frac_max_,active_frac_sum_,active_samples_,tier_occupancy_,
       saved_telemetry,telemetry_);
     if(!rk_reacted_.empty())a.fixed(rk_reacted_,rk_reacted_reported_);
-    if(common_stage_&&common_stage_->runtimeBoundariesEnabled())a(bc_cell_,bc_slot_,bc_q_,bc_accum_,wall_ptr_,wall_slot_);
+    if((common_stage_&&common_stage_->runtimeBoundariesEnabled())||(second_order_&&gw_&&rk2HasSurfaceBoundary(state_->boundary)))a(bc_cell_,bc_slot_,bc_q_,bc_accum_,wall_ptr_,wall_slot_);
     if(joint_checkpoint_) {
         a.fixed(exch_,node_drawn_);
         for(double v:exch_) if(!std::isfinite(v)) throw std::runtime_error("Nonfinite joint CPU exchange.");
@@ -401,13 +401,105 @@ std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const 
         *common_stage_=std::move(stage); *this=std::move(trial); return {};
     } catch(const std::exception& e) { return e.what(); }
 }
+bool rk2HasSurfaceBoundary(const BoundaryData* boundary) {
+    return boundary&&(!boundary->receipts.empty()||!boundary->runtime_original.empty()||
+        std::any_of(boundary->edge_bc_type.begin(),boundary->edge_bc_type.end(),[](int8_t type){return type!=int8_t(BoundaryType::WALL);}));
+}
+std::string validateRk2SurfaceBoundary(const MeshData& mesh,const SurfaceStateData& surface) {
+    if(!rk2HasSurfaceBoundary(surface.boundary))return surface.transport.runtime_bc_conc.empty()?std::string{}:"RK2 boundary quality has no hydraulic edge.";
+    const auto& b=*surface.boundary;const auto& tr=surface.transport;const auto n=std::size_t(mesh.n_cells()*kMaxCellVerts),ns=std::size_t(tr.n_species);
+    if(b.edge_bc_type.size()!=n||b.edge_bc_head.size()!=n||b.edge_bc_flow.size()!=n||b.edge_bed_slope.size()!=n||
+       b.edge_bc_tseries.size()!=n||b.edge_bc_flow_tseries.size()!=n||b.edge_bc_rating_curve.size()!=n||
+       b.edge_bc_tseries_name.size()!=n||b.edge_bc_flow_tseries_name.size()!=n||b.edge_bc_rating_curve_name.size()!=n||b.edge_bc_cum_flux.size()!=n)
+        return "RK2 surface boundary shape differs.";
+    const auto exterior=[&](int slot){return slot>=0&&std::size_t(slot)<n&&MeshData::slot_local(slot)<mesh.cell_vertex_count(MeshData::slot_cell(slot))&&mesh.cell_neighbour(MeshData::slot_cell(slot),MeshData::slot_local(slot))<0;};
+    for(std::size_t slot=0;slot<n;++slot) {
+        const auto type=BoundaryType(b.edge_bc_type[slot]);
+        if((type!=BoundaryType::WALL&&type!=BoundaryType::SPECIFIED_STAGE&&type!=BoundaryType::SPECIFIED_FLOW)||
+           (type!=BoundaryType::WALL&&(!exterior(int(slot))||!b.runtime_original.count(int(slot))||!b.runtime_owner.count(int(slot))||!b.receipts.count(int(slot))))||
+           !std::isfinite(b.edge_bc_head[slot])||!std::isfinite(b.edge_bc_flow[slot])||!std::isfinite(b.edge_bed_slope[slot])||!std::isfinite(b.edge_bc_cum_flux[slot])||
+           b.edge_bc_tseries[slot]!=-1||b.edge_bc_flow_tseries[slot]!=-1||b.edge_bc_rating_curve[slot]!=-1||
+           !b.edge_bc_tseries_name[slot].empty()||!b.edge_bc_flow_tseries_name[slot].empty()||!b.edge_bc_rating_curve_name[slot].empty())
+            return "RK2 copied surface boundaries require constant exterior STAGE/FLOW overrides with wall fallback.";
+    }
+    if(b.runtime_original.size()!=b.runtime_owner.size()||b.runtime_original.size()!=tr.runtime_bc_conc.size())return "RK2 surface boundary owner/quality layout differs.";
+    for(const auto& [slot,old]:b.runtime_original) {
+        const auto owner=b.runtime_owner.find(slot);const auto quality=tr.runtime_bc_conc.find(slot);
+        if(!exterior(slot)||old.type!=int8_t(BoundaryType::WALL)||!std::isfinite(old.head)||!std::isfinite(old.flow)||!std::isfinite(old.slope)||
+           old.stage_ts!=-1||old.flow_ts!=-1||old.rating!=-1||!old.stage_name.empty()||!old.flow_name.empty()||!old.rating_name.empty()||
+           owner==b.runtime_owner.end()||owner->second.find('/')!=std::string::npos||owner->second.find('\0')!=std::string::npos||
+           quality==tr.runtime_bc_conc.end()||quality->second.size()!=ns)
+            return "Invalid RK2 surface boundary fallback, owner or quality.";
+        for(int row=0;row<tr.n_species;++row)if(!std::isfinite(quality->second[row])||(row!=tr.temp_row&&quality->second[row]<0))return "Invalid RK2 surface boundary composition.";
+    }
+    for(const auto& [slot,r]:b.receipts) {
+        if(!exterior(slot)||r.requested_mass.size()!=ns||r.applied_mass.size()!=ns||r.water_in<0||r.water_out<0||r.last_dt<0||
+           std::abs(r.applied-(r.water_in-r.water_out))>1e-10*std::max({1.,r.water_in,r.water_out}))return "Invalid RK2 surface boundary water receipt.";
+        for(double v:{r.requested,r.applied,r.water_in,r.water_out,r.heat_requested,r.heat_applied,r.last_flow,r.last_dt})if(!std::isfinite(v))return "Nonfinite RK2 surface boundary receipt.";
+        for(std::size_t row=0;row<ns;++row)if(!std::isfinite(r.requested_mass[row])||!std::isfinite(r.applied_mass[row]))return "Nonfinite RK2 surface boundary species receipt.";
+    }
+    for(int row=0;row<tr.n_species;++row) {
+        double applied=0;for(const auto& entry:b.receipts)applied+=entry.second.applied_mass[row];
+        const double net=tr.gained_boundary[row]-tr.lost_boundary[row];
+        if(!std::isfinite(applied)||!std::isfinite(net)||std::abs(applied-net)>1e-10*std::max({1.,std::abs(applied),std::abs(net)}))return "RK2 surface boundary physical species ledger differs.";
+    }
+    return {};
+}
+void rk2SurfaceBoundaryArchive(Archive& a,BoundaryData& b,std::map<int,std::vector<double>>& quality,bool model,int species) {
+    std::string profile="RK2 copied surface boundaries v1";a(profile);if(profile!="RK2 copied surface boundaries v1")throw std::runtime_error("Unsupported RK2 surface boundary record.");
+    const auto keys=[&](auto& map,auto fields) {
+        std::vector<int> slots;if(!a.reading())for(const auto& entry:map)slots.push_back(entry.first);a(slots);
+        if(a.reading()) {
+            if(!std::is_sorted(slots.begin(),slots.end())||std::adjacent_find(slots.begin(),slots.end())!=slots.end())throw std::runtime_error("Duplicate RK2 surface boundary record.");
+            map.clear();for(int slot:slots) {if(slot<0||slot>=b.size())throw std::runtime_error("Invalid RK2 surface boundary slot.");map.try_emplace(slot);}
+        }
+        for(int slot:slots)fields(map.at(slot));
+    };
+    if(model) {
+        a.fixed(b.edge_bc_type,b.edge_bc_head,b.edge_bc_flow,b.edge_bed_slope,b.edge_bc_tseries,b.edge_bc_flow_tseries,b.edge_bc_rating_curve,
+                b.edge_bc_tseries_name,b.edge_bc_flow_tseries_name,b.edge_bc_rating_curve_name);
+        keys(b.runtime_original,[&](auto& v){a(v.type,v.head,v.flow,v.slope,v.stage_ts,v.flow_ts,v.rating,v.stage_name,v.flow_name,v.rating_name);});
+        keys(b.runtime_owner,[&](auto& owner){a(owner);});keys(quality,[&](auto& values){a(values);});
+        // History keeps a cleared edge's canonical receipt and pin footprint.
+        std::vector<int> history;if(!a.reading())for(const auto& entry:b.receipts)history.push_back(entry.first);a(history);
+        if(a.reading()) {b.receipts.clear();for(int slot:history) {if(slot<0||slot>=b.size()||b.receipts.count(slot))throw std::runtime_error("Invalid RK2 surface boundary history.");b.ensureReceipt(slot,species);}}
+    } else {
+        a.fixed(b.edge_bc_cum_flux);
+        for(auto& [slot,r]:b.receipts)a(r.requested,r.applied,r.water_in,r.water_out,r.heat_requested,r.heat_applied,r.last_flow,r.last_dt,r.requested_mass,r.applied_mass);
+    }
+}
 std::string ExplicitInertialSolver::rk2CheckpointProfile() const {
     if(!initialized_||!second_order_||!gw_||common_stage_||joint_checkpoint_||channel_ground_||
        source_history_||engine_source_history_||engine_source_stream_||!checkpoint_ready_||
-       mode_!=Momentum2D::FULL_SWE||opts_->lts_tiers!=1||!bc_cell_.empty()||
+       mode_!=Momentum2D::FULL_SWE||opts_->lts_tiers!=1||
        state_->snow.active()||
        (state_->node_coupling&&!state_->node_coupling->empty()))
-        return "RK2 checkpoint requires the standalone wall-bounded transport/age coupled profile.";
+        return "RK2 checkpoint requires the standalone global transport/age coupled profile.";
+    if(auto error=validateRk2SurfaceBoundary(*mesh_,*state_);!error.empty())return error;
+    if(rk2HasSurfaceBoundary(state_->boundary)) {
+        std::vector<int> cells,slots,walls,ptr{0};
+        for(int cell=0;cell<mesh_->n_cells();++cell) {
+            for(int edge=0;edge<mesh_->cell_vertex_count(cell);++edge)if(mesh_->cell_neighbour(cell,edge)<0) {
+                const int slot=MeshData::slot(cell,edge);
+                if(state_->boundary->edge_bc_type[slot]==int8_t(BoundaryType::WALL))walls.push_back(slot);
+                else {cells.push_back(cell);slots.push_back(slot);}
+            }
+            ptr.push_back(int(walls.size()));
+        }
+        if(cells!=bc_cell_||slots!=bc_slot_||walls!=wall_slot_||ptr!=wall_ptr_||bc_q_.size()!=slots.size()||bc_accum_.size()!=slots.size())return "RK2 surface boundary work layout differs.";
+        const auto ns=std::size_t(state_->transport.n_species);
+        if(state_->transport.bc_conc.size()!=slots.size()*ns)return "RK2 surface boundary quality lookup shape differs.";
+        for(std::size_t k=0;k<slots.size();++k)for(std::size_t row=0;row<ns;++row)
+            if(state_->transport.bc_conc[k*ns+row]!=state_->transport.runtime_bc_conc.at(slots[k])[row])return "RK2 surface boundary quality lookup differs.";
+        for(const auto* values:{&bc_q_,&bc_accum_})for(double v:*values)if(!std::isfinite(v))return "Nonfinite RK2 surface boundary work state.";
+        for(const auto& [slot,r]:state_->boundary->receipts) {
+            if(r.last_dt>t_last_sync_||(r.last_dt==0&&r.last_flow!=0)||
+               std::abs(r.last_flow)*r.last_dt>r.water_in+r.water_out+1e-10*std::max(1.,r.water_in+r.water_out))return "RK2 surface boundary last receipt differs from its completed clock.";
+            const int temp=state_->transport.temp_row;
+            const double requested=temp<0?0:r.requested_mass[temp]*opts_->water_heat_capacity,applied=temp<0?0:r.applied_mass[temp]*opts_->water_heat_capacity;
+            if(std::abs(requested-r.heat_requested)>1e-10*std::max(1.,std::abs(requested))||std::abs(applied-r.heat_applied)>1e-10*std::max(1.,std::abs(applied)))return "RK2 surface boundary physical heat receipt differs.";
+        }
+    }
     if(auto error=rk2ThermalProfileError();!error.empty())return error;
     if(auto error=rk2SurfaceRuntimeProfile(*state_,gw_);!error.empty())return error;
     const auto& tr=state_->transport;const auto& ground=gw_->transport();
@@ -500,6 +592,7 @@ std::string ExplicitInertialSolver::rk2CheckpointModel(const Rk2CheckpointBindin
     auto runtime=binding&&binding->surface?*binding->surface:state_->runtime_sources;rk2SurfaceRuntimeArchive(a,runtime,mesh_->n_cells(),true);
     auto ground_runtime=binding&&binding->groundwater?*binding->groundwater:gw_->runtimeSources();rk2SurfaceRuntimeArchive(a,ground_runtime,mesh_->n_cells(),true,true);
     auto forcing=*state_;if(binding&&binding->forcing)forcing.runtime_forcings=*binding->forcing;rk2ForcingArchive(a,forcing,true);
+    if(rk2HasSurfaceBoundary(state_->boundary)) {auto boundary=*state_->boundary;auto quality=state_->transport.runtime_bc_conc;rk2SurfaceBoundaryArchive(a,boundary,quality,true,state_->transport.n_species);}
     auto rain=state_->rainfall,evap=state_->evap_rate;a(rain,evap);
     return a.bytes();
 }
@@ -510,6 +603,7 @@ std::string ExplicitInertialSolver::rk2CheckpointBytes(std::string& bytes) const
         auto model=rk2CheckpointModel();state(model);checkpoint::meshState(state,surface);
         gw.checkpoint(state,false);state(gw.cell_completed_);trial.checkpointState(state);
         rk2SurfaceRuntimeArchive(state,surface.runtime_sources,mesh_->n_cells(),false);rk2ForcingArchive(state,surface,false);rk2SurfaceRuntimeArchive(state,gw.runtimeSources(),mesh_->n_cells(),false,true);
+        if(rk2HasSurfaceBoundary(surface.boundary)) {auto boundary=*surface.boundary;rk2SurfaceBoundaryArchive(state,boundary,surface.transport.runtime_bc_conc,false,surface.transport.n_species);}
         std::string magic=magicName,payload=state.bytes();
         uint32_t version=4,endian=0x01020304,longBytes=sizeof(long),crc=checksum(payload);
         Archive file;file(magic,version,endian,longBytes,payload,crc);
@@ -532,11 +626,13 @@ std::string ExplicitInertialSolver::loadRk2CheckpointBytes(std::string bytes,con
         if(crc!=checksum(payload))return "RK2 checkpoint checksum differs.";
         Archive state(std::move(payload));std::string model;state(model);
         if(!binding&&model!=rk2CheckpointModel())return "RK2 checkpoint mesh, options, groundwater or held forcing differs.";
-        auto trial=*this;auto surface=*state_;auto gw=*gw_;
+        auto trial=*this;auto surface=*state_;auto gw=*gw_;BoundaryData boundary;
+        if(state_->boundary){boundary=binding&&binding->boundary?*binding->boundary:*state_->boundary;surface.boundary=&boundary;}
         if(binding) {
             if(binding->surface)surface.runtime_sources=*binding->surface;
             if(binding->groundwater)gw.runtimeSources()=*binding->groundwater;
             if(binding->forcing)surface.runtime_forcings=*binding->forcing;
+            if(binding->boundary_quality)surface.transport.runtime_bc_conc=*binding->boundary_quality;
             // Managed descriptors are untrusted input. Admit their immutable
             // layout before a mutable enabled flag can rebuild indexed tables.
             for(auto* store:{&surface.runtime_sources,&gw.runtimeSources()})for(auto& row:store->rows) {
@@ -551,24 +647,32 @@ std::string ExplicitInertialSolver::loadRk2CheckpointBytes(std::string bytes,con
         }
         trial.state_=&surface;trial.gw_=&gw;
         if(surface.heat.enabled)surface.heat.aquifer_ground=&gw.heat();
+        if(binding&&rk2HasSurfaceBoundary(surface.boundary)) {
+            if(auto error=validateRk2SurfaceBoundary(*mesh_,surface);!error.empty())return error;
+            trial.refreshBoundaries();
+            for(const auto& [slot,r]:boundary.receipts)trial.pin_t0_.at(MeshData::slot_cell(slot))=1;
+        }
         checkpoint::meshState(state,surface);
         if(binding&&model!=trial.rk2CheckpointModel(binding))return "Managed RK2 checkpoint project, prescriptions or prepared weather differs.";
         gw.checkpoint(state,false);state.fixed(gw.cell_completed_);
-        trial.checkpointState(state);rk2SurfaceRuntimeArchive(state,surface.runtime_sources,mesh_->n_cells(),false);rk2ForcingArchive(state,surface,false);rk2SurfaceRuntimeArchive(state,gw.runtimeSources(),mesh_->n_cells(),false,true);state.finish();
+        trial.checkpointState(state);rk2SurfaceRuntimeArchive(state,surface.runtime_sources,mesh_->n_cells(),false);rk2ForcingArchive(state,surface,false);rk2SurfaceRuntimeArchive(state,gw.runtimeSources(),mesh_->n_cells(),false,true);
+        if(rk2HasSurfaceBoundary(surface.boundary))rk2SurfaceBoundaryArchive(state,boundary,surface.transport.runtime_bc_conc,false,surface.transport.n_species);
+        state.finish();
         if(auto error=trial.rk2CheckpointProfile();!error.empty())return error;
         if(validate)(*validate)(trial,surface,gw);
         if(inspect)return {};
         if(before_install)(*before_install)();
         trial.state_=state_;trial.gw_=gw_;
+        if(surface.boundary) {static_assert(std::is_nothrow_move_assignable_v<BoundaryData>);*const_cast<BoundaryData*>(state_->boundary)=std::move(boundary);surface.boundary=state_->boundary;}
         *state_=std::move(surface);*gw_=std::move(gw);
         if(state_->heat.enabled)state_->heat.aquifer_ground=&gw_->heat();
         *this=std::move(trial);return {};
     } catch(const std::exception& e){return e.what();}
 }
 
-void rk2ManagedRuntimeModel(Archive& a,RuntimeSources& surface,RuntimeSources& ground,RuntimeForcings& forcing,int /*cells*/) {
-    std::string profile="managed RK2 copied prescriptions v1";a(profile);
-    if(profile!="managed RK2 copied prescriptions v1")throw std::runtime_error("Unsupported managed RK2 prescription record.");
+void rk2ManagedRuntimeModel(Archive& a,RuntimeSources& surface,RuntimeSources& ground,RuntimeForcings& forcing,int species,BoundaryData* boundary,std::map<int,std::vector<double>>* quality) {
+    std::string profile=rk2HasSurfaceBoundary(boundary)?"managed RK2 copied prescriptions v2":"managed RK2 copied prescriptions v1";a(profile);
+    if(profile!="managed RK2 copied prescriptions v1"&&profile!="managed RK2 copied prescriptions v2")throw std::runtime_error("Unsupported managed RK2 prescription record.");
     const auto sources=[&](RuntimeSources& store) {
         a.sequence(store.rows,[&](auto& row) {
             a(row.id,row.owner,row.cell,row.boundary_edge,row.boundary_head);
@@ -584,6 +688,10 @@ void rk2ManagedRuntimeModel(Archive& a,RuntimeSources& surface,RuntimeSources& g
     a.sequence(forcing.rows,[&](auto& row){a(row.channel,row.cell,row.mode,row.rate,row.until,row.owner,row.concentrations);if(a.reading())row.enabled=false;});
     if(a.reading()) {
         forcing.index.clear();forcing.cells.clear();
+    }
+    if(profile=="managed RK2 copied prescriptions v2") {
+        if(!boundary||!quality)throw std::runtime_error("Managed RK2 boundary owner is missing.");
+        rk2SurfaceBoundaryArchive(a,*boundary,*quality,true,species);
     }
 }
 std::string validateRk2ReplayIds(const RuntimeSources& surface,const RuntimeSources& ground,const RuntimeForcings& forcing,double completed) {

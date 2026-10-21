@@ -259,7 +259,7 @@ private:
     /// FULL_SWE ghost-cell Riemann boundary flux for BC entry k on cell i:
     /// returns the inflow-positive volumetric flux (m³/s) and adds the
     /// momentum change (with the bed-slope correction) to the cell's q⃗.
-    double boundaryFluxSwe(std::size_t k, int i, double dt_c);
+    double boundaryFluxSwe(std::size_t k, int i, double dt_c,const std::array<double,4>* held=nullptr);
     /// DIFFUSIVE_WAVE step bound helper: refresh dw_slope_ for the active cells.
     void refreshDiffusiveSlopes();
     std::vector<uint8_t> cell_active_;
@@ -322,7 +322,7 @@ private:
     // Sources share one water budget after face transfers have landed. Gross
     // constituent transfers are evaluated even when net water change is zero.
     // Returns false only when no source bookkeeping or volume change occurred.
-    bool applyCellSources(int cell, double dt);
+    bool applyCellSources(int cell, double dt, double* boundary_donor=nullptr);
     bool applyRuntimeSources(int cell, double dt);
     struct CellSourceStep {
         double area_dt=0,rain=0,coupling=0,available=0,infil=0,evap=0,out=0,final_volume=0,requested_infil=0;

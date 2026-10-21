@@ -6681,3 +6681,27 @@ TEST(EngineCheckpoint, ManagedRk2FileRadiationRemainsExplicitlyUnqualified) {
     EXPECT_FALSE(std::filesystem::exists(root()/"managed-rk2-met-refusal.h5"));
 }
 #endif
+
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, ManagedRk2SurfaceBoundariesReplayQualityClearAndPendingReportsExactly) {
+    for(bool head:{false,true})for(bool cleared:{false,true})for(bool porous:{false,true}) {
+        const auto name="managed-rk2-surface-edge-"+std::to_string(head)+std::to_string(cleared)+std::to_string(porous);SWMMEngine a,b;
+        const auto extra=managedRk2Quality("SIGMA",true,true,porous,true);
+        ASSERT_NO_THROW(startManagedRk2Session(a,name+"-a",extra));
+        ASSERT_NO_THROW(startManagedRk2Session(b,name+"-b",extra));
+        const auto& tr=a.surfaceRouter2D().state().transport;std::vector<double> quality(tr.n_species,3);quality[tr.temp_row]=-8;quality[tr.age_row]=2;
+        int edge=-1;const auto& mesh=a.surfaceRouter2D().mesh();for(int k=0;k<mesh.cell_vertex_count(0);++k)if(mesh.cell_neighbour(0,k)<0){edge=k;break;}ASSERT_GE(edge,0);
+        SWMM_CouplingBoundary boundary{sizeof(boundary),0,0,edge,head?1:2,head?.56:-.001,tr.n_species,quality.data()};SWMM_CouplingFrame frame{sizeof(frame),1,"surface",0,nullptr,1,&boundary,0,nullptr,0,nullptr};
+        unsigned flags=0;ASSERT_EQ(swmm_coupling_capabilities(&a,&flags),SWMM_OK);EXPECT_NE(flags&8,0);
+        ASSERT_EQ(swmm_coupling_apply_frame(&a,&frame),SWMM_OK);
+        double actual=0;ASSERT_EQ(swmm_coupling_advance_to(&a,1.237,&actual),SWMM_OK);
+        if(cleared) {boundary.kind=0;boundary.species_count=0;boundary.concentrations=nullptr;ASSERT_EQ(swmm_coupling_apply_frame(&a,&frame),SWMM_OK);}
+        const auto saved=root()/(name+".chk");ASSERT_EQ(a.saveCheckpoint(saved.string()),"");ASSERT_EQ(b.loadCheckpoint(saved.string()),"");compare(a,b,name+"-restored");
+        while(a.context().elapsed_ms<a.context().options.totalDurationMs()) {
+            ASSERT_NO_THROW(step(a));
+            ASSERT_NO_THROW(step(b));compare(a,b,name+"-continued");
+        }
+        const auto& receipt=a.surfaceRouter2D().boundary().receipts.at(twoD::MeshData::slot(0,edge));EXPECT_GT(receipt.water_in,0);EXPECT_GT(receipt.heat_applied<0?-receipt.heat_applied:receipt.heat_applied,0);
+    }
+}
+#endif

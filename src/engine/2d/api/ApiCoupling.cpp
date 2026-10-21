@@ -2,6 +2,7 @@
 #include <openswmm/engine/openswmm_coupling.h>
 #include <openswmm/engine/openswmm_2d.h>
 #include "../../core/SWMMEngine.hpp"
+#include "../coupling/Rk2RuntimeSources.hpp"
 #include <new>
 #include <algorithm>
 #include <optional>
@@ -17,9 +18,6 @@ int ready(SWMMEngine* eng) {
     return eng->surfaceRouter2D().runtimeCpuAvailable() ? SWMM_OK : SWMM_ERR_PLUGIN;
 }
 bool domainOk(int d) { return d==0 || d==1; }
-bool weatherWallProfile(const BoundaryData& boundary) {
-    return std::all_of(boundary.edge_bc_type.begin(),boundary.edge_bc_type.end(),[](int type){return type==SWMM_2D_BC_WALL;});
-}
 RuntimeSources& sources(SWMMEngine& eng,int d) {
     auto& r=eng.surfaceRouter2D(); return d==0 ? r.runtimeSources() : r.subsurface().runtimeSources();
 }
@@ -80,11 +78,8 @@ int swmm_coupling_apply_frame(SWMM_Engine h,const SWMM_CouplingFrame* f) {
        (f->forcing_count && !f->forcings) || (f->clear_count && !f->clears)) return SWMM_ERR_BADPARAM;
     // The qualified FULL_SWE RK2 transaction owns copied surface source
     // rows for both water domains, aquifer boundaries and held weather.
-    // Surface boundary owners keep their separate guard.
     const auto& runtime_options=eng->surfaceRouter2D().options();
     if(runtime_options.momentum==Momentum2D::FULL_SWE) {
-        if(f->forcing_count&&!weatherWallProfile(eng->surfaceRouter2D().boundary()))return SWMM_ERR_PLUGIN;
-        for(int k=0;k<f->boundary_count;++k)if(f->boundaries[k].domain!=1)return SWMM_ERR_PLUGIN;
         for(int k=0;k<f->forcing_count;++k)if(f->forcings[k].channel==2&&f->forcings[k].mode!=0&&
             f->forcings[k].rate_m_s>0&&eng->surfaceRouter2D().state().heat.surface)return SWMM_ERR_PLUGIN;
         for(int k=0;k<f->source_count;++k)if(f->sources[k].domain!=0&&f->sources[k].domain!=1)return SWMM_ERR_PLUGIN;
@@ -232,6 +227,10 @@ int swmm_coupling_apply_frame(SWMM_Engine h,const SWMM_CouplingFrame* f) {
             const auto invalid=router.validateRuntimeWater(next[0]?*next[0]:sources(*eng,0),
                 next[1]?*next[1]:sources(*eng,1),forcing?*forcing:router.state().runtime_forcings,now,bc?&*bc:nullptr);
             if(!invalid.empty())return SWMM_ERR_PLUGIN;
+        }
+        if(runtime_options.momentum==Momentum2D::FULL_SWE&&bc) {
+            auto candidate=router.state();candidate.boundary=&*bc;candidate.transport.runtime_bc_conc=*concentrations;
+            if(!validateRk2SurfaceBoundary(router.mesh(),candidate).empty())return SWMM_ERR_PLUGIN;
         }
         // All validation/allocation precedes the barrier. Preserve cumulative
         // physics belonging to the old prescription, then commit by moves.
@@ -382,7 +381,7 @@ int swmm_coupling_capabilities(SWMM_Engine h,unsigned* flags) {
             if(r.state().transport.temp_row>=0)*flags|=4;
             if(r.subsurface().active())*flags|=2|32|512;
             if(r.subsurface().active()&&r.subsurface().transport().temp_row>=0)*flags|=16;
-            if(weatherWallProfile(r.boundary()))*flags|=128|256;
+            *flags|=8|128|256|512;
             return SWMM_OK;
         }
         *flags|=8|128|512;

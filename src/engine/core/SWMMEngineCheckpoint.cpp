@@ -869,8 +869,9 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
         bool mesh_reactions=false;
 #ifdef OPENSWMM_HAS_2D
         mesh_reactions=surface_router_.isActive()&&ctx_.n_nodes()==0&&ctx_.n_links()==0&&ctx_.n_subcatches()==0&&
-            surface_router_.state().transport.n_msx>0&&twoD::CommonSourceStage::supportsMeshGroundQuality(
-                ctx_,surface_router_.state(),surface_router_.subsurface());
+            surface_router_.state().transport.n_msx>0&&
+            (twoD::CommonSourceStage::supportsMeshGroundQuality(ctx_,surface_router_.state(),surface_router_.subsurface())||
+             (surface_router_.options().reconstruction_order==2&&(attaching_surface||surface_router_.standaloneRk2Checkpointing())));
         require(!surface_router_.isActive()||mesh_reactions,
             "Reaction mesh checkpoints require the matched mesh-only ground quality profile without live network or catchment owners.");
 #endif

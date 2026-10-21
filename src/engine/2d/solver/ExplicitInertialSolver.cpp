@@ -475,7 +475,7 @@ OPENSWMM_SOURCE_INLINE bool ExplicitInertialSolver::prepareCellSources(int i, do
     const double requested_out = std::max(-coupling, 0.0);
     const double requested = requested_infil + requested_evap + requested_out;
     double donor_water=available;
-    if(rk_transport_stage_&&!state_->rk2_rain_pending.empty()) {
+    if(rk_transport_stage_&&(!state_->rk2_rain_pending.empty()||!bc_cell_.empty())) {
         double exported=0;
         for(int p=edges_.cell_ptr[i];p<edges_.cell_ptr[i+1];++p) {
             const int edge=edges_.cell_edge[p];
@@ -612,7 +612,7 @@ OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::applyCellSourceRow(
         gw_->bookInfiltrationMass(i, gw_row_map_[r], mi);
 }
 
-bool ExplicitInertialSolver::applyCellSources(int i, double dt) {
+bool ExplicitInertialSolver::applyCellSources(int i, double dt, double* boundary_donor) {
     if (common_stage_ && common_stage_->ownsCell(i)) {
         // The common source stage owns mesh-only water bookkeeping, but the
         // shared surface/ground quality profile still needs its local bed
@@ -649,6 +649,7 @@ bool ExplicitInertialSolver::applyCellSources(int i, double dt) {
         for (int r = 0; r < tr.n_species; ++r)
             applyCellSourceRow(i, r, tr.cell_mass[tr.idx(r, i)], source);
     }
+    if(boundary_donor)*boundary_donor=std::max(0.,*boundary_donor-source.infil-source.evap-source.out);
     state_->volume[i] = source.final_volume;
     applyRuntimeSources(i, dt);
     return true;
@@ -1707,7 +1708,10 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
     const bool   front   = front_rebuild_;
     // Keep each owned-side physical face receipt until this cell has
     // debited its beginning donor budget. The neighbour owns the other side.
-    const bool preserve_face_water=rk_transport_stage_&&!state_->rk2_rain_pending.empty();
+    const bool boundary_stage=rk_transport_stage_&&gw_&&!bc_cell_.empty();
+    const bool preserve_face_water=rk_transport_stage_&&(!state_->rk2_rain_pending.empty()||boundary_stage);
+    std::vector<double> boundary_donor(boundary_stage?state_->volume.size():0);
+    const auto boundary_qx=boundary_stage?qcx_:std::vector<double>{},boundary_qy=boundary_stage?qcy_:std::vector<double>{};
     const double dry     = opts_->dry_depth;
 
     int front_breached = 0;
@@ -1745,6 +1749,13 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
                 sx += f * ed.cell_arm_x[p];
                 sy += f * ed.cell_arm_y[p];
             }
+        }
+        if(boundary_stage) {
+            double exported=0;
+            for(int p=ed.cell_ptr[i];p<ed.cell_ptr[i+1];++p) {
+                const int edge=ed.cell_edge[p];exported+=std::max(0.,-(ed.cell_sign[p]>0?facc_L_[edge]:facc_R_[edge]));
+            }
+            boundary_donor[i]=std::max(0.,rk_stage_volume_[i]-exported);
         }
         CellSourceStep source;
         bool has_sources = false;
@@ -1790,11 +1801,12 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
             }
         }
         if constexpr (kFuse) {
-            if (has_sources) state_->volume[i] = source.final_volume;
+            if (has_sources) {state_->volume[i] = source.final_volume;
+                if(boundary_stage)boundary_donor[i]=std::max(0.,boundary_donor[i]-source.infil-source.evap-source.out);}
             applyRuntimeSources(i, dt_c);
         } else {
             state_->volume[i] = std::max(0.0, state_->volume[i] + flux_m3);
-            applyCellSources(i, dt_c);
+            applyCellSources(i, dt_c,boundary_stage?&boundary_donor[i]:nullptr);
         }
         if(preserve_face_water)for(int p=ed.cell_ptr[i];p<ed.cell_ptr[i+1];++p) {
             const int edge=ed.cell_edge[p];if(ed.cell_sign[p]>0)facc_L_[edge]=0;else facc_R_[edge]=0;
@@ -1882,7 +1894,9 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
             // Ghost-cell Riemann boundary: mass AND momentum, no clamp
             // beyond v ≥ 0 (the Riemann flux is bounded by the states).
             swe_bc_dqx_ = swe_bc_dqy_ = 0.0;
-            f = boundaryFluxSwe(k, i, dt_c);
+            std::array<double,4> held{};
+            if(boundary_stage) {inertial::cellEtaDepth(*mesh_,*opts_,i,rk_stage_volume_[i],held[0],held[1]);held[2]=boundary_qx[i];held[3]=boundary_qy[i];}
+            f = boundaryFluxSwe(k, i, dt_c,boundary_stage?&held:nullptr);
             f_requested_swe = f;
         } else if (mode_ == Momentum2D::DIFFUSIVE_WAVE) {
             // The diffusive-wave boundary law for every type (collapsed
@@ -1946,6 +1960,8 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
             bc_q_[k] = 0.0;
             continue;
         }
+        if(boundary_stage&&(!std::isfinite(f)||!std::isfinite(qcx_[i])||!std::isfinite(qcy_[i])))
+            throw std::runtime_error("Nonfinite RK2 surface boundary flux or momentum.");
         const double requested_volume=f*dt_c;
         // Clamp the exchange in VOLUME space and re-derive the booked flux
         // from the applied change, so booking matches application exactly
@@ -1960,6 +1976,11 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
                 *mesh_, *opts_, i, state_->boundary->edge_bc_head[idx]);
             if (f < 0.0) v_new = std::max(v_new, std::min(v_old, v_eq));
             else         v_new = std::min(v_new, std::max(v_old, v_eq));
+        }
+        if(boundary_stage) {
+            if(!std::isfinite(requested_volume)||!std::isfinite(v_new))throw std::runtime_error("Nonfinite RK2 surface boundary water proposal.");
+            if(requested_volume<0)v_new=v_old-std::min({-requested_volume,v_old,boundary_donor[i]});
+            boundary_donor[i]-=std::max(0.,v_old-v_new);
         }
         if (v_new < 0.0) v_new = 0.0;   // availability clamp (exact floor)
         f = (v_new - v_old) / dt_c;
@@ -1978,6 +1999,14 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
         // rescale of qn1) — the prescribed-flux types record theirs here too.
         bc_q_[k] = (L > 1.0e-12) ? f / L : 0.0;
         const double applied_volume=v_new-v_old;
+        if(boundary_stage)for(int row=0;row<state_->transport.n_species;++row) {
+            const auto ns=std::size_t(state_->transport.n_species);const double c=requested_volume<0?donorConc(row,i):state_->transport.bc_conc[k*ns+row];
+            if(!std::isfinite(requested_volume*c)||!std::isfinite(applied_volume*c)||
+               !std::isfinite(receipt.requested_mass[row]+requested_volume*c)||!std::isfinite(receipt.applied_mass[row]+applied_volume*c)||
+               !std::isfinite(state_->transport.cell_mass[state_->transport.idx(row,i)]+(applied_volume>0?applied_volume*c:0))||
+               (row==state_->transport.temp_row&&(!std::isfinite(requested_volume*c*opts_->water_heat_capacity)||!std::isfinite(applied_volume*c*opts_->water_heat_capacity))))
+                throw std::runtime_error("Nonfinite RK2 surface boundary quality proposal.");
+        }
         receipt.requested+=requested_volume; receipt.applied+=applied_volume;
         receipt.water_in+=std::max(0.0,applied_volume);
         receipt.water_out+=std::max(0.0,-applied_volume);
@@ -2404,8 +2433,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
         if(auto error=gw_->rk2ProfileError();!error.empty())throw std::runtime_error(error);
         if(auto error=rk2ThermalProfileError();!error.empty())throw std::runtime_error(error);
         if(auto error=rk2SurfaceRuntimeProfile(*state_,gw_);!error.empty())throw std::runtime_error(error);
-        if(!state_->runtime_forcings.rows.empty()&&!bc_cell_.empty())
-            throw std::runtime_error("RK2 runtime weather requires wall-bounded surface owners.");
+
         if(common_stage_ || channel_ground_ ||
            (gw_->transport().temp_row>=0&&(state_->transport.temp_row!=gw_->transport().temp_row||(opts_->coupled_heat&&!state_->heat.enabled))) ||
            state_->snow.active() ||
@@ -2502,7 +2530,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
                     throw std::runtime_error("Nonfinite RK2 runtime rainfall quality proposal.");
             }
         }
-        rk_transport_stage_=gw_&&(species_on_||!forcing0.rows.empty());
+        rk_transport_stage_=gw_&&(species_on_||!forcing0.rows.empty()||!bc_cell_.empty());
         if(rk_transport_stage_) {rk_stage_mass_=state_->transport.cell_mass;rk_stage_volume_=state_->volume;}
         if(gw_)gw_->publishRk2Infiltration(*state_,dt,time);
         fireFaces(active_faces_, dt, /*global_step=*/true);
@@ -2579,6 +2607,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
             now.requested_mass[r]=blend(before.requested_mass[r],now.requested_mass[r]);
             now.applied_mass[r]=blend(before.applied_mass[r],now.applied_mass[r]);
         }
+        if(gw_&&state_->boundary->edge_bc_type[entry.first]!=int8_t(BoundaryType::WALL)){now.last_dt=dt;now.last_flow=(now.applied-before.applied)/dt;}
     }
     for (std::size_t k = 0; k < bc_accum_.size(); ++k)
         bc_accum_[k] = rk_bc0_[k] + 0.5 * (bc_accum_[k] - rk_bc0_[k]);
@@ -2599,6 +2628,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
             receipt.last_dt=dt;receipt.last_flow=(receipt.applied-runtime0.rows[k].receipt.applied)/dt;
         }
         state_->runtime_sources.expire(time+dt);state_->runtime_forcings.expire(time+dt);gw_->runtimeSources().expire(time+dt);
+        if(auto error=validateRk2SurfaceBoundary(*mesh_,*state_);!error.empty())throw std::runtime_error(error);
         source_phase_end_=time+dt;
         gw_->publishRk2Infiltration(*state_,dt,time+dt);
     }
@@ -2713,16 +2743,16 @@ void ExplicitInertialSolver::syncRk2ReactionReport(SimulationContext& ctx) {
 // momentum change, which is applied to the cell here (tier-0 cadence, after
 // the parallel cell pass — the same slot the inertial law's Perot completion
 // uses).
-double ExplicitInertialSolver::boundaryFluxSwe(std::size_t k, int i, double dt_c) {
+double ExplicitInertialSolver::boundaryFluxSwe(std::size_t k, int i, double dt_c,const std::array<double,4>* held) {
     const int    idx = bc_slot_[k];
     const auto   bt  = static_cast<BoundaryType>(state_->boundary->edge_bc_type[idx]);
     const double L   = mesh_->edge_length[idx];
     if (L <= 1.0e-12) return 0.0;
     const double nx = mesh_->edge_nx[idx], ny = mesh_->edge_ny[idx];   // outward
-    const double eta_i = state_->head[i], h_i = state_->depth[i];
+    const double eta_i = held?(*held)[0]:state_->head[i], h_i = held?(*held)[1]:state_->depth[i];
     const double z_i   = eta_i - h_i;
     const double dry   = opts_->dry_depth;
-    const double qx_i  = qcx_[i], qy_i = qcy_[i];
+    const double qx_i  = held?(*held)[2]:qcx_[i], qy_i = held?(*held)[3]:qcy_[i];
     double u_n = 0.0, u_t = 0.0;
     if (h_i > dry) {
         const double ux = qx_i / h_i, uy = qy_i / h_i;

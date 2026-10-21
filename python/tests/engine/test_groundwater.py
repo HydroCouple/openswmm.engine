@@ -1263,7 +1263,7 @@ def test_groundwater_rk2_surface_runtime_provider_has_public_receipts_and_expiry
         view = solver.surface2d
         caps = solver.coupling.capabilities
         assert caps['surface_sources'] and caps['surface_water_heat'] and caps['atomic_frames']
-        assert caps['groundwater_sources'] and not caps['surface_boundaries']
+        assert caps['groundwater_sources'] and caps['surface_boundaries']
         assert caps['paired_infiltration'] and caps['rainfall_quality']
         initial = view.species_ledger('__TEMPERATURE__')['storage'] + view.groundwater.species_ledger(0, L.STORAGE)
         view.set_water_source([0, 1], [.001, .001], concentrations={'__TEMPERATURE__': -8}, until_seconds=.735)
@@ -1463,7 +1463,7 @@ DISPERSION NO''').replace('HEAT_TRANSPORT YES', 'HEAT_TRANSPORT YES\nWATER_DENSI
         solver.start(False)
         caps = solver.coupling.capabilities
         assert caps['groundwater_lateral_boundaries'] and caps['boundary_receipts']
-        assert not caps['surface_boundaries']
+        assert caps['surface_boundaries']
         if head:
             gw.set_head_boundary(0, 0, 1, {'__TEMPERATURE__': -8})
         else:
@@ -1482,6 +1482,42 @@ DISPERSION NO''').replace('HEAT_TRANSPORT YES', 'HEAT_TRANSPORT YES\nWATER_DENSI
         assert gw.boundary_flow(0, 0) == 0
         assert gw.boundary_receipt(0, 0).applied_m3 == receipt.applied_m3
         assert surface.total_volume + gw.ledger(W.STORAGE)-initial_water == pytest.approx(receipt.applied_m3, abs=1e-10)
+        solver.end()
+    finally:
+        cleanup(solver)
+
+
+@pytest.mark.parametrize('closure,layered', [('CLOSED_FORM', False), ('ENSLAVED', False), ('SIGMA', False), ('SIGMA', True)])
+@pytest.mark.parametrize('head', [False, True])
+def test_groundwater_rk2_surface_runtime_boundary_has_public_water_heat_and_atomic_clear(tmp_path, closure, layered, head):
+    from openswmm.engine import Solver, GroundwaterSpeciesLedger as L, GroundwaterLedger as W
+    path = tmp_path / 'surface-boundary-rk2.inp'
+    path.write_text(_rk2_water_temperature_text(closure, layered).replace('* 18 2', '* 1e-15 2'))
+    solver = Solver(path, path.with_suffix('.rpt'))
+    solver.open()
+    try:
+        solver.initialize()
+        solver.start(False)
+        surface, gw = solver.surface2d, solver.surface2d.groundwater
+        assert solver.coupling.capabilities['surface_boundaries']
+        assert solver.coupling.capabilities['boundary_receipts']
+        initial_water = surface.total_volume + gw.ledger(W.STORAGE)
+        initial_energy = 4186000*(surface.species_ledger('__TEMPERATURE__')['storage'] + gw.species_ledger(0, L.STORAGE))
+        surface.sources.set_boundary(0, 0, 1 if head else 2, .2 if head else -.001, {'__TEMPERATURE__': -8})
+        solver.advance_to(.735)
+        receipt = surface.boundary_receipt(0, 0)
+        assert receipt.applied_m3 > 0
+        if not head:
+            assert receipt.applied_m3 == pytest.approx(.000735, abs=1e-12)
+            assert receipt.applied_species['__TEMPERATURE__'] == pytest.approx(-8*.000735, abs=1e-12)
+        assert receipt.applied_heat_j == pytest.approx(4186000*receipt.applied_species['__TEMPERATURE__'], rel=1e-12, abs=1e-8)
+        assert surface.total_volume + gw.ledger(W.STORAGE) - initial_water == pytest.approx(receipt.applied_m3, abs=1e-10)
+        energy = 4186000*(surface.species_ledger('__TEMPERATURE__')['storage'] + gw.species_ledger(0, L.STORAGE))
+        assert energy-initial_energy == pytest.approx(receipt.applied_heat_j, abs=1e-10*max(1, abs(initial_energy)))
+        surface.sources.clear_boundary(0, 0)
+        solver.advance_to(2)
+        assert surface.boundary_receipt(0, 0) == receipt
+        assert surface.total_volume + gw.ledger(W.STORAGE) - initial_water == pytest.approx(receipt.applied_m3, abs=1e-10)
         solver.end()
     finally:
         cleanup(solver)

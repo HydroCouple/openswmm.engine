@@ -21,19 +21,24 @@ owner; it does not prescribe a soil temperature or thermal boundary.
 
 The standalone CPU FULL_SWE reconstruction-order-2 groundwater profile accepts
 copied surface and groundwater sources, including optional transported heat,
-and wall-bounded rain/quality, evaporation demand and paired infiltration.
+and rain/quality, evaporation demand and paired infiltration.
 Source expiry splits the shared transaction, and beginning donors bound each
 Euler stage. Runtime aquifer HEAD/FLOW edges require an exterior hydraulic
 binding and retain accepted water, species and sensible-heat receipts. HEAD is
-an absolute elevation; runtime FLOW is outward-positive total m³/s. Runtime
-surface boundary frames and borrowed network/catchment owners
-remain unavailable in that profile. Check capabilities for the active model.
+an absolute elevation; runtime FLOW is outward-positive total m³/s. Copied surface STAGE/FLOW overrides also qualify with exterior binding,
+constant values, explicit quality and authored wall fallback. FLOW is total
+outward-positive m³/s; accepted receipt amounts are inward-positive. All outgoing
+edges share the beginning donor budget; clear restores the wall and preserves
+receipts. Authored non-wall/series fallback and borrowed network/catchment owners
+remain unavailable in this profile. Check capabilities for the active model.
 Component checkpoints bind copied prescriptions and retain accepted receipts.
 Managed standalone RK2 checkpoint sessions additionally own the engine calendar,
 native in-memory weather, pending coupling batches and copied prescriptions.
 Numerical-only (``0``) and mesh-HDF5 (``2``) output modes qualify, including
 matching chemistry/age and the supported thermal owners. Restore into a fresh
-session with no existing runtime prescriptions. Scientific HDF5 values,
+session with no existing runtime prescriptions. Active and cleared surface
+boundary histories are included. Earlier managed RK2 router snapshots without
+the boundary receipt/fallback record are refused safely. Scientific HDF5 values,
 attributes and schema continue exactly; file allocation addresses may differ.
 Network/catchment owners, source journals, binary/combined output, file-based
 radiation and external provider programs remain outside this managed profile.
