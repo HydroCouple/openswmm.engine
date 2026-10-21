@@ -2415,6 +2415,13 @@ Coupling to the 1D network
 | COUPLING_AREA | AUTO / DEFAULT | DEFAULT | AUTO derives the exchange area of each coupling row that did not author an AREA from the largest connected conduit (1.25 times its full-flow area, clamped to 0.05 .. 2.0 square metres). DEFAULT keeps the authored or default area. |
 | COUPLING_SYNC | >= 0, seconds | 0 | 0 co-advances the 2D domain every routing step. A positive value batches the 2D advance over roughly that span (clamped at run time to the routing step .. 60 s); the held-exchange error grows with the span. |
 | COUPLING_IN_FLOODING | YES / TRUE / NO / FALSE | NO | YES books the 1D-to-2D spill into the 1D report's Flooding Loss row instead of its own 2D Coupling Outflow row. Changes the report only; routed volumes are identical. |
+| COUPLING_LAW | ORIFICE / WEIR_ORIFICE | ORIFICE | Exchange law for junction/storage coupling points. WEIR_ORIFICE selects the structure-aware weir/orifice law; a node's LAW in [2D_NODE_COUPLING] overrides this choice. |
+| COUPLING_HEAD | CELL / VERTEX / STENCIL_WET_MEAN | CELL | Surface head sampled for coupling: the mapped cell, vertex reconstruction, or wet-cell stencil mean. |
+| COUPLING_COEFFS | DEFAULT / RUBINATO2017 / RUBINATO2017_LOWER / RUBINATO2017_UPPER | DEFAULT | Coefficient preset for WEIR_ORIFICE. A node's COEFFS and individual CW, CSW, COI and COO values override the global preset; an authored legacy map-row Cd overrides both orifice coefficients. |
+| COUPLING_POND_MODE | FOOTPRINT / CHAMBER / TRACKING | FOOTPRINT | Above-rim pond-area policy: the mapped surface footprint, the 1D chamber area, or a relaxed tracking area. |
+| COUPLING_POND_RELAX | >= 0, seconds | 0 | Relaxation time for TRACKING; 0 selects five routing steps. |
+| COUPLING_RIM_BAND | DEFAULT or >= 0, metres | DEFAULT | Height above the rim over which pond area ramps in smoothly. DEFAULT selects 0 for FOOTPRINT and 0.05 m for CHAMBER or TRACKING. Always metres. |
+| COUPLING_EQUALIZE | YES / NO / DEFAULT | DEFAULT | Caps an exchange so one coupling window cannot carry the 1D and 2D heads past each other. DEFAULT enables the cap for WEIR_ORIFICE and disables it for ORIFICE. |
 
 Rainfall, evaporation and infiltration
 
@@ -2665,6 +2672,61 @@ The exchange law, the rim gate and the outfall behaviour are those of [2D_VERTEX
 This section has no counterpart in SWMM 5.
 
 <!-- source: src/engine/2d/input/SectionHandlers2D.cpp:769-820 (registration 1267-1270) -->
+
+### Section: [2D_NODE_COUPLING] {#engine_manual_sect_2D_NODE_COUPLING}
+
+Purpose:
+Assigns a node's 1D/2D coupling structure type and optional local parameters.
+The row is node data and is retained even when no mesh is present; spatial
+coupling still requires [2D_VERTEX_NODE_MAP] or [2D_TRIANGLE_NODE_MAP].
+
+Format:
+```
+Node  Type  (KEY=VALUE ...)
+```
+
+Parameters:
+Node    name of an existing 1D node; at most one row per node.
+Type    NONE, MANHOLE, GRATE, CURB, OPEN or OUTFALL.
+
+| Key | Values / units | Meaning |
+|---|---|---|
+| D | > 0, project length units | Manhole diameter. |
+| PERIMETER | > 0, project length units | Weir crest length. |
+| AREA | > 0, project area units | Orifice/open area. |
+| CHAMBER_AREA | > 0, project area units | 1D chamber plan area above the rim. |
+| LID_OPEN_FRACTION | > 0 and <= 1 | Open fraction of the lid. |
+| CREST | NODE_RIM / MESH_BED / MAX / MIN | Crest elevation policy; MAX/MIN choose between node rim and mapped mesh bed. Default NODE_RIM. |
+| COEFFS | DEFAULT / RUBINATO2017 / RUBINATO2017_LOWER / RUBINATO2017_UPPER | Local WEIR_ORIFICE coefficient preset. |
+| CW / CSW | > 0 | Free/submerged weir coefficients. |
+| COI / COO | > 0 | Surface-to-sewer / sewer-to-surface orifice coefficients. |
+| LAW | ORIFICE / WEIR_ORIFICE | Local exchange law, overriding [2D_OPTIONS] COUPLING_LAW. |
+| SPREAD | >= 0, project length units | OUTFALL discharge spread radius. |
+| TAILWATER_RELAX | >= 0, seconds | OUTFALL tailwater relaxation time. |
+
+Remarks:
+NONE accepts no keys and suppresses that node's map rows. OUTFALL accepts
+only SPREAD and TAILWATER_RELAX; those keys are refused for all other types.
+An outfall may be OUTFALL or NONE, and OPEN requires a storage node.
+Unspecified types default to OUTFALL for outfalls, OPEN for storage, MANHOLE
+for dividers and ordinary junctions, and NONE for inlet or virtual junctions.
+
+All numeric parameters must be finite; duplicate nodes, duplicate keys,
+unknown keys and invalid type/key combinations are errors. Keys use the
+single-token KEY=VALUE spelling. WEIR_ORIFICE resolves its geometry and
+coefficients from these overrides and the global defaults; a legacy map-row
+Area or Cd retains precedence over the corresponding resolved area or
+orifice coefficients. These parameters do not turn an unmapped node into
+a spatial coupling point.
+
+Example:
+```
+[2D_NODE_COUPLING]
+J1 MANHOLE LAW=WEIR_ORIFICE D=1.2 CREST=NODE_RIM
+OUT OUTFALL SPREAD=2 TAILWATER_RELAX=5
+```
+
+<!-- source: src/engine/core/NodeCoupling2D.cpp; src/engine/2d/coupling/ExchangeStructure.cpp -->
 
 ### Section: [2D_BOUNDARY_CONDITIONS] {#engine_manual_sect_2D_BOUNDARY_CONDITIONS}
 
@@ -3112,6 +3174,44 @@ C2      EXCHANGE NO
 This section has no counterpart in SWMM 5.
 
 <!-- source: src/engine/2d/subsurface/SubsurfaceSections.cpp (parseAquiferLinkLine, resolveLinkSeepage, writeSubsurfaceSections); src/engine/2d/subsurface/SubsurfaceData.hpp (GwLinkRow, GwLinkMode); src/engine/2d/SurfaceRouter2D.cpp (publishLinkCoupling) -->
+
+### Section: [2D_AQUIFER_BOUNDARIES] {#engine_manual_sect_2D_AQUIFER_BOUNDARIES}
+
+Purpose:
+Prescribes hydraulic forcing at exterior edges of the integrated mesh aquifer.
+An unspecified edge is no-flow. These boundaries require MODE MESH in
+[2D_AQUIFER_OPTIONS] and an active aquifer covering the boundary cell.
+
+Format:
+```
+CELL Cell EDGE Edge HEAD CONST Head
+CELL Cell EDGE Edge HEAD SERIES Tseries
+CELL Cell EDGE Edge FLOW CONST Flow
+CELL Cell EDGE Edge FLOW SERIES Tseries
+```
+
+Parameters:
+Cell    1-based unified mesh cell index.
+Edge    0-based local edge: 0 .. 2 for triangles, 0 .. 3 for quads.
+Head    prescribed groundwater head elevation, in project length units.
+Flow    total discharge across the edge, in cubic metres per second, positive inward; always SI, including in US-unit projects.
+Tseries    a [TIMESERIES] supplying head or flow in the same units as its constant counterpart.
+
+Remarks:
+Each row has exactly seven tokens. Constants must be finite. Duplicate
+hydraulic edges, interior edges, out-of-range cell/edge indices and cells
+without active aquifer coverage are refused. Local edge e joins vertices
+(e+1) modulo the cell's vertex count and (e+2) modulo that count.
+
+HEAD and time-varying FLOW may reverse. Whenever inflow is possible, every
+enabled groundwater species needs an explicit concentration in
+[GW_BOUNDARY_QUALITY], including zero. Extraction uses interior donor
+composition. Quality rows need a matching hydraulic boundary; a quality row
+alone supplies no water. A concentration and one independent imposed
+mass/heat flux may coexist for each edge/species. FLOW is a total edge
+rate, unlike the per-length imposed species fluxes in [GW_BOUNDARY_QUALITY].
+
+<!-- source: src/engine/2d/subsurface/SubsurfaceSections.cpp (parseAquiferBoundaryLine); src/engine/2d/gw/GwBoundaryForcing.cpp -->
 
 ### Section: [2D_INITIAL_QUALITY] {#engine_manual_sect_2D_INITIAL_QUALITY}
 
@@ -3900,6 +4000,52 @@ not change the internal species stride or the selected columns' unit codes.
 Ordinary `[REPORT]` options continue to select nodes, links and subcatchments;
 this section does not independently select elements. The routing continuity
 summary reports BULK species only: a WALL density is not a water-volume mass.
+
+### Component section: [REACTION_SUBSURFACE] {#engine_manual_sect_REACTION_SUBSURFACE}
+
+Purpose: \status{Implemented}
+Defines explicit groundwater BULK-species reactions independently of the
+network pipe/tank and surface reaction laws.
+
+Format:
+```
+*          SAT / UNSAT     Species RATE / EQUIL / FORMULA Expression
+TAG  Name  SAT / UNSAT     Species RATE / EQUIL / FORMULA Expression
+CELL Index SAT / UNSAT     Species RATE / EQUIL / FORMULA Expression
+*          LAYER Layer    Species RATE / EQUIL / FORMULA Expression
+TAG  Name  LAYER Layer    Species RATE / EQUIL / FORMULA Expression
+CELL Index LAYER Layer    Species RATE / EQUIL / FORMULA Expression
+```
+
+Parameters:
+Name    a mesh cell tag.
+Index    1-based unified mesh cell index.
+Layer    1-based unsaturated SIGMA layer index, counted from the surface downward.
+Species    a declared BULK species from [REACTION_SPECIES]; WALL targets are refused.
+Expression    kinetic rate, equilibrium residual or formula, according to the form; RATE follows [REACTION_OPTIONS] RATE_UNITS.
+
+Remarks:
+Precedence is global `*`, then TAG, then CELL. Under layered unsaturated
+transport, UNSAT laws run independently in each active layer; explicit
+LAYER laws override them. A LAYER request must resolve to a valid SIGMA layer.
+No PIPE or TANK expression is silently substituted when this section is absent.
+The model must enable the aquifer and corresponding groundwater transport.
+
+Expressions may use supported species, coefficients and intermediate terms,
+plus DT (seconds), TEMP (degrees C), GW_THETA, GW_POROSITY, GW_SE and
+GW_DEPTH_M (metres). Pipe-only variables, reachable WALL dependencies,
+disabled pollutant dependencies and duplicate first-order decay ownership
+are refused. Aqueous RATE kinetics use aqueous volume, rather than reacting
+sorbed inventory at the same rate.
+
+Example (A and B must already be declared BULK species):
+```
+[REACTION_SUBSURFACE]
+* SAT A RATE -0.001*A
+* SAT B RATE 0.001*A
+```
+
+<!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp (parseSubsurface); docs/design/groundwater-transport.md -->
 
 ### Component section: [REACTION_SUBCATCHMENTS] {#engine_manual_sect_REACTION_SUBCATCHMENTS}
 
