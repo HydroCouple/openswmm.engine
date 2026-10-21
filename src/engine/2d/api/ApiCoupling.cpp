@@ -80,8 +80,6 @@ int swmm_coupling_apply_frame(SWMM_Engine h,const SWMM_CouplingFrame* f) {
     // rows for both water domains, aquifer boundaries and held weather.
     const auto& runtime_options=eng->surfaceRouter2D().options();
     if(runtime_options.momentum==Momentum2D::FULL_SWE) {
-        for(int k=0;k<f->forcing_count;++k)if(f->forcings[k].channel==2&&f->forcings[k].mode!=0&&
-            f->forcings[k].rate_m_s>0&&eng->surfaceRouter2D().state().heat.surface)return SWMM_ERR_PLUGIN;
         for(int k=0;k<f->source_count;++k)if(f->sources[k].domain!=0&&f->sources[k].domain!=1)return SWMM_ERR_PLUGIN;
         for(int k=0;k<f->clear_count;++k)if(f->clears[k].domain!=0&&f->clears[k].domain!=1)return SWMM_ERR_PLUGIN;
     }

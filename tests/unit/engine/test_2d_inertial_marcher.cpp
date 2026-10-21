@@ -3991,11 +3991,16 @@ TEST(CoupledGroundwaterRk2, AtmosphereUsesPhysicalVfrFootprintAndDoesNotHeatDryR
     for(int i=0;i<r.mesh.n_cells();++i)EXPECT_DOUBLE_EQ(applyMeshHeatCell(r.mesh,r.opts,r.state.heat,i,17,0,0,1,true),17);
     EXPECT_DOUBLE_EQ(rkPorousEnergy(r),before);EXPECT_EQ(r.state.heat.atmospheric_j,receipts);
 }
-TEST(CoupledGroundwaterRk2, AtmosphereKeepsEvaporatingSensibleOwnerExplicitlyGuarded) {
+TEST(CoupledGroundwaterRk2, SurfaceLatentNativeDemandSharesSensibleAtmosphereAndCanBeDisabled) {
     CoupledRkRig r;r.init(.1,0,0,.02,"NONE");RkPorousOwner o;initRkAtmosphere(r,o);
     r.opts.evaporation=1;r.state.evap_rate.assign(r.mesh.n_cells(),.001);
-    const double before=rkFiniteEnergy(r);EXPECT_THROW(r.solver.advance(0,.1),std::runtime_error);EXPECT_DOUBLE_EQ(rkFiniteEnergy(r),before);
-    r.opts.evaporation=0;const double water=r.total();ASSERT_NO_THROW(r.solver.advance(0,.1));EXPECT_NEAR(r.total(),water,1e-12);checkRkPorousLedgers(r);
+    const double before=rkFiniteEnergy(r);
+    ASSERT_NO_THROW(r.solver.advance(0,.1));
+    const auto& h=r.state.heat;double atmosphere=0,latent=0;
+    for(int i=0;i<r.mesh.n_cells();++i){atmosphere+=h.atmospheric_j[i];latent+=h.latent_j[i];EXPECT_NEAR(h.atmospheric_j[i],h.radiative_j[i]+h.sensible_j[i]+h.latent_j[i],1e-10*std::max(1.,std::abs(h.atmospheric_j[i])));}
+    EXPECT_LT(latent,0);EXPECT_NEAR(rkFiniteEnergy(r)-before,atmosphere-r.state.transport.lost_external[0]*4186000,1e-10*std::max(1.,std::abs(before)));
+    r.opts.evaporation=0;const double water=r.total();const auto previous_latent=h.latent_j;
+    ASSERT_NO_THROW(r.solver.advance(.1,.2));EXPECT_NEAR(r.total(),water,1e-12);EXPECT_EQ(h.latent_j,previous_latent);checkRkPorousLedgers(r);
 }
 TEST(CoupledGroundwaterRk2, AtmosphereSharesReactiveChemicalAgeAndFiniteContactBudgets) {
     for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true}) {
@@ -4188,12 +4193,16 @@ TEST(CoupledGroundwaterRk2, RuntimeForcingLaterNumericFailureRestoresPendingRain
     EXPECT_THROW(ExplicitInertialSolverTestAccess::rk2(r.solver,10,0),std::runtime_error);ASSERT_EQ(r.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
     r.state.runtime_forcings.find(1,1)->rate=.01;ASSERT_NO_THROW(r.solver.advance(0,.1));
 }
-TEST(CoupledGroundwaterRk2, RuntimeForcingEvaporationCannotBypassTheSensibleAtmosphereGuard) {
+TEST(CoupledGroundwaterRk2, SurfaceLatentCopiedDemandExpiryPreservesAcceptedPhysicalEnergy) {
     CoupledRkRig r;r.init(.1,0,0,.02,"NONE");RkPorousOwner o;initRkAtmosphere(r,o);
-    RuntimeForcing row;row.channel=2;row.cell=-1;row.rate=.01;row.receipt.requested_mass.assign(1,0);row.receipt.applied_mass.assign(1,0);
+    RuntimeForcing row;row.channel=2;row.cell=-1;row.rate=.01;row.until=.0735;row.receipt.requested_mass.assign(1,0);row.receipt.applied_mass.assign(1,0);
     r.state.runtime_forcings.replace(row);r.state.runtime_forcings.rebuild(r.mesh.n_cells());const double before=rkFiniteEnergy(r);
-    EXPECT_THROW(r.solver.advance(0,.1),std::runtime_error);EXPECT_DOUBLE_EQ(rkFiniteEnergy(r),before);
-    r.state.runtime_forcings.find(2,-1)->rate=0;ASSERT_NO_THROW(r.solver.advance(0,.1));checkRkPorousLedgers(r);
+    ASSERT_NO_THROW(r.solver.advance(0,.1));const auto& h=r.state.heat;double atmosphere=0,evaporated=0;
+    for(int i=0;i<r.mesh.n_cells();++i){atmosphere+=h.atmospheric_j[i];evaporated+=h.evaporated_m3[i];EXPECT_LT(h.latent_j[i],0);}
+    EXPECT_NEAR(evaporated,.01*.0735*16,1e-12);EXPECT_FALSE(r.state.runtime_forcings.rows[0].enabled);
+    EXPECT_NEAR(rkFiniteEnergy(r)-before,atmosphere-r.state.transport.lost_external[0]*4186000,1e-10*std::max(1.,std::abs(before)));
+    const auto previous=h.latent_j;
+    ASSERT_NO_THROW(r.solver.advance(.1,.2));EXPECT_EQ(h.latent_j,previous);checkRkPorousLedgers(r);
 }
 
 TEST(CoupledGroundwaterRk2, RuntimeForcingRainMovingColumnMatchesIndependentReactiveWaterHeatAgeOde) {
@@ -4863,6 +4872,192 @@ TEST(CoupledGroundwaterRk2, SurfaceBoundaryChangedDescriptorAndCorruptReceiptRef
     double applied=0;std::memcpy(&applied,payload.data()+offset,sizeof(applied));applied+=1;std::memcpy(payload.data()+offset,&applied,sizeof(applied));
     crc=~uint32_t(0);for(unsigned char c:payload){crc^=c;for(int k=0;k<8;++k)crc=(crc>>1)^((crc&1)?0xedb88320u:0u);}crc=~crc;openswmm::detail::CompletedSourceArchive corrupted;corrupted(magic,version,endian,long_bytes,payload,crc);std::ofstream(bad,std::ios::binary)<<corrupted.bytes();
     ASSERT_EQ(b.solver.saveCheckpoint(before.string()),"");EXPECT_NE(b.solver.loadCheckpoint(bad.string()).find("receipt"),std::string::npos);
+    ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+    ASSERT_EQ(b.solver.loadCheckpoint(good.string()),"");
+    ASSERT_NO_THROW(a.solver.advance(.735,1));
+    ASSERT_NO_THROW(b.solver.advance(.735,1));
+    ASSERT_EQ(a.solver.saveCheckpoint(before.string()),"");
+    ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+}
+
+TEST(CoupledGroundwaterRk2, SurfaceLatentVariableVolumeCoolingHasIndependentSecondOrderSolution) {
+    double previous=0;
+    for(double dt:{.2,.1,.05,.025}) {
+        CoupledRkRig r;r.init(dt,0,0,.02,"NONE");RkPorousOwner owner;initRkAtmosphere(r,owner,true,false,true);
+        r.opts.evaporation=1;owner.context.options.wind_func_coeff_a=0;for(auto& rate:r.state.evap_rate)rate=.0005;
+        const auto file=rk2Output("surface-latent-initial.chk");
+        ASSERT_EQ(r.solver.saveCheckpoint(file.string()),"");
+        const double initial=rkFiniteEnergy(r),water=r.state.volume[0];
+        for(int step=0;step<int(std::round(2/dt));++step)ASSERT_NO_THROW(r.solver.advance(step*dt,(step+1)*dt));
+        const double final_water=water-.0005*r.mesh.tri_area[0]*2;
+        const double exact=2499000./2360-(2499000./2360-20)*std::pow(water/final_water,2360./4186);
+        double error=0,latent=0,sensible=0;
+        for(int cell=0;cell<2;++cell) {
+            EXPECT_NEAR(r.state.volume[cell],final_water,1e-10);const double temperature=r.state.transport.cell_mass[r.state.transport.idx(0,cell)]/r.state.volume[cell];
+            error=std::max(error,std::abs(temperature-exact));latent+=r.state.heat.latent_j[cell];
+            EXPECT_NEAR(r.state.heat.evaporated_m3[cell],.0005*r.mesh.tri_area[cell]*2,1e-12);
+            EXPECT_NEAR(r.state.heat.atmospheric_j[cell],r.state.heat.latent_j[cell],1e-10);
+        }
+        sensible=r.state.transport.lost_external[0]*4186000;
+        EXPECT_LT(latent,0);EXPECT_NEAR(rkFiniteEnergy(r)-initial,latent-sensible,1e-10*std::max(1.,std::abs(initial)));
+        RecordProperty("surface_latent_error_"+std::to_string(int(dt*1000)),error);EXPECT_LT(error,.002);if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;
+    }
+}
+
+TEST(CoupledGroundwaterRk2, SurfaceLatentDryingRetriesWholeIntervalsAndKeepsFiniteOwnedEnergy) {
+    CoupledRkRig r;r.opts.dry_depth=.001;r.init(.2,0,0,.0011,"NONE");RkPorousOwner o;initRkAtmosphere(r,o,true,false,false);
+    r.opts.evaporation=1;o.context.options.wind_func_coeff_a=0;r.state.evap_rate.assign(2,.001);const double initial=rkFiniteEnergy(r),water=r.total();
+    ASSERT_NO_THROW(r.solver.advance(0,.2));EXPECT_GT(r.solver.last_num_steps(),2);
+    ASSERT_NO_THROW(r.solver.advance(.2,1));double atmosphere=0,evaporated=0;
+    for(int i=0;i<2;++i) {EXPECT_GT(r.state.volume[i],0);EXPECT_LE(r.state.depth[i],r.opts.dry_depth);const double temp=r.state.transport.cell_mass[i]/r.state.volume[i];EXPECT_TRUE(std::isfinite(temp));EXPECT_GT(temp,-273.15);atmosphere+=r.state.heat.atmospheric_j[i];evaporated+=r.state.heat.evaporated_m3[i];}
+    EXPECT_NEAR(r.total()+evaporated,water,1e-10);EXPECT_NEAR(rkFiniteEnergy(r)-initial,atmosphere-r.state.transport.lost_external[0]*4186000,1e-10*std::max(1.,std::abs(initial)));
+    const auto saved=rk2Output("surface-latent-dry.chk");ASSERT_EQ(r.solver.saveCheckpoint(saved.string()),"");
+}
+TEST(CoupledGroundwaterRk2, SurfaceLatentWorkLimitRestoresEveryOwnerAndSupportsAValidRetry) {
+    CoupledRkRig r;r.opts.dry_depth=0;r.init(1,0,0,.001,"NONE");RkPorousOwner o;initRkAtmosphere(r,o,true,false,true);
+    r.opts.evaporation=1;o.context.options.wind_func_coeff_a=0;r.state.evap_rate={.000001,1};
+    const auto before=rk2Output("surface-latent-limit-before.chk"),after=rk2Output("surface-latent-limit-after.chk");
+    ASSERT_EQ(r.solver.saveCheckpoint(before.string()),"");EXPECT_THROW(r.solver.advance(0,1),std::runtime_error);
+    ASSERT_EQ(r.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));r.state.evap_rate.assign(2,.000001);
+    ASSERT_NO_THROW(r.solver.advance(0,.1));
+}
+TEST(CoupledGroundwaterRk2, SurfaceLatentNativeAndCopiedDemandContinueExactlyAndBindTheirPolicy) {
+    CoupledRkRig a,b;RkPorousOwner oa,ob;
+    for(auto* r:{&a,&b}) {r->init(.1,.003,.001,.02,"NONE");initRkAtmosphere(*r,r==&a?oa:ob);r->opts.evaporation=1;r->state.evap_rate.assign(2,.0001);setRkRuntimePair(*r,.001,1.237);
+        RuntimeForcing demand;demand.channel=2;demand.cell=0;demand.rate=.0002;demand.until=1.237;demand.receipt.requested_mass={0};demand.receipt.applied_mass={0};r->state.runtime_forcings.replace(demand);r->state.runtime_forcings.rebuild(2);}
+    ASSERT_NO_THROW(a.solver.advance(0,.735));const auto good=rk2Output("surface-latent-good.chk"),before=rk2Output("surface-latent-fresh.chk"),after=rk2Output("surface-latent-after.chk");
+    ASSERT_EQ(a.solver.saveCheckpoint(good.string()),"");EXPECT_NE(rk2File(good).find("RK2 accepted surface latent cooling v1"),std::string::npos);
+    b.state.evap_rate[1]=.0003;
+    ASSERT_EQ(b.solver.saveCheckpoint(before.string()),"");EXPECT_FALSE(b.solver.loadCheckpoint(good.string()).empty());
+    ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));b.state.evap_rate[1]=.0001;
+    ASSERT_EQ(b.solver.loadCheckpoint(good.string()),"");
+    ASSERT_NO_THROW(a.solver.advance(.735,2));
+    ASSERT_NO_THROW(b.solver.advance(.735,2));
+    ASSERT_EQ(a.solver.saveCheckpoint(before.string()),"");
+    ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+}
+
+namespace {
+std::array<double,9> surfaceLatentAtmosphereReference(double volume,double soil,double conductance,double area,int steps,double mass_a=0,double mass_b=0,double age=0) {
+    std::array<double,9> y{20,-2,0,0,0,0,mass_a,mass_b,age};const double dt=2./steps,evaporation=.0002*area;
+    const auto rate=[&](double time,const std::array<double,9>& state) {
+        const double water=4186000*(volume-evaporation*time),kelvin=state[0]+273.15;
+        const double latent=1000*(2499-2.36*state[0]),radiation=area*(5.67e-8*kelvin*kelvin*kelvin*kelvin-750);
+        const double sensible=area*1000*latent*1e-6*.061*(state[0]-5),vapour=1000*latent*evaporation;
+        return std::array<double,9>{(-conductance*(state[0]-state[1])-radiation-sensible-vapour)/water,
+            conductance*(state[0]-state[1])/soil,-radiation,-sensible,-vapour,4186000*state[0]*evaporation,
+            -.2*std::exp(.01*state[0])*state[6],.2*std::exp(.01*state[0])*state[6],volume-evaporation*time-evaporation*state[8]/(volume-evaporation*time)};
+    };
+    for(int step=0;step<steps;++step) {
+        const double t=step*dt;const auto a=rate(t,y);auto trial=y;for(int k=0;k<9;++k)trial[k]=y[k]+.5*dt*a[k];const auto b=rate(t+.5*dt,trial);
+        for(int k=0;k<9;++k)trial[k]=y[k]+.5*dt*b[k];const auto c=rate(t+.5*dt,trial);
+        for(int k=0;k<9;++k)trial[k]=y[k]+dt*c[k];const auto d=rate(t+dt,trial);
+        for(int k=0;k<9;++k)y[k]+=dt*(a[k]+2*b[k]+2*c[k]+d[k])/6;
+    }
+    return y;
+}
+}
+TEST(CoupledGroundwaterRk2, SurfaceLatentFiniteSoilSensibleRadiationAndJoulesMatchAnIndependentReference) {
+    double previous=0;
+    for(double dt:{.2,.1,.05,.025}) {
+        CoupledRkRig r;r.init(dt,0,0,.02,"NONE");RkPorousOwner o;initRkAtmosphere(r,o);
+        r.opts.evaporation=1;r.state.evap_rate.assign(2,.0002);const auto& col=r.gw.heat().cells[0].column;
+        const double water=r.state.volume[0],capacity=4186000*water,soil=col.capacity[0],area=col.area,g=area*col.conductivity[0];
+        const auto reference=surfaceLatentAtmosphereReference(water,soil,g,area,20000),refined=surfaceLatentAtmosphereReference(water,soil,g,area,40000);
+        for(int k=0;k<6;++k)ASSERT_NEAR(reference[k],refined[k],k<2?1e-10:1e-10*std::max(1.,std::abs(reference[k])));
+        const double initial=rkFiniteEnergy(r);
+        for(int step=0;step<int(std::round(2/dt));++step)ASSERT_NO_THROW(r.solver.advance(step*dt,(step+1)*dt));
+        double error=0,atmosphere=0;
+        for(int i=0;i<2;++i) {
+            const auto& h=r.state.heat;const auto& c=r.gw.heat().cells[i].column;
+            const double temperature=r.state.transport.cell_mass[i]/r.state.volume[i];
+            error=std::max({error,std::abs(temperature-reference[0])/20,std::abs(c.energy[0]/soil-reference[1])/20,
+                std::abs(h.radiative_j[i]-reference[2])/(20*capacity),std::abs(h.sensible_j[i]-reference[3])/(20*capacity),std::abs(h.latent_j[i]-reference[4])/(20*capacity)});
+            atmosphere+=h.atmospheric_j[i];EXPECT_NEAR(h.atmospheric_j[i],h.radiative_j[i]+h.sensible_j[i]+h.latent_j[i],1e-10*std::max(1.,std::abs(h.atmospheric_j[i])));
+        }
+        const double sensible=r.state.transport.lost_external[0]*4186000;error=std::max(error,std::abs(sensible-2*reference[5])/(40*capacity));
+        RecordProperty("surface_latent_finite_error_"+std::to_string(int(dt*1000)),error);EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;
+        EXPECT_NEAR(rkFiniteEnergy(r)-initial,atmosphere-sensible,1e-10*std::max(1.,std::abs(initial)));checkRkPorousLedgers(r);
+    }
+}
+TEST(CoupledGroundwaterRk2, SurfaceLatentFiniteGraphFullAndHalfStepsHaveThirdOrderDifference) {
+    double previous=0;
+    for(double dt:{.2,.1,.05,.025}) {
+        CoupledRkRig a,b;RkPorousOwner oa,ob;for(auto* r:{&a,&b}){r->init(dt,0,0,.02,"NONE");initRkAtmosphere(*r,r==&a?oa:ob);r->opts.evaporation=1;r->state.evap_rate.assign(2,.0002);}
+        ASSERT_NO_THROW(a.solver.advance(0,dt));
+        ASSERT_NO_THROW(b.solver.advance(0,.5*dt));
+        ASSERT_NO_THROW(b.solver.advance(.5*dt,dt));
+        const auto& ac=a.gw.heat().cells[0].column;const auto& bc=b.gw.heat().cells[0].column;
+        const double error=std::hypot(a.state.transport.cell_mass[0]/a.state.volume[0]-b.state.transport.cell_mass[0]/b.state.volume[0],ac.energy[0]/ac.capacity[0]-bc.energy[0]/bc.capacity[0]);
+        RecordProperty("surface_latent_local_"+std::to_string(int(dt*1000)),error);EXPECT_GT(error,0);if(previous>0)EXPECT_GT(previous/error,6.5);previous=error;
+    }
+}
+
+TEST(CoupledGroundwaterRk2, SurfaceLatentTemperatureDependentReactionAndAgeMatchAJointIndependentReference) {
+    double previous=0,previous_chemical=0;
+    for(double dt:{.2,.1,.05,.025}) {
+        RkReactionSystem system("* SAT A RATE 0\n* SAT B RATE 0\n* UNSAT A RATE 0\n* UNSAT B RATE 0\n","RK5","RATE A -.2*exp(.01*TEMP)*A\nRATE B .2*exp(.01*TEMP)*A\n");
+        CoupledRkRig r;r.init(dt,0,0,.02,"NONE");RkPorousOwner owner;initRkFiniteQuality(r,owner,system,false,1,0);
+        auto& ctx=system.context();owner.config.options.conduction=true;ctx.heat_config.sediment.solute_diffusivity=0;ctx.heat_config.sediment.hyporheic_velocity=0;
+        r.opts.evaporation=1;r.opts.heat_surface=r.opts.heat_radiative=1;r.state.heat.surface=r.state.heat.radiative=true;r.state.evap_rate.assign(2,.0002);
+        ctx.climate_state.temperature=41;ctx.climate_state.wind_speed=3;ctx.climate_state.humidity=60;ctx.options.wind_func_coeff_a=1e-6;ctx.options.wind_func_coeff_b=0;ctx.options.pressure_ratio=1;
+        ctx.climate_state.radiation.shared_heat_forcing=true;ctx.climate_state.radiation.longwave=250;ctx.heat_state.shortwave_now=500;ctx.heat_state.cloud_now=0;
+        auto& rc=ctx.heat_config.radiative;rc.emiss_water=1;rc.emiss_landcover=0;rc.lw_reflection=0;rc.sky_view=1;rc.albedo=0;rc.shade_factor=0;
+        auto& tr=r.state.transport;for(int i=0;i<2;++i)tr.cell_mass[tr.idx(tr.temp_row,i)]=20*r.state.volume[i];
+        const auto& col=r.gw.heat().cells[0].column;const double volume=r.state.volume[0],soil=col.capacity[0],area=col.area,g=area*col.conductivity[0];
+        const auto initial=finiteQualityInitial(r);const auto energy=[&](){double e=rkPorousEnergy(r);for(int i=0;i<2;++i)e+=4186000*tr.cell_mass[tr.idx(tr.temp_row,i)];return e;};const double e0=energy();
+        const auto exact=surfaceLatentAtmosphereReference(volume,soil,g,area,20000,8*volume,0,11*volume),refined=surfaceLatentAtmosphereReference(volume,soil,g,area,40000,8*volume,0,11*volume);
+        for(int k=0;k<9;++k)ASSERT_NEAR(exact[k],refined[k],1e-10*std::max(1.,std::abs(exact[k])));
+        for(int step=0;step<int(std::round(2/dt));++step)ASSERT_NO_THROW(r.solver.advance(step*dt,(step+1)*dt));
+        double error=0,chemical=0,atmosphere=0;
+        for(int i=0;i<2;++i) {
+            error=std::max({error,std::abs(tr.cell_mass[tr.idx(tr.temp_row,i)]/r.state.volume[i]-exact[0])/20,
+                std::abs(r.gw.heat().cells[i].column.energy[0]/soil-exact[1])/20,std::abs(tr.cell_mass[tr.idx(tr.age_row,i)]-exact[8])/std::max(1.,std::abs(exact[8]))});
+            chemical=std::max({chemical,std::abs(tr.cell_mass[tr.idx(0,i)]-exact[6])/(8*volume),std::abs(tr.cell_mass[tr.idx(1,i)]-exact[7])/(8*volume)});
+            atmosphere+=r.state.heat.atmospheric_j[i];EXPECT_NEAR(tr.cell_mass[tr.idx(0,i)]+tr.cell_mass[tr.idx(1,i)],8*volume,1e-10);
+        }
+        error=std::max(error,chemical);RecordProperty("surface_latent_reactive_error_"+std::to_string(int(dt*1000)),error);RecordProperty("surface_latent_chemical_error_"+std::to_string(int(dt*1000)),chemical);
+        EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GT(previous/error,3.5);if(previous_chemical>0)EXPECT_GT(previous_chemical/chemical,3.5);previous=error;previous_chemical=chemical;
+        EXPECT_NEAR(energy()-e0,atmosphere-4186000*tr.lost_external[tr.temp_row],1e-10*std::max(1.,std::abs(e0)));checkFiniteQualityBudgets(r,initial);
+    }
+}
+
+TEST(CoupledGroundwaterRk2, SurfaceLatentClearedCopiedDemandRetainsRestartHistoryWithoutFurtherLatentLoss) {
+    CoupledRkRig a,b;RkPorousOwner oa,ob;
+    for(auto* r:{&a,&b}) {
+        r->init(.1,0,0,.02,"NONE");initRkAtmosphere(*r,r==&a?oa:ob);
+        RuntimeForcing row;row.channel=2;row.cell=0;row.rate=.0002;
+        row.receipt.requested_mass={0};row.receipt.applied_mass={0};
+        r->state.runtime_forcings.replace(row);r->state.runtime_forcings.rebuild(2);
+    }
+    ASSERT_NO_THROW(a.solver.advance(0,.735));
+    a.state.runtime_forcings.rows[0].enabled=false;
+    const auto latent=a.state.heat.latent_j;
+    const auto saved=rk2Output("surface-latent-cleared.chk"),left=rk2Output("surface-latent-cleared-left.chk"),right=rk2Output("surface-latent-cleared-right.chk");
+    ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");
+    EXPECT_NE(rk2File(saved).find("RK2 accepted surface latent cooling v1"),std::string::npos);
+    ASSERT_EQ(b.solver.loadCheckpoint(saved.string()),"");
+    ASSERT_NO_THROW(a.solver.advance(.735,2));
+    ASSERT_NO_THROW(b.solver.advance(.735,2));
+    EXPECT_EQ(a.state.heat.latent_j,latent);EXPECT_EQ(b.state.heat.latent_j,latent);
+    ASSERT_EQ(a.solver.saveCheckpoint(left.string()),"");
+    ASSERT_EQ(b.solver.saveCheckpoint(right.string()),"");EXPECT_EQ(rk2File(left),rk2File(right));
+}
+TEST(CoupledGroundwaterRk2, SurfaceLatentChecksumValidNonfiniteEnergyRefusesBeforeInstallation) {
+    CoupledRkRig a,b;RkPorousOwner oa,ob;
+    for(auto* r:{&a,&b}) {r->init(.1,0,0,.02,"NONE");initRkAtmosphere(*r,r==&a?oa:ob);r->opts.evaporation=1;r->state.evap_rate={.0002,.0001};}
+    ASSERT_NO_THROW(a.solver.advance(0,.735));
+    const auto good=rk2Output("surface-latent-corrupt-good.chk"),bad=rk2Output("surface-latent-corrupt-bad.chk"),before=rk2Output("surface-latent-corrupt-before.chk"),after=rk2Output("surface-latent-corrupt-after.chk");
+    ASSERT_EQ(a.solver.saveCheckpoint(good.string()),"");
+    openswmm::detail::CompletedSourceArchive original(rk2File(good));std::string magic,payload;uint32_t version=0,endian=0,long_bytes=0,crc=0;
+    original(magic,version,endian,long_bytes,payload,crc);original.finish();
+    const double joules=a.state.heat.latent_j[0];
+    const std::string needle(reinterpret_cast<const char*>(&joules),sizeof(joules));
+    const auto offset=payload.find(needle);ASSERT_NE(offset,std::string::npos);ASSERT_EQ(payload.find(needle,offset+1),std::string::npos);
+    const double invalid=std::numeric_limits<double>::quiet_NaN();std::memcpy(payload.data()+offset,&invalid,sizeof(invalid));
+    crc=~uint32_t(0);for(unsigned char c:payload){crc^=c;for(int k=0;k<8;++k)crc=(crc>>1)^((crc&1)?0xedb88320u:0u);}crc=~crc;
+    openswmm::detail::CompletedSourceArchive corrupted;corrupted(magic,version,endian,long_bytes,payload,crc);std::ofstream(bad,std::ios::binary)<<corrupted.bytes();
+    ASSERT_EQ(b.solver.saveCheckpoint(before.string()),"");EXPECT_NE(b.solver.loadCheckpoint(bad.string()).find("thermal"),std::string::npos);
     ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
     ASSERT_EQ(b.solver.loadCheckpoint(good.string()),"");
     ASSERT_NO_THROW(a.solver.advance(.735,1));

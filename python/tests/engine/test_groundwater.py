@@ -1521,3 +1521,80 @@ def test_groundwater_rk2_surface_runtime_boundary_has_public_water_heat_and_atom
         solver.end()
     finally:
         cleanup(solver)
+
+
+@pytest.mark.parametrize('closure,layered', [('CLOSED_FORM', False), ('ENSLAVED', False), ('SIGMA', False), ('SIGMA', True)])
+@pytest.mark.parametrize('copied', [False, True])
+@pytest.mark.parametrize('reactive', [False, True])
+def test_groundwater_rk2_surface_latent_keeps_public_water_species_age_and_physical_heat(tmp_path, closure, layered, copied, reactive):
+    from openswmm.engine import Solver, GroundHeatValue as H, GroundwaterSpeciesLedger as L, GroundwaterLedger as W, RuntimeForcing
+    text = _rk2_water_temperature_text(closure, layered, kinetics=reactive).replace('* 18 2', '* 1e-15 2').replace(
+        'HEAT_MODEL TRANSPORT_ONLY', """HEAT_MODEL COUPLED
+BED_HEAT_MODEL GROUND_COLUMN
+EVAPORATION CLIMATE
+HEAT_SURFACE_EXCHANGE YES
+HEAT_RADIATIVE_EXCHANGE YES""").replace('THERMAL_MODEL WATER_ONLY', """THERMAL_MODEL POROUS_EQUILIBRIUM
+THERMAL_LAYERS 3
+CONDUCTION YES
+LATERAL_CONDUCTION NO
+SOIL_ET_HEAT SENSIBLE_ONLY
+SURFACE_THERMAL_BC SURFACE_WATER
+DEEP_THERMAL_BC ADIABATIC
+DISPERSION NO""").replace('HEAT_TRANSPORT YES', 'HEAT_TRANSPORT YES\nWATER_DENSITY 1000\nWATER_SPECIFIC_HEAT_CAPACITY 4186', 1)
+    text += '\n[EVAPORATION]\nCONSTANT 18\n'
+    if reactive:
+        text += """[OPTIONS]
+WATER_AGE ON
+[2D_OPTIONS]
+TRANSPORT_POLLUTANTS YES
+TRANSPORT_AGE YES
+[GW_TRANSPORT_OPTIONS]
+TRANSPORT_POLLUTANTS YES
+TRANSPORT_AGE YES
+[2D_INITIAL_QUALITY]
+* TSS 3
+* __WATER_AGE__ 0
+[GW_INITIAL_QUALITY]
+* SAT TSS 4
+* UNSAT TSS 4
+* SAT __WATER_AGE__ 5
+* UNSAT __WATER_AGE__ 5
+"""
+    path = tmp_path / 'surface-latent-rk2.inp'
+    path.write_text(text)
+    solver = Solver(path, path.with_suffix('.rpt'))
+    solver.open()
+    try:
+        solver.initialize()
+        surface, gw, heat = solver.surface2d, solver.surface2d.groundwater, solver.heat
+        initial_water = surface.total_volume + gw.ledger(W.STORAGE)
+        initial_energy = sum(heat.ground_values(H.ENERGY, 0, 2)) + 4186000*surface.species_ledger('__TEMPERATURE__')['storage']
+        initial = {name: gw.species_ledger(row, L.INIT) + surface.species_ledger(name)['storage'] for row, name in enumerate(gw.species)}
+        solver.start(False)
+        if copied:
+            solver.coupling.surface.set_forcings([RuntimeForcing('evaporation', rate_m_s=.0002, until_seconds=.735)])
+        solver.advance_to(2)
+        evaporation = sum(heat.mesh_values(11, 0, 2))
+        native_rate = 18/1000/86400
+        expected = 150*(.0002*.735+native_rate*(2-.735)) if copied else 150*native_rate*2
+        assert evaporation == pytest.approx(expected, abs=1e-10)
+        assert evaporation == pytest.approx(surface.get_mass_balance()['evap_out'], abs=1e-10)
+        assert surface.total_volume + gw.ledger(W.STORAGE) + evaporation == pytest.approx(initial_water, abs=1e-10*max(initial_water, 1))
+        atmosphere, radiation, sensible, latent = (sum(heat.mesh_values(term, 0, 2)) for term in (4, 5, 6, 7))
+        assert latent < 0
+        assert atmosphere == pytest.approx(radiation+sensible+latent, abs=1e-10*max(abs(atmosphere), 1))
+        final_energy = sum(heat.ground_values(H.ENERGY, 0, 2)) + 4186000*surface.species_ledger('__TEMPERATURE__')['storage']
+        sensible_export = 4186000*surface.species_ledger('__TEMPERATURE__')['external_out']
+        assert final_energy-initial_energy == pytest.approx(atmosphere-sensible_export, abs=1e-10*max(abs(initial_energy), 1))
+        for row, name in enumerate(gw.species):
+            if name == '__TEMPERATURE__':
+                continue
+            ledger = surface.species_ledger(name)
+            accounted = gw.species_ledger(row, L.STORAGE) + ledger['storage'] + gw.species_ledger(row, L.REACTED) + ledger['reacted'] + ledger['external_out']
+            accounted -= gw.species_ledger(row, L.AGE_GENERATED) + ledger['age_generated']
+            assert accounted == pytest.approx(initial[name], abs=1e-10*max(initial[name], 1))
+        assert np.max(np.abs(heat.ground_values(H.NORMALIZED_RESIDUAL, 0, 2))) < 1e-10
+        assert np.all(np.isfinite(surface.concentrations(surface.species.index('__TEMPERATURE__'))))
+        solver.end()
+    finally:
+        cleanup(solver)

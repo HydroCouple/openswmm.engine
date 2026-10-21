@@ -32,6 +32,11 @@ edges share the beginning donor budget; clear restores the wall and preserves
 receipts. Authored non-wall/series fallback and borrowed network/catchment owners
 remain unavailable in this profile. Check capabilities for the active model.
 Component checkpoints bind copied prescriptions and retain accepted receipts.
+With the qualified finite COUPLED/GROUND_COLUMN thermal owner, copied evaporation
+also removes latent joules from actual accepted water loss. Native project demand
+uses ``EVAPORATION CLIMATE``; ``EVAPORATION YES`` uses forcing-only demand.
+Sensible exported heat remains separate. Thermal inadmissibility requests bounded
+whole-interval retries; exhaustion refuses atomically without clipping temperature.
 Managed standalone RK2 checkpoint sessions additionally own the engine calendar,
 native in-memory weather, pending coupling batches and copied prescriptions.
 Numerical-only (``0``) and mesh-HDF5 (``2``) output modes qualify, including

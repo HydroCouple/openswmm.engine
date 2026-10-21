@@ -69,6 +69,7 @@
 #include "../../data/NodeData.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../transport/components/ReactionModule/ReactionsWriter.hpp"
+#include "../../transport/components/HeatFluxModules/SurfaceExchange.hpp"
 #include "../gw/GwTransportData.hpp"
 #include "../heat/ChannelGround.hpp"
 
@@ -83,6 +84,7 @@ constexpr int kRebuildEveryCycles = 4;
 /// to cross a macro cycle of 2^(K−1) base substeps at CFL ½ (K = 4 ⇒ ~3–4
 /// cells). The breach flag then triggers the rebuild at the next cycle.
 constexpr int kFrontHaloRings = 5;
+struct SurfaceLatentIntervalLimit:std::runtime_error {using std::runtime_error::runtime_error;};
 }  // namespace
 
 void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
@@ -475,7 +477,7 @@ OPENSWMM_SOURCE_INLINE bool ExplicitInertialSolver::prepareCellSources(int i, do
     const double requested_out = std::max(-coupling, 0.0);
     const double requested = requested_infil + requested_evap + requested_out;
     double donor_water=available;
-    if(rk_transport_stage_&&(!state_->rk2_rain_pending.empty()||!bc_cell_.empty())) {
+    if(rk_transport_stage_&&(!state_->rk2_rain_pending.empty()||!bc_cell_.empty()||surfaceLatentCooling())) {
         double exported=0;
         for(int p=edges_.cell_ptr[i];p<edges_.cell_ptr[i+1];++p) {
             const int edge=edges_.cell_edge[p];
@@ -600,6 +602,17 @@ OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::applyCellSourceRow(
     book(SourceLedger::Infiltration, r, mi);
     book(SourceLedger::CouplingOut, r, mc);
     if(rk_transport_stage_)book(SourceLedger::ExternalOut,r,me);
+    if(rk_transport_stage_&&r==tr.temp_row&&state_->heat.enabled&&state_->heat.surface&&source.evap>0) {
+        auto& heat=state_->heat;
+        const double latent=transport::heat::latentHeatOfVaporization(concentration);
+        const double joules=heat.context->options.water_density*latent*source.evap;
+        if(!(latent>0)||!std::isfinite(joules)||!std::isfinite(mass-joules/opts_->water_heat_capacity))heat.failures[i]=1;
+        else {
+            mass-=joules/opts_->water_heat_capacity;
+            heat.latent_j[i]-=joules;heat.atmospheric_j[i]-=joules;heat.water_j[i]-=joules;
+            book(SourceLedger::ExternalIn,r,-joules/opts_->water_heat_capacity);
+        }
+    }
     if(auto* row=const_cast<RuntimeForcing*>(state_->runtime_forcings.get(3,i))) {
         row->receipt.requested_mass[r]+=concentration*source.requested_infil;
         row->receipt.applied_mass[r]+=mi;
@@ -1709,7 +1722,7 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
     // Keep each owned-side physical face receipt until this cell has
     // debited its beginning donor budget. The neighbour owns the other side.
     const bool boundary_stage=rk_transport_stage_&&gw_&&!bc_cell_.empty();
-    const bool preserve_face_water=rk_transport_stage_&&(!state_->rk2_rain_pending.empty()||boundary_stage);
+    const bool preserve_face_water=rk_transport_stage_&&(!state_->rk2_rain_pending.empty()||boundary_stage||surfaceLatentCooling());
     std::vector<double> boundary_donor(boundary_stage?state_->volume.size():0);
     const auto boundary_qx=boundary_stage?qcx_:std::vector<double>{},boundary_qy=boundary_stage?qcy_:std::vector<double>{};
     const double dry     = opts_->dry_depth;
@@ -2337,21 +2350,29 @@ void ExplicitInertialSolver::computeLimitedGradientsSwe() {
     }
 }
 
+bool ExplicitInertialSolver::surfaceLatentCooling() const noexcept {
+    return gw_&&second_order_&&state_->heat.enabled&&state_->heat.surface&&(opts_->evaporation!=0||
+        std::any_of(state_->runtime_forcings.rows.begin(),state_->runtime_forcings.rows.end(),[](const auto& row){return row.channel==2;}));
+}
 std::string ExplicitInertialSolver::rk2ThermalProfileError() const {
     const auto& h=state_->heat;if(!h.enabled)return {};
     const auto n=std::size_t(mesh_->n_cells());const auto& tr=state_->transport;
     if(!gw_||!gw_->heat().active()||!opts_->coupled_heat||opts_->bed_heat_model!=2||!h.context||!h.bed||!h.ground_column||
-       (h.surface&&opts_->evaporation!=0)||
        tr.n_species<=0||tr.temp_row<0||tr.gained_external.size()!=std::size_t(tr.n_species)||tr.gained_bed.size()!=std::size_t(tr.n_species)||
        tr.row_names!=gw_->transport().row_names||tr.n_species!=gw_->transport().n_species||tr.temp_row!=gw_->transport().temp_row||
        tr.age_row!=gw_->transport().age_row||h.bed_species!=tr.n_species||h.bed_temp_row!=tr.temp_row||gw_->heat().cells.size()!=n||
        h.context!=gw_->heat().context||h.aquifer_ground!=&gw_->heat()||h.aquifer_owned.size()!=n||
        h.failures.size()!=n||h.ground_column_seconds.size()!=n||
        (!h.channel_footprint.empty()&&h.channel_footprint.size()!=n))
-        return "RK2 finite heat requires matched porous GROUND_COLUMN owners without evaporating surface atmospheric exchange.";
+        return "RK2 finite heat requires matched porous GROUND_COLUMN owners.";
     for(std::size_t i=0;i<n;++i) {
-        if(h.surface&&(!std::isfinite(state_->runtime_forcings.rate(2,int(i),0))||state_->runtime_forcings.rate(2,int(i),0)>0))
-            return "RK2 sensible atmosphere cannot own latent surface evaporation.";
+        if(surfaceLatentCooling()) {
+            if(opts_->evaporation!=0&&(!std::isfinite(state_->evap_rate.at(i))||state_->evap_rate[i]<0))return "Invalid RK2 native surface evaporation demand.";
+            if(state_->volume[i]>0) {
+                const double temperature=tr.cell_mass[tr.idx(tr.temp_row,int(i))]/state_->volume[i];
+                if(!(temperature+273.15>0)||!(transport::heat::latentHeatOfVaporization(temperature)>0))return "Invalid accepted RK2 latent-cooling temperature.";
+            }
+        }
         if(!gw_->covers(int(i))||!h.aquifer_owned[i]||!gw_->heat().cells[i].surface_owned||h.failures[i]||
            !std::isfinite(h.ground_column_seconds[i])||h.ground_column_seconds[i]<0||
            (!h.channel_footprint.empty()&&h.channel_footprint[i]!=0)||
@@ -2424,7 +2445,8 @@ void ExplicitInertialSolver::advanceRk2BedContact(double seconds) {
 // U² = U¹ + Δt·L(U¹), Uⁿ⁺¹ = ½(U⁰ + U²). The per-advance ledgers that both
 // stages incremented (boundary ∫F dt, coupling ∫Q dt, infiltration applied)
 // are reset to their trapezoidal value, ½·(stage-1 + stage-2) increments.
-void ExplicitInertialSolver::runRk2Step(double interval,double start) {
+void ExplicitInertialSolver::runRk2Step(double interval,double start) {runRk2Step(interval,start,0);}
+void ExplicitInertialSolver::runRk2Step(double interval,double start,unsigned thermal_depth) {
     std::unique_ptr<ExplicitInertialSolver> marcher0;
     std::unique_ptr<SurfaceStateData> surface0;
     std::unique_ptr<SubsurfaceSolver> ground0;
@@ -2446,6 +2468,12 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
         ground0=std::make_unique<SubsurfaceSolver>(*gw_);
         if(state_->boundary)receipts0=state_->boundary->receipts;
     }
+    const auto restore_trial=[&]() {
+        if(marcher0) {
+            *this=*marcher0;*state_=*surface0;*gw_=*ground0;
+            if(state_->boundary)state_->boundary->receipts=receipts0;
+        }
+    };
     try {
     if(gw_&&!state_->runtime_forcings.rows.empty()&&state_->rk2_rain_pending.empty())
         state_->rk2_rain_pending.assign(state_->volume.size(),0);
@@ -2511,6 +2539,10 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     rk_cpl0_ = state_->coupling_applied;
     rk_drawn0_ = node_drawn_;
     const auto transport0=state_->transport;const auto heat_evap0=state_->heat.evaporated_m3;
+    const bool latent_cooling=surfaceLatentCooling();
+    const auto heat_latent0=latent_cooling?state_->heat.latent_j:std::vector<double>{};
+    const auto heat_atmosphere0=latent_cooling?state_->heat.atmospheric_j:std::vector<double>{};
+    const auto heat_water0=latent_cooling?state_->heat.water_j:std::vector<double>{};
     const double evap0 = state_->evap_loss_total;
     for (int stage = 0; stage < 2; ++stage) {
         if(gw_&&!forcing0.rows.empty())for(int i=0;i<mesh_->n_cells();++i) {
@@ -2535,7 +2567,15 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
         if(gw_)gw_->publishRk2Infiltration(*state_,dt,time);
         fireFaces(active_faces_, dt, /*global_step=*/true);
         if(gw_)gw_->fireGwFaces(0,dt);
+        const auto latent_before=latent_cooling?state_->heat.latent_j:std::vector<double>{};
         fireCells(active_cells_, dt, /*tier0=*/true);
+        if(latent_cooling)for(int i=0;i<mesh_->n_cells();++i) {
+            const auto& h=state_->heat;const auto& t=state_->transport;const double volume=state_->volume[i],mass=t.cell_mass[t.idx(t.temp_row,i)];
+            if(h.failures[i]||!std::isfinite(volume)||!std::isfinite(mass)||!std::isfinite(h.latent_j[i])||!std::isfinite(h.atmospheric_j[i])||!std::isfinite(h.water_j[i]))
+                throw std::runtime_error("Invalid RK2 surface latent energy proposal.");
+            if((volume<=0&&h.latent_j[i]!=latent_before[i])||(volume>0&&!(mass/volume+273.15>0)))
+                throw SurfaceLatentIntervalLimit("RK2 latent cooling requires a smaller admissible coupled interval.");
+        }
         if(gw_)gw_->fireGwRk2Cells(dt,*state_,time);
         if(rk_transport_stage_&&state_->transport.age_row>=0) {
             auto& tr=state_->transport;double generated=0;
@@ -2586,6 +2626,12 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     }
     for(std::size_t i=0;i<state_->heat.evaporated_m3.size();++i)
         state_->heat.evaporated_m3[i]=heat_evap0[i]+.5*(state_->heat.evaporated_m3[i]-heat_evap0[i]);
+    if(latent_cooling)for(std::size_t i=0;i<heat_latent0.size();++i) {
+        auto& h=state_->heat;
+        h.latent_j[i]=heat_latent0[i]+.5*(h.latent_j[i]-heat_latent0[i]);
+        h.atmospheric_j[i]=heat_atmosphere0[i]+.5*(h.atmospheric_j[i]-heat_atmosphere0[i]);
+        h.water_j[i]=heat_water0[i]+.5*(h.water_j[i]-heat_water0[i]);
+    }
     for(std::size_t i=0;i<state_->rk2_rain_pending.size();++i)
         state_->rk2_rain_pending[i]=rain_pending0[i]+.5*(state_->rk2_rain_pending[i]-rain_pending0[i]);
     for(std::size_t k=0;k<forcing0.rows.size();++k) {
@@ -2636,6 +2682,11 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     substeps_run_ += 2;
     last_steps_   += 2;
     }
+    } catch(const SurfaceLatentIntervalLimit&) {
+        restore_trial();const double half=.5*interval;
+        if(thermal_depth>=12||!(half>0)||start+half==start||start+half==start+interval)throw;
+        try {runRk2Step(half,start,thermal_depth+1);runRk2Step(interval-half,start+half,thermal_depth+1);}
+        catch(...) {restore_trial();throw;}
     } catch(...) {
         if(marcher0) {
             *this=std::move(*marcher0);

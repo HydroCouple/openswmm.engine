@@ -574,6 +574,7 @@ std::string ExplicitInertialSolver::rk2CheckpointModel(const Rk2CheckpointBindin
             "RK2 finite surface/soil geometric contact v2":"RK2 finite surface/soil thermal owner v1";
         auto heat=checkpoint::meshHeatModelIdentity(state_->heat);a(profile,heat);
         std::string evaporation="RK2 accepted mesh evaporation receipt v1";a(evaporation);
+        if(surfaceLatentCooling()){std::string latent="RK2 accepted surface latent cooling v1";a(latent);}
         if(state_->heat.surface||state_->heat.radiative) {
             std::string atmosphere="RK2 nonlinear atmospheric midpoint v1";a(atmosphere);
             auto& ctx=*state_->heat.context;

@@ -236,6 +236,8 @@ private:
     /// forward-Euler substeps averaged with the start state; the ledgers
     /// that accumulated over both stages are halved to the trapezoidal value.
     void runRk2Step(double dt,double time);
+    void runRk2Step(double dt,double time,unsigned thermal_depth);
+    bool surfaceLatentCooling() const noexcept;
     /// FRONT_REBUILD: frontier_[i] = 1 for an active cell with at least one
     /// inactive neighbour (the outer ring of the halo). When such a cell
     /// crosses the activation depth the front has used up the halo, and the

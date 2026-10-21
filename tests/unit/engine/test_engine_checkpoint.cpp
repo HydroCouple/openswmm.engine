@@ -6705,3 +6705,25 @@ TEST(EngineCheckpoint, ManagedRk2SurfaceBoundariesReplayQualityClearAndPendingRe
     }
 }
 #endif
+
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, ManagedRk2SurfaceLatentNativeAndCopiedDemandContinueAcrossMidnight) {
+    for(const auto& layout:std::vector<std::pair<std::string,bool>>{{"CLOSED_FORM",false},{"ENSLAVED",false},{"SIGMA",false},{"SIGMA",true}})for(bool copied:{false,true}) {
+        const auto name="managed-rk2-latent-"+layout.first+std::to_string(layout.second)+std::to_string(copied);SWMMEngine a,b;
+        const auto extra=managedRk2Quality(layout.first,layout.second,true,true,true)+"[2D_OPTIONS]\nHEAT_MODEL COUPLED\nBED_HEAT_MODEL GROUND_COLUMN\nHEAT_SURFACE_EXCHANGE YES\nHEAT_RADIATIVE_EXCHANGE YES\nEVAPORATION CLIMATE\n[EVAPORATION]\nCONSTANT 18\n[GW_TRANSPORT_OPTIONS]\nSURFACE_THERMAL_BC SURFACE_WATER\n";
+        ASSERT_NO_THROW(startManagedRk2Session(a,name+"-a",extra));
+        ASSERT_NO_THROW(startManagedRk2Session(b,name+"-b",extra));
+        if(copied) {
+            SWMM_CouplingForcing demand{sizeof(demand),2,-1,1,.0002,1.237,0,nullptr};SWMM_CouplingFrame frame{sizeof(frame),1,"latent",0,nullptr,0,nullptr,1,&demand,0,nullptr};
+            ASSERT_EQ(swmm_coupling_apply_frame(&a,&frame),SWMM_OK);
+        }
+        double actual=0;ASSERT_EQ(swmm_coupling_advance_to(&a,1,&actual),SWMM_OK);const auto saved=root()/(name+".chk");
+        ASSERT_EQ(a.saveCheckpoint(saved.string()),"");ASSERT_EQ(b.loadCheckpoint(saved.string()),"");compare(a,b,name+"-restored");
+        while(a.context().elapsed_ms<a.context().options.totalDurationMs()) {
+            ASSERT_NO_THROW(step(a));
+            ASSERT_NO_THROW(step(b));compare(a,b,name+"-continued");
+        }
+        EXPECT_LT(std::accumulate(a.surfaceRouter2D().state().heat.latent_j.begin(),a.surfaceRouter2D().state().heat.latent_j.end(),0.),0);
+    }
+}
+#endif

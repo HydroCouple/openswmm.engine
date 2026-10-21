@@ -10,7 +10,7 @@ from openswmm.engine import (
 from tests.engine._groundwater_cases import cleanup
 
 
-def _open(directory, chemistry, thermal, reactive=True, passive=False, output=0, rate='.001', age=True, porous=True, unit='MG', boundary=None, rk2=False):
+def _open(directory, chemistry, thermal, reactive=True, passive=False, output=0, rate='.001', age=True, porous=True, unit='MG', boundary=None, rk2=False, latent=False):
     directory.mkdir()
     path = directory / 'model.inp'
     reaction = ''
@@ -130,6 +130,8 @@ W CELL 1 FLOW WELL{forcing}{' __TEMPERATURE__ CONC -4' if porous else ''}{' __WA
 ''')
     if rk2:
         path.write_text(path.read_text()+'\n[2D_OPTIONS]\nMOMENTUM_EQUATION FULL_SWE\nRECONSTRUCTION_ORDER 2\nLTS_TIERS 1\n')
+    if latent:
+        path.write_text(path.read_text()+'\n[EVAPORATION]\nCONSTANT 18\n')
     solver = Solver(path, path.with_suffix('.rpt'))
     solver.create()
     capabilities = solver.checkpoints.capabilities
@@ -145,6 +147,10 @@ W CELL 1 FLOW WELL{forcing}{' __TEMPERATURE__ CONC -4' if porous else ''}{' __WA
         solver.options.ext['BED_HEAT_MODEL'] = 'GROUND_COLUMN'
         solver.options.ext['HEAT_SURFACE_EXCHANGE'] = 'NO'
         solver.options.ext['HEAT_RADIATIVE_EXCHANGE'] = 'NO'
+        if latent:
+            solver.options.ext['HEAT_SURFACE_EXCHANGE'] = 'YES'
+            solver.options.ext['HEAT_RADIATIVE_EXCHANGE'] = 'YES'
+            solver.options.ext['EVAPORATION'] = 'CLIMATE'
         solver.heat.sediment[HeatSedimentParam.HYPORHEIC_VELOCITY] = .001
     return solver
 
@@ -202,15 +208,18 @@ def test_reactive_edge_session_preserves_reversals_fluxes_and_reports(tmp_path, 
     _continue_session(tmp_path, chemistry, thermal, True, passive, output, True, porous, boundary)
 
 
-def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, age, porous, boundary=None, rk2=False, surface_boundary=None):
-    source = _open(tmp_path / 'source', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2)
-    target = _open(tmp_path / 'target', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2)
+def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, age, porous, boundary=None, rk2=False, surface_boundary=None, latent=False, copied_et=False):
+    source = _open(tmp_path / 'source', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2, latent=latent)
+    target = _open(tmp_path / 'target', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2, latent=latent)
     try:
         source.checkpoints.start_session(output)
         target.checkpoints.start_session(output)
         names = ('A', 'B') if reactive else (('Dye',) if passive else ())
         initial_amount = _amount(source, names)
         initial_dye = _amount(source, ('Dye',)) if passive else 0.0
+        if copied_et:
+            from openswmm.engine import RuntimeForcing
+            source.coupling.surface.set_forcings([RuntimeForcing('evaporation', rate_m_s=.00001, until_seconds=13.537)])
         if surface_boundary:
             kind, cleared = surface_boundary
             quality = {name: (-8 if name == '__TEMPERATURE__' else 2 if name == '__WATER_AGE__' else 3)
@@ -235,9 +244,22 @@ def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, a
             assert source.surface2d.boundary_receipt(0, 1) == target.surface2d.boundary_receipt(0, 1)
         for a, b in zip(_snapshot(source, chemistry, porous), _snapshot(target, chemistry, porous)):
             np.testing.assert_array_equal(a, b)
-        while source.step().total_seconds() > 0:
-            assert target.step() == source.elapsed
-        target.step()
+        if rk2:
+            while source.elapsed.total_seconds() < 75:
+                assert source.step().total_seconds() > 0
+                assert target.step() == source.elapsed
+            for a, b in zip(_snapshot(source, chemistry, porous), _snapshot(target, chemistry, porous)):
+                np.testing.assert_array_equal(a, b)
+            # Settle the explicit public boundary while still RUNNING;
+            # the following terminal step transitions the engine to ENDED.
+            source.advance_to(75)
+            target.advance_to(75)
+            source.step()
+            target.step()
+        else:
+            while source.step().total_seconds() > 0:
+                assert target.step() == source.elapsed
+            target.step()
         for a, b in zip(_snapshot(source, chemistry, porous), _snapshot(target, chemistry, porous)):
             np.testing.assert_array_equal(a, b)
         gw = source.surface2d.groundwater
@@ -427,3 +449,11 @@ def test_managed_rk2_surface_boundary_owner_and_invalid_frame_preserve_accepted_
         assert receipt == solver.surface2d.boundary_receipt(0, 1)
     finally:
         cleanup(solver)
+
+
+@pytest.mark.parametrize('chemistry,thermal', [(0, 4), (5, 3), (3, 7)])
+@pytest.mark.parametrize('output', [0, 2])
+@pytest.mark.parametrize('copied', [False, True])
+def test_managed_rk2_surface_latent_continues_native_weather_receipts_and_history(tmp_path, chemistry, thermal, output, copied):
+    _continue_session(tmp_path, chemistry, thermal, True, True, output, True, True,
+                      rk2=True, latent=True, copied_et=copied)
