@@ -142,7 +142,9 @@ SWMM_ENGINE_API int swmm_coupling_advance_to(SWMM_Engine, double target_seconds,
 /** Bitmask: 1 surface sources, 2 saturated GW sources, 4 surface water heat,
  * 8 surface runtime boundaries, 16 saturated groundwater water heat,
  * 32 groundwater lateral hydraulic/advective boundaries, 64 atomic frames,
- * 128 runtime rain quality, 256 paired infiltration, 512 boundary receipts. A zero bit means unavailable in this run. FULL_SWE coupling is not supported. */
+ * 128 runtime rain quality, 256 paired infiltration, 512 boundary receipts. A zero bit means unavailable in this run. FULL_SWE supports the qualified
+ * standalone CPU groundwater profiles; model-specific owner and transport
+ * restrictions are checked before publishing a frame. */
 SWMM_ENGINE_API int swmm_coupling_capabilities(SWMM_Engine, unsigned* flags);
 #ifdef __cplusplus
 }

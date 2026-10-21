@@ -76,7 +76,8 @@ struct BoundaryData {
     /// Boundary condition type per edge (cast from BoundaryType)
     std::vector<int8_t> edge_bc_type;
 
-    /// Bed slope for NORMAL_FLOW edges (dimensionless, >= 0).
+    /// Signed bed slope for NORMAL_FLOW edges (dimensionless).
+    /// Positive values drain outward; negative values prescribe inward flow.
     /// A zero slope zeroes the Manning outflow — the edge behaves as a
     /// Wall (validate_project warns; no auto-compute from bed geometry).
     std::vector<double> edge_bed_slope;

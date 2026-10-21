@@ -10,7 +10,7 @@ from openswmm.engine import (
 from tests.engine._groundwater_cases import cleanup
 
 
-def _open(directory, chemistry, thermal, reactive=True, passive=False, output=0, rate='.001', age=True, porous=True, unit='MG', boundary=None, rk2=False, latent=False, authored_surface=None, authored_series=False, network=False, met=False, snow=None):
+def _open(directory, chemistry, thermal, reactive=True, passive=False, output=0, rate='.001', age=True, porous=True, unit='MG', boundary=None, rk2=False, latent=False, authored_surface=None, authored_series=False, network=False, met=False, snow=None, mesh=None):
     directory.mkdir()
     path = directory / 'model.inp'
     reaction = ''
@@ -167,6 +167,16 @@ SurfaceEdge 02/01/2026 00:01:30 {values[3]}
     if snow:
         assert not (reactive or passive or age or porous)
         path.write_text(path.read_text()+f'\n[OPTIONS]\nIGNORE_SNOWMELT NO\nWET_STEP 00:00:01\nDRY_STEP 00:00:01\n[TEMPERATURE]\nSNOWMELT_MODEL {snow}\nSITE 45 -120 -8 1000\n[SNOWPACKS]\nSP PERVIOUS 1 2 0 .1 1000 100 0\n[2D_SNOW_DEFAULTS]\n* SNOWPACK SP\n')
+    if mesh:
+        assert mesh in ('quads', 'mixed')
+        cells = ('[2D_QUADS]\n0 1 4 3 .03 .04\n1 2 5 4 .04 .03\n' if mesh == 'quads' else
+                 '[2D_TRIANGLES]\n0 4 3 .03 .04\n0 1 4 .04 .03\n[2D_QUADS]\n1 2 5 4 .05 .02\n')
+        text = path.read_text()
+        first, last = text.index('[2D_VERTICES]'), text.index('[2D_AQUIFER_OPTIONS]')
+        text = text[:first] + '[2D_VERTICES]\n0 0 .5\n2 0 .5\n4 0 .5\n.4 2 .5\n2.4 2 .5\n4.4 2 .5\n' + cells + text[last:]
+        # Discontinuous materials test actual heterogeneous storage and fluxes.
+        text += '[2D_AQUIFER]\nCELL 2 72 1 .5 .1 2 HG0 .3 C_LOSS .03\n'
+        path.write_text(text)
     solver = Solver(path, path.with_suffix('.rpt'), path.with_suffix('.out') if output in (1, 3) else None)
     solver.create()
     capabilities = solver.checkpoints.capabilities
@@ -227,7 +237,8 @@ def _amount(solver, names):
             GroundwaterSpeciesLedger.SOURCE_OUT, GroundwaterSpeciesLedger.NODE_OUT,
             GroundwaterSpeciesLedger.LINK_OUT, GroundwaterSpeciesLedger.BOUNDARY_OUT,
             GroundwaterSpeciesLedger.BOUNDARY_FLUX_OUT))
-        amount += float(np.sum(surface.concentrations(surface.species.index(name)) * surface.get_depths() * 4.0))
+        amount += float(np.sum(surface.concentrations(surface.species.index(name)) * surface.get_depths() *
+                               np.asarray([surface.get_triangle_area(cell) for cell in range(gw.dimensions[0])])))
     return amount
 
 
@@ -249,12 +260,17 @@ def test_reactive_edge_session_preserves_reversals_fluxes_and_reports(tmp_path, 
     _continue_session(tmp_path, chemistry, thermal, True, passive, output, True, porous, boundary)
 
 
-def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, age, porous, boundary=None, rk2=False, surface_boundary=None, latent=False, copied_et=False, authored_surface=None, authored_series=False, network=False, met=False, snow=None):
-    source = _open(tmp_path / 'source', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2, latent=latent, authored_surface=authored_surface, authored_series=authored_series, network=network, met=met, snow=snow)
-    target = _open(tmp_path / 'target', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2, latent=latent, authored_surface=authored_surface, authored_series=authored_series, network=network, met=met, snow=snow)
+def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, age, porous, boundary=None, rk2=False, surface_boundary=None, latent=False, copied_et=False, authored_surface=None, authored_series=False, network=False, met=False, snow=None, mesh=None):
+    source = _open(tmp_path / 'source', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2, latent=latent, authored_surface=authored_surface, authored_series=authored_series, network=network, met=met, snow=snow, mesh=mesh)
+    target = _open(tmp_path / 'target', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2, latent=latent, authored_surface=authored_surface, authored_series=authored_series, network=network, met=met, snow=snow, mesh=mesh)
     try:
         source.checkpoints.start_session(output)
         target.checkpoints.start_session(output)
+        if mesh:
+            # Independent polygon areas from these explicit parallelograms.
+            expected_areas = [4., 4.] if mesh == 'quads' else [2., 2., 4.]
+            np.testing.assert_allclose([source.surface2d.get_triangle_area(cell) for cell in range(len(expected_areas))],
+                                       expected_areas, rtol=0, atol=1e-14)
         if met:
             # Each initialized session owns validated immutable weather rows.
             (tmp_path / 'source/weather.met').unlink()
@@ -335,8 +351,9 @@ def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, a
                 # Two linear sign reversals, then 58 seconds of positive flow.
                 assert edge_input == pytest.approx(62.25e-6, abs=1e-12)
                 assert receipt['accepted_out'] == pytest.approx(4.25e-6, abs=1e-12)
-            # Native mg/s/m becomes (mg/L)*m3 once; exterior edge length is 2 m.
-            imposed = .000002 * .001 * 2 * 75
+            # Native mg/s/m becomes (mg/L)*m3 once, using the physical exterior length.
+            edge_length = np.hypot(.4, 2.) if mesh == 'mixed' else 2.
+            imposed = .000002 * .001 * edge_length * 75
             a = gw.species.index('A')
             assert gw.authored_boundary_receipt(0, a)['flux_in'] == pytest.approx(imposed, rel=1e-10, abs=1e-14)
         concentration = 4 if reactive else (3 if passive else 0)
@@ -610,3 +627,15 @@ def test_managed_rk2_owned_snow_refuses_copied_weather_without_changing_point_or
         assert before.read_bytes() == after.read_bytes()
     finally:
         cleanup(solver)
+
+
+@pytest.mark.parametrize('mesh', ['quads', 'mixed'])
+@pytest.mark.parametrize('chemistry,thermal', [(0, 4), (5, 3), (3, 7)])
+@pytest.mark.parametrize('porous', [False, True])
+@pytest.mark.parametrize('kind', [1, 2, 3, 4])
+@pytest.mark.parametrize('output', [0, 3])
+def test_managed_rk2_skewed_heterogeneous_mesh_shares_boundary_transport_heat_and_restart(tmp_path, mesh, chemistry, thermal, porous, kind, output):
+    _continue_session(tmp_path, chemistry, thermal, True, True, output, True, porous,
+                      boundary='HEAD' if kind % 2 else 'FLOW', rk2=True,
+                      authored_surface=kind, authored_series=kind in (1, 2),
+                      latent=porous, copied_et=porous, met=True, mesh=mesh)

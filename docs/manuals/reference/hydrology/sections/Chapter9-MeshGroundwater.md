@@ -634,6 +634,14 @@ it is \f$m \times\f$ the cell count per step and off by default.
 
 <!-- source: src/engine/2d/subsurface/SoilCharacteristic.hpp:62-72; src/engine/2d/subsurface/SigmaColumn.hpp:131-132; src/engine/2d/subsurface/SubsurfaceData.hpp:58-60, :107-140; src/engine/2d/subsurface/SubsurfaceSolver.cpp:252-254, :391-400; src/engine/2d/subsurface/SubsurfaceSolver.hpp:268-273; src/engine/2d/solver/ExplicitInertialSolver.cpp:812-815; src/engine/2d/SurfaceRouter2D.cpp:905-910 (backend refusal); plans/TWO_ZONE_GROUNDWATER_EXPLICIT_LTS_PLAN_2026-08-15.md:88-90, :196-283 -->
 
+Managed global-RK2 qualification also includes skewed all-quad and mixed meshes
+with heterogeneous aquifers, bulk or independent chemical/thermal grids,
+groundwater HEAD/FLOW and surface stage/flow/normal/rating boundaries, reactions,
+age and optional latent heat/cached weather. Independent water/species/energy
+budgets and numerical/combined-output continuation pass together. These tests
+qualify the stated integration and restart profile, without extending its
+borrowed-owner or device restrictions or claiming general spatial order.
+
 ## 9.12 Parameter estimation
 
 A `[2D_AQUIFER]` row is `*`, `TAG name` or `CELL n`, then five positional

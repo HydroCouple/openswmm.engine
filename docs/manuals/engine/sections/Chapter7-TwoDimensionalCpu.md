@@ -261,6 +261,13 @@ timing ratios. The reviewed component builds use O3/native CPU with fast
 math disabled and floating-point contraction disabled. Changing arithmetic
 settings requires a new correctness comparison.
 
+Managed global-RK2 integration checks also cover skewed all-quad and mixed
+triangle/quad meshes with heterogeneous aquifers, independent chemical/thermal
+grids, both boundary domains, reactions, age and optional latent heat. Physical
+budgets and numerical/combined output histories pass together; this does not
+establish general spatial order on distorted meshes. See the groundwater
+transport design for the integration/restart capability matrix.
+
 The remaining boundaries are further thermal and borrowed-owner support for RK2,
 long-period damping, mesh-dependent stability, production-catchment
 accuracy and hardware portability. The planned CPU review is complete;

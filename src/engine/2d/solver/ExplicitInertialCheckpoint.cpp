@@ -488,7 +488,7 @@ std::string validateRk2SurfaceBoundary(const MeshData& mesh,const SurfaceStateDa
            !std::isfinite(b.edge_bc_head[slot])||!std::isfinite(b.edge_bc_flow[slot])||!std::isfinite(b.edge_bed_slope[slot])||!std::isfinite(b.edge_bc_cum_flux[slot])||
            !rk2SurfaceDescriptor(b.edge_bc_type[slot],b.edge_bc_tseries[slot],b.edge_bc_flow_tseries[slot],b.edge_bc_rating_curve[slot],
                b.edge_bc_tseries_name[slot],b.edge_bc_flow_tseries_name[slot],b.edge_bc_rating_curve_name[slot]))
-            return "RK2 surface boundaries require exterior STAGE/FLOW prescriptions and resolved signals.";
+            return "RK2 surface boundaries require supported exterior prescriptions and resolved signals.";
     }
     if(b.runtime_original.size()!=b.runtime_owner.size()||b.runtime_original.size()!=tr.runtime_bc_conc.size())return "RK2 surface boundary owner/quality layout differs.";
     for(const auto& [slot,old]:b.runtime_original) {
