@@ -361,12 +361,12 @@ class TestReactionScope(unittest.TestCase):
     """Verify ReactionScope values (mirrors the ``SWMM_RXN_SCOPE_*`` macros)."""
 
     def test_known_values(self):
-        expected = {"TERM": 0, "PIPE": 1, "TANK": 2}
+        expected = {"TERM": 0, "PIPE": 1, "TANK": 2, "SUBSURFACE": 3, "SUBCATCHMENT": 4}
         for name, val in expected.items():
             self.assertEqual(ReactionScope[name].value, val)
 
     def test_member_count(self):
-        self.assertEqual(len(ReactionScope), 3)
+        self.assertEqual(len(ReactionScope), 5)
 
 
 # ---------------------------------------------------------------------------
