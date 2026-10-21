@@ -53,6 +53,6 @@ struct GroundHeatState {
     std::size_t boundaries(int cell,double exposed_fraction,std::vector<ThermalBoundary>&) const;
     // Called after accepted water advection. A surface-owned column advances
     // its conduction with its finite water contact instead, never twice.
-    std::string conduct(int cell,double seconds);
+    std::string conduct(int cell,double seconds,bool midpoint=false);
 };
 } // namespace openswmm::twoD

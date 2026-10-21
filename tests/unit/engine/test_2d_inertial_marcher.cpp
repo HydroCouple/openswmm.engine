@@ -2521,3 +2521,310 @@ TEST(CoupledGroundwaterRk2, WaterTemperatureHeaterAndKineticsUseOnePhysicalSecon
         }
     }
 }
+
+namespace {
+struct RkPorousOwner {
+    openswmm::SimulationContext context;
+    GwTransportData config;
+    void initialize(CoupledRkRig& r,bool layered,int layers=1,bool conduction=false,double conductivity=2,double second_conductivity=0,bool lateral=false) {
+        context.options.heat_transport=true;context.options.water_density=1000;context.options.water_specific_heat=4186;
+        config.options.thermal_model="POROUS_EQUILIBRIUM";config.options.thermal_layers=layers;
+        config.options.unsat_transport=layered?"LAYERED":"BULK";
+        config.options.conduction=conduction;config.options.dispersion=false;
+        config.options.lateral_conduction=lateral;
+        config.options.soil_et_heat="SENSIBLE_ONLY";
+        config.options.surface_thermal_bc=config.options.deep_thermal_bc="ADIABATIC";
+        GwParamsRow material;material.lambda_s=conductivity;config.params={material};
+        if(second_conductivity>0){material.scope=GwScope::CELL;material.cell=1;material.lambda_s=second_conductivity;config.params.push_back(material);}
+        GwInitialQualityRow initial;initial.species="__TEMPERATURE__";initial.value=-2;
+        initial.zone=GwZone::SAT;config.initial_quality.push_back(initial);
+        initial.zone=GwZone::UNSAT;config.initial_quality.push_back(initial);
+        RowLayoutLite rows;rows.n_species=1;rows.temp_row=0;rows.names={"__TEMPERATURE__"};
+        std::vector<std::string> warnings;r.gw.initTransport(rows,&config,{},warnings);
+        r.state.transport.resize(1,r.mesh.n_cells(),0);auto& tr=r.state.transport;
+        tr.n_pollut=0;tr.temp_row=0;tr.row_names=rows.names;
+        for(int cell=0;cell<tr.n_cells;++cell)tr.cell_mass[tr.idx(0,cell)]=-2*r.state.volume[cell];
+        r.opts.groundwater=1;r.opts.coupled_heat=false;r.opts.water_heat_capacity=4186000;
+        ASSERT_EQ(r.gw.initHeat(context,config),"");ASSERT_EQ(r.gw.initPorewater(),"");
+        r.solver.initialize(r.mesh,r.state,r.opts);r.solver.setSubsurface(&r.gw);
+        ASSERT_EQ(r.gw.rk2ProfileError(),"");
+    }
+};
+double rkPorousEnergy(const CoupledRkRig& r) {
+    double value=0;for(const auto& cell:r.gw.heat().cells)value+=std::accumulate(cell.column.energy.begin(),cell.column.energy.end(),0.);
+    return value;
+}
+void checkRkPorousLedgers(const CoupledRkRig& r) {
+    for(const auto& c:r.gw.heat().cells) {
+        const double energy=std::accumulate(c.column.energy.begin(),c.column.energy.end(),0.);
+        const double net=c.advective_j+c.source_j+c.surface_j+c.deep_j+c.latent_j+c.lateral_j+c.water_contact_j+c.channel_contact_j+c.lid_contact_j;
+        EXPECT_NEAR(energy-c.initial_j,net,1e-10*std::max({1.,std::abs(c.initial_j),std::abs(net)}));
+    }
+}
+std::vector<double> porousColumnReference(int steps) {
+    // Independent continuous Gardner water/energy ODE. Differentiate the
+    // overlap integrals with dual numbers, rather than calling the staged
+    // projection or reconstructing an accepted numerical water packet.
+    constexpr double phi=.45,residual=.1,ks=.003,deep=.001,cp=4186000,dx=2./3;
+    constexpr double grain=(1-phi)*2650*880/cp;
+    using Dual=std::array<double,2>;
+    const auto add=[](Dual a,Dual b){return Dual{a[0]+b[0],a[1]+b[1]};};
+    const auto sub=[](Dual a,Dual b){return Dual{a[0]-b[0],a[1]-b[1]};};
+    const auto mul=[](Dual a,Dual b){return Dual{a[0]*b[0],a[1]*b[0]+a[0]*b[1]};};
+    const auto low=[](Dual a,Dual b){return a[0]<b[0]?a:b;};
+    const auto high=[](Dual a,Dual b){return a[0]>b[0]?a:b;};
+    const auto water=[&](const std::vector<double>& v,const std::vector<double>& rate) {
+        const Dual length={2-v[0],-rate[0]};std::array<Dual,3> result{};
+        for(int j=0;j<3;++j) {
+            const Dual top={dx*j,0},bottom={dx*(j+1),0};
+            for(int k=0;k<4;++k) {
+                const Dual theta={4*v[k+1]/length[0],4*rate[k+1]/length[0]-4*v[k+1]*length[1]/(length[0]*length[0])};
+                const auto overlap=high(Dual{0,0},sub(low(bottom,mul(length,Dual{double(k+1)/4,0})),high(top,mul(length,Dual{double(k)/4,0}))));
+                result[j]=add(result[j],mul(theta,overlap));
+            }
+            result[j]=add(result[j],mul(Dual{phi,0},high(Dual{0,0},sub(bottom,high(top,length)))));
+        }
+        return result;
+    };
+    std::vector<double> y(10);y[0]=.6;y[5]=.2;y[6]=6*y[5];
+    for(int k=0;k<4;++k)y[k+1]=(.24+.015*k)*(2-y[0])/4;
+    const auto initial_water=water(y,std::vector<double>(10));
+    for(int j=0;j<3;++j)y[7+j]=-2*(grain*dx+initial_water[j][0]);
+    const auto rhs=[&](const std::vector<double>& v) {
+        std::vector<double> out(10);std::array<double,4> theta{},conductivity{};std::array<double,5> flux{};
+        const double length=2-v[0];
+        for(int k=0;k<4;++k){theta[k]=4*v[k+1]/length;conductivity[k]=ks*(theta[k]-residual)/(phi-residual);}
+        out[0]=(conductivity[3]-deep*v[0]/2)/(phi-theta[3]);const double grid=-out[0];
+        flux[0]=ks*(1+(v[5]-std::log((theta[0]-residual)/(phi-residual))/2)/(.5*length/4));
+        for(int k=1;k<4;++k)flux[k]=conductivity[k-1]-theta[grid>0?k:k-1]*(double(k)/4)*grid;
+        flux[4]=conductivity[3]-theta[3]*grid;
+        for(int k=0;k<4;++k)out[k+1]=flux[k]-flux[k+1];out[5]=-flux[0];
+        const auto fixed=water(v,out);std::array<double,3> temperature{},lambda{},external{};
+        for(int j=0;j<3;++j) {
+            temperature[j]=v[7+j]/(grain*dx+fixed[j][0]);
+            const double moisture=fixed[j][0]/dx;
+            lambda[j]=(1-phi)*2e5+moisture*.606+(phi-moisture)*.025;
+        }
+        external[0]=flux[0];external[2]=-deep*v[0]/2;
+        out[6]=-flux[0]*v[6]/v[5];out[7]+=flux[0]*v[6]/v[5];out[9]+=external[2]*temperature[2];
+        double vertical=0;
+        for(int j=0;j<2;++j) {
+            vertical+=external[j]-fixed[j][1];
+            const double advective=vertical*(vertical>=0?temperature[j]:temperature[j+1]);
+            const double contact=(temperature[j]-temperature[j+1])/(cp*(.5*dx/lambda[j]+.5*dx/lambda[j+1]));
+            out[7+j]-=advective+contact;out[8+j]+=advective+contact;
+        }
+        return out;
+    };
+    const double dt=2./steps;
+    for(int step=0;step<steps;++step) {
+        const auto a=rhs(y);auto v=y;
+        for(int k=0;k<10;++k)v[k]=y[k]+.5*dt*a[k];const auto b=rhs(v);
+        for(int k=0;k<10;++k)v[k]=y[k]+.5*dt*b[k];const auto c=rhs(v);
+        for(int k=0;k<10;++k)v[k]=y[k]+dt*c[k];const auto d=rhs(v);
+        for(int k=0;k<10;++k)y[k]+=dt*(a[k]+2*b[k]+2*c[k]+d[k])/6;
+    }
+    return y;
+}
+}
+TEST(CoupledGroundwaterRk2, PorousStirredWaterRetainsGrainCapacityAndSecondOrderTemperature) {
+    for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true}) {
+        if(layered&&closure!=GwClosure::SIGMA)continue;double previous=0;
+        for(double dt:{.4,.2,.1,.05}) {
+            CoupledRkRig r;r.init(dt,0,0,0,"NONE",closure,SoilChar::GARDNER,4);
+            RkPorousOwner owner;owner.initialize(r,layered);const auto& w=r.gw.state();
+            const double q=.5,cp=4186000,area=w.area[0],depth=w.zs[0];
+            const double capacity=area*(depth*(1-w.theta_s[0])*2650*880+cp*(w.hu[0]+w.theta_s[0]*w.hg[0]));
+            ASSERT_NEAR(r.gw.heat().cells[0].column.capacity[0],capacity,1e-7);
+            GwResolvedSource source;source.name="porous-stirred";source.cells={{0,1}};source.flow.constant=q;
+            GwResolvedSourceTerm term;term.row=0;term.signal.constant=7;source.terms={term};r.gw.setSources({source});
+            GwSourceSignal flow;flow.constant=-q;auto edge=rk2FlowEdge(r,0,flow);
+            edge.mass_in.assign(1,0);edge.mass_out.assign(1,0);edge.flux_in.assign(1,0);edge.flux_out.assign(1,0);r.gw.setBoundaries({edge});
+            const double initial_water=r.total();
+            for(int step=0;step<int(std::round(2/dt));++step)ASSERT_NO_THROW(r.solver.advance(step*dt,(step+1)*dt));
+            const double exact=7-9*std::exp(-cp*q*2/capacity);
+            const double actual=r.gw.heat().cells[0].column.energy[0]/capacity,error=std::abs(actual-exact)/9;
+            EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;
+            RecordProperty("porous_stirred_"+std::to_string(int(closure))+"_"+std::to_string(layered)+"_"+std::to_string(int(dt*1000)),error);
+            EXPECT_NEAR(r.total(),initial_water,1e-10);EXPECT_NEAR(w.continuityResidual(),0,1e-10);
+            checkRkPorousLedgers(r);
+        }
+    }
+}
+TEST(CoupledGroundwaterRk2, PorousThreeLayerConductionMatchesIndependentFiniteVolumeEigenmode) {
+    for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true}) {
+        if(layered&&closure!=GwClosure::SIGMA)continue;double previous=0;
+        for(double dt:{.4,.2,.1,.05}) {
+            CoupledRkRig r;r.init(dt,0,0,0,"NONE",closure,SoilChar::GARDNER,4);
+            RkPorousOwner owner;owner.initialize(r,layered,3,true,2e5);
+            const auto& c=r.gw.heat().cells[0].column;const auto& m=c.material;
+            const double dz=2./3,area=r.gw.state().area[0];std::array<double,3> cap{},lambda{};
+            for(int j=0;j<3;++j) {
+                cap[j]=area*dz*((1-m.porosity)*2650*880+c.theta[j]*4186000);
+                lambda[j]=(1-m.porosity)*2e5+c.theta[j]*.606+(m.porosity-c.theta[j])*.025;
+                ASSERT_NEAR(cap[j],c.capacity[j],1e-7);
+            }
+            const double g1=area/(.5*dz/lambda[0]+.5*dz/lambda[1]),g2=area/(.5*dz/lambda[1]+.5*dz/lambda[2]);
+            const double trace=g1*(1/cap[0]+1/cap[1])+g2*(1/cap[1]+1/cap[2]);
+            const double product=g1*g2*(cap[0]+cap[1]+cap[2])/(cap[0]*cap[1]*cap[2]);
+            const double rate=.5*(trace-std::sqrt(trace*trace-4*product));
+            std::array<double,3> mode={1,1-rate*cap[0]/g1,0};mode[2]=-(cap[0]+cap[1]*mode[1])/cap[2];
+            const double scale=std::max({std::abs(mode[0]),std::abs(mode[1]),std::abs(mode[2])});for(double& v:mode)v/=scale;
+            for(int cell=0;cell<r.gw.state().n_cells;++cell) {
+                auto& owner_cell=r.gw.heat().cells[cell];
+                for(int j=0;j<3;++j)owner_cell.column.energy[j]=owner_cell.column.capacity[j]*(-2+mode[j]);
+                owner_cell.column.initial_energy=owner_cell.column.energy;
+                owner_cell.initial_j=std::accumulate(owner_cell.column.energy.begin(),owner_cell.column.energy.end(),0.);
+                r.gw.heat().refreshView(cell,r.gw.transport());
+            }
+            const double initial=rkPorousEnergy(r);
+            for(int step=0;step<int(std::round(2/dt));++step)ASSERT_NO_THROW(r.solver.advance(step*dt,(step+1)*dt));
+            double error=0;for(int j=0;j<3;++j)error=std::max(error,std::abs(c.energy[j]/cap[j]-(-2+mode[j]*std::exp(-rate*2))));
+            EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;
+            RecordProperty("porous_conduction_"+std::to_string(int(closure))+"_"+std::to_string(layered)+"_"+std::to_string(int(dt*1000)),error);
+            EXPECT_NEAR(rkPorousEnergy(r),initial,1e-10*std::max(1.,std::abs(initial)));checkRkPorousLedgers(r);
+        }
+    }
+}
+TEST(CoupledGroundwaterRk2, PorousMovingWaterAndIndependentThermalGridHaveSecondOrderCoupledEnergy) {
+    const auto exact=porousColumnReference(20000),refined=porousColumnReference(40000);
+    for(int k=0;k<10;++k)ASSERT_NEAR(exact[k],refined[k],1e-10);
+    for(bool layered:{false,true}) {
+        double previous=0;
+        for(double dt:{.1,.05,.025,.0125}) {
+            CoupledRkRig r;r.init(dt,.003,.001,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);seedRkSigma(r);
+            RkPorousOwner owner;owner.initialize(r,layered,3,true,2e5);
+            for(int cell=0;cell<r.state.transport.n_cells;++cell)r.state.transport.cell_mass[r.state.transport.idx(0,cell)]=6*r.state.volume[cell];
+            const double cp=4186000,area=r.gw.state().area[0];
+            const auto total=[&](){return rkPorousEnergy(r)+cp*std::accumulate(r.state.transport.cell_mass.begin(),r.state.transport.cell_mass.end(),0.);};
+            const double initial_energy=total(),initial_water=r.total();
+            for(int step=0;step<int(std::round(2/dt));++step)ASSERT_NO_THROW(r.solver.advance(step*dt,(step+1)*dt));
+            const auto& w=r.gw.state();std::vector<double> actual={w.hg[0]};
+            for(int k=0;k<4;++k)actual.push_back(w.theta_sigma[std::size_t(k)*w.n_cells]*(2-w.hg[0])/4);
+            actual.push_back(r.state.volume[0]/area);actual.push_back(r.state.transport.cell_mass[0]/area);
+            for(double energy:r.gw.heat().cells[0].column.energy)actual.push_back(energy/(area*cp));
+            double error=0;for(int k=0;k<10;++k)error+=std::pow(actual[k]-exact[k],2);error=std::sqrt(error);
+            EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;
+            RecordProperty("porous_column_"+std::to_string(layered)+"_"+std::to_string(int(dt*10000)),error);
+            EXPECT_NEAR(total()+cp*r.gw.transport().lost_deep[0],initial_energy,1e-10*std::max(1.,std::abs(initial_energy)));
+            EXPECT_NEAR(r.total()+w.led_deep,initial_water,1e-10);checkRkPorousLedgers(r);
+        }
+    }
+}
+TEST(CoupledGroundwaterRk2, PorousCheckpointRetainsColdPacketsAndRefusesChangedMaterialAtomically) {
+    for(bool layered:{false,true}) {
+        CoupledRkRig a,b,bad;RkPorousOwner oa,ob,oc;
+        const auto initialize=[&](CoupledRkRig& r,RkPorousOwner& owner,double conductivity) {
+            r.init(.025,.0001,.0002,.1,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);seedRkSigma(r);
+            owner.initialize(r,layered,3,true,conductivity);
+            GwResolvedSource source;source.name="porous-cold-well";source.cells={{0,1}};
+            source.flow.times={0,.2,.6,1};source.flow.values={.01,-.01,.02,0};
+            GwResolvedSourceTerm term;term.row=0;term.signal.constant=-5;source.terms={term};r.gw.setSources({source});
+            GwSourceSignal flow;flow.times={0,.3,.7,1};flow.values={.001,-.001,.001,0};auto edge=rk2FlowEdge(r,0,flow);
+            GwBoundaryTerm quality;quality.row=0;quality.signal.constant=-8;edge.terms={quality};
+            edge.mass_in.assign(1,0);edge.mass_out.assign(1,0);edge.flux_in.assign(1,0);edge.flux_out.assign(1,0);r.gw.setBoundaries({edge});
+        };
+        initialize(a,oa,2);initialize(b,ob,2);initialize(bad,oc,4);
+        const auto saved=rk2Output("porous-temperature.chk"),before=rk2Output("porous-temperature-before.chk"),after=rk2Output("porous-temperature-after.chk");
+        for(int step=0;step<40;++step) {
+            ASSERT_NO_THROW(a.solver.advance(step*.025,(step+1)*.025));
+            if(step==9) {
+                ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");ASSERT_EQ(bad.solver.saveCheckpoint(before.string()),"");
+                EXPECT_FALSE(bad.solver.loadCheckpoint(saved.string()).empty());ASSERT_EQ(bad.solver.saveCheckpoint(after.string()),"");
+                EXPECT_EQ(rk2File(before),rk2File(after));ASSERT_EQ(b.solver.loadCheckpoint(saved.string()),"");
+            }else if(step>9)ASSERT_NO_THROW(b.solver.advance(step*.025,(step+1)*.025));
+        }
+        ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");
+        EXPECT_EQ(rk2File(saved),rk2File(after));checkRkPorousLedgers(a);checkRkPorousLedgers(b);
+        EXPECT_LT(a.gw.boundaries()[0].mass_in[0],0);
+    }
+}
+TEST(CoupledGroundwaterRk2, PorousLaterCellThermalWorkFailureRestoresEnergyAndCanRetrySmallerStep) {
+    CoupledRkRig r;r.init(.1,0,0,0,"NONE",GwClosure::CLOSED_FORM,SoilChar::GARDNER,4);
+    RkPorousOwner owner;owner.initialize(r,false,3,true,2,1e15);
+    auto& cell=r.gw.heat().cells[0];
+    for(int j=0;j<3;++j)cell.column.energy[j]=cell.column.capacity[j]*(-2+3*j);
+    cell.column.initial_energy=cell.column.energy;cell.initial_j=std::accumulate(cell.column.energy.begin(),cell.column.energy.end(),0.);
+    r.gw.heat().refreshView(0,r.gw.transport());const auto initial=cell.column.energy;
+    const auto before=rk2Output("porous-work-before.chk"),after=rk2Output("porous-work-after.chk");
+    ASSERT_EQ(r.solver.saveCheckpoint(before.string()),"");
+    try{r.solver.advance(0,.1);FAIL()<<"Expected bounded midpoint work refusal in the second cell";}
+    catch(const std::runtime_error& error){EXPECT_NE(std::string(error.what()).find("subdivision limit"),std::string::npos)<<error.what();}
+    ASSERT_EQ(r.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+    EXPECT_EQ(r.gw.heat().cells[0].column.energy,initial);
+    ASSERT_NO_THROW(r.solver.advance(0,1e-6));checkRkPorousLedgers(r);
+}
+TEST(CoupledGroundwaterRk2, PorousSignedHeatInputsKeepIndependentJoulesWithoutBoundaryWater) {
+    for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true}) {
+        if(layered&&closure!=GwClosure::SIGMA)continue;
+        for(bool top:{false,true})for(double power:{-10000.,10000.}) {
+            CoupledRkRig r;r.init(.1,0,0,0,"NONE",closure,SoilChar::GARDNER,4);
+            RkPorousOwner owner;owner.initialize(r,layered,3,true);
+            GwSourceSignal flow;auto edge=rk2FlowEdge(r,0,flow);
+            if(top) {
+                owner.config.options.surface_thermal_bc="HEAT_FLUX";owner.config.options.surface_thermal_arg=std::to_string(power);
+            } else {
+                GwBoundaryTerm term;term.row=0;term.flux=true;term.scale=edge.length/4186000;term.signal.constant=power;edge.terms={term};
+                edge.mass_in.assign(1,0);edge.mass_out.assign(1,0);edge.flux_in.assign(1,0);edge.flux_out.assign(1,0);r.gw.setBoundaries({edge});
+            }
+            const double initial=rkPorousEnergy(r),initial_water=r.total();
+            double area=0;for(double value:r.gw.state().area)area+=value;
+            const double expected=power*2*(top?area:edge.length);
+            for(int step=0;step<20;++step)ASSERT_NO_THROW(r.solver.advance(step*.1,(step+1)*.1));
+            EXPECT_NEAR(rkPorousEnergy(r)-initial,expected,1e-6);
+            double receipt=0;for(const auto& c:r.gw.heat().cells)receipt+=top?c.surface_j:c.source_j;
+            EXPECT_NEAR(receipt,expected,1e-6);EXPECT_NEAR(r.total(),initial_water,1e-10);checkRkPorousLedgers(r);
+            if(!top){EXPECT_DOUBLE_EQ(r.gw.boundaries()[0].applied_in,0);EXPECT_DOUBLE_EQ(r.gw.boundaries()[0].applied_out,0);}
+        }
+    }
+}
+TEST(CoupledGroundwaterRk2, PorousSensibleEtKeepsGrainsAndSignedEnergyAcrossWetAndDrySurface) {
+    for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true}) {
+        if(layered&&closure!=GwClosure::SIGMA)continue;
+        for(double temperature:{-3.,5.})for(double pond:{0.,1e-5,.01}) {
+            CoupledRkRig r;r.init(.05,0,0,pond,"BOTH",closure,SoilChar::GARDNER,4);
+            RkPorousOwner owner;owner.initialize(r,layered,3);
+            for(int cell=0;cell<r.gw.state().n_cells;++cell) {
+                auto& c=r.gw.heat().cells[cell];
+                for(std::size_t j=0;j<c.column.energy.size();++j)c.column.energy[j]=temperature*c.column.capacity[j];
+                c.column.initial_energy=c.column.energy;c.initial_j=std::accumulate(c.column.energy.begin(),c.column.energy.end(),0.);
+                r.gw.heat().refreshView(cell,r.gw.transport());r.state.transport.cell_mass[cell]=temperature*r.state.volume[cell];
+            }
+            r.opts.evaporation=true;r.state.evap_rate.assign(r.mesh.n_cells(),1e-4);
+            const auto energy=[&](){return rkPorousEnergy(r)+4186000*std::accumulate(r.state.transport.cell_mass.begin(),r.state.transport.cell_mass.end(),0.);};
+            const double initial_energy=energy(),initial_water=r.total();
+            for(int step=0;step<40;++step)ASSERT_NO_THROW(r.solver.advance(step*.05,(step+1)*.05));
+            const auto& w=r.gw.state();EXPECT_GT(w.led_et+r.state.evap_loss_total,0);
+            EXPECT_NEAR(energy()+4186000*(r.gw.transport().lost_et[0]+temperature*r.state.evap_loss_total),initial_energy,1e-10*std::max(1.,std::abs(initial_energy)));
+            EXPECT_NEAR(r.total()+w.led_et+r.state.evap_loss_total,initial_water,1e-10);checkRkPorousLedgers(r);
+            for(const auto& c:r.gw.heat().cells)for(std::size_t j=0;j<c.column.energy.size();++j) {
+                EXPECT_GT(c.column.capacity[j],0);EXPECT_NEAR(c.column.energy[j]/c.column.capacity[j],temperature,1e-5);
+            }
+        }
+    }
+}
+TEST(CoupledGroundwaterRk2, PorousHeterogeneousLateralHeatMatchesIndependentPairDecay) {
+    for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true}) {
+        if(layered&&closure!=GwClosure::SIGMA)continue;double previous=0;
+        for(double dt:{.4,.2,.1,.05}) {
+            CoupledRkRig r;r.init(dt,0,0,0,"NONE",closure,SoilChar::GARDNER,4);
+            RkPorousOwner owner;owner.initialize(r,layered,1,true,1e6,4e6,true);
+            const auto& w=r.gw.state();const double mean_theta=(w.hu[0]+w.theta_s[0]*w.hg[0])/2;
+            const double capacity=8*2*((1-.45)*2650*880+mean_theta*4186000);
+            const auto k=[&](double grain){return (1-.45)*grain+mean_theta*.606+(.45-mean_theta)*.025;};
+            const double distance=4/(3*std::sqrt(2.)),g=4*std::sqrt(2.)*.6/(distance/k(1e6)+distance/k(4e6));
+            for(int cell=0;cell<2;++cell) {
+                auto& c=r.gw.heat().cells[cell];ASSERT_NEAR(c.column.capacity[0],capacity,1e-7);
+                c.column.energy[0]=capacity*(cell==0?-2:6);c.column.initial_energy=c.column.energy;c.initial_j=c.column.energy[0];
+                r.gw.heat().refreshView(cell,r.gw.transport());
+            }
+            const double initial=rkPorousEnergy(r);
+            for(int step=0;step<int(std::round(2/dt));++step)ASSERT_NO_THROW(r.solver.advance(step*dt,(step+1)*dt));
+            const double exact=2-4*std::exp(-2*g*2/capacity),error=std::abs(r.gw.heat().cells[0].column.energy[0]/capacity-exact)/8;
+            EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;
+            RecordProperty("porous_lateral_"+std::to_string(int(closure))+"_"+std::to_string(layered)+"_"+std::to_string(int(dt*1000)),error);
+            EXPECT_NEAR(rkPorousEnergy(r),initial,1e-10*std::max(1.,std::abs(initial)));
+            EXPECT_NEAR(r.gw.heat().cells[0].lateral_j+r.gw.heat().cells[1].lateral_j,0,1e-7);checkRkPorousLedgers(r);
+        }
+    }
+}

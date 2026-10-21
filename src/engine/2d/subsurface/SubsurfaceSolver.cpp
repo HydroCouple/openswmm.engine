@@ -2076,7 +2076,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
                     throw std::runtime_error("SIGMA table/column water settlement did not converge.");
             }
         }
-        if(tr_.n_layers>0)evaluate(hg1,true);
+        if(tr_.n_layers>0||(heat_.active()&&sigma_stage))evaluate(hg1,true);
         for(int j=0;j<state_.m_layers;++j) state_.theta_sigma[static_cast<std::size_t>(j)*n+u]=trial[j];
         rejected=cs.rejected;state_.et_stress[u]=et_boundary?cs.et_stress:std::numeric_limits<double>::quiet_NaN();
         state_.qet_last[u]=cs.et_taken;state_.led_et+=cs.et_taken*A*dt;
@@ -2189,7 +2189,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     // so mass can never travel on a volume the water gave back.
     if (tr_.active()) {
         CellFlux f;
-        if(tr_.n_layers>0)f.column=&column_transfers;
+        if(tr_.n_layers>0||(heat_.active()&&sigma_stage))f.column=&column_transfers;
         f.boundary_in=boundary_in;f.boundary_out=boundary_out;f.boundaries=&boundary_pulses;
         f.hg_final=hg1;f.runtime_dt=dt; f.requested_source_out=requested_source_out;
         f.v_sat0   = hg0 * ts * A;
@@ -2562,10 +2562,39 @@ std::string SubsurfaceSolver::conductGroundWithLids(int i,double dt) {
     return {};
 }
 
+std::string SubsurfaceSolver::groundWaterIncrement(int i,const CellFlux& f,std::vector<double>& output) const {
+    const auto& column=heat_.cells[i].column;const double area=state_.area[i];
+    const double length=state_.zs[i]-state_.hg[i];
+    if(!(length>0)) {
+        // The collapsed-column start is a bounded geometric event, not a
+        // differentiable stretching coordinate. Retain its accepted water.
+        std::vector<double> moisture;
+        if(auto error=projectGroundMoisture(state_,i,f.hg_final,column.depth_edges,moisture);!error.empty())return error;
+        std::vector<double> next(moisture.size());
+        for(std::size_t j=0;j<next.size();++j)
+            next[j]=(moisture[j]-column.theta[j])*area*(column.depth_edges[j+1]-column.depth_edges[j]);
+        output=std::move(next);return {};
+    }
+    std::vector<double> old_water,delta_water;
+    if(state_.closure[i]==int8_t(GwClosure::SIGMA)) {
+        if(!f.column||f.column->old_water.size()!=std::size_t(state_.m_layers)||
+           f.column->new_water.size()!=f.column->old_water.size())
+            return "RK2 porous heat requires the accepted hydraulic layer transfers.";
+        old_water=f.column->old_water;delta_water.resize(old_water.size());
+        for(std::size_t j=0;j<old_water.size();++j)delta_water[j]=f.column->new_water[j]-old_water[j];
+    } else {
+        old_water={f.v_uns0/area};
+        delta_water={(f.infil_in-f.reject-f.et-f.recharge+f.handover)/area};
+    }
+    return projectGroundWaterIncrement(column,length,f.grid_volume/area,old_water,delta_water,output);
+}
 void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
     auto& cell=heat_.cells[i];auto& column=cell.column;
     if(column.energy.empty()||cell.failed)return;
     try {
+        const bool euler=opts_&&opts_->reconstruction_order==2;
+        std::vector<double> donor_temperature;
+        if(euler)for(std::size_t j=0;j<column.energy.size();++j)donor_temperature.push_back(heat_.activeTemperature(i,j));
         gatherLateralHeat(i);
         const int r=tr_.temp_row;const auto k=tr_.idx(r,i);const double cp=heat_.water_capacity;
         const double top=heat_.activeTemperature(i,0);
@@ -2627,7 +2656,10 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
         }
         water.front()+=f.infil_in-f.reject-f.et-f.dunne;energy.front()+=cp*(infil-refund);
         withdrawal.front()+=excess_volume+f.et+f.dunne;water.back()-=f.deep;withdrawal.back()+=f.deep;
-        const auto advected=advectPorousColumn(column,moisture,water,energy,withdrawal);
+        std::vector<double> water_change;
+        if(euler)if(auto error=groundWaterIncrement(i,f,water_change);!error.empty())throw std::runtime_error(error);
+        const auto advected=euler?advectPorousColumnEuler(column,moisture,water_change,water,energy,withdrawal,donor_temperature):
+            advectPorousColumn(column,moisture,water,energy,withdrawal);
         if(!advected.error.empty())throw std::runtime_error(advected.error);
         for(std::size_t j=0;j<weights.size();++j)cell.reserved_out_water[j]=heat_preset_out_water_[base+j];
         double donor=0;for(std::size_t j=0;j<weights.size();++j)donor+=weights[j]/weight*advected.temperature[j];
@@ -2667,7 +2699,7 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
             const double latent=-heat_.density*f.et*transport::heat::latentHeatOfVaporization(top);
             column.energy.front()+=latent;cell.latent_j+=latent;
         }
-        if(auto error=conductGroundWithLids(i,f.dt);!error.empty())throw std::runtime_error(error);
+        if(!euler)if(auto error=conductGroundWithLids(i,f.dt);!error.empty())throw std::runtime_error(error);
         if(tr_.n_layers>0)if(auto error=refreshSigmaPorewater(i);!error.empty())throw std::runtime_error(error);
         heat_.refreshView(i,tr_);
     } catch(const std::exception& error) {
@@ -3002,8 +3034,25 @@ void SubsurfaceSolver::fireGwRk2Cells(double dt,SurfaceStateData& surface,double
     source_firing_end_=time+dt;
     if(!active()||!tierHasCells(0))return;
     const auto& cells=cells_by_tier_[0];prepareRechargeBatch(cells);
-    for(int cell:cells)fireCell(cell,dt,surface,time);
+    for(int cell:cells) {
+        fireCell(cell,dt,surface,time);
+        if(heat_.active()&&heat_.cells[cell].failed)
+            throw std::runtime_error(heat_.cells[cell].error.empty()?"Coupled RK2 thermal stage failed.":heat_.cells[cell].error);
+        if(heat_.active()) {
+            if(tr_.n_layers)if(auto error=refreshSigmaPorewater(cell);!error.empty())throw std::runtime_error(error);
+            heat_.refreshView(cell,tr_);
+        }
+    }
     if(!tier_firings_.empty())++tier_firings_[0];
+}
+void SubsurfaceSolver::advanceRk2Heat(double seconds) {
+    if(!heat_.active()||!(seconds>0))return;
+    if(!std::isfinite(seconds))throw std::runtime_error("Nonfinite coupled thermal interval.");
+    heat_.prepare();
+    for(int i=0;i<state_.n_cells;++i)if(covers(i)) {
+        if(auto error=heat_.conduct(i,seconds,true);!error.empty())throw std::runtime_error(error);
+        heat_.refreshView(i,tr_);
+    }
 }
 void SubsurfaceSolver::fireGwCells(int tier, double dt, SurfaceStateData& surf, double time,
                                    double accepted_end) {
@@ -3142,11 +3191,31 @@ double SubsurfaceSolver::rawRecharge(int cell,const soil::Params& p,double lengt
 }
 
 std::string SubsurfaceSolver::rk2ProfileError() const {
-    if(!active() || options_.per_subcatch || heat_.active() ||
+    if(!active() || options_.per_subcatch ||
        !node_beds_.empty() || lid_receipts_enabled_ || runtime_sources_.active() ||
        std::any_of(source_owned_.begin(),source_owned_.end(),[](bool v){return v;}) ||
        std::any_of(state_.closure.begin(),state_.closure.end(),[](int8_t v){return v!=int8_t(GwClosure::CLOSED_FORM)&&v!=int8_t(GwClosure::ENSLAVED)&&v!=int8_t(GwClosure::SIGMA);}))
         return "Coupled RK2 requires spatial CLOSED_FORM/ENSLAVED/SIGMA cells without borrowed source, network or thermal owners.";
+    if(heat_.active()) {
+        if(!heat_.config||tr_.n_species!=1||tr_.temp_row!=0||tr_.age_row>=0||tr_.n_pollut||tr_.n_msx||
+           heat_.cells.size()!=std::size_t(state_.n_cells)||heat_.snow_owner||
+           heat_.top_series>=0||heat_.deep_series>=0||
+           heat_.config->options.surface_thermal_bc=="AIR"||heat_.config->options.surface_thermal_bc=="SURFACE_WATER"||
+           heat_.config->options.soil_et_heat!="SENSIBLE_ONLY"||
+           (opts_&&opts_->water_heat_capacity!=heat_.water_capacity))
+            return "Coupled RK2 porous heat currently requires temperature-only transport, constant boundaries and no borrowed heat owner.";
+        for(int i=0;i<state_.n_cells;++i)if(covers(i)) {
+            const auto& cell=heat_.cells[i];const auto& column=cell.column;const auto n=column.energy.size();
+            if(cell.surface_owned||cell.failed||!n||column.theta.size()!=n||column.capacity.size()!=n||
+               column.depth_edges.size()!=n+1||cell.saturated_water.size()!=n||cell.reserved_out_water.size()!=n)
+                return "Coupled RK2 porous thermal owner shape or status differs.";
+            for(double mass:cell.porewater.mass)if(mass!=0)
+                return "Coupled RK2 temperature-only porous heat cannot own a chemical porewater inventory.";
+            for(std::size_t j=0;j<n;++j)
+                if(!std::isfinite(column.energy[j])||!std::isfinite(heat_.activeCapacity(i,j))||!(heat_.activeCapacity(i,j)>0))
+                    return "Coupled RK2 porous energy or active capacity is inadmissible.";
+        }
+    }
     for(int i=0;i<state_.n_cells;++i)if(covers(i)&&state_.closure[i]==int8_t(GwClosure::ENSLAVED)) {
         const double equilibrium=soil::equilibriumStorage(paramsOf(i),state_.zs[i]-state_.hg[i]);
         if(!std::isfinite(state_.hu[i])||!std::isfinite(equilibrium)||
@@ -3306,6 +3375,34 @@ void SubsurfaceSolver::blendRk2Water(const SubsurfaceSolver& initial,double end)
         if(t.n_layers)t.refreshUnsat(species,i);
     for(std::size_t i=0;i<boundaries_.size();++i)for(auto member:{&GwResolvedBoundary::mass_in,&GwResolvedBoundary::mass_out,
         &GwResolvedBoundary::flux_in,&GwResolvedBoundary::flux_out})blend(boundaries_[i].*member,initial.boundaries_[i].*member);
+    if(heat_.active()) {
+        const auto scalar=[](double& now,double before) {
+            now=.5*before+.5*now;
+            if(!std::isfinite(now))throw std::runtime_error("Coupled RK2 thermal inventory or receipt is nonfinite.");
+        };
+        const auto values=[&](auto& now,const auto& before) {
+            if(now.size()!=before.size())throw std::runtime_error("Coupled RK2 thermal shape changed in a stage.");
+            for(std::size_t k=0;k<now.size();++k)scalar(now[k],before[k]);
+        };
+        for(auto member:{&SubsurfaceSolver::heat_link_out_volume_,&SubsurfaceSolver::heat_preset_out_j_,
+            &SubsurfaceSolver::heat_preset_out_water_,&SubsurfaceSolver::heat_node_out_volume_,
+            &SubsurfaceSolver::heat_node_gathered_out_,&SubsurfaceSolver::porewater_preset_out_,
+            &SubsurfaceSolver::heat_pending_left_,&SubsurfaceSolver::heat_pending_right_})values(this->*member,initial.*member);
+        for(int i=0;i<s.n_cells;++i)if(covers(i)) {
+            auto& cell=heat_.cells[i];const auto& before=initial.heat_.cells[i];
+            values(cell.column.energy,before.column.energy);values(cell.reserved_out_water,before.reserved_out_water);
+            for(auto member:{&GroundThermalCell::advective_j,&GroundThermalCell::source_j,&GroundThermalCell::surface_j,
+                &GroundThermalCell::deep_j,&GroundThermalCell::latent_j,&GroundThermalCell::lateral_j,
+                &GroundThermalCell::water_contact_j,&GroundThermalCell::channel_contact_j,&GroundThermalCell::lid_contact_j,
+                &GroundThermalCell::vertical_absolute_j})scalar(cell.*member,before.*member);
+            std::vector<double> moisture,saturated;
+            if(auto error=projectGroundMoisture(s,i,s.hg[i],cell.column.depth_edges,moisture,&saturated);!error.empty())throw std::runtime_error(error);
+            if(auto error=cell.column.setMoisture(moisture);!error.empty())throw std::runtime_error(error);
+            cell.saturated_water=std::move(saturated);
+            if(t.n_layers)if(auto error=refreshSigmaPorewater(i);!error.empty())throw std::runtime_error(error);
+            heat_.refreshView(i,t);
+        }
+    }
     pending_surface_.clear();std::fill(pending_flag_.begin(),pending_flag_.end(),0);
     for(int i=0;i<s.n_cells;++i)if(covers(i)) {
         if(!std::isfinite(s.hg[i]) || !std::isfinite(s.hu[i]) || !std::isfinite(s.xacc_to_surface[i]) ||

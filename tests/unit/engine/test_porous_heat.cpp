@@ -142,6 +142,83 @@ TEST(PorousHeat, MidpointRefusesInvalidOrExcessiveWorkWithoutPartialPublication)
     EXPECT_DOUBLE_EQ(stores[0].energy,1);EXPECT_DOUBLE_EQ(stores[1].energy,4);
     const auto empty=solveThermalContactsRk2({}, {}, {},1);EXPECT_TRUE(empty.error.empty());EXPECT_TRUE(empty.energy.empty());
 }
+TEST(PorousHeat, MovingWaterTangentMatchesIndependentSigmaAndAlignedBulkIntegrals) {
+    PorousHeatColumn column;ThermalMaterial material;
+    ASSERT_TRUE(column.initialize(2,{0,.5,1,1.5,2},material,{.2,.28,.36,.4},{1,2,3,4}).empty());
+    std::vector<double> actual;
+    ASSERT_EQ(projectGroundWaterIncrement(column,1.2,.03,{.12,.18},{.004,-.001},actual),"");
+    const std::vector<double> expected={1./600,-.010,-.009666666666666667,0};
+    for(int j=0;j<4;++j)EXPECT_NEAR(actual[j],expected[j],1e-12);
+    EXPECT_NEAR(sum(actual),2*(.004-.001-.4*.03),1e-12);
+    ASSERT_TRUE(column.initialize(2,{0,.6,1.2,2},material,{.25,.25,.4},{-3,-3,-3}).empty());
+    for(double sign:{-1.,1.}) {
+        ASSERT_EQ(projectGroundWaterIncrement(column,1.2,sign*.02,{.3},{sign*.006},actual),"");
+        EXPECT_NEAR(actual[0],sign*.001,1e-12);
+        EXPECT_NEAR(actual[1],sign*.001+(sign<0?.006:0),1e-12);
+        EXPECT_NEAR(actual[2],sign>0?-.006:0,1e-12);
+        EXPECT_NEAR(sum(actual),-sign*.004,1e-12);
+    }
+}
+TEST(PorousHeat, EulerThroughflowUsesBeginningDonorsAndPairedPhysicalJoules) {
+    PorousHeatColumn column;ThermalMaterial material;
+    ASSERT_TRUE(column.initialize(1,{0,.5,1},material,{.2,.4},{-2,4}).empty());
+    const auto before=column.energy;const double cp=material.water_heat_capacity,q=.01;
+    const auto out=advectPorousColumnEuler(column,{.2,.4},{0,0},{q,-q},{cp*q*3,0},{0,q},{-2,4});
+    ASSERT_TRUE(out.error.empty())<<out.error;
+    EXPECT_NEAR(column.energy[0]-before[0],cp*q*(3-(-2)),1e-7);
+    EXPECT_NEAR(column.energy[1]-before[1],cp*q*(-2-4),1e-7);
+    EXPECT_NEAR(out.vertical_j[0],cp*q*(-2),1e-7);
+    EXPECT_NEAR(out.withdrawn_j[1],cp*q*4,1e-7);
+    EXPECT_EQ(out.temperature,(std::vector<double>{-2,4}));
+    EXPECT_NEAR(sum(column.energy)-sum(before),out.external_j,1e-7);
+}
+TEST(PorousHeat, EulerThermalCascadeUnderHeunHasIndependentSecondOrderSolution) {
+    double previous=1;
+    for(double dt:{125.,62.5,31.25,15.625,7.8125}) {
+        PorousHeatColumn column;ThermalMaterial material;
+        ASSERT_TRUE(column.initialize(1,{0,.5,1},material,{.2,.4},{-2,-2}).empty());
+        const double cp=material.water_heat_capacity,q=.0001;
+        const double a=cp*q/column.capacity[0],b=cp*q/column.capacity[1];
+        double external=0;
+        for(int step=0;step<int(1000/dt);++step) {
+            const auto before=column.energy;double stage_receipt=0;
+            for(int stage=0;stage<2;++stage) {
+                const std::vector<double> temp={column.energy[0]/column.capacity[0],column.energy[1]/column.capacity[1]};
+                const auto out=advectPorousColumnEuler(column,{.2,.4},{0,0},{q*dt,-q*dt},{cp*q*dt*7,0},{0,q*dt},temp);
+                ASSERT_TRUE(out.error.empty())<<out.error;stage_receipt+=out.external_j;
+            }
+            for(int j=0;j<2;++j)column.energy[j]=.5*(before[j]+column.energy[j]);
+            external+=.5*stage_receipt;
+        }
+        const std::vector<double> exact={7-9*std::exp(-a*1000),7-9*(b*std::exp(-a*1000)-a*std::exp(-b*1000))/(b-a)};
+        double error=0;
+        for(int j=0;j<2;++j)error=std::max(error,std::abs(column.energy[j]/column.capacity[j]-exact[j])/9);
+        // Retain the coarse observation; the four fine steps qualify the
+        // frozen accuracy bound without relaxing its tolerance.
+        if(dt<=62.5)EXPECT_LT(error,1e-4);
+        if(dt<125)EXPECT_GT(previous/error,3.5);previous=error;
+        RecordProperty("cascade_error_"+std::to_string(int(dt*1000)),error);
+        EXPECT_NEAR(sum(column.energy)+2*sum(column.capacity),external,1e-7);
+    }
+}
+TEST(PorousHeat, EulerAndWaterTangentRefusalLeaveColumnAndOutputsUnchanged) {
+    PorousHeatColumn column;ThermalMaterial material;
+    ASSERT_TRUE(column.initialize(1,{0,.5,1},material,{.2,.4},{-2,4}).empty());
+    const auto energy=column.energy,theta=column.theta,capacity=column.capacity;
+    const double nan=std::numeric_limits<double>::quiet_NaN();
+    auto refuse=[&](const ThermalAdvection& out){EXPECT_FALSE(out.error.empty());EXPECT_TRUE(out.temperature.empty());EXPECT_TRUE(out.vertical_j.empty());EXPECT_EQ(column.energy,energy);EXPECT_EQ(column.theta,theta);EXPECT_EQ(column.capacity,capacity);};
+    refuse(advectPorousColumnEuler(column,{.2,.4},{0,0},{.1,0},{0,0},{0,0},{-2,4}));
+    refuse(advectPorousColumnEuler(column,{.2,.4},{0,0},{0,0},{0,0},{0,-1},{-2,4}));
+    refuse(advectPorousColumnEuler(column,{.2,.4},{0,0},{0,0},{0,nan},{0,0},{-2,4}));
+    refuse(advectPorousColumnEuler(column,{.2,.4},{0,0},{0,0},{0,0},{0,0},{nan,4}));
+    refuse(advectPorousColumnEuler(column,{.2,.5},{0,0},{0,0},{0,0},{0,0},{-2,4}));
+    refuse(advectPorousColumnEuler(column,{.2,.4},{0},{0,0},{0,0},{0,0},{-2,4}));
+    std::vector<double> output={17,18};
+    for(double length:{0.,-1.,2.,nan}){EXPECT_FALSE(projectGroundWaterIncrement(column,length,.01,{.1},{.001},output).empty());EXPECT_EQ(output,(std::vector<double>{17,18}));}
+    EXPECT_FALSE(projectGroundWaterIncrement(column,.5,.01,{.3},{.001},output).empty());
+    EXPECT_FALSE(projectGroundWaterIncrement(column,.5,.01,{.1},{nan},output).empty());
+    EXPECT_EQ(output,(std::vector<double>{17,18}));
+}
 TEST(PorousHeat, SlabSineModeRefinesAgainstAnalyticalDiffusion) {
     double previous=1;
     for(int n:{10,20,40}) {

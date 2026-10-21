@@ -167,8 +167,12 @@ equal/opposite cumulative joule receipts. Bounded subdivision preserves
 nonnegative conductive propagation weights for stiff graphs. Independent finite
 pair and Robin/power references demonstrate second-order time convergence;
 signed-temperature, stiff-contact and invalid-input tests cover conservation
-and atomic refusal. This primitive is not yet connected to the coupled porous
-RK2 route; the operational thermal owners above still use backward Euler.
+and atomic refusal. A restricted temperature-only porous CPU RK2 route now uses this primitive in
+symmetric half steps around shared water/energy transport. It requires surface
+`HEAT_MODEL TRANSPORT_ONLY`, sensible-only soil ET and constant thermal
+boundaries. The finite surface/channel/LID/snow owners above retain backward
+Euler. See the [groundwater RK2 profiles](groundwater-transport.md#temperature-only-porous-ssp-rk2)
+for activation, energy budgets, convergence and remaining restrictions.
 
 Balanced hyporheic recirculation adds no net water. It is eligible by default
 only on `channel:*` cells created by channel burning. A positive explicit

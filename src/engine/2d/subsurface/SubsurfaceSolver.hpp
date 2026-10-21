@@ -299,6 +299,7 @@ public:
     // One forward-Euler evaluation within the owned shared RK2 transaction.
     // Prescribed forcing is integrated without additional water substeps.
     void fireGwRk2Cells(double dt, SurfaceStateData&, double time);
+    void advanceRk2Heat(double seconds);
     void setSources(std::vector<GwResolvedSource> sources);
     /// Flush every pending accumulator into its owner. Mandatory before any
     /// re-tier or active-set change (the stranded-flux hazard).
@@ -566,6 +567,7 @@ private:
     void fireLayerSpecies(int i, const CellFlux& f);
     void reactPorewaterCell(int cell,double dt,double hg);
     void fireGroundHeatSpecies(int i,const CellFlux& f) noexcept;
+    std::string groundWaterIncrement(int cell,const CellFlux&,std::vector<double>&) const;
     void fireGroundPorewaterSpecies(int i,const CellFlux& f) noexcept;
     /// Gather this cell's lateral side accumulators (m³) and zero them.
     double gatherLateral(int i) noexcept;

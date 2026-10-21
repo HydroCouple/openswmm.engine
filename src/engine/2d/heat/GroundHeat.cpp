@@ -235,7 +235,7 @@ std::size_t GroundHeatState::boundaries(int i,double exposed,std::vector<Thermal
         bc.push_back({bottom,g(bottom,o.deep_depth/c.conductivity[bottom]),deep_now,0});
     return top_count;
 }
-std::string GroundHeatState::conduct(int i,double dt) {
+std::string GroundHeatState::conduct(int i,double dt,bool midpoint) {
     auto& cell=cells[i];auto& c=cell.column;const auto& o=config->options;
     if(c.energy.empty()||!o.conduction||cell.surface_owned)return {};
     if(o.surface_thermal_bc=="SURFACE_WATER")return "SURFACE_WATER thermal boundary requires a reciprocal mesh ground-column contact.";
@@ -244,7 +244,8 @@ std::string GroundHeatState::conduct(int i,double dt) {
     const int snow_boundary=appendSnowContact(i,c.area*snow_fraction,bc)?int(bc.size()-1):-1;
     auto stores=c.stores();
     for(std::size_t j=0;j<stores.size();++j)stores[j].capacity=activeCapacity(i,j);
-    auto solved=solveThermalContacts(stores,c.contacts(),bc,dt);
+    auto solved=midpoint?solveThermalContactsRk2(stores,c.contacts(),bc,dt):
+        solveThermalContacts(stores,c.contacts(),bc,dt);
     if(!solved.error.empty())return solved.error;
     for(std::size_t b=0;b<solved.boundary_j.size();++b) {
         const double receipt=solved.boundary_j[b];

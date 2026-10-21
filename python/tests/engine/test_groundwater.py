@@ -883,3 +883,55 @@ def test_reserved_temperature_spelling_does_not_make_a_chemical_row_signed(tmp_p
             solver.initialize()
     finally:
         cleanup(solver)
+
+
+@pytest.mark.parametrize('closure,layered', [('CLOSED_FORM', False), ('ENSLAVED', False), ('SIGMA', False), ('SIGMA', True)])
+@pytest.mark.parametrize('forcing', [None, 'well', 'edge', 'head', 'heat'])
+@pytest.mark.parametrize('specific_heat', [4184, 4186])
+def test_groundwater_rk2_porous_temperature_has_physical_energy_and_separate_grain_capacity(tmp_path, closure, layered, forcing, specific_heat):
+    from openswmm.engine import Solver, GroundHeatValue, GroundHeatLayerValue
+    text = _rk2_water_temperature_text(closure, layered, forcing=forcing).replace(
+        'THERMAL_MODEL WATER_ONLY', '''THERMAL_MODEL POROUS_EQUILIBRIUM
+THERMAL_LAYERS 3
+CONDUCTION YES
+LATERAL_CONDUCTION NO
+SOIL_ET_HEAT SENSIBLE_ONLY
+SURFACE_THERMAL_BC ADIABATIC
+DEEP_THERMAL_BC ADIABATIC
+DISPERSION NO''')
+    text = text.replace('HEAT_TRANSPORT YES', f'HEAT_TRANSPORT YES\nWATER_DENSITY 1000\nWATER_SPECIFIC_HEAT_CAPACITY {specific_heat}', 1)
+    cp = 1000*specific_heat
+    path = tmp_path / 'porous-rk2-temperature.inp'
+    path.write_text(text)
+    solver = Solver(path, path.with_suffix('.rpt'))
+    solver.open()
+    try:
+        solver.initialize()
+        solver.start(False)
+        heat = solver.heat
+        status = heat.ground_status()
+        assert status['initialized'] and status['conduction_active']
+        assert status['thermal_layers'] == 3
+        initial = sum(heat.ground_values(GroundHeatValue.ENERGY, 0, 2)) + cp*solver.surface2d.species_ledger('__TEMPERATURE__')['storage']
+        while solver.step().total_seconds() > 0:
+            pass
+        assert np.max(np.abs(heat.ground_values(GroundHeatValue.NORMALIZED_RESIDUAL, 0, 2))) < 1e-10
+        assert np.all(np.asarray(heat.ground_values(GroundHeatValue.CAPACITY, 0, 2)) > 0)
+        temperature = np.asarray(heat.ground_values(GroundHeatValue.TEMPERATURE, 0, 2))
+        assert np.all(np.isfinite(temperature))
+        assert np.all(temperature >= -8-1e-4)
+        assert np.all(temperature <= -2+1e-4)
+        for cell in range(2):
+            layer_temperature = np.asarray(heat.ground_layers(cell, GroundHeatLayerValue.TEMPERATURE, 0, 3))
+            assert layer_temperature.shape == (3,) and np.all(np.isfinite(layer_temperature))
+        if forcing == 'heat':
+            # Local edge 0 of the shared triangle is its 10 m by 10 m diagonal.
+            expected = -100*np.hypot(10, 10)*2
+            assert sum(heat.ground_values(GroundHeatValue.SOURCE_ENERGY, 0, 2)) == pytest.approx(expected, abs=1e-6)
+            final = sum(heat.ground_values(GroundHeatValue.ENERGY, 0, 2)) + cp*solver.surface2d.species_ledger('__TEMPERATURE__')['storage']
+            assert final-initial == pytest.approx(expected, abs=1e-10*max(abs(initial), 1))
+            boundary = solver.surface2d.groundwater.authored_boundary_receipt(0)
+            assert boundary['accepted_in'] == boundary['accepted_out'] == 0
+        solver.end()
+    finally:
+        cleanup(solver)

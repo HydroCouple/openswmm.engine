@@ -253,6 +253,80 @@ ThermalAdvection advectPorousColumn(PorousHeatColumn& column,const std::vector<d
     out.temperature=std::move(temperature);
     column=std::move(next);return out;
 }
+ThermalAdvection advectPorousColumnEuler(PorousHeatColumn& column,const std::vector<double>& moisture,
+    const std::vector<double>& change,const std::vector<double>& external_water,
+    const std::vector<double>& external_j,const std::vector<double>& withdrawal,
+    const std::vector<double>& temperature) {
+    const auto refused=[](const char* message){ThermalAdvection out;out.error=message;return out;};
+    const auto n=column.theta.size();
+    if(!n||column.energy.size()!=n||moisture.size()!=n||change.size()!=n||external_water.size()!=n||external_j.size()!=n||
+       temperature.size()!=n||(!withdrawal.empty()&&withdrawal.size()!=n))
+        return refused("Thermal Euler layer shapes differ.");
+    if(auto error=column.material.validate();!error.empty())return refused(error.c_str());
+    auto next=column;
+    if(auto error=next.setMoisture(moisture);!error.empty())return refused(error.c_str());
+    std::vector<double> water(n+1,0);double scale=0;
+    for(std::size_t j=0;j<n;++j) {
+        if(!std::isfinite(change[j])||!std::isfinite(external_water[j])||!std::isfinite(external_j[j])||
+           !std::isfinite(temperature[j])||(!withdrawal.empty()&&(!std::isfinite(withdrawal[j])||withdrawal[j]<0)))
+            return refused("Invalid physical thermal Euler receipt or donor.");
+        water[j+1]=water[j]+external_water[j]-change[j];
+        scale+=std::abs(external_water[j])+std::abs(change[j]);
+        if(!std::isfinite(water[j+1])||!std::isfinite(scale))return refused("Thermal Euler water receipt overflow.");
+    }
+    if(std::abs(water.back())>1e-10*scale+1e-12)
+        return refused("Thermal Euler water increments do not close the accepted physical balance.");
+    ThermalAdvection out;out.temperature=temperature;out.water_residual=water.back();out.withdrawn_j.resize(n);
+    const double cp=column.material.water_heat_capacity;
+    for(std::size_t j=0;j<n;++j) {
+        out.withdrawn_j[j]=withdrawal.empty()?0:cp*withdrawal[j]*temperature[j];
+        next.energy[j]+=external_j[j]-out.withdrawn_j[j];out.external_j+=external_j[j]-out.withdrawn_j[j];
+    }
+    for(std::size_t j=1;j<n;++j) {
+        const double joules=cp*water[j]*(water[j]>=0?temperature[j-1]:temperature[j]);
+        if(!std::isfinite(joules))return refused("Thermal Euler internal energy receipt overflow.");
+        next.energy[j-1]-=joules;next.energy[j]+=joules;
+        out.vertical_water.push_back(water[j]);out.vertical_j.push_back(joules);
+    }
+    if(!std::isfinite(out.external_j))return refused("Thermal Euler external energy receipt overflow.");
+    for(std::size_t j=0;j<n;++j)if(!std::isfinite(next.energy[j])||!std::isfinite(next.energy[j]/next.capacity[j]))
+        return refused("Nonfinite thermal Euler energy or temperature.");
+    column=std::move(next);return out;
+}
+std::string projectGroundWaterIncrement(const PorousHeatColumn& column,double length,double delta_length,
+    const std::vector<double>& old_water,const std::vector<double>& delta_water,std::vector<double>& output) {
+    const auto m=old_water.size(),n=column.theta.size();const auto& edges=column.depth_edges;
+    if(!m||!n||delta_water.size()!=m||edges.size()!=n+1||!(column.area>0)||!std::isfinite(column.area)||
+       !(length>0)||!std::isfinite(length)||!std::isfinite(delta_length)||length>edges.back()||
+       !std::isfinite(column.material.porosity)||column.material.porosity<0||column.material.porosity>=1)
+        return "Invalid moving-column thermal projection geometry.";
+    const double dz=length/m,phi=column.material.porosity;
+    std::vector<double> theta(m),increment(m),next(n,0);
+    for(std::size_t k=0;k<m;++k) {
+        theta[k]=old_water[k]/dz;
+        if(!std::isfinite(theta[k])||theta[k]<-1e-12||theta[k]>phi+1e-12)
+            return "Invalid moving-column thermal water increment.";
+        theta[k]=std::clamp(theta[k],0.,phi); // derived view, as in moisture projection
+        increment[k]=(delta_water[k]-theta[k]*delta_length/m)/dz;
+        if(!std::isfinite(increment[k]))return "Nonfinite moving-column thermal water increment.";
+    }
+    for(std::size_t j=0;j<n;++j) {
+        if(!(edges[j+1]>edges[j])||!std::isfinite(edges[j+1])||edges.front()!=0)
+            return "Thermal projection depth edges must increase from zero.";
+        for(std::size_t k=0;k<m;++k) {
+            const double overlap=std::max(0.,std::min(edges[j+1],dz*(k+1))-std::max(edges[j],dz*k));
+            next[j]+=column.area*overlap*increment[k];
+        }
+        for(std::size_t k=1;k<=m;++k) {
+            const double z=dz*k,movement=delta_length*(double(k)/m);
+            const bool contains=(z>edges[j]&&z<edges[j+1])||
+                (z==edges[j]&&movement>0)||(z==edges[j+1]&&movement<0);
+            if(contains)next[j]+=column.area*(theta[k-1]-(k<m?theta[k]:phi))*movement;
+        }
+        if(!std::isfinite(next[j]))return "Moving-column thermal water projection overflow.";
+    }
+    output=std::move(next);return {};
+}
 std::string projectGroundMoisture(const SubsurfaceState& s,int i,double hg,const std::vector<double>& edges,
     std::vector<double>& output,std::vector<double>* saturated_water) {
     if(i<0||i>=s.n_cells||edges.size()<2)return "Invalid fixed-grid groundwater projection target.";
