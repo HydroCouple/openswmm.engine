@@ -102,6 +102,60 @@ ThermalSolution solveThermalContacts(const std::vector<ThermalStore>& stores,
     }
     out.energy=std::move(energy);out.temperature=std::move(x);return out;
 }
+ThermalSolution solveThermalContactsRk2(const std::vector<ThermalStore>& stores,
+    const std::vector<ThermalContact>& contacts,const std::vector<ThermalBoundary>& boundaries,double dt) {
+    const auto refused=[](const char* message){ThermalSolution result;result.error=message;return result;};
+    if(!(dt>0)||!std::isfinite(dt))return refused("Thermal step must be finite and positive.");
+    std::vector<long double> rate(stores.size(),0);
+    for(const auto& store:stores)
+        if(!(store.capacity>0)||!std::isfinite(store.capacity)||!std::isfinite(store.energy)||
+           !std::isfinite(store.energy/store.capacity))
+            return refused("Thermal stores require finite temperature and energy and positive capacity.");
+    for(const auto& c:contacts) {
+        if(c.a<0||c.b<0||std::size_t(c.a)>=stores.size()||std::size_t(c.b)>=stores.size()||
+           c.a==c.b||c.conductance<0||!std::isfinite(c.conductance))
+            return refused("Invalid reciprocal thermal contact or conductance.");
+        rate[c.a]+=c.conductance;rate[c.b]+=c.conductance;
+    }
+    for(const auto& b:boundaries) {
+        if(b.store<0||std::size_t(b.store)>=stores.size()||b.conductance<0||
+           !std::isfinite(b.conductance)||!std::isfinite(b.temperature)||!std::isfinite(b.power))
+            return refused("Invalid thermal boundary.");
+        rate[b.store]+=b.conductance;
+    }
+    long double divisions=1;
+    for(std::size_t i=0;i<stores.size();++i)
+        divisions=std::max(divisions,std::ceil(static_cast<long double>(dt)*rate[i]/(2.L*stores[i].capacity)));
+    if(!std::isfinite(divisions)||divisions>65536)
+        return refused("Thermal midpoint subdivision limit exceeded; reduce the step.");
+    const int steps=int(divisions);const double half=.5*(dt/steps);
+    if(!(half>0))return refused("Thermal midpoint interval is below the representable step.");
+    auto current=stores;ThermalSolution out;
+    out.contact_j.assign(contacts.size(),0);out.boundary_j.assign(boundaries.size(),0);
+    for(int step=0;step<steps;++step) {
+        const auto middle=solveThermalContacts(current,contacts,boundaries,half);
+        if(!middle.error.empty())return refused(middle.error.c_str());
+        // (C + h L/2) Tmid = Eold + h forcing/2. Twice the
+        // midpoint receipts give the Crank-Nicolson energy update. When
+        // h*sum(G)/(2*C)<=1, both propagation factors are nonnegative.
+        for(std::size_t k=0;k<contacts.size();++k) {
+            const double joules=2*middle.contact_j[k];const auto& c=contacts[k];
+            current[c.a].energy-=joules;current[c.b].energy+=joules;out.contact_j[k]+=joules;
+            if(!std::isfinite(joules)||!std::isfinite(out.contact_j[k]))return refused("Nonfinite thermal contact receipt.");
+        }
+        for(std::size_t k=0;k<boundaries.size();++k) {
+            const double joules=2*middle.boundary_j[k];
+            current[boundaries[k].store].energy+=joules;out.boundary_j[k]+=joules;
+            if(!std::isfinite(joules)||!std::isfinite(out.boundary_j[k]))return refused("Nonfinite thermal boundary receipt.");
+        }
+        for(const auto& store:current)if(!std::isfinite(store.energy)||!std::isfinite(store.energy/store.capacity))
+            return refused("Nonfinite thermal midpoint solution.");
+        out.iterations+=middle.iterations;
+        out.algebraic_residual=std::max(out.algebraic_residual,2*middle.algebraic_residual);
+    }
+    for(const auto& store:current){out.energy.push_back(store.energy);out.temperature.push_back(store.energy/store.capacity);}
+    return out;
+}
 std::string PorousHeatColumn::initialize(double a,const std::vector<double>& edges,
     const ThermalMaterial& m,const std::vector<double>& water,const std::vector<double>& temperatures) {
     if(auto error=m.validate();!error.empty())return error;

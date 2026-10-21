@@ -30,6 +30,11 @@ struct ThermalSolution {
 // are never modified, including on numerical refusal.
 ThermalSolution solveThermalContacts(const std::vector<ThermalStore>&,
     const std::vector<ThermalContact>&,const std::vector<ThermalBoundary>&,double seconds);
+// Implicit midpoint with conservative receipts and bounded monotone
+// subdivision for stiff contact graphs. Boundary data is held for seconds.
+// This does not advance moisture, advection or a borrowed thermal owner.
+ThermalSolution solveThermalContactsRk2(const std::vector<ThermalStore>&,
+    const std::vector<ThermalContact>&,const std::vector<ThermalBoundary>&,double seconds);
 
 struct PorousHeatColumn {
     ThermalMaterial material;

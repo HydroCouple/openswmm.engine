@@ -8,6 +8,7 @@
 #include <array>
 #include <cmath>
 #include <numeric>
+#include <limits>
 using namespace openswmm::twoD;
 namespace {
 constexpr double pi=3.14159265358979323846;
@@ -62,6 +63,84 @@ TEST(PorousHeat, UniformDryInsulatedColumnAndArbitraryContactGraphDoNotDrift) {
         c.energy=r.energy;
     }
     EXPECT_NEAR(sum(c.energy),sum(original),1e-6);
+}
+TEST(PorousHeat, MidpointFinitePairHasSecondOrderDecayAndReciprocalReceipts) {
+    double previous=1;
+    for(int steps:{8,16,32,64}) {
+        std::vector<ThermalStore> stores={{2000,-2000},{3000,60000}};
+        for(int k=0;k<steps;++k) {
+            const auto out=solveThermalContactsRk2(stores,{{0,1,1}},{},600./steps);
+            ASSERT_TRUE(out.error.empty())<<out.error;
+            EXPECT_NEAR(sum(out.energy),58000,1e-7);
+            EXPECT_NEAR(out.energy[0]-stores[0].energy,-out.contact_j[0],1e-7);
+            EXPECT_NEAR(out.energy[1]-stores[1].energy,out.contact_j[0],1e-7);
+            for(int i=0;i<2;++i)stores[i].energy=out.energy[i];
+        }
+        const double exact=11.6-.6*21*std::exp(-.5);
+        const double error=std::abs(stores[0].energy/stores[0].capacity-exact)/21;
+        EXPECT_LT(error,1e-4);
+        if(steps>8)EXPECT_GT(previous/error,3.5);
+        RecordProperty("pair_error_"+std::to_string(steps),error);previous=error;
+    }
+}
+TEST(PorousHeat, MidpointRobinAndPowerBoundaryHaveIndependentSecondOrderSolution) {
+    double previous=1;
+    for(int steps:{8,16,32,64}) {
+        std::vector<ThermalStore> stores={{2000,20000}};double receipt=0;
+        for(int k=0;k<steps;++k) {
+            // T' = (-7-T+3)/2000; T(0)=10, T(infinity)=-4.
+            const auto out=solveThermalContactsRk2(stores,{},{{0,1,-7,3}},600./steps);
+            ASSERT_TRUE(out.error.empty())<<out.error;
+            receipt+=out.boundary_j[0];stores[0].energy=out.energy[0];
+        }
+        EXPECT_NEAR(stores[0].energy-20000,receipt,1e-7);
+        const double error=std::abs(stores[0].energy/2000-(-4+14*std::exp(-.3)))/14;
+        EXPECT_LT(error,1e-4);
+        if(steps>8)EXPECT_GT(previous/error,3.5);
+        RecordProperty("robin_error_"+std::to_string(steps),error);previous=error;
+    }
+}
+TEST(PorousHeat, MidpointStiffContactsSubdivideWithoutOvershootOrEnergyCreation) {
+    const std::vector<ThermalStore> stores={{2,-8},{3,18}};
+    const auto out=solveThermalContactsRk2(stores,{{0,1,100}},{},20);
+    ASSERT_TRUE(out.error.empty())<<out.error;
+    for(double t:out.temperature){EXPECT_GE(t,-4);EXPECT_LE(t,6);EXPECT_NEAR(t,2,1e-11);}
+    EXPECT_NEAR(sum(out.energy),10,1e-7);
+    EXPECT_NEAR(out.energy[0]+8,-out.contact_j[0],1e-7);
+    EXPECT_NEAR(out.energy[1]-18,out.contact_j[0],1e-7);
+    EXPECT_GT(out.iterations,1);
+}
+TEST(PorousHeat, MidpointArbitraryColdGraphRetainsUniformFieldAndPhysicalBoundaryBudget) {
+    const std::vector<ThermalStore> stores={{1000,-7000},{2000,-14000},{4000,-28000},{3000,-21000}};
+    const std::vector<ThermalContact> contacts={{0,1,20},{0,3,5},{1,2,17},{2,3,30},{1,3,2}};
+    const auto uniform=solveThermalContactsRk2(stores,contacts,{},2000);
+    ASSERT_TRUE(uniform.error.empty())<<uniform.error;
+    for(double t:uniform.temperature)EXPECT_NEAR(t,-7,1e-11);
+    EXPECT_NEAR(sum(uniform.energy),-70000,1e-7);
+    const auto forced=solveThermalContactsRk2(stores,contacts,{{0,3,12,0},{3,0,0,-4}},500);
+    ASSERT_TRUE(forced.error.empty())<<forced.error;
+    EXPECT_NEAR(sum(forced.energy)+70000,sum(forced.boundary_j),1e-7);
+    EXPECT_NEAR(forced.boundary_j[1],-2000,1e-7);
+    auto energy=std::vector<double>{-7000,-14000,-28000,-21000};
+    for(std::size_t k=0;k<contacts.size();++k){energy[contacts[k].a]-=forced.contact_j[k];energy[contacts[k].b]+=forced.contact_j[k];}
+    energy[0]+=forced.boundary_j[0];energy[3]+=forced.boundary_j[1];
+    for(int i=0;i<4;++i)EXPECT_NEAR(energy[i],forced.energy[i],1e-7);
+}
+TEST(PorousHeat, MidpointRefusesInvalidOrExcessiveWorkWithoutPartialPublication) {
+    const double nan=std::numeric_limits<double>::quiet_NaN(),inf=std::numeric_limits<double>::infinity();
+    const auto refused=[](const ThermalSolution& out){EXPECT_FALSE(out.error.empty());EXPECT_TRUE(out.energy.empty());EXPECT_TRUE(out.temperature.empty());EXPECT_TRUE(out.contact_j.empty());EXPECT_TRUE(out.boundary_j.empty());};
+    for(double dt:{0.,-1.,nan,inf})refused(solveThermalContactsRk2({{1,1}},{},{},dt));
+    for(double cap:{0.,-1.,nan,inf})refused(solveThermalContactsRk2({{cap,1}},{},{},1));
+    for(double energy:{nan,inf})refused(solveThermalContactsRk2({{1,energy}},{},{},1));
+    for(const auto& c:std::vector<ThermalContact>{{0,2,1},{-1,1,1},{0,0,1},{0,1,-1},{0,1,nan},{0,1,inf}})
+        refused(solveThermalContactsRk2({{1,1},{1,2}},{c},{},1));
+    for(const auto& b:std::vector<ThermalBoundary>{{-1,1,0,0},{1,1,0,0},{0,-1,0,0},{0,nan,0,0},{0,1,nan,0},{0,1,0,inf}})
+        refused(solveThermalContactsRk2({{1,1}},{},{b},1));
+    const std::vector<ThermalStore> stores={{1,1},{2,4}};
+    refused(solveThermalContactsRk2(stores,{{0,1,1e9}},{},1));
+    refused(solveThermalContactsRk2(stores,{},{{0,0,0,1e308}},100));
+    EXPECT_DOUBLE_EQ(stores[0].energy,1);EXPECT_DOUBLE_EQ(stores[1].energy,4);
+    const auto empty=solveThermalContactsRk2({}, {}, {},1);EXPECT_TRUE(empty.error.empty());EXPECT_TRUE(empty.energy.empty());
 }
 TEST(PorousHeat, SlabSineModeRefinesAgainstAnalyticalDiffusion) {
     double previous=1;

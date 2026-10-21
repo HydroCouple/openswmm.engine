@@ -162,6 +162,14 @@ AIR uses `SURFACE_THERMAL_RESISTANCE`; fixed/series temperatures, flux/flux-seri
 adiabatic and geothermal boundaries use the existing project series system.
 Missing temperature-series coverage is a runtime error.
 
+The internal contact library also provides an implicit-midpoint operator with
+equal/opposite cumulative joule receipts. Bounded subdivision preserves
+nonnegative conductive propagation weights for stiff graphs. Independent finite
+pair and Robin/power references demonstrate second-order time convergence;
+signed-temperature, stiff-contact and invalid-input tests cover conservation
+and atomic refusal. This primitive is not yet connected to the coupled porous
+RK2 route; the operational thermal owners above still use backward Euler.
+
 Balanced hyporheic recirculation adds no net water. It is eligible by default
 only on `channel:*` cells created by channel burning. A positive explicit
 `HYPORHEIC_VELOCITY` at `MESH_TAG` or `CELL2D` scope opts other cells in. A
