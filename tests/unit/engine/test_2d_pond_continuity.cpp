@@ -93,20 +93,19 @@ TEST(PondModel, RelaxationConservesVolumeAndConverges) {
     EXPECT_NEAR(a, target, 1e-6 * target);
 }
 
-// Held for the window, the capped exchange never carries the two heads past
-// each other: a 1D chamber of A1 and a 2D cell of A2 end no further apart in
-// sign than they started.
-TEST(PondModel, EqualisationCapNeverInvertsTheHeadDifference) {
+// Held for the window, the capped exchange never carries the 1D head past
+// the 2D head: over the window the 1D side moves at most |Δh| — exactly |Δh|
+// when the law is stronger than the cap. (The 2D cell is live: the law
+// re-reads its head every substep.)
+TEST(PondModel, EqualisationCapNeverCarriesThe1DHeadPastThe2D) {
     for (double a1 : {1.13, 10.0, 300.0})
-        for (double a2 : {0.5, 1.0, 50.0})
-            for (double dh : {-0.4, -0.01, 0.003, 0.2}) {
-                const double T = 6.0;
-                const double q = std::copysign(1e9, dh);          // a law far stronger than the cap
-                const double cap = equalizeCap(dh, T, a1, a2);
-                const double qc = std::copysign(std::min(std::fabs(q), cap), q);
-                const double h2 = dh - qc * T / a2, h1 = qc * T / a1;   // 2D loses, 1D gains
-                EXPECT_GE((h2 - h1) * dh, -1e-12) << "a1 " << a1 << " a2 " << a2 << " dh " << dh;
-                EXPECT_NEAR(h2 - h1, 0.0, 1e-9) << "an unbounded law equalises exactly";
-            }
-    EXPECT_EQ(equalizeCap(0.1, 0.0, 1.0, 1.0), HUGE_VAL);
+        for (double dh : {-0.4, -0.01, 0.003, 0.2}) {
+            const double T = 6.0;
+            const double q = std::copysign(1e9, dh);          // a law far stronger than the cap
+            const double cap = equalizeCap(dh, T, a1);
+            const double qc = std::copysign(std::min(std::fabs(q), cap), q);
+            EXPECT_NEAR(qc * T / a1, dh, 1e-12 * std::fabs(dh)) << "a1 " << a1 << " dh " << dh;
+        }
+    EXPECT_EQ(equalizeCap(0.1, 0.0, 1.0), HUGE_VAL);
+    EXPECT_EQ(equalizeCap(0.1, 1.0, 0.0), HUGE_VAL);
 }

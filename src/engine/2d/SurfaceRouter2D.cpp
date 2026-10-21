@@ -723,8 +723,11 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             // lateral inflows, large node continuity "errors", and 2D solver
             // grind at the coupling stencils). Skipped when no conduit area is
             // resolved yet (a_max == 0) — the guard, not the warning, is load-
-            // bearing.
-            if (a_pipe_max > 0.0 && cp.area > 10.0 * a_pipe_max) {
+            // bearing. A WEIR_ORIFICE point is sized by its physical structure
+            // (a manhole is routinely 10–16× its pipe's area), not by this
+            // map-row AREA, so the heuristic does not apply to it.
+            if (cp.law == static_cast<int8_t>(CouplingLaw2D::ORIFICE) &&
+                a_pipe_max > 0.0 && cp.area > 10.0 * a_pipe_max) {
                 char abuf[320];
                 std::snprintf(abuf, sizeof(abuf),
                     "WARNING: 2D-coupled node '%s' has exchange AREA %.3f m² — "

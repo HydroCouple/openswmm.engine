@@ -30,3 +30,19 @@ with these coefficients reproduce none of the 36 measured rows within `ξ_f + 2 
 resulting terms and checks the slope against Table 3 (±0.01) and R² ≥ 0.96 — a check
 that the law's regime structure reproduces the paper's equation terms. Absolute
 `Q` comparisons are written for review only.
+
+`tests/unit/engine/test_2d_exchange_rubinato_model.cpp` rebuilds the flume in the full
+engine (manhole `[2D_NODE_COUPLING] MANHOLE D=0.24 COEFFS=RUBINATO2017`, weir/orifice
+law, structure-area wet-mean head, chamber pond) and runs every Table 2 row to steady
+state. The paper does not tabulate inflows, so each row's boundary conditions are
+reconstructed from the row itself: surface inflow `Q1 = Fr_s √(g h_s) h_s W`, sewer
+inflow from `Re_p` (S2–S4; in S1 `Re_p` equals `Q_e`, i.e. no sewer inflow), and the
+measured `h_p` imposed at the manhole by a fixed outfall stage behind a short wide
+pipe. The manhole sits at the flume centre and the mesh is a uniform 0.2 m grid: a
+junction exchanges through one cell, and cells far smaller than the 0.045 m² opening
+concentrate the whole exchange in a sliver. Results (`model_vs_table2.csv`, report
+only): S1 free weir ≈ 1.04–1.09 × `Q_e` (the legacy orifice law ≈ 1.8 ×), S3/S4
+sewer→surface ≈ 1.6–2.5 × — the zero-intercept over-prediction the Table 3
+intercepts imply — and S2 at the crest 0.5–3 ×. The test gates only the exchange
+direction and order of magnitude, plus a regression that the paper's own 0.0125 m
+mesh is not choked by the head-equalisation cap.

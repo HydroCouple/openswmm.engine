@@ -1147,7 +1147,7 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                                    : devWetRamp(depth_1d_avail, dry);
                     if (cp_eq(kk) && eq_window > 0.0) {   // COUPLING_EQUALIZE
                         const double cap = openswmm::twoD::pond::equalizeCap(
-                            h_2d - h_1d, eq_window, npa(ni), area(ci));
+                            h_2d - h_1d, eq_window, npa(ni));
                         Q = (Q > cap) ? cap : ((Q < -cap) ? -cap : Q);
                     }
                     if (Q == 0.0) continue;

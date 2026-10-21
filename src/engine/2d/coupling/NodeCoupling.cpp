@@ -253,14 +253,14 @@ double computeNodeCouplingQ(const CouplingPoint& cp,
     // trend slope × time-in-batch, in the 2D metre frame.
     const double h_1d = nodes.head[ni] * opts.len_1d_to_2d + h1d_offset_m;
 
-    // COUPLING_EQUALIZE: no single coupling window may carry the two heads
-    // past each other (the 1D head is held for the window; the 2D cell
-    // responds live). The cap's derivative never enters G.
+    // COUPLING_EQUALIZE: no single coupling window may carry the 1D head (held
+    // for the window) past the 2D head (live). The cap's derivative never
+    // enters G.
     auto equalized = [&](double q) {
         if (!cp.equalize || !state.node_pond_area_m2 || !(state.coupling_window_s > 0.0))
             return q;
         const double cap = pond::equalizeCap(h_2d - h_1d, state.coupling_window_s,
-                                             (*state.node_pond_area_m2)[ni], mesh.tri_area[ci]);
+                                             (*state.node_pond_area_m2)[ni]);
         return std::clamp(q, -cap, cap);
     };
 

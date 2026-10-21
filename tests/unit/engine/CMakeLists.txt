@@ -549,6 +549,10 @@ if(OPENSWMM_BUILD_2D)
     add_gtest_unit(test_engine_2d_exchange_law test_2d_exchange_law.cpp)
     add_gtest_unit(test_engine_2d_exchange_rubinato_steady
                    test_2d_exchange_rubinato_steady.cpp)
+    # Table 2 rows in the full engine (flume rebuilt from rig_geometry.yaml);
+    # report-only agreement, writes ./rubinato2017_model_out/.
+    add_gtest_unit(test_engine_2d_exchange_rubinato_model
+                   test_2d_exchange_rubinato_model.cpp)
     add_gtest_unit(test_engine_2d_weir_orifice_coupling
                    test_2d_weir_orifice_coupling.cpp)
     # Coupled-junction ponds (COUPLING_POND_MODE / RIM_BAND) and the

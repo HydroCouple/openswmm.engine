@@ -73,13 +73,18 @@ OPENSWMM_POND_HD double depthForVolume(double v, double a_eq, double band) {
     return t * band;
 }
 
-/// Head-equalisation cap on one exchange held for a window T over which the
-/// 1D head is frozen: moving more than |Δh|·(1/A1 + 1/A2)⁻¹ in the window
-/// would carry the heads past each other (the generalised Rubinato Eq. 10
-/// limiter). Returns the largest admissible |Q|; +∞ when an area is unknown.
-OPENSWMM_POND_HD double equalizeCap(double dh, double window, double a1, double a2) {
-    if (!(window > 0.0) || !(a1 > 0.0) || !(a2 > 0.0)) return HUGE_VAL;
-    return std::fabs(dh) / (window * (1.0 / a1 + 1.0 / a2));
+/// Head-equalisation cap on one exchange (the generalised Rubinato Eq. 10
+/// limiter). The 1D head is frozen for the coupling window T while the 2D
+/// cell is re-evaluated every substep against its live head, so the only
+/// head an exchange can carry past the other within the window is the 1D
+/// node's: |Q| ≤ |Δh|·A1/T. (The first form also charged the coupling cell
+/// for the whole window, |Δh|/(T(1/A1 + 1/A2)); that scaled the cap with the
+/// cell's area and choked the exchange wherever cells are smaller than the
+/// structure, while the drain/spill churn it removes is the 1D side's.)
+/// Returns the largest admissible |Q|; +∞ when the area or window is unknown.
+OPENSWMM_POND_HD double equalizeCap(double dh, double window, double a1) {
+    if (!(window > 0.0) || !(a1 > 0.0)) return HUGE_VAL;
+    return std::fabs(dh) * a1 / window;
 }
 
 } // namespace openswmm::twoD::pond
