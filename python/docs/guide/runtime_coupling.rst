@@ -45,7 +45,7 @@ Sensible exported heat remains separate. Thermal inadmissibility requests bounde
 whole-interval retries; exhaustion refuses atomically without clipping temperature.
 Managed standalone RK2 checkpoint sessions additionally own the engine calendar,
 native in-memory weather, pending coupling batches and copied prescriptions.
-Numerical-only (``0``) and mesh-HDF5 (``2``) output modes qualify, including
+Numerical (``0``), binary (``1``), mesh-HDF5 (``2``) and combined (``3``) modes qualify, including
 matching chemistry/age and the supported thermal owners. Restore into a fresh
 session with no existing runtime prescriptions. Active and cleared surface
 boundary histories are included. Earlier managed RK2 router snapshots without
@@ -54,11 +54,14 @@ attributes and schema continue exactly; file allocation addresses may differ.
 Water-only networks without shared exchanges additionally use the existing
 hydraulic checkpoint owner alongside RK2 mesh/aquifer state. Node/link stores
 and native calendars resume together. Network quality and shared
-network/catchment owners, source journals, binary/combined output and external
+network/catchment owners, source journals and external
 provider programs remain outside this managed profile. Immutable hourly
 ``MET_FILE`` caches qualify: initialize both sessions with identical weather
 rows; every cached value is bound, including future hours. Later file removal
 or edits cannot change an initialized session. Native weather cadence is retained.
+Binary output retains the native 1D/system format. Select combined output
+for both native binary and mesh/GW chemical or thermal histories. Both writer
+prefixes and physical state validate before restore publishes any output.
 See the engine groundwater transport profile for activation and thermal limits.
 
 Direct sources

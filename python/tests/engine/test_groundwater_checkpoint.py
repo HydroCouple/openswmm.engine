@@ -68,7 +68,7 @@ CELL 1 EDGE 1 {boundary} SERIES EDGE
     initial_heat = '[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ 8\n* UNSAT __TEMPERATURE__ 8\n' if porous else ''
     variables = 'DEPTH HEAT GROUNDWATER' if porous else 'DEPTH GROUNDWATER'
     mesh_output = (f'REPORT_2D YES\nOUTPUT_FILE "{directory / "mesh.h5"}"\n'
-                   f'OUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES {variables}\n') if output else 'REPORT_2D NO\n'
+                   f'OUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES {variables}\n') if output in (2, 3) else 'REPORT_2D NO\n'
     path.write_text(f'''[OPTIONS]
 FLOW_UNITS CMS
 FLOW_ROUTING DYNWAVE
@@ -162,13 +162,13 @@ SurfaceEdge 02/01/2026 00:01:30 {values[3]}
     if met:
         (directory / 'weather.met').write_text('01/31/2026 23:00 4 40 1 200 300\n02/01/2026 00:00 9 75 3 800 375\n02/01/2026 01:00 -2 60 2 100 290\n')
         path.write_text(path.read_text()+'\n[TEMPERATURE]\nMET_FILE weather.met\n[OPTIONS]\nWET_STEP 00:00:01\nDRY_STEP 00:00:01\n')
-    solver = Solver(path, path.with_suffix('.rpt'))
+    solver = Solver(path, path.with_suffix('.rpt'), path.with_suffix('.out') if output in (1, 3) else None)
     solver.create()
     capabilities = solver.checkpoints.capabilities
     if not capabilities & (1 << 4):  # SWMM_CHECKPOINT_SURFACE_PROFILE
         cleanup(solver)
         pytest.skip('Mesh checkpoint support is omitted from this build')
-    if output and not capabilities & (1 << 6):  # HDF5-backed SWMM_CHECKPOINT_FILE_PROFILE
+    if output in (2, 3) and not capabilities & (1 << 6):  # HDF5-backed SWMM_CHECKPOINT_FILE_PROFILE
         cleanup(solver)
         pytest.skip('Mesh HDF5 checkpoint support is omitted from this build')
     solver.open()
@@ -350,7 +350,9 @@ def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, a
                 assert abs(gw.species_ledger(row, GroundwaterSpeciesLedger.RESIDUAL)) < 1e-8
         source.end()
         target.end()
-        if output:
+        if output in (1, 3):
+            assert (tmp_path / 'source/model.out').read_bytes() == (tmp_path / 'target/model.out').read_bytes()
+        if output in (2, 3):
             # HDF5 allocation addresses need not match after reopening a saved
             # prefix. Require exact report values, attributes and schema instead.
             diff, dump = shutil.which('h5diff'), shutil.which('h5dump')
@@ -368,7 +370,7 @@ def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, a
 
 
 @pytest.mark.parametrize('mutation', ['binary', 'combined', 'thermal', 'layout'])
-def test_mesh_groundwater_session_refuses_unqualified_profiles_before_mesh_output(tmp_path, mutation):
+def test_mesh_groundwater_session_refuses_invalid_profiles_before_mesh_output(tmp_path, mutation):
     directory = tmp_path / 'refused'
     solver = _open(directory, 5, 3, output=2)
     try:
@@ -557,3 +559,12 @@ def test_managed_rk2_disjoint_network_continues_native_hydraulics_and_mesh_histo
 def test_managed_rk2_cached_meteorology_continues_after_file_removal(tmp_path, chemistry, thermal, output, porous):
     _continue_session(tmp_path, chemistry, thermal, porous, porous, output, porous, porous,
                       rk2=True, latent=porous, met=True)
+
+
+@pytest.mark.parametrize('chemistry,thermal', [(0, 4), (5, 3), (3, 7)])
+@pytest.mark.parametrize('output', [1, 3])
+@pytest.mark.parametrize('porous', [False, True])
+@pytest.mark.parametrize('rk2', [False, True])
+def test_mesh_groundwater_binary_companions_continue_complete_accepted_history(tmp_path, chemistry, thermal, output, porous, rk2):
+    _continue_session(tmp_path, chemistry, thermal, True, True, output, True, porous, rk2=rk2,
+                      latent=porous and rk2, met=rk2)

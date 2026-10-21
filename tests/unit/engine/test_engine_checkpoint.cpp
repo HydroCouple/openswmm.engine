@@ -6373,9 +6373,10 @@ GW_ET NONE
 [2D_AQUIFER]
 * 36 1 .45 .1 2 HG0 .3 C_LOSS .02
 )";
-    if(output==SWMM_CHECKPOINT_OUTPUT_MESH)deck+="[2D_OPTIONS]\nREPORT_2D YES\nOUTPUT_FILE "+path.string()+".h5\nOUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES DEPTH GROUNDWATER\n";
+    if(output>=SWMM_CHECKPOINT_OUTPUT_MESH)deck+="[2D_OPTIONS]\nREPORT_2D YES\nOUTPUT_FILE "+path.string()+".h5\nOUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES DEPTH GROUNDWATER\n";
     deck+=extra;write(path.string()+".inp",deck);
-    if(engine.open((path.string()+".inp").c_str(),(path.string()+".rpt").c_str(),nullptr)!=SWMM_OK)throw std::runtime_error(engine.context().error_message);
+    const bool binary=output==SWMM_CHECKPOINT_OUTPUT_BINARY||output>=SWMM_CHECKPOINT_OUTPUT_COMBINED;
+    if(engine.open((path.string()+".inp").c_str(),(path.string()+".rpt").c_str(),binary?(path.string()+".out").c_str():nullptr)!=SWMM_OK)throw std::runtime_error(engine.context().error_message);
     if(configure)configure(engine);
     if(auto error=engine.startCheckpointSession(output,"",false,"");!error.empty())throw std::runtime_error(error);
 }
@@ -6778,6 +6779,38 @@ TEST(EngineCheckpoint, ManagedRk2ChangedCachedWeatherRejectsBeforeTargetMutation
         ASSERT_EQ(a.saveCheckpoint(saved.string()),"");ASSERT_EQ(b.saveCheckpoint(before.string()),"");const auto initial=bytes(before);
         EXPECT_FALSE(b.loadCheckpoint(saved.string()).empty());ASSERT_EQ(b.saveCheckpoint(before.string()),"");EXPECT_EQ(bytes(before),initial);
     }
+}
+TEST(EngineCheckpoint, ManagedRk2QualityBinaryCompanionsRestoreActualReportsAndPhysicalState) {
+    for(int output:{SWMM_CHECKPOINT_OUTPUT_BINARY,SWMM_CHECKPOINT_OUTPUT_COMBINED})for(bool met:{false,true}) {
+#ifndef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+        if(output==SWMM_CHECKPOINT_OUTPUT_COMBINED)continue;
+#endif
+        const auto name="managed-rk2-binary-quality-"+std::to_string(output)+std::to_string(met),file=name+".met";if(met)write(root()/file,rk2MetText());SWMMEngine a,b;
+        const auto configure=[&](SWMMEngine& e){if(met)e.context().snowpacks.config.met_file.original=file;};
+        const auto extra=rk2MetHeat()+"[OPTIONS]\nWET_STEP 00:00:01\nDRY_STEP 00:00:01\n[2D_OPTIONS]\nCOUPLING_SYNC .7\nREPORT_2D_STEP 00:00:01\n";
+        ASSERT_NO_THROW(startManagedRk2Session(a,name+"-a",extra,output,configure));
+        ASSERT_NO_THROW(startManagedRk2Session(b,name+"-b",extra,output,configure));
+        double actual=0;ASSERT_EQ(swmm_coupling_advance_to(&a,1.237,&actual),SWMM_OK);const auto saved=root()/(name+".chk");ASSERT_EQ(a.saveCheckpoint(saved.string()),"");
+        ASSERT_EQ(b.loadCheckpoint(saved.string()),"");compareManagedRk2(a,b,name+"-restored",output==SWMM_CHECKPOINT_OUTPUT_COMBINED);
+        while(a.context().elapsed_ms<a.context().options.totalDurationMs()) {
+            ASSERT_NO_THROW(step(a));
+            ASSERT_NO_THROW(step(b));compareManagedRk2(a,b,name+"-continued",output==SWMM_CHECKPOINT_OUTPUT_COMBINED);
+        }
+        ASSERT_EQ(a.end(),SWMM_OK);ASSERT_EQ(b.end(),SWMM_OK);sameBinary(name+"-a",name+"-b",5);
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+        if(output==SWMM_CHECKPOINT_OUTPUT_COMBINED)sameMesh(name+"-a",name+"-b",5);
+#endif
+    }
+}
+TEST(EngineCheckpoint, ManagedRk2QualityCombinedMismatchPreservesBothOutputPrefixes) {
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+    SWMMEngine a,b;auto changed=rk2MetHeat();const auto pos=changed.find("-.01*A");ASSERT_NE(pos,std::string::npos);changed.replace(pos,6,"-.02*A");
+    ASSERT_NO_THROW(startManagedRk2Session(a,"managed-rk2-combined-model-a",rk2MetHeat(),SWMM_CHECKPOINT_OUTPUT_COMBINED));
+    ASSERT_NO_THROW(startManagedRk2Session(b,"managed-rk2-combined-model-b",changed,SWMM_CHECKPOINT_OUTPUT_COMBINED));
+    ASSERT_NO_THROW(step(a));const auto saved=root()/"managed-rk2-combined-model.chk",before=root()/"managed-rk2-combined-before.chk";
+    ASSERT_EQ(a.saveCheckpoint(saved.string()),"");ASSERT_EQ(b.saveCheckpoint(before.string()),"");const auto initial=bytes(before),binary=bytes(root()/"managed-rk2-combined-model-b.out"),mesh=bytes(root()/"managed-rk2-combined-model-b.h5");
+    EXPECT_FALSE(b.loadCheckpoint(saved.string()).empty());ASSERT_EQ(b.saveCheckpoint(before.string()),"");EXPECT_EQ(bytes(before),initial);EXPECT_EQ(bytes(root()/"managed-rk2-combined-model-b.out"),binary);EXPECT_EQ(bytes(root()/"managed-rk2-combined-model-b.h5"),mesh);
+#endif
 }
 TEST(EngineCheckpoint, ManagedRk2FileRadiationRefusesUnreadableCache) {
     SWMMEngine engine;
