@@ -401,6 +401,16 @@ std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const 
         *common_stage_=std::move(stage); *this=std::move(trial); return {};
     } catch(const std::exception& e) { return e.what(); }
 }
+namespace {
+bool rk2HasAuthoredSurfaceBoundary(const BoundaryData& boundary) {
+    for(std::size_t slot=0;slot<boundary.edge_bc_type.size();++slot) {
+        const auto original=boundary.runtime_original.find(int(slot));
+        const auto type=original==boundary.runtime_original.end()?boundary.edge_bc_type[slot]:original->second.type;
+        if(type!=int8_t(BoundaryType::WALL))return true;
+    }
+    return false;
+}
+}
 bool rk2HasSurfaceBoundary(const BoundaryData* boundary) {
     return boundary&&(!boundary->receipts.empty()||!boundary->runtime_original.empty()||
         std::any_of(boundary->edge_bc_type.begin(),boundary->edge_bc_type.end(),[](int8_t type){return type!=int8_t(BoundaryType::WALL);}));
@@ -416,21 +426,28 @@ std::string validateRk2SurfaceBoundary(const MeshData& mesh,const SurfaceStateDa
     for(std::size_t slot=0;slot<n;++slot) {
         const auto type=BoundaryType(b.edge_bc_type[slot]);
         if((type!=BoundaryType::WALL&&type!=BoundaryType::SPECIFIED_STAGE&&type!=BoundaryType::SPECIFIED_FLOW)||
-           (type!=BoundaryType::WALL&&(!exterior(int(slot))||!b.runtime_original.count(int(slot))||!b.runtime_owner.count(int(slot))||!b.receipts.count(int(slot))))||
+           (type!=BoundaryType::WALL&&(!exterior(int(slot))||!b.receipts.count(int(slot))))||
            !std::isfinite(b.edge_bc_head[slot])||!std::isfinite(b.edge_bc_flow[slot])||!std::isfinite(b.edge_bed_slope[slot])||!std::isfinite(b.edge_bc_cum_flux[slot])||
            b.edge_bc_tseries[slot]!=-1||b.edge_bc_flow_tseries[slot]!=-1||b.edge_bc_rating_curve[slot]!=-1||
            !b.edge_bc_tseries_name[slot].empty()||!b.edge_bc_flow_tseries_name[slot].empty()||!b.edge_bc_rating_curve_name[slot].empty())
-            return "RK2 copied surface boundaries require constant exterior STAGE/FLOW overrides with wall fallback.";
+            return "RK2 surface boundaries require constant exterior STAGE/FLOW prescriptions.";
     }
     if(b.runtime_original.size()!=b.runtime_owner.size()||b.runtime_original.size()!=tr.runtime_bc_conc.size())return "RK2 surface boundary owner/quality layout differs.";
     for(const auto& [slot,old]:b.runtime_original) {
         const auto owner=b.runtime_owner.find(slot);const auto quality=tr.runtime_bc_conc.find(slot);
-        if(!exterior(slot)||old.type!=int8_t(BoundaryType::WALL)||!std::isfinite(old.head)||!std::isfinite(old.flow)||!std::isfinite(old.slope)||
+        if(!exterior(slot)||(old.type!=int8_t(BoundaryType::WALL)&&old.type!=int8_t(BoundaryType::SPECIFIED_STAGE)&&old.type!=int8_t(BoundaryType::SPECIFIED_FLOW))||!std::isfinite(old.head)||!std::isfinite(old.flow)||!std::isfinite(old.slope)||
            old.stage_ts!=-1||old.flow_ts!=-1||old.rating!=-1||!old.stage_name.empty()||!old.flow_name.empty()||!old.rating_name.empty()||
            owner==b.runtime_owner.end()||owner->second.find('/')!=std::string::npos||owner->second.find('\0')!=std::string::npos||
            quality==tr.runtime_bc_conc.end()||quality->second.size()!=ns)
             return "Invalid RK2 surface boundary fallback, owner or quality.";
         for(int row=0;row<tr.n_species;++row)if(!std::isfinite(quality->second[row])||(row!=tr.temp_row&&quality->second[row]<0))return "Invalid RK2 surface boundary composition.";
+    }
+    for(const auto& row:tr.bc_quality_rows) {
+        if(!exterior(row.slot)||row.species<0||row.species>=tr.n_species||!std::isfinite(row.conc)||
+           (row.species!=tr.temp_row&&row.conc<0))return "Invalid RK2 authored surface boundary quality.";
+        const auto original=b.runtime_original.find(row.slot);
+        const auto type=original==b.runtime_original.end()?b.edge_bc_type[row.slot]:original->second.type;
+        if(type==int8_t(BoundaryType::WALL))return "RK2 authored boundary quality has no hydraulic fallback.";
     }
     for(const auto& [slot,r]:b.receipts) {
         if(!exterior(slot)||r.requested_mass.size()!=ns||r.applied_mass.size()!=ns||r.water_in<0||r.water_out<0||r.last_dt<0||
@@ -446,7 +463,8 @@ std::string validateRk2SurfaceBoundary(const MeshData& mesh,const SurfaceStateDa
     return {};
 }
 void rk2SurfaceBoundaryArchive(Archive& a,BoundaryData& b,std::map<int,std::vector<double>>& quality,bool model,int species) {
-    std::string profile="RK2 copied surface boundaries v1";a(profile);if(profile!="RK2 copied surface boundaries v1")throw std::runtime_error("Unsupported RK2 surface boundary record.");
+    const std::string expected=rk2HasAuthoredSurfaceBoundary(b)?"RK2 authored surface boundaries v1":"RK2 copied surface boundaries v1";
+    std::string profile=expected;a(profile);if(profile!=expected)throw std::runtime_error("Unsupported RK2 surface boundary record.");
     const auto keys=[&](auto& map,auto fields) {
         std::vector<int> slots;if(!a.reading())for(const auto& entry:map)slots.push_back(entry.first);a(slots);
         if(a.reading()) {
@@ -489,8 +507,13 @@ std::string ExplicitInertialSolver::rk2CheckpointProfile() const {
         if(cells!=bc_cell_||slots!=bc_slot_||walls!=wall_slot_||ptr!=wall_ptr_||bc_q_.size()!=slots.size()||bc_accum_.size()!=slots.size())return "RK2 surface boundary work layout differs.";
         const auto ns=std::size_t(state_->transport.n_species);
         if(state_->transport.bc_conc.size()!=slots.size()*ns)return "RK2 surface boundary quality lookup shape differs.";
-        for(std::size_t k=0;k<slots.size();++k)for(std::size_t row=0;row<ns;++row)
-            if(state_->transport.bc_conc[k*ns+row]!=state_->transport.runtime_bc_conc.at(slots[k])[row])return "RK2 surface boundary quality lookup differs.";
+        for(std::size_t k=0;k<slots.size();++k) {
+            std::vector<double> expected(ns,0);
+            for(const auto& row:state_->transport.bc_quality_rows)if(row.slot==slots[k])expected[row.species]=row.conc;
+            const auto copied=state_->transport.runtime_bc_conc.find(slots[k]);
+            if(copied!=state_->transport.runtime_bc_conc.end())expected=copied->second;
+            for(std::size_t row=0;row<ns;++row)if(state_->transport.bc_conc[k*ns+row]!=expected[row])return "RK2 surface boundary quality lookup differs.";
+        }
         for(const auto* values:{&bc_q_,&bc_accum_})for(double v:*values)if(!std::isfinite(v))return "Nonfinite RK2 surface boundary work state.";
         for(const auto& [slot,r]:state_->boundary->receipts) {
             if(r.last_dt>t_last_sync_||(r.last_dt==0&&r.last_flow!=0)||
@@ -594,6 +617,12 @@ std::string ExplicitInertialSolver::rk2CheckpointModel(const Rk2CheckpointBindin
     auto ground_runtime=binding&&binding->groundwater?*binding->groundwater:gw_->runtimeSources();rk2SurfaceRuntimeArchive(a,ground_runtime,mesh_->n_cells(),true,true);
     auto forcing=*state_;if(binding&&binding->forcing)forcing.runtime_forcings=*binding->forcing;rk2ForcingArchive(a,forcing,true);
     if(rk2HasSurfaceBoundary(state_->boundary)) {auto boundary=*state_->boundary;auto quality=state_->transport.runtime_bc_conc;rk2SurfaceBoundaryArchive(a,boundary,quality,true,state_->transport.n_species);}
+    if(state_->boundary&&rk2HasAuthoredSurfaceBoundary(*state_->boundary)) {
+        // Bind authored fallback quality even when a copied full tuple hides it.
+        std::string policy="RK2 authored surface boundary quality v1";a(policy);
+        auto rows=state_->transport.bc_quality_rows;
+        a.sequence(rows,[&](auto& row){a(row.slot,row.species,row.conc);});
+    }
     auto rain=state_->rainfall,evap=state_->evap_rate;a(rain,evap);
     return a.bytes();
 }

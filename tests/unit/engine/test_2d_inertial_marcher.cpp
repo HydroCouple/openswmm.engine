@@ -5065,3 +5065,151 @@ TEST(CoupledGroundwaterRk2, SurfaceLatentChecksumValidNonfiniteEnergyRefusesBefo
     ASSERT_EQ(a.solver.saveCheckpoint(before.string()),"");
     ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
 }
+
+namespace {
+int setRkAuthoredSurfaceBoundary(CoupledRkRig& r,BoundaryData& boundary,int cell,bool stage,double value,const std::vector<double>& quality,int ordinal=0) {
+    const auto slot=setRkSurfaceBoundary(r,boundary,cell,stage,value,quality,ordinal);
+    boundary.runtime_original.erase(slot);boundary.runtime_owner.erase(slot);r.state.transport.runtime_bc_conc.erase(slot);
+    for(int row=0;row<r.state.transport.n_species;++row)r.state.transport.bc_quality_rows.push_back({slot,row,quality.at(row)});
+    r.solver.refreshBoundaries();return slot;
+}
+}
+TEST(CoupledGroundwaterRk2, AuthoredSurfaceConstantStageAndFlowMatchCopiedPhysicalTransactions) {
+    for(const auto closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true})for(bool stage:{false,true}) {
+        if(layered&&closure!=GwClosure::SIGMA)continue;
+        CoupledRkRig a,b;BoundaryData ba,bb;
+        for(auto* r:{&a,&b}){r->init(.05,.003,.001,.2,"NONE",closure,SoilChar::GARDNER,4);initRkQuality(*r,layered,true,true);seedRkQuality(*r,2,.001);}
+        const auto slot=setRkAuthoredSurfaceBoundary(a,ba,0,stage,stage?.22:-.01,{7,3});setRkSurfaceBoundary(b,bb,0,stage,stage?.22:-.01,{7,3});
+        ASSERT_EQ(a.solver.saveCheckpoint(rk2Output("authored-surface-initial.chk").string()),"");
+        const double initial=a.total();
+        ASSERT_NO_THROW(a.solver.advance(0,.735));
+        ASSERT_NO_THROW(b.solver.advance(0,.735));
+        EXPECT_EQ(a.state.volume,b.state.volume);EXPECT_EQ(a.state.transport.cell_mass,b.state.transport.cell_mass);
+        EXPECT_EQ(a.gw.state().hg,b.gw.state().hg);EXPECT_EQ(a.gw.transport().sat_mass,b.gw.transport().sat_mass);
+        EXPECT_EQ(ba.receipts.at(slot).applied,bb.receipts.at(slot).applied);
+        EXPECT_EQ(ba.receipts.at(slot).applied_mass,bb.receipts.at(slot).applied_mass);
+        EXPECT_NEAR(a.total()+a.gw.state().led_deep-initial,ba.receipts.at(slot).applied,1e-10);
+    }
+}
+
+TEST(CoupledGroundwaterRk2, AuthoredSurfaceMixingHasIndependentSecondOrderChemicalAndAgeTrajectories) {
+    double previous=0;int uniform=0;
+    for(double dt:{.4,.2,.1,.05,.025}) {
+        CoupledRkRig r;
+        for(int cell=0;cell<r.mesh.n_cells();++cell)for(int edge=0;edge<r.mesh.cell_vertex_count(cell);++edge)if(r.mesh.cell_neighbour(cell,edge)>=0)r.mesh.edge_conveyance[MeshData::slot(cell,edge)]=0;
+        r.init(dt,0,0,.2,"NONE");initRkQuality(r,false,true,true);seedRkQuality(r,2);
+        BoundaryData boundary;for(int cell=0;cell<r.mesh.n_cells();++cell) {setRkAuthoredSurfaceBoundary(r,boundary,cell,false,-.1,{7,3});setRkAuthoredSurfaceBoundary(r,boundary,cell,false,.1,{7,3},1);}
+        long evaluations=0;
+        for(int step=0;step<int(std::round(2/dt));++step) {
+            ASSERT_NO_THROW(r.solver.advance(step*dt,(step+1)*dt));evaluations+=r.solver.last_num_steps();
+        }
+        RecordProperty("surface_boundary_evaluations_"+std::to_string(int(dt*1000)),evaluations);
+        const double volume=.2*r.mesh.tri_area[0],attenuation=std::exp(-.1*2/volume),chemical=7-5*attenuation,age=3+volume/.1+(5-3-volume/.1)*attenuation;
+        double error=0;for(int cell=0;cell<r.mesh.n_cells();++cell) {EXPECT_NEAR(r.state.volume[cell],volume,1e-12);error=std::max(error,std::abs(r.state.transport.cell_mass[r.state.transport.idx(0,cell)]/volume-chemical));error=std::max(error,std::abs(r.state.transport.cell_mass[r.state.transport.idx(1,cell)]/volume-age));}
+        RecordProperty("surface_boundary_mix_error_"+std::to_string(int(dt*1000)),error);EXPECT_LT(error,.0002);
+        const long expected=2*int(std::round(2/dt));
+        if(evaluations!=expected) {EXPECT_EQ(dt,.4);EXPECT_GT(evaluations,expected);}
+        else {if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;++uniform;}
+        for(int row=0;row<2;++row)EXPECT_NEAR(r.state.transport.totalIncludingLedgers(row),row==1?5*2*volume:2*2*volume,1e-10);
+    }
+    EXPECT_EQ(uniform,4);
+}
+
+TEST(CoupledGroundwaterRk2, AuthoredSurfaceStageFullAndHalfStepsHaveThirdOrderLocalDifference) {
+    double previous=0;
+    for(double dt:{.08,.04,.02,.01}) {
+        CoupledRkRig a,b;BoundaryData ba,bb;
+        for(auto* r:{&a,&b}){for(auto& n:r->mesh.mannings_n)n=0;r->init(dt,0,0,.2,"NONE");initRkQuality(*r,false,true,true);seedRkQuality(*r,2);}
+        setRkAuthoredSurfaceBoundary(a,ba,0,true,.22,{7,3});setRkAuthoredSurfaceBoundary(b,bb,0,true,.22,{7,3});
+        ASSERT_NO_THROW(a.solver.advance(0,dt));
+        ASSERT_NO_THROW(b.solver.advance(0,dt/2));
+        ASSERT_NO_THROW(b.solver.advance(dt/2,dt));
+        double error=0;for(int cell=0;cell<a.mesh.n_cells();++cell)error=std::max(error,std::abs(a.state.volume[cell]-b.state.volume[cell]));
+        RecordProperty("surface_boundary_stage_local_"+std::to_string(int(dt*1000)),error);EXPECT_GT(error,0);if(previous>0)EXPECT_GT(previous/error,6.5);previous=error;
+    }
+}
+
+TEST(CoupledGroundwaterRk2, AuthoredSurfaceColdReversalAndCompetingExportsProtectBeginningDonors) {
+    for(bool layered:{false,true}) {
+        CoupledRkRig r;r.init(.05,0,0,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);initRkTemperature(r,layered,6,6);
+        BoundaryData boundary;const auto a=setRkAuthoredSurfaceBoundary(r,boundary,0,false,-.1,{-8});const auto b=setRkAuthoredSurfaceBoundary(r,boundary,0,false,.1,{-8},1);
+        RuntimeForcing rain;rain.channel=1;rain.cell=0;rain.mode=1;rain.rate=.001;rain.concentrations={-8};rain.receipt.requested_mass={0};rain.receipt.applied_mass={0};r.state.runtime_forcings.replace(rain);r.state.runtime_forcings.rebuild(2);
+        const double initial=r.total(),energy=r.state.transport.totalIncludingLedgers(0)+r.gw.transport().storage(0);
+        ASSERT_NO_THROW(r.solver.advance(0,.735));boundary.edge_bc_flow[a]=1000/r.mesh.edge_length[a];boundary.edge_bc_flow[b]=1000/r.mesh.edge_length[b];
+        ASSERT_NO_THROW(r.solver.advance(.735,2));
+        for(int cell=0;cell<2;++cell) {const auto k=r.state.transport.idx(0,cell);EXPECT_GE(r.state.volume[cell],0);if(r.state.volume[cell]>1e-12){const double temp=r.state.transport.cell_mass[k]/r.state.volume[cell];EXPECT_GE(temp,-8-1e-10);EXPECT_LE(temp,6+1e-10);}}
+        const auto& x=boundary.receipts.at(a);const auto& y=boundary.receipts.at(b);EXPECT_GT(x.water_in,0);EXPECT_GT(x.water_out,0);EXPECT_GT(y.water_out,0);
+        EXPECT_NEAR(r.total()-initial,x.water_in+y.water_in-x.water_out-y.water_out+r.state.rk2_rain_pending[0]+r.state.rk2_rain_pending[1],1e-10);
+        EXPECT_NEAR(r.state.transport.totalIncludingLedgers(0)+r.gw.transport().storage(0),energy,1e-10);
+    }
+}
+
+TEST(CoupledGroundwaterRk2, AuthoredSurfaceLaterHeadOverflowRollsBackEveryOwnerAndAllowsRetry) {
+    CoupledRkRig r;r.init(.05,.003,.001,.2,"NONE");initRkQuality(r,false,true,true);seedRkQuality(r,2);
+    BoundaryData boundary;setRkAuthoredSurfaceBoundary(r,boundary,0,true,.22,{7,3});const auto late=setRkAuthoredSurfaceBoundary(r,boundary,1,true,1e308,{7,3});
+    const auto before=rk2Output("authored-surface-overflow-before.chk"),after=rk2Output("authored-surface-overflow-after.chk");
+    ASSERT_EQ(r.solver.saveCheckpoint(before.string()),"");EXPECT_THROW(r.solver.advance(0,.1),std::runtime_error);
+    ASSERT_EQ(r.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));boundary.edge_bc_head[late]=.22;
+    ASSERT_NO_THROW(r.solver.advance(0,.1));
+}
+
+TEST(CoupledGroundwaterRk2, AuthoredSurfaceChangedDescriptorAndCorruptReceiptRefuseAtomically) {
+    CoupledRkRig a,b;BoundaryData ba,bb;
+    for(auto* r:{&a,&b}){r->init(.05,0,0,.2,"NONE");initRkQuality(*r,false,true,true);seedRkQuality(*r,2);}
+    const auto slot=setRkAuthoredSurfaceBoundary(a,ba,0,false,-.01,{7,3});setRkAuthoredSurfaceBoundary(b,bb,0,false,-.01,{7,3});
+    ASSERT_NO_THROW(a.solver.advance(0,.735));const auto good=rk2Output("authored-surface-corrupt-good.chk"),bad=rk2Output("authored-surface-corrupt-bad.chk"),before=rk2Output("authored-surface-corrupt-before.chk"),after=rk2Output("authored-surface-corrupt-after.chk");
+    ASSERT_EQ(a.solver.saveCheckpoint(good.string()),"");
+    for(double* value:{&bb.edge_bc_flow[slot],&b.state.transport.bc_quality_rows[0].conc}) {
+        const auto old=*value;*value+=.001;b.solver.refreshBoundaries();
+        ASSERT_EQ(b.solver.saveCheckpoint(before.string()),"");EXPECT_FALSE(b.solver.loadCheckpoint(good.string()).empty());
+        ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));*value=old;b.solver.refreshBoundaries();
+    }
+    openswmm::detail::CompletedSourceArchive original(rk2File(good));std::string magic,payload;uint32_t version=0,endian=0,long_bytes=0,crc=0;original(magic,version,endian,long_bytes,payload,crc);original.finish();
+    const std::string marker="RK2 authored surface boundaries v1";const auto pos=payload.rfind(marker);ASSERT_NE(pos,std::string::npos);
+    const auto offset=pos+marker.size()+sizeof(uint64_t)+ba.edge_bc_cum_flux.size()*sizeof(double)+sizeof(double);ASSERT_LT(offset+sizeof(double),payload.size());
+    double applied=0;std::memcpy(&applied,payload.data()+offset,sizeof(applied));applied+=1;std::memcpy(payload.data()+offset,&applied,sizeof(applied));
+    crc=~uint32_t(0);for(unsigned char c:payload){crc^=c;for(int k=0;k<8;++k)crc=(crc>>1)^((crc&1)?0xedb88320u:0u);}crc=~crc;openswmm::detail::CompletedSourceArchive corrupted;corrupted(magic,version,endian,long_bytes,payload,crc);std::ofstream(bad,std::ios::binary)<<corrupted.bytes();
+    ASSERT_EQ(b.solver.saveCheckpoint(before.string()),"");EXPECT_NE(b.solver.loadCheckpoint(bad.string()).find("receipt"),std::string::npos);
+    ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+    ASSERT_EQ(b.solver.loadCheckpoint(good.string()),"");
+    ASSERT_NO_THROW(a.solver.advance(.735,1));
+    ASSERT_NO_THROW(b.solver.advance(.735,1));
+    ASSERT_EQ(a.solver.saveCheckpoint(before.string()),"");
+    ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+}
+
+TEST(CoupledGroundwaterRk2, AuthoredSurfaceOverrideClearAndHiddenQualityAreRestartBound) {
+    CoupledRkRig a,b;BoundaryData ba,bb;
+    for(auto* r:{&a,&b}) {
+        r->init(.05,0,0,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);initRkTemperature(*r,true,6,6);
+        auto& boundary=r==&a?ba:bb;setRkAuthoredSurfaceBoundary(*r,boundary,0,false,-.001,{-8});
+        setRkSurfaceBoundary(*r,boundary,0,false,-.002,{-4});
+    }
+    ASSERT_NO_THROW(a.solver.advance(0,.735));
+    const auto saved=rk2Output("authored-surface-hidden.chk"),before=rk2Output("authored-surface-hidden-before.chk"),after=rk2Output("authored-surface-hidden-after.chk");
+    ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");
+    b.state.transport.bc_quality_rows[0].conc=-7;
+    ASSERT_EQ(b.solver.saveCheckpoint(before.string()),"");EXPECT_FALSE(b.solver.loadCheckpoint(saved.string()).empty());
+    ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+    b.state.transport.bc_quality_rows[0].conc=-8;ASSERT_EQ(b.solver.loadCheckpoint(saved.string()),"");
+    const auto slot=ba.runtime_original.begin()->first;
+    for(auto* r:{&a,&b}) {auto& boundary=r==&a?ba:bb;boundary.clearRuntime(slot);r->state.transport.runtime_bc_conc.erase(slot);r->solver.refreshBoundaries();}
+    const double old=ba.receipts.at(slot).applied_mass[0];
+    ASSERT_NO_THROW(a.solver.advance(.735,2));
+    ASSERT_NO_THROW(b.solver.advance(.735,2));
+    EXPECT_NEAR(ba.receipts.at(slot).applied_mass[0]-old,-8*.001*(2-.735),1e-12);
+    EXPECT_NEAR(ba.receipts.at(slot).heat_applied,ba.receipts.at(slot).applied_mass[0]*4186000,1e-8);
+    ASSERT_EQ(a.solver.saveCheckpoint(before.string()),"");
+    ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+}
+
+TEST(CoupledGroundwaterRk2, AuthoredSurfaceUnspecifiedIncomingQualityUsesCleanWaterWithoutInventingSpecies) {
+    CoupledRkRig r;r.init(.05,0,0,.2,"NONE");initRkQuality(r,false,true,true);seedRkQuality(r,2);
+    BoundaryData boundary;const auto slot=setRkAuthoredSurfaceBoundary(r,boundary,0,false,-.01,{7,3});
+    r.state.transport.bc_quality_rows.clear();r.solver.refreshBoundaries();
+    const double initial=r.total();
+    ASSERT_NO_THROW(r.solver.advance(0,.735));
+    EXPECT_NEAR(r.total()-initial,.00735,1e-10);
+    EXPECT_EQ(boundary.receipts.at(slot).applied_mass,(std::vector<double>{0,0}));
+    for(int row=0;row<2;++row)EXPECT_NEAR(r.state.transport.totalIncludingLedgers(row),row==0?2*3.2:5*3.2,1e-10);
+}

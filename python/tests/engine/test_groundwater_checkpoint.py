@@ -10,7 +10,7 @@ from openswmm.engine import (
 from tests.engine._groundwater_cases import cleanup
 
 
-def _open(directory, chemistry, thermal, reactive=True, passive=False, output=0, rate='.001', age=True, porous=True, unit='MG', boundary=None, rk2=False, latent=False):
+def _open(directory, chemistry, thermal, reactive=True, passive=False, output=0, rate='.001', age=True, porous=True, unit='MG', boundary=None, rk2=False, latent=False, authored_surface=None):
     directory.mkdir()
     path = directory / 'model.inp'
     reaction = ''
@@ -130,6 +130,15 @@ W CELL 1 FLOW WELL{forcing}{' __TEMPERATURE__ CONC -4' if porous else ''}{' __WA
 ''')
     if rk2:
         path.write_text(path.read_text()+'\n[2D_OPTIONS]\nMOMENTUM_EQUATION FULL_SWE\nRECONSTRUCTION_ORDER 2\nLTS_TIERS 1\n')
+    if authored_surface:
+        kind = 'SPECIFIED_STAGE .56' if authored_surface == 1 else 'SPECIFIED_FLOW -.00001'
+        rows = ([('A', 1), ('B', 0)] if reactive else []) + ([('Dye', 1)] if passive else [])
+        if porous:
+            rows.append(('__TEMPERATURE__', -12))
+        if age:
+            rows.append(('__WATER_AGE__', 1))
+        quality = ''.join(f'0 1 {name} {value}\n' for name, value in rows)
+        path.write_text(path.read_text()+f'\n[2D_BOUNDARY_CONDITIONS]\n0 1 {kind}\n[2D_BOUNDARY_QUALITY]\n{quality}')
     if latent:
         path.write_text(path.read_text()+'\n[EVAPORATION]\nCONSTANT 18\n')
     solver = Solver(path, path.with_suffix('.rpt'))
@@ -208,9 +217,9 @@ def test_reactive_edge_session_preserves_reversals_fluxes_and_reports(tmp_path, 
     _continue_session(tmp_path, chemistry, thermal, True, passive, output, True, porous, boundary)
 
 
-def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, age, porous, boundary=None, rk2=False, surface_boundary=None, latent=False, copied_et=False):
-    source = _open(tmp_path / 'source', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2, latent=latent)
-    target = _open(tmp_path / 'target', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2, latent=latent)
+def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, age, porous, boundary=None, rk2=False, surface_boundary=None, latent=False, copied_et=False, authored_surface=None):
+    source = _open(tmp_path / 'source', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2, latent=latent, authored_surface=authored_surface)
+    target = _open(tmp_path / 'target', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2, latent=latent, authored_surface=authored_surface)
     try:
         source.checkpoints.start_session(output)
         target.checkpoints.start_session(output)
@@ -240,7 +249,7 @@ def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, a
             assert before.read_bytes() == after.read_bytes()
         target.checkpoints.restore(checkpoint)
         assert source.elapsed == target.elapsed
-        if surface_boundary:
+        if surface_boundary or authored_surface:
             assert source.surface2d.boundary_receipt(0, 1) == target.surface2d.boundary_receipt(0, 1)
         for a, b in zip(_snapshot(source, chemistry, porous), _snapshot(target, chemistry, porous)):
             np.testing.assert_array_equal(a, b)
@@ -288,7 +297,7 @@ def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, a
         concentration = 4 if reactive else (3 if passive else 0)
         surface_input = 0.0
         surface_dye = 0.0
-        if surface_boundary:
+        if surface_boundary or authored_surface:
             receipt = source.surface2d.boundary_receipt(0, 1)
             assert receipt == target.surface2d.boundary_receipt(0, 1)
             assert receipt.applied_m3 > 0
@@ -457,3 +466,14 @@ def test_managed_rk2_surface_boundary_owner_and_invalid_frame_preserve_accepted_
 def test_managed_rk2_surface_latent_continues_native_weather_receipts_and_history(tmp_path, chemistry, thermal, output, copied):
     _continue_session(tmp_path, chemistry, thermal, True, True, output, True, True,
                       rk2=True, latent=True, copied_et=copied)
+
+
+@pytest.mark.parametrize('chemistry,thermal', [(0, 4), (5, 3), (3, 7)])
+@pytest.mark.parametrize('porous', [False, True])
+@pytest.mark.parametrize('output', [0, 2])
+@pytest.mark.parametrize('kind', [1, 2])
+@pytest.mark.parametrize('override', [None, False, True])
+def test_managed_rk2_authored_surface_boundary_restores_overrides_and_fallback_history(tmp_path, chemistry, thermal, porous, output, kind, override):
+    _continue_session(tmp_path, chemistry, thermal, True, True, output, True, porous,
+                      rk2=True, authored_surface=kind,
+                      surface_boundary=None if override is None else (kind, override))

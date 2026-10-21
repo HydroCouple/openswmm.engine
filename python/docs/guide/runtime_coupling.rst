@@ -26,10 +26,11 @@ Source expiry splits the shared transaction, and beginning donors bound each
 Euler stage. Runtime aquifer HEAD/FLOW edges require an exterior hydraulic
 binding and retain accepted water, species and sensible-heat receipts. HEAD is
 an absolute elevation; runtime FLOW is outward-positive total m³/s. Copied surface STAGE/FLOW overrides also qualify with exterior binding,
-constant values, explicit quality and authored wall fallback. FLOW is total
+constant values, explicit quality and wall or authored constant STAGE/FLOW fallback.
+Authored inflow quality defaults to clean water, with optional explicit rows. FLOW is total
 outward-positive m³/s; accepted receipt amounts are inward-positive. All outgoing
-edges share the beginning donor budget; clear restores the wall and preserves
-receipts. Authored non-wall/series fallback and borrowed network/catchment owners
+edges share the beginning donor budget; clear restores authored values/quality and
+preserves receipts. Time-series/normal/rating boundaries and borrowed network/catchment owners
 remain unavailable in this profile. Check capabilities for the active model.
 Component checkpoints bind copied prescriptions and retain accepted receipts.
 With the qualified finite COUPLED/GROUND_COLUMN thermal owner, copied evaporation
