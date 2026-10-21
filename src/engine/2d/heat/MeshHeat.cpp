@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 namespace openswmm::twoD {
 namespace {
@@ -190,8 +191,7 @@ GroundColumnAssembly appendGroundColumnSystem(const MeshData& mesh,const SolverO
     if(h&&volume>0) {
         a.water=int(stores.size());a.temperature=mass/volume;a.water_initial_j=owner.water_capacity*mass;
         stores.push_back({owner.water_capacity*volume,a.water_initial_j});
-        double eta=0,depth=0;inertial::cellEtaDepth(mesh,options,i,volume,eta,depth);
-        a.wet=depth>0?std::clamp(volume/depth,0.,c.area):0;
+        a.wet=inertial::cellWetArea(mesh,options,i,volume);
         const double exposed_fraction=std::max(0.,1-(channel_area+lid_area)/c.area);
         const double contact_area=a.wet*exposed_fraction;
         const auto& sc=sedimentFor(*h->context,HeatElement::cell2d(i));
@@ -489,6 +489,67 @@ double applyLocalBedSpecies(const MeshData& mesh,MeshHeatState& h,int i,int r,do
     if(!std::isfinite(q)||!std::isfinite(next)||!std::isfinite(bed)||next<0||bed<0||
        !std::isfinite(h.bed_exchange_mass[k]+transfer)){h.failures[i]=1;return mass;}
     h.bed_carried_mass[k]=bed;h.bed_exchange_mass[k]+=transfer;return next;
+}
+double applyLocalBedSpeciesEuler(const MeshData& mesh,MeshHeatState& h,int i,int r,double mass,double volume,double dt) {
+    if(r==h.bed_temp_row)return mass;
+    const auto refused=[](){throw std::runtime_error("Invalid RK2 finite porewater contact.");};
+    const auto& sc=sedimentFor(*h.context,HeatElement::cell2d(i));
+    if(!std::isfinite(mass)||mass<0||!std::isfinite(volume)||volume<0||!(dt>0)||!std::isfinite(dt)||
+       !(sc.bed_thickness>0)||!std::isfinite(sc.bed_thickness)||sc.solute_diffusivity<0||!std::isfinite(sc.solute_diffusivity)||
+       sc.hyporheic_velocity<0||!std::isfinite(sc.hyporheic_velocity))refused();
+    auto& cell=h.aquifer_ground->cells.at(std::size_t(i));auto& pore=cell.porewater;const auto& column=cell.column;
+    const auto nl=column.theta.size(),base=std::size_t(r)*nl;
+    if(r<0||r>=pore.n_species||pore.n_species!=h.bed_species||pore.retention.size()!=std::size_t(pore.n_species)*nl||
+       cell.reserved_out_water.size()!=nl)refused();
+    // Dry residue remains in its current inventory; it cannot participate
+    // in a finite aqueous contact before the surface rewets.
+    if(!(volume>0))return mass;
+    const double area=mesh.tri_area.at(std::size_t(i));
+    const double velocity=std::size_t(i)<h.hyporheic_eligible.size()&&h.hyporheic_eligible[i]?sc.hyporheic_velocity:0;
+    const double rate=sc.solute_diffusivity/sc.bed_thickness+velocity;
+    if(!(area>0)||!std::isfinite(area)||!std::isfinite(rate))refused();
+    double overlap_total=0;
+    for(std::size_t j=0;j<nl;++j)overlap_total+=column.theta[j]*
+        std::max(0.,std::min(column.depth_edges[j+1],sc.bed_thickness)-column.depth_edges[j]);
+    if(!(overlap_total>0)||rate==0)return mass;
+    std::vector<double> delta(nl,0);double outgoing=0;
+    for(std::size_t j=0;j<nl;++j) {
+        const double overlap=std::max(0.,std::min(column.depth_edges[j+1],sc.bed_thickness)-column.depth_edges[j]);
+        const double available=pore.contactAvailableMass(r,j);
+        const double water=column.theta[j]*column.area*(column.depth_edges[j+1]-column.depth_edges[j])-cell.reserved_out_water[j];
+        const double capacity=water+pore.retention[base+j];
+        if(!std::isfinite(available)||available<0||!std::isfinite(water)||water<0||!std::isfinite(capacity)||capacity<0)refused();
+        if(!(overlap>0)||!(column.theta[j]>0)||!(capacity>0))continue;
+        const double conductance=rate*area*(column.theta[j]*overlap/overlap_total);
+        const double transfer=dt*conductance*(mass/volume-available/capacity);
+        if(!std::isfinite(transfer))refused();
+        delta[j]=std::max(-available,transfer);
+        if(delta[j]>0)outgoing+=delta[j];
+    }
+    if(!std::isfinite(outgoing))refused();
+    // Incoming soil mass never funds an export in the same Euler stage.
+    const double scale=outgoing>mass?std::nextafter(mass/outgoing,0.):1.;
+    auto next=pore;double result=mass;
+    // Settle surface debits first against their representable remainder.
+    // Summing scaled exports and subtracting once can overdraw by one ulp
+    // even when their proportional scale was rounded downward.
+    for(int pass=0;pass<2;++pass)for(std::size_t j=0;j<nl;++j) {
+        if((delta[j]>0)!=(pass==0))continue;
+        if(delta[j]>0)delta[j]=std::min(delta[j]*scale,result);
+        if(!next.applyContactMassIncrement(r,j,delta[j])) {
+            std::ostringstream error;error.precision(17);
+            error<<"RK2 porewater contact donor at cell "<<i<<", species "<<r<<", layer "<<j
+                 <<": mass="<<next.mass[base+j]<<", reserved="<<next.reserved_out[base+j]<<", increment="<<delta[j];
+            throw std::runtime_error(error.str());
+        }
+        result-=delta[j];
+    }
+    if(!std::isfinite(result)||result<0) {
+        std::ostringstream error;error.precision(17);
+        error<<"RK2 surface contact donor at cell "<<i<<", species "<<r<<": mass="<<mass<<", remainder="<<result;
+        throw std::runtime_error(error.str());
+    }
+    pore=std::move(next);return result;
 }
 bool ageLocalBedPorewater(MeshHeatState& h,double dt) noexcept {
     if(!h.enabled||h.ground_column||h.bed_age_row<0||h.bed_pore_volume.empty())return true;

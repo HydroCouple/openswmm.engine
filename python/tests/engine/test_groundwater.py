@@ -1142,3 +1142,66 @@ DISPERSION NO''').replace('HEAT_TRANSPORT YES', 'HEAT_TRANSPORT YES\nWATER_DENSI
         solver.end()
     finally:
         cleanup(solver)
+
+
+@pytest.mark.parametrize('closure,layered', [('CLOSED_FORM', False), ('ENSLAVED', False), ('SIGMA', False), ('SIGMA', True)])
+@pytest.mark.parametrize('integrator', ['RK5', 'ROS2', 'BDF2'])
+def test_groundwater_rk2_finite_contacts_share_pollutant_reaction_age_and_heat_budgets(tmp_path, closure, layered, integrator):
+    from openswmm.engine import Solver, GroundHeatValue as H, GroundwaterSpeciesLedger as L
+    text = _rk2_water_temperature_text(closure, layered, kinetics=True).replace(
+        'HEAT_MODEL TRANSPORT_ONLY', '''HEAT_MODEL COUPLED
+BED_HEAT_MODEL GROUND_COLUMN
+HEAT_SURFACE_EXCHANGE NO
+HEAT_RADIATIVE_EXCHANGE NO''').replace('THERMAL_MODEL WATER_ONLY', '''THERMAL_MODEL POROUS_EQUILIBRIUM
+THERMAL_LAYERS 3
+CONDUCTION YES
+LATERAL_CONDUCTION NO
+SOIL_ET_HEAT SENSIBLE_ONLY
+SURFACE_THERMAL_BC SURFACE_WATER
+DEEP_THERMAL_BC ADIABATIC
+DISPERSION NO''').replace('TRANSPORT_POLLUTANTS NO', 'TRANSPORT_POLLUTANTS YES').replace(
+        'TRANSPORT_AGE NO', 'TRANSPORT_AGE YES').replace('SOLVER RK5', f'SOLVER {integrator}').replace(
+        'HEAT_TRANSPORT YES', 'HEAT_TRANSPORT YES\nWATER_DENSITY 1000\nWATER_SPECIFIC_HEAT_CAPACITY 4186', 1)
+    text += '''[OPTIONS]
+WATER_AGE ON
+[SEDIMENT_EXCHANGE]
+BED_THICKNESS GLOBAL 1.1
+SOLUTE_DIFFUSIVITY GLOBAL .044
+[2D_INITIAL_QUALITY]
+* TSS 3
+* __WATER_AGE__ 0
+[GW_INITIAL_QUALITY]
+* SAT TSS 4
+* UNSAT TSS 4
+* SAT __WATER_AGE__ 5
+* UNSAT __WATER_AGE__ 5
+'''
+    path = tmp_path / 'finite-reactive-contacts-rk2.inp'
+    path.write_text(text)
+    solver = Solver(path, path.with_suffix('.rpt'))
+    solver.open()
+    try:
+        solver.initialize()
+        gw, surface, heat = solver.surface2d.groundwater, solver.surface2d, solver.heat
+        assert gw.species == surface.species == ('TSS', 'A', 'B', '__WATER_AGE__', '__TEMPERATURE__')
+        initial = [gw.species_ledger(row, L.INIT) + surface.species_ledger(name)['storage'] for row, name in enumerate(gw.species)]
+        initial_heat = sum(heat.ground_values(H.ENERGY, 0, 2)) + 4186000*surface.species_ledger('__TEMPERATURE__')['storage']
+        passive_initial = gw.species_ledger(0, L.INIT)
+        solver.start(False)
+        while solver.step().total_seconds() > 0:
+            pass
+        for row, name in enumerate(gw.species[:4]):
+            ledger = surface.species_ledger(name)
+            total = gw.species_ledger(row, L.STORAGE) + ledger['storage'] + gw.species_ledger(row, L.REACTED) + ledger['reacted']
+            total -= gw.species_ledger(row, L.AGE_GENERATED) + ledger['age_generated']
+            assert total == pytest.approx(initial[row], abs=1e-10*max(initial[row], 1))
+            assert abs(gw.species_ledger(row, L.RESIDUAL)) < 1e-8
+        assert gw.species_ledger(0, L.STORAGE) < passive_initial
+        final_heat = sum(heat.ground_values(H.ENERGY, 0, 2)) + 4186000*surface.species_ledger('__TEMPERATURE__')['storage']
+        assert final_heat == pytest.approx(initial_heat, abs=1e-10*max(abs(initial_heat), 1))
+        assert np.max(np.abs(heat.ground_values(H.NORMALIZED_RESIDUAL, 0, 2))) < 1e-10
+        assert surface.species_ledger('__WATER_AGE__')['reacted'] == 0
+        assert surface.species_ledger('__TEMPERATURE__')['age_generated'] == 0
+        solver.end()
+    finally:
+        cleanup(solver)

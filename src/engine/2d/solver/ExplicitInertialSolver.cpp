@@ -2229,12 +2229,13 @@ std::string ExplicitInertialSolver::rk2ThermalProfileError() const {
     const auto& h=state_->heat;if(!h.enabled)return {};
     const auto n=std::size_t(mesh_->n_cells());const auto& tr=state_->transport;
     if(!gw_||!gw_->heat().active()||!opts_->coupled_heat||opts_->bed_heat_model!=2||!h.context||!h.bed||!h.ground_column||h.surface||h.radiative||
-       tr.n_species!=1||tr.temp_row!=0||tr.gained_external.size()!=1||gw_->transport().n_species!=1||
-       h.bed_species!=1||h.bed_temp_row!=0||gw_->heat().cells.size()!=n||
+       tr.n_species<=0||tr.temp_row<0||tr.gained_external.size()!=std::size_t(tr.n_species)||tr.gained_bed.size()!=std::size_t(tr.n_species)||
+       tr.row_names!=gw_->transport().row_names||tr.n_species!=gw_->transport().n_species||tr.temp_row!=gw_->transport().temp_row||
+       tr.age_row!=gw_->transport().age_row||h.bed_species!=tr.n_species||h.bed_temp_row!=tr.temp_row||gw_->heat().cells.size()!=n||
        h.context!=gw_->heat().context||h.aquifer_ground!=&gw_->heat()||h.aquifer_owned.size()!=n||
        h.failures.size()!=n||h.ground_column_seconds.size()!=n||
        (!h.channel_footprint.empty()&&h.channel_footprint.size()!=n))
-        return "RK2 finite heat requires matched temperature-only porous GROUND_COLUMN owners with surface atmospheric/radiative exchange disabled.";
+        return "RK2 finite heat requires matched porous GROUND_COLUMN owners with surface atmospheric/radiative exchange disabled.";
     for(std::size_t i=0;i<n;++i) {
         if(!gw_->covers(int(i))||!h.aquifer_owned[i]||!gw_->heat().cells[i].surface_owned||h.failures[i]||
            !std::isfinite(h.ground_column_seconds[i])||h.ground_column_seconds[i]<0||
@@ -2260,6 +2261,48 @@ void ExplicitInertialSolver::advanceRk2Thermal(double seconds,double time) {
         tr.gained_external[tr.temp_row]+=mass-before;
         gw_->heat().refreshView(i,gw_->transport());
     }
+}
+void ExplicitInertialSolver::advanceRk2BedContact(double seconds) {
+    auto& tr=state_->transport;auto& h=state_->heat;
+    if(!h.enabled||tr.n_species==1)return;
+    auto& ground=gw_->transport();auto& cells=gw_->heat().cells;
+    const auto surface0=tr;const auto ground0=ground;
+    std::vector<GroundPorewaterColumn> pore0;for(const auto& cell:cells)pore0.push_back(cell.porewater);
+    for(int stage=0;stage<2;++stage)for(int i=0;i<mesh_->n_cells();++i) {
+        const double wet=inertial::cellWetArea(*mesh_,*opts_,i,state_->volume[i])/mesh_->tri_area[i];
+        for(int row=0;row<tr.n_species;++row)if(row!=tr.temp_row) {
+            auto& mass=tr.cell_mass[tr.idx(row,i)];const double before=mass;
+            if(wet>0)mass=applyLocalBedSpeciesEuler(*mesh_,h,i,row,mass,state_->volume[i],seconds*wet);
+            tr.gained_bed[row]+=mass-before;
+        }
+        // All physical increments settle into the current canonical SIGMA
+        // inventory before evaluating the second stage's concentrations.
+        gw_->heat().refreshView(i,ground);
+    }
+    const auto blend=[](double& now,double before) {
+        now=before+.5*(now-before);
+        if(!std::isfinite(now))throw std::runtime_error("Nonfinite RK2 porewater contact blend.");
+    };
+    for(int row=0;row<tr.n_species;++row)if(row!=tr.temp_row) {
+        blend(tr.gained_bed[row],surface0.gained_bed[row]);
+        for(int i=0;i<mesh_->n_cells();++i) {
+            blend(tr.cell_mass[tr.idx(row,i)],surface0.cell_mass[tr.idx(row,i)]);
+            auto& pore=cells[i].porewater;const auto nl=cells[i].column.theta.size();
+            for(std::size_t j=0;j<nl;++j) {
+                const auto k=std::size_t(row)*nl+j;
+                blend(pore.contact_mass[k],pore0[i].contact_mass[k]);
+                if(!ground.n_layers)blend(pore.mass[k],pore0[i].mass[k]);
+            }
+            if(ground.n_layers) {
+                blend(ground.sat_mass[ground.idx(row,i)],ground0.sat_mass[ground.idx(row,i)]);
+                for(int layer=0;layer<ground.n_layers;++layer)
+                    blend(ground.layer_mass[ground.layerIdx(row,layer,i)],ground0.layer_mass[ground.layerIdx(row,layer,i)]);
+                ground.refreshUnsat(row,i);
+            }
+        }
+    }
+    for(int i=0;i<mesh_->n_cells();++i)gw_->heat().refreshView(i,ground);
+    if(auto error=gw_->refreshPorewaterContactLedger();!error.empty())throw std::runtime_error(error);
 }
 
 // SSP-RK2 (Heun) over the global active lists: U¹ = U⁰ + Δt·L(U⁰),
@@ -2323,6 +2366,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     const double time=cuts.empty()?start:cuts[part],dt=cuts.empty()?interval:cuts[part+1]-time;
     std::unique_ptr<SubsurfaceSolver> part_ground;
     if(gw_) {
+        advanceRk2BedContact(.5*dt);
         advanceRk2Thermal(.5*dt,time+.25*dt);
         advanceRk2SurfaceReactions(.5*dt);
         gw_->advanceRk2Reactions(.5*dt);
@@ -2422,6 +2466,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
         gw_->advanceRk2Reactions(.5*dt);
         advanceRk2SurfaceReactions(.5*dt);
         advanceRk2Thermal(.5*dt,time+.75*dt);
+        advanceRk2BedContact(.5*dt);
         source_phase_end_=time+dt;
         gw_->publishRk2Infiltration(*state_,dt,time+dt);
     }

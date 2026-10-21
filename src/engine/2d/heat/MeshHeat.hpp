@@ -83,5 +83,8 @@ double applyMeshHeatCell(const MeshData&,const SolverOptions2D&,MeshHeatState&,i
 void advectStandaloneGround(MeshHeatState&,int cell,double accepted_m3,double donor_celsius) noexcept;
 double applyLocalBedSpecies(const MeshData&,MeshHeatState&,int cell,int species,
                            double surface_mass,double available_m3,double seconds) noexcept;
+// Beginning-state donor budgets for one Euler evaluation of the RK2 contact.
+double applyLocalBedSpeciesEuler(const MeshData&,MeshHeatState&,int cell,int species,
+                                double surface_mass,double available_m3,double seconds);
 bool ageLocalBedPorewater(MeshHeatState&,double seconds) noexcept;
 } // namespace openswmm::twoD

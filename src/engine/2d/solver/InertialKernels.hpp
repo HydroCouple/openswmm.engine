@@ -201,6 +201,22 @@ inline void cellEtaDepth(const MeshData& m, const SolverOptions2D& o,
                    true, o.vfr_min_wet_frac, V, eta, depth);
 }
 
+/// Physical planimetric water contact, distinct from the cell-mean depth
+/// V/A returned above. The VFR regularization is not a flooded-area floor.
+inline double cellWetArea(const MeshData& m,const SolverOptions2D& o,int i,double volume) noexcept {
+    if(!(volume>0))return 0;
+    if(o.cell_closure!=CellClosure2D::VFR)return m.tri_area[i];
+    double eta=0,depth=0;cellEtaDepth(m,o,i,volume,eta,depth);
+    double fraction;
+    if(m.cell_nv[std::size_t(i)]==4)fraction=quadWetFraction(&m.quad_vfr_z[std::size_t(i)*kQuadVfrZ],
+        m.quad_vfr_a[std::size_t(i)*2],m.quad_vfr_a[std::size_t(i)*2+1],eta);
+    else {
+        double a=m.vz[m.cell_vertex(i,0)],b=m.vz[m.cell_vertex(i,1)],c=m.vz[m.cell_vertex(i,2)];
+        vfrSort3(a,b,c);fraction=vfrWetFraction(a,b,c,eta);
+    }
+    return m.tri_area[i]*std::clamp(fraction,0.,1.);
+}
+
 /// Exact inverse of the closure: cell volume holding free surface η — FLAT
 /// A·max(0, η − z_c); VFR the regularized B&S forward relation (round-trips
 /// with cellEtaDepth). Closure-consistent seeding for tests/hotstart.

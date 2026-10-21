@@ -367,7 +367,8 @@ std::string ExplicitInertialSolver::rk2CheckpointModel() const {
         auto decay=rk_decay_;auto rows=rk_reaction_rows_;a(profile,identity,decay,rows);
     }
     if(state_->heat.enabled) {
-        std::string profile="RK2 finite surface/soil thermal owner v1";
+        std::string profile=opts_->cell_closure==CellClosure2D::VFR?
+            "RK2 finite surface/soil geometric contact v2":"RK2 finite surface/soil thermal owner v1";
         auto heat=checkpoint::meshHeatModelIdentity(state_->heat);a(profile,heat);
     }
     auto rain=state_->rainfall,evap=state_->evap_rate;a(rain,evap);

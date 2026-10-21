@@ -133,6 +133,7 @@ private:
     double advanceImpl(double current,double target);
     std::string rk2ThermalProfileError() const;
     void advanceRk2Thermal(double seconds,double sample_time);
+    void advanceRk2BedContact(double seconds);
     void advanceRk2SurfaceReactions(double seconds);
     void syncRk2ReactionReport(SimulationContext&);
     const ReactionData* rk_reactions_=nullptr; // immutable model config
