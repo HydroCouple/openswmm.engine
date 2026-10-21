@@ -271,21 +271,22 @@ if(OPENSWMM_INSTALL)
     # the loader can find the bundled copy next to the CLI (bin/) or the engine
     # (lib/), and re-sign — install_name_tool invalidates the ad-hoc signature
     # on arm64, which otherwise SIGKILLs at dlopen.
+    # Pass the filename as an argument; failed repair/signing must fail install.
     if(APPLE)
         install(CODE "
             set(_plugin \"\${CMAKE_INSTALL_PREFIX}/${OPENSWMM_GPU_PLUGIN_INSTALL_DESTINATION}/$<TARGET_FILE_NAME:${_OPENSWMM_GPU_TARGET}>\")
             if(EXISTS \"\${_plugin}\")
                 execute_process(COMMAND bash -c \"
                     set -e
-                    plugin='\${_plugin}'
-                    otool -L \\\"\$plugin\\\" | awk 'NR>1 {print \$1}' | grep '/libomp\\.dylib\$' | grep -v '^@' | while read -r old; do
+                    plugin=\\\"\$1\\\"
+                    otool -L \\\"\$plugin\\\" | awk 'NR>1 {print \$1}' | grep '/libomp[.]dylib\$' | grep -v '^@' | while read -r old; do
                         install_name_tool -change \\\"\$old\\\" @rpath/libomp.dylib \\\"\$plugin\\\"
                     done
                     for rp in @loader_path @loader_path/../bin @loader_path/../lib; do
                         install_name_tool -add_rpath \\\"\$rp\\\" \\\"\$plugin\\\" 2>/dev/null || true
                     done
                     codesign --force --sign - \\\"\$plugin\\\"
-                \")
+                \" -- \"\${_plugin}\" COMMAND_ERROR_IS_FATAL ANY)
             endif()
         ")
     endif()
