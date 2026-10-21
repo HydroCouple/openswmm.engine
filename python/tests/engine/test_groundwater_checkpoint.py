@@ -10,7 +10,7 @@ from openswmm.engine import (
 from tests.engine._groundwater_cases import cleanup
 
 
-def _open(directory, chemistry, thermal, reactive=True, passive=False, output=0, rate='.001', age=True, porous=True, unit='MG', boundary=None, rk2=False, latent=False, authored_surface=None, authored_series=False):
+def _open(directory, chemistry, thermal, reactive=True, passive=False, output=0, rate='.001', age=True, porous=True, unit='MG', boundary=None, rk2=False, latent=False, authored_surface=None, authored_series=False, network=False):
     directory.mkdir()
     path = directory / 'model.inp'
     reaction = ''
@@ -157,6 +157,8 @@ SurfaceEdge 02/01/2026 00:01:30 {values[3]}
 ''')
     if latent:
         path.write_text(path.read_text()+'\n[EVAPORATION]\nCONSTANT 18\n')
+    if network:
+        path.write_text(path.read_text()+"\n[STORAGE]\nS 0 3 1 FUNCTIONAL 20 1 100 0 0\n[OUTFALLS]\nO 0 FIXED .4 NO\n[CONDUITS]\nC S O 30 .013 .75 0 0 0\n[XSECTIONS]\nC CIRCULAR .3 0 0 0\n[2D_OPTIONS]\nCOUPLING_SYNC .7\n")
     solver = Solver(path, path.with_suffix('.rpt'))
     solver.create()
     capabilities = solver.checkpoints.capabilities
@@ -198,6 +200,9 @@ def _snapshot(solver, chemistry, porous=True):
         values.append(np.asarray(list(gw.authored_boundary_receipt(edge).values())))
         values += [np.asarray(list(gw.authored_boundary_receipt(edge, row).values()))
                    for row in range(len(gw.species))]
+    if len(solver.nodes):
+        values.append(np.asarray([node.depth for node in solver.nodes]))
+        values.append(np.asarray([link.flow for link in solver.links]))
     return values
 
 
@@ -233,9 +238,9 @@ def test_reactive_edge_session_preserves_reversals_fluxes_and_reports(tmp_path, 
     _continue_session(tmp_path, chemistry, thermal, True, passive, output, True, porous, boundary)
 
 
-def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, age, porous, boundary=None, rk2=False, surface_boundary=None, latent=False, copied_et=False, authored_surface=None, authored_series=False):
-    source = _open(tmp_path / 'source', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2, latent=latent, authored_surface=authored_surface, authored_series=authored_series)
-    target = _open(tmp_path / 'target', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2, latent=latent, authored_surface=authored_surface, authored_series=authored_series)
+def _continue_session(tmp_path, chemistry, thermal, reactive, passive, output, age, porous, boundary=None, rk2=False, surface_boundary=None, latent=False, copied_et=False, authored_surface=None, authored_series=False, network=False):
+    source = _open(tmp_path / 'source', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2, latent=latent, authored_surface=authored_surface, authored_series=authored_series, network=network)
+    target = _open(tmp_path / 'target', chemistry, thermal, reactive, passive, output, age=age, porous=porous, boundary=boundary, rk2=rk2, latent=latent, authored_surface=authored_surface, authored_series=authored_series, network=network)
     try:
         source.checkpoints.start_session(output)
         target.checkpoints.start_session(output)
@@ -531,3 +536,9 @@ def test_managed_rk2_surface_state_boundary_restores_derivatives_and_fallback(tm
 def test_managed_rk2_surface_state_boundary_shares_latent_weather_and_reactive_history(tmp_path, chemistry, thermal, output, kind):
     _continue_session(tmp_path, chemistry, thermal, True, True, output, True, True,
                       rk2=True, latent=True, copied_et=True, authored_surface=kind)
+
+
+@pytest.mark.parametrize('chemistry,thermal', [(0, 4), (5, 3), (3, 7)])
+@pytest.mark.parametrize('output', [0, 2])
+def test_managed_rk2_disjoint_network_continues_native_hydraulics_and_mesh_history(tmp_path, chemistry, thermal, output):
+    _continue_session(tmp_path, chemistry, thermal, False, False, output, False, False, rk2=True, network=True)

@@ -273,11 +273,11 @@ bool SurfaceRouter2D::standaloneRk2Checkpointing() const noexcept {
 std::string SurfaceRouter2D::standaloneRk2Boundary(const SimulationContext& ctx) const {
     const auto* cpu=dynamic_cast<const ExplicitInertialSolver*>(solver_.get());
     if(!active_||!cpu||options_.momentum!=Momentum2D::FULL_SWE||options_.reconstruction_order!=2||
-       &ctx!=source_context_||common_stage_||!joint_hydraulic_||channel_ground_.active()||ctx.n_nodes()!=0||ctx.n_links()!=0||
+       &ctx!=source_context_||common_stage_||!joint_hydraulic_||channel_ground_.active()||
        ctx.n_subcatches()!=0||!aquiferConfig().surface_owners.empty()||!coupling_points_.empty()||!pond_track_ptr_.empty()||
        !subcatch_recharge_.empty()||!cell_subcatch_.empty()||surface_quality_.active()||!aquifer_link_shares_.empty()||
        pending_dt_<0||!close(ctx.current_time,sim_time_+pending_dt_)||!close(cpu->completedSourceTime(),sim_time_))
-        return "Managed RK2 requires its completed standalone CPU aquifer/router boundary without borrowed owners.";
+        return "Managed RK2 requires its completed CPU aquifer/router boundary without shared network or catchment owners.";
     if(auto error=cpu->rk2CheckpointProfile();!error.empty())return error;
     if(auto error=validateRk2ReplayIds(state_.runtime_sources,subsurface_.runtimeSources(),state_.runtime_forcings,sim_time_);!error.empty())return error;
     for(const auto* values:{&state_.rainfall,&state_.evap_rate})for(double value:*values)

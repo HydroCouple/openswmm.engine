@@ -6380,6 +6380,68 @@ GW_ET NONE
     if(auto error=engine.startCheckpointSession(output,"",false,"");!error.empty())throw std::runtime_error(error);
 }
 }
+namespace {
+std::string independentRk2Network(const std::string& roughness=".013") {
+    return "[STORAGE]\nS 0 3 1 FUNCTIONAL 20 1 100 0 0\n[OUTFALLS]\nO 0 FIXED .4 NO\n"
+        "[CONDUITS]\nC S O 30 "+roughness+" .75 0 0 0\n[XSECTIONS]\nC CIRCULAR .3 0 0 0\n";
+}
+}
+TEST(EngineCheckpoint, ManagedRk2IndependentNetworkRestoresPhysicalRouterAndPendingCalendar) {
+    for(bool layered:{false,true}) {
+        const auto name="managed-rk2-independent-"+std::to_string(layered);SCOPED_TRACE(name);SWMMEngine a,b;
+        const auto extra=independentRk2Network()+"[2D_OPTIONS]\nCOUPLING_SYNC .7\n[2D_AQUIFER_OPTIONS]\nCLOSURE "+(layered?std::string("SIGMA"):std::string("CLOSED_FORM"))+"\nM_LAYERS 5\n";
+        ASSERT_NO_THROW(startManagedRk2Session(a,name+"-a",extra));
+        ASSERT_NO_THROW(startManagedRk2Session(b,name+"-b",extra));
+        const auto initial=a.context().nodes.volume[0];double actual=0;
+        ASSERT_EQ(swmm_coupling_advance_to(&a,1.237,&actual),SWMM_OK);ASSERT_DOUBLE_EQ(actual,1.237);
+        EXPECT_GT(std::abs(a.context().links.flow[0]),0);EXPECT_NE(a.context().nodes.volume[0],initial);
+        const auto saved=root()/(name+".chk");ASSERT_EQ(a.saveCheckpoint(saved.string()),"");
+        ASSERT_EQ(b.loadCheckpoint(saved.string()),"");compare(a,b,name+"-restored");
+        while(a.context().current_time<4.7) {
+            ASSERT_NO_THROW(step(a));
+            ASSERT_NO_THROW(step(b));compare(a,b,name+"-continued");
+        }
+        EXPECT_NEAR(a.surfaceRouter2D().subsurface().state().continuityResidual(),0,1e-10);
+        EXPECT_EQ(a.context().mass_balance_2d.coupling_1d_to_2d_in,0);
+        EXPECT_EQ(a.context().mass_balance_2d.coupling_2d_to_1d_out,0);
+    }
+}
+TEST(EngineCheckpoint, ManagedRk2IndependentNetworkDoesNotChangeFixedCadenceMeshTrajectory) {
+    SWMMEngine a,b;ASSERT_NO_THROW(startManagedRk2Session(a,"managed-rk2-independent-mesh",independentRk2Network()));
+    ASSERT_NO_THROW(startManagedRk2Session(b,"managed-rk2-independent-reference"));
+    while(a.context().current_time<4.7) {
+        ASSERT_NO_THROW(step(a));
+        ASSERT_NO_THROW(step(b));ASSERT_EQ(a.context().current_time,b.context().current_time);
+        EXPECT_EQ(a.surfaceRouter2D().state().volume,b.surfaceRouter2D().state().volume);
+        EXPECT_EQ(a.surfaceRouter2D().subsurface().transportRestartState(),b.surfaceRouter2D().subsurface().transportRestartState());
+    }
+}
+TEST(EngineCheckpoint, ManagedRk2IndependentMeshDoesNotChangeFixedCadenceNetworkTrajectory) {
+    SWMMEngine a,b;ASSERT_NO_THROW(startManagedRk2Session(a,"managed-rk2-independent-network",independentRk2Network()));
+    ASSERT_NO_THROW(startManagedRk2Session(b,"managed-rk2-independent-network-reference",independentRk2Network()+"[OPTIONS]\nIGNORE_2D YES\n"));
+    while(a.context().current_time<4.7) {
+        ASSERT_NO_THROW(step(a));
+        ASSERT_NO_THROW(step(b));ASSERT_EQ(a.context().current_time,b.context().current_time);
+        EXPECT_EQ(a.context().nodes.volume,b.context().nodes.volume);
+        EXPECT_EQ(a.context().nodes.depth,b.context().nodes.depth);
+        EXPECT_EQ(a.context().links.flow,b.context().links.flow);
+        EXPECT_DOUBLE_EQ(a.context().mass_balance.routing_final_storage,b.context().mass_balance.routing_final_storage);
+        EXPECT_DOUBLE_EQ(a.context().mass_balance.routing_outflow,b.context().mass_balance.routing_outflow);
+    }
+}
+TEST(EngineCheckpoint, ManagedRk2IndependentNetworkMismatchPreservesTarget) {
+    SWMMEngine a,b;ASSERT_NO_THROW(startManagedRk2Session(a,"managed-rk2-independent-model-source",independentRk2Network()));
+    ASSERT_NO_THROW(startManagedRk2Session(b,"managed-rk2-independent-model-target",independentRk2Network(".014")));
+    ASSERT_NO_THROW(step(a));const auto good=root()/"managed-rk2-independent-model.chk",before=root()/"managed-rk2-independent-before.chk";
+    ASSERT_EQ(a.saveCheckpoint(good.string()),"");ASSERT_EQ(b.saveCheckpoint(before.string()),"");const auto initial=bytes(before);
+    EXPECT_FALSE(b.loadCheckpoint(good.string()).empty());ASSERT_EQ(b.saveCheckpoint(before.string()),"");EXPECT_EQ(bytes(before),initial);
+}
+TEST(EngineCheckpoint, ManagedRk2IndependentNetworkStillRefusesSharedExchangeAndQuality) {
+    for(const auto& extra:{std::string("[2D_TRIANGLE_NODE_MAP]\n0 S 0 1\n"),std::string("[OPTIONS]\nIGNORE_QUALITY NO\n[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0\n")}) {
+        SWMMEngine engine;const auto name="managed-rk2-independent-refusal-"+std::to_string(extra.size());
+        EXPECT_THROW(startManagedRk2Session(engine,name,independentRk2Network()+extra),std::runtime_error);
+    }
+}
 TEST(EngineCheckpoint, ManagedRk2WaterSessionRestoresActualNumericalOwnerAndCalendar) {
     SWMMEngine a,b;
 

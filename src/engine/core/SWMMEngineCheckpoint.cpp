@@ -1159,8 +1159,8 @@ std::string SWMMEngine::enableCheckpointingImpl(
 #ifdef OPENSWMM_HAS_2D
         if(stage)surface_router_.setJointSourceStage(ctx_,*stage,router_);
         else if(rk2_attachment) {
-            // This router has no 1D physical stores in the standalone profile,
-            // but its accepted engine calendar still requires owned recovery.
+            // The hydraulic router owns its accepted calendar and any disjoint
+            // water-only network stores; the mesh has no shared exchanges.
             surface_router_.joint_hydraulic_=&router_;
             try {surface_router_.attachStandaloneRk2Checkpoint(ctx_);}
             catch(...) {surface_router_.joint_hydraulic_=nullptr;throw;}

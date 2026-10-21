@@ -51,7 +51,10 @@ session with no existing runtime prescriptions. Active and cleared surface
 boundary histories are included. Earlier managed RK2 router snapshots without
 the boundary receipt/fallback record are refused safely. Scientific HDF5 values,
 attributes and schema continue exactly; file allocation addresses may differ.
-Network/catchment owners, source journals, binary/combined output, file-based
+Water-only networks without shared exchanges additionally use the existing
+hydraulic checkpoint owner alongside RK2 mesh/aquifer state. Node/link stores
+and native calendars resume together. Network quality and shared
+network/catchment owners, source journals, binary/combined output, file-based
 radiation and external provider programs remain outside this managed profile.
 See the engine groundwater transport profile for activation and thermal limits.
 
