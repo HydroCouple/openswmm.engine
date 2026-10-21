@@ -4608,3 +4608,136 @@ TEST(CoupledGroundwaterRk2, GroundRuntimeMovingColumnMatchesIndependentReactiveW
         }
     }
 }
+
+namespace {
+RuntimeSource rkGroundBoundary(CoupledRkRig& r,int cell,bool head,double value,int outer=0) {
+    RuntimeSource row;row.cell=cell;
+    for(int edge=0;edge<r.mesh.cell_vertex_count(cell);++edge)if(r.mesh.cell_neighbour(cell,edge)<0) {
+        if(outer--==0){row.boundary_edge=edge;break;}
+    }
+    if(row.boundary_edge<0)throw std::runtime_error("Missing test exterior aquifer edge");
+    row.id="boundary/"+std::to_string(cell)+"/"+std::to_string(row.boundary_edge);row.owner="boundary-test";
+    if(head)row.boundary_head=value;else row.flow=value;
+    const auto& tr=r.gw.transport();row.concentrations.assign(tr.n_species,7);row.rates.assign(tr.n_species,0);
+    if(tr.age_row>=0)row.concentrations[tr.age_row]=3;if(tr.temp_row>=0)row.concentrations[tr.temp_row]=-8;
+    return row;
+}
+void setRkGroundBoundary(CoupledRkRig& r,bool head,double value) {
+    for(int cell=0;cell<r.mesh.n_cells();++cell)r.gw.runtimeSources().replace(rkGroundBoundary(r,cell,head,value));
+    r.gw.runtimeSources().rebuild(r.mesh.n_cells());
+}
+}
+TEST(CoupledGroundwaterRk2, GroundBoundaryHeadHasIndependentAnalyticalSecondOrderRelaxation) {
+    double previous=0;
+    for(double dt:{.4,.2,.1,.05}) {
+        CoupledRkRig r;r.init(dt,.02,0,0,"NONE",GwClosure::CLOSED_FORM,SoilChar::GARDNER);auto& w=r.gw.state();
+        for(int i=0;i<w.n_cells;++i)w.hu[i]=w.theta_r[i]*(w.zs[i]-w.hg[i]);w.led_init_storage=w.storage();setRkGroundBoundary(r,true,w.z_bed[0]+.8);
+        const double initial=r.total();const int slot=MeshData::slot(0,r.gw.runtimeSources().rows[0].boundary_edge);
+        const double coefficient=.02*r.mesh.edge_length[slot]/(2*r.mesh.edge_dist_c[slot]*(w.theta_s[0]-w.theta_r[0])*w.area[0]);
+        const double exact=.8*std::tanh(std::atanh(.6/.8)+coefficient*.8*2);
+        ASSERT_NO_THROW(r.solver.advance(0,2));const double error=std::abs(w.hg[0]-exact);EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;
+        RecordProperty("ground_boundary_head_"+std::to_string(dt),error);double incoming=0;for(const auto& row:r.gw.runtimeSources().rows)incoming+=row.receipt.applied;
+        EXPECT_NEAR(r.total()-initial,incoming,1e-10);EXPECT_NEAR(w.continuityResidual(),0,1e-10);
+    }
+}
+TEST(CoupledGroundwaterRk2, GroundBoundaryFlowHasIndependentRetardedQualityMixing) {
+    for(bool layered:{false,true})for(double kd:{0.,.001}) {double previous=0;
+        for(double dt:{.4,.2,.1,.05}) {
+            CoupledRkRig r;r.init(dt,0,0,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);initRkQuality(r,layered,true,true);seedRkQuality(r,2,kd);setRkGroundBoundary(r,false,.1);
+            for(int i=0;i<r.mesh.n_cells();++i)r.gw.runtimeSources().replace(rkGroundBoundary(r,i,false,-.1,1));r.gw.runtimeSources().rebuild(2);
+            const auto& w=r.gw.state();const auto& tr=r.gw.transport();const double capacity=w.area[0]*w.hg[0]*(w.theta_s[0]+kd*tr.rho_b[0]);
+            ASSERT_NO_THROW(r.solver.advance(0,2));const double exact=7-5*std::exp(-.2/capacity),error=std::abs(tr.sat_mass[0]/capacity-exact);
+            EXPECT_LT(error,1e-4);if(previous>0)EXPECT_GT(previous/error,3.5);previous=error;for(int row=0;row<tr.n_species;++row)EXPECT_NEAR(tr.residual(row),0,1e-10);EXPECT_NEAR(w.continuityResidual(),0,1e-10);
+        }
+    }
+}
+TEST(CoupledGroundwaterRk2, GroundBoundaryMatchesAuthoredHydraulicAndQualityEdgeTrajectories) {
+    for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true})for(bool head:{false,true})for(int thermal:{0,1,2}) {
+        if(layered&&closure!=GwClosure::SIGMA)continue;CoupledRkRig a,b;RkPorousOwner oa,ob;
+        for(auto* r:{&a,&b}){r->init(.05,.003,.001,.2,"NONE",closure,SoilChar::GARDNER,4);if(thermal==2)(r==&a?oa:ob).initialize(*r,layered,3);else if(thermal==1)initRkTemperature(*r,layered);else{initRkQuality(*r,layered,true,true);seedRkQuality(*r,2,.001);}}
+        setRkGroundBoundary(a,head,head?.8:.01);std::vector<GwResolvedBoundary> authored;
+        for(const auto& row:a.gw.runtimeSources().rows) {
+            GwSourceSignal signal;signal.constant=head?row.boundary_head:row.flow;auto edge=rk2FlowEdge(b,row.cell,signal);edge.head=head;
+            for(int s=0;s<b.gw.transport().n_species;++s){GwBoundaryTerm term;term.row=s;term.signal.constant=row.concentrations[s];edge.terms.push_back(term);}
+            edge.mass_in.assign(b.gw.transport().n_species,0);edge.mass_out=edge.flux_in=edge.flux_out=edge.mass_in;authored.push_back(edge);
+        }
+        b.gw.setBoundaries(authored);ASSERT_NO_THROW(a.solver.advance(0,2));
+        ASSERT_NO_THROW(b.solver.advance(0,2));
+        for(auto member:{&SubsurfaceState::hg,&SubsurfaceState::hu})for(int i=0;i<a.mesh.n_cells();++i)EXPECT_NEAR((a.gw.state().*member)[i],(b.gw.state().*member)[i],1e-13);
+        for(auto member:{&SubsurfaceTransportState::sat_mass,&SubsurfaceTransportState::layer_mass,&SubsurfaceTransportState::unsat_mass}) {
+            const auto& actual=a.gw.transport().*member;const auto& reference=b.gw.transport().*member;ASSERT_EQ(actual.size(),reference.size());for(std::size_t k=0;k<actual.size();++k)EXPECT_NEAR(actual[k],reference[k],1e-13);
+        }
+        if(thermal==2) {
+            checkRkPorousLedgers(a);checkRkPorousLedgers(b);
+            for(int i=0;i<a.mesh.n_cells();++i)for(std::size_t j=0;j<a.gw.heat().cells[i].column.energy.size();++j)
+                EXPECT_NEAR(a.gw.heat().cells[i].column.energy[j],b.gw.heat().cells[i].column.energy[j],1e-7);
+        }
+    }
+}
+TEST(CoupledGroundwaterRk2, GroundBoundaryHeadCheckpointBindsPrescriptionAndRestoresEvaluatedFlowExactly) {
+    for(bool layered:{false,true}) {
+        CoupledRkRig a,b;for(auto* r:{&a,&b}){r->init(.1,.003,.001,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);initRkQuality(*r,layered,true,true);seedRkQuality(*r,2,.001);setRkGroundBoundary(*r,true,.8);}
+        ASSERT_NO_THROW(a.solver.advance(0,.6));ASSERT_NE(a.gw.runtimeSources().rows[0].flow,0);const auto saved=rk2Output("ground-boundary.chk"),before=rk2Output("ground-boundary-before.chk"),after=rk2Output("ground-boundary-after.chk");ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");
+        for(double* value:{&b.gw.runtimeSources().rows[0].boundary_head,&b.gw.runtimeSources().rows[0].concentrations[0]}) {
+            const double old=*value;*value+=.1;ASSERT_EQ(b.solver.saveCheckpoint(before.string()),"");EXPECT_FALSE(b.solver.loadCheckpoint(saved.string()).empty());ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));*value=old;
+        }
+        ASSERT_EQ(b.solver.loadCheckpoint(saved.string()),"");EXPECT_EQ(a.gw.runtimeSources().rows[0].flow,b.gw.runtimeSources().rows[0].flow);
+        ASSERT_NO_THROW(a.solver.advance(.6,2));
+        ASSERT_NO_THROW(b.solver.advance(.6,2));
+        ASSERT_EQ(a.solver.saveCheckpoint(before.string()),"");ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+    }
+}
+TEST(CoupledGroundwaterRk2, GroundBoundaryLaterHeadOverflowRestoresEveryPhysicalOwnerAndCanRetry) {
+    CoupledRkRig r;r.init(.1,.003,.001,.2,"NONE");initRkTemperature(r,false);setRkGroundBoundary(r,true,.8);r.gw.runtimeSources().rows[1].boundary_head=1e308;
+    const auto before=rk2Output("ground-boundary-head-overflow-before.chk"),after=rk2Output("ground-boundary-head-overflow-after.chk");ASSERT_EQ(r.solver.saveCheckpoint(before.string()),"");EXPECT_THROW(r.solver.advance(0,.1),std::runtime_error);ASSERT_EQ(r.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));r.gw.runtimeSources().rows[1].boundary_head=.8;ASSERT_NO_THROW(r.solver.advance(0,.1));
+}
+TEST(CoupledGroundwaterRk2, GroundBoundaryClearReversalAndExhaustionKeepColdWaterAndCanonicalBudgets) {
+    for(GwClosure closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(bool layered:{false,true}) {
+        if(layered&&closure!=GwClosure::SIGMA)continue;CoupledRkRig r;r.init(.05,0,0,.2,"NONE",closure,SoilChar::GARDNER,4);initRkTemperature(r,layered,6,6);setRkGroundBoundary(r,false,.1);
+        ASSERT_NO_THROW(r.solver.advance(0,.3));for(auto& row:r.gw.runtimeSources().rows)row.flow=-100;
+        ASSERT_NO_THROW(r.solver.advance(.3,.35));const auto& w=r.gw.state();const auto& tr=r.gw.transport();
+        for(int i=0;i<w.n_cells;++i)if(w.hg[i]>0){const double t=tr.sat_mass[i]/(w.area[i]*w.theta_s[i]*w.hg[i]);EXPECT_GE(t,-8-1e-10);EXPECT_LE(t,6+1e-10);}
+        for(auto& row:r.gw.runtimeSources().rows)row.enabled=false;r.gw.runtimeSources().rebuild(2);const double water=r.total();ASSERT_NO_THROW(r.solver.advance(.35,.5));EXPECT_NEAR(r.total(),water,1e-10);EXPECT_NEAR(w.continuityResidual(),0,1e-10);EXPECT_NEAR(tr.residual(0),0,1e-10);
+    }
+}
+TEST(CoupledGroundwaterRk2, GroundBoundaryInvalidHydraulicBindingAndAuthoredOverlapRefuseAtomically) {
+    CoupledRkRig r;r.init(.1,.003,0,.2,"NONE");initRkQuality(r,false);seedRkQuality(r,2);setRkGroundBoundary(r,true,.8);auto& row=r.gw.runtimeSources().rows[0];const double water=r.total();
+    const int edge=row.boundary_edge;for(int k=0;k<r.mesh.cell_vertex_count(0);++k)if(r.mesh.cell_neighbour(0,k)>=0)row.boundary_edge=k;
+    EXPECT_THROW(r.solver.advance(0,.1),std::runtime_error);row.boundary_edge=edge;
+    GwSourceSignal signal;signal.constant=.01;auto boundary=rk2FlowEdge(r,0,signal);boundary.mass_in=boundary.mass_out=boundary.flux_in=boundary.flux_out={0};r.gw.setBoundaries({boundary});
+    EXPECT_THROW(r.solver.advance(0,.1),std::runtime_error);EXPECT_DOUBLE_EQ(r.total(),water);
+}
+TEST(CoupledGroundwaterRk2, GroundBoundaryLocalHeadStepDoublingHasThirdOrderDifference) {
+    double previous=0;
+    for(double dt:{.4,.2,.1,.05}) {
+        CoupledRkRig a,b;for(auto* r:{&a,&b}){r->init(dt,.02,0,0,"NONE");setRkGroundBoundary(*r,true,.8);}
+        ASSERT_NO_THROW(a.solver.advance(0,dt));
+        ASSERT_NO_THROW(b.solver.advance(0,dt/2));
+        ASSERT_NO_THROW(b.solver.advance(dt/2,dt));
+        const double error=std::abs(a.gw.state().hg[0]-b.gw.state().hg[0]);EXPECT_GT(error,0);if(previous>0)EXPECT_GT(previous/error,7);previous=error;
+    }
+}
+TEST(CoupledGroundwaterRk2, GroundBoundaryFlowCorruptReceiptRefusesBeforeAnyOwnerIsInstalled) {
+    CoupledRkRig a,b;for(auto* r:{&a,&b}){r->init(.1,0,0,.2,"NONE");initRkQuality(*r,false);seedRkQuality(*r,2);setRkGroundBoundary(*r,false,.01);}
+    ASSERT_NO_THROW(a.solver.advance(0,.6));const auto saved=rk2Output("boundary-corrupt.chk"),bad=rk2Output("boundary-bad.chk"),before=rk2Output("boundary-corrupt-before.chk"),after=rk2Output("boundary-corrupt-after.chk");ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");
+    openswmm::detail::CompletedSourceArchive original(rk2File(saved));std::string magic,payload;uint32_t version=0,endian=0,long_bytes=0,crc=0;original(magic,version,endian,long_bytes,payload,crc);original.finish();
+    const std::string marker="RK2 copied groundwater boundaries v1";const auto pos=payload.rfind(marker);ASSERT_NE(pos,std::string::npos);const auto offset=pos+marker.size()+sizeof(uint64_t)+sizeof(bool)+sizeof(double);ASSERT_LT(offset+sizeof(double),payload.size());double value=0;std::memcpy(&value,payload.data()+offset,sizeof(value));value+=1;std::memcpy(payload.data()+offset,&value,sizeof(value));
+    crc=~uint32_t(0);for(unsigned char c:payload){crc^=c;for(int k=0;k<8;++k)crc=(crc>>1)^((crc&1)?0xedb88320u:0u);}crc=~crc;openswmm::detail::CompletedSourceArchive corrupted;corrupted(magic,version,endian,long_bytes,payload,crc);std::ofstream(bad,std::ios::binary)<<corrupted.bytes();
+    ASSERT_EQ(b.solver.saveCheckpoint(before.string()),"");EXPECT_NE(b.solver.loadCheckpoint(bad.string()).find("net and gross"),std::string::npos);ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+}
+TEST(CoupledGroundwaterRk2, GroundBoundaryClearedRowsAndMixedOrdinarySourcesContinueExactly) {
+    CoupledRkRig a,b;for(auto* r:{&a,&b}){r->init(.1,.003,0,.2,"NONE",GwClosure::SIGMA,SoilChar::GARDNER,4);initRkQuality(*r,true,true,true);seedRkQuality(*r,2,.001);setRkGroundRuntimePair(*r,.01,.735);setRkGroundBoundary(*r,true,.8);}
+    ASSERT_NO_THROW(a.solver.advance(0,.6));for(auto& row:a.gw.runtimeSources().rows)if(row.boundary_edge>=0)row.enabled=false;a.gw.runtimeSources().rebuild(2);
+    const auto saved=rk2Output("boundary-cleared.chk"),before=rk2Output("boundary-cleared-before.chk"),after=rk2Output("boundary-cleared-after.chk");ASSERT_EQ(a.solver.saveCheckpoint(saved.string()),"");ASSERT_EQ(b.solver.loadCheckpoint(saved.string()),"");
+    ASSERT_NO_THROW(a.solver.advance(.6,2));
+    ASSERT_NO_THROW(b.solver.advance(.6,2));
+    ASSERT_EQ(a.solver.saveCheckpoint(before.string()),"");ASSERT_EQ(b.solver.saveCheckpoint(after.string()),"");EXPECT_EQ(rk2File(before),rk2File(after));
+}
+TEST(CoupledGroundwaterRk2, GroundBoundaryHeadRecomputesFlowInsteadOfSpendingAnOldDiagnostic) {
+    CoupledRkRig a,b;for(auto* r:{&a,&b}){r->init(.1,.003,0,.2,"NONE");initRkTemperature(*r,false);setRkGroundBoundary(*r,true,.8);}
+    a.gw.runtimeSources().rows[0].flow=1e308;
+    ASSERT_NO_THROW(ExplicitInertialSolverTestAccess::rk2(a.solver,10,0));
+    ASSERT_NO_THROW(ExplicitInertialSolverTestAccess::rk2(b.solver,10,0));
+    EXPECT_EQ(a.gw.state().hg,b.gw.state().hg);EXPECT_EQ(a.gw.transport().sat_mass,b.gw.transport().sat_mass);
+    EXPECT_EQ(a.gw.runtimeSources().rows[0].receipt.applied,b.gw.runtimeSources().rows[0].receipt.applied);
+}

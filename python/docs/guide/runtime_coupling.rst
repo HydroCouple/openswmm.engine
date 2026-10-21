@@ -23,7 +23,10 @@ The standalone CPU FULL_SWE reconstruction-order-2 groundwater profile accepts
 copied surface and groundwater sources, including optional transported heat,
 and wall-bounded rain/quality, evaporation demand and paired infiltration.
 Source expiry splits the shared transaction, and beginning donors bound each
-Euler stage. Runtime boundary frames and borrowed network/catchment owners
+Euler stage. Runtime aquifer HEAD/FLOW edges require an exterior hydraulic
+binding and retain accepted water, species and sensible-heat receipts. HEAD is
+an absolute elevation; runtime FLOW is outward-positive total m³/s. Runtime
+surface boundary frames and borrowed network/catchment owners
 remain unavailable in that profile. Check capabilities for the active model.
 Component checkpoints bind copied prescriptions and retain accepted receipts;
 external provider programs and full RK2 engine/session continuation are separate.

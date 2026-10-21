@@ -1849,6 +1849,12 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
                     /mesh_->edge_dist_c[slot];
                 s.flow=conductance*(outside-state_.z_bed[u]-hg0);
             }
+            if(runtime_rk2) {
+                const double water=s.flow*dt;
+                if(!std::isfinite(water))throw std::runtime_error("RK2 groundwater hydraulic boundary proposal overflow.");
+                for(int r=0;r<tr_.n_species;++r)if(!std::isfinite(std::max(0.,water)*s.concentrations[r]+dt*s.rates[r]))
+                    throw std::runtime_error("RK2 groundwater boundary species proposal overflow.");
+            }
             const double in = std::max(0.0,s.flow)*dt;
             source.in += in; source.out += std::max(0.0,-s.flow)*dt;
             s.receipt.requested += s.flow*dt;
@@ -3046,6 +3052,9 @@ void SubsurfaceSolver::fireGwRk2Cells(double dt,SurfaceStateData& surface,double
     for(int cell:cells) {
         if(std::size_t(cell)<runtime_sources_.cells.size())for(auto k:runtime_sources_.cells[cell]) {
             const auto& row=runtime_sources_.rows[k];
+            // HEAD flow is evaluated below from this Euler state's table;
+            // a previous stage's diagnostic cannot be a new proposal.
+            if(std::isfinite(row.boundary_head))continue;
             const double water=row.flow*dt,joules=row.heat*dt;
             if(!std::isfinite(water)||!std::isfinite(joules))throw std::runtime_error("RK2 groundwater source proposal overflow.");
             for(int r=0;r<tr_.n_species;++r)
@@ -3214,6 +3223,14 @@ std::string SubsurfaceSolver::rk2ProfileError() const {
        std::any_of(state_.closure.begin(),state_.closure.end(),[](int8_t v){return v!=int8_t(GwClosure::CLOSED_FORM)&&v!=int8_t(GwClosure::ENSLAVED)&&v!=int8_t(GwClosure::SIGMA);}))
         return "Coupled RK2 requires spatial CLOSED_FORM/ENSLAVED/SIGMA cells without borrowed source, network or thermal owners.";
     if(auto error=validateRk2Sources(runtime_sources_,state_.n_cells,tr_.n_species,tr_.temp_row,tr_.age_row,&covered_);!error.empty())return error;
+    for(const auto& row:runtime_sources_.rows)if(row.boundary_edge>=0) {
+        if(!mesh_||row.boundary_edge>=mesh_->cell_vertex_count(row.cell)||mesh_->cell_neighbour(row.cell,row.boundary_edge)>=0||
+           row.id!="boundary/"+std::to_string(row.cell)+"/"+std::to_string(row.boundary_edge)||row.heat!=0||
+           !std::isinf(row.until)||std::any_of(row.rates.begin(),row.rates.end(),[](double rate){return rate!=0;}))
+            return "RK2 runtime aquifer boundary requires a valid exterior hydraulic edge and an ordinary quality tuple.";
+        if(row.enabled)for(const auto& authored:boundaries_)if(authored.cell==row.cell&&authored.edge==row.boundary_edge)
+            return "RK2 runtime aquifer boundary overlaps an authored edge.";
+    }
     if(heat_.active()) {
         if(!heat_.config||tr_.n_species<=0||tr_.temp_row<0||tr_.temp_row>=tr_.n_species||
            heat_.cells.size()!=std::size_t(state_.n_cells)||heat_.snow_owner||

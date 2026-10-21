@@ -64,7 +64,9 @@ std::string validateRk2Sources(const RuntimeSources& sources,int cells,int speci
         const auto ns=std::size_t(species);
         if(row.id.empty()||row.cell<0||std::size_t(row.cell)>=std::size_t(cells)||!keys.emplace(row.id,row.cell).second||
            (coverage&&(coverage->size()!=std::size_t(cells)||!(*coverage)[row.cell]))||
-           row.boundary_edge!=-1||!std::isnan(row.boundary_head)||!std::isfinite(row.flow)||!std::isfinite(row.heat)||
+           row.boundary_edge< -1||(!coverage&&(row.boundary_edge!=-1||!std::isnan(row.boundary_head)))||
+           (row.boundary_edge<0&&!std::isnan(row.boundary_head))||(!std::isnan(row.boundary_head)&&!std::isfinite(row.boundary_head))||
+           !std::isfinite(row.flow)||!std::isfinite(row.heat)||
            std::isnan(row.until)||row.until<0||row.concentrations.size()!=ns||row.rates.size()!=ns||
            row.receipt.requested_mass.size()!=ns||row.receipt.applied_mass.size()!=ns||
            (row.heat!=0&&temperature<0))return "Invalid RK2 runtime prescription or species shape.";
@@ -120,12 +122,19 @@ std::string rk2SurfaceRuntimeProfile(const SurfaceStateData& surface,const Subsu
 namespace {
 void rk2SurfaceRuntimeArchive(Archive& a,RuntimeSources& sources,int cells,bool model,bool groundwater=false) {
     if(sources.rows.empty())return;
-    const std::string expected=groundwater?"RK2 copied groundwater runtime sources v1":"RK2 copied surface runtime sources v1";
+    const bool boundary=groundwater&&std::any_of(sources.rows.begin(),sources.rows.end(),[](const auto& row){return row.boundary_edge>=0;});
+    const std::string expected=boundary?"RK2 copied groundwater boundaries v1":groundwater?"RK2 copied groundwater runtime sources v1":"RK2 copied surface runtime sources v1";
     std::string profile=expected;a(profile);
     if(profile!=expected)throw std::runtime_error("Unsupported RK2 runtime source record.");
     a.sequence(sources.rows,[&](auto& row) {
-        if(model)a(row.id,row.owner,row.cell,row.flow,row.heat,row.until,row.concentrations,row.rates);
-        else {
+        if(model) {
+            a(row.id,row.owner,row.cell);
+            if(boundary)a(row.boundary_edge,row.boundary_head);
+            // A HEAD row's evaluated Darcy flow is mutable diagnostic state.
+            if(!boundary||!std::isfinite(row.boundary_head))a(row.flow);
+            a(row.heat,row.until,row.concentrations,row.rates);
+        } else {
+            if(boundary&&std::isfinite(row.boundary_head))a(row.flow);
             a(row.enabled);auto& b=row.receipt;
             a(b.requested,b.applied,b.water_in,b.water_out,b.heat_requested,b.heat_applied,b.last_flow,b.last_dt,b.requested_mass,b.applied_mass);
         }
