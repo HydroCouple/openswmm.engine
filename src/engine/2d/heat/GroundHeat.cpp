@@ -36,6 +36,28 @@ double boundaryValue(SimulationContext& ctx,const std::string& kind,const std::s
     if(kind=="ADIABATIC"||kind=="AIR"||kind=="SURFACE_WATER")return 0;
     return std::stod(arg);
 }
+double boundaryValueAt(SimulationContext& ctx,const std::string& kind,const std::string& arg,int series,double time) {
+    if(series<0)return boundaryValue(ctx,kind,arg,series);
+    const auto& table=ctx.tables[series];const double origin=ctx.options.start_date,date=origin+time/86400.;
+    if(table.x.empty()||table.x.size()!=table.y.size())throw std::runtime_error("Ground thermal series has no matching time/value rows.");
+    const double first=(table.x.front()-origin)*86400.,last=(table.x.back()-origin)*86400.;
+    if(time<first||time>last) {
+        if(kind=="TIMESERIES") {
+            if(date<table.x.front()||date>table.x.back())throw std::runtime_error("Ground temperature series does not cover the coupled interval.");
+            // An authored endpoint can differ from its elapsed-second value
+            // by one date rounding unit. A reservoir holds that endpoint.
+            return time<first?table.y.front():table.y.back();
+        }
+        return 0;
+    }
+    if(time==first)return table.y.front();
+    if(time==last)return table.y.back();
+    const auto upper=std::upper_bound(table.x.begin(),table.x.end(),time,
+        [origin](double seconds,double date){return seconds<(date-origin)*86400.;});
+    const auto j=std::size_t(upper-table.x.begin());
+    const double a=(table.x[j-1]-origin)*86400.,b=(table.x[j]-origin)*86400.;
+    return table.y[j-1]+(time-a)*(table.y[j]-table.y[j-1])/(b-a);
+}
 }
 std::string GroundHeatState::initialize(SimulationContext& ctx,const MeshData& mesh,const SubsurfaceState& water,
     const SubsurfaceTransportState& tr,const GwTransportData& cfg,const std::vector<uint8_t>& coverage) {
@@ -159,6 +181,32 @@ void GroundHeatState::prepare() {
         boundaryValue(*context,o.surface_thermal_bc,o.surface_thermal_arg,top_series);
     deep_now=boundaryValue(*context,o.deep_thermal_bc,o.deep_thermal_arg,deep_series);
     if(!std::isfinite(top_now)||!std::isfinite(deep_now))throw std::runtime_error("Nonfinite ground thermal boundary forcing.");
+}
+void GroundHeatState::prepareAt(double time) {
+    if(!active())return;
+    const auto& o=config->options;
+    top_now=boundaryValueAt(*context,o.surface_thermal_bc,o.surface_thermal_arg,top_series,time);
+    deep_now=boundaryValueAt(*context,o.deep_thermal_bc,o.deep_thermal_arg,deep_series,time);
+    if(!std::isfinite(top_now)||!std::isfinite(deep_now))throw std::runtime_error("Nonfinite ground thermal boundary forcing.");
+}
+void GroundHeatState::appendRk2Cuts(double start,double end,std::vector<double>& cuts) const {
+    if(!active())return;
+    const auto append=[&](int series,const std::string& kind) {
+        if(series<0)return;
+        if(!context||std::size_t(series)>=context->tables.count())throw std::runtime_error("Ground thermal series index is invalid.");
+        const auto& table=context->tables[series];const double origin=context->options.start_date;
+        if(!std::isfinite(origin)||table.x.empty()||table.x.size()!=table.y.size())throw std::runtime_error("Ground thermal series has no matching time/value rows.");
+        for(std::size_t j=0;j<table.x.size();++j) {
+            if(!std::isfinite(table.x[j])||!std::isfinite(table.y[j])||(j&&table.x[j]<=table.x[j-1]))
+                throw std::runtime_error("Ground thermal series must have finite, strictly increasing times and finite values.");
+            const double time=(table.x[j]-origin)*86400.;
+            if(!std::isfinite(time))throw std::runtime_error("Ground thermal series elapsed time overflow.");
+            if(time>start&&time<end)cuts.push_back(time);
+        }
+        if(kind=="TIMESERIES"&&(origin+start/86400.<table.x.front()||origin+end/86400.>table.x.back()))
+            throw std::runtime_error("Ground temperature series does not cover the coupled interval.");
+    };
+    append(top_series,config->options.surface_thermal_bc);append(deep_series,config->options.deep_thermal_bc);
 }
 double GroundHeatState::zoneTemperature(int i,bool saturated) const {
     const auto& cell=cells[i];const auto& c=cell.column;double volume=0,mass=0;

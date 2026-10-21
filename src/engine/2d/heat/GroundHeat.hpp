@@ -46,6 +46,10 @@ struct GroundHeatState {
                           const SubsurfaceTransportState&,const GwTransportData&,const std::vector<uint8_t>& coverage);
     std::string initializeStandalone(SimulationContext&,const MeshData&,const GwTransportData&,const std::vector<unsigned char>& owned);
     void prepare();
+    // RK2 forcing reads project series without changing their shared cursors
+    // or the engine calendar. Cuts apply to the entire coupled transaction.
+    void prepareAt(double elapsed_seconds);
+    void appendRk2Cuts(double start,double end,std::vector<double>&) const;
     void refreshView(int cell,SubsurfaceTransportState&);
     double zoneTemperature(int cell,bool saturated) const;
     // Append physical top/deep boundaries, returning the number of top

@@ -2696,7 +2696,7 @@ void SubsurfaceSolver::fireGroundHeatSpecies(int i,const CellFlux& f) noexcept {
         }
         cell.saturated_water=std::move(new_sat);cell.advective_j+=advected.external_j-heater_j-cp*edge_heat;cell.source_j+=heater_j+cp*edge_heat;
         if(heat_.config->options.soil_et_heat=="LATENT_SURFACE"&&f.et>0) {
-            const double latent=-heat_.density*f.et*transport::heat::latentHeatOfVaporization(top);
+            const double latent=-heat_.density*f.et*transport::heat::latentHeatOfVaporization(euler?donor_temperature.front():top);
             column.energy.front()+=latent;cell.latent_j+=latent;
         }
         if(!euler)if(auto error=conductGroundWithLids(i,f.dt);!error.empty())throw std::runtime_error(error);
@@ -3045,10 +3045,10 @@ void SubsurfaceSolver::fireGwRk2Cells(double dt,SurfaceStateData& surface,double
     }
     if(!tier_firings_.empty())++tier_firings_[0];
 }
-void SubsurfaceSolver::advanceRk2Heat(double seconds) {
+void SubsurfaceSolver::advanceRk2Heat(double seconds,double sample_time) {
     if(!heat_.active()||!(seconds>0))return;
     if(!std::isfinite(seconds))throw std::runtime_error("Nonfinite coupled thermal interval.");
-    heat_.prepare();
+    heat_.prepareAt(sample_time);
     for(int i=0;i<state_.n_cells;++i)if(covers(i)) {
         if(auto error=heat_.conduct(i,seconds,true);!error.empty())throw std::runtime_error(error);
         heat_.refreshView(i,tr_);
@@ -3199,11 +3199,10 @@ std::string SubsurfaceSolver::rk2ProfileError() const {
     if(heat_.active()) {
         if(!heat_.config||tr_.n_species<=0||tr_.temp_row<0||tr_.temp_row>=tr_.n_species||
            heat_.cells.size()!=std::size_t(state_.n_cells)||heat_.snow_owner||
-           heat_.top_series>=0||heat_.deep_series>=0||
            heat_.config->options.surface_thermal_bc=="AIR"||heat_.config->options.surface_thermal_bc=="SURFACE_WATER"||
-           heat_.config->options.soil_et_heat!="SENSIBLE_ONLY"||
+           (heat_.config->options.soil_et_heat!="SENSIBLE_ONLY"&&heat_.config->options.soil_et_heat!="LATENT_SURFACE")||
            (opts_&&opts_->water_heat_capacity!=heat_.water_capacity))
-            return "Coupled RK2 porous heat requires a temperature row, constant boundaries and no borrowed heat owner.";
+            return "Coupled RK2 porous heat requires a temperature row and no borrowed heat owner.";
         for(int i=0;i<state_.n_cells;++i)if(covers(i)) {
             const auto& cell=heat_.cells[i];const auto& column=cell.column;const auto n=column.energy.size();
             if(cell.surface_owned||cell.failed||!n||column.theta.size()!=n||column.capacity.size()!=n||
@@ -3356,6 +3355,10 @@ void SubsurfaceSolver::blendRk2Water(const SubsurfaceSolver& initial,double end)
     blend(s.dunne_cumulative,b.dunne_cumulative);blend(s.et_potential_cumulative,b.et_potential_cumulative);
     blend(s.et_surface_cumulative,b.et_surface_cumulative);blend(s.et_soil_cumulative,b.et_soil_cumulative);
     blend(s.et_unused_cumulative,b.et_unused_cumulative);
+    // This is elapsed booked demand time, not the last stage's timestamp.
+    // Preserve its uninitialized NaN until a source evaluation first books it.
+    for(std::size_t i=0;i<s.et_refresh.size();++i)if(std::isfinite(s.et_refresh[i]))
+        s.et_refresh[i]=.5*((std::isfinite(b.et_refresh[i])?b.et_refresh[i]:0.)+s.et_refresh[i]);
     for(auto member:{&SubsurfaceState::led_recharge,&SubsurfaceState::led_lateral,&SubsurfaceState::led_deep,
         &SubsurfaceState::led_node,&SubsurfaceState::led_reject,&SubsurfaceState::led_dunne,
         &SubsurfaceState::led_caprise,&SubsurfaceState::led_et,&SubsurfaceState::led_infil_in,

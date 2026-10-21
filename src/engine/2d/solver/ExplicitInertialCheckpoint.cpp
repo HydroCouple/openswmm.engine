@@ -374,7 +374,7 @@ std::string ExplicitInertialSolver::rk2CheckpointBytes(std::string& bytes) const
         auto model=rk2CheckpointModel();state(model);checkpoint::meshState(state,surface);
         gw.checkpoint(state,false);state(gw.cell_completed_);trial.checkpointState(state);
         std::string magic=magicName,payload=state.bytes();
-        uint32_t version=3,endian=0x01020304,longBytes=sizeof(long),crc=checksum(payload);
+        uint32_t version=4,endian=0x01020304,longBytes=sizeof(long),crc=checksum(payload);
         Archive file;file(magic,version,endian,longBytes,payload,crc);
         if(file.bytes().size()>maxBytes)return "RK2 checkpoint exceeds its size limit.";
         bytes=file.bytes();return {};
@@ -387,7 +387,7 @@ std::string ExplicitInertialSolver::loadRk2CheckpointBytes(std::string bytes) {
         if(bytes.empty()||bytes.size()>maxBytes)return "RK2 checkpoint exceeds its size limit.";
         Archive file(std::move(bytes));std::string magic,payload;
         uint32_t version=0,endian=0,longBytes=0,crc=0;file(magic,version,endian,longBytes,payload,crc);file.finish();
-        if(magic!=magicName||version!=3||endian!=0x01020304||longBytes!=sizeof(long))
+        if(magic!=magicName||version!=4||endian!=0x01020304||longBytes!=sizeof(long))
             return "Unsupported RK2 checkpoint version/platform.";
         if(crc!=checksum(payload))return "RK2 checkpoint checksum differs.";
         Archive state(std::move(payload));std::string model;state(model);

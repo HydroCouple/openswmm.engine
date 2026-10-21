@@ -841,8 +841,11 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
             inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],
                                    state_->head[i], state_->depth[i]);
         const double thresh = cell_active_[i] ? h_off : h_on;
+        // Covered RK2 cells participate in both surface source evaluations,
+        // even while dry. Lazy settlement would book atmospheric demand only
+        // after the aquifer step and leave a half-blended ET backlog.
         if (state_->depth[i] >= thresh || state_->coupling_flux[i] != 0.0 ||
-            pin_t0_[i] || state_->heat.enabled)
+            pin_t0_[i] || state_->heat.enabled || (second_order_&&gw_&&gw_->covers(i)))
             next[i] = 1;
     }
 
@@ -2262,6 +2265,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
         }
     };
     if(gw_) {
+        gw_->heat().appendRk2Cuts(start,start+interval,cuts);
         for(const auto& source:gw_->sources_) {add_cuts(source.flow);for(const auto& term:source.terms)add_cuts(term.signal);}
         for(const auto& boundary:gw_->boundaries_) {
             for(const auto& term:boundary.terms)add_cuts(term.signal);
@@ -2281,7 +2285,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
     const double time=cuts.empty()?start:cuts[part],dt=cuts.empty()?interval:cuts[part+1]-time;
     std::unique_ptr<SubsurfaceSolver> part_ground;
     if(gw_) {
-        gw_->advanceRk2Heat(.5*dt);
+        gw_->advanceRk2Heat(.5*dt,time+.25*dt);
         advanceRk2SurfaceReactions(.5*dt);
         gw_->advanceRk2Reactions(.5*dt);
         // Transport blends against the state after the first reaction half.
@@ -2379,7 +2383,7 @@ void ExplicitInertialSolver::runRk2Step(double interval,double start) {
         gw_->blendRk2Water(part_ground?*part_ground:*ground0,time+dt);
         gw_->advanceRk2Reactions(.5*dt);
         advanceRk2SurfaceReactions(.5*dt);
-        gw_->advanceRk2Heat(.5*dt);
+        gw_->advanceRk2Heat(.5*dt,time+.75*dt);
         source_phase_end_=time+dt;
         gw_->publishRk2Infiltration(*state_,dt,time+dt);
     }

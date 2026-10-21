@@ -988,3 +988,79 @@ WATER_AGE ON
         solver.end()
     finally:
         cleanup(solver)
+
+
+@pytest.mark.parametrize('closure,layered', [('CLOSED_FORM', False), ('ENSLAVED', False), ('SIGMA', False), ('SIGMA', True)])
+@pytest.mark.parametrize('integrator', ['RK5', 'ROS2', 'BDF2'])
+def test_groundwater_rk2_porous_latent_and_thermal_series_keep_mixed_canonical_ledgers(tmp_path, closure, layered, integrator):
+    from openswmm.engine import Solver, GroundHeatValue as H, GroundwaterSpeciesLedger as L
+    text = _rk2_water_temperature_text(closure, layered, kinetics=True).replace(
+        'THERMAL_MODEL WATER_ONLY', '''THERMAL_MODEL POROUS_EQUILIBRIUM
+THERMAL_LAYERS 3
+CONDUCTION YES
+LATERAL_CONDUCTION NO
+SOIL_ET_HEAT LATENT_SURFACE
+SURFACE_THERMAL_BC TIMESERIES TOP
+DEEP_THERMAL_BC FLUX_TIMESERIES DEEP
+DISPERSION NO''').replace('GW_ET NONE', 'GW_ET BOUNDARY_ET').replace('TRANSPORT_POLLUTANTS NO', 'TRANSPORT_POLLUTANTS YES').replace('TRANSPORT_AGE NO', 'TRANSPORT_AGE YES').replace('SOLVER RK5', f'SOLVER {integrator}').replace('0.1 FAR', '0 FAR').replace('0.1 PAN', '0 PAN')
+    text += f'''[OPTIONS]
+WATER_AGE ON
+[2D_OPTIONS]
+EVAPORATION CLIMATE
+[EVAPORATION]
+CONSTANT 432000
+[2D_INITIAL_QUALITY]
+* TSS 3
+* __WATER_AGE__ {5/3600}
+[GW_INITIAL_QUALITY]
+* SAT TSS 4
+* UNSAT TSS 4
+* SAT __WATER_AGE__ 5
+* UNSAT __WATER_AGE__ 5
+[TIMESERIES]
+TOP 01/01/2026 00:00:00 -6
+TOP 01/01/2026 00:00:01 8
+TOP 01/01/2026 00:00:02 -4
+DEEP 01/01/2026 00:00:00 100
+DEEP 01/01/2026 00:00:01 -200
+DEEP 01/01/2026 00:00:02 50
+'''
+    path = tmp_path / 'porous-latent-series-rk2.inp'
+    path.write_text(text)
+    solver = Solver(path, path.with_suffix('.rpt'))
+    solver.open()
+    try:
+        solver.initialize()
+        gw = solver.surface2d.groundwater
+        assert gw.species == solver.surface2d.species == ('TSS', 'A', 'B', '__WATER_AGE__', '__TEMPERATURE__')
+        initial = gw.species_ledger(1, L.INIT)
+        passive = gw.species_ledger(0, L.INIT)
+        solver.start(False)
+        while solver.step().total_seconds() > 0:
+            pass
+        assert 0 < gw.species_ledger(1, L.STORAGE) < initial
+        assert gw.species_ledger(2, L.STORAGE) > 0
+        assert gw.species_ledger(1, L.STORAGE) + gw.species_ledger(2, L.STORAGE) == pytest.approx(initial, abs=1e-8)
+        assert gw.species_ledger(0, L.STORAGE) == pytest.approx(passive, abs=1e-8)
+        for row in [0, 1, 2, 3]:
+            assert abs(gw.species_ledger(row, L.RESIDUAL)) < 1e-8
+        for row in [0, 3, 4]:
+            assert gw.species_ledger(row, L.REACTED) == 0
+        heat = solver.heat
+        assert np.max(np.abs(heat.ground_values(H.NORMALIZED_RESIDUAL, 0, 2))) < 1e-10
+        assert sum(heat.ground_values(H.LATENT_ENERGY, 0, 2)) < 0
+        assert np.all(np.isfinite(heat.ground_values(H.TEMPERATURE, 0, 2)))
+        # Integrate the represented project dates, including a final partial
+        # segment if date quantization puts the authored end after 2 seconds.
+        from datetime import date
+        origin = date(2026, 1, 1).toordinal() - 693594
+        t1 = (origin + 1/86400 - origin)*86400
+        t2 = (origin + 2/86400 - origin)*86400
+        end = min(2, t2)
+        final_flux = -200 + (end-t1)*250/(t2-t1)
+        expected_deep = 150*(-50*t1 + .5*(-200+final_flux)*(end-t1))
+        assert sum(heat.ground_values(H.DEEP_ENERGY, 0, 2)) == pytest.approx(expected_deep, abs=1e-4)
+        assert abs(gw.continuity_error) < 1e-9
+        solver.end()
+    finally:
+        cleanup(solver)
