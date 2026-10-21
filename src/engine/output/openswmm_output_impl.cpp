@@ -41,6 +41,9 @@ static inline openswmm::OutputReader* to_reader(SWMM_Output h) noexcept {
 #define CHECK_READER(h)  do { if (!(h)) return -1; } while(0)
 
 extern "C" {
+SWMM_ENGINE_API int swmm_output_get_pollut_units(SWMM_Output handle, int index) {
+    return handle ? to_reader(handle)->pollut_units(index) : -1;
+}
 SWMM_ENGINE_API int swmm_output_has_subcatch_variable(SWMM_Output handle,int code) {
     CHECK_READER(handle);return to_reader(handle)->has_subcatch_variable(code)?1:0;
 }

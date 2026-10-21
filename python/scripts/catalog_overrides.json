@@ -63,6 +63,13 @@
     ]
    }
   },
+  "surface_output": {
+   "class": "Output2DReader",
+   "construct": {
+    "via": "new",
+    "args": ["path"]
+   }
+  },
   "geopackage": {
    "class": "GeoPackage",
    "construct": {

@@ -130,6 +130,23 @@ def test_collector_distinguishes_declarations_comments_and_helpers():
 class TestApiCoverage(unittest.TestCase):
     """Drift guards for the C API ↔ Cython binding surface."""
 
+    def test_detailed_coverage_report_accounts_for_every_public_function(self):
+        import contextlib
+        import io
+        import json
+        from unittest.mock import patch
+        output = io.StringIO()
+        with patch('sys.argv', ['api_drift_audit.py', '--json', '--coverage']), contextlib.redirect_stdout(output):
+            self.assertEqual(_audit.main(), 0)
+        report = json.loads(output.getvalue())
+        bindings = report['function_bindings']
+        self.assertEqual(set(bindings), set(collect_c_functions()))
+        for name, binding in bindings.items():
+            self.assertIn(binding['status'], {'bound', 'intentional'})
+            if binding['status'] == 'bound':
+                self.assertTrue(binding['python_members'], name)
+        self.assertEqual(sum(row['functions'] for row in report['header_coverage'].values()), len(bindings))
+
     def test_callgraph_tracks_helpers_and_member_scopes(self):
         from unittest.mock import patch
         from tests._paths import artifact_dir

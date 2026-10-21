@@ -98,9 +98,6 @@ bool OutputReader::openLive(const char* path) {
     if (!readHeader()) { close(); return false; }
     id_start_pos_ = std::ftell(file_);
     if (!readIDs()) { close(); return false; }
-    // Pollutant concentration unit codes (one int per pollutant column).
-    if (std::fseek(file_, static_cast<long>(n_polluts_) * static_cast<long>(sizeof(int32_t)),
-                   SEEK_CUR) != 0) { close(); return false; }
     input_start_pos_ = std::ftell(file_);
     if (!readVariableCodes()) { close(); return false; }
     output_start_pos_ = std::ftell(file_);
@@ -167,6 +164,8 @@ void OutputReader::close() {
     subcatch_ids_.clear();
     node_ids_.clear();
     link_ids_.clear();
+    pollut_ids_.clear();
+    pollut_units_.clear();
     n_periods_ = 0;
     live_      = false;
 }
@@ -194,6 +193,12 @@ const char* OutputReader::pollut_id(int index) const {
     if (index < 0 || static_cast<std::size_t>(index) >= pollut_ids_.size())
         return nullptr;
     return pollut_ids_[static_cast<std::size_t>(index)].c_str();
+}
+
+int OutputReader::pollut_units(int index) const {
+    return index >= 0 && static_cast<size_t>(index) < pollut_units_.size()
+               ? pollut_units_[static_cast<size_t>(index)]
+               : -1;
 }
 
 // ============================================================================
@@ -483,6 +488,12 @@ bool OutputReader::readIDs() {
     // The species (pollutant) ID list — emitted by the writer immediately
     // after the link IDs since the format's inception, but never read.
     if (!readIDList(n_polluts_, pollut_ids_))    return false;
+    pollut_units_.resize(static_cast<size_t>(n_polluts_));
+    for (int& units : pollut_units_) {
+        int32_t code;
+        if (!readInt4(code)) return false;
+        units = code;
+    }
 
     return true;
 }

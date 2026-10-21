@@ -104,14 +104,15 @@ class SourceResultHistory;
  *   - /Mesh2                         topology variable (cf_role = "mesh_topology")
  *   - /Mesh2_node_x, /Mesh2_node_y  vertex coordinates
  *   - /Mesh2_node_z                  vertex elevation
- *   - /Mesh2_face_nodes              face-node connectivity [nFace, 3]
+ *   - /Mesh2_face_nodes              cell-node connectivity [nFace, edgeStride]
+ *   - /Mesh2_face_nv                 vertex count per cell (triangles/quads)
  *   - /Mesh2_face_x, /Mesh2_face_y  face centroids
  *   - /Mesh2_face_z                  face centroid elevation
  *   - /Mesh2_face_mannings_n         Manning's roughness
- *   - /Mesh2_edge_length             edge lengths [nFace, 3]
+ *   - /Mesh2_edge_length             edge lengths [nFace, edgeStride]
  *
  * ### Time-varying fields (appended each update())
- *   - /time                          [nTime] seconds since simulation start
+ *   - /time                          [nTime] days since 1899-12-30 00:00:00
  *   - /Mesh2_face_depth              [nTime, nFace] overland flow depth (m)
  *   - /Mesh2_face_head               [nTime, nFace] total head (m)
  *   - /Mesh2_face_grad_hx            [nTime, nFace] head gradient dh/dx
@@ -127,7 +128,7 @@ class SourceResultHistory;
  *   - /Mesh2_face_vx                 [nTime, nFace] cell velocity X (m/s)
  *   - /Mesh2_face_vy                 [nTime, nFace] cell velocity Y (m/s)
  *   - /Mesh2_face_continuity_err     [nTime, nFace] per-cell continuity residual (m³/s)
- *   - /Mesh2_edge_flux               [nTime, nFace, 3] edge normal flux
+ *   - /Mesh2_edge_flux               [nTime, nFace, edgeStride] edge normal flux
  *   - /Mesh2_node_head               [nTime, nNode] reconstructed vertex head (m)
  *
  * ### Cumulative rendering envelopes (fixed [nFace], overwritten each update())

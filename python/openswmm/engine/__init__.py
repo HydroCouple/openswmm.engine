@@ -231,6 +231,8 @@ from ._hotstart import HotStart
 from ._massbalance import MassBalance
 from ._statistics import Statistics
 from ._output_reader import OutputReader
+from ._output2d import Output2DReader
+from ._results import Results, ResultField, SeriesField, SurfaceField, SurfaceResults, ResultMesh
 
 # =============================================================================
 # Hydrology, water quality, and time-varying inputs
@@ -360,7 +362,8 @@ __all__ = [
     "Nodes", "Links", "Subcatchments", "Gages",
     "Aquifers", "Snowpacks",
     # --- Simulation state & I/O ---
-    "HotStart", "MassBalance", "Statistics", "OutputReader",
+    "HotStart", "MassBalance", "Statistics", "OutputReader", "Output2DReader",
+    "Results", "ResultField", "SeriesField", "SurfaceField", "SurfaceResults", "ResultMesh",
     # --- Hydrology, water quality, and time-varying inputs ---
     "Pollutants", "Quality", "Tables", "Patterns", "Inflows", "Controls", "Forcing",
     "Climate", "Snow", "MeshSnow", "Checkpoints", "InitialQuality", "InitialQualityEntry",

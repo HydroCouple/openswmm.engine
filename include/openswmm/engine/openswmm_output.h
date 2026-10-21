@@ -72,6 +72,11 @@ extern "C" {
 /** @brief Opaque handle to an opened output file reader. */
 typedef void* SWMM_Output;
 
+/** Stored concentration code for one species column (0 mg/L, 1 ug/L,
+ * 2 count/L), or -1 on invalid handle/index. Reserved __WATER_AGE__ and
+ * __TEMPERATURE__ columns must be interpreted by name as hours and degC. */
+SWMM_ENGINE_API int swmm_output_get_pollut_units(SWMM_Output handle, int index);
+
 /* =========================================================================
  * Result variable enumerations
  * ========================================================================= */

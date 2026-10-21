@@ -15,6 +15,11 @@ def test_minimal_package_exports():
     assert 'Groundwater' not in namespace
     assert 'SurfaceQuality' not in namespace
     assert 'GeoPackage' not in namespace
+    assert 'Results' in namespace
+    assert 'Output2DReader' in namespace
+    assert not engine.Output2DReader.available()
+    with pytest.raises(engine.PluginError):
+        engine.Output2DReader('unused.h5')
     solver = engine.Solver()
     try:
         solver.create()
@@ -24,3 +29,11 @@ def test_minimal_package_exports():
         assert solver.thread_info.logical_cpus >= 1
     finally:
         solver.destroy()
+
+
+def test_named_binary_results_without_optional_features():
+    from tests._paths import EXAMPLE_OUTPUT_FILE
+    with engine.Results.open(EXAMPLE_OUTPUT_FILE) as result:
+        assert result.surface is None
+        assert len(result.nodes) > 0
+        assert result.nodes[0].depth.read().shape == (result.output.period_count,)

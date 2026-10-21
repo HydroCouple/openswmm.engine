@@ -140,11 +140,24 @@ class TestSpeciesIds(SpeciesIdCase):
             "reached the writer, so this gate is not testing the binding",
         )
         self.assertEqual(out.pollutant_ids, ["TSS", "__WATER_AGE__"])
+        self.assertEqual(out.pollutant_units, ["mg/L", "h"])
 
     def test_reference_deck_names_its_pollutant(self):
         out = self._reader(self._run(SITE_DRAINAGE_INP))
         self.assertEqual(out.pollutant_ids, ["TSS"])
         self.assertEqual(len(out.pollutant_ids), out.pollutant_count)
+        self.assertEqual(out.pollutant_units, ["mg/L"])
+
+    def test_reserved_temperature_units(self):
+        d = artifact_dir(self)
+        inp = os.path.join(d, 'heat_age.inp')
+        with open(os.path.join(d, 'age.cfg'), 'w', encoding='utf-8') as stream:
+            stream.write(_AGE_CFG)
+        with open(inp, 'w', encoding='utf-8') as stream:
+            stream.write(_DECK.replace('WATER_AGE ON', 'WATER_AGE ON\nHEAT_TRANSPORT ON'))
+        out = self._reader(self._run(inp))
+        self.assertEqual(dict(zip(out.pollutant_ids, out.pollutant_units)),
+                         {'TSS': 'mg/L', '__WATER_AGE__': 'h', '__TEMPERATURE__': 'degC'})
 
     def test_pollutant_ids_returns_a_copy(self):
         out = self._reader(self._run(SITE_DRAINAGE_INP))

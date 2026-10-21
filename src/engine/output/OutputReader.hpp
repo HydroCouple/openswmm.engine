@@ -144,6 +144,7 @@ public:
      *          water age being usable at all, not a convenience.
      */
     const char* pollut_id(int index)   const;
+    int pollut_units(int index) const;
 
     // -- Per-period results (all objects, one variable) --------------------
 
@@ -259,6 +260,7 @@ private:
     std::vector<std::string> node_ids_;
     std::vector<std::string> link_ids_;
     std::vector<std::string> pollut_ids_;
+    std::vector<int> pollut_units_;
 
     // -- Helpers ----------------------------------------------------------
 

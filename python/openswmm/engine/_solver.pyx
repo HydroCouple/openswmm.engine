@@ -70,7 +70,7 @@ from typing import Iterator, Optional, Union
 
 from ._common cimport *
 from ._dates import datetime_to_oadate, oadate_to_datetime
-from ._enums import EngineState, FlowUnits
+from ._enums import EngineState, FlowUnits, ErrorCode
 
 # Canonical EngineError hierarchy lives in :mod:`_exceptions`. Re-exported for
 # both intra-module raises and backward-compatible imports.
@@ -323,6 +323,34 @@ cdef class Solver:
         self._surface2d = None
         self._access.raise_callback_error()
         _check(rc)
+
+    def open_results(self, *, surface=None, bint live=False):
+        """Open independent result readers for this solver's configured files.
+
+        Call after end(), or after the solver context exits. While the engine
+        remains open, its resolved 2D output path is discovered automatically;
+        after destroy(), supply surface explicitly to include that file.
+        live=True opens only the configured binary 1D output during a run.
+        The returned Results owns its readers and must be closed separately.
+        """
+        from ._results import Results
+        from pathlib import Path
+        self._access.require_idle()
+        cdef char absolute[65536]
+        cdef char original[65536]
+        cdef int status
+        if self._handle != NULL:
+            if not live and self.state not in (EngineState.ENDED, EngineState.CLOSED):
+                raise LifecycleError(ErrorCode.LIFECYCLE, 'Call end() before opening saved results, or use live=True for 1D output')
+            if surface is None and not live:
+                status = swmm_file_path_get(self._handle, <SWMM_FilePathRole>12, b'',
+                                            absolute, 65536, original, 65536)
+                if status == 0:
+                    configured = absolute.decode('utf-8') or original.decode('utf-8')
+                    if configured:
+                        candidate = Path(configured)
+                        surface = candidate if candidate.is_absolute() else Path(self._inp).resolve().parent / candidate
+        return Results.open(self._out or None, surface=surface, live=live)
 
     def initialize(self) -> None:
         """Initialize the simulation; transition to ``INITIALIZED``."""
