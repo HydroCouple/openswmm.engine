@@ -1,6 +1,8 @@
 """Binding-level regressions for authored text and teardown diagnostics."""
 
 import unittest
+import re
+from pathlib import Path
 
 from openswmm.engine import EngineError, ModelBuilder, Solver
 from tests._paths import artifact_dir
@@ -56,7 +58,10 @@ class TestBindingFileIO(unittest.TestCase):
         self.assertFalse(solver.__exit__(ValueError, body_error, None))
         self.assertEqual(solver.calls, ["end", "report", "close", "destroy"])
         self.assertTrue(
-            any("Cannot write report summary" in note for note in getattr(body_error, "__notes__", []))
+            any(
+                "Cannot write report summary" in note
+                for note in getattr(body_error, "__notes__", [])
+            )
             or "Cannot write report summary" in str(body_error.__context__)
         )
 
@@ -66,3 +71,56 @@ class TestBindingFileIO(unittest.TestCase):
         with self.assertRaises(EngineError) as caught:
             model.write(bad_path)
         self.assertIn("failed.inp", str(caught.exception))
+
+    def test_rain_and_snow_factors_affect_precipitation_once_and_persist(self):
+        source = (
+            Path(__file__).resolve().parents[3] / "tests/parity/snow/snow_parity.inp"
+        )
+        work = Path(artifact_dir(self))
+
+        def precipitation(inp, rain, snow, tag, save=False):
+            rpt = work / f"{tag}.rpt"
+            solver = Solver(inp, rpt, work / f"{tag}.out")
+            try:
+                solver.open()
+                gage = solver.gages["RG1"]
+                gage.scale_factor = rain
+                gage.snow_factor = snow
+                if save:
+                    solver.write(work / "snow_factors_saved.inp")
+                solver.initialize()
+                solver.start()
+                while solver.step().total_seconds() > 0:
+                    pass
+                solver.end()
+                solver.report()
+            finally:
+                solver.destroy()
+            match = re.search(r"Total Precipitation \.{6,}\s+([\d.]+)", rpt.read_text())
+            self.assertIsNotNone(match)
+            return float(match.group(1))
+
+        for rain, snow, expected in (
+            (1, 1, 20.0),
+            (10, 1, 200.0),
+            (1, 1.4, 24.8),
+            (10, 1.4, 248.0),
+            (10, 10, 1280.0),
+        ):
+            with self.subTest(rain=rain, snow=snow):
+                actual = precipitation(
+                    source, rain, snow, f"rain{rain}_snow{snow}", rain == snow == 10
+                )
+                self.assertAlmostEqual(actual, expected, places=3)
+
+        saved = work / "snow_factors_saved.inp"
+        reopened = Solver(saved, work / "reopened.rpt", work / "reopened.out")
+        try:
+            reopened.open()
+            self.assertEqual(reopened.gages["RG1"].scale_factor, 10)
+            self.assertEqual(reopened.gages["RG1"].snow_factor, 10)
+        finally:
+            reopened.destroy()
+        self.assertAlmostEqual(
+            precipitation(saved, 10, 10, "reopened_run"), 1280.0, places=3
+        )
