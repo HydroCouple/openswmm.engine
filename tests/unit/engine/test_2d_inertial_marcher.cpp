@@ -185,12 +185,33 @@ double totalVolume(const SurfaceStateData& state, int nt) {
 // Lake at rest on an uneven bed: flux depends on Δη only, so a uniform η is
 // an EXACT steady state — volumes bit-unchanged, projected fluxes bit-zero.
 // ---------------------------------------------------------------------------
-TEST(InertialMarcher, LakeAtRestExactFlatAndVfr) {
+TEST(InertialMomentum, PhysicalTimeRelaxationIsIndependentOfStepPartition) {
+    constexpr double theta = 0.8, reference = 1.0, reconstructed = -0.3;
+    const double expected = reconstructed + (2.0 - reconstructed) * std::pow(theta, 2.0);
+    for (const int partitions : {1, 2, 8, 128, 1024}) {
+        double q = 2.0;
+        const double blend = inertial::momentumBlendFraction(theta, 2.0 / partitions, reference);
+        for (int k = 0; k < partitions; ++k)
+            q += blend * (reconstructed - q);
+        EXPECT_NEAR(q, expected, 5e-14) << partitions;
+        EXPECT_GE(blend, 0.0);
+        EXPECT_LE(blend, 1.0);
+    }
+    EXPECT_DOUBLE_EQ(inertial::momentumBlendFraction(theta, .01, 0.0), 1.0 - theta);
+    EXPECT_DOUBLE_EQ(inertial::momentumBlendFraction(1.0, .01, reference), 0.0);
+    EXPECT_DOUBLE_EQ(inertial::momentumBlendFraction(theta, 0.0, reference), 0.0);
+    const double tiny = inertial::momentumBlendFraction(theta, 1e-14, reference);
+    EXPECT_GT(tiny, 0.0);
+    EXPECT_NEAR(tiny / 1e-14, -std::log(theta), 1e-14);
+}
+
+static void checkLakeAtRestExactFlatAndVfr(double reference_step) {
     for (const auto closure : {CellClosure2D::FLAT, CellClosure2D::VFR}) {
         auto mesh = makeGridMesh(6, 6, 5.0, [](double x, double y) {
             return 0.05 * x + 0.11 * y + 0.3 * std::sin(0.7 * x);
         });
         SolverOptions2D opts;
+        opts.theta_reference_step = reference_step;
         opts.cell_closure = closure;
         auto state = makeState(mesh);
         // Fully submerged everywhere (bed tops out ≈ 5.1 m): the exactness
@@ -217,6 +238,9 @@ TEST(InertialMarcher, LakeAtRestExactFlatAndVfr) {
         solver.finalize();
     }
 }
+
+TEST(InertialMarcher, LakeAtRestExactFlatAndVfr) { checkLakeAtRestExactFlatAndVfr(0.0); }
+TEST(InertialMomentum, LakeAtRestExactFlatAndVfr) { checkLakeAtRestExactFlatAndVfr(1.0); }
 
 // ---------------------------------------------------------------------------
 // C-property / dry wall: a puddle whose surface sits BELOW the interface bed
@@ -251,9 +275,10 @@ TEST(InertialMarcher, DryNeighbourWallNoCreep) {
 // Closed-basin dam-break: violent transient, thousands of substeps. Gates:
 // V ≥ 0 always (positivity), ΣV conserved to reduction roundoff, no NaN.
 // ---------------------------------------------------------------------------
-TEST(InertialMarcher, ClosedBasinConservationAndPositivity) {
+static void checkClosedBasinConservationAndPositivity(double reference_step) {
     auto mesh = makeGridMesh(10, 10, 2.0, [](double, double) { return 0.0; });
     SolverOptions2D opts;
+    opts.theta_reference_step = reference_step;
     auto state = makeState(mesh);
     // Column of water in the corner quarter.
     for (int i = 0; i < mesh.n_triangles(); ++i) {
@@ -281,19 +306,23 @@ TEST(InertialMarcher, ClosedBasinConservationAndPositivity) {
     solver.finalize();
 }
 
+TEST(InertialMarcher, ClosedBasinConservationAndPositivity) { checkClosedBasinConservationAndPositivity(0.0); }
+TEST(InertialMomentum, ClosedBasinConservationAndPositivity) { checkClosedBasinConservationAndPositivity(1.0); }
+
 // ---------------------------------------------------------------------------
 // Manning steady uniform slope: rain over an inclined strip draining through a
 // NORMAL_FLOW outlet. At steady state the outlet ledger equals the rain input
 // (≤ 1 %) and the interior depth matches the analytic normal depth
 // h_n = (n·q / √S)^(3/5) with q the per-width discharge at that station (≤ 5 %).
 // ---------------------------------------------------------------------------
-TEST(InertialMarcher, ManningSteadySlopeRainOutflow) {
+static void checkManningSteadySlopeRainOutflow(double reference_step) {
     // dx = 1 m keeps the first-order upwind-depth staggering offset (~half a
     // cell of the (L−x)^{3/5} profile) comfortably inside the 5 % gate.
     const double S = 0.01, dx = 1.0, n_man = 0.03;
     const int nx = 40, ny = 4;
     auto mesh = makeGridMesh(nx, ny, dx, [&](double x, double) { return S * x; }, n_man);
     SolverOptions2D opts;
+    opts.theta_reference_step = reference_step;
     auto state = makeState(mesh);
 
     // NORMAL_FLOW outlet along the downhill (x = 0) boundary edges.
@@ -375,6 +404,9 @@ TEST(InertialMarcher, ManningSteadySlopeRainOutflow) {
     solver.finalize();
 }
 
+TEST(InertialMarcher, ManningSteadySlopeRainOutflow) { checkManningSteadySlopeRainOutflow(0.0); }
+TEST(InertialMomentum, ManningSteadySlopeRainOutflow) { checkManningSteadySlopeRainOutflow(1.0); }
+
 // ---------------------------------------------------------------------------
 // Steady-slope surface smoothness: the same rain-fed inclined strip as the
 // Manning gate, both closures. At steady state the free surface must be
@@ -386,12 +418,13 @@ TEST(InertialMarcher, ManningSteadySlopeRainOutflow) {
 // observed upstream of the road_culvert embankment (flow-dependent,
 // θ-independent). The shared-edge sill datum removes it.
 // ---------------------------------------------------------------------------
-TEST(InertialMarcher, SteadySlopeNoCheckerboard) {
+static void checkSteadySlopeNoCheckerboard(double reference_step) {
     const double S = 0.01, dx = 1.0, n_man = 0.03;
     const int nx = 40, ny = 4;
     for (const auto closure : {CellClosure2D::FLAT, CellClosure2D::VFR}) {
         auto mesh = makeGridMesh(nx, ny, dx, [&](double x, double) { return S * x; }, n_man);
         SolverOptions2D opts;
+        opts.theta_reference_step = reference_step;
         opts.cell_closure = closure;
         auto state = makeState(mesh);
 
@@ -458,6 +491,9 @@ TEST(InertialMarcher, SteadySlopeNoCheckerboard) {
         solver.finalize();
     }
 }
+
+TEST(InertialMarcher, SteadySlopeNoCheckerboard) { checkSteadySlopeNoCheckerboard(0.0); }
+TEST(InertialMomentum, SteadySlopeNoCheckerboard) { checkSteadySlopeNoCheckerboard(1.0); }
 
 // ---------------------------------------------------------------------------
 // SPECIFIED_STAGE tailwater: a flat DRY basin with a stage BC along x = 0.
@@ -1042,6 +1078,28 @@ TEST(CoupledGroundwaterRk2, CompletedCheckpointResumesAllOwnedStateExactly) {
         EXPECT_EQ(rk2File(saved), rk2File(restored)) << k;
     }
 }
+TEST(InertialMomentum, CheckpointRejectsDifferentReferenceIntervalWithoutMutation) {
+    CoupledRkRig a, b;
+    a.opts.theta_reference_step = 1.0;
+    b.opts.theta_reference_step = 2.0;
+    a.init(.05, .005, .0005, .2);
+    b.init(.05, .005, .0005, .2);
+    a.solver.advance(0, .05);
+    const auto saved = rk2Output("momentum-reference.chk");
+    const auto before = rk2Output("momentum-before.chk");
+    const auto after = rk2Output("momentum-after.chk");
+    ASSERT_TRUE(a.solver.saveCheckpoint(saved.string()).empty());
+    ASSERT_TRUE(b.solver.saveCheckpoint(before.string()).empty());
+    EXPECT_FALSE(b.solver.loadCheckpoint(saved.string()).empty());
+    ASSERT_TRUE(b.solver.saveCheckpoint(after.string()).empty());
+    EXPECT_EQ(rk2File(before), rk2File(after));
+    b.opts.theta_reference_step = 1.0;
+    ASSERT_TRUE(b.solver.loadCheckpoint(saved.string()).empty());
+    a.solver.advance(.05, .1);
+    b.solver.advance(.05, .1);
+    EXPECT_EQ(a.state.volume, b.state.volume);
+}
+
 TEST(CoupledGroundwaterRk2, CorruptAndIncompatibleCheckpointRefusalIsAtomicAndRetryWorks) {
     CoupledRkRig a, b;
     a.init(.05, .005, .0005, .2);

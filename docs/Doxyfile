@@ -1506,7 +1506,10 @@ HTML_EXTRA_FILES       = custom/js/doxygen-awesome-darkmode-toggle.js \
                          manuals/reference/hydraulics/downloads/rubinato2017_examples.zip \
                          manuals/reference/hydraulics/downloads/rubinato2017_results.html \
                          manuals/reference/hydraulics/downloads/rubinato2017_visual_supplement.pdf \
-                         manuals/reference/hydraulics/downloads/rubinato2017_visuals.zip
+                         manuals/reference/hydraulics/downloads/rubinato2017_visuals.zip \
+                         manuals/reference/hydraulics/downloads/rubinato2017_momentum.zip \
+                         manuals/reference/hydraulics/downloads/rubinato2017_momentum_comparison.csv \
+                         manuals/reference/hydraulics/downloads/rubinato2017_momentum_data.json
 
 # The HTML_COLORSTYLE tag can be used to specify if the generated HTML output
 # should be rendered with a dark or light theme.

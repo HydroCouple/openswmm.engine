@@ -440,6 +440,10 @@ struct SolverOptions2D {
     /// (no numerical diffusion), <1 blends the Perot-reconstructed neighbour
     /// discharge to damp thin-film checkerboarding on steep faces.
     double theta = 0.8;      ///< [2D_OPTIONS] THETA, (0, 1]
+    /// Seconds over which THETA retains momentum. Zero preserves the legacy
+    /// per-firing blend; positive values make its relaxation rate independent
+    /// of face-step splitting and coupling-window tails.
+    double theta_reference_step = 0.0; ///< [2D_OPTIONS] THETA_REFERENCE_STEP, s >= 0
     double cfl_number = 0.7; ///< [2D_OPTIONS] CFL_NUMBER — α in
                              ///< dt = α·L_char/(√(gh)+|u|). L_char is
                              ///< derived from the discrete wave operator

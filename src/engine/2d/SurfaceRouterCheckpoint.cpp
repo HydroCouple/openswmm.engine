@@ -526,6 +526,11 @@ std::string SurfaceRouter2D::sourceRouterModel(const SimulationContext& ctx) con
     a(o.start_date, o.total_duration_ms, o.flow_units, o.routing_step, o.wet_step, o.report_step,
       o.ignore_quality, o.ignore_snow_melt, o.ignore_2d, o.water_age, o.heat_transport, x, y, step,
       sync);
+    if (options_.theta_reference_step > 0.0) {
+        std::string profile = "physical-time momentum smoothing v1";
+        double step = options_.theta_reference_step;
+        a(profile, step);
+    }
     for (int g = 0; g < ctx.n_gages(); ++g) {
         auto name = ctx.gage_names.name_of(g);
         a(name);

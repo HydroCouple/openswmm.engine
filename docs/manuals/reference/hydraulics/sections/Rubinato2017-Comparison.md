@@ -65,7 +65,52 @@ the rim and sets `MIN_SURFAREA` to the actual shaft area, 0.0452389 m².
 It changes storage and the area floor together, without retuning any
 exchange coefficient. Storage nodes retain their storage curves.
 
-## Absolute steady agreement
+## Physical-time smoothing follow-up — 22 October 2026
+
+The opt-in `THETA_REFERENCE_STEP` keeps the numerical momentum relaxation
+rate tied to a fixed time interval. The new study holds `THETA 0.8` and
+`THETA_REFERENCE_STEP 1` fixed across 36 physical-shaft cases at routing
+steps 0.0125, 0.00625 and 0.003125 s (108 completed runs). It uses maximum
+1D trials 80, head tolerance 0.00001 m, variable step 0 and lengthening step 0.
+Mesh, geometry, reconstructed forcing and physical coefficients are unchanged.
+The 1 s reference is a declared numerical timescale, not a fit to observations.
+
+All **36/36** cases change by less than 1% between the two finest steps;
+the largest change is **0.516%**. All pass the separate
+2% successive-minute drift and ordinary 1D continuity checks. These are
+fixed-mesh temporal and numerical diagnostics. **0/36** fine-step results meet
+the illustrative experimental band, so experimental qualification remains
+incomplete. Stable rates expose substantial surcharge overprediction and
+submerged-regime errors that the original coarse-step comparison obscured.
+
+![Physical-time smoothing compared with measured exchange](figures/png/hydraulics_ch9_rubinato_momentum_parity.png)
+
+Blue filled circles show the new simulated rates at 0.003125 s; gray open
+circles show the archived physical-shaft results at 0.5 s with per-firing
+smoothing. The green dashed line is 1:1 agreement. Horizontal bars show
+measured variation. Both numerical schedules and their timesteps differ;
+this overlay does not isolate just one parameter.
+
+![All-row timestep comparison with a fixed smoothing interval](figures/png/hydraulics_ch9_rubinato_momentum_convergence.png)
+
+Orange triangles show the first timestep halving, blue circles the final
+halving, and green shading the region below 1%. The ordinate is logarithmic.
+This check does not establish spatial convergence or independent validation.
+
+Download the [follow-up report, figures and plotted data](rubinato2017_momentum.zip),
+[all 36 rows at three steps](rubinato2017_momentum_comparison.csv), or
+[heads, separate volume ledgers and binary/source identifiers](rubinato2017_momentum_data.json).
+The previous report, plots and synthetic transient viewer remain the dated
+21 October record. Their outputs have not been replaced by new transient runs.
+
+To reproduce the new mode, hold the reference interval fixed while refining
+the routing step. Zero or omission retains the historical per-firing blend.
+Positive values are persisted and checked in restart compatibility; surface
+plugins require GPU ABI 9. See @ref hydraulics_ref_ch9_two_dimensional §9.5.1
+for the retention equation. Further experimental work should resolve the
+boundary/head reconstruction and spatial delivery before coefficient fitting.
+
+## Absolute steady agreement — 21 October archive
 
 The following ranges use all rows of each scenario. Bias is
 \f$100(|Q_{model}|/Q_e-1)\f$. The bare paper equations use measured heads;
@@ -110,7 +155,7 @@ not establish absolute discharge agreement. The implementation's inward
 orifice coefficient is borrowed by analogy; that regime was not calibrated
 by these experiments. See §9.7.1 for the exact preset mapping.
 
-## Numerical checks and routing-step sensitivity
+## Numerical checks and routing-step sensitivity — 21 October archive
 
 The physical-shaft alternative puts all 36 ordinary 1D continuity errors
 within 2%, but five cases fail a 2% successive-minute drift check. The

@@ -1595,6 +1595,9 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces, do
     const auto& ed = edges_;
     const int na = static_cast<int>(faces.size());
     const double theta = opts_->theta;
+    const bool physical_time_blend = opts_->theta_reference_step > 0.0;
+    const double blend =
+        inertial::momentumBlendFraction(theta, dt_f, opts_->theta_reference_step);
     // Positivity share per face: a cell's ≤ nv outgoing faces may take at most
     // β·V in total, so each takes β/nv of its EXPORTER's volume. Triangle
     // meshes keep the historical β/3 exactly.
@@ -1626,7 +1629,8 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces, do
             const double qfx = 0.5 * (qcx_[a] + qcx_[b]);
             const double qfy = 0.5 * (qcy_[a] + qcy_[b]);
             const double qn = qfx * ed.nx[e] + qfy * ed.ny[e];
-            qhat = theta * q_[e] + (1.0 - theta) * qn;
+            qhat = physical_time_blend ? q_[e] + blend * (qn - q_[e])
+                                      : theta * q_[e] + (1.0 - theta) * qn;
             // Friction magnitude: the face flow VECTOR, floored at |q_n| so
             // a face whose reconstruction lags its own discharge (front
             // arrival, first firing after activation) never under-damps.

@@ -274,9 +274,14 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens, SolverOpt
         opts.reconstruction_order = k;
     } else if (iequals(key, "THETA")) {
         const double th = tryParseDouble(val, ok);
-        if (!ok || th <= 0.0 || th > 1.0)
+        if (!ok || !std::isfinite(th) || th <= 0.0 || th > 1.0)
             return "Invalid THETA value (expected (0, 1])";
         opts.theta = th;
+    } else if (iequals(key, "THETA_REFERENCE_STEP")) {
+        const double step = tryParseDouble(val, ok);
+        if (!ok || !std::isfinite(step) || step < 0.0)
+            return "Invalid THETA_REFERENCE_STEP value (expected finite seconds >= 0)";
+        opts.theta_reference_step = step;
     } else if (iequals(key, "CFL_NUMBER")) {
         const double c = tryParseDouble(val, ok);
         if (!ok || c <= 0.0 || c > 1.0)
@@ -627,6 +632,7 @@ bool is2DOptionKey(const std::string& key) {
         "RECONSTRUCTION_ORDER",
         "FRONT_REBUILD",
         "THETA",
+        "THETA_REFERENCE_STEP",
         "CFL_NUMBER",
         "H_MOVE",
         "LTS_TIERS",
@@ -775,6 +781,8 @@ std::string format2DOptionValue(const SolverOptions2D& opts, const std::string& 
         return opts.front_rebuild < 0 ? "AUTO" : (opts.front_rebuild ? "YES" : "NO");
     if (iequals(key, "THETA"))
         return fmt_g(opts.theta);
+    if (iequals(key, "THETA_REFERENCE_STEP"))
+        return fmt_g(opts.theta_reference_step);
     if (iequals(key, "CFL_NUMBER"))
         return fmt_g(opts.cfl_number);
     if (iequals(key, "H_MOVE"))

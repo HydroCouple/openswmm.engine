@@ -85,6 +85,25 @@ inline constexpr double kGravity = 9.80665; ///< matches the existing kernels
 inline constexpr double kEtaDeadband = 1.0e-12;
 
 /**
+ * @brief Fraction of reconstructed momentum mixed over one physical face step.
+ * @param[in] theta Valid retention in (0,1]; one disables blending.
+ * @param[in] dt Nonnegative actual face interval, seconds.
+ * @param[in] reference_step Nonnegative reference interval, seconds; zero selects
+ * the historical per-firing weight. Positive values retain theta^(dt/reference_step).
+ * @return Blend fraction in [0,1]. expm1 avoids cancellation for very small steps.
+ * @note Pure host/device scalar calculation. Call once per face firing, outside
+ * the face loop. Inputs are validated by the option parser/solver owner.
+ */
+OPENSWMM_KERNEL_FN double momentumBlendFraction(double theta, double dt,
+                                                 double reference_step) noexcept {
+    if (!(reference_step > 0.0))
+        return 1.0 - theta;
+    if (!(dt > 0.0) || theta == 1.0)
+        return 0.0;
+    return -std::expm1(std::log(theta) * (dt / reference_step));
+}
+
+/**
  * @brief |(x, y)| for the marcher's discharge vectors.
  *
  * std::hypot's overflow/underflow safety costs ~10x a plain sqrt and buys nothing here: the

@@ -692,9 +692,13 @@ TEST_F(InpWriter2DTest, ExtOptions2DRouteToSolverAndPersist) {
     // Set exactly like the GUI's 2D Surface Routing tab does.
     ASSERT_EQ(swmm_options_set_ext(eng_a_, "DRY_DEPTH", "0.005"), 0);
     ASSERT_EQ(swmm_options_set_ext(eng_a_, "THETA", "0.9"), 0);
+    ASSERT_EQ(swmm_options_set_ext(eng_a_, "THETA_REFERENCE_STEP", "0.125"), 0);
     ASSERT_EQ(swmm_options_set_ext(eng_a_, "LTS_TIERS", "6"), 0);
     // Invalid values are rejected (parse2DOptionsLine validation).
     EXPECT_NE(swmm_options_set_ext(eng_a_, "DRY_DEPTH", "not_a_number"), 0);
+    for (const char* invalid : {"-1", "nan", "inf", "1e999", "bad"})
+        EXPECT_NE(swmm_options_set_ext(eng_a_, "THETA_REFERENCE_STEP", invalid), 0);
+    EXPECT_NE(swmm_options_set_ext(eng_a_, "THETA", "nan"), 0);
     // Retired CVODE-stack keys are hard errors (D2, 2026-07-29).
     EXPECT_NE(swmm_options_set_ext(eng_a_, "LINEAR_SOLVER", "GMRES"), 0);
     EXPECT_NE(swmm_options_set_ext(eng_a_, "MAX_CVODE_STEPS", "500"), 0);
@@ -706,6 +710,8 @@ TEST_F(InpWriter2DTest, ExtOptions2DRouteToSolverAndPersist) {
     EXPECT_STREQ(buf, "0.005");
     ASSERT_EQ(swmm_options_get_ext(eng_a_, "THETA", buf, sizeof(buf)), 0);
     EXPECT_STREQ(buf, "0.9");
+    ASSERT_EQ(swmm_options_get_ext(eng_a_, "THETA_REFERENCE_STEP", buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "0.125");
 
     // The edits persist: the emitted [2D_OPTIONS] carries them...
     const fs::path inp_b = dir_ / "opt_out.inp";
@@ -721,6 +727,8 @@ TEST_F(InpWriter2DTest, ExtOptions2DRouteToSolverAndPersist) {
 
     // ...and survive a reload.
     eng_b_ = open_engine(inp_b);
+    ASSERT_EQ(swmm_options_get_ext(eng_b_, "THETA_REFERENCE_STEP", buf, sizeof(buf)), 0);
+    EXPECT_STREQ(buf, "0.125");
     ASSERT_EQ(swmm_options_get_ext(eng_b_, "DRY_DEPTH", buf, sizeof(buf)), 0);
     EXPECT_STREQ(buf, "0.005");
     ASSERT_EQ(swmm_options_get_ext(eng_b_, "LTS_TIERS", buf, sizeof(buf)), 0);

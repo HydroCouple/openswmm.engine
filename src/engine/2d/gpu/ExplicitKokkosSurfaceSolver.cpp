@@ -835,6 +835,9 @@ void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f, bool global_step
     // VFR_FACE: B&S Eq. 14 at the shared edge's true crest (== serial branch).
     const bool vfr_face = (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
     const double theta = opts_->theta;
+    const bool physical_time_blend = opts_->theta_reference_step > 0.0;
+    const double blend =
+        inertial::momentumBlendFraction(theta, dt_f, opts_->theta_reference_step);
     const double dry = opts_->dry_depth;
     const double fr_max = opts_->froude_max;
     const double beta_share = opts_->exchange_beta / 3.0;
@@ -856,7 +859,8 @@ void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f, bool global_step
                 const double qfx = 0.5 * (qcx(a) + qcx(b));
                 const double qfy = 0.5 * (qcy(a) + qcy(b));
                 const double qn = qfx * nxv(e) + qfy * nyv(e);
-                qhat = theta * qv(e) + (1.0 - theta) * qn;
+                qhat = physical_time_blend ? qv(e) + blend * (qn - qv(e))
+                                          : theta * qv(e) + (1.0 - theta) * qn;
                 // Vector friction magnitude, floored at |q_n| (== serial).
                 const double qm = inertial::qMagnitude(qfx, qfy);
                 if (qm > q_mag)

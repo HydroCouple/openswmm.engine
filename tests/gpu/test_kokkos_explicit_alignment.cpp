@@ -509,12 +509,14 @@ void unsupported() {
  * 2e-9. Requires initialized Kokkos; emits step/PASS progress and throws at the first mismatch.
  */
 void marcher() {
+    for (double reference_step : {0.0, 0.37})
     for (bool vfr : {false, true})
         for (int tiers : {1, 4})
             for (int scenario = 0; scenario < 5; ++scenario) {
                 auto m = mesh(12, 0, false, vfr);
                 auto s = state(m, .1);
                 auto o = options(tiers);
+                o.theta_reference_step = reference_step;
                 if (vfr)
                     o.cell_closure = CellClosure2D::VFR;
                 for (int i = 0; i < m.n_cells(); ++i) {
@@ -548,7 +550,7 @@ void marcher() {
                 for (double end : {.93282250995272253, 1.8656450199054451, 2.0}) {
                     cpu.advance(t, end);
                     kk.advance(t, end);
-                    std::cout << "step tiers=" << tiers << " case=" << scenario << " end=" << end
+                    std::cout << "step smoothing_ref=" << reference_step << " tiers=" << tiers << " case=" << scenario << " end=" << end
                               << " cpu=" << cpu.last_num_steps() << " kk=" << kk.last_num_steps()
                               << std::endl;
                     compare(s.volume, ref.volume, "marcher volume", 2e-9);

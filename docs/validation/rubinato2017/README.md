@@ -2,6 +2,13 @@
 
 Prepared 21 October 2026; integrated into the manuals following review.
 
+Latest follow-up (22 October): [momentum smoothing and full-table refinement report](momentum_report.md),
+[three-step data](momentum_comparison.csv), and [complete plotted snapshot](momentum_data.json).
+All 36 cases meet the final 1% timestep criterion (maximum 0.516%),
+but 0/36 meet the illustrative experimental band. The reference and SWMMVis
+manuals include the new comparison and convergence figures. The earlier assets
+below remain the dated 21 October record.
+
 - [Illustrated report](review.pdf) and [editable source](review.md).
 - [All 36 steady measurements and model comparisons](steady_comparison.csv).
 - [Experimental/simulated comparisons and animated results](../../manuals/reference/hydraulics/downloads/rubinato2017_results.html).
@@ -58,3 +65,6 @@ The snapshot records input/output and binary hashes. Replotting needs no
 native engine and does not imply that new simulations have been performed.
 The generator's `visuals/` staging folder stays local; the curated files under
 the manual's `downloads/` directory are the versioned publication assets.
+
+Reproduce the follow-up with `tests/benchmarks/rubinato2017/momentum_study.md`.
+Its publisher is `publish_momentum.py --gui-root [SWMMVis checkout]`.

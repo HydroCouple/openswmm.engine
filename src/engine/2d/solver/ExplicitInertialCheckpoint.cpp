@@ -1436,6 +1436,10 @@ std::string ExplicitInertialSolver::rk2CheckpointModel(const Rk2CheckpointBindin
       o.vol_1d_to_2d, o.flow_1d_to_2d, o.flow_2d_to_1d, o.num_threads, o.requested_threads,
       o.mesh_units_si, o.mesh_scaled_to_si, o.mesh_to_si_factor, o.pending_rows_drained,
       o.bc_flow_to_si_applied);
+    if (o.theta_reference_step > 0.0) {
+        std::string profile = "physical-time momentum smoothing v1";
+        a(profile, o.theta_reference_step);
+    }
     a(o.infil_default_method, o.infil_destination, o.gw_et);
     if (o.auto_backend_cpu) {
         std::string policy = "RK2 session CPU default v1";

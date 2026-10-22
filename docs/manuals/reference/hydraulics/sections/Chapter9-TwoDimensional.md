@@ -843,6 +843,34 @@ formulation of de Almeida et al. (2012). The default \f$\theta = 0.8\f$
 applies enough diffusion to suppress the oscillation without visibly
 smearing fronts.
 
+**Smoothing over a fixed time interval.** By default,
+`THETA_REFERENCE_STEP = 0`: the authored weight is applied on every face
+firing. Shortening a routing window can create more face firings per second
+and increase this numerical damping. A positive `THETA_REFERENCE_STEP`
+\f$T_\theta\f$, in seconds, instead defines the retention over that interval:
+
+\f[
+\theta_f = \exp\!\left(\frac{\Delta t_f}{T_\theta}\ln\theta\right),\qquad
+\widehat q = q_f + (1-\theta_f)(q_{reconstructed}-q_f).
+\f]
+
+Here \f$\Delta t_f\f$ is the actual face step, including local-timestep tiers
+and shortened window tails. For a fixed reconstructed target, subdividing
+an interval gives the same total relaxation. The implementation evaluates
+the blend fraction with `expm1` to retain precision at small steps; CPU and
+Kokkos use the same scalar function. `THETA = 1` still disables blending
+and retains the existing no-vector-friction branch described above.
+
+For example, `THETA 0.8` with `THETA_REFERENCE_STEP 1` retains 80% of the
+momentum difference over one second, independently of the number of face
+steps. The equivalent relaxation timescale is
+\f$-T_\theta/\ln\theta\f$. This is a numerical stabilization control, not a
+discharge coefficient or a calibration to measured flow. Select the interval
+explicitly and check timestep refinement, stability, heads and conservation.
+Omitting it preserves the historical calculation and restart identity;
+positive values are included in checkpoint compatibility checks. Surface
+plugins must be rebuilt for GPU ABI v9, which includes the new option layout.
+
 Finally the result is clamped:
 
 | | | | |
@@ -2648,6 +2676,7 @@ sections at @ref engine_manual_sect_2D_BOUNDARY_CONDITIONS,
 | `RECONSTRUCTION_ORDER` | §9.5.10, §9.5.6 |
 | `FRONT_REBUILD` | §9.5.7 |
 | `THETA` | §9.5.1 |
+| `THETA_REFERENCE_STEP` | §9.5.1; zero keeps the per-firing weight, positive seconds define physical-time retention |
 | `CFL_NUMBER` | §9.5.5; clamped to ½ under `FULL_SWE`, §9.5.10; the diffusion safety fraction of §9.5.11 |
 | `H_MOVE` | §9.5.7 |
 | `LTS_TIERS` | §9.5.6 |

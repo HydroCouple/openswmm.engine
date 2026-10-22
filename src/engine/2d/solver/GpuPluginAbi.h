@@ -85,7 +85,9 @@ extern "C" {
  * Rebuild surface plugins; independent raw groundwater recharge remains v1. */
 /* v8: SurfaceStateData adds gross applied boundary-water transfer arrays.
  * Rebuild surface plugins; independent raw groundwater recharge remains v1. */
-#define OPENSWMM_GPU_ABI_VERSION 8
+/* v9: SolverOptions2D adds the physical-time momentum smoothing reference
+ * interval. Rebuild surface plugins to match the changed option layout. */
+#define OPENSWMM_GPU_ABI_VERSION 9
 
 /** GPU vendor / backend identifier reported by a plugin. */
 typedef enum OpenSwmmGpuVendor {
