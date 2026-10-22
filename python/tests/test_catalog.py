@@ -51,6 +51,19 @@ class CatalogSourceContract(unittest.TestCase):
                 self.assertIn("collection", entry, name)
                 self.assertIn(entry["collection"], targets, name)
 
+    def test_documented_unit_kinds_survive_header_rewording(self):
+        members = {m["path"]: m for m in json.loads(_CATALOG.read_text(encoding="utf-8"))["members"]}
+        expected = {
+            "link.hyd_power": "ft-lb/s",
+            "links.hyd_powers": "ft-lb/s",
+            "climate.snow_temp": "temperature",
+            "link.orifice.open_close_rate": "1/s",
+            "statistics.subcatchment_precip": "volume",
+        }
+        for path, units in expected.items():
+            with self.subTest(path=path):
+                self.assertEqual(members[path].get("units"), units)
+
     def test_every_unit_kind_has_a_label(self):
         """A new symbolic unit kind must get a label in catalog.py, in both systems."""
         spec = importlib.util.spec_from_file_location("_catalog_src", _CATALOG.with_suffix(".py"))
