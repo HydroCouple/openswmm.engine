@@ -308,6 +308,19 @@ TEST(SubcatchScaleRoundTrip, StarPlaceholderWrittenWhenNoPackButScaled) {
     EXPECT_DOUBLE_EQ(ctx2.subcatches.rain_scale_factor[0], 0.5);
 }
 
+TEST(SubcatchScaleRoundTrip, RainAndSnowFactorsKeepPrecision) {
+    SimulationContext ctx;
+    parseSub(ctx, "S1 RG1 J1 10 100 500 0.5 0 * 0.123456789 1.23456789");
+    const auto line = firstSubcatchLine(writeInp(ctx, "_rt_precise.inp"));
+    SimulationContext reopened;
+    parseSub(reopened, line);
+    ASSERT_EQ(reopened.n_subcatches(), 1);
+    EXPECT_DOUBLE_EQ(reopened.subcatches.rain_scale_factor[0],
+                     ctx.subcatches.rain_scale_factor[0]) << line;
+    EXPECT_DOUBLE_EQ(reopened.subcatches.snow_scale_factor[0],
+                     ctx.subcatches.snow_scale_factor[0]) << line;
+}
+
 // ============================================================================
 // splitPrecip — the single rain/snow split
 // ============================================================================

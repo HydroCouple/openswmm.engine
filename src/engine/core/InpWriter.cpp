@@ -2439,15 +2439,17 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
 
         if (has_adj) {
             sec(f, "ADJUSTMENTS");
-            auto write12 = [&](const char* key, const double* arr) {
+            auto write12 = [&](const char* key, const double* arr,
+                               const char* format = " %10.4f") {
                 std::fprintf(f, "%-12s", key);
                 for (int i = 0; i < 12; ++i)
-                    std::fprintf(f, " %10.4f", arr[i]);
+                    std::fprintf(f, format, arr[i]);
                 std::fprintf(f, "\n");
             };
             write12("TEMP", ctx.adjust_temp);
             write12("EVAP", ctx.adjust_evap);
-            write12("RAIN", ctx.adjust_rain);
+            // A small positive multiplier must not round to zero on save.
+            write12("RAIN", ctx.adjust_rain, " %10.17g");
             write12("CONDUCT", ctx.adjust_hydcon);
 
             for (size_t i = 0; i < ctx.subcatch_n_perv_pattern.size(); ++i) {
@@ -2526,6 +2528,8 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                               : ctx.gages.rain_type[u] == 2 ? "CUMULATIVE"
                                                             : "INTENSITY";
             double sf = ctx.gages.scale_factor[u];
+            // Preserve both precipitation multipliers through the saved input
+            // used by GUI runs; display precision must not change the model.
             // The trailing scale-factor token is an OpenSWMM legacy-engine extension;
             // a stock SWMM 5 parser has no slot for it. Drop it for that profile and
             // say so — it scales the gage's rainfall, so it is model content.
@@ -2535,11 +2539,11 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 sf = 1.0;
             }
             if (ts >= 0) {
-                std::fprintf(f, "%-16s %-12s %-8s     %.2f     TIMESERIES %s",
+                std::fprintf(f, "%-16s %-12s %-8s     %.17g     TIMESERIES %s",
                              ctx.gage_names.name_of(j).c_str(), fmt, gsb, ctx.gages.snow_factor[u],
                              tN(ctx, ts));
                 if (sf != 1.0)
-                    std::fprintf(f, " %.4g", sf);
+                    std::fprintf(f, " %.17g", sf);
                 std::fprintf(f, "\n");
             } else if (!ctx.gages.file_path[u].empty()) {
                 const std::string tok =
@@ -2551,11 +2555,11 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                     // "path:" that reads as malformed to EPA SWMM / PCSWMM.
                     const std::string& col = ctx.gages.col_name[u];
                     const std::string src = col.empty() ? tok : tok + ":" + col;
-                    std::fprintf(f, "%-16s %-12s %-8s     %.2f     FILE \"%s\"",
+                    std::fprintf(f, "%-16s %-12s %-8s     %.17g     FILE \"%s\"",
                                  ctx.gage_names.name_of(j).c_str(), fmt, gsb,
                                  ctx.gages.snow_factor[u], src.c_str());
                     if (sf != 1.0)
-                        std::fprintf(f, " %.4g", sf);
+                        std::fprintf(f, " %.17g", sf);
                 } else {
                     // Legacy FILE grammar: Fname Station Units [StartDate] [SF] — the
                     // station + units tokens are REQUIRED (gage.c errors with ERROR 203
@@ -2567,7 +2571,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                                             "\": no station ID set; wrote '*' — the legacy "
                                             "engine will match no rows in \"" +
                                             tok + "\"");
-                    std::fprintf(f, "%-16s %-12s %-8s     %.2f     FILE \"%s\" %s %s",
+                    std::fprintf(f, "%-16s %-12s %-8s     %.17g     FILE \"%s\" %s %s",
                                  ctx.gage_names.name_of(j).c_str(), fmt, gsb,
                                  ctx.gages.snow_factor[u], tok.c_str(),
                                  sta.empty() ? "*" : sta.c_str(),
@@ -2581,7 +2585,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                     } else if (sf != 1.0)
                         std::fprintf(f, " *");
                     if (sf != 1.0)
-                        std::fprintf(f, " %.4g", sf);
+                        std::fprintf(f, " %.17g", sf);
                 }
                 std::fprintf(f, "\n");
             } else {
@@ -2594,11 +2598,11 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 if (tsn.empty() && warnings)
                     warnings->push_back("[RAINGAGES] gage \"" + ctx.gage_names.name_of(j) +
                                         "\": no rainfall source set; wrote 'TIMESERIES *'");
-                std::fprintf(f, "%-16s %-12s %-8s     %.2f     TIMESERIES %s",
+                std::fprintf(f, "%-16s %-12s %-8s     %.17g     TIMESERIES %s",
                              ctx.gage_names.name_of(j).c_str(), fmt, gsb, ctx.gages.snow_factor[u],
                              tsn.empty() ? "*" : tsn.c_str());
                 if (sf != 1.0)
-                    std::fprintf(f, " %.4g", sf);
+                    std::fprintf(f, " %.17g", sf);
                 std::fprintf(f, "\n");
             }
         }
@@ -2656,9 +2660,9 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             if (need_scale) {
                 // RainScale must be written even when 1.0 if SnowScale is not, to hold
                 // the position of token 10.
-                std::fprintf(f, " %-10.4g", rsf);
+                std::fprintf(f, " %-10.17g", rsf);
                 if (ssf != 1.0)
-                    std::fprintf(f, " %-10.4g", ssf);
+                    std::fprintf(f, " %-10.17g", ssf);
             }
             std::fprintf(f, "\n");
         }

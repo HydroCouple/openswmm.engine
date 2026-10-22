@@ -515,6 +515,15 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
                 ctx.gages.file_format[idx] = RainFileFormat::STAN_PRCP;
             }
 
+            // Compact FILE "path" [ScaleFactor] also represents a CSV/TSF
+            // gage using its first data column. A standard station file needs
+            // both Station and Units (at least eight tokens); treating the
+            // sole numeric trailing token as a station silently loses the
+            // multiplier and prevents content-based CSV detection on reopen.
+            if (ctx.gages.file_format[idx] == RainFileFormat::STAN_PRCP &&
+                tok.size() == 7 && to_double(tok[6], -1.0) > 0.0)
+                ctx.gages.file_format[idx] = RainFileFormat::USER_CSV;
+
             // Standard SWMM FILE grammar (legacy gage.c gage_readParams):
             //   Name Format Interval SCF FILE Fname Station Units [StartDate] [SCF]
             // tok[5]=Fname, tok[6]=Station, tok[7]=Units (IN|MM),

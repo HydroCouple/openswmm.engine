@@ -35,6 +35,7 @@
 #include "../../src/engine/core/SimulationContext.hpp"
 #include "../../src/engine/core/InpWriter.hpp"
 #include "../../src/engine/input/handlers/CatchmentHandler.hpp"
+#include "input/handlers/InfraHandler.hpp"
 
 namespace fs = std::filesystem;
 using openswmm::RainFileFormat;
@@ -314,4 +315,50 @@ TEST(GageFileRoundTrip, TimeseriesScaleFactorRoundTrip) {
     parseGages(ctx2, line);
     ASSERT_EQ(ctx2.n_gages(), 1);
     EXPECT_DOUBLE_EQ(ctx2.gages.scale_factor[0], 3.5);
+}
+
+TEST(GageFileRoundTrip, DefaultCsvColumnRetainsTenfoldScale) {
+    SimulationContext ctx;
+    parseGages(ctx, "G1 VOLUME 0:15 1 FILE \"rain.csv:RAIN\" 10");
+    ctx.gages.col_name[0].clear(); // GUI's default/first-column selection
+
+    const auto line = firstGageLine(writeInp(ctx, "csv_default_column_scaled.inp"));
+    SimulationContext reopened;
+    parseGages(reopened, line);
+    ASSERT_EQ(reopened.n_gages(), 1);
+    EXPECT_EQ(reopened.gages.file_format[0], RainFileFormat::USER_CSV);
+    EXPECT_TRUE(reopened.gages.col_name[0].empty());
+    EXPECT_TRUE(reopened.gages.station_id[0].empty());
+    EXPECT_DOUBLE_EQ(reopened.gages.scale_factor[0], 10.0) << line;
+}
+
+TEST(GageFileRoundTrip, PrecipitationFactorsKeepPrecisionForEverySource) {
+    for (const auto& source : {"TIMESERIES TS1 1.23456789",
+                               "FILE \"rain.dat\" STA MM * 1.23456789",
+                               "FILE \"rain.csv:RAIN\" 1.23456789",
+                               "TIMESERIES * 1.23456789"}) {
+        SCOPED_TRACE(source);
+        SimulationContext ctx;
+        ctx.tables.add("TS1", openswmm::TableType::TIMESERIES);
+        parseGages(ctx, std::string("G1 VOLUME 0:15 0.00123456789 ") + source);
+        const auto line = firstGageLine(writeInp(ctx, "precise_factors.inp"));
+        SimulationContext reopened;
+        reopened.tables.add("TS1", openswmm::TableType::TIMESERIES);
+        parseGages(reopened, line);
+        ASSERT_EQ(reopened.n_gages(), 1);
+        EXPECT_DOUBLE_EQ(reopened.gages.snow_factor[0], ctx.gages.snow_factor[0]) << line;
+        EXPECT_DOUBLE_EQ(reopened.gages.scale_factor[0], ctx.gages.scale_factor[0]) << line;
+    }
+}
+
+TEST(GageFileRoundTrip, MonthlyRainfallFactorsKeepPrecision) {
+    SimulationContext ctx;
+    ctx.adjust_rain[0] = 0.0000123456789;
+    ctx.adjust_rain[1] = 1.23456789;
+    ctx.adjust_rain[2] = 10.0;
+    const auto content = writeInp(ctx, "precise_monthly_rain.inp");
+    SimulationContext reopened;
+    openswmm::input::handle_adjustments(reopened, sectionLines(content, "ADJUSTMENTS"));
+    for (int month = 0; month < 12; ++month)
+        EXPECT_DOUBLE_EQ(reopened.adjust_rain[month], ctx.adjust_rain[month]);
 }
