@@ -97,8 +97,6 @@ add_library(openswmm::engine ALIAS openswmm_engine)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/GpuContract.cmake)
 openswmm_gpu_contract(openswmm_engine)
-find_package(Threads REQUIRED)
-target_link_libraries(openswmm_engine PRIVATE Threads::Threads)
 
 # ---- Output name ----
 set_target_properties(openswmm_engine PROPERTIES
