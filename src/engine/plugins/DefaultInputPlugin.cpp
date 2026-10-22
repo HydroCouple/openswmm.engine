@@ -55,7 +55,44 @@
 #include "../input/handlers/SpatialHandler.hpp"
 #include "../input/handlers/InfraHandler.hpp"
 
+#include "../input/InputReader.hpp"
+#include "../core/SimulationContext.hpp"
+#include <sstream>
+#ifdef OPENSWMM_HAS_2D
+#include "../2d/SurfaceRouter2D.hpp"
+#include "../2d/input/SectionHandlers2D.hpp"
+#include "../2d/quality/SurfaceQuality2D.hpp"
+#include "../2d/gw/GwTransportSections.hpp"
+#include "../2d/subsurface/SubsurfaceSections.hpp"
+#endif
+
 namespace openswmm {
+
+void DefaultInputPlugin::registerContextSections(SimulationContext& ctx) {
+#ifdef OPENSWMM_HAS_2D
+    auto* r = ctx.twod_io.surface_router;
+    if (!r)
+        return;
+    twoD::register2DSections(r->mesh(), r->options(), r->pendingBCRows(),
+        r->pendingEdgeConveyanceRows(), r->pendingInitialQualityRows(),
+        r->pendingInitialBedQualityRows(), r->pendingBoundaryQualityRows(), registry_);
+    twoD::registerGwTransportSections(r->gwTransport(), registry_);
+    twoD::registerSurfaceQualitySections(r->surfaceQuality(), registry_);
+    twoD::registerSubsurfaceSections(r->aquiferConfig(), r->aquiferNodeNames(),
+                                    r->aquiferLinkNames(), registry_);
+#else
+    (void)ctx;
+#endif
+}
+
+int DefaultInputPlugin::readText(const std::string& text, SimulationContext& ctx) {
+    registerContextSections(ctx);
+    std::istringstream stream(text);
+    input::InputReader reader(registry_);
+    const bool ok = reader.read_stream(stream, ctx);
+    skipped_sections_ = reader.skipped_sections();
+    return ok ? 0 : -1;
+}
 
 // ============================================================================
 // Constructor

@@ -32,6 +32,7 @@
 #ifndef OPENSWMM_INP_WRITER_HPP
 #define OPENSWMM_INP_WRITER_HPP
 
+#include <cstdio>
 #include <functional>
 #include <string>
 #include <vector>
@@ -122,6 +123,11 @@ int writeInpFile(const SimulationContext& ctx, const std::string& path,
 struct InpWriteOptions {
     enum class Profile { Full, Swmm5, Swmm5Stock };
     Profile profile = Profile::Full;
+    // Internal container serialization: borrowed stream, no mesh sidecar writes.
+    FILE* stream = nullptr;
+    bool internal_units = false;
+    bool inline_mesh = false;
+    bool skip_component_files = false;
     enum class OutputKind { Model = 0, Mesh = 1, Component = 2 };
     // Final paths remain the reference anchor. Every actual output is sent
     // here before opening; an empty mapped path refuses that output.
@@ -131,6 +137,11 @@ struct InpWriteOptions {
 
 int writeInpFile(const SimulationContext& ctx, const std::string& path,
                  std::vector<std::string>* warnings, const InpWriteOptions& opts);
+
+// Complete native text, anchored at a container destination. No model/mesh files
+// are created. internal_units is used only for GeoPackage supplemental sections.
+std::string modelText(const SimulationContext& ctx, const std::string& anchor,
+                      bool internal_units = false);
 
 } // namespace inp_writer
 } // namespace openswmm

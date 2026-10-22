@@ -27,6 +27,7 @@
  */
 
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -101,6 +102,9 @@ std::string join_args(const std::vector<std::string>& args) {
  * @param[in] v Scalar in its retained option units; NaN/inf are not rejected.
  * @return Owned current-C-locale %g text; finite ordinary values aim to round-trip through strtod.
  */
+template<class T> requires std::is_integral_v<T>
+std::string fmt_full(T value) { return std::to_string(value); }
+
 std::string fmt_full(double v) {
     char b[40];
     for (int prec = 15; prec <= 17; ++prec) {
@@ -428,7 +432,7 @@ namespace {
  * @param[in,out] ctx Borrowed context; warnings are appended, preserving existing entries.
  * @param[in,out] sink Borrowed collected strings; each moved-from element remains in the vector.
  */
-void forwardWriteWarnings(openswmm::SimulationContext& ctx, std::vector<std::string>& sink) {
+void forwardWriteWarnings(openswmm::SimulationContext& ctx, std::vector<std::string> sink) {
     for (auto& w : sink)
         ctx.warnings.push_back(std::move(w));
 }
@@ -527,8 +531,15 @@ SWMM_ENGINE_API int swmm_model_write_with_plugin(SWMM_Engine engine, const char*
     int rc = writer->initialize({}, info);
     if (rc == 0)
         rc = writer->write(new_path, eng->context());
-    // Best-effort finalize; ignore its return so we surface the write rc.
-    (void)writer->finalize(eng->context());
+    forwardWriteWarnings(eng->context(), writer->skipped_sections());
+    if (rc != 0 && writer->last_error_message()[0])
+        forwardWriteWarnings(eng->context(), {writer->last_error_message()});
+    const int finalRc = writer->finalize(eng->context());
+    if (finalRc != 0) {
+        if (writer->last_error_message()[0])
+            forwardWriteWarnings(eng->context(), {writer->last_error_message()});
+        if (rc == 0) rc = finalRc;
+    }
     delete writer;
 
     return rc == 0 ? SWMM_OK : SWMM_ERR_PLUGIN;
@@ -1128,9 +1139,9 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine, const char* key, char* 
     } else if (k == "LINK_OFFSETS")
         val = (opt.link_offsets == 1) ? "ELEVATION" : "DEPTH";
     else if (k == "ROUTING_STEP")
-        val = std::to_string(opt.routing_step);
+        val = fmt_full(opt.routing_step);
     else if (k == "REPORT_STEP")
-        val = std::to_string(opt.report_step);
+        val = fmt_full(opt.report_step);
     else if (k == "CRS")
         val = opt.crs;
 
@@ -1243,13 +1254,13 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine, const char* key, char* 
     // Step keys — emitted as integer seconds (GUI parseStepSeconds
     // accepts both seconds and HH:MM:SS; seconds matches REPORT_STEP).
     else if (k == "DRY_STEP")
-        val = std::to_string(static_cast<long long>(opt.dry_step));
+        val = fmt_full(opt.dry_step);
     else if (k == "WET_STEP")
-        val = std::to_string(static_cast<long long>(opt.wet_step));
+        val = fmt_full(opt.wet_step);
     else if (k == "RULE_STEP")
-        val = std::to_string(static_cast<long long>(opt.rule_step));
+        val = fmt_full(opt.rule_step);
     else if (k == "DRY_DAYS")
-        val = std::to_string(opt.dry_days);
+        val = fmt_full(opt.dry_days);
 
     // Sweep day-of-year → MM/DD via the NON-leap year-2001 anchor (matches
     // OptionsHandler's parser and InpWriter's fmt_sweep — the 2000 anchor
@@ -1319,11 +1330,11 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine, const char* key, char* 
         else
             val = "DYNAMIC_SLOT";
     } else if (k == "TPA_CELERITY")
-        val = std::to_string(opt.tpa_celerity);
+        val = fmt_full(opt.tpa_celerity);
     else if (k == "UNSTEADY_FRICTION") { // issue #156
         val = (opt.unsteady_friction == 1) ? "VITKOVSKY" : "NONE";
     } else if (k == "UF_K3")
-        val = std::to_string(opt.uf_k3);
+        val = fmt_full(opt.uf_k3);
     else if (k == "REPORT_SIGNED_HEADS") // issue #156 O-6
         val = opt.report_signed_heads ? "YES" : "NO";
     else if (k == "NODE_CONTINUITY") {
@@ -1361,47 +1372,47 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine, const char* key, char* 
     } else if (k == "ANDERSON_ACCEL")
         val = opt.anderson_accel ? "YES" : "NO";
     else if (k == "DPS_CELERITY")
-        val = std::to_string(opt.dps_target_celerity);
+        val = fmt_full(opt.dps_target_celerity);
     else if (k == "DPS_ALPHA")
-        val = std::to_string(opt.dps_alpha);
+        val = fmt_full(opt.dps_alpha);
     else if (k == "DPS_DECAY_TIME")
-        val = std::to_string(opt.dps_decay_time);
+        val = fmt_full(opt.dps_decay_time);
     else if (k == "LENGTHENING_STEP")
-        val = std::to_string(opt.lengthening_step);
+        val = fmt_full(opt.lengthening_step);
     else if (k == "VARIABLE_STEP")
-        val = std::to_string(opt.variable_step);
+        val = fmt_full(opt.variable_step);
     else if (k == "MINIMUM_STEP")
-        val = std::to_string(opt.min_routing_step);
+        val = fmt_full(opt.min_routing_step);
     else if (k == "MAX_TRIALS")
-        val = std::to_string(opt.max_trials);
+        val = fmt_full(opt.max_trials);
     else if (k == "HEAD_TOLERANCE")
-        val = std::to_string(opt.head_tol);
+        val = fmt_full(opt.head_tol);
     // LAT_FLOW_TOL / SYS_FLOW_TOL speak percent through this API on both
     // get and set, mirroring the [OPTIONS] surface; the stored fraction
     // (value / 100) is internal to the routing solver.
     else if (k == "LAT_FLOW_TOL")
-        val = std::to_string(opt.lat_flow_tol * 100.0);
+        val = fmt_full(opt.lat_flow_tol * 100.0);
     else if (k == "SYS_FLOW_TOL")
-        val = std::to_string(opt.sys_flow_tol * 100.0);
+        val = fmt_full(opt.sys_flow_tol * 100.0);
     else if (k == "MIN_SURFAREA")
-        val = std::to_string(opt.min_surf_area);
+        val = fmt_full(opt.min_surf_area);
     else if (k == "MIN_SLOPE")
-        val = std::to_string(opt.min_slope);
+        val = fmt_full(opt.min_slope);
 
     // Explicit finite-volume solver (FLOW_ROUTING FV). Readable and writable
     // under ANY routing model — the keys are inert rather than rejected, so a
     // GUI or script can configure FV before selecting it (matches the
     // [OPTIONS] parser contract, plan §4.2).
     else if (k == "FV_CELL_LENGTH")
-        val = std::to_string(opt.fv.cell_length);
+        val = fmt_full(opt.fv.cell_length);
     else if (k == "FV_MIN_CELLS")
-        val = std::to_string(opt.fv.min_cells);
+        val = fmt_full(opt.fv.min_cells);
     else if (k == "FV_CFL")
-        val = std::to_string(opt.fv.cfl);
+        val = fmt_full(opt.fv.cfl);
     else if (k == "FV_RIEMANN")
         val = (opt.fv.riemann == openswmm::fv::RiemannSolver::HLL) ? "HLL" : "HLLC";
     else if (k == "FV_ORDER")
-        val = std::to_string(opt.fv.order);
+        val = fmt_full(opt.fv.order);
     else if (k == "FV_LIMITER") {
         switch (opt.fv.limiter) {
         case openswmm::fv::Limiter::VANLEER:
@@ -1429,13 +1440,13 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine, const char* key, char* 
     } else if (k == "FV_TIME_INTEGRATION")
         val = (opt.fv.time_integration == openswmm::fv::TimeIntegration::RK2) ? "RK2" : "EULER";
     else if (k == "FV_SLOT_CELERITY")
-        val = std::to_string(opt.fv.slot_celerity);
+        val = fmt_full(opt.fv.slot_celerity);
     else if (k == "FV_PRESSURIZED_IMPLICIT")
         val = opt.fv.pressurized_implicit ? "YES" : "NO";
     else if (k == "FV_PRESSURE_CLOSURE") // issue #156
         val = (opt.fv.pressure_closure == 1) ? "TPA" : "SLOT";
     else if (k == "FV_DISPERSION")
-        val = std::to_string(opt.fv.dispersion);
+        val = fmt_full(opt.fv.dispersion);
     else if (k == "FV_STRUCTURE_COUPLING")
         val = (opt.fv.structure_coupling == openswmm::fv::StructureCoupling::ROUTING_STEP)
                   ? "ROUTING_STEP"
@@ -1474,13 +1485,13 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine, const char* key, char* 
             break;
         }
     } else if (k == "FV_MIN_PARALLEL_CELLS")
-        val = std::to_string(opt.fv.min_parallel_cells);
+        val = fmt_full(opt.fv.min_parallel_cells);
     else if (k == "FV_LTS")
         val = opt.fv.lts ? "YES" : "NO";
     else if (k == "FV_LTS_MAX_TIERS")
-        val = std::to_string(opt.fv.lts_max_tiers);
+        val = fmt_full(opt.fv.lts_max_tiers);
     else if (k == "FV_CFL_CENSUS_INTERVAL")
-        val = std::to_string(opt.fv.cfl_census_interval);
+        val = fmt_full(opt.fv.cfl_census_interval);
 
     // Quality & transport (subplan Y0). Readable and writable under ANY
     // solver — the keys are inert rather than rejected, the same contract
@@ -1506,13 +1517,13 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine, const char* key, char* 
     else if (k == "HEAT_TRANSPORT")
         val = opt.heat_transport ? "YES" : "NO";
     else if (k == "QUALITY_STEP")
-        val = std::to_string(opt.quality_step);
+        val = fmt_full(opt.quality_step);
     else if (k == "MAX_SEGMENTS_PER_LINK")
-        val = std::to_string(opt.max_segments_per_link);
+        val = fmt_full(opt.max_segments_per_link);
     else if (k == "DISPERSION")
         val = opt.lard_rwpt ? "RWPT" : "OFF";
     else if (k == "RWPT_SEED")
-        val = std::to_string(opt.rwpt_seed);
+        val = fmt_full(opt.rwpt_seed);
 
     // Physical constants and FV feedback (closed C-API gaps 2026-10-11).
     // Printed at full precision: std::to_string's six decimals would read
@@ -1541,7 +1552,7 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine, const char* key, char* 
 
     // System / Performance
     else if (k == "THREADS")
-        val = std::to_string(opt.num_threads);
+        val = fmt_full(opt.num_threads);
 
     else
         return SWMM_ERR_BADPARAM;

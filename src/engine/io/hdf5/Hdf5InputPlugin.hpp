@@ -79,25 +79,14 @@ public:
      */
     int validate(const SimulationContext& ctx) override;
 
-    /**
-     * @brief Refuse unsupported HDF5 model import in schema 1.0.
-     * @param[in] path Source path, currently ignored; no file is opened.
-     * @param[in,out] ctx Model context left completely unchanged.
-     * @return One; state() becomes ERROR and last_error_message() explains
-     * that the current schema supports export only.
-     */
+    /** @brief Read the complete native model dataset and embedded component configurations.
+     * Older column-only exports are refused with a diagnostic. A successful parse
+     * populates ctx; errors may leave it partially populated. */
     int read(const std::string& path, SimulationContext& ctx) override;
 
-    /**
-     * @brief Export a model to a columnar HDF5 file.
-     * @param[in] path Destination filename; existing files are truncated.
-     * @param[in] ctx Model in internal units; conversion uses a copy when needed.
-     * @return write_model()'s status. A failure sets state() to ERROR and stores
-     * a diagnostic; success preserves the current state and exposes omissions
-     * through skipped_sections(). Allocation/conversion exceptions propagate.
-     * @note Clears previous errors and omissions before writing. A zero result
-     * has write_model()'s limited I/O-status guarantee; inspect skipped_sections().
-     */
+    /** @brief Write the complete model to HDF5, replacing the destination.
+     * Returns nonzero and records a diagnostic on I/O or conversion failure.
+     * Clears previous diagnostics before writing. */
     int write(const std::string& path, const SimulationContext& ctx) override;
 
     /**

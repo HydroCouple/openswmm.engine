@@ -9,6 +9,7 @@
  */
 
 #include "GeoPackageWriter.hpp"
+#include "ModelSupplement.hpp"
 #include "../../core/Constants.hpp"
 #include "ExternalContentWriter.hpp"
 #include "GeoPackageSchema.hpp"
@@ -353,7 +354,7 @@ static void write_options(sqlite3* db, const SimulationContext& ctx, const std::
         bind_text(stmt.get(), 1, sim_id);
         bind_text(stmt.get(), 2, key);
         bind_text(stmt.get(), 3, val);
-        sqlite3_step(stmt.get());
+        checked_model_step(db, stmt.get());
     };
     // Double-valued options at FULL precision — std::to_string emits only 6 dp,
     // which rounds dates/steps/tolerances (e.g. START_DATE 36161.0416666… →
@@ -383,6 +384,7 @@ static void write_options(sqlite3* db, const SimulationContext& ctx, const std::
     insert_d("REPORT_STEP", opts.report_step);
     insert_d("START_DATE", opts.start_date);
     insert_d("END_DATE", opts.end_date);
+    insert_d("TOTAL_DURATION_MS", opts.total_duration_ms);
     insert_d("REPORT_START", opts.report_start);
     insert("SWEEP_START", std::to_string(opts.sweep_start));
     insert("SWEEP_END", std::to_string(opts.sweep_end));
@@ -561,7 +563,7 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx, const std::st
         bind_int(stmt.get(), 13,
                  (utag < ctx.nodes.is_inlet.size() && ctx.nodes.is_inlet[utag]) ? 1 : 0);
 
-        sqlite3_step(stmt.get());
+        checked_model_step(db, stmt.get());
 
         // --- per-subtype child row ---
         if (ntype == NodeType::STORAGE) {
@@ -586,7 +588,7 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx, const std::st
             bind_double(st_stmt.get(), 13, r >= 0 ? S.exfil_suction[ur] : 0.0);
             bind_double(st_stmt.get(), 14, r >= 0 ? S.exfil_ksat[ur] : 0.0);
             bind_double(st_stmt.get(), 15, r >= 0 ? S.exfil_imd[ur] : 0.0);
-            sqlite3_step(st_stmt.get());
+            checked_model_step(db, st_stmt.get());
         } else if (ntype == NodeType::OUTFALL) {
             const int r = ctx.node_subtypes.outfall_row(i);
             const auto& O = ctx.node_subtypes.outfalls;
@@ -603,7 +605,7 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx, const std::st
             bind_name(of_stmt.get(), 6,
                       (rt >= 0 && rt < ctx.subcatch_names.size()) ? ctx.subcatch_names.name_of(rt)
                                                                   : std::string{});
-            sqlite3_step(of_stmt.get());
+            checked_model_step(db, of_stmt.get());
         } else if (ntype == NodeType::DIVIDER) {
             const int r = ctx.node_subtypes.divider_row(i);
             const auto& D = ctx.node_subtypes.dividers;
@@ -619,7 +621,7 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx, const std::st
             bind_double(dv_stmt.get(), 6, r >= 0 ? D.max_depth[ur] : 0.0);
             bind_name(dv_stmt.get(), 7, r >= 0 ? D.curve_name[ur] : std::string{});
             bind_name(dv_stmt.get(), 8, r >= 0 ? D.link_name[ur] : std::string{});
-            sqlite3_step(dv_stmt.get());
+            checked_model_step(db, dv_stmt.get());
         }
     }
 }
@@ -770,7 +772,7 @@ static void write_links(sqlite3* db, const SimulationContext& ctx, const std::st
             bind_text(stmt.get(), 19, ctx.links.tags[utag]);
         else
             bind_null(stmt.get(), 19);
-        sqlite3_step(stmt.get());
+        checked_model_step(db, stmt.get());
 
         // ---- per-type child row, sourced from the relational side-tables ----
         const int cr = ctx.link_subtypes.conduit_row(i);
@@ -793,7 +795,7 @@ static void write_links(sqlite3* db, const SimulationContext& ctx, const std::st
             bind_double(st_conduit.get(), 8, CD.loss_outlet[u]);
             bind_double(st_conduit.get(), 9, CD.loss_avg[u]);
             bind_double(st_conduit.get(), 10, CD.seep_rate[u]);
-            sqlite3_step(st_conduit.get());
+            checked_model_step(db, st_conduit.get());
         } else if (pr >= 0) {
             const auto& PD = ctx.link_subtypes.pumps;
             const auto u = (size_t)pr;
@@ -810,7 +812,7 @@ static void write_links(sqlite3* db, const SimulationContext& ctx, const std::st
             bind_double(st_pump.get(), 4, PD.init_state[u] ? 1.0 : 0.0);
             bind_double(st_pump.get(), 5, PD.startup[u]);
             bind_double(st_pump.get(), 6, PD.shutoff[u]);
-            sqlite3_step(st_pump.get());
+            checked_model_step(db, st_pump.get());
         } else if (orr >= 0) {
             const auto& ORF = ctx.link_subtypes.orifices;
             const auto u = (size_t)orr;
@@ -821,7 +823,7 @@ static void write_links(sqlite3* db, const SimulationContext& ctx, const std::st
             bind_text(st_orifice.get(), 3, orifice_orientation_str(ORF.orifice_type[u]));
             bind_double(st_orifice.get(), 4, ORF.cd[u]);
             bind_double(st_orifice.get(), 5, ORF.orate[u]);
-            sqlite3_step(st_orifice.get());
+            checked_model_step(db, st_orifice.get());
         } else if (wr >= 0) {
             const auto& WD = ctx.link_subtypes.weirs;
             const auto u = (size_t)wr;
@@ -833,7 +835,7 @@ static void write_links(sqlite3* db, const SimulationContext& ctx, const std::st
             bind_double(st_weir.get(), 4, WD.cd[u]);
             bind_double(st_weir.get(), 5, WD.crest_height[u]);
             bind_int(st_weir.get(), 6, static_cast<int>(WD.end_contractions[u] + 0.5));
-            sqlite3_step(st_weir.get());
+            checked_model_step(db, st_weir.get());
         } else if (olr >= 0) {
             const auto& OUT = ctx.link_subtypes.outlets;
             const auto u = (size_t)olr;
@@ -854,7 +856,7 @@ static void write_links(sqlite3* db, const SimulationContext& ctx, const std::st
             bind_double(st_outlet.get(), 5, OUT.coeff[u]);
             bind_double(st_outlet.get(), 6, OUT.expon[u]);
             bind_double(st_outlet.get(), 7, OUT.crest_height[u]);
-            sqlite3_step(st_outlet.get());
+            checked_model_step(db, st_outlet.get());
         }
     }
 }
@@ -955,7 +957,7 @@ static void write_subcatchments(sqlite3* db, const SimulationContext& ctx,
         bind_double(stmt.get(), 26, safe_dbl(ctx.subcatches.rain_scale_factor, i));
         bind_double(stmt.get(), 27, safe_dbl(ctx.subcatches.snow_scale_factor, i));
 
-        sqlite3_step(stmt.get());
+        checked_model_step(db, stmt.get());
     }
 }
 
@@ -1010,7 +1012,7 @@ static void write_rain_gages(sqlite3* db, const SimulationContext& ctx, const st
         else
             bind_null(stmt.get(), 8);
 
-        sqlite3_step(stmt.get());
+        checked_model_step(db, stmt.get());
     }
 }
 
@@ -1053,7 +1055,7 @@ static void write_topology(sqlite3* db, const SimulationContext& ctx, const std:
         bind_text(stmt.get(), 5,
                   link_type_str(safe_get(ctx.links.type, (size_t)i, LinkType::CONDUIT)));
         bind_int(stmt.get(), 6, 1);
-        sqlite3_step(stmt.get());
+        checked_model_step(db, stmt.get());
     }
 
     // subcatch_routing
@@ -1086,7 +1088,7 @@ static void write_topology(sqlite3* db, const SimulationContext& ctx, const std:
             bind_text(stmt2.get(), 4, "");
             bind_null(stmt2.get(), 5);
         }
-        sqlite3_step(stmt2.get());
+        checked_model_step(db, stmt2.get());
     }
 }
 
@@ -1128,7 +1130,7 @@ static void write_curves(sqlite3* db, const SimulationContext& ctx, const std::s
             bind_double(stmt.get(), 4, tbl.x[j]);
             bind_double(stmt.get(), 5, tbl.y[j]);
             bind_int(stmt.get(), 6, j);
-            sqlite3_step(stmt.get());
+            checked_model_step(db, stmt.get());
         }
     }
 }
@@ -1169,7 +1171,7 @@ static void write_timeseries(sqlite3* db, const SimulationContext& ctx, const st
             bind_text(stmt.get(), 3, format_ts_timestamp(tbl.x[j], ctx.options.start_date));
             bind_double(stmt.get(), 4, tbl.y[j]);
             bind_int(stmt.get(), 5, j);
-            sqlite3_step(stmt.get());
+            checked_model_step(db, stmt.get());
         }
     }
 }
@@ -1240,7 +1242,7 @@ static void write_evaporation(sqlite3* db, const SimulationContext& ctx,
         bind_null(stmt.get(), 6);
 
     bind_int(stmt.get(), 7, opts.evap_dry_only ? 1 : 0);
-    sqlite3_step(stmt.get());
+    checked_model_step(db, stmt.get());
 }
 
 /**
@@ -1302,7 +1304,7 @@ static void write_climate_settings(sqlite3* db, const SimulationContext& ctx,
     bind_double(stmt.get(), 16, opts.snow_elev);
     bind_double(stmt.get(), 17, opts.snow_dtlong);
     bind_int(stmt.get(), 18, opts.temp_units);
-    sqlite3_step(stmt.get());
+    checked_model_step(db, stmt.get());
 }
 
 /**
@@ -1339,7 +1341,7 @@ static void write_snowpacks(sqlite3* db, const SimulationContext& ctx, const std
             for (int k = 0; k < 7; ++k)
                 bind_double(stmt.get(), 4 + k, p[static_cast<size_t>(k)]);
             bind_null(stmt.get(), 11);
-            sqlite3_step(stmt.get());
+            checked_model_step(db, stmt.get());
         };
 
         if (j < ctx.snowpacks.plowable.size())
@@ -1365,7 +1367,7 @@ static void write_snowpacks(sqlite3* db, const SimulationContext& ctx, const std
                 bind_text(stmt.get(), 11, ctx.snowpacks.removal_subcatch[j]);
             else
                 bind_null(stmt.get(), 11);
-            sqlite3_step(stmt.get());
+            checked_model_step(db, stmt.get());
         }
     }
 }
@@ -1400,7 +1402,7 @@ static void write_adjustments(sqlite3* db, const SimulationContext& ctx,
             bind_text(stmt.get(), 1, sim_id);
             bind_text(stmt.get(), 2, atype);
             bind_text(stmt.get(), 3, join_doubles(arr, 12));
-            sqlite3_step(stmt.get());
+            checked_model_step(db, stmt.get());
         };
 
         write_row("TEMP", ctx.adjust_temp);
@@ -1423,8 +1425,8 @@ static void write_adjustments(sqlite3* db, const SimulationContext& ctx,
                 bind_text(stmt.get(), 1, sim_id);
                 bind_text(stmt.get(), 2, ctx.subcatch_names.name_of(static_cast<int>(i)));
                 bind_text(stmt.get(), 3, atype);
-                bind_text(stmt.get(), 4, ctx.tables[pats[i]].id);
-                sqlite3_step(stmt.get());
+                bind_text(stmt.get(), 4, ctx.patterns.names.at(static_cast<std::size_t>(pats[i])));
+                checked_model_step(db, stmt.get());
             }
         };
 
@@ -1480,7 +1482,7 @@ static void write_pollutants(sqlite3* db, const SimulationContext& ctx, const st
         bind_double(stmt.get(), 10, safe_dbl(ctx.pollutants.c_rdii, i));
         bind_double(stmt.get(), 11, safe_dbl(ctx.pollutants.c_dwf, i));
         bind_double(stmt.get(), 12, safe_dbl(ctx.pollutants.init_conc, i));
-        sqlite3_step(stmt.get());
+        checked_model_step(db, stmt.get());
     }
 }
 
@@ -1523,7 +1525,7 @@ static void write_landuses(sqlite3* db, const SimulationContext& ctx, const std:
             bind_null(stmt.get(), 6);
         else
             bind_text(stmt.get(), 6, comment);
-        sqlite3_step(stmt.get());
+        checked_model_step(db, stmt.get());
     }
 }
 
@@ -1567,7 +1569,7 @@ static void write_buildup_washoff(sqlite3* db, const SimulationContext& ctx,
                 bind_double(stmt.get(), 7, safe_dbl(ctx.buildup.coeff3, idx));
                 bind_text(stmt.get(), 8,
                           safe_int(ctx.buildup.normalizer, idx) == 0 ? "AREA" : "CURB");
-                sqlite3_step(stmt.get());
+                checked_model_step(db, stmt.get());
             }
         }
     }
@@ -1592,7 +1594,7 @@ static void write_buildup_washoff(sqlite3* db, const SimulationContext& ctx,
                 bind_double(stmt.get(), 6, safe_dbl(ctx.washoff.expon, idx));
                 bind_double(stmt.get(), 7, safe_dbl(ctx.washoff.sweep_effic, idx));
                 bind_double(stmt.get(), 8, safe_dbl(ctx.washoff.bmp_effic, idx));
-                sqlite3_step(stmt.get());
+                checked_model_step(db, stmt.get());
             }
         }
     }
@@ -1635,7 +1637,7 @@ static void write_subcatch_coverages(sqlite3* db, const SimulationContext& ctx,
             bind_text(stmt.get(), 3, ctx.landuse_names.name_of(lu));
             bind_double(stmt.get(), 4, pct);
             bind_double(stmt.get(), 5, safe_dbl(ctx.subcatches.sweep_last_swept, idx));
-            sqlite3_step(stmt.get());
+            checked_model_step(db, stmt.get());
         }
     }
 }
@@ -1676,7 +1678,7 @@ static void write_subcatch_loadings(sqlite3* db, const SimulationContext& ctx,
             bind_text(stmt.get(), 2, ctx.subcatch_names.name_of(s));
             bind_text(stmt.get(), 3, ctx.pollutant_names.name_of(p));
             bind_double(stmt.get(), 4, w);
-            sqlite3_step(stmt.get());
+            checked_model_step(db, stmt.get());
         }
     }
 }
@@ -1717,7 +1719,7 @@ static void write_patterns(sqlite3* db, const SimulationContext& ctx, const std:
             bind_int(stmt.get(), 3, ctx.patterns.types[i]);
             bind_int(stmt.get(), 4, j);
             bind_double(stmt.get(), 5, factors[j]);
-            sqlite3_step(stmt.get());
+            checked_model_step(db, stmt.get());
         }
     }
 }
@@ -1755,7 +1757,7 @@ static void write_lid_controls(sqlite3* db, const SimulationContext& ctx,
             bind_text(stmt.get(), 3, layer);
             for (int k = 0; k < 7; ++k)
                 bind_double(stmt.get(), 4 + k, (k < np) ? p[k] : 0.0);
-            sqlite3_step(stmt.get());
+            checked_model_step(db, stmt.get());
         };
 
         // Type code
@@ -2003,7 +2005,7 @@ static void write_lid_usage(sqlite3* db, const SimulationContext& ctx, const std
 
         bind_double(stmt.get(), 12,
                     (uj < ctx.lid_usage.from_perv.size()) ? ctx.lid_usage.from_perv[uj] : 0.0);
-        sqlite3_step(stmt.get());
+        checked_model_step(db, stmt.get());
     }
 }
 
@@ -2041,7 +2043,7 @@ static void write_rdii(sqlite3* db, const SimulationContext& ctx, const std::str
                           : std::string("*"));
             bind_text(stmt.get(), 3, ctx.rdii_assigns.uh_name[uj]);
             sqlite3_bind_double(stmt.get(), 4, ctx.rdii_assigns.sewer_area[uj]);
-            sqlite3_step(stmt.get());
+            checked_model_step(db, stmt.get());
         }
     }
 
@@ -2055,7 +2057,7 @@ static void write_rdii(sqlite3* db, const SimulationContext& ctx, const std::str
             bind_text(stmt.get(), 1, sim_id);
             bind_text(stmt.get(), 2, ctx.unit_hyds.gage_assignments[i]);
             bind_text(stmt.get(), 3, ctx.unit_hyds.gage_names[i]);
-            sqlite3_step(stmt.get());
+            checked_model_step(db, stmt.get());
         }
     }
 
@@ -2080,7 +2082,7 @@ static void write_rdii(sqlite3* db, const SimulationContext& ctx, const std::str
             sqlite3_bind_double(stmt.get(), 8, e.dmax);
             sqlite3_bind_double(stmt.get(), 9, e.drecov);
             sqlite3_bind_double(stmt.get(), 10, e.dinit);
-            sqlite3_step(stmt.get());
+            checked_model_step(db, stmt.get());
         }
     }
 
@@ -2108,7 +2110,7 @@ static void write_rdii(sqlite3* db, const SimulationContext& ctx, const std::str
             sqlite3_bind_int(stmt.get(), 10, e.snow_on ? 1 : 0);
             sqlite3_bind_double(stmt.get(), 11, e.snow_T);
             sqlite3_bind_double(stmt.get(), 12, e.snow_ddf);
-            sqlite3_step(stmt.get());
+            checked_model_step(db, stmt.get());
         }
     }
 }
@@ -2154,7 +2156,7 @@ static void write_treatment(sqlite3* db, const SimulationContext& ctx, const std
                       (p >= 0 && p < ctx.pollutant_names.size()) ? ctx.pollutant_names.name_of(p)
                                                                  : std::string("*"));
             bind_text(stmt.get(), 4, ctx.treatment.expressions[idx]);
-            sqlite3_step(stmt.get());
+            checked_model_step(db, stmt.get());
         }
     }
 }
@@ -2203,7 +2205,7 @@ static void write_inflows(sqlite3* db, const SimulationContext& ctx, const std::
             bind_text(stmt.get(), 9, E.pattern_name[u]);
         else
             bind_null(stmt.get(), 9);
-        sqlite3_step(stmt.get());
+        checked_model_step(db, stmt.get());
     }
 }
 
@@ -2250,7 +2252,7 @@ static void write_dwf(sqlite3* db, const SimulationContext& ctx, const std::stri
         bind_pat(6, D.pat2[u]);
         bind_pat(7, D.pat3[u]);
         bind_pat(8, D.pat4[u]);
-        sqlite3_step(stmt.get());
+        checked_model_step(db, stmt.get());
     }
 }
 
@@ -2306,7 +2308,7 @@ static void write_transects(sqlite3* db, const SimulationContext& ctx, const std
                 bind_text(stmt.get(), 16, T.comments[ut]);
             else
                 bind_null(stmt.get(), 16);
-            sqlite3_step(stmt.get());
+            checked_model_step(db, stmt.get());
         }
     }
 }
@@ -2353,7 +2355,7 @@ static void write_streets(sqlite3* db, const SimulationContext& ctx, const std::
         bind_double(stmt.get(), 10, S.back_width[u]);
         bind_double(stmt.get(), 11, S.back_slope[u]);
         bind_double(stmt.get(), 12, S.back_n[u]);
-        sqlite3_step(stmt.get());
+        checked_model_step(db, stmt.get());
     }
 }
 
@@ -2406,7 +2408,7 @@ static void write_inlets(sqlite3* db, const SimulationContext& ctx, const std::s
             bind_text(stmt.get(), 13, I.comments[u]);
         else
             bind_null(stmt.get(), 13);
-        sqlite3_step(stmt.get());
+        checked_model_step(db, stmt.get());
     }
 }
 
@@ -2464,7 +2466,7 @@ static void write_inlet_usage(sqlite3* db, const SimulationContext& ctx,
         bind_double(stmt.get(), 9, U.local_depress[ur]);
         bind_double(stmt.get(), 10, U.local_width[ur]);
         bind_int(stmt.get(), 11, U.placement[ur]);
-        sqlite3_step(stmt.get());
+        checked_model_step(db, stmt.get());
     }
 }
 
@@ -2494,7 +2496,7 @@ static void write_controls(sqlite3* db, const SimulationContext& ctx, const std:
         bind_text(stmt.get(), 1, sim_id);
         bind_int(stmt.get(), 2, i);
         bind_text(stmt.get(), 3, C.rule_text[static_cast<std::size_t>(i)]);
-        sqlite3_step(stmt.get());
+        checked_model_step(db, stmt.get());
     }
 }
 
@@ -2640,7 +2642,7 @@ bool has_mesh_2d(const SimulationContext& ctx) {
  *     catalogues must match.
  */
 static void write_options_2d(sqlite3* db, const SimulationContext& ctx, const std::string& sim_id) {
-    if (!ctx.twod_io.options || !has_mesh_2d(ctx))
+    if (!ctx.twod_io.options)
         return;
     const auto& o = *ctx.twod_io.options;
 
@@ -3120,6 +3122,16 @@ void write_model(sqlite3* db, const SimulationContext& ctx, const std::string& s
     }
 
     Transaction txn(db);
+    // Replace this simulation's authored rows as one transaction. Other runs,
+    // observations and saved states remain in the container. Deferred FK checks
+    // permit replacement of cross-referenced registries without partial updates.
+    exec(db, "PRAGMA defer_foreign_keys=ON");
+    for (const char* table : {"options", "nodes", "storages", "outfalls", "dividers", "links", "conduits", "pumps", "orifices", "weirs", "outlets", "subcatchments", "rain_gages", "node_links", "subcatch_routing", "curves", "input_timeseries", "patterns", "inflows", "dwf_inflows", "control_rules", "evaporation", "climate_settings", "snowpacks", "adjustments", "subcatch_adjustments", "pollutants", "landuses", "buildup", "washoff", "subcatch_coverages", "subcatch_loadings", "lid_controls", "lid_node_layers", "lid_layer_treatment", "lid_nodes", "lid_richards_options", "lid_richards_materials", "lid_node_outlets", "lid_usage", "rdii_assignments", "unit_hydrographs", "rdii_decay", "treatment", "transects", "streets", "inlets", "inlet_usage", "raingage_data", "climate_data", "routing_interface_node", "routing_interface_subcatch", "routing_interface_gage", "routing_interface_node_pollutants", "mesh_2d_vertices", "mesh_2d_triangles", "mesh_2d_quads", "mesh_2d_boundary_conditions", "mesh_2d_edge_conveyance", "mesh_2d_vertex_coupling", "node_2d_coupling", "mesh_2d_triangle_coupling", "surface_ownership_2d_input"}) {
+        auto remove = prepare(db, std::string("DELETE FROM ") + table + " WHERE simulation_id=?");
+        bind_text(remove.get(), 1, simulation_id);
+        checked_model_step(db, remove.get());
+    }
+
 
     // Register CRS and feature tables
     const auto& sp = ctx.spatial;
@@ -3213,6 +3225,7 @@ void write_model(sqlite3* db, const SimulationContext& ctx, const std::string& s
     // transaction so a Part D parse failure rolls back the whole save.
     write_external_content(db, ctx, simulation_id);
 
+    write_model_supplement(db, ctx, simulation_id);
     txn.commit();
 }
 

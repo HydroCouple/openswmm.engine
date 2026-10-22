@@ -754,8 +754,11 @@ void handle_transects(SimulationContext& ctx, const std::vector<std::string>& li
     double nc_right = 0.0;
     double nc_channel = 0.0;
 
-    for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+    std::string pendingComment;
+    for (const auto& pl : parse_section(lines)) {
+        if (!pl.comment.empty())
+            pendingComment = pl.comment;
+        auto tok = Tokenizer::tokenize(pl.data);
         if (tok.empty())
             continue;
 
@@ -835,14 +838,15 @@ void handle_transects(SimulationContext& ctx, const std::vector<std::string>& li
             // push_back here lets a subsequent get_*() read past end of an
             // empty vector and crash. INP doesn't supply comments /
             // encroachment, so default them at parse time.
-            ctx.transects.comments.emplace_back();
+            ctx.transects.comments.push_back(pendingComment);
+            pendingComment.clear();
             ctx.transects.n_left.push_back(nc_left);
             ctx.transects.n_right.push_back(nc_right);
             ctx.transects.n_channel.push_back(nc_channel);
             ctx.transects.x_left_bank.push_back((tok.size() > 3) ? to_double(tok[3]) : 0.0);
             ctx.transects.x_right_bank.push_back((tok.size() > 4) ? to_double(tok[4]) : 0.0);
-            ctx.transects.x_left_encroachment.push_back(0.0);
-            ctx.transects.x_right_encroachment.push_back(0.0);
+            ctx.transects.x_left_encroachment.push_back(tok.size() > 5 ? to_double(tok[5]) : 0.0);
+            ctx.transects.x_right_encroachment.push_back(tok.size() > 6 ? to_double(tok[6]) : 0.0);
 
             double lFactor = (tok.size() > 7) ? to_double(tok[7]) : 1.0;
             double xFactor = (tok.size() > 8) ? to_double(tok[8]) : 1.0;

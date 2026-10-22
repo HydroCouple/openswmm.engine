@@ -59,22 +59,15 @@ inline constexpr int kSchemaVersionMinor = 0;
 inline constexpr const char* kSchemaVersion = "1.0";
 
 /**
- * @brief Export supported model sections to a columnar HDF5 file.
- * @param[in] path Destination filename, created or truncated using H5F_ACC_TRUNC.
- * @param[in] ctx Consistent model in engine internal units; not modified.
- * Authored/display conversion is performed on a local copy when necessary.
- * @param[in,out] warnings Optional caller-owned vector. Appends file-creation
- * errors or an unsupported-section summary; existing entries are preserved.
- * Null discards these diagnostics. The pointer is not retained.
- * @return One if the destination cannot be created; zero after invoking
- * all section writers. Individual dataset/attribute writes and close errors
- * are not aggregated, so zero does not certify complete I/O success.
- * @details References are exported by name and numeric data in authored units.
- * Schema 1.0 intentionally omits controls, LID, groundwater, snow, quality,
- * inflows, options/report settings, 2D sections and other sections listed
- * in the warning. Use the .inp/.gpkg writer for a complete model archive.
- * @note Failure may leave a truncated or partial file. Conversion/allocation
- * exceptions propagate; this function does not publish through a staging file.
+ * @brief Write a complete native model and analysis columns to HDF5.
+ * @param path Destination filename, created or truncated.
+ * @param ctx Model in engine internal units; not modified.
+ * @param warnings Optional diagnostics sink, preserved and appended to.
+ * @return Zero after writing and flushing; nonzero on I/O failure.
+ * The native_input dataset is the authoritative editable configuration. Existing
+ * column datasets retain their authored-unit analysis layout. Component configuration
+ * contents are embedded separately. Older column-only files lack enough data to reopen.
+ * Conversion/allocation exceptions propagate. Failure may leave a partial destination.
  */
 int write_model(const std::string& path, const SimulationContext& ctx,
                 std::vector<std::string>* warnings = nullptr);

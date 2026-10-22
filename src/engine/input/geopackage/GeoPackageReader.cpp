@@ -10,6 +10,7 @@
  */
 
 #include "GeoPackageReader.hpp"
+#include "ModelSupplement.hpp"
 #ifdef OPENSWMM_HAS_2D
 #include "2d/subsurface/SubsurfaceSections.hpp"
 #include "2d/gw/GwTransportSections.hpp"
@@ -513,6 +514,8 @@ static void read_options(sqlite3* db, SimulationContext& ctx, const std::string&
             ctx.options.start_date = std::stod(val);
         else if (key == "END_DATE")
             ctx.options.end_date = std::stod(val);
+        else if (key == "TOTAL_DURATION_MS")
+            ctx.options.total_duration_ms = std::stod(val);
         else if (key == "REPORT_START")
             ctx.options.report_start = std::stod(val);
         else if (key == "SWEEP_START")
@@ -1414,6 +1417,13 @@ static void read_pollutants(sqlite3* db, SimulationContext& ctx, const std::stri
     auto stmt = prepare(db, sql);
     bind_text(stmt.get(), 1, sim_id);
 
+    auto names = prepare(db, "SELECT pollutant_id FROM pollutants WHERE simulation_id=?");
+    bind_text(names.get(), 1, sim_id);
+    while (sqlite3_step(names.get()) == SQLITE_ROW) {
+        const auto name = column_text(names.get(), 0);
+        if (ctx.pollutant_names.find(name) < 0)
+            ctx.pollutant_names.add(name);
+    }
     while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
         std::string name = column_text(stmt.get(), 0);
         int idx = ctx.pollutant_names.find(name);
@@ -1426,6 +1436,8 @@ static void read_pollutants(sqlite3* db, SimulationContext& ctx, const std::stri
                 vec.resize(n);
         };
         grow(ctx.pollutants.units);
+        ctx.pollutants.mwt.resize(n, 1.0);
+        ctx.pollutants.comments.resize(n);
         grow(ctx.pollutants.c_rain);
         grow(ctx.pollutants.c_gw);
         grow(ctx.pollutants.c_rdii);
@@ -1433,7 +1445,8 @@ static void read_pollutants(sqlite3* db, SimulationContext& ctx, const std::stri
         grow(ctx.pollutants.init_conc);
         grow(ctx.pollutants.k_decay);
         grow(ctx.pollutants.snow_only);
-        grow(ctx.pollutants.co_pollut);
+        if (ctx.pollutants.co_pollut.size() < n)
+            ctx.pollutants.co_pollut.resize(n, -1);
         grow(ctx.pollutants.co_frac);
 
         ctx.pollutants.units[idx] = static_cast<MassUnits>(column_int(stmt.get(), 1));
@@ -2050,7 +2063,7 @@ static void read_adjustments(sqlite3* db, SimulationContext& ctx, const std::str
             std::string pat_name = column_text(stmt.get(), 2);
 
             int si = ctx.subcatch_names.find(sc_name);
-            int pi = ctx.find_table_any(pat_name);
+            int pi = ctx.patterns.find(pat_name);
             if (si < 0 || pi < 0)
                 continue;
 
@@ -3165,7 +3178,7 @@ int read_model(sqlite3* db, SimulationContext& ctx, const std::string& simulatio
         // already applied by read_options above, so mesh_units_si is set
         // before SurfaceRouter2D::initialize() ever looks at it.
         read_mesh_2d(db, ctx, simulation_id);
-        if (table_exists(db, "surface_ownership_2d_input")) {
+        if (!has_model_supplement(db, simulation_id) && table_exists(db, "surface_ownership_2d_input")) {
             auto row = prepare(
                 db, "SELECT sections FROM surface_ownership_2d_input WHERE simulation_id=?");
             bind_text(row.get(), 1, simulation_id);
@@ -3223,6 +3236,7 @@ int read_model(sqlite3* db, SimulationContext& ctx, const std::string& simulatio
         // Slice IO-8 — hydrate external-file slots from Part D tables
         // and materialise scratch files. Skipped when no scratch_dir
         // was provided (callers that only need model definition).
+        read_model_supplement(db, ctx, simulation_id);
         read_external_content(db, ctx, simulation_id, scratch_dir);
         return 0;
     } catch (const std::exception& error) {

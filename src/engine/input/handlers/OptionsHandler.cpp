@@ -799,6 +799,8 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             // Slice IO-4 portability opt-out — see SimulationOptions.hpp.
             opt.write_absolute_paths = Tokenizer::parse_boolean(val);
 
+        } else if (key.starts_with("IO_")) {
+            opt.ext_options[key] = val;
         } else if (key == "COMPATIBILITY") {
             // Not acted on by the v6 engine; kept verbatim so the round trip
             // and swmm_options_get/set("COMPATIBILITY") see it.

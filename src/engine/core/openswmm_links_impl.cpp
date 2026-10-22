@@ -313,9 +313,13 @@ SWMM_ENGINE_API int swmm_link_set_offset_up(SWMM_Engine engine, int idx, double 
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    // units: display LENGTH -> internal ft; authored -> stored (sediment bump)
-    ctx.links.offset1[static_cast<std::size_t>(idx)] =
-        to_internal(ctx, openswmm::ucf::LENGTH, offset) + offsetBump(ctx, idx);
+    const double internal = to_internal(ctx, openswmm::ucf::LENGTH, offset);
+    const int weir = ctx.link_subtypes.weir_row(idx), outlet = ctx.link_subtypes.outlet_row(idx);
+    if (weir >= 0 || outlet >= 0) {
+        if (weir >= 0) ctx.link_subtypes.weirs.crest_height[weir] = internal;
+        if (outlet >= 0) ctx.link_subtypes.outlets.crest_height[outlet] = internal;
+        ctx.links.offset1[idx] = ctx.links.offset2[idx] = internal;
+    } else ctx.links.offset1[idx] = internal + offsetBump(ctx, idx);
     return SWMM_OK;
 }
 
@@ -324,9 +328,10 @@ SWMM_ENGINE_API int swmm_link_set_offset_dn(SWMM_Engine engine, int idx, double 
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    // units: display LENGTH -> internal ft; authored -> stored (sediment bump)
-    ctx.links.offset2[static_cast<std::size_t>(idx)] =
-        to_internal(ctx, openswmm::ucf::LENGTH, offset) + offsetBump(ctx, idx);
+    // Regulators have one authored crest, not independently authored end offsets.
+    if (ctx.link_subtypes.weir_row(idx) >= 0 || ctx.link_subtypes.outlet_row(idx) >= 0)
+        return SWMM_ERR_BADPARAM;
+    ctx.links.offset2[idx] = to_internal(ctx, openswmm::ucf::LENGTH, offset) + offsetBump(ctx, idx);
     return SWMM_OK;
 }
 
@@ -1466,18 +1471,8 @@ SWMM_ENGINE_API int swmm_link_set_crest_height(SWMM_Engine engine, int idx, doub
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    // units: display LENGTH -> internal ft
-    {
-        const double ch = to_internal(ctx, openswmm::ucf::LENGTH, h);
-        const int wr = ctx.link_subtypes.weir_row(idx);
-        if (wr >= 0) {
-            ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)] = ch;
-        } else {
-            const int olr = ctx.link_subtypes.outlet_row(idx);
-            if (olr >= 0)
-                ctx.link_subtypes.outlets.crest_height[static_cast<std::size_t>(olr)] = ch;
-        }
-    }
+    if (ctx.link_subtypes.weir_row(idx) >= 0 || ctx.link_subtypes.outlet_row(idx) >= 0)
+        return swmm_link_set_offset_up(engine, idx, h);
     return SWMM_OK;
 }
 
@@ -1720,10 +1715,13 @@ SWMM_ENGINE_API int swmm_link_get_offset_up(SWMM_Engine engine, int idx, double*
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     // units: internal ft -> display LENGTH; stored -> authored (sediment bump)
-    if (offset)
-        *offset =
-            to_display(ctx, openswmm::ucf::LENGTH,
-                       ctx.links.offset1[static_cast<std::size_t>(idx)] - offsetBump(ctx, idx));
+    if (offset) {
+        const int wr = ctx.link_subtypes.weir_row(idx), out = ctx.link_subtypes.outlet_row(idx);
+        const double value = wr >= 0 ? ctx.link_subtypes.weirs.crest_height[wr]
+            : out >= 0 ? ctx.link_subtypes.outlets.crest_height[out]
+                       : ctx.links.offset1[idx] - offsetBump(ctx, idx);
+        *offset = to_display(ctx, openswmm::ucf::LENGTH, value);
+    }
     return SWMM_OK;
 }
 

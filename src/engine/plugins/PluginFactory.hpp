@@ -258,14 +258,15 @@ public:
 
     /** @brief Resolve specs and create every advertised input/output/report/state-IO capability.
      * @param specs Borrowed ordered specs; path selects metadata and init_args are
-     * retained only for created output plugins. Every advertised capability is
-     * instantiated; specs have no per-capability selector. Existing instances remain.
+     * retained with each created capability instance. Explicit IO role selections
+     * suppress legacy output/report discovery for that role. Existing instances remain.
      * @param warn_cb Optional synchronous resolution-warning sink.
      * @return Count of specs whose metadata resolved, even if factory methods returned
      * no plugin instances. No lifecycle method is called here. Returned raw plugin
      * objects become owned by this factory; allocation/plugin exceptions propagate. */
     int load_plugins(const std::vector<PluginSpec>& specs,
-                     std::function<void(const std::string&)> warn_cb = {});
+                     std::function<void(const std::string&)> warn_cb = {},
+                     const SimulationContext* io = nullptr);
 
     // -----------------------------------------------------------------------
     // Lifecycle dispatch (main thread — call in order)
@@ -273,9 +274,8 @@ public:
 
     /** @brief Initialize output, report and state-IO instances in that order.
      * @param ctx Unused context; input instances are not initialized by this dispatcher.
-     * Output instances receive retained positional init args; report/state-IO receive
-     * empty args. Component-info pointer is the first registered metadata with the
-     * capability, which need not be the actual instance's originating component.
+     * Each instance receives its retained positional arguments and originating
+     * component metadata.
      * @return Last nonzero initialize result, or zero; calls continue after returned
      * errors and have no state gate. Plugin exceptions propagate without rollback. */
     int initialize_all(SimulationContext& ctx);
@@ -363,11 +363,13 @@ public:
      * duplicate checks occur. Factory deletes it on unload.
      * @param args Initialization strings moved into the output's positional args slot.
      * Caller must avoid concurrent dispatch; allocation failure can leave partially appended lists. */
-    void add_output_plugin(IOutputPlugin* plugin, std::vector<std::string> args = {});
+    void add_output_plugin(IOutputPlugin* plugin, std::vector<std::string> args = {},
+                           IPluginComponentInfo* info = nullptr);
     /** @brief Adopt a report plugin without lifecycle calls or validation.
      * @param plugin Required nonnull uniquely owned instance, deleted on unload.
      * Do not insert a duplicate pointer or mutate lists concurrently with dispatch. */
-    void add_report_plugin(IReportPlugin* plugin);
+    void add_report_plugin(IReportPlugin* plugin, std::vector<std::string> args = {},
+                           IPluginComponentInfo* info = nullptr);
     /** @brief Adopt an input plugin without lifecycle calls or validation.
      * @param plugin Required nonnull uniquely owned instance, deleted on unload.
      * Input lifecycle is managed separately from the all() output/report dispatchers. */
@@ -405,6 +407,8 @@ private:
     std::vector<IReportPlugin*> report_plugins_;
     std::vector<IStateIOPlugin*> state_io_plugins_;
     std::vector<std::vector<std::string>> init_args_;
+    std::unordered_map<void*, std::vector<std::string>> instance_args_;
+    std::unordered_map<void*, IPluginComponentInfo*> instance_info_;
 
     // -----------------------------------------------------------------------
     // Helpers

@@ -10,6 +10,7 @@
 
 #include "GeoPackageInputPlugin.hpp"
 #include "GeoPackageReader.hpp"
+#include "ExternalContentReader.hpp"
 #include "GeoPackageWriter.hpp"
 #include "GeoPackageSchema.hpp"
 #include "GpkgUtils.hpp"
@@ -40,6 +41,7 @@ int GeoPackageInputPlugin::validate(const SimulationContext& /*ctx*/) {
 }
 
 int GeoPackageInputPlugin::read(const std::string& path, SimulationContext& ctx) {
+    ctx.inp_file_path = path;
     try {
         auto db = open_database(path, SQLITE_OPEN_READONLY);
 
@@ -58,7 +60,7 @@ int GeoPackageInputPlugin::read(const std::string& path, SimulationContext& ctx)
             }
         }
 
-        int rc = read_model(db.get(), ctx, simulation_id_);
+        int rc = read_model(db.get(), ctx, simulation_id_, scratchDirFor(path));
         if (rc != 0) {
             error_msg_ = "Failed to read model from GeoPackage";
             return rc;

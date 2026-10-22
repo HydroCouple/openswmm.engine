@@ -886,6 +886,8 @@ void handle_lid_controls(SimulationContext& ctx, const std::vector<std::string>&
         } else if (layer == "DRAIN") {
             for (std::size_t i = 0; i < 6 && (i + 2) < tok.size(); ++i)
                 ctx.lid_controls.drain[idx][i] = to_double(tok[2 + i]);
+            ctx.lid_controls.drain_curve.resize(ctx.lid_controls.names.size());
+            if (tok.size() > 8) ctx.lid_controls.drain_curve[idx] = tok[8];
         } else if (layer == "DRAINMAT") {
             for (std::size_t i = 0; i < 3 && (i + 2) < tok.size(); ++i)
                 ctx.lid_controls.drainmat[idx][i] = to_double(tok[2 + i]);

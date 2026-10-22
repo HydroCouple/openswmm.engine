@@ -82,6 +82,10 @@ public:
      * Parser/handler/allocation exceptions are not caught by this plugin. */
     int read(const std::string& path, SimulationContext& ctx) override;
 
+    // Parse native container input using the same handlers as ordinary INP files.
+    int readText(const std::string& text, SimulationContext& ctx);
+    void registerContextSections(SimulationContext& ctx);
+
     /** @brief Serialize current engine state through InpWriter and its sidecar rules.
      * @param path UTF-8 destination filename; writing can create/replace the input and
      * component/mesh companions according to InpWriter's staged persistence contract.

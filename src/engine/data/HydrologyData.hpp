@@ -162,6 +162,7 @@ struct LidControlStore {
 
     /** @brief DRAIN layer params (up to 6 values). */
     std::vector<std::array<double, 6>> drain;
+    std::vector<std::string> drain_curve;
 
     /** @brief DRAINMAT layer params (up to 3 values). */
     std::vector<std::array<double, 3>> drainmat;

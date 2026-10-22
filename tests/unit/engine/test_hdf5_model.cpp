@@ -324,17 +324,23 @@ TEST(Hdf5Model, RaggedTablesUseWellFormedCsrOffsets) {
         EXPECT_LE(offs[i - 1], offs[i]) << "offsets must be non-decreasing";
 }
 
-// Reading is not implemented in schema 1.0. It must REFUSE rather than
-// half-populate a context: a partially loaded model still runs and still
-// produces numbers, which is a far worse failure than not opening.
-TEST(Hdf5Model, ReadIsRefusedRatherThanPartiallyImplemented) {
+// Complete native configuration makes the analysis container editable again.
+TEST(Hdf5Model, ReadsCompleteNativeConfiguration) {
     const auto path = writeFixture("column_and_precision.inp", "_cp_model.h5");
     ASSERT_FALSE(path.empty());
-
     Hdf5InputPlugin plugin;
     ASSERT_EQ(plugin.initialize({}, nullptr), 0);
     SimulationContext ctx;
-    EXPECT_NE(plugin.read(path, ctx), 0);
-    EXPECT_NE(std::string(plugin.last_error_message()).find("not implemented"), std::string::npos);
-    EXPECT_EQ(ctx.n_nodes(), 0) << "a refused read must leave the context untouched";
+    ASSERT_EQ(plugin.read(path, ctx), 0) << plugin.last_error_message();
+    EXPECT_GT(ctx.n_nodes(), 0);
+    EXPECT_GT(ctx.n_links(), 0);
+}
+
+TEST(Hdf5Model, RefusesMissingNativeConfiguration) {
+    Hdf5InputPlugin plugin;
+    ASSERT_EQ(plugin.initialize({}, nullptr), 0);
+    SimulationContext ctx;
+    EXPECT_NE(plugin.read(data("missing_model_file.h5"), ctx), 0);
+    EXPECT_NE(std::string(plugin.last_error_message()).find("no complete native model"), std::string::npos);
+    EXPECT_EQ(ctx.n_nodes(), 0);
 }

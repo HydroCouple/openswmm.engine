@@ -131,6 +131,20 @@ static constexpr int SWMM_ERR_WRONG_STATE = 6;    // public SWMM_ERR_LIFECYCLE
 
 namespace openswmm {
 
+static std::string plugin_io_error(const PluginFactory& plugins, const char* fallback) {
+    auto detail = [](const auto& instances) -> std::string {
+        for (const auto* instance : instances) {
+            const char* message = instance->last_error_message();
+            if (message && *message) return message;
+        }
+        return {};
+    };
+    for (const auto& message : {detail(plugins.output_plugins()), detail(plugins.report_plugins()),
+                                detail(plugins.state_io_plugins())})
+        if (!message.empty()) return std::string(fallback) + ": " + message;
+    return fallback;
+}
+
 // A3 parity tracing: routing-step serial (updated by the RSTEP trace in
 // stepRouting) so the per-link term trace in DynamicWave.cpp can be gated on
 // a step number (SWMM_TRACE_LSTEP) instead of an invocation count — bypassed
@@ -671,7 +685,65 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
     if (!ctx_.plugin_specs.empty()) {
         plugins_.load_plugins(ctx_.plugin_specs, [this](const std::string& msg) {
             emit_warning(SWMM_ERR_PLUGIN, msg.c_str());
-        });
+        }, &ctx_);
+    }
+
+    // Explicit per-role writer choices are independent of the plugin catalogue.
+    auto ioOption = [&](const char* key) -> std::string {
+        auto it = ctx_.options.ext_options.find(key);
+        return it == ctx_.options.ext_options.end() ? "" : it->second;
+    };
+    auto pluginChoice = [&](const char* key) {
+        const auto id = ioOption(key); return !id.empty() && id != "BUILTIN";
+    };
+    const bool single = ioOption("IO_SINGLE_CONTAINER") == "YES";
+    auto selectedWriter = [&](bool report) -> bool {
+        const auto id = ioOption(report ? "IO_REPORT_WRITER" : "IO_OUTPUT_WRITER");
+        if (id.empty() || id == "BUILTIN") return true;
+        auto* info = plugins_.find_component(id);
+        if (!info || (report ? !info->has_report() : !info->has_output())) return false;
+        std::string extension;
+        for (const auto& filter : info->file_filters()) {
+            if (filter.role != (report ? PluginRole::REPORT_WRITE : PluginRole::OUTPUT_WRITE)) continue;
+            if (!filter.patterns.empty()) {
+                extension = filter.patterns.front();
+                if (extension.starts_with("*")) extension.erase(0, 1);
+                break;
+            }
+        }
+        std::string target = ioOption(report ? "IO_REPORT_PATH" : "IO_OUTPUT_PATH");
+        if (single) {
+            target = ioOption("IO_OUTPUT_PATH");
+            if (target.empty()) target = ioOption("IO_REPORT_PATH");
+        }
+        auto input = io::utf8_path(inp_path ? inp_path : "");
+        if (target.empty()) { auto dest = input; dest.replace_extension(extension); target = io::path_utf8(dest); }
+        else if (io::utf8_path(target).is_relative()) target = io::path_utf8(input.parent_path() / io::utf8_path(target));
+        // A native deck must never be overwritten by a plugin selected for results.
+        if (io::utf8_path(target).lexically_normal() == input.lexically_normal() &&
+            input.extension() != extension) return false;
+        if (report) {
+            auto* writer = info->create_report_plugin(); if (!writer) return false;
+            plugins_.add_report_plugin(writer, {target}, info);
+        } else {
+            auto* writer = info->create_output_plugin(); if (!writer) return false;
+            plugins_.add_output_plugin(writer, {target}, info);
+        }
+        return true;
+    };
+    if (!selectedWriter(false) || !selectedWriter(true)) {
+        set_error(SWMM_ERR_PLUGIN, "The selected output/report writer or destination is unavailable");
+        return SWMM_ERR_PLUGIN;
+    }
+    // Native companions support the GUI's existing results and report readers.
+    // Selected plugins use the authored destinations above, never these files.
+    if (pluginChoice("IO_OUTPUT_WRITER") && !out_path_.empty()) {
+        auto companion = io::utf8_path(inp_path ? inp_path : ""); companion.replace_extension(".out");
+        out_path_ = io::path_utf8(companion);
+    }
+    if (pluginChoice("IO_REPORT_WRITER") && !rpt_path_.empty()) {
+        auto companion = io::utf8_path(inp_path ? inp_path : ""); companion.replace_extension(".rpt");
+        rpt_path_ = io::path_utf8(companion);
     }
 
     // Inject built-in output/report plugins when paths are configured.
@@ -1753,9 +1825,13 @@ int SWMMEngine::start(int save_results) noexcept {
     if (!plugins_.empty()) {
         perf::ScopedTimer _pt(perf::sec_start_plugins);
         plugins_prepare_attempted_ = true;
+        if (plugins_.initialize_all(ctx_) != 0 || plugins_.validate_all(ctx_) != 0) {
+            set_error(SWMM_ERR_PLUGIN, plugin_io_error(plugins_, "Selected plugin initialization or validation failed").c_str());
+            return SWMM_ERR_PLUGIN;
+        }
         const int rc = plugins_.prepare_all(ctx_);
         if (rc != 0) {
-            set_error(SWMM_ERR_PLUGIN, "swmm_engine_start: plugin prepare() failed");
+            set_error(SWMM_ERR_PLUGIN, plugin_io_error(plugins_, "swmm_engine_start: plugin prepare() failed").c_str());
             return SWMM_ERR_PLUGIN;
         }
     }
@@ -8655,11 +8731,12 @@ int SWMMEngine::end() noexcept {
     io_thread_.stop();
 
     // Phase 4: finalize plugins (flush/close output files)
-    if (!plugins_.empty()) {
-        plugins_.finalize_all(ctx_);
-    }
-
+    const int pluginResult = plugins_.empty() ? 0 : plugins_.finalize_all(ctx_);
     ctx_.state = EngineState::ENDED;
+    if (pluginResult != 0) {
+        set_error(SWMM_ERR_PLUGIN, plugin_io_error(plugins_, "Cannot finish writing results").c_str());
+        return SWMM_ERR_PLUGIN;
+    }
     return SWMM_OK;
 }
 
@@ -8848,11 +8925,12 @@ int SWMMEngine::report() noexcept {
 #endif
 
     // Phase 4: write summary reports via all report plugins
-    if (!plugins_.empty()) {
-        plugins_.write_summary_all(ctx_);
-    }
-
+    const int pluginResult = plugins_.empty() ? 0 : plugins_.write_summary_all(ctx_);
     ctx_.state = EngineState::REPORTED;
+    if (pluginResult != 0) {
+        set_error(SWMM_ERR_PLUGIN, plugin_io_error(plugins_, "Cannot write report summary").c_str());
+        return SWMM_ERR_PLUGIN;
+    }
     return SWMM_OK;
 }
 

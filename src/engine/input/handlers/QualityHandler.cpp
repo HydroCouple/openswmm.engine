@@ -204,6 +204,10 @@ void handle_pollutants(SimulationContext& ctx, const std::vector<std::string>& l
         if (tok.size() > 9)
             ctx.pollutants.c_dwf[idx] = to_double(tok[9]);
 
+        // Native extension after the legacy Cinit column.
+        if (tok.size() > 11)
+            ctx.pollutants.mwt[idx] = to_double(tok[11]);
+
         // Cinit
         if (tok.size() > 10)
             ctx.pollutants.init_conc[idx] = to_double(tok[10]);

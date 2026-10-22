@@ -26,6 +26,7 @@
  * @license   Apache-2.0
  */
 
+#include <cmath>
 #include "openswmm_api_common.hpp"
 #include <cctype>
 #include "Constants.hpp"
@@ -393,6 +394,9 @@ SWMM_ENGINE_API int swmm_pollutant_set_mwt(SWMM_Engine engine, int idx, double m
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
+    if (!std::isfinite(mwt) || mwt <= 0.0)
+        return SWMM_ERR_BADPARAM;
+    ctx.pollutants.mwt.resize(ctx.n_pollutants(), 1.0);
     ctx.pollutants.mwt[static_cast<std::size_t>(idx)] = mwt;
     return SWMM_OK;
 }
@@ -402,7 +406,8 @@ SWMM_ENGINE_API int swmm_pollutant_get_mwt(SWMM_Engine engine, int idx, double* 
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
     if (mwt)
-        *mwt = ctx.pollutants.mwt[static_cast<std::size_t>(idx)];
+        *mwt = static_cast<std::size_t>(idx) < ctx.pollutants.mwt.size()
+                   ? ctx.pollutants.mwt[static_cast<std::size_t>(idx)] : 1.0;
     return SWMM_OK;
 }
 

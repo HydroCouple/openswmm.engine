@@ -50,6 +50,9 @@
  */
 
 #include "InpWriter.hpp"
+#include "../transport/components/ReactionModule/ReactionsWriter.hpp"
+#include <memory>
+#include <limits>
 #include "AtomicOutputFile.hpp"
 #include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
 #include "Constants.hpp"
@@ -170,18 +173,29 @@ template <std::size_t N> static void fmt_date(char (&buf)[N], double oadate) {
  * @param[out] buf Caller-owned N-byte array, N>0 for a terminator.
  * @param[in] oadate Engine OADate supported by datetime::decodeTime.
  */
+template <std::size_t N> static void fmt_elapsed(char (&buf)[N], double seconds, double day, bool elapsed = false) {
+    const double nearest = std::round(seconds);
+    const double ulp = std::abs(std::nextafter(day, std::numeric_limits<double>::infinity()) - day);
+    if (std::abs(seconds - nearest) <= std::max(1e-12, 0.51 * ulp * 86400.0)) seconds = nearest;
+    const auto h = static_cast<long long>(std::floor(seconds / 3600.0));
+    const int m = static_cast<int>(std::floor((seconds - h * 3600.0) / 60.0));
+    const double second = seconds - h * 3600.0 - m * 60.0;
+    if (elapsed && second == 0.0) std::snprintf(buf, N, "%lld:%02d", h, m);
+    else if (second == std::floor(second))
+        std::snprintf(buf, N, elapsed ? "%lld:%02d:%02d" : "%02lld:%02d:%02d", h, m, static_cast<int>(second));
+    else std::snprintf(buf, N, elapsed ? "%lld:%02d:%.17g" : "%02lld:%02d:%.17g", h, m, second);
+}
+
 template <std::size_t N> static void fmt_time(char (&buf)[N], double oadate) {
-    int h, m, s;
-    datetime::decodeTime(oadate, h, m, s);
-    std::snprintf(buf, N, "%02d:%02d:%02d", h, m, s);
+    fmt_elapsed(buf, (oadate - std::floor(oadate)) * 86400.0, oadate);
 }
 
 // Format a timestep (seconds).  Whole-second values use H:MM:SS (matching
-// legacy SWMM GUI GetTimeString); fractional values use %g decimal notation.
+// legacy SWMM GUI GetTimeString); fractional values use %.17g decimal notation.
 /**
  * @brief Format a timestep in legacy clock or fractional-second notation.
  *
- * Within 0.001 of rounded whole seconds uses H:MM:SS; otherwise uses %g. No range validation before
+ * Exact whole seconds use H:MM:SS; otherwise use 17 significant digits. No range validation before
  * numeric conversion.
  *
  * @param[out] buf Caller-owned N-byte character array; short capacity truncates.
@@ -190,13 +204,13 @@ template <std::size_t N> static void fmt_time(char (&buf)[N], double oadate) {
  */
 template <std::size_t N> static void fmt_step(char (&buf)[N], double secs) {
     long r = std::lround(secs);
-    if (std::fabs(secs - static_cast<double>(r)) < 0.001) {
+    if (secs == static_cast<double>(r)) {
         int ss = static_cast<int>(r % 60);
         int mm = static_cast<int>((r / 60) % 60);
         int hh = static_cast<int>(r / 3600);
         std::snprintf(buf, N, "%d:%02d:%02d", hh, mm, ss);
     } else {
-        std::snprintf(buf, N, "%g", secs);
+        std::snprintf(buf, N, "%.17g", secs);
     }
 }
 
@@ -740,7 +754,7 @@ static void emit2DInfilSections(FILE* f, const SimulationContext& ctx) {
             if (row.method == InfilModel::CURVE_NUM && k == 1)
                 std::fprintf(f, " %-12s", "-");
             else
-                std::fprintf(f, " %-12.12g", row.p[k]);
+                std::fprintf(f, " %.17g", row.p[k]);
         }
         // E2: DEST only when the row spelled it; unspelled rows follow
         // [2D_OPTIONS] INFIL_DESTINATION and must not freeze a copy here.
@@ -814,7 +828,7 @@ static void emitSurfaceQualitySections(FILE* f, const SimulationContext& ctx) {
         for (const auto& r : sq->coverage_rows) {
             std::fprintf(f, "%-16s", twoD::formatSqScope(r.key).c_str());
             for (const auto& u : r.uses)
-                std::fprintf(f, " %-16s %8.3f", u.first.c_str(), u.second);
+                std::fprintf(f, " %-16s %.17g", u.first.c_str(), u.second);
             std::fprintf(f, "\n");
         }
     }
@@ -822,14 +836,14 @@ static void emitSurfaceQualitySections(FILE* f, const SimulationContext& ctx) {
         sec(f, "2D_LOADINGS");
         std::fprintf(f, ";;%-14s %-16s %-10s\n", "Scope", "Species", "Buildup");
         for (const auto& r : sq->loading_rows)
-            std::fprintf(f, "%-16s %-16s %10.4f\n", twoD::formatSqScope(r.key).c_str(),
+            std::fprintf(f, "%-16s %-16s %.17g\n", twoD::formatSqScope(r.key).c_str(),
                          r.species.c_str(), r.value);
     }
     if (!sq->curb_rows.empty()) {
         sec(f, "2D_CURB_LENGTH");
         std::fprintf(f, ";;%-14s %-10s\n", "Scope", "Length");
         for (const auto& r : sq->curb_rows)
-            std::fprintf(f, "%-16s %10.4f\n", twoD::formatSqScope(r.key).c_str(), r.length);
+            std::fprintf(f, "%-16s %.17g\n", twoD::formatSqScope(r.key).c_str(), r.length);
     }
 }
 
@@ -933,8 +947,8 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
         for (const auto& r : gw->params) {
             scope_col(r.scope, r.tag, r.cell, sc, sizeof sc);
             std::fprintf(f,
-                         "%-16s %-9.17g %-7.17g %-9.17g %-7.17g %-8.17g %-8.17g "
-                         "%-9.17g %-9.17g %.17g\n",
+                         "%-16s %.17g %.17g %.17g %.17g %.17g %.17g "
+                         "%.17g %.17g %.17g\n",
                          sc, r.rho_s, r.c_s, r.lambda_s, r.a_s, r.alpha_L, r.alpha_T, r.D_m, r.D_v,
                          r.geo_flux);
         }
@@ -946,10 +960,10 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
         for (const auto& r : gw->sorption) {
             scope_col(r.scope, r.tag, r.cell, sc, sizeof sc);
             if (r.decay >= 0.0)
-                std::fprintf(f, "%-16s %-16s %-12.17g %.17g\n", sc, r.species.c_str(), r.kd,
+                std::fprintf(f, "%-16s %-16s %.17g %.17g\n", sc, r.species.c_str(), r.kd,
                              r.decay);
             else
-                std::fprintf(f, "%-16s %-16s %-12.17g -\n", sc, r.species.c_str(), r.kd);
+                std::fprintf(f, "%-16s %-16s %.17g -\n", sc, r.species.c_str(), r.kd);
         }
     }
 
@@ -1011,7 +1025,7 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
             if (!r.flow_ts.empty())
                 std::fprintf(f, "%-12s", r.flow_ts.c_str());
             else
-                std::fprintf(f, "%-12.17g", r.flow);
+                std::fprintf(f, "%.17g", r.flow);
             if (r.scale != 1.0)
                 std::fprintf(f, " SCALE %.17g", r.scale);
             for (const auto& t : r.species) {
@@ -1122,9 +1136,7 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx, const std::st
     const auto& o = *tio.options;
 
     const bool has_mesh = mesh.n_vertices() > 0 && mesh.n_triangles() > 0;
-    const bool external = !o.mesh_file.empty();
-    if (!has_mesh && !external)
-        return true;
+    const bool external = !opts.inline_mesh && !o.mesh_file.empty();
 
     // ---- [2D_OPTIONS] -----------------------------------------------------
     // Exact key set accepted by parse2DOptionsLine — nothing else (unknown
@@ -1133,12 +1145,12 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx, const std::st
                                       "NEAREST_NEIGHBOUR"}; // RainfallMode order
     sec(f, "2D_OPTIONS");
     std::fprintf(f, ";;%-20s %s\n", "Parameter", "Value");
-    std::fprintf(f, "%-22s %.12g\n", "MAX_TIMESTEP", o.max_timestep);
-    std::fprintf(f, "%-22s %.12g\n", "DRY_DEPTH", o.dry_depth);
-    std::fprintf(f, "%-22s %.12g\n", "LIMITER_EPSILON", o.limiter_epsilon);
-    std::fprintf(f, "%-22s %.12g\n", "FLUX_DH_EPS", o.flux_dh_eps);
-    std::fprintf(f, "%-22s %.12g\n", "COUPLING_CD", o.coupling_cd);
-    std::fprintf(f, "%-22s %.12g\n", "COUPLING_SYNC", o.coupling_sync);
+    std::fprintf(f, "%-22s %.17g\n", "MAX_TIMESTEP", o.max_timestep);
+    std::fprintf(f, "%-22s %.17g\n", "DRY_DEPTH", o.dry_depth);
+    std::fprintf(f, "%-22s %.17g\n", "LIMITER_EPSILON", o.limiter_epsilon);
+    std::fprintf(f, "%-22s %.17g\n", "FLUX_DH_EPS", o.flux_dh_eps);
+    std::fprintf(f, "%-22s %.17g\n", "COUPLING_CD", o.coupling_cd);
+    std::fprintf(f, "%-22s %.17g\n", "COUPLING_SYNC", o.coupling_sync);
     std::fprintf(
         f, "%-22s %s\n", "RAINFALL_MODE",
         sRainMode[static_cast<int>(o.rainfall_mode) >= 0 && static_cast<int>(o.rainfall_mode) <= 3
@@ -1149,7 +1161,7 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx, const std::st
                  o.cell_closure == twoD::CellClosure2D::VFR ? "VFR" : "FLAT");
     std::fprintf(f, "%-22s %s\n", "FACE_RECONSTRUCTION",
                  o.face_reconstruction == twoD::FaceDepth2D::VFR_FACE ? "VFR_FACE" : "MEAN");
-    std::fprintf(f, "%-22s %.12g\n", "VFR_MIN_WET_FRAC", o.vfr_min_wet_frac);
+    std::fprintf(f, "%-22s %.17g\n", "VFR_MIN_WET_FRAC", o.vfr_min_wet_frac);
     // Explicit-marcher configuration (the only 2D integrator).
     std::fprintf(f, "%-22s %s\n", "INTEGRATOR", "EXPLICIT");
     // Momentum closure: the LOCAL_INERTIAL default is omitted (option-default
@@ -1162,17 +1174,17 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx, const std::st
         std::fprintf(f, "%-22s %d\n", "RECONSTRUCTION_ORDER", o.reconstruction_order);
     if (o.front_rebuild >= 0)
         std::fprintf(f, "%-22s %s\n", "FRONT_REBUILD", o.front_rebuild ? "YES" : "NO");
-    std::fprintf(f, "%-22s %.12g\n", "THETA", o.theta);
+    std::fprintf(f, "%-22s %.17g\n", "THETA", o.theta);
     if (o.theta_reference_step > 0.0)
-        std::fprintf(f, "%-22s %.12g\n", "THETA_REFERENCE_STEP", o.theta_reference_step);
-    std::fprintf(f, "%-22s %.12g\n", "CFL_NUMBER", o.cfl_number);
-    std::fprintf(f, "%-22s %.12g\n", "H_MOVE", o.h_move);
+        std::fprintf(f, "%-22s %.17g\n", "THETA_REFERENCE_STEP", o.theta_reference_step);
+    std::fprintf(f, "%-22s %.17g\n", "CFL_NUMBER", o.cfl_number);
+    std::fprintf(f, "%-22s %.17g\n", "H_MOVE", o.h_move);
     std::fprintf(f, "%-22s %d\n", "LTS_TIERS", o.lts_tiers);
-    std::fprintf(f, "%-22s %.12g\n", "FROUDE_MAX", o.froude_max);
+    std::fprintf(f, "%-22s %.17g\n", "FROUDE_MAX", o.froude_max);
     std::fprintf(f, "%-22s %s\n", "ADVECTION", o.advection ? "YES" : "NO");
     std::fprintf(f, "%-22s %s\n", "COUPLING_AREA", o.coupling_area_auto ? "AUTO" : "DEFAULT");
     if (o.dispersion > 0.0) // S2: default 0 is omitted (option-default rule)
-        std::fprintf(f, "%-22s %.12g\n", "DISPERSION", o.dispersion);
+        std::fprintf(f, "%-22s %.17g\n", "DISPERSION", o.dispersion);
     // Exchange law / head sampling / coefficient preset — defaults omitted.
     if (o.coupling_law != twoD::CouplingLaw2D::ORIFICE)
         std::fprintf(f, "%-22s %s\n", "COUPLING_LAW", "WEIR_ORIFICE");
@@ -1185,9 +1197,9 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx, const std::st
                      o.coupling_pond_mode == twoD::CouplingPondMode2D::CHAMBER ? "CHAMBER"
                                                                                : "TRACKING");
     if (o.coupling_pond_relax > 0.0)
-        std::fprintf(f, "%-22s %.12g\n", "COUPLING_POND_RELAX", o.coupling_pond_relax);
+        std::fprintf(f, "%-22s %.17g\n", "COUPLING_POND_RELAX", o.coupling_pond_relax);
     if (o.coupling_rim_band >= 0.0)
-        std::fprintf(f, "%-22s %.12g\n", "COUPLING_RIM_BAND", o.coupling_rim_band);
+        std::fprintf(f, "%-22s %.17g\n", "COUPLING_RIM_BAND", o.coupling_rim_band);
     if (o.coupling_equalize >= 0)
         std::fprintf(f, "%-22s %s\n", "COUPLING_EQUALIZE", o.coupling_equalize ? "YES" : "NO");
     if (o.coupling_coeffs != 0)
@@ -1342,7 +1354,8 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx, const std::st
         return true;
     }
 
-    emit2DMeshSections(f, ctx);
+    if (has_mesh)
+        emit2DMeshSections(f, ctx);
     return true;
 }
 
@@ -1381,7 +1394,7 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
         std::fprintf(f, ";; UNITS: SI (m)\n");
     std::fprintf(f, ";;%-16s %-18s %-14s %s\n", "X", "Y", "Z", "TAG");
     for (int i = 0; i < nv; ++i) {
-        std::fprintf(f, "%-18.10g %-18.10g %-14.10g", mesh.vx[i], mesh.vy[i], mesh.vz[i]);
+        std::fprintf(f, "%.17g %.17g %.17g", mesh.vx[i], mesh.vy[i], mesh.vz[i]);
         if (!mesh.vtag[i].empty())
             std::fprintf(f, " %s", mesh.vtag[i].c_str());
         std::fprintf(f, "\n");
@@ -1413,10 +1426,10 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     for (int t = 0; t < nt; ++t) {
         if (mesh.cell_vertex_count(t) != 3)
             continue;
-        std::fprintf(f, "%-8d %-8d %-8d %-12.6g", mesh.cell_vertex(t, 0), mesh.cell_vertex(t, 1),
+        std::fprintf(f, "%-8d %-8d %-8d %.17g", mesh.cell_vertex(t, 0), mesh.cell_vertex(t, 1),
                      mesh.cell_vertex(t, 2), mesh.mannings_n[t]);
         if (write_depth_col)
-            std::fprintf(f, " %-12.6g", mesh.tri_init_depth[t]);
+            std::fprintf(f, " %.17g", mesh.tri_init_depth[t]);
         if (!mesh.tri_tag[t].empty())
             std::fprintf(f, " %s", mesh.tri_tag[t].c_str());
         std::fprintf(f, "\n");
@@ -1436,11 +1449,11 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
         for (int t = 0; t < nt; ++t) {
             if (mesh.cell_vertex_count(t) != 4)
                 continue;
-            std::fprintf(f, "%-8d %-8d %-8d %-8d %-12.6g", mesh.cell_vertex(t, 0),
+            std::fprintf(f, "%-8d %-8d %-8d %-8d %.17g", mesh.cell_vertex(t, 0),
                          mesh.cell_vertex(t, 1), mesh.cell_vertex(t, 2), mesh.cell_vertex(t, 3),
                          mesh.mannings_n[t]);
             if (write_depth_col)
-                std::fprintf(f, " %-12.6g", mesh.tri_init_depth[t]);
+                std::fprintf(f, " %.17g", mesh.tri_init_depth[t]);
             if (!mesh.tri_tag[t].empty())
                 std::fprintf(f, " %s", mesh.tri_tag[t].c_str());
             std::fprintf(f, "\n");
@@ -1460,7 +1473,7 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
             for (int t = 0; t < nt; ++t) {
                 if (mesh.tri_init_u[t] == 0.0 && mesh.tri_init_v[t] == 0.0)
                     continue;
-                std::fprintf(f, "%-8d %-12.6g %.6g\n", t, mesh.tri_init_u[t], mesh.tri_init_v[t]);
+                std::fprintf(f, "%-8d %.17g %.17g\n", t, mesh.tri_init_u[t], mesh.tri_init_v[t]);
             }
         }
     }
@@ -1482,10 +1495,10 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     auto map_row = [&o](FILE* out, int idx, const std::string& node, double cd, bool cd_set,
                         double area, bool area_set) {
         if (area_set)
-            std::fprintf(out, "%-8d %-16s %-10.6g %.12g\n", idx, node.c_str(),
+            std::fprintf(out, "%-8d %-16s %.17g %.17g\n", idx, node.c_str(),
                          cd_set ? cd : o.coupling_cd, area);
         else if (cd_set)
-            std::fprintf(out, "%-8d %-16s %.6g\n", idx, node.c_str(), cd);
+            std::fprintf(out, "%-8d %-16s %.17g\n", idx, node.c_str(), cd);
         else
             std::fprintf(out, "%-8d %s\n", idx, node.c_str());
     };
@@ -1539,7 +1552,7 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
                         node_name_for(mesh.tri_coupled_node_name[t], mesh.tri_coupled_node[t]);
                     if (cn.empty())
                         continue;
-                    std::fprintf(f, "%-8d %-16s %-10.6g %.12g\n", t, cn.c_str(),
+                    std::fprintf(f, "%-8d %-16s %.17g %.17g\n", t, cn.c_str(),
                                  mesh.tri_coupling_cd[t], mesh.tri_coupling_area[t]);
                 }
             }
@@ -1563,7 +1576,7 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
                 } else if (r.bc_type == 0) { // WALL — no parameter
                     std::snprintf(p1, sizeof(p1), "*");
                 } else {
-                    std::snprintf(p1, sizeof(p1), "%.12g", r.param1);
+                    std::snprintf(p1, sizeof(p1), "%.17g", r.param1);
                 }
                 if (!r.group.empty()) {
                     std::fprintf(f, "%-6d %-4d %-16s %-14s %-8s %s\n", r.tri, r.edge,
@@ -1583,7 +1596,7 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
             sec(f, "2D_EDGE_CONVEYANCE");
             std::fprintf(f, ";;%-10s %-12s %s\n", "FROM_VERTEX", "TO_VERTEX", "CONVEYANCE");
             for (const auto& r : rows) {
-                std::fprintf(f, "%-12d %-12d %.12g\n", r.v_from, r.v_to, r.conveyance);
+                std::fprintf(f, "%-12d %-12d %.17g\n", r.v_from, r.v_to, r.conveyance);
             }
         }
     }
@@ -1596,12 +1609,12 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
         std::fprintf(f, ";;%-6s %-16s %-12s %s\n", "SCOPE", "NAME", "SPECIES", "CONC");
         for (const auto& r : *tio.pending_iq) {
             if (r.all)
-                std::fprintf(f, "%-8s %-16s %-12s %.12g\n", "*", "", r.species.c_str(), r.conc);
+                std::fprintf(f, "%-8s %-16s %-12s %.17g\n", "*", "", r.species.c_str(), r.conc);
             else if (r.tri >= 0)
-                std::fprintf(f, "%-8s %-16d %-12s %.12g\n", "CELL", r.tri + 1, r.species.c_str(),
+                std::fprintf(f, "%-8s %-16d %-12s %.17g\n", "CELL", r.tri + 1, r.species.c_str(),
                              r.conc);
             else
-                std::fprintf(f, "%-8s %-16s %-12s %.12g\n", "TAG", r.tag.c_str(), r.species.c_str(),
+                std::fprintf(f, "%-8s %-16s %-12s %.17g\n", "TAG", r.tag.c_str(), r.species.c_str(),
                              r.conc);
         }
     }
@@ -1610,12 +1623,12 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
         std::fprintf(f, ";;%-6s %-16s %-12s %s\n", "SCOPE", "NAME", "SPECIES", "CONC");
         for (const auto& r : *tio.pending_ibq) {
             if (r.all)
-                std::fprintf(f, "%-8s %-16s %-12s %.12g\n", "*", "", r.species.c_str(), r.conc);
+                std::fprintf(f, "%-8s %-16s %-12s %.17g\n", "*", "", r.species.c_str(), r.conc);
             else if (r.tri >= 0)
-                std::fprintf(f, "%-8s %-16d %-12s %.12g\n", "CELL", r.tri + 1, r.species.c_str(),
+                std::fprintf(f, "%-8s %-16d %-12s %.17g\n", "CELL", r.tri + 1, r.species.c_str(),
                              r.conc);
             else
-                std::fprintf(f, "%-8s %-16s %-12s %.12g\n", "TAG", r.tag.c_str(), r.species.c_str(),
+                std::fprintf(f, "%-8s %-16s %-12s %.17g\n", "TAG", r.tag.c_str(), r.species.c_str(),
                              r.conc);
         }
     }
@@ -1623,7 +1636,7 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
         sec(f, "2D_BOUNDARY_QUALITY");
         std::fprintf(f, ";;%-4s %-4s %-12s %s\n", "TRI", "EDGE", "SPECIES", "CONC");
         for (const auto& r : *tio.pending_bq)
-            std::fprintf(f, "%-6d %-4d %-12s %.12g\n", r.tri, r.edge, r.species.c_str(), r.conc);
+            std::fprintf(f, "%-6d %-4d %-12s %.17g\n", r.tri, r.edge, r.species.c_str(), r.conc);
     }
 
 #ifdef OPENSWMM_HAS_2D
@@ -1816,7 +1829,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
     // back-conversions that are not length-dimensioned and that the READ side
     // performs unconditionally:
     //   * [LOSSES] seepage, /= UCF(RAINFALL) = 43200 on read — written back in
-    //     internal ft/s under an in/hr column, and at %10.6f it prints
+    //     internal ft/s under an in/hr column, and the former fixed-six-decimal format printed
     //     0.000000 after one save, so the error is a FIXED POINT that a
     //     save-convergence test can never catch.
     //   * q0 / q_limit / divider cutoff, /= Qcf on read for GPM and MGD decks.
@@ -1834,15 +1847,15 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
     const bool needs_authored_conv = input::needs_authored_conversion(ctx_internal);
 
     SimulationContext ctx_display;
-    if (needs_display_conv || needs_authored_conv) {
+    if ((!opts.internal_units && needs_display_conv) || needs_authored_conv) {
         ctx_display = ctx_internal;
-        if (needs_display_conv)
+        if (needs_display_conv && !opts.internal_units)
             input::convert_internal_to_display(ctx_display);
         if (needs_authored_conv)
             input::convert_internal_to_authored(ctx_display);
     }
     const SimulationContext& ctx =
-        (needs_display_conv || needs_authored_conv) ? ctx_display : ctx_internal;
+        ((needs_display_conv && !opts.internal_units) || needs_authored_conv) ? ctx_display : ctx_internal;
 
     // SWMM 5.x write profile (MULTI_ENGINE plan V2 Phase 4): omit the v6-only
     // sections and option keys, map incompatible option values, and write
@@ -1879,10 +1892,12 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         mappedOutputPath(path, InpWriteOptions::OutputKind::Model, opts, warnings);
     if (physical.empty())
         return -1;
-    openswmm::io::AtomicOutputFile output(openswmm::io::utf8_path(physical));
-    FILE* f = output.stream();
+    std::unique_ptr<openswmm::io::AtomicOutputFile> output;
+    if (!opts.stream)
+        output = std::make_unique<openswmm::io::AtomicOutputFile>(openswmm::io::utf8_path(physical));
+    FILE* f = opts.stream ? opts.stream : output->stream();
     if (!f) {
-        note(output.error());
+        note(output->error());
         return -1;
     }
     if (swmm5)
@@ -1951,7 +1966,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             std::fprintf(f, "%-20s %s\n", "FLOW_ROUTING", routing_word);
         }
         std::fprintf(f, "%-20s %s\n", "LINK_OFFSETS", o.link_offsets == 1 ? "ELEVATION" : "DEPTH");
-        std::fprintf(f, "%-20s %g\n", "MIN_SLOPE", o.min_slope);
+        std::fprintf(f, "%-20s %.17g\n", "MIN_SLOPE", o.min_slope);
         std::fprintf(f, "%-20s %s\n", "ALLOW_PONDING", o.allow_ponding ? "YES" : "NO");
         std::fprintf(f, "%-20s %s\n", "SKIP_STEADY_STATE", o.skip_steady_state ? "YES" : "NO");
         std::fprintf(f, "\n");
@@ -2030,7 +2045,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         fmt_sweep(sb, o.sweep_end);
         std::fprintf(f, "%-20s %s\n", "SWEEP_END", sb);
 
-        std::fprintf(f, "%-20s %g\n", "DRY_DAYS", o.dry_days);
+        std::fprintf(f, "%-20s %.17g\n", "DRY_DAYS", o.dry_days);
         fmt_step(sb, o.report_step);
         std::fprintf(f, "%-20s %s\n", "REPORT_STEP", sb);
         fmt_step(sb, o.wet_step);
@@ -2058,37 +2073,37 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             }
             std::fprintf(f, "%-20s %s\n", "SURCHARGE_METHOD", sm_word);
         }
-        if (sm == 3 && !swmm5) // issue #156: TPA acoustic celerity, non-default method only
-            std::fprintf(f, "%-20s %g\n", "TPA_CELERITY", o.tpa_celerity);
+        if (!swmm5) // Retain authored TPA celerity even while another method is active.
+            std::fprintf(f, "%-20s %.17g\n", "TPA_CELERITY", o.tpa_celerity);
         if (!swmm5) { // Unsteady friction (issue #156): round-tripped unconditionally, like
             // SURCHARGE_METHOD — the keys are inert unless a consuming solver runs.
             const int uf = o.unsteady_friction;
             std::fprintf(f, "%-20s %s\n", "UNSTEADY_FRICTION",
                          (uf >= 0 && uf <= 1) ? sUnsteadyFriction[uf] : "NONE");
-            std::fprintf(f, "%-20s %g\n", "UF_K3", o.uf_k3);
+            std::fprintf(f, "%-20s %.17g\n", "UF_K3", o.uf_k3);
             if (o.report_signed_heads) // issue #156 O-6: non-default only
                 std::fprintf(f, "%-20s %s\n", "REPORT_SIGNED_HEADS", "YES");
         }
-        std::fprintf(f, "%-20s %.2f\n", "VARIABLE_STEP", o.variable_step);
-        std::fprintf(f, "%-20s %g\n", "LENGTHENING_STEP", o.lengthening_step);
-        std::fprintf(f, "%-20s %g\n", "MIN_SURFAREA", o.min_surf_area);
+        std::fprintf(f, "%-20s %.17g\n", "VARIABLE_STEP", o.variable_step);
+        std::fprintf(f, "%-20s %.17g\n", "LENGTHENING_STEP", o.lengthening_step);
+        std::fprintf(f, "%-20s %.17g\n", "MIN_SURFAREA", o.min_surf_area);
         std::fprintf(f, "%-20s %d\n", "MAX_TRIALS", o.max_trials);
-        std::fprintf(f, "%-20s %g\n", "HEAD_TOLERANCE", o.head_tol);
-        std::fprintf(f, "%-20s %g\n", "SYS_FLOW_TOL", o.sys_flow_tol * 100.0);
-        std::fprintf(f, "%-20s %g\n", "LAT_FLOW_TOL", o.lat_flow_tol * 100.0);
+        std::fprintf(f, "%-20s %.17g\n", "HEAD_TOLERANCE", o.head_tol);
+        std::fprintf(f, "%-20s %.17g\n", "SYS_FLOW_TOL", o.sys_flow_tol * 100.0);
+        std::fprintf(f, "%-20s %.17g\n", "LAT_FLOW_TOL", o.lat_flow_tol * 100.0);
         // MINIMUM_STEP takes DECIMAL SECONDS only — legacy's MIN_ROUTE_STEP is a
         // bare getDouble with no clock fallback (project.c:701-704), unlike
         // ROUTE_STEP/LENGTHENING_STEP which try both (:676-690). Running it through
         // fmt_step emitted "0:00:00" for every whole-second value, which legacy
         // rejects with ERROR 211 — refusing the ENTIRE deck, not just the option.
-        std::fprintf(f, "%-20s %.15g\n", "MINIMUM_STEP", o.min_routing_step);
+        std::fprintf(f, "%-20s %.17g\n", "MINIMUM_STEP", o.min_routing_step);
         std::fprintf(f, "%-20s %d\n", "THREADS", o.num_threads);
 
         // --- Engine-specific extensions (not in legacy GUI) ---
-        if (sm == 2 && !swmm5) {
-            std::fprintf(f, "%-20s %.4f\n", "DPS_CELERITY", o.dps_target_celerity);
-            std::fprintf(f, "%-20s %.4f\n", "DPS_ALPHA", o.dps_alpha);
-            std::fprintf(f, "%-20s %.4f\n", "DPS_DECAY_TIME", o.dps_decay_time);
+        if (!swmm5) {
+            std::fprintf(f, "%-20s %.17g\n", "DPS_CELERITY", o.dps_target_celerity);
+            std::fprintf(f, "%-20s %.17g\n", "DPS_ALPHA", o.dps_alpha);
+            std::fprintf(f, "%-20s %.17g\n", "DPS_DECAY_TIME", o.dps_decay_time);
         }
         if (o.node_continuity != NodeContinuity::EXPLICIT && !swmm5)
             std::fprintf(f, "%-20s %s\n", "NODE_CONTINUITY", "SEMI_IMPLICIT");
@@ -2098,21 +2113,18 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         // SimulationOptions.hpp) and virtual_junction_momentum is now always 0,
         // so writing the key could only ever re-emit the retired value.
 
-        // Explicit finite-volume solver knobs. Emitted only under FLOW_ROUTING FV
-        // so a DW model's [OPTIONS] block stays legacy-clean; the keys are inert
-        // under other routing models, so a round-trip that changes FLOW_ROUTING
-        // does not lose a user's FV configuration mid-session — it is simply not
-        // written until FV is selected again.
-        if (o.routing_model == RoutingModel::FV && !swmm5) {
+        // Preserve finite-volume settings in native files even while another
+        // routing method is selected; the keys remain inert until FV is active.
+        if (!swmm5) {
             static const char* sRiemann[] = {"HLL", "HLLC"};
             static const char* sLimiter[] = {"MINMOD", "VANLEER", "SUPERBEE"};
             static const char* sScalar[] = {"UPWIND", "MUSCL", "QUICKEST_ULTIMATE"};
             static const char* sTime[] = {"EULER", "RK2"};
             static const char* sBackend[] = {"CPU", "AUTO", "OMP", "CUDA", "HIP", "SYCL"};
             const auto& fvo = o.fv;
-            std::fprintf(f, "%-20s %g\n", "FV_CELL_LENGTH", fvo.cell_length);
+            std::fprintf(f, "%-20s %.17g\n", "FV_CELL_LENGTH", fvo.cell_length);
             std::fprintf(f, "%-20s %d\n", "FV_MIN_CELLS", fvo.min_cells);
-            std::fprintf(f, "%-20s %g\n", "FV_CFL", fvo.cfl);
+            std::fprintf(f, "%-20s %.17g\n", "FV_CFL", fvo.cfl);
             std::fprintf(f, "%-20s %s\n", "FV_RIEMANN", sRiemann[static_cast<int>(fvo.riemann)]);
             std::fprintf(f, "%-20s %d\n", "FV_ORDER", fvo.order);
             std::fprintf(f, "%-20s %s\n", "FV_LIMITER", sLimiter[static_cast<int>(fvo.limiter)]);
@@ -2120,7 +2132,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                          sScalar[static_cast<int>(fvo.scalar_scheme)]);
             std::fprintf(f, "%-20s %s\n", "FV_TIME_INTEGRATION",
                          sTime[static_cast<int>(fvo.time_integration)]);
-            std::fprintf(f, "%-20s %g\n", "FV_SLOT_CELERITY", fvo.slot_celerity);
+            std::fprintf(f, "%-20s %.17g\n", "FV_SLOT_CELERITY", fvo.slot_celerity);
             if (fvo.pressurized_implicit)
                 std::fprintf(f, "%-20s %s\n", "FV_PRESSURIZED_IMPLICIT", "YES");
             if (fvo.node_feedback_dt) // non-default only
@@ -2128,7 +2140,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             if (fvo.pressure_closure == 1) // issue #156: non-default only
                 std::fprintf(f, "%-20s %s\n", "FV_PRESSURE_CLOSURE", "TPA");
             if (fvo.dispersion > 0.0)
-                std::fprintf(f, "%-20s %g\n", "FV_DISPERSION", fvo.dispersion);
+                std::fprintf(f, "%-20s %.17g\n", "FV_DISPERSION", fvo.dispersion);
             if (fvo.structure_coupling != fv::StructureCoupling::SUBSTEP)
                 std::fprintf(f, "%-20s %s\n", "FV_STRUCTURE_COUPLING", "ROUTING_STEP");
             if (!fvo.compaction)
@@ -2181,7 +2193,17 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             // keeps only the first value token.
             if (kv.first.rfind("GWF:", 0) == 0)
                 continue;
-            std::fprintf(f, "%-20s %s\n", kv.first.c_str(), kv.second.c_str());
+            if (swmm5 && kv.first.starts_with("IO_")) continue;
+            if (kv.first.starts_with("IO_")) {
+                std::string value = kv.second;
+                if (kv.first.ends_with("_PATH") && !value.empty()) {
+                    if (!io::isAbsolutePath(value))
+                        value = io::path_utf8(io::utf8_path(ctx.inp_file_path).parent_path() / io::utf8_path(value));
+                    if (!force_abs_paths && !dst_dir.empty()) value = io::makeRelative(value, dst_dir).path;
+                }
+                std::fprintf(f, "%-20s %s\n", kv.first.c_str(), quote_argument(value).c_str());
+            } else if (!swmm5 || !kv.first.starts_with("FV_"))
+                std::fprintf(f, "%-20s %s\n", kv.first.c_str(), kv.second.c_str());
         }
     }
 
@@ -2193,12 +2215,12 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         std::fprintf(f, ";;---------- ----------\n");
         switch (opts.evap_type) {
         case 0: // CONSTANT
-            std::fprintf(f, "CONSTANT     %.4f\n", opts.evap_values[0]);
+            std::fprintf(f, "CONSTANT     %.17g\n", opts.evap_values[0]);
             break;
         case 1: // MONTHLY
             std::fprintf(f, "MONTHLY     ");
             for (int i = 0; i < 12; ++i)
-                std::fprintf(f, " %.4f", opts.evap_values[i]);
+                std::fprintf(f, " %.17g", opts.evap_values[i]);
             std::fprintf(f, "\n");
             break;
         case 2: // TIMESERIES
@@ -2210,7 +2232,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         case 4: // FILE
             std::fprintf(f, "FILE        ");
             for (int i = 0; i < 12; ++i)
-                std::fprintf(f, " %.4f", opts.pan_coeff[i]);
+                std::fprintf(f, " %.17g", opts.pan_coeff[i]);
             std::fprintf(f, "\n");
             break;
         }
@@ -2298,7 +2320,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             if (opts.wind_type == 0) {
                 std::fprintf(f, "WINDSPEED    MONTHLY");
                 for (int i = 0; i < 12; ++i)
-                    std::fprintf(f, " %.4f", opts.wind_speed[i]);
+                    std::fprintf(f, " %.17g", opts.wind_speed[i]);
                 std::fprintf(f, "\n");
             } else {
                 std::fprintf(f, "WINDSPEED    FILE\n");
@@ -2313,30 +2335,30 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 } else if (opts.humidity_type == 1) {
                     std::fprintf(f, " MONTHLY");
                     for (int i = 0; i < 12; ++i)
-                        std::fprintf(f, " %.4f", opts.humidity[i]);
+                        std::fprintf(f, " %.17g", opts.humidity[i]);
                     std::fprintf(f, "\n");
                 } else {
-                    std::fprintf(f, " %.4f\n", opts.humidity[0]);
+                    std::fprintf(f, " %.17g\n", opts.humidity[0]);
                 }
             }
 
             // Legacy form: SNOWMELT Stemp ATIwt RNM Elev Lat DTLong (minutes).
             // The v6-only minMelt/maxMelt ride as tokens 7-8 only when set
             // (legacy ignores extra tokens; the solver does not use them).
-            std::fprintf(f, "SNOWMELT     %.2f %.4f %.4f %.4f %.4f %.4f", opts.snow_divt,
+            std::fprintf(f, "SNOWMELT     %.17g %.17g %.17g %.17g %.17g %.17g", opts.snow_divt,
                          opts.snow_ati_wt, opts.snow_nrg_ratio, opts.snow_elev, opts.snow_lat,
                          opts.snow_dtlong);
             if (opts.snow_min_melt != 0.0 || opts.snow_max_melt != 0.0)
-                std::fprintf(f, " %.6f %.6f", opts.snow_min_melt, opts.snow_max_melt);
+                std::fprintf(f, " %.17g %.17g", opts.snow_min_melt, opts.snow_max_melt);
             std::fprintf(f, "\n");
 
             std::fprintf(f, "ADC          IMPERVIOUS");
             for (int i = 0; i < 10; ++i)
-                std::fprintf(f, " %.4f", opts.adc_imperv[i]);
+                std::fprintf(f, " %.17g", opts.adc_imperv[i]);
             std::fprintf(f, "\n");
             std::fprintf(f, "ADC          PERVIOUS");
             for (int i = 0; i < 10; ++i)
-                std::fprintf(f, " %.4f", opts.adc_perv[i]);
+                std::fprintf(f, " %.17g", opts.adc_perv[i]);
             std::fprintf(f, "\n");
         }
     }
@@ -2381,21 +2403,21 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 const auto& p = ctx.snowpacks.plowable[j];
                 std::fprintf(f, "%-16s PLOWABLE    ", name);
                 for (int k = 0; k < 7; ++k)
-                    std::fprintf(f, " %10.4f", p[static_cast<size_t>(k)]);
+                    std::fprintf(f, " %.17g", p[static_cast<size_t>(k)]);
                 std::fprintf(f, "\n");
             }
             if (j < ctx.snowpacks.impervious.size()) {
                 const auto& p = ctx.snowpacks.impervious[j];
                 std::fprintf(f, "%-16s IMPERVIOUS  ", name);
                 for (int k = 0; k < 7; ++k)
-                    std::fprintf(f, " %10.4f", p[static_cast<size_t>(k)]);
+                    std::fprintf(f, " %.17g", p[static_cast<size_t>(k)]);
                 std::fprintf(f, "\n");
             }
             if (j < ctx.snowpacks.pervious.size()) {
                 const auto& p = ctx.snowpacks.pervious[j];
                 std::fprintf(f, "%-16s PERVIOUS    ", name);
                 for (int k = 0; k < 7; ++k)
-                    std::fprintf(f, " %10.4f", p[static_cast<size_t>(k)]);
+                    std::fprintf(f, " %.17g", p[static_cast<size_t>(k)]);
                 std::fprintf(f, "\n");
             }
             if (j < ctx.snowpacks.removal.size()) {
@@ -2409,7 +2431,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 if (has_removal) {
                     std::fprintf(f, "%-16s REMOVAL     ", name);
                     for (int k = 0; k < 6; ++k)
-                        std::fprintf(f, " %10.4f", r[static_cast<size_t>(k)]);
+                        std::fprintf(f, " %.17g", r[static_cast<size_t>(k)]);
                     if (j < ctx.snowpacks.removal_subcatch.size() &&
                         !ctx.snowpacks.removal_subcatch[j].empty())
                         std::fprintf(f, " %s", ctx.snowpacks.removal_subcatch[j].c_str());
@@ -2442,7 +2464,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         if (has_adj) {
             sec(f, "ADJUSTMENTS");
             auto write12 = [&](const char* key, const double* arr,
-                               const char* format = " %10.4f") {
+                               const char* format = " %.17g") {
                 std::fprintf(f, "%-12s", key);
                 for (int i = 0; i < 12; ++i)
                     std::fprintf(f, format, arr[i]);
@@ -2451,7 +2473,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             write12("TEMP", ctx.adjust_temp);
             write12("EVAP", ctx.adjust_evap);
             // A small positive multiplier must not round to zero on save.
-            write12("RAIN", ctx.adjust_rain, " %10.17g");
+            write12("RAIN", ctx.adjust_rain, " %.17g");
             write12("CONDUCT", ctx.adjust_hydcon);
 
             for (size_t i = 0; i < ctx.subcatch_n_perv_pattern.size(); ++i) {
@@ -2523,7 +2545,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             if (iv > 0 && iv % 60 == 0)
                 std::snprintf(gsb, sizeof(gsb), "%d:%02d", h, m);
             else
-                std::snprintf(gsb, sizeof(gsb), "%.10g", iv / 3600.0);
+                std::snprintf(gsb, sizeof(gsb), "%.17g", iv / 3600.0);
             // Emit the actual rain-data format (0=INTENSITY,1=VOLUME,2=CUMULATIVE) — a
             // prior hardcoded "INTENSITY" silently rewrote VOLUME/CUMULATIVE gages.
             const char* fmt = ctx.gages.rain_type[u] == 1   ? "VOLUME"
@@ -2645,13 +2667,13 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                      std::to_string(ssf) + " dropped (stock SWMM 5 has no such columns)");
                 need_scale = false;
             }
-            // Full precision on every solver-facing field. %12.4f is an ABSOLUTE
+            // Full precision on every solver-facing field. %.17g is an ABSOLUTE
             // 4-decimal format, so a small area lost most of its significance
             // (0.018939394 ac -> 0.0189, a 0.2% error applied straight to runoff
             // volume); of the corpus decks whose [SUBCATCHMENTS] changed on round
             // trip, 13 of 13 went on to simulate differently. Keeps the column width
             // so the file still reads as a table (same form as [CONDUITS] length).
-            std::fprintf(f, "%-16s %-16s %-16s %12.15g %10.15g %12.15g %10.15g %10.15g",
+            std::fprintf(f, "%-16s %-16s %-16s %.17g %.17g %.17g %.17g %.17g",
                          ctx.subcatch_names.name_of(j).c_str(), sgN(ctx, u), oN(ctx, u),
                          ctx.subcatches.area[u], ctx.subcatches.frac_imperv[u] * 100.0,
                          ctx.subcatches.width[u], ctx.subcatches.slope[u] * 100.0,
@@ -2662,9 +2684,9 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             if (need_scale) {
                 // RainScale must be written even when 1.0 if SnowScale is not, to hold
                 // the position of token 10.
-                std::fprintf(f, " %-10.17g", rsf);
+                std::fprintf(f, " %.17g", rsf);
                 if (ssf != 1.0)
-                    std::fprintf(f, " %-10.17g", ssf);
+                    std::fprintf(f, " %.17g", ssf);
             }
             std::fprintf(f, "\n");
         }
@@ -2688,7 +2710,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             // S-Imperv/S-Perv are stored in display depth units (Runoff converts them
             // via UCF(RAINDEPTH) at use), so emit as-is — a prior *12.0 corrupted them
             // (and broke file→write→reparse round-trips).
-            std::fprintf(f, "%-16s %10.4f %10.4f %10.4f %10.4f %10.2f %-8s %10.2f\n",
+            std::fprintf(f, "%-16s %.17g %.17g %.17g %.17g %.17g %-8s %.17g\n",
                          ctx.subcatch_names.name_of(j).c_str(), ctx.subcatches.n_imperv[u],
                          ctx.subcatches.n_perv[u], ctx.subcatches.ds_imperv[u],
                          ctx.subcatches.ds_perv[u], ctx.subcatches.frac_imperv_no_store[u] * 100.0,
@@ -2709,11 +2731,11 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             auto u = static_cast<size_t>(j);
             int im = ctx.subcatches.infil_model[u];
             const char* mn = (im >= 0 && im <= 4) ? infilNames[im] : "HORTON";
-            // Full precision, like the other solver-facing fields. %10.4f is an
+            // Full precision, like the other solver-facing fields. %.17g is an
             // ABSOLUTE 4-decimal format, so a Green-Ampt Ksat of 1e-6 in/hr — which
             // real low-conductivity decks carry — was written as 0.0000, and legacy
             // rejects a non-positive Ksat outright with ERROR 235 (grnampt_setParams).
-            std::fprintf(f, "%-16s %10.15g %10.15g %10.15g %10.15g %10.15g %s\n",
+            std::fprintf(f, "%-16s %.17g %.17g %.17g %.17g %.17g %s\n",
                          ctx.subcatch_names.name_of(j).c_str(), ctx.subcatches.infil_p1[u],
                          ctx.subcatches.infil_p2[u], ctx.subcatches.infil_p3[u],
                          ctx.subcatches.infil_p4[u], ctx.subcatches.infil_p5[u], mn);
@@ -2722,7 +2744,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
 
     // [AQUIFERS]
     // Grammar: Name Por WP FC Ksat Kslope Tslope ETu ETs Seep Ebot Egw Umc [ETupat]
-    // %.10g preserves full double precision without scientific notation for the
+    // %.17g preserves full double precision without scientific notation for the
     // magnitudes seen in elevations and conductivities.
     if (ctx.aquifers.count() > 0) {
         sec(f, "AQUIFERS");
@@ -2741,7 +2763,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             auto u = static_cast<size_t>(j);
             std::fprintf(
                 f,
-                "%-16s %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g",
+                "%-16s %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g",
                 ctx.aquifers.names[u].c_str(), ctx.aquifers.porosity[u],
                 ctx.aquifers.wilting_point[u], ctx.aquifers.field_capacity[u],
                 ctx.aquifers.conductivity[u], ctx.aquifers.conduct_slope[u],
@@ -2799,7 +2821,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 }
                 std::fprintf(
                     f,
-                    "%-16s %-16s %-16s %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g",
+                    "%-16s %-16s %-16s %.17g %.17g %.17g %.17g %.17g %.17g %.17g",
                     ctx.subcatch_names.name_of(s).c_str(),
                     ctx.aquifers.names[static_cast<size_t>(aq)].c_str(),
                     nN(ctx, ctx.subcatches.gw_node[u]), ctx.subcatches.gw_surf_elev[u],
@@ -2824,7 +2846,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                             last = k;
                     for (int k = 0; k <= last; ++k) {
                         if (opt[k] != constants::MISSING)
-                            std::fprintf(f, " %-10.10g", opt[k]);
+                            std::fprintf(f, " %.17g", opt[k]);
                         else
                             std::fprintf(f, " %-10s", "*");
                     }
@@ -2935,7 +2957,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 if (has) {
                     std::fprintf(f, "%-16s SURFACE    ", name);
                     for (int k = 0; k < 5; ++k)
-                        std::fprintf(f, " %10.4f", p[k]);
+                        std::fprintf(f, " %.17g", p[k]);
                     std::fprintf(f, "\n");
                 }
             }
@@ -2951,7 +2973,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 if (has) {
                     std::fprintf(f, "%-16s SOIL       ", name);
                     for (int k = 0; k < 7; ++k)
-                        std::fprintf(f, " %10.4f", p[k]);
+                        std::fprintf(f, " %.17g", p[k]);
                     std::fprintf(f, "\n");
                 }
             }
@@ -2967,7 +2989,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 if (has) {
                     std::fprintf(f, "%-16s PAVEMENT   ", name);
                     for (int k = 0; k < 6; ++k)
-                        std::fprintf(f, " %10.4f", p[k]);
+                        std::fprintf(f, " %.17g", p[k]);
                     std::fprintf(f, "\n");
                 }
             }
@@ -2983,14 +3005,14 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 if (has) {
                     std::fprintf(f, "%-16s STORAGE    ", name);
                     for (int k = 0; k < 4; ++k)
-                        std::fprintf(f, " %10.4f", p[k]);
+                        std::fprintf(f, " %.17g", p[k]);
                     std::fprintf(f, "\n");
                 }
             }
             // DRAIN (6 params)
             if (uj < ctx.lid_controls.drain.size()) {
                 const auto& p = ctx.lid_controls.drain[uj];
-                bool has = false;
+                bool has = uj < ctx.lid_controls.drain_curve.size() && !ctx.lid_controls.drain_curve[uj].empty();
                 for (int k = 0; k < 6; ++k)
                     if (p[k] != 0.0) {
                         has = true;
@@ -2999,7 +3021,9 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 if (has) {
                     std::fprintf(f, "%-16s DRAIN      ", name);
                     for (int k = 0; k < 6; ++k)
-                        std::fprintf(f, " %10.4f", p[k]);
+                        std::fprintf(f, " %.17g", p[k]);
+                    if (uj < ctx.lid_controls.drain_curve.size() && !ctx.lid_controls.drain_curve[uj].empty())
+                        std::fprintf(f, " %s", ctx.lid_controls.drain_curve[uj].c_str());
                     std::fprintf(f, "\n");
                 }
             }
@@ -3015,7 +3039,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 if (has) {
                     std::fprintf(f, "%-16s DRAINMAT   ", name);
                     for (int k = 0; k < 3; ++k)
-                        std::fprintf(f, " %10.4f", p[k]);
+                        std::fprintf(f, " %.17g", p[k]);
                     std::fprintf(f, "\n");
                 }
             }
@@ -3119,7 +3143,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             const char* sc_name = (sc >= 0) ? ctx.subcatch_names.name_of(sc).c_str() : "*";
             const char* lid_name =
                 (li >= 0 && li < ctx.lid_names.size()) ? ctx.lid_names.name_of(li).c_str() : "*";
-            std::fprintf(f, "%-16s %-16s %8d %12.2f %10.2f %8.2f %8.2f %8d", sc_name, lid_name,
+            std::fprintf(f, "%-16s %-16s %8d %.17g %.17g %.17g %.17g %8d", sc_name, lid_name,
                          ctx.lid_usage.number[uj], ctx.lid_usage.area[uj], ctx.lid_usage.width[uj],
                          ctx.lid_usage.init_sat[uj], ctx.lid_usage.from_imperv[uj],
                          ctx.lid_usage.to_perv[uj]);
@@ -3142,7 +3166,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             else
                 std::fprintf(f, " *");
             if (uj < ctx.lid_usage.from_perv.size())
-                std::fprintf(f, " %8.2f", ctx.lid_usage.from_perv[uj]);
+                std::fprintf(f, " %.17g", ctx.lid_usage.from_perv[uj]);
             std::fprintf(f, "\n");
         }
     }
@@ -3170,7 +3194,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 // 5.x engine derives it from the crown as for any junction. The node
                 // had no surcharge depth and no ponded area.
                 const double rim = (u < ctx.nodes.rim_depth.size()) ? ctx.nodes.rim_depth[u] : 0.0;
-                std::fprintf(f, "%-16s %12.4f %12.4f %12.4f %12.4f %12.4f\n",
+                std::fprintf(f, "%-16s %.17g %.17g %.17g %.17g %.17g\n",
                              ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u],
                              rim > 0.0 ? rim : 0.0, 0.0, 0.0, 0.0);
                 note(
@@ -3181,7 +3205,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                     " (SWMM 5.x profile)");
                 continue;
             }
-            std::fprintf(f, "%-16s %12.4f %12.4f %12.4f %12.4f %12.4f\n",
+            std::fprintf(f, "%-16s %.17g %.17g %.17g %.17g %.17g\n",
                          ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u],
                          ctx.nodes.full_depth[u], ctx.nodes.init_depth[u], ctx.nodes.sur_depth[u],
                          ctx.nodes.ponded_area[u]);
@@ -3213,10 +3237,10 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             write_obj_comment(f, ctx.nodes.comments, u);
             const double rim = (u < ctx.nodes.rim_depth.size()) ? ctx.nodes.rim_depth[u] : 0.0;
             if (rim > 0.0)
-                std::fprintf(f, "%-16s %12.4f %12.4f\n", ctx.node_names.name_of(j).c_str(),
+                std::fprintf(f, "%-16s %.17g %.17g\n", ctx.node_names.name_of(j).c_str(),
                              ctx.nodes.invert_elev[u], rim);
             else
-                std::fprintf(f, "%-16s %12.4f\n", ctx.node_names.name_of(j).c_str(),
+                std::fprintf(f, "%-16s %.17g\n", ctx.node_names.name_of(j).c_str(),
                              ctx.nodes.invert_elev[u]);
         }
     }
@@ -3244,7 +3268,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             if (pl < 0 || pl > 2)
                 pl = 0;
             std::fprintf(
-                f, "%-16s %12.4f %12.4f %-16s %-16s %8d %8.4g %10.4g %10.4g %10.4g %-10s\n",
+                f, "%-16s %.17g %.17g %-16s %-16s %8d %.17g %.17g %.17g %.17g %-10s\n",
                 ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u],
                 (u < ctx.nodes.rim_depth.size()) ? ctx.nodes.rim_depth[u] : 0.0,
                 ctx.inlets.names[static_cast<size_t>(ctx.inlet_usages.design_index[ur])].c_str(),
@@ -3285,7 +3309,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             char stage[64];
             stage[0] = '\0';
             if (otype == OutfallType::FIXED) {
-                std::snprintf(stage, sizeof(stage), "%.4f", oparam);
+                std::snprintf(stage, sizeof(stage), "%.17g", oparam);
             } else if (otype == OutfallType::TIDAL || otype == OutfallType::TIMESERIES) {
                 const int t = static_cast<int>(oparam);
                 if (t >= 0 && t < static_cast<int>(ctx.tables.tables.size()))
@@ -3305,7 +3329,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                     "\": a flap gate together with a Route To subcatchment cannot be "
                     "expressed in SWMM 5.x — a legacy engine reading this file will "
                     "ignore the flap gate.");
-            std::fprintf(f, "%-16s %12.15g %-12s", ctx.node_names.name_of(j).c_str(),
+            std::fprintf(f, "%-16s %.17g %-12s", ctx.node_names.name_of(j).c_str(),
                          ctx.nodes.invert_elev[u], ofName(otype));
             if (stage[0] != '\0')
                 std::fprintf(f, " %-16s", stage);
@@ -3344,13 +3368,13 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             double cutoff = (drow >= 0) ? D.cutoff[static_cast<size_t>(drow)] : 0.0;
             switch (dtype) {
             case DividerType::CUTOFF:
-                std::fprintf(f, "%-16s %12.4f %-16s CUTOFF   %12.4f %12.4f %12.4f %12.4f %12.4f\n",
+                std::fprintf(f, "%-16s %.17g %-16s CUTOFF   %.17g %.17g %.17g %.17g %.17g\n",
                              ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u],
                              divLinkName, cutoff, ctx.nodes.full_depth[u], ctx.nodes.init_depth[u],
                              ctx.nodes.sur_depth[u], ctx.nodes.ponded_area[u]);
                 break;
             case DividerType::OVERFLOW_DIV:
-                std::fprintf(f, "%-16s %12.4f %-16s OVERFLOW %12.4f %12.4f %12.4f %12.4f\n",
+                std::fprintf(f, "%-16s %.17g %-16s OVERFLOW %.17g %.17g %.17g %.17g\n",
                              ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u],
                              divLinkName, ctx.nodes.full_depth[u], ctx.nodes.init_depth[u],
                              ctx.nodes.sur_depth[u], ctx.nodes.ponded_area[u]);
@@ -3365,7 +3389,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 } else if (drow >= 0 && !D.curve_name[static_cast<size_t>(drow)].empty()) {
                     curveName = D.curve_name[static_cast<size_t>(drow)].c_str();
                 }
-                std::fprintf(f, "%-16s %12.4f %-16s TABULAR  %-16s %12.4f %12.4f %12.4f %12.4f\n",
+                std::fprintf(f, "%-16s %.17g %-16s TABULAR  %-16s %.17g %.17g %.17g %.17g\n",
                              ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u],
                              divLinkName, curveName, ctx.nodes.full_depth[u],
                              ctx.nodes.init_depth[u], ctx.nodes.sur_depth[u],
@@ -3378,7 +3402,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 // Legacy column order: qMin dhMax cWeir (node.c:1112)
                 std::fprintf(
                     f,
-                    "%-16s %12.4f %-16s WEIR     %12.4f %12.4f %12.4f %12.4f %12.4f %12.4f %12.4f\n",
+                    "%-16s %.17g %-16s WEIR     %.17g %.17g %.17g %.17g %.17g %.17g %.17g\n",
                     ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u], divLinkName,
                     cutoff, maxd, cd, ctx.nodes.full_depth[u], ctx.nodes.init_depth[u],
                     ctx.nodes.sur_depth[u], ctx.nodes.ponded_area[u]);
@@ -3412,7 +3436,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             // `0 <surdepth>` tails re-read the surcharge depth as Fevap or as a bare
             // Ksat.
             if (scurve >= 0)
-                std::fprintf(f, "%-16s %12.15g %12.15g %12.15g TABULAR    %s",
+                std::fprintf(f, "%-16s %.17g %.17g %.17g TABULAR    %s",
                              ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u],
                              ctx.nodes.full_depth[u], ctx.nodes.init_depth[u], tN(ctx, scurve));
             else if (storage_shape_is_geometric(sshape)) {
@@ -3422,7 +3446,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 const double q1 = S.p1[static_cast<size_t>(srow)];
                 const double q2 = S.p2[static_cast<size_t>(srow)];
                 const double q3 = S.p3[static_cast<size_t>(srow)];
-                std::fprintf(f, "%-16s %12.15g %12.15g %12.15g %-10s %.15g %.15g %.15g",
+                std::fprintf(f, "%-16s %.17g %.17g %.17g %-10s %.17g %.17g %.17g",
                              ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u],
                              ctx.nodes.full_depth[u], ctx.nodes.init_depth[u],
                              storage_shape_keyword(sshape), q1, q2, q3);
@@ -3434,16 +3458,16 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 // its fraction (278.539816 -> 278.54). A1 scales storage surface area,
                 // hence volume and routing: 13 of 14 corpus decks whose [STORAGE] rows
                 // changed on round trip went on to simulate differently.
-                std::fprintf(f, "%-16s %12.15g %12.15g %12.15g FUNCTIONAL %.15g %.15g %.15g",
+                std::fprintf(f, "%-16s %.17g %.17g %.17g FUNCTIONAL %.17g %.17g %.17g",
                              ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u],
                              ctx.nodes.full_depth[u], ctx.nodes.init_depth[u], sa, sb, sc);
             }
             {
                 const double fevap = (srow >= 0) ? S.evap_frac[static_cast<size_t>(srow)] : 0.0;
                 const double ksat = (srow >= 0) ? S.exfil_ksat[static_cast<size_t>(srow)] : 0.0;
-                std::fprintf(f, " %12.15g %.15g", ctx.nodes.sur_depth[u], fevap);
+                std::fprintf(f, " %.17g %.17g", ctx.nodes.sur_depth[u], fevap);
                 if (ksat != 0.0)
-                    std::fprintf(f, " %g %g %g", S.exfil_suction[static_cast<size_t>(srow)], ksat,
+                    std::fprintf(f, " %.17g %.17g %.17g", S.exfil_suction[static_cast<size_t>(srow)], ksat,
                                  S.exfil_imd[static_cast<size_t>(srow)]);
                 std::fprintf(f, "\n");
             }
@@ -3466,14 +3490,14 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             write_obj_comment(f, ctx.links.comments, u);
             const int cr = ctx.link_subtypes.conduit_row(j);
             const auto& CD = ctx.link_subtypes.conduits;
-            // Length and roughness are emitted at full double precision (%.15g), not a
+            // Length and roughness are emitted at full double precision (%.17g), not a
             // fixed 4/6-decimal field: real models carry sub-metre lengths and 1/n-derived
             // roughness with many significant figures, and truncating them perturbs the
             // routing solution — noticeable on large, control-heavy (chaos-sensitive) models.
-            // The offsets and flows on the same row were left at %12.4f/%10.4f and so
+            // The offsets and flows on the same row formerly used four/six decimals and so
             // kept truncating (0.000195 -> 0.0002); they feed the solver just as directly.
             std::fprintf(
-                f, "%-16s %-16s %-16s %15.15g %15.15g %12.15g %12.15g %10.15g %10.15g\n",
+                f, "%-16s %-16s %-16s %.17g %.17g %.17g %.17g %.17g %.17g\n",
                 ctx.link_names.name_of(j).c_str(), nN(ctx, ctx.links.node1[u]),
                 nN(ctx, ctx.links.node2[u]), (cr >= 0) ? CD.length[static_cast<size_t>(cr)] : 0.0,
                 (cr >= 0) ? CD.roughness[static_cast<size_t>(cr)] : 0.01, ctx.links.offset1[u],
@@ -3511,7 +3535,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                                                : (ctx.links.pump_curve_name[u].empty()
                                                       ? "*"
                                                       : ctx.links.pump_curve_name[u].c_str());
-            std::fprintf(f, "%-16s %-16s %-16s %-16s %-10s %.10g %.10g\n",
+            std::fprintf(f, "%-16s %-16s %-16s %-16s %-10s %.17g %.17g\n",
                          ctx.link_names.name_of(j).c_str(), nN(ctx, ctx.links.node1[u]),
                          nN(ctx, ctx.links.node2[u]), pcname, pstat,
                          (pr >= 0) ? PD.startup[static_cast<size_t>(pr)] : 0.0,
@@ -3541,7 +3565,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             const char* otype = (orr >= 0 && ctx.link_subtypes.orifices.orifice_type[uorr] != 0.0)
                                     ? "SIDE"
                                     : "BOTTOM";
-            std::fprintf(f, "%-16s %-16s %-16s %-10s %10.4f %10.4f %-8s %10.4f\n",
+            std::fprintf(f, "%-16s %-16s %-16s %-10s %.17g %.17g %-8s %.17g\n",
                          ctx.link_names.name_of(j).c_str(), nN(ctx, ctx.links.node1[u]),
                          nN(ctx, ctx.links.node2[u]), otype, ctx.links.offset1[u],
                          (orr >= 0) ? ctx.link_subtypes.orifices.cd[uorr] : 0.0,
@@ -3580,7 +3604,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             const char* wgate = ctx.links.has_flap_gate[u] ? "YES" : "NO";
             const char* wsurch =
                 (wr >= 0 && WD.can_surcharge[static_cast<size_t>(wr)]) ? "YES" : "NO";
-            std::fprintf(f, "%-16s %-16s %-16s %-12s %10.4f %10.4f %-8s %10.4f %10.4f %-10s",
+            std::fprintf(f, "%-16s %-16s %-16s %-12s %.17g %.17g %-8s %.17g %.17g %-10s",
                          ctx.link_names.name_of(j).c_str(), nN(ctx, ctx.links.node1[u]),
                          nN(ctx, ctx.links.node2[u]), wtStr,
                          (wr >= 0) ? WD.crest_height[static_cast<size_t>(wr)] : 0.0,
@@ -3592,7 +3616,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             const int cdc = (wr >= 0) ? WD.cd_curve[static_cast<size_t>(wr)] : -1;
             if (wt == 4 || cdc >= 0) {
                 const int rs = (wr >= 0) ? WD.road_surface[static_cast<size_t>(wr)] : 0;
-                std::fprintf(f, " %10.4f %-10s",
+                std::fprintf(f, " %.17g %-10s",
                              (wr >= 0) ? WD.road_width[static_cast<size_t>(wr)] : 0.0,
                              rs == 1   ? "PAVED"
                              : rs == 2 ? "GRAVEL"
@@ -3635,11 +3659,11 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 const int oci = (olr >= 0) ? OUT.curve[static_cast<size_t>(olr)] : -1;
                 const char* ocurve =
                     (oci >= 0) ? tN(ctx, oci) : ctx.links.pump_curve_name[u].c_str();
-                std::fprintf(f, "%-16s %-16s %-16s %10.4f %-16s %-16s %s\n",
+                std::fprintf(f, "%-16s %-16s %-16s %.17g %-16s %-16s %s\n",
                              ctx.link_names.name_of(j).c_str(), nN(ctx, ctx.links.node1[u]),
                              nN(ctx, ctx.links.node2[u]), ocrest, otypeStr, ocurve, ogate);
             } else {
-                std::fprintf(f, "%-16s %-16s %-16s %10.4f %-16s %10g %10g %s\n",
+                std::fprintf(f, "%-16s %-16s %-16s %.17g %-16s %.17g %.17g %s\n",
                              ctx.link_names.name_of(j).c_str(), nN(ctx, ctx.links.node1[u]),
                              nN(ctx, ctx.links.node2[u]), ocrest, otypeStr,
                              (olr >= 0) ? OUT.coeff[static_cast<size_t>(olr)] : 0.0,
@@ -3682,7 +3706,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             // street name, not a dimension), so emit the retained name instead of the
             // numeric geometry — matching the [XSECTIONS] parser's STREET handling.
             if (ctx.links.xsect_shape[u] == XsectShape::STREET_XSECT) {
-                std::fprintf(f, "%-16s %-16s %-12s %12.4f %12.4f %12.4f %8d\n",
+                std::fprintf(f, "%-16s %-16s %-12s %.17g %.17g %.17g %8d\n",
                              ctx.link_names.name_of(j).c_str(),
                              xsName(static_cast<int>(ctx.links.xsect_shape[u])),
                              ctx.links.pump_curve_name[u].c_str(), 0.0, 0.0, 0.0, xbarrels);
@@ -3704,7 +3728,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                     ctx.links.xsect_curve[u] < ctx.transects.count())
                     tname =
                         ctx.transects.names[static_cast<size_t>(ctx.links.xsect_curve[u])].c_str();
-                std::fprintf(f, "%-16s %-16s %-12s %12.4f %12.4f %12.4f %8d\n",
+                std::fprintf(f, "%-16s %-16s %-12s %.17g %.17g %.17g %8d\n",
                              ctx.link_names.name_of(j).c_str(),
                              xsName(static_cast<int>(ctx.links.xsect_shape[u])), tname, 0.0, 0.0,
                              0.0, xbarrels);
@@ -3718,7 +3742,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             if (ctx.links.xsect_shape[u] == XsectShape::CUSTOM) {
                 const double cy = (ctx.links.xsect_geom1[u] != 0.0) ? ctx.links.xsect_geom1[u]
                                                                     : ctx.links.xsect_y_full[u];
-                std::fprintf(f, "%-16s %-16s %.15g %-16s %12.4f %12.4f %8d\n",
+                std::fprintf(f, "%-16s %-16s %.17g %-16s %.17g %.17g %8d\n",
                              ctx.link_names.name_of(j).c_str(),
                              xsName(static_cast<int>(ctx.links.xsect_shape[u])), cy,
                              ctx.links.pump_curve_name[u].c_str(), 0.0, 0.0, xbarrels);
@@ -3757,9 +3781,9 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                                     "(ERROR 211) for shape " +
                                     xsName(static_cast<int>(ctx.links.xsect_shape[u])));
             // Full precision on the geometry: xsect dimensions (e.g. CUSTOM/irregular
-            // heights like 0.61875) set conduit conveyance; %.4f truncation perturbs routing.
+            // heights like 0.61875) set conduit conveyance; fixed-decimal truncation perturbs routing.
             std::fprintf(
-                f, "%-16s %-16s %.15g %.15g %.15g %.15g %8d", ctx.link_names.name_of(j).c_str(),
+                f, "%-16s %-16s %.17g %.17g %.17g %.17g %8d", ctx.link_names.name_of(j).c_str(),
                 xsName(static_cast<int>(ctx.links.xsect_shape[u])), g1, g2, g3, g4, xbarrels);
             if (xculvert > 0)
                 std::fprintf(f, " %8d", xculvert);
@@ -3803,7 +3827,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 if (CD.loss_inlet[ucr] == 0 && CD.loss_outlet[ucr] == 0 && CD.loss_avg[ucr] == 0 &&
                     !ctx.links.has_flap_gate[u] && CD.seep_rate[ucr] == 0)
                     continue;
-                std::fprintf(f, "%-16s %10.4f %10.4f %10.4f %-8s %10.6f\n",
+                std::fprintf(f, "%-16s %.17g %.17g %.17g %-8s %.17g\n",
                              ctx.link_names.name_of(j).c_str(), CD.loss_inlet[ucr],
                              CD.loss_outlet[ucr], CD.loss_avg[ucr],
                              ctx.links.has_flap_gate[u] ? "YES" : "NO", CD.seep_rate[ucr]);
@@ -3816,26 +3840,34 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         sec(f, "TRANSECTS");
         for (int t = 0; t < ctx.transects.count(); ++t) {
             auto ut = static_cast<size_t>(t);
-            std::fprintf(f, "NC %10.4f %10.4f %10.4f\n", ctx.transects.n_left[ut],
+            write_obj_comment(f, ctx.transects.comments, ut);
+            std::fprintf(f, "NC %.17g %.17g %.17g\n", ctx.transects.n_left[ut],
                          ctx.transects.n_right[ut], ctx.transects.n_channel[ut]);
             int nsta = static_cast<int>(ctx.transects.stations[ut].size());
+            if (swmm5 && (ctx.transects.x_left_encroachment[ut] != 0.0 ||
+                          ctx.transects.x_right_encroachment[ut] != 0.0))
+                note("Transect " + ctx.transects.names[ut] + ": encroachment stations omitted (SWMM 5.x profile)");
+            // Native X1 uses the two legacy placeholders for encroachment stations.
             // X1 layout per EPA SWMM 5 (transect.c::setParams):
             //   X1 Name Nsta Xleft Xright 0 0 Lfactor Xfactor Yfactor
             // i.e. TWO placeholder zeros between Xright and Lfactor (not three).
             // An extra zero shifts Lfactor/Xfactor/Yfactor by one column, which
             // every SWMM-5 parser then misreads.
-            std::fprintf(f, "X1 %-16s %10d %10.4f %10.4f 0 0 %10.4f %10.4f %10.4f\n",
+            std::fprintf(f, "X1 %-16s %10d %.17g %.17g %.17g %.17g %.17g %.17g %.17g\n",
                          ctx.transects.names[ut].c_str(), nsta, ctx.transects.x_left_bank[ut],
-                         ctx.transects.x_right_bank[ut], ctx.transects.length_factor[ut],
+                         ctx.transects.x_right_bank[ut],
+                         swmm5 ? 0.0 : ctx.transects.x_left_encroachment[ut],
+                         swmm5 ? 0.0 : ctx.transects.x_right_encroachment[ut],
+                         ctx.transects.length_factor[ut],
                          ctx.transects.x_factor[ut], ctx.transects.y_factor[ut]);
             // Full precision on the GR pairs: they are token-parsed on both engines
-            // (column width is not load-bearing) and %.4f silently rounded >4-dp
+            // (column width is not load-bearing) and the former four-decimal format rounded >4-dp
             // stations/elevations on every save. Matches the [XSECTIONS] precedent.
             for (int k = 0; k < nsta; ++k) {
                 auto uk = static_cast<size_t>(k);
                 if (k % 5 == 0)
                     std::fprintf(f, "GR");
-                std::fprintf(f, " %10.15g %10.15g", ctx.transects.elevations[ut][uk],
+                std::fprintf(f, " %.17g %.17g", ctx.transects.elevations[ut][uk],
                              ctx.transects.stations[ut][uk]);
                 if (k % 5 == 4 || k == nsta - 1)
                     std::fprintf(f, "\n");
@@ -3852,7 +3884,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         for (int j = 0; j < ctx.streets.count(); ++j) {
             auto u = static_cast<size_t>(j);
             std::fprintf(
-                f, "%-16s %10.4f %10.4f %10.4f %10.6f %10.4f %10.4f %8d %10.4f %10.4f %10.6f\n",
+                f, "%-16s %.17g %.17g %.17g %.17g %.17g %.17g %8d %.17g %.17g %.17g\n",
                 ctx.streets.names[u].c_str(), ctx.streets.t_crown[u], ctx.streets.h_curb[u],
                 ctx.streets.sx[u], ctx.streets.n_road[u], ctx.streets.gutter_depres[u],
                 ctx.streets.gutter_width[u], ctx.streets.sides[u], ctx.streets.back_width[u],
@@ -3866,17 +3898,17 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
     if (ctx.inlets.count() > 0) {
         sec(f, "INLETS");
         auto grate_line = [&](const std::string& name, size_t u, const char* kw) {
-            std::fprintf(f, "%-16s %-12s %10.4f %10.4f %s", name.c_str(), kw, ctx.inlets.length[u],
+            std::fprintf(f, "%-16s %-12s %.17g %.17g %s", name.c_str(), kw, ctx.inlets.length[u],
                          ctx.inlets.width[u], ctx.inlets.grate_type[u].c_str());
             if (ieq(ctx.inlets.grate_type[u], "GENERIC")) {
-                std::fprintf(f, " %g", ctx.inlets.open_area[u]);
+                std::fprintf(f, " %.17g", ctx.inlets.open_area[u]);
                 if (ctx.inlets.splash_veloc[u] > 0)
-                    std::fprintf(f, " %g", ctx.inlets.splash_veloc[u]);
+                    std::fprintf(f, " %.17g", ctx.inlets.splash_veloc[u]);
             }
             std::fprintf(f, "\n");
         };
         auto curb_line = [&](const std::string& name, size_t u, bool drop) {
-            std::fprintf(f, "%-16s %-12s %10.4f %10.4f", name.c_str(), drop ? "DROP_CURB" : "CURB",
+            std::fprintf(f, "%-16s %-12s %.17g %.17g", name.c_str(), drop ? "DROP_CURB" : "CURB",
                          ctx.inlets.curb_length[u], ctx.inlets.curb_height[u]);
             // DROP_CURB has no throat token in the legacy grammar.
             if (!drop) {
@@ -3903,7 +3935,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 std::fprintf(f, "%-16s %-12s %s\n", name.c_str(), "CUSTOM",
                              ctx.inlets.curve_id[u].c_str());
             else // SLOTTED (and any type string carried through verbatim)
-                std::fprintf(f, "%-16s %-12s %10.4f %10.4f\n", name.c_str(), t.c_str(),
+                std::fprintf(f, "%-16s %-12s %.17g %.17g\n", name.c_str(), t.c_str(),
                              ctx.inlets.length[u], ctx.inlets.width[u]);
         }
     }
@@ -3962,7 +3994,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             int pl = ctx.inlet_usages.placement[u];
             if (pl < 0 || pl > 2)
                 pl = 0;
-            std::fprintf(f, "%-16s %-16s %-16s %8d %8.4g %10.4g %10.4g %10.4g %-10s\n",
+            std::fprintf(f, "%-16s %-16s %-16s %8d %.17g %.17g %.17g %.17g %-10s\n",
                          ctx.link_names.name_of(li).c_str(),
                          ctx.inlets.names[static_cast<size_t>(di)].c_str(),
                          ctx.node_names.name_of(ni).c_str(), ctx.inlet_usages.num_inlets[u],
@@ -4034,12 +4066,17 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             if (ctx.pollutants.units[u] == MassUnits::COUNTS_PER_L)
                 un = "#/L";
             std::fprintf(
-                f, "%-16s %-8s %10.4f %10.4f %10.4f %10.4f %-10s %-16s %10.4f %10.4f %10.4f\n",
+                f, "%-16s %-8s %.17g %.17g %.17g %.17g %-10s %-16s %.17g %.17g %.17g",
                 pN(ctx, p), un, ctx.pollutants.c_rain[u], ctx.pollutants.c_gw[u],
                 ctx.pollutants.c_rdii[u], ctx.pollutants.k_decay[u] * constants::SEC_PER_DAY,
                 ctx.pollutants.snow_only[u] ? "YES" : "NO",
                 ctx.pollutants.co_pollut[u] >= 0 ? pN(ctx, ctx.pollutants.co_pollut[u]) : "*",
                 ctx.pollutants.co_frac[u], ctx.pollutants.c_dwf[u], ctx.pollutants.init_conc[u]);
+            if (!swmm5)
+                std::fprintf(f, " %.17g", ctx.pollutants.mwt[u]);
+            else if (ctx.pollutants.mwt[u] != 1.0)
+                note("Pollutant " + ctx.pollutant_names.name_of(p) + ": molecular weight omitted (SWMM 5.x profile)");
+            std::fprintf(f, "\n");
         }
     }
 
@@ -4069,7 +4106,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             else
                 en = (ei >= 0 && ei < ctx.n_nodes()) ? ctx.node_names.name_of(ei).c_str()
                                                      : iq.elem_name[u].c_str();
-            std::fprintf(f, "%-8s %-16s %-16s %10.4f\n", link ? "LINK" : "NODE", en,
+            std::fprintf(f, "%-8s %-16s %-16s %.17g\n", link ? "LINK" : "NODE", en,
                          iq.constituent[u].c_str(), iq.value[u]);
         }
     }
@@ -4084,7 +4121,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         for (int j = 0; j < ctx.n_landuses(); ++j) {
             auto u = static_cast<size_t>(j);
             write_obj_comment(f, ctx.landuses.comments, u);
-            std::fprintf(f, "%-16s %12.2f %12.2f %12.2f\n", ctx.landuse_names.name_of(j).c_str(),
+            std::fprintf(f, "%-16s %.17g %.17g %.17g\n", ctx.landuse_names.name_of(j).c_str(),
                          ctx.landuses.sweep_interval[u], ctx.landuses.sweep_removal[u],
                          ctx.landuses.last_swept[u]);
         }
@@ -4113,7 +4150,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                     const double pct = ctx.subcatches.coverage[idx];
                     if (pct == 0.0)
                         continue;
-                    std::fprintf(f, "%-16s %-16s %10.4f\n", ctx.subcatch_names.name_of(s).c_str(),
+                    std::fprintf(f, "%-16s %-16s %.17g\n", ctx.subcatch_names.name_of(s).c_str(),
                                  ctx.landuse_names.name_of(lu).c_str(), pct);
                 }
             }
@@ -4149,7 +4186,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 int ft = ctx.buildup.func_type[idx];
                 if (ft == 0)
                     continue;
-                std::fprintf(f, "%-16s %-16s %-10s %10.4f %10.4f %10.4f %-8s\n",
+                std::fprintf(f, "%-16s %-16s %-10s %.17g %.17g %.17g %-8s\n",
                              ctx.landuse_names.name_of(lu).c_str(), pN(ctx, p),
                              (ft >= 0 && ft <= 4) ? buNames[ft] : "NONE", ctx.buildup.coeff1[idx],
                              ctx.buildup.coeff2[idx], ctx.buildup.coeff3[idx],
@@ -4172,12 +4209,12 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                         (ts >= 0 && ts < static_cast<int>(ctx.tables.tables.size()))
                             ? ctx.tables.tables[static_cast<std::size_t>(ts)].id
                             : std::string{"*"};
-                    std::fprintf(f, "%-16s %-16s %-10s %10.4f %10.4f %-10s %-8s\n",
+                    std::fprintf(f, "%-16s %-16s %-10s %.17g %.17g %-10s %-8s\n",
                                  ctx.landuse_names.name_of(lu).c_str(), sp.c_str(), "EXT",
                                  msxs.bu_c1[idx], msxs.bu_c2[idx], tsn.c_str(),
                                  msxs.bu_normalizer[idx] == 0 ? "AREA" : "CURB");
                 } else {
-                    std::fprintf(f, "%-16s %-16s %-10s %10.4f %10.4f %10.4f %-8s\n",
+                    std::fprintf(f, "%-16s %-16s %-10s %.17g %.17g %.17g %-8s\n",
                                  ctx.landuse_names.name_of(lu).c_str(), sp.c_str(),
                                  (ft >= 0 && ft <= 4) ? buNames[ft] : "NONE", msxs.bu_c1[idx],
                                  msxs.bu_c2[idx], msxs.bu_c3[idx],
@@ -4202,7 +4239,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 int ft = ctx.washoff.func_type[idx];
                 if (ft == 0)
                     continue;
-                std::fprintf(f, "%-16s %-16s %-10s %10.4f %10.4f %10.2f %10.2f\n",
+                std::fprintf(f, "%-16s %-16s %-10s %.17g %.17g %.17g %.17g\n",
                              ctx.landuse_names.name_of(lu).c_str(), pN(ctx, p),
                              (ft >= 0 && ft <= 3) ? woNames[ft] : "NONE", ctx.washoff.coeff[idx],
                              ctx.washoff.expon[idx], ctx.washoff.sweep_effic[idx],
@@ -4219,7 +4256,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                     (static_cast<std::size_t>(m) < ctx.reactions.species_name.size())
                         ? ctx.reactions.species_name[static_cast<std::size_t>(m)]
                         : std::string{};
-                std::fprintf(f, "%-16s %-16s %-10s %10.4f %10.4f %10.2f %10.2f\n",
+                std::fprintf(f, "%-16s %-16s %-10s %.17g %.17g %.17g %.17g\n",
                              ctx.landuse_names.name_of(lu).c_str(), sp.c_str(),
                              (ft >= 0 && ft <= 3) ? woNames[ft] : "NONE", msxs.wo_coeff[idx],
                              msxs.wo_expon[idx], msxs.wo_sweep_effic[idx], msxs.wo_bmp_effic[idx]);
@@ -4257,7 +4294,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                         const double w = ctx.subcatches.init_loading[idx];
                         if (w == 0.0)
                             continue;
-                        std::fprintf(f, "%-16s %-16s %10.4f\n",
+                        std::fprintf(f, "%-16s %-16s %.17g\n",
                                      ctx.subcatch_names.name_of(s).c_str(), pN(ctx, p), w);
                     }
                 }
@@ -4273,7 +4310,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                             (static_cast<std::size_t>(m) < ctx.reactions.species_name.size())
                                 ? ctx.reactions.species_name[static_cast<std::size_t>(m)]
                                 : std::string{};
-                        std::fprintf(f, "%-16s %-16s %10.4f\n",
+                        std::fprintf(f, "%-16s %-16s %.17g\n",
                                      ctx.subcatch_names.name_of(s).c_str(), sp.c_str(), w);
                     }
                 }
@@ -4308,7 +4345,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         for (int j = 0; j < ctx.ext_inflows.count(); ++j) {
             auto u = static_cast<size_t>(j);
             std::fprintf(
-                f, "%-16s %-16s %-16s %-16s %10.4f %10.4f %10.4f %-16s\n",
+                f, "%-16s %-16s %-16s %-16s %.17g %.17g %.17g %-16s\n",
                 nN(ctx, ctx.ext_inflows.node_idx[u]), ctx.ext_inflows.constituent[u].c_str(),
                 ctx.ext_inflows.ts_name[u].empty() ? "\"\"" : ctx.ext_inflows.ts_name[u].c_str(),
                 ctx.ext_inflows.inflow_type[u].c_str(), ctx.ext_inflows.m_factor[u],
@@ -4329,8 +4366,8 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         for (int j = 0; j < ctx.dwf_inflows.count(); ++j) {
             auto u = static_cast<size_t>(j);
             // Full precision on the average value: DWF base flows are small (~1e-4 m3/s)
-            // with many significant figures; %.6f truncation shifts the base sewage load.
-            std::fprintf(f, "%-16s %-16s %.15g", nN(ctx, ctx.dwf_inflows.node_idx[u]),
+            // with many significant figures; fixed-decimal truncation shifts the base sewage load.
+            std::fprintf(f, "%-16s %-16s %.17g", nN(ctx, ctx.dwf_inflows.node_idx[u]),
                          ctx.dwf_inflows.constituent[u].c_str(), ctx.dwf_inflows.avg_value[u]);
             if (!ctx.dwf_inflows.pat1[u].empty())
                 std::fprintf(f, " %-16s", ctx.dwf_inflows.pat1[u].c_str());
@@ -4352,7 +4389,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                      "------------");
         for (int j = 0; j < ctx.rdii_assigns.count(); ++j) {
             auto u = static_cast<size_t>(j);
-            std::fprintf(f, "%-16s %-16s %12.4f\n", nN(ctx, ctx.rdii_assigns.node_idx[u]),
+            std::fprintf(f, "%-16s %-16s %.17g\n", nN(ctx, ctx.rdii_assigns.node_idx[u]),
                          ctx.rdii_assigns.uh_name[u].c_str(), ctx.rdii_assigns.sewer_area[u]);
         }
     }
@@ -4376,10 +4413,10 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         static const char* uhResp[] = {"SHORT", "MEDIUM", "LONG"};
         for (const auto& e : ctx.unit_hyds.entries) {
             const char* mon = (e.month < 0) ? "ALL" : uhMonths[e.month];
-            std::fprintf(f, "%-16s %-9s %-8s %8.4f %8.4f %8.4f", e.name.c_str(), mon,
+            std::fprintf(f, "%-16s %-9s %-8s %.17g %.17g %.17g", e.name.c_str(), mon,
                          uhResp[e.response], e.r, e.t, e.k);
             if (e.dmax > 0.0 || e.drecov > 0.0 || e.dinit > 0.0)
-                std::fprintf(f, " %8.4f %8.4f %8.4f", e.dmax, e.drecov, e.dinit);
+                std::fprintf(f, " %.17g %.17g %.17g", e.dmax, e.drecov, e.dinit);
             std::fprintf(f, "\n");
         }
     }
@@ -4399,11 +4436,11 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         static const char* decayResp[] = {"SHORT", "MEDIUM", "LONG"};
         for (const auto& e : ctx.rdii_decay.entries) {
             const char* r = (e.response >= 0 && e.response <= 2) ? decayResp[e.response] : "SHORT";
-            std::fprintf(f, "%-16s %-8s %10.5f %10.5f %10.5f %8.2f %10.5f %10.5f",
+            std::fprintf(f, "%-16s %-8s %.17g %.17g %.17g %.17g %.17g %.17g",
                          e.uh_name.c_str(), r, e.k_dep, e.k_0, e.k_T, e.T_ref, e.theta_rec,
                          e.T_freeze);
             if (e.snow_on)
-                std::fprintf(f, " SNOW %8.2f %10.5f", e.snow_T, e.snow_ddf);
+                std::fprintf(f, " SNOW %.17g %.17g", e.snow_T, e.snow_ddf);
             std::fprintf(f, "\n");
         }
     }
@@ -4422,13 +4459,13 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             // First line: name + type + first batch of values
             std::fprintf(f, "%-16s %-12s", ctx.patterns.names[u].c_str(), ptn);
             for (size_t k = 0; k < facs.size() && k < 6; ++k)
-                std::fprintf(f, " %10.4f", facs[k]);
+                std::fprintf(f, " %.17g", facs[k]);
             std::fprintf(f, "\n");
             // Continuation lines (6 values per line)
             for (size_t k = 6; k < facs.size(); k += 6) {
                 std::fprintf(f, "%-16s            ", ctx.patterns.names[u].c_str());
                 for (size_t m = k; m < facs.size() && m < k + 6; ++m)
-                    std::fprintf(f, " %10.4f", facs[m]);
+                    std::fprintf(f, " %.17g", facs[m]);
                 std::fprintf(f, "\n");
             }
         }
@@ -4482,7 +4519,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 // from x-value magnitude (the old x[0]-start heuristic rewrote a series
                 // the user authored WITH dates near the start date as elapsed times,
                 // silently re-basing that data onto START_DATE).
-                char dateBuf[16], timeBuf[12];
+                char dateBuf[16], timeBuf[64];
                 for (size_t k = 0; k < tb.x.size(); ++k) {
                     const bool relative = static_cast<int>(k) < tb.n_relative;
                     if (relative) {
@@ -4490,20 +4527,13 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                         // Round to whole seconds first so 0.99999998 days prints as
                         // 24:00 and not the truncated-then-rounded "23:60".
                         const double xv = tb.x[k] - tb.rel_anchor;
-                        const long long totalSecs = std::llround(xv * 86400.0);
-                        const long long hh = totalSecs / 3600;
-                        const int mm = static_cast<int>((totalSecs / 60) % 60);
-                        const int ss = static_cast<int>(totalSecs % 60);
-                        if (ss)
-                            std::fprintf(f, "%-16s %lld:%02d:%02d %12.6f\n", tN(ctx, t), hh, mm, ss,
-                                         tb.y[k]);
-                        else
-                            std::fprintf(f, "%-16s %lld:%02d %12.6f\n", tN(ctx, t), hh, mm,
-                                         tb.y[k]);
+                        char elapsed[64];
+                        fmt_elapsed(elapsed, xv * 86400.0, tb.x[k], true);
+                        std::fprintf(f, "%-16s %s %.17g\n", tN(ctx, t), elapsed, tb.y[k]);
                     } else {
                         fmt_date(dateBuf, tb.x[k]);
                         fmt_time(timeBuf, tb.x[k]);
-                        std::fprintf(f, "%-16s %-12s %-8s %12.6f\n", tN(ctx, t), dateBuf, timeBuf,
+                        std::fprintf(f, "%-16s %-12s %-8s %.17g\n", tN(ctx, t), dateBuf, timeBuf,
                                      tb.y[k]);
                     }
                 }
@@ -4547,10 +4577,10 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 // "Name X Y". Legacy SWMM reads a repeated type on a later row as the
                 // X-value → ERROR 211 (invalid number).
                 // Full precision on the ordinates: a storage or pump curve IS the node's
-                // geometry or the pump's operating point, and %12.6f silently rounded both
+                // geometry or the pump's operating point, and the former fixed-decimal format rounded both
                 // on every save.
                 for (size_t k = 0; k < tb.x.size(); ++k)
-                    std::fprintf(f, "%-16s %-12s %12.15g %12.15g\n", tN(ctx, t),
+                    std::fprintf(f, "%-16s %-12s %.17g %.17g\n", tN(ctx, t),
                                  (k == 0 ? lbl : ""), tb.x[k], tb.y[k]);
             }
         }
@@ -4583,7 +4613,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         if (has_spatial) {
             // [MAP] first — legacy writes this before coordinates
             sec(f, "MAP");
-            std::fprintf(f, "DIMENSIONS %-18.4f %-18.4f %-18.4f %-18.4f\n", ctx.spatial.map_x1,
+            std::fprintf(f, "DIMENSIONS %.17g %.17g %.17g %.17g\n", ctx.spatial.map_x1,
                          ctx.spatial.map_y1, ctx.spatial.map_x2, ctx.spatial.map_y2);
             // "Units" (mixed case) matches legacy GUI keyword exactly. The VALUE is
             // written in the legacy GUI's mixed case too, mapped from the parser's
@@ -4604,7 +4634,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         }
 
         // [COORDINATES] — all nodes (junctions, outfalls, dividers, storage)
-        // Column layout: %-16s name | %-18.4f X | %-18.4f Y  (matches legacy Fmt)
+        // Column layout: %-16s name | %.17g X | %.17g Y  (matches legacy Fmt)
         if (has_nodes) {
             sec(f, "COORDINATES");
             std::fprintf(f, ";;%-14s %-18s %-18s\n", "Node", "X-Coord", "Y-Coord");
@@ -4613,7 +4643,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             for (int j = 0; j < ctx.n_nodes(); ++j) {
                 auto u = static_cast<size_t>(j);
                 if (u < ctx.spatial.node_x.size())
-                    std::fprintf(f, "%-16s %-18.4f %-18.4f\n", ctx.node_names.name_of(j).c_str(),
+                    std::fprintf(f, "%-16s %.17g %.17g\n", ctx.node_names.name_of(j).c_str(),
                                  ctx.spatial.node_x[u], ctx.spatial.node_y[u]);
             }
         }
@@ -4631,7 +4661,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 const auto& vx = ctx.spatial.link_vertices_x[u];
                 const auto& vy = ctx.spatial.link_vertices_y[u];
                 for (size_t k = 0; k < vx.size(); ++k)
-                    std::fprintf(f, "%-16s %-18.4f %-18.4f\n", ctx.link_names.name_of(j).c_str(),
+                    std::fprintf(f, "%-16s %.17g %.17g\n", ctx.link_names.name_of(j).c_str(),
                                  vx[k], vy[k]);
             }
         }
@@ -4652,7 +4682,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 const auto& px = ctx.spatial.subcatch_polygon_x[u];
                 const auto& py = ctx.spatial.subcatch_polygon_y[u];
                 for (size_t k = 0; k < px.size(); ++k)
-                    std::fprintf(f, "%-16s %-18.4f %-18.4f\n",
+                    std::fprintf(f, "%-16s %.17g %.17g\n",
                                  ctx.subcatch_names.name_of(j).c_str(), px[k], py[k]);
             }
         }
@@ -4666,7 +4696,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             for (int j = 0; j < ctx.n_gages(); ++j) {
                 auto u = static_cast<size_t>(j);
                 if (u < ctx.spatial.gage_x.size())
-                    std::fprintf(f, "%-16s %-18.4f %-18.4f\n", ctx.gage_names.name_of(j).c_str(),
+                    std::fprintf(f, "%-16s %.17g %.17g\n", ctx.gage_names.name_of(j).c_str(),
                                  ctx.spatial.gage_x[u], ctx.spatial.gage_y[u]);
             }
         }
@@ -4781,7 +4811,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             else if (std::holds_alternative<int>(v))
                 std::fprintf(f, "%d\n", std::get<int>(v));
             else if (std::holds_alternative<double>(v))
-                std::fprintf(f, "%g\n", std::get<double>(v));
+                std::fprintf(f, "%.17g\n", std::get<double>(v));
             else if (std::holds_alternative<std::string>(v)) {
                 const auto& s = std::get<std::string>(v);
                 if (s.find(' ') != std::string::npos)
@@ -4890,7 +4920,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                     emit_path_token(pc.config_path, dst_dir, force_abs_paths, warnings);
                 std::fprintf(f, " config=\"%s\"", cfg.c_str());
 
-                if (!writeComponentConfig(ctx, pc, cfg, dst_dir, warnings, opts))
+                if (!opts.skip_component_files && !writeComponentConfig(ctx, pc, cfg, dst_dir, warnings, opts))
                     return -1;
             }
             for (const auto& a : pc.args)
@@ -4899,26 +4929,20 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         }
     }
 
-    // Embedded component sections ([REACTION_*] today) are NOT serialized —
-    // there is no per-component saveData() until IO3, and the intended layout
-    // is an external config file anyway. Say so rather than dropping
-    // user-authored model data silently: whether they were applied or
-    // overridden by an external file, they are gone from the deck we just
-    // wrote.
-    if (warnings && !ctx.embedded_component_sections.empty()) {
-        std::string tags;
-        for (const auto& es : ctx.embedded_component_sections) {
-            if (!tags.empty())
-                tags += ", ";
-            tags += "[" + es.first + "]";
+    if (!swmm5) {
+        bool wroteReactions = false;
+        for (const auto& section : ctx.embedded_component_sections) {
+            if (section.first.starts_with("REACTION_") && ctx.reactions.n_species() > 0) {
+                if (!wroteReactions) {
+                    const auto text = transport::serializeReactionSystem(ctx);
+                    std::fprintf(f, "%s", text.c_str());
+                    wroteReactions = true;
+                }
+                continue;
+            }
+            sec(f, section.first.c_str());
+            for (const auto& line : section.second) std::fprintf(f, "%s\n", line.c_str());
         }
-        warnings->push_back(
-            "Embedded component sections are NOT written back to the .inp and are "
-            "lost from this save: " +
-            tags +
-            ". Move them to an external component "
-            "config file registered in [PROCESS_COMPONENTS] (config=\"model.rxn\") "
-            "to keep them — per-component serialization arrives with plan phase IO3.");
     }
 
     // [2D_*] — 2D surface-routing model definition (no-op for 1D models
@@ -4945,11 +4969,56 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
     }
     if (!swmm5 && !write2DSections(f, ctx, dst_dir, force_abs_paths, warnings, opts))
         return -1;
-    if (!output.commit()) {
-        note(output.error());
+    if (output && !output->commit()) {
+        note(output->error());
         return -1;
     }
     return 0;
+}
+
+std::string modelText(const SimulationContext& ctx, const std::string& anchor, bool internal_units) {
+    std::unique_ptr<FILE, decltype(&std::fclose)> file(std::tmpfile(), &std::fclose);
+    if (!file)
+        throw std::runtime_error("Cannot create native model serialization stream");
+    // Data-level importers may supply sparse optional parallel columns. Complete
+    // a copy in that case; ordinary API models avoid this extra allocation.
+    std::unique_ptr<SimulationContext> completed;
+    const bool sparse = ctx.nodes.comments.size() < std::size_t(ctx.n_nodes()) ||
+        ctx.links.direction.size() < std::size_t(ctx.n_links()) ||
+        ctx.subcatches.snowpack_name.size() < std::size_t(ctx.n_subcatches()) ||
+        ctx.gages.scale_factor.size() < std::size_t(ctx.gage_names.size()) ||
+        ctx.pollutants.mwt.size() < std::size_t(ctx.n_pollutants());
+    if (sparse) {
+        completed = std::make_unique<SimulationContext>(ctx);
+        auto grow = [](auto& store, auto& primary, int count) {
+            auto values = std::move(primary);
+            primary.clear(); store.grow_to(count);
+            std::copy_n(values.begin(), std::min(values.size(), primary.size()), primary.begin());
+        };
+        grow(completed->nodes, completed->nodes.type, ctx.n_nodes());
+        grow(completed->links, completed->links.type, ctx.n_links());
+        grow(completed->subcatches, completed->subcatches.area, ctx.n_subcatches());
+        grow(completed->gages, completed->gages.source, ctx.gage_names.size());
+        completed->pollutants.mwt.resize(ctx.n_pollutants(), 1.0);
+        completed->pollutants.comments.resize(ctx.n_pollutants());
+    }
+    InpWriteOptions options;
+    options.stream = file.get();
+    options.inline_mesh = true;
+    options.internal_units = internal_units;
+    options.skip_component_files = true;
+    std::vector<std::string> warnings;
+    if (writeInpFile(completed ? *completed : ctx, anchor, &warnings, options) != 0 || std::fflush(file.get()) != 0)
+        throw std::runtime_error(warnings.empty() ? "Cannot serialize native model" : warnings.back());
+    std::rewind(file.get());
+    std::string text;
+    char buffer[16384];
+    std::size_t count;
+    while ((count = std::fread(buffer, 1, sizeof buffer, file.get())) != 0)
+        text.append(buffer, count);
+    if (std::ferror(file.get()))
+        throw std::runtime_error("Cannot read native model serialization stream");
+    return text;
 }
 
 } // namespace inp_writer
