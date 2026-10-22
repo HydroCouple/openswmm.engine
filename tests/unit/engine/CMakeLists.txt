@@ -647,6 +647,30 @@ if(OPENSWMM_BUILD_2D)
     target_compile_definitions(test_engine_2d_bc_units PRIVATE
         OPENSWMM_BC_UNITS_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
     if(OPENSWMM_2D_HDF5_OUTPUT)
+    # Live output reads, open-handle replacement, rollback and HDF5 interoperability.
+    # Compile the helpers here so access-property IDs and HDF5 calls use one
+    # library instance even when the engine embeds a separate static HDF5 copy.
+    add_executable(test_checkpoint_output_io test_checkpoint_output_io.cpp
+        ${PROJECT_SOURCE_DIR}/src/engine/io/CheckpointOutputPublication.cpp
+        ${PROJECT_SOURCE_DIR}/src/engine/io/CheckpointFile.cpp
+        ${PROJECT_SOURCE_DIR}/src/engine/io/CheckpointHdf5.cpp)
+    target_link_libraries(test_checkpoint_output_io PRIVATE GTest::gtest_main)
+    target_include_directories(test_checkpoint_output_io PRIVATE ${PROJECT_SOURCE_DIR}/src/engine)
+    set_target_properties(test_checkpoint_output_io PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY})
+    add_test(NAME test_checkpoint_output_io COMMAND $<TARGET_FILE:test_checkpoint_output_io>)
+    set_tests_properties(test_checkpoint_output_io PROPERTIES LABELS "unit")
+    target_compile_definitions(test_checkpoint_output_io PRIVATE
+        CHECKPOINT_OUTPUT_IO_DIR="${CMAKE_CURRENT_BINARY_DIR}/checkpoint-output-io")
+    if(TARGET hdf5::hdf5-shared)
+        target_link_libraries(test_checkpoint_output_io PRIVATE hdf5::hdf5-shared)
+    elseif(TARGET hdf5::hdf5-static)
+        target_link_libraries(test_checkpoint_output_io PRIVATE hdf5::hdf5-static)
+    else()
+        target_link_libraries(test_checkpoint_output_io PRIVATE ${HDF5_C_LIBRARIES})
+        target_include_directories(test_checkpoint_output_io PRIVATE ${HDF5_INCLUDE_DIRS})
+    endif()
+    openswmm_stage_test_runtime_deps(test_checkpoint_output_io)
     # Results-file size controls ([2D_OPTIONS] OUTPUT_PRECISION /
     # OUTPUT_COMPRESSION / REPORT_2D_VARIABLES / REPORT_2D_SPECIES /
     # REPORT_2D_STEP): grammar + C API round trip, float32 storage, unselected

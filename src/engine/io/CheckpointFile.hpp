@@ -24,8 +24,10 @@ struct OwnedCheckpointFile {
 };
 /// Copy exactly a known prefix; validate the copy again before publication.
 /// Exclusive creation and ownership ensure failures cannot remove other files.
+/// A supplied descriptor is borrowed from a flushed, exclusively held writer;
+/// its position is preserved, avoiding a second handle under mandatory locks.
 std::shared_ptr<OwnedCheckpointFile> copyCheckpointFile(const std::filesystem::path& source,
-    uint64_t bytes,const std::filesystem::path& staging_base);
+    uint64_t bytes,const std::filesystem::path& staging_base, int source_descriptor = -1);
 uint64_t checkpointFileSize(const std::filesystem::path&);
 void checkpointSeek(FILE*,uint64_t);
 }

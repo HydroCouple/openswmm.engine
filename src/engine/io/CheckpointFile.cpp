@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "CheckpointFile.hpp"
+#include "CheckpointOutputPublication.hpp"
 #include "../core/CompletedSourceArchive.hpp"
 #include "../core/FileIO.hpp"
 #include <algorithm>
@@ -18,10 +19,23 @@ void require(bool ok,const char* message){if(!ok)throw std::runtime_error(messag
 constexpr uint64_t seed=14695981039346656037ULL;
 uint64_t hash(uint64_t h,const char* data,std::size_t n){for(std::size_t i=0;i<n;++i){h^=static_cast<unsigned char>(data[i]);h*=1099511628211ULL;}return h;}
 struct File {FILE* f;~File(){if(f)std::fclose(f);}};
-uint64_t prefixHash(FILE* f,uint64_t bytes,FILE* out=nullptr) {
-    std::array<char,64*1024> buffer{};uint64_t h=seed;
-    while(bytes) {const auto n=std::min(bytes,uint64_t(buffer.size()));require(std::fread(buffer.data(),1,n,f)==n,"Checkpoint companion is truncated or unreadable.");
-        h=hash(h,buffer.data(),n);if(out)require(std::fwrite(buffer.data(),1,n,out)==n,"Cannot copy checkpoint companion.");bytes-=n;}
+uint64_t prefixHash(FILE* f, uint64_t bytes, FILE* out = nullptr, int descriptor = -1) {
+    std::array<char, 64 * 1024> buffer{};
+    uint64_t h = seed, offset = 0;
+    while (bytes) {
+        const auto n = std::min(bytes, uint64_t(buffer.size()));
+        if (descriptor >= 0)
+            checkpointReadOutput(descriptor, offset, buffer.data(), n);
+        else
+            require(std::fread(buffer.data(), 1, n, f) == n,
+                    "Checkpoint companion is truncated or unreadable.");
+        offset += n;
+        h = hash(h, buffer.data(), n);
+        if (out)
+            require(std::fwrite(buffer.data(), 1, n, out) == n,
+                    "Cannot copy checkpoint companion.");
+        bytes -= n;
+    }
     return h;
 }
 }
@@ -44,12 +58,12 @@ CheckpointFile CheckpointFile::decode(std::string bytes) {
 }
 void CheckpointFile::verify() const {require(checkpointFileSize(path)==bytes,"Checkpoint companion size changed.");File f{fopen_path(path,"rb")};require(f.f,"Cannot open checkpoint companion.");require(prefixHash(f.f,bytes)==fingerprint,"Checkpoint companion fingerprint differs.");}
 OwnedCheckpointFile::~OwnedCheckpointFile(){if(owned){std::error_code ec;std::filesystem::remove(file.path,ec);}}
-std::shared_ptr<OwnedCheckpointFile> copyCheckpointFile(const std::filesystem::path& source,uint64_t bytes,const std::filesystem::path& base) {
-    require(bytes>0 && bytes<=checkpointFileSize(source),"Checkpoint prefix size differs.");File in{fopen_path(source,"rb")};require(in.f,"Cannot read checkpoint prefix.");
+std::shared_ptr<OwnedCheckpointFile> copyCheckpointFile(const std::filesystem::path& source,uint64_t bytes,const std::filesystem::path& base, int source_descriptor) {
+    require(bytes>0 && bytes<=checkpointFileSize(source),"Checkpoint prefix size differs.");File in{source_descriptor < 0 ? fopen_path(source,"rb") : nullptr};require(source_descriptor >= 0 || in.f,"Cannot read checkpoint prefix.");
     auto copy=std::make_shared<OwnedCheckpointFile>();copy->owned=false;File out{nullptr};static std::atomic<uint64_t> serial{0};
     for(int k=0;k<32 && !out.f;++k){copy->file.path=base;copy->file.path+=".file-part-"+std::to_string(++serial);out.f=fopen_path(copy->file.path,"wbx");}
     require(out.f,"Cannot create exclusive checkpoint companion.");copy->owned=true;copy->file.bytes=bytes;
-    copy->file.fingerprint=prefixHash(in.f,bytes,out.f);require(std::fflush(out.f)==0 && !std::ferror(out.f),"Cannot flush checkpoint companion.");
+    copy->file.fingerprint=prefixHash(in.f,bytes,out.f,source_descriptor);require(std::fflush(out.f)==0 && !std::ferror(out.f),"Cannot flush checkpoint companion.");
 #ifdef _WIN32
     require(_commit(_fileno(out.f))==0,"Cannot synchronize checkpoint companion.");
 #else

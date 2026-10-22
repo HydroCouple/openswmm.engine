@@ -5,9 +5,15 @@
 #include <cstdio>
 #include <string>
 #include <vector>
+#include <cstdint>
+#include <cstddef>
 
 namespace openswmm::io {
 int checkpointFileDescriptor(FILE*) noexcept;
+/// Read an exact range through a borrowed, seekable writer descriptor, restoring
+/// its position on success or failure. Required for Windows mandatory HDF5 locks.
+/// Call only while the writer is flushed and exclusively held by the caller.
+void checkpointReadOutput(int descriptor, uint64_t offset, char* data, std::size_t bytes);
 // Create exclusively, or reopen without truncation, with rename sharing.
 FILE* checkpointOpenOutput(const std::filesystem::path&, bool existing = false);
 // Internal checkpoint publication. Writers remain on their old handles until

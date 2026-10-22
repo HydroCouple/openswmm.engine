@@ -11,6 +11,7 @@
 #include "Default2DOutputPlugin.hpp"
 #include "../../io/Hdf5Mutex.hpp"
 #include "../../io/Hdf5ObjectCreation.hpp"
+#include "../../io/CheckpointHdf5.hpp"
 #include "../subsurface/SourceResultHistory.hpp"
 #include "../subsurface/SubsurfaceData.hpp"   // G-O: the aquifer ledger at finalize
 #include "../../core/SimulationContext.hpp"
@@ -214,8 +215,7 @@ void Default2DOutputPlugin::writeMeshTopology(const SimulationContext& ctx) {
 int Default2DOutputPlugin::prepare(const SimulationContext& ctx) {
     std::lock_guard<std::recursive_mutex> lock(io::resultHdf5Mutex());
     // Create HDF5 file (truncate if exists)
-    file_id_ = io::createHdf5File(h5_path_.c_str(), checkpoint_fresh_ ? H5F_ACC_EXCL : H5F_ACC_TRUNC,
-                        H5P_DEFAULT, H5P_DEFAULT);
+    file_id_ = io::createCheckpointHdf5(h5_path_.c_str(), checkpoint_fresh_ ? H5F_ACC_EXCL : H5F_ACC_TRUNC);
     if (file_id_ < 0) {
         last_error_ = "Default2DOutputPlugin: cannot create file '" + h5_path_ + "'";
         state_ = PluginState::ERROR;

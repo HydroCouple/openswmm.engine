@@ -7,6 +7,7 @@
 #include "../../core/DateTime.hpp"
 #include "../../core/FileIO.hpp"
 #include "../../io/Hdf5Mutex.hpp"
+#include "../../io/CheckpointHdf5.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../data/Report2DVars.hpp"
 #include <algorithm>
@@ -28,12 +29,11 @@ struct Handle {
     hid_t id; herr_t (*close)(hid_t);
     ~Handle() { if (id >= 0) close(id); }
 };
-std::string readFile(const std::filesystem::path& path) {
+std::string readFile(const std::filesystem::path& path, int descriptor) {
     std::error_code ec; const auto size = std::filesystem::file_size(path, ec);
     require(!ec && size > 0 && size <= maxBytes, "Mesh result prefix is missing or exceeds its checkpoint limit.");
-    std::ifstream in(path, std::ios::binary); std::string bytes(size, '\0');
-    in.read(bytes.data(), bytes.size());
-    require(bool(in) && in.peek() == std::char_traits<char>::eof(), "Cannot read mesh result prefix.");
+    std::string bytes(size, '\0');
+    io::checkpointReadOutput(descriptor, 0, bytes.data(), bytes.size());
     return bytes;
 }
 hid_t openImage(const std::string& bytes) {
@@ -208,7 +208,7 @@ std::string Default2DOutputPlugin::fileBytes() const {
     // Settle that EOF/superblock update before capturing bytes, so another
     // read-only checkpoint does not invalidate the exact fresh-header guard.
     require(!checkpoint_write_failed_ && file_id_ >= 0 && H5Fflush(file_id_, H5F_SCOPE_GLOBAL) >= 0 && H5Fflush(file_id_, H5F_SCOPE_GLOBAL) >= 0, "Cannot flush mesh results.");
-    return readFile(io::utf8_path(h5_path_));
+    return readFile(io::utf8_path(h5_path_), io::checkpointHdf5Descriptor(file_id_));
 }
 
 void Default2DOutputPlugin::validateCheckpoint(hid_t file, const SimulationContext& ctx,
@@ -337,7 +337,7 @@ std::shared_ptr<Default2DOutputPlugin::PreparedCheckpoint> Default2DOutputPlugin
     require(stream, "Cannot create staged mesh result prefix.");
     const bool wrote = std::fwrite(prefix.data(), 1, prefix.size(), stream) == prefix.size(); const bool closed = std::fclose(stream) == 0;
     require(wrote && closed, "Cannot stage mesh result prefix.");
-    result->file = H5Fopen(result->staging.string().c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+    result->file = io::openCheckpointHdf5(io::path_utf8(result->staging).c_str(), H5F_ACC_RDWR);
     require(result->file >= 0, "Cannot reopen staged mesh result prefix.");
     validateCheckpoint(result->file, ctx, next_report_ms, snap, result->steps, result->next_due, result->groundwater);
     resolveCheckpointDatasets(*result,snap);
@@ -391,7 +391,7 @@ std::string Default2DOutputPlugin::captureFileCheckpoint(const SimulationContext
     {std::lock_guard<std::mutex> source_lock(source_mutex_);require(source_pending_.empty()&&!source_written_,"File checkpoint uses its separate full source stream.");}
     require(!checkpoint_write_failed_&&file_id_>=0&&H5Lexists(file_id_,"source_history",H5P_DEFAULT)==0&&H5Fflush(file_id_,H5F_SCOPE_GLOBAL)>=0,"Cannot settle mesh file checkpoint or embedded source history.");
     validateCheckpoint(file_id_,ctx,next,snap,n_steps_,next_due_days_,gw_created_);
-    const auto path=io::utf8_path(h5_path_);auto copy=io::copyCheckpointFile(path,io::checkpointFileSize(path),base);
+    const auto path=io::utf8_path(h5_path_);auto copy=io::copyCheckpointFile(path,io::checkpointFileSize(path),base,io::checkpointHdf5Descriptor(file_id_));
     detail::CompletedSourceArchive a;uint32_t version=1;auto step=report_2d_step_days_;auto descriptor=copy->file.encode();a(version,step,n_steps_,next_due_days_,gw_created_,descriptor);artifact=std::move(copy);return a.bytes();
 }
 std::shared_ptr<Default2DOutputPlugin::PreparedCheckpoint> Default2DOutputPlugin::prepareFileCheckpoint(const SimulationContext& ctx,
@@ -403,17 +403,14 @@ std::shared_ptr<Default2DOutputPlugin::PreparedCheckpoint> Default2DOutputPlugin
     a(version,step,result->steps,result->next_due,result->groundwater,descriptor);a.finish();require(version==1&&step==report_2d_step_days_,"Mesh file checkpoint version or cadence differs.");
     auto saved=io::CheckpointFile::decode(std::move(descriptor));saved.verify();result->file_copy=io::copyCheckpointFile(saved.path,saved.bytes,io::utf8_path(h5_path_));
     require(result->file_copy->file.fingerprint==saved.fingerprint,"Mesh companion changed during copying.");result->staging=result->file_copy->file.path;
-    result->file=H5Fopen(result->staging.string().c_str(),H5F_ACC_RDWR,H5P_DEFAULT);require(result->file>=0&&H5Lexists(result->file,"source_history",H5P_DEFAULT)==0,"Mesh file checkpoint contains unsupported embedded history.");
+    result->file=io::openCheckpointHdf5(io::path_utf8(result->staging).c_str(),H5F_ACC_RDWR);require(result->file>=0&&H5Lexists(result->file,"source_history",H5P_DEFAULT)==0,"Mesh file checkpoint contains unsupported embedded history.");
     validateCheckpoint(result->file,ctx,next,snap,result->steps,result->next_due,result->groundwater);resolveCheckpointDatasets(*result,snap);return result;
 }
 
 io::CheckpointOutputPublication::Output Default2DOutputPlugin::checkpointPublication(const PreparedCheckpoint& prepared) const {
-    const auto properties=H5Fget_access_plist(file_id_);require(properties>=0,"Cannot inspect mesh output driver.");
-    const bool sec2=H5Pget_driver(properties)==H5FD_SEC2;H5Pclose(properties);
-    void* handle=nullptr;
-    require(sec2 && H5Fget_vfd_handle(file_id_,H5P_DEFAULT,&handle)>=0 && handle,
-            "Mesh checkpoint publication requires the native file descriptor driver.");
-    return {prepared.staging,io::utf8_path(h5_path_),checkpoint_header_,*static_cast<int*>(handle)};
+    const int descriptor = io::checkpointHdf5Descriptor(file_id_);
+    require(descriptor >= 0, "Mesh checkpoint publication requires the native file descriptor driver.");
+    return {prepared.staging,io::utf8_path(h5_path_),checkpoint_header_,descriptor};
 }
 void Default2DOutputPlugin::installCheckpoint(PreparedCheckpoint& prepared) {
     std::lock_guard<std::recursive_mutex> lock(io::resultHdf5Mutex());

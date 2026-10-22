@@ -5,6 +5,9 @@
 #ifdef OPENSWMM_HAS_HDF5_MODEL
 #include "../../io/Hdf5ObjectCreation.hpp"
 #include "../../io/hdf5/Hdf5Util.hpp"
+#ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
+#include "../../io/CheckpointHdf5.hpp"
+#endif
 #include <algorithm>
 #include <atomic>
 #include <cstring>
@@ -205,7 +208,14 @@ struct SourceResultFile {
             QuietErrors quiet;
             std::error_code error;const auto size=std::filesystem::file_size(path,error);
             require(!error&&size>0&&size<=256*1024*1024,"Source result file missing or exceeds size limit.");
-            auto file=h5io::open_file_readonly(path);require(file.ok(),"Cannot open source result HDF5 file.");
+#ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
+            // Mesh validation also inspects a live checkpoint writer. Reuse
+            // its VFD so HDF5 can share the existing locked file instance.
+            Handle file(io::openCheckpointHdf5(path.c_str(),H5F_ACC_RDONLY),Handle::Kind::File);
+#else
+            auto file=h5io::open_file_readonly(path);
+#endif
+            require(file.ok(),"Cannot open source result HDF5 file.");
             require(!h5io::has_link(file.get(),"__source_history_next")&&!h5io::has_link(file.get(),"__source_history_previous"),"Source output contains an unfinished publication.");
             if(!h5io::has_link(file.get(),"source_history"))return {};
             auto group=h5io::open_group(file.get(),"source_history");require(group.ok(),"Invalid source result group.");

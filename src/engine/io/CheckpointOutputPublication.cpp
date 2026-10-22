@@ -1,11 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Caleb Buahin
+// FileRenameInfoEx provides open-handle replacement starting with Windows 10.
+#if defined(_WIN32) && (!defined(_WIN32_WINNT) || _WIN32_WINNT < 0x0A00)
+#undef _WIN32_WINNT
+#define _WIN32_WINNT 0x0A00
+#endif
 #include "CheckpointOutputPublication.hpp"
 #include "../core/FileIO.hpp"
 #include <atomic>
 #include <fstream>
 #include <stdexcept>
 #include <sys/stat.h>
+#include <algorithm>
+#include <cerrno>
+#include <climits>
+#include <cstring>
+#include <new>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -39,7 +52,83 @@ int checkpointFileDescriptor(FILE* stream) noexcept {
     return stream?fileno(stream):-1;
 #endif
 }
+void checkpointReadOutput(int descriptor, uint64_t offset, char* data, std::size_t bytes) {
+    if (descriptor < 0 || offset > uint64_t(INT64_MAX) || bytes > uint64_t(INT64_MAX) - offset)
+        throw std::runtime_error("Invalid checkpoint read range.");
+#ifdef _WIN32
+    const auto position = _lseeki64(descriptor, 0, SEEK_CUR);
+    const bool positioned = position >= 0 && _lseeki64(descriptor, offset, SEEK_SET) >= 0;
+#else
+    const auto position = lseek(descriptor, 0, SEEK_CUR);
+    const bool positioned = position >= 0 && lseek(descriptor, offset, SEEK_SET) >= 0;
+#endif
+    bool complete = positioned;
+    while (complete && bytes) {
+        const auto n = unsigned(std::min(bytes, std::size_t(INT_MAX)));
+#ifdef _WIN32
+        const auto got = _read(descriptor, data, n);
+#else
+        const auto got = ::read(descriptor, data, n);
+#endif
+        if (got < 0 && errno == EINTR)
+            continue;
+        if (got <= 0) {
+            complete = false;
+            break;
+        }
+        data += got;
+        bytes -= got;
+    }
+#ifdef _WIN32
+    const bool restored = position >= 0 && _lseeki64(descriptor, position, SEEK_SET) == position;
+#else
+    const bool restored = position >= 0 && lseek(descriptor, position, SEEK_SET) == position;
+#endif
+    if (!complete || !restored)
+        throw std::runtime_error("Cannot read checkpoint output range.");
+}
 namespace {
+void renameOutput(const std::filesystem::path& from, const std::filesystem::path& to,
+                  std::error_code& ec) {
+#ifdef _WIN32
+    try {
+        // Replacement must preserve handles to the old destination. Prepare
+        // all allocations before opening a DELETE handle; report allocation
+        // errors through ec so an earlier output can still be rolled back.
+        const auto name = std::filesystem::absolute(to).native();
+        const auto size =
+            offsetof(FILE_RENAME_INFO, FileName) + (name.size() + 1) * sizeof(wchar_t);
+        if (size > MAXDWORD) {
+            ec = std::make_error_code(std::errc::filename_too_long);
+            return;
+        }
+        std::vector<unsigned char> buffer(size);
+        auto* info = reinterpret_cast<FILE_RENAME_INFO*>(buffer.data());
+        info->Flags = FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS;
+        info->RootDirectory = nullptr;
+        info->FileNameLength = DWORD(name.size() * sizeof(wchar_t));
+        std::memcpy(info->FileName, name.data(), info->FileNameLength);
+        const HANDLE file = CreateFileW(
+            from.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+            OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        if (file == INVALID_HANDLE_VALUE) {
+            ec = {int(GetLastError()), std::system_category()};
+            return;
+        }
+        const bool moved =
+            SetFileInformationByHandle(file, FileRenameInfoEx, info, DWORD(size)) != 0;
+        const DWORD error = moved ? ERROR_SUCCESS : GetLastError();
+        CloseHandle(file);
+        ec = {int(error), std::system_category()};
+    } catch (const std::filesystem::filesystem_error& error) {
+        ec = error.code();
+    } catch (const std::bad_alloc&) {
+        ec = std::make_error_code(std::errc::not_enough_memory);
+    }
+#else
+    std::filesystem::rename(from, to, ec);
+#endif
+}
 void require(bool ok,const char* message) {if(!ok)throw std::runtime_error(message);}
 bool fresh(const CheckpointOutputPublication::Output& output) {
     std::error_code ec;const auto status=std::filesystem::symlink_status(output.destination,ec);
@@ -68,8 +157,15 @@ bool fresh(const CheckpointOutputPublication::Output& output) {
         if(opened.st_dev!=named.st_dev || opened.st_ino!=named.st_ino)return false;
 #endif
     }
-    std::ifstream in(output.destination,std::ios::binary);std::string bytes(output.fresh_header.size(),'\0');
-    in.read(bytes.data(),bytes.size());return bool(in) && in.peek()==std::char_traits<char>::eof() && bytes==output.fresh_header;
+    std::string bytes(output.fresh_header.size(), '\0');
+    if (output.original_descriptor >= 0) {
+        try { checkpointReadOutput(output.original_descriptor, 0, bytes.data(), bytes.size()); }
+        catch (const std::runtime_error&) { return false; }
+        return bytes == output.fresh_header;
+    }
+    std::ifstream in(output.destination, std::ios::binary);
+    in.read(bytes.data(), bytes.size());
+    return bool(in) && in.peek() == std::char_traits<char>::eof() && bytes == output.fresh_header;
 }
 }
 CheckpointOutputPublication::CheckpointOutputPublication(std::vector<Output> outputs) {
@@ -114,14 +210,14 @@ void CheckpointOutputPublication::publish() {
     }
     std::error_code error;
     for(auto& entry:entries_) {
-        std::filesystem::rename(entry.output.staging,entry.output.destination,error);
+        renameOutput(entry.output.staging,entry.output.destination,error);
         if(error)break;
         entry.published=true;
     }
     if(!error)return;
     bool rollback_failed=false;
     for(auto it=entries_.rbegin();it!=entries_.rend();++it)if(it->published) {
-        std::error_code ec;std::filesystem::rename(it->backup,it->output.destination,ec);
+        std::error_code ec;renameOutput(it->backup,it->output.destination,ec);
         if(ec) {it->retain=true;rollback_failed=true;} else {it->backup.clear();it->published=false;}
     }
     if(rollback_failed) {
