@@ -2063,7 +2063,7 @@ double rect_round_getRofY(TXsect* xsect, double y)
 
     // --- find hyd. radius of circular section
     theta1 = 2.0*acos(1.0 - y/xsect->rBot);
-    return 0.5 * xsect->rBot * (1.0 - sin(theta1)) / theta1;
+    return 0.5 * xsect->rBot * (1.0 - sin(theta1) / theta1);
 }
 
 double rect_round_getWofY(TXsect* xsect, double y)
