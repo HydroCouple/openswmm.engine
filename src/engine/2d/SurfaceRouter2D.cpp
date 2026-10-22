@@ -2244,6 +2244,9 @@ bool SurfaceRouter2D::refreshDue(const SimulationContext& ctx, double dt) const 
  * render views may be invalidated.
  */
 void SurfaceRouter2D::refreshRenderFields() {
+    // Output may be requested more often than the 30 s statistics cadence.
+    // Refresh the derived RT0 velocity at the same state as the render fields.
+    computeFaceVelocity(mesh_, state_, options_);
     reconstructVertexHeads(mesh_, state_, options_.num_threads);
     refreshOutputGradients(mesh_, state_, options_);
     reconstructVertexRenderDepths(mesh_, state_, options_.dry_depth, options_.num_threads,

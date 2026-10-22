@@ -824,7 +824,7 @@ public:
     void invalidateBoundaryNames() noexcept { boundary_names_resolved_ = false; }
 
     /**
-     * @brief Bring the render fields (vertex heads, output gradients, vertex render depths) up
+     * @brief Bring the render fields (face velocity, vertex heads, output gradients, vertex render depths) up
      * to date with the current solver state if a batch has run since they were last computed.
      * The API getters that expose those fields call this so a reader arriving between reports is
      * never served a stale field; it is a no-op at a report instant, where the refresh already
