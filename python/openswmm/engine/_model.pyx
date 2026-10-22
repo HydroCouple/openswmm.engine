@@ -367,7 +367,7 @@ cdef class ModelBuilder:
         @raise EngineError: On C API failure.
         """
         cdef bytes b = path.encode('utf-8')
-        _check(swmm_model_write(self._handle, b))
+        _check_engine(swmm_model_write(self._handle, b), self._handle)
 
     # =========================================================================
     # Title management
@@ -393,9 +393,7 @@ cdef class ModelBuilder:
         @rtype: str
         @raise EngineError: On C API failure.
         """
-        cdef char buf[1024]
-        _check(swmm_title_get_line(self._handle, index, buf, 1024))
-        return buf.decode('utf-8')
+        return _read_engine_index_string(self._handle, index, swmm_title_get_line)
 
     def add_title_line(self, str line):
         """Append a new line to the C{[TITLE]} section.
@@ -495,9 +493,7 @@ cdef class ModelBuilder:
         @raise EngineError: On C API failure.
         """
         cdef bytes b = key.encode('utf-8')
-        cdef char buf[256]
-        _check(swmm_options_get(self._handle, b, buf, 256))
-        return buf.decode('utf-8')
+        return _read_engine_key_string(self._handle, b, swmm_options_get)
 
     def set_option(self, str key, str value):
         """Set a model option.
@@ -529,11 +525,7 @@ cdef class ModelBuilder:
         @raise EngineError: On C API failure (e.g. unknown role/owner).
         """
         cdef bytes b_owner = owner.encode('utf-8')
-        cdef char abs_buf[512]
-        cdef char orig_buf[512]
-        _check(swmm_file_path_get(self._handle, <SWMM_FilePathRole>role, b_owner,
-                                  abs_buf, 512, orig_buf, 512))
-        return (abs_buf.decode('utf-8'), orig_buf.decode('utf-8'))
+        return _read_engine_file_path(self._handle, <SWMM_FilePathRole>role, b_owner)
 
     def set_file_path(self, int role, str new_path, str owner="") -> None:
         """Set the original token for an external-file slot.
@@ -564,9 +556,7 @@ cdef class ModelBuilder:
         @raise EngineError: On C API failure.
         """
         cdef bytes b = key.encode('utf-8')
-        cdef char buf[256]
-        _check(swmm_options_get_ext(self._handle, b, buf, 256))
-        return buf.decode('utf-8')
+        return _read_engine_key_string(self._handle, b, swmm_options_get_ext)
 
     def set_option_ext(self, str key, str value):
         """Set an extended model option.
@@ -591,9 +581,7 @@ cdef class ModelBuilder:
         @rtype: str
         @raise EngineError: On C API failure.
         """
-        cdef char buf[256]
-        _check(swmm_get_crs(self._handle, buf, 256))
-        return buf.decode('utf-8')
+        return _read_engine_string(self._handle, swmm_get_crs)
 
     # =========================================================================
     # Typed time-control properties (datetime)
@@ -896,10 +884,7 @@ cdef class ModelBuilder:
         @rtype: tuple
         @raise EngineError: On C API failure.
         """
-        cdef char path_buf[4096]
-        cdef char args_buf[4096]
-        _check(swmm_plugin_get(self._handle, idx, path_buf, 4096, args_buf, 4096))
-        return path_buf.decode('utf-8'), args_buf.decode('utf-8')
+        return _read_engine_plugin(self._handle, idx)
 
     def plugin_set(self, str path_or_id, str args=""):
         """Add or replace a [PLUGINS] row keyed by path/id.
@@ -948,9 +933,7 @@ cdef class ModelBuilder:
         @raise EngineError: On C API failure.
         """
         cdef bytes b = key.encode('utf-8')
-        cdef char buf[4096]
-        _check(swmm_files_get(self._handle, b, buf, 4096))
-        return buf.decode('utf-8')
+        return _read_engine_key_string(self._handle, b, swmm_files_get)
 
     def files_set(self, str key, str value):
         """Write one [FILES] field by key.
@@ -984,5 +967,5 @@ cdef class ModelBuilder:
         """
         cdef bytes b_path = path.encode('utf-8')
         cdef bytes b_plugin = output_plugin_id.encode('utf-8')
-        _check(swmm_model_write_with_plugin(self._handle, b_path, b_plugin))
+        _check_engine(swmm_model_write_with_plugin(self._handle, b_path, b_plugin), self._handle)
 

@@ -437,6 +437,17 @@ void forwardWriteWarnings(openswmm::SimulationContext& ctx, std::vector<std::str
         ctx.warnings.push_back(std::move(w));
 }
 
+int finishNativeWrite(openswmm::SimulationContext& ctx, int result,
+                      const std::string& path, std::vector<std::string> warnings) {
+    if (result != 0) {
+        ctx.error_code = SWMM_ERR_IO;
+        ctx.error_message = warnings.empty() ? "Cannot write model to '" + path + "'"
+                                             : warnings.back();
+    }
+    forwardWriteWarnings(ctx, std::move(warnings));
+    return result == 0 ? SWMM_OK : SWMM_ERR_IO;
+}
+
 } // namespace
 
 SWMM_ENGINE_API int swmm_model_write(SWMM_Engine engine, const char* new_inp_path) {
@@ -446,8 +457,7 @@ SWMM_ENGINE_API int swmm_model_write(SWMM_Engine engine, const char* new_inp_pat
     auto& ctx = to_engine(engine)->context();
     std::vector<std::string> warns;
     const int rc = openswmm::inp_writer::writeInpFile(ctx, new_inp_path, &warns);
-    forwardWriteWarnings(ctx, warns);
-    return rc;
+    return finishNativeWrite(ctx, rc, new_inp_path, std::move(warns));
 }
 
 SWMM_ENGINE_API int swmm_model_write_staged(SWMM_Engine engine, const char* final_inp_path,
@@ -463,8 +473,7 @@ SWMM_ENGINE_API int swmm_model_write_staged(SWMM_Engine engine, const char* fina
     auto& ctx = to_engine(engine)->context();
     std::vector<std::string> warns;
     const int rc = openswmm::inp_writer::writeInpFile(ctx, final_inp_path, &warns, opts);
-    forwardWriteWarnings(ctx, warns);
-    return rc;
+    return finishNativeWrite(ctx, rc, final_inp_path, std::move(warns));
 }
 
 SWMM_ENGINE_API int swmm_model_write_compat(SWMM_Engine engine, const char* new_inp_path,
@@ -489,8 +498,7 @@ SWMM_ENGINE_API int swmm_model_write_compat(SWMM_Engine engine, const char* new_
     auto& ctx = to_engine(engine)->context();
     std::vector<std::string> warns;
     const int rc = openswmm::inp_writer::writeInpFile(ctx, new_inp_path, &warns, opts);
-    forwardWriteWarnings(ctx, warns);
-    return rc;
+    return finishNativeWrite(ctx, rc, new_inp_path, std::move(warns));
 }
 
 SWMM_ENGINE_API int swmm_model_write_with_plugin(SWMM_Engine engine, const char* new_path,
@@ -506,8 +514,7 @@ SWMM_ENGINE_API int swmm_model_write_with_plugin(SWMM_Engine engine, const char*
         auto& ctx = to_engine(engine)->context();
         std::vector<std::string> warns;
         const int rc = openswmm::inp_writer::writeInpFile(ctx, new_path, &warns);
-        forwardWriteWarnings(ctx, warns);
-        return rc;
+        return finishNativeWrite(ctx, rc, new_path, std::move(warns));
     }
 
     auto* eng = to_engine(engine);
@@ -517,16 +524,25 @@ SWMM_ENGINE_API int swmm_model_write_with_plugin(SWMM_Engine engine, const char*
     // emitted to the engine's warn channel here — the GUI surfaces
     // resolution failures via the SWMM_ERR_BADPARAM return code.
     openswmm::IPluginComponentInfo* info = eng->plugin_factory().find_component(output_plugin_id);
-    if (!info)
+    if (!info) {
+        eng->context().error_code = SWMM_ERR_BADPARAM;
+        eng->context().error_message = std::string("Unknown model writer plugin: ") + output_plugin_id;
         return SWMM_ERR_BADPARAM;
-    if (!info->has_input())
+    }
+    if (!info->has_input()) {
+        eng->context().error_code = SWMM_ERR_PLUGIN;
+        eng->context().error_message = std::string("Plugin cannot write models: ") + output_plugin_id;
         return SWMM_ERR_PLUGIN;
+    }
 
     // Always create a transient writer instance so the engine's primary
     // input plugin (which may be in any state) is left undisturbed.
     openswmm::IInputPlugin* writer = info->create_input_plugin();
-    if (!writer)
+    if (!writer) {
+        eng->context().error_code = SWMM_ERR_PLUGIN;
+        eng->context().error_message = std::string("Cannot create model writer: ") + output_plugin_id;
         return SWMM_ERR_PLUGIN;
+    }
 
     int rc = writer->initialize({}, info);
     if (rc == 0)
@@ -539,6 +555,12 @@ SWMM_ENGINE_API int swmm_model_write_with_plugin(SWMM_Engine engine, const char*
         if (writer->last_error_message()[0])
             forwardWriteWarnings(eng->context(), {writer->last_error_message()});
         if (rc == 0) rc = finalRc;
+    }
+    if (rc != 0) {
+        eng->context().error_code = SWMM_ERR_PLUGIN;
+        eng->context().error_message = writer->last_error_message()[0]
+            ? writer->last_error_message()
+            : "Cannot write model to '" + std::string(new_path) + "'";
     }
     delete writer;
 
