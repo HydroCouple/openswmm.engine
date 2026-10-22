@@ -22,10 +22,10 @@
  *
  *   Line 1: "SWMM5 Interface File"
  *   Line 2: Title
- *   Line 3: <step> - reporting time step in sec
- *   Line 4: <n> - number of constituents (flow + pollutants)
+ *   Line 3: `step` - reporting time step in sec
+ *   Line 4: `n` - number of constituents (flow + pollutants)
  *   Lines 5..5+n: constituent names and units (FLOW first)
- *   Next line: <m> - number of nodes
+ *   Next line: `m` - number of nodes
  *   Next m lines: node names
  *   Column headings line
  *   Data lines: NodeID YYYY MM DD HH MM SS FLOW [pollut1] [pollut2] ...

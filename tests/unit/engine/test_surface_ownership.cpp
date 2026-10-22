@@ -99,7 +99,7 @@ struct Model {
      * @brief Replace selected context arrays with the fixed two-unit trench ownership fixture.
      *
      * Requires an opened basic model containing S1. Installs L1 IT storage metadata and one usage row
-     * with two100 m2 units under fixture CMS units. Does not initialize LID physics or fully reset
+     * with two 100 m2 units under fixture CMS units. Does not initialize LID physics or fully reset
      * unrelated usage fields; direct context mutation intentionally affects subsequent preview tokens.
      */
     void lid() {

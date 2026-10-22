@@ -1123,10 +1123,12 @@ private:
      * Temporary router flags are restored on handled refusal where applicable; no checkpoint file is
      * written.
      *
+     * @if OPENSWMM_HAS_2D
      * @param[in,out] stage 2D build only: optional borrowed matching CommonSourceStage; NULL selects no
      *     common-stage attachment. Caller keeps any stage alive through session end.
      * @param[in] own_sources 2D build only: true requires explicit catchment graphs and initializes a
      *     delivery bridge; false accepts only mesh-only common stages.
+     * @endif
      * @return Empty string on success; otherwise an owned refusal/IO/compatibility diagnostic.
      */
     std::string enableCheckpointingImpl(

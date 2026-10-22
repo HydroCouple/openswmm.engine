@@ -75,6 +75,9 @@ struct OwnedCheckpointFile {
  * @param[in] bytes Prefix length in [1, source file size], no larger than INT64_MAX.
  * @param[in] staging_base Base path for exclusive sibling names ending
  * in .file-part-N; its parent must exist and permit file creation.
+ * @param[in] source_descriptor Borrowed seekable descriptor for the same source file, or -1 to
+ * open source independently. Caller must flush/exclusively hold a supplied writer; its offset
+ * is preserved. The descriptor/file identity is a caller precondition, not independently checked.
  * @return Shared cleanup owner for a flushed, synchronized, closed and
  * fingerprint-verified private copy. Call retain() only when removal ownership
  * has been transferred; otherwise the last owner's destruction removes it.
@@ -90,23 +93,19 @@ std::shared_ptr<OwnedCheckpointFile> copyCheckpointFile(const std::filesystem::p
                                                         int source_descriptor = -1);
 /**
  * @brief Read a checkpoint companion's validated size.
- * @par Input argument
- * The unnamed path argument identifies a non-symlink regular file to inspect.
+ * @param[in] path Borrowed non-symlink regular file to inspect.
  * @return Length in bytes, in [1, INT64_MAX].
  * @throws std::runtime_error File type or size is invalid.
  * @throws std::filesystem::filesystem_error Metadata inspection fails.
  */
-uint64_t checkpointFileSize(const std::filesystem::path&);
+uint64_t checkpointFileSize(const std::filesystem::path& path);
 /**
  * @brief Position an existing stream at an absolute checkpoint byte offset.
- * @par Stream argument
- * The first, unnamed argument is a non-null open seekable stream,
- * borrowed and not closed.
- * @par Offset argument
- * The second, unnamed argument is an absolute byte offset in [0, INT64_MAX]; seeking beyond
+ * @param[in,out] f Non-null open seekable stream, borrowed and not closed.
+ * @param[in] offset Absolute byte offset in [0, INT64_MAX]; seeking beyond
  * the current end is allowed when supported by the underlying stream.
  * @throws std::runtime_error The stream or offset is invalid, or seeking fails.
  * @note This does not clear existing stream error flags or validate file length.
  */
-void checkpointSeek(FILE*, uint64_t);
+void checkpointSeek(FILE* f, uint64_t offset);
 }

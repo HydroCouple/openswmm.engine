@@ -749,7 +749,10 @@ int ControlEngine::addExpression(const std::string& name, const std::string& for
 
 namespace {
 
-/// Convert a string to upper case (ASCII only).
+/** @brief Copy bytes through C-locale uppercase conversion.
+ * @param s Borrowed bytes; each is converted via unsigned char before toupper.
+ * @return Independent uppercase bytes; no Unicode normalization is performed.
+ */
 static std::string to_upper(const std::string& s) {
     std::string r = s;
     for (auto& c : r)
@@ -757,7 +760,10 @@ static std::string to_upper(const std::string& s) {
     return r;
 }
 
-/// Split a line into whitespace-delimited tokens.
+/** @brief Split on stream whitespace without quote/comment processing.
+ * @param line Borrowed single-line text.
+ * @return Owned nonempty tokens in input order; quoted spaces still split.
+ */
 static std::vector<std::string> tokenize(const std::string& line) {
     std::vector<std::string> toks;
     std::istringstream iss(line);
@@ -767,7 +773,13 @@ static std::vector<std::string> tokenize(const std::string& line) {
     return toks;
 }
 
-/// Try to parse a double from a string.  Returns true on success.
+/** @brief Accept a complete std::stod conversion without range/finite constraints.
+ * @param s Numeric token; any trailing byte makes the result false.
+ * @param[out] val Parsed value on conversion; can be changed even when trailing
+ * bytes cause false. A thrown conversion leaves it unchanged.
+ * @return True only if every byte was consumed. Catches all conversion exceptions;
+ * NaN/infinity tokens accepted by stod are not rejected.
+ */
 static bool tryParseDouble(const std::string& s, double& val) {
     try {
         size_t pos = 0;
@@ -778,7 +790,10 @@ static bool tryParseDouble(const std::string& s, double& val) {
     }
 }
 
-/// Match a relational operator token.  Returns CompareOp or -1 on failure.
+/** @brief Map a literal control comparison token to CompareOp.
+ * @param tok One of =, <>, <, <=, > or >=; no trimming/case conversion.
+ * @return Corresponding enum integer, or -1 for any other token.
+ */
 static int matchRelOp(const std::string& tok) {
     if (tok == "=")
         return static_cast<int>(CompareOp::EQ);
@@ -795,7 +810,10 @@ static int matchRelOp(const std::string& tok) {
     return -1;
 }
 
-/// Map attribute keyword to ConditionVar for node attributes.
+/** @brief Map an uppercase node attribute keyword.
+ * @param attr DEPTH, MAXDEPTH, HEAD, VOLUME or INFLOW; exact match required.
+ * @return ConditionVar integer, or -1 for an unsupported token.
+ */
 static int nodeAttribute(const std::string& attr) {
     if (attr == "DEPTH")
         return static_cast<int>(ConditionVar::NODE_DEPTH);
@@ -810,7 +828,11 @@ static int nodeAttribute(const std::string& attr) {
     return -1;
 }
 
-/// Map attribute keyword to ConditionVar for link attributes.
+/** @brief Map an uppercase link attribute keyword.
+ * @param attr Exact FLOW/DEPTH/SETTING/STATUS/FULLFLOW/FULLDEPTH/VELOCITY/LENGTH/
+ * SLOPE/TIMEOPEN/TIMECLOSED token; no subtype validation here.
+ * @return ConditionVar integer, or -1 for an unsupported token.
+ */
 static int linkAttribute(const std::string& attr) {
     if (attr == "FLOW")
         return static_cast<int>(ConditionVar::LINK_FLOW);
@@ -837,7 +859,10 @@ static int linkAttribute(const std::string& attr) {
     return -1;
 }
 
-/// Map attribute keyword to ConditionVar for simulation (system) attributes.
+/** @brief Map an uppercase simulation-clock attribute keyword.
+ * @param attr Exact TIME/DATE/CLOCKTIME/DAY/MONTH/DAYOFYEAR token.
+ * @return ConditionVar integer, or -1 for an unsupported token.
+ */
 static int simAttribute(const std::string& attr) {
     if (attr == "TIME")
         return static_cast<int>(ConditionVar::SIM_TIME);
@@ -854,11 +879,21 @@ static int simAttribute(const std::string& attr) {
     return -1;
 }
 
-/// Parse a premise variable from tokens starting at position k.
-/// On success, returns true and advances k past the consumed tokens.
-/// Fills out cv (condition variable type) and obj_idx (object index).
-/// On failure, fills `err` with the failing token and reason so callers can
-/// report the actual problem instead of the leading object keyword.
+/** @brief Resolve one object/attribute operand from a token cursor.
+ * @param toks Borrowed token sequence; names resolve through context name tables.
+ * @param[in,out] k Nonnegative starting token position; advanced only on success.
+ * @param ctx Compatible node/link/gage names; borrowed without mutation.
+ * @param[out] cv Attribute assigned on success; unspecified on failure.
+ * @param[out] obj_idx Resolved zero-based index, or -1 for simulation attributes;
+ * may be partially changed on failure. Declared link subtypes are not checked here.
+ * @param[out] extra_param Reset to zero, or history hours for GAGE_RAIN_PAST.
+ * @param[out] err Failure explanation; may retain earlier contents on success.
+ * @param[out] err_code Legacy error category, initialized to ERR_ITEMS.
+ * @param[out] err_tok Cleared initially, then offending name/keyword where available.
+ * @return True on a recognized complete operand, false with diagnostics otherwise.
+ * Gage history accepts a numeric prefix in [1,48], including n-HR_DEPTH, following
+ * strtol behavior. No expression/named-variable lookup is performed by this helper.
+ */
 static bool parsePremiseVariable(const std::vector<std::string>& toks, int& k,
                                  const SimulationContext& ctx, ConditionVar& cv, int& obj_idx,
                                  int& extra_param, std::string& err, int& err_code,
@@ -986,7 +1021,11 @@ static bool parsePremiseVariable(const std::vector<std::string>& toks, int& k,
     return false;
 }
 
-/// Parse a status word to a numeric value.
+/** @brief Parse case-insensitive link status words.
+ * @param tok Borrowed OFF/CLOSED/ON/OPEN token; no whitespace trimming.
+ * @param[out] val Set to zero or one on success, retained on failure.
+ * @return True for a recognized status word.
+ */
 static bool parseStatusValue(const std::string& tok, double& val) {
     std::string u = to_upper(tok);
     if (u == "OFF" || u == "CLOSED") {
@@ -1011,8 +1050,13 @@ static bool parseStatusValue(const std::string& tok, double& val) {
 //   r_MONTH                                           -> 1..12
 // ============================================================================
 
-/// Parse a time token (decimal hours or HH[:MM[:SS]]) to decimal days.
-/// Mirrors legacy datetime_strToTime() in datetime.c.
+/** @brief Parse decimal hours or a colon-style duration into SWMM days.
+ * @param s Borrowed token. Complete stod values (including negative/nonfinite) use
+ * hours/24. Otherwise sscanf accepts a nonnegative integer prefix with optional
+ * minute/second fields; trailing bytes and oversized fields are not rejected here.
+ * @param[out] out_days Converted days on success; retained on failure.
+ * @return True if either permissive conversion succeeds; not strict time validation.
+ */
 static bool parseTimeToken(const std::string& s, double& out_days) {
     // Try decimal hours first
     try {
@@ -1034,8 +1078,13 @@ static bool parseTimeToken(const std::string& s, double& out_days) {
     return false;
 }
 
-/// Parse a date token (M/D/Y, M-D-Y, etc.) to a DateTime.
-/// Mirrors legacy datetime_strToDate(); accepts any non-digit as separator.
+/** @brief Parse three integer calendar components into a SWMM serial day.
+ * @param s Month, day and year separated by single scanned characters; separators
+ * and trailing bytes are not validated. Calendar validity follows encodeDate().
+ * @param[out] out_date Assigned encodeDate result even for a rejected calendar date;
+ * retained when scanning fails.
+ * @return True when all components scan and encodeDate does not return its sentinel.
+ */
 static bool parseDateToken(const std::string& s, double& out_date) {
     int m = 0, d = 0, y = 0;
     char sep1 = 0, sep2 = 0;
@@ -1047,8 +1096,13 @@ static bool parseDateToken(const std::string& s, double& out_date) {
     return false;
 }
 
-/// Parse a day-of-year token: "M/D" -> day-of-year, or integer 1..365.
-/// Mirrors legacy controls.c:1394-1402.
+/** @brief Parse a nonleap calendar day or numeric day-of-year value.
+ * @param s Month/day pair (any scanned separator; trailing bytes ignored) interpreted
+ * in 1947, otherwise a complete numeric token in [1,365]. Fractional numeric values
+ * are accepted; no explicit finite-value check is added.
+ * @param[out] out_doy Day number assigned on success, retained on failure.
+ * @return True for an encoded valid date or accepted numeric range.
+ */
 static bool parseDayOfYearToken(const std::string& s, double& out_doy) {
     int m = 0, d = 0;
     char sep = 0;
@@ -1070,8 +1124,15 @@ static bool parseDayOfYearToken(const std::string& s, double& out_doy) {
     return true;
 }
 
-/// Dispatch RHS parsing on the LHS attribute, mirroring legacy
-/// getPremiseValue() in controls.c:1354-1410.
+/** @brief Parse a constant according to the left operand's control attribute.
+ * @param tok Borrowed constant token.
+ * @param lhs_var Status selects word parsing; time selects day conversion; date and
+ * calendar fields select their helpers. Other attributes accept a complete double.
+ * @param[out] val Parsed result; can change before a failed validation as documented
+ * by the selected helper. DAY and MONTH accept fractional numbers within range.
+ * @return True for accepted syntax/range, false otherwise. Hydraulic values remain
+ * in authored project units; no conversion is applied here.
+ */
 static bool parsePremiseRHS(const std::string& tok, ConditionVar lhs_var, double& val) {
     switch (lhs_var) {
     case ConditionVar::LINK_STATUS:

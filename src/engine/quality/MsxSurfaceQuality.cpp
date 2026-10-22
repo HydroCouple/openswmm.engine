@@ -1101,7 +1101,7 @@ void addRunon(SimulationContext& ctx, int donor, int receiver, double q) noexcep
     }
 }
 
-/**
+/*
  * @brief Add time-interpolated surface and LID drain species mass rates to native node inflows.
  * @param[in,out] ctx Active surface/native species with matching counts, valid outlet identities
  * and old/new runoff/underdrain histories; adds to msx_ext_mass_in[node*species+m].

@@ -92,16 +92,16 @@ constexpr int kNSubAge = static_cast<int>(openswmm::SubArea::COUNT_);
 /**
  * @brief Construct controlled five-minute held-value signal rows with optional cutoff.
  *
- * No quote/length/time validation or date rollover; hours can exceed23. Does not create/load a file
+ * No quote/length/time validation or date rollover; hours can exceed 23. Does not create/load a file
  * or report snprintf truncation.
  *
- * @param[in] name Non-null short signal name fitting the fixed80-byte row buffer.
+ * @param[in] name Non-null short signal name fitting the fixed 80-byte row buffer.
  * @param[in] last_min Inclusive last minute index; negative produces only a blank line, and loop
  *     arithmetic must not overflow.
  * @param[in] v Value in the signal's authored units, formatted to four decimals.
  * @param[in] stop_min Positive selects zero for m>=stop_min; nonpositive keeps v for all emitted
  *     rows.
- * @return Owned rows dated01/01/2026 at minute indices0,5,...<=last_min, plus trailing blank line.
+ * @return Owned rows dated 01/01/2026 at minute indices 0,5,...<=last_min, plus trailing blank line.
  */
 std::string series(const char* name, int last_min, double v, int stop_min = 0) {
     std::string s;

@@ -20,8 +20,8 @@
  *   PRIORITY `p`
  *
  * `premise` consists of:
- * `variable` <relational operator> value / `variable`
- * where `variable` is <object type> <id name> `attribute`
+ * `variable` `relational operator` value / `variable`
+ * where `variable` is `object type` `id name` `attribute`
  * E.g.: Node 123 Depth > 4.5
  *       Node 456 Depth < Node 123 Depth
  *
@@ -690,8 +690,7 @@ double getPIDSetting(struct TAction* a, double dt);
 
 /*!
  * \brief Gets variable index.
- * @par Argument contract
- * - varName (in): Name of variable to find index of
+ * @param[in] varName Name of variable to find index of
  * \return Index of variable
  */
 int getVariableIndex(char* varName);

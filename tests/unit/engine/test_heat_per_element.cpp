@@ -96,7 +96,7 @@ void write_file(const std::string& p, const std::string& body) {
  * @param[in] extra_opts Raw additional project option lines after HEAT_TRANSPORT YES; include
  *     trailing newline.
  * @return Owned four-hour CFS/DYNWAVE deck with independent branch outfalls,95 F air,40%
- *     humidity,15 mph wind and4 CFS upstream inflow.
+ *     humidity,15 mph wind and 4 CFS upstream inflow.
  */
 std::string deck(const std::string& heat_cfg, const std::string& tags,
                  const std::string& extra_opts = "") {

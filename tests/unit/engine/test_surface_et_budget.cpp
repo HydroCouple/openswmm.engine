@@ -37,7 +37,7 @@ struct Rig {
     /**
      * @brief Prepare a one-triangle aquifer fixture isolating ET demand allocation.
      *
-     * Intended on a fresh Rig. Constructs a2 m2 bed at10 m, zero-conductivity aquifer with2 m soil/1 m
+     * Intended on a fresh Rig. Constructs a2 m2 bed at10 m, zero-conductivity aquifer with 2 m soil/1 m
      * initial table, sets explicit wilting suction and assigns1 s/one-tier scheduling. Only minimal
      * metric/neighbor arrays are authored before edges.build. Fatal initialization assertion returns
      * with possible partial state; member dependencies remain owned and warnings are not asserted.
@@ -87,15 +87,15 @@ struct Rig {
      * Requires initialize success and compatible pending ET/accounting state; mutates gw and surf via
      * fireGwCells. Does not separately advance engine clocks or catch production errors.
      *
-     * @param[in] dt Positive firing duration in seconds, default1.
-     * @param[in] t Accepted firing start in elapsed seconds, default0.
+     * @param[in] dt Positive firing duration in seconds, default 1.
+     * @param[in] t Accepted firing start in elapsed seconds, default 0.
      */
     void fire(double dt = 1, double t = 0) { gw.fireGwCells(0, dt, surf, t); }
 };
 /**
  * @brief Assert cell-zero ET potential is partitioned into applied, unused and pending demand.
  *
- * Checks potential=surface+soil+unused+pending within1e-13 m3 and applied<=potential plus
+ * Checks potential=surface+soil+unused+pending within 1e-13 m3 and applied<=potential plus
  * tolerance. Uses nonfatal expectations; does not calculate independent physical forcing, check
  * every cell or mutate ledgers.
  *

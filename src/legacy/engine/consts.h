@@ -171,7 +171,7 @@
 /*!
  * \def MAXTIMESERIESCACHESIZE
  * \brief Maximum number of time series rows that can be cached to memory to speed up simulation
- * \TODO Allow users to set this value in the input file and GUI
+ * \todo Allow users to set this value in the input file and GUI
  */
 #define MAXTIMESERIESCACHESIZE 10 // maximum number of time series that can be cached
 
@@ -411,7 +411,7 @@
 #define SEPSTR " \t\n\r"
 
 /*!
- * \addtogroup Token_Separators Table Separator Characters
+ * \def TBLSEPSTR
  * \brief Table separator characters
  */
 #define TBLSEPSTR " \t\n\r,"

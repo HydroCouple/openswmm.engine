@@ -23,13 +23,13 @@
  *          subset of the component config (D-UT8 placement: these options
  *          live in the external component file, NOT in [OPTIONS]):
  *
- *          ```
+ *          @code{.text}
  *          [TRANSPORT_OPTIONS]
  *          DISPERSION   OFF | FISCHER | <value>   ; global coefficient model
  *
  *          [CONDUIT_DISPERSION]
  *          <conduit_name>  <value>                ; per-conduit override
- *          ```
+ *          @endcode
  *
  *          Values are entered in project display units (len²/s — m²/s under
  *          SI flow units, ft²/s under US); the engine converts to internal

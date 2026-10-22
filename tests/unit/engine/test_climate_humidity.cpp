@@ -125,7 +125,7 @@ std::string slurp(const std::string& path) {
  * @param[in] flow_units Non-null FLOW_UNITS token selecting US/SI authored temperature/dewpoint
  *     units, default CFS.
  * @param[in] air_temp Non-null numeric air-temperature text in degrees F for US or C for SI,
- *     default50.0.
+ *     default 50.0.
  * @return Owned one-hour KINWAVE deck with zero rain, held air series and RH/dewpoint signal rows.
  */
 std::string deck(const std::string& humidity_line, const char* flow_units = "CFS",
@@ -245,7 +245,7 @@ struct Parsed {
  * climate.
  *
  * @param[in] e Live opened engine with readable climate configuration.
- * @return Owned Parsed structure with12 monthly values and series name; defaults/partial data can
+ * @return Owned Parsed structure with 12 monthly values and series name; defaults/partial data can
  *     remain after ignored getter failures.
  */
 Parsed read_config(SWMM_Engine e) {

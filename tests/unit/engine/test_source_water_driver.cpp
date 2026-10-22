@@ -39,7 +39,7 @@ constexpr int IT = static_cast<int>(lid::LIDType::INFIL_TRENCH);
  *
  * @param[in] n Nonnegative catchment count supported by allocation; names S0..S(n-1) are assigned.
  * @param[in] rain First rain time-series intensity in authored in/hr under default CFS options,
- *     followed by zero at30 s; default432.
+ *     followed by zero at30 s; default 432.
  * @return Owned uninitialized native context with one gage, snow disabled and fixed
  *     infiltration/roughness metadata.
  */
@@ -137,7 +137,7 @@ RunoffSolver::InfiltrationBoundary sealed = [](int, double, double, double& rate
  * @brief Stage/check/commit source group zero against a sealed infiltration boundary.
  *
  * Stages with the global sealed callback assigning zero ordinary infiltration, checks trial water
- * residual within1e-10, then commits. Fatal stage/commit assertions return only from this helper
+ * residual within 1e-10, then commits. Fatal stage/commit assertions return only from this helper
  * and do not provide a separate status. Callback lifetime covers the synchronous stage call.
  *
  * @param[in,out] d Initialized fixture source driver with group0 and no conflicting active trial.
@@ -514,8 +514,8 @@ namespace {
  * both. Does not initialize a source driver or validate that arbitrary type tokens are supported.
  *
  * @param[in] type Authored LID token, default IT; VS receives a special surface row.
- * @param[in] rain Rain intensity in authored in/hr for model(1,rain), default432.
- * @return Owned uninitialized context with1 m2 total LID area,50% initial saturation, bottom
+ * @param[in] rain Rain intensity in authored in/hr for model(1,rain), default 432.
+ * @return Owned uninitialized context with 1 m2 total LID area,50% initial saturation, bottom
  *     conductivity432 in/hr, type-supporting layer arrays and Dissolved/Counts rows.
  */
 SimulationContext pollutantLid(const std::string& type = "IT", double rain = 432) {

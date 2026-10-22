@@ -203,7 +203,7 @@ namespace {
  *     US1.486 coefficient.
  * @param[in] reversed Reverse the second conduit's cell order/axis signs to represent
  *     A-to-VJ-from-B orientation.
- * @return Owned channel with2*half cells, one geometry/chain, no hydraulic nodes/species and
+ * @return Owned channel with 2*half cells, one geometry/chain, no hydraulic nodes/species and
  *     zero-resized water state.
  */
 Channel makeSplitChannel(const XSectParams& xs, int half, double dx, double manning,
@@ -643,7 +643,7 @@ namespace {
  * @param[in] n Positive cell count supported by makeWalledChannel and state allocation.
  * @param[in] dx Positive cell length in feet.
  * @param[in] nspecies Nonnegative scalar row count.
- * @return Owned10 ft wide,15 ft maximum-depth channel with zero-resized water and species state;
+ * @return Owned 10 ft wide,15 ft maximum-depth channel with zero-resized water and species state;
  *     caller seeds area/discharge/concentration.
  */
 Channel makeTransportChannel(int n, double dx, int nspecies) {

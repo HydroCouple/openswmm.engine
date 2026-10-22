@@ -125,6 +125,12 @@ static double getGWFlow(double lowerDepth);
 static void updateMassBal(double area, double tStep);
 
 // Used to process custom GW outflow equations
+/**
+ * @brief Finds position of GW variable in list of GW variable names.
+ *
+ * @param[in] s Name of a groundwater variable.
+ * @return Index of groundwater variable.
+ */
 static int getVariableIndex(char* s);
 static double getVariableValue(int varIndex);
 
@@ -867,12 +873,10 @@ double getGWFlow(double lowerDepth) {
 
 //=============================================================================
 
-/**
- * @fn static int getVariableIndex(char* s)
+/*
  * @brief Finds position of GW variable in list of GW variable names.
  *
- * @par Argument contract
- * - s (in): Name of a groundwater variable.
+ * @param[in] s Name of a groundwater variable.
  * @return Index of groundwater variable.
  */
 int getVariableIndex(char* s) {

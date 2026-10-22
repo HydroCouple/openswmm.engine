@@ -128,7 +128,7 @@ const char* kOptions = "[OPTIONS]\n"
  *     invalid test content.
  * @param[in] street_xsect Raw cross-section tokens for C_UP/C_DN, default STREET ST1.
  * @param[in] extra Optional raw sections appended before coordinates.
- * @return Owned CFS network text using kOptions, two100 ft street segments and a100 ft sewer
+ * @return Owned CFS network text using kOptions, two 100 ft street segments and a100 ft sewer
  *     conduit.
  */
 std::string ijModel(const std::string& inlets, const std::string& inlet_junctions,
@@ -182,7 +182,7 @@ std::string ijModel(const std::string& inlets, const std::string& inlet_junction
  * @brief Construct the unsplit street/sewer baseline with a named curb inlet design.
  *
  * No file creation, model parsing or hydraulic execution occurs.
- * @return Owned kOptions deck with200 ft C_ST, independent100 ft C_SEW, ST1 street definition and
+ * @return Owned kOptions deck with 200 ft C_ST, independent100 ft C_SEW, ST1 street definition and
  *     Curb1 design; no inlet-junction assignment.
  */
 std::string unsplitModel() {

@@ -166,7 +166,7 @@ std::string outPath(const std::string& name) {
  * @brief Construct a primed over-the-top two-tank drawdown deck.
  *
  * Only constructs text; does not validate ranges, prime dynamically or run drawdown. Requests six
- * cells per link and100 ft/s slot celerity.
+ * cells per link and 100 ft/s slot celerity.
  *
  * @param[in] closure Raw pressure-closure option text inserted after common options, not just an
  *     enum token.
@@ -174,7 +174,7 @@ std::string outPath(const std::string& name) {
  * @param[in] init_head Initial tank depth/head in feet; apex depth is max(init_head-6,0).
  * @param[in] withdraw_cfs Nonnegative intended withdrawal magnitude in CFS; inserted after a
  *     literal minus sign.
- * @return Owned half-hour CFS/FV deck with100 ft2 tanks, two60 ft one-foot pipes, apex invert6 ft
+ * @return Owned half-hour CFS/FV deck with 100 ft2 tanks, two 60 ft one-foot pipes, apex invert6 ft
  *     and fixed high overflow weir.
  */
 std::string overTopModel(const std::string& closure, bool apex_sealed, double init_head = 8.0,
@@ -543,7 +543,7 @@ namespace {
  *
  * @param[in] celerity Raw positive FV_SLOT_CELERITY token in m/s.
  * @param[in] extra Raw additional option lines inserted before STORAGE.
- * @return Owned two-minute deck with3.1 L/s inflow,8 m pipe of.094 m diameter, .04 m FV cell
+ * @return Owned two-minute deck with 3.1 L/s inflow,8 m pipe of.094 m diameter, .04 m FV cell
  *     target, .01 s routing and implicit pressurization disabled.
  */
 std::string fillingSurgeDeck(const std::string& celerity, const std::string& extra = "") {

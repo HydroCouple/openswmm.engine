@@ -258,7 +258,7 @@ namespace {
 /**
  * @brief Run a stage-series fixture until its lagging surface window resolves a nonzero head.
  *
- * Writes constant StageTS32.808 ft, starts with output disabled and steps at most50 times, stopping
+ * Writes constant StageTS32.808 ft, starts with output disabled and steps at most 50 times, stopping
  * when head!=0 or elapsed<=0. Calls end only after the loop; scoped Eng always closes/destroys.
  * Despite its historical name this may perform multiple steps, and does not assert success
  * internally.

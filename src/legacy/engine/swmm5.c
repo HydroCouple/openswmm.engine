@@ -29,7 +29,7 @@
  *      - Added swmm_getWarnings() function to retrieve value of Warnings.
  *      - Fixed error code returned on swmm_xxx functions.
  *  - Build 5.1.012:
- *      - #include <direct.h> only used when compiled for Windows.
+ *      - `#include <direct.h>` only used when compiled for Windows.
  *  - Build 5.1.013:
  *      - Support added for saving average results within a reporting period.
  *      - SWMM engine now always compiled to a shared object library.

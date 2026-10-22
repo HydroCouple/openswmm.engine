@@ -85,7 +85,7 @@ std::string outPath(const std::string& name) {
  *     delimiters.
  * @param[in] reverse_c3 Declare C_3 in reverse node order with negative initial flow when true.
  * @return Owned ten-minute CFS/DYNWAVE deck with 15 ft upstream fixed stage, quarter-second routing
- *     and a valve closing near60 s.
+ *     and a valve closing near 60 s.
  */
 std::string valveModel(const std::string& surcharge, const std::string& extra,
                        bool reverse_c3 = false) {
@@ -325,7 +325,7 @@ private:
  * @brief Run a forced-thread valve case and record binary64 API state at every step.
  *
  * Enables unsteady friction, writes THREADS1 while forcing the environment override, shortens deck
- * to2 min, then steps at most10000 calls with no binary output. Failures record GoogleTest
+ * to2 min, then steps at most 10000 calls with no binary output. Failures record GoogleTest
  * diagnostics; creation/open/init/start failure returns empty, while later errors can return a
  * partial trace. Checks elapsed completion/finiteness, ends/destroys engine and restores the
  * process override.

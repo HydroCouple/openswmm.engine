@@ -141,7 +141,7 @@ double dn(SWMM_Engine e, int idx) {
  * @brief Assert saved conduit offset columns match the expected authored values.
  *
  * Requires at least seven tokens via fatal assertion, converts columns5/6 with stod and compares
- * within1e-9. Numeric conversion exceptions propagate; does not validate other columns or alter the
+ * within 1e-9. Numeric conversion exceptions propagate; does not validate other columns or alter the
  * file.
  *
  * @param[in] path Readable written input artifact.

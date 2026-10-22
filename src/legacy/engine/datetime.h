@@ -95,13 +95,12 @@ DateTime datetime_encodeTime(int hour, int minute, int second);
 
 /*!
 * \brief Decodes a DateTime value to year, month, and day.
-* @par Argument contract
- * - date (in): Date value
-* - year (out): Year
-* - month (out): Month
-* - day (out): Day
+ * @param[in] date Date value
+* @param[out] year Year
+* @param[out] month Month
+* @param[out] day Day
 */
-void datetime_decodeDate(DateTime date, int* y, int* m, int* d);
+void datetime_decodeDate(DateTime date, int* year, int* month, int* day);
 
 /*!
 * \brief Decodes a DateTime value to hour, minute, and second.
@@ -175,11 +174,10 @@ void datetime_getTimeStamp(int fmt, DateTime aDate, int stampSize, char* timeSta
 
 /*!
 * \brief Finds the month of the year for a date.
-* @par Argument contract
- * - month (in): String date
+ * @param[in] month String date
 * \return Month of year
 */
-int datetime_findMonth(char* s);
+int datetime_findMonth(char* month);
 
 /*!
 * \brief Converts a string to a DateTime value.

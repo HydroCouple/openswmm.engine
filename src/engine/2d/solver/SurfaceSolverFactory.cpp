@@ -548,7 +548,7 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts, s
     return serial_marcher();
 }
 
-/**
+/*
  * @brief Discover and bind a qualified stateless OpenMP recharge operator.
  * @param[in] n_cells Mesh-cell count, currently unused; no AUTO threshold applies.
  * @param[in] opts Borrowed validated solver options and requested/session backend policy.

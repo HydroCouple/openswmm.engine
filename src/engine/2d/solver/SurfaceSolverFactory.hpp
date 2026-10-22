@@ -105,19 +105,20 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
  * the built-in marcher; absent/unsupported extensions select CPU.
  *
  * @details Discover an optional independently scheduled raw-recharge operator.
- * @par Argument contract
- * - Argument 1 (in): Borrowed validated SolverOptions2D, including backend request/session
+ * @param[in] opts Borrowed validated SolverOptions2D, including backend request/session
  * preference. Environment override takes precedence.
- * - n_cells (in): Mesh-cell count, currently unused; no qualified AUTO mesh-size policy is
+ * @param[in] n_cells Mesh-cell count, currently unused; no qualified AUTO mesh-size policy is
  * applied.
  * @return Value-owned backend descriptor. Empty evaluate/threads callbacks select scalar CPU and
  * diagnostic explains why. Explicit OMP is required for host-parallel recharge; AUTO remains
  * CPU.
  * @note Discovery never transfers groundwater state ownership. Captured execution owner and
  * resident library keep callbacks valid; their array arguments are borrowed synchronously.
+ * Callback evaluation exceptions become nonzero failure, while threads callback exceptions can
+ * propagate; both execute synchronously on the shared execution owner.
  * Allocation/module-pin exceptions can propagate.
  */
-GwRechargeBackend makeGwRechargeBackend(const SolverOptions2D&, int n_cells);
+GwRechargeBackend makeGwRechargeBackend(const SolverOptions2D& opts, int n_cells);
 
 } // namespace openswmm::twoD
 

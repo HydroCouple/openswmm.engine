@@ -27,7 +27,7 @@ using namespace fvnetwork;
  * @param[in] m Valid square CSR matrix compatible with rhs, with valid column indices.
  * @param[in] rhs Right-hand side; dimension must fit int and available dense storage.
  * @return Owned double-converted solution, empty when a selected long-double pivot magnitude is
- *     below1e-25 or dimension is zero.
+ *     below 1e-25 or dimension is zero.
  */
 std::vector<double> dense(const S::Matrix& m, const std::vector<double>& rhs) {
     const int n = static_cast<int>(rhs.size());

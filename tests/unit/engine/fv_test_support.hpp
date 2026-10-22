@@ -303,7 +303,13 @@ inline FvOptions defaultOptions() {
     return o;
 }
 
-/// Directory every test artefact is written to — reviewable, not temporary.
+/**
+ * @brief Name the retained analytic finite-volume artifact directory.
+ *
+ * Does not create directories, reserve a filename or change cwd; individual harnesses create their
+ * required outputs.
+ * @return Owned relative tests/output/fv path string.
+ */
 inline std::string outputDir() {
     return "tests/output/fv";
 }

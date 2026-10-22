@@ -79,7 +79,7 @@ template <class DxFn, class BedFn>
  * @param[in] bedfn Deterministic synchronous elevation callable bed(x_ft) in feet; called at
  *     centers/faces and not retained.
  * @param[in] manning Uniform Manning roughness.
- * @param[in] slot_celerity Positive geometry slot celerity in ft/s, default100.
+ * @param[in] slot_celerity Positive geometry slot celerity in ft/s, default 100.
  * @return Owned walled channel with recomputed center/face elevations, lengths and cell bed slopes;
  *     ch.dx=0 marks nonuniform spacing.
  */
@@ -176,7 +176,7 @@ struct RunResult {
  * @param[in] max_tiers Supported positive maximum local-timestep tier count.
  * @param[in] lts Enable local tiering when true.
  * @param[in] t_end Requested end in seconds; nonpositive performs no advances.
- * @param[in] dt_report Strictly positive advance-window length in seconds, default5.
+ * @param[in] dt_report Strictly positive advance-window length in seconds, default 5.
  * @return Owned final areas ft2/discharges CFS, accumulated substeps, maximum observed tier count,
  *     flux work and relative cell-water drift.
  */

@@ -90,7 +90,7 @@ using namespace openswmm::twoD;
  *
  * Geometry and state arrays are owned by the returned mesh. No solver, forcing or water state is
  * initialized; allocation/topology errors propagate.
- * @return Owned1-by-1 m mesh with triangles(0,1,3)/(0,3,2), uniform Manning.035 and built topology.
+ * @return Owned 1-by-1 m mesh with triangles(0,1,3)/(0,3,2), uniform Manning.035 and built topology.
  */
 static MeshData makeUnitSquareMesh() {
     MeshData mesh;
@@ -123,7 +123,7 @@ static MeshData makeUnitSquareMesh() {
  *
  * Geometry and state arrays are owned by the returned mesh. No solver, forcing or water state is
  * initialized; allocation/topology errors propagate.
- * @return Owned10-by-10 m mesh sampled from z=.1*x+.2*y in metres, Manning.03 and built topology.
+ * @return Owned 10-by-10 m mesh sampled from z=.1*x+.2*y in metres, Manning.03 and built topology.
  */
 static MeshData makeTiltedPlaneMesh() {
     MeshData mesh;

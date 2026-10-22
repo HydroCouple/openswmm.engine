@@ -70,6 +70,12 @@ static double* Cin; // node inflow concentrations
 //-----------------------------------------------------------------------------
 static int createTreatment(int node);
 static double getRemoval(int pollut);
+/**
+ * @brief Finds position of process variable/pollutant in list of names.
+ *
+ * @param[in] s Name of a process variable or pollutant.
+ * @return Index of process variable or pollutant.
+ */
 static int getVariableIndex(char* s);
 static double getVariableValue(int varCode);
 
@@ -314,12 +320,10 @@ int createTreatment(int j) {
 
 //=============================================================================
 
-/**
- * @fn static int getVariableIndex(char* s)
+/*
  * @brief Finds position of process variable/pollutant in list of names.
  *
- * @par Argument contract
- * - s (in): Name of a process variable or pollutant.
+ * @param[in] s Name of a process variable or pollutant.
  * @return Index of process variable or pollutant.
  */
 int getVariableIndex(char* s) {

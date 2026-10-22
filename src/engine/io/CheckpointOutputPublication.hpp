@@ -21,22 +21,33 @@
 namespace openswmm::io {
 /**
  * @brief Obtain a borrowed platform descriptor for a C stream.
- * @par Input argument
- * The unnamed stream argument is an open C stream, or null.
+ * @param[in] stream Borrowed open C stream, or null.
  * @return Its CRT/POSIX descriptor, or -1 for null or descriptor failure.
  * @note The stream retains ownership; the caller must not independently
  * close the returned descriptor.
  */
-int checkpointFileDescriptor(FILE*) noexcept;
-/// Read an exact range through a borrowed, seekable writer descriptor, restoring
-/// its position on success or failure. Required for Windows mandatory HDF5 locks.
-/// Call only while the writer is flushed and exclusively held by the caller.
+int checkpointFileDescriptor(FILE* stream) noexcept;
+/**
+ * @brief Read an exact output range through a borrowed seekable writer descriptor.
+ * @param[in] descriptor Nonnegative open readable seekable descriptor, flushed and exclusively
+ * held by the caller for the complete operation; never closed or retained by this helper.
+ * @param[in] offset Absolute byte offset in [0, INT64_MAX], with offset+bytes <= INT64_MAX.
+ * @param[out] data Writable storage for at least bytes bytes; null permitted only for zero bytes.
+ * May contain a copied prefix if reading or final position restoration fails.
+ * @param[in] bytes Exact byte count; zero still checks/repositions/restores the descriptor.
+ * @throws std::runtime_error Invalid range, failed initial seek/read (including early EOF), or
+ * failed final restoration. EINTR reads retry; already copied bytes are not rolled back.
+ * @details Saves the original file position, seeks and reads in at most INT_MAX chunks, then
+ * attempts to restore the saved offset even after failed reads. A restoration failure is reported,
+ * so the original position is not guaranteed on failure. Does not flush a C/HDF5 writer, lock the
+ * descriptor, validate source identity or advance simulation. This avoids opening another handle
+ * under Windows mandatory file locking.
+ */
 void checkpointReadOutput(int descriptor, uint64_t offset, char* data, std::size_t bytes);
 // Create exclusively, or reopen without truncation, with rename sharing.
 /**
  * @brief Open a writable binary output for checkpoint restoration.
- * @par Path argument
- * The first, unnamed argument is the output path in platform filesystem encoding.
+ * @param[in] path Borrowed output path in platform filesystem encoding.
  * @param[in] existing True opens an existing file without truncation;
  * false exclusively creates a new file and fails if the path exists.
  * @return Owned read/write stream, positioned at the beginning, or null on
@@ -44,7 +55,7 @@ void checkpointReadOutput(int descriptor, uint64_t offset, char* data, std::size
  * @note Windows opens with delete/rename sharing so publication may replace
  * the live file while its original stream remains open.
  */
-FILE* checkpointOpenOutput(const std::filesystem::path&, bool existing = false);
+FILE* checkpointOpenOutput(const std::filesystem::path& path, bool existing = false);
 // Internal checkpoint publication. Writers remain on their old handles until
 // every rename succeeds. This is not an atomic view for external readers or a
 // power-loss transaction. A failed rollback retains its backup for recovery.

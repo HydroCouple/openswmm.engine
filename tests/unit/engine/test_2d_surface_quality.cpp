@@ -726,7 +726,7 @@ namespace {
  *
  * @param[in] quality Raw pollutant/land-use/buildup/washoff section text.
  * @param[in] coverages Raw surface coverage section text.
- * @param[in] end Same-date END_TIME token, default00:40:00.
+ * @param[in] end Same-date END_TIME token, default 00:40:00.
  * @return Owned options with J1 coupling, authored bed5/depth.5 feet under deck CFS units and
  *     exchange area.002 in the authored coupling-area convention.
  */

@@ -124,7 +124,7 @@ struct Fixture {
      *
      * @param[in] r Valid metadata row for node0 and the intended type.
      * @param[in] t Coupling type passed to production resolution.
-     * @param[in] f Length conversion factor supplied to resolveExchangeStructure, default1.
+     * @param[in] f Length conversion factor supplied to resolveExchangeStructure, default 1.
      */
     void resolve(int r, NodeCoupling2DType t, double f = 1.0) {
         resolveExchangeStructure(cp, mesh, ctx, opts, r, t, f);
@@ -246,12 +246,12 @@ const fs::path kOut = "weir_orifice_coupling_out";
 /**
  * @brief Construct the rainy surface-to-node weir/orifice integration deck.
  *
- * Rain is forced at runtime rather than authored. Sets four tiers, maximum surface timestep30 s and
- * variable native routing around6 s; constructs text without validation/simulation.
+ * Rain is forced at runtime rather than authored. Sets four tiers, maximum surface timestep 30 s and
+ * variable native routing around 6 s; constructs text without validation/simulation.
  *
  * @param[in] opts2d Raw2D_OPTIONS lines with required delimiters.
  * @param[in] node_rows Optional raw2D_NODE_COUPLING rows; nonempty emits the section header.
- * @return Owned forty-minute CMS/DYNWAVE deck with10-by-10 m bed1 m patch, vertex0-to-J1 mapping
+ * @return Owned forty-minute CMS/DYNWAVE deck with 10-by-10 m bed1 m patch, vertex0-to-J1 mapping
  *     and free downstream outfall.
  */
 std::string deck(const std::string& opts2d, const std::string& node_rows) {
@@ -282,7 +282,7 @@ struct LiveRun {
 /**
  * @brief Run the forced-rain coupling deck and compare native receipts with surface exchange.
  *
- * Applies override rain.001 m/s until prior elapsed time reaches600 s, then zero; stops at step
+ * Applies override rain.001 m/s until prior elapsed time reaches 600 s, then zero; stops at step
  * error or completion and still sets ok=true after cleanup. Thus ok marks startup/cleanup only.
  * Omits terminal elapsed<=0 sample from receipt integration, ignores most getter/end/report/close
  * statuses and destroys the engine; no interpolation at forcing/cutoff times occurs.
@@ -290,7 +290,7 @@ struct LiveRun {
  * @param[in] tag Safe artifact basename under kOut for overwritten input/report.
  * @param[in] opts2d Raw surface options passed to deck.
  * @param[in] node_rows Raw coupling rows passed to deck.
- * @return Owned integrated J1 lateral volume m3, first120 s receipt m3, net2D-to-1D exchange m3,2D
+ * @return Owned integrated J1 lateral volume m3, first 120 s receipt m3, net2D-to-1D exchange m3,2D
  *     continuity fraction, backend text and ok flag.
  */
 LiveRun run(const std::string& tag, const std::string& opts2d, const std::string& node_rows) {

@@ -5181,7 +5181,7 @@ void compareMesh(SWMMEngine& a, SWMMEngine& b, const std::string& name) {
  * writer is idle; callers coordinate lifecycle/output access.
  *
  * @param[in] e Borrowed live engine with a populated output plugin catalogue.
- * @return Borrowed Default2DOutputPlugin reference valid while the engine retains that plugin.
+ * @return Borrowed Default 2DOutputPlugin reference valid while the engine retains that plugin.
  */
 twoD::Default2DOutputPlugin& meshWriter(SWMMEngine& e) {
     for (auto* p : e.plugin_factory().output_plugins())

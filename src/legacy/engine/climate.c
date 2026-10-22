@@ -375,28 +375,28 @@ static int getFileFormat(void);
  * \param[out] y Year
  * \param[out] m Month
  */
-static void readFileLine(int* year, int* month);
+static void readFileLine(int* y, int* m);
 
 /*!
  * \brief Reads year & month from line of User-Prepared climate file.
  * \param[out] y Year
  * \param[out] m Month
  */
-static void readUserFileLine(int* year, int* month);
+static void readUserFileLine(int* y, int* m);
 
 /*!
  * \brief Reads year & month from line of TD-3200 climate file.
  * \param[out] y Year
  * \param[out] m Month
  */
-static void readTD3200FileLine(int* year, int* month);
+static void readTD3200FileLine(int* y, int* m);
 
 /*!
  * \brief Reads year & month from line of DLY02 or DLY04 climate file.
  * \param[out] y Year
  * \param[out] m Month
  */
-static void readDLY0204FileLine(int* year, int* month);
+static void readDLY0204FileLine(int* y, int* m);
 
 /*!
  * \brief Reads next month's worth of data from a GHCND climate file.
@@ -408,7 +408,7 @@ static void readFileValues(void);
  * \param[in] theDate Current simulation date
  * @post Updates the shared NextEvapDate value.
  */
-static void setNextEvapDate(DateTime thedate);
+static void setNextEvapDate(DateTime theDate);
 
 /*!
  * \brief Sets evaporation rate (ft/sec) for a specified date.
@@ -482,7 +482,7 @@ static void parseDLY0204FileLine(void);
  * \brief Reads month worth of values for climate variable from TD-3200 file.
  * \param[in] i Climate variable code
  */
-static void setTD3200FileValues(int param);
+static void setTD3200FileValues(int i);
 
 /*!
  * \brief Checks if a climate file is in the NCDC GHCN Daily format
@@ -497,7 +497,7 @@ static int isGhcndFormat(char* line);
  * \param[out] y Year
  * \param[out] m Month
  */
-static void readGhcndFileLine(int* year, int* month);
+static void readGhcndFileLine(int* y, int* m);
 
 /*!
  * \brief Parses a line of a NCDC GHCN Daily file for daily values of max/min temperature,
@@ -977,7 +977,7 @@ DateTime climate_getNextEvapDate() {
     return NextEvapDate;
 }
 
-/*!
+/*
  * @see Declaration contract for setNextEvapDate().
  * \note local function
  */
@@ -1032,7 +1032,7 @@ void setNextEvapDate(DateTime theDate) {
     }
 }
 
-/*!
+/*
  * @see Declaration contract for updateFileValues().
  * \note local function
  */
@@ -1069,7 +1069,7 @@ void updateFileValues(DateTime theDate) {
     }
 }
 
-/*!
+/*
  * @see Declaration contract for setTemp().
  * \note local function
  */
@@ -1152,7 +1152,7 @@ void setTemp(DateTime theDate) {
     Temp.ea = 8.1175e6 * exp(-7701.544 / (Temp.ta + 405.0265));
 }
 
-/*!
+/*
  * @see Declaration contract for setEvap().
  * \note local function
  */
@@ -1204,7 +1204,7 @@ void setEvap(DateTime theDate) {
     }
 }
 
-/*!
+/*
  * @see Declaration contract for setWind().
  * \note local function
  */
@@ -1230,7 +1230,7 @@ void setWind(DateTime theDate) {
         Wind.ws = Wind.apiWs;
 }
 
-/*!
+/*
  * @see Declaration contract for updateTempTimes().
  * \note local function
  */
@@ -1262,7 +1262,7 @@ void updateTempTimes(int day) {
     Temp.tmax = Tmax;
 }
 
-/*!
+/*
  * @see Declaration contract for getTempEvap().
  * \note local function
  */
@@ -1285,7 +1285,7 @@ double getTempEvap(int day, double tave, double trng) {
     return e;
 }
 
-/*!
+/*
  * @see Declaration contract for getFileFormat().
  * \note local function
  */
@@ -1329,7 +1329,7 @@ int getFileFormat() {
     return UNKNOWN_FORMAT;
 }
 
-/*!
+/*
  * @see Declaration contract for readFileLine().
  * \note local function
  */
@@ -1359,7 +1359,7 @@ void readFileLine(int* y, int* m) {
     }
 }
 
-/*!
+/*
  * @see Declaration contract for readUserFileLine().
  * \note local function
  */
@@ -1372,7 +1372,7 @@ void readUserFileLine(int* y, int* m) {
     }
 }
 
-/*!
+/*
  * @see Declaration contract for readTD3200FileLine().
  * \note local function
  */
@@ -1401,7 +1401,7 @@ void readTD3200FileLine(int* y, int* m) {
     *m = atoi(month);
 }
 
-/*!
+/*
  * @see Declaration contract for readDLY0204FileLine().
  * \note local function
  */
@@ -1422,7 +1422,7 @@ void readDLY0204FileLine(int* y, int* m) {
     *m = atoi(month);
 }
 
-/*!
+/*
  * @see Declaration contract for readFileValues().
  * \note local function
  */
@@ -1463,7 +1463,7 @@ void readFileValues() {
     }
 }
 
-/*!
+/*
  * @see Declaration contract for parseUserFileLine().
  * \note local function
  */
@@ -1509,7 +1509,7 @@ void parseUserFileLine() {
         FileData[WIND][d] = atof(s3);
 }
 
-/*!
+/*
  * @see Declaration contract for parseTD3200FileLine().
  * \note local function
  */
@@ -1527,7 +1527,7 @@ void parseTD3200FileLine() {
     }
 }
 
-/*!
+/*
  * @see Declaration contract for setTD3200FileValues().
  * \note local function
  */
@@ -1585,7 +1585,7 @@ void setTD3200FileValues(int i) {
     }
 }
 
-/*!
+/*
  * @see Declaration contract for parseDLY0204FileLine().
  * \note local function
  */
@@ -1650,7 +1650,7 @@ void parseDLY0204FileLine() {
     }
 }
 
-/*!
+/*
  * @see Declaration contract for isGhcndFormat().
  * \note local function
  */
@@ -1696,7 +1696,7 @@ int isGhcndFormat(char* line) {
     return FALSE;
 }
 
-/*!
+/*
  * @see Declaration contract for readGhcndFileLine().
  * \note local function
  */
@@ -1708,7 +1708,7 @@ void readGhcndFileLine(int* y, int* m) {
     }
 }
 
-/*!
+/*
  * @see Declaration contract for parseGhcndFileLine().
  * \note local function
  */
@@ -1734,7 +1734,7 @@ void parseGhcndFileLine() {
     }
 }
 
-/*!
+/*
  * @see Declaration contract for convertGhcndValue().
  * \note local function
  */
@@ -1800,7 +1800,7 @@ double convertGhcndValue(int var, double v) {
     }
 }
 
-/*!
+/*
  * @see Declaration contract for updateTempMoveAve().
  * \note local function
  */
@@ -1847,3 +1847,5 @@ void updateTempMoveAve(double tmin, double tmax) {
             Tma.front = 0;
     }
 }
+
+/** @} */ // Climate_File_Constants_and_Shared_Variables

@@ -194,7 +194,7 @@ std::map<std::string, SourceResultTable> EngineSourceResultHistory::schema(bool 
     }
     return tables;
 }
-/**
+/*
  * @brief Construct one engine-boundary water/queue projection with stable saved identities.
  * @par Engine argument Prepared accepted-boundary engine with a live common source stage and
  * consistent source delivery bridge or enabled LID bottom receipts. All borrowed subsystem
@@ -341,7 +341,7 @@ EngineSourceResultHistory EngineSourceResultHistory::projection(const SWMMEngine
         }
     return out;
 }
-/**
+/*
  * @brief Capture initial state or the next accepted engine-step water boundary transactionally.
  * @par Engine argument Stable checkpoint-capable engine with a managed source bridge or enabled
  * LID bottom attachment. After frame zero its exact address/identities/capabilities/start date
@@ -406,7 +406,7 @@ std::string EngineSourceResultHistory::append(const SWMMEngine& e, double start)
         return e.what();
     }
 }
-/**
+/*
  * @brief Rebind a saved recorder only to an exact restored whole-engine checkpoint and
  * projection.
  * @par Engine argument Stable restored checkpoint-capable engine with matching

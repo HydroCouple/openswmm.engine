@@ -219,7 +219,7 @@ struct CoupledRun {
 /**
  * @brief Write/start a coupled transport fixture and optionally attempt the full step loop.
  *
- * Lifecycle failure/absent2D returns ok=false without destroying the created engine. Step failure
+ * Lifecycle failure/absent 2D returns ok=false without destroying the created engine. Step failure
  * exits the loop but still sets eng/ok=true, so ok proves startup/activity only. Leaves the engine
  * un-ended for state inspection; copying result ownership is unsafe.
  *

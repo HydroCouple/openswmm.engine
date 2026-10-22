@@ -632,7 +632,7 @@ namespace {
  *
  * @param[in] kdecay_col Authored first-order pollutant decay coefficient in1/day, inserted without
  *     validation.
- * @return Owned two-hour CFS/KINWAVE deck with1 CFS/100 mg/L TSS inflow and400 ft two-foot conduit.
+ * @return Owned two-hour CFS/KINWAVE deck with 1 CFS/100 mg/L TSS inflow and 400 ft two-foot conduit.
  */
 std::string kdecay_routed_model(double kdecay_col) {
     std::ostringstream m;

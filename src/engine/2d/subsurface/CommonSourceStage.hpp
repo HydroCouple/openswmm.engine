@@ -180,7 +180,16 @@ public:
      * profile.
      */
     bool standaloneLocalBed() const { return standalone_local_bed_; }
-    void synchronizeSurfaceLedgers(const ::openswmm::SimulationContext&);
+    /**
+     * @brief Synchronize standalone-local-bed cumulative water diagnostics from accepted mesh
+     * ledgers.
+     * @param[in] ctx Stable simulation context supplying SI mass_balance_2d rainfall_in, evap_out and
+     * aquifer_in volumes m3.
+     * @note Copies these three totals only for standalone_local_bed_; otherwise does nothing. Does
+     * not change physical water, source intervals, receipt queues or hydraulic reporting clocks.
+     * Caller orders this after the appropriate accepted surface ledger publication.
+     */
+    void synchronizeSurfaceLedgers(const ::openswmm::SimulationContext& ctx);
     // Initial internal qualification profile. External program state is not
     // recovered by its immutable replay identity. No authored/public activation.
     /**

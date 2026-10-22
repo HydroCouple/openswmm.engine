@@ -527,6 +527,19 @@ class EngineReceiver : public EngineComponent {
 protected:
     Library receiverLibrary{ENGINE_RECEIVER_LIBRARY};
     std::unique_ptr<HC::IModelComponent> receiver;
+    /**
+     * @brief Initialize, connect and prepare a real interval-transfer receiver fixture.
+     *
+     * Initializes the provider with transfer outputs, creates a receiver from receiverLibrary and
+     * configures reversed B/A species order, expected count three and retained receipts.csv. Connects
+     * each receiver input to matching provider output, validates/prepares both, and fatally checks
+     * statuses. Assertions can leave partial connections/runtime for fixture cleanup. Requires sole
+     * ownership and no prior receiver, matching output IDs, and live components for connection
+     * lifetime; no update/transfer is executed here.
+     *
+     * @param[in] capacity Nonnegative maximum accepted water volume m3 for the receiver config;
+     *     negative omits the limit.
+     */
     void connectReceiver(double capacity = -1) {
         initialize(true);
         receiver = receiverLibrary.create();

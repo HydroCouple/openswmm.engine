@@ -107,8 +107,8 @@ struct ViewFixture {
     /**
      * @brief Construct and wire a borrowed PressurizedView around a synthetic tee network.
      *
-     * Builds tee_pressure with four cells per pipe and100 ft/s geometry, normalizes through a local
-     * ExplicitFvSolver, then creates owned5.5 ft cell elevation/depth, zero velocity and sentinel face
+     * Builds tee_pressure with four cells per pipe and 100 ft/s geometry, normalizes through a local
+     * ExplicitFvSolver, then creates owned 5.5 ft cell elevation/depth, zero velocity and sentinel face
      * flux buffers. Wires view/forcing pointers to member arrays and marks all cells/faces active with
      * algebraic nodes. Members must not move/resize/die while the view is used; copying/moving the
      * fixture does not rebind pointers. No pressure-candidate solve occurs during construction.

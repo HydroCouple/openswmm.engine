@@ -241,7 +241,15 @@ std::string swale_block() {
            "S1 SW1 1 43560 500 0 100 0\n\n";
 }
 
-/// Rain garden: surface + soil, storage ABSENT (thickness 0).
+/**
+ * @brief Build the rain-garden surface/soil age fixture.
+ *
+ * No storage or underdrain layer is authored. Usage starts at 50 percent soil saturation and
+ * captures 100 percent impervious runoff; width is zero. Constructs text only, without validating
+ * or simulating steady-state behavior.
+ * @return Owned RG control and LID_USAGE sections with 6 inch surface storage, 3 inch soil and one
+ *     acre footprint.
+ */
 std::string garden_block() {
     return "[LID_CONTROLS]\n"
            "RG1 RG\n"

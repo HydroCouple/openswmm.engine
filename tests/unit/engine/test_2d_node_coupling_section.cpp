@@ -406,7 +406,7 @@ namespace {
 /**
  * @brief Append the two-triangle surface and vertex-node map to the section fixture.
  *
- * Sets maximum surface timestep5 s, dry depth.002 m and no 2D reports. Rain is applied later at
+ * Sets maximum surface timestep 5 s, dry depth.002 m and no 2D reports. Rain is applied later at
  * runtime by run_coupled, rather than authored in this deck.
  *
  * @param[in] rows Raw optional 2D_NODE_COUPLING rows; empty emits no such section, otherwise the

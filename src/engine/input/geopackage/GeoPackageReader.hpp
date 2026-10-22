@@ -24,6 +24,11 @@
  * @license   Apache-2.0
  */
 
+/**
+ * @defgroup engine_geopackage GeoPackage model persistence
+ * @brief Reading, writing and external-content resolution for GeoPackage-backed model input. Each operation states dataset ownership, error handling and publication behavior.
+ */
+
 #ifndef OPENSWMM_GEOPACKAGE_READER_HPP
 #define OPENSWMM_GEOPACKAGE_READER_HPP
 

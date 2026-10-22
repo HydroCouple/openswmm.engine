@@ -30,6 +30,11 @@
  * @license   Apache-2.0
  */
 
+/**
+ * @defgroup engine_edit Model editing and reference maintenance
+ * @brief Analysis, conversion and deletion of authored model objects, including references and cascade impacts. C ABI entry points enforce editable lifecycle states; internal helpers document their mutation and ownership contracts.
+ */
+
 #ifndef OPENSWMM_ENGINE_OBJECT_DELETER_HPP
 #define OPENSWMM_ENGINE_OBJECT_DELETER_HPP
 

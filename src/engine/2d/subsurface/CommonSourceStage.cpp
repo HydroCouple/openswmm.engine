@@ -593,7 +593,7 @@ std::string CommonSourceStage::initialize(const MeshData& mesh, SurfaceStateData
     return {};
 }
 
-/**
+/*
  * @brief Synchronize standalone-local-bed cumulative water diagnostics from accepted mesh
  * ledgers.
  * - ctx (in): Stable simulation context supplying SI mass_balance_2d rainfall_in, evap_out and

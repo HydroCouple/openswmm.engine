@@ -90,9 +90,13 @@ private:
 };
 
 /**
- * @brief Build a minimal SimulationContext with a few nodes, links, subcatches.
+ * @brief Build a synthetic running-state context for hotstart serialization tests.
  *
- * @details Sets state to RUNNING so HotStartManager::save() accepts it.
+ * Registers/allocates stores, sets native depth/head feet, node volumes ft3, link flow/runoff
+ * ft3/s, EPSG:4326 metadata, numeric start/end dates and current_time=86400 s. Marks RUNNING
+ * directly to exercise save; does not open/validate/initialize or numerically advance a complete
+ * connected model.
+ * @return Owned context with J1/J2/OUT1, C1/C2, S1 and fixed diagnostic water state.
  */
 static SimulationContext make_test_context() {
     SimulationContext ctx;

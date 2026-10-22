@@ -51,7 +51,7 @@ struct Receiver {
      * @param[in] law Soil characteristic law, default RUSSO.
      * @param[in] cells Positive count of disconnected2 m2 triangles; derived counts must fit
      *     indices/storage.
-     * @param[in] table Initial groundwater table height in metres, compatible with2 m soil thickness.
+     * @param[in] table Initial groundwater table height in metres, compatible with 2 m soil thickness.
      * @param[in] ks Saturated conductivity in m/s, default.1.
      */
     void init(GwClosure closure = GwClosure::CLOSED_FORM, SoilChar law = SoilChar::RUSSO,
@@ -96,8 +96,8 @@ struct Receiver {
  *
  * @param[in] id Source identity copied/moved into the owned request.
  * @param[in] candidate Requested intake volume in m3, default.1.
- * @param[in] water Available donor water ceiling in m3, default1.
- * @param[in] cell Target zero-based receiver cell, default0.
+ * @param[in] water Available donor water ceiling in m3, default 1.
+ * @param[in] cell Target zero-based receiver cell, default 0.
  * @param[in] area Contact area in m2, default.5.
  * @return Owned NON_LID request with unit=-1 and pond=0 m.
  */

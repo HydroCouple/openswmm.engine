@@ -3875,16 +3875,12 @@ void SWMMEngine::stepRunoff(double dt_routing) {
 // ============================================================================
 
 /**
- * @brief Compute variable runoff timestep matching legacy runoff_getTimeStep().
+ * @brief Advance the next evaporation-change date once its saved boundary has been reached.
  *
- * @details Selects wet_step or dry_step based on current conditions, then
- *          shortens to align with next rain gage boundary.
- *
- * @param abs_time     Current absolute OADate (days since 12/30/1899).
- * @param is_raining   True if any gage has rainfall > 0.
- * @param has_runoff   True if any subcatchment produces runoff > 0.
- * @param has_snow     True if any subcatchment has snow depth > 0.
- * @returns Runoff timestep in seconds.
+ * Uses the current climate source: constant/default advances 365 days, monthly selects next month's
+ * first day, pan selects next midnight, and timeseries advances the cursor to the next qualifying
+ * sample no later than simulation end. A future boundary is preserved. The absolute decimal-day
+ * input and caller-initialized state requirements are documented on the canonical declaration.
  */
 // legacy climate.c setNextEvapDate(theDate): when the current NextEvapDate has
 // been reached, find when the evaporation source next changes.
@@ -3940,6 +3936,13 @@ void SWMMEngine::setNextEvapDate(double the_date) noexcept {
     }
 }
 
+/**
+ * @brief Compute variable runoff timestep matching legacy runoff_getTimeStep().
+ *
+ * @details Selects wet_step or dry_step based on current conditions, then
+ *          shortens to align with next rain gage boundary.
+ *
+ */
 double SWMMEngine::computeRunoffTimestep(double abs_time, bool is_raining, bool has_runoff,
                                          bool has_snow) noexcept {
     // Matches legacy runoff_getTimeStep() exactly:
@@ -4004,7 +4007,6 @@ double SWMMEngine::computeRunoffTimestep(double abs_time, bool is_raining, bool 
  *          per-subcatchment statistics (max runoff, precipitation volume,
  *          runoff volume).
  *
- * @param dt_runoff  Runoff substep duration (seconds).
  */
 void SWMMEngine::accumulateRunoffMassBalance(double dt_runoff) noexcept {
     //      Sum over all subcatchments for this runoff substep
@@ -4407,7 +4409,6 @@ surfacespecies::Block pollutantSurfaceBlock(SimulationContext& ctx,
  *          Iterates over subcatchments, pollutants, and land uses to
  *          accumulate buildup and compute washoff loads.
  *
- * @param dt_runoff  Runoff substep duration (seconds).
  */
 void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
     // Multispecies Phase 2 (S1): the arithmetic lives in
@@ -4489,7 +4490,6 @@ void SWMMEngine::bookWashoffLoads(double dt_runoff) noexcept {
  *          scatters GW lateral flow contributions to receiving nodes
  *          and accumulates groundwater inflow mass balance.
  *
- * @param dt_runoff  Runoff substep duration (seconds).
  */
 void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
     int ns = ctx_.n_subcatches();
@@ -4666,7 +4666,6 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
  *          runs hydraulic routing, inlet capture, culvert control,
  *          exfiltration, and quality transport.
  *
- * @param dt_routing  Routing timestep (seconds).
  */
 void SWMMEngine::stepRouting(double dt_routing) {
     last_step_steady_ = false;
@@ -5225,13 +5224,12 @@ void SWMMEngine::stepRouting(double dt_routing) {
 // ============================================================================
 
 /**
- * @brief Update node and link statistics after routing.
+ * @brief Refresh reporting cross-section parameters when the link count or generation changes.
  *
- * @details Updates max depth, max overflow, flooding duration/volume for
- *          nodes, and max flow, max velocity, max filling, surcharge
- *          duration, and volume conveyed for links.
- *
- * @param dt_routing  Routing timestep (seconds).
+ * Reuses the existing cache when both its size and generation match. Otherwise resizes to the
+ * current link count, gathers each link's section parameters using the current transect tables, and
+ * records the generation. This helper has no timestep argument and does not update statistics.
+ * Allocation failures are not caught inside this noexcept function.
  */
 void SWMMEngine::ensureXspCache() noexcept {
     const auto n = static_cast<std::size_t>(ctx_.n_links());
@@ -5261,6 +5259,14 @@ void SWMMEngine::accumulateNodeRoutingTotals(double half_step) noexcept {
     }
 }
 
+/**
+ * @brief Update node and link statistics after routing.
+ *
+ * @details Updates max depth, max overflow, flooding duration/volume for
+ *          nodes, and max flow, max velocity, max filling, surcharge
+ *          duration, and volume conveyed for links.
+ *
+ */
 void SWMMEngine::updateStatistics(double dt_routing) noexcept {
     const int np = ctx_.n_pollutants();
     // legacy stats_updateFlowStats(routingStep, getDateTime(NewRoutingTime)):
@@ -5618,7 +5624,6 @@ static double effectiveUserLatFlow(const SimulationContext& ctx, std::size_t uj)
  *          link seepage losses, and wet weather inflow volumes for the
  *          routing mass balance.
  *
- * @param dt_routing  Routing timestep (seconds).
  */
 void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
     // B7. Mass balance update (P8-G12: routing totals)

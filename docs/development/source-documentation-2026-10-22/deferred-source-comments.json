@@ -1,9 +1,9 @@
 {
-  "note": "These completed comments are preserved here because their working source files also contain independent pending implementation changes. The documentation commit stages file metadata/formatting against HEAD for those files and leaves their implementation edits untouched. Each comment includes its current source line and following token anchor. This is documentation content, not a claim that all functions in either project have been reviewed.",
+  "note": "Completed current comments tied to independent pending implementation are archived with exact source lines and following tokens. Their fully documented working files remain untouched; implementation is excluded from this documentation commit.",
   "files": [
     {
       "file": "src/engine/hydraulics/fv/ImplicitNetworkSolver.cpp",
-      "reason": "Independent pending source implementation; keep functional edits out of documentation commit.",
+      "reason": "Independent pending implementation or untracked source; keep code out of documentation commit.",
       "working_source_sha256": "9189df8305d4fafe7e2216543b80700334b370b47889d921751dc2c1a6ab5be3",
       "comments": [
         {
@@ -25,7 +25,11 @@
             "include",
             "<",
             "cmath",
-            ">"
+            ">",
+            "#",
+            "include",
+            "<",
+            "limits"
           ]
         },
         {
@@ -47,7 +51,11 @@
             "p",
             ".",
             "regime",
-            "=="
+            "==",
+            "S",
+            "::",
+            "Regime",
+            "::"
           ]
         },
         {
@@ -69,7 +77,11 @@
             "&",
             "g",
             ")",
-            "{"
+            "{",
+            "return",
+            "wet",
+            "(",
+            "p"
           ]
         },
         {
@@ -91,7 +103,11 @@
             "const",
             "auto",
             "e",
-            "="
+            "=",
+            "k",
+            "::",
+            "closureEval",
+            "("
           ]
         },
         {
@@ -113,7 +129,11 @@
             ",",
             "int",
             "i",
-            ")"
+            ")",
+            "{",
+            "return",
+            "v",
+            "."
           ]
         },
         {
@@ -135,7 +155,11 @@
             ")",
             "{",
             "return",
-            "std"
+            "std",
+            "::",
+            "all_of",
+            "(",
+            "v"
           ]
         },
         {
@@ -157,7 +181,11 @@
             ")",
             "{",
             "return",
-            "("
+            "(",
+            "p",
+            ".",
+            "mesh",
+            "->"
           ]
         },
         {
@@ -179,7 +207,11 @@
             "head",
             ",",
             "double",
-            "*"
+            "*",
+            "area",
+            "=",
+            "nullptr",
+            ")"
           ]
         },
         {
@@ -201,7 +233,11 @@
             "head",
             ")",
             "{",
-            "const"
+            "const",
+            "double",
+            "d",
+            "=",
+            "head"
           ]
         },
         {
@@ -223,7 +259,11 @@
             ")",
             "{",
             "if",
-            "("
+            "(",
+            "!",
+            "p",
+            ".",
+            "mesh"
           ]
         },
         {
@@ -245,7 +285,11 @@
             "::",
             "Trial",
             "&",
-            "x"
+            "x",
+            ")",
+            "{",
+            "const",
+            "auto"
           ]
         },
         {
@@ -267,7 +311,11 @@
             "::",
             "Trial",
             "&",
-            "x"
+            "x",
+            ",",
+            "int",
+            "f",
+            ","
           ]
         },
         {
@@ -289,7 +337,11 @@
             "::",
             "Trial",
             "&",
-            "x"
+            "x",
+            ",",
+            "int",
+            "c",
+            ")"
           ]
         },
         {
@@ -311,7 +363,11 @@
             "::",
             "Trial",
             "&",
-            "x"
+            "x",
+            ",",
+            "int",
+            "f",
+            ","
           ]
         },
         {
@@ -333,7 +389,11 @@
             "&",
             "p",
             ")",
-            "{"
+            "{",
+            "std",
+            "::",
+            "vector",
+            "<"
           ]
         },
         {
@@ -355,14 +415,18 @@
             "&",
             "p",
             ",",
-            "const"
+            "const",
+            "S",
+            "::",
+            "Evaluation",
+            "&"
           ]
         }
       ]
     },
     {
       "file": "src/engine/hydraulics/fv/ImplicitNetworkSolver.hpp",
-      "reason": "Independent pending source implementation; keep functional edits out of documentation commit.",
+      "reason": "Independent pending implementation or untracked source; keep code out of documentation commit.",
       "working_source_sha256": "fcb6667edc37e89c7153a1e39646e1c8d58586967e04cceca786e285ea6fa1c9",
       "comments": [
         {
@@ -384,7 +448,245 @@
             "#",
             "include",
             "<",
-            "array"
+            "array",
+            ">",
+            "namespace",
+            "openswmm",
+            "::"
+          ]
+        },
+        {
+          "line": 22,
+          "text": "/// Standalone, first-order SLOT experiment, pressurized-only by default with",
+          "following_tokens": [
+            "class",
+            "ImplicitNetworkSolver",
+            "{",
+            "public",
+            ":",
+            "enum",
+            "class",
+            "Regime",
+            "{",
+            "PressurizedOnly",
+            ",",
+            "BoundedWetSlot",
+            "}",
+            ";",
+            "struct",
+            "Problem",
+            "{",
+            "const",
+            "NetworkMeshData",
+            "*"
+          ]
+        },
+        {
+          "line": 23,
+          "text": "/// opt-in bounded wet free-surface/transition support. Uses every",
+          "following_tokens": [
+            "class",
+            "ImplicitNetworkSolver",
+            "{",
+            "public",
+            ":",
+            "enum",
+            "class",
+            "Regime",
+            "{",
+            "PressurizedOnly",
+            ",",
+            "BoundedWetSlot",
+            "}",
+            ";",
+            "struct",
+            "Problem",
+            "{",
+            "const",
+            "NetworkMeshData",
+            "*"
+          ]
+        },
+        {
+          "line": 24,
+          "text": "/// original cell and shared face geometry, including oriented virtual faces.",
+          "following_tokens": [
+            "class",
+            "ImplicitNetworkSolver",
+            "{",
+            "public",
+            ":",
+            "enum",
+            "class",
+            "Regime",
+            "{",
+            "PressurizedOnly",
+            ",",
+            "BoundedWetSlot",
+            "}",
+            ";",
+            "struct",
+            "Problem",
+            "{",
+            "const",
+            "NetworkMeshData",
+            "*"
+          ]
+        },
+        {
+          "line": 25,
+          "text": "/// Junctions have ZERO storage; bounded physical storage uses mesh V(h) tables.",
+          "following_tokens": [
+            "class",
+            "ImplicitNetworkSolver",
+            "{",
+            "public",
+            ":",
+            "enum",
+            "class",
+            "Regime",
+            "{",
+            "PressurizedOnly",
+            ",",
+            "BoundedWetSlot",
+            "}",
+            ";",
+            "struct",
+            "Problem",
+            "{",
+            "const",
+            "NetworkMeshData",
+            "*"
+          ]
+        },
+        {
+          "line": 26,
+          "text": "/// Ponding/overflow, structures, losses,",
+          "following_tokens": [
+            "class",
+            "ImplicitNetworkSolver",
+            "{",
+            "public",
+            ":",
+            "enum",
+            "class",
+            "Regime",
+            "{",
+            "PressurizedOnly",
+            ",",
+            "BoundedWetSlot",
+            "}",
+            ";",
+            "struct",
+            "Problem",
+            "{",
+            "const",
+            "NetworkMeshData",
+            "*"
+          ]
+        },
+        {
+          "line": 27,
+          "text": "/// dry states, TPA and transport are deliberately unsupported.",
+          "following_tokens": [
+            "class",
+            "ImplicitNetworkSolver",
+            "{",
+            "public",
+            ":",
+            "enum",
+            "class",
+            "Regime",
+            "{",
+            "PressurizedOnly",
+            ",",
+            "BoundedWetSlot",
+            "}",
+            ";",
+            "struct",
+            "Problem",
+            "{",
+            "const",
+            "NetworkMeshData",
+            "*"
+          ]
+        },
+        {
+          "line": 28,
+          "text": "/// Ordinary degree-2 nodes retain algebraic heads in both standalone scopes.",
+          "following_tokens": [
+            "class",
+            "ImplicitNetworkSolver",
+            "{",
+            "public",
+            ":",
+            "enum",
+            "class",
+            "Regime",
+            "{",
+            "PressurizedOnly",
+            ",",
+            "BoundedWetSlot",
+            "}",
+            ";",
+            "struct",
+            "Problem",
+            "{",
+            "const",
+            "NetworkMeshData",
+            "*"
+          ]
+        },
+        {
+          "line": 29,
+          "text": "/// Typed virtual faces stay direct.",
+          "following_tokens": [
+            "class",
+            "ImplicitNetworkSolver",
+            "{",
+            "public",
+            ":",
+            "enum",
+            "class",
+            "Regime",
+            "{",
+            "PressurizedOnly",
+            ",",
+            "BoundedWetSlot",
+            "}",
+            ";",
+            "struct",
+            "Problem",
+            "{",
+            "const",
+            "NetworkMeshData",
+            "*"
+          ]
+        },
+        {
+          "line": 30,
+          "text": "/// No production routing option or GUI selects this solver.",
+          "following_tokens": [
+            "class",
+            "ImplicitNetworkSolver",
+            "{",
+            "public",
+            ":",
+            "enum",
+            "class",
+            "Regime",
+            "{",
+            "PressurizedOnly",
+            ",",
+            "BoundedWetSlot",
+            "}",
+            ";",
+            "struct",
+            "Problem",
+            "{",
+            "const",
+            "NetworkMeshData",
+            "*"
           ]
         },
         {
@@ -406,7 +708,63 @@
             "const",
             ";",
             "}",
-            ";"
+            ";",
+            "struct",
+            "Linearization",
+            "{",
+            "Matrix"
+          ]
+        },
+        {
+          "line": 120,
+          "text": "/// One active symbolic layout per workspace; not shared by concurrent calls.",
+          "following_tokens": [
+            "class",
+            "LinearWorkspace",
+            "{",
+            "public",
+            ":",
+            "std",
+            "::",
+            "size_t",
+            "bytes",
+            "(",
+            ")",
+            "const",
+            ";",
+            "void",
+            "release",
+            "(",
+            ")",
+            ";",
+            "private",
+            ":"
+          ]
+        },
+        {
+          "line": 121,
+          "text": "/// Cached values are scratch only and are refilled/refactored on EVERY call.",
+          "following_tokens": [
+            "class",
+            "LinearWorkspace",
+            "{",
+            "public",
+            ":",
+            "std",
+            "::",
+            "size_t",
+            "bytes",
+            "(",
+            ")",
+            "const",
+            ";",
+            "void",
+            "release",
+            "(",
+            ")",
+            ";",
+            "private",
+            ":"
           ]
         },
         {
@@ -428,7 +786,11 @@
             ";",
             "private",
             ":",
-            "friend"
+            "friend",
+            "class",
+            "ImplicitNetworkSolver",
+            ";",
+            "bool"
           ]
         },
         {
@@ -450,7 +812,11 @@
             "matches",
             "(",
             "const",
-            "Matrix"
+            "Matrix",
+            "&",
+            "a",
+            ",",
+            "Preconditioner"
           ]
         },
         {
@@ -472,7 +838,11 @@
             "::",
             "size_t",
             "pairs",
-            ")"
+            ")",
+            "const",
+            ";",
+            "std",
+            "::"
           ]
         },
         {
@@ -494,7 +864,11 @@
             ";",
             "Preconditioner",
             "backend_",
-            "="
+            "=",
+            "Preconditioner",
+            "::",
+            "ScalarIlu0",
+            ";"
           ]
         },
         {
@@ -516,183 +890,11 @@
             "::",
             "NotAttempted",
             "?",
-            "gmres"
-          ]
-        },
-        {
-          "line": 214,
-          "text": "// Optional admissible Newton seed. Conserved history and convergence",
-          "following_tokens": [
-            "const",
-            "Trial",
-            "*",
-            "initial_guess",
-            "=",
-            "nullptr",
-            ";",
-            "int",
-            "merit_window",
-            "=",
-            "0",
-            ";",
-            "void",
+            "gmres",
+            ".",
+            "converged",
             "(",
-            "*",
-            "observe"
-          ]
-        },
-        {
-          "line": 215,
-          "text": "// budgets still come from Problem's accepted old state, never this seed.",
-          "following_tokens": [
-            "const",
-            "Trial",
-            "*",
-            "initial_guess",
-            "=",
-            "nullptr",
-            ";",
-            "int",
-            "merit_window",
-            "=",
-            "0",
-            ";",
-            "void",
-            "(",
-            "*",
-            "observe"
-          ]
-        },
-        {
-          "line": 217,
-          "text": "// Optional bounded nonmonotone Newton globalization. Zero preserves",
-          "following_tokens": [
-            "int",
-            "merit_window",
-            "=",
-            "0",
-            ";",
-            "void",
-            "(",
-            "*",
-            "observe",
-            ")",
-            "(",
-            "void",
-            "*",
-            ",",
-            "int",
-            "iteration"
-          ]
-        },
-        {
-          "line": 218,
-          "text": "// strict decrease; 1..32 compares against recent iterate merits.",
-          "following_tokens": [
-            "int",
-            "merit_window",
-            "=",
-            "0",
-            ";",
-            "void",
-            "(",
-            "*",
-            "observe",
-            ")",
-            "(",
-            "void",
-            "*",
-            ",",
-            "int",
-            "iteration"
-          ]
-        },
-        {
-          "line": 219,
-          "text": "// Final acceptance ALWAYS uses the original physical residual budgets.",
-          "following_tokens": [
-            "int",
-            "merit_window",
-            "=",
-            "0",
-            ";",
-            "void",
-            "(",
-            "*",
-            "observe",
-            ")",
-            "(",
-            "void",
-            "*",
-            ",",
-            "int",
-            "iteration"
-          ]
-        },
-        {
-          "line": 221,
-          "text": "// Optional synchronous diagnostic observer; never receives mutable",
-          "following_tokens": [
-            "void",
-            "(",
-            "*",
-            "observe",
-            ")",
-            "(",
-            "void",
-            "*",
-            ",",
-            "int",
-            "iteration",
-            ",",
-            "int",
-            "backtrack",
-            ",",
-            "double"
-          ]
-        },
-        {
-          "line": 222,
-          "text": "// solver state. backtrack=-1 denotes the current Newton iterate;",
-          "following_tokens": [
-            "void",
-            "(",
-            "*",
-            "observe",
-            ")",
-            "(",
-            "void",
-            "*",
-            ",",
-            "int",
-            "iteration",
-            ",",
-            "int",
-            "backtrack",
-            ",",
-            "double"
-          ]
-        },
-        {
-          "line": 223,
-          "text": "// a null evaluation denotes an inadmissible line-search trial.",
-          "following_tokens": [
-            "void",
-            "(",
-            "*",
-            "observe",
-            ")",
-            "(",
-            "void",
-            "*",
-            ",",
-            "int",
-            "iteration",
-            ",",
-            "int",
-            "backtrack",
-            ",",
-            "double"
+            ")"
           ]
         },
         {
@@ -714,7 +916,11 @@
             ";",
             "}",
             "}",
-            ";"
+            ";",
+            "static",
+            "bool",
+            "residual",
+            "("
           ]
         },
         {
@@ -736,7 +942,11 @@
             "x",
             ",",
             "double",
-            "dt"
+            "dt",
+            ",",
+            "Evaluation",
+            "&",
+            "output"
           ]
         },
         {
@@ -758,7 +968,11 @@
             "x",
             ",",
             "double",
-            "dt"
+            "dt",
+            ",",
+            "double",
+            "step",
+            ","
           ]
         },
         {
@@ -780,7 +994,11 @@
             "vector",
             "<",
             "double",
-            ">"
+            ">",
+            "&",
+            "rhs",
+            ",",
+            "const"
           ]
         },
         {
@@ -802,7 +1020,11 @@
             "vector",
             "<",
             "double",
-            ">"
+            ">",
+            "&",
+            "rhs",
+            ",",
+            "std"
           ]
         },
         {
@@ -824,7 +1046,11 @@
             "a",
             ",",
             "const",
-            "std"
+            "std",
+            "::",
+            "vector",
+            "<",
+            "double"
           ]
         },
         {
@@ -846,7 +1072,11 @@
             ",",
             "double",
             "tolerance",
-            ")"
+            ")",
+            ";",
+            "Result",
+            "solve",
+            "("
           ]
         },
         {
@@ -868,7 +1098,11 @@
             "Controls",
             "&",
             "controls",
-            ","
+            ",",
+            "Endpoint",
+            "&",
+            "output",
+            ")"
           ]
         },
         {
@@ -890,7 +1124,11 @@
             "(",
             ")",
             ";",
-            "}"
+            "}",
+            "void",
+            "clearLinearWorkspace",
+            "(",
+            ")"
           ]
         },
         {
@@ -912,15 +1150,19 @@
             "private",
             ":",
             "LinearWorkspace",
-            "linear_workspace_"
+            "linear_workspace_",
+            ";",
+            "}",
+            ";",
+            "}"
           ]
         }
       ]
     },
     {
       "file": "tests/unit/engine/test_2d_exchange_rubinato_model.cpp",
-      "reason": "Independent pending source implementation; keep functional edits out of documentation commit.",
-      "working_source_sha256": "fe9f8b0d40db64b9cff91de37891a331406e93173a5f655baaa17a95eadec52e",
+      "reason": "Independent pending implementation or untracked source; keep code out of documentation commit.",
+      "working_source_sha256": "ca6a1221fa4471be6275340e2d28d45892ff321be2f6f06b0f4c7cce16c87dc5",
       "comments": [
         {
           "line": 17,
@@ -941,7 +1183,11 @@
             "cmath",
             ">",
             "#",
-            "include"
+            "include",
+            "<",
+            "cstdlib",
+            ">",
+            "#"
           ]
         },
         {
@@ -963,7 +1209,11 @@
             "const",
             "fs",
             "::",
-            "path"
+            "path",
+            "&",
+            "p",
+            ")",
+            "{"
           ]
         },
         {
@@ -985,7 +1235,11 @@
             "std",
             "::",
             "string",
-            ">>"
+            ">>",
+            "read_csv",
+            "(",
+            "const",
+            "fs"
           ]
         },
         {
@@ -1007,12 +1261,16 @@
             "hi",
             ",",
             "double",
-            "c"
+            "c",
+            ",",
+            "double",
+            "h0",
+            ","
           ]
         },
         {
           "line": 180,
-          "text": "/**\n * @brief Construct the graded flume/manhole benchmark deck with measured case forcing.\n *\n * Uses axis growth1.1, fixed held pipe/outfall forcing and Rubinato2017 manhole coefficients.\n * Requires positive dimensions and derived vertex/cell counts fitting int; no\n * syntax/finite/physical validation or simulation occurs. Rig/Case references are not retained.\n *\n * @param[in] c Scenario inputs: q1/q3 m3/s and downstream head h_p metres; selects sewer feed when\n *     q3>0.\n * @param[in] rig Required named rig dimensions/slopes/roughness/diameters/crest/spacing map;\n *     missing keys throw out_of_range.\n * @param[in] law Raw COUPLING_LAW token inserted verbatim.\n * @param[in] h0 Positive center mesh spacing in metres, not initial water depth.\n * @param[in] extra2d Raw additional2D_OPTIONS text with required newline delimiters.\n * @param[in] physical_shaft Use a real circular-area manhole storage and matching minimum area when\n *     true; otherwise ordinary junction.\n * @return Owned five-minute CMS/DYNWAVE deck with graded triangular flume, center vertex MH map,\n *     downstream normal flow and optional upstream flow boundary.\n */",
+          "text": "/**\n * @brief Construct the graded flume/manhole benchmark deck with measured case forcing.\n *\n * Uses axis growth1.1, fixed held pipe/outfall forcing and Rubinato2017 manhole coefficients.\n * Requires positive dimensions and derived vertex/cell counts fitting int; no\n * syntax/finite/physical validation or simulation occurs. Rig/Case references are not retained.\n *\n * @param[in] c Scenario inputs: q1/q3 m3/s and downstream head h_p metres; selects sewer feed when\n *     q3>0.\n * @param[in] rig Required named rig dimensions/slopes/roughness/diameters/crest/spacing map;\n *     missing keys throw out_of_range.\n * @param[in] law Raw COUPLING_LAW token inserted verbatim.\n * @param[in] h0 Positive center mesh spacing in metres, not initial water depth.\n * @param[in] extra2d Raw additional 2D_OPTIONS text with required newline delimiters.\n * @param[in] physical_shaft Use a real circular-area manhole storage and matching minimum area when\n *     true; otherwise ordinary junction.\n * @return Owned five-minute CMS/DYNWAVE deck with graded triangular flume, center vertex MH map,\n *     downstream normal flow and optional upstream flow boundary.\n */",
           "following_tokens": [
             "std",
             "::",
@@ -1029,78 +1287,42 @@
             "::",
             "map",
             "<",
-            "std"
+            "std",
+            "::",
+            "string",
+            ",",
+            "double"
           ]
         },
         {
-          "line": 216,
-          "text": "// A laboratory shaft has real storage below the rim. The default",
+          "line": 284,
+          "text": "///< steady exchange, + = sewer \u2192 surface",
           "following_tokens": [
-            "m",
-            "<<",
-            "\"MIN_SURFAREA \"",
-            "<<",
-            "a",
-            "<<",
-            "\"\\n\\n[STORAGE]\\nMH 0 \"",
-            "<<",
-            "zc",
-            "<<",
-            "\" 0 FUNCTIONAL 0 0 \"",
-            "<<",
-            "a",
-            "<<",
-            "\" 0 0\\n\\n\"",
-            ";"
-          ]
-        },
-        {
-          "line": 217,
-          "text": "// DW MIN_SURFAREA (about 1.17 m\u00b2) is much larger than this 0.045 m\u00b2",
-          "following_tokens": [
-            "m",
-            "<<",
-            "\"MIN_SURFAREA \"",
-            "<<",
-            "a",
-            "<<",
-            "\"\\n\\n[STORAGE]\\nMH 0 \"",
-            "<<",
-            "zc",
-            "<<",
-            "\" 0 FUNCTIONAL 0 0 \"",
-            "<<",
-            "a",
-            "<<",
-            "\" 0 0\\n\\n\"",
-            ";"
-          ]
-        },
-        {
-          "line": 218,
-          "text": "// shaft; set both the storage curve and the floor to its actual area.",
-          "following_tokens": [
-            "m",
-            "<<",
-            "\"MIN_SURFAREA \"",
-            "<<",
-            "a",
-            "<<",
-            "\"\\n\\n[STORAGE]\\nMH 0 \"",
-            "<<",
-            "zc",
-            "<<",
-            "\" 0 FUNCTIONAL 0 0 \"",
-            "<<",
-            "a",
-            "<<",
-            "\" 0 0\\n\\n\"",
-            ";"
+            "double",
+            "continuity_pct",
+            "=",
+            "0",
+            ";",
+            "double",
+            "q_previous_lps",
+            "=",
+            "0",
+            ";",
+            "double",
+            "surface_depth_m",
+            "=",
+            "0",
+            ",",
+            "node_head_m",
+            "=",
+            "0",
+            ";",
+            "double"
           ]
         },
         {
           "line": 293,
-          "text": "/**\n * @brief Run a flume/manhole case and measure last-minute exchange and nearby depth/head.\n *\n * Writes/opens/initializes/starts with output disabled, chooses nearest centroid to the upstream\n * sensor target, and measures cumulative exchange windows after180/240 s. Requires successful\n * step/end, late coverage>=299 s, ordered windows and positive sample time before setting\n * finite-result ok. Many getter/report/close statuses remain unchecked; probe is approximate and no\n * time interpolation/exact experimental-location reconstruction occurs. Destroys engine on returned\n * paths; filesystem/map/allocation exceptions propagate.\n *\n * @param[in] c Measured case forcing forwarded to deck.\n * @param[in] rig Required rig map including flume dimensions and p_surface_offset_m for\n *     nearest-cell probe selection.\n * @param[in] law Raw coupling law forwarded to deck.\n * @param[in] tag Safe artifact basename beneath kOut for .inp/.rpt, overwritten.\n * @param[in] h0 Positive center mesh spacing override in metres; nonpositive selects rig\n *     mesh_size_boundary_m.\n * @param[in] extra2d Raw2D option overrides forwarded unchanged.\n * @param[in] physical_shaft Enable physical manhole storage geometry in deck.\n * @return Owned result with exchange L/s, native continuity converted to percent, sampled mean\n *     surface depth/node head metres, probe coordinates, duration seconds, cell count and validity\n *     flag.\n */",
+          "text": "/**\n * @brief Run a flume/manhole case and measure last-minute exchange and nearby depth/head.\n *\n * Writes/opens/initializes/starts with output disabled, chooses nearest centroid to the upstream\n * sensor target, and measures cumulative exchange windows after 180/240 s. Requires successful\n * step/end, late coverage>=299 s, ordered windows and positive sample time before setting\n * finite-result ok. Many getter/report/close statuses remain unchecked; probe is approximate and no\n * time interpolation/exact experimental-location reconstruction occurs. Destroys engine on returned\n * paths; filesystem/map/allocation exceptions propagate.\n *\n * @param[in] c Measured case forcing forwarded to deck.\n * @param[in] rig Required rig map including flume dimensions and p_surface_offset_m for\n *     nearest-cell probe selection.\n * @param[in] law Raw coupling law forwarded to deck.\n * @param[in] tag Safe artifact basename beneath kOut for .inp/.rpt, overwritten.\n * @param[in] h0 Positive center mesh spacing override in metres; nonpositive selects rig\n *     mesh_size_boundary_m.\n * @param[in] extra2d Raw2D option overrides forwarded unchanged.\n * @param[in] physical_shaft Enable physical manhole storage geometry in deck.\n * @return Owned result with exchange L/s, native continuity converted to percent, sampled mean\n *     surface depth/node head metres, probe coordinates, duration seconds, cell count and validity\n *     flag.\n */",
           "following_tokens": [
             "Result",
             "run",
@@ -1117,168 +1339,18 @@
             "<",
             "std",
             "::",
-            "string"
-          ]
-        },
-        {
-          "line": 337,
-          "text": "// Nearest-cell proxy for P_surface, 0.46 m upstream of the assumed",
-          "following_tokens": [
-            "int",
-            "probe",
-            "=",
-            "-",
-            "1",
-            ";",
-            "double",
-            "distance",
-            "=",
-            "std",
-            "::",
-            "numeric_limits",
-            "<",
+            "string",
+            ",",
             "double",
             ">",
-            "::"
-          ]
-        },
-        {
-          "line": 338,
-          "text": "// central manhole. Export its coordinates: this is not an exact probe.",
-          "following_tokens": [
-            "int",
-            "probe",
-            "=",
-            "-",
-            "1",
-            ";",
-            "double",
-            "distance",
-            "=",
-            "std",
-            "::",
-            "numeric_limits",
-            "<",
-            "double",
-            ">",
-            "::"
-          ]
-        },
-        {
-          "line": 392,
-          "text": "// A late step failure used to be indistinguishable from normal EOF.",
-          "following_tokens": [
-            "if",
-            "(",
-            "status",
-            "!=",
-            "SWMM_OK",
-            "||",
-            "end_status",
-            "!=",
-            "SWMM_OK",
-            "||",
-            "t1",
-            "<",
-            "299.0",
-            "||",
-            "tp",
-            "<"
-          ]
-        },
-        {
-          "line": 495,
-          "text": "// A modelling sensitivity, without retuning any exchange coefficient. This",
-          "following_tokens": [
-            "TEST",
-            "(",
-            "RubinatoModel",
-            ",",
-            "PhysicalShaftSensitivity",
-            ")",
-            "{",
-            "const",
-            "auto",
-            "rig",
-            "=",
-            "read_yaml",
-            "(",
-            "kRef",
-            "/",
-            "\"rig_geometry.yaml\""
-          ]
-        },
-        {
-          "line": 496,
-          "text": "// separates the previous junction/MIN_SURFAREA surrogate from a shaft with",
-          "following_tokens": [
-            "TEST",
-            "(",
-            "RubinatoModel",
-            ",",
-            "PhysicalShaftSensitivity",
-            ")",
-            "{",
-            "const",
-            "auto",
-            "rig",
-            "=",
-            "read_yaml",
-            "(",
-            "kRef",
-            "/",
-            "\"rig_geometry.yaml\""
-          ]
-        },
-        {
-          "line": 497,
-          "text": "// the laboratory's actual area and booked below-rim storage. Absolute fit,",
-          "following_tokens": [
-            "TEST",
-            "(",
-            "RubinatoModel",
-            ",",
-            "PhysicalShaftSensitivity",
-            ")",
-            "{",
-            "const",
-            "auto",
-            "rig",
-            "=",
-            "read_yaml",
-            "(",
-            "kRef",
-            "/",
-            "\"rig_geometry.yaml\""
-          ]
-        },
-        {
-          "line": 498,
-          "text": "// head residuals and continuity remain report-only, including poor results.",
-          "following_tokens": [
-            "TEST",
-            "(",
-            "RubinatoModel",
-            ",",
-            "PhysicalShaftSensitivity",
-            ")",
-            "{",
-            "const",
-            "auto",
-            "rig",
-            "=",
-            "read_yaml",
-            "(",
-            "kRef",
-            "/",
-            "\"rig_geometry.yaml\""
+            "&"
           ]
         }
       ]
     },
     {
       "file": "tests/unit/engine/test_2d_exchange_rubinato_steady.cpp",
-      "reason": "Independent pending source implementation; keep functional edits out of documentation commit.",
+      "reason": "Independent pending implementation or untracked source; keep code out of documentation commit.",
       "working_source_sha256": "1f77d2d290455f183b56ed81a1445219fe0d452e71a0aec9d3f2b6e08ded90ce",
       "comments": [
         {
@@ -1300,7 +1372,11 @@
             "cmath",
             ">",
             "#",
-            "include"
+            "include",
+            "<",
+            "filesystem",
+            ">",
+            "#"
           ]
         },
         {
@@ -1322,7 +1398,11 @@
             "std",
             "::",
             "string",
-            ">>"
+            ">>",
+            "read_csv",
+            "(",
+            "const",
+            "fs"
           ]
         },
         {
@@ -1344,7 +1424,11 @@
             "std",
             "::",
             "string",
-            ">"
+            ">",
+            "&",
+            "row",
+            ")",
+            "{"
           ]
         }
       ]

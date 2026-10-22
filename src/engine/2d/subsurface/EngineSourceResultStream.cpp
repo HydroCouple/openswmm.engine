@@ -657,7 +657,7 @@ void EngineSourceResultStream::append(Frame frame) {
     source_intervals_ = progress.intervals;
     largest_frame_ = std::max(largest_frame_, payload.size());
 }
-/**
+/*
  * @brief Exclusively create and attach a fresh companion stream at engine time zero.
  * - e (in): Stable prepared engine with common source stage and managed bridge or LID receipts;
  * its address/context/model remain borrowed through stream lifetime, which the caller retains to
@@ -730,7 +730,7 @@ std::string EngineSourceResultStream::initialize(const SWMMEngine& e, const std:
         return e.what();
     }
 }
-/**
+/*
  * @brief Record an accepted engine step or zero-time barrier with its physical checkpoint
  * anchor.
  * - e (in): Exact attached live engine with common source stage and managed bridge/LID receipts.
@@ -740,8 +740,7 @@ std::string EngineSourceResultStream::initialize(const SWMMEngine& e, const std:
  * - start (in): Accepted elapsed engine start s; barriers hold start=end and EngineStep advances
  * it.
  * - anchor (in): Optional nonzero supplied physical-checkpoint fingerprint. Zero computes it
- * from engine checkpointBytes(...,false); canonical declaration names this parameter
- * fingerprint.
+ * from engine checkpointBytes(...,false); canonical declaration uses the same anchor name.
  * @return Empty after synchronized append, clearing pending flag/error; caught
  * standard-exception message otherwise, stored in error_. Failure after obtaining an anchor
  * leaves capture pending.

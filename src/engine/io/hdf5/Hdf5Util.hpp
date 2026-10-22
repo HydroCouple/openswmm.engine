@@ -37,6 +37,11 @@
  * @license   Apache-2.0
  */
 
+/**
+ * @defgroup engine_hdf5 HDF5 model persistence
+ * @brief HDF5 input, model output and shared dataset helpers. Contracts distinguish owned versus borrowed handles, array layouts and I/O failure behavior.
+ */
+
 #ifndef OPENSWMM_HDF5_UTIL_HPP
 #define OPENSWMM_HDF5_UTIL_HPP
 

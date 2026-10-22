@@ -138,9 +138,9 @@ void addRunon(SimulationContext& ctx, int donor, int receiver, double q) noexcep
  * runoff mass rate per outlet node, the `addWetWeatherLoads` trapezoid on old/new runoff). Call
  * after the external-inflow assembly has (re)zeroed the array for the step.
  *
- * - Argument ctx (in,out): Native node inflow destination and matching accepted surface/LID
+ * @param[in,out] ctx Native node inflow destination and matching accepted surface/LID
  * histories.
- * - Argument dt_routing (in): Unused routing duration s, retained for routing-dispatch interface
+ * @param[in] dt_routing Unused routing duration s, retained for routing-dispatch interface
  * consistency.
  */
 void deliver(SimulationContext& ctx, double dt_routing);

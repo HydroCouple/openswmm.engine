@@ -30,7 +30,7 @@ constexpr double pi = 3.14159265358979323846;
  *
  * @param[in,out] ch Compatible channel with geometry/state storage; seedLevel mutates its initial
  *     water state.
- * @param[in] walls True selects NaN wall endpoints; false prescribes6 ft depth at both ends.
+ * @param[in] walls True selects NaN wall endpoints; false prescribes 6 ft depth at both ends.
  * @return Problem owning copies of old area/discharge, borrowing ch.mesh, with allowed depth
  *     range[3.01,100] ft.
  */

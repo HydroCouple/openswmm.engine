@@ -64,11 +64,15 @@ struct File {
 };
 /**
  * @brief Hash and optionally copy exactly bytes bytes from a stream.
- * @param[in,out] f Non-null readable stream positioned at the prefix start;
- * advanced by bytes on success and possibly partly advanced on failure.
+ * @param[in,out] f Readable stream positioned at the desired prefix start when descriptor <0;
+ * advanced by bytes on success and possibly partly on failure. Ignored and may be null when
+ * descriptor >=0.
  * @param[in] bytes Number of bytes to consume; zero returns the FNV seed.
  * @param[in,out] out Optional writable destination stream; null hashes only.
  * Neither stream is retained or closed, and output is not flushed here.
+ * @param[in] descriptor Borrowed seekable writer descriptor, or negative to use f. A supplied
+ * descriptor is read from byte zero with its original position restored for every chunk; caller
+ * must flush and exclusively hold the writer throughout this call. No descriptor is closed.
  * @return FNV-1a fingerprint of the consumed byte range.
  * @throws std::runtime_error A full read or requested write cannot be completed.
  * @note A fixed 64 KiB buffer bounds temporary memory.

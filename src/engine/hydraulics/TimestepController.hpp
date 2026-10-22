@@ -77,6 +77,11 @@
  * @license   Apache-2.0
  */
 
+/**
+ * @defgroup engine_hydraulics Network hydraulic routing
+ * @brief One-dimensional network routing, hydraulic closures and timestep selection. Solver-specific helpers document their state mutation, numerical bounds and time/unit conventions.
+ */
+
 #ifndef OPENSWMM_ENGINE_TIMESTEP_CONTROLLER_HPP
 #define OPENSWMM_ENGINE_TIMESTEP_CONTROLLER_HPP
 

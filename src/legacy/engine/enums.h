@@ -401,7 +401,7 @@ enum LinkResultType {
 #define MAX_SYS_RESULTS 15
 
 /*!
-* \enum SysResultType
+* \enum SysFlowType
 * \brief Enumeration of computed system quantities
 */
 enum SysFlowType {

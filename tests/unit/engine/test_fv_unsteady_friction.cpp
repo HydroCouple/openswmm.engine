@@ -129,7 +129,7 @@ std::string outPath(const std::string& name) {
  * @param[in] init_a TA initial depth in feet.
  * @param[in] init_b TB initial depth in feet.
  * @param[in] extra Raw extra FV/project option lines inserted before STORAGE.
- * @return Owned twenty-minute CFS deck with100 ft2 tanks,200 ft three-foot pipe, minimum eight
+ * @return Owned twenty-minute CFS deck with 100 ft2 tanks,200 ft three-foot pipe, minimum eight
  *     cells and high overflow weir.
  */
 std::string sloshModel(double init_a, double init_b, const std::string& extra) {
@@ -346,11 +346,11 @@ namespace {
 /**
  * @brief Construct an FV pressurized valve-closure deck for wave damping comparisons.
  *
- * Control closes the .41 ft side-orifice valve near60 s. Does not validate option text or execute
+ * Control closes the .41 ft side-orifice valve near 60 s. Does not validate option text or execute
  * the transient.
  *
  * @param[in] extra Raw extra FV/project option lines inserted before JUNCTIONS.
- * @return Owned ten-minute CFS deck with15 ft upstream stage, JV initial depth13 ft,200 ft one-foot
+ * @return Owned ten-minute CFS deck with 15 ft upstream stage, JV initial depth13 ft,200 ft one-foot
  *     pipe with initial2.4 CFS, .25 s routing and minimum16 cells.
  */
 std::string valveModel(const std::string& extra) {
@@ -404,7 +404,7 @@ struct ValveResult {
  * @param[in] base Artifact basename beneath outPath, without extension; .inp/.rpt/.out are
  *     overwritten.
  * @param[in] deck Complete input text written through an unchecked stream.
- * @param[in] win_start_s Elapsed-second threshold selecting the late window, default420.
+ * @param[in] win_start_s Elapsed-second threshold selecting the late window, default 420.
  * @return Owned maximum absolute depth difference in feet from the final recorded JV depth and ok
  *     flag.
  */

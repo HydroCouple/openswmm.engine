@@ -40,9 +40,9 @@ struct Rig {
      *
      * @param[in] closure Groundwater closure to test.
      * @param[in] law Soil characteristic law to test.
-     * @param[in] table Initial groundwater table height in metres, default1.
-     * @param[in] ks Saturated conductivity in m/s, default1e-5.
-     * @param[in] thickness Aquifer soil thickness in metres, default2.
+     * @param[in] table Initial groundwater table height in metres, default 1.
+     * @param[in] ks Saturated conductivity in m/s, default 1e-5.
+     * @param[in] thickness Aquifer soil thickness in metres, default 2.
      */
     void initialize(GwClosure closure, SoilChar law, double table = 1.0, double ks = 1e-5,
                     double thickness = 2.0) {
@@ -223,7 +223,7 @@ struct Model {
     /**
      * @brief Write/open equivalent US/SI aquifer intake decks with retained result artifacts.
      *
-     * Writes a five-minute deck with equivalent10 m triangle dimensions, .1 m ponding,2 m soil and1 m
+     * Writes a five-minute deck with equivalent10 m triangle dimensions, .1 m ponding,2 m soil and 1 m
      * table; requests all-variable2D output. Creates directories with throwing filesystem operations;
      * input stream status is unchecked. Does not initialize/start; extra/token inputs are deliberately
      * unvalidated.

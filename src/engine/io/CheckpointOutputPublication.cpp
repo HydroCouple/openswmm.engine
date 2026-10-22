@@ -106,6 +106,19 @@ void checkpointReadOutput(int descriptor, uint64_t offset, char* data, std::size
         throw std::runtime_error("Cannot read checkpoint output range.");
 }
 namespace {
+/**
+ * @brief Rename one staged/recovery output over its destination while preserving old handles.
+ * @param[in] from Borrowed existing source path; no ownership is retained and it is consumed
+ * as a directory entry only when the rename succeeds.
+ * @param[in] to Borrowed destination path, replaced when supported; Windows resolves an absolute
+ * target and uses FileRenameInfoEx with replacement/POSIX flags and shared-delete access.
+ * @param[out] ec Native/system or generic allocation/path error; cleared to success when moved.
+ * @details POSIX delegates to filesystem::rename(error_code). Windows prepares allocations before
+ * opening its temporary DELETE handle, closes that handle after the rename attempt and maps
+ * filesystem/bad_alloc exceptions to ec. Does not copy bytes, flush writers, close caller handles
+ * or roll back earlier publications; the surrounding owner coordinates rollback. Other exception
+ * types may propagate and no power-loss or multi-output atomicity is guaranteed here.
+ */
 void renameOutput(const std::filesystem::path& from, const std::filesystem::path& to,
                   std::error_code& ec) {
 #ifdef _WIN32

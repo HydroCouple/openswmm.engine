@@ -37,6 +37,11 @@
  * @license   Apache-2.0
  */
 
+/**
+ * @defgroup engine_fv Finite-volume network hydraulics
+ * @brief Backend-neutral network solver interfaces, finite-volume kernels, options and mesh assembly. Individual APIs describe internal hydraulic units, caller-owned buffers and accepted-step publication.
+ */
+
 #ifndef OPENSWMM_ENGINE_FV_I_NETWORK_SOLVER_HPP
 #define OPENSWMM_ENGINE_FV_I_NETWORK_SOLVER_HPP
 

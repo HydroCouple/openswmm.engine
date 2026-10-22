@@ -113,10 +113,57 @@ private:
     friend class EngineSourceResultStream;
     static std::map<std::string, SourceResultTable> schema(bool outfall_returns,
                                                            bool lid_beds = false);
-    static EngineSourceResultHistory projection(const openswmm::SWMMEngine&, std::size_t frame,
+    /**
+     * @brief Construct one engine-boundary water/queue projection with stable saved identities.
+     * @param[in] e Prepared accepted-boundary engine with a live common source stage and
+     * consistent source delivery bridge or enabled LID bottom receipts. All borrowed subsystem
+     * arrays must remain stable and internally sized during this synchronous read.
+     * @param[in] frame Exactly representable nonnegative result frame identifier.
+     * @param[in] start Beginning of this accepted engine interval in elapsed seconds; end uses ctx
+     * time.
+     * @return Owned one-frame projection of cumulative source water, groups, node delivery, pending
+     * queues and optional LID/porous diagnostics. Does not advance clocks or consume any queue.
+     * @throws std::runtime_error On receipt/schema failure or pending ordinal above 2^53-1.
+     * Allocation errors propagate. Low-level helper does not validate complete model checkpoint
+     * eligibility.
+     * @note Converts 1D feet/ft3 quantities to SI and preserves source clocks independently of
+     * engine steps; repeated source clocks are valid. No whole-engine checkpoint bytes/live pointer
+     * are bound until the surrounding append/resume operation publishes the candidate.
+     */
+    static EngineSourceResultHistory projection(const openswmm::SWMMEngine& e, std::size_t frame,
                                                 double start);
-    std::string append(const openswmm::SWMMEngine&, double start);
-    std::string resume(const openswmm::SWMMEngine&);
+    /**
+     * @brief Capture initial state or the next accepted engine-step water boundary transactionally.
+     * @param[in] e Stable checkpoint-capable engine with a managed source bridge or enabled
+     * LID bottom attachment. After frame zero its exact address/identities/capabilities/start date
+     * must match.
+     * @param[in] start Accepted interval start elapsed s, exactly the previous saved engine end.
+     * Initial capture requires start/current time zero; subsequent engine time must be strictly
+     * greater.
+     * @return Empty after checkpoint capture, boundary projection and complete candidate validation;
+     * diagnostic on refusal or caught standard exception, with history/physics unchanged.
+     * @note Copies existing history before appending and offsets pending-row identifiers globally.
+     * Detailed mode seeds source frame zero on first capture; intermediate source intervals are
+     * captured through captureSourceInterval(). The engine remains borrowed and must outlive
+     * recorder use. Checkpoint capture can settle associated output metadata; this method does not
+     * advance physics.
+     */
+    std::string append(const openswmm::SWMMEngine& e, double start);
+    /**
+     * @brief Rebind a saved recorder only to an exact restored whole-engine checkpoint and
+     * projection.
+     * @param[in] e Stable restored checkpoint-capable engine with matching
+     * managed-source/LID ownership. Its address is retained only after complete validation and must
+     * outlive future recorder use.
+     * @return Empty after exact checkpoint bytes, identifiers/capabilities/start date and final
+     * table projection agree; otherwise diagnostic with this recorder and engine unchanged. Caught
+     * standard exceptions become diagnostics.
+     * @note Detailed companion history is privately checked against its earlier captured component
+     * boundary and rebound to this engine's common stage. No hydraulic/component state is installed;
+     * whole-engine restoration must already have completed. Future captures append after the saved
+     * end.
+     */
+    std::string resume(const openswmm::SWMMEngine& e);
     std::string validate() const;
     std::string captureSourceInterval(const CommonSourceStage&);
     std::string validatePairing() const;

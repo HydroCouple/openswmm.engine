@@ -55,13 +55,13 @@
  *     - Support added for tracking a gage's prior n-hour rainfall total.
  *     - Removed extIfaceInflow member from ExtInflow struct.
  *     - Refactored TRptFlags struct.
- *  - Build 5.3.0:
+ *   - Build 5.3.0:
  *     - Modified TFile to support specification of time for saving hotstart files.
  *     - Adding support for API provided pollutant fluxes and inflows.
  *     - Added a project structure to hold project-wide settings to for thread safety and rentrancy.
  *     - Use vectors instead of linked lists for computational efficiency.
  *     - Use structures of arrays for selected data structures to improve cache performance.
- * .    - Added support for reporting rain gage scaling factor.
+ *     - Added support for reporting rain gage scaling factor.
  *
  * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
  * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM

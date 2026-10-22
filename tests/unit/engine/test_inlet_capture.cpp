@@ -96,8 +96,8 @@ void writeFile(const std::string& path, const std::string& text) {
  *
  * Computes fixed qfactor/beta using US constants. Does not validate a street object or run inlet
  * capture; unrelated geometry fields use defaults.
- * @return Owned Geom with2% cross slope,1% longitudinal slope, Manning.016, one side, no gutter
- *     depression and20 ft crown distance.
+ * @return Owned Geom with 2% cross slope,1% longitudinal slope, Manning.016, one side, no gutter
+ *     depression and 20 ft crown distance.
  */
 Geom refStreet() {
     Geom g;
@@ -543,7 +543,7 @@ namespace {
  *     junction plus C_ST1 INLET_USAGE.
  * @param[in] undersized_trunk Shrink sewer diameter from1 to.25 ft and MH1 max depth from10 to1 ft
  *     to exercise return/backflow.
- * @return Owned half-hour CFS/DYNWAVE deck with2 CFS ST_UP dry-weather inflow, two50 ft street
+ * @return Owned half-hour CFS/DYNWAVE deck with 2 CFS ST_UP dry-weather inflow, two 50 ft street
  *     reaches, P_BAR-50 grate and independent sewer outfall.
  */
 std::string streetModel(bool mid_is_inlet_junction, bool undersized_trunk = false) {

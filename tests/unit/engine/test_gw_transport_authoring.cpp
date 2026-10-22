@@ -115,7 +115,7 @@ std::string section(const std::string& text, const std::string& header) {
  * and arbitrary signal references are not validated here.
  *
  * @param[in] gw_sections Raw complete groundwater/quality/source sections inserted before REPORT.
- * @param[in] twod_options_extra Raw additional2D_OPTIONS lines inserted before mesh sections.
+ * @param[in] twod_options_extra Raw additional 2D_OPTIONS lines inserted before mesh sections.
  * @return Owned ten-minute deck with Cu/age/heat enabled, one triangle then one quad, fixed .5 m
  *     depth and two held test signals.
  */

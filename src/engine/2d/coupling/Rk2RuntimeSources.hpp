@@ -31,16 +31,15 @@ struct SurfaceStateData;
 /**
  * @brief Validate copied RK2 source prescriptions and water/heat/species receipt shapes.
  *
- * @par Arguments (definition names for unnamed declaration parameters)
- * - sources (in): Stable source rows; no live lookup caches or physical state are changed.
- * - cells (in): Prepared nonnegative cell count.
- * - species (in): Prepared nonnegative species count; each row concentration/rate and receipt
+ * @param[in] sources Stable source rows; no live lookup caches or physical state are changed.
+ * @param[in] cells Prepared nonnegative cell count.
+ * @param[in] species Prepared nonnegative species count; each row concentration/rate and receipt
  * mass vector must contain exactly this many entries.
- * - temperature (in): Optional signed temperature row, -1 when absent; nonzero heat requires
+ * @param[in] temperature Optional signed temperature row, -1 when absent; nonzero heat requires
  * one.
- * - age (in): Optional age row, -1 when absent; age/temperature independent mass rates must be
+ * @param[in] age Optional age row, -1 when absent; age/temperature independent mass rates must be
  * zero.
- * - coverage (in): Optional mask of exactly cells entries selecting active groundwater
+ * @param[in] coverage Optional mask of exactly cells entries selecting active groundwater
  * receivers. Its presence permits boundary-edge/head metadata; without it only nonboundary rows
  * are accepted.
  * @return Empty on valid IDs/cells/uniqueness/finite flow+heat/expiry/species and gross/net
@@ -57,9 +56,8 @@ std::string validateRk2Sources(const RuntimeSources&, int cells, int species, in
  * @brief Qualify prepared surface source/weather/snow state for the managed RK2 numerical
  * profile.
  *
- * @par Arguments (definition names for unnamed declaration parameters)
- * - surface (in): Stable prepared cell/transport/weather/snow state with valid row identities.
- * - ground (in): Optional stable groundwater owner; used for paired infiltration coverage and
+ * @param[in] surface Stable prepared cell/transport/weather/snow state with valid row identities.
+ * @param[in] ground Optional stable groundwater owner; used for paired infiltration coverage and
  * snow incompatibility with groundwater heat/transport. Null leaves that coverage check
  * deferred.
  * @return Empty on qualified source rows, forcing channels/modes/extents/receipts and
@@ -89,8 +87,7 @@ struct Rk2CheckpointBinding {
 /**
  * @brief Detect any hydraulic boundary use or retained override/receipt history.
  *
- * @par Arguments (definition names for unnamed declaration parameters)
- * - boundary (in): Optional stable boundary owner.
+ * @param[in] boundary Optional stable boundary owner.
  * @return False for null or wall-only arrays with no history; true for any receipts, saved
  * runtime originals or non-WALL current type. This capability test does not validate arrays or
  * descriptors.
@@ -99,10 +96,9 @@ bool rk2HasSurfaceBoundary(const BoundaryData*);
 /**
  * @brief Validate prepared RK2 exterior boundary descriptors, composition and physical receipts.
  *
- * @par Arguments (definition names for unnamed declaration parameters)
- * - mesh (in): Stable valid mixed mesh; padded slot shape is four times cell count, with valid
+ * @param[in] mesh Stable valid mixed mesh; padded slot shape is four times cell count, with valid
  * cell vertex counts and neighbors for exterior-edge tests.
- * - surface (in): Stable boundary and transport owner. Boundary arrays must have exact slot
+ * @param[in] surface Stable boundary and transport owner. Boundary arrays must have exact slot
  * shape, transport ledgers at least n_species entries and prepared valid row metadata.
  * @return Empty for supported resolved exterior boundaries and exact override-owner/composition
  * layout, finite scalar/species receipts and gross/net pairing; otherwise diagnostic. Without a
@@ -118,17 +114,16 @@ std::string validateRk2SurfaceBoundary(const MeshData&, const SurfaceStateData&)
 /**
  * @brief Archive a matched RK2 boundary model identity or its accepted runtime receipts.
  *
- * @par Arguments (definition names for unnamed declaration parameters)
- * - a (in,out): Sequential writer/reader; outer framing and final validation belong to the
+ * @param[in,out] a Sequential writer/reader; outer framing and final validation belong to the
  * owner.
- * - b (in,out): Prepared matching boundary arrays. Model mode archives fixed descriptors,
+ * @param[in,out] b Prepared matching boundary arrays. Model mode archives fixed descriptors,
  * fallback/owner maps and retained receipt keys; runtime mode fixed cumulative flux and existing
  * receipt values, plus head/flow work values for dynamic signals/curves.
- * - quality (in,out): Runtime boundary concentration map, archived/rebuilt only in model mode.
- * - model (in): True selects copied/authored/state-dependent/time-dependent/rated model
+ * @param[in,out] quality Runtime boundary concentration map, archived/rebuilt only in model mode.
+ * @param[in] model True selects copied/authored/state-dependent/time-dependent/rated model
  * identity; false selects runtime payload against that already prepared exact profile and
  * receipt-key layout.
- * - species (in): Nonnegative receipt row count used when rebuilding model receipt placeholders.
+ * @param[in] species Nonnegative receipt row count used when rebuilding model receipt placeholders.
  * @throws std::runtime_error On profile mismatch, duplicate/unsorted/out-of-range keys, archive
  * shape or decoding failure. Allocation failures propagate; inputs may be partially decoded on
  * failure.
@@ -137,21 +132,21 @@ std::string validateRk2SurfaceBoundary(const MeshData&, const SurfaceStateData&)
  * full boundary physics/species budgets nor serializes referenced model table records; callers
  * stage private copies.
  */
-void rk2SurfaceBoundaryArchive(detail::CompletedSourceArchive&, BoundaryData&,
-                               std::map<int, std::vector<double>>&, bool model, int species);
+void rk2SurfaceBoundaryArchive(detail::CompletedSourceArchive& a, BoundaryData& b,
+                               std::map<int, std::vector<double>>& quality, bool model,
+                               int species);
 /**
  * @brief Archive copied RK2 source/forcing prescriptions for a managed model binding.
  *
- * @par Arguments (definition names for unnamed declaration parameters)
- * - a (in,out): Sequential archive; read mode may progressively replace row vectors.
- * - surface (in,out): Surface source model rows.
- * - ground (in,out): Groundwater source model rows, including optional boundary-edge/head
+ * @param[in,out] a Sequential archive; read mode may progressively replace row vectors.
+ * @param[in,out] surface Surface source model rows.
+ * @param[in,out] ground Groundwater source model rows, including optional boundary-edge/head
  * metadata.
- * - forcing (in,out): Copied forcing model rows, including
+ * @param[in,out] forcing Copied forcing model rows, including
  * channel/mode/rate/expiry/owner/composition.
- * - species (in): Prepared nonnegative boundary receipt species count.
- * - boundary (in,out): Optional hydraulic boundary model owner; required for encoded profile v2.
- * - quality (in,out): Optional boundary composition map; required with v2 boundary profile.
+ * @param[in] species Prepared nonnegative boundary receipt species count.
+ * @param[in,out] boundary Optional hydraulic boundary model owner; required for encoded profile v2.
+ * @param[in,out] quality Optional boundary composition map; required with v2 boundary profile.
  * @throws std::runtime_error On unsupported v1/v2 profile, missing boundary owner or archive
  * failures.
  * @note This archives prescriptions/identity, not complete active runtime: decoding disables
@@ -160,18 +155,18 @@ void rk2SurfaceBoundaryArchive(detail::CompletedSourceArchive&, BoundaryData&,
  * provider programs are not encoded by this helper. Full restored profile/replay validation is
  * separate; use private candidates because failures can leave partial row/model changes.
  */
-void rk2ManagedRuntimeModel(detail::CompletedSourceArchive&, RuntimeSources&, RuntimeSources&,
-                            RuntimeForcings&, int species, BoundaryData* boundary = nullptr,
+void rk2ManagedRuntimeModel(detail::CompletedSourceArchive& a, RuntimeSources& surface,
+                            RuntimeSources& ground, RuntimeForcings& forcing, int species,
+                            BoundaryData* boundary = nullptr,
                             std::map<int, std::vector<double>>* quality = nullptr);
 /**
  * @brief Check provider namespaces, active expiry and last-receipt horizons at a managed
  * boundary.
  *
- * @par Arguments (definition names for unnamed declaration parameters)
- * - surface (in): Stable source rows already validated for finite shapes/receipts.
- * - ground (in): Stable groundwater source rows under the same prepared model.
- * - forcing (in): Stable copied forcing rows already validated by the RK2 profile checks.
- * - completed (in): Finite nonnegative accepted elapsed time s.
+ * @param[in] surface Stable source rows already validated for finite shapes/receipts.
+ * @param[in] ground Stable groundwater source rows under the same prepared model.
+ * @param[in] forcing Stable copied forcing rows already validated by the RK2 profile checks.
+ * @param[in] completed Finite nonnegative accepted elapsed time s.
  * @return Empty when owners contain no slash/NUL, enabled records expire strictly later, last
  * receipt intervals fit completed/gross water, and nonboundary source IDs match direct/provider
  * local namespaces; otherwise diagnostic. Boundary IDs receive topology-specific validation

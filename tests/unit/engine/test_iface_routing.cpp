@@ -74,7 +74,7 @@ namespace {
  * @param[in] receiver Junction identifier, default J1; selected to match incoming interface node
  *     rows.
  * @param[in] outfall Outfall identifier, default O1; caller chooses distinct valid names.
- * @return Owned one-hour CFS/DYNWAVE deck with400 ft1.5 ft circular conduit,30 s routing and5 min
+ * @return Owned one-hour CFS/DYNWAVE deck with 400 ft1.5 ft circular conduit,30 s routing and 5 min
  *     reporting.
  */
 std::string minimal_model_inp(const std::string& receiver = "J1",

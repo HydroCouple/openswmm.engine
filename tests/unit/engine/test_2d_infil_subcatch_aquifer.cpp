@@ -66,9 +66,9 @@ const fs::path kOutDir = fs::path(OPENSWMM_INFIL_AQ_TEST_OUT_DIR) / "infil_subca
  *
  * @param[in] twod_options_extra Raw2D_OPTIONS overrides, including infiltration destination
  *     token/newline delimiters.
- * @param[in] pan_x0 Pan left x coordinate in metres;0 lies in the S1 polygon and100 outside it.
+ * @param[in] pan_x0 Pan left x coordinate in metres;0 lies in the S1 polygon and 100 outside it.
  * @param[in] extra_sections Raw additional complete sections inserted before REPORT.
- * @return Owned half-hour CMS deck with10-by-10 m/.5 m-deep two-triangle pan, constant50 mm/hr
+ * @return Owned half-hour CMS deck with 10-by-10 m/.5 m-deep two-triangle pan, constant50 mm/hr
  *     infiltration and an S1 legacy aquifer.
  */
 std::string deck(const std::string& twod_options_extra, double pan_x0,

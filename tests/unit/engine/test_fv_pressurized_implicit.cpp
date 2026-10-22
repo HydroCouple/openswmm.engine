@@ -222,13 +222,13 @@ struct HeadLossResult {
  * @brief Run a64-cell pressurized reach toward steady head-loss equilibrium.
  *
  * Uses64 cells of25 ft, circular diameter3 ft, downstream head20 ft and Manning.013. Advances at
- * most400 windows of30 s, requiring all cell discharges within .2% of inflow after at least12
+ * most 400 windows of30 s, requiring all cell discharges within .2% of inflow after at least 12
  * windows for convergence. No output artifacts or test assertions are produced; solver errors
  * propagate.
  *
  * @param[in] celerity Positive acoustic slot celerity in ft/s passed to geometry construction.
  * @param[in] implicit_on Select pressurized-implicit routing option.
- * @param[in] q_in Strictly positive upstream lateral inflow in CFS, default50; also scales the
+ * @param[in] q_in Strictly positive upstream lateral inflow in CFS, default 50; also scales the
  *     convergence threshold.
  * @return Owned final head drop ft, mid-pipe discharge CFS, accumulated substeps and convergence
  *     flag.
@@ -334,7 +334,7 @@ namespace {
  *
  * @param[in] celerity Positive slot celerity in ft/s.
  * @param[in] implicit_on Select pressurized-implicit option.
- * @return First5-second reporting endpoint with watched cell depth>=full depth, or -1 if none
+ * @return First 5-second reporting endpoint with watched cell depth>=full depth, or -1 if none
  *     by4000 s.
  */
 double boreArrival(double celerity, bool implicit_on) {

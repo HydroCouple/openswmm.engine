@@ -293,12 +293,11 @@ enum ErrorType {
 
 /*!
 * \brief Get the error message for a given error code.
-* @par Argument contract
- * - errCode (in): Error code
-* - msg (out): Error message
+ * @param[in] errCode Error code
+* @param[out] msg Error message
 * \return Error message
 */
-char* error_getMsg(int i, char* msg);
+char* error_getMsg(int errCode, char* msg);
 
 /*!
 * \brief Set an error code in the error manager.

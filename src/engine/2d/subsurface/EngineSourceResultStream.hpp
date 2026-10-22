@@ -148,30 +148,43 @@ private:
     friend class ExplicitInertialSolver;
     struct PreparedRestore;
     /**
-     * @brief Exclusively create the companion and attach it to a prepared engine at time zero.
-     * @par Arguments in order Borrowed live engine, new companion path with existing parent
-     * directory, and detailed-interval flag. Engine must have a common source stage and managed
-     * delivery or LID bottom receipts, and outlive the recorder through close. Existing
-     * destination files are never truncated.
-     * @return Empty after synchronized model header/initial frame and guard capture; standard
-     * exception diagnostic otherwise. This call's created file is removed best-effort on
-     * failure. No physics is advanced; source captures and engine/barrier captures share one
-     * committed prefix.
+     * @brief Exclusively create and attach a fresh companion stream at engine time zero.
+     * @param[in] e Stable prepared engine with common source stage and managed bridge or LID receipts;
+     * its address/context/model remain borrowed through stream lifetime, which the caller retains to
+     * close.
+     * @param[in] path New destination; existing files are not truncated. Parent directory must exist.
+     * @param[in] detailed True retains fine source-interval frames in addition to engine/barrier
+     * frames.
+     * @return Empty after synchronized model header, initial engine/source frame and fresh
+     * publication guard capture; otherwise caught standard-exception text. A file created by this
+     * call is removed best-effort on reported failure and attachment/path/cursor/latest are cleared.
+     * @note Refuses an existing stream attachment or nonzero engine time. Uses random 32-character
+     * identity, native-platform versioned archives and copied names/model metadata. Failure does not
+     * promise every auxiliary status/statistic field is reset; no hydraulic state is advanced.
      */
-    std::string initialize(const openswmm::SWMMEngine&, const std::string&, bool);
+    std::string initialize(const openswmm::SWMMEngine& e, const std::string& path, bool detailed);
     /**
-     * @brief Append one accepted engine-step or zero-time barrier frame with a physical anchor.
-     * @param[in] fingerprint Optional physical-checkpoint fingerprint; zero computes it from the
-     * attached engine. It is the anchor argument at the implementation.
-     * @par Leading unnamed arguments Exact borrowed attached engine, capture Kind, and elapsed
-     * engine interval start seconds. EngineStep advances engine end; barriers hold it fixed and
-     * suppress replay of prior routing receipts.
-     * @return Empty after synchronized append and pending/error reset; diagnostic otherwise.
-     * Once the physical anchor exists, failure leaves capture pending. Accepted physics is not
-     * rolled back; caller settles recording before advancing and serializes engine/stream/file
-     * access.
+     * @brief Record an accepted engine step or zero-time barrier with its physical checkpoint
+     * anchor.
+     * @param[in] e Exact attached live engine with common source stage and managed bridge/LID receipts.
+     * @param[in] kind Initial, EngineStep, CouplingBarrier, PrescriptionUpdate or Checkpoint as
+     * appropriate; SourceInterval belongs to captureSourceInterval(). Progression validation refuses
+     * invalid use.
+     * @param[in] start Accepted elapsed engine start s; barriers hold start=end and EngineStep advances
+     * it.
+     * @param[in] anchor Optional nonzero supplied physical-checkpoint fingerprint. Zero computes it
+     * from engine checkpointBytes(...,false); canonical declaration uses the same anchor name.
+     * @return Empty after synchronized append, clearing pending flag/error; caught
+     * standard-exception message otherwise, stored in error_. Failure after obtaining an anchor
+     * leaves capture pending.
+     * @note Builds immutable diagnostic tables, suppresses replay of prior routing receipts at
+     * barriers, and includes initial source ownership tables only at Initial. Physics/prescriptions
+     * may already have been accepted; capture failure does not roll them back. Caller must settle
+     * recording before advancing and serialize all stream/engine access. Early failures may precede
+     * the pending flag.
      */
-    std::string capture(const openswmm::SWMMEngine&, Kind, double, uint64_t fingerprint = 0);
+    std::string capture(const openswmm::SWMMEngine& e, Kind kind, double start,
+                        uint64_t anchor = 0);
     std::string captureSourceInterval(const CommonSourceStage&);
     void preflight() const;
     std::string checkpointContract(uint64_t physical_fingerprint,
