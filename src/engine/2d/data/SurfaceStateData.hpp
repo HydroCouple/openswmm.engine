@@ -196,6 +196,18 @@ struct SurfaceStateData {
     /// from end-of-step state is first-order and under-books the cells that
     /// dried mid-step.
     std::vector<double> coupling_applied;
+
+    // Plugin boundary transfers (m³), compacted in boundary_receipt_slots order. Allocated
+    // only by plugin solvers; additive until the router drains them into its
+    // engine-owned receipts after advance(). Separate directions preserve
+    // reversals within a window. CPU solvers book their receipts directly.
+    std::vector<int> boundary_receipt_slots; ///< padded edge slot for each transfer entry
+    std::vector<double> boundary_in_applied;
+    std::vector<double> boundary_out_applied;
+    std::vector<double> boundary_requested; ///< signed cumulative request pending receipt drain
+    std::vector<double> boundary_last_flow; ///< last applied substep flow (m³/s)
+    std::vector<double> boundary_last_dt;   ///< last boundary substep duration (s)
+
     std::vector<double> net_source;     ///< Net source/sink per cell (m/s)
 
     // -----------------------------------------------------------------------
@@ -283,6 +295,12 @@ struct SurfaceStateData {
         infil_rate.assign(nt, 0.0);
         infil_applied.assign(nt, 0.0);
         coupling_applied.assign(nt, 0.0);
+        boundary_receipt_slots.clear();
+        boundary_in_applied.clear();
+        boundary_out_applied.clear();
+        boundary_requested.clear();
+        boundary_last_flow.clear();
+        boundary_last_dt.clear();
         coupling_flux.assign(nt, 0.0);
         coupling_native.clear();
         runtime_sources = {};

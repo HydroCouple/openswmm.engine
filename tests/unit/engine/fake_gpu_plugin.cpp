@@ -14,7 +14,9 @@ extern "C" OPENSWMM_GPU_ABI const char* openswmm_gpu_build_contract() {
 }
 extern "C" OPENSWMM_GPU_ABI int openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
     ++probes;
-    *out={}; out->abi_version=std::getenv("OPENSWMM_TEST_OLD_GPU_ABI")?6:OPENSWMM_GPU_ABI_VERSION;
+    *out={}; out->abi_version = std::getenv("OPENSWMM_TEST_OLD_GPU_ABI")
+                           ? OPENSWMM_GPU_ABI_VERSION - 1
+                           : OPENSWMM_GPU_ABI_VERSION;
     out->device_count=1; out->vendor=OPENSWMM_GPU_VENDOR_CUDA;
     std::strcpy(out->device_name,"failure injection; no device used");
     return 0;

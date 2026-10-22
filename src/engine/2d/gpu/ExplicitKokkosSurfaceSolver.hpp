@@ -137,6 +137,10 @@ private:
     // Boundary edges (non-WALL): built host-side at initialize.
     IView d_bc_cell_, d_bc_slot_, d_bc_type_;
     DView d_bc_accum_, d_bc_slope_, d_bc_head_, d_bc_flow_;
+    DView d_bc_in_, d_bc_out_; ///< gross applied volumes since publication
+    std::vector<double> bc_in_host_, bc_out_host_;
+    DView d_bc_requested_, d_bc_last_flow_, d_bc_last_dt_;
+    std::vector<double> bc_requested_host_, bc_last_flow_host_, bc_last_dt_host_;
     DView d_bc_q_;   ///< prognostic boundary-edge discharge (m²/s, inflow-
                      ///< positive) — mirrors ExplicitInertialSolver::bc_q_
     std::vector<int> bc_cell_host_, bc_slot_host_;

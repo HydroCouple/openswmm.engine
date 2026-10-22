@@ -84,7 +84,9 @@ extern "C" {
  * The independent C-only groundwater raw-recharge ABI remains v1. */
 /* v7: SurfaceStateData adds accepted runtime-forcing rainfall receipts.
  * Rebuild surface plugins; independent raw groundwater recharge remains v1. */
-#define OPENSWMM_GPU_ABI_VERSION 7
+/* v8: SurfaceStateData adds gross applied boundary-water transfer arrays.
+ * Rebuild surface plugins; independent raw groundwater recharge remains v1. */
+#define OPENSWMM_GPU_ABI_VERSION 8
 
 /** GPU vendor / backend identifier reported by a plugin. */
 typedef enum OpenSwmmGpuVendor {

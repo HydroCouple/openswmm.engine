@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+#include "2d/coupling/NodeCoupling.hpp"
+#include "2d/data/BoundaryData.hpp"
+#include "data/NodeData.hpp"
 #include "2d/data/SolverOptions2D.hpp"
 #include "2d/data/SurfaceStateData.hpp"
 #include "2d/gpu/ExplicitKokkosSurfaceSolver.hpp"
@@ -48,6 +51,17 @@ struct ExplicitInertialSolverTestAccess {
 } // namespace openswmm::twoD
 namespace openswmm::twoD::gpu {
 struct ExplicitKokkosSurfaceSolverTestAccess {
+    static void prepareBoundarySteps(ExplicitKokkosSurfaceSolver& s) {
+        s.pushForcings();
+        s.syncAndRebuild(0.0);
+    }
+    static void boundarySubstep(ExplicitKokkosSurfaceSolver& s, double dt) {
+        s.pushForcings();
+        s.fireCells(0, dt, true);
+    }
+    static void publish(ExplicitKokkosSurfaceSolver& s, double span) {
+        s.publishAndCopyBack(0.0, span);
+    }
     static long advances(const ExplicitKokkosSurfaceSolver &s) { return s.perf_counters_.n_advance; }
     static int coarse(ExplicitKokkosSurfaceSolver &s) {
         s.pushForcings();
@@ -249,6 +263,178 @@ void marcher() {
                 std::cout << "marcher tiers=" << tiers << " scenario=" << scenario << " PASS\n";
             }
 }
+// All non-wall laws, in both directions and closures. Boundary values are
+// resolved by the router before advance; rating curves arrive as held flows.
+void boundaries() {
+    for (bool vfr : {false, true})
+        for (int tiers : {1, 4})
+            for (auto type : {BoundaryType::NORMAL_FLOW, BoundaryType::SPECIFIED_STAGE,
+                              BoundaryType::SPECIFIED_FLOW, BoundaryType::RATING_CURVE}) {
+                auto m = mesh(3, 0, false, vfr);
+                auto a = state(m, .2), b = a;
+                auto o = options(tiers);
+                if (vfr)
+                    o.cell_closure = CellClosure2D::VFR;
+                BoundaryData ba;
+                ba.resize(m.n_cells() * kMaxCellVerts);
+                std::vector<int> slots;
+                for (int i = 0; i < m.n_cells(); ++i)
+                    for (int e = 0; e < m.cell_vertex_count(i); ++e)
+                        if (m.cell_neighbour(i, e) < 0) {
+                            const int slot = MeshData::slot(i, e);
+                            slots.push_back(slot);
+                            ba.edge_bc_type[slot] = static_cast<int8_t>(type);
+                        }
+                auto bb = ba;
+                a.boundary = &ba;
+                b.boundary = &bb;
+                ExplicitInertialSolver cpu;
+                gpu::ExplicitKokkosSurfaceSolver kk;
+                cpu.initialize(m, a, o);
+                kk.initialize(m, b, o);
+                const double initial = sum(a.volume);
+                double t = 0;
+                for (int phase = 0; phase < 3; ++phase) {
+                    const double sign = phase == 1 ? 1.0 : -1.0;
+                    for (int slot : slots) {
+                        ba.edge_bed_slope[slot] = bb.edge_bed_slope[slot] = sign * .001;
+                        ba.edge_bc_flow[slot] = bb.edge_bc_flow[slot] = sign * .03;
+                        ba.edge_bc_head[slot] = bb.edge_bc_head[slot] = phase == 1 ? 0.0 : .6;
+                    }
+                    const double end = t + .37;
+                    cpu.advance(t, end);
+                    kk.advance(t, end);
+                    compare(b.volume, a.volume, "boundary storage", 2e-9);
+                    compare(b.edge_flux, a.edge_flux, "boundary flux", 2e-9);
+                    double incoming = 0, outgoing = 0;
+                    require(b.boundary_receipt_slots == slots, "boundary receipt slots");
+                    for (std::size_t k = 0; k < slots.size(); ++k) {
+                        const auto& r = ba.receipts.at(slots[k]);
+                        near(b.boundary_in_applied[k], r.water_in, "gross boundary in", 2e-9);
+                        near(b.boundary_out_applied[k], r.water_out, "gross boundary out", 2e-9);
+                        near(b.boundary_requested[k], r.requested, "boundary requested", 2e-9);
+                        near(b.boundary_last_flow[k], r.last_flow, "boundary last flow", 2e-9);
+                        near(b.boundary_last_dt[k], r.last_dt, "boundary last dt", 2e-9);
+                        incoming += r.water_in;
+                        outgoing += r.water_out;
+                    }
+                    near(sum(b.volume) + outgoing - incoming, initial, "boundary conservation");
+                    if (phase > 0)
+                        require(incoming > 0 && outgoing > 0, "both boundary directions exercised");
+                    t = end;
+                }
+                require(bb.receipts.empty(), "plugin must not mutate engine receipt map");
+            }
+    std::cout << "Open boundary laws and gross receipts PASS\n";
+}
+
+// Reverse a prescribed flow between two cell firings before one publication.
+// The mean flux is zero, but both gross transfers must survive. Then publish
+// again without a firing to prove the device accumulators were drained.
+void boundaryReversal() {
+    auto m = mesh(1);
+    auto s = state(m, .2);
+    auto o = options();
+    BoundaryData bc;
+    bc.resize(m.n_cells() * kMaxCellVerts);
+    int slot = -1;
+    for (int e = 0; e < 3; ++e)
+        if (m.cell_neighbour(0, e) < 0) {
+            slot = MeshData::slot(0, e);
+            break;
+        }
+    require(slot >= 0, "boundary reversal fixture");
+    bc.edge_bc_type[slot] = static_cast<int8_t>(BoundaryType::SPECIFIED_FLOW);
+    s.boundary = &bc;
+    gpu::ExplicitKokkosSurfaceSolver kk;
+    kk.initialize(m, s, o);
+    using Access = gpu::ExplicitKokkosSurfaceSolverTestAccess;
+    const double initial = sum(s.volume);
+    bc.edge_bc_flow[slot] = -.02;
+    Access::prepareBoundarySteps(kk);
+    Access::boundarySubstep(kk, .1);
+    bc.edge_bc_flow[slot] = .02;
+    Access::boundarySubstep(kk, .1);
+    Access::publish(kk, .2);
+    const double expected = .002 * m.edge_length[slot];
+    near(s.boundary_in_applied[0], expected, "reversal inflow");
+    near(s.boundary_out_applied[0], expected, "reversal outflow");
+    near(s.edge_flux[slot], 0, "reversal mean flux");
+    near(sum(s.volume), initial, "reversal storage");
+    Access::publish(kk, .2);
+    near(s.boundary_in_applied[0], expected, "no repeated inflow publication");
+    near(s.boundary_out_applied[0], expected, "no repeated outflow publication");
+    const double available = s.volume[0];
+    bc.edge_bc_flow[slot] = 1000.;
+    Access::boundarySubstep(kk, .1);
+    Access::publish(kk, .1);
+    near(s.volume[0], 0, "boundary availability floor");
+    near(s.boundary_out_applied[0], expected + available, "clamped applied boundary outflow");
+    require(-s.boundary_requested[0] > s.boundary_out_applied[0],
+            "boundary request distinguishes rejected water");
+    near(sum(s.volume) + s.boundary_out_applied[0] - s.boundary_in_applied[0],
+         initial, "clamped boundary conservation");
+    std::cout << "Within-window boundary reversal and dry-out PASS\n";
+}
+
+void nodeExchange() {
+    for (bool vfr : {false, true})
+        for (int law : {0, 1})
+            for (bool spill : {false, true}) {
+                auto m = mesh(3, 0, false, vfr);
+                auto a = state(m, .2), b = a;
+                auto o = options(4);
+                if (vfr)
+                    o.cell_closure = CellClosure2D::VFR;
+                openswmm::NodeData nodes;
+                nodes.resize(1);
+                nodes.invert_elev[0] = -.1;
+                nodes.full_depth[0] = .1;
+                nodes.full_volume[0] = 1.;
+                nodes.volume[0] = 1.01; // Only the .01 ponded share may spill.
+                nodes.head[0] = spill ? .8 : -.05;
+                nodes.depth[0] = nodes.head[0] - nodes.invert_elev[0];
+                std::vector<CouplingPoint> points;
+                for (int cell : {0, 1}) {
+                    CouplingPoint cp{};
+                    cp.cell_idx = cell;
+                    cp.vertex_idx = -1;
+                    cp.node_idx = 0;
+                    cp.cd = .6;
+                    cp.area = .1;
+                    cp.law = law;
+                    cp.geo.z_crest = 0;
+                    cp.geo.l_weir = .4;
+                    cp.geo.a_orif = .1;
+                    points.push_back(cp);
+                }
+                a.nodes_1d = b.nodes_1d = &nodes;
+                a.node_coupling = b.node_coupling = &points;
+                ExplicitInertialSolver cpu;
+                gpu::ExplicitKokkosSurfaceSolver kk;
+                cpu.initialize(m, a, o);
+                kk.initialize(m, b, o);
+                const double initial = sum(a.volume);
+                double total = 0, t = 0;
+                for (double end : {.37, .91}) {
+                    cpu.advance(t, end);
+                    kk.advance(t, end);
+                    compare(b.volume, a.volume, "node exchange storage", 2e-9);
+                    compare(kk.last_coupling_exchange(), cpu.last_coupling_exchange(),
+                            "node exchange ledger", 2e-9);
+                    compare(b.coupling_applied, a.coupling_applied, "node applied exchange", 2e-9);
+                    const double exchanged = sum(kk.last_coupling_exchange());
+                    require(spill ? exchanged < 0 : exchanged > 0, "node exchange direction");
+                    if (spill)
+                        require(-exchanged <= .01 + 1e-12, "shared node ponded-only spill budget");
+                    total += exchanged;
+                    near(sum(b.volume) + total, initial, "node exchange conservation");
+                    t = end;
+                }
+            }
+    std::cout << "Node drain/spill and shared pond budget PASS\n";
+}
+
 sk::Mesh mirrorMesh(MeshData &m, InertialEdges &e) {
     sk::Mesh d;
     std::vector<int> nv(m.n_cells()), nei(4 * m.n_cells(), -1),
@@ -440,6 +626,9 @@ int main(int argc, char **argv) {
         frozenTier();
         unsupported();
         marcher();
+        boundaries();
+        boundaryReversal();
+        nodeExchange();
         externalVolumeResync();
         sweChecks();
         auto initial = device(std::vector<double>{7., -3., 0.});

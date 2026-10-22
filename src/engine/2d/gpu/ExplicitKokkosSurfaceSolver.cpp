@@ -261,6 +261,22 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
     d_bc_slot_ = devCopy("bc_slot", bc_slot_host_);
     d_bc_type_  = IView("bc_type", nbc);
     d_bc_accum_ = DView("bc_accum", nbc);
+    d_bc_in_ = DView("bc_in", nbc);
+    d_bc_out_ = DView("bc_out", nbc);
+    d_bc_requested_ = DView("bc_requested", nbc);
+    d_bc_last_flow_ = DView("bc_last_flow", nbc);
+    d_bc_last_dt_ = DView("bc_last_dt", nbc);
+    bc_requested_host_.assign(nbc, 0.0);
+    bc_last_flow_host_.assign(nbc, 0.0);
+    bc_last_dt_host_.assign(nbc, 0.0);
+    bc_in_host_.assign(nbc, 0.0);
+    bc_out_host_.assign(nbc, 0.0);
+    state.boundary_receipt_slots = bc_slot_host_;
+    state.boundary_in_applied.assign(nbc, 0.0);
+    state.boundary_out_applied.assign(nbc, 0.0);
+    state.boundary_requested.assign(nbc, 0.0);
+    state.boundary_last_flow.assign(nbc, 0.0);
+    state.boundary_last_dt.assign(nbc, 0.0);
     d_bc_slope_ = DView("bc_slope", nbc);
     d_bc_head_  = DView("bc_head", nbc);
     d_bc_flow_  = DView("bc_flow", nbc);
@@ -880,6 +896,9 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
     if (nbc > 0) {
         auto bc_cell = d_bc_cell_, bc_slot = d_bc_slot_, bc_type = d_bc_type_;
         auto bc_accum = d_bc_accum_, bc_slope = d_bc_slope_;
+        auto bc_in = d_bc_in_, bc_out = d_bc_out_;
+        auto bc_requested = d_bc_requested_, bc_last_flow = d_bc_last_flow_;
+        auto bc_last_dt = d_bc_last_dt_;
         auto bc_head = d_bc_head_, bc_flow = d_bc_flow_;
         auto bc_q = d_bc_q_;
         auto active = d_active_;
@@ -972,12 +991,14 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                         qn1 = inertial::froudeCap(qn1, hf, fr_max);
                         f = qn1 * L;   // inflow-positive
                     }
+                    bc_last_dt(kk) = dt_c;
                     if (f == 0.0) {
                         bc_q(kk) = 0.0;
                         continue;
                     }
                     // Volume-space clamp; booked flux re-derived from the
                     // applied change (mirrors ExplicitInertialSolver).
+                    bc_requested(kk) += dt_c * f;
                     const double v_old = vol(i);
                     double v_new = v_old + dt_c * f;
                     if (ty == bt_stage) {
@@ -999,11 +1020,17 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                     }
                     if (v_new < 0.0) v_new = 0.0;  // availability floor
                     f = (v_new - v_old) / dt_c;
+                    bc_last_flow(kk) = f;
                     // Momentum matches applied mass (== serial rescale).
                     bc_q(kk) = (L > 1.0e-12) ? f / L : 0.0;
                     if (f != 0.0) {
                         vol(i) = v_new;
                         bc_accum(kk) += dt_c * f;
+                        const double applied = v_new - v_old;
+                        if (applied > 0.0)
+                            bc_in(kk) += applied;
+                        else
+                            bc_out(kk) -= applied;
                         double e2, d2;
                         inertial::etaDepthScalar(area(i), cz(i), vz(cvv(i * kMaxCellVerts + 0)),
                                                  vz(cvv(i * kMaxCellVerts + 1)), vz(cvv(i * kMaxCellVerts + 2)), vfr,
@@ -1299,6 +1326,25 @@ void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current,
     hostRefresh(state_->depth, d_depth_);
     hostRefresh(state_->edge_flux, d_edge_flux_);
     if (!exch_host_.empty()) hostRefresh(exch_host_, d_exch_);
+
+    // Publish plain arrays across the plugin boundary; the engine owns and
+    // updates the receipt map. Keep totals additive until the router consumes
+    // them, just like the applied cell sources below.
+    hostRefresh(bc_in_host_, d_bc_in_);
+    hostRefresh(bc_out_host_, d_bc_out_);
+    hostRefresh(bc_requested_host_, d_bc_requested_);
+    hostRefresh(bc_last_flow_host_, d_bc_last_flow_);
+    hostRefresh(bc_last_dt_host_, d_bc_last_dt_);
+    for (std::size_t k = 0; k < bc_slot_host_.size(); ++k) {
+        state_->boundary_in_applied[k] += bc_in_host_[k];
+        state_->boundary_out_applied[k] += bc_out_host_[k];
+        state_->boundary_requested[k] += bc_requested_host_[k];
+        state_->boundary_last_flow[k] = bc_last_flow_host_[k];
+        state_->boundary_last_dt[k] = bc_last_dt_host_[k];
+    }
+    Kokkos::deep_copy(d_bc_in_, 0.0);
+    Kokkos::deep_copy(d_bc_out_, 0.0);
+    Kokkos::deep_copy(d_bc_requested_, 0.0);
 
     // Fixed cell-order host fold avoids a floating-point device sum and drains
     // only once per publication, including exact macro-cycle landings.

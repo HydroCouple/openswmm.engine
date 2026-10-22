@@ -473,59 +473,33 @@ set_tests_properties(test_engine_2d_surface PROPERTIES
 
 endif()
 
-# Exercise the acceleration path end-to-end under BOTH cell closures. The
-# Kokkos marcher kernels implement FLAT and VFR alike, so the factory must
-# discover and load the omp plugin in both cases (the default-on policy) — the
-# old closure-refusal guard retired with the CVODE-family solvers, which were
-# VFR-only. Numeric parity is byte-exact by construction (disjoint writes,
-# exact-min reductions); the bench harness verifies .out byte-identity
-# serial-vs-omp on the Bellinge slice.
-if(OPENSWMM_BUILD_2D AND OPENSWMM_BUILD_GPU_PLUGIN)
-    file(COPY ${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp
-         DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
-    # VFR variant of the same fixture, generated at configure time.
-    file(READ ${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp
-         _omp_vfr_inp)
+# Numeric end-to-end gates require the actual OpenMP plugin, exercise both
+# closures and compare every 2D continuity term against the CPU reference.
+if(OPENSWMM_BUILD_2D AND TARGET openswmm_gpu_omp)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    file(READ ${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp _omp_vfr_inp)
     string(REPLACE "[2D_OPTIONS]" "[2D_OPTIONS]\nCELL_CLOSURE           VFR"
            _omp_vfr_inp "${_omp_vfr_inp}")
-    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_vfr.inp
-         "${_omp_vfr_inp}")
-
-    add_test(
-        NAME    test_engine_2d_omp_default
-        COMMAND $<TARGET_FILE:openswmm> 2d_complete_example.inp 2d_omp_default.rpt
-        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    )
-    add_test(
-        NAME    test_engine_2d_omp_vfr
-        COMMAND $<TARGET_FILE:openswmm> 2d_complete_example_vfr.inp 2d_omp_vfr.rpt
-        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    )
-    # Point plugin discovery straight at the freshly built omp plugin. Without
-    # this the engine only searches its own module dir; on Windows multi-config
-    # builds the CLI and the plugin land in separate per-config trees (e.g.
-    # bin/Debug vs src/engine/2d/gpu/Debug), so the omp plugin is never found,
-    # the run silently falls back to the serial CPU solver, and the
-    # PASS_REGULAR_EXPRESSION below never matches. OPENSWMM_GPU_PLUGIN_PATH is
-    # the highest-priority search dir, so this makes discovery deterministic on
-    # every platform/generator. Guarded so non-omp GPU backends still configure.
-    set(_omp_test_env "OPENSWMM_2D_BACKEND=omp")
-    if(TARGET openswmm_gpu_omp)
-        list(APPEND _omp_test_env
-             "OPENSWMM_GPU_PLUGIN_PATH=$<TARGET_FILE_DIR:openswmm_gpu_omp>")
-    endif()
-    # test_engine_2d_omp_default carries no INTEGRATOR line, so it also gates
-    # the marcher-is-the-default contract; the separate P5
-    # test_engine_2d_omp_explicit became an exact duplicate of it once EXPLICIT
-    # became the default and was dropped.
-    set_tests_properties(test_engine_2d_omp_default PROPERTIES
-        LABELS "unit"
-        ENVIRONMENT "${_omp_test_env}"
-        PASS_REGULAR_EXPRESSION "using GPU backend: omp")
-    set_tests_properties(test_engine_2d_omp_vfr PROPERTIES
-        LABELS "unit"
-        ENVIRONMENT "${_omp_test_env}"
-        PASS_REGULAR_EXPRESSION "using GPU backend: omp")
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_vfr.inp "${_omp_vfr_inp}")
+    foreach(_case default vfr evaporation)
+        set(_input "${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp")
+        set(_extra)
+        if(_case STREQUAL "vfr")
+            set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_vfr.inp")
+        elseif(_case STREQUAL "evaporation")
+            set(_extra --evaporation)
+        endif()
+        add_test(NAME test_engine_2d_omp_${_case}
+            COMMAND ${Python3_EXECUTABLE}
+                ${PROJECT_SOURCE_DIR}/tests/gpu/check_engine_continuity.py
+                --engine $<TARGET_FILE:openswmm>
+                --plugin-dir $<TARGET_FILE_DIR:openswmm_gpu_omp>
+                --input ${_input}
+                --output ${CMAKE_CURRENT_BINARY_DIR}/omp_continuity_${_case}
+                ${_extra})
+        set_tests_properties(test_engine_2d_omp_${_case} PROPERTIES
+            LABELS "unit;gpu;parity" TIMEOUT 400)
+    endforeach()
 endif()
 
 # InpWriter [2D_*] emission — end-to-end through the public C API (open a

@@ -2225,6 +2225,27 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
         perf::ScopedTimer tm_adv(perf::sec_2d_advance);
         solver_->advance(sim_time_, sim_time_ + dt);  // always reaches target
     }
+    // Plugin solvers publish gross accepted boundary volumes without touching
+    // the engine-owned receipt map across the shared-library boundary. Drain
+    // once, before reporting/checkpoint/API consumers can observe this step.
+    if (!state_.boundary_in_applied.empty()) {
+        for (std::size_t k = 0; k < state_.boundary_receipt_slots.size(); ++k) {
+            const int slot = state_.boundary_receipt_slots[k];
+            boundary_.ensureReceipt(slot, state_.transport.n_species);
+            auto& receipt = boundary_.receipts.at(slot);
+            const double incoming = state_.boundary_in_applied[k];
+            const double outgoing = state_.boundary_out_applied[k];
+            receipt.water_in += incoming;
+            receipt.water_out += outgoing;
+            receipt.applied += incoming - outgoing;
+            receipt.requested += state_.boundary_requested[k];
+            receipt.last_flow = state_.boundary_last_flow[k];
+            receipt.last_dt = state_.boundary_last_dt[k];
+            state_.boundary_requested[k] = 0.0;
+            state_.boundary_in_applied[k] = 0.0;
+            state_.boundary_out_applied[k] = 0.0;
+        }
+    }
     if(auto error=subsurface_.refreshPorewaterContactLedger();!error.empty())
         throw std::runtime_error("[2D porewater] "+error);
     advanceRemainingGroundColumns(mesh_,options_,state_,dt);
@@ -3292,15 +3313,13 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     auto& mb = ctx.mass_balance_2d;
     int nt = mesh_.n_triangles();
 
-    // Rain / evaporation / infiltration / storage in ONE pass over the cells.
-    // Each accumulator still sums its own term over ascending i, so every
-    // total is bit-identical to the four separate passes this replaces; only
-    // the memory traffic (four full sweeps of the same arrays per routing
-    // step) is gone.
+    // Rain / infiltration / storage in ONE pass over the cells.
+    // Each term is summed in ascending cell order. Applied evaporation is
+    // already accumulated by the solver and needs no cell pass here.
     const bool do_infil = infil_.active() || common_stage_;
     const bool track_cum =
         do_infil && infil_cum_applied_.size() == static_cast<std::size_t>(nt);
-    double rain_vol = 0.0, evap_vol = 0.0, infil_vol = 0.0, storage = 0.0;
+    double rain_vol = 0.0, infil_vol = 0.0, storage = 0.0;
     const bool split_snow=subsurface_.active()&&options_.reconstruction_order==2&&state_.snow.active();
     double snow_rain_total=0;
     const bool route_aq =
@@ -3321,8 +3340,6 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
             rain_vol += (state_.snow.owns(i)?state_.liquidRainfall(i):rain_rate) * weather_area;
             rain_cum_[ui] += rain_rate * weather_area * dt;
         }
-        evap_vol += evapSink(state_.exposedEvaporation(i), state_.depth[ui],
-                             options_.dry_depth) * area;
         if (do_infil) {
             // APPLIED depth (m) the marcher actually removed since the last
             // read — not a re-derivation at the accepted end-of-step depth.
@@ -3361,16 +3378,10 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     else if (common_stage_&&!common_stage_->standaloneLocalBed()) mb.rainfall_in = common_stage_->meshRain();
     else mb.rainfall_in += rain_vol * dt;
 
-    // The CPU marcher records the applied evaporation after sharing the
-    // cell's finite water budget. Re-evaluating at the final depth misses
-    // dry-out and cannot close the ledger. Plugins retain their existing
-    // estimate until they implement applied source accounting.
-    if (dynamic_cast<ExplicitInertialSolver*>(solver_.get())) {
-        mb.evap_out = state_.evap_loss_total;
-    } else {
-        mb.evap_out += evap_vol * dt;
-        state_.evap_loss_total += evap_vol * dt;
-    }
+    // Every solver records applied evaporation after sharing the cell's
+    // finite water budget. An end-depth estimate misses dry-out and would
+    // also add a second loss to the cumulative total saved in hot starts.
+    mb.evap_out = state_.evap_loss_total;
 
     // Infiltration loss (m³) — plan §5.5.2 site 5 / §5.5.4. Destination is
     // LOST in this release (D-I4), so it is a true exit from the modelled
