@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file HeatOverrides.hpp
- * @brief Plan PE — resolve per-element attributes, and read them.
+ * @file      HeatOverrides.hpp
+ * @brief     Plan PE — resolve per-element attributes, and read them.
  *
  * @details Two accessors and one resolver. Everything else about the
  *          feature is parsing (HeatComponent.cpp) or threading
@@ -24,9 +24,9 @@
  *
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_HEAT_OVERRIDES_HPP
@@ -74,21 +74,16 @@ std::vector<std::string> resolveHeatOverrides(SimulationContext& ctx);
  *          is what makes a non-PE model bit-identical by construction rather
  *          than by tolerance.
  */
-const RadiativeConfig& radiativeFor(const SimulationContext& ctx,
-                                    const HeatElement& e) noexcept;
+const RadiativeConfig& radiativeFor(const SimulationContext& ctx, const HeatElement& e) noexcept;
 
 /**
  * @brief The bed attributes in force for `e`.
  *
- * @details Bed overrides are LINK-scoped only — the bed zone itself is
- *          conduits only (`BedZoneState`), so a node-scoped bed attribute
- *          would describe a body that does not exist. A NODE element
- *          therefore always reads the global here, and the parser refuses
- *          `NODE` scope on a `[SEDIMENT_EXCHANGE]` row rather than accepting
- *          a row that could never take effect.
+ * @details Dense bed overrides support LINK and CELL2D scopes for their respective finite
+ *          physical owners. NODE and unsupported/out-of-range identities read the global
+ *          configuration. The accessor does not create a bed or qualify runtime ownership.
  */
-const SedimentConfig& sedimentFor(const SimulationContext& ctx,
-                                  const HeatElement& e) noexcept;
+const SedimentConfig& sedimentFor(const SimulationContext& ctx, const HeatElement& e) noexcept;
 
 // The NaN sentinel on `landcover_temp` ("use air temperature") is resolved
 // in exactly one place: `netRadiativeFluxOut`, which receives the resolved
@@ -98,6 +93,6 @@ const SedimentConfig& sedimentFor(const SimulationContext& ctx,
 // and physically inert. The check deleted the accessor and moved the
 // resolution to the reader.
 
-}  // namespace openswmm::transport::heat
+} // namespace openswmm::transport::heat
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_HEAT_OVERRIDES_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_HEAT_OVERRIDES_HPP

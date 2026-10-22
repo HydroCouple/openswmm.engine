@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file SpeciesRegistry.hpp
- * @brief Single source of truth for all transported constituents
+ * @file      SpeciesRegistry.hpp
+ * @brief     Single source of truth for all transported constituents
  *        (Unified Transport master plan §4.1; phase T0a).
  *
  * @details Legacy `[POLLUTANTS]` entries occupy the first slots with kind
@@ -30,14 +30,14 @@
  *          pollutants + MSX_BULK species on its mesh (it sizes from
  *          n_pollutants() + ReactionData::n_species(), refusing WALL);
  *          `transported_count()` counts POLLUTANT + MSX_BULK to match.
- *          The LEGACY engine still transports pollutants only (MSX
- *          transport under LEGACY is plan phase R4b).
+ *          The LEGACY engine also maintains its separate MSX state and routing ledger
+ *          in ReactionData; this registry does not allocate that runtime storage.
  *
  * @ingroup engine_data
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_DATA_SPECIES_REGISTRY_HPP
@@ -51,15 +51,21 @@ namespace openswmm {
 
 /// Constituent kinds (master plan §4.1).
 enum class SpeciesKind : int {
-    POLLUTANT            = 0,  ///< legacy [POLLUTANTS] entry
-    RESERVED_AGE         = 1,  ///< __WATER_AGE__ (phase A1)
-    RESERVED_TEMPERATURE = 2,  ///< __TEMPERATURE__ (phase H1)
-    MSX_BULK             = 3,  ///< reactions component BULK species (R1)
-    MSX_WALL             = 4   ///< reactions component WALL species (R1)
+    POLLUTANT = 0,            ///< legacy [POLLUTANTS] entry
+    RESERVED_AGE = 1,         ///< __WATER_AGE__ (phase A1)
+    RESERVED_TEMPERATURE = 2, ///< __TEMPERATURE__ (phase H1)
+    MSX_BULK = 3,             ///< reactions component BULK species (R1)
+    MSX_WALL = 4              ///< reactions component WALL species (R1)
 };
 
 class SpeciesRegistry {
 public:
+    /**
+     * @brief Erase all species and reset the pollutant count.
+     *
+     * Retains vector capacities and invalidates borrowed species strings; does not update any external
+     * concentration arrays or ReactionData indexes.
+     */
     void clear() {
         name_.clear();
         kind_.clear();
@@ -67,64 +73,115 @@ public:
         n_pollutants_ = 0;
     }
 
-    /// Append a species. Returns the new index, or -1 on a name collision
-    /// (names are unique across ALL kinds — an MSX species may not shadow a
-    /// pollutant).
+    /**
+     * @brief Append a uniquely named species across all kinds.
+     *
+     * Does not enforce pollutant-first ordering. Independent vector appends may fail without rollback;
+     * caller keeps dependent arrays and registry blocks coherent.
+     *
+     * @param[in] name Owned name moved into storage if accepted; exact-case collision detection.
+     * @param[in] kind Kind stored without enum or ordering validation.
+     * @param[in] units Owned display/unit label moved verbatim; not parsed.
+     * @return New registry index, or -1 on an exact-name collision with no mutation.
+     */
     int add(std::string name, SpeciesKind kind, std::string units) {
-        if (find(name) >= 0) return -1;
+        if (find(name) >= 0)
+            return -1;
         name_.push_back(std::move(name));
         kind_.push_back(kind);
         units_.push_back(std::move(units));
-        if (kind == SpeciesKind::POLLUTANT) ++n_pollutants_;
+        if (kind == SpeciesKind::POLLUTANT)
+            ++n_pollutants_;
         return static_cast<int>(name_.size()) - 1;
     }
 
+    /**
+     * @brief Find the first byte-exact species name.
+     *
+     * @param[in] name Borrowed untrimmed name; case-sensitive and allocation-free lookup.
+     * @return Registry index or -1; linear scan over all kinds.
+     */
     int find(std::string_view name) const {
         for (std::size_t i = 0; i < name_.size(); ++i)
-            if (name_[i] == name) return static_cast<int>(i);
+            if (name_[i] == name)
+                return static_cast<int>(i);
         return -1;
     }
 
+    /**
+     * @brief Count registered constituents of all kinds.
+     * @return Owned name vector length converted to int.
+     */
     int count() const noexcept { return static_cast<int>(name_.size()); }
+    /**
+     * @brief Count registered entries marked POLLUTANT.
+     * @return Maintained pollutant-kind count; does not imply those entries occupy the first slots
+     *     unless caller enforces ordering.
+     */
     int pollutant_count() const noexcept { return n_pollutants_; }
 
-    /// Species the ARD engine carries on its mesh: POLLUTANT + MSX_BULK
-    /// (E4/R6) + RESERVED_AGE (A1a) + RESERVED_TEMPERATURE (H4). WALL
-    /// species are element-local and stay off the mesh.
-    ///
-    /// @note This is a KIND whitelist, the shape lesson 51 warns about: it
-    ///       had to be edited when temperature joined, and will again for
-    ///       the next reserved kind. It currently has no callers in `src/`,
-    ///       so a stale entry here is latent rather than live — which is
-    ///       exactly why it was still wrong when H4 arrived.
+    /**
+     * @brief Count mesh-transported constituent kinds.
+     *
+     * This kind whitelist reports registry membership, not the active solver's supported configuration
+     * or allocated mesh dimensions.
+     * @return Number of POLLUTANT, MSX_BULK, RESERVED_AGE and RESERVED_TEMPERATURE entries; excludes
+     *     MSX_WALL and unknown kinds.
+     */
     int transported_count() const noexcept {
         int n = 0;
         for (const auto k : kind_)
             if (k == SpeciesKind::POLLUTANT || k == SpeciesKind::MSX_BULK ||
-                k == SpeciesKind::RESERVED_AGE ||
-                k == SpeciesKind::RESERVED_TEMPERATURE)
+                k == SpeciesKind::RESERVED_AGE || k == SpeciesKind::RESERVED_TEMPERATURE)
                 ++n;
         return n;
     }
 
+    /**
+     * @brief Borrow a species identifier.
+     *
+     * @param[in] i Existing registry index in [0,count()); unchecked.
+     * @return Reference to owned string, invalidated by growth, truncation, clear or destruction.
+     */
     const std::string& name(int i) const { return name_[static_cast<std::size_t>(i)]; }
+    /**
+     * @brief Read a species category.
+     *
+     * @param[in] i Existing registry index; unchecked.
+     * @return Stored SpeciesKind value without normalization.
+     */
     SpeciesKind kind(int i) const { return kind_[static_cast<std::size_t>(i)]; }
+    /**
+     * @brief Borrow a species unit label.
+     *
+     * @param[in] i Existing registry index; unchecked.
+     * @return Reference to owned string, invalidated by registry vector mutation/destruction.
+     */
     const std::string& units(int i) const { return units_[static_cast<std::size_t>(i)]; }
 
-    /// Drop every entry at index >= @p n (E-C2: the MSX-block rebuild in
-    /// the reactions CRUD API snapshots the tail, truncates, re-adds the
-    /// MSX species from ReactionData, then restores the tail). Recounts
-    /// pollutants defensively, though the pollutant block always precedes n.
+    /**
+     * @brief Drop registry entries from a specified index onward.
+     *
+     * Shrinks all columns and recounts pollutant kinds. Preserves retained prefix values but
+     * invalidates erased strings/references; does not repair dependent species indexes or state arrays.
+     * Used when rebuilding reaction-species blocks.
+     *
+     * @param[in] n First removed index; negative treated as zero, values >=count() leave storage
+     *     unchanged.
+     */
     void truncate_to(int n) {
-        if (n < 0) n = 0;
-        if (n >= count()) return;
+        if (n < 0)
+            n = 0;
+        if (n >= count())
+            return;
         const auto un = static_cast<std::size_t>(n);
         name_.resize(un);
         kind_.resize(un);
         units_.resize(un);
         n_pollutants_ = 0;
         for (const auto k : kind_)
-            if (k == SpeciesKind::POLLUTANT) ++n_pollutants_;
+            if (k == SpeciesKind::POLLUTANT)
+                ++n_pollutants_;
     }
 
 private:
@@ -134,6 +191,6 @@ private:
     int n_pollutants_ = 0;
 };
 
-}  // namespace openswmm
+} // namespace openswmm
 
-#endif  // OPENSWMM_ENGINE_DATA_SPECIES_REGISTRY_HPP
+#endif // OPENSWMM_ENGINE_DATA_SPECIES_REGISTRY_HPP

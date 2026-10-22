@@ -1,6 +1,6 @@
 /**
- * @file test_da4_engine_api.cpp
- * @brief DA.4.0 — Unit tests for the engine prerequisites of GUI Slice DA.4.
+ * @file      test_da4_engine_api.cpp
+ * @brief     DA.4.0 — Unit tests for the engine prerequisites of GUI Slice DA.4.
  *
  * @details Covers two C API additions wired for the GUI's outfall stage-data
  *          picker and the rich pattern editor:
@@ -13,6 +13,10 @@
  *               current state)
  *
  * @see docs/GUI_IMPLEMENTATION_PLAN.md slice DA.4 (openswmm.gui)
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -30,6 +34,13 @@ protected:
     int curve_a_idx = -1;
     int ts_a_idx = -1;
 
+    /**
+     * @brief Create an editable outfall and named tidal/time-series tables.
+     *
+     * Adds OUT1, TC1 of tidal type2 and TS1, resolving/caching nonnegative indices. No table rows,
+     * stage evaluation or simulation occur here. Fatal GoogleTest assertions return from this hook on
+     * failure; any created handle remains owned by the fixture for teardown.
+     */
     void SetUp() override {
         engine = swmm_engine_new();
         ASSERT_NE(engine, nullptr);
@@ -46,7 +57,16 @@ protected:
         ASSERT_GE(ts_a_idx, 0);
     }
 
-    void TearDown() override { if (engine) swmm_engine_destroy(engine); }
+    /**
+     * @brief Destroy the fixture engine when allocation succeeded.
+     *
+     * Releases model resources through engine destruction; the member value is not reset and must not
+     * be reused after teardown.
+     */
+    void TearDown() override {
+        if (engine)
+            swmm_engine_destroy(engine);
+    }
 };
 
 // Case 1 — set TIDAL with curve_a → get_outfall_tidal returns that idx.
@@ -71,7 +91,7 @@ TEST_F(OutfallStageDataApiTest, GetTidalRejectsFixedType) {
     ASSERT_EQ(swmm_node_set_outfall_stage(engine, out_idx, 12.5), SWMM_OK);
     int got = -999;
     EXPECT_EQ(swmm_node_get_outfall_tidal(engine, out_idx, &got), SWMM_ERR_BADPARAM);
-    EXPECT_EQ(got, -999);  // untouched
+    EXPECT_EQ(got, -999); // untouched
 }
 
 // Case 4 — get_outfall_timeseries on a TIDAL-typed outfall returns BADPARAM.
@@ -89,19 +109,36 @@ class PatternGetterApiTest : public ::testing::Test {
 protected:
     SWMM_Engine engine = nullptr;
 
+    /**
+     * @brief Create an editable empty model for each API test.
+     *
+     * Stores the owned handle in engine and asserts allocation succeeded. Tests populate the model and
+     * fixture teardown destroys it.
+     */
     void SetUp() override {
         engine = swmm_engine_new();
         ASSERT_NE(engine, nullptr);
     }
 
-    void TearDown() override { if (engine) swmm_engine_destroy(engine); }
+    /**
+     * @brief Destroy the fixture engine when allocation succeeded.
+     *
+     * Releases model resources through engine destruction; the member value is not reset and must not
+     * be reused after teardown.
+     */
+    void TearDown() override {
+        if (engine)
+            swmm_engine_destroy(engine);
+    }
 };
 
 // Case 5 — pattern type round-trips across all four kinds.
 TEST_F(PatternGetterApiTest, GetTypeRoundtripsAllKinds) {
     const int kinds[4][2] = {
-        {0 /*MONTHLY*/, 12}, {1 /*DAILY*/, 7},
-        {2 /*HOURLY*/,  24}, {3 /*WEEKEND*/, 24},
+        {0 /*MONTHLY*/, 12},
+        {1 /*DAILY*/, 7},
+        {2 /*HOURLY*/, 24},
+        {3 /*WEEKEND*/, 24},
     };
     const char* names[4] = {"PM", "PD", "PH", "PW"};
 
@@ -122,7 +159,8 @@ TEST_F(PatternGetterApiTest, GetFactorCountAndFactorRoundtrip) {
     ASSERT_GE(idx, 0);
 
     double f24[24];
-    for (int i = 0; i < 24; ++i) f24[i] = 1.0 + 0.1 * i;
+    for (int i = 0; i < 24; ++i)
+        f24[i] = 1.0 + 0.1 * i;
     ASSERT_EQ(swmm_pattern_set_factors(engine, idx, f24, 24), SWMM_OK);
 
     int count = -1;
@@ -143,7 +181,7 @@ TEST_F(PatternGetterApiTest, GetFactorOutOfRangeIsRejected) {
     ASSERT_EQ(swmm_pattern_add(engine, "PM", 0 /*MONTHLY*/), SWMM_OK);
     const int idx = swmm_pattern_index(engine, "PM");
     ASSERT_GE(idx, 0);
-    double f12[12] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
+    double f12[12] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
     ASSERT_EQ(swmm_pattern_set_factors(engine, idx, f12, 12), SWMM_OK);
 
     double v = -1.0;

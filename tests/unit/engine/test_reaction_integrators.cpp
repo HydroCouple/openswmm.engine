@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_reaction_integrators.cpp
- * @brief R3 gates: EUL/RK5/ROS2/BDF2 + EQUIL Newton + FORMULA + rate units
+ * @file      test_reaction_integrators.cpp
+ * @brief     R3 gates: EUL/RK5/ROS2/BDF2 + EQUIL Newton + FORMULA + rate units
  *        against ANALYTIC batch-reactor references
  *        (plans/transport/MULTISPECIES_REACTIONS_MSX_PLAN.md §5 R3).
  *
@@ -39,9 +39,9 @@
  *          end-to-end; the integrator is then driven directly on a local
  *          species block (batch reactor: zero flow, tank scope).
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -64,10 +64,33 @@ using openswmm::transport::ReactionIntegrator;
 using openswmm::transport::RxStepReport;
 using openswmm::transport::RxWorkspace;
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
+/**
+ * @brief Write a one-conduit deck referencing an integrator-test reaction config.
+ *
+ * Half-hour CFS/TSS MG/L fixture with a reactions component; no integrator runs in this helper.
+ * Uses a local ofstream and requires existing parent directories. Open/write/close failures are
+ * unchecked; owned input strings are not retained and raw tokens/config paths are not escaped.
+ * Optional sidecar files are also overwritten when described.
+ *
+ * @param[in] path Borrowed destination filename; character pointers must be non-null.
+ *     Opens/truncates this file for the generated deck.
+ * @param[in] rxn_path Non-null reaction-sidecar path copied in quotes; config creation is separate.
+ */
 void write_deck(const char* path, const char* rxn_path) {
     std::ofstream f(path);
     f << "[TITLE]\nR3 gate deck\n\n[OPTIONS]\n"
@@ -80,12 +103,21 @@ void write_deck(const char* path, const char* rxn_path) {
       << "[CONDUITS]\nC1 J0 OUT 400 0.013 0 0 0\n\n"
       << "[XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\n"
       << "[POLLUTANTS]\nTSS MG/L 0 0 0 0 NO * 0 0 0\n\n"
-      << "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions  config=\""
-      << rxn_path << "\"\n\n[REPORT]\nINPUT NO\n";
+      << "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions  config=\"" << rxn_path
+      << "\"\n\n[REPORT]\nINPUT NO\n";
 }
 
-/// Open a deck with the given model.rxn body; returns the engine (caller
-/// destroys). The reaction system arrives fully parsed + compiled.
+/**
+ * @brief Write a fixed reaction config/deck and open its compiled reaction system.
+ *
+ * Writes fixed _r3_sys.inp/.rxn/.rpt/.out paths, opens the model without initialization, then
+ * removes only input/config files while retaining parsed/compiled state. File-write/delete outcomes
+ * are ignored; concurrent calls conflict on the fixed paths.
+ *
+ * @param[in] rxn_body Borrowed full reaction sidecar text written to _r3_sys.rxn.
+ * @return Owned raw engine handle, even if a nonfatal open expectation fails; caller must destroy
+ *     it. Allocation failure is recorded but does not stop the later open call.
+ */
 SWMM_Engine open_with_rxn(const std::string& rxn_body) {
     {
         std::ofstream c("_r3_sys.rxn");
@@ -94,13 +126,25 @@ SWMM_Engine open_with_rxn(const std::string& rxn_body) {
     write_deck("_r3_sys.inp", "_r3_sys.rxn");
     SWMM_Engine e = swmm_engine_create();
     EXPECT_NE(e, nullptr);
-    EXPECT_EQ(swmm_engine_open(e, "_r3_sys.inp", "_r3_sys.rpt", "_r3_sys.out",
-                               nullptr), SWMM_OK);
+    EXPECT_EQ(swmm_engine_open(e, "_r3_sys.inp", "_r3_sys.rpt", "_r3_sys.out", nullptr), SWMM_OK);
     std::remove("_r3_sys.inp");
     std::remove("_r3_sys.rxn");
     return e;
 }
 
+/**
+ * @brief Advance one isolated tank reaction step with zero hydraulic environment.
+ *
+ * Allocates/initializes a local workspace, sets every RxHydVar entry to zero, and uses tank=true.
+ * No workspace or concentration pointers are retained. Integrator validation/failure behavior
+ * applies; this helper does not wrap it in an assertion.
+ *
+ * @param[in] rx Borrowed compiled reaction data; all expressions/coefficient tables must be valid.
+ * @param[in] dt Reaction step seconds, passed unchanged to ReactionIntegrator::step.
+ * @param[in,out] species Non-null caller-owned concentration array covering all reaction species,
+ *     updated in place using the species expression units.
+ * @return Integrator report containing step status/diagnostics.
+ */
 RxStepReport run_step(const ReactionData& rx, double dt, double* species) {
     RxWorkspace ws;
     ws.init(rx);
@@ -112,8 +156,8 @@ RxStepReport run_step(const ReactionData& rx, double dt, double* species) {
 // Gate 1 — first-order decay vs exp() for all four solvers.
 // ---------------------------------------------------------------------------
 TEST(RxIntegrators, FirstOrderDecayMatchesClosedForm) {
-    const double k = 0.25;    // 1/s
-    const double dt = 10.0;   // s
+    const double k = 0.25;  // 1/s
+    const double dt = 10.0; // s
     const double c0 = 5.0;
     const double exact = c0 * std::exp(-k * dt);
 
@@ -122,17 +166,19 @@ TEST(RxIntegrators, FirstOrderDecayMatchesClosedForm) {
     // band around a positive exact value can express that, and asserting one
     // only hides the real behavior. Its exact value is pinned below, and
     // gate 3 asserts the loud failure when the same step blows up.
-    const struct { const char* solver; double tol; } rows[] = {
-        {"RK5",  1e-6},
+    const struct {
+        const char* solver;
+        double tol;
+    } rows[] = {
+        {"RK5", 1e-6},
         {"ROS2", 1e-3},
         {"BDF2", 5e-2},
     };
     for (const auto& r : rows) {
-        SWMM_Engine e = open_with_rxn(
-            std::string("[REACTION_OPTIONS]\nSOLVER ") + r.solver +
-            "\nRATE_UNITS SEC\nATOL 1e-10\nRTOL 1e-8\n"
-            "[REACTION_SPECIES]\nBULK A MG\n"
-            "[REACTION_TANKS]\nRATE A -0.25 * A\n");
+        SWMM_Engine e = open_with_rxn(std::string("[REACTION_OPTIONS]\nSOLVER ") + r.solver +
+                                      "\nRATE_UNITS SEC\nATOL 1e-10\nRTOL 1e-8\n"
+                                      "[REACTION_SPECIES]\nBULK A MG\n"
+                                      "[REACTION_TANKS]\nRATE A -0.25 * A\n");
         const auto& rx = as_cpp_engine(e).context().reactions;
         ASSERT_TRUE(rx.compiled) << r.solver;
         double species[1] = {c0};
@@ -143,22 +189,19 @@ TEST(RxIntegrators, FirstOrderDecayMatchesClosedForm) {
         // validation.)
         EXPECT_TRUE(rep.ok) << r.solver << ": " << rep.error;
         if (rep.ok)
-            EXPECT_NEAR(species[0], exact, r.tol * exact)
-                << r.solver << " vs exact " << exact;
+            EXPECT_NEAR(species[0], exact, r.tol * exact) << r.solver << " vs exact " << exact;
         swmm_engine_destroy(e);
     }
 
     // EUL: exactly one explicit step, c0*(1 - k*dt). Pinned exactly — this
     // is the documented MSX EUL contract, not an accuracy claim.
     {
-        SWMM_Engine e = open_with_rxn(
-            "[REACTION_OPTIONS]\nSOLVER EUL\nRATE_UNITS SEC\n"
-            "ATOL 1e-10\nRTOL 1e-8\n"
-            "[REACTION_SPECIES]\nBULK A MG\n"
-            "[REACTION_TANKS]\nRATE A -0.25 * A\n");
+        SWMM_Engine e = open_with_rxn("[REACTION_OPTIONS]\nSOLVER EUL\nRATE_UNITS SEC\n"
+                                      "ATOL 1e-10\nRTOL 1e-8\n"
+                                      "[REACTION_SPECIES]\nBULK A MG\n"
+                                      "[REACTION_TANKS]\nRATE A -0.25 * A\n");
         double species[1] = {c0};
-        const auto rep = run_step(as_cpp_engine(e).context().reactions, dt,
-                                  species);
+        const auto rep = run_step(as_cpp_engine(e).context().reactions, dt, species);
         EXPECT_TRUE(rep.ok) << rep.error;
         EXPECT_EQ(rep.substeps, 1) << "EUL must take exactly one step";
         EXPECT_DOUBLE_EQ(species[0], c0 * (1.0 - k * dt));
@@ -183,19 +226,17 @@ TEST(RxIntegrators, NonlinearDecayMatchesClosedFormWithCachedJacobian) {
     const double k = 0.5, dt = 20.0, a0 = 3.0;
     const double exact = a0 / (1.0 + k * a0 * dt);
     for (const char* solver : {"ROS2", "BDF2", "RK5"}) {
-        SWMM_Engine e = open_with_rxn(
-            std::string("[REACTION_OPTIONS]\nSOLVER ") + solver +
-            "\nRATE_UNITS SEC\nATOL 1e-10\nRTOL 1e-8\n"
-            "[REACTION_SPECIES]\nBULK A MG\n"
-            "[REACTION_TANKS]\nRATE A -0.5 * A * A\n");
+        SWMM_Engine e = open_with_rxn(std::string("[REACTION_OPTIONS]\nSOLVER ") + solver +
+                                      "\nRATE_UNITS SEC\nATOL 1e-10\nRTOL 1e-8\n"
+                                      "[REACTION_SPECIES]\nBULK A MG\n"
+                                      "[REACTION_TANKS]\nRATE A -0.5 * A * A\n");
         const auto& rx = as_cpp_engine(e).context().reactions;
         ASSERT_TRUE(rx.compiled) << solver;
         double species[1] = {a0};
         const auto rep = run_step(rx, dt, species);
         EXPECT_TRUE(rep.ok) << solver << ": " << rep.error;
         if (rep.ok)
-            EXPECT_NEAR(species[0], exact, 1e-5 * exact)
-                << solver << " vs exact " << exact;
+            EXPECT_NEAR(species[0], exact, 1e-5 * exact) << solver << " vs exact " << exact;
         swmm_engine_destroy(e);
     }
 }
@@ -210,14 +251,12 @@ TEST(RxIntegrators, NonlinearDecayMatchesClosedFormWithCachedJacobian) {
 // covers.
 // ---------------------------------------------------------------------------
 TEST(RxIntegrators, DefaultSolverIsExplicitRK5) {
-    SWMM_Engine e = open_with_rxn(
-        "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"        // no SOLVER row
-        "[REACTION_SPECIES]\nBULK A MG\n"
-        "[REACTION_TANKS]\nRATE A -0.25 * A\n");
+    SWMM_Engine e = open_with_rxn("[REACTION_OPTIONS]\nRATE_UNITS SEC\n" // no SOLVER row
+                                  "[REACTION_SPECIES]\nBULK A MG\n"
+                                  "[REACTION_TANKS]\nRATE A -0.25 * A\n");
     const auto& rx = as_cpp_engine(e).context().reactions;
     ASSERT_TRUE(rx.compiled);
-    EXPECT_EQ(static_cast<int>(rx.solver),
-              static_cast<int>(openswmm::ReactionSolverKind::RK5));
+    EXPECT_EQ(static_cast<int>(rx.solver), static_cast<int>(openswmm::ReactionSolverKind::RK5));
 
     // …and it is cheap on the ordinary case at the shipping tolerances.
     double species[1] = {5.0};
@@ -235,10 +274,9 @@ TEST(RxIntegrators, DefaultSolverIsExplicitRK5) {
 // cap" alone leaves the user with no action.
 // ---------------------------------------------------------------------------
 TEST(RxIntegrators, ExplicitDefaultOnStiffKineticsFailsWithActionableMessage) {
-    SWMM_Engine e = open_with_rxn(
-        "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"        // default solver
-        "[REACTION_SPECIES]\nBULK A MG\n"
-        "[REACTION_TANKS]\nRATE A -1000000.0 * A\n"); // lambda*dt = 1e7
+    SWMM_Engine e = open_with_rxn("[REACTION_OPTIONS]\nRATE_UNITS SEC\n" // default solver
+                                  "[REACTION_SPECIES]\nBULK A MG\n"
+                                  "[REACTION_TANKS]\nRATE A -1000000.0 * A\n"); // lambda*dt = 1e7
     const auto& rx = as_cpp_engine(e).context().reactions;
     ASSERT_TRUE(rx.compiled);
     double species[1] = {1.0};
@@ -257,14 +295,13 @@ TEST(RxIntegrators, CoupledChainMatchesAnalyticSolution) {
     const double a_exact = a0 * std::exp(-ka * dt);
     // b(0) = 0 ⇒ b(t) = a0·ka/(kb − ka)·(e^(−ka·t) − e^(−kb·t)); with
     // ka > kb both factors are negative, so b_ref > 0.
-    const double b_ref = a0 * ka / (kb - ka) *
-                         (std::exp(-ka * dt) - std::exp(-kb * dt));
+    const double b_ref = a0 * ka / (kb - ka) * (std::exp(-ka * dt) - std::exp(-kb * dt));
 
-    SWMM_Engine e = open_with_rxn(
-        "[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\nCOUPLING FULL\n"
-        "ATOL 1e-10\nRTOL 1e-8\n"
-        "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
-        "[REACTION_TANKS]\nRATE A -0.30 * A\nRATE B 0.30 * A - 0.10 * B\n");
+    SWMM_Engine e =
+        open_with_rxn("[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\nCOUPLING FULL\n"
+                      "ATOL 1e-10\nRTOL 1e-8\n"
+                      "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
+                      "[REACTION_TANKS]\nRATE A -0.30 * A\nRATE B 0.30 * A - 0.10 * B\n");
     const auto& rx = as_cpp_engine(e).context().reactions;
     double species[2] = {a0, 0.0};
     const auto rep = run_step(rx, dt, species);
@@ -282,21 +319,20 @@ TEST(RxIntegrators, CoupledChainMatchesAnalyticSolution) {
 // the same step size must blow up (proves the gate discriminates).
 // ---------------------------------------------------------------------------
 TEST(RxIntegrators, StiffnessLadderImplicitSolversHoldExplicitDiverges) {
-    const double k_fast = 100.0;    // 1/s  (fast mode, 1/λ = 10 ms)
-    const double k_slow = 1e-4;     // 1/s
-    const double dt     = 100.0;    // s — 10,000× the fast time constant
+    const double k_fast = 100.0; // 1/s  (fast mode, 1/λ = 10 ms)
+    const double k_slow = 1e-4;  // 1/s
+    const double dt = 100.0;     // s — 10,000× the fast time constant
     const double f0 = 1.0, s0 = 1.0;
-    const double f_exact = f0 * std::exp(-k_fast * dt);   // ~0 (underflows to ~0)
-    const double s_exact = s0 * std::exp(-k_slow * dt);   // 0.99005
+    const double f_exact = f0 * std::exp(-k_fast * dt); // ~0 (underflows to ~0)
+    const double s_exact = s0 * std::exp(-k_slow * dt); // 0.99005
 
-    const std::string body_common =
-        "\nRATE_UNITS SEC\nCOUPLING FULL\nATOL 1e-8\nRTOL 1e-6\n"
-        "[REACTION_SPECIES]\nBULK F MG\nBULK S MG\n"
-        "[REACTION_TANKS]\nRATE F -100.0 * F\nRATE S -0.0001 * S\n";
+    const std::string body_common = "\nRATE_UNITS SEC\nCOUPLING FULL\nATOL 1e-8\nRTOL 1e-6\n"
+                                    "[REACTION_SPECIES]\nBULK F MG\nBULK S MG\n"
+                                    "[REACTION_TANKS]\nRATE F -100.0 * F\nRATE S -0.0001 * S\n";
 
     for (const char* solver : {"ROS2", "BDF2"}) {
-        SWMM_Engine e = open_with_rxn(
-            std::string("[REACTION_OPTIONS]\nSOLVER ") + solver + body_common);
+        SWMM_Engine e =
+            open_with_rxn(std::string("[REACTION_OPTIONS]\nSOLVER ") + solver + body_common);
         const auto& rx = as_cpp_engine(e).context().reactions;
         double species[2] = {f0, s0};
         const auto rep = run_step(rx, dt, species);
@@ -304,8 +340,7 @@ TEST(RxIntegrators, StiffnessLadderImplicitSolversHoldExplicitDiverges) {
         EXPECT_NEAR(species[1], s_exact, 2e-3 * s_exact)
             << solver << " slow-mode accuracy at dt >> 1/lambda_fast";
         EXPECT_LT(std::fabs(species[0]), 1e-2)
-            << solver << " fast mode must be damped (L-stability), exact "
-            << f_exact;
+            << solver << " fast mode must be damped (L-stability), exact " << f_exact;
         // Record the cost: implicit solvers should NOT need ~k_fast*dt
         // substeps. (RK5 would; that asymmetry is the ladder's point.)
         // Economy is informative, not a physical claim (handoff §3a). The
@@ -322,16 +357,13 @@ TEST(RxIntegrators, StiffnessLadderImplicitSolversHoldExplicitDiverges) {
     // mode explodes. The integrator must FAIL LOUDLY (non-finite detection),
     // not return a silently wrong state.
     {
-        SWMM_Engine e = open_with_rxn(
-            std::string("[REACTION_OPTIONS]\nSOLVER EUL") + body_common);
+        SWMM_Engine e = open_with_rxn(std::string("[REACTION_OPTIONS]\nSOLVER EUL") + body_common);
         const auto& rx = as_cpp_engine(e).context().reactions;
         double species[2] = {f0, s0};
         const auto rep = run_step(rx, dt, species);
-        const bool diverged =
-            !rep.ok || std::fabs(species[0]) > 1e3;
-        EXPECT_TRUE(diverged)
-            << "EUL at h*k=1e4 cannot be accurate; if this passes the "
-               "ladder cannot discriminate and the gate is broken";
+        const bool diverged = !rep.ok || std::fabs(species[0]) > 1e3;
+        EXPECT_TRUE(diverged) << "EUL at h*k=1e4 cannot be accurate; if this passes the "
+                                 "ladder cannot discriminate and the gate is broken";
         swmm_engine_destroy(e);
     }
 }
@@ -340,14 +372,14 @@ TEST(RxIntegrators, StiffnessLadderImplicitSolversHoldExplicitDiverges) {
 // Gate 4 — EQUIL Newton + FORMULA order + terms in kinetics.
 // ---------------------------------------------------------------------------
 TEST(RxIntegrators, EquilibriumAndFormulaAlgebra) {
-    SWMM_Engine e = open_with_rxn(
-        "[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\nATOL 1e-10\nRTOL 1e-8\n"
-        "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\nBULK TOT MG\n"
-        "[REACTION_TERMS]\nHALF 0.5 * A\n"
-        "[REACTION_TANKS]\n"
-        "RATE    A   -0.1 * A + HALF * 0.0\n"   // decay, term referenced
-        "EQUIL   B   B - 2.0 * A\n"             // B = 2A after solve
-        "FORMULA TOT A + B\n");
+    SWMM_Engine e =
+        open_with_rxn("[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\nATOL 1e-10\nRTOL 1e-8\n"
+                      "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\nBULK TOT MG\n"
+                      "[REACTION_TERMS]\nHALF 0.5 * A\n"
+                      "[REACTION_TANKS]\n"
+                      "RATE    A   -0.1 * A + HALF * 0.0\n" // decay, term referenced
+                      "EQUIL   B   B - 2.0 * A\n"           // B = 2A after solve
+                      "FORMULA TOT A + B\n");
     const auto& rx = as_cpp_engine(e).context().reactions;
     double species[3] = {3.0, 0.0, 0.0};
     const double dt = 5.0;
@@ -355,8 +387,8 @@ TEST(RxIntegrators, EquilibriumAndFormulaAlgebra) {
     ASSERT_TRUE(rep.ok) << rep.error;
     const double a = 3.0 * std::exp(-0.1 * dt);
     EXPECT_NEAR(species[0], a, 1e-6 * a);
-    EXPECT_NEAR(species[1], 2.0 * species[0], 1e-8);   // EQUIL algebra
-    EXPECT_NEAR(species[2], species[0] + species[1], 1e-12);  // FORMULA
+    EXPECT_NEAR(species[1], 2.0 * species[0], 1e-8);         // EQUIL algebra
+    EXPECT_NEAR(species[2], species[0] + species[1], 1e-12); // FORMULA
     EXPECT_GT(rep.newton_iters, 0);
     swmm_engine_destroy(e);
 }
@@ -366,23 +398,23 @@ TEST(RxIntegrators, EquilibriumAndFormulaAlgebra) {
 // Falsifier: remove unitFactor — the HR run decays 3600× too fast.
 // ---------------------------------------------------------------------------
 TEST(RxIntegrators, RateUnitsScaleExactly) {
-    const double dt = 600.0;  // s
+    const double dt = 600.0; // s
     double a_sec = 0.0, a_hr = 0.0;
     {
-        SWMM_Engine e = open_with_rxn(
-            "[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\nATOL 1e-12\nRTOL 1e-10\n"
-            "[REACTION_SPECIES]\nBULK A MG\n"
-            "[REACTION_TANKS]\nRATE A -0.0001 * A\n");   // 1e-4 1/s
+        SWMM_Engine e =
+            open_with_rxn("[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\nATOL 1e-12\nRTOL 1e-10\n"
+                          "[REACTION_SPECIES]\nBULK A MG\n"
+                          "[REACTION_TANKS]\nRATE A -0.0001 * A\n"); // 1e-4 1/s
         double sp[1] = {2.0};
         ASSERT_TRUE(run_step(as_cpp_engine(e).context().reactions, dt, sp).ok);
         a_sec = sp[0];
         swmm_engine_destroy(e);
     }
     {
-        SWMM_Engine e = open_with_rxn(
-            "[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS HR\nATOL 1e-12\nRTOL 1e-10\n"
-            "[REACTION_SPECIES]\nBULK A MG\n"
-            "[REACTION_TANKS]\nRATE A -0.36 * A\n");     // 0.36 1/hr = 1e-4 1/s
+        SWMM_Engine e =
+            open_with_rxn("[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS HR\nATOL 1e-12\nRTOL 1e-10\n"
+                          "[REACTION_SPECIES]\nBULK A MG\n"
+                          "[REACTION_TANKS]\nRATE A -0.36 * A\n"); // 0.36 1/hr = 1e-4 1/s
         double sp[1] = {2.0};
         ASSERT_TRUE(run_step(as_cpp_engine(e).context().reactions, dt, sp).ok);
         a_hr = sp[0];
@@ -398,11 +430,10 @@ TEST(RxIntegrators, RateUnitsScaleExactly) {
 // ---------------------------------------------------------------------------
 TEST(RxIntegrators, CouplingNoneFreezesOtherSpecies) {
     const double dt = 4.0, a0 = 2.0;
-    SWMM_Engine e = open_with_rxn(
-        "[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\nCOUPLING NONE\n"
-        "ATOL 1e-12\nRTOL 1e-10\n"
-        "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
-        "[REACTION_TANKS]\nRATE A -0.5 * A\nRATE B 0.5 * A\n");
+    SWMM_Engine e = open_with_rxn("[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\nCOUPLING NONE\n"
+                                  "ATOL 1e-12\nRTOL 1e-10\n"
+                                  "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
+                                  "[REACTION_TANKS]\nRATE A -0.5 * A\nRATE B 0.5 * A\n");
     const auto& rx = as_cpp_engine(e).context().reactions;
     double species[2] = {a0, 0.0};
     const auto rep = run_step(rx, dt, species);
@@ -416,4 +447,4 @@ TEST(RxIntegrators, CouplingNoneFreezesOtherSpecies) {
     swmm_engine_destroy(e);
 }
 
-}  // namespace
+} // namespace

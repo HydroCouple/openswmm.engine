@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_inlet_junction_io.cpp
- * @brief Inlet design / inlet-usage / [INLET_JUNCTIONS] input-output tests:
+ * @file      test_inlet_junction_io.cpp
+ * @brief     Inlet design / inlet-usage / [INLET_JUNCTIONS] input-output tests:
  *        the legacy two-line COMBO encoding, curb throat angles, CUSTOM
  *        capture-curve resolution, [INLET_JUNCTIONS] parse + .inp round-trip,
  *        each validation rule code (623-635), the split/fuse edit pair and the
@@ -27,9 +27,9 @@
  *          directory is tests/unit/engine/data) so a reviewer can read them —
  *          no temp files (CLAUDE.md §4.1). Refactored engine only.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -51,18 +51,51 @@ namespace fs = std::filesystem;
 
 namespace {
 
-const char* kOutDir = "inlets_out";  // data/*_out/ is the gitignored scratch convention
+const char* kOutDir = "inlets_out"; // data/*_out/ is the gitignored scratch convention
 
+/**
+ * @brief Create the fixture output directory and form one artifact filename.
+ *
+ * Creates missing output-root directories and propagates filesystem errors. Does not
+ * create/truncate the artifact, sanitize name or create arbitrary nested parents; no
+ * current-directory change occurs.
+ *
+ * @param[in] name Raw filename/path appended below kOutDir; caller chooses a safe fixture
+ *     destination.
+ * @return Owned native path string.
+ */
 std::string outPath(const std::string& name) {
     fs::create_directories(kOutDir);
     return (fs::path(kOutDir) / name).string();
 }
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Open failure is not
+ * reported by this helper. Subsequent write/close failures are not checked; the local stream closes
+ * at scope exit and no path/content storage is retained. Allocation exceptions can propagate.
+ *
+ * @param[in] path Borrowed destination path; an existing file is truncated/overwritten.
+ * @param[in] text Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void writeFile(const std::string& path, const std::string& text) {
     std::ofstream f(path);
     f << text;
 }
 
+/**
+ * @brief Collect an entire fixture file into owned text.
+ *
+ * Uses ordinary text mode and its platform newline rules. The local stream closes on return; no
+ * model state is touched and no borrowed buffer is returned. Default stream exception settings
+ * apply; allocation exceptions may propagate.
+ *
+ * @param[in] path Borrowed input filename used for this synchronous open/read.
+ * @return Owned string collected from the stream; empty can mean an empty file or failure to open.
+ *     Partial read failures have no separate status.
+ */
 std::string readFile(const std::string& path) {
     std::ifstream f(path);
     std::stringstream ss;
@@ -70,167 +103,239 @@ std::string readFile(const std::string& path) {
     return ss.str();
 }
 
-const char* kOptions =
-    "[OPTIONS]\n"
-    "FLOW_UNITS           CFS\n"
-    "FLOW_ROUTING         DYNWAVE\n"
-    "START_DATE           01/01/2026\n"
-    "START_TIME           00:00:00\n"
-    "END_DATE             01/01/2026\n"
-    "END_TIME             00:10:00\n"
-    "REPORT_STEP          00:01:00\n"
-    "ROUTING_STEP         1\n"
-    "ALLOW_PONDING        NO\n"
-    "\n";
+const char* kOptions = "[OPTIONS]\n"
+                       "FLOW_UNITS           CFS\n"
+                       "FLOW_ROUTING         DYNWAVE\n"
+                       "START_DATE           01/01/2026\n"
+                       "START_TIME           00:00:00\n"
+                       "END_DATE             01/01/2026\n"
+                       "END_TIME             00:10:00\n"
+                       "REPORT_STEP          00:01:00\n"
+                       "ROUTING_STEP         1\n"
+                       "ALLOW_PONDING        NO\n"
+                       "\n";
 
 // A street reach J_IN -> IJ1 -> O_ST beside a sewer MH1 -> O_SEW. `xsect` and
 // `extra` let one deck serve every rule case.
-std::string ijModel(const std::string& inlets,
-                    const std::string& inlet_junctions,
+/**
+ * @brief Construct a street inlet-junction reach beside an independent sewer reach.
+ *
+ * Constructs text only; arbitrary overrides support parser/validation negatives and are not checked
+ * here.
+ *
+ * @param[in] inlets Complete raw INLETS section text, including header/delimiters.
+ * @param[in] inlet_junctions Complete raw INLET_JUNCTIONS section defining IJ1, or deliberately
+ *     invalid test content.
+ * @param[in] street_xsect Raw cross-section tokens for C_UP/C_DN, default STREET ST1.
+ * @param[in] extra Optional raw sections appended before coordinates.
+ * @return Owned CFS network text using kOptions, two100 ft street segments and a100 ft sewer
+ *     conduit.
+ */
+std::string ijModel(const std::string& inlets, const std::string& inlet_junctions,
                     const std::string& street_xsect = "STREET    ST1",
                     const std::string& extra = "") {
     return std::string(kOptions) +
-        "[JUNCTIONS]\n"
-        ";;Name  Elev  MaxDepth\n"
-        "J_IN    10.0  5.0\n"
-        "MH1     2.0   8.0\n"
-        "\n"
-        "[OUTFALLS]\n"
-        ";;Name  Elev  Type  Gated\n"
-        "O_ST    8.0   FREE  NO\n"
-        "O_SEW   0.0   FREE  NO\n"
-        "\n"
-        "[CONDUITS]\n"
-        ";;Name  From   To      Length  N      Z1  Z2\n"
-        "C_UP    J_IN   IJ1     100.0   0.016  0   0\n"
-        "C_DN    IJ1    O_ST    100.0   0.016  0   0\n"
-        "C_SEW   MH1    O_SEW   100.0   0.013  0   0\n"
-        "\n"
-        "[XSECTIONS]\n"
-        ";;Link   Shape     G1   G2  G3  G4  Barrels\n"
-        "C_UP     " + street_xsect + "\n"
-        "C_DN     " + street_xsect + "\n"
-        "C_SEW    CIRCULAR  1.0  0   0   0   1\n"
-        "\n"
-        "[STREETS]\n"
-        ";;Name Tcrown Hcurb Sx nRoad a W Sides Tback Sback nBack\n"
-        "ST1  20  0.5  4  0.016  0  0  1  20  4  0.016\n"
-        "\n"
-        + inlets + "\n"
-        + inlet_junctions + extra +
-        "\n"
-        "[COORDINATES]\n"
-        ";;Node  X      Y\n"
-        "J_IN    0.0    0.0\n"
-        "IJ1     100.0  0.0\n"
-        "O_ST    200.0  0.0\n"
-        "MH1     100.0  -50.0\n"
-        "O_SEW   200.0  -50.0\n";
+           "[JUNCTIONS]\n"
+           ";;Name  Elev  MaxDepth\n"
+           "J_IN    10.0  5.0\n"
+           "MH1     2.0   8.0\n"
+           "\n"
+           "[OUTFALLS]\n"
+           ";;Name  Elev  Type  Gated\n"
+           "O_ST    8.0   FREE  NO\n"
+           "O_SEW   0.0   FREE  NO\n"
+           "\n"
+           "[CONDUITS]\n"
+           ";;Name  From   To      Length  N      Z1  Z2\n"
+           "C_UP    J_IN   IJ1     100.0   0.016  0   0\n"
+           "C_DN    IJ1    O_ST    100.0   0.016  0   0\n"
+           "C_SEW   MH1    O_SEW   100.0   0.013  0   0\n"
+           "\n"
+           "[XSECTIONS]\n"
+           ";;Link   Shape     G1   G2  G3  G4  Barrels\n"
+           "C_UP     " +
+           street_xsect +
+           "\n"
+           "C_DN     " +
+           street_xsect +
+           "\n"
+           "C_SEW    CIRCULAR  1.0  0   0   0   1\n"
+           "\n"
+           "[STREETS]\n"
+           ";;Name Tcrown Hcurb Sx nRoad a W Sides Tback Sback nBack\n"
+           "ST1  20  0.5  4  0.016  0  0  1  20  4  0.016\n"
+           "\n" +
+           inlets + "\n" + inlet_junctions + extra +
+           "\n"
+           "[COORDINATES]\n"
+           ";;Node  X      Y\n"
+           "J_IN    0.0    0.0\n"
+           "IJ1     100.0  0.0\n"
+           "O_ST    200.0  0.0\n"
+           "MH1     100.0  -50.0\n"
+           "O_SEW   200.0  -50.0\n";
 }
 
 // The same network without the inlet junction: a single street conduit, used
 // as the split/fuse baseline.
+/**
+ * @brief Construct the unsplit street/sewer baseline with a named curb inlet design.
+ *
+ * No file creation, model parsing or hydraulic execution occurs.
+ * @return Owned kOptions deck with200 ft C_ST, independent100 ft C_SEW, ST1 street definition and
+ *     Curb1 design; no inlet-junction assignment.
+ */
 std::string unsplitModel() {
-    return std::string(kOptions) +
-        "[JUNCTIONS]\n"
-        ";;Name  Elev  MaxDepth\n"
-        "J_IN    10.0  5.0\n"
-        "MH1     2.0   8.0\n"
-        "\n"
-        "[OUTFALLS]\n"
-        ";;Name  Elev  Type  Gated\n"
-        "O_ST    8.0   FREE  NO\n"
-        "O_SEW   0.0   FREE  NO\n"
-        "\n"
-        "[CONDUITS]\n"
-        ";;Name  From   To      Length  N      Z1  Z2\n"
-        "C_ST    J_IN   O_ST    200.0   0.016  0   0\n"
-        "C_SEW   MH1    O_SEW   100.0   0.013  0   0\n"
-        "\n"
-        "[XSECTIONS]\n"
-        ";;Link   Shape     G1   G2  G3  G4  Barrels\n"
-        "C_ST     STREET    ST1\n"
-        "C_SEW    CIRCULAR  1.0  0   0   0   1\n"
-        "\n"
-        "[STREETS]\n"
-        ";;Name Tcrown Hcurb Sx nRoad a W Sides Tback Sback nBack\n"
-        "ST1  20  0.5  4  0.016  0  0  1  20  4  0.016\n"
-        "\n"
-        "[INLETS]\n"
-        "Curb1  CURB  2.0  0.5  VERTICAL\n"
-        "\n"
-        "[COORDINATES]\n"
-        ";;Node  X      Y\n"
-        "J_IN    0.0    0.0\n"
-        "O_ST    200.0  0.0\n"
-        "MH1     100.0  -50.0\n"
-        "O_SEW   200.0  -50.0\n";
+    return std::string(kOptions) + "[JUNCTIONS]\n"
+                                   ";;Name  Elev  MaxDepth\n"
+                                   "J_IN    10.0  5.0\n"
+                                   "MH1     2.0   8.0\n"
+                                   "\n"
+                                   "[OUTFALLS]\n"
+                                   ";;Name  Elev  Type  Gated\n"
+                                   "O_ST    8.0   FREE  NO\n"
+                                   "O_SEW   0.0   FREE  NO\n"
+                                   "\n"
+                                   "[CONDUITS]\n"
+                                   ";;Name  From   To      Length  N      Z1  Z2\n"
+                                   "C_ST    J_IN   O_ST    200.0   0.016  0   0\n"
+                                   "C_SEW   MH1    O_SEW   100.0   0.013  0   0\n"
+                                   "\n"
+                                   "[XSECTIONS]\n"
+                                   ";;Link   Shape     G1   G2  G3  G4  Barrels\n"
+                                   "C_ST     STREET    ST1\n"
+                                   "C_SEW    CIRCULAR  1.0  0   0   0   1\n"
+                                   "\n"
+                                   "[STREETS]\n"
+                                   ";;Name Tcrown Hcurb Sx nRoad a W Sides Tback Sback nBack\n"
+                                   "ST1  20  0.5  4  0.016  0  0  1  20  4  0.016\n"
+                                   "\n"
+                                   "[INLETS]\n"
+                                   "Curb1  CURB  2.0  0.5  VERTICAL\n"
+                                   "\n"
+                                   "[COORDINATES]\n"
+                                   ";;Node  X      Y\n"
+                                   "J_IN    0.0    0.0\n"
+                                   "O_ST    200.0  0.0\n"
+                                   "MH1     100.0  -50.0\n"
+                                   "O_SEW   200.0  -50.0\n";
 }
 
 // A design-only deck: one plain circular reach plus whatever [INLETS] (and
 // optional extra sections) the caller wants exercised.
+/**
+ * @brief Construct a plain circular network carrying arbitrary inlet-design sections.
+ *
+ * Does not assign any inlet junction, parse design geometry or execute a model.
+ *
+ * @param[in] inlets Complete raw inlet-design section text.
+ * @param[in] extra Optional additional raw sections with required delimiters.
+ * @return Owned kOptions deck with a200 ft one-foot circular C_MAIN and J_IN/O_OUT coordinates.
+ */
 std::string designModel(const std::string& inlets, const std::string& extra = "") {
     return std::string(kOptions) +
-        "[JUNCTIONS]\n"
-        "J_IN    10.0  5.0\n"
-        "\n"
-        "[OUTFALLS]\n"
-        "O_OUT   8.0   FREE  NO\n"
-        "\n"
-        "[CONDUITS]\n"
-        "C_MAIN  J_IN  O_OUT  200.0  0.013  0  0\n"
-        "\n"
-        "[XSECTIONS]\n"
-        "C_MAIN  CIRCULAR  1.0  0  0  0  1\n"
-        "\n"
-        + inlets + extra +
-        "\n"
-        "[COORDINATES]\n"
-        "J_IN    0.0    0.0\n"
-        "O_OUT   200.0  0.0\n";
+           "[JUNCTIONS]\n"
+           "J_IN    10.0  5.0\n"
+           "\n"
+           "[OUTFALLS]\n"
+           "O_OUT   8.0   FREE  NO\n"
+           "\n"
+           "[CONDUITS]\n"
+           "C_MAIN  J_IN  O_OUT  200.0  0.013  0  0\n"
+           "\n"
+           "[XSECTIONS]\n"
+           "C_MAIN  CIRCULAR  1.0  0  0  0  1\n"
+           "\n" +
+           inlets + extra +
+           "\n"
+           "[COORDINATES]\n"
+           "J_IN    0.0    0.0\n"
+           "O_OUT   200.0  0.0\n";
 }
 
-SWMM_Engine openModel(const std::string& base, const std::string& text,
-                      bool expect_ok, int* open_rc = nullptr) {
+/**
+ * @brief Write/open an inlet-junction test deck while retaining failures for diagnostic inspection.
+ *
+ * Input/report/output artifacts are reviewable; directory/write behavior follows outPath/writeFile.
+ * Does not initialize/start or destroy failed-open handles automatically.
+ *
+ * @param[in] base Filesystem-safe artifact basename passed to outPath for .inp/.rpt/.out.
+ * @param[in] text Complete deck text passed to writeFile.
+ * @param[in] expect_ok True records a nonfatal open-success expectation; false suppresses it only.
+ * @param[out] open_rc Optional raw open-status destination, null allowed.
+ * @return Created handle irrespective of open status, caller-owned for close/destroy; creation
+ *     failure is not independently checked.
+ */
+SWMM_Engine openModel(const std::string& base, const std::string& text, bool expect_ok,
+                      int* open_rc = nullptr) {
     const std::string inp = outPath(base + ".inp");
     writeFile(inp, text);
     SWMM_Engine e = swmm_engine_create();
-    const int rc = swmm_engine_open(e, inp.c_str(),
-                                    outPath(base + ".rpt").c_str(),
+    const int rc = swmm_engine_open(e, inp.c_str(), outPath(base + ".rpt").c_str(),
                                     outPath(base + ".out").c_str(), nullptr);
-    if (open_rc) *open_rc = rc;
+    if (open_rc)
+        *open_rc = rc;
     if (expect_ok) {
-        EXPECT_EQ(rc, 0) << "open failed for " << base << ": "
-                         << swmm_get_last_error_msg(e);
+        EXPECT_EQ(rc, 0) << "open failed for " << base << ": " << swmm_get_last_error_msg(e);
     }
     return e;
 }
 
+/**
+ * @brief Close/destroy the inlet fixture's owned engine handle.
+ *
+ * Ignores close status and performs no separate validity check. Caller must not use the consumed
+ * handle afterward.
+ *
+ * @param[in] e Created handle returned by openModel; ownership is consumed.
+ */
 void destroy(SWMM_Engine e) {
     swmm_engine_close(e);
     swmm_engine_destroy(e);
 }
 
+/**
+ * @brief Copy all indexed engine errors followed by the last-error text.
+ *
+ * Skips null strings, retains no borrowed pointers and does not clear diagnostic state.
+ *
+ * @param[in] e Live engine retained after the operation under inspection.
+ * @return Owned concatenated error text; indexed non-null messages receive newlines and the final
+ *     message may duplicate one.
+ */
 std::string allErrors(SWMM_Engine e) {
     std::string s;
     const int n = swmm_get_error_count(e);
     for (int i = 0; i < n; ++i) {
         const char* m = swmm_get_error_at(e, i);
-        if (m) { s += m; s += "\n"; }
+        if (m) {
+            s += m;
+            s += "\n";
+        }
     }
     const char* last = swmm_get_last_error_msg(e);
-    if (last) s += last;
+    if (last)
+        s += last;
     return s;
 }
 
-void expectOpenError(const std::string& base, const std::string& text,
-                     const std::string& code) {
+/**
+ * @brief Require an inlet-validation deck to fail open with a diagnostic substring.
+ *
+ * Uses nonfatal expectations for failure status and collected error presence, then closes/destroys
+ * the handle. Does not attempt initialization or simulation after refusal.
+ *
+ * @param[in] base Artifact basename forwarded to openModel.
+ * @param[in] text Complete deliberately invalid deck.
+ * @param[in] code Required literal diagnostic substring, not numerically parsed.
+ */
+void expectOpenError(const std::string& base, const std::string& text, const std::string& code) {
     int rc = 0;
     SWMM_Engine e = openModel(base, text, false, &rc);
     const std::string errs = allErrors(e);
     EXPECT_NE(rc, 0) << base << " opened cleanly but should have failed with " << code;
-    EXPECT_NE(errs.find(code), std::string::npos)
-        << base << " did not report " << code << ":\n" << errs;
+    EXPECT_NE(errs.find(code), std::string::npos) << base << " did not report " << code << ":\n"
+                                                  << errs;
     destroy(e);
 }
 
@@ -243,10 +348,11 @@ void expectOpenError(const std::string& base, const std::string& text,
 // Legacy encodes a combination inlet as a GRATE line and a CURB line sharing
 // one name; both halves must land in a single COMBO design.
 TEST(InletJunctionIO, ComboMergeFromTwoLines) {
-    SWMM_Engine e = openModel("inlet_combo", designModel(
-        "[INLETS]\n"
-        "Combo1  GRATE  2.0  2.0  P_BAR-50\n"
-        "Combo1  CURB   3.0  0.5  HORIZONTAL\n"), true);
+    SWMM_Engine e = openModel("inlet_combo",
+                              designModel("[INLETS]\n"
+                                          "Combo1  GRATE  2.0  2.0  P_BAR-50\n"
+                                          "Combo1  CURB   3.0  0.5  HORIZONTAL\n"),
+                              true);
 
     ASSERT_EQ(swmm_inlet_count(e), 1);
     char type[32] = {0};
@@ -270,7 +376,8 @@ TEST(InletJunctionIO, ComboMergeFromTwoLines) {
     {
         std::size_t n = 0;
         for (std::size_t p = txt.find("Combo1"); p != std::string::npos;
-             p = txt.find("Combo1", p + 1)) ++n;
+             p = txt.find("Combo1", p + 1))
+            ++n;
         EXPECT_EQ(n, 2u) << "a COMBO must be written as two lines:\n" << txt;
     }
     EXPECT_NE(txt.find("HORIZONTAL"), std::string::npos) << txt;
@@ -289,24 +396,25 @@ TEST(InletJunctionIO, ComboMergeFromTwoLines) {
 
 // A third line with the same name is an ordinary duplicate ID.
 TEST(InletJunctionIO, DuplicateInletNameRejected) {
-    expectOpenError("inlet_dup", designModel(
-        "[INLETS]\n"
-        "G1  GRATE  2.0  2.0  P_BAR-50\n"
-        "G1  GRATE  3.0  3.0  P_BAR-30\n"), "207");
+    expectOpenError("inlet_dup",
+                    designModel("[INLETS]\n"
+                                "G1  GRATE  2.0  2.0  P_BAR-50\n"
+                                "G1  GRATE  3.0  3.0  P_BAR-30\n"),
+                    "207");
 }
 
 TEST(InletJunctionIO, CurbThroatParses) {
-    SWMM_Engine e = openModel("inlet_throat", designModel(
-        "[INLETS]\n"
-        "CurbH  CURB  2.0  0.5  HORIZONTAL\n"
-        "CurbI  CURB  2.0  0.5  INCLINED\n"
-        "CurbV  CURB  2.0  0.5  VERTICAL\n"
-        "CurbD  CURB  2.0  0.5\n"
-        "DropC  DROP_CURB  2.0  0.5\n"), true);
+    SWMM_Engine e = openModel("inlet_throat",
+                              designModel("[INLETS]\n"
+                                          "CurbH  CURB  2.0  0.5  HORIZONTAL\n"
+                                          "CurbI  CURB  2.0  0.5  INCLINED\n"
+                                          "CurbV  CURB  2.0  0.5  VERTICAL\n"
+                                          "CurbD  CURB  2.0  0.5\n"
+                                          "DropC  DROP_CURB  2.0  0.5\n"),
+                              true);
 
-    const int throats[5] = {SWMM_THROAT_HORIZONTAL, SWMM_THROAT_INCLINED,
-                            SWMM_THROAT_VERTICAL, SWMM_THROAT_VERTICAL,
-                            SWMM_THROAT_VERTICAL};
+    const int throats[5] = {SWMM_THROAT_HORIZONTAL, SWMM_THROAT_INCLINED, SWMM_THROAT_VERTICAL,
+                            SWMM_THROAT_VERTICAL, SWMM_THROAT_VERTICAL};
     for (int i = 0; i < 5; ++i) {
         SWMM_InletDesign d{};
         ASSERT_EQ(swmm_inlet_get_design(e, i, &d), SWMM_OK) << "design " << i;
@@ -329,18 +437,19 @@ TEST(InletJunctionIO, CurbThroatParses) {
 }
 
 TEST(InletJunctionIO, CustomCurveKindResolves) {
-    const std::string curves =
-        "\n[CURVES]\n"
-        ";;Name  Type       X     Y\n"
-        "DIV1     DIVERSION  0.0   0.0\n"
-        "DIV1                1.0   0.5\n"
-        "RAT1     RATING     0.0   0.0\n"
-        "RAT1                1.0   2.0\n";
+    const std::string curves = "\n[CURVES]\n"
+                               ";;Name  Type       X     Y\n"
+                               "DIV1     DIVERSION  0.0   0.0\n"
+                               "DIV1                1.0   0.5\n"
+                               "RAT1     RATING     0.0   0.0\n"
+                               "RAT1                1.0   2.0\n";
 
-    SWMM_Engine e = openModel("inlet_custom", designModel(
-        "[INLETS]\n"
-        "CustD  CUSTOM  DIV1\n"
-        "CustR  CUSTOM  RAT1\n", curves), true);
+    SWMM_Engine e = openModel("inlet_custom",
+                              designModel("[INLETS]\n"
+                                          "CustD  CUSTOM  DIV1\n"
+                                          "CustR  CUSTOM  RAT1\n",
+                                          curves),
+                              true);
 
     SWMM_InletDesign d{};
     ASSERT_EQ(swmm_inlet_get_design(e, 0, &d), SWMM_OK);
@@ -354,27 +463,30 @@ TEST(InletJunctionIO, CustomCurveKindResolves) {
     destroy(e);
 
     // An unknown curve name is an undefined-object error.
-    expectOpenError("inlet_custom_bad", designModel(
-        "[INLETS]\n"
-        "CustX  CUSTOM  NOPE\n", curves), "209");
+    expectOpenError("inlet_custom_bad",
+                    designModel("[INLETS]\n"
+                                "CustX  CUSTOM  NOPE\n",
+                                curves),
+                    "209");
 }
 
 // swmm_inlet_set_design must persist curve_kind (the [INLETS] grammar has no
 // kind token, so a lost kind silently degrades a RATING inlet to DIVERSION).
 TEST(InletJunctionIO, CustomCurveKindRoundTripsThroughSetDesign) {
-    const std::string curves =
-        "\n[CURVES]\n"
-        ";;Name  Type       X     Y\n"
-        "DIV1     DIVERSION  0.0   0.0\n"
-        "DIV1                1.0   0.5\n"
-        "RAT1     RATING     0.0   0.0\n"
-        "RAT1                1.0   2.0\n"
-        "STO1     STORAGE    0.0   1.0\n"
-        "STO1                1.0   2.0\n";
+    const std::string curves = "\n[CURVES]\n"
+                               ";;Name  Type       X     Y\n"
+                               "DIV1     DIVERSION  0.0   0.0\n"
+                               "DIV1                1.0   0.5\n"
+                               "RAT1     RATING     0.0   0.0\n"
+                               "RAT1                1.0   2.0\n"
+                               "STO1     STORAGE    0.0   1.0\n"
+                               "STO1                1.0   2.0\n";
 
-    SWMM_Engine e = openModel("inlet_custom_set", designModel(
-        "[INLETS]\n"
-        "CustD  CUSTOM  DIV1\n", curves), true);
+    SWMM_Engine e = openModel("inlet_custom_set",
+                              designModel("[INLETS]\n"
+                                          "CustD  CUSTOM  DIV1\n",
+                                          curves),
+                              true);
 
     // Retarget the design at the RATING curve: get_design must read the new
     // kind back, not the DIVERSION kind the parser resolved.
@@ -399,7 +511,7 @@ TEST(InletJunctionIO, CustomCurveKindRoundTripsThroughSetDesign) {
 
     // A kind that contradicts the named curve is rejected, and the row is
     // left untouched.
-    d.curve_kind = SWMM_INLET_CURVE_RATING;   // DIV1 is a DIVERSION curve
+    d.curve_kind = SWMM_INLET_CURVE_RATING; // DIV1 is a DIVERSION curve
     EXPECT_EQ(swmm_inlet_set_design(e, 0, &d), SWMM_ERR_BADPARAM);
     // ...as is a curve that is neither DIVERSION nor RATING.
     std::snprintf(d.curve_id, sizeof(d.curve_id), "STO1");
@@ -494,32 +606,36 @@ TEST(InletJunctionIO, InletJunctionParsesAndRoundTrips) {
 TEST(InletJunctionIO, ValidationRuleCodes) {
     // 623: the attached conduits are not STREET (a curb inlet needs one).
     expectOpenError("ij_err_not_street",
-        ijModel(kCurbInlets, kIjSection, "CIRCULAR  2.0  0   0   0   1"), "623");
+                    ijModel(kCurbInlets, kIjSection, "CIRCULAR  2.0  0   0   0   1"), "623");
 
     // 625: unknown inlet design. With no design the node also has nothing
     // assigned, so 633 is raised alongside it.
     {
-        const std::string m = ijModel(kCurbInlets,
-            "[INLET_JUNCTIONS]\nIJ1  9.0  0.5  NoSuchInlet  MH1\n");
+        const std::string m =
+            ijModel(kCurbInlets, "[INLET_JUNCTIONS]\nIJ1  9.0  0.5  NoSuchInlet  MH1\n");
         expectOpenError("ij_err_design", m, "625");
         expectOpenError("ij_err_no_usage", m, "633");
     }
 
     // 627: capture node missing / the inlet junction itself / virtual.
-    expectOpenError("ij_err_capture_missing", ijModel(kCurbInlets,
-        "[INLET_JUNCTIONS]\nIJ1  9.0  0.5  Curb1  NoSuchNode\n"), "627");
-    expectOpenError("ij_err_capture_self", ijModel(kCurbInlets,
-        "[INLET_JUNCTIONS]\nIJ1  9.0  0.5  Curb1  IJ1\n"), "627");
+    expectOpenError("ij_err_capture_missing",
+                    ijModel(kCurbInlets, "[INLET_JUNCTIONS]\nIJ1  9.0  0.5  Curb1  NoSuchNode\n"),
+                    "627");
+    expectOpenError("ij_err_capture_self",
+                    ijModel(kCurbInlets, "[INLET_JUNCTIONS]\nIJ1  9.0  0.5  Curb1  IJ1\n"), "627");
 
     // 629: a conduit of the pair also carries an [INLET_USAGE] row.
-    expectOpenError("ij_err_usage_on_pair", ijModel(kCurbInlets, kIjSection,
-        "STREET    ST1",
-        "\n[INLET_USAGE]\n;;Link Inlet Node\nC_UP  Curb1  MH1\n"), "629");
+    expectOpenError("ij_err_usage_on_pair",
+                    ijModel(kCurbInlets, kIjSection, "STREET    ST1",
+                            "\n[INLET_USAGE]\n;;Link Inlet Node\nC_UP  Curb1  MH1\n"),
+                    "629");
 
     // 631: more than 11 tokens.
-    expectOpenError("ij_err_tokens", ijModel(kCurbInlets,
-        "[INLET_JUNCTIONS]\n"
-        "IJ1  9.0  0.5  Curb1  MH1  1  0  0  0  0  AUTOMATIC  EXTRA\n"), "631");
+    expectOpenError("ij_err_tokens",
+                    ijModel(kCurbInlets,
+                            "[INLET_JUNCTIONS]\n"
+                            "IJ1  9.0  0.5  Curb1  MH1  1  0  0  0  0  AUTOMATIC  EXTRA\n"),
+                    "631");
 }
 
 // ---------------------------------------------------------------------------
@@ -534,7 +650,8 @@ TEST(InletJunctionIO, Swmm5ProfileDowngradesInletJunction) {
     ASSERT_EQ(swmm_model_write_compat(e, out.c_str(), SWMM_INP_PROFILE_SWMM5), SWMM_OK);
     bool noted = false;
     for (int i = warn_before; i < swmm_get_warning_count(e); ++i)
-        if (std::string(swmm_get_warning_at(e, i)).find("IJ1") != std::string::npos) noted = true;
+        if (std::string(swmm_get_warning_at(e, i)).find("IJ1") != std::string::npos)
+            noted = true;
     EXPECT_TRUE(noted) << "the downgrade must be reported as a warning";
     EXPECT_EQ(swmm_model_write_compat(e, out.c_str(), 99), SWMM_ERR_BADPARAM);
     destroy(e);
@@ -551,20 +668,29 @@ TEST(InletJunctionIO, Swmm5ProfileDowngradesInletJunction) {
         std::istringstream ss(txt);
         std::string ln;
         while (std::getline(ss, ln)) {
-            if (!ln.empty() && ln[0] == '[') { on = (ln == "[" + name + "]"); continue; }
-            if (!on || ln.empty() || ln[0] == ';') continue;
+            if (!ln.empty() && ln[0] == '[') {
+                on = (ln == "[" + name + "]");
+                continue;
+            }
+            if (!on || ln.empty() || ln[0] == ';')
+                continue;
             std::istringstream ls(ln);
             std::vector<std::string> tok;
             std::string t;
-            while (ls >> t) tok.push_back(t);
-            if (!tok.empty()) r.push_back(tok);
+            while (ls >> t)
+                tok.push_back(t);
+            if (!tok.empty())
+                r.push_back(tok);
         }
         return r;
     };
     // IJ1 is an ordinary junction whose MaxDepth is its 0.5 flood threshold...
     bool ij1_junction = false;
     for (const auto& tok : rows("JUNCTIONS"))
-        if (tok[0] == "IJ1") { ij1_junction = true; EXPECT_EQ(tok.at(2), "0.5000"); }
+        if (tok[0] == "IJ1") {
+            ij1_junction = true;
+            EXPECT_EQ(tok.at(2), "0.5000");
+        }
     EXPECT_TRUE(ij1_junction) << txt;
     // ...and its inlet rides on the approach conduit C_UP with the same design,
     // capture node and placement columns.
@@ -622,13 +748,19 @@ TEST(InletJunctionIO, Swmm5StockProfileDropsScaleFactors) {
         std::istringstream ss(txt);
         std::string ln;
         while (std::getline(ss, ln)) {
-            if (!ln.empty() && ln[0] == '[') { on = (ln == "[" + name + "]"); continue; }
-            if (!on || ln.empty() || ln[0] == ';') continue;
+            if (!ln.empty() && ln[0] == '[') {
+                on = (ln == "[" + name + "]");
+                continue;
+            }
+            if (!on || ln.empty() || ln[0] == ';')
+                continue;
             std::istringstream ls(ln);
             std::vector<std::string> tok;
             std::string t;
-            while (ls >> t) tok.push_back(t);
-            if (!tok.empty()) r.push_back(tok);
+            while (ls >> t)
+                tok.push_back(t);
+            if (!tok.empty())
+                r.push_back(tok);
         }
         return r;
     };
@@ -643,7 +775,12 @@ TEST(InletJunctionIO, Swmm5StockProfileDropsScaleFactors) {
         EXPECT_EQ(txt.find("\nCRS "), std::string::npos) << txt;
         bool s1 = false;
         for (const auto& tok : rows(txt, "SUBCATCHMENTS"))
-            if (tok[0] == "S1") { s1 = true; ASSERT_GE(tok.size(), 10u) << txt; EXPECT_EQ(tok[8], "*"); EXPECT_EQ(tok[9], "10"); }
+            if (tok[0] == "S1") {
+                s1 = true;
+                ASSERT_GE(tok.size(), 10u) << txt;
+                EXPECT_EQ(tok[8], "*");
+                EXPECT_EQ(tok[9], "10");
+            }
         EXPECT_TRUE(s1);
         const auto g = rows(txt, "RAINGAGES");
         ASSERT_EQ(g.size(), 1u);
@@ -659,10 +796,12 @@ TEST(InletJunctionIO, Swmm5StockProfileDropsScaleFactors) {
         bool noted_sub = false, noted_gage = false;
         for (int i = warn_before; i < swmm_get_warning_count(e); ++i) {
             const std::string w = swmm_get_warning_at(e, i);
-            if (w.find("S1") != std::string::npos && w.find("scale factor") != std::string::npos) noted_sub = true;
-            if (w.find("RG1") != std::string::npos && w.find("scale factor") != std::string::npos) noted_gage = true;
+            if (w.find("S1") != std::string::npos && w.find("scale factor") != std::string::npos)
+                noted_sub = true;
+            if (w.find("RG1") != std::string::npos && w.find("scale factor") != std::string::npos)
+                noted_gage = true;
         }
-        EXPECT_TRUE(noted_sub)  << "dropped subcatchment scale factor must be reported";
+        EXPECT_TRUE(noted_sub) << "dropped subcatchment scale factor must be reported";
         EXPECT_TRUE(noted_gage) << "dropped gage scale factor must be reported";
         destroy(e);
 
@@ -670,11 +809,13 @@ TEST(InletJunctionIO, Swmm5StockProfileDropsScaleFactors) {
         EXPECT_EQ(txt.find("\nCRS "), std::string::npos) << txt;
         for (const auto& tok : rows(txt, "SUBCATCHMENTS")) {
             EXPECT_EQ(tok.size(), 8u) << "stock grammar: 8 tokens, no '*'/scale — " << txt;
-            for (const auto& t : tok) EXPECT_NE(t, "*") << txt;
+            for (const auto& t : tok)
+                EXPECT_NE(t, "*") << txt;
         }
         const auto g = rows(txt, "RAINGAGES");
         ASSERT_EQ(g.size(), 1u);
-        EXPECT_EQ(g[0].size(), 6u) << "stock grammar: Name Format Intvl SCF TIMESERIES name — " << txt;
+        EXPECT_EQ(g[0].size(), 6u)
+            << "stock grammar: Name Format Intvl SCF TIMESERIES name — " << txt;
 
         // The refactored engine still opens the stock file (factors default to 1).
         SWMM_Engine e2 = openModel("sf_stock_reopen", txt, true);
@@ -697,9 +838,10 @@ TEST(InletJunctionIO, SplitInletFuseRoundTrip) {
     const int c_st = swmm_link_index(e, "C_ST");
     ASSERT_GE(c_st, 0);
     int new_node = -1, new_link = -1;
-    ASSERT_EQ(swmm_conduit_split_inlet(e, c_st, 0.5, "IJ1", "C_ST_B",
-                                       "Curb1", "MH1", &new_node, &new_link),
-              SWMM_OK) << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_conduit_split_inlet(e, c_st, 0.5, "IJ1", "C_ST_B", "Curb1", "MH1", &new_node,
+                                       &new_link),
+              SWMM_OK)
+        << swmm_get_last_error_msg(e);
     EXPECT_EQ(swmm_node_count(e), n_nodes0 + 1);
     EXPECT_EQ(swmm_link_count(e), n_links0 + 1);
 
@@ -734,10 +876,12 @@ TEST(InletJunctionIO, SplitInletFuseRoundTrip) {
 
     // Bad references are refused without touching the model.
     int nn = -1, nl = -1;
-    EXPECT_EQ(swmm_conduit_split_inlet(e, c_st, 0.5, "IJ2", "C_ST_C",
-                                       "NoSuchInlet", "MH1", &nn, &nl), 625);
-    EXPECT_EQ(swmm_conduit_split_inlet(e, c_st, 0.5, "IJ2", "C_ST_C",
-                                       "Curb1", "NoSuchNode", &nn, &nl), 627);
+    EXPECT_EQ(
+        swmm_conduit_split_inlet(e, c_st, 0.5, "IJ2", "C_ST_C", "NoSuchInlet", "MH1", &nn, &nl),
+        625);
+    EXPECT_EQ(
+        swmm_conduit_split_inlet(e, c_st, 0.5, "IJ2", "C_ST_C", "Curb1", "NoSuchNode", &nn, &nl),
+        627);
     EXPECT_EQ(swmm_node_count(e), n_nodes0 + 1);
 
     int surviving = -1;
@@ -760,11 +904,14 @@ TEST(InletJunctionIO, SplitInletFuseRoundTrip) {
 TEST(InletJunctionIO, UsageSetGetRemove) {
     SWMM_Engine e = openModel("ij_usage_api", ijModel(kCurbInlets, kIjSection), true);
 
-    const int ij   = swmm_node_index(e, "IJ1");
-    const int mh1  = swmm_node_index(e, "MH1");
+    const int ij = swmm_node_index(e, "IJ1");
+    const int mh1 = swmm_node_index(e, "MH1");
     const int c_up = swmm_link_index(e, "C_UP");
     const int curb = swmm_inlet_index(e, "Curb1");
-    ASSERT_GE(ij, 0); ASSERT_GE(mh1, 0); ASSERT_GE(c_up, 0); ASSERT_GE(curb, 0);
+    ASSERT_GE(ij, 0);
+    ASSERT_GE(mh1, 0);
+    ASSERT_GE(c_up, 0);
+    ASSERT_GE(curb, 0);
 
     // Replace the node-hosted row in place (one row per host).
     SWMM_InletUsage u{};
@@ -794,9 +941,11 @@ TEST(InletJunctionIO, UsageSetGetRemove) {
     SWMM_InletUsage bad = u;
     bad.pct_clogged = 120.0;
     EXPECT_EQ(swmm_inlet_usage_set(e, &bad, nullptr), SWMM_ERR_BADPARAM);
-    bad = u; bad.capture_node_idx = ij;
+    bad = u;
+    bad.capture_node_idx = ij;
     EXPECT_EQ(swmm_inlet_usage_set(e, &bad, nullptr), SWMM_ERR_BADPARAM);
-    bad = u; bad.host_idx = mh1;   // a plain junction cannot host a node row
+    bad = u;
+    bad.host_idx = mh1; // a plain junction cannot host a node row
     EXPECT_EQ(swmm_inlet_usage_set(e, &bad, nullptr), SWMM_ERR_BADPARAM);
 
     // A link-hosted row on the sewer pipe violates the shape rule (635).
@@ -822,9 +971,10 @@ TEST(InletJunctionIO, UsageSetGetRemove) {
 }
 
 TEST(InletJunctionIO, DesignGetSet) {
-    SWMM_Engine e = openModel("ij_design_api", designModel(
-        "[INLETS]\n"
-        "G1  GRATE  2.0  2.0  P_BAR-50\n"), true);
+    SWMM_Engine e = openModel("ij_design_api",
+                              designModel("[INLETS]\n"
+                                          "G1  GRATE  2.0  2.0  P_BAR-50\n"),
+                              true);
 
     SWMM_InletDesign d{};
     ASSERT_EQ(swmm_inlet_get_design(e, 0, &d), SWMM_OK);
@@ -856,9 +1006,12 @@ TEST(InletJunctionIO, DesignGetSet) {
     SWMM_InletDesign bad = back;
     bad.curb_height = 0.0;
     EXPECT_EQ(swmm_inlet_set_design(e, 0, &bad), SWMM_ERR_BADPARAM);
-    bad = back; bad.open_area = 1.5;
+    bad = back;
+    bad.open_area = 1.5;
     EXPECT_EQ(swmm_inlet_set_design(e, 0, &bad), SWMM_ERR_BADPARAM);
-    bad = back; bad.type = SWMM_INLET_CUSTOM; bad.curve_id[0] = '\0';
+    bad = back;
+    bad.type = SWMM_INLET_CUSTOM;
+    bad.curve_id[0] = '\0';
     EXPECT_EQ(swmm_inlet_set_design(e, 0, &bad), SWMM_ERR_BADPARAM);
 
     // The legacy 5-arg convenience API keeps working; for a curb design it

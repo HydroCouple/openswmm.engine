@@ -15,15 +15,15 @@
 // limitations under the License.
 
 /**
- * @file openswmm_tables_impl.cpp
- * @brief C API implementation — tables (time series, curves) and patterns.
+ * @file      openswmm_tables_impl.cpp
+ * @brief     C API implementation — tables (time series, curves) and patterns.
  *
  * @see include/openswmm/engine/openswmm_tables.h
  * @ingroup engine_api
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "openswmm_api_common.hpp"
@@ -39,14 +39,30 @@ namespace {
 // Visit every pattern-name reference site with @p fn(std::string& slot).
 // Centralised so remove (clear matching) and rename (rewrite matching)
 // share one walk and stay in sync with the data layout.
-template <class F>
-void for_each_pattern_name_ref(openswmm::SimulationContext& ctx, F&& fn) {
-    for (auto& s : ctx.ext_inflows.pattern_name)  fn(s);
-    for (auto& s : ctx.dwf_inflows.pat1)           fn(s);
-    for (auto& s : ctx.dwf_inflows.pat2)           fn(s);
-    for (auto& s : ctx.dwf_inflows.pat3)           fn(s);
-    for (auto& s : ctx.dwf_inflows.pat4)           fn(s);
-    for (auto& s : ctx.aquifers.upper_evap_pat)    fn(s);
+/**
+ * @brief Visit selected authored pattern-name references in deterministic store order.
+ *
+ * Visits external inflow, four DWF, aquifer upper evaporation and evaporation-recovery names,
+ * including empty strings. Does not cover numeric pattern slots or every component extension; no
+ * automatic rebinding/validation. Callback exceptions leave a visited prefix changed.
+ *
+ * @param[in,out] ctx Borrowed coherent context; reference strings may be mutated by fn.
+ * @param[in] fn Synchronous callable receiving mutable string references; must not resize visited
+ *     stores.
+ */
+template <class F> void for_each_pattern_name_ref(openswmm::SimulationContext& ctx, F&& fn) {
+    for (auto& s : ctx.ext_inflows.pattern_name)
+        fn(s);
+    for (auto& s : ctx.dwf_inflows.pat1)
+        fn(s);
+    for (auto& s : ctx.dwf_inflows.pat2)
+        fn(s);
+    for (auto& s : ctx.dwf_inflows.pat3)
+        fn(s);
+    for (auto& s : ctx.dwf_inflows.pat4)
+        fn(s);
+    for (auto& s : ctx.aquifers.upper_evap_pat)
+        fn(s);
     fn(ctx.options.evap_recovery_pat);
 }
 
@@ -55,38 +71,63 @@ void for_each_pattern_name_ref(openswmm::SimulationContext& ctx, F&& fn) {
 // indices that follow a rename by themselves; these name copies are what the
 // .inp writer and deferred resolution read, so a rename must rewrite them.
 template <class F>
+/**
+ * @brief Visit selected authored curve or time-series reference strings.
+ *
+ * Visits applicable outfall names, climate/gage/inflow/snow series or storage/divider/link/inlet
+ * curves, plus compiled2D boundary names. Does not cover every process-component or
+ * deferred/numeric reference. Callback exceptions can leave partial renaming; no binding refresh
+ * occurs here.
+ *
+ * @param[in,out] eng Borrowed engine with aligned outfall type/name vectors and live optional2D
+ *     router.
+ * @param[in] timeseries True selects time-series references, false curve references.
+ * @param[in] fn Synchronous callable receiving mutable string references; must not resize visited
+ *     stores.
+ */
 void for_each_table_name_ref(openswmm::SWMMEngine& eng, bool timeseries, F&& fn) {
     auto& ctx = eng.context();
     using openswmm::OutfallType;
     auto& O = ctx.node_subtypes.outfalls;
     for (int r = 0; r < O.count(); ++r) {
         const auto ur = static_cast<std::size_t>(r);
-        if (ur >= O.param_name.size()) break;
+        if (ur >= O.param_name.size())
+            break;
         const bool ts = O.bc_type[ur] == OutfallType::TIMESERIES;
         const bool tidal = O.bc_type[ur] == OutfallType::TIDAL;
-        if ((timeseries && ts) || (!timeseries && tidal)) fn(O.param_name[ur]);
+        if ((timeseries && ts) || (!timeseries && tidal))
+            fn(O.param_name[ur]);
     }
     if (timeseries) {
-        for (auto& s : ctx.gages.ts_name)          fn(s);
-        for (auto& s : ctx.ext_inflows.ts_name)    fn(s);
+        for (auto& s : ctx.gages.ts_name)
+            fn(s);
+        for (auto& s : ctx.ext_inflows.ts_name)
+            fn(s);
         fn(ctx.options.evap_ts_name);
         fn(ctx.options.temp_ts_name);
         fn(ctx.options.humidity_ts_name);
         fn(ctx.snowpacks.config.shortwave.series);
         fn(ctx.snowpacks.config.longwave.series);
     } else {
-        for (auto& s : ctx.node_subtypes.storages.curve_name) fn(s);
-        for (auto& s : ctx.node_subtypes.dividers.curve_name) fn(s);
-        for (auto& s : ctx.links.pump_curve_name)             fn(s);
-        for (auto& s : ctx.inlets.curve_id)                   fn(s);
+        for (auto& s : ctx.node_subtypes.storages.curve_name)
+            fn(s);
+        for (auto& s : ctx.node_subtypes.dividers.curve_name)
+            fn(s);
+        for (auto& s : ctx.links.pump_curve_name)
+            fn(s);
+        for (auto& s : ctx.inlets.curve_id)
+            fn(s);
     }
 #ifdef OPENSWMM_HAS_2D
     auto& b = eng.surfaceRouter2D().boundary();
     if (timeseries) {
-        for (auto& s : b.edge_bc_tseries_name)      fn(s);
-        for (auto& s : b.edge_bc_flow_tseries_name) fn(s);
+        for (auto& s : b.edge_bc_tseries_name)
+            fn(s);
+        for (auto& s : b.edge_bc_flow_tseries_name)
+            fn(s);
     } else {
-        for (auto& s : b.edge_bc_rating_curve_name) fn(s);
+        for (auto& s : b.edge_bc_rating_curve_name)
+            fn(s);
     }
 #endif
 }
@@ -100,21 +141,25 @@ extern "C" {
 // ============================================================================
 
 SWMM_ENGINE_API int swmm_table_count(SWMM_Engine engine) {
-    if (!engine) return -1;
+    if (!engine)
+        return -1;
     return to_engine(engine)->context().n_tables();
 }
 
 SWMM_ENGINE_API int swmm_table_index(SWMM_Engine engine, const char* id) {
-    if (!engine || !id) return -1;
+    if (!engine || !id)
+        return -1;
     // No kind context here: timeseries searched first, then curves (a curve
     // and a timeseries may share a name, matching legacy's separate tables).
     return to_engine(engine)->context().find_table_any(id);
 }
 
 SWMM_ENGINE_API const char* swmm_table_id(SWMM_Engine engine, int idx) {
-    if (!engine) return nullptr;
+    if (!engine)
+        return nullptr;
     const auto& ctx = to_engine(engine)->context();
-    if (idx < 0 || idx >= ctx.n_tables()) return nullptr;
+    if (idx < 0 || idx >= ctx.n_tables())
+        return nullptr;
     return ctx.tables[idx].id.c_str();
 }
 
@@ -122,7 +167,8 @@ SWMM_ENGINE_API int swmm_table_get_type(SWMM_Engine engine, int idx, int* type) 
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_tables());
-    if (!type) return SWMM_ERR_BADPARAM;
+    if (!type)
+        return SWMM_ERR_BADPARAM;
     *type = static_cast<int>(ctx.tables[idx].type);
     return SWMM_OK;
 }
@@ -133,7 +179,8 @@ SWMM_ENGINE_API int swmm_table_get_type(SWMM_Engine engine, int idx, int* type) 
 
 SWMM_ENGINE_API int swmm_timeseries_add(SWMM_Engine engine, const char* id) {
     CHECK_HANDLE(engine);
-    if (!id) return SWMM_ERR_BADPARAM;
+    if (!id)
+        return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
@@ -150,7 +197,8 @@ SWMM_ENGINE_API int swmm_timeseries_add(SWMM_Engine engine, const char* id) {
 
 SWMM_ENGINE_API int swmm_curve_add(SWMM_Engine engine, const char* id, int type) {
     CHECK_HANDLE(engine);
-    if (!id) return SWMM_ERR_BADPARAM;
+    if (!id)
+        return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
@@ -183,19 +231,23 @@ SWMM_ENGINE_API int swmm_table_get_point_count(SWMM_Engine engine, int idx, int*
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_tables());
-    if (count) *count = static_cast<int>(ctx.tables[idx].size());
+    if (count)
+        *count = static_cast<int>(ctx.tables[idx].size());
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_table_get_point(SWMM_Engine engine, int idx, int pt_idx, double* x, double* y) {
+SWMM_ENGINE_API int swmm_table_get_point(SWMM_Engine engine, int idx, int pt_idx, double* x,
+                                         double* y) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_tables());
     const auto& tbl = ctx.tables[idx];
     CHECK_INDEX(pt_idx >= 0 && pt_idx < static_cast<int>(tbl.size()));
     const auto upt = static_cast<std::size_t>(pt_idx);
-    if (x) *x = tbl.x[upt];
-    if (y) *y = tbl.y[upt];
+    if (x)
+        *x = tbl.x[upt];
+    if (y)
+        *y = tbl.y[upt];
     return SWMM_OK;
 }
 
@@ -215,26 +267,31 @@ SWMM_ENGINE_API int swmm_table_clear(SWMM_Engine engine, int idx) {
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_timeseries_get_relative_info(SWMM_Engine engine, int idx,
-                                                      int* n_relative, double* anchor) {
+SWMM_ENGINE_API int swmm_timeseries_get_relative_info(SWMM_Engine engine, int idx, int* n_relative,
+                                                      double* anchor) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_tables());
     const auto& tbl = ctx.tables[idx];
-    if (tbl.type != openswmm::TableType::TIMESERIES) return SWMM_ERR_BADPARAM;
-    if (n_relative) *n_relative = tbl.n_relative;
-    if (anchor)     *anchor     = tbl.rel_anchor;
+    if (tbl.type != openswmm::TableType::TIMESERIES)
+        return SWMM_ERR_BADPARAM;
+    if (n_relative)
+        *n_relative = tbl.n_relative;
+    if (anchor)
+        *anchor = tbl.rel_anchor;
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_timeseries_set_relative_info(SWMM_Engine engine, int idx,
-                                                      int n_relative, double anchor) {
+SWMM_ENGINE_API int swmm_timeseries_set_relative_info(SWMM_Engine engine, int idx, int n_relative,
+                                                      double anchor) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_tables());
     auto& tbl = ctx.tables[idx];
-    if (tbl.type != openswmm::TableType::TIMESERIES) return SWMM_ERR_BADPARAM;
-    if (n_relative < 0) return SWMM_ERR_BADPARAM;
+    if (tbl.type != openswmm::TableType::TIMESERIES)
+        return SWMM_ERR_BADPARAM;
+    if (n_relative < 0)
+        return SWMM_ERR_BADPARAM;
     tbl.n_relative = std::min(n_relative, static_cast<int>(tbl.x.size()));
     tbl.rel_anchor = anchor;
     return SWMM_OK;
@@ -248,7 +305,8 @@ SWMM_ENGINE_API int swmm_table_lookup(SWMM_Engine engine, int idx, double x, dou
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_tables());
-    if (!y) return SWMM_ERR_BADPARAM;
+    if (!y)
+        return SWMM_ERR_BADPARAM;
     *y = openswmm::table_lookup_cursor(ctx.tables[idx], x);
     return SWMM_OK;
 }
@@ -259,7 +317,8 @@ SWMM_ENGINE_API int swmm_table_lookup(SWMM_Engine engine, int idx, double x, dou
 
 SWMM_ENGINE_API int swmm_pattern_add(SWMM_Engine engine, const char* id, int type) {
     CHECK_HANDLE(engine);
-    if (!id) return SWMM_ERR_BADPARAM;
+    if (!id)
+        return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
@@ -268,11 +327,13 @@ SWMM_ENGINE_API int swmm_pattern_add(SWMM_Engine engine, const char* id, int typ
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_pattern_set_factors(SWMM_Engine engine, int idx, const double* factors, int count) {
+SWMM_ENGINE_API int swmm_pattern_set_factors(SWMM_Engine engine, int idx, const double* factors,
+                                             int count) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.patterns.count());
-    if (!factors || count <= 0) return SWMM_ERR_BADPARAM;
+    if (!factors || count <= 0)
+        return SWMM_ERR_BADPARAM;
     ctx.patterns.factors[static_cast<std::size_t>(idx)].assign(factors, factors + count);
     // Propagate the edit to the inflow solver's per-step pattern cache so a
     // mid-run change takes effect on the next step (DWF/external inflow read
@@ -282,20 +343,24 @@ SWMM_ENGINE_API int swmm_pattern_set_factors(SWMM_Engine engine, int idx, const 
 }
 
 SWMM_ENGINE_API int swmm_pattern_count(SWMM_Engine engine) {
-    if (!engine) return -1;
+    if (!engine)
+        return -1;
     return to_engine(engine)->context().patterns.count();
 }
 
 SWMM_ENGINE_API int swmm_pattern_index(SWMM_Engine engine, const char* id) {
-    if (!engine || !id) return -1;
+    if (!engine || !id)
+        return -1;
     // Case-insensitive (legacy hash.c parity)
     return to_engine(engine)->context().patterns.find(id);
 }
 
 SWMM_ENGINE_API const char* swmm_pattern_id(SWMM_Engine engine, int idx) {
-    if (!engine) return nullptr;
+    if (!engine)
+        return nullptr;
     const auto& names = to_engine(engine)->context().patterns.names;
-    if (idx < 0 || idx >= static_cast<int>(names.size())) return nullptr;
+    if (idx < 0 || idx >= static_cast<int>(names.size()))
+        return nullptr;
     return names[static_cast<std::size_t>(idx)].c_str();
 }
 
@@ -303,7 +368,8 @@ SWMM_ENGINE_API int swmm_pattern_get_type(SWMM_Engine engine, int idx, int* type
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.patterns.count());
-    if (!type) return SWMM_ERR_BADPARAM;
+    if (!type)
+        return SWMM_ERR_BADPARAM;
     *type = ctx.patterns.types[static_cast<std::size_t>(idx)];
     return SWMM_OK;
 }
@@ -312,7 +378,8 @@ SWMM_ENGINE_API int swmm_pattern_get_factor_count(SWMM_Engine engine, int idx, i
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.patterns.count());
-    if (!count) return SWMM_ERR_BADPARAM;
+    if (!count)
+        return SWMM_ERR_BADPARAM;
     *count = static_cast<int>(ctx.patterns.factors[static_cast<std::size_t>(idx)].size());
     return SWMM_OK;
 }
@@ -323,7 +390,8 @@ SWMM_ENGINE_API int swmm_pattern_get_factor(SWMM_Engine engine, int idx, int i, 
     CHECK_INDEX(idx >= 0 && idx < ctx.patterns.count());
     const auto& f = ctx.patterns.factors[static_cast<std::size_t>(idx)];
     CHECK_INDEX(i >= 0 && i < static_cast<int>(f.size()));
-    if (!v) return SWMM_ERR_BADPARAM;
+    if (!v)
+        return SWMM_ERR_BADPARAM;
     *v = f[static_cast<std::size_t>(i)];
     return SWMM_OK;
 }
@@ -334,7 +402,8 @@ SWMM_ENGINE_API int swmm_pattern_remove(SWMM_Engine engine, int idx) {
     CHECK_EDITABLE(ctx);
     // Idempotent: silently ignore stale indices so the GUI's "delete then
     // delete again on a re-resolved-too-late button" path is safe.
-    if (idx < 0 || idx >= ctx.patterns.count()) return SWMM_OK;
+    if (idx < 0 || idx >= ctx.patterns.count())
+        return SWMM_OK;
 
     // Same code path as swmm_pattern_delete, minus the impact report.
     openswmm::edit::delete_pattern(ctx, idx);
@@ -343,7 +412,8 @@ SWMM_ENGINE_API int swmm_pattern_remove(SWMM_Engine engine, int idx) {
 
 SWMM_ENGINE_API int swmm_table_rename(SWMM_Engine engine, int idx, const char* newId) {
     CHECK_HANDLE(engine);
-    if (!newId || newId[0] == '\0') return SWMM_ERR_BADPARAM;
+    if (!newId || newId[0] == '\0')
+        return SWMM_ERR_BADPARAM;
     auto* eng = to_engine(engine);
     auto& ctx = eng->context();
     CHECK_EDITABLE(ctx);
@@ -352,19 +422,22 @@ SWMM_ENGINE_API int swmm_table_rename(SWMM_Engine engine, int idx, const char* n
     const auto u = static_cast<std::size_t>(idx);
     const bool timeseries = ctx.tables.tables[u].type == openswmm::TableType::TIMESERIES;
     const std::string next = newId;
-    if (ctx.tables.tables[u].id == next) return SWMM_OK;
+    if (ctx.tables.tables[u].id == next)
+        return SWMM_OK;
 
     // Kind-scoped, case-insensitive uniqueness, as swmm_timeseries_add /
     // swmm_curve_add enforce (a curve and a timeseries may share a name).
     const int clash = ctx.tables.find_by_kind(next, timeseries);
-    if (clash >= 0 && clash != idx) return SWMM_ERR_BADPARAM;
+    if (clash >= 0 && clash != idx)
+        return SWMM_ERR_BADPARAM;
 
     const std::string prev = ctx.tables.tables[u].id;
     ctx.tables.tables[u].id = next;
     ctx.tables.rebuild_index();
 
     for_each_table_name_ref(*eng, timeseries, [&](std::string& slot) {
-        if (!slot.empty() && openswmm::ieq(slot, prev)) slot = next;
+        if (!slot.empty() && openswmm::ieq(slot, prev))
+            slot = next;
     });
     return SWMM_OK;
 }
@@ -378,9 +451,9 @@ SWMM_ENGINE_API int swmm_table_set_type(SWMM_Engine engine, int idx, int type) {
     const auto ts = openswmm::TableType::TIMESERIES;
     // Curve-to-curve only: a timeseries is a different object kind, and the
     // kind-scoped name index (find_by_kind) must stay valid.
-    if (ctx.tables.tables[u].type == ts || type == static_cast<int>(ts)
-        || type < static_cast<int>(openswmm::TableType::CURVE_STORAGE)
-        || type > static_cast<int>(openswmm::TableType::CURVE_PUMP5))
+    if (ctx.tables.tables[u].type == ts || type == static_cast<int>(ts) ||
+        type < static_cast<int>(openswmm::TableType::CURVE_STORAGE) ||
+        type > static_cast<int>(openswmm::TableType::CURVE_PUMP5))
         return SWMM_ERR_BADPARAM;
     ctx.tables.tables[u].type = static_cast<openswmm::TableType>(type);
     return SWMM_OK;
@@ -388,7 +461,8 @@ SWMM_ENGINE_API int swmm_table_set_type(SWMM_Engine engine, int idx, int type) {
 
 SWMM_ENGINE_API int swmm_pattern_rename(SWMM_Engine engine, int idx, const char* newId) {
     CHECK_HANDLE(engine);
-    if (!newId || newId[0] == '\0') return SWMM_ERR_BADPARAM;
+    if (!newId || newId[0] == '\0')
+        return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.patterns.count());
@@ -396,7 +470,8 @@ SWMM_ENGINE_API int swmm_pattern_rename(SWMM_Engine engine, int idx, const char*
     const std::string next = newId;
     const auto u = static_cast<std::size_t>(idx);
     // Renaming to the same name is a no-op (also avoids a false collision).
-    if (ctx.patterns.names[u] == next) return SWMM_OK;
+    if (ctx.patterns.names[u] == next)
+        return SWMM_OK;
 
     for (std::size_t j = 0; j < ctx.patterns.names.size(); ++j) {
         // Case-insensitive collision check (a case-respelling of this same
@@ -409,7 +484,8 @@ SWMM_ENGINE_API int swmm_pattern_rename(SWMM_Engine engine, int idx, const char*
     ctx.patterns.names[u] = next;
 
     for_each_pattern_name_ref(ctx, [&](std::string& slot) {
-        if (slot == prev) slot = next;
+        if (slot == prev)
+            slot = next;
     });
     return SWMM_OK;
 }

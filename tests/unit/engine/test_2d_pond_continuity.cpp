@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_2d_pond_continuity.cpp
- * @brief The coupled-junction pond geometry (2d/coupling/PondModel.hpp): a C¹
+ * @file      test_2d_pond_continuity.cpp
+ * @brief     The coupled-junction pond geometry (2d/coupling/PondModel.hpp): a C¹
  *        area ramp entirely above the rim, the closed-form volume and its
  *        exact inverse, volume-conserving relaxation of the pond area, and the
  *        head-equalisation cap.
@@ -24,6 +24,10 @@
  * @details plans/1D2D_FINE_SCALE_COUPLING_PLAN_2026-10-19.md §4, §0R R8/R13.
  *
  * @ingroup engine_2d
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -41,7 +45,7 @@ TEST(PondModel, AreaIsC1AndStartsAtTheRim) {
     EXPECT_EQ(area(band, a, band), a);
     EXPECT_EQ(area(1.0, a, band), a);
     constexpr double e = 1e-7;
-    for (double x : {0.0, band}) {   // band edges
+    for (double x : {0.0, band}) { // band edges
         const double left = (area(x, a, band) - area(x - e, a, band)) / e;
         const double right = (area(x + e, a, band) - area(x, a, band)) / e;
         EXPECT_NEAR(left, right, 1e-3 * a / band) << "slope jump at x=" << x;
@@ -101,7 +105,7 @@ TEST(PondModel, EqualisationCapNeverCarriesThe1DHeadPastThe2D) {
     for (double a1 : {1.13, 10.0, 300.0})
         for (double dh : {-0.4, -0.01, 0.003, 0.2}) {
             const double T = 6.0;
-            const double q = std::copysign(1e9, dh);          // a law far stronger than the cap
+            const double q = std::copysign(1e9, dh); // a law far stronger than the cap
             const double cap = equalizeCap(dh, T, a1);
             const double qc = std::copysign(std::min(std::fabs(q), cap), q);
             EXPECT_NEAR(qc * T / a1, dh, 1e-12 * std::fabs(dh)) << "a1 " << a1 << " dh " << dh;

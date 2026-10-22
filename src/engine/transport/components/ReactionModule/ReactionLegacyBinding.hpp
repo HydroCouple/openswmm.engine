@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file ReactionLegacyBinding.hpp
- * @brief Phase R4 — reaction binding for the LEGACY (CSTR) quality engine.
+ * @file      ReactionLegacyBinding.hpp
+ * @brief     Phase R4 — reaction binding for the LEGACY (CSTR) quality engine.
  *
  * @details When a reactions component is configured:
  *          - Pollutant kdecay upgrades from the legacy linearized factor
@@ -40,9 +40,9 @@
  * @see plans/transport/MULTISPECIES_REACTIONS_MSX_PLAN.md §5 R4
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_REACTION_LEGACY_BINDING_HPP
@@ -73,8 +73,7 @@ void noteNegativeClamp(SimulationContext& ctx, const char* where);
 /// Review A2: set every negative RATE species in `block` (scope `tank`) to
 /// zero; writes the concentration added per species to `added` when it is
 /// non-null, returns the sum.
-double clampRateSpecies(const ReactionData& rx, bool tank, double* block,
-                        double* added);
+double clampRateSpecies(const ReactionData& rx, bool tank, double* block, double* added);
 
 /// L3: integrate ONE species block in place over dt through the shared
 /// integrator. `pollut` may be null (no pollutant context); `tank`
@@ -83,11 +82,9 @@ double clampRateSpecies(const ReactionData& rx, bool tank, double* block,
 /// TEMPERATURE constant). On an integrator failure the block is left
 /// unchanged and the once-per-run failure warning fires — the
 /// reactElements contract.
-void reactSpeciesBlock(SimulationContext& ctx, bool tank, double dt,
-                       double* species_block, const double* pollut,
-                       double hrt_seconds,
-                       double temp_c = std::numeric_limits<double>::quiet_NaN(),
-                       int element = -1);
+void reactSpeciesBlock(SimulationContext& ctx, bool tank, double dt, double* species_block,
+                       const double* pollut, double hrt_seconds,
+                       double temp_c = std::numeric_limits<double>::quiet_NaN(), int element = -1);
 
 /// Node-side step: exact-exponential pollutant decay + MSX tank-scope
 /// integration. Runs where applyDecay() ran (before updateLinkQuality).
@@ -107,6 +104,6 @@ void reactLegacyLinks(SimulationContext& ctx, double dt);
 /// and nothing said so.
 void warnIfLegacyBindingBypassed(SimulationContext& ctx);
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_REACTION_LEGACY_BINDING_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_REACTION_LEGACY_BINDING_HPP

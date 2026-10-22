@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file MsxSurfaceData.hpp
- * @brief BW-MSX (2026-09-19) — surface buildup / washoff / sweeping state and
+ * @file      MsxSurfaceData.hpp
+ * @brief     BW-MSX (2026-09-19) — surface buildup / washoff / sweeping state and
  *        parameters for the reactions component's (MSX) species.
  *
  * @details `[BUILDUP]`, `[WASHOFF]` and `[LOADINGS]` are pollutant-keyed
@@ -40,6 +40,10 @@
  *          §8.9; program plan decisions D-A24, D-A27–D-A29.
  *
  * @ingroup engine_data
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_DATA_MSX_SURFACE_DATA_HPP
@@ -55,26 +59,28 @@ namespace openswmm {
 struct MsxSurfaceRows {
     struct Buildup {
         std::string landuse, species;
-        int    func_type = 0;      ///< 0=NONE,1=POW,2=EXP,3=SAT,4=EXT
+        int func_type = 0; ///< 0=NONE,1=POW,2=EXP,3=SAT,4=EXT
         double c1 = 0.0, c2 = 0.0, c3 = 0.0;
-        std::string ts_name;       ///< EXT: time series name (resolved later)
-        int    normalizer = 0;     ///< 0=PER_AREA, 1=PER_CURB
+        std::string ts_name; ///< EXT: time series name (resolved later)
+        int normalizer = 0;  ///< 0=PER_AREA, 1=PER_CURB
     };
     struct Washoff {
         std::string landuse, species;
-        int    func_type = 0;      ///< 0=NONE,1=EXP,2=RC,3=EMC
+        int func_type = 0; ///< 0=NONE,1=EXP,2=RC,3=EMC
         double coeff = 0.0, expon = 0.0, sweep_effic = 0.0, bmp_effic = 0.0;
     };
     struct Loading {
         std::string subcatch, species;
-        double value = 0.0;        ///< initial buildup, mass per unit area
+        double value = 0.0; ///< initial buildup, mass per unit area
     };
     std::vector<Buildup> buildup;
     std::vector<Washoff> washoff;
     std::vector<Loading> loadings;
-    bool empty() const noexcept {
-        return buildup.empty() && washoff.empty() && loadings.empty();
-    }
+    /**
+     * @brief Test whether all deferred MSX buildup/washoff/loading row lists are empty.
+     * @return True only when every authored list is empty; does not inspect resolved state.
+     */
+    bool empty() const noexcept { return buildup.empty() && washoff.empty() && loadings.empty(); }
 };
 
 /**
@@ -90,29 +96,29 @@ struct MsxSurfaceRows {
  *    convention.
  */
 struct MsxSurfaceData {
-    MsxSurfaceRows rows;                 ///< parse-time, by name
+    MsxSurfaceRows rows; ///< parse-time, by name
 
     int n_landuses = 0;
-    int n_species  = 0;                  ///< MSX species count at resolve time
+    int n_species = 0; ///< MSX species count at resolve time
     int n_subcatch = 0;
 
     // ---- parameters [lu * n_species + m] --------------------------------
-    std::vector<int>    bu_type;         ///< 0=NONE,1=POW,2=EXP,3=SAT,4=EXT
-    std::vector<double> bu_c1, bu_c2, bu_c3;   ///< EXT: c3 = time-series index
-    std::vector<int>    bu_normalizer;   ///< 0=PER_AREA, 1=PER_CURB
-    std::vector<double> bu_max_days;     ///< derived (99.9 % of max)
-    std::vector<int>    wo_type;         ///< 0=NONE,1=EXP,2=RC,3=EMC
+    std::vector<int> bu_type;                ///< 0=NONE,1=POW,2=EXP,3=SAT,4=EXT
+    std::vector<double> bu_c1, bu_c2, bu_c3; ///< EXT: c3 = time-series index
+    std::vector<int> bu_normalizer;          ///< 0=PER_AREA, 1=PER_CURB
+    std::vector<double> bu_max_days;         ///< derived (99.9 % of max)
+    std::vector<int> wo_type;                ///< 0=NONE,1=EXP,2=RC,3=EMC
     std::vector<double> wo_coeff, wo_expon, wo_sweep_effic, wo_bmp_effic;
 
     // ---- initial loading [sc * n_species + m] (mass per unit area) ------
     std::vector<double> init_loading;
 
     // ---- per-species unit factor: concentration-mass → user mass --------
-    std::vector<double> mcf;             ///< D-A27: MG → UCF(MASS), UG → /1000, else 1
+    std::vector<double> mcf; ///< D-A27: MG → UCF(MASS), UG → /1000, else 1
 
     // ---- state ----------------------------------------------------------
-    std::vector<double> buildup;         ///< bu_idx(sc, lu, m), per normalizer unit
-    std::vector<double> washoff_conc;    ///< [sc * n_species + m], conc units (mg/L-like)
+    std::vector<double> buildup;      ///< bu_idx(sc, lu, m), per normalizer unit
+    std::vector<double> washoff_conc; ///< [sc * n_species + m], conc units (mg/L-like)
     /// Previous runoff step's `washoff_conc`, the "old" end of the routing-step
     /// interpolation the delivery seam does. The pollutant mirror of this is
     /// `SubcatchData::conc_old`, rolled by `SubcatchData::save_state()`; this
@@ -128,7 +134,7 @@ struct MsxSurfaceData {
     /// snow-only buildup flag (species have none; kept so the kernel reads
     /// the same fields for every family).
     std::vector<double> c_rain;
-    std::vector<bool>   snow_only;
+    std::vector<bool> snow_only;
     /// LID underdrain removal fraction `[control * n_species + m]` (from the
     /// LID REMOVALS rows that name a species), and the underdrain species
     /// load each node receives `[node * n_species + m]` (concentration mass
@@ -146,47 +152,105 @@ struct MsxSurfaceData {
     std::vector<double> led_runoff_load; ///< delivered to the network
     std::vector<double> led_sweeping;
     std::vector<double> led_bmp_removal;
-    std::vector<double> led_wet_deposition; ///< rainfall concentration × rain volume
-    std::vector<double> led_infil_loss;     ///< infiltrated from ponded water and LID units
-    std::vector<double> led_reacted; ///< signed wet-pool reaction loss, user mass
+    std::vector<double> led_wet_deposition;   ///< rainfall concentration × rain volume
+    std::vector<double> led_infil_loss;       ///< infiltrated from ponded water and LID units
+    std::vector<double> led_reacted;          ///< signed wet-pool reaction loss, user mass
     std::vector<double> led_reaction_clamped; ///< numerical addition after a negative RATE
-    std::vector<double> led_ponded_lost;    ///< ponded mass written off when a surface dried
-    std::vector<double> led_subcatch_load; ///< [sc * n_species + m], per-subcatchment total (report)
+    std::vector<double> led_ponded_lost;      ///< ponded mass written off when a surface dried
+    std::vector<double>
+        led_subcatch_load; ///< [sc * n_species + m], per-subcatchment total (report)
 
     bool resolved = false;
-    /// `resolved` already requires a land use for buildup/washoff rows; a
-    /// species that only rains in (Multispecies Phase 2) resolves without one.
+    /**
+     * @brief Test whether resolved MSX surface state has at least one species.
+     * @return resolved && n_species>0; land-use/subcatchment counts may still be zero.
+     */
     bool active() const noexcept { return resolved && n_species > 0; }
 
+    /**
+     * @brief Calculate a land-use-major parameter matrix index.
+     *
+     * @param[in] lu Existing land-use index in [0,n_landuses).
+     * @param[in] m Existing species index in [0,n_species).
+     * @return lu*n_species+m; unchecked, caller ensures bounds and size_t arithmetic.
+     */
     std::size_t pidx(int lu, int m) const noexcept {
         return static_cast<std::size_t>(lu) * static_cast<std::size_t>(n_species) +
                static_cast<std::size_t>(m);
     }
+    /**
+     * @brief Calculate a subcatchment/land-use/species buildup index.
+     *
+     * @param[in] sc Existing subcatchment index in [0,n_subcatch).
+     * @param[in] lu Existing land-use index.
+     * @param[in] m Existing MSX species index.
+     * @return (sc*n_landuses+lu)*n_species+m; unchecked, caller ensures dimensions and arithmetic.
+     */
     std::size_t bu_idx(int sc, int lu, int m) const noexcept {
         return (static_cast<std::size_t>(sc) * static_cast<std::size_t>(n_landuses) +
-                static_cast<std::size_t>(lu)) * static_cast<std::size_t>(n_species) +
+                static_cast<std::size_t>(lu)) *
+                   static_cast<std::size_t>(n_species) +
                static_cast<std::size_t>(m);
     }
+    /**
+     * @brief Calculate a subcatchment-major species matrix index.
+     *
+     * @param[in] sc Existing subcatchment index.
+     * @param[in] m Existing MSX species index.
+     * @return sc*n_species+m; unchecked, caller ensures bounds and size_t arithmetic.
+     */
     std::size_t sidx(int sc, int m) const noexcept {
         return static_cast<std::size_t>(sc) * static_cast<std::size_t>(n_species) +
                static_cast<std::size_t>(m);
     }
 
+    /**
+     * @brief Replace resolved MSX buildup/washoff parameter matrices.
+     *
+     * Stores counts, defaults all functions/coefficients to zero, PER_AREA normalizers, mcf=1 and
+     * snow_only=false. Preserves c_rain only when its existing length equals nm. Does not clear
+     * authored rows, resolved flag or runtime state; caller rebuilds those as needed. No transactional
+     * allocation rollback.
+     *
+     * @param[in] nlu Nonnegative land-use count.
+     * @param[in] nm Nonnegative species count; size_t products must fit.
+     */
     void resize_params(int nlu, int nm) {
-        n_landuses = nlu; n_species = nm;
+        n_landuses = nlu;
+        n_species = nm;
         const auto n = static_cast<std::size_t>(nlu) * static_cast<std::size_t>(nm);
-        bu_type.assign(n, 0); bu_c1.assign(n, 0.0); bu_c2.assign(n, 0.0); bu_c3.assign(n, 0.0);
-        bu_normalizer.assign(n, 0); bu_max_days.assign(n, 0.0);
-        wo_type.assign(n, 0); wo_coeff.assign(n, 0.0); wo_expon.assign(n, 0.0);
-        wo_sweep_effic.assign(n, 0.0); wo_bmp_effic.assign(n, 0.0);
+        bu_type.assign(n, 0);
+        bu_c1.assign(n, 0.0);
+        bu_c2.assign(n, 0.0);
+        bu_c3.assign(n, 0.0);
+        bu_normalizer.assign(n, 0);
+        bu_max_days.assign(n, 0.0);
+        wo_type.assign(n, 0);
+        wo_coeff.assign(n, 0.0);
+        wo_expon.assign(n, 0.0);
+        wo_sweep_effic.assign(n, 0.0);
+        wo_bmp_effic.assign(n, 0.0);
         mcf.assign(static_cast<std::size_t>(nm), 1.0);
-        if (c_rain.size() != static_cast<std::size_t>(nm)) c_rain.assign(static_cast<std::size_t>(nm), 0.0);
+        if (c_rain.size() != static_cast<std::size_t>(nm))
+            c_rain.assign(static_cast<std::size_t>(nm), 0.0);
         snow_only.assign(static_cast<std::size_t>(nm), false);
     }
+    /**
+     * @brief Replace MSX subcatchment state and continuity ledgers with zero arrays.
+     *
+     * Zeroes buildup, current/old concentrations, ponded/run-on loads, LID run-on and all
+     * per-species/subcatchment ledgers. Preserves initial loading only when shape matches. Does not
+     * resize lid_rmvl or node LID drain load arrays, alter parameter matrices or set resolved.
+     * Allocation failure can leave partial state.
+     *
+     * @param[in] nsc Nonnegative subcatchment count; configured land-use/species dimensions and
+     *     products must be valid.
+     */
     void resize_state(int nsc) {
         n_subcatch = nsc;
         const auto nm = static_cast<std::size_t>(n_species);
-        buildup.assign(static_cast<std::size_t>(nsc) * static_cast<std::size_t>(n_landuses) * nm, 0.0);
+        buildup.assign(static_cast<std::size_t>(nsc) * static_cast<std::size_t>(n_landuses) * nm,
+                       0.0);
         washoff_conc.assign(static_cast<std::size_t>(nsc) * nm, 0.0);
         washoff_conc_old.assign(static_cast<std::size_t>(nsc) * nm, 0.0);
         ponded_qual.assign(static_cast<std::size_t>(nsc) * nm, 0.0);
@@ -194,8 +258,10 @@ struct MsxSurfaceData {
         lid_drain_runon_load.assign(static_cast<std::size_t>(nsc) * nm, 0.0);
         if (init_loading.size() != static_cast<std::size_t>(nsc) * nm)
             init_loading.assign(static_cast<std::size_t>(nsc) * nm, 0.0);
-        led_init_buildup.assign(nm, 0.0); led_buildup.assign(nm, 0.0);
-        led_runoff_load.assign(nm, 0.0);  led_sweeping.assign(nm, 0.0);
+        led_init_buildup.assign(nm, 0.0);
+        led_buildup.assign(nm, 0.0);
+        led_runoff_load.assign(nm, 0.0);
+        led_sweeping.assign(nm, 0.0);
         led_bmp_removal.assign(nm, 0.0);
         led_wet_deposition.assign(nm, 0.0);
         led_infil_loss.assign(nm, 0.0);

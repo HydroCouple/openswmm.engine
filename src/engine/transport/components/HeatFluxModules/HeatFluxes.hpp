@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file HeatFluxes.hpp
- * @brief Plan D-H5e — the single node/link surface-flux binding.
+ * @file      HeatFluxes.hpp
+ * @brief     Plan D-H5e — the single node/link surface-flux binding.
  *
  * @details **One traversal, one net flux, one relaxation.** Every enabled
  *          flux family contributes to `J(T)`; the element is then stepped
@@ -63,15 +63,15 @@
  * @see plans/transport/HEAT_TRANSPORT_PLAN.md §6.2 D-H5d, §6.3 D-H5e
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_HEAT_FLUXES_HPP
 #define OPENSWMM_ENGINE_TRANSPORT_HEAT_FLUXES_HPP
 
-#include "../../../data/HeatOverrideData.hpp"   // HeatElement (PE1)
+#include "../../../data/HeatOverrideData.hpp" // HeatElement (PE1)
 
 namespace openswmm {
 struct SimulationContext;
@@ -101,8 +101,7 @@ namespace openswmm::transport::heat {
  *          forgets to pass its element degrades to the old behaviour rather
  *          than reading element 0's attributes.
  */
-double netFluxOut(const SimulationContext& ctx,
-                  const HeatElement& elem, double t_w) noexcept;
+double netFluxOut(const SimulationContext& ctx, const HeatElement& elem, double t_w) noexcept;
 
 /**
  * @brief Apply one step of surface heat exchange to every exchanging
@@ -120,6 +119,6 @@ double netFluxOut(const SimulationContext& ctx,
  */
 void applyHeatFluxes(SimulationContext& ctx, double dt);
 
-}  // namespace openswmm::transport::heat
+} // namespace openswmm::transport::heat
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_HEAT_FLUXES_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_HEAT_FLUXES_HPP

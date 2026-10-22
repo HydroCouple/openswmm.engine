@@ -1,0 +1,18 @@
+{
+  "repository": "openswmm.engine",
+  "scope": {
+    "comments_and_format_only": 997,
+    "comments_format_and_c_api_parameter_names": 8,
+    "comments_format_and_ledgered_parameter_names": 40,
+    "mixed_source_changes": 4
+  },
+  "reviewed_source_files": 1049,
+  "project_function_documentation_complete": false,
+  "documentation_commit_excludes_unrelated_implementation": true,
+  "deferred_comment_files": [
+    "src/engine/hydraulics/fv/ImplicitNetworkSolver.cpp",
+    "src/engine/hydraulics/fv/ImplicitNetworkSolver.hpp",
+    "tests/unit/engine/test_2d_exchange_rubinato_model.cpp",
+    "tests/unit/engine/test_2d_exchange_rubinato_steady.cpp"
+  ]
+}

@@ -15,17 +15,17 @@
 // limitations under the License.
 
 /**
- * @file ReactionTokens.hpp
- * @brief POD reaction-VM instruction + span types (phase R2, D-L3 flat
+ * @file      ReactionTokens.hpp
+ * @brief     POD reaction-VM instruction + span types (phase R2, D-L3 flat
  *        pool). Data-layer header: no dependencies, included by both
  *        ReactionData (which owns the pool) and the transport-side
  *        compiler/evaluator (ReactionExpression).
  *
  * @ingroup engine_data
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_DATA_REACTION_TOKENS_HPP
@@ -39,17 +39,17 @@ namespace openswmm {
 /// §2; engines populate the evaluation environment at R6). Order is the
 /// ABI of the evaluator's hydvar array.
 enum class RxHydVar : int {
-    D = 0,    ///< depth (ft)
-    Q,        ///< flow (cfs)
-    U,        ///< velocity (ft/s)
-    RE,       ///< Reynolds number
-    US,       ///< shear velocity (ft/s)
-    FF,       ///< Darcy-Weisbach friction factor
-    AV,       ///< wetted surface area per volume (1/ft)
-    HRT,      ///< hydraulic residence time (s)
-    DT,       ///< reaction step (s)
-    TEMP,     ///< local water temperature (degC); [REACTION_OPTIONS]
-              ///< TEMPERATURE constant when HEAT_TRANSPORT is off
+    D = 0,       ///< depth (ft)
+    Q,           ///< flow (cfs)
+    U,           ///< velocity (ft/s)
+    RE,          ///< Reynolds number
+    US,          ///< shear velocity (ft/s)
+    FF,          ///< Darcy-Weisbach friction factor
+    AV,          ///< wetted surface area per volume (1/ft)
+    HRT,         ///< hydraulic residence time (s)
+    DT,          ///< reaction step (s)
+    TEMP,        ///< local water temperature (degC); [REACTION_OPTIONS]
+                 ///< TEMPERATURE constant when HEAT_TRANSPORT is off
     GW_THETA,    ///< water content (dimensionless), groundwater only
     GW_POROSITY, ///< porosity (dimensionless), groundwater only
     GW_SE,       ///< effective saturation (dimensionless), groundwater only
@@ -61,32 +61,46 @@ enum class RxHydVar : int {
 /// per-expression heap vectors (LARD plan §16 D-L3).
 struct RxToken {
     enum Op : uint8_t {
-        PUSH_NUM = 0,   ///< value
-        PUSH_SPECIES,   ///< idx = local species slot
-        PUSH_COEF,      ///< idx = coefficient slot
-        PUSH_TERM,      ///< idx = term slot (evaluated earlier in-order)
-        PUSH_HYDVAR,    ///< idx = RxHydVar
-        PUSH_POLLUT,    ///< idx = pollutant index (READ-ONLY coupling, R4)
-        ADD, SUB, MUL, DIV, POW, NEG,
-        F_EXP, F_LOG, F_LOG10, F_SQRT, F_ABS, F_SGN, F_STEP,
-        F_SIN, F_COS, F_TAN,
-        F_MIN, F_MAX    ///< binary
+        PUSH_NUM = 0, ///< value
+        PUSH_SPECIES, ///< idx = local species slot
+        PUSH_COEF,    ///< idx = coefficient slot
+        PUSH_TERM,    ///< idx = term slot (evaluated earlier in-order)
+        PUSH_HYDVAR,  ///< idx = RxHydVar
+        PUSH_POLLUT,  ///< idx = pollutant index (READ-ONLY coupling, R4)
+        ADD,
+        SUB,
+        MUL,
+        DIV,
+        POW,
+        NEG,
+        F_EXP,
+        F_LOG,
+        F_LOG10,
+        F_SQRT,
+        F_ABS,
+        F_SGN,
+        F_STEP,
+        F_SIN,
+        F_COS,
+        F_TAN,
+        F_MIN,
+        F_MAX ///< binary
     };
-    uint8_t  op    = PUSH_NUM;
-    int32_t  idx   = 0;
-    double   value = 0.0;
+    uint8_t op = PUSH_NUM;
+    int32_t idx = 0;
+    double value = 0.0;
 };
 
 /// Compiled expression = span into the shared pool. len 0 ⇒ no expression.
 struct RxExprSpan {
     int32_t begin = 0;
-    int32_t len   = 0;
+    int32_t len = 0;
 };
 
 /// Maximum operand-stack depth; the compiler rejects deeper expressions so
 /// the evaluator's fixed stack can never overflow.
 inline constexpr int kRxMaxStackDepth = 32;
 
-}  // namespace openswmm
+} // namespace openswmm
 
-#endif  // OPENSWMM_ENGINE_DATA_REACTION_TOKENS_HPP
+#endif // OPENSWMM_ENGINE_DATA_REACTION_TOKENS_HPP

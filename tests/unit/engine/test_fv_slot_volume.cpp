@@ -1,6 +1,6 @@
 /**
- * @file test_fv_slot_volume.cpp
- * @brief The FV slot-storage diagnostic: links.slot_volume must equal the
+ * @file      test_fv_slot_volume.cpp
+ * @brief     The FV slot-storage diagnostic: links.slot_volume must equal the
  *        closure's own slot content when a conduit is pressurized, read 0
  *        below the crown and under the dynamic-wave router, and surface in
  *        the report as the "Final Slot Storage" continuity line.
@@ -12,10 +12,14 @@
  * recomputed here from first principles (g*A_full/c^2, 5%-of-Wmax cap),
  * so a wrong crown reference in the accumulation (e.g. a_full instead of
  * a_crown) shifts the magnitude and the gate bites.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #ifdef _MSC_VER
-#  define _USE_MATH_DEFINES
+#define _USE_MATH_DEFINES
 #endif
 #include <gtest/gtest.h>
 
@@ -35,16 +39,49 @@ namespace {
 
 const char* kOutDir = "fv_slot_volume_out";
 
+/**
+ * @brief Create the fixture output directory and form one artifact filename.
+ *
+ * Creates missing output-root directories and propagates filesystem errors. Does not
+ * create/truncate the artifact, sanitize name or create arbitrary nested parents; no
+ * current-directory change occurs.
+ *
+ * @param[in] name Raw filename/path appended below kOutDir; caller chooses a safe fixture
+ *     destination.
+ * @return Owned native path string.
+ */
 std::string outPath(const std::string& name) {
     fs::create_directories(kOutDir);
     return (fs::path(kOutDir) / name).string();
 }
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Open failure is not
+ * reported by this helper. Subsequent write/close failures are not checked; the local stream closes
+ * at scope exit and no path/content storage is retained. Allocation exceptions can propagate.
+ *
+ * @param[in] path Borrowed destination path; an existing file is truncated/overwritten.
+ * @param[in] text Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void writeFile(const std::string& path, const std::string& text) {
     std::ofstream f(path);
     f << text;
 }
 
+/**
+ * @brief Collect an entire fixture file into owned text.
+ *
+ * Uses ordinary text mode and its platform newline rules. The local stream closes on return; no
+ * model state is touched and no borrowed buffer is returned. Default stream exception settings
+ * apply; allocation exceptions may propagate.
+ *
+ * @param[in] path Borrowed input filename used for this synchronous open/read.
+ * @return Owned string collected from the stream; empty can mean an empty file or failure to open.
+ *     Partial read failures have no separate status.
+ */
 std::string readFile(const std::string& path) {
     std::ifstream f(path);
     std::stringstream ss;
@@ -56,11 +93,23 @@ std::string readFile(const std::string& path) {
 // pressurized variant pins the outfall stage 12 ft above the crown so the
 // whole barrel sits in the slot at steady state; the free variant trickles
 // 1 cfs to a free outfall and never nears the crown.
+/**
+ * @brief Build the free-surface or pressurized slot-volume fixture.
+ *
+ * No validation, filesystem operation or solver initialization; raw routing token is unescaped.
+ *
+ * @param[in] routing Raw FLOW_ROUTING keyword.
+ * @param[in] pressurized True fixes outfall head at 115 ft and inflow 20 cfs; false uses free
+ *     outfall and 1 cfs.
+ * @return Owned one-hour CFS deck with one 300 ft, 3 ft circular pipe and 100 ft/s slot celerity.
+ */
 std::string deck(const std::string& routing, bool pressurized) {
     std::ostringstream s;
     s << "[OPTIONS]\n"
          "FLOW_UNITS           CFS\n"
-         "FLOW_ROUTING         " << routing << "\n"
+         "FLOW_ROUTING         "
+      << routing
+      << "\n"
          "START_DATE           01/01/2026\n"
          "START_TIME           00:00:00\n"
          "END_DATE             01/01/2026\n"
@@ -91,7 +140,9 @@ std::string deck(const std::string& routing, bool pressurized) {
          "\n"
          "[INFLOWS]\n"
          ";;Node Constituent TimeSeries Type Mfactor Sfactor Baseline\n"
-         "J0     FLOW \"\" FLOW 1.0 1.0 " << (pressurized ? 20.0 : 1.0) << "\n"
+         "J0     FLOW \"\" FLOW 1.0 1.0 "
+      << (pressurized ? 20.0 : 1.0)
+      << "\n"
          "\n"
          "[REPORT]\n"
          "CONTINUITY YES\n";
@@ -99,28 +150,40 @@ std::string deck(const std::string& routing, bool pressurized) {
 }
 
 struct RunResult {
-    double depth       = -1.0;   // published link depth (CLAMPED to y_full, R0b)
-    double j0_depth    = -1.0;   // upstream node depth (piezometric head - invert)
-    double volume      = -1.0;
+    double depth = -1.0;    // published link depth (CLAMPED to y_full, R0b)
+    double j0_depth = -1.0; // upstream node depth (piezometric head - invert)
+    double volume = -1.0;
     double slot_volume = -1.0;
     std::string rpt;
 };
 
+/**
+ * @brief Run the slot-volume fixture and collect final storage/report diagnostics.
+ *
+ * Owns/closes/destroys engine on normal return. Setup and step errors record nonfatal expectations
+ * without short-circuiting; a failure leaving positive elapsed can loop indefinitely.
+ * Getter/end/report/close/read errors are not independently returned; no iteration cap or validity
+ * flag.
+ *
+ * @param[in] base Safe retained outPath artifact basename.
+ * @param[in] text Complete input passed to writeFile.
+ * @return Owned pipe/node depths feet, pipe/slot volume ft3 and report text, possibly
+ *     partial/default after nonfatal failure.
+ */
 RunResult run(const std::string& base, const std::string& text) {
     const std::string inp = outPath(base + ".inp");
     const std::string rpt = outPath(base + ".rpt");
     writeFile(inp, text);
     RunResult r;
     SWMM_Engine e = swmm_engine_create();
-    EXPECT_EQ(swmm_engine_open(e, inp.c_str(), rpt.c_str(),
-                               outPath(base + ".out").c_str(), nullptr), 0)
+    EXPECT_EQ(
+        swmm_engine_open(e, inp.c_str(), rpt.c_str(), outPath(base + ".out").c_str(), nullptr), 0)
         << swmm_get_last_error_msg(e);
     EXPECT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
     EXPECT_EQ(swmm_engine_start(e, 0), 0) << swmm_get_last_error_msg(e);
     double elapsed = 0.0;
     do {
-        EXPECT_EQ(swmm_engine_step(e, &elapsed), 0)
-            << swmm_get_last_error_msg(e);
+        EXPECT_EQ(swmm_engine_step(e, &elapsed), 0) << swmm_get_last_error_msg(e);
     } while (elapsed > 0.0);
     const int c1 = swmm_link_index(e, "C1");
     EXPECT_GE(c1, 0);
@@ -130,24 +193,25 @@ RunResult run(const std::string& base, const std::string& text) {
         EXPECT_EQ(swmm_link_get_slot_volume(e, c1, &r.slot_volume), 0);
     }
     const int j0 = swmm_node_index(e, "J0");
-    if (j0 >= 0) EXPECT_EQ(swmm_node_get_depth(e, j0, &r.j0_depth), 0);
+    if (j0 >= 0)
+        EXPECT_EQ(swmm_node_get_depth(e, j0, &r.j0_depth), 0);
     swmm_engine_end(e);
-    swmm_engine_report(e);   // writes the summary sections (incl. continuity)
+    swmm_engine_report(e); // writes the summary sections (incl. continuity)
     swmm_engine_close(e);
     swmm_engine_destroy(e);
     r.rpt = readFile(rpt);
     return r;
 }
 
-}  // namespace
+} // namespace
 
 TEST(FvSlotVolume, pressurizedSlotVolumeMatchesTheClosure) {
     const RunResult r = run("pressurized_fv", deck("FV", true));
 
     // R0b: the PUBLISHED link depth is truncated to the pipe's true max
     // height even though the barrel is pressurized well past it.
-    ASSERT_GT(r.slot_volume, 0.0);            // pressurized for certain...
-    EXPECT_DOUBLE_EQ(r.depth, 3.0);           // ...and reported at the crown
+    ASSERT_GT(r.slot_volume, 0.0);  // pressurized for certain...
+    EXPECT_DOUBLE_EQ(r.depth, 3.0); // ...and reported at the crown
 
     // The piezometric identity now reads through the NODE heads: at steady
     // state on a flat pipe the HGL is linear, A(h) is affine above the
@@ -159,8 +223,8 @@ TEST(FvSlotVolume, pressurizedSlotVolumeMatchesTheClosure) {
     ASSERT_GT(r.j0_depth, 3.0);
     const double mean_piezo = 0.5 * (r.j0_depth + 15.0);
     const double a_full = M_PI * 1.5 * 1.5;
-    const double t_req  = 32.2 * a_full / (100.0 * 100.0);  // g*A_full/c^2
-    const double t_slot = std::min(t_req, 0.05 * 3.0);      // 5%-of-Wmax cap
+    const double t_req = 32.2 * a_full / (100.0 * 100.0); // g*A_full/c^2
+    const double t_slot = std::min(t_req, 0.05 * 3.0);    // 5%-of-Wmax cap
     const double expected = t_slot * (mean_piezo - 3.0) * 300.0;
     EXPECT_NEAR(r.slot_volume, expected, 0.02 * expected);
 
@@ -174,7 +238,7 @@ TEST(FvSlotVolume, pressurizedSlotVolumeMatchesTheClosure) {
 TEST(FvSlotVolume, belowCrownReadsZeroAndReportStaysSilent) {
     const RunResult r = run("free_fv", deck("FV", false));
     ASSERT_GE(r.depth, 0.0);
-    EXPECT_LT(r.depth, 2.9);                       // never near the crown band
+    EXPECT_LT(r.depth, 2.9); // never near the crown band
     EXPECT_EQ(r.slot_volume, 0.0);
     EXPECT_EQ(r.rpt.find("Final Slot Storage"), std::string::npos);
 }
@@ -197,8 +261,8 @@ TEST(FvSlotVolume, shareStatisticsAndReportBlock) {
     const std::string rpt = outPath(base + ".rpt");
     writeFile(inp, deck("FV", true));
     SWMM_Engine e = swmm_engine_create();
-    ASSERT_EQ(swmm_engine_open(e, inp.c_str(), rpt.c_str(),
-                               outPath(base + ".out").c_str(), nullptr), 0);
+    ASSERT_EQ(
+        swmm_engine_open(e, inp.c_str(), rpt.c_str(), outPath(base + ".out").c_str(), nullptr), 0);
     ASSERT_EQ(swmm_engine_initialize(e), 0);
     ASSERT_EQ(swmm_engine_start(e, 0), 0);
     double elapsed = 0.0;
@@ -217,7 +281,7 @@ TEST(FvSlotVolume, shareStatisticsAndReportBlock) {
     swmm_engine_close(e);
     swmm_engine_destroy(e);
 
-    const double inst_share = slot / vol;            // final instantaneous
+    const double inst_share = slot / vol; // final instantaneous
     ASSERT_GT(inst_share, 0.0);
     EXPECT_GT(run_share, 0.0);
     EXPECT_LE(run_share, peak_share + 1.0e-12);

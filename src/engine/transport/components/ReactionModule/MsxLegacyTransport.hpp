@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file MsxLegacyTransport.hpp
- * @brief Phase R4b (transport half) — MSX species advect under LEGACY.
+ * @file      MsxLegacyTransport.hpp
+ * @brief     Phase R4b (transport half) — MSX species advect under LEGACY.
  *
  * @details R4 gave MSX species per-element STATE and per-element REACTION
  *          under the LEGACY dispatch, but nothing moved that state between
@@ -56,9 +56,9 @@
  * @see plans/transport/MULTISPECIES_REACTIONS_MSX_PLAN.md (R4b)
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_MSX_LEGACY_TRANSPORT_HPP
@@ -85,9 +85,8 @@ void drainMsxCouplingQueue(SimulationContext& ctx, double dt);
 /// (ft³/s, > 0) for `dt` into the routing ledger's outflow or flooding row,
 /// at the node's published concentration. No-op until the LEGACY ledger is
 /// armed. Called from the same classification that books pollutants.
-void bookMsxSystemOutflow(SimulationContext& ctx, int node, double q,
-                          bool flooding, double dt);
+void bookMsxSystemOutflow(SimulationContext& ctx, int node, double q, bool flooding, double dt);
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_MSX_LEGACY_TRANSPORT_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_MSX_LEGACY_TRANSPORT_HPP

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_2d_coupling_ponds.cpp
- * @brief Coupled-junction ponds under dynamic wave (COUPLING_POND_MODE,
+ * @file      test_2d_coupling_ponds.cpp
+ * @brief     Coupled-junction ponds under dynamic wave (COUPLING_POND_MODE,
  *        COUPLING_RIM_BAND) and the head-equalisation cap (COUPLING_EQUALIZE):
  *        conservation in every mode, TRACKING moving the pond area between
  *        the chamber and the wet footprint, and fewer drain/spill reversals
@@ -29,6 +29,10 @@
  *          land in ./coupling_ponds_out/ for review.
  *
  * @ingroup engine_2d
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -59,6 +63,17 @@ const fs::path kOut = "coupling_ponds_out";
 // 10 × 10 m patch of kN × kN squares (two triangles each), J1 at the centre
 // vertex: kN = 10 is the fine 1 m mesh, kN = 2 a coarse one whose wet
 // footprint (6 × 12.5 m² / 3 = 25 m²) dwarfs the 1.13 m² manhole.
+/**
+ * @brief Build the SI two-pulse coupled-pond fixture.
+ *
+ * Input pulses peak at 0.09 m3/s; odd kN selects the integer-floor central vertex. No validation,
+ * file writing or solver call.
+ *
+ * @param[in] opts2d Raw additional 2D_OPTIONS lines.
+ * @param[in] kN Positive square subdivision count with index products fitting int, default ten.
+ * @return Owned forty-minute CMS deck with 10 m square pan at 1 m bed, 2*kN^2 triangles and
+ *     central-grid vertex mapped to J1.
+ */
 std::string deck(const std::string& opts2d, int kN = 10) {
     const double h = 10.0 / kN;
     std::ostringstream m;
@@ -71,10 +86,13 @@ std::string deck(const std::string& opts2d, int kN = 10) {
          "[TIMESERIES]\n"
          "IN_TS 0:00 0.0\nIN_TS 0:02 0.09\nIN_TS 0:08 0.09\nIN_TS 0:09 0.0\n"
          "IN_TS 0:14 0.0\nIN_TS 0:15 0.09\nIN_TS 0:20 0.09\nIN_TS 0:21 0.0\nIN_TS 0:40 0.0\n\n"
-         "[2D_OPTIONS]\nMAX_TIMESTEP 1\nDRY_DEPTH 0.002\nREPORT_2D NO\n" << opts2d << "\n"
+         "[2D_OPTIONS]\nMAX_TIMESTEP 1\nDRY_DEPTH 0.002\nREPORT_2D NO\n"
+      << opts2d
+      << "\n"
          "[2D_VERTICES]\n";
     for (int j = 0; j <= kN; ++j)
-        for (int i = 0; i <= kN; ++i) m << i * h << " " << j * h << " 1.0\n";
+        for (int i = 0; i <= kN; ++i)
+            m << i * h << " " << j * h << " 1.0\n";
     m << "\n[2D_TRIANGLES]\n";
     auto v = [kN](int i, int j) { return j * (kN + 1) + i; };
     for (int j = 0; j < kN; ++j)
@@ -88,22 +106,39 @@ std::string deck(const std::string& opts2d, int kN = 10) {
 
 struct PondRun {
     bool ok = false;
-    int reversals = 0;            ///< sign changes of J1's coupling inflow
-    double peak_depth = 0.0;      ///< J1, m
-    double max_pond_area = 0.0;   ///< J1 coupled pond area A_eq, m² (pond modes)
+    int reversals = 0;          ///< sign changes of J1's coupling inflow
+    double peak_depth = 0.0;    ///< J1, m
+    double max_pond_area = 0.0; ///< J1 coupled pond area A_eq, m² (pond modes)
     double first_pond_area = 0.0;
     double spilled = 0.0, drained = 0.0, cont_2d = 0.0, cont_routing = 0.0;
     std::string backend;
 };
 
+/**
+ * @brief Run the coupled-pond deck and record pond areas, reversals and ledger closure.
+ *
+ * ok=false only for lifecycle setup refusal; step error can still be ok. Requires valid J1 indexing
+ * for internal arrays, steps without a cap and counts nonzero coupling-flow sign changes beyond
+ * 1e-6 native ft3/s. Owns/destroys engine, writes summary CSV and ignores
+ * getter/end/report/close/stream statuses; artifacts remain.
+ *
+ * @param[in] tag Safe retained kOut basename.
+ * @param[in] opts2d Raw options passed to deck.
+ * @param[in] kN Positive subdivision count passed to deck.
+ * @return Owned peak node depth meters, pond areas m2, exchange volumes m3, continuity fractions,
+ *     backend and reversal count.
+ */
 PondRun run(const std::string& tag, const std::string& opts2d, int kN = 10) {
     PondRun r;
     fs::create_directories(kOut);
     const fs::path inp = kOut / (tag + ".inp");
-    { std::ofstream f(inp); f << deck(opts2d, kN); }
+    {
+        std::ofstream f(inp);
+        f << deck(opts2d, kN);
+    }
     SWMM_Engine e = swmm_engine_create();
-    if (swmm_engine_open(e, inp.string().c_str(), (kOut / (tag + ".rpt")).string().c_str(),
-                         "", nullptr) != SWMM_OK ||
+    if (swmm_engine_open(e, inp.string().c_str(), (kOut / (tag + ".rpt")).string().c_str(), "",
+                         nullptr) != SWMM_OK ||
         swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 0) != SWMM_OK) {
         swmm_engine_destroy(e);
         return r;
@@ -111,29 +146,32 @@ PondRun run(const std::string& tag, const std::string& opts2d, int kN = 10) {
     const auto& ctx = static_cast<openswmm::SWMMEngine*>(e)->context();
     const int j1 = swmm_node_index(e, "J1");
     SWMM_2DRunStats stats{};
-    if (swmm_2d_get_run_stats(e, &stats) == SWMM_OK) r.backend = stats.backend;
+    if (swmm_2d_get_run_stats(e, &stats) == SWMM_OK)
+        r.backend = stats.backend;
     constexpr double kFt2ToM2 = 0.3048 * 0.3048;
     if (static_cast<std::size_t>(j1) < ctx.coupled_pond_area.size())
         r.first_pond_area = ctx.coupled_pond_area[j1] * kFt2ToM2;
     double elapsed = 0.0;
     int last_sign = 0;
     for (;;) {
-        if (swmm_engine_step(e, &elapsed) != SWMM_OK || elapsed <= 0.0) break;
+        if (swmm_engine_step(e, &elapsed) != SWMM_OK || elapsed <= 0.0)
+            break;
         double depth = 0.0;
         swmm_node_get_depth(e, j1, &depth);
         r.peak_depth = std::max(r.peak_depth, depth);
         const double q = ctx.nodes.coupling_inflow[static_cast<std::size_t>(j1)];
         const int sign = q > 1e-6 ? 1 : (q < -1e-6 ? -1 : 0);
         if (sign != 0) {
-            if (last_sign != 0 && sign != last_sign) ++r.reversals;
+            if (last_sign != 0 && sign != last_sign)
+                ++r.reversals;
             last_sign = sign;
         }
         if (static_cast<std::size_t>(j1) < ctx.coupled_pond_area.size())
             r.max_pond_area = std::max(r.max_pond_area, ctx.coupled_pond_area[j1] * kFt2ToM2);
     }
     swmm_engine_end(e);
-    swmm_2d_get_mass_balance(e, nullptr, nullptr, nullptr, &r.spilled, &r.drained,
-                             nullptr, nullptr, nullptr, nullptr, nullptr);
+    swmm_2d_get_mass_balance(e, nullptr, nullptr, nullptr, &r.spilled, &r.drained, nullptr, nullptr,
+                             nullptr, nullptr, nullptr);
     swmm_2d_get_continuity_error(e, &r.cont_2d);
     swmm_get_routing_continuity_error(e, &r.cont_routing);
     swmm_engine_report(e);
@@ -158,12 +196,14 @@ TEST(CouplingPonds, EveryModeConserves) {
     ASSERT_GT(legacy.spilled, 1.0) << "fixture never spilled";
     for (const char* mode : {"FOOTPRINT\nCOUPLING_RIM_BAND 0.05", "CHAMBER", "TRACKING"}) {
         const std::string tag = std::string("mode_") + (mode[0] == 'F' ? "footprint_band" : mode);
-        const PondRun r = run(tag, std::string("COUPLING_LAW WEIR_ORIFICE\nCOUPLING_POND_MODE ") + mode + "\n");
+        const PondRun r =
+            run(tag, std::string("COUPLING_LAW WEIR_ORIFICE\nCOUPLING_POND_MODE ") + mode + "\n");
         ASSERT_TRUE(r.ok) << tag;
         EXPECT_GT(r.spilled, 1.0) << tag;
         EXPECT_GT(r.drained, 0.5 * r.spilled) << tag << ": the patch was not recaptured";
         EXPECT_LT(std::fabs(r.cont_2d), 0.005) << tag;
-        EXPECT_LT(std::fabs(r.cont_routing), std::max(0.02, 1.5 * std::fabs(legacy.cont_routing))) << tag;
+        EXPECT_LT(std::fabs(r.cont_routing), std::max(0.02, 1.5 * std::fabs(legacy.cont_routing)))
+            << tag;
     }
 }
 
@@ -173,17 +213,21 @@ TEST(CouplingPonds, EveryModeConserves) {
 // (1 m²) is below the chamber, so TRACKING holds at its floor there.
 TEST(CouplingPonds, TrackingPondFollowsTheWetFootprintAboveTheChamber) {
     const double chamber_m2 = 3.14159265358979 * 1.44 / 4.0;
-    const PondRun r = run("tracking_coarse", "COUPLING_LAW WEIR_ORIFICE\nCOUPLING_POND_MODE TRACKING\n"
-                                             "COUPLING_POND_RELAX 10\n", 2);
+    const PondRun r = run("tracking_coarse",
+                          "COUPLING_LAW WEIR_ORIFICE\nCOUPLING_POND_MODE TRACKING\n"
+                          "COUPLING_POND_RELAX 10\n",
+                          2);
     ASSERT_TRUE(r.ok);
     EXPECT_NEAR(r.first_pond_area, chamber_m2, 1e-9) << "starts at the chamber";
     EXPECT_GT(r.max_pond_area, 0.5 * 25.0) << "never followed the wet footprint";
     EXPECT_LE(r.max_pond_area, 25.0 + 1e-9);
     EXPECT_LT(std::fabs(r.cont_2d), 0.005);
-    const PondRun chamber = run("chamber_coarse", "COUPLING_LAW WEIR_ORIFICE\nCOUPLING_POND_MODE CHAMBER\n", 2);
+    const PondRun chamber =
+        run("chamber_coarse", "COUPLING_LAW WEIR_ORIFICE\nCOUPLING_POND_MODE CHAMBER\n", 2);
     ASSERT_TRUE(chamber.ok);
     EXPECT_EQ(chamber.max_pond_area, chamber.first_pond_area) << "CHAMBER is fixed";
-    const PondRun fine = run("tracking_fine", "COUPLING_LAW WEIR_ORIFICE\nCOUPLING_POND_MODE TRACKING\n");
+    const PondRun fine =
+        run("tracking_fine", "COUPLING_LAW WEIR_ORIFICE\nCOUPLING_POND_MODE TRACKING\n");
     ASSERT_TRUE(fine.ok);
     EXPECT_NEAR(fine.max_pond_area, chamber_m2, 1e-9) << "floored at the chamber";
 }
@@ -194,17 +238,21 @@ TEST(CouplingPonds, TrackingPondFollowsTheWetFootprintAboveTheChamber) {
 TEST(CouplingPonds, EqualisationReducesDrainSpillReversals) {
     const PondRun legacy = run("churn_legacy", "");
     const PondRun law = run("churn_weir_only", "COUPLING_LAW WEIR_ORIFICE\nCOUPLING_EQUALIZE NO\n");
-    const PondRun fine = run("churn_weir_tracking_equalize",
-                             "COUPLING_LAW WEIR_ORIFICE\nCOUPLING_POND_MODE TRACKING\nCOUPLING_EQUALIZE YES\n");
+    const PondRun fine =
+        run("churn_weir_tracking_equalize",
+            "COUPLING_LAW WEIR_ORIFICE\nCOUPLING_POND_MODE TRACKING\nCOUPLING_EQUALIZE YES\n");
     // Attribution: each half on its own (recorded, not gated).
-    const PondRun pond_only = run("churn_weir_tracking", "COUPLING_LAW WEIR_ORIFICE\n"
-                                  "COUPLING_POND_MODE TRACKING\nCOUPLING_EQUALIZE NO\n");
-    const PondRun cap_only = run("churn_weir_equalize", "COUPLING_LAW WEIR_ORIFICE\nCOUPLING_EQUALIZE YES\n");
+    const PondRun pond_only =
+        run("churn_weir_tracking", "COUPLING_LAW WEIR_ORIFICE\n"
+                                   "COUPLING_POND_MODE TRACKING\nCOUPLING_EQUALIZE NO\n");
+    const PondRun cap_only =
+        run("churn_weir_equalize", "COUPLING_LAW WEIR_ORIFICE\nCOUPLING_EQUALIZE YES\n");
     const PondRun legacy_cap = run("churn_orifice_equalize", "COUPLING_EQUALIZE YES\n");
     ASSERT_TRUE(legacy.ok && law.ok && fine.ok && pond_only.ok && cap_only.ok && legacy_cap.ok);
     std::printf("reversals: legacy %d, legacy+EQUALIZE %d, WEIR_ORIFICE alone %d, +TRACKING %d, "
-                "+EQUALIZE %d, +TRACKING+EQUALIZE %d\n", legacy.reversals, legacy_cap.reversals,
-                law.reversals, pond_only.reversals, cap_only.reversals, fine.reversals);
+                "+EQUALIZE %d, +TRACKING+EQUALIZE %d\n",
+                legacy.reversals, legacy_cap.reversals, law.reversals, pond_only.reversals,
+                cap_only.reversals, fine.reversals);
     EXPECT_LT(fine.reversals, legacy.reversals / 10) << "the fine-mesh churn did not settle";
     EXPECT_LE(fine.reversals, law.reversals);
 }
@@ -214,7 +262,8 @@ TEST(CouplingPonds, EqualisationReducesDrainSpillReversals) {
 // CPU marcher. Skipped where the plugin is not built or not found (set
 // OPENSWMM_GPU_PLUGIN_PATH to the plugin directory).
 TEST(CouplingPonds, KokkosCapMatchesCpu) {
-    const std::string opts = "COUPLING_LAW WEIR_ORIFICE\nCOUPLING_POND_MODE TRACKING\nCOUPLING_EQUALIZE YES\n";
+    const std::string opts =
+        "COUPLING_LAW WEIR_ORIFICE\nCOUPLING_POND_MODE TRACKING\nCOUPLING_EQUALIZE YES\n";
     plattest::setEnvVar("OPENSWMM_2D_BACKEND", "cpu");
     const PondRun cpu = run("backend_cpu", opts);
     plattest::setEnvVar("OPENSWMM_2D_BACKEND", "omp");

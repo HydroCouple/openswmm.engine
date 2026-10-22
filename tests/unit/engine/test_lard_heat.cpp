@@ -13,8 +13,8 @@
 // limitations under the License.
 
 /**
- * @file test_lard_heat.cpp
- * @brief H7b gates — temperature through the LARD segment store.
+ * @file      test_lard_heat.cpp
+ * @brief     H7b gates — temperature through the LARD segment store.
  *
  * @details Temperature rides the segments as the SECOND reserved species
  *          row (SpeciesRowLayout::temp_row, after age — H7a made the
@@ -41,9 +41,9 @@
  *
  * @see plans/transport/FINALIZATION_SEQUENCE_2026-08-29.md step 2
  * @see plans/transport/H7A_LARD_ROW_LAYOUT_HANDOFF_2026-08-29.md
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -60,26 +60,45 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
-constexpr double kQ     = 5.0;   ///< steady inflow, cfs
-constexpr double kTin   = 30.0;  ///< EXTERNAL_INFLOW temperature, degC
-constexpr double kTinit = 10.0;  ///< INITIAL_STATE temperature, degC
-constexpr int    kC5    = 4;     ///< last conduit of the chain
-constexpr int    kC3    = 2;     ///< mid-chain conduit
-constexpr double kCin   = 100.0; ///< TSS inflow concentration, mg/L
+constexpr double kQ = 5.0;      ///< steady inflow, cfs
+constexpr double kTin = 30.0;   ///< EXTERNAL_INFLOW temperature, degC
+constexpr double kTinit = 10.0; ///< INITIAL_STATE temperature, degC
+constexpr int kC5 = 4;          ///< last conduit of the chain
+constexpr int kC3 = 2;          ///< mid-chain conduit
+constexpr double kCin = 100.0;  ///< TSS inflow concentration, mg/L
 
 struct DeckSpec {
-    const char* solver = "LAGRANGIAN";  ///< "" = omit (LEGACY default)
-    bool rwpt = false;                  ///< DISPERSION RWPT + fixed seed
-    int  inflow_stop_h = 0;             ///< 0 = steady for the whole run
-    bool bone_dry = false;              ///< no inflow, no initial depth
-    bool pollutant_decay = false;       ///< [POLLUTANTS] TSS, k = 1e-3 1/s
-    int  end_h = 4;
+    const char* solver = "LAGRANGIAN"; ///< "" = omit (LEGACY default)
+    bool rwpt = false;                 ///< DISPERSION RWPT + fixed seed
+    int inflow_stop_h = 0;             ///< 0 = steady for the whole run
+    bool bone_dry = false;             ///< no inflow, no initial depth
+    bool pollutant_decay = false;      ///< [POLLUTANTS] TSS, k = 1e-3 1/s
+    int end_h = 4;
 };
 
+/**
+ * @brief Write held heat sources with both surface flux families disabled.
+ *
+ * Authors rainfall/initial temperature kTinit C and external-inflow temperature kTin C. Stream
+ * statuses are unchecked; no file parsing or heat-state initialization.
+ *
+ * @param[in] path Non-null destination; existing content is truncated and parent must exist.
+ */
 void write_heat_cfg(const char* path) {
     std::ofstream f(path);
     f << "[HEAT_SOURCES]\n"
@@ -89,17 +108,34 @@ void write_heat_cfg(const char* path) {
       << "[HEAT_FLUXES]\nSURFACE_EXCHANGE OFF\nRADIATIVE_EXCHANGE OFF\n";
 }
 
-void write_deck(const std::string& path, const DeckSpec& s,
-                const char* hs_file) {
+/**
+ * @brief Write the five-conduit Lagrangian heat/decay fixture.
+ *
+ * Always enables heat and references _lh.heat. Bone-dry mode has no inflow; stopping inflow creates
+ * an hourly series; otherwise fixed kQ and optional kCin are emitted. Pollutant decay 86.4/day
+ * represents 1e-3/s. Opens/truncates the deck using a local ofstream; parent directories must
+ * exist. Stream open/write/close outcomes are not checked, and sidecar names/text are not escaped.
+ * Caller-owned inputs are not retained.
+ *
+ * @param[in] path Destination deck filename, non-null when a character pointer; borrowed only
+ *     during this call. Existing files are truncated.
+ * @param[in] s Borrowed spec selecting optional solver keyword, RWPT seed-42 mode, end hours,
+ *     bone-dry start, inflow-stop hours and optional pollutant decay.
+ * @param[in] hs_file Compatibility hotstart filename argument, deliberately ignored; the caller
+ *     applies restarts through the hotstart API.
+ */
+void write_deck(const std::string& path, const DeckSpec& s, const char* hs_file) {
     std::ofstream f(path);
     f << "[TITLE]\nLARD H7b heat deck\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT ON\n";
-    if (s.solver[0] != '\0') f << "QUALITY_SOLVER " << s.solver << "\n";
-    if (s.rwpt) f << "DISPERSION RWPT\nRWPT_SEED 42\n";
+    if (s.solver[0] != '\0')
+        f << "QUALITY_SOLVER " << s.solver << "\n";
+    if (s.rwpt)
+        f << "DISPERSION RWPT\nRWPT_SEED 42\n";
     f << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
       << "END_DATE 01/01/2026\nEND_TIME 0" << s.end_h << ":00:00\n"
       << "ROUTING_STEP 5\nREPORT_STEP 00:05:00\n\n";
-    (void)hs_file;  // the restart applies via the hotstart API instead
+    (void)hs_file; // the restart applies via the hotstart API instead
     const char* y0 = s.bone_dry ? "0" : "1.5";
     f << "[JUNCTIONS]\n"
       << "J0 10.0 10 " << y0 << " 0 0\nJ1 9.4  10 " << y0 << " 0 0\n"
@@ -115,7 +151,7 @@ void write_deck(const std::string& path, const DeckSpec& s,
       << "C3 CIRCULAR 2.0 0 0 0\nC4 CIRCULAR 2.0 0 0 0\n"
       << "C5 CIRCULAR 2.0 0 0 0\n\n";
     if (s.pollutant_decay)
-        f << "[POLLUTANTS]\nTSS MG/L 0 0 0 86.4 NO * 0 0 0\n\n";  // 1e-3 1/s in the 1/day column (KD1)
+        f << "[POLLUTANTS]\nTSS MG/L 0 0 0 86.4 NO * 0 0 0\n\n"; // 1e-3 1/s in the 1/day column (KD1)
     if (s.bone_dry) {
         // no [INFLOWS] at all — the network never wets
     } else if (s.inflow_stop_h > 0) {
@@ -137,32 +173,48 @@ void write_deck(const std::string& path, const DeckSpec& s,
 
 struct HeatRun {
     bool ok = false;
-    double tss_c5_final = -1.0;               ///< outfall-link TSS, mg/L
-    std::vector<double> link_temp_final;      ///< [link] degC at end
-    std::vector<double> c3_trace;             ///< mid-chain temp per step
+    double tss_c5_final = -1.0;          ///< outfall-link TSS, mg/L
+    std::vector<double> link_temp_final; ///< [link] degC at end
+    std::vector<double> c3_trace;        ///< mid-chain temp per step
     std::vector<std::string> warnings;
 };
 
-HeatRun run_deck(const std::string& tag, const DeckSpec& s,
-                 const char* save_hs = nullptr,
+/**
+ * @brief Run a LARD heat fixture with optional restart/save and collect temperature state.
+ *
+ * Overwrites shared _lh.heat, so calls require serialized artifact access. Owns/destroys engine and
+ * opened hotstart reader; caps at 40000 positive-time calls, with guard exhaustion potentially
+ * still ok. Ignores end status; missing C3 heat state skips samples. Fatal run refusal records
+ * ADD_FAILURE; partial traces can remain.
+ *
+ * @param[in] tag Safe cwd artifact prefix for overwritten .inp/.rpt/.out.
+ * @param[in] s Deck specification copied before writing.
+ * @param[in] save_hs Optional hotstart destination written after end.
+ * @param[in] use_hs Optional existing hotstart applied between initialize and start.
+ * @return Owned temperature trajectories/final arrays C, first-pollutant C5 concentration and
+ *     warnings; ok reflects setup/step/save success.
+ */
+HeatRun run_deck(const std::string& tag, const DeckSpec& s, const char* save_hs = nullptr,
                  const char* use_hs = nullptr) {
     HeatRun out;
     write_heat_cfg("_lh.heat");
     DeckSpec spec = s;
     write_deck(tag + ".inp", spec, "");
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) { ADD_FAILURE() << "create"; return out; }
-    bool ok = swmm_engine_open(e, (tag + ".inp").c_str(),
-                               (tag + ".rpt").c_str(),
+    if (e == nullptr) {
+        ADD_FAILURE() << "create";
+        return out;
+    }
+    bool ok = swmm_engine_open(e, (tag + ".inp").c_str(), (tag + ".rpt").c_str(),
                                (tag + ".out").c_str(), nullptr) == SWMM_OK &&
               swmm_engine_initialize(e) == SWMM_OK;
     // Restart path: apply the saved state through the hotstart API (the
     // test_water_age convention) between initialize and start.
     if (ok && use_hs != nullptr) {
         SWMM_HotStart hs = nullptr;
-        ok = swmm_hotstart_open(use_hs, &hs) == SWMM_OK &&
-             swmm_hotstart_apply(e, hs) == SWMM_OK;
-        if (hs != nullptr) swmm_hotstart_close(hs);
+        ok = swmm_hotstart_open(use_hs, &hs) == SWMM_OK && swmm_hotstart_apply(e, hs) == SWMM_OK;
+        if (hs != nullptr)
+            swmm_hotstart_close(hs);
     }
     ok = ok && swmm_engine_start(e, 1) == SWMM_OK;
     if (ok) {
@@ -170,31 +222,32 @@ HeatRun run_deck(const std::string& tag, const DeckSpec& s,
         double elapsed = 0.0;
         int guard = 0;
         do {
-            if (swmm_engine_step(e, &elapsed) != SWMM_OK) { ok = false; break; }
-            if (static_cast<std::size_t>(kC3) <
-                ctx.heat_state.link_temp.size())
+            if (swmm_engine_step(e, &elapsed) != SWMM_OK) {
+                ok = false;
+                break;
+            }
+            if (static_cast<std::size_t>(kC3) < ctx.heat_state.link_temp.size())
                 out.c3_trace.push_back(ctx.heat_state.link_temp[kC3]);
         } while (elapsed > 0.0 && ++guard < 40000);
         if (ok) {
             swmm_engine_end(e);
             if (ctx.n_pollutants() > 0)
-                out.tss_c5_final =
-                    ctx.links.conc[static_cast<std::size_t>(kC5) *
-                                   static_cast<std::size_t>(
-                                       ctx.n_pollutants())];
+                out.tss_c5_final = ctx.links.conc[static_cast<std::size_t>(kC5) *
+                                                  static_cast<std::size_t>(ctx.n_pollutants())];
             out.link_temp_final = ctx.heat_state.link_temp;
             out.warnings = ctx.warnings;
             if (save_hs != nullptr)
                 ok = swmm_hotstart_save(e, save_hs) == SWMM_OK;
         }
     }
-    if (!ok) ADD_FAILURE() << "run failed for " << tag;
+    if (!ok)
+        ADD_FAILURE() << "run failed for " << tag;
     swmm_engine_destroy(e);
     out.ok = ok;
     return out;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Gate 1 — cross-engine: the LEGACY mirror is the control. A 30 degC
@@ -219,11 +272,9 @@ TEST(LardHeatTest, TemperatureAdvancesAndMatchesTheLegacyControl) {
            "temperature row is not advancing under LARD";
 
     for (std::size_t l = 0; l < a.link_temp_final.size(); ++l) {
-        EXPECT_NEAR(a.link_temp_final[l], b.link_temp_final[l],
-                    0.01 * kTin)
-            << "link " << l << ": LARD " << a.link_temp_final[l]
-            << " degC vs LEGACY " << b.link_temp_final[l]
-            << " degC — the engines disagree at steady state";
+        EXPECT_NEAR(a.link_temp_final[l], b.link_temp_final[l], 0.01 * kTin)
+            << "link " << l << ": LARD " << a.link_temp_final[l] << " degC vs LEGACY "
+            << b.link_temp_final[l] << " degC — the engines disagree at steady state";
         EXPECT_NEAR(a.link_temp_final[l], kTin, 0.01 * kTin)
             << "link " << l << " did not reach the inflow temperature";
     }
@@ -246,7 +297,7 @@ TEST(LardHeatTest, TemperatureAdvancesAndMatchesTheLegacyControl) {
 // ---------------------------------------------------------------------------
 TEST(LardHeatTest, TemperatureDoesNotDecayWithThePollutant) {
     DeckSpec s;
-    s.pollutant_decay = true;   // TSS with k = 1e-4 1/s
+    s.pollutant_decay = true; // TSS with k = 1e-4 1/s
     const HeatRun r = run_deck("_lh_decay", s);
     ASSERT_TRUE(r.ok);
 
@@ -288,8 +339,8 @@ TEST(LardHeatTest, HotstartReseedsTemperatureFromInitialState) {
     // run's final temperature.
     ASSERT_FALSE(b.c3_trace.empty());
     EXPECT_NEAR(b.c3_trace.front(), kTinit, 1.0)
-        << "the restarted run's first mid-chain temperature is "
-        << b.c3_trace.front() << " degC — either the hotstart began "
+        << "the restarted run's first mid-chain temperature is " << b.c3_trace.front()
+        << " degC — either the hotstart began "
            "persisting temperature (update this gate to assert the "
            "round-trip!) or the INITIAL_STATE re-seed broke";
 }
@@ -315,12 +366,12 @@ TEST(LardHeatTest, RwptDispersionMovesTemperature) {
 
     double max_diff = 0.0;
     for (std::size_t i = 0; i < n; ++i)
-        max_diff = std::max(max_diff,
-                            std::fabs(a.c3_trace[i] - b.c3_trace[i]));
-    EXPECT_GT(max_diff, 0.05)
-        << "RWPT on vs off never separates the mid-chain temperature by "
-           "more than " << max_diff << " degC — the temperature row is "
-           "not participating in dispersion";
+        max_diff = std::max(max_diff, std::fabs(a.c3_trace[i] - b.c3_trace[i]));
+    EXPECT_GT(max_diff, 0.05) << "RWPT on vs off never separates the mid-chain temperature by "
+                                 "more than "
+                              << max_diff
+                              << " degC — the temperature row is "
+                                 "not participating in dispersion";
     // And both settle at the inflow temperature — dispersion conserves.
     EXPECT_NEAR(a.link_temp_final[kC5], b.link_temp_final[kC5], 0.01 * kTin);
 }

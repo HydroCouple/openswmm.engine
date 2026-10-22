@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_water_age_watershed.cpp
- * @brief Phase A3 gates — water age on subcatchment surfaces.
+ * @file      test_water_age_watershed.cpp
+ * @brief     Phase A3 gates — water age on subcatchment surfaces.
  *
  * @details Every gate here has a reachability problem to solve first
  *          (lesson 59): the code under test only runs on a deck that
@@ -32,9 +32,9 @@
  *
  * @see plans/transport/WATER_AGE_TRACKING_PLAN.md §3, §7 A3
  * @see plans/transport/A3_SCOPING_2026-08-17.md
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -53,37 +53,72 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
 constexpr int kNSub = static_cast<int>(openswmm::SubArea::COUNT_);
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Open failure is not
+ * reported by this helper. Subsequent write/close failures are not checked; the local stream closes
+ * at scope exit and no path/content storage is retained. Allocation exceptions can propagate.
+ *
+ * @param[in] path Non-null null-terminated destination path; an existing file is
+ *     truncated/overwritten.
+ * @param[in] body Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const char* path, const std::string& body) {
     std::ofstream f(path);
     f << body;
 }
 
-/// An INTENSITY gage on a 5-minute interval reads one value per interval, so
-/// a series with entries only at 00:00 and 01:00 rains for FIVE MINUTES and
-/// then recedes for fifty-five. That matters more than it looks: the mixing
-/// term is exercised only while water is ARRIVING, so a five-minute storm
-/// leaves every gate watching a draining surface. One entry per interval.
+/**
+ * @brief Build sustained two-inch-per-hour rainfall at every five-minute gage interval.
+ *
+ * The final extra interval covers the one-hour run boundary; a sparse two-endpoint series would
+ * exercise different rainfall sampling.
+ * @return Owned rain_ts rows on 01/01/2026 from 00:00 through 01:05, followed by a blank line.
+ */
 std::string rain_series() {
     std::string s;
     char buf[64];
     for (int m = 0; m <= 65; m += 5) {
-        std::snprintf(buf, sizeof(buf), "rain_ts 01/01/2026 %02d:%02d 2.0\n",
-                      m / 60, m % 60);
+        std::snprintf(buf, sizeof(buf), "rain_ts 01/01/2026 %02d:%02d 2.0\n", m / 60, m % 60);
         s += buf;
     }
     return s + "\n";
 }
 
-/// `cascade` makes S1 drain into S2 (run-on) instead of straight to the node
-/// — the only configuration in which the run-on age path executes at all.
-void write_deck(const char* path, const std::string& pc_lines,
-                bool cascade = false) {
+/**
+ * @brief Write the two-subcatchment runoff/cascade water-age fixture.
+ *
+ * One-hour CFS/Horton model with a fixed rainfall series and WATER_AGE ON. No runon mixing or age
+ * integration is executed here. Uses a local ofstream and requires existing parent directories.
+ * Open/write/close failures are unchecked; owned input strings are not retained and raw
+ * tokens/config paths are not escaped. Optional sidecar files are also overwritten when described.
+ *
+ * @param[in] path Borrowed destination filename; character pointers must be non-null.
+ *     Opens/truncates this file for the generated deck.
+ * @param[in] pc_lines Raw PROCESS_COMPONENTS rows, emitted as a section only when nonempty; copied
+ *     without escaping or validation.
+ * @param[in] cascade True sends S1 runoff into S2; false sends both subcatchments directly to J1.
+ */
+void write_deck(const char* path, const std::string& pc_lines, bool cascade = false) {
     std::ofstream f(path);
     f << "[TITLE]\nA3 watershed age gate deck\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nWATER_AGE ON\n"
@@ -93,11 +128,11 @@ void write_deck(const char* path, const std::string& pc_lines,
       << "WET_STEP 00:01:00\nDRY_STEP 00:05:00\n"
       << "ROUTING_STEP 10\nREPORT_STEP 00:05:00\n\n"
       << "[RAINGAGES]\nRG1 INTENSITY 0:05 1.0 TIMESERIES rain_ts\n\n"
-      << "[TIMESERIES]\n" << rain_series()
+      << "[TIMESERIES]\n"
+      << rain_series()
       // Two subcatchments. S1 drains to S2 when cascading, else to J1.
       << "[SUBCATCHMENTS]\n"
-      << "S1 RG1 " << (cascade ? "S2" : "J1")
-      << " 5 50 500 0.5 0\nS2 RG1 J1 5 50 500 0.5 0\n\n"
+      << "S1 RG1 " << (cascade ? "S2" : "J1") << " 5 50 500 0.5 0\nS2 RG1 J1 5 50 500 0.5 0\n\n"
       << "[SUBAREAS]\n"
       // N-Imperv N-Perv S-Imperv S-Perv PctZero RouteTo
       << "S1 0.01 0.1 0.05 0.10 25 OUTLET\n"
@@ -113,30 +148,51 @@ void write_deck(const char* path, const std::string& pc_lines,
     f << "[REPORT]\nINPUT NO\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n";
 }
 
+/**
+ * @brief Build a global rainfall-age source config.
+ *
+ * @param[in] rain_h Authored rainfall age in hours; converted to native seconds when the component
+ *     loads it.
+ * @return Owned WATER_AGE_SOURCES text with one RAINFALL GLOBAL row; no validation or file IO.
+ */
 std::string age_cfg(double rain_h) {
-    return "[WATER_AGE_SOURCES]\nRAINFALL GLOBAL " +
-           std::to_string(rain_h) + "\n";
+    return "[WATER_AGE_SOURCES]\nRAINFALL GLOBAL " + std::to_string(rain_h) + "\n";
 }
 
+/**
+ * @brief Run a generated fixture and keep its engine for state inspection.
+ *
+ * Steps with saved results until completion, step error or a 20000-step guard, then invokes end
+ * without checking its status. A non-null result does not prove successful complete
+ * stepping/finalization. Does not request a full report; returned context/diagnostics remain owned
+ * by that handle.
+ *
+ * @param[in] inp Non-null input-deck path, borrowed for the synchronous run.
+ * @param[in] rpt Report destination passed through to engine open.
+ * @param[in] out Binary-result destination; start requests saved results.
+ * @return Owned raw engine handle after allocation/open/initialize/start succeed, or null after
+ *     allocation/setup failure; caller must destroy any returned handle.
+ */
 SWMM_Engine run_and_hold(const char* inp, const char* rpt, const char* out) {
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) return nullptr;
+    if (e == nullptr)
+        return nullptr;
     if (swmm_engine_open(e, inp, rpt, out, nullptr) != SWMM_OK ||
-        swmm_engine_initialize(e) != SWMM_OK ||
-        swmm_engine_start(e, 1) != SWMM_OK) {
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
         swmm_engine_destroy(e);
         return nullptr;
     }
     double elapsed = 0.0;
     int guard = 0;
     do {
-        if (swmm_engine_step(e, &elapsed) != SWMM_OK) break;
+        if (swmm_engine_step(e, &elapsed) != SWMM_OK)
+            break;
     } while (elapsed > 0.0 && ++guard < 20000);
     swmm_engine_end(e);
     return e;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Gate 1 — the state exists, is per-SUBAREA, and ages.
@@ -153,8 +209,8 @@ TEST(WaterAgeWatershedTest, SubareaAgeStateIsSizedAndAdvances) {
     ASSERT_EQ(nsc, 2) << "deck did not build two subcatchments";
     // Per-SUBAREA, not per-subcatchment: three rows each (user decision).
     ASSERT_EQ(static_cast<int>(ws.subarea_age.size()), nsc * kNSub)
-        << "subarea_age is sized " << ws.subarea_age.size() << ", expected "
-        << (nsc * kNSub) << " — per-subarea state was not allocated";
+        << "subarea_age is sized " << ws.subarea_age.size() << ", expected " << (nsc * kNSub)
+        << " — per-subarea state was not allocated";
     ASSERT_EQ(static_cast<int>(ws.subcatch_runoff_age.size()), nsc);
 
     // SETUP (lesson 59/36): the deck must actually have produced runoff, or
@@ -164,16 +220,15 @@ TEST(WaterAgeWatershedTest, SubareaAgeStateIsSizedAndAdvances) {
     for (int i = 0; i < nsc; ++i)
         if (sc.stat_runoff_vol[static_cast<std::size_t>(i)] > 0.0)
             any_runoff = true;
-    ASSERT_TRUE(any_runoff)
-        << "no subcatchment produced runoff — the rainfall deck is not "
-           "exercising the code under test";
+    ASSERT_TRUE(any_runoff) << "no subcatchment produced runoff — the rainfall deck is not "
+                               "exercising the code under test";
 
     bool any_aged = false;
     for (double a : ws.subarea_age)
-        if (a > 0.0) any_aged = true;
-    EXPECT_TRUE(any_aged)
-        << "every subarea age is still 0 after an hour of rain — the "
-           "watershed update never ran";
+        if (a > 0.0)
+            any_aged = true;
+    EXPECT_TRUE(any_aged) << "every subarea age is still 0 after an hour of rain — the "
+                             "watershed update never ran";
     swmm_engine_destroy(e);
 }
 
@@ -186,12 +241,14 @@ TEST(WaterAgeWatershedTest, RunonCarriesTheDonorsAge) {
     // "invented locally" produce different numbers (lesson 26).
     constexpr double kRainH = 3.0;
     write_file("_a3c.age", age_cfg(kRainH));
-    write_deck("_a3c.inp", "org.hydrocouple.openswmm.waterage "
-                           "config=\"_a3c.age\"", /*cascade=*/true);
+    write_deck("_a3c.inp",
+               "org.hydrocouple.openswmm.waterage "
+               "config=\"_a3c.age\"",
+               /*cascade=*/true);
     SWMM_Engine e = run_and_hold("_a3c.inp", "_a3c.rpt", "_a3c.out");
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
-    const auto& ws  = ctx.water_age_state;
+    const auto& ws = ctx.water_age_state;
 
     // SETUP: S1 must actually be draining into S2, or the run-on path never
     // executes and this gate proves nothing (lesson 59 — the deck must
@@ -206,11 +263,10 @@ TEST(WaterAgeWatershedTest, RunonCarriesTheDonorsAge) {
     // The receiving subcatchment's runoff must be at least as old as the
     // rain, because it is a mix of rain and water that already aged on S1.
     const double a2_h = ws.subcatch_runoff_age[1] / 3600.0;
-    EXPECT_GT(a2_h, kRainH)
-        << "S2 sheds water at " << a2_h << " h against " << kRainH
-        << " h of rain. Equal to the rainfall age means run-on arrived with "
-           "NO age attached — the defect A3 exists to fix, where the flow "
-           "path adds q_runon and the age path adds nothing.";
+    EXPECT_GT(a2_h, kRainH) << "S2 sheds water at " << a2_h << " h against " << kRainH
+                            << " h of rain. Equal to the rainfall age means run-on arrived with "
+                               "NO age attached — the defect A3 exists to fix, where the flow "
+                               "path adds q_runon and the age path adds nothing.";
 
     // And the NODE must receive that age. Everything above reads the
     // watershed array directly, so it is satisfied whether or not the
@@ -226,7 +282,8 @@ TEST(WaterAgeWatershedTest, RunonCarriesTheDonorsAge) {
     const double j1_h = ws.node_age[0] / 3600.0;
     EXPECT_NEAR(j1_h, a2_h, 0.05)
         << "J1 receives water at " << j1_h << " h while S2 sheds at " << a2_h
-        << " h. A node sitting at the " << kRainH << " h RAINFALL source age "
+        << " h. A node sitting at the " << kRainH
+        << " h RAINFALL source age "
            "means the wet-weather loader is still delivering the age water "
            "arrives from the SKY with, not the age it leaves the surface "
            "with — which every assertion above is blind to, because they all "
@@ -253,11 +310,13 @@ TEST(WaterAgeWatershedTest, RunoffAgeIsVolumeWeightedNotAreaWeighted) {
     for (int k = 0; k < kNSub; ++k) {
         const auto idx = base * kNSub + static_cast<std::size_t>(k);
         const double v = ws.subarea_vol_prev[idx];
-        if (v > 1.0e-12) { num += ws.subarea_age[idx] * v; den += v; }
+        if (v > 1.0e-12) {
+            num += ws.subarea_age[idx] * v;
+            den += v;
+        }
     }
-    ASSERT_GT(den, 0.0)
-        << "no subarea on S1 holds water at the end of the run, so the "
-           "weighting cannot be observed — lengthen the storm";
+    ASSERT_GT(den, 0.0) << "no subarea on S1 holds water at the end of the run, so the "
+                           "weighting cannot be observed — lengthen the storm";
 
     EXPECT_NEAR(ws.subcatch_runoff_age[0], num / den, 1.0e-6)
         << "published runoff age " << ws.subcatch_runoff_age[0]
@@ -291,18 +350,16 @@ TEST(WaterAgeWatershedTest, ResizeKeepsTheWatershedRows) {
     SWMM_Engine e = run_and_hold("_a3r.inp", "_a3r.rpt", "_a3r.out");
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
-    const auto& ws  = ctx.water_age_state;
+    const auto& ws = ctx.water_age_state;
 
     // The run has stepped the loaders (which re-size on mismatch), the
     // legacy mirror and possibly the ARD init. If any of them used the
     // 2-argument form, these arrays are now empty.
-    EXPECT_EQ(static_cast<int>(ws.subarea_age.size()),
-              ctx.n_subcatches() * kNSub)
+    EXPECT_EQ(static_cast<int>(ws.subarea_age.size()), ctx.n_subcatches() * kNSub)
         << "subarea_age is not sized to n_subcatch * 3 at the end of the "
            "run — some path re-sized WaterAgeState without its subcatchment "
            "count";
-    EXPECT_EQ(static_cast<int>(ws.subcatch_runoff_age.size()),
-              ctx.n_subcatches());
+    EXPECT_EQ(static_cast<int>(ws.subcatch_runoff_age.size()), ctx.n_subcatches());
     swmm_engine_destroy(e);
 }
 
@@ -344,7 +401,8 @@ TEST(WaterAgeWatershedTest, ShedAgeIsTheResidenceTimeUnderSteadyRain) {
           << "WET_STEP 00:01:00\nDRY_STEP 00:05:00\n"
           << "ROUTING_STEP 10\nREPORT_STEP 00:05:00\n\n"
           << "[RAINGAGES]\nRG1 INTENSITY 0:05 1.0 TIMESERIES rain_ts\n\n"
-          << "[TIMESERIES]\n" << rain_series()
+          << "[TIMESERIES]\n"
+          << rain_series()
           // PctZero 50, not 100: both impervious subareas get dStore 0, so
           // they are identical thin sheets and V/Q is still the mean
           // residence — but each carries frac 0.5, so a mixing volume that
@@ -364,11 +422,11 @@ TEST(WaterAgeWatershedTest, ShedAgeIsTheResidenceTimeUnderSteadyRain) {
     SWMM_Engine e = run_and_hold("_a3t.inp", "_a3t.rpt", "_a3t.out");
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
-    const auto& ws  = ctx.water_age_state;
+    const auto& ws = ctx.water_age_state;
 
     ASSERT_GE(ctx.n_subcatches(), 1);
-    const double q = ctx.subcatches.runoff[0];              // cfs
-    double v = 0.0;                                        // ft3, all subareas
+    const double q = ctx.subcatches.runoff[0]; // cfs
+    double v = 0.0;                            // ft3, all subareas
     for (int k = 0; k < kNSub; ++k)
         v += ws.subarea_vol_prev[static_cast<std::size_t>(k)];
 
@@ -384,11 +442,13 @@ TEST(WaterAgeWatershedTest, ShedAgeIsTheResidenceTimeUnderSteadyRain) {
     ASSERT_GT(v, 0.0) << "no water stored on the surface at the final step";
 
     const double residence_h = (v / q) / 3600.0;
-    const double reported_h  = ws.subcatch_runoff_age[0] / 3600.0;
+    const double reported_h = ws.subcatch_runoff_age[0] / 3600.0;
     EXPECT_NEAR(reported_h / residence_h, 1.0, 0.05)
-        << "S1 sheds water at " << reported_h << " h against a residence "
-           "time V/Q of " << residence_h << " h (V = " << v << " ft3, Q = "
-        << q << " cfs) — a ratio of " << (reported_h / residence_h)
+        << "S1 sheds water at " << reported_h
+        << " h against a residence "
+           "time V/Q of "
+        << residence_h << " h (V = " << v << " ft3, Q = " << q << " cfs) — a ratio of "
+        << (reported_h / residence_h)
         << ". A ratio far above 1 means the mixing volume is not admitting "
            "the rain falling through the surface, so the age is measuring "
            "time since the storm began rather than time on the surface.";
@@ -422,13 +482,15 @@ TEST(WaterAgeWatershedTest, ShedAgeIsTheResidenceTimeUnderSteadyRain) {
 TEST(WaterAgeWatershedTest, CascadeShedAgeSitsInsideItsAnalyticBracket) {
     constexpr double kRainH = 3.0;
     write_file("_a3b.age", age_cfg(kRainH));
-    write_deck("_a3b.inp", "org.hydrocouple.openswmm.waterage "
-                           "config=\"_a3b.age\"", /*cascade=*/true);
+    write_deck("_a3b.inp",
+               "org.hydrocouple.openswmm.waterage "
+               "config=\"_a3b.age\"",
+               /*cascade=*/true);
     SWMM_Engine e = run_and_hold("_a3b.inp", "_a3b.rpt", "_a3b.out");
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
-    const auto& ws  = ctx.water_age_state;
-    const auto& sc  = ctx.subcatches;
+    const auto& ws = ctx.water_age_state;
+    const auto& sc = ctx.subcatches;
 
     ASSERT_GE(ctx.n_subcatches(), 2);
     ASSERT_EQ(sc.outlet_subcatch[0], 1) << "the cascade deck did not build";
@@ -452,13 +514,13 @@ TEST(WaterAgeWatershedTest, CascadeShedAgeSitsInsideItsAnalyticBracket) {
         << "S1 sheds at " << a1_h << " h against " << kRainH
         << " h of rain — too close to tell a carried age from a source age";
 
-    EXPECT_GT(a2_h, kRainH)
-        << "S2 sheds at " << a2_h << " h, younger than the " << kRainH
-        << " h rain that is the youngest thing entering it.";
+    EXPECT_GT(a2_h, kRainH) << "S2 sheds at " << a2_h << " h, younger than the " << kRainH
+                            << " h rain that is the youngest thing entering it.";
     EXPECT_LT(a2_h, a1_h + turnover_h)
         << "S2 sheds at " << a2_h << " h, older than S1's " << a1_h
-        << " h plus one full turnover of S2's own surface (" << turnover_h
-        << " h, V = " << v2 << " ft3 / Q = " << sc.runoff[1] << " cfs). "
+        << " h plus one full turnover of S2's own surface (" << turnover_h << " h, V = " << v2
+        << " ft3 / Q = " << sc.runoff[1]
+        << " cfs). "
            "Nothing entering S2 is older than S1's runoff, so exceeding this "
            "means the run-on is carrying an age it did not get from the "
            "donor.";
@@ -492,8 +554,8 @@ TEST(WaterAgeWatershedTest, SubcatchmentAgeReachesTheOutByName) {
           << "WET_STEP 00:01:00\nDRY_STEP 00:05:00\n"
           << "ROUTING_STEP 10\nREPORT_STEP 00:05:00\n\n"
           << "[RAINGAGES]\nRG1 INTENSITY 0:05 1.0 TIMESERIES rain_ts\n\n"
-          << "[TIMESERIES]\n" << rain_series()
-          << "[SUBCATCHMENTS]\nS1 RG1 J1 5 50 500 0.5 0\n\n"
+          << "[TIMESERIES]\n"
+          << rain_series() << "[SUBCATCHMENTS]\nS1 RG1 J1 5 50 500 0.5 0\n\n"
           << "[SUBAREAS]\nS1 0.01 0.1 0.05 0.10 25 OUTLET\n\n"
           << "[INFILTRATION]\nS1 3.0 0.5 4 7 0\n\n"
           << "[POLLUTANTS]\n"
@@ -509,8 +571,7 @@ TEST(WaterAgeWatershedTest, SubcatchmentAgeReachesTheOutByName) {
     SWMM_Engine e = run_and_hold("_a3o.inp", "_a3o.rpt", "_a3o.out");
     ASSERT_NE(e, nullptr);
     const double shed_h =
-        as_cpp_engine(e).context().water_age_state.subcatch_runoff_age[0]
-        / 3600.0;
+        as_cpp_engine(e).context().water_age_state.subcatch_runoff_age[0] / 3600.0;
     swmm_engine_destroy(e);
 
     SWMM_Output h = swmm_output_open("_a3o.out");
@@ -522,13 +583,14 @@ TEST(WaterAgeWatershedTest, SubcatchmentAgeReachesTheOutByName) {
     ASSERT_NE(s1, nullptr);
     EXPECT_STREQ(s0, "TSS");
     ASSERT_STREQ(s1, "__WATER_AGE__")
-        << "species 1 is '" << s1 << "' — the age column is not where this "
+        << "species 1 is '" << s1
+        << "' — the age column is not where this "
            "gate is about to read, so find it by name before trusting an "
            "index";
 
     const int periods = swmm_output_get_period_count(h);
     ASSERT_GT(periods, 1);
-    const int age_attr = SWMM_OUT_SUBCATCH_POLLUT_BASE + 1;  // species index 1
+    const int age_attr = SWMM_OUT_SUBCATCH_POLLUT_BASE + 1; // species index 1
 
     // The column must carry a real age somewhere, not the retired 0. Scan
     // every period: the last one may fall in a gap between washoff steps,
@@ -538,22 +600,20 @@ TEST(WaterAgeWatershedTest, SubcatchmentAgeReachesTheOutByName) {
     std::vector<float> vals(static_cast<std::size_t>(nsub), 0.0f);
     double best = 0.0;
     for (int t = 0; t < periods; ++t) {
-        ASSERT_EQ(swmm_output_get_subcatch_result(h, t, age_attr, vals.data()),
-                  0);
+        ASSERT_EQ(swmm_output_get_subcatch_result(h, t, age_attr, vals.data()), 0);
         best = std::max(best, static_cast<double>(vals[0]));
     }
     swmm_output_close(h);
 
-    EXPECT_GT(best, 0.0)
-        << "the subcatchment age column is 0 in every reporting period. A2b "
-           "pinned it there as a placeholder and A3 retires it — a column "
-           "still reading 0 means the retirement never reached the writer.";
+    EXPECT_GT(best, 0.0) << "the subcatchment age column is 0 in every reporting period. A2b "
+                            "pinned it there as a placeholder and A3 retires it — a column "
+                            "still reading 0 means the retirement never reached the writer.";
     // And it is the age the engine computed, not some other quantity that
     // happens to be non-zero.
-    EXPECT_GT(best, 1.9)
-        << "the column peaks at " << best << " h against a 2.0 h RAINFALL "
-           "source age and a computed shed age of " << shed_h
-        << " h — non-zero, but not the age.";
+    EXPECT_GT(best, 1.9) << "the column peaks at " << best
+                         << " h against a 2.0 h RAINFALL "
+                            "source age and a computed shed age of "
+                         << shed_h << " h — non-zero, but not the age.";
 }
 
 // ---------------------------------------------------------------------------
@@ -595,8 +655,7 @@ TEST(WaterAgeWatershedTest, RunonFromEveryContributorKeepsAgesAboveTheSource) {
           << "[TIMESERIES]\n";
         for (int m = 0; m <= 185; m += 5) {
             char buf[64];
-            std::snprintf(buf, sizeof(buf),
-                          "rain_ts 01/01/2026 %02d:%02d 2.0\n", m / 60, m % 60);
+            std::snprintf(buf, sizeof(buf), "rain_ts 01/01/2026 %02d:%02d 2.0\n", m / 60, m % 60);
             f << buf;
         }
         f << "\n[SUBCATCHMENTS]\nS1 RG1 J1 5 50 500 0.5 0\n\n"
@@ -622,7 +681,7 @@ TEST(WaterAgeWatershedTest, RunonFromEveryContributorKeepsAgesAboveTheSource) {
     SWMM_Engine e = run_and_hold("_a3l.inp", "_a3l.rpt", "_a3l.out");
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
-    const auto& ws  = ctx.water_age_state;
+    const auto& ws = ctx.water_age_state;
 
     // SETUP: both extra contributors must actually be returning water, or
     // this is just the cascade deck again under another name.
@@ -639,10 +698,11 @@ TEST(WaterAgeWatershedTest, RunonFromEveryContributorKeepsAgesAboveTheSource) {
 
     const double floor_s = kRainH * 3600.0;
     for (std::size_t i = 0; i < ws.subarea_age.size(); ++i) {
-        if (ws.subarea_vol_prev[i] <= 0.0) continue;  // holds no water
+        if (ws.subarea_vol_prev[i] <= 0.0)
+            continue; // holds no water
         EXPECT_GE(ws.subarea_age[i], floor_s * 0.999)
-            << "subarea " << i << " holds water aged " << (ws.subarea_age[i]
-               / 3600.0) << " h, younger than the " << kRainH
+            << "subarea " << i << " holds water aged " << (ws.subarea_age[i] / 3600.0)
+            << " h, younger than the " << kRainH
             << " h RAINFALL source — and nothing in this model is younger "
                "than that. An age below the floor means run-on volume is "
                "being divided into an age accumulator that some contributor "
@@ -650,7 +710,7 @@ TEST(WaterAgeWatershedTest, RunonFromEveryContributorKeepsAgesAboveTheSource) {
     }
     ASSERT_FALSE(ws.subcatch_runoff_age.empty());
     EXPECT_GE(ws.subcatch_runoff_age[0], floor_s * 0.999)
-        << "S1 sheds water at " << (ws.subcatch_runoff_age[0] / 3600.0)
-        << " h against a " << kRainH << " h floor.";
+        << "S1 sheds water at " << (ws.subcatch_runoff_age[0] / 3600.0) << " h against a " << kRainH
+        << " h floor.";
     swmm_engine_destroy(e);
 }

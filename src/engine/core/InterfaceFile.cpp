@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file InterfaceFile.cpp
- * @brief Routing interface file — coupling between separate SWMM simulations.
+ * @file      InterfaceFile.cpp
+ * @brief     Routing interface file — coupling between separate SWMM simulations.
  *
  * @details Text-based interface file format matching legacy iface.c:
  *
@@ -33,13 +33,13 @@
  * @note Legacy reference: src/legacy/engine/iface.c
  * @ingroup engine_core
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "InterfaceFile.hpp"
-#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
+#include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
 #include "Constants.hpp"
 #include "SimulationContext.hpp"
 #include "DateTime.hpp"
@@ -52,9 +52,9 @@
 
 // Portable strtok: MSVC deprecates strtok in favour of strtok_s
 #ifdef _MSC_VER
-#  define OPENSWMM_STRTOK(str, delim, ctx) strtok_s((str), (delim), (ctx))
+#define OPENSWMM_STRTOK(str, delim, ctx) strtok_s((str), (delim), (ctx))
 #else
-#  define OPENSWMM_STRTOK(str, delim, ctx) strtok((str), (delim))
+#define OPENSWMM_STRTOK(str, delim, ctx) strtok((str), (delim))
 #endif
 
 namespace openswmm {
@@ -85,7 +85,7 @@ void InterfaceManager::init(SimulationContext& /*ctx*/) {
     // handles (openFiles() is called again from start()).
     closeFiles();
     data_.count = 0;
-    infile_  = nullptr;
+    infile_ = nullptr;
     outfile_ = nullptr;
     old_time_ = 0.0;
     new_time_ = 0.0;
@@ -99,25 +99,26 @@ void InterfaceManager::init(SimulationContext& /*ctx*/) {
 // openFiles
 // ============================================================================
 
-int InterfaceManager::openFiles(const std::string& infile_path,
-                                 const std::string& outfile_path) {
+int InterfaceManager::openFiles(const std::string& infile_path, const std::string& outfile_path) {
     // Validate that infile and outfile are not the same
     if (!infile_path.empty() && !outfile_path.empty()) {
         if (infile_path == outfile_path) {
-            return -1;  // Error: same file for input and output
+            return -1; // Error: same file for input and output
         }
     }
 
     // Open output file for writing
     if (!outfile_path.empty()) {
         outfile_ = openswmm::io::fopen_utf8(outfile_path, "wt");
-        if (!outfile_) return -2;
+        if (!outfile_)
+            return -2;
     }
 
     // Open input file for reading
     if (!infile_path.empty()) {
         infile_ = openswmm::io::fopen_utf8(infile_path, "rt");
-        if (!infile_) return -3;
+        if (!infile_)
+            return -3;
     }
 
     return 0;
@@ -128,38 +129,51 @@ int InterfaceManager::openFiles(const std::string& infile_path,
 // ============================================================================
 
 int InterfaceManager::readFileHeader(SimulationContext& ctx) {
-    if (!infile_) return -1;
+    if (!infile_)
+        return -1;
 
     char line[MAXLINE + 1];
     char s1[MAXLINE + 1];
     char s2[MAXLINE + 1];
 
     // Line 1: check "SWMM5 Interface File"
-    if (!std::fgets(line, MAXLINE, infile_)) return -1;
-    if (std::sscanf(line, "%s", s1) != 1) return -1;
-    if (std::strncmp(s1, "SWMM5", 5) != 0) return -1;
+    if (!std::fgets(line, MAXLINE, infile_))
+        return -1;
+    if (std::sscanf(line, "%s", s1) != 1)
+        return -1;
+    if (std::strncmp(s1, "SWMM5", 5) != 0)
+        return -1;
 
     // Line 2: skip title
-    if (!std::fgets(line, MAXLINE, infile_)) return -1;
+    if (!std::fgets(line, MAXLINE, infile_))
+        return -1;
 
     // Line 3: reporting time step
-    if (!std::fgets(line, MAXLINE, infile_)) return -1;
-    if (std::sscanf(line, "%d", &iface_step_) != 1 || iface_step_ <= 0) return -1;
+    if (!std::fgets(line, MAXLINE, infile_))
+        return -1;
+    if (std::sscanf(line, "%d", &iface_step_) != 1 || iface_step_ <= 0)
+        return -1;
 
     // Line 4: number of constituents (including FLOW)
     int n_constit = 0;
-    if (!std::fgets(line, MAXLINE, infile_)) return -1;
-    if (std::sscanf(line, "%d", &n_constit) != 1) return -1;
-    n_iface_polluts_ = n_constit - 1;  // subtract FLOW
-    if (n_iface_polluts_ < 0) return -1;
+    if (!std::fgets(line, MAXLINE, infile_))
+        return -1;
+    if (std::sscanf(line, "%d", &n_constit) != 1)
+        return -1;
+    n_iface_polluts_ = n_constit - 1; // subtract FLOW
+    if (n_iface_polluts_ < 0)
+        return -1;
     n_values_per_node_ = 1 + n_iface_polluts_;
 
     // Line 5: FLOW units
-    if (!std::fgets(line, MAXLINE, infile_)) return -1;
-    if (std::sscanf(line, "%s %s", s1, s2) < 2) return -1;
-    if (std::strncmp(s1, "FLOW", 4) != 0) return -1;
+    if (!std::fgets(line, MAXLINE, infile_))
+        return -1;
+    if (std::sscanf(line, "%s %s", s1, s2) < 2)
+        return -1;
+    if (std::strncmp(s1, "FLOW", 4) != 0)
+        return -1;
     // Map flow unit string to FlowUnits enum index (matching legacy iface.c)
-    static const char* flow_words[] = {"CFS","GPM","MGD","CMS","LPS","MLD"};
+    static const char* flow_words[] = {"CFS", "GPM", "MGD", "CMS", "LPS", "MLD"};
     iface_flow_units_ = 0;
     for (int fi = 0; fi < 6; ++fi) {
         if (std::strncmp(s2, flow_words[fi], 3) == 0) {
@@ -176,8 +190,10 @@ int InterfaceManager::readFileHeader(SimulationContext& ctx) {
 
     // Read pollutant names and match to project pollutants
     for (int i = 0; i < n_iface_polluts_; ++i) {
-        if (!std::fgets(line, MAXLINE, infile_)) return -1;
-        if (std::sscanf(line, "%s %s", s1, s2) < 2) return -1;
+        if (!std::fgets(line, MAXLINE, infile_))
+            return -1;
+        if (std::sscanf(line, "%s %s", s1, s2) < 2)
+            return -1;
 
         // Look up this pollutant name in the project
         int j = ctx.pollutant_names.find(s1);
@@ -188,8 +204,10 @@ int InterfaceManager::readFileHeader(SimulationContext& ctx) {
 
     // Read number of interface nodes
     int n_nodes = 0;
-    if (!std::fgets(line, MAXLINE, infile_)) return -1;
-    if (std::sscanf(line, "%d", &n_nodes) != 1 || n_nodes <= 0) return -1;
+    if (!std::fgets(line, MAXLINE, infile_))
+        return -1;
+    if (std::sscanf(line, "%d", &n_nodes) != 1 || n_nodes <= 0)
+        return -1;
 
     // Allocate SoA arrays
     data_.resize(n_nodes);
@@ -200,14 +218,17 @@ int InterfaceManager::readFileHeader(SimulationContext& ctx) {
 
     // Read node names and find their indices in the project
     for (int i = 0; i < n_nodes; ++i) {
-        if (!std::fgets(line, MAXLINE, infile_)) return -1;
+        if (!std::fgets(line, MAXLINE, infile_))
+            return -1;
         char name[MAXLINE + 1];
-        if (std::sscanf(line, "%s", name) != 1) return -1;
+        if (std::sscanf(line, "%s", name) != 1)
+            return -1;
         data_.node_idx[static_cast<std::size_t>(i)] = ctx.node_names.find(name);
     }
 
     // Skip column headings line
-    if (!std::fgets(line, MAXLINE, infile_)) return -1;
+    if (!std::fgets(line, MAXLINE, infile_))
+        return -1;
 
     // Read first set of interface values
     readNextPeriod();
@@ -221,34 +242,57 @@ int InterfaceManager::readFileHeader(SimulationContext& ctx) {
 // ============================================================================
 
 bool InterfaceManager::readNextPeriod() {
-    if (!infile_) return false;
+    if (!infile_)
+        return false;
 
     char line[MAXLINE + 1];
     new_time_ = NO_DATE;
 
     for (int i = 0; i < data_.count; ++i) {
         auto ui = static_cast<std::size_t>(i);
-        if (std::feof(infile_)) return false;
-        if (!std::fgets(line, MAXLINE, infile_)) return false;
+        if (std::feof(infile_))
+            return false;
+        if (!std::fgets(line, MAXLINE, infile_))
+            return false;
 
         // Parse: NodeName YYYY MM DD HH MM SS Flow [Pollut1] [Pollut2] ...
         char* strtok_ctx = nullptr;
-        (void)strtok_ctx;  // used only on MSVC
+        (void)strtok_ctx; // used only on MSVC
         char* tok = OPENSWMM_STRTOK(line, " \t\n\r", &strtok_ctx);
-        if (!tok) return false;
+        if (!tok)
+            return false;
 
         // Parse date/time components
         int yr = 0, mon = 0, day = 0, hr = 0, mn = 0, sec = 0;
-        tok = OPENSWMM_STRTOK(nullptr, " \t\n\r", &strtok_ctx); if (!tok) return false; yr  = std::atoi(tok);
-        tok = OPENSWMM_STRTOK(nullptr, " \t\n\r", &strtok_ctx); if (!tok) return false; mon = std::atoi(tok);
-        tok = OPENSWMM_STRTOK(nullptr, " \t\n\r", &strtok_ctx); if (!tok) return false; day = std::atoi(tok);
-        tok = OPENSWMM_STRTOK(nullptr, " \t\n\r", &strtok_ctx); if (!tok) return false; hr  = std::atoi(tok);
-        tok = OPENSWMM_STRTOK(nullptr, " \t\n\r", &strtok_ctx); if (!tok) return false; mn  = std::atoi(tok);
-        tok = OPENSWMM_STRTOK(nullptr, " \t\n\r", &strtok_ctx); if (!tok) return false; sec = std::atoi(tok);
+        tok = OPENSWMM_STRTOK(nullptr, " \t\n\r", &strtok_ctx);
+        if (!tok)
+            return false;
+        yr = std::atoi(tok);
+        tok = OPENSWMM_STRTOK(nullptr, " \t\n\r", &strtok_ctx);
+        if (!tok)
+            return false;
+        mon = std::atoi(tok);
+        tok = OPENSWMM_STRTOK(nullptr, " \t\n\r", &strtok_ctx);
+        if (!tok)
+            return false;
+        day = std::atoi(tok);
+        tok = OPENSWMM_STRTOK(nullptr, " \t\n\r", &strtok_ctx);
+        if (!tok)
+            return false;
+        hr = std::atoi(tok);
+        tok = OPENSWMM_STRTOK(nullptr, " \t\n\r", &strtok_ctx);
+        if (!tok)
+            return false;
+        mn = std::atoi(tok);
+        tok = OPENSWMM_STRTOK(nullptr, " \t\n\r", &strtok_ctx);
+        if (!tok)
+            return false;
+        sec = std::atoi(tok);
 
         // Parse flow value
         tok = OPENSWMM_STRTOK(nullptr, " \t\n\r", &strtok_ctx);
-        if (!tok) return false;
+        if (!tok)
+            return false;
         auto base = ui * static_cast<std::size_t>(n_values_per_node_);
         data_.new_values[base] = std::atof(tok);
         // Convert interface flow from interface file units to CFS (internal)
@@ -259,14 +303,14 @@ bool InterfaceManager::readNextPeriod() {
         // Parse pollutant values
         for (int j = 1; j <= n_iface_polluts_; ++j) {
             tok = OPENSWMM_STRTOK(nullptr, " \t\n\r", &strtok_ctx);
-            if (!tok) return false;
+            if (!tok)
+                return false;
             data_.new_values[base + static_cast<std::size_t>(j)] = std::atof(tok);
         }
 
         // Encode the date/time as decimal days using DateTime.hpp
         // All nodes share the same date — last iteration's value is used
-        new_time_ = datetime::encodeDate(yr, mon, day)
-                  + datetime::encodeTime(hr, mn, sec);
+        new_time_ = datetime::encodeDate(yr, mon, day) + datetime::encodeTime(hr, mn, sec);
     }
 
     return true;
@@ -278,8 +322,8 @@ bool InterfaceManager::readNextPeriod() {
 
 void InterfaceManager::setOldValues() {
     old_time_ = new_time_;
-    auto total = static_cast<std::size_t>(data_.count) *
-                 static_cast<std::size_t>(n_values_per_node_);
+    auto total =
+        static_cast<std::size_t>(data_.count) * static_cast<std::size_t>(n_values_per_node_);
     for (std::size_t i = 0; i < total; ++i) {
         data_.old_values[i] = data_.new_values[i];
     }
@@ -290,7 +334,8 @@ void InterfaceManager::setOldValues() {
 // ============================================================================
 
 void InterfaceManager::readInflows(SimulationContext& ctx, double current_time) {
-    if (!infile_) return;
+    if (!infile_)
+        return;
 
     // Fallback: read the header if start() has not done so eagerly.
     // (Checked before the count guard — count is 0 until the header is read.)
@@ -300,10 +345,12 @@ void InterfaceManager::readInflows(SimulationContext& ctx, double current_time) 
             return;
         }
     }
-    if (data_.count == 0) return;
+    if (data_.count == 0)
+        return;
 
     // Return if interface file starts after current time
-    if (old_time_ > current_time) return;
+    if (old_time_ > current_time)
+        return;
 
     // Advance until current time is bracketed by old/new times
     while (new_time_ < current_time && new_time_ != NO_DATE) {
@@ -312,7 +359,8 @@ void InterfaceManager::readInflows(SimulationContext& ctx, double current_time) 
     }
 
     // If no more data, stop
-    if (new_time_ == NO_DATE) return;
+    if (new_time_ == NO_DATE)
+        return;
 
     // Compute interpolation fraction
     double dt_iface = new_time_ - old_time_;
@@ -326,27 +374,27 @@ void InterfaceManager::readInflows(SimulationContext& ctx, double current_time) 
     // Add interpolated interface flows to node lateral inflows
     for (int i = 0; i < data_.count; ++i) {
         int node = data_.node_idx[static_cast<std::size_t>(i)];
-        if (node < 0 || node >= ctx.n_nodes()) continue;
+        if (node < 0 || node >= ctx.n_nodes())
+            continue;
 
         double flow = getFlow(i, iface_frac_);
         // legacy addIfaceInflows: `if (fabs(q) < FLOW_TOL) continue;` — the
         // flow AND its pollutant loads are skipped below the floor.
-        if (std::fabs(flow) < constants::FLOW_TOL) continue;
+        if (std::fabs(flow) < constants::FLOW_TOL)
+            continue;
         ctx.nodes.iface_inflow[static_cast<std::size_t>(node)] += flow;
 
         // Add interpolated quality mass rates (w = q * c), matching legacy
         // addIfaceInflows(): quality is only added for positive flows.
         // QualitySolver::addIfaceLoads() folds these into qual_mass_in.
         int n_polluts = ctx.n_pollutants();
-        if (flow > 0.0 && n_polluts > 0 && !pollut_map_.empty()
-            && !ctx.nodes.iface_qual_mass.empty()) {
-            auto base_q = static_cast<std::size_t>(node) *
-                          static_cast<std::size_t>(n_polluts);
+        if (flow > 0.0 && n_polluts > 0 && !pollut_map_.empty() &&
+            !ctx.nodes.iface_qual_mass.empty()) {
+            auto base_q = static_cast<std::size_t>(node) * static_cast<std::size_t>(n_polluts);
             for (int p = 0; p < n_polluts; ++p) {
                 double qual = getQuality(i, p, iface_frac_);
                 if (qual > 0.0) {
-                    ctx.nodes.iface_qual_mass[base_q + static_cast<std::size_t>(p)]
-                        += flow * qual;
+                    ctx.nodes.iface_qual_mass[base_q + static_cast<std::size_t>(p)] += flow * qual;
                 }
             }
         }
@@ -357,9 +405,9 @@ void InterfaceManager::readInflows(SimulationContext& ctx, double current_time) 
 // writeOutfallResults — save outfall flows/quality to the output interface file
 // ============================================================================
 
-void InterfaceManager::writeOutfallResults(const SimulationContext& ctx,
-                                            double current_time) {
-    if (!outfile_) return;
+void InterfaceManager::writeOutfallResults(const SimulationContext& ctx, double current_time) {
+    if (!outfile_)
+        return;
 
     // Decode current_time (OADate decimal days) into yr/mon/day/hr/min/sec
     // using DateTime.hpp — matching legacy datetime_decodeDate/Time
@@ -369,28 +417,28 @@ void InterfaceManager::writeOutfallResults(const SimulationContext& ctx,
 
     for (int i = 0; i < ctx.n_nodes(); ++i) {
         auto ui = static_cast<std::size_t>(i);
-        if (!isOutletNode(ctx, i)) continue;
+        if (!isOutletNode(ctx, i))
+            continue;
 
         // Write node ID
         const std::string& name = ctx.node_names.names()[ui];
         std::fprintf(outfile_, "\n%-16s", name.c_str());
 
         // Write date/time
-        std::fprintf(outfile_, " %04d %02d  %02d  %02d  %02d  %02d ",
-                     yr, mon, day, hr, mn, sec);
+        std::fprintf(outfile_, " %04d %02d  %02d  %02d  %02d  %02d ", yr, mon, day, hr, mn, sec);
 
         // Write flow converted from internal cfs to the project's flow units
         // (legacy: Node[j].inflow * UCF(FLOW), with UCF(FLOW) = Qcf[FlowUnits])
         int fu = static_cast<int>(ctx.options.flow_units);
-        if (fu < 0 || fu > 5) fu = 0;
+        if (fu < 0 || fu > 5)
+            fu = 0;
         std::fprintf(outfile_, " %-10f", ctx.nodes.inflow[ui] * ucf::Qcf[fu]);
 
         // Write pollutant concentrations
         int np = ctx.n_pollutants();
         for (int p = 0; p < np; ++p) {
             auto qi = ui * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
-            double conc = (qi < ctx.nodes.conc.size())
-                          ? ctx.nodes.conc[qi] : 0.0;
+            double conc = (qi < ctx.nodes.conc.size()) ? ctx.nodes.conc[qi] : 0.0;
             std::fprintf(outfile_, " %-10f", conc);
         }
     }
@@ -401,7 +449,8 @@ void InterfaceManager::writeOutfallResults(const SimulationContext& ctx,
 // ============================================================================
 
 void InterfaceManager::writeFileHeader(const SimulationContext& ctx) {
-    if (!outfile_) return;
+    if (!outfile_)
+        return;
 
     std::fprintf(outfile_, "SWMM5 Interface File");
     std::fprintf(outfile_, "\n%s", "OpenSWMM Engine Output");
@@ -412,11 +461,11 @@ void InterfaceManager::writeFileHeader(const SimulationContext& ctx) {
 
     // Number of constituents (FLOW + pollutants)
     int n_polluts = ctx.n_pollutants();
-    std::fprintf(outfile_, "\n%-4d - number of constituents as listed below:",
-                 n_polluts + 1);
-    static const char* flow_words[] = {"CFS","GPM","MGD","CMS","LPS","MLD"};
+    std::fprintf(outfile_, "\n%-4d - number of constituents as listed below:", n_polluts + 1);
+    static const char* flow_words[] = {"CFS", "GPM", "MGD", "CMS", "LPS", "MLD"};
     int fu = static_cast<int>(ctx.options.flow_units);
-    if (fu < 0 || fu > 5) fu = 0;
+    if (fu < 0 || fu > 5)
+        fu = 0;
     std::fprintf(outfile_, "\nFLOW %s", flow_words[fu]);
 
     // Write pollutant names
@@ -430,13 +479,15 @@ void InterfaceManager::writeFileHeader(const SimulationContext& ctx) {
     // Count outlet nodes
     int n_outlets = 0;
     for (int i = 0; i < ctx.n_nodes(); ++i) {
-        if (isOutletNode(ctx, i)) n_outlets++;
+        if (isOutletNode(ctx, i))
+            n_outlets++;
     }
 
     // Write outlet node names
     std::fprintf(outfile_, "\n%-4d - number of nodes as listed below:", n_outlets);
     for (int i = 0; i < ctx.n_nodes(); ++i) {
-        if (!isOutletNode(ctx, i)) continue;
+        if (!isOutletNode(ctx, i))
+            continue;
         const std::string& nname = ctx.node_names.names()[static_cast<std::size_t>(i)];
         std::fprintf(outfile_, "\n%s", nname.c_str());
     }
@@ -469,10 +520,10 @@ void InterfaceManager::closeFiles() {
 // ============================================================================
 
 double InterfaceManager::getFlow(int index, double frac) const {
-    if (index < 0 || index >= data_.count) return 0.0;
+    if (index < 0 || index >= data_.count)
+        return 0.0;
 
-    auto base = static_cast<std::size_t>(index) *
-                static_cast<std::size_t>(n_values_per_node_);
+    auto base = static_cast<std::size_t>(index) * static_cast<std::size_t>(n_values_per_node_);
     double q1 = data_.old_values[base];
     double q2 = data_.new_values[base];
     return (1.0 - frac) * q1 + frac * q2;
@@ -483,16 +534,17 @@ double InterfaceManager::getFlow(int index, double frac) const {
 // ============================================================================
 
 double InterfaceManager::getQuality(int index, int pollut_idx, double frac) const {
-    if (index < 0 || index >= data_.count) return 0.0;
-    if (pollut_idx < 0 ||
-        pollut_idx >= static_cast<int>(pollut_map_.size())) return 0.0;
+    if (index < 0 || index >= data_.count)
+        return 0.0;
+    if (pollut_idx < 0 || pollut_idx >= static_cast<int>(pollut_map_.size()))
+        return 0.0;
 
     int col = pollut_map_[static_cast<std::size_t>(pollut_idx)];
-    if (col < 0) return 0.0;
+    if (col < 0)
+        return 0.0;
 
-    auto base = static_cast<std::size_t>(index) *
-                static_cast<std::size_t>(n_values_per_node_);
-    auto offset = base + static_cast<std::size_t>(col + 1);  // +1 for flow column
+    auto base = static_cast<std::size_t>(index) * static_cast<std::size_t>(n_values_per_node_);
+    auto offset = base + static_cast<std::size_t>(col + 1); // +1 for flow column
 
     double c1 = data_.old_values[offset];
     double c2 = data_.new_values[offset];

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file ReactionsWriter.hpp
- * @brief Canonical .rxn text from engine state (E-C3).
+ * @file      ReactionsWriter.hpp
+ * @brief     Canonical .rxn text from engine state (E-C3).
  *
  * @details The round-trip IS the spec (D-RC6): serialize -> apply_text ->
  *          serialize must be byte-identical, which is the sync contract the
@@ -26,9 +26,9 @@
  *
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_REACTIONS_WRITER_HPP
@@ -36,7 +36,9 @@
 
 #include <string>
 
-namespace openswmm { struct SimulationContext; }
+namespace openswmm {
+struct SimulationContext;
+}
 
 namespace openswmm::transport {
 
@@ -45,6 +47,6 @@ namespace openswmm::transport {
 /// the result is an empty string when nothing is configured).
 std::string serializeReactionSystem(const SimulationContext& ctx);
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport
 
-#endif  // OPENSWMM_ENGINE_REACTIONS_WRITER_HPP
+#endif // OPENSWMM_ENGINE_REACTIONS_WRITER_HPP

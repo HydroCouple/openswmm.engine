@@ -14,6 +14,16 @@
  *     - Error-code retrieval functions
  */
 
+/**
+ * @file      test_solver_errors.cpp
+ * @brief     Tests for solver errors.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
+ */
+
 #include <gtest/gtest.h>
 
 #include <cstdio>
@@ -25,8 +35,8 @@
 #include "openswmm_solver.h"
 
 #define MODEL_INP "./hotstart/site_drainage_model.inp"
-#define ERR_RPT   "./hotstart/_err_test.rpt"
-#define ERR_OUT   "./hotstart/_err_test.out"
+#define ERR_RPT "./hotstart/_err_test.rpt"
+#define ERR_OUT "./hotstart/_err_test.out"
 
 // ============================================================
 // Before swmm_open() — model is in initial uninitialized state
@@ -78,12 +88,21 @@ TEST(SolverFileErrors, OpenEmptyStringPath) {
 
 class SolverOpenErrorFixture : public ::testing::Test {
 protected:
-    void SetUp() override {
-        ASSERT_EQ(swmm_open(MODEL_INP, ERR_RPT, ERR_OUT), 0);
-    }
-    void TearDown() override {
-        swmm_close();
-    }
+    /**
+     * @brief Open the global legacy reference model for API assertions.
+     *
+     * Uses MODEL_INP and ERR_RPT/ERR_OUT artifact paths. Does not start or advance; global singleton
+     * use must be exclusive. Fatal GoogleTest assertions return from this hook on failure; any created
+     * handle remains owned by the fixture for teardown.
+     */
+    void SetUp() override { ASSERT_EQ(swmm_open(MODEL_INP, ERR_RPT, ERR_OUT), 0); }
+    /**
+     * @brief Close the process-global legacy project after the test.
+     *
+     * Releases partial/open/ended model files and statistics. This wrapper does not call swmm_end or
+     * assert close status.
+     */
+    void TearDown() override { swmm_close(); }
 };
 
 TEST_F(SolverOpenErrorFixture, StepBeforeStart) {
@@ -170,7 +189,7 @@ TEST(SolverErrorRetrieval, GetVersionIsPositive) {
 
 // Minimal .inp content for a conduit with a transect whose channel n = 0.
 // swmm_open must reject this and set error code 227.
-static const char *kZeroManningInp = R"(
+static const char* kZeroManningInp = R"(
 [TITLE]
 Zero Manning transect test
 
@@ -224,13 +243,13 @@ LINKS          NONE
 
 TEST(SolverTransectErrors, ZeroChannelManningIsError227) {
     // Write minimal .inp with zero channel Manning's n to a temp file.
-    char *tname = std::tmpnam(nullptr);
+    char* tname = std::tmpnam(nullptr);
     std::string inpPath = std::string(tname) + "_zero_n.inp";
     std::string rptPath = std::string(tname) + "_zero_n.rpt";
     std::string outPath = std::string(tname) + "_zero_n.out";
 
     {
-        std::FILE *f = std::fopen(inpPath.c_str(), "w");
+        std::FILE* f = std::fopen(inpPath.c_str(), "w");
         ASSERT_NE(f, nullptr);
         std::fputs(kZeroManningInp, f);
         std::fclose(f);
@@ -247,7 +266,7 @@ TEST(SolverTransectErrors, ZeroChannelManningIsError227) {
     char errMsg[512] = {};
     int code = swmm_getError(errMsg, sizeof(errMsg));
     EXPECT_EQ(code, 200) << "Expected generic input error 200, got " << code
-                          << " message: " << errMsg;
+                         << " message: " << errMsg;
 
     swmm_close();
 

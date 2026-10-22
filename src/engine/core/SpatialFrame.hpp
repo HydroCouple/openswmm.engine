@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file SpatialFrame.hpp
- * @brief Spatial frame — CRS specification and coordinate data for nodes/links.
+ * @file      SpatialFrame.hpp
+ * @brief     Spatial frame — CRS specification and coordinate data for nodes/links.
  *
  * @details The spatial frame encapsulates the coordinate reference system (CRS)
  *          and georeferenced coordinates of nodes, link centroids, and
@@ -35,9 +35,9 @@
  *
  * @ingroup engine_core
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_SPATIAL_FRAME_HPP
@@ -64,18 +64,43 @@ namespace openswmm {
  */
 class ICouplingPoint {
 public:
+    /**
+     * @brief Destroy the concrete coupling point through its interface.
+     *
+     * SpatialFrame stores non-owning pointers and never invokes this destructor on registration or
+     * destruction.
+     */
     virtual ~ICouplingPoint() = default;
 
-    /** @brief Index of the 1D SWMM object (node, link, or subcatch index). */
+    /**
+     * @brief Identify the referenced 1D object within its type-specific table.
+     * @return Zero-based object index interpreted according to object_type(); validity is the
+     *     implementer's responsibility.
+     */
     virtual int object_index() const noexcept = 0;
 
-    /** @brief Type: "NODE", "LINK", or "SUBCATCH" */
+    /**
+     * @brief Identify the referenced 1D object category.
+     * @return Borrowed category token such as NODE, LINK or SUBCATCH; pointer lifetime is defined by
+     *     the implementation.
+     */
     virtual const char* object_type() const noexcept = 0;
 
-    /** @brief Exchange 1D state to the 2D component at this point. */
+    /**
+     * @brief Deliver a 1D-side sample to the concrete coupling implementation.
+     *
+     * This abstract interface imposes no clock, ownership, synchronization or conservation policy.
+     *
+     * @param[in] value Sample whose physical quantity, units and sign convention are defined by that
+     *     implementation.
+     */
     virtual void exchange_to_2d(double value) = 0;
 
-    /** @brief Receive 2D state from the 2D component at this point. */
+    /**
+     * @brief Read the sample provided by the concrete 2D coupling implementation.
+     * @return Sample in the quantity/units defined by the concrete implementation; no clock advancement
+     *     is prescribed by this interface.
+     */
     virtual double receive_from_2d() const = 0;
 };
 
@@ -217,31 +242,41 @@ struct SpatialFrame {
      * @brief Registered 2D coupling points.
      *
      * @details 2D components register ICouplingPoint objects here to establish
-     *          exchange at specific 1D objects. The 1D engine calls
-     *          exchange_to_2d() and receive_from_2d() at each timestep
-     *          if any coupling points are registered.
+     *          exchange at specific 1D objects. Registration stores the pointers only; a driver integrating this interface
+     *          must invoke exchange_to_2d()/receive_from_2d() explicitly. The concrete
+     *          SurfaceRouter2D uses its own coupling data structures.
      *
      * Not owned — the 2D component manages the lifetime of these objects.
      */
     std::vector<ICouplingPoint*> coupling_points;
 
     /**
-     * @brief Register a 2D coupling point.
-     * @param point  Non-owning pointer to a coupling point.
+     * @brief Append a borrowed coupling point without deduplication.
+     *
+     * Does not invoke exchange methods, locate the object on a mesh or take ownership. Caller
+     * serializes vector mutation and traversal.
+     *
+     * @param[in] point Non-owning pointer that must outlive all uses of the frame entry; NULL is
+     *     ignored.
      */
     void register_coupling_point(ICouplingPoint* point) {
-        if (point) coupling_points.push_back(point);
+        if (point)
+            coupling_points.push_back(point);
     }
 
     /**
-     * @brief Returns true if any 2D coupling points are registered.
+     * @brief Check whether the registration vector contains any entries.
+     * @return True when coupling_points is nonempty; does not validate object indices, point lifetime
+     *     or solver wiring.
      */
-    bool has_2d_coupling() const noexcept {
-        return !coupling_points.empty();
-    }
+    bool has_2d_coupling() const noexcept { return !coupling_points.empty(); }
 
     /**
-     * @brief Release excess vector capacity accumulated during parsing.
+     * @brief Request capacity reduction for coordinate and vertex arrays.
+     *
+     * Preserves values but can invalidate references, pointers and iterators if a vector reallocates.
+     * Visits outer and inner geometry vectors; node_has_xy and coupling_points are not compacted.
+     * Standard vector capacity requests need not reduce allocation.
      */
     void shrink_to_fit() {
         node_x.shrink_to_fit();
@@ -254,14 +289,18 @@ struct SpatialFrame {
         gage_y.shrink_to_fit();
 
         link_vertices_x.shrink_to_fit();
-        for (auto& v : link_vertices_x) v.shrink_to_fit();
+        for (auto& v : link_vertices_x)
+            v.shrink_to_fit();
         link_vertices_y.shrink_to_fit();
-        for (auto& v : link_vertices_y) v.shrink_to_fit();
+        for (auto& v : link_vertices_y)
+            v.shrink_to_fit();
 
         subcatch_polygon_x.shrink_to_fit();
-        for (auto& v : subcatch_polygon_x) v.shrink_to_fit();
+        for (auto& v : subcatch_polygon_x)
+            v.shrink_to_fit();
         subcatch_polygon_y.shrink_to_fit();
-        for (auto& v : subcatch_polygon_y) v.shrink_to_fit();
+        for (auto& v : subcatch_polygon_y)
+            v.shrink_to_fit();
     }
 };
 

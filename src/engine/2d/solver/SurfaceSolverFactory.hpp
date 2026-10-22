@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file SurfaceSolverFactory.hpp
- * @brief Runtime selection of the 2D surface solver backend (Phase 4).
+ * @file      SurfaceSolverFactory.hpp
+ * @brief     Runtime selection of the 2D surface solver backend (Phase 4).
  *
  * @details Resolves which ISurfaceSolver to construct based on the
  *          OPENSWMM_2D_BACKEND policy, discovering and dlopen()ing a GPU
@@ -46,9 +46,9 @@
  *
  * @ingroup engine_2d
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_SURFACE_SOLVER_FACTORY_HPP
@@ -66,32 +66,58 @@ class ISurfaceSolver;
 /**
  * @brief Construct the 2D surface solver per the runtime backend policy.
  *
- * Never throws on plugin absence or load failure — it resolves to the serial
- * CPU solver instead. A successfully loaded GPU plugin is reported on stderr;
- * the default CPU path is silent so ordinary runs produce no extra output.
+ * Never throws on plugin absence or load failure — it resolves to the serial CPU solver instead.
+ * A successfully loaded GPU plugin is reported on stderr; AUTO CPU fallback may also report its
+ * backend selection rationale.
  *
- * @param opts    Solver options; `backend` ([2D_OPTIONS] BACKEND) is the
- *                model's request, overridden by OPENSWMM_2D_BACKEND when set.
- * @param chosen  Optional out-param; receives a human-readable backend label
- *                (e.g. "cpu (serial CVODE)" or "cuda (NVIDIA A100)").
- * @param n_cells Triangle count of the mesh (0 = unknown). Under the default
- *                `auto` policy a mesh below the parallel-worthwhile threshold
- *                (env OPENSWMM_2D_MIN_PARALLEL_CELLS, default 20000) selects the
- *                serial CPU solver even when a GPU/OpenMP plugin is present —
- *                Kokkos' per-kernel launch overhead makes the accelerated path
- *                slower than serial on small meshes. An explicit backend
- *                (option or env) always wins (no size gate).
- * @return An owned ISurfaceSolver. For a plugin-backed solver the owning
- *         shared library is kept resident for the process lifetime.
+ * @param[in] opts    Solver options; `backend` ([2D_OPTIONS] BACKEND) is the model's request,
+ * overridden by OPENSWMM_2D_BACKEND when set.
+ * @param[out] chosen  Optional out-param; receives a human-readable backend label (e.g. "cpu
+ * (explicit marcher)" or "cuda (NVIDIA A100)").
+ * @param[in] n_cells Triangle count of the mesh (0 = unknown). Under the default `auto` policy a
+ * mesh below the parallel-worthwhile threshold (env OPENSWMM_2D_MIN_PARALLEL_CELLS, default
+ * 50000) selects the serial CPU solver even when a GPU/OpenMP plugin is present — Kokkos'
+ * per-kernel launch overhead makes the accelerated path slower than serial on small meshes. An
+ * explicit backend (option or env) always wins (no size gate).
+ * @return An owned ISurfaceSolver. For a plugin-backed solver the owning shared library is kept
+ * resident for the process lifetime.
+ *
+ * @param[in] plugin_capable Caller-established compatibility: false forces the built-in marcher
+ * for mixed quads, non-local-inertial momentum, transport or other unsupported plugin physics.
+ * @throws std::invalid_argument For an unknown OPENSWMM_2D_BACKEND override.
+ * @note Plugin probing/construction failures are caught and fall back to CPU; allocations for
+ * the selected solver/label may still throw. Solver is constructed but not initialized; caller
+ * supplies model arrays later.
+ * @note AUTO uses a default 10000-cell device floor and 50000-cell OpenMP floor, each overridden
+ * by its documented environment variable; nonpositive n_cells bypasses size gates. Explicit
+ * named backends bypass both. Session auto_backend_cpu applies only to AUTO without an
+ * environment override.
+ * @note Plugin objects are wrapped by a core adapter; the adapter dispatches use/destruction to
+ * the resident execution-owner thread. CPU fallback under AUTO may print its selection rationale
+ * to stderr.
  */
 std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
-                                                  std::string* chosen = nullptr,
-                                                  int n_cells = 0,
+                                                  std::string* chosen = nullptr, int n_cells = 0,
                                                   bool plugin_capable = true);
 
-/// Optional stateless host recharge operator. Surface/water/transfer ownership
-/// stays with the built-in marcher; absent/unsupported extensions select CPU.
-GwRechargeBackend makeGwRechargeBackend(const SolverOptions2D&,int n_cells);
+/**
+ * @brief Optional stateless host recharge operator. Surface/water/transfer ownership stays with
+ * the built-in marcher; absent/unsupported extensions select CPU.
+ *
+ * @details Discover an optional independently scheduled raw-recharge operator.
+ * @par Argument contract
+ * - Argument 1 (in): Borrowed validated SolverOptions2D, including backend request/session
+ * preference. Environment override takes precedence.
+ * - n_cells (in): Mesh-cell count, currently unused; no qualified AUTO mesh-size policy is
+ * applied.
+ * @return Value-owned backend descriptor. Empty evaluate/threads callbacks select scalar CPU and
+ * diagnostic explains why. Explicit OMP is required for host-parallel recharge; AUTO remains
+ * CPU.
+ * @note Discovery never transfers groundwater state ownership. Captured execution owner and
+ * resident library keep callbacks valid; their array arguments are borrowed synchronously.
+ * Allocation/module-pin exceptions can propagate.
+ */
+GwRechargeBackend makeGwRechargeBackend(const SolverOptions2D&, int n_cells);
 
 } // namespace openswmm::twoD
 

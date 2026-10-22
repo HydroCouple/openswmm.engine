@@ -1,5 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Caleb Buahin
+
+/**
+ * @file      NonlinearPressureStorage.cpp
+ * @brief     Nonlinear pressure and physical storage equations for finite-volume trials.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
 #include "NonlinearPressureStorage.hpp"
 
 #include <algorithm>
@@ -8,46 +18,61 @@
 
 namespace openswmm::fv {
 
-NonlinearPressureStorage::Result NonlinearPressureStorage::solve(
-    const std::vector<Row>& rows, const std::vector<Edge>& edges, double dt,
-    const Controls& c, std::vector<double>& output_heads) {
+NonlinearPressureStorage::Result
+NonlinearPressureStorage::solve(const std::vector<Row>& rows, const std::vector<Edge>& edges,
+                                double dt, const Controls& c, std::vector<double>& output_heads) {
     Result result;
     const auto n = rows.size();
     auto positive = [](double x) { return std::isfinite(x) && x > 0.0; };
-    if (n == 0 || n > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
-        !positive(dt) || c.max_newton < 0 || c.max_linear < 0 || c.max_backtracks < 0 ||
+    if (n == 0 || n > static_cast<std::size_t>(std::numeric_limits<int>::max()) || !positive(dt) ||
+        c.max_newton < 0 || c.max_linear < 0 || c.max_backtracks < 0 ||
         !positive(c.absolute_volume) || !std::isfinite(c.relative_volume) ||
-        c.relative_volume < 0.0 || !positive(c.linear_relative) ||
-        c.linear_relative >= 1.0 || !positive(c.linear_absolute)) return result;
+        c.relative_volume < 0.0 || !positive(c.linear_relative) || c.linear_relative >= 1.0 ||
+        !positive(c.linear_absolute))
+        return result;
 
-    head_.resize(n); trial_.resize(n); residual_.resize(n); trial_residual_.resize(n);
-    budget_.resize(n); diag_.resize(n); delta_.resize(n); r_.resize(n);
-    z_.resize(n); p_.resize(n); ap_.resize(n); parent_.resize(n); anchored_.resize(n);
+    head_.resize(n);
+    trial_.resize(n);
+    residual_.resize(n);
+    trial_residual_.resize(n);
+    budget_.resize(n);
+    diag_.resize(n);
+    delta_.resize(n);
+    r_.resize(n);
+    z_.resize(n);
+    p_.resize(n);
+    ap_.resize(n);
+    parent_.resize(n);
+    anchored_.resize(n);
     weight_.resize(edges.size());
     for (std::size_t i = 0; i < n; ++i) {
         const auto& row = rows[i];
-        if (!std::isfinite(row.bed) || !std::isfinite(row.old_head) ||
-            !std::isfinite(row.source) || !std::isfinite(row.lower_head) ||
-            !std::isfinite(row.upper_head) || row.lower_head > row.old_head ||
-            row.old_head > row.upper_head) return result;
-        if (row.geometry && (row.geometry->is_open || !positive(row.length) ||
-            !positive(row.geometry->t_slot) || !positive(row.geometry->y_full) ||
-            row.lower_head < row.bed || !std::isfinite(row.old_area) ||
-            row.old_area < 0.0)) return result;
+        if (!std::isfinite(row.bed) || !std::isfinite(row.old_head) || !std::isfinite(row.source) ||
+            !std::isfinite(row.lower_head) || !std::isfinite(row.upper_head) ||
+            row.lower_head > row.old_head || row.old_head > row.upper_head)
+            return result;
+        if (row.geometry &&
+            (row.geometry->is_open || !positive(row.length) || !positive(row.geometry->t_slot) ||
+             !positive(row.geometry->y_full) || row.lower_head < row.bed ||
+             !std::isfinite(row.old_area) || row.old_area < 0.0))
+            return result;
         head_[i] = row.old_head;
         const double old_volume = row.geometry ? row.length * row.old_area : 0.0;
-        budget_[i] = c.absolute_volume + c.relative_volume *
-            std::max({1.0, std::fabs(old_volume), dt * std::fabs(row.source)});
-        if (!std::isfinite(old_volume) || !positive(budget_[i])) return result;
+        budget_[i] = c.absolute_volume + c.relative_volume * std::max({1.0, std::fabs(old_volume),
+                                                                       dt * std::fabs(row.source)});
+        if (!std::isfinite(old_volume) || !positive(budget_[i]))
+            return result;
     }
     for (std::size_t e = 0; e < edges.size(); ++e) {
         const auto& edge = edges[e];
-        if (edge.left < 0 || static_cast<std::size_t>(edge.left) >= n ||
-            edge.right < -1 || (edge.right >= 0 && static_cast<std::size_t>(edge.right) >= n) ||
+        if (edge.left < 0 || static_cast<std::size_t>(edge.left) >= n || edge.right < -1 ||
+            (edge.right >= 0 && static_cast<std::size_t>(edge.right) >= n) ||
             edge.left == edge.right || !positive(edge.conductance) ||
-            (edge.right == -1 && !std::isfinite(edge.boundary_head))) return result;
+            (edge.right == -1 && !std::isfinite(edge.boundary_head)))
+            return result;
         weight_[e] = dt * edge.conductance;
-        if (!positive(weight_[e])) return result;
+        if (!positive(weight_[e]))
+            return result;
     }
 
     auto evaluate = [&](const std::vector<double>& h, std::vector<double>& r) {
@@ -65,11 +90,13 @@ NonlinearPressureStorage::Result NonlinearPressureStorage::solve(
             const double other = edge.right < 0 ? edge.boundary_head : h[edge.right];
             const double transfer = weight_[e] * (h[edge.left] - other);
             r[edge.left] += transfer;
-            if (edge.right >= 0) r[edge.right] -= transfer;
+            if (edge.right >= 0)
+                r[edge.right] -= transfer;
         }
         double scaled = 0.0;
         for (std::size_t i = 0; i < n; ++i) {
-            if (!std::isfinite(r[i])) return std::numeric_limits<double>::infinity();
+            if (!std::isfinite(r[i]))
+                return std::numeric_limits<double>::infinity();
             scaled = std::max(scaled, std::fabs(r[i]) / budget_[i]);
         }
         return scaled;
@@ -89,17 +116,20 @@ NonlinearPressureStorage::Result NonlinearPressureStorage::solve(
     };
     // Matrix product for the current exact storage tangent and frozen edges.
     auto matvec = [&](const std::vector<double>& x, std::vector<double>& out) {
-        for (std::size_t i = 0; i < n; ++i) out[i] = diag_[i] * x[i];
+        for (std::size_t i = 0; i < n; ++i)
+            out[i] = diag_[i] * x[i];
         for (std::size_t e = 0; e < edges.size(); ++e) {
             const auto& edge = edges[e];
-            if (edge.right < 0) continue;
+            if (edge.right < 0)
+                continue;
             out[edge.left] -= weight_[e] * x[edge.right];
             out[edge.right] -= weight_[e] * x[edge.left];
         }
     };
     auto norm = [](const std::vector<double>& x) {
         double value = 0.0;
-        for (double v : x) value = std::hypot(value, v);
+        for (double v : x)
+            value = std::hypot(value, v);
         return value;
     };
     auto root = [&](int i) {
@@ -121,8 +151,9 @@ NonlinearPressureStorage::Result NonlinearPressureStorage::solve(
         // an unanchored algebraic component has no unique head solution.
         for (std::size_t i = 0; i < n; ++i) {
             const auto& row = rows[i];
-            diag_[i] = row.geometry ? row.length *
-                kernels::widthOfDepth(*row.geometry, head_[i] - row.bed) : 0.0;
+            diag_[i] = row.geometry
+                           ? row.length * kernels::widthOfDepth(*row.geometry, head_[i] - row.bed)
+                           : 0.0;
             if (!std::isfinite(diag_[i]) || diag_[i] < 0.0) {
                 result.status = Status::NonFinite;
                 return result;
@@ -137,10 +168,12 @@ NonlinearPressureStorage::Result NonlinearPressureStorage::solve(
                 diag_[edge.right] += weight_[e];
                 const int a = root(edge.left), b = root(edge.right);
                 parent_[a] = b;
-            } else anchored_[edge.left] = 1;
+            } else
+                anchored_[edge.left] = 1;
         }
         for (std::size_t i = 0; i < n; ++i)
-            if (anchored_[i]) anchored_[root(static_cast<int>(i))] = 1;
+            if (anchored_[i])
+                anchored_[root(static_cast<int>(i))] = 1;
         for (std::size_t i = 0; i < n; ++i) {
             if (!anchored_[root(static_cast<int>(i))]) {
                 result.status = Status::UnanchoredComponent;
@@ -158,7 +191,8 @@ NonlinearPressureStorage::Result NonlinearPressureStorage::solve(
             if (result.scaled_residual <= 1.0) {
                 output_heads = head_;
                 result.status = Status::Converged;
-            } else result.status = Status::NonFinite;
+            } else
+                result.status = Status::NonFinite;
             return result;
         }
         if (it == c.max_newton) {
@@ -188,10 +222,12 @@ NonlinearPressureStorage::Result NonlinearPressureStorage::solve(
                 linear_status = Status::Converged;
                 break;
             }
-            if (k == c.max_linear) break;
+            if (k == c.max_linear)
+                break;
             matvec(p_, ap_);
             double curvature = 0.0;
-            for (std::size_t i = 0; i < n; ++i) curvature += p_[i] * ap_[i];
+            for (std::size_t i = 0; i < n; ++i)
+                curvature += p_[i] * ap_[i];
             if (!positive(curvature) || !positive(rz)) {
                 linear_status = Status::LinearBreakdown;
                 break;
@@ -204,15 +240,19 @@ NonlinearPressureStorage::Result NonlinearPressureStorage::solve(
             }
             ++result.linear_iterations;
             double next_rz = 0.0;
-            for (std::size_t i = 0; i < n; ++i) next_rz += r_[i] * z_[i];
+            for (std::size_t i = 0; i < n; ++i)
+                next_rz += r_[i] * z_[i];
             const double beta = next_rz / rz;
-            for (std::size_t i = 0; i < n; ++i) p_[i] = z_[i] + beta * p_[i];
+            for (std::size_t i = 0; i < n; ++i)
+                p_[i] = z_[i] + beta * p_[i];
             rz = next_rz;
         }
         matvec(delta_, ap_);
-        for (std::size_t i = 0; i < n; ++i) ap_[i] = -residual_[i] - ap_[i];
+        for (std::size_t i = 0; i < n; ++i)
+            ap_[i] = -residual_[i] - ap_[i];
         result.linear_residual = norm(ap_);
-        if (!std::isfinite(result.linear_residual)) linear_status = Status::NonFinite;
+        if (!std::isfinite(result.linear_residual))
+            linear_status = Status::NonFinite;
         else if (linear_status == Status::Converged &&
                  result.linear_residual > result.linear_tolerance)
             linear_status = Status::LinearResidualFailure;
@@ -238,12 +278,12 @@ NonlinearPressureStorage::Result NonlinearPressureStorage::solve(
             for (std::size_t i = 0; i < n; ++i) {
                 trial_[i] = head_[i] + step * delta_[i];
                 admissible = admissible && std::isfinite(trial_[i]) &&
-                    trial_[i] >= rows[i].lower_head && trial_[i] <= rows[i].upper_head;
+                             trial_[i] >= rows[i].lower_head && trial_[i] <= rows[i].upper_head;
             }
-            const double scaled = admissible ? evaluate(trial_, trial_residual_) :
-                std::numeric_limits<double>::infinity();
-            if (std::isfinite(scaled) && (scaled <= 1.0 ||
-                scaled <= (1.0 - 1.e-4 * step) * result.scaled_residual)) {
+            const double scaled = admissible ? evaluate(trial_, trial_residual_)
+                                             : std::numeric_limits<double>::infinity();
+            if (std::isfinite(scaled) &&
+                (scaled <= 1.0 || scaled <= (1.0 - 1.e-4 * step) * result.scaled_residual)) {
                 head_.swap(trial_);
                 residual_.swap(trial_residual_);
                 result.scaled_residual = scaled;

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_2d_node_coupling_section.cpp
- * @brief [2D_NODE_COUPLING]: per-node coupling type — parse, class defaults,
+ * @file      test_2d_node_coupling_section.cpp
+ * @brief     [2D_NODE_COUPLING]: per-node coupling type — parse, class defaults,
  *        validation, C API, node delete, .inp / GeoPackage round trip, and the
  *        router dropping map rows of non-coupleable nodes.
  *
@@ -25,6 +25,10 @@
  *          tests/unit/engine/data) for review.
  *
  * @ingroup engine_2d
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -49,82 +53,150 @@ const fs::path kOut = "node_coupling_section_out";
 // Chain J1 → V1 (virtual) → J2 → O1, with J3, J4 and storage ST1 draining to
 // J2. `section` is spliced in BEFORE the node sections so every row exercises
 // the deferred-name replay.
+/**
+ * @brief Construct a CMS network with coupling declarations before node declarations.
+ *
+ * Name references in section are deliberately deferred by ordering; does not parse, validate or run
+ * the model.
+ *
+ * @param[in] section Raw optional section text prepended verbatim, including headers/delimiters.
+ * @return Owned ten-minute DYNWAVE deck with J1/V1/J2/O1 chain and J3/J4/ST1 tributaries.
+ */
 std::string deck(const std::string& section) {
-    return section +
-        "\n[OPTIONS]\n"
-        "FLOW_UNITS           CMS\n"
-        "FLOW_ROUTING         DYNWAVE\n"
-        "START_DATE           01/01/2026\n"
-        "START_TIME           00:00:00\n"
-        "END_DATE             01/01/2026\n"
-        "END_TIME             00:10:00\n"
-        "ROUTING_STEP         5\n"
-        "\n[JUNCTIONS]\n"
-        "J1   3.0  1.0  0  0  0\n"
-        "J2   1.0  1.0  0  0  0\n"
-        "J3   2.0  1.0  0  0  0\n"
-        "J4   2.0  1.0  0  0  0\n"
-        "\n[VIRTUAL_JUNCTIONS]\n"
-        "V1   2.0\n"
-        "\n[STORAGE]\n"
-        "ST1  2.0  2.0  0  FUNCTIONAL  0  0  50  0  0\n"
-        "\n[OUTFALLS]\n"
-        "O1   0.0  FREE  NO\n"
-        "\n[CONDUITS]\n"
-        "C1   J1   V1  20  0.013  0  0  0\n"
-        "C2   V1   J2  20  0.013  0  0  0\n"
-        "C3   J2   O1  20  0.013  0  0  0\n"
-        "C4   J3   J2  20  0.013  0  0  0\n"
-        "C5   J4   J2  20  0.013  0  0  0\n"
-        "C6   ST1  J2  20  0.013  0  0  0\n"
-        "\n[XSECTIONS]\n"
-        "C1   CIRCULAR  0.3  0  0  0  1\n"
-        "C2   CIRCULAR  0.3  0  0  0  1\n"
-        "C3   CIRCULAR  0.3  0  0  0  1\n"
-        "C4   CIRCULAR  0.3  0  0  0  1\n"
-        "C5   CIRCULAR  0.3  0  0  0  1\n"
-        "C6   CIRCULAR  0.3  0  0  0  1\n";
+    return section + "\n[OPTIONS]\n"
+                     "FLOW_UNITS           CMS\n"
+                     "FLOW_ROUTING         DYNWAVE\n"
+                     "START_DATE           01/01/2026\n"
+                     "START_TIME           00:00:00\n"
+                     "END_DATE             01/01/2026\n"
+                     "END_TIME             00:10:00\n"
+                     "ROUTING_STEP         5\n"
+                     "\n[JUNCTIONS]\n"
+                     "J1   3.0  1.0  0  0  0\n"
+                     "J2   1.0  1.0  0  0  0\n"
+                     "J3   2.0  1.0  0  0  0\n"
+                     "J4   2.0  1.0  0  0  0\n"
+                     "\n[VIRTUAL_JUNCTIONS]\n"
+                     "V1   2.0\n"
+                     "\n[STORAGE]\n"
+                     "ST1  2.0  2.0  0  FUNCTIONAL  0  0  50  0  0\n"
+                     "\n[OUTFALLS]\n"
+                     "O1   0.0  FREE  NO\n"
+                     "\n[CONDUITS]\n"
+                     "C1   J1   V1  20  0.013  0  0  0\n"
+                     "C2   V1   J2  20  0.013  0  0  0\n"
+                     "C3   J2   O1  20  0.013  0  0  0\n"
+                     "C4   J3   J2  20  0.013  0  0  0\n"
+                     "C5   J4   J2  20  0.013  0  0  0\n"
+                     "C6   ST1  J2  20  0.013  0  0  0\n"
+                     "\n[XSECTIONS]\n"
+                     "C1   CIRCULAR  0.3  0  0  0  1\n"
+                     "C2   CIRCULAR  0.3  0  0  0  1\n"
+                     "C3   CIRCULAR  0.3  0  0  0  1\n"
+                     "C4   CIRCULAR  0.3  0  0  0  1\n"
+                     "C5   CIRCULAR  0.3  0  0  0  1\n"
+                     "C6   CIRCULAR  0.3  0  0  0  1\n";
 }
 
-const char* kSection =
-    "[2D_NODE_COUPLING]\n"
-    ";;Node  Type     KEY=VALUE ...\n"
-    "J2      NONE\n"
-    "J3      grate    PERIMETER=1.8 AREA=0.18\n"
-    "J4      MANHOLE  D=1.2 CREST=MESH_BED COEFFS=RUBINATO2017 CW=0.55\n"
-    "O1      OUTFALL  SPREAD=3 TAILWATER_RELAX=10\n"
-    "ST1     OPEN\n";
+const char* kSection = "[2D_NODE_COUPLING]\n"
+                       ";;Node  Type     KEY=VALUE ...\n"
+                       "J2      NONE\n"
+                       "J3      grate    PERIMETER=1.8 AREA=0.18\n"
+                       "J4      MANHOLE  D=1.2 CREST=MESH_BED COEFFS=RUBINATO2017 CW=0.55\n"
+                       "O1      OUTFALL  SPREAD=3 TAILWATER_RELAX=10\n"
+                       "ST1     OPEN\n";
 
+/**
+ * @brief Write/open one coupling-section deck without initialization.
+ *
+ * Creates directories with throwing filesystem calls, writes through an unchecked stream, and opens
+ * tag.rpt with empty binary output path. Does not check create failure separately; successful
+ * caller closes/destroys the returned handle.
+ *
+ * @param[in] tag Filesystem-safe artifact basename under kOut, without extension.
+ * @param[in] text Complete deck text copied to tag.inp, overwriting it.
+ * @param[out] rc Optional raw engine_open status; null is allowed.
+ * @return Owned opened handle on SWMM_OK; null after destroying the handle on open failure.
+ */
 SWMM_Engine open_text(const std::string& tag, const std::string& text, int* rc = nullptr) {
     fs::create_directories(kOut);
     const fs::path inp = kOut / (tag + ".inp");
-    { std::ofstream f(inp); f << text; }
+    {
+        std::ofstream f(inp);
+        f << text;
+    }
     SWMM_Engine e = swmm_engine_create();
     const int r = swmm_engine_open(e, inp.string().c_str(),
                                    (kOut / (tag + ".rpt")).string().c_str(), "", nullptr);
-    if (rc) *rc = r;
-    if (r != SWMM_OK) { swmm_engine_destroy(e); return nullptr; }
+    if (rc)
+        *rc = r;
+    if (r != SWMM_OK) {
+        swmm_engine_destroy(e);
+        return nullptr;
+    }
     return e;
 }
 
+/**
+ * @brief Close/destroy a coupling-section test engine, accepting null.
+ *
+ * Ignores close status before destruction; caller must not use a non-null consumed handle
+ * afterward.
+ *
+ * @param[in] e Owned created/opened handle to consume, or null for no operation.
+ */
 void close(SWMM_Engine e) {
-    if (!e) return;
+    if (!e)
+        return;
     swmm_engine_close(e);
     swmm_engine_destroy(e);
 }
 
+/**
+ * @brief Read the authored/resolved coupling type for a named node.
+ *
+ * Records a nonfatal SWMM_OK expectation; node lookup and API failure are not separately handled,
+ * and authored may retain its prior value on failure.
+ *
+ * @param[in] e Live opened fixture engine containing the node.
+ * @param[in] node Non-null exact node identifier.
+ * @param[out] authored Optional flag passed to the API to indicate an explicit authored row; null
+ *     allowed.
+ * @return Returned coupling type, initialized to -1 if the API does not assign it.
+ */
 int type_of(SWMM_Engine e, const char* node, int* authored = nullptr) {
     int t = -1;
     EXPECT_EQ(swmm_node_get_2d_coupling_type(e, swmm_node_index(e, node), &t, authored), SWMM_OK);
     return t;
 }
 
+/**
+ * @brief Read one textual 2D coupling parameter through a fixed-size test buffer.
+ *
+ * Records a nonfatal SWMM_OK expectation; no separate failure result is returned. Intended fixture
+ * values fit the buffer; no allocation retry occurs for larger values.
+ *
+ * @param[in] e Live opened fixture engine containing the requested node.
+ * @param[in] node Non-null exact node identifier.
+ * @param[in] key Non-null supported coupling parameter key.
+ * @return Owned parameter text from a zero-initialized 64-byte buffer; empty can mean an unset
+ *     value or API failure.
+ */
 std::string param(SWMM_Engine e, const char* node, const char* key) {
     char buf[64] = {};
     EXPECT_EQ(swmm_node_get_2d_coupling_param(e, swmm_node_index(e, node), key, buf, 64), SWMM_OK);
     return buf;
 }
 
+/**
+ * @brief Collect an available text artifact into an owned string.
+ *
+ * Uses ordinary text mode and no explicit stream status checks; allocation errors propagate.
+ *
+ * @param[in] p Input path, unchanged by the helper.
+ * @return Owned text; empty can mean empty/missing/unreadable file, partial read failures have no
+ *     separate status.
+ */
 std::string read_text(const fs::path& p) {
     std::ifstream f(p);
     std::stringstream ss;
@@ -132,6 +204,15 @@ std::string read_text(const fs::path& p) {
     return ss.str();
 }
 
+/**
+ * @brief Check the canonical authored/inferred coupling rows in the section fixture.
+ *
+ * Checks type/authored flags and expected grate/manhole/outfall text parameters through
+ * type_of/param. Uses nonfatal expectations and does not run physics, verify arbitrary rows or
+ * mutate authored settings.
+ *
+ * @param[in] e Opened engine built from the canonical fixture section, containing J1..J4/O1/ST1.
+ */
 void expect_section_rows(SWMM_Engine e) {
     int authored = 0;
     EXPECT_EQ(type_of(e, "J1", &authored), SWMM_2D_COUPLING_MANHOLE);
@@ -203,21 +284,21 @@ TEST(NodeCoupling2DSection, ParsesAndRoundTripsThroughInp) {
 // apply to the type, bad values and duplicates refuse the model.
 TEST(NodeCoupling2DSection, IllegalRowsRefuseTheModel) {
     const char* bad[] = {
-        "J1 OUTFALL",                  // OUTFALL only on outfalls
-        "O1 MANHOLE",                  // an outfall is OUTFALL or NONE
-        "J1 OPEN",                     // OPEN only on storage
-        "J1 PIPE",                     // unknown type
-        "NOPE MANHOLE",                // unknown node
-        "J1 MANHOLE SPREAD=2",         // outfall key on a structure
-        "O1 OUTFALL D=1",              // structure key on an outfall
-        "J2 NONE D=1",                 // NONE takes no keys
-        "J1 MANHOLE FOO=1",            // unknown key
-        "J1 MANHOLE D",                // not KEY=VALUE
+        "J1 OUTFALL",          // OUTFALL only on outfalls
+        "O1 MANHOLE",          // an outfall is OUTFALL or NONE
+        "J1 OPEN",             // OPEN only on storage
+        "J1 PIPE",             // unknown type
+        "NOPE MANHOLE",        // unknown node
+        "J1 MANHOLE SPREAD=2", // outfall key on a structure
+        "O1 OUTFALL D=1",      // structure key on an outfall
+        "J2 NONE D=1",         // NONE takes no keys
+        "J1 MANHOLE FOO=1",    // unknown key
+        "J1 MANHOLE D",        // not KEY=VALUE
         "J1 MANHOLE LID_OPEN_FRACTION=2",
         "J1 MANHOLE D=-1",
         "J1 MANHOLE CREST=TOP",
-        "J1 MANHOLE D=1 D=2",          // duplicate key
-        "J1 MANHOLE\nJ1 GRATE",        // duplicate row
+        "J1 MANHOLE D=1 D=2",   // duplicate key
+        "J1 MANHOLE\nJ1 GRATE", // duplicate row
     };
     int i = 0;
     for (const char* row : bad) {
@@ -300,11 +381,13 @@ TEST(NodeCoupling2DSection, GeoPackageRoundTrip) {
     ASSERT_NE(e, nullptr);
     const fs::path gpkg = kOut / "gpkg.gpkg";
     std::error_code ec;
-    for (const char* sfx : {"", "-wal", "-shm"}) fs::remove(gpkg.string() + sfx, ec);
+    for (const char* sfx : {"", "-wal", "-shm"})
+        fs::remove(gpkg.string() + sfx, ec);
     const char* kGpkgId = "org.hydrocouple.openswmm.plugins.geopackage";
     const int rc = swmm_model_write_with_plugin(e, gpkg.string().c_str(), kGpkgId);
     close(e);
-    if (rc != SWMM_OK) GTEST_SKIP() << "geopackage plugin unavailable (rc=" << rc << ")";
+    if (rc != SWMM_OK)
+        GTEST_SKIP() << "geopackage plugin unavailable (rc=" << rc << ")";
 
     SWMM_Engine e2 = swmm_engine_create();
     ASSERT_EQ(swmm_engine_open(e2, gpkg.string().c_str(), "", "", kGpkgId), SWMM_OK);
@@ -320,31 +403,61 @@ namespace {
 
 // J1 drains a rained-on 10×10 m patch through vertex 0. `j1_row` is an
 // optional [2D_NODE_COUPLING] row; `j2_row` likewise for an unmapped node.
+/**
+ * @brief Append the two-triangle surface and vertex-node map to the section fixture.
+ *
+ * Sets maximum surface timestep5 s, dry depth.002 m and no 2D reports. Rain is applied later at
+ * runtime by run_coupled, rather than authored in this deck.
+ *
+ * @param[in] rows Raw optional 2D_NODE_COUPLING rows; empty emits no such section, otherwise the
+ *     header is prepended.
+ * @return Owned CMS deck with 10-by-10 m elevated patch and vertex0 mapped to J1.
+ */
 std::string coupled_deck(const std::string& rows) {
-    return deck(rows.empty() ? "" : "[2D_NODE_COUPLING]\n" + rows) +
-        "\n[2D_OPTIONS]\n"
-        "MAX_TIMESTEP     5\n"
-        "DRY_DEPTH        0.002\n"
-        "REPORT_2D        NO\n"
-        "\n[2D_VERTICES]\n"
-        " 0.0    0.0   4.0\n"
-        "10.0    0.0   4.0\n"
-        "10.0   10.0   4.0\n"
-        " 0.0   10.0   4.0\n"
-        "\n[2D_TRIANGLES]\n"
-        "0  1  2  0.03\n"
-        "0  2  3  0.03\n"
-        "\n[2D_VERTEX_NODE_MAP]\n"
-        "0  J1  0.7  0.1\n";
+    return deck(rows.empty() ? "" : "[2D_NODE_COUPLING]\n" + rows) + "\n[2D_OPTIONS]\n"
+                                                                     "MAX_TIMESTEP     5\n"
+                                                                     "DRY_DEPTH        0.002\n"
+                                                                     "REPORT_2D        NO\n"
+                                                                     "\n[2D_VERTICES]\n"
+                                                                     " 0.0    0.0   4.0\n"
+                                                                     "10.0    0.0   4.0\n"
+                                                                     "10.0   10.0   4.0\n"
+                                                                     " 0.0   10.0   4.0\n"
+                                                                     "\n[2D_TRIANGLES]\n"
+                                                                     "0  1  2  0.03\n"
+                                                                     "0  2  3  0.03\n"
+                                                                     "\n[2D_VERTEX_NODE_MAP]\n"
+                                                                     "0  J1  0.7  0.1\n";
 }
 
-struct CoupledRun { bool ok = false; double drained = 0.0; std::string rpt; };
+struct CoupledRun {
+    bool ok = false;
+    double drained = 0.0;
+    std::string rpt;
+};
 
+/**
+ * @brief Run a rainy coupling fixture and retain drained volume and report text.
+ *
+ * Creates/opens/initializes/starts with output disabled; forces uniform override rain .0005 m/s
+ * before each step. Step failure and natural completion both break the loop, after which
+ * end/mass-balance/report/cleanup statuses are ignored and ok becomes true. Thus ok marks completed
+ * helper cleanup, not proof every timestep succeeded. Does not return a separate rain/status
+ * diagnostic; filesystem exceptions propagate.
+ *
+ * @param[in] tag Filesystem-safe artifact basename under kOut; input/report files are overwritten.
+ * @param[in] rows Optional raw authored coupling rows passed to coupled_deck.
+ * @return Owned result with drained water in m3 and report text; ok=false on open/init/start
+ *     failure.
+ */
 CoupledRun run_coupled(const std::string& tag, const std::string& rows) {
     CoupledRun r;
     fs::create_directories(kOut);
     const fs::path inp = kOut / (tag + ".inp"), rpt = kOut / (tag + ".rpt");
-    { std::ofstream f(inp); f << coupled_deck(rows); }
+    {
+        std::ofstream f(inp);
+        f << coupled_deck(rows);
+    }
     SWMM_Engine e = swmm_engine_create();
     if (swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(), "", nullptr) != SWMM_OK ||
         swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 0) != SWMM_OK) {
@@ -354,11 +467,12 @@ CoupledRun run_coupled(const std::string& tag, const std::string& rows) {
     double elapsed = 0.0;
     for (;;) {
         swmm_2d_force_rainfall_uniform(e, 0.0005, SWMM_FORCING_OVERRIDE, SWMM_FORCING_PERSIST);
-        if (swmm_engine_step(e, &elapsed) != SWMM_OK || elapsed <= 0.0) break;
+        if (swmm_engine_step(e, &elapsed) != SWMM_OK || elapsed <= 0.0)
+            break;
     }
     swmm_engine_end(e);
-    swmm_2d_get_mass_balance(e, nullptr, nullptr, nullptr, nullptr, &r.drained,
-                             nullptr, nullptr, nullptr, nullptr, nullptr);
+    swmm_2d_get_mass_balance(e, nullptr, nullptr, nullptr, nullptr, &r.drained, nullptr, nullptr,
+                             nullptr, nullptr, nullptr);
     swmm_engine_report(e);
     close(e);
     r.rpt = read_text(rpt);
@@ -370,7 +484,7 @@ CoupledRun run_coupled(const std::string& tag, const std::string& rows) {
 
 TEST(NodeCoupling2DSection, MapRowsOfNoneNodesAreIgnored) {
     CoupledRun coupled = run_coupled("router_default", "");
-    CoupledRun none    = run_coupled("router_none", "J1 NONE\n");
+    CoupledRun none = run_coupled("router_none", "J1 NONE\n");
     ASSERT_TRUE(coupled.ok && none.ok);
     EXPECT_GT(coupled.drained, 1.0) << "J1 (MANHOLE by default) should drain the patch";
     EXPECT_EQ(none.drained, 0.0) << "a NONE node's map row must not couple";
@@ -382,6 +496,7 @@ TEST(NodeCoupling2DSection, AuthoredCoupleableNodeWithoutMapRowIsReported) {
     CoupledRun r = run_coupled("router_unmapped", "J3 GRATE PERIMETER=1.8\n");
     ASSERT_TRUE(r.ok);
     EXPECT_NE(r.rpt.find("1 node(s) authored as coupleable in [2D_NODE_COUPLING] have no"),
-              std::string::npos) << r.rpt;
+              std::string::npos)
+        << r.rpt;
     EXPECT_NE(r.rpt.find(": J3"), std::string::npos);
 }

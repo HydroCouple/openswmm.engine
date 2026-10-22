@@ -1,9 +1,13 @@
 /**
- * @file NetworkMeshBuilder.cpp
- * @brief Implementation of the FV network mesh construction.
+ * @file      NetworkMeshBuilder.cpp
+ * @brief     Implementation of the FV network mesh construction.
  *
  * @see NetworkMeshBuilder.hpp
  * @ingroup engine_fv
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include "NetworkMeshBuilder.hpp"
@@ -30,53 +34,61 @@ namespace {
 
 /// One end of one conduit attached to a node.
 struct Attachment {
-    int conduit = -1;   ///< ConduitData row
-    int end     = 0;    ///< 0 = conduit's upstream (node1) end, 1 = downstream
+    int conduit = -1; ///< ConduitData row
+    int end = 0;      ///< 0 = conduit's upstream (node1) end, 1 = downstream
 };
 
 /**
- * @brief Build the exact-geometry closure table for one section.
+ * @brief Build consistent FV area/width/pressure-integral closure geometry.
  *
- * Samples SectionGeometry (closed forms where they exist, the legacy
- * evaluator where the table is the definition) at kClosurePanels+1 uniform
- * depths with the tapered slot folded in, takes the exact top width as the
- * Hermite slope, limits the slopes for monotonicity (Fritsch–Carlson), and
- * integrates the panel cubics for I₁. Open polynomial sections get the
- * closed-form class instead. Areas and widths are per cell (barrels folded
- * in); R is per barrel. a_crown / i1_crown are then the closure's own values.
+ * Nonpositive/NaN full depth leaves a reset disabled closure. Polynomial open
+ * rectangle/trapezoid/triangle uses analytic coefficients. Other shapes sample kClosurePanels+1
+ * depths with tapered slot, use exact-width or PCHIP slopes, Fritsch-Carlson monotonic limiter,
+ * cubic integrals and area-uniform inverse brackets. Areas/widths aggregate barrels; hydraulic
+ * radius remains per barrel. No heap allocation, section validation or ownership transfer.
+ *
+ * @param[in,out] g Borrowed initialized native geometry with live section tables, positive y_full
+ *     and coherent barrel/slot parameters; closure_tbl/a_crown/i1_crown replaced.
  */
 void buildClosure(FvGeometry& g) {
     FvClosure& c = g.closure_tbl;
     c = FvClosure{};
     const int N = kClosurePanels;
-    if (!(g.y_full > 0.0)) return;
+    if (!(g.y_full > 0.0))
+        return;
 
     c.y_full = g.y_full;
-    c.dh     = g.y_full / static_cast<double>(N);
+    c.dh = g.y_full / static_cast<double>(N);
     c.inv_dh = static_cast<double>(N) / g.y_full;
     c.t_slot = g.t_slot;
     c.r_full = g.r_full;
-    const double bs   = g.barrel_scale;
+    const double bs = g.barrel_scale;
     const double band = g.y_full - g.y_crown;
     const XSectParams& xs = g.xs;
 
     if (g.is_open && secgeom::isPolynomialOpen(xs.type)) {
         c.kind = kClosurePolynomial;
         switch (static_cast<XSectShape>(xs.type)) {
-            case XSectShape::RECT_OPEN:
-                c.c2 = 0.0;            c.c1 = bs * xs.w_max;
-                c.p0 = bs * xs.w_max;  c.p1 = bs * (2.0 - xs.s_bot);
-                break;
-            case XSectShape::TRAPEZOIDAL:
-                c.c2 = bs * xs.s_bot;  c.c1 = bs * xs.y_bot;
-                c.p0 = bs * xs.y_bot;  c.p1 = bs * xs.r_bot;
-                break;
-            default:  // TRIANGULAR
-                c.c2 = bs * xs.s_bot;  c.c1 = 0.0;
-                c.p0 = 0.0;            c.p1 = bs * 2.0 * xs.r_bot;
-                break;
+        case XSectShape::RECT_OPEN:
+            c.c2 = 0.0;
+            c.c1 = bs * xs.w_max;
+            c.p0 = bs * xs.w_max;
+            c.p1 = bs * (2.0 - xs.s_bot);
+            break;
+        case XSectShape::TRAPEZOIDAL:
+            c.c2 = bs * xs.s_bot;
+            c.c1 = bs * xs.y_bot;
+            c.p0 = bs * xs.y_bot;
+            c.p1 = bs * xs.r_bot;
+            break;
+        default: // TRIANGULAR
+            c.c2 = bs * xs.s_bot;
+            c.c1 = 0.0;
+            c.p0 = 0.0;
+            c.p1 = bs * 2.0 * xs.r_bot;
+            break;
         }
-        c.a_crown  = (c.c2 * g.y_full + c.c1) * g.y_full;
+        c.a_crown = (c.c2 * g.y_full + c.c1) * g.y_full;
         c.i1_crown = (c.c2 * g.y_full / 3.0 + 0.5 * c.c1) * g.y_full * g.y_full;
         c.inv_a_crown_n = (c.a_crown > 0.0) ? static_cast<double>(N) / c.a_crown : 0.0;
     } else {
@@ -107,7 +119,8 @@ void buildClosure(FvGeometry& g) {
         // which is monotone by construction and keeps T consistent with A.
         if (!secgeom::hasClosedForm(xs.type)) {
             double d[kClosurePanels];
-            for (int i = 0; i < N; ++i) d[i] = (c.A[i + 1] - c.A[i]) * c.inv_dh;
+            for (int i = 0; i < N; ++i)
+                d[i] = (c.A[i + 1] - c.A[i]) * c.inv_dh;
             c.M[0] = d[0];
             c.M[N] = d[N - 1];
             for (int i = 1; i < N; ++i) {
@@ -119,7 +132,8 @@ void buildClosure(FvGeometry& g) {
             // Keep the slot's own slope at the crown node: above it the
             // closure is the slot line, and continuity of T there is what the
             // taper band is for.
-            if (band > 0.0) c.M[N] = std::max(c.M[N], g.t_slot);
+            if (band > 0.0)
+                c.M[N] = std::max(c.M[N], g.t_slot);
         }
 
         // Fritsch–Carlson: with the exact width as node slope the limiter
@@ -127,15 +141,25 @@ void buildClosure(FvGeometry& g) {
         // of the table rather than of the shape.
         for (int i = 0; i < N; ++i) {
             const double delta = (c.A[i + 1] - c.A[i]) * c.inv_dh;
-            if (!(delta > 0.0)) { c.M[i] = 0.0; c.M[i + 1] = 0.0; continue; }
+            if (!(delta > 0.0)) {
+                c.M[i] = 0.0;
+                c.M[i + 1] = 0.0;
+                continue;
+            }
             double alpha = c.M[i] / delta, beta = c.M[i + 1] / delta;
-            if (alpha < 0.0) { alpha = 0.0; c.M[i] = 0.0; }
-            if (beta  < 0.0) { beta  = 0.0; c.M[i + 1] = 0.0; }
+            if (alpha < 0.0) {
+                alpha = 0.0;
+                c.M[i] = 0.0;
+            }
+            if (beta < 0.0) {
+                beta = 0.0;
+                c.M[i + 1] = 0.0;
+            }
             const double s2 = alpha * alpha + beta * beta;
             if (s2 > 9.0) {
                 const double tau = 3.0 / std::sqrt(s2);
-                c.M[i]     = tau * alpha * delta;
-                c.M[i + 1] = tau * beta  * delta;
+                c.M[i] = tau * alpha * delta;
+                c.M[i + 1] = tau * beta * delta;
             }
         }
 
@@ -144,7 +168,7 @@ void buildClosure(FvGeometry& g) {
         for (int i = 0; i < N; ++i)
             c.I1[i + 1] = c.I1[i] + c.dh * (0.5 * (c.A[i] + c.A[i + 1]) +
                                             c.dh / 12.0 * (c.M[i] - c.M[i + 1]));
-        c.a_crown  = c.A[N];
+        c.a_crown = c.A[N];
         c.i1_crown = c.I1[N];
         c.inv_a_crown_n = (c.a_crown > 0.0) ? static_cast<double>(N) / c.a_crown : 0.0;
 
@@ -154,13 +178,16 @@ void buildClosure(FvGeometry& g) {
             int lo = 0, hi = N;
             while (hi - lo > 1) {
                 const int mid = (lo + hi) / 2;
-                if (c.A[mid] <= ak) lo = mid; else hi = mid;
+                if (c.A[mid] <= ak)
+                    lo = mid;
+                else
+                    hi = mid;
             }
             c.j_of_a[k] = static_cast<int16_t>((lo > N - 1) ? N - 1 : lo);
         }
     }
 
-    g.a_crown  = c.a_crown;
+    g.a_crown = c.a_crown;
     g.i1_crown = c.i1_crown;
 }
 
@@ -170,17 +197,18 @@ void buildClosure(FvGeometry& g) {
 // buildGeometry
 // ===========================================================================
 
-void buildGeometry(const XSectParams& xs, bool is_open, double slot_celerity,
-                   FvGeometry& g, int barrels) {
-    g.xs      = xs;
+// Aggregate geometry contract is documented in NetworkMeshBuilder.hpp.
+void buildGeometry(const XSectParams& xs, bool is_open, double slot_celerity, FvGeometry& g,
+                   int barrels) {
+    g.xs = xs;
     g.barrels = std::max(1, barrels);
     g.barrel_scale = static_cast<double>(g.barrels);
     // Area and width are aggregate over the barrels; depth and hydraulic radius
     // are per barrel and unscaled.
-    g.y_full  = xs.y_full;
-    g.a_full  = g.barrel_scale * xs.a_full;
-    g.w_max   = g.barrel_scale * xs.w_max;
-    g.r_full  = xs.r_full;
+    g.y_full = xs.y_full;
+    g.a_full = g.barrel_scale * xs.a_full;
+    g.w_max = g.barrel_scale * xs.w_max;
+    g.r_full = xs.r_full;
     g.is_open = is_open ? uint8_t{1} : uint8_t{0};
 
     if (is_open) {
@@ -188,7 +216,7 @@ void buildGeometry(const XSectParams& xs, bool is_open, double slot_celerity,
         // y_full. One code path with the closed case — the "slot" width is just
         // the section's own top width there, so celerity stays physical.
         g.y_crown = xs.y_full;
-        g.t_slot  = (g.w_max > 0.0) ? g.w_max : 1.0;
+        g.t_slot = (g.w_max > 0.0) ? g.w_max : 1.0;
     } else {
         // T_slot from the DESIGN celerity: c = √(g·A_full/T_slot). Making the
         // celerity the user-facing knob (FV_SLOT_CELERITY) rather than the
@@ -200,12 +228,14 @@ void buildGeometry(const XSectParams& xs, bool is_open, double slot_celerity,
         // Never let the slot be wider than the section it pressurizes — that
         // would make the "slot" the dominant storage and understate surge.
         const double cap = 0.05 * ((g.w_max > 0.0) ? g.w_max : 1.0);
-        if (g.t_slot > cap) g.t_slot = cap;
-        if (g.t_slot <= 0.0) g.t_slot = 1.0e-6;
+        if (g.t_slot > cap)
+            g.t_slot = cap;
+        if (g.t_slot <= 0.0)
+            g.t_slot = 1.0e-6;
     }
 
     const double band = g.y_full - g.y_crown;
-    g.a_crown = g.a_full + g.t_slot * band * 0.5;   // ∫₀¹ ramp = ½
+    g.a_crown = g.a_full + g.t_slot * band * 0.5; // ∫₀¹ ramp = ½
 
     buildClosure(g);
 }
@@ -214,16 +244,15 @@ void buildGeometry(const XSectParams& xs, bool is_open, double slot_celerity,
 // buildNetworkMesh
 // ===========================================================================
 
-MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
-                                 const FvOptions& opts,
+MeshBuildReport buildNetworkMesh(SimulationContext& ctx, const FvOptions& opts,
                                  NetworkMeshData& mesh) {
     MeshBuildReport rep;
     mesh.clear();
 
     const int n_links = ctx.n_links();
     const int n_nodes = ctx.n_nodes();
-    const auto& CD    = ctx.link_subtypes.conduits;
-    const int n_cond  = CD.count();
+    const auto& CD = ctx.link_subtypes.conduits;
+    const int n_cond = CD.count();
 
     // -----------------------------------------------------------------------
     // Nodes
@@ -235,28 +264,27 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
     mesh.node_can_pond.resize(static_cast<std::size_t>(n_nodes));
     mesh.node_kind.resize(static_cast<std::size_t>(n_nodes));
     mesh.node_vj_face.assign(static_cast<std::size_t>(n_nodes), -1);
-    mesh.node_area.assign(static_cast<std::size_t>(n_nodes),
-                          constants::MIN_SURFAREA);
+    mesh.node_area.assign(static_cast<std::size_t>(n_nodes), constants::MIN_SURFAREA);
     for (int i = 0; i < n_nodes; ++i) {
         const auto ui = static_cast<std::size_t>(i);
-        mesh.node_invert[ui]      = ctx.nodes.invert_elev[ui];
-        mesh.node_full_depth[ui]  = ctx.nodes.full_depth[ui];
+        mesh.node_invert[ui] = ctx.nodes.invert_elev[ui];
+        mesh.node_full_depth[ui] = ctx.nodes.full_depth[ui];
         mesh.node_ponded_area[ui] = ctx.nodes.ponded_area[ui];
-        mesh.node_sur_depth[ui]   = ctx.nodes.sur_depth[ui];
+        mesh.node_sur_depth[ui] = ctx.nodes.sur_depth[ui];
         // Same eligibility rule as DW (DynamicWave.cpp getFloodedDepth): the
         // project option gates ponding, and a 2D-coupled node ponds regardless
         // because its rim is the surface exchange.
-        const bool is_coupled =
-            (ui < ctx.coupled_node.size() && ctx.coupled_node[ui]);
-        mesh.node_can_pond[ui] = static_cast<uint8_t>(
-            (ctx.options.allow_ponding || is_coupled) &&
-            ctx.nodes.ponded_area[ui] > 0.0 &&
-            ctx.nodes.type[ui] != NodeType::OUTFALL);
+        const bool is_coupled = (ui < ctx.coupled_node.size() && ctx.coupled_node[ui]);
+        mesh.node_can_pond[ui] = static_cast<uint8_t>((ctx.options.allow_ponding || is_coupled) &&
+                                                      ctx.nodes.ponded_area[ui] > 0.0 &&
+                                                      ctx.nodes.type[ui] != NodeType::OUTFALL);
         uint8_t kind = kNodeJunction;
         if (ui < ctx.nodes.is_virtual.size() && ctx.nodes.is_virtual[ui])
             kind = kNodeVirtual;
-        else if (ctx.nodes.type[ui] == NodeType::STORAGE) kind = kNodeStorage;
-        else if (ctx.nodes.type[ui] == NodeType::OUTFALL) kind = kNodeOutfall;
+        else if (ctx.nodes.type[ui] == NodeType::STORAGE)
+            kind = kNodeStorage;
+        else if (ctx.nodes.type[ui] == NodeType::OUTFALL)
+            kind = kNodeOutfall;
         mesh.node_kind[ui] = kind;
 
         // Match node::getVolume's JUNCTION branch exactly: V = full_volume *
@@ -264,8 +292,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         // full_depth. Storage nodes use their real curve instead (below).
         const double fd = ctx.nodes.full_depth[ui];
         const double fvol = ctx.nodes.full_volume[ui];
-        mesh.node_area[ui] =
-            (fd > 0.0 && fvol > 0.0) ? fvol / fd : constants::MIN_SURFAREA;
+        mesh.node_area[ui] = (fd > 0.0 && fvol > 0.0) ? fvol / fd : constants::MIN_SURFAREA;
     }
 
     // Flatten STORAGE geometry into a monotone depth→volume table so the solver
@@ -280,22 +307,22 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
         for (int i = 0; i < n_nodes; ++i) {
             const auto ui = static_cast<std::size_t>(i);
-            if (mesh.node_kind[ui] != kNodeStorage) continue;
+            if (mesh.node_kind[ui] != kNodeStorage)
+                continue;
             double dmax = ctx.nodes.full_depth[ui] + ctx.nodes.sur_depth[ui];
-            if (!(dmax > 0.0)) dmax = std::max(ctx.nodes.full_depth[ui], 1.0);
-            mesh.node_vol_off[ui]  = static_cast<int>(mesh.node_vol_tbl.size());
+            if (!(dmax > 0.0))
+                dmax = std::max(ctx.nodes.full_depth[ui], 1.0);
+            mesh.node_vol_off[ui] = static_cast<int>(mesh.node_vol_tbl.size());
             mesh.node_vol_dmax[ui] = dmax;
             const double dd = dmax / static_cast<double>(kNodeVolSamples - 1);
             for (int k = 0; k < kNodeVolSamples; ++k) {
                 const double d = static_cast<double>(k) * dd;
                 mesh.node_vol_tbl.push_back(
-                    node::getVolume(ctx.nodes, i, d, &ctx.tables, us,
-                                    &ctx.node_subtypes));
+                    node::getVolume(ctx.nodes, i, d, &ctx.tables, us, &ctx.node_subtypes));
             }
-            mesh.node_vol_atop[ui] = std::max(
-                node::getSurfArea(ctx.nodes, i, dmax, &ctx.tables, us,
-                                  &ctx.node_subtypes),
-                constants::MIN_SURFAREA);
+            mesh.node_vol_atop[ui] =
+                std::max(node::getSurfArea(ctx.nodes, i, dmax, &ctx.tables, us, &ctx.node_subtypes),
+                         constants::MIN_SURFAREA);
         }
     }
 
@@ -336,19 +363,17 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
     // identical tables at different addresses merely miss the memo, which is
     // safe. (After the STREET/CUSTOM memoization in the resolver, links sharing
     // a street already share one table address, so they hit.)
-    using GeomKey = std::tuple<int, int, int,
-                               double, double, double, double, double, double,
-                               double, double, double, double, double,
-                               const double*, const double*, const double*,
-                               int, int, bool>;
+    using GeomKey = std::tuple<int, int, int, double, double, double, double, double, double,
+                               double, double, double, double, double, const double*, const double*,
+                               const double*, int, int, bool>;
     const auto geom_key = [](const XSectParams& x, int barrels, bool is_open) {
-        return GeomKey{x.type, x.culvert_code, x.transect,
-                       x.y_full, x.w_max, x.yw_max, x.a_full, x.r_full,
-                       x.s_full, x.s_max, x.y_bot, x.a_bot, x.s_bot, x.r_bot,
-                       x.area_tbl, x.hrad_tbl, x.width_tbl,
-                       x.transect_tbl_size, barrels, is_open};
+        return GeomKey{
+            x.type,   x.culvert_code, x.transect, x.y_full,   x.w_max,     x.yw_max,
+            x.a_full, x.r_full,       x.s_full,   x.s_max,    x.y_bot,     x.a_bot,
+            x.s_bot,  x.r_bot,        x.area_tbl, x.hrad_tbl, x.width_tbl, x.transect_tbl_size,
+            barrels,  is_open};
     };
-    std::map<GeomKey, int> geom_memo;   // key -> conduit row already tabulated
+    std::map<GeomKey, int> geom_memo; // key -> conduit row already tabulated
 
     // Slot-cap transparency tally (surfaced once after the loop): where
     // g·A_full/c² exceeds the 5%-of-top-width cap, the cap sets the slot and
@@ -360,7 +385,8 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
     for (int r = 0; r < n_cond; ++r) {
         const auto ur = static_cast<std::size_t>(r);
         const int j = CD.link_idx[ur];
-        if (j < 0 || j >= n_links) continue;
+        if (j < 0 || j >= n_links)
+            continue;
         const auto uj = static_cast<std::size_t>(j);
 
         // A DUMMY conduit is connectivity, not a channel: it declares that
@@ -374,7 +400,8 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         // This has to be tested on the SHAPE, before buildXSectParams, rather
         // than falling through to the zero-geometry check: that check must stay
         // an error for a link whose geometry genuinely failed to resolve.
-        if (ctx.links.xsect_shape[uj] == XsectShape::DUMMY) continue;
+        if (ctx.links.xsect_shape[uj] == XsectShape::DUMMY)
+            continue;
 
         mesh.conduit_link[ur] = j;
 
@@ -383,10 +410,9 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
             // A control volume needs a real section. A link whose geometry
             // never resolved cannot be marched. (DUMMY shapes are handled
             // above and never reach here.)
-            rep.errors.push_back(
-                "FV routing: conduit '" + ctx.link_names.name_of(j) +
-                "' has no usable cross-section (full depth/area is zero). "
-                "FLOW_ROUTING FV requires every conduit to carry real geometry.");
+            rep.errors.push_back("FV routing: conduit '" + ctx.link_names.name_of(j) +
+                                 "' has no usable cross-section (full depth/area is zero). "
+                                 "FLOW_ROUTING FV requires every conduit to carry real geometry.");
             continue;
         }
 
@@ -402,8 +428,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         } else {
             sec = static_cast<int>(mesh.geom.size());
             mesh.geom.emplace_back();
-            buildGeometry(xs, is_open, opts.slot_celerity, mesh.geom.back(),
-                          CD.barrels[ur]);
+            buildGeometry(xs, is_open, opts.slot_celerity, mesh.geom.back(), CD.barrels[ur]);
             geom_memo.emplace(geom_key(xs, CD.barrels[ur], is_open), sec);
         }
         mesh.conduit_section[ur] = sec;
@@ -415,39 +440,37 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
             ++n_closed;
             if (uncapped > cap && g.t_slot > 0.0) {
                 ++n_capped;
-                c_implied_max = std::max(
-                    c_implied_max,
-                    std::sqrt(kernels::kGravity * g.a_full / g.t_slot));
+                c_implied_max =
+                    std::max(c_implied_max, std::sqrt(kernels::kGravity * g.a_full / g.t_slot));
             }
         }
-        mesh.conduit_roughness[ur]    = CD.roughness[ur];
+        mesh.conduit_roughness[ur] = CD.roughness[ur];
         mesh.conduit_rough_factor[ur] = CD.rough_factor[ur];
-        mesh.conduit_loss_inlet[ur]   = CD.loss_inlet[ur];
-        mesh.conduit_loss_outlet[ur]  = CD.loss_outlet[ur];
+        mesh.conduit_loss_inlet[ur] = CD.loss_inlet[ur];
+        mesh.conduit_loss_outlet[ur] = CD.loss_outlet[ur];
         mesh.conduit_culvert_code[ur] = CD.culvert_code[ur];
-        mesh.conduit_slope[ur]        = CD.slope[ur];
+        mesh.conduit_slope[ur] = CD.slope[ur];
         if (CD.culvert_code[ur] > 0) {
             const culvert::CulvertCoeffs cc = culvert::getCoeffs(CD.culvert_code[ur]);
             mesh.conduit_culvert_curve[ur] = {cc.K, cc.M, cc.C, cc.Y};
             mesh.conduit_culvert_mitered[ur] = static_cast<uint8_t>(
-                CD.culvert_code[ur] == 5 || CD.culvert_code[ur] == 37 ||
-                CD.culvert_code[ur] == 46);
+                CD.culvert_code[ur] == 5 || CD.culvert_code[ur] == 37 || CD.culvert_code[ur] == 46);
         }
 
         // Mesh length: the Courant-lengthened mod_length is reused as the Δx
         // floor in BOTH modes (plan §3.2). Router::init has already adjusted
         // slope and roughness for the same factor, so bed slope (drop/mod_length)
         // and rough_factor stay mutually consistent.
-        const double len  = CD.length[ur];
+        const double len = CD.length[ur];
         const double mlen = CD.mod_length[ur];
-        const double L    = std::max({len, mlen, constants::FUDGE});
+        const double L = std::max({len, mlen, constants::FUDGE});
 
         // FV_MIN_CELLS is a FLOOR on the discretization, so it applies whether
         // or not FV_CELL_LENGTH asked for a target Δx. Applying it only inside
         // the FINE branch made it inert on its own — another parsed knob that
         // did nothing unless a second one was also set.
-        int ncell = 1;                                   // COARSE default
-        if (opts.cell_length > 0.0)                      // FINE
+        int ncell = 1;              // COARSE default
+        if (opts.cell_length > 0.0) // FINE
             ncell = static_cast<int>(std::ceil(L / opts.cell_length));
         ncell = std::max({ncell, opts.min_cells, 1});
         mesh.conduit_cell_begin[ur] = mesh.n_cells();
@@ -459,14 +482,13 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
 
         const int n1 = ctx.links.node1[uj];
         const int n2 = ctx.links.node2[uj];
-        const double z1 = ctx.nodes.invert_elev[static_cast<std::size_t>(n1)] +
-                          ctx.links.offset1[uj];
-        const double z2 = ctx.nodes.invert_elev[static_cast<std::size_t>(n2)] +
-                          ctx.links.offset2[uj];
+        const double z1 =
+            ctx.nodes.invert_elev[static_cast<std::size_t>(n1)] + ctx.links.offset1[uj];
+        const double z2 =
+            ctx.nodes.invert_elev[static_cast<std::size_t>(n2)] + ctx.links.offset2[uj];
 
         for (int i = 0; i < ncell; ++i) {
-            const double t = (static_cast<double>(i) + 0.5) /
-                             static_cast<double>(ncell);
+            const double t = (static_cast<double>(i) + 0.5) / static_cast<double>(ncell);
             mesh.cell_geom.push_back(sec);
             mesh.cell_conduit.push_back(r);
             mesh.cell_dx.push_back(dx);
@@ -474,22 +496,25 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
             mesh.cell_dzdx.push_back((z2 - z1) / L);
         }
     }
-    if (!rep.errors.empty()) return rep;
-    if (rep.min_dx > 1.0e29) rep.min_dx = 0.0;
+    if (!rep.errors.empty())
+        return rep;
+    if (rep.min_dx > 1.0e29)
+        rep.min_dx = 0.0;
 
     if (n_capped > 0) {
         char buf[160];
         std::snprintf(buf, sizeof(buf),
                       "%d of %d closed conduits (cap-implied celerity up to "
-                      "%.0f ft/s)", n_capped, n_closed, c_implied_max);
+                      "%.0f ft/s)",
+                      n_capped, n_closed, c_implied_max);
         rep.warnings.push_back(format_warning(WARN_FV_SLOT_CAP, buf));
     }
 
     // -----------------------------------------------------------------------
     // Interior faces inside each conduit chain
     // -----------------------------------------------------------------------
-    auto add_face = [&](int cl, int cr, int node, double zb, double dx,
-                        int8_t dl, int8_t dr, bool is_vj) {
+    auto add_face = [&](int cl, int cr, int node, double zb, double dx, int8_t dl, int8_t dr,
+                        bool is_vj) {
         mesh.face_cl.push_back(cl);
         mesh.face_cr.push_back(cr);
         mesh.face_node.push_back(node);
@@ -507,20 +532,20 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         const auto ur = static_cast<std::size_t>(r);
         const int begin = mesh.conduit_cell_begin[ur];
         const int count = mesh.conduit_cell_count[ur];
-        if (begin < 0 || count < 2) continue;
+        if (begin < 0 || count < 2)
+            continue;
         const int j = mesh.conduit_link[ur];
         const auto uj = static_cast<std::size_t>(j);
         const int n1 = ctx.links.node1[uj];
         const int n2 = ctx.links.node2[uj];
-        const double z1 = ctx.nodes.invert_elev[static_cast<std::size_t>(n1)] +
-                          ctx.links.offset1[uj];
-        const double z2 = ctx.nodes.invert_elev[static_cast<std::size_t>(n2)] +
-                          ctx.links.offset2[uj];
+        const double z1 =
+            ctx.nodes.invert_elev[static_cast<std::size_t>(n1)] + ctx.links.offset1[uj];
+        const double z2 =
+            ctx.nodes.invert_elev[static_cast<std::size_t>(n2)] + ctx.links.offset2[uj];
         const double dx = mesh.cell_dx[static_cast<std::size_t>(begin)];
         for (int i = 1; i < count; ++i) {
             const double t = static_cast<double>(i) / static_cast<double>(count);
-            add_face(begin + i - 1, begin + i, -1, z1 + (z2 - z1) * t, dx,
-                     1, 1, false);
+            add_face(begin + i - 1, begin + i, -1, z1 + (z2 - z1) * t, dx, 1, 1, false);
         }
     }
 
@@ -530,13 +555,16 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
     std::vector<std::vector<Attachment>> attach(static_cast<std::size_t>(n_nodes));
     for (int r = 0; r < n_cond; ++r) {
         const auto ur = static_cast<std::size_t>(r);
-        if (mesh.conduit_cell_begin[ur] < 0) continue;
+        if (mesh.conduit_cell_begin[ur] < 0)
+            continue;
         const int j = mesh.conduit_link[ur];
         const auto uj = static_cast<std::size_t>(j);
         const int n1 = ctx.links.node1[uj];
         const int n2 = ctx.links.node2[uj];
-        if (n1 >= 0 && n1 < n_nodes) attach[static_cast<std::size_t>(n1)].push_back({r, 0});
-        if (n2 >= 0 && n2 < n_nodes) attach[static_cast<std::size_t>(n2)].push_back({r, 1});
+        if (n1 >= 0 && n1 < n_nodes)
+            attach[static_cast<std::size_t>(n1)].push_back({r, 0});
+        if (n2 >= 0 && n2 < n_nodes)
+            attach[static_cast<std::size_t>(n2)].push_back({r, 1});
     }
 
     auto chain_end_cell = [&](const Attachment& a) {
@@ -570,12 +598,14 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
     std::vector<uint8_t> conduit_gate(static_cast<std::size_t>(n_cond), 0);
     for (int r = 0; r < n_cond; ++r) {
         const auto ur = static_cast<std::size_t>(r);
-        if (mesh.conduit_cell_begin[ur] < 0) continue;
+        if (mesh.conduit_cell_begin[ur] < 0)
+            continue;
         const auto uj = static_cast<std::size_t>(mesh.conduit_link[ur]);
         uint8_t gate = 0;
         auto block = [&](int s) { gate |= (s > 0) ? uint8_t{1} : uint8_t{2}; };
 
-        if (ctx.links.has_flap_gate[uj]) block(-ctx.links.direction[uj]);
+        if (ctx.links.has_flap_gate[uj])
+            block(-ctx.links.direction[uj]);
 
         // A gated outfall upstream blocks chain-POSITIVE flow (out of node1
         // into the pipe); downstream it blocks chain-negative.
@@ -585,8 +615,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
             if (nd < 0 || ctx.nodes.type[static_cast<std::size_t>(nd)] != NodeType::OUTFALL)
                 continue;
             const int ofr = ctx.node_subtypes.outfall_row(nd);
-            if (ofr >= 0 &&
-                ctx.node_subtypes.outfalls.has_flap_gate[static_cast<std::size_t>(ofr)])
+            if (ofr >= 0 && ctx.node_subtypes.outfalls.has_flap_gate[static_cast<std::size_t>(ofr)])
                 block((e == 0) ? 1 : -1);
         }
         conduit_gate[ur] = gate;
@@ -594,7 +623,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
 
     // Per-node face lists, gathered before flattening to CSR so the ordering is
     // deterministic (node-major, then attachment order) on every backend.
-    std::vector<std::vector<int>>    nf_idx(static_cast<std::size_t>(n_nodes));
+    std::vector<std::vector<int>> nf_idx(static_cast<std::size_t>(n_nodes));
     std::vector<std::vector<double>> nf_sign(static_cast<std::size_t>(n_nodes));
     std::vector<std::vector<double>> nf_zb(static_cast<std::size_t>(n_nodes));
 
@@ -604,10 +633,9 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
 
         if (mesh.node_kind[ui] == kNodeVirtual) {
             if (at.size() != 2) {
-                rep.errors.push_back(
-                    "FV routing: virtual junction '" + ctx.node_names.name_of(i) +
-                    "' must join exactly two conduits (found " +
-                    std::to_string(at.size()) + ").");
+                rep.errors.push_back("FV routing: virtual junction '" + ctx.node_names.name_of(i) +
+                                     "' must join exactly two conduits (found " +
+                                     std::to_string(at.size()) + ").");
                 continue;
             }
             // Splice the two chains into ONE interior face. Nothing else to do:
@@ -621,8 +649,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
             const int8_t dr = (a1.end == 0) ? int8_t{1} : int8_t{-1};
             const double dxl = mesh.cell_dx[static_cast<std::size_t>(cl)];
             const double dxr = mesh.cell_dx[static_cast<std::size_t>(cr)];
-            add_face(cl, cr, -1, mesh.node_invert[ui], 0.5 * (dxl + dxr),
-                     dl, dr, true);
+            add_face(cl, cr, -1, mesh.node_invert[ui], 0.5 * (dxl + dxr), dl, dr, true);
             mesh.face_vj_node.back() = i;
             mesh.node_vj_face[ui] = mesh.n_faces() - 1;
             ++rep.n_virtual;
@@ -649,12 +676,12 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
                 conduit_gate[static_cast<std::size_t>(a.conduit)];
 
             // HEC-5 inlet control acts at the culvert's UPSTREAM face only.
-            if (a.end == 0 &&
-                mesh.conduit_culvert_code[static_cast<std::size_t>(a.conduit)] > 0)
+            if (a.end == 0 && mesh.conduit_culvert_code[static_cast<std::size_t>(a.conduit)] > 0)
                 mesh.face_culvert[static_cast<std::size_t>(fidx)] = a.conduit;
         }
     }
-    if (!rep.errors.empty()) return rep;
+    if (!rep.errors.empty())
+        return rep;
 
     // Flatten to CSR.
     mesh.node_face_ptr.assign(static_cast<std::size_t>(n_nodes) + 1, 0);
@@ -700,12 +727,14 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
             const auto ui = static_cast<std::size_t>(i);
             const int nb = mesh.node_face_ptr[ui];
             const int ne = mesh.node_face_ptr[ui + 1];
-            if (ne - nb != 2) continue;              // only clean degree-2
+            if (ne - nb != 2)
+                continue; // only clean degree-2
             const int f0 = mesh.node_face_idx[static_cast<std::size_t>(nb)];
             const int f1 = mesh.node_face_idx[static_cast<std::size_t>(nb + 1)];
             const int g0 = mesh.face_geom[static_cast<std::size_t>(f0)];
             const int g1 = mesh.face_geom[static_cast<std::size_t>(f1)];
-            if (g0 < 0 || g1 < 0 || g0 == g1) continue;   // same section: no-op
+            if (g0 < 0 || g1 < 0 || g0 == g1)
+                continue; // same section: no-op
             const auto& a = mesh.geom[static_cast<std::size_t>(g0)];
             const auto& b = mesh.geom[static_cast<std::size_t>(g1)];
             // Only average like with like. Different shape types, transect
@@ -713,32 +742,30 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
             // no meaningful average; those faces keep their own section, which
             // is still well balanced (the C-property holds for ANY consistent
             // choice) and merely first order in the step.
-            if (a.xs.type != b.xs.type || a.barrels != b.barrels ||
-                a.xs.transect >= 0 || b.xs.transect >= 0 ||
-                a.xs.area_tbl != nullptr || b.xs.area_tbl != nullptr)
+            if (a.xs.type != b.xs.type || a.barrels != b.barrels || a.xs.transect >= 0 ||
+                b.xs.transect >= 0 || a.xs.area_tbl != nullptr || b.xs.area_tbl != nullptr)
                 continue;
             const auto key = std::make_pair(std::min(g0, g1), std::max(g0, g1));
             int gf;
             if (const auto hit = pair_geom.find(key); hit != pair_geom.end()) {
                 gf = hit->second;
             } else {
-                XSectParams xs = a.xs;               // shape, tables, culvert
+                XSectParams xs = a.xs; // shape, tables, culvert
                 const XSectParams& xb = b.xs;
                 const auto mid = [](double p, double q) { return 0.5 * (p + q); };
                 xs.y_full = mid(a.xs.y_full, xb.y_full);
-                xs.w_max  = mid(a.xs.w_max,  xb.w_max);
+                xs.w_max = mid(a.xs.w_max, xb.w_max);
                 xs.yw_max = mid(a.xs.yw_max, xb.yw_max);
                 xs.a_full = mid(a.xs.a_full, xb.a_full);
                 xs.r_full = mid(a.xs.r_full, xb.r_full);
                 xs.s_full = mid(a.xs.s_full, xb.s_full);
-                xs.s_max  = mid(a.xs.s_max,  xb.s_max);
-                xs.y_bot  = mid(a.xs.y_bot,  xb.y_bot);
-                xs.a_bot  = mid(a.xs.a_bot,  xb.a_bot);
-                xs.s_bot  = mid(a.xs.s_bot,  xb.s_bot);
-                xs.r_bot  = mid(a.xs.r_bot,  xb.r_bot);
+                xs.s_max = mid(a.xs.s_max, xb.s_max);
+                xs.y_bot = mid(a.xs.y_bot, xb.y_bot);
+                xs.a_bot = mid(a.xs.a_bot, xb.a_bot);
+                xs.s_bot = mid(a.xs.s_bot, xb.s_bot);
+                xs.r_bot = mid(a.xs.r_bot, xb.r_bot);
                 FvGeometry g{};
-                buildGeometry(xs, xsect::isOpen(xs.type), opts.slot_celerity, g,
-                              a.barrels);
+                buildGeometry(xs, xsect::isOpen(xs.type), opts.slot_celerity, g, a.barrels);
                 // A face section is geometry only: friction and losses are
                 // read through the CELL's conduit (mesh.conduit_*), never
                 // through the face (faceSide uses only A, W and I₁ from it).
@@ -763,24 +790,31 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
     mesh.cell_side1.assign(static_cast<std::size_t>(nc), 0);
     auto attach_cell_face = [&](int cell, int face, int8_t side) {
         const auto uc = static_cast<std::size_t>(cell);
-        if (mesh.cell_face0[uc] < 0) { mesh.cell_face0[uc] = face; mesh.cell_side0[uc] = side; }
-        else                         { mesh.cell_face1[uc] = face; mesh.cell_side1[uc] = side; }
+        if (mesh.cell_face0[uc] < 0) {
+            mesh.cell_face0[uc] = face;
+            mesh.cell_side0[uc] = side;
+        } else {
+            mesh.cell_face1[uc] = face;
+            mesh.cell_side1[uc] = side;
+        }
     };
     for (int f = 0; f < mesh.n_faces(); ++f) {
         const auto uf = static_cast<std::size_t>(f);
-        if (mesh.face_cl[uf] >= 0) attach_cell_face(mesh.face_cl[uf], f, 0);
-        if (mesh.face_cr[uf] >= 0) attach_cell_face(mesh.face_cr[uf], f, 1);
+        if (mesh.face_cl[uf] >= 0)
+            attach_cell_face(mesh.face_cl[uf], f, 0);
+        if (mesh.face_cr[uf] >= 0)
+            attach_cell_face(mesh.face_cr[uf], f, 1);
     }
     for (int c = 0; c < nc; ++c) {
         const auto uc = static_cast<std::size_t>(c);
         if (mesh.cell_face0[uc] < 0 || mesh.cell_face1[uc] < 0) {
-            rep.errors.push_back(
-                "FV routing: internal error — cell " + std::to_string(c) +
-                " is not bounded by two faces (dangling conduit end).");
+            rep.errors.push_back("FV routing: internal error — cell " + std::to_string(c) +
+                                 " is not bounded by two faces (dangling conduit end).");
             break;
         }
     }
-    if (!rep.errors.empty()) return rep;
+    if (!rep.errors.empty())
+        return rep;
 
     // -----------------------------------------------------------------------
     // Cell chains. Every cell has exactly two faces, so the interior-face graph
@@ -796,7 +830,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
     // relative to this cell's axis.
     auto step = [&](int cell, int face, int8_t side, int& next, int8_t& flip) {
         const auto uf = static_cast<std::size_t>(face);
-        if (side == 0) {                      // this cell is L
+        if (side == 0) { // this cell is L
             next = mesh.face_cr[uf];
             flip = static_cast<int8_t>(mesh.face_dir_l[uf] * mesh.face_dir_r[uf]);
         } else {
@@ -808,7 +842,8 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
 
     for (int c0 = 0; c0 < nc; ++c0) {
         const auto u0 = static_cast<std::size_t>(c0);
-        if (mesh.cell_chain[u0] >= 0) continue;
+        if (mesh.cell_chain[u0] >= 0)
+            continue;
         // Only start a walk at a chain END — a cell with at least one face that
         // has no neighbour cell.
         const int fa = mesh.cell_face0[u0], fb = mesh.cell_face1[u0];
@@ -816,7 +851,8 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
                             mesh.face_cr[static_cast<std::size_t>(fa)] < 0);
         const bool end_b = (mesh.face_cl[static_cast<std::size_t>(fb)] < 0 ||
                             mesh.face_cr[static_cast<std::size_t>(fb)] < 0);
-        if (!end_a && !end_b) continue;
+        if (!end_a && !end_b)
+            continue;
 
         const int chain = mesh.n_chains();
         int cur = c0;
@@ -826,15 +862,15 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         int pos = 0;
         while (cur >= 0) {
             const auto uc = static_cast<std::size_t>(cur);
-            mesh.cell_chain[uc]     = chain;
+            mesh.cell_chain[uc] = chain;
             mesh.cell_chain_pos[uc] = pos++;
             mesh.chain_cells.push_back(cur);
             mesh.chain_dir.push_back(dir);
 
-            const int out_face = (mesh.cell_face0[uc] == in_face)
-                                     ? mesh.cell_face1[uc] : mesh.cell_face0[uc];
-            const int8_t out_side = (mesh.cell_face0[uc] == in_face)
-                                        ? mesh.cell_side1[uc] : mesh.cell_side0[uc];
+            const int out_face =
+                (mesh.cell_face0[uc] == in_face) ? mesh.cell_face1[uc] : mesh.cell_face0[uc];
+            const int8_t out_side =
+                (mesh.cell_face0[uc] == in_face) ? mesh.cell_side1[uc] : mesh.cell_side0[uc];
             int next = -1;
             int8_t flip = 1;
             step(cur, out_face, out_side, next, flip);
@@ -848,15 +884,15 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
     }
     for (int c = 0; c < nc; ++c) {
         if (mesh.cell_chain[static_cast<std::size_t>(c)] < 0) {
-            rep.errors.push_back(
-                "FV routing: internal error — cell " + std::to_string(c) +
-                " is not reachable from any chain end (closed conduit loop). "
-                "A cycle of conduits joined only by virtual junctions has no "
-                "boundary and cannot be meshed.");
+            rep.errors.push_back("FV routing: internal error — cell " + std::to_string(c) +
+                                 " is not reachable from any chain end (closed conduit loop). "
+                                 "A cycle of conduits joined only by virtual junctions has no "
+                                 "boundary and cannot be meshed.");
             break;
         }
     }
-    if (!rep.errors.empty()) return rep;
+    if (!rep.errors.empty())
+        return rep;
 
     // -----------------------------------------------------------------------
     // Non-conduit links — applied as node source/sink pairs (plan §3.4).
@@ -872,27 +908,30 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         const auto uj = static_cast<std::size_t>(j);
         const bool is_dummy = (ctx.links.type[uj] == LinkType::CONDUIT &&
                                ctx.links.xsect_shape[uj] == XsectShape::DUMMY);
-        if (ctx.links.type[uj] == LinkType::CONDUIT && !is_dummy) continue;
+        if (ctx.links.type[uj] == LinkType::CONDUIT && !is_dummy)
+            continue;
         const int a = ctx.links.node1[uj];
         const int b = ctx.links.node2[uj];
-        if (a < 0 || b < 0) continue;
+        if (a < 0 || b < 0)
+            continue;
         mesh.struct_link.push_back(j);
         mesh.struct_n1.push_back(a);
         mesh.struct_n2.push_back(b);
         mesh.struct_is_dummy.push_back(is_dummy ? 1 : 0);
-        if (is_dummy) mesh.node_dummy_drain[static_cast<std::size_t>(a)] = 1;
+        if (is_dummy)
+            mesh.node_dummy_drain[static_cast<std::size_t>(a)] = 1;
     }
     // Leave both vectors EMPTY when the model has no dummy links at all, so
     // `node_dummy_drain.empty()` is a cheap "nothing to do" test the solver's
     // hot paths can branch on, and a model without dummies allocates nothing.
-    if (std::find(mesh.struct_is_dummy.begin(), mesh.struct_is_dummy.end(),
-                  uint8_t{1}) == mesh.struct_is_dummy.end()) {
+    if (std::find(mesh.struct_is_dummy.begin(), mesh.struct_is_dummy.end(), uint8_t{1}) ==
+        mesh.struct_is_dummy.end()) {
         mesh.struct_is_dummy.clear();
         mesh.node_dummy_drain.clear();
     }
 
-    rep.n_cells    = nc;
-    rep.n_faces    = mesh.n_faces();
+    rep.n_cells = nc;
+    rep.n_faces = mesh.n_faces();
     rep.n_conduits = n_cond;
     return rep;
 }

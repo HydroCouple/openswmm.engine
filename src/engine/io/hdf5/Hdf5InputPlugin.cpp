@@ -15,13 +15,13 @@
 // limitations under the License.
 
 /**
- * @file Hdf5InputPlugin.cpp
- * @brief Lifecycle wrapper over Hdf5ModelWriter / Hdf5ModelReader.
+ * @file      Hdf5InputPlugin.cpp
+ * @brief     Lifecycle wrapper over Hdf5ModelWriter / Hdf5ModelReader.
  * @ingroup engine_hdf5
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "Hdf5InputPlugin.hpp"
@@ -29,6 +29,7 @@
 
 namespace openswmm::h5io {
 
+// Contract: openswmm::h5io::Hdf5InputPlugin::initialize.
 int Hdf5InputPlugin::initialize(const std::vector<std::string>& /*init_args*/,
                                 const IPluginComponentInfo* /*info*/) {
     error_.clear();
@@ -37,23 +38,25 @@ int Hdf5InputPlugin::initialize(const std::vector<std::string>& /*init_args*/,
     return 0;
 }
 
+// Contract: openswmm::h5io::Hdf5InputPlugin::validate.
 int Hdf5InputPlugin::validate(const SimulationContext& /*ctx*/) {
     state_ = PluginState::VALIDATED;
     return 0;
 }
 
+// Contract: openswmm::h5io::Hdf5InputPlugin::read.
 int Hdf5InputPlugin::read(const std::string& /*path*/, SimulationContext& /*ctx*/) {
     // Schema 1.0 ships write-first. Refusing outright is the honest answer: a
     // partially populated SimulationContext would run and produce numbers,
     // which is a far worse failure than not opening at all.
-    error_ = "HDF5 model read is not implemented in schema " +
-             std::string(kSchemaVersion) +
+    error_ = "HDF5 model read is not implemented in schema " + std::string(kSchemaVersion) +
              "; the format is currently an export target. Use the .inp or "
              ".gpkg reader to load a model.";
     state_ = PluginState::ERROR;
     return 1;
 }
 
+// Contract: openswmm::h5io::Hdf5InputPlugin::write.
 int Hdf5InputPlugin::write(const std::string& path, const SimulationContext& ctx) {
     error_.clear();
     skipped_.clear();
@@ -70,9 +73,10 @@ int Hdf5InputPlugin::write(const std::string& path, const SimulationContext& ctx
     return 0;
 }
 
+// Contract: openswmm::h5io::Hdf5InputPlugin::finalize.
 int Hdf5InputPlugin::finalize(const SimulationContext& /*ctx*/) {
     state_ = PluginState::FINALIZED;
     return 0;
 }
 
-}  // namespace openswmm::h5io
+} // namespace openswmm::h5io

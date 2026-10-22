@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file SurfaceTransportState.hpp
- * @brief Overland transport S1 — per-cell species MASS on the 2D surface.
+ * @file      SurfaceTransportState.hpp
+ * @brief     Overland transport S1 — per-cell species MASS on the 2D surface.
  *
  * @details Species are carried as **mass**, not concentration (D-2DT1). The
  *          2D solver's integrated state is `SurfaceStateData::volume`, with
@@ -51,9 +51,9 @@
  * @see plans/transport/OVERLAND_TRANSPORT_HEAT_MSX_PLAN_2026-09-01.md
  * @ingroup engine_2d
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_SURFACE_TRANSPORT_STATE_HPP
@@ -68,8 +68,8 @@
 namespace openswmm::twoD {
 
 struct SurfaceTransportState {
-    int n_species = 0;   ///< rows carried; 0 ⇒ transport is off everywhere
-    int n_cells   = 0;
+    int n_species = 0; ///< rows carried; 0 ⇒ transport is off everywhere
+    int n_cells = 0;
 
     // ---- S4 row layout — the 1D engines' convention, verbatim -------------
     // rows [0, n_pollut) pollutants; [n_pollut, n_pollut + n_msx) MSX species
@@ -78,20 +78,34 @@ struct SurfaceTransportState {
     // so adding heat to an age model never moves the age column). Set by the
     // router after resize(); -1 ⇒ the row is not carried.
     int n_pollut = 0;
-    int n_msx    = 0;
-    int age_row  = -1;
+    int n_msx = 0;
+    int age_row = -1;
     int temp_row = -1;
     /// Row names in row order (pollutant ids, MSX ids, `__WATER_AGE__`,
     /// `__TEMPERATURE__`) — what the HDF5 species attribute and the
     /// [2D_INITIAL_QUALITY]/[2D_BOUNDARY_QUALITY] resolvers key on.
     std::vector<std::string> row_names;
-    /// The temperature row is SIGNED (°C below zero is a state, not an
-    /// error): every "mass ≥ 0" guard in the marcher and the queue must skip
-    /// it. Age and every concentration row are non-negative.
+    /**
+     * @brief The temperature row is SIGNED (°C below zero is a state, not an error): every "mass
+     * ≥ 0" guard in the marcher and the queue must skip it. Age and every concentration row are
+     * non-negative.
+     *
+     * @note Test whether a transport row uses signed inventory.
+     * @param[in] s Valid zero-based species row; caller excludes the -1 unset sentinel.
+     * @return True exactly when s == temp_row; false otherwise. No bounds validation, allocation
+     * or state mutation.
+     */
     bool signedRow(int s) const noexcept { return s == temp_row; }
+    /**
+     * @brief Resolve an exact species name in the current transport layout.
+     * @param[in] name Borrowed non-owning name view, used only during this call.
+     * @return First exact case-sensitive row index, or -1 when absent. Read-only linear scan; no
+     * allocation or retained string view.
+     */
     int rowIndex(std::string_view name) const noexcept {
         for (std::size_t i = 0; i < row_names.size(); ++i)
-            if (row_names[i] == name) return static_cast<int>(i);
+            if (row_names[i] == name)
+                return static_cast<int>(i);
         return -1;
     }
 
@@ -103,11 +117,12 @@ struct SurfaceTransportState {
     // ---- Ledgers (per species), m³·conc, cumulative over the run. ----------
     // These are what S3's coupling tuple and the continuity table will read;
     // in S1 they are the record that mass left the surface and where.
-    std::vector<double> lost_infiltration;   ///< left through the bed
-    std::vector<double> lost_boundary;       ///< left through an open edge
+    std::vector<double> lost_infiltration; ///< left through the bed
+    std::vector<double> lost_boundary;     ///< left through an open edge
     std::vector<double> gained_external, lost_external;
-    std::vector<double> gained_bed; ///< signed finite-bed -> surface exchange; empty in compatibility mode
-    std::vector<double> lost_coupling;       ///< left through the 1D↔2D exchange
+    std::vector<double>
+        gained_bed; ///< signed finite-bed -> surface exchange; empty in compatibility mode
+    std::vector<double> lost_coupling; ///< left through the 1D↔2D exchange
     /// [k * n_species + s] species mass drained through coupling point k this
     /// advance (m³·conc, + = 2D→1D). Reset with `exch_` per advance; S3's
     /// tuple reads it into the node's `qual_mass_in`.
@@ -132,10 +147,14 @@ struct SurfaceTransportState {
     /// solver to its own `bc_cell_` list at initialize; empty ⇒ inflow
     /// arrives clean. Outflow always leaves at the cell's concentration.
     std::vector<double> bc_conc;
-    std::map<int,std::vector<double>> runtime_bc_conc;
+    std::map<int, std::vector<double>> runtime_bc_conc;
     /// Raw `[2D_BOUNDARY_QUALITY]` rows, resolved by the solver against its
     /// boundary-edge list: (flat mesh edge slot tri*3+e, species, conc).
-    struct BoundaryQualityRow { int slot = -1; int species = -1; double conc = 0.0; };
+    struct BoundaryQualityRow {
+        int slot = -1;
+        int species = -1;
+        double conc = 0.0;
+    };
     std::vector<BoundaryQualityRow> bc_quality_rows;
 
     // ---- S2 dispersion limiter telemetry ----------------------------------
@@ -156,7 +175,8 @@ struct SurfaceTransportState {
     /// T7.1: mass the two-zone aquifer handed back up with its saturation
     /// excess. The twin of `lost_infiltration`, which is what went down.
     std::vector<double> gained_exfiltration;
-    std::vector<double> generated_age; ///< RK2 age-volume production; empty in first-order compatibility mode
+    std::vector<double>
+        generated_age; ///< RK2 age-volume production; empty in first-order compatibility mode
     /// S7: [s] species mass washed off the cells' land-use surfaces into the
     /// rows (cell buildup → water), m³·conc. Sized by the router when
     /// `[2D_COVERAGES]` resolves; empty otherwise.
@@ -183,79 +203,132 @@ struct SurfaceTransportState {
     /// node's concentration.
     std::vector<double> coupling_src;
 
+    /**
+     * @brief Test whether cell transport arrays have a nonempty layout.
+     * @return True when both n_species and n_cells are positive; this does not verify vector
+     * extents or process activation. Read-only and allocation-free.
+     */
     bool active() const noexcept { return n_species > 0 && n_cells > 0; }
 
+    /**
+     * @brief Reset core transport inventory and ledgers to a new tuple/cell layout.
+     * @param[in] n_spec Requested species count; nonpositive clamps to zero.
+     * @param[in] n_tri Requested mixed-cell count; nonpositive clamps to zero.
+     * @param[in] n_coupling_points Requested coupling-point count; nonpositive clamps to zero.
+     * @post Sets a provisional pollutant-only layout with age/temp unset, zeroes core
+     * cell/ledger/exchange arrays and clears source/boundary caches. The router refines row
+     * names/layout after this call.
+     * @note Existing gained_washoff and cell_runoff_vol vectors are not reset here; their
+     * quality owner manages them. Allocations may throw after partial reset. Requires exclusive
+     * access; indices/references may be invalidated.
+     */
     void resize(int n_spec, int n_tri, int n_coupling_points) {
         n_species = (n_spec > 0) ? n_spec : 0;
-        n_cells   = (n_tri  > 0) ? n_tri  : 0;
-        n_pollut = n_species; n_msx = 0; age_row = -1; temp_row = -1;   // S4: router refines
+        n_cells = (n_tri > 0) ? n_tri : 0;
+        n_pollut = n_species;
+        n_msx = 0;
+        age_row = -1;
+        temp_row = -1; // S4: router refines
+
         row_names.clear();
         const auto ns = static_cast<std::size_t>(n_species);
         cell_mass.assign(ns * static_cast<std::size_t>(n_cells), 0.0);
         lost_infiltration.assign(ns, 0.0);
         lost_boundary.assign(ns, 0.0);
-        gained_external.assign(ns, 0.0); lost_external.assign(ns, 0.0);
+        gained_external.assign(ns, 0.0);
+        lost_external.assign(ns, 0.0);
         gained_bed.clear();
         lost_coupling.assign(ns, 0.0);
-        exch_mass.assign(ns * static_cast<std::size_t>(
-                                  n_coupling_points > 0 ? n_coupling_points
-                                                        : 0),
-                         0.0);
-        exch_spill.assign(static_cast<std::size_t>(
-                              n_coupling_points > 0 ? n_coupling_points : 0),
+        exch_mass.assign(
+            ns * static_cast<std::size_t>(n_coupling_points > 0 ? n_coupling_points : 0), 0.0);
+        exch_spill.assign(static_cast<std::size_t>(n_coupling_points > 0 ? n_coupling_points : 0),
                           0.0);
-        rain_conc.clear();          // S2: router fills when pollutants carry one
+        rain_conc.clear(); // S2: router fills when pollutants carry one
         runtime_bc_conc.clear();
-        bc_conc.clear();            // S2: solver sizes at initialize
+        bc_conc.clear(); // S2: solver sizes at initialize
         bc_quality_rows.clear();
         dispersion_limiter_binds = 0;
         gained_rainfall.assign(ns, 0.0);
         gained_boundary.assign(ns, 0.0);
         gained_coupling.assign(ns, 0.0);
-        gained_exfiltration.assign(ns, 0.0);   // T7.1
+        gained_exfiltration.assign(ns, 0.0); // T7.1
         generated_age.clear();
-        coupling_src.clear();       // S3: router sizes when outfalls exist
+        coupling_src.clear(); // S3: router sizes when outfalls exist
     }
 
+    /**
+     * @brief Replace the complete surface transport state with empty defaults.
+     * @post Clears all inventories, ledgers, source caches and row layout, including optional
+     * quality stores. Previously borrowed references/indices are invalidated; requires exclusive
+     * access.
+     */
     void clear() { *this = SurfaceTransportState{}; }
 
+    /**
+     * @brief Map a species/cell pair into species-major storage.
+     * @param[in] s Valid nonnegative species row in [0,n_species).
+     * @param[in] c Valid nonnegative mixed-cell index in [0,n_cells).
+     * @return size_t offset s*n_cells+c; no bounds or overflow checking. No allocation or
+     * mutation.
+     */
     std::size_t idx(int s, int c) const noexcept {
         return static_cast<std::size_t>(s) * static_cast<std::size_t>(n_cells) +
                static_cast<std::size_t>(c);
     }
 
-    /// Reported concentration — derived, never stored. `dry_volume_m3` is the
-    /// hydraulics' own dry threshold expressed as a volume; below it the
-    /// cell holds its mass and reports 0 rather than dividing by a vanishing
-    /// volume (the 2D analogue of the 1D dryness guard).
-    double concentration(int s, int c, double volume_m3,
-                         double dry_volume_m3) const noexcept {
-        if (!(volume_m3 > dry_volume_m3)) return 0.0;
+    /**
+     * @brief Reported concentration — derived, never stored. `dry_volume_m3` is the hydraulics'
+     * own dry threshold expressed as a volume; below it the cell holds its mass and reports 0
+     * rather than dividing by a vanishing volume (the 2D analogue of the 1D dryness guard).
+     *
+     * @param[in] s Valid zero-based species index, unchecked.
+     * @param[in] c Valid zero-based cell index, unchecked.
+     * @param[in] volume_m3 Current SI water volume, m3.
+     * @param[in] dry_volume_m3 Nonnegative dry threshold, m3.
+     * @return Native concentration, age seconds or temperature degrees Celsius; zero when
+     * volume_m3 is not strictly greater than dry_volume_m3, including NaN volume.
+     * @note Does not consume/clip stored mass or validate nonfinite inventory. Requires
+     * coherently sized, stable mass storage; no allocation.
+     */
+    double concentration(int s, int c, double volume_m3, double dry_volume_m3) const noexcept {
+        if (!(volume_m3 > dry_volume_m3))
+            return 0.0;
         return cell_mass[idx(s, c)] / volume_m3;
     }
 
-    /// Total mass of one species over the surface + every ledger — the
-    /// quantity the S1 conservation gate asserts is invariant.
+    /**
+     * @brief Total mass of one species over the surface + every ledger — the quantity the S1
+     * conservation gate asserts is invariant.
+     *
+     * @param[in] s Valid zero-based species row with all mandatory ledger arrays sized,
+     * unchecked.
+     * @return Sum of stored inventory plus infiltration/boundary/coupling/external losses minus
+     * external/rain/boundary/coupling/washoff/exfiltration/age-production gains, in native
+     * concentration*m3.
+     * @note Optional missing gain arrays contribute zero. gained_bed is not included by this
+     * helper, so callers using finite-bed exchange must account for that separate ledger in
+     * their conservation statement. No allocation or state mutation; read only accepted stable
+     * state.
+     */
     double totalIncludingLedgers(int s) const noexcept {
         double m = 0.0;
-        const auto base = static_cast<std::size_t>(s) *
-                          static_cast<std::size_t>(n_cells);
+        const auto base = static_cast<std::size_t>(s) * static_cast<std::size_t>(n_cells);
         for (int c = 0; c < n_cells; ++c)
             m += cell_mass[base + static_cast<std::size_t>(c)];
         const auto us = static_cast<std::size_t>(s);
         // Sources are SUBTRACTED so the quantity is "what was there at t=0":
         // surface + everything that left − everything that arrived.
-        return m + lost_infiltration[us] + lost_boundary[us] +
-               lost_coupling[us] + lost_external[us] - gained_external[us] -
+        return m + lost_infiltration[us] + lost_boundary[us] + lost_coupling[us] +
+               lost_external[us] - gained_external[us] -
                (us < gained_rainfall.size() ? gained_rainfall[us] : 0.0) -
                (us < gained_boundary.size() ? gained_boundary[us] : 0.0) -
                (us < gained_coupling.size() ? gained_coupling[us] : 0.0) -
-               (us < gained_washoff.size()  ? gained_washoff[us]  : 0.0) -
+               (us < gained_washoff.size() ? gained_washoff[us] : 0.0) -
                (us < gained_exfiltration.size() ? gained_exfiltration[us] : 0.0) -
                (us < generated_age.size() ? generated_age[us] : 0.0);
     }
 };
 
-}  // namespace openswmm::twoD
+} // namespace openswmm::twoD
 
-#endif  // OPENSWMM_ENGINE_2D_SURFACE_TRANSPORT_STATE_HPP
+#endif // OPENSWMM_ENGINE_2D_SURFACE_TRANSPORT_STATE_HPP

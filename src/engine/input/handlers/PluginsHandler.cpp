@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file PluginsHandler.cpp
- * @brief [PLUGINS] section handler — parses plugin library specs (Phase 4, R12).
+ * @file      PluginsHandler.cpp
+ * @brief     [PLUGINS] section handler — parses plugin library specs (Phase 4, R12).
  *
  * Row format:
  * @code
@@ -31,9 +31,9 @@
  * @see src/engine/plugins/PluginFactory.hpp
  * @ingroup engine_input
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "PluginsHandler.hpp"
@@ -43,13 +43,26 @@
 
 namespace openswmm::input {
 
+/**
+ * @brief Append external plugin library paths and initialization arguments.
+ *
+ * Nonempty tokenized rows append one owned PluginSpec; first token is path, remainder copied
+ * arguments. Does not clear earlier registrations, resolve paths, load libraries, validate
+ * duplicate specs or call initialization.
+ *
+ * @param[in,out] ctx Model context receiving authored section state and any documented diagnostics;
+ *     not automatically reset before parsing.
+ * @param[in] lines Borrowed section data lines without the section heading, tokenized/copied
+ *     synchronously; may be empty. Caller serializes context mutation.
+ */
 void handle_plugins(SimulationContext& ctx, const std::vector<std::string>& lines) {
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.empty()) continue;
+        if (tok.empty())
+            continue;
 
         PluginSpec spec;
-        spec.path = tok[0];  // First token is the library path
+        spec.path = tok[0]; // First token is the library path
 
         // Remaining tokens are init_args
         for (std::size_t i = 1; i < tok.size(); ++i) {

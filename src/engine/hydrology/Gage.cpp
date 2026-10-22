@@ -15,20 +15,20 @@
 // limitations under the License.
 
 /**
- * @file Gage.cpp
- * @brief Rain gage processing — numerically identical to legacy gage.c.
+ * @file      Gage.cpp
+ * @brief     Rain gage processing — numerically identical to legacy gage.c.
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "Gage.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../core/DateTime.hpp"
-#include "../2d/data/MeshData.hpp"          // S7: gageIsUsed — the mesh reads gages
+#include "../2d/data/MeshData.hpp" // S7: gageIsUsed — the mesh reads gages
 #include "../2d/data/SolverOptions2D.hpp"
 #include <cmath>
 #include <algorithm>
@@ -41,26 +41,26 @@ double convertRainfall(double raw_value, GageState& state) {
     double r = 0.0;
 
     switch (state.rain_type) {
-        case RainType::INTENSITY:
-            r = raw_value;
-            break;
+    case RainType::INTENSITY:
+        r = raw_value;
+        break;
 
-        case RainType::VOLUME:
-            if (state.rain_interval > 0.0)
+    case RainType::VOLUME:
+        if (state.rain_interval > 0.0)
+            r = raw_value / state.rain_interval * 3600.0;
+        break;
+
+    case RainType::CUMULATIVE:
+        if (state.rain_interval > 0.0) {
+            if (raw_value < state.rain_accum) {
+                // Reset on decrease (new event)
                 r = raw_value / state.rain_interval * 3600.0;
-            break;
-
-        case RainType::CUMULATIVE:
-            if (state.rain_interval > 0.0) {
-                if (raw_value < state.rain_accum) {
-                    // Reset on decrease (new event)
-                    r = raw_value / state.rain_interval * 3600.0;
-                } else {
-                    r = (raw_value - state.rain_accum) / state.rain_interval * 3600.0;
-                }
-                state.rain_accum = raw_value;
+            } else {
+                r = (raw_value - state.rain_accum) / state.rain_interval * 3600.0;
             }
-            break;
+            state.rain_accum = raw_value;
+        }
+        break;
     }
 
     return r * state.units_factor * state.scale_factor * state.adjust_factor;
@@ -70,7 +70,8 @@ PrecipSplit splitPrecip(const SimulationContext& ctx, std::size_t sub) {
     PrecipSplit out{};
 
     const int gi = ctx.subcatches.gage[sub];
-    if (gi < 0 || gi >= ctx.n_gages()) return out;
+    if (gi < 0 || gi >= ctx.n_gages())
+        return out;
     const auto ug = static_cast<std::size_t>(gi);
 
     // Gage intensity already carries units_factor * scale_factor * adjust_factor
@@ -92,13 +93,18 @@ PrecipSplit splitPrecip(const SimulationContext& ctx, std::size_t sub) {
     if (!ctx.options.ignore_snow_melt && pack >= 0 &&
         snow_config.modelFor(pack) == surface::SnowKind::Ueb) {
         const auto& p = snow_config.parameters;
-        const double temperature = (ctx.climate_state.temperature-32.)/1.8;
-        const double fraction = snow_config.division_temperature ? (is_snowing ? 1. : 0.) :
-            std::clamp((p.rain_temperature-temperature)/(p.rain_temperature-p.snow_temperature),0.,1.);
+        const double temperature = (ctx.climate_state.temperature - 32.) / 1.8;
+        const double fraction = snow_config.division_temperature
+                                    ? (is_snowing ? 1. : 0.)
+                                    : std::clamp((p.rain_temperature - temperature) /
+                                                     (p.rain_temperature - p.snow_temperature),
+                                                 0., 1.);
         const auto site = snow_config.packs.find(pack);
         const double drift = site == snow_config.packs.end() ? 1 : site->second.site.drift;
-        out.rainfall = intensity/ucf_rain*(1-fraction)*ctx.subcatches.rain_scale_factor[sub];
-        out.snowfall = intensity/ucf_rain*fraction*ctx.gages.snow_factor[ug]*drift*ctx.subcatches.snow_scale_factor[sub];
+        out.rainfall =
+            intensity / ucf_rain * (1 - fraction) * ctx.subcatches.rain_scale_factor[sub];
+        out.snowfall = intensity / ucf_rain * fraction * ctx.gages.snow_factor[ug] * drift *
+                       ctx.subcatches.snow_scale_factor[sub];
         return out;
     }
     if (is_snowing) {
@@ -112,8 +118,17 @@ PrecipSplit splitPrecip(const SimulationContext& ctx, std::size_t sub) {
 }
 
 namespace {
-void accumulatePastRain(double* completed, double& partial, double& interval,
-                        double rainfall, int time_step) {
+/** @brief Integrate a held project/hour intensity into partial/completed depth history.
+ * @param[in,out] completed Writable array of at least 48 hourly depth buckets, newest
+ * first; shifting discards the oldest bucket.
+ * @param[in,out] partial Current incomplete-hour depth in the same project depth units.
+ * @param[in,out] interval Current bucket seconds in [0,3600], normally integer-valued;
+ * invalid larger values can prevent progress and must be excluded by the caller.
+ * @param rainfall Finite held intensity in project depth/hour; no value clamp.
+ * @param time_step Integer seconds to integrate, nonpositive no-op. Exact completion
+ * remains partial until the next positive update; no external clock is changed. */
+void accumulatePastRain(double* completed, double& partial, double& interval, double rainfall,
+                        int time_step) {
     const double rate = rainfall / 3600.0;
     while (time_step > 0) {
         const int remaining = 3600 - static_cast<int>(interval);
@@ -137,8 +152,8 @@ void accumulatePastRain(double* completed, double& partial, double& interval,
 }
 
 void updatePastRain(GageState& state, int time_step) {
-    accumulatePastRain(state.past_rain, state.past_rain_accum,
-                       state.past_rain_interval, state.rainfall, time_step);
+    accumulatePastRain(state.past_rain, state.past_rain_accum, state.past_rain_interval,
+                       state.rainfall, time_step);
 }
 
 void updatePastRain(SimulationContext& ctx, int time_step) {
@@ -151,7 +166,8 @@ void updatePastRain(SimulationContext& ctx, int time_step) {
 }
 
 double getPastRain(const GageState& state, int hours) {
-    if (hours <= 0 || hours > MAXPASTRAIN) return 0.0;
+    if (hours <= 0 || hours > MAXPASTRAIN)
+        return 0.0;
     double total = 0.0;
     for (int i = 0; i < hours; ++i) {
         total += state.past_rain[i];
@@ -164,7 +180,8 @@ double getPastRain(const GageState& state, int hours) {
 // ---------------------------------------------------------------------------
 
 const Table* gageRainSeries(const SimulationContext& ctx, int gage_idx) {
-    if (gage_idx < 0 || gage_idx >= ctx.n_gages()) return nullptr;
+    if (gage_idx < 0 || gage_idx >= ctx.n_gages())
+        return nullptr;
     const auto ug = static_cast<std::size_t>(gage_idx);
 
     if (ctx.gages.source[ug] == RainSource::FILE_RAIN) {
@@ -187,7 +204,8 @@ int gageSeriesRainType(const SimulationContext& ctx, int gage_idx) {
 }
 
 double gageUnitsFactor(const SimulationContext& ctx, int gage_idx) {
-    if (gage_idx < 0 || gage_idx >= ctx.n_gages()) return 1.0;
+    if (gage_idx < 0 || gage_idx >= ctx.n_gages())
+        return 1.0;
     const auto ug = static_cast<std::size_t>(gage_idx);
 
     // PARITY: legacy sets Gage.unitsFactor = MMperINCH for SI projects
@@ -198,13 +216,12 @@ double gageUnitsFactor(const SimulationContext& ctx, int gage_idx) {
     if (ctx.gages.source[ug] == RainSource::FILE_RAIN &&
         ctx.gages.file_format[ug] == RainFileFormat::STAN_PRCP &&
         static_cast<int>(ctx.options.flow_units) >= 3)
-        return 25.40;  // legacy MMperINCH (consts.h:389)
+        return 25.40; // legacy MMperINCH (consts.h:389)
     return 1.0;
 }
 
-double convertGageValue(double raw, int rain_type, double interval_sec,
-                        double& cumul_accum, double units_factor,
-                        double scale_factor) {
+double convertGageValue(double raw, int rain_type, double interval_sec, double& cumul_accum,
+                        double units_factor, double scale_factor) {
     if (rain_type == 1 && interval_sec > 0.0) {
         // VOLUME: depth per interval -> in/hr. Match legacy operand order
         // exactly (gage.c:692): r/interval*3600.0 — one divide then one
@@ -226,16 +243,17 @@ double convertGageValue(double raw, int rain_type, double interval_sec,
 
 bool gageIsUsed(const SimulationContext& ctx, int gage_idx) {
     for (int i = 0; i < ctx.n_subcatches(); ++i)
-        if (ctx.subcatches.gage[static_cast<std::size_t>(i)] == gage_idx) return true;
+        if (ctx.subcatches.gage[static_cast<std::size_t>(i)] == gage_idx)
+            return true;
     for (const auto& gname : ctx.unit_hyds.gage_names)
-        if (ctx.gage_names.find(gname) == gage_idx) return true;
+        if (ctx.gage_names.find(gname) == gage_idx)
+            return true;
     // S7 (2026-09-19): the 2D mesh reads EVERY gage under RAINFALL_MODE
     // SYSTEM / NATURAL_NEIGHBOUR (SurfaceRouter2D::updateRainfall). A gage no
     // subcatchment names kept its seeded first record for the whole run
     // (legacy's "unused gage" rule), so a rain-on-grid deck with no
     // subcatchment rained at its first non-zero intensity forever.
-    if (ctx.twod_io.mesh && ctx.twod_io.options &&
-        ctx.twod_io.mesh->n_triangles() > 0 &&
+    if (ctx.twod_io.mesh && ctx.twod_io.options && ctx.twod_io.mesh->n_triangles() > 0 &&
         ctx.twod_io.options->rainfall_mode != twoD::RainfallMode::NONE)
         return true;
     return false;
@@ -253,11 +271,19 @@ bool gageIsUsed(const SimulationContext& ctx, int gage_idx) {
 // ---------------------------------------------------------------------------
 namespace {
 
-constexpr int    kNoState   = -2;   ///< st_cur: legacy startDate == NO_DATE
-constexpr int    kPreRecord = -1;   ///< st_cur: the [StartDateTime, x0) interval
-constexpr int    kNoDate    = -1;   ///< st_next: legacy nextDate == NO_DATE
-constexpr double kNoDateValue = -693594.0;   ///< legacy NO_DATE (1/1/0001)
+constexpr int kNoState = -2;               ///< st_cur: legacy startDate == NO_DATE
+constexpr int kPreRecord = -1;             ///< st_cur: the [StartDateTime, x0) interval
+constexpr int kNoDate = -1;                ///< st_next: legacy nextDate == NO_DATE
+constexpr double kNoDateValue = -693594.0; ///< legacy NO_DATE (1/1/0001)
 
+/** @brief Resolve one source record to project/hour intensity without cursor mutation.
+ * @param ctx Compatible gage source/type/interval/unit/scale arrays.
+ * @param j Valid gage index.
+ * @param tbl Borrowed ordered aligned table containing k (and k-1 when cumulative).
+ * @param k Valid nonnegative record index. Cumulative difference uses preceding raw
+ * record directly, with a decrease treated as reset; first previous raw is zero.
+ * @return Converted project/hour rate with unit then scale factors. Does not apply
+ * monthly adjustment, API override or final gage forcing, and does not validate finite data. */
 double recordRate(const SimulationContext& ctx, int j, const Table& tbl, int k) {
     const auto uk = static_cast<std::size_t>(k);
     const auto uj = static_cast<std::size_t>(j);
@@ -269,8 +295,7 @@ double recordRate(const SimulationContext& ctx, int j, const Table& tbl, int k) 
         r = r / interval * 3600.0;
     } else if (rain_type == 2 && interval > 0.0) {
         const double prev = (k > 0) ? tbl.y[uk - 1] : 0.0;
-        r = (r < prev) ? (r / interval * 3600.0)
-                       : ((r - prev) / interval * 3600.0);
+        r = (r < prev) ? (r / interval * 3600.0) : ((r - prev) / interval * 3600.0);
     }
     // unitsFactor BEFORE scaleFactor (gage.c:705)
     return r * gageUnitsFactor(ctx, j) * ctx.gages.scale_factor[uj];
@@ -279,11 +304,20 @@ double recordRate(const SimulationContext& ctx, int j, const Table& tbl, int k) 
 // getNextRainfall: the next record after `from` whose rate is not zero
 // (explicit zeros — and a cumulative gage's zero deltas — are skipped so the
 // wet/dry accounting sees them as a gap).
+/** @brief Scan source records after an index for the next exactly nonzero rate.
+ * @param ctx Compatible gage metadata for recordRate().
+ * @param j Valid zero-based gage index.
+ * @param tbl Borrowed ordered aligned source table with count fitting int.
+ * @param from Last visited index, normally -1 through last; scanning starts from+1.
+ * @param adjustment Monthly dimensionless multiplier used before the zero test;
+ * zero suppresses every finite rate. No finite/range validation occurs.
+ * @return First matching index or kNoDate (-1); NaN compares nonzero. No cache mutation. */
 int nextNonzeroRecord(const SimulationContext& ctx, int j, const Table& tbl, int from,
                       double adjustment = 1.0) {
     const int n = static_cast<int>(tbl.x.size());
     for (int k = from + 1; k < n; ++k)
-        if (recordRate(ctx, j, tbl, k) * adjustment != 0.0) return k;
+        if (recordRate(ctx, j, tbl, k) * adjustment != 0.0)
+            return k;
     return kNoDate;
 }
 
@@ -292,55 +326,99 @@ int nextNonzeroRecord(const SimulationContext& ctx, int j, const Table& tbl, int
 // makes the current interval [StartDateTime, x0) with no rain and record 0
 // the next one. Under IGNORE_RAINFALL legacy returns before reading the
 // series, so there is no state (and no runoff-step limit) at all.
+/** @brief Seed one gage's used flag, current/next record cache and initial rates.
+ * @param[in,out] ctx Aligned initialized gage arrays/options; changes st_init/st_used,
+ * current/next indices and cached rates without publishing ctx.gages.rainfall yet.
+ * @param j Valid gage index.
+ * @param tbl Optional borrowed resolved table; null/empty or ignore-rainfall leaves
+ * NO_STATE and zero rates. A first record after simulation start creates a dry
+ * pre-record interval; otherwise record zero seeds the state. Uses adjustment one
+ * for first/lookahead records before later climate adjustment. No timestamp search
+ * for an initial record nearer start_date, rollback or ownership transfer occurs. */
 void initGageState(SimulationContext& ctx, int j, const Table* tbl) {
     const auto uj = static_cast<std::size_t>(j);
     ctx.gages.st_init[uj] = 1;
     ctx.gages.st_used[uj] = gageIsUsed(ctx, j) ? 1 : 0;
-    ctx.gages.st_cur[uj]  = kNoState;
+    ctx.gages.st_cur[uj] = kNoState;
     ctx.gages.st_next[uj] = kNoDate;
     ctx.gages.st_rain[uj] = 0.0;
     ctx.gages.next_rainfall[uj] = 0.0;
-    if (ctx.options.ignore_rainfall) return;
-    if (!tbl || tbl->x.empty()) return;
+    if (ctx.options.ignore_rainfall)
+        return;
+    if (!tbl || tbl->x.empty())
+        return;
     if (tbl->x[0] > ctx.options.start_date) {
-        ctx.gages.st_cur[uj]  = kPreRecord;
+        ctx.gages.st_cur[uj] = kPreRecord;
         ctx.gages.st_next[uj] = 0;
     } else {
-        ctx.gages.st_cur[uj]  = 0;
+        ctx.gages.st_cur[uj] = 0;
         ctx.gages.st_rain[uj] = recordRate(ctx, j, *tbl, 0);
         ctx.gages.st_next[uj] = nextNonzeroRecord(ctx, j, *tbl, 0);
     }
     const int next = ctx.gages.st_next[uj];
-    if (next >= 0) ctx.gages.next_rainfall[uj] = recordRate(ctx, j, *tbl, next);
+    if (next >= 0)
+        ctx.gages.next_rainfall[uj] = recordRate(ctx, j, *tbl, next);
 }
 
 // legacy startDate / endDate of the current interval
-void currentInterval(const SimulationContext& ctx, int j, const Table& tbl,
-                     double& start, double& end) {
+/** @brief Read current cached interval boundaries without checking its validity.
+ * @param ctx Compatible gage cache; current is pre-record or a valid table index,
+ * never NO_STATE. Recording seconds and start_date are initialized.
+ * @param j Valid zero-based gage index.
+ * @param tbl Nonempty ordered source table consistent with cached indices.
+ * @param[out] start Absolute SWMM day, simulation start for a pre-record interval.
+ * @param[out] end First source date for pre-record, otherwise start+recording seconds.
+ * No mutation of source/cache; callers must distinguish NO_STATE beforehand. */
+void currentInterval(const SimulationContext& ctx, int j, const Table& tbl, double& start,
+                     double& end) {
     const auto uj = static_cast<std::size_t>(j);
     const int cur = ctx.gages.st_cur[uj];
     if (cur == kPreRecord) {
         start = ctx.options.start_date;
-        end   = tbl.x[0];
+        end = tbl.x[0];
     } else {
         start = tbl.x[static_cast<std::size_t>(cur)];
-        end   = datetime::addSeconds(start, ctx.gages.interval_sec[uj]);
+        end = datetime::addSeconds(start, ctx.gages.interval_sec[uj]);
     }
 }
 
 // gage_setState's march (t already carries legacy's +1 s)
+/** @brief March one gage forward to a caller-shifted query and update lookahead.
+ * @param[in,out] ctx Compatible initialized gage state; updates cached indices/rates
+ * and next rainfall while preserving factors captured when each record was read.
+ * @param j Valid zero-based gage index.
+ * @param tbl Nonempty ordered finite aligned table with consistent cached indices.
+ * @param t Finite absolute SWMM day already shifted by legacy one second. Requests
+ * must progress forward; no rewind occurs for an earlier query.
+ * @param adjustment Monthly factor applied only when reading a new lookahead and
+ * searching nonzero records, not retroactively to the current cached rate.
+ * Sets cached rain zero before/after intervals and gaps; no final API/forcing override,
+ * published rainfall assignment, error status or rollback is performed here. */
 void setGageState(SimulationContext& ctx, int j, const Table& tbl, double t, double adjustment) {
     const auto uj = static_cast<std::size_t>(j);
     for (;;) {
-        if (ctx.gages.st_cur[uj] == kNoState) { ctx.gages.st_rain[uj] = 0.0; return; }
+        if (ctx.gages.st_cur[uj] == kNoState) {
+            ctx.gages.st_rain[uj] = 0.0;
+            return;
+        }
         double start, end;
         currentInterval(ctx, j, tbl, start, end);
-        if (t < start) { ctx.gages.st_rain[uj] = 0.0; return; }   // before the interval
-        if (t < end)   return;                                     // inside it: keep
+        if (t < start) {
+            ctx.gages.st_rain[uj] = 0.0;
+            return;
+        } // before the interval
+        if (t < end)
+            return; // inside it: keep
         const int nxt = ctx.gages.st_next[uj];
-        if (nxt < 0)   { ctx.gages.st_rain[uj] = 0.0; return; }   // no next interval
-        if (t < tbl.x[static_cast<std::size_t>(nxt)]) { ctx.gages.st_rain[uj] = 0.0; return; }
-        ctx.gages.st_cur[uj]  = nxt;                               // advance
+        if (nxt < 0) {
+            ctx.gages.st_rain[uj] = 0.0;
+            return;
+        } // no next interval
+        if (t < tbl.x[static_cast<std::size_t>(nxt)]) {
+            ctx.gages.st_rain[uj] = 0.0;
+            return;
+        }
+        ctx.gages.st_cur[uj] = nxt; // advance
         // Legacy converts the next record when it is read, retaining that
         // adjustment across month boundaries. The first/next records are
         // initially read with factor 1 before climate_setState runs.
@@ -355,40 +433,49 @@ void setGageState(SimulationContext& ctx, int j, const Table& tbl, double t, dou
 
 double gageNextRainDate(const SimulationContext& ctx, int gage_idx, double t) {
     const auto ug = static_cast<std::size_t>(gage_idx);
-    if (ug >= ctx.gages.st_cur.size() || !ctx.gages.st_used[ug]) return t;   // legacy: aDate
+    if (ug >= ctx.gages.st_cur.size() || !ctx.gages.st_used[ug])
+        return t; // legacy: aDate
     const int cur = ctx.gages.st_cur[ug];
     const Table* tbl = gageRainSeries(ctx, gage_idx);
-    if (cur == kNoState || !tbl || tbl->x.empty()) return kNoDateValue;
+    if (cur == kNoState || !tbl || tbl->x.empty())
+        return kNoDateValue;
     const double t1 = t + datetime::OneSecond;
     double start, end;
     currentInterval(ctx, gage_idx, *tbl, start, end);
-    if (t1 < start) return start;
-    if (t1 < end)   return end;
+    if (t1 < start)
+        return start;
+    if (t1 < end)
+        return end;
     const int nxt = ctx.gages.st_next[ug];
     return (nxt >= 0) ? tbl->x[static_cast<std::size_t>(nxt)] : kNoDateValue;
 }
 
 double gageNextRateChange(const SimulationContext& ctx, int j, double date, double limit) {
-    const auto* table=gageRainSeries(ctx,j);
-    if(!table||table->x.empty()||ctx.options.ignore_rainfall)return limit;
-    constexpr double tolerance=1e-5/86400.;
-    const double duration=ctx.gages.interval_sec[j]/86400.;
-    int current=ctx.gages.st_cur[j];
-    double end=date,rate=0;
-    if(current>=0) {
-        end=table->x[current]+duration;
-        if(date<end-tolerance)rate=recordRate(ctx,j,*table,current);
+    const auto* table = gageRainSeries(ctx, j);
+    if (!table || table->x.empty() || ctx.options.ignore_rainfall)
+        return limit;
+    constexpr double tolerance = 1e-5 / 86400.;
+    const double duration = ctx.gages.interval_sec[j] / 86400.;
+    int current = ctx.gages.st_cur[j];
+    double end = date, rate = 0;
+    if (current >= 0) {
+        end = table->x[current] + duration;
+        if (date < end - tolerance)
+            rate = recordRate(ctx, j, *table, current);
     }
-    if(rate==0) {
-        int next=ctx.gages.st_next[j];
-        while(next>=0&&table->x[next]<=date+tolerance)
-            next=nextNonzeroRecord(ctx,j,*table,next);
-        return next>=0?std::min(limit,table->x[next]):limit;
+    if (rate == 0) {
+        int next = ctx.gages.st_next[j];
+        while (next >= 0 && table->x[next] <= date + tolerance)
+            next = nextNonzeroRecord(ctx, j, *table, next);
+        return next >= 0 ? std::min(limit, table->x[next]) : limit;
     }
-    while(end<limit-tolerance) {
-        const int next=nextNonzeroRecord(ctx,j,*table,current);
-        if(next<0||table->x[next]>end+tolerance||recordRate(ctx,j,*table,next)!=rate)return end;
-        current=next;end=table->x[current]+duration;
+    while (end < limit - tolerance) {
+        const int next = nextNonzeroRecord(ctx, j, *table, current);
+        if (next < 0 || table->x[next] > end + tolerance ||
+            recordRate(ctx, j, *table, next) != rate)
+            return end;
+        current = next;
+        end = table->x[current] + duration;
     }
     return limit;
 }
@@ -399,7 +486,7 @@ void updateAllGages(SimulationContext& ctx, double current_time) {
         auto uj = static_cast<std::size_t>(j);
         Table* rtbl = const_cast<Table*>(gageRainSeries(ctx, j));
         if (uj < ctx.gages.st_init.size() && !ctx.gages.st_init[uj])
-            initGageState(ctx, j, rtbl);   // legacy gage_initState, once
+            initGageState(ctx, j, rtbl); // legacy gage_initState, once
 
         // legacy gage_setState returns at once for a gage no subcatchment
         // or unit-hydrograph group reads; its rainfall keeps the seeded
@@ -423,12 +510,11 @@ void updateAllGages(SimulationContext& ctx, double current_time) {
         // shares this gage's timeseries.  Matches legacy gage_setState() coGage path.
         // The primary's rainfall already has its own scale_factor baked in, so
         // we strip it and multiply by this gage's scale_factor (legacy gage.c:355).
-        int co = (uj < ctx.gages.co_gage_index.size())
-                 ? ctx.gages.co_gage_index[uj] : -1;
+        int co = (uj < ctx.gages.co_gage_index.size()) ? ctx.gages.co_gage_index[uj] : -1;
         if (co >= 0 && co < j) {
             const auto uco = static_cast<std::size_t>(co);
             double primary_sf = ctx.gages.scale_factor[uco];
-            double this_sf    = ctx.gages.scale_factor[uj];
+            double this_sf = ctx.gages.scale_factor[uj];
             double ratio = (primary_sf > 0.0) ? (this_sf / primary_sf) : 1.0;
             ctx.gages.rainfall[uj] = ctx.gages.rainfall[uco] * ratio;
             continue;
@@ -460,7 +546,8 @@ void updateAllGages(SimulationContext& ctx, double current_time) {
     if (!ctx.options.ignore_rainfall) {
         for (int j = 0; j < ctx.n_gages(); ++j) {
             const auto uj = static_cast<std::size_t>(j);
-            if (!ctx.gages.st_used[uj] || uj >= ctx.forcing.gage_rainfall_mode.size()) continue;
+            if (!ctx.gages.st_used[uj] || uj >= ctx.forcing.gage_rainfall_mode.size())
+                continue;
             if (ctx.forcing.gage_rainfall_mode[uj] == ForcingMode::OVERRIDE)
                 ctx.gages.rainfall[uj] = ctx.forcing.gage_rainfall_value[uj];
             else if (ctx.forcing.gage_rainfall_mode[uj] == ForcingMode::ADD)
@@ -469,22 +556,31 @@ void updateAllGages(SimulationContext& ctx, double current_time) {
     }
 }
 
-static double reportRainfall(const SimulationContext& ctx, int gage_idx,
-                             double report_date, bool from_series) {
+/** @brief Resolve one report rainfall query through co-gage/API/cache or source paths.
+ * @param ctx Compatible initialized metadata/state/source tables; borrowed read-only.
+ * @param gage_idx Valid gage index; co-gage recursion follows strictly lower indices.
+ * @param report_date Supported finite SWMM/OLE day, shifted one second internally.
+ * @param from_series True searches source records with report-month adjustment;
+ * false consumes cached current/lookahead rate as last left by runoff.
+ * @return Project/hour intensity or zero under ignore/missing/out-of-interval state.
+ * Requires initialized non-NO_STATE before either source path. Co-gage/API precede
+ * source selection. No final gage forcing, cursor mutation or historical rewind. */
+static double reportRainfall(const SimulationContext& ctx, int gage_idx, double report_date,
+                             bool from_series) {
     // IGNORE_RAINFALL: nothing is reported (legacy leaves gage rainfall 0).
-    if (ctx.options.ignore_rainfall) return 0.0;
+    if (ctx.options.ignore_rainfall)
+        return 0.0;
 
     auto ug = static_cast<std::size_t>(gage_idx);
 
     // Co-gage: report the primary's report rainfall re-scaled by this gage's
     // factor (legacy gage_setReportRainfall, gage.c:535-541). Co-gage index is
     // always lower than this gage's, so the recursion terminates.
-    int co = (ug < ctx.gages.co_gage_index.size())
-             ? ctx.gages.co_gage_index[ug] : -1;
+    int co = (ug < ctx.gages.co_gage_index.size()) ? ctx.gages.co_gage_index[ug] : -1;
     if (co >= 0 && co < gage_idx) {
         const auto uco = static_cast<std::size_t>(co);
         double primary_sf = ctx.gages.scale_factor[uco];
-        double this_sf    = ctx.gages.scale_factor[ug];
+        double this_sf = ctx.gages.scale_factor[ug];
         double ratio = (primary_sf > 0.0) ? (this_sf / primary_sf) : 1.0;
         return reportRainfall(ctx, co, report_date, from_series) * ratio;
     }
@@ -502,8 +598,10 @@ static double reportRainfall(const SimulationContext& ctx, int gage_idx,
     // rate (a report instant on a record boundary reads the record that
     // begins there even though the runoff step reading it has not run).
     const Table* rtbl = gageRainSeries(ctx, gage_idx);
-    if (!rtbl || rtbl->x.empty()) return 0.0;
-    if (ug >= ctx.gages.st_cur.size() || ctx.gages.st_cur[ug] == kNoState) return 0.0;
+    if (!rtbl || rtbl->x.empty())
+        return 0.0;
+    if (ug >= ctx.gages.st_cur.size() || ctx.gages.st_cur[ug] == kNoState)
+        return 0.0;
     const double t = report_date + datetime::OneSecond;
 
     // Current and lookahead rates already carry the adjustment used when
@@ -517,29 +615,31 @@ static double reportRainfall(const SimulationContext& ctx, int gage_idx,
         // boundary. The runoff cursor then describes a future record, so
         // reading st_rain would report that future rate at the earlier date.
         const auto it = std::upper_bound(rtbl->x.begin(), rtbl->x.end(), t);
-        if (it == rtbl->x.begin()) return 0.0;
+        if (it == rtbl->x.begin())
+            return 0.0;
         const int k = static_cast<int>(it - rtbl->x.begin()) - 1;
-        const double end = datetime::addSeconds(rtbl->x[static_cast<std::size_t>(k)],
-                                                ctx.gages.interval_sec[ug]);
+        const double end =
+            datetime::addSeconds(rtbl->x[static_cast<std::size_t>(k)], ctx.gages.interval_sec[ug]);
         return t < end ? recordRate(ctx, gage_idx, *rtbl, k) * radj : 0.0;
     }
 
     double start, end;
     currentInterval(ctx, gage_idx, *rtbl, start, end);
-    if (t < end) return ctx.gages.st_rain[ug];
+    if (t < end)
+        return ctx.gages.st_rain[ug];
     const int nxt = ctx.gages.st_next[ug];
-    if (nxt < 0) return 0.0;                                   // nextRainfall = 0 past the end
-    if (t < rtbl->x[static_cast<std::size_t>(nxt)]) return 0.0;
+    if (nxt < 0)
+        return 0.0; // nextRainfall = 0 past the end
+    if (t < rtbl->x[static_cast<std::size_t>(nxt)])
+        return 0.0;
     return ctx.gages.next_rainfall[ug];
 }
 
-double getReportRainfall(const SimulationContext& ctx, int gage_idx,
-                         double report_date) {
+double getReportRainfall(const SimulationContext& ctx, int gage_idx, double report_date) {
     return reportRainfall(ctx, gage_idx, report_date, false);
 }
 
-double getReportRainfallFromSeries(const SimulationContext& ctx, int gage_idx,
-                                   double report_date) {
+double getReportRainfallFromSeries(const SimulationContext& ctx, int gage_idx, double report_date) {
     return reportRainfall(ctx, gage_idx, report_date, true);
 }
 

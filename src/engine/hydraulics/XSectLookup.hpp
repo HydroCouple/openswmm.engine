@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file XSectLookup.hpp
- * @brief Bit-exact geometry-table interpolation — the single source of truth.
+ * @file      XSectLookup.hpp
+ * @brief     Bit-exact geometry-table interpolation — the single source of truth.
  *
  * @details `lookup_exact()` is an op-for-op transliteration of legacy
  *          src/legacy/engine/xsect.c:lookup(). It is shared by BOTH the
@@ -48,9 +48,9 @@
  * @note INTERNAL HEADER — not installed.
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_XSECT_LOOKUP_HPP
@@ -59,29 +59,38 @@
 namespace openswmm::xsect {
 
 /**
- * @brief Bit-exact transliteration of legacy xsect.c:lookup().
+ * @brief Interpolate a normalized geometry table with the legacy arithmetic grouping.
  *
- * @param x  Normalized independent variable (depth/y_full or area/a_full),
- *           finite and in [0, 1] (see file-level preconditions).
- * @param t  Geometry table (n equally spaced entries on [0, 1]).
- * @param n  Logical entry count (== legacy nItems).
- * @return   Interpolated dependent value; ULP==0 vs legacy `lookup()`.
+ * Uses exact division and a positive low-end quadratic refinement. No negative-input clamp; caller
+ * must prevent unsafe indices/nonfinite casts. No allocation or ownership transfer; bitwise legacy
+ * agreement requires compatible FP/compiler settings.
+ *
+ * @param[in] x Finite nonnegative normalized coordinate, normally0..1; x/(1/(n-1)) must fit int.
+ *     Values>=1 return final entry.
+ * @param[in] t Borrowed readable n-entry equally spaced table on0..1; n>=4 for low-end quadratic
+ *     lookahead.
+ * @param[in] n Logical entry count>=4; no local validation.
+ * @return Interpolated dependent value in table units, floored0, or final value at/above upper
+ *     extent.
  */
 inline double lookup_exact(double x, const double* t, int n) noexcept {
-    const double delta = 1.0 / static_cast<double>(n - 1);   // same rounding as legacy
-    int i = static_cast<int>(x / delta);                     // DIVIDE (legacy), not x*inv_delta
-    if (i >= n - 1) return t[n - 1];
+    const double delta = 1.0 / static_cast<double>(n - 1); // same rounding as legacy
+    int i = static_cast<int>(x / delta);                   // DIVIDE (legacy), not x*inv_delta
+    if (i >= n - 1)
+        return t[n - 1];
 
     double x0 = i * delta;
-    double y  = t[i] + (x - x0) * (t[i + 1] - t[i]) / delta; // grouping matches legacy
+    double y = t[i] + (x - x0) * (t[i + 1] - t[i]) / delta; // grouping matches legacy
 
-    if (i < 2) {                                             // quadratic refinement for low x
+    if (i < 2) { // quadratic refinement for low x
         double x1 = (static_cast<double>(i) + 1.0) * delta;
-        double y2 = y + (x - x0) * (x - x1) / (delta * delta) *
-                        (t[i] / 2.0 - t[i + 1] + t[i + 2] / 2.0);
-        if (y2 > 0.0) y = y2;
+        double y2 =
+            y + (x - x0) * (x - x1) / (delta * delta) * (t[i] / 2.0 - t[i + 1] + t[i + 2] / 2.0);
+        if (y2 > 0.0)
+            y = y2;
     }
-    if (y < 0.0) y = 0.0;
+    if (y < 0.0)
+        y = 0.0;
     return y;
 }
 
@@ -102,22 +111,39 @@ inline double lookup_exact(double x, const double* t, int n) noexcept {
 // SWMM_XSECT_FAST_LOOKUP is defined.
 // ============================================================================
 
-/** @brief Reciprocal-multiply lookup (fast, NOT bit-exact — see §6). */
+/**
+ * @brief Interpolate normalized geometry using reciprocal multiplication and endpoint clamps.
+ *
+ * Faster arithmetic can differ by ULPs from lookup_exact; no NaN guard before integer cast. No
+ * allocation or table mutation.
+ *
+ * @param[in] x Non-NaN normalized coordinate; values below0/above1, including infinities, clamp to
+ *     endpoints.
+ * @param[in] t Borrowed readable n-entry equally spaced table; n>=4 for quadratic lookahead.
+ * @param[in] n Logical count>=4, caller-validated.
+ * @return Interpolated table-unit value floored0, with final table value at upper endpoint.
+ */
 inline double lookup_fast(double x, const double* t, int n) noexcept {
-    const double inv_delta = static_cast<double>(n - 1);   // exact integer
-    const double delta     = 1.0 / inv_delta;
-    if (x < 0.0) x = 0.0; else if (x > 1.0) x = 1.0;       // fast mode pre-clamps
+    const double inv_delta = static_cast<double>(n - 1); // exact integer
+    const double delta = 1.0 / inv_delta;
+    if (x < 0.0)
+        x = 0.0;
+    else if (x > 1.0)
+        x = 1.0; // fast mode pre-clamps
     int i = static_cast<int>(x * inv_delta);
-    if (i >= n - 1) return t[n - 1];
+    if (i >= n - 1)
+        return t[n - 1];
     double x0 = i * delta;
-    double y  = t[i] + (x - x0) * (t[i + 1] - t[i]) * inv_delta;
+    double y = t[i] + (x - x0) * (t[i + 1] - t[i]) * inv_delta;
     if (i < 2) {
         double x1 = (static_cast<double>(i) + 1.0) * delta;
         double y2 = y + (x - x0) * (x - x1) * (inv_delta * inv_delta) *
-                        (t[i] / 2.0 - t[i + 1] + t[i + 2] / 2.0);
-        if (y2 > 0.0) y = y2;
+                            (t[i] / 2.0 - t[i + 1] + t[i + 2] / 2.0);
+        if (y2 > 0.0)
+            y = y2;
     }
-    if (y < 0.0) y = 0.0;
+    if (y < 0.0)
+        y = 0.0;
     return y;
 }
 
@@ -125,17 +151,41 @@ inline double lookup_fast(double x, const double* t, int n) noexcept {
 // and x = y/yFull via IEEE divide; under SWMM_XSECT_FAST_LOOKUP `param` is the
 // precomputed inv_y_full and x = depth*inv (clamped). The kernels feed the
 // matching per-link array (see XSectBatch.cpp norm_param()).
+/**
+ * @brief Normalize a depth with the selected exact or fast-lookup operand convention.
+ *
+ * The fast branch does not catch NaN multiplication. Supplying a full depth to a reciprocal build
+ * (or reverse) silently misnormalizes; no units or finiteness validation.
+ *
+ * @param[in] depth Depth in the same length convention as full depth; finite inputs supplied by
+ *     caller.
+ * @param[in] param Default build: positive full depth; FAST_LOOKUP build: its precomputed
+ *     reciprocal.
+ * @return Default depth/param when both positive else0; fast depth*param clamped0..1.
+ */
 inline double norm_x(double depth, double param) noexcept {
 #ifdef SWMM_XSECT_FAST_LOOKUP
-    double x = depth * param;                              // param == inv_y_full
-    if (x < 0.0) x = 0.0; else if (x > 1.0) x = 1.0;
+    double x = depth * param; // param == inv_y_full
+    if (x < 0.0)
+        x = 0.0;
+    else if (x > 1.0)
+        x = 1.0;
     return x;
 #else
-    return (param > 0.0 && depth > 0.0) ? (depth / param) : 0.0;  // param == y_full
+    return (param > 0.0 && depth > 0.0) ? (depth / param) : 0.0; // param == y_full
 #endif
 }
 
-/** @brief Mode-aware normalize + table lookup (bit-exact by default; §6 fast if opted in). */
+/**
+ * @brief Normalize a depth and dispatch the build-selected table interpolation.
+ *
+ * @param[in] depth Depth in consistent native length units, finite and safely normalizable.
+ * @param[in] param Default full-depth denominator or FAST_LOOKUP reciprocal, matching norm_x build
+ *     convention.
+ * @param[in] t Borrowed readable normalized geometry table with n>=4 entries.
+ * @param[in] n Logical entry count>=4.
+ * @return Dependent table-unit value via lookup_exact by default or lookup_fast when opted in.
+ */
 inline double norm_lookup(double depth, double param, const double* t, int n) noexcept {
 #ifdef SWMM_XSECT_FAST_LOOKUP
     return lookup_fast(norm_x(depth, param), t, n);
@@ -182,98 +232,174 @@ inline double norm_lookup(double depth, double param, const double* t, int n) no
 struct LocateLut {
     static constexpr int kBuckets = 64;
 
-    double        t0     = 0.0;   ///< table[0] — the low end of the value range
-    double        scale  = 0.0;   ///< kBuckets / (table[jLast] - t0); 0 == disabled
-    int           j_last = 0;     ///< the `jLast` this map was built for
-    unsigned char lo[kBuckets + 1] = {};  ///< lo[b] = max{ j : bucket(table[j]) < b }
+    double t0 = 0.0;                     ///< table[0] — the low end of the value range
+    double scale = 0.0;                  ///< kBuckets / (table[jLast] - t0); 0 == disabled
+    int j_last = 0;                      ///< the `jLast` this map was built for
+    unsigned char lo[kBuckets + 1] = {}; ///< lo[b] = max{ j : bucket(table[j]) < b }
 };
 
-/// Bucket index for a value — the ONE expression used by both build and query.
+/**
+ * @brief Map a value to one of64 locate-acceleration buckets.
+ *
+ * Clamping occurs after the integer cast; it does not make nonfinite or enormous inputs safe. No
+ * table lookup or mutation.
+ *
+ * @param[in] L Borrowed initialized map; scale positive and mapped query expression representable
+ *     as int.
+ * @param[in] y Value in the same units as L.t0; (y-t0)*scale must be finite/int-representable.
+ * @return Truncated bucket index clamped into0..63.
+ */
 inline int lut_bucket(const LocateLut& L, double y) noexcept {
     int b = static_cast<int>((y - L.t0) * L.scale);
-    if (b < 0) b = 0;
-    else if (b >= LocateLut::kBuckets) b = LocateLut::kBuckets - 1;
+    if (b < 0)
+        b = 0;
+    else if (b >= LocateLut::kBuckets)
+        b = LocateLut::kBuckets - 1;
     return b;
 }
 
-/// Plain bisection — the shipped `locate()` body, kept here so the LUT builder
-/// and the fallback path share one definition with XsectEval::locate.
+/**
+ * @brief Find a lower bracketing index in a nondecreasing table.
+ *
+ * Interior equal values follow the bisection comparison; all-equal/bottom endpoint returns0. No
+ * interpolation or table validation.
+ *
+ * @param[in] y Query in table units; endpoint queries clamp, NaN resolves to0.
+ * @param[in] table Borrowed ascending/nondecreasing table with readable indices0..jLast; lifetime
+ *     covers query.
+ * @param[in] jLast Nonnegative inclusive final search index; caller prevents midpoint integer
+ *     overflow.
+ * @return Zero-based lower bracket,0 at/below first and jLast at/above last.
+ */
 inline int locate_bisect(double y, const double* table, int jLast) noexcept {
     int j1 = 0;
     int j2 = jLast;
-    if (y <= table[0])     return 0;
-    if (y >= table[jLast]) return jLast;
+    if (y <= table[0])
+        return 0;
+    if (y >= table[jLast])
+        return jLast;
     while (j2 - j1 > 1) {
         int j = (j1 + j2) >> 1;
-        if (y >= table[j]) j1 = j;
-        else               j2 = j;
+        if (y >= table[j])
+            j1 = j;
+        else
+            j2 = j;
     }
     return j1;
 }
 
-/// Build the bucket map for `table` over indices [0, jLast].
-///
-/// Leaves the map disabled (scale == 0) for a degenerate or non-monotone table,
-/// or one too long to index with a byte — the caller then bisects as before.
+/**
+ * @brief Build a byte-indexed acceleration map for a monotone geometry table.
+ *
+ * Refuses nonmonotone comparisons (including NaN) and nonpositive span by leaving scale0. Caller
+ * supplies finite well-scaled geometry values; infinities/underflow/overflow are not independently
+ * guarded. Builds65 bucket lower bounds without allocation. Rebuild after table values change.
+ *
+ * @param[out] L Reset to disabled first, then populated in place when eligible.
+ * @param[in] table NULL disables; otherwise readable0..jLast table with finite bounded values
+ *     making scale/mapped products finite and int-representable.
+ * @param[in] jLast Inclusive extent; only2..254 can enable the map, otherwise disabled.
+ */
 inline void build_locate_lut(LocateLut& L, const double* table, int jLast) noexcept {
     L = LocateLut{};
-    if (!table || jLast < 2 || jLast > 254) return;
+    if (!table || jLast < 2 || jLast > 254)
+        return;
     for (int j = 1; j <= jLast; ++j)
-        if (!(table[j] >= table[j - 1])) return;   // non-monotone (or NaN) — no LUT
+        if (!(table[j] >= table[j - 1]))
+            return; // non-monotone (or NaN) — no LUT
 
     const double span = table[jLast] - table[0];
-    if (!(span > 0.0)) return;                     // flat table — nothing to bracket
+    if (!(span > 0.0))
+        return; // flat table — nothing to bracket
 
-    L.t0     = table[0];
-    L.scale  = static_cast<double>(LocateLut::kBuckets) / span;
+    L.t0 = table[0];
+    L.scale = static_cast<double>(LocateLut::kBuckets) / span;
     L.j_last = jLast;
     for (int b = 0; b <= LocateLut::kBuckets; ++b) {
         int best = 0;
         for (int j = 0; j <= jLast; ++j) {
-            if (lut_bucket(L, table[j]) >= b) break;   // bucket(table[.]) is sorted
+            if (lut_bucket(L, table[j]) >= b)
+                break; // bucket(table[.]) is sorted
             best = j;
         }
         L.lo[b] = static_cast<unsigned char>(best);
     }
 }
 
-/// LUT-accelerated `locate()` — returns the identical index for every input.
-inline int locate_lut(double y, const double* table, int jLast,
-                      const LocateLut& L) noexcept {
+/**
+ * @brief Find the same lower bracket using a prebuilt bucket map.
+ *
+ * Does not validate map identity/extent; stale maps can produce incorrect or unsafe brackets.
+ *
+ * @param[in] y Query in table units; NaN/below-first returns0 and above-last returns jLast.
+ * @param[in] table Borrowed ascending/nondecreasing table with readable indices0..jLast; lifetime
+ *     covers query.
+ * @param[in] jLast Nonnegative inclusive final search index; caller prevents midpoint integer
+ *     overflow.
+ * @param[in] L Borrowed enabled map built from this unchanged table and extent; interior mapped
+ *     expression must fit int.
+ * @return Lower bracket after bucket narrowing and exact bisection comparisons.
+ */
+inline int locate_lut(double y, const double* table, int jLast, const LocateLut& L) noexcept {
     // `!(y > table[0])` (not `y <= table[0]`) also catches NaN, which plain
     // bisection resolves to 0 because every `y >= table[j]` test is false.
-    if (!(y > table[0])) return 0;
-    if (y >= table[jLast]) return jLast;
+    if (!(y > table[0]))
+        return 0;
+    if (y >= table[jLast])
+        return jLast;
 
-    const int b  = lut_bucket(L, y);
-    int       j1 = L.lo[b];
-    int       j2 = L.lo[b + 1] + 1;
-    if (j2 > jLast) j2 = jLast;
+    const int b = lut_bucket(L, y);
+    int j1 = L.lo[b];
+    int j2 = L.lo[b + 1] + 1;
+    if (j2 > jLast)
+        j2 = jLast;
     while (j2 - j1 > 1) {
         int jm = (j1 + j2) >> 1;
-        if (y >= table[jm]) j1 = jm;
-        else                j2 = jm;
+        if (y >= table[jm])
+            j1 = jm;
+        else
+            j2 = jm;
     }
     return j1;
 }
 
-/// Dispatch: use the map when one was built for this exact table extent.
-inline int locate_maybe_lut(double y, const double* table, int jLast,
-                            const LocateLut* L) noexcept {
+/**
+ * @brief Use a matching enabled bucket map or fall back to plain bisection.
+ *
+ * @param[in] y Query in table units; same value-domain requirements as selected implementation.
+ * @param[in] table Borrowed ascending/nondecreasing table with readable indices0..jLast; lifetime
+ *     covers query.
+ * @param[in] jLast Nonnegative inclusive final search index; caller prevents midpoint integer
+ *     overflow.
+ * @param[in] L Optional borrowed map; scale>0 and matching j_last select it. Caller ensures table
+ *     identity/content still match.
+ * @return Bracketing index from locate_lut or locate_bisect; no interpolation.
+ */
+inline int locate_maybe_lut(double y, const double* table, int jLast, const LocateLut* L) noexcept {
     if (L && L->scale > 0.0 && L->j_last == jLast)
         return locate_lut(y, table, jLast, *L);
     return locate_bisect(y, table, jLast);
 }
 
-/// Build the map for the extent `invLookup(y, table, n_items)` actually
-/// searches — including the section-factor tables' two-row top truncation, so
-/// the S_* maps bracket the same window `locate()` is called on. (The
-/// truncated top rows are resolved by invLookup's own branch, outside
-/// `locate`, and are unaffected.)
+/**
+ * @brief Build a map for the actual truncated extent used by inverse geometry lookup.
+ *
+ * When table[n-3]>table[n-1], excludes the two nonmonotone top rows before building. Does not alter
+ * source data or accelerate the inverse lookup's separate top-branch interpolation.
+ *
+ * @param[out] L Reset/filled map; NULL/short source disables it.
+ * @param[in] table Optional readable n_items-entry finite well-scaled geometry table; same safety
+ *     preconditions as build_locate_lut.
+ * @param[in] n_items Logical table length; fewer than4 disables map.
+ */
 inline void build_invlookup_lut(LocateLut& L, const double* table, int n_items) noexcept {
-    if (!table || n_items < 4) { L = LocateLut{}; return; }
+    if (!table || n_items < 4) {
+        L = LocateLut{};
+        return;
+    }
     int n = n_items;
-    if (table[n - 3] > table[n - 1]) n = n - 2;
+    if (table[n - 3] > table[n - 1])
+        n = n - 2;
     build_locate_lut(L, table, n - 1);
 }
 

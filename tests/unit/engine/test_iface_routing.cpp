@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_iface_routing.cpp
- * @brief End-to-end tests for routing interface files
+ * @file      test_iface_routing.cpp
+ * @brief     End-to-end tests for routing interface files
  *        ([FILES] USE INFLOWS / SAVE OUTFLOWS).
  *
  * @details Verifies the lifecycle wiring added per
@@ -36,9 +36,9 @@
  * @see Legacy: src/legacy/engine/iface.c, routing.c addIfaceInflows()
  * @ingroup engine_tests
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -65,8 +65,20 @@ namespace {
 
 // Minimal 1-junction / 1-outfall model. `receiver` names the junction so the
 // chained test can receive rows written for another model's outfall.
+/**
+ * @brief Construct the one-junction/outfall routing-interface receiver deck.
+ *
+ * Constructs text only; interface FILES rows are added by cases/API later, and arbitrary
+ * identifiers are not validated.
+ *
+ * @param[in] receiver Junction identifier, default J1; selected to match incoming interface node
+ *     rows.
+ * @param[in] outfall Outfall identifier, default O1; caller chooses distinct valid names.
+ * @return Owned one-hour CFS/DYNWAVE deck with400 ft1.5 ft circular conduit,30 s routing and5 min
+ *     reporting.
+ */
 std::string minimal_model_inp(const std::string& receiver = "J1",
-                              const std::string& outfall  = "O1") {
+                              const std::string& outfall = "O1") {
     std::ostringstream s;
     s << "[OPTIONS]\n"
          "FLOW_UNITS           CFS\n"
@@ -89,7 +101,8 @@ std::string minimal_model_inp(const std::string& receiver = "J1",
       << outfall << "  95.0  FREE\n"
       << "\n[CONDUITS]\n"
          ";;Name  From  To  Length  N  InOff  OutOff\n"
-         "C1  " << receiver << "  " << outfall << "  400.0  0.013  0  0\n"
+         "C1  "
+      << receiver << "  " << outfall << "  400.0  0.013  0  0\n"
       << "\n[XSECTIONS]\n"
          ";;Link  Shape  Geom1  Geom2  Geom3  Geom4  Barrels\n"
          "C1  CIRCULAR  1.5  0  0  0  1\n";
@@ -98,6 +111,17 @@ std::string minimal_model_inp(const std::string& receiver = "J1",
 
 // Legacy-format routing interface file: one node, constant flow, two
 // periods bracketing the whole simulation (00:00 → 03:00).
+/**
+ * @brief Construct a legacy text routing-interface file with one held flow series.
+ *
+ * Only constructs file contents; does not create a file, check node existence or integrate a
+ * volume.
+ *
+ * @param[in] node Exact recipient node identifier inserted into the node list and both data rows.
+ * @param[in] flow_cfs Constant signed flow in CFS, inserted without validation.
+ * @return Owned SWMM5 interface text with FLOW CFS,300 s declared reporting interval and equal flow
+ *     records at00:00/03:00 on01/01/2026.
+ */
 std::string constant_inflow_iface(const std::string& node, double flow_cfs) {
     std::ostringstream s;
     s << "SWMM5 Interface File\n"
@@ -113,12 +137,35 @@ std::string constant_inflow_iface(const std::string& node, double flow_cfs) {
     return s.str();
 }
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Asserts open success and
+ * returns early from this void helper on a fatal assertion. Subsequent write/close failures are not
+ * checked; the local stream closes at scope exit and no path/content storage is retained.
+ * Allocation exceptions can propagate.
+ *
+ * @param[in] path Borrowed destination path; an existing file is truncated/overwritten.
+ * @param[in] content Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const std::string& path, const std::string& content) {
     std::ofstream f(path);
     ASSERT_TRUE(f.is_open()) << "cannot create " << path;
     f << content;
 }
 
+/**
+ * @brief Collect an entire fixture file into owned text.
+ *
+ * Uses ordinary text mode and its platform newline rules. The local stream closes on return; no
+ * model state is touched and no borrowed buffer is returned. Default stream exception settings
+ * apply; allocation exceptions may propagate.
+ *
+ * @param[in] path Borrowed input filename used for this synchronous open/read.
+ * @return Owned string collected from the stream; empty can mean an empty file or failure to open.
+ *     Partial read failures have no separate status.
+ */
 std::string slurp(const std::string& path) {
     std::ifstream f(path);
     std::stringstream ss;
@@ -131,6 +178,12 @@ protected:
     SWMM_Engine engine_ = nullptr;
     std::vector<std::string> scratch_;
 
+    /**
+     * @brief Close/destroy the routing-interface engine and remove registered scratch files.
+     *
+     * Resets engine_ to null after cleanup; ignores close status and each filesystem remove error_code.
+     * Only paths recorded in scratch_ are removed.
+     */
     void TearDown() override {
         if (engine_) {
             swmm_engine_close(engine_);
@@ -143,6 +196,16 @@ protected:
         }
     }
 
+    /**
+     * @brief Register a cwd-based artifact path for teardown deletion.
+     *
+     * Does not reserve/create the file, sanitize traversal/absolute paths or avoid name collisions.
+     * Filesystem/allocation errors propagate; registered paths are removed by teardown.
+     *
+     * @param[in] name Raw filename/path combined with current_path; caller selects an artifact this
+     *     fixture may remove.
+     * @return Owned native path string also appended to scratch_.
+     */
     std::string scratch(const std::string& name) {
         auto p = (fs::current_path() / name).string();
         scratch_.push_back(p);
@@ -150,6 +213,17 @@ protected:
     }
 
     // Open a model from INP text and stop before start().
+    /**
+     * @brief Write/open/initialize a routing-interface fixture and stop before start.
+     *
+     * Registers all three artifacts for deletion, creates a new engine_ and asserts open/initialize
+     * success. Intended when engine_ is null; repeated use without close_engine would overwrite
+     * ownership. Fatal assertions return only from this helper with possible partial state; teardown
+     * handles the retained engine. write_file failure does not itself prevent subsequent calls here.
+     *
+     * @param[in] tag Filesystem-safe basename suffix for iface_tag.inp/.rpt/.out in cwd.
+     * @param[in] inp_text Complete model text passed to write_file.
+     */
     void open_model(const std::string& tag, const std::string& inp_text) {
         const auto inp = scratch("iface_" + tag + ".inp");
         const auto rpt = scratch("iface_" + tag + ".rpt");
@@ -158,22 +232,37 @@ protected:
 
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
-        ASSERT_EQ(swmm_engine_open(engine_, inp.c_str(), rpt.c_str(),
-                                   out.c_str(), nullptr), SWMM_OK)
+        ASSERT_EQ(swmm_engine_open(engine_, inp.c_str(), rpt.c_str(), out.c_str(), nullptr),
+                  SWMM_OK)
             << "open failed: " << swmm_get_last_error_msg(engine_);
         ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
     }
 
+    /**
+     * @brief Step an already started interface fixture to elapsed completion and end it.
+     *
+     * Requires a valid initialized/started engine_. Fatal assertions return on the first step/end
+     * error, leaving remaining cleanup to the fixture; no independent iteration limit or rollback is
+     * supplied.
+     */
     void run_to_completion() {
         double elapsed = 0.0;
         for (;;) {
             int rc = swmm_engine_step(engine_, &elapsed);
             ASSERT_EQ(rc, SWMM_OK) << swmm_get_last_error_msg(engine_);
-            if (elapsed <= 0.0) break;
+            if (elapsed <= 0.0)
+                break;
         }
         ASSERT_EQ(swmm_engine_end(engine_), SWMM_OK);
     }
 
+    /**
+     * @brief Close/destroy the fixture engine and reset its owning member.
+     *
+     * Requires a live engine_. A fatal close-success assertion returns before destruction/reset on
+     * failure, allowing teardown to retry cleanup. Successful call destroys the handle and sets
+     * engine_=null; registered artifacts are removed later.
+     */
     void close_engine() {
         ASSERT_EQ(swmm_engine_close(engine_), SWMM_OK);
         swmm_engine_destroy(engine_);
@@ -186,20 +275,18 @@ protected:
 // ---------------------------------------------------------------------------
 
 TEST_F(IfaceRoutingTest, UseInflows_AppliesLateralFlow) {
-    const double kFlow = 2.0;   // cfs, constant over the 1 h simulation
+    const double kFlow = 2.0; // cfs, constant over the 1 h simulation
     const auto iface = scratch("iface_use.txt");
     write_file(iface, constant_inflow_iface("J1", kFlow));
 
     open_model("use", minimal_model_inp());
     ASSERT_EQ(swmm_files_set(engine_, "INFLOWS_PATH", iface.c_str()), SWMM_OK);
-    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK)
-        << swmm_get_last_error_msg(engine_);
+    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK) << swmm_get_last_error_msg(engine_);
     run_to_completion();
 
     // 2 cfs × 3600 s = 7200 ft³ booked as external inflow.
     double ext_vol = 0.0;
-    ASSERT_EQ(swmm_get_routing_total(engine_, SWMM_ROUTING_EXTERNAL, &ext_vol),
-              SWMM_OK);
+    ASSERT_EQ(swmm_get_routing_total(engine_, SWMM_ROUTING_EXTERNAL, &ext_vol), SWMM_OK);
     EXPECT_NEAR(ext_vol, kFlow * 3600.0, 0.10 * kFlow * 3600.0)
         << "interface inflow volume not delivered";
 
@@ -220,20 +307,17 @@ TEST_F(IfaceRoutingTest, UseInflows_ParsedFromFilesSection) {
     std::string inp = minimal_model_inp();
     inp += "\n[FILES]\nUSE INFLOWS \"" + iface + "\"\n";
     open_model("use_sect", inp);
-    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK)
-        << swmm_get_last_error_msg(engine_);
+    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK) << swmm_get_last_error_msg(engine_);
     run_to_completion();
 
     double ext_vol = 0.0;
-    ASSERT_EQ(swmm_get_routing_total(engine_, SWMM_ROUTING_EXTERNAL, &ext_vol),
-              SWMM_OK);
+    ASSERT_EQ(swmm_get_routing_total(engine_, SWMM_ROUTING_EXTERNAL, &ext_vol), SWMM_OK);
     EXPECT_GT(ext_vol, 0.0);
 }
 
 TEST_F(IfaceRoutingTest, UseInflows_MissingFileFailsStart) {
     open_model("missing", minimal_model_inp());
-    ASSERT_EQ(swmm_files_set(engine_, "INFLOWS_PATH",
-                             "no_such_interface_file.txt"), SWMM_OK);
+    ASSERT_EQ(swmm_files_set(engine_, "INFLOWS_PATH", "no_such_interface_file.txt"), SWMM_OK);
     EXPECT_NE(swmm_engine_start(engine_, 1), SWMM_OK)
         << "start() must fail when the inflows file cannot be opened";
 }
@@ -252,19 +336,16 @@ TEST_F(IfaceRoutingTest, UseInflows_BadHeaderFailsStart) {
 // ---------------------------------------------------------------------------
 
 TEST_F(IfaceRoutingTest, SaveOutflows_WritesLegacyHeaderAndRows) {
-    const auto in_iface  = scratch("iface_chain_in.txt");
+    const auto in_iface = scratch("iface_chain_in.txt");
     const auto out_iface = scratch("iface_save_out.txt");
     write_file(in_iface, constant_inflow_iface("J1", 2.0));
 
     open_model("save", minimal_model_inp());
-    ASSERT_EQ(swmm_files_set(engine_, "INFLOWS_PATH",  in_iface.c_str()),
-              SWMM_OK);
-    ASSERT_EQ(swmm_files_set(engine_, "OUTFLOWS_PATH", out_iface.c_str()),
-              SWMM_OK);
-    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK)
-        << swmm_get_last_error_msg(engine_);
+    ASSERT_EQ(swmm_files_set(engine_, "INFLOWS_PATH", in_iface.c_str()), SWMM_OK);
+    ASSERT_EQ(swmm_files_set(engine_, "OUTFLOWS_PATH", out_iface.c_str()), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK) << swmm_get_last_error_msg(engine_);
     run_to_completion();
-    close_engine();   // flushes + closes the interface file
+    close_engine(); // flushes + closes the interface file
 
     ASSERT_TRUE(fs::exists(out_iface));
     const std::string content = slurp(out_iface);
@@ -283,8 +364,12 @@ TEST_F(IfaceRoutingTest, SaveOutflows_WritesLegacyHeaderAndRows) {
     std::string line;
     bool past_header = false;
     while (std::getline(ss, line)) {
-        if (line.rfind("Node", 0) == 0) { past_header = true; continue; }
-        if (past_header && line.rfind("O1", 0) == 0) ++rows;
+        if (line.rfind("Node", 0) == 0) {
+            past_header = true;
+            continue;
+        }
+        if (past_header && line.rfind("O1", 0) == 0)
+            ++rows;
     }
     EXPECT_GE(rows, 10) << "expected ~12 report-step rows for O1";
     EXPECT_LE(rows, 14) << "rows written per routing step instead of per "
@@ -295,7 +380,7 @@ TEST_F(IfaceRoutingTest, SameInflowsAndOutflowsFileFailsStart) {
     const auto iface = scratch("iface_same.txt");
     write_file(iface, constant_inflow_iface("J1", 1.0));
     open_model("same", minimal_model_inp());
-    ASSERT_EQ(swmm_files_set(engine_, "INFLOWS_PATH",  iface.c_str()), SWMM_OK);
+    ASSERT_EQ(swmm_files_set(engine_, "INFLOWS_PATH", iface.c_str()), SWMM_OK);
     ASSERT_EQ(swmm_files_set(engine_, "OUTFLOWS_PATH", iface.c_str()), SWMM_OK);
     EXPECT_NE(swmm_engine_start(engine_, 1), SWMM_OK)
         << "legacy ERR 357: inflows and outflows must not share a file";
@@ -307,34 +392,30 @@ TEST_F(IfaceRoutingTest, SameInflowsAndOutflowsFileFailsStart) {
 
 TEST_F(IfaceRoutingTest, ChainedModels_ConserveBoundaryVolume) {
     const double kFlow = 2.0;
-    const auto a_in  = scratch("iface_a_in.txt");
+    const auto a_in = scratch("iface_a_in.txt");
     const auto a_out = scratch("iface_a_out.txt");
     write_file(a_in, constant_inflow_iface("J1", kFlow));
 
     // --- Model A: J1 → O1, driven by a constant interface inflow. ---
     open_model("chain_a", minimal_model_inp("J1", "O1"));
-    ASSERT_EQ(swmm_files_set(engine_, "INFLOWS_PATH",  a_in.c_str()),  SWMM_OK);
+    ASSERT_EQ(swmm_files_set(engine_, "INFLOWS_PATH", a_in.c_str()), SWMM_OK);
     ASSERT_EQ(swmm_files_set(engine_, "OUTFLOWS_PATH", a_out.c_str()), SWMM_OK);
-    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK)
-        << swmm_get_last_error_msg(engine_);
+    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK) << swmm_get_last_error_msg(engine_);
     run_to_completion();
 
     double a_outflow = 0.0;
-    ASSERT_EQ(swmm_get_routing_total(engine_, SWMM_ROUTING_OUTFLOW, &a_outflow),
-              SWMM_OK);
+    ASSERT_EQ(swmm_get_routing_total(engine_, SWMM_ROUTING_OUTFLOW, &a_outflow), SWMM_OK);
     ASSERT_GT(a_outflow, 0.0);
     close_engine();
 
     // --- Model B: junction named O1 receives model A's outfall rows. ---
     open_model("chain_b", minimal_model_inp("O1", "OB"));
     ASSERT_EQ(swmm_files_set(engine_, "INFLOWS_PATH", a_out.c_str()), SWMM_OK);
-    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK)
-        << swmm_get_last_error_msg(engine_);
+    ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK) << swmm_get_last_error_msg(engine_);
     run_to_completion();
 
     double b_ext = 0.0;
-    ASSERT_EQ(swmm_get_routing_total(engine_, SWMM_ROUTING_EXTERNAL, &b_ext),
-              SWMM_OK);
+    ASSERT_EQ(swmm_get_routing_total(engine_, SWMM_ROUTING_EXTERNAL, &b_ext), SWMM_OK);
     EXPECT_GT(b_ext, 0.0) << "model B received nothing from model A's file";
     // Boundary conservation within routing tolerance. A's outfall volume
     // ramps up over the first report steps, so allow a generous band.
@@ -350,14 +431,13 @@ TEST_F(IfaceRoutingTest, SaveInflowsRowFailsOpen) {
     inp += "\n[FILES]\nSAVE INFLOWS \"whatever.txt\"\n";
 
     const auto path = scratch("iface_badmode.inp");
-    const auto rpt  = scratch("iface_badmode.rpt");
-    const auto out  = scratch("iface_badmode.out");
+    const auto rpt = scratch("iface_badmode.rpt");
+    const auto out = scratch("iface_badmode.out");
     write_file(path, inp);
 
     engine_ = swmm_engine_create();
     ASSERT_NE(engine_, nullptr);
-    EXPECT_NE(swmm_engine_open(engine_, path.c_str(), rpt.c_str(),
-                               out.c_str(), nullptr), SWMM_OK)
+    EXPECT_NE(swmm_engine_open(engine_, path.c_str(), rpt.c_str(), out.c_str(), nullptr), SWMM_OK)
         << "SAVE INFLOWS must be rejected at parse time (legacy ERR_ITEMS)";
 }
 

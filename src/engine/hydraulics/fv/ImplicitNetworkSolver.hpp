@@ -1,5 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Caleb Buahin
+
+/**
+ * @file      ImplicitNetworkSolver.hpp
+ * @brief     Standalone implicit finite-volume network solver for supported wet regimes.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
 #pragma once
 
 #include "NetworkMeshData.hpp"
@@ -79,9 +89,17 @@ public:
         // Appended head row order, after interleaved cell (h,Q) rows.
         std::vector<int> nodes;
     };
-    enum class CondensationStatus { NotAttempted, Converged, InvalidInput,
-        UnsupportedStencil, BlockPivot, FillLimit, MemoryLimit,
-        InterfaceFailure, ReconstructionFailure };
+    enum class CondensationStatus {
+        NotAttempted,
+        Converged,
+        InvalidInput,
+        UnsupportedStencil,
+        BlockPivot,
+        FillLimit,
+        MemoryLimit,
+        InterfaceFailure,
+        ReconstructionFailure
+    };
     enum class Preconditioner { ScalarIlu0, BlockIlu0 };
     struct WorkspaceDiagnostics {
         bool enabled = false, symbolic_reused = false, symbolic_rebuilt = false;
@@ -94,6 +112,7 @@ public:
     public:
         std::size_t bytes() const;
         void release();
+
     private:
         friend class ImplicitNetworkSolver;
         bool matches(const Matrix&, Preconditioner, std::size_t pairs) const;
@@ -104,7 +123,7 @@ public:
         std::vector<std::size_t> source_row_, row_, diagonal_, scatter_;
         std::vector<int> source_column_, column_;
         std::vector<double> scalar_lu_;
-        std::vector<std::array<double,4>> block_lu_, inverses_;
+        std::vector<std::array<double, 4>> block_lu_, inverses_;
         NativeGmres gmres_;
     };
     struct BlockIluDiagnostics {
@@ -119,7 +138,8 @@ public:
         std::size_t workspace_limit_bytes = 64 * 1024 * 1024;
         bool reduced_gmres_only = false;
         bool tree_interface = false; // opt-in exact 1/2-variable leaf elimination
-        Preconditioner preconditioner = Preconditioner::ScalarIlu0; // static solveCondensed selection
+        Preconditioner preconditioner =
+            Preconditioner::ScalarIlu0; // static solveCondensed selection
     };
     struct CondensationDiagnostics {
         CondensationStatus status = CondensationStatus::NotAttempted;
@@ -145,8 +165,10 @@ public:
         WorkspaceDiagnostics workspace;
         bool fallback = false;
         bool converged() const {
-            return condensation.status==CondensationStatus::NotAttempted ? gmres.converged() :
-                condensation.status==CondensationStatus::Converged || (fallback && gmres.converged());
+            return condensation.status == CondensationStatus::NotAttempted
+                       ? gmres.converged()
+                       : condensation.status == CondensationStatus::Converged ||
+                             (fallback && gmres.converged());
         }
     };
     enum class LinearMethod { FullGmres, CondensedThenGmres, CondensedOnly };
@@ -164,8 +186,15 @@ public:
         bool reuse_linear_workspace = false; // instance-owned, opt-in; fresh numeric factors
         CondensationControls condensation;
     };
-    enum class Status { Converged, InvalidInput, InitializationFailure,
-                        LinearFailure, LineSearchFailed, IterationLimit, NonFinite };
+    enum class Status {
+        Converged,
+        InvalidInput,
+        InitializationFailure,
+        LinearFailure,
+        LineSearchFailed,
+        IterationLimit,
+        NonFinite
+    };
     struct Result {
         Status status = Status::InvalidInput;
         int newton_iterations = 0, backtracks = 0, gmres_iterations = 0;
@@ -188,7 +217,8 @@ public:
     /// Guarded diagonal shifts affect ONLY the preconditioner, never A or b.
     /// Full-matrix comparator and fallback for solveCondensed below.
     static LinearResult solveLinear(const Matrix&, const std::vector<double>& rhs,
-        const NativeGmres::Controls&, std::vector<double>&, LinearWorkspace* = nullptr);
+                                    const NativeGmres::Controls&, std::vector<double>&,
+                                    LinearWorkspace* = nullptr);
     /// Native mixed-block ILU(0), fixed for one right-preconditioned GMRES solve.
     /// The first 2*cell_blocks scalars are cell pairs; the suffix is scalar heads.
     /// Complete existing blocks and add missing PRECONDITIONER diagonals only;
@@ -196,7 +226,8 @@ public:
     /// Guarded shifts affect only factors. Budget includes all block CSR/factor
     /// and Krylov buffers. Failure never publishes a correction.
     static LinearResult solveBlockLinear(const Matrix&, const std::vector<double>& rhs,
-        std::size_t cell_blocks, const NativeGmres::Controls&, std::vector<double>&, LinearWorkspace* = nullptr);
+                                         std::size_t cell_blocks, const NativeGmres::Controls&,
+                                         std::vector<double>&, LinearWorkspace* = nullptr);
     /// Exact eligible conduit-interior block elimination, sparse interface
     /// Schur solve and reconstruction of EVERY original scalar correction.
     /// Endpoint cells/heads are protected. No shifted exact factors or head pins.
@@ -205,8 +236,9 @@ public:
     /// Budget covers owned dynamic buffers, not caller matrix/input/output or
     /// allocator/vector-object/stack overhead. Failure never publishes output.
     static LinearResult solveCondensed(const NetworkMeshData&, const Matrix&,
-        const std::vector<double>& rhs, const NativeGmres::Controls&,
-        const CondensationControls&, bool allow_fallback, std::vector<double>&, LinearWorkspace* = nullptr);
+                                       const std::vector<double>& rhs, const NativeGmres::Controls&,
+                                       const CondensationControls&, bool allow_fallback,
+                                       std::vector<double>&, LinearWorkspace* = nullptr);
     /// Bracketed algebraic-head initialization with cells held fixed. Does not
     /// alter conserved initial area/Q or invent a startup volume step.
     static bool initializeHeads(const Problem&, Trial&, double tolerance);
@@ -214,6 +246,7 @@ public:
     Result solve(const Problem&, double dt, const Controls&, Endpoint&);
     std::size_t linearWorkspaceBytes() const { return linear_workspace_.bytes(); }
     void clearLinearWorkspace() { linear_workspace_.release(); }
+
 private:
     LinearWorkspace linear_workspace_;
 };

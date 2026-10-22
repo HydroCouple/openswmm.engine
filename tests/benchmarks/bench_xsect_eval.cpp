@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file bench_xsect_eval.cpp
- * @brief Microbenchmark of the IRREGULAR cross-section evaluation chain on
+ * @file      bench_xsect_eval.cpp
+ * @brief     Microbenchmark of the IRREGULAR cross-section evaluation chain on
  *        REAL transect tables (plans/XSECT_LOOKUP_ACCEL_PLAN.md, phase 0).
  *
  * @details Opens one or more decks through the real engine, builds the same
@@ -55,7 +55,7 @@
  *          Median over kReps repetitions of the whole input sweep; a volatile
  *          sink defeats dead-code elimination.
  *
- *          --dump-tables <dir> instead writes one CSV per transect (51-row
+ *          --dump-tables &lt;dir&gt; instead writes one CSV per transect (51-row
  *          area/hrad/width tables + full-depth properties + the RAW store
  *          stations/elevations), for offline analysis of the engine-built
  *          tables (a Python reimplementation of buildTables would not do: the
@@ -66,9 +66,9 @@
  *   bench_xsect_eval deck1.inp [deck2.inp ...]
  *   bench_xsect_eval --dump-tables out_dir deck1.inp [deck2.inp ...]
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <algorithm>
@@ -93,99 +93,168 @@ using openswmm::SWMMEngine;
 using openswmm::XSectParams;
 using openswmm::xsect::XsectEval;
 
-volatile double g_sink = 0.0;   // defeats DCE across every timed loop
+volatile double g_sink = 0.0; // defeats DCE across every timed loop
 
-constexpr int kReps = 9;        // repetitions of the whole sweep; median reported
+constexpr int kReps = 9; // repetitions of the whole sweep; median reported
 
 struct Timed {
     double ns_med, ns_min, ns_max;
 };
 
-/// Time fn() (one full sweep of `calls` evaluator invocations) kReps times.
-template <class F>
-Timed time_sweep(std::size_t calls, F&& fn) {
+/**
+ * @brief Measure nine whole sweeps and normalize durations by calls per sweep.
+ *
+ * Does not subtract timer/loop overhead and propagates callable/allocation exceptions.
+ *
+ * @param[in] calls Positive number of evaluator invocations performed by each fn call; zero would
+ *     divide by zero.
+ * @param[in] fn Borrowed callable invoked synchronously once per repetition; its cost includes all
+ *     work inside it.
+ * @return Median/minimum/maximum nanoseconds per call, after sorting nine wall-clock sweep samples.
+ */
+template <class F> Timed time_sweep(std::size_t calls, F&& fn) {
     std::vector<double> per_call(kReps);
     for (int r = 0; r < kReps; ++r) {
         const auto t0 = std::chrono::steady_clock::now();
         fn();
         const auto t1 = std::chrono::steady_clock::now();
         per_call[static_cast<std::size_t>(r)] =
-            std::chrono::duration<double, std::nano>(t1 - t0).count() /
-            static_cast<double>(calls);
+            std::chrono::duration<double, std::nano>(t1 - t0).count() / static_cast<double>(calls);
     }
     std::sort(per_call.begin(), per_call.end());
     return {per_call[kReps / 2], per_call.front(), per_call.back()};
 }
 
+/**
+ * @brief Print one benchmark CSV row to stdout.
+ *
+ * Includes the fixed nine-repetition count and median/min/max timings. IO errors are ignored; no
+ * files are owned by this helper.
+ *
+ * @param[in] deck CSV label emitted without quoting/escaping; supply text without commas/newlines.
+ * @param[in] op Non-null operation-name string emitted without CSV escaping.
+ * @param[in] calls Number of evaluator calls per sweep.
+ * @param[in] t Measured nanoseconds-per-call summary.
+ */
 void report(const std::string& deck, const char* op, std::size_t calls, Timed t) {
-    std::printf("%s,%s,%zu,%d,%.2f,%.2f,%.2f\n",
-                deck.c_str(), op, calls, kReps, t.ns_med, t.ns_min, t.ns_max);
+    std::printf("%s,%s,%zu,%d,%.2f,%.2f,%.2f\n", deck.c_str(), op, calls, kReps, t.ns_med, t.ns_min,
+                t.ns_max);
 }
 
-/// Faithful replica of FvKernels.hpp depthOfArea: bracketed bisection/secant
-/// on f(y) = AofY(y) - a with the FV exit tolerance (|f| <= 1e-10 * a_full or
-/// 60 iterations). Kept here so the bench does not need FvGeometry plumbing;
-/// the iteration count and per-iteration cost (one forward area lookup) match
-/// the shipped inversion's 3-6 evals per call on smooth sections.
+/**
+ * @brief Invert area with the benchmark bracketed secant/bisection replica.
+ *
+ * Maintains a [0,y_full] bracket with secant proposals and midpoint fallback. This is an explicitly
+ * documented cost-model replica, not a direct call to shipped FV inversion.
+ *
+ * @param[in] ev Borrowed cross-section evaluator; any referenced tables must outlive the call.
+ * @param[in] xs Borrowed valid monotonic cross section with positive full depth/area and live table
+ *     pointers.
+ * @param[in] a Requested area in ft2; <= 0 returns zero and >= full area returns full depth.
+ * @return Depth in ft, using |A(y)-a| <= 1e-10*a_full; after 60 iterations returns the last
+ *     proposal without a separate failure code.
+ */
 double brent_depth_of_area(const XsectEval& ev, const XSectParams& xs, double a) {
-    if (a <= 0.0) return 0.0;
-    if (a >= xs.a_full) return xs.y_full;
+    if (a <= 0.0)
+        return 0.0;
+    if (a >= xs.a_full)
+        return xs.y_full;
     double lo = 0.0, hi = xs.y_full;
     double flo = -a, fhi = xs.a_full - a;
-    double y = hi * (a / xs.a_full);   // proportional first guess
+    double y = hi * (a / xs.a_full); // proportional first guess
     const double tol = 1e-10 * xs.a_full;
     for (int it = 0; it < 60; ++it) {
         const double f = ev.getAofY(xs, y) - a;
-        if (std::fabs(f) <= tol) return y;
-        if (f > 0.0) { hi = y; fhi = f; }
-        else         { lo = y; flo = f; }
+        if (std::fabs(f) <= tol)
+            return y;
+        if (f > 0.0) {
+            hi = y;
+            fhi = f;
+        } else {
+            lo = y;
+            flo = f;
+        }
         // secant step, bisection fallback (Brent-lite, same eval count regime)
         const double denom = fhi - flo;
-        double ynew = (denom != 0.0) ? (lo * fhi - hi * flo) / denom
-                                     : 0.5 * (lo + hi);
-        if (!(ynew > lo && ynew < hi)) ynew = 0.5 * (lo + hi);
+        double ynew = (denom != 0.0) ? (lo * fhi - hi * flo) / denom : 0.5 * (lo + hi);
+        if (!(ynew > lo && ynew < hi))
+            ynew = 0.5 * (lo + hi);
         y = ynew;
     }
     return y;
 }
 
+/**
+ * @brief Write engine-built transect tables and raw station metadata to CSV files.
+ *
+ * Overwrites matching CSVs and writes normalized area/radius/width, full-scale internal geometry
+ * and raw authored station/elevation data. Stops at the smaller of declared transects and built
+ * table count. Filesystem creation exceptions can propagate; names are not sanitized or
+ * CSV-escaped.
+ *
+ * @param[in] ctx Opened model with transect definitions and built tables; arrays must be
+ *     consistent.
+ * @param[in] deck_stem Filename prefix copied into each &lt;deck_stem&gt;_<transect>.csv name.
+ * @param[in] out_dir Output directory, created recursively if needed.
+ * @return One if opening an output CSV fails; otherwise zero. Write/close failures are not checked.
+ */
 int dump_tables(const SimulationContext& ctx, const std::string& deck_stem,
                 const std::filesystem::path& out_dir) {
     std::filesystem::create_directories(out_dir);
     const int nt = ctx.transects.count();
     for (int t = 0; t < nt; ++t) {
         const auto ut = static_cast<std::size_t>(t);
-        if (ut >= ctx.transect_tables.size()) break;
+        if (ut >= ctx.transect_tables.size())
+            break;
         const auto& td = ctx.transect_tables[ut];
         const auto path = out_dir / (deck_stem + "_" + td.name + ".csv");
         FILE* f = std::fopen(path.string().c_str(), "w");
-        if (!f) { std::fprintf(stderr, "cannot write %s\n", path.string().c_str()); return 1; }
+        if (!f) {
+            std::fprintf(stderr, "cannot write %s\n", path.string().c_str());
+            return 1;
+        }
         std::fprintf(f, "# transect,%s\n# deck,%s\n", td.name.c_str(), deck_stem.c_str());
         std::fprintf(f, "# y_full,%.17g\n# a_full,%.17g\n# r_full,%.17g\n# w_max,%.17g\n",
                      td.y_full, td.a_full, td.r_full, td.w_max);
         std::fprintf(f, "# s_max,%.17g\n# a_max,%.17g\n", td.s_max, td.a_max);
-        std::fprintf(f, "# x_left_bank,%.17g\n# x_right_bank,%.17g\n",
-                     td.x_left_bank, td.x_right_bank);
-        std::fprintf(f, "# n_left,%.17g\n# n_right,%.17g\n# n_channel,%.17g\n",
-                     td.n_left, td.n_right, td.n_channel);
+        std::fprintf(f, "# x_left_bank,%.17g\n# x_right_bank,%.17g\n", td.x_left_bank,
+                     td.x_right_bank);
+        std::fprintf(f, "# n_left,%.17g\n# n_right,%.17g\n# n_channel,%.17g\n", td.n_left,
+                     td.n_right, td.n_channel);
         // RAW store data (display units) — what [TRANSECTS] round-trips.
         std::fprintf(f, "# raw_stations");
-        for (double s : ctx.transects.stations[ut]) std::fprintf(f, ",%.17g", s);
+        for (double s : ctx.transects.stations[ut])
+            std::fprintf(f, ",%.17g", s);
         std::fprintf(f, "\n# raw_elevations");
-        for (double e : ctx.transects.elevations[ut]) std::fprintf(f, ",%.17g", e);
+        for (double e : ctx.transects.elevations[ut])
+            std::fprintf(f, ",%.17g", e);
         std::fprintf(f, "\nidx,area_norm,hrad_norm,width_norm\n");
         for (int i = 0; i < openswmm::transect::N_TRANSECT_TBL; ++i)
-            std::fprintf(f, "%d,%.17g,%.17g,%.17g\n",
-                         i, td.area_tbl[i], td.hrad_tbl[i], td.width_tbl[i]);
+            std::fprintf(f, "%d,%.17g,%.17g,%.17g\n", i, td.area_tbl[i], td.hrad_tbl[i],
+                         td.width_tbl[i]);
         std::fclose(f);
     }
-    std::fprintf(stderr, "%s: dumped %d transect tables to %s\n",
-                 deck_stem.c_str(), nt, out_dir.string().c_str());
+    std::fprintf(stderr, "%s: dumped %d transect tables to %s\n", deck_stem.c_str(), nt,
+                 out_dir.string().c_str());
     return 0;
 }
 
-}  // namespace
+} // namespace
 
+/**
+ * @brief Benchmark irregular cross-section evaluation or dump its built tables.
+ *
+ * Opens each deck using a .benchrpt report path. Timing mode sweeps 64 interior depth/area
+ * fractions per irregular link, including gathered/fused/bisection baselines, with a global
+ * volatile sink. Dump mode writes engine tables to the specified directory. Table pointers remain
+ * borrowed from each live engine during use; allocation/filesystem exceptions can propagate.
+ *
+ * @param[in] argc Process argument count.
+ * @param[in] argv Borrowed deck paths; optional initial --dump-tables directory selects export mode
+ *     instead of timings.
+ * @return Two for missing required arguments; one for a dump file-open failure; otherwise zero,
+ *     including skipped deck-open/no-irregular cases.
+ */
 int main(int argc, char** argv) {
     std::string dump_dir;
     std::vector<std::string> decks;
@@ -196,8 +265,7 @@ int main(int argc, char** argv) {
             decks.push_back(argv[i]);
     }
     if (decks.empty()) {
-        std::fprintf(stderr,
-                     "usage: %s [--dump-tables out_dir] deck1.inp [...]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s [--dump-tables out_dir] deck1.inp [...]\n", argv[0]);
         return 2;
     }
 
@@ -216,7 +284,8 @@ int main(int argc, char** argv) {
 
         if (!dump_dir.empty()) {
             const int rc = dump_tables(ctx, stem, dump_dir);
-            if (rc != 0) return rc;
+            if (rc != 0)
+                return rc;
             continue;
         }
 
@@ -230,8 +299,7 @@ int main(int argc, char** argv) {
                 continue;
             ctx.links.xsect_batch_shape[uj] =
                 openswmm::link::translateShape(ctx.links.xsect_shape[uj]);
-            XSectParams xs =
-                openswmm::link::buildXSectParams(ctx.links, uj, &ctx.transect_tables);
+            XSectParams xs = openswmm::link::buildXSectParams(ctx.links, uj, &ctx.transect_tables);
             if (xs.area_tbl && xs.a_full > 0.0 && xs.y_full > 0.0)
                 xss.push_back(xs);
         }
@@ -254,48 +322,56 @@ int main(int argc, char** argv) {
         const auto sweep = [&](auto&& per_call) {
             double acc = 0.0;
             for (const auto& xs : xss)
-                for (double fr : frac) acc += per_call(xs, fr);
+                for (double fr : frac)
+                    acc += per_call(xs, fr);
             g_sink = g_sink + acc;
         };
 
         report(stem, "fwd_AofY", calls, time_sweep(calls, [&] {
-            sweep([&](const XSectParams& xs, double fr) {
-                return ev.getAofY(xs, fr * xs.y_full); });
-        }));
+                   sweep([&](const XSectParams& xs, double fr) {
+                       return ev.getAofY(xs, fr * xs.y_full);
+                   });
+               }));
         report(stem, "fwd_WofY", calls, time_sweep(calls, [&] {
-            sweep([&](const XSectParams& xs, double fr) {
-                return ev.getWofY(xs, fr * xs.y_full); });
-        }));
+                   sweep([&](const XSectParams& xs, double fr) {
+                       return ev.getWofY(xs, fr * xs.y_full);
+                   });
+               }));
         report(stem, "fwd_RofY", calls, time_sweep(calls, [&] {
-            sweep([&](const XSectParams& xs, double fr) {
-                return ev.getRofY(xs, fr * xs.y_full); });
-        }));
+                   sweep([&](const XSectParams& xs, double fr) {
+                       return ev.getRofY(xs, fr * xs.y_full);
+                   });
+               }));
         report(stem, "inv_YofA", calls, time_sweep(calls, [&] {
-            sweep([&](const XSectParams& xs, double fr) {
-                return ev.getYofA(xs, fr * xs.a_full); });
-        }));
+                   sweep([&](const XSectParams& xs, double fr) {
+                       return ev.getYofA(xs, fr * xs.a_full);
+                   });
+               }));
         report(stem, "SofA", calls, time_sweep(calls, [&] {
-            sweep([&](const XSectParams& xs, double fr) {
-                return ev.getSofA(xs, fr * xs.a_full); });
-        }));
+                   sweep([&](const XSectParams& xs, double fr) {
+                       return ev.getSofA(xs, fr * xs.a_full);
+                   });
+               }));
         report(stem, "newton_AofS", calls, time_sweep(calls, [&] {
-            sweep([&](const XSectParams& xs, double fr) {
-                return ev.getAofS(xs, fr * xs.s_full); });
-        }));
+                   sweep([&](const XSectParams& xs, double fr) {
+                       return ev.getAofS(xs, fr * xs.s_full);
+                   });
+               }));
         report(stem, "brent_depthOfArea", calls, time_sweep(calls, [&] {
-            sweep([&](const XSectParams& xs, double fr) {
-                return brent_depth_of_area(ev, xs, fr * xs.a_full); });
-        }));
+                   sweep([&](const XSectParams& xs, double fr) {
+                       return brent_depth_of_area(ev, xs, fr * xs.a_full);
+                   });
+               }));
 
         // Batch gather shape: iterate links in the inner loop so consecutive
         // evaluations chase different table pointers, like perlink_tabulated.
         report(stem, "gather_area", calls, time_sweep(calls, [&] {
-            double acc = 0.0;
-            for (double fr : frac)
-                for (const auto& xs : xss)
-                    acc += ev.getAofY(xs, fr * xs.y_full);
-            g_sink = g_sink + acc;
-        }));
+                   double acc = 0.0;
+                   for (double fr : frac)
+                       for (const auto& xs : xss)
+                           acc += ev.getAofY(xs, fr * xs.y_full);
+                   g_sink = g_sink + acc;
+               }));
 
         // ---- A1: inv_YofA with the bucket maps unbound (the pre-change path).
         // Same evaluator, same params, only the search strategy differs — so
@@ -304,14 +380,16 @@ int main(int argc, char** argv) {
         no_lut_tbl.luts = nullptr;
         const XsectEval bisecting{no_lut_tbl};
         std::vector<XSectParams> xss_nolut = xss;
-        for (auto& xs : xss_nolut) xs.area_lut = nullptr;
+        for (auto& xs : xss_nolut)
+            xs.area_lut = nullptr;
 
         report(stem, "inv_YofA_bisect", calls, time_sweep(calls, [&] {
-            double acc = 0.0;
-            for (const auto& xs : xss_nolut)
-                for (double fr : frac) acc += bisecting.getYofA(xs, fr * xs.a_full);
-            g_sink = g_sink + acc;
-        }));
+                   double acc = 0.0;
+                   for (const auto& xs : xss_nolut)
+                       for (double fr : frac)
+                           acc += bisecting.getYofA(xs, fr * xs.a_full);
+                   g_sink = g_sink + acc;
+               }));
 
         // ---- A2: the DW STEP-D batch shape — area + hyd-radius over the whole
         // group at one depth, as two perlink_tabulated passes vs one fused pass.
@@ -339,32 +417,31 @@ int main(int argc, char** argv) {
         depth_sweeps.reserve(frac.size());
         for (double fr : frac) {
             std::vector<double> d(nlink);
-            for (std::size_t li = 0; li < nlink; ++li) d[li] = fr * xss[li].y_full;
+            for (std::size_t li = 0; li < nlink; ++li)
+                d[li] = fr * xss[li].y_full;
             depth_sweeps.push_back(std::move(d));
         }
         const std::size_t batch_calls = nlink * depth_sweeps.size();
 
         report(stem, "batch_AR_2pass", batch_calls, time_sweep(batch_calls, [&] {
-            for (const auto& d : depth_sweeps) {
-                openswmm::xsect_batch::perlink_tabulated(
-                    d.data(), b_nrm.data(), b_af.data(), b_ta.data(),
-                    tbl_n, b_a.data(), static_cast<int>(nlink));
-                openswmm::xsect_batch::perlink_tabulated(
-                    d.data(), b_nrm.data(), b_rf.data(), b_tb.data(),
-                    tbl_n, b_r.data(), static_cast<int>(nlink));
-                g_sink = g_sink + b_a[0] + b_r[0];
-            }
-        }));
+                   for (const auto& d : depth_sweeps) {
+                       openswmm::xsect_batch::perlink_tabulated(d.data(), b_nrm.data(), b_af.data(),
+                                                                b_ta.data(), tbl_n, b_a.data(),
+                                                                static_cast<int>(nlink));
+                       openswmm::xsect_batch::perlink_tabulated(d.data(), b_nrm.data(), b_rf.data(),
+                                                                b_tb.data(), tbl_n, b_r.data(),
+                                                                static_cast<int>(nlink));
+                       g_sink = g_sink + b_a[0] + b_r[0];
+                   }
+               }));
         report(stem, "batch_AR_fused", batch_calls, time_sweep(batch_calls, [&] {
-            for (const auto& d : depth_sweeps) {
-                openswmm::xsect_batch::perlink_tabulated_pair(
-                    d.data(), b_nrm.data(), b_af.data(), b_rf.data(),
-                    b_ta.data(), b_tb.data(), tbl_n,
-                    b_a.data(), b_r.data(), static_cast<int>(nlink));
-                g_sink = g_sink + b_a[0] + b_r[0];
-            }
-        }));
-
+                   for (const auto& d : depth_sweeps) {
+                       openswmm::xsect_batch::perlink_tabulated_pair(
+                           d.data(), b_nrm.data(), b_af.data(), b_rf.data(), b_ta.data(),
+                           b_tb.data(), tbl_n, b_a.data(), b_r.data(), static_cast<int>(nlink));
+                       g_sink = g_sink + b_a[0] + b_r[0];
+                   }
+               }));
     }
     return 0;
 }

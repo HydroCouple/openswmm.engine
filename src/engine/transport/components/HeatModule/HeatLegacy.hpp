@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file HeatLegacy.hpp
- * @brief Phase H1 — the LEGACY (CSTR) engine's temperature transport.
+ * @file      HeatLegacy.hpp
+ * @brief     Phase H1 — the LEGACY (CSTR) engine's temperature transport.
  *
  * @details A single-scalar rerun of the CSTR quality stages for
  *          `__TEMPERATURE__`, in the same order the pollutant arrays take
@@ -50,9 +50,9 @@
  * @see plans/transport/HEAT_TRANSPORT_PLAN.md §1, §6 H1
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_HEAT_LEGACY_HPP
@@ -69,6 +69,6 @@ namespace openswmm::transport {
 /// No-op when HEAT_TRANSPORT is off.
 void routeLegacyHeat(SimulationContext& ctx, double dt);
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_HEAT_LEGACY_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_HEAT_LEGACY_HPP

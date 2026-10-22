@@ -15,13 +15,13 @@
 // limitations under the License.
 
 /**
- * @file HydrologyHandler.hpp
- * @brief Section handlers for hydrology-related input sections.
+ * @file      HydrologyHandler.hpp
+ * @brief     Section handlers for hydrology-related input sections.
  * @ingroup engine_input
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_HYDROLOGY_HANDLER_HPP
@@ -30,7 +30,9 @@
 #include <vector>
 #include <string>
 
-namespace openswmm { struct SimulationContext; }
+namespace openswmm {
+struct SimulationContext;
+}
 
 namespace openswmm::input {
 
@@ -43,9 +45,9 @@ void handle_temperature(SimulationContext& ctx, const std::vector<std::string>& 
 /** @brief Parse [SNOWPACKS] into SnowpackStore + snowpack_names. */
 void handle_snowpacks(SimulationContext& ctx, const std::vector<std::string>& lines);
 void handle_ueb_options(SimulationContext& ctx, const std::vector<std::string>& lines);
-void handle_mesh_snow_options(SimulationContext&,const std::vector<std::string>&);
-void handle_mesh_snow_defaults(SimulationContext&,const std::vector<std::string>&);
-void handle_mesh_snow_cells(SimulationContext&,const std::vector<std::string>&);
+void handle_mesh_snow_options(SimulationContext&, const std::vector<std::string>&);
+void handle_mesh_snow_defaults(SimulationContext&, const std::vector<std::string>&);
+void handle_mesh_snow_cells(SimulationContext&, const std::vector<std::string>&);
 
 /** @brief Parse [AQUIFERS] into AquiferStore + aquifer_names. */
 void handle_aquifers(SimulationContext& ctx, const std::vector<std::string>& lines);

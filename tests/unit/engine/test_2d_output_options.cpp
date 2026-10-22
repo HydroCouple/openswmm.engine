@@ -1,6 +1,6 @@
 /**
- * @file test_2d_output_options.cpp
- * @brief Results-file size controls for the 2D HDF5 writer
+ * @file      test_2d_output_options.cpp
+ * @brief     Results-file size controls for the 2D HDF5 writer
  *        (plans/2D_OUTPUT_FLOAT32_AND_VARIABLE_SELECTION_PLAN_2026-09-04.md):
  *        [2D_OPTIONS] OUTPUT_PRECISION, OUTPUT_COMPRESSION,
  *        REPORT_2D_VARIABLES, REPORT_2D_SPECIES, REPORT_2D_STEP.
@@ -15,6 +15,10 @@
  *   - the writer's defaults drop the solver diagnostics.
  *
  * Artefacts land in tests/output/2d_output_options (CLAUDE.md §4.1).
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -64,6 +68,10 @@ namespace {
 
 const fs::path kOutDir = fs::path(OPENSWMM_2D_OUTPUT_TEST_OUT_DIR) / "2d_output_options";
 
+/**
+ * @brief Build the flat one-square-metre two-triangle output fixture.
+ * @return Owned four-vertex/two-cell mesh with Manning n=0.035 and built topology/geometry.
+ */
 MeshData unitSquare() {
     MeshData mesh;
     mesh.resize_vertices(4);
@@ -78,36 +86,48 @@ MeshData unitSquare() {
     return mesh;
 }
 
-/// One tick of surface state for the 2-cell mesh, with 3 species rows.
+/**
+ * @brief Create a deterministic two-cell/three-species output tick.
+ *
+ * Seeds deterministic rainfall/cumulative rain, velocity and continuity/statistics arrays; most
+ * source/edge/vertex values are zero. Does not attach species names (caller does), validate depths
+ * or simulate dynamics.
+ *
+ * @param[in] t_days Snapshot model time in elapsed days, copied directly to sim_time.
+ * @param[in] depth0 Cell-zero depth/head/max-depth in metres.
+ * @param[in] depth1 Cell-one depth/head/max-depth in metres.
+ * @return Owned snapshot arrays with two cells, four vertices, three edge slots per cell, and fixed
+ *     species-major concentration rows.
+ */
 openswmm::SimulationSnapshot makeSnap(double t_days, double depth0, double depth1) {
     openswmm::SimulationSnapshot snap;
-    snap.sim_time           = t_days;
-    snap.surface_tri_count  = 2;
+    snap.sim_time = t_days;
+    snap.surface_tri_count = 2;
     snap.surface_vert_count = 4;
-    snap.surface_depth         = {depth0, depth1};
-    snap.surface_head          = {depth0, depth1};
-    snap.surface_grad_hx       = {0.0, 0.0};
-    snap.surface_grad_hy       = {0.0, 0.0};
-    snap.surface_grad_hx_lim   = {0.0, 0.0};
-    snap.surface_grad_hy_lim   = {0.0, 0.0};
-    snap.surface_rainfall      = {1e-6, 2e-6};
-    snap.surface_rain_cum      = {3.0, 7.0};
+    snap.surface_depth = {depth0, depth1};
+    snap.surface_head = {depth0, depth1};
+    snap.surface_grad_hx = {0.0, 0.0};
+    snap.surface_grad_hy = {0.0, 0.0};
+    snap.surface_grad_hx_lim = {0.0, 0.0};
+    snap.surface_grad_hy_lim = {0.0, 0.0};
+    snap.surface_rainfall = {1e-6, 2e-6};
+    snap.surface_rain_cum = {3.0, 7.0};
     snap.surface_coupling_flux = {0.0, 0.0};
-    snap.surface_net_source    = {0.0, 0.0};
-    snap.surface_infil_rate    = {0.0, 0.0};
-    snap.surface_infil_cum     = {0.0, 0.0};
-    snap.surface_face_vx       = {0.123456789, 0.5};
-    snap.surface_face_vy       = {0.0, 0.25};
+    snap.surface_net_source = {0.0, 0.0};
+    snap.surface_infil_rate = {0.0, 0.0};
+    snap.surface_infil_cum = {0.0, 0.0};
+    snap.surface_face_vx = {0.123456789, 0.5};
+    snap.surface_face_vy = {0.0, 0.25};
     snap.surface_continuity_err = {0.0, 0.0};
-    snap.surface_edge_stride   = 3;
-    snap.surface_edge_flux     = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-    snap.surface_vert_head     = {0.0, 0.0, 0.0, 0.0};
-    snap.surface_vert_depth    = {0.0, 0.0, 0.0, 0.0};
-    snap.surface_stat_max_depth    = {depth0, depth1};
+    snap.surface_edge_stride = 3;
+    snap.surface_edge_flux = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    snap.surface_vert_head = {0.0, 0.0, 0.0, 0.0};
+    snap.surface_vert_depth = {0.0, 0.0, 0.0, 0.0};
+    snap.surface_stat_max_depth = {depth0, depth1};
     snap.surface_stat_max_velocity = {0.2, 0.4};
     snap.surface_stat_max_cont_err = {1e-6, 2e-6};
     snap.surface_species_count = 3;
-    snap.surface_species_conc  = {1.0, 2.0,   10.0, 20.0,   100.0, 200.0};
+    snap.surface_species_conc = {1.0, 2.0, 10.0, 20.0, 100.0, 200.0};
     return snap;
 }
 
@@ -115,56 +135,161 @@ const std::vector<std::string> kSpeciesNames = {"TSS", "__WATER_AGE__", "__TEMPE
 
 struct H5File {
     hid_t id = H5I_INVALID_HID;
-    explicit H5File(const fs::path& p) { id = H5Fopen(p.string().c_str(), H5F_ACC_RDONLY, H5P_DEFAULT); }
-    ~H5File() { if (id >= 0) H5Fclose(id); }
+    /**
+     * @brief Open an existing output file read-only for direct dataset assertions.
+     *
+     * Stores the H5Fopen result, including a negative failure identifier; no exception/assertion or
+     * locking is added. The wrapper owns a successful file identifier and must not be copied as an
+     * independent owner.
+     *
+     * @param[in] p HDF5 output path; caller checks id before dataset helpers.
+     */
+    explicit H5File(const fs::path& p) {
+        id = H5Fopen(p.string().c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    }
+    /**
+     * @brief Close a successfully opened HDF5 file identifier.
+     *
+     * Calls H5Fclose only when id>=0 and ignores close status. Borrowed identifiers derived from this
+     * file must not be used after the wrapper lifetime.
+     */
+    ~H5File() {
+        if (id >= 0)
+            H5Fclose(id);
+    }
+    /**
+     * @brief Check whether an HDF5 link name exists.
+     *
+     * Requires a valid file id; does not distinguish an error from absence or validate the linked
+     * object type.
+     *
+     * @param[in] name Non-null dataset/link name relative to this valid open file; required object must
+     *     exist for dataset readers.
+     * @return True for positive H5Lexists; false for absent links or HDF5 errors.
+     */
     bool has(const char* name) const { return H5Lexists(id, name, H5P_DEFAULT) > 0; }
-    /// Storage class + size of a dataset (H5T_FLOAT, 4 or 8).
+    /**
+     * @brief Read the on-disk datatype element width of an existing dataset.
+     *
+     * Opens/closes temporary dataset/type identifiers without checking statuses; callers require the
+     * intended existing dataset and valid datatype. Does not report errors separately.
+     *
+     * @param[in] name Non-null dataset/link name relative to this valid open file; required object must
+     *     exist for dataset readers.
+     * @return Datatype size in bytes as returned by H5Tget_size; this helper does not return/check the
+     *     datatype class.
+     */
     size_t storageSize(const char* name) const {
         hid_t ds = H5Dopen2(id, name, H5P_DEFAULT);
-        hid_t t  = H5Dget_type(ds);
+        hid_t t = H5Dget_type(ds);
         const size_t sz = H5Tget_size(t);
-        H5Tclose(t); H5Dclose(ds);
+        H5Tclose(t);
+        H5Dclose(ds);
         return sz;
     }
-    /// Allocated data bytes of a dataset — the sum of its chunks, excluding
-    /// the file's object headers and chunk index. This is the payload
-    /// OUTPUT_PRECISION actually thins.
+    /**
+     * @brief Read allocated dataset payload storage, excluding file object/index overhead.
+     *
+     * Requires a valid dataset in the open file. Temporary dataset id is closed; HDF5 errors and close
+     * status are not checked or distinguished from a zero-sized result.
+     *
+     * @param[in] name Non-null dataset/link name relative to this valid open file; required object must
+     *     exist for dataset readers.
+     * @return H5Dget_storage_size result in bytes, including chunk allocation effects.
+     */
     hsize_t datasetBytes(const char* name) const {
         hid_t ds = H5Dopen2(id, name, H5P_DEFAULT);
         const hsize_t n = H5Dget_storage_size(ds);
         H5Dclose(ds);
         return n;
     }
+    /**
+     * @brief Read an existing dataset's current extent dimensions.
+     *
+     * Requires valid dataset/dataspace with nonnegative rank; negative error rank would convert to a
+     * large allocation size. Opens/closes dataset and dataspace, without HDF5 status checks.
+     *
+     * @param[in] name Non-null dataset/link name relative to this valid open file; required object must
+     *     exist for dataset readers.
+     * @return Owned extent vector in HDF5 dimension order; a scalar dataspace returns an empty vector.
+     */
     std::vector<hsize_t> dims(const char* name) const {
         hid_t ds = H5Dopen2(id, name, H5P_DEFAULT);
         hid_t sp = H5Dget_space(ds);
         const int rank = H5Sget_simple_extent_ndims(sp);
         std::vector<hsize_t> d(static_cast<size_t>(rank));
         H5Sget_simple_extent_dims(sp, d.data(), nullptr);
-        H5Sclose(sp); H5Dclose(ds);
+        H5Sclose(sp);
+        H5Dclose(ds);
         return d;
     }
+    /**
+     * @brief Read an entire numeric dataset into double-precision host storage.
+     *
+     * Requires valid numeric dataset, successful dimensions, and an extent product fitting
+     * size_t/available storage. Scalar datasets allocate one entry. Does not check read status, finite
+     * values or shape; failures have no separate result. Temporary dataset id is closed.
+     *
+     * @param[in] name Non-null dataset/link name relative to this valid open file; required object must
+     *     exist for dataset readers.
+     * @return Owned flattened dataset values in HDF5 iteration order, converted by H5Dread to native
+     *     double.
+     */
     std::vector<double> readAll(const char* name) const {
         auto d = dims(name);
-        size_t n = 1; for (auto x : d) n *= x;
+        size_t n = 1;
+        for (auto x : d)
+            n *= x;
         std::vector<double> v(n);
         hid_t ds = H5Dopen2(id, name, H5P_DEFAULT);
         H5Dread(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, v.data());
         H5Dclose(ds);
         return v;
     }
+    /**
+     * @brief Read a fixed-width string attribute from a valid HDF5 location.
+     *
+     * Requires an existing attribute to use the fixture's fixed-width string representation;
+     * variable-length strings are not supported by this buffer layout. Opens/closes attribute/type
+     * identifiers; read/type/close statuses are unchecked. Internal zero bytes are retained.
+     *
+     * @param[in] loc Borrowed valid file/group/dataset identifier; ownership remains with caller.
+     * @param[in] name Non-null attribute name.
+     * @return Owned attribute bytes with trailing zero characters removed; empty also means absent
+     *     attribute or failed existence query.
+     */
     std::string strAttr(hid_t loc, const char* name) const {
-        if (H5Aexists(loc, name) <= 0) return {};
+        if (H5Aexists(loc, name) <= 0)
+            return {};
         hid_t a = H5Aopen(loc, name, H5P_DEFAULT);
         hid_t t = H5Aget_type(a);
         const size_t sz = H5Tget_size(t);
         std::string s(sz, '\0');
         H5Aread(a, t, s.data());
-        H5Tclose(t); H5Aclose(a);
-        while (!s.empty() && s.back() == '\0') s.pop_back();
+        H5Tclose(t);
+        H5Aclose(a);
+        while (!s.empty() && s.back() == '\0')
+            s.pop_back();
         return s;
     }
+    /**
+     * @brief Read a fixed-width string attribute attached to the file root.
+     *
+     * @param[in] name Non-null root attribute name, under strAttr fixed-string preconditions.
+     * @return Owned trimmed string from strAttr(id,name), empty for absence/error; file id must be
+     *     valid.
+     */
     std::string rootAttr(const char* name) const { return strAttr(id, name); }
+    /**
+     * @brief Read a fixed-width string attribute attached to a named dataset.
+     *
+     * Opens the dataset, delegates to strAttr and closes the dataset; does not check open/close errors
+     * or retain identifiers.
+     *
+     * @param[in] ds_name Non-null name of an existing dataset in the valid open file.
+     * @param[in] attr Non-null attribute name satisfying strAttr representation assumptions.
+     * @return Owned trimmed string, empty for absence/existence-query failure.
+     */
     std::string dsAttr(const char* ds_name, const char* attr) const {
         hid_t ds = H5Dopen2(id, ds_name, H5P_DEFAULT);
         const std::string s = strAttr(ds, attr);
@@ -173,10 +298,27 @@ struct H5File {
     }
 };
 
-/// Run the writer lifecycle with the given options; returns the file path.
-fs::path writeFile(const std::string& stem, const SolverOptions2D& opts,
-                   double report_step_sec, int n_ticks, double tick_days,
-                   std::string* cfg_err = nullptr) {
+/**
+ * @brief Run the default 2D writer lifecycle with deterministic snapshot ticks.
+ *
+ * Ignores directory/removal error codes, records nonfatal
+ * initialize/validate/prepare/update/finalize expectations, and continues after configuration
+ * errors so rejection behavior can be tested. Builds a local two-cell mesh and borrowed static
+ * species names; finalizes before their relevant lifetime ends. No output existence/readability
+ * guarantee follows from the returned path alone.
+ *
+ * @param[in] stem Filesystem-safe basename beneath kOutDir, without .h5; destination is removed
+ *     before writing.
+ * @param[in] opts Output options forwarded to configureOutput, unchanged.
+ * @param[in] report_step_sec Requested reporting interval in seconds.
+ * @param[in] n_ticks Number of snapshots to submit; nonpositive produces none.
+ * @param[in] tick_days Spacing of input snapshot times in elapsed days, multiplied by k from zero.
+ * @param[out] cfg_err Optional string receiving the configureOutput diagnostic; null suppresses
+ *     this copy.
+ * @return Output .h5 path, even after a recorded lifecycle/configuration failure.
+ */
+fs::path writeFile(const std::string& stem, const SolverOptions2D& opts, double report_step_sec,
+                   int n_ticks, double tick_days, std::string* cfg_err = nullptr) {
     std::error_code ec;
     fs::create_directories(kOutDir, ec);
     const fs::path p = kOutDir / (stem + ".h5");
@@ -189,7 +331,8 @@ fs::path writeFile(const std::string& stem, const SolverOptions2D& opts,
     EXPECT_EQ(plugin.validate(ctx), 0);
     EXPECT_EQ(plugin.prepare(ctx), 0);
     const std::string err = plugin.configureOutput(opts, report_step_sec);
-    if (cfg_err) *cfg_err = err;
+    if (cfg_err)
+        *cfg_err = err;
     plugin.prepareMeshAndDatasets(mesh);
     for (int k = 0; k < n_ticks; ++k) {
         auto snap = makeSnap(k * tick_days, 0.05 + 0.01 * k, 0.10 + 0.01 * k);
@@ -227,7 +370,8 @@ TEST(Output2DOptions, TokenMaskRoundTrip) {
     EXPECT_FALSE(report2d::parseMask("VELOCITY BOGUS", m).empty());
     EXPECT_EQ(swmm_2d_output_variable_mask("BOGUS"), 0u);
     EXPECT_EQ(swmm_2d_output_variable_mask("DEFAULT"), report2d::DEFAULT_MASK);
-    EXPECT_EQ(swmm_2d_output_variable_count(), 15);   // S7/G-O and P9: BUILDUP, GROUNDWATER, GW_DETAILED, HEAT
+    EXPECT_EQ(swmm_2d_output_variable_count(),
+              15); // S7/G-O and P9: BUILDUP, GROUNDWATER, GW_DETAILED, HEAT
     EXPECT_STREQ(swmm_2d_output_variable_name(0), "DEPTH");
     EXPECT_STREQ(swmm_2d_output_variable_name(10), "ENVELOPES");
     EXPECT_STREQ(swmm_2d_output_variable_name(11), "BUILDUP");
@@ -265,13 +409,15 @@ TEST(Output2DOptions, ParseAndFormatKeys) {
     EXPECT_FALSE(parse2DOptionsLine({"OUTPUT_COMPRESSION", "12"}, o, nullptr).empty());
 
     // Multi-token file line
-    EXPECT_TRUE(parse2DOptionsLine({"REPORT_2D_VARIABLES", "DEPTH", "VELOCITY"}, o, nullptr).empty());
+    EXPECT_TRUE(
+        parse2DOptionsLine({"REPORT_2D_VARIABLES", "DEPTH", "VELOCITY"}, o, nullptr).empty());
     EXPECT_EQ(o.report_2d_vars, report2d::DEPTH | report2d::VELOCITY);
     // Single joined token (the C API path)
     EXPECT_TRUE(parse2DOptionsLine({"REPORT_2D_VARIABLES", "MINIMAL"}, o, nullptr).empty());
     EXPECT_EQ(format2DOptionValue(o, "REPORT_2D_VARIABLES"), "MINIMAL");
 
-    EXPECT_TRUE(parse2DOptionsLine({"REPORT_2D_SPECIES", "TSS,__TEMPERATURE__"}, o, nullptr).empty());
+    EXPECT_TRUE(
+        parse2DOptionsLine({"REPORT_2D_SPECIES", "TSS,__TEMPERATURE__"}, o, nullptr).empty());
     ASSERT_EQ(o.report_2d_species.size(), 2u);
     EXPECT_EQ(format2DOptionValue(o, "REPORT_2D_SPECIES"), "TSS __TEMPERATURE__");
     EXPECT_TRUE(parse2DOptionsLine({"REPORT_2D_SPECIES", "ALL"}, o, nullptr).empty());
@@ -311,7 +457,7 @@ TEST(Output2DOptions, CApiExtRoundTripOnAModel) {
 // ---------------------------------------------------------------------------
 
 TEST(Output2DWriter, DefaultIsFloat32AndDropsDiagnostics) {
-    SolverOptions2D o;   // defaults: FLOAT32, level 4, DEFAULT mask
+    SolverOptions2D o; // defaults: FLOAT32, level 4, DEFAULT mask
     const fs::path p = writeFile("default", o, 300.0, 2, 300.0 / 86400.0);
     H5File f(p);
     ASSERT_GE(f.id, 0);
@@ -345,15 +491,15 @@ TEST(Output2DWriter, DefaultIsFloat32AndDropsDiagnostics) {
     const auto vx = f.readAll("Mesh2_face_vx");
     ASSERT_EQ(vx.size(), 4u);
     EXPECT_NEAR(vx[0], 0.123456789, 1e-7);
-    EXPECT_NE(vx[0], 0.123456789);   // and are NOT the double (proves storage)
+    EXPECT_NE(vx[0], 0.123456789); // and are NOT the double (proves storage)
     EXPECT_EQ(f.dims("time")[0], 2u);
 }
 
 TEST(Output2DWriter, Float64AllWritesEverythingExactly) {
     SolverOptions2D o;
-    o.output_precision  = OutputPrecision2D::FLOAT64;
+    o.output_precision = OutputPrecision2D::FLOAT64;
     o.output_compression = 0;
-    o.report_2d_vars    = report2d::ALL_MASK;
+    o.report_2d_vars = report2d::ALL_MASK;
     const fs::path p = writeFile("all_f64", o, 300.0, 1, 0.0);
     H5File f(p);
     ASSERT_GE(f.id, 0);
@@ -391,20 +537,20 @@ TEST(Output2DWriter, MinimalCreatesOnlyDepthNodeAndEnvelopes) {
 
 TEST(Output2DWriter, SpeciesSubsetByName) {
     SolverOptions2D o;
-    o.report_2d_species = {"__TEMPERATURE__", "TSS"};   // order in file follows row order
+    o.report_2d_species = {"__TEMPERATURE__", "TSS"}; // order in file follows row order
     const fs::path p = writeFile("species_subset", o, 300.0, 1, 0.0);
     H5File f(p);
     ASSERT_GE(f.id, 0);
     ASSERT_TRUE(f.has("Mesh2_face_species_conc"));
     const auto d = f.dims("Mesh2_face_species_conc");
     ASSERT_EQ(d.size(), 3u);
-    EXPECT_EQ(d[1], 2u);   // two of three rows
+    EXPECT_EQ(d[1], 2u); // two of three rows
     EXPECT_EQ(f.dsAttr("Mesh2_face_species_conc", "species_names"), "TSS,__TEMPERATURE__");
     const auto v = f.readAll("Mesh2_face_species_conc");
     ASSERT_EQ(v.size(), 4u);
-    EXPECT_NEAR(v[0], 1.0, 1e-6);     // TSS cell 0
+    EXPECT_NEAR(v[0], 1.0, 1e-6); // TSS cell 0
     EXPECT_NEAR(v[1], 2.0, 1e-6);
-    EXPECT_NEAR(v[2], 100.0, 1e-4);   // __TEMPERATURE__ cell 0
+    EXPECT_NEAR(v[2], 100.0, 1e-4); // __TEMPERATURE__ cell 0
     EXPECT_NEAR(v[3], 200.0, 1e-4);
 }
 
@@ -446,7 +592,7 @@ TEST(Output2DWriter, DeckAgeColumnIsHoursEndToEnd) {
     std::error_code ec;
     fs::create_directories(kOutDir, ec);
     const fs::path inp = kOutDir / "age_hours.inp";
-    const fs::path h5  = kOutDir / "age_hours.h5";
+    const fs::path h5 = kOutDir / "age_hours.h5";
     fs::remove(h5, ec);
     {
         std::ofstream f(inp);
@@ -474,12 +620,14 @@ TEST(Output2DWriter, DeckAgeColumnIsHoursEndToEnd) {
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
     const fs::path rpt = kOutDir / "age_hours.rpt", out = kOutDir / "age_hours.out";
-    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(),
-                               out.string().c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(),
+                               nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
     double elapsed = 0.0;
-    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+    }
     swmm_engine_end(e);
     swmm_engine_close(e);
     swmm_engine_destroy(e);
@@ -489,13 +637,13 @@ TEST(Output2DWriter, DeckAgeColumnIsHoursEndToEnd) {
     ASSERT_TRUE(f.has("Mesh2_face_species_conc"));
     EXPECT_EQ(f.dsAttr("Mesh2_face_species_conc", "species_names"), "Cu,__WATER_AGE__");
     EXPECT_EQ(f.dsAttr("Mesh2_face_species_conc", "species_units"), "MG/L,hours");
-    const auto d = f.dims("Mesh2_face_species_conc");     // [time, species, face]
+    const auto d = f.dims("Mesh2_face_species_conc"); // [time, species, face]
     ASSERT_EQ(d.size(), 3u);
     ASSERT_GE(d[0], 2u);
     ASSERT_EQ(d[1], 2u);
     ASSERT_EQ(d[2], 2u);
     const auto v = f.readAll("Mesh2_face_species_conc");
-    const auto t = f.readAll("time");                    // days since start
+    const auto t = f.readAll("time"); // days since start
     ASSERT_EQ(t.size(), d[0]);
     const size_t last = (d[0] - 1) * d[1] * d[2];
     const double age_h_exp = 1.0 + 20.0 / 60.0;
@@ -510,9 +658,9 @@ TEST(Output2DWriter, DeckAgeColumnIsHoursEndToEnd) {
     // by a fraction of one routing step (5 s here), hence the tolerance.
     for (size_t k = 1; k < d[0]; ++k)
         for (size_t c = 0; c < d[2]; ++c) {
-            const double age_k  = v[k * d[1] * d[2] + 1 * d[2] + c];
-            const double age_0  = v[0 * d[1] * d[2] + 1 * d[2] + c];
-            const double dt_h   = (t[k] - t[0]) * 24.0;
+            const double age_k = v[k * d[1] * d[2] + 1 * d[2] + c];
+            const double age_0 = v[0 * d[1] * d[2] + 1 * d[2] + c];
+            const double dt_h = (t[k] - t[0]) * 24.0;
             EXPECT_NEAR(age_k - age_0, dt_h, 5.0 / 3600.0)
                 << "record " << k << " cell " << c
                 << ": the age column must advance by the elapsed hours";
@@ -537,7 +685,9 @@ TEST(Output2DWriter, LocalBedTracerAndAgeAreReportedFromLivePorewaterState) {
              "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\nDRY_DEPTH .001\n"
              "REPORT_2D YES\nHEAT_MODEL COUPLED\nBED_HEAT_MODEL LOCAL_STORAGE\n"
              "HEAT_SURFACE_EXCHANGE NO\nHEAT_RADIATIVE_EXCHANGE NO\n"
-             "OUTPUT_FILE " << stem << ".h5\nOUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES HEAT\n"
+             "OUTPUT_FILE "
+          << stem
+          << ".h5\nOUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES HEAT\n"
              "[2D_VERTICES]\n0 0 -10\n10 0 -10\n10 10 -10\n0 10 -10\n"
              "[2D_TRIANGLES]\n0 1 2 .03 .1 channel:test\n0 2 3 .03 .1 floodplain\n"
              "[2D_INITIAL_QUALITY]\n* Cu 10\n* __WATER_AGE__ 1\n"
@@ -547,7 +697,9 @@ TEST(Output2DWriter, LocalBedTracerAndAgeAreReportedFromLivePorewaterState) {
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
     const fs::path rpt = kOutDir / (stem + ".rpt"), out = kOutDir / (stem + ".out");
-    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(),
+                               nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_BED_THICKNESS, .3), SWMM_OK);
     ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_MESH_POROSITY, .4), SWMM_OK);
     ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_DENSITY, 1000), SWMM_OK);
@@ -558,7 +710,8 @@ TEST(Output2DWriter, LocalBedTracerAndAgeAreReportedFromLivePorewaterState) {
     ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
     double elapsed = 0.0;
-    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+    }
     ASSERT_EQ(swmm_engine_end(e), SWMM_OK);
     swmm_engine_close(e);
     swmm_engine_destroy(e);
@@ -615,13 +768,14 @@ TEST(Output2DWriter, LocalBedTracerAndAgeAreReportedFromLivePorewaterState) {
     const auto age_generation = file.readAll("Mesh2_face_bed_age_generation");
     EXPECT_GT(age_generation[last_face], 0.0);
     EXPECT_GT(age_generation[last_face + 1], 0.0);
-    for(std::size_t cell=0;cell<shape[2];++cell) {
-        const double current_cu=conc[last_species+cell]*pore[last_face+cell];
-        EXPECT_NEAR(current_cu-initial_amount[last_initial+cell],exchange[last_species+cell],1e-8);
-        const std::size_t age_index=last_species+shape[2]+cell;
-        const double current_age=conc[age_index]*pore[last_face+cell];
-        EXPECT_NEAR(current_age-initial_amount[last_initial+shape[2]+cell],
-                    age_generation[last_face+cell]+exchange[age_index],1e-8);
+    for (std::size_t cell = 0; cell < shape[2]; ++cell) {
+        const double current_cu = conc[last_species + cell] * pore[last_face + cell];
+        EXPECT_NEAR(current_cu - initial_amount[last_initial + cell], exchange[last_species + cell],
+                    1e-8);
+        const std::size_t age_index = last_species + shape[2] + cell;
+        const double current_age = conc[age_index] * pore[last_face + cell];
+        EXPECT_NEAR(current_age - initial_amount[last_initial + shape[2] + cell],
+                    age_generation[last_face + cell] + exchange[age_index], 1e-8);
     }
 }
 
@@ -642,7 +796,9 @@ TEST(Output2DWriter, LocalBedThermalStorageIsReportedWithoutQualityTransport) {
              "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\nDRY_DEPTH .001\n"
              "REPORT_2D YES\nHEAT_MODEL COUPLED\nBED_HEAT_MODEL LOCAL_STORAGE\n"
              "HEAT_SURFACE_EXCHANGE NO\nHEAT_RADIATIVE_EXCHANGE NO\n"
-             "OUTPUT_FILE " << stem << ".h5\nOUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES HEAT\n"
+             "OUTPUT_FILE "
+          << stem
+          << ".h5\nOUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES HEAT\n"
              "[2D_VERTICES]\n0 0 -10\n10 0 -10\n10 10 -10\n0 10 -10\n"
              "[2D_TRIANGLES]\n0 1 2 .03 .1 channel:test\n0 2 3 .03 .1 floodplain\n"
              "[REPORT]\nINPUT NO\n";
@@ -650,7 +806,9 @@ TEST(Output2DWriter, LocalBedThermalStorageIsReportedWithoutQualityTransport) {
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
     const fs::path rpt = kOutDir / (stem + ".rpt"), out = kOutDir / (stem + ".out");
-    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(),
+                               nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_BED_THICKNESS, .3), SWMM_OK);
     ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_MESH_POROSITY, .4), SWMM_OK);
     ASSERT_EQ(swmm_heat_set_sediment(e, SWMM_HEAT_SED_DENSITY, 1000), SWMM_OK);
@@ -659,7 +817,8 @@ TEST(Output2DWriter, LocalBedThermalStorageIsReportedWithoutQualityTransport) {
     ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
     double elapsed = 0.0;
-    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+    }
     ASSERT_EQ(swmm_engine_end(e), SWMM_OK);
     swmm_engine_close(e);
     swmm_engine_destroy(e);
@@ -678,11 +837,11 @@ TEST(Output2DWriter, LocalBedThermalStorageIsReportedWithoutQualityTransport) {
     const auto pore = file.readAll("Mesh2_face_bed_porewater_volume");
     const double expected_energy =
         ((1.0 - .4) * 1000.0 * 1000.0 + .4 * 1000.0 * 4184.0) * 15.0 * 5.0;
-    for(std::size_t step=0;step<dims[0];++step) {
-        EXPECT_NEAR(energy[step*2],expected_energy,1e-8);
-        EXPECT_NEAR(energy[step*2+1],expected_energy,1e-8);
-        EXPECT_NEAR(pore[step*2],6.0,1e-12);
-        EXPECT_NEAR(pore[step*2+1],6.0,1e-12);
+    for (std::size_t step = 0; step < dims[0]; ++step) {
+        EXPECT_NEAR(energy[step * 2], expected_energy, 1e-8);
+        EXPECT_NEAR(energy[step * 2 + 1], expected_energy, 1e-8);
+        EXPECT_NEAR(pore[step * 2], 6.0, 1e-12);
+        EXPECT_NEAR(pore[step * 2 + 1], 6.0, 1e-12);
     }
 }
 
@@ -696,7 +855,7 @@ TEST(Output2DWriter, RainPulseBetweenReportsAccumulates) {
     std::error_code ec;
     fs::create_directories(kOutDir, ec);
     const fs::path inp = kOutDir / "rain_pulse.inp";
-    const fs::path h5  = kOutDir / "rain_pulse.h5";
+    const fs::path h5 = kOutDir / "rain_pulse.h5";
     fs::remove(h5, ec);
     {
         std::ofstream f(inp);
@@ -723,12 +882,14 @@ TEST(Output2DWriter, RainPulseBetweenReportsAccumulates) {
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
     const fs::path rpt = kOutDir / "rain_pulse.rpt", out = kOutDir / "rain_pulse.out";
-    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(),
-                               out.string().c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(),
+                               nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
     double elapsed = 0.0;
-    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+    }
     swmm_engine_end(e);
     swmm_engine_close(e);
     swmm_engine_destroy(e);
@@ -737,12 +898,12 @@ TEST(Output2DWriter, RainPulseBetweenReportsAccumulates) {
     ASSERT_GE(f.id, 0) << "no .h5 written";
     ASSERT_TRUE(f.has("Mesh2_face_rainfall"));
     ASSERT_TRUE(f.has("Mesh2_face_rain_cum"));
-    const auto d = f.dims("Mesh2_face_rain_cum");   // [time, face]
+    const auto d = f.dims("Mesh2_face_rain_cum"); // [time, face]
     ASSERT_EQ(d.size(), 2u);
-    ASSERT_EQ(d[0], 6u);   // 00:05 … 00:30
+    ASSERT_EQ(d[0], 6u); // 00:05 … 00:30
     ASSERT_EQ(d[1], 2u);
     const auto rate = f.readAll("Mesh2_face_rainfall");
-    const auto cum  = f.readAll("Mesh2_face_rain_cum");
+    const auto cum = f.readAll("Mesh2_face_rain_cum");
     const auto area = f.readAll("Mesh2_face_area");
     for (size_t k = 0; k < d[0]; ++k)
         for (size_t c = 0; c < d[1]; ++c) {
@@ -759,142 +920,189 @@ TEST(Output2DWriter, RainPulseBetweenReportsAccumulates) {
 TEST(Output2DWriter, RainFormatsAndMismatchedClocks) {
     fs::create_directories(kOutDir);
     const std::vector<std::vector<double>> depths_mm = {
-        {0.2, 0.0, 0.1, 0.15, 0.0, 0.3, 0.1},
-        {0.1, 0.2, 0.0, 0.15}, {0.0, 0.3, 0.1}};
+        {0.2, 0.0, 0.1, 0.15, 0.0, 0.3, 0.1}, {0.1, 0.2, 0.0, 0.15}, {0.0, 0.3, 0.1}};
     const int intervals[] = {60, 120, 180};
     auto depthAt = [&](int g, double t) {
         double mm = 0;
         for (size_t k = 0; k < depths_mm[g].size(); ++k)
-            mm += depths_mm[g][k] * std::clamp(
-                (t - k * intervals[g]) / intervals[g], 0.0, 1.0);
+            mm += depths_mm[g][k] * std::clamp((t - k * intervals[g]) / intervals[g], 0.0, 1.0);
         return mm * 0.001;
     };
     auto rateAt = [&](int g, double t) {
         const auto k = static_cast<size_t>(t / intervals[g]);
         return k < depths_mm[g].size() ? depths_mm[g][k] * 0.001 / intervals[g] : 0.0;
     };
-    struct Clock { double route, substep; int report, wet, start, sync = 0, first = 0; bool compact = false; };
-    const Clock clocks[] = {{7, 2, 17, 37, 0}, {31, 7, 60, 120, 17},
-                            {2.5, 0.7, 19, 13, 0}, {7, 2, 17, 37, 0, 29, 68, true}, {31, 7, 53, 120, 17}};
+    struct Clock {
+        double route, substep;
+        int report, wet, start, sync = 0, first = 0;
+        bool compact = false;
+    };
+    const Clock clocks[] = {{7, 2, 17, 37, 0},
+                            {31, 7, 60, 120, 17},
+                            {2.5, 0.7, 19, 13, 0},
+                            {7, 2, 17, 37, 0, 29, 68, true},
+                            {31, 7, 53, 120, 17}};
     for (const auto* mode : {"NATURAL_NEIGHBOUR", "NEAREST_NEIGHBOUR"})
-    for (const auto* units : {"CMS", "CFS"})
-    for (const auto* format : {"INTENSITY", "VOLUME", "CUMULATIVE"})
-    for (size_t ci = 0; ci < std::size(clocks); ++ci) {
-        const auto& clock = clocks[ci];
-        const int first_report = clock.first ? clock.first : clock.report;
-        const int output_step = clock.compact ? 2 * clock.report : clock.report;
-        const std::string stem = std::string("rain_clocks_") + mode + "_" + units + "_" + format + "_" + std::to_string(ci);
-        SCOPED_TRACE(stem);
-        const auto inp = kOutDir / (stem + ".inp");
-        const auto h5 = kOutDir / (stem + ".h5");
-        fs::remove(h5);
-        auto hhmmss = [](int seconds) {
-            std::ostringstream o;
-            o << "00:" << std::setfill('0') << std::setw(2) << seconds / 60
-              << ':' << std::setw(2) << seconds % 60;
-            return o.str();
-        };
-        {
-            std::ofstream f(inp);
-            f << std::setprecision(17)
-              << "[OPTIONS]\nFLOW_UNITS " << units << "\nFLOW_ROUTING DYNWAVE\n"
-              << "START_DATE 01/01/2026\nSTART_TIME " << hhmmss(clock.start)
-              << "\nEND_DATE 01/01/2026\nEND_TIME 00:06:10\nREPORT_STEP " << hhmmss(clock.report)
-              << "\nWET_STEP " << hhmmss(clock.wet) << "\nDRY_STEP " << hhmmss(clock.wet)
-              << "\nROUTING_STEP " << clock.route << "\nVARIABLE_STEP 0\n"
-              << "REPORT_START_DATE 01/01/2026\nREPORT_START_TIME " << hhmmss(clock.start + first_report)
-              << "\n[RAINGAGES]\n";
-            for (int g = 0; g < 3; ++g)
-                f << "G" << g << ' ' << format << " 0:0" << intervals[g] / 60 << " 1 TIMESERIES T" << g << '\n';
-            f << "[TIMESERIES]\n";
-            for (int g = 0; g < 3; ++g) {
-                double counter = 0;
-                for (size_t k = 0; k < depths_mm[g].size(); ++k) {
-                    if (k == 3) counter = 0; // a real cumulative-gage reset
-                    counter += depths_mm[g][k];
-                    double v = std::string(format) == "INTENSITY" ? depths_mm[g][k] * 3600.0 / intervals[g]
-                             : std::string(format) == "VOLUME" ? depths_mm[g][k] : counter;
-                    if (std::string(units) == "CFS") v /= 25.4;
-                    f << "T" << g << " 01/01/2026 " << hhmmss(static_cast<int>(k) * intervals[g]) << ' ' << v << '\n';
+        for (const auto* units : {"CMS", "CFS"})
+            for (const auto* format : {"INTENSITY", "VOLUME", "CUMULATIVE"})
+                for (size_t ci = 0; ci < std::size(clocks); ++ci) {
+                    const auto& clock = clocks[ci];
+                    const int first_report = clock.first ? clock.first : clock.report;
+                    const int output_step = clock.compact ? 2 * clock.report : clock.report;
+                    const std::string stem = std::string("rain_clocks_") + mode + "_" + units +
+                                             "_" + format + "_" + std::to_string(ci);
+                    SCOPED_TRACE(stem);
+                    const auto inp = kOutDir / (stem + ".inp");
+                    const auto h5 = kOutDir / (stem + ".h5");
+                    fs::remove(h5);
+                    auto hhmmss = [](int seconds) {
+                        std::ostringstream o;
+                        o << "00:" << std::setfill('0') << std::setw(2) << seconds / 60 << ':'
+                          << std::setw(2) << seconds % 60;
+                        return o.str();
+                    };
+                    {
+                        std::ofstream f(inp);
+                        f << std::setprecision(17) << "[OPTIONS]\nFLOW_UNITS " << units
+                          << "\nFLOW_ROUTING DYNWAVE\n"
+                          << "START_DATE 01/01/2026\nSTART_TIME " << hhmmss(clock.start)
+                          << "\nEND_DATE 01/01/2026\nEND_TIME 00:06:10\nREPORT_STEP "
+                          << hhmmss(clock.report) << "\nWET_STEP " << hhmmss(clock.wet)
+                          << "\nDRY_STEP " << hhmmss(clock.wet) << "\nROUTING_STEP " << clock.route
+                          << "\nVARIABLE_STEP 0\n"
+                          << "REPORT_START_DATE 01/01/2026\nREPORT_START_TIME "
+                          << hhmmss(clock.start + first_report) << "\n[RAINGAGES]\n";
+                        for (int g = 0; g < 3; ++g)
+                            f << "G" << g << ' ' << format << " 0:0" << intervals[g] / 60
+                              << " 1 TIMESERIES T" << g << '\n';
+                        f << "[TIMESERIES]\n";
+                        for (int g = 0; g < 3; ++g) {
+                            double counter = 0;
+                            for (size_t k = 0; k < depths_mm[g].size(); ++k) {
+                                if (k == 3)
+                                    counter = 0; // a real cumulative-gage reset
+                                counter += depths_mm[g][k];
+                                double v = std::string(format) == "INTENSITY"
+                                               ? depths_mm[g][k] * 3600.0 / intervals[g]
+                                           : std::string(format) == "VOLUME" ? depths_mm[g][k]
+                                                                             : counter;
+                                if (std::string(units) == "CFS")
+                                    v /= 25.4;
+                                f << "T" << g << " 01/01/2026 "
+                                  << hhmmss(static_cast<int>(k) * intervals[g]) << ' ' << v << '\n';
+                            }
+                        }
+                        f << "[SYMBOLS]\nG0 -50 -50\nG1 70 -50\nG2 10 80\n"
+                          << "[JUNCTIONS]\nJ 0 1 0 0 0\n[OUTFALLS]\nO -0.5 FREE NO\n"
+                          << "[CONDUITS]\nC J O 30 0.013 0 0 0\n[XSECTIONS]\nC CIRCULAR 0.3 0 0 0 1\n"
+                          << "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP "
+                          << clock.substep << "\nREPORT_2D YES\nOUTPUT_FILE "
+                          << h5.filename().string() << "\nCOUPLING_SYNC " << clock.sync
+                          << "\nREPORT_2D_STEP " << hhmmss(output_step) << "\nOUTPUT_PRECISION "
+                          << (clock.compact ? "FLOAT32" : "FLOAT64") << "\nRAINFALL_MODE " << mode
+                          << "\n[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n0 10 0\n"
+                          << "[2D_TRIANGLES]\n0 1 2 0.03 0\n0 2 3 0.03 0\n[REPORT]\nINPUT NO\n";
+                    }
+                    /** @cond */
+                    struct Engine {
+                        SWMM_Engine e = swmm_engine_create();
+                        /**
+                         * @brief Release the native engine owned by this function-local test guard.
+                         *
+                         * Calls cleanup unconditionally on the owned fixture handle. Calls close and destroy without a
+                         * separate end call. Ignores all cleanup statuses; ownership must be exclusive and handle storage
+                         * must remain valid until scope exit. Borrowed engine/model references expire here; generated
+                         * artifacts are retained.
+                         */
+                        ~Engine() {
+                            swmm_engine_close(e);
+                            swmm_engine_destroy(e);
+                        }
+                    } engine;
+                    /** @endcond */
+                    const auto rpt = kOutDir / (stem + ".rpt"), out = kOutDir / (stem + ".out");
+                    ASSERT_EQ(swmm_engine_open(engine.e, inp.string().c_str(), rpt.string().c_str(),
+                                               out.string().c_str(), nullptr),
+                              SWMM_OK);
+                    ASSERT_EQ(swmm_engine_initialize(engine.e), SWMM_OK);
+                    double weights[2][3] = {}, area[2] = {};
+                    for (int c = 0; c < 2; ++c) {
+                        int method, count, ids[3];
+                        double w[3];
+                        ASSERT_EQ(
+                            swmm_2d_get_rainfall_weights(engine.e, c, &method, ids, w, 3, &count),
+                            SWMM_OK);
+                        for (int k = 0; k < count; ++k)
+                            weights[c][ids[k]] = w[k];
+                        ASSERT_EQ(swmm_2d_triangle_get_area(engine.e, c, &area[c]), SWMM_OK);
+                    }
+                    ASSERT_EQ(swmm_engine_start(engine.e, 1), SWMM_OK);
+                    // On the batched/delayed-output case, also check persistent ADD
+                    // forcing on one cell; the other retains pure interpolated rainfall.
+                    const double added_rate = clock.compact ? 3e-7 : 0.0;
+                    if (added_rate > 0)
+                        ASSERT_EQ(swmm_2d_force_rainfall(engine.e, 0, added_rate, SWMM_FORCING_ADD,
+                                                         SWMM_FORCING_PERSIST),
+                                  SWMM_OK);
+                    double elapsed;
+                    do {
+                        ASSERT_EQ(swmm_engine_step(engine.e, &elapsed), SWMM_OK);
+                    } while (elapsed > 0);
+                    double final_vol[2], rain_in;
+                    ASSERT_EQ(swmm_2d_get_rain_volume_bulk(engine.e, final_vol), SWMM_OK);
+                    ASSERT_EQ(swmm_2d_get_mass_balance(engine.e, nullptr, nullptr, &rain_in,
+                                                       nullptr, nullptr, nullptr, nullptr, nullptr,
+                                                       nullptr, nullptr),
+                              SWMM_OK);
+                    EXPECT_NEAR(final_vol[0] + final_vol[1], rain_in, 1e-11);
+                    double expected_final_total = 0;
+                    for (int c = 0; c < 2; ++c) {
+                        double expected = c == 0 ? added_rate * (370 - clock.start) * area[c] : 0.0;
+                        for (int g = 0; g < 3; ++g)
+                            expected += weights[c][g] *
+                                        (depthAt(g, 370) - depthAt(g, clock.start)) * area[c];
+                        expected_final_total += expected;
+                    }
+                    // end() flushes a final partial 2D synchronization batch.
+                    ASSERT_EQ(swmm_engine_end(engine.e), SWMM_OK);
+                    ASSERT_EQ(swmm_engine_close(engine.e), SWMM_OK);
+                    H5File f(h5);
+                    ASSERT_GE(f.id, 0);
+                    const auto final_mass = f.readAll("mass_balance_2d/rainfall_in");
+                    ASSERT_EQ(final_mass.size(), 1u);
+                    EXPECT_NEAR(final_mass[0], expected_final_total, 1e-9);
+                    EXPECT_EQ(f.dsAttr("time", "units"), "days since 1899-12-30 00:00:00");
+                    EXPECT_EQ(f.dsAttr("Mesh2_face_rainfall", "units"), "m s-1");
+                    EXPECT_EQ(f.dsAttr("Mesh2_face_rain_cum", "units"), "m3");
+                    const auto times = f.readAll("time"), rates = f.readAll("Mesh2_face_rainfall"),
+                               cum = f.readAll("Mesh2_face_rain_cum");
+                    ASSERT_EQ(rates.size(), times.size() * 2);
+                    ASSERT_EQ(cum.size(), rates.size());
+                    ASSERT_EQ(
+                        times.size(),
+                        static_cast<size_t>((370 - clock.start - first_report) / output_step + 1));
+                    for (size_t k = 0; k < times.size(); ++k) {
+                        EXPECT_NEAR((times[k] - openswmm::datetime::encodeDate(2026, 1, 1)) *
+                                        86400.0,
+                                    clock.start + first_report + k * output_step + 0.001, 1e-5);
+                        const double t = clock.start + first_report + k * output_step;
+                        for (int c = 0; c < 2; ++c) {
+                            double expected_rate = c == 0 ? added_rate : 0.0;
+                            double expected_depth = expected_rate * (t - clock.start);
+                            for (int g = 0; g < 3; ++g) {
+                                expected_depth +=
+                                    weights[c][g] * (depthAt(g, t) - depthAt(g, clock.start));
+                                // SWMM's report-gage lookup has a legacy +1 s convention.
+                                expected_rate += weights[c][g] * rateAt(g, t + 1.001);
+                            }
+                            EXPECT_NEAR(rates[2 * k + c], expected_rate, 1e-12)
+                                << "time " << t << " cell " << c;
+                            EXPECT_NEAR(cum[2 * k + c], expected_depth * area[c],
+                                        clock.compact ? 5e-9 : 1e-9)
+                                << "time " << t << " cell " << c;
+                        }
+                    }
                 }
-            }
-            f << "[SYMBOLS]\nG0 -50 -50\nG1 70 -50\nG2 10 80\n"
-              << "[JUNCTIONS]\nJ 0 1 0 0 0\n[OUTFALLS]\nO -0.5 FREE NO\n"
-              << "[CONDUITS]\nC J O 30 0.013 0 0 0\n[XSECTIONS]\nC CIRCULAR 0.3 0 0 0 1\n"
-              << "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP " << clock.substep
-              << "\nREPORT_2D YES\nOUTPUT_FILE " << h5.filename().string()
-              << "\nCOUPLING_SYNC " << clock.sync << "\nREPORT_2D_STEP " << hhmmss(output_step)
-              << "\nOUTPUT_PRECISION " << (clock.compact ? "FLOAT32" : "FLOAT64") << "\nRAINFALL_MODE " << mode
-              << "\n[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n0 10 0\n"
-              << "[2D_TRIANGLES]\n0 1 2 0.03 0\n0 2 3 0.03 0\n[REPORT]\nINPUT NO\n";
-        }
-        struct Engine {
-            SWMM_Engine e = swmm_engine_create();
-            ~Engine() { swmm_engine_close(e); swmm_engine_destroy(e); }
-        } engine;
-        const auto rpt = kOutDir / (stem + ".rpt"), out = kOutDir / (stem + ".out");
-        ASSERT_EQ(swmm_engine_open(engine.e, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(), nullptr), SWMM_OK);
-        ASSERT_EQ(swmm_engine_initialize(engine.e), SWMM_OK);
-        double weights[2][3] = {}, area[2] = {};
-        for (int c = 0; c < 2; ++c) {
-            int method, count, ids[3]; double w[3];
-            ASSERT_EQ(swmm_2d_get_rainfall_weights(engine.e, c, &method, ids, w, 3, &count), SWMM_OK);
-            for (int k = 0; k < count; ++k) weights[c][ids[k]] = w[k];
-            ASSERT_EQ(swmm_2d_triangle_get_area(engine.e, c, &area[c]), SWMM_OK);
-        }
-        ASSERT_EQ(swmm_engine_start(engine.e, 1), SWMM_OK);
-        // On the batched/delayed-output case, also check persistent ADD
-        // forcing on one cell; the other retains pure interpolated rainfall.
-        const double added_rate = clock.compact ? 3e-7 : 0.0;
-        if (added_rate > 0)
-            ASSERT_EQ(swmm_2d_force_rainfall(engine.e, 0, added_rate,
-                      SWMM_FORCING_ADD, SWMM_FORCING_PERSIST), SWMM_OK);
-        double elapsed;
-        do { ASSERT_EQ(swmm_engine_step(engine.e, &elapsed), SWMM_OK); } while (elapsed > 0);
-        double final_vol[2], rain_in;
-        ASSERT_EQ(swmm_2d_get_rain_volume_bulk(engine.e, final_vol), SWMM_OK);
-        ASSERT_EQ(swmm_2d_get_mass_balance(engine.e, nullptr, nullptr, &rain_in, nullptr, nullptr,
-                                          nullptr, nullptr, nullptr, nullptr, nullptr), SWMM_OK);
-        EXPECT_NEAR(final_vol[0] + final_vol[1], rain_in, 1e-11);
-        double expected_final_total = 0;
-        for (int c = 0; c < 2; ++c) {
-            double expected = c == 0 ? added_rate * (370 - clock.start) * area[c] : 0.0;
-            for (int g = 0; g < 3; ++g)
-                expected += weights[c][g] * (depthAt(g, 370) - depthAt(g, clock.start)) * area[c];
-            expected_final_total += expected;
-        }
-        // end() flushes a final partial 2D synchronization batch.
-        ASSERT_EQ(swmm_engine_end(engine.e), SWMM_OK);
-        ASSERT_EQ(swmm_engine_close(engine.e), SWMM_OK);
-        H5File f(h5);
-        ASSERT_GE(f.id, 0);
-        const auto final_mass = f.readAll("mass_balance_2d/rainfall_in");
-        ASSERT_EQ(final_mass.size(), 1u);
-        EXPECT_NEAR(final_mass[0], expected_final_total, 1e-9);
-        EXPECT_EQ(f.dsAttr("time", "units"), "days since 1899-12-30 00:00:00");
-        EXPECT_EQ(f.dsAttr("Mesh2_face_rainfall", "units"), "m s-1");
-        EXPECT_EQ(f.dsAttr("Mesh2_face_rain_cum", "units"), "m3");
-        const auto times = f.readAll("time"), rates = f.readAll("Mesh2_face_rainfall"), cum = f.readAll("Mesh2_face_rain_cum");
-        ASSERT_EQ(rates.size(), times.size() * 2);
-        ASSERT_EQ(cum.size(), rates.size());
-        ASSERT_EQ(times.size(), static_cast<size_t>((370 - clock.start - first_report) / output_step + 1));
-        for (size_t k = 0; k < times.size(); ++k) {
-            EXPECT_NEAR((times[k] - openswmm::datetime::encodeDate(2026, 1, 1)) * 86400.0,
-                        clock.start + first_report + k * output_step + 0.001, 1e-5);
-            const double t = clock.start + first_report + k * output_step;
-            for (int c = 0; c < 2; ++c) {
-                double expected_rate = c == 0 ? added_rate : 0.0;
-                double expected_depth = expected_rate * (t - clock.start);
-                for (int g = 0; g < 3; ++g) {
-                    expected_depth += weights[c][g] * (depthAt(g, t) - depthAt(g, clock.start));
-                    // SWMM's report-gage lookup has a legacy +1 s convention.
-                    expected_rate += weights[c][g] * rateAt(g, t + 1.001);
-                }
-                EXPECT_NEAR(rates[2*k+c], expected_rate, 1e-12) << "time " << t << " cell " << c;
-                EXPECT_NEAR(cum[2*k+c], expected_depth * area[c], clock.compact ? 5e-9 : 1e-9) << "time " << t << " cell " << c;
-            }
-        }
-    }
 }
 
 // S7, end to end: a covered pan under a 1 in/hr hour of rain writes
@@ -906,7 +1114,7 @@ TEST(Output2DWriter, DeckBuildupColumnEndToEnd) {
     std::error_code ec;
     fs::create_directories(kOutDir, ec);
     const fs::path inp = kOutDir / "buildup_h5.inp";
-    const fs::path h5  = kOutDir / "buildup_h5.h5";
+    const fs::path h5 = kOutDir / "buildup_h5.h5";
     fs::remove(h5, ec);
     {
         std::ofstream f(inp);
@@ -916,7 +1124,7 @@ TEST(Output2DWriter, DeckBuildupColumnEndToEnd) {
              "END_DATE             01/01/2026\nEND_TIME             01:00:00\n"
              "REPORT_STEP          00:05:00\nWET_STEP             00:05:00\nDRY_STEP             00:05:00\n"
              "ROUTING_STEP         5\nDRY_DAYS             5\n\n"
-             "[RAINGAGES]\nRG1  INTENSITY 1:00 1.0 TIMESERIES TS1\n\n"   // one record = one hour
+             "[RAINGAGES]\nRG1  INTENSITY 1:00 1.0 TIMESERIES TS1\n\n" // one record = one hour
              "[TIMESERIES]\nTS1  01/01/2026 00:00 1.0\nTS1  01/01/2026 01:00 0.0\n\n"
              "[POLLUTANTS]\nTSS  MG/L  0  0  0  0  NO  *  0.0  0  0\n\n"
              "[LANDUSES]\nLU1  0  0  0\n\n"
@@ -939,12 +1147,14 @@ TEST(Output2DWriter, DeckBuildupColumnEndToEnd) {
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
     const fs::path rpt = kOutDir / "buildup_h5.rpt", out = kOutDir / "buildup_h5.out";
-    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(),
-                               out.string().c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(),
+                               nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
     double elapsed = 0.0;
-    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+    }
     double api[2] = {-1.0, -1.0};
     ASSERT_EQ(swmm_2d_get_buildup_bulk(e, "TSS", api, 2), SWMM_OK);
     EXPECT_EQ(swmm_2d_get_buildup_bulk(e, "NOPE", api, 2), SWMM_ERR_BADPARAM);
@@ -958,7 +1168,7 @@ TEST(Output2DWriter, DeckBuildupColumnEndToEnd) {
     ASSERT_TRUE(f.has("Mesh2_face_buildup"));
     EXPECT_EQ(f.dsAttr("Mesh2_face_buildup", "species_names"), "TSS");
     EXPECT_EQ(f.dsAttr("Mesh2_face_buildup", "units"), "lb acre-1");
-    const auto d = f.dims("Mesh2_face_buildup");            // [time, species, face]
+    const auto d = f.dims("Mesh2_face_buildup"); // [time, species, face]
     ASSERT_EQ(d.size(), 3u);
     ASSERT_GE(d[0], 2u);
     ASSERT_EQ(d[1], 1u);
@@ -967,8 +1177,10 @@ TEST(Output2DWriter, DeckBuildupColumnEndToEnd) {
     // DRY_DAYS 5 at POW(100, 2, 1) seeds min(2·5, 100) = 10 lbs/acre; the
     // hour of rain washes it down monotonically on both cells. The first
     // record is the first REPORT_STEP (not t = 0), so it is already below.
-    EXPECT_LT(v[0], 10.0); EXPECT_GT(v[0], 9.0);
-    EXPECT_LT(v[1], 10.0); EXPECT_GT(v[1], 9.0);
+    EXPECT_LT(v[0], 10.0);
+    EXPECT_GT(v[0], 9.0);
+    EXPECT_LT(v[1], 10.0);
+    EXPECT_GT(v[1], 9.0);
     const size_t last = (d[0] - 1) * d[2];
     EXPECT_LT(v[last], 10.0);
     EXPECT_GT(v[last], 0.0);
@@ -993,7 +1205,7 @@ TEST(Output2DWriter, DeckGroundwaterFieldsEndToEnd) {
     for (const bool mixed : {false, true}) {
         const std::string stem = mixed ? "gw_h5_mixed" : "gw_h5_tri";
         const fs::path inp = kOutDir / (stem + ".inp");
-        const fs::path h5  = kOutDir / (stem + ".h5");
+        const fs::path h5 = kOutDir / (stem + ".h5");
         fs::remove(h5, ec);
         {
             std::ofstream f(inp);
@@ -1009,7 +1221,9 @@ TEST(Output2DWriter, DeckGroundwaterFieldsEndToEnd) {
                  "[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n\n"
                  "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
                  "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D YES\n"
-                 "OUTPUT_FILE " << stem << ".h5\nOUTPUT_PRECISION FLOAT64\n"
+                 "OUTPUT_FILE "
+              << stem
+              << ".h5\nOUTPUT_PRECISION FLOAT64\n"
                  "REPORT_2D_VARIABLES DEPTH GROUNDWATER GW_DETAILED\n\n"
                  "[2D_VERTICES]\n0.0 0.0 -10.0\n10.0 0.0 -10.0\n10.0 10.0 -10.0\n0.0 10.0 -10.0\n";
             if (mixed) {
@@ -1029,11 +1243,13 @@ TEST(Output2DWriter, DeckGroundwaterFieldsEndToEnd) {
         ASSERT_NE(e, nullptr);
         const fs::path rpt = kOutDir / (stem + ".rpt"), out = kOutDir / (stem + ".out");
         ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(),
-                                   out.string().c_str(), nullptr), SWMM_OK);
+                                   out.string().c_str(), nullptr),
+                  SWMM_OK);
         ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
         ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
         double elapsed = 0.0;
-        while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+        while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+        }
         swmm_engine_end(e);
         swmm_engine_close(e);
         swmm_engine_destroy(e);
@@ -1041,11 +1257,11 @@ TEST(Output2DWriter, DeckGroundwaterFieldsEndToEnd) {
         H5File f(h5);
         ASSERT_GE(f.id, 0) << stem << ": no .h5 written";
         const hsize_t nf = mixed ? 3 : 2;
-        for (const char* name : {"Mesh2_face_gw_table_elev", "Mesh2_face_gw_hg", "Mesh2_face_gw_hu",
-                                 "Mesh2_face_gw_recharge", "Mesh2_face_gw_lateral",
-                                 "Mesh2_face_gw_node_exchange", "Mesh2_face_gw_deep",
-                                 "Mesh2_face_gw_et", "Mesh2_face_gw_dunne", "Mesh2_face_gw_infil_in",
-                                 "Mesh2_face_gw_link_seepage"}) {   // G-X3
+        for (const char* name :
+             {"Mesh2_face_gw_table_elev", "Mesh2_face_gw_hg", "Mesh2_face_gw_hu",
+              "Mesh2_face_gw_recharge", "Mesh2_face_gw_lateral", "Mesh2_face_gw_node_exchange",
+              "Mesh2_face_gw_deep", "Mesh2_face_gw_et", "Mesh2_face_gw_dunne",
+              "Mesh2_face_gw_infil_in", "Mesh2_face_gw_link_seepage"}) { // G-X3
             ASSERT_TRUE(f.has(name)) << stem << ": " << name;
             const auto d = f.dims(name);
             ASSERT_EQ(d.size(), 2u) << name;
@@ -1068,15 +1284,16 @@ TEST(Output2DWriter, DeckGroundwaterFieldsEndToEnd) {
         EXPECT_EQ(f.dsAttr("groundwater_node_exchange_cum", "node_names"), "J1");
         EXPECT_EQ(f.dsAttr("Mesh2_face_gw_hg", "units"), "m");
         // water table = bed + hg, per record, per cell
-        const auto te  = f.readAll("Mesh2_face_gw_table_elev");
-        const auto hg  = f.readAll("Mesh2_face_gw_hg");
+        const auto te = f.readAll("Mesh2_face_gw_table_elev");
+        const auto hg = f.readAll("Mesh2_face_gw_hg");
         const auto bed = f.readAll("Mesh2_face_gw_bed_elev");
         ASSERT_EQ(bed.size(), nf);
         ASSERT_EQ(te.size(), hg.size());
         for (size_t i = 0; i < te.size(); ++i)
             EXPECT_NEAR(te[i], bed[i % nf] + hg[i], 1e-9) << stem << " record/cell " << i;
         // the bed sits ZS = 4 m under the cell bed (−10)
-        for (size_t c = 0; c < nf; ++c) EXPECT_NEAR(bed[c], -14.0, 1e-9);
+        for (size_t c = 0; c < nf; ++c)
+            EXPECT_NEAR(bed[c], -14.0, 1e-9);
         // the σ block is [time, 6, nf] and every cell is closure 2 (sigma)
         const auto dth = f.dims("Mesh2_face_gw_theta_sigma");
         ASSERT_EQ(dth.size(), 3u);
@@ -1085,9 +1302,9 @@ TEST(Output2DWriter, DeckGroundwaterFieldsEndToEnd) {
         // the ledger's last row: storage − init − (in − out) == residual, and
         // the residual is machine-small against the storage
         const auto led = f.readAll("groundwater_ledger");
-        const auto dl  = f.dims("groundwater_ledger");
+        const auto dl = f.dims("groundwater_ledger");
         ASSERT_EQ(dl.size(), 2u);
-        ASSERT_EQ(dl[1], 15u);   // Residual at 11; source in/out at 12/13; reject at 14.
+        ASSERT_EQ(dl[1], 15u); // Residual at 11; source in/out at 12/13; reject at 14.
         EXPECT_EQ(f.dsAttr("groundwater_ledger", "terms"),
                   "recharge,lateral,deep,node,dunne,caprise,et,infil_in,"
                   "init_storage,storage,link,continuity_residual,source_in,source_out,reject");
@@ -1102,7 +1319,8 @@ TEST(Output2DWriter, DeckGroundwaterFieldsEndToEnd) {
         EXPECT_LT(std::fabs(resid), 1e-6 * storage + 1e-9) << stem << ": residual " << resid;
         if (std::getenv("OPENSWMM_TEST_VERBOSE")) {
             const auto nx = f.readAll("groundwater_node_exchange_cum");
-            std::fprintf(stderr, "[%s] ledger last: init %.6g storage %.6g infil_in %.6g recharge %.6g "
+            std::fprintf(stderr,
+                         "[%s] ledger last: init %.6g storage %.6g infil_in %.6g recharge %.6g "
                          "node %.6g dunne %.6g resid %.3e; J1 exchange cum %.6g; hg[0] %.6g\n",
                          stem.c_str(), init, storage, led[last + 7], led[last + 0], led[last + 3],
                          led[last + 4], resid, nx.empty() ? 0.0 : nx.back(), hg[hg.size() - nf]);
@@ -1110,7 +1328,7 @@ TEST(Output2DWriter, DeckGroundwaterFieldsEndToEnd) {
     }
     // …and a deck without an aquifer writes none of it.
     {
-        const fs::path h5 = kOutDir / "age_hours.h5";   // written by DeckAgeColumnIsHoursEndToEnd
+        const fs::path h5 = kOutDir / "age_hours.h5"; // written by DeckAgeColumnIsHoursEndToEnd
         H5File f(h5);
         if (f.id >= 0) {
             EXPECT_FALSE(f.has("Mesh2_face_gw_hg"));
@@ -1136,7 +1354,9 @@ TEST(Output2DWriter, CoupledGroundHeatFieldsAndBudgetsEndToEnd) {
              "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\nREPORT_2D YES\n"
              "HEAT_MODEL COUPLED\nBED_HEAT_MODEL GROUND_COLUMN\n"
              "HEAT_SURFACE_EXCHANGE NO\nHEAT_RADIATIVE_EXCHANGE NO\n"
-             "OUTPUT_FILE " << stem << ".h5\nOUTPUT_PRECISION FLOAT64\n"
+             "OUTPUT_FILE "
+          << stem
+          << ".h5\nOUTPUT_PRECISION FLOAT64\n"
              "REPORT_2D_VARIABLES DEPTH HEAT\n"
              "[2D_VERTICES]\n0 0 -10\n10 0 -10\n10 10 -10\n0 10 -10\n"
              "[2D_TRIANGLES]\n0 1 2 .03 .5\n0 2 3 .03 .5\n"
@@ -1151,29 +1371,33 @@ TEST(Output2DWriter, CoupledGroundHeatFieldsAndBudgetsEndToEnd) {
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
     const fs::path rpt = kOutDir / (stem + ".rpt"), out = kOutDir / (stem + ".out");
-    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(),
+                               nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
     double elapsed = 0.0;
-    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+    }
     swmm_engine_end(e);
     swmm_engine_close(e);
     swmm_engine_destroy(e);
 
     H5File file(h5);
     ASSERT_GE(file.id, 0) << "No thermal mesh result was written";
-    for (const char* name : {"Mesh2_face_water_temperature", "Mesh2_face_bed_temperature",
-                             "Mesh2_face_bed_energy", "Mesh2_face_soil_temperature",
-                             "Mesh2_face_soil_energy", "Mesh2_face_soil_heat_capacity",
-                             "Mesh2_face_soil_layer_temperature", "Mesh2_face_soil_layer_energy",
-                             "Mesh2_face_soil_layer_heat_capacity", "mesh_heat_budget", "ground_heat_budget"})
+    for (const char* name :
+         {"Mesh2_face_water_temperature", "Mesh2_face_bed_temperature", "Mesh2_face_bed_energy",
+          "Mesh2_face_soil_temperature", "Mesh2_face_soil_energy", "Mesh2_face_soil_heat_capacity",
+          "Mesh2_face_soil_layer_temperature", "Mesh2_face_soil_layer_energy",
+          "Mesh2_face_soil_layer_heat_capacity", "mesh_heat_budget", "ground_heat_budget"})
         EXPECT_TRUE(file.has(name)) << name;
     const auto time = file.dims("Mesh2_face_soil_layer_temperature");
     ASSERT_EQ(time.size(), 3u);
     ASSERT_GT(time[0], 0u);
     EXPECT_EQ(time[1], 4u);
     EXPECT_EQ(time[2], 2u);
-    EXPECT_EQ(file.dsAttr("ground_heat_budget", "terms"),
+    EXPECT_EQ(
+        file.dsAttr("ground_heat_budget", "terms"),
         "initial_j,advective_j,source_j,surface_boundary_j,deep_boundary_j,latent_j,lateral_net_j,water_contact_j,channel_contact_j,residual_j,pending_lateral_j,lid_contact_j");
     const auto energy = file.readAll("Mesh2_face_soil_energy");
     const auto capacity = file.readAll("Mesh2_face_soil_heat_capacity");
@@ -1209,7 +1433,9 @@ TEST(Output2DWriter, MeshRichardsLidThermalStateMapsToItsReciprocalGroundReceipt
              "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\nREPORT_2D YES\n"
              "HEAT_MODEL COUPLED\nBED_HEAT_MODEL GROUND_COLUMN\n"
              "HEAT_SURFACE_EXCHANGE NO\nHEAT_RADIATIVE_EXCHANGE NO\n"
-             "OUTPUT_FILE " << stem << ".h5\nOUTPUT_PRECISION FLOAT64\n"
+             "OUTPUT_FILE "
+          << stem
+          << ".h5\nOUTPUT_PRECISION FLOAT64\n"
              "REPORT_2D_VARIABLES DEPTH HEAT\n"
              "[2D_VERTICES]\n0 0 0\n10 0 0\n0 10 0\n[2D_TRIANGLES]\n0 1 2 .03 .1 floodplain\n"
              "[2D_AQUIFER_OPTIONS]\nNODE_ENROLMENT ROWS\nGW_ET NONE\nM_LAYERS 4\nCLOSURE CLOSED_FORM\n"
@@ -1228,23 +1454,25 @@ TEST(Output2DWriter, MeshRichardsLidThermalStateMapsToItsReciprocalGroundReceipt
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
     const fs::path rpt = kOutDir / (stem + ".rpt"), out = kOutDir / (stem + ".out");
-    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(),
+                               nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK) << swmm_get_last_error_msg(e);
     ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK) << swmm_get_last_error_msg(e);
     double elapsed = 0.0;
-    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+    }
     swmm_engine_end(e);
     swmm_engine_close(e);
     swmm_engine_destroy(e);
 
     H5File file(h5);
     ASSERT_GE(file.id, 0) << "No 2D thermal result was written";
-    for (const char* name : {"Mesh2_lid_layer_node_id", "Mesh2_lid_layer_node_index",
-                             "Mesh2_lid_layer_face_index", "Mesh2_lid_layer_physical_cell_index",
-                             "Mesh2_lid_layer_authored_index", "Mesh2_lid_layer_temperature",
-                             "Mesh2_lid_layer_energy", "Mesh2_lid_layer_heat_capacity",
-                             "Mesh2_lid_layer_ground_contact_energy",
-                             "ground_heat_budget"})
+    for (const char* name :
+         {"Mesh2_lid_layer_node_id", "Mesh2_lid_layer_node_index", "Mesh2_lid_layer_face_index",
+          "Mesh2_lid_layer_physical_cell_index", "Mesh2_lid_layer_authored_index",
+          "Mesh2_lid_layer_temperature", "Mesh2_lid_layer_energy", "Mesh2_lid_layer_heat_capacity",
+          "Mesh2_lid_layer_ground_contact_energy", "ground_heat_budget"})
         EXPECT_TRUE(file.has(name)) << name;
     const auto lid_dims = file.dims("Mesh2_lid_layer_temperature");
     ASSERT_EQ(lid_dims.size(), 2u);
@@ -1252,7 +1480,8 @@ TEST(Output2DWriter, MeshRichardsLidThermalStateMapsToItsReciprocalGroundReceipt
     ASSERT_GT(lid_dims[1], 0u);
     EXPECT_EQ(file.dims("Mesh2_lid_layer_node_id"), (std::vector<hsize_t>{lid_dims[1]}));
     EXPECT_EQ(file.dsAttr("Mesh2_lid_layer_energy", "units"), "J");
-    EXPECT_NE(file.dsAttr("Mesh2_lid_layer_temperature", "layout").find("physical LID cell"), std::string::npos);
+    EXPECT_NE(file.dsAttr("Mesh2_lid_layer_temperature", "layout").find("physical LID cell"),
+              std::string::npos);
     const auto temperature = file.readAll("Mesh2_lid_layer_temperature");
     const auto energy = file.readAll("Mesh2_lid_layer_energy");
     const auto capacity = file.readAll("Mesh2_lid_layer_heat_capacity");
@@ -1262,8 +1491,10 @@ TEST(Output2DWriter, MeshRichardsLidThermalStateMapsToItsReciprocalGroundReceipt
     ASSERT_EQ(temperature.size(), lid_contact.size());
     for (std::size_t i = 0; i < energy.size(); ++i) {
         EXPECT_GE(capacity[i], 0.0);
-        if (capacity[i] > 0.0) EXPECT_NEAR(temperature[i], energy[i] / capacity[i], 1e-8);
-        else EXPECT_TRUE(std::isnan(temperature[i]));
+        if (capacity[i] > 0.0)
+            EXPECT_NEAR(temperature[i], energy[i] / capacity[i], 1e-8);
+        else
+            EXPECT_TRUE(std::isnan(temperature[i]));
     }
     const auto budget_dims = file.dims("ground_heat_budget");
     const auto budget = file.readAll("ground_heat_budget");
@@ -1271,22 +1502,23 @@ TEST(Output2DWriter, MeshRichardsLidThermalStateMapsToItsReciprocalGroundReceipt
     ASSERT_EQ(budget_dims.size(), 3u);
     bool saw_lid_contact = false;
     for (hsize_t t = 0; t < budget_dims[0]; ++t) {
-        std::vector<double> layer_contact_by_face(budget_dims[1],0.0);
+        std::vector<double> layer_contact_by_face(budget_dims[1], 0.0);
         for (hsize_t layer = 0; layer < lid_dims[1]; ++layer)
-            layer_contact_by_face[static_cast<std::size_t>(layer_faces[layer])] += lid_contact[t*lid_dims[1]+layer];
-        for (hsize_t c = 0; c < budget_dims[1]; ++c)
-        {
-            const double soil_receipt=budget[(t * budget_dims[1] + c) * budget_dims[2] + 11];
+            layer_contact_by_face[static_cast<std::size_t>(layer_faces[layer])] +=
+                lid_contact[t * lid_dims[1] + layer];
+        for (hsize_t c = 0; c < budget_dims[1]; ++c) {
+            const double soil_receipt = budget[(t * budget_dims[1] + c) * budget_dims[2] + 11];
             saw_lid_contact |= std::abs(soil_receipt) > 0.0;
-            EXPECT_NEAR(layer_contact_by_face[c],-soil_receipt,1e-6);
+            EXPECT_NEAR(layer_contact_by_face[c], -soil_receipt, 1e-6);
         }
     }
-    EXPECT_TRUE(saw_lid_contact) << "LID layer output should be paired with its soil-side contact receipt";
+    EXPECT_TRUE(saw_lid_contact)
+        << "LID layer output should be paired with its soil-side contact receipt";
 }
 
 TEST(Output2DWriter, Report2DStepThinsTheTimeAxis) {
     SolverOptions2D o;
-    o.report_2d_step = 3600.0;   // 12 × the 300 s report step
+    o.report_2d_step = 3600.0; // 12 × the 300 s report step
     std::string err;
     // 25 report ticks of 300 s → t = 0..2 h → 2D writes at 0, 1 h, 2 h = 3.
     const fs::path p = writeFile("step_1h", o, 300.0, 25, 300.0 / 86400.0, &err);
@@ -1301,7 +1533,7 @@ TEST(Output2DWriter, Report2DStepThinsTheTimeAxis) {
 
 TEST(Output2DWriter, Report2DStepMustBeAMultipleOfReportStep) {
     SolverOptions2D o;
-    o.report_2d_step = 1000.0;   // not a multiple of 300
+    o.report_2d_step = 1000.0; // not a multiple of 300
     std::string err;
     (void)writeFile("step_bad", o, 300.0, 1, 0.0, &err);
     EXPECT_FALSE(err.empty());
@@ -1309,8 +1541,12 @@ TEST(Output2DWriter, Report2DStepMustBeAMultipleOfReportStep) {
 }
 
 TEST(Output2DWriter, Float32FileIsSmaller) {
-    SolverOptions2D a;  a.output_precision = OutputPrecision2D::FLOAT64; a.output_compression = 0;
-    SolverOptions2D b;  b.output_precision = OutputPrecision2D::FLOAT32; b.output_compression = 0;
+    SolverOptions2D a;
+    a.output_precision = OutputPrecision2D::FLOAT64;
+    a.output_compression = 0;
+    SolverOptions2D b;
+    b.output_precision = OutputPrecision2D::FLOAT32;
+    b.output_compression = 0;
     a.report_2d_vars = b.report_2d_vars = report2d::ALL_MASK;
     const fs::path pa = writeFile("size_f64", a, 300.0, 400, 300.0 / 86400.0);
     const fs::path pb = writeFile("size_f32", b, 300.0, 400, 300.0 / 86400.0);
@@ -1330,8 +1566,8 @@ TEST(Output2DWriter, Float32FileIsSmaller) {
     const H5File fa(pa), fb(pb);
     ASSERT_GE(fa.id, 0);
     ASSERT_GE(fb.id, 0);
-    for (const char* ds : {"Mesh2_face_depth", "Mesh2_face_head",
-                           "Mesh2_node_head", "Mesh2_edge_flux"}) {
+    for (const char* ds :
+         {"Mesh2_face_depth", "Mesh2_face_head", "Mesh2_node_head", "Mesh2_edge_flux"}) {
         SCOPED_TRACE(ds);
         const auto ba = fa.datasetBytes(ds), bb = fb.datasetBytes(ds);
         ASSERT_GT(bb, 0u) << "dataset absent or unallocated under ALL_MASK";
@@ -1345,190 +1581,447 @@ TEST(Output2DWriter, Float32FileIsSmaller) {
 #ifdef OPENSWMM_HAS_HDF5_MODEL
 namespace {
 struct SourceOutputModel {
-    MeshData mesh=unitSquare();SurfaceStateData surface;SolverOptions2D options;
-    InertialEdges edges;SubsurfaceSolver gw;openswmm::SimulationContext context;
-    openswmm::runoff::SourceWaterDriver sources;CommonSourceStage stage;SourceResultHistory history;
-    void setup(bool outfall_returns=false) {
-        surface.resize(2,mesh.n_edge_slots());surface.volume={.04,.04};surface.depth={.08,.08};surface.head={.08,.08};
-        edges.build(mesh);SubsurfaceConfig config;config.options.authored=true;config.options.force_closed_form=true;
-        GwAquiferRow soil;soil.zs=2;soil.hg0=1;soil.Ks=.01;config.rows.push_back(soil);std::vector<std::string> warnings;
-        ASSERT_EQ(gw.initialize(mesh,edges,options,{},0,config,warnings),"");
-        context.options.start_date=openswmm::datetime::encodeDate(2026,10,9);context.options.total_duration_ms=86400000;
-        context.options.ignore_snow_melt=true;context.options.ignore_quality=true;
-        context.subcatches.resize(1);context.gages.resize(1);context.forcing.resize(0,0,1,1,0);
-        context.subcatch_names.try_add("S0");context.gage_names.try_add("RG");context.tables.tables.resize(1);
-        context.gages.ts_index[0]=0;context.gages.interval_sec[0]=30;
-        context.tables.tables[0].x={context.options.start_date,openswmm::datetime::addSeconds(context.options.start_date,30)};
-        context.tables.tables[0].y={432,0};context.subcatches.gage[0]=0;
-        context.subcatches.area[0]=.25/(43560*.3048*.3048);context.subcatches.width[0]=1;context.subcatches.n_perv[0]=.1;
-        context.subcatches.frac_imperv[0]=0;context.subcatches.infil_model[0]=2;
-        context.subcatches.infil_p1[0]=3.5;context.subcatches.infil_p2[0]=.5;context.subcatches.infil_p3[0]=.26;
-        ASSERT_EQ(sources.initialize(context,{0},{{0,.25}},nullptr,outfall_returns),"");
-        SurfaceOwnershipPreview reviewed;SurfaceOwnerObject owner;owner.subcatch=0;owner.reviewed=true;
-        owner.declared_area=.25;owner.inside_area=.25;reviewed.objects.push_back(owner);
-        reviewed.mesh_weather_area={.375,.375};reviewed.shares={{0,0,.125,.125,0,0,0},{0,1,.125,.125,0,0,0}};
-        ASSERT_EQ(stage.initialize(mesh,surface,options,gw,sources,reviewed),"");ASSERT_EQ(history.append(stage),"");
+    MeshData mesh = unitSquare();
+    SurfaceStateData surface;
+    SolverOptions2D options;
+    InertialEdges edges;
+    SubsurfaceSolver gw;
+    openswmm::SimulationContext context;
+    openswmm::runoff::SourceWaterDriver sources;
+    CommonSourceStage stage;
+    SourceResultHistory history;
+    /**
+     * @brief Initialize a two-cell source/runoff/groundwater output fixture and its initial history.
+     *
+     * Intended once per fresh SourceOutputModel. Seeds 0.04 m3 per cell, closed-form groundwater, a
+     * 0.25 m2 source catchment, 30 s rain signal and reviewed split source shares, then binds the
+     * common stage and appends initial history. All member dependencies outlive stage/source borrows.
+     * Fatal GoogleTest assertions can leave a partially initialized fixture and return only from this
+     * helper.
+     *
+     * @param[in] outfall_returns Forwarded to source-driver initialization to enable retained
+     *     outfall-return results.
+     */
+    void setup(bool outfall_returns = false) {
+        surface.resize(2, mesh.n_edge_slots());
+        surface.volume = {.04, .04};
+        surface.depth = {.08, .08};
+        surface.head = {.08, .08};
+        edges.build(mesh);
+        SubsurfaceConfig config;
+        config.options.authored = true;
+        config.options.force_closed_form = true;
+        GwAquiferRow soil;
+        soil.zs = 2;
+        soil.hg0 = 1;
+        soil.Ks = .01;
+        config.rows.push_back(soil);
+        std::vector<std::string> warnings;
+        ASSERT_EQ(gw.initialize(mesh, edges, options, {}, 0, config, warnings), "");
+        context.options.start_date = openswmm::datetime::encodeDate(2026, 10, 9);
+        context.options.total_duration_ms = 86400000;
+        context.options.ignore_snow_melt = true;
+        context.options.ignore_quality = true;
+        context.subcatches.resize(1);
+        context.gages.resize(1);
+        context.forcing.resize(0, 0, 1, 1, 0);
+        context.subcatch_names.try_add("S0");
+        context.gage_names.try_add("RG");
+        context.tables.tables.resize(1);
+        context.gages.ts_index[0] = 0;
+        context.gages.interval_sec[0] = 30;
+        context.tables.tables[0].x = {
+            context.options.start_date,
+            openswmm::datetime::addSeconds(context.options.start_date, 30)};
+        context.tables.tables[0].y = {432, 0};
+        context.subcatches.gage[0] = 0;
+        context.subcatches.area[0] = .25 / (43560 * .3048 * .3048);
+        context.subcatches.width[0] = 1;
+        context.subcatches.n_perv[0] = .1;
+        context.subcatches.frac_imperv[0] = 0;
+        context.subcatches.infil_model[0] = 2;
+        context.subcatches.infil_p1[0] = 3.5;
+        context.subcatches.infil_p2[0] = .5;
+        context.subcatches.infil_p3[0] = .26;
+        ASSERT_EQ(sources.initialize(context, {0}, {{0, .25}}, nullptr, outfall_returns), "");
+        SurfaceOwnershipPreview reviewed;
+        SurfaceOwnerObject owner;
+        owner.subcatch = 0;
+        owner.reviewed = true;
+        owner.declared_area = .25;
+        owner.inside_area = .25;
+        reviewed.objects.push_back(owner);
+        reviewed.mesh_weather_area = {.375, .375};
+        reviewed.shares = {{0, 0, .125, .125, 0, 0, 0}, {0, 1, .125, .125, 0, 0, 0}};
+        ASSERT_EQ(stage.initialize(mesh, surface, options, gw, sources, reviewed), "");
+        ASSERT_EQ(history.append(stage), "");
     }
-    void step(double start,double end) {
-        ASSERT_EQ(stage.advance(start,end),"");gw.fireGwCells(0,end-start,surface,start);ASSERT_EQ(history.append(stage),"");
+    /**
+     * @brief Advance the source stage and groundwater, then append a result-history row.
+     *
+     * Calls stage.advance, then groundwater tier-zero firing with end-start and start, then
+     * history.append. Fatal assertions return from this helper and may leave partial advancement; no
+     * rollback or owning-dependency changes occur.
+     *
+     * @param[in] start Accepted interval start in model seconds for the initialized fixture.
+     * @param[in] end Interval end in seconds, greater than start and compatible with prepared
+     *     stage/source time.
+     */
+    void step(double start, double end) {
+        ASSERT_EQ(stage.advance(start, end), "");
+        gw.fireGwCells(0, end - start, surface, start);
+        ASSERT_EQ(history.append(stage), "");
     }
 };
-void historyColumnsEqual(const SourceResultHistory& a,const SourceResultHistory& b) {
-    EXPECT_EQ(a.outfallReturnsAvailable(),b.outfallReturnsAvailable());
-    EXPECT_EQ(a.sourceNames(),b.sourceNames());ASSERT_EQ(a.tables().size(),b.tables().size());
-    for(const auto& [name,t]:a.tables())EXPECT_EQ(t.columns,b.tables().at(name).columns)<<name;
+/**
+ * @brief Compare source-history schema and column payloads using GoogleTest.
+ *
+ * Checks outfall-return availability, source names, equal table counts and each table's columns.
+ * Equal size is a fatal assertion; equal size alone does not ensure matching keys, so
+ * b.tables().at(name) may throw. Does not compare additional metadata outside these fields or
+ * mutate histories.
+ *
+ * @param[in] a Reference initialized history, with stable table names.
+ * @param[in] b Comparison history expected to contain every table name in a.
+ */
+void historyColumnsEqual(const SourceResultHistory& a, const SourceResultHistory& b) {
+    EXPECT_EQ(a.outfallReturnsAvailable(), b.outfallReturnsAvailable());
+    EXPECT_EQ(a.sourceNames(), b.sourceNames());
+    ASSERT_EQ(a.tables().size(), b.tables().size());
+    for (const auto& [name, t] : a.tables())
+        EXPECT_EQ(t.columns, b.tables().at(name).columns) << name;
 }
 }
 TEST(Output2DSourceHistory, SavesSourceIntervalsIndependentlyOfReportCadenceAndKeepsMeshFields) {
-    fs::create_directories(kOutDir);const auto file=kOutDir/"source_history_embedded.h5";SourceOutputModel m;m.setup();
-    Default2DOutputPlugin writer(file.string());ASSERT_EQ(writer.initialize({},nullptr),0);ASSERT_EQ(writer.prepare(m.context),0);
-    auto opts=m.options;opts.report_2d_step=120;ASSERT_EQ(writer.configureOutput(opts,60),"");writer.prepareMeshAndDatasets(m.mesh);
-    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));ASSERT_EQ(writer.update(makeSnap(0,.08,.08)),0);
-    m.step(0,.75);const auto first=std::make_shared<const SourceResultHistory>(m.history);
-    std::thread producer([&]{writer.enqueueSourceHistory(first);});producer.join();
-    ASSERT_EQ(writer.update(makeSnap(60./86400,.08,.08)),0); // render output skipped; source prefix still saved
-    m.step(.75,2);writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));ASSERT_EQ(writer.finalize(m.context),0);
-    SourceResultHistory read;bool available=false;ASSERT_EQ(SourceResultHistory::read(file.string(),read,available),"");ASSERT_TRUE(available);historyColumnsEqual(m.history,read);
-    H5File h5(file);ASSERT_TRUE(h5.has("/Mesh2_face_depth"));EXPECT_EQ(h5.dims("/time"),(std::vector<hsize_t>{1}));
-    EXPECT_FALSE(h5.has("/__source_history_next"));EXPECT_FALSE(h5.has("/__source_history_previous"));
+    fs::create_directories(kOutDir);
+    const auto file = kOutDir / "source_history_embedded.h5";
+    SourceOutputModel m;
+    m.setup();
+    Default2DOutputPlugin writer(file.string());
+    ASSERT_EQ(writer.initialize({}, nullptr), 0);
+    ASSERT_EQ(writer.prepare(m.context), 0);
+    auto opts = m.options;
+    opts.report_2d_step = 120;
+    ASSERT_EQ(writer.configureOutput(opts, 60), "");
+    writer.prepareMeshAndDatasets(m.mesh);
+    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));
+    ASSERT_EQ(writer.update(makeSnap(0, .08, .08)), 0);
+    m.step(0, .75);
+    const auto first = std::make_shared<const SourceResultHistory>(m.history);
+    std::thread producer([&] { writer.enqueueSourceHistory(first); });
+    producer.join();
+    ASSERT_EQ(writer.update(makeSnap(60. / 86400, .08, .08)),
+              0); // render output skipped; source prefix still saved
+    m.step(.75, 2);
+    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));
+    ASSERT_EQ(writer.finalize(m.context), 0);
+    SourceResultHistory read;
+    bool available = false;
+    ASSERT_EQ(SourceResultHistory::read(file.string(), read, available), "");
+    ASSERT_TRUE(available);
+    historyColumnsEqual(m.history, read);
+    H5File h5(file);
+    ASSERT_TRUE(h5.has("/Mesh2_face_depth"));
+    EXPECT_EQ(h5.dims("/time"), (std::vector<hsize_t>{1}));
+    EXPECT_FALSE(h5.has("/__source_history_next"));
+    EXPECT_FALSE(h5.has("/__source_history_previous"));
 }
 TEST(Output2DSourceHistory, InvalidPrefixPreservesSavedHistoryAndOrdinaryFields) {
-    fs::create_directories(kOutDir);const auto file=kOutDir/"source_history_prefix_refused.h5";SourceOutputModel m;m.setup();
-    Default2DOutputPlugin writer(file.string());ASSERT_EQ(writer.prepare(m.context),0);writer.prepareMeshAndDatasets(m.mesh);
-    const auto initial=m.history;writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));ASSERT_EQ(writer.update(makeSnap(0,.08,.08)),0);
-    m.step(0,1);writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));ASSERT_EQ(writer.update(makeSnap(1./86400,.08,.08)),0);
-    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(initial));EXPECT_NE(writer.update(makeSnap(2./86400,.08,.08)),0);
-    EXPECT_NE(std::string(writer.last_error_message()).find("truncated"),std::string::npos);EXPECT_NE(writer.finalize(m.context),0);
-    SourceResultHistory read;bool available=false;ASSERT_EQ(SourceResultHistory::read(file.string(),read,available),"");historyColumnsEqual(m.history,read);
-    H5File h5(file);EXPECT_EQ(h5.dims("/time"),(std::vector<hsize_t>{2}));EXPECT_TRUE(h5.has("/Mesh2_face_depth"));
+    fs::create_directories(kOutDir);
+    const auto file = kOutDir / "source_history_prefix_refused.h5";
+    SourceOutputModel m;
+    m.setup();
+    Default2DOutputPlugin writer(file.string());
+    ASSERT_EQ(writer.prepare(m.context), 0);
+    writer.prepareMeshAndDatasets(m.mesh);
+    const auto initial = m.history;
+    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));
+    ASSERT_EQ(writer.update(makeSnap(0, .08, .08)), 0);
+    m.step(0, 1);
+    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));
+    ASSERT_EQ(writer.update(makeSnap(1. / 86400, .08, .08)), 0);
+    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(initial));
+    EXPECT_NE(writer.update(makeSnap(2. / 86400, .08, .08)), 0);
+    EXPECT_NE(std::string(writer.last_error_message()).find("truncated"), std::string::npos);
+    EXPECT_NE(writer.finalize(m.context), 0);
+    SourceResultHistory read;
+    bool available = false;
+    ASSERT_EQ(SourceResultHistory::read(file.string(), read, available), "");
+    historyColumnsEqual(m.history, read);
+    H5File h5(file);
+    EXPECT_EQ(h5.dims("/time"), (std::vector<hsize_t>{2}));
+    EXPECT_TRUE(h5.has("/Mesh2_face_depth"));
 }
 TEST(Output2DSourceHistory, InvalidNewHistoryAndUnopenedSinkReturnErrorsWithoutHdf5Publication) {
-    fs::create_directories(kOutDir);const auto file=kOutDir/"source_history_invalid.h5";SourceOutputModel m;m.setup();
-    Default2DOutputPlugin unopened(file.string());unopened.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));EXPECT_NE(unopened.update(makeSnap(0,.08,.08)),0);
-    Default2DOutputPlugin writer(file.string());ASSERT_EQ(writer.prepare(m.context),0);writer.prepareMeshAndDatasets(m.mesh);
-    auto invalid=m.history;auto& tables=const_cast<std::map<std::string,SourceResultTable>&>(invalid.tables());tables.at("source_water").columns[5].pop_back();
-    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(invalid));EXPECT_NE(writer.update(makeSnap(0,.08,.08)),0);EXPECT_NE(writer.finalize(m.context),0);
-    H5File h5(file);EXPECT_FALSE(h5.has("/source_history"));EXPECT_TRUE(h5.has("/Mesh2_face_depth"));EXPECT_EQ(h5.dims("/time"),(std::vector<hsize_t>{0}));
-    EXPECT_THROW(writer.enqueueSourceHistory(nullptr),std::invalid_argument);
+    fs::create_directories(kOutDir);
+    const auto file = kOutDir / "source_history_invalid.h5";
+    SourceOutputModel m;
+    m.setup();
+    Default2DOutputPlugin unopened(file.string());
+    unopened.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));
+    EXPECT_NE(unopened.update(makeSnap(0, .08, .08)), 0);
+    Default2DOutputPlugin writer(file.string());
+    ASSERT_EQ(writer.prepare(m.context), 0);
+    writer.prepareMeshAndDatasets(m.mesh);
+    auto invalid = m.history;
+    auto& tables = const_cast<std::map<std::string, SourceResultTable>&>(invalid.tables());
+    tables.at("source_water").columns[5].pop_back();
+    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(invalid));
+    EXPECT_NE(writer.update(makeSnap(0, .08, .08)), 0);
+    EXPECT_NE(writer.finalize(m.context), 0);
+    H5File h5(file);
+    EXPECT_FALSE(h5.has("/source_history"));
+    EXPECT_TRUE(h5.has("/Mesh2_face_depth"));
+    EXPECT_EQ(h5.dims("/time"), (std::vector<hsize_t>{0}));
+    EXPECT_THROW(writer.enqueueSourceHistory(nullptr), std::invalid_argument);
 }
 #endif
 #ifdef OPENSWMM_HAS_HDF5_MODEL
 TEST(Output2DSourceHistory, VersionOneHistoryRemainsReadableWithoutContinuationMetadata) {
-    fs::create_directories(kOutDir);const auto file=kOutDir/"source_history_v1.h5";SourceOutputModel m;m.setup();
-    Default2DOutputPlugin writer(file.string());ASSERT_EQ(writer.prepare(m.context),0);writer.prepareMeshAndDatasets(m.mesh);
-    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));ASSERT_EQ(writer.finalize(m.context),0);
+    fs::create_directories(kOutDir);
+    const auto file = kOutDir / "source_history_v1.h5";
+    SourceOutputModel m;
+    m.setup();
+    Default2DOutputPlugin writer(file.string());
+    ASSERT_EQ(writer.prepare(m.context), 0);
+    writer.prepareMeshAndDatasets(m.mesh);
+    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));
+    ASSERT_EQ(writer.finalize(m.context), 0);
     // Modify on this test's HDF5 instance ONLY after the engine writer closes.
-    const auto f=H5Fopen(file.string().c_str(),H5F_ACC_RDWR,H5P_DEFAULT);ASSERT_GE(f,0);
-    const auto g=H5Gopen2(f,"source_history",H5P_DEFAULT);ASSERT_GE(g,0);
-    const auto a=H5Aopen(g,"schema_version",H5P_DEFAULT),t=H5Aget_type(a);char value[512]={};value[0]='1';
-    ASSERT_GE(H5Awrite(a,t,value),0);H5Tclose(t);H5Aclose(a);ASSERT_GE(H5Ldelete(g,"checkpoint_match",H5P_DEFAULT),0);H5Gclose(g);H5Fclose(f);
-    SourceResultHistory read;bool available=false;ASSERT_EQ(SourceResultHistory::read(file.string(),read,available),"");ASSERT_TRUE(available);
-    historyColumnsEqual(m.history,read);EXPECT_FALSE(read.outfallReturnsAvailable());EXPECT_FALSE(read.resume(m.stage).empty());
+    const auto f = H5Fopen(file.string().c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+    ASSERT_GE(f, 0);
+    const auto g = H5Gopen2(f, "source_history", H5P_DEFAULT);
+    ASSERT_GE(g, 0);
+    const auto a = H5Aopen(g, "schema_version", H5P_DEFAULT), t = H5Aget_type(a);
+    char value[512] = {};
+    value[0] = '1';
+    ASSERT_GE(H5Awrite(a, t, value), 0);
+    H5Tclose(t);
+    H5Aclose(a);
+    ASSERT_GE(H5Ldelete(g, "checkpoint_match", H5P_DEFAULT), 0);
+    H5Gclose(g);
+    H5Fclose(f);
+    SourceResultHistory read;
+    bool available = false;
+    ASSERT_EQ(SourceResultHistory::read(file.string(), read, available), "");
+    ASSERT_TRUE(available);
+    historyColumnsEqual(m.history, read);
+    EXPECT_FALSE(read.outfallReturnsAvailable());
+    EXPECT_FALSE(read.resume(m.stage).empty());
 }
 TEST(Output2DSourceHistory, RestoredPrefixContinuesInsideTheSameMeshResultFile) {
-    fs::create_directories(kOutDir);const auto file=kOutDir/"source_history_continued.h5",checkpoint=kOutDir/"source_history_match.checkpoint";
-    SourceOutputModel m;m.setup();Default2DOutputPlugin writer(file.string());ASSERT_EQ(writer.prepare(m.context),0);writer.prepareMeshAndDatasets(m.mesh);
-    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));ASSERT_EQ(writer.update(makeSnap(0,.08,.08)),0);
-    m.step(0,1);writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));ASSERT_EQ(writer.update(makeSnap(1./86400,.08,.08)),0);
-    ASSERT_EQ(m.stage.saveCheckpoint(checkpoint.string()),"");SourceOutputModel restored;restored.setup();
-    ASSERT_EQ(restored.stage.loadCheckpoint(checkpoint.string()),"");bool available=false;
-    ASSERT_EQ(SourceResultHistory::read(file.string(),restored.history,available),"");ASSERT_TRUE(available);ASSERT_EQ(restored.history.resume(restored.stage),"");
-    m.step(1,2);restored.step(1,2);historyColumnsEqual(m.history,restored.history);
-    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(restored.history));ASSERT_EQ(writer.update(makeSnap(2./86400,.08,.08)),0);
-    ASSERT_EQ(writer.finalize(m.context),0);SourceResultHistory read;ASSERT_EQ(SourceResultHistory::read(file.string(),read,available),"");
-    historyColumnsEqual(m.history,read);H5File h5(file);EXPECT_EQ(h5.dims("/time"),(std::vector<hsize_t>{3}));
+    fs::create_directories(kOutDir);
+    const auto file = kOutDir / "source_history_continued.h5",
+               checkpoint = kOutDir / "source_history_match.checkpoint";
+    SourceOutputModel m;
+    m.setup();
+    Default2DOutputPlugin writer(file.string());
+    ASSERT_EQ(writer.prepare(m.context), 0);
+    writer.prepareMeshAndDatasets(m.mesh);
+    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));
+    ASSERT_EQ(writer.update(makeSnap(0, .08, .08)), 0);
+    m.step(0, 1);
+    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));
+    ASSERT_EQ(writer.update(makeSnap(1. / 86400, .08, .08)), 0);
+    ASSERT_EQ(m.stage.saveCheckpoint(checkpoint.string()), "");
+    SourceOutputModel restored;
+    restored.setup();
+    ASSERT_EQ(restored.stage.loadCheckpoint(checkpoint.string()), "");
+    bool available = false;
+    ASSERT_EQ(SourceResultHistory::read(file.string(), restored.history, available), "");
+    ASSERT_TRUE(available);
+    ASSERT_EQ(restored.history.resume(restored.stage), "");
+    m.step(1, 2);
+    restored.step(1, 2);
+    historyColumnsEqual(m.history, restored.history);
+    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(restored.history));
+    ASSERT_EQ(writer.update(makeSnap(2. / 86400, .08, .08)), 0);
+    ASSERT_EQ(writer.finalize(m.context), 0);
+    SourceResultHistory read;
+    ASSERT_EQ(SourceResultHistory::read(file.string(), read, available), "");
+    historyColumnsEqual(m.history, read);
+    H5File h5(file);
+    EXPECT_EQ(h5.dims("/time"), (std::vector<hsize_t>{3}));
 }
-TEST(Output2DSourceHistory, OutfallHistorySavesFutureAvailabilityAndContinuesThroughSkippedReports) {
-    fs::create_directories(kOutDir);const auto file=kOutDir/"outfall_history_continued.h5",checkpoint=kOutDir/"outfall_history_match.checkpoint";
-    SourceOutputModel m;m.setup(true);Default2DOutputPlugin writer(file.string());ASSERT_EQ(writer.prepare(m.context),0);
-    auto opts=m.options;opts.report_2d_step=120;ASSERT_EQ(writer.configureOutput(opts,60),"");writer.prepareMeshAndDatasets(m.mesh);
-    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));ASSERT_EQ(writer.update(makeSnap(0,.08,.08)),0);
-    ASSERT_EQ(m.stage.creditOutfallReturns(0,2,{.1}),"");m.step(0,.5);
-    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));ASSERT_EQ(writer.update(makeSnap(60./86400,.08,.08)),0);
-    ASSERT_EQ(m.stage.saveCheckpoint(checkpoint.string()),"");SourceOutputModel restored;restored.setup(true);
-    ASSERT_EQ(restored.stage.loadCheckpoint(checkpoint.string()),"");bool available=false;
-    ASSERT_EQ(SourceResultHistory::read(file.string(),restored.history,available),"");ASSERT_TRUE(available);
-    EXPECT_TRUE(restored.history.outfallReturnsAvailable());ASSERT_EQ(restored.history.resume(restored.stage),"");
-    EXPECT_EQ(restored.history.tables().at("pending_outfall_return").columns[3].back(),2);
-    m.step(.5,3);restored.step(.5,3);historyColumnsEqual(m.history,restored.history);
+TEST(Output2DSourceHistory,
+     OutfallHistorySavesFutureAvailabilityAndContinuesThroughSkippedReports) {
+    fs::create_directories(kOutDir);
+    const auto file = kOutDir / "outfall_history_continued.h5",
+               checkpoint = kOutDir / "outfall_history_match.checkpoint";
+    SourceOutputModel m;
+    m.setup(true);
+    Default2DOutputPlugin writer(file.string());
+    ASSERT_EQ(writer.prepare(m.context), 0);
+    auto opts = m.options;
+    opts.report_2d_step = 120;
+    ASSERT_EQ(writer.configureOutput(opts, 60), "");
+    writer.prepareMeshAndDatasets(m.mesh);
+    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));
+    ASSERT_EQ(writer.update(makeSnap(0, .08, .08)), 0);
+    ASSERT_EQ(m.stage.creditOutfallReturns(0, 2, {.1}), "");
+    m.step(0, .5);
+    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));
+    ASSERT_EQ(writer.update(makeSnap(60. / 86400, .08, .08)), 0);
+    ASSERT_EQ(m.stage.saveCheckpoint(checkpoint.string()), "");
+    SourceOutputModel restored;
+    restored.setup(true);
+    ASSERT_EQ(restored.stage.loadCheckpoint(checkpoint.string()), "");
+    bool available = false;
+    ASSERT_EQ(SourceResultHistory::read(file.string(), restored.history, available), "");
+    ASSERT_TRUE(available);
+    EXPECT_TRUE(restored.history.outfallReturnsAvailable());
+    ASSERT_EQ(restored.history.resume(restored.stage), "");
+    EXPECT_EQ(restored.history.tables().at("pending_outfall_return").columns[3].back(), 2);
+    m.step(.5, 3);
+    restored.step(.5, 3);
+    historyColumnsEqual(m.history, restored.history);
     EXPECT_TRUE(restored.sources.pendingOutfallReturns().empty());
-    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(restored.history));ASSERT_EQ(writer.finalize(m.context),0);
-    SourceResultHistory read;ASSERT_EQ(SourceResultHistory::read(file.string(),read,available),"");historyColumnsEqual(m.history,read);
-    H5File h5(file);EXPECT_EQ(h5.dims("/time"),(std::vector<hsize_t>{1}));
-    EXPECT_TRUE(h5.has("/source_history/source_water/outfall_return"));EXPECT_TRUE(h5.has("/Mesh2_face_depth"));
+    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(restored.history));
+    ASSERT_EQ(writer.finalize(m.context), 0);
+    SourceResultHistory read;
+    ASSERT_EQ(SourceResultHistory::read(file.string(), read, available), "");
+    historyColumnsEqual(m.history, read);
+    H5File h5(file);
+    EXPECT_EQ(h5.dims("/time"), (std::vector<hsize_t>{1}));
+    EXPECT_TRUE(h5.has("/source_history/source_water/outfall_return"));
+    EXPECT_TRUE(h5.has("/Mesh2_face_depth"));
 }
 TEST(Output2DSourceHistory, OutfallHistoryRefusesChangedProfilesAndMissingRequiredDataAtomically) {
-    fs::create_directories(kOutDir);const auto file=kOutDir/"outfall_history_schema.h5";
-    SourceOutputModel m;m.setup(true);Default2DOutputPlugin writer(file.string());ASSERT_EQ(writer.prepare(m.context),0);writer.prepareMeshAndDatasets(m.mesh);
-    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));ASSERT_EQ(writer.update(makeSnap(0,.08,.08)),0);
-    SourceOutputModel ordinary;ordinary.setup();EXPECT_FALSE(ordinary.history.outfallReturnsAvailable());
-    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(ordinary.history));EXPECT_NE(writer.update(makeSnap(1./86400,.08,.08)),0);
-    EXPECT_NE(writer.finalize(m.context),0);SourceResultHistory read;bool available=false;
-    ASSERT_EQ(SourceResultHistory::read(file.string(),read,available),"");historyColumnsEqual(m.history,read);
+    fs::create_directories(kOutDir);
+    const auto file = kOutDir / "outfall_history_schema.h5";
+    SourceOutputModel m;
+    m.setup(true);
+    Default2DOutputPlugin writer(file.string());
+    ASSERT_EQ(writer.prepare(m.context), 0);
+    writer.prepareMeshAndDatasets(m.mesh);
+    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));
+    ASSERT_EQ(writer.update(makeSnap(0, .08, .08)), 0);
+    SourceOutputModel ordinary;
+    ordinary.setup();
+    EXPECT_FALSE(ordinary.history.outfallReturnsAvailable());
+    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(ordinary.history));
+    EXPECT_NE(writer.update(makeSnap(1. / 86400, .08, .08)), 0);
+    EXPECT_NE(writer.finalize(m.context), 0);
+    SourceResultHistory read;
+    bool available = false;
+    ASSERT_EQ(SourceResultHistory::read(file.string(), read, available), "");
+    historyColumnsEqual(m.history, read);
     // Use this test's HDF5 instance after the engine writer closes, so malformed
     // files exercise the public reader rather than its in-memory validator.
-    for(int mode=0;mode<4;++mode) {
-        const auto bad=kOutDir/("outfall_history_bad_"+std::to_string(mode)+".h5");fs::copy_file(file,bad,fs::copy_options::overwrite_existing);
-        const auto f=H5Fopen(bad.string().c_str(),H5F_ACC_RDWR,H5P_DEFAULT);ASSERT_GE(f,0);
-        if(mode==0)ASSERT_GE(H5Ldelete(f,"/source_history/outfall_clock/completed_time",H5P_DEFAULT),0);
-        if(mode==1)ASSERT_GE(H5Ldelete(f,"/source_history/source_water/outfall_return",H5P_DEFAULT),0);
-        if(mode==2) {
-            const auto g=H5Gopen2(f,"/source_history",H5P_DEFAULT);ASSERT_GE(g,0);
-            ASSERT_GE(H5Adelete(g,"outfall_return_convention"),0);H5Gclose(g);
+    for (int mode = 0; mode < 4; ++mode) {
+        const auto bad = kOutDir / ("outfall_history_bad_" + std::to_string(mode) + ".h5");
+        fs::copy_file(file, bad, fs::copy_options::overwrite_existing);
+        const auto f = H5Fopen(bad.string().c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+        ASSERT_GE(f, 0);
+        if (mode == 0)
+            ASSERT_GE(H5Ldelete(f, "/source_history/outfall_clock/completed_time", H5P_DEFAULT), 0);
+        if (mode == 1)
+            ASSERT_GE(H5Ldelete(f, "/source_history/source_water/outfall_return", H5P_DEFAULT), 0);
+        if (mode == 2) {
+            const auto g = H5Gopen2(f, "/source_history", H5P_DEFAULT);
+            ASSERT_GE(g, 0);
+            ASSERT_GE(H5Adelete(g, "outfall_return_convention"), 0);
+            H5Gclose(g);
         }
-        if(mode==3)ASSERT_GE(H5Ldelete(f,"/source_history/checkpoint_match",H5P_DEFAULT),0);
-        H5Fclose(f);const auto before=read;available=true;
-        EXPECT_FALSE(SourceResultHistory::read(bad.string(),read,available).empty());EXPECT_FALSE(available);historyColumnsEqual(read,before);
+        if (mode == 3)
+            ASSERT_GE(H5Ldelete(f, "/source_history/checkpoint_match", H5P_DEFAULT), 0);
+        H5Fclose(f);
+        const auto before = read;
+        available = true;
+        EXPECT_FALSE(SourceResultHistory::read(bad.string(), read, available).empty());
+        EXPECT_FALSE(available);
+        historyColumnsEqual(read, before);
     }
 }
 TEST(Output2DSourceHistory, OlderHistoryCannotResumeReturnProfileWithoutItsRequiredDiagnostics) {
-    fs::create_directories(kOutDir);const auto file=kOutDir/"outfall_history_legacy_prefix.h5";
-    SourceOutputModel m;m.setup(true);m.step(0,1);Default2DOutputPlugin writer(file.string());
-    ASSERT_EQ(writer.prepare(m.context),0);writer.prepareMeshAndDatasets(m.mesh);
-    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));ASSERT_EQ(writer.finalize(m.context),0);
+    fs::create_directories(kOutDir);
+    const auto file = kOutDir / "outfall_history_legacy_prefix.h5";
+    SourceOutputModel m;
+    m.setup(true);
+    m.step(0, 1);
+    Default2DOutputPlugin writer(file.string());
+    ASSERT_EQ(writer.prepare(m.context), 0);
+    writer.prepareMeshAndDatasets(m.mesh);
+    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));
+    ASSERT_EQ(writer.finalize(m.context), 0);
     // A pre-version-3 recorder could save a matching enabled profile before
     // any positive returns, without knowing how to record later credits.
-    const auto f=H5Fopen(file.string().c_str(),H5F_ACC_RDWR,H5P_DEFAULT);ASSERT_GE(f,0);
-    const auto g=H5Gopen2(f,"/source_history",H5P_DEFAULT);ASSERT_GE(g,0);
-    const auto a=H5Aopen(g,"schema_version",H5P_DEFAULT),t=H5Aget_type(a);char version[512]={};version[0]='2';
-    ASSERT_GE(H5Awrite(a,t,version),0);H5Tclose(t);H5Aclose(a);
-    ASSERT_GE(H5Adelete(g,"outfall_return_convention"),0);
-    for(const char* name:{"outfall_clock","pending_outfall_return","source_water/outfall_return"})
-        ASSERT_GE(H5Ldelete(g,name,H5P_DEFAULT),0);
-    H5Gclose(g);H5Fclose(f);SourceResultHistory read;bool available=false;
-    ASSERT_EQ(SourceResultHistory::read(file.string(),read,available),"");ASSERT_TRUE(available);EXPECT_FALSE(read.outfallReturnsAvailable());
-    const auto before=read;
-    CommonSourceStage unattached;EXPECT_FALSE(read.resume(unattached).empty());historyColumnsEqual(read,before);
-    EXPECT_NE(read.resume(m.stage).find("capability"),std::string::npos);historyColumnsEqual(read,before);
-    ASSERT_EQ(m.stage.creditOutfallReturns(0,1,{.1}),"");m.step(1,2); // The version-3 recorder continues correctly.
-    EXPECT_NEAR(m.history.tables().at("source_water").columns.back().back(),.1*.3048*.3048*.3048,1e-15);
+    const auto f = H5Fopen(file.string().c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+    ASSERT_GE(f, 0);
+    const auto g = H5Gopen2(f, "/source_history", H5P_DEFAULT);
+    ASSERT_GE(g, 0);
+    const auto a = H5Aopen(g, "schema_version", H5P_DEFAULT), t = H5Aget_type(a);
+    char version[512] = {};
+    version[0] = '2';
+    ASSERT_GE(H5Awrite(a, t, version), 0);
+    H5Tclose(t);
+    H5Aclose(a);
+    ASSERT_GE(H5Adelete(g, "outfall_return_convention"), 0);
+    for (const char* name :
+         {"outfall_clock", "pending_outfall_return", "source_water/outfall_return"})
+        ASSERT_GE(H5Ldelete(g, name, H5P_DEFAULT), 0);
+    H5Gclose(g);
+    H5Fclose(f);
+    SourceResultHistory read;
+    bool available = false;
+    ASSERT_EQ(SourceResultHistory::read(file.string(), read, available), "");
+    ASSERT_TRUE(available);
+    EXPECT_FALSE(read.outfallReturnsAvailable());
+    const auto before = read;
+    CommonSourceStage unattached;
+    EXPECT_FALSE(read.resume(unattached).empty());
+    historyColumnsEqual(read, before);
+    EXPECT_NE(read.resume(m.stage).find("capability"), std::string::npos);
+    historyColumnsEqual(read, before);
+    ASSERT_EQ(m.stage.creditOutfallReturns(0, 1, {.1}), "");
+    m.step(1, 2); // The version-3 recorder continues correctly.
+    EXPECT_NEAR(m.history.tables().at("source_water").columns.back().back(),
+                .1 * .3048 * .3048 * .3048, 1e-15);
 }
 #endif
 
 TEST(Output2DSnow, WritesAcceptedStateWithUnitsMissingValuesAndRainfallSelection) {
     fs::create_directories(kOutDir);
-    for(bool selected:{false,true}) {
-        const auto path=kOutDir/(selected?"snow.h5":"snow-disabled.h5");
-        openswmm::SimulationContext ctx;Default2DOutputPlugin writer(path.string());
-        ASSERT_EQ(writer.initialize({},nullptr),0);ASSERT_EQ(writer.prepare(ctx),0);
-        SolverOptions2D options;options.report_2d_vars=report2d::DEPTH | (selected?report2d::RAINFALL:0);
-        ASSERT_EQ(writer.configureOutput(options,60),"");writer.prepareMeshAndDatasets(unitSquare());
-        auto snap=makeSnap(1,.1,.2);snap.surface_species_count=0;snap.surface_species_conc.clear();
-        const double missing=std::numeric_limits<double>::quiet_NaN();
-        for(std::size_t k=0;k<snap.surface_snow.size();++k)snap.surface_snow[k]={double(k)+.123456789012345,missing};
-        snap.surface_snow[0]={1,-1};snap.surface_snow[1]={3590,missing};
-        ASSERT_EQ(writer.update(snap),0);ASSERT_EQ(writer.finalize(ctx),0);
-        H5File file(path);ASSERT_GE(file.id,0);
-        for(std::size_t k=0;k<openswmm::meshSnowFields.size();++k) {
-            const auto& field=openswmm::meshSnowFields[k];EXPECT_EQ(file.has(field.name),selected);
-            if(!selected)continue;
-            EXPECT_EQ(file.dims(field.name),(std::vector<hsize_t>{1,2}));
-            const auto values=file.readAll(field.name);ASSERT_EQ(values.size(),2);
-            EXPECT_EQ(values[0],snap.surface_snow[k][0]);
-            if(k==0)EXPECT_EQ(values[1],-1);else EXPECT_TRUE(std::isnan(values[1]));
-            EXPECT_EQ(file.storageSize(field.name),8);
-            hid_t ds=H5Dopen2(file.id,field.name,H5P_DEFAULT);
-            EXPECT_GT(H5Aexists(ds,"units"),0);EXPECT_GT(H5Aexists(ds,"state_time"),0);H5Dclose(ds);
+    for (bool selected : {false, true}) {
+        const auto path = kOutDir / (selected ? "snow.h5" : "snow-disabled.h5");
+        openswmm::SimulationContext ctx;
+        Default2DOutputPlugin writer(path.string());
+        ASSERT_EQ(writer.initialize({}, nullptr), 0);
+        ASSERT_EQ(writer.prepare(ctx), 0);
+        SolverOptions2D options;
+        options.report_2d_vars = report2d::DEPTH | (selected ? report2d::RAINFALL : 0);
+        ASSERT_EQ(writer.configureOutput(options, 60), "");
+        writer.prepareMeshAndDatasets(unitSquare());
+        auto snap = makeSnap(1, .1, .2);
+        snap.surface_species_count = 0;
+        snap.surface_species_conc.clear();
+        const double missing = std::numeric_limits<double>::quiet_NaN();
+        for (std::size_t k = 0; k < snap.surface_snow.size(); ++k)
+            snap.surface_snow[k] = {double(k) + .123456789012345, missing};
+        snap.surface_snow[0] = {1, -1};
+        snap.surface_snow[1] = {3590, missing};
+        ASSERT_EQ(writer.update(snap), 0);
+        ASSERT_EQ(writer.finalize(ctx), 0);
+        H5File file(path);
+        ASSERT_GE(file.id, 0);
+        for (std::size_t k = 0; k < openswmm::meshSnowFields.size(); ++k) {
+            const auto& field = openswmm::meshSnowFields[k];
+            EXPECT_EQ(file.has(field.name), selected);
+            if (!selected)
+                continue;
+            EXPECT_EQ(file.dims(field.name), (std::vector<hsize_t>{1, 2}));
+            const auto values = file.readAll(field.name);
+            ASSERT_EQ(values.size(), 2);
+            EXPECT_EQ(values[0], snap.surface_snow[k][0]);
+            if (k == 0)
+                EXPECT_EQ(values[1], -1);
+            else
+                EXPECT_TRUE(std::isnan(values[1]));
+            EXPECT_EQ(file.storageSize(field.name), 8);
+            hid_t ds = H5Dopen2(file.id, field.name, H5P_DEFAULT);
+            EXPECT_GT(H5Aexists(ds, "units"), 0);
+            EXPECT_GT(H5Aexists(ds, "state_time"), 0);
+            H5Dclose(ds);
         }
     }
 }
@@ -1559,11 +2052,11 @@ TEST(Output2DThermal, WritesOnlySelectedInitializedThermalStateAndSignedBudgets)
         snap.thermal2d_bed_species_units = {"MG/L", "hours"};
         snap.thermal2d_bed_pore_volume = {0.2, std::numeric_limits<double>::quiet_NaN()};
         snap.thermal2d_bed_species_concentration = {1.5, std::numeric_limits<double>::quiet_NaN(),
-                                                     2.5, std::numeric_limits<double>::quiet_NaN()};
+                                                    2.5, std::numeric_limits<double>::quiet_NaN()};
         snap.thermal2d_bed_species_initial_amount = {0.3, std::numeric_limits<double>::quiet_NaN(),
-                                                      0.5, std::numeric_limits<double>::quiet_NaN()};
-        snap.thermal2d_bed_species_exchange = {3.0, std::numeric_limits<double>::quiet_NaN(),
-                                                -4.0, std::numeric_limits<double>::quiet_NaN()};
+                                                     0.5, std::numeric_limits<double>::quiet_NaN()};
+        snap.thermal2d_bed_species_exchange = {3.0, std::numeric_limits<double>::quiet_NaN(), -4.0,
+                                               std::numeric_limits<double>::quiet_NaN()};
         snap.thermal2d_bed_age_generation = {5.0, std::numeric_limits<double>::quiet_NaN()};
         snap.thermal2d_surface_budget_terms = 6;
         snap.thermal2d_surface_budget = {1, 2, -3, 4, 5, 6, 7, 8, -9, 10, 11, 12};
@@ -1572,10 +2065,14 @@ TEST(Output2DThermal, WritesOnlySelectedInitializedThermalStateAndSignedBudgets)
         snap.thermal2d_ground_energy = {120.0, std::numeric_limits<double>::quiet_NaN()};
         snap.thermal2d_ground_capacity = {20.0, std::numeric_limits<double>::quiet_NaN()};
         snap.thermal2d_layer_count = 2;
-        snap.thermal2d_ground_layer_center_m = {.25, std::numeric_limits<double>::quiet_NaN(), .75, std::numeric_limits<double>::quiet_NaN()};
-        snap.thermal2d_ground_layer_temperature = {5.0, std::numeric_limits<double>::quiet_NaN(), 7.0, std::numeric_limits<double>::quiet_NaN()};
-        snap.thermal2d_ground_layer_energy = {50.0, std::numeric_limits<double>::quiet_NaN(), 70.0, std::numeric_limits<double>::quiet_NaN()};
-        snap.thermal2d_ground_layer_capacity = {10.0, std::numeric_limits<double>::quiet_NaN(), 10.0, std::numeric_limits<double>::quiet_NaN()};
+        snap.thermal2d_ground_layer_center_m = {.25, std::numeric_limits<double>::quiet_NaN(), .75,
+                                                std::numeric_limits<double>::quiet_NaN()};
+        snap.thermal2d_ground_layer_temperature = {5.0, std::numeric_limits<double>::quiet_NaN(),
+                                                   7.0, std::numeric_limits<double>::quiet_NaN()};
+        snap.thermal2d_ground_layer_energy = {50.0, std::numeric_limits<double>::quiet_NaN(), 70.0,
+                                              std::numeric_limits<double>::quiet_NaN()};
+        snap.thermal2d_ground_layer_capacity = {10.0, std::numeric_limits<double>::quiet_NaN(),
+                                                10.0, std::numeric_limits<double>::quiet_NaN()};
         snap.thermal2d_ground_budget_terms = 12;
         snap.thermal2d_ground_budget.assign(24, 0.0);
         snap.thermal2d_ground_budget[9] = -1.25;
@@ -1614,7 +2111,8 @@ TEST(Output2DThermal, WritesOnlySelectedInitializedThermalStateAndSignedBudgets)
         EXPECT_EQ(file.has("Mesh2_lid_layer_node_id"), selected);
         EXPECT_EQ(file.has("Mesh2_lid_layer_ground_contact_energy"), selected);
         EXPECT_EQ(H5Aexists(file.id, "thermal_result_schema_version") > 0, selected);
-        if (!selected) continue;
+        if (!selected)
+            continue;
 
         EXPECT_EQ(file.dims("Mesh2_face_water_temperature"), (std::vector<hsize_t>{1, 2}));
         EXPECT_EQ(file.dims("Mesh2_face_soil_layer_temperature"), (std::vector<hsize_t>{1, 2, 2}));
@@ -1647,15 +2145,17 @@ TEST(Output2DThermal, WritesOnlySelectedInitializedThermalStateAndSignedBudgets)
         const auto budget = file.readAll("mesh_heat_budget");
         ASSERT_EQ(budget.size(), 12u);
         EXPECT_DOUBLE_EQ(budget[2], -3.0);
-        EXPECT_EQ(file.dsAttr("mesh_heat_budget", "terms"),
-                  "radiation_j,sensible_j,latent_j,deep_boundary_j,water_to_bed_j,water_thermal_increment_j");
+        EXPECT_EQ(
+            file.dsAttr("mesh_heat_budget", "terms"),
+            "radiation_j,sensible_j,latent_j,deep_boundary_j,water_to_bed_j,water_thermal_increment_j");
         EXPECT_EQ(file.dsAttr("Mesh2_face_soil_layer_temperature", "units"), "degree_Celsius");
         EXPECT_EQ(file.dims("Mesh2_face_bed_species_conc"), (std::vector<hsize_t>{1, 2, 2}));
         EXPECT_EQ(file.dsAttr("Mesh2_face_bed_species_conc", "species_names"), "TSS,__WATER_AGE__");
         EXPECT_EQ(file.dsAttr("Mesh2_face_bed_species_conc", "species_units"), "MG/L,hours");
         EXPECT_EQ(file.dsAttr("Mesh2_face_bed_species_exchange", "location"), "bed porewater");
         EXPECT_EQ(file.dsAttr("Mesh2_face_bed_species_exchange", "units"), "1");
-        EXPECT_EQ(file.dsAttr("Mesh2_face_bed_species_exchange", "species_units"), "MG/L m3,hours m3");
+        EXPECT_EQ(file.dsAttr("Mesh2_face_bed_species_exchange", "species_units"),
+                  "MG/L m3,hours m3");
         const auto bed_species = file.readAll("Mesh2_face_bed_species_conc");
         ASSERT_EQ(bed_species.size(), 4u);
         EXPECT_DOUBLE_EQ(bed_species[0], 1.5);
@@ -1714,62 +2214,127 @@ TEST(Output2DThermal, ReportsLocalBedPhysicalStoresWithoutQualityRows) {
     EXPECT_TRUE(file.has("Mesh2_face_bed_porewater_volume"));
     EXPECT_FALSE(file.has("Mesh2_face_bed_species_conc"));
     EXPECT_FALSE(file.has("Mesh2_face_bed_species_initial_amount"));
-    EXPECT_EQ(file.readAll("Mesh2_face_bed_initial_energy"),
-              (std::vector<double>{10.0, 20.0}));
-    EXPECT_EQ(file.readAll("Mesh2_face_bed_porewater_volume"),
-              (std::vector<double>{.2, .4}));
+    EXPECT_EQ(file.readAll("Mesh2_face_bed_initial_energy"), (std::vector<double>{10.0, 20.0}));
+    EXPECT_EQ(file.readAll("Mesh2_face_bed_porewater_volume"), (std::vector<double>{.2, .4}));
 }
 
 namespace {
+/**
+ * @brief Read complete output artifact bytes for unchanged-file comparisons.
+ *
+ * Uses stream iterators and no explicit open/read checks; embedded zero bytes are retained and
+ * allocation errors propagate.
+ *
+ * @param[in] path Binary input file path, unchanged by the helper.
+ * @return Owned binary bytes; empty can mean an empty or unreadable file, and read errors have no
+ *     separate status.
+ */
 std::string resultBytes(const fs::path& path) {
-    std::ifstream file(path,std::ios::binary);
-    return {std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
+    std::ifstream file(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
 }
 }
 TEST(Output2DWriter, IdenticalReportsDoNotDependOnWallClockCreationTime) {
-    SolverOptions2D options;options.output_precision=OutputPrecision2D::FLOAT64;options.output_compression=3;
-    const auto a=writeFile("deterministic-a",options,0,3,1./86400);
+    SolverOptions2D options;
+    options.output_precision = OutputPrecision2D::FLOAT64;
+    options.output_compression = 3;
+    const auto a = writeFile("deterministic-a", options, 0, 3, 1. / 86400);
     std::this_thread::sleep_for(std::chrono::milliseconds(1100));
-    const auto b=writeFile("deterministic-b",options,0,3,1./86400);
-    const auto x=resultBytes(a),y=resultBytes(b);ASSERT_FALSE(x.empty());
-    EXPECT_EQ(x.size(),y.size());EXPECT_TRUE(x==y)<<"Identical reports must retain exact file bytes across wall-clock seconds.";
+    const auto b = writeFile("deterministic-b", options, 0, 3, 1. / 86400);
+    const auto x = resultBytes(a), y = resultBytes(b);
+    ASSERT_FALSE(x.empty());
+    EXPECT_EQ(x.size(), y.size());
+    EXPECT_TRUE(x == y)
+        << "Identical reports must retain exact file bytes across wall-clock seconds.";
 }
 TEST(Output2DSourceHistory, IdenticalAcceptedHistoryDoesNotDependOnWallClockCreationTime) {
-    fs::create_directories(kOutDir);SourceOutputModel model;model.setup();model.step(0,1);
-    const auto write=[&](const char* name) {
-        const auto path=kOutDir/name;Default2DOutputPlugin writer(path.string());
-        EXPECT_EQ(writer.prepare(model.context),0);writer.prepareMeshAndDatasets(model.mesh);
+    fs::create_directories(kOutDir);
+    SourceOutputModel model;
+    model.setup();
+    model.step(0, 1);
+    const auto write = [&](const char* name) {
+        const auto path = kOutDir / name;
+        Default2DOutputPlugin writer(path.string());
+        EXPECT_EQ(writer.prepare(model.context), 0);
+        writer.prepareMeshAndDatasets(model.mesh);
         writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(model.history));
-        EXPECT_EQ(writer.update(makeSnap(0,.08,.08)),0);EXPECT_EQ(writer.finalize(model.context),0);return path;
+        EXPECT_EQ(writer.update(makeSnap(0, .08, .08)), 0);
+        EXPECT_EQ(writer.finalize(model.context), 0);
+        return path;
     };
-    const auto a=write("deterministic-history-a.h5");std::this_thread::sleep_for(std::chrono::milliseconds(1100));
-    const auto b=write("deterministic-history-b.h5");const auto x=resultBytes(a),y=resultBytes(b);ASSERT_FALSE(x.empty());
-    EXPECT_EQ(x.size(),y.size());EXPECT_TRUE(x==y)<<"Identical accepted history must retain exact file bytes across wall-clock seconds.";
+    const auto a = write("deterministic-history-a.h5");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    const auto b = write("deterministic-history-b.h5");
+    const auto x = resultBytes(a), y = resultBytes(b);
+    ASSERT_FALSE(x.empty());
+    EXPECT_EQ(x.size(), y.size());
+    EXPECT_TRUE(x == y)
+        << "Identical accepted history must retain exact file bytes across wall-clock seconds.";
 }
 
 TEST(Output2DWriter, RuntimeRk2RainExpiryPreservesAcceptedMassBalanceAndCellHdfHistory) {
-    fs::create_directories(kOutDir);const auto inp=kOutDir/"runtime_rk2_rain.inp",h5=kOutDir/"runtime_rk2_rain.h5";fs::remove(h5);
+    fs::create_directories(kOutDir);
+    const auto inp = kOutDir / "runtime_rk2_rain.inp", h5 = kOutDir / "runtime_rk2_rain.h5";
+    fs::remove(h5);
     {
-        std::ofstream f(inp);f<<"[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:00:03\nREPORT_START_TIME 00:00:01\nREPORT_STEP 00:00:01\nROUTING_STEP .4\nVARIABLE_STEP 0\n"
-          "[POLLUTANTS]\nTSS MG/L 0 0 0 0\n[JUNCTIONS]\nJ1 -2 4 0 0 0\n[OUTFALLS]\nO1 -2.5 FREE NO\n[CONDUITS]\nC1 J1 O1 30 .013 0 0 0\n[XSECTIONS]\nC1 CIRCULAR .5 0 0 0 1\n"
-          "[2D_OPTIONS]\nMOMENTUM_EQUATION FULL_SWE\nRECONSTRUCTION_ORDER 2\nLTS_TIERS 1\nMAX_TIMESTEP .1\nREPORT_2D YES\nREPORT_2D_STEP 00:00:01\nOUTPUT_PRECISION FLOAT64\nOUTPUT_FILE runtime_rk2_rain.h5\n"
-          "[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n0 10 0\n[2D_TRIANGLES]\n0 1 2 .03 .1\n0 2 3 .03 .1\n"
-          "[2D_AQUIFER_OPTIONS]\nCLOSURE SIGMA\nM_LAYERS 4\nNODE_ENROLMENT ROWS\nLINK_SEEPAGE NONE\nGW_ET NONE\n[2D_AQUIFER]\n* 1e-15 2 .45 .1 2 HG0 .6 C_LOSS 0\n"
-          "[GW_TRANSPORT_OPTIONS]\nUNSAT_TRANSPORT LAYERED\nTRANSPORT_POLLUTANTS YES\nDISPERSION NO\n[REPORT]\nINPUT NO\n";
+        std::ofstream f(inp);
+        f << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:00:03\nREPORT_START_TIME 00:00:01\nREPORT_STEP 00:00:01\nROUTING_STEP .4\nVARIABLE_STEP 0\n"
+             "[POLLUTANTS]\nTSS MG/L 0 0 0 0\n[JUNCTIONS]\nJ1 -2 4 0 0 0\n[OUTFALLS]\nO1 -2.5 FREE NO\n[CONDUITS]\nC1 J1 O1 30 .013 0 0 0\n[XSECTIONS]\nC1 CIRCULAR .5 0 0 0 1\n"
+             "[2D_OPTIONS]\nMOMENTUM_EQUATION FULL_SWE\nRECONSTRUCTION_ORDER 2\nLTS_TIERS 1\nMAX_TIMESTEP .1\nREPORT_2D YES\nREPORT_2D_STEP 00:00:01\nOUTPUT_PRECISION FLOAT64\nOUTPUT_FILE runtime_rk2_rain.h5\n"
+             "[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n0 10 0\n[2D_TRIANGLES]\n0 1 2 .03 .1\n0 2 3 .03 .1\n"
+             "[2D_AQUIFER_OPTIONS]\nCLOSURE SIGMA\nM_LAYERS 4\nNODE_ENROLMENT ROWS\nLINK_SEEPAGE NONE\nGW_ET NONE\n[2D_AQUIFER]\n* 1e-15 2 .45 .1 2 HG0 .6 C_LOSS 0\n"
+             "[GW_TRANSPORT_OPTIONS]\nUNSAT_TRANSPORT LAYERED\nTRANSPORT_POLLUTANTS YES\nDISPERSION NO\n[REPORT]\nINPUT NO\n";
     }
-    struct Engine {SWMM_Engine e=swmm_engine_create();~Engine(){swmm_engine_close(e);swmm_engine_destroy(e);}} engine;
-    const auto rpt=kOutDir/"runtime_rk2_rain.rpt",out=kOutDir/"runtime_rk2_rain.out";
-    ASSERT_EQ(swmm_engine_open(engine.e,inp.string().c_str(),rpt.string().c_str(),out.string().c_str(),nullptr),SWMM_OK);
-    ASSERT_EQ(swmm_engine_initialize(engine.e),SWMM_OK);ASSERT_EQ(swmm_engine_start(engine.e,1),SWMM_OK);
-    double concentration=0;SWMM_CouplingForcing forcing{sizeof(SWMM_CouplingForcing),1,-1,1,.0001,.735,1,&concentration};
-    SWMM_CouplingFrame frame{};frame.struct_size=sizeof(frame);frame.version=SWMM_COUPLING_FRAME_VERSION;frame.provider="rain-report";frame.forcing_count=1;frame.forcings=&forcing;
-    ASSERT_EQ(swmm_coupling_apply_frame(engine.e,&frame),SWMM_OK);double actual=0;
-    ASSERT_EQ(swmm_engine_advance_to(engine.e,3,&actual),SWMM_OK);EXPECT_NEAR(actual,3,1e-12);
-    double volume[2]={};ASSERT_EQ(swmm_2d_get_rain_volume_bulk(engine.e,volume),SWMM_OK);
-    for(double value:volume)EXPECT_NEAR(value,50*.0001*.735,1e-12);
-    ASSERT_EQ(swmm_engine_end(engine.e),SWMM_OK);H5File file(h5);
-    ASSERT_TRUE(file.has("Mesh2_face_rain_cum"));const auto times=file.readAll("time"),cum=file.readAll("Mesh2_face_rain_cum"),rain=file.readAll("mass_balance_2d/rainfall_in");
-    ASSERT_FALSE(times.empty());ASSERT_EQ(cum.size(),2*times.size());ASSERT_FALSE(rain.empty());
-    for(double value:cum)EXPECT_NEAR(value,50*.0001*.735,1e-10);
-    for(double value:rain)EXPECT_NEAR(value,100*.0001*.735,1e-10);
+    /** @cond */
+    struct Engine {
+        SWMM_Engine e = swmm_engine_create();
+        /**
+         * @brief Release the native engine owned by this function-local test guard.
+         *
+         * Calls cleanup unconditionally on the owned fixture handle. Calls close and destroy without a
+         * separate end call. Ignores all cleanup statuses; ownership must be exclusive and handle storage
+         * must remain valid until scope exit. Borrowed engine/model references expire here; generated
+         * artifacts are retained.
+         */
+        ~Engine() {
+            swmm_engine_close(e);
+            swmm_engine_destroy(e);
+        }
+    } engine;
+    /** @endcond */
+    const auto rpt = kOutDir / "runtime_rk2_rain.rpt", out = kOutDir / "runtime_rk2_rain.out";
+    ASSERT_EQ(swmm_engine_open(engine.e, inp.string().c_str(), rpt.string().c_str(),
+                               out.string().c_str(), nullptr),
+              SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(engine.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(engine.e, 1), SWMM_OK);
+    double concentration = 0;
+    SWMM_CouplingForcing forcing{
+        sizeof(SWMM_CouplingForcing), 1, -1, 1, .0001, .735, 1, &concentration};
+    SWMM_CouplingFrame frame{};
+    frame.struct_size = sizeof(frame);
+    frame.version = SWMM_COUPLING_FRAME_VERSION;
+    frame.provider = "rain-report";
+    frame.forcing_count = 1;
+    frame.forcings = &forcing;
+    ASSERT_EQ(swmm_coupling_apply_frame(engine.e, &frame), SWMM_OK);
+    double actual = 0;
+    ASSERT_EQ(swmm_engine_advance_to(engine.e, 3, &actual), SWMM_OK);
+    EXPECT_NEAR(actual, 3, 1e-12);
+    double volume[2] = {};
+    ASSERT_EQ(swmm_2d_get_rain_volume_bulk(engine.e, volume), SWMM_OK);
+    for (double value : volume)
+        EXPECT_NEAR(value, 50 * .0001 * .735, 1e-12);
+    ASSERT_EQ(swmm_engine_end(engine.e), SWMM_OK);
+    H5File file(h5);
+    ASSERT_TRUE(file.has("Mesh2_face_rain_cum"));
+    const auto times = file.readAll("time"), cum = file.readAll("Mesh2_face_rain_cum"),
+               rain = file.readAll("mass_balance_2d/rainfall_in");
+    ASSERT_FALSE(times.empty());
+    ASSERT_EQ(cum.size(), 2 * times.size());
+    ASSERT_FALSE(rain.empty());
+    for (double value : cum)
+        EXPECT_NEAR(value, 50 * .0001 * .735, 1e-10);
+    for (double value : rain)
+        EXPECT_NEAR(value, 100 * .0001 * .735, 1e-10);
 }

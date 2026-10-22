@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file WriteTask.hpp
- * @brief Ring-buffer task descriptor for the IO thread (Phase 5, R17).
+ * @file      WriteTask.hpp
+ * @brief     Ring-buffer task descriptor for the IO thread (Phase 5, R17).
  *
  * @details A WriteTask packages a SimulationSnapshot for delivery to the
  *          IOThread write queue. The snapshot is moved (or deep-copied) from
@@ -30,9 +30,9 @@
  * @see include/openswmm/plugin_sdk/SimulationSnapshot.hpp
  * @ingroup engine_io
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_WRITE_TASK_HPP
@@ -58,15 +58,30 @@ struct WriteTask {
     /** @brief Sequential task index (0-based). Useful for ordering assertions. */
     int sequence = 0;
 
+    /** @brief Construct an empty/default snapshot task with sequence zero. */
     WriteTask() = default;
 
+    /** @brief Take snapshot ownership for deferred plugin delivery.
+     * @param snap Snapshot by value, moved into the task; callers can move large owned
+     * vector payloads instead of copying them. Referenced nonowned metadata still follows
+     * SimulationSnapshot's lifetime contract.
+     * @param seq Raw ordering index copied without range/uniqueness validation. */
     explicit WriteTask(SimulationSnapshot snap, int seq = 0)
         : snapshot(std::move(snap)), sequence(seq) {}
 
     // Movable; not copyable (snapshots can be large)
+    /** @brief Move snapshot ownership and copy the sequence, leaving moved-from storage valid.
+     * @par Source
+     * The unnamed rvalue task supplies the moved payload; no plugin IO is performed. */
     WriteTask(WriteTask&&) noexcept = default;
+    /** @brief Replace the snapshot/sequence by defaulted move assignment.
+     * @par Source
+     * The unnamed rvalue task supplies the moved payload; prior owned buffers are released.
+     * @return This task. */
     WriteTask& operator=(WriteTask&&) noexcept = default;
+    /** @brief Disable copying of potentially large snapshot payloads. */
     WriteTask(const WriteTask&) = delete;
+    /** @brief Disable copy assignment of potentially large snapshot payloads. */
     WriteTask& operator=(const WriteTask&) = delete;
 };
 

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file Link.hpp
- * @brief Link hydraulics — velocity, Froude, Manning conveyance, settings.
+ * @file      Link.hpp
+ * @brief     Link hydraulics — velocity, Froude, Manning conveyance, settings.
  *
  * @details Provides per-element and batch functions for conduit hydraulic
  *          computations. All formulas are numerically identical to legacy
@@ -25,9 +25,9 @@
  * @note Legacy reference: src/legacy/engine/link.c
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_LINK_HPP
@@ -90,8 +90,8 @@ double getFroude(const XSectParams& xs, double v, double y);
  * @param[out] rough_factor Head loss coefficient.
  * @param[out] q_full     Full-pipe flow rate (ft3/s).
  */
-void computeConveyance(double roughness, double slope, double s_full,
-                       double& beta, double& rough_factor, double& q_full);
+void computeConveyance(double roughness, double slope, double s_full, double& beta,
+                       double& rough_factor, double& q_full);
 
 /**
  * @brief Compute normal-flow depth from flow rate (inverse Manning).
@@ -111,12 +111,17 @@ void computeConveyance(double roughness, double slope, double s_full,
  *              the table past its end. Negative disables the cap.
  * @returns Normal depth (ft).
  */
-double getDepthFromFlow(const XSectParams& xs, double beta, double q,
-                        double q_max = -1.0);
+double getDepthFromFlow(const XSectParams& xs, double beta, double q, double q_max = -1.0);
 
 /**
- * @brief Compute the capacity fraction (depth / full depth for conduits,
- *        setting for other links).
+ * @brief Compute the wetted-area fraction relative to full cross-section area.
+ *
+ * This helper reports area fraction, not depth fraction or regulator setting. It does not cap an
+ * analytic open shape's above-full area ratio at1.
+ *
+ * @param[in] xs Borrowed valid native section with live optional tables.
+ * @param[in] depth Finite nonnegative native water depth ft.
+ * @return A(depth)/a_full, or0 when y_full<=0 or a_full<=0.
  */
 double getCapacity(const XSectParams& xs, double depth);
 
@@ -147,9 +152,8 @@ double getHydPower(double flow, double head_upstream, double head_downstream);
  *                   is known to be a self-contained shape.
  * @returns Populated XSectParams struct.
  */
-XSectParams buildXSectParams(
-    const LinkData& links, std::size_t uj,
-    const std::vector<transect::TransectData>* transects = nullptr);
+XSectParams buildXSectParams(const LinkData& links, std::size_t uj,
+                             const std::vector<transect::TransectData>* transects = nullptr);
 
 // ============================================================================
 // Batch functions (for routing hot loop)
@@ -159,32 +163,29 @@ XSectParams buildXSectParams(
 // code; referenced conduit fields now in ConduitData — see LinkSubtypes.hpp).
 
 /**
- * @brief Translate LinkData::XsectShape to batch XSectShape int code.
+ * @brief Map model-storage section type to its distinct kernel numbering.
  *
- * @details The two enums have different orderings. This function provides
- *          a safe mapping for use wherever XSectParams.type is set from
- *          LinkData::xsect_shape.
+ * @param[in] link_shape Storage XsectShape candidate; known types map by name.
+ * @return Matching XSectShape integer code; DUMMY for DUMMY or unrecognized storage value.
  */
 int translateShape(XsectShape link_shape);
 
 /**
- * @brief Sediment bump carried by a FILLED_CIRCULAR conduit's stored offsets.
+ * @brief Read the resolved sediment-depth adjustment for a filled circular conduit.
  *
- * @details Once resolve_cross_references() has run, offset1 / offset2 of a
- *          partly filled circular conduit hold the AUTHORED offset plus the
- *          sediment depth y_bot (legacy link.c:1072-1077), so the hydraulics
- *          see the sediment surface as the invert. Everything that speaks
- *          authored offsets — the C API getters / setters, the edit ops that
- *          write an authored 0 at a new junction, and the writers' inverse in
- *          convert_internal_to_authored() — adds or removes this amount.
- *          @p resolved is false in the BUILDING state, where the stores hold
- *          authored values until swmm_finalize_model() resolves them once.
- * @return y_bot (internal ft) for a resolved FILLED_CIRCULAR conduit, else 0.
+ * Does not mutate offsets or validate the index; callers add/subtract this bump when crossing
+ * authored/resolved offset conventions.
+ *
+ * @param[in] links Borrowed aligned link type/shape/bottom-depth columns.
+ * @param[in] j Valid global link slot if resolved=true; not read when false.
+ * @param[in] resolved True only after geometry resolution has applied the filled-bottom adjustment.
+ * @return Stored xsect_y_bot in native ft for a resolved FILLED_CIRCULAR conduit, otherwise0.
  */
 inline double filledCircularOffsetBump(const LinkData& links, std::size_t j, bool resolved) {
-    if (!resolved) return 0.0;
-    if (links.type[j] != LinkType::CONDUIT ||
-        links.xsect_shape[j] != XsectShape::FILLED_CIRCULAR) return 0.0;
+    if (!resolved)
+        return 0.0;
+    if (links.type[j] != LinkType::CONDUIT || links.xsect_shape[j] != XsectShape::FILLED_CIRCULAR)
+        return 0.0;
     return links.xsect_y_bot[j];
 }
 
@@ -215,8 +216,8 @@ inline double filledCircularOffsetBump(const LinkData& links, std::size_t j, boo
  * @param transect_idx  Index to record in `xs.transect`, or -1 when the table
  *                      is owned rather than pooled.
  */
-void applyTabulatedXSectParams(XSectParams& xs, const transect::TransectData& td,
-                               double y_full, int transect_idx);
+void applyTabulatedXSectParams(XSectParams& xs, const transect::TransectData& td, double y_full,
+                               int transect_idx);
 
 } // namespace link
 

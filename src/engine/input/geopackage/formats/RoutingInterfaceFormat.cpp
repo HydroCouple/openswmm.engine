@@ -15,16 +15,16 @@
 // limitations under the License.
 
 /**
- * @file RoutingInterfaceFormat.cpp
- * @brief SWMM5 routing-interface text format — parser + materialiser.
+ * @file      RoutingInterfaceFormat.cpp
+ * @brief     SWMM5 routing-interface text format — parser + materialiser.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "RoutingInterfaceFormat.hpp"
-#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
+#include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
 
 #include "../../../core/DateTime.hpp"
 
@@ -39,42 +39,69 @@ namespace openswmm::gpkg::formats {
 
 namespace {
 
+/**
+ * @brief Remove trailing newline, carriage return, space and tab bytes.
+ *
+ * Does not interpret Unicode or comments; borrowed views into modified tail invalidate.
+ *
+ * @param[in,out] s Mutable line; leading whitespace and other trailing whitespace remain.
+ */
 void rtrim(std::string& s) {
-    while (!s.empty() && (s.back() == '\n' || s.back() == '\r'
-                          || s.back() == ' ' || s.back() == '\t'))
+    while (!s.empty() &&
+           (s.back() == '\n' || s.back() == '\r' || s.back() == ' ' || s.back() == '\t'))
         s.pop_back();
 }
 
 // Read the leading integer from a header line like "  60   - reporting time step".
 // Returns -1 if no integer was found.
+/**
+ * @brief Scan the leading signed integer from an interface header line.
+ *
+ * A legitimate -1 is indistinguishable from failure; does not require complete numeric-token
+ * consumption.
+ *
+ * @param[in] s Borrowed text; optional leading whitespace and trailing description accepted.
+ *     Numeric prefix must fit int.
+ * @return Scanned integer, or -1 when no integer conversion succeeds.
+ */
 int leadingInt(const std::string& s) {
     int v = 0;
-    if (std::sscanf(s.c_str(), "%d", &v) != 1) return -1;
+    if (std::sscanf(s.c_str(), "%d", &v) != 1)
+        return -1;
     return v;
 }
 
+/**
+ * @brief Split an interface line at C++ stream-locale whitespace.
+ *
+ * Stream/allocation failures follow standard stream behavior; no token-count/schema validation.
+ *
+ * @param[in] s Borrowed line; no quote/comment processing.
+ * @return Owned nonempty tokens in order; whitespace-only input yields an empty vector.
+ */
 std::vector<std::string> tokenize(const std::string& s) {
     std::vector<std::string> out;
     std::istringstream is(s);
     std::string tok;
-    while (is >> tok) out.push_back(std::move(tok));
+    while (is >> tok)
+        out.push_back(std::move(tok));
     return out;
 }
 
 } // namespace
 
-FormatResult parseRoutingInterfaceText(
-    const std::string&                path,
-    RoutingInterfaceMetadata&         meta,
-    std::vector<RoutingInterfaceRow>& rows) {
+FormatResult parseRoutingInterfaceText(const std::string& path, RoutingInterfaceMetadata& meta,
+                                       std::vector<RoutingInterfaceRow>& rows) {
 
     std::FILE* fp = openswmm::io::fopen_utf8(path, "r");
-    if (!fp) return fail("could not open '" + path + "' for reading");
+    if (!fp)
+        return fail("could not open '" + path + "' for reading");
 
     char buf[1024];
 
     auto readLine = [&](std::string& dst) -> bool {
-        if (!std::fgets(buf, sizeof(buf), fp)) return false;
+        if (!std::fgets(buf, sizeof(buf), fp))
+            return false;
         dst.assign(buf);
         rtrim(dst);
         return true;
@@ -83,17 +110,26 @@ FormatResult parseRoutingInterfaceText(
     std::string line;
 
     // Line 1: "SWMM5 Interface File" — signature.
-    if (!readLine(line)) { std::fclose(fp); return fail("empty file"); }
+    if (!readLine(line)) {
+        std::fclose(fp);
+        return fail("empty file");
+    }
     if (line.find("Interface File") == std::string::npos) {
         std::fclose(fp);
         return fail("missing 'SWMM5 Interface File' signature");
     }
 
     // Line 2: title.
-    if (!readLine(meta.title)) { std::fclose(fp); return fail("missing title"); }
+    if (!readLine(meta.title)) {
+        std::fclose(fp);
+        return fail("missing title");
+    }
 
     // Line 3: "<step> - reporting time step in sec".
-    if (!readLine(line)) { std::fclose(fp); return fail("missing step line"); }
+    if (!readLine(line)) {
+        std::fclose(fp);
+        return fail("missing step line");
+    }
     meta.report_step_sec = leadingInt(line);
     if (meta.report_step_sec < 0) {
         std::fclose(fp);
@@ -101,7 +137,10 @@ FormatResult parseRoutingInterfaceText(
     }
 
     // Line 4: "<N+1> - number of constituents..."
-    if (!readLine(line)) { std::fclose(fp); return fail("missing constituent count"); }
+    if (!readLine(line)) {
+        std::fclose(fp);
+        return fail("missing constituent count");
+    }
     int n_constituents = leadingInt(line);
     if (n_constituents < 1) {
         std::fclose(fp);
@@ -109,7 +148,10 @@ FormatResult parseRoutingInterfaceText(
     }
 
     // Next: FLOW units, then each pollutant "<id> <units>".
-    if (!readLine(line)) { std::fclose(fp); return fail("missing FLOW line"); }
+    if (!readLine(line)) {
+        std::fclose(fp);
+        return fail("missing FLOW line");
+    }
     {
         auto t = tokenize(line);
         if (t.size() < 2 || t[0] != "FLOW") {
@@ -135,7 +177,10 @@ FormatResult parseRoutingInterfaceText(
     }
 
     // "<M> - number of nodes..."
-    if (!readLine(line)) { std::fclose(fp); return fail("missing node count"); }
+    if (!readLine(line)) {
+        std::fclose(fp);
+        return fail("missing node count");
+    }
     int n_nodes = leadingInt(line);
     if (n_nodes < 0) {
         std::fclose(fp);
@@ -150,37 +195,41 @@ FormatResult parseRoutingInterfaceText(
             return fail("missing node id");
         }
         auto t = tokenize(line);
-        if (t.empty()) continue;
+        if (t.empty())
+            continue;
         meta.object_ids.push_back(t[0]);
     }
 
     // Column header line — skip.
-    if (!readLine(line)) { std::fclose(fp); return ok(); }  // no data rows
+    if (!readLine(line)) {
+        std::fclose(fp);
+        return ok();
+    } // no data rows
 
     // Data rows: <id> <y> <mo> <d> <h> <mi> <s> <flow> <pollut1> ...
     const std::size_t expected_pollut = meta.pollutant_ids.size();
     while (readLine(line)) {
-        if (line.empty()) continue;
+        if (line.empty())
+            continue;
         auto t = tokenize(line);
-        if (t.size() < 8) continue;  // need id + 6 date parts + flow
+        if (t.size() < 8)
+            continue; // need id + 6 date parts + flow
 
         RoutingInterfaceRow row;
         row.object_id = t[0];
-        int y  = std::atoi(t[1].c_str());
+        int y = std::atoi(t[1].c_str());
         int mo = std::atoi(t[2].c_str());
-        int d  = std::atoi(t[3].c_str());
-        int h  = std::atoi(t[4].c_str());
+        int d = std::atoi(t[3].c_str());
+        int h = std::atoi(t[4].c_str());
         int mi = std::atoi(t[5].c_str());
-        int s  = std::atoi(t[6].c_str());
-        row.timestamp_oa = datetime::encodeDate(y, mo, d)
-                         + datetime::encodeTime(h, mi, s);
-        row.flow_value   = std::atof(t[7].c_str());
+        int s = std::atoi(t[6].c_str());
+        row.timestamp_oa = datetime::encodeDate(y, mo, d) + datetime::encodeTime(h, mi, s);
+        row.flow_value = std::atof(t[7].c_str());
 
         row.pollutant_values.reserve(expected_pollut);
         for (std::size_t i = 0; i < expected_pollut; ++i) {
             const std::size_t col = 8 + i;
-            row.pollutant_values.push_back(
-                col < t.size() ? std::atof(t[col].c_str()) : 0.0);
+            row.pollutant_values.push_back(col < t.size() ? std::atof(t[col].c_str()) : 0.0);
         }
         rows.push_back(std::move(row));
     }
@@ -189,38 +238,33 @@ FormatResult parseRoutingInterfaceText(
     return ok();
 }
 
-FormatResult writeRoutingInterfaceText(
-    const std::string&                      path,
-    const RoutingInterfaceMetadata&         meta,
-    const std::vector<RoutingInterfaceRow>& rows) {
+FormatResult writeRoutingInterfaceText(const std::string& path,
+                                       const RoutingInterfaceMetadata& meta,
+                                       const std::vector<RoutingInterfaceRow>& rows) {
 
     std::FILE* fp = openswmm::io::fopen_utf8(path, "w");
-    if (!fp) return fail("could not open '" + path + "' for writing");
+    if (!fp)
+        return fail("could not open '" + path + "' for writing");
 
     std::fprintf(fp, "SWMM5 Interface File");
     std::fprintf(fp, "\n%s", meta.title.c_str());
-    std::fprintf(fp, "\n%-4d - reporting time step in sec",
-                  meta.report_step_sec);
+    std::fprintf(fp, "\n%-4d - reporting time step in sec", meta.report_step_sec);
 
     const int n_const = 1 + static_cast<int>(meta.pollutant_ids.size());
-    std::fprintf(fp, "\n%-4d - number of constituents as listed below:",
-                  n_const);
+    std::fprintf(fp, "\n%-4d - number of constituents as listed below:", n_const);
     std::fprintf(fp, "\nFLOW %s", meta.flow_units.c_str());
     for (std::size_t i = 0; i < meta.pollutant_ids.size(); ++i) {
-        std::fprintf(fp, "\n%s %s",
-                      meta.pollutant_ids[i].c_str(),
-                      i < meta.pollutant_units.size()
-                          ? meta.pollutant_units[i].c_str() : "");
+        std::fprintf(fp, "\n%s %s", meta.pollutant_ids[i].c_str(),
+                     i < meta.pollutant_units.size() ? meta.pollutant_units[i].c_str() : "");
     }
 
-    std::fprintf(fp, "\n%-4d - number of nodes as listed below:",
-                  static_cast<int>(meta.object_ids.size()));
+    std::fprintf(
+        fp, "\n%-4d - number of nodes as listed below:", static_cast<int>(meta.object_ids.size()));
     for (const auto& id : meta.object_ids)
         std::fprintf(fp, "\n%s", id.c_str());
 
     // Column header.
-    std::fprintf(fp,
-        "\nNode             Year Mon Day Hr  Min Sec FLOW      ");
+    std::fprintf(fp, "\nNode             Year Mon Day Hr  Min Sec FLOW      ");
     for (const auto& p : meta.pollutant_ids)
         std::fprintf(fp, " %-10s", p.c_str());
 
@@ -228,9 +272,8 @@ FormatResult writeRoutingInterfaceText(
         int y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0;
         datetime::decodeDate(r.timestamp_oa, y, mo, d);
         datetime::decodeTime(r.timestamp_oa, h, mi, s);
-        std::fprintf(fp, "\n%-16s %04d %02d  %02d  %02d  %02d  %02d  %-10f",
-                      r.object_id.c_str(), y, mo, d, h, mi, s,
-                      r.flow_value);
+        std::fprintf(fp, "\n%-16s %04d %02d  %02d  %02d  %02d  %02d  %-10f", r.object_id.c_str(), y,
+                     mo, d, h, mi, s, r.flow_value);
         for (double v : r.pollutant_values)
             std::fprintf(fp, " %-10f", v);
     }

@@ -15,21 +15,21 @@
 // limitations under the License.
 
 /**
- * @file openswmm_quality_impl.cpp
- * @brief C API implementation — landuse, buildup, washoff, treatment.
+ * @file      openswmm_quality_impl.cpp
+ * @brief     C API implementation — landuse, buildup, washoff, treatment.
  *
  * @see include/openswmm/engine/openswmm_quality.h
  * @ingroup engine_api
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_quality.h"
 #include "../quality/Treatment.hpp"
-#include "../quality/MsxSurfaceQuality.hpp"   // BW-MSX
+#include "../quality/MsxSurfaceQuality.hpp" // BW-MSX
 
 #include <cstring>
 
@@ -40,19 +40,23 @@ extern "C" {
 // ============================================================================
 
 SWMM_ENGINE_API int swmm_landuse_count(SWMM_Engine engine) {
-    if (!engine) return -1;
+    if (!engine)
+        return -1;
     return to_engine(engine)->context().n_landuses();
 }
 
 SWMM_ENGINE_API int swmm_landuse_index(SWMM_Engine engine, const char* id) {
-    if (!engine || !id) return -1;
+    if (!engine || !id)
+        return -1;
     return to_engine(engine)->context().landuse_names.find(id);
 }
 
 SWMM_ENGINE_API const char* swmm_landuse_id(SWMM_Engine engine, int idx) {
-    if (!engine) return nullptr;
+    if (!engine)
+        return nullptr;
     const auto& ctx = to_engine(engine)->context();
-    if (idx < 0 || idx >= ctx.n_landuses()) return nullptr;
+    if (idx < 0 || idx >= ctx.n_landuses())
+        return nullptr;
     return ctx.landuse_names.name_of(idx).c_str();
 }
 
@@ -62,14 +66,14 @@ SWMM_ENGINE_API const char* swmm_landuse_id(SWMM_Engine engine, int idx) {
 
 SWMM_ENGINE_API int swmm_landuse_add(SWMM_Engine engine, const char* id) {
     CHECK_HANDLE(engine);
-    if (!id) return SWMM_ERR_BADPARAM;
+    if (!id)
+        return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();
     // Landuses may be added during programmatic construction (BUILDING) or on a
     // model opened from an .inp (OPENED) — mirroring swmm_lid_add. Buildup /
     // washoff configuration itself imposes no lifecycle gate.
-    if (ctx.state != openswmm::EngineState::BUILDING &&
-        ctx.state != openswmm::EngineState::OPENED)
+    if (ctx.state != openswmm::EngineState::BUILDING && ctx.state != openswmm::EngineState::OPENED)
         return SWMM_ERR_LIFECYCLE;
 
     // Check for duplicate
@@ -115,17 +119,16 @@ SWMM_ENGINE_API int swmm_landuse_add(SWMM_Engine engine, const char* id) {
     if (nSc > 0) {
         const int nluOld = ctx.subcatches.coverage_n_landuses;
         auto repack = [&](std::vector<double>& v) {
-            if (nluOld == n - 1 &&
-                static_cast<int>(v.size()) == nSc * nluOld) {
+            if (nluOld == n - 1 && static_cast<int>(v.size()) == nSc * nluOld) {
                 v.resize(static_cast<std::size_t>(nSc) * static_cast<std::size_t>(n), 0.0);
                 for (int s = nSc - 1; s >= 0; --s) {
                     for (int lu = nluOld - 1; lu >= 0; --lu)
-                        v[static_cast<std::size_t>(s) * static_cast<std::size_t>(n)
-                          + static_cast<std::size_t>(lu)] =
-                            v[static_cast<std::size_t>(s) * static_cast<std::size_t>(nluOld)
-                              + static_cast<std::size_t>(lu)];
-                    v[static_cast<std::size_t>(s) * static_cast<std::size_t>(n)
-                      + static_cast<std::size_t>(n - 1)] = 0.0;
+                        v[static_cast<std::size_t>(s) * static_cast<std::size_t>(n) +
+                          static_cast<std::size_t>(lu)] =
+                            v[static_cast<std::size_t>(s) * static_cast<std::size_t>(nluOld) +
+                              static_cast<std::size_t>(lu)];
+                    v[static_cast<std::size_t>(s) * static_cast<std::size_t>(n) +
+                      static_cast<std::size_t>(n - 1)] = 0.0;
                 }
             } else {
                 v.assign(static_cast<std::size_t>(nSc) * static_cast<std::size_t>(n), 0.0);
@@ -141,7 +144,8 @@ SWMM_ENGINE_API int swmm_landuse_add(SWMM_Engine engine, const char* id) {
 
 SWMM_ENGINE_API int swmm_landuse_rename(SWMM_Engine engine, int idx, const char* new_id) {
     CHECK_HANDLE(engine);
-    if (!new_id || new_id[0] == '\0') return SWMM_ERR_BADPARAM;
+    if (!new_id || new_id[0] == '\0')
+        return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_landuses());
@@ -166,7 +170,8 @@ SWMM_ENGINE_API int swmm_landuse_get_sweep_interval(SWMM_Engine engine, int idx,
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_landuses());
-    if (days) *days = ctx.landuses.sweep_interval[static_cast<std::size_t>(idx)];
+    if (days)
+        *days = ctx.landuses.sweep_interval[static_cast<std::size_t>(idx)];
     return SWMM_OK;
 }
 
@@ -182,7 +187,8 @@ SWMM_ENGINE_API int swmm_landuse_get_sweep_removal(SWMM_Engine engine, int idx, 
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_landuses());
-    if (frac) *frac = ctx.landuses.sweep_removal[static_cast<std::size_t>(idx)];
+    if (frac)
+        *frac = ctx.landuses.sweep_removal[static_cast<std::size_t>(idx)];
     return SWMM_OK;
 }
 
@@ -190,9 +196,8 @@ SWMM_ENGINE_API int swmm_landuse_get_sweep_removal(SWMM_Engine engine, int idx, 
 // Buildup — set/get
 // ============================================================================
 
-SWMM_ENGINE_API int swmm_buildup_set(SWMM_Engine engine, int lu_idx, int pollut_idx,
-                                       int func_type, double c1, double c2, double c3,
-                                       int normalizer) {
+SWMM_ENGINE_API int swmm_buildup_set(SWMM_Engine engine, int lu_idx, int pollut_idx, int func_type,
+                                     double c1, double c2, double c3, int normalizer) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(lu_idx >= 0 && lu_idx < ctx.n_landuses());
@@ -205,7 +210,10 @@ SWMM_ENGINE_API int swmm_buildup_set(SWMM_Engine engine, int lu_idx, int pollut_
         if (ms.n_landuses != ctx.n_landuses() || ms.n_species != ctx.reactions.n_species())
             ms.resize_params(ctx.n_landuses(), ctx.reactions.n_species());
         const auto k = ms.pidx(lu_idx, m);
-        ms.bu_type[k] = func_type; ms.bu_c1[k] = c1; ms.bu_c2[k] = c2; ms.bu_c3[k] = c3;
+        ms.bu_type[k] = func_type;
+        ms.bu_c1[k] = c1;
+        ms.bu_c2[k] = c2;
+        ms.bu_c3[k] = c3;
         ms.bu_normalizer[k] = normalizer;
         ms.resolved = true;
         openswmm::msxsurf::refreshDerived(ctx);
@@ -219,13 +227,12 @@ SWMM_ENGINE_API int swmm_buildup_set(SWMM_Engine engine, int lu_idx, int pollut_
         ctx.buildup.resize(ctx.n_landuses(), ctx.n_pollutants());
     }
 
-    auto k = static_cast<std::size_t>(lu_idx) *
-             static_cast<std::size_t>(ctx.n_pollutants()) +
+    auto k = static_cast<std::size_t>(lu_idx) * static_cast<std::size_t>(ctx.n_pollutants()) +
              static_cast<std::size_t>(pollut_idx);
-    ctx.buildup.func_type[k]  = func_type;
-    ctx.buildup.coeff1[k]     = c1;
-    ctx.buildup.coeff2[k]     = c2;
-    ctx.buildup.coeff3[k]     = c3;
+    ctx.buildup.func_type[k] = func_type;
+    ctx.buildup.coeff1[k] = c1;
+    ctx.buildup.coeff2[k] = c2;
+    ctx.buildup.coeff3[k] = c3;
     ctx.buildup.normalizer[k] = normalizer;
     // Refresh the per-step buildup/washoff parameter cache so a mid-run edit
     // takes effect on the next step (the accumulated pool is preserved).
@@ -233,43 +240,59 @@ SWMM_ENGINE_API int swmm_buildup_set(SWMM_Engine engine, int lu_idx, int pollut_
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_buildup_get(SWMM_Engine engine, int lu_idx, int pollut_idx,
-                                       int* func_type, double* c1, double* c2, double* c3,
-                                       int* normalizer) {
+SWMM_ENGINE_API int swmm_buildup_get(SWMM_Engine engine, int lu_idx, int pollut_idx, int* func_type,
+                                     double* c1, double* c2, double* c3, int* normalizer) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(lu_idx >= 0 && lu_idx < ctx.n_landuses());
-    if (pollut_idx >= ctx.n_pollutants()) {          // BW-MSX species index
+    if (pollut_idx >= ctx.n_pollutants()) { // BW-MSX species index
         const auto& ms = ctx.reactions.surface;
         const int m = pollut_idx - ctx.n_pollutants();
         CHECK_INDEX(m >= 0 && m < ctx.reactions.n_species());
         if (ms.n_landuses != ctx.n_landuses() || ms.n_species != ctx.reactions.n_species()) {
-            if (func_type) *func_type = 0;
-            if (c1) *c1 = 0.0; if (c2) *c2 = 0.0; if (c3) *c3 = 0.0;
-            if (normalizer) *normalizer = 0;
+            if (func_type)
+                *func_type = 0;
+            if (c1)
+                *c1 = 0.0;
+            if (c2)
+                *c2 = 0.0;
+            if (c3)
+                *c3 = 0.0;
+            if (normalizer)
+                *normalizer = 0;
             return SWMM_OK;
         }
         const auto k = ms.pidx(lu_idx, m);
-        if (func_type)  *func_type  = ms.bu_type[k];
-        if (c1)         *c1         = ms.bu_c1[k];
-        if (c2)         *c2         = ms.bu_c2[k];
-        if (c3)         *c3         = ms.bu_c3[k];
-        if (normalizer) *normalizer = ms.bu_normalizer[k];
+        if (func_type)
+            *func_type = ms.bu_type[k];
+        if (c1)
+            *c1 = ms.bu_c1[k];
+        if (c2)
+            *c2 = ms.bu_c2[k];
+        if (c3)
+            *c3 = ms.bu_c3[k];
+        if (normalizer)
+            *normalizer = ms.bu_normalizer[k];
         return SWMM_OK;
     }
     CHECK_INDEX(pollut_idx >= 0 && pollut_idx < ctx.n_pollutants());
 
-    auto k = static_cast<std::size_t>(lu_idx) *
-             static_cast<std::size_t>(ctx.n_pollutants()) +
+    auto k = static_cast<std::size_t>(lu_idx) * static_cast<std::size_t>(ctx.n_pollutants()) +
              static_cast<std::size_t>(pollut_idx);
 
-    if (k >= ctx.buildup.func_type.size()) return SWMM_ERR_BADINDEX;
+    if (k >= ctx.buildup.func_type.size())
+        return SWMM_ERR_BADINDEX;
 
-    if (func_type)  *func_type  = ctx.buildup.func_type[k];
-    if (c1)         *c1         = ctx.buildup.coeff1[k];
-    if (c2)         *c2         = ctx.buildup.coeff2[k];
-    if (c3)         *c3         = ctx.buildup.coeff3[k];
-    if (normalizer) *normalizer = ctx.buildup.normalizer[k];
+    if (func_type)
+        *func_type = ctx.buildup.func_type[k];
+    if (c1)
+        *c1 = ctx.buildup.coeff1[k];
+    if (c2)
+        *c2 = ctx.buildup.coeff2[k];
+    if (c3)
+        *c3 = ctx.buildup.coeff3[k];
+    if (normalizer)
+        *normalizer = ctx.buildup.normalizer[k];
     return SWMM_OK;
 }
 
@@ -277,21 +300,24 @@ SWMM_ENGINE_API int swmm_buildup_get(SWMM_Engine engine, int lu_idx, int pollut_
 // Washoff — set/get
 // ============================================================================
 
-SWMM_ENGINE_API int swmm_washoff_set(SWMM_Engine engine, int lu_idx, int pollut_idx,
-                                       int func_type, double coeff, double expon,
-                                       double sweep_effic, double bmp_effic) {
+SWMM_ENGINE_API int swmm_washoff_set(SWMM_Engine engine, int lu_idx, int pollut_idx, int func_type,
+                                     double coeff, double expon, double sweep_effic,
+                                     double bmp_effic) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(lu_idx >= 0 && lu_idx < ctx.n_landuses());
-    if (pollut_idx >= ctx.n_pollutants()) {          // BW-MSX species index
+    if (pollut_idx >= ctx.n_pollutants()) { // BW-MSX species index
         auto& ms = ctx.reactions.surface;
         const int m = pollut_idx - ctx.n_pollutants();
         CHECK_INDEX(m >= 0 && m < ctx.reactions.n_species());
         if (ms.n_landuses != ctx.n_landuses() || ms.n_species != ctx.reactions.n_species())
             ms.resize_params(ctx.n_landuses(), ctx.reactions.n_species());
         const auto k = ms.pidx(lu_idx, m);
-        ms.wo_type[k] = func_type; ms.wo_coeff[k] = coeff; ms.wo_expon[k] = expon;
-        ms.wo_sweep_effic[k] = sweep_effic; ms.wo_bmp_effic[k] = bmp_effic;
+        ms.wo_type[k] = func_type;
+        ms.wo_coeff[k] = coeff;
+        ms.wo_expon[k] = expon;
+        ms.wo_sweep_effic[k] = sweep_effic;
+        ms.wo_bmp_effic[k] = bmp_effic;
         ms.resolved = true;
         return SWMM_OK;
     }
@@ -303,56 +329,72 @@ SWMM_ENGINE_API int swmm_washoff_set(SWMM_Engine engine, int lu_idx, int pollut_
         ctx.washoff.resize(ctx.n_landuses(), ctx.n_pollutants());
     }
 
-    auto k = static_cast<std::size_t>(lu_idx) *
-             static_cast<std::size_t>(ctx.n_pollutants()) +
+    auto k = static_cast<std::size_t>(lu_idx) * static_cast<std::size_t>(ctx.n_pollutants()) +
              static_cast<std::size_t>(pollut_idx);
-    ctx.washoff.func_type[k]   = func_type;
-    ctx.washoff.coeff[k]       = coeff;
-    ctx.washoff.expon[k]       = expon;
+    ctx.washoff.func_type[k] = func_type;
+    ctx.washoff.coeff[k] = coeff;
+    ctx.washoff.expon[k] = expon;
     ctx.washoff.sweep_effic[k] = sweep_effic;
-    ctx.washoff.bmp_effic[k]   = bmp_effic;
+    ctx.washoff.bmp_effic[k] = bmp_effic;
     // Refresh the per-step parameter cache so a mid-run edit takes effect.
     to_engine(engine)->refreshLanduseParams();
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_washoff_get(SWMM_Engine engine, int lu_idx, int pollut_idx,
-                                       int* func_type, double* coeff, double* expon,
-                                       double* sweep_effic, double* bmp_effic) {
+SWMM_ENGINE_API int swmm_washoff_get(SWMM_Engine engine, int lu_idx, int pollut_idx, int* func_type,
+                                     double* coeff, double* expon, double* sweep_effic,
+                                     double* bmp_effic) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(lu_idx >= 0 && lu_idx < ctx.n_landuses());
-    if (pollut_idx >= ctx.n_pollutants()) {          // BW-MSX species index
+    if (pollut_idx >= ctx.n_pollutants()) { // BW-MSX species index
         const auto& ms = ctx.reactions.surface;
         const int m = pollut_idx - ctx.n_pollutants();
         CHECK_INDEX(m >= 0 && m < ctx.reactions.n_species());
         if (ms.n_landuses != ctx.n_landuses() || ms.n_species != ctx.reactions.n_species()) {
-            if (func_type) *func_type = 0;
-            if (coeff) *coeff = 0.0; if (expon) *expon = 0.0;
-            if (sweep_effic) *sweep_effic = 0.0; if (bmp_effic) *bmp_effic = 0.0;
+            if (func_type)
+                *func_type = 0;
+            if (coeff)
+                *coeff = 0.0;
+            if (expon)
+                *expon = 0.0;
+            if (sweep_effic)
+                *sweep_effic = 0.0;
+            if (bmp_effic)
+                *bmp_effic = 0.0;
             return SWMM_OK;
         }
         const auto k = ms.pidx(lu_idx, m);
-        if (func_type)   *func_type   = ms.wo_type[k];
-        if (coeff)       *coeff       = ms.wo_coeff[k];
-        if (expon)       *expon       = ms.wo_expon[k];
-        if (sweep_effic) *sweep_effic = ms.wo_sweep_effic[k];
-        if (bmp_effic)   *bmp_effic   = ms.wo_bmp_effic[k];
+        if (func_type)
+            *func_type = ms.wo_type[k];
+        if (coeff)
+            *coeff = ms.wo_coeff[k];
+        if (expon)
+            *expon = ms.wo_expon[k];
+        if (sweep_effic)
+            *sweep_effic = ms.wo_sweep_effic[k];
+        if (bmp_effic)
+            *bmp_effic = ms.wo_bmp_effic[k];
         return SWMM_OK;
     }
     CHECK_INDEX(pollut_idx >= 0 && pollut_idx < ctx.n_pollutants());
 
-    auto k = static_cast<std::size_t>(lu_idx) *
-             static_cast<std::size_t>(ctx.n_pollutants()) +
+    auto k = static_cast<std::size_t>(lu_idx) * static_cast<std::size_t>(ctx.n_pollutants()) +
              static_cast<std::size_t>(pollut_idx);
 
-    if (k >= ctx.washoff.func_type.size()) return SWMM_ERR_BADINDEX;
+    if (k >= ctx.washoff.func_type.size())
+        return SWMM_ERR_BADINDEX;
 
-    if (func_type)   *func_type   = ctx.washoff.func_type[k];
-    if (coeff)       *coeff       = ctx.washoff.coeff[k];
-    if (expon)       *expon       = ctx.washoff.expon[k];
-    if (sweep_effic) *sweep_effic = ctx.washoff.sweep_effic[k];
-    if (bmp_effic)   *bmp_effic   = ctx.washoff.bmp_effic[k];
+    if (func_type)
+        *func_type = ctx.washoff.func_type[k];
+    if (coeff)
+        *coeff = ctx.washoff.coeff[k];
+    if (expon)
+        *expon = ctx.washoff.expon[k];
+    if (sweep_effic)
+        *sweep_effic = ctx.washoff.sweep_effic[k];
+    if (bmp_effic)
+        *bmp_effic = ctx.washoff.bmp_effic[k];
     return SWMM_OK;
 }
 
@@ -361,9 +403,10 @@ SWMM_ENGINE_API int swmm_washoff_get(SWMM_Engine engine, int lu_idx, int pollut_
 // ============================================================================
 
 SWMM_ENGINE_API int swmm_treatment_set(SWMM_Engine engine, int node_idx, int pollut_idx,
-                                         const char* expression) {
+                                       const char* expression) {
     CHECK_HANDLE(engine);
-    if (!expression) return SWMM_ERR_BADPARAM;
+    if (!expression)
+        return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(node_idx >= 0 && node_idx < ctx.n_nodes());
     CHECK_INDEX(pollut_idx >= 0 && pollut_idx < ctx.n_pollutants());
@@ -374,8 +417,7 @@ SWMM_ENGINE_API int swmm_treatment_set(SWMM_Engine engine, int node_idx, int pol
         ctx.treatment.resize(ctx.n_nodes(), ctx.n_pollutants());
     }
 
-    auto k = static_cast<std::size_t>(node_idx) *
-             static_cast<std::size_t>(ctx.n_pollutants()) +
+    auto k = static_cast<std::size_t>(node_idx) * static_cast<std::size_t>(ctx.n_pollutants()) +
              static_cast<std::size_t>(pollut_idx);
     // The step loop evaluates the compiled cache, so recompile the edited cell
     // (mid-run edits take effect next step). A parse failure restores the
@@ -391,16 +433,16 @@ SWMM_ENGINE_API int swmm_treatment_set(SWMM_Engine engine, int node_idx, int pol
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_treatment_get(SWMM_Engine engine, int node_idx, int pollut_idx,
-                                         char* buf, int buflen) {
+SWMM_ENGINE_API int swmm_treatment_get(SWMM_Engine engine, int node_idx, int pollut_idx, char* buf,
+                                       int buflen) {
     CHECK_HANDLE(engine);
-    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    if (!buf || buflen <= 0)
+        return SWMM_ERR_BADPARAM;
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(node_idx >= 0 && node_idx < ctx.n_nodes());
     CHECK_INDEX(pollut_idx >= 0 && pollut_idx < ctx.n_pollutants());
 
-    auto k = static_cast<std::size_t>(node_idx) *
-             static_cast<std::size_t>(ctx.n_pollutants()) +
+    auto k = static_cast<std::size_t>(node_idx) * static_cast<std::size_t>(ctx.n_pollutants()) +
              static_cast<std::size_t>(pollut_idx);
 
     if (k >= ctx.treatment.expressions.size()) {
@@ -420,8 +462,7 @@ SWMM_ENGINE_API int swmm_treatment_clear(SWMM_Engine engine, int node_idx, int p
     CHECK_INDEX(node_idx >= 0 && node_idx < ctx.n_nodes());
     CHECK_INDEX(pollut_idx >= 0 && pollut_idx < ctx.n_pollutants());
 
-    auto k = static_cast<std::size_t>(node_idx) *
-             static_cast<std::size_t>(ctx.n_pollutants()) +
+    auto k = static_cast<std::size_t>(node_idx) * static_cast<std::size_t>(ctx.n_pollutants()) +
              static_cast<std::size_t>(pollut_idx);
 
     if (k < ctx.treatment.expressions.size()) {
@@ -434,22 +475,27 @@ SWMM_ENGINE_API int swmm_treatment_clear(SWMM_Engine engine, int node_idx, int p
 }
 
 SWMM_ENGINE_API int swmm_treatment_validate_expression(SWMM_Engine engine, const char* expr,
-                                                        char* errbuf, int buflen, int* col_out) {
+                                                       char* errbuf, int buflen, int* col_out) {
     CHECK_HANDLE(engine);
-    if (errbuf && buflen > 0) errbuf[0] = '\0';
-    if (col_out) *col_out = -1;
-    if (!expr) return SWMM_ERR_BADPARAM;
+    if (errbuf && buflen > 0)
+        errbuf[0] = '\0';
+    if (col_out)
+        *col_out = -1;
+    if (!expr)
+        return SWMM_ERR_BADPARAM;
 
     std::string msg;
     int col = -1;
     const int rc = openswmm::treatment::validate(expr, msg, col);
-    if (rc == 0) return SWMM_OK;
+    if (rc == 0)
+        return SWMM_OK;
 
     if (errbuf && buflen > 0) {
         std::strncpy(errbuf, msg.c_str(), static_cast<std::size_t>(buflen - 1));
         errbuf[buflen - 1] = '\0';
     }
-    if (col_out) *col_out = col;
+    if (col_out)
+        *col_out = col;
     return SWMM_ERR_BADPARAM;
 }
 

@@ -1,6 +1,6 @@
 /**
- * @file test_thread_info.cpp
- * @brief Unit tests for the thread-capability query and the THREADS
+ * @file      test_thread_info.cpp
+ * @brief     Unit tests for the thread-capability query and the THREADS
  *        resolution rules (THREAD_LIMITS_AND_OVERSUBSCRIPTION_PLAN_2026-09-03).
  *
  * @details Covers:
@@ -13,6 +13,10 @@
  *     THREADS = 1 (the any-thread-count contract).
  *
  * Artefacts are written under tests/output/thread_info (CLAUDE.md §4.1).
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -37,6 +41,13 @@ namespace {
 
 const char* kDataDir = OPENSWMM_THREAD_TEST_DATA_DIR;
 
+/**
+ * @brief Form and attempt to create the reviewable thread-info evidence directory.
+ *
+ * Uses error_code overload and ignores filesystem errors. Does not change current directory or
+ * create individual artifacts.
+ * @return Owned OPENSWMM_THREAD_TEST_OUT_DIR/thread_info path even if directory creation fails.
+ */
 std::string outDir() {
     const std::string d = std::string(OPENSWMM_THREAD_TEST_OUT_DIR) + "/thread_info";
     std::error_code ec;
@@ -44,7 +55,18 @@ std::string outDir() {
     return d;
 }
 
-/// Copy Example1.inp with its THREADS line replaced (or appended).
+/**
+ * @brief Copy Example1 with a requested THREADS option for capability tests.
+ *
+ * Nonfatally expects source open, then replaces lines beginning THREADS or inserts after the first
+ * FLOW_ROUTING row. If neither anchor exists no THREADS row is added; later THREADS rows still
+ * replace even after insertion. Does not parse numeric validity or preserve source line endings
+ * exactly.
+ *
+ * @param[in] name Raw output stem below outDir; matching .inp may be overwritten.
+ * @param[in] threads Requested integer copied verbatim into authored THREADS rows.
+ * @return Owned destination filename, including after unchecked output failures.
+ */
 std::string writeVariant(const std::string& name, int threads) {
     std::ifstream in(std::string(kDataDir) + "/Example1.inp");
     EXPECT_TRUE(in.good()) << "cannot open the reference model";
@@ -67,16 +89,35 @@ std::string writeVariant(const std::string& name, int threads) {
     return path;
 }
 
+/**
+ * @brief Search warning strings for a case-sensitive fragment.
+ *
+ * @param[in] w Borrowed warning vector, unchanged.
+ * @param[in] needle Non-null substring; empty matches any existing entry.
+ * @return True on a matching warning, false otherwise.
+ */
 bool hasWarningContaining(const std::vector<std::string>& w, const char* needle) {
     for (const auto& s : w)
-        if (s.find(needle) != std::string::npos) return true;
+        if (s.find(needle) != std::string::npos)
+            return true;
     return false;
 }
 
+/**
+ * @brief Copy public engine warning messages into owned storage.
+ *
+ * Does not clear warnings or retain borrowed C string pointers. Assumes indexed getters succeed; no
+ * null/error handling is supplied here.
+ *
+ * @param[in] e Borrowed valid engine with stable warning count and non-null messages for each
+ *     returned index.
+ * @return Owned ordered warning vector.
+ */
 std::vector<std::string> engineWarnings(SWMM_Engine e) {
     std::vector<std::string> out;
     const int n = swmm_get_warning_count(e);
-    for (int i = 0; i < n; ++i) out.emplace_back(swmm_get_warning_at(e, i));
+    for (int i = 0; i < n; ++i)
+        out.emplace_back(swmm_get_warning_at(e, i));
     return out;
 }
 
@@ -96,7 +137,8 @@ TEST(ThreadInfo, QueryReportsSaneNumbers) {
     EXPECT_GE(info.kokkos_omp_threads, 0);
     // Without OpenMP the runtime limit is 1 by definition; with it the
     // default limit can only be lowered by the environment / affinity.
-    if (!info.omp_available) EXPECT_EQ(info.omp_max_threads, 1);
+    if (!info.omp_available)
+        EXPECT_EQ(info.omp_max_threads, 1);
     EXPECT_EQ(swmm_get_thread_info(nullptr), SWMM_ERR_BADPARAM);
 }
 
@@ -121,18 +163,31 @@ TEST(ThreadInfo, ExplicitAboveLogicalIsHonouredAndWarned) {
     ASSERT_GE(logical, 1);
     std::vector<std::string> w;
     const int req = logical + 3;
-    EXPECT_EQ(ti::resolveRequested(req, "test", &w), req);   // NOT clamped
+    EXPECT_EQ(ti::resolveRequested(req, "test", &w), req); // NOT clamped
     EXPECT_TRUE(hasWarningContaining(w, "logical processors"));
     EXPECT_TRUE(ti::isOversubscribed(req));
     EXPECT_FALSE(ti::isOversubscribed(logical));
 }
 
 namespace {
+/**
+ * @brief Set or remove a thread-test process environment variable.
+ *
+ * Ignores native status, mutates process-global state and does not preserve the old value. Tests
+ * must serialize environment mutation and restore previous settings when required.
+ *
+ * @param[in] name Non-null valid variable name.
+ * @param[in] value Non-null string sets/replaces its value; nullptr removes it. Empty also removes
+ *     on Windows but stores empty on POSIX.
+ */
 void setEnvVar(const char* name, const char* value) {
 #if defined(_WIN32)
     _putenv_s(name, value ? value : "");
 #else
-    if (value) setenv(name, value, 1); else unsetenv(name);
+    if (value)
+        setenv(name, value, 1);
+    else
+        unsetenv(name);
 #endif
 }
 } // namespace
@@ -143,7 +198,8 @@ void setEnvVar(const char* name, const char* value) {
 // that only "fits" the machine on paper.
 TEST(ThreadInfo, HostReservedThreadsCountTowardOversubscription) {
     const int logical = ti::logicalCpus();
-    if (logical < 4) GTEST_SKIP() << "needs >= 4 logical CPUs";
+    if (logical < 4)
+        GTEST_SKIP() << "needs >= 4 logical CPUs";
 
     setEnvVar("OPENSWMM_HOST_RESERVED_THREADS", nullptr);
     EXPECT_EQ(ti::hostReservedThreads(), 0);
@@ -202,10 +258,10 @@ TEST(ThreadInfo, DwAutoAppliesSizeGateAndStaysWithinRuntime) {
 
 TEST(ThreadInfo, TwoDTriangleGate) {
     std::vector<std::string> w;
-    EXPECT_EQ(ti::twoDThreads(4, 3, &w), 1);        // 3 < 4*4
+    EXPECT_EQ(ti::twoDThreads(4, 3, &w), 1); // 3 < 4*4
     EXPECT_TRUE(hasWarningContaining(w, "triangles"));
     w.clear();
-    EXPECT_EQ(ti::twoDThreads(1, 3, &w), 1);        // serial request: no warning
+    EXPECT_EQ(ti::twoDThreads(1, 3, &w), 1); // serial request: no warning
     EXPECT_TRUE(w.empty());
 }
 
@@ -217,15 +273,15 @@ TEST(ThreadInfo, EffectiveThreadsMirrorsRulesForSmallModel) {
     SWMM_Engine e = swmm_engine_new();
     ASSERT_NE(e, nullptr);
     ASSERT_EQ(swmm_node_add(e, "J1", SWMM_NODE_JUNCTION), SWMM_OK);
-    ASSERT_EQ(swmm_node_add(e, "O1", SWMM_NODE_OUTFALL),  SWMM_OK);
-    ASSERT_EQ(swmm_link_add(e, "L1", SWMM_LINK_CONDUIT),  SWMM_OK);
+    ASSERT_EQ(swmm_node_add(e, "O1", SWMM_NODE_OUTFALL), SWMM_OK);
+    ASSERT_EQ(swmm_link_add(e, "L1", SWMM_LINK_CONDUIT), SWMM_OK);
     ASSERT_EQ(swmm_options_set(e, "FLOW_ROUTING", "DYNWAVE"), SWMM_OK);
 
     int g = -1, dw = -1, td = -1;
     ASSERT_EQ(swmm_get_effective_threads(e, 8, &g, &dw, &td), SWMM_OK);
-    EXPECT_EQ(g, 8);        // explicit request honoured for the general team
-    EXPECT_EQ(dw, 1);       // one conduit → size gate
-    EXPECT_EQ(td, 0);       // no 2D mesh
+    EXPECT_EQ(g, 8);  // explicit request honoured for the general team
+    EXPECT_EQ(dw, 1); // one conduit → size gate
+    EXPECT_EQ(td, 0); // no 2D mesh
 
     ASSERT_EQ(swmm_get_effective_threads(e, 0, &g, &dw, &td), SWMM_OK);
     EXPECT_EQ(g, ti::ompMaxThreads());
@@ -243,22 +299,42 @@ namespace {
 struct RunResult {
     int err = 0;
     std::vector<std::string> warnings;
-    std::string rptDigest;   // continuity block of the .rpt, for comparison
+    std::string rptDigest; // continuity block of the .rpt, for comparison
 };
 
+/**
+ * @brief Run a requested-thread variant and collect warnings/continuity report digest.
+ *
+ * Owns/closes/destroys engine, steps without a cap and still calls end/report after setup failure,
+ * ignoring their statuses. Returns NOMEM on create refusal. Report reads have no separate status
+ * and digest can be empty; does not compare variants or include timing lines.
+ *
+ * @param[in] name Safe variant name used by writeVariant and retained outDir artifacts.
+ * @param[in] threads Requested thread count authored by writeVariant, not a guarantee of actual
+ *     backend parallelism.
+ * @return Owned first setup/step error, warnings and report lines from Flow Routing Continuity
+ *     through the first Continuity Error line.
+ */
 RunResult runVariant(const std::string& name, int threads) {
     RunResult r;
     const std::string inp = writeVariant(name, threads);
     const std::string rpt = outDir() + "/" + name + ".rpt";
     const std::string out = outDir() + "/" + name + ".out";
     SWMM_Engine e = swmm_engine_create();
-    if (!e) { r.err = SWMM_ERR_NOMEM; return r; }
+    if (!e) {
+        r.err = SWMM_ERR_NOMEM;
+        return r;
+    }
     r.err = swmm_engine_open(e, inp.c_str(), rpt.c_str(), out.c_str(), nullptr);
-    if (r.err == SWMM_OK) r.err = swmm_engine_initialize(e);
-    if (r.err == SWMM_OK) r.err = swmm_engine_start(e, 1);
+    if (r.err == SWMM_OK)
+        r.err = swmm_engine_initialize(e);
+    if (r.err == SWMM_OK)
+        r.err = swmm_engine_start(e, 1);
     if (r.err == SWMM_OK) {
         double elapsed = 0.0;
-        do { r.err = swmm_engine_step(e, &elapsed); } while (elapsed > 0.0 && r.err == SWMM_OK);
+        do {
+            r.err = swmm_engine_step(e, &elapsed);
+        } while (elapsed > 0.0 && r.err == SWMM_OK);
     }
     swmm_engine_end(e);
     swmm_engine_report(e);
@@ -273,9 +349,13 @@ RunResult runVariant(const std::string& name, int threads) {
     std::string line;
     bool capture = false;
     while (std::getline(in, line)) {
-        if (line.find("Flow Routing Continuity") != std::string::npos) capture = true;
+        if (line.find("Flow Routing Continuity") != std::string::npos)
+            capture = true;
         if (capture) {
-            if (line.find("Continuity Error") != std::string::npos) { r.rptDigest += line + "\n"; break; }
+            if (line.find("Continuity Error") != std::string::npos) {
+                r.rptDigest += line + "\n";
+                break;
+            }
             r.rptDigest += line + "\n";
         }
     }

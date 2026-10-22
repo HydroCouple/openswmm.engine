@@ -15,17 +15,17 @@
 // limitations under the License.
 
 /**
- * @file test_2d_lts_equivalence.cpp
- * @brief Phase-2 gates for tiered local timestepping (LTS) in the explicit
+ * @file      test_2d_lts_equivalence.cpp
+ * @brief     Phase-2 gates for tiered local timestepping (LTS) in the explicit
  *        marcher: K-tier runs must conserve exactly and agree with the
  *        global-dt (K = 1) reference; multiscale meshes must be stable and
  *        cost-proportional.
  *
  * @ingroup engine_2d
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -51,8 +51,23 @@ namespace {
 // face-normal projection misestimates their gradients — measured as a
 // perpetual non-level limit cycle at 25:1 EVEN at K=1). Real multiscale
 // meshes grade area with bounded aspect (Bellinge: min angle 34.6°).
-MeshData makeGradedStrip(int nx, int ny, double dx0, double ratio,
-                         double slope = 0.0, double n = 0.03) {
+/**
+ * @brief Construct the SI graded-width triangulated LTS comparison strip.
+ *
+ * No state or solver is initialized and no input validation is added. Note this helper uses
+ * positive slope*x rather than the negative-slope convention of some transport fixtures.
+ *
+ * @param[in] nx Positive x-cell count; products must fit mesh indices.
+ * @param[in] ny Positive y-cell count.
+ * @param[in] dx0 Positive first x width and fixed y spacing meters.
+ * @param[in] ratio Positive successive x-width multiplier with finite cumulative coordinates.
+ * @param[in] slope Dimensionless bed gradient: elevation increases as slope*x.
+ * @param[in] n Manning roughness assigned to every triangle.
+ * @return Owned topology-built mesh with two triangles per rectangular cell and closed implicit
+ *     boundaries.
+ */
+MeshData makeGradedStrip(int nx, int ny, double dx0, double ratio, double slope = 0.0,
+                         double n = 0.03) {
     MeshData mesh;
     std::vector<double> xs(nx + 1, 0.0);
     double dx = dx0;
@@ -60,7 +75,7 @@ MeshData makeGradedStrip(int nx, int ny, double dx0, double ratio,
         xs[i] = xs[i - 1] + dx;
         dx *= ratio;
     }
-    const double dy = dx0;   // uniform rows
+    const double dy = dx0; // uniform rows
     const int nvx = nx + 1, nvy = ny + 1;
     mesh.resize_vertices(nvx * nvy);
     for (int j = 0; j < nvy; ++j)
@@ -74,32 +89,51 @@ MeshData makeGradedStrip(int nx, int ny, double dx0, double ratio,
     int t = 0;
     for (int j = 0; j < ny; ++j)
         for (int i = 0; i < nx; ++i) {
-            const int v00 = j * nvx + i,       v10 = j * nvx + i + 1;
+            const int v00 = j * nvx + i, v10 = j * nvx + i + 1;
             const int v01 = (j + 1) * nvx + i, v11 = (j + 1) * nvx + i + 1;
             mesh.set_triangle(t, v00, v10, v11);
             ++t;
             mesh.set_triangle(t, v00, v11, v01);
             ++t;
         }
-    for (int i = 0; i < mesh.n_triangles(); ++i) mesh.mannings_n[i] = n;
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        mesh.mannings_n[i] = n;
     buildMeshTopology(mesh);
     return mesh;
 }
 
+/**
+ * @brief Allocate a dry surface state matching the graded mesh.
+ *
+ * Mesh is unchanged; no transport species or initialized solver is created.
+ *
+ * @param[in] mesh Topology-built mesh with valid centroids and counts.
+ * @return Owned state with zero volume/depth and head equal to cell-bed elevation.
+ */
 SurfaceStateData makeState(const MeshData& mesh) {
     SurfaceStateData state;
     state.resize(mesh.n_triangles(), mesh.n_vertices());
     for (int i = 0; i < mesh.n_triangles(); ++i) {
-        state.head[i]   = mesh.tri_cz[i];
-        state.depth[i]  = 0.0;
+        state.head[i] = mesh.tri_cz[i];
+        state.depth[i] = 0.0;
         state.volume[i] = 0.0;
     }
     return state;
 }
 
+/**
+ * @brief Sum the selected prefix of SI surface cell volumes.
+ *
+ * Does not include groundwater, exchange queues or boundary ledgers; does not mutate state.
+ *
+ * @param[in] s Borrowed surface state with volume storage covering nt cells.
+ * @param[in] nt Nonnegative cell count no greater than the volume vector length.
+ * @return Ordered double sum in m3, zero for an empty prefix.
+ */
 double totalVolume(const SurfaceStateData& s, int nt) {
     double v = 0.0;
-    for (int i = 0; i < nt; ++i) v += s.volume[i];
+    for (int i = 0; i < nt; ++i)
+        v += s.volume[i];
     return v;
 }
 
@@ -110,19 +144,37 @@ double totalVolume(const SurfaceStateData& s, int nt) {
 // end-state sample aliases the K-dependent seiche phase (and the platform's
 // FP contraction), while the time-mean is the settled solution. Same gating
 // rationale as the SpecifiedStageFillAndDrawdownLedger time-mean gates.
-void runGradedDamBreak(int K, double t_mid, double t_end,
-                       std::vector<double>* v_mid, std::vector<double>* v_end,
-                       double* sum_drift = nullptr, double mean_win = 0.0) {
+/**
+ * @brief Run a fixed multiscale closed dam-break and capture volume comparisons.
+ *
+ * Uses a fixed 24-by-4 graded strip, 1.5 m upstream column and 5 s advance windows, finalizing its
+ * local solver. Return/status of advances is ignored. Mean selection uses nominal
+ * t+5>=t_end-mean_win and equal sample weights, not exact time integration; no independent success
+ * status is returned.
+ *
+ * @param[in] K LTS tier count passed to solver options.
+ * @param[in] t_mid Nonnegative intermediate time seconds, no later than t_end.
+ * @param[in] t_end Final time seconds.
+ * @param[out] v_mid Optional vector overwritten with per-cell m3 volumes at t_mid.
+ * @param[out] v_end Optional vector overwritten with final m3 volumes or unweighted late-window
+ *     sample means.
+ * @param[out] sum_drift Optional absolute final-minus-initial total volume divided by positive
+ *     initial volume.
+ * @param[in] mean_win Positive seconds enables late-window sample averaging; nonpositive selects
+ *     final state.
+ */
+void runGradedDamBreak(int K, double t_mid, double t_end, std::vector<double>* v_mid,
+                       std::vector<double>* v_end, double* sum_drift = nullptr,
+                       double mean_win = 0.0) {
     auto mesh = makeGradedStrip(24, 4, 1.0, 1.08, /*slope=*/0.0,
-                                /*n=*/0.10);   // rough: seiches damp out
+                                /*n=*/0.10); // rough: seiches damp out
     SolverOptions2D opts;
     opts.lts_tiers = K;
     auto state = makeState(mesh);
     for (int i = 0; i < mesh.n_triangles(); ++i) {
         if (mesh.tri_cx[i] < 4.0) {
             state.volume[i] = 1.5 * mesh.tri_area[i];
-            inertial::cellEtaDepth(mesh, opts, i, state.volume[i],
-                                   state.head[i], state.depth[i]);
+            inertial::cellEtaDepth(mesh, opts, i, state.volume[i], state.head[i], state.depth[i]);
         }
     }
     const double sum0 = totalVolume(state, mesh.n_triangles());
@@ -130,7 +182,8 @@ void runGradedDamBreak(int K, double t_mid, double t_end,
     solver.initialize(mesh, state, opts);
     for (double t = 0.0; t < t_mid; t += 5.0)
         solver.advance(t, std::min(t + 5.0, t_mid));
-    if (v_mid) *v_mid = state.volume;
+    if (v_mid)
+        *v_mid = state.volume;
     std::vector<double> acc(state.volume.size(), 0.0);
     int n_samples = 0;
     for (double t = t_mid; t < t_end; t += 5.0) {
@@ -143,19 +196,19 @@ void runGradedDamBreak(int K, double t_mid, double t_end,
     }
     if (v_end) {
         if (n_samples > 0) {
-            for (auto& a : acc) a /= n_samples;
+            for (auto& a : acc)
+                a /= n_samples;
             *v_end = acc;
         } else {
             *v_end = state.volume;
         }
     }
     if (sum_drift)
-        *sum_drift =
-            std::fabs(totalVolume(state, mesh.n_triangles()) - sum0) / sum0;
+        *sum_drift = std::fabs(totalVolume(state, mesh.n_triangles()) - sum0) / sum0;
     solver.finalize();
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Conservation is exact (reduction roundoff) at every tier count, through a
@@ -202,11 +255,12 @@ TEST(LtsEquivalence, TierSolutionMatchesGlobalDt) {
     EXPECT_LT(max_end, max_mid) << "tier divergence must decay, not grow";
     EXPECT_LE(max_end, 0.025) << "near-settled max depth divergence (m)";
 
-    const double x23 = mesh.vx[24 * 2 / 3];   // 2/3-basin station
+    const double x23 = mesh.vx[24 * 2 / 3]; // 2/3-basin station
     auto passed = [&](const std::vector<double>& v) {
         double s = 0.0;
         for (std::size_t i = 0; i < v.size(); ++i)
-            if (mesh.tri_cx[static_cast<int>(i)] > x23) s += v[i];
+            if (mesh.tri_cx[static_cast<int>(i)] > x23)
+                s += v[i];
         return s;
     };
     const double p1 = passed(v1e), p4 = passed(v4e);
@@ -224,7 +278,7 @@ TEST(LtsEquivalence, FinePatchInCoarseWatershedStable) {
     opts.lts_tiers = 6;
     auto state = makeState(mesh);
     for (int i = 0; i < mesh.n_triangles(); ++i)
-        state.rainfall[i] = 5.0e-5;                  // 180 mm/hr burst
+        state.rainfall[i] = 5.0e-5; // 180 mm/hr burst
     const double t_end = 300.0;
     ExplicitInertialSolver solver;
     solver.initialize(mesh, state, opts);
@@ -239,8 +293,7 @@ TEST(LtsEquivalence, FinePatchInCoarseWatershedStable) {
         }
     }
     // Closed basin (walls): everything that rained is still on the surface.
-    EXPECT_NEAR(totalVolume(state, mesh.n_triangles()), rain_in,
-                1.0e-8 * rain_in);
+    EXPECT_NEAR(totalVolume(state, mesh.n_triangles()), rain_in, 1.0e-8 * rain_in);
     solver.finalize();
 }
 
@@ -257,8 +310,7 @@ TEST(LtsEquivalence, TailSplitsUniformNeverDegenerate) {
     for (int i = 0; i < mesh.n_triangles(); ++i) {
         if (mesh.tri_cx[i] < 4.0) {
             state.volume[i] = 1.5 * mesh.tri_area[i];
-            inertial::cellEtaDepth(mesh, opts, i, state.volume[i],
-                                   state.head[i], state.depth[i]);
+            inertial::cellEtaDepth(mesh, opts, i, state.volume[i], state.head[i], state.depth[i]);
         }
     }
     ExplicitInertialSolver solver;

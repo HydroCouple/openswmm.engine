@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file Infil2D.hpp
- * @brief Per-cell infiltration for the 2D overland-flow mesh (track I).
+ * @file      Infil2D.hpp
+ * @brief     Per-cell infiltration for the 2D overland-flow mesh (track I).
  *
  * @details Implements `plans/TWO_ZONE_GROUNDWATER_EXPLICIT_LTS_PLAN_2026-08-15.md`
  *          §5.5 (steps I1–I8, decisions D-I1…D-I6). This is the
@@ -50,11 +50,11 @@
  *          Infil2D::updateRates() at the call boundary, so the hydrology
  *          kernels keep bit-parity with legacy `infil.c`.
  *
- * @ingroup twoD
+ * @ingroup engine_2d
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_2D_INFIL2D_HPP
@@ -66,7 +66,9 @@
 
 #include "../../hydrology/surface/InfilBank.hpp"
 
-namespace openswmm { struct SimulationOptions; }
+namespace openswmm {
+struct SimulationOptions;
+}
 
 namespace openswmm::twoD {
 
@@ -82,9 +84,9 @@ struct SurfaceStateData;
 /// receiving capacity. AQUIFER_2D remains parseable for reviewed migration,
 /// but is rejected at initialization (R2, 2026-10-05).
 enum class Infil2DDest : int {
-    LOST             = 0,  ///< Leaves the domain; booked to MassBalance2D::infil_out
-    SUBCATCH_AQUIFER = 1,  ///< Legacy subcatchment aquifer (U3 track I-b)
-    AQUIFER_2D       = 2   ///< Obsolete; migrate using the ownership review.
+    LOST = 0,             ///< Leaves the domain; booked to MassBalance2D::infil_out
+    SUBCATCH_AQUIFER = 1, ///< Legacy subcatchment aquifer (U3 track I-b)
+    AQUIFER_2D = 2        ///< Obsolete; migrate using the ownership review.
 };
 
 /// Number of positional parameter columns carried per row. Matches the widest
@@ -94,46 +96,45 @@ inline constexpr int kInfil2DMaxParams = 5;
 /**
  * @brief One infiltration specification: method + positional parameters + destination.
  *
- * @details Parameters are POSITIONAL and in PROJECT UNITS, matching legacy
- *          `[INFILTRATION]` exactly:
+ * @details Parameters are POSITIONAL and in PROJECT UNITS, matching legacy `[INFILTRATION]`
+ * exactly:
  *
- *          | method          | p0        | p1        | p2          | p3         | p4   |
- *          |-----------------|-----------|-----------|-------------|------------|------|
- *          | HORTON          | f0        | fmin      | decay (1/hr)| dry_time(d)| Fmax |
- *          | MOD_HORTON      | f0        | fmin      | decay (1/hr)| dry_time(d)| Fmax |
- *          | GREEN_AMPT      | S (suction)| Ks       | IMD         | —          | —    |
- *          | MOD_GREEN_AMPT  | S (suction)| Ks       | IMD         | —          | —    |
- *          | CURVE_NUM       | CN        | —         | dry_time(d) | —          | —    |
- *          | CONSTANT        | rate      | —         | —           | —          | —    |
+ * | method | p0 | p1 | p2 | p3 | p4 |
+ * |---|---|---|---|---|---|
+ * | HORTON | f0 | fmin | decay (1/hr) | dry_time (d) | Fmax |
+ * | MOD_HORTON | f0 | fmin | decay (1/hr) | dry_time (d) | Fmax |
+ * | GREEN_AMPT | S (suction) | Ks | IMD | — | — |
+ * | MOD_GREEN_AMPT | S (suction) | Ks | IMD | — | — |
+ * | CURVE_NUM | CN | — | dry_time (d) | — | — |
+ * | CONSTANT | rate | — | — | — | — |
  *
- *          f0/fmin/Ks/rate are in/hr (US) or mm/hr (SI); S and Fmax are in
- *          (US) or mm (SI). CURVE_NUM's p1 is unused and ignored, matching the
- *          legacy column layout where the middle value is a no-op.
+ * f0/fmin/Ks/rate are in/hr (US) or mm/hr (SI); S and Fmax are in (US) or mm (SI). CURVE_NUM's
+ * p1 is unused and ignored, matching the legacy column layout where the middle value is a no-op.
  */
 struct Infil2DRow {
     /// False = NONE: the cell has no infiltration model. When false, every
     /// other field is meaningless.
-    bool        has_method = false;
-    InfilModel  method     = InfilModel::HORTON;
-    double      p[kInfil2DMaxParams] = {0.0, 0.0, 0.0, 0.0, 0.0};
-    Infil2DDest dest       = Infil2DDest::LOST;
+    bool has_method = false;
+    InfilModel method = InfilModel::HORTON;
+    double p[kInfil2DMaxParams] = {0.0, 0.0, 0.0, 0.0, 0.0};
+    Infil2DDest dest = Infil2DDest::LOST;
     /// E2: true when the row spelled its own DEST column. Rows that did not
     /// take the project default ([2D_OPTIONS] INFIL_DESTINATION) at
     /// initialize; the writer emits DEST only for explicit rows so a deck
     /// round-trips unchanged.
-    bool        dest_explicit = false;
+    bool dest_explicit = false;
 };
 
 /// One `[2D_INFILTRATION_DEFAULTS]` row. `tag == "*"` is the mesh-wide
 /// fallback and may appear anywhere in the section.
 struct Infil2DDefault {
     std::string tag;
-    Infil2DRow  row;
+    Infil2DRow row;
 };
 
 /// One `[2D_INFILTRATION]` per-cell override row.
 struct Infil2DOverride {
-    int        tri = -1;   ///< Triangle index (0-based internally; 1-based in file)
+    int tri = -1; ///< Triangle index (0-based internally; 1-based in file)
     Infil2DRow row;
 };
 
@@ -147,10 +148,10 @@ struct Infil2DOptions {
 /// Where a resolved cell's parameters came from. Retained so the writer emits
 /// a compact file (D-I3) instead of N per-cell rows.
 enum class Infil2DProvenance : std::uint8_t {
-    NONE     = 0,  ///< No model resolved
-    STAR     = 1,  ///< From the '*' default row
-    TAG      = 2,  ///< From a tag default row
-    OVERRIDE = 3   ///< From a per-cell [2D_INFILTRATION] row
+    NONE = 0,    ///< No model resolved
+    STAR = 1,    ///< From the '*' default row
+    TAG = 2,     ///< From a tag default row
+    OVERRIDE = 3 ///< From a per-cell [2D_INFILTRATION] row
 };
 
 // ============================================================================
@@ -161,150 +162,325 @@ enum class Infil2DProvenance : std::uint8_t {
  * @brief Owns per-cell infiltration parameters, kernel state and held rates.
  *
  * @details Lifecycle:
- *          1. Parsers fill `defaults()`, `overrides()`, `options()`.
- *          2. `SurfaceRouter2D::initialize()` calls resolve() once the mesh
- *             (and therefore `MeshData::tri_tag`) is available.
- *          3. `SurfaceRouter2D` calls updateRates() every `INFIL_STEP`.
- *          4. The marcher consumes `SurfaceStateData::infil_rate` only.
+ * 1. Parsers fill `defaults()`, `overrides()`, `options()`.
+ * 2. `SurfaceRouter2D::initialize()` calls resolve() once the mesh (and therefore
+ * `MeshData::tri_tag`) is available.
+ * 3. `SurfaceRouter2D` calls updateRates() every `INFIL_STEP`.
+ * 4. The marcher consumes `SurfaceStateData::infil_rate` only.
  *
- *          Empty/unconfigured is the fast path: `active()` is false and no
- *          array is allocated, so a project with no `[2D_INFILTRATION*]`
- *          sections is bitwise identical to the pre-track-I engine (gate I7).
+ * Empty/unconfigured is the fast path: `active()` is false and no array is allocated, so a
+ * project with no `[2D_INFILTRATION*]` sections is bitwise identical to the pre-track-I engine
+ * (gate I7).
  */
 class Infil2D {
 public:
     // --- configuration (populated by the section handlers) -----------------
-    std::vector<Infil2DDefault>&        defaults()        noexcept { return defaults_; }
-    const std::vector<Infil2DDefault>&  defaults()  const noexcept { return defaults_; }
-    std::vector<Infil2DOverride>&       overrides()       noexcept { return overrides_; }
+    /**
+     * @brief Borrow the authored ordered star/tag fallback rows.
+     * @return Mutable reference owned by this Infil2D, valid until reset, replacement, or object
+     * destruction; container element references may be invalidated by edits.
+     * @note Caller edits only during pre-run authoring and calls resolve() afterward; changing
+     * rows does not rebuild a running bank automatically. No allocation or ownership transfer.
+     */
+    std::vector<Infil2DDefault>& defaults() noexcept { return defaults_; }
+    /**
+     * @brief Borrow the authored ordered star/tag fallback rows.
+     * @return Const reference owned by this Infil2D, valid until reset, replacement, or object
+     * destruction; container element references may be invalidated by edits.
+     * @note Read only while authoring/resolution is stable. No allocation or ownership transfer.
+     */
+    const std::vector<Infil2DDefault>& defaults() const noexcept { return defaults_; }
+    /**
+     * @brief Borrow the authored ordered per-cell overrides.
+     * @return Mutable reference owned by this Infil2D, valid until reset, replacement, or object
+     * destruction; container element references may be invalidated by edits.
+     * @note Caller edits only during pre-run authoring and calls resolve() afterward; changing
+     * rows does not rebuild a running bank automatically. No allocation or ownership transfer.
+     */
+    std::vector<Infil2DOverride>& overrides() noexcept { return overrides_; }
+    /**
+     * @brief Borrow the authored ordered per-cell overrides.
+     * @return Const reference owned by this Infil2D, valid until reset, replacement, or object
+     * destruction; container element references may be invalidated by edits.
+     * @note Read only while authoring/resolution is stable. No allocation or ownership transfer.
+     */
     const std::vector<Infil2DOverride>& overrides() const noexcept { return overrides_; }
-    Infil2DOptions&                     options()         noexcept { return options_; }
-    const Infil2DOptions&               options()   const noexcept { return options_; }
+    /**
+     * @brief Borrow the authored infiltration cadence options.
+     * @return Mutable reference owned by this Infil2D, valid until reset, replacement, or object
+     * destruction; container element references may be invalidated by edits.
+     * @note Caller edits only during pre-run authoring and calls resolve() afterward; changing
+     * rows does not rebuild a running bank automatically. No allocation or ownership transfer.
+     */
+    Infil2DOptions& options() noexcept { return options_; }
+    /**
+     * @brief Borrow the authored infiltration cadence options.
+     * @return Const reference owned by this Infil2D, valid until reset, replacement, or object
+     * destruction; container element references may be invalidated by edits.
+     * @note Read only while authoring/resolution is stable. No allocation or ownership transfer.
+     */
+    const Infil2DOptions& options() const noexcept { return options_; }
 
     /**
      * @brief Resolve tag/override precedence into flat per-cell state.
      *
-     * @details D-I3 precedence: override > tag > '*' > none. Initializes the
-     *          hydrology kernel state for every cell that resolved to a model,
-     *          converting project-unit parameters through `infil::*_init`.
+     * @details D-I3 precedence: override > tag > '*' > none. Initializes the hydrology kernel
+     * state for every cell that resolved to a model, converting project-unit parameters through
+     * `infil::*_init`.
      *
-     * @param mesh  Mesh (uses `tri_tag` and `n_triangles()`).
-     * @param opts  Simulation options (unit system for the *_init conversions).
-     * @param err   [out] Human-readable message when the return is false.
-     * @returns False on a validation failure (unsupported destination,
-     *          out-of-range triangle index, unknown method, bad parameters).
+     * @param[in] mesh  Mesh (uses `tri_tag` and `n_triangles()`).
+     * @param[in] opts  Simulation options (unit system for the *_init conversions).
+     * @param[out] err   [out] Human-readable message when the return is false.
+     * @returns False on a validation failure (unsupported destination, out-of-range triangle
+     * index, unknown method, bad parameters).
+     *
+     * @pre Called during pre-run setup after aquifer ownership is supplied; mesh cell/tag arrays
+     * and simulation unit options are valid.
+     * @post On success publishes a fully resolved private candidate with newly initialized
+     * kernel history and zero capacity integrals. On validation failure this object remains
+     * unchanged; err contains a diagnostic. Successful calls need not clear a preexisting err
+     * string.
+     * @note Ownership coverage must match cell_count; star/tag ordinary defaults skip
+     * aquifer-owned cells, explicit ordinary model overrides there are refused, and obsolete
+     * AQUIFER_2D destinations are rejected. Copy/allocation exceptions propagate without
+     * publishing the candidate; no input references retained. Requires exclusive access.
      */
-    bool resolve(const MeshData& mesh, const SimulationOptions& opts,
-                 std::string& err);
-    /// Effective coverage, not inferred from conductivity or authored rows.
+    bool resolve(const MeshData& mesh, const SimulationOptions& opts, std::string& err);
+    /**
+     * @brief Effective coverage, not inferred from conductivity or authored rows.
+     *
+     * @details Replace explicit effective aquifer coverage used by the next resolve.
+     * @param[in] owners Owned coverage mask, one entry per mixed cell, zero ordinary/nonzero
+     * external aquifer. Moved into this object.
+     * @post Does not rebuild kernels or validate extent immediately; resolve() checks it. Empty
+     * coverage asks resolve to use aquifer2DAvailable() as an all-cell fallback. Requires
+     * exclusive pre-run authoring access.
+     */
     void setAquiferOwners(std::vector<uint8_t> owners) { aquifer_owners_ = std::move(owners); }
-    const std::vector<std::string>& ownershipMessages() const noexcept { return ownership_messages_; }
+    /**
+     * @brief Borrow the most recent successful resolution's default-ownership diagnostics.
+     * @return Object-owned string vector describing applied/skipped ordinary default counts.
+     * Valid until resolve/reset/replacement/destruction; never free it. No allocation; read
+     * while state is stable.
+     */
+    const std::vector<std::string>& ownershipMessages() const noexcept {
+        return ownership_messages_;
+    }
 
     /**
-     * @brief G1 — tell validation that a `[2D_AQUIFER]` resolved, so the
-     *        `AQUIFER_2D` destination has somewhere to send its water.
+     * @brief G1 — tell validation that a `[2D_AQUIFER]` resolved, so the `AQUIFER_2D`
+     * destination has somewhere to send its water.
      *
-     * @details Must be called before `resolve()`. Without it `AQUIFER_2D` is
-     *          refused, which is the right answer when there is no aquifer:
-     *          silently treating it as LOST would drain a model the user
-     *          believed was recharging.
+     * @details Supplies only fallback owner coverage when an explicit owner mask is empty.
+     * AQUIFER_2D remains obsolete and resolve() rejects such rows.
+     *
+     * @param[in] on Whether aquifer coverage is available as an all-cell fallback when no
+     * explicit owner mask exists.
+     * @post Stores a fallback flag only; does not validate or activate obsolete AQUIFER_2D row
+     * destinations. Call before resolve(), with exclusive pre-run access.
      */
     void setAquifer2DAvailable(bool on) noexcept { aquifer_2d_available_ = on; }
+    /**
+     * @brief Read the stored aquifer-availability fallback flag.
+     * @return The last setAquifer2DAvailable() value, reset false by reset(); not proof of
+     * initialized aquifer coverage/runtime. No mutation or allocation.
+     */
     bool aquifer2DAvailable() const noexcept { return aquifer_2d_available_; }
 
     /**
      * @brief Recompute and publish per-cell infiltration rates (D-I1).
      *
-     * @details Called on the `INFIL_STEP` cadence. Advances kernel state for
-     *          EVERY model-carrying cell, including cells the marcher has
-     *          deactivated — otherwise a dry cell presents full initial
-     *          capacity when rain finally arrives (§5.5.2).
+     * @details Called on the `INFIL_STEP` cadence. Advances kernel state for EVERY
+     * model-carrying cell, including cells the marcher has deactivated — otherwise a dry cell
+     * presents full initial capacity when rain finally arrives (§5.5.2).
      *
-     *          Writes `state.infil_rate[i]` in m/s, >= 0. Conversion:
-     *          precip/depth SI→ft on the way in, rate ft/s→SI on the way out.
+     * Writes `state.infil_rate[i]` in m/s, >= 0. Conversion: precip/depth SI→ft on the way in,
+     * rate ft/s→SI on the way out.
      *
-     * @param mesh   Mesh (unused today; kept for symmetry and future area use).
-     * @param state  Surface state — reads `rainfall`/`depth`, writes `infil_rate`.
-     * @param dt     Elapsed seconds since the previous call (the INFIL_STEP).
+     * @param[in] mesh   Mesh (unused today; kept for symmetry and future area use).
+     * @param[in,out] state  Surface state — reads `rainfall`/`depth`, writes `infil_rate`.
+     * @param[in] dt     Elapsed seconds since the previous call (the INFIL_STEP).
+     *
+     * @param[in] factors Monthly/global InfilBank adjustment factors, dimensionless; defaults
+     * are unity.
+     * @pre Resolved bank and source/depth/rate arrays have compatible cell extents; ordinary
+     * rows use valid project-unit parameters and finite dt.
+     * @post Advances ordinary cell infiltration kernel history and publishes held SI m/s rates
+     * for model-carrying nonexternal rows. Aquifer-owned/no-method rows remain for their
+     * separate owner; cells beyond min(resolved size, output rate size) are untouched.
+     * @note Inactive or dt <= 0 is a no-op; no explicit NaN dt guard exists. Does not integrate
+     * removed surface volume or update mass-balance ledgers. Exclusive bank/output access is
+     * required; input pointers are not retained.
      */
     void updateRates(const MeshData& mesh, SurfaceStateData& state, double dt,
                      surface::InfilBank::Factors factors = {1.0, 1.0});
 
+    /**
+     * @brief Borrow the canonical mutable per-cell infiltration bank.
+     * @return Object-owned InfilBank reference, valid until replacement/reset/destruction.
+     * Caller must respect owner/cadence rules and serialize with resolve/updateRates; direct
+     * edits are not validated here. No allocation or ownership transfer.
+     */
     surface::InfilBank& bank() noexcept { return bank_; }
 
-    /// True when at least one cell resolved to a model.
+    /**
+     * @brief True when at least one cell resolved to a model.
+     *
+     * @return True when successful resolution found ordinary model cells OR externally
+     * aquifer-owned cells, unless deactivate() was called. No allocation or runtime
+     * initialization; read stable owner state.
+     */
     bool active() const noexcept { return active_; }
 
-    /// E2: [2D_OPTIONS] INFILTRATION NO — keep the rows (they still save)
-    /// but run without infiltration. Called after resolve().
+    /**
+     * @brief E2: [2D_OPTIONS] INFILTRATION NO — keep the rows (they still save) but run without
+     * infiltration. Called after resolve().
+     *
+     * @post Clears active_ only; authored rows, resolved arrays and kernel history remain
+     * stored. Subsequent updateRates() calls become no-ops; it does not zero already published
+     * state.infil_rate.
+     * @note Caller coordinates disabling consumption/published rates through the router.
+     * Exclusive access; no allocation or unit changes.
+     */
     void deactivate() noexcept { active_ = false; }
 
-    /// Resolved method per triangle; `has_method == false` entries are NONE.
+    /**
+     * @brief Resolved method per triangle; `has_method == false` entries are NONE.
+     *
+     * @return Borrowed resolved per-cell parameter vector, in original project units; empty
+     * after inactive resolution/reset.
+     * @note Storage remains owned by this object/bank and may be invalidated or updated by
+     * resolve/updateRates/reset. Read stable state; do not free or retain element pointers
+     * across mutations. No allocation.
+     */
     const std::vector<Infil2DRow>& resolvedRows() const noexcept { return resolved_; }
 
-    /// Provenance per triangle (D-I3, for the writer).
+    /**
+     * @brief Provenance per triangle (D-I3, for the writer).
+     *
+     * @return Borrowed per-cell provenance codes; empty after inactive resolution/reset.
+     * @note Storage remains owned by this object/bank and may be invalidated or updated by
+     * resolve/updateRates/reset. Read stable state; do not free or retain element pointers
+     * across mutations. No allocation.
+     */
     const std::vector<Infil2DProvenance>& provenance() const noexcept { return prov_; }
 
-    /// Cumulative infiltration CAPACITY per triangle (m): the integral of the
-    /// published rate, without the solver's depth ramp. On a drying cell this
-    /// exceeds the water actually removed, so it is NOT ledger-consistent with
-    /// `MassBalance2D::infil_out`. `SurfaceRouter2D::infilCumulative()` is the
-    /// ledger-consistent series and is what the sidecar's `infil_cum` and the
-    /// C API's `*_get_cum_bulk` report; this one is retained as the kernel-side
-    /// diagnostic.
+    /**
+     * @brief Cumulative infiltration CAPACITY per triangle (m): the integral of the published
+     * rate, without the solver's depth ramp. On a drying cell this exceeds the water actually
+     * removed, so it is NOT ledger-consistent with `MassBalance2D::infil_out`.
+     * `SurfaceRouter2D::infilCumulative()` is the ledger-consistent series and is what the
+     * sidecar's `infil_cum` and the C API's `*_get_cum_bulk` report; this one is retained as the
+     * kernel-side diagnostic.
+     *
+     * @return Borrowed bank-owned per-cell cumulative capacity integral in m; diagnostic
+     * capacity, not actual availability-limited surface removal.
+     * @note Storage remains owned by this object/bank and may be invalidated or updated by
+     * resolve/updateRates/reset. Read stable state; do not free or retain element pointers
+     * across mutations. No allocation.
+     */
     const std::vector<double>& cumulative() const noexcept { return bank_.cumulative(); }
 
-    /// Resolved cadence in seconds (options_.infil_step, or the project
-    /// WET_STEP when that was <= 0). Set by resolve().
+    /**
+     * @brief Resolved cadence in seconds (options_.infil_step, or the project WET_STEP when that
+     * was <= 0). Set by resolve().
+     *
+     * @return Resolved cadence in seconds: positive authored infil_step, otherwise the project's
+     * wet_step. Zero before resolve/reset. Read-only; this getter does not resolve or validate
+     * the cadence.
+     */
     double stepSeconds() const noexcept { return step_seconds_; }
 
-    /// Clear everything back to the unconfigured fast path.
+    /**
+     * @brief Clear everything back to the unconfigured fast path.
+     *
+     * @post Erases authored rows/options, aquifer owners/fallback, diagnostics, resolved
+     * rows/provenance and kernel history; active false and cadence zero. Does not clear rates
+     * already held in an external SurfaceStateData.
+     * @note Requires exclusive lifecycle access; invalidates borrowed bank/configuration/state
+     * views. No external model ownership is changed.
+     */
     void reset();
 
 private:
     bool resolveImpl(const MeshData&, const SimulationOptions&, std::string&);
     std::vector<uint8_t> aquifer_owners_;
     std::vector<std::string> ownership_messages_;
-    std::vector<Infil2DDefault>  defaults_;
+    std::vector<Infil2DDefault> defaults_;
     std::vector<Infil2DOverride> overrides_;
-    Infil2DOptions               options_;
+    Infil2DOptions options_;
 
-    bool   active_        = false;
-    double step_seconds_  = 0.0;
+    bool active_ = false;
+    double step_seconds_ = 0.0;
     /// G1: a `[2D_AQUIFER]` resolved, so AQUIFER_2D has a receiver. Set by
     /// SurfaceRouter2D before resolve(), and cleared by reset() with the rest
     /// of the authored state.
-    bool   aquifer_2d_available_ = false;
+    bool aquifer_2d_available_ = false;
 
     // Per-triangle resolved state (empty when !active_).
-    std::vector<Infil2DRow>        resolved_;
+    std::vector<Infil2DRow> resolved_;
     std::vector<Infil2DProvenance> prov_;
     surface::InfilBank bank_;
-
 };
 
 // ============================================================================
 // Free helpers
 // ============================================================================
 
-/// Parse a method token (`HORTON`, `MODIFIED_HORTON`, `GREEN_AMPT`,
-/// `MODIFIED_GREEN_AMPT`, `CURVE_NUMBER`, `CONSTANT`, `NONE`), case-insensitive.
-/// @returns False if the token is unrecognised. `NONE` returns true with
-///          @p has_method set false.
-bool parseInfil2DMethod(const std::string& token, InfilModel& method,
-                        bool& has_method);
+/**
+ * @brief Parse a method token (`HORTON`, `MODIFIED_HORTON`, `GREEN_AMPT`, `MODIFIED_GREEN_AMPT`,
+ * `CURVE_NUMBER`, `CONSTANT`, `NONE`), case-insensitive.
+ * @returns False if the token is unrecognised. `NONE` returns true with
+ * @p has_method set false.
+ *
+ * @param[in] token Borrowed complete case-insensitive method token; no whitespace trimming.
+ * @param[out] method Assigned recognized enum, or HORTON for NONE; unchanged on an unknown
+ * token.
+ * @param[out] has_method True for a recognized physical method, false for NONE or unrecognized
+ * text.
+ * @note No input retention, allocation or engine-state mutation. Caller checks the boolean
+ * result before using method.
+ */
+bool parseInfil2DMethod(const std::string& token, InfilModel& method, bool& has_method);
 
-/// Inverse of parseInfil2DMethod — the canonical file token.
+/**
+ * @brief Inverse of parseInfil2DMethod — the canonical file token.
+ *
+ * @param[in] row Borrowed authored/resolved row.
+ * @return Process-lifetime immutable canonical token; NONE when no method or unsupported enum.
+ * Do not modify/free the literal; no allocation or mutation.
+ */
 const char* infil2DMethodToken(const Infil2DRow& row);
 
-/// Parse a destination token. @returns false if unrecognised.
+/**
+ * @brief Parse a destination token. @returns false if unrecognised.
+ *
+ * @param[in] token Borrowed complete case-insensitive LOST, SUBCATCH_AQUIFER or AQUIFER_2D
+ * token.
+ * @param[out] dest Assigned only on success; unchanged for unknown text.
+ * @note Parsing accepts obsolete AQUIFER_2D for migration/roundtrip; it does not establish
+ * runtime support. No allocation or retained input.
+ */
 bool parseInfil2DDest(const std::string& token, Infil2DDest& dest);
 
-/// Inverse of parseInfil2DDest.
+/**
+ * @brief Inverse of parseInfil2DDest.
+ *
+ * @param[in] dest Authored destination enum.
+ * @return Borrowed process-lifetime canonical literal, with LOST fallback for an unsupported
+ * enum. Do not modify/free it; no allocation or validation of runtime support.
+ */
 const char* infil2DDestToken(Infil2DDest dest);
 
-/// Number of meaningful positional parameters for @p method (used by the
-/// writer to trim trailing placeholders and by validation).
+/**
+ * @brief Number of meaningful positional parameters for @p method (used by the writer to trim
+ * trailing placeholders and by validation).
+ *
+ * @param[in] method Engine infiltration method enum.
+ * @return Five for Horton variants, three for Green-Ampt variants/Curve Number, one for
+ * Constant, or zero for unsupported method. Counts include the ignored middle Curve Number
+ * placeholder. No allocation or mutation.
+ */
 int infil2DParamCount(InfilModel method);
 
 } // namespace openswmm::twoD

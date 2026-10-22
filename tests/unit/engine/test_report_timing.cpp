@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_report_timing.cpp
- * @brief Legacy parity for the .rpt "Analysis begun on / Total elapsed time"
+ * @file      test_report_timing.cpp
+ * @brief     Legacy parity for the .rpt "Analysis begun on / Total elapsed time"
  *        section.
  *
  * @details Legacy takes its wall-clock stamp in `report_writeLogo()`, which
@@ -36,9 +36,9 @@
  *            - Elapsed formatting matches legacy across the sub-second, the
  *              hh:mm:ss and the >= 24 h `d.hh:mm:ss` branches.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -58,10 +58,32 @@ constexpr const char* kInp = "warnerr_base.inp";
 constexpr const char* kRpt = "_report_timing.rpt";
 constexpr const char* kOut = "_report_timing.out";
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
+/**
+ * @brief Collect an entire fixture file into owned text.
+ *
+ * Uses ordinary text mode and its platform newline rules. The local stream closes on return; no
+ * model state is touched and no borrowed buffer is returned. Default stream exception settings
+ * apply; allocation exceptions may propagate.
+ *
+ * @param[in] path Non-null null-terminated filename used for this synchronous open/read.
+ * @return Owned string collected from the stream; empty can mean an empty file or failure to open.
+ *     Partial read failures have no separate status.
+ */
 std::string read_file(const char* path) {
     std::ifstream in(path);
     std::ostringstream ss;
@@ -69,23 +91,42 @@ std::string read_file(const char* path) {
     return ss.str();
 }
 
-/** @brief Returns the text after "Total elapsed time: " up to end of line. */
+/**
+ * @brief Extract the first report elapsed-time field literally.
+ *
+ * Retains spaces and possible terminal CR; does not parse/validate duration or alter input.
+ *
+ * @param[in] rpt Report text searched for exact Total elapsed time prefix.
+ * @return Owned text after the prefix through before LF or EOF, empty when prefix absent.
+ */
 std::string elapsed_field(const std::string& rpt) {
     const std::string key = "Total elapsed time: ";
     const auto at = rpt.find(key);
-    if (at == std::string::npos) return {};
+    if (at == std::string::npos)
+        return {};
     const auto from = at + key.size();
-    const auto to   = rpt.find('\n', from);
+    const auto to = rpt.find('\n', from);
     return rpt.substr(from, (to == std::string::npos ? rpt.size() : to) - from);
 }
 
 class ReportTimingTest : public ::testing::Test {
 protected:
+    /**
+     * @brief Allocate the per-test engine handle and assert allocation succeeded.
+     *
+     * Leaves the handle unopen for this fixture; its teardown owns destruction. A fatal allocation
+     * assertion stops setup.
+     */
     void SetUp() override {
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
     }
 
+    /**
+     * @brief Destroy a non-null fixture handle and clear its member slot.
+     *
+     * Engine destruction supplies remaining model cleanup; safe after setup failed before allocation.
+     */
     void TearDown() override {
         if (engine_ != nullptr) {
             swmm_engine_destroy(engine_);
@@ -178,8 +219,7 @@ TEST_F(ReportTimingTest, SubSecondRunReportsLessThanOneSecond) {
     // The model is a single junction over one hour; wall time is well under a
     // second on any supported host. Guard against flake by also accepting the
     // 00:00:0N form rather than pinning "< 1 sec" alone.
-    EXPECT_TRUE(elapsed.rfind("< 1 sec", 0) == 0u ||
-                elapsed.rfind("00:00:0", 0) == 0u)
+    EXPECT_TRUE(elapsed.rfind("< 1 sec", 0) == 0u || elapsed.rfind("00:00:0", 0) == 0u)
         << "unexpected elapsed field: " << elapsed;
 }
 
@@ -205,4 +245,4 @@ TEST_F(ReportTimingTest, ElapsedUnderOneDayHasNoDayPrefix) {
     EXPECT_EQ(elapsed.rfind("23:59:", 0), 0u) << elapsed;
 }
 
-}  // namespace
+} // namespace

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_heat_watershed.cpp
- * @brief Phase H5a gates — temperature on subcatchment surfaces.
+ * @file      test_heat_watershed.cpp
+ * @brief     Phase H5a gates — temperature on subcatchment surfaces.
  *
  * @details Every gate asserts its SETUP before its result (lesson 59): the
  *          code under test runs only on a deck that actually produces
@@ -35,9 +35,9 @@
  *      by assuming physics the deck cannot express.
  *
  * @see plans/transport/HEAT_TRANSPORT_PLAN.md §6 H5a, §6.1 D-H5a/D-H5c
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -55,89 +55,138 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
 constexpr int kNSub = openswmm::HeatState::kNSubArea;
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Open failure is not
+ * reported by this helper. Subsequent write/close failures are not checked; the local stream closes
+ * at scope exit and no path/content storage is retained. Allocation exceptions can propagate.
+ *
+ * @param[in] path Non-null null-terminated destination path; an existing file is
+ *     truncated/overwritten.
+ * @param[in] body Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const char* path, const std::string& body) {
     std::ofstream f(path);
     f << body;
 }
 
-/// An INTENSITY gage on a 5-minute interval reads ONE value per interval, so
-/// a series with entries only at 00:00 and 01:00 rains for five minutes, not
-/// an hour. A3's round learned this the expensive way — its gates all ran on
-/// a draining surface without meaning to. One entry per interval.
-///
-/// @param stop_min Last minute that rains; entries after it are 0.0. Without
-///        it every "long dry tail" deck rained for its whole run, because
-///        the series was always generated out to `end_min + 5` — which is
-///        what left the dry-policy gate measuring a soaking-wet surface.
+/**
+ * @brief Build a five-minute rainfall series with an optional dry tail.
+ *
+ * No range or calendar-rollover validation; negative last_min produces only the trailing blank
+ * line.
+ *
+ * @param[in] last_min Nonnegative final minute on the fixture 01/01/2026 date.
+ * @param[in] intensity Rainfall intensity in in/hr, formatted to three decimals.
+ * @param[in] stop_min Last minute retaining the rain intensity, inclusive; a negative value uses
+ *     last_min.
+ * @return Owned rain_ts rows from zero through the last five-minute sample <= last_min, with zero
+ *     after stop_min and a trailing blank line.
+ */
 std::string rain_series(int last_min, double intensity, int stop_min = -1) {
-    if (stop_min < 0) stop_min = last_min;
+    if (stop_min < 0)
+        stop_min = last_min;
     std::string s;
     char buf[80];
     for (int m = 0; m <= last_min; m += 5) {
-        std::snprintf(buf, sizeof(buf), "rain_ts 01/01/2026 %02d:%02d %.3f\n",
-                      m / 60, m % 60, m <= stop_min ? intensity : 0.0);
+        std::snprintf(buf, sizeof(buf), "rain_ts 01/01/2026 %02d:%02d %.3f\n", m / 60, m % 60,
+                      m <= stop_min ? intensity : 0.0);
         s += buf;
     }
     return s + "\n";
 }
 
-/// A flat zero series, for a subcatchment that must receive run-on and
-/// nothing else.
+/**
+ * @brief Build a zero-rain series for a receiver supplied only by runon.
+ *
+ * @param[in] last_min Nonnegative final minute on the fixed fixture date; samples are every five
+ *     minutes.
+ * @return Owned zero_ts rows with zero in/hr and a trailing blank line; no model is run.
+ */
 std::string zero_series(int last_min) {
     std::string s;
     char buf[80];
     for (int m = 0; m <= last_min; m += 5) {
-        std::snprintf(buf, sizeof(buf), "zero_ts 01/01/2026 %02d:%02d 0.000\n",
-                      m / 60, m % 60);
+        std::snprintf(buf, sizeof(buf), "zero_ts 01/01/2026 %02d:%02d 0.000\n", m / 60, m % 60);
         s += buf;
     }
     return s + "\n";
 }
 
-/// A flat air-temperature series in °F. Flat on purpose: the fluxes are
-/// nonlinear in air temperature, so a varying series would make every
-/// expected value a numerical integration rather than a fixed point.
+/**
+ * @brief Build constant air-temperature forcing at five-minute intervals.
+ *
+ * Constant forcing isolates a thermal equilibrium instead of requiring a time-varying numerical
+ * expectation; no finite/range validation is performed.
+ *
+ * @param[in] last_min Nonnegative final minute on 01/01/2026; no calendar rollover is applied.
+ * @param[in] temp_f Air temperature in degrees F, formatted to three decimal places.
+ * @return Owned air_ts rows through the last sample <= last_min, plus a blank line.
+ */
 std::string air_series(int last_min, double temp_f) {
     std::string s;
     char buf[80];
     for (int m = 0; m <= last_min; m += 5) {
-        std::snprintf(buf, sizeof(buf), "air_ts 01/01/2026 %02d:%02d %.3f\n",
-                      m / 60, m % 60, temp_f);
+        std::snprintf(buf, sizeof(buf), "air_ts 01/01/2026 %02d:%02d %.3f\n", m / 60, m % 60,
+                      temp_f);
         s += buf;
     }
     return s + "\n";
 }
 
 struct DeckOpts {
-    bool   cascade      = false;  ///< S1 drains to S2 rather than to J1
-    bool   surface      = false;  ///< [HEAT_FLUXES] SURFACE_EXCHANGE ON
-    bool   radiative    = false;
-    double air_f        = 68.0;   ///< [TEMPERATURE] constant, °F
-    double wind_mph     = 5.0;
+    bool cascade = false; ///< S1 drains to S2 rather than to J1
+    bool surface = false; ///< [HEAT_FLUXES] SURFACE_EXCHANGE ON
+    bool radiative = false;
+    double air_f = 68.0; ///< [TEMPERATURE] constant, °F
+    double wind_mph = 5.0;
     double humidity_pct = 50.0;
-    int    end_min      = 60;
-    double rain_in_hr   = 2.0;
-    int    rain_stop_min = -1;    ///< -1 = rains for the whole run
+    int end_min = 60;
+    double rain_in_hr = 2.0;
+    int rain_stop_min = -1; ///< -1 = rains for the whole run
     /// Put the cascade receiver on a zero-rain gage. Its surface then wets
     /// only as fast as run-on arrives, which is how it holds the films thin
     /// enough to expose the explicit step's stability limit (gate 9).
-    bool   starve_receiver = false;
-    const char* dry_policy = nullptr;  ///< HOLD | AIR | DEFAULT
+    bool starve_receiver = false;
+    const char* dry_policy = nullptr; ///< HOLD | AIR | DEFAULT
 };
 
-/// @param cfg_path The heat component config this deck must point at. A
-///        parameter and not a constant: every gate writes its own
-///        config, and a shared literal here silently ran all of them
-///        against gate 1's file — fluxes off, RAINFALL 8 C, no policy
-///        key — which is what five of the seven gates were measuring.
-void write_deck(const char* path, const char* cfg_path,
-                const DeckOpts& o) {
+/**
+ * @brief Write a two-subcatchment watershed heat-source/cascade fixture.
+ *
+ * Enables heat and Horton infiltration in a CFS model. Emits real air/rain time series and, for a
+ * starved receiver, a separate zero-rain gage. Sidecar heat config contents are the caller
+ * responsibility. Opens/truncates the deck using a local ofstream; parent directories must exist.
+ * Stream open/write/close outcomes are not checked, and sidecar names/text are not escaped.
+ * Caller-owned inputs are not retained.
+ *
+ * @param[in] path Destination deck filename, non-null when a character pointer; borrowed only
+ *     during this call. Existing files are truncated.
+ * @param[in] cfg_path Non-null heat config filename written in quotes into the PROCESS_COMPONENTS
+ *     row; no escaping is applied.
+ * @param[in] o Borrowed options: end/rain-stop minutes, rain in/hr, air F, wind mph, humidity
+ *     percent, S1-to-S2 cascade and a zero-rain receiver flag.
+ */
+void write_deck(const char* path, const char* cfg_path, const DeckOpts& o) {
     std::ofstream f(path);
     f << "[TITLE]\nH5a watershed heat gate deck\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT ON\n"
@@ -156,25 +205,23 @@ void write_deck(const char* path, const char* cfg_path,
       // gate below read a forcing the deck never set.
       << "[TEMPERATURE]\n"
       << "TIMESERIES air_ts\n"
-      << "WINDSPEED MONTHLY " << o.wind_mph << " " << o.wind_mph << " "
-      << o.wind_mph << " " << o.wind_mph << " " << o.wind_mph << " "
-      << o.wind_mph << " " << o.wind_mph << " " << o.wind_mph << " "
-      << o.wind_mph << " " << o.wind_mph << " " << o.wind_mph << " "
+      << "WINDSPEED MONTHLY " << o.wind_mph << " " << o.wind_mph << " " << o.wind_mph << " "
+      << o.wind_mph << " " << o.wind_mph << " " << o.wind_mph << " " << o.wind_mph << " "
+      << o.wind_mph << " " << o.wind_mph << " " << o.wind_mph << " " << o.wind_mph << " "
       << o.wind_mph << "\n";
     f << "HUMIDITY";
-    for (int m = 0; m < 12; ++m) f << " " << o.humidity_pct;
+    for (int m = 0; m < 12; ++m)
+        f << " " << o.humidity_pct;
     f << "\n\n";
     f << "[RAINGAGES]\nRG1 INTENSITY 0:05 1.0 TIMESERIES rain_ts\n";
     if (o.starve_receiver)
         f << "RG0 INTENSITY 0:05 1.0 TIMESERIES zero_ts\n";
-    f << "\n[TIMESERIES]\n"
-      << rain_series(o.end_min + 5, o.rain_in_hr, o.rain_stop_min);
-    if (o.starve_receiver) f << zero_series(o.end_min + 5);
-    f << air_series(o.end_min + 5, o.air_f)
-      << "[SUBCATCHMENTS]\n"
-      << "S1 RG1 " << (o.cascade ? "S2" : "J1")
-      << " 5 50 500 0.5 0\nS2 " << (o.starve_receiver ? "RG0" : "RG1")
-      << " J1 5 50 500 0.5 0\n\n"
+    f << "\n[TIMESERIES]\n" << rain_series(o.end_min + 5, o.rain_in_hr, o.rain_stop_min);
+    if (o.starve_receiver)
+        f << zero_series(o.end_min + 5);
+    f << air_series(o.end_min + 5, o.air_f) << "[SUBCATCHMENTS]\n"
+      << "S1 RG1 " << (o.cascade ? "S2" : "J1") << " 5 50 500 0.5 0\nS2 "
+      << (o.starve_receiver ? "RG0" : "RG1") << " J1 5 50 500 0.5 0\n\n"
       << "[SUBAREAS]\n"
       << "S1 0.01 0.1 0.05 0.10 25 OUTLET\n"
       << "S2 0.01 0.1 0.05 0.10 25 OUTLET\n\n"
@@ -185,49 +232,79 @@ void write_deck(const char* path, const char* cfg_path,
       << "[CONDUITS]\nC1 J1 OUT 400 0.013 0 0 0\n\n"
       << "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n\n"
       << "[PROCESS_COMPONENTS]\n"
-      << "org.hydrocouple.openswmm.heat config=\"" << cfg_path
-      << "\"\n\n"
+      << "org.hydrocouple.openswmm.heat config=\"" << cfg_path << "\"\n\n"
       << "[REPORT]\nINPUT NO\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n";
     (void)path;
 }
 
-/// The heat component config. `rain_c` is the RAINFALL source temperature —
-/// deliberately distinct from the INITIAL_STATE value so "carried" and
-/// "invented locally" cannot produce the same number (lesson 26).
-void write_heat_cfg(const char* path, double rain_c, double initial_c,
-                    const DeckOpts& o) {
+/**
+ * @brief Write rainfall/initial heat sources and watershed exchange options.
+ *
+ * Builds HEAT_SOURCES and HEAT_FLUXES text, then overwrites the path through write_file. Caller
+ * supplies valid physical values/keywords; no escaping, parse validation or stream-error reporting
+ * occurs.
+ *
+ * @param[in] path Non-null destination filename, passed to the truncating write_file helper.
+ * @param[in] rain_c Global rainfall source temperature in degrees C.
+ * @param[in] initial_c Global initial-state temperature in degrees C.
+ * @param[in] o Borrowed flags for surface/radiative exchange and optional non-null raw dry-policy
+ *     keyword; other DeckOpts fields are ignored here.
+ */
+void write_heat_cfg(const char* path, double rain_c, double initial_c, const DeckOpts& o) {
     std::string s = "[HEAT_SOURCES]\n";
     s += "RAINFALL GLOBAL " + std::to_string(rain_c) + "\n";
     s += "INITIAL_STATE GLOBAL " + std::to_string(initial_c) + "\n\n";
     s += "[HEAT_FLUXES]\n";
     s += std::string("SURFACE_EXCHANGE ") + (o.surface ? "ON" : "OFF") + "\n";
-    s += std::string("RADIATIVE_EXCHANGE ") +
-         (o.radiative ? "ON" : "OFF") + "\n";
+    s += std::string("RADIATIVE_EXCHANGE ") + (o.radiative ? "ON" : "OFF") + "\n";
     if (o.dry_policy != nullptr)
         s += std::string("DRY_ELEMENT_TEMPERATURE ") + o.dry_policy + "\n";
     write_file(path, s);
 }
 
+/**
+ * @brief Run a generated fixture and keep its engine for state inspection.
+ *
+ * Steps with saved results until completion, step error or a 20000-step guard, then invokes end
+ * without checking its status. A non-null result does not prove successful complete
+ * stepping/finalization. Does not request a full report; returned context/diagnostics remain owned
+ * by that handle.
+ *
+ * @param[in] inp Non-null input-deck path, borrowed for the synchronous run.
+ * @param[in] rpt Report destination passed through to engine open.
+ * @param[in] out Binary-result destination; start requests saved results.
+ * @return Owned raw engine handle after allocation/open/initialize/start succeed, or null after
+ *     allocation/setup failure; caller must destroy any returned handle.
+ */
 SWMM_Engine run_and_hold(const char* inp, const char* rpt, const char* out) {
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) return nullptr;
+    if (e == nullptr)
+        return nullptr;
     if (swmm_engine_open(e, inp, rpt, out, nullptr) != SWMM_OK ||
-        swmm_engine_initialize(e) != SWMM_OK ||
-        swmm_engine_start(e, 1) != SWMM_OK) {
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
         swmm_engine_destroy(e);
         return nullptr;
     }
     double elapsed = 0.0;
     int guard = 0;
     do {
-        if (swmm_engine_step(e, &elapsed) != SWMM_OK) break;
+        if (swmm_engine_step(e, &elapsed) != SWMM_OK)
+            break;
     } while (elapsed > 0.0 && ++guard < 20000);
     swmm_engine_end(e);
     return e;
 }
 
-/// SETUP assertion shared by every gate: the deck must have produced runoff,
-/// or every temperature below is an untouched seed value.
+/**
+ * @brief Require evidence that at least one subcatchment produced nonzero runoff.
+ *
+ * Does not recompute hydrology or inspect temperature change; it ensures a runoff-dependent
+ * assertion is not merely observing untouched seed state.
+ *
+ * @param[in] c Borrowed run context with stat_runoff_vol covering every n_subcatches entry.
+ * @return AssertionSuccess when any cumulative runoff volume is > 0, otherwise AssertionFailure
+ *     with a setup diagnostic.
+ */
 ::testing::AssertionResult ProducedRunoff(const openswmm::SimulationContext& c) {
     for (int i = 0; i < c.n_subcatches(); ++i)
         if (c.subcatches.stat_runoff_vol[static_cast<std::size_t>(i)] > 0.0)
@@ -237,7 +314,7 @@ SWMM_Engine run_and_hold(const char* inp, const char* rpt, const char* out) {
               "the code under test";
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Gate 1 — the state exists, is per-SUBAREA, and is seeded from INITIAL_STATE
@@ -250,13 +327,13 @@ TEST(HeatWatershedTest, SubareaTemperatureStateIsSizedAndSeeded) {
     SWMM_Engine e = run_and_hold("_h5a.inp", "_h5a.rpt", "_h5a.out");
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
-    const auto& hs  = ctx.heat_state;
+    const auto& hs = ctx.heat_state;
     const int nsc = ctx.n_subcatches();
 
     ASSERT_EQ(nsc, 2) << "deck did not build two subcatchments";
     ASSERT_EQ(static_cast<int>(hs.subarea_temp.size()), nsc * kNSub)
-        << "subarea_temp is sized " << hs.subarea_temp.size() << ", expected "
-        << (nsc * kNSub) << " — per-subarea state was not allocated";
+        << "subarea_temp is sized " << hs.subarea_temp.size() << ", expected " << (nsc * kNSub)
+        << " — per-subarea state was not allocated";
     ASSERT_EQ(static_cast<int>(hs.subcatch_runoff_temp.size()), nsc);
     ASSERT_EQ(static_cast<int>(hs.subcatch_runon_temp_rate.size()), nsc)
         << "the run-on RATE companion is missing — without it the consumer "
@@ -266,9 +343,8 @@ TEST(HeatWatershedTest, SubareaTemperatureStateIsSizedAndSeeded) {
     // Nothing may sit at exactly 0 °C: that is A4's age sentinel, and it is
     // the value this phase exists to stop being written as a temperature.
     for (double t : hs.subarea_temp)
-        EXPECT_NE(t, 0.0)
-            << "a subarea reports exactly 0 C — the age module's "
-               "'no water, no value' sentinel leaked into the heat track";
+        EXPECT_NE(t, 0.0) << "a subarea reports exactly 0 C — the age module's "
+                             "'no water, no value' sentinel leaked into the heat track";
     swmm_engine_destroy(e);
 
     // The SEED, observed rather than assumed. On the deck above every
@@ -281,9 +357,9 @@ TEST(HeatWatershedTest, SubareaTemperatureStateIsSizedAndSeeded) {
     // and link temperatures from — and NOT kDefaultTemp.
     constexpr double kInitC = 14.0;
     DeckOpts d{};
-    d.rain_in_hr    = 0.0;
+    d.rain_in_hr = 0.0;
     d.rain_stop_min = 0;
-    d.dry_policy    = "HOLD";
+    d.dry_policy = "HOLD";
     write_heat_cfg("_h5h.heat", 8.0, kInitC, d);
     write_deck("_h5h.inp", "_h5h.heat", d);
     SWMM_Engine e2 = run_and_hold("_h5h.inp", "_h5h.rpt", "_h5h.out");
@@ -292,8 +368,8 @@ TEST(HeatWatershedTest, SubareaTemperatureStateIsSizedAndSeeded) {
     ASSERT_FALSE(dry.subarea_temp.empty());
     for (std::size_t i = 0; i < dry.subarea_temp.size(); ++i)
         EXPECT_NEAR(dry.subarea_temp[i], kInitC, 1.0e-12)
-            << "subarea " << i << " of a deck that never rained reports "
-            << dry.subarea_temp[i] << " C. Nothing mixed, so this IS the "
+            << "subarea " << i << " of a deck that never rained reports " << dry.subarea_temp[i]
+            << " C. Nothing mixed, so this IS the "
                "seed: it must be the INITIAL_STATE source ("
             << kInitC << " C), not HeatConfigData::kDefaultTemp ("
             << openswmm::HeatConfigData::kDefaultTemp << " C).";
@@ -311,13 +387,13 @@ TEST(HeatWatershedTest, RunoffLeavesAtTheSurfaceTemperatureNotTheRainTemperature
     constexpr double kRainC = 5.0;
     DeckOpts o{};
     o.surface = true;
-    o.air_f   = 86.0;   // ~30 C air over 5 C rain: a large, one-signed forcing
+    o.air_f = 86.0; // ~30 C air over 5 C rain: a large, one-signed forcing
     write_heat_cfg("_h5b.heat", kRainC, 5.0, o);
     write_deck("_h5b.inp", "_h5b.heat", o);
     SWMM_Engine e = run_and_hold("_h5b.inp", "_h5b.rpt", "_h5b.out");
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
-    const auto& hs  = ctx.heat_state;
+    const auto& hs = ctx.heat_state;
     ASSERT_TRUE(ProducedRunoff(ctx));
     ASSERT_TRUE(ctx.heat_config.surface_exchange)
         << "SURFACE_EXCHANGE did not parse — with fluxes off this gate "
@@ -325,11 +401,11 @@ TEST(HeatWatershedTest, RunoffLeavesAtTheSurfaceTemperatureNotTheRainTemperature
 
     bool any_moved = false;
     for (double t : hs.subcatch_runoff_temp)
-        if (std::fabs(t - kRainC) > 1.0e-6) any_moved = true;
-    EXPECT_TRUE(any_moved)
-        << "every subcatchment's runoff temperature equals the configured "
-           "RAINFALL temperature exactly — the surface energy balance is "
-           "not reaching the ponded subareas";
+        if (std::fabs(t - kRainC) > 1.0e-6)
+            any_moved = true;
+    EXPECT_TRUE(any_moved) << "every subcatchment's runoff temperature equals the configured "
+                              "RAINFALL temperature exactly — the surface energy balance is "
+                              "not reaching the ponded subareas";
 
     // And the loader seam, which the assertion above cannot see: it reads
     // heat_state.subcatch_runoff_temp, which QualityRouting does not write.
@@ -339,9 +415,11 @@ TEST(HeatWatershedTest, RunoffLeavesAtTheSurfaceTemperatureNotTheRainTemperature
     // runoff alone, so its temperature IS what the loader delivered.
     ASSERT_GE(ctx.n_nodes(), 1);
     EXPECT_GT(ctx.heat_state.node_temp[0], kRainC + 1.0e-3)
-        << "J1 sits at " << ctx.heat_state.node_temp[0] << " C. Its only "
+        << "J1 sits at " << ctx.heat_state.node_temp[0]
+        << " C. Its only "
            "inflow is runoff from surfaces the balance warmed to "
-        << hs.subcatch_runoff_temp[0] << " C, so the rain temperature at the "
+        << hs.subcatch_runoff_temp[0]
+        << " C, so the rain temperature at the "
            "node means the wet-weather loader is still delivering the "
            "configured RAINFALL source instead of the computed one.";
     swmm_engine_destroy(e);
@@ -380,11 +458,10 @@ TEST(HeatWatershedTest, RunoffLeavesAtTheSurfaceTemperatureNotTheRainTemperature
 // ---------------------------------------------------------------------------
 TEST(HeatWatershedTest, RunonCarriesTheDonorsTemperature) {
     constexpr double kRainC = 12.0;
-    constexpr double kDwfC  = 40.0;
-    write_file("_h5c.heat",
-               "[HEAT_SOURCES]\nRAINFALL GLOBAL 12.0\n"
-               "INITIAL_STATE GLOBAL 12.0\nDWF GLOBAL 40.0\n\n"
-               "[HEAT_FLUXES]\nSURFACE_EXCHANGE OFF\nRADIATIVE_EXCHANGE OFF\n");
+    constexpr double kDwfC = 40.0;
+    write_file("_h5c.heat", "[HEAT_SOURCES]\nRAINFALL GLOBAL 12.0\n"
+                            "INITIAL_STATE GLOBAL 12.0\nDWF GLOBAL 40.0\n\n"
+                            "[HEAT_FLUXES]\nSURFACE_EXCHANGE OFF\nRADIATIVE_EXCHANGE OFF\n");
     {
         std::ofstream f("_h5c.inp");
         f << "[TITLE]\nH5a cascade deck\n\n[OPTIONS]\n"
@@ -396,7 +473,8 @@ TEST(HeatWatershedTest, RunonCarriesTheDonorsTemperature) {
           << "ROUTING_STEP 10\nREPORT_STEP 00:05:00\n\n"
           << "[RAINGAGES]\nRG1 INTENSITY 0:05 1.0 TIMESERIES rain_ts\n"
           << "RG0 INTENSITY 0:05 1.0 TIMESERIES zero_ts\n\n"
-          << "[TIMESERIES]\n" << rain_series(185, 2.0) << zero_series(185)
+          << "[TIMESERIES]\n"
+          << rain_series(185, 2.0) << zero_series(185)
           << "[SUBCATCHMENTS]\nS1 RG1 S2 5 50 500 0.5 0\n"
           << "S2 RG0 J1 5 50 500 0.5 0\n\n"
           << "[SUBAREAS]\nS1 0.01 0.1 0.02 0.02 25 OUTLET\n"
@@ -414,7 +492,7 @@ TEST(HeatWatershedTest, RunonCarriesTheDonorsTemperature) {
     SWMM_Engine e = run_and_hold("_h5c.inp", "_h5c.rpt", "_h5c.out");
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
-    const auto& hs  = ctx.heat_state;
+    const auto& hs = ctx.heat_state;
     ASSERT_TRUE(ProducedRunoff(ctx));
 
     // SETUP: no flux module may be on, or warmth on S2 proves nothing.
@@ -433,19 +511,25 @@ TEST(HeatWatershedTest, RunonCarriesTheDonorsTemperature) {
     // the cascade to carry.
     ASSERT_GE(static_cast<int>(hs.subcatch_runoff_temp.size()), 2);
     ASSERT_GT(hs.subcatch_runoff_temp[0], kRainC + 1.0e-3)
-        << "S1 sheds at " << hs.subcatch_runoff_temp[0] << " C, not above "
-           "the " << kRainC << " C rain — the outfall return is not warming "
+        << "S1 sheds at " << hs.subcatch_runoff_temp[0]
+        << " C, not above "
+           "the "
+        << kRainC
+        << " C rain — the outfall return is not warming "
            "the donor, so this gate has no contrast to measure";
 
     EXPECT_GT(hs.subcatch_runoff_temp[1], kRainC + 1.0e-3)
-        << "S2 sheds at " << hs.subcatch_runoff_temp[1] << " C. It receives "
+        << "S2 sheds at " << hs.subcatch_runoff_temp[1]
+        << " C. It receives "
            "no rain and no flux module is enabled, so its only possible "
-           "source of water above " << kRainC << " C is S1's runoff arriving "
+           "source of water above "
+        << kRainC
+        << " C is S1's runoff arriving "
            "across the cascade. The rain temperature exactly is what the "
            "fallback returns when the run-on scatter never wrote a numerator.";
     EXPECT_LE(hs.subcatch_runoff_temp[1], kDwfC + 1.0e-9)
-        << "S2 sheds at " << hs.subcatch_runoff_temp[1] << " C, above the "
-        << kDwfC << " C warmest source in a model with no fluxes.";
+        << "S2 sheds at " << hs.subcatch_runoff_temp[1] << " C, above the " << kDwfC
+        << " C warmest source in a model with no fluxes.";
     swmm_engine_destroy(e);
 }
 
@@ -457,12 +541,12 @@ TEST(HeatWatershedTest, RunonCarriesTheDonorsTemperature) {
 TEST(HeatWatershedTest, RunonTemperatureNeverFallsBelowEveryContributor) {
     DeckOpts o{};
     o.cascade = true;
-    write_heat_cfg("_h5d.heat", 12.0, 12.0, o);   // fluxes OFF: pure transport
+    write_heat_cfg("_h5d.heat", 12.0, 12.0, o); // fluxes OFF: pure transport
     write_deck("_h5d.inp", "_h5d.heat", o);
     SWMM_Engine e = run_and_hold("_h5d.inp", "_h5d.rpt", "_h5d.out");
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
-    const auto& hs  = ctx.heat_state;
+    const auto& hs = ctx.heat_state;
     ASSERT_TRUE(ProducedRunoff(ctx));
     ASSERT_FALSE(ctx.heat_config.surface_exchange);
     ASSERT_FALSE(ctx.heat_config.radiative_exchange);
@@ -474,8 +558,8 @@ TEST(HeatWatershedTest, RunonTemperatureNeverFallsBelowEveryContributor) {
     // rotting when a deck or a timestep changes.
     for (std::size_t i = 0; i < hs.subcatch_runoff_temp.size(); ++i)
         EXPECT_NEAR(hs.subcatch_runoff_temp[i], 12.0, 1.0e-9)
-            << "subcatchment " << i << " reports "
-            << hs.subcatch_runoff_temp[i] << " C in a model where every "
+            << "subcatchment " << i << " reports " << hs.subcatch_runoff_temp[i]
+            << " C in a model where every "
                "source is 12 C and no flux module is enabled. A value pulled "
                "toward 0 is the signature of dividing by a run-on rate "
                "larger than the one whose temperature was counted";
@@ -491,23 +575,23 @@ TEST(HeatWatershedTest, DryElementPolicyIsSelectableAndTheModesDiffer) {
     auto run_policy = [](const char* policy, double* out_perv) {
         DeckOpts o{};
         o.dry_policy = policy;
-        o.end_min    = 120;
+        o.end_min = 120;
         // The storm STOPS at 10 minutes. `rain_series` is generated out to
         // end_min + 5, so without this the "long dry tail" rained for its
         // whole two hours and every policy read a soaking subarea — all
         // three returning the same number for a reason that had nothing to
         // do with the policy key.
         o.rain_stop_min = 10;
-        o.air_f      = 95.0;   // ~35 C, far from both 20 C and the last wet
+        o.air_f = 95.0; // ~35 C, far from both 20 C and the last wet
         write_heat_cfg("_h5e.heat", 5.0, 5.0, o);
         write_deck("_h5e.inp", "_h5e.heat", o);
         SWMM_Engine e = run_and_hold("_h5e.inp", "_h5e.rpt", "_h5e.out");
-        if (e == nullptr) return false;
+        if (e == nullptr)
+            return false;
         const auto& ctx = as_cpp_engine(e).context();
         const bool parsed_ok = ctx.heat_config.configured;
         // PERV subarea of S1 — index (0 * kNSub + PERV).
-        const auto idx = static_cast<std::size_t>(
-            static_cast<int>(openswmm::HeatSubArea::PERV));
+        const auto idx = static_cast<std::size_t>(static_cast<int>(openswmm::HeatSubArea::PERV));
         if (idx >= ctx.heat_state.subarea_temp.size() ||
             ctx.heat_state.subarea_vol_prev[idx] > 1.0e-12) {
             // Not dry: the policy branch was never reached and whatever is
@@ -531,15 +615,13 @@ TEST(HeatWatershedTest, DryElementPolicyIsSelectableAndTheModesDiffer) {
 
     EXPECT_NEAR(t_default, openswmm::HeatConfigData::kDefaultTemp, 1.0e-9)
         << "DEFAULT did not fall to kDefaultTemp";
-    EXPECT_NEAR(t_air, 35.0, 0.5)
-        << "AIR did not track the air temperature (95 F = 35 C)";
+    EXPECT_NEAR(t_air, 35.0, 0.5) << "AIR did not track the air temperature (95 F = 35 C)";
     // HOLD must differ from both, or the key is being ignored and all three
     // runs are the same code path (lesson 56).
     EXPECT_GT(std::fabs(t_hold - t_default), 1.0e-6)
         << "HOLD and DEFAULT produced the same value — the policy key is "
            "not reaching the dry branch";
-    EXPECT_GT(std::fabs(t_hold - t_air), 1.0e-6)
-        << "HOLD and AIR produced the same value";
+    EXPECT_GT(std::fabs(t_hold - t_air), 1.0e-6) << "HOLD and AIR produced the same value";
 }
 
 // ---------------------------------------------------------------------------
@@ -552,8 +634,7 @@ TEST(HeatWatershedTest, AnUnknownDryPolicyIsRefused) {
     write_deck("_h5f.inp", "_h5f.heat", o);
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    const int rc = swmm_engine_open(e, "_h5f.inp", "_h5f.rpt", "_h5f.out",
-                                    nullptr);
+    const int rc = swmm_engine_open(e, "_h5f.inp", "_h5f.rpt", "_h5f.out", nullptr);
     const int rc2 = (rc == SWMM_OK) ? swmm_engine_initialize(e) : rc;
     EXPECT_TRUE(rc != SWMM_OK || rc2 != SWMM_OK)
         << "an unrecognised DRY_ELEMENT_TEMPERATURE value was accepted. "
@@ -595,12 +676,11 @@ TEST(HeatWatershedTest, AnUnknownDryPolicyIsRefused) {
 // them) — see the note in test_water_age_lid.cpp.
 // ---------------------------------------------------------------------------
 TEST(HeatWatershedTest, EveryRunonContributorKeepsTemperaturesInsideTheSources) {
-    constexpr double kFloorC = 12.0;   // RAINFALL and INITIAL_STATE
-    constexpr double kCeilC  = 40.0;   // DWF, the only warmer source
-    write_file("_h5i.heat",
-               "[HEAT_SOURCES]\nRAINFALL GLOBAL 12.0\n"
-               "INITIAL_STATE GLOBAL 12.0\nDWF GLOBAL 40.0\n\n"
-               "[HEAT_FLUXES]\nSURFACE_EXCHANGE OFF\nRADIATIVE_EXCHANGE OFF\n");
+    constexpr double kFloorC = 12.0; // RAINFALL and INITIAL_STATE
+    constexpr double kCeilC = 40.0;  // DWF, the only warmer source
+    write_file("_h5i.heat", "[HEAT_SOURCES]\nRAINFALL GLOBAL 12.0\n"
+                            "INITIAL_STATE GLOBAL 12.0\nDWF GLOBAL 40.0\n\n"
+                            "[HEAT_FLUXES]\nSURFACE_EXCHANGE OFF\nRADIATIVE_EXCHANGE OFF\n");
     {
         std::ofstream f("_h5i.inp");
         f << "[TITLE]\nH5a run-on contributor deck\n\n[OPTIONS]\n"
@@ -611,8 +691,8 @@ TEST(HeatWatershedTest, EveryRunonContributorKeepsTemperaturesInsideTheSources) 
           << "WET_STEP 00:01:00\nDRY_STEP 00:05:00\n"
           << "ROUTING_STEP 10\nREPORT_STEP 00:05:00\n\n"
           << "[RAINGAGES]\nRG1 INTENSITY 0:05 1.0 TIMESERIES rain_ts\n\n"
-          << "[TIMESERIES]\n" << rain_series(185, 2.0)
-          << "[SUBCATCHMENTS]\nS1 RG1 J1 5 50 500 0.5 0\n"
+          << "[TIMESERIES]\n"
+          << rain_series(185, 2.0) << "[SUBCATCHMENTS]\nS1 RG1 J1 5 50 500 0.5 0\n"
           << "S2 RG1 J1 5 50 500 0.5 0\n\n"
           << "[SUBAREAS]\nS1 0.01 0.1 0.02 0.02 25 OUTLET\n"
           << "S2 0.01 0.1 0.02 0.02 25 OUTLET\n\n"
@@ -643,7 +723,7 @@ TEST(HeatWatershedTest, EveryRunonContributorKeepsTemperaturesInsideTheSources) 
     SWMM_Engine e = run_and_hold("_h5i.inp", "_h5i.rpt", "_h5i.out");
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
-    const auto& hs  = ctx.heat_state;
+    const auto& hs = ctx.heat_state;
     ASSERT_TRUE(ProducedRunoff(ctx));
     ASSERT_FALSE(ctx.heat_config.surface_exchange);
     ASSERT_FALSE(ctx.heat_config.radiative_exchange);
@@ -678,16 +758,20 @@ TEST(HeatWatershedTest, EveryRunonContributorKeepsTemperaturesInsideTheSources) 
     // arithmetically identical, so A3's defect is UNREPRESENTABLE in the
     // heat track rather than merely absent. This assertion is what keeps it
     // that way.
-    EXPECT_NEAR(hs.subcatch_runon_temp_rate[0], ctx.subcatches.runon_inflow[0],
-                1.0e-12)
-        << "S1 receives " << ctx.subcatches.runon_inflow[0] << " cfs of "
-           "run-on but only " << hs.subcatch_runon_temp_rate[0] << " cfs of "
+    EXPECT_NEAR(hs.subcatch_runon_temp_rate[0], ctx.subcatches.runon_inflow[0], 1.0e-12)
+        << "S1 receives " << ctx.subcatches.runon_inflow[0]
+        << " cfs of "
+           "run-on but only "
+        << hs.subcatch_runon_temp_rate[0]
+        << " cfs of "
            "it has a temperature. Some contributor is adding to the flow "
            "path without going through addRunonTemperatureAt.";
-    EXPECT_NEAR(hs.subcatch_runon_temp_rate[1], ctx.subcatches.runon_inflow[1],
-                1.0e-12)
-        << "S2 receives " << ctx.subcatches.runon_inflow[1] << " cfs of "
-           "run-on but only " << hs.subcatch_runon_temp_rate[1] << " cfs of "
+    EXPECT_NEAR(hs.subcatch_runon_temp_rate[1], ctx.subcatches.runon_inflow[1], 1.0e-12)
+        << "S2 receives " << ctx.subcatches.runon_inflow[1]
+        << " cfs of "
+           "run-on but only "
+        << hs.subcatch_runon_temp_rate[1]
+        << " cfs of "
            "it has a temperature.";
 
     // (0) The volume ledger must be in ft3. `RunoffSoA::area` is ft2 and
@@ -701,25 +785,27 @@ TEST(HeatWatershedTest, EveryRunonContributorKeepsTemperaturesInsideTheSources) 
     double ponded_ft3 = 0.0;
     for (int k = 0; k < kNSub; ++k)
         ponded_ft3 += hs.subarea_vol_prev[static_cast<std::size_t>(k)];
-    EXPECT_GT(ponded_ft3, 1.0)
-        << "S1's three subareas hold " << ponded_ft3 << " ft3 between them "
-           "after three hours of 2 in/hr rain on five acres. That is not a "
-           "volume — it is an area in the wrong units (acres for ft2, "
-           "43560x) reaching the ponded-volume expression.";
+    EXPECT_GT(ponded_ft3, 1.0) << "S1's three subareas hold " << ponded_ft3
+                               << " ft3 between them "
+                                  "after three hours of 2 in/hr rain on five acres. That is not a "
+                                  "volume — it is an area in the wrong units (acres for ft2, "
+                                  "43560x) reaching the ponded-volume expression.";
 
     // (1) Nothing may fall below the coldest source. With every flux off,
     //     water at 0 C cannot exist in this model — it is the signature of a
     //     numerator that some contributor never wrote to, divided by a rate
     //     that counted it anyway.
     for (std::size_t i = 0; i < hs.subarea_temp.size(); ++i) {
-        if (hs.subarea_vol_prev[i] <= 0.0) continue;   // holds no water
+        if (hs.subarea_vol_prev[i] <= 0.0)
+            continue; // holds no water
         EXPECT_GE(hs.subarea_temp[i], kFloorC - 1.0e-9)
-            << "subarea " << i << " holds water at " << hs.subarea_temp[i]
-            << " C, below the " << kFloorC << " C coldest source in a model "
+            << "subarea " << i << " holds water at " << hs.subarea_temp[i] << " C, below the "
+            << kFloorC
+            << " C coldest source in a model "
                "with no flux module enabled.";
         EXPECT_LE(hs.subarea_temp[i], kCeilC + 1.0e-9)
-            << "subarea " << i << " holds water at " << hs.subarea_temp[i]
-            << " C, above the " << kCeilC << " C warmest source.";
+            << "subarea " << i << " holds water at " << hs.subarea_temp[i] << " C, above the "
+            << kCeilC << " C warmest source.";
     }
 
     // (2) S1's only run-on is S2's underdrain. S2 receives the outfall's
@@ -732,7 +818,8 @@ TEST(HeatWatershedTest, EveryRunonContributorKeepsTemperaturesInsideTheSources) 
     //     across a subcatchment boundary (LID fix round, 2026-08-30) makes
     //     the carried temperature distinguishable from the fallback.
     EXPECT_GT(hs.subcatch_runoff_temp[0], kFloorC + 1.0e-3)
-        << "S1 sheds at " << hs.subcatch_runoff_temp[0] << " C, the rain "
+        << "S1 sheds at " << hs.subcatch_runoff_temp[0]
+        << " C, the rain "
            "temperature. Its only run-on is S2's underdrain, which carries "
            "outfall-warmed water — the drain temperature is not reaching "
            "addRunonTemperatureAt, or S2's LID is not receiving its run-on.";
@@ -743,11 +830,13 @@ TEST(HeatWatershedTest, EveryRunonContributorKeepsTemperaturesInsideTheSources) 
     //     strict inequality against a value the failure mode produces
     //     exactly — not a band around a remembered number.
     EXPECT_GT(hs.subcatch_runoff_temp[1], kFloorC + 1.0e-3)
-        << "S2 sheds at " << hs.subcatch_runoff_temp[1] << " C, which is the "
+        << "S2 sheds at " << hs.subcatch_runoff_temp[1]
+        << " C, which is the "
            "rain temperature. It receives the outfall's discharge carrying a "
-           << kCeilC << " C dry-weather flow, so its temperature must be "
-                        "above the rain's — the outfall return is not "
-                        "reaching addRunonTemperatureAt.";
+        << kCeilC
+        << " C dry-weather flow, so its temperature must be "
+           "above the rain's — the outfall return is not "
+           "reaching addRunonTemperatureAt.";
     swmm_engine_destroy(e);
 }
 
@@ -775,16 +864,16 @@ TEST(HeatWatershedTest, EveryRunonContributorKeepsTemperaturesInsideTheSources) 
 // ---------------------------------------------------------------------------
 TEST(HeatWatershedTest, AThinFilmDoesNotDivergeUnderTheExplicitStep) {
     DeckOpts o{};
-    o.cascade         = true;
+    o.cascade = true;
     o.starve_receiver = true;
-    o.surface         = true;
-    o.air_f           = 86.0;   // ~30 C over 5 C rain
+    o.surface = true;
+    o.air_f = 86.0; // ~30 C over 5 C rain
     write_heat_cfg("_h5j.heat", 5.0, 5.0, o);
     write_deck("_h5j.inp", "_h5j.heat", o);
     SWMM_Engine e = run_and_hold("_h5j.inp", "_h5j.rpt", "_h5j.out");
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
-    const auto& hs  = ctx.heat_state;
+    const auto& hs = ctx.heat_state;
     ASSERT_TRUE(ProducedRunoff(ctx));
     ASSERT_TRUE(ctx.heat_config.surface_exchange)
         << "SURFACE_EXCHANGE is off, so no flux is being integrated and "
@@ -808,13 +897,13 @@ TEST(HeatWatershedTest, AThinFilmDoesNotDivergeUnderTheExplicitStep) {
     }
     for (std::size_t i = 0; i < hs.subcatch_runoff_temp.size(); ++i)
         EXPECT_TRUE(std::isfinite(hs.subcatch_runoff_temp[i]))
-            << "subcatchment " << i << " sheds water at "
-            << hs.subcatch_runoff_temp[i] << ", which the wet-weather loader "
+            << "subcatchment " << i << " sheds water at " << hs.subcatch_runoff_temp[i]
+            << ", which the wet-weather loader "
                "then carries into the node temperatures and the report";
     for (double t : hs.node_temp)
-        EXPECT_TRUE(std::isfinite(t))
-            << "a node temperature is " << t << " — a non-finite subcatchment "
-               "runoff temperature has escaped the watershed stage";
+        EXPECT_TRUE(std::isfinite(t)) << "a node temperature is " << t
+                                      << " — a non-finite subcatchment "
+                                         "runoff temperature has escaped the watershed stage";
     swmm_engine_destroy(e);
 }
 
@@ -832,39 +921,38 @@ TEST(HeatWatershedTest, AThinFilmDoesNotDivergeUnderTheExplicitStep) {
 // ---------------------------------------------------------------------------
 TEST(HeatWatershedTest, AFreezingSurfaceIsNotClampedToZero) {
     DeckOpts o{};
-    o.surface      = true;
-    o.radiative    = true;
-    o.air_f        = 5.0;    // -15 C
-    o.wind_mph     = 15.0;
+    o.surface = true;
+    o.radiative = true;
+    o.air_f = 5.0; // -15 C
+    o.wind_mph = 15.0;
     o.humidity_pct = 30.0;
     write_heat_cfg("_h5k.heat", 2.0, 2.0, o);
     write_deck("_h5k.inp", "_h5k.heat", o);
     SWMM_Engine e = run_and_hold("_h5k.inp", "_h5k.rpt", "_h5k.out");
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
-    const auto& hs  = ctx.heat_state;
+    const auto& hs = ctx.heat_state;
     ASSERT_TRUE(ProducedRunoff(ctx));
     ASSERT_TRUE(ctx.heat_config.surface_exchange);
     ASSERT_TRUE(ctx.heat_config.radiative_exchange);
     // SETUP: the forcing must actually be below freezing, or nothing here
     // can drive a surface under 0 C and the gate passes on nothing.
     const double t_air_c = (ctx.climate_state.temperature - 32.0) * 5.0 / 9.0;
-    ASSERT_LT(t_air_c, -5.0)
-        << "air is at " << t_air_c << " C — the deck is not cold enough to "
-           "drive a ponded surface below freezing";
+    ASSERT_LT(t_air_c, -5.0) << "air is at " << t_air_c
+                             << " C — the deck is not cold enough to "
+                                "drive a ponded surface below freezing";
 
     bool any_sub_zero = false;
     for (std::size_t i = 0; i < hs.subarea_temp.size(); ++i)
         if (hs.subarea_vol_prev[i] > 0.0 && hs.subarea_temp[i] < 0.0)
             any_sub_zero = true;
-    EXPECT_TRUE(any_sub_zero)
-        << "no ponded subarea is below 0 C under " << t_air_c << " C air. "
-           "A value resting at exactly 0 is the age module's floor applied "
-           "to a temperature: it manufactures energy on every frozen surface "
-           "and reads as data rather than as a clamp.";
+    EXPECT_TRUE(any_sub_zero) << "no ponded subarea is below 0 C under " << t_air_c
+                              << " C air. "
+                                 "A value resting at exactly 0 is the age module's floor applied "
+                                 "to a temperature: it manufactures energy on every frozen surface "
+                                 "and reads as data rather than as a clamp.";
     EXPECT_LT(hs.subcatch_runoff_temp[0], 0.0)
-        << "S1 sheds at " << hs.subcatch_runoff_temp[0] << " C into "
-        << t_air_c << " C air.";
+        << "S1 sheds at " << hs.subcatch_runoff_temp[0] << " C into " << t_air_c << " C air.";
     swmm_engine_destroy(e);
 }
 
@@ -880,8 +968,8 @@ TEST(HeatWatershedTest, HeatOffLeavesTheWatershedStateEmpty) {
       << "WET_STEP 00:01:00\nDRY_STEP 00:05:00\n"
       << "ROUTING_STEP 10\nREPORT_STEP 00:05:00\n\n"
       << "[RAINGAGES]\nRG1 INTENSITY 0:05 1.0 TIMESERIES rain_ts\n\n"
-      << "[TIMESERIES]\n" << rain_series(65, 2.0)
-      << "[SUBCATCHMENTS]\nS1 RG1 J1 5 50 500 0.5 0\n\n"
+      << "[TIMESERIES]\n"
+      << rain_series(65, 2.0) << "[SUBCATCHMENTS]\nS1 RG1 J1 5 50 500 0.5 0\n\n"
       << "[SUBAREAS]\nS1 0.01 0.1 0.05 0.10 25 OUTLET\n\n"
       << "[INFILTRATION]\nS1 3.0 0.5 4 7 0\n\n"
       << "[JUNCTIONS]\nJ1 10.0 10 0 0 0\n\n"
@@ -923,8 +1011,8 @@ TEST(HeatWatershedTest, HeatOffLeavesTheWatershedStateEmpty) {
 TEST(HeatWatershedTest, SubcatchmentTemperatureColumnIsWrittenToTheOutput) {
     DeckOpts o{};
     o.surface = true;
-    o.air_f   = 85.0;       // well away from both source values below, so a
-                            // written column cannot coincide with a constant
+    o.air_f = 85.0; // well away from both source values below, so a
+                    // written column cannot coincide with a constant
     write_heat_cfg("_h5t.heat", 8.0, 14.0, o);
     write_deck("_h5t.inp", "_h5t.heat", o);
 
@@ -976,19 +1064,21 @@ TEST(HeatWatershedTest, SubcatchmentTemperatureColumnIsWrittenToTheOutput) {
             << "could not read the temperature column at period " << period;
         for (int s = 0; s < nsc; ++s) {
             const double t = static_cast<double>(v[static_cast<std::size_t>(s)]);
-            if (t != 0.0) any_nonzero = true;
-            if (!have_first) { first_seen = t; have_first = true; }
-            else if (std::fabs(t - first_seen) > 1e-6) varies = true;
+            if (t != 0.0)
+                any_nonzero = true;
+            if (!have_first) {
+                first_seen = t;
+                have_first = true;
+            } else if (std::fabs(t - first_seen) > 1e-6)
+                varies = true;
         }
     }
     swmm_output_close(h);
 
-    EXPECT_TRUE(any_nonzero)
-        << "every subcatchment temperature in the .out is exactly 0.0 across "
-        << n_periods << " periods — the column exists and nothing writes it";
-    EXPECT_TRUE(varies)
-        << "the subcatchment temperature column is a constant across the "
-           "whole run; a writer that emits one number is not reporting state";
+    EXPECT_TRUE(any_nonzero) << "every subcatchment temperature in the .out is exactly 0.0 across "
+                             << n_periods << " periods — the column exists and nothing writes it";
+    EXPECT_TRUE(varies) << "the subcatchment temperature column is a constant across the "
+                           "whole run; a writer that emits one number is not reporting state";
 }
 
 // A dry subcatchment still reports its temperature.
@@ -1006,9 +1096,9 @@ TEST(HeatWatershedTest, SubcatchmentTemperatureColumnIsWrittenToTheOutput) {
 // other heat gate in this file.
 TEST(HeatWatershedTest, DrySubcatchmentStillReportsATemperature) {
     DeckOpts o{};
-    o.surface        = true;
-    o.air_f          = 85.0;
-    o.rain_stop_min  = 15;      // rain for 15 minutes, then dry out
+    o.surface = true;
+    o.air_f = 85.0;
+    o.rain_stop_min = 15; // rain for 15 minutes, then dry out
     // S2 SITS ON A ZERO GAGE, and that is what makes this gate work.
     //
     // Stopping the rain is NOT enough, and the first two writings of this
@@ -1028,7 +1118,7 @@ TEST(HeatWatershedTest, DrySubcatchmentStillReportsATemperature) {
     // exactly 0.0 from the first step. That is the only fixture in this file
     // that can separate the two placements.
     o.starve_receiver = true;
-    o.dry_policy     = "HOLD";  // the state keeps its last value when dry
+    o.dry_policy = "HOLD"; // the state keeps its last value when dry
     write_heat_cfg("_h5u.heat", 8.0, 14.0, o);
     write_deck("_h5u.inp", "_h5u.heat", o);
 
@@ -1054,15 +1144,16 @@ TEST(HeatWatershedTest, DrySubcatchmentStillReportsATemperature) {
     // One VARIABLE across all subcatchments — see the note in the gate above
     // on why this is not `..._get_subcatch_attribute`.
     for (int period = 0; period < n_periods; ++period) {
-        ASSERT_EQ(swmm_output_get_subcatch_result(
-                      h, period, SWMM_OUT_SUBCATCH_RUNOFF, q.data()), 0);
-        ASSERT_EQ(swmm_output_get_subcatch_result(
-                      h, period, t_attr, t.data()), 0);
+        ASSERT_EQ(swmm_output_get_subcatch_result(h, period, SWMM_OUT_SUBCATCH_RUNOFF, q.data()),
+                  0);
+        ASSERT_EQ(swmm_output_get_subcatch_result(h, period, t_attr, t.data()), 0);
         for (int s = 0; s < nsc; ++s) {
             const auto us = static_cast<std::size_t>(s);
-            if (static_cast<double>(q[us]) != 0.0) continue;
+            if (static_cast<double>(q[us]) != 0.0)
+                continue;
             ++dry_periods_seen;
-            if (static_cast<double>(t[us]) != 0.0) ++dry_with_temperature;
+            if (static_cast<double>(t[us]) != 0.0)
+                ++dry_with_temperature;
         }
     }
     swmm_output_close(h);

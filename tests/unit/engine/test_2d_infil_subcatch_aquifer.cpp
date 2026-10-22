@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_2d_infil_subcatch_aquifer.cpp
- * @brief U3 (track I-b, 2026-09-07) — `[2D_OPTIONS] INFIL_DESTINATION
+ * @file      test_2d_infil_subcatch_aquifer.cpp
+ * @brief     U3 (track I-b, 2026-09-07) — `[2D_OPTIONS] INFIL_DESTINATION
  *        SUBCATCH_AQUIFER`: 2D per-cell infiltration recharges the legacy
  *        aquifer of the subcatchment whose polygon contains the cell.
  *
@@ -32,6 +32,10 @@
  *   - G5 AQUIFER_2D is still refused at initialize.
  *
  * Artefacts under tests/output/infil_subcatch_aquifer (CLAUDE.md §4.1).
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -51,12 +55,22 @@ namespace fs = std::filesystem;
 
 namespace {
 
-const fs::path kOutDir =
-    fs::path(OPENSWMM_INFIL_AQ_TEST_OUT_DIR) / "infil_subcatch_aquifer";
+const fs::path kOutDir = fs::path(OPENSWMM_INFIL_AQ_TEST_OUT_DIR) / "infil_subcatch_aquifer";
 
-/// One subcatchment S1 whose polygon covers x∈[0,10], y∈[0,10] with an
-/// aquifer, and a 2D pan. @p pan_x0 shifts the mesh: 0 puts the pan inside
-/// the polygon, 100 puts it outside every polygon.
+/**
+ * @brief Construct a pond/catchment groundwater recharge fixture with movable mesh footprint.
+ *
+ * Constructs text only; S1 polygon is[0,10]x[0,10] m, authored area remains .0247 hectares and no
+ * polygon-area reconciliation is computed here. Caller chooses valid overrides; no recharge or
+ * ownership check is performed.
+ *
+ * @param[in] twod_options_extra Raw2D_OPTIONS overrides, including infiltration destination
+ *     token/newline delimiters.
+ * @param[in] pan_x0 Pan left x coordinate in metres;0 lies in the S1 polygon and100 outside it.
+ * @param[in] extra_sections Raw additional complete sections inserted before REPORT.
+ * @return Owned half-hour CMS deck with10-by-10 m/.5 m-deep two-triangle pan, constant50 mm/hr
+ *     infiltration and an S1 legacy aquifer.
+ */
 std::string deck(const std::string& twod_options_extra, double pan_x0,
                  const std::string& extra_sections = "") {
     std::ostringstream m;
@@ -96,17 +110,18 @@ std::string deck(const std::string& twod_options_extra, double pan_x0,
          "S1  0   0\nS1  10  0\nS1  10  10\nS1  0   10\n\n"
          "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
          "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\n"
-      << twod_options_extra << "\n"
+      << twod_options_extra
+      << "\n"
          "[2D_VERTICES]\n"
       << pan_x0 << " 0.0 -10.0\n"
-      << x1     << " 0.0 -10.0\n"
-      << x1     << " 10.0 -10.0\n"
-      << pan_x0 << " 10.0 -10.0\n\n"
+      << x1 << " 0.0 -10.0\n"
+      << x1 << " 10.0 -10.0\n"
+      << pan_x0
+      << " 10.0 -10.0\n\n"
          "[2D_TRIANGLES]\n;;V1 V2 V3 N INIT_DEPTH\n"
          "0 1 2 0.03 0.5\n0 2 3 0.03 0.5\n\n"
          "[2D_INFILTRATION_DEFAULTS]\n*  CONSTANT  50.0  -  -  -  -\n\n"
-      << extra_sections
-      << "[REPORT]\nINPUT NO\n";
+      << extra_sections << "[REPORT]\nINPUT NO\n";
     return m.str();
 }
 
@@ -116,46 +131,96 @@ struct DeckRun {
     bool opened = false, started = false;
 };
 
+/**
+ * @brief Write/open a legacy-aquifer recharge deck while retaining startup status.
+ *
+ * Creates directories with throwing filesystem operations. Does not initialize/start or destroy a
+ * failed-open handle; caller invokes finish for every non-null e. No success expectation is made
+ * here.
+ *
+ * @param[in] tag Safe artifact basename beneath kOutDir for overwritten .inp/.rpt/.out.
+ * @param[in] body Complete deck written through an unchecked stream.
+ * @return Owning result with handle, borrowed native pointer and opened flag; started remains
+ *     false.
+ */
 DeckRun openDeck(const std::string& tag, const std::string& body) {
     fs::create_directories(kOutDir);
     DeckRun r;
     const fs::path inp = kOutDir / (tag + ".inp");
-    { std::ofstream f(inp); f << body; }
+    {
+        std::ofstream f(inp);
+        f << body;
+    }
     r.e = swmm_engine_create();
-    if (!r.e) return r;
-    r.opened = swmm_engine_open(r.e, inp.string().c_str(),
-                                (kOutDir / (tag + ".rpt")).string().c_str(),
-                                (kOutDir / (tag + ".out")).string().c_str(),
-                                nullptr) == SWMM_OK;
+    if (!r.e)
+        return r;
+    r.opened =
+        swmm_engine_open(r.e, inp.string().c_str(), (kOutDir / (tag + ".rpt")).string().c_str(),
+                         (kOutDir / (tag + ".out")).string().c_str(), nullptr) == SWMM_OK;
     r.eng = static_cast<openswmm::SWMMEngine*>(r.e);
     return r;
 }
 
+/**
+ * @brief Initialize/start the recharge fixture and attempt its complete step loop.
+ *
+ * Sets started=true only after start success, then steps until non-SWMM_OK or elapsed completion
+ * without separately reporting which occurred. Leaves the engine running/un-ended for state
+ * inspection; caller invokes finish.
+ *
+ * @param[in,out] r Live owning openDeck result, not yet started or finished.
+ * @return False for unopened/init/start refusal; true after a successful start and step-loop exit,
+ *     including later step error.
+ */
 bool run(DeckRun& r) {
-    if (!r.opened) return false;
-    if (swmm_engine_initialize(r.e) != SWMM_OK) return false;
-    if (swmm_engine_start(r.e, 1) != SWMM_OK) return false;
+    if (!r.opened)
+        return false;
+    if (swmm_engine_initialize(r.e) != SWMM_OK)
+        return false;
+    if (swmm_engine_start(r.e, 1) != SWMM_OK)
+        return false;
     r.started = true;
     double elapsed = 0.0;
-    while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+    }
     return true;
 }
 
+/**
+ * @brief End a marked-started recharge model, then close/destroy its handle.
+ *
+ * Ignores cleanup statuses and sets e=null. Leaves borrowed eng and status flags unchanged; eng is
+ * dangling after cleanup and must not be used. Artifacts remain retained.
+ *
+ * @param[in,out] r Owning result; null e is accepted.
+ */
 void finish(DeckRun& r) {
-    if (!r.e) return;
-    if (r.started) swmm_engine_end(r.e);
+    if (!r.e)
+        return;
+    if (r.started)
+        swmm_engine_end(r.e);
     swmm_engine_close(r.e);
     swmm_engine_destroy(r.e);
     r.e = nullptr;
 }
 
+/**
+ * @brief Search the live recharge model's warning list for a literal substring.
+ *
+ * Does not validate, clear warnings, mutate state or synchronize concurrent engine changes.
+ *
+ * @param[in] r Result with a valid live non-null native eng pointer, not yet finished.
+ * @param[in] needle Non-null case-sensitive substring, empty matches any warning.
+ * @return True for the first matching warning; false when none match.
+ */
 bool warnedAbout(const DeckRun& r, const char* needle) {
     for (const auto& w : r.eng->context().warnings)
-        if (w.find(needle) != std::string::npos) return true;
+        if (w.find(needle) != std::string::npos)
+            return true;
     return false;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // G3 (control) + G1 — LOST vs SUBCATCH_AQUIFER on the same deck
@@ -166,7 +231,7 @@ TEST(Infil2DSubcatchAquifer, RechargeReachesTheContainingSubcatchmentsAquifer) {
         DeckRun r = openDeck("lost", deck("", 0.0));
         ASSERT_TRUE(r.opened);
         ASSERT_TRUE(run(r));
-        lost_infil2d  = r.eng->context().mass_balance_2d.infil_out;
+        lost_infil2d = r.eng->context().mass_balance_2d.infil_out;
         lost_gw_infil = r.eng->context().mass_balance.gw_infil;
         EXPECT_GT(lost_infil2d, 0.0) << "the deck must actually infiltrate";
         EXPECT_DOUBLE_EQ(r.eng->context().mass_balance_2d.infil_to_aquifer, 0.0);
@@ -179,22 +244,20 @@ TEST(Infil2DSubcatchAquifer, RechargeReachesTheContainingSubcatchmentsAquifer) {
         ASSERT_TRUE(run(r));
         const auto& ctx = r.eng->context();
         // The 2D side books the same infiltration and names the transfer.
-        EXPECT_NEAR(ctx.mass_balance_2d.infil_out, lost_infil2d,
-                    0.05 * lost_infil2d)
+        EXPECT_NEAR(ctx.mass_balance_2d.infil_out, lost_infil2d, 0.05 * lost_infil2d)
             << "routing the destination must not change how much infiltrates";
         EXPECT_GT(ctx.mass_balance_2d.infil_to_aquifer, 0.0);
         // G1-c item 1: the transfer is booked at DELIVERY, so what the
         // aquifer received plus what is still in flight at the end is the
         // whole applied loss — every cell is inside S1 — to round-off, and
         // the in-flight tail is at most one runoff step of recharge.
-        EXPECT_NEAR(ctx.mass_balance_2d.infil_to_aquifer + ctx.mass_balance_2d.infil_aquifer_pending,
-                    ctx.mass_balance_2d.infil_out,
-                    1e-9 * ctx.mass_balance_2d.infil_out)
+        EXPECT_NEAR(ctx.mass_balance_2d.infil_to_aquifer +
+                        ctx.mass_balance_2d.infil_aquifer_pending,
+                    ctx.mass_balance_2d.infil_out, 1e-9 * ctx.mass_balance_2d.infil_out)
             << "every cell is inside S1, so all of it is a transfer";
         EXPECT_GT(ctx.mass_balance_2d.infil_aquifer_pending, 0.0)
             << "the routing steps after the last runoff drain leave a tail";
-        EXPECT_LT(ctx.mass_balance_2d.infil_aquifer_pending,
-                  0.05 * ctx.mass_balance_2d.infil_out);
+        EXPECT_LT(ctx.mass_balance_2d.infil_aquifer_pending, 0.05 * ctx.mass_balance_2d.infil_out);
         // The groundwater side received it.
         EXPECT_GT(ctx.mass_balance.gw_infil_2d_recharge, 0.0);
         EXPECT_GT(ctx.mass_balance.gw_infil, lost_gw_infil)
@@ -229,18 +292,18 @@ TEST(Infil2DSubcatchAquifer, CellsOutsideEveryPolygonStayLost) {
 // G4 — one owner per subcatchment
 // ---------------------------------------------------------------------------
 TEST(Infil2DSubcatchAquifer, IntegratedComponentAndSubcatchAquiferConflict) {
-    DeckRun r = openDeck(
-        "one_owner",
-        deck("INFIL_DESTINATION SUBCATCH_AQUIFER\n", 0.0,
-             "[PROCESS_COMPONENTS]\n"
-             "org.hydrocouple.openswmm.integrated2d  config=\"none.i2d\"\n\n"));
+    DeckRun r = openDeck("one_owner",
+                         deck("INFIL_DESTINATION SUBCATCH_AQUIFER\n", 0.0,
+                              "[PROCESS_COMPONENTS]\n"
+                              "org.hydrocouple.openswmm.integrated2d  config=\"none.i2d\"\n\n"));
     // The component itself is planned-only, so the open may already fail on
     // its config; either way the run must not proceed silently.
-    const bool init_ok =
-        r.opened && swmm_engine_initialize(r.e) == SWMM_OK;
-    EXPECT_FALSE(init_ok)
-        << "a subcatchment aquifer with two owners must be refused";
-    if (r.e) { swmm_engine_close(r.e); swmm_engine_destroy(r.e); }
+    const bool init_ok = r.opened && swmm_engine_initialize(r.e) == SWMM_OK;
+    EXPECT_FALSE(init_ok) << "a subcatchment aquifer with two owners must be refused";
+    if (r.e) {
+        swmm_engine_close(r.e);
+        swmm_engine_destroy(r.e);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -267,10 +330,11 @@ TEST(Infil2DSubcatchAquifer, Aquifer2DDestinationNeedsA2DAquifer) {
 TEST(Infil2DSubcatchAquifer, NoSubcatchmentsIsAnError) {
     std::string body = deck("INFIL_DESTINATION SUBCATCH_AQUIFER\n", 0.0);
     // Strip the subcatchment sections.
-    for (const char* sec : {"[SUBCATCHMENTS]", "[SUBAREAS]", "[INFILTRATION]",
-                            "[AQUIFERS]", "[GROUNDWATER]", "[Polygons]"}) {
+    for (const char* sec : {"[SUBCATCHMENTS]", "[SUBAREAS]", "[INFILTRATION]", "[AQUIFERS]",
+                            "[GROUNDWATER]", "[Polygons]"}) {
         const auto a = body.find(sec);
-        if (a == std::string::npos) continue;
+        if (a == std::string::npos)
+            continue;
         const auto b = body.find("\n\n", a);
         body.erase(a, (b == std::string::npos ? body.size() : b + 2) - a);
     }

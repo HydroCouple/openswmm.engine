@@ -1,6 +1,6 @@
 /**
- * @file test_gage_cumulative.cpp
- * @brief CUMULATIVE rain-gage format — issue #158 regression guard.
+ * @file      test_gage_cumulative.cpp
+ * @brief     CUMULATIVE rain-gage format — issue #158 regression guard.
  *
  * @details A CUMULATIVE gage records a running depth total; the intensity for
  *          a record is the rise since the previous record spread over the
@@ -30,6 +30,10 @@
  * @see src/engine/hydrology/Gage.cpp (recordRate / setGageState / initGageState)
  * @see Legacy parity: src/legacy/engine/gage.c (convertRainfall, gage_setState)
  * @ingroup engine_hydrology
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -48,23 +52,40 @@ namespace {
 
 /// One runoff step: elapsed time and what the gage and subcatchment read there.
 struct Sample {
-    double t;       ///< elapsed time at the end of the step (days)
-    double rain;    ///< gage intensity, project rain units (in/hr)
-    double runoff;  ///< subcatchment runoff, project flow units (cfs)
+    double t;      ///< elapsed time at the end of the step (days)
+    double rain;   ///< gage intensity, project rain units (in/hr)
+    double runoff; ///< subcatchment runoff, project flow units (cfs)
 };
 
 constexpr double kSecPerDay = 86400.0;
-constexpr double kHrPerDay  = 24.0;
+constexpr double kHrPerDay = 24.0;
 
 /// The gage's first record is a zero counter at t=0, so nothing falls until
 /// the 01:00 record. Samples at or before that instant are outside the storm.
 constexpr double kStormStartSec = 3600.0;
 
+/**
+ * @brief Form a cumulative-rain fixture input path.
+ *
+ * @param[in] name Non-null controlled basename without .inp.
+ * @return Owned rain_cumulative/name.inp path; no file operations or sanitization.
+ */
 std::string deckPath(const char* name) {
     return std::string("rain_cumulative/") + name + ".inp";
 }
 
-/// Run a deck through the NEW engine, sampling gage 0 / subcatchment 0.
+/**
+ * @brief Run the cumulative-rain fixture through a newly owned engine.
+ *
+ * Setup/getter/end errors record nonfatal expectations; calls continue after setup failure. Stops
+ * on first step refusal/completion with no guard or separate success flag. Closes/destroys engine,
+ * ignores close status and retains artifacts; a partial trajectory can be returned.
+ *
+ * @param[in] name Non-null controlled basename naming an existing deck and overwritten _cum_
+ *     artifacts.
+ * @return Owned positive-time samples: elapsed days, gage-zero in/hr and subcatchment-zero project
+ *     runoff units (cfs for these decks).
+ */
 std::vector<Sample> runNew(const char* name) {
     std::vector<Sample> out;
     const std::string inp = deckPath(name);
@@ -91,7 +112,17 @@ std::vector<Sample> runNew(const char* name) {
     return out;
 }
 
-/// Run the same deck through the LEGACY engine (a process-wide singleton).
+/**
+ * @brief Run the same cumulative-rain fixture through global legacy state.
+ *
+ * Requires exclusive process-wide legacy-engine access. Writes _cum_ legacy report/output paths,
+ * records nonfatal open/start/end expectations, stops on step error/completion, then closes. No
+ * guard or independent completion status; later calls still occur after setup failure.
+ *
+ * @param[in] name Non-null controlled basename naming an existing fixture deck.
+ * @return Owned positive-time samples with elapsed days, gage-zero in/hr and subcatchment-zero
+ *     project runoff units.
+ */
 std::vector<Sample> runLegacy(const char* name) {
     std::vector<Sample> out;
     const std::string inp = deckPath(name);
@@ -103,9 +134,8 @@ std::vector<Sample> runLegacy(const char* name) {
 
     double t = 0.0;
     while (swmm_step(&t) == 0 && t > 0.0) {
-        out.push_back({t,
-                       swmm_getValue(swmm_GAGE_RAINFALL, 0),
-                       swmm_getValue(swmm_SUBCATCH_RUNOFF, 0)});
+        out.push_back(
+            {t, swmm_getValue(swmm_GAGE_RAINFALL, 0), swmm_getValue(swmm_SUBCATCH_RUNOFF, 0)});
     }
 
     EXPECT_EQ(swmm_end(), 0);
@@ -113,8 +143,15 @@ std::vector<Sample> runLegacy(const char* name) {
     return out;
 }
 
-/// Rain depth (in) delivered over the run, integrating intensity over each
-/// step. This is the quantity the continuity report calls Total Precipitation.
+/**
+ * @brief Integrate right-end sampled rainfall intensity from elapsed zero.
+ *
+ * No sorting, terminal-tail extrapolation, monotonicity or finite validation; does not integrate
+ * runoff or mutate samples.
+ *
+ * @param[in] s Intended time-ordered samples with elapsed days and rain in/hr.
+ * @return Sum rain*(time-previous)*24 in inches, zero for an empty sequence.
+ */
 double integratedDepth(const std::vector<Sample>& s) {
     double depth = 0.0, prev = 0.0;
     for (const Sample& k : s) {
@@ -136,9 +173,12 @@ TEST(GageCumulative, RainFallsOnEveryStepBetweenRecords) {
 
     int wet = 0, dry_inside_storm = 0;
     for (const Sample& k : s) {
-        if (k.t * kSecPerDay <= kStormStartSec + 0.5) continue;
-        if (k.rain > 0.0) ++wet;
-        else              ++dry_inside_storm;
+        if (k.t * kSecPerDay <= kStormStartSec + 0.5)
+            continue;
+        if (k.rain > 0.0)
+            ++wet;
+        else
+            ++dry_inside_storm;
     }
 
     EXPECT_GT(wet, 0) << "the gage never rained at all";
@@ -155,7 +195,8 @@ TEST(GageCumulative, RampHoldsOneInchPerHourThroughout) {
     ASSERT_FALSE(s.empty());
 
     for (const Sample& k : s) {
-        if (k.t * kSecPerDay <= kStormStartSec + 0.5) continue;
+        if (k.t * kSecPerDay <= kStormStartSec + 0.5)
+            continue;
         EXPECT_NEAR(k.rain, 1.0, 1e-9) << "at elapsed " << k.t << " d";
     }
 }
@@ -193,7 +234,7 @@ class GageCumulativeParity : public ::testing::TestWithParam<const char*> {};
 
 TEST_P(GageCumulativeParity, MatchesLegacyStepForStep) {
     const char* deck = GetParam();
-    const std::vector<Sample> mine   = runNew(deck);
+    const std::vector<Sample> mine = runNew(deck);
     const std::vector<Sample> legacy = runLegacy(deck);
 
     ASSERT_FALSE(legacy.empty());
@@ -206,13 +247,11 @@ TEST_P(GageCumulativeParity, MatchesLegacyStepForStep) {
     // step BOUNDARIES below are compared exactly, so a genuinely divergent
     // next-rain-date limit still fails here.
     const std::size_t n = std::min(mine.size(), legacy.size());
-    const std::size_t extra =
-        std::max(mine.size(), legacy.size()) - n;
-    EXPECT_LE(extra, 1u)
-        << "the two engines took a different number of runoff steps — the "
-           "gage's next-rain-date limit disagrees with legacy "
-           "gage_getNextRainDate (new=" << mine.size()
-        << " legacy=" << legacy.size() << ")";
+    const std::size_t extra = std::max(mine.size(), legacy.size()) - n;
+    EXPECT_LE(extra, 1u) << "the two engines took a different number of runoff steps — the "
+                            "gage's next-rain-date limit disagrees with legacy "
+                            "gage_getNextRainDate (new="
+                         << mine.size() << " legacy=" << legacy.size() << ")";
 
     for (std::size_t i = 0; i < n; ++i) {
         EXPECT_NEAR(mine[i].t, legacy[i].t, 1e-12) << "step " << i;
@@ -222,8 +261,7 @@ TEST_P(GageCumulativeParity, MatchesLegacyStepForStep) {
 }
 
 INSTANTIATE_TEST_SUITE_P(Issue158, GageCumulativeParity,
-                         ::testing::Values("cumulative_ramp",
-                                           "cumulative_flat",
+                         ::testing::Values("cumulative_ramp", "cumulative_flat",
                                            "cumulative_reset"),
                          [](const ::testing::TestParamInfo<const char*>& i) {
                              return std::string(i.param);

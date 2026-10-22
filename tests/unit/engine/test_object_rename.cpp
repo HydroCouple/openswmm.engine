@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_object_rename.cpp
- * @brief In-place rename for snow packs, aquifers, inlets, streets and LID
+ * @file      test_object_rename.cpp
+ * @brief     In-place rename for snow packs, aquifers, inlets, streets and LID
  *        controls.
  *
  * @details These five object kinds had no rename API. The GUI's registries
@@ -37,9 +37,9 @@
  *              every STREET_XSECT link, which is the one back-reference of the
  *              five that survives parsing.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -57,6 +57,12 @@ namespace {
 
 class ObjectRenameTest : public ::testing::Test {
 protected:
+    /**
+     * @brief Create an editable BUILDING engine for object rename tests.
+     *
+     * Uses swmm_engine_new and performs no model open or simulation. Fatal GoogleTest assertions return
+     * from this hook on failure; any created handle remains owned by the fixture for teardown.
+     */
     void SetUp() override {
         // swmm_engine_new (not swmm_engine_create) puts the context in
         // BUILDING, which the *_add and *_rename lifecycle guards require.
@@ -64,6 +70,11 @@ protected:
         ASSERT_NE(engine_, nullptr);
     }
 
+    /**
+     * @brief Destroy a non-null fixture handle and clear its member slot.
+     *
+     * Engine destruction supplies remaining model cleanup; safe after setup failed before allocation.
+     */
     void TearDown() override {
         if (engine_ != nullptr) {
             swmm_engine_destroy(engine_);
@@ -200,15 +211,14 @@ TEST_F(ObjectRenameTest, StreetRenameRewritesLinkCrossSectionReference) {
 
     const int link = swmm_link_index(engine_, "C1");
     ASSERT_GE(link, 0);
-    ASSERT_EQ(swmm_link_set_nodes(engine_, link,
-                                  swmm_node_index(engine_, "J1"),
+    ASSERT_EQ(swmm_link_set_nodes(engine_, link, swmm_node_index(engine_, "J1"),
                                   swmm_node_index(engine_, "O1")),
               SWMM_OK);
     const int street = swmm_street_index(engine_, "ST1");
     ASSERT_GE(street, 0);
 
-    ASSERT_EQ(swmm_link_set_xsect(engine_, link, SWMM_XSECT_STREET,
-                                  static_cast<double>(street), 0.0, 0.0, 0.0),
+    ASSERT_EQ(swmm_link_set_xsect(engine_, link, SWMM_XSECT_STREET, static_cast<double>(street),
+                                  0.0, 0.0, 0.0),
               SWMM_OK);
 
     ASSERT_EQ(swmm_street_rename(engine_, street, "Main"), SWMM_OK);
@@ -216,11 +226,10 @@ TEST_F(ObjectRenameTest, StreetRenameRewritesLinkCrossSectionReference) {
     // The link still resolves, and it resolves to the SAME street.
     int shape = -1;
     double g1 = -1.0, g2 = 0.0, g3 = 0.0, g4 = 0.0;
-    ASSERT_EQ(swmm_link_get_xsect(engine_, link, &shape, &g1, &g2, &g3, &g4),
-              SWMM_OK);
+    ASSERT_EQ(swmm_link_get_xsect(engine_, link, &shape, &g1, &g2, &g3, &g4), SWMM_OK);
     EXPECT_EQ(shape, SWMM_XSECT_STREET);
     EXPECT_EQ(static_cast<int>(g1), street)
         << "street rename left the link's named cross-section reference stale";
 }
 
-}  // namespace
+} // namespace

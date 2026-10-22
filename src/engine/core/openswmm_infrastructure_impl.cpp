@@ -16,15 +16,15 @@
 // limitations under the License.
 
 /**
- * @file openswmm_infrastructure_impl.cpp
- * @brief C API implementation — transects, streets, inlets, LID controls, LID usage.
+ * @file      openswmm_infrastructure_impl.cpp
+ * @brief     C API implementation — transects, streets, inlets, LID controls, LID usage.
  *
  * @see include/openswmm/engine/openswmm_infrastructure.h
  * @ingroup engine_api
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "openswmm_api_common.hpp"
@@ -44,14 +44,16 @@ extern "C" {
 
 SWMM_ENGINE_API int swmm_transect_add(SWMM_Engine engine, const char* id) {
     CHECK_HANDLE(engine);
-    if (!id) return SWMM_ERR_BADPARAM;
+    if (!id)
+        return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();
     auto& ts = ctx.transects;
 
     // Reject duplicates (case-insensitive, legacy hash.c parity).
     for (const auto& existing : ts.names)
-        if (openswmm::ieq(existing, id)) return SWMM_ERR_BADPARAM;
+        if (openswmm::ieq(existing, id))
+            return SWMM_ERR_BADPARAM;
 
     ts.names.push_back(id);
     ts.comments.push_back(std::string{});
@@ -76,18 +78,20 @@ SWMM_ENGINE_API int swmm_transect_add(SWMM_Engine engine, const char* id) {
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_transect_set_roughness(SWMM_Engine engine, int idx, double n_left, double n_right, double n_channel) {
+SWMM_ENGINE_API int swmm_transect_set_roughness(SWMM_Engine engine, int idx, double n_left,
+                                                double n_right, double n_channel) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.transects.count());
     const auto ui = static_cast<std::size_t>(idx);
-    ctx.transects.n_left[ui]    = n_left;
-    ctx.transects.n_right[ui]   = n_right;
+    ctx.transects.n_left[ui] = n_left;
+    ctx.transects.n_right[ui] = n_right;
     ctx.transects.n_channel[ui] = n_channel;
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_transect_add_station(SWMM_Engine engine, int idx, double station, double elevation) {
+SWMM_ENGINE_API int swmm_transect_add_station(SWMM_Engine engine, int idx, double station,
+                                              double elevation) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.transects.count());
@@ -98,24 +102,29 @@ SWMM_ENGINE_API int swmm_transect_add_station(SWMM_Engine engine, int idx, doubl
 }
 
 SWMM_ENGINE_API int swmm_transect_count(SWMM_Engine engine) {
-    if (!engine) return -1;
+    if (!engine)
+        return -1;
     return to_engine(engine)->context().transects.count();
 }
 
 SWMM_ENGINE_API int swmm_transect_index(SWMM_Engine engine, const char* id) {
-    if (!engine || !id) return -1;
+    if (!engine || !id)
+        return -1;
     // Case-insensitive (legacy hash.c parity)
     const auto& names = to_engine(engine)->context().transects.names;
     for (std::size_t i = 0; i < names.size(); ++i) {
-        if (openswmm::ieq(names[i], id)) return static_cast<int>(i);
+        if (openswmm::ieq(names[i], id))
+            return static_cast<int>(i);
     }
     return -1;
 }
 
 SWMM_ENGINE_API const char* swmm_transect_id(SWMM_Engine engine, int idx) {
-    if (!engine) return nullptr;
+    if (!engine)
+        return nullptr;
     const auto& names = to_engine(engine)->context().transects.names;
-    if (idx < 0 || idx >= static_cast<int>(names.size())) return nullptr;
+    if (idx < 0 || idx >= static_cast<int>(names.size()))
+        return nullptr;
     return names[static_cast<std::size_t>(idx)].c_str();
 }
 
@@ -123,83 +132,93 @@ SWMM_ENGINE_API const char* swmm_transect_id(SWMM_Engine engine, int idx) {
 // Per-field getters / setters (DA-ENG-09 + BQ-TR-02)
 // ----------------------------------------------------------------------------
 
-SWMM_ENGINE_API int swmm_transect_get_roughness(SWMM_Engine engine, int idx,
-                                                 double* n_left, double* n_right, double* n_channel) {
+SWMM_ENGINE_API int swmm_transect_get_roughness(SWMM_Engine engine, int idx, double* n_left,
+                                                double* n_right, double* n_channel) {
     CHECK_HANDLE(engine);
     auto& ts = to_engine(engine)->context().transects;
     CHECK_INDEX(idx >= 0 && idx < ts.count());
     const auto ui = static_cast<std::size_t>(idx);
-    if (n_left)    *n_left    = ts.n_left[ui];
-    if (n_right)   *n_right   = ts.n_right[ui];
-    if (n_channel) *n_channel = ts.n_channel[ui];
+    if (n_left)
+        *n_left = ts.n_left[ui];
+    if (n_right)
+        *n_right = ts.n_right[ui];
+    if (n_channel)
+        *n_channel = ts.n_channel[ui];
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_transect_set_bank_stations(SWMM_Engine engine, int idx,
-                                                     double x_left, double x_right) {
+SWMM_ENGINE_API int swmm_transect_set_bank_stations(SWMM_Engine engine, int idx, double x_left,
+                                                    double x_right) {
     CHECK_HANDLE(engine);
     auto& ts = to_engine(engine)->context().transects;
     CHECK_INDEX(idx >= 0 && idx < ts.count());
     const auto ui = static_cast<std::size_t>(idx);
-    ts.x_left_bank[ui]  = x_left;
+    ts.x_left_bank[ui] = x_left;
     ts.x_right_bank[ui] = x_right;
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_transect_get_bank_stations(SWMM_Engine engine, int idx,
-                                                     double* x_left, double* x_right) {
+SWMM_ENGINE_API int swmm_transect_get_bank_stations(SWMM_Engine engine, int idx, double* x_left,
+                                                    double* x_right) {
     CHECK_HANDLE(engine);
     auto& ts = to_engine(engine)->context().transects;
     CHECK_INDEX(idx >= 0 && idx < ts.count());
     const auto ui = static_cast<std::size_t>(idx);
-    if (x_left)  *x_left  = ts.x_left_bank[ui];
-    if (x_right) *x_right = ts.x_right_bank[ui];
+    if (x_left)
+        *x_left = ts.x_left_bank[ui];
+    if (x_right)
+        *x_right = ts.x_right_bank[ui];
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_transect_set_encroachment_stations(SWMM_Engine engine, int idx,
-                                                             double x_left, double x_right) {
+                                                            double x_left, double x_right) {
     CHECK_HANDLE(engine);
     auto& ts = to_engine(engine)->context().transects;
     CHECK_INDEX(idx >= 0 && idx < ts.count());
     const auto ui = static_cast<std::size_t>(idx);
-    ts.x_left_encroachment[ui]  = x_left;
+    ts.x_left_encroachment[ui] = x_left;
     ts.x_right_encroachment[ui] = x_right;
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_transect_get_encroachment_stations(SWMM_Engine engine, int idx,
-                                                             double* x_left, double* x_right) {
+                                                            double* x_left, double* x_right) {
     CHECK_HANDLE(engine);
     auto& ts = to_engine(engine)->context().transects;
     CHECK_INDEX(idx >= 0 && idx < ts.count());
     const auto ui = static_cast<std::size_t>(idx);
-    if (x_left)  *x_left  = ts.x_left_encroachment[ui];
-    if (x_right) *x_right = ts.x_right_encroachment[ui];
+    if (x_left)
+        *x_left = ts.x_left_encroachment[ui];
+    if (x_right)
+        *x_right = ts.x_right_encroachment[ui];
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_transect_set_modifiers(SWMM_Engine engine, int idx,
-                                                 double x_factor, double y_factor, double length_factor) {
+SWMM_ENGINE_API int swmm_transect_set_modifiers(SWMM_Engine engine, int idx, double x_factor,
+                                                double y_factor, double length_factor) {
     CHECK_HANDLE(engine);
     auto& ts = to_engine(engine)->context().transects;
     CHECK_INDEX(idx >= 0 && idx < ts.count());
     const auto ui = static_cast<std::size_t>(idx);
-    ts.x_factor[ui]      = x_factor;
-    ts.y_factor[ui]      = y_factor;
+    ts.x_factor[ui] = x_factor;
+    ts.y_factor[ui] = y_factor;
     ts.length_factor[ui] = length_factor;
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_transect_get_modifiers(SWMM_Engine engine, int idx,
-                                                 double* x_factor, double* y_factor, double* length_factor) {
+SWMM_ENGINE_API int swmm_transect_get_modifiers(SWMM_Engine engine, int idx, double* x_factor,
+                                                double* y_factor, double* length_factor) {
     CHECK_HANDLE(engine);
     auto& ts = to_engine(engine)->context().transects;
     CHECK_INDEX(idx >= 0 && idx < ts.count());
     const auto ui = static_cast<std::size_t>(idx);
-    if (x_factor)      *x_factor      = ts.x_factor[ui];
-    if (y_factor)      *y_factor      = ts.y_factor[ui];
-    if (length_factor) *length_factor = ts.length_factor[ui];
+    if (x_factor)
+        *x_factor = ts.x_factor[ui];
+    if (y_factor)
+        *y_factor = ts.y_factor[ui];
+    if (length_factor)
+        *length_factor = ts.length_factor[ui];
     return SWMM_OK;
 }
 
@@ -214,7 +233,8 @@ SWMM_ENGINE_API int swmm_transect_set_comments(SWMM_Engine engine, int idx, cons
 
 SWMM_ENGINE_API int swmm_transect_get_comments(SWMM_Engine engine, int idx, char* buf, int buflen) {
     CHECK_HANDLE(engine);
-    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    if (!buf || buflen <= 0)
+        return SWMM_ERR_BADPARAM;
     auto& ts = to_engine(engine)->context().transects;
     CHECK_INDEX(idx >= 0 && idx < ts.count());
     const auto ui = static_cast<std::size_t>(idx);
@@ -226,14 +246,16 @@ SWMM_ENGINE_API int swmm_transect_get_comments(SWMM_Engine engine, int idx, char
 }
 
 SWMM_ENGINE_API int swmm_transect_get_station_count(SWMM_Engine engine, int idx) {
-    if (!engine) return -1;
+    if (!engine)
+        return -1;
     auto& ts = to_engine(engine)->context().transects;
-    if (idx < 0 || idx >= ts.count()) return -1;
+    if (idx < 0 || idx >= ts.count())
+        return -1;
     return static_cast<int>(ts.stations[static_cast<std::size_t>(idx)].size());
 }
 
 SWMM_ENGINE_API int swmm_transect_get_station(SWMM_Engine engine, int idx, int station_idx,
-                                               double* station, double* elevation) {
+                                              double* station, double* elevation) {
     CHECK_HANDLE(engine);
     auto& ts = to_engine(engine)->context().transects;
     CHECK_INDEX(idx >= 0 && idx < ts.count());
@@ -242,8 +264,10 @@ SWMM_ENGINE_API int swmm_transect_get_station(SWMM_Engine engine, int idx, int s
     const auto& ys = ts.elevations[ui];
     CHECK_INDEX(station_idx >= 0 && station_idx < static_cast<int>(xs.size()));
     const auto si = static_cast<std::size_t>(station_idx);
-    if (station)   *station   = xs[si];
-    if (elevation) *elevation = ys[si];
+    if (station)
+        *station = xs[si];
+    if (elevation)
+        *elevation = ys[si];
     return SWMM_OK;
 }
 
@@ -259,19 +283,23 @@ SWMM_ENGINE_API int swmm_transect_clear_stations(SWMM_Engine engine, int idx) {
 
 SWMM_ENGINE_API int swmm_transect_rename(SWMM_Engine engine, int idx, const char* new_id) {
     CHECK_HANDLE(engine);
-    if (!new_id || new_id[0] == '\0') return SWMM_ERR_BADPARAM;
+    if (!new_id || new_id[0] == '\0')
+        return SWMM_ERR_BADPARAM;
     auto& ts = to_engine(engine)->context().transects;
     CHECK_INDEX(idx >= 0 && idx < ts.count());
     const auto ui = static_cast<std::size_t>(idx);
 
     // Same-name (case-sensitive) is a no-op.
-    if (ts.names[ui] == new_id) return SWMM_OK;
+    if (ts.names[ui] == new_id)
+        return SWMM_OK;
 
     // Case-insensitive collision check against every other slot.
     const std::string newName(new_id);
     for (std::size_t i = 0; i < ts.names.size(); ++i) {
-        if (i == ui) continue;
-        if (openswmm::ieq(ts.names[i], newName)) return SWMM_ERR_BADPARAM;
+        if (i == ui)
+            continue;
+        if (openswmm::ieq(ts.names[i], newName))
+            return SWMM_ERR_BADPARAM;
     }
 
     ts.names[ui] = newName;
@@ -282,7 +310,8 @@ SWMM_ENGINE_API int swmm_transect_remove(SWMM_Engine engine, int idx) {
     CHECK_HANDLE(engine);
     auto& ts = to_engine(engine)->context().transects;
     // Out-of-range is a no-op SWMM_OK (mirrors pattern mutation API).
-    if (idx < 0 || idx >= ts.count()) return SWMM_OK;
+    if (idx < 0 || idx >= ts.count())
+        return SWMM_OK;
     const auto ui = static_cast<std::size_t>(idx);
 
     ts.names.erase(ts.names.begin() + ui);
@@ -309,7 +338,8 @@ SWMM_ENGINE_API int swmm_transect_remove(SWMM_Engine engine, int idx) {
 
 SWMM_ENGINE_API int swmm_street_add(SWMM_Engine engine, const char* id) {
     CHECK_HANDLE(engine);
-    if (!id) return SWMM_ERR_BADPARAM;
+    if (!id)
+        return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();
     auto& st = ctx.streets;
@@ -331,21 +361,25 @@ SWMM_ENGINE_API int swmm_street_add(SWMM_Engine engine, const char* id) {
 
 SWMM_ENGINE_API int swmm_street_rename(SWMM_Engine engine, int idx, const char* new_id) {
     CHECK_HANDLE(engine);
-    if (!new_id || new_id[0] == '\0') return SWMM_ERR_BADPARAM;
+    if (!new_id || new_id[0] == '\0')
+        return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
-    auto& st  = ctx.streets;
+    auto& st = ctx.streets;
     CHECK_INDEX(idx >= 0 && idx < st.count());
     const auto ui = static_cast<std::size_t>(idx);
 
     // Same-name (case-sensitive) is a no-op.
-    if (st.names[ui] == new_id) return SWMM_OK;
+    if (st.names[ui] == new_id)
+        return SWMM_OK;
 
     // Streets have no NameIndex — lookups are linear ieq scans — so do the
     // collision check the same way.
     const std::string newName(new_id);
     for (std::size_t i = 0; i < st.names.size(); ++i) {
-        if (i == ui) continue;
-        if (openswmm::ieq(st.names[i], newName)) return SWMM_ERR_BADPARAM;
+        if (i == ui)
+            continue;
+        if (openswmm::ieq(st.names[i], newName))
+            return SWMM_ERR_BADPARAM;
     }
 
     const std::string prev = st.names[ui];
@@ -367,70 +401,85 @@ SWMM_ENGINE_API int swmm_street_rename(SWMM_Engine engine, int idx, const char* 
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_street_set_params(SWMM_Engine engine, int idx,
-                                             double t_crown, double h_curb, double sx, double n_road,
-                                             double gutter_depres, double gutter_width, int sides,
-                                             double back_width, double back_slope, double back_n) {
+SWMM_ENGINE_API int swmm_street_set_params(SWMM_Engine engine, int idx, double t_crown,
+                                           double h_curb, double sx, double n_road,
+                                           double gutter_depres, double gutter_width, int sides,
+                                           double back_width, double back_slope, double back_n) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.streets.count());
     const auto ui = static_cast<std::size_t>(idx);
 
-    ctx.streets.t_crown[ui]       = t_crown;
-    ctx.streets.h_curb[ui]        = h_curb;
-    ctx.streets.sx[ui]            = sx;
-    ctx.streets.n_road[ui]        = n_road;
+    ctx.streets.t_crown[ui] = t_crown;
+    ctx.streets.h_curb[ui] = h_curb;
+    ctx.streets.sx[ui] = sx;
+    ctx.streets.n_road[ui] = n_road;
     ctx.streets.gutter_depres[ui] = gutter_depres;
-    ctx.streets.gutter_width[ui]  = gutter_width;
-    ctx.streets.sides[ui]         = sides;
-    ctx.streets.back_width[ui]    = back_width;
-    ctx.streets.back_slope[ui]    = back_slope;
-    ctx.streets.back_n[ui]        = back_n;
+    ctx.streets.gutter_width[ui] = gutter_width;
+    ctx.streets.sides[ui] = sides;
+    ctx.streets.back_width[ui] = back_width;
+    ctx.streets.back_slope[ui] = back_slope;
+    ctx.streets.back_n[ui] = back_n;
 
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_street_count(SWMM_Engine engine) {
-    if (!engine) return -1;
+    if (!engine)
+        return -1;
     return to_engine(engine)->context().streets.count();
 }
 
 SWMM_ENGINE_API int swmm_street_index(SWMM_Engine engine, const char* id) {
-    if (!engine || !id) return -1;
+    if (!engine || !id)
+        return -1;
     // Case-insensitive (legacy hash.c parity)
     const auto& names = to_engine(engine)->context().streets.names;
     for (std::size_t i = 0; i < names.size(); ++i) {
-        if (openswmm::ieq(names[i], id)) return static_cast<int>(i);
+        if (openswmm::ieq(names[i], id))
+            return static_cast<int>(i);
     }
     return -1;
 }
 
 SWMM_ENGINE_API const char* swmm_street_id(SWMM_Engine engine, int idx) {
-    if (!engine) return nullptr;
+    if (!engine)
+        return nullptr;
     const auto& names = to_engine(engine)->context().streets.names;
-    if (idx < 0 || idx >= static_cast<int>(names.size())) return nullptr;
+    if (idx < 0 || idx >= static_cast<int>(names.size()))
+        return nullptr;
     return names[static_cast<std::size_t>(idx)].c_str();
 }
 
-SWMM_ENGINE_API int swmm_street_get_params(SWMM_Engine engine, int idx,
-                                             double* t_crown, double* h_curb, double* sx, double* n_road,
-                                             double* gutter_depres, double* gutter_width, int* sides,
-                                             double* back_width, double* back_slope, double* back_n) {
+SWMM_ENGINE_API int swmm_street_get_params(SWMM_Engine engine, int idx, double* t_crown,
+                                           double* h_curb, double* sx, double* n_road,
+                                           double* gutter_depres, double* gutter_width, int* sides,
+                                           double* back_width, double* back_slope, double* back_n) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.streets.count());
     const auto ui = static_cast<std::size_t>(idx);
 
-    if (t_crown)       *t_crown       = ctx.streets.t_crown[ui];
-    if (h_curb)        *h_curb        = ctx.streets.h_curb[ui];
-    if (sx)            *sx            = ctx.streets.sx[ui];
-    if (n_road)        *n_road        = ctx.streets.n_road[ui];
-    if (gutter_depres) *gutter_depres = ctx.streets.gutter_depres[ui];
-    if (gutter_width)  *gutter_width  = ctx.streets.gutter_width[ui];
-    if (sides)         *sides         = ctx.streets.sides[ui];
-    if (back_width)    *back_width    = ctx.streets.back_width[ui];
-    if (back_slope)    *back_slope    = ctx.streets.back_slope[ui];
-    if (back_n)        *back_n        = ctx.streets.back_n[ui];
+    if (t_crown)
+        *t_crown = ctx.streets.t_crown[ui];
+    if (h_curb)
+        *h_curb = ctx.streets.h_curb[ui];
+    if (sx)
+        *sx = ctx.streets.sx[ui];
+    if (n_road)
+        *n_road = ctx.streets.n_road[ui];
+    if (gutter_depres)
+        *gutter_depres = ctx.streets.gutter_depres[ui];
+    if (gutter_width)
+        *gutter_width = ctx.streets.gutter_width[ui];
+    if (sides)
+        *sides = ctx.streets.sides[ui];
+    if (back_width)
+        *back_width = ctx.streets.back_width[ui];
+    if (back_slope)
+        *back_slope = ctx.streets.back_slope[ui];
+    if (back_n)
+        *back_n = ctx.streets.back_n[ui];
 
     return SWMM_OK;
 }
@@ -441,7 +490,8 @@ SWMM_ENGINE_API int swmm_street_get_params(SWMM_Engine engine, int idx,
 
 SWMM_ENGINE_API int swmm_inlet_add(SWMM_Engine engine, const char* id, const char* type) {
     CHECK_HANDLE(engine);
-    if (!id || !type) return SWMM_ERR_BADPARAM;
+    if (!id || !type)
+        return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();
     ctx.inlets.add_row(id, type);
@@ -450,19 +500,23 @@ SWMM_ENGINE_API int swmm_inlet_add(SWMM_Engine engine, const char* id, const cha
 
 SWMM_ENGINE_API int swmm_inlet_rename(SWMM_Engine engine, int idx, const char* new_id) {
     CHECK_HANDLE(engine);
-    if (!new_id || new_id[0] == '\0') return SWMM_ERR_BADPARAM;
+    if (!new_id || new_id[0] == '\0')
+        return SWMM_ERR_BADPARAM;
     auto& inl = to_engine(engine)->context().inlets;
     CHECK_INDEX(idx >= 0 && idx < inl.count());
     const auto ui = static_cast<std::size_t>(idx);
 
-    if (inl.names[ui] == new_id) return SWMM_OK;
+    if (inl.names[ui] == new_id)
+        return SWMM_OK;
 
     // No NameIndex for inlets — swmm_inlet_index scans with ieq, so the
     // collision check must match.
     const std::string newName(new_id);
     for (std::size_t i = 0; i < inl.names.size(); ++i) {
-        if (i == ui) continue;
-        if (openswmm::ieq(inl.names[i], newName)) return SWMM_ERR_BADPARAM;
+        if (i == ui)
+            continue;
+        if (openswmm::ieq(inl.names[i], newName))
+            return SWMM_ERR_BADPARAM;
     }
 
     inl.names[ui] = newName;
@@ -475,6 +529,13 @@ namespace {
 // A curb-opening design keeps its length/height in its own columns, so the
 // legacy 5-arg convenience API maps length/width onto them for CURB and
 // DROP_CURB and onto the grate/slot columns for everything else.
+/**
+ * @brief Recognize exact persisted curb-only inlet design tokens.
+ *
+ * @param[in] ctx Borrowed coherent inlet design columns.
+ * @param[in] ui Valid zero-based inlet design slot, unchecked.
+ * @return True for CURB or DROP_CURB; COMBO is false here.
+ */
 bool inlet_is_curb(const openswmm::SimulationContext& ctx, std::size_t ui) {
     const std::string& t = ctx.inlets.inlet_type[ui];
     return t == "CURB" || t == "DROP_CURB";
@@ -482,7 +543,8 @@ bool inlet_is_curb(const openswmm::SimulationContext& ctx, std::size_t ui) {
 } // namespace
 
 SWMM_ENGINE_API int swmm_inlet_set_params(SWMM_Engine engine, int idx, double length, double width,
-                                            const char* grate_type, double open_area, double splash_veloc) {
+                                          const char* grate_type, double open_area,
+                                          double splash_veloc) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.inlets.count());
@@ -493,34 +555,39 @@ SWMM_ENGINE_API int swmm_inlet_set_params(SWMM_Engine engine, int idx, double le
         ctx.inlets.curb_height[ui] = width;
     } else {
         ctx.inlets.length[ui] = length;
-        ctx.inlets.width[ui]  = width;
+        ctx.inlets.width[ui] = width;
     }
-    ctx.inlets.grate_type[ui]   = grate_type ? grate_type : "";
-    ctx.inlets.open_area[ui]    = open_area;
+    ctx.inlets.grate_type[ui] = grate_type ? grate_type : "";
+    ctx.inlets.open_area[ui] = open_area;
     ctx.inlets.splash_veloc[ui] = splash_veloc;
 
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_inlet_count(SWMM_Engine engine) {
-    if (!engine) return -1;
+    if (!engine)
+        return -1;
     return to_engine(engine)->context().inlets.count();
 }
 
 SWMM_ENGINE_API int swmm_inlet_index(SWMM_Engine engine, const char* id) {
-    if (!engine || !id) return -1;
+    if (!engine || !id)
+        return -1;
     // Case-insensitive (legacy hash.c parity)
     const auto& names = to_engine(engine)->context().inlets.names;
     for (std::size_t i = 0; i < names.size(); ++i) {
-        if (openswmm::ieq(names[i], id)) return static_cast<int>(i);
+        if (openswmm::ieq(names[i], id))
+            return static_cast<int>(i);
     }
     return -1;
 }
 
 SWMM_ENGINE_API const char* swmm_inlet_id(SWMM_Engine engine, int idx) {
-    if (!engine) return nullptr;
+    if (!engine)
+        return nullptr;
     const auto& names = to_engine(engine)->context().inlets.names;
-    if (idx < 0 || idx >= static_cast<int>(names.size())) return nullptr;
+    if (idx < 0 || idx >= static_cast<int>(names.size()))
+        return nullptr;
     return names[static_cast<std::size_t>(idx)].c_str();
 }
 
@@ -528,8 +595,17 @@ namespace {
 // Copy a std::string into a caller buffer, NUL-terminated and truncated to
 // buflen (mirrors swmm_transect_get_comments). Returns SWMM_ERR_BADPARAM for a
 // null/empty buffer.
+/**
+ * @brief Copy optional text output with silent byte truncation and a terminator.
+ *
+ * @param[in] s Borrowed source, no overlap with destination.
+ * @param[out] buf Writable buflen-byte destination.
+ * @param[in] buflen Positive capacity including NUL.
+ * @return SWMM_OK after copy, BADPARAM for NULL/nonpositive buffer; no writes on refusal.
+ */
 int copy_str(const std::string& s, char* buf, int buflen) {
-    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    if (!buf || buflen <= 0)
+        return SWMM_ERR_BADPARAM;
     const std::size_t n = std::min(s.size(), static_cast<std::size_t>(buflen - 1));
     std::memcpy(buf, s.data(), n);
     buf[n] = '\0';
@@ -537,22 +613,26 @@ int copy_str(const std::string& s, char* buf, int buflen) {
 }
 } // namespace
 
-SWMM_ENGINE_API int swmm_inlet_get_params(SWMM_Engine engine, int idx,
-                                            double* length, double* width,
-                                            char* grate_type, int grate_buflen,
-                                            double* open_area, double* splash_veloc) {
+SWMM_ENGINE_API int swmm_inlet_get_params(SWMM_Engine engine, int idx, double* length,
+                                          double* width, char* grate_type, int grate_buflen,
+                                          double* open_area, double* splash_veloc) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.inlets.count());
     const auto ui = static_cast<std::size_t>(idx);
     const bool curb = inlet_is_curb(ctx, ui);
-    if (length)       *length       = curb ? ctx.inlets.curb_length[ui] : ctx.inlets.length[ui];
-    if (width)        *width        = curb ? ctx.inlets.curb_height[ui] : ctx.inlets.width[ui];
-    if (open_area)    *open_area    = ctx.inlets.open_area[ui];
-    if (splash_veloc) *splash_veloc = ctx.inlets.splash_veloc[ui];
+    if (length)
+        *length = curb ? ctx.inlets.curb_length[ui] : ctx.inlets.length[ui];
+    if (width)
+        *width = curb ? ctx.inlets.curb_height[ui] : ctx.inlets.width[ui];
+    if (open_area)
+        *open_area = ctx.inlets.open_area[ui];
+    if (splash_veloc)
+        *splash_veloc = ctx.inlets.splash_veloc[ui];
     if (grate_type) {
         const int rc = copy_str(ctx.inlets.grate_type[ui], grate_type, grate_buflen);
-        if (rc != SWMM_OK) return rc;
+        if (rc != SWMM_OK)
+            return rc;
     }
     return SWMM_OK;
 }
@@ -571,33 +651,53 @@ SWMM_ENGINE_API int swmm_inlet_get_type(SWMM_Engine engine, int idx, char* buf, 
 namespace {
 
 // SWMM_InletType order (== legacy InletTypeWords, with COMBO in slot 2).
-const char* const kInletTypeWords[] = {
-    "GRATE", "CURB", "COMBO", "SLOTTED", "DROP_GRATE", "DROP_CURB", "CUSTOM"};
+const char* const kInletTypeWords[] = {"GRATE",      "CURB",      "COMBO", "SLOTTED",
+                                       "DROP_GRATE", "DROP_CURB", "CUSTOM"};
 // SWMM_GrateType order (== legacy GrateTypeWords).
-const char* const kGrateTypeWords[] = {
-    "P_BAR-50", "P_BAR-50x100", "P_BAR-30", "CURVED_VANE",
-    "TILT_BAR-45", "TILT_BAR-30", "RETICULINE", "GENERIC"};
+const char* const kGrateTypeWords[] = {"P_BAR-50",    "P_BAR-50x100", "P_BAR-30",   "CURVED_VANE",
+                                       "TILT_BAR-45", "TILT_BAR-30",  "RETICULINE", "GENERIC"};
 
+/**
+ * @brief Find the first ASCII-insensitive token in a borrowed word catalogue.
+ *
+ * @param[in] words Readable n-pointer span of non-NULL NUL-terminated words; NULL allowed only when
+ *     n<=0.
+ * @param[in] n Catalogue length; <=0 returns -1.
+ * @param[in] w Borrowed token compared with ieq.
+ * @return First zero-based matching index, otherwise -1.
+ */
 int word_index(const char* const* words, int n, const std::string& w) {
     for (int i = 0; i < n; ++i)
-        if (openswmm::ieq(words[i], w)) return i;
+        if (openswmm::ieq(words[i], w))
+            return i;
     return -1;
 }
 
+/**
+ * @brief Test whether a public inlet kind includes grate capture.
+ *
+ * @param[in] type Public inlet type; unknown ordinals return false.
+ * @return True for GRATE, DROP_GRATE or COMBO.
+ */
 bool is_grate_kind(int type) {
-    return type == SWMM_INLET_GRATE || type == SWMM_INLET_DROP_GRATE ||
-           type == SWMM_INLET_COMBO;
+    return type == SWMM_INLET_GRATE || type == SWMM_INLET_DROP_GRATE || type == SWMM_INLET_COMBO;
 }
+/**
+ * @brief Test whether a public inlet kind includes curb capture.
+ *
+ * @param[in] type Public inlet type; unknown ordinals return false.
+ * @return True for CURB, DROP_CURB or COMBO.
+ */
 bool is_curb_kind(int type) {
-    return type == SWMM_INLET_CURB || type == SWMM_INLET_DROP_CURB ||
-           type == SWMM_INLET_COMBO;
+    return type == SWMM_INLET_CURB || type == SWMM_INLET_DROP_CURB || type == SWMM_INLET_COMBO;
 }
 
 } // namespace
 
 SWMM_ENGINE_API int swmm_inlet_get_design(SWMM_Engine engine, int idx, SWMM_InletDesign* out) {
     CHECK_HANDLE(engine);
-    if (!out) return SWMM_ERR_BADPARAM;
+    if (!out)
+        return SWMM_ERR_BADPARAM;
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.inlets.count());
     const auto ui = static_cast<std::size_t>(idx);
@@ -605,18 +705,20 @@ SWMM_ENGINE_API int swmm_inlet_get_design(SWMM_Engine engine, int idx, SWMM_Inle
 
     *out = SWMM_InletDesign{};
     out->type = word_index(kInletTypeWords, 7, I.inlet_type[ui]);
-    if (out->type < 0) out->type = SWMM_INLET_GRATE;
+    if (out->type < 0)
+        out->type = SWMM_INLET_GRATE;
 
     if (is_grate_kind(out->type)) {
         out->grate_length = I.length[ui];
-        out->grate_width  = I.width[ui];
+        out->grate_width = I.width[ui];
     } else if (out->type == SWMM_INLET_SLOTTED) {
         out->slot_length = I.length[ui];
-        out->slot_width  = I.width[ui];
+        out->slot_width = I.width[ui];
     }
-    out->grate_type   = word_index(kGrateTypeWords, 8, I.grate_type[ui]);
-    if (out->grate_type < 0) out->grate_type = SWMM_GRATE_P_BAR_50;
-    out->open_area    = I.open_area[ui];
+    out->grate_type = word_index(kGrateTypeWords, 8, I.grate_type[ui]);
+    if (out->grate_type < 0)
+        out->grate_type = SWMM_GRATE_P_BAR_50;
+    out->open_area = I.open_area[ui];
     out->splash_veloc = I.splash_veloc[ui];
 
     if (is_curb_kind(out->type)) {
@@ -630,53 +732,64 @@ SWMM_ENGINE_API int swmm_inlet_get_design(SWMM_Engine engine, int idx, SWMM_Inle
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_inlet_set_design(SWMM_Engine engine, int idx, const SWMM_InletDesign* design) {
+SWMM_ENGINE_API int swmm_inlet_set_design(SWMM_Engine engine, int idx,
+                                          const SWMM_InletDesign* design) {
     CHECK_HANDLE(engine);
-    if (!design) return SWMM_ERR_BADPARAM;
+    if (!design)
+        return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.inlets.count());
-    if (design->type < 0 || design->type > SWMM_INLET_CUSTOM) return SWMM_ERR_BADPARAM;
+    if (design->type < 0 || design->type > SWMM_INLET_CUSTOM)
+        return SWMM_ERR_BADPARAM;
 
     // --- validate only the fields the type actually uses ---
     if (is_grate_kind(design->type)) {
-        if (design->grate_length <= 0.0 || design->grate_width <= 0.0) return SWMM_ERR_BADPARAM;
-        if (design->grate_type < 0 || design->grate_type > SWMM_GRATE_GENERIC) return SWMM_ERR_BADPARAM;
+        if (design->grate_length <= 0.0 || design->grate_width <= 0.0)
+            return SWMM_ERR_BADPARAM;
+        if (design->grate_type < 0 || design->grate_type > SWMM_GRATE_GENERIC)
+            return SWMM_ERR_BADPARAM;
         if (design->grate_type == SWMM_GRATE_GENERIC &&
-            (design->open_area <= 0.0 || design->open_area > 1.0)) return SWMM_ERR_BADPARAM;
-        if (design->splash_veloc < 0.0) return SWMM_ERR_BADPARAM;
+            (design->open_area <= 0.0 || design->open_area > 1.0))
+            return SWMM_ERR_BADPARAM;
+        if (design->splash_veloc < 0.0)
+            return SWMM_ERR_BADPARAM;
     }
     if (is_curb_kind(design->type)) {
-        if (design->curb_length <= 0.0 || design->curb_height <= 0.0) return SWMM_ERR_BADPARAM;
-        if (design->throat < SWMM_THROAT_HORIZONTAL ||
-            design->throat > SWMM_THROAT_VERTICAL) return SWMM_ERR_BADPARAM;
+        if (design->curb_length <= 0.0 || design->curb_height <= 0.0)
+            return SWMM_ERR_BADPARAM;
+        if (design->throat < SWMM_THROAT_HORIZONTAL || design->throat > SWMM_THROAT_VERTICAL)
+            return SWMM_ERR_BADPARAM;
     }
     if (design->type == SWMM_INLET_SLOTTED &&
-        (design->slot_length <= 0.0 || design->slot_width <= 0.0)) return SWMM_ERR_BADPARAM;
+        (design->slot_length <= 0.0 || design->slot_width <= 0.0))
+        return SWMM_ERR_BADPARAM;
     // CUSTOM: the legacy [INLETS] grammar carries no kind token, so the curve's
     // own table type is the authority and PostParseResolver re-derives the kind
     // on load. Resolve it here as well when the curve already exists, so a
     // programmatically built model is complete without a reparse, and reject a
     // kind that contradicts the curve.
     int custom_curve_index = -1;
-    int custom_curve_kind  = SWMM_INLET_CURVE_NONE;
+    int custom_curve_kind = SWMM_INLET_CURVE_NONE;
     if (design->type == SWMM_INLET_CUSTOM) {
-        if (design->curve_id[0] == '\0') return SWMM_ERR_BADPARAM;
+        if (design->curve_id[0] == '\0')
+            return SWMM_ERR_BADPARAM;
         if (design->curve_kind < SWMM_INLET_CURVE_NONE ||
-            design->curve_kind > SWMM_INLET_CURVE_RATING) return SWMM_ERR_BADPARAM;
-        custom_curve_kind  = design->curve_kind;
+            design->curve_kind > SWMM_INLET_CURVE_RATING)
+            return SWMM_ERR_BADPARAM;
+        custom_curve_kind = design->curve_kind;
         custom_curve_index = ctx.find_curve(design->curve_id);
         if (custom_curve_index >= 0) {
             const openswmm::TableType tt =
                 ctx.tables[static_cast<std::size_t>(custom_curve_index)].type;
             const int actual = (tt == openswmm::TableType::CURVE_DIVERSION)
                                    ? SWMM_INLET_CURVE_DIVERSION
-                                   : (tt == openswmm::TableType::CURVE_RATING)
-                                         ? SWMM_INLET_CURVE_RATING
-                                         : SWMM_INLET_CURVE_NONE;
-            if (actual == SWMM_INLET_CURVE_NONE) return SWMM_ERR_BADPARAM;
-            if (custom_curve_kind != SWMM_INLET_CURVE_NONE &&
-                custom_curve_kind != actual) return SWMM_ERR_BADPARAM;
+                               : (tt == openswmm::TableType::CURVE_RATING) ? SWMM_INLET_CURVE_RATING
+                                                                           : SWMM_INLET_CURVE_NONE;
+            if (actual == SWMM_INLET_CURVE_NONE)
+                return SWMM_ERR_BADPARAM;
+            if (custom_curve_kind != SWMM_INLET_CURVE_NONE && custom_curve_kind != actual)
+                return SWMM_ERR_BADPARAM;
             custom_curve_kind = actual;
         }
     }
@@ -686,22 +799,22 @@ SWMM_ENGINE_API int swmm_inlet_set_design(SWMM_Engine engine, int idx, const SWM
     I.inlet_type[ui] = kInletTypeWords[design->type];
 
     if (is_grate_kind(design->type)) {
-        I.length[ui]       = design->grate_length;
-        I.width[ui]        = design->grate_width;
-        I.grate_type[ui]   = kGrateTypeWords[design->grate_type];
-        I.open_area[ui]    = design->open_area;
+        I.length[ui] = design->grate_length;
+        I.width[ui] = design->grate_width;
+        I.grate_type[ui] = kGrateTypeWords[design->grate_type];
+        I.open_area[ui] = design->open_area;
         I.splash_veloc[ui] = design->splash_veloc;
     } else if (design->type == SWMM_INLET_SLOTTED) {
-        I.length[ui]       = design->slot_length;
-        I.width[ui]        = design->slot_width;
+        I.length[ui] = design->slot_length;
+        I.width[ui] = design->slot_width;
         I.grate_type[ui].clear();
-        I.open_area[ui]    = 0.0;
+        I.open_area[ui] = 0.0;
         I.splash_veloc[ui] = 0.0;
     } else {
         I.length[ui] = 0.0;
-        I.width[ui]  = 0.0;
+        I.width[ui] = 0.0;
         I.grate_type[ui].clear();
-        I.open_area[ui]    = 0.0;
+        I.open_area[ui] = 0.0;
         I.splash_veloc[ui] = 0.0;
     }
 
@@ -716,13 +829,13 @@ SWMM_ENGINE_API int swmm_inlet_set_design(SWMM_Engine engine, int idx, const SWM
     }
 
     if (design->type == SWMM_INLET_CUSTOM) {
-        I.curve_id[ui]    = design->curve_id;
-        I.curve_index[ui] = custom_curve_index;  // -1 until PostParseResolver
-        I.curve_kind[ui]  = custom_curve_kind;
+        I.curve_id[ui] = design->curve_id;
+        I.curve_index[ui] = custom_curve_index; // -1 until PostParseResolver
+        I.curve_kind[ui] = custom_curve_kind;
     } else {
         I.curve_id[ui].clear();
         I.curve_index[ui] = -1;
-        I.curve_kind[ui]  = SWMM_INLET_CURVE_NONE;
+        I.curve_kind[ui] = SWMM_INLET_CURVE_NONE;
     }
     return SWMM_OK;
 }
@@ -747,75 +860,87 @@ SWMM_ENGINE_API int swmm_inlet_set_comment(SWMM_Engine engine, int idx, const ch
 // ---------------------------------------------------------------------------
 
 SWMM_ENGINE_API int swmm_inlet_usage_count(SWMM_Engine engine) {
-    if (!engine) return -1;
+    if (!engine)
+        return -1;
     return to_engine(engine)->context().inlet_usages.count();
 }
 
 SWMM_ENGINE_API int swmm_inlet_usage_find_link(SWMM_Engine engine, int link_idx) {
-    if (!engine) return -1;
+    if (!engine)
+        return -1;
     return to_engine(engine)->context().inlet_usages.find_by_link(link_idx);
 }
 
 SWMM_ENGINE_API int swmm_inlet_usage_find_node(SWMM_Engine engine, int node_idx) {
-    if (!engine) return -1;
+    if (!engine)
+        return -1;
     return to_engine(engine)->context().inlet_usages.find_by_node_host(node_idx);
 }
 
 SWMM_ENGINE_API int swmm_inlet_usage_get(SWMM_Engine engine, int usage_idx, SWMM_InletUsage* out) {
     CHECK_HANDLE(engine);
-    if (!out) return SWMM_ERR_BADPARAM;
+    if (!out)
+        return SWMM_ERR_BADPARAM;
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(usage_idx >= 0 && usage_idx < ctx.inlet_usages.count());
     const auto ur = static_cast<std::size_t>(usage_idx);
     const auto& U = ctx.inlet_usages;
 
     const bool node_host = U.node_host[ur] >= 0;
-    out->host_kind        = node_host ? SWMM_INLET_HOST_NODE : SWMM_INLET_HOST_LINK;
-    out->host_idx         = node_host ? U.node_host[ur] : U.link_index[ur];
-    out->design_idx       = U.design_index[ur];
+    out->host_kind = node_host ? SWMM_INLET_HOST_NODE : SWMM_INLET_HOST_LINK;
+    out->host_idx = node_host ? U.node_host[ur] : U.link_index[ur];
+    out->design_idx = U.design_index[ur];
     out->capture_node_idx = U.node_index[ur];
-    out->num_inlets       = U.num_inlets[ur];
-    out->pct_clogged      = (1.0 - U.clog_factor[ur]) * 100.0;
-    out->flow_limit       = U.flow_limit[ur];
-    out->local_depress    = U.local_depress[ur];
-    out->local_width      = U.local_width[ur];
-    out->placement        = U.placement[ur];
+    out->num_inlets = U.num_inlets[ur];
+    out->pct_clogged = (1.0 - U.clog_factor[ur]) * 100.0;
+    out->flow_limit = U.flow_limit[ur];
+    out->local_depress = U.local_depress[ur];
+    out->local_width = U.local_width[ur];
+    out->placement = U.placement[ur];
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_inlet_usage_set(SWMM_Engine engine, const SWMM_InletUsage* usage, int* usage_idx) {
+SWMM_ENGINE_API int swmm_inlet_usage_set(SWMM_Engine engine, const SWMM_InletUsage* usage,
+                                         int* usage_idx) {
     CHECK_HANDLE(engine);
-    if (!usage) return SWMM_ERR_BADPARAM;
+    if (!usage)
+        return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
 
     const bool node_host = (usage->host_kind == SWMM_INLET_HOST_NODE);
-    if (usage->host_kind != SWMM_INLET_HOST_LINK && !node_host) return SWMM_ERR_BADPARAM;
+    if (usage->host_kind != SWMM_INLET_HOST_LINK && !node_host)
+        return SWMM_ERR_BADPARAM;
 
     if (node_host) {
         CHECK_INDEX(usage->host_idx >= 0 && usage->host_idx < ctx.n_nodes());
         const auto uh = static_cast<std::size_t>(usage->host_idx);
         // Only a node already promoted to an inlet junction may host a row.
-        if (uh >= ctx.nodes.is_inlet.size() || !ctx.nodes.is_inlet[uh]) return SWMM_ERR_BADPARAM;
+        if (uh >= ctx.nodes.is_inlet.size() || !ctx.nodes.is_inlet[uh])
+            return SWMM_ERR_BADPARAM;
     } else {
         CHECK_INDEX(usage->host_idx >= 0 && usage->host_idx < ctx.n_links());
         if (ctx.links.type[static_cast<std::size_t>(usage->host_idx)] !=
-            openswmm::LinkType::CONDUIT) return SWMM_ERR_BADPARAM;
+            openswmm::LinkType::CONDUIT)
+            return SWMM_ERR_BADPARAM;
     }
     CHECK_INDEX(usage->design_idx >= 0 && usage->design_idx < ctx.inlets.count());
     CHECK_INDEX(usage->capture_node_idx >= 0 && usage->capture_node_idx < ctx.n_nodes());
-    if (node_host && usage->capture_node_idx == usage->host_idx) return SWMM_ERR_BADPARAM;
-    if (ctx.nodes.is_virtual[static_cast<std::size_t>(usage->capture_node_idx)]) return SWMM_ERR_BADPARAM;
-    if (usage->num_inlets < 1) return SWMM_ERR_BADPARAM;
-    if (usage->pct_clogged < 0.0 || usage->pct_clogged > 99.0) return SWMM_ERR_BADPARAM;
-    if (usage->flow_limit < 0.0 || usage->local_depress < 0.0 ||
-        usage->local_width < 0.0) return SWMM_ERR_BADPARAM;
-    if (usage->placement < SWMM_INLET_AUTOMATIC ||
-        usage->placement > SWMM_INLET_ON_SAG) return SWMM_ERR_BADPARAM;
+    if (node_host && usage->capture_node_idx == usage->host_idx)
+        return SWMM_ERR_BADPARAM;
+    if (ctx.nodes.is_virtual[static_cast<std::size_t>(usage->capture_node_idx)])
+        return SWMM_ERR_BADPARAM;
+    if (usage->num_inlets < 1)
+        return SWMM_ERR_BADPARAM;
+    if (usage->pct_clogged < 0.0 || usage->pct_clogged > 99.0)
+        return SWMM_ERR_BADPARAM;
+    if (usage->flow_limit < 0.0 || usage->local_depress < 0.0 || usage->local_width < 0.0)
+        return SWMM_ERR_BADPARAM;
+    if (usage->placement < SWMM_INLET_AUTOMATIC || usage->placement > SWMM_INLET_ON_SAG)
+        return SWMM_ERR_BADPARAM;
 
     // Legacy inlet_validate shape rule (inlet.c:498-505).
-    const int host_link = openswmm::edit::ij_host_conduit(
-        ctx, node_host ? 1 : 0, usage->host_idx);
+    const int host_link = openswmm::edit::ij_host_conduit(ctx, node_host ? 1 : 0, usage->host_idx);
     if (!openswmm::edit::ij_usage_shape_ok(ctx, usage->design_idx, host_link))
         return openswmm::ERR_INLET_USAGE_SHAPE;
 
@@ -824,22 +949,23 @@ SWMM_ENGINE_API int swmm_inlet_usage_set(SWMM_Engine engine, const SWMM_InletUsa
                         : ctx.inlet_usages.find_by_link(usage->host_idx);
     if (row < 0) {
         row = ctx.inlet_usages.add_row(node_host ? -1 : usage->host_idx,
-                                       node_host ? usage->host_idx : -1,
-                                       usage->design_idx, usage->capture_node_idx);
+                                       node_host ? usage->host_idx : -1, usage->design_idx,
+                                       usage->capture_node_idx);
     }
     const auto ur = static_cast<std::size_t>(row);
     auto& U = ctx.inlet_usages;
-    U.design_index[ur]   = usage->design_idx;
-    U.node_index[ur]     = usage->capture_node_idx;
-    U.num_inlets[ur]     = usage->num_inlets;
-    U.placement[ur]      = usage->placement;
-    U.clog_factor[ur]    = 1.0 - usage->pct_clogged / 100.0;
-    U.flow_limit[ur]     = usage->flow_limit;
-    U.local_depress[ur]  = usage->local_depress;
-    U.local_width[ur]    = usage->local_width;
+    U.design_index[ur] = usage->design_idx;
+    U.node_index[ur] = usage->capture_node_idx;
+    U.num_inlets[ur] = usage->num_inlets;
+    U.placement[ur] = usage->placement;
+    U.clog_factor[ur] = 1.0 - usage->pct_clogged / 100.0;
+    U.flow_limit[ur] = usage->flow_limit;
+    U.local_depress[ur] = usage->local_depress;
+    U.local_width[ur] = usage->local_width;
     U.pending_design_name[ur].clear();
     U.pending_capture_name[ur].clear();
-    if (usage_idx) *usage_idx = row;
+    if (usage_idx)
+        *usage_idx = row;
     return SWMM_OK;
 }
 
@@ -860,6 +986,12 @@ namespace {
 // LID type codes match legacy SWMM 5 2-letter codes used by the .inp parser
 // (HydrologyHandler [LID_CONTROLS]). Index = openswmm_infrastructure.h type
 // enum (0 = BIO_CELL, 1 = RAIN_GARDEN, ...).
+/**
+ * @brief Translate a public LID type ordinal to its static authoring code.
+ *
+ * @param[in] type Ordinal0..8 for BC/RG/GR/IT/PP/RB/RD/VS/NODE.
+ * @return Static code string or empty text outside range; never free.
+ */
 inline const char* lid_type_code(int type) {
     static const char* codes[] = {"BC", "RG", "GR", "IT", "PP", "RB", "RD", "VS", "NODE"};
     if (type < 0 || type >= static_cast<int>(sizeof(codes) / sizeof(codes[0])))
@@ -868,27 +1000,36 @@ inline const char* lid_type_code(int type) {
 }
 // Inverse of lid_type_code: 2-letter code string -> type enum int, or -1 if
 // unrecognised.
+/**
+ * @brief Translate an exact uppercase LID authoring code.
+ *
+ * @param[in] code Borrowed BC/RG/GR/IT/PP/RB/RD/VS/NODE token; no case folding.
+ * @return Public0..8 type ordinal, otherwise -1.
+ */
 inline int lid_type_from_code(const std::string& code) {
     static const char* codes[] = {"BC", "RG", "GR", "IT", "PP", "RB", "RD", "VS", "NODE"};
     for (int i = 0; i < static_cast<int>(sizeof(codes) / sizeof(codes[0])); ++i)
-        if (code == codes[i]) return i;
+        if (code == codes[i])
+            return i;
     return -1;
 }
 } // namespace
 
 SWMM_ENGINE_API int swmm_lid_add(SWMM_Engine engine, const char* id, int type) {
     CHECK_HANDLE(engine);
-    if (!id) return SWMM_ERR_BADPARAM;
+    if (!id)
+        return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();
-    if (ctx.state != openswmm::EngineState::BUILDING &&
-        ctx.state != openswmm::EngineState::OPENED)
+    if (ctx.state != openswmm::EngineState::BUILDING && ctx.state != openswmm::EngineState::OPENED)
         return SWMM_ERR_LIFECYCLE;
     // Reject duplicates (case-insensitive) BEFORE touching the backing store;
     // an unguarded NameIndex::add would throw across the C ABI.
-    if (ctx.lid_names.find(id) >= 0) return SWMM_ERR_BADPARAM;
+    if (ctx.lid_names.find(id) >= 0)
+        return SWMM_ERR_BADPARAM;
 
-    if (type < 0 || type > 8 || id[0] == '\0') return SWMM_ERR_BADPARAM;
+    if (type < 0 || type > 8 || id[0] == '\0')
+        return SWMM_ERR_BADPARAM;
     auto& lid = ctx.lid_controls;
     lid.node_layers.resize(lid.names.size() + 1);
     lid.names.push_back(id);
@@ -907,17 +1048,18 @@ SWMM_ENGINE_API int swmm_lid_add(SWMM_Engine engine, const char* id, int type) {
 
 SWMM_ENGINE_API int swmm_lid_rename(SWMM_Engine engine, int idx, const char* new_id) {
     CHECK_HANDLE(engine);
-    if (!new_id || new_id[0] == '\0') return SWMM_ERR_BADPARAM;
+    if (!new_id || new_id[0] == '\0')
+        return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
-    if (ctx.state != openswmm::EngineState::BUILDING &&
-        ctx.state != openswmm::EngineState::OPENED)
+    if (ctx.state != openswmm::EngineState::BUILDING && ctx.state != openswmm::EngineState::OPENED)
         return SWMM_ERR_LIFECYCLE;
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
 
     // Both stores are read: lid_controls.names backs swmm_lid_id and the
     // [LID_CONTROLS] writer, the NameIndex backs swmm_lid_index and the
     // [LID_USAGE] writer. NameIndex::rename arbitrates the collision.
-    if (!ctx.lid_names.rename(idx, new_id)) return SWMM_ERR_BADPARAM;
+    if (!ctx.lid_names.rename(idx, new_id))
+        return SWMM_ERR_BADPARAM;
     ctx.lid_controls.names[static_cast<std::size_t>(idx)] = new_id;
 
     // lid_usage rows carry lid_index, not a name string — nothing else to fix.
@@ -932,14 +1074,15 @@ SWMM_ENGINE_API int swmm_lid_rename(SWMM_Engine engine, int idx, const char* new
 // head, so swmm_lid_set_drain is callable mid-run and refreshes the LID
 // solver's per-unit parameter cache.
 
-SWMM_ENGINE_API int swmm_lid_set_surface(SWMM_Engine engine, int idx, double storage, double roughness, double slope) {
+SWMM_ENGINE_API int swmm_lid_set_surface(SWMM_Engine engine, int idx, double storage,
+                                         double roughness, double slope) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
-    if (ctx.state != openswmm::EngineState::BUILDING &&
-        ctx.state != openswmm::EngineState::OPENED)
+    if (ctx.state != openswmm::EngineState::BUILDING && ctx.state != openswmm::EngineState::OPENED)
         return SWMM_ERR_LIFECYCLE;
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
-    if (ctx.lid_controls.lid_type[idx] == "NODE") return SWMM_ERR_BADPARAM;
+    if (ctx.lid_controls.lid_type[idx] == "NODE")
+        return SWMM_ERR_BADPARAM;
     if (storage < 0.0 || roughness < 0.0 || slope < 0.0)
         return SWMM_ERR_BADPARAM;
     // SURFACE layer: [0]=StorHt, [1]=VegVolFrac, [2]=Roughness, [3]=SurfSlope
@@ -951,24 +1094,25 @@ SWMM_ENGINE_API int swmm_lid_set_surface(SWMM_Engine engine, int idx, double sto
     if (std::any_of(ctx.node_subtypes.storages.lid.begin(), ctx.node_subtypes.storages.lid.end(),
                     [idx](const auto& cfg) { return cfg.control == idx; })) {
         if (!openswmm::lidnode::validateStack(openswmm::lidnode::layers(ctx, idx)).empty()) {
-            p = previous; return SWMM_ERR_BADPARAM;
+            p = previous;
+            return SWMM_ERR_BADPARAM;
         }
     }
     openswmm::lidnode::sync(ctx, idx);
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_lid_set_soil(SWMM_Engine engine, int idx, double thick, double porosity, double fc, double wp, double ksat, double kslope) {
+SWMM_ENGINE_API int swmm_lid_set_soil(SWMM_Engine engine, int idx, double thick, double porosity,
+                                      double fc, double wp, double ksat, double kslope) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
-    if (ctx.state != openswmm::EngineState::BUILDING &&
-        ctx.state != openswmm::EngineState::OPENED)
+    if (ctx.state != openswmm::EngineState::BUILDING && ctx.state != openswmm::EngineState::OPENED)
         return SWMM_ERR_LIFECYCLE;
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
-    if (ctx.lid_controls.lid_type[idx] == "NODE") return SWMM_ERR_BADPARAM;
-    if (thick < 0.0 || porosity <= 0.0 || porosity > 1.0
-        || fc < 0.0 || fc >= porosity || wp < 0.0 || wp >= fc
-        || ksat < 0.0)
+    if (ctx.lid_controls.lid_type[idx] == "NODE")
+        return SWMM_ERR_BADPARAM;
+    if (thick < 0.0 || porosity <= 0.0 || porosity > 1.0 || fc < 0.0 || fc >= porosity ||
+        wp < 0.0 || wp >= fc || ksat < 0.0)
         return SWMM_ERR_BADPARAM;
     // SOIL layer: [0]=Thick, [1]=Poros, [2]=FC, [3]=WP, [4]=Ksat, [5]=Kslope
     auto& p = ctx.lid_controls.soil[static_cast<std::size_t>(idx)];
@@ -982,21 +1126,23 @@ SWMM_ENGINE_API int swmm_lid_set_soil(SWMM_Engine engine, int idx, double thick,
     if (std::any_of(ctx.node_subtypes.storages.lid.begin(), ctx.node_subtypes.storages.lid.end(),
                     [idx](const auto& cfg) { return cfg.control == idx; })) {
         if (!openswmm::lidnode::validateStack(openswmm::lidnode::layers(ctx, idx)).empty()) {
-            p = previous; return SWMM_ERR_BADPARAM;
+            p = previous;
+            return SWMM_ERR_BADPARAM;
         }
     }
     openswmm::lidnode::sync(ctx, idx);
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_lid_set_storage(SWMM_Engine engine, int idx, double thick, double void_frac, double ksat) {
+SWMM_ENGINE_API int swmm_lid_set_storage(SWMM_Engine engine, int idx, double thick,
+                                         double void_frac, double ksat) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
-    if (ctx.state != openswmm::EngineState::BUILDING &&
-        ctx.state != openswmm::EngineState::OPENED)
+    if (ctx.state != openswmm::EngineState::BUILDING && ctx.state != openswmm::EngineState::OPENED)
         return SWMM_ERR_LIFECYCLE;
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
-    if (ctx.lid_controls.lid_type[idx] == "NODE") return SWMM_ERR_BADPARAM;
+    if (ctx.lid_controls.lid_type[idx] == "NODE")
+        return SWMM_ERR_BADPARAM;
     if (thick < 0.0 || void_frac <= 0.0 || ksat < 0.0)
         return SWMM_ERR_BADPARAM;
     // STORAGE layer: [0]=Thick, [1]=VoidRatio, [2]=Ksat
@@ -1008,18 +1154,21 @@ SWMM_ENGINE_API int swmm_lid_set_storage(SWMM_Engine engine, int idx, double thi
     if (std::any_of(ctx.node_subtypes.storages.lid.begin(), ctx.node_subtypes.storages.lid.end(),
                     [idx](const auto& cfg) { return cfg.control == idx; })) {
         if (!openswmm::lidnode::validateStack(openswmm::lidnode::layers(ctx, idx)).empty()) {
-            p = previous; return SWMM_ERR_BADPARAM;
+            p = previous;
+            return SWMM_ERR_BADPARAM;
         }
     }
     openswmm::lidnode::sync(ctx, idx);
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_lid_set_drain(SWMM_Engine engine, int idx, double coeff, double expon, double offset) {
+SWMM_ENGINE_API int swmm_lid_set_drain(SWMM_Engine engine, int idx, double coeff, double expon,
+                                       double offset) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
-    if (ctx.lid_controls.lid_type[idx] == "NODE") return SWMM_ERR_BADPARAM;
+    if (ctx.lid_controls.lid_type[idx] == "NODE")
+        return SWMM_ERR_BADPARAM;
     if (coeff < 0.0 || expon < 0.0 || offset < 0.0)
         return SWMM_ERR_BADPARAM;
     // DRAIN layer: [0]=Coeff, [1]=Expon, [2]=Offset
@@ -1039,11 +1188,13 @@ SWMM_ENGINE_API int swmm_lid_set_drain(SWMM_Engine engine, int idx, double coeff
 // Pollutants live in lid_controls.removals (by index), species in
 // removals_by_name (by name, as the file holds them) and, once resolved, in
 // the species store's lid_rmvl.
-SWMM_ENGINE_API int swmm_lid_get_removal(SWMM_Engine engine, int idx, int constituent, double* percent) {
+SWMM_ENGINE_API int swmm_lid_get_removal(SWMM_Engine engine, int idx, int constituent,
+                                         double* percent) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
-    if (!percent) return SWMM_ERR_BADPARAM;
+    if (!percent)
+        return SWMM_ERR_BADPARAM;
     const int np = ctx.n_pollutants();
     const int nm = ctx.reactions.configured ? ctx.reactions.n_species() : 0;
     CHECK_INDEX(constituent >= 0 && constituent < np + nm);
@@ -1052,25 +1203,29 @@ SWMM_ENGINE_API int swmm_lid_get_removal(SWMM_Engine engine, int idx, int consti
     if (constituent < np) {
         if (ui < ctx.lid_controls.removals.size())
             for (const auto& pr : ctx.lid_controls.removals[ui])
-                if (pr.first == constituent) *percent = pr.second * 100.0;
+                if (pr.first == constituent)
+                    *percent = pr.second * 100.0;
     } else {
         const auto& name = ctx.reactions.species_name[static_cast<std::size_t>(constituent - np)];
         if (ui < ctx.lid_controls.removals_by_name.size())
             for (const auto& pr : ctx.lid_controls.removals_by_name[ui])
-                if (openswmm::ieq(pr.first, name)) *percent = pr.second * 100.0;
+                if (openswmm::ieq(pr.first, name))
+                    *percent = pr.second * 100.0;
     }
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_lid_set_removal(SWMM_Engine engine, int idx, int constituent, double percent) {
+SWMM_ENGINE_API int swmm_lid_set_removal(SWMM_Engine engine, int idx, int constituent,
+                                         double percent) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
-    if (ctx.state != openswmm::EngineState::BUILDING &&
-        ctx.state != openswmm::EngineState::OPENED)
+    if (ctx.state != openswmm::EngineState::BUILDING && ctx.state != openswmm::EngineState::OPENED)
         return SWMM_ERR_LIFECYCLE;
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
-    if (ctx.lid_controls.lid_type[idx] == "NODE") return SWMM_ERR_BADPARAM;
-    if (!(percent >= 0.0 && percent <= 100.0)) return SWMM_ERR_BADPARAM;
+    if (ctx.lid_controls.lid_type[idx] == "NODE")
+        return SWMM_ERR_BADPARAM;
+    if (!(percent >= 0.0 && percent <= 100.0))
+        return SWMM_ERR_BADPARAM;
     const int np = ctx.n_pollutants();
     const int nm = ctx.reactions.configured ? ctx.reactions.n_species() : 0;
     CHECK_INDEX(constituent >= 0 && constituent < np + nm);
@@ -1078,49 +1233,61 @@ SWMM_ENGINE_API int swmm_lid_set_removal(SWMM_Engine engine, int idx, int consti
     const double frac = percent / 100.0;
     if (constituent < np) {
         auto& all = ctx.lid_controls.removals;
-        if (all.size() <= ui) all.resize(ui + 1);
+        if (all.size() <= ui)
+            all.resize(ui + 1);
         auto& rows = all[ui];
         bool found = false;
         for (auto it = rows.begin(); it != rows.end(); ++it)
             if (it->first == constituent) {
-                if (frac == 0.0) rows.erase(it); else it->second = frac;
+                if (frac == 0.0)
+                    rows.erase(it);
+                else
+                    it->second = frac;
                 found = true;
                 break;
             }
-        if (!found && frac != 0.0) rows.push_back({constituent, frac});
+        if (!found && frac != 0.0)
+            rows.push_back({constituent, frac});
     } else {
         const int m = constituent - np;
         const auto& name = ctx.reactions.species_name[static_cast<std::size_t>(m)];
         auto& all = ctx.lid_controls.removals_by_name;
-        if (all.size() <= ui) all.resize(ui + 1);
+        if (all.size() <= ui)
+            all.resize(ui + 1);
         auto& rows = all[ui];
         bool found = false;
         for (auto it = rows.begin(); it != rows.end(); ++it)
             if (openswmm::ieq(it->first, name)) {
-                if (frac == 0.0) rows.erase(it); else it->second = frac;
+                if (frac == 0.0)
+                    rows.erase(it);
+                else
+                    it->second = frac;
                 found = true;
                 break;
             }
-        if (!found && frac != 0.0) rows.push_back({name, frac});
+        if (!found && frac != 0.0)
+            rows.push_back({name, frac});
         auto& rm = ctx.reactions.surface.lid_rmvl;
         const auto k = ui * static_cast<std::size_t>(nm) + static_cast<std::size_t>(m);
-        if (rm.size() == static_cast<std::size_t>(ctx.lid_controls.count()) * static_cast<std::size_t>(nm))
+        if (rm.size() ==
+            static_cast<std::size_t>(ctx.lid_controls.count()) * static_cast<std::size_t>(nm))
             rm[k] = frac;
     }
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_lid_set_pavement(SWMM_Engine engine, int idx, double thick, double void_ratio,
-                                          double frac_imperv, double ksat, double clog_factor, double regen_days) {
+SWMM_ENGINE_API int swmm_lid_set_pavement(SWMM_Engine engine, int idx, double thick,
+                                          double void_ratio, double frac_imperv, double ksat,
+                                          double clog_factor, double regen_days) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
-    if (ctx.state != openswmm::EngineState::BUILDING &&
-        ctx.state != openswmm::EngineState::OPENED)
+    if (ctx.state != openswmm::EngineState::BUILDING && ctx.state != openswmm::EngineState::OPENED)
         return SWMM_ERR_LIFECYCLE;
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
-    if (ctx.lid_controls.lid_type[idx] == "NODE") return SWMM_ERR_BADPARAM;
-    if (thick < 0.0 || void_ratio < 0.0 || frac_imperv < 0.0 || frac_imperv > 1.0
-        || ksat < 0.0 || clog_factor < 0.0 || regen_days < 0.0)
+    if (ctx.lid_controls.lid_type[idx] == "NODE")
+        return SWMM_ERR_BADPARAM;
+    if (thick < 0.0 || void_ratio < 0.0 || frac_imperv < 0.0 || frac_imperv > 1.0 || ksat < 0.0 ||
+        clog_factor < 0.0 || regen_days < 0.0)
         return SWMM_ERR_BADPARAM;
     // PAVEMENT layer: [0]=Thick, [1]=VoidRatio, [2]=FracImperv, [3]=Ksat, [4]=ClogFactor, [5]=RegenDays
     auto& p = ctx.lid_controls.pavement[static_cast<std::size_t>(idx)];
@@ -1134,21 +1301,23 @@ SWMM_ENGINE_API int swmm_lid_set_pavement(SWMM_Engine engine, int idx, double th
     if (std::any_of(ctx.node_subtypes.storages.lid.begin(), ctx.node_subtypes.storages.lid.end(),
                     [idx](const auto& cfg) { return cfg.control == idx; })) {
         if (!openswmm::lidnode::validateStack(openswmm::lidnode::layers(ctx, idx)).empty()) {
-            p = previous; return SWMM_ERR_BADPARAM;
+            p = previous;
+            return SWMM_ERR_BADPARAM;
         }
     }
     openswmm::lidnode::sync(ctx, idx);
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_lid_set_drainmat(SWMM_Engine engine, int idx, double thick, double void_frac, double roughness) {
+SWMM_ENGINE_API int swmm_lid_set_drainmat(SWMM_Engine engine, int idx, double thick,
+                                          double void_frac, double roughness) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
-    if (ctx.state != openswmm::EngineState::BUILDING &&
-        ctx.state != openswmm::EngineState::OPENED)
+    if (ctx.state != openswmm::EngineState::BUILDING && ctx.state != openswmm::EngineState::OPENED)
         return SWMM_ERR_LIFECYCLE;
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
-    if (ctx.lid_controls.lid_type[idx] == "NODE") return SWMM_ERR_BADPARAM;
+    if (ctx.lid_controls.lid_type[idx] == "NODE")
+        return SWMM_ERR_BADPARAM;
     if (thick < 0.0 || void_frac < 0.0 || void_frac > 1.0 || roughness < 0.0)
         return SWMM_ERR_BADPARAM;
     // DRAINMAT layer: [0]=Thick, [1]=VoidRatio, [2]=Roughness
@@ -1160,21 +1329,25 @@ SWMM_ENGINE_API int swmm_lid_set_drainmat(SWMM_Engine engine, int idx, double th
 }
 
 SWMM_ENGINE_API int swmm_lid_count(SWMM_Engine engine) {
-    if (!engine) return -1;
+    if (!engine)
+        return -1;
     return to_engine(engine)->context().lid_controls.count();
 }
 
 SWMM_ENGINE_API int swmm_lid_index(SWMM_Engine engine, const char* id) {
-    if (!engine || !id) return -1;
+    if (!engine || !id)
+        return -1;
     // Route through the registry (case-insensitive, legacy hash.c parity)
     // instead of scanning lid_controls.names, which could disagree with it.
     return to_engine(engine)->context().lid_names.find(id);
 }
 
 SWMM_ENGINE_API const char* swmm_lid_id(SWMM_Engine engine, int idx) {
-    if (!engine) return nullptr;
+    if (!engine)
+        return nullptr;
     const auto& names = to_engine(engine)->context().lid_controls.names;
-    if (idx < 0 || idx >= static_cast<int>(names.size())) return nullptr;
+    if (idx < 0 || idx >= static_cast<int>(names.size()))
+        return nullptr;
     return names[static_cast<std::size_t>(idx)].c_str();
 }
 
@@ -1191,80 +1364,111 @@ SWMM_ENGINE_API int swmm_lid_get_type(SWMM_Engine engine, int idx, int* type) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
-    if (type) *type = lid_type_from_code(ctx.lid_controls.lid_type[static_cast<std::size_t>(idx)]);
+    if (type)
+        *type = lid_type_from_code(ctx.lid_controls.lid_type[static_cast<std::size_t>(idx)]);
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_lid_get_surface(SWMM_Engine engine, int idx, double* storage, double* roughness, double* slope) {
+SWMM_ENGINE_API int swmm_lid_get_surface(SWMM_Engine engine, int idx, double* storage,
+                                         double* roughness, double* slope) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
     const auto& p = ctx.lid_controls.surface[static_cast<std::size_t>(idx)];
-    if (storage)   *storage   = p[0];
-    if (roughness) *roughness = p[2];
-    if (slope)     *slope     = p[3];
+    if (storage)
+        *storage = p[0];
+    if (roughness)
+        *roughness = p[2];
+    if (slope)
+        *slope = p[3];
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_lid_get_soil(SWMM_Engine engine, int idx, double* thick, double* porosity, double* fc, double* wp, double* ksat, double* kslope) {
+SWMM_ENGINE_API int swmm_lid_get_soil(SWMM_Engine engine, int idx, double* thick, double* porosity,
+                                      double* fc, double* wp, double* ksat, double* kslope) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
     const auto& p = ctx.lid_controls.soil[static_cast<std::size_t>(idx)];
-    if (thick)    *thick    = p[0];
-    if (porosity) *porosity = p[1];
-    if (fc)       *fc       = p[2];
-    if (wp)       *wp       = p[3];
-    if (ksat)     *ksat     = p[4];
-    if (kslope)   *kslope   = p[5];
+    if (thick)
+        *thick = p[0];
+    if (porosity)
+        *porosity = p[1];
+    if (fc)
+        *fc = p[2];
+    if (wp)
+        *wp = p[3];
+    if (ksat)
+        *ksat = p[4];
+    if (kslope)
+        *kslope = p[5];
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_lid_get_storage(SWMM_Engine engine, int idx, double* thick, double* void_frac, double* ksat) {
+SWMM_ENGINE_API int swmm_lid_get_storage(SWMM_Engine engine, int idx, double* thick,
+                                         double* void_frac, double* ksat) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
     const auto& p = ctx.lid_controls.storage[static_cast<std::size_t>(idx)];
-    if (thick)     *thick     = p[0];
-    if (void_frac) *void_frac = p[1];
-    if (ksat)      *ksat      = p[2];
+    if (thick)
+        *thick = p[0];
+    if (void_frac)
+        *void_frac = p[1];
+    if (ksat)
+        *ksat = p[2];
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_lid_get_drain(SWMM_Engine engine, int idx, double* coeff, double* expon, double* offset) {
+SWMM_ENGINE_API int swmm_lid_get_drain(SWMM_Engine engine, int idx, double* coeff, double* expon,
+                                       double* offset) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
     const auto& p = ctx.lid_controls.drain[static_cast<std::size_t>(idx)];
-    if (coeff)  *coeff  = p[0];
-    if (expon)  *expon  = p[1];
-    if (offset) *offset = p[2];
+    if (coeff)
+        *coeff = p[0];
+    if (expon)
+        *expon = p[1];
+    if (offset)
+        *offset = p[2];
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_lid_get_pavement(SWMM_Engine engine, int idx, double* thick, double* void_ratio,
-                                          double* frac_imperv, double* ksat, double* clog_factor, double* regen_days) {
+SWMM_ENGINE_API int swmm_lid_get_pavement(SWMM_Engine engine, int idx, double* thick,
+                                          double* void_ratio, double* frac_imperv, double* ksat,
+                                          double* clog_factor, double* regen_days) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
     const auto& p = ctx.lid_controls.pavement[static_cast<std::size_t>(idx)];
-    if (thick)       *thick       = p[0];
-    if (void_ratio)  *void_ratio  = p[1];
-    if (frac_imperv) *frac_imperv = p[2];
-    if (ksat)        *ksat        = p[3];
-    if (clog_factor) *clog_factor = p[4];
-    if (regen_days)  *regen_days  = p[5];
+    if (thick)
+        *thick = p[0];
+    if (void_ratio)
+        *void_ratio = p[1];
+    if (frac_imperv)
+        *frac_imperv = p[2];
+    if (ksat)
+        *ksat = p[3];
+    if (clog_factor)
+        *clog_factor = p[4];
+    if (regen_days)
+        *regen_days = p[5];
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_lid_get_drainmat(SWMM_Engine engine, int idx, double* thick, double* void_frac, double* roughness) {
+SWMM_ENGINE_API int swmm_lid_get_drainmat(SWMM_Engine engine, int idx, double* thick,
+                                          double* void_frac, double* roughness) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
     const auto& p = ctx.lid_controls.drainmat[static_cast<std::size_t>(idx)];
-    if (thick)     *thick     = p[0];
-    if (void_frac) *void_frac = p[1];
-    if (roughness) *roughness = p[2];
+    if (thick)
+        *thick = p[0];
+    if (void_frac)
+        *void_frac = p[1];
+    if (roughness)
+        *roughness = p[2];
     return SWMM_OK;
 }
 
@@ -1272,12 +1476,15 @@ SWMM_ENGINE_API int swmm_lid_get_drainmat(SWMM_Engine engine, int idx, double* t
 // LID usage (assign LID to subcatchment)
 // ============================================================================
 
-SWMM_ENGINE_API int swmm_lid_usage_add(SWMM_Engine engine, int subcatch_idx, int lid_idx, int number, double area, double width, double init_sat, double from_imperv) {
+SWMM_ENGINE_API int swmm_lid_usage_add(SWMM_Engine engine, int subcatch_idx, int lid_idx,
+                                       int number, double area, double width, double init_sat,
+                                       double from_imperv) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(subcatch_idx >= 0 && subcatch_idx < ctx.n_subcatches());
     CHECK_INDEX(lid_idx >= 0 && lid_idx < ctx.lid_controls.count());
-    if (ctx.lid_controls.lid_type[lid_idx] == "NODE") return SWMM_ERR_BADPARAM;
+    if (ctx.lid_controls.lid_type[lid_idx] == "NODE")
+        return SWMM_ERR_BADPARAM;
     auto& u = ctx.lid_usage;
     u.subcatch_index.push_back(subcatch_idx);
     u.lid_index.push_back(lid_idx);
@@ -1290,7 +1497,7 @@ SWMM_ENGINE_API int swmm_lid_usage_add(SWMM_Engine engine, int subcatch_idx, int
     u.rpt_file.emplace_back();
     u.drain_to.emplace_back();
     u.from_perv.push_back(0.0);
-    u.resize_wb(u.count());   // keep water-balance vectors sized to the config rows
+    u.resize_wb(u.count()); // keep water-balance vectors sized to the config rows
     return SWMM_OK;
 }
 
@@ -1299,28 +1506,38 @@ SWMM_ENGINE_API int swmm_lid_usage_add(SWMM_Engine engine, int subcatch_idx, int
 // subcatch_idx returned by swmm_lid_usage_get (mirrors how ext-inflows are
 // filtered per node).
 SWMM_ENGINE_API int swmm_lid_usage_count(SWMM_Engine engine) {
-    if (!engine) return -1;
+    if (!engine)
+        return -1;
     return to_engine(engine)->context().lid_usage.count();
 }
 
 // Read one LID usage row by global index. Any out-param may be null.
-SWMM_ENGINE_API int swmm_lid_usage_get(SWMM_Engine engine, int usage_idx,
-                                       int* subcatch_idx, int* lid_idx, int* number,
-                                       double* area, double* width, double* init_sat,
-                                       double* from_imperv, int* to_perv, double* from_perv) {
+SWMM_ENGINE_API int swmm_lid_usage_get(SWMM_Engine engine, int usage_idx, int* subcatch_idx,
+                                       int* lid_idx, int* number, double* area, double* width,
+                                       double* init_sat, double* from_imperv, int* to_perv,
+                                       double* from_perv) {
     CHECK_HANDLE(engine);
     const auto& u = to_engine(engine)->context().lid_usage;
     CHECK_INDEX(usage_idx >= 0 && usage_idx < u.count());
     auto ui = static_cast<std::size_t>(usage_idx);
-    if (subcatch_idx) *subcatch_idx = u.subcatch_index[ui];
-    if (lid_idx)      *lid_idx      = u.lid_index[ui];
-    if (number)       *number       = u.number[ui];
-    if (area)         *area         = u.area[ui];
-    if (width)        *width        = u.width[ui];
-    if (init_sat)     *init_sat     = u.init_sat[ui];
-    if (from_imperv)  *from_imperv  = u.from_imperv[ui];
-    if (to_perv)      *to_perv      = u.to_perv[ui];
-    if (from_perv)    *from_perv    = u.from_perv[ui];
+    if (subcatch_idx)
+        *subcatch_idx = u.subcatch_index[ui];
+    if (lid_idx)
+        *lid_idx = u.lid_index[ui];
+    if (number)
+        *number = u.number[ui];
+    if (area)
+        *area = u.area[ui];
+    if (width)
+        *width = u.width[ui];
+    if (init_sat)
+        *init_sat = u.init_sat[ui];
+    if (from_imperv)
+        *from_imperv = u.from_imperv[ui];
+    if (to_perv)
+        *to_perv = u.to_perv[ui];
+    if (from_perv)
+        *from_perv = u.from_perv[ui];
     return SWMM_OK;
 }
 

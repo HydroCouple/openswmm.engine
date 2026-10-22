@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file main.cpp
- * @brief `o4_differential` — the plain A/B driver O4's protocol §3 calls for.
+ * @file      main.cpp
+ * @brief     `o4_differential` — the plain A/B driver O4's protocol §3 calls for.
  *
  * @details **O4:** the same parity deck delivered **7.25 in** to the ground
  *          through `lifecycle_open_model` + `lifecycle_run_simulation` where
@@ -63,9 +63,9 @@
  *      diff says only *that* two runs parted.
  *
  * @see plans/transport/O4_API_CLI_DIFFERENTIAL_2026-08-22.md
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <cstdio>
@@ -83,10 +83,10 @@ namespace {
 /// differential is that **one variable moves at a time**.
 struct Variant {
     const char* name;
-    bool        chdir_elsewhere;   ///< run with cwd != the deck's directory
-    bool        reopen_first;      ///< open/close/open before stepping
-    bool        save_results;      ///< `start`'s only argument
-    bool        report_before_end; ///< call report() before end()
+    bool chdir_elsewhere;   ///< run with cwd != the deck's directory
+    bool reopen_first;      ///< open/close/open before stepping
+    bool save_results;      ///< `start`'s only argument
+    bool report_before_end; ///< call report() before end()
 };
 
 /// Restores the previous working directory on scope exit, so one variant
@@ -94,28 +94,73 @@ struct Variant {
 /// into a two-variable one.
 class ScopedCwd {
 public:
+    /**
+     * @brief Attempt a process-wide directory change while remembering the previous directory.
+     *
+     * Capturing the original directory can throw filesystem_error. Changing to the destination uses
+     * error_code and stores failure in moved(); no exception is raised for that operation. Must not
+     * overlap other threads that rely on process cwd.
+     *
+     * @param[in] to Destination path; borrowed only during construction.
+     */
     explicit ScopedCwd(const std::filesystem::path& to)
         : prev_(std::filesystem::current_path()), moved_(false) {
         std::error_code ec;
         std::filesystem::current_path(to, ec);
         moved_ = !ec;
     }
+    /**
+     * @brief Restore the saved process directory if construction successfully moved it.
+     *
+     * Uses error_code and silently ignores restoration failure. The guard owns its saved path and
+     * performs no restoration when the original move failed.
+     */
     ~ScopedCwd() {
         if (moved_) {
             std::error_code ec;
             std::filesystem::current_path(prev_, ec);
         }
     }
+    /// @brief Prevent copying a process-directory restoration guard.
     ScopedCwd(const ScopedCwd&) = delete;
+    /// @brief Prevent assigning a process-directory restoration guard.
     ScopedCwd& operator=(const ScopedCwd&) = delete;
+    /**
+     * @brief Report whether the constructor changed the process working directory.
+     * @return True when the original change succeeded; this records that operation, rather than
+     *     checking the current directory.
+     */
     bool moved() const { return moved_; }
+
 private:
     std::filesystem::path prev_;
     bool moved_;
 };
 
-int runOnce(const char* inp, const char* rpt, const char* out,
-            const Variant& v, double* out_elapsed, long* out_steps) {
+/**
+ * @brief Run one differential variant synchronously and write separate report/output files.
+ *
+ * Owns and destroys its engine handle. Optionally changes cwd to the temporary directory for this
+ * call and restores it by guard; filesystem path/cwd capture errors can propagate. The preliminary
+ * open failure is ignored before the real open. End/report/close statuses are logged immediately
+ * but do not affect the returned success value. No comparison of generated artifacts is performed.
+ *
+ * @param[in] inp Non-null input filename, normally absolute so cwd variants preserve input
+ *     identity.
+ * @param[in] rpt Non-null report filename, normally absolute; passed to engine open.
+ * @param[in] out Non-null binary-output filename, normally absolute; saving depends on
+ *     v.save_results.
+ * @param[in] v Borrowed variant flags and printable non-null name; controls cwd, preliminary
+ *     reopen, saving and final call order.
+ * @param[out] out_elapsed Non-null writable elapsed-days result, written only after the
+ *     stepping/finalization path; final completion commonly leaves zero.
+ * @param[out] out_steps Non-null writable count of successful steps with positive elapsed time,
+ *     written only after the stepping/finalization path.
+ * @return 1 on engine allocation failure, or the open/initialize/start error code. Returns SWMM_OK
+ *     after stepping even when a step/end/report/close fails; these errors are printed.
+ */
+int runOnce(const char* inp, const char* rpt, const char* out, const Variant& v,
+            double* out_elapsed, long* out_steps) {
     // The MCP server runs with a working directory that is NOT the deck's
     // (`.../Projects/default`), and §3 names that as a suspect. Reproducing
     // it needs the deck given as an ABSOLUTE path — which is what a session
@@ -124,11 +169,11 @@ int runOnce(const char* inp, const char* rpt, const char* out,
     // machine-specific assumption in it.
     std::unique_ptr<ScopedCwd> cwd_guard;
     if (v.chdir_elsewhere) {
-        cwd_guard = std::make_unique<ScopedCwd>(
-            std::filesystem::temp_directory_path());
+        cwd_guard = std::make_unique<ScopedCwd>(std::filesystem::temp_directory_path());
         if (!cwd_guard->moved())
             std::printf("  [%s] WARNING: could not change directory; this "
-                        "variant is now identical to `cli`\n", v.name);
+                        "variant is now identical to `cli`\n",
+                        v.name);
     }
 
     SWMM_Engine e = swmm_engine_create();
@@ -148,16 +193,14 @@ int runOnce(const char* inp, const char* rpt, const char* out,
 
     int err = swmm_engine_open(e, inp, rpt, out, nullptr);
     if (err != SWMM_OK) {
-        std::printf("  [%s] open FAILED: %s\n", v.name,
-                    swmm_get_last_error_msg(e));
+        std::printf("  [%s] open FAILED: %s\n", v.name, swmm_get_last_error_msg(e));
         swmm_engine_destroy(e);
         return err;
     }
 
     err = swmm_engine_initialize(e);
     if (err != SWMM_OK) {
-        std::printf("  [%s] initialize FAILED: %s\n", v.name,
-                    swmm_get_last_error_msg(e));
+        std::printf("  [%s] initialize FAILED: %s\n", v.name, swmm_get_last_error_msg(e));
         swmm_engine_close(e);
         swmm_engine_destroy(e);
         return err;
@@ -165,23 +208,22 @@ int runOnce(const char* inp, const char* rpt, const char* out,
 
     err = swmm_engine_start(e, v.save_results ? 1 : 0);
     if (err != SWMM_OK) {
-        std::printf("  [%s] start FAILED: %s\n", v.name,
-                    swmm_get_last_error_msg(e));
+        std::printf("  [%s] start FAILED: %s\n", v.name, swmm_get_last_error_msg(e));
         swmm_engine_close(e);
         swmm_engine_destroy(e);
         return err;
     }
 
     double elapsed = 0.0;
-    long   steps   = 0;
+    long steps = 0;
     while (true) {
         err = swmm_engine_step(e, &elapsed);
         if (err != SWMM_OK) {
-            std::printf("  [%s] step %ld FAILED: %s\n", v.name, steps,
-                        swmm_get_last_error_msg(e));
+            std::printf("  [%s] step %ld FAILED: %s\n", v.name, steps, swmm_get_last_error_msg(e));
             break;
         }
-        if (elapsed <= 0.0) break;
+        if (elapsed <= 0.0)
+            break;
         ++steps;
     }
 
@@ -230,9 +272,9 @@ int runOnce(const char* inp, const char* rpt, const char* out,
 
     if (v.report_before_end) {
         call("report()", swmm_engine_report(e));
-        call("end()",    swmm_engine_end(e));
+        call("end()", swmm_engine_end(e));
     } else {
-        call("end()",    swmm_engine_end(e));
+        call("end()", swmm_engine_end(e));
         call("report()", swmm_engine_report(e));
     }
     call("close()", swmm_engine_close(e));
@@ -240,49 +282,65 @@ int runOnce(const char* inp, const char* rpt, const char* out,
     swmm_engine_destroy(e);
 
     *out_elapsed = elapsed;
-    *out_steps   = steps;
+    *out_steps = steps;
     return SWMM_OK;
 }
 
+/**
+ * @brief Print the differential invocation and external artifact-comparison examples to stdout.
+ */
 void usage() {
-    std::printf(
-        "o4_differential — run one deck through the C API several ways.\n\n"
-        "  o4_differential <input.inp> <out-prefix>\n\n"
-        "Writes <out-prefix>_<variant>.rpt / .out for each variant, then\n"
-        "leaves the comparison to the caller:\n\n"
-        "  cmp  <prefix>_cli.out <prefix>_<variant>.out\n"
-        "  diff <prefix>_cli.rpt <prefix>_<variant>.rpt\n\n"
-        "The `cli` variant is byte-for-byte the sequence in src/cli/main.cpp,\n"
-        "so `<prefix>_cli.*` must match a real CLI run of the same deck. If\n"
-        "it does not, THAT is the finding and nothing below it means\n"
-        "anything.\n");
+    std::printf("o4_differential — run one deck through the C API several ways.\n\n"
+                "  o4_differential <input.inp> <out-prefix>\n\n"
+                "Writes <out-prefix>_<variant>.rpt / .out for each variant, then\n"
+                "leaves the comparison to the caller:\n\n"
+                "  cmp  <prefix>_cli.out <prefix>_<variant>.out\n"
+                "  diff <prefix>_cli.rpt <prefix>_<variant>.rpt\n\n"
+                "The `cli` variant is byte-for-byte the sequence in src/cli/main.cpp,\n"
+                "so `<prefix>_cli.*` must match a real CLI run of the same deck. If\n"
+                "it does not, THAT is the finding and nothing below it means\n"
+                "anything.\n");
 }
 
-}  // namespace
+} // namespace
 
+/**
+ * @brief Run the fixed differential variants for a deck and output prefix.
+ *
+ * Resolves absolute paths and writes cli/reopened/nosave/reportfirst/elsewhere artifacts, then
+ * prints commands for external comparison. Output-prefix resolution uses error_code without
+ * checking it. No differences are evaluated internally, and runOnce() does not propagate
+ * step/finalization errors. Filesystem exceptions from the variant cwd guard can escape.
+ *
+ * @param[in] argc Process argument count; fewer than three arguments prints usage.
+ * @param[in] argv Borrowed strings: program, input path and output prefix; additional arguments are
+ *     ignored.
+ * @return 1 when invoked without an input, absolute input resolution fails or any variant fails
+ *     during allocation/open/initialize/start; otherwise zero. Supplying only an input prints usage
+ *     and returns zero.
+ */
 int main(int argc, char* argv[]) {
-    if (argc < 3) { usage(); return argc < 2 ? 1 : 0; }
+    if (argc < 3) {
+        usage();
+        return argc < 2 ? 1 : 0;
+    }
 
     // Absolute, so the `elsewhere` variant tests the working directory and
     // not the engine's ability to resolve a relative path from one.
     std::error_code abs_ec;
-    const std::string inp =
-        std::filesystem::absolute(argv[1], abs_ec).string();
+    const std::string inp = std::filesystem::absolute(argv[1], abs_ec).string();
     if (abs_ec) {
         std::printf("cannot resolve %s: %s\n", argv[1], abs_ec.message().c_str());
         return 1;
     }
-    const std::string prefix =
-        std::filesystem::absolute(argv[2], abs_ec).string();
+    const std::string prefix = std::filesystem::absolute(argv[2], abs_ec).string();
 
     // One variable at a time. `cli` is the control and MUST reproduce a real
     // CLI run; every other row changes exactly one thing against it.
     const Variant variants[] = {
-        {"cli",        false, false, true,  false},
-        {"reopened",   false, true,  true,  false},
-        {"nosave",     false, false, false, false},
-        {"reportfirst",false, false, true,  true },
-        {"elsewhere",  true,  false, true,  false},
+        {"cli", false, false, true, false},      {"reopened", false, true, true, false},
+        {"nosave", false, false, false, false},  {"reportfirst", false, false, true, true},
+        {"elsewhere", true, false, true, false},
     };
 
     std::printf("o4_differential\n  deck: %s\n\n", inp.c_str());
@@ -292,22 +350,23 @@ int main(int argc, char* argv[]) {
         const std::string rpt = prefix + "_" + v.name + ".rpt";
         const std::string out = prefix + "_" + v.name + ".out";
         double elapsed = 0.0;
-        long   steps   = 0;
-        const int err = runOnce(inp.c_str(), rpt.c_str(), out.c_str(), v,
-                                &elapsed, &steps);
-        if (err != SWMM_OK) { ++failures; continue; }
+        long steps = 0;
+        const int err = runOnce(inp.c_str(), rpt.c_str(), out.c_str(), v, &elapsed, &steps);
+        if (err != SWMM_OK) {
+            ++failures;
+            continue;
+        }
         std::printf("  %-12s steps=%-8ld rpt=%s\n", v.name, steps, rpt.c_str());
     }
 
-    std::printf(
-        "\nNext, per O4 protocol step 4 — compare, do NOT instrument yet:\n"
-        "  cmp %s_cli.out %s_reopened.out\n"
-        "  diff %s_cli.rpt %s_reopened.rpt\n\n"
-        "and the control first:\n"
-        "  openswmm %s /tmp/real_cli.rpt /tmp/real_cli.out\n"
-        "  cmp /tmp/real_cli.out %s_cli.out\n",
-        prefix.c_str(), prefix.c_str(), prefix.c_str(), prefix.c_str(),
-        inp.c_str(), prefix.c_str());
+    std::printf("\nNext, per O4 protocol step 4 — compare, do NOT instrument yet:\n"
+                "  cmp %s_cli.out %s_reopened.out\n"
+                "  diff %s_cli.rpt %s_reopened.rpt\n\n"
+                "and the control first:\n"
+                "  openswmm %s /tmp/real_cli.rpt /tmp/real_cli.out\n"
+                "  cmp /tmp/real_cli.out %s_cli.out\n",
+                prefix.c_str(), prefix.c_str(), prefix.c_str(), prefix.c_str(), inp.c_str(),
+                prefix.c_str());
 
     return failures == 0 ? 0 : 1;
 }

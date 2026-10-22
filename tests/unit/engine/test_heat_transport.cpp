@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_heat_transport.cpp
- * @brief Phase H1 gates — `__TEMPERATURE__` transport under LEGACY.
+ * @file      test_heat_transport.cpp
+ * @brief     Phase H1 gates — `__TEMPERATURE__` transport under LEGACY.
  *
  * @details H1 carries temperature as a conservative tracer: no fluxes, no
  *          decay, no growth. The gates therefore have to separate "the
@@ -47,9 +47,9 @@
  *          - HeatSourcesConfigParsesAndDefers: the config surface.
  *
  * @see plans/transport/HEAT_TRANSPORT_PLAN.md §1, §3, §6 H1
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -68,30 +68,67 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
 // The two-source arithmetic, chosen so no wrong answer lands on the right
 // number (see the file comment).
-constexpr double kQExt   = 6.0;   ///< cfs, [INFLOWS]  → EXTERNAL_INFLOW
-constexpr double kQDwf   = 2.0;   ///< cfs, [DWF]      → DWF
-constexpr double kTExt   = 30.0;  ///< degC
-constexpr double kTDwf   = 6.0;   ///< degC
-constexpr double kTInit  = 3.0;   ///< degC, INITIAL_STATE
+constexpr double kQExt = 6.0;  ///< cfs, [INFLOWS]  → EXTERNAL_INFLOW
+constexpr double kQDwf = 2.0;  ///< cfs, [DWF]      → DWF
+constexpr double kTExt = 30.0; ///< degC
+constexpr double kTDwf = 6.0;  ///< degC
+constexpr double kTInit = 3.0; ///< degC, INITIAL_STATE
 /// (6*30 + 2*6) / 8 = 24. Unweighted would be 18; the default is 20.
 constexpr double kTMixed = 24.0;
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Open failure is not
+ * reported by this helper. Subsequent write/close failures are not checked; the local stream closes
+ * at scope exit and no path/content storage is retained. Allocation exceptions can propagate.
+ *
+ * @param[in] path Non-null null-terminated destination path; an existing file is
+ *     truncated/overwritten.
+ * @param[in] body Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const char* path, const std::string& body) {
     std::ofstream f(path);
     f << body;
 }
 
-/// Two-inflow chain: J0 takes both an [INFLOWS] flow and a [DWF] baseline,
-/// then drains through a conduit to an outfall.
-void write_deck(const char* path, const std::string& extra_options,
-                const std::string& pc_lines, bool pollutants = false,
-                double q_ext = kQExt, double q_dwf = kQDwf) {
+/**
+ * @brief Write a two-hour external/DWF heat-advection fixture.
+ *
+ * The two-conduit model uses CFS and five-second routing; heat activation/configuration is supplied
+ * by the raw options/component rows. Opens/truncates the deck using a local ofstream; parent
+ * directories must exist. Stream open/write/close outcomes are not checked, and sidecar names/text
+ * are not escaped. Caller-owned inputs are not retained.
+ *
+ * @param[in] path Destination deck filename, non-null when a character pointer; borrowed only
+ *     during this call. Existing files are truncated.
+ * @param[in] extra_options Raw additional OPTIONS rows; inserted verbatim without validation.
+ * @param[in] pc_lines Raw PROCESS_COMPONENTS rows, copied when nonempty; caller supplies valid
+ *     component IDs/config references and line separators.
+ * @param[in] pollutants Emit a fixed 42 mg/L initial TSS definition when true.
+ * @param[in] q_ext External J0 flow in cfs; emitted only when positive.
+ * @param[in] q_dwf Dry-weather J0 flow in cfs; emitted only when positive.
+ */
+void write_deck(const char* path, const std::string& extra_options, const std::string& pc_lines,
+                bool pollutants = false, double q_ext = kQExt, double q_dwf = kQDwf) {
     std::ofstream f(path);
     f << "[TITLE]\nH1 heat transport gate deck\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
@@ -121,56 +158,99 @@ void write_deck(const char* path, const std::string& extra_options,
     f << "[REPORT]\nINPUT NO\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n";
 }
 
-/// The standard H1 source table: the two inlet temperatures plus a
-/// distinguishable initial state.
-std::string heat_cfg(double t_ext = kTExt, double t_dwf = kTDwf,
-                     double t_init = kTInit) {
+/**
+ * @brief Build the standard heat source and initial-temperature sidecar text.
+ *
+ * Formats numbers with std::to_string and performs no range/finite checks or file IO.
+ *
+ * @param[in] t_ext Global external-inflow temperature in degrees C.
+ * @param[in] t_dwf Global dry-weather-flow temperature in degrees C.
+ * @param[in] t_init Global initial-state temperature in degrees C.
+ * @return Owned HEAT_SOURCES section with three constant GLOBAL rows.
+ */
+std::string heat_cfg(double t_ext = kTExt, double t_dwf = kTDwf, double t_init = kTInit) {
     return "[HEAT_SOURCES]\n"
-           "EXTERNAL_INFLOW GLOBAL " + std::to_string(t_ext) + "\n"
-           "DWF             GLOBAL " + std::to_string(t_dwf) + "\n"
-           "INITIAL_STATE   GLOBAL " + std::to_string(t_init) + "\n";
+           "EXTERNAL_INFLOW GLOBAL " +
+           std::to_string(t_ext) +
+           "\n"
+           "DWF             GLOBAL " +
+           std::to_string(t_dwf) +
+           "\n"
+           "INITIAL_STATE   GLOBAL " +
+           std::to_string(t_init) + "\n";
 }
 
+/**
+ * @brief Run and end a heat fixture, releasing its engine afterward.
+ *
+ * Owns the temporary engine handle, saves results, and destroys it on every allocated path. Does
+ * not write a full report or inspect guard completion independently; destruction closes resources
+ * and files. Caller paths/content are not retained after return.
+ *
+ * @param[in] inp Non-null input-deck filename, borrowed for this call.
+ * @param[in] rpt Report destination passed to open; may be null where the engine API permits it.
+ * @param[in] out Binary-output destination passed to open; may be null where supported, though
+ *     start requests saved results.
+ * @return False for allocation/open/initialize/start/step/end failure; true otherwise, including
+ *     exhaustion of the 20000-step guard if end succeeds.
+ */
 bool run_deck(const char* inp, const char* rpt, const char* out) {
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) return false;
+    if (e == nullptr)
+        return false;
     bool ok = swmm_engine_open(e, inp, rpt, out, nullptr) == SWMM_OK &&
-              swmm_engine_initialize(e) == SWMM_OK &&
-              swmm_engine_start(e, 1) == SWMM_OK;
+              swmm_engine_initialize(e) == SWMM_OK && swmm_engine_start(e, 1) == SWMM_OK;
     if (ok) {
         double elapsed = 0.0;
         int guard = 0;
         do {
-            if (swmm_engine_step(e, &elapsed) != SWMM_OK) { ok = false; break; }
+            if (swmm_engine_step(e, &elapsed) != SWMM_OK) {
+                ok = false;
+                break;
+            }
         } while (elapsed > 0.0 && ++guard < 20000);
-        if (ok) ok = swmm_engine_end(e) == SWMM_OK;
+        if (ok)
+            ok = swmm_engine_end(e) == SWMM_OK;
     }
     swmm_engine_destroy(e);
     return ok;
 }
 
-/// Run to completion and hand back the live engine so a gate can read
-/// internal state (the published temperatures, the node inflow that proves
-/// the deck delivered). Caller destroys.
+/**
+ * @brief Run a heat fixture and retain its engine for internal-state inspection.
+ *
+ * Saves results and steps until completion, step error or a 20000-step guard, then calls end
+ * without checking its result. A non-null return does not guarantee successful complete
+ * stepping/finalization. State/diagnostics remain available on the returned engine; no report is
+ * generated here.
+ *
+ * @param[in] inp Non-null input-deck filename, borrowed for this call.
+ * @param[in] rpt Report destination passed to open; may be null where the engine API permits it.
+ * @param[in] out Binary-output destination passed to open; may be null where supported, though
+ *     start requests saved results.
+ * @return Owned raw engine handle after open/initialize/start succeeded, or null if those
+ *     stages/allocation fail; caller must destroy a returned handle.
+ */
 SWMM_Engine run_and_hold(const char* inp, const char* rpt, const char* out) {
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) return nullptr;
+    if (e == nullptr)
+        return nullptr;
     if (swmm_engine_open(e, inp, rpt, out, nullptr) != SWMM_OK ||
-        swmm_engine_initialize(e) != SWMM_OK ||
-        swmm_engine_start(e, 1) != SWMM_OK) {
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
         swmm_engine_destroy(e);
         return nullptr;
     }
     double elapsed = 0.0;
     int guard = 0;
     do {
-        if (swmm_engine_step(e, &elapsed) != SWMM_OK) break;
+        if (swmm_engine_step(e, &elapsed) != SWMM_OK)
+            break;
     } while (elapsed > 0.0 && ++guard < 20000);
     swmm_engine_end(e);
     return e;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Gate 1 — the plan's verify criterion: conservative mixing of two sources.
@@ -187,11 +267,9 @@ TEST(HeatTransportTest, TwoSourcesMixConservativelyAtANode) {
     // only one pathway ever fired would be measuring nothing. Both inflows
     // must be present, or the "mix" is a single source.
     ASSERT_GT(ctx.n_nodes(), 0);
-    const double q_total = ctx.nodes.lat_flow.empty() ? 0.0
-                                                      : ctx.nodes.lat_flow[0];
+    const double q_total = ctx.nodes.lat_flow.empty() ? 0.0 : ctx.nodes.lat_flow[0];
     EXPECT_NEAR(q_total, kQExt + kQDwf, 0.5)
-        << "J0 receives " << q_total << " cfs, expected "
-        << (kQExt + kQDwf)
+        << "J0 receives " << q_total << " cfs, expected " << (kQExt + kQDwf)
         << " — one of the two pathways did not deliver, so this deck cannot "
            "observe mixing at all.";
 
@@ -200,8 +278,11 @@ TEST(HeatTransportTest, TwoSourcesMixConservativelyAtANode) {
 
     const double t_node = ctx.heat_state.node_temp[0];
     EXPECT_NEAR(t_node, kTMixed, 0.5)
-        << "J0 settles at " << t_node << " degC, expected the FLOW-WEIGHTED "
-           "mean " << kTMixed << ". 18 would mean the weighting was dropped "
+        << "J0 settles at " << t_node
+        << " degC, expected the FLOW-WEIGHTED "
+           "mean "
+        << kTMixed
+        << ". 18 would mean the weighting was dropped "
            "(plain average), 20 the default source temperature (the table "
            "never reached the loaders), 3 the initial state (no inflow was "
            "mixed in), 30 or 6 a single pathway winning outright.";
@@ -221,25 +302,22 @@ TEST(HeatTransportTest, TwoSourcesMixConservativelyAtANode) {
 TEST(HeatTransportTest, SubZeroTemperaturesSurvive) {
     // Single cold source; the network starts warm so reaching a negative
     // value also proves the inflow actually displaced the initial state.
-    write_file("_ht_cold.heat",
-               "[HEAT_SOURCES]\n"
-               "EXTERNAL_INFLOW GLOBAL -5.0\n"
-               "INITIAL_STATE   GLOBAL 10.0\n");
+    write_file("_ht_cold.heat", "[HEAT_SOURCES]\n"
+                                "EXTERNAL_INFLOW GLOBAL -5.0\n"
+                                "INITIAL_STATE   GLOBAL 10.0\n");
     write_deck("_ht_cold.inp", "HEAT_TRANSPORT ON\n",
-               "org.hydrocouple.openswmm.heat config=\"_ht_cold.heat\"",
-               false, kQExt, 0.0);
-    SWMM_Engine e =
-        run_and_hold("_ht_cold.inp", "_ht_cold.rpt", "_ht_cold.out");
+               "org.hydrocouple.openswmm.heat config=\"_ht_cold.heat\"", false, kQExt, 0.0);
+    SWMM_Engine e = run_and_hold("_ht_cold.inp", "_ht_cold.rpt", "_ht_cold.out");
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
     ASSERT_FALSE(ctx.heat_state.node_temp.empty());
 
     const double t = ctx.heat_state.node_temp[0];
-    EXPECT_LT(t, 0.0)
-        << "J0 reads " << t << " degC on a -5 degC inflow. Exactly 0.0 means "
-           "a max(value, 0) clamp was carried over from the water-age mirror, "
-           "where it is correct because negative age is meaningless — here it "
-           "silently warms every below-freezing model to the freezing point.";
+    EXPECT_LT(t, 0.0) << "J0 reads " << t
+                      << " degC on a -5 degC inflow. Exactly 0.0 means "
+                         "a max(value, 0) clamp was carried over from the water-age mirror, "
+                         "where it is correct because negative age is meaningless — here it "
+                         "silently warms every below-freezing model to the freezing point.";
     EXPECT_NEAR(t, -5.0, 1.0) << "cold inflow did not reach steady state";
     swmm_engine_destroy(e);
 }
@@ -249,10 +327,8 @@ TEST(HeatTransportTest, SubZeroTemperaturesSurvive) {
 // ---------------------------------------------------------------------------
 TEST(HeatTransportTest, TemperatureReportsAsATrailingColumnByName) {
     write_file("_ht_rpt.heat", heat_cfg());
-    write_file("_ht_rpt.age",
-               "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 0.0\n");
-    write_deck("_ht_rpt.inp",
-               "HEAT_TRANSPORT ON\nWATER_AGE ON\n",
+    write_file("_ht_rpt.age", "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 0.0\n");
+    write_deck("_ht_rpt.inp", "HEAT_TRANSPORT ON\nWATER_AGE ON\n",
                "org.hydrocouple.openswmm.heat config=\"_ht_rpt.heat\"\n"
                "org.hydrocouple.openswmm.waterage config=\"_ht_rpt.age\"",
                /*pollutants=*/true);
@@ -297,22 +373,19 @@ TEST(HeatTransportTest, TemperatureReportsAsATrailingColumnByName) {
     write_deck("_ht_rpt_off.inp", "WATER_AGE ON\n",
                "org.hydrocouple.openswmm.waterage config=\"_ht_rpt.age\"",
                /*pollutants=*/true);
-    ASSERT_TRUE(run_deck("_ht_rpt_off.inp", "_ht_rpt_off.rpt",
-                         "_ht_rpt_off.out"));
+    ASSERT_TRUE(run_deck("_ht_rpt_off.inp", "_ht_rpt_off.rpt", "_ht_rpt_off.out"));
     SWMM_Output h_off = swmm_output_open("_ht_rpt_off.out");
     ASSERT_NE(h_off, nullptr);
     ASSERT_EQ(swmm_output_get_pollut_count(h_off), 2);
     std::vector<float> vo(32, -1.0f);
     int count_off = 0;
-    ASSERT_EQ(swmm_output_get_node_attribute(h_off, 0, period, vo.data(),
-                                             &count_off), 0);
+    ASSERT_EQ(swmm_output_get_node_attribute(h_off, 0, period, vo.data(), &count_off), 0);
     ASSERT_GE(count_off, 8);
     EXPECT_FLOAT_EQ(v[6], vo[6])
-        << "the TSS column moved when temperature was added (stride slip): "
-        << v[6] << " with heat, " << vo[6] << " without";
-    EXPECT_FLOAT_EQ(v[7], vo[7])
-        << "the age column moved when temperature was added: " << v[7]
-        << " with heat, " << vo[7] << " without";
+        << "the TSS column moved when temperature was added (stride slip): " << v[6]
+        << " with heat, " << vo[6] << " without";
+    EXPECT_FLOAT_EQ(v[7], vo[7]) << "the age column moved when temperature was added: " << v[7]
+                                 << " with heat, " << vo[7] << " without";
     swmm_output_close(h_off);
     EXPECT_NEAR(v[8], static_cast<float>(kTMixed), 0.5f)
         << "temperature column reads " << v[8] << ", expected " << kTMixed;
@@ -323,16 +396,14 @@ TEST(HeatTransportTest, TemperatureReportsAsATrailingColumnByName) {
 // Gate 4 — HEAT_TRANSPORT ON leaves pollutants and age untouched.
 // ---------------------------------------------------------------------------
 TEST(HeatTransportTest, PollutantsAndAgeUnchangedWithHeatOn) {
-    write_file("_ht_ref.age",
-               "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 2.0\n");
+    write_file("_ht_ref.age", "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 2.0\n");
     write_file("_ht_ref.heat", heat_cfg());
 
     write_deck("_ht_ref.inp", "WATER_AGE ON\n",
-               "org.hydrocouple.openswmm.waterage config=\"_ht_ref.age\"",
-               true);
+               "org.hydrocouple.openswmm.waterage config=\"_ht_ref.age\"", true);
     SWMM_Engine a = run_and_hold("_ht_ref.inp", "_ht_ref.rpt", "_ht_ref.out");
     ASSERT_NE(a, nullptr);
-    const auto age_ref  = as_cpp_engine(a).context().water_age_state.node_age;
+    const auto age_ref = as_cpp_engine(a).context().water_age_state.node_age;
     const auto conc_ref = as_cpp_engine(a).context().nodes.conc;
     swmm_engine_destroy(a);
 
@@ -347,7 +418,8 @@ TEST(HeatTransportTest, PollutantsAndAgeUnchangedWithHeatOn) {
     ASSERT_EQ(age_ref.size(), ctxb.water_age_state.node_age.size());
     for (std::size_t i = 0; i < age_ref.size(); ++i)
         EXPECT_DOUBLE_EQ(age_ref[i], ctxb.water_age_state.node_age[i])
-            << "node " << i << " age moved when HEAT_TRANSPORT was enabled — "
+            << "node " << i
+            << " age moved when HEAT_TRANSPORT was enabled — "
                "the heat mirror must write only heat_state";
     ASSERT_EQ(conc_ref.size(), ctxb.nodes.conc.size());
     for (std::size_t i = 0; i < conc_ref.size(); ++i)
@@ -383,19 +455,16 @@ TEST(HeatTransportTest, HeatOffAddsNoColumnAndNoState) {
 // ---------------------------------------------------------------------------
 TEST(HeatTransportTest, ArdTransportsTemperatureAndTheH4WarningIsRetired) {
     write_file("_ht_ard.heat", heat_cfg());
-    write_deck("_ht_ard.inp",
-               "HEAT_TRANSPORT ON\nQUALITY_SOLVER EULERIAN_ARD\n",
+    write_deck("_ht_ard.inp", "HEAT_TRANSPORT ON\nQUALITY_SOLVER EULERIAN_ARD\n",
                "org.hydrocouple.openswmm.heat config=\"_ht_ard.heat\"");
     SWMM_Engine e = run_and_hold("_ht_ard.inp", "_ht_ard.rpt", "_ht_ard.out");
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
 
     const auto& w = ctx.warnings;
-    const bool still_deferred = std::any_of(
-        w.begin(), w.end(), [](const std::string& s) {
-            return s.find("EULERIAN_ARD") != std::string::npos &&
-                   s.find("H4") != std::string::npos;
-        });
+    const bool still_deferred = std::any_of(w.begin(), w.end(), [](const std::string& s) {
+        return s.find("EULERIAN_ARD") != std::string::npos && s.find("H4") != std::string::npos;
+    });
     EXPECT_FALSE(still_deferred)
         << "the H1 warning that ARD tracks no temperature is still emitted, "
            "but H4 implements the mesh binding — a retired deferral must "
@@ -407,8 +476,8 @@ TEST(HeatTransportTest, ArdTransportsTemperatureAndTheH4WarningIsRetired) {
         << "heat_state was never sized under ARD — the row is not on the mesh";
     EXPECT_NEAR(ctx.heat_state.node_temp[0], kTMixed, 1.0)
         << "under EULERIAN_ARD J0 settles at " << ctx.heat_state.node_temp[0]
-        << " degC; the flow-weighted mean of the two loader pathways is "
-        << kTMixed << ". Reading the 3 degC INITIAL_STATE means the mesh row "
+        << " degC; the flow-weighted mean of the two loader pathways is " << kTMixed
+        << ". Reading the 3 degC INITIAL_STATE means the mesh row "
            "exists but no loader reached it; reading 20 means the config "
            "table never arrived.";
     swmm_engine_destroy(e);
@@ -419,49 +488,41 @@ TEST(HeatTransportTest, ArdTransportsTemperatureAndTheH4WarningIsRetired) {
 // ---------------------------------------------------------------------------
 TEST(HeatTransportTest, HeatSourcesConfigParsesAndDefers) {
     // A NODE override must beat the GLOBAL row for that node/source.
-    write_file("_ht_node.heat",
-               "[HEAT_SOURCES]\n"
-               "EXTERNAL_INFLOW GLOBAL 30.0\n"
-               "EXTERNAL_INFLOW NODE J0 -2.0\n"
-               "INITIAL_STATE   GLOBAL 3.0\n");
+    write_file("_ht_node.heat", "[HEAT_SOURCES]\n"
+                                "EXTERNAL_INFLOW GLOBAL 30.0\n"
+                                "EXTERNAL_INFLOW NODE J0 -2.0\n"
+                                "INITIAL_STATE   GLOBAL 3.0\n");
     write_deck("_ht_node.inp", "HEAT_TRANSPORT ON\n",
-               "org.hydrocouple.openswmm.heat config=\"_ht_node.heat\"",
-               false, kQExt, 0.0);
-    SWMM_Engine e =
-        run_and_hold("_ht_node.inp", "_ht_node.rpt", "_ht_node.out");
+               "org.hydrocouple.openswmm.heat config=\"_ht_node.heat\"", false, kQExt, 0.0);
+    SWMM_Engine e = run_and_hold("_ht_node.inp", "_ht_node.rpt", "_ht_node.out");
     ASSERT_NE(e, nullptr);
     const double t = as_cpp_engine(e).context().heat_state.node_temp[0];
-    EXPECT_NEAR(t, -2.0, 1.0)
-        << "J0 reads " << t << " degC — the NODE override lost to the GLOBAL "
-           "row (30) or to the default (20).";
+    EXPECT_NEAR(t, -2.0, 1.0) << "J0 reads " << t
+                              << " degC — the NODE override lost to the GLOBAL "
+                                 "row (30) or to the default (20).";
     swmm_engine_destroy(e);
 
     // A TIMESERIES row must refuse by NAME of the phase, and must be
     // reachable in its documented (longer) spelling — the A1a defect was
     // that an arity check ran first and reported "malformed" instead.
-    write_file("_ht_ts.heat",
-               "[HEAT_SOURCES]\n"
-               "EXTERNAL_INFLOW NODE J0 TIMESERIES temp_ts\n");
+    write_file("_ht_ts.heat", "[HEAT_SOURCES]\n"
+                              "EXTERNAL_INFLOW NODE J0 TIMESERIES temp_ts\n");
     write_deck("_ht_ts.inp", "HEAT_TRANSPORT ON\n",
                "org.hydrocouple.openswmm.heat config=\"_ht_ts.heat\"");
     SWMM_Engine e2 = swmm_engine_create();
     ASSERT_NE(e2, nullptr);
-    const int rc = swmm_engine_open(e2, "_ht_ts.inp", "_ht_ts.rpt",
-                                    "_ht_ts.out", nullptr);
+    const int rc = swmm_engine_open(e2, "_ht_ts.inp", "_ht_ts.rpt", "_ht_ts.out", nullptr);
     EXPECT_NE(rc, SWMM_OK) << "a deferred TIMESERIES row opened silently";
     swmm_engine_destroy(e2);
 
     // An out-of-range temperature (a Fahrenheit value pasted into a degC
     // field) must refuse rather than route 68-degree-Celsius water.
-    write_file("_ht_bad.heat",
-               "[HEAT_SOURCES]\nEXTERNAL_INFLOW GLOBAL 451.0\n");
+    write_file("_ht_bad.heat", "[HEAT_SOURCES]\nEXTERNAL_INFLOW GLOBAL 451.0\n");
     write_deck("_ht_bad.inp", "HEAT_TRANSPORT ON\n",
                "org.hydrocouple.openswmm.heat config=\"_ht_bad.heat\"");
     SWMM_Engine e3 = swmm_engine_create();
     ASSERT_NE(e3, nullptr);
-    EXPECT_NE(swmm_engine_open(e3, "_ht_bad.inp", "_ht_bad.rpt", "_ht_bad.out",
-                               nullptr),
-              SWMM_OK)
+    EXPECT_NE(swmm_engine_open(e3, "_ht_bad.inp", "_ht_bad.rpt", "_ht_bad.out", nullptr), SWMM_OK)
         << "451 degC was accepted as a water temperature";
     swmm_engine_destroy(e3);
 }
@@ -503,21 +564,19 @@ TEST(HeatTransportTest, SaveKeepsHeatTransport) {
     write_deck("_ht_rt.inp", "HEAT_TRANSPORT ON\n", "");
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, "_ht_rt.inp", "_ht_rt.rpt", "_ht_rt.out",
-                               nullptr),
-              SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e, "_ht_rt.inp", "_ht_rt.rpt", "_ht_rt.out", nullptr), SWMM_OK);
     ASSERT_TRUE(as_cpp_engine(e).context().options.heat_transport)
         << "the source deck did not even parse HEAT_TRANSPORT ON";
-    ASSERT_EQ(openswmm::inp_writer::writeInpFile(as_cpp_engine(e).context(),
-                                                 "_ht_rt_saved.inp", nullptr),
-              0);
+    ASSERT_EQ(
+        openswmm::inp_writer::writeInpFile(as_cpp_engine(e).context(), "_ht_rt_saved.inp", nullptr),
+        0);
     swmm_engine_destroy(e);
 
     SWMM_Engine e2 = swmm_engine_create();
     ASSERT_NE(e2, nullptr);
-    ASSERT_EQ(swmm_engine_open(e2, "_ht_rt_saved.inp", "_ht_rt_saved.rpt",
-                               "_ht_rt_saved.out", nullptr),
-              SWMM_OK);
+    ASSERT_EQ(
+        swmm_engine_open(e2, "_ht_rt_saved.inp", "_ht_rt_saved.rpt", "_ht_rt_saved.out", nullptr),
+        SWMM_OK);
     EXPECT_TRUE(as_cpp_engine(e2).context().options.heat_transport)
         << "the saved model reopened with HEAT_TRANSPORT off — a save-as "
            "silently disabled the feature (the A1a defect).";

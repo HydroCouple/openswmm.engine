@@ -1,6 +1,6 @@
 /**
- * @file test_object_deletion.cpp
- * @brief Unit tests for general object deletion (swmm_*_delete family).
+ * @file      test_object_deletion.cpp
+ * @brief     Unit tests for general object deletion (swmm_*_delete family).
  *
  * @details Covers: lifecycle guards, isolated deletion, cascade-deletion
  *          of links when a referenced node is removed, nullification of
@@ -9,6 +9,10 @@
  *          deletion of gages, tables, and transects.
  *
  * @ingroup engine_tests
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -38,35 +42,50 @@ class DeletionTest : public ::testing::Test {
 protected:
     SWMM_Engine engine = nullptr;
 
+    /**
+     * @brief Create an editable empty model for each API test.
+     *
+     * Stores the owned handle in engine and asserts allocation succeeded. Tests populate the model and
+     * fixture teardown destroys it.
+     */
     void SetUp() override {
         engine = swmm_engine_new();
         ASSERT_NE(engine, nullptr);
     }
 
-    void TearDown() override {
-        swmm_engine_destroy(engine);
-    }
+    /**
+     * @brief Destroy the fixture-owned engine and its model resources.
+     *
+     * The destroy API accepts a null handle after failed setup. The member slot is not reset and must
+     * not be used afterward.
+     */
+    void TearDown() override { swmm_engine_destroy(engine); }
 
     // Build: nodes A(junction), B(junction), C(outfall)
     //        links AB, BC
     // NOTE: All adds must be done before setting properties because
     //       swmm_*_add calls resize() which re-initializes all SoA fields.
+    /**
+     * @brief Add the A-B-C deletion fixture connectivity.
+     *
+     * Requires a live empty editable fixture engine. Adds A/B junctions, C outfall and AB/BC conduits,
+     * then connects them after all resizes. Fatal API assertions can leave partial objects and return
+     * only from the helper; no physical geometry, finalization or run is supplied.
+     */
     void build_simple_network() {
         ASSERT_EQ(swmm_node_add(engine, "A", SWMM_NODE_JUNCTION), SWMM_OK);
         ASSERT_EQ(swmm_node_add(engine, "B", SWMM_NODE_JUNCTION), SWMM_OK);
-        ASSERT_EQ(swmm_node_add(engine, "C", SWMM_NODE_OUTFALL),  SWMM_OK);
+        ASSERT_EQ(swmm_node_add(engine, "C", SWMM_NODE_OUTFALL), SWMM_OK);
         ASSERT_EQ(swmm_link_add(engine, "AB", SWMM_LINK_CONDUIT), SWMM_OK);
         ASSERT_EQ(swmm_link_add(engine, "BC", SWMM_LINK_CONDUIT), SWMM_OK);
 
         // Set connectivity after all objects are added (add uses resize which resets all fields)
-        ASSERT_EQ(swmm_link_set_nodes(engine,
-                      swmm_link_index(engine, "AB"),
-                      swmm_node_index(engine, "A"),
-                      swmm_node_index(engine, "B")), SWMM_OK);
-        ASSERT_EQ(swmm_link_set_nodes(engine,
-                      swmm_link_index(engine, "BC"),
-                      swmm_node_index(engine, "B"),
-                      swmm_node_index(engine, "C")), SWMM_OK);
+        ASSERT_EQ(swmm_link_set_nodes(engine, swmm_link_index(engine, "AB"),
+                                      swmm_node_index(engine, "A"), swmm_node_index(engine, "B")),
+                  SWMM_OK);
+        ASSERT_EQ(swmm_link_set_nodes(engine, swmm_link_index(engine, "BC"),
+                                      swmm_node_index(engine, "B"), swmm_node_index(engine, "C")),
+                  SWMM_OK);
     }
 };
 
@@ -135,7 +154,7 @@ TEST_F(DeletionTest, AnalyzeImpactDoesNotMutate) {
 TEST_F(DeletionTest, DeleteIsolatedNode) {
     ASSERT_EQ(swmm_node_add(engine, "X", SWMM_NODE_JUNCTION), SWMM_OK);
     ASSERT_EQ(swmm_node_add(engine, "Y", SWMM_NODE_JUNCTION), SWMM_OK);
-    ASSERT_EQ(swmm_node_add(engine, "Z", SWMM_NODE_OUTFALL),  SWMM_OK);
+    ASSERT_EQ(swmm_node_add(engine, "Z", SWMM_NODE_OUTFALL), SWMM_OK);
 
     ASSERT_EQ(swmm_node_delete(engine, 1, nullptr), SWMM_OK);
 
@@ -175,9 +194,9 @@ TEST_F(DeletionTest, DeleteNodeCascadesLinks) {
 
 TEST_F(DeletionTest, DeleteNodeNullifiesSubcatchOutlet) {
     ASSERT_EQ(swmm_node_add(engine, "J", SWMM_NODE_JUNCTION), SWMM_OK);
-    ASSERT_EQ(swmm_node_add(engine, "O", SWMM_NODE_OUTFALL),  SWMM_OK);
+    ASSERT_EQ(swmm_node_add(engine, "O", SWMM_NODE_OUTFALL), SWMM_OK);
     ASSERT_EQ(swmm_subcatch_add(engine, "S1"), SWMM_OK);
-    ASSERT_EQ(swmm_subcatch_set_outlet(engine, 0, 0), SWMM_OK);  // outlet = J (idx 0)
+    ASSERT_EQ(swmm_subcatch_set_outlet(engine, 0, 0), SWMM_OK); // outlet = J (idx 0)
 
     SWMM_ImpactReport report{};
     ASSERT_EQ(swmm_node_delete(engine, 0, &report), SWMM_OK);
@@ -189,8 +208,7 @@ TEST_F(DeletionTest, DeleteNodeNullifiesSubcatchOutlet) {
     // At least one entry for outlet_node nullification
     bool found = false;
     for (int i = 0; i < report.n_entries; ++i) {
-        if (report.entries[i].obj_type == SWMM_REF_SUBCATCH &&
-            report.entries[i].cascaded == 0)
+        if (report.entries[i].obj_type == SWMM_REF_SUBCATCH && report.entries[i].cascaded == 0)
             found = true;
     }
     EXPECT_TRUE(found);
@@ -206,7 +224,7 @@ TEST_F(DeletionTest, IndexRenumberingAfterDeleteNode) {
     ASSERT_EQ(swmm_node_add(engine, "A", SWMM_NODE_JUNCTION), SWMM_OK);
     ASSERT_EQ(swmm_node_add(engine, "B", SWMM_NODE_JUNCTION), SWMM_OK);
     ASSERT_EQ(swmm_node_add(engine, "C", SWMM_NODE_JUNCTION), SWMM_OK);
-    ASSERT_EQ(swmm_node_add(engine, "D", SWMM_NODE_OUTFALL),  SWMM_OK);
+    ASSERT_EQ(swmm_node_add(engine, "D", SWMM_NODE_OUTFALL), SWMM_OK);
 
     // Link CD: node1=2(C), node2=3(D) — should survive delete of B
     ASSERT_EQ(swmm_link_add(engine, "CD", SWMM_LINK_CONDUIT), SWMM_OK);
@@ -222,9 +240,9 @@ TEST_F(DeletionTest, IndexRenumberingAfterDeleteNode) {
     // Link CD should now have node1=1(C) and node2=2(D) (renumbered)
     int from = -1, to = -1;
     ASSERT_EQ(swmm_link_get_from_node(engine, 0, &from), SWMM_OK);
-    ASSERT_EQ(swmm_link_get_to_node(engine, 0, &to),   SWMM_OK);
-    EXPECT_EQ(from, 1);  // was 2 (C), now 1 after B deleted
-    EXPECT_EQ(to,   2);  // was 3 (D), now 2 after B deleted
+    ASSERT_EQ(swmm_link_get_to_node(engine, 0, &to), SWMM_OK);
+    EXPECT_EQ(from, 1); // was 2 (C), now 1 after B deleted
+    EXPECT_EQ(to, 2);   // was 3 (D), now 2 after B deleted
 }
 
 // ============================================================================
@@ -233,7 +251,7 @@ TEST_F(DeletionTest, IndexRenumberingAfterDeleteNode) {
 
 TEST_F(DeletionTest, DeleteLinkReducesCount) {
     ASSERT_EQ(swmm_node_add(engine, "A", SWMM_NODE_JUNCTION), SWMM_OK);
-    ASSERT_EQ(swmm_node_add(engine, "O", SWMM_NODE_OUTFALL),  SWMM_OK);
+    ASSERT_EQ(swmm_node_add(engine, "O", SWMM_NODE_OUTFALL), SWMM_OK);
     ASSERT_EQ(swmm_link_add(engine, "C1", SWMM_LINK_CONDUIT), SWMM_OK);
     ASSERT_EQ(swmm_link_add(engine, "C2", SWMM_LINK_CONDUIT), SWMM_OK);
     ASSERT_EQ(swmm_link_set_nodes(engine, 0, 0, 1), SWMM_OK);
@@ -252,7 +270,7 @@ TEST_F(DeletionTest, DeleteGageNullifiesSubcatchGage) {
     ASSERT_EQ(swmm_gage_add(engine, "G0"), SWMM_OK);
     ASSERT_EQ(swmm_gage_add(engine, "G1"), SWMM_OK);
     ASSERT_EQ(swmm_subcatch_add(engine, "S"), SWMM_OK);
-    ASSERT_EQ(swmm_subcatch_set_gage(engine, 0, 1), SWMM_OK);  // S uses G1
+    ASSERT_EQ(swmm_subcatch_set_gage(engine, 0, 1), SWMM_OK); // S uses G1
 
     SWMM_ImpactReport report{};
     ASSERT_EQ(swmm_gage_delete(engine, 1, &report), SWMM_OK);
@@ -261,8 +279,7 @@ TEST_F(DeletionTest, DeleteGageNullifiesSubcatchGage) {
 
     bool found = false;
     for (int i = 0; i < report.n_entries; ++i) {
-        if (report.entries[i].obj_type == SWMM_REF_SUBCATCH &&
-            report.entries[i].cascaded == 0)
+        if (report.entries[i].obj_type == SWMM_REF_SUBCATCH && report.entries[i].cascaded == 0)
             found = true;
     }
     EXPECT_TRUE(found);
@@ -295,8 +312,7 @@ TEST_F(DeletionTest, DeleteTableNullifiesPumpCurve) {
     // Pump link should have pump_curve nullified
     bool found = false;
     for (int i = 0; i < report.n_entries; ++i) {
-        if (report.entries[i].obj_type == SWMM_REF_LINK &&
-            report.entries[i].cascaded == 0)
+        if (report.entries[i].obj_type == SWMM_REF_LINK && report.entries[i].cascaded == 0)
             found = true;
     }
     EXPECT_TRUE(found);
@@ -318,8 +334,7 @@ TEST_F(DeletionTest, DeleteSubcatchNullifiesOutfallRouteTo) {
     EXPECT_EQ(swmm_subcatch_count(engine), 0);
     bool found = false;
     for (int i = 0; i < report.n_entries; ++i) {
-        if (report.entries[i].obj_type == SWMM_REF_NODE &&
-            report.entries[i].cascaded == 0)
+        if (report.entries[i].obj_type == SWMM_REF_NODE && report.entries[i].cascaded == 0)
             found = true;
     }
     EXPECT_TRUE(found);
@@ -347,12 +362,22 @@ TEST_F(DeletionTest, NullHandleReturnsError) {
 namespace {
 
 // Count report entries matching (obj_type, field, cascaded).
-int count_entries(const SWMM_ImpactReport& r, int obj_type,
-                  const char* field, int cascaded) {
+/**
+ * @brief Count exact matching impact-report rows.
+ *
+ * Caller retains report storage and must keep it alive throughout the scan. Does not validate
+ * pointers or entry counts.
+ *
+ * @param[in] r Stable impact report with n_entries readable records and terminated field strings.
+ * @param[in] obj_type Exact object-type integer to match.
+ * @param[in] field Non-null terminated field name compared case-sensitively.
+ * @param[in] cascaded Exact cascade flag value to match, without boolean normalization.
+ * @return Number of rows matching all three selectors; no report mutation or ownership transfer.
+ */
+int count_entries(const SWMM_ImpactReport& r, int obj_type, const char* field, int cascaded) {
     int n = 0;
     for (int i = 0; i < r.n_entries; ++i) {
-        if (r.entries[i].obj_type == obj_type &&
-            r.entries[i].cascaded == cascaded &&
+        if (r.entries[i].obj_type == obj_type && r.entries[i].cascaded == cascaded &&
             std::strcmp(r.entries[i].field, field) == 0)
             ++n;
     }
@@ -360,8 +385,18 @@ int count_entries(const SWMM_ImpactReport& r, int obj_type,
 }
 
 // Multiset of (obj_type, field, cascaded) — for analyze-vs-delete parity.
-std::map<std::tuple<int, std::string, int>, int>
-entry_multiset(const SWMM_ImpactReport& r) {
+/**
+ * @brief Count impact rows by object type, field and cascade flag.
+ *
+ * Copies field text, retains duplicate counts and leaves caller-owned report unchanged; no
+ * null/count validation.
+ *
+ * @param[in] r Stable impact report with readable entry count/storage and non-null terminated field
+ *     strings.
+ * @return Owned map from selected row tuple to multiplicity; object indices and ordering are
+ *     intentionally excluded.
+ */
+std::map<std::tuple<int, std::string, int>, int> entry_multiset(const SWMM_ImpactReport& r) {
     std::map<std::tuple<int, std::string, int>, int> m;
     for (int i = 0; i < r.n_entries; ++i)
         ++m[{r.entries[i].obj_type, r.entries[i].field, r.entries[i].cascaded}];
@@ -375,7 +410,7 @@ entry_multiset(const SWMM_ImpactReport& r) {
 TEST_F(DeletionTest, DeleteNodeCascadesInflowRows) {
     ASSERT_EQ(swmm_node_add(engine, "A", SWMM_NODE_JUNCTION), SWMM_OK);
     ASSERT_EQ(swmm_node_add(engine, "B", SWMM_NODE_JUNCTION), SWMM_OK);
-    ASSERT_EQ(swmm_node_add(engine, "C", SWMM_NODE_OUTFALL),  SWMM_OK);
+    ASSERT_EQ(swmm_node_add(engine, "C", SWMM_NODE_OUTFALL), SWMM_OK);
 
     ASSERT_EQ(swmm_ext_inflow_add(engine, 1, "FLOW", "", "FLOW", 1.0, 1.0, 0.5, ""), SWMM_OK);
     ASSERT_EQ(swmm_ext_inflow_add(engine, 2, "FLOW", "", "FLOW", 1.0, 1.0, 0.7, ""), SWMM_OK);
@@ -383,10 +418,10 @@ TEST_F(DeletionTest, DeleteNodeCascadesInflowRows) {
     ASSERT_EQ(swmm_rdii_add(engine, 1, "UH1", 12.0), SWMM_OK);
 
     SWMM_ImpactReport report{};
-    ASSERT_EQ(swmm_node_delete(engine, 1, &report), SWMM_OK);  // delete B
+    ASSERT_EQ(swmm_node_delete(engine, 1, &report), SWMM_OK); // delete B
 
-    EXPECT_EQ(count_entries(report, SWMM_REF_EXT_INFLOW,  "node_idx", 1), 1);
-    EXPECT_EQ(count_entries(report, SWMM_REF_DWF_INFLOW,  "node_idx", 1), 1);
+    EXPECT_EQ(count_entries(report, SWMM_REF_EXT_INFLOW, "node_idx", 1), 1);
+    EXPECT_EQ(count_entries(report, SWMM_REF_DWF_INFLOW, "node_idx", 1), 1);
     EXPECT_EQ(count_entries(report, SWMM_REF_RDII_ASSIGN, "node_idx", 1), 1);
     swmm_impact_report_free(&report);
 
@@ -399,9 +434,9 @@ TEST_F(DeletionTest, DeleteNodeCascadesInflowRows) {
     double baseline = 0.0;
     char cons[32], ts[64], type[16], pat[64];
     double mf, sf;
-    ASSERT_EQ(swmm_ext_inflow_get(engine, 0, &node_idx,
-                  cons, sizeof cons, ts, sizeof ts, type, sizeof type,
-                  &mf, &sf, &baseline, pat, sizeof pat), SWMM_OK);
+    ASSERT_EQ(swmm_ext_inflow_get(engine, 0, &node_idx, cons, sizeof cons, ts, sizeof ts, type,
+                                  sizeof type, &mf, &sf, &baseline, pat, sizeof pat),
+              SWMM_OK);
     EXPECT_EQ(node_idx, 1);
     EXPECT_DOUBLE_EQ(baseline, 0.7);
 }
@@ -411,8 +446,8 @@ TEST_F(DeletionTest, DeleteNodeCascadesInflowRows) {
 TEST_F(DeletionTest, DeleteNodeRepacksTreatmentStripes) {
     ASSERT_EQ(swmm_node_add(engine, "A", SWMM_NODE_JUNCTION), SWMM_OK);
     ASSERT_EQ(swmm_node_add(engine, "B", SWMM_NODE_JUNCTION), SWMM_OK);
-    ASSERT_EQ(swmm_node_add(engine, "C", SWMM_NODE_OUTFALL),  SWMM_OK);
-    ASSERT_EQ(swmm_pollutant_add(engine, "TSS",  0), SWMM_OK);
+    ASSERT_EQ(swmm_node_add(engine, "C", SWMM_NODE_OUTFALL), SWMM_OK);
+    ASSERT_EQ(swmm_pollutant_add(engine, "TSS", 0), SWMM_OK);
     ASSERT_EQ(swmm_pollutant_add(engine, "Lead", 1), SWMM_OK);
 
     ASSERT_EQ(swmm_treatment_set(engine, 0, 0, "R = 0.1"), SWMM_OK);
@@ -420,7 +455,7 @@ TEST_F(DeletionTest, DeleteNodeRepacksTreatmentStripes) {
     ASSERT_EQ(swmm_treatment_set(engine, 2, 0, "R = 0.3"), SWMM_OK);
 
     SWMM_ImpactReport report{};
-    ASSERT_EQ(swmm_node_delete(engine, 1, &report), SWMM_OK);  // delete B
+    ASSERT_EQ(swmm_node_delete(engine, 1, &report), SWMM_OK); // delete B
 
     // B's stripe (one non-empty expression) reported as cascaded.
     EXPECT_EQ(count_entries(report, SWMM_REF_TREATMENT, "expression", 1), 1);
@@ -443,7 +478,7 @@ TEST_F(DeletionTest, DeleteNodeNullifiesSubcatchGwNode) {
     ASSERT_EQ(swmm_node_add(engine, "A", SWMM_NODE_JUNCTION), SWMM_OK);
     ASSERT_EQ(swmm_node_add(engine, "B", SWMM_NODE_JUNCTION), SWMM_OK);
     ASSERT_EQ(swmm_subcatch_add(engine, "S"), SWMM_OK);
-    ASSERT_EQ(swmm_subcatch_set_gw_node(engine, 0, 1), SWMM_OK);  // gw → B
+    ASSERT_EQ(swmm_subcatch_set_gw_node(engine, 0, 1), SWMM_OK); // gw → B
 
     SWMM_ImpactReport report{};
     ASSERT_EQ(swmm_node_delete(engine, 1, &report), SWMM_OK);
@@ -464,17 +499,17 @@ TEST_F(DeletionTest, DeleteSubcatchCascadesLidUsage) {
     ASSERT_EQ(swmm_lid_usage_add(engine, 1, 0, 2, 200.0, 8.0, 0.0, 50.0), SWMM_OK);
 
     SWMM_ImpactReport report{};
-    ASSERT_EQ(swmm_subcatch_delete(engine, 0, &report), SWMM_OK);  // delete S1
+    ASSERT_EQ(swmm_subcatch_delete(engine, 0, &report), SWMM_OK); // delete S1
     EXPECT_EQ(count_entries(report, SWMM_REF_LID_USAGE, "subcatch_index", 1), 1);
     swmm_impact_report_free(&report);
 
     ASSERT_EQ(swmm_lid_usage_count(engine), 1);
     int sc = -99, lid = -99, number = 0;
-    ASSERT_EQ(swmm_lid_usage_get(engine, 0, &sc, &lid, &number,
-                                 nullptr, nullptr, nullptr,
-                                 nullptr, nullptr, nullptr), SWMM_OK);
-    EXPECT_EQ(sc, 0);      // was 1 (S2), renumbered
-    EXPECT_EQ(number, 2);  // S2's row survived intact
+    ASSERT_EQ(swmm_lid_usage_get(engine, 0, &sc, &lid, &number, nullptr, nullptr, nullptr, nullptr,
+                                 nullptr, nullptr),
+              SWMM_OK);
+    EXPECT_EQ(sc, 0);     // was 1 (S2), renumbered
+    EXPECT_EQ(number, 2); // S2's row survived intact
 }
 
 // Deleting a subcatchment clears snowpack removal_subcatch name references.
@@ -497,8 +532,7 @@ TEST_F(DeletionTest, DeleteSubcatchClearsSnowpackRemoval) {
 TEST_F(DeletionTest, DeleteGageClearsHydrographAssignments) {
     ASSERT_EQ(swmm_gage_add(engine, "G1"), SWMM_OK);
     ASSERT_EQ(swmm_hydrograph_add_gage(engine, "UH1", "G1"), SWMM_OK);
-    ASSERT_EQ(swmm_hydrograph_add(engine, "UH1", -1, 0,
-                                  0.05, 1.0, 2.0, 0.0, 0.0, 0.0), SWMM_OK);
+    ASSERT_EQ(swmm_hydrograph_add(engine, "UH1", -1, 0, 0.05, 1.0, 2.0, 0.0, 0.0, 0.0), SWMM_OK);
 
     SWMM_ImpactReport report{};
     ASSERT_EQ(swmm_gage_delete(engine, 0, &report), SWMM_OK);
@@ -509,8 +543,7 @@ TEST_F(DeletionTest, DeleteGageClearsHydrographAssignments) {
     swmm_impact_report_free(&report);
 
     char uh[32] = {0}, gage[32] = {0};
-    ASSERT_EQ(swmm_hydrograph_get_gage(engine, 0, uh, sizeof uh,
-                                       gage, sizeof gage), SWMM_OK);
+    ASSERT_EQ(swmm_hydrograph_get_gage(engine, 0, uh, sizeof uh, gage, sizeof gage), SWMM_OK);
     EXPECT_STREQ(uh, "UH1");
     EXPECT_STREQ(gage, "");
 }
@@ -531,9 +564,9 @@ TEST_F(DeletionTest, DeleteTableClearsExtInflowTsName) {
     int node_idx = -99;
     double mf, sf, baseline;
     char cons[32], ts[64], type[16], pat[64];
-    ASSERT_EQ(swmm_ext_inflow_get(engine, 0, &node_idx,
-                  cons, sizeof cons, ts, sizeof ts, type, sizeof type,
-                  &mf, &sf, &baseline, pat, sizeof pat), SWMM_OK);
+    ASSERT_EQ(swmm_ext_inflow_get(engine, 0, &node_idx, cons, sizeof cons, ts, sizeof ts, type,
+                                  sizeof type, &mf, &sf, &baseline, pat, sizeof pat),
+              SWMM_OK);
     EXPECT_STREQ(ts, "");
 }
 
@@ -543,8 +576,8 @@ TEST_F(DeletionTest, DeleteTableClearsExtInflowTsName) {
 TEST_F(DeletionTest, AnalyzeMatchesDeleteForNode) {
     build_simple_network();
     ASSERT_EQ(swmm_subcatch_add(engine, "S"), SWMM_OK);
-    ASSERT_EQ(swmm_subcatch_set_outlet(engine, 0, 1), SWMM_OK);   // outlet = B
-    ASSERT_EQ(swmm_subcatch_set_gw_node(engine, 0, 1), SWMM_OK);  // gw → B
+    ASSERT_EQ(swmm_subcatch_set_outlet(engine, 0, 1), SWMM_OK);  // outlet = B
+    ASSERT_EQ(swmm_subcatch_set_gw_node(engine, 0, 1), SWMM_OK); // gw → B
     ASSERT_EQ(swmm_ext_inflow_add(engine, 1, "FLOW", "", "FLOW", 1.0, 1.0, 0.1, ""), SWMM_OK);
     ASSERT_EQ(swmm_dwf_add(engine, 1, "FLOW", 0.2, "", "", "", ""), SWMM_OK);
     ASSERT_EQ(swmm_rdii_add(engine, 1, "UH1", 3.0), SWMM_OK);
@@ -563,9 +596,8 @@ TEST_F(DeletionTest, AnalyzeMatchesDeleteForNode) {
     // entries and the link "node1/node2" markers; every predicted entry kind
     // must appear in the actual report with at least the predicted count.
     for (const auto& [key, n] : p) {
-        EXPECT_GE(a[key], n) << "missing impact kind: type="
-                             << std::get<0>(key) << " field=" << std::get<1>(key)
-                             << " cascaded=" << std::get<2>(key);
+        EXPECT_GE(a[key], n) << "missing impact kind: type=" << std::get<0>(key)
+                             << " field=" << std::get<1>(key) << " cascaded=" << std::get<2>(key);
     }
     swmm_impact_report_free(&predicted);
     swmm_impact_report_free(&actual);

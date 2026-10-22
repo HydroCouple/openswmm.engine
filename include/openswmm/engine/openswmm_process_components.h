@@ -16,8 +16,8 @@
  */
 
 /**
- * @file openswmm_process_components.h
- * @brief C API — [PROCESS_COMPONENTS] registrations (E-C3 subset of the
+ * @file      openswmm_process_components.h
+ * @brief     C API — [PROCESS_COMPONENTS] registrations (E-C3 subset of the
  *        transport IO plan §5): enumerate, find, register, remove.
  *
  * @details The GUI's file-binding surface: an editor locates its component's
@@ -28,9 +28,9 @@
  *
  * @ingroup engine_api
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_PROCESS_COMPONENTS_H
@@ -42,34 +42,77 @@
 extern "C" {
 #endif
 
-/** @brief Number of [PROCESS_COMPONENTS] registrations. -1 on bad handle. */
+/**
+ * @brief Count stored model process-component registrations.
+ *
+ * Counts authoring entries, not discovered libraries or initialized runtime instances.
+ *
+ * @param[in] engine Non-null live engine with exclusive caller access.
+ * @return Nonnegative registration count, or -1 for null engine.
+ */
 SWMM_ENGINE_API int swmm_process_component_count(SWMM_Engine engine);
 
 /**
- * @brief Read one registration.
- * @param id_buf        [out] Component id (NUL-terminated).
- * @param config_buf    [out] The config="…" argument as written (may be "").
- * @param resolved_buf  [out] Effective path the config was READ from at the
- *                      last open ("" until resolution).
+ * @brief Copy one process-component registration and its last resolved config path.
+ *
+ * This is metadata retrieval only; it does not load the component or reread its configuration.
+ *
+ * @param[in] engine Non-null live engine with exclusive caller access.
+ * @param[in] idx Zero-based registration index.
+ * @param[out] id_buf Non-null caller-owned component-ID buffer, NUL-terminated and silently
+ *     truncated to id_len-1 bytes.
+ * @param[in] id_len Positive ID capacity in bytes including NUL.
+ * @param[out] config_buf Non-null caller-owned authored config-path buffer; empty is allowed,
+ *     NUL-terminated/truncated.
+ * @param[in] config_len Positive config capacity including NUL.
+ * @param[out] resolved_buf Non-null caller-owned resolved effective path buffer; empty until
+ *     resolution, NUL-terminated/truncated.
+ * @param[in] resolved_len Positive resolved-path capacity including NUL.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for invalid idx, or
+ *     SWMM_ERR_BADPARAM for a null/nonpositive-capacity buffer.
  */
-SWMM_ENGINE_API int swmm_process_component_get(SWMM_Engine engine, int idx,
-        char* id_buf, int id_len, char* config_buf, int config_len,
-        char* resolved_buf, int resolved_len);
-
-/** @brief Registration index for @p id, or -1. */
-SWMM_ENGINE_API int swmm_process_component_find(SWMM_Engine engine,
-        const char* id);
+SWMM_ENGINE_API int swmm_process_component_get(SWMM_Engine engine, int idx, char* id_buf,
+                                               int id_len, char* config_buf, int config_len,
+                                               char* resolved_buf, int resolved_len);
 
 /**
- * @brief Register a component (BUILDING/OPENED). Duplicate id refused.
- *        The config file need not exist yet.
+ * @brief Find a model registration by exact component ID.
+ *
+ * @param[in] engine Non-null live engine with exclusive caller access.
+ * @param[in] id Non-null NUL-terminated ID, matched case-sensitively.
+ * @return Zero-based registration index, or -1 for absent ID/null engine/null ID.
  */
-SWMM_ENGINE_API int swmm_process_component_register(SWMM_Engine engine,
-        const char* id, const char* config_path);
+SWMM_ENGINE_API int swmm_process_component_find(SWMM_Engine engine, const char* id);
 
-/** @brief Remove registration @p idx (BUILDING/OPENED). Indexes shift. */
-SWMM_ENGINE_API int swmm_process_component_remove(SWMM_Engine engine,
-        int idx);
+/**
+ * @brief Append an editable process-component registration.
+ *
+ * Does not resolve the ID against a catalogue or initialize/read the config immediately. Normal
+ * model resolution at a subsequent open consumes the registration; no automatic config file is
+ * created.
+ *
+ * @param[in] engine Non-null live engine with exclusive caller access.
+ * @param[in] id Non-null, nonempty NUL-terminated component ID to copy; an exact existing ID is
+ *     refused.
+ * @param[in] config_path Optional copied config path token; NULL means no config argument. The file
+ *     need not exist yet.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_LIFECYCLE outside BUILDING/OPENED,
+ *     or SWMM_ERR_BADPARAM for null/empty/duplicate ID.
+ */
+SWMM_ENGINE_API int swmm_process_component_register(SWMM_Engine engine, const char* id,
+                                                    const char* config_path);
+
+/**
+ * @brief Remove a model registration and shift later indices down.
+ *
+ * Does not delete its config file or independently unload a runtime instance.
+ *
+ * @param[in] engine Non-null live engine with exclusive caller access.
+ * @param[in] idx Zero-based existing registration index.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_LIFECYCLE outside BUILDING/OPENED,
+ *     or SWMM_ERR_BADINDEX for invalid idx.
+ */
+SWMM_ENGINE_API int swmm_process_component_remove(SWMM_Engine engine, int idx);
 
 /* ---- Built-in component catalogue (U1, 2026-09-07) -----------------------
  * The ids the engine knows how to bind, independent of any model: the six
@@ -79,20 +122,35 @@ SWMM_ENGINE_API int swmm_process_component_remove(SWMM_Engine engine,
  * PROG stream D) is a separate, later seam; this one never scans disk.
  */
 
-/** @brief Number of built-in component ids. */
+/**
+ * @brief Count process-global built-in catalogue entries.
+ *
+ * Independent of any model handle and does not scan disk.
+ * @return Number of known built-ins, including entries with no apply hook.
+ */
 SWMM_ENGINE_API int swmm_process_component_known_count(void);
 
 /**
- * @brief Read built-in id @p idx.
- * @param id_buf       [out] The id (e.g. "org.hydrocouple.openswmm.reactions").
- * @param desc_buf     [out] Short description.
- * @param implemented  [out] 1 when the component has an apply hook in this
- *                     build, 0 when it is a planned placeholder (its
- *                     registration line is diagnosed at open).
+ * @brief Read one process-global built-in catalogue entry.
+ *
+ * Optional outputs may all be suppressed; this does not validate whether a particular model/config
+ * can activate the built-in.
+ *
+ * @param[in] idx Zero-based index in [0,swmm_process_component_known_count()).
+ * @param[out] id_buf Optional caller-owned ID buffer, NUL-terminated/truncated when id_len>0.
+ * @param[in] id_len ID capacity including NUL; nonpositive suppresses ID output.
+ * @param[out] desc_buf Optional caller-owned description buffer, NUL-terminated/truncated when
+ *     desc_len>0.
+ * @param[in] desc_len Description capacity including NUL; nonpositive suppresses description
+ *     output.
+ * @param[out] implemented Optional destination: 1 when an apply hook is present in this build, 0
+ *     for a placeholder.
+ * @return SWMM_OK; SWMM_ERR_BADINDEX for invalid idx or SWMM_ERR_INTERNAL for an inconsistent
+ *     registry entry.
  */
-SWMM_ENGINE_API int swmm_process_component_known_get(int idx,
-        char* id_buf, int id_len, char* desc_buf, int desc_len,
-        int* implemented);
+SWMM_ENGINE_API int swmm_process_component_known_get(int idx, char* id_buf, int id_len,
+                                                     char* desc_buf, int desc_len,
+                                                     int* implemented);
 
 /* ------------------------------------------------------------------------
  * D2 (program plan §B.2.5) — discovered HydroCouple component libraries.
@@ -126,7 +184,7 @@ SWMM_ENGINE_API int swmm_process_component_known_get(int idx,
 /** @brief One discovered (or refused) component library. Strings are
  *         NUL-terminated and truncated to their field size. */
 typedef struct SWMM_ComponentLibraryInfo {
-    char id[256];          /**< component id; "" when refused */
+    char id[256]; /**< component id; "" when refused */
     char caption[256];
     char version[64];
     char path[1024];       /**< the library file */
@@ -136,21 +194,41 @@ typedef struct SWMM_ComponentLibraryInfo {
 } SWMM_ComponentLibraryInfo;
 
 /**
- * @brief Scan @p dir for component libraries now, and keep it for later.
- * @return SWMM_OK; SWMM_ERR_BADPARAM if @p dir is null or not a directory;
- *         SWMM_ERR_PLUGIN if the engine was built without HydroCouple support.
+ * @brief Scan an additional directory for HydroCouple component libraries.
+ *
+ * Discovery can load recognized shared libraries to inspect their component ABI. Recognized refused
+ * libraries remain in the catalogue with load_error; successful scanning does not imply every
+ * library was accepted. See the header discovery/stamp contract.
+ *
+ * @param[in] dir Non-null, nonempty NUL-terminated directory path, copied into the process-global
+ *     search configuration.
+ * @return SWMM_OK on accepted scan; SWMM_ERR_BADPARAM for null/empty/invalid directory, or
+ *     SWMM_ERR_PLUGIN when built without HydroCouple.
  */
 SWMM_ENGINE_API int swmm_component_search_path_add(const char* dir);
 
-/** @brief Number of recognised component libraries, refused ones included. */
+/**
+ * @brief Count recognized discovered component libraries, including refused candidates.
+ *
+ * Triggers normal initial discovery when required. No engine handle is needed; this count is
+ * distinct from model process-component registrations.
+ * @return Nonnegative process-global catalogue size; zero when no component libraries are
+ *     recognized (including builds without HydroCouple).
+ */
 SWMM_ENGINE_API int swmm_component_library_count(void);
 
 /**
- * @brief Read recognised library @p idx.
- * @return SWMM_OK; SWMM_ERR_BADINDEX; SWMM_ERR_BADPARAM if @p info is null.
+ * @brief Copy metadata for one recognized component-library candidate.
+ *
+ * May trigger initial discovery. Inspect load_error before treating the ID/caption/version as an
+ * accepted usable library; a returned catalogue entry can represent an ABI refusal.
+ *
+ * @param[in] idx Zero-based index in [0,swmm_component_library_count()).
+ * @param[out] info Non-null caller-owned fixed-size metadata destination. All string fields are
+ *     NUL-terminated and silently truncated to their own array capacity.
+ * @return SWMM_OK; SWMM_ERR_BADPARAM for null info or SWMM_ERR_BADINDEX for invalid idx.
  */
-SWMM_ENGINE_API int swmm_component_library_get(int idx,
-        SWMM_ComponentLibraryInfo* info);
+SWMM_ENGINE_API int swmm_component_library_get(int idx, SWMM_ComponentLibraryInfo* info);
 
 #ifdef __cplusplus
 }

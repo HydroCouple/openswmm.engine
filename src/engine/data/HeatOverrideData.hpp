@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file HeatOverrideData.hpp
- * @brief Plan PE — per-element radiative and bed attributes.
+ * @file      HeatOverrideData.hpp
+ * @brief     Plan PE — per-element radiative and bed attributes.
  *
  * @details Shading, sky view, land-cover emissivity and temperature, burial
  *          depth, ground temperature, hyporheic velocity and bed material
@@ -56,9 +56,9 @@
  * @see plans/transport/PER_ELEMENT_HEAT_ATTRIBUTES_PLAN_2026-09-01.md
  * @ingroup engine_data
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_DATA_HEAT_OVERRIDE_DATA_HPP
@@ -73,13 +73,13 @@ namespace openswmm {
 
 /// What kind of element a flux is being evaluated for (D-PE1).
 enum class HeatElemKind : std::uint8_t {
-    NODE     = 0,
-    LINK     = 1,
+    NODE = 0,
+    LINK = 1,
     SUBCATCH = 2,
-    LID      = 3,
+    LID = 3,
     /// Surface mesh cell; CELL2D and MESH_TAG overrides are independent
     /// of the network LINK/NODE/TAG namespaces.
-    CELL2D   = 4
+    CELL2D = 4
 };
 
 /**
@@ -93,21 +93,45 @@ enum class HeatElemKind : std::uint8_t {
  *          would silently give every element the FIRST link's attributes.
  */
 struct HeatElement {
-    HeatElemKind kind  = HeatElemKind::LINK;
-    int          index = -1;
+    HeatElemKind kind = HeatElemKind::LINK;
+    int index = -1;
 
+    /**
+     * @brief Construct a NODE heat-element descriptor.
+     *
+     * @param[in] i Stored index copied without bounds checking; negative denotes no usable element.
+     * @return Value descriptor; does not resolve names, allocate storage or enable overrides.
+     */
     static HeatElement node(int i) { return {HeatElemKind::NODE, i}; }
+    /**
+     * @brief Construct a LINK heat-element descriptor.
+     *
+     * @param[in] i Stored index copied without bounds checking; negative denotes no usable element.
+     * @return Value descriptor; does not resolve names, allocate storage or enable overrides.
+     */
     static HeatElement link(int i) { return {HeatElemKind::LINK, i}; }
+    /**
+     * @brief Construct a SUBCATCH heat-element descriptor.
+     *
+     * @param[in] i Stored index copied without bounds checking; negative denotes no usable element.
+     * @return Value descriptor; does not resolve names, allocate storage or enable overrides.
+     */
     static HeatElement subcatch(int i) { return {HeatElemKind::SUBCATCH, i}; }
-    static HeatElement cell2d(int i)   { return {HeatElemKind::CELL2D, i}; }
+    /**
+     * @brief Construct a CELL2D heat-element descriptor.
+     *
+     * @param[in] i Stored index copied without bounds checking; negative denotes no usable element.
+     * @return Value descriptor; does not resolve names, allocate storage or enable overrides.
+     */
+    static HeatElement cell2d(int i) { return {HeatElemKind::CELL2D, i}; }
 };
 
 /// Scope of one override row (D-PE3). Ordered by specificity.
 enum class HeatScope : std::uint8_t {
     GLOBAL = 0,
-    TAG    = 1,
-    NODE   = 2,
-    LINK   = 3,
+    TAG = 1,
+    NODE = 2,
+    LINK = 3,
     // 4/5 remain reserved for the effective-value API's air/series sources.
     CELL2D = 6,
     MESH_TAG = 7
@@ -130,7 +154,7 @@ enum class HeatAttr : int {
     SKY_VIEW,
     EMISS_WATER,
     EMISS_LANDCOVER,
-    LANDCOVER_TEMP,        ///< NEW (PE2) — NaN means "use air temperature"
+    LANDCOVER_TEMP, ///< NEW (PE2) — NaN means "use air temperature"
     // SedimentConfig
     SED_THERMAL_DIFFUSIVITY,
     SED_SOLUTE_DIFFUSIVITY,
@@ -145,9 +169,15 @@ enum class HeatAttr : int {
     COUNT_
 };
 
-/// True when the attribute belongs to `SedimentConfig` rather than
-/// `RadiativeConfig`. One predicate, so the two families cannot drift apart
-/// about which struct owns a key.
+/**
+ * @brief Classify an attribute ordinal by the sediment-family boundary.
+ *
+ * This threshold predicate does not perform a full HeatAttr range check.
+ *
+ * @param[in] a Heat attribute ordinal; caller validates membership separately.
+ * @return True for every ordinal >=SED_THERMAL_DIFFUSIVITY, including COUNT_ and larger unknown
+ *     values.
+ */
 inline bool isSedimentAttr(HeatAttr a) noexcept {
     return static_cast<int>(a) >= static_cast<int>(HeatAttr::SED_THERMAL_DIFFUSIVITY);
 }
@@ -155,10 +185,10 @@ inline bool isSedimentAttr(HeatAttr a) noexcept {
 /// One parsed override row, kept verbatim so the serializer can render what
 /// the user wrote rather than a resolved expansion of it.
 struct HeatOverrideRow {
-    HeatAttr    attr  = HeatAttr::ALBEDO;
-    HeatScope   scope = HeatScope::GLOBAL;
-    std::string name;    ///< tag or element name; empty at GLOBAL scope
-    double      value = 0.0;
+    HeatAttr attr = HeatAttr::ALBEDO;
+    HeatScope scope = HeatScope::GLOBAL;
+    std::string name; ///< tag or element name; empty at GLOBAL scope
+    double value = 0.0;
 };
 
 // The dense storage that these rows resolve into lives in HeatData.hpp, as
@@ -167,6 +197,6 @@ struct HeatOverrideRow {
 // here lets BedExchange.hpp and the flux evaluators take a `HeatElement`
 // without pulling in the whole heat-config header.
 
-}  // namespace openswmm
+} // namespace openswmm
 
-#endif  // OPENSWMM_ENGINE_DATA_HEAT_OVERRIDE_DATA_HPP
+#endif // OPENSWMM_ENGINE_DATA_HEAT_OVERRIDE_DATA_HPP

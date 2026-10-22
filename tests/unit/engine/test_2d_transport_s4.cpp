@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_2d_transport_s4.cpp
- * @brief Overland transport S4 — age, temperature and MSX rows on the
+ * @file      test_2d_transport_s4.cpp
+ * @brief     Overland transport S4 — age, temperature and MSX rows on the
  *        surface, and the coupling tuple's age/temperature halves.
  *
  * @details The rows take the 1D engines' layout verbatim (pollutants, MSX,
@@ -34,6 +34,10 @@
  *          tuple's temperature-volume half drained by the volume queue's
  *          rule, delivered to `node_temp_vol_in` instead of the
  *          EXTERNAL_INFLOW stand-in S3 used.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -64,6 +68,17 @@ using namespace openswmm::twoD;
 
 namespace {
 
+/**
+ * @brief Build a flat rectangular strip split into two triangles per square.
+ *
+ * No dimension/range validation occurs here; allocation/topology errors propagate.
+ *
+ * @param[in] nx Positive square count along x; derived counts must fit integer/storage limits.
+ * @param[in] ny Positive square count along y; derived counts must fit integer/storage limits.
+ * @param[in] dx Positive square edge length in metres.
+ * @param[in] n Manning roughness assigned uniformly, default 0.03.
+ * @return Owned mesh with zero bed elevations, geometry and topology built.
+ */
 MeshData makeStrip(int nx, int ny, double dx, double n = 0.03) {
     MeshData mesh;
     const int nvx = nx + 1, nvy = ny + 1;
@@ -71,25 +86,43 @@ MeshData makeStrip(int nx, int ny, double dx, double n = 0.03) {
     for (int j = 0; j < nvy; ++j)
         for (int i = 0; i < nvx; ++i) {
             const int v = j * nvx + i;
-            mesh.vx[v] = i * dx; mesh.vy[v] = j * dx; mesh.vz[v] = 0.0;
+            mesh.vx[v] = i * dx;
+            mesh.vy[v] = j * dx;
+            mesh.vz[v] = 0.0;
         }
     mesh.resize_triangles(2 * nx * ny);
     int t = 0;
     for (int j = 0; j < ny; ++j)
         for (int i = 0; i < nx; ++i) {
-            const int v00 = j * nvx + i,       v10 = j * nvx + i + 1;
+            const int v00 = j * nvx + i, v10 = j * nvx + i + 1;
             const int v01 = (j + 1) * nvx + i, v11 = (j + 1) * nvx + i + 1;
-            mesh.set_triangle(t, v00, v10, v11); ++t;
-            mesh.set_triangle(t, v00, v11, v01); ++t;
+            mesh.set_triangle(t, v00, v10, v11);
+            ++t;
+            mesh.set_triangle(t, v00, v11, v01);
+            ++t;
         }
-    for (int i = 0; i < mesh.n_triangles(); ++i) mesh.mannings_n[i] = n;
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        mesh.mannings_n[i] = n;
     buildMeshTopology(mesh);
     return mesh;
 }
 
-/// Still pond with a pollutant row (0) and a SIGNED temperature row (1).
-SurfaceStateData makePondPT(const MeshData& mesh, const SolverOptions2D& opts,
-                            double h, double c0, double t0) {
+/**
+ * @brief Create uniform pond water with one solute and one signed temperature row.
+ *
+ * Does not run heat/reaction/advection or validate physical inputs. Volume=h*area; closure helpers
+ * supply head/depth, and row names are copied into owned storage.
+ *
+ * @param[in] mesh Built compatible triangular mesh with cell areas in m2.
+ * @param[in] opts Cell closure options used to derive head/depth from volume.
+ * @param[in] h Nonnegative uniform area-based water depth in metres.
+ * @param[in] c0 Initial Cu concentration in the fixture native amount/m3 units.
+ * @param[in] t0 Initial signed water temperature in degrees C.
+ * @return Owned state with row0 Cu mass=c0*volume and row1 temperature-volume=t0*volume, plus
+ *     n_pollut1/temp_row1 metadata.
+ */
+SurfaceStateData makePondPT(const MeshData& mesh, const SolverOptions2D& opts, double h, double c0,
+                            double t0) {
     SurfaceStateData s;
     s.resize(mesh.n_triangles(), mesh.n_vertices());
     s.transport.resize(2, mesh.n_triangles(), 0);
@@ -105,39 +138,75 @@ SurfaceStateData makePondPT(const MeshData& mesh, const SolverOptions2D& opts,
     return s;
 }
 
+/**
+ * @brief Advance a freshly initialized surface solver in clipped reporting-size windows.
+ *
+ * Calls advance(t,min(t+dt_out,T)) from t=0; ignores returned achieved times/status and propagates
+ * exceptions. No output file is written by this helper itself.
+ *
+ * @param[in,out] solver Initialized solver at model time zero with live attached dependencies.
+ * @param[in] T Final model time in seconds; nonpositive performs no calls.
+ * @param[in] dt_out Positive window length in seconds, default 5; must remain positive to terminate
+ *     the loop.
+ */
 void run(ExplicitInertialSolver& solver, double T, double dt_out = 5.0) {
     for (double t = 0.0; t < T; t += dt_out)
         solver.advance(t, std::min(t + dt_out, T));
 }
 
 // ---- deck path ------------------------------------------------------------
-std::string deck(const std::string& options_extra, const std::string& iq,
-                 const std::string& node, double z_pan, double h0,
-                 const std::string& inflows = "", const std::string& pollut =
-                     "Cu     MG/L  0     0   0     0\n") {
+/**
+ * @brief Construct the CMS two-triangle coupling deck for age/temperature/solute transport.
+ *
+ * Only text construction occurs; arbitrary option/quality/series inputs are not parsed or validated
+ * here.
+ *
+ * @param[in] options_extra Raw additional project option lines, including required delimiters.
+ * @param[in] iq Raw initial-quality section text inserted before REPORT.
+ * @param[in] node Node identifier mapped to vertex0, normally J1 or O1.
+ * @param[in] z_pan Uniform mesh bed elevation in metres.
+ * @param[in] h0 Initial cell water depth in metres.
+ * @param[in] inflows Optional raw inflow/series sections inserted before 2D_OPTIONS.
+ * @param[in] pollut Raw pollutant rows, default one zero-decay Cu MG/L row.
+ * @return Owned twenty-minute DYNWAVE deck with 10-by-10 m pan, fixed explicit/one-tier/5 s surface
+ *     options and vertex coupling.
+ */
+std::string deck(const std::string& options_extra, const std::string& iq, const std::string& node,
+                 double z_pan, double h0, const std::string& inflows = "",
+                 const std::string& pollut = "Cu     MG/L  0     0   0     0\n") {
     std::ostringstream m;
     m << "[OPTIONS]\n"
          "FLOW_UNITS           CMS\nFLOW_ROUTING         DYNWAVE\n"
          "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
          "END_DATE             01/01/2026\nEND_TIME             00:20:00\n"
          "REPORT_STEP          00:01:00\nROUTING_STEP         5\n"
-         "ALLOW_PONDING        NO\n" << options_extra << "\n"
-         "[POLLUTANTS]\n;;Name Units Crain Cgw Crdii Kdecay\n" << pollut << "\n"
+         "ALLOW_PONDING        NO\n"
+      << options_extra
+      << "\n"
+         "[POLLUTANTS]\n;;Name Units Crain Cgw Crdii Kdecay\n"
+      << pollut
+      << "\n"
          "[JUNCTIONS]\nJ1 0.0 1.0 0 0 0\n\n"
          "[OUTFALLS]\nO1 -0.5 FREE NO\n\n"
          "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n"
          "[XSECTIONS]\nC1 CIRCULAR 0.3 0 0 0 1\n\n"
-      << inflows <<
-         "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
+      << inflows
+      << "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
          "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\n\n"
          "[2D_VERTICES]\n"
-         " 0.0  0.0 " << z_pan << "\n10.0  0.0 " << z_pan << "\n"
-         "10.0 10.0 " << z_pan << "\n 0.0 10.0 " << z_pan << "\n\n"
+         " 0.0  0.0 "
+      << z_pan << "\n10.0  0.0 " << z_pan
+      << "\n"
+         "10.0 10.0 "
+      << z_pan << "\n 0.0 10.0 " << z_pan
+      << "\n\n"
          "[2D_TRIANGLES]\n;;V1 V2 V3 N INIT_DEPTH\n"
-         "0 1 2 0.03 " << h0 << "\n0 2 3 0.03 " << h0 << "\n\n"
-         "[2D_VERTEX_NODE_MAP]\n0 " << node << " 0.7 1.0\n\n"
-      << iq <<
-         "[REPORT]\nINPUT NO\n";
+         "0 1 2 0.03 "
+      << h0 << "\n0 2 3 0.03 " << h0
+      << "\n\n"
+         "[2D_VERTEX_NODE_MAP]\n0 "
+      << node << " 0.7 1.0\n\n"
+      << iq << "[REPORT]\nINPUT NO\n";
     return m.str();
 }
 
@@ -147,37 +216,65 @@ struct CoupledRun {
     bool ok = false;
 };
 
+/**
+ * @brief Write/start a coupled transport fixture and optionally attempt the full step loop.
+ *
+ * Lifecycle failure/absent2D returns ok=false without destroying the created engine. Step failure
+ * exits the loop but still sets eng/ok=true, so ok proves startup/activity only. Leaves the engine
+ * un-ended for state inspection; copying result ownership is unsafe.
+ *
+ * @param[in] tag Filesystem-safe path stem for .inp/.rpt/.out in the test working directory.
+ * @param[in] body Complete input deck, copied through an unchecked stream.
+ * @param[in] step True steps until error/completion; false returns immediately after successful
+ *     start and active-2D check.
+ * @return Owned-result handle plus borrowed native eng pointer and ok flag; any non-null e,
+ *     including on failure, requires close(r).
+ */
 CoupledRun runDeck(const std::string& tag, const std::string& body, bool step = true) {
     CoupledRun r;
-    { std::ofstream f(tag + ".inp"); f << body; }
+    {
+        std::ofstream f(tag + ".inp");
+        f << body;
+    }
     r.e = swmm_engine_create();
-    if (!r.e) return r;
+    if (!r.e)
+        return r;
     if (swmm_engine_open(r.e, (tag + ".inp").c_str(), (tag + ".rpt").c_str(),
                          (tag + ".out").c_str(), nullptr) != SWMM_OK ||
-        swmm_engine_initialize(r.e) != SWMM_OK ||
-        swmm_engine_start(r.e, 1) != SWMM_OK)
+        swmm_engine_initialize(r.e) != SWMM_OK || swmm_engine_start(r.e, 1) != SWMM_OK)
         return r;
     int active = 0;
     swmm_2d_is_active(r.e, &active);
-    if (!active) return r;
+    if (!active)
+        return r;
     if (step) {
         double elapsed = 0.0;
-        while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+        while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+        }
     }
     r.eng = static_cast<openswmm::SWMMEngine*>(r.e);
     r.ok = true;
     return r;
 }
 
+/**
+ * @brief End/close/destroy the coupled transport result's engine and clear its handle.
+ *
+ * Ignores all cleanup statuses, sets e=null and leaves eng/ok unchanged. The retained eng pointer
+ * is dangling after non-null cleanup and must not be used; artifacts remain reviewable.
+ *
+ * @param[in,out] r Owning result from runDeck; null e is accepted.
+ */
 void close(CoupledRun& r) {
-    if (!r.e) return;
+    if (!r.e)
+        return;
     swmm_engine_end(r.e);
     swmm_engine_close(r.e);
     swmm_engine_destroy(r.e);
     r.e = nullptr;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // 1. Evaporation: the solute concentrates (S1), the temperature does NOT — a
@@ -226,15 +323,15 @@ TEST(SurfaceTransportS4, EvaporationLeavesTheMeanAgeUnchanged) {
     s.resize(mesh.n_triangles(), mesh.n_vertices());
     s.transport.resize(3, mesh.n_triangles(), 0);
     s.transport.n_pollut = 1;
-    s.transport.age_row  = 1;
+    s.transport.age_row = 1;
     s.transport.temp_row = 2;
     s.transport.row_names = {"Cu", "__WATER_AGE__", "__TEMPERATURE__"};
     for (int i = 0; i < mesh.n_triangles(); ++i) {
         s.volume[i] = h0 * mesh.tri_area[i];
         inertial::cellEtaDepth(mesh, opts, i, s.volume[i], s.head[i], s.depth[i]);
-        s.transport.cell_mass[s.transport.idx(0, i)] = c0   * s.volume[i];
+        s.transport.cell_mass[s.transport.idx(0, i)] = c0 * s.volume[i];
         s.transport.cell_mass[s.transport.idx(1, i)] = age0 * s.volume[i];
-        s.transport.cell_mass[s.transport.idx(2, i)] = t0   * s.volume[i];
+        s.transport.cell_mass[s.transport.idx(2, i)] = t0 * s.volume[i];
     }
     std::fill(s.evap_rate.begin(), s.evap_rate.end(), E);
 
@@ -245,15 +342,14 @@ TEST(SurfaceTransportS4, EvaporationLeavesTheMeanAgeUnchanged) {
     const double c_exp = c0 * h0 / (h0 - E * T);
     for (int i = 0; i < mesh.n_triangles(); ++i) {
         ASSERT_GT(s.volume[i], 0.0);
-        EXPECT_NEAR(s.volume[i], (h0 - E * T) * mesh.tri_area[i],
-                    1.0e-9 * h0 * mesh.tri_area[i]) << "volume at cell " << i;
-        const double c   = s.transport.cell_mass[s.transport.idx(0, i)] / s.volume[i];
+        EXPECT_NEAR(s.volume[i], (h0 - E * T) * mesh.tri_area[i], 1.0e-9 * h0 * mesh.tri_area[i])
+            << "volume at cell " << i;
+        const double c = s.transport.cell_mass[s.transport.idx(0, i)] / s.volume[i];
         const double age = s.transport.cell_mass[s.transport.idx(1, i)] / s.volume[i];
-        const double t   = s.transport.cell_mass[s.transport.idx(2, i)] / s.volume[i];
+        const double t = s.transport.cell_mass[s.transport.idx(2, i)] / s.volume[i];
         EXPECT_NEAR(c, c_exp, 1.0e-9 * c_exp) << "solute at cell " << i;
         EXPECT_NEAR(age, age0, 1.0e-9 * age0)
-            << "age at cell " << i
-            << " — evaporation must leave at the water's own age";
+            << "age at cell " << i << " — evaporation must leave at the water's own age";
         EXPECT_NEAR(t, t0, 1.0e-9 * t0) << "temperature at cell " << i;
     }
 }
@@ -287,11 +383,12 @@ TEST(SurfaceTransportS4, TemperatureRowIsSignedEverywhere) {
     for (int i = 0; i < mesh.n_triangles(); ++i) {
         tv1 += s.transport.cell_mass[s.transport.idx(1, i)];
         const double t = s.transport.cell_mass[s.transport.idx(1, i)] / s.volume[i];
-        tmin = std::min(tmin, t); tmax = std::max(tmax, t);
+        tmin = std::min(tmin, t);
+        tmax = std::max(tmax, t);
     }
     EXPECT_NEAR(tv1, tv0, 1.0e-9 * 5.0 * 40.0);
     EXPECT_GE(tmin, -5.0 * (1.0 + 1.0e-10));
-    EXPECT_LE(tmax,  5.0 * (1.0 + 1.0e-10));
+    EXPECT_LE(tmax, 5.0 * (1.0 + 1.0e-10));
     EXPECT_LT(tmin, -4.0) << "the cold half vanished — a positivity guard ate it";
     EXPECT_EQ(s.transport.dispersion_limiter_binds, 0L);
 }
@@ -306,10 +403,11 @@ TEST(SurfaceTransportS4, RowsFollowThe1DLayoutAndAStillPanAgesExactly) {
     // node is EMPTY and the pan is not coupled hydraulically in a way that
     // drains (vertex 0 maps to J1 — the orifice law WILL drain). Use O1 with
     // the pan far BELOW the outfall so nothing crosses: a still pan.
-    CoupledRun r = runDeck("_s4_still", deck(
-        "WATER_AGE            YES\nHEAT_TRANSPORT       YES\n",
-        "[2D_INITIAL_QUALITY]\n* Cu 2.0\n* __WATER_AGE__ 100\n* __TEMPERATURE__ 12.5\n\n",
-        "O1", -10.0, 0.5));
+    CoupledRun r = runDeck(
+        "_s4_still",
+        deck("WATER_AGE            YES\nHEAT_TRANSPORT       YES\n",
+             "[2D_INITIAL_QUALITY]\n* Cu 2.0\n* __WATER_AGE__ 100\n* __TEMPERATURE__ 12.5\n\n",
+             "O1", -10.0, 0.5));
     ASSERT_TRUE(r.ok);
     const auto& router = r.eng->surfaceRouter2D();
     const auto& st = router.state();
@@ -347,18 +445,20 @@ TEST(SurfaceTransportS4, RowsFollowThe1DLayoutAndAStillPanAgesExactly) {
 //     A deck without transport keeps the plain notice.
 // ---------------------------------------------------------------------------
 TEST(SurfaceTransportS4, TransportRowsRefuseTheKokkosPluginLoudly) {
-    CoupledRun r = runDeck("_s4_kokkos_tr", deck(
-        "WATER_AGE            YES\n",
-        "[2D_INITIAL_QUALITY]\n* __WATER_AGE__ 1\n\n", "O1", -10.0, 0.5), false);
+    CoupledRun r = runDeck("_s4_kokkos_tr",
+                           deck("WATER_AGE            YES\n",
+                                "[2D_INITIAL_QUALITY]\n* __WATER_AGE__ 1\n\n", "O1", -10.0, 0.5),
+                           false);
     ASSERT_TRUE(r.ok);
     bool said = false;
     for (const auto& w : r.eng->surfaceRouter2D().threadWarnings())
-        if (w.find("carries no transport rows") != std::string::npos) said = true;
+        if (w.find("carries no transport rows") != std::string::npos)
+            said = true;
     EXPECT_TRUE(said) << "transport on: the notice must name the plugin refusal";
     close(r);
 
-    CoupledRun q = runDeck("_s4_kokkos_notr", deck(
-        "IGNORE_QUALITY       YES\n", "", "O1", -10.0, 0.5), false);
+    CoupledRun q =
+        runDeck("_s4_kokkos_notr", deck("IGNORE_QUALITY       YES\n", "", "O1", -10.0, 0.5), false);
     ASSERT_TRUE(q.ok);
     for (const auto& w : q.eng->surfaceRouter2D().threadWarnings())
         EXPECT_EQ(w.find("carries no transport rows"), std::string::npos)
@@ -376,14 +476,14 @@ TEST(SurfaceTransportS4, TransportRowsRefuseTheKokkosPluginLoudly) {
 // ---------------------------------------------------------------------------
 TEST(SurfaceTransportS4, DrainDeliversTheCellTemperatureToTheNode) {
     const double t0 = 15.0;
-    CoupledRun r = runDeck("_s4_drain_t", deck(
-        "HEAT_TRANSPORT       YES\n",
-        "[2D_INITIAL_QUALITY]\n* Cu 4.0\n* __TEMPERATURE__ 15.0\n\n",
-        "J1", 1.0, 0.5));
+    CoupledRun r =
+        runDeck("_s4_drain_t",
+                deck("HEAT_TRANSPORT       YES\n",
+                     "[2D_INITIAL_QUALITY]\n* Cu 4.0\n* __TEMPERATURE__ 15.0\n\n", "J1", 1.0, 0.5));
     ASSERT_TRUE(r.ok);
-    const auto& ctx    = r.eng->context();
+    const auto& ctx = r.eng->context();
     const auto& router = r.eng->surfaceRouter2D();
-    const auto& tr     = router.state().transport;
+    const auto& tr = router.state().transport;
     ASSERT_EQ(tr.temp_row, 1);
     ASSERT_GT(ctx.mass_balance_2d.coupling_2d_to_1d_out, 0.5);
 
@@ -408,27 +508,25 @@ TEST(SurfaceTransportS4, DrainDeliversTheCellTemperatureToTheNode) {
 //    `nodes.conc` mis-strided (which would put Cu's 4.0 into the T row).
 // ---------------------------------------------------------------------------
 TEST(SurfaceTransportS4, SpillArrivesAtTheNodeTemperature) {
-    const std::string inflows =
-        "[INFLOWS]\n"
-        "J1 FLOW \"\" FLOW   1.0 1.0 0.3\n"
-        "J1 Cu   \"\" CONCEN 1.0 1.0 4.0\n\n";
+    const std::string inflows = "[INFLOWS]\n"
+                                "J1 FLOW \"\" FLOW   1.0 1.0 0.3\n"
+                                "J1 Cu   \"\" CONCEN 1.0 1.0 4.0\n\n";
     // First run: discover the node temperature the 1D side publishes.
-    CoupledRun probe = runDeck("_s4_spill_probe", deck(
-        "HEAT_TRANSPORT       YES\n",
-        "[2D_INITIAL_QUALITY]\n* Cu 4.0\n\n", "J1", 0.5, 0.2, inflows));
+    CoupledRun probe = runDeck("_s4_spill_probe",
+                               deck("HEAT_TRANSPORT       YES\n",
+                                    "[2D_INITIAL_QUALITY]\n* Cu 4.0\n\n", "J1", 0.5, 0.2, inflows));
     ASSERT_TRUE(probe.ok);
     const int j1 = swmm_node_index(probe.e, "J1");
     ASSERT_GE(j1, 0);
-    const double t_node =
-        probe.eng->context().heat_state.node_temp[static_cast<std::size_t>(j1)];
+    const double t_node = probe.eng->context().heat_state.node_temp[static_cast<std::size_t>(j1)];
     ASSERT_GT(probe.eng->context().mass_balance_2d.coupling_1d_to_2d_in, 0.5);
     close(probe);
     ASSERT_NE(t_node, 4.0) << "fixture cannot tell the T row from the Cu row";
 
     std::ostringstream iq;
     iq << "[2D_INITIAL_QUALITY]\n* Cu 4.0\n* __TEMPERATURE__ " << t_node << "\n\n";
-    CoupledRun r = runDeck("_s4_spill_t", deck(
-        "HEAT_TRANSPORT       YES\n", iq.str(), "J1", 0.5, 0.2, inflows));
+    CoupledRun r = runDeck("_s4_spill_t",
+                           deck("HEAT_TRANSPORT       YES\n", iq.str(), "J1", 0.5, 0.2, inflows));
     ASSERT_TRUE(r.ok);
     const auto& router = r.eng->surfaceRouter2D();
     const auto& st = router.state();
@@ -437,8 +535,10 @@ TEST(SurfaceTransportS4, SpillArrivesAtTheNodeTemperature) {
     double worst_c = 0.0, worst_t = 0.0;
     for (int c = 0; c < tr.n_cells; ++c) {
         const double v_dry = router.options().dry_depth * router.mesh().tri_area[c];
-        if (!(st.volume[c] > v_dry)) continue;
-        worst_c = std::max(worst_c, std::fabs(tr.cell_mass[tr.idx(0, c)] / st.volume[c] - 4.0) / 4.0);
+        if (!(st.volume[c] > v_dry))
+            continue;
+        worst_c =
+            std::max(worst_c, std::fabs(tr.cell_mass[tr.idx(0, c)] / st.volume[c] - 4.0) / 4.0);
         worst_t = std::max(worst_t, std::fabs(tr.cell_mass[tr.idx(1, c)] / st.volume[c] - t_node) /
                                         std::fabs(t_node));
     }
@@ -454,17 +554,17 @@ TEST(SurfaceTransportS4, SpillArrivesAtTheNodeTemperature) {
 //    does not decay.
 // ---------------------------------------------------------------------------
 TEST(SurfaceTransportS4, PollutantKdecayAppliesOnTheSurfaceAndIsLedgered) {
-    CoupledRun r = runDeck("_s4_decay", deck(
-        "HEAT_TRANSPORT       YES\n",
-        "[2D_INITIAL_QUALITY]\n* Cu 4.0\n* __TEMPERATURE__ 12.0\n\n",
-        "O1", -10.0, 0.5, "",
-        "Cu     MG/L  0     0   0     0.5\n"));   // Kdecay 0.5 /day
+    CoupledRun r =
+        runDeck("_s4_decay", deck("HEAT_TRANSPORT       YES\n",
+                                  "[2D_INITIAL_QUALITY]\n* Cu 4.0\n* __TEMPERATURE__ 12.0\n\n",
+                                  "O1", -10.0, 0.5, "",
+                                  "Cu     MG/L  0     0   0     0.5\n")); // Kdecay 0.5 /day
     ASSERT_TRUE(r.ok);
-    const auto& ctx    = r.eng->context();
+    const auto& ctx = r.eng->context();
     const auto& router = r.eng->surfaceRouter2D();
-    const auto& st     = router.state();
-    const auto& tr     = router.state().transport;
-    const double k_s   = ctx.pollutants.k_decay[0];      // internal 1/s
+    const auto& st = router.state();
+    const auto& tr = router.state().transport;
+    const double k_s = ctx.pollutants.k_decay[0]; // internal 1/s
     ASSERT_GT(k_s, 0.0);
     const double T = 20.0 * 60.0;
     const double c_exp = 4.0 * std::exp(-k_s * T);
@@ -488,15 +588,16 @@ TEST(SurfaceTransportS4, PollutantKdecayAppliesOnTheSurfaceAndIsLedgered) {
 //    hydraulics are bit-identical to the pollutant-only S3 deck.
 // ---------------------------------------------------------------------------
 TEST(SurfaceTransportS4, ExtraRowsArePassengersOnTheHydraulics) {
-    CoupledRun a = runDeck("_s4_pass_a", deck("", "[2D_INITIAL_QUALITY]\n* Cu 4.0\n\n",
-                                              "J1", 1.0, 0.5));
+    CoupledRun a =
+        runDeck("_s4_pass_a", deck("", "[2D_INITIAL_QUALITY]\n* Cu 4.0\n\n", "J1", 1.0, 0.5));
     ASSERT_TRUE(a.ok);
     std::vector<double> vol_a = a.eng->surfaceRouter2D().state().volume;
     close(a);
-    CoupledRun b = runDeck("_s4_pass_b", deck(
-        "WATER_AGE            YES\nHEAT_TRANSPORT       YES\n",
-        "[2D_INITIAL_QUALITY]\n* Cu 4.0\n* __WATER_AGE__ 50\n* __TEMPERATURE__ 9.0\n\n",
-        "J1", 1.0, 0.5));
+    CoupledRun b = runDeck(
+        "_s4_pass_b",
+        deck("WATER_AGE            YES\nHEAT_TRANSPORT       YES\n",
+             "[2D_INITIAL_QUALITY]\n* Cu 4.0\n* __WATER_AGE__ 50\n* __TEMPERATURE__ 9.0\n\n", "J1",
+             1.0, 0.5));
     ASSERT_TRUE(b.ok);
     EXPECT_EQ(b.eng->surfaceRouter2D().state().volume, vol_a);
     close(b);
@@ -510,12 +611,12 @@ TEST(SurfaceTransportS4, ExtraRowsArePassengersOnTheHydraulics) {
 TEST(SurfaceTransportS4, QualitySectionsRoundTripThroughTheWriter) {
     // Pan far below O1 (still), with a non-WALL boundary edge so the
     // [2D_BOUNDARY_QUALITY] row can resolve, and DISPERSION set.
-    std::string body = deck(
-        "HEAT_TRANSPORT       YES\n",
-        "[2D_INITIAL_QUALITY]\n* Cu 2.0\nCELL 2 Cu 7.0\n* __TEMPERATURE__ 11.0\n\n"
-        "[2D_BOUNDARY_CONDITIONS]\n0 0 SPECIFIED_FLOW 0.0\n\n"
-        "[2D_BOUNDARY_QUALITY]\n0 0 Cu 3.5\n0 0 __TEMPERATURE__ 8.0\n\n",
-        "O1", -10.0, 0.5);
+    std::string body =
+        deck("HEAT_TRANSPORT       YES\n",
+             "[2D_INITIAL_QUALITY]\n* Cu 2.0\nCELL 2 Cu 7.0\n* __TEMPERATURE__ 11.0\n\n"
+             "[2D_BOUNDARY_CONDITIONS]\n0 0 SPECIFIED_FLOW 0.0\n\n"
+             "[2D_BOUNDARY_QUALITY]\n0 0 Cu 3.5\n0 0 __TEMPERATURE__ 8.0\n\n",
+             "O1", -10.0, 0.5);
     body.replace(body.find("REPORT_2D NO\n"), std::string("REPORT_2D NO\n").size(),
                  "REPORT_2D NO\nDISPERSION 0.02\n");
     CoupledRun a = runDeck("_s4_rt_a", body, /*step=*/false);
@@ -523,13 +624,18 @@ TEST(SurfaceTransportS4, QualitySectionsRoundTripThroughTheWriter) {
     const auto& tra = a.eng->surfaceRouter2D().state().transport;
     ASSERT_EQ(tra.n_species, 2);
     const std::vector<double> mass_a = tra.cell_mass;
-    const std::vector<double> bc_a   = tra.bc_conc;
+    const std::vector<double> bc_a = tra.bc_conc;
     ASSERT_EQ(a.eng->surfaceRouter2D().options().dispersion, 0.02);
     ASSERT_EQ(swmm_model_write(a.e, "_s4_rt_b.inp"), 0);
     close(a);
 
     std::string written;
-    { std::ifstream f("_s4_rt_b.inp"); std::ostringstream ss; ss << f.rdbuf(); written = ss.str(); }
+    {
+        std::ifstream f("_s4_rt_b.inp");
+        std::ostringstream ss;
+        ss << f.rdbuf();
+        written = ss.str();
+    }
     EXPECT_NE(written.find("[2D_INITIAL_QUALITY]"), std::string::npos) << written;
     EXPECT_NE(written.find("[2D_BOUNDARY_QUALITY]"), std::string::npos) << written;
     EXPECT_NE(written.find("DISPERSION"), std::string::npos) << written;
@@ -539,7 +645,7 @@ TEST(SurfaceTransportS4, QualitySectionsRoundTripThroughTheWriter) {
     ASSERT_TRUE(b.ok) << "the written deck did not reopen";
     const auto& trb = b.eng->surfaceRouter2D().state().transport;
     EXPECT_EQ(trb.cell_mass, mass_a) << "seeded state differs after the round trip";
-    EXPECT_EQ(trb.bc_conc, bc_a)     << "boundary quality differs after the round trip";
+    EXPECT_EQ(trb.bc_conc, bc_a) << "boundary quality differs after the round trip";
     EXPECT_EQ(b.eng->surfaceRouter2D().options().dispersion, 0.02);
     close(b);
 }

@@ -1,4 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
+
+/**
+ * @file      test_perf_timers.cpp
+ * @brief     Tests for perf timers.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
 #include <gtest/gtest.h>
 #include "core/PerfTimers.hpp"
 #include <thread>
@@ -7,7 +17,8 @@
 namespace perf = openswmm::perf;
 
 TEST(PerfCounters, ParallelNestedBatchesRetainEveryOperation) {
-    if (!perf::enabled()) GTEST_SKIP() << "run with OPENSWMM_PERF=1";
+    if (!perf::enabled())
+        GTEST_SKIP() << "run with OPENSWMM_PERF=1";
     perf::reset_fv();
     constexpr int workers = 8;
     constexpr int operations = 100000;
@@ -26,7 +37,8 @@ TEST(PerfCounters, ParallelNestedBatchesRetainEveryOperation) {
             perf::count(perf::n_fv_geom_i1, 3);
         });
     }
-    for (auto& thread : threads) thread.join();
+    for (auto& thread : threads)
+        thread.join();
     EXPECT_EQ(perf::value(perf::n_fv_geom_area), workers * operations);
     EXPECT_EQ(perf::value(perf::n_fv_geom_width), 2 * workers * operations);
     EXPECT_EQ(perf::value(perf::n_fv_alg_resid), 7 * workers);
@@ -34,7 +46,8 @@ TEST(PerfCounters, ParallelNestedBatchesRetainEveryOperation) {
 }
 
 TEST(PerfCounters, BatchExitRestoresSerialDestinationAndResetClearsTotals) {
-    if (!perf::enabled()) GTEST_SKIP() << "run with OPENSWMM_PERF=1";
+    if (!perf::enabled())
+        GTEST_SKIP() << "run with OPENSWMM_PERF=1";
     perf::reset_fv();
     {
         perf::CounterBatch batch;
@@ -53,7 +66,8 @@ TEST(PerfCounters, BatchExitRestoresSerialDestinationAndResetClearsTotals) {
 }
 
 TEST(PerfCounters, DisabledProfilingDoesNotAccumulate) {
-    if (perf::enabled()) GTEST_SKIP() << "run without OPENSWMM_PERF";
+    if (perf::enabled())
+        GTEST_SKIP() << "run without OPENSWMM_PERF";
     perf::reset_fv();
     perf::count(perf::n_fv_substep, 10);
     {

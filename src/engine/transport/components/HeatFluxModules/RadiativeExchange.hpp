@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file RadiativeExchange.hpp
- * @brief Phase H3 — shortwave and longwave radiation at the water surface
+ * @file      RadiativeExchange.hpp
+ * @brief     Phase H3 — shortwave and longwave radiation at the water surface
  *        (heat plan §2.2; RHEComponent §6).
  *
  * @details Four terms, each a pure function so it can be gated against the
@@ -62,15 +62,15 @@
  * @see plans/transport/HEAT_TRANSPORT_PLAN.md §2.2, §6 H3
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_RADIATIVE_EXCHANGE_HPP
 #define OPENSWMM_ENGINE_TRANSPORT_RADIATIVE_EXCHANGE_HPP
 
-#include "../../../data/HeatOverrideData.hpp"   // HeatElement (PE1)
+#include "../../../data/HeatOverrideData.hpp" // HeatElement (PE1)
 
 namespace openswmm {
 struct SimulationContext;
@@ -86,8 +86,7 @@ inline constexpr double kStefanBoltzmann = 5.67e-8;
 inline constexpr double kKelvinOffset = 273.15;
 
 /// Net absorbed shortwave [W/m²], INTO the water.
-double netShortwave(double incoming_wm2, double albedo,
-                    double shade_factor) noexcept;
+double netShortwave(double incoming_wm2, double albedo, double shade_factor) noexcept;
 
 /// Back longwave emitted by the water [W/m²], OUT of the water.
 double backLongwave(double t_water_c, double emiss_water) noexcept;
@@ -103,14 +102,12 @@ double atmosphericEmissivity(double e_a_kpa, double atm_emiss_coeff,
                              double cloud_factor = 1.0) noexcept;
 
 /// Atmospheric longwave [W/m²], INTO the water.
-double atmosphericLongwave(double t_air_c, double humidity_pct,
-                           double atm_emiss_coeff, double lw_reflection,
-                           double sky_view,
+double atmosphericLongwave(double t_air_c, double humidity_pct, double atm_emiss_coeff,
+                           double lw_reflection, double sky_view,
                            double cloud_factor = 1.0) noexcept;
 
 /// Land-cover longwave [W/m²], INTO the water.
-double landCoverLongwave(double t_air_c, double emiss_landcover,
-                         double sky_view) noexcept;
+double landCoverLongwave(double t_air_c, double emiss_landcover, double sky_view) noexcept;
 
 /// Net radiative flux [W/m²], **positive OUT of the water** so it sums with
 /// SurfaceExchange's `Je + Jc`.
@@ -121,11 +118,9 @@ double landCoverLongwave(double t_air_c, double emiss_landcover,
 ///     The sentinel is negative rather than NaN because a deck may legally
 ///     mean 0 W/m² (night), and 0 must not be mistaken for "unset".
 ///   - `cloud_factor` defaults to 1.0 — see `atmosphericEmissivity`.
-double netRadiativeFluxOut(double t_water_c, double t_air_c,
-                           double humidity_pct, const RadiativeConfig& cfg,
-                           double jin_wm2 = -1.0,
-                           double cloud_factor = 1.0,
-                           double incoming_longwave = -1.0) noexcept;
+double netRadiativeFluxOut(double t_water_c, double t_air_c, double humidity_pct,
+                           const RadiativeConfig& cfg, double jin_wm2 = -1.0,
+                           double cloud_factor = 1.0, double incoming_longwave = -1.0) noexcept;
 
 /// This module's contribution to the net outward flux at `t_w` [W/m²].
 /// Returns 0 unless HEAT_TRANSPORT is on AND `[HEAT_FLUXES]
@@ -135,11 +130,11 @@ double netRadiativeFluxOut(double t_water_c, double t_air_c,
 /// its own element traversal and its own explicit conversion, and that is
 /// how it came to relax separately from SurfaceExchange toward a different
 /// equilibrium — making the answer depend on which module ran last.
-double radiativeFluxOut(const SimulationContext& ctx,
-                        const HeatElement& elem, double t_w) noexcept;
+double radiativeFluxOut(const SimulationContext& ctx, const HeatElement& elem, double t_w) noexcept;
 /// Same evaluator with an explicit domain enable; no global mutation.
-double radiativeFluxOut(const SimulationContext&,const HeatElement&,double,bool enabled) noexcept;
+double radiativeFluxOut(const SimulationContext&, const HeatElement&, double,
+                        bool enabled) noexcept;
 
-}  // namespace openswmm::transport::heat
+} // namespace openswmm::transport::heat
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_RADIATIVE_EXCHANGE_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_RADIATIVE_EXCHANGE_HPP

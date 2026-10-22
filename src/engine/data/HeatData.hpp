@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file HeatData.hpp
- * @brief Heat-transport data (heat plan §1, §3; phase H1).
+ * @file      HeatData.hpp
+ * @brief     Heat-transport data (heat plan §1, §3; phase H1).
  *
  * @details Temperature is the reserved species `__TEMPERATURE__` (registry
  *          kind RESERVED_TEMPERATURE), advected and mixed by whichever
@@ -48,9 +48,9 @@
  * @see data/WaterAgeData.hpp — the shape this mirrors
  * @ingroup engine_data
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_DATA_HEAT_DATA_HPP
@@ -68,16 +68,16 @@ namespace openswmm {
 /// Order is the storage index of HeatConfigData::global_temp, and matches
 /// WaterAgeSource one-for-one so the two tables read the same way.
 enum class HeatSource : int {
-    RAINFALL        = 0,  ///< washoff runoff. H5b retired this row's
-                          ///< second job: a LID drain now leaves at its
-                          ///< own storage-layer temperature, not the rain's.
-    DWF             = 1,
-    GW              = 2,
-    RDII            = 3,
+    RAINFALL = 0, ///< washoff runoff. H5b retired this row's
+                  ///< second job: a LID drain now leaves at its
+                  ///< own storage-layer temperature, not the rain's.
+    DWF = 1,
+    GW = 2,
+    RDII = 3,
     EXTERNAL_INFLOW = 4,
-    IFACE           = 5,
-    INITIAL_STATE   = 6,  ///< water in the network at t = 0
-    COUNT_          = 7
+    IFACE = 5,
+    INITIAL_STATE = 6, ///< water in the network at t = 0
+    COUNT_ = 7
 };
 
 /// H5a: which subarea of a subcatchment a ponded temperature belongs to.
@@ -85,12 +85,7 @@ enum class HeatSource : int {
 /// the members coincide today: nothing guarantees the age and heat tracks
 /// keep the same subarea decomposition, and a shared enum would make a
 /// future divergence a silent index error rather than a compile error.
-enum class HeatSubArea : int {
-    IMPERV0 = 0,
-    IMPERV1 = 1,
-    PERV    = 2,
-    COUNT_  = 3
-};
+enum class HeatSubArea : int { IMPERV0 = 0, IMPERV1 = 1, PERV = 2, COUNT_ = 3 };
 
 /**
  * @brief What a dry or absent element reports (plan D-H5c, user 2026-08-19).
@@ -103,15 +98,14 @@ enum class HeatSubArea : int {
 enum class DryTempPolicy : int {
     /// Freeze the last wet value; rewetting mixes against it. Invents no
     /// number and needs no forcing series, which is why it is the default.
-    HOLD    = 0,
+    HOLD = 0,
     /// Track air temperature — the physical answer for an exposed dry
     /// surface. Costs a dependency on the met forcing.
-    AIR     = 1,
+    AIR = 1,
     /// Fall to `HeatConfigData::kDefaultTemp`. Reproducible, but it invents
     /// a number that then looks like data.
     DEFAULT = 2
 };
-
 
 /**
  * @brief Vertical conduction between LID layers (plan §6.1 D-H5b, H5b).
@@ -133,10 +127,10 @@ enum class DryTempPolicy : int {
  *          defensible pair, deliberately not taken here.
  */
 struct ConductionConfig {
-    double water_conductivity = 0.606;   ///< W/m/K  (gwmodel.h:885)
-    double sed_conductivity   = 2.6;     ///< W/m/K  (gwmodel.h:886)
-    double sed_density        = 1970.0;  ///< kg/m³  (gwmodel.cpp:51)
-    double sed_specific_heat  = 2758.0;  ///< J/kg/K (gwmodel.cpp:52)
+    double water_conductivity = 0.606; ///< W/m/K  (gwmodel.h:885)
+    double sed_conductivity = 2.6;     ///< W/m/K  (gwmodel.h:886)
+    double sed_density = 1970.0;       ///< kg/m³  (gwmodel.cpp:51)
+    double sed_specific_heat = 2758.0; ///< J/kg/K (gwmodel.cpp:52)
 };
 
 /**
@@ -150,9 +144,9 @@ struct ConductionConfig {
  *          rather than clamping it.
  */
 enum class ShortwaveMode : int {
-    CONSTANT   = 0,  ///< `SHORTWAVE GLOBAL <W/m²>` — the H3 spelling.
-    TIMESERIES = 1,  ///< `SHORTWAVE GLOBAL TIMESERIES <name>` — measured.
-    COMPUTED   = 2   ///< `SHORTWAVE GLOBAL COMPUTED` — position + clear-sky.
+    CONSTANT = 0,   ///< `SHORTWAVE GLOBAL <W/m²>` — the H3 spelling.
+    TIMESERIES = 1, ///< `SHORTWAVE GLOBAL TIMESERIES <name>` — measured.
+    COMPUTED = 2    ///< `SHORTWAVE GLOBAL COMPUTED` — position + clear-sky.
 };
 
 /**
@@ -172,15 +166,15 @@ enum class ShortwaveMode : int {
  *       "true solar time", which is not "longitude 0"). Plan §2.5 trap 2.
  */
 struct SolarConfig {
-    double latitude_deg   = 0.0;    ///< +N. REQUIRED under COMPUTED.
-    double longitude_deg  = 0.0;    ///< +E. REQUIRED under COMPUTED.
-    double timezone_hours = 0.0;    ///< Offset from UTC, +E (e.g. MST = -7).
-    bool   has_latitude   = false;  ///< Set by the parser, checked at close.
-    bool   has_longitude  = false;
+    double latitude_deg = 0.0;   ///< +N. REQUIRED under COMPUTED.
+    double longitude_deg = 0.0;  ///< +E. REQUIRED under COMPUTED.
+    double timezone_hours = 0.0; ///< Offset from UTC, +E (e.g. MST = -7).
+    bool has_latitude = false;   ///< Set by the parser, checked at close.
+    bool has_longitude = false;
     /// Not required — 0 (UTC) is a legal answer — but an OMITTED timezone
     /// shifts the whole diurnal curve by up to 12 h, which dwarfs every
     /// other error in this module. Tracked so the parser can WARN.
-    bool   has_timezone   = false;
+    bool has_timezone = false;
 
     /// Site elevation, metres, for the Bird pressure term. Absent means
     /// "take the climate state's `elev`", which is the usual case.
@@ -190,16 +184,16 @@ struct SolarConfig {
     /// Salton Sea), and every one of them would have been silently
     /// discarded in favour of the climate value. An explicit flag cannot
     /// collide with a legal value.
-    double elevation_m    = 0.0;
-    bool   has_elevation  = false;
+    double elevation_m = 0.0;
+    bool has_elevation = false;
 
     // ---- Bird & Hulstrom (1981) atmosphere. Defaults are the paper's
     //      standard atmosphere.
-    double aod380        = 0.30;   ///< Aerosol optical depth at 380 nm
-    double aod500        = 0.20;   ///< Aerosol optical depth at 500 nm
+    double aod380 = 0.30;          ///< Aerosol optical depth at 380 nm
+    double aod500 = 0.20;          ///< Aerosol optical depth at 500 nm
     double precip_water_cm = 1.42; ///< Precipitable water vapour, cm
-    double ozone_cm        = 0.34; ///< Ozone column, cm (NTP)
-    double ground_albedo   = 0.20; ///< Surface albedo for the sky-ground
+    double ozone_cm = 0.34;        ///< Ozone column, cm (NTP)
+    double ground_albedo = 0.20;   ///< Surface albedo for the sky-ground
                                    ///< multiple-reflection term. NOT
                                    ///< `RadiativeConfig::albedo`, which is
                                    ///< the WATER's reflectance — two
@@ -221,14 +215,14 @@ struct SolarConfig {
  *          `!configured` path rather than evaluating `1 + k·0²`.
  */
 struct CloudConfig {
-    bool   configured = false;  ///< No `[CLOUD_COVER]` section → clear sky.
-    bool   use_timeseries = false;
-    int    ts_index   = -1;     ///< Index into `ctx.tables`, -1 = none.
-    double fraction   = 0.0;    ///< C ∈ [0,1], constant spelling.
+    bool configured = false; ///< No `[CLOUD_COVER]` section → clear sky.
+    bool use_timeseries = false;
+    int ts_index = -1;     ///< Index into `ctx.tables`, -1 = none.
+    double fraction = 0.0; ///< C ∈ [0,1], constant spelling.
 
-    double sw_atten_k = 0.75;   ///< Kasten–Czeplak k
-    double sw_atten_n = 3.4;    ///< Kasten–Czeplak n
-    double lw_cloud_k = 0.17;   ///< Bolz k_lw
+    double sw_atten_k = 0.75; ///< Kasten–Czeplak k
+    double sw_atten_n = 3.4;  ///< Kasten–Czeplak n
+    double lw_cloud_k = 0.17; ///< Bolz k_lw
 };
 
 /**
@@ -241,14 +235,14 @@ struct CloudConfig {
  *          per-step solar position is computed once, not per element).
  */
 struct RadiativeConfig {
-    double shortwave_wm2   = 0.0;   ///< Incoming solar Jin, W/m² (0 = night)
-    double albedo          = 0.0;   ///< Rs, reference default
-    double shade_factor    = 0.0;   ///< fs, 0 = unshaded
-    double sky_view        = 1.0;   ///< fsky, 1 = open sky
-    double emiss_water     = 0.97;  ///< εw
-    double emiss_landcover = 0.97;  ///< εlc
-    double atm_emiss_coeff = 0.5;   ///< Brunt Aa
-    double lw_reflection   = 0.03;  ///< RL
+    double shortwave_wm2 = 0.0;    ///< Incoming solar Jin, W/m² (0 = night)
+    double albedo = 0.0;           ///< Rs, reference default
+    double shade_factor = 0.0;     ///< fs, 0 = unshaded
+    double sky_view = 1.0;         ///< fsky, 1 = open sky
+    double emiss_water = 0.97;     ///< εw
+    double emiss_landcover = 0.97; ///< εlc
+    double atm_emiss_coeff = 0.5;  ///< Brunt Aa
+    double lw_reflection = 0.03;   ///< RL
 
     /**
      * @brief Land-cover radiating temperature, °C. NaN ⇒ use air temperature.
@@ -291,17 +285,27 @@ struct RadiativeConfig {
  *          per-element configuration.
  */
 struct HeatOverrideData {
-    std::vector<HeatOverrideRow> rows;   ///< as parsed; the serializer's input
+    std::vector<HeatOverrideRow> rows; ///< as parsed; the serializer's input
 
-    std::vector<RadiativeConfig> rad_link;   ///< [link], empty ⇒ use global
-    std::vector<RadiativeConfig> rad_node;   ///< [node], empty ⇒ use global
-    std::vector<SedimentConfig>  sed_link;   ///< [link], empty ⇒ use global
-    std::vector<RadiativeConfig> rad_cell;   ///< [surface mesh cell]
-    std::vector<SedimentConfig> sed_cell;    ///< [surface mesh cell], not ARD cells
+    std::vector<RadiativeConfig> rad_link; ///< [link], empty ⇒ use global
+    std::vector<RadiativeConfig> rad_node; ///< [node], empty ⇒ use global
+    std::vector<SedimentConfig> sed_link;  ///< [link], empty ⇒ use global
+    std::vector<RadiativeConfig> rad_cell; ///< [surface mesh cell]
+    std::vector<SedimentConfig> sed_cell;  ///< [surface mesh cell], not ARD cells
 
     bool resolved = false;
 
+    /**
+     * @brief Test whether authored heat-override rows are absent.
+     * @return rows.empty(); does not inspect resolved dense vectors or the resolved flag.
+     */
     bool empty() const noexcept { return rows.empty(); }
+    /**
+     * @brief Reset authored and resolved heat-override storage.
+     *
+     * Releases row/dense vectors and resets resolved=false; invalidates all borrowed entries. Does not
+     * change the containing global heat configuration.
+     */
     void clear() { *this = HeatOverrideData{}; }
 };
 
@@ -390,15 +394,23 @@ struct HeatConfigData {
     bool configured_source[static_cast<int>(HeatSource::COUNT_)] = {};
 
     // NODE-scope overrides (DWF / EXTERNAL_INFLOW), parallel arrays.
-    std::vector<int>    node_over_source;  ///< HeatSource as int
-    std::vector<int>    node_over_node;    ///< node index
-    std::vector<double> node_over_temp;    ///< °C
+    std::vector<int> node_over_source;  ///< HeatSource as int
+    std::vector<int> node_over_node;    ///< node index
+    std::vector<double> node_over_temp; ///< °C
 
-    /// Temperature of `source` water entering `node` (°C).
+    /**
+     * @brief Read the first matching node/source temperature override or global fallback.
+     *
+     * Requires aligned node_over_source/node_over_node/node_over_temp vectors. Does not check
+     * configured_source, validate range or convert units.
+     *
+     * @param[in] s Valid HeatSource excluding COUNT_; unchecked global-array index on fallback.
+     * @param[in] node Stored node key; no model bounds/type check.
+     * @return Temperature in degC, first matching override otherwise global_temp[s].
+     */
     double source_temp(HeatSource s, int node) const noexcept {
         for (std::size_t i = 0; i < node_over_source.size(); ++i)
-            if (node_over_source[i] == static_cast<int>(s) &&
-                node_over_node[i] == node)
+            if (node_over_source[i] == static_cast<int>(s) && node_over_node[i] == node)
                 return node_over_temp[i];
         return global_temp[static_cast<int>(s)];
     }
@@ -414,7 +426,7 @@ struct HeatConfigData {
  */
 struct HeatState {
     std::vector<unsigned char> mesh_contact_link; ///< Empty in prescribed compatibility mode.
-    std::vector<double> node_temp_vol_in;  ///< [node], °C·ft³/s
+    std::vector<double> node_temp_vol_in;         ///< [node], °C·ft³/s
     /// [node], °C·ft³/s arriving through LID underdrains, accumulated in the
     /// runoff step beside `nodes.lid_drain_qual_vol` and consumed by the
     /// wet-weather loader on that same per-runoff-step cadence — the twin of
@@ -423,8 +435,8 @@ struct HeatState {
     /// H5b's storage-layer temperature reached run-on receivers but never a
     /// node (LID fix round, 2026-08-30).
     std::vector<double> node_lid_drain_temp_vol_in;
-    std::vector<double> node_temp;         ///< [node], °C
-    std::vector<double> link_temp;         ///< [link], °C
+    std::vector<double> node_temp; ///< [node], °C
+    std::vector<double> link_temp; ///< [link], °C
 
     /// The LEGACY mirror seeds INITIAL_STATE on its first step.
     bool legacy_seeded = false;
@@ -520,6 +532,18 @@ struct HeatState {
 
     static constexpr int kNSubArea = static_cast<int>(HeatSubArea::COUNT_);
 
+    /**
+     * @brief Replace network heat arrays and reset current forcing caches.
+     *
+     * Zeroes node temperature-volume input rates, sets temperatures, resets legacy_seeded=false,
+     * shortwave_now=-1 and cloud_now=0. Preserves mesh_contact_link ownership mask and all watershed
+     * arrays. Allocation failure may leave a partially replaced state.
+     *
+     * @param[in] n_nodes Nonnegative node count; unchecked conversion to size_t.
+     * @param[in] n_links Nonnegative link count.
+     * @param[in] initial_temp Initial published node/link temperature in degC; no finite/range
+     *     validation.
+     */
     void resize(int n_nodes, int n_links, double initial_temp) {
         // Lazy 1D backend seeding must retain the router's already-bound
         // contact ownership. Model/router initialization clears that mask.
@@ -534,13 +558,21 @@ struct HeatState {
         // forcing readable, and `swmm_heat_get_current_shortwave` documents
         // itself as unresolved before the first step.
         shortwave_now = -1.0;
-        cloud_now     = 0.0;
+        cloud_now = 0.0;
     }
 
+    /**
+     * @brief Replace subcatchment heat arrays and their three-subarea histories.
+     *
+     * Seeds temperature arrays, zeroes prior ft3 volumes and pending run-on/outfall/drain accumulators.
+     * Does not alter network heat arrays or global forcing cache; no transactional allocation rollback.
+     *
+     * @param[in] n_subcatch Nonnegative subcatchment count; product with kNSubArea must fit size_t.
+     * @param[in] initial_temp Initial runoff/subarea temperature in degC.
+     */
     void resizeWatershed(int n_subcatch, double initial_temp) {
         const auto n = static_cast<std::size_t>(n_subcatch);
-        subarea_temp.assign(n * static_cast<std::size_t>(kNSubArea),
-                            initial_temp);
+        subarea_temp.assign(n * static_cast<std::size_t>(kNSubArea), initial_temp);
         subarea_vol_prev.assign(n * static_cast<std::size_t>(kNSubArea), 0.0);
         subcatch_runoff_temp.assign(n, initial_temp);
         subcatch_runon_temp_vol_in.assign(n, 0.0);
@@ -549,14 +581,27 @@ struct HeatState {
         subcatch_lid_drain_temp_cfs.assign(n, 0.0);
     }
 
+    /**
+     * @brief Check the length of the subarea temperature vector only.
+     *
+     * @param[in] n_subcatch Nonnegative expected subcatchment count; unchecked
+     *     conversion/multiplication.
+     * @return True if subarea_temp has n_subcatch*kNSubArea entries; other arrays are not checked.
+     */
     bool watershedSized(int n_subcatch) const noexcept {
-        return subarea_temp.size() == static_cast<std::size_t>(n_subcatch) *
-                                          static_cast<std::size_t>(kNSubArea);
+        return subarea_temp.size() ==
+               static_cast<std::size_t>(n_subcatch) * static_cast<std::size_t>(kNSubArea);
     }
 
+    /**
+     * @brief Release all network/watershed heat state and restore cache sentinels.
+     *
+     * Restores default HeatState including shortwave_now=-1, cloud_now=0 and legacy_seeded=false;
+     * releases the mesh-contact mask and invalidates borrowed vector elements.
+     */
     void clear() { *this = HeatState{}; }
 };
 
-}  // namespace openswmm
+} // namespace openswmm
 
-#endif  // OPENSWMM_ENGINE_DATA_HEAT_DATA_HPP
+#endif // OPENSWMM_ENGINE_DATA_HEAT_DATA_HPP

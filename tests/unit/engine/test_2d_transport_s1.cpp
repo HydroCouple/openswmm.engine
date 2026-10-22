@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_2d_transport_s1.cpp
- * @brief Overland transport S1 — species mass rides the LTS marcher.
+ * @file      test_2d_transport_s1.cpp
+ * @brief     Overland transport S1 — species mass rides the LTS marcher.
  *
  * @details These gates drive `ExplicitInertialSolver` directly on the graded
  *          strip `test_2d_lts_equivalence.cpp` established, so a species
@@ -34,6 +34,10 @@
  *          S1's sources (rain, boundary inflow, coupling spill) arrive at
  *          zero concentration by design — a uniformity test with an inflow
  *          would fail for the right reason and prove nothing.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -53,10 +57,23 @@ using namespace openswmm::twoD;
 
 namespace {
 
-/// nx cells of geometrically growing width (dx0, dx0·r, …) — the same
-/// multiscale strip the LTS gates use, so cells land in DIFFERENT tiers.
-MeshData makeGradedStrip(int nx, int ny, double dx0, double ratio,
-                         double slope = 0.0, double n = 0.03) {
+/**
+ * @brief Construct a closed triangulated strip with geometric cell-width growth.
+ *
+ * No explicit open boundary or state is created; counts and physical geometry are assumed valid.
+ * Allocation/topology errors propagate.
+ *
+ * @param[in] nx Positive x-cell count; dimension products must fit indices.
+ * @param[in] ny Positive y-cell count.
+ * @param[in] dx0 Positive first x width and every y spacing in meters.
+ * @param[in] ratio Positive geometric multiplier for successive x widths; coordinates must remain
+ *     finite.
+ * @param[in] slope Dimensionless downward bed slope along x.
+ * @param[in] n Manning roughness assigned to every triangle.
+ * @return Owned topology-built two-triangles-per-rectangle mesh in SI units.
+ */
+MeshData makeGradedStrip(int nx, int ny, double dx0, double ratio, double slope = 0.0,
+                         double n = 0.03) {
     MeshData mesh;
     std::vector<double> xs(static_cast<std::size_t>(nx + 1), 0.0);
     double dx = dx0;
@@ -77,16 +94,29 @@ MeshData makeGradedStrip(int nx, int ny, double dx0, double ratio,
     int t = 0;
     for (int j = 0; j < ny; ++j)
         for (int i = 0; i < nx; ++i) {
-            const int v00 = j * nvx + i,       v10 = j * nvx + i + 1;
+            const int v00 = j * nvx + i, v10 = j * nvx + i + 1;
             const int v01 = (j + 1) * nvx + i, v11 = (j + 1) * nvx + i + 1;
-            mesh.set_triangle(t, v00, v10, v11); ++t;
-            mesh.set_triangle(t, v00, v11, v01); ++t;
+            mesh.set_triangle(t, v00, v10, v11);
+            ++t;
+            mesh.set_triangle(t, v00, v11, v01);
+            ++t;
         }
-    for (int i = 0; i < mesh.n_triangles(); ++i) mesh.mannings_n[i] = n;
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        mesh.mannings_n[i] = n;
     buildMeshTopology(mesh);
     return mesh;
 }
 
+/**
+ * @brief Allocate dry hydraulic and transport state for the strip.
+ *
+ * The returned state is independent storage; no solver is initialized and mesh is unchanged.
+ *
+ * @param[in] mesh Topology-built mesh with valid centroid elevations and vertex counts.
+ * @param[in] n_species Nonnegative species count fitting transport storage.
+ * @return Owned state with head at bed, zero depth/volume and resized species arrays; no boundary
+ *     transport rows.
+ */
 SurfaceStateData makeState(const MeshData& mesh, int n_species) {
     SurfaceStateData s;
     s.resize(mesh.n_triangles(), mesh.n_vertices());
@@ -99,27 +129,46 @@ SurfaceStateData makeState(const MeshData& mesh, int n_species) {
     return s;
 }
 
-/// Dam-break: a 1.5 m column over x < x_dam, dry beyond; species seeded at
-/// concentration `c0` in the wet cells (mass = c0 · V).
-void seedDamBreak(const MeshData& mesh, const SolverOptions2D& opts,
-                  SurfaceStateData& s, double x_dam, double c0) {
+/**
+ * @brief Seed a 1.5 m wet column and uniform concentration upstream of a strict x threshold.
+ *
+ * Uses inertial volume-to-depth reconstruction, setting each selected species mass to c0*volume.
+ * Downstream cells and existing ledgers are untouched; callers start from dry makeState for a
+ * complete dam-break initial condition.
+ *
+ * @param[in] mesh Consistent SI mesh matching all state extents.
+ * @param[in] opts Depth reconstruction controls.
+ * @param[in,out] s State whose selected cell volume/head/depth and all species masses are
+ *     overwritten.
+ * @param[in] x_dam Cell-centroid cutoff in meters; centroids equal to cutoff are left untouched.
+ * @param[in] c0 Mass concentration in the fixture mass unit per m3.
+ */
+void seedDamBreak(const MeshData& mesh, const SolverOptions2D& opts, SurfaceStateData& s,
+                  double x_dam, double c0) {
     for (int i = 0; i < mesh.n_triangles(); ++i) {
         if (mesh.tri_cx[i] < x_dam) {
             s.volume[i] = 1.5 * mesh.tri_area[i];
-            inertial::cellEtaDepth(mesh, opts, i, s.volume[i], s.head[i],
-                                   s.depth[i]);
+            inertial::cellEtaDepth(mesh, opts, i, s.volume[i], s.head[i], s.depth[i]);
             for (int sp = 0; sp < s.transport.n_species; ++sp)
-                s.transport.cell_mass[s.transport.idx(sp, i)] =
-                    c0 * s.volume[i];
+                s.transport.cell_mass[s.transport.idx(sp, i)] = c0 * s.volume[i];
         }
     }
 }
 
+/**
+ * @brief Read one species total including pending transport ledgers.
+ *
+ * Delegates without mutation or independent bounds/physical validation.
+ *
+ * @param[in] tr Stable compatible transport state.
+ * @param[in] sp Valid species index for totalIncludingLedgers.
+ * @return Internal mass total in the fixture mass unit, including the transport ledger convention.
+ */
 double totalMass(const SurfaceTransportState& tr, int sp) {
     return tr.totalIncludingLedgers(sp);
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // 1. D-2DT3 — THE S1 gate. Uniform concentration under a multiscale dam-break
@@ -150,15 +199,15 @@ TEST(SurfaceTransportS1, UniformConcentrationSurvivesTieredDamBreak) {
     double worst = 0.0;
     for (int i = 0; i < mesh.n_triangles(); ++i) {
         const double v_dry = opts.dry_depth * mesh.tri_area[i];
-        if (!(s.volume[i] > v_dry)) continue;
+        if (!(s.volume[i] > v_dry))
+            continue;
         ++wet;
         const double c = s.transport.concentration(0, i, s.volume[i], v_dry);
         worst = std::max(worst, std::fabs(c - c0) / c0);
     }
     ASSERT_GT(wet, 20) << "the front did not spread — deck not discriminating";
-    EXPECT_LT(worst, 1.0e-12)
-        << "a wet cell departed from the seed concentration: the species "
-           "flux is not riding the volume flux on the same cadence";
+    EXPECT_LT(worst, 1.0e-12) << "a wet cell departed from the seed concentration: the species "
+                                 "flux is not riding the volume flux on the same cadence";
     EXPECT_NEAR(totalMass(s.transport, 0), m0, 1.0e-10 * m0)
         << "total species mass drifted (closed domain, no sources)";
 }
@@ -188,7 +237,8 @@ TEST(SurfaceTransportS1, FrontConservesMassAndObeysMaxPrinciple) {
         solver.advance(t, std::min(t + 5.0, 240.0));
         for (int i = 0; i < mesh.n_triangles(); ++i) {
             const double v_dry = opts.dry_depth * mesh.tri_area[i];
-            if (!(s.volume[i] > v_dry)) continue;
+            if (!(s.volume[i] > v_dry))
+                continue;
             const double c = s.transport.concentration(0, i, s.volume[i], v_dry);
             cmax_seen = std::max(cmax_seen, c);
             cmin_seen = std::min(cmin_seen, c);
@@ -196,7 +246,7 @@ TEST(SurfaceTransportS1, FrontConservesMassAndObeysMaxPrinciple) {
     }
     EXPECT_NEAR(totalMass(s.transport, 0), m0, 1.0e-10 * m0);
     EXPECT_LE(cmax_seen, 10.0 * (1.0 + 1.0e-10)) << "new maximum created";
-    EXPECT_GE(cmin_seen, -1.0e-12)                << "negative concentration";
+    EXPECT_GE(cmin_seen, -1.0e-12) << "negative concentration";
     // And the front actually moved: cells past the dam carry species now.
     double downstream = 0.0;
     for (int i = 0; i < mesh.n_triangles(); ++i)
@@ -217,7 +267,8 @@ TEST(SurfaceTransportS1, TwoSpeciesDoNotBleed) {
     auto s = makeState(mesh, 2);
     seedDamBreak(mesh, opts, s, 4.0, 0.0);
     for (int i = 0; i < mesh.n_triangles(); ++i) {
-        if (!(s.volume[i] > 0.0)) continue;
+        if (!(s.volume[i] > 0.0))
+            continue;
         s.transport.cell_mass[s.transport.idx(0, i)] = 3.0 * s.volume[i];
         s.transport.cell_mass[s.transport.idx(1, i)] = 11.0 * s.volume[i];
     }
@@ -231,11 +282,12 @@ TEST(SurfaceTransportS1, TwoSpeciesDoNotBleed) {
     // stride bug this exists to catch.
     for (int i = 0; i < mesh.n_triangles(); ++i) {
         const double v_dry = opts.dry_depth * mesh.tri_area[i];
-        if (!(s.volume[i] > v_dry)) continue;
-        EXPECT_NEAR(s.transport.concentration(0, i, s.volume[i], v_dry), 3.0,
-                    3.0e-12) << "cell " << i;
-        EXPECT_NEAR(s.transport.concentration(1, i, s.volume[i], v_dry), 11.0,
-                    11.0e-12) << "cell " << i;
+        if (!(s.volume[i] > v_dry))
+            continue;
+        EXPECT_NEAR(s.transport.concentration(0, i, s.volume[i], v_dry), 3.0, 3.0e-12)
+            << "cell " << i;
+        EXPECT_NEAR(s.transport.concentration(1, i, s.volume[i], v_dry), 11.0, 11.0e-12)
+            << "cell " << i;
     }
 }
 
@@ -256,20 +308,20 @@ TEST(SurfaceTransportS1, InfiltrationBooksMassAndEvaporationConcentrates) {
         auto s = makeState(mesh, 1);
         for (int i = 0; i < mesh.n_triangles(); ++i) {
             s.volume[i] = 0.5 * mesh.tri_area[i];
-            inertial::cellEtaDepth(mesh, opts, i, s.volume[i], s.head[i],
-                                   s.depth[i]);
+            inertial::cellEtaDepth(mesh, opts, i, s.volume[i], s.head[i], s.depth[i]);
             s.transport.cell_mass[s.transport.idx(0, i)] = 4.0 * s.volume[i];
             // 1e-4 m/s x 600 s = 60 mm from a 500 mm pond = 12 % of the
             // volume, comfortably past the 5 % bar below. The handoff's
             // draft used 1e-5, which removes 1.2 % — the mechanism worked
             // (surface read exactly 0.988·m0) and the gate failed on its
             // own arithmetic, not on the code.
-            s.infil_rate[i] = 1.0e-4;   // m/s
+            s.infil_rate[i] = 1.0e-4; // m/s
         }
         const double m0 = totalMass(s.transport, 0);
         ExplicitInertialSolver solver;
         solver.initialize(mesh, s, opts);
-        for (double t = 0.0; t < 600.0; t += 10.0) solver.advance(t, t + 10.0);
+        for (double t = 0.0; t < 600.0; t += 10.0)
+            solver.advance(t, t + 10.0);
 
         double surf = 0.0;
         for (int i = 0; i < mesh.n_triangles(); ++i)
@@ -281,8 +333,8 @@ TEST(SurfaceTransportS1, InfiltrationBooksMassAndEvaporationConcentrates) {
         for (int i = 0; i < mesh.n_triangles(); ++i) {
             const double v_dry = opts.dry_depth * mesh.tri_area[i];
             if (s.volume[i] > v_dry)
-                EXPECT_NEAR(s.transport.concentration(0, i, s.volume[i], v_dry),
-                            4.0, 4.0e-9) << "infiltration changed concentration";
+                EXPECT_NEAR(s.transport.concentration(0, i, s.volume[i], v_dry), 4.0, 4.0e-9)
+                    << "infiltration changed concentration";
         }
     }
     // (b) evaporation
@@ -290,15 +342,15 @@ TEST(SurfaceTransportS1, InfiltrationBooksMassAndEvaporationConcentrates) {
         auto s = makeState(mesh, 1);
         for (int i = 0; i < mesh.n_triangles(); ++i) {
             s.volume[i] = 0.5 * mesh.tri_area[i];
-            inertial::cellEtaDepth(mesh, opts, i, s.volume[i], s.head[i],
-                                   s.depth[i]);
+            inertial::cellEtaDepth(mesh, opts, i, s.volume[i], s.head[i], s.depth[i]);
             s.transport.cell_mass[s.transport.idx(0, i)] = 4.0 * s.volume[i];
             s.evap_rate[i] = 1.0e-5;
         }
         const double m0 = totalMass(s.transport, 0);
         ExplicitInertialSolver solver;
         solver.initialize(mesh, s, opts);
-        for (double t = 0.0; t < 600.0; t += 10.0) solver.advance(t, t + 10.0);
+        for (double t = 0.0; t < 600.0; t += 10.0)
+            solver.advance(t, t + 10.0);
 
         EXPECT_NEAR(totalMass(s.transport, 0), m0, 1.0e-12 * m0)
             << "evaporation must remove NO species mass";
@@ -306,7 +358,8 @@ TEST(SurfaceTransportS1, InfiltrationBooksMassAndEvaporationConcentrates) {
         int checked = 0;
         for (int i = 0; i < mesh.n_triangles(); ++i) {
             const double v_dry = opts.dry_depth * mesh.tri_area[i];
-            if (!(s.volume[i] > v_dry)) continue;
+            if (!(s.volume[i] > v_dry))
+                continue;
             EXPECT_GT(s.transport.concentration(0, i, s.volume[i], v_dry), 4.01)
                 << "evaporation did not up-concentrate — KD1's 1D defect, "
                    "reproduced on the surface";
@@ -336,9 +389,10 @@ TEST(SurfaceTransportS1, UniformConcentrationAtSingleTierIsTheControl) {
         solver.advance(t, std::min(t + 5.0, 300.0));
     for (int i = 0; i < mesh.n_triangles(); ++i) {
         const double v_dry = opts.dry_depth * mesh.tri_area[i];
-        if (!(s.volume[i] > v_dry)) continue;
-        EXPECT_NEAR(s.transport.concentration(0, i, s.volume[i], v_dry), c0,
-                    c0 * 1.0e-12) << "cell " << i;
+        if (!(s.volume[i] > v_dry))
+            continue;
+        EXPECT_NEAR(s.transport.concentration(0, i, s.volume[i], v_dry), c0, c0 * 1.0e-12)
+            << "cell " << i;
     }
 }
 

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file SimulationOptions.hpp
- * @brief Simulation options parsed from the [OPTIONS] section.
+ * @file      SimulationOptions.hpp
+ * @brief     Simulation options parsed from the [OPTIONS] section.
  *
  * @details Contains all standard SWMM options plus an extension map for
  *          unknown keys (R05) and a CRS field (R06).
@@ -29,12 +29,14 @@
  * - `crs`: Coordinate reference system (EPSG code or PROJ string). R06.
  * - `ext_options`: Key-value map for unknown/extension option keys. R05.
  *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
+/**
  * @defgroup engine_core Core Engine The core engine module, including lifecycle management, simulation options, and shared utilities.
  * @ingroup  new_engine
- *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_SIMULATION_OPTIONS_HPP
@@ -60,12 +62,12 @@ namespace openswmm {
  * @see Legacy: FlowUnitsType in enums.h
  */
 enum class FlowUnits : int {
-    CFS  = 0,  ///< Cubic feet per second
-    GPM  = 1,  ///< Gallons per minute
-    MGD  = 2,  ///< Million gallons per day
-    CMS  = 3,  ///< Cubic meters per second
-    LPS  = 4,  ///< Liters per second
-    MLD  = 5   ///< Million liters per day
+    CFS = 0, ///< Cubic feet per second
+    GPM = 1, ///< Gallons per minute
+    MGD = 2, ///< Million gallons per day
+    CMS = 3, ///< Cubic meters per second
+    LPS = 4, ///< Liters per second
+    MLD = 5  ///< Million liters per day
 };
 
 /**
@@ -73,33 +75,33 @@ enum class FlowUnits : int {
  * @see Legacy: RouteModelType in enums.h
  */
 enum class RoutingModel : int {
-    STEADY   = 0,  ///< Steady-state (no routing)
-    KINWAVE  = 1,  ///< Kinematic wave approximation
-    DYNWAVE  = 2,  ///< Dynamic wave (full Saint-Venant, implicit Picard)
-    FV       = 3   ///< Explicit conservative finite volume (Godunov, HLL/HLLC)
+    STEADY = 0,  ///< Steady-state (no routing)
+    KINWAVE = 1, ///< Kinematic wave approximation
+    DYNWAVE = 2, ///< Dynamic wave (full Saint-Venant, implicit Picard)
+    FV = 3       ///< Explicit conservative finite volume (Godunov, HLL/HLLC)
 };
 
 /**
  * @brief Water-quality engine (`[OPTIONS] QUALITY_SOLVER`, master plan D-UT6).
  */
 enum class QualitySolverKind : int {
-    LEGACY       = 0,  ///< Legacy-parity CSTR mixing (QualityRouting.cpp)
-    EULERIAN_ARD = 1,  ///< Eulerian ARD on the FV cell mesh (all routing models)
-    LAGRANGIAN   = 2   ///< LARD segment transport. LIVE: LTD advection +
-                       ///< junction/storage mixing (X2 `8c141a5e`), RWPT
-                       ///< dispersion (X3b `b9852cee`), water age (X4
-                       ///< `9f155227`), exact-exponential KDECAY.
-                       ///< NOT YET, each behind a live open() warning in
-                       ///< SWMMEngine::open: MSX reactions on segments (L3),
-                       ///< treatment interop, heat (H7). Storage mixing
-                       ///< beyond CMSTR is also absent but is NOT warned —
-                       ///< there is no input surface for it yet, so there is
-                       ///< nothing to bypass.
-                       ///< (This comment said "X1 skeleton dispatch only;
-                       ///< transport lands in X2" until 2026-08-25, five
-                       ///< rounds after X2 landed.)
-                       ///< (plans/transport/LARD_AGE_EXPEDITE_SUBPLAN_2026-08-23.md,
-                       ///< plans/LAGRANGIAN_QUALITY_STRATEGY.md)
+    LEGACY = 0,       ///< Legacy-parity CSTR mixing (QualityRouting.cpp)
+    EULERIAN_ARD = 1, ///< Eulerian ARD on the FV cell mesh (all routing models)
+    LAGRANGIAN = 2    ///< LARD segment transport. LIVE: LTD advection +
+                      ///< junction/storage mixing (X2 `8c141a5e`), RWPT
+                      ///< dispersion (X3b `b9852cee`), water age (X4
+                      ///< `9f155227`), exact-exponential KDECAY.
+                      ///< NOT YET, each behind a live open() warning in
+                      ///< SWMMEngine::open: MSX reactions on segments (L3),
+                      ///< treatment interop, heat (H7). Storage mixing
+                      ///< beyond CMSTR is also absent but is NOT warned —
+                      ///< there is no input surface for it yet, so there is
+                      ///< nothing to bypass.
+                      ///< (This comment said "X1 skeleton dispatch only;
+                      ///< transport lands in X2" until 2026-08-25, five
+                      ///< rounds after X2 landed.)
+                      ///< (plans/transport/LARD_AGE_EXPEDITE_SUBPLAN_2026-08-23.md,
+                      ///< plans/LAGRANGIAN_QUALITY_STRATEGY.md)
 };
 
 /**
@@ -107,11 +109,11 @@ enum class QualitySolverKind : int {
  * @see Legacy: InfilModelType in enums.h
  */
 enum class InfiltrationModel : int {
-    HORTON        = 0,
-    MOD_HORTON    = 1,
-    GREEN_AMPT    = 2,
+    HORTON = 0,
+    MOD_HORTON = 1,
+    GREEN_AMPT = 2,
     MOD_GREEN_AMPT = 3,
-    CURVE_NUMBER  = 4
+    CURVE_NUMBER = 4
 };
 
 /**
@@ -119,8 +121,8 @@ enum class InfiltrationModel : int {
  * @see Legacy: RunoffModelType in enums.h
  */
 enum class RunoffModel : int {
-    NONE       = 0,
-    NL_POND    = 1  ///< Non-linear reservoir (default)
+    NONE = 0,
+    NL_POND = 1 ///< Non-linear reservoir (default)
 };
 
 /**
@@ -141,8 +143,8 @@ enum class RunoffModel : int {
  * @endcode
  */
 enum class NodeContinuity : int {
-    EXPLICIT      = 0,  ///< Classic explicit two-branch (default)
-    SEMI_IMPLICIT = 1   ///< Unified semi-implicit formulation
+    EXPLICIT = 0,     ///< Classic explicit two-branch (default)
+    SEMI_IMPLICIT = 1 ///< Unified semi-implicit formulation
 };
 
 // ============================================================================
@@ -170,7 +172,7 @@ struct SimulationOptions {
 
     /** @brief Simulation start date/time (decimal days, OADate (days since 12/30/1899)).
      *  @details Legacy default: Jan 1, 2004 = datetime_encodeDate(2004,1,1). */
-    double start_date = 37987.0;  // Jan 1, 2004 OADate (days since 12/30/1899) (legacy default)
+    double start_date = 37987.0; // Jan 1, 2004 OADate (days since 12/30/1899) (legacy default)
 
     /** @brief Simulation end date/time (decimal days, OADate (days since 12/30/1899)). */
     double end_date = 0.0;
@@ -513,7 +515,7 @@ struct SimulationOptions {
 
     /** @brief Normal flow limitation: 0=SLOPE, 1=FROUDE, 2=BOTH, 3=NEITHER.
      *  @see Legacy: NormalFlowLtd */
-    int normal_flow_ltd = 2;  // BOTH (legacy default)
+    int normal_flow_ltd = 2; // BOTH (legacy default)
 
     /** @brief Force main equation: 0=Hazen-Williams, 1=Darcy-Weisbach.
      *  @see Legacy: ForceMainEqn */
@@ -521,17 +523,17 @@ struct SimulationOptions {
 
     /** @brief Inertial damping: 0=NONE, 1=PARTIAL, 2=FULL.
      *  @see Legacy: InertDamping */
-    int inertial_damping = 1;  // PARTIAL (legacy default)
+    int inertial_damping = 1; // PARTIAL (legacy default)
 
     /** @brief Link offset mode: 0=DEPTH_OFFSET, 1=ELEV_OFFSET.
      *  @see Legacy: LinkOffsets */
-    int link_offsets = 0;  // DEPTH_OFFSET (legacy default)
+    int link_offsets = 0; // DEPTH_OFFSET (legacy default)
 
     /** @brief Minimum conduit slope (ft/ft). @see Legacy: MinSlope */
     double min_slope = 0.0;
 
     /** @brief Minimum node surface area (ft²). @see Legacy: MinSurfArea */
-    double min_surf_area = 0.0;  // 0 = use MIN_SURFAREA constant
+    double min_surf_area = 0.0; // 0 = use MIN_SURFAREA constant
 
     /** @brief Convergence head tolerance in project length units.
      *  @details Legacy default: 0.0 (sentinel → runtime default 0.005 ft,
@@ -696,7 +698,7 @@ struct SimulationOptions {
     int evap_type = 0;
 
     /** @brief Monthly evaporation values (used when evap_type == 0 or 1). */
-    double evap_values[12] = {0,0,0,0,0,0,0,0,0,0,0,0};
+    double evap_values[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
     /** @brief Timeseries name for evaporation (evap_type == 2). */
     std::string evap_ts_name;
@@ -708,7 +710,7 @@ struct SimulationOptions {
     bool evap_dry_only = false;
 
     /** @brief Monthly pan coefficients (used when evap_type == 4/FILE). */
-    double pan_coeff[12] = {1,1,1,1,1,1,1,1,1,1,1,1};
+    double pan_coeff[12] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
 
     // -----------------------------------------------------------------------
     // Temperature settings (from [TEMPERATURE] section)
@@ -736,7 +738,7 @@ struct SimulationOptions {
     int wind_type = 0;
 
     /** @brief Monthly wind speed values (12 months). */
-    double wind_speed[12] = {0,0,0,0,0,0,0,0,0,0,0,0};
+    double wind_speed[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
     /** @brief Snowmelt: dividing temperature. */
     double snow_divt = 34.0;
@@ -770,10 +772,10 @@ struct SimulationOptions {
     double snow_max_melt = 0.0;
 
     /** @brief Areal depletion curve for impervious surfaces (10 fractions). */
-    double adc_imperv[10] = {1,1,1,1,1,1,1,1,1,1};
+    double adc_imperv[10] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
 
     /** @brief Areal depletion curve for pervious surfaces (10 fractions). */
-    double adc_perv[10] = {1,1,1,1,1,1,1,1,1,1};
+    double adc_perv[10] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
 
     // -----------------------------------------------------------------------
     // Report settings (from [REPORT] section)
@@ -827,7 +829,8 @@ struct SimulationOptions {
      *  serial difference to whole seconds (mirroring legacy swmm5.c:3198-3200
      *  as closely as the combined representation allows). */
     double totalDurationMs() const {
-        if (total_duration_ms >= 0.0) return total_duration_ms;
+        if (total_duration_ms >= 0.0)
+            return total_duration_ms;
         return std::floor((end_date - start_date) * 86400.0) * 1000.0;
     }
 };

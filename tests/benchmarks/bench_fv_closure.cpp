@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file bench_fv_closure.cpp
- * @brief Per-op cost of the explicit-FV cross-section closure (FvKernels.hpp)
+ * @file      bench_fv_closure.cpp
+ * @brief     Per-op cost of the explicit-FV cross-section closure (FvKernels.hpp)
  *        on the geometries NetworkMeshBuilder::buildGeometry builds.
  *
  * @details Phase 0 of plans/FV1D_CLOSURE_KERNEL_PERF_PLAN_2026-09-11.md. The
@@ -59,9 +59,9 @@
  *   IRREGULAR / STREET links (through link::buildXSectParams, exactly as the
  *   mesh builder sees them) as one row per link, capped at 64 links per deck.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <algorithm>
@@ -88,80 +88,141 @@ using openswmm::XSectShape;
 using openswmm::fv::FvGeometry;
 namespace k = openswmm::fv::kernels;
 
-volatile double g_sink = 0.0;   // defeats DCE across every timed loop
+volatile double g_sink = 0.0; // defeats DCE across every timed loop
 
-constexpr int kReps = 9;        // repetitions of the whole sweep; median reported
+constexpr int kReps = 9; // repetitions of the whole sweep; median reported
 
 struct Timed {
     double ns_med, ns_min, ns_max;
 };
 
-template <class F>
-Timed time_sweep(std::size_t calls, F&& fn) {
+/**
+ * @brief Measure nine whole sweeps and normalize durations by calls per sweep.
+ *
+ * Does not subtract timer/loop overhead and propagates callable/allocation exceptions.
+ *
+ * @param[in] calls Positive number of evaluator invocations performed by each fn call; zero would
+ *     divide by zero.
+ * @param[in] fn Borrowed callable invoked synchronously once per repetition; its cost includes all
+ *     work inside it.
+ * @return Median/minimum/maximum nanoseconds per call, after sorting nine wall-clock sweep samples.
+ */
+template <class F> Timed time_sweep(std::size_t calls, F&& fn) {
     std::vector<double> per_call(kReps);
     for (int r = 0; r < kReps; ++r) {
         const auto t0 = std::chrono::steady_clock::now();
         fn();
         const auto t1 = std::chrono::steady_clock::now();
         per_call[static_cast<std::size_t>(r)] =
-            std::chrono::duration<double, std::nano>(t1 - t0).count() /
-            static_cast<double>(calls);
+            std::chrono::duration<double, std::nano>(t1 - t0).count() / static_cast<double>(calls);
     }
     std::sort(per_call.begin(), per_call.end());
     return {per_call[kReps / 2], per_call.front(), per_call.back()};
 }
 
+/**
+ * @brief Print one benchmark CSV row to stdout.
+ *
+ * Includes the fixed nine-repetition count and median/min/max timings. IO errors are ignored; no
+ * files are owned by this helper.
+ *
+ * @param[in] shape CSV label emitted without quoting/escaping; supply text without commas/newlines.
+ * @param[in] op Non-null operation-name string emitted without CSV escaping.
+ * @param[in] calls Number of evaluator calls per sweep.
+ * @param[in] t Measured nanoseconds-per-call summary.
+ */
 void report(const std::string& shape, const char* op, std::size_t calls, Timed t) {
-    std::printf("%s,%s,%zu,%d,%.2f,%.2f,%.2f\n",
-                shape.c_str(), op, calls, kReps, t.ns_med, t.ns_min, t.ns_max);
+    std::printf("%s,%s,%zu,%d,%.2f,%.2f,%.2f\n", shape.c_str(), op, calls, kReps, t.ns_med,
+                t.ns_min, t.ns_max);
 }
 
 /// One named geometry under test.
 struct Case {
     std::string name;
-    FvGeometry  g;
+    FvGeometry g;
 };
 
-
-/// Analytic shape from legacy-order geom1..4 (the [XSECTIONS] columns).
-Case analytic(const char* name, XSectShape type, double p0, double p1 = 0.0,
-              double p2 = 0.0, double p3 = 0.0, double slot_celerity = 100.0) {
+/**
+ * @brief Build one named finite-volume geometry from authored cross-section parameters.
+ *
+ * Uses unit conversion factor one; setParams/buildGeometry validation outcomes are not checked by
+ * this wrapper, so callers supply a valid supported shape.
+ *
+ * @param[in] name Non-null label copied into the returned case.
+ * @param[in] type Supported analytic XSectShape.
+ * @param[in] p0 First legacy [XSECTIONS] geometry value, in internal feet where dimensional.
+ * @param[in] p1 Second shape-specific parameter; defaults to zero.
+ * @param[in] p2 Third shape-specific parameter; defaults to zero.
+ * @param[in] p3 Fourth shape-specific parameter; defaults to zero.
+ * @param[in] slot_celerity Slot wave celerity in ft/s used for closed shapes.
+ * @return Owned case with name and built FV geometry.
+ */
+Case analytic(const char* name, XSectShape type, double p0, double p1 = 0.0, double p2 = 0.0,
+              double p3 = 0.0, double slot_celerity = 100.0) {
     Case c;
     c.name = name;
     XSectParams xs;
     xs.type = static_cast<int>(type);
     double p[4] = {p0, p1, p2, p3};
     openswmm::xsect::setParams(xs, xs.type, p, 1.0);
-    openswmm::fv::buildGeometry(xs, openswmm::xsect::isOpen(xs.type),
-                                slot_celerity, c.g);
+    openswmm::fv::buildGeometry(xs, openswmm::xsect::isOpen(xs.type), slot_celerity, c.g);
     return c;
 }
 
 /// Deterministic LCG in [0, 1).
 struct Lcg {
     unsigned long long s = 0x9E3779B97F4A7C15ULL;
+    /**
+     * @brief Advance the fixed 64-bit linear congruential generator.
+     *
+     * Mutates only this generator state; arithmetic intentionally wraps in unsigned 64-bit space.
+     * @return Deterministic fraction in [0,1), formed from the high 53 state bits.
+     */
     double next() {
         s = s * 6364136223846793005ULL + 1442695040888963407ULL;
         return static_cast<double>(s >> 11) * (1.0 / 9007199254740992.0);
     }
 };
 
-/// A coherent random walk in depth over [0, h_max]: each step moves by at most
-/// ±step. This is the substep-to-substep pattern a cell presents, and it is
-/// what keeps the bracket/locate cost honest (a uniform sweep would be the
-/// pessimistic control; both are reported).
+/**
+ * @brief Generate a deterministic, reflected depth random walk.
+ *
+ * Per-step increment is step*(2*rng.next()-1). Reflects once at zero and once at h_max; no general
+ * repeated-reflection or argument validation is performed.
+ *
+ * @param[in] n Nonnegative sample count; negative values convert to a large allocation size.
+ * @param[in] h_max Positive maximum depth in ft.
+ * @param[in] step Nonnegative maximum step magnitude in ft; keep small enough that one reflection
+ *     at each bound stays in range.
+ * @param[in,out] rng Generator advanced once per returned sample.
+ * @return Owned n-element depth sequence starting from 0.4*h_max before its first random increment.
+ */
 std::vector<double> walk(int n, double h_max, double step, Lcg& rng) {
     std::vector<double> h(static_cast<std::size_t>(n));
     double x = 0.4 * h_max;
     for (int i = 0; i < n; ++i) {
         x += step * (2.0 * rng.next() - 1.0);
-        if (x < 0.0) x = -x;
-        if (x > h_max) x = 2.0 * h_max - x;
+        if (x < 0.0)
+            x = -x;
+        if (x > h_max)
+            x = 2.0 * h_max - x;
         h[static_cast<std::size_t>(i)] = x;
     }
     return h;
 }
 
+/**
+ * @brief Benchmark FV closure operations over a shared coherent depth sweep.
+ *
+ * Builds depth/area/reconstructed-depth arrays outside the timed loops, emits
+ * area/width/radius/I1/inverse/face/fused CSV rows, and prints maximum normalized inverse-roundtrip
+ * error. A process-global volatile sink prevents optimization; concurrent calls would race on it.
+ *
+ * @param[in] c Borrowed named geometry; positive full depth/crown area required, otherwise prints a
+ *     skip message.
+ * @param[in] n_samples Positive sweep sample count; controls each timed operation call denominator.
+ * @param[in,out] rng Deterministic generator advanced while creating the depth inputs.
+ */
 void bench_case(const Case& c, int n_samples, Lcg& rng) {
     const FvGeometry& g = c.g;
     if (!(g.y_full > 0.0) || !(g.a_crown > 0.0)) {
@@ -176,69 +237,77 @@ void bench_case(const Case& c, int n_samples, Lcg& rng) {
     std::vector<double> hstar(hs.size());
     std::vector<double> as(hs.size());
     for (std::size_t i = 0; i < hs.size(); ++i) {
-        hstar[i] = 0.9 * hs[i];                       // a reconstructed depth
-        as[i]    = k::areaOfDepth(g, hs[i]);          // the inverse's input
+        hstar[i] = 0.9 * hs[i];           // a reconstructed depth
+        as[i] = k::areaOfDepth(g, hs[i]); // the inverse's input
     }
     const std::size_t calls = hs.size();
 
     report(c.name, "area", calls, time_sweep(calls, [&] {
-        double acc = 0.0;
-        for (double h : hs) acc += k::areaOfDepth(g, h);
-        g_sink = g_sink + acc;
-    }));
+               double acc = 0.0;
+               for (double h : hs)
+                   acc += k::areaOfDepth(g, h);
+               g_sink = g_sink + acc;
+           }));
     report(c.name, "width", calls, time_sweep(calls, [&] {
-        double acc = 0.0;
-        for (double h : hs) acc += k::widthOfDepth(g, h);
-        g_sink = g_sink + acc;
-    }));
+               double acc = 0.0;
+               for (double h : hs)
+                   acc += k::widthOfDepth(g, h);
+               g_sink = g_sink + acc;
+           }));
     report(c.name, "hydrad", calls, time_sweep(calls, [&] {
-        double acc = 0.0;
-        for (double h : hs) acc += k::hydRadOfDepth(g, h);
-        g_sink = g_sink + acc;
-    }));
+               double acc = 0.0;
+               for (double h : hs)
+                   acc += k::hydRadOfDepth(g, h);
+               g_sink = g_sink + acc;
+           }));
     report(c.name, "area_i1", calls, time_sweep(calls, [&] {
-        double acc = 0.0;
-        for (double h : hs) {
-            const double a = k::areaOfDepth(g, h);
-            acc += a + k::i1OfDepth(g, h, a);
-        }
-        g_sink = g_sink + acc;
-    }));
+               double acc = 0.0;
+               for (double h : hs) {
+                   const double a = k::areaOfDepth(g, h);
+                   acc += a + k::i1OfDepth(g, h, a);
+               }
+               g_sink = g_sink + acc;
+           }));
     report(c.name, "faceside", calls, time_sweep(calls, [&] {
-        double acc = 0.0;
-        for (std::size_t i = 0; i < hs.size(); ++i) {
-            const double h = hs[i];
-            const double i1_raw = (h > k::kDryDepth)
-                ? k::i1OfDepth(g, h, k::areaOfDepth(g, h)) : 0.0;
-            const double hst = hstar[i];
-            if (hst <= k::kDryDepth) { acc += i1_raw; continue; }
-            const double a = k::areaOfDepth(g, hst);
-            const double cc = k::celerity(a, k::widthOfDepth(g, hst));
-            acc += i1_raw + a + cc + k::i1OfDepth(g, hst, a);
-        }
-        g_sink = g_sink + acc;
-    }));
+               double acc = 0.0;
+               for (std::size_t i = 0; i < hs.size(); ++i) {
+                   const double h = hs[i];
+                   const double i1_raw =
+                       (h > k::kDryDepth) ? k::i1OfDepth(g, h, k::areaOfDepth(g, h)) : 0.0;
+                   const double hst = hstar[i];
+                   if (hst <= k::kDryDepth) {
+                       acc += i1_raw;
+                       continue;
+                   }
+                   const double a = k::areaOfDepth(g, hst);
+                   const double cc = k::celerity(a, k::widthOfDepth(g, hst));
+                   acc += i1_raw + a + cc + k::i1OfDepth(g, hst, a);
+               }
+               g_sink = g_sink + acc;
+           }));
     report(c.name, "invert", calls, time_sweep(calls, [&] {
-        double acc = 0.0;
-        for (double a : as) acc += k::depthOfArea(g, a);
-        g_sink = g_sink + acc;
-    }));
+               double acc = 0.0;
+               for (double a : as)
+                   acc += k::depthOfArea(g, a);
+               g_sink = g_sink + acc;
+           }));
     report(c.name, "roundtrip", calls, time_sweep(calls, [&] {
-        double acc = 0.0;
-        for (double h : hs) acc += k::depthOfArea(g, k::areaOfDepth(g, h));
-        g_sink = g_sink + acc;
-    }));
+               double acc = 0.0;
+               for (double h : hs)
+                   acc += k::depthOfArea(g, k::areaOfDepth(g, h));
+               g_sink = g_sink + acc;
+           }));
 
     // The fused evaluation: A, T and I₁ from one panel locate — what
     // faceSide and the per-cell cache call.
     report(c.name, "eval_fused", calls, time_sweep(calls, [&] {
-        double acc = 0.0;
-        for (double h : hs) {
-            const k::ClosureEval e = k::closureEval(g.closure_tbl, h);
-            acc += e.a + e.t + e.i1;
-        }
-        g_sink = g_sink + acc;
-    }));
+               double acc = 0.0;
+               for (double h : hs) {
+                   const k::ClosureEval e = k::closureEval(g.closure_tbl, h);
+                   acc += e.a + e.t + e.i1;
+               }
+               g_sink = g_sink + acc;
+           }));
 
     // Accuracy of the inverse over the same sweep, so cost and correctness
     // are read side by side.
@@ -251,8 +320,22 @@ void bench_case(const Case& c, int n_samples, Lcg& rng) {
                 c.name.c_str(), max_rel, g.y_full, g.a_crown, g.t_slot);
 }
 
-}  // namespace
+} // namespace
 
+/**
+ * @brief Benchmark built-in and optional deck-derived finite-volume closures.
+ *
+ * Defaults to celerity 100 ft/s and 4096 samples. Emits stdout CSV and stderr skips, opens each
+ * supplied deck with a .benchrpt path, and benchmarks up to 64 irregular/street links per deck.
+ * Requires positive sample count and physically valid celerity to avoid invalid timing/geometry;
+ * allocations and filesystem exceptions can propagate.
+ *
+ * @param[in] argc Process argument count including program name.
+ * @param[in] argv Borrowed --slot-celerity C, --samples N and repeated --deck filename arguments;
+ *     numeric conversion is atof/atoi without range checks.
+ * @return Two for unrecognized/incomplete options; otherwise zero, including skipped
+ *     deck-open/geometry cases.
+ */
 int main(int argc, char** argv) {
     double slot_celerity = 100.0;
     int n_samples = 4096;
@@ -265,9 +348,8 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--deck") == 0 && i + 1 < argc)
             decks.emplace_back(argv[++i]);
         else {
-            std::fprintf(stderr,
-                "usage: %s [--slot-celerity C] [--samples N] [--deck f.inp ...]\n",
-                argv[0]);
+            std::fprintf(stderr, "usage: %s [--slot-celerity C] [--samples N] [--deck f.inp ...]\n",
+                         argv[0]);
             return 2;
         }
     }
@@ -278,17 +360,18 @@ int main(int argc, char** argv) {
     // The dominant sewer shapes first, then the ones whose closed forms the
     // exact-geometry program will replace, in the 3–5 ft class.
     const Case cases[] = {
-        analytic("circular_3ft",      XSectShape::CIRCULAR,      3.0, 0.0, 0.0, 0.0, slot_celerity),
-        analytic("force_main_3ft",    XSectShape::FORCE_MAIN,    3.0, 120.0, 0.0, 0.0, slot_celerity),
-        analytic("rect_closed_4x3",   XSectShape::RECT_CLOSED,   3.0, 4.0, 0.0, 0.0, slot_celerity),
-        analytic("rect_open_10x5",    XSectShape::RECT_OPEN,     5.0, 10.0, 0.0, 0.0, slot_celerity),
-        analytic("trapezoid_5_4_2_2", XSectShape::TRAPEZOIDAL,   5.0, 4.0, 2.0, 2.0, slot_celerity),
-        analytic("triangular_5x10",   XSectShape::TRIANGULAR,    5.0, 10.0, 0.0, 0.0, slot_celerity),
+        analytic("circular_3ft", XSectShape::CIRCULAR, 3.0, 0.0, 0.0, 0.0, slot_celerity),
+        analytic("force_main_3ft", XSectShape::FORCE_MAIN, 3.0, 120.0, 0.0, 0.0, slot_celerity),
+        analytic("rect_closed_4x3", XSectShape::RECT_CLOSED, 3.0, 4.0, 0.0, 0.0, slot_celerity),
+        analytic("rect_open_10x5", XSectShape::RECT_OPEN, 5.0, 10.0, 0.0, 0.0, slot_celerity),
+        analytic("trapezoid_5_4_2_2", XSectShape::TRAPEZOIDAL, 5.0, 4.0, 2.0, 2.0, slot_celerity),
+        analytic("triangular_5x10", XSectShape::TRIANGULAR, 5.0, 10.0, 0.0, 0.0, slot_celerity),
         analytic("horiz_ellipse_3x4", XSectShape::HORIZ_ELLIPSE, 3.0, 4.0, 0.0, 0.0, slot_celerity),
-        analytic("eggshaped_3ft",     XSectShape::EGGSHAPED,     3.0, 0.0, 0.0, 0.0, slot_celerity),
-        analytic("parabolic_5x10",    XSectShape::PARABOLIC,     5.0, 10.0, 0.0, 0.0, slot_celerity),
+        analytic("eggshaped_3ft", XSectShape::EGGSHAPED, 3.0, 0.0, 0.0, 0.0, slot_celerity),
+        analytic("parabolic_5x10", XSectShape::PARABOLIC, 5.0, 10.0, 0.0, 0.0, slot_celerity),
     };
-    for (const Case& c : cases) bench_case(c, n_samples, rng);
+    for (const Case& c : cases)
+        bench_case(c, n_samples, rng);
 
     for (const auto& deck : decks) {
         openswmm::SWMMEngine eng;
@@ -307,19 +390,17 @@ int main(int argc, char** argv) {
                 shape != openswmm::XsectShape::STREET_XSECT)
                 continue;
             ctx.links.xsect_batch_shape[uj] = openswmm::link::translateShape(shape);
-            XSectParams xs =
-                openswmm::link::buildXSectParams(ctx.links, uj, &ctx.transect_tables);
-            if (!(xs.a_full > 0.0) || !(xs.y_full > 0.0)) continue;
+            XSectParams xs = openswmm::link::buildXSectParams(ctx.links, uj, &ctx.transect_tables);
+            if (!(xs.a_full > 0.0) || !(xs.y_full > 0.0))
+                continue;
             Case c;
             c.name = stem + ":L" + std::to_string(j);
-            openswmm::fv::buildGeometry(xs, openswmm::xsect::isOpen(xs.type),
-                                        slot_celerity, c.g);
+            openswmm::fv::buildGeometry(xs, openswmm::xsect::isOpen(xs.type), slot_celerity, c.g);
             bench_case(c, n_samples, rng);
             ++taken;
         }
         if (taken == 0)
-            std::fprintf(stderr, "%s: no IRREGULAR/STREET links — nothing timed\n",
-                         stem.c_str());
+            std::fprintf(stderr, "%s: no IRREGULAR/STREET links — nothing timed\n", stem.c_str());
     }
     return 0;
 }

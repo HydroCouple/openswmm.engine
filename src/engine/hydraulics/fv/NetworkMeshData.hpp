@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file NetworkMeshData.hpp
- * @brief SoA storage for the 1D finite-volume network mesh and its state.
+ * @file      NetworkMeshData.hpp
+ * @brief     SoA storage for the 1D finite-volume network mesh and its state.
  *
  * @details The FV counterpart of 2d/data/MeshData.hpp. Three index spaces:
  *
@@ -36,9 +36,9 @@
  * @see plans/EXPLICIT_FV_KOKKOS_1D_SOLVER_PLAN.md §3.2, §4
  * @ingroup engine_fv
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_FV_NETWORK_MESH_DATA_HPP
@@ -69,12 +69,12 @@ inline constexpr int kNodeVolSamples = 129;
  * Riemann solver's wave-speed estimates.
  */
 struct FvGeometry {
-    XSectParams xs{};              ///< section parameters (owns transect table ptrs)
+    XSectParams xs{}; ///< copied scalars; transect/profile table pointers remain borrowed
 
-    double y_full = 0.0;           ///< full depth (ft)
-    double a_full = 0.0;           ///< area when full (ft²)
-    double w_max  = 0.0;           ///< width at widest point (ft)
-    double r_full = 0.0;           ///< hydraulic radius when full (ft)
+    double y_full = 0.0; ///< full depth (ft)
+    double a_full = 0.0; ///< area when full (ft²)
+    double w_max = 0.0;  ///< width at widest point (ft)
+    double r_full = 0.0; ///< hydraulic radius when full (ft)
 
     /// `barrels` as a factor on AREA and TOP WIDTH (see `barrels` below). Kept
     /// beside the fields every area evaluation already loads.
@@ -97,9 +97,9 @@ struct FvGeometry {
     /// I₁(y_full) — the table's last entry, cached for the same reason.
     double i1_crown = 0.0;
 
-    uint8_t is_open = 0;           ///< open section: no crown, no slot taper
+    uint8_t is_open = 0; ///< open section: no crown, no slot taper
 
-    int    barrels = 1;            ///< parallel identical barrels
+    int barrels = 1; ///< parallel identical barrels
 
     // Friction, losses, slope and the culvert curve are PER CONDUIT and live
     // in NetworkMeshData::conduit_* (plan Phase 1f): this block is one shared
@@ -115,7 +115,6 @@ struct FvGeometry {
     /// bytes; `xs` above still carries host table pointers for the table-
     /// defined shapes and is read only at build time.
     FvClosure closure_tbl{};
-
 };
 
 /**
@@ -127,10 +126,10 @@ struct NetworkMeshData {
     // Cells — indexed by cell index [0, n_cells)
     // -----------------------------------------------------------------------
 
-    std::vector<int>    cell_geom;    ///< index into `geom`
-    std::vector<int>    cell_conduit; ///< ConduitData row (for reporting)
-    std::vector<double> cell_dx;      ///< cell length (ft)
-    std::vector<double> cell_zb;      ///< bed elevation at cell centre (ft)
+    std::vector<int> cell_geom;    ///< index into `geom`
+    std::vector<int> cell_conduit; ///< ConduitData row (for reporting)
+    std::vector<double> cell_dx;   ///< cell length (ft)
+    std::vector<double> cell_zb;   ///< bed elevation at cell centre (ft)
 
     /// dz/dx along the cell's OWN axis. The bed is linear within a conduit, so
     /// this is exact rather than reconstructed — which matters, because the
@@ -145,8 +144,8 @@ struct NetworkMeshData {
     /// a CSR: the cell update becomes a fixed-width GATHER with no atomics and
     /// no scatter races, which is what makes the update deterministic and
     /// identical across backends and thread counts.
-    std::vector<int>    cell_face0;
-    std::vector<int>    cell_face1;
+    std::vector<int> cell_face0;
+    std::vector<int> cell_face1;
     std::vector<int8_t> cell_side0;
     std::vector<int8_t> cell_side1;
 
@@ -159,9 +158,9 @@ struct NetworkMeshData {
     // nothing but a splice of two conduits' chains — mass and momentum flux
     // continuity are then properties of the scheme, not a special treatment.
 
-    std::vector<int>    face_cl;      ///< left cell  (-1 ⇒ node on the left)
-    std::vector<int>    face_cr;      ///< right cell (-1 ⇒ node on the right)
-    std::vector<int>    face_node;    ///< coupled node (-1 for interior faces)
+    std::vector<int> face_cl;   ///< left cell  (-1 ⇒ node on the left)
+    std::vector<int> face_cr;   ///< right cell (-1 ⇒ node on the right)
+    std::vector<int> face_node; ///< coupled node (-1 for interior faces)
 
     /// Cross-section (index into `geom`) that this face reconstructs BOTH of
     /// its sides in. Almost always the adjacent cells' own section, which
@@ -181,27 +180,27 @@ struct NetworkMeshData {
     /// g·(I₁(cell section, h) − I₁(face section, h*)), becomes exactly the
     /// discrete wall-pressure (I₂) source — consistently discretized with the
     /// flux it has to balance, which is what every additive closure got wrong.
-    std::vector<int>    face_geom;    ///< index into `geom`
+    std::vector<int> face_geom; ///< index into `geom`
 
-    /// Give every face the section of its adjacent cell, sizing `face_geom` if
-    /// a caller never populated it. This reproduces the behaviour that
-    /// preceded `face_geom` exactly, so it is always safe; NetworkMeshBuilder
-    /// calls it and then overrides the entries at width-step junctions.
-    /// Idempotent, and a no-op once `face_geom` is already the right size.
-    ///
-    /// It exists because `face_geom` is the one face array a hand-built mesh
-    /// can silently omit: the unit-test fixtures assemble NetworkMeshData
-    /// field by field without a SimulationContext, and an omission there is an
-    /// empty vector that `faceSide` would index straight into a null page.
+    /**
+     * @brief Populate missing face section indices from adjacent cell geometry.
+     *
+     * No-op when face_geom already has n_faces entries, even if their contents are invalid. Otherwise
+     * assigns a new n_faces-entry array, choosing the left cell when nonnegative and the right cell
+     * otherwise. An invalid/missing chosen cell falls back to geometry index zero. Requires face_cr
+     * aligned with face_cl; does not validate geom[0] exists. Allocation can throw after face_geom has
+     * changed.
+     */
     void deriveFaceGeom() {
-        if (face_geom.size() == static_cast<std::size_t>(n_faces())) return;
+        if (face_geom.size() == static_cast<std::size_t>(n_faces()))
+            return;
         face_geom.assign(static_cast<std::size_t>(n_faces()), 0);
         for (int f = 0; f < n_faces(); ++f) {
             const auto uf = static_cast<std::size_t>(f);
             const int c = (face_cl[uf] >= 0) ? face_cl[uf] : face_cr[uf];
-            face_geom[uf] = (c >= 0 &&
-                             static_cast<std::size_t>(c) < cell_geom.size())
-                ? cell_geom[static_cast<std::size_t>(c)] : 0;
+            face_geom[uf] = (c >= 0 && static_cast<std::size_t>(c) < cell_geom.size())
+                                ? cell_geom[static_cast<std::size_t>(c)]
+                                : 0;
         }
     }
 
@@ -217,8 +216,8 @@ struct NetworkMeshData {
     /// upstream boundary face of a conduit carrying a culvert code, which is
     /// where HEC-5 inlet control physically acts.
     std::vector<int> face_culvert;
-    std::vector<double> face_zb;      ///< bed elevation at the interface (ft)
-    std::vector<double> face_dx;      ///< centre-to-centre distance (ft)
+    std::vector<double> face_zb; ///< bed elevation at the interface (ft)
+    std::vector<double> face_dx; ///< centre-to-centre distance (ft)
 
     /// Orientation of each incident cell's own axis relative to the face's
     /// LEFT→RIGHT positive direction. +1 is the normal case (the face sits at
@@ -267,12 +266,12 @@ struct NetworkMeshData {
     // Per-conduit friction and losses (already lengthening-adjusted, see
     // Router::init) and the culvert inlet-control data — everything that
     // differs between conduits sharing one section block (plan Phase 1f).
-    std::vector<double>  conduit_roughness;      ///< Manning n
-    std::vector<double>  conduit_rough_factor;   ///< g·(n/PHI)² — friction denominator factor
-    std::vector<double>  conduit_loss_inlet;     ///< entrance loss coefficient K
-    std::vector<double>  conduit_loss_outlet;    ///< exit loss coefficient K
-    std::vector<double>  conduit_slope;          ///< bed slope the HEC-5 equations need
-    std::vector<int>     conduit_culvert_code;   ///< [XSECTIONS] culvert code (0 = none)
+    std::vector<double> conduit_roughness;    ///< Manning n
+    std::vector<double> conduit_rough_factor; ///< g·(n/PHI)² — friction denominator factor
+    std::vector<double> conduit_loss_inlet;   ///< entrance loss coefficient K
+    std::vector<double> conduit_loss_outlet;  ///< exit loss coefficient K
+    std::vector<double> conduit_slope;        ///< bed slope the HEC-5 equations need
+    std::vector<int> conduit_culvert_code;    ///< [XSECTIONS] culvert code (0 = none)
     /// The type code's inlet-control curve, RESOLVED at mesh build so the
     /// solver evaluates the closure with no engine dependency.
     std::vector<hydkernels::CulvertCurve> conduit_culvert_curve;
@@ -290,12 +289,19 @@ struct NetworkMeshData {
     // the cell's own axis relative to the chain's walking direction.
     // -----------------------------------------------------------------------
 
-    std::vector<int>    chain_ptr;     ///< [n_chains + 1] row pointers
-    std::vector<int>    chain_cells;   ///< cell indices in walk order
-    std::vector<int8_t> chain_dir;     ///< cell axis vs. chain direction (±1)
-    std::vector<int>    cell_chain;    ///< chain of each cell
-    std::vector<int>    cell_chain_pos;///< position within that chain
+    std::vector<int> chain_ptr;      ///< [n_chains + 1] row pointers
+    std::vector<int> chain_cells;    ///< cell indices in walk order
+    std::vector<int8_t> chain_dir;   ///< cell axis vs. chain direction (±1)
+    std::vector<int> cell_chain;     ///< chain of each cell
+    std::vector<int> cell_chain_pos; ///< position within that chain
 
+    /**
+     * @brief Return the logical chains count from its owning vector.
+     *
+     * Returns zero for an empty CSR, otherwise chain_ptr.size()-1; does not validate row pointers or
+     * membership.
+     * @return Count as int; container sizes must be representable as int.
+     */
     int n_chains() const noexcept {
         return chain_ptr.empty() ? 0 : static_cast<int>(chain_ptr.size()) - 1;
     }
@@ -315,9 +321,9 @@ struct NetworkMeshData {
     // refreshDummyFlows) rather than reading FvStepForcing::structure_flow.
     // -----------------------------------------------------------------------
 
-    std::vector<int> struct_link;  ///< LinkData index
-    std::vector<int> struct_n1;    ///< upstream node
-    std::vector<int> struct_n2;    ///< downstream node
+    std::vector<int> struct_link; ///< LinkData index
+    std::vector<int> struct_n1;   ///< upstream node
+    std::vector<int> struct_n2;   ///< downstream node
 
     /// 1 for a DUMMY-xsect conduit, 0 for a real structure. Parallel to
     /// `struct_link`.
@@ -336,8 +342,8 @@ struct NetworkMeshData {
     // and identical across backends and thread counts.
     // -----------------------------------------------------------------------
 
-    std::vector<int>    node_face_ptr;  ///< [n_nodes + 1] row pointers
-    std::vector<int>    node_face_idx;  ///< face indices
+    std::vector<int> node_face_ptr;     ///< [n_nodes + 1] row pointers
+    std::vector<int> node_face_idx;     ///< face indices
     std::vector<double> node_face_sign; ///< +1 flux ENTERS the node, −1 leaves it
 
     /// Bed elevation the node presents to each of its faces — the conduit
@@ -349,10 +355,10 @@ struct NetworkMeshData {
     // Node properties
     // -----------------------------------------------------------------------
 
-    std::vector<double>  node_invert;      ///< invert elevation (ft)
-    std::vector<double>  node_full_depth;  ///< crown / rim depth (ft)
-    std::vector<double>  node_ponded_area; ///< ponding area above the rim (ft²)
-    std::vector<double>  node_sur_depth;   ///< SURCHARGE_DEPTH above the rim (ft)
+    std::vector<double> node_invert;      ///< invert elevation (ft)
+    std::vector<double> node_full_depth;  ///< crown / rim depth (ft)
+    std::vector<double> node_ponded_area; ///< ponding area above the rim (ft²)
+    std::vector<double> node_sur_depth;   ///< SURCHARGE_DEPTH above the rim (ft)
 
     /// Ponding eligibility, resolved at build time from the same rule DW uses
     /// (`(ALLOW_PONDING || 2D-coupled) && ponded_area > 0`). Without it the
@@ -383,10 +389,10 @@ struct NetworkMeshData {
     // Junctions need none of this: their storage is linear in depth with the
     // surface area held over the routing step (plan §3.4).
 
-    std::vector<int>    node_vol_off;   ///< offset into node_vol_tbl, −1 = none
-    std::vector<double> node_vol_dmax;  ///< depth at the table top (ft)
-    std::vector<double> node_vol_atop;  ///< surface area above dmax (ft²)
-    std::vector<double> node_vol_tbl;   ///< kNodeVolSamples volumes per node
+    std::vector<int> node_vol_off;     ///< offset into node_vol_tbl, −1 = none
+    std::vector<double> node_vol_dmax; ///< depth at the table top (ft)
+    std::vector<double> node_vol_atop; ///< surface area above dmax (ft²)
+    std::vector<double> node_vol_tbl;  ///< kNodeVolSamples volumes per node
 
     // -----------------------------------------------------------------------
     // Geometry closures — one per conduit row
@@ -398,53 +404,109 @@ struct NetworkMeshData {
     // Capacity queries
     // -----------------------------------------------------------------------
 
+    /**
+     * @brief Return the logical cells count from its owning vector.
+     *
+     * Other cell arrays must be kept aligned by the builder.
+     * @return Count as int; container sizes must be representable as int.
+     */
     int n_cells() const noexcept { return static_cast<int>(cell_dx.size()); }
+    /**
+     * @brief Return the logical faces count from its owning vector.
+     *
+     * Other face arrays must be kept aligned by the builder.
+     * @return Count as int; container sizes must be representable as int.
+     */
     int n_faces() const noexcept { return static_cast<int>(face_cl.size()); }
+    /**
+     * @brief Return the logical nodes count from its owning vector.
+     *
+     * Other node arrays must be kept aligned by the builder.
+     * @return Count as int; container sizes must be representable as int.
+     */
     int n_nodes() const noexcept { return static_cast<int>(node_invert.size()); }
-    int n_conduits() const noexcept {
-        return static_cast<int>(conduit_cell_begin.size());
-    }
+    /**
+     * @brief Return the logical conduits count from its owning vector.
+     *
+     * Other conduit arrays must be kept aligned by the builder.
+     * @return Count as int; container sizes must be representable as int.
+     */
+    int n_conduits() const noexcept { return static_cast<int>(conduit_cell_begin.size()); }
 
+    /**
+     * @brief Remove every mesh/topology/geometry entry while retaining vector capacities.
+     *
+     * All logical counts become zero. Owned geometry objects are destroyed, but their borrowed
+     * XSectParams profile tables are not freed. Existing element references and initialized solvers
+     * depending on this mesh become invalid; reinitialize before reuse. No shrink-to-fit or external
+     * context update is performed.
+     */
     void clear() {
-        cell_geom.clear(); cell_conduit.clear(); cell_dx.clear(); cell_zb.clear();
+        cell_geom.clear();
+        cell_conduit.clear();
+        cell_dx.clear();
+        cell_zb.clear();
         cell_dzdx.clear();
-        cell_face0.clear(); cell_face1.clear();
-        cell_side0.clear(); cell_side1.clear();
-        face_cl.clear(); face_cr.clear(); face_node.clear(); face_gate.clear();
+        cell_face0.clear();
+        cell_face1.clear();
+        cell_side0.clear();
+        cell_side1.clear();
+        face_cl.clear();
+        face_cr.clear();
+        face_node.clear();
+        face_gate.clear();
         face_geom.clear();
         face_culvert.clear();
-        face_zb.clear(); face_dx.clear(); face_virtual.clear();
-        face_vj_node.clear(); node_vj_face.clear();
-        face_dir_l.clear(); face_dir_r.clear();
-        conduit_cell_begin.clear(); conduit_cell_count.clear(); conduit_link.clear();
+        face_zb.clear();
+        face_dx.clear();
+        face_virtual.clear();
+        face_vj_node.clear();
+        node_vj_face.clear();
+        face_dir_l.clear();
+        face_dir_r.clear();
+        conduit_cell_begin.clear();
+        conduit_cell_count.clear();
+        conduit_link.clear();
         conduit_section.clear();
-        conduit_roughness.clear(); conduit_rough_factor.clear();
-        conduit_loss_inlet.clear(); conduit_loss_outlet.clear(); conduit_slope.clear();
-        conduit_culvert_code.clear(); conduit_culvert_curve.clear();
+        conduit_roughness.clear();
+        conduit_rough_factor.clear();
+        conduit_loss_inlet.clear();
+        conduit_loss_outlet.clear();
+        conduit_slope.clear();
+        conduit_culvert_code.clear();
+        conduit_culvert_curve.clear();
         conduit_culvert_mitered.clear();
-        chain_ptr.clear(); chain_cells.clear(); chain_dir.clear();
-        cell_chain.clear(); cell_chain_pos.clear();
-        struct_link.clear(); struct_n1.clear(); struct_n2.clear();
-        struct_is_dummy.clear(); node_dummy_drain.clear();
-        node_face_ptr.clear(); node_face_idx.clear();
-        node_face_sign.clear(); node_face_zb.clear();
-        node_invert.clear(); node_full_depth.clear(); node_ponded_area.clear();
-        node_sur_depth.clear(); node_can_pond.clear();
+        chain_ptr.clear();
+        chain_cells.clear();
+        chain_dir.clear();
+        cell_chain.clear();
+        cell_chain_pos.clear();
+        struct_link.clear();
+        struct_n1.clear();
+        struct_n2.clear();
+        struct_is_dummy.clear();
+        node_dummy_drain.clear();
+        node_face_ptr.clear();
+        node_face_idx.clear();
+        node_face_sign.clear();
+        node_face_zb.clear();
+        node_invert.clear();
+        node_full_depth.clear();
+        node_ponded_area.clear();
+        node_sur_depth.clear();
+        node_can_pond.clear();
         node_kind.clear();
         node_area.clear();
-        node_vol_off.clear(); node_vol_dmax.clear();
-        node_vol_atop.clear(); node_vol_tbl.clear();
+        node_vol_off.clear();
+        node_vol_dmax.clear();
+        node_vol_atop.clear();
+        node_vol_tbl.clear();
         geom.clear();
     }
 };
 
 /// Node kind codes stored in NetworkMeshData::node_kind.
-enum : uint8_t {
-    kNodeJunction = 0,
-    kNodeVirtual  = 1,
-    kNodeStorage  = 2,
-    kNodeOutfall  = 3
-};
+enum : uint8_t { kNodeJunction = 0, kNodeVirtual = 1, kNodeStorage = 2, kNodeOutfall = 3 };
 
 /**
  * @brief Mutable solver state — the conserved variables and the node volumes.
@@ -455,14 +517,14 @@ enum : uint8_t {
  * what the reporting path reads.
  */
 struct NetworkStateData {
-    // Conserved cell variables (per BARREL — link reporting multiplies by
-    // geom.barrels).
-    std::vector<double> cell_a;   ///< flow area (ft²)
-    std::vector<double> cell_q;   ///< discharge (cfs)
+    // Conserved cell variables aggregate every parallel barrel. Link reporting
+    // uses these directly; it must not multiply them by geom.barrels again.
+    std::vector<double> cell_a; ///< flow area (ft²)
+    std::vector<double> cell_q; ///< discharge (cfs)
 
     // Derived, refreshed after every cell update so faces read a consistent
     // depth without re-inverting A(h) per face.
-    std::vector<double> cell_h;   ///< depth (ft)
+    std::vector<double> cell_h; ///< depth (ft)
 
     // Node state. `volume` is the prognostic mass ledger — depth follows from
     // it through the node's storage relation — so node mass is conserved
@@ -476,7 +538,7 @@ struct NetworkStateData {
     /// step made of many substeps reports a correct mean flooding rate.
     std::vector<double> node_overflow_vol;
 
-    // Advected scalars, cell-major: phi[s * n_cells + c]. Empty when transport
+    // Advected scalars, species-major: phi[s * n_cells + c]. Empty when transport
     // is off.
     std::vector<double> cell_phi;
     int n_species = 0;
@@ -492,6 +554,20 @@ struct NetworkStateData {
     /// one spurious re-pressurization step (TPA plan §5).
     std::vector<uint8_t> cell_tpa;
 
+    /**
+     * @brief Reset conserved, derived and transport arrays to requested zero-filled dimensions.
+     *
+     * assign replaces all cell/node/overflow values with zero and stores n_species. cell_phi is
+     * species-major with n_cells*n_species entries. cell_tpa is deliberately untouched, so its
+     * allocation/reset is the solver initialization responsibility. Existing references may be
+     * invalidated; allocation failure can leave arrays partially resized/reset. This does not establish
+     * geometry-consistent heads, areas or storage relations.
+     *
+     * @param[in] n_cells Nonnegative cell count; converted unchecked to size_t.
+     * @param[in] n_nodes Nonnegative node count; converted unchecked to size_t.
+     * @param[in] n_species_in Nonnegative species count; cell/species product must fit size_t and
+     *     vector limits.
+     */
     void resize(int n_cells, int n_nodes, int n_species_in) {
         const auto nc = static_cast<std::size_t>(n_cells);
         const auto nn = static_cast<std::size_t>(n_nodes);

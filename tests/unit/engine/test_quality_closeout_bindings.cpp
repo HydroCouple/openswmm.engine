@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_quality_closeout_bindings.cpp
- * @brief The 2026-09-01 closeout batch: five bindings, one gate each.
+ * @file      test_quality_closeout_bindings.cpp
+ * @brief     The 2026-09-01 closeout batch: five bindings, one gate each.
  *
  * @details Every gate here was written to FAIL at base:
  *          1. LARD applied NO flux module (transported temperature,
@@ -32,6 +32,10 @@
  *          behaviour is the failure mode these exist to catch.
  *
  *          Scratch fixtures use the `_qcb_` prefix (collision-checked).
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -48,20 +52,50 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Asserts open success and
+ * returns early from this void helper on a fatal assertion. Subsequent write/close failures are not
+ * checked; the local stream closes at scope exit and no path/content storage is retained.
+ * Allocation exceptions can propagate.
+ *
+ * @param[in] path Borrowed destination path; an existing file is truncated/overwritten.
+ * @param[in] body Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const std::string& path, const std::string& body) {
     std::ofstream f(path);
     ASSERT_TRUE(f.is_open()) << path;
     f << body;
 }
 
-/// Three junctions and an outfall on a circular chain, one steady inflow.
-/// `extra_options` lands in [OPTIONS]; `extra_sections` after [XSECTIONS].
-std::string deck(const std::string& extra_options,
-                 const std::string& extra_sections) {
+/**
+ * @brief Construct a CFS quality closeout binding fixture.
+ *
+ * Text construction only; dimensions use feet and optional quality definitions/configs come from
+ * caller. No escaping, validation or file creation.
+ *
+ * @param[in] extra_options Raw OPTIONS rows with valid separators.
+ * @param[in] extra_sections Raw complete sections inserted before fixed INFLOWS.
+ * @return Owned two-hour three-conduit deck with 3 cfs supply and 5 s routing.
+ */
+std::string deck(const std::string& extra_options, const std::string& extra_sections) {
     return "[TITLE]\ncloseout bindings\n\n[OPTIONS]\n"
            "FLOW_UNITS           CFS\nFLOW_ROUTING         DYNWAVE\n"
            "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
@@ -82,16 +116,25 @@ std::string deck(const std::string& extra_options,
            "[REPORT]\nINPUT NO\n";
 }
 
-/// Open + run a deck to completion; returns the engine (caller destroys)
-/// or nullptr. The context stays readable until destroy.
+/**
+ * @brief Run the quality closeout fixture while retaining ended state for inspection.
+ *
+ * Caps at 40000 positive-time calls; guard exhaustion can return a partial ended model. End status
+ * is ignored. Caller must destroy success, and files remain; no assertions or independent full-run
+ * indicator.
+ *
+ * @param[in] tag Safe artifact prefix for overwritten .inp/.rpt/.out.
+ * @param[in] body Complete deck passed to write_file.
+ * @return Caller-owned ended handle on success, null after setup/step refusal and destruction.
+ */
 SWMM_Engine run(const std::string& tag, const std::string& body) {
     write_file(tag + ".inp", body);
     SWMM_Engine e = swmm_engine_create();
-    if (!e) return nullptr;
-    if (swmm_engine_open(e, (tag + ".inp").c_str(), (tag + ".rpt").c_str(),
-                         (tag + ".out").c_str(), nullptr) != SWMM_OK ||
-        swmm_engine_initialize(e) != SWMM_OK ||
-        swmm_engine_start(e, 1) != SWMM_OK) {
+    if (!e)
+        return nullptr;
+    if (swmm_engine_open(e, (tag + ".inp").c_str(), (tag + ".rpt").c_str(), (tag + ".out").c_str(),
+                         nullptr) != SWMM_OK ||
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
         swmm_engine_destroy(e);
         return nullptr;
     }
@@ -107,7 +150,7 @@ SWMM_Engine run(const std::string& tag, const std::string& body) {
     return e;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // 1. LARD applies the surface flux modules. Hot air (90 °F) over 5 °C water
@@ -134,18 +177,14 @@ TEST(QualityCloseoutTest, LardAppliesSurfaceFluxes) {
     // six-minute transit — windless, LEGACY itself warms the outlet by
     // ~0.01 degC and the control assert cannot discriminate (the ARD-relax
     // round's lesson, re-learned here on the first run of this fixture).
-    const std::string air =
-        "[TEMPERATURE]\nTIMESERIES air_ts\nHUMIDITY 50\n"
-        "WINDSPEED MONTHLY 25 25 25 25 25 25 25 25 25 25 25 25\n\n"
-        "[TIMESERIES]\nair_ts 01/01/2026 00:00 90.0\n"
-        "air_ts 01/02/2026 00:00 90.0\n\n";
-    const std::string opts_lard =
-        "HEAT_TRANSPORT       YES\nQUALITY_SOLVER       LAGRANGIAN\n";
-    const std::string opts_leg =
-        "HEAT_TRANSPORT       YES\n";
-    const std::string pc = air +
-        "[PROCESS_COMPONENTS]\n"
-        "org.hydrocouple.openswmm.heat config=\"_qcb_flux.heat\"\n\n";
+    const std::string air = "[TEMPERATURE]\nTIMESERIES air_ts\nHUMIDITY 50\n"
+                            "WINDSPEED MONTHLY 25 25 25 25 25 25 25 25 25 25 25 25\n\n"
+                            "[TIMESERIES]\nair_ts 01/01/2026 00:00 90.0\n"
+                            "air_ts 01/02/2026 00:00 90.0\n\n";
+    const std::string opts_lard = "HEAT_TRANSPORT       YES\nQUALITY_SOLVER       LAGRANGIAN\n";
+    const std::string opts_leg = "HEAT_TRANSPORT       YES\n";
+    const std::string pc = air + "[PROCESS_COMPONENTS]\n"
+                                 "org.hydrocouple.openswmm.heat config=\"_qcb_flux.heat\"\n\n";
 
     // Open channels, or there is nothing to exchange THROUGH: the fixture
     // shipped all-CIRCULAR, whose closed conduits have no free surface (the
@@ -159,7 +198,7 @@ TEST(QualityCloseoutTest, LardAppliesSurfaceFluxes) {
         return d;
     };
     SWMM_Engine lard = run("_qcb_flux_lard", open_channels(deck(opts_lard, pc)));
-    SWMM_Engine leg  = run("_qcb_flux_leg", open_channels(deck(opts_leg, pc)));
+    SWMM_Engine leg = run("_qcb_flux_leg", open_channels(deck(opts_leg, pc)));
     ASSERT_NE(lard, nullptr);
     ASSERT_NE(leg, nullptr);
 
@@ -167,13 +206,12 @@ TEST(QualityCloseoutTest, LardAppliesSurfaceFluxes) {
     const auto& cg = as_cpp_engine(leg).context();
     ASSERT_GT(cl.heat_state.link_temp.size(), 2u);
 
-    const double t_lard = cl.heat_state.link_temp[2];  // C3, chain outlet
-    const double t_leg  = cg.heat_state.link_temp[2];
+    const double t_lard = cl.heat_state.link_temp[2]; // C3, chain outlet
+    const double t_leg = cg.heat_state.link_temp[2];
     // The premise must hold for the control, or the deck is not
     // discriminating and this gate would be vacuous.
     ASSERT_GT(t_leg, 5.5) << "the LEGACY control did not warm — deck defect";
-    EXPECT_GT(t_lard, 5.5)
-        << "LARD applied no surface flux (the pre-batch behaviour)";
+    EXPECT_GT(t_lard, 5.5) << "LARD applied no surface flux (the pre-batch behaviour)";
     EXPECT_NEAR(t_lard, t_leg, std::max(1.0, 0.15 * (t_leg - 5.0)))
         << "LARD warms, but not where the LEGACY control lands";
 
@@ -188,20 +226,17 @@ TEST(QualityCloseoutTest, LardAppliesSurfaceFluxes) {
 //    temperature sat at 20 °C exactly.
 // ---------------------------------------------------------------------------
 TEST(QualityCloseoutTest, BedBindsUnderArd) {
-    write_file("_qcb_bed.heat",
-               "[HEAT_FLUXES]\nSEDIMENT_EXCHANGE ON\n\n"
-               "[SEDIMENT_EXCHANGE]\n"
-               "GROUND_TEMPERATURE GLOBAL 5.0\n"
-               "GROUND_DEPTH GLOBAL 0.1\n"
-               "BED_THICKNESS GLOBAL 0.1\n"
-               "THERMAL_DIFFUSIVITY GLOBAL 1.0e-5\n\n"
-               "[HEAT_SOURCES]\n"
-               "EXTERNAL_INFLOW GLOBAL 20.0\nINITIAL_STATE GLOBAL 20.0\n");
-    const std::string opts =
-        "HEAT_TRANSPORT       YES\nQUALITY_SOLVER       EULERIAN_ARD\n";
-    const std::string pc =
-        "[PROCESS_COMPONENTS]\n"
-        "org.hydrocouple.openswmm.heat config=\"_qcb_bed.heat\"\n\n";
+    write_file("_qcb_bed.heat", "[HEAT_FLUXES]\nSEDIMENT_EXCHANGE ON\n\n"
+                                "[SEDIMENT_EXCHANGE]\n"
+                                "GROUND_TEMPERATURE GLOBAL 5.0\n"
+                                "GROUND_DEPTH GLOBAL 0.1\n"
+                                "BED_THICKNESS GLOBAL 0.1\n"
+                                "THERMAL_DIFFUSIVITY GLOBAL 1.0e-5\n\n"
+                                "[HEAT_SOURCES]\n"
+                                "EXTERNAL_INFLOW GLOBAL 20.0\nINITIAL_STATE GLOBAL 20.0\n");
+    const std::string opts = "HEAT_TRANSPORT       YES\nQUALITY_SOLVER       EULERIAN_ARD\n";
+    const std::string pc = "[PROCESS_COMPONENTS]\n"
+                           "org.hydrocouple.openswmm.heat config=\"_qcb_bed.heat\"\n\n";
 
     SWMM_Engine e = run("_qcb_bed_ard", deck(opts, pc));
     ASSERT_NE(e, nullptr);
@@ -213,8 +248,7 @@ TEST(QualityCloseoutTest, BedBindsUnderArd) {
         << "cooled BELOW the ground temperature — no term can do that";
     // And the engine-gating warning must be gone.
     for (const auto& w : ctx.warnings)
-        EXPECT_EQ(w.find("binds to the LEGACY link store"), std::string::npos)
-            << w;
+        EXPECT_EQ(w.find("binds to the LEGACY link store"), std::string::npos) << w;
     swmm_engine_destroy(e);
 }
 
@@ -224,18 +258,14 @@ TEST(QualityCloseoutTest, BedBindsUnderArd) {
 //    warning fired and removal was 0, so the two twins agreed exactly.
 // ---------------------------------------------------------------------------
 TEST(QualityCloseoutTest, TreatmentRemovesUnderLard) {
-    const std::string polls =
-        "[POLLUTANTS]\nTSS MG/L 0 0 0 0\n\n";
-    const std::string treat =
-        "[TREATMENT]\nJ1 TSS R = 0.5\n\n";
-    const std::string inflow_tss =
-        "[TIMESERIES]\nT_TSS 0:00 100\nT_TSS 2:00 100\n\n";
+    const std::string polls = "[POLLUTANTS]\nTSS MG/L 0 0 0 0\n\n";
+    const std::string treat = "[TREATMENT]\nJ1 TSS R = 0.5\n\n";
+    const std::string inflow_tss = "[TIMESERIES]\nT_TSS 0:00 100\nT_TSS 2:00 100\n\n";
     const std::string opts = "QUALITY_SOLVER       LAGRANGIAN\n";
 
     // The inflow row needs the pollutant column; rebuild [INFLOWS].
     auto body = [&](bool treated) {
-        std::string d = deck(opts, polls + (treated ? treat : "") +
-                                       inflow_tss);
+        std::string d = deck(opts, polls + (treated ? treat : "") + inflow_tss);
         const std::string mark = "[INFLOWS]\nJ0 FLOW \"\" FLOW 1.0 1.0 3.0\n";
         const auto at = d.find(mark);
         EXPECT_NE(at, std::string::npos);
@@ -243,7 +273,7 @@ TEST(QualityCloseoutTest, TreatmentRemovesUnderLard) {
         return d;
     };
 
-    SWMM_Engine treated   = run("_qcb_treat_on", body(true));
+    SWMM_Engine treated = run("_qcb_treat_on", body(true));
     SWMM_Engine untreated = run("_qcb_treat_off", body(false));
     ASSERT_NE(treated, nullptr);
     ASSERT_NE(untreated, nullptr);
@@ -252,11 +282,10 @@ TEST(QualityCloseoutTest, TreatmentRemovesUnderLard) {
     const auto& cu = as_cpp_engine(untreated).context();
     const auto np = static_cast<std::size_t>(ct.n_pollutants());
     ASSERT_GE(np, 1u);
-    const double c3_t = ct.links.conc[2 * np];      // C3 TSS
+    const double c3_t = ct.links.conc[2 * np]; // C3 TSS
     const double c3_u = cu.links.conc[2 * np];
     ASSERT_GT(c3_u, 50.0) << "untreated control never loaded — deck defect";
-    EXPECT_LT(c3_t, 0.75 * c3_u)
-        << "treatment removed nothing under LARD (the pre-batch bypass)";
+    EXPECT_LT(c3_t, 0.75 * c3_u) << "treatment removed nothing under LARD (the pre-batch bypass)";
     for (const auto& w : ct.warnings)
         EXPECT_EQ(w.find("treatment interop is"), std::string::npos) << w;
     swmm_engine_destroy(treated);
@@ -272,8 +301,7 @@ TEST(QualityCloseoutTest, TreatmentRemovesUnderLard) {
 TEST(QualityCloseoutTest, TreatmentRemovalIsBookedAsMassAndTheBalanceCloses) {
     const std::string polls = "[POLLUTANTS]\nTSS MG/L 0 0 0 0\n\n";
     const std::string treat = "[TREATMENT]\nJ1 TSS R = 0.5\n\n";
-    const std::string inflow_tss =
-        "[TIMESERIES]\nT_TSS 0:00 100\nT_TSS 2:00 100\n\n";
+    const std::string inflow_tss = "[TIMESERIES]\nT_TSS 0:00 100\nT_TSS 2:00 100\n\n";
     std::string d = deck("", polls + treat + inflow_tss);
     const std::string mark = "[INFLOWS]\nJ0 FLOW \"\" FLOW 1.0 1.0 3.0\n";
     const auto at = d.find(mark);
@@ -284,7 +312,7 @@ TEST(QualityCloseoutTest, TreatmentRemovalIsBookedAsMassAndTheBalanceCloses) {
     ASSERT_NE(e, nullptr);
     const auto& mb = as_cpp_engine(e).context().mass_balance;
     ASSERT_FALSE(mb.qual_routing_reacted.empty());
-    const double in  = mb.qual_routing_ex_in[0];
+    const double in = mb.qual_routing_ex_in[0];
     const double out = mb.qual_routing_outflow[0];
     const double reacted = mb.qual_routing_reacted[0];
     ASSERT_GT(in, 0.0) << "no TSS entered; deck defect";
@@ -295,8 +323,8 @@ TEST(QualityCloseoutTest, TreatmentRemovalIsBookedAsMassAndTheBalanceCloses) {
     double err = 1.0;
     ASSERT_EQ(swmm_get_quality_continuity_error(e, 0, &err), SWMM_OK);
     EXPECT_LT(std::fabs(err), 0.01)
-        << "quality routing continuity error " << err * 100.0
-        << " % (in " << in << ", out " << out << ", reacted " << reacted << ")";
+        << "quality routing continuity error " << err * 100.0 << " % (in " << in << ", out " << out
+        << ", reacted " << reacted << ")";
     swmm_engine_destroy(e);
 }
 
@@ -307,15 +335,13 @@ TEST(QualityCloseoutTest, TreatmentRemovalIsBookedAsMassAndTheBalanceCloses) {
 //    base the species reacted in place and C3 stayed at exactly 0 forever.
 // ---------------------------------------------------------------------------
 TEST(QualityCloseoutTest, MsxSpeciesAdvectUnderLegacy) {
-    write_file("_qcb_msx.rxn",
-               "[REACTION_OPTIONS]\nSOLVER EUL\n\n"
-               "[REACTION_SPECIES]\nBULK TRACER MG\n\n"
-               "[REACTION_PIPES]\nRATE TRACER 0\n\n"
-               "[REACTION_TANKS]\nRATE TRACER 0\n\n"
-               "[REACTION_QUALITY]\nLINK C1 TRACER 80.0\n");
-    const std::string pc =
-        "[PROCESS_COMPONENTS]\n"
-        "org.hydrocouple.openswmm.reactions config=\"_qcb_msx.rxn\"\n\n";
+    write_file("_qcb_msx.rxn", "[REACTION_OPTIONS]\nSOLVER EUL\n\n"
+                               "[REACTION_SPECIES]\nBULK TRACER MG\n\n"
+                               "[REACTION_PIPES]\nRATE TRACER 0\n\n"
+                               "[REACTION_TANKS]\nRATE TRACER 0\n\n"
+                               "[REACTION_QUALITY]\nLINK C1 TRACER 80.0\n");
+    const std::string pc = "[PROCESS_COMPONENTS]\n"
+                           "org.hydrocouple.openswmm.reactions config=\"_qcb_msx.rxn\"\n\n";
 
     // Twelve minutes, not two hours: the seeded slug transits the chain in
     // ~10 minutes and a 2 h run flushes it out entirely — the first run of
@@ -334,10 +360,9 @@ TEST(QualityCloseoutTest, MsxSpeciesAdvectUnderLegacy) {
     const int nsp = ctx.reactions.n_species();
     ASSERT_EQ(nsp, 1);
     ASSERT_GE(ctx.reactions.msx_link_conc.size(), 3u);
-    const double c3 = ctx.reactions.msx_link_conc[2];  // link C3, species 0
-    EXPECT_GT(c3, 1.0)
-        << "the seeded tracer never arrived downstream — MSX state did not "
-           "advect under LEGACY (the pre-batch limitation)";
+    const double c3 = ctx.reactions.msx_link_conc[2]; // link C3, species 0
+    EXPECT_GT(c3, 1.0) << "the seeded tracer never arrived downstream — MSX state did not "
+                          "advect under LEGACY (the pre-batch limitation)";
     // Two hours of 3 cfs through three 400 ft pipes flushes the slug well
     // below its seed value at the seeded link too — advection moves mass
     // OUT, which distinguishes transport from a copy.
@@ -356,14 +381,11 @@ TEST(QualityCloseoutTest, MsxSpeciesAdvectUnderLegacy) {
 //    temperature rows to 0 °C, so the outlet read exactly 0.
 // ---------------------------------------------------------------------------
 TEST(QualityCloseoutTest, SubZeroTemperatureSurvivesArdTransport) {
-    write_file("_qcb_subz.heat",
-               "[HEAT_SOURCES]\n"
-               "EXTERNAL_INFLOW GLOBAL -5.0\nINITIAL_STATE GLOBAL -5.0\n");
-    const std::string opts =
-        "HEAT_TRANSPORT       YES\nQUALITY_SOLVER       EULERIAN_ARD\n";
-    const std::string pc =
-        "[PROCESS_COMPONENTS]\n"
-        "org.hydrocouple.openswmm.heat config=\"_qcb_subz.heat\"\n\n";
+    write_file("_qcb_subz.heat", "[HEAT_SOURCES]\n"
+                                 "EXTERNAL_INFLOW GLOBAL -5.0\nINITIAL_STATE GLOBAL -5.0\n");
+    const std::string opts = "HEAT_TRANSPORT       YES\nQUALITY_SOLVER       EULERIAN_ARD\n";
+    const std::string pc = "[PROCESS_COMPONENTS]\n"
+                           "org.hydrocouple.openswmm.heat config=\"_qcb_subz.heat\"\n\n";
 
     SWMM_Engine e = run("_qcb_subz_ard", deck(opts, pc));
     ASSERT_NE(e, nullptr);

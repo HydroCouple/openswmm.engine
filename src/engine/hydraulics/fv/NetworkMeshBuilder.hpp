@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file NetworkMeshBuilder.hpp
- * @brief Build the FV cell/face mesh from a SimulationContext.
+ * @file      NetworkMeshBuilder.hpp
+ * @brief     Build the FV cell/face mesh from a SimulationContext.
  *
  * @details Runs once at Router::init. The mesh is INTERNAL numerical
  *          discretization — it creates no named objects and is invisible to
@@ -28,9 +28,9 @@
  * @see plans/EXPLICIT_FV_KOKKOS_1D_SOLVER_PLAN.md §3.2, §3.4
  * @ingroup engine_fv
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_FV_NETWORK_MESH_BUILDER_HPP
@@ -51,12 +51,12 @@ namespace openswmm::fv {
 /// Diagnostics produced while building the mesh. Warnings are non-fatal and
 /// surface through the normal ctx.warnings channel; errors abort the run.
 struct MeshBuildReport {
-    int  n_cells    = 0;
-    int  n_faces    = 0;
-    int  n_conduits = 0;
-    int  n_virtual  = 0;   ///< virtual junctions spliced into interior faces
-    double min_dx   = 0.0;
-    double max_dx   = 0.0;
+    int n_cells = 0;
+    int n_faces = 0;
+    int n_conduits = 0;
+    int n_virtual = 0; ///< virtual junctions spliced into interior faces
+    double min_dx = 0.0;
+    double max_dx = 0.0;
     std::vector<std::string> warnings;
     std::vector<std::string> errors;
 };
@@ -72,22 +72,29 @@ struct MeshBuildReport {
  * @param mesh    [out] Cleared and filled.
  * @return Build report; a non-empty `errors` list means the mesh is unusable.
  */
-MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
-                                 const FvOptions& opts,
+MeshBuildReport buildNetworkMesh(SimulationContext& ctx, const FvOptions& opts,
                                  NetworkMeshData& mesh);
 
 /**
- * @brief Populate one conduit's cross-section closure, including the tapered
- *        Preissmann slot and the first-moment table.
+ * @brief Construct an aggregate-barrel FV section and its tapered slot/closure.
  *
- * Exposed for the unit tests, which exercise the closure directly (continuity
- * of dA/dh through the crown, A↔h round-trip, the analytic I₁ extension).
+ * Depth/radius remain per-barrel, area/width multiply max(1,barrels). Closed slot uses g*A/c^2,
+ * caps at5% full width (fallback width1ft) and floors nonpositive result1e-6ft; crown uses
+ * SLOT_CROWN_CUTOFF. Calls buildClosure to replace provisional crown area/integral. No complete
+ * finite/physical validation or ownership transfer.
+ *
+ * @param[in] xs Borrowed initialized native scalar section; optional table pointers copy as
+ *     non-owning references and must remain live.
+ * @param[in] is_open True extends the open section above full depth with vertical-wall width; false
+ *     creates a pressurization slot.
+ * @param[in] slot_celerity Design speed ft/s; closed-section calculation floors nonpositive/<=1/NaN
+ *     to1 through comparison.
+ * @param[in,out] g Borrowed destination overwritten with copied geometry, barrel-scaled area/width
+ *     and constructed closure; unrelated fields not assigned here retain prior values.
+ * @param[in] barrels Parallel barrel count; <=0 becomes1.
  */
-/// @param barrels  parallel identical barrels; area and top width are scaled
-///                 by it so a cell is their aggregate section (hydraulic
-///                 radius is per barrel and stays unscaled).
-void buildGeometry(const XSectParams& xs, bool is_open, double slot_celerity,
-                   FvGeometry& g, int barrels = 1);
+void buildGeometry(const XSectParams& xs, bool is_open, double slot_celerity, FvGeometry& g,
+                   int barrels = 1);
 
 } // namespace openswmm::fv
 

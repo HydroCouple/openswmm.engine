@@ -1,6 +1,6 @@
 /**
- * @file test_fv_pressurized_implicit.cpp
- * @brief Slot program R2a — gates for the implicit pressurized head update
+ * @file      test_fv_pressurized_implicit.cpp
+ * @brief     Slot program R2a — gates for the implicit pressurized head update
  *        (FV_PRESSURIZED_IMPLICIT / PressurizedHeadSolver).
  *
  * The gates follow plans/FV_SLOT_STORAGE_PROGRAM_2026-08-24.md §R2:
@@ -16,10 +16,14 @@
  *       slot celerity: flat wall-vs-c, and an order-of-magnitude drop
  *       against the explicit baseline;
  *   plus the degree-3 fold (surcharged tee → the CG component path).
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #ifdef _MSC_VER
-#  define _USE_MATH_DEFINES
+#define _USE_MATH_DEFINES
 #endif
 #include <gtest/gtest.h>
 
@@ -37,20 +41,45 @@ namespace {
 
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 
-FvOptions pressOptions(double, bool implicit_on) {
+/**
+ * @brief Create default FV options with the chosen pressurized-implicit switch.
+ *
+ * Does not validate/convert celerity or initialize a solver.
+ *
+ * @param[in] celerity Ignored compatibility argument; geometry builders, rather than this options
+ *     helper, receive slot celerity.
+ * @param[in] implicit_on Enable or disable pressurized implicit treatment.
+ * @return Owned defaultOptions() with only pressurized_implicit replaced.
+ */
+FvOptions pressOptions(double celerity, bool implicit_on) {
     FvOptions o = defaultOptions();
     o.pressurized_implicit = implicit_on;
     return o;
 }
 
-/// Advance in fixed chunks (a stand-in for routing steps).
-void advanceBy(ExplicitFvSolver& s, double t0, double t_end, double chunk,
-               const FvStepForcing& f, long* substeps = nullptr) {
+/**
+ * @brief Advance a prepared FV solver through fixed-size clipped windows.
+ *
+ * Uses each returned achieved time as the next start, so advance must make progress to terminate.
+ * Propagates exceptions and does not independently reject a stalled/short advance or roll back
+ * partial state.
+ *
+ * @param[in,out] s Initialized solver with live model dependencies at t0.
+ * @param[in] t0 Initial accepted model time in seconds.
+ * @param[in] t_end Desired end time in seconds; no calls when <=t0+1e-9.
+ * @param[in] chunk Strictly positive requested window size in seconds.
+ * @param[in] f Borrowed forcing with dependencies valid for every synchronous advance.
+ * @param[in,out] substeps Optional running counter incremented by last_num_steps after each call;
+ *     not initialized here, null disables counting.
+ */
+void advanceBy(ExplicitFvSolver& s, double t0, double t_end, double chunk, const FvStepForcing& f,
+               long* substeps = nullptr) {
     double t = t0;
     while (t < t_end - 1.0e-9) {
         const double target = std::min(t + chunk, t_end);
         t = s.advance(t, target, f);
-        if (substeps) *substeps += s.last_num_steps();
+        if (substeps)
+            *substeps += s.last_num_steps();
     }
 }
 
@@ -64,19 +93,17 @@ class PressLakeAtRest : public ::testing::TestWithParam<int> {};
 
 INSTANTIATE_TEST_SUITE_P(Integrators, PressLakeAtRest, ::testing::Values(0, 1),
                          [](const ::testing::TestParamInfo<int>& i) {
-                             return i.param == 0 ? std::string("Euler")
-                                                 : std::string("RK2");
+                             return i.param == 0 ? std::string("Euler") : std::string("RK2");
                          });
 
 TEST_P(PressLakeAtRest, staysAtRestToMachinePrecision) {
-    Channel ch = makeWalledChannel(circular(3.0), 24, 50.0,
-                                   [](double) { return 0.0; }, 0.015, 100.0);
-    const double eta0 = 9.0;   // 3 diameters of surcharge — every cell in P
+    Channel ch =
+        makeWalledChannel(circular(3.0), 24, 50.0, [](double) { return 0.0; }, 0.015, 100.0);
+    const double eta0 = 9.0; // 3 diameters of surcharge — every cell in P
     seedLevel(ch, eta0);
 
     FvOptions o = pressOptions(100.0, true);
-    o.time_integration =
-        (GetParam() == 1) ? TimeIntegration::RK2 : TimeIntegration::EULER;
+    o.time_integration = (GetParam() == 1) ? TimeIntegration::RK2 : TimeIntegration::EULER;
 
     ExplicitFvSolver s;
     s.initialize(ch.mesh, ch.state, o);
@@ -86,8 +113,8 @@ TEST_P(PressLakeAtRest, staysAtRestToMachinePrecision) {
     for (int i = 0; i < ch.n; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         EXPECT_NEAR(ch.state.cell_q[ui], 0.0, 1.0e-9) << "cell " << i;
-        const double eta = ch.mesh.cell_zb[ui] +
-                           k::depthOfArea(ch.mesh.geom[0], ch.state.cell_a[ui]);
+        const double eta =
+            ch.mesh.cell_zb[ui] + k::depthOfArea(ch.mesh.geom[0], ch.state.cell_a[ui]);
         EXPECT_NEAR(eta, eta0, 1.0e-9) << "cell " << i;
     }
 }
@@ -96,8 +123,7 @@ TEST_P(PressLakeAtRest, staysAtRestToMachinePrecision) {
 // piezometric head, not the depth, is what the implicit system diffuses.
 TEST(PressLakeAtRest, holdsOverAnUnevenBed) {
     Channel ch = makeWalledChannel(
-        circular(3.0), 24, 50.0,
-        [](double x) { return (x > 600.0) ? 1.5 : 0.0; }, 0.015, 100.0);
+        circular(3.0), 24, 50.0, [](double x) { return (x > 600.0) ? 1.5 : 0.0; }, 0.015, 100.0);
     const double eta0 = 9.0;
     seedLevel(ch, eta0);
 
@@ -110,8 +136,8 @@ TEST(PressLakeAtRest, holdsOverAnUnevenBed) {
     for (int i = 0; i < ch.n; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         EXPECT_NEAR(ch.state.cell_q[ui], 0.0, 1.0e-9) << "cell " << i;
-        const double eta = ch.mesh.cell_zb[ui] +
-                           k::depthOfArea(ch.mesh.geom[0], ch.state.cell_a[ui]);
+        const double eta =
+            ch.mesh.cell_zb[ui] + k::depthOfArea(ch.mesh.geom[0], ch.state.cell_a[ui]);
         EXPECT_NEAR(eta, eta0, 1.0e-9) << "cell " << i;
     }
 }
@@ -122,9 +148,8 @@ TEST(PressLakeAtRest, holdsOverAnUnevenBed) {
 
 TEST(PressInertness, freeSurfaceRunIsBitIdenticalWithTheOptionOn) {
     auto run = [](bool option_on) {
-        Channel ch = makeWalledChannel(circular(3.0), 32, 40.0,
-                                       [](double x) { return -0.001 * x; },
-                                       0.015, 100.0);
+        Channel ch = makeWalledChannel(
+            circular(3.0), 32, 40.0, [](double x) { return -0.001 * x; }, 0.015, 100.0);
         // A genuine transient, everywhere below band entry.
         for (int i = 0; i < ch.n; ++i) {
             const auto ui = static_cast<std::size_t>(i);
@@ -140,12 +165,11 @@ TEST(PressInertness, freeSurfaceRunIsBitIdenticalWithTheOptionOn) {
         return std::make_pair(ch.state.cell_a, ch.state.cell_q);
     };
     const auto off = run(false);
-    const auto on  = run(true);
+    const auto on = run(true);
     ASSERT_EQ(off.first.size(), on.first.size());
-    EXPECT_EQ(0, std::memcmp(off.first.data(), on.first.data(),
-                             off.first.size() * sizeof(double)));
-    EXPECT_EQ(0, std::memcmp(off.second.data(), on.second.data(),
-                             off.second.size() * sizeof(double)));
+    EXPECT_EQ(0, std::memcmp(off.first.data(), on.first.data(), off.first.size() * sizeof(double)));
+    EXPECT_EQ(0,
+              std::memcmp(off.second.data(), on.second.data(), off.second.size() * sizeof(double)));
 }
 
 // ---------------------------------------------------------------------------
@@ -153,14 +177,13 @@ TEST(PressInertness, freeSurfaceRunIsBitIdenticalWithTheOptionOn) {
 // ---------------------------------------------------------------------------
 
 TEST(PressConservation, sloshConservesVolumeExactly) {
-    Channel ch = makeWalledChannel(circular(3.0), 32, 40.0,
-                                   [](double) { return 0.0; }, 0.012, 150.0);
+    Channel ch =
+        makeWalledChannel(circular(3.0), 32, 40.0, [](double) { return 0.0; }, 0.012, 150.0);
     // Tilted pressurized surface, at rest: the relaxation is an acoustic
     // slosh handled entirely by the implicit pass (walls stay explicit).
     for (int i = 0; i < ch.n; ++i) {
         const auto ui = static_cast<std::size_t>(i);
-        const double eta = 8.0 + 2.0 * (static_cast<double>(i) /
-                                        static_cast<double>(ch.n - 1));
+        const double eta = 8.0 + 2.0 * (static_cast<double>(i) / static_cast<double>(ch.n - 1));
         ch.state.cell_a[ui] = k::areaOfDepth(ch.mesh.geom[0], eta);
         ch.state.cell_q[ui] = 0.0;
     }
@@ -178,8 +201,7 @@ TEST(PressConservation, sloshConservesVolumeExactly) {
     // And the slosh must actually DAMP (friction), not ring up.
     double qmax = 0.0;
     for (int i = 0; i < ch.n; ++i)
-        qmax = std::max(qmax,
-                        std::fabs(ch.state.cell_q[static_cast<std::size_t>(i)]));
+        qmax = std::max(qmax, std::fabs(ch.state.cell_q[static_cast<std::size_t>(i)]));
     EXPECT_LT(qmax, 50.0);
 }
 
@@ -190,18 +212,32 @@ TEST(PressConservation, sloshConservesVolumeExactly) {
 namespace {
 
 struct HeadLossResult {
-    double dh = 0.0;       // upstream head − downstream head (ft)
-    double q_mid = 0.0;    // discharge at mid-pipe (cfs)
-    long   substeps = 0;
-    bool   converged = false;
+    double dh = 0.0;    // upstream head − downstream head (ft)
+    double q_mid = 0.0; // discharge at mid-pipe (cfs)
+    long substeps = 0;
+    bool converged = false;
 };
 
-HeadLossResult runHeadLoss(double celerity, bool implicit_on,
-                           double q_in = 50.0) {
-    const int    n  = 64;
+/**
+ * @brief Run a64-cell pressurized reach toward steady head-loss equilibrium.
+ *
+ * Uses64 cells of25 ft, circular diameter3 ft, downstream head20 ft and Manning.013. Advances at
+ * most400 windows of30 s, requiring all cell discharges within .2% of inflow after at least12
+ * windows for convergence. No output artifacts or test assertions are produced; solver errors
+ * propagate.
+ *
+ * @param[in] celerity Positive acoustic slot celerity in ft/s passed to geometry construction.
+ * @param[in] implicit_on Select pressurized-implicit routing option.
+ * @param[in] q_in Strictly positive upstream lateral inflow in CFS, default50; also scales the
+ *     convergence threshold.
+ * @return Owned final head drop ft, mid-pipe discharge CFS, accumulated substeps and convergence
+ *     flag.
+ */
+HeadLossResult runHeadLoss(double celerity, bool implicit_on, double q_in = 50.0) {
+    const int n = 64;
     const double dx = 25.0;
-    Channel ch = makeNodedChannel(circular(3.0), n, dx,
-                                  [](double) { return 0.0; }, 0.013, celerity);
+    Channel ch =
+        makeNodedChannel(circular(3.0), n, dx, [](double) { return 0.0; }, 0.013, celerity);
     const double h_dn = 20.0;
     seedLevel(ch, h_dn);
     ch.state.node_head[0] = h_dn;
@@ -211,10 +247,10 @@ HeadLossResult runHeadLoss(double celerity, bool implicit_on,
     ExplicitFvSolver s;
     s.initialize(ch.mesh, ch.state, o);
 
-    std::vector<double> lat   = {q_in, 0.0};
+    std::vector<double> lat = {q_in, 0.0};
     std::vector<double> fixed = {kNaN, h_dn};
     FvStepForcing f{};
-    f.node_lateral    = lat.data();
+    f.node_lateral = lat.data();
     f.node_fixed_head = fixed.data();
     f.n_nodes = 2;
 
@@ -225,9 +261,7 @@ HeadLossResult runHeadLoss(double celerity, bool implicit_on,
         r.substeps += s.last_num_steps();
         double dev = 0.0;
         for (int i = 0; i < ch.n; ++i)
-            dev = std::max(dev,
-                           std::fabs(ch.state.cell_q[static_cast<std::size_t>(
-                                         i)] - q_in));
+            dev = std::max(dev, std::fabs(ch.state.cell_q[static_cast<std::size_t>(i)] - q_in));
         if (dev < 0.002 * q_in && chunk > 10) {
             r.converged = true;
             break;
@@ -242,9 +276,9 @@ HeadLossResult runHeadLoss(double celerity, bool implicit_on,
 
 TEST(PressHeadLoss, matchesManningAndIsSlotWidthInvariant) {
     // Analytic: S_f = (n·V / (φ·R^(2/3)))², h_f = S_f · L.
-    const double A  = 0.25 * M_PI * 9.0;
-    const double V  = 50.0 / A;
-    const double R  = 0.75;
+    const double A = 0.25 * M_PI * 9.0;
+    const double V = 50.0 / A;
+    const double R = 0.75;
     const double sf = std::pow(0.013 * V / (1.486 * std::pow(R, 2.0 / 3.0)), 2.0);
     const double hf = sf * 64.0 * 25.0;
 
@@ -267,22 +301,21 @@ TEST(PressHeadLoss, matchesManningAndIsSlotWidthInvariant) {
 // ---------------------------------------------------------------------------
 
 TEST(PressCensus, substepCountIsCelerityInvariantAndFarBelowExplicit) {
-    const HeadLossResult on_100  = runHeadLoss(100.0, true);
+    const HeadLossResult on_100 = runHeadLoss(100.0, true);
     const HeadLossResult on_1000 = runHeadLoss(1000.0, true);
     ASSERT_TRUE(on_100.converged);
     ASSERT_TRUE(on_1000.converged);
     // Flat wall-vs-c (the substep count is advective).  ±10% per the plan.
-    EXPECT_NEAR(static_cast<double>(on_1000.substeps) /
-                    static_cast<double>(on_100.substeps),
-                1.0, 0.10);
+    EXPECT_NEAR(static_cast<double>(on_1000.substeps) / static_cast<double>(on_100.substeps), 1.0,
+                0.10);
 
     // And the explicit baseline at the same celerity needs at least 5x the
     // substeps to cover the same simulated span (it is acoustic-bound).
     const HeadLossResult off_300 = runHeadLoss(300.0, false);
-    const HeadLossResult on_300  = runHeadLoss(300.0, true);
+    const HeadLossResult on_300 = runHeadLoss(300.0, true);
     ASSERT_TRUE(on_300.converged);
     const double per_s_off = static_cast<double>(off_300.substeps);
-    const double per_s_on  = static_cast<double>(on_300.substeps);
+    const double per_s_on = static_cast<double>(on_300.substeps);
     EXPECT_GT(per_s_off, 5.0 * per_s_on);
 }
 
@@ -292,13 +325,23 @@ TEST(PressCensus, substepCountIsCelerityInvariantAndFarBelowExplicit) {
 
 namespace {
 
-/// Time at which the LAST interior cell pressurizes under a fixed upstream
-/// head driving a bore into an initially near-empty pipe.
+/**
+ * @brief Measure pressurization arrival at the sixty-percent cell of a wetting reach.
+ *
+ * Uses48 cells of25 ft, initial depth.3 ft and fixed endpoint depths12/.3 ft. Despite the old
+ * brief, it watches index(6*n)/10 rather than the last cell; arrival is window-quantized with no
+ * event interpolation. Solver failures propagate.
+ *
+ * @param[in] celerity Positive slot celerity in ft/s.
+ * @param[in] implicit_on Select pressurized-implicit option.
+ * @return First5-second reporting endpoint with watched cell depth>=full depth, or -1 if none
+ *     by4000 s.
+ */
 double boreArrival(double celerity, bool implicit_on) {
-    const int    n  = 48;
+    const int n = 48;
     const double dx = 25.0;
-    Channel ch = makeNodedChannel(circular(3.0), n, dx,
-                                  [](double) { return 0.0; }, 0.013, celerity);
+    Channel ch =
+        makeNodedChannel(circular(3.0), n, dx, [](double) { return 0.0; }, 0.013, celerity);
     seedLevel(ch, 0.3);
     const double h_up = 12.0;
     ch.state.node_head[0] = h_up;
@@ -322,7 +365,8 @@ double boreArrival(double celerity, bool implicit_on) {
     double t = 0.0;
     while (t < 4000.0) {
         t = s.advance(t, t + 5.0, f);
-        if (ch.state.cell_h[watch] >= g.y_full) return t;
+        if (ch.state.cell_h[watch] >= g.y_full)
+            return t;
     }
     return -1.0;
 }
@@ -337,7 +381,7 @@ double boreArrival(double celerity, bool implicit_on) {
 // explicit, flux and census bound alike); what the implicit pass fixes is
 // the DELIVERY through the pressurized section feeding the front.
 TEST(PressBore, arrivalMatchesTheQuasiSteadyFillAndIsCelerityStable) {
-    const double t_on  = boreArrival(150.0, true);
+    const double t_on = boreArrival(150.0, true);
     ASSERT_GT(t_on, 0.0);
 
     // dL/dt = Q(L)/ΔA with Q(L) = (φ/n)·A_full·R^(2/3)·√(H_d/L):
@@ -345,12 +389,11 @@ TEST(PressBore, arrivalMatchesTheQuasiSteadyFillAndIsCelerityStable) {
     FvGeometry g;
     buildGeometry(circular(3.0), false, 150.0, g);
     const double a_full = 0.25 * M_PI * 9.0;
-    const double a0     = k::areaOfDepth(g, 0.3);
-    const double K  = (1.486 / 0.013) * a_full * std::pow(0.75, 2.0 / 3.0);
+    const double a0 = k::areaOfDepth(g, 0.3);
+    const double K = (1.486 / 0.013) * a_full * std::pow(0.75, 2.0 / 3.0);
     const double hd = 12.0 - 3.0;
-    const double lw = (6.0 * 48.0 / 10.0) * 25.0;   // watch cell station
-    const double t_est =
-        (2.0 / 3.0) * std::pow(lw, 1.5) * (a_full - a0) / (K * std::sqrt(hd));
+    const double lw = (6.0 * 48.0 / 10.0) * 25.0; // watch cell station
+    const double t_est = (2.0 / 3.0) * std::pow(lw, 1.5) * (a_full - a0) / (K * std::sqrt(hd));
     EXPECT_NEAR(t_on, t_est, 0.5 * t_est) << "analytic " << t_est;
 
     // Celerity invariance of the arrival — the slot width must not set the
@@ -363,13 +406,11 @@ TEST(PressBore, arrivalMatchesTheQuasiSteadyFillAndIsCelerityStable) {
     // entrance deficit is the very defect the program exists to remove.
     const double t_off = boreArrival(150.0, false);
     std::printf("  [bore] implicit c=150: %.0f s, c=660: %.0f s; explicit c=150: %.0f s;"
-                " quasi-steady fill %.1f s\n", t_on, t_on_660, t_off, t_est);
-    ::testing::Test::RecordProperty("explicit_arrival_s",
-                                    std::to_string(t_off));
-    ::testing::Test::RecordProperty("implicit_arrival_s",
-                                    std::to_string(t_on));
-    ::testing::Test::RecordProperty("analytic_arrival_s",
-                                    std::to_string(t_est));
+                " quasi-steady fill %.1f s\n",
+                t_on, t_on_660, t_off, t_est);
+    ::testing::Test::RecordProperty("explicit_arrival_s", std::to_string(t_off));
+    ::testing::Test::RecordProperty("implicit_arrival_s", std::to_string(t_on));
+    ::testing::Test::RecordProperty("analytic_arrival_s", std::to_string(t_est));
 }
 
 // ---------------------------------------------------------------------------
@@ -382,21 +423,33 @@ namespace {
 /// inflow node → tee → two outfalls at a common fixed head. Exercises the
 /// junction fold at degree 3 (no simple path — the CG branch must solve it).
 struct Tee {
-    NetworkMeshData  mesh;
+    NetworkMeshData mesh;
     NetworkStateData state;
     int cells_per_pipe = 4;
 };
 
+/**
+ * @brief Construct the three-pipe tee topology for implicit pressurization tests.
+ *
+ * Builds all face/cell/chain/node CSR/sign arrays explicitly with flat beds and Manning.013.
+ * Assigns large full-depth bounds/default node areas and no storage-volume tables. Does not seed
+ * heads/water or initialize a solver; geometry/allocation errors propagate.
+ *
+ * @param[in] celerity Positive acoustic slot celerity in ft/s used to build the shared three-foot
+ *     circular geometry.
+ * @return Owned mesh/state with three four-cell50 ft pipes, upstream junction0, tee junction1,
+ *     outfalls2/3 and zero-resized water state.
+ */
 Tee makeTee(double celerity) {
     Tee t;
-    const int    nc = t.cells_per_pipe;
+    const int nc = t.cells_per_pipe;
     const double dx = 50.0;
 
     t.mesh.geom.resize(1);
     buildGeometry(circular(3.0), false, celerity, t.mesh.geom[0]);
     t.mesh.geom[0].barrels = 1;
-    t.mesh.conduit_section    = {0, 0, 0};
-    t.mesh.conduit_roughness  = {0.013, 0.013, 0.013};
+    t.mesh.conduit_section = {0, 0, 0};
+    t.mesh.conduit_roughness = {0.013, 0.013, 0.013};
     t.mesh.conduit_rough_factor.assign(3, 32.2 * (0.013 / 1.486) * (0.013 / 1.486));
     t.mesh.conduit_loss_inlet.assign(3, 0.0);
     t.mesh.conduit_loss_outlet.assign(3, 0.0);
@@ -416,7 +469,7 @@ Tee makeTee(double celerity) {
     }
     t.mesh.conduit_cell_begin = {0, nc, 2 * nc};
     t.mesh.conduit_cell_count = {nc, nc, nc};
-    t.mesh.conduit_link       = {0, 1, 2};
+    t.mesh.conduit_link = {0, 1, 2};
 
     auto face = [&](int cl, int cr, int node) {
         t.mesh.face_cl.push_back(cl);
@@ -432,15 +485,18 @@ Tee makeTee(double celerity) {
 
     // Nodes: 0 = inflow junction, 1 = tee junction, 2,3 = outfalls.
     // Pipe 0: node0 → tee. Pipe 1: tee → node2. Pipe 2: tee → node3.
-    face(-1, 0, 0);                                  // f0  node0 | pipe0
-    for (int i = 1; i < nc; ++i) face(i - 1, i, -1); // interior pipe0
-    face(nc - 1, -1, 1);                             // pipe0 | tee
-    face(-1, nc, 1);                                 // tee | pipe1
-    for (int i = 1; i < nc; ++i) face(nc + i - 1, nc + i, -1);
-    face(2 * nc - 1, -1, 2);                         // pipe1 | out1
-    face(-1, 2 * nc, 1);                             // tee | pipe2
-    for (int i = 1; i < nc; ++i) face(2 * nc + i - 1, 2 * nc + i, -1);
-    face(3 * nc - 1, -1, 3);                         // pipe2 | out2
+    face(-1, 0, 0); // f0  node0 | pipe0
+    for (int i = 1; i < nc; ++i)
+        face(i - 1, i, -1); // interior pipe0
+    face(nc - 1, -1, 1);    // pipe0 | tee
+    face(-1, nc, 1);        // tee | pipe1
+    for (int i = 1; i < nc; ++i)
+        face(nc + i - 1, nc + i, -1);
+    face(2 * nc - 1, -1, 2); // pipe1 | out1
+    face(-1, 2 * nc, 1);     // tee | pipe2
+    for (int i = 1; i < nc; ++i)
+        face(2 * nc + i - 1, 2 * nc + i, -1);
+    face(3 * nc - 1, -1, 3); // pipe2 | out2
 
     const int nf = t.mesh.n_faces();
     t.mesh.cell_face0.assign(static_cast<std::size_t>(ncell), -1);
@@ -459,8 +515,10 @@ Tee makeTee(double celerity) {
                 t.mesh.cell_side1[uc] = side;
             }
         };
-        if (t.mesh.face_cl[uf] >= 0) attach(t.mesh.face_cl[uf], 0);
-        if (t.mesh.face_cr[uf] >= 0) attach(t.mesh.face_cr[uf], 1);
+        if (t.mesh.face_cl[uf] >= 0)
+            attach(t.mesh.face_cl[uf], 0);
+        if (t.mesh.face_cr[uf] >= 0)
+            attach(t.mesh.face_cr[uf], 1);
     }
 
     // Chains: one per pipe.
@@ -474,28 +532,27 @@ Tee makeTee(double celerity) {
         t.mesh.cell_chain_pos[static_cast<std::size_t>(i)] = i % nc;
     }
 
-    t.mesh.node_invert      = {0.0, 0.0, 0.0, 0.0};
-    t.mesh.node_full_depth  = {1.0e6, 1.0e6, 1.0e6, 1.0e6};
+    t.mesh.node_invert = {0.0, 0.0, 0.0, 0.0};
+    t.mesh.node_full_depth = {1.0e6, 1.0e6, 1.0e6, 1.0e6};
     t.mesh.node_ponded_area = {0.0, 0.0, 0.0, 0.0};
-    t.mesh.node_kind = {kNodeJunction, kNodeJunction, kNodeOutfall,
-                        kNodeOutfall};
+    t.mesh.node_kind = {kNodeJunction, kNodeJunction, kNodeOutfall, kNodeOutfall};
     t.mesh.node_area.assign(4, openswmm::constants::MIN_SURFAREA);
-    t.mesh.node_vol_off  = {-1, -1, -1, -1};
+    t.mesh.node_vol_off = {-1, -1, -1, -1};
     t.mesh.node_vol_dmax = {0.0, 0.0, 0.0, 0.0};
     t.mesh.node_vol_atop = {0.0, 0.0, 0.0, 0.0};
 
     // Node → face CSR. Tee faces: pipe0's downstream end (enters tee, +1),
     // pipe1's and pipe2's upstream ends (leave tee, −1).
-    const int f_up   = 0;
+    const int f_up = 0;
     const int f_p0dn = nc;
     const int f_p1up = nc + 1;
     const int f_p1dn = 2 * nc + 1;
     const int f_p2up = 2 * nc + 2;
     const int f_p2dn = 3 * nc + 2;
-    t.mesh.node_face_ptr  = {0, 1, 4, 5, 6};
-    t.mesh.node_face_idx  = {f_up, f_p0dn, f_p1up, f_p2up, f_p1dn, f_p2dn};
+    t.mesh.node_face_ptr = {0, 1, 4, 5, 6};
+    t.mesh.node_face_idx = {f_up, f_p0dn, f_p1up, f_p2up, f_p1dn, f_p2dn};
     t.mesh.node_face_sign = {-1.0, 1.0, -1.0, -1.0, 1.0, 1.0};
-    t.mesh.node_face_zb   = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    t.mesh.node_face_zb = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 
     t.state.resize(ncell, 4, 0);
     return t;
@@ -509,32 +566,34 @@ TEST(PressTee, degreeThreeFoldSplitsSymmetricallyUnderCG) {
     const FvGeometry& g = tee.mesh.geom[0];
     for (std::size_t i = 0; i < tee.state.cell_a.size(); ++i)
         tee.state.cell_a[i] = k::areaOfDepth(g, h0);
-    for (int n2 = 0; n2 < 4; ++n2) tee.state.node_head[static_cast<std::size_t>(n2)] = h0;
+    for (int n2 = 0; n2 < 4; ++n2)
+        tee.state.node_head[static_cast<std::size_t>(n2)] = h0;
 
     FvOptions o = pressOptions(300.0, true);
     ExplicitFvSolver s;
     s.initialize(tee.mesh, tee.state, o);
 
-    std::vector<double> lat   = {40.0, 0.0, 0.0, 0.0};
+    std::vector<double> lat = {40.0, 0.0, 0.0, 0.0};
     std::vector<double> fixed = {kNaN, kNaN, h0, h0};
     FvStepForcing f{};
-    f.node_lateral    = lat.data();
+    f.node_lateral = lat.data();
     f.node_fixed_head = fixed.data();
     f.n_nodes = 4;
 
     double t = 0.0;
-    for (int chunk = 0; chunk < 240; ++chunk) t = s.advance(t, t + 30.0, f);
+    for (int chunk = 0; chunk < 240; ++chunk)
+        t = s.advance(t, t + 30.0, f);
 
-    for (const double q : tee.state.cell_q) ASSERT_TRUE(std::isfinite(q));
+    for (const double q : tee.state.cell_q)
+        ASSERT_TRUE(std::isfinite(q));
     const int nc = tee.cells_per_pipe;
     const double q_in = tee.state.cell_q[static_cast<std::size_t>(nc / 2)];
     const double q_b1 = tee.state.cell_q[static_cast<std::size_t>(nc + nc / 2)];
-    const double q_b2 =
-        tee.state.cell_q[static_cast<std::size_t>(2 * nc + nc / 2)];
+    const double q_b2 = tee.state.cell_q[static_cast<std::size_t>(2 * nc + nc / 2)];
     EXPECT_NEAR(q_in, 40.0, 0.5);
     EXPECT_NEAR(q_b1, 20.0, 0.5);
     EXPECT_NEAR(q_b2, 20.0, 0.5);
-    EXPECT_NEAR(q_b1, q_b2, 0.1);   // symmetry: identical branches
+    EXPECT_NEAR(q_b1, q_b2, 0.1); // symmetry: identical branches
     // Both junctions sit above the tee outfalls' head — flow runs downhill
     // in HEAD even though every bed is flat.
     EXPECT_GT(tee.state.node_head[0], tee.state.node_head[1]);

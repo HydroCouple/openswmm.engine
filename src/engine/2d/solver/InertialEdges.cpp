@@ -1,9 +1,13 @@
 /**
- * @file InertialEdges.cpp
- * @brief Implementation of the unique interior-edge builder.
+ * @file      InertialEdges.cpp
+ * @brief     Implementation of the unique interior-edge builder.
  *
  * @see InertialEdges.hpp
  * @ingroup engine_2d
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include "InertialEdges.hpp"
@@ -18,11 +22,23 @@ namespace openswmm::twoD {
 void InertialEdges::build(const MeshData& mesh) {
     const int nt = mesh.n_triangles();
 
-    cL.clear(); cR.clear(); xi.clear(); inv_dx.clear(); zface.clear();
-    ze_lo.clear(); ze_hi.clear();
-    slotL.clear(); slotR.clear();
-    nx.clear(); ny.clear(); mx.clear(); my.clear();
-    inv_dx_normal.clear(); n2_face.clear(); n_face.clear(); cell_lchar.clear();
+    cL.clear();
+    cR.clear();
+    xi.clear();
+    inv_dx.clear();
+    zface.clear();
+    ze_lo.clear();
+    ze_hi.clear();
+    slotL.clear();
+    slotR.clear();
+    nx.clear();
+    ny.clear();
+    mx.clear();
+    my.clear();
+    inv_dx_normal.clear();
+    n2_face.clear();
+    n_face.clear();
+    cell_lchar.clear();
     cell_lpos.clear();
 
     // slot_edge[t][e] = unique-edge id incident to (t, local edge e), or −1 for
@@ -36,19 +52,20 @@ void InertialEdges::build(const MeshData& mesh) {
         const int nv_t = mesh.cell_vertex_count(t);
         for (int e = 0; e < nv_t; ++e) {
             const int nb = mesh.cell_neighbour(t, e);
-            if (nb < 0 || nb < t) continue;   // boundary, or already counted
+            if (nb < 0 || nb < t)
+                continue; // boundary, or already counted
 
             const int eid = static_cast<int>(cL.size());
             cL.push_back(t);
             cR.push_back(nb);
             xi.push_back(mesh.edge_length[MeshData::slot(t, e)]);
-            const double ddx = std::hypot(mesh.tri_cx[t] - mesh.tri_cx[nb],
-                                          mesh.tri_cy[t] - mesh.tri_cy[nb]);
+            const double ddx =
+                std::hypot(mesh.tri_cx[t] - mesh.tri_cx[nb], mesh.tri_cy[t] - mesh.tri_cy[nb]);
             inv_dx.push_back(ddx > 1.0e-12 ? 1.0 / ddx : 0.0);
             zface.push_back(std::max(mesh.tri_cz[t], mesh.tri_cz[nb]));
             {
                 // Endpoint bed elevations of the shared edge (MeshData
-                // convention: edge k = (v[(k+1)%nv], v[(k+2)%nv])). Same rule
+                // connectivity supplies the actual endpoint pair). Same rule
                 // as SurfaceFluxCalculator's edgeEndpointZ — both incident
                 // cells see identical (z_lo, z_hi), so the VFR face depth is
                 // antisymmetric and the FV flux mass-conservative.
@@ -64,11 +81,14 @@ void InertialEdges::build(const MeshData& mesh) {
             // Find nb's local edge facing t (the mirror slot) and record it.
             const int nv_nb = mesh.cell_vertex_count(nb);
             int e2 = 0;
-            for (; e2 < nv_nb; ++e2) if (mesh.cell_neighbour(nb, e2) == t) break;
+            for (; e2 < nv_nb; ++e2)
+                if (mesh.cell_neighbour(nb, e2) == t)
+                    break;
             slotR.push_back(MeshData::slot(nb, e2));
 
-            slot_edge[t][e]  = eid;
-            if (e2 < nv_nb) slot_edge[nb][e2] = eid;
+            slot_edge[t][e] = eid;
+            if (e2 < nv_nb)
+                slot_edge[nb][e2] = eid;
 
             // Marcher extension. The mesh stores the OUTWARD normal per cell
             // slot; cL's slot normal already points cL→cR.
@@ -81,9 +101,8 @@ void InertialEdges::build(const MeshData& mesh) {
                 const double dxc = mesh.tri_cx[nb] - mesh.tri_cx[t];
                 const double dyc = mesh.tri_cy[nb] - mesh.tri_cy[t];
                 const double chord = std::hypot(dxc, dyc);
-                double dn = std::fabs(dxc * mesh.edge_nx[sl] +
-                                      dyc * mesh.edge_ny[sl]);
-                dn = std::max(dn, 0.3 * chord);   // near-degenerate floor
+                double dn = std::fabs(dxc * mesh.edge_nx[sl] + dyc * mesh.edge_ny[sl]);
+                dn = std::max(dn, 0.3 * chord); // near-degenerate floor
                 inv_dx_normal.push_back(dn > 1.0e-12 ? 1.0 / dn : 0.0);
             }
             {
@@ -124,8 +143,7 @@ void InertialEdges::build(const MeshData& mesh) {
                 double xi_max = 0.0;
                 for (int e = 0; e < 3; ++e)
                     xi_max = std::max(xi_max, mesh.edge_length[MeshData::slot(t, e)]);
-                cell_lchar[t] =
-                    (xi_max > 0.0) ? 2.0 * mesh.tri_area[t] / xi_max : 0.0;
+                cell_lchar[t] = (xi_max > 0.0) ? 2.0 * mesh.tri_area[t] / xi_max : 0.0;
             } else {
                 // Quad with no interior face: twice the smallest centroid→edge
                 // normal distance (Δx for a square; conservative for skewed
@@ -150,7 +168,9 @@ void InertialEdges::build(const MeshData& mesh) {
     cell_ptr.assign(static_cast<std::size_t>(nt) + 1, 0);
     for (int t = 0; t < nt; ++t) {
         int c = 0;
-        for (int e = 0; e < kMaxCellVerts; ++e) if (slot_edge[t][e] >= 0) ++c;
+        for (int e = 0; e < kMaxCellVerts; ++e)
+            if (slot_edge[t][e] >= 0)
+                ++c;
         cell_ptr[t + 1] = cell_ptr[t] + c;
     }
     const int total = cell_ptr[nt];
@@ -163,7 +183,8 @@ void InertialEdges::build(const MeshData& mesh) {
     for (int t = 0; t < nt; ++t) {
         for (int e = 0; e < kMaxCellVerts; ++e) {
             const int eid = slot_edge[t][e];
-            if (eid < 0) continue;
+            if (eid < 0)
+                continue;
             const int pos = cell_ptr[t] + fill[t]++;
             cell_edge[pos] = eid;
             cell_sign[pos] = (cL[eid] == t) ? 1 : -1;

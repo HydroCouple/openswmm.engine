@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file Hdf5ModelWriter.hpp
- * @brief Serialise a SimulationContext to the columnar HDF5 model format.
+ * @file      Hdf5ModelWriter.hpp
+ * @brief     Serialise a SimulationContext to the columnar HDF5 model format.
  *
  * @details Design and rationale: `src/engine/io/hdf5/STRATEGY.md`.
  *
@@ -35,9 +35,9 @@
  *
  * @ingroup engine_hdf5
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_HDF5_MODEL_WRITER_HPP
@@ -54,23 +54,32 @@ namespace h5io {
 
 /// Bumped on any layout change. The reader refuses a major it does not know
 /// rather than silently misreading a file written by a newer engine.
-inline constexpr int    kSchemaVersionMajor = 1;
-inline constexpr int    kSchemaVersionMinor = 0;
+inline constexpr int kSchemaVersionMajor = 1;
+inline constexpr int kSchemaVersionMinor = 0;
 inline constexpr const char* kSchemaVersion = "1.0";
 
 /**
- * @brief Write the model held by @p ctx to @p path as HDF5.
- *
- * @param path      Destination `.h5` path (overwritten if it exists).
- * @param ctx       The model. Not modified: unit conversion runs on a copy.
- * @param warnings  Receives one entry per section that could not be written
- *                  in full. Optional.
- * @returns 0 on success, non-zero on failure.
+ * @brief Export supported model sections to a columnar HDF5 file.
+ * @param[in] path Destination filename, created or truncated using H5F_ACC_TRUNC.
+ * @param[in] ctx Consistent model in engine internal units; not modified.
+ * Authored/display conversion is performed on a local copy when necessary.
+ * @param[in,out] warnings Optional caller-owned vector. Appends file-creation
+ * errors or an unsupported-section summary; existing entries are preserved.
+ * Null discards these diagnostics. The pointer is not retained.
+ * @return One if the destination cannot be created; zero after invoking
+ * all section writers. Individual dataset/attribute writes and close errors
+ * are not aggregated, so zero does not certify complete I/O success.
+ * @details References are exported by name and numeric data in authored units.
+ * Schema 1.0 intentionally omits controls, LID, groundwater, snow, quality,
+ * inflows, options/report settings, 2D sections and other sections listed
+ * in the warning. Use the .inp/.gpkg writer for a complete model archive.
+ * @note Failure may leave a truncated or partial file. Conversion/allocation
+ * exceptions propagate; this function does not publish through a staging file.
  */
 int write_model(const std::string& path, const SimulationContext& ctx,
                 std::vector<std::string>* warnings = nullptr);
 
-}  // namespace h5io
-}  // namespace openswmm
+} // namespace h5io
+} // namespace openswmm
 
-#endif  // OPENSWMM_HDF5_MODEL_WRITER_HPP
+#endif // OPENSWMM_HDF5_MODEL_WRITER_HPP

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file InertialKernels.hpp
- * @brief Single-source flat kernels for the explicit local-inertial marcher.
+ * @file      InertialKernels.hpp
+ * @brief     Single-source flat kernels for the explicit local-inertial marcher.
  *
  * @details The numerical core of ExplicitInertialSolver (2026-07-29 2D
  *          reimplementation plan): the de Almeida & Bates (2013) local-inertial
@@ -45,9 +45,9 @@
  *
  * @ingroup engine_2d
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_INERTIAL_KERNELS_HPP
@@ -74,7 +74,7 @@
 
 namespace openswmm::twoD::inertial {
 
-inline constexpr double kGravity = 9.80665;  ///< matches the existing kernels
+inline constexpr double kGravity = 9.80665; ///< matches the existing kernels
 
 /// Free-surface difference below which a face slope is numerical zero (m).
 /// Without it, the local-inertial q integrates even 1-ulp closure round-trip
@@ -84,25 +84,50 @@ inline constexpr double kGravity = 9.80665;  ///< matches the existing kernels
 /// decays q geometrically and rest states are exact.
 inline constexpr double kEtaDeadband = 1.0e-12;
 
-/// |(x, y)| for the marcher's discharge vectors.
-///
-/// std::hypot's overflow/underflow safety costs ~10x a plain sqrt and buys
-/// nothing here: the arguments are unit-width discharges (m^2/s), which the
-/// Froude cap and the positivity limiter already bound to O(1..10). It was
-/// measured at ~8% of the marcher's runtime. Values differ from std::hypot by
-/// at most 1 ulp — and the Kokkos face kernel had ALREADY taken this liberty
-/// while the serial marcher had not, so routing every backend through this
-/// helper closes a real cross-backend bit-difference instead of opening one.
+/**
+ * @brief |(x, y)| for the marcher's discharge vectors.
+ *
+ * std::hypot's overflow/underflow safety costs ~10x a plain sqrt and buys nothing here: the
+ * arguments are unit-width discharges (m^2/s), which the Froude cap and the positivity limiter
+ * already bound to O(1..10). It was measured at ~8% of the marcher's runtime. Values differ from
+ * std::hypot by at most 1 ulp — and the Kokkos face kernel had ALREADY taken this liberty while
+ * the serial marcher had not, so routing every backend through this helper closes a real
+ * cross-backend bit-difference instead of opening one.
+ *
+ * @param[in] x Finite X unit-width discharge, m2/s.
+ * @param[in] y Finite Y unit-width discharge, m2/s.
+ * @return Euclidean discharge magnitude, m2/s. Direct squaring can overflow for unbounded
+ * inputs; caller-provided hydraulic limits keep this kernel in range.
+ * @note Pure host/device arithmetic: no allocation, exceptions, retained pointers or model state
+ * mutation. Caller supplies finite valid physical inputs; no general validation.
+ */
 OPENSWMM_KERNEL_FN double qMagnitude(double x, double y) noexcept {
     return std::sqrt(x * x + y * y);
 }
 
-/// Scalar core of the V → (η, depth) closure (device-callable; the MeshData
-/// wrapper below loads the geometry and forwards — identical ops and order).
-OPENSWMM_KERNEL_FN void etaDepthScalar(double area, double cz,
-                                       double z1, double z2, double z3,
-                                       bool vfr, double vfr_min_wet_frac,
-                                       double V, double& eta,
+/**
+ * @brief Scalar core of the V → (η, depth) closure (device-callable; the MeshData wrapper below
+ * loads the geometry and forwards — identical ops and order).
+ *
+ * @param[in] area Finite positive planimetric cell area, m2.
+ * @param[in] cz Finite cell-mean bed elevation, m.
+ * @param[in] z1 Finite first triangle vertex bed, m; inputs are sorted on local copies.
+ * @param[in] z2 Finite second triangle vertex bed, m.
+ * @param[in] z3 Finite third triangle vertex bed, m.
+ * @param[in] vfr True selects the regularized triangular/two-plane VFR law; false uses flat mean
+ * bed.
+ * @param[in] vfr_min_wet_frac Dimensionless regularization fraction in [0,1); zero selects exact
+ * storage.
+ * @param[in] V Signed cell water volume, m3; nonpositive/NaN is treated as zero by this closure
+ * without rewriting caller volume.
+ * @param[out] eta Free-surface elevation in m, including the regularized dry anchor.
+ * @param[out] depth Nonnegative cell-mean depth in m; zero when area <= 1e-30 m2.
+ * @note Pure host/device closure. Caller retains all storage and supplies distinct eta/depth
+ * outputs. Quad storage is dereferenced only in VFR branches; other geometry is unchecked. No
+ * allocation or source-state mutation.
+ */
+OPENSWMM_KERNEL_FN void etaDepthScalar(double area, double cz, double z1, double z2, double z3,
+                                       bool vfr, double vfr_min_wet_frac, double V, double& eta,
                                        double& depth) noexcept {
     const double v = (V > 0.0) ? V : 0.0;
     depth = (area > 1.0e-30) ? v / area : 0.0;
@@ -114,10 +139,26 @@ OPENSWMM_KERNEL_FN void etaDepthScalar(double area, double cz,
     }
 }
 
-/// Scalar core of the η → V inverse (device-callable).
-OPENSWMM_KERNEL_FN double volumeFromEtaScalar(double area, double cz,
-                                              double z1, double z2, double z3,
-                                              bool vfr, double vfr_min_wet_frac,
+/**
+ * @brief Scalar core of the η → V inverse (device-callable).
+ *
+ * @param[in] area Finite positive planimetric cell area, m2.
+ * @param[in] cz Finite cell-mean bed elevation, m.
+ * @param[in] z1 Finite first triangle vertex bed, m; inputs are sorted on local copies.
+ * @param[in] z2 Finite second triangle vertex bed, m.
+ * @param[in] z3 Finite third triangle vertex bed, m.
+ * @param[in] vfr True selects the regularized triangular/two-plane VFR law; false uses flat mean
+ * bed.
+ * @param[in] vfr_min_wet_frac Dimensionless regularization fraction in [0,1); zero selects exact
+ * storage.
+ * @param[in] eta Finite free-surface elevation in m, in the bed datum.
+ * @return Cell volume in m3; nonpositive flat depth returns zero. Area is not validated here.
+ * @note Pure host/device closure. Caller retains all storage and supplies distinct eta/depth
+ * outputs. Quad storage is dereferenced only in VFR branches; other geometry is unchecked. No
+ * allocation or source-state mutation.
+ */
+OPENSWMM_KERNEL_FN double volumeFromEtaScalar(double area, double cz, double z1, double z2,
+                                              double z3, bool vfr, double vfr_min_wet_frac,
                                               double eta) noexcept {
     if (vfr) {
         vfrSort3(z1, z2, z3);
@@ -127,26 +168,63 @@ OPENSWMM_KERNEL_FN double volumeFromEtaScalar(double area, double cz,
     return (d > 0.0) ? area * d : 0.0;
 }
 
-/// Quad (B&S 2007 two-plane) V → (η, depth) closure core. @p zs / @p A1 /
-/// @p A2 are the precomputed quad VFR data (MeshData::quad_vfr_*).
-OPENSWMM_KERNEL_FN void etaDepthQuadScalar(double area, double cz,
-                                           const double* zs, double A1, double A2,
-                                           bool vfr, double vfr_min_wet_frac,
-                                           double V, double& eta,
-                                           double& depth) noexcept {
+/**
+ * @brief Quad (B&S 2007 two-plane) V → (η, depth) closure core. @p zs / @p A1 /
+ * @p A2 are the precomputed quad VFR data (MeshData::quad_vfr_*).
+ *
+ * @param[in] area Finite positive planimetric cell area, m2.
+ * @param[in] cz Finite cell-mean bed elevation, m.
+ * @param[in] zs Required borrowed six-double quad VFR array, two sorted elevation triples in m;
+ * valid only for the VFR branch.
+ * @param[in] A1 Finite nonnegative first quad subtriangle area, m2.
+ * @param[in] A2 Finite nonnegative second subtriangle area, m2; A1+A2 > 0.
+ * @param[in] vfr True selects the regularized triangular/two-plane VFR law; false uses flat mean
+ * bed.
+ * @param[in] vfr_min_wet_frac Dimensionless regularization fraction in [0,1); zero selects exact
+ * storage.
+ * @param[in] V Signed cell water volume, m3; nonpositive/NaN is treated as zero by this closure
+ * without rewriting caller volume.
+ * @param[out] eta Free-surface elevation in m, including the regularized dry anchor.
+ * @param[out] depth Nonnegative cell-mean depth in m; zero when area <= 1e-30 m2.
+ * @note Pure host/device closure. Caller retains all storage and supplies distinct eta/depth
+ * outputs. Quad storage is dereferenced only in VFR branches; other geometry is unchecked. No
+ * allocation or source-state mutation.
+ */
+OPENSWMM_KERNEL_FN void etaDepthQuadScalar(double area, double cz, const double* zs, double A1,
+                                           double A2, bool vfr, double vfr_min_wet_frac, double V,
+                                           double& eta, double& depth) noexcept {
     const double v = (V > 0.0) ? V : 0.0;
     depth = (area > 1.0e-30) ? v / area : 0.0;
-    if (vfr) eta = quadEtaFromMeanDepth(zs, A1, A2, depth, vfr_min_wet_frac);
-    else     eta = cz + depth;
+    if (vfr)
+        eta = quadEtaFromMeanDepth(zs, A1, A2, depth, vfr_min_wet_frac);
+    else
+        eta = cz + depth;
 }
 
-/// Quad η → V inverse (device-callable).
-OPENSWMM_KERNEL_FN double volumeFromEtaQuadScalar(double area, double cz,
-                                                  const double* zs, double A1,
-                                                  double A2, bool vfr,
-                                                  double vfr_min_wet_frac,
-                                                  double eta) noexcept {
-    if (vfr) return area * quadMeanDepthFromEta(zs, A1, A2, eta, vfr_min_wet_frac);
+/**
+ * @brief Quad η → V inverse (device-callable).
+ *
+ * @param[in] area Finite positive planimetric cell area, m2.
+ * @param[in] cz Finite cell-mean bed elevation, m.
+ * @param[in] zs Required borrowed six-double quad VFR array, two sorted elevation triples in m;
+ * valid only for the VFR branch.
+ * @param[in] A1 Finite nonnegative first quad subtriangle area, m2.
+ * @param[in] A2 Finite nonnegative second subtriangle area, m2; A1+A2 > 0.
+ * @param[in] vfr True selects the regularized triangular/two-plane VFR law; false uses flat mean
+ * bed.
+ * @param[in] vfr_min_wet_frac Dimensionless regularization fraction in [0,1); zero selects exact
+ * storage.
+ * @param[in] eta Finite free-surface elevation in m, in the bed datum.
+ * @return Cell volume in m3; nonpositive flat depth returns zero. Area is not validated here.
+ * @note Pure host/device closure. Caller retains all storage and supplies distinct eta/depth
+ * outputs. Quad storage is dereferenced only in VFR branches; other geometry is unchecked. No
+ * allocation or source-state mutation.
+ */
+OPENSWMM_KERNEL_FN double volumeFromEtaQuadScalar(double area, double cz, const double* zs,
+                                                  double A1, double A2, bool vfr,
+                                                  double vfr_min_wet_frac, double eta) noexcept {
+    if (vfr)
+        return area * quadMeanDepthFromEta(zs, A1, A2, eta, vfr_min_wet_frac);
     const double d = eta - cz;
     return (d > 0.0) ? area * d : 0.0;
 }
@@ -159,109 +237,174 @@ OPENSWMM_KERNEL_FN double volumeFromEtaQuadScalar(double area, double cz,
 #define OPENSWMM_2D_NOINLINE
 #endif
 
-/// Quad (B&S 2007 two-plane) VFR closure, kept OUT OF LINE on purpose: its
-/// safeguarded Newton (QuadVfr.hpp) is large, and inlining it into
-/// cellEtaDepth made GCC stop inlining cellEtaDepth itself into the cell
-/// kernels — a call per cell per firing on every mesh, quads or not
-/// (2D_PERF_REGRESSION_DIAGNOSIS: measured +30 % on Bellinge LI, profile
-/// showed cellEtaDepth as a 10 M-call function that used to be inlined).
-OPENSWMM_2D_NOINLINE inline void cellEtaDepthQuad(const MeshData& m,
-                                                  const SolverOptions2D& o,
+/**
+ * @brief Quad (B&S 2007 two-plane) VFR closure, kept OUT OF LINE on purpose: its safeguarded
+ * Newton (QuadVfr.hpp) is large, and inlining it into cellEtaDepth made GCC stop inlining
+ * cellEtaDepth itself into the cell kernels — a call per cell per firing on every mesh, quads or
+ * not (2D_PERF_REGRESSION_DIAGNOSIS: measured +30 % on Bellinge LI, profile showed cellEtaDepth
+ * as a 10 M-call function that used to be inlined).
+ *
+ * @param[in] m Borrowed built SI mixed mesh with valid cell/vertex/quad-VFR arrays.
+ * @param[in] o Borrowed validated cell-closure options and regularization fraction.
+ * @param[in] i Valid zero-based mixed-cell index; bounds are unchecked.
+ * @param[in] V Signed cell volume, m3; closure uses its positive part.
+ * @param[out] eta Required distinct scalar for free-surface elevation, m.
+ * @param[out] depth Required distinct scalar for mean water depth, m.
+ * @note Read-only mesh/options gather; no ownership transfer, state writes or allocation. Caller
+ * guarantees stable valid SI geometry. cellEtaDepthQuad requires an actual quad and always
+ * selects VFR.
+ */
+OPENSWMM_2D_NOINLINE inline void cellEtaDepthQuad(const MeshData& m, const SolverOptions2D& o,
                                                   int i, double V, double& eta,
                                                   double& depth) noexcept {
-    etaDepthQuadScalar(m.tri_area[i], m.tri_cz[i],
-                       &m.quad_vfr_z[static_cast<std::size_t>(i) * kQuadVfrZ],
-                       m.quad_vfr_a[static_cast<std::size_t>(i) * 2],
-                       m.quad_vfr_a[static_cast<std::size_t>(i) * 2 + 1],
-                       true, o.vfr_min_wet_frac, V, eta, depth);
+    etaDepthQuadScalar(
+        m.tri_area[i], m.tri_cz[i], &m.quad_vfr_z[static_cast<std::size_t>(i) * kQuadVfrZ],
+        m.quad_vfr_a[static_cast<std::size_t>(i) * 2],
+        m.quad_vfr_a[static_cast<std::size_t>(i) * 2 + 1], true, o.vfr_min_wet_frac, V, eta, depth);
 }
 
-/// Volume → (η, depth) closure — the SAME semantics as the CVODE/ARKODE
-/// reconstructFromVolume: depth = max(V,0)/A; FLAT η = z_c + depth, VFR η from
-/// the Begnudelli–Sanders planar-bed relation (ε-regularized) for triangles
-/// and the B&S 2007 two-plane relation for quads.
-inline void cellEtaDepth(const MeshData& m, const SolverOptions2D& o,
-                         int i, double V, double& eta, double& depth) noexcept {
+/**
+ * @brief Volume → (η, depth) closure — the SAME semantics as the CVODE/ARKODE
+ * reconstructFromVolume: depth = max(V,0)/A; FLAT η = z_c + depth, VFR η from the
+ * Begnudelli–Sanders planar-bed relation (ε-regularized) for triangles and the B&S 2007
+ * two-plane relation for quads.
+ *
+ * @param[in] m Borrowed built SI mixed mesh with valid cell/vertex/quad-VFR arrays.
+ * @param[in] o Borrowed validated cell-closure options and regularization fraction.
+ * @param[in] i Valid zero-based mixed-cell index; bounds are unchecked.
+ * @param[in] V Signed cell volume, m3; closure uses its positive part.
+ * @param[out] eta Required distinct scalar for free-surface elevation, m.
+ * @param[out] depth Required distinct scalar for mean water depth, m.
+ * @note Read-only mesh/options gather; no ownership transfer, state writes or allocation. Caller
+ * guarantees stable valid SI geometry. cellEtaDepthQuad requires an actual quad and always
+ * selects VFR.
+ */
+inline void cellEtaDepth(const MeshData& m, const SolverOptions2D& o, int i, double V, double& eta,
+                         double& depth) noexcept {
     // Branch BEFORE the geometry loads: under the default FLAT closure the
     // three vertex-index loads and the three scattered vz gathers below are
     // dead, and this is the hottest call in the marcher (every cell, every
     // firing).
     if (o.cell_closure != CellClosure2D::VFR) {
-        etaDepthScalar(m.tri_area[i], m.tri_cz[i], 0.0, 0.0, 0.0,
-                       false, o.vfr_min_wet_frac, V, eta, depth);
+        etaDepthScalar(m.tri_area[i], m.tri_cz[i], 0.0, 0.0, 0.0, false, o.vfr_min_wet_frac, V, eta,
+                       depth);
         return;
     }
     if (m.cell_nv[static_cast<std::size_t>(i)] == 4) {
         cellEtaDepthQuad(m, o, i, V, eta, depth);
         return;
     }
-    etaDepthScalar(m.tri_area[i], m.tri_cz[i],
-                   m.vz[m.cell_vertex(i, 0)], m.vz[m.cell_vertex(i, 1)],
-                   m.vz[m.cell_vertex(i, 2)],
-                   true, o.vfr_min_wet_frac, V, eta, depth);
+    etaDepthScalar(m.tri_area[i], m.tri_cz[i], m.vz[m.cell_vertex(i, 0)], m.vz[m.cell_vertex(i, 1)],
+                   m.vz[m.cell_vertex(i, 2)], true, o.vfr_min_wet_frac, V, eta, depth);
 }
 
-/// Physical planimetric water contact, distinct from the cell-mean depth
-/// V/A returned above. The VFR regularization is not a flooded-area floor.
-inline double cellWetArea(const MeshData& m,const SolverOptions2D& o,int i,double volume) noexcept {
-    if(!(volume>0))return 0;
-    if(o.cell_closure!=CellClosure2D::VFR)return m.tri_area[i];
-    double eta=0,depth=0;cellEtaDepth(m,o,i,volume,eta,depth);
+/**
+ * @brief Physical planimetric water contact, distinct from the cell-mean depth V/A returned
+ * above. The VFR regularization is not a flooded-area floor.
+ *
+ * @param[in] m Borrowed built SI mixed mesh with valid cell/vertex/quad-VFR arrays.
+ * @param[in] o Borrowed validated cell-closure options and regularization fraction.
+ * @param[in] i Valid zero-based mixed-cell index; bounds are unchecked.
+ * @param[in] volume Signed cell volume, m3; nonpositive/NaN returns zero contact.
+ * @return Physical wetted planimetric area in m2, between zero and cell area for valid inputs.
+ * VFR regularization is not used as a wetted-area floor.
+ * @note Read-only mesh/options gather; no ownership transfer, state writes or allocation. Caller
+ * guarantees stable valid SI geometry. cellEtaDepthQuad requires an actual quad and always
+ * selects VFR.
+ */
+inline double cellWetArea(const MeshData& m, const SolverOptions2D& o, int i,
+                          double volume) noexcept {
+    if (!(volume > 0))
+        return 0;
+    if (o.cell_closure != CellClosure2D::VFR)
+        return m.tri_area[i];
+    double eta = 0, depth = 0;
+    cellEtaDepth(m, o, i, volume, eta, depth);
     double fraction;
-    if(m.cell_nv[std::size_t(i)]==4)fraction=quadWetFraction(&m.quad_vfr_z[std::size_t(i)*kQuadVfrZ],
-        m.quad_vfr_a[std::size_t(i)*2],m.quad_vfr_a[std::size_t(i)*2+1],eta);
+    if (m.cell_nv[std::size_t(i)] == 4)
+        fraction = quadWetFraction(&m.quad_vfr_z[std::size_t(i) * kQuadVfrZ],
+                                   m.quad_vfr_a[std::size_t(i) * 2],
+                                   m.quad_vfr_a[std::size_t(i) * 2 + 1], eta);
     else {
-        double a=m.vz[m.cell_vertex(i,0)],b=m.vz[m.cell_vertex(i,1)],c=m.vz[m.cell_vertex(i,2)];
-        vfrSort3(a,b,c);fraction=vfrWetFraction(a,b,c,eta);
+        double a = m.vz[m.cell_vertex(i, 0)], b = m.vz[m.cell_vertex(i, 1)],
+               c = m.vz[m.cell_vertex(i, 2)];
+        vfrSort3(a, b, c);
+        fraction = vfrWetFraction(a, b, c, eta);
     }
-    return m.tri_area[i]*std::clamp(fraction,0.,1.);
+    return m.tri_area[i] * std::clamp(fraction, 0., 1.);
 }
 
-/// Exact inverse of the closure: cell volume holding free surface η — FLAT
-/// A·max(0, η − z_c); VFR the regularized B&S forward relation (round-trips
-/// with cellEtaDepth). Closure-consistent seeding for tests/hotstart.
-inline double cellVolumeFromEta(const MeshData& m, const SolverOptions2D& o,
-                                int i, double eta) noexcept {
+/**
+ * @brief Exact inverse of the closure: cell volume holding free surface η — FLAT A·max(0, η −
+ * z_c); VFR the regularized B&S forward relation (round-trips with cellEtaDepth).
+ * Closure-consistent seeding for tests/hotstart.
+ *
+ * @param[in] m Borrowed built SI mixed mesh with valid cell/vertex/quad-VFR arrays.
+ * @param[in] o Borrowed validated cell-closure options and regularization fraction.
+ * @param[in] i Valid zero-based mixed-cell index; bounds are unchecked.
+ * @param[in] eta Finite free-surface elevation, m in mesh datum.
+ * @return Closure-consistent nonnegative water volume in m3; caller must provide valid area and
+ * bed arrays.
+ * @note Read-only mesh/options gather; no ownership transfer, state writes or allocation. Caller
+ * guarantees stable valid SI geometry. cellEtaDepthQuad requires an actual quad and always
+ * selects VFR.
+ */
+inline double cellVolumeFromEta(const MeshData& m, const SolverOptions2D& o, int i,
+                                double eta) noexcept {
     if (m.cell_nv[static_cast<std::size_t>(i)] == 4) {
         return volumeFromEtaQuadScalar(
-            m.tri_area[i], m.tri_cz[i],
-            &m.quad_vfr_z[static_cast<std::size_t>(i) * kQuadVfrZ],
+            m.tri_area[i], m.tri_cz[i], &m.quad_vfr_z[static_cast<std::size_t>(i) * kQuadVfrZ],
             m.quad_vfr_a[static_cast<std::size_t>(i) * 2],
-            m.quad_vfr_a[static_cast<std::size_t>(i) * 2 + 1],
-            o.cell_closure == CellClosure2D::VFR, o.vfr_min_wet_frac, eta);
+            m.quad_vfr_a[static_cast<std::size_t>(i) * 2 + 1], o.cell_closure == CellClosure2D::VFR,
+            o.vfr_min_wet_frac, eta);
     }
-    return volumeFromEtaScalar(m.tri_area[i], m.tri_cz[i],
-                               m.vz[m.cell_vertex(i, 0)], m.vz[m.cell_vertex(i, 1)],
-                               m.vz[m.cell_vertex(i, 2)],
-                               o.cell_closure == CellClosure2D::VFR,
-                               o.vfr_min_wet_frac, eta);
+    return volumeFromEtaScalar(m.tri_area[i], m.tri_cz[i], m.vz[m.cell_vertex(i, 0)],
+                               m.vz[m.cell_vertex(i, 1)], m.vz[m.cell_vertex(i, 2)],
+                               o.cell_closure == CellClosure2D::VFR, o.vfr_min_wet_frac, eta);
 }
 
-/// Flow depth at a face: the water surface above the higher of the two
-/// interface beds. ≤ 0 means the face is a wall this substep. This is the
-/// FACE_RECONSTRUCTION = MEAN form; zface is centroid-based (max of the two
-/// cell-mean beds), so a thin crest resolved as a line of high VERTICES is
-/// diluted by ~⅓ of its height — use the VFR form below to block at the true
-/// edge crest.
+/**
+ * @brief Flow depth at a face: the water surface above the higher of the two interface beds. ≤ 0
+ * means the face is a wall this substep. This is the FACE_RECONSTRUCTION = MEAN form; zface is
+ * centroid-based (max of the two cell-mean beds), so a thin crest resolved as a line of high
+ * VERTICES is diluted by ~⅓ of its height — use the VFR form below to block at the true edge
+ * crest.
+ *
+ * @param[in] etaL Finite left free-surface elevation, m.
+ * @param[in] etaR Finite right free-surface elevation, m.
+ * @param[in] zface Finite higher interface/centroid bed elevation, m.
+ * @return Signed flow depth in m; nonpositive means a blocked face.
+ * @note Pure host/device arithmetic: no allocation, exceptions, retained pointers or model state
+ * mutation. Caller supplies finite valid physical inputs; no general validation.
+ */
 OPENSWMM_KERNEL_FN double faceFlowDepth(double etaL, double etaR, double zface) noexcept {
     return std::max(etaL, etaR) - zface;
 }
 
-/// Wetted-edge flow depth from a free surface η over an edge with endpoint
-/// beds z_lo ≤ z_hi — Begnudelli & Sanders (2007) Eq. 14, the exact mean
-/// depth over the wetted portion of the edge:
-///   η ≤ z_lo          : 0                        (wetting gate: bed above water)
-///   z_lo < η ≤ z_hi   : (η − z_lo)² / (2(z_hi − z_lo))   (partially submerged)
-///   η > z_hi          : η − (z_lo + z_hi)/2      (fully submerged: mean depth)
-/// The quadratic branch matches value AND slope at both joins (C¹), so
-/// overtopping onset is smooth. Single source for the CPU boundary path, the
-/// GPU boundary kernels, and the VFR interior-face path — byte-identical to
-/// the copies it replaced in SurfaceFluxCalculator.cpp and
-/// ExplicitKokkosSurfaceSolver.cpp.
+/**
+ * @brief Wetted-edge flow depth from a free surface η over an edge with endpoint beds z_lo ≤
+ * z_hi — Begnudelli & Sanders (2007) Eq. 14, the exact cross-sectional water area divided by the
+ * full edge length: η ≤ z_lo          : 0                        (wetting gate: bed above water)
+ * z_lo < η ≤ z_hi   : (η − z_lo)² / (2(z_hi − z_lo))   (partially submerged) η > z_hi          :
+ * η − (z_lo + z_hi)/2      (fully submerged: mean depth) The quadratic branch matches value AND
+ * slope at both joins (C¹), so overtopping onset is smooth. Single source for the CPU boundary
+ * path, the GPU boundary kernels, and the VFR interior-face path — byte-identical to the copies
+ * it replaced in SurfaceFluxCalculator.cpp and ExplicitKokkosSurfaceSolver.cpp.
+ *
+ * @param[in] eta Finite driving free-surface elevation, m.
+ * @param[in] z_lo Finite lower endpoint bed, m.
+ * @param[in] z_hi Finite upper endpoint bed, m; z_lo <= z_hi.
+ * @return Nonnegative edge-averaged hydraulic depth in m; zero below the low endpoint.
+ * Near-level relief below 1e-9 m uses the level-edge limit.
+ * @note Pure host/device arithmetic: no allocation, exceptions, retained pointers or model state
+ * mutation. Caller supplies finite valid physical inputs; no general validation.
+ */
 OPENSWMM_KERNEL_FN double faceDepthFromEta(double eta, double z_lo, double z_hi) noexcept {
-    if (eta <= z_lo) return 0.0;
+    if (eta <= z_lo)
+        return 0.0;
     const double dz = z_hi - z_lo;
-    if (dz < 1.0e-9) return eta - z_lo;             // level edge
+    if (dz < 1.0e-9)
+        return eta - z_lo; // level edge
     if (eta <= z_hi) {
         const double t = eta - z_lo;
         return t * t / (2.0 * dz);
@@ -269,90 +412,155 @@ OPENSWMM_KERNEL_FN double faceDepthFromEta(double eta, double z_lo, double z_hi)
     return eta - 0.5 * (z_lo + z_hi);
 }
 
-/// Flow depth at an interior face under FACE_RECONSTRUCTION = VFR_FACE: the
-/// B&S Eq. 14 wetted-edge depth of the driving surface max(η_L, η_R) over the
-/// shared edge's TRUE endpoint beds. Water is blocked until the surface
-/// exceeds the edge's low point and overtops smoothly up to full submergence
-/// — embankments/levees/road crowns hold to their real crest instead of the
-/// centroid-diluted zface. Fully submerged reduces to max(η) − mean edge bed.
-OPENSWMM_KERNEL_FN double faceFlowDepthVfr(double etaL, double etaR,
-                                           double z_lo, double z_hi) noexcept {
+/**
+ * @brief Flow depth at an interior face under FACE_RECONSTRUCTION = VFR_FACE: the B&S Eq. 14
+ * wetted-edge depth of the driving surface max(η_L, η_R) over the shared edge's TRUE endpoint
+ * beds. Water is blocked until the surface exceeds the edge's low point and overtops smoothly up
+ * to full submergence — embankments/levees/road crowns hold to their real crest instead of the
+ * centroid-diluted zface. Fully submerged reduces to max(η) − mean edge bed.
+ *
+ * @param[in] etaL Finite left free-surface elevation, m.
+ * @param[in] etaR Finite right free-surface elevation, m.
+ * @param[in] z_lo Finite lower endpoint bed, m.
+ * @param[in] z_hi Finite upper endpoint bed, m; z_lo <= z_hi.
+ * @return Nonnegative edge-averaged hydraulic depth in m; zero below the low endpoint.
+ * Near-level relief below 1e-9 m uses the level-edge limit.
+ * @note Pure host/device arithmetic: no allocation, exceptions, retained pointers or model state
+ * mutation. Caller supplies finite valid physical inputs; no general validation.
+ */
+OPENSWMM_KERNEL_FN double faceFlowDepthVfr(double etaL, double etaR, double z_lo,
+                                           double z_hi) noexcept {
     return faceDepthFromEta(std::max(etaL, etaR), z_lo, z_hi);
 }
 
-/// One local-inertial face update over Δt. @p q is the current face discharge,
-/// @p qhat the θ-averaged discharge feeding the momentum balance, @p hf the
-/// face flow depth (> 0), @p slope (η_R−η_L)·inv_dx_normal, @p n2 the squared
-/// face Manning coefficient, @p q_mag the FLOW-VECTOR magnitude at the face
-/// (from the Perot cell reconstruction; pass |q| when unavailable). Friction
-/// is semi-implicit: dividing by (1 + g·Δt·n²·q_mag/h^{7/3}) is
-/// unconditionally stable — h^{7/3} written as h²·cbrt(h) to avoid pow().
-///
-/// The friction magnitude MUST be the vector magnitude, not |q_n|: Manning
-/// friction on the normal component is n²·q_n·|q⃗|/h^{7/3}. With |q_n| the
-/// friction a face applies depends on its orientation relative to the flow
-/// (a face at 45° to a uniform sheet flow under-damps by √2), so no smooth
-/// surface can balance every face of a triangulated slope — the steady state
-/// corrugates cell-to-cell (the depth "checkerboarding" observed upstream of
-/// the road_culvert embankment under the VFR closure).
+/**
+ * @brief One local-inertial face update over Δt. @p q is the current face discharge,
+ * @p qhat the θ-averaged discharge feeding the momentum balance, @p hf the face flow depth (>
+ * 0), @p slope (η_R−η_L)·inv_dx_normal, @p n2 the squared face Manning coefficient, @p q_mag the
+ * FLOW-VECTOR magnitude at the face (from the Perot cell reconstruction; pass |q| when
+ * unavailable). Friction is semi-implicit: dividing by (1 + g·Δt·n²·q_mag/h^{7/3}) is
+ * unconditionally stable — h^{7/3} written as h²·cbrt(h) to avoid pow().
+ *
+ * The friction magnitude MUST be the vector magnitude, not |q_n|: Manning friction on the normal
+ * component is n²·q_n·|q⃗|/h^{7/3}. With |q_n| the friction a face applies depends on its
+ * orientation relative to the flow (a face at 45° to a uniform sheet flow under-damps by √2), so
+ * no smooth surface can balance every face of a triangulated slope — the steady state corrugates
+ * cell-to-cell (the depth "checkerboarding" observed upstream of the road_culvert embankment
+ * under the VFR closure).
+ *
+ * @param[in] q Current face discharge in m2/s; retained for interface compatibility and not used
+ * in this update.
+ * @param[in] qhat Theta-averaged unit-width discharge in m2/s, positive left-to-right.
+ * @param[in] hf Finite strictly positive face flow depth, m; no dry guard exists in this kernel.
+ * @param[in] dt Finite nonnegative face integration interval, s.
+ * @param[in] slope Signed dimensionless surface slope, right-minus-left.
+ * @param[in] n2 Finite nonnegative squared Manning roughness, s2/m^(2/3).
+ * @param[in] q_mag Finite nonnegative face discharge-vector magnitude, m2/s.
+ * @param[in] adv Finite convective momentum-gradient contribution, m2/s2; default zero disables
+ * advection.
+ * @return Uncapped semi-implicit updated unit-width discharge in m2/s; availability/Froude
+ * limiting are separate caller steps.
+ * @note Pure host/device arithmetic: no allocation, exceptions, retained pointers or model state
+ * mutation. Caller supplies finite valid physical inputs; no general validation.
+ */
 OPENSWMM_KERNEL_FN double inertialFaceUpdate(double q, double qhat, double hf, double dt,
-                                 double slope, double n2,
-                                 double q_mag, double adv = 0.0) noexcept {
+                                             double slope, double n2, double q_mag,
+                                             double adv = 0.0) noexcept {
     const double h73 = hf * hf * std::cbrt(hf);
     const double num = qhat - dt * (kGravity * hf * slope + adv);
     const double den = 1.0 + kGravity * dt * n2 * q_mag / h73;
     return num / den;
 }
 
-/// Convective momentum flux difference ∂(u·q)/∂n at an interior face —
-/// [2D_OPTIONS] ADVECTION, the term the pure local-inertial scheme drops.
-/// Stelling & Duinmeijer's staggered momentum-conservative upwinding, mapped
-/// onto the unstructured layout with the Perot cell vectors standing in for
-/// the along-normal neighbour faces a structured grid would have:
-///
-///   adv = (u_R·q̂_R − u_L·q̂_L) / Δn
-///   u_c  = (q⃗_c·n̂)/h_c            (cell velocity along the face normal)
-///   q̂_L = u_L > 0 ? h_L·u_L : q_f  (upwind: the cell's own momentum carries
-///   q̂_R = u_R > 0 ? q_f : h_R·u_R   in; the face's discharge carries out)
-///
-/// Exactly zero at rest (u = 0) and in uniform flow (u_L = u_R = u,
-/// h_L = h_R, q_f = h·u ⇒ both fluxes equal h·u²), so the C-property and
-/// steady sheet flow are untouched; upwinding supplies shock dissipation.
-/// Units: (m/s)·(m²/s)/m = m²/s², the same as the g·h·∂η/∂n term.
-OPENSWMM_KERNEL_FN double inertialAdvection(double q_f, double unL, double hL,
-                                            double unR, double hR,
-                                            double inv_dx_normal) noexcept {
+/**
+ * @brief Convective momentum flux difference ∂(u·q)/∂n at an interior face — [2D_OPTIONS]
+ * ADVECTION, the term the pure local-inertial scheme drops. Stelling & Duinmeijer's staggered
+ * momentum-conservative upwinding, mapped onto the unstructured layout with the Perot cell
+ * vectors standing in for the along-normal neighbour faces a structured grid would have:
+ *
+ * adv = (u_R·q̂_R − u_L·q̂_L) / Δn u_c  = (q⃗_c·n̂)/h_c            (cell velocity along the face
+ * normal) q̂_L = u_L > 0 ? h_L·u_L : q_f  (upwind: the cell's own momentum carries q̂_R = u_R >
+ * 0 ? q_f : h_R·u_R   in; the face's discharge carries out)
+ *
+ * Exactly zero at rest (u = 0) and in uniform flow (u_L = u_R = u, h_L = h_R, q_f = h·u ⇒ both
+ * fluxes equal h·u²), so the C-property and steady sheet flow are untouched; upwinding supplies
+ * shock dissipation. Units: (m/s)·(m²/s)/m = m²/s², the same as the g·h·∂η/∂n term.
+ *
+ * @param[in] q_f Finite current face unit-width discharge, m2/s, positive left-to-right.
+ * @param[in] unL Finite left normal velocity, m/s, along the left-to-right normal.
+ * @param[in] hL Finite nonnegative left mean water depth, m.
+ * @param[in] unR Finite right normal velocity, m/s, in the same orientation.
+ * @param[in] hR Finite nonnegative right mean depth, m.
+ * @param[in] inv_dx_normal Finite positive inverse normal cell-center distance, 1/m.
+ * @return Upwind convective momentum-flux divergence, m2/s2; zero for rest and consistent
+ * uniform-flow states.
+ * @note Pure host/device arithmetic: no allocation, exceptions, retained pointers or model state
+ * mutation. Caller supplies finite valid physical inputs; no general validation.
+ */
+OPENSWMM_KERNEL_FN double inertialAdvection(double q_f, double unL, double hL, double unR,
+                                            double hR, double inv_dx_normal) noexcept {
     const double FL = unL * ((unL > 0.0) ? hL * unL : q_f);
     const double FR = unR * ((unR > 0.0) ? q_f : hR * unR);
     return (FR - FL) * inv_dx_normal;
 }
 
-/// Froude-number clamp: |q| ≤ Fr_max · h_f · √(g·h_f). The steep-face guard —
-/// the local-inertial scheme carries no advection term, so supercritical
-/// acceleration must be capped rather than resolved.
+/**
+ * @brief Froude-number clamp: |q| ≤ Fr_max · h_f · √(g·h_f). The steep-face guard — the
+ * local-inertial scheme carries no advection term, so supercritical acceleration must be capped
+ * rather than resolved.
+ *
+ * @param[in] q Finite signed unit-width discharge, m2/s.
+ * @param[in] hf Finite nonnegative flow depth, m.
+ * @param[in] fr_max Finite nonnegative maximum Froude number.
+ * @return Discharge clamped to the symmetric Froude bound in m2/s. Negative hf/fr_max violates
+ * the clamp/square-root precondition.
+ * @note Pure host/device arithmetic: no allocation, exceptions, retained pointers or model state
+ * mutation. Caller supplies finite valid physical inputs; no general validation.
+ */
 OPENSWMM_KERNEL_FN double froudeCap(double q, double hf, double fr_max) noexcept {
     const double qcap = fr_max * hf * std::sqrt(kGravity * hf);
     return std::clamp(q, -qcap, qcap);
 }
 
-/// Per-cell CFL stable step: dt = α·L_char/(√(g·h) + |u|), with |u| = |q⃗|/h
-/// the cell speed from the Perot reconstruction (pass 0 when unavailable —
-/// the gravity-wave celerity dominates in the flows this scheme is valid for).
-OPENSWMM_KERNEL_FN double cellCflDt(double alpha, double lchar, double h,
-                        double speed) noexcept {
+/**
+ * @brief Per-cell CFL stable step: dt = α·L_char/(√(g·h) + |u|), with |u| = |q⃗|/h the cell
+ * speed from the Perot reconstruction (pass 0 when unavailable — the gravity-wave celerity
+ * dominates in the flows this scheme is valid for).
+ *
+ * @param[in] alpha Finite positive dimensionless Courant factor.
+ * @param[in] lchar Finite positive characteristic cell length, m.
+ * @param[in] h Finite nonnegative mean depth, m.
+ * @param[in] speed Finite nonnegative cell velocity magnitude, m/s; zero when unavailable.
+ * @return Gravity/advection CFL bound in seconds; 1e30 s when total celerity is at most 1e-12
+ * m/s.
+ * @note Pure host/device arithmetic: no allocation, exceptions, retained pointers or model state
+ * mutation. Caller supplies finite valid physical inputs; no general validation.
+ */
+OPENSWMM_KERNEL_FN double cellCflDt(double alpha, double lchar, double h, double speed) noexcept {
     const double c = std::sqrt(kGravity * h) + speed;
     return (c > 1.0e-12) ? alpha * lchar / c : 1.0e30;
 }
 
-/// Positivity scale factor λ for a cell about to export volume: outgoing
-/// fluxes (+ explicit sinks) may take at most β·max(V,0) over Δt. Faces leaving
-/// the cell are scaled by λ; the identical scaled flux updates both incident
-/// cells, so conservation is untouched.
+/**
+ * @brief Positivity scale factor λ for a cell about to export volume: outgoing fluxes (+
+ * explicit sinks) may take at most β·max(V,0) over Δt. Faces leaving the cell are scaled by λ;
+ * the identical scaled flux updates both incident cells, so conservation is untouched.
+ *
+ * @param[in] V Finite signed donor-cell volume, m3; only max(V,0) is available.
+ * @param[in] outflow_m3s Finite total positive export demand, m3/s.
+ * @param[in] dt Finite step duration, s.
+ * @param[in] beta Finite availability fraction in [0,1].
+ * @return Dimensionless export scale in [0,1] for valid inputs; returns one for nonpositive
+ * outflow or step. Does not apply the scale or book any water.
+ * @note Pure host/device arithmetic: no allocation, exceptions, retained pointers or model state
+ * mutation. Caller supplies finite valid physical inputs; no general validation.
+ */
 OPENSWMM_KERNEL_FN double positivityScale(double V, double outflow_m3s, double dt,
-                              double beta) noexcept {
-    if (outflow_m3s <= 0.0 || dt <= 0.0) return 1.0;
+                                          double beta) noexcept {
+    if (outflow_m3s <= 0.0 || dt <= 0.0)
+        return 1.0;
     const double avail = beta * std::max(V, 0.0);
-    const double take  = outflow_m3s * dt;
+    const double take = outflow_m3s * dt;
     return (take <= avail) ? 1.0 : avail / take;
 }
 

@@ -15,16 +15,17 @@
 // limitations under the License.
 
 /**
- * @file SimulationSnapshot.hpp
- * @brief Read-only snapshot of simulation state passed to plugins.
+ * @file      SimulationSnapshot.hpp
+ * @brief     Read-only snapshot of simulation state passed to plugins.
  *
- * @details A SimulationSnapshot is a deep copy of the relevant SoA arrays
- *          from SimulationContext at an output time boundary. Plugins receive
- *          a const reference to the snapshot from the IO thread.
+ * @details Numeric vectors own copied output-boundary data. ID, unit and species
+ *          pointers borrow host metadata: they can be null and must remain alive
+ *          and immutable until queued callbacks finish. Copying this struct copies
+ *          those pointers rather than their targets.
  *
- *          Because the snapshot is a separate copy, plugins can safely read
- *          all fields without any mutex or synchronization. The main simulation
- *          thread continues advancing while the IO thread processes the snapshot.
+ *          Plugins read the const snapshot while the simulation advances. They
+ *          must use snapshot data only, qualify optional arrays/metadata and copy
+ *          anything retained beyond update; no mutable live-context access.
  *
  * @note The snapshot is allocated on the heap and managed by the IOThread's
  *       ring buffer. Do NOT store pointers to snapshot data beyond the
@@ -34,9 +35,9 @@
  * @see IOThread.hpp (in src/engine/output/)
  * @see IOutputPlugin.hpp
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_SIMULATION_SNAPSHOT_HPP
@@ -76,11 +77,11 @@ struct NodeSnapshot {
  * @ingroup engine_plugins
  */
 struct LinkSnapshot {
-    std::vector<double> flow;       ///< Flow rate [display flow units]
-    std::vector<double> depth;      ///< Water depth [display length units]
-    std::vector<double> velocity;   ///< Mean velocity [display length/time]
-    std::vector<double> volume;     ///< Link volume [display volume units]
-    std::vector<double> capacity;   ///< Full-flow capacity fraction [0, 1]
+    std::vector<double> flow;     ///< Flow rate [display flow units]
+    std::vector<double> depth;    ///< Water depth [display length units]
+    std::vector<double> velocity; ///< Mean velocity [display length/time]
+    std::vector<double> volume;   ///< Link volume [display volume units]
+    std::vector<double> capacity; ///< Full-flow capacity fraction [0, 1]
 };
 
 /**
@@ -92,14 +93,14 @@ struct SubcatchSnapshot {
     // SI regardless of project display units; missing values remain NaN.
     static constexpr int snow_process_count = 10;
     std::vector<double> snow_process; // [subcatch * snow_process_count + field]
-    std::vector<double> rainfall;   ///< Rainfall rate [display rate units]
-    std::vector<double> snow_depth; ///< Snow depth [display depth units]
-    std::vector<double> evap;       ///< Evaporation [display rate units]
-    std::vector<double> infil;      ///< Infiltration [display rate units]
-    std::vector<double> runoff;     ///< Surface runoff [display flow units]
-    std::vector<double> gw_flow;    ///< Groundwater outflow [display flow units]
-    std::vector<double> gw_elev;    ///< Groundwater elevation [display length units]
-    std::vector<double> soil_moist; ///< Soil moisture [-]
+    std::vector<double> rainfall;     ///< Rainfall rate [display rate units]
+    std::vector<double> snow_depth;   ///< Snow depth [display depth units]
+    std::vector<double> evap;         ///< Evaporation [display rate units]
+    std::vector<double> infil;        ///< Infiltration [display rate units]
+    std::vector<double> runoff;       ///< Surface runoff [display flow units]
+    std::vector<double> gw_flow;      ///< Groundwater outflow [display flow units]
+    std::vector<double> gw_elev;      ///< Groundwater elevation [display length units]
+    std::vector<double> soil_moist;   ///< Soil moisture [-]
 };
 
 /**
@@ -107,7 +108,7 @@ struct SubcatchSnapshot {
  * @ingroup engine_plugins
  */
 struct GageSnapshot {
-    std::vector<double> rainfall;   ///< Current rainfall rate [project rate units]
+    std::vector<double> rainfall; ///< Current rainfall rate [project rate units]
 };
 
 /**
@@ -137,39 +138,39 @@ struct SimulationSnapshot {
     // Object counts
     // -----------------------------------------------------------------------
 
-    int node_count     = 0; ///< Number of nodes
-    int link_count     = 0; ///< Number of links
+    int node_count = 0;     ///< Number of nodes
+    int link_count = 0;     ///< Number of links
     int subcatch_count = 0; ///< Number of subcatchments
-    int gage_count     = 0; ///< Number of rain gages
-    int pollut_count   = 0; ///< Number of pollutants
+    int gage_count = 0;     ///< Number of rain gages
+    int pollut_count = 0;   ///< Number of pollutants
 
     // -----------------------------------------------------------------------
     // State arrays (parallel to the engine's SoA arrays)
     // -----------------------------------------------------------------------
 
-    NodeSnapshot     nodes;       ///< Node state
-    LinkSnapshot     links;       ///< Link state
-    SubcatchSnapshot subcatch;    ///< Subcatchment state
-    GageSnapshot     gages;       ///< Gage state
+    NodeSnapshot nodes;        ///< Node state
+    LinkSnapshot links;        ///< Link state
+    SubcatchSnapshot subcatch; ///< Subcatchment state
+    GageSnapshot gages;        ///< Gage state
 
     // -----------------------------------------------------------------------
     // System-level results (for binary output file)
     // -----------------------------------------------------------------------
 
-    double sys_temperature    = 0.0;  ///< Air temperature
-    double sys_rainfall       = 0.0;  ///< Average rainfall over all gages
-    double sys_snow_depth     = 0.0;  ///< Total snow depth
-    double sys_evap           = 0.0;  ///< Total evaporation loss
-    double sys_infil          = 0.0;  ///< Total infiltration loss
-    double sys_runoff         = 0.0;  ///< Total runoff flow
-    double sys_dw_inflow      = 0.0;  ///< Total dry weather inflow
-    double sys_gw_inflow      = 0.0;  ///< Total groundwater inflow
-    double sys_ii_inflow      = 0.0;  ///< Total RDII inflow
-    double sys_ext_inflow     = 0.0;  ///< Total external inflow
-    double sys_flooding       = 0.0;  ///< Total flooding
-    double sys_outflow        = 0.0;  ///< Total outflow
-    double sys_storage        = 0.0;  ///< Total storage volume
-    double sys_pet            = 0.0;  ///< Potential evapotranspiration
+    double sys_temperature = 0.0; ///< Air temperature
+    double sys_rainfall = 0.0;    ///< Average rainfall over all gages
+    double sys_snow_depth = 0.0;  ///< Total snow depth
+    double sys_evap = 0.0;        ///< Total evaporation loss
+    double sys_infil = 0.0;       ///< Total infiltration loss
+    double sys_runoff = 0.0;      ///< Total runoff flow
+    double sys_dw_inflow = 0.0;   ///< Total dry weather inflow
+    double sys_gw_inflow = 0.0;   ///< Total groundwater inflow
+    double sys_ii_inflow = 0.0;   ///< Total RDII inflow
+    double sys_ext_inflow = 0.0;  ///< Total external inflow
+    double sys_flooding = 0.0;    ///< Total flooding
+    double sys_outflow = 0.0;     ///< Total outflow
+    double sys_storage = 0.0;     ///< Total storage volume
+    double sys_pet = 0.0;         ///< Potential evapotranspiration
 
     /**
      * @brief Whether the model has any subcatchments.
@@ -213,16 +214,16 @@ struct SimulationSnapshot {
     // -----------------------------------------------------------------------
 
     /** @brief Node IDs in index order. Pointer to engine-managed strings. */
-    const std::vector<std::string>* node_ids     = nullptr;
+    const std::vector<std::string>* node_ids = nullptr;
 
     /** @brief Link IDs in index order. */
-    const std::vector<std::string>* link_ids     = nullptr;
+    const std::vector<std::string>* link_ids = nullptr;
 
     /** @brief Subcatchment IDs in index order. */
     const std::vector<std::string>* subcatch_ids = nullptr;
 
     /** @brief Gage IDs in index order. */
-    const std::vector<std::string>* gage_ids     = nullptr;
+    const std::vector<std::string>* gage_ids = nullptr;
 
     /** @brief Pollutant names in index order. */
     const std::vector<std::string>* pollut_names = nullptr;
@@ -262,27 +263,29 @@ struct SimulationSnapshot {
     // `surface_tri_count == 0` to skip 2D-specific work in that case.
     // -----------------------------------------------------------------------
 
-    int surface_tri_count  = 0;             ///< Number of cells (faces): triangles + quads
-    int surface_vert_count = 0;             ///< Number of vertices (nodes)
-    int surface_quad_count = 0;             ///< Number of quadrilateral cells (0 = all triangles)
-    int surface_edge_stride = 3;            ///< Edge slots per cell row in surface_edge_flux (3 | 4)
+    int surface_tri_count = 0;   ///< Number of cells (faces): triangles + quads
+    int surface_vert_count = 0;  ///< Number of vertices (nodes)
+    int surface_quad_count = 0;  ///< Number of quadrilateral cells (0 = all triangles)
+    int surface_edge_stride = 3; ///< Edge slots per cell row in surface_edge_flux (3 | 4)
     /// Vertices per cell (3 or 4), sized surface_tri_count. Empty when the
     /// mesh is all triangles (consumers may treat empty as "all 3").
     std::vector<uint8_t> surface_cell_nv;
 
-    std::vector<double> surface_depth;          ///< Overland flow depth ψ_o (m), per face
-    std::vector<double> surface_head;           ///< Total head h_o = z_s + ψ_o (m), per face
-    std::vector<double> surface_grad_hx;        ///< Unlimited head gradient ∂h/∂x, per face
-    std::vector<double> surface_grad_hy;        ///< Unlimited head gradient ∂h/∂y, per face
-    std::vector<double> surface_grad_hx_lim;    ///< Slope-limited head gradient ∂h/∂x, per face
-    std::vector<double> surface_grad_hy_lim;    ///< Slope-limited head gradient ∂h/∂y, per face
-    MeshSnowSnapshot surface_snow;              ///< Accepted snow state/ledgers, SI; own completed clock.
-    std::vector<double> surface_rainfall;       ///< Rainfall intensity (m/s), per face
-    std::vector<double> surface_coupling_flux;  ///< Coupling flux to SWMM node (m/s, + = into 2D), per face
-    std::vector<double> surface_net_source;     ///< Net source/sink (m/s), per face
-    std::vector<double> surface_infil_rate;     ///< Held infiltration loss rate (m/s, ≥ 0), per face — all zero when no [2D_INFILTRATION*] model resolved
-    std::vector<double> surface_infil_cum;      ///< Cumulative infiltrated depth (m), per face
-    std::vector<double> surface_rain_cum;       ///< Cumulative rainfall volume (m³), per face
+    std::vector<double> surface_depth;       ///< Overland flow depth ψ_o (m), per face
+    std::vector<double> surface_head;        ///< Total head h_o = z_s + ψ_o (m), per face
+    std::vector<double> surface_grad_hx;     ///< Unlimited head gradient ∂h/∂x, per face
+    std::vector<double> surface_grad_hy;     ///< Unlimited head gradient ∂h/∂y, per face
+    std::vector<double> surface_grad_hx_lim; ///< Slope-limited head gradient ∂h/∂x, per face
+    std::vector<double> surface_grad_hy_lim; ///< Slope-limited head gradient ∂h/∂y, per face
+    MeshSnowSnapshot surface_snow;        ///< Accepted snow state/ledgers, SI; own completed clock.
+    std::vector<double> surface_rainfall; ///< Rainfall intensity (m/s), per face
+    std::vector<double>
+        surface_coupling_flux; ///< Coupling flux to SWMM node (m/s, + = into 2D), per face
+    std::vector<double> surface_net_source; ///< Net source/sink (m/s), per face
+    std::vector<double>
+        surface_infil_rate; ///< Held infiltration loss rate (m/s, ≥ 0), per face — all zero when no [2D_INFILTRATION*] model resolved
+    std::vector<double> surface_infil_cum; ///< Cumulative infiltrated depth (m), per face
+    std::vector<double> surface_rain_cum;  ///< Cumulative rainfall volume (m³), per face
     /**
      * @brief 2D surface species concentration (overland transport S1/S2).
      * @details Layout: [species * surface_tri_count + face], species-major to
@@ -320,18 +323,20 @@ struct SimulationSnapshot {
      *        resolved. Rates are the cell's LAST firing (held between
      *        firings, like the surface's held infiltration rate).
      */
-    bool                gw2d_active = false;
-    std::vector<double> gw2d_table_elev;    ///< water-table elevation (m) = bed + hg
-    std::vector<double> gw2d_hg;            ///< saturated thickness (m)
-    std::vector<double> gw2d_hu;            ///< closure A bulk unsaturated storage (m of water); 0 under closure B
-    std::vector<double> gw2d_recharge;      ///< q0 (m/s), + down, − capillary rise
-    std::vector<double> gw2d_lateral;       ///< net lateral Darcy into the cell (m³/s)
-    std::vector<double> gw2d_node_exchange; ///< exchange with a 1D node (m³/s), + out of the aquifer
-    std::vector<double> gw2d_deep;          ///< deep loss (m/s)
-    std::vector<double> gw2d_et;            ///< subsurface ET (m/s, ≥ 0 out)
-    std::vector<double> gw2d_dunne;         ///< saturation excess returned to the surface (m³/s)
-    std::vector<double> gw2d_infil_in;      ///< infiltration delivered from the surface (m/s)
-    std::vector<double> gw2d_link_seepage;  ///< G-X3: conduit seepage delivered in (m³/s)
+    bool gw2d_active = false;
+    std::vector<double> gw2d_table_elev; ///< water-table elevation (m) = bed + hg
+    std::vector<double> gw2d_hg;         ///< saturated thickness (m)
+    std::vector<double>
+        gw2d_hu; ///< closure A bulk unsaturated storage (m of water); 0 under closure B
+    std::vector<double> gw2d_recharge; ///< q0 (m/s), + down, − capillary rise
+    std::vector<double> gw2d_lateral;  ///< net lateral Darcy into the cell (m³/s)
+    std::vector<double>
+        gw2d_node_exchange;                ///< exchange with a 1D node (m³/s), + out of the aquifer
+    std::vector<double> gw2d_deep;         ///< deep loss (m/s)
+    std::vector<double> gw2d_et;           ///< subsurface ET (m/s, ≥ 0 out)
+    std::vector<double> gw2d_dunne;        ///< saturation excess returned to the surface (m³/s)
+    std::vector<double> gw2d_infil_in;     ///< infiltration delivered from the surface (m/s)
+    std::vector<double> gw2d_link_seepage; ///< G-X3: conduit seepage delivered in (m³/s)
     /// T7.5: the aquifer's transported tuple, `[s * n_cells + c]`, as
     /// CONCENTRATIONS (mass / water volume of the zone) — the quantity a
     /// reader plots, derived here so no consumer has to know how the kernel
@@ -341,18 +346,18 @@ struct SimulationSnapshot {
     /// `[s * kTerms + t]` cumulative species ledger; the term order is the
     /// `terms` attribute the writer emits.
     std::vector<double> gw2d_species_ledger;
-    int                 gw2d_species_count = 0;
+    int gw2d_species_count = 0;
     const std::vector<std::string>* gw2d_species_names = nullptr;
     /// Static per-cell descriptors (filled every snapshot; the writer stores
     /// them once): aquifer bottom elevation (m) and the resolved closure
     /// (SWMM_GW2D_CLOSURE_*: 0 closed form, 1 enslaved, 2 sigma).
     std::vector<double> gw2d_bed_elev;
-    std::vector<int>    gw2d_closure;
+    std::vector<int> gw2d_closure;
     /// Closure B water content per σ layer, `[layer * surface_tri_count + face]`,
     /// layer 0 at the ground surface; `gw2d_m_layers` layers. A cell not under
     /// closure B carries 0 in every layer (mask with `gw2d_closure`).
     std::vector<double> gw2d_theta_sigma;
-    int                 gw2d_m_layers = 0;
+    int gw2d_m_layers = 0;
     /// Domain ledger (m³, cumulative): recharge, lateral, deep, node, dunne,
     /// caprise, et, infil_in, init_storage, storage (live, incl. accumulators),
     /// link (G-X3, conduit seepage in), continuity residual (ledgered) — the
@@ -361,7 +366,7 @@ struct SimulationSnapshot {
     /// Cumulative exchange per `[2D_AQUIFER_NODE]` bed (m³, + out of the
     /// aquifer into the pipe), in the authored bed order; `gw2d_node_names`
     /// is the parallel name list (null when there are no beds).
-    std::vector<double>             gw2d_bed_exchange_cum;
+    std::vector<double> gw2d_bed_exchange_cum;
     const std::vector<std::string>* gw2d_node_names = nullptr;
 
     // P9 thermal result contract. Values are copied from accepted runtime
@@ -391,7 +396,7 @@ struct SimulationSnapshot {
     /// [face, term]: radiation, sensible, latent, deep boundary, water->bed,
     /// accepted non-advective water increment. All terms are cumulative J.
     std::vector<double> thermal2d_surface_budget;
-    std::vector<double> thermal2d_evaporation_m3; ///< cumulative accepted evaporation, face
+    std::vector<double> thermal2d_evaporation_m3;     ///< cumulative accepted evaporation, face
     std::vector<double> thermal2d_ground_temperature; ///< capacity-weighted degC, face
     std::vector<double> thermal2d_ground_energy;      ///< J, face
     std::vector<double> thermal2d_ground_capacity;    ///< J K-1, face
@@ -421,9 +426,12 @@ struct SimulationSnapshot {
     std::vector<double> thermal2d_lid_layer_capacity;
     std::vector<double> thermal2d_lid_layer_ground_contact_j;
 
-    std::vector<double> surface_edge_flux;      ///< Normal flux through each edge, flat [tri*3+edge]
-    std::vector<double> surface_vert_head;      ///< Reconstructed head at vertices (m) — SOLVER field (dry-cell head = bed)
-    std::vector<double> surface_vert_depth;     ///< SIGNED vertex depth η_v − z_v (m) — wet-masked, wetted-contact-gated render reconstruction; > 0 where water reaches the vertex, 0 = no-data sentinel (older engines also emitted negatives on the dry side of partially wet cells — readers stay negative-tolerant)
+    std::vector<double>
+        surface_edge_flux; ///< Normal integrated edge flux m3/s, [cell*surface_edge_stride+edge].
+    std::vector<double>
+        surface_vert_head; ///< Reconstructed head at vertices (m) — SOLVER field (dry-cell head = bed)
+    std::vector<double>
+        surface_vert_depth; ///< SIGNED vertex depth η_v − z_v (m) — wet-masked, wetted-contact-gated render reconstruction; > 0 where water reaches the vertex, 0 = no-data sentinel (older engines also emitted negatives on the dry side of partially wet cells — readers stay negative-tolerant)
     std::vector<double> surface_face_vx;        ///< Cell-centred velocity X (m/s), per face
     std::vector<double> surface_face_vy;        ///< Cell-centred velocity Y (m/s), per face
     std::vector<double> surface_continuity_err; ///< Per-cell continuity residual (m³/s), per face
@@ -435,12 +443,14 @@ struct SimulationSnapshot {
     std::vector<double> surface_stat_max_velocity; ///< Max cell speed |v| (m/s), per face
     std::vector<double> surface_stat_max_cont_err; ///< Max |continuity residual| (m³/s), per face
     std::vector<double> gw2d_infil_capacity; ///< Aquifer top-interface receiving capacity (m s-1)
-    std::vector<double> gw2d_infil_remaining; ///< Remaining receiving allowance after pending receipts (m3)
+    std::vector<double>
+        gw2d_infil_remaining; ///< Remaining receiving allowance after pending receipts (m3)
     std::vector<double> gw2d_infil_refresh; ///< Capacity refresh time since simulation start (s)
     std::vector<double> gw2d_infil_pending; ///< Reserved surface water pending aquifer firing (m3)
-    std::vector<double> gw2d_reject; ///< Rejected top-interface delivery returned to surface (m3 s-1)
+    std::vector<double>
+        gw2d_reject; ///< Rejected top-interface delivery returned to surface (m3 s-1)
     std::vector<double> gw2d_reject_cum; ///< Cumulative rejected top-interface delivery (m3)
-    std::vector<double> gw2d_dunne_cum; ///< Cumulative physical saturation excess (m3)
+    std::vector<double> gw2d_dunne_cum;  ///< Cumulative physical saturation excess (m3)
     std::vector<double> gw2d_et_pending;
     std::vector<double> gw2d_et_potential_cum;
     std::vector<double> gw2d_et_surface_cum;
@@ -458,13 +468,13 @@ struct SimulationSnapshot {
     /// age is converted from seconds to hours, matching the reported species.
     std::vector<double> thermal2d_bed_species_initial_amount;
     // Additive groundwater completion output, absent for compatibility BULK profiles.
-    int gw2d_transport_layers=0,gw2d_boundary_count=0;
-    std::vector<double> gw2d_layer_mass,gw2d_layer_concentration; // [species,layer,face]
+    int gw2d_transport_layers = 0, gw2d_boundary_count = 0;
+    std::vector<double> gw2d_layer_mass, gw2d_layer_concentration; // [species,layer,face]
     std::vector<double> gw2d_boundary_water; // [boundary,4]: requested in/out, accepted in/out
-    std::vector<double> gw2d_boundary_species; // [species,boundary,4]: advective in/out, imposed in/out
-    std::vector<int> gw2d_boundary_cell_edge; // [boundary,2], zero-based
+    std::vector<double>
+        gw2d_boundary_species; // [species,boundary,4]: advective in/out, imposed in/out
+    std::vector<int> gw2d_boundary_cell_edge;  // [boundary,2], zero-based
     std::vector<double> gw2d_transport_ledger; // [species,20], append-only public SPL terms
-
 };
 
 } /* namespace openswmm */

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_hdf5_model.cpp
- * @brief The HDF5 columnar model writer — layout, units and fidelity.
+ * @file      test_hdf5_model.cpp
+ * @brief     The HDF5 columnar model writer — layout, units and fidelity.
  *
  * @details The fixture is the one the file-IO parity audit uses
  *          (`inp_roundtrip/column_and_precision.inp`): every value in it is
@@ -27,14 +27,14 @@
  *
  *          Design: `src/engine/io/hdf5/STRATEGY.md`.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
 
-#include <openswmm/engine/openswmm_engine.h>   // SWMM_OK
+#include <openswmm/engine/openswmm_engine.h> // SWMM_OK
 
 #include "core/SWMMEngine.hpp"
 #include "io/hdf5/Hdf5InputPlugin.hpp"
@@ -49,18 +49,35 @@ using namespace openswmm::h5io;
 
 namespace {
 
+/**
+ * @brief Form a fixture-relative input/HDF5 artifact path.
+ *
+ * @param[in] name Safe filename/path beneath inp_roundtrip; not sanitized or validated.
+ * @return Owned inp_roundtrip/name path string; does not create directories or the file.
+ */
 std::string data(const std::string& name) {
     return "inp_roundtrip/" + name;
 }
 
-/// Open the audit fixture and write it as HDF5. Artifacts land beside the
-/// fixture, reviewable on disk (CLAUDE.md §4.1), not in a temp directory.
+/**
+ * @brief Open the input audit fixture leniently and write its authored HDF5 model.
+ *
+ * Records nonfatal open/write expectations and collects unasserted writer warnings. A write failure
+ * can still return a nonempty path, so caller verifies file/read status. Local native engine owns
+ * loaded state; no simulation is initialized or run.
+ *
+ * @param[in] fixture Input filename under inp_roundtrip, relative to configured test cwd.
+ * @param[in] out_name HDF5 destination filename in the same directory; writer may replace existing
+ *     contents.
+ * @return Owned destination path after the attempted write; empty only when open fails.
+ */
 std::string writeFixture(const std::string& fixture, const std::string& out_name) {
     SWMMEngine eng;
     eng.set_lenient_open(true);
     const int rc = eng.open(data(fixture).c_str(), nullptr, nullptr);
     EXPECT_EQ(rc, SWMM_OK) << "open(" << fixture << ") failed";
-    if (rc != SWMM_OK) return {};
+    if (rc != SWMM_OK)
+        return {};
 
     const std::string out = data(out_name);
     std::vector<std::string> warnings;
@@ -68,12 +85,24 @@ std::string writeFixture(const std::string& fixture, const std::string& out_name
     return out;
 }
 
-/// Row index of `id` in a group's `name`-like column, or -1.
+/**
+ * @brief Find the first exact identifier in a string column read through engine HDF5 helpers.
+ *
+ * Does not mutate the group or return borrowed text; read/allocation exceptions can propagate.
+ *
+ * @param[in] g Borrowed valid group id from the engine's HDF5 instance.
+ * @param[in] col Non-null string column dataset name.
+ * @param[in] id Exact case-sensitive identifier to locate.
+ * @return First zero-based matching row as int, or -1 for column-read failure/no match; column
+ *     length must fit int for a valid returned index.
+ */
 int find_row(hid_t g, const char* col, const std::string& id) {
     std::vector<std::string> names;
-    if (!read_column(g, col, names)) return -1;
+    if (!read_column(g, col, names))
+        return -1;
     for (std::size_t i = 0; i < names.size(); ++i)
-        if (names[i] == id) return static_cast<int>(i);
+        if (names[i] == id)
+            return static_cast<int>(i);
     return -1;
 }
 
@@ -83,12 +112,29 @@ int find_row(hid_t g, const char* col, const std::string& id) {
 /// HDF5 instance to another — which fails exactly as if the file were corrupt.
 struct File {
     Handle h;
+    /**
+     * @brief Open a model file through the engine's HDF5 instance and retain RAII ownership.
+     *
+     * Owns the returned h5io::Handle; caller checks ok() before using get(). No second HDF5 runtime or
+     * direct raw API file open is used; helper error behavior propagates.
+     *
+     * @param[in] p HDF5 model path passed to open_file_readonly.
+     */
     explicit File(const std::string& p) : h(open_file_readonly(p)) {}
+    /**
+     * @brief Test whether the owned HDF5 helper handle is valid.
+     * @return h.ok() without modifying file state or transferring identifier ownership.
+     */
     bool ok() const { return h.ok(); }
+    /**
+     * @brief Borrow the raw identifier from the owned engine HDF5 handle.
+     * @return h.get(); valid only while this File/Handle remains alive and valid. Do not close or pass
+     *     it to a different HDF5 instance.
+     */
     hid_t get() const { return h.get(); }
 };
 
-}  // namespace
+} // namespace
 
 // The container must say what convention its numbers follow. A consumer that
 // assumes the wrong one is wrong by 43200 on seepage or 3.28084 on lengths,
@@ -236,16 +282,16 @@ TEST(Hdf5Model, ColumnsWithinAGroupShareOneLength) {
     File f(path);
     ASSERT_TRUE(f.ok());
 
-    for (const char* grp : {"nodes", "links", "links/xsections", "subcatchments",
-                            "links/conduits", "nodes/dividers"}) {
+    for (const char* grp : {"nodes", "links", "links/xsections", "subcatchments", "links/conduits",
+                            "nodes/dividers"}) {
         Handle g = open_group(f.get(), grp);
         ASSERT_TRUE(g.ok()) << grp << " missing";
-        const std::size_t n = column_length(g.get(), "name")
-                            + column_length(g.get(), "link");
-        for (const char* col : {"name", "link", "type", "shape", "geom1",
-                                "invert_elev", "area", "length", "method"}) {
+        const std::size_t n = column_length(g.get(), "name") + column_length(g.get(), "link");
+        for (const char* col : {"name", "link", "type", "shape", "geom1", "invert_elev", "area",
+                                "length", "method"}) {
             const std::size_t m = column_length(g.get(), col);
-            if (m == 0) continue;  // column absent from this group
+            if (m == 0)
+                continue; // column absent from this group
             EXPECT_EQ(m, n) << grp << "/" << col << " disagrees on row count";
         }
     }
@@ -289,7 +335,6 @@ TEST(Hdf5Model, ReadIsRefusedRatherThanPartiallyImplemented) {
     ASSERT_EQ(plugin.initialize({}, nullptr), 0);
     SimulationContext ctx;
     EXPECT_NE(plugin.read(path, ctx), 0);
-    EXPECT_NE(std::string(plugin.last_error_message()).find("not implemented"),
-              std::string::npos);
+    EXPECT_NE(std::string(plugin.last_error_message()).find("not implemented"), std::string::npos);
     EXPECT_EQ(ctx.n_nodes(), 0) << "a refused read must leave the context untouched";
 }

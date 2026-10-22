@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_2d_momentum_modes.cpp
- * @brief Gates for the MOMENTUM_EQUATION closures FULL_SWE and DIFFUSIVE_WAVE
+ * @file      test_2d_momentum_modes.cpp
+ * @brief     Gates for the MOMENTUM_EQUATION closures FULL_SWE and DIFFUSIVE_WAVE
  *        (plans/2D_FULL_SWE_SHOCK_CAPTURING_PLAN_2026-09-05.md, P2 / P4).
  *
  * @details
@@ -36,6 +36,10 @@
  *     steady uniform flow: ≤ 3 %); conservation.
  *
  * @ingroup engine_2d
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -58,15 +62,29 @@ namespace {
 
 constexpr double G = 9.80665;
 
-template <typename ZFn>
-MeshData makeTriGrid(int nx, int ny, double dx, ZFn z, double n = 0.03) {
+/**
+ * @brief Build a uniform rectangular momentum-test mesh with two triangles per square.
+ *
+ * No dimension, finite-value or callback-result validation occurs; callback/allocation/topology
+ * failures propagate.
+ *
+ * @param[in] nx Positive square count along x; derived counts must fit integer/storage limits.
+ * @param[in] ny Positive square count along y; derived counts must fit integer/storage limits.
+ * @param[in] dx Positive square edge length in metres.
+ * @param[in] z Synchronous callable z(x,y) returning vertex bed elevation in metres; not retained.
+ * @param[in] n Uniform Manning roughness, default 0.03.
+ * @return Owned mesh with sampled bed, uniform roughness and built geometry/topology.
+ */
+template <typename ZFn> MeshData makeTriGrid(int nx, int ny, double dx, ZFn z, double n = 0.03) {
     MeshData mesh;
     const int nvx = nx + 1, nvy = ny + 1;
     mesh.resize_vertices(nvx * nvy);
     for (int j = 0; j < nvy; ++j)
         for (int i = 0; i < nvx; ++i) {
             const int v = j * nvx + i;
-            mesh.vx[v] = i * dx; mesh.vy[v] = j * dx; mesh.vz[v] = z(i * dx, j * dx);
+            mesh.vx[v] = i * dx;
+            mesh.vy[v] = j * dx;
+            mesh.vz[v] = z(i * dx, j * dx);
         }
     mesh.resize_triangles(2 * nx * ny);
     int t = 0;
@@ -77,20 +95,35 @@ MeshData makeTriGrid(int nx, int ny, double dx, ZFn z, double n = 0.03) {
             mesh.set_triangle(t++, v00, v10, v11);
             mesh.set_triangle(t++, v00, v11, v01);
         }
-    for (int i = 0; i < mesh.n_triangles(); ++i) mesh.mannings_n[i] = n;
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        mesh.mannings_n[i] = n;
     buildMeshTopology(mesh);
     return mesh;
 }
 
-template <typename ZFn>
-MeshData makeQuadGrid(int nx, int ny, double dx, ZFn z, double n = 0.03) {
+/**
+ * @brief Build a uniform rectangular momentum-test mesh with one quad per square.
+ *
+ * No dimension, finite-value or callback-result validation occurs; callback/allocation/topology
+ * failures propagate.
+ *
+ * @param[in] nx Positive square count along x; derived counts must fit integer/storage limits.
+ * @param[in] ny Positive square count along y; derived counts must fit integer/storage limits.
+ * @param[in] dx Positive square edge length in metres.
+ * @param[in] z Synchronous callable z(x,y) returning vertex bed elevation in metres; not retained.
+ * @param[in] n Uniform Manning roughness, default 0.03.
+ * @return Owned mesh with sampled bed, uniform roughness and built geometry/topology.
+ */
+template <typename ZFn> MeshData makeQuadGrid(int nx, int ny, double dx, ZFn z, double n = 0.03) {
     MeshData mesh;
     const int nvx = nx + 1, nvy = ny + 1;
     mesh.resize_vertices(nvx * nvy);
     for (int j = 0; j < nvy; ++j)
         for (int i = 0; i < nvx; ++i) {
             const int v = j * nvx + i;
-            mesh.vx[v] = i * dx; mesh.vy[v] = j * dx; mesh.vz[v] = z(i * dx, j * dx);
+            mesh.vx[v] = i * dx;
+            mesh.vy[v] = j * dx;
+            mesh.vz[v] = z(i * dx, j * dx);
         }
     mesh.resize_triangles(nx * ny);
     int c = 0;
@@ -100,20 +133,35 @@ MeshData makeQuadGrid(int nx, int ny, double dx, ZFn z, double n = 0.03) {
             const int v01 = (j + 1) * nvx + i, v11 = (j + 1) * nvx + i + 1;
             mesh.set_quad(c++, v00, v10, v11, v01);
         }
-    for (int i = 0; i < mesh.n_triangles(); ++i) mesh.mannings_n[i] = n;
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        mesh.mannings_n[i] = n;
     buildMeshTopology(mesh);
     return mesh;
 }
 
-template <typename ZFn>
-MeshData makeMixedStrip(int nx, double dx, ZFn z, double n = 0.03) {
+/**
+ * @brief Build a one-row quad strip with two triangular end squares.
+ *
+ * No dimension/geometry/finite validation occurs here; callback/allocation/topology exceptions
+ * propagate.
+ *
+ * @param[in] nx Positive interior quad count; derived nx+2 columns/counts must fit storage/index
+ *     limits.
+ * @param[in] dx Positive square edge length in metres.
+ * @param[in] z Synchronous bed-elevation callable z(x,y) in metres, not retained.
+ * @param[in] n Uniform Manning roughness, default 0.03.
+ * @return Owned mesh of nx quads and four end triangles, with built topology.
+ */
+template <typename ZFn> MeshData makeMixedStrip(int nx, double dx, ZFn z, double n = 0.03) {
     MeshData mesh;
     const int ncol = nx + 2, nvx = ncol + 1;
     mesh.resize_vertices(nvx * 2);
     for (int j = 0; j < 2; ++j)
         for (int i = 0; i < nvx; ++i) {
             const int v = j * nvx + i;
-            mesh.vx[v] = i * dx; mesh.vy[v] = j * dx; mesh.vz[v] = z(i * dx, j * dx);
+            mesh.vx[v] = i * dx;
+            mesh.vy[v] = j * dx;
+            mesh.vz[v] = z(i * dx, j * dx);
         }
     mesh.resize_triangles(4 + nx);
     auto V = [&](int i, int j) { return j * nvx + i; };
@@ -123,35 +171,81 @@ MeshData makeMixedStrip(int nx, double dx, ZFn z, double n = 0.03) {
     mesh.set_triangle(3, V(ncol - 1, 0), V(ncol, 1), V(ncol - 1, 1));
     for (int i = 0; i < nx; ++i)
         mesh.set_quad(4 + i, V(i + 1, 0), V(i + 2, 0), V(i + 2, 1), V(i + 1, 1));
-    for (int i = 0; i < mesh.n_triangles(); ++i) mesh.mannings_n[i] = n;
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        mesh.mannings_n[i] = n;
     buildMeshTopology(mesh);
     return mesh;
 }
 
+/**
+ * @brief Create dry fixture water storage with heads equal to cell bed elevations.
+ *
+ * @param[in] mesh Built mesh supplying compatible counts and cell bed elevations in metres.
+ * @return Owned resized state with zero volume/depth and head=tri_cz for every cell; unrelated
+ *     fields use defaults.
+ */
 SurfaceStateData makeState(const MeshData& mesh) {
     SurfaceStateData state;
     state.resize(mesh.n_triangles(), mesh.n_vertices());
     for (int i = 0; i < mesh.n_triangles(); ++i) {
-        state.head[i] = mesh.tri_cz[i]; state.depth[i] = 0.0; state.volume[i] = 0.0;
+        state.head[i] = mesh.tri_cz[i];
+        state.depth[i] = 0.0;
+        state.volume[i] = 0.0;
     }
     return state;
 }
 
-void seedSurface(const MeshData& mesh, const SolverOptions2D& opts,
-                 SurfaceStateData& state, double eta) {
+/**
+ * @brief Seed a uniform water-surface elevation through the selected cell closure.
+ *
+ * Converts eta to cell volume then back to head/depth with production closure helpers, allowing dry
+ * cells where appropriate. Does not initialize momentum or run dynamics; preconditions follow the
+ * selected closure.
+ *
+ * @param[in] mesh Built mesh compatible with state.
+ * @param[in] opts Options selecting the volume/elevation closure.
+ * @param[in,out] state Already resized surface state receiving per-cell volume/head/depth; other
+ *     arrays remain unchanged.
+ * @param[in] eta Common absolute water-surface elevation in metres.
+ */
+void seedSurface(const MeshData& mesh, const SolverOptions2D& opts, SurfaceStateData& state,
+                 double eta) {
     for (int i = 0; i < mesh.n_triangles(); ++i) {
         state.volume[i] = inertial::cellVolumeFromEta(mesh, opts, i, eta);
         inertial::cellEtaDepth(mesh, opts, i, state.volume[i], state.head[i], state.depth[i]);
     }
 }
 
+/**
+ * @brief Sum the selected prefix of SI surface cell volumes.
+ *
+ * Does not include groundwater, exchange queues or boundary ledgers; does not mutate state.
+ *
+ * @param[in] s Borrowed surface state with volume storage covering nt cells.
+ * @param[in] nt Nonnegative cell count no greater than the volume vector length.
+ * @return Ordered double sum in m3, zero for an empty prefix.
+ */
 double totalVolume(const SurfaceStateData& s, int nt) {
     double v = 0.0;
-    for (int i = 0; i < nt; ++i) v += s.volume[i];
+    for (int i = 0; i < nt; ++i)
+        v += s.volume[i];
     return v;
 }
 
 // Stoker's exact wet dam break (middle state by bisection).
+/**
+ * @brief Solve the intermediate state of the exact wet-bed dam-break reference.
+ *
+ * Uses gravity 9.80665 m/s2 and 200 bisection iterations on the rarefaction/shock matching
+ * equation. Requires the intended hl>hr>0 regime; square roots and hm-hr division are unguarded. No
+ * production solver state is read or changed.
+ *
+ * @param[in] hl Positive upstream depth in metres, strictly greater than hr.
+ * @param[in] hr Positive downstream depth in metres.
+ * @param[out] hm Intermediate water depth in metres.
+ * @param[out] um Intermediate velocity in m/s.
+ * @param[out] s Right-moving shock speed in m/s.
+ */
 void stokerMiddle(double hl, double hr, double& hm, double& um, double& s) {
     auto f = [&](double h) {
         return 2.0 * (std::sqrt(G * hl) - std::sqrt(G * h)) -
@@ -160,45 +254,103 @@ void stokerMiddle(double hl, double hr, double& hm, double& um, double& s) {
     double a = hr * (1.0 + 1e-12), b = hl;
     for (int it = 0; it < 200; ++it) {
         const double m = 0.5 * (a + b);
-        if (f(a) * f(m) <= 0.0) b = m; else a = m;
+        if (f(a) * f(m) <= 0.0)
+            b = m;
+        else
+            a = m;
     }
     hm = 0.5 * (a + b);
     um = 2.0 * (std::sqrt(G * hl) - std::sqrt(G * hm));
-    s  = um * hm / (hm - hr);
+    s = um * hm / (hm - hr);
 }
+/**
+ * @brief Evaluate the self-similar wet-bed dam-break depth reference.
+ *
+ * Calls stokerMiddle for every sample; no zero-time/invalid-depth guard or adaptive solve occurs.
+ *
+ * @param[in] x Sample position in metres.
+ * @param[in] t Strictly positive time in seconds.
+ * @param[in] hl Upstream depth in metres, strictly greater than hr.
+ * @param[in] hr Strictly positive downstream depth in metres.
+ * @param[in] x0 Initial dam location in metres.
+ * @return Exact reference depth in metres from left reservoir, rarefaction, intermediate state or
+ *     right reservoir.
+ */
 double stokerDepth(double x, double t, double hl, double hr, double x0) {
-    double hm, um, s; stokerMiddle(hl, hr, hm, um, s);
+    double hm, um, s;
+    stokerMiddle(hl, hr, hm, um, s);
     const double c0 = std::sqrt(G * hl), cm = std::sqrt(G * hm), xi = (x - x0) / t;
-    if (xi <= -c0) return hl;
-    if (xi < um - cm) { const double c = (2.0 * c0 - xi) / 3.0; return c * c / G; }
-    if (xi < s) return hm;
+    if (xi <= -c0)
+        return hl;
+    if (xi < um - cm) {
+        const double c = (2.0 * c0 - xi) / 3.0;
+        return c * c / G;
+    }
+    if (xi < s)
+        return hm;
     return hr;
 }
+/**
+ * @brief Evaluate the exact dry-bed dam-break depth reference.
+ *
+ * Uses gravity 9.80665 m/s2; no zero-time/negative-depth validation or production solver call
+ * occurs.
+ *
+ * @param[in] x Sample position in metres.
+ * @param[in] t Strictly positive time in seconds.
+ * @param[in] hl Positive upstream reservoir depth in metres.
+ * @param[in] x0 Initial dam location in metres.
+ * @return Reference depth in metres: hl left of the fan, fan depth inside, zero beyond the dry
+ *     front.
+ */
 double ritterDepth(double x, double t, double hl, double x0) {
     const double c0 = std::sqrt(G * hl), xi = (x - x0) / t;
-    if (xi <= -c0) return hl;
-    if (xi < 2.0 * c0) { const double c = (2.0 * c0 - xi) / 3.0; return c * c / G; }
+    if (xi <= -c0)
+        return hl;
+    if (xi < 2.0 * c0) {
+        const double c = (2.0 * c0 - xi) / 3.0;
+        return c * c / G;
+    }
     return 0.0;
 }
 
 // Relative L1 depth error of a strip run (column-mean depth vs reference).
 template <typename Ref>
+/**
+ * @brief Compute a column-mean relative depth error against a scalar reference.
+ *
+ * Clamps centroid bins to [0,nx-1], uses arithmetic cell means rather than area weights, and
+ * assigns zero to empty bins. Requires a positive included reference sum; denominator is unguarded.
+ * Callback/allocation failures propagate; no state mutation occurs.
+ *
+ * @param[in] mesh Mesh with centroid x coordinates and cells compatible with st.
+ * @param[in] st Stable surface state with per-cell depth in metres.
+ * @param[in] nx Strictly positive number of x bins, fitting storage limits.
+ * @param[in] dx Strictly positive x-bin width in metres.
+ * @param[in] ref Synchronous callable returning reference depth in metres at x; not retained.
+ * @return Sum of absolute column-mean errors divided by summed reference depth over bins with
+ *     reference>1e-9.
+ */
 double stripL1(const MeshData& mesh, const SurfaceStateData& st, int nx, double dx, Ref ref) {
     std::vector<double> sum(nx, 0.0), cnt(nx, 0.0);
     for (int i = 0; i < mesh.n_triangles(); ++i) {
         int k = static_cast<int>(mesh.tri_cx[i] / dx);
         k = std::max(0, std::min(nx - 1, k));
-        sum[k] += st.depth[i]; cnt[k] += 1.0;
+        sum[k] += st.depth[i];
+        cnt[k] += 1.0;
     }
     double num = 0.0, den = 0.0;
     for (int k = 0; k < nx; ++k) {
         const double h = sum[k] / std::max(cnt[k], 1.0), r = ref((k + 0.5) * dx);
-        if (r > 1e-9) { num += std::fabs(h - r); den += r; }
+        if (r > 1e-9) {
+            num += std::fabs(h - r);
+            den += r;
+        }
     }
     return num / den;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Kernel-level properties of the HLLC face flux.
@@ -208,7 +360,9 @@ TEST(SweKernels, HllcConsistencyAndSymmetry) {
     double fh, fn, ft, ss, ph, pn, pt;
     swe::hllcFlux(L, L, fh, fn, ft, ss);
     swe::physicalFlux(L, ph, pn, pt);
-    EXPECT_NEAR(fh, ph, 1e-12); EXPECT_NEAR(fn, pn, 1e-12); EXPECT_NEAR(ft, pt, 1e-12);
+    EXPECT_NEAR(fh, ph, 1e-12);
+    EXPECT_NEAR(fn, pn, 1e-12);
+    EXPECT_NEAR(ft, pt, 1e-12);
 
     // Mirror wall: zero mass flux, positive normal-momentum (pressure) flux.
     swe::FaceSide R{0.7, -0.9, -0.3};
@@ -234,7 +388,8 @@ TEST(SweKernels, HllcConsistencyAndSymmetry) {
     swe::hllcFlux(D, W, fh, fn, ft, ss);
     EXPECT_LT(fh, 0.0);
     swe::hllcFlux(D, D, fh, fn, ft, ss);
-    EXPECT_EQ(fh, 0.0); EXPECT_EQ(fn, 0.0);
+    EXPECT_EQ(fh, 0.0);
+    EXPECT_EQ(fn, 0.0);
 }
 
 TEST(SweKernels, FaceFluxRestStateCancelsPerFace) {
@@ -242,11 +397,12 @@ TEST(SweKernels, FaceFluxRestStateCancelsPerFace) {
     // change per side = −½g·h_side²·n̂ (the term that closes over a cell).
     const double eta = 2.0, zL = 0.3, zR = 0.8;
     const double hL = eta - zL, hR = eta - zR;
-    swe::FaceFlux F; double cLx, cLy, cRx, cRy;
+    swe::FaceFlux F;
+    double cLx, cLy, cRx, cRy;
     swe::faceFlux(eta, hL, 0, 0, eta, hR, 0, 0, 1.0, 0.0, 1e-3, F, cLx, cLy, cRx, cRy);
     EXPECT_NEAR(F.mass, 0.0, 1e-14);
     EXPECT_NEAR(-F.mx + cLx, -0.5 * G * hL * hL, 1e-12);
-    EXPECT_NEAR( F.mx + cRx, +0.5 * G * hR * hR, 1e-12);
+    EXPECT_NEAR(F.mx + cRx, +0.5 * G * hR * hR, 1e-12);
     EXPECT_NEAR(F.my, 0.0, 1e-14);
 }
 
@@ -260,9 +416,9 @@ TEST(MomentumModes, LakeAtRestExactAllShapesAndClosures) {
                 auto bed = [](double x, double y) {
                     return 0.05 * x + 0.11 * y + 0.3 * std::sin(0.7 * x);
                 };
-                MeshData mesh = (kind == 0) ? makeTriGrid(6, 6, 5.0, bed)
-                              : (kind == 1) ? makeQuadGrid(6, 6, 5.0, bed)
-                                            : makeMixedStrip(8, 5.0, bed);
+                MeshData mesh = (kind == 0)   ? makeTriGrid(6, 6, 5.0, bed)
+                                : (kind == 1) ? makeQuadGrid(6, 6, 5.0, bed)
+                                              : makeMixedStrip(8, 5.0, bed);
                 SolverOptions2D opts;
                 opts.momentum = mode;
                 opts.cell_closure = closure;
@@ -278,7 +434,8 @@ TEST(MomentumModes, LakeAtRestExactAllShapesAndClosures) {
                 for (int i = 0; i < mesh.n_triangles(); ++i)
                     EXPECT_NEAR(state.volume[i], v0[i], 1.0e-9 * (v0[i] + 1.0))
                         << "mode " << int(mode) << " kind " << kind << " cell " << i;
-                for (double f : state.edge_flux) EXPECT_LE(std::fabs(f), 1.0e-9);
+                for (double f : state.edge_flux)
+                    EXPECT_LE(std::fabs(f), 1.0e-9);
                 solver.finalize();
             }
         }
@@ -297,7 +454,8 @@ TEST(MomentumModes, DryNeighbourWallNoCreep) {
         solver.initialize(mesh, state, opts);
         solver.advance(0.0, 300.0);
         for (int i = 0; i < mesh.n_triangles(); ++i)
-            if (mesh.tri_cz[i] > 1.5) EXPECT_EQ(state.volume[i], 0.0) << "mode " << int(mode);
+            if (mesh.tri_cz[i] > 1.5)
+                EXPECT_EQ(state.volume[i], 0.0) << "mode " << int(mode);
         EXPECT_NEAR(totalVolume(state, mesh.n_triangles()), sum0, 1.0e-9 * sum0);
         solver.finalize();
     }
@@ -312,12 +470,13 @@ TEST(MomentumModes, ClosedBasinConservationAndPositivity) {
         for (int i = 0; i < mesh.n_triangles(); ++i)
             if (mesh.tri_cx[i] < 5.0 && mesh.tri_cy[i] < 5.0) {
                 state.volume[i] = 2.0 * mesh.tri_area[i];
-                inertial::cellEtaDepth(mesh, opts, i, state.volume[i], state.head[i], state.depth[i]);
+                inertial::cellEtaDepth(mesh, opts, i, state.volume[i], state.head[i],
+                                       state.depth[i]);
             }
         const double sum0 = totalVolume(state, mesh.n_triangles());
         ExplicitInertialSolver solver;
         solver.initialize(mesh, state, opts);
-        const int chunks = (mode == Momentum2D::FULL_SWE) ? 40 : 6;   // DW is Δx²-bound
+        const int chunks = (mode == Momentum2D::FULL_SWE) ? 40 : 6; // DW is Δx²-bound
         for (int c = 0; c < chunks; ++c) {
             solver.advance(c * 5.0, (c + 1) * 5.0);
             for (int i = 0; i < mesh.n_triangles(); ++i) {
@@ -334,12 +493,16 @@ TEST(MomentumModes, ClosedBasinConservationAndPositivity) {
 // SWASHES 4.1.1, L = 10 m, 6 s). The local-inertial law puts the plateau 30 %
 // high and the bore 7 % short; the Godunov closure must sit within 3 %.
 TEST(MomentumModes, StokerWetDamBreakFullSwe) {
-    const int nx = 200, ny = 2; const double dx = 0.05;
+    const int nx = 200, ny = 2;
+    const double dx = 0.05;
     auto mesh = makeTriGrid(nx, ny, dx, [](double, double) { return 0.0; }, 0.0);
-    for (int i = 0; i < mesh.n_triangles(); ++i) mesh.mannings_n[i] = 1e-9;   // frictionless
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        mesh.mannings_n[i] = 1e-9; // frictionless
     SolverOptions2D opts;
     opts.momentum = Momentum2D::FULL_SWE;
-    opts.dry_depth = 1e-4; opts.h_move = 1e-4; opts.cfl_number = 0.5;
+    opts.dry_depth = 1e-4;
+    opts.h_move = 1e-4;
+    opts.cfl_number = 0.5;
     auto state = makeState(mesh);
     for (int i = 0; i < mesh.n_triangles(); ++i) {
         const double h = (mesh.tri_cx[i] < 5.0) ? 0.005 : 0.001;
@@ -349,30 +512,38 @@ TEST(MomentumModes, StokerWetDamBreakFullSwe) {
     const double sum0 = totalVolume(state, mesh.n_triangles());
     ExplicitInertialSolver solver;
     solver.initialize(mesh, state, opts);
-    for (int c = 0; c < 6; ++c) solver.advance(c * 1.0, (c + 1) * 1.0);
+    for (int c = 0; c < 6; ++c)
+        solver.advance(c * 1.0, (c + 1) * 1.0);
     const double l1 = stripL1(mesh, state, nx, dx,
                               [](double x) { return stokerDepth(x, 6.0, 0.005, 0.001, 5.0); });
     EXPECT_LT(l1, 0.03) << "Stoker L1 " << l1;
     EXPECT_NEAR(totalVolume(state, mesh.n_triangles()), sum0, 1e-10 * sum0);
     // The bore is where the exact solution puts it (within 2 cells).
-    double hm, um, s; stokerMiddle(0.005, 0.001, hm, um, s);
+    double hm, um, s;
+    stokerMiddle(0.005, 0.001, hm, um, s);
     double x_bore = 0.0;
     for (int i = 0; i < mesh.n_triangles(); ++i)
-        if (state.depth[i] > 0.5 * (hm + 0.001)) x_bore = std::max(x_bore, mesh.tri_cx[i]);
+        if (state.depth[i] > 0.5 * (hm + 0.001))
+            x_bore = std::max(x_bore, mesh.tri_cx[i]);
     EXPECT_NEAR(x_bore, 5.0 + s * 6.0, 2.5 * dx);
     solver.finalize();
 }
 
 TEST(MomentumModes, RitterDryDamBreakFullSwe) {
-    const int nx = 200, ny = 2; const double dx = 0.05;
+    const int nx = 200, ny = 2;
+    const double dx = 0.05;
     auto mesh = makeTriGrid(nx, ny, dx, [](double, double) { return 0.0; }, 0.0);
-    for (int i = 0; i < mesh.n_triangles(); ++i) mesh.mannings_n[i] = 1e-9;
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        mesh.mannings_n[i] = 1e-9;
     SolverOptions2D opts;
     opts.momentum = Momentum2D::FULL_SWE;
-    opts.dry_depth = 1e-4; opts.h_move = 1e-4; opts.cfl_number = 0.5;
+    opts.dry_depth = 1e-4;
+    opts.h_move = 1e-4;
+    opts.cfl_number = 0.5;
     auto state = makeState(mesh);
     for (int i = 0; i < mesh.n_triangles(); ++i) {
-        if (mesh.tri_cx[i] >= 5.0) continue;
+        if (mesh.tri_cx[i] >= 5.0)
+            continue;
         state.volume[i] = 0.005 * mesh.tri_area[i];
         inertial::cellEtaDepth(mesh, opts, i, state.volume[i], state.head[i], state.depth[i]);
     }
@@ -381,17 +552,19 @@ TEST(MomentumModes, RitterDryDamBreakFullSwe) {
     solver.initialize(mesh, state, opts);
     for (int c = 0; c < 6; ++c) {
         solver.advance(c * 1.0, (c + 1) * 1.0);
-        for (int i = 0; i < mesh.n_triangles(); ++i) ASSERT_GE(state.volume[i], 0.0);
+        for (int i = 0; i < mesh.n_triangles(); ++i)
+            ASSERT_GE(state.volume[i], 0.0);
     }
-    const double l1 = stripL1(mesh, state, nx, dx,
-                              [](double x) { return ritterDepth(x, 6.0, 0.005, 5.0); });
+    const double l1 =
+        stripL1(mesh, state, nx, dx, [](double x) { return ritterDepth(x, 6.0, 0.005, 5.0); });
     EXPECT_LT(l1, 0.04) << "Ritter L1 " << l1;
     EXPECT_NEAR(totalVolume(state, mesh.n_triangles()), sum0, 1e-10 * sum0);
     // The front advanced past 6.5 m (ideal toe 7.66 m; a first-order scheme
     // lags the infinitely thin toe, but not the water-carrying part).
     double x_front = 0.0;
     for (int i = 0; i < mesh.n_triangles(); ++i)
-        if (state.depth[i] > 2e-4) x_front = std::max(x_front, mesh.tri_cx[i]);
+        if (state.depth[i] > 2e-4)
+            x_front = std::max(x_front, mesh.tri_cx[i]);
     EXPECT_GT(x_front, 6.5);
     solver.finalize();
 }
@@ -400,15 +573,19 @@ TEST(MomentumModes, RitterDryDamBreakFullSwe) {
 // and bore sharpen — L1 below 1 % where first order sits near 0.7–1 %; the
 // rest state stays exact and mass is conserved through the two-stage update.
 TEST(MomentumModes, StokerSecondOrderSharper) {
-    const int nx = 200, ny = 2; const double dx = 0.05;
+    const int nx = 200, ny = 2;
+    const double dx = 0.05;
     double l1[2] = {0.0, 0.0};
     for (int order = 1; order <= 2; ++order) {
         auto mesh = makeTriGrid(nx, ny, dx, [](double, double) { return 0.0; }, 0.0);
-        for (int i = 0; i < mesh.n_triangles(); ++i) mesh.mannings_n[i] = 1e-9;
+        for (int i = 0; i < mesh.n_triangles(); ++i)
+            mesh.mannings_n[i] = 1e-9;
         SolverOptions2D opts;
         opts.momentum = Momentum2D::FULL_SWE;
         opts.reconstruction_order = order;
-        opts.dry_depth = 1e-4; opts.h_move = 1e-4; opts.cfl_number = 0.5;
+        opts.dry_depth = 1e-4;
+        opts.h_move = 1e-4;
+        opts.cfl_number = 0.5;
         auto state = makeState(mesh);
         for (int i = 0; i < mesh.n_triangles(); ++i) {
             const double h = (mesh.tri_cx[i] < 5.0) ? 0.005 : 0.001;
@@ -418,8 +595,10 @@ TEST(MomentumModes, StokerSecondOrderSharper) {
         const double sum0 = totalVolume(state, mesh.n_triangles());
         ExplicitInertialSolver solver;
         solver.initialize(mesh, state, opts);
-        if (order == 2) EXPECT_EQ(opts.lts_tiers, 1);
-        for (int c = 0; c < 6; ++c) solver.advance(c * 1.0, (c + 1) * 1.0);
+        if (order == 2)
+            EXPECT_EQ(opts.lts_tiers, 1);
+        for (int c = 0; c < 6; ++c)
+            solver.advance(c * 1.0, (c + 1) * 1.0);
         l1[order - 1] = stripL1(mesh, state, nx, dx,
                                 [](double x) { return stokerDepth(x, 6.0, 0.005, 0.001, 5.0); });
         EXPECT_NEAR(totalVolume(state, mesh.n_triangles()), sum0, 1e-10 * sum0);
@@ -463,7 +642,8 @@ TEST(MomentumModes, ManningSteadySlopeQuadStrip) {
         for (int i = 0; i < mesh.n_triangles(); ++i)
             for (int e = 0; e < mesh.cell_vertex_count(i); ++e) {
                 const int idx = MeshData::slot(i, e);
-                if (mesh.cell_neighbour(i, e) >= 0) continue;
+                if (mesh.cell_neighbour(i, e) >= 0)
+                    continue;
                 if (mesh.edge_mx[idx] < 1.0e-9) {
                     boundary.edge_bc_type[idx] = static_cast<int8_t>(BoundaryType::NORMAL_FLOW);
                     boundary.edge_bed_slope[idx] = S;
@@ -471,7 +651,8 @@ TEST(MomentumModes, ManningSteadySlopeQuadStrip) {
             }
         state.boundary = &boundary;
         const double rain = 2.0e-4;
-        for (int i = 0; i < mesh.n_triangles(); ++i) state.rainfall[i] = rain;
+        for (int i = 0; i < mesh.n_triangles(); ++i)
+            state.rainfall[i] = rain;
         ExplicitInertialSolver solver;
         solver.initialize(mesh, state, opts);
         // DW steps are Δx²-bound: keep its spin-up shorter (the strip is
@@ -490,14 +671,19 @@ TEST(MomentumModes, ManningSteadySlopeQuadStrip) {
                     q_out += -state.edge_flux[idx];
             }
         double q_rain = 0.0;
-        for (int i = 0; i < mesh.n_triangles(); ++i) q_rain += rain * mesh.tri_area[i];
+        for (int i = 0; i < mesh.n_triangles(); ++i)
+            q_rain += rain * mesh.tri_area[i];
         EXPECT_NEAR(q_rain * T, q_out * T + (v_end - v_start), 1.0e-8 * q_rain * T) << int(mode);
         EXPECT_NEAR(q_out, q_rain, 0.10 * q_rain) << int(mode);
         const double L = nx * dx, x_mid = 0.5 * L;
         const double h_n = std::pow(n_man * rain * (L - x_mid) / std::sqrt(S), 3.0 / 5.0);
-        double h_avg = 0.0; int cnt = 0;
+        double h_avg = 0.0;
+        int cnt = 0;
         for (int i = 0; i < mesh.n_triangles(); ++i)
-            if (std::fabs(mesh.tri_cx[i] - x_mid) < dx) { h_avg += state.depth[i]; ++cnt; }
+            if (std::fabs(mesh.tri_cx[i] - x_mid) < dx) {
+                h_avg += state.depth[i];
+                ++cnt;
+            }
         h_avg /= cnt;
         EXPECT_NEAR(h_avg, h_n, 0.05 * h_n) << "mode " << int(mode);
         solver.finalize();
@@ -511,12 +697,16 @@ TEST(MomentumModes, ManningSteadySlopeQuadStrip) {
 // 10) on a supercritical inlet. Subcritical inflow, supercritical inflow and
 // a dry-bed inflow are all checked, against the volume the domain gained.
 TEST(MomentumModes, SpecifiedFlowInflowIsExactFullSwe) {
-    struct Case { const char* name; double q_in; double h0; };
+    struct Case {
+        const char* name;
+        double q_in;
+        double h0;
+    };
     // q_in is per metre of edge (m²/s), inward. h0 = 0 starts the strip dry.
     const Case cases[] = {
-        {"subcritical",   0.40, 0.60},   // Fr = q/(h sqrt(g h)) ~ 0.28
-        {"supercritical", 2.00, 0.30},   // Fr ~ 3.9 at the inlet cell
-        {"dry bed",       0.50, 0.00},
+        {"subcritical", 0.40, 0.60},   // Fr = q/(h sqrt(g h)) ~ 0.28
+        {"supercritical", 2.00, 0.30}, // Fr ~ 3.9 at the inlet cell
+        {"dry bed", 0.50, 0.00},
     };
     for (const auto& c : cases) {
         const double dx = 1.0;
@@ -527,7 +717,7 @@ TEST(MomentumModes, SpecifiedFlowInflowIsExactFullSwe) {
         auto state = makeState(mesh);
         for (int i = 0; i < mesh.n_triangles(); ++i) {
             state.depth[i] = c.h0;
-            state.head[i]  = c.h0;
+            state.head[i] = c.h0;
             state.volume[i] = c.h0 * mesh.tri_area[i];
         }
         BoundaryData boundary;
@@ -536,13 +726,14 @@ TEST(MomentumModes, SpecifiedFlowInflowIsExactFullSwe) {
         for (int i = 0; i < mesh.n_triangles(); ++i)
             for (int e = 0; e < mesh.cell_vertex_count(i); ++e) {
                 const int idx = MeshData::slot(i, e);
-                if (mesh.cell_neighbour(i, e) >= 0) continue;
+                if (mesh.cell_neighbour(i, e) >= 0)
+                    continue;
                 // edge_mx / edge_my are the edge MIDPOINT: the inlet is the
                 // west face at x = 0 (the side walls sit at x >= dx/2).
-                if (mesh.edge_mx[idx] > 1.0e-9) continue;
-                boundary.edge_bc_type[idx] =
-                    static_cast<int8_t>(BoundaryType::SPECIFIED_FLOW);
-                boundary.edge_bc_flow[idx] = -c.q_in;           // outward +, so inflow < 0
+                if (mesh.edge_mx[idx] > 1.0e-9)
+                    continue;
+                boundary.edge_bc_type[idx] = static_cast<int8_t>(BoundaryType::SPECIFIED_FLOW);
+                boundary.edge_bc_flow[idx] = -c.q_in; // outward +, so inflow < 0
                 inlet_len += mesh.edge_length[idx];
             }
         ASSERT_GT(inlet_len, 0.0) << c.name;
@@ -557,8 +748,8 @@ TEST(MomentumModes, SpecifiedFlowInflowIsExactFullSwe) {
         const double v1 = totalVolume(state, mesh.n_triangles());
         const double expected = c.q_in * inlet_len * T;
         EXPECT_NEAR(v1 - v0, expected, 1.0e-3 * expected)
-            << c.name << ": inflow boundary delivered " << (v1 - v0)
-            << " m³ against a prescribed " << expected;
+            << c.name << ": inflow boundary delivered " << (v1 - v0) << " m³ against a prescribed "
+            << expected;
         solver.finalize();
     }
 }
@@ -575,7 +766,8 @@ TEST(MomentumModes, NormalFlowOutletUsesManningFullSwe) {
         opts.momentum = Momentum2D::FULL_SWE;
         auto state = makeState(mesh);
         for (int i = 0; i < mesh.n_triangles(); ++i) {
-            state.depth[i] = h0; state.head[i] = h0;
+            state.depth[i] = h0;
+            state.head[i] = h0;
             state.volume[i] = h0 * mesh.tri_area[i];
         }
         BoundaryData boundary;
@@ -583,11 +775,12 @@ TEST(MomentumModes, NormalFlowOutletUsesManningFullSwe) {
         for (int i = 0; i < mesh.n_triangles(); ++i)
             for (int e = 0; e < mesh.cell_vertex_count(i); ++e) {
                 const int idx = MeshData::slot(i, e);
-                if (mesh.cell_neighbour(i, e) >= 0) continue;
+                if (mesh.cell_neighbour(i, e) >= 0)
+                    continue;
                 // Outlet = the east face at x = nx·dx (midpoint coordinate).
-                if (mesh.edge_mx[idx] < nx * dx - 1.0e-9) continue;
-                boundary.edge_bc_type[idx] =
-                    static_cast<int8_t>(BoundaryType::NORMAL_FLOW);
+                if (mesh.edge_mx[idx] < nx * dx - 1.0e-9)
+                    continue;
+                boundary.edge_bc_type[idx] = static_cast<int8_t>(BoundaryType::NORMAL_FLOW);
                 boundary.edge_bed_slope[idx] = S;
             }
         state.boundary = &boundary;
@@ -597,13 +790,12 @@ TEST(MomentumModes, NormalFlowOutletUsesManningFullSwe) {
         solver.advance(0.0, 0.5);
         const double v1 = totalVolume(state, mesh.n_triangles());
         solver.finalize();
-        return v0 - v1;                                          // volume that left
+        return v0 - v1; // volume that left
     };
     // An inert outlet (no slope) conveys nothing — the local-inertial law's
     // contract. A zero-gradient ghost would make it absorbing and drain the
     // pond; that was the FULL_SWE behaviour before this law was applied.
-    EXPECT_NEAR(run(0.0), 0.0, 1.0e-9)
-        << "a zero-slope normal-flow outlet must not drain";
+    EXPECT_NEAR(run(0.0), 0.0, 1.0e-9) << "a zero-slope normal-flow outlet must not drain";
     const double out1 = run(0.0025), out2 = run(0.01);
     EXPECT_GT(out1, 0.0);
     EXPECT_GT(out2, out1) << "more slope must convey more";
@@ -628,5 +820,5 @@ TEST(MomentumModes, OptionContract) {
     solver.initialize(mesh, state, opts);
     EXPECT_DOUBLE_EQ(opts.cfl_number, 0.5);
     solver.finalize();
-    EXPECT_EQ(opts.front_rebuild, -1);   // AUTO untouched
+    EXPECT_EQ(opts.front_rebuild, -1); // AUTO untouched
 }

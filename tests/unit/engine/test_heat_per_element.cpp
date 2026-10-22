@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_heat_per_element.cpp
- * @brief Plan PE — per-element attributes (PE1/PE2) and per-element climate
+ * @file      test_heat_per_element.cpp
+ * @brief     Plan PE — per-element attributes (PE1/PE2) and per-element climate
  *        through the API (PE4).
  *
  * @details Every gate fails at base, where every attribute is one number for
@@ -31,6 +31,10 @@
  *          "simplification" a future reader is most likely to reach for.
  *
  *          Scratch fixtures use the `_pe_` prefix (collision-checked).
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -49,27 +53,57 @@
 
 namespace {
 
+/**
+ * @brief Borrow the native heat-test engine behind an opaque handle.
+ *
+ * Unchecked static_cast/dereference only; no lifecycle validation, state mutation or lifetime
+ * extension occurs.
+ *
+ * @param[in] e Required live non-null native SWMMEngine handle; ownership remains with caller.
+ * @return Mutable engine reference valid until handle destruction/replacement.
+ */
 openswmm::SWMMEngine& as_cpp(SWMM_Engine e) {
     return *static_cast<openswmm::SWMMEngine*>(e);
 }
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Asserts open success and
+ * returns early from this void helper on a fatal assertion. Subsequent write/close failures are not
+ * checked; the local stream closes at scope exit and no path/content storage is retained.
+ * Allocation exceptions can propagate.
+ *
+ * @param[in] p Borrowed destination path; an existing file is truncated/overwritten.
+ * @param[in] body Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const std::string& p, const std::string& body) {
     std::ofstream f(p);
     ASSERT_TRUE(f.is_open()) << p;
     f << body;
 }
 
-/// Two PARALLEL open channels from one source node to one outfall, so the
-/// pair differ in nothing the hydraulics can see. Any temperature difference
-/// between them is attributable to the attribute under test and to nothing
-/// else — the control the shade gate needs.
-///
-/// `tags` lands as a [TAGS] block; `heat_cfg` names the component file.
+/**
+ * @brief Construct matched parallel open-channel branches for attribute-specific heat tests.
+ *
+ * Only text construction occurs; tags/config references are not validated or read. Branch hydraulic
+ * equality is authored by matching geometry rather than checked by this helper.
+ *
+ * @param[in] heat_cfg Component configuration filename inserted inside quotes; caller supplies
+ *     valid escaped/path syntax.
+ * @param[in] tags Complete TAGS section text appended after link definitions for name resolution.
+ * @param[in] extra_opts Raw additional project option lines after HEAT_TRANSPORT YES; include
+ *     trailing newline.
+ * @return Owned four-hour CFS/DYNWAVE deck with independent branch outfalls,95 F air,40%
+ *     humidity,15 mph wind and4 CFS upstream inflow.
+ */
 std::string deck(const std::string& heat_cfg, const std::string& tags,
                  const std::string& extra_opts = "") {
     return "[TITLE]\nper-element heat\n\n[OPTIONS]\n"
            "FLOW_UNITS           CFS\nFLOW_ROUTING         DYNWAVE\n"
-           "HEAT_TRANSPORT       YES\n" + extra_opts +
+           "HEAT_TRANSPORT       YES\n" +
+           extra_opts +
            "START_DATE           07/01/2026\nSTART_TIME           00:00:00\n"
            "END_DATE             07/01/2026\nEND_TIME             04:00:00\n"
            "ROUTING_STEP         5\nREPORT_STEP          00:05:00\n\n"
@@ -78,7 +112,9 @@ std::string deck(const std::string& heat_cfg, const std::string& tags,
            "[TIMESERIES]\nair_ts 07/01/2026 00:00 95.0\n"
            "air_ts 07/02/2026 00:00 95.0\n\n"
            "[PROCESS_COMPONENTS]\n"
-           "org.hydrocouple.openswmm.heat config=\"" + heat_cfg + "\"\n\n"
+           "org.hydrocouple.openswmm.heat config=\"" +
+           heat_cfg +
+           "\"\n\n"
            "[JUNCTIONS]\nJ0 12.0 10 0.5 0 0\nJA 9.0 10 0.5 0 0\n"
            "JB 9.0 10 0.5 0 0\n\n"
            // One outfall PER BRANCH. Both branches used to end at a single
@@ -100,18 +136,29 @@ std::string deck(const std::string& heat_cfg, const std::string& tags,
            // silently dropped — and under D-PE5 that silent drop becomes a
            // fatal "TAG matches nothing" at open. Pre-existing order
            // sensitivity, recorded in the PE check record.
-           tags +
-           "[REPORT]\nINPUT NO\n";
+           tags + "[REPORT]\nINPUT NO\n";
 }
 
+/**
+ * @brief Write/run a per-element heat fixture and retain its ended engine for inspection.
+ *
+ * Stops normally at elapsed completion or40000-iteration guard; guard exhaustion still returns an
+ * ended handle. Ignores end status, does not independently assert full completion, and caller must
+ * close/destroy success. Nested write_file fatal failure returns only from that helper.
+ *
+ * @param[in] tag Filesystem-safe stem for overwritten .inp/.rpt/.out artifacts.
+ * @param[in] body Complete input text passed to write_file.
+ * @return Owned ended handle after a successful stepping attempt, or null after
+ *     creation/lifecycle/step failure and destruction.
+ */
 SWMM_Engine run(const std::string& tag, const std::string& body) {
     write_file(tag + ".inp", body);
     SWMM_Engine e = swmm_engine_create();
-    if (!e) return nullptr;
-    if (swmm_engine_open(e, (tag + ".inp").c_str(), (tag + ".rpt").c_str(),
-                         (tag + ".out").c_str(), nullptr) != SWMM_OK ||
-        swmm_engine_initialize(e) != SWMM_OK ||
-        swmm_engine_start(e, 1) != SWMM_OK) {
+    if (!e)
+        return nullptr;
+    if (swmm_engine_open(e, (tag + ".inp").c_str(), (tag + ".rpt").c_str(), (tag + ".out").c_str(),
+                         nullptr) != SWMM_OK ||
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
         swmm_engine_destroy(e);
         return nullptr;
     }
@@ -127,28 +174,47 @@ SWMM_Engine run(const std::string& tag, const std::string& body) {
     return e;
 }
 
-/// Open only — for gates that assert a PARSE outcome rather than a result.
-int open_only(const std::string& tag, const std::string& body,
-              std::string* first_error) {
+/**
+ * @brief Write/open/destroy a heat fixture to inspect parser refusal behavior.
+ *
+ * Never initializes/starts; destroys the created handle before return. Does not clear first_error,
+ * guarantee write success or return all diagnostics.
+ *
+ * @param[in] tag Filesystem-safe artifact stem for .inp/.rpt/.out.
+ * @param[in] body Complete deck text passed to write_file.
+ * @param[out] first_error Optional string assigned the first context error only on open failure
+ *     with an available error; otherwise left unchanged.
+ * @return Raw open status, or SWMM_ERR_NOMEM if creation fails.
+ */
+int open_only(const std::string& tag, const std::string& body, std::string* first_error) {
     write_file(tag + ".inp", body);
     SWMM_Engine e = swmm_engine_create();
-    if (!e) return SWMM_ERR_NOMEM;
-    const int rc = swmm_engine_open(e, (tag + ".inp").c_str(),
-                                    (tag + ".rpt").c_str(),
+    if (!e)
+        return SWMM_ERR_NOMEM;
+    const int rc = swmm_engine_open(e, (tag + ".inp").c_str(), (tag + ".rpt").c_str(),
                                     (tag + ".out").c_str(), nullptr);
     if (rc != SWMM_OK && first_error) {
         const auto& ctx = as_cpp(e).context();
-        if (!ctx.errors.empty()) *first_error = ctx.errors.front();
+        if (!ctx.errors.empty())
+            *first_error = ctx.errors.front();
     }
     swmm_engine_destroy(e);
     return rc;
 }
 
+/**
+ * @brief Resolve an exact link identifier in the test context registry.
+ *
+ * @param[in] ctx Stable context containing link name registry.
+ * @param[in] id Non-null exact link name accepted by the registry.
+ * @return Registry link index, or its negative not-found sentinel; no assertion or state mutation
+ *     occurs.
+ */
 int link_of(const openswmm::SimulationContext& ctx, const char* id) {
     return ctx.link_names.find(id);
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // 1. THE headline. Two identical parallel channels; one fully shaded, one
@@ -160,14 +226,13 @@ int link_of(const openswmm::SimulationContext& ctx, const char* id) {
 //    quotes when it fails.
 // ---------------------------------------------------------------------------
 TEST(HeatPerElementTest, ShadeFactorVariesPerLink) {
-    write_file("_pe_shade.heat",
-               "[HEAT_FLUXES]\nSURFACE_EXCHANGE ON\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\n"
-               "SHORTWAVE GLOBAL 800.0\n"
-               "SHADE_FACTOR GLOBAL 0.0\n"
-               "SHADE_FACTOR LINK CB 0.95\n\n"
-               "[HEAT_SOURCES]\n"
-               "EXTERNAL_INFLOW GLOBAL 12.0\nINITIAL_STATE GLOBAL 12.0\n");
+    write_file("_pe_shade.heat", "[HEAT_FLUXES]\nSURFACE_EXCHANGE ON\nRADIATIVE_EXCHANGE ON\n\n"
+                                 "[RADIATIVE_FLUXES]\n"
+                                 "SHORTWAVE GLOBAL 800.0\n"
+                                 "SHADE_FACTOR GLOBAL 0.0\n"
+                                 "SHADE_FACTOR LINK CB 0.95\n\n"
+                                 "[HEAT_SOURCES]\n"
+                                 "EXTERNAL_INFLOW GLOBAL 12.0\nINITIAL_STATE GLOBAL 12.0\n");
 
     SWMM_Engine e = run("_pe_shade", deck("_pe_shade.heat", ""));
     ASSERT_NE(e, nullptr);
@@ -182,9 +247,8 @@ TEST(HeatPerElementTest, ShadeFactorVariesPerLink) {
     // Premise: the sunlit channel must actually have warmed, or the deck is
     // not discriminating and everything below would pass vacuously.
     ASSERT_GT(t_sun, 12.5) << "the sunlit control never warmed — deck defect";
-    EXPECT_LT(t_shd, t_sun)
-        << "shaded and sunlit channels reached the same temperature: the "
-           "per-link SHADE_FACTOR did not reach the physics";
+    EXPECT_LT(t_shd, t_sun) << "shaded and sunlit channels reached the same temperature: the "
+                               "per-link SHADE_FACTOR did not reach the physics";
     EXPECT_GT(t_sun - t_shd, 0.25)
         << "the difference is present but implausibly small for 95% shade";
     swmm_engine_destroy(e);
@@ -197,17 +261,15 @@ TEST(HeatPerElementTest, ShadeFactorVariesPerLink) {
 //    FALSIFIER: invert the resolver's two passes and this gate alone fails.
 // ---------------------------------------------------------------------------
 TEST(HeatPerElementTest, ElementBeatsTagBeatsGlobal) {
-    write_file("_pe_prec.heat",
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\n"
-               "SHORTWAVE GLOBAL 800.0\n"
-               "SHADE_FACTOR GLOBAL 0.10\n"
-               "SHADE_FACTOR TAG  RIPARIAN 0.50\n"
-               "SHADE_FACTOR LINK CB       0.90\n");
+    write_file("_pe_prec.heat", "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                                "[RADIATIVE_FLUXES]\n"
+                                "SHORTWAVE GLOBAL 800.0\n"
+                                "SHADE_FACTOR GLOBAL 0.10\n"
+                                "SHADE_FACTOR TAG  RIPARIAN 0.50\n"
+                                "SHADE_FACTOR LINK CB       0.90\n");
     // CA and CB are both tagged; only CB is also named at LINK scope. CAO is
     // untagged and unnamed, so it must fall all the way through to GLOBAL.
-    const std::string tags =
-        "[TAGS]\nLink CA RIPARIAN\nLink CB RIPARIAN\n\n";
+    const std::string tags = "[TAGS]\nLink CA RIPARIAN\nLink CB RIPARIAN\n\n";
 
     SWMM_Engine e = run("_pe_prec", deck("_pe_prec.heat", tags));
     ASSERT_NE(e, nullptr);
@@ -215,12 +277,9 @@ TEST(HeatPerElementTest, ElementBeatsTagBeatsGlobal) {
     namespace th = openswmm::transport::heat;
     using openswmm::HeatElement;
 
-    const double g = th::radiativeFor(
-        ctx, HeatElement::link(link_of(ctx, "CAO"))).shade_factor;
-    const double t = th::radiativeFor(
-        ctx, HeatElement::link(link_of(ctx, "CA"))).shade_factor;
-    const double l = th::radiativeFor(
-        ctx, HeatElement::link(link_of(ctx, "CB"))).shade_factor;
+    const double g = th::radiativeFor(ctx, HeatElement::link(link_of(ctx, "CAO"))).shade_factor;
+    const double t = th::radiativeFor(ctx, HeatElement::link(link_of(ctx, "CA"))).shade_factor;
+    const double l = th::radiativeFor(ctx, HeatElement::link(link_of(ctx, "CB"))).shade_factor;
 
     EXPECT_DOUBLE_EQ(g, 0.10) << "untagged, unnamed link did not take GLOBAL";
     EXPECT_DOUBLE_EQ(t, 0.50) << "tagged link did not take TAG";
@@ -234,23 +293,21 @@ TEST(HeatPerElementTest, ElementBeatsTagBeatsGlobal) {
 //    temperatures through the ground conductance alone.
 // ---------------------------------------------------------------------------
 TEST(HeatPerElementTest, GroundDepthAndHyporheicVaryPerTag) {
-    write_file("_pe_bed.heat",
-               "[HEAT_FLUXES]\nSEDIMENT_EXCHANGE ON\n\n"
-               "[SEDIMENT_EXCHANGE]\n"
-               "GROUND_TEMPERATURE GLOBAL 6.0\n"
-               "THERMAL_DIFFUSIVITY GLOBAL 1.0e-5\n"
-               "BED_THICKNESS GLOBAL 0.15\n"
-               "GROUND_DEPTH GLOBAL 3.0\n"
-               "GROUND_DEPTH TAG LATERAL 0.15\n"
-               "HYPORHEIC_VELOCITY TAG UNLINED 3.0e-5\n\n"
-               "[HEAT_SOURCES]\n"
-               "EXTERNAL_INFLOW GLOBAL 22.0\nINITIAL_STATE GLOBAL 22.0\n");
+    write_file("_pe_bed.heat", "[HEAT_FLUXES]\nSEDIMENT_EXCHANGE ON\n\n"
+                               "[SEDIMENT_EXCHANGE]\n"
+                               "GROUND_TEMPERATURE GLOBAL 6.0\n"
+                               "THERMAL_DIFFUSIVITY GLOBAL 1.0e-5\n"
+                               "BED_THICKNESS GLOBAL 0.15\n"
+                               "GROUND_DEPTH GLOBAL 3.0\n"
+                               "GROUND_DEPTH TAG LATERAL 0.15\n"
+                               "HYPORHEIC_VELOCITY TAG UNLINED 3.0e-5\n\n"
+                               "[HEAT_SOURCES]\n"
+                               "EXTERNAL_INFLOW GLOBAL 22.0\nINITIAL_STATE GLOBAL 22.0\n");
     // A link carries ONE tag, so CB cannot be both LATERAL and UNLINED; the
     // UNLINED row lands on the short outlet conduit CAO instead — a real
     // target for the tag (D-PE5 makes an unmatched tag fatal) that leaves
     // the CA-vs-CB ground-depth comparison untouched.
-    const std::string tags =
-        "[TAGS]\nLink CB LATERAL\nLink CAO UNLINED\n\n";
+    const std::string tags = "[TAGS]\nLink CB LATERAL\nLink CAO UNLINED\n\n";
 
     SWMM_Engine e = run("_pe_bed", deck("_pe_bed.heat", tags));
     ASSERT_NE(e, nullptr);
@@ -260,19 +317,16 @@ TEST(HeatPerElementTest, GroundDepthAndHyporheicVaryPerTag) {
     const double t_shal = ctx.heat_state.link_temp[static_cast<std::size_t>(cb)];
 
     ASSERT_LT(t_deep, 21.9) << "neither channel cooled — the bed never ran";
-    EXPECT_LT(t_shal, t_deep)
-        << "the shallow-buried link did not cool faster: the per-tag "
-           "GROUND_DEPTH did not reach bedCouplingFromContact";
+    EXPECT_LT(t_shal, t_deep) << "the shallow-buried link did not cool faster: the per-tag "
+                                 "GROUND_DEPTH did not reach bedCouplingFromContact";
     EXPECT_GT(t_shal, 5.9) << "cooled past the ground temperature";
 
     // And the per-element config itself, so a failure above can be localised
     // to the physics rather than the resolution.
     namespace th = openswmm::transport::heat;
     using openswmm::HeatElement;
-    EXPECT_DOUBLE_EQ(th::sedimentFor(ctx, HeatElement::link(cb)).ground_depth,
-                     0.15);
-    EXPECT_DOUBLE_EQ(th::sedimentFor(ctx, HeatElement::link(ca)).ground_depth,
-                     3.0);
+    EXPECT_DOUBLE_EQ(th::sedimentFor(ctx, HeatElement::link(cb)).ground_depth, 0.15);
+    EXPECT_DOUBLE_EQ(th::sedimentFor(ctx, HeatElement::link(ca)).ground_depth, 3.0);
     swmm_engine_destroy(e);
 }
 
@@ -289,32 +343,20 @@ TEST(HeatPerElementTest, MalformedOverridesAreRefusedNotIgnored) {
          "[RADIATIVE_FLUXES]\nSHADE_FACTOR LINK CA 0.2\n"
          "SHADE_FACTOR LINK CA 0.8\n",
          "duplicate"},
-        {"_pe_unk",
-         "[RADIATIVE_FLUXES]\nSHADE_FACTOR LINK C99 0.5\n",
-         "unknown link"},
-        {"_pe_tag0",
-         "[RADIATIVE_FLUXES]\nSHADE_FACTOR TAG NOBODY 0.5\n",
-         "matches no link"},
-        {"_pe_range",
-         "[RADIATIVE_FLUXES]\nSHADE_FACTOR LINK CA 7.5\n",
-         "fraction in [0,1]"},
-        {"_pe_nodebed",
-         "[SEDIMENT_EXCHANGE]\nGROUND_DEPTH NODE JA 1.0\n",
-         "CONDUITS only"},
-        {"_pe_swscope",
-         "[RADIATIVE_FLUXES]\nSHORTWAVE LINK CA 500.0\n",
-         "GLOBAL only"},
+        {"_pe_unk", "[RADIATIVE_FLUXES]\nSHADE_FACTOR LINK C99 0.5\n", "unknown link"},
+        {"_pe_tag0", "[RADIATIVE_FLUXES]\nSHADE_FACTOR TAG NOBODY 0.5\n", "matches no link"},
+        {"_pe_range", "[RADIATIVE_FLUXES]\nSHADE_FACTOR LINK CA 7.5\n", "fraction in [0,1]"},
+        {"_pe_nodebed", "[SEDIMENT_EXCHANGE]\nGROUND_DEPTH NODE JA 1.0\n", "CONDUITS only"},
+        {"_pe_swscope", "[RADIATIVE_FLUXES]\nSHORTWAVE LINK CA 500.0\n", "GLOBAL only"},
     };
 
     for (const auto& c : cases) {
         write_file(std::string(c.tag) + ".heat", c.cfg);
         std::string err;
-        const int rc = open_only(
-            c.tag, deck(std::string(c.tag) + ".heat", ""), &err);
+        const int rc = open_only(c.tag, deck(std::string(c.tag) + ".heat", ""), &err);
         EXPECT_NE(rc, SWMM_OK) << c.tag << ": accepted a row it must refuse";
         EXPECT_NE(err.find(c.needle), std::string::npos)
-            << c.tag << ": refused, but the message does not say why. Got: "
-            << err;
+            << c.tag << ": refused, but the message does not say why. Got: " << err;
     }
 }
 
@@ -323,44 +365,41 @@ TEST(HeatPerElementTest, MalformedOverridesAreRefusedNotIgnored) {
 //    IO3a lost a whole section this way once (lesson 201).
 // ---------------------------------------------------------------------------
 TEST(HeatPerElementTest, OverridesSurviveSaveAndReopen) {
-    write_file("_pe_rt.heat",
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\nSEDIMENT_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\n"
-               "SHADE_FACTOR GLOBAL 0.10\n"
-               "SHADE_FACTOR TAG RIPARIAN 0.55\n"
-               "SKY_VIEW LINK CB 0.20\n"
-               "LANDCOVER_TEMPERATURE TAG RIPARIAN 27.5\n\n"
-               "[SEDIMENT_EXCHANGE]\n"
-               "GROUND_TEMPERATURE GLOBAL 9.0\n"
-               "GROUND_DEPTH LINK CA 1.25\n");
+    write_file("_pe_rt.heat", "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\nSEDIMENT_EXCHANGE ON\n\n"
+                              "[RADIATIVE_FLUXES]\n"
+                              "SHADE_FACTOR GLOBAL 0.10\n"
+                              "SHADE_FACTOR TAG RIPARIAN 0.55\n"
+                              "SKY_VIEW LINK CB 0.20\n"
+                              "LANDCOVER_TEMPERATURE TAG RIPARIAN 27.5\n\n"
+                              "[SEDIMENT_EXCHANGE]\n"
+                              "GROUND_TEMPERATURE GLOBAL 9.0\n"
+                              "GROUND_DEPTH LINK CA 1.25\n");
     const std::string tags = "[TAGS]\nLink CA RIPARIAN\nLink CB RIPARIAN\n\n";
 
     write_file("_pe_rt.inp", deck("_pe_rt.heat", tags));
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, "_pe_rt.inp", "_pe_rt.rpt", "_pe_rt.out",
-                               nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e, "_pe_rt.inp", "_pe_rt.rpt", "_pe_rt.out", nullptr), SWMM_OK);
     ASSERT_EQ(swmm_model_write(e, "_pe_rt_gen2.inp"), SWMM_OK);
     swmm_engine_destroy(e);
 
     SWMM_Engine e2 = swmm_engine_create();
     ASSERT_NE(e2, nullptr);
-    ASSERT_EQ(swmm_engine_open(e2, "_pe_rt_gen2.inp", "_pe_rt2.rpt",
-                               "_pe_rt2.out", nullptr), SWMM_OK)
+    ASSERT_EQ(swmm_engine_open(e2, "_pe_rt_gen2.inp", "_pe_rt2.rpt", "_pe_rt2.out", nullptr),
+              SWMM_OK)
         << "the saved model does not reopen — a row was rendered wrong";
 
     const auto& ctx = as_cpp(e2).context();
     namespace th = openswmm::transport::heat;
     using openswmm::HeatElement;
     const int ca = link_of(ctx, "CA"), cb = link_of(ctx, "CB");
-    EXPECT_DOUBLE_EQ(th::radiativeFor(ctx, HeatElement::link(ca)).shade_factor,
-                     0.55) << "TAG row lost on save";
-    EXPECT_DOUBLE_EQ(th::radiativeFor(ctx, HeatElement::link(cb)).sky_view,
-                     0.20) << "LINK row lost on save";
-    EXPECT_DOUBLE_EQ(th::sedimentFor(ctx, HeatElement::link(ca)).ground_depth,
-                     1.25) << "bed LINK row lost on save";
-    EXPECT_DOUBLE_EQ(
-        th::radiativeFor(ctx, HeatElement::link(ca)).landcover_temp, 27.5);
+    EXPECT_DOUBLE_EQ(th::radiativeFor(ctx, HeatElement::link(ca)).shade_factor, 0.55)
+        << "TAG row lost on save";
+    EXPECT_DOUBLE_EQ(th::radiativeFor(ctx, HeatElement::link(cb)).sky_view, 0.20)
+        << "LINK row lost on save";
+    EXPECT_DOUBLE_EQ(th::sedimentFor(ctx, HeatElement::link(ca)).ground_depth, 1.25)
+        << "bed LINK row lost on save";
+    EXPECT_DOUBLE_EQ(th::radiativeFor(ctx, HeatElement::link(ca)).landcover_temp, 27.5);
 
     ASSERT_EQ(swmm_model_write(e2, "_pe_rt_gen3.inp"), SWMM_OK);
     swmm_engine_destroy(e2);
@@ -386,15 +425,14 @@ TEST(HeatPerElementTest, LandcoverTemperatureSentinelMeansAir) {
                "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL 0.0\nSKY_VIEW GLOBAL 0.3\n\n"
                "[HEAT_SOURCES]\nEXTERNAL_INFLOW GLOBAL 15.0\n"
                "INITIAL_STATE GLOBAL 15.0\n");
-    write_file("_pe_lc_on.heat",
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL 0.0\nSKY_VIEW GLOBAL 0.3\n"
-               "LANDCOVER_TEMPERATURE GLOBAL 55.0\n\n"
-               "[HEAT_SOURCES]\nEXTERNAL_INFLOW GLOBAL 15.0\n"
-               "INITIAL_STATE GLOBAL 15.0\n");
+    write_file("_pe_lc_on.heat", "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                                 "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL 0.0\nSKY_VIEW GLOBAL 0.3\n"
+                                 "LANDCOVER_TEMPERATURE GLOBAL 55.0\n\n"
+                                 "[HEAT_SOURCES]\nEXTERNAL_INFLOW GLOBAL 15.0\n"
+                                 "INITIAL_STATE GLOBAL 15.0\n");
 
     SWMM_Engine off = run("_pe_lc_off", deck("_pe_lc_off.heat", ""));
-    SWMM_Engine on  = run("_pe_lc_on", deck("_pe_lc_on.heat", ""));
+    SWMM_Engine on = run("_pe_lc_on", deck("_pe_lc_on.heat", ""));
     ASSERT_NE(off, nullptr);
     ASSERT_NE(on, nullptr);
     const auto& co = as_cpp(off).context();
@@ -420,65 +458,61 @@ TEST(HeatPerElementTest, LandcoverTemperatureSentinelMeansAir) {
 //    the other must be untouched and match a no-forcing control EXACTLY.
 // ---------------------------------------------------------------------------
 TEST(HeatPerElementTest, ApiPerElementClimateForcing) {
-    write_file("_pe_api.heat",
-               "[HEAT_FLUXES]\nSURFACE_EXCHANGE ON\n\n"
-               "[HEAT_SOURCES]\nEXTERNAL_INFLOW GLOBAL 15.0\n"
-               "INITIAL_STATE GLOBAL 15.0\n");
+    write_file("_pe_api.heat", "[HEAT_FLUXES]\nSURFACE_EXCHANGE ON\n\n"
+                               "[HEAT_SOURCES]\nEXTERNAL_INFLOW GLOBAL 15.0\n"
+                               "INITIAL_STATE GLOBAL 15.0\n");
     const std::string body = deck("_pe_api.heat", "");
 
     // Control: no forcing at all.
     SWMM_Engine ctrl = run("_pe_api_ctrl", body);
     ASSERT_NE(ctrl, nullptr);
-    const double ca_ctrl =
-        as_cpp(ctrl).context().heat_state.link_temp[static_cast<std::size_t>(
-            link_of(as_cpp(ctrl).context(), "CA"))];
-    const double cb_ctrl =
-        as_cpp(ctrl).context().heat_state.link_temp[static_cast<std::size_t>(
-            link_of(as_cpp(ctrl).context(), "CB"))];
+    const double ca_ctrl = as_cpp(ctrl).context().heat_state.link_temp[static_cast<std::size_t>(
+        link_of(as_cpp(ctrl).context(), "CA"))];
+    const double cb_ctrl = as_cpp(ctrl).context().heat_state.link_temp[static_cast<std::size_t>(
+        link_of(as_cpp(ctrl).context(), "CB"))];
     swmm_engine_destroy(ctrl);
 
     write_file("_pe_api_f.inp", body);
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, "_pe_api_f.inp", "_pe_api_f.rpt",
-                               "_pe_api_f.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e, "_pe_api_f.inp", "_pe_api_f.rpt", "_pe_api_f.out", nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
     const auto& ctx = as_cpp(e).context();
     const int cb = link_of(ctx, "CB"), ca = link_of(ctx, "CA");
 
     // PERSIST so one call covers the run; the RESET contract is gate 8.
-    ASSERT_EQ(swmm_forcing_element_climate(
-                  e, SWMM_HEAT_ELEM_LINK, cb,
-                  SWMM_FORCE_ELEM_AIR_TEMPERATURE, -12.0, SWMM_FORCING_ADD,
-                  SWMM_FORCING_PERSIST), SWMM_OK);
+    ASSERT_EQ(swmm_forcing_element_climate(e, SWMM_HEAT_ELEM_LINK, cb,
+                                           SWMM_FORCE_ELEM_AIR_TEMPERATURE, -12.0, SWMM_FORCING_ADD,
+                                           SWMM_FORCING_PERSIST),
+              SWMM_OK);
     double back = 0.0;
     int mode = -1;
-    ASSERT_EQ(swmm_forcing_element_climate_get(
-                  e, SWMM_HEAT_ELEM_LINK, cb,
-                  SWMM_FORCE_ELEM_AIR_TEMPERATURE, &back, &mode), SWMM_OK);
+    ASSERT_EQ(swmm_forcing_element_climate_get(e, SWMM_HEAT_ELEM_LINK, cb,
+                                               SWMM_FORCE_ELEM_AIR_TEMPERATURE, &back, &mode),
+              SWMM_OK);
     EXPECT_EQ(mode, SWMM_FORCING_ADD);
     EXPECT_DOUBLE_EQ(back, -12.0) << "US units must round-trip unconverted";
 
     double el = 0.0;
     int guard = 0;
-    do { ASSERT_EQ(swmm_engine_step(e, &el), SWMM_OK); }
-    while (el > 0.0 && ++guard < 40000);
+    do {
+        ASSERT_EQ(swmm_engine_step(e, &el), SWMM_OK);
+    } while (el > 0.0 && ++guard < 40000);
     swmm_engine_end(e);
 
     const double ca_f = ctx.heat_state.link_temp[static_cast<std::size_t>(ca)];
     const double cb_f = ctx.heat_state.link_temp[static_cast<std::size_t>(cb)];
-    EXPECT_DOUBLE_EQ(ca_f, ca_ctrl)
-        << "the UNFORCED link moved — the push is not element-scoped";
+    EXPECT_DOUBLE_EQ(ca_f, ca_ctrl) << "the UNFORCED link moved — the push is not element-scoped";
     EXPECT_LT(cb_f, cb_ctrl - 0.05)
         << "the forced link did not cool: elementAirTempF is not reaching "
            "surfaceFluxOut";
 
     // SUBCATCH is refused by design (§6.2): a subcatchment air temperature
     // has competing consumers, so there is deliberately no spelling for it.
-    EXPECT_EQ(swmm_forcing_element_climate(
-                  e, 2 /* SUBCATCH */, 0, SWMM_FORCE_ELEM_AIR_TEMPERATURE,
-                  1.0, SWMM_FORCING_ADD, SWMM_FORCING_RESET),
+    EXPECT_EQ(swmm_forcing_element_climate(e, 2 /* SUBCATCH */, 0, SWMM_FORCE_ELEM_AIR_TEMPERATURE,
+                                           1.0, SWMM_FORCING_ADD, SWMM_FORCING_RESET),
               SWMM_ERR_BADPARAM);
     swmm_engine_destroy(e);
 }
@@ -492,31 +526,30 @@ TEST(HeatPerElementTest, ApiPerElementClimateForcing) {
 //    keeps applying and every other gate still passes.
 // ---------------------------------------------------------------------------
 TEST(HeatPerElementTest, ResetForcingDoesNotPersistToTheNextStep) {
-    write_file("_pe_reset.heat",
-               "[HEAT_FLUXES]\nSURFACE_EXCHANGE ON\n\n"
-               "[HEAT_SOURCES]\nEXTERNAL_INFLOW GLOBAL 15.0\n"
-               "INITIAL_STATE GLOBAL 15.0\n");
+    write_file("_pe_reset.heat", "[HEAT_FLUXES]\nSURFACE_EXCHANGE ON\n\n"
+                                 "[HEAT_SOURCES]\nEXTERNAL_INFLOW GLOBAL 15.0\n"
+                                 "INITIAL_STATE GLOBAL 15.0\n");
     write_file("_pe_reset.inp", deck("_pe_reset.heat", ""));
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, "_pe_reset.inp", "_pe_reset.rpt",
-                               "_pe_reset.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e, "_pe_reset.inp", "_pe_reset.rpt", "_pe_reset.out", nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
     const auto& ctx = as_cpp(e).context();
     const int cb = link_of(ctx, "CB");
 
-    ASSERT_EQ(swmm_forcing_element_climate(
-                  e, SWMM_HEAT_ELEM_LINK, cb,
-                  SWMM_FORCE_ELEM_AIR_TEMPERATURE, -30.0, SWMM_FORCING_ADD,
-                  SWMM_FORCING_RESET), SWMM_OK);
+    ASSERT_EQ(swmm_forcing_element_climate(e, SWMM_HEAT_ELEM_LINK, cb,
+                                           SWMM_FORCE_ELEM_AIR_TEMPERATURE, -30.0, SWMM_FORCING_ADD,
+                                           SWMM_FORCING_RESET),
+              SWMM_OK);
     double el = 0.0;
     ASSERT_EQ(swmm_engine_step(e, &el), SWMM_OK);
 
     int mode = -1;
-    ASSERT_EQ(swmm_forcing_element_climate_get(
-                  e, SWMM_HEAT_ELEM_LINK, cb,
-                  SWMM_FORCE_ELEM_AIR_TEMPERATURE, nullptr, &mode), SWMM_OK);
+    ASSERT_EQ(swmm_forcing_element_climate_get(e, SWMM_HEAT_ELEM_LINK, cb,
+                                               SWMM_FORCE_ELEM_AIR_TEMPERATURE, nullptr, &mode),
+              SWMM_OK);
     EXPECT_EQ(mode, SWMM_FORCING_NONE)
         << "a RESET forcing survived its step — a driver that stops pushing "
            "would silently keep a stale field that looks like data";
@@ -536,10 +569,9 @@ TEST(HeatPerElementTest, ResetForcingDoesNotPersistToTheNextStep) {
 //    this gate fails while gates 7 and 8 still pass.
 // ---------------------------------------------------------------------------
 TEST(HeatPerElementTest, PerLinkClimateDoesNotReachSnowmelt) {
-    write_file("_pe_snow.heat",
-               "[HEAT_FLUXES]\nSURFACE_EXCHANGE ON\n\n"
-               "[HEAT_SOURCES]\nEXTERNAL_INFLOW GLOBAL 2.0\n"
-               "INITIAL_STATE GLOBAL 2.0\n");
+    write_file("_pe_snow.heat", "[HEAT_FLUXES]\nSURFACE_EXCHANGE ON\n\n"
+                                "[HEAT_SOURCES]\nEXTERNAL_INFLOW GLOBAL 2.0\n"
+                                "INITIAL_STATE GLOBAL 2.0\n");
     // A subcatchment with a SEEDED, MELTING snowpack, draining to the same
     // network. Air is 95 °F, so the pack is melting; a -80 °F push on a LINK
     // must not slow that down by even a bit.
@@ -551,18 +583,17 @@ TEST(HeatPerElementTest, PerLinkClimateDoesNotReachSnowmelt) {
     // attached and seeded (SD0 = 2.0 in), and the premises below assert
     // that it exists AND is actually melting before the comparison means
     // anything.
-    const std::string snow =
-        "[SUBCATCHMENTS]\nS1 G1 J0 3.0 50 400 0.5 0 SP1\n\n"
-        "[SUBAREAS]\nS1 0.01 0.1 0.05 0.05 25 OUTLET\n\n"
-        "[INFILTRATION]\nS1 3.0 0.5 4\n\n"
-        "[RAINGAGES]\nG1 INTENSITY 0:05 1.0 TIMESERIES rain_ts\n\n"
-        "[SNOWPACKS]\n"
-        "SP1 PLOWABLE   0.001 0.001 32.0 1.0 2.0 0.0 0.0\n"
-        "SP1 IMPERVIOUS 0.001 0.001 32.0 1.0 2.0 0.0 0.0\n"
-        "SP1 PERVIOUS   0.001 0.001 32.0 1.0 2.0 0.0 0.0\n"
-        "SP1 REMOVAL    1.0 0.0 0.0 0.0 0.0 0.0\n\n"
-        "[TIMESERIES]\nrain_ts 07/01/2026 00:00 0.0\n"
-        "rain_ts 07/01/2026 04:00 0.0\n\n";
+    const std::string snow = "[SUBCATCHMENTS]\nS1 G1 J0 3.0 50 400 0.5 0 SP1\n\n"
+                             "[SUBAREAS]\nS1 0.01 0.1 0.05 0.05 25 OUTLET\n\n"
+                             "[INFILTRATION]\nS1 3.0 0.5 4\n\n"
+                             "[RAINGAGES]\nG1 INTENSITY 0:05 1.0 TIMESERIES rain_ts\n\n"
+                             "[SNOWPACKS]\n"
+                             "SP1 PLOWABLE   0.001 0.001 32.0 1.0 2.0 0.0 0.0\n"
+                             "SP1 IMPERVIOUS 0.001 0.001 32.0 1.0 2.0 0.0 0.0\n"
+                             "SP1 PERVIOUS   0.001 0.001 32.0 1.0 2.0 0.0 0.0\n"
+                             "SP1 REMOVAL    1.0 0.0 0.0 0.0 0.0 0.0\n\n"
+                             "[TIMESERIES]\nrain_ts 07/01/2026 00:00 0.0\n"
+                             "rain_ts 07/01/2026 04:00 0.0\n\n";
 
     auto body = [&](bool /*forced*/) {
         std::string d = deck("_pe_snow.heat", "");
@@ -580,8 +611,9 @@ TEST(HeatPerElementTest, PerLinkClimateDoesNotReachSnowmelt) {
     write_file("_pe_snow_ctrl.inp", body(false));
     SWMM_Engine ctrl = swmm_engine_create();
     ASSERT_NE(ctrl, nullptr);
-    ASSERT_EQ(swmm_engine_open(ctrl, "_pe_snow_ctrl.inp", "_pe_snow_ctrl.rpt",
-                               "_pe_snow_ctrl.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(ctrl, "_pe_snow_ctrl.inp", "_pe_snow_ctrl.rpt", "_pe_snow_ctrl.out",
+                               nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(ctrl), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(ctrl, 1), SWMM_OK);
     double snow_start = -1.0;
@@ -589,8 +621,9 @@ TEST(HeatPerElementTest, PerLinkClimateDoesNotReachSnowmelt) {
     {
         double el = 0.0;
         int guard = 0;
-        do { ASSERT_EQ(swmm_engine_step(ctrl, &el), SWMM_OK); }
-        while (el > 0.0 && ++guard < 40000);
+        do {
+            ASSERT_EQ(swmm_engine_step(ctrl, &el), SWMM_OK);
+        } while (el > 0.0 && ++guard < 40000);
     }
     swmm_engine_end(ctrl);
     double snow_ctrl = -1.0;
@@ -611,22 +644,23 @@ TEST(HeatPerElementTest, PerLinkClimateDoesNotReachSnowmelt) {
     write_file("_pe_snow_f.inp", body(true));
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, "_pe_snow_f.inp", "_pe_snow_f.rpt",
-                               "_pe_snow_f.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e, "_pe_snow_f.inp", "_pe_snow_f.rpt", "_pe_snow_f.out", nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
     const auto& ctx = as_cpp(e).context();
     const int nl = ctx.n_links();
     (void)ctx;
     for (int j = 0; j < nl; ++j)
-        ASSERT_EQ(swmm_forcing_element_climate(
-                      e, SWMM_HEAT_ELEM_LINK, j,
-                      SWMM_FORCE_ELEM_AIR_TEMPERATURE, -80.0,
-                      SWMM_FORCING_ADD, SWMM_FORCING_PERSIST), SWMM_OK);
+        ASSERT_EQ(swmm_forcing_element_climate(e, SWMM_HEAT_ELEM_LINK, j,
+                                               SWMM_FORCE_ELEM_AIR_TEMPERATURE, -80.0,
+                                               SWMM_FORCING_ADD, SWMM_FORCING_PERSIST),
+                  SWMM_OK);
     double el = 0.0;
     int guard = 0;
-    do { ASSERT_EQ(swmm_engine_step(e, &el), SWMM_OK); }
-    while (el > 0.0 && ++guard < 40000);
+    do {
+        ASSERT_EQ(swmm_engine_step(e, &el), SWMM_OK);
+    } while (el > 0.0 && ++guard < 40000);
     swmm_engine_end(e);
 
     double snow_forced = -2.0;
@@ -657,9 +691,8 @@ TEST(HeatPerElementTest, PerLinkClimateDoesNotReachSnowmelt) {
 //     corpus byte-identical by construction rather than by tolerance.
 // ---------------------------------------------------------------------------
 TEST(HeatPerElementTest, NoOverridesAllocatesNothingAndReadsTheGlobal) {
-    write_file("_pe_none.heat",
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\nSHADE_FACTOR GLOBAL 0.4\n");
+    write_file("_pe_none.heat", "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                                "[RADIATIVE_FLUXES]\nSHADE_FACTOR GLOBAL 0.4\n");
     SWMM_Engine e = run("_pe_none", deck("_pe_none.heat", ""));
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp(e).context();
@@ -673,12 +706,9 @@ TEST(HeatPerElementTest, NoOverridesAllocatesNothingAndReadsTheGlobal) {
     namespace th = openswmm::transport::heat;
     using openswmm::HeatElement;
     // Identity, not equality: the accessor must hand back THE global object.
-    EXPECT_EQ(&th::radiativeFor(ctx, HeatElement::link(0)),
-              &ctx.heat_config.radiative);
-    EXPECT_EQ(&th::sedimentFor(ctx, HeatElement::link(0)),
-              &ctx.heat_config.sediment);
+    EXPECT_EQ(&th::radiativeFor(ctx, HeatElement::link(0)), &ctx.heat_config.radiative);
+    EXPECT_EQ(&th::sedimentFor(ctx, HeatElement::link(0)), &ctx.heat_config.sediment);
     // And a default-constructed token (index -1) must be safe.
-    EXPECT_EQ(&th::radiativeFor(ctx, HeatElement{}),
-              &ctx.heat_config.radiative);
+    EXPECT_EQ(&th::radiativeFor(ctx, HeatElement{}), &ctx.heat_config.radiative);
     swmm_engine_destroy(e);
 }

@@ -21,21 +21,49 @@
 
 namespace openswmm {
 namespace {
+/**
+ * @brief Own one successfully opened HDF5 identifier and its matching close callback.
+ * @note Copying is disabled. Callers serialize lifetime and operations with the result
+ *       HDF5 mutex; this small guard does not lock internally.
+ */
 struct H5Handle {
     hid_t id;
     herr_t (*close)(hid_t);
+    /**
+     * @brief Adopt an HDF5 identifier or reject an unsuccessful HDF5 open/create result.
+     * @param[in] value Identifier to own; a negative value represents an HDF5 failure.
+     * @param[in] closer Non-null matching HDF5 close routine, invoked once on destruction.
+     * @throws std::runtime_error When value is negative; no identifier is then owned.
+     */
     H5Handle(hid_t value, herr_t (*closer)(hid_t)) : id(value), close(closer) {
         if (id < 0)
             throw std::runtime_error("Cannot open HDF5 object or dataspace");
     }
+    /** @brief Invoke the matching close routine; its status is intentionally ignored. */
     ~H5Handle() { close(id); }
+    /** @brief Prohibit duplicating ownership of the same HDF5 identifier. */
     H5Handle(const H5Handle&) = delete;
+    /** @brief Prohibit replacing an identifier through copied ownership. */
     H5Handle& operator=(const H5Handle&) = delete;
 };
+/**
+ * @brief Enforce a reader argument or supported-layout constraint.
+ * @param[in] condition True when the required invariant holds.
+ * @param[in] message Non-null diagnostic copied into the thrown exception on failure.
+ * @throws std::invalid_argument When condition is false.
+ */
 void require(bool condition, const char* message) {
     if (!condition)
         throw std::invalid_argument(message);
 }
+/**
+ * @brief Open any HDF5 object relative to a live file/group and transfer its ownership.
+ * @param[in] file Open HDF5 file or group identifier; ownership stays with the caller.
+ * @param[in] path Non-null, non-empty relative or absolute HDF5 object path.
+ * @return Guard owning the opened object with H5Oclose as its matching close routine.
+ * @throws std::invalid_argument For a null or empty path.
+ * @throws std::out_of_range If H5Oopen fails; automatic HDF5 error printing is suppressed.
+ */
 H5Handle object(hid_t file, const char* path) {
     require(path && *path, "An HDF5 object path is required");
     hid_t id;
@@ -47,10 +75,21 @@ H5Handle object(hid_t file, const char* path) {
         throw std::out_of_range(std::string("HDF5 object not found: ") + path);
     return H5Handle(id, H5Oclose);
 }
+/**
+ * @brief Translate a negative HDF5 status into a reader exception.
+ * @param[in] status HDF5 operation result; all non-negative values are accepted.
+ * @throws std::runtime_error When status is negative.
+ */
 void check(herr_t status) {
     if (status < 0)
         throw std::runtime_error("HDF5 result read failed");
 }
+/**
+ * @brief Concatenate names with newline separators and no final delimiter.
+ * @param[in] items Strings to append in their existing order; contents are not escaped.
+ * @return Concatenated text, empty when no characters are appended.
+ * @note A separator is inserted only when the accumulated result is non-empty.
+ */
 std::string joined(const std::vector<std::string>& items) {
     std::string result;
     for (const auto& item : items) {
@@ -60,6 +99,18 @@ std::string joined(const std::vector<std::string>& items) {
     }
     return result;
 }
+/**
+ * @brief Recursively append supported dataset paths beneath an HDF5 group.
+ * @param[in] group Live group/file identifier whose links are enumerated in name order.
+ * @param[in] prefix Absolute path of the current group; empty for the root group.
+ * @param[in,out] names Accumulated dataset paths; appended to without sorting or clearing.
+ * @param[in] depth Current recursion depth, zero at the root; must remain below 16.
+ * @throws std::invalid_argument For the nesting limit or an invalid link enumeration.
+ * @throws std::out_of_range If an enumerated child object cannot be opened.
+ * @throws std::runtime_error On an HDF5 failure.
+ * @note Only hard links are followed; integer, floating-point and string datasets qualify.
+ *       Previously appended paths are not rolled back if a later child causes a failure.
+ */
 void collect(hid_t group, const std::string& prefix, std::vector<std::string>& names,
              int depth = 0) {
     require(depth < 16, "Result groups exceed maximum nesting depth");
@@ -111,7 +162,8 @@ void Output2DReader::open(const char* path) {
     uint64_t dims[8]{}, unlimited;
     int rank, integer;
     shape("/time", rank, dims, integer, unlimited);
-    require(rank == 1 && integer >= 0, "Result time coordinate must be numeric and one-dimensional");
+    require(rank == 1 && integer >= 0,
+            "Result time coordinate must be numeric and one-dimensional");
     shape("/Mesh2_node_x", rank, dims, integer, unlimited);
     require(rank == 1 && integer >= 0, "Mesh X coordinates must be a numeric vector");
     const auto vertices = dims[0];

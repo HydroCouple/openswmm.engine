@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_kinwave_storage_outlets.cpp
- * @brief Issue #148 — a storage unit draining through non-conduit outlets
+ * @file      test_kinwave_storage_outlets.cpp
+ * @brief     Issue #148 — a storage unit draining through non-conduit outlets
  *        under KINWAVE routing.
  *
  * @details The defect: KW handed every non-conduit link its upstream node's
@@ -41,13 +41,13 @@
  *
  *          Scratch fixtures use the `_kws_` prefix (collision-checked).
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifdef _MSC_VER
-#  define _USE_MATH_DEFINES
+#define _USE_MATH_DEFINES
 #endif
 #include <gtest/gtest.h>
 
@@ -62,19 +62,42 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
 // --- Pond geometry, held in one place so the assertions can quote it --------
-constexpr double kPondArea   = 20000.0;  ///< ft2, constant (FUNCTIONAL 0 0 A)
-constexpr double kOrifDiam   = 0.83;     ///< ft
-constexpr double kOrifCd     = 0.65;
-constexpr double kWeirCrest  = 8.0;      ///< ft above the pond invert
-constexpr double kInflowCfs  = 10.0;
-constexpr double kGravity    = 32.2;     ///< ft/s2
+constexpr double kPondArea = 20000.0; ///< ft2, constant (FUNCTIONAL 0 0 A)
+constexpr double kOrifDiam = 0.83;    ///< ft
+constexpr double kOrifCd = 0.65;
+constexpr double kWeirCrest = 8.0; ///< ft above the pond invert
+constexpr double kInflowCfs = 10.0;
+constexpr double kGravity = 32.2; ///< ft/s2
 
-/// @param with_weir  add the inert TRANSVERSE weir alongside the orifice.
+/**
+ * @brief Write a kinematic storage/orifice fixture with an optional inert weir.
+ *
+ * Uses fixed kPondArea ft2 storage, kOrifCd/orifice diameter, kWeirCrest ft and a kInflowCfs pulse
+ * ending just after two hours. No simulation runs in this helper. Opens/truncates the deck using a
+ * local ofstream; parent directories must exist. Stream open/write/close outcomes are not checked,
+ * and sidecar names/text are not escaped. Caller-owned inputs are not retained.
+ *
+ * @param[in] path Destination deck filename, non-null when a character pointer; borrowed only
+ *     during this call. Existing files are truncated.
+ * @param[in] with_weir Add a TRANSVERSE weir and its cross section beside the orifice; false leaves
+ *     only the orifice outlet.
+ */
 void write_deck(const std::string& path, bool with_weir) {
     std::ofstream f(path);
     f << "[TITLE]\nKW storage outlet regression (issue #148)\n\n"
@@ -92,12 +115,12 @@ void write_deck(const std::string& path, bool with_weir) {
       << "[CONDUITS]\nCOUT J_out OUT 100 0.01 0 0 0 0\n\n"
       << "[ORIFICES]\nOR1 SU1 J_out SIDE 0 " << kOrifCd << " NO 0\n\n";
     if (with_weir)
-        f << "[WEIRS]\nWR1 SU1 J_out TRANSVERSE " << kWeirCrest
-          << " 3.33 NO 0 0 NO\n\n";
+        f << "[WEIRS]\nWR1 SU1 J_out TRANSVERSE " << kWeirCrest << " 3.33 NO 0 0 NO\n\n";
     f << "[XSECTIONS]\n"
       << "COUT CIRCULAR 3 0 0 0\n"
       << "OR1 CIRCULAR " << kOrifDiam << " 0 0 0\n";
-    if (with_weir) f << "WR1 RECT_OPEN 2 5 0 0\n";
+    if (with_weir)
+        f << "WR1 RECT_OPEN 2 5 0 0\n";
     f << "\n[INFLOWS]\nSU1 FLOW Qin FLOW 1.0\n\n"
       << "[TIMESERIES]\n"
       << "Qin 0:00 " << kInflowCfs << "\n"
@@ -107,7 +130,7 @@ void write_deck(const std::string& path, bool with_weir) {
 }
 
 struct PondRun {
-    bool   ok = false;
+    bool ok = false;
     double routing_error = 0.0;  ///< fraction
     double max_volume = 0.0;     ///< ft3
     double max_depth = 0.0;      ///< ft
@@ -117,18 +140,31 @@ struct PondRun {
     double outfall_volume = 0.0; ///< ft3 delivered to OUT
 };
 
-
+/**
+ * @brief Run the kinematic-wave storage-outlet fixture and collect hydraulic closure probes.
+ *
+ * Owns/destroys engine, caps at 200000 positive-time calls and ignores end status. Outfall
+ * integration uses only positive elapsed differences, omitting terminal zero-time interval; guard
+ * exhaustion can still set ok=true. Nonfatal failures are recorded and artifacts remain.
+ *
+ * @param[in] tag Safe cwd artifact prefix.
+ * @param[in] with_weir True includes and requires WR1 in addition to OR1.
+ * @return Owned storage maxima ft3/feet, flow peaks ft3/s, integrated outfall volume ft3 and
+ *     dimensionless routing error; ok=false on setup/lookup/step refusal.
+ */
 PondRun run_deck(const std::string& tag, bool with_weir) {
     PondRun r;
     const std::string inp = tag + ".inp";
     write_deck(inp, with_weir);
 
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) { ADD_FAILURE() << "engine create"; return r; }
-    if (swmm_engine_open(e, inp.c_str(), (tag + ".rpt").c_str(),
-                         (tag + ".out").c_str(), nullptr) != SWMM_OK ||
-        swmm_engine_initialize(e) != SWMM_OK ||
-        swmm_engine_start(e, 1) != SWMM_OK) {
+    if (e == nullptr) {
+        ADD_FAILURE() << "engine create";
+        return r;
+    }
+    if (swmm_engine_open(e, inp.c_str(), (tag + ".rpt").c_str(), (tag + ".out").c_str(), nullptr) !=
+            SWMM_OK ||
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
         ADD_FAILURE() << "open/init/start failed for " << inp;
         swmm_engine_destroy(e);
         return r;
@@ -155,18 +191,19 @@ PondRun run_deck(const std::string& tag, bool with_weir) {
             swmm_engine_destroy(e);
             return r;
         }
-        const double dt = (elapsed - prev_elapsed) * 86400.0;  // days -> sec
+        const double dt = (elapsed - prev_elapsed) * 86400.0; // days -> sec
         prev_elapsed = elapsed;
 
         r.max_volume = std::max(r.max_volume, ctx.nodes.volume[usu]);
-        r.max_depth  = std::max(r.max_depth,  ctx.nodes.depth[usu]);
+        r.max_depth = std::max(r.max_depth, ctx.nodes.depth[usu]);
         r.peak_inflow = std::max(r.peak_inflow, ctx.nodes.inflow[usu]);
-        r.peak_orifice = std::max(
-            r.peak_orifice, std::fabs(ctx.links.flow[static_cast<std::size_t>(or1)]));
+        r.peak_orifice =
+            std::max(r.peak_orifice, std::fabs(ctx.links.flow[static_cast<std::size_t>(or1)]));
         if (wr1 >= 0)
-            r.peak_weir = std::max(
-                r.peak_weir, std::fabs(ctx.links.flow[static_cast<std::size_t>(wr1)]));
-        if (dt > 0.0) r.outfall_volume += ctx.nodes.inflow[uout] * dt;
+            r.peak_weir =
+                std::max(r.peak_weir, std::fabs(ctx.links.flow[static_cast<std::size_t>(wr1)]));
+        if (dt > 0.0)
+            r.outfall_volume += ctx.nodes.inflow[uout] * dt;
     } while (elapsed > 0.0 && ++guard < 200000);
 
     swmm_engine_end(e);
@@ -176,7 +213,7 @@ PondRun run_deck(const std::string& tag, bool with_weir) {
     return r;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Gate 1 — the pond conserves mass and actually ponds.
@@ -192,8 +229,7 @@ TEST(KinwaveStorageOutlets, PondStoresAndConservesMass) {
     // A pond fed 10 cfs for 2 h over 20000 ft2 must hold water. Under the
     // defect this stayed exactly 0 for the whole run.
     EXPECT_GT(r.max_volume, 0.0) << "storage unit never accumulated volume";
-    EXPECT_GT(r.max_depth, 1.0)
-        << "pond peaked at " << r.max_depth << " ft; expected several feet";
+    EXPECT_GT(r.max_depth, 1.0) << "pond peaked at " << r.max_depth << " ft; expected several feet";
 }
 
 // ---------------------------------------------------------------------------
@@ -210,13 +246,13 @@ TEST(KinwaveStorageOutlets, OrificeDischargeIsPhysicallyAchievable) {
     const double q_ceiling = kOrifCd * area * std::sqrt(2.0 * kGravity * r.max_depth);
 
     EXPECT_LE(r.peak_orifice, q_ceiling * 1.05)
-        << "orifice passed " << r.peak_orifice << " cfs at a peak head of "
-        << r.max_depth << " ft; the orifice equation caps it at " << q_ceiling;
+        << "orifice passed " << r.peak_orifice << " cfs at a peak head of " << r.max_depth
+        << " ft; the orifice equation caps it at " << q_ceiling;
 
     // Attenuation is the whole point of a detention pond.
     EXPECT_LT(r.peak_orifice, r.peak_inflow)
-        << "peak release " << r.peak_orifice << " cfs vs peak inflow "
-        << r.peak_inflow << " cfs — the pond attenuated nothing";
+        << "peak release " << r.peak_orifice << " cfs vs peak inflow " << r.peak_inflow
+        << " cfs — the pond attenuated nothing";
 }
 
 // ---------------------------------------------------------------------------
@@ -236,13 +272,12 @@ TEST(KinwaveStorageOutlets, InertWeirDoesNotManufactureFlow) {
         << "fixture invalid: pond reached the weir crest, so the weir is not inert";
 
     EXPECT_DOUBLE_EQ(with.peak_weir, 0.0)
-        << "weir crest is " << kWeirCrest << " ft above a pond that peaked at "
-        << with.max_depth << " ft, yet it carried " << with.peak_weir << " cfs";
+        << "weir crest is " << kWeirCrest << " ft above a pond that peaked at " << with.max_depth
+        << " ft, yet it carried " << with.peak_weir << " cfs";
 
     // Identical outfall delivery with and without the inert weir. The defect
     // put the pond's full inflow through BOTH outlets, roughly doubling this.
-    EXPECT_NEAR(with.outfall_volume, without.outfall_volume,
-                without.outfall_volume * 1e-6)
-        << "adding an inert weir changed the delivered volume from "
-        << without.outfall_volume << " to " << with.outfall_volume << " ft3";
+    EXPECT_NEAR(with.outfall_volume, without.outfall_volume, without.outfall_volume * 1e-6)
+        << "adding an inert weir changed the delivered volume from " << without.outfall_volume
+        << " to " << with.outfall_volume << " ft3";
 }

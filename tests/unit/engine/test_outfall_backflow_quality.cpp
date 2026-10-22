@@ -1,6 +1,6 @@
-/*!
- * @file test_outfall_backflow_quality.cpp
- * @brief Gates for `[OPTIONS] OUTFALL_BACKFLOW_QUALITY LAST|ZERO` — the
+/**
+ * @file      test_outfall_backflow_quality.cpp
+ * @brief     Gates for `[OPTIONS] OUTFALL_BACKFLOW_QUALITY LAST|ZERO` — the
  *        quality carried by reverse flow at outfalls.
  *
  * @details The deck is a two-phase, single-pipe system: for the first hour a
@@ -22,9 +22,9 @@
  *          whose outfall never supplies, default == LAST, and the
  *          parse/API/writer round-trip.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -42,20 +42,46 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
-constexpr double kElapsedS = 5.0 * 3600.0;  // 5 h simulated span
+constexpr double kElapsedS = 5.0 * 3600.0; // 5 h simulated span
 
 struct DeckSpec {
-    std::string solver = "LEGACY";  ///< LEGACY | LAGRANGIAN | EULERIAN_ARD
-    std::string bfq;                ///< "", "LAST", or "ZERO"
-    bool reversing = true;          ///< stage ramp reverses C1 after 1 h
-    bool constant_inflow = false;   ///< keep 3 cfs all 3 h (inertness deck)
+    std::string solver = "LEGACY"; ///< LEGACY | LAGRANGIAN | EULERIAN_ARD
+    std::string bfq;               ///< "", "LAST", or "ZERO"
+    bool reversing = true;         ///< stage ramp reverses C1 after 1 h
+    bool constant_inflow = false;  ///< keep 3 cfs all 3 h (inertness deck)
     bool water_age = true;
 };
 
+/**
+ * @brief Write the five-hour storage flushing/backflow quality fixture.
+ *
+ * Uses a 100 ft2 storage node, two outfalls, CFS flow and a 100 mg/L TRC source. The rising stage
+ * creates a continuous backflow flushing circuit; this writer only constructs the input and does
+ * not verify reversal. Uses a local ofstream and requires existing parent directories.
+ * Open/write/close failures are unchecked; owned input strings are not retained and raw
+ * tokens/config paths are not escaped. Optional sidecar files are also overwritten when described.
+ *
+ * @param[in] path Borrowed destination filename; character pointers must be non-null.
+ *     Opens/truncates this file for the generated deck.
+ * @param[in] s Borrowed spec selecting solver keyword, water-age flag, optional
+ *     OUTFALL_BACKFLOW_QUALITY token, constant versus stopping inflow, and fixed versus rising
+ *     boundary stage.
+ */
 void write_deck(const std::string& path, const DeckSpec& s) {
     std::ofstream f(path);
     f << "[TITLE]\nOutfall backflow quality gate deck\n\n"
@@ -69,7 +95,8 @@ void write_deck(const std::string& path, const DeckSpec& s) {
       << "END_DATE             01/01/2026\nEND_TIME             05:00:00\n"
       << "ROUTING_STEP         0:00:05\nREPORT_STEP          0:05:00\n"
       << "QUALITY_SOLVER       " << s.solver << "\n";
-    if (s.water_age) f << "WATER_AGE            ON\n";
+    if (s.water_age)
+        f << "WATER_AGE            ON\n";
     if (!s.bfq.empty())
         f << "OUTFALL_BACKFLOW_QUALITY " << s.bfq << "\n";
     // O2 (FREE, low) gives phase 2 a discharge path, so the rising stage at
@@ -112,26 +139,42 @@ void write_deck(const std::string& path, const DeckSpec& s) {
 
 struct RunResult {
     bool ok = false;
-    double j1_conc = -1.0;             ///< TRC at the junction, end of run
-    double o1_conc = -1.0;             ///< TRC at the outfall, end of run
-    double j1_age = -1.0;              ///< seconds
-    double o1_age = -1.0;              ///< seconds
-    std::vector<double> node_conc;     ///< full array, inertness compare
+    double j1_conc = -1.0;         ///< TRC at the junction, end of run
+    double o1_conc = -1.0;         ///< TRC at the outfall, end of run
+    double j1_age = -1.0;          ///< seconds
+    double o1_age = -1.0;          ///< seconds
+    std::vector<double> node_conc; ///< full array, inertness compare
     std::vector<double> link_conc;
     std::vector<double> node_age;
     std::vector<double> link_age;
 };
 
+/**
+ * @brief Run the outfall backflow-quality fixture and copy selected final state.
+ *
+ * Owns/destroys engine, caps at 200000 positive-time calls and ignores end status. Copies
+ * first-pollutant concentrations plus complete concentration arrays, and available node/link ages
+ * in seconds. Node selection is first non-outfall/first outfall rather than ID lookup. Returns
+ * partial/default data on early failure; no full-run guarantee.
+ *
+ * @param[in] tag Safe cwd artifact prefix overwritten by write_deck/open.
+ * @param[in] s Deck configuration; must yield a non-outfall node, an outfall and at least one
+ *     pollutant.
+ * @return Owned result with ok=false on setup/step/unexpected-shape refusal; guard exhaustion can
+ *     still be ok.
+ */
 RunResult run_deck(const std::string& tag, const DeckSpec& s) {
     RunResult r;
     const std::string inp = tag + ".inp";
     write_deck(inp, s);
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) { ADD_FAILURE() << "engine create"; return r; }
-    if (swmm_engine_open(e, inp.c_str(), (tag + ".rpt").c_str(),
-                         (tag + ".out").c_str(), nullptr) != SWMM_OK ||
-        swmm_engine_initialize(e) != SWMM_OK ||
-        swmm_engine_start(e, 1) != SWMM_OK) {
+    if (e == nullptr) {
+        ADD_FAILURE() << "engine create";
+        return r;
+    }
+    if (swmm_engine_open(e, inp.c_str(), (tag + ".rpt").c_str(), (tag + ".out").c_str(), nullptr) !=
+            SWMM_OK ||
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
         ADD_FAILURE() << "open/init/start failed for " << inp;
         swmm_engine_destroy(e);
         return r;
@@ -149,18 +192,18 @@ RunResult run_deck(const std::string& tag, const DeckSpec& s) {
     swmm_engine_end(e);
 
     const int np = ctx.n_pollutants();
-    int j1 = -1, o1 = -1;  // j1 = the storage node; o1 = FIRST outfall = O1
+    int j1 = -1, o1 = -1; // j1 = the storage node; o1 = FIRST outfall = O1
     for (int j = 0; j < ctx.n_nodes(); ++j) {
         const auto uj = static_cast<std::size_t>(j);
         if (ctx.nodes.type[uj] == openswmm::NodeType::OUTFALL) {
-            if (o1 < 0) o1 = j;
+            if (o1 < 0)
+                o1 = j;
         } else if (j1 < 0) {
             j1 = j;
         }
     }
     if (j1 < 0 || o1 < 0 || np < 1) {
-        ADD_FAILURE() << "deck shape unexpected (j1=" << j1 << " o1=" << o1
-                      << " np=" << np << ")";
+        ADD_FAILURE() << "deck shape unexpected (j1=" << j1 << " o1=" << o1 << " np=" << np << ")";
         swmm_engine_destroy(e);
         return r;
     }
@@ -180,10 +223,20 @@ RunResult run_deck(const std::string& tag, const DeckSpec& s) {
     return r;
 }
 
+/**
+ * @brief Compare double vectors by exact object-representation bytes.
+ *
+ * Distinguishes signed zero and accepts equal NaN bit patterns; this is not numeric/tolerance
+ * equality and does not mutate inputs.
+ *
+ * @param[in] a First vector, unchanged.
+ * @param[in] b Second vector, unchanged.
+ * @return True for equal lengths and identical bytes (or both empty).
+ */
 bool bitwise_equal(const std::vector<double>& a, const std::vector<double>& b) {
-    if (a.size() != b.size()) return false;
-    return a.empty() ||
-           std::memcmp(a.data(), b.data(), a.size() * sizeof(double)) == 0;
+    if (a.size() != b.size())
+        return false;
+    return a.empty() || std::memcmp(a.data(), b.data(), a.size() * sizeof(double)) == 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -191,10 +244,25 @@ bool bitwise_equal(const std::vector<double>& a, const std::vector<double>& b) {
 // polluted with the outfall's held ~100 mg/L; ZERO floods it with clean
 // boundary water and the supplying outfall itself reads (near) zero.
 // ---------------------------------------------------------------------------
-void behavioralGate(const std::string& solver, double zero_band,
-                    double sep_factor) {
-    DeckSpec last;  last.solver = solver;  last.bfq = "LAST";
-    DeckSpec zero;  zero.solver = solver;  zero.bfq = "ZERO";
+/**
+ * @brief Compare LAST and ZERO backflow boundary-quality behaviors.
+ *
+ * Runs both fixture variants, requires ok flags, records four properties and checks
+ * concentration/age separation with fixed diagnostic bounds. Ages use seconds and concentrations
+ * mg/L; assertions describe this fixture, not arbitrary boundary states. Generated artifacts remain
+ * and fatal runner assertions stop only this helper.
+ *
+ * @param[in] solver Raw quality-solver keyword and safe filename suffix.
+ * @param[in] zero_band Upper concentration bound mg/L for ZERO at the first non-outfall node.
+ * @param[in] sep_factor Required multiplicative LAST/ZERO concentration separation.
+ */
+void behavioralGate(const std::string& solver, double zero_band, double sep_factor) {
+    DeckSpec last;
+    last.solver = solver;
+    last.bfq = "LAST";
+    DeckSpec zero;
+    zero.solver = solver;
+    zero.bfq = "ZERO";
     const std::string t = "_obq_" + solver;
     const RunResult rl = run_deck(t + "_last", last);
     const RunResult rz = run_deck(t + "_zero", zero);
@@ -205,21 +273,19 @@ void behavioralGate(const std::string& solver, double zero_band,
     ::testing::Test::RecordProperty(solver + "_last_o1_age_s", std::to_string(rl.o1_age));
     ::testing::Test::RecordProperty(solver + "_zero_o1_age_s", std::to_string(rz.o1_age));
 
-    EXPECT_GT(rl.j1_conc, 50.0)
-        << solver << " LAST: held boundary re-injection should keep J1 near "
-        << "the loading concentration";
-    EXPECT_LT(rz.j1_conc, zero_band)
-        << solver << " ZERO: fresh boundary water should flush J1";
+    EXPECT_GT(rl.j1_conc, 50.0) << solver
+                                << " LAST: held boundary re-injection should keep J1 near "
+                                << "the loading concentration";
+    EXPECT_LT(rz.j1_conc, zero_band) << solver << " ZERO: fresh boundary water should flush J1";
     EXPECT_GT(rl.j1_conc, rz.j1_conc * sep_factor)
         << solver << ": the two settings must separate decisively";
-    EXPECT_LE(rz.o1_conc, 1e-9)
-        << solver << " ZERO: a supplying outfall's held state must read zero";
+    EXPECT_LE(rz.o1_conc, 1e-9) << solver
+                                << " ZERO: a supplying outfall's held state must read zero";
 
     ASSERT_GE(rl.o1_age, 0.0) << solver << ": age state missing";
     EXPECT_GT(rl.o1_age, 0.5 * kElapsedS)
         << solver << " LAST: the held boundary water ages with the clock";
-    EXPECT_LT(rz.o1_age, 300.0)
-        << solver << " ZERO: boundary water must re-enter (near) age-zero";
+    EXPECT_LT(rz.o1_age, 300.0) << solver << " ZERO: boundary water must re-enter (near) age-zero";
     EXPECT_LT(rz.j1_age, 0.75 * rl.j1_age + 60.0)
         << solver << " ZERO: the flushed junction must be younger";
 }
@@ -245,18 +311,20 @@ TEST(OutfallBackflowQuality, LagrangianSolverSeparatesLastFromZero) {
 // guard), so backflow is already fresh under either setting and the flag is
 // defensive there (it matters only if an outfall store ever carries volume).
 TEST(OutfallBackflowQuality, ArdBackflowIsFreshUnderEitherSetting) {
-    DeckSpec last;  last.solver = "EULERIAN_ARD";  last.bfq = "LAST";
-    DeckSpec zero;  zero.solver = "EULERIAN_ARD";  zero.bfq = "ZERO";
+    DeckSpec last;
+    last.solver = "EULERIAN_ARD";
+    last.bfq = "LAST";
+    DeckSpec zero;
+    zero.solver = "EULERIAN_ARD";
+    zero.bfq = "ZERO";
     const RunResult rl = run_deck("_obq_ARD_last", last);
     const RunResult rz = run_deck("_obq_ARD_zero", zero);
     ASSERT_TRUE(rl.ok && rz.ok);
     ::testing::Test::RecordProperty("ard_last_j1_conc", std::to_string(rl.j1_conc));
     ::testing::Test::RecordProperty("ard_zero_j1_conc", std::to_string(rz.j1_conc));
-    EXPECT_LT(rl.j1_conc, 1.0)
-        << "ARD LAST: the zero-volume outfall store donates nothing today; "
-        << "if this starts holding mass the donor convention changed";
-    EXPECT_LT(rz.j1_conc, 1.0)
-        << "ARD ZERO: fresh boundary, same as the donor-guard convention";
+    EXPECT_LT(rl.j1_conc, 1.0) << "ARD LAST: the zero-volume outfall store donates nothing today; "
+                               << "if this starts holding mass the donor convention changed";
+    EXPECT_LT(rz.j1_conc, 1.0) << "ARD ZERO: fresh boundary, same as the donor-guard convention";
 }
 
 // ---------------------------------------------------------------------------
@@ -266,8 +334,12 @@ TEST(OutfallBackflowQuality, ArdBackflowIsFreshUnderEitherSetting) {
 // zero-inflow tail of the behavioral deck is deliberately not used here.
 // ---------------------------------------------------------------------------
 TEST(OutfallBackflowQuality, InertWithoutBackflow) {
-    DeckSpec last;  last.bfq = "LAST";  last.reversing = false;
-    DeckSpec zero;  zero.bfq = "ZERO";  zero.reversing = false;
+    DeckSpec last;
+    last.bfq = "LAST";
+    last.reversing = false;
+    DeckSpec zero;
+    zero.bfq = "ZERO";
+    zero.reversing = false;
     last.constant_inflow = zero.constant_inflow = true;
     last.solver = zero.solver = "LAGRANGIAN";
     const RunResult rl = run_deck("_obq_inert_last", last);
@@ -284,8 +356,11 @@ TEST(OutfallBackflowQuality, InertWithoutBackflow) {
 // and the option surface round-trips (parse -> get, set -> get, writer echo).
 // ---------------------------------------------------------------------------
 TEST(OutfallBackflowQuality, DefaultIsLastAndRoundTrips) {
-    DeckSpec absent;   absent.solver = "LAGRANGIAN";  // bfq empty
-    DeckSpec explast;  explast.solver = "LAGRANGIAN"; explast.bfq = "LAST";
+    DeckSpec absent;
+    absent.solver = "LAGRANGIAN"; // bfq empty
+    DeckSpec explast;
+    explast.solver = "LAGRANGIAN";
+    explast.bfq = "LAST";
     const RunResult ra = run_deck("_obq_default", absent);
     const RunResult re = run_deck("_obq_explicit_last", explast);
     ASSERT_TRUE(ra.ok && re.ok);
@@ -294,33 +369,32 @@ TEST(OutfallBackflowQuality, DefaultIsLastAndRoundTrips) {
 
     // API surface on a ZERO deck: get reflects the parse, set round-trips,
     // an unknown value is refused, and the writer echoes the non-default.
-    DeckSpec z; z.solver = "LAGRANGIAN"; z.bfq = "ZERO";
+    DeckSpec z;
+    z.solver = "LAGRANGIAN";
+    z.bfq = "ZERO";
     write_deck("_obq_api.inp", z);
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, "_obq_api.inp", "_obq_api.rpt",
-                               "_obq_api.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e, "_obq_api.inp", "_obq_api.rpt", "_obq_api.out", nullptr),
+              SWMM_OK);
     char buf[32];
-    ASSERT_EQ(swmm_options_get(e, "OUTFALL_BACKFLOW_QUALITY", buf,
-                               static_cast<int>(sizeof(buf))), SWMM_OK);
+    ASSERT_EQ(swmm_options_get(e, "OUTFALL_BACKFLOW_QUALITY", buf, static_cast<int>(sizeof(buf))),
+              SWMM_OK);
     EXPECT_STREQ(buf, "ZERO");
-    EXPECT_EQ(swmm_options_set(e, "OUTFALL_BACKFLOW_QUALITY", "LAST"),
+    EXPECT_EQ(swmm_options_set(e, "OUTFALL_BACKFLOW_QUALITY", "LAST"), SWMM_OK);
+    ASSERT_EQ(swmm_options_get(e, "OUTFALL_BACKFLOW_QUALITY", buf, static_cast<int>(sizeof(buf))),
               SWMM_OK);
-    ASSERT_EQ(swmm_options_get(e, "OUTFALL_BACKFLOW_QUALITY", buf,
-                               static_cast<int>(sizeof(buf))), SWMM_OK);
     EXPECT_STREQ(buf, "LAST");
-    EXPECT_NE(swmm_options_set(e, "OUTFALL_BACKFLOW_QUALITY", "SOMETIMES"),
-              SWMM_OK);
-    EXPECT_EQ(swmm_options_set(e, "OUTFALL_BACKFLOW_QUALITY", "ZERO"),
-              SWMM_OK);
+    EXPECT_NE(swmm_options_set(e, "OUTFALL_BACKFLOW_QUALITY", "SOMETIMES"), SWMM_OK);
+    EXPECT_EQ(swmm_options_set(e, "OUTFALL_BACKFLOW_QUALITY", "ZERO"), SWMM_OK);
     ASSERT_EQ(swmm_model_write(e, "_obq_api_echo.inp"), 0);
     swmm_engine_destroy(e);
 
     std::ifstream echo("_obq_api_echo.inp");
-    std::stringstream ss; ss << echo.rdbuf();
-    EXPECT_NE(ss.str().find("OUTFALL_BACKFLOW_QUALITY ZERO"),
-              std::string::npos)
+    std::stringstream ss;
+    ss << echo.rdbuf();
+    EXPECT_NE(ss.str().find("OUTFALL_BACKFLOW_QUALITY ZERO"), std::string::npos)
         << "writer must echo the non-default setting (save-as rule)";
 }
 
-}  // namespace
+} // namespace

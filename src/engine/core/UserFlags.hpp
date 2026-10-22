@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file UserFlags.hpp
- * @brief User-defined model flags (InfoWorks ICM-style, two-section design).
+ * @file      UserFlags.hpp
+ * @brief     User-defined model flags (InfoWorks ICM-style, two-section design).
  *
  * @details User flags are a two-section feature:
  *
@@ -51,9 +51,9 @@
  *
  * @ingroup engine_core
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_USER_FLAGS_HPP
@@ -79,10 +79,10 @@ namespace openswmm {
  * @ingroup engine_core
  */
 enum class UserFlagType : int {
-    BOOLEAN = 0,  ///< YES/NO/TRUE/FALSE/1/0
-    INTEGER = 1,  ///< Signed integer
-    REAL    = 2,  ///< Double-precision floating-point
-    STRING  = 3   ///< Arbitrary string
+    BOOLEAN = 0, ///< YES/NO/TRUE/FALSE/1/0
+    INTEGER = 1, ///< Signed integer
+    REAL = 2,    ///< Double-precision floating-point
+    STRING = 3   ///< Arbitrary string
 };
 
 // ============================================================================
@@ -99,9 +99,9 @@ enum class UserFlagType : int {
  * @ingroup engine_core
  */
 struct UserFlagDef {
-    std::string  name;         ///< Flag identifier (uppercase)
-    UserFlagType type;         ///< Value type
-    std::string  description;  ///< Human-readable description (may be empty)
+    std::string name;        ///< Flag identifier (uppercase)
+    UserFlagType type;       ///< Value type
+    std::string description; ///< Human-readable description (may be empty)
 };
 
 // ============================================================================
@@ -121,10 +121,10 @@ using UserFlagValue = std::variant<bool, int, double, std::string>;
  * @ingroup engine_core
  */
 struct UserFlagAssignment {
-    std::string    object_type;  ///< e.g. "NODE", "LINK", "SUBCATCHMENT"
-    std::string    object_name;  ///< Object identifier as it appears in the model
-    std::string    flag_name;    ///< Must match a name in UserFlags::defs_
-    UserFlagValue  value;        ///< Typed runtime value
+    std::string object_type; ///< e.g. "NODE", "LINK", "SUBCATCHMENT"
+    std::string object_name; ///< Object identifier as it appears in the model
+    std::string flag_name;   ///< Must match a name in UserFlags::defs_
+    UserFlagValue value;     ///< Typed runtime value
 };
 
 // ============================================================================
@@ -138,20 +138,25 @@ struct UserFlagAssignment {
  *          and Python bindings.
  *
  * Lookup key for per-object values is the composite string
- * @c "OBJECTTYPE:OBJECTNAME:FLAGNAME" (all uppercase).
+ * @c "OBJECTTYPE:OBJECTNAME:FLAGNAME" with original spelling and ASCII-insensitive value lookup.
+ * Schema definition lookup remains exact-case; callers normalize schema names when required.
  *
  * @ingroup engine_core
  */
 class UserFlags {
 public:
-
     // ------------------------------------------------------------------
     // Schema (from [USER_FLAGS])
     // ------------------------------------------------------------------
 
     /**
-     * @brief Register a flag definition.
-     * @details Overwrites any existing definition with the same name.
+     * @brief Insert or replace an exact-case flag schema.
+     *
+     * Replacing preserves schema insertion order and existing assignments, including values whose
+     * variant no longer matches the schema type. Adding can invalidate borrowed schema references.
+     *
+     * @param[in] def Definition passed by value and moved into storage; name/type/description are not
+     *     normalized or validated.
      */
     void define(UserFlagDef def) {
         const auto it = def_index_.find(def.name);
@@ -164,25 +169,32 @@ public:
     }
 
     /**
-     * @brief Remove a flag definition and all per-object values assigned to it.
-     * @returns true if the definition existed and was removed.
+     * @brief Remove a schema and matching assignment suffixes.
+     *
+     * Renumbers following schema slots, then removes values whose suffix after the second colon equals
+     * name case-sensitively. Mixed-case assignment spellings can therefore survive; components
+     * containing colons are ambiguous to this suffix scan.
+     *
+     * @param[in] name Exact-case schema key; this schema map does not normalize case.
+     * @return True when the exact schema key existed; false leaves all assignments unchanged.
      */
     bool undefine(const std::string& name) {
         const auto it = def_index_.find(name);
-        if (it == def_index_.end()) return false;
+        if (it == def_index_.end())
+            return false;
         const std::size_t idx = it->second;
         defs_.erase(defs_.begin() + static_cast<std::ptrdiff_t>(idx));
         def_index_.erase(it);
         // Reindex definitions that followed the erased slot.
         for (auto& kv : def_index_)
-            if (kv.second > idx) --kv.second;
+            if (kv.second > idx)
+                --kv.second;
         // Remove orphaned per-object values (key = "TYPE:NAME:FLAG";
         // same left-to-right decomposition as InpWriter).
-        for (auto vit = values_.begin(); vit != values_.end(); ) {
+        for (auto vit = values_.begin(); vit != values_.end();) {
             const auto& key = vit->first;
             const auto p1 = key.find(':');
-            const auto p2 = (p1 == std::string::npos)
-                                ? std::string::npos : key.find(':', p1 + 1);
+            const auto p2 = (p1 == std::string::npos) ? std::string::npos : key.find(':', p1 + 1);
             if (p2 != std::string::npos && key.compare(p2 + 1, std::string::npos, name) == 0)
                 vit = values_.erase(vit);
             else
@@ -192,15 +204,20 @@ public:
     }
 
     /**
-     * @brief Check whether a flag name has been defined (schema).
+     * @brief Test exact-case schema membership.
+     *
+     * @param[in] name Exact-case schema key; this schema map does not normalize case.
+     * @return True if that exact schema key exists.
      */
-    bool is_defined(const std::string& name) const {
-        return def_index_.count(name) != 0;
-    }
+    bool is_defined(const std::string& name) const { return def_index_.count(name) != 0; }
 
     /**
-     * @brief Retrieve a flag definition by name.
-     * @throws std::out_of_range if not defined.
+     * @brief Borrow an exact-case schema definition.
+     *
+     * @param[in] name Exact-case schema key; this schema map does not normalize case.
+     * @return Engine-owned definition reference, invalidated by schema vector mutation or container
+     *     destruction.
+     * @throws std::out_of_range When the exact schema key is absent.
      */
     const UserFlagDef& get_def(const std::string& name) const {
         const auto it = def_index_.find(name);
@@ -210,12 +227,14 @@ public:
     }
 
     /**
-     * @brief All flag definitions, in insertion order.
+     * @brief Borrow schema definitions in insertion order.
+     * @return Reference to the owned vector; do not retain element references across schema edits.
      */
     const std::vector<UserFlagDef>& all_defs() const noexcept { return defs_; }
 
     /**
-     * @brief Number of defined flag schemas.
+     * @brief Count schema definitions.
+     * @return Number of exact-case schema entries.
      */
     std::size_t def_count() const noexcept { return defs_.size(); }
 
@@ -224,77 +243,105 @@ public:
     // ------------------------------------------------------------------
 
     /**
-     * @brief Assign a value to (object_type, object_name, flag_name).
-     * @details Overwrites any existing assignment for the same triple.
-     *          @p object_type and @p flag_name are stored uppercase.
+     * @brief Assign an owned variant value using a case-insensitive composite key.
+     *
+     * Overwrites an equivalent key while preserving its first stored spelling. Components are not
+     * uppercased; the map folds ASCII case. Caller serializes reads/edits; no engine lifecycle check
+     * occurs here.
+     *
+     * @param[in] object_type Borrowed object-category token; copied into the composite key.
+     * @param[in] object_name Borrowed object ID; no model-object existence check is performed.
+     * @param[in] flag_name Borrowed flag token; no schema/type validation is performed by this
+     *     value-map operation.
+     * @param[in] value Variant passed by value and moved into the map; no conversion to a declared
+     *     schema type.
      */
-    void set(const std::string& object_type,
-             const std::string& object_name,
-             const std::string& flag_name,
-             UserFlagValue      value) {
+    void set(const std::string& object_type, const std::string& object_name,
+             const std::string& flag_name, UserFlagValue value) {
         values_[make_key(object_type, object_name, flag_name)] = std::move(value);
     }
 
     /**
-     * @brief Remove the value assigned to (object_type, object_name, flag_name).
-     * @returns true if a value existed and was removed.
+     * @brief Remove a case-insensitive composite assignment.
+     *
+     * @param[in] object_type Borrowed object-category token; copied into the composite key.
+     * @param[in] object_name Borrowed object ID; no model-object existence check is performed.
+     * @param[in] flag_name Borrowed flag token; no schema/type validation is performed by this
+     *     value-map operation.
+     * @return True when an equivalent key was erased.
      */
-    bool unset(const std::string& object_type,
-               const std::string& object_name,
+    bool unset(const std::string& object_type, const std::string& object_name,
                const std::string& flag_name) {
         return values_.erase(make_key(object_type, object_name, flag_name)) != 0;
     }
 
     /**
-     * @brief Check whether a value has been assigned for a given triple.
+     * @brief Test case-insensitive composite assignment membership.
+     *
+     * @param[in] object_type Borrowed object-category token; copied into the composite key.
+     * @param[in] object_name Borrowed object ID; no model-object existence check is performed.
+     * @param[in] flag_name Borrowed flag token; no schema/type validation is performed by this
+     *     value-map operation.
+     * @return True when the composite key is present.
      */
-    bool has_value(const std::string& object_type,
-                   const std::string& object_name,
+    bool has_value(const std::string& object_type, const std::string& object_name,
                    const std::string& flag_name) const {
         return values_.count(make_key(object_type, object_name, flag_name)) != 0;
     }
 
     /**
-     * @brief Retrieve the value for (object_type, object_name, flag_name).
-     * @throws std::out_of_range if not found.
+     * @brief Borrow a case-insensitive composite assignment value.
+     *
+     * @param[in] object_type Borrowed object-category token; copied into the composite key.
+     * @param[in] object_name Borrowed object ID; no model-object existence check is performed.
+     * @param[in] flag_name Borrowed flag token; no schema/type validation is performed by this
+     *     value-map operation.
+     * @return Reference to the owned variant, valid until that entry is replaced/erased or the
+     *     container is destroyed.
      */
-    const UserFlagValue& get_value(const std::string& object_type,
-                                   const std::string& object_name,
+    const UserFlagValue& get_value(const std::string& object_type, const std::string& object_name,
                                    const std::string& flag_name) const {
         const auto it = values_.find(make_key(object_type, object_name, flag_name));
         if (it == values_.end())
-            throw std::out_of_range(
-                "UserFlags: no value for " + object_type + ":" +
-                object_name + ":" + flag_name);
+            throw std::out_of_range("UserFlags: no value for " + object_type + ":" + object_name +
+                                    ":" + flag_name);
         return it->second;
     }
 
     /**
-     * @brief Retrieve the value, or nullopt if not assigned.
+     * @brief Copy a case-insensitive composite assignment when present.
+     *
+     * @param[in] object_type Borrowed object-category token; copied into the composite key.
+     * @param[in] object_name Borrowed object ID; no model-object existence check is performed.
+     * @param[in] flag_name Borrowed flag token; no schema/type validation is performed by this
+     *     value-map operation.
+     * @return Independent value copy, or std::nullopt for an absent key. String values may allocate
+     *     while copying.
      */
     std::optional<UserFlagValue> try_get_value(const std::string& object_type,
                                                const std::string& object_name,
                                                const std::string& flag_name) const {
         const auto it = values_.find(make_key(object_type, object_name, flag_name));
-        if (it == values_.end()) return std::nullopt;
+        if (it == values_.end())
+            return std::nullopt;
         return it->second;
     }
 
     /// Composite-key value map; case-insensitive so object-name lookups match
     /// the engine's legacy-parity name semantics, while the stored key keeps
     /// the first-seen spelling for faithful [USER_FLAG_VALUES] round-trips.
-    using ValueMap =
-        std::unordered_map<std::string, UserFlagValue, CiHash, CiEqual>;
+    using ValueMap = std::unordered_map<std::string, UserFlagValue, CiHash, CiEqual>;
 
     /**
-     * @brief All per-object value assignments, keyed by composite string.
+     * @brief Borrow the complete case-insensitive assignment map.
+     * @return Owned map reference; edits can invalidate iterators, and replacing/erasing entries
+     *     invalidates borrowed values.
      */
-    const ValueMap& all_values() const noexcept {
-        return values_;
-    }
+    const ValueMap& all_values() const noexcept { return values_; }
 
     /**
-     * @brief Number of per-object value assignments.
+     * @brief Count stored composite assignments.
+     * @return Number of case-insensitively distinct composite keys.
      */
     std::size_t value_count() const noexcept { return values_.size(); }
 
@@ -303,7 +350,10 @@ public:
     // ------------------------------------------------------------------
 
     /**
-     * @brief Clear both schema definitions and per-object value assignments.
+     * @brief Erase all schemas and assignments.
+     *
+     * Invalidates borrowed schema/value references and iterators; vector/map capacity is not explicitly
+     * released.
      */
     void clear() noexcept {
         defs_.clear();
@@ -316,13 +366,18 @@ public:
     // ------------------------------------------------------------------
 
     /**
-     * @brief Build the composite lookup key "OBJECTTYPE:OBJECTNAME:FLAGNAME".
-     * @details All components are used as-is; the value map itself compares
-     *          keys case-insensitively (CiHash/CiEqual), so no component needs
-     *          pre-normalization and the first-seen spelling is preserved.
+     * @brief Join three unmodified components with colon delimiters.
+     *
+     * Performs no escaping, normalization or validation. Callers needing an unambiguous composite
+     * identity must ensure components contain no colons.
+     *
+     * @param[in] object_type Borrowed object-category token; copied into the composite key.
+     * @param[in] object_name Borrowed object ID; no model-object existence check is performed.
+     * @param[in] flag_name Borrowed flag token; no schema/type validation is performed by this
+     *     value-map operation.
+     * @return New owned string object_type + colon + object_name + colon + flag_name.
      */
-    static std::string make_key(const std::string& object_type,
-                                const std::string& object_name,
+    static std::string make_key(const std::string& object_type, const std::string& object_name,
                                 const std::string& flag_name) {
         std::string key;
         key.reserve(object_type.size() + 1 + object_name.size() + 1 + flag_name.size());
@@ -336,11 +391,11 @@ public:
 
 private:
     // Schema
-    std::vector<UserFlagDef>                  defs_;
-    std::unordered_map<std::string, std::size_t> def_index_;  ///< name → defs_ index
+    std::vector<UserFlagDef> defs_;
+    std::unordered_map<std::string, std::size_t> def_index_; ///< name → defs_ index
 
     // Per-object values
-    ValueMap values_;   ///< composite key → value (case-insensitive)
+    ValueMap values_; ///< composite key → value (case-insensitive)
 };
 
 } /* namespace openswmm */

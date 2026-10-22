@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_2d_exchange_rubinato_model.cpp
- * @brief Rubinato et al. (2017) Table 2 in the full engine: the flume rebuilt
+ * @file      test_2d_exchange_rubinato_model.cpp
+ * @brief     Rubinato et al. (2017) Table 2 in the full engine: the flume rebuilt
  *        from rig_geometry.yaml, each steady row's boundary conditions
  *        reconstructed, run to steady state, exchange compared with Q_e
  *        (1D2D fine-scale coupling plan §8.2, report-only per §0R R2).
@@ -51,6 +51,10 @@
  *          law as well.
  *
  * @ingroup engine_2d
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -80,7 +84,8 @@ std::map<std::string, double> read_yaml(const fs::path& p) {
     std::ifstream f(p);
     for (std::string line; std::getline(f, line);) {
         const auto colon = line.find(':');
-        if (line.empty() || line[0] == '#' || colon == std::string::npos) continue;
+        if (line.empty() || line[0] == '#' || colon == std::string::npos)
+            continue;
         out[line.substr(0, colon)] = std::atof(line.c_str() + colon + 1);
     }
     return out;
@@ -92,14 +97,17 @@ std::vector<std::map<std::string, std::string>> read_csv(const fs::path& p) {
     std::getline(f, header);
     std::vector<std::string> keys;
     std::stringstream hs(header);
-    for (std::string k; std::getline(hs, k, ',');) keys.push_back(k);
+    for (std::string k; std::getline(hs, k, ',');)
+        keys.push_back(k);
     std::vector<std::map<std::string, std::string>> rows;
     for (std::string line; std::getline(f, line);) {
-        if (line.empty()) continue;
+        if (line.empty())
+            continue;
         std::map<std::string, std::string> row;
         std::stringstream ls(line);
         std::string v;
-        for (std::size_t i = 0; i < keys.size() && std::getline(ls, v, ','); ++i) row[keys[i]] = v;
+        for (std::size_t i = 0; i < keys.size() && std::getline(ls, v, ','); ++i)
+            row[keys[i]] = v;
         rows.push_back(row);
     }
     return rows;
@@ -126,7 +134,7 @@ std::vector<double> axis(double lo, double hi, double c, double h0, double hmax,
 
 struct Case {
     std::string scenario;
-    double q_e = 0, h_s = 0, h_p = 0, q1 = 0, q3 = 0;   // l/s, m, m, m³/s, m³/s
+    double q_e = 0, h_s = 0, h_p = 0, q1 = 0, q3 = 0; // l/s, m, m, m³/s, m³/s
 };
 
 std::string deck(const Case& c, const std::map<std::string, double>& rig, const std::string& law,
@@ -144,31 +152,46 @@ std::string deck(const Case& c, const std::map<std::string, double>& rig, const 
     m.precision(10);
     m << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
          "END_DATE 01/01/2026\nEND_TIME 00:05:00\nREPORT_STEP 00:01:00\nROUTING_STEP 0.5\n\n"
-         "[JUNCTIONS]\nMH 0 " << zc << " 0 0 0\n\n"
+         "[JUNCTIONS]\nMH 0 "
+      << zc
+      << " 0 0 0\n\n"
          "[OUTFALLS]\n";
-    const bool sewer = c.q3 > 0;   // S2–S4: the inlet tank feeds the pipe
-    if (!sewer) m << "OUT 0 FREE NO\n\n";
-    else        m << "OUT 0 FIXED " << c.h_p << " NO\n\n";
+    const bool sewer = c.q3 > 0; // S2–S4: the inlet tank feeds the pipe
+    if (!sewer)
+        m << "OUT 0 FREE NO\n\n";
+    else
+        m << "OUT 0 FIXED " << c.h_p << " NO\n\n";
     // The inlet tank is a storage node so its volume is booked (a dead-end
     // junction integrates over MIN_SURFAREA but books no volume below its
     // rim — a continuity artefact on a network this small). Downstream, a
     // short wide pipe lets the outfall's FIXED stage impose the measured h_p
     // at the manhole; S1 drains through the 75 mm pipe to a free outfall.
-    if (sewer) m << "[STORAGE]\nIN 0 1.5 0 FUNCTIONAL 0 0 0.05 0 0\n\n";
+    if (sewer)
+        m << "[STORAGE]\nIN 0 1.5 0 FUNCTIONAL 0 0 0.05 0 0\n\n";
     m << "[CONDUITS]\n";
-    if (sewer) m << "C1 IN MH 2.0 0.010 0 0 0\nC2 MH OUT 0.2 0.010 0 0 0\n\n";
-    else       m << "C2 MH OUT 2.0 0.010 0 0 0\n\n";
+    if (sewer)
+        m << "C1 IN MH 2.0 0.010 0 0 0\nC2 MH OUT 0.2 0.010 0 0 0\n\n";
+    else
+        m << "C2 MH OUT 2.0 0.010 0 0 0\n\n";
     m << "[XSECTIONS]\n";
-    if (sewer) m << "C1 CIRCULAR " << rig.at("pipe_diameter_m") << " 0 0 0 1\nC2 CIRCULAR 0.3 0 0 0 1\n\n";
-    else       m << "C2 CIRCULAR " << rig.at("pipe_diameter_m") << " 0 0 0 1\n\n";
-    if (sewer) m << "[INFLOWS]\nIN FLOW \"\" FLOW 1.0 1.0 " << c.q3 << "\n\n";
+    if (sewer)
+        m << "C1 CIRCULAR " << rig.at("pipe_diameter_m") << " 0 0 0 1\nC2 CIRCULAR 0.3 0 0 0 1\n\n";
+    else
+        m << "C2 CIRCULAR " << rig.at("pipe_diameter_m") << " 0 0 0 1\n\n";
+    if (sewer)
+        m << "[INFLOWS]\nIN FLOW \"\" FLOW 1.0 1.0 " << c.q3 << "\n\n";
     m << "[2D_OPTIONS]\nMAX_TIMESTEP 1\nDRY_DEPTH 0.0002\nREPORT_2D NO\nCOUPLING_LAW " << law
-      << "\nCOUPLING_HEAD STENCIL_WET_MEAN\nCOUPLING_POND_MODE CHAMBER\n" << extra2d << "\n"
-         "[2D_NODE_COUPLING]\nMH MANHOLE D=" << rig.at("manhole_diameter_m") << " COEFFS=RUBINATO2017\n\n"
+      << "\nCOUPLING_HEAD STENCIL_WET_MEAN\nCOUPLING_POND_MODE CHAMBER\n"
+      << extra2d
+      << "\n"
+         "[2D_NODE_COUPLING]\nMH MANHOLE D="
+      << rig.at("manhole_diameter_m")
+      << " COEFFS=RUBINATO2017\n\n"
          "[2D_VERTICES]\n";
     for (int j = 0; j < ny; ++j)
         for (int i = 0; i < nx; ++i) {
-            if (std::fabs(xs[i] - xm) < 1e-12 && std::fabs(ys[j] - ym) < 1e-12) centre = vid(i, j);
+            if (std::fabs(xs[i] - xm) < 1e-12 && std::fabs(ys[j] - ym) < 1e-12)
+                centre = vid(i, j);
             m << xs[i] << " " << ys[j] << " " << zc + slope * (xm - xs[i]) << "\n";
         }
     m << "\n[2D_TRIANGLES]\n";
@@ -178,10 +201,12 @@ std::string deck(const Case& c, const std::map<std::string, double>& rig, const 
         for (int i = 0; i + 1 < nx; ++i) {
             // A = (v00, v10, v11), B = (v00, v11, v01); edge k is opposite vertex k.
             m << vid(i, j) << " " << vid(i + 1, j) << " " << vid(i + 1, j + 1) << " " << n << "\n";
-            if (i + 2 == nx) bc << tri << " 0 NORMAL_FLOW " << slope << "\n";   // (v10, v11)
+            if (i + 2 == nx)
+                bc << tri << " 0 NORMAL_FLOW " << slope << "\n"; // (v10, v11)
             ++tri;
             m << vid(i, j) << " " << vid(i + 1, j + 1) << " " << vid(i, j + 1) << " " << n << "\n";
-            if (i == 0 && c.q1 > 0) bc << tri << " 1 SPECIFIED_FLOW " << -c.q1 / W << "\n";   // (v01, v00)
+            if (i == 0 && c.q1 > 0)
+                bc << tri << " 1 SPECIFIED_FLOW " << -c.q1 / W << "\n"; // (v01, v00)
             ++tri;
         }
     m << "\n[2D_VERTEX_NODE_MAP]\n" << centre << " MH\n\n[2D_BOUNDARY_CONDITIONS]\n" << bc.str();
@@ -190,7 +215,7 @@ std::string deck(const Case& c, const std::map<std::string, double>& rig, const 
 
 struct Result {
     bool ok = false;
-    double q_num_lps = 0;      ///< steady exchange, + = sewer → surface
+    double q_num_lps = 0; ///< steady exchange, + = sewer → surface
     double continuity_pct = 0;
 };
 
@@ -199,7 +224,10 @@ Result run(const Case& c, const std::map<std::string, double>& rig, const std::s
     Result r;
     fs::create_directories(kOut);
     const fs::path inp = kOut / (tag + ".inp"), rpt = kOut / (tag + ".rpt");
-    { std::ofstream f(inp); f << deck(c, rig, law, h0 > 0 ? h0 : rig.at("mesh_size_boundary_m"), extra2d); }
+    {
+        std::ofstream f(inp);
+        f << deck(c, rig, law, h0 > 0 ? h0 : rig.at("mesh_size_boundary_m"), extra2d);
+    }
     SWMM_Engine e = swmm_engine_create();
     if (swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(), "", nullptr) != SWMM_OK ||
         swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 0) != SWMM_OK) {
@@ -212,13 +240,17 @@ Result run(const Case& c, const std::map<std::string, double>& rig, const std::s
     auto net = [&] {
         swmm_2d_get_coupling_volume_bulk(e, vol.data());
         double s = 0;
-        for (double v : vol) s += v;
+        for (double v : vol)
+            s += v;
         return s;
     };
     double elapsed = 0, t0 = -1, v0 = 0, t1 = 0, v1 = 0;
     while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {
         const double t = elapsed * 86400.0;
-        if (t0 < 0 && t >= 240.0) { t0 = t; v0 = net(); }   // last minute = steady window
+        if (t0 < 0 && t >= 240.0) {
+            t0 = t;
+            v0 = net();
+        } // last minute = steady window
         t1 = t;
     }
     v1 = net();
@@ -228,7 +260,8 @@ Result run(const Case& c, const std::map<std::string, double>& rig, const std::s
     swmm_engine_report(e);
     swmm_engine_close(e);
     swmm_engine_destroy(e);
-    if (t0 < 0 || !(t1 > t0)) return r;
+    if (t0 < 0 || !(t1 > t0))
+        return r;
     r.q_num_lps = 1000.0 * (v1 - v0) / (t1 - t0);
     r.continuity_pct = 100.0 * cont;
     r.ok = true;
@@ -251,13 +284,15 @@ TEST(RubinatoModel, Table2RowsInTheFlume) {
     for (const auto& row : rows) {
         Case c;
         c.scenario = row.at("scenario");
-        const int k = ++seen[c.scenario];   // row number within the scenario
+        const int k = ++seen[c.scenario]; // row number within the scenario
         c.q_e = std::atof(row.at("q_e_lps").c_str());
         c.h_s = row.at("h_s_m").empty() ? 0.0 : std::atof(row.at("h_s_m").c_str());
         c.h_p = row.at("h_p_m").empty() ? 0.0 : std::atof(row.at("h_p_m").c_str());
         const double fr = std::atof(row.at("fr_s").c_str());
         c.q1 = c.h_s > 0 ? fr * std::sqrt(g * c.h_s) * c.h_s * W : 0.0;
-        c.q3 = c.scenario == "S1" ? 0.0 : std::atof(row.at("re_p").c_str()) * nu * 3.14159265358979 * D / 4.0;
+        c.q3 = c.scenario == "S1"
+                   ? 0.0
+                   : std::atof(row.at("re_p").c_str()) * nu * 3.14159265358979 * D / 4.0;
         const bool to_surface = c.scenario == "S3" || c.scenario == "S4";
         // S1 also runs under the legacy ORIFICE law — the anchor that shows
         // what the pre-plan law predicts for a free-weir drain.
@@ -268,10 +303,11 @@ TEST(RubinatoModel, Table2RowsInTheFlume) {
             const std::string tag = c.scenario + "_" + std::to_string(k) + "_" + law;
             const Result r = run(c, rig, law, tag);
             ASSERT_TRUE(r.ok) << tag << " did not run (see " << (kOut / (tag + ".rpt")) << ")";
-            csv << tag << "," << c.scenario << "," << law << "," << c.q_e << "," << r.q_num_lps << ","
-                << std::fabs(r.q_num_lps) / c.q_e << "," << c.h_s << "," << c.h_p << "," << 1000 * c.q1
-                << "," << 1000 * c.q3 << "," << r.continuity_pct << "\n";
-            EXPECT_EQ(r.q_num_lps > 0, to_surface) << tag << ": exchange direction, Q_num " << r.q_num_lps;
+            csv << tag << "," << c.scenario << "," << law << "," << c.q_e << "," << r.q_num_lps
+                << "," << std::fabs(r.q_num_lps) / c.q_e << "," << c.h_s << "," << c.h_p << ","
+                << 1000 * c.q1 << "," << 1000 * c.q3 << "," << r.continuity_pct << "\n";
+            EXPECT_EQ(r.q_num_lps > 0, to_surface)
+                << tag << ": exchange direction, Q_num " << r.q_num_lps;
             // Not an accuracy gate — a choke detector: a pond or cap that
             // throttles the exchange shows up as Q_num ≪ Q_e.
             EXPECT_GT(std::fabs(r.q_num_lps), 0.25 * c.q_e) << tag << ": exchange choked";
@@ -287,20 +323,24 @@ TEST(RubinatoModel, Table2RowsInTheFlume) {
 TEST(RubinatoModel, EqualisationDoesNotChokeAFineMesh) {
     const auto rig = read_yaml(kRef / "rig_geometry.yaml");
     const auto rows = read_csv(kRef / "table2_steady_exchange.csv");
-    const auto& row = rows.at(20);   // the first S3 row
+    const auto& row = rows.at(20); // the first S3 row
     ASSERT_EQ(row.at("scenario"), "S3");
     Case c;
     c.scenario = "S3";
     c.q_e = std::atof(row.at("q_e_lps").c_str());
     c.h_s = std::atof(row.at("h_s_m").c_str());
     c.h_p = std::atof(row.at("h_p_m").c_str());
-    c.q1 = std::atof(row.at("fr_s").c_str()) * std::sqrt(9.81 * c.h_s) * c.h_s * rig.at("flume_width_m");
-    c.q3 = std::atof(row.at("re_p").c_str()) * 1.0e-6 * 3.14159265358979 * rig.at("pipe_diameter_m") / 4.0;
+    c.q1 = std::atof(row.at("fr_s").c_str()) * std::sqrt(9.81 * c.h_s) * c.h_s *
+           rig.at("flume_width_m");
+    c.q3 = std::atof(row.at("re_p").c_str()) * 1.0e-6 * 3.14159265358979 *
+           rig.at("pipe_diameter_m") / 4.0;
     const double h0 = rig.at("mesh_size_near_crest_m");
-    const Result eq  = run(c, rig, "WEIR_ORIFICE", "fine_S3_equalize", h0);
-    const Result off = run(c, rig, "WEIR_ORIFICE", "fine_S3_no_equalize", h0, "COUPLING_EQUALIZE NO");
+    const Result eq = run(c, rig, "WEIR_ORIFICE", "fine_S3_equalize", h0);
+    const Result off =
+        run(c, rig, "WEIR_ORIFICE", "fine_S3_no_equalize", h0, "COUPLING_EQUALIZE NO");
     ASSERT_TRUE(eq.ok && off.ok);
     ASSERT_GT(off.q_num_lps, 0.25 * c.q_e) << "fixture: the fine mesh exchanges without the cap";
     EXPECT_GT(eq.q_num_lps, 0.5 * off.q_num_lps)
-        << "equalisation choked the exchange: " << eq.q_num_lps << " vs " << off.q_num_lps << " l/s";
+        << "equalisation choked the exchange: " << eq.q_num_lps << " vs " << off.q_num_lps
+        << " l/s";
 }

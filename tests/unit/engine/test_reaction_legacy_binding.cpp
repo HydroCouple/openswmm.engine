@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_reaction_legacy_binding.cpp
- * @brief R4 gates: LEGACY quality engine reaction binding
+ * @file      test_reaction_legacy_binding.cpp
+ * @brief     R4 gates: LEGACY quality engine reaction binding
  *        (plans/transport/MULTISPECIES_REACTIONS_MSX_PLAN.md §5 R4).
  *
  * @details Falsifiers, each unique to the defense under test. Measured
@@ -52,9 +52,9 @@
  *            loop's `n_pollutants() > 0`, and EULERIAN_ARD / IGNORE_QUALITY
  *            route around QualitySolver::execute() without saying so.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -70,32 +70,55 @@
 
 namespace {
 
-constexpr double kC0 = 10.0;     ///< initial TSS at the node (Cinit)
+constexpr double kC0 = 10.0; ///< initial TSS at the node (Cinit)
 /// kdecay (1/s). Sized so exp(−k·dt) and the legacy (1−k·dt) product
 /// separate by 35% over the horizon — see the file comment.
-constexpr double kK  = 0.03;
-constexpr double kDt = 5.0;      ///< ROUTING_STEP (s)
+constexpr double kK = 0.03;
+constexpr double kDt = 5.0; ///< ROUTING_STEP (s)
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
-/// Isolated-ish node deck: J0 (initial depth, no inflow) drains to OUT.
-/// TSS has kdecay and Cinit, so node conc evolves by decay alone (no
-/// inflow ⇒ mixing is a no-op on concentration). 2-minute horizon keeps
-/// the node wet throughout.
-/// `extra_options` appends to [OPTIONS]; `pollutants` false omits the
-/// [POLLUTANTS] section entirely (the MSX-only model shape).
+/**
+ * @brief Write the two-minute wet-storage legacy-reaction binding fixture.
+ *
+ * Uses explicit 1000 ft2 storage so real node water exists for decay/mixing, unlike a zero-storage
+ * junction. Component configuration remains caller supplied. Uses a local ofstream and requires
+ * existing parent directories. Open/write/close failures are unchecked; owned input strings are not
+ * retained and raw tokens/config paths are not escaped. Optional sidecar files are also overwritten
+ * when described.
+ *
+ * @param[in] path Borrowed destination filename; character pointers must be non-null.
+ *     Opens/truncates this file for the generated deck.
+ * @param[in] pc_lines Raw PROCESS_COMPONENTS rows, emitted as a section only when nonempty; copied
+ *     without escaping or validation.
+ * @param[in] extra_options Raw extra OPTIONS rows inserted verbatim; caller supplies valid line
+ *     boundaries.
+ * @param[in] pollutants Emit fixed kC0 initial TSS mg/L and kK decay (converted from 1/s to 1/day)
+ *     when true.
+ */
 void write_deck(const char* path, const std::string& pc_lines,
-                const std::string& extra_options = "",
-                bool pollutants = true) {
+                const std::string& extra_options = "", bool pollutants = true) {
     std::ofstream f(path);
     f << "[TITLE]\nR4 legacy binding gate deck\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
       << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
       << "END_DATE 01/01/2026\nEND_TIME 00:02:00\n"
       << "ROUTING_STEP 5\nREPORT_STEP 00:01:00\n"
-      << extra_options << "\n"
+      << extra_options
+      << "\n"
       // J0 is a STORAGE unit, not a junction: legacy routes a node's
       // quality through findStorageQual (mix + decay) only for STORAGE or
       // a node holding volume, and a junction holds none below its rim
@@ -110,13 +133,22 @@ void write_deck(const char* path, const std::string& pc_lines,
     if (pollutants)
         f << "[POLLUTANTS]\n"
           << ";;Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut CoFrac Cdwf Cinit\n"
-          << "TSS    MG/L  0     0   0     " << (kK * 86400.0)  // 1/day column (KD1)
+          << "TSS    MG/L  0     0   0     " << (kK * 86400.0) // 1/day column (KD1)
           << "    NO       *        0      0    " << kC0 << "\n\n";
     if (!pc_lines.empty())
         f << "[PROCESS_COMPONENTS]\n" << pc_lines << "\n\n";
     f << "[REPORT]\nINPUT NO\n";
 }
 
+/**
+ * @brief Overwrite a caller-named reaction sidecar with raw config text.
+ *
+ * Uses a local truncating ofstream and does not inspect open/write/close success. Does not
+ * parse/validate the config or retain caller storage.
+ *
+ * @param[in] path Non-null destination filename; parent directory must exist.
+ * @param[in] body Borrowed config text written verbatim, without appending a newline.
+ */
 void write_rxn(const char* path, const std::string& body) {
     std::ofstream c(path);
     c << body;
@@ -124,19 +156,40 @@ void write_rxn(const char* path, const std::string& body) {
 
 class ReactionLegacyBindingTest : public ::testing::Test {
 protected:
+    /**
+     * @brief Allocate the per-test engine handle and assert allocation succeeded.
+     *
+     * Leaves the handle unopen for this fixture; its teardown owns destruction. A fatal allocation
+     * assertion stops setup.
+     */
     void SetUp() override {
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
     }
+    /**
+     * @brief Destroy a non-null fixture handle and clear its member slot.
+     *
+     * Engine destruction supplies remaining model cleanup; safe after setup failed before allocation.
+     */
     void TearDown() override {
-        if (engine_) { swmm_engine_destroy(engine_); engine_ = nullptr; }
+        if (engine_) {
+            swmm_engine_destroy(engine_);
+            engine_ = nullptr;
+        }
     }
-    /// Open + run to completion. ASSERT, not EXPECT, on the open: every
-    /// caller reads a concentration array afterwards, and a failed open
-    /// leaves those arrays EMPTY — with EXPECT the suite ran on and
-    /// segfaulted on nodes.conc[0], turning "the config no longer compiles"
-    /// into a crash instead of a reported failure. (Found by running the
-    /// handoff's own PUSH_POLLUT falsifier.)
+    /**
+     * @brief Open, initialize, run and end a reaction fixture on the stored handle.
+     *
+     * Each lifecycle/step status uses a fatal assertion so this helper stops immediately on rejection.
+     * Steps until completion or a 10000-step guard, then asserts end; guard exhaustion has no separate
+     * failure assertion. The fixture retains engine_ for concentration/diagnostic checks and owns
+     * teardown. A fatal return may leave a partial lifecycle; callers must not assume populated arrays
+     * after a helper failure.
+     *
+     * @param[in] inp Non-null input deck filename, borrowed during the call.
+     * @param[in] rpt Report destination passed to engine open; may overwrite matching output.
+     * @param[in] out Binary-result destination passed to engine open; start requests saved results.
+     */
     void run_deck(const char* inp, const char* rpt, const char* out) {
         ASSERT_EQ(swmm_engine_open(engine_, inp, rpt, out, nullptr), SWMM_OK);
         ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
@@ -148,48 +201,83 @@ protected:
         } while (elapsed > 0.0 && ++guard < 10000);
         ASSERT_EQ(swmm_engine_end(engine_), SWMM_OK);
     }
-    /// Node J0's TSS concentration after a completed run (-1 if unavailable,
-    /// which fails any band a caller asserts rather than reading past the end).
+    /**
+     * @brief Read the first node first pollutant concentration from fixture state.
+     *
+     * Requires a live fixture handle and the intended J0/TSS ordering; does not validate pollutant/node
+     * identities or finalization itself.
+     * @return Native TSS concentration (mg/L for these decks), or -1 when the node concentration vector
+     *     is empty.
+     */
     double node_conc() const {
         const auto& c = as_cpp_engine(engine_).context().nodes.conc;
         return c.empty() ? -1.0 : c[0];
     }
-    /// Conduit C1's TSS concentration after a completed run.
+    /**
+     * @brief Read the first link first pollutant concentration from fixture state.
+     *
+     * Requires the intended C1/TSS ordering on a live fixture engine; no model-state change occurs.
+     * @return Native TSS concentration (mg/L in these decks), or -1 when its vector is empty.
+     */
     double link_conc() const {
         const auto& c = as_cpp_engine(engine_).context().links.conc;
         return c.empty() ? -1.0 : c[0];
     }
-    static bool warned(const openswmm::SimulationContext& ctx,
-                       const std::string& needle) {
+    /**
+     * @brief Search fixture warnings for a case-sensitive expected fragment.
+     *
+     * @param[in] ctx Borrowed context whose warnings vector is scanned without mutation.
+     * @param[in] needle Borrowed substring; empty matches any existing entry.
+     * @return True when an entry contains needle, otherwise false.
+     */
+    static bool warned(const openswmm::SimulationContext& ctx, const std::string& needle) {
         for (const auto& w : ctx.warnings)
-            if (w.find(needle) != std::string::npos) return true;
+            if (w.find(needle) != std::string::npos)
+                return true;
         return false;
     }
-    static bool errored(const openswmm::SimulationContext& ctx,
-                        const std::string& needle) {
+    /**
+     * @brief Search fixture errors for a case-sensitive expected fragment.
+     *
+     * @param[in] ctx Borrowed context whose errors vector is scanned without mutation.
+     * @param[in] needle Borrowed substring; empty matches any existing entry.
+     * @return True when an entry contains needle, otherwise false.
+     */
+    static bool errored(const openswmm::SimulationContext& ctx, const std::string& needle) {
         for (const auto& e : ctx.errors)
-            if (e.find(needle) != std::string::npos) return true;
+            if (e.find(needle) != std::string::npos)
+                return true;
         return false;
     }
-    /// Run a deck on its OWN engine — the link gate compares a with-component
-    /// run against a without-component run of the same network, so it needs
-    /// two live contexts.
+    /**
+     * @brief Run a separate comparison engine and copy its first link concentration.
+     *
+     * Owns/destroys a separate handle so two fixture scenarios can be compared independently.
+     * Allocation, initialize/start/step/end statuses are not fully checked; it steps at most 10000
+     * guard iterations and may return partial state. Does not validate completion or write a full
+     * report.
+     *
+     * @param[in] inp Non-null input filename; .rpt/.out suffixes are appended for artifact paths.
+     * @return First link/TSS concentration in native mg/L for this fixture, or -1 when open fails or no
+     *     concentration entry exists.
+     */
     static double link_conc_of(const char* inp) {
         SWMM_Engine e = swmm_engine_create();
         const std::string rpt = std::string(inp) + ".rpt";
         const std::string out = std::string(inp) + ".out";
         double v = -1.0;
-        if (swmm_engine_open(e, inp, rpt.c_str(), out.c_str(), nullptr)
-            == SWMM_OK) {
+        if (swmm_engine_open(e, inp, rpt.c_str(), out.c_str(), nullptr) == SWMM_OK) {
             swmm_engine_initialize(e);
             swmm_engine_start(e, 1);
             double elapsed = 0.0;
             int guard = 0;
-            do { swmm_engine_step(e, &elapsed); }
-            while (elapsed > 0.0 && ++guard < 10000);
+            do {
+                swmm_engine_step(e, &elapsed);
+            } while (elapsed > 0.0 && ++guard < 10000);
             swmm_engine_end(e);
             const auto& c = as_cpp_engine(e).context().links.conc;
-            if (!c.empty()) v = c[0];
+            if (!c.empty())
+                v = c[0];
         }
         swmm_engine_destroy(e);
         return v;
@@ -199,8 +287,8 @@ protected:
 
 // Steps over the 2-minute horizon.
 constexpr int kSteps = static_cast<int>(120.0 / kDt);
-const double kLinear = std::pow(1.0 - kK * kDt, kSteps);   // legacy product
-const double kExp    = std::exp(-kK * kDt * kSteps);       // exact
+const double kLinear = std::pow(1.0 - kK * kDt, kSteps); // legacy product
+const double kExp = std::exp(-kK * kDt * kSteps);        // exact
 
 // ---------------------------------------------------------------------------
 // Gate 1 — parity guard: WITHOUT a reactions component the node decays by
@@ -209,8 +297,7 @@ const double kExp    = std::exp(-kK * kDt * kSteps);       // exact
 // ---------------------------------------------------------------------------
 TEST_F(ReactionLegacyBindingTest, ParityGuardWhenNoConfig) {
     write_deck("_r4_plain.inp", "");
-    ASSERT_NO_FATAL_FAILURE(
-        run_deck("_r4_plain.inp", "_r4_plain.rpt", "_r4_plain.out"));
+    ASSERT_NO_FATAL_FAILURE(run_deck("_r4_plain.inp", "_r4_plain.rpt", "_r4_plain.out"));
     EXPECT_NEAR(node_conc(), kC0 * kLinear, 0.01 * kC0 * kLinear)
         << "legacy linear-decay path must be untouched without reactions";
     std::remove("_r4_plain.inp");
@@ -221,13 +308,10 @@ TEST_F(ReactionLegacyBindingTest, ParityGuardWhenNoConfig) {
 // and NOT the linear product, and NOT the double-decayed value.
 // ---------------------------------------------------------------------------
 TEST_F(ReactionLegacyBindingTest, ExactExponentialReplacesLinearDecay) {
-    write_rxn("_r4_inert.rxn",
-              "[REACTION_SPECIES]\nBULK X MG\n"
-              "[REACTION_TANKS]\nFORMULA X 0.0 * TSS\n");
-    write_deck("_r4_exp.inp",
-               "org.hydrocouple.openswmm.reactions  config=\"_r4_inert.rxn\"");
-    ASSERT_NO_FATAL_FAILURE(
-        run_deck("_r4_exp.inp", "_r4_exp.rpt", "_r4_exp.out"));
+    write_rxn("_r4_inert.rxn", "[REACTION_SPECIES]\nBULK X MG\n"
+                               "[REACTION_TANKS]\nFORMULA X 0.0 * TSS\n");
+    write_deck("_r4_exp.inp", "org.hydrocouple.openswmm.reactions  config=\"_r4_inert.rxn\"");
+    ASSERT_NO_FATAL_FAILURE(run_deck("_r4_exp.inp", "_r4_exp.rpt", "_r4_exp.out"));
     const double c = node_conc();
     EXPECT_NEAR(c, kC0 * kExp, 0.01 * kC0 * kExp);
     // exp/linear = 1.3505 at this kdecay, so the 1.10 floor leaves 18%
@@ -244,13 +328,10 @@ TEST_F(ReactionLegacyBindingTest, ExactExponentialReplacesLinearDecay) {
 // Gate 3 — MSX FORMULA species reads the element's pollutant (PUSH_POLLUT).
 // ---------------------------------------------------------------------------
 TEST_F(ReactionLegacyBindingTest, MsxFormulaReadsPollutant) {
-    write_rxn("_r4_form.rxn",
-              "[REACTION_SPECIES]\nBULK X MG\n"
-              "[REACTION_TANKS]\nFORMULA X 2.0 * TSS\n");
-    write_deck("_r4_form.inp",
-               "org.hydrocouple.openswmm.reactions  config=\"_r4_form.rxn\"");
-    ASSERT_NO_FATAL_FAILURE(
-        run_deck("_r4_form.inp", "_r4_form.rpt", "_r4_form.out"));
+    write_rxn("_r4_form.rxn", "[REACTION_SPECIES]\nBULK X MG\n"
+                              "[REACTION_TANKS]\nFORMULA X 2.0 * TSS\n");
+    write_deck("_r4_form.inp", "org.hydrocouple.openswmm.reactions  config=\"_r4_form.rxn\"");
+    ASSERT_NO_FATAL_FAILURE(run_deck("_r4_form.inp", "_r4_form.rpt", "_r4_form.out"));
     const double c = node_conc();
     const auto& ctx = as_cpp_engine(engine_).context();
     ASSERT_FALSE(ctx.reactions.msx_node_conc.empty());
@@ -265,15 +346,12 @@ TEST_F(ReactionLegacyBindingTest, MsxFormulaReadsPollutant) {
 // Gate 4 — pollutant kinetics rows are a defined R4b deferral error.
 // ---------------------------------------------------------------------------
 TEST_F(ReactionLegacyBindingTest, PollutantKineticsRowErrors) {
-    write_rxn("_r4_pk.rxn",
-              "[REACTION_SPECIES]\nBULK X MG\n"
-              "[REACTION_TANKS]\nRATE TSS -0.5 * TSS\n");
-    write_deck("_r4_pk.inp",
-               "org.hydrocouple.openswmm.reactions  config=\"_r4_pk.rxn\"");
-    EXPECT_NE(swmm_engine_open(engine_, "_r4_pk.inp", "_r4_pk.rpt",
-                               "_r4_pk.out", nullptr), SWMM_OK);
-    EXPECT_TRUE(errored(as_cpp_engine(engine_).context(),
-                        "pollutant kinetics"));
+    write_rxn("_r4_pk.rxn", "[REACTION_SPECIES]\nBULK X MG\n"
+                            "[REACTION_TANKS]\nRATE TSS -0.5 * TSS\n");
+    write_deck("_r4_pk.inp", "org.hydrocouple.openswmm.reactions  config=\"_r4_pk.rxn\"");
+    EXPECT_NE(swmm_engine_open(engine_, "_r4_pk.inp", "_r4_pk.rpt", "_r4_pk.out", nullptr),
+              SWMM_OK);
+    EXPECT_TRUE(errored(as_cpp_engine(engine_).context(), "pollutant kinetics"));
     std::remove("_r4_pk.inp");
     std::remove("_r4_pk.rxn");
 }
@@ -289,14 +367,11 @@ TEST_F(ReactionLegacyBindingTest, RateMsxEvolvesLocallyWithWarning) {
     // (a deleted warning with unchanged behaviour is the failure mode the
     // closeout gates exist for; the transport itself is observed by
     // MsxSpeciesAdvectUnderLegacy in test_quality_closeout_bindings).
-    write_rxn("_r4_rate.rxn",
-              "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
-              "[REACTION_SPECIES]\nBULK X MG\n"
-              "[REACTION_TANKS]\nRATE X 0.001 * TSS\n");
-    write_deck("_r4_rate.inp",
-               "org.hydrocouple.openswmm.reactions  config=\"_r4_rate.rxn\"");
-    ASSERT_NO_FATAL_FAILURE(
-        run_deck("_r4_rate.inp", "_r4_rate.rpt", "_r4_rate.out"));
+    write_rxn("_r4_rate.rxn", "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
+                              "[REACTION_SPECIES]\nBULK X MG\n"
+                              "[REACTION_TANKS]\nRATE X 0.001 * TSS\n");
+    write_deck("_r4_rate.inp", "org.hydrocouple.openswmm.reactions  config=\"_r4_rate.rxn\"");
+    ASSERT_NO_FATAL_FAILURE(run_deck("_r4_rate.inp", "_r4_rate.rpt", "_r4_rate.out"));
     const auto& ctx = as_cpp_engine(engine_).context();
     EXPECT_FALSE(warned(ctx, "not yet transported between elements"))
         << "the R4b deferral warning is back — its condition was retired "
@@ -313,14 +388,12 @@ TEST_F(ReactionLegacyBindingTest, RateMsxEvolvesLocallyWithWarning) {
 // ---------------------------------------------------------------------------
 TEST_F(ReactionLegacyBindingTest, FailureIsLoudActionableAndNonFatal) {
     write_rxn("_r4_stiff.rxn",
-              "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"   // default solver: RK5
+              "[REACTION_OPTIONS]\nRATE_UNITS SEC\n" // default solver: RK5
               "[REACTION_SPECIES]\nBULK X MG\n"
               "[REACTION_QUALITY]\nGLOBAL X 1.0\n"
               "[REACTION_TANKS]\nRATE X -1000000.0 * X\n");
-    write_deck("_r4_stiff.inp",
-               "org.hydrocouple.openswmm.reactions  config=\"_r4_stiff.rxn\"");
-    ASSERT_NO_FATAL_FAILURE(
-        run_deck("_r4_stiff.inp", "_r4_stiff.rpt", "_r4_stiff.out"));
+    write_deck("_r4_stiff.inp", "org.hydrocouple.openswmm.reactions  config=\"_r4_stiff.rxn\"");
+    ASSERT_NO_FATAL_FAILURE(run_deck("_r4_stiff.inp", "_r4_stiff.rpt", "_r4_stiff.out"));
     const auto& ctx = as_cpp_engine(engine_).context();
     EXPECT_TRUE(warned(ctx, "SOLVER to ROS2 or BDF2"))
         << "the failure warning must carry the integrator's remedy text";
@@ -343,22 +416,19 @@ TEST_F(ReactionLegacyBindingTest, FailureIsLoudActionableAndNonFatal) {
 //   measured  correct 1.215x legacy | double-decay 0.197x | no decay 26.4x
 // ---------------------------------------------------------------------------
 TEST_F(ReactionLegacyBindingTest, LinkDecayIsNotDoubleApplied) {
-    write_rxn("_r4_lnk.rxn",
-              "[REACTION_SPECIES]\nBULK X MG\n"
-              "[REACTION_PIPES]\nFORMULA X 0.0 * TSS\n");
+    write_rxn("_r4_lnk.rxn", "[REACTION_SPECIES]\nBULK X MG\n"
+                             "[REACTION_PIPES]\nFORMULA X 0.0 * TSS\n");
     write_deck("_r4_lnk_plain.inp", "");
-    write_deck("_r4_lnk_rxn.inp",
-               "org.hydrocouple.openswmm.reactions  config=\"_r4_lnk.rxn\"");
+    write_deck("_r4_lnk_rxn.inp", "org.hydrocouple.openswmm.reactions  config=\"_r4_lnk.rxn\"");
     const double legacy = link_conc_of("_r4_lnk_plain.inp");
-    const double rxn    = link_conc_of("_r4_lnk_rxn.inp");
+    const double rxn = link_conc_of("_r4_lnk_rxn.inp");
     ASSERT_GT(legacy, 0.0);
     ASSERT_GT(rxn, 0.0);
     EXPECT_GT(rxn, legacy * 1.10)
-        << "link decayed twice — the in-mix k was not zeroed (rxn/legacy = "
-        << rxn / legacy << ")";
+        << "link decayed twice — the in-mix k was not zeroed (rxn/legacy = " << rxn / legacy << ")";
     EXPECT_LT(rxn, legacy * 1.50)
-        << "link never decayed — reactLegacyLinks did not run (rxn/legacy = "
-        << rxn / legacy << ")";
+        << "link never decayed — reactLegacyLinks did not run (rxn/legacy = " << rxn / legacy
+        << ")";
     std::remove("_r4_lnk_plain.inp");
     std::remove("_r4_lnk_rxn.inp");
     std::remove("_r4_lnk.rxn");
@@ -370,14 +440,11 @@ TEST_F(ReactionLegacyBindingTest, LinkDecayIsNotDoubleApplied) {
 // path are never executed.
 // ---------------------------------------------------------------------------
 TEST_F(ReactionLegacyBindingTest, MsxPipeScopeFormulaTracksLinkPollutant) {
-    write_rxn("_r4_pipe.rxn",
-              "[REACTION_SPECIES]\nBULK X MG\n"
-              "[REACTION_PIPES]\nFORMULA X 3.0 * TSS\n"
-              "[REACTION_TANKS]\nFORMULA X 2.0 * TSS\n");
-    write_deck("_r4_pipe.inp",
-               "org.hydrocouple.openswmm.reactions  config=\"_r4_pipe.rxn\"");
-    ASSERT_NO_FATAL_FAILURE(
-        run_deck("_r4_pipe.inp", "_r4_pipe.rpt", "_r4_pipe.out"));
+    write_rxn("_r4_pipe.rxn", "[REACTION_SPECIES]\nBULK X MG\n"
+                              "[REACTION_PIPES]\nFORMULA X 3.0 * TSS\n"
+                              "[REACTION_TANKS]\nFORMULA X 2.0 * TSS\n");
+    write_deck("_r4_pipe.inp", "org.hydrocouple.openswmm.reactions  config=\"_r4_pipe.rxn\"");
+    ASSERT_NO_FATAL_FAILURE(run_deck("_r4_pipe.inp", "_r4_pipe.rpt", "_r4_pipe.out"));
     const auto& ctx = as_cpp_engine(engine_).context();
     ASSERT_FALSE(ctx.reactions.msx_link_conc.empty());
     ASSERT_FALSE(ctx.reactions.msx_node_conc.empty());
@@ -396,16 +463,13 @@ TEST_F(ReactionLegacyBindingTest, MsxPipeScopeFormulaTracksLinkPollutant) {
 // reported.
 // ---------------------------------------------------------------------------
 TEST_F(ReactionLegacyBindingTest, MsxOnlyModelWithoutPollutantsStillReacts) {
-    write_rxn("_r4_only.rxn",
-              "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
-              "[REACTION_SPECIES]\nBULK X MG\n"
-              "[REACTION_QUALITY]\nGLOBAL X 1.0\n"
-              "[REACTION_TANKS]\nRATE X 0.001 * X\n");
-    write_deck("_r4_only.inp",
-               "org.hydrocouple.openswmm.reactions  config=\"_r4_only.rxn\"",
-               "", /*pollutants=*/false);
-    ASSERT_NO_FATAL_FAILURE(
-        run_deck("_r4_only.inp", "_r4_only.rpt", "_r4_only.out"));
+    write_rxn("_r4_only.rxn", "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
+                              "[REACTION_SPECIES]\nBULK X MG\n"
+                              "[REACTION_QUALITY]\nGLOBAL X 1.0\n"
+                              "[REACTION_TANKS]\nRATE X 0.001 * X\n");
+    write_deck("_r4_only.inp", "org.hydrocouple.openswmm.reactions  config=\"_r4_only.rxn\"", "",
+               /*pollutants=*/false);
+    ASSERT_NO_FATAL_FAILURE(run_deck("_r4_only.inp", "_r4_only.rpt", "_r4_only.out"));
     const auto& ctx = as_cpp_engine(engine_).context();
     ASSERT_EQ(ctx.n_pollutants(), 0);
     ASSERT_FALSE(ctx.reactions.msx_node_conc.empty())
@@ -422,30 +486,29 @@ TEST_F(ReactionLegacyBindingTest, MsxOnlyModelWithoutPollutantsStillReacts) {
 // run completes, and nothing reacted.
 // ---------------------------------------------------------------------------
 TEST_F(ReactionLegacyBindingTest, BypassedBindingIsAnnounced) {
-    write_rxn("_r4_byp.rxn",
-              "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
-              "[REACTION_SPECIES]\nBULK X MG\n"
-              "[REACTION_TANKS]\nRATE X 0.001 * TSS\n");
-    const std::string pc =
-        "org.hydrocouple.openswmm.reactions  config=\"_r4_byp.rxn\"";
+    write_rxn("_r4_byp.rxn", "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
+                             "[REACTION_SPECIES]\nBULK X MG\n"
+                             "[REACTION_TANKS]\nRATE X 0.001 * TSS\n");
+    const std::string pc = "org.hydrocouple.openswmm.reactions  config=\"_r4_byp.rxn\"";
 
     write_deck("_r4_byp_ard.inp", pc, "QUALITY_SOLVER EULERIAN_ARD\n");
-    ASSERT_EQ(swmm_engine_open(engine_, "_r4_byp_ard.inp", "_r4_byp_ard.rpt",
-                               "_r4_byp_ard.out", nullptr), SWMM_OK);
+    ASSERT_EQ(
+        swmm_engine_open(engine_, "_r4_byp_ard.inp", "_r4_byp_ard.rpt", "_r4_byp_ard.out", nullptr),
+        SWMM_OK);
     // E4/R6: EULERIAN_ARD is no longer a bypass — the ARD engine runs its
     // own reaction binding with MSX species transported on the mesh, so the
     // R4-era "does not yet run reactions" warning must be GONE. The
     // positive coverage (reactions actually running under ARD) lives in
     // test_reaction_ard_binding.cpp.
-    EXPECT_FALSE(warned(as_cpp_engine(engine_).context(),
-                        "does not yet run reactions"))
+    EXPECT_FALSE(warned(as_cpp_engine(engine_).context(), "does not yet run reactions"))
         << "the retired R4-era EULERIAN_ARD bypass warning still fires";
 
     // A second engine — the fixture's is already open on the ARD deck.
     SWMM_Engine e2 = swmm_engine_create();
     write_deck("_r4_byp_ign.inp", pc, "IGNORE_QUALITY YES\n");
-    ASSERT_EQ(swmm_engine_open(e2, "_r4_byp_ign.inp", "_r4_byp_ign.rpt",
-                               "_r4_byp_ign.out", nullptr), SWMM_OK);
+    ASSERT_EQ(
+        swmm_engine_open(e2, "_r4_byp_ign.inp", "_r4_byp_ign.rpt", "_r4_byp_ign.out", nullptr),
+        SWMM_OK);
     EXPECT_TRUE(warned(as_cpp_engine(e2).context(), "IGNORE_QUALITY is YES"));
     swmm_engine_destroy(e2);
 
@@ -454,4 +517,4 @@ TEST_F(ReactionLegacyBindingTest, BypassedBindingIsAnnounced) {
     std::remove("_r4_byp.rxn");
 }
 
-}  // namespace
+} // namespace

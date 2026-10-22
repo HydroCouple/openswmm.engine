@@ -18,8 +18,8 @@
 // limitations under the License.
 
 /**
- * @file HotStartManager.cpp
- * @brief Hot start file I/O — implementation.
+ * @file      HotStartManager.cpp
+ * @brief     Hot start file I/O — implementation.
  *
  * @details Implements the OPENSWMM_HS_V1 binary format:
  *
@@ -39,22 +39,22 @@
  * @see Legacy reference: src/solver/hotstart.c
  * @ingroup engine_hotstart
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "HotStartManager.hpp"
 #include <algorithm>
-#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
+#include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
 #include "SimulationContext.hpp"
-#include "../transport/components/ReactionModule/ReactionLegacyBinding.hpp"   // ensureMsxState
+#include "../transport/components/ReactionModule/ReactionLegacyBinding.hpp" // ensureMsxState
 #include "../hydrology/Runoff.hpp"
 #include "../hydrology/Groundwater.hpp"
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/SurfaceRouter2D.hpp"
 #include "../2d/subsurface/SubsurfaceData.hpp"
-#include "../2d/subsurface/SubsurfaceTransportState.hpp"   // T7.5   // G1: the V5 aquifer block
+#include "../2d/subsurface/SubsurfaceTransportState.hpp" // T7.5   // G1: the V5 aquifer block
 #endif
 
 #include <algorithm>
@@ -66,24 +66,47 @@
 
 namespace openswmm {
 namespace {
+/**
+ * @brief Detect a storage LID tied to the mesh aquifer restart path.
+ *
+ * @param[in] ctx Borrowed coherent model with live optional 2D attachments; no mutation.
+ * @return True when any storage LID has control>=0 and MeshAquifer bottom; does not validate
+ *     control index or runtime activity.
+ */
 bool meshLidRestartUnsupported(const SimulationContext& ctx) {
-    return std::any_of(ctx.node_subtypes.storages.lid.begin(),ctx.node_subtypes.storages.lid.end(),[](const auto& c){
-        return c.control>=0 && c.bottom==LidNodeBottom::MeshAquifer;
-    });
+    return std::any_of(
+        ctx.node_subtypes.storages.lid.begin(), ctx.node_subtypes.storages.lid.end(),
+        [](const auto& c) { return c.control >= 0 && c.bottom == LidNodeBottom::MeshAquifer; });
 }
+/**
+ * @brief Query whether the attached subsurface router needs transport restart state.
+ *
+ * @param[in] ctx Borrowed coherent model with live optional 2D attachments; no mutation.
+ * @return Router needsTransportRestart result, or false without an attached/compiled 2D router.
+ */
 bool layeredGroundwaterRestart(const SimulationContext& ctx) {
 #ifdef OPENSWMM_HAS_2D
-    return ctx.twod_io.surface_router && ctx.twod_io.surface_router->subsurface().needsTransportRestart();
+    return ctx.twod_io.surface_router &&
+           ctx.twod_io.surface_router->subsurface().needsTransportRestart();
 #else
-    (void)ctx;return false;
+    (void)ctx;
+    return false;
 #endif
 }
+/**
+ * @brief Detect active surface or subsurface coupled thermal state.
+ *
+ * @param[in] ctx Borrowed coherent model with live optional 2D attachments; no mutation.
+ * @return True for enabled surface heat or active subsurface heat; false without a
+ *     compiled/attached 2D router.
+ */
 bool coupledThermalRestartUnsupported(const SimulationContext& ctx) {
 #ifdef OPENSWMM_HAS_2D
-    const auto* router=ctx.twod_io.surface_router;
-    return router&&(router->state().heat.enabled||router->subsurface().heat().active());
+    const auto* router = ctx.twod_io.surface_router;
+    return router && (router->state().heat.enabled || router->subsurface().heat().active());
 #else
-    (void)ctx;return false;
+    (void)ctx;
+    return false;
 #endif
 }
 }
@@ -102,6 +125,13 @@ const std::string& HotStartManager::last_io_error() noexcept {
 // CRC32 (IEEE 802.3) — no external dependency
 // ============================================================================
 
+/**
+ * @brief Compute one reflected IEEE CRC32 lookup-table entry without a static table.
+ *
+ * @param[in] i Initial 32-bit remainder, normally an unsigned-byte table index.
+ * @return Remainder after eight shifts/XORs using polynomial 0xEDB88320; no initial/final CRC
+ *     complement.
+ */
 static uint32_t compute_crc32_table(uint32_t i) {
     uint32_t c = i;
     for (int k = 0; k < 8; ++k)
@@ -126,36 +156,77 @@ uint32_t HotStartManager::crc32(const uint8_t* data, std::size_t len) noexcept {
 
 namespace {
 
-/** Write a POD value as little-endian bytes. */
-template<typename T>
-static bool write_pod(std::ostream& os, const T& v) {
+/**
+ * @brief Write the host representation of one trivially copyable value.
+ *
+ * No endian conversion, padding normalization or exception barrier; enabled stream exceptions
+ * propagate.
+ *
+ * @param[in,out] os Borrowed writable binary stream; cursor/status change, ownership remains with
+ *     caller.
+ * @param[in] v Readable value with compatible host representation; caller restricts T to suitable
+ *     POD types.
+ * @return Stream good() after writing sizeof(T) bytes.
+ */
+template <typename T> static bool write_pod(std::ostream& os, const T& v) {
     os.write(reinterpret_cast<const char*>(&v), sizeof(v));
     return os.good();
 }
 
-/** Write a length-prefixed string (uint32 length including NUL + bytes). */
+/**
+ * @brief Write a uint32 length including terminator followed by raw string bytes.
+ *
+ * Uses host uint32 representation and writes a final NUL; does not enforce the reader's4096-byte
+ * limit. Partial writes persist; stream exceptions propagate.
+ *
+ * @param[in,out] os Borrowed writable binary stream.
+ * @param[in] s Borrowed string; size+1 must fit uint32. Embedded NUL bytes are retained.
+ * @return False when prefix/data write leaves the stream not good, otherwise true.
+ */
 static bool write_string(std::ostream& os, const std::string& s) {
     const uint32_t len = static_cast<uint32_t>(s.size() + 1u); // +1 for NUL
-    if (!write_pod(os, len)) return false;
+    if (!write_pod(os, len))
+        return false;
     os.write(s.c_str(), len);
     return os.good();
 }
 
-/** Read a POD value. */
-template<typename T>
-static bool read_pod(std::istream& is, T& v) {
+/**
+ * @brief Read sizeof(T) host-representation bytes directly into a value.
+ *
+ * No endian conversion or semantic validation; caller supplies a compatible representation. Stream
+ * exceptions propagate.
+ *
+ * @param[in,out] is Borrowed readable binary stream; cursor/status advance.
+ * @param[out] v Writable suitable POD value; short reads may partially overwrite it.
+ * @return Stream good() after read.
+ */
+template <typename T> static bool read_pod(std::istream& is, T& v) {
     is.read(reinterpret_cast<char*>(&v), sizeof(v));
     return is.good();
 }
 
-/** Read a length-prefixed string. */
+/**
+ * @brief Decode a bounded length-prefixed string and discard its final stored byte.
+ *
+ * Does not require the discarded last byte to be NUL; embedded NULs before it remain.
+ * Stream/allocation exceptions propagate; read cursor is not rolled back.
+ *
+ * @param[in,out] is Borrowed readable binary stream using compatible host uint32 representation.
+ * @param[out] s Replaced only after full data read; earlier contents remain on false return.
+ * @return True on complete length1..4096-byte record, false for prefix/data failure or invalid
+ *     length.
+ */
 static bool read_string(std::istream& is, std::string& s) {
     uint32_t len = 0;
-    if (!read_pod(is, len)) return false;
-    if (len == 0 || len > 4096u) return false; // sanity guard
+    if (!read_pod(is, len))
+        return false;
+    if (len == 0 || len > 4096u)
+        return false; // sanity guard
     std::vector<char> buf(len);
     is.read(buf.data(), len);
-    if (!is.good()) return false;
+    if (!is.good())
+        return false;
     // Remove trailing NUL (stored as part of the string)
     s.assign(buf.data(), buf.data() + (len - 1u));
     return true;
@@ -176,75 +247,114 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
     buf.write(MAGIC, 16);
 
     // Header fields
-    if (!write_pod(buf, hs.header.version))    return false;
-    if (!write_pod(buf, hs.header.timestamp))  return false;
-    if (!write_pod(buf, hs.header.sim_time))   return false;
-    if (!write_pod(buf, hs.header.start_date)) return false;
-    if (!write_pod(buf, hs.header.end_date))   return false;
-    if (!write_string(buf, hs.header.crs))     return false;
+    if (!write_pod(buf, hs.header.version))
+        return false;
+    if (!write_pod(buf, hs.header.timestamp))
+        return false;
+    if (!write_pod(buf, hs.header.sim_time))
+        return false;
+    if (!write_pod(buf, hs.header.start_date))
+        return false;
+    if (!write_pod(buf, hs.header.end_date))
+        return false;
+    if (!write_string(buf, hs.header.crs))
+        return false;
 
     // Nodes
     const auto node_count = static_cast<uint32_t>(hs.nodes.size());
-    if (!write_pod(buf, node_count)) return false;
+    if (!write_pod(buf, node_count))
+        return false;
     for (const auto& n : hs.nodes) {
-        if (!write_string(buf, n.id))    return false;
-        if (!write_pod(buf, n.depth))    return false;
-        if (!write_pod(buf, n.head))     return false;
-        if (!write_pod(buf, n.volume))   return false;
+        if (!write_string(buf, n.id))
+            return false;
+        if (!write_pod(buf, n.depth))
+            return false;
+        if (!write_pod(buf, n.head))
+            return false;
+        if (!write_pod(buf, n.volume))
+            return false;
         // V3 (A2a): water age, -1 = not tracked.
         if (hs.header.version >= 3u) {
-            if (!write_pod(buf, n.age))  return false;
+            if (!write_pod(buf, n.age))
+                return false;
         }
         if (hs.header.version >= 8u) {
-            if (!write_pod(buf, static_cast<uint32_t>(n.lid_cells.size())) || !write_pod(buf, n.lid_treated_volume)) return false;
+            if (!write_pod(buf, static_cast<uint32_t>(n.lid_cells.size())) ||
+                !write_pod(buf, n.lid_treated_volume))
+                return false;
             for (const auto& c : n.lid_cells)
-                if (!write_pod(buf, static_cast<int32_t>(c.layer)) || !write_pod(buf, c.bottom) || !write_pod(buf, c.top) ||
-                    !write_pod(buf, c.porosity) || !write_pod(buf, c.volume) || !write_pod(buf, c.theta)) return false;
+                if (!write_pod(buf, static_cast<int32_t>(c.layer)) || !write_pod(buf, c.bottom) ||
+                    !write_pod(buf, c.top) || !write_pod(buf, c.porosity) ||
+                    !write_pod(buf, c.volume) || !write_pod(buf, c.theta))
+                    return false;
         }
         if (hs.header.version >= 9u) {
-            if(!write_pod(buf,static_cast<uint32_t>(n.lid_quality_mass.size())))return false;
-            for(double mass:n.lid_quality_mass)if(!write_pod(buf,mass))return false;
+            if (!write_pod(buf, static_cast<uint32_t>(n.lid_quality_mass.size())))
+                return false;
+            for (double mass : n.lid_quality_mass)
+                if (!write_pod(buf, mass))
+                    return false;
         }
         if (hs.header.version >= 10u) {
-            if (!write_pod(buf, static_cast<uint32_t>(n.lid_infiltration.size()))) return false;
-            for (double value : n.lid_infiltration) if (!write_pod(buf, value)) return false;
+            if (!write_pod(buf, static_cast<uint32_t>(n.lid_infiltration.size())))
+                return false;
+            for (double value : n.lid_infiltration)
+                if (!write_pod(buf, value))
+                    return false;
         }
         if (hs.header.version >= 11u) {
-            if (!write_pod(buf, static_cast<uint32_t>(n.lid_richards.size()))) return false;
-            for (double value : n.lid_richards) if (!write_pod(buf, value)) return false;
+            if (!write_pod(buf, static_cast<uint32_t>(n.lid_richards.size())))
+                return false;
+            for (double value : n.lid_richards)
+                if (!write_pod(buf, value))
+                    return false;
         }
     }
 
     // Links
     const auto link_count = static_cast<uint32_t>(hs.links.size());
-    if (!write_pod(buf, link_count)) return false;
+    if (!write_pod(buf, link_count))
+        return false;
     for (const auto& l : hs.links) {
-        if (!write_string(buf, l.id))    return false;
-        if (!write_pod(buf, l.flow))     return false;
-        if (!write_pod(buf, l.depth))    return false;
-        if (!write_pod(buf, l.volume))   return false;
+        if (!write_string(buf, l.id))
+            return false;
+        if (!write_pod(buf, l.flow))
+            return false;
+        if (!write_pod(buf, l.depth))
+            return false;
+        if (!write_pod(buf, l.volume))
+            return false;
         // V3 (A2a): water age, -1 = not tracked.
         if (hs.header.version >= 3u) {
-            if (!write_pod(buf, l.age))  return false;
+            if (!write_pod(buf, l.age))
+                return false;
         }
     }
 
     // Subcatchments
     const auto sub_count = static_cast<uint32_t>(hs.subcatches.size());
-    if (!write_pod(buf, sub_count)) return false;
+    if (!write_pod(buf, sub_count))
+        return false;
     for (const auto& s : hs.subcatches) {
-        if (!write_string(buf, s.id))    return false;
-        if (!write_pod(buf, s.runoff))   return false;
-        if (!write_pod(buf, s.gwater))   return false;
+        if (!write_string(buf, s.id))
+            return false;
+        if (!write_pod(buf, s.runoff))
+            return false;
+        if (!write_pod(buf, s.gwater))
+            return false;
         // V2: infiltration model state + GW zone state
         if (hs.header.version >= 2u) {
             uint32_t im = static_cast<uint32_t>(s.infil_model < 0 ? 0 : s.infil_model);
-            if (!write_pod(buf, im)) return false;
+            if (!write_pod(buf, im))
+                return false;
             for (int k = 0; k < 6; ++k) {
-                if (!write_pod(buf, s.infil[k])) return false;
+                if (!write_pod(buf, s.infil[k]))
+                    return false;
             }
-            if (!write_pod(buf, s.gw_theta))       return false;
-            if (!write_pod(buf, s.gw_lower_depth)) return false;
+            if (!write_pod(buf, s.gw_theta))
+                return false;
+            if (!write_pod(buf, s.gw_lower_depth))
+                return false;
         }
     }
 
@@ -252,9 +362,11 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
     // [link * ns + s] concentrations in the element order above.
     if (hs.header.version >= 4u) {
         const auto ns = static_cast<uint32_t>(hs.species.size());
-        if (!write_pod(buf, ns)) return false;
+        if (!write_pod(buf, ns))
+            return false;
         for (const auto& name : hs.species)
-            if (!write_string(buf, name)) return false;
+            if (!write_string(buf, name))
+                return false;
         const std::size_t want_n = hs.nodes.size() * hs.species.size();
         const std::size_t want_l = hs.links.size() * hs.species.size();
         for (std::size_t i = 0; i < want_n; ++i)
@@ -269,11 +381,12 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
     // actually ran, so a model without [2D_AQUIFER] still produces a V4 file
     // and every existing reader keeps working.
     if (hs.header.version >= 5u) {
-        if (!write_pod(buf, hs.gw_n_cells))  return false;
-        if (!write_pod(buf, hs.gw_m_layers)) return false;
+        if (!write_pod(buf, hs.gw_n_cells))
+            return false;
+        if (!write_pod(buf, hs.gw_m_layers))
+            return false;
         const auto nc = static_cast<std::size_t>(hs.gw_n_cells);
-        const std::size_t want_t =
-            nc * static_cast<std::size_t>(hs.gw_m_layers);
+        const std::size_t want_t = nc * static_cast<std::size_t>(hs.gw_m_layers);
         for (std::size_t i = 0; i < nc; ++i)
             if (!write_pod(buf, i < hs.gw_hg.size() ? hs.gw_hg[i] : 0.0))
                 return false;
@@ -284,13 +397,14 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
         // it is flagged by a zero layer count so the reader does not have to
         // infer it from a size.
         for (std::size_t i = 0; i < want_t; ++i)
-            if (!write_pod(buf, i < hs.gw_theta_sigma.size()
-                                    ? hs.gw_theta_sigma[i] : 0.0))
+            if (!write_pod(buf, i < hs.gw_theta_sigma.size() ? hs.gw_theta_sigma[i] : 0.0))
                 return false;
         const auto nl = static_cast<uint32_t>(hs.gw_ledger.size());
-        if (!write_pod(buf, nl)) return false;
+        if (!write_pod(buf, nl))
+            return false;
         for (double v : hs.gw_ledger)
-            if (!write_pod(buf, v)) return false;
+            if (!write_pod(buf, v))
+                return false;
     }
 
     // T7.5 (V6): the aquifer's transported tuple. Written only when the
@@ -298,9 +412,11 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
     // still produces a V5 file and every V5 reader keeps working.
     if (hs.header.version >= 6u) {
         const auto ns = static_cast<uint32_t>(hs.gw_species.size());
-        if (!write_pod(buf, ns)) return false;
+        if (!write_pod(buf, ns))
+            return false;
         for (const auto& name : hs.gw_species)
-            if (!write_string(buf, name)) return false;
+            if (!write_string(buf, name))
+                return false;
         const std::size_t want =
             static_cast<std::size_t>(ns) * static_cast<std::size_t>(hs.gw_n_cells);
         for (std::size_t i = 0; i < want; ++i)
@@ -313,49 +429,63 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
         for (std::size_t row = 0; row < ns; ++row)
             for (int term = 0; term < terms; ++term) {
                 const auto i = row * HotStartFile::kGwSpeciesLedgerTerms + term;
-                if (!write_pod(buf, i < hs.gw_species_ledger.size()
-                                        ? hs.gw_species_ledger[i] : 0.0)) return false;
+                if (!write_pod(buf,
+                               i < hs.gw_species_ledger.size() ? hs.gw_species_ledger[i] : 0.0))
+                    return false;
             }
     }
 
     if (hs.header.version >= 12u) {
-        if (!write_pod(buf, static_cast<uint32_t>(hs.gw_interface.size()))) return false;
+        if (!write_pod(buf, static_cast<uint32_t>(hs.gw_interface.size())))
+            return false;
         for (const auto& row : hs.gw_interface) {
-            if (!write_pod(buf, static_cast<uint32_t>(row.size()))) return false;
-            for (double value : row) if (!write_pod(buf, value)) return false;
+            if (!write_pod(buf, static_cast<uint32_t>(row.size())))
+                return false;
+            for (double value : row)
+                if (!write_pod(buf, value))
+                    return false;
         }
     }
 
     if (hs.header.version >= 14u) {
-        if (hs.snow_state.size()>64u*1024u*1024u || !write_pod(buf,static_cast<uint32_t>(hs.snow_state.size())))return false;
-        buf.write(hs.snow_state.data(),static_cast<std::streamsize>(hs.snow_state.size()));
-        if(!buf.good())return false;
+        if (hs.snow_state.size() > 64u * 1024u * 1024u ||
+            !write_pod(buf, static_cast<uint32_t>(hs.snow_state.size())))
+            return false;
+        buf.write(hs.snow_state.data(), static_cast<std::streamsize>(hs.snow_state.size()));
+        if (!buf.good())
+            return false;
     }
     if (hs.header.version >= 15u) {
         // From V16 the engine checkpoint is optional (size 0 = none).
-        if((hs.engine_checkpoint.empty() && hs.header.version < 16u) || hs.engine_checkpoint.size()>512u*1024u*1024u ||
-           !write_pod(buf,static_cast<uint32_t>(hs.engine_checkpoint.size())))return false;
-        buf.write(hs.engine_checkpoint.data(),static_cast<std::streamsize>(hs.engine_checkpoint.size()));
-        if(!buf.good())return false;
+        if ((hs.engine_checkpoint.empty() && hs.header.version < 16u) ||
+            hs.engine_checkpoint.size() > 512u * 1024u * 1024u ||
+            !write_pod(buf, static_cast<uint32_t>(hs.engine_checkpoint.size())))
+            return false;
+        buf.write(hs.engine_checkpoint.data(),
+                  static_cast<std::streamsize>(hs.engine_checkpoint.size()));
+        if (!buf.good())
+            return false;
     }
     if (hs.header.version >= 16u) {
-        if(hs.surface_state.size()>256u*1024u*1024u ||
-           !write_pod(buf,static_cast<uint32_t>(hs.surface_state.size())))return false;
-        buf.write(hs.surface_state.data(),static_cast<std::streamsize>(hs.surface_state.size()));
-        if(!buf.good())return false;
+        if (hs.surface_state.size() > 256u * 1024u * 1024u ||
+            !write_pod(buf, static_cast<uint32_t>(hs.surface_state.size())))
+            return false;
+        buf.write(hs.surface_state.data(), static_cast<std::streamsize>(hs.surface_state.size()));
+        if (!buf.good())
+            return false;
     }
-    if(hs.header.version>=17u) {
-        if(hs.gw_transport_state.size()>64u*1024u*1024u ||
-            !write_pod(buf,static_cast<uint32_t>(hs.gw_transport_state.size())))return false;
-        buf.write(hs.gw_transport_state.data(),static_cast<std::streamsize>(hs.gw_transport_state.size()));
-        if(!buf.good())return false;
+    if (hs.header.version >= 17u) {
+        if (hs.gw_transport_state.size() > 64u * 1024u * 1024u ||
+            !write_pod(buf, static_cast<uint32_t>(hs.gw_transport_state.size())))
+            return false;
+        buf.write(hs.gw_transport_state.data(),
+                  static_cast<std::streamsize>(hs.gw_transport_state.size()));
+        if (!buf.good())
+            return false;
     }
     // Compute CRC32 over the body
     const std::string body = buf.str();
-    const uint32_t crc = crc32(
-        reinterpret_cast<const uint8_t*>(body.data()),
-        body.size()
-    );
+    const uint32_t crc = crc32(reinterpret_cast<const uint8_t*>(body.data()), body.size());
 
     // Write body + checksum to actual file
     std::ofstream file(openswmm::io::utf8_path(path), std::ios::binary | std::ios::trunc);
@@ -405,8 +535,7 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
     std::memcpy(&stored_crc, raw.data() + file_size - sizeof(stored_crc), sizeof(stored_crc));
     const uint32_t computed_crc = crc32(raw.data(), file_size - 4);
     if (stored_crc != computed_crc) {
-        tl_last_io_error = "CRC32 checksum mismatch in '" + path
-                           + "' (corrupt or truncated file)";
+        tl_last_io_error = "CRC32 checksum mismatch in '" + path + "' (corrupt or truncated file)";
         return false;
     }
 
@@ -423,105 +552,150 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
     }
 
     // Header
-    if (!read_pod(is, hs.header.version))    return false;
+    if (!read_pod(is, hs.header.version))
+        return false;
     if (hs.header.version < 1u || hs.header.version > 17u) {
-        tl_last_io_error = "Unsupported hot start version " +
-                           std::to_string(hs.header.version) + " in '" + path + "'";
+        tl_last_io_error = "Unsupported hot start version " + std::to_string(hs.header.version) +
+                           " in '" + path + "'";
         return false;
     }
-    if (!read_pod(is, hs.header.timestamp))  return false;
-    if (!read_pod(is, hs.header.sim_time))   return false;
-    if (!read_pod(is, hs.header.start_date)) return false;
-    if (!read_pod(is, hs.header.end_date))   return false;
-    if (!read_string(is, hs.header.crs))     return false;
+    if (!read_pod(is, hs.header.timestamp))
+        return false;
+    if (!read_pod(is, hs.header.sim_time))
+        return false;
+    if (!read_pod(is, hs.header.start_date))
+        return false;
+    if (!read_pod(is, hs.header.end_date))
+        return false;
+    if (!read_string(is, hs.header.crs))
+        return false;
 
     // Nodes
     uint32_t node_count = 0;
-    if (!read_pod(is, node_count)) return false;
+    if (!read_pod(is, node_count))
+        return false;
     hs.nodes.resize(node_count);
     for (auto& n : hs.nodes) {
-        if (!read_string(is, n.id))  return false;
-        if (!read_pod(is, n.depth))  return false;
-        if (!read_pod(is, n.head))   return false;
-        if (!read_pod(is, n.volume)) return false;
+        if (!read_string(is, n.id))
+            return false;
+        if (!read_pod(is, n.depth))
+            return false;
+        if (!read_pod(is, n.head))
+            return false;
+        if (!read_pod(is, n.volume))
+            return false;
         // V3 (A2a): water age; pre-V3 files leave the -1 default.
         if (hs.header.version >= 3u) {
-            if (!read_pod(is, n.age)) return false;
+            if (!read_pod(is, n.age))
+                return false;
         }
         if (hs.header.version >= 8u) {
             uint32_t count = 0;
-            if (!read_pod(is, count) || count > file_size / 44 || !read_pod(is, n.lid_treated_volume)) return false;
-            if (!std::isfinite(n.lid_treated_volume) || n.lid_treated_volume < 0.0) return false;
+            if (!read_pod(is, count) || count > file_size / 44 ||
+                !read_pod(is, n.lid_treated_volume))
+                return false;
+            if (!std::isfinite(n.lid_treated_volume) || n.lid_treated_volume < 0.0)
+                return false;
             n.lid_cells.resize(count);
             for (auto& c : n.lid_cells) {
                 int32_t layer;
                 if (!read_pod(is, layer) || !read_pod(is, c.bottom) || !read_pod(is, c.top) ||
-                    !read_pod(is, c.porosity) || !read_pod(is, c.volume) || !read_pod(is, c.theta)) return false;
+                    !read_pod(is, c.porosity) || !read_pod(is, c.volume) || !read_pod(is, c.theta))
+                    return false;
                 c.layer = layer;
-                if (!std::isfinite(c.bottom) || !std::isfinite(c.top) || !std::isfinite(c.porosity) || !std::isfinite(c.volume) ||
-                    !std::isfinite(c.theta) || c.bottom < 0 || c.top <= c.bottom || c.porosity <= 0 || c.porosity > 1 ||
-                    c.theta < 0 || c.theta > c.porosity || c.volume <= 0 || c.layer < 1) return false;
+                if (!std::isfinite(c.bottom) || !std::isfinite(c.top) ||
+                    !std::isfinite(c.porosity) || !std::isfinite(c.volume) ||
+                    !std::isfinite(c.theta) || c.bottom < 0 || c.top <= c.bottom ||
+                    c.porosity <= 0 || c.porosity > 1 || c.theta < 0 || c.theta > c.porosity ||
+                    c.volume <= 0 || c.layer < 1)
+                    return false;
             }
         }
         if (hs.header.version >= 9u) {
-            uint32_t count=0;if(!read_pod(is,count)||count>file_size/sizeof(double))return false;
+            uint32_t count = 0;
+            if (!read_pod(is, count) || count > file_size / sizeof(double))
+                return false;
             n.lid_quality_mass.resize(count);
-            for(auto& mass:n.lid_quality_mass)if(!read_pod(is,mass)||!std::isfinite(mass)||mass<0)return false;
+            for (auto& mass : n.lid_quality_mass)
+                if (!read_pod(is, mass) || !std::isfinite(mass) || mass < 0)
+                    return false;
         }
         if (hs.header.version >= 10u) {
             uint32_t count = 0;
-            if (!read_pod(is, count) || (count != 0 && count != 11)) return false;
+            if (!read_pod(is, count) || (count != 0 && count != 11))
+                return false;
             n.lid_infiltration.resize(count);
-            for (auto& value : n.lid_infiltration) if (!read_pod(is, value) || !std::isfinite(value)) return false;
-            if (count && (n.lid_infiltration[0] < 0 || n.lid_infiltration[1] <= 0 ||
-                n.lid_infiltration[2] <= 0 || n.lid_infiltration[2] > 1 ||
-                n.lid_infiltration[3] < 0 || n.lid_infiltration[3] > n.lid_infiltration[2] ||
-                n.lid_infiltration[4] < 0 || n.lid_infiltration[5] < 0 ||
-                n.lid_infiltration[5] > n.lid_infiltration[6] || n.lid_infiltration[6] <= 0 ||
-                n.lid_infiltration[7] <= 0 || n.lid_infiltration[9] < 0 ||
-                (n.lid_infiltration[10] != 0 && n.lid_infiltration[10] != 1))) return false;
+            for (auto& value : n.lid_infiltration)
+                if (!read_pod(is, value) || !std::isfinite(value))
+                    return false;
+            if (count &&
+                (n.lid_infiltration[0] < 0 || n.lid_infiltration[1] <= 0 ||
+                 n.lid_infiltration[2] <= 0 || n.lid_infiltration[2] > 1 ||
+                 n.lid_infiltration[3] < 0 || n.lid_infiltration[3] > n.lid_infiltration[2] ||
+                 n.lid_infiltration[4] < 0 || n.lid_infiltration[5] < 0 ||
+                 n.lid_infiltration[5] > n.lid_infiltration[6] || n.lid_infiltration[6] <= 0 ||
+                 n.lid_infiltration[7] <= 0 || n.lid_infiltration[9] < 0 ||
+                 (n.lid_infiltration[10] != 0 && n.lid_infiltration[10] != 1)))
+                return false;
         }
         if (hs.header.version >= 11u) {
             uint32_t count = 0;
-            if (!read_pod(is, count) || count > file_size / sizeof(double) || count % 8 != 0) return false;
+            if (!read_pod(is, count) || count > file_size / sizeof(double) || count % 8 != 0)
+                return false;
             n.lid_richards.resize(count);
-            for (auto& value : n.lid_richards) if (!read_pod(is, value) || !std::isfinite(value)) return false;
+            for (auto& value : n.lid_richards)
+                if (!read_pod(is, value) || !std::isfinite(value))
+                    return false;
         }
     }
 
     // Links
     uint32_t link_count = 0;
-    if (!read_pod(is, link_count)) return false;
+    if (!read_pod(is, link_count))
+        return false;
     hs.links.resize(link_count);
     for (auto& l : hs.links) {
-        if (!read_string(is, l.id))  return false;
-        if (!read_pod(is, l.flow))   return false;
-        if (!read_pod(is, l.depth))  return false;
-        if (!read_pod(is, l.volume)) return false;
+        if (!read_string(is, l.id))
+            return false;
+        if (!read_pod(is, l.flow))
+            return false;
+        if (!read_pod(is, l.depth))
+            return false;
+        if (!read_pod(is, l.volume))
+            return false;
         // V3 (A2a): water age; pre-V3 files leave the -1 default.
         if (hs.header.version >= 3u) {
-            if (!read_pod(is, l.age)) return false;
+            if (!read_pod(is, l.age))
+                return false;
         }
     }
 
     // Subcatchments
     uint32_t sub_count = 0;
-    if (!read_pod(is, sub_count)) return false;
+    if (!read_pod(is, sub_count))
+        return false;
     hs.subcatches.resize(sub_count);
     for (auto& s : hs.subcatches) {
-        if (!read_string(is, s.id))    return false;
-        if (!read_pod(is, s.runoff))   return false;
-        if (!read_pod(is, s.gwater))   return false;
+        if (!read_string(is, s.id))
+            return false;
+        if (!read_pod(is, s.runoff))
+            return false;
+        if (!read_pod(is, s.gwater))
+            return false;
         // V2: infiltration model state + GW zone state
         if (hs.header.version >= 2u) {
             uint32_t im = 0;
-            if (!read_pod(is, im)) return false;
+            if (!read_pod(is, im))
+                return false;
             s.infil_model = static_cast<int>(im);
             for (int k = 0; k < 6; ++k) {
-                if (!read_pod(is, s.infil[k])) return false;
+                if (!read_pod(is, s.infil[k]))
+                    return false;
             }
-            if (!read_pod(is, s.gw_theta))       return false;
-            if (!read_pod(is, s.gw_lower_depth)) return false;
+            if (!read_pod(is, s.gw_theta))
+                return false;
+            if (!read_pod(is, s.gw_lower_depth))
+                return false;
         }
     }
 
@@ -531,96 +705,143 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
     hs.link_species.clear();
     if (hs.header.version >= 4u) {
         uint32_t ns = 0;
-        if (!read_pod(is, ns)) return false;
+        if (!read_pod(is, ns))
+            return false;
         hs.species.resize(ns);
         for (auto& name : hs.species)
-            if (!read_string(is, name)) return false;
+            if (!read_string(is, name))
+                return false;
         hs.node_species.resize(hs.nodes.size() * static_cast<std::size_t>(ns));
         hs.link_species.resize(hs.links.size() * static_cast<std::size_t>(ns));
-        for (auto& v : hs.node_species) if (!read_pod(is, v)) return false;
-        for (auto& v : hs.link_species) if (!read_pod(is, v)) return false;
+        for (auto& v : hs.node_species)
+            if (!read_pod(is, v))
+                return false;
+        for (auto& v : hs.link_species)
+            if (!read_pod(is, v))
+                return false;
     }
 
-    hs.gw_n_cells  = 0;
+    hs.gw_n_cells = 0;
     hs.gw_m_layers = 0;
     hs.gw_hg.clear();
     hs.gw_hu.clear();
     hs.gw_theta_sigma.clear();
     hs.gw_ledger.clear();
     if (hs.header.version >= 5u) {
-        if (!read_pod(is, hs.gw_n_cells))  return false;
-        if (!read_pod(is, hs.gw_m_layers)) return false;
+        if (!read_pod(is, hs.gw_n_cells))
+            return false;
+        if (!read_pod(is, hs.gw_m_layers))
+            return false;
         const auto nc = static_cast<std::size_t>(hs.gw_n_cells);
         hs.gw_hg.resize(nc);
         hs.gw_hu.resize(nc);
         hs.gw_theta_sigma.resize(nc * static_cast<std::size_t>(hs.gw_m_layers));
-        for (auto& v : hs.gw_hg)          if (!read_pod(is, v)) return false;
-        for (auto& v : hs.gw_hu)          if (!read_pod(is, v)) return false;
-        for (auto& v : hs.gw_theta_sigma) if (!read_pod(is, v)) return false;
+        for (auto& v : hs.gw_hg)
+            if (!read_pod(is, v))
+                return false;
+        for (auto& v : hs.gw_hu)
+            if (!read_pod(is, v))
+                return false;
+        for (auto& v : hs.gw_theta_sigma)
+            if (!read_pod(is, v))
+                return false;
         uint32_t nl = 0;
-        if (!read_pod(is, nl)) return false;
+        if (!read_pod(is, nl))
+            return false;
         hs.gw_ledger.resize(nl);
-        for (auto& v : hs.gw_ledger) if (!read_pod(is, v)) return false;
+        for (auto& v : hs.gw_ledger)
+            if (!read_pod(is, v))
+                return false;
     }
 
     hs.gw_species.clear();
     hs.gw_sat_mass.clear();
     hs.gw_unsat_mass.clear();
     hs.gw_species_ledger.clear();
-    if (hs.header.version >= 6u) {            // T7.5
+    if (hs.header.version >= 6u) { // T7.5
         uint32_t ns = 0;
-        if (!read_pod(is, ns)) return false;
+        if (!read_pod(is, ns))
+            return false;
         hs.gw_species.resize(ns);
-        for (auto& n : hs.gw_species) if (!read_string(is, n)) return false;
+        for (auto& n : hs.gw_species)
+            if (!read_string(is, n))
+                return false;
         const std::size_t want =
             static_cast<std::size_t>(ns) * static_cast<std::size_t>(hs.gw_n_cells);
         hs.gw_sat_mass.resize(want);
         hs.gw_unsat_mass.resize(want);
-        for (auto& v : hs.gw_sat_mass)   if (!read_pod(is, v)) return false;
-        for (auto& v : hs.gw_unsat_mass) if (!read_pod(is, v)) return false;
-        hs.gw_species_ledger.resize(
-            static_cast<std::size_t>(ns) *
-            static_cast<std::size_t>(HotStartFile::kGwSpeciesLedgerTerms));
+        for (auto& v : hs.gw_sat_mass)
+            if (!read_pod(is, v))
+                return false;
+        for (auto& v : hs.gw_unsat_mass)
+            if (!read_pod(is, v))
+                return false;
+        hs.gw_species_ledger.resize(static_cast<std::size_t>(ns) *
+                                    static_cast<std::size_t>(HotStartFile::kGwSpeciesLedgerTerms));
         const int terms = hs.header.version >= 7u ? HotStartFile::kGwSpeciesLedgerTerms : 11;
         for (std::size_t row = 0; row < ns; ++row)
             for (int term = 0; term < terms; ++term)
-                if (!read_pod(is, hs.gw_species_ledger[row * HotStartFile::kGwSpeciesLedgerTerms + term]))
+                if (!read_pod(
+                        is, hs.gw_species_ledger[row * HotStartFile::kGwSpeciesLedgerTerms + term]))
                     return false;
     }
 
     hs.gw_interface.clear();
     if (hs.header.version >= 12u) {
-        uint32_t count=0;
-        if (!read_pod(is,count) || count > 64u) return false;
+        uint32_t count = 0;
+        if (!read_pod(is, count) || count > 64u)
+            return false;
         hs.gw_interface.resize(count);
         for (auto& row : hs.gw_interface) {
-            uint32_t size=0;
-            if (!read_pod(is,size) || size > file_size / sizeof(double)) return false;
+            uint32_t size = 0;
+            if (!read_pod(is, size) || size > file_size / sizeof(double))
+                return false;
             row.resize(size);
-            for (auto& value : row) if (!read_pod(is,value)) return false;
+            for (auto& value : row)
+                if (!read_pod(is, value))
+                    return false;
         }
     }
-    if(hs.header.version>=14u) {
-        uint32_t size=0;
-        if(!read_pod(is,size)||size>64u*1024u*1024u||size>file_size)return false;
-        hs.snow_state.resize(size);is.read(hs.snow_state.data(),size);if(!is.good())return false;
+    if (hs.header.version >= 14u) {
+        uint32_t size = 0;
+        if (!read_pod(is, size) || size > 64u * 1024u * 1024u || size > file_size)
+            return false;
+        hs.snow_state.resize(size);
+        is.read(hs.snow_state.data(), size);
+        if (!is.good())
+            return false;
     }
-    if(hs.header.version>=15u) {
-        uint32_t size=0;
-        if(!read_pod(is,size)||(size==0&&hs.header.version<16u)||size>512u*1024u*1024u||size>file_size)return false;
+    if (hs.header.version >= 15u) {
+        uint32_t size = 0;
+        if (!read_pod(is, size) || (size == 0 && hs.header.version < 16u) ||
+            size > 512u * 1024u * 1024u || size > file_size)
+            return false;
         hs.engine_checkpoint.resize(size);
-        if(size>0){is.read(hs.engine_checkpoint.data(),size);if(!is.good())return false;}
+        if (size > 0) {
+            is.read(hs.engine_checkpoint.data(), size);
+            if (!is.good())
+                return false;
+        }
     }
-    if(hs.header.version>=16u) {
-        uint32_t size=0;
-        if(!read_pod(is,size)||size>256u*1024u*1024u||size>file_size)return false;
+    if (hs.header.version >= 16u) {
+        uint32_t size = 0;
+        if (!read_pod(is, size) || size > 256u * 1024u * 1024u || size > file_size)
+            return false;
         hs.surface_state.resize(size);
-        if(size>0){is.read(hs.surface_state.data(),size);if(!is.good())return false;}
+        if (size > 0) {
+            is.read(hs.surface_state.data(), size);
+            if (!is.good())
+                return false;
+        }
     }
-    if(hs.header.version>=17u) {
-        uint32_t size=0;
-        if(!read_pod(is,size)||size==0||size>64u*1024u*1024u||size>file_size)return false;
-        hs.gw_transport_state.resize(size);is.read(hs.gw_transport_state.data(),size);if(!is.good())return false;
+    if (hs.header.version >= 17u) {
+        uint32_t size = 0;
+        if (!read_pod(is, size) || size == 0 || size > 64u * 1024u * 1024u || size > file_size)
+            return false;
+        hs.gw_transport_state.resize(size);
+        is.read(hs.gw_transport_state.data(), size);
+        if (!is.good())
+            return false;
     }
     hs.path = path;
     return true;
@@ -632,35 +853,55 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
 
 bool HotStartFile::set_node_depth(const std::string& id, double v) {
     for (auto& n : nodes) {
-        if (n.id == id) { n.depth = v; dirty = true; return true; }
+        if (n.id == id) {
+            n.depth = v;
+            dirty = true;
+            return true;
+        }
     }
     return false;
 }
 
 bool HotStartFile::set_node_head(const std::string& id, double v) {
     for (auto& n : nodes) {
-        if (n.id == id) { n.head = v; dirty = true; return true; }
+        if (n.id == id) {
+            n.head = v;
+            dirty = true;
+            return true;
+        }
     }
     return false;
 }
 
 bool HotStartFile::set_link_flow(const std::string& id, double v) {
     for (auto& l : links) {
-        if (l.id == id) { l.flow = v; dirty = true; return true; }
+        if (l.id == id) {
+            l.flow = v;
+            dirty = true;
+            return true;
+        }
     }
     return false;
 }
 
 bool HotStartFile::set_link_depth(const std::string& id, double v) {
     for (auto& l : links) {
-        if (l.id == id) { l.depth = v; dirty = true; return true; }
+        if (l.id == id) {
+            l.depth = v;
+            dirty = true;
+            return true;
+        }
     }
     return false;
 }
 
 bool HotStartFile::set_subcatch_runoff(const std::string& id, double v) {
     for (auto& s : subcatches) {
-        if (s.id == id) { s.runoff = v; dirty = true; return true; }
+        if (s.id == id) {
+            s.runoff = v;
+            dirty = true;
+            return true;
+        }
     }
     return false;
 }
@@ -675,22 +916,33 @@ bool HotStartFile::set_subcatch_runoff(const std::string& id, double v) {
 
 namespace {
 
-/// Fill hs.species / node_species / link_species from the live arrays:
-/// pollutants from nodes.conc / links.conc, reactions species from the
-/// msx_*_conc state when it is sized (else the GLOBAL seed). Returns true
-/// when at least one species was captured (the file then promotes to V4).
+/**
+ * @brief Copy combined pollutant/reaction concentrations into a name-keyed hotstart block.
+ *
+ * Pollutants precede reaction names. Missing pollutant slots become0; reaction arrays are used only
+ * when both node/link shapes match, otherwise GLOBAL seed (or0). Does not capture
+ * finite-volume/particle/wall state or check finite values. Allocation may leave partial changes.
+ *
+ * @param[in] ctx Borrowed coherent registries/quality stores; pollutant concentrations retain
+ *     declared units, reaction values retain species units.
+ * @param[in,out] hs Borrowed file; species names and node/link species arrays are replaced when any
+ *     species exists.
+ * @return True when pollutants/configured reaction species exist, false leaves the block unchanged.
+ */
 bool captureSpeciesBlock(const SimulationContext& ctx, HotStartFile& hs) {
     const int np = ctx.n_pollutants();
     const int nm = ctx.reactions.configured ? ctx.reactions.n_species() : 0;
     const int ns = np + nm;
-    if (ns <= 0) return false;
+    if (ns <= 0)
+        return false;
     const auto nn = static_cast<std::size_t>(ctx.n_nodes());
     const auto nl = static_cast<std::size_t>(ctx.n_links());
     const auto uns = static_cast<std::size_t>(ns);
     const auto unp = static_cast<std::size_t>(np);
     const auto unm = static_cast<std::size_t>(nm);
     hs.species.clear();
-    for (int p = 0; p < np; ++p) hs.species.push_back(ctx.pollutant_names.name_of(p));
+    for (int p = 0; p < np; ++p)
+        hs.species.push_back(ctx.pollutant_names.name_of(p));
     for (int m = 0; m < nm; ++m)
         hs.species.push_back(ctx.reactions.species_name[static_cast<std::size_t>(m)]);
     hs.node_species.assign(nn * uns, 0.0);
@@ -703,9 +955,9 @@ bool captureSpeciesBlock(const SimulationContext& ctx, HotStartFile& hs) {
                 hs.node_species[e * uns + p] = ctx.nodes.conc[e * unp + p];
         for (std::size_t m = 0; m < unm; ++m)
             hs.node_species[e * uns + unp + m] =
-                msx_sized ? ctx.reactions.msx_node_conc[e * unm + m]
-                          : (m < ctx.reactions.init_global.size()
-                                 ? ctx.reactions.init_global[m] : 0.0);
+                msx_sized
+                    ? ctx.reactions.msx_node_conc[e * unm + m]
+                    : (m < ctx.reactions.init_global.size() ? ctx.reactions.init_global[m] : 0.0);
     }
     for (std::size_t e = 0; e < nl; ++e) {
         for (std::size_t p = 0; p < unp; ++p)
@@ -713,20 +965,31 @@ bool captureSpeciesBlock(const SimulationContext& ctx, HotStartFile& hs) {
                 hs.link_species[e * uns + p] = ctx.links.conc[e * unp + p];
         for (std::size_t m = 0; m < unm; ++m)
             hs.link_species[e * uns + unp + m] =
-                msx_sized ? ctx.reactions.msx_link_conc[e * unm + m]
-                          : (m < ctx.reactions.init_global.size()
-                                 ? ctx.reactions.init_global[m] : 0.0);
+                msx_sized
+                    ? ctx.reactions.msx_link_conc[e * unm + m]
+                    : (m < ctx.reactions.init_global.size() ? ctx.reactions.init_global[m] : 0.0);
     }
     return true;
 }
 
-/// Restore the species block by NAME. Pollutants land in nodes/links.conc
-/// (+conc_old); reactions species pre-size and fill msx_*_conc, which every
-/// engine seeds from (ensureMsxState skips its GLOBAL fill once sized).
-/// Runs after initialize()'s seeds, so the file wins (D-IQ5).
+/**
+ * @brief Restore matching node/link species by object and species names after initialization.
+ *
+ * Pollutant names take precedence over reaction names. Unknown species warn/skip; unknown objects
+ * skip. Matching reactions cause missing-shaped arrays to seed GLOBAL then element overrides before
+ * restore. Missing file columns retain seeded/current values. No unit conversion, positivity checks
+ * or rollback; callback/allocation failures propagate.
+ *
+ * @param[in] hs Borrowed species block; flattened arrays correspond to file node/link record order.
+ * @param[in,out] ctx Borrowed initialized model; pollutant conc/conc_old and reaction arrays are
+ *     overwritten where present.
+ * @param[in] warn Synchronous callable required when unknown species occur; message reference is
+ *     temporary, copy if retained.
+ */
 void restoreSpeciesBlock(const HotStartFile& hs, SimulationContext& ctx,
                          const std::function<void(const std::string&)>& warn) {
-    if (hs.species.empty()) return;
+    if (hs.species.empty())
+        return;
     const int np = ctx.n_pollutants();
     const int nm = ctx.reactions.configured ? ctx.reactions.n_species() : 0;
     const auto nn = static_cast<std::size_t>(ctx.n_nodes());
@@ -740,16 +1003,26 @@ void restoreSpeciesBlock(const HotStartFile& hs, SimulationContext& ctx,
     int matched = 0;
     for (std::size_t s = 0; s < uns; ++s) {
         const int p = ctx.pollutant_names.find(hs.species[s]);
-        if (p >= 0) { col_p[s] = p; ++matched; continue; }
+        if (p >= 0) {
+            col_p[s] = p;
+            ++matched;
+            continue;
+        }
         const int m = nm > 0 ? ctx.reactions.find_species(hs.species[s]) : -1;
-        if (m >= 0) { col_m[s] = m; ++matched; continue; }
+        if (m >= 0) {
+            col_m[s] = m;
+            ++matched;
+            continue;
+        }
         warn("Hot start: species '" + hs.species[s] +
              "' is not in the current model — its concentrations are skipped");
     }
-    if (matched == 0) return;
+    if (matched == 0)
+        return;
 
     bool any_msx = false;
-    for (std::size_t s = 0; s < uns; ++s) any_msx = any_msx || col_m[s] >= 0;
+    for (std::size_t s = 0; s < uns; ++s)
+        any_msx = any_msx || col_m[s] >= 0;
     if (any_msx) {
         auto& rx = ctx.reactions;
         if (rx.msx_node_conc.size() != nn * unm || rx.msx_link_conc.size() != nl * unm) {
@@ -768,77 +1041,113 @@ void restoreSpeciesBlock(const HotStartFile& hs, SimulationContext& ctx,
             for (std::size_t k = 0; k < rx.init_elem_idx.size(); ++k) {
                 const auto e = static_cast<std::size_t>(rx.init_elem_idx[k]);
                 const auto m = static_cast<std::size_t>(rx.init_elem_species[k]);
-                if (m >= unm) continue;
+                if (m >= unm)
+                    continue;
                 auto& arr = rx.init_elem_is_link[k] ? rx.msx_link_conc : rx.msx_node_conc;
-                if (e * unm + m < arr.size()) arr[e * unm + m] = rx.init_elem_value[k];
+                if (e * unm + m < arr.size())
+                    arr[e * unm + m] = rx.init_elem_value[k];
             }
         }
     }
 
     for (std::size_t r = 0; r < hs.nodes.size(); ++r) {
         const int idx = ctx.node_names.find(hs.nodes[r].id);
-        if (idx < 0) continue;   // already warned by the record pass
+        if (idx < 0)
+            continue; // already warned by the record pass
         const auto e = static_cast<std::size_t>(idx);
         for (std::size_t s = 0; s < uns; ++s) {
             const std::size_t src = r * uns + s;
-            if (src >= hs.node_species.size()) break;
+            if (src >= hs.node_species.size())
+                break;
             const double v = hs.node_species[src];
             if (col_p[s] >= 0) {
                 const std::size_t i = e * unp + static_cast<std::size_t>(col_p[s]);
-                if (i < ctx.nodes.conc.size())     ctx.nodes.conc[i] = v;
-                if (i < ctx.nodes.conc_old.size()) ctx.nodes.conc_old[i] = v;
+                if (i < ctx.nodes.conc.size())
+                    ctx.nodes.conc[i] = v;
+                if (i < ctx.nodes.conc_old.size())
+                    ctx.nodes.conc_old[i] = v;
             } else if (col_m[s] >= 0) {
                 const std::size_t i = e * unm + static_cast<std::size_t>(col_m[s]);
-                if (i < ctx.reactions.msx_node_conc.size()) ctx.reactions.msx_node_conc[i] = v;
+                if (i < ctx.reactions.msx_node_conc.size())
+                    ctx.reactions.msx_node_conc[i] = v;
             }
         }
     }
     for (std::size_t r = 0; r < hs.links.size(); ++r) {
         const int idx = ctx.link_names.find(hs.links[r].id);
-        if (idx < 0) continue;
+        if (idx < 0)
+            continue;
         const auto e = static_cast<std::size_t>(idx);
         for (std::size_t s = 0; s < uns; ++s) {
             const std::size_t src = r * uns + s;
-            if (src >= hs.link_species.size()) break;
+            if (src >= hs.link_species.size())
+                break;
             const double v = hs.link_species[src];
             if (col_p[s] >= 0) {
                 const std::size_t i = e * unp + static_cast<std::size_t>(col_p[s]);
-                if (i < ctx.links.conc.size())     ctx.links.conc[i] = v;
-                if (i < ctx.links.conc_old.size()) ctx.links.conc_old[i] = v;
+                if (i < ctx.links.conc.size())
+                    ctx.links.conc[i] = v;
+                if (i < ctx.links.conc_old.size())
+                    ctx.links.conc_old[i] = v;
             } else if (col_m[s] >= 0) {
                 const std::size_t i = e * unm + static_cast<std::size_t>(col_m[s]);
-                if (i < ctx.reactions.msx_link_conc.size()) ctx.reactions.msx_link_conc[i] = v;
+                if (i < ctx.reactions.msx_link_conc.size())
+                    ctx.reactions.msx_link_conc[i] = v;
             }
         }
     }
 }
 
-
-/// G1 (V5): copy the running two-zone groundwater state into the file.
-/// @returns true when there was a kernel to capture.
+/**
+ * @brief Copy active two-zone aquifer and pending surface-interface continuation state.
+ *
+ * Copies native SI levels/volumes, exchange accumulators, ET state and optional transport/surface
+ * interface. Sigma profile is copied only if any cell uses SIGMA closure; caller uses a fresh file
+ * to avoid stale fields otherwise. Does not validate state dimensions or capture thermal energy.
+ * Allocation may leave partial changes.
+ *
+ * @param[in] ctx Borrowed live 2D/aquifer/router attachments with coherent aligned state vectors.
+ * @param[in,out] hs Borrowed file whose aquifer counts, water levels, ledgers and interface rows
+ *     are replaced.
+ * @return True for an active aquifer with positive cells; false without it or compiled2D, leaving
+ *     block unchanged.
+ */
 bool captureAquiferBlock(const SimulationContext& ctx, HotStartFile& hs) {
 #ifdef OPENSWMM_HAS_2D
     const twoD::SubsurfaceState* st = ctx.twod_io.aquifer_state;
-    if (st == nullptr || !st->active || st->n_cells <= 0) return false;
+    if (st == nullptr || !st->active || st->n_cells <= 0)
+        return false;
     hs.gw_n_cells = static_cast<uint32_t>(st->n_cells);
     hs.gw_hg = st->hg;
     hs.gw_hu = st->hu;
     // The sigma layers are only meaningful if some cell actually uses
     // closure B. Writing them for an all-closure-A model would triple the
     // block for nothing, so a zero layer count is the signal.
-    const bool any_sigma =
-        std::any_of(st->closure.begin(), st->closure.end(), [](int8_t c) {
-            return c == static_cast<int8_t>(twoD::GwClosure::SIGMA);
-        });
+    const bool any_sigma = std::any_of(st->closure.begin(), st->closure.end(), [](int8_t c) {
+        return c == static_cast<int8_t>(twoD::GwClosure::SIGMA);
+    });
     if (any_sigma) {
-        hs.gw_m_layers    = static_cast<uint32_t>(st->m_layers);
+        hs.gw_m_layers = static_cast<uint32_t>(st->m_layers);
         hs.gw_theta_sigma = st->theta_sigma;
     }
-    hs.gw_ledger = {st->led_recharge, st->led_lateral, st->led_deep,
-                    st->led_node,     st->led_dunne,   st->led_caprise,
-                    st->led_et,       st->led_infil_in, st->led_init_storage,
-                    st->led_link, st->led_source_in, st->led_source_out, st->led_reject}; // Length-prefixed.
-    hs.gw_interface = {st->infil_capacity, st->infil_remaining, st->infil_refresh, st->infil_interval, st->wetting_front, st->reject_last, st->reject_cumulative, st->dunne_cumulative, st->xacc_from_surface, st->xacc_to_surface, st->eacc_L, st->eacc_R, st->nacc, st->lacc};
+    hs.gw_ledger = {st->led_recharge,     st->led_lateral, st->led_deep,      st->led_node,
+                    st->led_dunne,        st->led_caprise, st->led_et,        st->led_infil_in,
+                    st->led_init_storage, st->led_link,    st->led_source_in, st->led_source_out,
+                    st->led_reject}; // Length-prefixed.
+    hs.gw_interface = {st->infil_capacity,
+                       st->infil_remaining,
+                       st->infil_refresh,
+                       st->infil_interval,
+                       st->wetting_front,
+                       st->reject_last,
+                       st->reject_cumulative,
+                       st->dunne_cumulative,
+                       st->xacc_from_surface,
+                       st->xacc_to_surface,
+                       st->eacc_L,
+                       st->eacc_R,
+                       st->nacc,
+                       st->lacc};
     const auto* tr = ctx.twod_io.aquifer_transport;
     hs.gw_interface.push_back(tr ? tr->xacc_from_surface : std::vector<double>{});
     hs.gw_interface.push_back(tr ? tr->xacc_to_surface : std::vector<double>{});
@@ -859,67 +1168,102 @@ bool captureAquiferBlock(const SimulationContext& ctx, HotStartFile& hs) {
         hs.gw_interface.push_back({router->infiltrationElapsed()});
         hs.gw_interface.push_back(surf.transport.cell_mass);
     }
-    for(const auto* row:std::vector<const std::vector<double>*>{&st->et_pending, &st->et_potential_cumulative, &st->et_surface_cumulative, &st->et_soil_cumulative, &st->et_unused_cumulative, &st->et_surface_last, &st->et_potential_last, &st->et_stress, &st->et_refresh})hs.gw_interface.push_back(*row);
-    if(router){hs.gw_interface.push_back(router->state().evap_rate);hs.gw_interface.push_back({router->state().evap_loss_total});}
+    for (const auto* row : std::vector<const std::vector<double>*>{
+             &st->et_pending, &st->et_potential_cumulative, &st->et_surface_cumulative,
+             &st->et_soil_cumulative, &st->et_unused_cumulative, &st->et_surface_last,
+             &st->et_potential_last, &st->et_stress, &st->et_refresh})
+        hs.gw_interface.push_back(*row);
+    if (router) {
+        hs.gw_interface.push_back(router->state().evap_rate);
+        hs.gw_interface.push_back({router->state().evap_loss_total});
+    }
     return true;
 #else
-    (void)ctx; (void)hs;
+    (void)ctx;
+    (void)hs;
     return false;
 #endif
 }
 
-/// T7.5: the aquifer's transported tuple. Returns false when the kernel
-/// carried no species, which keeps the file at V5.
+/**
+ * @brief Copy active aquifer species masses and per-species accounting ledgers.
+ *
+ * Flattens thirteen ledger terms per species; does not validate finite values, shapes, unit
+ * compatibility or species-name uniqueness. Allocation can leave partial block changes.
+ *
+ * @param[in] ctx Borrowed active transport with aligned row names/mass/ledger vectors in native
+ *     species mass units.
+ * @param[in,out] hs Borrowed file; gw_n_cells must already match transport cells, then
+ *     species/mass/ledger arrays are replaced.
+ * @return True on capture, false without active species/matching cells/compiled2D.
+ */
 bool captureAquiferSpeciesBlock(const SimulationContext& ctx, HotStartFile& hs) {
 #ifdef OPENSWMM_HAS_2D
     const twoD::SubsurfaceTransportState* tr = ctx.twod_io.aquifer_transport;
-    if (tr == nullptr || !tr->active() || hs.gw_n_cells == 0) return false;
-    if (static_cast<uint32_t>(tr->n_cells) != hs.gw_n_cells) return false;
-    hs.gw_species     = tr->row_names;
-    hs.gw_sat_mass    = tr->sat_mass;
-    hs.gw_unsat_mass  = tr->unsat_mass;
-    hs.gw_species_ledger.assign(
-        static_cast<std::size_t>(tr->n_species) *
-            static_cast<std::size_t>(HotStartFile::kGwSpeciesLedgerTerms), 0.0);
+    if (tr == nullptr || !tr->active() || hs.gw_n_cells == 0)
+        return false;
+    if (static_cast<uint32_t>(tr->n_cells) != hs.gw_n_cells)
+        return false;
+    hs.gw_species = tr->row_names;
+    hs.gw_sat_mass = tr->sat_mass;
+    hs.gw_unsat_mass = tr->unsat_mass;
+    hs.gw_species_ledger.assign(static_cast<std::size_t>(tr->n_species) *
+                                    static_cast<std::size_t>(HotStartFile::kGwSpeciesLedgerTerms),
+                                0.0);
     for (int s = 0; s < tr->n_species; ++s) {
         const auto u = static_cast<std::size_t>(s);
         double* d = &hs.gw_species_ledger[u * HotStartFile::kGwSpeciesLedgerTerms];
-        d[0]  = tr->init_mass[u];
-        d[1]  = tr->gained_infil[u];
-        d[2]  = tr->gained_node[u];
-        d[3]  = tr->gained_link[u];
-        d[4]  = tr->net_lateral[u];
-        d[5]  = tr->lost_deep[u];
-        d[6]  = tr->lost_node[u];
-        d[7]  = tr->lost_link[u];
-        d[8]  = tr->lost_dunne[u];
-        d[9]  = tr->lost_et[u];
+        d[0] = tr->init_mass[u];
+        d[1] = tr->gained_infil[u];
+        d[2] = tr->gained_node[u];
+        d[3] = tr->gained_link[u];
+        d[4] = tr->net_lateral[u];
+        d[5] = tr->lost_deep[u];
+        d[6] = tr->lost_node[u];
+        d[7] = tr->lost_link[u];
+        d[8] = tr->lost_dunne[u];
+        d[9] = tr->lost_et[u];
         d[10] = tr->lost_reaction[u];
         d[11] = tr->gained_source[u];
         d[12] = tr->lost_source[u];
     }
     return true;
 #else
-    (void)ctx; (void)hs;
+    (void)ctx;
+    (void)hs;
     return false;
 #endif
 }
 
-/// …and back, matching species by NAME (§ the V6 block's note). A species
-/// the file has and this model does not is dropped with a warning; one this
-/// model has and the file does not keeps its `[GW_INITIAL_QUALITY]` seed.
+/**
+ * @brief Restore matching aquifer species by name while retaining unmatched model seeds.
+ *
+ * No-op without active transport/species or matching cells, and without compiled2D. Copies
+ * available saturated/unsaturated mass prefixes and legacy eleven or current thirteen ledger terms.
+ * Missing entries retain current state; unknown species are dropped with warning. Cells match by
+ * index, not geometry; no finite/unit checks or rollback.
+ *
+ * @param[in] hs Borrowed aquifer mass block; saved cell count must match live transport.
+ * @param[in,out] ctx Borrowed initialized aquifer transport with aligned destination mass/ledger
+ *     vectors.
+ * @param[in] warn Synchronous callable invoked once for dropped file species; copy transient
+ *     message if retained.
+ */
 void restoreAquiferSpeciesBlock(const HotStartFile& hs, SimulationContext& ctx,
                                 const std::function<void(const std::string&)>& warn) {
 #ifdef OPENSWMM_HAS_2D
     twoD::SubsurfaceTransportState* tr = ctx.twod_io.aquifer_transport;
-    if (tr == nullptr || !tr->active() || hs.gw_species.empty()) return;
-    if (static_cast<uint32_t>(tr->n_cells) != hs.gw_n_cells) return;   // V5 already warned
+    if (tr == nullptr || !tr->active() || hs.gw_species.empty())
+        return;
+    if (static_cast<uint32_t>(tr->n_cells) != hs.gw_n_cells)
+        return; // V5 already warned
     const auto nc = static_cast<std::size_t>(tr->n_cells);
     std::string dropped;
     for (std::size_t fs = 0; fs < hs.gw_species.size(); ++fs) {
         const int row = tr->rowIndex(hs.gw_species[fs]);
         if (row < 0) {
-            if (!dropped.empty()) dropped += ", ";
+            if (!dropped.empty())
+                dropped += ", ";
             dropped += hs.gw_species[fs];
             continue;
         }
@@ -935,16 +1279,16 @@ void restoreAquiferSpeciesBlock(const HotStartFile& hs, SimulationContext& ctx,
         if (lsrc + 10 < hs.gw_species_ledger.size()) {
             const double* d = &hs.gw_species_ledger[lsrc];
             const auto u = static_cast<std::size_t>(row);
-            tr->init_mass[u]     = d[0];
-            tr->gained_infil[u]  = d[1];
-            tr->gained_node[u]   = d[2];
-            tr->gained_link[u]   = d[3];
-            tr->net_lateral[u]   = d[4];
-            tr->lost_deep[u]     = d[5];
-            tr->lost_node[u]     = d[6];
-            tr->lost_link[u]     = d[7];
-            tr->lost_dunne[u]    = d[8];
-            tr->lost_et[u]       = d[9];
+            tr->init_mass[u] = d[0];
+            tr->gained_infil[u] = d[1];
+            tr->gained_node[u] = d[2];
+            tr->gained_link[u] = d[3];
+            tr->net_lateral[u] = d[4];
+            tr->lost_deep[u] = d[5];
+            tr->lost_node[u] = d[6];
+            tr->lost_link[u] = d[7];
+            tr->lost_dunne[u] = d[8];
+            tr->lost_et[u] = d[9];
             tr->lost_reaction[u] = d[10];
             if (lsrc + 12 < hs.gw_species_ledger.size()) {
                 tr->gained_source[u] = d[11];
@@ -958,7 +1302,9 @@ void restoreAquiferSpeciesBlock(const HotStartFile& hs, SimulationContext& ctx,
              "Species are matched by name, so a [POLLUTANTS] change between "
              "runs drops exactly what it removed and keeps the rest.");
 #else
-    (void)hs; (void)ctx; (void)warn;
+    (void)hs;
+    (void)ctx;
+    (void)warn;
 #endif
 }
 
@@ -967,42 +1313,104 @@ void restoreAquiferSpeciesBlock(const HotStartFile& hs, SimulationContext& ctx,
 /// silent, plausible-looking corruption, which is worse than not restarting.
 // Validate the new interface before any hotstart state is changed. A
 // mismatched pending-volume layout cannot safely be restored in part.
+/**
+ * @brief Check V12/V13 pending surface-aquifer interface dimensions without mutation.
+ *
+ * Checks current interface schema dimensions including optional router/ET rows; does not validate
+ * numeric values, cell geometry, material identity or all other hotstart blocks. Temporary vector
+ * allocation can throw.
+ *
+ * @param[in] hs Borrowed saved interface rows, version and species ordering.
+ * @param[in] ctx Borrowed live aquifer/transport/router attachments with coherent vector sizes.
+ * @return True for compatible expected row counts/sizes and species order; also true for pre-V12,
+ *     empty, inactive/missing or uncompiled aquifer.
+ */
 bool validAquiferInterface(const HotStartFile& hs, const SimulationContext& ctx) {
 #ifdef OPENSWMM_HAS_2D
-    if (hs.header.version < 12u || hs.gw_interface.empty()) return true;
-    const auto* st=ctx.twod_io.aquifer_state;
-    if (!st || !st->active) return true;
-    const auto* tr=ctx.twod_io.aquifer_transport;
-    const auto* router=ctx.twod_io.surface_router;
-    if(tr && hs.gw_species!=tr->row_names)return false;
-    std::vector<const std::vector<double>*> fields={&st->infil_capacity,&st->infil_remaining,&st->infil_refresh,&st->infil_interval,&st->wetting_front,&st->reject_last,&st->reject_cumulative,&st->dunne_cumulative,&st->xacc_from_surface,&st->xacc_to_surface,&st->eacc_L,&st->eacc_R,&st->nacc,&st->lacc};
-    if(tr) fields.insert(fields.end(),{&tr->xacc_from_surface,&tr->xacc_to_surface,&tr->sacc_L,&tr->sacc_R,&tr->nacc_mass,&tr->lacc_mass,&tr->node_out_mass});
-    else fields.resize(21,nullptr);
-    if(router){const auto& surf=router->state();fields.insert(fields.end(),{&surf.volume,&surf.head,&surf.depth,&surf.infil_rate,&surf.infil_applied});}
-    const auto& rows=hs.gw_interface;
-    const std::size_t base=router?29u:21u;
-    if(rows.size()!=base+(hs.header.version>=13u?(router?11u:9u):0u))return false;
-    if(hs.header.version>=13u){
-        for(std::size_t k=0;k<9;++k)if(rows[base+k].size()!=static_cast<std::size_t>(st->n_cells))return false;
-        if(router&&(rows[base+9].size()!=router->state().evap_rate.size()||rows[base+10].size()!=1))return false;
+    if (hs.header.version < 12u || hs.gw_interface.empty())
+        return true;
+    const auto* st = ctx.twod_io.aquifer_state;
+    if (!st || !st->active)
+        return true;
+    const auto* tr = ctx.twod_io.aquifer_transport;
+    const auto* router = ctx.twod_io.surface_router;
+    if (tr && hs.gw_species != tr->row_names)
+        return false;
+    std::vector<const std::vector<double>*> fields = {&st->infil_capacity,
+                                                      &st->infil_remaining,
+                                                      &st->infil_refresh,
+                                                      &st->infil_interval,
+                                                      &st->wetting_front,
+                                                      &st->reject_last,
+                                                      &st->reject_cumulative,
+                                                      &st->dunne_cumulative,
+                                                      &st->xacc_from_surface,
+                                                      &st->xacc_to_surface,
+                                                      &st->eacc_L,
+                                                      &st->eacc_R,
+                                                      &st->nacc,
+                                                      &st->lacc};
+    if (tr)
+        fields.insert(fields.end(),
+                      {&tr->xacc_from_surface, &tr->xacc_to_surface, &tr->sacc_L, &tr->sacc_R,
+                       &tr->nacc_mass, &tr->lacc_mass, &tr->node_out_mass});
+    else
+        fields.resize(21, nullptr);
+    if (router) {
+        const auto& surf = router->state();
+        fields.insert(fields.end(), {&surf.volume, &surf.head, &surf.depth, &surf.infil_rate,
+                                     &surf.infil_applied});
     }
-    for(std::size_t k=0;k<fields.size();++k)
-        if(rows[k].size()!=(fields[k]?fields[k]->size():0u))return false;
-    return !router || (rows[26].size()==router->infilCumulative().size()&&rows[27].size()==1&&rows[28].size()==router->state().transport.cell_mass.size());
+    const auto& rows = hs.gw_interface;
+    const std::size_t base = router ? 29u : 21u;
+    if (rows.size() != base + (hs.header.version >= 13u ? (router ? 11u : 9u) : 0u))
+        return false;
+    if (hs.header.version >= 13u) {
+        for (std::size_t k = 0; k < 9; ++k)
+            if (rows[base + k].size() != static_cast<std::size_t>(st->n_cells))
+                return false;
+        if (router && (rows[base + 9].size() != router->state().evap_rate.size() ||
+                       rows[base + 10].size() != 1))
+            return false;
+    }
+    for (std::size_t k = 0; k < fields.size(); ++k)
+        if (rows[k].size() != (fields[k] ? fields[k]->size() : 0u))
+            return false;
+    return !router ||
+           (rows[26].size() == router->infilCumulative().size() && rows[27].size() == 1 &&
+            rows[28].size() == router->state().transport.cell_mass.size());
 #else
-    (void)hs;(void)ctx;return true;
+    (void)hs;
+    (void)ctx;
+    return true;
 #endif
 }
 
+/**
+ * @brief Restore aquifer levels, ledgers and compatible held surface-interface state.
+ *
+ * No-op for absent/inactive/empty/uncompiled aquifer; count mismatch warns and leaves aquifer
+ * unchanged. Clamps hg to0..zs and hu>=0, restores sigma only for matching layer count/shape, and
+ * copies available ledger versions. Valid V12/V13 interface restores exchanges/surface inventories
+ * and pending receipts; invalid interface warns after earlier level/ledger changes. Older files
+ * retain reconstructed interface, V12 lacks shared ET demand. No complete atomicity,
+ * geometry/finite check or thermal restore.
+ *
+ * @param[in] hs Borrowed validated file, with cell-index identity established by caller.
+ * @param[in,out] ctx Borrowed initialized aquifer/router; destination vectors must be aligned and
+ *     live.
+ * @param[in] warn Synchronous diagnostic callable for count/layer/interface incompatibility and
+ *     legacy continuation limitations.
+ */
 void restoreAquiferBlock(const HotStartFile& hs, SimulationContext& ctx,
                          const std::function<void(const std::string&)>& warn) {
 #ifdef OPENSWMM_HAS_2D
     twoD::SubsurfaceState* st = ctx.twod_io.aquifer_state;
-    if (st == nullptr || !st->active || hs.gw_n_cells == 0) return;
+    if (st == nullptr || !st->active || hs.gw_n_cells == 0)
+        return;
     if (static_cast<int>(hs.gw_n_cells) != st->n_cells) {
         warn("Hot start: the file carries " + std::to_string(hs.gw_n_cells) +
-             " groundwater cells but this model has " +
-             std::to_string(st->n_cells) +
+             " groundwater cells but this model has " + std::to_string(st->n_cells) +
              " — the aquifer state was NOT restored (cells are matched by "
              "index; a mesh has no cell ids).");
         return;
@@ -1015,8 +1423,7 @@ void restoreAquiferBlock(const HotStartFile& hs, SimulationContext& ctx,
     if (hs.gw_m_layers > 0) {
         if (static_cast<int>(hs.gw_m_layers) != st->m_layers) {
             warn("Hot start: the file has " + std::to_string(hs.gw_m_layers) +
-                 " sigma layers and this model has " +
-                 std::to_string(st->m_layers) +
+                 " sigma layers and this model has " + std::to_string(st->m_layers) +
                  " — the columns were left at their seeded profiles. Set "
                  "M_LAYERS to match, or accept the reseed.");
         } else if (hs.gw_theta_sigma.size() == st->theta_sigma.size()) {
@@ -1024,24 +1431,39 @@ void restoreAquiferBlock(const HotStartFile& hs, SimulationContext& ctx,
         }
     }
     if (hs.gw_ledger.size() >= 9) {
-        st->led_recharge     = hs.gw_ledger[0];
-        st->led_lateral      = hs.gw_ledger[1];
-        st->led_deep         = hs.gw_ledger[2];
-        st->led_node         = hs.gw_ledger[3];
-        st->led_dunne        = hs.gw_ledger[4];
-        st->led_caprise      = hs.gw_ledger[5];
-        st->led_et           = hs.gw_ledger[6];
-        st->led_infil_in     = hs.gw_ledger[7];
+        st->led_recharge = hs.gw_ledger[0];
+        st->led_lateral = hs.gw_ledger[1];
+        st->led_deep = hs.gw_ledger[2];
+        st->led_node = hs.gw_ledger[3];
+        st->led_dunne = hs.gw_ledger[4];
+        st->led_caprise = hs.gw_ledger[5];
+        st->led_et = hs.gw_ledger[6];
+        st->led_infil_in = hs.gw_ledger[7];
         st->led_init_storage = hs.gw_ledger[8];
-        if (hs.gw_ledger.size() >= 10) st->led_link = hs.gw_ledger[9];
-        if (hs.gw_ledger.size() >= 13) st->led_reject = hs.gw_ledger[12];
+        if (hs.gw_ledger.size() >= 10)
+            st->led_link = hs.gw_ledger[9];
+        if (hs.gw_ledger.size() >= 13)
+            st->led_reject = hs.gw_ledger[12];
         if (hs.gw_ledger.size() >= 12) {
             st->led_source_in = hs.gw_ledger[10];
             st->led_source_out = hs.gw_ledger[11];
         }
     }
     if (hs.header.version >= 12u && !hs.gw_interface.empty()) {
-        std::vector<std::vector<double>*> targets = {&st->infil_capacity, &st->infil_remaining, &st->infil_refresh, &st->infil_interval, &st->wetting_front, &st->reject_last, &st->reject_cumulative, &st->dunne_cumulative, &st->xacc_from_surface, &st->xacc_to_surface, &st->eacc_L, &st->eacc_R, &st->nacc, &st->lacc};
+        std::vector<std::vector<double>*> targets = {&st->infil_capacity,
+                                                     &st->infil_remaining,
+                                                     &st->infil_refresh,
+                                                     &st->infil_interval,
+                                                     &st->wetting_front,
+                                                     &st->reject_last,
+                                                     &st->reject_cumulative,
+                                                     &st->dunne_cumulative,
+                                                     &st->xacc_from_surface,
+                                                     &st->xacc_to_surface,
+                                                     &st->eacc_L,
+                                                     &st->eacc_R,
+                                                     &st->nacc,
+                                                     &st->lacc};
         auto* tr = ctx.twod_io.aquifer_transport;
         if (tr) {
             targets.push_back(&tr->xacc_from_surface);
@@ -1052,7 +1474,8 @@ void restoreAquiferBlock(const HotStartFile& hs, SimulationContext& ctx,
             targets.push_back(&tr->lacc_mass);
             targets.push_back(&tr->node_out_mass);
         }
-        if (!tr) targets.resize(21,nullptr);
+        if (!tr)
+            targets.resize(21, nullptr);
         auto* router = ctx.twod_io.surface_router;
         if (router) {
             auto& surf = router->state();
@@ -1063,42 +1486,68 @@ void restoreAquiferBlock(const HotStartFile& hs, SimulationContext& ctx,
             targets.push_back(&surf.infil_applied);
         }
         const auto& rows = hs.gw_interface;
-        if (validAquiferInterface(hs,ctx)) {
-            if(hs.header.version>=13u){
-                const std::size_t base=router?29u:21u;
-                std::vector<std::vector<double>*> et={&st->et_pending, &st->et_potential_cumulative, &st->et_surface_cumulative, &st->et_soil_cumulative, &st->et_unused_cumulative, &st->et_surface_last, &st->et_potential_last, &st->et_stress, &st->et_refresh};
-                for(std::size_t k=0;k<et.size();++k)*et[k]=rows[base+k];
-                if(router){router->state().evap_rate=rows[base+9];router->state().evap_loss_total=rows[base+10][0];}
-            }else warn("Hot start V12 lacks pending shared ET demand; atmospheric accounting begins with subsequent surface intervals.");
-            for (std::size_t k=0;k<targets.size();++k) if(targets[k]) *targets[k]=rows[k];
-            if(router){
+        if (validAquiferInterface(hs, ctx)) {
+            if (hs.header.version >= 13u) {
+                const std::size_t base = router ? 29u : 21u;
+                std::vector<std::vector<double>*> et = {&st->et_pending,
+                                                        &st->et_potential_cumulative,
+                                                        &st->et_surface_cumulative,
+                                                        &st->et_soil_cumulative,
+                                                        &st->et_unused_cumulative,
+                                                        &st->et_surface_last,
+                                                        &st->et_potential_last,
+                                                        &st->et_stress,
+                                                        &st->et_refresh};
+                for (std::size_t k = 0; k < et.size(); ++k)
+                    *et[k] = rows[base + k];
+                if (router) {
+                    router->state().evap_rate = rows[base + 9];
+                    router->state().evap_loss_total = rows[base + 10][0];
+                }
+            } else
+                warn(
+                    "Hot start V12 lacks pending shared ET demand; atmospheric accounting begins with subsequent surface intervals.");
+            for (std::size_t k = 0; k < targets.size(); ++k)
+                if (targets[k])
+                    *targets[k] = rows[k];
+            if (router) {
                 router->restoreInfiltration(rows[26], rows[27][0]);
-                router->state().transport.cell_mass=rows[28];
+                router->state().transport.cell_mass = rows[28];
                 router->subsurface().restorePendingSurface();
             }
-        } else warn("Hot start: incompatible V12 surface/aquifer interface dimensions");
+        } else
+            warn("Hot start: incompatible V12 surface/aquifer interface dimensions");
     } else if (st->active) {
-        warn("Hot start: pre-V12 aquifer file has no held receiving allowance or pending deliveries; interface continuation is reconstructed");
+        warn(
+            "Hot start: pre-V12 aquifer file has no held receiving allowance or pending deliveries; interface continuation is reconstructed");
     }
 #else
-    (void)hs; (void)ctx; (void)warn;
+    (void)hs;
+    (void)ctx;
+    (void)warn;
 #endif
 }
 
-}  // namespace
+} // namespace
 
-HotStartFile* HotStartManager::save(const SimulationContext& ctx,
-                                    const std::string& path) {
+HotStartFile* HotStartManager::save(const SimulationContext& ctx, const std::string& path) {
     tl_last_io_error.clear();
-    if(!ctx.reactions.lid_controls.empty()) {tl_last_io_error="LID reaction inventories require a full native engine checkpoint";return nullptr;}
-    if(coupledThermalRestartUnsupported(ctx)) {
-        tl_last_io_error="Coupled mesh/ground heat hotstart requires its thermal energy restart extension";return nullptr;
+    if (!ctx.reactions.lid_controls.empty()) {
+        tl_last_io_error = "LID reaction inventories require a full native engine checkpoint";
+        return nullptr;
     }
-    if(meshLidRestartUnsupported(ctx)) {
-        tl_last_io_error="Mesh LID hotstart requires the R5 joint owner restart extension";return nullptr;
+    if (coupledThermalRestartUnsupported(ctx)) {
+        tl_last_io_error =
+            "Coupled mesh/ground heat hotstart requires its thermal energy restart extension";
+        return nullptr;
     }
-    if(ctx.runtime_coupling_used) {
-        tl_last_io_error="Hotstart cannot preserve runtime 2D coupling prescriptions and receipts";
+    if (meshLidRestartUnsupported(ctx)) {
+        tl_last_io_error = "Mesh LID hotstart requires the R5 joint owner restart extension";
+        return nullptr;
+    }
+    if (ctx.runtime_coupling_used) {
+        tl_last_io_error =
+            "Hotstart cannot preserve runtime 2D coupling prescriptions and receipts";
         return nullptr;
     }
 
@@ -1113,8 +1562,9 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
 
     // Header. V4 (U2) whenever the model carries species: the block is
     // written after the subcatchments and implies the V3 age field.
-    hs->header.version    = ctx.options.water_age ? 3u : (use_v2 ? 2u : 1u);
-    if (captureSpeciesBlock(ctx, *hs)) hs->header.version = 4u;
+    hs->header.version = ctx.options.water_age ? 3u : (use_v2 ? 2u : 1u);
+    if (captureSpeciesBlock(ctx, *hs))
+        hs->header.version = 4u;
     // V5 (G1) implies V4: the aquifer block sits after the species block, so
     // a reader that stops at V4 still reads a coherent file.
     if (captureAquiferBlock(ctx, *hs)) {
@@ -1127,45 +1577,59 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
                     hs->header.version = 7u;
         }
     }
-    hs->header.timestamp  = static_cast<int64_t>(std::time(nullptr));
-    hs->header.sim_time   = ctx.current_time;
+    hs->header.timestamp = static_cast<int64_t>(std::time(nullptr));
+    hs->header.sim_time = ctx.current_time;
     hs->header.start_date = ctx.options.start_date;
-    hs->header.end_date   = ctx.options.end_date;
-    hs->header.crs        = ctx.spatial.crs;
+    hs->header.end_date = ctx.options.end_date;
+    hs->header.crs = ctx.spatial.crs;
 
     // Nodes — capture depth/head/volume from live SoA arrays
     const int n_nodes = ctx.n_nodes();
     hs->nodes.resize(static_cast<std::size_t>(n_nodes));
     for (int i = 0; i < n_nodes; ++i) {
         const auto ui = static_cast<std::size_t>(i);
-        hs->nodes[ui].id     = ctx.node_names.name_of(i);
-        hs->nodes[ui].depth  = ctx.nodes.depth[ui];
-        hs->nodes[ui].head   = ctx.nodes.head[ui];
+        hs->nodes[ui].id = ctx.node_names.name_of(i);
+        hs->nodes[ui].depth = ctx.nodes.depth[ui];
+        hs->nodes[ui].head = ctx.nodes.head[ui];
         hs->nodes[ui].volume = ctx.nodes.volume[ui];
         if (lidnode::active(ctx, i)) {
             hs->header.version = std::max(hs->header.version, 10u);
-            const auto& state = ctx.node_subtypes.storages.lid_state[ctx.node_subtypes.storage_row(i)];
+            const auto& state =
+                ctx.node_subtypes.storages.lid_state[ctx.node_subtypes.storage_row(i)];
             hs->nodes[ui].lid_treated_volume = state.treated_volume;
             hs->nodes[ui].lid_quality_mass = state.quality_mass;
             if (state.richards) {
                 hs->header.version = 11u;
-                const auto stack = lidnode::layers(ctx, ctx.node_subtypes.storages.lid[ctx.node_subtypes.storage_row(i)].control);
+                const auto stack = lidnode::layers(
+                    ctx, ctx.node_subtypes.storages.lid[ctx.node_subtypes.storage_row(i)].control);
                 for (std::size_t k = 0; k < state.cells.size(); ++k) {
-                    const auto& cell = state.cells[k]; const auto& p = stack[cell.layer - 1].retention;
+                    const auto& cell = state.cells[k];
+                    const auto& p = stack[cell.layer - 1].retention;
                     auto& values = hs->nodes[ui].lid_richards;
-                    values.insert(values.end(), {state.richards_water[k], p.theta_r, p.alpha, p.n, p.l, p.specific_storage, cell.conductivity, cell.wilting_point});
+                    values.insert(values.end(),
+                                  {state.richards_water[k], p.theta_r, p.alpha, p.n, p.l,
+                                   p.specific_storage, cell.conductivity, cell.wilting_point});
                 }
             }
             if (state.infiltration_cell >= 0) {
                 const auto& ga = state.surface_infil;
-                hs->nodes[ui].lid_infiltration = {ga.S, ga.Ks, ga.IMDmax, ga.IMD, ga.F, ga.Fu,
-                    ga.Fumax, ga.Lu, ga.T, state.infiltration_head, ga.saturated ? 1.0 : 0.0};
+                hs->nodes[ui].lid_infiltration = {ga.S,
+                                                  ga.Ks,
+                                                  ga.IMDmax,
+                                                  ga.IMD,
+                                                  ga.F,
+                                                  ga.Fu,
+                                                  ga.Fumax,
+                                                  ga.Lu,
+                                                  ga.T,
+                                                  state.infiltration_head,
+                                                  ga.saturated ? 1.0 : 0.0};
             }
             for (const auto& c : state.cells)
-                hs->nodes[ui].lid_cells.push_back({c.layer, c.bottom, c.top, c.porosity, c.geometric_volume, c.theta});
+                hs->nodes[ui].lid_cells.push_back(
+                    {c.layer, c.bottom, c.top, c.porosity, c.geometric_volume, c.theta});
         }
-        if (ctx.options.water_age &&
-            ui < ctx.water_age_state.node_age.size())
+        if (ctx.options.water_age && ui < ctx.water_age_state.node_age.size())
             hs->nodes[ui].age = ctx.water_age_state.node_age[ui];
     }
 
@@ -1174,12 +1638,11 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
     hs->links.resize(static_cast<std::size_t>(n_links));
     for (int i = 0; i < n_links; ++i) {
         const auto ui = static_cast<std::size_t>(i);
-        hs->links[ui].id     = ctx.link_names.name_of(i);
-        hs->links[ui].flow   = ctx.links.flow[ui];
-        hs->links[ui].depth  = ctx.links.depth[ui];
+        hs->links[ui].id = ctx.link_names.name_of(i);
+        hs->links[ui].flow = ctx.links.flow[ui];
+        hs->links[ui].depth = ctx.links.depth[ui];
         hs->links[ui].volume = ctx.links.volume[ui];
-        if (ctx.options.water_age &&
-            ui < ctx.water_age_state.link_age.size())
+        if (ctx.options.water_age && ui < ctx.water_age_state.link_age.size())
             hs->links[ui].age = ctx.water_age_state.link_age[ui];
     }
 
@@ -1189,7 +1652,7 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
     for (int i = 0; i < n_sub; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         auto& rec = hs->subcatches[ui];
-        rec.id     = ctx.subcatch_names.name_of(i);
+        rec.id = ctx.subcatch_names.name_of(i);
         rec.runoff = ctx.subcatches.runoff[ui];
         rec.gwater = ctx.subcatches.gw_flow[ui];
 
@@ -1205,17 +1668,29 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
         }
     }
 
-    if (!hs->gw_interface.empty()) hs->header.version = std::max(hs->header.version, 13u);
+    if (!hs->gw_interface.empty())
+        hs->header.version = std::max(hs->header.version, 13u);
     try {
-        if(ctx.state_accessors.get_snow_state)hs->snow_state=ctx.state_accessors.get_snow_state();
-        if(!hs->snow_state.empty())hs->header.version=14u;
-        if(ctx.state_accessors.get_surface_state)hs->surface_state=ctx.state_accessors.get_surface_state();
-        if(!hs->surface_state.empty())hs->header.version=16u;
+        if (ctx.state_accessors.get_snow_state)
+            hs->snow_state = ctx.state_accessors.get_snow_state();
+        if (!hs->snow_state.empty())
+            hs->header.version = 14u;
+        if (ctx.state_accessors.get_surface_state)
+            hs->surface_state = ctx.state_accessors.get_surface_state();
+        if (!hs->surface_state.empty())
+            hs->header.version = 16u;
 #ifdef OPENSWMM_HAS_2D
-        if(ctx.twod_io.surface_router)hs->gw_transport_state=ctx.twod_io.surface_router->subsurface().transportRestartState();
-        if(!hs->gw_transport_state.empty())hs->header.version=17u;
+        if (ctx.twod_io.surface_router)
+            hs->gw_transport_state =
+                ctx.twod_io.surface_router->subsurface().transportRestartState();
+        if (!hs->gw_transport_state.empty())
+            hs->header.version = 17u;
 #endif
-    }catch(const std::exception& e){tl_last_io_error=e.what();delete hs;return nullptr;}
+    } catch (const std::exception& e) {
+        tl_last_io_error = e.what();
+        delete hs;
+        return nullptr;
+    }
     if (!write_file(*hs, path)) {
         delete hs;
         return nullptr;
@@ -1232,36 +1707,44 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
                                     const runoff::RunoffSolver* runoff_solver,
                                     const groundwater::GWSolver* gw_solver,
                                     const std::string& path) {
-    return save_with_engine_checkpoint(ctx,runoff_solver,gw_solver,path,{});
+    return save_with_engine_checkpoint(ctx, runoff_solver, gw_solver, path, {});
 }
 
-HotStartFile* HotStartManager::save_with_engine_checkpoint(const SimulationContext& ctx,
-                                    const runoff::RunoffSolver* runoff_solver,
-                                    const groundwater::GWSolver* gw_solver,
-                                    const std::string& path,
-                                    const std::string& engine_checkpoint) {
+HotStartFile* HotStartManager::save_with_engine_checkpoint(
+    const SimulationContext& ctx, const runoff::RunoffSolver* runoff_solver,
+    const groundwater::GWSolver* gw_solver, const std::string& path,
+    const std::string& engine_checkpoint) {
     tl_last_io_error.clear();
-    if(engine_checkpoint.empty()&&!ctx.reactions.lid_controls.empty()) {tl_last_io_error="LID reaction inventories require a full native engine checkpoint";return nullptr;}
-    if(engine_checkpoint.empty() && coupledThermalRestartUnsupported(ctx)) {
-        tl_last_io_error="Coupled mesh/ground heat hotstart requires its thermal energy restart extension";return nullptr;
-    }
-    if(engine_checkpoint.empty() && meshLidRestartUnsupported(ctx)) {
-        tl_last_io_error="Mesh LID hotstart requires the R5 joint owner restart extension";return nullptr;
-    }
-    if(engine_checkpoint.empty() && ctx.runtime_coupling_used) {
-        tl_last_io_error="Hotstart cannot preserve runtime 2D coupling prescriptions and receipts";
+    if (engine_checkpoint.empty() && !ctx.reactions.lid_controls.empty()) {
+        tl_last_io_error = "LID reaction inventories require a full native engine checkpoint";
         return nullptr;
     }
-    if(engine_checkpoint.size()>512u*1024u*1024u) {
-        tl_last_io_error="Native engine hotstart checkpoint exceeds the 512 MiB limit";return nullptr;
+    if (engine_checkpoint.empty() && coupledThermalRestartUnsupported(ctx)) {
+        tl_last_io_error =
+            "Coupled mesh/ground heat hotstart requires its thermal energy restart extension";
+        return nullptr;
+    }
+    if (engine_checkpoint.empty() && meshLidRestartUnsupported(ctx)) {
+        tl_last_io_error = "Mesh LID hotstart requires the R5 joint owner restart extension";
+        return nullptr;
+    }
+    if (engine_checkpoint.empty() && ctx.runtime_coupling_used) {
+        tl_last_io_error =
+            "Hotstart cannot preserve runtime 2D coupling prescriptions and receipts";
+        return nullptr;
+    }
+    if (engine_checkpoint.size() > 512u * 1024u * 1024u) {
+        tl_last_io_error = "Native engine hotstart checkpoint exceeds the 512 MiB limit";
+        return nullptr;
     }
 
     auto* hs = new HotStartFile();
     hs->path = path;
 
     // Header — V2 (V4 when the model carries species, U2)
-    hs->header.version    = 2;
-    if (captureSpeciesBlock(ctx, *hs)) hs->header.version = 4u;
+    hs->header.version = 2;
+    if (captureSpeciesBlock(ctx, *hs))
+        hs->header.version = 4u;
     // V5 (G1) implies V4: the aquifer block sits after the species block, so
     // a reader that stops at V4 still reads a coherent file.
     if (captureAquiferBlock(ctx, *hs)) {
@@ -1274,45 +1757,59 @@ HotStartFile* HotStartManager::save_with_engine_checkpoint(const SimulationConte
                     hs->header.version = 7u;
         }
     }
-    hs->header.timestamp  = static_cast<int64_t>(std::time(nullptr));
-    hs->header.sim_time   = ctx.current_time;
+    hs->header.timestamp = static_cast<int64_t>(std::time(nullptr));
+    hs->header.sim_time = ctx.current_time;
     hs->header.start_date = ctx.options.start_date;
-    hs->header.end_date   = ctx.options.end_date;
-    hs->header.crs        = ctx.spatial.crs;
+    hs->header.end_date = ctx.options.end_date;
+    hs->header.crs = ctx.spatial.crs;
 
     // Nodes
     const int n_nodes = ctx.n_nodes();
     hs->nodes.resize(static_cast<std::size_t>(n_nodes));
     for (int i = 0; i < n_nodes; ++i) {
         const auto ui = static_cast<std::size_t>(i);
-        hs->nodes[ui].id     = ctx.node_names.name_of(i);
-        hs->nodes[ui].depth  = ctx.nodes.depth[ui];
-        hs->nodes[ui].head   = ctx.nodes.head[ui];
+        hs->nodes[ui].id = ctx.node_names.name_of(i);
+        hs->nodes[ui].depth = ctx.nodes.depth[ui];
+        hs->nodes[ui].head = ctx.nodes.head[ui];
         hs->nodes[ui].volume = ctx.nodes.volume[ui];
         if (lidnode::active(ctx, i)) {
             hs->header.version = std::max(hs->header.version, 10u);
-            const auto& state = ctx.node_subtypes.storages.lid_state[ctx.node_subtypes.storage_row(i)];
+            const auto& state =
+                ctx.node_subtypes.storages.lid_state[ctx.node_subtypes.storage_row(i)];
             hs->nodes[ui].lid_treated_volume = state.treated_volume;
             hs->nodes[ui].lid_quality_mass = state.quality_mass;
             if (state.richards) {
                 hs->header.version = 11u;
-                const auto stack = lidnode::layers(ctx, ctx.node_subtypes.storages.lid[ctx.node_subtypes.storage_row(i)].control);
+                const auto stack = lidnode::layers(
+                    ctx, ctx.node_subtypes.storages.lid[ctx.node_subtypes.storage_row(i)].control);
                 for (std::size_t k = 0; k < state.cells.size(); ++k) {
-                    const auto& cell = state.cells[k]; const auto& p = stack[cell.layer - 1].retention;
+                    const auto& cell = state.cells[k];
+                    const auto& p = stack[cell.layer - 1].retention;
                     auto& values = hs->nodes[ui].lid_richards;
-                    values.insert(values.end(), {state.richards_water[k], p.theta_r, p.alpha, p.n, p.l, p.specific_storage, cell.conductivity, cell.wilting_point});
+                    values.insert(values.end(),
+                                  {state.richards_water[k], p.theta_r, p.alpha, p.n, p.l,
+                                   p.specific_storage, cell.conductivity, cell.wilting_point});
                 }
             }
             if (state.infiltration_cell >= 0) {
                 const auto& ga = state.surface_infil;
-                hs->nodes[ui].lid_infiltration = {ga.S, ga.Ks, ga.IMDmax, ga.IMD, ga.F, ga.Fu,
-                    ga.Fumax, ga.Lu, ga.T, state.infiltration_head, ga.saturated ? 1.0 : 0.0};
+                hs->nodes[ui].lid_infiltration = {ga.S,
+                                                  ga.Ks,
+                                                  ga.IMDmax,
+                                                  ga.IMD,
+                                                  ga.F,
+                                                  ga.Fu,
+                                                  ga.Fumax,
+                                                  ga.Lu,
+                                                  ga.T,
+                                                  state.infiltration_head,
+                                                  ga.saturated ? 1.0 : 0.0};
             }
             for (const auto& c : state.cells)
-                hs->nodes[ui].lid_cells.push_back({c.layer, c.bottom, c.top, c.porosity, c.geometric_volume, c.theta});
+                hs->nodes[ui].lid_cells.push_back(
+                    {c.layer, c.bottom, c.top, c.porosity, c.geometric_volume, c.theta});
         }
-        if (ctx.options.water_age &&
-            ui < ctx.water_age_state.node_age.size())
+        if (ctx.options.water_age && ui < ctx.water_age_state.node_age.size())
             hs->nodes[ui].age = ctx.water_age_state.node_age[ui];
     }
 
@@ -1321,12 +1818,11 @@ HotStartFile* HotStartManager::save_with_engine_checkpoint(const SimulationConte
     hs->links.resize(static_cast<std::size_t>(n_links));
     for (int i = 0; i < n_links; ++i) {
         const auto ui = static_cast<std::size_t>(i);
-        hs->links[ui].id     = ctx.link_names.name_of(i);
-        hs->links[ui].flow   = ctx.links.flow[ui];
-        hs->links[ui].depth  = ctx.links.depth[ui];
+        hs->links[ui].id = ctx.link_names.name_of(i);
+        hs->links[ui].flow = ctx.links.flow[ui];
+        hs->links[ui].depth = ctx.links.depth[ui];
         hs->links[ui].volume = ctx.links.volume[ui];
-        if (ctx.options.water_age &&
-            ui < ctx.water_age_state.link_age.size())
+        if (ctx.options.water_age && ui < ctx.water_age_state.link_age.size())
             hs->links[ui].age = ctx.water_age_state.link_age[ui];
     }
 
@@ -1335,10 +1831,10 @@ HotStartFile* HotStartManager::save_with_engine_checkpoint(const SimulationConte
     hs->subcatches.resize(static_cast<std::size_t>(n_sub));
     for (int i = 0; i < n_sub; ++i) {
         const auto ui = static_cast<std::size_t>(i);
-        auto& rec    = hs->subcatches[ui];
-        rec.id       = ctx.subcatch_names.name_of(i);
-        rec.runoff   = ctx.subcatches.runoff[ui];
-        rec.gwater   = ctx.subcatches.gw_flow[ui];
+        auto& rec = hs->subcatches[ui];
+        rec.id = ctx.subcatch_names.name_of(i);
+        rec.runoff = ctx.subcatches.runoff[ui];
+        rec.gwater = ctx.subcatches.gw_flow[ui];
 
         // Infiltration state
         if (runoff_solver) {
@@ -1351,27 +1847,38 @@ HotStartFile* HotStartManager::save_with_engine_checkpoint(const SimulationConte
         if (gw_solver) {
             const auto& gwa = gw_solver->state();
             if (ui < gwa.theta.size()) {
-                rec.gw_theta       = gwa.theta[ui];
-                rec.gw_lower_depth = ui < gwa.lower_depth.size()
-                                     ? gwa.lower_depth[ui] : 0.0;
+                rec.gw_theta = gwa.theta[ui];
+                rec.gw_lower_depth = ui < gwa.lower_depth.size() ? gwa.lower_depth[ui] : 0.0;
             }
         }
     }
 
-    if (!hs->gw_interface.empty()) hs->header.version = std::max(hs->header.version, 13u);
+    if (!hs->gw_interface.empty())
+        hs->header.version = std::max(hs->header.version, 13u);
     try {
-        if(ctx.state_accessors.get_snow_state)hs->snow_state=ctx.state_accessors.get_snow_state();
-        if(!hs->snow_state.empty())hs->header.version=14u;
-        if(ctx.state_accessors.get_surface_state)hs->surface_state=ctx.state_accessors.get_surface_state();
-        if(!hs->surface_state.empty())hs->header.version=16u;
+        if (ctx.state_accessors.get_snow_state)
+            hs->snow_state = ctx.state_accessors.get_snow_state();
+        if (!hs->snow_state.empty())
+            hs->header.version = 14u;
+        if (ctx.state_accessors.get_surface_state)
+            hs->surface_state = ctx.state_accessors.get_surface_state();
+        if (!hs->surface_state.empty())
+            hs->header.version = 16u;
 #ifdef OPENSWMM_HAS_2D
-        if(ctx.twod_io.surface_router)hs->gw_transport_state=ctx.twod_io.surface_router->subsurface().transportRestartState();
-        if(!hs->gw_transport_state.empty())hs->header.version=17u;
+        if (ctx.twod_io.surface_router)
+            hs->gw_transport_state =
+                ctx.twod_io.surface_router->subsurface().transportRestartState();
+        if (!hs->gw_transport_state.empty())
+            hs->header.version = 17u;
 #endif
-    }catch(const std::exception& e){tl_last_io_error=e.what();delete hs;return nullptr;}
-    if(!engine_checkpoint.empty()) {
-        hs->engine_checkpoint=engine_checkpoint;
-        hs->header.version=std::max(hs->header.version,15u);
+    } catch (const std::exception& e) {
+        tl_last_io_error = e.what();
+        delete hs;
+        return nullptr;
+    }
+    if (!engine_checkpoint.empty()) {
+        hs->engine_checkpoint = engine_checkpoint;
+        hs->header.version = std::max(hs->header.version, 15u);
     }
     if (!write_file(*hs, path)) {
         delete hs;
@@ -1408,54 +1915,91 @@ bool HotStartManager::is_native_file(const std::string& path) noexcept {
 // HotStartManager::apply()
 // ============================================================================
 
-int HotStartManager::apply(HotStartFile& hs,
-                           SimulationContext& ctx,
+int HotStartManager::apply(HotStartFile& hs, SimulationContext& ctx,
                            std::function<void(const std::string&)> warn_cb) {
     hs.warnings.clear();
-    if(!ctx.reactions.lid_controls.empty()&&hs.engine_checkpoint.empty()) {tl_last_io_error="LID reaction inventories require a full native engine checkpoint";hs.warnings.push_back(tl_last_io_error);return -1;}
-    if(!hs.engine_checkpoint.empty()) {
-        tl_last_io_error="Native V15 engine checkpoint must be restored through SWMMEngine start; partial hotstart apply is refused";
-        hs.warnings.push_back(tl_last_io_error);if(warn_cb)warn_cb(tl_last_io_error);return -1;
+    if (!ctx.reactions.lid_controls.empty() && hs.engine_checkpoint.empty()) {
+        tl_last_io_error = "LID reaction inventories require a full native engine checkpoint";
+        hs.warnings.push_back(tl_last_io_error);
+        return -1;
     }
-    if(coupledThermalRestartUnsupported(ctx)) {
-        tl_last_io_error="Coupled mesh/ground heat hotstart requires its thermal energy restart extension";
-        hs.warnings.push_back(tl_last_io_error);if(warn_cb)warn_cb(tl_last_io_error);return -1;
+    if (!hs.engine_checkpoint.empty()) {
+        tl_last_io_error =
+            "Native V15 engine checkpoint must be restored through SWMMEngine start; partial hotstart apply is refused";
+        hs.warnings.push_back(tl_last_io_error);
+        if (warn_cb)
+            warn_cb(tl_last_io_error);
+        return -1;
     }
-    if(!hs.snow_state.empty()) {
-        const std::string error=ctx.state_accessors.set_snow_state?
-            ctx.state_accessors.set_snow_state(hs.snow_state,false):"Snow state accessor is unavailable.";
-        if(!error.empty()) {
-            tl_last_io_error=error;hs.warnings.push_back(error);if(warn_cb)warn_cb(error);return -1;
+    if (coupledThermalRestartUnsupported(ctx)) {
+        tl_last_io_error =
+            "Coupled mesh/ground heat hotstart requires its thermal energy restart extension";
+        hs.warnings.push_back(tl_last_io_error);
+        if (warn_cb)
+            warn_cb(tl_last_io_error);
+        return -1;
+    }
+    if (!hs.snow_state.empty()) {
+        const std::string error = ctx.state_accessors.set_snow_state
+                                      ? ctx.state_accessors.set_snow_state(hs.snow_state, false)
+                                      : "Snow state accessor is unavailable.";
+        if (!error.empty()) {
+            tl_last_io_error = error;
+            hs.warnings.push_back(error);
+            if (warn_cb)
+                warn_cb(error);
+            return -1;
         }
     }
-    if(!hs.surface_state.empty()) {
-        const std::string error=ctx.state_accessors.set_surface_state?
-            ctx.state_accessors.set_surface_state(hs.surface_state,false):"Subcatchment surface state accessor is unavailable.";
-        if(!error.empty()) {
-            tl_last_io_error=error;hs.warnings.push_back(error);if(warn_cb)warn_cb(error);return -1;
+    if (!hs.surface_state.empty()) {
+        const std::string error =
+            ctx.state_accessors.set_surface_state
+                ? ctx.state_accessors.set_surface_state(hs.surface_state, false)
+                : "Subcatchment surface state accessor is unavailable.";
+        if (!error.empty()) {
+            tl_last_io_error = error;
+            hs.warnings.push_back(error);
+            if (warn_cb)
+                warn_cb(error);
+            return -1;
         }
     }
 #ifdef OPENSWMM_HAS_2D
-    if(ctx.twod_io.surface_router) {
-        const auto error=ctx.twod_io.surface_router->subsurface().restoreTransportRestart(hs.gw_transport_state,false);
-        if(!error.empty()){tl_last_io_error=error;hs.warnings.push_back(error);if(warn_cb)warn_cb(error);return -1;}
-    } else if(!hs.gw_transport_state.empty()){tl_last_io_error="Groundwater transport hotstart requires its spatial model.";return -1;}
+    if (ctx.twod_io.surface_router) {
+        const auto error = ctx.twod_io.surface_router->subsurface().restoreTransportRestart(
+            hs.gw_transport_state, false);
+        if (!error.empty()) {
+            tl_last_io_error = error;
+            hs.warnings.push_back(error);
+            if (warn_cb)
+                warn_cb(error);
+            return -1;
+        }
+    } else if (!hs.gw_transport_state.empty()) {
+        tl_last_io_error = "Groundwater transport hotstart requires its spatial model.";
+        return -1;
+    }
 #endif
-    if(meshLidRestartUnsupported(ctx)) {
-        tl_last_io_error="Mesh LID hotstart requires the R5 joint owner restart extension";
-        hs.warnings.push_back(tl_last_io_error);if(warn_cb)warn_cb(tl_last_io_error);return 1;
+    if (meshLidRestartUnsupported(ctx)) {
+        tl_last_io_error = "Mesh LID hotstart requires the R5 joint owner restart extension";
+        hs.warnings.push_back(tl_last_io_error);
+        if (warn_cb)
+            warn_cb(tl_last_io_error);
+        return 1;
     }
     int missing = 0;
 
     auto emit_warning = [&](const std::string& msg) {
         hs.warnings.push_back(msg);
-        if (warn_cb) warn_cb(msg);
+        if (warn_cb)
+            warn_cb(msg);
         ++missing;
     };
 
-    if (!validAquiferInterface(hs,ctx)) {
-        tl_last_io_error="Incompatible V12 surface/aquifer interface dimensions";
-        emit_warning(tl_last_io_error);return missing;
+    if (!validAquiferInterface(hs, ctx)) {
+        tl_last_io_error = "Incompatible V12 surface/aquifer interface dimensions";
+        emit_warning(tl_last_io_error);
+        return missing;
     }
 
     // Apply node records
@@ -1468,44 +2012,62 @@ int HotStartManager::apply(HotStartFile& hs,
         const auto i = static_cast<std::size_t>(idx);
         if (lidnode::active(ctx, idx) || !rec.lid_cells.empty()) {
             const int r = ctx.node_subtypes.storage_row(idx);
-            bool compatible = r >= 0 && ctx.node_subtypes.storages.lid_state[r].cells.size() == rec.lid_cells.size() && !rec.lid_cells.empty();
+            bool compatible =
+                r >= 0 &&
+                ctx.node_subtypes.storages.lid_state[r].cells.size() == rec.lid_cells.size() &&
+                !rec.lid_cells.empty();
             if (compatible) {
                 const auto& cells = ctx.node_subtypes.storages.lid_state[r].cells;
                 for (std::size_t k = 0; k < cells.size(); ++k) {
-                    const auto& a = cells[k]; const auto& b = rec.lid_cells[k];
+                    const auto& a = cells[k];
+                    const auto& b = rec.lid_cells[k];
                     compatible &= a.layer == b.layer && a.bottom == b.bottom && a.top == b.top &&
-                                  a.porosity == b.porosity && a.geometric_volume == b.volume && (ctx.node_subtypes.storages.lid_state[r].richards || b.theta >= a.wilting_point);
+                                  a.porosity == b.porosity && a.geometric_volume == b.volume &&
+                                  (ctx.node_subtypes.storages.lid_state[r].richards ||
+                                   b.theta >= a.wilting_point);
                 }
             }
-            compatible &= rec.lid_quality_mass.empty() || rec.lid_quality_mass.size()==rec.lid_cells.size()*ctx.n_pollutants();
+            compatible &= rec.lid_quality_mass.empty() ||
+                          rec.lid_quality_mass.size() == rec.lid_cells.size() * ctx.n_pollutants();
             if (compatible) {
                 const auto& state = ctx.node_subtypes.storages.lid_state[r];
-                compatible &= state.richards ? rec.lid_richards.size() == state.cells.size() * 8 : rec.lid_richards.empty();
+                compatible &= state.richards ? rec.lid_richards.size() == state.cells.size() * 8
+                                             : rec.lid_richards.empty();
                 if (compatible && state.richards) {
-                    const auto stack = lidnode::layers(ctx, ctx.node_subtypes.storages.lid[r].control);
+                    const auto stack =
+                        lidnode::layers(ctx, ctx.node_subtypes.storages.lid[r].control);
                     for (std::size_t k = 0; k < state.cells.size(); ++k) {
-                        const auto& cell = state.cells[k]; const auto& p = stack[cell.layer - 1].retention;
+                        const auto& cell = state.cells[k];
+                        const auto& p = stack[cell.layer - 1].retention;
                         const auto* v = rec.lid_richards.data() + k * 8;
-                        compatible &= v[1] == p.theta_r && v[2] == p.alpha && v[3] == p.n && v[4] == p.l &&
-                            v[5] == p.specific_storage && v[6] == cell.conductivity && v[7] == cell.wilting_point;
-                        if (k) compatible &= v[0] > p.theta_r * cell.geometric_volume;
+                        compatible &= v[1] == p.theta_r && v[2] == p.alpha && v[3] == p.n &&
+                                      v[4] == p.l && v[5] == p.specific_storage &&
+                                      v[6] == cell.conductivity && v[7] == cell.wilting_point;
+                        if (k)
+                            compatible &= v[0] > p.theta_r * cell.geometric_volume;
                     }
                 }
             }
             if (compatible && hs.header.version >= 10u) {
                 const auto& state = ctx.node_subtypes.storages.lid_state[r];
                 const auto& ga = state.surface_infil;
-                compatible &= state.infiltration_cell < 0 ? rec.lid_infiltration.empty() :
-                    rec.lid_infiltration.size() == 11 && rec.lid_infiltration[0] == ga.S &&
-                    rec.lid_infiltration[1] == ga.Ks && rec.lid_infiltration[2] == ga.IMDmax &&
-                    rec.lid_infiltration[6] == ga.Fumax && rec.lid_infiltration[7] == ga.Lu;
+                compatible &= state.infiltration_cell < 0
+                                  ? rec.lid_infiltration.empty()
+                                  : rec.lid_infiltration.size() == 11 &&
+                                        rec.lid_infiltration[0] == ga.S &&
+                                        rec.lid_infiltration[1] == ga.Ks &&
+                                        rec.lid_infiltration[2] == ga.IMDmax &&
+                                        rec.lid_infiltration[6] == ga.Fumax &&
+                                        rec.lid_infiltration[7] == ga.Lu;
             }
             if (!compatible) {
-                emit_warning("Hot start: LID profile missing or incompatible for node '" + rec.id + "'; node state not applied");
+                emit_warning("Hot start: LID profile missing or incompatible for node '" + rec.id +
+                             "'; node state not applied");
                 continue;
             }
             auto& state = ctx.node_subtypes.storages.lid_state[r];
-            state.held_volume = 0.0; state.treated_volume = rec.lid_treated_volume;
+            state.held_volume = 0.0;
+            state.treated_volume = rec.lid_treated_volume;
             state.quality_mass = rec.lid_quality_mass;
             std::fill(state.port_delta.begin(), state.port_delta.end(), 0.0);
             for (std::size_t k = 0; k < state.cells.size(); ++k) {
@@ -1513,26 +2075,34 @@ int HotStartManager::apply(HotStartFile& hs,
                 state.held_volume += state.cells[k].theta * state.cells[k].geometric_volume;
             }
             if (state.richards) {
-                for (std::size_t k = 0; k < state.cells.size(); ++k) state.richards_water[k] = rec.lid_richards[k * 8];
+                for (std::size_t k = 0; k < state.cells.size(); ++k)
+                    state.richards_water[k] = rec.lid_richards[k * 8];
                 lidnode::refreshRichardsState(ctx, r);
             }
             ctx.nodes.full_volume[i] = 0.0;
-            ctx.nodes.full_volume[i] = node::getVolume(ctx.nodes, idx, ctx.nodes.full_depth[i], &ctx.tables,
+            ctx.nodes.full_volume[i] = node::getVolume(
+                ctx.nodes, idx, ctx.nodes.full_depth[i], &ctx.tables,
                 ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)), &ctx.node_subtypes);
             ctx.nodes.rpt_full_volume[i] = ctx.nodes.full_volume[i];
             if (!rec.lid_infiltration.empty()) {
                 const auto& v = rec.lid_infiltration;
                 auto& ga = state.surface_infil;
-                ga.IMD = v[3]; ga.F = v[4]; ga.Fu = v[5]; ga.T = v[8];
-                state.infiltration_head = v[9]; ga.saturated = v[10] != 0;
+                ga.IMD = v[3];
+                ga.F = v[4];
+                ga.Fu = v[5];
+                ga.T = v[8];
+                state.infiltration_head = v[9];
+                ga.saturated = v[10] != 0;
             } else if (hs.header.version < 10u && state.infiltration_cell >= 0) {
                 ctx.nodes.depth[i] = rec.depth;
                 lidnode::initializeInfiltration(ctx, idx);
-                emit_warning("Hot start: pre-V10 LID infiltration history reconstructed from moisture for node '" + rec.id + "'; exact continuation unavailable");
+                emit_warning(
+                    "Hot start: pre-V10 LID infiltration history reconstructed from moisture for node '" +
+                    rec.id + "'; exact continuation unavailable");
             }
         }
-        ctx.nodes.depth[i]  = rec.depth;
-        ctx.nodes.head[i]   = rec.head;
+        ctx.nodes.depth[i] = rec.depth;
+        ctx.nodes.head[i] = rec.head;
         ctx.nodes.volume[i] = rec.volume;
         // A2a: restore water age. Sizing happens once (guarded resize);
         // both engines then seed FROM the loaded state instead of
@@ -1540,12 +2110,11 @@ int HotStartManager::apply(HotStartFile& hs,
         // mirror's first-step fill).
         if (rec.age >= 0.0 && ctx.options.water_age) {
             auto& ws = ctx.water_age_state;
-            if (ws.node_age.size() !=
-                static_cast<std::size_t>(ctx.n_nodes()))
+            if (ws.node_age.size() != static_cast<std::size_t>(ctx.n_nodes()))
                 ws.resize(ctx.n_nodes(), ctx.n_links(), ctx.n_subcatches());
-            ws.node_age[i]     = rec.age;
+            ws.node_age[i] = rec.age;
             ws.hotstart_loaded = true;
-            ws.legacy_seeded   = true;
+            ws.legacy_seeded = true;
         }
     }
 
@@ -1557,17 +2126,16 @@ int HotStartManager::apply(HotStartFile& hs,
             continue;
         }
         const auto i = static_cast<std::size_t>(idx);
-        ctx.links.flow[i]  = rec.flow;
+        ctx.links.flow[i] = rec.flow;
         ctx.links.depth[i] = rec.depth;
         ctx.links.volume[i] = rec.volume;
         if (rec.age >= 0.0 && ctx.options.water_age) {
             auto& ws = ctx.water_age_state;
-            if (ws.link_age.size() !=
-                static_cast<std::size_t>(ctx.n_links()))
+            if (ws.link_age.size() != static_cast<std::size_t>(ctx.n_links()))
                 ws.resize(ctx.n_nodes(), ctx.n_links(), ctx.n_subcatches());
-            ws.link_age[i]     = rec.age;
+            ws.link_age[i] = rec.age;
             ws.hotstart_loaded = true;
-            ws.legacy_seeded   = true;
+            ws.legacy_seeded = true;
         }
     }
 
@@ -1578,8 +2146,7 @@ int HotStartManager::apply(HotStartFile& hs,
     for (const auto& rec : hs.subcatches) {
         const int idx = ctx.subcatch_names.find(rec.id);
         if (idx < 0) {
-            emit_warning("Hot start: subcatchment '" + rec.id +
-                         "' not found in current model");
+            emit_warning("Hot start: subcatchment '" + rec.id + "' not found in current model");
             continue;
         }
         const auto i = static_cast<std::size_t>(idx);
@@ -1600,48 +2167,71 @@ int HotStartManager::apply(HotStartFile& hs,
     if (hs.header.version >= 4u)
         restoreSpeciesBlock(hs, ctx, [&](const std::string& m) {
             hs.warnings.push_back(m);
-            if (warn_cb) warn_cb(m);
+            if (warn_cb)
+                warn_cb(m);
         });
 
     // V5 (G1): the two-zone groundwater state, by cell index.
     if (hs.header.version >= 5u)
         restoreAquiferBlock(hs, ctx, [&](const std::string& m) {
             hs.warnings.push_back(m);
-            if (warn_cb) warn_cb(m);
+            if (warn_cb)
+                warn_cb(m);
         });
     // V6 (T7.5): and what is dissolved in it, by species name. After the
     // water, because it reads `gw_n_cells` the V5 block validated.
     if (hs.header.version >= 6u)
         restoreAquiferSpeciesBlock(hs, ctx, [&](const std::string& m) {
             hs.warnings.push_back(m);
-            if (warn_cb) warn_cb(m);
+            if (warn_cb)
+                warn_cb(m);
         });
 
-    if(!hs.snow_state.empty()) {
-        const auto error=ctx.state_accessors.set_snow_state(hs.snow_state,true);
-        if(!error.empty()){tl_last_io_error=error;return -1;}
-    } else if(ctx.state_accessors.set_snow_state && (std::any_of(ctx.subcatches.snowpack.begin(),ctx.subcatches.snowpack.end(),[](int p){return p>=0;}) ||
-              (ctx.state_accessors.get_snow_state&&!ctx.state_accessors.get_snow_state().empty()))) {
-        const auto error=ctx.state_accessors.set_snow_state({},true);
-        if(!error.empty()){tl_last_io_error=error;return -1;}
-        emit_warning("Hot start lacks snow state: assigned native and mesh snowpacks start bare; future snow forcing is retained.");
+    if (!hs.snow_state.empty()) {
+        const auto error = ctx.state_accessors.set_snow_state(hs.snow_state, true);
+        if (!error.empty()) {
+            tl_last_io_error = error;
+            return -1;
+        }
+    } else if (ctx.state_accessors.set_snow_state &&
+               (std::any_of(ctx.subcatches.snowpack.begin(), ctx.subcatches.snowpack.end(),
+                            [](int p) { return p >= 0; }) ||
+                (ctx.state_accessors.get_snow_state &&
+                 !ctx.state_accessors.get_snow_state().empty()))) {
+        const auto error = ctx.state_accessors.set_snow_state({}, true);
+        if (!error.empty()) {
+            tl_last_io_error = error;
+            return -1;
+        }
+        emit_warning(
+            "Hot start lacks snow state: assigned native and mesh snowpacks start bare; future snow forcing is retained.");
     }
-    if(!hs.surface_state.empty()) {
-        const auto error=ctx.state_accessors.set_surface_state(hs.surface_state,true);
-        if(!error.empty()){tl_last_io_error=error;return -1;}
-    } else if(ctx.state_accessors.set_surface_state && ctx.n_subcatches()>0) {
+    if (!hs.surface_state.empty()) {
+        const auto error = ctx.state_accessors.set_surface_state(hs.surface_state, true);
+        if (!error.empty()) {
+            tl_last_io_error = error;
+            return -1;
+        }
+    } else if (ctx.state_accessors.set_surface_state && ctx.n_subcatches() > 0) {
         // A file from before V16 is still usable, so this is a warning, not
         // a missing object (emit_warning counts those, and USE HOTSTART
         // refuses a file with any).
-        const std::string msg="Hot start lacks subcatchment surface state (version " + std::to_string(hs.header.version) +
-                              " file): ponded water and buildup start from the model's initial conditions.";
+        const std::string msg =
+            "Hot start lacks subcatchment surface state (version " +
+            std::to_string(hs.header.version) +
+            " file): ponded water and buildup start from the model's initial conditions.";
         hs.warnings.push_back(msg);
-        if(warn_cb)warn_cb(msg);
+        if (warn_cb)
+            warn_cb(msg);
     }
 #ifdef OPENSWMM_HAS_2D
-    if(ctx.twod_io.surface_router&&!hs.gw_transport_state.empty()) {
-        const auto error=ctx.twod_io.surface_router->subsurface().restoreTransportRestart(hs.gw_transport_state,true);
-        if(!error.empty()){tl_last_io_error=error;return -1;}
+    if (ctx.twod_io.surface_router && !hs.gw_transport_state.empty()) {
+        const auto error = ctx.twod_io.surface_router->subsurface().restoreTransportRestart(
+            hs.gw_transport_state, true);
+        if (!error.empty()) {
+            tl_last_io_error = error;
+            return -1;
+        }
     }
 #endif
     return missing;
@@ -1651,23 +2241,26 @@ int HotStartManager::apply(HotStartFile& hs,
 // HotStartManager::apply() — V2 overload with infil + GW state (Gap #54)
 // ============================================================================
 
-int HotStartManager::apply(HotStartFile& hs,
-                           SimulationContext& ctx,
-                           runoff::RunoffSolver* runoff_solver,
-                           groundwater::GWSolver* gw_solver,
+int HotStartManager::apply(HotStartFile& hs, SimulationContext& ctx,
+                           runoff::RunoffSolver* runoff_solver, groundwater::GWSolver* gw_solver,
                            std::function<void(const std::string&)> warn_cb) {
     // Apply hydraulic state (nodes, links) via the existing V1 overload
     int missing = apply(hs, ctx, warn_cb);
-    if(missing<0)return missing;
-    if(meshLidRestartUnsupported(ctx))return missing;
-    if (!validAquiferInterface(hs,ctx)) return missing;
+    if (missing < 0)
+        return missing;
+    if (meshLidRestartUnsupported(ctx))
+        return missing;
+    if (!validAquiferInterface(hs, ctx))
+        return missing;
 
     // Apply V2 infiltration + GW state if the file has it
-    if (hs.header.version < 2u) return missing;
+    if (hs.header.version < 2u)
+        return missing;
 
     for (const auto& rec : hs.subcatches) {
         const int idx = ctx.subcatch_names.find(rec.id);
-        if (idx < 0) continue;  // already counted as missing in V1 path
+        if (idx < 0)
+            continue; // already counted as missing in V1 path
 
         // Infiltration model state
         if (runoff_solver && rec.infil_model >= 0) {
@@ -1678,8 +2271,10 @@ int HotStartManager::apply(HotStartFile& hs,
         if (gw_solver && rec.gw_theta >= 0.0) {
             auto& gwa = gw_solver->state();
             const auto ui = static_cast<std::size_t>(idx);
-            if (ui < gwa.theta.size())       gwa.theta[ui]       = rec.gw_theta;
-            if (ui < gwa.lower_depth.size()) gwa.lower_depth[ui] = rec.gw_lower_depth;
+            if (ui < gwa.theta.size())
+                gwa.theta[ui] = rec.gw_theta;
+            if (ui < gwa.lower_depth.size())
+                gwa.lower_depth[ui] = rec.gw_lower_depth;
         }
     }
 
@@ -1696,40 +2291,46 @@ int HotStartManager::apply(HotStartFile& hs,
 // readRouting(); see also hotstart_is_valid() for the stamp/version logic.
 
 /// Marks the reaction species trailer after a legacy-layout body.
-static constexpr char kSpeciesTrailerTag[15] = {'O','P','E','N','S','W','M','M','-','H','S','M','S','X','1'};
+static constexpr char kSpeciesTrailerTag[15] = {'O', 'P', 'E', 'N', 'S', 'W', 'M', 'M',
+                                                '-', 'H', 'S', 'M', 'S', 'X', '1'};
 
-std::size_t HotStartManager::legacy_runoff_size(const SimulationContext& ctx,
-                                                int n_land) {
+std::size_t HotStartManager::legacy_runoff_size(const SimulationContext& ctx, int n_land) {
     const auto& sub = ctx.subcatches;
     const auto np = static_cast<std::size_t>(std::max(ctx.n_pollutants(), 0));
     std::size_t n = 0;
     for (int i = 0; i < ctx.n_subcatches(); ++i) {
         const auto ui = static_cast<std::size_t>(i);
         n += 4 + 6;
-        if (ui < sub.gw_aquifer.size() && sub.gw_aquifer[ui] >= 0) n += 4;
-        if (ui < sub.snowpack.size()   && sub.snowpack[ui]   >= 0) n += 15;
+        if (ui < sub.gw_aquifer.size() && sub.gw_aquifer[ui] >= 0)
+            n += 4;
+        if (ui < sub.snowpack.size() && sub.snowpack[ui] >= 0)
+            n += 15;
         if (np > 0)
             n += 2 * np + static_cast<std::size_t>(std::max(n_land, 0)) * (np + 1);
     }
     return n;
 }
 
-int HotStartManager::apply_legacy_routing(
-        const std::string& path,
-        SimulationContext& ctx,
-        std::function<void(const std::string&)> warn_cb,
-        std::vector<double>* runoff,
-        LegacySpeciesTrailer* species) {
-    if(!ctx.reactions.lid_controls.empty()) {tl_last_io_error="LID reaction inventories require a full native engine checkpoint";return 1;}
-    if(layeredGroundwaterRestart(ctx)) {
-        tl_last_io_error="Legacy hotstart cannot restore groundwater boundary/layer transport state; use NATIVE.";return 1;
+int HotStartManager::apply_legacy_routing(const std::string& path, SimulationContext& ctx,
+                                          std::function<void(const std::string&)> warn_cb,
+                                          std::vector<double>* runoff,
+                                          LegacySpeciesTrailer* species) {
+    if (!ctx.reactions.lid_controls.empty()) {
+        tl_last_io_error = "LID reaction inventories require a full native engine checkpoint";
+        return 1;
+    }
+    if (layeredGroundwaterRestart(ctx)) {
+        tl_last_io_error =
+            "Legacy hotstart cannot restore groundwater boundary/layer transport state; use NATIVE.";
+        return 1;
     }
     if (coupledThermalRestartUnsupported(ctx)) {
         tl_last_io_error = "Legacy hotstart has no coupled mesh/ground thermal energy";
         return -1;
     }
-    if(meshLidRestartUnsupported(ctx)) {
-        tl_last_io_error="Mesh LID hotstart requires the R5 joint owner restart extension";return 1;
+    if (meshLidRestartUnsupported(ctx)) {
+        tl_last_io_error = "Mesh LID hotstart requires the R5 joint owner restart extension";
+        return 1;
     }
     std::ifstream file(openswmm::io::utf8_path(path), std::ios::binary);
     if (!file) {
@@ -1747,35 +2348,50 @@ int HotStartManager::apply_legacy_routing(
         return 1;
     }
     int version = 0;
-    if      (std::memcmp(stamp, "SWMM5-HOTSTART4", 15) == 0) version = 4;
-    else if (std::memcmp(stamp, "SWMM5-HOTSTART3", 15) == 0) version = 3;
-    else if (std::memcmp(stamp, "SWMM5-HOTSTART2", 15) == 0) version = 2;
+    if (std::memcmp(stamp, "SWMM5-HOTSTART4", 15) == 0)
+        version = 4;
+    else if (std::memcmp(stamp, "SWMM5-HOTSTART3", 15) == 0)
+        version = 3;
+    else if (std::memcmp(stamp, "SWMM5-HOTSTART2", 15) == 0)
+        version = 2;
     else {
         file.clear();
         file.seekg(0, std::ios::beg);
         char s14[15] = {};
         file.read(s14, 14);
-        if (file && std::memcmp(s14, "SWMM5-HOTSTART", 14) == 0) version = 1;
+        if (file && std::memcmp(s14, "SWMM5-HOTSTART", 14) == 0)
+            version = 1;
         else {
-            tl_last_io_error =
-                "'" + path + "' is not a legacy EPA SWMM5 hotstart file";
+            tl_last_io_error = "'" + path + "' is not a legacy EPA SWMM5 hotstart file";
             return 2;
         }
     }
 
     // --- header object counts (legacy initializeFromHotstartFile) ---
     int32_t nSub = 0, nLand = 0, nNodes = 0, nLinks = 0, nPollut = 0, flowUnits = 0;
-    if (version >= 2) { if (!read_pod(file, nSub))  return 1; } else nSub = ctx.n_subcatches();
-    if (version >= 3) { if (!read_pod(file, nLand)) return 1; }
-    if (!read_pod(file, nNodes))    return 1;
-    if (!read_pod(file, nLinks))    return 1;
-    if (!read_pod(file, nPollut))   return 1;
-    if (!read_pod(file, flowUnits)) return 1;
+    if (version >= 2) {
+        if (!read_pod(file, nSub))
+            return 1;
+    } else
+        nSub = ctx.n_subcatches();
+    if (version >= 3) {
+        if (!read_pod(file, nLand))
+            return 1;
+    }
+    if (!read_pod(file, nNodes))
+        return 1;
+    if (!read_pod(file, nLinks))
+        return 1;
+    if (!read_pod(file, nPollut))
+        return 1;
+    if (!read_pod(file, flowUnits))
+        return 1;
 
     if (nNodes != ctx.n_nodes() || nLinks != ctx.n_links()) {
-        tl_last_io_error = "Hotstart node/link count mismatch (file " +
-            std::to_string(nNodes) + "/" + std::to_string(nLinks) + " vs model " +
-            std::to_string(ctx.n_nodes()) + "/" + std::to_string(ctx.n_links()) + ")";
+        tl_last_io_error = "Hotstart node/link count mismatch (file " + std::to_string(nNodes) +
+                           "/" + std::to_string(nLinks) + " vs model " +
+                           std::to_string(ctx.n_nodes()) + "/" + std::to_string(ctx.n_links()) +
+                           ")";
         return 3;
     }
 
@@ -1803,18 +2419,16 @@ int HotStartManager::apply_legacy_routing(
     // readRunoff() itself relies on, since the file records subcatchment state
     // positionally with no per-object type tags.
     if (nSub != ctx.n_subcatches()) {
-        tl_last_io_error = "Hotstart subcatchment count mismatch (file " +
-            std::to_string(nSub) + " vs model " +
-            std::to_string(ctx.n_subcatches()) + ")";
+        tl_last_io_error = "Hotstart subcatchment count mismatch (file " + std::to_string(nSub) +
+                           " vs model " + std::to_string(ctx.n_subcatches()) + ")";
         return 3;
     }
 
     // Legacy initializeFromHotstartFile refuses a land-use count that differs
     // from the model's: the runoff section is positional per land use.
     if (runoff && version >= 3 && nLand != ctx.n_landuses()) {
-        tl_last_io_error = "Hotstart land use count mismatch (file " +
-            std::to_string(nLand) + " vs model " +
-            std::to_string(ctx.n_landuses()) + ")";
+        tl_last_io_error = "Hotstart land use count mismatch (file " + std::to_string(nLand) +
+                           " vs model " + std::to_string(ctx.n_landuses()) + ")";
         return 3;
     }
 
@@ -1825,8 +2439,7 @@ int HotStartManager::apply_legacy_routing(
             file.read(reinterpret_cast<char*>(runoff->data()),
                       static_cast<std::streamsize>(runoff->size() * sizeof(double)));
             if (!file) {
-                tl_last_io_error =
-                    "Hotstart runoff section truncated in '" + path + "'";
+                tl_last_io_error = "Hotstart runoff section truncated in '" + path + "'";
                 return 1;
             }
         }
@@ -1837,10 +2450,10 @@ int HotStartManager::apply_legacy_routing(
         // groundwater/snowpack/buildup state in the file is skipped, not
         // applied — a continuation run is hydraulically hot-started but its
         // hydrology restarts cold. Surface that so it is not silently lossy.
-        const std::string msg =
-            "USE HOTSTART: subcatchment runoff/infiltration/groundwater/"
-            "snowpack state was skipped (routing state applied only)";
-        if (warn_cb) warn_cb(msg);
+        const std::string msg = "USE HOTSTART: subcatchment runoff/infiltration/groundwater/"
+                                "snowpack state was skipped (routing state applied only)";
+        if (warn_cb)
+            warn_cb(msg);
     }
 
     if (!runoff && version >= 3 && nSub > 0) {
@@ -1855,33 +2468,31 @@ int HotStartManager::apply_legacy_routing(
         for (int i = 0; i < nSub; ++i) {
             const auto ui = static_cast<std::size_t>(i);
             std::streamoff nd = 4 + 6;
-            if (ui < sub.gw_aquifer.size() && sub.gw_aquifer[ui] >= 0) nd += 4;
-            if (ui < sub.snowpack.size()   && sub.snowpack[ui]   >= 0) nd += 15;
+            if (ui < sub.gw_aquifer.size() && sub.gw_aquifer[ui] >= 0)
+                nd += 4;
+            if (ui < sub.snowpack.size() && sub.snowpack[ui] >= 0)
+                nd += 15;
             if (nPollut > 0) {
                 nd += 2 * static_cast<std::streamoff>(nPollut);
-                nd += static_cast<std::streamoff>(nLand) *
-                      (static_cast<std::streamoff>(nPollut) + 1);
+                nd +=
+                    static_cast<std::streamoff>(nLand) * (static_cast<std::streamoff>(nPollut) + 1);
             }
             skip_doubles += nd;
         }
-        file.seekg(skip_doubles * static_cast<std::streamoff>(sizeof(double)),
-                   std::ios::cur);
+        file.seekg(skip_doubles * static_cast<std::streamoff>(sizeof(double)), std::ios::cur);
         if (!file) {
-            tl_last_io_error =
-                "Hotstart runoff section truncated in '" + path + "'";
+            tl_last_io_error = "Hotstart runoff section truncated in '" + path + "'";
             return 1;
         }
-    }
-    else if (version == 2 && nSub > 0) {
+    } else if (version == 2 && nSub > 0) {
         // fileVersion 2 has no separate runoff section; legacy readRouting()
         // instead reads 2 floats (GW moisture content, water-table elevation)
         // per subcatchment immediately before the node records.
         file.seekg(static_cast<std::streamoff>(nSub) * 2 *
-                   static_cast<std::streamoff>(sizeof(float)),
+                       static_cast<std::streamoff>(sizeof(float)),
                    std::ios::cur);
         if (!file) {
-            tl_last_io_error =
-                "Hotstart v2 groundwater block truncated in '" + path + "'";
+            tl_last_io_error = "Hotstart v2 groundwater block truncated in '" + path + "'";
             return 1;
         }
     }
@@ -1894,39 +2505,52 @@ int HotStartManager::apply_legacy_routing(
     for (int i = 0; i < nNodes; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         float depth = 0.0f, lat = 0.0f;
-        if (!read_pod(file, depth)) return 1;
-        if (!read_pod(file, lat))   return 1;
-        nodes.depth[ui]    = static_cast<double>(depth);
+        if (!read_pod(file, depth))
+            return 1;
+        if (!read_pod(file, lat))
+            return 1;
+        nodes.depth[ui] = static_cast<double>(depth);
         nodes.lat_flow[ui] = static_cast<double>(lat);
         if (version >= 4 && nodes.type[ui] == NodeType::STORAGE) {
             float hrt = 0.0f;
-            if (!read_pod(file, hrt)) return 1;
-            if (ui < nodes.hrt.size()) nodes.hrt[ui] = static_cast<double>(hrt);
+            if (!read_pod(file, hrt))
+                return 1;
+            if (ui < nodes.hrt.size())
+                nodes.hrt[ui] = static_cast<double>(hrt);
         }
         for (int j = 0; j < nPollut; ++j) {
             float q = 0.0f;
-            if (!read_pod(file, q)) return 1;
+            if (!read_pod(file, q))
+                return 1;
             const auto qi = ui * static_cast<std::size_t>(nPollut) + j;
             nodes.conc[qi] = nodes.conc_old[qi] = static_cast<double>(q);
         }
         if (version <= 2)
-            for (int j = 0; j < nPollut; ++j) { float q = 0.0f; if (!read_pod(file, q)) return 1; }
+            for (int j = 0; j < nPollut; ++j) {
+                float q = 0.0f;
+                if (!read_pod(file, q))
+                    return 1;
+            }
     }
 
     // --- link states (legacy readRouting): flow, depth, setting, quality. ---
     for (int i = 0; i < nLinks; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         float flow = 0.0f, depth = 0.0f, setting = 0.0f;
-        if (!read_pod(file, flow))    return 1;
-        if (!read_pod(file, depth))   return 1;
-        if (!read_pod(file, setting)) return 1;
-        links.flow[ui]           = static_cast<double>(flow);
-        links.depth[ui]          = static_cast<double>(depth);
-        links.setting[ui]        = static_cast<double>(setting);
+        if (!read_pod(file, flow))
+            return 1;
+        if (!read_pod(file, depth))
+            return 1;
+        if (!read_pod(file, setting))
+            return 1;
+        links.flow[ui] = static_cast<double>(flow);
+        links.depth[ui] = static_cast<double>(depth);
+        links.setting[ui] = static_cast<double>(setting);
         links.target_setting[ui] = static_cast<double>(setting);
         for (int j = 0; j < nPollut; ++j) {
             float q = 0.0f;
-            if (!read_pod(file, q)) return 1;
+            if (!read_pod(file, q))
+                return 1;
             const auto qi = ui * static_cast<std::size_t>(nPollut) + j;
             links.conc[qi] = links.conc_old[qi] = static_cast<double>(q);
         }
@@ -1941,15 +2565,18 @@ int HotStartManager::apply_legacy_routing(
             int32_t ns = 0, nn = 0, nl = 0, surf = 0;
             bool ok = read_pod(file, ns) && ns >= 0 && ns < 100000;
             std::vector<std::string> names(ok ? static_cast<std::size_t>(ns) : 0u);
-            for (auto& n : names) ok = ok && read_string(file, n);
+            for (auto& n : names)
+                ok = ok && read_string(file, n);
             ok = ok && read_pod(file, nn) && read_pod(file, nl);
             ok = ok && nn == nNodes && nl == nLinks;
             const auto uns = static_cast<std::size_t>(std::max(ns, 0));
             std::vector<double> node(ok ? static_cast<std::size_t>(nn) * uns : 0u);
             std::vector<double> link(ok ? static_cast<std::size_t>(nl) * uns : 0u);
             if (ok) {
-                file.read(reinterpret_cast<char*>(node.data()), static_cast<std::streamsize>(node.size() * sizeof(double)));
-                file.read(reinterpret_cast<char*>(link.data()), static_cast<std::streamsize>(link.size() * sizeof(double)));
+                file.read(reinterpret_cast<char*>(node.data()),
+                          static_cast<std::streamsize>(node.size() * sizeof(double)));
+                file.read(reinterpret_cast<char*>(link.data()),
+                          static_cast<std::streamsize>(link.size() * sizeof(double)));
                 ok = static_cast<bool>(file) && read_pod(file, surf);
             }
             if (ok && surf == 1) {
@@ -1963,7 +2590,8 @@ int HotStartManager::apply_legacy_routing(
                     species->ponded.resize(a);
                     species->buildup.resize(a * static_cast<std::size_t>(nlu));
                     for (auto* v : {&species->washoff, &species->ponded, &species->buildup})
-                        file.read(reinterpret_cast<char*>(v->data()), static_cast<std::streamsize>(v->size() * sizeof(double)));
+                        file.read(reinterpret_cast<char*>(v->data()),
+                                  static_cast<std::streamsize>(v->size() * sizeof(double)));
                     ok = static_cast<bool>(file);
                 }
             }
@@ -1988,7 +2616,8 @@ int HotStartManager::apply_legacy_routing(
             if (nm > 0) {
                 transport::ensureMsxState(ctx);
                 for (std::size_t s = 0; s < uns; ++s) {
-                    if (col[s] < 0) continue;
+                    if (col[s] < 0)
+                        continue;
                     const auto m = static_cast<std::size_t>(col[s]);
                     for (std::size_t e = 0; e < static_cast<std::size_t>(nn); ++e)
                         if (e * unm + m < rx.msx_node_conc.size())
@@ -2010,32 +2639,40 @@ int HotStartManager::apply_legacy_routing(
     return 0;
 }
 
-bool HotStartManager::apply_species_surface(
-        const LegacySpeciesTrailer& tr, SimulationContext& ctx,
-        const std::function<void(const std::string&)>& warn) {
+bool HotStartManager::apply_species_surface(const LegacySpeciesTrailer& tr, SimulationContext& ctx,
+                                            const std::function<void(const std::string&)>& warn) {
     auto& s = ctx.reactions.surface;
-    if (tr.n_landuses < 0 || !s.active()) return false;
+    if (tr.n_landuses < 0 || !s.active())
+        return false;
     if (tr.n_subcatch != ctx.n_subcatches() || tr.n_landuses != s.n_landuses) {
-        if (warn) warn("USE HOTSTART: reaction species surface state skipped "
-                       "(subcatchment or land use count differs from the model)");
+        if (warn)
+            warn("USE HOTSTART: reaction species surface state skipped "
+                 "(subcatchment or land use count differs from the model)");
         return false;
     }
     const auto uns = tr.species.size();
     const int nlu = tr.n_landuses;
     for (std::size_t k = 0; k < uns; ++k) {
         const int m = ctx.reactions.find_species(tr.species[k]);
-        if (m < 0 || m >= s.n_species) continue;
+        if (m < 0 || m >= s.n_species)
+            continue;
         for (int sc = 0; sc < tr.n_subcatch; ++sc) {
             const auto src = static_cast<std::size_t>(sc) * uns + k;
             const auto dst = s.sidx(sc, m);
-            if (dst < s.washoff_conc.size()) s.washoff_conc[dst] = tr.washoff[src];
-            if (dst < s.washoff_conc_old.size()) s.washoff_conc_old[dst] = tr.washoff[src];
-            if (dst < s.ponded_qual.size()) s.ponded_qual[dst] = tr.ponded[src];
+            if (dst < s.washoff_conc.size())
+                s.washoff_conc[dst] = tr.washoff[src];
+            if (dst < s.washoff_conc_old.size())
+                s.washoff_conc_old[dst] = tr.washoff[src];
+            if (dst < s.ponded_qual.size())
+                s.ponded_qual[dst] = tr.ponded[src];
             for (int lu = 0; lu < nlu; ++lu) {
                 const auto b = (static_cast<std::size_t>(sc) * static_cast<std::size_t>(nlu) +
-                                static_cast<std::size_t>(lu)) * uns + k;
+                                static_cast<std::size_t>(lu)) *
+                                   uns +
+                               k;
                 const auto d = s.bu_idx(sc, lu, m);
-                if (d < s.buildup.size()) s.buildup[d] = tr.buildup[b];
+                if (d < s.buildup.size())
+                    s.buildup[d] = tr.buildup[b];
             }
         }
     }
@@ -2050,19 +2687,24 @@ bool HotStartManager::apply_species_surface(
 // 492-561, 358-399).
 // ============================================================================
 
-int HotStartManager::save_legacy_routing(const std::string& path,
-                                         const SimulationContext& ctx,
+int HotStartManager::save_legacy_routing(const std::string& path, const SimulationContext& ctx,
                                          const std::vector<double>* runoff) {
-    if(!ctx.reactions.lid_controls.empty()) {tl_last_io_error="LID reaction inventories require a full native engine checkpoint";return 1;}
-    if(layeredGroundwaterRestart(ctx)) {
-        tl_last_io_error="Legacy hotstart cannot preserve groundwater boundary/layer transport state; use NATIVE.";return 1;
+    if (!ctx.reactions.lid_controls.empty()) {
+        tl_last_io_error = "LID reaction inventories require a full native engine checkpoint";
+        return 1;
+    }
+    if (layeredGroundwaterRestart(ctx)) {
+        tl_last_io_error =
+            "Legacy hotstart cannot preserve groundwater boundary/layer transport state; use NATIVE.";
+        return 1;
     }
     if (coupledThermalRestartUnsupported(ctx)) {
         tl_last_io_error = "Legacy hotstart cannot preserve coupled mesh/ground thermal energy";
         return -1;
     }
-    if(meshLidRestartUnsupported(ctx)) {
-        tl_last_io_error="Mesh LID hotstart requires the R5 joint owner restart extension";return 1;
+    if (meshLidRestartUnsupported(ctx)) {
+        tl_last_io_error = "Mesh LID hotstart requires the R5 joint owner restart extension";
+        return 1;
     }
     std::ofstream file(openswmm::io::utf8_path(path), std::ios::binary | std::ios::trunc);
     if (!file) {
@@ -2072,18 +2714,17 @@ int HotStartManager::save_legacy_routing(const std::string& path,
 
     // --- header: 15-char stamp (no NUL) + object counts (int32) ---
     //     legacy hotstart.c:346-352.
-    const char stamp[] = "SWMM5-HOTSTART4";       // 15 chars + implicit NUL
-    file.write(stamp, 15);                          // NUL not written (strlen)
+    const char stamp[] = "SWMM5-HOTSTART4"; // 15 chars + implicit NUL
+    file.write(stamp, 15);                  // NUL not written (strlen)
 
-    const int32_t nSub   = ctx.n_subcatches();
-    const int32_t nLand  = runoff ? ctx.n_landuses() : 0;
+    const int32_t nSub = ctx.n_subcatches();
+    const int32_t nLand = runoff ? ctx.n_landuses() : 0;
     const int32_t nNodes = ctx.n_nodes();
     const int32_t nLinks = ctx.n_links();
     const int32_t nPollut = ctx.n_pollutants();
     const int32_t flowUnits = static_cast<int32_t>(ctx.options.flow_units);
-    if (!write_pod(file, nSub)   || !write_pod(file, nLand) ||
-        !write_pod(file, nNodes) || !write_pod(file, nLinks) ||
-        !write_pod(file, nPollut) || !write_pod(file, flowUnits)) {
+    if (!write_pod(file, nSub) || !write_pod(file, nLand) || !write_pod(file, nNodes) ||
+        !write_pod(file, nLinks) || !write_pod(file, nPollut) || !write_pod(file, flowUnits)) {
         tl_last_io_error = "Hotstart header write failed for '" + path + "'";
         return 1;
     }
@@ -2109,13 +2750,10 @@ int HotStartManager::save_legacy_routing(const std::string& path,
         write_pod(file, static_cast<float>(nodes.lat_flow[ui]));
         // Legacy saveRouting preserves storage treatment residence time.
         if (nodes.type[ui] == NodeType::STORAGE)
-            write_pod(file, ui < nodes.hrt.size()
-                ? static_cast<float>(nodes.hrt[ui]) : 0.0f);
+            write_pod(file, ui < nodes.hrt.size() ? static_cast<float>(nodes.hrt[ui]) : 0.0f);
         for (int j = 0; j < nPollut; ++j) {
-            const auto qi = ui * static_cast<std::size_t>(nPollut) +
-                            static_cast<std::size_t>(j);
-            float q = (qi < nodes.conc.size())
-                ? static_cast<float>(nodes.conc[qi]) : 0.0f;
+            const auto qi = ui * static_cast<std::size_t>(nPollut) + static_cast<std::size_t>(j);
+            float q = (qi < nodes.conc.size()) ? static_cast<float>(nodes.conc[qi]) : 0.0f;
             write_pod(file, q);
         }
     }
@@ -2128,10 +2766,8 @@ int HotStartManager::save_legacy_routing(const std::string& path,
         write_pod(file, static_cast<float>(links.depth[ui]));
         write_pod(file, static_cast<float>(links.setting[ui]));
         for (int j = 0; j < nPollut; ++j) {
-            const auto qi = ui * static_cast<std::size_t>(nPollut) +
-                            static_cast<std::size_t>(j);
-            float q = (qi < links.conc.size())
-                ? static_cast<float>(links.conc[qi]) : 0.0f;
+            const auto qi = ui * static_cast<std::size_t>(nPollut) + static_cast<std::size_t>(j);
+            float q = (qi < links.conc.size()) ? static_cast<float>(links.conc[qi]) : 0.0f;
             write_pod(file, q);
         }
     }
@@ -2145,7 +2781,8 @@ int HotStartManager::save_legacy_routing(const std::string& path,
         rx.msx_link_conc.size() == static_cast<std::size_t>(nLinks) * unm) {
         file.write(kSpeciesTrailerTag, 15);
         write_pod(file, static_cast<int32_t>(nm));
-        for (int m = 0; m < nm; ++m) write_string(file, rx.species_name[static_cast<std::size_t>(m)]);
+        for (int m = 0; m < nm; ++m)
+            write_string(file, rx.species_name[static_cast<std::size_t>(m)]);
         write_pod(file, nNodes);
         write_pod(file, nLinks);
         file.write(reinterpret_cast<const char*>(rx.msx_node_conc.data()),
@@ -2177,12 +2814,14 @@ int HotStartManager::save_legacy_routing(const std::string& path,
 // ============================================================================
 
 bool HotStartManager::flush(HotStartFile& hs) {
-    if (!hs.dirty) return true;
+    if (!hs.dirty)
+        return true;
     if (hs.path.empty()) {
         tl_last_io_error = "HotStartFile has no path; cannot flush";
         return false;
     }
-    if (!write_file(hs, hs.path)) return false;
+    if (!write_file(hs, hs.path))
+        return false;
     hs.dirty = false;
     return true;
 }

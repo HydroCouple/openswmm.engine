@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file MsxSurfaceQuality.hpp
- * @brief BW-MSX (2026-09-19) — buildup, washoff and street sweeping of the
+ * @file      MsxSurfaceQuality.hpp
+ * @brief     BW-MSX (2026-09-19) — buildup, washoff and street sweeping of the
  *        reactions component's (MSX) species on subcatchment surfaces.
  *
  * @details The pollutant surface-quality step (`SWMMEngine::stepSurfaceQuality`,
@@ -32,10 +32,10 @@
  *          engine, the legacy MSX dispatch and LARD already consume for
  *          external species loads.
  *
- *          What is deliberately NOT mirrored (pollutant-only mechanisms):
- *          co-pollutant fractions (D-A28), rain concentration / ponded-quality
- *          mixing and LID wet deposition (MSX species rain in clean, as on the
- *          2D surface), and any kinetics inside the dry store (D-A29).
+ *          Rainfall concentrations, ponded mixing/reactions, scoped dry-buildup kinetics
+ *          and opted-in LID species inventories are supported. Co-pollutant
+ *          fraction coupling remains pollutant-only. The shared kernel partitions
+ *          accepted reacted ponded mass among water destinations.
  *
  *          Units: buildup is user mass (lbs / kg) per normalizer unit; the
  *          per-species factor `mcf` converts concentration-mass to user mass
@@ -46,6 +46,10 @@
  *          §8.9.
  *
  * @ingroup engine_quality
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_QUALITY_MSX_SURFACE_QUALITY_HPP
@@ -70,11 +74,11 @@ double speciesUnitFactor(const std::string& units, const SimulationOptions& opts
 bool active(const SimulationContext& ctx) noexcept;
 
 /**
- * @brief Bind the by-name rows to (land use, species) — call after the
- *        reactions component has been applied and the name tables are final.
- * @return Warnings (unresolvable species / land use / subcatchment names,
- *         WALL species). Never fatal: a typo in a row is a warning here,
- *         exactly as the pollutant handlers silently skip theirs.
+ * @brief Bind the by-name rows to (land use, species) — call after the reactions component has
+ * been applied and the name tables are final.
+ * @return Warnings (unresolvable species / land use / subcatchment names, WALL species). Never
+ * fatal: a typo in a row is a warning here, exactly as the pollutant handlers silently skip
+ * theirs.
  */
 std::vector<std::string> resolve(SimulationContext& ctx);
 
@@ -82,20 +86,17 @@ std::vector<std::string> resolve(SimulationContext& ctx);
 void refreshDerived(SimulationContext& ctx) noexcept;
 
 /**
- * @brief Size the state and seed initial buildup: `[LOADINGS]` row when
- *        given, else the land use's function at `[OPTIONS] DRY_DAYS`
- *        (legacy `landuse_getInitBuildup`).
+ * @brief Size the state and seed initial buildup: `[LOADINGS]` row when given, else the land
+ * use's function at `[OPTIONS] DRY_DAYS` (legacy `landuse_getInitBuildup`).
  */
 void initState(SimulationContext& ctx);
 
 /**
- * @brief One runoff step: buildup accrual then washoff for every
- *        (subcatchment, land use, species); stores the washoff
- *        concentration per (subcatchment, species) for delivery.
- *        Runs the pollutant kernel (SurfaceSpeciesKernel) over the species
- *        store (Multispecies Phase 2).
- * @param dt_runoff        runoff step (s)
- * @param old_runoff_time  seconds since the start at the step's start
+ * @brief One runoff step: buildup accrual then washoff for every (subcatchment, land use,
+ * species); stores the washoff concentration per (subcatchment, species) for delivery. Runs the
+ * pollutant kernel (SurfaceSpeciesKernel) over the species store (Multispecies Phase 2).
+ * - Argument dt_runoff: runoff step (s)
+ * - Argument old_runoff_time: seconds since the start at the step's start
  */
 void step(SimulationContext& ctx, double dt_runoff, double old_runoff_time);
 
@@ -107,12 +108,14 @@ void bookPostLid(SimulationContext& ctx, double dt_runoff,
 /// LID underdrain species load from one unit (the A6b drain loop's species
 /// half), and the per-runoff-step roll of those loads.
 void addLidDrain(SimulationContext& ctx, int control, int sc, int node, double drain_cfs,
-                 bool to_perv, bool runoff_load, double dt_runoff, const double* source=nullptr) noexcept;
+                 bool to_perv, bool runoff_load, double dt_runoff,
+                 const double* source = nullptr) noexcept;
 void rollLidDrain(SimulationContext& ctx) noexcept;
 /// A LID underdrain routed to another subcatchment: the species join that
 /// subcatchment's run-on (next runoff step), as the water does.
 void addLidDrainRunon(SimulationContext& ctx, int control, int sc, int receiver, double drain_cfs,
-                      bool to_perv, bool runoff_load, double dt_runoff, const double* source=nullptr) noexcept;
+                      bool to_perv, bool runoff_load, double dt_runoff,
+                      const double* source = nullptr) noexcept;
 void consumeLidDrainRunon(SimulationContext& ctx, int receiver) noexcept;
 
 /// Set the store up for a species that only rains in (called by resolve and
@@ -130,12 +133,15 @@ double remainingBuildup(const SimulationContext& ctx, int m) noexcept;
 void clearRunon(SimulationContext& ctx) noexcept;
 void addRunon(SimulationContext& ctx, int donor, int receiver, double q) noexcept;
 
-
 /**
- * @brief Deliver this routing step's washoff into `msx_ext_mass_in`
- *        (+= washoff_conc × q̄ per outlet node, the `addWetWeatherLoads`
- *        trapezoid on old/new runoff). Call after the external-inflow
- *        assembly has (re)zeroed the array for the step.
+ * @brief Deliver this routing step's washoff into `msx_ext_mass_in` (+= interpolated old/new
+ * runoff mass rate per outlet node, the `addWetWeatherLoads` trapezoid on old/new runoff). Call
+ * after the external-inflow assembly has (re)zeroed the array for the step.
+ *
+ * - Argument ctx (in,out): Native node inflow destination and matching accepted surface/LID
+ * histories.
+ * - Argument dt_routing (in): Unused routing duration s, retained for routing-dispatch interface
+ * consistency.
  */
 void deliver(SimulationContext& ctx, double dt_routing);
 

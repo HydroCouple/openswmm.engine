@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_outfall_stage_data.cpp
- * @brief Regression cover for TIDAL/TIMESERIES outfall stage-data references.
+ * @file      test_outfall_stage_data.cpp
+ * @brief     Regression cover for TIDAL/TIMESERIES outfall stage-data references.
  *
  * @details Pins the fix for the v6.0.0-alpha.2 defect in which a
  *          `TIMESERIES` outfall silently drew its stage from the wrong table.
@@ -42,9 +42,9 @@
  *            - FREE outfalls accept the EPA-GUI `*` stage-data placeholder
  *              without the gate column shifting.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -109,10 +109,18 @@ NODES ALL
 LINKS ALL
 )INP";
 
-/// Write `outfall_row` into the template and return the temp .inp path.
+/**
+ * @brief Write the fixed model with a caller-supplied outfall row.
+ *
+ * Assumes the template contains its marker; replace can throw otherwise. Overwrites existing file,
+ * creates no parent directories and performs no model parsing; caller owns artifact cleanup.
+ *
+ * @param[in] stem Controlled filename component after outfall_stage_ in testing::TempDir.
+ * @param[in] outfall_row Raw replacement for the template's first %s marker.
+ * @return Owned generated .inp filename even after unchecked write failure.
+ */
 std::string writeModel(const std::string& stem, const std::string& outfall_row) {
-    const std::string path =
-        std::string(testing::TempDir()) + "outfall_stage_" + stem + ".inp";
+    const std::string path = std::string(testing::TempDir()) + "outfall_stage_" + stem + ".inp";
     std::string inp(kModelTemplate);
     const auto pos = inp.find("%s");
     inp.replace(pos, 2, outfall_row);
@@ -120,11 +128,20 @@ std::string writeModel(const std::string& stem, const std::string& outfall_row) 
     return path;
 }
 
-/// The single non-comment row of the [OUTFALLS] section of `path`.
+/**
+ * @brief Read the first apparent data row of an exact OUT FALLS section header.
+ *
+ * Recognizes section/comment markers only at column zero and does not trim or validate rows;
+ * leading-whitespace comments can be returned as data. CR may remain in the returned string.
+ *
+ * @param[in] path Input filename borrowed for this synchronous text read.
+ * @return First nonblank, non-semicolon-leading row inside [OUTFALLS], or empty for absence/open
+ *     failure.
+ */
 std::string outfallRowOf(const std::string& path) {
     std::ifstream f(path);
-    std::string   line;
-    bool          in_section = false;
+    std::string line;
+    bool in_section = false;
     while (std::getline(f, line)) {
         if (!line.empty() && line[0] == '[')
             in_section = (line.rfind("[OUTFALLS]", 0) == 0);
@@ -138,25 +155,37 @@ std::string outfallRowOf(const std::string& path) {
 /// Resolved stage-data row for the model's single outfall.
 struct Resolved {
     OutfallType bc_type{};
-    int         table_index{-1};
-    std::string table_id;      ///< empty when table_index is not a valid table
-    TableType   table_type{};
+    int table_index{-1};
+    std::string table_id; ///< empty when table_index is not a valid table
+    TableType table_type{};
 };
 
+/**
+ * @brief Copy the first outfall's resolved boundary/table reference.
+ *
+ * A numeric fixed-stage parameter is still cast as a candidate table index; caller interprets it
+ * with bc_type. No state mutation or borrowed reference escapes.
+ *
+ * @param[in] ctx Stable context with consistent node/subtype arrays and representable outfall
+ *     parameter values.
+ * @return Owned default record when no outfall subtype exists; otherwise first subtype's boundary
+ *     kind, integer-cast parameter and valid table ID/type if in bounds.
+ */
 Resolved firstOutfall(const SimulationContext& ctx) {
     Resolved out;
     for (int i = 0; i < ctx.n_nodes(); ++i) {
-        if (ctx.nodes.type[static_cast<std::size_t>(i)] != NodeType::OUTFALL) continue;
+        if (ctx.nodes.type[static_cast<std::size_t>(i)] != NodeType::OUTFALL)
+            continue;
         const int r = ctx.node_subtypes.outfall_row(i);
-        if (r < 0) continue;
-        const auto& O  = ctx.node_subtypes.outfalls;
-        const auto  ur = static_cast<std::size_t>(r);
-        out.bc_type     = O.bc_type[ur];
+        if (r < 0)
+            continue;
+        const auto& O = ctx.node_subtypes.outfalls;
+        const auto ur = static_cast<std::size_t>(r);
+        out.bc_type = O.bc_type[ur];
         out.table_index = static_cast<int>(O.param[ur]);
-        if (out.table_index >= 0 &&
-            out.table_index < static_cast<int>(ctx.tables.tables.size())) {
+        if (out.table_index >= 0 && out.table_index < static_cast<int>(ctx.tables.tables.size())) {
             const auto& t = ctx.tables.tables[static_cast<std::size_t>(out.table_index)];
-            out.table_id   = t.id;
+            out.table_id = t.id;
             out.table_type = t.type;
         }
         break;
@@ -169,8 +198,8 @@ Resolved firstOutfall(const SimulationContext& ctx) {
 // The original repro: the decoy shape curve occupies table 0, so an unresolved
 // param of 0 aliases it. The outfall must land on the *named* timeseries.
 TEST(OutfallStageData, TimeseriesResolvesToNamedSeriesNotTableZero) {
-    const std::string inp = writeModel(
-        "ts", "OUTFALL1         0          TIMESERIES TSERIES_ELEV_01  NO");
+    const std::string inp =
+        writeModel("ts", "OUTFALL1         0          TIMESERIES TSERIES_ELEV_01  NO");
 
     SWMMEngine e;
     ASSERT_EQ(e.open(inp.c_str(), (inp + ".rpt").c_str(), ""), 0);
@@ -189,8 +218,8 @@ TEST(OutfallStageData, TimeseriesResolvesToNamedSeriesNotTableZero) {
 // dropped on save. The rewrite also reorders the tables, so a correct writer must
 // round-trip the NAME, not the raw index.
 TEST(OutfallStageData, TimeseriesReferenceSurvivesInpRoundTrip) {
-    const std::string inp = writeModel(
-        "ts_rt", "OUTFALL1         0          TIMESERIES TSERIES_ELEV_01  NO");
+    const std::string inp =
+        writeModel("ts_rt", "OUTFALL1         0          TIMESERIES TSERIES_ELEV_01  NO");
 
     SWMMEngine e1;
     ASSERT_EQ(e1.open(inp.c_str(), (inp + ".rpt").c_str(), ""), 0);
@@ -208,8 +237,7 @@ TEST(OutfallStageData, TimeseriesReferenceSurvivesInpRoundTrip) {
         << "writer dropped the stage-data name: " << row;
 
     SWMMEngine e2;
-    ASSERT_EQ(e2.open(out.c_str(), (out + ".rpt").c_str(), ""), 0)
-        << "written .inp must re-parse";
+    ASSERT_EQ(e2.open(out.c_str(), (out + ".rpt").c_str(), ""), 0) << "written .inp must re-parse";
 
     const Resolved r = firstOutfall(e2.context());
     EXPECT_EQ(r.bc_type, OutfallType::TIMESERIES);
@@ -233,8 +261,7 @@ TEST(OutfallStageData, FixedStageSurvivesInpRoundTrip) {
     SWMMEngine e2;
     ASSERT_EQ(e2.open(out.c_str(), (out + ".rpt").c_str(), ""), 0);
 
-    const int r = e2.context().node_subtypes.outfall_row(
-        e2.context().node_names.find("OUTFALL1"));
+    const int r = e2.context().node_subtypes.outfall_row(e2.context().node_names.find("OUTFALL1"));
     ASSERT_GE(r, 0);
     const auto& O = e2.context().node_subtypes.outfalls;
     EXPECT_EQ(O.bc_type[static_cast<std::size_t>(r)], OutfallType::FIXED);
@@ -244,8 +271,8 @@ TEST(OutfallStageData, FixedStageSurvivesInpRoundTrip) {
 // An unresolvable name must fail loudly (legacy ERR_NAME) rather than silently
 // aliasing table 0 — the silence is what let the original defect hide.
 TEST(OutfallStageData, UnknownStageDataNameIsFatal) {
-    const std::string inp = writeModel(
-        "bad", "OUTFALL1         0          TIMESERIES NO_SUCH_SERIES   NO");
+    const std::string inp =
+        writeModel("bad", "OUTFALL1         0          TIMESERIES NO_SUCH_SERIES   NO");
 
     SWMMEngine e;
     EXPECT_NE(e.open(inp.c_str(), (inp + ".rpt").c_str(), ""), 0)
@@ -255,8 +282,8 @@ TEST(OutfallStageData, UnknownStageDataNameIsFatal) {
 // A TIMESERIES outfall pointing at a CURVE (or a TIDAL outfall pointing at a
 // timeseries) is a type error; the shared index space cannot catch it for us.
 TEST(OutfallStageData, TimeseriesPointingAtCurveIsFatal) {
-    const std::string inp = writeModel(
-        "wrongkind", "OUTFALL1         0          TIMESERIES SHAPECURVE_99    NO");
+    const std::string inp =
+        writeModel("wrongkind", "OUTFALL1         0          TIMESERIES SHAPECURVE_99    NO");
 
     SWMMEngine e;
     EXPECT_NE(e.open(inp.c_str(), (inp + ".rpt").c_str(), ""), 0)
@@ -268,16 +295,16 @@ TEST(OutfallStageData, TimeseriesPointingAtCurveIsFatal) {
 TEST(OutfallStageData, FreeOutfallAcceptsStarPlaceholderWithoutShiftingGate) {
     for (const auto& [row, gated] : std::initializer_list<std::pair<const char*, bool>>{
              {"OUTFALL1         0          FREE       *                YES", true},
-             {"OUTFALL1         0          FREE       *                NO",  false},
-             {"OUTFALL1         0          FREE       YES",                  true},
-             {"OUTFALL1         0          FREE       NO",                   false},
+             {"OUTFALL1         0          FREE       *                NO", false},
+             {"OUTFALL1         0          FREE       YES", true},
+             {"OUTFALL1         0          FREE       NO", false},
          }) {
         const std::string inp = writeModel("free", row);
         SWMMEngine e;
         ASSERT_EQ(e.open(inp.c_str(), (inp + ".rpt").c_str(), ""), 0) << row;
 
-        const int r = e.context().node_subtypes.outfall_row(
-            e.context().node_names.find("OUTFALL1"));
+        const int r =
+            e.context().node_subtypes.outfall_row(e.context().node_names.find("OUTFALL1"));
         ASSERT_GE(r, 0) << row;
         const auto& O = e.context().node_subtypes.outfalls;
         EXPECT_EQ(O.bc_type[static_cast<std::size_t>(r)], OutfallType::FREE) << row;

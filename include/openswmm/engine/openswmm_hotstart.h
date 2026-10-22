@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file openswmm_hotstart.h
- * @brief Hot start file management — transparent C API.
+ * @file      openswmm_hotstart.h
+ * @brief     Hot start file management — transparent C API.
  *
  * @details Hot start files capture the hydraulic and water quality state of a
  *          SWMM simulation so it can be resumed later without running a warm-up
@@ -61,14 +61,16 @@
  * swmm_hotstart_close(hs);
  * @endcode
  *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
+/**
  * @defgroup engine_hotstart Hot Start File API
  * @ingroup  new_engine
  *
  * @see Legacy reference: src/solver/hotstart.c — swmm_saveHotstart(), swmm_useHotstart()
- *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_HOTSTART_H
@@ -84,12 +86,12 @@ extern "C" {
 typedef void* SWMM_HotStart;
 
 /** @brief Magic string written at the start of every OPENSWMM_HS_V1 file. */
-#define OPENSWMM_HOTSTART_MAGIC    "OPENSWMM_HS_V1\0"
+#define OPENSWMM_HOTSTART_MAGIC "OPENSWMM_HS_V1\0"
 
-/** @brief Base format version. Writers select compatible extensions through
- * version 11, which stores complete Richards cell water and material identity.
- * Existing layer/Green-Ampt models continue to use their version 10 extension. */
-#define OPENSWMM_HOTSTART_VERSION  1
+/** @brief Base format version. Writers select compatible extensions for the configured model state, including Richards cell water/material
+ * identity, full-engine checkpoints, snow and groundwater transport state.
+ * The macro identifies the base format, not the highest extension version. */
+#define OPENSWMM_HOTSTART_VERSION 1
 
 /* =========================================================================
  * [FILES] section — `SAVE HOTSTART` entry management (Slice BV-01)
@@ -109,62 +111,76 @@ typedef void* SWMM_HotStart;
  * ========================================================================= */
 
 /**
- * @brief Get the number of `SAVE HOTSTART` entries currently in `[FILES]`.
- * @param engine  Engine handle.
- * @param count   [out] Vector size (>= 0).
- * @returns SWMM_OK or SWMM_ERR_BADHANDLE / SWMM_ERR_BADPARAM.
+ * @brief Count scheduled SAVE HOTSTART authoring entries.
+ *
+ * @param[in] engine Non-null live engine with exclusive caller access. Scheduled-entry authoring
+ *     APIs impose no lifecycle guard and do not write a file immediately.
+ * @param[out] count Non-null destination for the stored entry count.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle or SWMM_ERR_BADPARAM for an invalid required
+ *     argument or slot.
  */
 SWMM_ENGINE_API int swmm_hotstart_saves_count(SWMM_Engine engine, int* count);
 
 /**
- * @brief Get the path of the i-th `SAVE HOTSTART` entry.
- * @param engine  Engine handle.
- * @param idx     Slot index in `[0, swmm_hotstart_saves_count)`.
- * @param buf     Caller-allocated buffer.
- * @param buflen  Buffer size (NUL-terminated, truncated at `buflen - 1`).
- * @returns SWMM_OK; SWMM_ERR_BADPARAM if `idx` is out of range.
+ * @brief Copy the authored path of one scheduled save entry.
+ *
+ * @param[in] engine Non-null live engine with exclusive caller access. Scheduled-entry authoring
+ *     APIs impose no lifecycle guard and do not write a file immediately.
+ * @param[in] idx Zero-based existing SAVE HOTSTART slot index; invalid indices return BADPARAM
+ *     rather than BADINDEX.
+ * @param[out] buf Non-null caller-owned destination, NUL-terminated and silently truncated to
+ *     buflen-1 bytes.
+ * @param[in] buflen Positive buffer capacity in bytes, including NUL.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle or SWMM_ERR_BADPARAM for an invalid required
+ *     argument or slot.
  */
-SWMM_ENGINE_API int swmm_hotstart_saves_get_path(
-    SWMM_Engine engine, int idx, char* buf, int buflen);
+SWMM_ENGINE_API int swmm_hotstart_saves_get_path(SWMM_Engine engine, int idx, char* buf,
+                                                 int buflen);
 
 /**
- * @brief Get the datetime (decimal day; `0.0` = "end of run") of the
- *        i-th `SAVE HOTSTART` entry.
- * @param engine    Engine handle.
- * @param idx       Slot index.
- * @param datetime  [out] Decimal day.
- * @returns SWMM_OK; SWMM_ERR_BADPARAM if `idx` is out of range.
+ * @brief Read the scheduled calendar date of one save entry.
+ *
+ * @param[in] engine Non-null live engine with exclusive caller access. Scheduled-entry authoring
+ *     APIs impose no lifecycle guard and do not write a file immediately.
+ * @param[in] idx Zero-based existing SAVE HOTSTART slot index; invalid indices return BADPARAM
+ *     rather than BADINDEX.
+ * @param[out] datetime Non-null destination for SWMM DateTime decimal days since 1899-12-30; 0
+ *     denotes end of run.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle or SWMM_ERR_BADPARAM for an invalid required
+ *     argument or slot.
  */
-SWMM_ENGINE_API int swmm_hotstart_saves_get_datetime(
-    SWMM_Engine engine, int idx, double* datetime);
+SWMM_ENGINE_API int swmm_hotstart_saves_get_datetime(SWMM_Engine engine, int idx, double* datetime);
 
 /**
- * @brief Replace the path of an existing `SAVE HOTSTART` entry.
+ * @brief Replace a scheduled save path without removing its row.
  *
- * @details Multi-slot generalization of `swmm_files_set("HOTSTART_SAVE_PATH",
- *          …)` (which only addresses slot 0).  Empty path + zero
- *          datetime does *not* auto-remove the row here — the caller
- *          is expected to manage row lifecycle explicitly via
- *          `_remove()` / `_clear()`.
+ * Unlike the legacy slot-0 swmm_files_set() sugar, an empty path with zero datetime does not
+ * auto-remove this entry. Use remove/clear explicitly.
  *
- * @param engine  Engine handle.
- * @param idx     Slot index.
- * @param path    New path (may be empty).
- * @returns SWMM_OK; SWMM_ERR_BADPARAM if `idx` is out of range.
+ * @param[in] engine Non-null live engine with exclusive caller access. Scheduled-entry authoring
+ *     APIs impose no lifecycle guard and do not write a file immediately.
+ * @param[in] idx Zero-based existing SAVE HOTSTART slot index; invalid indices return BADPARAM
+ *     rather than BADINDEX.
+ * @param[in] path Non-null NUL-terminated path to copy; empty is permitted and clears the
+ *     token/cached absolute path.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle or SWMM_ERR_BADPARAM for an invalid required
+ *     argument or slot.
  */
-SWMM_ENGINE_API int swmm_hotstart_saves_set_path(
-    SWMM_Engine engine, int idx, const char* path);
+SWMM_ENGINE_API int swmm_hotstart_saves_set_path(SWMM_Engine engine, int idx, const char* path);
 
 /**
- * @brief Replace the datetime of an existing `SAVE HOTSTART` entry.
+ * @brief Assign a scheduled save calendar date directly.
  *
- * @param engine    Engine handle.
- * @param idx       Slot index.
- * @param datetime  Decimal day (`0.0` = "save at end of run").
- * @returns SWMM_OK; SWMM_ERR_BADPARAM if `idx` is out of range.
+ * @param[in] engine Non-null live engine with exclusive caller access. Scheduled-entry authoring
+ *     APIs impose no lifecycle guard and do not write a file immediately.
+ * @param[in] idx Zero-based existing SAVE HOTSTART slot index; invalid indices return BADPARAM
+ *     rather than BADINDEX.
+ * @param[in] datetime SWMM DateTime decimal days since 1899-12-30; 0 saves at run end. No
+ *     finite/range/order validation is performed.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle or SWMM_ERR_BADPARAM for an invalid required
+ *     argument or slot.
  */
-SWMM_ENGINE_API int swmm_hotstart_saves_set_datetime(
-    SWMM_Engine engine, int idx, double datetime);
+SWMM_ENGINE_API int swmm_hotstart_saves_set_datetime(SWMM_Engine engine, int idx, double datetime);
 
 /**
  * @brief File formats a `SAVE HOTSTART` entry can write.
@@ -178,77 +194,97 @@ SWMM_ENGINE_API int swmm_hotstart_saves_set_datetime(
  *          NATIVE also carries what the legacy format has no room for
  *          (see swmm_hotstart_legacy_omits()); legacy SWMM 5 cannot read it.
  */
-#define SWMM_HOTSTART_FORMAT_AUTO    0  /**< Legacy, or native with node LIDs */
-#define SWMM_HOTSTART_FORMAT_LEGACY  1  /**< EPA SWMM5 `.hsf`                 */
-#define SWMM_HOTSTART_FORMAT_NATIVE  2  /**< OPENSWMM_HS_V1                   */
+#define SWMM_HOTSTART_FORMAT_AUTO 0   /**< Legacy, or native with node LIDs */
+#define SWMM_HOTSTART_FORMAT_LEGACY 1 /**< EPA SWMM5 `.hsf`                 */
+#define SWMM_HOTSTART_FORMAT_NATIVE 2 /**< OPENSWMM_HS_V1                   */
 
 /**
- * @brief Get the file format of the i-th `SAVE HOTSTART` entry.
- * @param engine  Engine handle.
- * @param idx     Slot index.
- * @param format  [out] One of `SWMM_HOTSTART_FORMAT_*`.
- * @returns SWMM_OK; SWMM_ERR_BADPARAM if `idx` is out of range.
+ * @brief Read the authored format selector of one scheduled save.
+ *
+ * @param[in] engine Non-null live engine with exclusive caller access. Scheduled-entry authoring
+ *     APIs impose no lifecycle guard and do not write a file immediately.
+ * @param[in] idx Zero-based existing SAVE HOTSTART slot index; invalid indices return BADPARAM
+ *     rather than BADINDEX.
+ * @param[out] format Non-null destination for SWMM_HOTSTART_FORMAT_AUTO, LEGACY or NATIVE.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle or SWMM_ERR_BADPARAM for an invalid required
+ *     argument or slot.
  */
-SWMM_ENGINE_API int swmm_hotstart_saves_get_format(
-    SWMM_Engine engine, int idx, int* format);
+SWMM_ENGINE_API int swmm_hotstart_saves_get_format(SWMM_Engine engine, int idx, int* format);
 
 /**
- * @brief Set the file format of an existing `SAVE HOTSTART` entry.
- * @param engine  Engine handle.
- * @param idx     Slot index.
- * @param format  One of `SWMM_HOTSTART_FORMAT_*`.
- * @returns SWMM_OK; SWMM_ERR_BADPARAM if `idx` or `format` is out of range.
+ * @brief Select the authored format of an existing scheduled save.
+ *
+ * This setter stores a preference; actual restart-profile support is evaluated when saving.
+ *
+ * @param[in] engine Non-null live engine with exclusive caller access. Scheduled-entry authoring
+ *     APIs impose no lifecycle guard and do not write a file immediately.
+ * @param[in] idx Zero-based existing SAVE HOTSTART slot index; invalid indices return BADPARAM
+ *     rather than BADINDEX.
+ * @param[in] format SWMM_HOTSTART_FORMAT_AUTO (0), LEGACY (1) or NATIVE (2). Other values are
+ *     refused.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle or SWMM_ERR_BADPARAM for an invalid required
+ *     argument or slot.
  */
-SWMM_ENGINE_API int swmm_hotstart_saves_set_format(
-    SWMM_Engine engine, int idx, int format);
+SWMM_ENGINE_API int swmm_hotstart_saves_set_format(SWMM_Engine engine, int idx, int format);
 
 /** @brief Bits of swmm_hotstart_legacy_omits(). */
-#define SWMM_HOTSTART_OMITS_WATER_AGE        0x1  /**< `[OPTIONS] WATER_AGE YES`  */
-#define SWMM_HOTSTART_OMITS_REACTION_SPECIES 0x2  /**< reactions-component species */
-#define SWMM_HOTSTART_OMITS_AQUIFER          0x4  /**< 2D aquifer rows            */
-#define SWMM_HOTSTART_OMITS_NODE_LIDS        0x8  /**< LID units at storage nodes */
+#define SWMM_HOTSTART_OMITS_WATER_AGE 0x1        /**< `[OPTIONS] WATER_AGE YES`  */
+#define SWMM_HOTSTART_OMITS_REACTION_SPECIES 0x2 /**< reactions-component species */
+#define SWMM_HOTSTART_OMITS_AQUIFER 0x4          /**< 2D aquifer rows            */
+#define SWMM_HOTSTART_OMITS_NODE_LIDS 0x8        /**< LID units at storage nodes */
 
 /**
- * @brief Which of this model's state a legacy SWMM5 hot-start file has no
- *        place for, and only a native file keeps.
+ * @brief Report selected model features that legacy routing hotstarts cannot retain.
  *
- * @details Reads the parsed model, so it answers before initialize(); a
- *          front end can use it to suggest NATIVE for a new `SAVE HOTSTART`
- *          row. Zero means nothing in the model needs the native format.
- *          `[POLLUTANTS]` concentrations and subcatchment ponded depths and
- *          buildup are in both formats. Neither format holds everything: the
- *          native one has no link control settings, node lateral inflows or
- *          storage residence times.
- * @param engine  Engine handle.
- * @param flags   [out] OR of `SWMM_HOTSTART_OMITS_*`.
- * @returns SWMM_OK; SWMM_ERR_BADPARAM if `flags` is NULL.
+ * Reads parsed authoring before initialization and does not write or validate a complete restart.
+ * The mask is not an exhaustive restart-completeness certificate: legacy/native formats and
+ * qualified full-engine checkpoints retain different state.
+ *
+ * @param[in] engine Non-null live engine with exclusive caller access. Scheduled-entry authoring
+ *     APIs impose no lifecycle guard and do not write a file immediately.
+ * @param[out] flags Non-null OR-mask of SWMM_HOTSTART_OMITS_WATER_AGE, REACTION_SPECIES, AQUIFER
+ *     and NODE_LIDS; zero when none of these features are configured.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle or SWMM_ERR_BADPARAM for an invalid required
+ *     argument or slot.
  */
 SWMM_ENGINE_API int swmm_hotstart_legacy_omits(SWMM_Engine engine, int* flags);
 
 /**
- * @brief Append a new `SAVE HOTSTART` entry.
+ * @brief Append an AUTO-format scheduled save authoring entry.
  *
- * @param engine    Engine handle.
- * @param path      File path (must be non-NULL; may be empty for a
- *                  placeholder row to be filled in later).
- * @param datetime  Decimal day (`0.0` = "save at end of run").
- * @returns SWMM_OK; SWMM_ERR_BADPARAM if `path` is NULL.
+ * Appending does not validate collisions or file writability and does not emit the file
+ * immediately.
+ *
+ * @param[in] engine Non-null live engine with exclusive caller access. Scheduled-entry authoring
+ *     APIs impose no lifecycle guard and do not write a file immediately.
+ * @param[in] path Non-null NUL-terminated path to copy; empty creates a placeholder row.
+ * @param[in] datetime SWMM DateTime decimal days since 1899-12-30; 0 means run end. Stored without
+ *     finite/date validation.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle or SWMM_ERR_BADPARAM for an invalid required
+ *     argument or slot.
  */
-SWMM_ENGINE_API int swmm_hotstart_saves_add(
-    SWMM_Engine engine, const char* path, double datetime);
+SWMM_ENGINE_API int swmm_hotstart_saves_add(SWMM_Engine engine, const char* path, double datetime);
 
 /**
- * @brief Remove the i-th `SAVE HOTSTART` entry; subsequent slots shift down.
- * @param engine  Engine handle.
- * @param idx     Slot index.
- * @returns SWMM_OK; SWMM_ERR_BADPARAM if `idx` is out of range.
+ * @brief Remove a scheduled save entry and shift later indices down.
+ *
+ * @param[in] engine Non-null live engine with exclusive caller access. Scheduled-entry authoring
+ *     APIs impose no lifecycle guard and do not write a file immediately.
+ * @param[in] idx Zero-based existing SAVE HOTSTART slot index; invalid indices return BADPARAM
+ *     rather than BADINDEX.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle or SWMM_ERR_BADPARAM for an invalid required
+ *     argument or slot.
  */
 SWMM_ENGINE_API int swmm_hotstart_saves_remove(SWMM_Engine engine, int idx);
 
 /**
- * @brief Remove all `SAVE HOTSTART` entries.
- * @param engine  Engine handle.
- * @returns SWMM_OK or SWMM_ERR_BADHANDLE.
+ * @brief Remove all scheduled save authoring entries.
+ *
+ * Does not delete any existing files already written by earlier entries.
+ *
+ * @param[in] engine Non-null live engine with exclusive caller access. Scheduled-entry authoring
+ *     APIs impose no lifecycle guard and do not write a file immediately.
+ * @return SWMM_OK, or SWMM_ERR_BADHANDLE for null engine.
  */
 SWMM_ENGINE_API int swmm_hotstart_saves_clear(SWMM_Engine engine);
 
@@ -257,27 +293,31 @@ SWMM_ENGINE_API int swmm_hotstart_saves_clear(SWMM_Engine engine);
  * ========================================================================= */
 
 /**
- * @brief Save the current engine state to a new hot start file.
+ * @brief Write current simulation state through the native checkpoint or state-IO path.
  *
- * @details Captures the full hydraulic state (node depths, heads, volumes;
- *          link flows, depths; subcatchment runoff and groundwater depths;
- *          user flag values) and writes it to the OPENSWMM_HS_V1 binary format.
- *          When a qualified thermal engine checkpoint is attached, the file
- *          uses V15 and includes the complete accepted 1D/2D state.
+ * A heat model with a qualified attached full-engine checkpoint uses its accepted native restart.
+ * Otherwise state-IO plugins are tried in order until one succeeds, with a built-in record-format
+ * fallback when no state plugin is registered. Record files match objects by ID; full-engine
+ * checkpoints require matching model/provider/runtime state and are restored at a subsequent start.
+ * This is not the exclusive new-path checkpoint API and does not promise no-replace publication.
  *
- * @param engine  Engine handle (must be in SWMM_STATE_STARTED or SWMM_STATE_RUNNING).
- * @param path    File path for the new hot start file.
- * @returns SWMM_OK on success; SWMM_ERR_HOTSTART or SWMM_ERR_IO on failure.
- *
- * @note Record-based files can be applied to a *different* model as long as
- *       object IDs overlap. A V15 full-engine restart requires the matching
- *       initialized model and is restored when the engine starts.
+ * @param[in] engine Non-null engine in RUNNING or ENDED; exclusive access is required.
+ * @param[in] path Non-null, nonempty NUL-terminated destination path, borrowed for the synchronous
+ *     call.
+ * @return SWMM_OK on successful write; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADPARAM for
+ *     null/empty path, SWMM_ERR_LIFECYCLE outside RUNNING/ENDED, or SWMM_ERR_HOTSTART on
+ *     checkpoint/state-writer failure.
  */
 SWMM_ENGINE_API int swmm_hotstart_save(SWMM_Engine engine, const char* path);
 
-/** Last diagnostic from the built-in hot-start reader/writer on this thread.
- * The borrowed string is valid until the next hot-start I/O call on this thread.
- * An empty string means no detailed diagnostic is available. */
+/**
+ * @brief Borrow the built-in hot-start reader/writer diagnostic for this thread.
+ *
+ * This diagnostic belongs to HotStartManager, not the independent checkpoint diagnostic or every
+ * possible state-IO plugin.
+ * @return NUL-terminated thread-local string, empty when no detailed IO diagnostic is available. Do
+ *     not free it; copy before another hot-start IO call on this thread.
+ */
 SWMM_ENGINE_API const char* swmm_hotstart_last_io_error(void);
 
 /* =========================================================================
@@ -285,14 +325,17 @@ SWMM_ENGINE_API const char* swmm_hotstart_last_io_error(void);
  * ========================================================================= */
 
 /**
- * @brief Open an existing hot start file for reading.
+ * @brief Load a native OPENSWMM hot-start file into an independent handle.
  *
- * @details Validates the magic number, version, and CRC32 checksum.
- *          Loads the full object UUID map into memory.
+ * Reads the file into owned in-memory records and restart extensions; no engine handle is retained.
+ * Release with swmm_hotstart_close(). This reader is distinct from the model-bound legacy USE
+ * HOTSTART loader.
  *
- * @param path  Path to an existing OPENSWMM_HS_V1 hot start file.
- * @param hs    [out] Handle to the opened hot start.
- * @returns SWMM_OK on success; SWMM_ERR_HOTSTART if file is invalid.
+ * @param[in] path Non-null, nonempty NUL-terminated native hot-start path; borrowed for the call.
+ * @param[out] hs Non-null output slot. Set to NULL before path/read validation, then to a newly
+ *     allocated caller-owned handle on success. A previous handle in this variable is not freed.
+ * @return SWMM_OK; SWMM_ERR_BADPARAM for null output or null/empty path; SWMM_ERR_HOTSTART when
+ *     native magic/version/checksum/content validation fails.
  */
 SWMM_ENGINE_API int swmm_hotstart_open(const char* path, SWMM_HotStart* hs);
 
@@ -301,24 +344,22 @@ SWMM_ENGINE_API int swmm_hotstart_open(const char* path, SWMM_HotStart* hs);
  * ========================================================================= */
 
 /**
- * @brief Apply hot start state to an engine.
+ * @brief Apply record state or queue a complete restart on an initialized engine.
  *
- * @details For each object in the hot start file, the engine's corresponding
- *          object (matched by string ID) is updated. Objects in the hot start
- *          that do not exist in the target engine generate warnings (not errors).
- *          Objects in the target engine that are absent from the hot start are
- *          left at their default initial conditions.
- *          A V15 full-engine checkpoint is queued here and restored atomically
- *          by the subsequent engine start after its 1D and 2D owners initialize.
+ * Record-based application matches string IDs, keeps missing target objects unchanged, records
+ * missing source objects as warnings and reopens mass-balance initial storage on success. This
+ * wrapper passes a no-op warning sink; use swmm_hotstart_warning_count()/warning() rather than
+ * assuming a registered engine warning callback fires. Full-engine checkpoint payloads are queued
+ * here and restored during subsequent engine start, after owners initialize; queue acceptance is
+ * not completed restoration. Record application is not promised atomic on every extension failure.
  *
- * @param engine  Engine handle (must be in SWMM_STATE_INITIALIZED).
- * @param hs      Hot start handle (from swmm_hotstart_open()).
- * @returns SWMM_OK on success. Missing objects in record-based files are
- *          warnings, not errors.
- *
- * @note Warnings are accessible via swmm_hotstart_warning_count() and
- *       swmm_hotstart_warning(). If a warning callback is registered, each
- *       missing object also fires SWMM_WARN_HOTSTART_MISSING.
+ * @param[in] engine Non-null INITIALIZED engine whose model and restart owners support the file
+ *     profile.
+ * @param[in] hs Non-null live hot-start handle returned by swmm_hotstart_open(); caller retains
+ *     ownership until close.
+ * @return SWMM_OK when records apply or a full-engine restart is queued; SWMM_ERR_BADHANDLE for a
+ *     null handle, SWMM_ERR_LIFECYCLE outside INITIALIZED, or SWMM_ERR_HOTSTART for a
+ *     refused/incompatible restart.
  */
 SWMM_ENGINE_API int swmm_hotstart_apply(SWMM_Engine engine, SWMM_HotStart hs);
 
@@ -327,117 +368,156 @@ SWMM_ENGINE_API int swmm_hotstart_apply(SWMM_Engine engine, SWMM_HotStart hs);
  * ========================================================================= */
 
 /**
- * @brief Modify the stored depth for a node in the hot start file.
+ * @brief Edit one stored node depth record before application/write-back.
  *
- * @details This allows adjusting initial conditions before applying a hot
- *          start. Changes are written back to the file when the handle is closed.
+ * Marks the record file dirty for swmm_hotstart_close() write-back. Does not modify an already
+ * running engine or recalculate related fields; a full-engine payload without this record returns
+ * BADPARAM.
  *
- * @param hs       Hot start handle.
- * @param node_id  Node identifier string.
- * @param depth    New depth in the original project length units.
- * @returns SWMM_OK, or SWMM_ERR_BADPARAM if node_id not found in hot start.
+ * @param[in] hs Non-null live hot-start handle returned by swmm_hotstart_open(); caller retains
+ *     ownership until close.
+ * @param[in] node_id Non-null NUL-terminated node ID, matched exactly/case-sensitively against
+ *     stored records.
+ * @param[in] depth New depth in internal feet (ft), regardless of project display units; assigned
+ *     without finite/range validation.
+ * @return SWMM_OK when a matching record is modified; SWMM_ERR_BADHANDLE for null hs or
+ *     SWMM_ERR_BADPARAM for null/unmatched ID.
  */
-SWMM_ENGINE_API int swmm_hotstart_set_node_depth(
-    SWMM_HotStart hs,
-    const char*   node_id,
-    double        depth
-);
+SWMM_ENGINE_API int swmm_hotstart_set_node_depth(SWMM_HotStart hs, const char* node_id,
+                                                 double depth);
 
 /**
- * @brief Modify the stored head for a node.
- * @param hs      Hot start handle.
- * @param node_id Node identifier.
- * @param head    New head value.
- * @returns SWMM_OK or SWMM_ERR_BADPARAM.
+ * @brief Edit one stored node head record before application/write-back.
+ *
+ * Marks the record file dirty for swmm_hotstart_close() write-back. Does not modify an already
+ * running engine or recalculate related fields; a full-engine payload without this record returns
+ * BADPARAM.
+ *
+ * @param[in] hs Non-null live hot-start handle returned by swmm_hotstart_open(); caller retains
+ *     ownership until close.
+ * @param[in] node_id Non-null NUL-terminated node ID, matched exactly/case-sensitively against
+ *     stored records.
+ * @param[in] head New head in internal datum feet (ft); assigned without finite/range validation.
+ * @return SWMM_OK when a matching record is modified; SWMM_ERR_BADHANDLE for null hs or
+ *     SWMM_ERR_BADPARAM for null/unmatched ID.
  */
-SWMM_ENGINE_API int swmm_hotstart_set_node_head(
-    SWMM_HotStart hs,
-    const char*   node_id,
-    double        head
-);
+SWMM_ENGINE_API int swmm_hotstart_set_node_head(SWMM_HotStart hs, const char* node_id, double head);
 
 /**
- * @brief Modify the stored flow for a link.
- * @param hs      Hot start handle.
- * @param link_id Link identifier.
- * @param flow    New flow value.
- * @returns SWMM_OK or SWMM_ERR_BADPARAM.
+ * @brief Edit one stored link flow record before application/write-back.
+ *
+ * Marks the record file dirty for swmm_hotstart_close() write-back. Does not modify an already
+ * running engine or recalculate related fields; a full-engine payload without this record returns
+ * BADPARAM.
+ *
+ * @param[in] hs Non-null live hot-start handle returned by swmm_hotstart_open(); caller retains
+ *     ownership until close.
+ * @param[in] link_id Non-null NUL-terminated link ID, matched exactly/case-sensitively against
+ *     stored records.
+ * @param[in] flow New flow in internal cubic feet per second (ft3/s), signed in stored link
+ *     orientation; assigned without finite/range validation.
+ * @return SWMM_OK when a matching record is modified; SWMM_ERR_BADHANDLE for null hs or
+ *     SWMM_ERR_BADPARAM for null/unmatched ID.
  */
-SWMM_ENGINE_API int swmm_hotstart_set_link_flow(
-    SWMM_HotStart hs,
-    const char*   link_id,
-    double        flow
-);
+SWMM_ENGINE_API int swmm_hotstart_set_link_flow(SWMM_HotStart hs, const char* link_id, double flow);
 
 /**
- * @brief Modify the stored depth for a link.
- * @param hs      Hot start handle.
- * @param link_id Link identifier.
- * @param depth   New depth value.
- * @returns SWMM_OK or SWMM_ERR_BADPARAM.
+ * @brief Edit one stored link depth record before application/write-back.
+ *
+ * Marks the record file dirty for swmm_hotstart_close() write-back. Does not modify an already
+ * running engine or recalculate related fields; a full-engine payload without this record returns
+ * BADPARAM.
+ *
+ * @param[in] hs Non-null live hot-start handle returned by swmm_hotstart_open(); caller retains
+ *     ownership until close.
+ * @param[in] link_id Non-null NUL-terminated link ID, matched exactly/case-sensitively against
+ *     stored records.
+ * @param[in] depth New depth in internal feet (ft); assigned without finite/range validation.
+ * @return SWMM_OK when a matching record is modified; SWMM_ERR_BADHANDLE for null hs or
+ *     SWMM_ERR_BADPARAM for null/unmatched ID.
  */
-SWMM_ENGINE_API int swmm_hotstart_set_link_depth(
-    SWMM_HotStart hs,
-    const char*   link_id,
-    double        depth
-);
+SWMM_ENGINE_API int swmm_hotstart_set_link_depth(SWMM_HotStart hs, const char* link_id,
+                                                 double depth);
 
 /**
- * @brief Modify the stored runoff for a subcatchment.
- * @param hs         Hot start handle.
- * @param subcatch_id Subcatchment identifier.
- * @param runoff     New runoff value.
- * @returns SWMM_OK or SWMM_ERR_BADPARAM.
+ * @brief Edit one stored subcatchment runoff record before application/write-back.
+ *
+ * Marks the record file dirty for swmm_hotstart_close() write-back. Does not modify an already
+ * running engine or recalculate related fields; a full-engine payload without this record returns
+ * BADPARAM.
+ *
+ * @param[in] hs Non-null live hot-start handle returned by swmm_hotstart_open(); caller retains
+ *     ownership until close.
+ * @param[in] subcatch_id Non-null NUL-terminated subcatchment ID, matched exactly/case-sensitively
+ *     against stored records.
+ * @param[in] runoff New runoff in internal cubic feet per second (ft3/s); assigned without
+ *     finite/range validation.
+ * @return SWMM_OK when a matching record is modified; SWMM_ERR_BADHANDLE for null hs or
+ *     SWMM_ERR_BADPARAM for null/unmatched ID.
  */
-SWMM_ENGINE_API int swmm_hotstart_set_subcatch_runoff(
-    SWMM_HotStart hs,
-    const char*   subcatch_id,
-    double        runoff
-);
+SWMM_ENGINE_API int swmm_hotstart_set_subcatch_runoff(SWMM_HotStart hs, const char* subcatch_id,
+                                                      double runoff);
 
 /* =========================================================================
  * Query hot start metadata
  * ========================================================================= */
 
 /**
- * @brief Get the elapsed simulation time at which the state was saved.
- * @param hs         Hot start handle.
- * @param sim_time   [out] Seconds since the saving run's start date (see
- *                   swmm_hotstart_get_start_date); the saved moment is the start
- *                   date plus this.
- * @returns SWMM_OK or SWMM_ERR_HOTSTART.
+ * @brief Read the saved elapsed simulation time.
+ *
+ * @param[in] hs Non-null live hot-start handle returned by swmm_hotstart_open(); caller retains
+ *     ownership until close.
+ * @param[out] sim_time Non-null destination for elapsed seconds since the saving run start calendar
+ *     date.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle or SWMM_ERR_BADPARAM for an invalid required
+ *     argument or slot.
  */
 SWMM_ENGINE_API int swmm_hotstart_get_sim_time(SWMM_HotStart hs, double* sim_time);
 
 /**
- * @brief Get the start date of the run that saved the hot start file.
- * @param hs          Hot start handle.
- * @param start_date  [out] Start date and time as an OADate (decimal days since
- *                    12/30/1899).
- * @returns SWMM_OK or SWMM_ERR_HOTSTART.
+ * @brief Read the saving run start calendar date.
+ *
+ * @param[in] hs Non-null live hot-start handle returned by swmm_hotstart_open(); caller retains
+ *     ownership until close.
+ * @param[out] start_date Non-null destination for OADate/SWMM DateTime decimal days since
+ *     1899-12-30; no timezone conversion.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle or SWMM_ERR_BADPARAM for an invalid required
+ *     argument or slot.
  */
 SWMM_ENGINE_API int swmm_hotstart_get_start_date(SWMM_HotStart hs, double* start_date);
 
 /**
- * @brief Get the CRS string stored in the hot start file.
- * @param hs     Hot start handle.
- * @param buf    Caller-allocated buffer.
- * @param buflen Buffer size.
- * @returns SWMM_OK or SWMM_ERR_HOTSTART.
+ * @brief Copy the hot-start header CRS string.
+ *
+ * Returns stored metadata without validating coordinates or compatibility with another model.
+ *
+ * @param[in] hs Non-null live hot-start handle returned by swmm_hotstart_open(); caller retains
+ *     ownership until close.
+ * @param[out] buf Non-null caller-owned destination; success NUL-terminates and silently truncates
+ *     to buflen-1 bytes. An absent CRS is an empty string.
+ * @param[in] buflen Positive byte capacity including NUL.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null handle or SWMM_ERR_BADPARAM for an invalid required
+ *     argument or slot.
  */
 SWMM_ENGINE_API int swmm_hotstart_get_crs(SWMM_HotStart hs, char* buf, int buflen);
 
 /**
- * @brief Get the number of nodes stored in the hot start file.
- * @param hs  Hot start handle.
- * @returns Node count, or -1 on error.
+ * @brief Count stored node records in a hot-start handle.
+ *
+ * A full-engine checkpoint payload need not expose its embedded state as editable record rows.
+ *
+ * @param[in] hs Non-null live hot-start handle returned by swmm_hotstart_open(); caller retains
+ *     ownership until close.
+ * @return Stored node-record count, or -1 for null hs.
  */
 SWMM_ENGINE_API int swmm_hotstart_node_count(SWMM_HotStart hs);
 
 /**
- * @brief Get the number of links stored in the hot start file.
- * @param hs  Hot start handle.
- * @returns Link count, or -1 on error.
+ * @brief Count stored link records in a hot-start handle.
+ *
+ * @param[in] hs Non-null live hot-start handle returned by swmm_hotstart_open(); caller retains
+ *     ownership until close.
+ * @return Stored link-record count, or -1 for null hs.
  */
 SWMM_ENGINE_API int swmm_hotstart_link_count(SWMM_HotStart hs);
 
@@ -446,22 +526,26 @@ SWMM_ENGINE_API int swmm_hotstart_link_count(SWMM_HotStart hs);
  * ========================================================================= */
 
 /**
- * @brief Get the number of warnings generated by the last swmm_hotstart_apply().
+ * @brief Count warnings retained by the hot-start handle.
  *
- * @details Warnings are issued for objects that were in the hot start file
- *          but not found in the target engine model.
+ * Record-based apply clears/repopulates this list; it can contain missing-object and
+ * restart-profile diagnostics. The full-checkpoint queue path does not promise to refresh this
+ * list.
  *
- * @param hs  Hot start handle.
- * @returns Warning count (0 if no apply was called, or all objects matched).
+ * @param[in] hs Non-null live hot-start handle returned by swmm_hotstart_open(); caller retains
+ *     ownership until close.
+ * @return Warning count, or 0 for null hs.
  */
 SWMM_ENGINE_API int swmm_hotstart_warning_count(SWMM_HotStart hs);
 
 /**
- * @brief Get the i-th warning message from the last swmm_hotstart_apply().
+ * @brief Borrow one retained hot-start warning.
  *
- * @param hs     Hot start handle.
- * @param index  Warning index [0, count-1].
- * @returns Null-terminated warning string (owned by hs handle), or NULL.
+ * @param[in] hs Non-null live hot-start handle returned by swmm_hotstart_open(); caller retains
+ *     ownership until close.
+ * @param[in] index Zero-based index in [0,swmm_hotstart_warning_count(hs)).
+ * @return Handle-owned NUL-terminated warning string, or NULL for null hs/out-of-range index. Never
+ *     free it; copy before applying again or closing hs.
  */
 SWMM_ENGINE_API const char* swmm_hotstart_warning(SWMM_HotStart hs, int index);
 
@@ -470,13 +554,14 @@ SWMM_ENGINE_API const char* swmm_hotstart_warning(SWMM_HotStart hs, int index);
  * ========================================================================= */
 
 /**
- * @brief Close and free the hot start handle.
+ * @brief Flush dirty record edits and destroy a hot-start handle.
  *
- * @details If any modifications were made via swmm_hotstart_set_*(), the
- *          changes are written back to the file before closing.
+ * Unmodified handles do not rewrite the file. Setters mark their records dirty; close attempts to
+ * persist those changes to the original path before freeing all storage.
  *
- * @param hs  Hot start handle. Safe to call with NULL.
- * @returns SWMM_OK, or SWMM_ERR_IO if write-back fails.
+ * @param[in] hs Caller-owned live hot-start handle, or NULL for a successful no-op. The handle is
+ *     destroyed even if flush fails; do not retry close or use it afterward.
+ * @return SWMM_OK after close/no-op; SWMM_ERR_IO when dirty write-back fails.
  */
 SWMM_ENGINE_API int swmm_hotstart_close(SWMM_HotStart hs);
 

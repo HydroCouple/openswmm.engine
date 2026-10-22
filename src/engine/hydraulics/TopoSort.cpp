@@ -15,13 +15,13 @@
 // limitations under the License.
 
 /**
- * @file TopoSort.cpp
- * @brief Topological sort — Kahn's algorithm, numerically identical to legacy.
+ * @file      TopoSort.cpp
+ * @brief     Topological sort — Kahn's algorithm, numerically identical to legacy.
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "TopoSort.hpp"
@@ -31,10 +31,8 @@
 namespace openswmm {
 namespace toposort {
 
-int sortLinks(const int* node1, const int* node2,
-              int n_links, int n_nodes,
-              std::vector<int>& sorted_links,
-              const int* divert_link) {
+int sortLinks(const int* node1, const int* node2, int n_links, int n_nodes,
+              std::vector<int>& sorted_links, const int* divert_link) {
     sorted_links.clear();
     sorted_links.reserve(static_cast<std::size_t>(n_links));
 
@@ -45,7 +43,8 @@ int sortLinks(const int* node1, const int* node2,
     // Count outgoing links per node
     for (int j = 0; j < n_links; ++j) {
         int n1 = node1[j];
-        if (n1 >= 0 && n1 < n_nodes) degree[static_cast<std::size_t>(n1)]++;
+        if (n1 >= 0 && n1 < n_nodes)
+            degree[static_cast<std::size_t>(n1)]++;
     }
 
     // Build CSR offsets
@@ -57,7 +56,7 @@ int sortLinks(const int* node1, const int* node2,
 
     // Fill adjacency list
     std::vector<int> adj_list(static_cast<std::size_t>(n_links));
-    std::vector<int> cursor = start_pos;  // copy for filling
+    std::vector<int> cursor = start_pos; // copy for filling
     for (int j = 0; j < n_links; ++j) {
         int n1 = node1[j];
         if (n1 >= 0 && n1 < n_nodes) {
@@ -74,8 +73,10 @@ int sortLinks(const int* node1, const int* node2,
     if (divert_link != nullptr) {
         for (int i = 0; i < n_nodes; ++i) {
             const auto ui = static_cast<std::size_t>(i);
-            if (divert_link[ui] < 0) continue;
-            if (degree[ui] != 2) continue;
+            if (divert_link[ui] < 0)
+                continue;
+            if (degree[ui] != 2)
+                continue;
             const auto m = static_cast<std::size_t>(start_pos[ui]);
             if (adj_list[m] == divert_link[ui])
                 std::swap(adj_list[m], adj_list[m + 1]);
@@ -85,7 +86,8 @@ int sortLinks(const int* node1, const int* node2,
     // Compute in-degree
     for (int j = 0; j < n_links; ++j) {
         int n2 = node2[j];
-        if (n2 >= 0 && n2 < n_nodes) in_degree[static_cast<std::size_t>(n2)]++;
+        if (n2 >= 0 && n2 < n_nodes)
+            in_degree[static_cast<std::size_t>(n2)]++;
     }
 
     // Kahn's algorithm: stack of zero in-degree nodes

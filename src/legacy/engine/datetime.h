@@ -1,23 +1,28 @@
-/*!
-* \file datetime.h
-* \brief Header file for date and time functions.
-* \author L. Rossman
-* \date Created: 2021-11-01
-* \date Last updated: 2024-12-30
-* \version 5.3.0
-* \details
-* The DateTime type is used to store date and time values. It is
-* equivalent to a double floating point type.
-*
-* The integral part of a DateTime value is the number of days that have
-* passed since 12/31/1899. The fractional part of a DateTime value is the
-* fraction of a 24 hour day that has elapsed.
-*
-* Update History
-* ==============
-* Build 5.1.011:
-* - New getTimeStamp function added.
-*/
+/**
+ * @file      datetime.h
+ * @brief     Header file for date and time functions.
+ * @author    L. Rossman
+ * @date      Created: 2021-11-01
+ * @date      Last updated: 2024-12-30
+ * @version 5.3.0
+ * @details
+ * The DateTime type is used to store date and time values. It is
+ * equivalent to a double floating point type.
+ *
+ * The integral part of a DateTime value is the number of days that have
+ * passed since 12/31/1899. The fractional part of a DateTime value is the
+ * fraction of a 24 hour day that has elapsed.
+ *
+ * Update History
+ * ==============
+ * Build 5.1.011:
+ * - New getTimeStamp function added.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
+ */
 
 #ifndef DATETIME_H
 #define DATETIME_H
@@ -90,10 +95,11 @@ DateTime datetime_encodeTime(int hour, int minute, int second);
 
 /*!
 * \brief Decodes a DateTime value to year, month, and day.
-* \param[in] date Date value
-* \param[out] y Year
-* \param[out] m Month
-* \param[out] d Day
+* @par Argument contract
+ * - date (in): Date value
+* - year (out): Year
+* - month (out): Month
+* - day (out): Day
 */
 void datetime_decodeDate(DateTime date, int* y, int* m, int* d);
 
@@ -111,28 +117,28 @@ void datetime_decodeTime(DateTime time, int* h, int* m, int* s);
 * \param[in] date Date value
 * \return Month of year
 */
-int  datetime_monthOfYear(DateTime date);
+int datetime_monthOfYear(DateTime date);
 
 /*!
 * \brief Finds the day of the year for a date.
 * \param[in] date Date value
 * \return Day of year
 */
-int  datetime_dayOfYear(DateTime date);
+int datetime_dayOfYear(DateTime date);
 
 /*!
 * \brief Finds the day of the week for a date.
 * \param[in] date Date value
 * \return Day of week (0 = Sunday, 1 = Monday, ..., 6 = Saturday)
 */
-int  datetime_dayOfWeek(DateTime date);
+int datetime_dayOfWeek(DateTime date);
 
 /*!
 * \brief Finds the hour of the day for a time.
-* \param[in] time Time value
+* \param[in] date Time value
 * \return Hour of day
 */
-int  datetime_hourOfDay(DateTime date);
+int datetime_hourOfDay(DateTime date);
 
 /*!
 * \brief Finds the number of days in a month.
@@ -140,7 +146,7 @@ int  datetime_hourOfDay(DateTime date);
 * \param[in] month Month
 * \return Number of days in the month
 */
-int  datetime_daysPerMonth(int year, int month);
+int datetime_daysPerMonth(int year, int month);
 
 /*!
 * \brief Converts a DateTime value to a string.
@@ -156,20 +162,24 @@ void datetime_dateToStr(DateTime date, char* s);
 */
 void datetime_timeToStr(DateTime time, char* s);
 
-/*!
-* \brief Converts a DateTime value to a string.
-* \param[in] date Date value
-* \param[in] time Time value
-* \param[out] s String to store the date and time
-*/
+/**
+ * @brief Format a calendar date and whole-second clock time in caller storage.
+ * @param[in] fmt Date format code accepted by datetime_setDateFormat().
+ * @param[in] aDate SWMM calendar days relative to 1899-12-30.
+ * @param[in] stampSize Writable byte capacity; below TIME_STAMP_SIZE leaves the buffer untouched.
+ * @param[out] timeStamp Caller-owned buffer with stampSize writable bytes when formatting occurs.
+ * @note Temporarily selects and restores the global DateFormat. Output is
+ * null-terminated and storage is not retained; shared formatting is not thread-safe.
+ */
 void datetime_getTimeStamp(int fmt, DateTime aDate, int stampSize, char* timeStamp);
 
 /*!
 * \brief Finds the month of the year for a date.
-* \param[in] s String date
+* @par Argument contract
+ * - month (in): String date
 * \return Month of year
 */
-int  datetime_findMonth(char* s);
+int datetime_findMonth(char* s);
 
 /*!
 * \brief Converts a string to a DateTime value.
@@ -177,7 +187,7 @@ int  datetime_findMonth(char* s);
 * \param[out] d DateTime value
 * \return 1 if successful, 0 if not
 */
-int  datetime_strToDate(char* s, DateTime* d);
+int datetime_strToDate(char* s, DateTime* d);
 
 /*!
 * \brief Converts a string to a DateTime value.
@@ -185,7 +195,7 @@ int  datetime_strToDate(char* s, DateTime* d);
 * \param[out] t DateTime value
 * \return 1 if successful, 0 if not
 */
-int  datetime_strToTime(char* s, DateTime* t);
+int datetime_strToTime(char* s, DateTime* t);
 
 /*!
 * \brief Sets the date format.
@@ -204,7 +214,7 @@ DateTime datetime_addSeconds(DateTime date1, double seconds);
 /*!
 * \brief Adds days to a DateTime value.
 * \param[in] date1 Date value
-* \param[in] days Number of days to add
+* \param[in] date2 Number of days to add
 * \return New DateTime value
 */
 DateTime datetime_addDays(DateTime date1, DateTime date2);
@@ -216,6 +226,5 @@ DateTime datetime_addDays(DateTime date1, DateTime date2);
 * \return Number of seconds
 */
 long datetime_timeDiff(DateTime date1, DateTime date2);
-
 
 #endif //DATETIME_H

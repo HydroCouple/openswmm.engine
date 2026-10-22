@@ -1,11 +1,15 @@
 /**
- * @file test_options_parser.cpp
- * @brief Unit tests for [OPTIONS] section parsing.
+ * @file      test_options_parser.cpp
+ * @brief     Unit tests for [OPTIONS] section parsing.
  *
  * @see src/engine/input/handlers/OptionsHandler.hpp
  * @see src/engine/core/SimulationOptions.hpp
  * @see Legacy reference: src/solver/input.c — readOption()
  * @ingroup engine_input
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -21,6 +25,15 @@ using openswmm::InfiltrationModel;
 namespace {
 
 // Helper: call handle_options with a list of raw option lines
+/**
+ * @brief Apply raw OPTIONS rows directly through the maintained handler.
+ *
+ * Delegates without a return status; callers inspect options/errors/warnings. Does not parse a
+ * complete file, finalize a model or execute a simulation.
+ *
+ * @param[in,out] ctx Context whose option values and diagnostics may change.
+ * @param[in] lines Owned-copy raw option rows.
+ */
 static void parse(SimulationContext& ctx, std::vector<std::string> lines) {
     openswmm::input::handle_options(ctx, lines);
 }
@@ -75,13 +88,13 @@ TEST(OptionsParserTest, RoutingStepSeconds) {
 
 TEST(OptionsParserTest, RoutingStepHHMMSS) {
     SimulationContext ctx;
-    parse(ctx, {"ROUTING_STEP  0:00:30"});  // 30 seconds
+    parse(ctx, {"ROUTING_STEP  0:00:30"}); // 30 seconds
     EXPECT_DOUBLE_EQ(ctx.options.routing_step, 30.0);
 }
 
 TEST(OptionsParserTest, ReportStepHHMMSS) {
     SimulationContext ctx;
-    parse(ctx, {"REPORT_STEP  0:15:00"});   // 15 minutes
+    parse(ctx, {"REPORT_STEP  0:15:00"}); // 15 minutes
     EXPECT_DOUBLE_EQ(ctx.options.report_step, 900.0);
 }
 
@@ -104,7 +117,7 @@ TEST(OptionsParserTest, MinimumStep) {
 TEST(OptionsParserTest, DateAcceptsHyphenSeparator) {
     SimulationContext a, b;
     parse(a, {"START_DATE  01/01/2000", "END_DATE  01/02/2000"});
-    parse(b, {"START_DATE  1-1-2000",   "END_DATE  1-2-2000"});
+    parse(b, {"START_DATE  1-1-2000", "END_DATE  1-2-2000"});
     EXPECT_DOUBLE_EQ(b.options.start_date, a.options.start_date);
     EXPECT_DOUBLE_EQ(b.options.end_date, a.options.end_date);
     // and the run has a real duration, which is what the deck actually lost
@@ -124,8 +137,8 @@ TEST(OptionsParserTest, DateRejectsAMissingSeparator) {
 TEST(OptionsParserTest, CRSStoredInOptionsAndSpatial) {
     SimulationContext ctx;
     parse(ctx, {"CRS  EPSG:4326"});
-    EXPECT_EQ(ctx.options.crs,   "EPSG:4326");
-    EXPECT_EQ(ctx.spatial.crs,   "EPSG:4326");
+    EXPECT_EQ(ctx.options.crs, "EPSG:4326");
+    EXPECT_EQ(ctx.spatial.crs, "EPSG:4326");
     EXPECT_TRUE(ctx.spatial.is_geographic);
 }
 
@@ -250,7 +263,7 @@ TEST(OptionsParserTest, InfiltrationGreenAmpt) {
 TEST(OptionsParserTest, UnsteadyFrictionDefaults) {
     SimulationContext ctx;
     parse(ctx, {});
-    EXPECT_EQ(ctx.options.unsteady_friction, 0);   // NONE
+    EXPECT_EQ(ctx.options.unsteady_friction, 0); // NONE
     EXPECT_DOUBLE_EQ(ctx.options.uf_k3, 0.015);
 }
 

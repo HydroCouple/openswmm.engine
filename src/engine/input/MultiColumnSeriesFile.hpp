@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file MultiColumnSeriesFile.hpp
- * @brief Parse-once cache for multi-column external series files
+ * @file      MultiColumnSeriesFile.hpp
+ * @brief     Parse-once cache for multi-column external series files
  *        (CSV / TSV / PCSWMM TSF).
  *
  * @details Implements the eager parse-once design of
@@ -46,9 +46,9 @@
  * @see src/engine/input/PostParseResolver.cpp — the two consumers
  * @ingroup engine_input
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_MULTI_COLUMN_SERIES_FILE_HPP
@@ -70,13 +70,13 @@ namespace openswmm::input {
  */
 struct ParsedSeriesFile {
     /// Header names; index 0 is the time-column label and never matches.
-    std::vector<std::string>          headers;
+    std::vector<std::string> headers;
 
     /// Row datetimes (SWMM OADate, whole file, ascending).
-    std::vector<double>               dates;
+    std::vector<double> dates;
 
     /// columns[i] (i >= 1) aligned to `dates`; columns[0] is unused/empty.
-    std::vector<std::vector<double>>  columns;
+    std::vector<std::vector<double>> columns;
 
     /// Whole-file first/last datetime (0 when the file has no data rows).
     double first_date = 0.0, last_date = 0.0;
@@ -84,106 +84,109 @@ struct ParsedSeriesFile {
     // Per-column statistics over the WHOLE file (index-aligned with
     // `headers`; entry 0 unused). These preserve the "Rainfall File
     // Summary" values a per-gage scan used to produce.
-    std::vector<double>               col_first_date;
-    std::vector<double>               col_last_date;
-    std::vector<long>                 col_periods_precip;  ///< cells with value > 0
-    std::vector<long>                 col_unparsed_cells;  ///< value-parse failures
+    std::vector<double> col_first_date;
+    std::vector<double> col_last_date;
+    std::vector<long> col_periods_precip; ///< cells with value > 0
+    std::vector<long> col_unparsed_cells; ///< value-parse failures
 
     /// Data rows whose datetime cell failed to parse (skipped entirely).
-    long                              unparsed_rows = 0;
+    long unparsed_rows = 0;
 
     /**
-     * @brief Case-insensitive column lookup by header name.
-     * @returns Column index >= 1, or -1 when not found (a match on the time
-     *          column 0 is as wrong as no match and also returns -1).
+     * @brief Find the first non-time header matching with C-locale case folding.
+     *
+     * Linear scan; caller prevents concurrent mutation of the owned parsed-file headers.
+     *
+     * @param[in] name Borrowed exact-length header bytes; no whitespace/quote cleanup occurs here.
+     * @return First matching index>=1, or -1 for no match/time-column-only match.
      */
     int find_column(std::string_view name) const;
 
-    /// First data column (1) when one exists, else -1.
-    int first_data_column() const {
-        return headers.size() > 1 ? 1 : -1;
-    }
+    /**
+     * @brief Select the first data column based on header shape.
+     *
+     * Does not require any parsed data rows or inspect column storage.
+     * @return One if headers has at least two entries; -1 otherwise.
+     */
+    int first_data_column() const { return headers.size() > 1 ? 1 : -1; }
 };
 
 /// Why a parse failed (or that it did not).
 enum class SeriesFileStatus {
-    OK,            ///< parsed (possibly zero data rows)
-    OPEN_FAILED,   ///< file could not be opened
-    FORMAT_FAILED  ///< no header / no data columns
+    OK,           ///< parsed (possibly zero data rows)
+    OPEN_FAILED,  ///< file could not be opened
+    FORMAT_FAILED ///< no header / no data columns
 };
 
 /**
- * @brief Parse a full datetime cell.
+ * @brief Parse supported date/clock syntax into SWMM decimal days.
  *
- * @details Accepts ISO-8601 `YYYY-MM-DD[ T]HH:MM[:SS]`, 24-hour US
- *          `MM/DD/YYYY[ HH:MM[:SS]]`, and 12-hour US with a trailing
- *          AM/PM token (`MM/DD/YYYY hh:mm[:ss] AM` — the TSF form).
- *          Relocated from PostParseResolver.cpp (csv_parse_datetime) per
- *          the 2026-08-17 plan; the `n<5` hour-dropping asymmetry of the
- *          US branch is fixed to mirror the ISO branch.
+ * Uses permissive sscanf prefixes, tolerates trailing text and missing clock components. encodeDate
+ * supplies its invalid-date sentinel and encodeTime accepts extended nonnegative hours/minutes. US
+ * AM/PM changes only hours 1..12; 00/13..23 remain as supplied. No timezone conversion or unit
+ * scaling.
  *
- * @param cell  Text of the cell (already trimmed).
- * @param out   Receives the encoded SWMM OADate on success.
- * @returns true when the cell parsed as a datetime.
+ * @param[in] cell Borrowed NUL-terminated text; supports ISO numeric date or US slash date,
+ *     optional clock and US AM/PM suffix.
+ * @param[out] out Written on recognized date syntax; preserved if fewer than three date fields
+ *     parse.
+ * @return True when date field syntax parses, false otherwise; this is not independent
+ *     Gregorian/clock validity validation.
  */
 bool parse_series_datetime(const std::string& cell, double& out);
 
 /**
- * @brief Parse a multi-column series file (format auto-detected).
+ * @brief Parse CSV/TSV/TSF columns into owned sorted raw-value arrays.
  *
- * @param abs_path  Resolved path to open.
- * @param out       Receives the parsed file on success.
- * @param errors    Receives one human-readable string per file-level
- *                  problem (cannot open, no header, no data columns).
- * @param status    Optional; receives why parsing failed (or OK).
- * @returns true on success (a well-formed file with zero data rows still
- *          succeeds — consumers decide whether emptiness is an error).
+ * Increments process parse counter even on failed open. Raw numeric cells use C-locale strtod
+ * prefixes without complete-token/range checks; absent/unparseable cells become NaN, present
+ * unparseable cells increment diagnostics. Invalid datetime syntax skips a whole row. Sorts
+ * dates/columns ascending without deduplicating equal timestamps; ties need not preserve source
+ * order. Stream EOF/read failure are not separately distinguished. Allocation/path exceptions
+ * propagate.
+ *
+ * @param[in] abs_path Borrowed filename expected resolved; opened through UTF-8/native-path helper.
+ * @param[out] out Caller-owned parsed file RESET at entry; may contain a partial header/data prefix
+ *     after refusal or exception.
+ * @param[in,out] errors Caller-owned sink receiving appended file-level open/header/column
+ *     diagnostics; not cleared.
+ * @param[out] status Optional destination set to OK, OPEN_FAILED or FORMAT_FAILED on normal return.
+ * @return True for a valid header with at least one data column, even with no successfully parsed
+ *     data rows; false for file-level refusal.
  */
-bool parse_multicolumn_series_file(const std::string& abs_path,
-                                   ParsedSeriesFile& out,
+bool parse_multicolumn_series_file(const std::string& abs_path, ParsedSeriesFile& out,
                                    std::vector<std::string>& errors,
                                    SeriesFileStatus* status = nullptr);
 
 /**
- * @brief Cheap content sniff: does this file look multi-column?
+ * @brief Open a file and sniff its first nonblank/noncomment row.
  *
- * @details Reads only up to the first content line. True when it starts
- *          with `IDs:` (TSF), contains a comma (legacy .dat is whitespace
- *          delimited), or is tab-delimited with a non-datetime first cell
- *          (a TSV header row). Used by the timeseries loader to route a
- *          FILE reference without a `:column` suffix.
+ * Reads until the first content row then closes the local stream. This open is separate from
+ * parse/cache attempts and is not counted by multicolumn_parse_count_total(). Not a full format
+ * validator.
+ *
+ * @param[in] abs_path Borrowed filename opened through UTF-8/native-path conversion.
+ * @return True for an IDs: prefix, any comma, or tabs with a nondatetime first cell; false for open
+ *     failure, empty input or no matching signature.
  */
 bool looks_like_multicolumn_series_file(const std::string& abs_path);
 
 /**
- * @brief Split a `path[:column]` FILE token into its path and column parts.
+ * @brief Split the last eligible column-suffix colon from an external-file token.
  *
- * @details ONE rule, shared by every consumer of the convention — the rain
- *          gage reader (`handlers/CatchmentHandler.cpp`) and the timeseries
- *          loader (`PostParseResolver.cpp`). They used to differ (first
- *          colon vs. last colon), which derived two different cache keys for
- *          the same file and silently defeated the single-read guarantee
- *          whenever a path contained a colon.
+ * No trimming/unquoting, file lookup or encoding conversion. A true result with empty column
+ * selects first-data-column conventions at consumers.
  *
- *          The rule: take the LAST colon in the token, then reject it as a
- *          column separator when either
- *          - it is the Windows drive-letter colon (index 1, preceded by a
- *            letter), or
- *          - the text after it contains a path separator ('/' or '\\'), i.e.
- *            the colon belongs to a directory name (legal on POSIX/macOS,
- *            e.g. `/data/Rich:2024/rain.csv`).
- *
- * @param token       The verbatim FILE token.
- * @param path_out    Receives the path (the whole token when there is no
- *                    column).
- * @param column_out  Receives the column name (empty when there is none, and
- *                    also when the token ends in a bare `:`).
- * @returns true when a column separator was found. An empty @p column_out
- *          with a true return is the `"path:"` form, which selects the first
- *          data column but still identifies the file as multi-column.
+ * @param[in] token Borrowed bytes; must not alias either output string because output assignment
+ *     can invalidate the view.
+ * @param[out] path_out Receives the whole token if no separator, otherwise the prefix; must be
+ *     distinct from column_out.
+ * @param[out] column_out Cleared first; receives suffix if a separator exists, including an empty
+ *     suffix for a trailing colon.
+ * @return True for an eligible colon, false if absent, a sole alphabetic drive colon at index one,
+ *     or a suffix containing slash/backslash.
  */
-bool split_series_file_token(std::string_view token,
-                             std::string& path_out,
+bool split_series_file_token(std::string_view token, std::string& path_out,
                              std::string& column_out);
 
 /**
@@ -197,18 +200,31 @@ bool split_series_file_token(std::string_view token,
 class MultiColumnFileCache {
 public:
     /**
-     * @brief Return the parsed file, parsing it on first request.
-     * @param abs_path  Resolved path (the cache key).
-     * @param errors    Receives file-level parse errors (first parse only).
-     * @param status    Optional; receives the entry's status.
-     * @returns Pointer into the cache (valid for the cache's lifetime), or
-     *          nullptr when the file could not be parsed.
+     * @brief Borrow a path-keyed parsed result, caching normal failure as well as success.
+     *
+     * No file-change invalidation or internal synchronization. Caller shares one cache per resolve pass
+     * and copies selected data before that cache dies. Exceptions during parsing/insertion propagate
+     * and do not establish a normal cached result.
+     *
+     * @param[in] abs_path Borrowed exact-byte cache key; no canonicalization or case folding.
+     *     Equivalent filesystem spellings can create separate entries.
+     * @param[in,out] errors Appended file-level diagnostics only on first normal parse attempt for this
+     *     exact key.
+     * @param[out] status Optional cached status destination.
+     * @return Pointer into owned cache for OK, nullptr for cached failure; result remains valid across
+     *     map rehashes until cache destruction.
      */
     const ParsedSeriesFile* get_or_parse(const std::string& abs_path,
                                          std::vector<std::string>& errors,
                                          SeriesFileStatus* status = nullptr);
 
-    /// Number of actual parse attempts (test hook for the single-read assertion).
+    /**
+     * @brief Read this cache's normal parse-attempt count.
+     *
+     * Not an underlying OS-open counter; sniffing and thrown parse attempts are not included.
+     * @return Number of parse calls that returned before cache insertion; failures count, cache hits do
+     *     not.
+     */
     int parse_count() const noexcept { return parse_count_; }
 
 private:
@@ -221,11 +237,11 @@ private:
 };
 
 /**
- * @brief Process-wide count of multi-column file parses (test hook).
+ * @brief Read the relaxed atomic process-wide parse-entry count.
  *
- * @details Lets a black-box engine test assert the single-read guarantee
- *          across swmm_engine_open (capture before, compare after). Not part
- *          of the public C API.
+ * No reset or synchronization with completed parsing; use snapshots only as test diagnostics.
+ * @return Cumulative calls entering parse_multicolumn_series_file(), including failed opens and
+ *     attempts that later throw.
  */
 long multicolumn_parse_count_total() noexcept;
 

@@ -1,11 +1,11 @@
-/*!
- * \file consts.h
- * \brief Header file for SWMM constants.
- * \author L. Rossman
- * \date Created: 2023-07-15
- * \date Last updated: 2024-12-30
- * \version 5.3.0
- * \details
+/**
+ * @file      consts.h
+ * @brief     Header file for SWMM constants.
+ * @author    L. Rossman
+ * @date      Created: 2023-07-15
+ * @date      Last updated: 2024-12-30
+ * @version 5.3.0
+ * @details
  * Various constants used in the SWMM model.
  *
  * Update history
@@ -13,7 +13,13 @@
  * - Build 5.3.0 (2024-12-30)
  *   - Added MAXHOTSTARTFILES constant to support saving multiple hotstart files
  *     at different times.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
  */
+
 #ifndef CONSTS_H
 #define CONSTS_H
 

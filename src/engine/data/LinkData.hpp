@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file LinkData.hpp
- * @brief Structure-of-Arrays (SoA) storage for all link types.
+ * @file      LinkData.hpp
+ * @brief     Structure-of-Arrays (SoA) storage for all link types.
  *
  * @details Replaces the global `Link[]` array and `TLink`/`TConduit`/`TPump`/
  *          `TWeir`/`TOrifice`/`TOutlet` structs from src/solver/objects.h.
@@ -32,9 +32,9 @@
  * @see Legacy reference: src/solver/globals.h — Link[], Nlinks[]
  * @ingroup engine_data
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_LINK_DATA_HPP
@@ -55,45 +55,39 @@ namespace openswmm {
  * @brief Link type codes.
  * @see Legacy: LinkType in src/solver/enums.h
  */
-enum class LinkType : int8_t {
-    CONDUIT = 0,
-    PUMP    = 1,
-    ORIFICE = 2,
-    WEIR    = 3,
-    OUTLET  = 4
-};
+enum class LinkType : int8_t { CONDUIT = 0, PUMP = 1, ORIFICE = 2, WEIR = 3, OUTLET = 4 };
 
 /**
  * @brief Conduit cross-section shape code.
  * @see Legacy: XsectType in src/solver/enums.h
  */
 enum class XsectShape : int16_t {
-    CIRCULAR         = 0,
-    FILLED_CIRCULAR  = 1,
-    RECT_CLOSED      = 2,
-    RECT_OPEN        = 3,
-    TRAPEZOIDAL      = 4,
-    TRIANGULAR       = 5,
-    PARABOLIC        = 6,
-    POWER            = 7,
-    MODBASKETHANDLE  = 8,
-    EGGSHAPED        = 9,
-    HORSESHOE        = 10,
-    GOTHIC           = 11,
-    CATENARY         = 12,
-    SEMIELLIPTICAL   = 13,
-    BASKETHANDLE     = 14,
-    SEMICIRCULAR     = 15,
-    RECT_TRIANG      = 16,  ///< Rectangular-triangular bottom
-    RECT_ROUND       = 17,  ///< Rectangular-round bottom
-    HORIZ_ELLIPSE    = 18,  ///< Horizontal elliptical pipe
-    VERT_ELLIPSE     = 19,  ///< Vertical elliptical pipe
-    ARCH             = 20,  ///< Arch pipe
-    IRREGULAR        = 21,  ///< User-supplied shape curve
-    CUSTOM           = 22,  ///< Shape from CURVE_SHAPE table
-    FORCE_MAIN       = 23,  ///< Circular force main (Hazen-Williams or D-W)
-    STREET_XSECT     = 24,  ///< Street cross-section
-    DUMMY            = 25   ///< Dummy (no geometry)
+    CIRCULAR = 0,
+    FILLED_CIRCULAR = 1,
+    RECT_CLOSED = 2,
+    RECT_OPEN = 3,
+    TRAPEZOIDAL = 4,
+    TRIANGULAR = 5,
+    PARABOLIC = 6,
+    POWER = 7,
+    MODBASKETHANDLE = 8,
+    EGGSHAPED = 9,
+    HORSESHOE = 10,
+    GOTHIC = 11,
+    CATENARY = 12,
+    SEMIELLIPTICAL = 13,
+    BASKETHANDLE = 14,
+    SEMICIRCULAR = 15,
+    RECT_TRIANG = 16,   ///< Rectangular-triangular bottom
+    RECT_ROUND = 17,    ///< Rectangular-round bottom
+    HORIZ_ELLIPSE = 18, ///< Horizontal elliptical pipe
+    VERT_ELLIPSE = 19,  ///< Vertical elliptical pipe
+    ARCH = 20,          ///< Arch pipe
+    IRREGULAR = 21,     ///< User-supplied shape curve
+    CUSTOM = 22,        ///< Shape from CURVE_SHAPE table
+    FORCE_MAIN = 23,    ///< Circular force main (Hazen-Williams or D-W)
+    STREET_XSECT = 24,  ///< Street cross-section
+    DUMMY = 25          ///< Dummy (no geometry)
 };
 
 /**
@@ -101,9 +95,9 @@ enum class XsectShape : int16_t {
  * @see Legacy: FlowClass in src/solver/enums.h
  */
 enum class FlowClass : int8_t {
-    DRY        = 0,
-    UP_DRY     = 1,
-    DN_DRY     = 2,
+    DRY = 0,
+    UP_DRY = 1,
+    DN_DRY = 2,
     SUBCRITICAL = 3,
     SUPERCRITICAL = 4,
     UP_CRITICAL = 5,
@@ -129,43 +123,43 @@ struct LinkData {
     // -----------------------------------------------------------------------
 
     /** @brief Link type. */
-    std::vector<LinkType>   type;
+    std::vector<LinkType> type;
 
     /**
      * @brief Upstream node index.
      * @see Legacy: Link[i].node1
      */
-    std::vector<int>        node1;
+    std::vector<int> node1;
 
     /**
      * @brief Downstream node index.
      * @see Legacy: Link[i].node2
      */
-    std::vector<int>        node2;
+    std::vector<int> node2;
 
     /**
      * @brief Link offset at upstream node (project length units above invert).
      * @see Legacy: Link[i].offset1
      */
-    std::vector<double>     offset1;
+    std::vector<double> offset1;
 
     /**
      * @brief Link offset at downstream node.
      * @see Legacy: Link[i].offset2
      */
-    std::vector<double>     offset2;
+    std::vector<double> offset2;
 
     /**
      * @brief Initial flow rate (project flow units).
      * @see Legacy: Link[i].q0
      */
-    std::vector<double>     q0;
+    std::vector<double> q0;
 
     /**
      * @brief Maximum allowable flow rate (project flow units, 0 = unlimited).
      * @see Legacy: Link[i].qLimit
      */
-    std::vector<double>     q_limit;
+    std::vector<double> q_limit;
 
     // -----------------------------------------------------------------------
     // Conduit-specific properties (valid when type[i] == CONDUIT)
@@ -175,13 +169,13 @@ struct LinkData {
     std::vector<XsectShape> xsect_shape;
 
     /** @brief Full depth of cross-section (project length units). */
-    std::vector<double>     xsect_y_full;
+    std::vector<double> xsect_y_full;
 
     /** @brief Full-flow area of cross-section (sq project length units). */
-    std::vector<double>     xsect_a_full;
+    std::vector<double> xsect_a_full;
 
     /** @brief Full hydraulic width of cross-section. */
-    std::vector<double>     xsect_w_max;
+    std::vector<double> xsect_w_max;
 
     /**
      * @brief Raw [XSECTIONS] geometry parameters as supplied (display units),
@@ -198,16 +192,16 @@ struct LinkData {
      *          not set these), in which case writers fall back to the derived
      *          fields.  Set by swmm_link_set_xsect and the [XSECTIONS] parser.
      */
-    std::vector<double>     xsect_geom1;
-    std::vector<double>     xsect_geom2;
-    std::vector<double>     xsect_geom3;
-    std::vector<double>     xsect_geom4;
+    std::vector<double> xsect_geom1;
+    std::vector<double> xsect_geom2;
+    std::vector<double> xsect_geom3;
+    std::vector<double> xsect_geom4;
 
     /**
      * @brief Shape curve index (for IRREGULAR / CUSTOM shapes).
      * @details -1 for standard shapes.
      */
-    std::vector<int>        xsect_curve;
+    std::vector<int> xsect_curve;
 
     // Phase 6: conduit-config fields (roughness, length, slope, mod_length,
     // barrels, beta, rough_factor, q_full, q_max) moved to ConduitData in
@@ -217,69 +211,69 @@ struct LinkData {
      * @brief Full-pipe hydraulic radius.
      * @see Legacy: Link[j].xsect.rFull
      */
-    std::vector<double>     xsect_r_full;
+    std::vector<double> xsect_r_full;
 
     /**
      * @brief Full-pipe section factor.
      * @see Legacy: Link[j].xsect.sFull
      */
-    std::vector<double>     xsect_s_full;
+    std::vector<double> xsect_s_full;
 
     /**
      * @brief Maximum section factor (at depth of max conveyance).
      * @see Legacy: Link[j].xsect.sMax
      */
-    std::vector<double>     xsect_s_max;
+    std::vector<double> xsect_s_max;
 
     /**
      * @brief Bottom depth for FILLED_CIRCULAR, RECT_TRIANG, RECT_ROUND shapes.
      * @see Legacy: Link[j].xsect.yBot
      */
-    std::vector<double>     xsect_y_bot;
+    std::vector<double> xsect_y_bot;
 
     /**
      * @brief Bottom area for FILLED_CIRCULAR, RECT_TRIANG shapes.
      * @see Legacy: Link[j].xsect.aBot
      */
-    std::vector<double>     xsect_a_bot;
+    std::vector<double> xsect_a_bot;
 
     /**
      * @brief Multi-purpose shape param: side slope (RECT_TRIANG), C-factor (FORCE_MAIN),
      *        number of open sides (RECT_OPEN), etc.
      * @see Legacy: Link[j].xsect.sBot
      */
-    std::vector<double>     xsect_s_bot;
+    std::vector<double> xsect_s_bot;
 
     /**
      * @brief Multi-purpose shape param: wall length (RECT_TRIANG), wetted perimeter (FILLED_CIRCULAR).
      * @see Legacy: Link[j].xsect.rBot
      */
-    std::vector<double>     xsect_r_bot;
+    std::vector<double> xsect_r_bot;
 
     /**
      * @brief Depth at maximum width.
      * @see Legacy: Link[j].xsect.ywMax
      */
-    std::vector<double>     xsect_yw_max;
+    std::vector<double> xsect_yw_max;
 
     /**
      * @brief Cached batch (XSectBatch) shape code, translated from XsectShape at init.
      * @details Avoids per-timestep translateShape() switch dispatch.
      *          Set once by Routing::init() or PostParseResolver.
      */
-    std::vector<int>        xsect_batch_shape;
+    std::vector<int> xsect_batch_shape;
 
     /**
      * @brief Current link setting (0-1 for pumps/orifices/weirs, 1.0 default for conduits).
      * @see Legacy: Link[j].setting
      */
-    std::vector<double>     setting;
+    std::vector<double> setting;
 
     /**
      * @brief Target setting from control rules.
      * @see Legacy: Link[j].targetSetting
      */
-    std::vector<double>     target_setting;
+    std::vector<double> target_setting;
 
     /**
      * @brief Absolute date (decimal days) when target_setting last crossed
@@ -289,13 +283,13 @@ struct LinkData {
      *        transitions, matching legacy routing.c:295-299.
      * @see Legacy: Link[j].timeLastSet
      */
-    std::vector<double>     time_last_set;
+    std::vector<double> time_last_set;
 
     /**
      * @brief Flow direction: +1 = node1→node2, -1 = reversed.
      * @see Legacy: Link[j].direction
      */
-    std::vector<int>        direction;
+    std::vector<int> direction;
 
     // -----------------------------------------------------------------------
     // Pump-specific properties (valid when type[i] == PUMP)
@@ -318,13 +312,13 @@ struct LinkData {
     // has_flap_gate and dqdh stay on base (shared / multi-owner).
 
     /** @brief Flap gate on this conduit (uint8_t: 0=no, 1=yes). @see Legacy: Link[j].hasFlapGate */
-    std::vector<uint8_t>    has_flap_gate;
+    std::vector<uint8_t> has_flap_gate;
 
     /**
      * @brief Derivative dQ/dH for inlet-controlled culvert flow.
      * @see Legacy: Link[j].dqdh
      */
-    std::vector<double>     dqdh;
+    std::vector<double> dqdh;
 
     // -----------------------------------------------------------------------
     // Weir / Orifice / Outlet — shared geometric properties
@@ -341,23 +335,23 @@ struct LinkData {
      * @brief Current flow rate (project flow units, +ve = node1→node2).
      * @see Legacy: Link[i].newFlow
      */
-    std::vector<double>     flow;
+    std::vector<double> flow;
 
     /// Kinematic-wave accepted upstream flow, all barrels (cfs). Published
     /// by each hydraulic solve before transport; not persisted in hotstarts.
-    std::vector<double>     kw_inflow;
+    std::vector<double> kw_inflow;
 
     /**
      * @brief Current water depth at midpoint (project length units).
      * @see Legacy: Link[i].newDepth
      */
-    std::vector<double>     depth;
+    std::vector<double> depth;
 
     /**
      * @brief Current full-flow volume (project volume units).
      * @see Legacy: Link[i].newVolume
      */
-    std::vector<double>     volume;
+    std::vector<double> volume;
 
     /**
      * @brief Portion of `volume` held in the Preissmann slot (ft³).
@@ -366,7 +360,7 @@ struct LinkData {
      *          under the dynamic-wave router and below the pipe crown. No
      *          legacy counterpart: legacy never separates slot storage.
      */
-    std::vector<double>     slot_volume;
+    std::vector<double> slot_volume;
 
     // Slot-storage share statistics (FV slot program R0). All stay 0.0
     // under the dynamic-wave router. The share of a link at an instant is
@@ -374,25 +368,25 @@ struct LinkData {
     // time integrals below, never an average of instantaneous ratios.
 
     /** @brief ∫ slot_volume dt over the run (ft³·s). */
-    std::vector<double>     stat_slot_vol_dt;
+    std::vector<double> stat_slot_vol_dt;
     /** @brief ∫ volume dt over the run (ft³·s) — the share denominator. */
-    std::vector<double>     stat_vol_dt;
+    std::vector<double> stat_vol_dt;
     /** @brief Peak instantaneous slot share (slot_volume/volume, 0..1). */
-    std::vector<double>     stat_peak_slot_share;
+    std::vector<double> stat_peak_slot_share;
     /** @brief Time (s) the instantaneous slot share exceeded 1 %. */
-    std::vector<double>     stat_time_slot_above;
+    std::vector<double> stat_time_slot_above;
 
     /**
      * @brief Current froude number (absolute).
      * @see Legacy: Link[i].froude
      */
-    std::vector<double>     froude;
+    std::vector<double> froude;
 
     /** @brief Current flow class (DRY, SUBCRITICAL, etc.). */
-    std::vector<FlowClass>  flow_class;
+    std::vector<FlowClass> flow_class;
 
     /** @brief True if the link is closed by a control rule (uint8_t: 0=no, 1=yes). */
-    std::vector<uint8_t>    is_closed;
+    std::vector<uint8_t> is_closed;
 
     // Phase 6: full_state (per-step up/down full bitmask) moved to ConduitData.
 
@@ -401,13 +395,13 @@ struct LinkData {
     // -----------------------------------------------------------------------
 
     /** @brief Flow at the previous timestep. */
-    std::vector<double>     old_flow;
+    std::vector<double> old_flow;
 
     /** @brief Depth at the previous timestep. */
-    std::vector<double>     old_depth;
+    std::vector<double> old_depth;
 
     /** @brief Volume at the previous timestep. */
-    std::vector<double>     old_volume;
+    std::vector<double> old_volume;
 
     // -----------------------------------------------------------------------
     // Per-link quality state — flat 2D: [link * n_pollutants + pollutant]
@@ -418,13 +412,13 @@ struct LinkData {
      * @details Size = n_links * n_pollutants.
      * @see Legacy: Link[i].newQual[]
      */
-    std::vector<double>     conc;
+    std::vector<double> conc;
 
     /** @brief Previous-step quality in each link. */
-    std::vector<double>     conc_old;
+    std::vector<double> conc_old;
 
     /** @brief Number of pollutants in the quality arrays. */
-    int                     conc_n_pollutants = 0;
+    int conc_n_pollutants = 0;
 
     // -----------------------------------------------------------------------
     // Per-object INP comment
@@ -451,7 +445,7 @@ struct LinkData {
 
     /** @brief Whether this link is included in report/output (0=no, 1=yes).
      *  @see Legacy: Link[j].rptFlag */
-    std::vector<char>       rpt_flag;
+    std::vector<char> rpt_flag;
 
     // -----------------------------------------------------------------------
     // Cumulative statistics
@@ -461,31 +455,31 @@ struct LinkData {
      * @brief Total volume conveyed by this link (project volume units).
      * @see Legacy: LinkStats[i].volFlow
      */
-    std::vector<double>     stat_vol_flow;
+    std::vector<double> stat_vol_flow;
 
     /**
      * @brief Maximum reported flow rate (project flow units).
      * @see Legacy: LinkStats[i].maxFlow
      */
-    std::vector<double>     stat_max_flow;
+    std::vector<double> stat_max_flow;
 
     /**
      * @brief Maximum reported flow velocity (project length/time units).
      * @see Legacy: LinkStats[i].maxVeloc
      */
-    std::vector<double>     stat_max_veloc;
+    std::vector<double> stat_max_veloc;
 
     /**
      * @brief Maximum reported filling ratio (depth / full depth).
      * @see Legacy: LinkStats[i].maxFroude
      */
-    std::vector<double>     stat_max_filling;
+    std::vector<double> stat_max_filling;
 
     /**
      * @brief Total duration of surcharge (seconds).
      * @see Legacy: LinkStats[i].timeSurcharged
      */
-    std::vector<double>     stat_time_surcharged;
+    std::vector<double> stat_time_surcharged;
 
     /**
      * @brief Per-link flow classification step counts.
@@ -494,29 +488,29 @@ struct LinkData {
      * @see Legacy: LinkStats[i].timeInFlowClass[]
      */
     static constexpr int N_FLOW_CLASSES = 7;
-    std::vector<double> stat_flow_class;  ///< Seconds in each flow class (legacy timeInFlowClass)
-    std::vector<double> stat_norm_ltd;    ///< Seconds normal-flow limited (legacy timeNormalFlow)
-    std::vector<double> stat_inlet_ctrl;  ///< Seconds under inlet control (legacy timeInletControl)
+    std::vector<double> stat_flow_class; ///< Seconds in each flow class (legacy timeInFlowClass)
+    std::vector<double> stat_norm_ltd;   ///< Seconds normal-flow limited (legacy timeNormalFlow)
+    std::vector<double> stat_inlet_ctrl; ///< Seconds under inlet control (legacy timeInletControl)
 
     /// Date/time when maximum flow occurred (OADate (days since 12/30/1899)).
     /// @see Legacy: LinkStats[i].maxFlowDate
-    std::vector<double>     stat_max_flow_date;
+    std::vector<double> stat_max_flow_date;
 
     /// Time of upstream surcharge (seconds).
     /// @see Legacy: LinkStats[i].timeFullUpstream
-    std::vector<double>     stat_time_full_upstream;
+    std::vector<double> stat_time_full_upstream;
 
     /// Time of downstream surcharge (seconds).
     /// @see Legacy: LinkStats[i].timeFullDnstream
-    std::vector<double>     stat_time_full_dnstream;
+    std::vector<double> stat_time_full_dnstream;
 
     /// Time flowing at or above full normal flow (seconds).
     /// @see Legacy: LinkStats[i].timeFullFlow
-    std::vector<double>     stat_time_full_both;
+    std::vector<double> stat_time_full_both;
 
     /// Time above full normal flow (seconds).
     /// @see Legacy: LinkStats[i].timeCapacityLimited
-    std::vector<double>     stat_time_capacity_limited;
+    std::vector<double> stat_time_capacity_limited;
 
     /**
      * @brief Cumulative pollutant loads transported through each link.
@@ -524,35 +518,36 @@ struct LinkData {
      *          Resized by resize_loads() after pollutant count is known.
      * @see Legacy: Link[i].totalLoad[p]
      */
-    std::vector<double>     stat_total_load;
-    int                     stat_n_pollutants = 0;
+    std::vector<double> stat_total_load;
+    int stat_n_pollutants = 0;
 
     // -----------------------------------------------------------------------
     // Pump utilization statistics (valid when type[i] == PUMP)
     // -----------------------------------------------------------------------
 
     /** @brief Number of pump on→off + off→on transitions per pump. */
-    std::vector<int>        stat_pump_cycles;
+    std::vector<int> stat_pump_cycles;
 
     /** @brief Time pump was running (seconds). */
-    std::vector<double>     stat_pump_on_time;
+    std::vector<double> stat_pump_on_time;
 
     /** @brief Total volume pumped (ft³). */
-    std::vector<double>     stat_pump_volume;
+    std::vector<double> stat_pump_volume;
 
     /**
      * @brief Total pump energy consumed (kWh).
      * @see Legacy PumpStats[].energy, computed as link_getPower(j) * dt / 3600
      *      where link_getPower = |dh| * |q| / 8.814 * KWperHP.
      */
-    std::vector<double>     stat_pump_energy;
-    std::vector<double> stat_pump_sum_flow;  ///< Sum of active-period flows for legacy arithmetic mean (CFS).
-    std::vector<long> stat_pump_periods;  ///< Count of active routing periods.
+    std::vector<double> stat_pump_energy;
+    std::vector<double>
+        stat_pump_sum_flow; ///< Sum of active-period flows for legacy arithmetic mean (CFS).
+    std::vector<long> stat_pump_periods;          ///< Count of active routing periods.
     std::vector<double> stat_pump_off_curve_low;  ///< Active seconds below the pump curve range.
-    std::vector<double> stat_pump_off_curve_high;  ///< Active seconds above the pump curve range.
+    std::vector<double> stat_pump_off_curve_high; ///< Active seconds above the pump curve range.
 
     /** @brief Previous pump state for cycle detection (true = on). */
-    std::vector<bool>       stat_pump_was_on;
+    std::vector<bool> stat_pump_was_on;
 
     /**
      * @brief Count of flow direction reversals per link.
@@ -561,7 +556,7 @@ struct LinkData {
      *          LinkStats[i].flowTurns).
      * @see Legacy: stats_updateLinkStats()
      */
-    std::vector<long>       stat_flow_turns;
+    std::vector<long> stat_flow_turns;
 
     /**
      * @brief Sign of previous flow change for flow-turn detection.
@@ -569,7 +564,7 @@ struct LinkData {
      *          previous routing step (matching legacy LinkStats[i].flowTurnSign).
      * @see Legacy: stats_updateLinkStats()
      */
-    std::vector<int>        stat_flow_turn_sign;
+    std::vector<int> stat_flow_turn_sign;
 
     /**
      * @brief CFL time-step critical count per link.
@@ -577,7 +572,7 @@ struct LinkData {
      *          adaptive timestep (matching legacy LinkStats[i].timeCourantCritical).
      * @see Legacy: stats_updateCriticalTimeCount()
      */
-    std::vector<double>     stat_time_courant_critical;
+    std::vector<double> stat_time_courant_critical;
 
     // -----------------------------------------------------------------------
     // Conduit time step summary ([REPORT] LINK_STEPS; accumulated only when
@@ -588,30 +583,54 @@ struct LinkData {
     /** @brief Number of log2 step bins: (RS/2,RS], (RS/4,RS/2], ..., (0,RS/16]. */
     static constexpr int N_LSTEP_BINS = 5;
 
-    std::vector<double> stat_lstep_min;       ///< Smallest local step (0 = no sample)
-    std::vector<double> stat_lstep_max;       ///< Largest local step
-    std::vector<double> stat_lstep_dt_time;   ///< Sum of step * duration
-    std::vector<double> stat_lstep_time;      ///< Sum of duration
-    std::vector<double> stat_lstep_bin_time;  ///< Flat 2D [link * N_LSTEP_BINS + bin], duration
-    std::vector<long>   stat_conv_steps;      ///< DW steps with both end nodes converged
-    std::vector<long>   stat_conv_total;      ///< DW steps sampled for convergence
+    std::vector<double> stat_lstep_min;      ///< Smallest local step (0 = no sample)
+    std::vector<double> stat_lstep_max;      ///< Largest local step
+    std::vector<double> stat_lstep_dt_time;  ///< Sum of step * duration
+    std::vector<double> stat_lstep_time;     ///< Sum of duration
+    std::vector<double> stat_lstep_bin_time; ///< Flat 2D [link * N_LSTEP_BINS + bin], duration
+    std::vector<long> stat_conv_steps;       ///< DW steps with both end nodes converged
+    std::vector<long> stat_conv_total;       ///< DW steps sampled for convergence
 
-    /// Bin of local step `dt` relative to the routing step `rs`:
-    /// 0 = (rs/2, rs], 1 = (rs/4, rs/2], ..., N_LSTEP_BINS-1 = (0, rs/2^(N-1)].
+    /**
+     * @brief Classify a local routing duration into five relative log2 bins.
+     *
+     * No validation; values above rs also enter bin zero, and nonpositive steps fall into the last bin
+     * for positive rs.
+     *
+     * @param[in] dt Local step in seconds; expected finite positive.
+     * @param[in] rs Reference routing step in seconds; expected finite positive.
+     * @return Bin 0..N_LSTEP_BINS-1; ties at rs/2^k enter the smaller-step bin.
+     */
     static int lstep_bin(double dt, double rs) noexcept {
         int b = 0;
         double edge = 0.5 * rs;
-        while (b < N_LSTEP_BINS - 1 && dt <= edge) { ++b; edge *= 0.5; }
+        while (b < N_LSTEP_BINS - 1 && dt <= edge) {
+            ++b;
+            edge *= 0.5;
+        }
         return b;
     }
 
-    /// Fold one local-step sample `dt` held for `dur` seconds into link `j`.
+    /**
+     * @brief Accumulate one link-local step sample weighted by simulated duration.
+     *
+     * Updates min/max, sum(dt*dur), sum(dur) and duration in one log2 bin. No bounds, finite-value or
+     * report-option check.
+     *
+     * @param[in] j Existing link index with all local-step statistic arrays allocated/aligned.
+     * @param[in] dt Local time-step duration in seconds; caller supplies finite positive input.
+     * @param[in] dur Simulated time represented by this sample in seconds; caller supplies finite
+     *     nonnegative input.
+     * @param[in] rs Positive reference routing step in seconds for histogram binning.
+     */
     void add_lstep_sample(int j, double dt, double dur, double rs) noexcept {
         const auto u = static_cast<std::size_t>(j);
-        if (stat_lstep_time[u] <= 0.0 || dt < stat_lstep_min[u]) stat_lstep_min[u] = dt;
-        if (dt > stat_lstep_max[u]) stat_lstep_max[u] = dt;
+        if (stat_lstep_time[u] <= 0.0 || dt < stat_lstep_min[u])
+            stat_lstep_min[u] = dt;
+        if (dt > stat_lstep_max[u])
+            stat_lstep_max[u] = dt;
         stat_lstep_dt_time[u] += dt * dur;
-        stat_lstep_time[u]    += dur;
+        stat_lstep_time[u] += dur;
         stat_lstep_bin_time[u * N_LSTEP_BINS + static_cast<std::size_t>(lstep_bin(dt, rs))] += dur;
     }
 
@@ -619,8 +638,25 @@ struct LinkData {
     // Capacity management
     // -----------------------------------------------------------------------
 
+    /**
+     * @brief Count link rows from the type column.
+     * @return type.size() converted to int; does not inspect names, subtype stores or parallel-column
+     *     alignment.
+     */
     int count() const noexcept { return static_cast<int>(type.size()); }
 
+    /**
+     * @brief Replace the base link store with a requested row count.
+     *
+     * Replaces base-link geometry/state/statistic columns with defaults: CONDUIT, CIRCULAR, unresolved
+     * end nodes/curve, setting/target=1 and direction=1. pump_curve_name uses resize and preserves its
+     * retained prefix; concentration and pollutant load matrices require separate sizing. Names,
+     * subtype rows and spatial geometry are external. Independent assignments can fail without
+     * rollback; borrowed elements may be invalidated.
+     *
+     * @param[in] n Nonnegative row count; unchecked conversion to size_t, with valid size products for
+     *     flat statistics.
+     */
     void resize(int n) {
         const auto un = static_cast<std::size_t>(n);
 
@@ -715,51 +751,101 @@ struct LinkData {
     }
 
     /**
-     * @brief Grow all arrays to hold at least `n` links, preserving existing data.
+     * @brief Extend base link columns while preserving existing prefixes.
+     *
+     * New rows use the corresponding resize() defaults. Does not grow flattened pollutant matrices,
+     * name indexes, subtype stores or spatial arrays; caller resizes those separately. Requires
+     * initially aligned columns and valid size products; allocation failure can interrupt extension.
+     *
+     * @param[in] n Requested total count; <=count() is a no-op, including negatives.
      */
     void grow_to(int n) {
-        if (n <= count()) return;
+        if (n <= count())
+            return;
         const auto un = static_cast<std::size_t>(n);
         auto g = [&](auto& vec, auto def) { vec.resize(un, def); };
-        g(type, LinkType::CONDUIT); g(node1, -1); g(node2, -1);
-        g(offset1, 0.0); g(offset2, 0.0); g(q0, 0.0); g(q_limit, 0.0);
+        g(type, LinkType::CONDUIT);
+        g(node1, -1);
+        g(node2, -1);
+        g(offset1, 0.0);
+        g(offset2, 0.0);
+        g(q0, 0.0);
+        g(q_limit, 0.0);
         g(xsect_shape, XsectShape::CIRCULAR);
-        g(xsect_y_full, 0.0); g(xsect_a_full, 0.0); g(xsect_w_max, 0.0);
-        g(xsect_geom1, 0.0); g(xsect_geom2, 0.0); g(xsect_geom3, 0.0); g(xsect_geom4, 0.0);
+        g(xsect_y_full, 0.0);
+        g(xsect_a_full, 0.0);
+        g(xsect_w_max, 0.0);
+        g(xsect_geom1, 0.0);
+        g(xsect_geom2, 0.0);
+        g(xsect_geom3, 0.0);
+        g(xsect_geom4, 0.0);
         g(xsect_curve, -1);
-        g(xsect_r_full, 0.0); g(xsect_s_full, 0.0); g(xsect_s_max, 0.0);
-        g(xsect_y_bot, 0.0); g(xsect_a_bot, 0.0);
-        g(xsect_s_bot, 0.0); g(xsect_r_bot, 0.0);
-        g(xsect_yw_max, 0.0); g(xsect_batch_shape, 0);
-        g(setting, 1.0); g(target_setting, 1.0); g(time_last_set, 0.0);
+        g(xsect_r_full, 0.0);
+        g(xsect_s_full, 0.0);
+        g(xsect_s_max, 0.0);
+        g(xsect_y_bot, 0.0);
+        g(xsect_a_bot, 0.0);
+        g(xsect_s_bot, 0.0);
+        g(xsect_r_bot, 0.0);
+        g(xsect_yw_max, 0.0);
+        g(xsect_batch_shape, 0);
+        g(setting, 1.0);
+        g(target_setting, 1.0);
+        g(time_last_set, 0.0);
         g(direction, 1);
-        g(has_flap_gate, uint8_t{0}); g(dqdh, 0.0);
+        g(has_flap_gate, uint8_t{0});
+        g(dqdh, 0.0);
         pump_curve_name.resize(un);
-        g(flow, 0.0); g(depth, 0.0); g(volume, 0.0); g(slot_volume, 0.0);
+        g(flow, 0.0);
+        g(depth, 0.0);
+        g(volume, 0.0);
+        g(slot_volume, 0.0);
         g(kw_inflow, 0.0);
-        g(stat_slot_vol_dt, 0.0); g(stat_vol_dt, 0.0);
-        g(stat_peak_slot_share, 0.0); g(stat_time_slot_above, 0.0);
-        g(froude, 0.0); g(flow_class, FlowClass::DRY); g(is_closed, uint8_t{0});
-        g(old_flow, 0.0); g(old_depth, 0.0); g(old_volume, 0.0);
+        g(stat_slot_vol_dt, 0.0);
+        g(stat_vol_dt, 0.0);
+        g(stat_peak_slot_share, 0.0);
+        g(stat_time_slot_above, 0.0);
+        g(froude, 0.0);
+        g(flow_class, FlowClass::DRY);
+        g(is_closed, uint8_t{0});
+        g(old_flow, 0.0);
+        g(old_depth, 0.0);
+        g(old_volume, 0.0);
         comments.resize(un, std::string{});
         tags.resize(un, std::string{});
 
         g(rpt_flag, static_cast<char>(0));
-        g(stat_vol_flow, 0.0); g(stat_max_flow, 0.0);
-        g(stat_max_veloc, 0.0); g(stat_max_filling, 0.0);
-        g(stat_time_surcharged, 0.0); g(stat_max_flow_date, 0.0);
-        g(stat_time_full_upstream, 0.0); g(stat_time_full_dnstream, 0.0);
-        g(stat_time_full_both, 0.0); g(stat_time_capacity_limited, 0.0);
-        g(stat_pump_cycles, 0); g(stat_pump_on_time, 0.0);
-        g(stat_pump_volume, 0.0); g(stat_pump_energy, 0.0); g(stat_pump_off_curve_high, 0.0); g(stat_pump_off_curve_low, 0.0); g(stat_pump_periods, 0.0); g(stat_pump_sum_flow, 0.0);
+        g(stat_vol_flow, 0.0);
+        g(stat_max_flow, 0.0);
+        g(stat_max_veloc, 0.0);
+        g(stat_max_filling, 0.0);
+        g(stat_time_surcharged, 0.0);
+        g(stat_max_flow_date, 0.0);
+        g(stat_time_full_upstream, 0.0);
+        g(stat_time_full_dnstream, 0.0);
+        g(stat_time_full_both, 0.0);
+        g(stat_time_capacity_limited, 0.0);
+        g(stat_pump_cycles, 0);
+        g(stat_pump_on_time, 0.0);
+        g(stat_pump_volume, 0.0);
+        g(stat_pump_energy, 0.0);
+        g(stat_pump_off_curve_high, 0.0);
+        g(stat_pump_off_curve_low, 0.0);
+        g(stat_pump_periods, 0.0);
+        g(stat_pump_sum_flow, 0.0);
         g(stat_pump_was_on, false);
-        g(stat_flow_turns, 0L); g(stat_flow_turn_sign, 0);
+        g(stat_flow_turns, 0L);
+        g(stat_flow_turn_sign, 0);
         g(stat_time_courant_critical, 0.0);
-        g(stat_lstep_min, 0.0); g(stat_lstep_max, 0.0);
-        g(stat_lstep_dt_time, 0.0); g(stat_lstep_time, 0.0);
-        g(stat_conv_steps, 0L); g(stat_conv_total, 0L);
+        g(stat_lstep_min, 0.0);
+        g(stat_lstep_max, 0.0);
+        g(stat_lstep_dt_time, 0.0);
+        g(stat_lstep_time, 0.0);
+        g(stat_conv_steps, 0L);
+        g(stat_conv_total, 0L);
         stat_lstep_bin_time.resize(un * N_LSTEP_BINS, 0.0);
-        g(stat_norm_ltd, 0.0); g(stat_inlet_ctrl, 0.0);
+        g(stat_norm_ltd, 0.0);
+        g(stat_inlet_ctrl, 0.0);
         // stat_flow_class is flat 2D [n * N_FLOW_CLASSES]
         stat_flow_class.resize(un * N_FLOW_CLASSES, 0.0);
         // Note: conc, conc_old handled by resize_quality()
@@ -783,85 +869,206 @@ struct LinkData {
      *
      *          Over-reserving is harmless, so callers pass the section's row
      *          count as an upper bound.
+
+     * @param[in] n Nonnegative target capacity for the base columns; flat-array products must fit size_t.
+     * @note Capacity requests can allocate/throw and invalidate element references. They do not grow sizes or synchronize external name/spatial/subtype data.
      */
     void reserve_to(int n) {
-        if (n <= 0) return;
+        if (n <= 0)
+            return;
         const auto un = static_cast<std::size_t>(n);
-        if (type.capacity() >= un) return;
+        if (type.capacity() >= un)
+            return;
         auto r = [&](auto& vec) { vec.reserve(un); };
-        r(type); r(node1); r(node2); r(offset1);
-        r(offset2); r(q0); r(q_limit); r(xsect_shape);
-        r(xsect_y_full); r(xsect_a_full); r(xsect_w_max); r(xsect_geom1);
-        r(xsect_geom2); r(xsect_geom3); r(xsect_geom4); r(xsect_curve);
-        r(xsect_r_full); r(xsect_s_full); r(xsect_s_max); r(xsect_y_bot);
-        r(xsect_a_bot); r(xsect_s_bot); r(xsect_r_bot); r(xsect_yw_max);
-        r(xsect_batch_shape); r(setting); r(target_setting); r(time_last_set);
-        r(direction); r(has_flap_gate); r(dqdh); r(flow);
+        r(type);
+        r(node1);
+        r(node2);
+        r(offset1);
+        r(offset2);
+        r(q0);
+        r(q_limit);
+        r(xsect_shape);
+        r(xsect_y_full);
+        r(xsect_a_full);
+        r(xsect_w_max);
+        r(xsect_geom1);
+        r(xsect_geom2);
+        r(xsect_geom3);
+        r(xsect_geom4);
+        r(xsect_curve);
+        r(xsect_r_full);
+        r(xsect_s_full);
+        r(xsect_s_max);
+        r(xsect_y_bot);
+        r(xsect_a_bot);
+        r(xsect_s_bot);
+        r(xsect_r_bot);
+        r(xsect_yw_max);
+        r(xsect_batch_shape);
+        r(setting);
+        r(target_setting);
+        r(time_last_set);
+        r(direction);
+        r(has_flap_gate);
+        r(dqdh);
+        r(flow);
         r(kw_inflow);
-        r(depth); r(volume); r(froude); r(flow_class);
-        r(is_closed); r(old_flow); r(old_depth); r(old_volume);
-        r(rpt_flag); r(stat_vol_flow); r(stat_max_flow); r(stat_max_veloc);
-        r(stat_max_filling); r(stat_time_surcharged); r(stat_max_flow_date); r(stat_time_full_upstream);
-        r(stat_time_full_dnstream); r(stat_time_full_both); r(stat_time_capacity_limited); r(stat_pump_cycles);
-        r(stat_pump_on_time); r(stat_pump_volume); r(stat_pump_energy); r(stat_pump_off_curve_high); r(stat_pump_off_curve_low); r(stat_pump_periods); r(stat_pump_sum_flow); r(stat_pump_was_on);
-        r(stat_flow_turns); r(stat_flow_turn_sign); r(stat_time_courant_critical); r(stat_norm_ltd);
-        r(stat_inlet_ctrl); r(pump_curve_name); r(comments); r(tags);
+        r(depth);
+        r(volume);
+        r(froude);
+        r(flow_class);
+        r(is_closed);
+        r(old_flow);
+        r(old_depth);
+        r(old_volume);
+        r(rpt_flag);
+        r(stat_vol_flow);
+        r(stat_max_flow);
+        r(stat_max_veloc);
+        r(stat_max_filling);
+        r(stat_time_surcharged);
+        r(stat_max_flow_date);
+        r(stat_time_full_upstream);
+        r(stat_time_full_dnstream);
+        r(stat_time_full_both);
+        r(stat_time_capacity_limited);
+        r(stat_pump_cycles);
+        r(stat_pump_on_time);
+        r(stat_pump_volume);
+        r(stat_pump_energy);
+        r(stat_pump_off_curve_high);
+        r(stat_pump_off_curve_low);
+        r(stat_pump_periods);
+        r(stat_pump_sum_flow);
+        r(stat_pump_was_on);
+        r(stat_flow_turns);
+        r(stat_flow_turn_sign);
+        r(stat_time_courant_critical);
+        r(stat_norm_ltd);
+        r(stat_inlet_ctrl);
+        r(pump_curve_name);
+        r(comments);
+        r(tags);
         r(stat_flow_class);
-        r(stat_lstep_min); r(stat_lstep_max); r(stat_lstep_dt_time); r(stat_lstep_time);
-        r(stat_conv_steps); r(stat_conv_total);
+        r(stat_lstep_min);
+        r(stat_lstep_max);
+        r(stat_lstep_dt_time);
+        r(stat_lstep_time);
+        r(stat_conv_steps);
+        r(stat_conv_total);
         stat_lstep_bin_time.reserve(un * N_LSTEP_BINS);
     }
 
     /**
-     * @brief Erase the link at index `idx` from every parallel array.
+     * @brief Erase one link row from the columns visited by this helper.
      *
-     * @details Removes the element at `idx` from every SoA vector. Flat-2D
-     *          arrays (stat_flow_class, conc, conc_old, stat_total_load) have
-     *          their full stride for `idx` removed. Spatial arrays are erased
-     *          separately by ObjectDeleter.
+     * Visits owned base columns plus flow-class, local-step histogram, quality and load strides when
+     * present. Caller separately repairs subtype rows, topology references, names and spatial geometry;
+     * no engine lifecycle check occurs here. Following rows shift down and element references/iterators
+     * are invalidated. Does not make inconsistent stores transactional.
+     *
+     * @param[in] idx Caller-validated existing row index; aligned dimensions and representable size
+     *     products required.
      */
     void erase_at(int idx) {
         const auto ui = static_cast<std::size_t>(idx);
-        auto e = [&](auto& v) { if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx)); };
+        auto e = [&](auto& v) {
+            if (ui < v.size())
+                v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx));
+        };
 
-        e(type); e(node1); e(node2); e(offset1); e(offset2); e(q0); e(q_limit);
+        e(type);
+        e(node1);
+        e(node2);
+        e(offset1);
+        e(offset2);
+        e(q0);
+        e(q_limit);
 
-        e(xsect_shape); e(xsect_y_full); e(xsect_a_full); e(xsect_w_max); e(xsect_curve);
-        e(xsect_geom1); e(xsect_geom2); e(xsect_geom3); e(xsect_geom4);
-        e(xsect_r_full); e(xsect_s_full); e(xsect_s_max);
-        e(xsect_y_bot); e(xsect_a_bot); e(xsect_s_bot); e(xsect_r_bot); e(xsect_yw_max);
-        e(xsect_batch_shape); e(setting); e(target_setting); e(direction);
+        e(xsect_shape);
+        e(xsect_y_full);
+        e(xsect_a_full);
+        e(xsect_w_max);
+        e(xsect_curve);
+        e(xsect_geom1);
+        e(xsect_geom2);
+        e(xsect_geom3);
+        e(xsect_geom4);
+        e(xsect_r_full);
+        e(xsect_s_full);
+        e(xsect_s_max);
+        e(xsect_y_bot);
+        e(xsect_a_bot);
+        e(xsect_s_bot);
+        e(xsect_r_bot);
+        e(xsect_yw_max);
+        e(xsect_batch_shape);
+        e(setting);
+        e(target_setting);
+        e(direction);
 
         e(pump_curve_name);
 
-        e(has_flap_gate); e(dqdh);
+        e(has_flap_gate);
+        e(dqdh);
 
-        e(flow); e(depth); e(volume); e(froude); e(flow_class); e(is_closed);
+        e(flow);
+        e(depth);
+        e(volume);
+        e(froude);
+        e(flow_class);
+        e(is_closed);
         e(kw_inflow);
-        e(old_flow); e(old_depth); e(old_volume);
-        e(comments); e(tags); e(rpt_flag);
+        e(old_flow);
+        e(old_depth);
+        e(old_volume);
+        e(comments);
+        e(tags);
+        e(rpt_flag);
 
-        e(stat_vol_flow); e(stat_max_flow); e(stat_max_veloc); e(stat_max_filling);
-        e(stat_time_surcharged); e(stat_norm_ltd); e(stat_inlet_ctrl);
-        e(stat_max_flow_date); e(stat_time_full_upstream); e(stat_time_full_dnstream);
-        e(stat_time_full_both); e(stat_time_capacity_limited);
-        e(stat_pump_cycles); e(stat_pump_on_time); e(stat_pump_volume); e(stat_pump_energy); e(stat_pump_off_curve_high); e(stat_pump_off_curve_low); e(stat_pump_periods); e(stat_pump_sum_flow);
-        e(stat_pump_was_on); e(stat_flow_turns); e(stat_flow_turn_sign);
+        e(stat_vol_flow);
+        e(stat_max_flow);
+        e(stat_max_veloc);
+        e(stat_max_filling);
+        e(stat_time_surcharged);
+        e(stat_norm_ltd);
+        e(stat_inlet_ctrl);
+        e(stat_max_flow_date);
+        e(stat_time_full_upstream);
+        e(stat_time_full_dnstream);
+        e(stat_time_full_both);
+        e(stat_time_capacity_limited);
+        e(stat_pump_cycles);
+        e(stat_pump_on_time);
+        e(stat_pump_volume);
+        e(stat_pump_energy);
+        e(stat_pump_off_curve_high);
+        e(stat_pump_off_curve_low);
+        e(stat_pump_periods);
+        e(stat_pump_sum_flow);
+        e(stat_pump_was_on);
+        e(stat_flow_turns);
+        e(stat_flow_turn_sign);
         e(stat_time_courant_critical);
-        e(stat_lstep_min); e(stat_lstep_max); e(stat_lstep_dt_time); e(stat_lstep_time);
-        e(stat_conv_steps); e(stat_conv_total);
+        e(stat_lstep_min);
+        e(stat_lstep_max);
+        e(stat_lstep_dt_time);
+        e(stat_lstep_time);
+        e(stat_conv_steps);
+        e(stat_conv_total);
         {
             const auto base = ui * static_cast<std::size_t>(N_LSTEP_BINS);
-            const auto end  = base + static_cast<std::size_t>(N_LSTEP_BINS);
+            const auto end = base + static_cast<std::size_t>(N_LSTEP_BINS);
             if (end <= stat_lstep_bin_time.size())
-                stat_lstep_bin_time.erase(stat_lstep_bin_time.begin() + static_cast<std::ptrdiff_t>(base),
-                                          stat_lstep_bin_time.begin() + static_cast<std::ptrdiff_t>(end));
+                stat_lstep_bin_time.erase(
+                    stat_lstep_bin_time.begin() + static_cast<std::ptrdiff_t>(base),
+                    stat_lstep_bin_time.begin() + static_cast<std::ptrdiff_t>(end));
         }
 
         // Flat 2D: stat_flow_class [link * N_FLOW_CLASSES + class]
         {
             const auto base = ui * static_cast<std::size_t>(N_FLOW_CLASSES);
-            const auto end  = base + static_cast<std::size_t>(N_FLOW_CLASSES);
+            const auto end = base + static_cast<std::size_t>(N_FLOW_CLASSES);
             if (end <= stat_flow_class.size())
                 stat_flow_class.erase(stat_flow_class.begin() + static_cast<std::ptrdiff_t>(base),
                                       stat_flow_class.begin() + static_cast<std::ptrdiff_t>(end));
@@ -876,7 +1083,8 @@ struct LinkData {
                     v.erase(v.begin() + static_cast<std::ptrdiff_t>(base),
                             v.begin() + static_cast<std::ptrdiff_t>(base + np));
             };
-            erase2d(conc); erase2d(conc_old);
+            erase2d(conc);
+            erase2d(conc_old);
         }
 
         // Flat 2D stat load: [link * np + p]
@@ -884,32 +1092,43 @@ struct LinkData {
             const auto np = static_cast<std::size_t>(stat_n_pollutants);
             const auto base = ui * np;
             if (base + np <= stat_total_load.size())
-                stat_total_load.erase(
-                    stat_total_load.begin() + static_cast<std::ptrdiff_t>(base),
-                    stat_total_load.begin() + static_cast<std::ptrdiff_t>(base + np));
+                stat_total_load.erase(stat_total_load.begin() + static_cast<std::ptrdiff_t>(base),
+                                      stat_total_load.begin() +
+                                          static_cast<std::ptrdiff_t>(base + np));
         }
     }
 
     /**
-     * @brief Resize pollutant load arrays after pollutant count is known.
+     * @brief Set the pollutant load stride and zero positive-sized load storage.
+     *
+     * Always assigns stat_n_pollutants. Nonpositive counts preserve the existing stat_total_load vector
+     * rather than clearing it. Does not resize concentration state or update names.
+     *
+     * @param[in] n_pollutants Pollutants per link; positive count sizes count()*n_pollutants, product
+     *     must fit size_t.
      */
     void resize_loads(int n_pollutants) {
         stat_n_pollutants = n_pollutants;
         if (n_pollutants > 0) {
-            auto total = static_cast<std::size_t>(count()) *
-                         static_cast<std::size_t>(n_pollutants);
+            auto total = static_cast<std::size_t>(count()) * static_cast<std::size_t>(n_pollutants);
             stat_total_load.assign(total, 0.0);
         }
     }
 
     /**
-     * @brief Resize per-link quality arrays after pollutant count is known.
+     * @brief Set the pollutant stride and replace positive-sized quality arrays.
+     *
+     * Always stores conc_n_pollutants; nonpositive counts leave existing vectors unchanged. Zeroes
+     * current and old pollutant concentrations only. Allocation failure may leave partial assignments.
+     * No pollutant registry update or initial-concentration seeding.
+     *
+     * @param[in] n_pollutants Pollutants per link; positive count requires count()*n_pollutants to fit
+     *     size_t.
      */
     void resize_quality(int n_pollutants) {
         conc_n_pollutants = n_pollutants;
         if (n_pollutants > 0) {
-            auto total = static_cast<std::size_t>(count()) *
-                         static_cast<std::size_t>(n_pollutants);
+            auto total = static_cast<std::size_t>(count()) * static_cast<std::size_t>(n_pollutants);
             conc.assign(total, 0.0);
             conc_old.assign(total, 0.0);
         }
@@ -992,32 +1211,48 @@ struct LinkData {
         stat_total_load.shrink_to_fit();
     }
 
+    /**
+     * @brief Snapshot both hydraulic and quality link state.
+     *
+     * Calls save_hyd_state and save_qual_state; destination old arrays must already be allocated to
+     * source lengths. Engine steady-step scheduling may require calling the halves separately.
+     */
     void save_state() noexcept {
         save_hyd_state();
         save_qual_state();
     }
 
-    /// Legacy link_setOldHydState — rolled by routeFlow only (not on a
-    /// SKIP_STEADY_STATE step).
+    /**
+     * @brief Snapshot current link flow, depth and volume for a routed step.
+     *
+     * Copies to old_flow/old_depth/old_volume without allocation; all destination lengths must match.
+     * Skip this call when steady routing is bypassed to preserve the old/new report pair.
+     */
     void save_hyd_state() noexcept {
-        std::copy(flow.begin(),   flow.end(),   old_flow.begin());
-        std::copy(depth.begin(),  depth.end(),  old_depth.begin());
+        std::copy(flow.begin(), flow.end(), old_flow.begin());
+        std::copy(depth.begin(), depth.end(), old_depth.begin());
         std::copy(volume.begin(), volume.end(), old_volume.begin());
     }
 
     /// Legacy link_setOldQualState — every routing step.
-    void save_qual_state() noexcept {
-        std::copy(conc.begin(),   conc.end(),   conc_old.begin());
-    }
+    void save_qual_state() noexcept { std::copy(conc.begin(), conc.end(), conc_old.begin()); }
 
+    /**
+     * @brief Clear the link dynamic arrays visited here for a cold start.
+     *
+     * Zeroes flow/kinematic inflow/depth/volume/Froude, old flow/depth/volume and pollutant
+     * concentrations; flow_class becomes DRY. Leaves settings, closure flags, slot state, static
+     * geometry and accumulated statistics unchanged. Runtime initialization completes solver-specific
+     * state.
+     */
     void reset_state() noexcept {
-        std::fill(flow.begin(),  flow.end(),  0.0);
+        std::fill(flow.begin(), flow.end(), 0.0);
         std::fill(kw_inflow.begin(), kw_inflow.end(), 0.0);
         std::fill(depth.begin(), depth.end(), 0.0);
         std::fill(volume.begin(), volume.end(), 0.0);
         std::fill(froude.begin(), froude.end(), 0.0);
         std::fill(flow_class.begin(), flow_class.end(), FlowClass::DRY);
-        std::fill(old_flow.begin(),  old_flow.end(),  0.0);
+        std::fill(old_flow.begin(), old_flow.end(), 0.0);
         std::fill(old_depth.begin(), old_depth.end(), 0.0);
         std::fill(old_volume.begin(), old_volume.end(), 0.0);
         std::fill(conc.begin(), conc.end(), 0.0);

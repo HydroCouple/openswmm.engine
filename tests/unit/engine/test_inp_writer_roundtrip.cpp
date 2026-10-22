@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_inp_writer_roundtrip.cpp
- * @brief Eleven `.inp` writer defects, three of them fatal on reload and the
+ * @file      test_inp_writer_roundtrip.cpp
+ * @brief     Eleven `.inp` writer defects, three of them fatal on reload and the
  *        rest silent data loss. One test per defect.
  *
  * @details Every defect here had the same shape: the writer consulted only a
@@ -54,9 +54,9 @@
  *          prefix that `.gitignore` excludes; files are overwritten each run
  *          and no temporary directory is used.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -84,8 +84,29 @@ using openswmm::SWMMEngine;
 
 constexpr const char* kDir = "inp_roundtrip/";
 
-std::string data(const std::string& name) { return kDir + name; }
+/**
+ * @brief Prefix a fixture name with the relative round-trip artifact directory.
+ *
+ * Does not create directories, normalize paths or access the file.
+ *
+ * @param[in] name Borrowed filename or suffix copied without path sanitization.
+ * @return Owned inp_roundtrip/name string.
+ */
+std::string data(const std::string& name) {
+    return kDir + name;
+}
 
+/**
+ * @brief Collect an entire fixture file into owned text.
+ *
+ * Uses ordinary text mode and its platform newline rules. The local stream closes on return; no
+ * model state is touched and no borrowed buffer is returned. Default stream exception settings
+ * apply; allocation exceptions may propagate.
+ *
+ * @param[in] path Borrowed input filename used for this synchronous open/read.
+ * @return Owned string collected from the stream; empty can mean an empty file or failure to open.
+ *     Partial read failures have no separate status.
+ */
 std::string slurp(const std::string& path) {
     std::ifstream in(path);
     std::stringstream ss;
@@ -93,17 +114,25 @@ std::string slurp(const std::string& path) {
     return ss.str();
 }
 
-/// Body of one `.inp` section: the lines after the `[NAME]` header and before
-/// the next one, with `;;` comment rows and blank lines removed. Returns an
-/// empty vector when the section is absent — which for most of these defects
-/// IS the failure, so callers assert on emptiness explicitly.
+/**
+ * @brief Collect nonblank, noncomment rows from matching input sections.
+ *
+ * Removes trailing CR, left whitespace and semicolon comment lines; does not strip inline comments
+ * or trailing whitespace. Matching repeated sections are all collected. Input text is unchanged.
+ *
+ * @param[in] text Borrowed complete input text.
+ * @param[in] name Section name without brackets, matched as a case-sensitive [name] prefix.
+ * @return Owned left-trimmed row vector; empty if the section is absent or contains no retained
+ *     rows.
+ */
 std::vector<std::string> section(const std::string& text, const std::string& name) {
     std::vector<std::string> rows;
     std::istringstream in(text);
     std::string line;
     bool inside = false;
     while (std::getline(in, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
         std::string trimmed = line;
         while (!trimmed.empty() && std::isspace(static_cast<unsigned char>(trimmed.front())))
             trimmed.erase(trimmed.begin());
@@ -111,29 +140,49 @@ std::vector<std::string> section(const std::string& text, const std::string& nam
             inside = (trimmed.rfind("[" + name + "]", 0) == 0);
             continue;
         }
-        if (!inside) continue;
-        if (trimmed.empty() || trimmed.rfind(";;", 0) == 0 || trimmed.front() == ';') continue;
+        if (!inside)
+            continue;
+        if (trimmed.empty() || trimmed.rfind(";;", 0) == 0 || trimmed.front() == ';')
+            continue;
         rows.push_back(trimmed);
     }
     return rows;
 }
 
-/// Whitespace-split one row, so assertions name columns rather than counting
-/// spaces (the writer's column widths are not part of any contract).
+/**
+ * @brief Split one fixture row on ordinary whitespace.
+ *
+ * Does not interpret quotes, comments or the full SWMM input grammar; used for known simple writer
+ * rows.
+ *
+ * @param[in] row Borrowed raw row text.
+ * @return Owned token vector in original order; empty on whitespace-only input.
+ */
 std::vector<std::string> cols(const std::string& row) {
     std::istringstream in(row);
     std::vector<std::string> out;
     std::string tok;
-    while (in >> tok) out.push_back(tok);
+    while (in >> tok)
+        out.push_back(tok);
     return out;
 }
 
-/// The row of `sec` whose first column is `id`, or an empty vector.
+/**
+ * @brief Find the first section row whose initial token matches an object ID.
+ *
+ * Uses local section/cols rules, so does not unquote IDs or parse inline comments.
+ *
+ * @param[in] text Borrowed complete written input text.
+ * @param[in] sec Case-sensitive section name without brackets.
+ * @param[in] id Exact case-sensitive first-token match.
+ * @return Owned whitespace token vector for the first match; empty when absent.
+ */
 std::vector<std::string> row(const std::string& text, const std::string& sec,
                              const std::string& id) {
     for (const auto& r : section(text, sec)) {
         auto c = cols(r);
-        if (!c.empty() && c[0] == id) return c;
+        if (!c.empty() && c[0] == id)
+            return c;
     }
     return {};
 }
@@ -147,38 +196,60 @@ struct Generation {
     std::vector<std::string> warnings;
 };
 
+/**
+ * @brief Open and rewrite one strict fixture generation.
+ *
+ * Uses a temporary C++ engine and nonfatal open/write assertions. Records every parser error and
+ * writer warning as test failure. After attempted write, unchecked slurp reads the destination even
+ * if the writer rejected; old destination text may therefore be returned. No simulation is
+ * initialized or run.
+ *
+ * @param[in] in_name Input filename relative to inp_roundtrip/; derived report may be overwritten.
+ * @param[in] out_name Destination filename relative to inp_roundtrip/; matching deck may be
+ *     overwritten.
+ * @return Owned written text and writer-warning vector; default record after open failure.
+ */
 Generation writeOnce(const std::string& in_name, const std::string& out_name) {
     Generation g;
     SWMMEngine eng;
-    const int rc = eng.open(data(in_name).c_str(),
-                            data("_" + in_name + ".rpt").c_str(), nullptr);
+    const int rc = eng.open(data(in_name).c_str(), data("_" + in_name + ".rpt").c_str(), nullptr);
     EXPECT_EQ(rc, SWMM_OK) << "open(" << in_name << ") failed";
-    for (const auto& e : eng.context().errors) ADD_FAILURE() << in_name << ": " << e;
-    if (rc != SWMM_OK) return g;
+    for (const auto& e : eng.context().errors)
+        ADD_FAILURE() << in_name << ": " << e;
+    if (rc != SWMM_OK)
+        return g;
 
     const std::string out = data(out_name);
     EXPECT_EQ(openswmm::inp_writer::writeInpFile(eng.context(), out, &g.warnings), 0)
         << "writeInpFile(" << out_name << ") failed";
-    for (const auto& w : g.warnings) ADD_FAILURE() << in_name << " writer warning: " << w;
+    for (const auto& w : g.warnings)
+        ADD_FAILURE() << in_name << " writer warning: " << w;
     g.text = slurp(out);
     return g;
 }
 
-
-/// A lenient open, the mode the GUI uses to load a model for editing
-/// (`swmm_engine_set_lenient_open`). Unresolved references are recorded as
-/// errors but the model still loads, keeping the parser's retained names with
-/// their indices at -1 — the only state in which defects 6, 7 and 8 are
-/// reachable. Expected errors are NOT failed on here; the caller asserts on
-/// what the writer then does with those names.
+/**
+ * @brief Open and rewrite one lenient unresolved-reference fixture generation.
+ *
+ * Uses a temporary C++ engine and nonfatal open/write assertions. Enables lenient open so expected
+ * unresolved references remain retained; parser errors and writer warnings are returned/left for
+ * caller assertions. After attempted write, unchecked slurp reads the destination even if the
+ * writer rejected; old destination text may therefore be returned. No simulation is initialized or
+ * run.
+ *
+ * @param[in] in_name Input filename relative to inp_roundtrip/; derived report may be overwritten.
+ * @param[in] out_name Destination filename relative to inp_roundtrip/; matching deck may be
+ *     overwritten.
+ * @return Owned written text and writer-warning vector; default record after open failure.
+ */
 Generation writeOnceLenient(const std::string& in_name, const std::string& out_name) {
     Generation g;
     SWMMEngine eng;
     eng.set_lenient_open(true);
-    const int rc = eng.open(data(in_name).c_str(),
-                            data("_" + in_name + ".rpt").c_str(), nullptr);
+    const int rc = eng.open(data(in_name).c_str(), data("_" + in_name + ".rpt").c_str(), nullptr);
     EXPECT_EQ(rc, SWMM_OK) << "lenient open(" << in_name << ") failed";
-    if (rc != SWMM_OK) return g;
+    if (rc != SWMM_OK)
+        return g;
 
     const std::string out = data(out_name);
     EXPECT_EQ(openswmm::inp_writer::writeInpFile(eng.context(), out, &g.warnings), 0);
@@ -186,7 +257,16 @@ Generation writeOnceLenient(const std::string& in_name, const std::string& out_n
     return g;
 }
 
-/// Generation 1 of a fixture: what the GUI's Save would produce from it.
+/**
+ * @brief Produce the first saved generation of a named fixture.
+ *
+ * Strict rewrite may overwrite an existing destination and report; caller checks returned text and
+ * warnings.
+ *
+ * @param[in] fixture Fixture name with expected four-character .inp suffix; used without validating
+ *     the suffix.
+ * @return writeOnce result for _basename_rt1.inp below inp_roundtrip/.
+ */
 Generation gen1(const std::string& fixture) {
     return writeOnce(fixture, "_" + fixture.substr(0, fixture.size() - 4) + "_rt1.inp");
 }
@@ -195,19 +275,39 @@ Generation gen1(const std::string& fixture) {
 /// the surface the GUI actually uses rather than engine internals.
 struct Reopened {
     SWMM_Engine e = nullptr;
+    /**
+     * @brief Open a saved fixture through the public handle surface for query assertions.
+     *
+     * Owns the created engine until destruction, uses nonfatal open assertions and reports every stored
+     * error. Allocation is not independently asserted; failed opens leave a partial handle for
+     * destruction. Does not initialize or run.
+     *
+     * @param[in] name Input filename below inp_roundtrip/; derived report may be overwritten.
+     */
     Reopened(const std::string& name) {
         e = swmm_engine_create();
-        const int rc = swmm_engine_open(e, data(name).c_str(),
-                                        data("_" + name + ".rpt").c_str(), nullptr, nullptr);
+        const int rc = swmm_engine_open(e, data(name).c_str(), data("_" + name + ".rpt").c_str(),
+                                        nullptr, nullptr);
         EXPECT_EQ(rc, SWMM_OK) << "reopen(" << name << "): "
                                << (swmm_get_last_error_msg(e) ? swmm_get_last_error_msg(e) : "");
         for (int i = 0; i < swmm_get_error_count(e); ++i)
             ADD_FAILURE() << "reopen(" << name << "): " << swmm_get_error_at(e, i);
     }
-    ~Reopened() { if (e) { swmm_engine_close(e); swmm_engine_destroy(e); } }
+    /**
+     * @brief Close and destroy the saved-model handle when allocation succeeded.
+     *
+     * Ignores close status. Public handles/views borrowed from e expire; matching artifacts are
+     * retained.
+     */
+    ~Reopened() {
+        if (e) {
+            swmm_engine_close(e);
+            swmm_engine_destroy(e);
+        }
+    }
 };
 
-}  // namespace
+} // namespace
 
 // ===========================================================================
 // Defect 1 — [SUBCATCHMENTS] Outlet
@@ -222,7 +322,7 @@ TEST(InpWriterRoundTrip, SubcatchmentOutletKeepsTheSubcatchmentName) {
     ASSERT_FALSE(g.text.empty());
 
     EXPECT_EQ(row(g.text, "SUBCATCHMENTS", "S1").at(2), "S2");
-    EXPECT_EQ(row(g.text, "SUBCATCHMENTS", "S2").at(2), "J1");  // a real node still wins
+    EXPECT_EQ(row(g.text, "SUBCATCHMENTS", "S2").at(2), "J1"); // a real node still wins
     EXPECT_EQ(row(g.text, "SUBCATCHMENTS", "S3").at(2), "S1");
 }
 
@@ -253,8 +353,8 @@ TEST(InpWriterRoundTrip, AquifersSurviveWithTheOptionalEvapPattern) {
     ASSERT_EQ(aq1.size(), 14u);
     ASSERT_EQ(aq2.size(), 13u);
     EXPECT_EQ(aq1.at(13), "MPAT");
-    EXPECT_EQ(aq1.at(1), "0.5");   // porosity
-    EXPECT_EQ(aq1.at(4), "5");     // ksat
+    EXPECT_EQ(aq1.at(1), "0.5"); // porosity
+    EXPECT_EQ(aq1.at(4), "5");   // ksat
 }
 
 TEST(InpWriterRoundTrip, AquiferParametersSurviveThroughTheApi) {
@@ -297,8 +397,8 @@ TEST(InpWriterRoundTrip, GroundwaterNodeResolvesThroughAForwardReference) {
     // The source model, before anything is written: J2 is defined after the
     // [GROUNDWATER] section, so this is the deferred pass under test.
     SWMMEngine eng;
-    ASSERT_EQ(eng.open(data("hydrology.inp").c_str(),
-                       data("_hydrology_gw.rpt").c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(eng.open(data("hydrology.inp").c_str(), data("_hydrology_gw.rpt").c_str(), nullptr),
+              SWMM_OK);
     const auto& ctx = eng.context();
 
     const int s1 = ctx.subcatch_names.find("S1");
@@ -383,7 +483,7 @@ TEST(InpWriterRoundTrip, InletUsageIsWritten) {
     EXPECT_EQ(c[1], "IN_A");
     EXPECT_EQ(c[2], "J5");
     EXPECT_EQ(c[3], "1");
-    EXPECT_EQ(c[4], "0");         // %Clog, stored as 1 - pct/100
+    EXPECT_EQ(c[4], "0"); // %Clog, stored as 1 - pct/100
     EXPECT_EQ(c[8], "ON_GRADE");
 }
 
@@ -392,17 +492,17 @@ TEST(InpWriterRoundTrip, InletUsageIsStillThereAfterReopening) {
 
     SWMMEngine eng;
     ASSERT_EQ(eng.open(data("_inlet_usage_rt1.inp").c_str(),
-                       data("_inlet_usage_reopen.rpt").c_str(), nullptr), SWMM_OK);
+                       data("_inlet_usage_reopen.rpt").c_str(), nullptr),
+              SWMM_OK);
     const auto& ctx = eng.context();
 
     ASSERT_EQ(ctx.inlet_usages.count(), 1) << "inlet usage lost on the round trip";
     EXPECT_EQ(ctx.link_names.name_of(ctx.inlet_usages.link_index[0]), "GUT1");
     EXPECT_EQ(ctx.node_names.name_of(ctx.inlet_usages.node_index[0]), "J5");
-    EXPECT_EQ(ctx.inlets.names[static_cast<std::size_t>(ctx.inlet_usages.design_index[0])],
-              "IN_A");
+    EXPECT_EQ(ctx.inlets.names[static_cast<std::size_t>(ctx.inlet_usages.design_index[0])], "IN_A");
     EXPECT_EQ(ctx.inlet_usages.num_inlets[0], 1);
     EXPECT_DOUBLE_EQ(ctx.inlet_usages.clog_factor[0], 1.0);
-    EXPECT_EQ(ctx.inlet_usages.placement[0], 1);  // ON_GRADE
+    EXPECT_EQ(ctx.inlet_usages.placement[0], 1); // ON_GRADE
 }
 
 // ===========================================================================
@@ -509,7 +609,7 @@ TEST(InpWriterRoundTrip, AGageWithNoResolvableSourceStillWritesItsRow) {
     const auto rg2 = row(g.text, "RAINGAGES", "RG2");
     ASSERT_GE(rg2.size(), 6u);
     EXPECT_EQ(rg2.at(4), "TIMESERIES");
-    EXPECT_EQ(rg2.at(5), "TSX");  // the retained name, not a dropped row
+    EXPECT_EQ(rg2.at(5), "TSX"); // the retained name, not a dropped row
 
     // The reference that would have gone fatal.
     EXPECT_EQ(row(g.text, "SUBCATCHMENTS", "S2").at(1), "RG2");
@@ -531,8 +631,9 @@ TEST(InpWriterRoundTrip, AGageWithNoResolvableSourceStillReopens) {
 
 TEST(InpWriterRoundTrip, LinkEndNodesBindWhenTheLinksPrecedeTheNodes) {
     SWMMEngine eng;
-    ASSERT_EQ(eng.open(data("section_order.inp").c_str(),
-                       data("_section_order_open.rpt").c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(eng.open(data("section_order.inp").c_str(), data("_section_order_open.rpt").c_str(),
+                       nullptr),
+              SWMM_OK);
     const auto& ctx = eng.context();
 
     ASSERT_GT(ctx.n_links(), 0);
@@ -569,16 +670,15 @@ TEST(InpWriterRoundTrip, LinkEndNodesAreWrittenAsNames) {
 TEST(InpWriterRoundTrip, AnUnresolvableLinkEndNodeIsFatal) {
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    EXPECT_NE(swmm_engine_open(e, data("orphan_link.inp").c_str(),
-                               data("_orphan_link.rpt").c_str(), nullptr, nullptr),
+    EXPECT_NE(swmm_engine_open(e, data("orphan_link.inp").c_str(), data("_orphan_link.rpt").c_str(),
+                               nullptr, nullptr),
               SWMM_OK)
         << "a link naming an undefined node opened silently";
 
     bool named = false;
     for (int i = 0; i < swmm_get_error_count(e); ++i) {
         const std::string msg = swmm_get_error_at(e, i);
-        if (msg.find("209") != std::string::npos &&
-            msg.find("J_MISSING") != std::string::npos)
+        if (msg.find("209") != std::string::npos && msg.find("J_MISSING") != std::string::npos)
             named = true;
     }
     // Asserting the code AND the offending name: "the open failed" alone would
@@ -642,14 +742,14 @@ TEST(InpWriterRoundTrip, StructureFlapGatesSurviveAReopen) {
         return flag;
     };
 
-    EXPECT_EQ(gated("C1"), 1)      << "[LOSSES] conduit gate";
-    EXPECT_EQ(gated("O_SIDE"), 1)  << "[ORIFICES] gate";
-    EXPECT_EQ(gated("O_BOT"), 0)   << "an ungated orifice must stay ungated";
-    EXPECT_EQ(gated("W1"), 1)      << "[WEIRS] gate";
+    EXPECT_EQ(gated("C1"), 1) << "[LOSSES] conduit gate";
+    EXPECT_EQ(gated("O_SIDE"), 1) << "[ORIFICES] gate";
+    EXPECT_EQ(gated("O_BOT"), 0) << "an ungated orifice must stay ungated";
+    EXPECT_EQ(gated("W1"), 1) << "[WEIRS] gate";
     // Both outlet rating layouts: the Gated column sits at a different token
     // index in each, so a fix that reads one fixed index passes only half.
-    EXPECT_EQ(gated("L_TAB"), 1)   << "[OUTLETS] TABULAR gate";
-    EXPECT_EQ(gated("L_FUN"), 1)   << "[OUTLETS] FUNCTIONAL gate";
+    EXPECT_EQ(gated("L_TAB"), 1) << "[OUTLETS] TABULAR gate";
+    EXPECT_EQ(gated("L_FUN"), 1) << "[OUTLETS] FUNCTIONAL gate";
 
     const int o1 = swmm_node_index(r.e, "O1");
     ASSERT_GE(o1, 0);
@@ -669,12 +769,12 @@ TEST(InpWriterRoundTrip, AlternateBooleanSpellingsAreAcceptedForEveryGate) {
 
     // The writer normalises every accepted spelling to YES on the way out.
     EXPECT_EQ(row(g.text, "ORIFICES", "OR1").at(6), "YES") << "[ORIFICES] TRUE";
-    EXPECT_EQ(row(g.text, "WEIRS",    "W1").at(6),  "YES") << "[WEIRS] 1";
-    EXPECT_EQ(row(g.text, "OUTLETS",  "L1").at(7),  "YES") << "[OUTLETS] TRUE";
-    EXPECT_EQ(row(g.text, "LOSSES",   "C1").at(4),  "YES") << "[LOSSES] TRUE";
+    EXPECT_EQ(row(g.text, "WEIRS", "W1").at(6), "YES") << "[WEIRS] 1";
+    EXPECT_EQ(row(g.text, "OUTLETS", "L1").at(7), "YES") << "[OUTLETS] TRUE";
+    EXPECT_EQ(row(g.text, "LOSSES", "C1").at(4), "YES") << "[LOSSES] TRUE";
     // FREE outfalls carry no stage-data column, so Gated is the 4th token,
     // not the 5th — the same left-shift the parser handles at NodesHandler.cpp.
-    EXPECT_EQ(row(g.text, "OUTFALLS", "O1").at(3),  "YES") << "[OUTFALLS] 1";
+    EXPECT_EQ(row(g.text, "OUTFALLS", "O1").at(3), "YES") << "[OUTFALLS] 1";
 
     // And the flags really are set, not merely echoed as text.
     Reopened r("_flap_gate_spellings_rt1.inp");
@@ -708,8 +808,7 @@ TEST(InpWriterRoundTrip, TheWriterConvergesAtTheSecondGeneration) {
         writeOnce("_" + stem + "_rt1.inp", "_" + stem + "_rt2.inp");
         writeOnce("_" + stem + "_rt2.inp", "_" + stem + "_rt3.inp");
 
-        EXPECT_EQ(slurp(data("_" + stem + "_rt2.inp")),
-                  slurp(data("_" + stem + "_rt3.inp")))
+        EXPECT_EQ(slurp(data("_" + stem + "_rt2.inp")), slurp(data("_" + stem + "_rt3.inp")))
             << fixture << ": writer does not converge";
     }
 }
@@ -733,7 +832,8 @@ TEST(InpWriterRoundTrip, GenerationOneDiffersOnlyByTheTwoKnownPreExistingGaps) {
     std::istringstream b(slurp(data("_hydrology_rt2.inp")));
     std::string la, lb;
     while (std::getline(a, la) && std::getline(b, lb)) {
-        if (la == lb) continue;
+        if (la == lb)
+            continue;
         const auto key = cols(la).empty() ? std::string() : cols(la).at(0);
         EXPECT_TRUE(key == "SWEEP_END" || key == "Units")
             << "new generation-to-generation drift:\n  gen1: " << la << "\n  gen2: " << lb;
@@ -753,26 +853,48 @@ TEST(InpWriterRoundTrip, GenerationOneDiffersOnlyByTheTwoKnownPreExistingGaps) {
 
 namespace {
 
-/// Internal-surface link lookup by name; the C API's get_xsect is itself part
-/// of the defect family (it returned y_full where the transect reference
-/// belongs), so these assertions read the context directly.
+/**
+ * @brief Find a link by exact name through internal context rows.
+ *
+ * Avoids the public cross-section query so this writer test can inspect reference integrity
+ * independently; no state mutation occurs.
+ *
+ * @param[in] ctx Borrowed model context with consistent link names/count.
+ * @param[in] name Exact case-sensitive link ID.
+ * @return First matching zero-based link row, or -1 when absent.
+ */
 int linkIndex(const SimulationContext& ctx, const std::string& name) {
     for (int j = 0; j < ctx.n_links(); ++j)
-        if (ctx.link_names.name_of(j) == name) return j;
+        if (ctx.link_names.name_of(j) == name)
+            return j;
     return -1;
 }
 
-/// All GR (elev, station) pairs belonging to `transect` in a written
-/// [TRANSECTS] section, in file order.
+/**
+ * @brief Collect written transect GR elevation/station pairs.
+ *
+ * Ignores NC rows, toggles selection on X1 and converts complete GR token pairs with stod. A
+ * dangling final token is ignored; malformed numbers throw. No geometry interpolation or mutation
+ * occurs.
+ *
+ * @param[in] text Borrowed written input text.
+ * @param[in] transect Exact X1 transect ID used to select following GR rows.
+ * @return Owned ordered pairs of authoring-unit elevation/station values.
+ */
 std::vector<std::pair<double, double>> grPairs(const std::string& text,
                                                const std::string& transect) {
     std::vector<std::pair<double, double>> pairs;
     bool inside = false;
     for (const auto& r : section(text, "TRANSECTS")) {
         auto c = cols(r);
-        if (c.empty()) continue;
-        if (c[0] == "X1") { inside = (c.size() > 1 && c[1] == transect); continue; }
-        if (c[0] == "NC") continue;
+        if (c.empty())
+            continue;
+        if (c[0] == "X1") {
+            inside = (c.size() > 1 && c[1] == transect);
+            continue;
+        }
+        if (c[0] == "NC")
+            continue;
         if (c[0] == "GR" && inside)
             for (size_t i = 1; i + 1 < c.size(); i += 2)
                 pairs.emplace_back(std::stod(c[i]), std::stod(c[i + 1]));
@@ -780,7 +902,7 @@ std::vector<std::pair<double, double>> grPairs(const std::string& text,
     return pairs;
 }
 
-}  // namespace
+} // namespace
 
 TEST(InpWriterRoundTrip, IrregularXsectKeepsTheTransectName) {
     const auto g = gen1("irregular_transect.inp");
@@ -810,7 +932,8 @@ TEST(InpWriterRoundTrip, IrregularXsectSurvivesReopen) {
     ASSERT_EQ(rt.open(data("_irregular_transect_rt1.inp").c_str(),
                       data("_irregular_transect_rt1.inp.rpt").c_str(), nullptr),
               SWMM_OK);
-    for (const auto& e : rt.context().errors) ADD_FAILURE() << "reopen: " << e;
+    for (const auto& e : rt.context().errors)
+        ADD_FAILURE() << "reopen: " << e;
     const auto& c1 = rt.context();
 
     for (const char* name : {"C1", "C2"}) {
@@ -840,7 +963,8 @@ TEST(InpWriterRoundTrip, TransectsRoundTripRawX1AndGRData) {
     std::vector<std::string> x1;
     for (const auto& r : section(g.text, "TRANSECTS")) {
         auto c = cols(r);
-        if (!c.empty() && c[0] == "X1" && c.size() > 1 && c[1] == "TRAP_MAIN") x1 = c;
+        if (!c.empty() && c[0] == "X1" && c.size() > 1 && c[1] == "TRAP_MAIN")
+            x1 = c;
     }
     ASSERT_EQ(x1.size(), 10u) << "X1 line must carry all 10 legacy tokens";
     EXPECT_DOUBLE_EQ(std::stod(x1.at(3)), 20.0) << "Xleft";
@@ -849,14 +973,13 @@ TEST(InpWriterRoundTrip, TransectsRoundTripRawX1AndGRData) {
     EXPECT_DOUBLE_EQ(std::stod(x1.at(8)), 2.0) << "Xfactor";
     EXPECT_DOUBLE_EQ(std::stod(x1.at(9)), 0.5) << "Yfactor (additive elevation offset)";
 
-    const std::vector<std::pair<double, double>> trap = {
-        {10.0, 0.0}, {8.0, 20.0}, {6.0, 40.0}, {5.5, 50.0},
-        {6.0, 60.0}, {8.0, 80.0}, {10.0, 100.0}};
+    const std::vector<std::pair<double, double>> trap = {{10.0, 0.0},  {8.0, 20.0}, {6.0, 40.0},
+                                                         {5.5, 50.0},  {6.0, 60.0}, {8.0, 80.0},
+                                                         {10.0, 100.0}};
     EXPECT_EQ(grPairs(g.text, "TRAP_MAIN"), trap);
 
     const std::vector<std::pair<double, double>> creek = {
-        {5.0, 0.0}, {3.0, 10.0}, {2.0, 12.123456}, {2.0, 20.0},
-        {3.5, 30.0}, {5.0, 40.0}};
+        {5.0, 0.0}, {3.0, 10.0}, {2.0, 12.123456}, {2.0, 20.0}, {3.5, 30.0}, {5.0, 40.0}};
     EXPECT_EQ(grPairs(g.text, "CREEK_A"), creek)
         << "GR precision loss: 12.123456 must not round to 12.1235";
 }
@@ -890,8 +1013,7 @@ TEST(InpWriterRoundTrip, AnUnresolvableTransectIsFatalOnAStrictOpen) {
     bool named = false;
     for (int i = 0; i < swmm_get_error_count(e); ++i) {
         const std::string msg = swmm_get_error_at(e, i);
-        if (msg.find("209") != std::string::npos &&
-            msg.find("TRX") != std::string::npos)
+        if (msg.find("209") != std::string::npos && msg.find("TRX") != std::string::npos)
             named = true;
     }
     EXPECT_TRUE(named) << "expected ERROR 209 naming TRX";
@@ -949,12 +1071,12 @@ TEST(InpWriterRoundTrip, SetXsectIrregularGeometryMatchesTheResolver) {
     EXPECT_DOUBLE_EQ(ctx.links.xsect_y_full[u1], ctx.links.xsect_y_full[u2]);
     EXPECT_DOUBLE_EQ(ctx.links.xsect_a_full[u1], ctx.links.xsect_a_full[u2]);
     EXPECT_DOUBLE_EQ(ctx.links.xsect_r_full[u1], ctx.links.xsect_r_full[u2]);
-    EXPECT_DOUBLE_EQ(ctx.links.xsect_w_max[u1],  ctx.links.xsect_w_max[u2]);
+    EXPECT_DOUBLE_EQ(ctx.links.xsect_w_max[u1], ctx.links.xsect_w_max[u2]);
 
     // And the writer must now save C1 with the new transect's NAME.
     std::vector<std::string> warnings;
-    ASSERT_EQ(openswmm::inp_writer::writeInpFile(
-                  ctx, data("_irregular_transect_api.inp"), &warnings), 0);
+    ASSERT_EQ(
+        openswmm::inp_writer::writeInpFile(ctx, data("_irregular_transect_api.inp"), &warnings), 0);
     const auto text = slurp(data("_irregular_transect_api.inp"));
     EXPECT_EQ(row(text, "XSECTIONS", "C1").at(2), "CREEK_A");
 }
@@ -1037,7 +1159,7 @@ TEST(InpWriterRoundTrip, SweepDatesAndMapUnitsAreSaveIdempotent) {
              "[MAP]\nDIMENSIONS 0 0 100 100\nUnits      None\n\n"
              "[REPORT]\nINPUT NO\n";
     }
-    const auto g1 = writeOnce("_swp_idem.inp",     "_swp_idem_rt1.inp");
+    const auto g1 = writeOnce("_swp_idem.inp", "_swp_idem_rt1.inp");
     const auto g2 = writeOnce("_swp_idem_rt1.inp", "_swp_idem_rt2.inp");
     const auto g3 = writeOnce("_swp_idem_rt2.inp", "_swp_idem_rt3.inp");
 
@@ -1051,9 +1173,8 @@ TEST(InpWriterRoundTrip, SweepDatesAndMapUnitsAreSaveIdempotent) {
     }
 
     // And the strong form: a second save of a saved file changes NOTHING.
-    EXPECT_EQ(g2.text, g3.text)
-        << "generation 2 and generation 3 differ — the writer is not "
-           "idempotent over its own output";
+    EXPECT_EQ(g2.text, g3.text) << "generation 2 and generation 3 differ — the writer is not "
+                                   "idempotent over its own output";
 }
 
 // ===========================================================================
@@ -1068,7 +1189,19 @@ TEST(InpWriterRoundTrip, SweepDatesAndMapUnitsAreSaveIdempotent) {
 // ===========================================================================
 
 namespace {
-double num(const std::vector<std::string>& c, std::size_t i) { return std::stod(c.at(i)); }
+/**
+ * @brief Convert a checked row token to a double.
+ *
+ * Throws out_of_range for missing token or numeric overflow, invalid_argument for a nonnumeric
+ * token. Does not alter the row.
+ *
+ * @param[in] c Borrowed token vector.
+ * @param[in] i Token index, bounds checked by vector::at.
+ * @return std::stod conversion result without requiring full-token consumption.
+ */
+double num(const std::vector<std::string>& c, std::size_t i) {
+    return std::stod(c.at(i));
+}
 }
 
 TEST(InpWriterRoundTrip, ElevationOffsetsAreWrittenAsElevations) {
@@ -1082,8 +1215,8 @@ TEST(InpWriterRoundTrip, ElevationOffsetsAreWrittenAsElevations) {
     EXPECT_NEAR(num(c_ok, 6), 11.0, 1e-6) << "OutOffset was written as a depth";
 
     EXPECT_NEAR(num(row(g.text, "ORIFICES", "OR1"), 4), 11.5, 1e-6);
-    EXPECT_NEAR(num(row(g.text, "WEIRS",    "W1"),  4), 12.0, 1e-6);
-    EXPECT_NEAR(num(row(g.text, "OUTLETS",  "L1"),  3), 11.25, 1e-6);
+    EXPECT_NEAR(num(row(g.text, "WEIRS", "W1"), 4), 12.0, 1e-6);
+    EXPECT_NEAR(num(row(g.text, "OUTLETS", "L1"), 3), 11.25, 1e-6);
 }
 
 TEST(InpWriterRoundTrip, AdverseConduitKeepsAuthoredOrientation) {
@@ -1094,9 +1227,9 @@ TEST(InpWriterRoundTrip, AdverseConduitKeepsAuthoredOrientation) {
     ASSERT_GE(c.size(), 8u);
     EXPECT_EQ(c.at(1), "J1") << "From node was swapped by the adverse-slope reversal";
     EXPECT_EQ(c.at(2), "J2");
-    EXPECT_NEAR(num(c, 5), 10.5,  1e-6);
+    EXPECT_NEAR(num(c, 5), 10.5, 1e-6);
     EXPECT_NEAR(num(c, 6), 12.25, 1e-6);
-    EXPECT_NEAR(num(c, 7), 0.75,  1e-6) << "InitFlow sign was flipped";
+    EXPECT_NEAR(num(c, 7), 0.75, 1e-6) << "InitFlow sign was flipped";
 
     const auto l = row(g.text, "LOSSES", "C_ADV");
     ASSERT_GE(l.size(), 3u);
@@ -1117,7 +1250,7 @@ TEST(InpWriterRoundTrip, AuthoredFormIsSaveIdempotentAndReopensClean) {
     const auto g3 = writeOnce("_authored_form_rt2.inp", "_authored_form_rt3.inp");
     EXPECT_EQ(g2.text, g3.text);
     EXPECT_EQ(row(g1.text, "CONDUITS", "C_ADV"), row(g3.text, "CONDUITS", "C_ADV"));
-    EXPECT_EQ(row(g1.text, "CONDUITS", "C_OK"),  row(g3.text, "CONDUITS", "C_OK"));
+    EXPECT_EQ(row(g1.text, "CONDUITS", "C_OK"), row(g3.text, "CONDUITS", "C_OK"));
 
     // The reopened model must hold the same depths as the original open —
     // and no negative-offset warning, which is what the double-subtraction
@@ -1142,9 +1275,11 @@ TEST(InpWriterRoundTrip, RestoreAuthoredOrientationApiUnreversesTheLiveContext) 
                                data("_authored_form.inp.rpt").c_str(), nullptr, nullptr),
               SWMM_OK);
     const int idx = swmm_link_index(e, "C_ADV");
-    const int j1  = swmm_node_index(e, "J1");
-    const int j2  = swmm_node_index(e, "J2");
-    ASSERT_GE(idx, 0); ASSERT_GE(j1, 0); ASSERT_GE(j2, 0);
+    const int j1 = swmm_node_index(e, "J1");
+    const int j2 = swmm_node_index(e, "J2");
+    ASSERT_GE(idx, 0);
+    ASSERT_GE(j1, 0);
+    ASSERT_GE(j2, 0);
 
     int from = -1;
     swmm_link_get_from_node(e, idx, &from);
@@ -1328,8 +1463,8 @@ TEST(InpWriterRoundTrip, SolverFacingValuesKeepFullPrecision) {
 // faithful for v6 — the writer says so rather than losing it silently. This is
 // the same treatment swmm_model_write_compat gives a dropped 5.x feature.
 TEST(InpWriterRoundTrip, OutfallGatePlusRouteToIsReportedAsInexpressible) {
-    const auto g = writeOnceLenient("outfall_gate_and_route.inp",
-                                    "_outfall_gate_and_route_rt1.inp");
+    const auto g =
+        writeOnceLenient("outfall_gate_and_route.inp", "_outfall_gate_and_route_rt1.inp");
     ASSERT_FALSE(g.text.empty());
 
     // Both columns are still written — v6 reads them correctly.
@@ -1340,8 +1475,10 @@ TEST(InpWriterRoundTrip, OutfallGatePlusRouteToIsReportedAsInexpressible) {
 
     int warned = 0, spurious = 0;
     for (const auto& w : g.warnings) {
-        if (w.find("O_BOTH") != std::string::npos) ++warned;
-        if (w.find("O_GATE") != std::string::npos) ++spurious;
+        if (w.find("O_BOTH") != std::string::npos)
+            ++warned;
+        if (w.find("O_GATE") != std::string::npos)
+            ++spurious;
     }
     EXPECT_EQ(warned, 1) << "no warning for the inexpressible combination";
     EXPECT_EQ(spurious, 0) << "warned about an outfall with only a flap gate";
@@ -1385,8 +1522,7 @@ TEST(InpWriterRoundTrip, GroundwaterRowKeepsLegacysEleventhToken) {
     ASSERT_FALSE(g.text.empty());
 
     const auto gw = row(g.text, "GROUNDWATER", "GW_SUB");
-    ASSERT_GE(gw.size(), 11u)
-        << "legacy refuses a groundwater row with fewer than 11 tokens";
+    ASSERT_GE(gw.size(), 11u) << "legacy refuses a groundwater row with fewer than 11 tokens";
     EXPECT_EQ(gw.at(10), "*") << "an unset optional depth is written as '*'";
 }
 
@@ -1415,7 +1551,10 @@ TEST(InpWriterRoundTrip, AdjustmentRowsNameTheirPatternNotATable) {
     std::vector<std::string> nperv;
     for (const auto& r : section(g.text, "ADJUSTMENTS")) {
         auto c = cols(r);
-        if (!c.empty() && c[0] == "N-PERV") { nperv = c; break; }
+        if (!c.empty() && c[0] == "N-PERV") {
+            nperv = c;
+            break;
+        }
     }
     ASSERT_GE(nperv.size(), 3u) << "the N-PERV adjustment row was dropped";
     EXPECT_EQ(nperv.at(1), "S_GA");

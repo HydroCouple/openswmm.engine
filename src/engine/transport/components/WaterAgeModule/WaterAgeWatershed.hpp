@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file WaterAgeWatershed.hpp
- * @brief Phase A3 — water age on subcatchment surfaces.
+ * @file      WaterAgeWatershed.hpp
+ * @brief     Phase A3 — water age on subcatchment surfaces.
  *
  * @details Each subcatchment carries THREE ages, one per ponded subarea
  *          (`IMPERV0`, `IMPERV1`, `PERV`), mirroring the RunoffSolver's own
@@ -72,9 +72,9 @@
  * @see plans/transport/A3_SCOPING_2026-08-17.md
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_WATER_AGE_WATERSHED_HPP
@@ -82,7 +82,9 @@
 
 namespace openswmm {
 struct SimulationContext;
-namespace runoff { struct RunoffSoA; }
+namespace runoff {
+struct RunoffSoA;
+}
 }
 
 namespace openswmm::transport {
@@ -90,14 +92,12 @@ namespace openswmm::transport {
 /// One runoff-step update of the subarea ages and the published runoff age.
 /// Call immediately AFTER the runoff solver has stepped, so the depths are
 /// this step's. No-op when WATER_AGE is off.
-void routeSubcatchmentAge(SimulationContext& ctx,
-                          const runoff::RunoffSoA& soa, double dt);
+void routeSubcatchmentAge(SimulationContext& ctx, const runoff::RunoffSoA& soa, double dt);
 
 /// Accumulate run-on age-volume from a donor subcatchment to its receiver.
 /// Called from the run-on assembly beside the flow it mirrors.
-void addRunonAge(SimulationContext& ctx, int donor_sc, int receiver_sc,
-                 double q);
+void addRunonAge(SimulationContext& ctx, int donor_sc, int receiver_sc, double q);
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_WATER_AGE_WATERSHED_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_WATER_AGE_WATERSHED_HPP

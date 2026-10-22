@@ -15,16 +15,16 @@
 // limitations under the License.
 
 /**
- * @file ProcessComponentRegistry.cpp
- * @brief Registry + config-file delivery for [PROCESS_COMPONENTS] — IO1–IO2.
+ * @file      ProcessComponentRegistry.cpp
+ * @brief     Registry + config-file delivery for [PROCESS_COMPONENTS] — IO1–IO2.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "ProcessComponentRegistry.hpp"
-#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
+#include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
 
 #include <algorithm>
 #include <cctype>
@@ -42,47 +42,58 @@ namespace openswmm::components {
 
 namespace {
 
+/** @brief Uppercase byte characters for config tags using the current C locale.
+ * @param s Owned copy transformed through unsigned-char toupper.
+ * @return Uppercased string; not Unicode case folding. */
 std::string upper(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
                    [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
     return s;
 }
 
-/// Strip ';'-style comments (the .inp convention) and trailing whitespace.
+/** @param line Borrowed raw line; first semicolon begins a comment even inside quotes.
+ * @return Prefix with trailing space/tab/CR removed; leading indentation is retained. */
 std::string strip_comment(const std::string& line) {
     const auto sc = line.find(';');
     std::string s = (sc == std::string::npos) ? line : line.substr(0, sc);
-    while (!s.empty() &&
-           (s.back() == ' ' || s.back() == '\t' || s.back() == '\r'))
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r'))
         s.pop_back();
     return s;
 }
 
-/// True when the id token is a shared-library path rather than a registry id
-/// (reserved for phase HC2 — HydroCouple component discovery).
+/** @param id Token inspected without trimming. Slash/backslash always qualifies;
+ * otherwise exact .so/.dylib/.dll suffix requires a nonempty preceding filename.
+ * @return Path heuristic only; no filesystem or loader probe occurs. */
 bool looks_like_library(const std::string& id) {
-    if (id.find('/') != std::string::npos ||
-        id.find('\\') != std::string::npos)
+    if (id.find('/') != std::string::npos || id.find('\\') != std::string::npos)
         return true;
     for (const char* ext : {".so", ".dylib", ".dll"}) {
         const std::string e(ext);
-        if (id.size() > e.size() &&
-            id.compare(id.size() - e.size(), e.size(), e) == 0)
+        if (id.size() > e.size() && id.compare(id.size() - e.size(), e.size(), e) == 0)
             return true;
     }
     return false;
 }
 
-}  // namespace
+} // namespace
 
-std::string parse_component_config_stream(std::istream& in,
-                                          const std::string& label,
+/** @brief Append parsed bracketed sections from the current stream position.
+ * @param[in,out] in Borrowed stream consumed until getline ends or a syntax error.
+ * @param label Source text used only in diagnostics.
+ * @param[in,out] out Existing sections are not cleared here; accepted sections append.
+ * A nested PROCESS_COMPONENTS section or content before the first recognized header
+ * returns an error with earlier appended data retained.
+ * @return Empty on accepted input, including an empty file. Header tags are uppercase
+ * but not internally trimmed; unknown/repeated tags are retained, trailing text after
+ * a closing bracket is ignored, and stream badbit is not separately diagnosed. */
+std::string parse_component_config_stream(std::istream& in, const std::string& label,
                                           ComponentConfigSections& out) {
     std::vector<std::string>* current = nullptr;
     std::string raw;
     while (std::getline(in, raw)) {
         const std::string line = strip_comment(raw);
-        if (line.empty()) continue;
+        if (line.empty())
+            continue;
 
         // Section header?
         const auto lb = line.find('[');
@@ -107,8 +118,7 @@ std::string parse_component_config_stream(std::istream& in,
     return {};
 }
 
-std::string parse_component_config_text(const std::string& text,
-                                        const std::string& label,
+std::string parse_component_config_text(const std::string& text, const std::string& label,
                                         ComponentConfigSections& out) {
     out.sections.clear();
     out.source_path = label;
@@ -116,8 +126,7 @@ std::string parse_component_config_text(const std::string& text,
     return parse_component_config_stream(in, label, out);
 }
 
-std::string read_component_config(const std::string& path,
-                                  const std::string& base_dir,
+std::string read_component_config(const std::string& path, const std::string& base_dir,
                                   ComponentConfigSections& out) {
     out.sections.clear();
 
@@ -134,8 +143,7 @@ std::string read_component_config(const std::string& path,
 
     std::ifstream in(p);
     if (!in.is_open())
-        return "Process component config file not found or unreadable: '" +
-               out.source_path + "'.";
+        return "Process component config file not found or unreadable: '" + out.source_path + "'.";
     return parse_component_config_stream(in, out.source_path, out);
 }
 
@@ -148,23 +156,25 @@ ProcessComponentRegistry::ProcessComponentRegistry() {
     // registration line for one of these before its phase lands produces a
     // precise diagnostic instead of "unknown component id". Entries are
     // OVERWRITTEN by register_component() when the implementation arrives.
-    const struct { const char* id; const char* desc; const char* phase; } planned[] = {
+    const struct {
+        const char* id;
+        const char* desc;
+        const char* phase;
+    } planned[] = {
         {"org.hydrocouple.openswmm.reactions",
          "Multispecies reaction system (EPANET-MSX conventions)", "R1 (reactions plan)"},
-        {"org.hydrocouple.openswmm.transport.ard",
-         "Eulerian ARD transport engine configuration", "E5 (Eulerian ARD plan)"},
-        {"org.hydrocouple.openswmm.transport.lard",
-         "Lagrangian (LARD) quality engine", "T5 (LARD plan)"},
-        {"org.hydrocouple.openswmm.heat",
-         "1D heat transport flux modules", "H1 (heat plan)"},
-        {"org.hydrocouple.openswmm.waterage",
-         "Water age tracking coordinator", "A1 (water age plan)"},
+        {"org.hydrocouple.openswmm.transport.ard", "Eulerian ARD transport engine configuration",
+         "E5 (Eulerian ARD plan)"},
+        {"org.hydrocouple.openswmm.transport.lard", "Lagrangian (LARD) quality engine",
+         "T5 (LARD plan)"},
+        {"org.hydrocouple.openswmm.heat", "1D heat transport flux modules", "H1 (heat plan)"},
+        {"org.hydrocouple.openswmm.waterage", "Water age tracking coordinator",
+         "A1 (water age plan)"},
         {"org.hydrocouple.openswmm.integrated2d",
          "Unified 2D surface + two-zone groundwater component", "S1/G1 (2D + GW plans)"},
     };
     for (const auto& pl : planned)
-        entries_[pl.id] =
-            ProcessComponentEntry{pl.desc, pl.phase, nullptr, nullptr};
+        entries_[pl.id] = ProcessComponentEntry{pl.desc, pl.phase, nullptr, nullptr};
 }
 
 ProcessComponentRegistry& ProcessComponentRegistry::instance() {
@@ -172,17 +182,14 @@ ProcessComponentRegistry& ProcessComponentRegistry::instance() {
     return reg;
 }
 
-void ProcessComponentRegistry::register_component(const std::string& id,
-                                                  std::string description,
+void ProcessComponentRegistry::register_component(const std::string& id, std::string description,
                                                   ComponentConfigApply apply,
                                                   ComponentConfigSave save) {
-    entries_[id] =
-        ProcessComponentEntry{std::move(description), std::string{},
-                              std::move(apply), std::move(save)};
+    entries_[id] = ProcessComponentEntry{std::move(description), std::string{}, std::move(apply),
+                                         std::move(save)};
 }
 
-const ProcessComponentEntry* ProcessComponentRegistry::find(
-    const std::string& id) const {
+const ProcessComponentEntry* ProcessComponentRegistry::find(const std::string& id) const {
     const auto it = entries_.find(id);
     return (it == entries_.end()) ? nullptr : &it->second;
 }
@@ -190,7 +197,8 @@ const ProcessComponentEntry* ProcessComponentRegistry::find(
 std::vector<std::string> ProcessComponentRegistry::known_ids() const {
     std::vector<std::string> ids;
     ids.reserve(entries_.size());
-    for (const auto& e : entries_) ids.push_back(e.first);
+    for (const auto& e : entries_)
+        ids.push_back(e.first);
     return ids;
 }
 
@@ -211,50 +219,47 @@ std::vector<std::string> resolve_process_components(SimulationContext& ctx,
         for (const auto& spec : ctx.process_component_specs) {
             for (const auto& s0 : seen)
                 if (s0 == spec.id) {
-                    errors.push_back(
-                        "[PROCESS_COMPONENTS] duplicate registration of '" +
-                        spec.id + "' — each component id may appear once.");
+                    errors.push_back("[PROCESS_COMPONENTS] duplicate registration of '" + spec.id +
+                                     "' — each component id may appear once.");
                     break;
                 }
             seen.push_back(spec.id);
         }
-        if (!errors.empty()) return errors;
+        if (!errors.empty())
+            return errors;
     }
 
     for (auto& spec : ctx.process_component_specs) {
         if (looks_like_library(spec.id)) {
-            errors.push_back(
-                "[PROCESS_COMPONENTS] '" + spec.id +
-                "': library-loaded HydroCouple components are not available "
-                "yet (arrives with plan phase HC2 — "
-                "IMPLEMENTATION_ROADMAP.md).");
+            errors.push_back("[PROCESS_COMPONENTS] '" + spec.id +
+                             "': library-loaded HydroCouple components are not available "
+                             "yet (arrives with plan phase HC2 — "
+                             "IMPLEMENTATION_ROADMAP.md).");
             continue;
         }
         const ProcessComponentEntry* entry = reg.find(spec.id);
         if (entry == nullptr) {
-            std::string msg = "[PROCESS_COMPONENTS] unknown component id '" +
-                              spec.id + "'. Known ids:";
-            for (const auto& id : reg.known_ids()) msg += " " + id;
+            std::string msg =
+                "[PROCESS_COMPONENTS] unknown component id '" + spec.id + "'. Known ids:";
+            for (const auto& id : reg.known_ids())
+                msg += " " + id;
             errors.push_back(msg);
             continue;
         }
         if (!entry->pending_phase.empty()) {
-            errors.push_back(
-                "[PROCESS_COMPONENTS] '" + spec.id + "' (" +
-                entry->description +
-                ") is recognized but not yet implemented — arrives with "
-                "plan phase " + entry->pending_phase + ".");
+            errors.push_back("[PROCESS_COMPONENTS] '" + spec.id + "' (" + entry->description +
+                             ") is recognized but not yet implemented — arrives with "
+                             "plan phase " +
+                             entry->pending_phase + ".");
             continue;
         }
         if (spec.config_path.empty()) {
-            errors.push_back(
-                "[PROCESS_COMPONENTS] '" + spec.id +
-                "': missing required config=\"…\" argument.");
+            errors.push_back("[PROCESS_COMPONENTS] '" + spec.id +
+                             "': missing required config=\"…\" argument.");
             continue;
         }
         ComponentConfigSections config;
-        const std::string err =
-            read_component_config(spec.config_path, base_dir, config);
+        const std::string err = read_component_config(spec.config_path, base_dir, config);
         if (!err.empty()) {
             errors.push_back(err);
             continue;
@@ -267,4 +272,4 @@ std::vector<std::string> resolve_process_components(SimulationContext& ctx,
     return errors;
 }
 
-}  // namespace openswmm::components
+} // namespace openswmm::components

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_dw_unsteady_friction.cpp
- * @brief Gates for the dynamic wave unsteady-friction terms (issue #156 P3).
+ * @file      test_dw_unsteady_friction.cpp
+ * @brief     Gates for the dynamic wave unsteady-friction terms (issue #156 P3).
  *
  * @details Valve-closure fixture under DYNWAVE (post-closure mass-oscillation
  *          damping — DW resolves the oscillation, not the acoustic front):
@@ -27,9 +27,9 @@
  *          health (trials do not degrade — the dqdh consistency gate U-G6).
  *          Plan: plans/MIXED_FLOW_CLOSURES_TPA_UF_PLAN_2026-08-29.md §3.4/§3.5.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -54,6 +54,17 @@ namespace {
 
 const char* kOutDir = "dw_uf_out";
 
+/**
+ * @brief Create the fixture output directory and form one artifact filename.
+ *
+ * Creates missing output-root directories and propagates filesystem errors. Does not
+ * create/truncate the artifact, sanitize name or create arbitrary nested parents; no
+ * current-directory change occurs.
+ *
+ * @param[in] name Raw filename/path appended below kOutDir; caller chooses a safe fixture
+ *     destination.
+ * @return Owned native path string.
+ */
 std::string outPath(const std::string& name) {
     fs::create_directories(kOutDir);
     return (fs::path(kOutDir) / name).string();
@@ -63,13 +74,27 @@ std::string outPath(const std::string& name) {
 // orifice valve -> free outfall; valve slams shut at t = 60 s. JV rides at
 // 13 ft on a 1-ft pipe, so the EXTRAN dQ/dH (or slot) surcharge machinery is
 // exercised on every step — dqdh consistency is structural to this fixture.
+/**
+ * @brief Construct a pressurized four-pipe chain with a rapidly closing downstream valve.
+ *
+ * Seeds heads/flows and multiple pipe segments to expose cross-link velocity gradients; text
+ * construction does not run hydraulics or validate overrides.
+ *
+ * @param[in] surcharge Raw SURCHARGE_METHOD token, normally EXTRAN or SLOT.
+ * @param[in] extra Raw additional option lines inserted after MAX_TRIALS; caller provides newline
+ *     delimiters.
+ * @param[in] reverse_c3 Declare C_3 in reverse node order with negative initial flow when true.
+ * @return Owned ten-minute CFS/DYNWAVE deck with 15 ft upstream fixed stage, quarter-second routing
+ *     and a valve closing near60 s.
+ */
 std::string valveModel(const std::string& surcharge, const std::string& extra,
                        bool reverse_c3 = false) {
     std::ostringstream ss;
     ss << "[OPTIONS]\n"
           "FLOW_UNITS           CFS\n"
           "FLOW_ROUTING         DYNWAVE\n"
-          "SURCHARGE_METHOD     " << surcharge << "\n"
+          "SURCHARGE_METHOD     "
+       << surcharge << "\n"
        << "START_DATE           01/01/2026\n"
           "START_TIME           00:00:00\n"
           "END_DATE             01/01/2026\n"
@@ -100,9 +125,8 @@ std::string valveModel(const std::string& surcharge, const std::string& extra,
        // upstream) carries q < 0 for the same physical flow, so the stencil
        // sign tables must map it back into its neighbours' frames (and
        // theirs into its own) for the cross-link ∂V/∂x to survive.
-       << (reverse_c3
-               ? "C_3    J3   J2 50.0   0.013 0  0  -2.4\n"
-               : "C_3    J2   J3 50.0   0.013 0  0  2.4\n")
+       << (reverse_c3 ? "C_3    J3   J2 50.0   0.013 0  0  -2.4\n"
+                      : "C_3    J2   J3 50.0   0.013 0  0  2.4\n")
        << "C_P    J3   JV 50.0   0.013 0  0  2.4\n"
           "\n[ORIFICES]\n;;Name From To Type Offset Cd   Gated CloseTime\n"
           "VALVE  JV   DN SIDE 0.0    0.62 NO    0\n"
@@ -119,6 +143,16 @@ std::string valveModel(const std::string& surcharge, const std::string& extra,
 }
 
 // Discretely-at-rest DW deck (flat, uniform level, junctions only).
+/**
+ * @brief Construct a uniform-level pressurized-at-rest DYNWAVE deck.
+ *
+ * Builds text only; the high weir satisfies the outfall topology requirement without intended
+ * initial overflow. No no-flow property is computed here.
+ *
+ * @param[in] extra Raw extra option text inserted before junction declarations.
+ * @return Owned ten-minute CFS/SLOT deck with two nodes at13 ft depth, 200 ft three-foot pipe and a
+ *     high overflow weir.
+ */
 std::string restModel(const std::string& extra) {
     std::ostringstream ss;
     ss << "[OPTIONS]\n"
@@ -147,16 +181,34 @@ std::string restModel(const std::string& extra) {
 }
 
 struct RunResult {
-    double late_amp = 0.0;   ///< max |head_JV − final| over the last 3 min
+    double late_amp = 0.0; ///< max |head_JV − final| over the last 3 min
     double max_q = 0.0;
     bool ok = false;
 };
 
-RunResult runDeck(const std::string& base, const std::string& deck,
-                  const char* probe_node, const char* probe_link) {
+/**
+ * @brief Write/run an unsteady-friction deck and measure peak flow and late depth amplitude.
+ *
+ * Open failure records failure, destroys handle and returns ok=false. Initialize/start/index checks
+ * are nonfatal; step failure records failure and breaks. After end/destruction, any nonempty
+ * partial trace sets ok=true, so ok alone does not prove full completion. Getter/end statuses are
+ * ignored; elapsed days are converted to seconds for late-window sampling.
+ *
+ * @param[in] base Artifact basename passed to outPath for .inp/.rpt/.out, overwritten.
+ * @param[in] deck Complete input text, copied through an unchecked stream.
+ * @param[in] probe_node Non-null existing node whose depth is sampled in feet.
+ * @param[in] probe_link Non-null existing link whose signed flow is sampled in CFS.
+ * @return Owned result: max absolute flow CFS, maximum depth difference from final sample for
+ *     recorded times>=420 s, and ok flag.
+ */
+RunResult runDeck(const std::string& base, const std::string& deck, const char* probe_node,
+                  const char* probe_link) {
     RunResult r;
     const std::string inp = outPath(base + ".inp");
-    { std::ofstream f(inp); f << deck; }
+    {
+        std::ofstream f(inp);
+        f << deck;
+    }
     SWMM_Engine e = swmm_engine_create();
     if (swmm_engine_open(e, inp.c_str(), outPath(base + ".rpt").c_str(),
                          outPath(base + ".out").c_str(), nullptr) != 0) {
@@ -185,7 +237,8 @@ RunResult runDeck(const std::string& base, const std::string& deck,
     } while (elapsed > 0.0);
     swmm_engine_end(e);
     swmm_engine_destroy(e);
-    if (trace.empty()) return r;
+    if (trace.empty())
+        return r;
     const double fin = trace.back().second;
     for (const auto& [t, d] : trace)
         if (t >= 420.0)
@@ -194,6 +247,15 @@ RunResult runDeck(const std::string& base, const std::string& deck,
     return r;
 }
 
+/**
+ * @brief Read a binary artifact into an owned comparison string.
+ *
+ * No explicit stream status checks; allocation errors propagate.
+ *
+ * @param[in] p Input file path, unchanged.
+ * @return All available bytes, including zero characters; empty can mean empty/unreadable file and
+ *     partial reads lack separate status.
+ */
 std::string fileBytes(const std::string& p) {
     std::ifstream f(p, std::ios::binary);
     std::stringstream ss;
@@ -201,28 +263,57 @@ std::string fileBytes(const std::string& p) {
     return ss.str();
 }
 
-const char* kUfOn =
-    "UNSTEADY_FRICTION    VITKOVSKY\n"
-    "UF_K3                0.020\n";
+const char* kUfOn = "UNSTEADY_FRICTION    VITKOVSKY\n"
+                    "UF_K3                0.020\n";
 
 class ForcedDwThreads {
     bool had_;
     std::string saved_;
+
 public:
+    /**
+     * @brief Temporarily force the DYNWAVE worker-count environment override.
+     *
+     * Captures original SWMM_DW_THREADS presence/value and installs the override. Process-global
+     * environment mutation is unsynchronized; caller excludes competitors and does not copy this
+     * restoration owner.
+     *
+     * @param[in] threads Intended supported positive thread count, converted to decimal text without
+     *     validation.
+     */
     explicit ForcedDwThreads(int threads) {
         const char* old = std::getenv("SWMM_DW_THREADS");
         had_ = old != nullptr;
-        if (old) saved_ = old;
+        if (old)
+            saved_ = old;
         set(std::to_string(threads).c_str());
     }
+    /**
+     * @brief Restore the previous DYNWAVE thread override or its absence.
+     *
+     * Delegates to set, ignoring platform environment-call statuses; process environment access must be
+     * externally serialized.
+     */
     ~ForcedDwThreads() { set(had_ ? saved_.c_str() : nullptr); }
+
 private:
+    /**
+     * @brief Set or remove the process DYNWAVE thread override.
+     *
+     * Uses _putenv_s on Windows and setenv/unsetenv elsewhere, ignoring return status. No thread
+     * synchronization or value validation occurs.
+     *
+     * @param[in] value Non-null decimal/other override text to install; null removes it (empty value
+     *     through _putenv_s on Windows).
+     */
     static void set(const char* value) {
 #ifdef _WIN32
         _putenv_s("SWMM_DW_THREADS", value ? value : "");
 #else
-        if (value) setenv("SWMM_DW_THREADS", value, 1);
-        else unsetenv("SWMM_DW_THREADS");
+        if (value)
+            setenv("SWMM_DW_THREADS", value, 1);
+        else
+            unsetenv("SWMM_DW_THREADS");
 #endif
     }
 };
@@ -230,20 +321,41 @@ private:
 // Compare binary64 API state every routing step, including the valve closure.
 // The force override deliberately crosses worker boundaries on this small
 // fixture; the ordinary model-size policy would keep it serial.
-std::vector<double> threadedTrace(const std::string& name,
-                                  const std::string& surcharge, int threads) {
+/**
+ * @brief Run a forced-thread valve case and record binary64 API state at every step.
+ *
+ * Enables unsteady friction, writes THREADS1 while forcing the environment override, shortens deck
+ * to2 min, then steps at most10000 calls with no binary output. Failures record GoogleTest
+ * diagnostics; creation/open/init/start failure returns empty, while later errors can return a
+ * partial trace. Checks elapsed completion/finiteness, ends/destroys engine and restores the
+ * process override.
+ *
+ * @param[in] name Artifact basename under outPath; input/report files are overwritten.
+ * @param[in] surcharge Raw surcharge method forwarded to valveModel.
+ * @param[in] threads Requested SWMM_DW_THREADS override, restored by scope exit.
+ * @return Owned flattened records: elapsed days, six node depths ft in J1/J2/J3/JV/UP/DN order,
+ *     then five flows CFS in C_1/C_2/C_3/C_P/VALVE order.
+ */
+std::vector<double> threadedTrace(const std::string& name, const std::string& surcharge,
+                                  int threads) {
     ForcedDwThreads force(threads);
     std::string deck = valveModel(surcharge, std::string(kUfOn) + "THREADS 1\n");
     const auto pos = deck.find("00:10:00");
     EXPECT_NE(pos, std::string::npos);
-    if (pos == std::string::npos) return {};
+    if (pos == std::string::npos)
+        return {};
     deck.replace(pos, 8, "00:02:00");
     const std::string inp = outPath(name + ".inp");
-    { std::ofstream f(inp); f << deck; }
+    {
+        std::ofstream f(inp);
+        f << deck;
+    }
     SWMM_Engine e = swmm_engine_create();
-    if (!e) { ADD_FAILURE() << "engine creation failed"; return {}; }
-    if (swmm_engine_open(e, inp.c_str(), outPath(name + ".rpt").c_str(),
-                         nullptr, nullptr) != 0 ||
+    if (!e) {
+        ADD_FAILURE() << "engine creation failed";
+        return {};
+    }
+    if (swmm_engine_open(e, inp.c_str(), outPath(name + ".rpt").c_str(), nullptr, nullptr) != 0 ||
         swmm_engine_initialize(e) != 0 || swmm_engine_start(e, 0) != 0) {
         ADD_FAILURE() << swmm_get_last_error_msg(e);
         swmm_engine_destroy(e);
@@ -259,7 +371,8 @@ std::vector<double> threadedTrace(const std::string& name,
     for (int step = 0; step < 10000; ++step) {
         const int rc = swmm_engine_step(e, &elapsed);
         EXPECT_EQ(rc, 0) << swmm_get_last_error_msg(e);
-        if (rc != 0) break;
+        if (rc != 0)
+            break;
         trace.push_back(elapsed);
         for (int n : nodes) {
             double value = 0.0;
@@ -273,7 +386,8 @@ std::vector<double> threadedTrace(const std::string& name,
             EXPECT_TRUE(std::isfinite(value));
             trace.push_back(value);
         }
-        if (elapsed == 0.0) break;
+        if (elapsed == 0.0)
+            break;
     }
     EXPECT_EQ(elapsed, 0.0);
     EXPECT_EQ(swmm_engine_end(e), 0);
@@ -286,7 +400,8 @@ std::vector<double> threadedTrace(const std::string& name,
 TEST(DwUnsteadyFriction, ThreadedStencilMatchesSerialBits) {
     SWMM_ThreadInfo info{};
     ASSERT_EQ(swmm_get_thread_info(&info), 0);
-    if (!info.omp_available) GTEST_SKIP() << "requires an OpenMP build";
+    if (!info.omp_available)
+        GTEST_SKIP() << "requires an OpenMP build";
     for (const std::string closure : {"SLOT", "EXTRAN"}) {
         const auto reference = threadedTrace("uf_threads_" + closure + "_serial", closure, 1);
         ASSERT_GT(reference.size(), 12u);
@@ -294,11 +409,14 @@ TEST(DwUnsteadyFriction, ThreadedStencilMatchesSerialBits) {
             for (int repeat = 0; repeat < 2; ++repeat) {
                 SCOPED_TRACE(closure + " threads=" + std::to_string(threads) +
                              " repeat=" + std::to_string(repeat));
-                const auto candidate = threadedTrace("uf_threads_" + closure + "_" +
-                    std::to_string(threads) + "_" + std::to_string(repeat), closure, threads);
+                const auto candidate =
+                    threadedTrace("uf_threads_" + closure + "_" + std::to_string(threads) + "_" +
+                                      std::to_string(repeat),
+                                  closure, threads);
                 ASSERT_EQ(reference.size(), candidate.size());
                 EXPECT_EQ(std::memcmp(reference.data(), candidate.data(),
-                                      reference.size() * sizeof(double)), 0);
+                                      reference.size() * sizeof(double)),
+                          0);
             }
         }
     }
@@ -307,9 +425,8 @@ TEST(DwUnsteadyFriction, ThreadedStencilMatchesSerialBits) {
 TEST(DwUnsteadyFriction, NoneIsBitIdenticalToAbsent) {
     const auto a = runDeck("dw_absent", valveModel("SLOT", ""), "JV", "C_P");
     const auto b = runDeck("dw_none",
-                           valveModel("SLOT",
-                                      "UNSTEADY_FRICTION    NONE\n"
-                                      "UF_K3                0.02\n"),
+                           valveModel("SLOT", "UNSTEADY_FRICTION    NONE\n"
+                                              "UF_K3                0.02\n"),
                            "JV", "C_P");
     ASSERT_TRUE(a.ok && b.ok);
     EXPECT_EQ(fileBytes(outPath("dw_absent.out")), fileBytes(outPath("dw_none.out")))
@@ -320,17 +437,14 @@ TEST(DwUnsteadyFriction, DiscreteRestIsBitIdentical) {
     const auto a = runDeck("dw_rest_base", restModel(""), "TA", "C_P");
     const auto b = runDeck("dw_rest_on", restModel(kUfOn), "TA", "C_P");
     ASSERT_TRUE(a.ok && b.ok);
-    EXPECT_EQ(fileBytes(outPath("dw_rest_base.out")),
-              fileBytes(outPath("dw_rest_on.out")));
+    EXPECT_EQ(fileBytes(outPath("dw_rest_base.out")), fileBytes(outPath("dw_rest_on.out")));
 }
 
 TEST(DwUnsteadyFriction, ValveClosureK3DampsUnderSlot) {
     const auto base = runDeck("dw_slot_k0", valveModel("SLOT", ""), "JV", "C_P");
-    const auto damped = runDeck("dw_slot_k20", valveModel("SLOT", kUfOn),
-                                "JV", "C_P");
+    const auto damped = runDeck("dw_slot_k20", valveModel("SLOT", kUfOn), "JV", "C_P");
     ASSERT_TRUE(base.ok && damped.ok);
-    ASSERT_GT(base.late_amp, 1e-4)
-        << "fixture must still be oscillating in the late window";
+    ASSERT_GT(base.late_amp, 1e-4) << "fixture must still be oscillating in the late window";
     EXPECT_LT(damped.late_amp, base.late_amp)
         << "k3=0.02 must damp the post-closure oscillation (SLOT celerity arm)";
 }
@@ -345,8 +459,7 @@ TEST(DwUnsteadyFriction, ValveClosureK3EngagesAndStaysBoundedUnderExtran) {
     // 259a0ed made the bit-exact kernels the default). What EXTRAN can
     // promise: k3 engages during the surge and stays bounded.
     const auto base = runDeck("dw_ext_k0", valveModel("EXTRAN", ""), "JV", "C_P");
-    const auto damped = runDeck("dw_ext_k20", valveModel("EXTRAN", kUfOn),
-                                "JV", "C_P");
+    const auto damped = runDeck("dw_ext_k20", valveModel("EXTRAN", kUfOn), "JV", "C_P");
     ASSERT_TRUE(base.ok && damped.ok);
     EXPECT_NE(fileBytes(outPath("dw_ext_k0.out")), fileBytes(outPath("dw_ext_k20.out")))
         << "k3=0.02 must engage the EXTRAN (frozen-width) celerity arm";
@@ -354,27 +467,23 @@ TEST(DwUnsteadyFriction, ValveClosureK3EngagesAndStaysBoundedUnderExtran) {
     EXPECT_LT(damped.max_q, 500.0) << "no blowup under EXTRAN";
     // Sign-flip restarts measured <= 0.026 ft across k3 in {0, 0.005..0.045}
     // and ROUTING_STEP {0.2, 0.25, 0.3}; 0.1 ft still catches sustained growth.
-    EXPECT_LT(damped.late_amp, 0.1)
-        << "base=" << base.late_amp << " damped=" << damped.late_amp;
+    EXPECT_LT(damped.late_amp, 0.1) << "base=" << base.late_amp << " damped=" << damped.late_amp;
 }
 
 TEST(DwUnsteadyFriction, DampingMonotoneInK3) {
     const auto k5 = runDeck("dw_slot_k05",
-                            valveModel("SLOT",
-                                       "UNSTEADY_FRICTION    VITKOVSKY\n"
-                                       "UF_K3                0.005\n"),
+                            valveModel("SLOT", "UNSTEADY_FRICTION    VITKOVSKY\n"
+                                               "UF_K3                0.005\n"),
                             "JV", "C_P");
-    const auto k20 = runDeck("dw_slot_k20b", valveModel("SLOT", kUfOn),
-                             "JV", "C_P");
+    const auto k20 = runDeck("dw_slot_k20b", valveModel("SLOT", kUfOn), "JV", "C_P");
     ASSERT_TRUE(k5.ok && k20.ok);
     EXPECT_LE(k20.late_amp, k5.late_amp * 1.001);
 }
 
 TEST(DwUnsteadyFriction, StableAtPaperMaxK3) {
     const auto r = runDeck("dw_slot_k45",
-                           valveModel("SLOT",
-                                      "UNSTEADY_FRICTION    VITKOVSKY\n"
-                                      "UF_K3                0.045\n"),
+                           valveModel("SLOT", "UNSTEADY_FRICTION    VITKOVSKY\n"
+                                              "UF_K3                0.045\n"),
                            "JV", "C_P");
     ASSERT_TRUE(r.ok);
     EXPECT_TRUE(std::isfinite(r.late_amp));
@@ -385,15 +494,12 @@ TEST(DwUnsteadyFriction, SemiImplicitNodeContinuityComposes) {
     // U-G6 flavor: the k3-widened denominator feeds dqdh_, which feeds the
     // SEMI_IMPLICIT node update — the pairing must run clean and damp the
     // same direction.
-    const auto base = runDeck("dw_semi_k0",
-                              valveModel("SLOT",
-                                         "NODE_CONTINUITY      SEMI_IMPLICIT\n"),
-                              "JV", "C_P");
+    const auto base = runDeck(
+        "dw_semi_k0", valveModel("SLOT", "NODE_CONTINUITY      SEMI_IMPLICIT\n"), "JV", "C_P");
     const auto damped = runDeck("dw_semi_k20",
-                                valveModel("SLOT",
-                                           "NODE_CONTINUITY      SEMI_IMPLICIT\n"
-                                           "UNSTEADY_FRICTION    VITKOVSKY\n"
-                                           "UF_K3                0.020\n"),
+                                valveModel("SLOT", "NODE_CONTINUITY      SEMI_IMPLICIT\n"
+                                                   "UNSTEADY_FRICTION    VITKOVSKY\n"
+                                                   "UF_K3                0.020\n"),
                                 "JV", "C_P");
     ASSERT_TRUE(base.ok && damped.ok);
     EXPECT_LE(damped.late_amp, base.late_amp * 1.001);
@@ -407,14 +513,10 @@ TEST(DwUnsteadyFriction, MirrorSymmetryOnReversedConduit) {
     // table reads the neighbour velocity with the wrong sense, manufactures a
     // spurious |∂V/∂x| ≈ 2|v| gradient, and moves late_amp far outside the
     // band (falsifier 7b).
-    const auto al_base = runDeck("dw_mir_al_k0", valveModel("SLOT", ""),
-                                 "JV", "C_P");
-    const auto al_damp = runDeck("dw_mir_al_k20", valveModel("SLOT", kUfOn),
-                                 "JV", "C_P");
-    const auto rv_base = runDeck("dw_mir_rv_k0",
-                                 valveModel("SLOT", "", true), "JV", "C_P");
-    const auto rv_damp = runDeck("dw_mir_rv_k20",
-                                 valveModel("SLOT", kUfOn, true), "JV", "C_P");
+    const auto al_base = runDeck("dw_mir_al_k0", valveModel("SLOT", ""), "JV", "C_P");
+    const auto al_damp = runDeck("dw_mir_al_k20", valveModel("SLOT", kUfOn), "JV", "C_P");
+    const auto rv_base = runDeck("dw_mir_rv_k0", valveModel("SLOT", "", true), "JV", "C_P");
+    const auto rv_damp = runDeck("dw_mir_rv_k20", valveModel("SLOT", kUfOn, true), "JV", "C_P");
     ASSERT_TRUE(al_base.ok && al_damp.ok && rv_base.ok && rv_damp.ok);
     // Damping must still occur on the reversed deck…
     ASSERT_GT(rv_base.late_amp, 1e-4);
@@ -428,12 +530,9 @@ TEST(DwUnsteadyFriction, MirrorSymmetryOnReversedConduit) {
     // gate robust to benign FP reshuffles while a flipped sign table (which
     // manufactures a spurious ~2|v| gradient) fails it by orders of
     // magnitude (falsifier 7b).
-    EXPECT_NEAR(rv_damp.late_amp, al_damp.late_amp,
-                1e-6 * al_damp.late_amp + 1e-12)
-        << "aligned damped=" << al_damp.late_amp
-        << " reversed damped=" << rv_damp.late_amp
-        << " (aligned base=" << al_base.late_amp
-        << " reversed base=" << rv_base.late_amp << ")";
+    EXPECT_NEAR(rv_damp.late_amp, al_damp.late_amp, 1e-6 * al_damp.late_amp + 1e-12)
+        << "aligned damped=" << al_damp.late_amp << " reversed damped=" << rv_damp.late_amp
+        << " (aligned base=" << al_base.late_amp << " reversed base=" << rv_base.late_amp << ")";
 }
 
 TEST(DwUnsteadyFriction, SingleLinkGetsNoStencilAndNoDamping) {
@@ -458,15 +557,20 @@ TEST(DwUnsteadyFriction, SingleLinkGetsNoStencilAndNoDamping) {
         };
         cut("J1     0.0", "JV     0.0");
         cut("C_1    UP   J1", "C_P    J3   JV");
-        d.replace(d.find("C_P    J3   JV 50.0"),
-                  std::string("C_P    J3   JV 50.0").size(),
+        d.replace(d.find("C_P    J3   JV 50.0"), std::string("C_P    J3   JV 50.0").size(),
                   "C_P    UP   JV 200.");
         cut("C_1    CIRCULAR", "C_P    CIRCULAR");
         return d;
     };
     std::string sl_base, sl_uf;
-    { SCOPED_TRACE("base"); sl_base = singleLink(base_deck); }
-    { SCOPED_TRACE("uf");   sl_uf   = singleLink(uf_deck); }
+    {
+        SCOPED_TRACE("base");
+        sl_base = singleLink(base_deck);
+    }
+    {
+        SCOPED_TRACE("uf");
+        sl_uf = singleLink(uf_deck);
+    }
     const auto b = runDeck("dw_single_k0", sl_base, "JV", "C_P");
     const auto u = runDeck("dw_single_k20", sl_uf, "JV", "C_P");
     ASSERT_TRUE(b.ok && u.ok);
@@ -474,6 +578,6 @@ TEST(DwUnsteadyFriction, SingleLinkGetsNoStencilAndNoDamping) {
     // No damping benefit without a live stencil (measured: slight ANTI-
     // damping from the added inertia — see plan §3.4 amendment (a)).
     EXPECT_GT(u.late_amp, b.late_amp * 0.90)
-        << "single-link UF must not show cross-link damping: base="
-        << b.late_amp << " uf=" << u.late_amp;
+        << "single-link UF must not show cross-link damping: base=" << b.late_amp
+        << " uf=" << u.late_amp;
 }

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file PendingRows2D.hpp
- * @brief Parse-time scratch rows for [2D_BOUNDARY_CONDITIONS] and
+ * @file      PendingRows2D.hpp
+ * @brief     Parse-time scratch rows for [2D_BOUNDARY_CONDITIONS] and
  *        [2D_EDGE_CONVEYANCE] input sections.
  *
  * @details Hoisted out of SurfaceRouter2D so serialization consumers
@@ -27,9 +27,9 @@
  *
  * @ingroup engine_2d
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_PENDING_ROWS_HPP
@@ -51,12 +51,12 @@ namespace openswmm::twoD {
  * distinction for re-emission.
  */
 struct PendingBoundaryRow {
-    int         tri      = 0;
-    int         edge     = 0;     ///< 0..2
-    int         bc_type  = 0;     ///< openswmm::twoD::BoundaryType cast
-    double      param1   = 0.0;   ///< slope (NormalFlow) / head (Stage) / flow (Flow)
-    std::string name;             ///< TS name or curve name (TS_/Rating variants)
-    std::string group;            ///< named group ("" = none)
+    int tri = 0;
+    int edge = 0;        ///< 0..2
+    int bc_type = 0;     ///< openswmm::twoD::BoundaryType cast
+    double param1 = 0.0; ///< slope (NormalFlow) / head (Stage) / flow (Flow)
+    std::string name;    ///< TS name or curve name (TS_/Rating variants)
+    std::string group;   ///< named group ("" = none)
 };
 
 /**
@@ -70,8 +70,8 @@ struct PendingBoundaryRow {
  * Retained after the drain for faithful re-serialization.
  */
 struct PendingEdgeConveyanceRow {
-    int    v_from     = 0;   ///< FROM_VERTEX index
-    int    v_to       = 0;   ///< TO_VERTEX index (≠ v_from)
+    int v_from = 0;          ///< FROM_VERTEX index
+    int v_to = 0;            ///< TO_VERTEX index (≠ v_from)
     double conveyance = 1.0; ///< Validated to [0, 1] at parse time
 };
 
@@ -87,11 +87,11 @@ struct PendingEdgeConveyanceRow {
  *          is `* < TAG < CELL`, the D-I3 order the infiltration rows use.
  */
 struct PendingInitialQualityRow {
-    int         tri = -1;     ///< 0-based cell, or -1 for TAG / '*' scope
-    std::string tag;          ///< tag name; empty with tri >= 0 or for '*'
-    bool        all = false;  ///< the '*' spelling
-    std::string species;      ///< name in [POLLUTANTS]
-    double      conc = 0.0;   ///< species units (mass = conc x cell volume)
+    int tri = -1;        ///< 0-based cell, or -1 for TAG / '*' scope
+    std::string tag;     ///< tag name; empty with tri >= 0 or for '*'
+    bool all = false;    ///< the '*' spelling
+    std::string species; ///< name in [POLLUTANTS]
+    double conc = 0.0;   ///< species units (mass = conc x cell volume)
 };
 
 /**
@@ -102,11 +102,11 @@ struct PendingInitialQualityRow {
  * the resolved local-bed porewater volume, not the overland-water volume.
  */
 struct PendingInitialBedQualityRow {
-    int         tri = -1;
+    int tri = -1;
     std::string tag;
-    bool        all = false;
+    bool all = false;
     std::string species;
-    double      conc = 0.0;
+    double conc = 0.0;
 };
 
 /// S2 — one `[2D_BOUNDARY_QUALITY]` row: `TRI EDGE SPECIES CONC`, the same
@@ -114,10 +114,10 @@ struct PendingInitialBedQualityRow {
 /// concentration INFLOW through that boundary edge carries; outflow always
 /// leaves at the cell's concentration, so no row is needed for it.
 struct PendingBoundaryQualityRow {
-    int         tri  = 0;
-    int         edge = 0;     ///< 0..2
-    std::string species;      ///< name in [POLLUTANTS]
-    double      conc = 0.0;   ///< species units
+    int tri = 0;
+    int edge = 0;        ///< 0..2
+    std::string species; ///< name in [POLLUTANTS]
+    double conc = 0.0;   ///< species units
 };
 
 } // namespace openswmm::twoD

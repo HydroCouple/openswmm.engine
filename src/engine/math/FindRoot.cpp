@@ -15,13 +15,13 @@
 // limitations under the License.
 
 /**
- * @file FindRoot.cpp
- * @brief Newton-Raphson + Ridder — numerically identical to legacy findroot.c.
+ * @file      FindRoot.cpp
+ * @brief     Newton-Raphson + Ridder — numerically identical to legacy findroot.c.
  * @ingroup engine_math
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "FindRoot.hpp"
@@ -30,6 +30,7 @@
 namespace openswmm {
 namespace findroot {
 
+// Contract: openswmm::findroot::newton.
 int newton(double x1, double x2, double* rts, double xacc, const NewtonFunc& func) {
     // legacy findroot_Newton, op for op: the caller brackets the root with
     // f(x1) < 0 < f(x2) (switching x1/x2 when f(x1) > f(x2), as kinwave.c
@@ -38,7 +39,7 @@ int newton(double x1, double x2, double* rts, double xacc, const NewtonFunc& fun
     // return is the number of evaluations, 0 past MAXIT.
     int n = 0;
     double f, df, dx, dxold, temp;
-    double x   = *rts;
+    double x = *rts;
     double xlo = x1;
     double xhi = x2;
     dxold = std::fabs(x2 - x1);
@@ -48,12 +49,13 @@ int newton(double x1, double x2, double* rts, double xacc, const NewtonFunc& fun
 
     for (int j = 1; j <= MAXIT; ++j) {
         // Bisect if Newton out of range or not decreasing fast enough.
-        if ((((x - xhi) * df - f) * ((x - xlo) * df - f) >= 0.0
-             || (std::fabs(2.0 * f) > std::fabs(dxold * df)))) {
+        if ((((x - xhi) * df - f) * ((x - xlo) * df - f) >= 0.0 ||
+             (std::fabs(2.0 * f) > std::fabs(dxold * df)))) {
             dxold = dx;
             dx = 0.5 * (xhi - xlo);
             x = xlo + dx;
-            if (xlo == x) break;
+            if (xlo == x)
+                break;
         }
         // Newton step acceptable. Take it.
         else {
@@ -61,23 +63,30 @@ int newton(double x1, double x2, double* rts, double xacc, const NewtonFunc& fun
             dx = f / df;
             temp = x;
             x -= dx;
-            if (temp == x) break;
+            if (temp == x)
+                break;
         }
 
         // Convergence criterion.
-        if (std::fabs(dx) < xacc) break;
+        if (std::fabs(dx) < xacc)
+            break;
 
         // Evaluate function. Maintain bracket on the root.
         func(x, &f, &df);
         n++;
-        if (f < 0.0) xlo = x;
-        else         xhi = x;
+        if (f < 0.0)
+            xlo = x;
+        else
+            xhi = x;
     }
     *rts = x;
-    if (n <= MAXIT) return n;
-    else return 0;
+    if (n <= MAXIT)
+        return n;
+    else
+        return 0;
 }
 
+// Contract: openswmm::findroot::ridder.
 double ridder(double x1, double x2, double xacc, const RidderFunc& func) {
     // legacy findroot_Ridder, op for op — including the evaluation SEQUENCE,
     // which the culvert's Form-1 flow depends on (it reads the last
@@ -88,8 +97,10 @@ double ridder(double x1, double x2, double xacc, const RidderFunc& func) {
     auto SIGN = [](double x, double y) { return (y >= 0.0) ? std::fabs(x) : -std::fabs(x); };
     double flo = func(x1);
     double fhi = func(x2);
-    if (flo == 0.0) return x1;
-    if (fhi == 0.0) return x2;
+    if (flo == 0.0)
+        return x1;
+    if (fhi == 0.0)
+        return x2;
     double ans = 0.5 * (x1 + x2);
     if ((flo > 0.0 && fhi < 0.0) || (flo < 0.0 && fhi > 0.0)) {
         double xlo = x1;
@@ -98,22 +109,29 @@ double ridder(double x1, double x2, double xacc, const RidderFunc& func) {
             const double xm = 0.5 * (xlo + xhi);
             const double fm = func(xm);
             const double s = std::sqrt(fm * fm - flo * fhi);
-            if (s == 0.0) return ans;
+            if (s == 0.0)
+                return ans;
             const double xnew = xm + (xm - xlo) * ((flo >= fhi ? 1.0 : -1.0) * fm / s);
-            if (std::fabs(xnew - ans) <= xacc) break;
+            if (std::fabs(xnew - ans) <= xacc)
+                break;
             ans = xnew;
             const double fnew = func(ans);
             if (SIGN(fm, fnew) != fm) {
-                xlo = xm;  flo = fm;
-                xhi = ans; fhi = fnew;
+                xlo = xm;
+                flo = fm;
+                xhi = ans;
+                fhi = fnew;
             } else if (SIGN(flo, fnew) != flo) {
-                xhi = ans; fhi = fnew;
+                xhi = ans;
+                fhi = fnew;
             } else if (SIGN(fhi, fnew) != fhi) {
-                xlo = ans; flo = fnew;
+                xlo = ans;
+                flo = fnew;
             } else {
                 return ans;
             }
-            if (std::fabs(xhi - xlo) <= xacc) return ans;
+            if (std::fabs(xhi - xlo) <= xacc)
+                return ans;
         }
         return ans;
     }

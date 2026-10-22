@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_initial_quality.cpp
- * @brief E-A1 gates: [INITIAL_QUALITY] parse, resolve, round-trip.
+ * @file      test_initial_quality.cpp
+ * @brief     E-A1 gates: [INITIAL_QUALITY] parse, resolve, round-trip.
  *
  * @details Falsifiers (each gate states what would make it fail):
  *          - FourRowsParseAndResolve fails if the section handler is never
@@ -30,9 +30,9 @@
  *            adding the section must not change the .out. E-A2 REWRITES this
  *            test when consumption lands.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -53,17 +53,39 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
-/// Minimal wet two-junction deck with one pollutant. `iq_lines` lands in an
-/// [INITIAL_QUALITY] section when non-empty; `options_extra` is appended to
-/// [OPTIONS] verbatim; `extra_sections` lands before [REPORT] (sidecar
-/// registration for the E-A3 reserved-species gates).
+/**
+ * @brief Write a mixed wet/dry/storage network for initial-quality override tests.
+ *
+ * Defines TSS in mg/L with global initial concentration five, a storage and wet/dry conduit pairs
+ * in CFS. Allows intentionally invalid override/config rows for rejection tests; no parsing is
+ * performed here. Opens/truncates the deck using a local ofstream; parent directories must exist.
+ * Stream open/write/close outcomes are not checked, and sidecar names/text are not escaped.
+ * Caller-owned inputs are not retained.
+ *
+ * @param[in] path Destination deck filename, non-null when a character pointer; borrowed only
+ *     during this call. Existing files are truncated.
+ * @param[in] iq_lines Raw INITIAL_QUALITY rows; omitted as a section when empty.
+ * @param[in] options_extra Raw additional OPTIONS rows, copied verbatim before fixed geometry.
+ * @param[in] extra_sections Raw complete additional sections copied before REPORT; caller supplies
+ *     section headers/line endings.
+ */
 void write_deck(const char* path, const std::string& iq_lines,
-                const std::string& options_extra = "",
-                const std::string& extra_sections = "") {
+                const std::string& options_extra = "", const std::string& extra_sections = "") {
     std::ofstream f(path);
     f << "[TITLE]\nE-A1 initial quality gate deck\n\n"
       << "[OPTIONS]\n"
@@ -75,8 +97,8 @@ void write_deck(const char* path, const std::string& iq_lines,
       << "[JUNCTIONS]\n;;Name Elev MaxDepth InitDepth SurDepth Aponded\n"
       << "J0     10.0 10 0.5 0 0\n"
       << "J1     9.0  10 0.5 0 0\n"
-      << "J2     9.5  10 0   0 0\n"     // dry (InitDepth 0)
-      << "J3     9.8  10 0   0 0\n\n"   // dry (InitDepth 0)
+      << "J2     9.5  10 0   0 0\n"   // dry (InitDepth 0)
+      << "J3     9.8  10 0   0 0\n\n" // dry (InitDepth 0)
       << "[OUTFALLS]\n;;Name Elev Type StageData Gated\nOUT 7.0 FREE  NO\n\n"
       << "[STORAGE]\n"
       << ";;Name Elev MaxDepth InitDepth Shape     Coeff Expon Const\n"
@@ -85,7 +107,7 @@ void write_deck(const char* path, const std::string& iq_lines,
       << "C1 J0 J1  400 0.013 0 0 0\n"
       << "C2 J1 OUT 400 0.013 0 0 0\n"
       << "C3 J2 J1  400 0.013 0 0 0\n"
-      << "C4 J3 J2  400 0.013 0 0 0\n"   // both ends dry -> dry link
+      << "C4 J3 J2  400 0.013 0 0 0\n" // both ends dry -> dry link
       << "C5 ST1 J1 400 0.013 0 0 0\n\n"
       << "[XSECTIONS]\n;;Link Shape G1 G2 G3 G4\n"
       << "C1 CIRCULAR 1.5 0 0 0\nC2 CIRCULAR 1.5 0 0 0\n"
@@ -104,20 +126,53 @@ void write_deck(const char* path, const std::string& iq_lines,
 
 class InitialQualityTest : public ::testing::Test {
 protected:
+    /**
+     * @brief Allocate the per-test engine handle and assert allocation succeeded.
+     *
+     * Leaves the handle unopen for this fixture; its teardown owns destruction. A fatal allocation
+     * assertion stops setup.
+     */
     void SetUp() override {
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
     }
+    /**
+     * @brief Destroy a non-null fixture handle and clear its member slot.
+     *
+     * Engine destruction supplies remaining model cleanup; safe after setup failed before allocation.
+     */
     void TearDown() override {
-        if (engine_) { swmm_engine_destroy(engine_); engine_ = nullptr; }
+        if (engine_) {
+            swmm_engine_destroy(engine_);
+            engine_ = nullptr;
+        }
     }
+    /**
+     * @brief Open a generated initial-quality fixture on the stored handle.
+     *
+     * Requires a live fixture-owned engine_ from SetUp; performs no initialization/run or cleanup.
+     * Opened/partially opened state remains owned by the fixture and is released in TearDown.
+     *
+     * @param[in] inp Non-null input-deck filename, borrowed for this call.
+     * @param[in] rpt Report destination passed to open; may be null where the engine API permits it.
+     * @param[in] out Binary-output destination passed to open; may be null where supported, though
+     *     start requests saved results.
+     * @return swmm_engine_open status unchanged.
+     */
     int open_deck(const char* inp, const char* rpt, const char* out) {
         return swmm_engine_open(engine_, inp, rpt, out, nullptr);
     }
-    static bool contains(const std::vector<std::string>& v,
-                         const std::string& needle) {
+    /**
+     * @brief Search a diagnostic vector for a case-sensitive substring.
+     *
+     * @param[in] v Borrowed messages, left unchanged.
+     * @param[in] needle Borrowed substring; empty matches any existing message.
+     * @return True when any vector entry contains needle, false for an empty vector or no match.
+     */
+    static bool contains(const std::vector<std::string>& v, const std::string& needle) {
         for (const auto& e : v)
-            if (e.find(needle) != std::string::npos) return true;
+            if (e.find(needle) != std::string::npos)
+                return true;
         return false;
     }
     SWMM_Engine engine_ = nullptr;
@@ -136,12 +191,12 @@ TEST_F(InitialQualityTest, FourRowsParseAndResolve) {
     ASSERT_EQ(open_deck("_iq_ok.inp", "_iq_ok.rpt", "_iq_ok.out"), SWMM_OK);
 
     const auto& ctx = as_cpp_engine(engine_).context();
-    const auto& iq  = ctx.initial_quality;
+    const auto& iq = ctx.initial_quality;
     ASSERT_EQ(iq.count(), 4);
 
     EXPECT_EQ(iq.is_link[0], 0);
     EXPECT_EQ(iq.elem_idx[0], ctx.node_names.find("J1"));
-    EXPECT_EQ(iq.kind[0], 0);                      // TSS = pollutant 0
+    EXPECT_EQ(iq.kind[0], 0); // TSS = pollutant 0
     EXPECT_DOUBLE_EQ(iq.value[0], 12.5);
 
     EXPECT_EQ(iq.is_link[1], 0);
@@ -170,10 +225,9 @@ TEST_F(InitialQualityTest, FourRowsParseAndResolve) {
 // ---------------------------------------------------------------------------
 TEST_F(InitialQualityTest, InertAgeRowWarnsWhenAgeOff) {
     write_deck("_iq_ageoff.inp", "NODE J0 __WATER_AGE__ 6.0\n");
-    ASSERT_EQ(open_deck("_iq_ageoff.inp", "_iq_ageoff.rpt", "_iq_ageoff.out"),
-              SWMM_OK);
+    ASSERT_EQ(open_deck("_iq_ageoff.inp", "_iq_ageoff.rpt", "_iq_ageoff.out"), SWMM_OK);
     const auto& ctx = as_cpp_engine(engine_).context();
-    ASSERT_EQ(ctx.initial_quality.count(), 1);   // warn-and-keep, not dropped
+    ASSERT_EQ(ctx.initial_quality.count(), 1); // warn-and-keep, not dropped
     EXPECT_TRUE(contains(ctx.warnings, "WATER_AGE is OFF"));
     std::remove("_iq_ageoff.inp");
 }
@@ -182,20 +236,24 @@ TEST_F(InitialQualityTest, InertAgeRowWarnsWhenAgeOff) {
 // Error matrix: each invalid deck must FAIL open with a message naming the
 // section. A negative age is legal (D-NS1), pinned at the end.
 TEST_F(InitialQualityTest, ErrorMatrix) {
-    struct Case { const char* tag; const char* row; const char* needle; };
+    struct Case {
+        const char* tag;
+        const char* row;
+        const char* needle;
+    };
     const Case cases[] = {
-        {"unode", "NODE NOPE TSS 1.0\n",       "unknown node 'NOPE'"},
-        {"ulink", "LINK NOPE TSS 1.0\n",       "unknown link 'NOPE'"},
-        {"ucons", "NODE J1 HOCL 1.0\n",        "unknown constituent 'HOCL'"},
+        {"unode", "NODE NOPE TSS 1.0\n", "unknown node 'NOPE'"},
+        {"ulink", "LINK NOPE TSS 1.0\n", "unknown link 'NOPE'"},
+        {"ucons", "NODE J1 HOCL 1.0\n", "unknown constituent 'HOCL'"},
         // U2 (2026-09-07): the refusal now names the accepted set, which as
         // of this changeset includes a reactions-component species.
-        {"umsx",  "NODE J1 HOCL 1.0\n",        "reactions-component species"},
-        {"dup",   "NODE J1 TSS 1.0\nNODE J1 TSS 2.0\n", "duplicate row"},
-        {"scope", "CELL J1 TSS 1.0\n",         "scope must be NODE or LINK"},
-        {"badv",  "NODE J1 TSS abc\n",         "bad value 'abc'"},
+        {"umsx", "NODE J1 HOCL 1.0\n", "reactions-component species"},
+        {"dup", "NODE J1 TSS 1.0\nNODE J1 TSS 2.0\n", "duplicate row"},
+        {"scope", "CELL J1 TSS 1.0\n", "scope must be NODE or LINK"},
+        {"badv", "NODE J1 TSS abc\n", "bad value 'abc'"},
         // U2 reworded this to name the constituent, since a species can hit
         // it too: "negative value for 'TSS' at node 'J1'".
-        {"negp",  "NODE J1 TSS -1.0\n",        "negative value for 'TSS'"},
+        {"negp", "NODE J1 TSS -1.0\n", "negative value for 'TSS'"},
     };
     for (const auto& c : cases) {
         SWMM_Engine e = swmm_engine_create();
@@ -203,9 +261,8 @@ TEST_F(InitialQualityTest, ErrorMatrix) {
         std::string inp = std::string("_iq_err_") + c.tag + ".inp";
         std::string rpt = std::string("_iq_err_") + c.tag + ".rpt";
         write_deck(inp.c_str(), c.row);
-        EXPECT_NE(swmm_engine_open(e, inp.c_str(), rpt.c_str(), nullptr,
-                                   nullptr),
-                  SWMM_OK) << c.tag;
+        EXPECT_NE(swmm_engine_open(e, inp.c_str(), rpt.c_str(), nullptr, nullptr), SWMM_OK)
+            << c.tag;
         const auto& ctx = as_cpp_engine(e).context();
         EXPECT_TRUE(contains(ctx.errors, "[INITIAL_QUALITY]")) << c.tag;
         EXPECT_TRUE(contains(ctx.errors, c.needle)) << c.tag;
@@ -214,8 +271,7 @@ TEST_F(InitialQualityTest, ErrorMatrix) {
     }
 
     // Negative AGE is legal (signed age, D-NS1) — open must succeed.
-    write_deck("_iq_negage.inp", "NODE J0 __WATER_AGE__ -2.0\n",
-               "WATER_AGE            YES\n");
+    write_deck("_iq_negage.inp", "NODE J0 __WATER_AGE__ -2.0\n", "WATER_AGE            YES\n");
     ASSERT_EQ(open_deck("_iq_negage.inp", "_iq_negage.rpt", nullptr), SWMM_OK);
     EXPECT_EQ(as_cpp_engine(engine_).context().initial_quality.count(), 1);
     std::remove("_iq_negage.inp");
@@ -234,9 +290,7 @@ TEST_F(InitialQualityTest, SaveRoundTrip) {
 
     SWMM_Engine e2 = swmm_engine_create();
     ASSERT_NE(e2, nullptr);
-    ASSERT_EQ(swmm_engine_open(e2, "_iq_rt_saved.inp", "_iq_rt2.rpt", nullptr,
-                               nullptr),
-              SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e2, "_iq_rt_saved.inp", "_iq_rt2.rpt", nullptr, nullptr), SWMM_OK);
 
     const auto& a = as_cpp_engine(engine_).context().initial_quality;
     const auto& b = as_cpp_engine(e2).context().initial_quality;
@@ -251,10 +305,12 @@ TEST_F(InitialQualityTest, SaveRoundTrip) {
         // Compare via resolved names so index permutation cannot hide drift.
         if (a.is_link[u]) {
             EXPECT_EQ(ctx_b.link_names.name_of(b.elem_idx[u]),
-                      ctx_a.link_names.name_of(a.elem_idx[u])) << i;
+                      ctx_a.link_names.name_of(a.elem_idx[u]))
+                << i;
         } else {
             EXPECT_EQ(ctx_b.node_names.name_of(b.elem_idx[u]),
-                      ctx_a.node_names.name_of(a.elem_idx[u])) << i;
+                      ctx_a.node_names.name_of(a.elem_idx[u]))
+                << i;
         }
         EXPECT_EQ(b.constituent[u], a.constituent[u]) << i;
     }
@@ -270,26 +326,22 @@ TEST_F(InitialQualityTest, SaveRoundTrip) {
 // Cinit (5), J2/C4 read 0.
 TEST_F(InitialQualityTest, OverridesApplyWetAndDry) {
     write_deck("_iq_ovr.inp",
-               "NODE J1 TSS 12.5\n"      // wet node override
-               "NODE J2 TSS 7.0\n"       // dry node set (D-IQ4: applies)
-               "LINK C4 TSS 3.0\n");     // dry link set (both ends dry)
+               "NODE J1 TSS 12.5\n"  // wet node override
+               "NODE J2 TSS 7.0\n"   // dry node set (D-IQ4: applies)
+               "LINK C4 TSS 3.0\n"); // dry link set (both ends dry)
     ASSERT_EQ(open_deck("_iq_ovr.inp", "_iq_ovr.rpt", nullptr), SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
 
     const auto& ctx = as_cpp_engine(engine_).context();
-    const auto ni = [&](const char* n) {
-        return static_cast<std::size_t>(ctx.node_names.find(n));
-    };
-    const auto li = [&](const char* n) {
-        return static_cast<std::size_t>(ctx.link_names.find(n));
-    };
+    const auto ni = [&](const char* n) { return static_cast<std::size_t>(ctx.node_names.find(n)); };
+    const auto li = [&](const char* n) { return static_cast<std::size_t>(ctx.link_names.find(n)); };
     // np == 1, so conc[idx] == conc[element index].
-    EXPECT_DOUBLE_EQ(ctx.nodes.conc[ni("J1")], 12.5);  // wet override
-    EXPECT_DOUBLE_EQ(ctx.nodes.conc[ni("J2")], 7.0);   // dry set (D-IQ4)
-    EXPECT_DOUBLE_EQ(ctx.nodes.conc[ni("J0")], 5.0);   // untouched wet: Cinit
-    EXPECT_DOUBLE_EQ(ctx.nodes.conc[ni("J3")], 0.0);   // untouched dry: 0
-    EXPECT_DOUBLE_EQ(ctx.links.conc[li("C4")], 3.0);   // dry link set
-    EXPECT_DOUBLE_EQ(ctx.links.conc[li("C1")], 5.0);   // untouched wet link
+    EXPECT_DOUBLE_EQ(ctx.nodes.conc[ni("J1")], 12.5); // wet override
+    EXPECT_DOUBLE_EQ(ctx.nodes.conc[ni("J2")], 7.0);  // dry set (D-IQ4)
+    EXPECT_DOUBLE_EQ(ctx.nodes.conc[ni("J0")], 5.0);  // untouched wet: Cinit
+    EXPECT_DOUBLE_EQ(ctx.nodes.conc[ni("J3")], 0.0);  // untouched dry: 0
+    EXPECT_DOUBLE_EQ(ctx.links.conc[li("C4")], 3.0);  // dry link set
+    EXPECT_DOUBLE_EQ(ctx.links.conc[li("C1")], 5.0);  // untouched wet link
     // conc_old mirrors conc (both seeds write the pair).
     EXPECT_DOUBLE_EQ(ctx.nodes.conc_old[ni("J1")], 12.5);
     EXPECT_DOUBLE_EQ(ctx.links.conc_old[li("C4")], 3.0);
@@ -303,9 +355,12 @@ TEST_F(InitialQualityTest, OverridesApplyWetAndDry) {
 // Zero flow (Q0=0, no inflows) keeps concentrations put; tolerance is for
 // one transport step of numerical noise.
 TEST_F(InitialQualityTest, ArdAndLardPickUpOverrides) {
-    struct Solver { const char* tag; const char* opt; };
+    struct Solver {
+        const char* tag;
+        const char* opt;
+    };
     const Solver solvers[] = {
-        {"ard",  "QUALITY_SOLVER       EULERIAN_ARD\n"},
+        {"ard", "QUALITY_SOLVER       EULERIAN_ARD\n"},
         {"lard", "QUALITY_SOLVER       LAGRANGIAN\n"},
     };
     for (const auto& s : solvers) {
@@ -313,14 +368,14 @@ TEST_F(InitialQualityTest, ArdAndLardPickUpOverrides) {
         std::string rpt = std::string("_iq_") + s.tag + ".rpt";
         std::string out = std::string("_iq_") + s.tag + ".out";
         write_deck(inp.c_str(),
-                   "NODE ST1 TSS 12.5\n"   // storage node: holds mass
-                   "LINK C1 TSS 9.0\n"     // wet conduit override
-                   "LINK C4 TSS 3.0\n",    // dry conduit row: inert, no crash
+                   "NODE ST1 TSS 12.5\n" // storage node: holds mass
+                   "LINK C1 TSS 9.0\n"   // wet conduit override
+                   "LINK C4 TSS 3.0\n",  // dry conduit row: inert, no crash
                    s.opt);
         SWMM_Engine e = swmm_engine_create();
         ASSERT_NE(e, nullptr) << s.tag;
-        ASSERT_EQ(swmm_engine_open(e, inp.c_str(), rpt.c_str(), out.c_str(),
-                                   nullptr), SWMM_OK) << s.tag;
+        ASSERT_EQ(swmm_engine_open(e, inp.c_str(), rpt.c_str(), out.c_str(), nullptr), SWMM_OK)
+            << s.tag;
         ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK) << s.tag;
         ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK) << s.tag;
         double elapsed = 1.0;
@@ -365,17 +420,24 @@ TEST_F(InitialQualityTest, ReservedAgeRowsOverrideGlobalPerEngine) {
         std::ofstream a("_iq_g2.age");
         a << "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 2.0\n";
     }
-    const std::string pc =
-        "[PROCESS_COMPONENTS]\n"
-        "org.hydrocouple.openswmm.waterage  config=\"_iq_g2.age\"\n\n";
+    const std::string pc = "[PROCESS_COMPONENTS]\n"
+                           "org.hydrocouple.openswmm.waterage  config=\"_iq_g2.age\"\n\n";
 
-    struct Solver { const char* tag; const char* opt; bool nodes; };
+    struct Solver {
+        const char* tag;
+        const char* opt;
+        bool nodes;
+    };
     const Solver solvers[] = {
-        {"aleg",  "WATER_AGE            YES\n", true},
-        {"aard",  "WATER_AGE            YES\n"
-                  "QUALITY_SOLVER       EULERIAN_ARD\n", true},
-        {"alard", "WATER_AGE            YES\n"
-                  "QUALITY_SOLVER       LAGRANGIAN\n", false},
+        {"aleg", "WATER_AGE            YES\n", true},
+        {"aard",
+         "WATER_AGE            YES\n"
+         "QUALITY_SOLVER       EULERIAN_ARD\n",
+         true},
+        {"alard",
+         "WATER_AGE            YES\n"
+         "QUALITY_SOLVER       LAGRANGIAN\n",
+         false},
     };
     for (const auto& s : solvers) {
         std::string inp = std::string("_iq_") + s.tag + ".inp";
@@ -386,19 +448,18 @@ TEST_F(InitialQualityTest, ReservedAgeRowsOverrideGlobalPerEngine) {
                    s.opt, pc);
         SWMM_Engine e = swmm_engine_create();
         ASSERT_NE(e, nullptr) << s.tag;
-        ASSERT_EQ(swmm_engine_open(e, inp.c_str(), rpt.c_str(), nullptr,
-                                   nullptr), SWMM_OK) << s.tag;
+        ASSERT_EQ(swmm_engine_open(e, inp.c_str(), rpt.c_str(), nullptr, nullptr), SWMM_OK)
+            << s.tag;
         ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK) << s.tag;
         ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK) << s.tag;
         double elapsed = 1.0;
         ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK) << s.tag;
 
         const auto& ctx = as_cpp_engine(e).context();
-        const auto& ws  = ctx.water_age_state;
+        const auto& ws = ctx.water_age_state;
         const auto uc1 = static_cast<std::size_t>(ctx.link_names.find("C1"));
         const auto uc2 = static_cast<std::size_t>(ctx.link_names.find("C2"));
-        EXPECT_NEAR(ws.link_age[uc1], 6.0 * 3600.0, 60.0)
-            << s.tag << ": link age override lost";
+        EXPECT_NEAR(ws.link_age[uc1], 6.0 * 3600.0, 60.0) << s.tag << ": link age override lost";
         // Control: the untouched link must sit near the 2 h global, NOT the
         // 6 h override. ARD's first-step publish carries a ~10% volume-
         // bookkeeping sag on this near-static deck (same factor on every
@@ -408,8 +469,7 @@ TEST_F(InitialQualityTest, ReservedAgeRowsOverrideGlobalPerEngine) {
         EXPECT_LT(ws.link_age[uc2], 4.0 * 3600.0)
             << s.tag << ": untouched link picked up the override";
         if (s.nodes) {
-            const auto ust =
-                static_cast<std::size_t>(ctx.node_names.find("ST1"));
+            const auto ust = static_cast<std::size_t>(ctx.node_names.find("ST1"));
             EXPECT_NEAR(ws.node_age[ust], 6.0 * 3600.0, 60.0)
                 << s.tag << ": storage-node age override lost";
         }
@@ -430,11 +490,13 @@ TEST_F(InitialQualityTest, ReservedTempRowsOverrideGlobalPerEngine) {
         h << "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 15.0\n\n"
           << "[HEAT_FLUXES]\nSURFACE_EXCHANGE OFF\nRADIATIVE_EXCHANGE OFF\n";
     }
-    const std::string pc =
-        "[PROCESS_COMPONENTS]\n"
-        "org.hydrocouple.openswmm.heat  config=\"_iq_h15.heat\"\n\n";
+    const std::string pc = "[PROCESS_COMPONENTS]\n"
+                           "org.hydrocouple.openswmm.heat  config=\"_iq_h15.heat\"\n\n";
 
-    struct Solver { const char* tag; const char* opt; };
+    struct Solver {
+        const char* tag;
+        const char* opt;
+    };
     const Solver solvers[] = {
         {"tleg", "HEAT_TRANSPORT       YES\n"},
         {"tard", "HEAT_TRANSPORT       YES\n"
@@ -449,26 +511,23 @@ TEST_F(InitialQualityTest, ReservedTempRowsOverrideGlobalPerEngine) {
                    s.opt, pc);
         SWMM_Engine e = swmm_engine_create();
         ASSERT_NE(e, nullptr) << s.tag;
-        ASSERT_EQ(swmm_engine_open(e, inp.c_str(), rpt.c_str(), nullptr,
-                                   nullptr), SWMM_OK) << s.tag;
+        ASSERT_EQ(swmm_engine_open(e, inp.c_str(), rpt.c_str(), nullptr, nullptr), SWMM_OK)
+            << s.tag;
         ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK) << s.tag;
         ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK) << s.tag;
         double elapsed = 1.0;
         ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK) << s.tag;
 
         const auto& ctx = as_cpp_engine(e).context();
-        const auto& hs  = ctx.heat_state;
+        const auto& hs = ctx.heat_state;
         const auto uc1 = static_cast<std::size_t>(ctx.link_names.find("C1"));
         const auto uc2 = static_cast<std::size_t>(ctx.link_names.find("C2"));
         const auto ust = static_cast<std::size_t>(ctx.node_names.find("ST1"));
-        EXPECT_NEAR(hs.link_temp[uc1], 18.5, 0.5)
-            << s.tag << ": link temperature override lost";
+        EXPECT_NEAR(hs.link_temp[uc1], 18.5, 0.5) << s.tag << ": link temperature override lost";
         // Range control — see the age gate's note on ARD's first-step
         // publish sag.
-        EXPECT_GT(hs.link_temp[uc2], 12.0)
-            << s.tag << ": untouched link lost the global seed";
-        EXPECT_LT(hs.link_temp[uc2], 16.5)
-            << s.tag << ": untouched link picked up the override";
+        EXPECT_GT(hs.link_temp[uc2], 12.0) << s.tag << ": untouched link lost the global seed";
+        EXPECT_LT(hs.link_temp[uc2], 16.5) << s.tag << ": untouched link picked up the override";
         EXPECT_NEAR(hs.node_temp[ust], 18.5, 0.5)
             << s.tag << ": storage-node temperature override lost";
         swmm_engine_end(e);
@@ -483,8 +542,7 @@ TEST_F(InitialQualityTest, ReservedTempRowsOverrideGlobalPerEngine) {
 // over a hotstart-loaded state, so no call site can get the precedence
 // wrong. Probed at the helper level.
 TEST_F(InitialQualityTest, HotstartWinsInsideTheAgeApplier) {
-    write_deck("_iq_hs.inp", "NODE J0 __WATER_AGE__ 6.0\n",
-               "WATER_AGE            YES\n");
+    write_deck("_iq_hs.inp", "NODE J0 __WATER_AGE__ 6.0\n", "WATER_AGE            YES\n");
     ASSERT_EQ(open_deck("_iq_hs.inp", "_iq_hs.rpt", nullptr), SWMM_OK);
     auto& ctx = as_cpp_engine(engine_).context();
     auto& ws = ctx.water_age_state;
@@ -494,13 +552,11 @@ TEST_F(InitialQualityTest, HotstartWinsInsideTheAgeApplier) {
     std::fill(ws.node_age.begin(), ws.node_age.end(), 999.0);
     ws.hotstart_loaded = true;
     openswmm::transport::applyInitialAgeOverrides(ctx);
-    EXPECT_DOUBLE_EQ(ws.node_age[uj0], 999.0)
-        << "hotstart must win over [INITIAL_QUALITY] (D-IQ7)";
+    EXPECT_DOUBLE_EQ(ws.node_age[uj0], 999.0) << "hotstart must win over [INITIAL_QUALITY] (D-IQ7)";
 
     ws.hotstart_loaded = false;
     openswmm::transport::applyInitialAgeOverrides(ctx);
-    EXPECT_DOUBLE_EQ(ws.node_age[uj0], 6.0 * 3600.0)
-        << "without hotstart the row must apply";
+    EXPECT_DOUBLE_EQ(ws.node_age[uj0], 6.0 * 3600.0) << "without hotstart the row must apply";
 
     std::remove("_iq_hs.inp");
 }
@@ -513,23 +569,22 @@ TEST_F(InitialQualityTest, InitialStoredMassDelta) {
     write_deck("_iq_m0.inp", "");
     write_deck("_iq_m1.inp",
                "LINK C1 TSS 12.5\n"
-               "NODE J2 TSS 7.0\n");     // dry: must contribute 0 mass
+               "NODE J2 TSS 7.0\n"); // dry: must contribute 0 mass
 
-    auto init_stored = [](const char* inp, const char* rpt,
-                          double* c1_vol) -> double {
+    auto init_stored = [](const char* inp, const char* rpt, double* c1_vol) -> double {
         SWMM_Engine e = swmm_engine_create();
-        if (!e) return -1.0;
+        if (!e)
+            return -1.0;
         double m = -1.0;
         if (swmm_engine_open(e, inp, rpt, nullptr, nullptr) == SWMM_OK &&
-            swmm_engine_initialize(e) == SWMM_OK &&
-            swmm_engine_start(e, 1) == SWMM_OK) {
+            swmm_engine_initialize(e) == SWMM_OK && swmm_engine_start(e, 1) == SWMM_OK) {
             const auto& ctx = as_cpp_engine(e).context();
             if (!ctx.mass_balance.qual_routing_init.empty())
                 m = ctx.mass_balance.qual_routing_init[0];
             if (c1_vol) {
                 const int c1 = ctx.link_names.find("C1");
-                if (c1 >= 0) *c1_vol =
-                    ctx.links.volume[static_cast<std::size_t>(c1)];
+                if (c1 >= 0)
+                    *c1_vol = ctx.links.volume[static_cast<std::size_t>(c1)];
             }
         }
         swmm_engine_destroy(e);
@@ -538,12 +593,11 @@ TEST_F(InitialQualityTest, InitialStoredMassDelta) {
 
     double vol_c1 = 0.0;
     const double m_base = init_stored("_iq_m0.inp", "_iq_m0.rpt", nullptr);
-    const double m_ovr  = init_stored("_iq_m1.inp", "_iq_m1.rpt", &vol_c1);
+    const double m_ovr = init_stored("_iq_m1.inp", "_iq_m1.rpt", &vol_c1);
     ASSERT_GE(m_base, 0.0);
     ASSERT_GE(m_ovr, 0.0);
     ASSERT_GT(vol_c1, 0.0) << "C1 must hold water for this gate to bite";
-    EXPECT_NEAR(m_ovr - m_base, (12.5 - 5.0) * vol_c1,
-                1e-9 * std::max(1.0, m_ovr))
+    EXPECT_NEAR(m_ovr - m_base, (12.5 - 5.0) * vol_c1, 1e-9 * std::max(1.0, m_ovr))
         << "delta must be exactly the wet link's dC*V; the dry node row "
            "must contribute nothing";
 
@@ -567,15 +621,13 @@ TEST_F(InitialQualityTest, ApiRoundTripUpsertRemove) {
     ASSERT_EQ(swmm_init_quality_set(engine_, 0, j1, "TSS", 12.5), SWMM_OK);
     ASSERT_EQ(swmm_init_quality_set(engine_, 1, c1, "TSS", 9.0), SWMM_OK);
     // Signed age is legal (D-NS1).
-    ASSERT_EQ(swmm_init_quality_set(engine_, 0, j0, "__WATER_AGE__", -2.0),
-              SWMM_OK);
+    ASSERT_EQ(swmm_init_quality_set(engine_, 0, j0, "__WATER_AGE__", -2.0), SWMM_OK);
     EXPECT_EQ(swmm_init_quality_count(engine_), 3);
 
     int is_link = -1, ei = -1;
     char buf[64];
     double v = 0.0;
-    ASSERT_EQ(swmm_init_quality_get(engine_, 0, &is_link, &ei, buf, 64, &v),
-              SWMM_OK);
+    ASSERT_EQ(swmm_init_quality_get(engine_, 0, &is_link, &ei, buf, 64, &v), SWMM_OK);
     EXPECT_EQ(is_link, 0);
     EXPECT_EQ(ei, j1);
     EXPECT_STREQ(buf, "TSS");
@@ -584,23 +636,18 @@ TEST_F(InitialQualityTest, ApiRoundTripUpsertRemove) {
     // Upsert: the same key changes the value without growing the count.
     ASSERT_EQ(swmm_init_quality_set(engine_, 0, j1, "TSS", 6.25), SWMM_OK);
     EXPECT_EQ(swmm_init_quality_count(engine_), 3);
-    ASSERT_EQ(swmm_init_quality_get(engine_, 0, &is_link, &ei, buf, 64, &v),
-              SWMM_OK);
+    ASSERT_EQ(swmm_init_quality_get(engine_, 0, &is_link, &ei, buf, 64, &v), SWMM_OK);
     EXPECT_DOUBLE_EQ(v, 6.25);
 
     // Rejections: unknown constituent, negative pollutant, bad element.
-    EXPECT_EQ(swmm_init_quality_set(engine_, 0, j1, "NOPE", 1.0),
-              SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_init_quality_set(engine_, 0, j1, "TSS", -1.0),
-              SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_init_quality_set(engine_, 0, 9999, "TSS", 1.0),
-              SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_init_quality_set(engine_, 0, j1, "NOPE", 1.0), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_init_quality_set(engine_, 0, j1, "TSS", -1.0), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_init_quality_set(engine_, 0, 9999, "TSS", 1.0), SWMM_ERR_BADINDEX);
 
     // Remove shifts subsequent entries down.
     ASSERT_EQ(swmm_init_quality_remove(engine_, 0), SWMM_OK);
     EXPECT_EQ(swmm_init_quality_count(engine_), 2);
-    ASSERT_EQ(swmm_init_quality_get(engine_, 0, &is_link, &ei, buf, 64, &v),
-              SWMM_OK);
+    ASSERT_EQ(swmm_init_quality_get(engine_, 0, &is_link, &ei, buf, 64, &v), SWMM_OK);
     EXPECT_EQ(is_link, 1);
     EXPECT_EQ(ei, c1);
 
@@ -622,22 +669,18 @@ TEST_F(InitialQualityTest, ApiSaveRoundTripAndLifecycleGuard) {
     ASSERT_EQ(swmm_model_write(engine_, "_iq_api2_saved.inp"), SWMM_OK);
     SWMM_Engine e2 = swmm_engine_create();
     ASSERT_NE(e2, nullptr);
-    ASSERT_EQ(swmm_engine_open(e2, "_iq_api2_saved.inp", "_iq_api3.rpt",
-                               nullptr, nullptr),
+    ASSERT_EQ(swmm_engine_open(e2, "_iq_api2_saved.inp", "_iq_api3.rpt", nullptr, nullptr),
               SWMM_OK);
     EXPECT_EQ(swmm_init_quality_count(e2), 1);
     ASSERT_EQ(swmm_engine_initialize(e2), SWMM_OK);
     const auto& ctx2 = as_cpp_engine(e2).context();
-    EXPECT_DOUBLE_EQ(
-        ctx2.nodes.conc[static_cast<std::size_t>(ctx2.node_names.find("J1"))],
-        12.5)
+    EXPECT_DOUBLE_EQ(ctx2.nodes.conc[static_cast<std::size_t>(ctx2.node_names.find("J1"))], 12.5)
         << "the API-set row must seed state after the save round-trip";
     swmm_engine_destroy(e2);
 
     ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK);
-    EXPECT_EQ(swmm_init_quality_set(engine_, 0, j1, "TSS", 1.0),
-              SWMM_ERR_LIFECYCLE);
+    EXPECT_EQ(swmm_init_quality_set(engine_, 0, j1, "TSS", 1.0), SWMM_ERR_LIFECYCLE);
     EXPECT_EQ(swmm_init_quality_remove(engine_, 0), SWMM_ERR_LIFECYCLE);
     swmm_engine_end(engine_);
 
@@ -645,4 +688,4 @@ TEST_F(InitialQualityTest, ApiSaveRoundTripAndLifecycleGuard) {
     std::remove("_iq_api2_saved.inp");
 }
 
-}  // namespace
+} // namespace

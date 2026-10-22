@@ -21,6 +21,18 @@
 
 namespace {
 thread_local std::string error;
+/**
+ * @brief Serialize a reader operation and translate its exceptions into C status codes.
+ * @tparam F Nullary callable whose result is ignored and whose exceptions are translated.
+ * @param[in] handle Non-null validity token. Ordinary calls pass a live reader; open()
+ *                   instead passes the non-null output-slot address before a reader exists.
+ * @param[in] function Operation to invoke under the shared recursive HDF5 mutex.
+ * @return SWMM_OK on success; BADHANDLE for a null token; BADINDEX for out_of_range;
+ *         BADPARAM for invalid_argument; NOMEM for bad_alloc; IO for other standard
+ *         exceptions; INTERNAL for a non-standard exception.
+ * @details Clears the calling thread's previous diagnostic before checking the token.
+ *          Only nullness is checked here; non-null reader validity is a caller precondition.
+ */
 template <class F> int invoke(SWMM_Output2D handle, F function) noexcept {
     error.clear();
     if (!handle) {
@@ -49,9 +61,24 @@ template <class F> int invoke(SWMM_Output2D handle, F function) noexcept {
     }
 }
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
+/**
+ * @brief Interpret a validated opaque handle as its owned C++ reader.
+ * @param[in] handle Non-null, live handle originally returned by swmm_output2d_open().
+ * @return Borrowed reader reference; no ownership transfer or extra validation occurs.
+ * @pre The caller holds the shared HDF5 mutex for subsequent reader access.
+ */
 openswmm::Output2DReader& reader(SWMM_Output2D handle) {
     return *static_cast<openswmm::Output2DReader*>(handle);
 }
+/**
+ * @brief Implement the common text size-query and complete-copy buffer contract.
+ * @param[in] value Text to copy, excluding the terminating NUL in its string size.
+ * @param[out] buffer Writable destination, or null with capacity zero for a size query.
+ * @param[in] capacity Available destination bytes, including space for the final NUL.
+ * @param[out] required Non-null pointer receiving value.size()+1 before buffer validation.
+ * @throws std::invalid_argument If required is null, or the non-query destination is
+ *                               null/too small. No partial destination text is copied.
+ */
 void copy(const std::string& value, char* buffer, size_t capacity, size_t* required) {
     if (!required)
         throw std::invalid_argument("Required-capacity pointer is null");
@@ -63,6 +90,10 @@ void copy(const std::string& value, char* buffer, size_t capacity, size_t* requi
     std::memcpy(buffer, value.c_str(), *required);
 }
 #else
+/**
+ * @brief Report an unavailable compiled backend without touching caller output buffers.
+ * @return SWMM_ERR_PLUGIN after replacing this thread's reader diagnostic.
+ */
 int unavailable() {
     error = "Engine was built without 2D HDF5 result support";
     return SWMM_ERR_PLUGIN;

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file GpuPluginHip.cpp
- * @brief Plugin entry points for the Phase 5 Kokkos/HIP surface solver (AMD).
+ * @file      GpuPluginHip.cpp
+ * @brief     Plugin entry points for the Phase 5 Kokkos/HIP surface solver (AMD).
  *
  * @details Exports the GpuPluginAbi.h contract for the openswmm_gpu_hip
  *          plugin. Identical in shape to GpuPluginCuda.cpp — the probe advertises
@@ -39,9 +39,9 @@
  *
  * @ingroup engine_2d_gpu
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "../solver/GpuPluginAbi.h"
@@ -57,27 +57,34 @@
 
 namespace {
 std::mutex initialization_mutex;
+/**
+ * @brief Initialize the plugin execution runtime once under a process-level mutex.
+ * @throws std::runtime_error If Kokkos has already been finalized.
+ * @note Existing initialized Kokkos state is reused; this helper does not finalize it.
+ * Initialization exceptions propagate to the enclosing factory/operation handler. Caller uses
+ * the execution-owner thread.
+ */
 void ensureKokkosInitialized() {
     std::lock_guard<std::mutex> lock(initialization_mutex);
-    if (Kokkos::is_finalized()) throw std::runtime_error("Kokkos runtime has already been finalized");
+    if (Kokkos::is_finalized())
+        throw std::runtime_error("Kokkos runtime has already been finalized");
     if (!Kokkos::is_initialized() && !Kokkos::is_finalized()) {
         Kokkos::initialize();
     }
 }
 } // namespace
 
-extern "C" OPENSWMM_GPU_ABI int
-openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
-    if (out == nullptr) return 1;
+extern "C" OPENSWMM_GPU_ABI int openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
+    if (out == nullptr)
+        return 1;
     std::memset(out, 0, sizeof(*out));
     out->abi_version = OPENSWMM_GPU_ABI_VERSION;
-    out->vendor      = OPENSWMM_GPU_VENDOR_HIP;
+    out->vendor = OPENSWMM_GPU_VENDOR_HIP;
 
     int device_count = 0;
     if (hipGetDeviceCount(&device_count) != hipSuccess || device_count <= 0) {
         // No usable HIP device — tell the core to fall back to the CPU solver.
-        std::strncpy(out->device_name, "no HIP device",
-                     sizeof(out->device_name) - 1);
+        std::strncpy(out->device_name, "no HIP device", sizeof(out->device_name) - 1);
         return 1;
     }
     out->device_count = device_count;
@@ -89,7 +96,7 @@ openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
     } else {
         std::strncpy(out->device_name, "HIP device", sizeof(out->device_name) - 1);
     }
-    return 0;  // usable device present
+    return 0; // usable device present
 }
 
 extern "C" OPENSWMM_GPU_ABI void*

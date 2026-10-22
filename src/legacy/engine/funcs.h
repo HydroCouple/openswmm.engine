@@ -1,12 +1,12 @@
-/*!
- * \file funcs.h
- * \brief Header file for global interfacing functions.
- * \author L. Rossman
- * \author M. Tryby (EPA)
- * \date Created: 2023-06-12
- * \date Last updated: 2025-01-02
- * \version 5.3.0
- * \details
+/**
+ * @file      funcs.h
+ * @brief     Header file for global interfacing functions.
+ * @author    L. Rossman
+ * @author    M. Tryby (EPA)
+ * @date      Created: 2023-06-12
+ * @date      Last updated: 2025-01-02
+ * @version 5.3.0
+ * @details
  * Update History
  * =================
  *  - Build 5.1.007:
@@ -32,6 +32,11 @@
  *  - Build 5.3.0:
  *      - Modified code to allow saving multiple hotstart files at different times.
  *      - Added support for API provided pollutant build up and washoff.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
  */
 
 #ifndef FUNCS_H
@@ -56,7 +61,7 @@
  * \param[in] rpt_file SWMM report file
  * \param[in] out_file SWMM output file
  */
-void project_open(const char *inp_file, const char *rpt_file, const char *out_file);
+void project_open(const char* inp_file, const char* rpt_file, const char* out_file);
 
 /*!
  * \brief Close project
@@ -75,7 +80,7 @@ void project_readInput(void);
  * \return Error code
  * \note All project options have default values assigned in setDefaults().
  */
-int project_readOption(char *s1, char *s2);
+int project_readOption(char* s1, char* s2);
 
 /*!
  * \brief Checks validity of project data
@@ -94,7 +99,7 @@ int project_init(void);
  * \param[in] n Object index
  * \return 0 if object already added, 1 if not, -1 if hashing fails
  */
-int project_addObject(int type, char *id, int n);
+int project_addObject(int type, char* id, int n);
 
 /*!
  * \brief Uses hash table to find index of an object with a given ID
@@ -102,7 +107,7 @@ int project_addObject(int type, char *id, int n);
  * \param[in] id Object ID string
  * \return Returns index of object with given ID, or -1 if not found
  */
-int project_findObject(int type, const char *id);
+int project_findObject(int type, const char* id);
 
 /*!
  * \brief Uses hash table to find address of a given string entry
@@ -110,7 +115,7 @@ int project_findObject(int type, const char *id);
  * \param[in] id ID name being sought
  * \return Pointer to location where object's ID string is stored
  */
-char *project_findID(int type, char *id);
+char* project_findID(int type, char* id);
 
 /*!
  * \brief Allocates memory for a matrix of doubles
@@ -118,12 +123,12 @@ char *project_findID(int type, char *id);
  * \param[in] ncols Number of columns (0-based)
  * \return Pointer to a matrix of doubles
  */
-double **project_createMatrix(int nrows, int ncols);
+double** project_createMatrix(int nrows, int ncols);
 
 /*!
  * \brief Frees memory allocated for a matrix of doubles
  */
-void project_freeMatrix(double **m);
+void project_freeMatrix(double** m);
 /*!
  * \}
  */
@@ -163,13 +168,13 @@ int input_readData(void);
  * \param[in] ntoks Number of tokens
  * \return Error code
  */
-int report_readOptions(char *tok[], int ntoks);
+int report_readOptions(char* tok[], int ntoks);
 
 /*!
  * \brief Writes a line of text to the report file
  * \param[in] line Line of text
  */
-void report_writeLine(const char *line);
+void report_writeLine(const char* line);
 
 /*!
  * \brief Writes starting/ending processing times to the report file
@@ -198,15 +203,17 @@ void report_writeReport(void);
 
 /*!
  * \brief Writes summary of rain data read from input file to report file
- * \param[in] gage Rain gage index
- * \param[in] rainStats Rain file summary statistics
+ * @par Argument contract
+ * - i (in): Rain gage index
+ * - r (in): Rain file summary statistics
  */
-void report_writeRainStats(int gage, TRainStats *rainStats);
+void report_writeRainStats(int gage, TRainStats* rainStats);
 
 /*!
  * \brief Writes summary of RDII inflow to report file
- * \param[in] totalRain Total rainfall volume over sewershed
- * \param[in] totalRdii Total RDII volume produced
+ * @par Argument contract
+ * - rainVol (in): Total rainfall volume over sewershed
+ * - rdiiVol (in): Total RDII volume produced
  */
 void report_writeRdiiStats(double totalRain, double totalRdii);
 
@@ -222,50 +229,52 @@ void report_writeControlActionsHeading(void);
  * \param[in] value New status value of link
  * \param[in] ruleID ID of rule implementing the action
  */
-void report_writeControlAction(DateTime aDate, char *linkID, double value,
-                               char *ruleID);
+void report_writeControlAction(DateTime aDate, char* linkID, double value, char* ruleID);
 
 /*!
  * \brief Writes runoff continuity error to report file
- * \param[in] totals Accumulated runoff totals
- * \param[in] totalArea Total area of all subcatchments
+ * @par Argument contract
+ * - totals (in): Accumulated runoff totals
+ * - totalArea (in): Total area of all subcatchments
  */
-void report_writeRunoffError(TRunoffTotals *totals, double area);
+void report_writeRunoffError(TRunoffTotals* totals, double area);
 
 /*!
  * \brief Writes runoff loading continuity error to report file
  * \param[in] totals Accumulated pollutant loading totals
  */
-void report_writeLoadingError(TLoadingTotals *totals);
+void report_writeLoadingError(TLoadingTotals* totals);
 
 /*!
  * \brief Writes groundwater continuity error to report file
- * \param[in] totals Accumulated groundwater totals
- * \param[in] area Total area of all subcatchments with groundwater
+ * @par Argument contract
+ * - totals (in): Accumulated groundwater totals
+ * - gwArea (in): Total area of all subcatchments with groundwater
  */
-void report_writeGwaterError(TGwaterTotals *totals, double area);
+void report_writeGwaterError(TGwaterTotals* totals, double area);
 
 /*!
  * \brief Writes flow routing continuity error to report file
  * \param[in] totals Accumulated flow routing totals
  */
-void report_writeFlowError(TRoutingTotals *totals);
+void report_writeFlowError(TRoutingTotals* totals);
 
 /*!
  * \brief Writes quality routing continuity error to report file
- * \param[in] QualTotals Accumulated quality routing totals for each pollutant
+ * @par Argument contract
+ * - QualTotals (in): Accumulated quality routing totals for each pollutant
  */
-void report_writeQualError(TRoutingTotals *totals);
+void report_writeQualError(TRoutingTotals* totals);
 
 /*!
  * \brief Lists nodes and links with highest mass balance errors and courant time
  *        step violations to report file
- * \param[in] massBalErrs Nodes with highest mass balance errors
- * \param[in] CourantCrit Nodes most often Courant time step critical
- * \param[in] nMaxStats Number of most critical nodes/links saved
+ * @par Argument contract
+ * - maxMassBalErrs (in): Nodes with highest mass balance errors
+ * - maxCourantCrit (in): Nodes most often Courant time step critical
+ * - nMaxStats (in): Number of most critical nodes/links saved
  */
-void report_writeMaxStats(TMaxStats massBalErrs[], TMaxStats CourantCrit[],
-                          int nMaxStats);
+void report_writeMaxStats(TMaxStats massBalErrs[], TMaxStats CourantCrit[], int nMaxStats);
 
 /*!
  * \brief Lists links with highest number of flow turns to report (i.e., fraction
@@ -281,21 +290,21 @@ void report_writeMaxFlowTurns(TMaxStats flowTurns[], int nMaxStats);
  * \param[in] maxNonconverged Nodes most often Courant time step critical
  * \param[in] nMaxStats Number of most critical nodes/links saved
  */
-void report_writeNonconvergedStats(TMaxStats maxNonconverged[],
-                                   int nMaxStats);
+void report_writeNonconvergedStats(TMaxStats maxNonconverged[], int nMaxStats);
 
 /*!
  * \brief Writes routing time step statistics to report file
  * \param[in] timeStepStats Routing time step statistics
  */
-void report_writeTimeStepStats(TTimeStepStats *timeStepStats);
+void report_writeTimeStepStats(TTimeStepStats* timeStepStats);
 
 /*!
  * \brief Writes error message to report file
- * \param[in] code Error code
- * \param[in] msg Error message text
+ * @par Argument contract
+ * - code (in): Error code
+ * - s (in): Error message text
  */
-void report_writeErrorMsg(int code, char *msg);
+void report_writeErrorMsg(int code, char* msg);
 
 /*!
  * \brief Writes error message to report file
@@ -309,14 +318,14 @@ void report_writeErrorCode(void);
  * \param[in] line Line of data containing the error
  * \param[in] lineCount Line number of data file containing the error
  */
-void report_writeInputErrorMsg(int k, int sect, char *line, long lineCount);
+void report_writeInputErrorMsg(int k, int sect, char* line, long lineCount);
 
 /*!
  * \brief Writes a warning message to report file
  * \param[in] msg Text of warning message
  * \param[in] id ID name of object that message refers to
  */
-void report_writeWarningMsg(char *msg, char *id);
+void report_writeWarningMsg(char* msg, char* id);
 
 /*!
  * \brief Invokes the registered warning callback (if any) with a message.
@@ -326,14 +335,14 @@ void report_writeWarningMsg(char *msg, char *id);
  * parsing, options parsing) so their warnings also stream to a host, in
  * addition to being invoked from report_writeWarningMsg.
  */
-void report_invokeWarningCallback(const char *msg);
+void report_invokeWarningCallback(const char* msg);
 
 /*!
  * \brief Writes the date where a time series' data is out of order
  * \param[in] code Error code
  * \param[in] tseries Pointer to a time series
  */
-void report_writeTseriesErrorMsg(int code, TTable *tseries);
+void report_writeTseriesErrorMsg(int code, TTable* tseries);
 
 /*!
  * \brief Writes summary of input data to report file
@@ -369,7 +378,7 @@ void statsrpt_writeReport(void);
  *      - SNOWMELT    v1  v2  ...  v6
  *      - ADC         IMPERV/PERV  v1  v2  ...  v10
  */
-int climate_readParams(char *tok[], int ntoks);
+int climate_readParams(char* tok[], int ntoks);
 
 /*!
  * \brief Reads evaporation parameters from input line of data.
@@ -386,7 +395,7 @@ int climate_readParams(char *tok[], int ntoks);
  *      - RECOVERY   name
  *      - DRY_ONLY   YES/NO
  */
-int climate_readEvapParams(char *tok[], int ntoks);
+int climate_readEvapParams(char* tok[], int ntoks);
 
 /*!
  * \brief Reads adjustments to monthly evaporation or rainfall from input line of data.
@@ -403,7 +412,7 @@ int climate_readEvapParams(char *tok[], int ntoks);
  *      - DSTORE        subcatchID  patternID
  *      - INFIL         subcatchID  patternID
  */
-int climate_readAdjustments(char *tok[], int ntoks);
+int climate_readAdjustments(char* tok[], int ntoks);
 
 /*!
  * \brief Validates climatological variables.
@@ -474,7 +483,7 @@ void rain_close(void);
  * - Name  SubArea   Cmin  Cmax  Tbase  FWF  SD0  FW0  SNN0/SD100
  * - Name  REMOVAL   SDplow Fout Fimperv Fperv Fimelt Fsubcatch (Subcatch)
  */
-int snow_readMeltParams(char *tok[], int ntoks);
+int snow_readMeltParams(char* tok[], int ntoks);
 
 /*!
  * \brief Creates a snowpack object for a subcatchment.
@@ -504,9 +513,10 @@ void snow_initSnowmelt(int snowIndex);
 
 /*!
  * \brief Retrieves the current state of a snowpack object.
- * \param[in] subcatchIndex Subcatchment index
- * \param[in] subAreaIndex Snowpack sub-area index
- * \param[out] x Array of snowpack state variables
+ * @par Argument contract
+ * - i (in): Subcatchment index
+ * - j (in): Snowpack sub-area index
+ * - x (out): Array of snowpack state variables
  */
 void snow_getState(int subcatchIndex, int subAreaIndex, double x[]);
 
@@ -542,8 +552,8 @@ void snow_plowSnow(int subcatchIndex, double tStep);
  * \param[out] netPrecip Rainfall + snowmelt on each runoff sub-area (ft/sec)
  * \return New snow depth over subcatchment
  */
-double snow_getSnowMelt(int subcatchIndex, double rainfall, double snowfall,
-                        double tStep, double netPrecip[]);
+double snow_getSnowMelt(int subcatchIndex, double rainfall, double snowfall, double tStep,
+                        double netPrecip[]);
 
 /*!
  * \brief Computes volume of snow on a subcatchment.
@@ -656,7 +666,7 @@ void output_updateAvgResults(void);
  * \param[in] period Index of reporting time period
  * \param[out] days Date/time value
  */
-void output_readDateTime(long period, DateTime *days);
+void output_readDateTime(long period, DateTime* days);
 
 /*!
  * \brief Reads computed results for a subcatchment at a specific time
@@ -702,7 +712,7 @@ void output_readLinkResults(long period, int index);
  *  gwRecession,  bottomElev,   waterTableElev,    upperMoisture
  *  (evapPattern)
  */
-int gwater_readAquiferParams(int aquiferIndex, char *tok[], int ntoks);
+int gwater_readAquiferParams(int aquiferIndex, char* tok[], int ntoks);
 
 /*!
  * \brief Reads groundwater inflow parameters for a subcatchment from
@@ -714,7 +724,7 @@ int gwater_readAquiferParams(int aquiferIndex, char *tok[], int ntoks);
  *  subcatch  aquifer  node  surfElev  a1  b1  a2  b2  a3  fixedDepth +
  *            (nodeElev  bottomElev  waterTableElev  upperMoisture )
  */
-int gwater_readGroundwaterParams(char *tok[], int ntoks);
+int gwater_readGroundwaterParams(char* tok[], int ntoks);
 
 /*!
  * \brief Reads mathematical expression for lateral or deep groundwater
@@ -722,12 +732,12 @@ int gwater_readGroundwaterParams(char *tok[], int ntoks);
  * \param[in] tok Array of string tokens
  * \param[in] ntoks Number of tokens
  * \return Error code
- * \details Format is: subcatch LATERAL/DEEP <expr>
+ * \details Format is: subcatch LATERAL/DEEP `expr`
  *  where subcatch is the ID of the subcatchment, LATERAL is for lateral
- *  GW flow, DEEP is for deep GW flow and <expr> is any well-formed math
+ *  GW flow, DEEP is for deep GW flow and `expr` is any well-formed math
  *  expression.
  */
-int gwater_readFlowExpression(char *tok[], int ntoks);
+int gwater_readFlowExpression(char* tok[], int ntoks);
 
 /*!
  * \brief Veletes a subcatchment's custom groundwater flow expressions.
@@ -769,13 +779,13 @@ void gwater_setState(int subcatchIndex, double x[]);
 
 /*!
  * \brief Computes groundwater flow for a subcatchment.
- * \param[in] subcatchIndex Subcatchment index
- * \param[in] evap Pervious surface evaporation volume consumed (ft3)
- * \param[in] infil Surface infiltration volume (ft3)
- * \param[in] tStep Time step (sec)
+ * @par Argument contract
+ * - j (in): Subcatchment index
+ * - evap (in): Pervious surface evaporation volume consumed (ft3)
+ * - infil (in): Surface infiltration volume (ft3)
+ * - tStep (in): Time step (sec)
  */
-void gwater_getGroundwater(int subcatchIndex, double evap, double infil,
-                           double tStep);
+void gwater_getGroundwater(int subcatchIndex, double evap, double infil, double tStep);
 
 /*!
  * \brief Finds volume of groundwater stored in upper & lower zones.
@@ -800,7 +810,7 @@ double gwater_getVolume(int subcatchIndex);
  * \param[in] ntoks Number of tokens
  * \return Error code
  */
-int rdii_readRdiiInflow(char *tok[], int ntoks);
+int rdii_readRdiiInflow(char* tok[], int ntoks);
 
 /*!
  * \brief Deletes RDII inflow data for a node.
@@ -820,7 +830,7 @@ void rdii_initUnitHyd(int unitHydIndex);
  * \param[in] ntoks Number of tokens
  * \return Error code
  */
-int rdii_readUnitHydParams(char *tok[], int ntoks);
+int rdii_readUnitHydParams(char* tok[], int ntoks);
 
 /*!
  * \brief Opens an exisiting RDII interface file or creates a new one.
@@ -845,7 +855,7 @@ int rdii_getNumRdiiFlows(DateTime aDate);
  * \param[out] nodeIndex Node index
  * \param[out] q RDII flow rate
  */
-void rdii_getRdiiFlow(int index, int *nodeIndex, double *q);
+void rdii_getRdiiFlow(int index, int* nodeIndex, double* q);
 /*!
  * \}
  */
@@ -866,7 +876,7 @@ void rdii_getRdiiFlow(int index, int *nodeIndex, double *q);
 * \details Data format is:
 *  landuseID  (sweepInterval sweepRemoval sweepDays0)
 */
-int landuse_readParams(int landuseIndex, char *tok[], int ntoks);
+int landuse_readParams(int landuseIndex, char* tok[], int ntoks);
 
 /*!
 * \brief Reads pollutant parameters from a tokenized line of input.
@@ -877,7 +887,7 @@ int landuse_readParams(int landuseIndex, char *tok[], int ntoks);
 * \details Data format is:
 *  ID Units cRain cGW cRDII kDecay (snowOnly coPollut coFrac cDWF cInit)
 */
-int landuse_readPollutParams(int pollutIndex, char *tok[], int ntoks);
+int landuse_readPollutParams(int pollutIndex, char* tok[], int ntoks);
 
 /*!
 * \brief Reads pollutant buildup parameters from a tokenized line of input.
@@ -887,7 +897,7 @@ int landuse_readPollutParams(int pollutIndex, char *tok[], int ntoks);
 * \details Data format is:
 *  landuseID  pollutID  buildupType  c1  c2  c3  normalizerType
 */
-int landuse_readBuildupParams(char *tok[], int ntoks);
+int landuse_readBuildupParams(char* tok[], int ntoks);
 
 /*!
 * \brief Reads pollutant washoff parameters from a tokenized line of input.
@@ -897,7 +907,7 @@ int landuse_readBuildupParams(char *tok[], int ntoks);
 * \details Data format is:
 *  landuseID  pollutID  washoffType  c1  c2  sweepEffic  bmpRemoval
 */
-int landuse_readWashoffParams(char *tok[], int ntoks);
+int landuse_readWashoffParams(char* tok[], int ntoks);
 
 /*!
 * \brief Determines the initial buildup of each pollutant on
@@ -909,8 +919,7 @@ int landuse_readWashoffParams(char *tok[], int ntoks);
 * \details Contributions from co-pollutants to initial buildup are not
 * included since the co-pollutant mechanism only applies to washoff.
 */
-void landuse_getInitBuildup(TLandFactor *landFactor, double *initBuildup,
-                            double area, double curb);
+void landuse_getInitBuildup(TLandFactor* landFactor, double* initBuildup, double area, double curb);
 
 /*!
 * \brief Computes new pollutant buildup on a landuse after a time increment.
@@ -927,16 +936,17 @@ double landuse_getBuildup(int landuseIndex, int pollutIndex, double area, double
 
 /*!
 * \brief Computes pollutant load generated by a land use over a time step.
-* \param[in] landuseIndex Land use index
-* \param[in] pollutIndex Pollutant index
-* \param[in] area Area of subcatchment (ft2)
-* \param[in] landFactor Array of land use data for subcatchment
-* \param[in] runoff Runoff flow generated by subcatchment (ft/sec)
-* \param[in] vOutflow Runoff volume leaving subcatchment (ft3)
+* @par Argument contract
+ * - i (in): Land use index
+* - p (in): Pollutant index
+* - area (in): Area of subcatchment (ft2)
+* - landFactor (in): Array of land use data for subcatchment
+* - runoff (in): Runoff flow generated by subcatchment (ft/sec)
+* - vOutflow (in): Runoff volume leaving subcatchment (ft3)
 * \return Returns pollutant load generated by a land use over a time step.
 */
-double landuse_getWashoffLoad(int landuse, int p, double area,
-                              TLandFactor landFactor[], double runoff, double vOutflow);
+double landuse_getWashoffLoad(int landuse, int p, double area, TLandFactor landFactor[],
+                              double runoff, double vOutflow);
 
 /*!
 * \brief Finds the overall average BMP removal achieved for pollutant pollutIndex
@@ -1003,21 +1013,22 @@ void toposort_sortLinks(int sortedLinks[]);
 /*!
 * \brief Finds outflow over time step tStep given flow entering a
 * conduit using Kinematic Wave flow routing.
-* \param[in] linkIndex Link index
-* \param[in] qinflow Inflow at current time (cfs)
-* \param[out] qoutflow Outflow at current time (cfs)
-* \param[in] tStep Time step (sec)
+* @par Argument contract
+ * - linkIndex (in): Link index
+* - qinflow (in): Inflow at current time (cfs)
+* - qoutflow (out): Outflow at current time (cfs)
+* - tStep (in): Time step (sec)
 * \return Returns number of iterations used
 * \details
 *  Orientation of link and variables:
-*  q1, a1, q2, a2, q3, a3, x, t 
-*                               ^ q3 
-*  t                            |   
+*  q1, a1, q2, a2, q3, a3, x, t
+*                               ^ q3
+*  t                            |
 *  |          qin, ain |-------------------| qout, aout
 *  |                   |  Flow --->        |
 *  |----> x     q1, a1 |-------------------| q2, a2
 */
-int kinwave_execute(int linkIndex, double *qin, double *qout, double tStep);
+int kinwave_execute(int linkIndex, double* qin, double* qout, double tStep);
 
 /*!
 * \brief Adjusts dynamic wave routing options.
@@ -1096,7 +1107,7 @@ void treatmnt_close(void);
 * \param[in] ntoks Number of tokens
 * \return Error code
 */
-int treatmnt_readExpression(char *tok[], int ntoks);
+int treatmnt_readExpression(char* tok[], int ntoks);
 
 /*!
 * \brief Deletes the treatment objects for each pollutant at a node.
@@ -1106,10 +1117,11 @@ void treatmnt_delete(int nodeIndex);
 
 /*!
 * \brief Updates pollutant concentrations at a node after treatment.
-* \param[in] nodeIndex Node index
-* \param[in] q Inflow to node (cfs)
-* \param[in] v Volume of node (ft3)
-* \param[in] tStep Routing time step (sec)
+* @par Argument contract
+ * - j (in): Node index
+* - q (in): Inflow to node (cfs)
+* - v (in): Volume of node (ft3)
+* - tStep (in): Routing time step (sec)
 */
 void treatmnt_treat(int nodeIndex, double q, double v, double tStep);
 
@@ -1155,9 +1167,10 @@ void massbal_updateRunoffTotals(int flowType, double v);
 
 /*!
 * \brief Adds inflow mass loading to loading totals for current time step.
-* \param[in] type Type of inflow
-* \param[in] pollutIndex Pollutant index
-* \param[in] w Mass loading
+* @par Argument contract
+ * - type (in): Type of inflow
+* - p (in): Pollutant index
+* - w (in): Mass loading
 */
 void massbal_updateLoadingTotals(int type, int pollutIndex, double w);
 
@@ -1169,8 +1182,8 @@ void massbal_updateLoadingTotals(int type, int pollutIndex, double w);
 * \param[in] vLowerPerc Volume depth of percolation to deep GW (ft)
 * \param[in] vGwater Volume depth of groundwater outflow (ft)
 */
-void massbal_updateGwaterTotals(double vInfil, double vUpperEvap,
-                                double vLowerEvap, double vLowerPerc, double vGwater);
+void massbal_updateGwaterTotals(double vInfil, double vUpperEvap, double vLowerEvap,
+                                double vLowerPerc, double vGwater);
 
 /*!
 * \brief Updates overall routing totals with totals from current time step.
@@ -1207,44 +1220,50 @@ void massbal_addOutflowFlow(double q, int isFlooded);
 
 /*!
 * \brief Adds pollutant outflow over current time step to routing totals.
-* \param[in] pollutIndex Pollutant index
-* \param[in] mass Mass outflow rate (mass/sec)
-* \param[in] isFlooded TRUE if outflow represents internal flooding
+* @par Argument contract
+ * - p (in): Pollutant index
+* - w (in): Mass outflow rate (mass/sec)
+* - isFlooded (in): TRUE if outflow represents internal flooding
 */
 void massbal_addOutflowQual(int pollutIndex, double mass, int isFlooded);
 
 /*!
 * \brief Adds node losses over current time step to routing totals.
-* \param[in] evapLoss Evaporation loss from all nodes (ft3/sec)
-* \param[in] infilLoss Seepage loss from all nodes (ft3/sec)
+* @par Argument contract
+ * - evapLoss (in): Evaporation loss from all nodes (ft3/sec)
+* - seepLoss (in): Seepage loss from all nodes (ft3/sec)
 */
 void massbal_addNodeLosses(double evapLoss, double infilLoss);
 
 /*!
 * \brief Adds link losses over current time step to routing totals.
-* \param[in] evapLoss Evaporation loss from all links (ft3/sec)
-* \param[in] infilLoss Infiltration loss from all links (ft3/sec)
+* @par Argument contract
+ * - evapLoss (in): Evaporation loss from all links (ft3/sec)
+* - seepLoss (in): Infiltration loss from all links (ft3/sec)
 */
 void massbal_addLinkLosses(double evapLoss, double infilLoss);
 
 /*!
 * \brief Adds mass reacted during current time step to routing totals.
-* \param[in] pollutIndex Pollutant index
-* \param[in] mass Rate of mass reacted (mass/sec)
+* @par Argument contract
+ * - pollutIndex (in): Pollutant index
+* - w (in): Rate of mass reacted (mass/sec)
 */
 void massbal_addReactedMass(int pollutIndex, double mass);
 
 /*!
 * \brief Adds mass lost to seepage during current time step to routing totals.
-* \param[in] pollutIndex Pollutant index
-* \param[in] seepLoss Mass seepage rate (mass/sec)
+* @par Argument contract
+ * - pollutIndex (in): Pollutant index
+* - w (in): Mass seepage rate (mass/sec)
 */
 void massbal_addSeepageLoss(int pollutIndex, double seepLoss);
 
 /*!
 * \brief Adds mass remaining on dry surface to routing totals.
-* \param[in] pollutIndex Pollutant index
-* \param[in] mass Pollutant mass
+* @par Argument contract
+ * - pollutIndex (in): Pollutant index
+* - w (in): Pollutant mass
 */
 void massbal_addToFinalStorage(int pollutIndex, double mass);
 
@@ -1325,9 +1344,9 @@ void stats_updateTimeStepStats(double tStep, int trialsCount, int steadyState);
 * \param[in] runoffVol Total runoff volume (ft3)
 * \param[in] runoff Runoff rate (cfs)
 */
-void stats_updateSubcatchStats(int subcatchIndex, double rainVol,
-                               double runonVol, double evapVol, double infilVol,
-                               double impervVol, double pervVol, double runoffVol, double runoff);
+void stats_updateSubcatchStats(int subcatchIndex, double rainVol, double runonVol, double evapVol,
+                               double infilVol, double impervVol, double pervVol, double runoffVol,
+                               double runoff);
 
 /*!
 * \brief Updates groundwater statistics for a specific subcatchment.
@@ -1340,9 +1359,8 @@ void stats_updateSubcatchStats(int subcatchIndex, double rainVol,
 * \param[in] waterTable Depth to water table (ft)
 * \param[in] tStep Time step (sec)
 */
-void stats_updateGwaterStats(int subcatchIndex, double infil, double evap,
-                             double latFlow, double deepFlow, double theta, double waterTable,
-                             double tStep);
+void stats_updateGwaterStats(int subcatchIndex, double infil, double evap, double latFlow,
+                             double deepFlow, double theta, double waterTable, double tStep);
 
 /*!
 * \brief Updates value of maximum system runoff rate.
@@ -1352,15 +1370,17 @@ void stats_updateMaxRunoff(void);
 
 /*!
 * \brief Updates a node's maximum depth recorded at reporting times.
-* \param[in] nodeIndex Node index
-* \param[in] depth Water depth at node at current reporting time (ft)
+* @par Argument contract
+ * - j (in): Node index
+* - depth (in): Water depth at node at current reporting time (ft)
 */
 void stats_updateMaxNodeDepth(int nodeIndex, double depth);
 
 /*!
 * \brief Updates convergence statistics node
-* \param[in] nodeIndex Node index
-* \param[in] converged TRUE if node has converged
+* @par Argument contract
+ * - node (in): Node index
+* - converged (in): TRUE if node has converged
 */
 void stats_updateConvergenceStats(int nodeIndex, int converged);
 /*!
@@ -1383,7 +1403,7 @@ void stats_updateConvergenceStats(int nodeIndex, int converged);
 *  Name RainType RecdFreq SCF TIMESERIES SeriesName
 *  Name RainType RecdFreq SCF FILE FileName Station Units StartDate
 */
-int gage_readParams(int gageIndex, char *tok[], int ntoks);
+int gage_readParams(int gageIndex, char* tok[], int ntoks);
 
 /*!
 * \brief Checks for valid rain gage parameters
@@ -1394,14 +1414,16 @@ void gage_validate(int gageIndex);
 
 /*!
 * \brief Initializes state of a rain gage
-* \param[in] gageIndex Rain gage index
+* @par Argument contract
+ * - j (in): Rain gage index
 */
 void gage_initState(int gageIndex);
 
 /*!
-* \brief Updates state of rain gage for specified date. 
-* \param[in] gageIndex Rain gage index
-* \param[in] aDate A calendar date/time
+* \brief Updates state of rain gage for specified date.
+* @par Argument contract
+ * - j (in): Rain gage index
+* - t (in): A calendar date/time
 */
 void gage_setState(int gageIndex, DateTime aDate);
 
@@ -1412,12 +1434,13 @@ void gage_setState(int gageIndex, DateTime aDate);
 * \param[out] snowfall Snowfall rate (ft/sec)
 * \return Returns Total precipitation (ft/sec)
 */
-double gage_getPrecip(int gageIndex, double *rainfall, double *snowfall);
+double gage_getPrecip(int gageIndex, double* rainfall, double* snowfall);
 
 /*!
 * \brief Sets the rainfall value reported at the current reporting time.
-* \param[in] gageIndex Rain gage index
-* \param[in] aDate Current date/time
+* @par Argument contract
+ * - gageIndex (in): Rain gage index
+* - reportDate (in): Current date/time
 */
 void gage_setReportRainfall(int gageIndex, DateTime aDate);
 
@@ -1442,8 +1465,9 @@ void gage_updatePastRain(int gageIndex, int tStep);
 
 /*!
 * \brief Retrieves rainfall total over some previous number of hours.
-* \param[in] gageIndex Rain gage index
-* \param[in] hrs Number of hours
+* @par Argument contract
+ * - j (in): Rain gage index
+* - n (in): Number of hours
 * \return Returns cumulative rain volume (inches or mm) in last n hours
 */
 double gage_getPastRain(int gageIndex, int hrs);
@@ -1466,10 +1490,10 @@ double gage_getPastRain(int gageIndex, int hrs);
 * \details Data has format:
 *  Name  RainGage  Outlet  Area  %Imperv  Width  Slope CurbLength  Snowpack
 */
-int subcatch_readParams(int subcatchIndex, char *tok[], int ntoks);
+int subcatch_readParams(int subcatchIndex, char* tok[], int ntoks);
 
 /*!
-* \brief Rreads subcatchment's subarea parameters from a tokenized 
+* \brief Rreads subcatchment's subarea parameters from a tokenized
 * line of input data.
 * \param[in] tok Array of string tokens
 * \param[in] ntoks Number of tokens
@@ -1477,10 +1501,10 @@ int subcatch_readParams(int subcatchIndex, char *tok[], int ntoks);
 * \details Data has format:
 *  Subcatch  Imperv_N  Perv_N  Imperv_S  Perv_S  PctZero  RouteTo (PctRouted)
 */
-int subcatch_readSubareaParams(char *tok[], int ntoks);
+int subcatch_readSubareaParams(char* tok[], int ntoks);
 
 /*!
-* \brief Reads assignment of landuses to subcatchment from a tokenized 
+* \brief Reads assignment of landuses to subcatchment from a tokenized
 * line of input data.
 * \param[in] tok Array of string tokens
 * \param[in] ntoks Number of tokens
@@ -1488,10 +1512,10 @@ int subcatch_readSubareaParams(char *tok[], int ntoks);
 * \details Data has format:
 *  Subcatch  landuse  percent .... landuse  percent
 */
-int subcatch_readLanduseParams(char *tok[], int ntoks);
+int subcatch_readLanduseParams(char* tok[], int ntoks);
 
 /*!
-* \brief Reads initial pollutant buildup on subcatchment from 
+* \brief Reads initial pollutant buildup on subcatchment from
 * tokenized line of input data.
 * \param[in] tok Array of string tokens
 * \param[in] ntoks Number of tokens
@@ -1499,7 +1523,7 @@ int subcatch_readLanduseParams(char *tok[], int ntoks);
 * \details Data has format:
 *  Subcatch  pollut  initLoad .... pollut  initLoad
 */
-int subcatch_readInitBuildup(char *tok[], int ntoks);
+int subcatch_readInitBuildup(char* tok[], int ntoks);
 
 /*!
 * \brief Checks for valid subcatchment input parameters.
@@ -1522,7 +1546,8 @@ void subcatch_setOldState(int subcatchIndex);
 /*!
 * \brief Determines what fraction of subcatchment area, including any LID
 * area, is pervious.
-* \param[in] subcatchIndex Subcatchment index
+* @par Argument contract
+ * - j (in): Subcatchment index
 * \return Returns fraction of subcatchment area that is pervious cover
 */
 double subcatch_getFracPerv(int subcatchIndex);
@@ -1546,7 +1571,8 @@ double subcatch_getStorage(int subcatchIndex);
 /*!
 * \brief Finds average depth of water over the non-LID portion of a
 * subcatchment
-* \param[in] subcatchIndex Subcatchment index
+* @par Argument contract
+ * - j (in): Subcatchment index
 * \return Returns average depth of ponded water (ft)
 */
 double subcatch_getDepth(int subcatchIndex);
@@ -1574,17 +1600,18 @@ void subcatch_addRunonFlow(int subcatchIndex, double flow);
 *  The 'runoff' value returned by this function is the total runoff
 *  generated (in ft/sec) by the subcatchment before any internal
 *  re-routing is applied. It is used to compute pollutant washoff.
-*  
+*
 *  The 'outflow' value computed here (in cfs) is the surface runoff
 *  that actually leaves the subcatchment after any LID controls are
-*  applied and is saved to Subcatch[j].newRunoff. 
+*  applied and is saved to Subcatch[j].newRunoff.
 */
 double subcatch_getRunoff(int subcatchIndex, double tStep);
 
 /*!
 * \brief Computes weighted combination of old and new subcatchment runoff.
-* \param[in] subcatchIndex Subcatchment index
-* \param[in] wt Weighting factor
+* @par Argument contract
+ * - subcatchIndex (in): Subcatchment index
+* - f (in): Weighting factor
 * \return Returns weighted runoff value (ft/sec)
 */
 double subcatch_getWtdOutflow(int subcatchIndex, double wt);
@@ -1654,9 +1681,10 @@ void surfqual_sweepBuildup(int subcatchIndex, DateTime aDate);
 
 /*!
 * \brief Finds wtd. combination of old and new washoff for a pollutant.
-* \param[in] subcatchIndex Subcatchment index
-* \param[in] pollutIndex Pollutant index
-* \param[in] wt Weighting factor
+* @par Argument contract
+ * - j (in): Subcatchment index
+* - p (in): Pollutant index
+* - f (in): Weighting factor
 * \return Returns pollutant washoff value
 */
 double surfqual_getWtdWashoff(int subcatchIndex, int pollutIndex, double wt);
@@ -1673,14 +1701,15 @@ double surfqual_getWtdWashoff(int subcatchIndex, int pollutIndex, double wt);
 
 /*!
 * \brief Reads node properties from a tokenized line of input.
-* \param[in] nodeIndex Node index
-* \param[in] type Node type code
-* \param[in] subIndex Node sub-type code
-* \param[in] tok Array of string tokens
-* \param[in] ntoks Number of tokens
+* @par Argument contract
+ * - nodeIndex (in): Node index
+* - type (in): Node type code
+* - k (in): Node sub-type code
+* - tok (in): Array of string tokens
+* - ntoks (in): Number of tokens
 * \return Error code
 */
-int node_readParams(int nodeIndex, int type, int subIndex, char *tok[], int ntoks);
+int node_readParams(int nodeIndex, int type, int subIndex, char* tok[], int ntoks);
 
 /*!
 * \brief Validates a node's properties.
@@ -1715,25 +1744,28 @@ void node_setOldQualState(int nodeIndex);
 
 /*!
 * \brief Sets water depth at a node that serves as an outlet point.
-* \param[in] nodeIndex Node index
-* \param[in] yNorm Normal flow depth (ft)
-* \param[in] yCrit Critical flow depth (ft)
-* \param[in] z Offset of connecting outfall link from node invert (ft)
+* @par Argument contract
+ * - j (in): Node index
+* - yNorm (in): Normal flow depth (ft)
+* - yCrit (in): Critical flow depth (ft)
+* - z (in): Offset of connecting outfall link from node invert (ft)
 */
 void node_setOutletDepth(int nodeIndex, double yNorm, double yCrit, double z);
 
 /*!
 * \brief Computes surface area of water stored at a node from water depth.
-* \param[in] nodeIndex Node index
-* \param[in] depth Water depth (ft)
+* @par Argument contract
+ * - j (in): Node index
+* - d (in): Water depth (ft)
 * \return Returns surface area of water stored at node (ft2)
 */
 double node_getSurfArea(int nodeIndex, double depth);
 
 /*!
 * \brief Computes a node's water depth from its volume.
-* \param[in] nodeIndex Node index
-* \param[in] volume Volume of water stored at node (ft3)
+* @par Argument contract
+ * - nodeIndex (in): Node index
+* - v (in): Volume of water stored at node (ft3)
 * \return Returns water depth at node (ft)
 */
 double node_getDepth(int nodeIndex, double volume);
@@ -1782,11 +1814,12 @@ double node_getMaxOutflow(int nodeIndex, double q, double tStep);
 
 /*!
 * \brief Computes flow rate at outfalls and flooded nodes.
-* \param[in] nodeIndex Node index
-* \param[out] isFlooded TRUE if node is flooded
+* @par Argument contract
+ * - j (in): Node index
+* - isFlooded (out): TRUE if node is flooded
 * \return Returns flow rate lost from system (cfs)
 */
-double node_getSystemOutflow(int nodeIndex, int *isFlooded);
+double node_getSystemOutflow(int nodeIndex, int* isFlooded);
 
 /*!
 * \brief Computes weighted average of old and new results at a node.
@@ -1814,7 +1847,7 @@ void node_getResults(int nodeIndex, double wt, float x[]);
 * nodeID  FLOW      tSeriesID  (FLOW         1.0          scaleFactor  baseline  basePat)
 * nodeID  pollutID  tSeriesID  (CONCEN/MASS  unitsFactor  scaleFactor  baseline  basePat)
 */
-int inflow_readExtInflow(char *tok[], int ntoks);
+int inflow_readExtInflow(char* tok[], int ntoks);
 
 /*!
 * \brief Reads dry weather inflow parameters from line of input data.
@@ -1824,7 +1857,7 @@ int inflow_readExtInflow(char *tok[], int ntoks);
 * \details Format of data line is:
 * nodeID  FLOW/pollutID  avgValue  (pattern1 pattern2  ... pattern4)
 */
-int inflow_readDwfInflow(char *tok[], int ntoks);
+int inflow_readDwfInflow(char* tok[], int ntoks);
 
 /*!
 * \brief Reads values of a time pattern from a line of input data.
@@ -1835,22 +1868,23 @@ int inflow_readDwfInflow(char *tok[], int ntoks);
 * patternID  patternType  value(1) value(2) ...
 * patternID  value(n)  value(n+1) ....          (for continuation lines)
 */
-int inflow_readDwfPattern(char *tok[], int ntoks);
+int inflow_readDwfPattern(char* tok[], int ntoks);
 
 /*!
 * \brief This function assigns property values to the inflow object.
-* \param[in] nodeIndex Node index
-* \param[in] param Parameter code
-* \param[in] type Inflow type code
-* \param[in] tSeries Time series index
-* \param[in] basePat Base pattern index
-* \param[in] cf Conversion factor
-* \param[in] baseline Baseline value
-* \param[in] sf Scale factor
+* @par Argument contract
+ * - nodeIndex (in): Node index
+* - param (in): Parameter code
+* - type (in): Inflow type code
+* - tseries (in): Time series index
+* - basePat (in): Base pattern index
+* - cf (in): Conversion factor
+* - baseline (in): Baseline value
+* - sf (in): Scale factor
 * \return Error code
 */
-int inflow_setExtInflow(int nodeIndex, int param, int type, int tSeries,
-                        int basePat, double cf, double baseline, double sf);
+int inflow_setExtInflow(int nodeIndex, int param, int type, int tSeries, int basePat, double cf,
+                        double baseline, double sf);
 
 /*!
 * \brief Initialzes a dry weather inflow by ordering its time patterns.
@@ -1859,7 +1893,7 @@ int inflow_setExtInflow(int nodeIndex, int param, int type, int tSeries,
 * inflow in the order of the PatternType enumeration (monthly, daily,
 * weekday hourly, weekend hourly) to help speed up pattern processing.
 */
-void inflow_initDwfInflow(TDwfInflow *inflow);
+void inflow_initDwfInflow(TDwfInflow* inflow);
 
 /*!
 * \brief Initialzes a dry weather inflow time pattern.
@@ -1874,17 +1908,18 @@ void inflow_initDwfPattern(int patternIndex);
 * \param[in] aDate Current simulation date/time
 * \return Returns current value of external inflow parameter
 */
-double inflow_getExtInflow(TExtInflow *inflow, DateTime aDate);
+double inflow_getExtInflow(TExtInflow* inflow, DateTime aDate);
 
 /*!
 * \brief Computes dry weather inflow value at a specific point in time.
-* \param[in] inflow Dry weather inflow data structure
-* \param[in] m Current month of year for the simulation
-* \param[in] d Current day of month for the simulation
-* \param[in] h Current hour of day for the simulation
+* @par Argument contract
+ * - inflow (in): Dry weather inflow data structure
+* - month (in): Current month of year for the simulation
+* - day (in): Current day of month for the simulation
+* - hour (in): Current hour of day for the simulation
 * \return Returns dry weather inflow value
 */
-double inflow_getDwfInflow(TDwfInflow *inflow, int m, int d, int h);
+double inflow_getDwfInflow(TDwfInflow* inflow, int m, int d, int h);
 
 /*!
 * \brief Deletes all time series inflow data for a node.
@@ -1904,14 +1939,14 @@ void inflow_deleteDwfInflows(int nodeIndex);
 //-----------------------------------------------------------------------------
 //   Routing Interface File Methods
 //-----------------------------------------------------------------------------
-int iface_readFileParams(char *tok[], int ntoks);
+int iface_readFileParams(char* tok[], int ntoks);
 void iface_openRoutingFiles(void);
 void iface_closeRoutingFiles(void);
 int iface_getNumIfaceNodes(DateTime aDate);
 int iface_getIfaceNode(int index);
 double iface_getIfaceFlow(int index);
 double iface_getIfaceQual(int index, int pollut);
-void iface_saveOutletResults(DateTime reportDate, FILE *file);
+void iface_saveOutletResults(DateTime reportDate, FILE* file);
 /*!
  * \}
  */
@@ -1921,8 +1956,8 @@ void iface_saveOutletResults(DateTime reportDate, FILE *file);
 //-----------------------------------------------------------------------------
 int hotstart_open(void);
 void hotstart_save(void);
-int hotstart_save_to_file(const char *hotstartFile);
-int hotstart_is_valid(const char *hotstartFile, int *inputFileVersion);
+int hotstart_save_to_file(const char* hotstartFile);
+int hotstart_is_valid(const char* hotstartFile, int* inputFileVersion);
 void hotstart_close(void);
 /*!
  * \}
@@ -1931,9 +1966,9 @@ void hotstart_close(void);
 //-----------------------------------------------------------------------------
 //   Conveyance System Link Methods
 //-----------------------------------------------------------------------------
-int link_readParams(int link, int type, int subIndex, char *tok[], int ntoks);
-int link_readXsectParams(char *tok[], int ntoks);
-int link_readLossParams(char *tok[], int ntoks);
+int link_readParams(int link, int type, int subIndex, char* tok[], int ntoks);
+int link_readXsectParams(char* tok[], int ntoks);
+int link_readLossParams(char* tok[], int ntoks);
 
 void link_validate(int link);
 void link_initState(int link);
@@ -1964,21 +1999,21 @@ void link_getResults(int link, double wt, float x[]);
 //   Link Cross-Section Methods
 //-----------------------------------------------------------------------------
 int xsect_isOpen(int type);
-int xsect_setParams(TXsect *xsect, int type, double p[], double ucf);
-void xsect_setIrregXsectParams(TXsect *xsect);
-void xsect_setCustomXsectParams(TXsect *xsect);
-void xsect_setStreetXsectParams(TXsect *xsect);
-double xsect_getAmax(TXsect *xsect);
+int xsect_setParams(TXsect* xsect, int type, double p[], double ucf);
+void xsect_setIrregXsectParams(TXsect* xsect);
+void xsect_setCustomXsectParams(TXsect* xsect);
+void xsect_setStreetXsectParams(TXsect* xsect);
+double xsect_getAmax(TXsect* xsect);
 
-double xsect_getSofA(TXsect *xsect, double area);
-double xsect_getYofA(TXsect *xsect, double area);
-double xsect_getRofA(TXsect *xsect, double area);
-double xsect_getAofS(TXsect *xsect, double sFactor);
-double xsect_getdSdA(TXsect *xsect, double area);
-double xsect_getAofY(TXsect *xsect, double y);
-double xsect_getRofY(TXsect *xsect, double y);
-double xsect_getWofY(TXsect *xsect, double y);
-double xsect_getYcrit(TXsect *xsect, double q);
+double xsect_getSofA(TXsect* xsect, double area);
+double xsect_getYofA(TXsect* xsect, double area);
+double xsect_getRofA(TXsect* xsect, double area);
+double xsect_getAofS(TXsect* xsect, double sFactor);
+double xsect_getdSdA(TXsect* xsect, double area);
+double xsect_getAofY(TXsect* xsect, double y);
+double xsect_getRofY(TXsect* xsect, double y);
+double xsect_getWofY(TXsect* xsect, double y);
+double xsect_getYcrit(TXsect* xsect, double q);
 /*!
  * \}
  */
@@ -1987,8 +2022,7 @@ double xsect_getYcrit(TXsect *xsect, double q);
 //   Culvert/Roadway Methods
 //-----------------------------------------------------------------------------
 double culvert_getInflow(int link, double q, double h);
-double roadway_getInflow(int link, double dir, double hcrest, double h1,
-                         double h2);
+double roadway_getInflow(int link, double dir, double hcrest, double h1, double h2);
 /*!
  * \}
  */
@@ -2008,9 +2042,9 @@ double forcemain_getFricSlope(int j, double v, double hrad);
 //-----------------------------------------------------------------------------
 int transect_create(int n);
 void transect_delete(void);
-int transect_readParams(int *count, char *tok[], int ntoks);
+int transect_readParams(int* count, char* tok[], int ntoks);
 void transect_validate(int j);
-void transect_createStreetTransect(TStreet *street);
+void transect_createStreetTransect(TStreet* street);
 /*!
  * \}
  */
@@ -2020,7 +2054,7 @@ void transect_createStreetTransect(TStreet *street);
 //-----------------------------------------------------------------------------
 int street_create(int nStreets);
 void street_delete();
-int street_readParams(char *tok[], int ntoks);
+int street_readParams(char* tok[], int ntoks);
 double street_getExtentFilled(int link);
 /*!
  * \}
@@ -2029,12 +2063,12 @@ double street_getExtentFilled(int link);
 //-----------------------------------------------------------------------------
 //   Custom Shape Cross-Section Methods
 //-----------------------------------------------------------------------------
-int shape_validate(TShape *shape, TTable *curve);
+int shape_validate(TShape* shape, TTable* curve);
 /*!
  * \}
  */
 
- /*!
+/*!
  * \addtogroup Control_Rules_File_Methods Global Control Rule Methods
  * \brief Global control rules methods
  * \ingroup Global_Interfacing_Functions
@@ -2051,7 +2085,7 @@ void controls_init(void);
 * by control rules.
 * \param[in] s String containing either "VARIABLE" or "EXPRESSION"
 */
-void controls_addToCount(char *s);
+void controls_addToCount(char* s);
 
 /*!
  * \brief Creates an array of control rules.
@@ -2068,33 +2102,37 @@ void controls_delete(void);
 /*!
 * \brief Adds a named variable to the control rule system from a
 * tokenized line of input with formats:
-*  - VARIABLE  name = Object  id  attribute
-*  - VARIABLE  name = SIMULATION attribute
-* \param[in] tok Array of string tokens
-* \param[in] nToks Number of tokens
+* @details Accepted records are `VARIABLE name = Object id attribute`
+* or `VARIABLE name = SIMULATION attribute`.
+*
+* @par Argument contract
+ * - tok (in): Array of string tokens
+* - nToks (in): Number of tokens
 * \return Error code
 */
-int controls_addVariable(char *tok[], int ntoks);
+int controls_addVariable(char* tok[], int ntoks);
 
 /*!
 * \brief Adds a math expression to the control rule system from a
 * a tokenized line of input with format:
 *   EXPRESSION  name = <math expression containing VARIABLE names>
-* \param[in] tok Array of string tokens
-* \param[in] nToks Number of tokens
+* @par Argument contract
+ * - tok (in): Array of string tokens
+* - nToks (in): Number of tokens
 * \return Error code
 */
-int controls_addExpression(char *tok[], int ntoks);
+int controls_addExpression(char* tok[], int ntoks);
 
 /*!
 * \brief Adds a new clause to a control rule.
-* \param[in] r Rule index
-* \param[in] keyword Clause's keyword code (IF, THEN, etc.)
-* \param[in] tok Array of string tokens that comprises the clause
-* \param[in] nToks Number of tokens
+* @par Argument contract
+ * - r (in): Rule index
+* - keyword (in): Clause's keyword code (IF, THEN, etc.)
+* - tok (in): Array of string tokens that comprises the clause
+* - nToks (in): Number of tokens
 * \return Error code
 */
-int controls_addRuleClause(int rule, int keyword, char *Tok[], int nTokens);
+int controls_addRuleClause(int rule, int keyword, char* Tok[], int nTokens);
 
 /*!
 * \brief Evaluates all control rules at the current time of the simulation.
@@ -2103,8 +2141,7 @@ int controls_addRuleClause(int rule, int keyword, char *Tok[], int nTokens);
 * \param[in] tStep Simulation time step (days)
 * \return Number of new actions taken
 */
-int controls_evaluate(DateTime currentTime, DateTime elapsedTime,
-                      double tStep);
+int controls_evaluate(DateTime currentTime, DateTime elapsedTime, double tStep);
 /*!
  * \}
  */
@@ -2112,29 +2149,29 @@ int controls_evaluate(DateTime currentTime, DateTime elapsedTime,
 //-----------------------------------------------------------------------------
 //   Table & Time Series Methods
 //-----------------------------------------------------------------------------
-int table_readCurve(char *tok[], int ntoks);
-int table_readTimeseries(char *tok[], int ntoks);
+int table_readCurve(char* tok[], int ntoks);
+int table_readTimeseries(char* tok[], int ntoks);
 
-int table_addEntry(TTable *table, double x, double y);
-int table_getFirstEntry(TTable *table, double *x, double *y);
-int table_getNextEntry(TTable *table, double *x, double *y);
-void table_deleteEntries(TTable *table);
+int table_addEntry(TTable* table, double x, double y);
+int table_getFirstEntry(TTable* table, double* x, double* y);
+int table_getNextEntry(TTable* table, double* x, double* y);
+void table_deleteEntries(TTable* table);
 
-void table_init(TTable *table);
-int table_validate(TTable *table);
+void table_init(TTable* table);
+int table_validate(TTable* table);
 
-double table_lookup(TTable *table, double x);
-double table_lookupEx(TTable *table, double x);
-double table_intervalLookup(TTable *table, double x);
-double table_inverseLookup(TTable *table, double y);
+double table_lookup(TTable* table, double x);
+double table_lookupEx(TTable* table, double x);
+double table_intervalLookup(TTable* table, double x);
+double table_inverseLookup(TTable* table, double y);
 
-double table_getSlope(TTable *table, double x);
-double table_getMaxY(TTable *table, double x);
-double table_getStorageVolume(TTable *table, double x);
-double table_getStorageDepth(TTable *table, double v);
+double table_getSlope(TTable* table, double x);
+double table_getMaxY(TTable* table, double x);
+double table_getStorageVolume(TTable* table, double x);
+double table_getStorageDepth(TTable* table, double v);
 
-void table_tseriesInit(TTable *table);
-double table_tseriesLookup(TTable *table, double t, char extend);
+void table_tseriesInit(TTable* table);
+double table_tseriesLookup(TTable* table, double t, char extend);
 /*!
  * \}
  */
@@ -2148,7 +2185,8 @@ double table_tseriesLookup(TTable *table, double t, char extend);
 
 /*!
 * \brief Computes a conversion factor from SWMM's internal units to user's units.
-* \param[in] integer code of quantity being converted
+* @par Argument contract
+ * - u (in): code of quantity being converted
 * \return Returns units conversion factor
 */
 double UCF(int quantity);
@@ -2159,7 +2197,7 @@ double UCF(int quantity);
 * \param[out] y converted value of s
 * \return Error code. Returns 1 if conversion successful, 0 if not.
 */
-int getInt(char *s, int *y);
+int getInt(char* s, int* y);
 
 /*!
 * \brief Converts a string to a float value.
@@ -2167,7 +2205,7 @@ int getInt(char *s, int *y);
 * \param[out] y converted value of s
 * \return Error code. Returns 1 if conversion successful, 0 if not.
 */
-int getFloat(char *s, float *y);
+int getFloat(char* s, float* y);
 
 /*!
 * \brief Converts a string to a double precision floating point number.
@@ -2175,14 +2213,14 @@ int getFloat(char *s, float *y);
 * \param[out] y converted value of s
 * \return Error code. Returns 1 if conversion successful, 0 if not.
 */
-int getDouble(char *s, double *y);
+int getDouble(char* s, double* y);
 
 /*!
 * \brief Creates a temporary file name with path prepended to it.
 * \param[in] fname file name string (with max size of MAXFNAME)
 * \return Returns pointer to the temporary file name
 */
-char *getTempFileName(char *fname);
+char* getTempFileName(char* fname);
 
 /*!
 * \brief Finds match between string and array of keyword strings.
@@ -2190,7 +2228,7 @@ char *getTempFileName(char *fname);
 * \param[in] keyword array of keyword strings
 * \return Returns index of matching keyword, or -1 if no match found.
 */
-int findmatch(char *s, char *keyword[]);
+int findmatch(char* s, char* keyword[]);
 
 /*!
 * \brief Sees if a sub-string of characters appears in a string (not case sensitive).
@@ -2199,7 +2237,7 @@ int findmatch(char *s, char *keyword[]);
 * \param[in] substr sub-string being searched for
 * \return Returns 1 if sub-string found, 0 if not.
 */
-int match(char *str, char *substr);
+int match(char* str, char* substr);
 
 /*!
 * \brief Compares two strings (case insensitive).
@@ -2207,17 +2245,17 @@ int match(char *str, char *substr);
 * \param[in] s2 second string
 * \return Returns 1 if strings are equal (ignoring case), 0 if not.
 */
-int strcomp(const char *s1, const char *s2);
+int strcomp(const char* s1, const char* s2);
 
 /*!
 * \brief Copies a string to a new memory location in a safe way.
-* \param[in] s a character string
+* \param[in] dest a character string
 * \param[in] src pointer to source string
 * \param[in] n number of characters to copy from source string
 * \return Returns the size of the copied string.
 * \todo use portable C version and deprecate
 */
-size_t sstrncpy(char *dest, const char *src, size_t n);
+size_t sstrncpy(char* dest, const char* src, size_t n);
 
 /*!
 * \brief Safe string concatenation
@@ -2226,13 +2264,13 @@ size_t sstrncpy(char *dest, const char *src, size_t n);
 * \param[in] destsize allocated size of dest (including null terminator)
 * \return Returns the size of the concatenated string.
 */
-size_t sstrcat(char *dest, const char *src, size_t destsize);
+size_t sstrcat(char* dest, const char* src, size_t destsize);
 
 /*!
 * \brief Writes string to console
 * \param[in] s a character string
 */
-void writecon(const char *s);
+void writecon(const char* s);
 
 /*!
 * \brief Finds elapsed simulation time for a given calendar date.
@@ -2242,7 +2280,7 @@ void writecon(const char *s);
 * \param[out] mins number of minutes since start of current hour
 * \return Returns elapsed simulation time in decimal days
 */
-void getElapsedTime(DateTime aDate,  int *days, int *hrs, int *mins);
+void getElapsedTime(DateTime aDate, int* days, int* hrs, int* mins);
 
 /*!
 * \brief Finds calendar date/time value for elapsed milliseconds of
@@ -2258,7 +2296,7 @@ DateTime getDateTime(double elapsedMsec);
 * \return Returns fname with a full path prepended to it
 * \note fname must have been dimensioned to accept MAXFNAME characters.
 */
-char *addAbsolutePath(char *fname); // add full path to a file name
+char* addAbsolutePath(char* fname); // add full path to a file name
 /*!
  * \}
  */

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file HotstartFormat.hpp
- * @brief Legacy HSF v4 binary hot-start file — parser / materialiser.
+ * @file      HotstartFormat.hpp
+ * @brief     Legacy HSF v4 binary hot-start file — parser / materialiser.
  *
  * @details Slice IO-6e. Implements the routing-state portion of the
  *          EPA-SWMM hot-start file (`saveRouting`/`readRouting` in
@@ -45,9 +45,9 @@
  *
  * @ingroup engine_geopackage
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_GEOPACKAGE_HOTSTART_FORMAT_HPP
@@ -60,32 +60,43 @@
 namespace openswmm::gpkg::formats {
 
 /**
- * @brief Parse an HSF v4 file into a `HotstartSnapshot`.
+ * @brief Read legacy-layout hot-start records and preserve raw runoff/trailer bytes.
  *
- * @details Populates `header.{num_*,flow_units,file_version,file_stamp}`,
- *          `node_state[]`, `link_state[]`, `runoff_raw` and `tail_raw`.
- *          A file with subcatchments needs `layout` (the model's
- *          subcatchment count must match the file's); v1/v2 files with
- *          subcatchments are refused.
+ * Reads a 15-byte SWMM5 stamp and six native int32 counts in the v4-compatible layout regardless of
+ * parsed suffix. Caller supplies nonnegative representable counts/size products and matching
+ * storage layout; the parser has no global count/memory or finite-value cap. Native floats store
+ * feet/cfs and concentrations; runoff/trailer retained verbatim, subcatch_state not decoded. No
+ * checksum/model-fingerprint validation or whole-destination rollback; allocation/callback
+ * exceptions can escape.
  *
- * @param path      Filesystem path to the HSF file.
- * @param snapshot  Output snapshot (existing content is overwritten).
+ * @param[in] path UTF-8 filesystem path; caller supplies parent directories and owns
+ *     destination/source lifetime.
+ * @param[in,out] snapshot Destination overwritten incrementally, with prior/partial fields retained
+ *     on failure; caller normally starts fresh.
+ * @param[in] layout Borrowed model-dependent runoff-length callback and storage-node mask; correct
+ *     aligned dimensions required to locate routing records.
+ * @return Failure on guarded open/stamp/count/read/layout refusal; otherwise success.
  */
-FormatResult parseHotstartHsf(const std::string&  path,
-                               HotstartSnapshot&  snapshot,
-                               const HsfLayout&   layout = {});
+FormatResult parseHotstartHsf(const std::string& path, HotstartSnapshot& snapshot,
+                              const HsfLayout& layout = {});
 
 /**
- * @brief Write a `HotstartSnapshot` to an HSF v4 file at `path`.
+ * @brief Write retained legacy hot-start routing records and opaque raw sections.
  *
- * @details Header counts must already match the lengths of the per-object
- *          state vectors; mismatches return a `FormatResult` with `ok=false`
- *          rather than writing a corrupt file. `runoff_raw` and `tail_raw`
- *          are written as they are; without `runoff_raw` the subcatchment
- *          count is written as 0.
+ * Checks node/link vector counts and pollutant widths before opening. Writes v2..v4 stamp according
+ * to file_version, otherwise v4, using the same six-count native layout; empty runoff writes
+ * subcatch count zero. Values narrow to native floats; HRT is written whenever has_hrt even if
+ * version is older, so caller supplies compatible flags. Ignores derived overflow/volume/timing
+ * fields. Direct truncation, no atomic stage, finite validation or CRC; trailer preserved.
+ *
+ * @param[in] path UTF-8 filesystem path; caller supplies parent directories and owns
+ *     destination/source lifetime.
+ * @param[in] snapshot Coherent header/counts and node/link concentration arrays, with matching
+ *     runoff bytes and storage HRT flags.
+ * @return Failure on guarded shape/open/write refusal; success after attempted close (close errors
+ *     ignored).
  */
-FormatResult writeHotstartHsf(const std::string&        path,
-                               const HotstartSnapshot&   snapshot);
+FormatResult writeHotstartHsf(const std::string& path, const HotstartSnapshot& snapshot);
 
 } // namespace openswmm::gpkg::formats
 

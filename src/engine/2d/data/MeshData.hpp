@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file MeshData.hpp
- * @brief Structure-of-Arrays (SoA) storage for 2D triangular mesh geometry.
+ * @file      MeshData.hpp
+ * @brief     Structure-of-Arrays (SoA) storage for 2D triangular mesh geometry.
  *
  * @details Stores vertex coordinates, triangle connectivity, edge geometry,
  *          neighbour adjacency, vertex reconstruction stencils, and coupling
@@ -26,9 +26,9 @@
  * @see TWO_DIMENSIONAL_SURFACE_ROUTING_IMPLEMENTATION_STRATEGY.md §2.1
  * @ingroup engine_2d
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_MESH_DATA_HPP
@@ -51,18 +51,16 @@ inline constexpr int kMaxCellVerts = 4;
 /**
  * @brief SoA storage for 2D mixed triangle/quad mesh geometry and topology.
  *
- * All vertex arrays are indexed by vertex index [0, n_vertices).
- * All cell arrays are indexed by cell index [0, n_triangles()) — the
- * historical `tri_*` names are kept for the per-cell scalar arrays; a "tri"
- * is any cell (triangle or quad). Cells are ordered triangles first, then
- * quads (the `[2D_TRIANGLES]` rows, then the `[2D_QUADS]` rows).
- * Edge / connectivity arrays are flat 2D: [cell * kMaxCellVerts + k] for
- * k in [0, cell_nv[cell]).
+ * All vertex arrays are indexed by vertex index [0, n_vertices). All cell arrays are indexed by
+ * cell index [0, n_triangles()) — the historical `tri_*` names are kept for the per-cell scalar
+ * arrays; a "tri" is any cell (triangle or quad). Cells are ordered triangles first, then quads
+ * (the `[2D_TRIANGLES]` rows, then the `[2D_QUADS]` rows). Edge / connectivity arrays are flat
+ * 2D: [cell * kMaxCellVerts + k] for k in [0, cell_nv[cell]).
  *
- * Local-edge convention (unified for both shapes): edge k has endpoints
- * `v[(k+1) % nv], v[(k+2) % nv]`. For a triangle this is the historical
- * "edge k is opposite vertex k" rule, so every existing `TRI EDGE` row keeps
- * its meaning; for a quad it is a fixed rotation of the natural numbering.
+ * Local-edge convention (unified for both shapes): edge k has endpoints `v[(k+1) % nv], v[(k+2)
+ * % nv]`. For a triangle this is the historical "edge k is opposite vertex k" rule, so every
+ * existing `TRI EDGE` row keeps its meaning; for a quad it is a fixed rotation of the natural
+ * numbering.
  */
 struct MeshData {
 
@@ -70,10 +68,10 @@ struct MeshData {
     // Vertex arrays — indexed by vertex index [0, n_vertices)
     // -----------------------------------------------------------------------
 
-    std::vector<double> vx;             ///< Vertex X coordinate
-    std::vector<double> vy;             ///< Vertex Y coordinate
-    std::vector<double> vz;             ///< Vertex Z (ground elevation)
-    std::vector<std::string> vtag;      ///< Optional vertex tag
+    std::vector<double> vx;        ///< Vertex X coordinate
+    std::vector<double> vy;        ///< Vertex Y coordinate
+    std::vector<double> vz;        ///< Vertex Z (ground elevation)
+    std::vector<std::string> vtag; ///< Optional vertex tag
 
     // -----------------------------------------------------------------------
     // Cell static properties — indexed by cell index [0, n_triangles())
@@ -91,18 +89,18 @@ struct MeshData {
     std::vector<int> cell_nbr;
 
     // Precomputed geometry (per cell)
-    std::vector<double> tri_area;       ///< Planimetric area (m²)
-    std::vector<double> tri_cx;         ///< Centroid X (area centroid)
-    std::vector<double> tri_cy;         ///< Centroid Y (area centroid)
-    std::vector<double> tri_cz;         ///< Mean of the cell's vertex elevations
+    std::vector<double> tri_area; ///< Planimetric area (m²)
+    std::vector<double> tri_cx;   ///< Centroid X (area centroid)
+    std::vector<double> tri_cy;   ///< Centroid Y (area centroid)
+    std::vector<double> tri_cz;   ///< Mean of the cell's vertex elevations
 
     // Edge geometry — flat 2D: [cell * kMaxCellVerts + k]
-    std::vector<double> edge_length;    ///< Length of each edge
-    std::vector<double> edge_nx;        ///< Outward normal X component
-    std::vector<double> edge_ny;        ///< Outward normal Y component
-    std::vector<double> edge_mx;        ///< Edge midpoint X
-    std::vector<double> edge_my;        ///< Edge midpoint Y
-    std::vector<double> edge_mz;        ///< Edge midpoint Z (interpolated)
+    std::vector<double> edge_length; ///< Length of each edge
+    std::vector<double> edge_nx;     ///< Outward normal X component
+    std::vector<double> edge_ny;     ///< Outward normal Y component
+    std::vector<double> edge_mx;     ///< Edge midpoint X
+    std::vector<double> edge_my;     ///< Edge midpoint Y
+    std::vector<double> edge_mz;     ///< Edge midpoint Z (interpolated)
     /// Centroid → edge-midpoint distance along the outward normal,
     /// (m⃗_e − c⃗)·n̂_e (m). For a triangle this equals the classic 2A/(3ξ)
     /// (the centroid sits one third of the altitude up); for a quad it is the
@@ -143,29 +141,29 @@ struct MeshData {
     // Vertex reconstruction stencil (pseudo-Laplacian weights)
     // -----------------------------------------------------------------------
     // Stored as CSR (compressed sparse row) for variable stencil sizes
-    std::vector<int>    vert_stencil_ptr;   ///< [n_vertices + 1] row pointers
-    std::vector<int>    vert_stencil_idx;   ///< Column indices (triangle indices)
-    std::vector<double> vert_stencil_wt;    ///< Pseudo-Laplacian weights
+    std::vector<int> vert_stencil_ptr;   ///< [n_vertices + 1] row pointers
+    std::vector<int> vert_stencil_idx;   ///< Column indices (triangle indices)
+    std::vector<double> vert_stencil_wt; ///< Pseudo-Laplacian weights
 
     // -----------------------------------------------------------------------
     // Coupling maps
     // -----------------------------------------------------------------------
 
-    std::vector<int> vert_coupled_node;     ///< SWMM node index (-1 = none)
-    std::vector<int> tri_coupled_node;      ///< SWMM node index (-1 = none)
+    std::vector<int> vert_coupled_node; ///< SWMM node index (-1 = none)
+    std::vector<int> tri_coupled_node;  ///< SWMM node index (-1 = none)
 
     // Coupling parameters (per vertex/triangle coupling point)
-    std::vector<double> vert_coupling_cd;       ///< Discharge coefficient (default 0.65)
+    std::vector<double> vert_coupling_cd; ///< Discharge coefficient (default 0.65)
     /// 1 when the coupling CD was authored (a [2D_VERTEX_NODE_MAP] CD token or
     /// an API edit). Coupling points without one take [2D_OPTIONS] COUPLING_CD.
     std::vector<uint8_t> vert_coupling_cd_set;
-    std::vector<double> vert_coupling_area;     ///< Effective exchange area (m²)
+    std::vector<double> vert_coupling_area; ///< Effective exchange area (m²)
     /// 1 when the [2D_VERTEX_NODE_MAP] row authored an explicit AREA token.
     /// Rows without one keep the 1.0 default value but are eligible for the
     /// COUPLING_AREA AUTO derivation at coupling-point resolve.
     std::vector<uint8_t> vert_coupling_area_set;
-    std::vector<double> tri_coupling_cd;        ///< Discharge coefficient
-    std::vector<double> tri_coupling_area;      ///< Effective exchange area
+    std::vector<double> tri_coupling_cd;   ///< Discharge coefficient
+    std::vector<double> tri_coupling_area; ///< Effective exchange area
 
     // Deferred resolution names (populated during parsing, cleared after resolve)
     std::vector<std::string> vert_coupled_node_name;
@@ -180,16 +178,16 @@ struct MeshData {
     /// arrays above are kept as a last-row-wins mirror for the existing
     /// getter API and the GeoPackage writer (single-coupling only).
     struct TriCouplingRow {
-        int         tri  = -1;    ///< Triangle index
-        int         node = -1;    ///< SWMM node index (-1 until resolved)
-        std::string node_name;    ///< Deferred name (cleared after resolve)
-        double      cd   = 0.65;  ///< Discharge coefficient
-        bool        cd_set = false;   ///< True when CD was authored; otherwise
-                                      ///< [2D_OPTIONS] COUPLING_CD applies.
-        double      area = 1.0;   ///< Effective exchange area
-        bool        area_set = false; ///< True when the row authored an
-                                      ///< explicit AREA token (COUPLING_AREA
-                                      ///< AUTO derives the rest at resolve).
+        int tri = -1;          ///< Triangle index
+        int node = -1;         ///< SWMM node index (-1 until resolved)
+        std::string node_name; ///< Deferred name (cleared after resolve)
+        double cd = 0.65;      ///< Discharge coefficient
+        bool cd_set = false;   ///< True when CD was authored; otherwise
+                               ///< [2D_OPTIONS] COUPLING_CD applies.
+        double area = 1.0;     ///< Effective exchange area
+        bool area_set = false; ///< True when the row authored an
+                               ///< explicit AREA token (COUPLING_AREA
+                               ///< AUTO derives the rest at resolve).
     };
     std::vector<TriCouplingRow> tri_couplings;
 
@@ -197,47 +195,160 @@ struct MeshData {
     // Capacity queries
     // -----------------------------------------------------------------------
 
-    int n_vertices()  const noexcept { return static_cast<int>(vx.size()); }
-    /// Number of CELLS (triangles + quads). The historical name is kept for
-    /// the ~200 call sites; `n_cells()` is the same value.
+    /**
+     * @brief Read the vertex-array extent.
+     * @return Number of vx entries narrowed to int; parallel vertex arrays are expected to
+     * match.
+     * @note Read-only and allocation-free. Serialize reads with mesh resizing/mutation.
+     */
+    int n_vertices() const noexcept { return static_cast<int>(vx.size()); }
+    /**
+     * @brief Number of CELLS (triangles + quads). The historical name is kept for the ~200 call
+     * sites; `n_cells()` is the same value.
+     *
+     * @note Read the historical per-cell extent.
+     * @return Number of mixed cells, triangles plus quadrilaterals, narrowed to int.
+     * @note Read-only and allocation-free. Serialize reads with mesh resizing/mutation.
+     */
     int n_triangles() const noexcept { return static_cast<int>(cell_nv.size()); }
-    int n_cells()     const noexcept { return static_cast<int>(cell_nv.size()); }
-    /// Number of quadrilateral cells (O(n) scan; not a hot path).
+    /**
+     * @brief Read the mixed-cell extent.
+     * @return Number of cell_nv entries narrowed to int.
+     * @note Read-only and allocation-free. Serialize reads with mesh resizing/mutation.
+     */
+    int n_cells() const noexcept { return static_cast<int>(cell_nv.size()); }
+    /**
+     * @brief Number of quadrilateral cells (O(n) scan; not a hot path).
+     *
+     * @note Count quadrilateral cells.
+     * @return Count of entries equal to four; scans all cell_nv values without validating other
+     * counts.
+     * @note Read-only and allocation-free. Serialize reads with mesh resizing/mutation.
+     */
     int n_quads() const noexcept {
         int q = 0;
-        for (uint8_t nv : cell_nv) q += (nv == 4);
+        for (uint8_t nv : cell_nv)
+            q += (nv == 4);
         return q;
     }
-    /// Edge-slot stride of the PUBLIC (API / HDF5) layout: 3 for an
-    /// all-triangle mesh (byte-compatible with every existing consumer),
-    /// kMaxCellVerts once a quad exists. Internal SoAs always use
-    /// kMaxCellVerts.
+    /**
+     * @brief Edge-slot stride of the PUBLIC (API / HDF5) layout: 3 for an all-triangle mesh
+     * (byte-compatible with every existing consumer), kMaxCellVerts once a quad exists. Internal
+     * SoAs always use kMaxCellVerts.
+     *
+     * @note Select the packed public edge-array stride.
+     * @return Four when any quad exists, otherwise three, including an empty mesh; O(cell_count)
+     * scan.
+     * @note Read-only and allocation-free. Serialize reads with mesh resizing/mutation.
+     */
     int edge_stride() const noexcept { return n_quads() > 0 ? kMaxCellVerts : 3; }
-    /// Number of internal edge slots (n_cells * kMaxCellVerts).
+    /**
+     * @brief Number of internal edge slots (n_cells * kMaxCellVerts).
+     *
+     * @note Read the padded internal edge-array extent.
+     * @return n_cells() * kMaxCellVerts; caller ensures the int multiplication is representable.
+     * @note Read-only and allocation-free. Serialize reads with mesh resizing/mutation.
+     */
     int n_edge_slots() const noexcept { return n_cells() * kMaxCellVerts; }
 
     // -----------------------------------------------------------------------
     // Cell / edge-slot accessors
     // -----------------------------------------------------------------------
 
-    /// Flat edge/vertex slot of local index k in cell c.
+    /**
+     * @brief Flat edge/vertex slot of local index k in cell c.
+     *
+     * @note Convert mixed-mesh padded slot coordinates.
+     * @param[in] c Nonnegative zero-based cell index.
+     * @param[in] k Local padded slot in [0,kMaxCellVerts).
+     * @return Padded internal offset c*kMaxCellVerts+k; arithmetic and ranges are unchecked.
+     * @note Pure integer mapping; caller prevents signed overflow.
+     */
     static constexpr int slot(int c, int k) noexcept { return c * kMaxCellVerts + k; }
-    /// Local index k of a flat slot; cell of a flat slot.
+    /**
+     * @brief Local index k of a flat slot; cell of a flat slot.
+     *
+     * @note Convert mixed-mesh padded slot coordinates.
+     * @param[in] s Nonnegative padded internal slot.
+     * @return Local padded offset s % kMaxCellVerts.
+     * @note Pure integer mapping; caller prevents signed overflow.
+     */
     static constexpr int slot_local(int s) noexcept { return s % kMaxCellVerts; }
-    static constexpr int slot_cell(int s)  noexcept { return s / kMaxCellVerts; }
+    /**
+     * @brief Convert mixed-mesh padded slot coordinates.
+     * @param[in] s Nonnegative padded internal slot.
+     * @return Owning cell offset s / kMaxCellVerts.
+     * @note Pure integer mapping; caller prevents signed overflow.
+     */
+    static constexpr int slot_cell(int s) noexcept { return s / kMaxCellVerts; }
 
+    /**
+     * @brief Read one mixed-cell topology field.
+     * @param[in] c Zero-based cell in [0,n_cells()); unchecked.
+     * @return Stored vertex count, normally three or four.
+     * @note Read-only, unchecked and allocation-free; backing arrays must be coherently sized
+     * and stable.
+     */
     int cell_vertex_count(int c) const noexcept { return cell_nv[static_cast<std::size_t>(c)]; }
-    int cell_vertex(int c, int k) const noexcept { return cell_v[static_cast<std::size_t>(slot(c, k))]; }
-    int cell_neighbour(int c, int k) const noexcept { return cell_nbr[static_cast<std::size_t>(slot(c, k))]; }
+    /**
+     * @brief Read one mixed-cell topology field.
+     * @param[in] c Zero-based cell in [0,n_cells()); unchecked.
+     * @param[in] k Local padded slot in [0,kMaxCellVerts); caller distinguishes actual edges
+     * from padding.
+     * @return Zero-based referenced vertex, or -1 in a triangle padding slot.
+     * @note Read-only, unchecked and allocation-free; backing arrays must be coherently sized
+     * and stable.
+     */
+    int cell_vertex(int c, int k) const noexcept {
+        return cell_v[static_cast<std::size_t>(slot(c, k))];
+    }
+    /**
+     * @brief Read one mixed-cell topology field.
+     * @param[in] c Zero-based cell in [0,n_cells()); unchecked.
+     * @param[in] k Local padded slot in [0,kMaxCellVerts); caller distinguishes actual edges
+     * from padding.
+     * @return Adjacent cell, -1 for exterior edges, or -2 for padding.
+     * @note Read-only, unchecked and allocation-free; backing arrays must be coherently sized
+     * and stable.
+     */
+    int cell_neighbour(int c, int k) const noexcept {
+        return cell_nbr[static_cast<std::size_t>(slot(c, k))];
+    }
+    /**
+     * @brief Read one mixed-cell topology field.
+     * @param[in] c Zero-based cell in [0,n_cells()); unchecked.
+     * @return True exactly when the stored vertex count is four.
+     * @note Read-only, unchecked and allocation-free; backing arrays must be coherently sized
+     * and stable.
+     */
     bool is_quad(int c) const noexcept { return cell_nv[static_cast<std::size_t>(c)] == 4; }
 
-    /// Endpoint vertices of local edge k of cell c: v[(k+1)%nv], v[(k+2)%nv].
+    /**
+     * @brief Endpoint vertices of local edge k of cell c: v[(k+1)%nv], v[(k+2)%nv].
+     *
+     * @param[in] c Valid zero-based cell index with a nonzero stored vertex count.
+     * @param[in] k Actual local edge, in [0,cell_vertex_count(c)).
+     * @param[out] a First endpoint's zero-based vertex index.
+     * @param[out] b Second endpoint's zero-based vertex index; use a distinct output reference.
+     * @note Uses the shared rotated cyclic-edge convention for triangles and quads; no checks,
+     * allocation or mutation.
+     */
     void cell_edge_vertices(int c, int k, int& a, int& b) const noexcept {
         const int nv = cell_nv[static_cast<std::size_t>(c)];
         a = cell_v[static_cast<std::size_t>(slot(c, (k + 1) % nv))];
         b = cell_v[static_cast<std::size_t>(slot(c, (k + 2) % nv))];
     }
 
+    /**
+     * @brief Assign 3-vertex connectivity to one preallocated cell.
+     * @param[in] c Valid zero-based cell index with allocated cell_nv/cell_v storage.
+     * @param[in] v0 Valid vertex index in cyclic order; not checked.
+     * @param[in] v1 Valid vertex index in cyclic order; not checked.
+     * @param[in] v2 Valid vertex index in cyclic order; not checked.
+     * @post Updates only vertex count/connectivity; the fourth vertex slot becomes -1. Neighbor
+     * topology, geometry, quad VFR and stencils must be rebuilt by the caller. No allocation,
+     * orientation validation, or runtime state changes.
+     */
     void set_triangle(int c, int v0, int v1, int v2) noexcept {
         cell_nv[static_cast<std::size_t>(c)] = 3;
         cell_v[static_cast<std::size_t>(slot(c, 0))] = v0;
@@ -245,6 +356,17 @@ struct MeshData {
         cell_v[static_cast<std::size_t>(slot(c, 2))] = v2;
         cell_v[static_cast<std::size_t>(slot(c, 3))] = -1;
     }
+    /**
+     * @brief Assign 4-vertex connectivity to one preallocated cell.
+     * @param[in] c Valid zero-based cell index with allocated cell_nv/cell_v storage.
+     * @param[in] v0 Valid vertex index in cyclic order; not checked.
+     * @param[in] v1 Valid vertex index in cyclic order; not checked.
+     * @param[in] v2 Valid vertex index in cyclic order; not checked.
+     * @param[in] v3 Valid vertex index in cyclic order; not checked.
+     * @post Updates only vertex count/connectivity. Neighbor topology, geometry, quad VFR and
+     * stencils must be rebuilt by the caller. No allocation, orientation validation, or runtime
+     * state changes.
+     */
     void set_quad(int c, int v0, int v1, int v2, int v3) noexcept {
         cell_nv[static_cast<std::size_t>(c)] = 4;
         cell_v[static_cast<std::size_t>(slot(c, 0))] = v0;
@@ -257,6 +379,15 @@ struct MeshData {
     // Resize / allocation
     // -----------------------------------------------------------------------
 
+    /**
+     * @brief Resize vertex coordinates, tags and vertex coupling arrays.
+     * @param[in] nv Nonnegative target vertex count, representable as size_t.
+     * @post Preserves existing entries, initializes new coordinates/tags and coupling defaults,
+     * and truncates removed entries. Does not rebuild cell references/stencils or validate
+     * dangling connectivity.
+     * @note Vector allocations may throw after partial resize; requires exclusive mesh access
+     * and invalidates element pointers/references. No rollback or unit conversion.
+     */
     void resize_vertices(int nv) {
         auto n = static_cast<std::size_t>(nv);
         vx.resize(n, 0.0);
@@ -271,8 +402,18 @@ struct MeshData {
         vert_coupling_area_set.resize(n, 0);
     }
 
-    /// Resize the per-cell arrays to nt cells. New cells are TRIANGLES
-    /// (cell_nv = 3, vertex slots 0 / padding −1) until set_quad() is called.
+    /**
+     * @brief Resize the per-cell arrays to nt cells. New cells are TRIANGLES (cell_nv = 3,
+     * vertex slots 0 / padding −1) until set_quad() is called.
+     *
+     * @param[in] nt Nonnegative target mixed-cell count; the historical name includes quads.
+     * @post Preserves existing entries and initializes appended geometry/properties and padded
+     * slots. Does not rebuild topology/stencils, resize existing quad VFR side data, or prune
+     * tri_couplings referring to removed cells.
+     * @note Callers reconstruct those dependent arrays before use. Vector allocations may throw
+     * after partial resize and invalidate references; requires exclusive mesh access. No
+     * physical-unit conversion.
+     */
     void resize_triangles(int nt) {
         auto n = static_cast<std::size_t>(nt);
         const auto old_n = cell_nv.size();
@@ -282,7 +423,7 @@ struct MeshData {
         cell_nbr.resize(n4, -1);
         // Padding slot of every NEW triangle: vertex −1, neighbour −2.
         for (std::size_t c = old_n; c < n; ++c) {
-            cell_v[c * kMaxCellVerts + 3]   = -1;
+            cell_v[c * kMaxCellVerts + 3] = -1;
             cell_nbr[c * kMaxCellVerts + 3] = -2;
         }
         tri_area.resize(n, 0.0);
@@ -297,7 +438,7 @@ struct MeshData {
         edge_my.resize(n4, 0.0);
         edge_mz.resize(n4, 0.0);
         edge_dist_c.resize(n4, 0.0);
-        edge_conveyance.resize(n4, 1.0);  // §11A — default unrestricted
+        edge_conveyance.resize(n4, 1.0); // §11A — default unrestricted
 
         mannings_n.resize(n, 0.035);
         tri_init_depth.resize(n, 0.0);

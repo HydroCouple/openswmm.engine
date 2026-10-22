@@ -14,12 +14,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/*!
- * \file   test_filled_circular_offset_api.cpp
- * \author Caleb Buahin <caleb.buahin@gmail.com>
- * \date   2026
- * \license Apache-2.0
- * \brief  FILLED_CIRCULAR conduit offsets cross the C API as AUTHORED values.
+/**
+ * @file      test_filled_circular_offset_api.cpp
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @date      2026
+ * @license   Apache-2.0
+ * @brief     FILLED_CIRCULAR conduit offsets cross the C API as AUTHORED values.
  *
  * resolve_cross_references() raises both stored offsets of a partly filled
  * circular conduit by the sediment depth (legacy link.c:1072-1077) and the
@@ -30,8 +30,10 @@
  *
  * Fixture: inp_roundtrip/filled_circular_offsets_api.inp — C1 authored
  * 0.3 / 0.7, FILLED_CIRCULAR 1.5 with 0.5 of sediment. Written files land
- * beside it as inp_roundtrip/_filled_circular_offsets_api_<case>.inp.
+ * beside it as inp_roundtrip/_filled_circular_offsets_api_&lt;case&gt;.inp.
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  */
+
 #include <gtest/gtest.h>
 
 #include <openswmm/engine/openswmm_engine.h>
@@ -48,65 +50,140 @@
 namespace {
 
 constexpr const char* kFixture = "inp_roundtrip/filled_circular_offsets_api.inp";
-constexpr const char* kReport  = "inp_roundtrip/_filled_circular_offsets_api.rpt";
+constexpr const char* kReport = "inp_roundtrip/_filled_circular_offsets_api.rpt";
 
+/**
+ * @brief Form the filled-circular offset fixture input path.
+ *
+ * Does not create directories or files or sanitize tag. Caller must provide the parent directory
+ * and handle writes separately.
+ *
+ * @param[in] tag Non-null raw suffix copied into the fixed relative filename.
+ * @return Owned inp_roundtrip/_filled_circular_offsets_api_tag.inp path.
+ */
 std::string outPath(const char* tag) {
     return std::string("inp_roundtrip/_filled_circular_offsets_api_") + tag + ".inp";
 }
 
-/// Whitespace-split columns of the row in [sec] whose first column is `id`
-/// (empty when the section or the row is absent).
+/**
+ * @brief Read whitespace-separated columns from one exact input-section row.
+ *
+ * Strips terminal CR, recognizes bracket tokens, skips blank/comment-first-token lines and matches
+ * exact id. Does not strip trailing inline comments from returned tokens or diagnose malformed row
+ * shapes.
+ *
+ * @param[in] path Readable input path, unchanged.
+ * @param[in] sec Exact case-sensitive section name without brackets.
+ * @param[in] id Exact first-column object identifier.
+ * @return Owned tokens including the identifier, or empty for missing/unreadable section/row.
+ */
 std::vector<std::string> sectionRow(const std::string& path, const std::string& sec,
                                     const std::string& id) {
     std::ifstream in(path);
     std::string line;
     bool inside = false;
     while (std::getline(in, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
         std::istringstream row(line);
         std::string tok;
-        if (!(row >> tok)) continue;
-        if (tok.front() == '[') { inside = (tok == "[" + sec + "]"); continue; }
-        if (!inside || tok.rfind(";", 0) == 0 || tok != id) continue;
+        if (!(row >> tok))
+            continue;
+        if (tok.front() == '[') {
+            inside = (tok == "[" + sec + "]");
+            continue;
+        }
+        if (!inside || tok.rfind(";", 0) == 0 || tok != id)
+            continue;
         std::vector<std::string> cols{tok};
-        while (row >> tok) cols.push_back(tok);
+        while (row >> tok)
+            cols.push_back(tok);
         return cols;
     }
     return {};
 }
 
+/**
+ * @brief Read the upstream authored conduit offset through the C API.
+ *
+ * Uses a nonfatal SWMM_OK expectation and preserves the API's authored-versus-resolved sediment
+ * convention; does not inspect internal raised offsets or mutate the conduit.
+ *
+ * @param[in] e Live opened native fixture engine.
+ * @param[in] idx Valid zero-based conduit index.
+ * @return Authored offset in display length units (feet for this fixture), initially -1 if
+ *     retrieval does not assign it.
+ */
 double up(SWMM_Engine e, int idx) {
     double v = -1.0;
     EXPECT_EQ(swmm_link_get_offset_up(e, idx, &v), SWMM_OK);
     return v;
 }
 
+/**
+ * @brief Read the downstream authored conduit offset through the C API.
+ *
+ * Uses a nonfatal SWMM_OK expectation and preserves the API's authored-versus-resolved sediment
+ * convention; does not inspect internal raised offsets or mutate the conduit.
+ *
+ * @param[in] e Live opened native fixture engine.
+ * @param[in] idx Valid zero-based conduit index.
+ * @return Authored offset in display length units (feet for this fixture), initially -1 if
+ *     retrieval does not assign it.
+ */
 double dn(SWMM_Engine e, int idx) {
     double v = -1.0;
     EXPECT_EQ(swmm_link_get_offset_dn(e, idx, &v), SWMM_OK);
     return v;
 }
 
-/// [CONDUITS] columns: Name From To Length N InOffset OutOffset InitFlow MaxFlow.
+/**
+ * @brief Assert saved conduit offset columns match the expected authored values.
+ *
+ * Requires at least seven tokens via fatal assertion, converts columns5/6 with stod and compares
+ * within1e-9. Numeric conversion exceptions propagate; does not validate other columns or alter the
+ * file.
+ *
+ * @param[in] path Readable written input artifact.
+ * @param[in] id Non-null conduit identifier.
+ * @param[in] in Expected authored inlet offset in the deck's length units.
+ * @param[in] out Expected authored outlet offset in the same units.
+ */
 void expectConduitRow(const std::string& path, const char* id, double in, double out) {
     const auto r = sectionRow(path, "CONDUITS", id);
     ASSERT_GE(r.size(), 7u) << id << " missing from " << path;
-    EXPECT_NEAR(std::stod(r[5]), in,  1e-9) << id << " InOffset in " << path;
+    EXPECT_NEAR(std::stod(r[5]), in, 1e-9) << id << " InOffset in " << path;
     EXPECT_NEAR(std::stod(r[6]), out, 1e-9) << id << " OutOffset in " << path;
 }
 
 struct Opened {
     SWMM_Engine e = swmm_engine_create();
     int c1 = -1;
+    /**
+     * @brief Open the filled-circular offset fixture and cache its C1 link index.
+     *
+     * Creates a handle through its member initializer, opens kFixture/kReport without binary output and
+     * records a nonfatal success expectation, then resolves C1 even after open failure. Caller checks
+     * c1 and test status before API use; destructor owns cleanup. No initialize/start occurs.
+     */
     Opened() {
         const int rc = swmm_engine_open(e, kFixture, kReport, nullptr, nullptr);
         EXPECT_EQ(rc, SWMM_OK) << (swmm_get_last_error_msg(e) ? swmm_get_last_error_msg(e) : "");
         c1 = swmm_link_index(e, "C1");
     }
-    ~Opened() { swmm_engine_close(e); swmm_engine_destroy(e); }
+    /**
+     * @brief Close/destroy the owned filled-circular fixture handle.
+     *
+     * Calls close/destroy unconditionally and ignores returned statuses. Do not copy this owner or
+     * retain engine storage beyond its lifetime; written artifacts remain.
+     */
+    ~Opened() {
+        swmm_engine_close(e);
+        swmm_engine_destroy(e);
+    }
 };
 
-}  // namespace
+} // namespace
 
 // The resolver stores 0.8 / 1.2 (authored + 0.5 of sediment); the API reports
 // what the file says.
@@ -143,7 +220,8 @@ TEST(FilledCircularOffsetApi, ShapeEditsLeaveTheAuthoredOffsetsAlone) {
     Opened m;
     ASSERT_GE(m.c1, 0);
 
-    ASSERT_EQ(swmm_link_set_xsect(m.e, m.c1, SWMM_XSECT_FILLED_CIRCULAR, 1.5, 0.2, 0.0, 0.0), SWMM_OK);
+    ASSERT_EQ(swmm_link_set_xsect(m.e, m.c1, SWMM_XSECT_FILLED_CIRCULAR, 1.5, 0.2, 0.0, 0.0),
+              SWMM_OK);
     EXPECT_NEAR(up(m.e, m.c1), 0.3, 1e-9);
     EXPECT_NEAR(dn(m.e, m.c1), 0.7, 1e-9);
     const std::string f1 = outPath("thinner");
@@ -160,7 +238,8 @@ TEST(FilledCircularOffsetApi, ShapeEditsLeaveTheAuthoredOffsetsAlone) {
     ASSERT_EQ(swmm_model_write(m.e, f2.c_str()), SWMM_OK);
     expectConduitRow(f2, "C1", 0.3, 0.7);
 
-    ASSERT_EQ(swmm_link_set_xsect(m.e, m.c1, SWMM_XSECT_FILLED_CIRCULAR, 1.5, 0.5, 0.0, 0.0), SWMM_OK);
+    ASSERT_EQ(swmm_link_set_xsect(m.e, m.c1, SWMM_XSECT_FILLED_CIRCULAR, 1.5, 0.5, 0.0, 0.0),
+              SWMM_OK);
     EXPECT_NEAR(up(m.e, m.c1), 0.3, 1e-9);
     EXPECT_NEAR(dn(m.e, m.c1), 0.7, 1e-9);
     const std::string f3 = outPath("refilled");
@@ -174,12 +253,12 @@ TEST(FilledCircularOffsetApi, ShapeEditsLeaveTheAuthoredOffsetsAlone) {
 TEST(FilledCircularOffsetApi, BuiltModelIsBumpedExactlyOnceAtFinalize) {
     SWMM_Engine e = swmm_engine_new();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_node_add(e, "J0",  SWMM_NODE_JUNCTION), SWMM_OK);
-    ASSERT_EQ(swmm_node_add(e, "OUT", SWMM_NODE_OUTFALL),  SWMM_OK);
-    ASSERT_EQ(swmm_link_add(e, "C1",  SWMM_LINK_CONDUIT),  SWMM_OK);
+    ASSERT_EQ(swmm_node_add(e, "J0", SWMM_NODE_JUNCTION), SWMM_OK);
+    ASSERT_EQ(swmm_node_add(e, "OUT", SWMM_NODE_OUTFALL), SWMM_OK);
+    ASSERT_EQ(swmm_link_add(e, "C1", SWMM_LINK_CONDUIT), SWMM_OK);
     ASSERT_EQ(swmm_link_set_nodes(e, 0, 0, 1), SWMM_OK);
     ASSERT_EQ(swmm_node_set_invert_elev(e, 0, 10.0), SWMM_OK);
-    ASSERT_EQ(swmm_node_set_invert_elev(e, 1,  7.0), SWMM_OK);
+    ASSERT_EQ(swmm_node_set_invert_elev(e, 1, 7.0), SWMM_OK);
     ASSERT_EQ(swmm_link_set_length(e, 0, 400.0), SWMM_OK);
     ASSERT_EQ(swmm_link_set_xsect(e, 0, SWMM_XSECT_FILLED_CIRCULAR, 1.5, 0.5, 0.0, 0.0), SWMM_OK);
     ASSERT_EQ(swmm_link_set_offset_up(e, 0, 2.2), SWMM_OK);
@@ -211,11 +290,11 @@ TEST(FilledCircularOffsetApi, SplitWritesAnAuthoredZeroAtTheNewJunction) {
     ASSERT_GE(c1b, 0);
     EXPECT_NEAR(up(m.e, m.c1), 0.3, 1e-9);
     EXPECT_NEAR(dn(m.e, m.c1), 0.0, 1e-9);
-    EXPECT_NEAR(up(m.e, c1b),  0.0, 1e-9);
-    EXPECT_NEAR(dn(m.e, c1b),  0.7, 1e-9);
+    EXPECT_NEAR(up(m.e, c1b), 0.0, 1e-9);
+    EXPECT_NEAR(dn(m.e, c1b), 0.7, 1e-9);
 
     const std::string f = outPath("split");
     ASSERT_EQ(swmm_model_write(m.e, f.c_str()), SWMM_OK);
-    expectConduitRow(f, "C1",  0.3, 0.0);
+    expectConduitRow(f, "C1", 0.3, 0.0);
     expectConduitRow(f, "C1B", 0.0, 0.7);
 }

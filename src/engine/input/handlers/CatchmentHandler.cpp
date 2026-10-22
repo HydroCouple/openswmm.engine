@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file CatchmentHandler.cpp
- * @brief Section handlers for [SUBCATCHMENTS], [SUBAREAS], and [RAINGAGES].
+ * @file      CatchmentHandler.cpp
+ * @brief     Section handlers for [SUBCATCHMENTS], [SUBAREAS], and [RAINGAGES].
  *
  * ### [SUBCATCHMENTS] format
  * ```
@@ -46,9 +46,9 @@
  * @see Legacy reference: src/solver/input.c — readSubcatch(), readGage()
  * @ingroup engine_input
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "CatchmentHandler.hpp"
@@ -69,49 +69,73 @@
 
 namespace openswmm::input {
 
+/**
+ * @brief Extend base subcatchment columns through a registered row index.
+ *
+ * Delegates grow_to preserving existing prefixes; does not grow name, spatial, land-use or
+ * pollutant matrices. Allocation failures can interrupt extension.
+ *
+ * @param[in,out] ctx Context with coherent current SubcatchData; other stores are separate.
+ * @param[in] idx Nonnegative registered index <INT_MAX; idx+1 must fit.
+ */
 static void ensure_subcatch_capacity(SimulationContext& ctx, int idx) {
     ctx.subcatches.grow_to(idx + 1);
 }
 
+/**
+ * @brief Grow rain-gage authoring/runtime columns through a registered index.
+ *
+ * Extends source/table/file metadata, state-machine, rain history/comment and optional rain-series
+ * columns. Does not create names/spatial rows or read rain files. Independent resizes can fail
+ * without rollback.
+ *
+ * @param[in,out] ctx Context whose gage columns receive default new entries while existing values
+ *     are preserved.
+ * @param[in] idx Nonnegative registered gage index <INT_MAX; hourly-history size product must fit
+ *     size_t.
+ */
 static void ensure_gage_capacity(SimulationContext& ctx, int idx) {
     const auto n = static_cast<std::size_t>(idx + 1);
     auto grow = [&](auto& vec, auto def) {
-        if (vec.size() < n) vec.resize(n, def);
+        if (vec.size() < n)
+            vec.resize(n, def);
     };
-    grow(ctx.gages.source,        RainSource::TIMESERIES);
-    grow(ctx.gages.ts_index,      -1);
-    grow(ctx.gages.ts_name,       std::string{});
-    grow(ctx.gages.file_path,     std::string{});
-    grow(ctx.gages.col_name,      std::string{});
-    grow(ctx.gages.station_id,    std::string{});
-    grow(ctx.gages.rain_units,    0);
-    grow(ctx.gages.file_first_date,    0.0);
-    grow(ctx.gages.file_last_date,     0.0);
+    grow(ctx.gages.source, RainSource::TIMESERIES);
+    grow(ctx.gages.ts_index, -1);
+    grow(ctx.gages.ts_name, std::string{});
+    grow(ctx.gages.file_path, std::string{});
+    grow(ctx.gages.col_name, std::string{});
+    grow(ctx.gages.station_id, std::string{});
+    grow(ctx.gages.rain_units, 0);
+    grow(ctx.gages.file_first_date, 0.0);
+    grow(ctx.gages.file_last_date, 0.0);
     grow(ctx.gages.file_periods_precip, 0L);
-    grow(ctx.gages.file_start_date,    0.0);
-    if (ctx.gages.rain_series.size() < n) ctx.gages.rain_series.resize(n);
-    grow(ctx.gages.file_format,   RainFileFormat::UNKNOWN);
-    grow(ctx.gages.interval_sec,  3600);
-    grow(ctx.gages.snow_factor,   1.0);
-    grow(ctx.gages.scale_factor,  1.0);
-    grow(ctx.gages.rain_type,     0);
-    grow(ctx.gages.rainfall,      0.0);
+    grow(ctx.gages.file_start_date, 0.0);
+    if (ctx.gages.rain_series.size() < n)
+        ctx.gages.rain_series.resize(n);
+    grow(ctx.gages.file_format, RainFileFormat::UNKNOWN);
+    grow(ctx.gages.interval_sec, 3600);
+    grow(ctx.gages.snow_factor, 1.0);
+    grow(ctx.gages.scale_factor, 1.0);
+    grow(ctx.gages.rain_type, 0);
+    grow(ctx.gages.rainfall, 0.0);
     grow(ctx.gages.next_rainfall, 0.0);
-    grow(ctx.gages.api_rainfall,  -1.0);  // -1 = no API override
-    grow(ctx.gages.next_rain_date,0.0);
-    grow(ctx.gages.is_raining,    false);
-    grow(ctx.gages.st_cur,  -2);
+    grow(ctx.gages.api_rainfall, -1.0); // -1 = no API override
+    grow(ctx.gages.next_rain_date, 0.0);
+    grow(ctx.gages.is_raining, false);
+    grow(ctx.gages.st_cur, -2);
     grow(ctx.gages.st_next, -1);
     grow(ctx.gages.st_rain, 0.0);
     grow(ctx.gages.st_init, static_cast<uint8_t>(0));
     grow(ctx.gages.st_used, static_cast<uint8_t>(0));
 
     // Past-rain tracking (used by updateAllGages for controls past-rain)
-    grow(ctx.gages.past_rain_accum,   0.0);
-    grow(ctx.gages.past_rain_interval,    0.0);
-    grow(ctx.gages.cumul_rain_accum,  0.0);
-    grow(ctx.gages.co_gage_index,     -1);
-    if (ctx.gages.comments.size() < n) ctx.gages.comments.resize(n, std::string{});
+    grow(ctx.gages.past_rain_accum, 0.0);
+    grow(ctx.gages.past_rain_interval, 0.0);
+    grow(ctx.gages.cumul_rain_accum, 0.0);
+    grow(ctx.gages.co_gage_index, -1);
+    if (ctx.gages.comments.size() < n)
+        ctx.gages.comments.resize(n, std::string{});
     // past_rain is a flat 2-D array: [gage * MAXPASTRAIN + hour]
     {
         const auto nr = n * static_cast<std::size_t>(GageData::MAXPASTRAIN);
@@ -124,6 +148,22 @@ static void ensure_gage_capacity(SimulationContext& ctx, int idx) {
 // handle_subcatchments()
 // ============================================================================
 
+/**
+ * @brief Parse subcatchment geometry and authored outlet/gage/snow references.
+ *
+ * Short rows skip; duplicate IDs append ERR_DUP_NAME through add_unique and retain the earlier
+ * object. New rows and partial field writes are not rolled back on later refusal/allocation.
+ * Retains names for deferred resolution; immediate outlet lookup prefers node over subcatchment.
+ * Converts impervious percentage to a fraction with upper cap100, slope percentage to fraction; no
+ * lower cap. Optional curb/snowpack and positive rain/snow scale factors are retained (* means no
+ * snowpack). Does not validate drainage topology, nonnegative geometry, gage existence or compute
+ * runoff state.
+ *
+ * @param[in,out] ctx Model context receiving authored definitions and errors; caller supplies a
+ *     coherent BUILDING/input phase and serializes edits.
+ * @param[in] lines Borrowed section rows, copied/tokenized synchronously; lengths/areas/flows
+ *     remain project display units until post-parse conversion.
+ */
 void handle_subcatchments(SimulationContext& ctx, const std::vector<std::string>& lines) {
     // Pre-reserve from the section's row count (an upper bound: some rows
     // are comments or duplicates). Capacity only — see reserve_to().
@@ -131,7 +171,8 @@ void handle_subcatchments(SimulationContext& ctx, const std::vector<std::string>
     ctx.subcatch_names.reserve(static_cast<std::size_t>(ctx.subcatch_names.size()) + lines.size());
     for (const auto& pl : parse_section(lines)) {
         auto tok = Tokenizer::tokenize(pl.data);
-        if (tok.size() < 7) continue;
+        if (tok.size() < 7)
+            continue;
         // Name  Gage  Outlet  Area  %Imperv  Width  %Slope  [CurbLen]
         //       [Snowpack] [RainScale] [SnowScale]
         //
@@ -142,7 +183,8 @@ void handle_subcatchments(SimulationContext& ctx, const std::vector<std::string>
 
         const std::string& name = tok[0];
         int idx = add_unique(ctx.subcatch_names, name, ctx.errors);
-        if (idx < 0) continue;  // duplicate ID (ERR 207, legacy input.c parity)
+        if (idx < 0)
+            continue; // duplicate ID (ERR 207, legacy input.c parity)
 
         ensure_subcatch_capacity(ctx, idx);
 
@@ -160,17 +202,18 @@ void handle_subcatchments(SimulationContext& ctx, const std::vector<std::string>
             ctx.subcatches.outlet_node[idx] = node_idx;
         } else {
             int sub_idx = ctx.subcatch_names.find(tok[2]);
-            if (sub_idx >= 0) ctx.subcatches.outlet_subcatch[idx] = sub_idx;
+            if (sub_idx >= 0)
+                ctx.subcatches.outlet_subcatch[idx] = sub_idx;
         }
 
-        ctx.subcatches.area[idx]       = to_double(tok[3]);
+        ctx.subcatches.area[idx] = to_double(tok[3]);
         // Legacy subcatch_readParams: fracImperv = MIN(x[4], 100) / 100 — a
         // percentage above 100 (w-wo-rb-2subcatchments writes 5000) is a
         // fully impervious subcatchment, not a 50x area.
-        ctx.subcatches.frac_imperv[idx]=
-            std::min(to_double(tok[4]), 100.0) / 100.0;  // % → fraction
-        ctx.subcatches.width[idx]      = to_double(tok[5]);
-        ctx.subcatches.slope[idx]      = to_double(tok[6]) / 100.0;  // % → fraction
+        ctx.subcatches.frac_imperv[idx] =
+            std::min(to_double(tok[4]), 100.0) / 100.0; // % → fraction
+        ctx.subcatches.width[idx] = to_double(tok[5]);
+        ctx.subcatches.slope[idx] = to_double(tok[6]) / 100.0; // % → fraction
 
         // Optional CurbLen (column 7)
         if (tok.size() > 7)
@@ -190,11 +233,13 @@ void handle_subcatchments(SimulationContext& ctx, const std::vector<std::string>
         // silently zeroing a subcatchment's precipitation.
         if (tok.size() > 9) {
             double rsf = to_double(tok[9]);
-            if (rsf > 0.0) ctx.subcatches.rain_scale_factor[idx] = rsf;
+            if (rsf > 0.0)
+                ctx.subcatches.rain_scale_factor[idx] = rsf;
         }
         if (tok.size() > 10) {
             double ssf = to_double(tok[10]);
-            if (ssf > 0.0) ctx.subcatches.snow_scale_factor[idx] = ssf;
+            if (ssf > 0.0)
+                ctx.subcatches.snow_scale_factor[idx] = ssf;
         }
 
         if (!pl.comment.empty())
@@ -206,19 +251,34 @@ void handle_subcatchments(SimulationContext& ctx, const std::vector<std::string>
 // handle_subareas()
 // ============================================================================
 
+/**
+ * @brief Assign surface roughness/depression storage and inter-subarea routing.
+ *
+ * Updates only known subcatchments; short/unknown rows skip silently. Stores authored PctZero and
+ * its fraction, project rain-depth depression storage and Manning n. OUTLET/IMPERV/PERV accept
+ * keyword-prefix spellings; unknown routing text falls back OUTLET. If routing token exists, absent
+ * routed percentage defaults100%; existing rows otherwise persist. No finite/range validation.
+ *
+ * @param[in,out] ctx Model context receiving authored definitions and errors; caller supplies a
+ *     coherent BUILDING/input phase and serializes edits.
+ * @param[in] lines Borrowed section rows, copied/tokenized synchronously; lengths/areas/flows
+ *     remain project display units until post-parse conversion.
+ */
 void handle_subareas(SimulationContext& ctx, const std::vector<std::string>& lines) {
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.size() < 6) continue;
+        if (tok.size() < 6)
+            continue;
         // Subcatch  N-Imperv  N-Perv  S-Imperv  S-Perv  PctZero  [RouteTo]
 
         const int idx = ctx.subcatch_names.find(tok[0]);
-        if (idx < 0) continue;
+        if (idx < 0)
+            continue;
 
-        ctx.subcatches.n_imperv[idx]  = to_double(tok[1]);
-        ctx.subcatches.n_perv[idx]    = to_double(tok[2]);
+        ctx.subcatches.n_imperv[idx] = to_double(tok[1]);
+        ctx.subcatches.n_perv[idx] = to_double(tok[2]);
         ctx.subcatches.ds_imperv[idx] = to_double(tok[3]);
-        ctx.subcatches.ds_perv[idx]   = to_double(tok[4]);
+        ctx.subcatches.ds_perv[idx] = to_double(tok[4]);
 
         // PctZero → fraction of impervious with no depression storage
         // Both forms are kept: the 0-1 fraction every consumer reads, and
@@ -236,10 +296,13 @@ void handle_subareas(SimulationContext& ctx, const std::vector<std::string>& lin
         if (tok.size() > 6) {
             std::string rt = Tokenizer::to_upper(tok[6]);
             auto has_prefix = [&](const char* p) { return rt.rfind(p, 0) == 0; };
-            int mode = 0;  // OUTLET
-            if      (has_prefix("OUTLET")) mode = 0;
-            else if (has_prefix("IMPERV")) mode = 1;
-            else if (has_prefix("PERV"))   mode = 2;
+            int mode = 0; // OUTLET
+            if (has_prefix("OUTLET"))
+                mode = 0;
+            else if (has_prefix("IMPERV"))
+                mode = 1;
+            else if (has_prefix("PERV"))
+                mode = 2;
             ctx.subcatches.subarea_routing[idx] = mode;
 
             // PctRouted defaults to 100%, then tok[7] overrides. Legacy sets
@@ -262,17 +325,33 @@ void handle_subareas(SimulationContext& ctx, const std::vector<std::string>& lin
 // handle_infiltration()
 // ============================================================================
 
+/**
+ * @brief Assign and check authored subcatchment infiltration parameters.
+ *
+ * Updates known rows with >=4 tokens. Default method follows OPTIONS; recognized final method token
+ * overrides it. Writes available raw project-unit parameter slots before validation: Horton
+ * requires nonnegative values/f0>=fmin, Green-Ampt suction>=0/Ksat>0/IMD in[0,1], curve number
+ * drying time>0. Failure appends ERR_INFILTRATION but leaves written values. Does not allocate
+ * solver state, normalize units or verify every finite input.
+ *
+ * @param[in,out] ctx Model context receiving authored definitions and errors; caller supplies a
+ *     coherent BUILDING/input phase and serializes edits.
+ * @param[in] lines Borrowed section rows, copied/tokenized synchronously; lengths/areas/flows
+ *     remain project display units until post-parse conversion.
+ */
 void handle_infiltration(SimulationContext& ctx, const std::vector<std::string>& lines) {
     // Determine infiltration model from OPTIONS enum
     int model = static_cast<int>(ctx.options.infiltration);
 
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.size() < 4) continue;
+        if (tok.size() < 4)
+            continue;
         // Subcatch  Param1  Param2  Param3  [Param4]  [Param5]
 
         const int idx = ctx.subcatch_names.find(tok[0]);
-        if (idx < 0) continue;
+        if (idx < 0)
+            continue;
 
         // SWMM 5.2 allows a per-subcatchment method override as the LAST
         // token (legacy infil.c:150-155: findmatch against InfilModelWords).
@@ -281,21 +360,35 @@ void handle_infiltration(SimulationContext& ctx, const std::vector<std::string>&
         int row_model = model;
         {
             const std::string last = Tokenizer::to_upper(tok[ntoks - 1]);
-            if      (last == "HORTON")         { row_model = 0; --ntoks; }
-            else if (last == "MOD_HORTON" ||
-                     last == "MODIFIED_HORTON") { row_model = 1; --ntoks; }
-            else if (last == "GREEN_AMPT")     { row_model = 2; --ntoks; }
-            else if (last == "MOD_GREEN_AMPT" ||
-                     last == "MODIFIED_GREEN_AMPT") { row_model = 3; --ntoks; }
-            else if (last == "CURVE_NUMBER")   { row_model = 4; --ntoks; }
+            if (last == "HORTON") {
+                row_model = 0;
+                --ntoks;
+            } else if (last == "MOD_HORTON" || last == "MODIFIED_HORTON") {
+                row_model = 1;
+                --ntoks;
+            } else if (last == "GREEN_AMPT") {
+                row_model = 2;
+                --ntoks;
+            } else if (last == "MOD_GREEN_AMPT" || last == "MODIFIED_GREEN_AMPT") {
+                row_model = 3;
+                --ntoks;
+            } else if (last == "CURVE_NUMBER") {
+                row_model = 4;
+                --ntoks;
+            }
         }
 
         ctx.subcatches.infil_model[idx] = row_model;
-        if (ntoks > 1) ctx.subcatches.infil_p1[idx] = to_double(tok[1]);
-        if (ntoks > 2) ctx.subcatches.infil_p2[idx] = to_double(tok[2]);
-        if (ntoks > 3) ctx.subcatches.infil_p3[idx] = to_double(tok[3]);
-        if (ntoks > 4) ctx.subcatches.infil_p4[idx] = to_double(tok[4]);
-        if (ntoks > 5) ctx.subcatches.infil_p5[idx] = to_double(tok[5]);
+        if (ntoks > 1)
+            ctx.subcatches.infil_p1[idx] = to_double(tok[1]);
+        if (ntoks > 2)
+            ctx.subcatches.infil_p2[idx] = to_double(tok[2]);
+        if (ntoks > 3)
+            ctx.subcatches.infil_p3[idx] = to_double(tok[3]);
+        if (ntoks > 4)
+            ctx.subcatches.infil_p4[idx] = to_double(tok[4]);
+        if (ntoks > 5)
+            ctx.subcatches.infil_p5[idx] = to_double(tok[5]);
 
         // Parameter validation — legacy infil_readParams raises ERROR 235
         // when the model's setParams rejects the values (infil.c:198).
@@ -307,22 +400,21 @@ void handle_infiltration(SimulationContext& ctx, const std::vector<std::string>&
         const double p5 = ctx.subcatches.infil_p5[idx];
         bool ok = true;
         switch (static_cast<InfiltrationModel>(row_model)) {
-            case InfiltrationModel::HORTON:
-            case InfiltrationModel::MOD_HORTON:
-                // horton_setParams (infil.c:328): no negatives, f0 >= fmin
-                ok = p1 >= 0.0 && p2 >= 0.0 && p3 >= 0.0 &&
-                     p4 >= 0.0 && p5 >= 0.0 && p1 >= p2;
-                break;
-            case InfiltrationModel::GREEN_AMPT:
-            case InfiltrationModel::MOD_GREEN_AMPT:
-                // grnampt_setParams (infil.c:605): suction >= 0, Ksat > 0,
-                // IMD a fraction in [0, 1]
-                ok = p1 >= 0.0 && p2 > 0.0 && p3 >= 0.0 && p3 <= 1.0;
-                break;
-            case InfiltrationModel::CURVE_NUMBER:
-                // curvenum_setParams (infil.c): drying time (3rd param) > 0
-                ok = p3 > 0.0;
-                break;
+        case InfiltrationModel::HORTON:
+        case InfiltrationModel::MOD_HORTON:
+            // horton_setParams (infil.c:328): no negatives, f0 >= fmin
+            ok = p1 >= 0.0 && p2 >= 0.0 && p3 >= 0.0 && p4 >= 0.0 && p5 >= 0.0 && p1 >= p2;
+            break;
+        case InfiltrationModel::GREEN_AMPT:
+        case InfiltrationModel::MOD_GREEN_AMPT:
+            // grnampt_setParams (infil.c:605): suction >= 0, Ksat > 0,
+            // IMD a fraction in [0, 1]
+            ok = p1 >= 0.0 && p2 > 0.0 && p3 >= 0.0 && p3 <= 1.0;
+            break;
+        case InfiltrationModel::CURVE_NUMBER:
+            // curvenum_setParams (infil.c): drying time (3rd param) > 0
+            ok = p3 > 0.0;
+            break;
         }
         if (!ok)
             ctx.errors.push_back(format_error(ERR_INFILTRATION, ""));
@@ -333,23 +425,45 @@ void handle_infiltration(SimulationContext& ctx, const std::vector<std::string>&
 // handle_raingages()
 // ============================================================================
 
+/**
+ * @brief Parse rain-gage recording format, source references and file filters.
+ *
+ * Short rows skip; duplicate IDs append ERR_DUP_NAME through add_unique and retain the earlier
+ * object. New rows and partial field writes are not rolled back on later refusal/allocation. Stores
+ * intensity/volume/cumulative format (unknown defaults intensity), interval in rounded integer
+ * seconds from decimal hours or H:MM[:SS], snow correction and positive optional scale. Caller
+ * input interval must be finite/int-representable. TIMESERIES names defer; FILE accepts path:column
+ * or standard station/IN|MM/start-date grammar. Start-date errors append ERR_DATETIME. Paths are
+ * authored only: no file IO, path resolution, rain conversion or complete source/interval
+ * validation here.
+ *
+ * @param[in,out] ctx Model context receiving authored definitions and errors; caller supplies a
+ *     coherent BUILDING/input phase and serializes edits.
+ * @param[in] lines Borrowed section rows, copied/tokenized synchronously; lengths/areas/flows
+ *     remain project display units until post-parse conversion.
+ */
 void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& lines) {
     for (const auto& pl : parse_section(lines)) {
         auto tok = Tokenizer::tokenize(pl.data);
-        if (tok.size() < 5) continue;
+        if (tok.size() < 5)
+            continue;
         // Name  Format  Interval  SCF  Source  [SourceName]
 
         const std::string& name = tok[0];
         int idx = add_unique(ctx.gage_names, name, ctx.errors);
-        if (idx < 0) continue;  // duplicate ID (ERR 207, legacy input.c parity)
+        if (idx < 0)
+            continue; // duplicate ID (ERR 207, legacy input.c parity)
 
         ensure_gage_capacity(ctx, idx);
 
         // Format: VOLUME or INTENSITY → store in rain_type
         const std::string fmt = Tokenizer::to_upper(tok[1]);
-        if (fmt == "VOLUME")          ctx.gages.rain_type[idx] = 1;
-        else if (fmt == "CUMULATIVE") ctx.gages.rain_type[idx] = 2;
-        else                          ctx.gages.rain_type[idx] = 0; // INTENSITY
+        if (fmt == "VOLUME")
+            ctx.gages.rain_type[idx] = 1;
+        else if (fmt == "CUMULATIVE")
+            ctx.gages.rain_type[idx] = 2;
+        else
+            ctx.gages.rain_type[idx] = 0; // INTENSITY
 
         // Recording interval. SWMM specifies the rain-gage interval in
         // DECIMAL HOURS or "H:MM[:SS]" format — NOT seconds. A bare decimal
@@ -359,12 +473,10 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
         // every timeseries/file rain gage. Match legacy datetime_strToTime
         // (decimal hours → fraction of day → seconds).
         const std::string& itok = tok[2];
-        double interval_secs =
-            (itok.find(':') != std::string::npos)
-                ? parse_time_seconds(itok)        // H:MM[:SS] clock duration
-                : to_double(itok, 0.0) * 3600.0;  // decimal hours
-        ctx.gages.interval_sec[idx] =
-            static_cast<int>(interval_secs + 0.5);
+        double interval_secs = (itok.find(':') != std::string::npos)
+                                   ? parse_time_seconds(itok)       // H:MM[:SS] clock duration
+                                   : to_double(itok, 0.0) * 3600.0; // decimal hours
+        ctx.gages.interval_sec[idx] = static_cast<int>(interval_secs + 0.5);
 
         // Snow correction factor
         ctx.gages.snow_factor[idx] = to_double(tok[3], 1.0);
@@ -373,15 +485,16 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
         const std::string src = Tokenizer::to_upper(tok[4]);
 
         if (src == "TIMESERIES" && tok.size() > 5) {
-            ctx.gages.source[idx]   = RainSource::TIMESERIES;
-            ctx.gages.ts_name[idx]  = tok[5]; // Store name for deferred resolution
+            ctx.gages.source[idx] = RainSource::TIMESERIES;
+            ctx.gages.ts_name[idx] = tok[5]; // Store name for deferred resolution
             ctx.gages.ts_index[idx] = ctx.find_timeseries(tok[5]);
             // ts_index may be -1 if TIMESERIES section appears after RAINGAGES
 
             // Optional trailing rainfall scaling factor (legacy gage.c readGageSeriesFormat tok[6])
             if (tok.size() > 6) {
                 double sf = to_double(tok[6], 1.0);
-                if (sf > 0.0) ctx.gages.scale_factor[idx] = sf;
+                if (sf > 0.0)
+                    ctx.gages.scale_factor[idx] = sf;
             }
         } else if (src == "FILE" && tok.size() > 5) {
             ctx.gages.source[idx] = RainSource::FILE_RAIN;
@@ -394,11 +507,11 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
             // guarantee.
             std::string file_only, file_col;
             if (split_series_file_token(tok[5], file_only, file_col)) {
-                ctx.gages.file_path[idx]   = file_only;
-                ctx.gages.col_name[idx]    = file_col;
+                ctx.gages.file_path[idx] = file_only;
+                ctx.gages.col_name[idx] = file_col;
                 ctx.gages.file_format[idx] = RainFileFormat::USER_CSV;
             } else {
-                ctx.gages.file_path[idx]   = file_only;
+                ctx.gages.file_path[idx] = file_only;
                 ctx.gages.file_format[idx] = RainFileFormat::STAN_PRCP;
             }
 
@@ -412,7 +525,8 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
                 // '*' is the writer's placeholder for "no station" — normalize
                 // back to empty ("accept all rows") instead of filtering on a
                 // literal '*' station that would zero out the rainfall.
-                if (tok.size() > 6 && tok[6] != "*") ctx.gages.station_id[idx] = tok[6];
+                if (tok.size() > 6 && tok[6] != "*")
+                    ctx.gages.station_id[idx] = tok[6];
                 if (tok.size() > 7) {
                     const std::string u = Tokenizer::to_upper(tok[7]);
                     ctx.gages.rain_units[idx] = (u == "MM") ? 1 : 0; // default IN
@@ -424,19 +538,23 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
                 ctx.gages.file_start_date[idx] = 0.0;
                 if (tok.size() > 8 && !tok[8].empty() && tok[8][0] != '*') {
                     const double start = parse_date(tok[8]);
-                    if (start > 0.0) ctx.gages.file_start_date[idx] = start;
-                    else ctx.errors.push_back(format_error(ERR_DATETIME, tok[8]));
+                    if (start > 0.0)
+                        ctx.gages.file_start_date[idx] = start;
+                    else
+                        ctx.errors.push_back(format_error(ERR_DATETIME, tok[8]));
                 }
                 // The trailing scale factor is honoured only when present as a
                 // positive number (a start date token would not parse as one).
                 if (tok.size() > 9) {
                     double sf = to_double(tok[9], 1.0);
-                    if (sf > 0.0) ctx.gages.scale_factor[idx] = sf;
+                    if (sf > 0.0)
+                        ctx.gages.scale_factor[idx] = sf;
                 }
             } else {
                 if (tok.size() > 6) {
                     double sf = to_double(tok[6], 1.0);
-                    if (sf > 0.0) ctx.gages.scale_factor[idx] = sf;
+                    if (sf > 0.0)
+                        ctx.gages.scale_factor[idx] = sf;
                 }
             }
         }

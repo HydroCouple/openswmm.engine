@@ -1,4 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
+
+/**
+ * @file      GpuPluginSupport.hpp
+ * @brief     Shared support for GPU execution plugins.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
 #pragma once
 #include "../solver/GpuPluginAbi.h"
 #include "ExplicitKokkosSurfaceSolver.hpp"
@@ -10,7 +20,18 @@
 #endif
 namespace openswmm::twoD::gpu::plugin {
 inline thread_local char error[512]{};
-template<class Initialize> void* make(Initialize initialize) noexcept {
+/**
+ * @brief Construct a plugin-owned Kokkos surface marcher with thread-local diagnostics.
+ * @tparam Initialize Callable type invocable with no arguments.
+ * @param[in] initialize Borrowed/copied synchronous initialization callable; not retained. May
+ * throw to refuse construction.
+ * @return Owned ISurfaceSolver pointer as void*, or NULL on any exception, with bounded text
+ * copied to the calling thread's error buffer.
+ * @note Clears the previous diagnostic first. Requires the plugin's controlling thread;
+ * destruction uses the matching plugin entry point. No exception escapes, and process-runtime
+ * finalization is outside this helper.
+ */
+template <class Initialize> void* make(Initialize initialize) noexcept {
     error[0] = '\0';
     try {
         initialize();

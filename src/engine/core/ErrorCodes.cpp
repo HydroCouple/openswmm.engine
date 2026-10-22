@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file ErrorCodes.cpp
- * @brief Error/warning description table and formatting — legacy-compatible.
+ * @file      ErrorCodes.cpp
+ * @brief     Error/warning description table and formatting — legacy-compatible.
  *
  * @details Description strings are taken verbatim from the legacy SWMM
  *          error.txt and text.h, preserving the `%s` placeholder convention.
@@ -26,9 +26,9 @@
  * @see Legacy reference: src/solver/error.txt, src/solver/error.c
  * @ingroup engine_core
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "ErrorCodes.hpp"
@@ -42,6 +42,13 @@ namespace openswmm {
 // Error description table — from legacy error.txt
 // ============================================================================
 
+/**
+ * @brief Borrow the process-lifetime legacy/new error description map.
+ *
+ * Constructed on first access with thread-safe local-static initialization; initial map allocation
+ * can throw. Callers do not free or mutate the map.
+ * @return Reference to a function-local immutable map whose values are static literals.
+ */
 static const std::unordered_map<int, const char*>& error_table() {
     static const std::unordered_map<int, const char*> table = {
         // System
@@ -201,6 +208,13 @@ static const std::unordered_map<int, const char*>& error_table() {
 // Warning description table — from legacy text.h
 // ============================================================================
 
+/**
+ * @brief Borrow the process-lifetime legacy/new warning description map.
+ *
+ * Constructed on first access with thread-safe local-static initialization; initial map allocation
+ * can throw. Callers do not free or mutate the map.
+ * @return Reference to a function-local immutable map whose values are static literals.
+ */
 static const std::unordered_map<int, const char*>& warning_table() {
     static const std::unordered_map<int, const char*> table = {
         // Codes 1-13 are legacy's own, and legacy's report_writeWarningMsg
@@ -211,15 +225,15 @@ static const std::unordered_map<int, const char*>& warning_table() {
         // minimum elevation drop used for Conduit 31.` against legacy's
         // `... Conduit 31`. Kept verbatim against text.h; the 6.0-only
         // warnings below have no legacy counterpart and keep their own style.
-        {1,  "wet weather time step reduced to recording interval for Rain Gage %s"},
-        {2,  "maximum depth increased for Node %s"},
-        {3,  "negative offset ignored for Link %s"},
-        {4,  "minimum elevation drop used for Conduit %s"},
-        {5,  "minimum slope used for Conduit %s"},
-        {6,  "dry weather time step increased to the wet weather time step"},
-        {7,  "routing time step reduced to the wet weather time step"},
-        {8,  "elevation drop exceeds length for Conduit %s"},
-        {9,  "time series interval greater than recording interval for Rain Gage %s"},
+        {1, "wet weather time step reduced to recording interval for Rain Gage %s"},
+        {2, "maximum depth increased for Node %s"},
+        {3, "negative offset ignored for Link %s"},
+        {4, "minimum elevation drop used for Conduit %s"},
+        {5, "minimum slope used for Conduit %s"},
+        {6, "dry weather time step increased to the wet weather time step"},
+        {7, "routing time step reduced to the wet weather time step"},
+        {8, "elevation drop exceeds length for Conduit %s"},
+        {9, "time series interval greater than recording interval for Rain Gage %s"},
         {10, "crest elevation is below downstream invert for regulator Link %s"},
         {11, "non-matching attributes in Control Rule %s"},
         {12, "inlet removed due to unsupported shape for Conduit %s"},
@@ -265,7 +279,13 @@ std::string_view warning_get_template(int code) noexcept {
 // ============================================================================
 
 /**
- * @brief Substitute the first `%s` in a template with a name string.
+ * @brief Replace the first literal percent-s marker with borrowed text.
+ *
+ * Does not escape text or interpret additional markers; allocation may throw.
+ *
+ * @param[in] tmpl Borrowed template bytes; only the first %s is special.
+ * @param[in] name Borrowed replacement bytes, copied exactly without printf interpretation.
+ * @return Owned result; no marker leaves the template unchanged.
  */
 static std::string substitute(std::string_view tmpl, std::string_view name) {
     std::string result;
@@ -342,18 +362,25 @@ std::string format_warning(int code, std::string_view name, std::string_view det
 // CFFI / C API description tables
 // ============================================================================
 
+/**
+ * @brief Borrow the process-lifetime C API error description map.
+ *
+ * Constructed on first access with thread-safe local-static initialization; initial map allocation
+ * can throw. Callers do not free or mutate the map.
+ * @return Reference to a function-local immutable map whose values are static literals.
+ */
 static const std::unordered_map<int, const char*>& cffi_error_table() {
     static const std::unordered_map<int, const char*> table = {
-        {0,  "no error."},
-        {1,  "memory allocation error."},
-        {2,  "cannot open input file."},
-        {3,  "cannot open report file."},
-        {4,  "cannot open output file."},
-        {5,  "input parsing error."},
-        {6,  "invalid engine lifecycle state transition."},
-        {7,  "invalid engine handle."},
-        {8,  "invalid object index."},
-        {9,  "invalid parameter value."},
+        {0, "no error."},
+        {1, "memory allocation error."},
+        {2, "cannot open input file."},
+        {3, "cannot open report file."},
+        {4, "cannot open output file."},
+        {5, "input parsing error."},
+        {6, "invalid engine lifecycle state transition."},
+        {7, "invalid engine handle."},
+        {8, "invalid object index."},
+        {9, "invalid parameter value."},
         {10, "plugin initialization or execution error."},
         {11, "file I/O error."},
         {12, "hot start file error."},
@@ -364,6 +391,13 @@ static const std::unordered_map<int, const char*>& cffi_error_table() {
     return table;
 }
 
+/**
+ * @brief Borrow the process-lifetime C API warning description map.
+ *
+ * Constructed on first access with thread-safe local-static initialization; initial map allocation
+ * can throw. Callers do not free or mutate the map.
+ * @return Reference to a function-local immutable map whose values are static literals.
+ */
 static const std::unordered_map<int, const char*>& cffi_warning_table() {
     static const std::unordered_map<int, const char*> table = {
         {0, "no warning."},

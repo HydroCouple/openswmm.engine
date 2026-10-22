@@ -1,6 +1,6 @@
 /**
- * @file test_runoff.cpp
- * @brief Unit tests for subcatchment runoff — ponded depth ODE, alpha, runoff rate.
+ * @file      test_runoff.cpp
+ * @brief     Unit tests for subcatchment runoff — ponded depth ODE, alpha, runoff rate.
  *
  * @details Tests the nonlinear reservoir model:
  *   - RunoffSoA::computeAlpha() — Manning's alpha coefficient
@@ -10,6 +10,10 @@
  *
  * @see src/engine/hydrology/Runoff.hpp
  * @ingroup engine_hydrology
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -31,24 +35,24 @@ TEST(RunoffAlpha, BasicComputation) {
     // PHI = 1.486 (US customary Manning constant)
     RunoffSoA soa;
     soa.resize(1);
-    soa.area[0]       = 43560.0;   // 1 acre = 43560 ft²
-    soa.width[0]      = 200.0;     // ft
-    soa.slope[0]      = 0.01;      // 1% slope
-    soa.imperv_pct[0] = 0.5;       // 50% impervious
-    soa.n_imperv[0]   = 0.01;      // Manning's n for impervious
-    soa.n_perv[0]     = 0.10;      // Manning's n for pervious
+    soa.area[0] = 43560.0;   // 1 acre = 43560 ft²
+    soa.width[0] = 200.0;    // ft
+    soa.slope[0] = 0.01;     // 1% slope
+    soa.imperv_pct[0] = 0.5; // 50% impervious
+    soa.n_imperv[0] = 0.01;  // Manning's n for impervious
+    soa.n_perv[0] = 0.10;    // Manning's n for pervious
 
     soa.computeAlpha();
 
-    double sq_slope = std::sqrt(0.01);  // 0.1
+    double sq_slope = std::sqrt(0.01); // 0.1
     double area_imperv = 43560.0 * 0.5;
-    double area_perv   = 43560.0 * 0.5;
+    double area_perv = 43560.0 * 0.5;
 
     double expected_alpha_i = PHI * 200.0 * sq_slope / (0.01 * area_imperv);
     double expected_alpha_p = PHI * 200.0 * sq_slope / (0.10 * area_perv);
 
     EXPECT_NEAR(soa.alpha_imperv[0], expected_alpha_i, 1e-10);
-    EXPECT_NEAR(soa.alpha_perv[0],   expected_alpha_p, 1e-10);
+    EXPECT_NEAR(soa.alpha_perv[0], expected_alpha_p, 1e-10);
     // Impervious alpha should be 10x pervious alpha (N ratio)
     EXPECT_NEAR(soa.alpha_imperv[0] / soa.alpha_perv[0], 10.0, 1e-10);
 }
@@ -56,49 +60,49 @@ TEST(RunoffAlpha, BasicComputation) {
 TEST(RunoffAlpha, ZeroAreaGivesZeroAlpha) {
     RunoffSoA soa;
     soa.resize(1);
-    soa.area[0]  = 0.0;
+    soa.area[0] = 0.0;
     soa.width[0] = 200.0;
     soa.slope[0] = 0.01;
     soa.imperv_pct[0] = 0.5;
-    soa.n_imperv[0]   = 0.01;
-    soa.n_perv[0]     = 0.10;
+    soa.n_imperv[0] = 0.01;
+    soa.n_perv[0] = 0.10;
 
     soa.computeAlpha();
 
     EXPECT_DOUBLE_EQ(soa.alpha_imperv[0], 0.0);
-    EXPECT_DOUBLE_EQ(soa.alpha_perv[0],   0.0);
+    EXPECT_DOUBLE_EQ(soa.alpha_perv[0], 0.0);
 }
 
 TEST(RunoffAlpha, ZeroManningsNGivesZeroAlpha) {
     RunoffSoA soa;
     soa.resize(1);
-    soa.area[0]  = 43560.0;
+    soa.area[0] = 43560.0;
     soa.width[0] = 200.0;
     soa.slope[0] = 0.01;
     soa.imperv_pct[0] = 0.5;
-    soa.n_imperv[0]   = 0.0;
-    soa.n_perv[0]     = 0.0;
+    soa.n_imperv[0] = 0.0;
+    soa.n_perv[0] = 0.0;
 
     soa.computeAlpha();
 
     EXPECT_DOUBLE_EQ(soa.alpha_imperv[0], 0.0);
-    EXPECT_DOUBLE_EQ(soa.alpha_perv[0],   0.0);
+    EXPECT_DOUBLE_EQ(soa.alpha_perv[0], 0.0);
 }
 
 TEST(RunoffAlpha, FullyImperviousNoPerviousAlpha) {
     RunoffSoA soa;
     soa.resize(1);
-    soa.area[0]  = 43560.0;
+    soa.area[0] = 43560.0;
     soa.width[0] = 200.0;
     soa.slope[0] = 0.01;
-    soa.imperv_pct[0] = 1.0;  // fully impervious
-    soa.n_imperv[0]   = 0.01;
-    soa.n_perv[0]     = 0.10;
+    soa.imperv_pct[0] = 1.0; // fully impervious
+    soa.n_imperv[0] = 0.01;
+    soa.n_perv[0] = 0.10;
 
     soa.computeAlpha();
 
     EXPECT_GT(soa.alpha_imperv[0], 0.0);
-    EXPECT_DOUBLE_EQ(soa.alpha_perv[0], 0.0);  // no pervious area
+    EXPECT_DOUBLE_EQ(soa.alpha_perv[0], 0.0); // no pervious area
 }
 
 TEST(RunoffAlpha, MultipleSubcatchments) {
@@ -106,12 +110,12 @@ TEST(RunoffAlpha, MultipleSubcatchments) {
     soa.resize(3);
     for (int i = 0; i < 3; ++i) {
         auto ui = static_cast<std::size_t>(i);
-        soa.area[ui]       = 43560.0 * (1 + i);  // 1, 2, 3 acres
-        soa.width[ui]      = 200.0;
-        soa.slope[ui]      = 0.01;
+        soa.area[ui] = 43560.0 * (1 + i); // 1, 2, 3 acres
+        soa.width[ui] = 200.0;
+        soa.slope[ui] = 0.01;
         soa.imperv_pct[ui] = 0.5;
-        soa.n_imperv[ui]   = 0.01;
-        soa.n_perv[ui]     = 0.10;
+        soa.n_imperv[ui] = 0.01;
+        soa.n_perv[ui] = 0.10;
     }
 
     soa.computeAlpha();
@@ -129,8 +133,23 @@ TEST(RunoffAlpha, MultipleSubcatchments) {
 
 // Replicate the ponded depth update logic from RunoffSolver (private static)
 // to test numerically without accessing private members directly.
-static void testUpdatePondedDepth(double& depth, double inflow,
-                                   double alpha, double dStore, double dt) {
+/**
+ * @brief Advance the test-local depression-storage runoff reference depth.
+ *
+ * Fills storage analytically, then integrates nonlinear drainage over the remaining interval using
+ * the maintained ODE integrator and ODETOL. Integration status is ignored; negative
+ * inputs/nonfinite values are not generally validated. This is a local reference update, not
+ * RunoffSolver execution.
+ *
+ * @param[in,out] depth Initial/final ponded depth feet, clamped nonnegative at return.
+ * @param[in] inflow Net areal supply ft/s held constant.
+ * @param[in] alpha Runoff coefficient such that alpha*excess^MEXP is ft/s; nonpositive disables
+ *     drainage.
+ * @param[in] dStore Depression storage depth feet.
+ * @param[in] dt Intended nonnegative interval seconds.
+ */
+static void testUpdatePondedDepth(double& depth, double inflow, double alpha, double dStore,
+                                  double dt) {
     double tx = dt;
     if (depth + inflow * tx <= dStore) {
         depth += inflow * tx;
@@ -142,25 +161,38 @@ static void testUpdatePondedDepth(double& depth, double inflow,
         }
         if (alpha > 0.0 && tx > 0.0) {
             double captured_inflow = inflow;
-            double captured_alpha  = alpha;
+            double captured_alpha = alpha;
             double captured_dStore = dStore;
             openswmm::ode::integrate(&depth, 1, 0.0, tx, ODETOL, tx,
-                [captured_inflow, captured_alpha, captured_dStore]
-                (double, const double* d, double* dddt) {
-                    double rx = *d - captured_dStore;
-                    double outflow = (rx > 0.0)
-                        ? captured_alpha * std::pow(rx, MEXP) : 0.0;
-                    *dddt = captured_inflow - outflow;
-                });
+                                     [captured_inflow, captured_alpha,
+                                      captured_dStore](double, const double* d, double* dddt) {
+                                         double rx = *d - captured_dStore;
+                                         double outflow =
+                                             (rx > 0.0) ? captured_alpha * std::pow(rx, MEXP) : 0.0;
+                                         *dddt = captured_inflow - outflow;
+                                     });
         } else {
-            if (tx < 0.0) tx = 0.0;
+            if (tx < 0.0)
+                tx = 0.0;
             depth += inflow * tx;
         }
     }
-    if (depth < 0.0) depth = 0.0;
+    if (depth < 0.0)
+        depth = 0.0;
 }
 
 // Replicate the runoff rate calculation
+/**
+ * @brief Evaluate the fixture's excess-depth power runoff law.
+ *
+ * No state mutation or independent finite checks.
+ *
+ * @param[in] depth Ponded depth feet.
+ * @param[in] dStore Depression storage depth feet.
+ * @param[in] alpha Coefficient yielding ft/s when multiplied by positive excess^MEXP.
+ * @return alpha*(depth-dStore)^MEXP ft/s only when both excess and alpha are positive; otherwise
+ *     zero.
+ */
 static double testGetRunoffRate(double depth, double dStore, double alpha) {
     double excess = depth - dStore;
     if (excess > 0.0 && alpha > 0.0)
@@ -261,8 +293,7 @@ TEST(RunoffRate, ManningsFormula) {
         double depth = dStore + excess;
         double rate = testGetRunoffRate(depth, dStore, alpha);
         double expected = alpha * std::pow(excess, MEXP);
-        EXPECT_NEAR(rate, expected, 1e-12)
-            << "Mismatch at excess = " << excess;
+        EXPECT_NEAR(rate, expected, 1e-12) << "Mismatch at excess = " << excess;
     }
 }
 
@@ -302,7 +333,7 @@ TEST(RunoffMassBalance, PondedDepthConservation) {
     // Start with some depth, apply constant inflow, verify mass balance
     double depth_init = 0.005;
     double depth = depth_init;
-    double inflow = 5e-5;   // ft/sec
+    double inflow = 5e-5; // ft/sec
     double dStore = 0.002;
     double alpha = 3.0;
     double dt = 60.0;

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file MeshBuilder.cpp
- * @brief Implementation of mesh topology construction and geometry computation.
+ * @file      MeshBuilder.cpp
+ * @brief     Implementation of mesh topology construction and geometry computation.
  *
  * @details Mixed triangle / quadrilateral cells (kMaxCellVerts = 4 padded
  *          layout, see MeshData.hpp). Triangle arithmetic is kept
@@ -28,6 +28,10 @@
  *
  * @see MeshBuilder.hpp
  * @ingroup engine_2d
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include "MeshBuilder.hpp"
@@ -47,12 +51,21 @@ namespace {
 // Hash for (min, max) vertex pair — identifies a unique edge
 struct EdgeKey {
     int v_lo, v_hi;
-    bool operator==(const EdgeKey& o) const noexcept {
-        return v_lo == o.v_lo && v_hi == o.v_hi;
-    }
+    /**
+     * @brief Compare an edge's complete orientation-independent key.
+     * @param[in] o Borrowed other key.
+     * @return True only when both ordered vertex indices match. No allocation or mutation.
+     */
+    bool operator==(const EdgeKey& o) const noexcept { return v_lo == o.v_lo && v_hi == o.v_hi; }
 };
 
 struct EdgeKeyHash {
+    /**
+     * @brief Hash the ordered vertex pair using unsigned Cantor pairing.
+     * @param[in] k Borrowed edge key; valid mesh indices are nonnegative.
+     * @return size_t hash with ordinary unsigned wraparound for arithmetic overflow; collisions
+     * are resolved by EdgeKey equality. No allocation or mutation.
+     */
     std::size_t operator()(const EdgeKey& k) const noexcept {
         // Cantor pairing
         auto a = static_cast<std::size_t>(k.v_lo);
@@ -64,17 +77,31 @@ struct EdgeKeyHash {
 // Edge record: first cell and local edge that claimed this edge
 struct EdgeRecord {
     int cell_idx;
-    int local_edge;  // 0 .. nv-1
+    int local_edge; // 0 .. nv-1
 };
 
+/**
+ * @brief Construct an orientation-independent mesh edge identity.
+ * @param[in] va First valid zero-based vertex index.
+ * @param[in] vb Second valid zero-based vertex index.
+ * @return Value-owned key ordered as min/max; no validation, allocation or mesh mutation.
+ */
 inline EdgeKey makeEdgeKey(int va, int vb) {
     return {std::min(va, vb), std::max(va, vb)};
 }
 
+/**
+ * @brief Populate one quad cell's sorted two-plane storage geometry.
+ * @param[in,out] mesh Built mixed mesh; side arrays are allocated/reset if their sizes differ
+ * from the current cell count.
+ * @param[in] t Valid zero-based cell index; triangles are an immediate no-op.
+ * @post Writes six sorted elevations in mesh length units and two planimetric areas in squared
+ * mesh units. Requires exclusive access; allocation may throw. No
+ * connectivity/positive-total-area validation occurs here.
+ */
 inline void computeQuadVfr(MeshData& mesh, int t);
 
 } // anonymous namespace
-
 
 void buildMeshTopology(MeshData& mesh) {
     (void)buildMeshTopologyCancellable(mesh, {});
@@ -84,13 +111,16 @@ bool buildMeshTopologyCancellable(MeshData& mesh, const std::function<bool(int)>
     const int nt = mesh.n_triangles();
     const auto cancelled = [&](int value) { return progress && progress(value); };
     const auto report = [&](int start, int width, int cell, int count) {
-        if (!progress) return false;
+        if (!progress)
+            return false;
         const int stride = std::max(1, count / 100);
-        if ((cell + 1) % stride != 0 && cell + 1 != count) return false;
+        if ((cell + 1) % stride != 0 && cell + 1 != count)
+            return false;
         const int pct = count > 0 ? start + width * (cell + 1) / count : start + width;
         return cancelled(pct);
     };
-    if (cancelled(0)) return false;
+    if (cancelled(0))
+        return false;
 
     // --- 1. Build edge-neighbour adjacency ---
 
@@ -102,9 +132,9 @@ bool buildMeshTopologyCancellable(MeshData& mesh, const std::function<bool(int)>
     for (int t = 0; t < nt; ++t) {
         const int nv = mesh.cell_vertex_count(t);
         for (int k = 0; k < kMaxCellVerts; ++k)
-            mesh.cell_nbr[static_cast<std::size_t>(MeshData::slot(t, k))] =
-                (k < nv) ? -1 : -2;
-        if (report(0, 10, t, nt)) return false;
+            mesh.cell_nbr[static_cast<std::size_t>(MeshData::slot(t, k))] = (k < nv) ? -1 : -2;
+        if (report(0, 10, t, nt))
+            return false;
     }
 
     for (int t = 0; t < nt; ++t) {
@@ -121,13 +151,13 @@ bool buildMeshTopologyCancellable(MeshData& mesh, const std::function<bool(int)>
             } else {
                 // Second cell — complete the pair
                 auto& first = it->second;
-                mesh.cell_nbr[static_cast<std::size_t>(MeshData::slot(t, e))] =
-                    first.cell_idx;
+                mesh.cell_nbr[static_cast<std::size_t>(MeshData::slot(t, e))] = first.cell_idx;
                 mesh.cell_nbr[static_cast<std::size_t>(
                     MeshData::slot(first.cell_idx, first.local_edge))] = t;
             }
         }
-        if (report(10, 25, t, nt)) return false;
+        if (report(10, 25, t, nt))
+            return false;
     }
 
     // --- 2. Compute cell geometry ---
@@ -161,12 +191,14 @@ bool buildMeshTopologyCancellable(MeshData& mesh, const std::function<bool(int)>
             double x[4], y[4], z[4];
             for (int k = 0; k < 4; ++k) {
                 const int v = mesh.cell_vertex(t, k);
-                x[k] = mesh.vx[v]; y[k] = mesh.vy[v]; z[k] = mesh.vz[v];
+                x[k] = mesh.vx[v];
+                y[k] = mesh.vy[v];
+                z[k] = mesh.vz[v];
             }
-            const double a1s = 0.5 * ((x[1] - x[0]) * (y[2] - y[0]) -
-                                      (x[2] - x[0]) * (y[1] - y[0]));
-            const double a2s = 0.5 * ((x[2] - x[0]) * (y[3] - y[0]) -
-                                      (x[3] - x[0]) * (y[2] - y[0]));
+            const double a1s =
+                0.5 * ((x[1] - x[0]) * (y[2] - y[0]) - (x[2] - x[0]) * (y[1] - y[0]));
+            const double a2s =
+                0.5 * ((x[2] - x[0]) * (y[3] - y[0]) - (x[3] - x[0]) * (y[2] - y[0]));
             const double a1 = std::abs(a1s), a2 = std::abs(a2s);
             const double area = a1 + a2;
             const double c1x = (x[0] + x[1] + x[2]) / 3.0;
@@ -183,14 +215,16 @@ bool buildMeshTopologyCancellable(MeshData& mesh, const std::function<bool(int)>
             mesh.tri_cz[t] = 0.25 * (z[0] + z[1] + z[2] + z[3]);
             mesh.tri_area[t] = area;
         }
-        if (report(35, 25, t, nt)) return false;
+        if (report(35, 25, t, nt))
+            return false;
     }
     // Quad VFR side data (needs the connectivity + z only; sized on first quad).
     mesh.quad_vfr_z.clear();
     mesh.quad_vfr_a.clear();
     for (int t = 0; t < nt; ++t) {
         computeQuadVfr(mesh, t);
-        if (report(60, 5, t, nt)) return false;
+        if (report(60, 5, t, nt))
+            return false;
     }
 
     // --- 3. Compute edge geometry ---
@@ -249,29 +283,29 @@ bool buildMeshTopologyCancellable(MeshData& mesh, const std::function<bool(int)>
                 mesh.edge_ny[idx] = 0.0;
             }
             // Centroid → edge normal distance (the ghost-cell arm).
-            mesh.edge_dist_c[idx] =
-                to_mid_x * mesh.edge_nx[idx] + to_mid_y * mesh.edge_ny[idx];
+            mesh.edge_dist_c[idx] = to_mid_x * mesh.edge_nx[idx] + to_mid_y * mesh.edge_ny[idx];
         }
-        if (report(65, 35, t, nt)) return false;
+        if (report(65, 35, t, nt))
+            return false;
     }
     return !cancelled(100);
 }
-
 
 std::string validateMesh(const MeshData& mesh) {
     bool cancelled = false;
     return validateMeshCancellable(mesh, {}, cancelled);
 }
 
-std::string validateMeshCancellable(const MeshData& mesh,
-                                    const std::function<bool(int)>& progress,
+std::string validateMeshCancellable(const MeshData& mesh, const std::function<bool(int)>& progress,
                                     bool& cancelled) {
     cancelled = false;
     int nv_total = mesh.n_vertices();
     int nt = mesh.n_triangles();
 
-    if (nv_total < 3) return "Mesh must have at least 3 vertices";
-    if (nt < 1) return "Mesh must have at least 1 cell";
+    if (nv_total < 3)
+        return "Mesh must have at least 3 vertices";
+    if (nt < 1)
+        return "Mesh must have at least 1 cell";
 
     for (int t = 0; t < nt; ++t) {
         if (progress) {
@@ -323,9 +357,8 @@ std::string validateMeshCancellable(const MeshData& mesh,
                 const int s = (cr > 0.0) ? 1 : (cr < 0.0) ? -1 : 0;
                 if (s == 0 || (sign != 0 && s != sign)) {
                     std::ostringstream oss;
-                    oss << "Quad " << t << " (vertices " << v[0] << " " << v[1]
-                        << " " << v[2] << " " << v[3]
-                        << ") is not a convex quadrilateral";
+                    oss << "Quad " << t << " (vertices " << v[0] << " " << v[1] << " " << v[2]
+                        << " " << v[3] << ") is not a convex quadrilateral";
                     return oss.str();
                 }
                 sign = s;
@@ -350,14 +383,19 @@ namespace {
 // Quad VFR side data for cell t (no-op for triangles). Allocates the SoA on
 // first use so all-triangle meshes carry nothing.
 inline void computeQuadVfr(MeshData& mesh, int t) {
-    if (mesh.cell_vertex_count(t) != 4) return;
+    if (mesh.cell_vertex_count(t) != 4)
+        return;
     const auto nt = static_cast<std::size_t>(mesh.n_triangles());
-    if (mesh.quad_vfr_z.size() != nt * kQuadVfrZ) mesh.quad_vfr_z.assign(nt * kQuadVfrZ, 0.0);
-    if (mesh.quad_vfr_a.size() != nt * 2)         mesh.quad_vfr_a.assign(nt * 2, 0.0);
+    if (mesh.quad_vfr_z.size() != nt * kQuadVfrZ)
+        mesh.quad_vfr_z.assign(nt * kQuadVfrZ, 0.0);
+    if (mesh.quad_vfr_a.size() != nt * 2)
+        mesh.quad_vfr_a.assign(nt * 2, 0.0);
     double x[4], y[4], z[4];
     for (int k = 0; k < 4; ++k) {
         const int v = mesh.cell_vertex(t, k);
-        x[k] = mesh.vx[v]; y[k] = mesh.vy[v]; z[k] = mesh.vz[v];
+        x[k] = mesh.vx[v];
+        y[k] = mesh.vy[v];
+        z[k] = mesh.vz[v];
     }
     double A1 = 0.0, A2 = 0.0;
     quadVfrPrecompute(x, y, z, &mesh.quad_vfr_z[static_cast<std::size_t>(t) * kQuadVfrZ], A1, A2);
@@ -367,6 +405,14 @@ inline void computeQuadVfr(MeshData& mesh, int t) {
 
 // Z-dependent geometry of one cell: mean bed and edge-midpoint beds. Triangle
 // expressions kept identical to the triangle-only builder (bit-identity).
+/**
+ * @brief Refresh one cell's bed centroid, edge beds and quad VFR data.
+ * @param[in,out] mesh Built mesh whose vertex elevations already contain the edits.
+ * @param[in] t Valid zero-based cell index with three or four vertices.
+ * @post Writes mesh-length bed elevations; XY-derived geometry and hydraulic state remain
+ * unchanged. Quad VFR arrays may allocate. No bounds validation; caller supplies exclusive mesh
+ * access.
+ */
 inline void recomputeCellZ(MeshData& mesh, int t) {
     const int nv = mesh.cell_vertex_count(t);
     if (nv == 3) {
@@ -388,7 +434,8 @@ inline void recomputeCellZ(MeshData& mesh, int t) {
         return;
     }
     double zsum = 0.0;
-    for (int k = 0; k < nv; ++k) zsum += mesh.vz[mesh.cell_vertex(t, k)];
+    for (int k = 0; k < nv; ++k)
+        zsum += mesh.vz[mesh.cell_vertex(t, k)];
     mesh.tri_cz[t] = zsum / static_cast<double>(nv);
     for (int e = 0; e < nv; ++e) {
         int va, vb;
@@ -404,8 +451,10 @@ void recomputeVertexZDependents(MeshData& mesh, int vidx) {
     for (int t = 0; t < nt; ++t) {
         const int nv = mesh.cell_vertex_count(t);
         bool hit = false;
-        for (int k = 0; k < nv && !hit; ++k) hit = (mesh.cell_vertex(t, k) == vidx);
-        if (!hit) continue;
+        for (int k = 0; k < nv && !hit; ++k)
+            hit = (mesh.cell_vertex(t, k) == vidx);
+        if (!hit)
+            continue;
         recomputeCellZ(mesh, t);
     }
 }

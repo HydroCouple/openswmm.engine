@@ -15,70 +15,27 @@
 // limitations under the License.
 
 /**
- * @file SolarRadiation.hpp
- * @brief Phase H6a — where incoming shortwave `Jin` comes from
- *        (heat plan §2.5, D-H6a).
+ * @file      Radiation.hpp
+ * @brief Solar geometry, atmospheric radiation and interval weather forcing.
  *
- * @details H3 took `Jin` as a static constant. This module adds the two
- *          other spellings of plan §2.5: an interpolated timeseries, and a
- *          computed clear-sky value from solar position — plus the cloud
- *          parameterization that modulates BOTH shortwave and longwave.
+ * @details Solar position uses the Spencer/NOAA approximation, not NREL SPA.
+ * Angles are degrees; longitude and timezone are positive east. The position
+ * result is shared by Bird-Hulstrom clear-sky irradiance and the interval solar
+ * geometry used for UEB forcing. Atmospheric and radiation outputs use SI units.
  *
- *          Nothing here is a flux family. This module produces a number in
- *          W/m² and hands it to H3's existing `netShortwave`; it adds no
- *          term to `netFluxOut`, touches no sign convention, and introduces
- *          no element state. That is why H6a is separable from H6b.
+ * Shortwave cloud attenuation follows 1-k*C^n; the independent longwave factor
+ * follows 1+k_lw*C^2. Constant, time-series and computed heat radiation are
+ * supported alongside the snow forcing resolver's meteorological file inputs.
+ * These functions supply incoming forcing; net surface fluxes live in the heat
+ * components. Serialization, configuration validation and runtime scheduling
+ * remain caller responsibilities.
  *
- * @par Solar position: NOAA/Spencer, NOT NREL SPA — and why (D-H6a-4, as
- *      amended 2026-08-30)
- *      The plan first specified NREL SPA for its published test vectors.
- *      Implementing it faithfully needs ~260 rows of periodic-term
- *      constants (truncated VSOP87 L/B/R plus the IAU 1980 nutation
- *      series). Transcribing those without the source document in reach
- *      means the TABLES and the TEST VECTOR would both be recalled — and a
- *      consistently misremembered pair gates green on wrong physics. That
- *      is the H3 Brunt-in-kPa failure (a plausible wrong number that only a
- *      true reference catches) at 260× the surface area, with the reference
- *      itself compromised.
- *
- *      So the position solver here is the Spencer (1971) / NOAA formulation:
- *      ~40 lines, no constant tables, **verifiable by inspection**, and
- *      independently cross-checkable against two things already in this
- *      engine — `Climate.cpp:178`'s declination and its sunrise/sunset
- *      hours. Stated accuracy is ~0.1° in declination and ~0.5 min in the
- *      equation of time, against SPA's ±0.0003°.
- *
- *      **That error is not the binding one.** A 0.1° zenith error moves
- *      clear-sky GHI by well under 0.1%; the cloud fraction multiplying it
- *      is a whole-number guess. Spending 400 lines of unverifiable
- *      constants to refine the small term under the large one is the wrong
- *      trade.
- *
- * @par The SPA swap point
- *      `solarPosition()` is the ONLY function that knows how a position is
- *      obtained. Everything downstream consumes `SolarPosition`. Landing
- *      SPA later is a new implementation of that one function plus a
- *      `SolarAlgorithm` selector — no caller changes. Do it with NREL's
- *      published C source open, so the tables can be DIFFED rather than
- *      recalled, and gate it against the report's worked example.
- *
- * @par Clear-sky: Bird & Hulstrom (1981)
- *      Broadband direct + diffuse on a horizontal surface. Five
- *      transmittance terms (Rayleigh, ozone, mixed gases, water vapour,
- *      aerosol) and a sky-ground multiple-reflection correction. Defaults
- *      are the paper's standard atmosphere.
- *
- * @warning The Bird coefficients below are transcribed from the published
- *          formulation. The validation handoff instructs the checking agent
- *          to re-derive them from the paper before trusting any gate that
- *          uses them — see `H6A_VALIDATION_HANDOFF_2026-08-30.md` §2.
- *
- * @see plans/transport/HEAT_TRANSPORT_PLAN.md §2.5, §6 H6a, §6.4
+ * @see SolarPosition, resolveRadiation(), updateSolarForcing()
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_HYDROLOGY_RADIATION_HPP
@@ -107,12 +64,55 @@ struct RadiationState {
     bool shared_heat_forcing = false;
 };
 
-// Resolves one forcing interval without mutating the engine's climate clock.
-// Configuration/coverage failures leave output untouched and return an error.
-std::string resolveRadiation(SimulationContext&, double date, double seconds, RadiationState&);
-std::string initializeRadiation(SimulationContext&);
-std::string resolveUebForcing(SimulationContext&, double date, double seconds,
-                              double slope, double aspect, surface::ueb::Forcing&, double& pressure);
+/** @brief Resolve mean weather/radiation for one interval without advancing climate time.
+ * @param[in,out] ctx Initialized compatible model with sorted, finite, aligned tables,
+ * valid date/unit configuration and caches prepared by initializeRadiation(). Table
+ * lookup cursors can advance, although the climate clock and output state do not.
+ * @param date Finite absolute SWMM interval-start date in days within supported calendar range.
+ * @param seconds Finite duration in (0,86400] seconds.
+ * @param[out] output Assigned only on success: horizontal shortwave/longwave W/m2,
+ * air temperature C, humidity fraction, wind m/s, pressure Pa, averaged positive
+ * horizontal cosine, degree geometry and input-origin markers.
+ * @return Empty on success, otherwise a configuration/coverage/value diagnostic.
+ * MET_FILE overrides weather and both radiation channels; otherwise authored series
+ * and legacy heat forcing can replace computed radiation. Weather prescriptions
+ * apply after native/file conversion. Series use piecewise-linear interval means;
+ * solar geometry fixes start-instant declination over the interval. Temperature,
+ * humidity, wind and radiation are checked, but pressure/geometry are not all
+ * individually validated here. Failure retains output but may change lookup cursors.
+ * Exceptions from calendar/geometry/allocation helpers are not caught here. */
+std::string resolveRadiation(SimulationContext& ctx, double date, double seconds,
+                             RadiationState& output);
+/** @brief Validate snow parameters and prepare site and weather input caches.
+ * @param[in,out] ctx Compatible initialized model/options with resolved input path,
+ * climate/heat/snow configuration and time-series tables. A snow SITE takes precedence
+ * over legacy coordinates/elevation and can append one conflict warning. Resolves
+ * MET_FILE relative to the input, loads/qualifies coverage, or builds a daily legacy
+ * climate cache when needed. Daily gaps retain the preceding temperature/wind values
+ * with initial defaults 70 F/zero wind. Does not advance the simulation clock.
+ * @return Empty on accepted setup, otherwise diagnostic. Changes made before failure
+ * (including site overrides, paths and weather caches) remain; not transactional.
+ * Requires caller serialization with forcing resolution and table/cache mutation.
+ * Archive/path/allocation exceptions can propagate beyond normal diagnostic returns. */
+std::string initializeRadiation(SimulationContext& ctx);
+/** @brief Merge resolved interval weather and slope-adjusted radiation into a UEB forcing.
+ * @param[in,out] ctx Compatible initialized weather configuration; successful return
+ * also stores horizontal radiation in climate_state.radiation. Lookup cursors may
+ * advance even on failure; no simulation clock advancement occurs.
+ * @param date Absolute SWMM start date in days, as for resolveRadiation().
+ * @param seconds Finite interval seconds in (0,86400].
+ * @param slope Plane inclination in degrees; follows solarIntegral() admissible range.
+ * @param aspect Plane aspect in degrees clockwise from north.
+ * @param[in,out] forcing Existing forcing copied on success, preserving precipitation
+ * and unrelated fields. Replaces weather, duration, cosine, longwave and shortwave;
+ * division-temperature mode also replaces snow_fraction with zero or one. Shortwave
+ * uses horizontal-area slope ratio unless flat or the astronomical denominator is zero.
+ * @param[out] pressure Station pressure Pa, assigned only on success.
+ * @return Empty on success, otherwise resolver/standard geometry-exception text.
+ * Outputs remain unchanged for normal failures before publication; exceptions from
+ * resolveRadiation occur outside the local geometry catch and can propagate. */
+std::string resolveUebForcing(SimulationContext& ctx, double date, double seconds, double slope,
+                              double aspect, surface::ueb::Forcing& forcing, double& pressure);
 
 /// Solar constant, W/m² (Bird & Hulstrom 1981; WMO 1982).
 inline constexpr double kSolarConstant = 1367.0;
@@ -129,88 +129,93 @@ inline constexpr double kStdPressureMb = 1013.25;
  *          `cos_zenith` acquires a small positive value.
  */
 struct SolarPosition {
-    double declination_deg = 0.0;  ///< Solar declination, +N
-    double eq_time_min     = 0.0;  ///< Equation of time, minutes
-    double hour_angle_deg  = 0.0;  ///< Solar hour angle, 0 at solar noon
-    double zenith_deg      = 90.0; ///< Solar zenith angle
-    double cos_zenith      = 0.0;  ///< Clamped at 0 below the horizon
-    double elevation_deg   = 0.0;  ///< 90 − zenith (may be negative)
+    double declination_deg = 0.0; ///< Solar declination, +N
+    double eq_time_min = 0.0;     ///< Equation of time, minutes
+    double hour_angle_deg = 0.0;  ///< Solar hour angle, 0 at solar noon
+    double zenith_deg = 90.0;     ///< Solar zenith angle
+    double cos_zenith = 0.0;      ///< Clamped at 0 below the horizon
+    double elevation_deg = 0.0;   ///< 90 − zenith (may be negative)
     /// Earth–sun distance correction `E0 = (r0/r)²`, dimensionless.
-    double eccentricity    = 1.0;
+    double eccentricity = 1.0;
 };
 
-/**
- * @brief Sun position by the Spencer (1971) / NOAA formulation.
- *
- * @param day_of_year 1–366.
- * @param hour_local  Local clock hour, decimal (13.5 = 13:30).
- * @param lat_deg     Latitude, +N.
- * @param lon_deg     Longitude, +E.
- * @param tz_hours    Offset from UTC, +E (MST = −7).
- *
- * @note This is the function SPA replaces. Nothing else in this module
- *       knows how a position is obtained.
- */
-SolarPosition solarPosition(int day_of_year, double hour_local, double lat_deg,
-                            double lon_deg, double tz_hours) noexcept;
+/** @brief Compute Spencer/NOAA sun geometry at a local civil-clock instant.
+ * @param day_of_year Calendar ordinal in [1,366]; the fit uses a 365-day denominator.
+ * @param hour_local Finite decimal local hour, normally [0,24).
+ * @param lat_deg Latitude degrees north in [-90,90].
+ * @param lon_deg Finite longitude degrees east, normally [-180,180].
+ * @param tz_hours Finite civil offset hours east of UTC; no daylight-saving lookup.
+ * @return Degree-valued declination/hour-angle/zenith/elevation, equation of time in
+ * minutes, nonnegative zenith cosine and dimensionless distance correction. Hour
+ * angle wraps to [-180,180]. Inputs are not validated; nonfinite hour/longitude can
+ * make wrapping nonterminating. This approximation is not a high-precision SPA solver. */
+SolarPosition solarPosition(int day_of_year, double hour_local, double lat_deg, double lon_deg,
+                            double tz_hours) noexcept;
 
-/// Kasten–Young relative optical air mass. Returns 0 below the horizon,
-/// which is what makes every Bird transmittance collapse to a dark result
-/// rather than to a domain error.
+/** @brief Compute Kasten-Young relative optical air mass.
+ * @param zenith_deg Finite solar zenith in degrees, normally [0,180].
+ * @return Dimensionless path factor, or zero for zenith>=90 or a nonpositive/NaN
+ * denominator. Does not normalize angles or validate negative zenith inputs. */
 double airMass(double zenith_deg) noexcept;
 
-/// Station pressure [mb] from elevation [m], standard atmosphere.
+/** @brief Estimate standard-atmosphere station pressure from elevation.
+ * @param elevation_m Finite metres above sea level; negative elevations allowed.
+ * Keep 1-2.25577e-5*elevation_m nonnegative for the power-law domain.
+ * @return Pressure in millibars; no range clamp, finite check or error diagnostic. */
 double pressureFromElevation(double elevation_m) noexcept;
 
-/**
- * @brief Bird & Hulstrom clear-sky global horizontal irradiance [W/m²].
- *
- * @param pos           Sun geometry from `solarPosition`.
- * @param pressure_mb   Station pressure.
- * @param cfg           Aerosol / water / ozone / ground albedo.
- * @returns 0 when the sun is at or below the horizon.
- */
+/** @brief Estimate clear-sky global horizontal irradiance with Bird-Hulstrom terms.
+ * @param pos Compatible solarPosition result with nonnegative cosine and valid
+ * zenith/eccentricity. The cosine and zenith must describe the same instant.
+ * @param pressure_mb Finite nonnegative station pressure in millibars.
+ * @param cfg Physical aerosol optical depths, precipitable water/ozone centimetres
+ * and land ground-albedo fraction. Caller validates finite model ranges.
+ * @return Nonnegative irradiance W/m2, zero without positive cosine/air mass.
+ * A nonpositive reflection denominator omits that correction. No diagnostics or
+ * complete input-domain validation are supplied by this noexcept numerical helper. */
 double birdClearSkyGHI(const SolarPosition& pos, double pressure_mb,
                        const SolarConfig& cfg) noexcept;
 
-/**
- * @brief Cloud attenuation of shortwave, `1 − k·C^n` (Kasten–Czeplak).
- *
- * @details Clamped at 0: an over-unity `k·C^n` blocks completely rather
- *          than turning into negative insolation — the same guard
- *          `netShortwave` applies to an over-unity shade factor.
- */
+/** @brief Compute the cloud attenuation multiplier max(0,1-k*C^n).
+ * @param cloud_fraction Cloud fraction; nonpositive or NaN returns literal one;
+ * positive values above one are capped at one.
+ * @param k Finite dimensionless attenuation coefficient, normally nonnegative.
+ * @param n Finite exponent compatible with the positive cloud fraction.
+ * @return Dimensionless factor; lower-bounded at zero but not capped at one when
+ * negative k is supplied. No other coefficient validation occurs. */
 double cloudShortwaveFactor(double cloud_fraction, double k, double n) noexcept;
 
-/**
- * @brief Cloud enhancement of atmospheric emissivity, `1 + k_lw·C²` (Bolz).
- *
- * @warning This multiplies into H3's RHE-gated Brunt term. It returns a
- *          LITERAL 1.0 when `cloud_fraction <= 0`, rather than evaluating
- *          `1 + k·0²`, so the clear-sky path is bit-identical to H3 rather
- *          than merely equal to it. Plan §2.5 makes that a verify criterion.
- */
+/** @brief Compute the cloud atmospheric-emissivity multiplier 1+k_lw*C^2.
+ * @param cloud_fraction Cloud fraction; nonpositive or NaN returns literal one;
+ * positive values above one are capped at one.
+ * @param k_lw Finite dimensionless enhancement coefficient, normally nonnegative.
+ * @return Dimensionless multiplier without an output clamp. Literal clear-sky one
+ * avoids evaluating coefficient arithmetic for a cloud-free input. */
 double cloudLongwaveFactor(double cloud_fraction, double k_lw) noexcept;
 
-/**
- * @brief Resolve `Jin` and `C` for this step into `ctx.heat_state`.
- *
- * @details Call at the PROLOGUE of every binding that will go on to call
- *          `netFluxOut`. There are four (`applyHeatFluxes`, the ARD
- *          binding, the watershed binding, the LID binding) and they run on
- *          two different clocks, so a single call site upstream of all of
- *          them does not exist. The function is idempotent within a step
- *          and costs ~40 flops, which is why repeating it is cheaper than
- *          inventing a scheduler to avoid repeating it.
- *
- * @note No-op unless HEAT_TRANSPORT is on and RADIATIVE_EXCHANGE is
- *       enabled — under any other configuration `shortwave_now` is never
- *       read, and computing it would be the kind of unobserved work
- *       lesson 39 is about.
- */
+/** @brief Update shared heat shortwave/cloud forcing with mesh radiation disabled.
+ * @param[in,out] ctx Initialized heat/climate/snow state at current_date; serializes
+ * table cursors and shared output state with other forcing readers/writers.
+ * @param seconds Interval seconds forwarded to the snow resolver when authored
+ * radiation/MET_FILE is present; default one. Otherwise legacy heat uses an instant.
+ * Equivalent to the three-argument overload with mesh_enabled=false; same failure
+ * and mutation behavior. Call before flux evaluation on each consuming clock. */
 void updateSolarForcing(SimulationContext& ctx, double seconds = 1);
+/** @brief Resolve shared incoming heat shortwave and cloud forcing at current_date.
+ * @param[in,out] ctx Compatible initialized heat/climate/snow state and resolved tables.
+ * Writes heat_state.shortwave_now/cloud_now and radiation.shared_heat_forcing; the
+ * snow path stores a full resolved radiation record. Table cursors may advance.
+ * @param seconds Positive interval seconds (at most one day) for the authored snow/
+ * MET_FILE path; unused by ordinary constant/series/computed legacy heat lookup.
+ * @param mesh_enabled Enables work for mesh heat even if legacy radiative exchange
+ * is off; heat_transport must still be enabled.
+ * @throws std::runtime_error Authored radiation/weather resolver diagnostic.
+ * Disabled work writes shortwave=-1 and cloud=0, retaining the prior radiation record.
+ * Legacy series lookup is instantaneous and can return zero beyond coverage; cloud
+ * is clamped to [0,1], then attenuates all shortwave modes. Missing computed-site
+ * coordinates yield zero. Repeated calls are not free of table-cursor mutations. */
 void updateSolarForcing(SimulationContext& ctx, double seconds, bool mesh_enabled);
 
-}  // namespace openswmm::climate
+} // namespace openswmm::climate
 
-#endif  // OPENSWMM_ENGINE_HYDROLOGY_RADIATION_HPP
+#endif // OPENSWMM_ENGINE_HYDROLOGY_RADIATION_HPP

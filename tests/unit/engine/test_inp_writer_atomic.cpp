@@ -1,4 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
+
+/**
+ * @file      test_inp_writer_atomic.cpp
+ * @brief     Tests for inp writer atomic.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
 #include <gtest/gtest.h>
 #include "core/AtomicOutputFile.hpp"
 #include "core/InpWriter.hpp"
@@ -20,28 +30,67 @@ using openswmm::io::AtomicOutputFile;
 using openswmm::io::path_utf8;
 
 namespace {
+/**
+ * @brief Read atomic-writer evidence in binary mode.
+ *
+ * Local stream closes at return; allocation exceptions propagate.
+ *
+ * @param[in] p Borrowed source path.
+ * @return Owned bytes, empty for empty/unopenable input; partial failures are not separately
+ *     reported.
+ */
 std::string read(const fs::path& p) {
     std::ifstream f(p, std::ios::binary);
     return {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
 }
+/**
+ * @brief Overwrite one binary fixture file and assert stream success after close.
+ *
+ * Explicitly closes the local stream and records a nonfatal f.good failure. Does not create
+ * directories or return an IO status.
+ *
+ * @param[in] p Borrowed destination path; parent must exist and matching contents are replaced.
+ * @param[in] text Borrowed bytes copied through stream insertion.
+ */
 void put(const fs::path& p, const std::string& text) {
-    std::ofstream f(p, std::ios::binary); f << text; f.close(); EXPECT_TRUE(f.good());
+    std::ofstream f(p, std::ios::binary);
+    f << text;
+    f.close();
+    EXPECT_TRUE(f.good());
 }
 #ifndef _WIN32
-template<class F> bool limited(rlim_t bytes, F action) {
+/**
+ * @brief Run an action in a child process with a file-size resource limit.
+ *
+ * POSIX-only fixture helper. Child ignores SIGXFSZ, installs the limit, invokes action and exits
+ * via _exit without ordinary stack/stdio flushing. Limit setup uses exit codes 2/3, false action
+ * uses 1; exceptions are not caught. Child file changes persist while memory changes do not
+ * propagate to parent.
+ *
+ * @param[in] bytes RLIMIT_FSIZE soft limit in bytes, accepted only when no greater than the
+ *     inherited hard limit.
+ * @param[in] action Copyable callable invoked once in the child and returning a bool success
+ *     indication.
+ * @return True only when fork/wait succeed and child exits normally with status zero.
+ */
+template <class F> bool limited(rlim_t bytes, F action) {
     const pid_t pid = fork();
-    if (pid < 0) return false;
+    if (pid < 0)
+        return false;
     if (pid == 0) {
         struct rlimit limit;
-        if (getrlimit(RLIMIT_FSIZE, &limit) != 0) _exit(2);
+        if (getrlimit(RLIMIT_FSIZE, &limit) != 0)
+            _exit(2);
         limit.rlim_cur = bytes;
         std::signal(SIGXFSZ, SIG_IGN);
-        if (setrlimit(RLIMIT_FSIZE, &limit) != 0) _exit(3);
+        if (setrlimit(RLIMIT_FSIZE, &limit) != 0)
+            _exit(3);
         const bool ok = action();
         _exit(ok ? 0 : 1);
     }
     int status = 0;
-    if (waitpid(pid, &status, 0) != pid) return false;
+    if (waitpid(pid, &status, 0) != pid)
+        return false;
     return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 #endif
@@ -52,25 +101,62 @@ protected:
     openswmm::SimulationContext ctx;
     openswmm::twoD::MeshData mesh;
     openswmm::twoD::SolverOptions2D options;
+    /**
+     * @brief Create unique reviewable atomic-writer evidence and seed prior destination content.
+     *
+     * Uses OPENSWMM_ATOMIC_WRITE_TEST_OUTPUT or _atomic_writer, appends test name and steady-clock
+     * count, creates directories and overwrites model.inp/mesh.2dm with original sentinel content. Adds
+     * a context title. Filesystem exceptions propagate; fixture keeps artifacts for review.
+     */
     void SetUp() override {
         const char* root = std::getenv("OPENSWMM_ATOMIC_WRITE_TEST_OUTPUT");
         dir = root ? openswmm::io::utf8_path(std::string(root)) : fs::path("_atomic_writer");
         dir /= std::string(testing::UnitTest::GetInstance()->current_test_info()->name()) + "-" +
                std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
         fs::create_directories(dir);
-        model = dir / "model.inp"; meshFile = dir / "mesh.2dm";
-        put(model, "original model\n"); put(meshFile, "original mesh\n");
+        model = dir / "model.inp";
+        meshFile = dir / "mesh.2dm";
+        put(model, "original model\n");
+        put(meshFile, "original mesh\n");
         ctx.title_notes.push_back("atomic writer test");
     }
+    /**
+     * @brief Attach a single-triangle owned mesh to the writer context.
+     *
+     * Populates unit triangle vertices/connectivity, sets absolute mesh-file path, then stores borrowed
+     * mesh/options pointers in ctx.twod_io. Members must remain alive/unmoved through write; does not
+     * create or overwrite mesh output itself.
+     */
     void attachMesh() {
-        mesh.resize_vertices(3); mesh.resize_triangles(1);
-        mesh.vx[1] = 1; mesh.vy[2] = 1; mesh.set_triangle(0, 0, 1, 2);
+        mesh.resize_vertices(3);
+        mesh.resize_triangles(1);
+        mesh.vx[1] = 1;
+        mesh.vy[2] = 1;
+        mesh.set_triangle(0, 0, 1, 2);
         options.mesh_file = path_utf8(fs::absolute(meshFile));
-        ctx.twod_io.mesh = &mesh; ctx.twod_io.options = &options;
+        ctx.twod_io.mesh = &mesh;
+        ctx.twod_io.options = &options;
     }
+    /**
+     * @brief Invoke the production model writer on the fixture context.
+     *
+     * Uses model as destination and any attached mesh/component references; writer may mutate derived
+     * save/path bookkeeping and replace destination artifacts according to its own transaction
+     * contract.
+     *
+     * @param[out] warnings Optional writable warning vector forwarded to writeInpFile; ownership stays
+     *     with caller.
+     * @return writeInpFile status unchanged.
+     */
     int write(std::vector<std::string>* warnings = nullptr) {
         return openswmm::inp_writer::writeInpFile(ctx, path_utf8(model), warnings);
     }
+    /**
+     * @brief Require no staged temporary save files remain in the evidence directory.
+     *
+     * Recursively scans retained fixture artifacts and nonfatally rejects filenames starting
+     * .openswmm-save-. Does not delete files; filesystem iteration/path exceptions can propagate.
+     */
     void TearDown() override {
         for (const auto& p : fs::recursive_directory_iterator(dir))
             EXPECT_NE(path_utf8(p.path().filename()).find(".openswmm-save-"), 0u)
@@ -84,51 +170,69 @@ TEST_F(InpWriterAtomic, ReplacesExistingUnicodeFileAndPreservesPermissions) {
     fs::permissions(model, fs::perms::owner_read | fs::perms::owner_write);
     ASSERT_EQ(write(), 0);
     EXPECT_NE(read(model).find("atomic writer test"), std::string::npos);
-#ifndef _WIN32  // Windows has no group permission bits
+#ifndef _WIN32 // Windows has no group permission bits
     EXPECT_EQ(fs::status(model).permissions() & fs::perms::group_write, fs::perms::none);
 #endif
     EXPECT_EQ(write(), 0);
 }
 TEST_F(InpWriterAtomic, RefusesDirectoryAndMissingParent) {
-    model = dir / "directory"; fs::create_directory(model);
-    EXPECT_NE(write(), 0); EXPECT_TRUE(fs::is_directory(model));
+    model = dir / "directory";
+    fs::create_directory(model);
+    EXPECT_NE(write(), 0);
+    EXPECT_TRUE(fs::is_directory(model));
     model = dir / "missing" / "model.inp";
-    EXPECT_NE(write(), 0); EXPECT_FALSE(fs::exists(model));
+    EXPECT_NE(write(), 0);
+    EXPECT_FALSE(fs::exists(model));
 }
 TEST_F(InpWriterAtomic, RefusesReadOnlyOutput) {
     fs::permissions(model, fs::perms::owner_read);
-    EXPECT_NE(write(), 0); EXPECT_EQ(read(model), "original model\n");
+    EXPECT_NE(write(), 0);
+    EXPECT_EQ(read(model), "original model\n");
     fs::permissions(model, fs::perms::owner_read | fs::perms::owner_write);
 }
 TEST_F(InpWriterAtomic, SidecarOpenFailureKeepsModel) {
-    attachMesh(); fs::remove(meshFile); fs::create_directory(meshFile);
+    attachMesh();
+    fs::remove(meshFile);
+    fs::create_directory(meshFile);
     std::vector<std::string> warnings;
     EXPECT_NE(write(&warnings), 0);
-    EXPECT_EQ(read(model), "original model\n"); EXPECT_FALSE(warnings.empty());
+    EXPECT_EQ(read(model), "original model\n");
+    EXPECT_FALSE(warnings.empty());
 }
 TEST_F(InpWriterAtomic, SidecarSuccessAndRebasedReference) {
-    attachMesh(); ASSERT_EQ(write(), 0);
+    attachMesh();
+    ASSERT_EQ(write(), 0);
     EXPECT_NE(read(meshFile).find("[2D_VERTICES]"), std::string::npos);
     EXPECT_NE(read(model).find("FILE mesh.2dm"), std::string::npos);
 }
 TEST_F(InpWriterAtomic, AbandonedOutputIsDiscarded) {
-    { AtomicOutputFile output(model); ASSERT_NE(output.stream(), nullptr);
-      std::fputs("partial replacement", output.stream()); }
+    {
+        AtomicOutputFile output(model);
+        ASSERT_NE(output.stream(), nullptr);
+        std::fputs("partial replacement", output.stream());
+    }
     EXPECT_EQ(read(model), "original model\n");
 }
 TEST_F(InpWriterAtomic, PublicationFailureKeepsCompetingDestination) {
     const auto target = dir / "new.inp";
-    { AtomicOutputFile output(target); ASSERT_NE(output.stream(), nullptr);
-      std::fputs("new", output.stream());
-      fs::create_directory(target); put(target / "keep", "do not replace");
-      EXPECT_FALSE(output.commit()); EXPECT_FALSE(output.error().empty()); }
+    {
+        AtomicOutputFile output(target);
+        ASSERT_NE(output.stream(), nullptr);
+        std::fputs("new", output.stream());
+        fs::create_directory(target);
+        put(target / "keep", "do not replace");
+        EXPECT_FALSE(output.commit());
+        EXPECT_FALSE(output.error().empty());
+    }
     EXPECT_EQ(read(target / "keep"), "do not replace");
 }
 #ifndef _WIN32
 TEST_F(InpWriterAtomic, SymlinkSaveUpdatesTargetAndKeepsLink) {
     const auto original = model;
-    model = dir / "alias.inp"; fs::create_symlink("model.inp", model);
-    ASSERT_EQ(write(), 0); EXPECT_TRUE(fs::is_symlink(model));
+    model = dir / "alias.inp";
+    fs::create_symlink("model.inp", model);
+    ASSERT_EQ(write(), 0);
+    EXPECT_TRUE(fs::is_symlink(model));
     EXPECT_NE(read(original).find("atomic writer test"), std::string::npos);
 }
 TEST_F(InpWriterAtomic, DanglingSymlinkErrorNamesRequestedDestination) {
@@ -143,9 +247,11 @@ TEST_F(InpWriterAtomic, DanglingSymlinkErrorNamesRequestedDestination) {
 TEST_F(InpWriterAtomic, BufferedFlushFailureKeepsOriginal) {
     EXPECT_TRUE(limited(16, [&] {
         AtomicOutputFile output(model);
-        if (!output.stream()) return false;
+        if (!output.stream())
+            return false;
         char buffer[4096];
-        if (std::setvbuf(output.stream(), buffer, _IOFBF, sizeof buffer) != 0) return false;
+        if (std::setvbuf(output.stream(), buffer, _IOFBF, sizeof buffer) != 0)
+            return false;
         std::fputs("a buffered payload longer than sixteen bytes", output.stream());
         return !output.commit() && !output.error().empty();
     }));
@@ -155,23 +261,39 @@ TEST_F(InpWriterAtomic, MainShortWriteKeepsOriginalAndRetrySucceeds) {
     ctx.title_notes.assign(800, std::string(120, 'x'));
     EXPECT_TRUE(limited(32768, [&] { return write() != 0; }));
     EXPECT_EQ(read(model), "original model\n");
-    ASSERT_EQ(write(), 0); EXPECT_GT(read(model).size(), 32768u);
+    ASSERT_EQ(write(), 0);
+    EXPECT_GT(read(model).size(), 32768u);
 }
 TEST_F(InpWriterAtomic, SidecarShortWriteKeepsBothFilesAndRetrySucceeds) {
-    attachMesh(); mesh.vtag[0] = std::string(131072, 'x');
+    attachMesh();
+    mesh.vtag[0] = std::string(131072, 'x');
     EXPECT_TRUE(limited(32768, [&] { return write() != 0; }));
     EXPECT_EQ(read(model), "original model\n");
     EXPECT_EQ(read(meshFile), "original mesh\n");
     mesh.vtag[0] = "corridor";
-    ASSERT_EQ(write(), 0); EXPECT_NE(read(meshFile).find("corridor"), std::string::npos);
+    ASSERT_EQ(write(), 0);
+    EXPECT_NE(read(meshFile).find("corridor"), std::string::npos);
 }
 #endif
 } // namespace
 
-
 class InpWriterComponent : public InpWriterAtomic {
 protected:
     fs::path sourceConfig, targetConfig;
+    /**
+     * @brief Register a fixture process component with optional rendered config saving.
+     *
+     * Creates source/saved directories, overwrites model/source/target sentinel files and appends a
+     * spec whose resolved path points to source. Registers a process-global renderer under a fixed ID;
+     * title_notes.front equal to large config selects 100000 bytes, otherwise rendered config newline.
+     * Caller ensures nonempty title for rendering and serialized use of the registry; no unregister
+     * occurs here.
+     *
+     * @param[in] rendered Install a renderer returning rendered config text when true; otherwise
+     *     register no renderer.
+     * @param[in] absolute Author config_path as the absolute target when true, otherwise component.cfg
+     *     relative to the saved model.
+     */
     void component(bool rendered, bool absolute = false) {
         fs::create_directories(dir / "source");
         fs::create_directories(dir / "saved");
@@ -189,11 +311,14 @@ protected:
         openswmm::components::ProcessComponentRegistry::instance().register_component(
             spec.id, "checked component writer test", nullptr,
             rendered ? openswmm::components::ComponentConfigSave(
-                [](const openswmm::SimulationContext& c, const openswmm::ProcessComponentSpec&) {
-                    // A compact title requests a large component without making the INP large.
-                    return c.title_notes.front() == "large config"
-                        ? std::string(100000, 'x') : std::string("rendered config\n");
-                }) : nullptr);
+                           [](const openswmm::SimulationContext& c,
+                              const openswmm::ProcessComponentSpec&) {
+                               // A compact title requests a large component without making the INP large.
+                               return c.title_notes.front() == "large config"
+                                          ? std::string(100000, 'x')
+                                          : std::string("rendered config\n");
+                           })
+                     : nullptr);
     }
 };
 
@@ -214,7 +339,8 @@ TEST_F(InpWriterComponent, RenderedFailurePreservesModelAndRetry) {
 
 TEST_F(InpWriterComponent, CopyFailurePreservesModelAndRetry) {
     component(false);
-    fs::remove(targetConfig); fs::create_directory(targetConfig);
+    fs::remove(targetConfig);
+    fs::create_directory(targetConfig);
     EXPECT_NE(write(), 0);
     EXPECT_EQ(read(model), "original model\n");
     fs::remove(targetConfig);
@@ -223,7 +349,8 @@ TEST_F(InpWriterComponent, CopyFailurePreservesModelAndRetry) {
 }
 
 TEST_F(InpWriterComponent, MissingCopySourceIsFailure) {
-    component(false); fs::remove(sourceConfig);
+    component(false);
+    fs::remove(sourceConfig);
     EXPECT_NE(write(), 0);
     EXPECT_EQ(read(model), "original model\n");
     EXPECT_EQ(read(targetConfig), "previous destination\n");
@@ -245,20 +372,24 @@ TEST_F(InpWriterComponent, CopySameSourceIsUnchanged) {
 
 #ifndef _WIN32
 TEST_F(InpWriterComponent, RenderedShortWritePreservesConfigAndModel) {
-    component(true); ctx.title_notes.front() = "large config";
+    component(true);
+    ctx.title_notes.front() = "large config";
     ASSERT_TRUE(limited(32768, [&] {
-        return write() != 0 && read(targetConfig) == "previous destination\n"
-            && read(model) == "original model\n";
+        return write() != 0 && read(targetConfig) == "previous destination\n" &&
+               read(model) == "original model\n";
     }));
-    ASSERT_EQ(write(), 0); EXPECT_EQ(read(targetConfig).size(), 100000u);
+    ASSERT_EQ(write(), 0);
+    EXPECT_EQ(read(targetConfig).size(), 100000u);
 }
 TEST_F(InpWriterComponent, CopyShortWritePreservesConfigAndModel) {
-    component(false); put(sourceConfig, std::string(100000, 'x'));
+    component(false);
+    put(sourceConfig, std::string(100000, 'x'));
     ASSERT_TRUE(limited(32768, [&] {
-        return write() != 0 && read(targetConfig) == "previous destination\n"
-            && read(model) == "original model\n";
+        return write() != 0 && read(targetConfig) == "previous destination\n" &&
+               read(model) == "original model\n";
     }));
-    ASSERT_EQ(write(), 0); EXPECT_EQ(read(targetConfig), read(sourceConfig));
+    ASSERT_EQ(write(), 0);
+    EXPECT_EQ(read(targetConfig), read(sourceConfig));
 }
 #endif
 
@@ -273,9 +404,9 @@ TEST_F(InpWriterComponent, RepeatedRenderedSaveReportsReplacementOnlyOnce) {
     EXPECT_TRUE(warnings.empty());
 }
 
-
 TEST_F(InpWriterComponent, StagingMapsEveryOutputAndKeepsFinalReferences) {
-    component(true); attachMesh();
+    component(true);
+    attachMesh();
     fs::create_directories(dir / "staging");
     std::vector<std::pair<std::string, int>> outputs;
     openswmm::inp_writer::InpWriteOptions opts;
@@ -297,11 +428,13 @@ TEST_F(InpWriterComponent, StagingMapsEveryOutputAndKeepsFinalReferences) {
 }
 
 TEST_F(InpWriterComponent, StagingRefusalLeavesAllFinalOutputsUnchanged) {
-    component(true); attachMesh();
+    component(true);
+    attachMesh();
     openswmm::inp_writer::InpWriteOptions opts;
     opts.map_output = [&](const std::string&, auto kind) {
         return kind == openswmm::inp_writer::InpWriteOptions::OutputKind::Mesh
-            ? std::string() : path_utf8(dir / (std::to_string(static_cast<int>(kind)) + ".stage"));
+                   ? std::string()
+                   : path_utf8(dir / (std::to_string(static_cast<int>(kind)) + ".stage"));
     };
     std::vector<std::string> warnings;
     EXPECT_NE(openswmm::inp_writer::writeInpFile(ctx, path_utf8(model), &warnings, opts), 0);
@@ -336,16 +469,18 @@ TEST_F(InpWriterComponent, StagingRejectsFinalDestinationAlias) {
 }
 #ifndef _WIN32
 TEST_F(InpWriterComponent, StagedShortWritePreservesAllFinalOutputs) {
-    component(true); attachMesh(); ctx.title_notes.front() = "large config";
+    component(true);
+    attachMesh();
+    ctx.title_notes.front() = "large config";
     openswmm::inp_writer::InpWriteOptions opts;
     opts.map_output = [&](const std::string&, auto kind) {
         return path_utf8(dir / (std::to_string(static_cast<int>(kind)) + ".stage"));
     };
     ASSERT_TRUE(limited(32768, [&] {
-        return openswmm::inp_writer::writeInpFile(ctx, path_utf8(model), nullptr, opts) != 0
-            && read(model) == "original model\n"
-            && read(targetConfig) == "previous destination\n"
-            && read(meshFile) == "original mesh\n";
+        return openswmm::inp_writer::writeInpFile(ctx, path_utf8(model), nullptr, opts) != 0 &&
+               read(model) == "original model\n" &&
+               read(targetConfig) == "previous destination\n" &&
+               read(meshFile) == "original mesh\n";
     }));
 }
 #endif

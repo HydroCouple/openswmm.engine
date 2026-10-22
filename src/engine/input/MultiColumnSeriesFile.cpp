@@ -15,18 +15,18 @@
 // limitations under the License.
 
 /**
- * @file MultiColumnSeriesFile.cpp
- * @brief Parse-once cache for multi-column series files (CSV/TSV/TSF).
+ * @file      MultiColumnSeriesFile.cpp
+ * @brief     Parse-once cache for multi-column series files (CSV/TSV/TSF).
  * @see MultiColumnSeriesFile.hpp
  * @ingroup engine_input
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "MultiColumnSeriesFile.hpp"
-#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
+#include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
 #include "../core/DateTime.hpp"
 
 #include <algorithm>
@@ -45,87 +45,150 @@ namespace {
 
 std::atomic<long> g_parse_count_total{0};
 
-/// Trim ASCII whitespace and surrounding double quotes.
-/// (Relocated from PostParseResolver.cpp csv_trim.)
+/**
+ * @brief Copy a cell without ASCII edge whitespace and one surrounding quote pair.
+ *
+ * @param[in] s Borrowed raw cell; trims space/tab/CR/LF before testing enclosing double quotes.
+ * @return Owned substring; quote contents are not unescaped or trimmed a second time.
+ */
 std::string cell_trim(const std::string& s) {
     std::size_t a = 0, b = s.size();
-    auto space = [](char c) {
-        return c == ' ' || c == '\t' || c == '\r' || c == '\n';
-    };
-    while (a < b && space(s[a])) ++a;
-    while (b > a && space(s[b - 1])) --b;
-    if (b - a >= 2 && s[a] == '"' && s[b - 1] == '"') { ++a; --b; }
+    auto space = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
+    while (a < b && space(s[a]))
+        ++a;
+    while (b > a && space(s[b - 1]))
+        --b;
+    if (b - a >= 2 && s[a] == '"' && s[b - 1] == '"') {
+        ++a;
+        --b;
+    }
     return s.substr(a, b - a);
 }
 
-/// Quote-aware split on a single-character delimiter.
-/// (Generalises PostParseResolver.cpp csv_split to comma or tab.)
+/**
+ * @brief Split one physical line on unquoted delimiter bytes.
+ *
+ * No doubled-quote/backslash escape decoding or multiline quote support; unmatched quotes group
+ * through end of line.
+ *
+ * @param[in] line Borrowed row; double quotes toggle grouping and are retained until per-cell trim.
+ * @param[in] delim Single delimiter byte, normally comma or tab.
+ * @return Owned trimmed/unquoted cells, preserving empty and trailing fields.
+ */
 std::vector<std::string> cell_split(const std::string& line, char delim) {
     std::vector<std::string> out;
     std::string cur;
     bool in_quotes = false;
     for (const char c : line) {
-        if (c == '"') { in_quotes = !in_quotes; cur.push_back(c); }
-        else if (c == delim && !in_quotes) { out.push_back(cell_trim(cur)); cur.clear(); }
-        else cur.push_back(c);
+        if (c == '"') {
+            in_quotes = !in_quotes;
+            cur.push_back(c);
+        } else if (c == delim && !in_quotes) {
+            out.push_back(cell_trim(cur));
+            cur.clear();
+        } else
+            cur.push_back(c);
     }
     out.push_back(cell_trim(cur));
     return out;
 }
 
-/// Count delimiters OUTSIDE double quotes — the delimiter sniff has to use
-/// the same notion of a delimiter as cell_split above, or a quoted header
-/// name containing the other delimiter (`Date<TAB>"a,b,c"`) sniffs wrong and
-/// the whole file mis-splits.
+/**
+ * @brief Count delimiter bytes outside toggled double-quote groups.
+ *
+ * @param[in] line Borrowed row; no escape interpretation.
+ * @param[in] delim Delimiter byte to count.
+ * @return Unquoted count; caller keeps the count representable as long.
+ */
 long count_unquoted(const std::string& line, char delim) {
     long n = 0;
     bool in_quotes = false;
     for (const char c : line) {
-        if (c == '"') in_quotes = !in_quotes;
-        else if (c == delim && !in_quotes) ++n;
+        if (c == '"')
+            in_quotes = !in_quotes;
+        else if (c == delim && !in_quotes)
+            ++n;
     }
     return n;
 }
 
-/// Case-insensitive equality (relocated from PostParseResolver.cpp csv_iequals).
+/**
+ * @brief Compare equal-length byte strings with C-locale lowercase mapping.
+ *
+ * @param[in] a Borrowed first string.
+ * @param[in] b Borrowed second string.
+ * @return True when every unsigned-char-safe lowercase byte matches; no Unicode folding.
+ */
 bool iequals(std::string_view a, std::string_view b) {
-    if (a.size() != b.size()) return false;
+    if (a.size() != b.size())
+        return false;
     for (std::size_t i = 0; i < a.size(); ++i)
-        if (std::tolower(static_cast<unsigned char>(a[i]))
-            != std::tolower(static_cast<unsigned char>(b[i]))) return false;
+        if (std::tolower(static_cast<unsigned char>(a[i])) !=
+            std::tolower(static_cast<unsigned char>(b[i])))
+            return false;
     return true;
 }
 
-/// 0 = none, 1 = AM, 2 = PM — detected from the cell's trailing token.
+/**
+ * @brief Recognize trailing AM or PM letters after ASCII edge whitespace.
+ *
+ * @param[in] cell Borrowed date/time cell; only final two nonwhitespace bytes are examined.
+ * @return One for AM, two for PM, zero otherwise; no token-boundary requirement before those
+ *     letters.
+ */
 int trailing_meridiem(const std::string& cell) {
     std::size_t e = cell.find_last_not_of(" \t\r\n");
-    if (e == std::string::npos || e < 1) return 0;
+    if (e == std::string::npos || e < 1)
+        return 0;
     const char m1 = static_cast<char>(std::toupper(static_cast<unsigned char>(cell[e])));
     const char m0 = static_cast<char>(std::toupper(static_cast<unsigned char>(cell[e - 1])));
-    if (m1 != 'M' || (m0 != 'A' && m0 != 'P')) return 0;
+    if (m1 != 'M' || (m0 != 'A' && m0 != 'P'))
+        return 0;
     return m0 == 'A' ? 1 : 2;
 }
 
-/// Strip a UTF-8 BOM and a trailing '\r' (files written on Windows).
+/**
+ * @brief Remove first-line UTF-8 BOM and one trailing CR byte.
+ *
+ * Does not trim other whitespace or validate encoding.
+ *
+ * @param[in,out] line Owned physical line read without LF.
+ * @param[in] first_line True permits stripping an initial EF-BB-BF byte sequence; false preserves
+ *     it.
+ */
 void normalize_line(std::string& line, bool first_line) {
-    if (first_line && line.size() >= 3 &&
-        static_cast<unsigned char>(line[0]) == 0xEF &&
-        static_cast<unsigned char>(line[1]) == 0xBB &&
-        static_cast<unsigned char>(line[2]) == 0xBF)
+    if (first_line && line.size() >= 3 && static_cast<unsigned char>(line[0]) == 0xEF &&
+        static_cast<unsigned char>(line[1]) == 0xBB && static_cast<unsigned char>(line[2]) == 0xBF)
         line.erase(0, 3);
-    if (!line.empty() && line.back() == '\r') line.pop_back();
+    if (!line.empty() && line.back() == '\r')
+        line.pop_back();
 }
 
+/**
+ * @brief Classify a line by its first non-space/tab byte.
+ *
+ * @param[in] line Borrowed line after trailing-CR normalization.
+ * @return True for empty/space-tab-only or leading semicolon/hash comment; false otherwise.
+ */
 bool is_blank_or_comment(const std::string& line) {
     for (const char c : line) {
-        if (c == ' ' || c == '\t') continue;
+        if (c == ' ' || c == '\t')
+            continue;
         return c == ';' || c == '#';
     }
-    return true;  // all-whitespace / empty
+    return true; // all-whitespace / empty
 }
 
+/**
+ * @brief Test a beginning-of-line prefix using C-locale case folding.
+ *
+ * @param[in] line Borrowed complete line; leading whitespace is significant.
+ * @param[in] prefix Borrowed prefix bytes.
+ * @return True for equal folded prefix bytes, including empty prefix.
+ */
 bool istarts_with(const std::string& line, std::string_view prefix) {
-    if (line.size() < prefix.size()) return false;
+    if (line.size() < prefix.size())
+        return false;
     return iequals(std::string_view(line).substr(0, prefix.size()), prefix);
 }
 
@@ -138,7 +201,8 @@ bool istarts_with(const std::string& line, std::string_view prefix) {
 int ParsedSeriesFile::find_column(std::string_view name) const {
     // Column 0 is the time stamp, so a match there is as wrong as no match.
     for (std::size_t i = 1; i < headers.size(); ++i)
-        if (iequals(headers[i], name)) return static_cast<int>(i);
+        if (iequals(headers[i], name))
+            return static_cast<int>(i);
     return -1;
 }
 
@@ -153,8 +217,11 @@ bool parse_series_datetime(const std::string& cell, double& out) {
     // ISO-8601: YYYY-MM-DD[ T]HH:MM[:SS]
     int n = std::sscanf(c, "%d-%d-%d%*[ T]%d:%d:%d", &y, &mo, &d, &h, &mi, &s);
     if (n >= 3) {
-        if (n < 4) { h = mi = s = 0; }
-        else if (n < 6) { s = 0; }
+        if (n < 4) {
+            h = mi = s = 0;
+        } else if (n < 6) {
+            s = 0;
+        }
         out = datetime::encodeDate(y, mo, d) + datetime::encodeTime(h, mi, s);
         return true;
     }
@@ -165,15 +232,20 @@ bool parse_series_datetime(const std::string& cell, double& out) {
     // branch above (plan §3.1).
     n = std::sscanf(c, "%d/%d/%d %d:%d:%d", &mo, &d, &y, &h, &mi, &s);
     if (n >= 3) {
-        if (n < 4) { h = mi = s = 0; }
-        else if (n < 6) { s = 0; }
+        if (n < 4) {
+            h = mi = s = 0;
+        } else if (n < 6) {
+            s = 0;
+        }
         if (n >= 4) {
             const int meridiem = trailing_meridiem(cell);
             // Some TSF exporters append AM/PM to a 24-hour clock (00 AM,
             // 13..23 PM). Those hours are already absolute; do not add 12.
             if (meridiem != 0 && h >= 1 && h <= 12) {
-                if (h == 12) h = 0;          // 12:xx AM → 00:xx, 12:xx PM → 12:xx
-                if (meridiem == 2) h += 12;  // PM
+                if (h == 12)
+                    h = 0; // 12:xx AM → 00:xx, 12:xx PM → 12:xx
+                if (meridiem == 2)
+                    h += 12; // PM
             }
         }
         out = datetime::encodeDate(y, mo, d) + datetime::encodeTime(h, mi, s);
@@ -188,17 +260,21 @@ bool parse_series_datetime(const std::string& cell, double& out) {
 
 bool looks_like_multicolumn_series_file(const std::string& abs_path) {
     std::ifstream in(openswmm::io::utf8_path(abs_path));
-    if (!in.is_open()) return false;
+    if (!in.is_open())
+        return false;
 
     std::string line;
     bool first = true;
     while (std::getline(in, line)) {
         normalize_line(line, first);
         first = false;
-        if (is_blank_or_comment(line)) continue;
+        if (is_blank_or_comment(line))
+            continue;
 
-        if (istarts_with(line, "IDs:")) return true;      // PCSWMM TSF
-        if (line.find(',') != std::string::npos) return true;  // comma CSV
+        if (istarts_with(line, "IDs:"))
+            return true; // PCSWMM TSF
+        if (line.find(',') != std::string::npos)
+            return true; // comma CSV
         if (line.find('\t') != std::string::npos) {
             // Tab-delimited: a legacy .dat data row starts with a date; a
             // TSV header row does not.
@@ -215,14 +291,14 @@ bool looks_like_multicolumn_series_file(const std::string& abs_path) {
 // `path:column` token split (one rule for gages AND timeseries)
 // ---------------------------------------------------------------------------
 
-bool split_series_file_token(std::string_view token,
-                             std::string& path_out,
+bool split_series_file_token(std::string_view token, std::string& path_out,
                              std::string& column_out) {
     path_out.assign(token);
     column_out.clear();
 
     const auto colon = token.rfind(':');
-    if (colon == std::string_view::npos) return false;
+    if (colon == std::string_view::npos)
+        return false;
 
     // Windows drive letter ("C:\dir\f.csv"): not a column separator.
     if (colon == 1 && std::isalpha(static_cast<unsigned char>(token[0])))
@@ -231,8 +307,7 @@ bool split_series_file_token(std::string_view token,
     // A colon inside a directory name ("/data/Rich:2024/f.csv"): the text
     // after it is still path, not a column name.
     const auto suffix = token.substr(colon + 1);
-    if (suffix.find('/') != std::string_view::npos ||
-        suffix.find('\\') != std::string_view::npos)
+    if (suffix.find('/') != std::string_view::npos || suffix.find('\\') != std::string_view::npos)
         return false;
 
     path_out.assign(token.substr(0, colon));
@@ -244,12 +319,11 @@ bool split_series_file_token(std::string_view token,
 // Parser
 // ---------------------------------------------------------------------------
 
-bool parse_multicolumn_series_file(const std::string& abs_path,
-                                   ParsedSeriesFile& out,
-                                   std::vector<std::string>& errors,
-                                   SeriesFileStatus* status) {
+bool parse_multicolumn_series_file(const std::string& abs_path, ParsedSeriesFile& out,
+                                   std::vector<std::string>& errors, SeriesFileStatus* status) {
     auto fail = [&](SeriesFileStatus st, const std::string& msg) {
-        if (status) *status = st;
+        if (status)
+            *status = st;
         errors.push_back(msg);
         return false;
     };
@@ -259,8 +333,7 @@ bool parse_multicolumn_series_file(const std::string& abs_path,
 
     std::ifstream in(openswmm::io::utf8_path(abs_path));
     if (!in.is_open())
-        return fail(SeriesFileStatus::OPEN_FAILED,
-                    "cannot open series file " + abs_path);
+        return fail(SeriesFileStatus::OPEN_FAILED, "cannot open series file " + abs_path);
 
     // --- Header ---------------------------------------------------------
     std::string line;
@@ -269,13 +342,13 @@ bool parse_multicolumn_series_file(const std::string& abs_path,
     while (std::getline(in, line)) {
         normalize_line(line, first);
         first = false;
-        if (is_blank_or_comment(line)) continue;
+        if (is_blank_or_comment(line))
+            continue;
         have_header = true;
         break;
     }
     if (!have_header)
-        return fail(SeriesFileStatus::FORMAT_FAILED,
-                    "no header row in series file " + abs_path);
+        return fail(SeriesFileStatus::FORMAT_FAILED, "no header row in series file " + abs_path);
 
     char delim = ',';
     if (istarts_with(line, "IDs:")) {
@@ -285,11 +358,12 @@ bool parse_multicolumn_series_file(const std::string& abs_path,
         delim = '\t';
         out.headers = cell_split(line, delim);
         std::string skip;
-        for (int i = 0; i < 2 && std::getline(in, skip); ++i) {}
+        for (int i = 0; i < 2 && std::getline(in, skip); ++i) {
+        }
     } else {
         // CSV/TSV: sniff the delimiter from the header row, counting only
         // delimiters outside quotes (see count_unquoted).
-        const long tabs   = count_unquoted(line, '\t');
+        const long tabs = count_unquoted(line, '\t');
         const long commas = count_unquoted(line, ',');
         delim = (tabs > 0 && tabs >= commas) ? '\t' : ',';
         out.headers = cell_split(line, delim);
@@ -297,8 +371,7 @@ bool parse_multicolumn_series_file(const std::string& abs_path,
 
     const std::size_t ncols = out.headers.size();
     if (ncols < 2)
-        return fail(SeriesFileStatus::FORMAT_FAILED,
-                    "no data columns in series file " + abs_path);
+        return fail(SeriesFileStatus::FORMAT_FAILED, "no data columns in series file " + abs_path);
 
     out.columns.assign(ncols, {});
     out.col_first_date.assign(ncols, 0.0);
@@ -310,7 +383,8 @@ bool parse_multicolumn_series_file(const std::string& abs_path,
     constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
     while (std::getline(in, line)) {
         normalize_line(line, false);
-        if (is_blank_or_comment(line)) continue;
+        if (is_blank_or_comment(line))
+            continue;
 
         const std::vector<std::string> cells = cell_split(line, delim);
         double dt = 0.0;
@@ -320,8 +394,10 @@ bool parse_multicolumn_series_file(const std::string& abs_path,
         }
 
         out.dates.push_back(dt);
-        if (out.first_date == 0.0 || dt < out.first_date) out.first_date = dt;
-        if (dt > out.last_date) out.last_date = dt;
+        if (out.first_date == 0.0 || dt < out.first_date)
+            out.first_date = dt;
+        if (dt > out.last_date)
+            out.last_date = dt;
 
         for (std::size_t i = 1; i < ncols; ++i) {
             double v = kNaN;
@@ -333,8 +409,10 @@ bool parse_multicolumn_series_file(const std::string& abs_path,
                     v = parsed;
                     if (out.col_first_date[i] == 0.0 || dt < out.col_first_date[i])
                         out.col_first_date[i] = dt;
-                    if (dt > out.col_last_date[i]) out.col_last_date[i] = dt;
-                    if (v > 0.0) ++out.col_periods_precip[i];
+                    if (dt > out.col_last_date[i])
+                        out.col_last_date[i] = dt;
+                    if (v > 0.0)
+                        ++out.col_periods_precip[i];
                 } else {
                     // Includes present-but-empty cells: the per-gage scan
                     // this replaces counted them as unreadable (strtod
@@ -353,17 +431,20 @@ bool parse_multicolumn_series_file(const std::string& abs_path,
         std::vector<std::size_t> order(out.dates.size());
         std::iota(order.begin(), order.end(), std::size_t{0});
         std::sort(order.begin(), order.end(),
-                  [&](std::size_t a, std::size_t b){ return out.dates[a] < out.dates[b]; });
+                  [&](std::size_t a, std::size_t b) { return out.dates[a] < out.dates[b]; });
         auto permute = [&](std::vector<double>& v) {
             std::vector<double> tmp(v.size());
-            for (std::size_t i = 0; i < order.size(); ++i) tmp[i] = v[order[i]];
+            for (std::size_t i = 0; i < order.size(); ++i)
+                tmp[i] = v[order[i]];
             v.swap(tmp);
         };
         permute(out.dates);
-        for (std::size_t i = 1; i < ncols; ++i) permute(out.columns[i]);
+        for (std::size_t i = 1; i < ncols; ++i)
+            permute(out.columns[i]);
     }
 
-    if (status) *status = SeriesFileStatus::OK;
+    if (status)
+        *status = SeriesFileStatus::OK;
     return true;
 }
 
@@ -371,10 +452,9 @@ bool parse_multicolumn_series_file(const std::string& abs_path,
 // Cache
 // ---------------------------------------------------------------------------
 
-const ParsedSeriesFile* MultiColumnFileCache::get_or_parse(
-        const std::string& abs_path,
-        std::vector<std::string>& errors,
-        SeriesFileStatus* status) {
+const ParsedSeriesFile* MultiColumnFileCache::get_or_parse(const std::string& abs_path,
+                                                           std::vector<std::string>& errors,
+                                                           SeriesFileStatus* status) {
     auto it = files_.find(abs_path);
     if (it == files_.end()) {
         Entry entry;
@@ -382,7 +462,8 @@ const ParsedSeriesFile* MultiColumnFileCache::get_or_parse(
         ++parse_count_;
         it = files_.emplace(abs_path, std::move(entry)).first;
     }
-    if (status) *status = it->second.status;
+    if (status)
+        *status = it->second.status;
     return it->second.status == SeriesFileStatus::OK ? &it->second.file : nullptr;
 }
 

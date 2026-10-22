@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file openswmm_engine.h
- * @brief OpenSWMM Engine — primary transparent C API (master header).
+ * @file      openswmm_engine.h
+ * @brief     OpenSWMM Engine — primary transparent C API (master header).
  *
  * @details This is the main public header for the openswmm.engine library
  *          (version 6.0.0-alpha.1). It defines:
@@ -29,7 +29,8 @@
  *
  *          Domain-specific APIs are in separate headers:
  *            - openswmm_datetime.h      — SWMM DateTime encode/decode utilities
- *            - openswmm_model.h         — model building, validation, serialisation, options, user flags
+ *            - openswmm_model.h         — model building, validation, serialisation, options, user
+ * flags
  *            - openswmm_nodes.h         — node creation, properties, state, forcing, bulk
  *            - openswmm_links.h         — link creation, properties, cross-sections, state, bulk
  *            - openswmm_subcatchments.h — subcatchment creation, properties, state, bulk
@@ -74,12 +75,19 @@
  *
  * @note This API maintains a C89-compatible ABI at the boundary.
  *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
+/**
+ * @defgroup new_engine OpenSWMM Engine
+ * @brief Modern engine implementation, data model and public interfaces.
+ */
+
+/**
  * @defgroup engine_api New Engine C API
  * @ingroup  new_engine
- *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_H
@@ -92,17 +100,17 @@
  * ========================================================================= */
 
 #ifdef OPENSWMM_ENGINE_STATIC
-#  define SWMM_ENGINE_API
+#define SWMM_ENGINE_API
 #else
-#  ifdef _WIN32
-#    ifdef openswmm_engine_EXPORTS
-#      define SWMM_ENGINE_API __declspec(dllexport)
-#    else
-#      define SWMM_ENGINE_API __declspec(dllimport)
-#    endif
-#  else
-#    define SWMM_ENGINE_API __attribute__((visibility("default")))
-#  endif
+#ifdef _WIN32
+#ifdef openswmm_engine_EXPORTS
+#define SWMM_ENGINE_API __declspec(dllexport)
+#else
+#define SWMM_ENGINE_API __declspec(dllimport)
+#endif
+#else
+#define SWMM_ENGINE_API __attribute__((visibility("default")))
+#endif
 #endif
 
 #ifdef __cplusplus
@@ -114,35 +122,35 @@ extern "C" {
  * ========================================================================= */
 
 typedef enum SWMM_ErrorCode {
-    SWMM_OK              =  0,
-    SWMM_ERR_NOMEM       =  1,
-    SWMM_ERR_INPFILE     =  2,
-    SWMM_ERR_RPTFILE     =  3,
-    SWMM_ERR_OUTFILE     =  4,
-    SWMM_ERR_PARSE       =  5,
-    SWMM_ERR_LIFECYCLE   =  6,
-    SWMM_ERR_BADHANDLE   =  7,
-    SWMM_ERR_BADINDEX    =  8,
-    SWMM_ERR_BADPARAM    =  9,
-    SWMM_ERR_PLUGIN      = 10,
-    SWMM_ERR_IO          = 11,
-    SWMM_ERR_HOTSTART    = 12,
-    SWMM_ERR_CRS         = 13,
-    SWMM_ERR_NUMERICAL   = 14,
-    SWMM_ERR_DEPENDENCY  = 15,  /**< Object has dependents that would be affected by deletion. */
-    SWMM_ERR_CANCELLED   = 16,  /**< A caller cancelled a cancellable read-only operation. */
-    SWMM_ERR_INTERNAL    = 99
+    SWMM_OK = 0,
+    SWMM_ERR_NOMEM = 1,
+    SWMM_ERR_INPFILE = 2,
+    SWMM_ERR_RPTFILE = 3,
+    SWMM_ERR_OUTFILE = 4,
+    SWMM_ERR_PARSE = 5,
+    SWMM_ERR_LIFECYCLE = 6,
+    SWMM_ERR_BADHANDLE = 7,
+    SWMM_ERR_BADINDEX = 8,
+    SWMM_ERR_BADPARAM = 9,
+    SWMM_ERR_PLUGIN = 10,
+    SWMM_ERR_IO = 11,
+    SWMM_ERR_HOTSTART = 12,
+    SWMM_ERR_CRS = 13,
+    SWMM_ERR_NUMERICAL = 14,
+    SWMM_ERR_DEPENDENCY = 15, /**< Object has dependents that would be affected by deletion. */
+    SWMM_ERR_CANCELLED = 16,  /**< A caller cancelled a cancellable read-only operation. */
+    SWMM_ERR_INTERNAL = 99
 } SWMM_ErrorCode;
 
 typedef enum SWMM_WarnCode {
-    SWMM_WARN_NONE              = 0,
-    SWMM_WARN_HOTSTART_MISSING  = 1,
-    SWMM_WARN_UNKNOWN_SECTION   = 2,
-    SWMM_WARN_UNKNOWN_OPTION    = 3,
-    SWMM_WARN_DEPRECATED_KW     = 4,
-    SWMM_WARN_PLUGIN_INIT       = 5,
-    SWMM_WARN_NUMERICAL         = 6,
-    SWMM_WARN_STABILITY_LIMIT   = 7
+    SWMM_WARN_NONE = 0,
+    SWMM_WARN_HOTSTART_MISSING = 1,
+    SWMM_WARN_UNKNOWN_SECTION = 2,
+    SWMM_WARN_UNKNOWN_OPTION = 3,
+    SWMM_WARN_DEPRECATED_KW = 4,
+    SWMM_WARN_PLUGIN_INIT = 5,
+    SWMM_WARN_NUMERICAL = 6,
+    SWMM_WARN_STABILITY_LIMIT = 7
 } SWMM_WarnCode;
 
 /* =========================================================================
@@ -150,15 +158,15 @@ typedef enum SWMM_WarnCode {
  * ========================================================================= */
 
 typedef enum SWMM_EngineState {
-    SWMM_STATE_NONE        = 0,
-    SWMM_STATE_CREATED     = 1,
-    SWMM_STATE_OPENED      = 2,
+    SWMM_STATE_NONE = 0,
+    SWMM_STATE_CREATED = 1,
+    SWMM_STATE_OPENED = 2,
     SWMM_STATE_INITIALIZED = 3,
-    SWMM_STATE_STARTED     = 4,
-    SWMM_STATE_RUNNING     = 5,
-    SWMM_STATE_ENDED       = 6,
-    SWMM_STATE_CLOSED      = 7,
-    SWMM_STATE_BUILDING    = 8  /**< Programmatic model construction in progress */
+    SWMM_STATE_STARTED = 4,
+    SWMM_STATE_RUNNING = 5,
+    SWMM_STATE_ENDED = 6,
+    SWMM_STATE_CLOSED = 7,
+    SWMM_STATE_BUILDING = 8 /**< Programmatic model construction in progress */
 } SWMM_EngineState;
 
 /* =========================================================================
@@ -166,94 +174,232 @@ typedef enum SWMM_EngineState {
  * ========================================================================= */
 
 typedef enum SWMM_ObjectType {
-    SWMM_OBJ_GAGE      = 0,
-    SWMM_OBJ_SUBCATCH  = 1,
-    SWMM_OBJ_NODE      = 2,
-    SWMM_OBJ_LINK      = 3,
-    SWMM_OBJ_POLLUT    = 4,
-    SWMM_OBJ_LANDUSE   = 5,
-    SWMM_OBJ_TIMESER   = 6,
-    SWMM_OBJ_TABLE     = 7,
-    SWMM_OBJ_RDII      = 8,
-    SWMM_OBJ_UNITHYD   = 9,
-    SWMM_OBJ_SNOWMELT  = 10,
-    SWMM_OBJ_SHAPE     = 11,
-    SWMM_OBJ_LID       = 12
+    SWMM_OBJ_GAGE = 0,
+    SWMM_OBJ_SUBCATCH = 1,
+    SWMM_OBJ_NODE = 2,
+    SWMM_OBJ_LINK = 3,
+    SWMM_OBJ_POLLUT = 4,
+    SWMM_OBJ_LANDUSE = 5,
+    SWMM_OBJ_TIMESER = 6,
+    SWMM_OBJ_TABLE = 7,
+    SWMM_OBJ_RDII = 8,
+    SWMM_OBJ_UNITHYD = 9,
+    SWMM_OBJ_SNOWMELT = 10,
+    SWMM_OBJ_SHAPE = 11,
+    SWMM_OBJ_LID = 12
 } SWMM_ObjectType;
 
 /* =========================================================================
  * Engine lifecycle functions
  * ========================================================================= */
 
-/** @brief Create a new engine instance (SWMM_STATE_CREATED). */
+/**
+ * @brief Allocate an independent engine in SWMM_STATE_CREATED.
+ * @return Caller-owned opaque engine handle, or NULL when construction fails. Release with
+ *     swmm_engine_destroy(); close active resources first when explicit teardown is needed.
+ */
 SWMM_ENGINE_API SWMM_Engine swmm_engine_create(void);
 
 /**
- * @brief Open and parse a SWMM input file; load plugins → SWMM_STATE_OPENED.
+ * @brief Load a model and prepare its plugin configuration in SWMM_STATE_OPENED.
  *
- * @param engine          Engine handle.
- * @param inp             Path to the input file.
- * @param rpt             Path to the report file, or NULL.
- * @param out             Path to the binary output file, or NULL.
- * @param input_plugin_lib Path to a shared library (.so/.dylib/.dll) that
- *                         provides an IInputPlugin via openswmm_plugin_info().
- *                         Pass NULL to use the built-in .inp reader.
+ * Requires CREATED or CLOSED and resets the model context for a fresh load. Ordinary open resolves
+ * and validates model references and may load configured plugins. Paths are consumed synchronously;
+ * the engine keeps its own copies as needed. Query swmm_get_last_error_msg() and accumulated
+ * errors/warnings after refusal. Existing report/output destinations can be written during the
+ * lifecycle; use separate private paths for staged work.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[in] inp Borrowed NUL-terminated input-model path.
+ * @param[in] rpt Borrowed report destination path, or NULL to omit it.
+ * @param[in] out Borrowed binary-results destination path, or NULL to omit it.
+ * @param[in] input_plugin_lib Borrowed input plugin library path, component ID or id:version;
+ *     NULL/empty selects the built-in INP reader when no input plugin is already registered.
+ * @return SWMM_OK on success; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_LIFECYCLE for an invalid
+ *     lifecycle state, or the underlying initialization/IO/plugin error.
  */
-SWMM_ENGINE_API int swmm_engine_open(SWMM_Engine engine,
-                                      const char* inp, const char* rpt, const char* out,
-                                      const char* input_plugin_lib);
+SWMM_ENGINE_API int swmm_engine_open(SWMM_Engine engine, const char* inp, const char* rpt,
+                                     const char* out, const char* input_plugin_lib);
 
 /**
- * @brief Parse a model for configured metadata without loading runtime plugins.
- * @details Uses the built-in input reader and normal strict model validation.
- * No report/result plugins are created and no simulation is initialized or
- * advanced. Existing model/species/options/geometry getters can inspect the
- * OPENED handle. initialize/start are refused on this handle; close and use a
- * normal open before simulation. Model-declared SAVE paths are never opened.
+ * @brief Open a model for configured metadata without preparing simulation plugins.
+ *
+ * Uses normal strict model validation and no report/result destinations. The returned OPENED model
+ * supports metadata getters; initialize/start are refused until the engine is closed and reopened
+ * normally. Model-declared SAVE paths are not opened by this metadata load.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[in] inp Borrowed NUL-terminated input-model path.
+ * @return SWMM_OK on success; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADPARAM for null/empty
+ *     inp, or an open/parse/validation error.
  */
 SWMM_ENGINE_API int swmm_engine_open_metadata(SWMM_Engine engine, const char* inp);
 
-/** @brief Initialize the simulation → SWMM_STATE_INITIALIZED. */
+/**
+ * @brief Allocate simulation modules and initial state, entering SWMM_STATE_INITIALIZED.
+ *
+ * Requires OPENED, or INITIALIZED for a pre-start rebuild. Resolves runtime physics/transport
+ * guards, initializes forcing arrays and compiles stored control rules. Metadata-only handles are
+ * refused. Reinitializing after a run requires a fresh open; initialization may change state to an
+ * error state on failure.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @return SWMM_OK on success; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_LIFECYCLE for an invalid
+ *     lifecycle state, or the underlying initialization/IO/plugin error.
+ */
 SWMM_ENGINE_API int swmm_engine_initialize(SWMM_Engine engine);
 
-/** @brief Start the simulation → SWMM_STATE_STARTED. */
+/**
+ * @brief Start an initialized simulation, entering SWMM_STATE_RUNNING.
+ *
+ * Requires INITIALIZED. Opens configured interface files and prepares run-time plugins/outputs
+ * before stepping. Failure may leave partially prepared resources that must be closed; read the
+ * last error before teardown.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[in] save_results 0 disables regular result saving; nonzero enables it through the
+ *     configured output path/plugins.
+ * @return SWMM_OK on success; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_LIFECYCLE for an invalid
+ *     lifecycle state, or the underlying initialization/IO/plugin error.
+ */
 SWMM_ENGINE_API int swmm_engine_start(SWMM_Engine engine, int save_results);
 
-/** Advance to an exact elapsed time in seconds, settling pending 2D work. */
-SWMM_ENGINE_API int swmm_engine_advance_to(SWMM_Engine engine, double target_seconds, double* actual_seconds);
-/** Current elapsed seconds, including inside step callbacks. */
+/**
+ * @brief Advance to a specified elapsed-second exchange boundary without overshooting.
+ *
+ * Flushes pending 2D work before successful return. Due external driver updates must be supplied
+ * first. Does not provide rollback or iterative coupling; inspect actual_seconds after errors.
+ *
+ * @param[in] engine Non-null RUNNING engine; cannot be invoked recursively from a step or its
+ *     callbacks.
+ * @param[in] target_seconds Finite absolute elapsed simulation time in seconds, at least the
+ *     current coupling clock and no later than simulation end.
+ * @param[out] actual_seconds Non-null accepted coupling-time output in seconds. With valid
+ *     arguments, set before lifecycle/target checks and updated after advancement; may report
+ *     partial progress on stepping failure.
+ * @return SWMM_OK on success; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADPARAM for invalid
+ *     target/output, SWMM_ERR_LIFECYCLE for a running/driver/boundary refusal, or the first step
+ *     error.
+ */
+SWMM_ENGINE_API int swmm_engine_advance_to(SWMM_Engine engine, double target_seconds,
+                                           double* actual_seconds);
+/**
+ * @brief Read the routing elapsed clock, including during step callbacks.
+ *
+ * No lifecycle guard is applied. This getter uses the context routing clock;
+ * swmm_engine_advance_to() reports the runtime coupling clock used for exchange boundaries.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[out] seconds Non-null destination for context elapsed_ms/1000 in seconds since simulation
+ *     start.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADPARAM for null seconds.
+ */
 SWMM_ENGINE_API int swmm_engine_get_elapsed_seconds(SWMM_Engine engine, double* seconds);
-/** @brief Advance one explicit timestep. elapsed_time==0 when done. */
+/**
+ * @brief Advance one physical simulation step and report elapsed days.
+ *
+ * Requires RUNNING and refuses recursive stepping or a due external driver update. Invokes progress
+ * and begin callbacks before physics and the end callback after physics/output. Runtime source
+ * expiries may shorten the proposed step. A failure after accepted physics or output recording does
+ * not promise rollback; query state and diagnostics.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[out] elapsed_time Optional destination for elapsed simulation DAYS after the accepted
+ *     step; 0 when the simulation is complete. NULL suppresses this output. Some early refusals
+ *     leave it unchanged.
+ * @return SWMM_OK on success; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_LIFECYCLE for an invalid
+ *     lifecycle state, or the underlying initialization/IO/plugin error.
+ */
 SWMM_ENGINE_API int swmm_engine_step(SWMM_Engine engine, double* elapsed_time);
 
 /**
- * @brief Advance up to n_steps routing steps in one call (Gap #50 — swmm_stride equivalent).
+ * @brief Perform up to a requested number of physical steps synchronously.
  *
- * @details Calls step() n_steps times and stops early on error or when the
- *          simulation ends (elapsed_time == 0).  elapsed_time receives the
- *          last non-zero elapsed value, or 0.0 when the simulation has ended.
- *          Passing n_steps <= 0 is a no-op (returns SWMM_OK).
+ * Stops early on an error or a step result <=0. A failed early step can overwrite the output with
+ * zero even when prior physics remains accepted. Each individual step performs its usual callbacks
+ * and lifecycle checks.
  *
- * @param engine        Engine handle.
- * @param n_steps       Maximum number of routing steps to advance.
- * @param elapsed_time  Receives elapsed time (decimal days) after the last step.
- * @return SWMM_OK on success; first non-OK error code encountered otherwise.
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[in] n_steps Maximum step count; nonpositive values are a successful no-op after checking
+ *     the handle.
+ * @param[out] elapsed_time Optional elapsed-days output, initially set to zero and then to each
+ *     step result; zero denotes completion.
+ * @return SWMM_OK on success/no-op, SWMM_ERR_BADHANDLE for null engine, or the first error returned
+ *     by swmm_engine_step().
  */
 SWMM_ENGINE_API int swmm_engine_stride(SWMM_Engine engine, int n_steps, double* elapsed_time);
 
-/** @brief End the simulation → SWMM_STATE_ENDED. */
+/**
+ * @brief Finalize a running or completed simulation and enter SWMM_STATE_ENDED.
+ *
+ * Requires RUNNING or ENDED. Finalizes balances, pending IO and end-of-run output/hotstarts. If a
+ * prior error has placed the engine in an error state, preserves and returns the existing
+ * root-cause error instead of replacing it with a teardown-state complaint.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @return SWMM_OK on success; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_LIFECYCLE for an invalid
+ *     lifecycle state, or the underlying initialization/IO/plugin error.
+ */
 SWMM_ENGINE_API int swmm_engine_end(SWMM_Engine engine);
 
-/** @brief Write summary report (SWMM_STATE_ENDED). */
+/**
+ * @brief Write final model/simulation reports after ending the simulation.
+ *
+ * Requires the internal ENDED state and transitions to REPORTED (publicly exposed as
+ * SWMM_STATE_ENDED). Preserves the root-cause error for failed runs. Report plugins/configuration
+ * determine the destinations and content.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @return SWMM_OK on success; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_LIFECYCLE for an invalid
+ *     lifecycle state, or the underlying initialization/IO/plugin error.
+ */
 SWMM_ENGINE_API int swmm_engine_report(SWMM_Engine engine);
 
-/** @brief Close all files → SWMM_STATE_CLOSED. */
+/**
+ * @brief Stop IO and release active model files, plugins and checkpoint attachments.
+ *
+ * May be called during teardown from any live engine state. Enters CLOSED and permits a fresh open;
+ * it does not free the handle. Flushes recorded fatal diagnostics on failed runs. Engine-owned
+ * pointers to mutable model data must not be retained across close/reopen.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @return SWMM_OK on success, or SWMM_ERR_BADHANDLE for null engine.
+ */
 SWMM_ENGINE_API int swmm_engine_close(SWMM_Engine engine);
 
-/** @brief Destroy the engine handle (any state, NULL safe). */
+/**
+ * @brief Delete an engine and all resources it owns.
+ *
+ * Do not call concurrently with any operation or from inside a callback. Callback user_data remains
+ * caller-owned and is never freed by this function.
+ *
+ * @param[in] engine Caller-owned engine handle, or NULL for a no-op. Do not use a non-null handle
+ *     afterward or destroy it twice.
+ */
 SWMM_ENGINE_API void swmm_engine_destroy(SWMM_Engine engine);
 
-/** @brief Query the current engine lifecycle state. */
+/**
+ * @brief Read the public lifecycle state of a live engine.
+ *
+ * Internal PAUSED maps to RUNNING, REPORTED maps to ENDED, and the internal error state maps to
+ * SWMM_STATE_NONE.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[out] state Optional destination for an SWMM_EngineState integer. NULL performs only the
+ *     handle check.
+ * @return SWMM_OK on success, or SWMM_ERR_BADHANDLE for null engine.
+ */
 SWMM_ENGINE_API int swmm_engine_get_state(SWMM_Engine engine, int* state);
 
 /* =========================================================================
@@ -261,79 +407,209 @@ SWMM_ENGINE_API int swmm_engine_get_state(SWMM_Engine engine, int* state);
  * ========================================================================= */
 
 /**
- * @brief Run a complete simulation to completion.
+ * @brief Create an engine, run the full lifecycle synchronously, and destroy it.
  *
- * @details Creates an engine, then chains:
- *          open → initialize → start → step loop → end → report → close → destroy.
- *          Mirrors the legacy swmm_run() function.
+ * Chains open, initialize, start(save_results=1), step loop, end, report, close and destroy. Early
+ * failures close/destroy as appropriate; the temporary engine and its detailed diagnostics are not
+ * available after return. All input strings remain caller-owned.
  *
- * @param inp              Path to SWMM input file (.inp).
- * @param rpt              Path to report file (.rpt), or NULL to skip reporting.
- * @param out              Path to binary output file (.out), or NULL.
- * @param input_plugin_lib Path to input plugin library, or NULL for built-in .inp reader.
- * @returns                SWMM_OK (0) on success, or an error code.
+ * @param[in] inp Borrowed NUL-terminated input-model path.
+ * @param[in] rpt Borrowed report destination path, or NULL to omit it.
+ * @param[in] out Borrowed binary-results destination path, or NULL to omit it.
+ * @param[in] input_plugin_lib Borrowed input plugin library path, component ID or id:version;
+ *     NULL/empty selects the built-in INP reader when no input plugin is already registered.
+ * @return SWMM_OK on success; SWMM_ERR_NOMEM when engine creation fails, otherwise an
+ *     open/initialize/start/step or recorded engine error.
  */
 SWMM_ENGINE_API int swmm_engine_run(const char* inp, const char* rpt, const char* out,
-                                     const char* input_plugin_lib);
+                                    const char* input_plugin_lib);
 
 /**
- * @brief Run a complete simulation with a progress callback.
+ * @brief Run the full synchronous lifecycle with a borrowed progress callback.
  *
- * @details Same as swmm_engine_run() but registers a progress callback
- *          before starting the simulation loop.
+ * Uses a temporary engine and destroys it before returning, as swmm_engine_run() does. Callbacks
+ * must not throw, close/destroy the temporary engine or recursively advance it; progress
+ * notifications cannot cancel the run.
  *
- * @param inp              Path to SWMM input file (.inp).
- * @param rpt              Path to report file (.rpt), or NULL to skip reporting.
- * @param out              Path to binary output file (.out), or NULL.
- * @param input_plugin_lib Path to input plugin library, or NULL for built-in .inp reader.
- * @param callback         Progress callback (may be NULL).
- * @param user_data        Opaque pointer passed through to the callback.
- * @returns                SWMM_OK (0) on success, or an error code.
+ * @param[in] inp Borrowed NUL-terminated input-model path.
+ * @param[in] rpt Borrowed report destination path, or NULL to omit it.
+ * @param[in] out Borrowed binary-results destination path, or NULL to omit it.
+ * @param[in] input_plugin_lib Borrowed input plugin library path, component ID or id:version;
+ *     NULL/empty selects the built-in INP reader when no input plugin is already registered.
+ * @param[in] callback Optional progress function, invoked on the calling thread before each
+ *     physical step; NULL disables progress notifications.
+ * @param[in] user_data Borrowed opaque context passed unchanged to callback; may be NULL and must
+ *     remain valid throughout this call.
+ * @return SWMM_OK on success, SWMM_ERR_NOMEM when engine creation fails, or the lifecycle/recorded
+ *     error.
  */
-SWMM_ENGINE_API int swmm_engine_run_with_callback(
-    const char* inp, const char* rpt, const char* out,
-    const char* input_plugin_lib,
-    SWMM_ProgressCallback callback, void* user_data);
+SWMM_ENGINE_API int swmm_engine_run_with_callback(const char* inp, const char* rpt, const char* out,
+                                                  const char* input_plugin_lib,
+                                                  SWMM_ProgressCallback callback, void* user_data);
 
 /* =========================================================================
  * Callback registration
  * ========================================================================= */
 
-SWMM_ENGINE_API int swmm_set_progress_callback  (SWMM_Engine engine,
-                                                   SWMM_ProgressCallback  callback, void* user_data);
-SWMM_ENGINE_API int swmm_set_warning_callback   (SWMM_Engine engine,
-                                                   SWMM_WarningCallback   callback, void* user_data);
+/**
+ * @brief Register, replace or disable pre-step progress.
+ *
+ * No lifecycle guard is applied. Callbacks run synchronously on the thread making the triggering
+ * engine call; they must not throw or recursively step/close/destroy the engine. See the callback
+ * typedef for timing and permitted updates.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[in] callback SWMM_ProgressCallback function pointer, or NULL to unregister. Borrowed until
+ *     replaced/unregistered or engine destruction.
+ * @param[in] user_data Borrowed opaque pointer passed through unchanged; may be NULL. Keep the
+ *     context alive for every callback invocation.
+ * @return SWMM_OK on success, or SWMM_ERR_BADHANDLE for null engine.
+ */
+SWMM_ENGINE_API int swmm_set_progress_callback(SWMM_Engine engine, SWMM_ProgressCallback callback,
+                                               void* user_data);
+/**
+ * @brief Register, replace or disable diagnostics.
+ *
+ * No lifecycle guard is applied. Callbacks run synchronously on the thread making the triggering
+ * engine call; they must not throw or recursively step/close/destroy the engine. See the callback
+ * typedef for timing and permitted updates.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[in] callback SWMM_WarningCallback function pointer, or NULL to unregister. Borrowed until
+ *     replaced/unregistered or engine destruction.
+ * @param[in] user_data Borrowed opaque pointer passed through unchanged; may be NULL. Keep the
+ *     context alive for every callback invocation.
+ * @return SWMM_OK on success, or SWMM_ERR_BADHANDLE for null engine.
+ */
+SWMM_ENGINE_API int swmm_set_warning_callback(SWMM_Engine engine, SWMM_WarningCallback callback,
+                                              void* user_data);
+/**
+ * @brief Register, replace or disable pre-physics step notifications.
+ *
+ * No lifecycle guard is applied. Callbacks run synchronously on the thread making the triggering
+ * engine call; they must not throw or recursively step/close/destroy the engine. See the callback
+ * typedef for timing and permitted updates.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[in] callback SWMM_StepBeginCallback function pointer, or NULL to unregister. Borrowed
+ *     until replaced/unregistered or engine destruction.
+ * @param[in] user_data Borrowed opaque pointer passed through unchanged; may be NULL. Keep the
+ *     context alive for every callback invocation.
+ * @return SWMM_OK on success, or SWMM_ERR_BADHANDLE for null engine.
+ */
 SWMM_ENGINE_API int swmm_set_step_begin_callback(SWMM_Engine engine,
-                                                   SWMM_StepBeginCallback callback, void* user_data);
-SWMM_ENGINE_API int swmm_set_step_end_callback  (SWMM_Engine engine,
-                                                   SWMM_StepEndCallback   callback, void* user_data);
+                                                 SWMM_StepBeginCallback callback, void* user_data);
+/**
+ * @brief Register, replace or disable post-physics step notifications.
+ *
+ * No lifecycle guard is applied. Callbacks run synchronously on the thread making the triggering
+ * engine call; they must not throw or recursively step/close/destroy the engine. See the callback
+ * typedef for timing and permitted updates.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[in] callback SWMM_StepEndCallback function pointer, or NULL to unregister. Borrowed until
+ *     replaced/unregistered or engine destruction.
+ * @param[in] user_data Borrowed opaque pointer passed through unchanged; may be NULL. Keep the
+ *     context alive for every callback invocation.
+ * @return SWMM_OK on success, or SWMM_ERR_BADHANDLE for null engine.
+ */
+SWMM_ENGINE_API int swmm_set_step_end_callback(SWMM_Engine engine, SWMM_StepEndCallback callback,
+                                               void* user_data);
 
 /* =========================================================================
  * Error reporting
  * ========================================================================= */
 
-SWMM_ENGINE_API int         swmm_get_last_error    (SWMM_Engine engine);
+/**
+ * @brief Read the stored simulation error code without clearing it.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @return Stored error code (SWMM_OK if no error), or SWMM_ERR_BADHANDLE for null engine.
+ */
+SWMM_ENGINE_API int swmm_get_last_error(SWMM_Engine engine);
+/**
+ * @brief Borrow the stored simulation error text.
+ *
+ * Reading does not clear the error. Diagnostic lifetime is tied to the underlying stored string,
+ * which subsequent operations can replace.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @return Engine-owned NUL-terminated string, or the static string invalid engine handle for NULL.
+ *     Never free it; copy before another error/model operation or engine destruction.
+ */
 SWMM_ENGINE_API const char* swmm_get_last_error_msg(SWMM_Engine engine);
-SWMM_ENGINE_API const char* swmm_error_message     (int code);
+/**
+ * @brief Translate a known public error code to a static English description.
+ *
+ * Does not require an engine or include operation-specific context; use swmm_get_last_error_msg()
+ * for the recorded diagnostic.
+ *
+ * @param[in] code SWMM_OK, an SWMM_ERR_* code, or a supported validation code.
+ * @return Pointer to immutable static NUL-terminated storage; Unknown error for an unrecognized
+ *     code. Never free it.
+ */
+SWMM_ENGINE_API const char* swmm_error_message(int code);
 
 /**
- * Enable permissive ("lenient") open on this engine. When enabled, a subsequent
- * swmm_engine_open() records post-parse validation errors (undefined objects,
- * missing curves, bad references) but still leaves the engine OPENED with all
- * parsed objects intact and editable, instead of failing. Use for editor/GUI
- * loads that must show as much of a broken model as possible; the accumulated
- * errors are readable via swmm_get_error_count/at. Hard reader failures still
- * fail the open. Default is strict (0). Running a model still needs a fresh,
- * strict open.
+ * @brief Select permissive model validation for subsequent editor loads.
+ *
+ * Lenient open keeps parsed objects editable in OPENED despite post-parse reference/validation
+ * errors, which remain available through swmm_get_error_count()/swmm_get_error_at(). Hard
+ * input-reader failures still fail. Running the repaired model requires a fresh strict open.
+ *
+ * @param[in] engine Live engine handle; NULL is a no-op.
+ * @param[in] on 0 selects strict validation (default); nonzero enables lenient open.
  */
-SWMM_ENGINE_API void        swmm_engine_set_lenient_open(SWMM_Engine engine, int on);
+SWMM_ENGINE_API void swmm_engine_set_lenient_open(SWMM_Engine engine, int on);
 
 /* Enumerate the errors/warnings accumulated on the engine during open (e.g.
  * after a lenient open). Index is 0-based; out-of-range returns "". */
-SWMM_ENGINE_API int         swmm_get_error_count   (SWMM_Engine engine);
-SWMM_ENGINE_API const char* swmm_get_error_at      (SWMM_Engine engine, int index);
-SWMM_ENGINE_API int         swmm_get_warning_count (SWMM_Engine engine);
-SWMM_ENGINE_API const char* swmm_get_warning_at    (SWMM_Engine engine, int index);
+/**
+ * @brief Count accumulated error messages.
+ *
+ * This getter does not clear the list and is distinct from the stored last-error code.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @return Number of accumulated messages; 0 for null engine.
+ */
+SWMM_ENGINE_API int swmm_get_error_count(SWMM_Engine engine);
+/**
+ * @brief Borrow one accumulated error message.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[in] index Zero-based message index.
+ * @return Engine-owned NUL-terminated message, or an empty string for null engine/out-of-range
+ *     index. Never free; copy before operations that change the list or destroy the engine.
+ */
+SWMM_ENGINE_API const char* swmm_get_error_at(SWMM_Engine engine, int index);
+/**
+ * @brief Count accumulated warning messages.
+ *
+ * This getter does not clear the list and is distinct from the stored last-error code.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @return Number of accumulated messages; 0 for null engine.
+ */
+SWMM_ENGINE_API int swmm_get_warning_count(SWMM_Engine engine);
+/**
+ * @brief Borrow one accumulated warning message.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[in] index Zero-based message index.
+ * @return Engine-owned NUL-terminated message, or an empty string for null engine/out-of-range
+ *     index. Never free; copy before operations that change the list or destroy the engine.
+ */
+SWMM_ENGINE_API const char* swmm_get_warning_at(SWMM_Engine engine, int index);
 
 /* =========================================================================
  * Thread capability query (engine-independent)
@@ -356,21 +632,37 @@ typedef struct {
                                  with in this process; 0 = not initialised.         */
 } SWMM_ThreadInfo;
 
-/** Fill @p out. Returns SWMM_OK, or SWMM_ERR_BADPARAM when @p out is NULL. */
+/**
+ * @brief Query hardware and parallel-runtime limits without an engine.
+ *
+ * Reports process-visible logical CPUs, OpenMP limits/availability, macOS performance-cluster CPUs
+ * and initialized Kokkos OpenMP team size. Zero indicates unavailable/unknown for fields whose
+ * struct comments permit it.
+ *
+ * @param[out] out Non-null caller-owned SWMM_ThreadInfo destination; all fields are filled on
+ *     success.
+ * @return SWMM_OK, or SWMM_ERR_BADPARAM for null out.
+ */
 SWMM_ENGINE_API int swmm_get_thread_info(SWMM_ThreadInfo* out);
 
 /**
- * Resolve the thread counts the engine WOULD use for @p threads_option
- * ([OPTIONS] THREADS; 0 = auto) with the engine's current model, applying
- * the same rules as swmm_engine_start: explicit values are honoured; auto
- * applies omp_get_max_threads(), the model-size gates and (macOS) the
- * performance-core clamp. Any of the out-pointers may be NULL. Returns
- * SWMM_OK, or SWMM_ERR_BADPARAM when @p engine is NULL.
+ * @brief Preview thread-team sizes for a request and the current model.
  *
- * @param global_threads  Team size for runoff / quality / general loops.
- * @param dw_threads      Dynamic-wave Picard team (0 when routing is not DYNWAVE
- *                        or the model is not open).
- * @param twod_threads    2D CPU marcher team (0 when the model has no 2D mesh).
+ * Read-only resolution using the same policy helpers as run setup. Model-size gates may reduce even
+ * an explicit request; automatic requests also apply applicable performance-core policy. Does not
+ * change the stored THREADS option or initialize a parallel backend.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[in] threads_option [OPTIONS] THREADS request: 0 is automatic; positive requests are
+ *     resolved against model-size/runtime policies.
+ * @param[out] global_threads Optional general OpenMP team-size destination.
+ * @param[out] dw_threads Optional dynamic-wave team-size destination; zero when routing is not
+ *     DYNWAVE.
+ * @param[out] twod_threads Optional 2D CPU team-size destination; zero without an enabled nonempty
+ *     mesh or 2D build support.
+ * @return SWMM_OK, or SWMM_ERR_BADPARAM for null engine (this query uses BADPARAM rather than
+ *     BADHANDLE).
  */
 SWMM_ENGINE_API int swmm_get_effective_threads(SWMM_Engine engine, int threads_option,
                                                int* global_threads, int* dw_threads,
@@ -384,35 +676,46 @@ SWMM_ENGINE_API int swmm_get_effective_threads(SWMM_Engine engine, int threads_o
  * same table. Valid after swmm_engine_open; re-read after option edits.
  * ========================================================================= */
 
-#define SWMM_TRANSPORT_DOMAIN_RUNOFF       0
-#define SWMM_TRANSPORT_DOMAIN_GROUNDWATER  1
-#define SWMM_TRANSPORT_DOMAIN_NETWORK_1D   2
-#define SWMM_TRANSPORT_DOMAIN_SURFACE_2D   3
-#define SWMM_TRANSPORT_DOMAIN_COUNT        4
+#define SWMM_TRANSPORT_DOMAIN_RUNOFF 0
+#define SWMM_TRANSPORT_DOMAIN_GROUNDWATER 1
+#define SWMM_TRANSPORT_DOMAIN_NETWORK_1D 2
+#define SWMM_TRANSPORT_DOMAIN_SURFACE_2D 3
+#define SWMM_TRANSPORT_DOMAIN_COUNT 4
 
-#define SWMM_TRANSPORT_CLASS_POLLUTANTS    0
-#define SWMM_TRANSPORT_CLASS_MSX           1
-#define SWMM_TRANSPORT_CLASS_AGE           2
-#define SWMM_TRANSPORT_CLASS_TEMPERATURE   3
-#define SWMM_TRANSPORT_CLASS_COUNT         4
+#define SWMM_TRANSPORT_CLASS_POLLUTANTS 0
+#define SWMM_TRANSPORT_CLASS_MSX 1
+#define SWMM_TRANSPORT_CLASS_AGE 2
+#define SWMM_TRANSPORT_CLASS_TEMPERATURE 3
+#define SWMM_TRANSPORT_CLASS_COUNT 4
 
-#define SWMM_TRANSPORT_ENABLED             0
-#define SWMM_TRANSPORT_DISABLED_BY_USER    1   /**< reason = the option key */
-#define SWMM_TRANSPORT_UNAVAILABLE         2   /**< reason = why nothing is carried */
+#define SWMM_TRANSPORT_ENABLED 0
+#define SWMM_TRANSPORT_DISABLED_BY_USER 1 /**< reason = the option key */
+#define SWMM_TRANSPORT_UNAVAILABLE 2      /**< reason = why nothing is carried */
 
 typedef struct SWMM_TransportCell {
-    int  state;        /**< SWMM_TRANSPORT_ENABLED / _DISABLED_BY_USER / _UNAVAILABLE */
-    int  count;        /**< rows of this class carried in the domain (0 unless ENABLED) */
-    char reason[96];   /**< key or explanation; "" when ENABLED */
+    int state;       /**< SWMM_TRANSPORT_ENABLED / _DISABLED_BY_USER / _UNAVAILABLE */
+    int count;       /**< rows of this class carried in the domain (0 unless ENABLED) */
+    char reason[96]; /**< key or explanation; "" when ENABLED */
 } SWMM_TransportCell;
 
 typedef struct SWMM_TransportMatrix {
     SWMM_TransportCell cell[SWMM_TRANSPORT_DOMAIN_COUNT][SWMM_TRANSPORT_CLASS_COUNT];
 } SWMM_TransportMatrix;
 
-/** Fill @p out for the open model (an unopened engine reports every cell
- *  UNAVAILABLE). Returns SWMM_OK, or SWMM_ERR_BADPARAM when @p engine or
- *  @p out is NULL. */
+/**
+ * @brief Resolve planned transport classes for each configured model domain.
+ *
+ * Read after open and again after relevant option edits. An unopened/unavailable domain reports
+ * unavailable cells. This is configured transport resolution, not proof of runtime initialization
+ * or local heat-flux availability.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[out] out Non-null caller-owned matrix indexed
+ *     [SWMM_TRANSPORT_DOMAIN_*][SWMM_TRANSPORT_CLASS_*]; reasons are NUL-terminated and truncated
+ *     to their fixed capacity.
+ * @return SWMM_OK, or SWMM_ERR_BADPARAM for null engine/out.
+ */
 SWMM_ENGINE_API int swmm_get_transport_matrix(SWMM_Engine engine, SWMM_TransportMatrix* out);
 
 /** Side-effect-free pre-run preview. Boolean fields must be 0 or 1;
@@ -423,48 +726,141 @@ typedef struct SWMM_TransportDraft {
     int surface_class[SWMM_TRANSPORT_CLASS_COUNT];
     int groundwater;
 } SWMM_TransportDraft;
+/**
+ * @brief Resolve transport for a temporary draft without mutating the model.
+ *
+ * Uses existing mesh/aquifer authoring and a temporary options overlay. Does not initialize
+ * transport, validate runtime support, or persist the draft.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[in] draft Non-null borrowed draft: Boolean fields and surface_class entries must be 0/1;
+ *     groundwater must be -1 (automatic), 0 (off), or 1 (on).
+ * @param[out] out Non-null caller-owned resolved matrix with bounded NUL-terminated reasons;
+ *     unchanged on argument refusal.
+ * @return SWMM_OK, or SWMM_ERR_BADPARAM for null arguments or invalid draft flags.
+ */
 SWMM_ENGINE_API int swmm_preview_transport_matrix(SWMM_Engine engine,
-    const SWMM_TransportDraft* draft, SWMM_TransportMatrix* out);
+                                                  const SWMM_TransportDraft* draft,
+                                                  SWMM_TransportMatrix* out);
 
-
-/** Display names for the matrix axes ("" when out of range). */
+/**
+ * @brief Get the display name of a transport-domain axis value.
+ *
+ * @param[in] domain SWMM_TRANSPORT_DOMAIN_* integer in [0,SWMM_TRANSPORT_DOMAIN_COUNT).
+ * @return Immutable static NUL-terminated name, or an empty static string when out of range; never
+ *     free it.
+ */
 SWMM_ENGINE_API const char* swmm_transport_domain_name(int domain);
+/**
+ * @brief Get the display name of a transport-species class.
+ *
+ * @param[in] species_class SWMM_TRANSPORT_CLASS_* integer in [0,SWMM_TRANSPORT_CLASS_COUNT).
+ * @return Immutable static NUL-terminated name, or an empty static string when out of range; never
+ *     free it.
+ */
 SWMM_ENGINE_API const char* swmm_transport_class_name(int species_class);
 
 /* =========================================================================
  * Simulation timing
  * ========================================================================= */
 
-SWMM_ENGINE_API int swmm_get_start_time  (SWMM_Engine engine, double* start);
-SWMM_ENGINE_API int swmm_get_end_time    (SWMM_Engine engine, double* end);
+/**
+ * @brief Read the configured simulation start calendar date.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[out] start Optional destination. SWMM DateTime decimal days since 1899-12-30.
+ * @return SWMM_OK on success, or SWMM_ERR_BADHANDLE for null engine.
+ */
+SWMM_ENGINE_API int swmm_get_start_time(SWMM_Engine engine, double* start);
+/**
+ * @brief Read the configured simulation end calendar date.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[out] end Optional destination. SWMM DateTime decimal days since 1899-12-30.
+ * @return SWMM_OK on success, or SWMM_ERR_BADHANDLE for null engine.
+ */
+SWMM_ENGINE_API int swmm_get_end_time(SWMM_Engine engine, double* end);
+/**
+ * @brief Read the current elapsed physics time.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[out] current Optional destination. Elapsed seconds since simulation start (context
+ *     current_time), NOT a DateTime calendar value.
+ * @return SWMM_OK on success, or SWMM_ERR_BADHANDLE for null engine.
+ */
 SWMM_ENGINE_API int swmm_get_current_time(SWMM_Engine engine, double* current);
+/**
+ * @brief Read the configured routing timestep limit.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[out] dt Optional destination. Configured routing-step seconds, not the last adaptive step
+ *     duration.
+ * @return SWMM_OK on success, or SWMM_ERR_BADHANDLE for null engine.
+ */
 SWMM_ENGINE_API int swmm_get_routing_step(SWMM_Engine engine, double* dt);
 
 /* =========================================================================
  * Unit system query
  * =========================================================================
- * All C API getters return — and all setters accept — values in the project's
- * DISPLAY units, selected by [OPTIONS] FLOW_UNITS. These accessors report which
- * units are in effect so callers (bindings, coupling) can interpret values.
+ * Most legacy model-object getters/setters use project DISPLAY units selected
+ * by [OPTIONS] FLOW_UNITS. Individual APIs explicitly document exceptions,
+ * including SI mesh/coupling quantities and elapsed/calendar time units. These
+ * accessors report the project display-unit selection.
  */
 
-/** @brief Get the active flow-units code (0=CFS,1=GPM,2=MGD,3=CMS,4=LPS,5=MLD).
- *  @note  Typed equivalent of swmm_options_get(engine,"FLOW_UNITS",...). */
+/**
+ * @brief Read the project display-flow unit code.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[out] flow_units Optional destination. 0=CFS, 1=GPM, 2=MGD, 3=CMS, 4=LPS, 5=MLD.
+ * @return SWMM_OK on success, or SWMM_ERR_BADHANDLE for null engine.
+ */
 SWMM_ENGINE_API int swmm_get_flow_units(SWMM_Engine engine, int* flow_units);
 
-/** @brief Get the active unit system (0 = US/imperial, 1 = SI/metric).
- *  @note  Derived from flow units: CMS/LPS/MLD => SI, otherwise US. */
+/**
+ * @brief Read the unit system implied by project flow units.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[out] unit_system Optional destination. 0=US/imperial or 1=SI/metric; CMS/LPS/MLD select
+ *     SI.
+ * @return SWMM_OK on success, or SWMM_ERR_BADHANDLE for null engine.
+ */
 SWMM_ENGINE_API int swmm_get_unit_system(SWMM_Engine engine, int* unit_system);
 
 /* =========================================================================
  * Routing event and steady-state status
  * ========================================================================= */
 
-/** @brief Check if simulation is currently between routing events. */
+/**
+ * @brief Read the current implementation event-list presence flag.
+ *
+ * Despite the historical function name, the implementation does not compare the simulation clock
+ * with event windows; it reports only whether the event list is nonempty.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[out] is_between Optional destination: 1 when at least one event entry is configured, 0 for
+ *     an empty event list.
+ * @return SWMM_OK on success, or SWMM_ERR_BADHANDLE for null engine.
+ */
 SWMM_ENGINE_API int swmm_is_between_events(SWMM_Engine engine, int* is_between);
 
-/** @brief Get number of routing events defined.
- *  @note Synonymous with swmm_events_count (Slice CW). */
+/**
+ * @brief Count configured routing-event entries.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[out] count Optional destination. Nonnegative number of stored event windows; alias of
+ *     swmm_events_count().
+ * @return SWMM_OK on success, or SWMM_ERR_BADHANDLE for null engine.
+ */
 SWMM_ENGINE_API int swmm_get_event_count(SWMM_Engine engine, int* count);
 
 /* -------------------------------------------------------------------------
@@ -476,35 +872,104 @@ SWMM_ENGINE_API int swmm_get_event_count(SWMM_Engine engine, int* count);
  * is provided so the [EVENTS] surface is self-consistent.
  * ------------------------------------------------------------------------- */
 
-/** @brief Number of [EVENTS] entries. Alias of swmm_get_event_count. */
+/**
+ * @brief Count configured routing-event entries.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[out] count Optional destination. Nonnegative number of stored event windows; alias of
+ *     swmm_get_event_count().
+ * @return SWMM_OK on success, or SWMM_ERR_BADHANDLE for null engine.
+ */
 SWMM_ENGINE_API int swmm_events_count(SWMM_Engine engine, int* count);
 
-/** @brief Get the start/end DateTime of the idx-th event.
- *  @returns SWMM_OK on success; SWMM_ERR_BADINDEX if idx is out of range. */
-SWMM_ENGINE_API int swmm_events_get(SWMM_Engine engine, int idx,
-                                    double* start, double* end);
+/**
+ * @brief Read the calendar window of a configured routing event.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[in] idx Zero-based event index in [0,event count).
+ * @param[out] start Optional destination for event start as SWMM DateTime decimal days since
+ *     1899-12-30.
+ * @param[out] end Optional destination for event end in the same calendar-day units.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADINDEX for invalid idx.
+ */
+SWMM_ENGINE_API int swmm_events_get(SWMM_Engine engine, int idx, double* start, double* end);
 
-/** @brief Overwrite the idx-th event's window.
- *  @returns SWMM_OK on success; SWMM_ERR_BADINDEX if idx out of range;
- *           SWMM_ERR_BADPARAM if start >= end. */
-SWMM_ENGINE_API int swmm_events_set(SWMM_Engine engine, int idx,
-                                    double start, double end);
+/**
+ * @brief Replace one event calendar window in place.
+ *
+ * Applies no lifecycle, overlap, sorting or finite-value validation; configure valid ordered event
+ * data before running.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[in] idx Zero-based event index.
+ * @param[in] start Start as SWMM DateTime decimal days since 1899-12-30; must compare less than
+ *     end.
+ * @param[in] end End in the same calendar-day units.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADINDEX for invalid idx, or
+ *     SWMM_ERR_BADPARAM when start>=end.
+ */
+SWMM_ENGINE_API int swmm_events_set(SWMM_Engine engine, int idx, double start, double end);
 
-/** @brief Append a new event window.
- *  @param out_idx Receives the new event's index (optional, may be NULL).
- *  @returns SWMM_OK on success; SWMM_ERR_BADPARAM if start >= end. */
-SWMM_ENGINE_API int swmm_events_add(SWMM_Engine engine,
-                                    double start, double end, int* out_idx);
+/**
+ * @brief Append a routing-event window in insertion order.
+ *
+ * Does not sort, merge overlaps or validate finite values. Caller retains no references into the
+ * internal event vector.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[in] start Start as SWMM DateTime decimal days since 1899-12-30; must compare less than
+ *     end.
+ * @param[in] end End in the same calendar-day units.
+ * @param[out] out_idx Optional destination for the appended zero-based index, written on success.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADPARAM when start>=end.
+ */
+SWMM_ENGINE_API int swmm_events_add(SWMM_Engine engine, double start, double end, int* out_idx);
 
-/** @brief Remove the idx-th event. Trailing entries shift down by one.
- *  @returns SWMM_OK on success; SWMM_ERR_BADINDEX if idx is out of range. */
+/**
+ * @brief Remove one configured event and shift later indices down.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[in] idx Zero-based event index to remove.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADINDEX for invalid idx.
+ */
 SWMM_ENGINE_API int swmm_events_remove(SWMM_Engine engine, int idx);
 
-/** @brief Remove all events. */
+/**
+ * @brief Remove all configured routing events.
+ *
+ * No lifecycle guard is applied; configure the event list before running.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @return SWMM_OK on success, or SWMM_ERR_BADHANDLE for null engine.
+ */
 SWMM_ENGINE_API int swmm_events_clear(SWMM_Engine engine);
 
-/** @brief Get/set steady-state skip flag. */
+/**
+ * @brief Read the stored steady-state routing-skip option.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[out] enabled Optional destination. 1 when skipping is enabled, otherwise 0.
+ * @return SWMM_OK on success, or SWMM_ERR_BADHANDLE for null engine.
+ */
 SWMM_ENGINE_API int swmm_get_steady_state_skip(SWMM_Engine engine, int* enabled);
+/**
+ * @brief Set the stored steady-state routing-skip option.
+ *
+ * Sets the option directly without a lifecycle guard. Routing logic determines whether individual
+ * steps can be skipped.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[in] enabled 0 disables skipping; any nonzero value enables it.
+ * @return SWMM_OK on success, or SWMM_ERR_BADHANDLE for null engine.
+ */
 SWMM_ENGINE_API int swmm_set_steady_state_skip(SWMM_Engine engine, int enabled);
 
 /* =========================================================================
@@ -529,62 +994,72 @@ SWMM_ENGINE_API int swmm_set_steady_state_skip(SWMM_Engine engine, int enabled);
  * ========================================================================= */
 
 /**
- * @brief Open the runoff interface file for writing (SAVE mode).
+ * @brief Open a runoff cache for SAVE records using the current model schema.
  *
- * @param engine  Engine handle (any state).
- * @param path    Output file path.  Existing file is truncated.
- * @returns @c SWMM_OK on success.  Non-zero error codes include
- *          @c SWMM_ERR_BADHANDLE (invalid engine), @c SWMM_ERR_BADPARAM
- *          (null path), and a non-zero file-I/O error code when the
- *          file could not be opened or a runoff file is already open.
+ * Call after configuring the model dimensions/units and before stepping. Automatic SAVE records are
+ * emitted by runoff substeps; close with swmm_runoff_iface_close() or engine close.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[in] path Non-null, nonempty NUL-terminated output path. Existing contents are truncated;
+ *     string is borrowed for the call.
+ * @return 0 on success; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADPARAM for null/empty path,
+ *     -10 when another runoff file is already open, or a runoff-interface file error.
  */
 SWMM_ENGINE_API int swmm_runoff_iface_open_write(SWMM_Engine engine, const char* path);
 
 /**
- * @brief Open the runoff interface file for reading (USE mode).
+ * @brief Open a compatible runoff cache for USE-mode record reads.
  *
- * @param engine  Engine handle.
- * @param path    Path to an existing runoff interface file.
- * @returns @c SWMM_OK on success; non-zero on file-open failure or
- *          header mismatch (subcatchment count, pollutant count, or
- *          flow units differ from the current model).
+ * Header subcatchment count, pollutant count and flow units must match the current model. USE does
+ * not automatically suppress native runoff computation; manually loaded states can be overwritten
+ * by subsequent runoff work.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[in] path Non-null, nonempty NUL-terminated existing runoff-cache path; borrowed for the
+ *     call.
+ * @return 0 on success; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADPARAM for null/empty path,
+ *     -10 when a runoff file is already open, or a file/header compatibility error.
  */
 SWMM_ENGINE_API int swmm_runoff_iface_open_read(SWMM_Engine engine, const char* path);
 
 /**
- * @brief Manually emit one runoff substep record to the open SAVE file.
+ * @brief Request a manual runoff-cache snapshot.
  *
- * @details Normally the engine emits records automatically inside
- *          @c stepRunoff().  This entry point is exposed so plugin
- *          authors and tests can force a snapshot at well-defined
- *          times; it is a no-op when no file is open or the file is
- *          in USE mode.
+ * Normally SAVE records are emitted automatically. With no open SAVE file this is a no-op; this
+ * wrapper does not report a write/flush error from the underlying void save operation.
  *
- * @param engine  Engine handle.
- * @param dt      Substep duration (seconds) to record in the file for
- *                this snapshot.
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[in] dt Snapshot runoff substep duration in seconds, passed through without validation.
+ * @return SWMM_OK on success, or SWMM_ERR_BADHANDLE for null engine.
  */
 SWMM_ENGINE_API int swmm_runoff_iface_save_step(SWMM_Engine engine, double dt);
 
 /**
- * @brief Read one runoff substep record from the open USE file into
- *        the current subcatchment state.
+ * @brief Read one available runoff record into the current subcatchment state.
  *
- * @param engine     Engine handle.
- * @param[out] has_data  Set to @c 1 when a record was successfully
- *                       read, @c 0 on EOF.  May be NULL.
- * @returns @c SWMM_OK in either case (use @p has_data to tell EOF
- *          apart from a successful read).  Returns @c SWMM_ERR_BADHANDLE
- *          on null engine; @c SWMM_ERR_BADPARAM if no USE-mode file is
- *          open.
+ * Returns SWMM_OK even when the underlying read returns false; has_data is the only per-call
+ * availability signal. The next native runoff calculation may overwrite the imported state.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @param[out] has_data Optional destination: 1 when a record was read, 0 when no record is
+ *     available (including EOF, no open file or an unsuitable read state).
+ * @return SWMM_OK on success, or SWMM_ERR_BADHANDLE for null engine.
  */
 SWMM_ENGINE_API int swmm_runoff_iface_read_step(SWMM_Engine engine, int* has_data);
 
 /**
- * @brief Close the runoff interface file.
+ * @brief Close and release the runoff-cache file if present.
  *
- * Safe to call multiple times; safe to call when no file was opened.
- * Also called automatically as part of @c swmm_engine_close.
+ * Idempotent for a live engine; engine close also invokes this cleanup. Does not destroy the
+ * engine.
+ *
+ * @param[in] engine Non-null live engine handle; caller provides exclusive access on the owning
+ *     thread.
+ * @return SWMM_OK on success, or SWMM_ERR_BADHANDLE for null engine.
  */
 SWMM_ENGINE_API int swmm_runoff_iface_close(SWMM_Engine engine);
 
@@ -625,7 +1100,7 @@ SWMM_ENGINE_API int swmm_runoff_iface_close(SWMM_Engine engine);
 
 #ifdef OPENSWMM_HAS_2D
 #include "openswmm_2d.h"
-#include "openswmm_gw_transport.h"   /* U4 (2026-09-07) */
+#include "openswmm_gw_transport.h" /* U4 (2026-09-07) */
 #endif
 
 #endif /* OPENSWMM_ENGINE_H */

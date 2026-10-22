@@ -15,13 +15,13 @@
 // limitations under the License.
 
 /**
- * @file LID.cpp
- * @brief LID control modules — batch-oriented, type-grouped.
+ * @file      LID.cpp
+ * @brief     LID control modules — batch-oriented, type-grouped.
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "LID.hpp"
@@ -114,8 +114,10 @@ void LIDGroupSoA::resize(int n) {
     in_pave.assign(un, 0.0);
     in_soil.assign(un, 0.0);
     in_stor.assign(un, 0.0);
-    evap_surf.assign(un, 0.0); evap_pave.assign(un, 0.0);
-    evap_soil.assign(un, 0.0); evap_stor.assign(un, 0.0);
+    evap_surf.assign(un, 0.0);
+    evap_pave.assign(un, 0.0);
+    evap_soil.assign(un, 0.0);
+    evap_stor.assign(un, 0.0);
 
     f_old_surf.assign(un, 0.0);
     f_old_soil.assign(un, 0.0);
@@ -139,7 +141,8 @@ void LIDGroupSoA::resize(int n) {
     wb_inflow.assign(un, 0.0);
     wb_evap.assign(un, 0.0);
     wb_infil.assign(un, 0.0);
-    spatial_infil_loss.assign(un,0.0);wb_spatial_infil.assign(un,0.0);
+    spatial_infil_loss.assign(un, 0.0);
+    wb_spatial_infil.assign(un, 0.0);
     wb_surf_flow.assign(un, 0.0);
     wb_drain_flow.assign(un, 0.0);
     wb_init_vol.assign(un, 0.0);
@@ -147,16 +150,29 @@ void LIDGroupSoA::resize(int n) {
     vol_treated.assign(un, 0.0);
 }
 
-/// Map type code string to LIDType enum index (0-7).
+/**
+ * @brief Decode an exact, case-sensitive authored LID type code.
+ *
+ * @param[in] code BC/RG/GR/IT/PP/RB/VS/RD; no whitespace or case normalization is performed.
+ * @return Corresponding LIDType index 0..7, or -1 for an unknown code.
+ */
 static int typeCodeToIndex(const std::string& code) {
-    if (code == "BC") return 0;
-    if (code == "RG") return 1;
-    if (code == "GR") return 2;
-    if (code == "IT") return 3;
-    if (code == "PP") return 4;
-    if (code == "RB") return 5;
-    if (code == "VS") return 6;
-    if (code == "RD") return 7;
+    if (code == "BC")
+        return 0;
+    if (code == "RG")
+        return 1;
+    if (code == "GR")
+        return 2;
+    if (code == "IT")
+        return 3;
+    if (code == "PP")
+        return 4;
+    if (code == "RB")
+        return 5;
+    if (code == "VS")
+        return 6;
+    if (code == "RD")
+        return 7;
     return -1;
 }
 
@@ -181,15 +197,16 @@ void LIDSolver::init(SimulationContext& ctx) {
     // routines in src/legacy/engine/lid.c — without this the underdrain and
     // conductivity terms are ~10^5-10^6× off (issue #102).
     const double ucfRainDepth = ucf::UCF(ucf::RAINDEPTH, ctx.options); // ft↔in|mm
-    const double ucfRainfall  = ucf::UCF(ucf::RAINFALL, ctx.options);  // ft/s↔rate
-    const double ucfLength    = ucf::UCF(ucf::LENGTH, ctx.options);    // ft↔ft|m
-    const double ucfLength2   = ucfLength * ucfLength;                 // ft²↔ft²|m²
+    const double ucfRainfall = ucf::UCF(ucf::RAINFALL, ctx.options);   // ft/s↔rate
+    const double ucfLength = ucf::UCF(ucf::LENGTH, ctx.options);       // ft↔ft|m
+    const double ucfLength2 = ucfLength * ucfLength;                   // ft²↔ft²|m²
 
     // If no LID usage data, leave all groups empty
     int n_usage = ctx.lid_usage.count();
     ctx.lid_usage.resize_wb(n_usage);
     if (n_usage == 0) {
-        for (auto& g : groups_) g.resize(0);
+        for (auto& g : groups_)
+            g.resize(0);
         return;
     }
 
@@ -198,9 +215,11 @@ void LIDSolver::init(SimulationContext& ctx) {
     for (int j = 0; j < n_usage; ++j) {
         auto uj = static_cast<std::size_t>(j);
         int li = ctx.lid_usage.lid_index[uj];
-        if (li < 0 || li >= ctx.lid_controls.count()) continue;
+        if (li < 0 || li >= ctx.lid_controls.count())
+            continue;
         int ti = typeCodeToIndex(ctx.lid_controls.lid_type[static_cast<std::size_t>(li)]);
-        if (ti < 0 || ti >= N_LID_TYPES) continue;
+        if (ti < 0 || ti >= N_LID_TYPES)
+            continue;
         type_counts[static_cast<size_t>(ti)]++;
     }
 
@@ -221,25 +240,27 @@ void LIDSolver::init(SimulationContext& ctx) {
     // booked 0.00 and pushed everything down the drain.
     for (auto& g : groups_) {
         g.ucf_raindepth = ucfRainDepth;
-        g.ucf_rainfall  = ucfRainfall;
+        g.ucf_rainfall = ucfRainfall;
     }
 
     // 3. Populate per-unit parameters from LidControlStore + LidUsageStore
-    std::array<int, 8> type_cursor = {};  // next free slot in each group
+    std::array<int, 8> type_cursor = {}; // next free slot in each group
     usage_order_.clear();
     usage_order_.reserve(static_cast<std::size_t>(n_usage));
     for (int j = 0; j < n_usage; ++j) {
         auto uj = static_cast<std::size_t>(j);
         int li = ctx.lid_usage.lid_index[uj];
-        if (li < 0 || li >= ctx.lid_controls.count()) continue;
+        if (li < 0 || li >= ctx.lid_controls.count())
+            continue;
         auto uli = static_cast<std::size_t>(li);
         int ti = typeCodeToIndex(ctx.lid_controls.lid_type[uli]);
-        if (ti < 0 || ti >= N_LID_TYPES) continue;
+        if (ti < 0 || ti >= N_LID_TYPES)
+            continue;
 
         auto& g = groups_[static_cast<size_t>(ti)];
         int slot = type_cursor[static_cast<size_t>(ti)]++;
         auto us = static_cast<std::size_t>(slot);
-        usage_order_.emplace_back(ti, slot);   // parse order; reversed per sub below
+        usage_order_.emplace_back(ti, slot); // parse order; reversed per sub below
 
         // Usage-level fields. area and full_width are scaled by the
         // replicate count so g.area is the TOTAL footprint of the usage row
@@ -259,23 +280,23 @@ void LIDSolver::init(SimulationContext& ctx) {
         // (issue #102). US decks are unaffected: Ucf[LENGTH][US] is 1.0.
         double n_units = static_cast<double>(ctx.lid_usage.number[uj]);
         g.subcatch_idx[us] = ctx.lid_usage.subcatch_index[uj];
-        g.control_idx[us]  = li;
+        g.control_idx[us] = li;
         // Legacy op order: convert ONE unit first (lid.c:551-552,
         // lidUnit->area = x[0] / SQR(UCF(LENGTH))), then multiply by the
         // count (lid.c:1168/1688, lidArea = lidUnit->area * number). On an
         // SI deck (area*n)/ucf^2 rounds differently from (area/ucf^2)*n.
-        g.area[us]         = (ctx.lid_usage.area[uj]  / ucfLength2) * n_units;
-        g.full_width[us]   = (ctx.lid_usage.width[uj] / ucfLength)  * n_units;
+        g.area[us] = (ctx.lid_usage.area[uj] / ucfLength2) * n_units;
+        g.full_width[us] = (ctx.lid_usage.width[uj] / ucfLength) * n_units;
         // The swale kernel (legacy swaleFluxRates) is NOT invariant under the
         // n_units scaling: botWidth = topWidth - 2*slope*thickness and the
         // hydraulic radius use ONE unit's width and area (lidUnit->fullWidth,
         // lidUnit->area), so the kernel is handed the per-unit values.
-        g.unit_area[us]    = ctx.lid_usage.area[uj]  / ucfLength2;
-        g.unit_width[us]   = ctx.lid_usage.width[uj] / ucfLength;
-        g.from_imperv[us]  = ctx.lid_usage.from_imperv[uj] / 100.0;  // % → fraction
-        g.from_perv[us]    = (uj < ctx.lid_usage.from_perv.size())
-                             ? ctx.lid_usage.from_perv[uj] / 100.0 : 0.0;
-        g.to_perv[us]      = ctx.lid_usage.to_perv[uj];
+        g.unit_area[us] = ctx.lid_usage.area[uj] / ucfLength2;
+        g.unit_width[us] = ctx.lid_usage.width[uj] / ucfLength;
+        g.from_imperv[us] = ctx.lid_usage.from_imperv[uj] / 100.0; // % → fraction
+        g.from_perv[us] =
+            (uj < ctx.lid_usage.from_perv.size()) ? ctx.lid_usage.from_perv[uj] / 100.0 : 0.0;
+        g.to_perv[us] = ctx.lid_usage.to_perv[uj];
         if (uj < ctx.lid_usage.rpt_file.size()) {
             const auto& fp = ctx.lid_usage.rpt_file[uj];
             g.rpt_path[us] = fp.absolute.empty() ? fp.original : fp.absolute;
@@ -297,7 +318,8 @@ void LIDSolver::init(SimulationContext& ctx) {
                 g.drain_node[us] = ni;
             } else {
                 int si = ctx.subcatch_names.find(dt_name);
-                if (si >= 0) g.drain_subcatch[us] = si;
+                if (si >= 0)
+                    g.drain_subcatch[us] = si;
             }
         }
 
@@ -309,66 +331,67 @@ void LIDSolver::init(SimulationContext& ctx) {
         if (uli < ctx.lid_controls.surface.size()) {
             const auto& p = ctx.lid_controls.surface[uli];
             const double veg = (p[0] == 0.0) ? 0.0 : p[1];
-            g.surf_store[us]      = p[0] / ucfRainDepth;              // in|mm → ft
-            g.surf_void_frac[us]  = 1.0 - veg;
-            g.surf_rough[us]      = p[2];
-            g.surf_slope[us]      = p[3] / 100.0;                     // % → fraction
-            g.surf_side_slope[us] = p[4];  // swale side slope (run/rise)
+            g.surf_store[us] = p[0] / ucfRainDepth; // in|mm → ft
+            g.surf_void_frac[us] = 1.0 - veg;
+            g.surf_rough[us] = p[2];
+            g.surf_slope[us] = p[3] / 100.0; // % → fraction
+            g.surf_side_slope[us] = p[4];    // swale side slope (run/rise)
         }
 
         // SOIL layer: [0]=Thick, [1]=Poros, [2]=FC, [3]=WP, [4]=Ksat, [5]=Kslope, [6]=Suction
         if (uli < ctx.lid_controls.soil.size()) {
             const auto& p = ctx.lid_controls.soil[uli];
-            g.soil_thick[us]    = p[0] / ucfRainDepth;   // in|mm  → ft
-            g.soil_poros[us]    = p[1];
-            g.soil_fc[us]       = p[2];
-            g.soil_wp[us]       = p[3];
-            g.soil_ksat[us]     = p[4] / ucfRainfall;    // in/hr|mm/hr → ft/sec
-            g.soil_kslope[us]   = p[5];
-            g.soil_suction[us]  = p[6] / ucfRainDepth;   // in|mm  → ft
+            g.soil_thick[us] = p[0] / ucfRainDepth; // in|mm  → ft
+            g.soil_poros[us] = p[1];
+            g.soil_fc[us] = p[2];
+            g.soil_wp[us] = p[3];
+            g.soil_ksat[us] = p[4] / ucfRainfall; // in/hr|mm/hr → ft/sec
+            g.soil_kslope[us] = p[5];
+            g.soil_suction[us] = p[6] / ucfRainDepth; // in|mm  → ft
         }
 
         // STORAGE layer: [0]=Thick, [1]=VoidRatio, [2]=Ksat, [3]=ClogFactor
         if (uli < ctx.lid_controls.storage.size()) {
             const auto& p = ctx.lid_controls.storage[uli];
-            g.stor_thick[us] = p[0] / ucfRainDepth;              // in|mm → ft
-            g.stor_void[us]  = (p[1] > 0.0) ? p[1] / (p[1] + 1.0) : 0.0; // ratio → fraction
-            g.stor_ksat[us]  = p[2] / ucfRainfall;              // in/hr|mm/hr → ft/sec
-            g.stor_clog[us]  = p[3];
+            g.stor_thick[us] = p[0] / ucfRainDepth;                     // in|mm → ft
+            g.stor_void[us] = (p[1] > 0.0) ? p[1] / (p[1] + 1.0) : 0.0; // ratio → fraction
+            g.stor_ksat[us] = p[2] / ucfRainfall;                       // in/hr|mm/hr → ft/sec
+            g.stor_clog[us] = p[3];
         }
 
         // DRAIN layer: [0]=Coeff, [1]=Expon, [2]=Offset, [3]=Delay, [4]=hOpen, [5]=hClose
         if (uli < ctx.lid_controls.drain.size()) {
             const auto& p = ctx.lid_controls.drain[uli];
-            g.drain_coeff[us]  = p[0];                    // user units; see getDrainRate
-            g.drain_expon[us]  = p[1];                    // dimensionless
-            g.drain_offset[us] = p[2] / ucfRainDepth;     // in|mm → ft
-            g.drain_delay[us]  = p[3] * 3600.0;           // hours → seconds
-            g.drain_hopen[us]  = p[4] / ucfRainDepth;     // in|mm → ft
-            g.drain_hclose[us] = p[5] / ucfRainDepth;     // in|mm → ft
+            g.drain_coeff[us] = p[0];                 // user units; see getDrainRate
+            g.drain_expon[us] = p[1];                 // dimensionless
+            g.drain_offset[us] = p[2] / ucfRainDepth; // in|mm → ft
+            g.drain_delay[us] = p[3] * 3600.0;        // hours → seconds
+            g.drain_hopen[us] = p[4] / ucfRainDepth;  // in|mm → ft
+            g.drain_hclose[us] = p[5] / ucfRainDepth; // in|mm → ft
         }
 
         // PAVEMENT layer: [0]=Thick, [1]=VoidRatio, [2]=FracImperv, [3]=Ksat, [4]=ClogFactor, [5]=RegenDays
         if (uli < ctx.lid_controls.pavement.size()) {
             const auto& p = ctx.lid_controls.pavement[uli];
-            g.pave_thick[us]       = p[0] / ucfRainDepth;               // in|mm → ft
-            g.pave_void[us]        = (p[1] > 0.0) ? p[1] / (p[1] + 1.0) : 0.0; // ratio → fraction
+            g.pave_thick[us] = p[0] / ucfRainDepth;                     // in|mm → ft
+            g.pave_void[us] = (p[1] > 0.0) ? p[1] / (p[1] + 1.0) : 0.0; // ratio → fraction
             g.pave_imperv_frac[us] = p[2];
-            g.pave_ksat[us]        = p[3] / ucfRainfall;               // in/hr|mm/hr → ft/sec
+            g.pave_ksat[us] = p[3] / ucfRainfall; // in/hr|mm/hr → ft/sec
             g.pave_clog_factor[us] = p[4];
             if (p[5] > 0.0) {
                 g.pave_regen_days[us] = p[5];
-                g.pave_regen_deg[us]  = (uli < ctx.lid_controls.pavement.size() && p[5] > 0.0)
-                                        ? 0.0 : 0.0;  // degree parsed separately if available
-                g.next_regen_day[us]  = p[5];  // first regen after p[5] days
+                g.pave_regen_deg[us] = (uli < ctx.lid_controls.pavement.size() && p[5] > 0.0)
+                                           ? 0.0
+                                           : 0.0; // degree parsed separately if available
+                g.next_regen_day[us] = p[5];      // first regen after p[5] days
             }
         }
 
         // DRAINMAT layer: [0]=Thick, [1]=VoidRatio, [2]=Roughness
         if (uli < ctx.lid_controls.drainmat.size()) {
             const auto& p = ctx.lid_controls.drainmat[uli];
-            g.drainmat_thick[us] = p[0] / ucfRainDepth;   // in|mm → ft
-            g.drainmat_void[us]  = p[1];
+            g.drainmat_thick[us] = p[0] / ucfRainDepth; // in|mm → ft
+            g.drainmat_void[us] = p[1];
             g.drainmat_rough[us] = p[2];
         }
 
@@ -377,36 +400,45 @@ void LIDSolver::init(SimulationContext& ctx) {
         {
             constexpr double PHI = 1.486;
             if (g.type == LIDType::VEG_SWALE) {
-                g.surf_alpha[us] = (g.surf_rough[us] * g.surf_slope[us] > 0.0 &&
-                                    g.surf_store[us] != 0.0)
-                    ? PHI * std::sqrt(g.surf_slope[us]) / g.surf_rough[us] : 0.0;
+                g.surf_alpha[us] =
+                    (g.surf_rough[us] * g.surf_slope[us] > 0.0 && g.surf_store[us] != 0.0)
+                        ? PHI * std::sqrt(g.surf_slope[us]) / g.surf_rough[us]
+                        : 0.0;
             } else {
                 g.surf_alpha[us] = (g.surf_rough[us] > 0.0)
-                    ? PHI / g.surf_rough[us] * std::sqrt(g.surf_slope[us]) : 0.0;
+                                       ? PHI / g.surf_rough[us] * std::sqrt(g.surf_slope[us])
+                                       : 0.0;
             }
             g.drainmat_alpha[us] = (g.drainmat_rough[us] > 0.0)
-                ? PHI / g.drainmat_rough[us] * std::sqrt(g.surf_slope[us]) : 0.0;
+                                       ? PHI / g.drainmat_rough[us] * std::sqrt(g.surf_slope[us])
+                                       : 0.0;
             // Clogging factors become the treated volume (ft) at which the
             // layer is fully clogged: void volume times the user's factor.
             if (g.pave_thick[us] > 0.0)
-                g.pave_clog_factor[us] *= g.pave_thick[us] * g.pave_void[us]
-                                        * (1.0 - g.pave_imperv_frac[us]);
+                g.pave_clog_factor[us] *=
+                    g.pave_thick[us] * g.pave_void[us] * (1.0 - g.pave_imperv_frac[us]);
             if (g.stor_thick[us] > 0.0)
                 g.stor_clog[us] *= g.stor_thick[us] * g.stor_void[us];
             else {
-                g.stor_clog[us]     = 0.0;
-                g.stor_void[us]     = 1.0;   // no storage layer
-                g.drain_offset[us]  = 0.0;
+                g.stor_clog[us] = 0.0;
+                g.stor_void[us] = 1.0; // no storage layer
+                g.drain_offset[us] = 0.0;
             }
             bool can_overflow = true;
             switch (g.type) {
-                case LIDType::ROOF_DISCON: can_overflow = false; break;
-                case LIDType::INFIL_TRENCH: case LIDType::PERM_PAVEMENT:
-                case LIDType::BIO_CELL: case LIDType::RAIN_GARDEN:
-                case LIDType::GREEN_ROOF:
-                    if (g.surf_alpha[us] > 0.0) can_overflow = false;
-                    break;
-                default: break;
+            case LIDType::ROOF_DISCON:
+                can_overflow = false;
+                break;
+            case LIDType::INFIL_TRENCH:
+            case LIDType::PERM_PAVEMENT:
+            case LIDType::BIO_CELL:
+            case LIDType::RAIN_GARDEN:
+            case LIDType::GREEN_ROOF:
+                if (g.surf_alpha[us] > 0.0)
+                    can_overflow = false;
+                break;
+            default:
+                break;
             }
             g.can_overflow[us] = can_overflow ? 1 : 0;
             if (g.type == LIDType::RAIN_BARREL) {
@@ -416,17 +448,16 @@ void LIDSolver::init(SimulationContext& ctx) {
             if (g.type == LIDType::GREEN_ROOF) {
                 // The drainage mat IS the storage layer.
                 g.stor_thick[us] = g.drainmat_thick[us];
-                g.stor_void[us]  = g.drainmat_void[us];
-                g.stor_clog[us]  = 0.0;
-                g.stor_ksat[us]  = 0.0;
+                g.stor_void[us] = g.drainmat_void[us];
+                g.stor_clog[us] = 0.0;
+                g.stor_ksat[us] = 0.0;
             }
         }
 
         // Initial saturation (percent → fraction, legacy x[2]/100)
         double initSat = ctx.lid_usage.init_sat[uj] / 100.0;
         if (g.soil_thick[us] > 0.0) {
-            g.soil_moist[us] = g.soil_wp[us]
-                             + initSat * (g.soil_poros[us] - g.soil_wp[us]);
+            g.soil_moist[us] = g.soil_wp[us] + initSat * (g.soil_poros[us] - g.soil_wp[us]);
         }
         if (g.stor_thick[us] > 0.0) {
             g.stor_depth[us] = initSat * g.stor_thick[us];
@@ -442,20 +473,18 @@ void LIDSolver::init(SimulationContext& ctx) {
         // kernel then falls back to the native-soil rate.
         g.soil_infil[us] = GreenAmptState{};
         if (g.soil_thick[us] > 0.0) {
-            infil::grnampt_init(g.soil_infil[us],
-                                g.soil_suction[us] * ucfRainDepth,
+            infil::grnampt_init(g.soil_infil[us], g.soil_suction[us] * ucfRainDepth,
                                 g.soil_ksat[us] * ucfRainfall,
-                                (g.soil_poros[us] - g.soil_wp[us]) * (1.0 - initSat),
-                                ctx.options);
+                                (g.soil_poros[us] - g.soil_wp[us]) * (1.0 - initSat), ctx.options);
         }
         if (g.type == LIDType::VEG_SWALE) {
             const int sc = g.subcatch_idx[us];
             const auto usc = static_cast<std::size_t>(sc);
             if (sc >= 0 && usc < ctx.subcatches.infil_model.size() &&
                 (ctx.subcatches.infil_model[usc] == 2 || ctx.subcatches.infil_model[usc] == 3)) {
-                infil::grnampt_init(g.soil_infil[us],
-                                    ctx.subcatches.infil_p1[usc], ctx.subcatches.infil_p2[usc],
-                                    ctx.subcatches.infil_p3[usc], ctx.options);
+                infil::grnampt_init(g.soil_infil[us], ctx.subcatches.infil_p1[usc],
+                                    ctx.subcatches.infil_p2[usc], ctx.subcatches.infil_p3[usc],
+                                    ctx.options);
             }
         }
         // legacy lid_initState: dryTime starts at DRY_DAYS
@@ -467,11 +496,10 @@ void LIDSolver::init(SimulationContext& ctx) {
     for (auto& g : groups_) {
         for (int i = 0; i < g.count; ++i) {
             auto ui = static_cast<std::size_t>(i);
-            double initVol = g.surf_depth[ui] * g.surf_void_frac[ui]
-                           + g.soil_moist[ui] * g.soil_thick[ui]
-                           + g.stor_depth[ui] * g.stor_void[ui]
-                           + g.pave_depth[ui] * g.pave_void[ui]
-                               * (1.0 - g.pave_imperv_frac[ui]);
+            double initVol = g.surf_depth[ui] * g.surf_void_frac[ui] +
+                             g.soil_moist[ui] * g.soil_thick[ui] +
+                             g.stor_depth[ui] * g.stor_void[ui] +
+                             g.pave_depth[ui] * g.pave_void[ui] * (1.0 - g.pave_imperv_frac[ui]);
             g.wb_init_vol[ui] = initVol;
             g.wb_final_vol[ui] = initVol;
         }
@@ -485,10 +513,12 @@ void LIDSolver::init(SimulationContext& ctx) {
         for (int j = 0; j < n_usage; ++j) {
             auto uj = static_cast<std::size_t>(j);
             int li = ctx.lid_usage.lid_index[uj];
-            if (li < 0 || li >= ctx.lid_controls.count()) continue;
+            if (li < 0 || li >= ctx.lid_controls.count())
+                continue;
             auto uli = static_cast<std::size_t>(li);
             int ti = typeCodeToIndex(ctx.lid_controls.lid_type[uli]);
-            if (ti < 0 || ti >= N_LID_TYPES) continue;
+            if (ti < 0 || ti >= N_LID_TYPES)
+                continue;
 
             auto& g = groups_[static_cast<size_t>(ti)];
             int slot = cursor2[static_cast<size_t>(ti)]++;
@@ -496,8 +526,7 @@ void LIDSolver::init(SimulationContext& ctx) {
             // Ensure drain_rmvl is sized
             if (g.n_pollutants != np) {
                 g.n_pollutants = np;
-                g.drain_rmvl.assign(
-                    static_cast<size_t>(g.count * np), 0.0);
+                g.drain_rmvl.assign(static_cast<size_t>(g.count * np), 0.0);
             }
 
             // Copy removal fractions from LidControlStore
@@ -524,8 +553,7 @@ void LIDSolver::init(SimulationContext& ctx) {
         std::map<int, std::vector<std::pair<int, int>>> by_sub;
         for (const auto& tu : usage_order_) {
             const auto& gg = groups_[static_cast<std::size_t>(tu.first)];
-            by_sub[gg.subcatch_idx[static_cast<std::size_t>(tu.second)]]
-                .push_back(tu);
+            by_sub[gg.subcatch_idx[static_cast<std::size_t>(tu.second)]].push_back(tu);
         }
         usage_order_.clear();
         for (auto& kv : by_sub)
@@ -562,16 +590,21 @@ void LIDSolver::init(SimulationContext& ctx) {
     }
 }
 
-double completedUnitStorage(const LIDGroupSoA& g,int u) {
-    if(g.type==LIDType::VEG_SWALE) {
-        const double top=std::max(g.unit_width[u],.5),height=g.surf_store[u];
-        double side=g.surf_side_slope[u],bottom=top-2*side*height;
-        if(bottom<.5){bottom=.5;side=.5*(top-.5)/height;}
-        const double depth=g.surf_depth[u];
-        return g.area[u]/top*depth*(bottom+side*depth)*g.surf_void_frac[u];
+double completedUnitStorage(const LIDGroupSoA& g, int u) {
+    if (g.type == LIDType::VEG_SWALE) {
+        const double top = std::max(g.unit_width[u], .5), height = g.surf_store[u];
+        double side = g.surf_side_slope[u], bottom = top - 2 * side * height;
+        if (bottom < .5) {
+            bottom = .5;
+            side = .5 * (top - .5) / height;
+        }
+        const double depth = g.surf_depth[u];
+        return g.area[u] / top * depth * (bottom + side * depth) * g.surf_void_frac[u];
     }
-    return (g.surf_depth[u]*g.surf_void_frac[u]+g.soil_moist[u]*g.soil_thick[u]+
-        g.stor_depth[u]*g.stor_void[u]+g.pave_depth[u]*g.pave_void[u]*(1-g.pave_imperv_frac[u]))*g.area[u];
+    return (g.surf_depth[u] * g.surf_void_frac[u] + g.soil_moist[u] * g.soil_thick[u] +
+            g.stor_depth[u] * g.stor_void[u] +
+            g.pave_depth[u] * g.pave_void[u] * (1 - g.pave_imperv_frac[u])) *
+           g.area[u];
 }
 
 double LIDSolver::storedVolume(const std::vector<int>* source_owners) const {
@@ -582,13 +615,13 @@ double LIDSolver::storedVolume(const std::vector<int>* source_owners) const {
     for (const auto& g : groups_) {
         for (int i = 0; i < g.count; ++i) {
             auto ui = static_cast<std::size_t>(i);
-            if (source_owners && g.subcatch_idx[ui] >= 0 && source_owners->at(g.subcatch_idx[ui]) >= 0) continue;
-            total += (g.surf_depth[ui] * g.surf_void_frac[ui]
-                      + g.soil_moist[ui] * g.soil_thick[ui]
-                      + g.stor_depth[ui] * g.stor_void[ui]
-                      + g.pave_depth[ui] * g.pave_void[ui]
-                          * (1.0 - g.pave_imperv_frac[ui]))
-                     * g.area[ui];
+            if (source_owners && g.subcatch_idx[ui] >= 0 &&
+                source_owners->at(g.subcatch_idx[ui]) >= 0)
+                continue;
+            total += (g.surf_depth[ui] * g.surf_void_frac[ui] +
+                      g.soil_moist[ui] * g.soil_thick[ui] + g.stor_depth[ui] * g.stor_void[ui] +
+                      g.pave_depth[ui] * g.pave_void[ui] * (1.0 - g.pave_imperv_frac[ui])) *
+                     g.area[ui];
         }
     }
     return total;
@@ -615,25 +648,24 @@ double LIDSolver::storedVolume(const std::vector<int>* source_owners) const {
 // every LID deck in the parity corpus failed; this is what closes them.
 namespace {
 
-constexpr int    L_SURF = 0, L_SOIL = 1, L_STOR = 2, L_PAVE = 3, L_MAX = 4;
-constexpr double L_BIG     = 1.0e10;      // legacy BIG
-constexpr double L_ZERO    = 1.0e-10;     // legacy ZERO
-constexpr double L_STOPTOL = 0.00328;     // legacy STOPTOL (1 mm)
-constexpr double L_MINFLOW = 2.3e-8;      // legacy MINFLOW (0.001 in/hr)
+constexpr int L_SURF = 0, L_SOIL = 1, L_STOR = 2, L_PAVE = 3, L_MAX = 4;
+constexpr double L_BIG = 1.0e10;      // legacy BIG
+constexpr double L_ZERO = 1.0e-10;    // legacy ZERO
+constexpr double L_STOPTOL = 0.00328; // legacy STOPTOL (1 mm)
+constexpr double L_MINFLOW = 2.3e-8;  // legacy MINFLOW (0.001 in/hr)
 
 /// Per-unit parameter view (ft, ft/s; legacy TLidProc after validateLidProc).
 struct LidProcView {
     LIDType type;
     double surf_thick, surf_void, surf_alpha, surf_side;
-    bool   can_overflow;
-    double pave_thick, pave_void, pave_imperv, pave_ksat, pave_clog,
-           pave_regen_days, pave_regen_deg;
+    bool can_overflow;
+    double pave_thick, pave_void, pave_imperv, pave_ksat, pave_clog, pave_regen_days,
+        pave_regen_deg;
     double soil_thick, soil_poros, soil_fc, soil_wp, soil_ksat, soil_kslope;
     double stor_thick, stor_void, stor_ksat, stor_clog;
-    double drain_coeff, drain_expon, drain_offset, drain_delay,
-           drain_hopen, drain_hclose;
+    double drain_coeff, drain_expon, drain_offset, drain_delay, drain_hopen, drain_hclose;
     double dm_thick, dm_alpha;
-    double area, full_width;                  // legacy TLidUnit
+    double area, full_width; // legacy TLidUnit
     double ucf_rainfall, ucf_raindepth;
 };
 
@@ -641,8 +673,8 @@ class LegacyLidKernel {
 public:
     // legacy file-scope shared variables (lidproc.c)
     double Tstep = 0.0, EvapRate = 0.0, MaxNativeInfil = L_BIG;
-    double SpatialFraction=-1.0,SpatialLimit=L_BIG,SpatialExfilRatio=0.0;
-    bool Completed=false;
+    double SpatialFraction = -1.0, SpatialLimit = L_BIG, SpatialExfilRatio = 0.0;
+    bool Completed = false;
     double SurfaceInflow = 0, SurfaceInfil = 0, SurfaceEvap = 0, SurfaceOutflow = 0;
     double PaveEvap = 0, PavePerc = 0, SoilEvap = 0, SoilPerc = 0;
     double StorageInflow = 0, StorageExfil = 0, StorageEvap = 0, StorageDrain = 0;
@@ -654,30 +686,59 @@ public:
     double old_runoff_days = 0.0;
 
     // ---- legacy getSurfaceOutflowRate
+    /**
+     * @brief Compute Manning surface discharge above the surface storage height.
+     *
+     * Requires a valid borrowed P view, positive P->area and Tstep, and initialized surface flux/volume
+     * fields. Does not change depth.
+     *
+     * @param[in] depth Current ponded depth in ft.
+     * @return Outflow in ft/s per unit footprint, zero below the storage crest, limited by excess
+     *     depth/Tstep and additionally by available net water in completed mode.
+     */
     double getSurfaceOutflowRate(double depth) const {
         double delta = depth - P->surf_thick;
-        if (delta < 0.0) return 0.0;
-        double outflow = P->surf_alpha * std::pow(delta, 5.0 / 3.0) *
-                         P->full_width / P->area;
+        if (delta < 0.0)
+            return 0.0;
+        double outflow = P->surf_alpha * std::pow(delta, 5.0 / 3.0) * P->full_width / P->area;
         outflow = std::min(outflow, delta / Tstep);
-        if (Completed) outflow = std::min(outflow, std::max(0.0,
-            SurfaceInflow + SurfaceVolume / Tstep - SurfaceEvap - SurfaceInfil));
+        if (Completed)
+            outflow = std::min(outflow, std::max(0.0, SurfaceInflow + SurfaceVolume / Tstep -
+                                                          SurfaceEvap - SurfaceInfil));
         return outflow;
     }
 
     // ---- legacy getSurfaceOverflowRate (clamps the depth it is handed)
+    /**
+     * @brief Spill and clamp water above the surface storage height.
+     *
+     * @param[in,out] surfaceDepth Non-null writable ft depth; clamped to P->surf_thick only when above
+     *     that height.
+     * @return Overflow ft/s per unit footprint, using surface void fraction and positive Tstep; zero
+     *     when no excess exists.
+     */
     double getSurfaceOverflowRate(double* surfaceDepth) const {
         double delta = *surfaceDepth - P->surf_thick;
-        if (delta <= 0.0) return 0.0;
+        if (delta <= 0.0)
+            return 0.0;
         *surfaceDepth = P->surf_thick;
         return delta * P->surf_void / Tstep;
     }
 
     // ---- legacy getPavementPermRate
+    /**
+     * @brief Apply accumulated clogging and due regeneration to pavement conductivity.
+     *
+     * Uses borrowed group slot U. At most one due regeneration event is applied per call: scales
+     * vol_treated and advances next_regen_day by the configured interval. The clock is elapsed runoff
+     * days, and the clogging factor is treated depth in ft. State/material must already be valid;
+     * negative factors/states are not normalized here.
+     * @return Effective pavement conductivity in ft/s after a clogging reduction capped above at one.
+     */
     double getPavementPermRate() {
         double permReduction = 0.0;
         double clogFactor = P->pave_clog;
-        double regenDays  = P->pave_regen_days;
+        double regenDays = P->pave_regen_days;
         if (clogFactor > 0.0) {
             if (regenDays > 0.0) {
                 if (old_runoff_days >= G->next_regen_day[U]) {
@@ -692,64 +753,107 @@ public:
     }
 
     // ---- legacy getSoilPercRate
+    /**
+     * @brief Evaluate exponential unsaturated soil percolation above field capacity.
+     *
+     * @param[in] theta Volumetric soil water fraction, expected within the valid material range.
+     * @return Zero at/below field capacity; otherwise soil_ksat * exp(-(porosity-theta)*kslope), in
+     *     ft/s. Availability limits are applied by the caller.
+     */
     double getSoilPercRate(double theta) const {
-        if (theta <= P->soil_fc) return 0.0;
+        if (theta <= P->soil_fc)
+            return 0.0;
         double delta = P->soil_poros - theta;
         return P->soil_ksat * std::exp(-delta * P->soil_kslope);
     }
 
     // ---- legacy getStorageExfilRate
+    /**
+     * @brief Compute clogged native/spatial bottom exfiltration capacity.
+     *
+     * Ordinary mode limits clogged storage conductivity by MaxNativeInfil, returning zero for an
+     * impermeable bottom or zero ceiling. For SpatialFraction >= 0, combines the spatial ceiling on the
+     * eligible native-bottom fraction with ordinary native capacity elsewhere and updates
+     * SpatialExfilRatio for receipt partitioning. Clogging uses cumulative wb_inflow divided by
+     * stor_clog; valid material and fraction inputs are required.
+     * @return Footprint-average bottom capacity in ft/s, before availability limits imposed by the type
+     *     flux routine.
+     */
     double getStorageExfilRate() {
         double infil = 0.0;
         double clogFactor = 0.0;
-        if (SpatialFraction<0 && P->stor_ksat == 0.0) return 0.0;
-        if (SpatialFraction<0 && MaxNativeInfil == 0.0) return 0.0;
+        if (SpatialFraction < 0 && P->stor_ksat == 0.0)
+            return 0.0;
+        if (SpatialFraction < 0 && MaxNativeInfil == 0.0)
+            return 0.0;
         clogFactor = P->stor_clog;
         if (clogFactor > 0.0) {
             clogFactor = G->wb_inflow[U] / clogFactor;
             clogFactor = std::min(clogFactor, 1.0);
         }
         infil = P->stor_ksat * (1.0 - clogFactor);
-        const double native=std::min(infil,MaxNativeInfil);
-        if(SpatialFraction<0)return native;
-        const double inside=hasNativeBottom(P->type,P->stor_thick,P->stor_ksat)
-            ? (P->stor_thick<=0 ? SpatialLimit : std::min(infil,SpatialLimit)) : 0.0;
-        const double total=SpatialFraction*inside+(1-SpatialFraction)*native;
-        SpatialExfilRatio=total>0 ? SpatialFraction*inside/total : 0.0;
+        const double native = std::min(infil, MaxNativeInfil);
+        if (SpatialFraction < 0)
+            return native;
+        const double inside =
+            hasNativeBottom(P->type, P->stor_thick, P->stor_ksat)
+                ? (P->stor_thick <= 0 ? SpatialLimit : std::min(infil, SpatialLimit))
+                : 0.0;
+        const double total = SpatialFraction * inside + (1 - SpatialFraction) * native;
+        SpatialExfilRatio = total > 0 ? SpatialFraction * inside / total : 0.0;
         return total;
     }
 
     // ---- legacy getStorageDrainRate
-    double getStorageDrainRate(double storageDepth, double soilTheta,
-                               double paveDepth, double surfaceDepth) const {
+    /**
+     * @brief Evaluate the underdrain head law and stored open/close hysteresis thresholds.
+     *
+     * Reads old_drain_flow to choose hysteresis; does not update it. Converts head to authored
+     * rain-depth units and drain discharge back through ucf_rainfall. No user drain-control curve is
+     * carried by this material view; callers apply available-water limits.
+     *
+     * @param[in] storageDepth Storage water depth in ft.
+     * @param[in] soilTheta Volumetric soil water fraction, used when saturated storage pushes head into
+     *     soil.
+     * @param[in] paveDepth Pavement water depth in ft, included when the underlying stack is saturated.
+     * @param[in] surfaceDepth Surface ponding depth in ft, included when all lower present layers are
+     *     saturated.
+     * @return Uncapped underdrain rate in ft/s per unit footprint, zero below the relevant
+     *     opening/closing threshold or drain offset.
+     */
+    double getStorageDrainRate(double storageDepth, double soilTheta, double paveDepth,
+                               double surfaceDepth) const {
         double head = storageDepth;
         double outflow = 0.0;
-        const double paveThickness    = P->pave_thick;
-        const double soilThickness    = P->soil_thick;
-        const double soilPorosity     = P->soil_poros;
-        const double soilFieldCap     = P->soil_fc;
+        const double paveThickness = P->pave_thick;
+        const double soilThickness = P->soil_thick;
+        const double soilPorosity = P->soil_poros;
+        const double soilFieldCap = P->soil_fc;
         const double storageThickness = P->stor_thick;
         if (storageDepth >= storageThickness) {
             if (soilThickness > 0.0) {
                 if (soilTheta > soilFieldCap) {
-                    head += (soilTheta - soilFieldCap) /
-                            (soilPorosity - soilFieldCap) * soilThickness;
+                    head +=
+                        (soilTheta - soilFieldCap) / (soilPorosity - soilFieldCap) * soilThickness;
                     if (soilTheta >= soilPorosity) {
                         if (paveThickness > 0.0) {
                             head += paveDepth;
-                            if (paveDepth >= paveThickness) head += surfaceDepth;
-                        }
-                        else head += surfaceDepth;
+                            if (paveDepth >= paveThickness)
+                                head += surfaceDepth;
+                        } else
+                            head += surfaceDepth;
                     }
                 }
-            }
-            else if (paveThickness > 0.0) {
+            } else if (paveThickness > 0.0) {
                 head += paveDepth;
-                if (paveDepth >= paveThickness) head += surfaceDepth;
+                if (paveDepth >= paveThickness)
+                    head += surfaceDepth;
             }
         }
-        if (G->old_drain_flow[U] == 0.0 && head <= P->drain_hopen) return 0.0;
-        if (G->old_drain_flow[U] > 0.0 && head <= P->drain_hclose) return 0.0;
+        if (G->old_drain_flow[U] == 0.0 && head <= P->drain_hopen)
+            return 0.0;
+        if (G->old_drain_flow[U] > 0.0 && head <= P->drain_hclose)
+            return 0.0;
         head -= P->drain_offset;
         if (head > L_ZERO) {
             head *= P->ucf_raindepth;
@@ -762,18 +866,38 @@ public:
     }
 
     // ---- legacy getDrainMatOutflow
+    /**
+     * @brief Evaluate green-roof drainage-mat outflow.
+     *
+     * @param[in] depth Drainage-mat water depth in ft.
+     * @return Manning outflow in ft/s per footprint when dm_alpha is positive, otherwise the current
+     *     SoilPerc rate. Water availability is limited by the caller.
+     */
     double getDrainMatOutflow(double depth) const {
         double result = SoilPerc;
         if (P->dm_alpha > 0.0) {
-            result = P->dm_alpha * std::pow(depth, 5.0 / 3.0) *
-                     P->full_width / P->area * P->stor_void;
+            result =
+                P->dm_alpha * std::pow(depth, 5.0 / 3.0) * P->full_width / P->area * P->stor_void;
         }
         return result;
     }
 
     // ---- legacy getEvapRates
-    void getEvapRates(double surfaceVol, double paveVol, double soilVol,
-                      double storageVol, double pervFrac) {
+    /**
+     * @brief Allocate one potential evaporation budget from surface downward.
+     *
+     * Writes SurfaceEvap, PaveEvap, SoilEvap and StorageEvap in ft/s using positive Tstep. When
+     * SurfaceInfil > 0, all subsurface evaporation is suppressed. Volumes must already be nonnegative;
+     * only the surface evaporation and residual budgets are explicitly clamped against zero.
+     *
+     * @param[in] surfaceVol Surface available water as equivalent ft over the footprint.
+     * @param[in] paveVol Pavement available water as equivalent ft.
+     * @param[in] soilVol Soil water available above wilting point as equivalent ft.
+     * @param[in] storageVol Storage available water as equivalent ft.
+     * @param[in] pervFrac Fraction [0,1] scaling the budget left after surface evaporation.
+     */
+    void getEvapRates(double surfaceVol, double paveVol, double soilVol, double storageVol,
+                      double pervFrac) {
         double availEvap = EvapRate;
         SurfaceEvap = std::min(availEvap, surfaceVol / Tstep);
         SurfaceEvap = std::max(0.0, SurfaceEvap);
@@ -793,31 +917,59 @@ public:
     }
 
     // ---- legacy roofFluxRates
+    /**
+     * @brief Evaluate roof-disconnection surface storage and capped drain diversion.
+     *
+     * Writes SURF only; other derivative entries must be initialized by the caller. Ordinary mode uses
+     * the legacy unweighted surface-depth convention; completed mode uses surface void volume. Surface
+     * overflow clamping here is local; final overflow is applied by getOutflow(). Requires initialized
+     * P/G/U, positive Tstep and staged forcing; the input array is not retained.
+     *
+     * @param[in] x Readable four-element state [SURF, SOIL, STOR, PAVE]: depths in ft except SOIL
+     *     volumetric moisture.
+     * @param[out] f Writable four-element derivative array: depth rates in ft/s and SOIL fraction/s;
+     *     entries written depend on the selected type.
+     */
     void roofFluxRates(const double x[], double f[]) {
         double surfaceDepth = x[L_SURF];
-        SurfaceVolume = Completed ? surfaceDepth*P->surf_void : surfaceDepth;
+        SurfaceVolume = Completed ? surfaceDepth * P->surf_void : surfaceDepth;
         getEvapRates(SurfaceVolume, 0.0, 0.0, 0.0, 1.0);
         SurfaceInfil = 0.0;
         if (P->surf_alpha > 0.0)
             SurfaceOutflow = getSurfaceOutflowRate(surfaceDepth);
-        else getSurfaceOverflowRate(&surfaceDepth);
+        else
+            getSurfaceOverflowRate(&surfaceDepth);
         StorageDrain = std::min(P->drain_coeff / P->ucf_rainfall, SurfaceOutflow);
         SurfaceOutflow -= StorageDrain;
         f[L_SURF] = (SurfaceInflow - SurfaceEvap - StorageDrain - SurfaceOutflow);
-        if (Completed) f[L_SURF] /= P->surf_void;
+        if (Completed)
+            f[L_SURF] /= P->surf_void;
     }
 
     // ---- legacy greenRoofFluxRates
+    /**
+     * @brief Evaluate soil percolation and drainage-mat flow for a green roof.
+     *
+     * Writes SURF/SOIL/STOR, leaving PAVE unchanged. There is no bottom exfiltration. Limits
+     * infiltration, percolation, evaporation and mat drain by available water and receiving capacity;
+     * soil thickness and void fractions must be positive. Requires initialized P/G/U, positive Tstep
+     * and staged forcing; the input array is not retained.
+     *
+     * @param[in] x Readable four-element state [SURF, SOIL, STOR, PAVE]: depths in ft except SOIL
+     *     volumetric moisture.
+     * @param[out] f Writable four-element derivative array: depth rates in ft/s and SOIL fraction/s;
+     *     entries written depend on the selected type.
+     */
     void greenRoofFluxRates(const double x[], double f[]) {
         double availVolume, maxRate;
-        const double soilThickness    = P->soil_thick;
+        const double soilThickness = P->soil_thick;
         const double storageThickness = P->stor_thick;
-        const double soilPorosity     = P->soil_poros;
-        const double storageVoidFrac  = P->stor_void;
-        const double soilFieldCap     = P->soil_fc;
-        const double soilWiltPoint    = P->soil_wp;
+        const double soilPorosity = P->soil_poros;
+        const double storageVoidFrac = P->stor_void;
+        const double soilFieldCap = P->soil_fc;
+        const double soilWiltPoint = P->soil_wp;
         const double surfaceDepth = x[L_SURF];
-        const double soilTheta    = x[L_SOIL];
+        const double soilTheta = x[L_SOIL];
         const double storageDepth = x[L_STOR];
         SurfaceVolume = surfaceDepth * P->surf_void;
         SoilVolume = soilTheta * soilThickness;
@@ -825,9 +977,11 @@ public:
         availVolume = SoilVolume - soilWiltPoint * soilThickness;
         getEvapRates(SurfaceVolume, 0.0, availVolume, StorageVolume, 1.0);
         // Completed fluxes must share the water left after surface evaporation.
-        if (Completed) SurfaceInfil = std::min(SurfaceInfil, std::max(0.0,
-            SurfaceInflow + SurfaceVolume / Tstep - SurfaceEvap));
-        if (soilTheta >= soilPorosity) StorageEvap = 0.0;
+        if (Completed)
+            SurfaceInfil = std::min(
+                SurfaceInfil, std::max(0.0, SurfaceInflow + SurfaceVolume / Tstep - SurfaceEvap));
+        if (soilTheta >= soilPorosity)
+            StorageEvap = 0.0;
         SoilPerc = getSoilPercRate(soilTheta);
         availVolume = (soilTheta - soilFieldCap) * soilThickness;
         maxRate = std::max(availVolume, 0.0) / Tstep - SoilEvap;
@@ -842,44 +996,58 @@ public:
             SurfaceInfil = std::min(SurfaceInfil, maxRate);
         } else {
             maxRate = storageDepth * storageVoidFrac / Tstep - StorageEvap;
-            if (storageDepth >= storageThickness) maxRate += SoilPerc;
+            if (storageDepth >= storageThickness)
+                maxRate += SoilPerc;
             maxRate = std::max(maxRate, 0.0);
             StorageDrain = std::min(StorageDrain, maxRate);
-            maxRate = (storageThickness - storageDepth) * storageVoidFrac / Tstep +
-                      StorageDrain + StorageEvap;
+            maxRate = (storageThickness - storageDepth) * storageVoidFrac / Tstep + StorageDrain +
+                      StorageEvap;
             SoilPerc = std::min(SoilPerc, maxRate);
-            maxRate = (soilPorosity - soilTheta) * soilThickness / Tstep +
-                      SoilPerc + SoilEvap;
+            maxRate = (soilPorosity - soilTheta) * soilThickness / Tstep + SoilPerc + SoilEvap;
             SurfaceInfil = std::min(SurfaceInfil, maxRate);
         }
         SurfaceOutflow = getSurfaceOutflowRate(surfaceDepth);
-        f[L_SURF] = (SurfaceInflow - SurfaceEvap - SurfaceInfil - SurfaceOutflow) /
-                    P->surf_void;
+        f[L_SURF] = (SurfaceInflow - SurfaceEvap - SurfaceInfil - SurfaceOutflow) / P->surf_void;
         f[L_SOIL] = (SurfaceInfil - SoilEvap - SoilPerc) / P->soil_thick;
         f[L_STOR] = (SoilPerc - StorageEvap - StorageDrain) / P->stor_void;
     }
 
     // ---- legacy biocellFluxRates
+    /**
+     * @brief Evaluate biocell/rain-garden soil, storage, exfiltration and underdrain fluxes.
+     *
+     * Writes SURF/SOIL/STOR and leaves PAVE unchanged. An absent storage layer transmits soil
+     * percolation directly to bottom exfiltration and forces STOR derivative to zero. Positive soil
+     * thickness and valid porosity/void fractions are required. Requires initialized P/G/U, positive
+     * Tstep and staged forcing; the input array is not retained.
+     *
+     * @param[in] x Readable four-element state [SURF, SOIL, STOR, PAVE]: depths in ft except SOIL
+     *     volumetric moisture.
+     * @param[out] f Writable four-element derivative array: depth rates in ft/s and SOIL fraction/s;
+     *     entries written depend on the selected type.
+     */
     void biocellFluxRates(const double x[], double f[]) {
         double availVolume, maxRate;
-        const double soilThickness    = P->soil_thick;
-        const double soilPorosity     = P->soil_poros;
-        const double soilFieldCap     = P->soil_fc;
-        const double soilWiltPoint    = P->soil_wp;
+        const double soilThickness = P->soil_thick;
+        const double soilPorosity = P->soil_poros;
+        const double soilFieldCap = P->soil_fc;
+        const double soilWiltPoint = P->soil_wp;
         const double storageThickness = P->stor_thick;
-        const double storageVoidFrac  = P->stor_void;
+        const double storageVoidFrac = P->stor_void;
         const double surfaceDepth = x[L_SURF];
-        const double soilTheta    = x[L_SOIL];
+        const double soilTheta = x[L_SOIL];
         const double storageDepth = x[L_STOR];
         SurfaceVolume = surfaceDepth * P->surf_void;
-        SoilVolume    = soilTheta * soilThickness;
+        SoilVolume = soilTheta * soilThickness;
         StorageVolume = storageDepth * storageVoidFrac;
         availVolume = SoilVolume - soilWiltPoint * soilThickness;
         getEvapRates(SurfaceVolume, 0.0, availVolume, StorageVolume, 1.0);
         // Completed fluxes must share the water left after surface evaporation.
-        if (Completed) SurfaceInfil = std::min(SurfaceInfil, std::max(0.0,
-            SurfaceInflow + SurfaceVolume / Tstep - SurfaceEvap));
-        if (soilTheta >= soilPorosity) StorageEvap = 0.0;
+        if (Completed)
+            SurfaceInfil = std::min(
+                SurfaceInfil, std::max(0.0, SurfaceInflow + SurfaceVolume / Tstep - SurfaceEvap));
+        if (soilTheta >= soilPorosity)
+            StorageEvap = 0.0;
         SoilPerc = getSoilPercRate(soilTheta);
         availVolume = (soilTheta - soilFieldCap) * soilThickness;
         maxRate = std::max(availVolume, 0.0) / Tstep - SoilEvap;
@@ -888,29 +1056,28 @@ public:
         StorageExfil = getStorageExfilRate();
         StorageDrain = 0.0;
         if (P->drain_coeff > 0.0) {
-            StorageDrain = getStorageDrainRate(storageDepth, soilTheta, 0.0,
-                                               surfaceDepth);
+            StorageDrain = getStorageDrainRate(storageDepth, soilTheta, 0.0, surfaceDepth);
         }
         if (storageThickness == 0.0) {
             StorageEvap = 0.0;
             maxRate = std::min(SoilPerc, StorageExfil);
             SoilPerc = maxRate;
             StorageExfil = maxRate;
-            maxRate = (soilPorosity - soilTheta) * soilThickness / Tstep +
-                      SoilPerc + SoilEvap;
+            maxRate = (soilPorosity - soilTheta) * soilThickness / Tstep + SoilPerc + SoilEvap;
             SurfaceInfil = std::min(SurfaceInfil, maxRate);
         } else {
             if (soilTheta >= soilPorosity && storageDepth >= storageThickness) {
                 maxRate = StorageExfil + StorageDrain;
                 if (SoilPerc < maxRate) {
                     maxRate = SoilPerc;
-                    if (maxRate > StorageExfil) StorageDrain = maxRate - StorageExfil;
+                    if (maxRate > StorageExfil)
+                        StorageDrain = maxRate - StorageExfil;
                     else {
                         StorageExfil = maxRate;
                         StorageDrain = 0.0;
                     }
-                }
-                else SoilPerc = maxRate;
+                } else
+                    SoilPerc = maxRate;
                 SurfaceInfil = std::min(SurfaceInfil, maxRate);
             } else {
                 maxRate = SoilPerc - StorageEvap + storageDepth * storageVoidFrac / Tstep;
@@ -918,38 +1085,49 @@ public:
                 StorageExfil = std::max(StorageExfil, 0.0);
                 if (StorageDrain > 0.0) {
                     maxRate = -StorageExfil - StorageEvap;
-                    if (storageDepth >= storageThickness) maxRate += SoilPerc;
+                    if (storageDepth >= storageThickness)
+                        maxRate += SoilPerc;
                     if (P->drain_offset <= storageDepth) {
-                        maxRate += (storageDepth - P->drain_offset) *
-                                   storageVoidFrac / Tstep;
+                        maxRate += (storageDepth - P->drain_offset) * storageVoidFrac / Tstep;
                     }
                     maxRate = std::max(maxRate, 0.0);
                     StorageDrain = std::min(StorageDrain, maxRate);
                 }
                 maxRate = StorageExfil + StorageDrain + StorageEvap +
-                          (storageThickness - storageDepth) *
-                          storageVoidFrac / Tstep;
+                          (storageThickness - storageDepth) * storageVoidFrac / Tstep;
                 SoilPerc = std::min(SoilPerc, maxRate);
-                maxRate = (soilPorosity - soilTheta) * soilThickness / Tstep +
-                          SoilPerc + SoilEvap;
+                maxRate = (soilPorosity - soilTheta) * soilThickness / Tstep + SoilPerc + SoilEvap;
                 SurfaceInfil = std::min(SurfaceInfil, maxRate);
             }
         }
         SurfaceOutflow = getSurfaceOutflowRate(surfaceDepth);
-        f[L_SURF] = (SurfaceInflow - SurfaceEvap - SurfaceInfil - SurfaceOutflow) /
-                    P->surf_void;
+        f[L_SURF] = (SurfaceInflow - SurfaceEvap - SurfaceInfil - SurfaceOutflow) / P->surf_void;
         f[L_SOIL] = (SurfaceInfil - SoilEvap - SoilPerc) / P->soil_thick;
-        if (storageThickness == 0.0) f[L_STOR] = 0.0;
-        else f[L_STOR] = (SoilPerc - StorageEvap - StorageExfil - StorageDrain) /
-                         P->stor_void;
+        if (storageThickness == 0.0)
+            f[L_STOR] = 0.0;
+        else
+            f[L_STOR] = (SoilPerc - StorageEvap - StorageExfil - StorageDrain) / P->stor_void;
     }
 
     // ---- legacy trenchFluxRates
+    /**
+     * @brief Evaluate direct surface-to-storage flow for an infiltration trench.
+     *
+     * Writes SURF/STOR and zeroes SOIL; PAVE is untouched. Bottom exfiltration and underdrain compete
+     * for available storage water. Completed mode removes surface evaporation before offering surface
+     * water to storage. Requires initialized P/G/U, positive Tstep and staged forcing; the input array
+     * is not retained.
+     *
+     * @param[in] x Readable four-element state [SURF, SOIL, STOR, PAVE]: depths in ft except SOIL
+     *     volumetric moisture.
+     * @param[out] f Writable four-element derivative array: depth rates in ft/s and SOIL fraction/s;
+     *     entries written depend on the selected type.
+     */
     void trenchFluxRates(const double x[], double f[]) {
         double availVolume = 0.0;
         double maxRate = 0.0;
         const double storageThickness = P->stor_thick;
-        const double storageVoidFrac  = P->stor_void;
+        const double storageVoidFrac = P->stor_void;
         const double surfaceDepth = x[L_SURF];
         const double storageDepth = x[L_STOR];
         SurfaceVolume = surfaceDepth * P->surf_void;
@@ -958,11 +1136,13 @@ public:
         availVolume = (storageThickness - storageDepth) * storageVoidFrac;
         (void)availVolume;
         getEvapRates(SurfaceVolume, 0.0, 0.0, StorageVolume, 1.0);
-        if (surfaceDepth > 0.0) StorageEvap = 0.0;
+        if (surfaceDepth > 0.0)
+            StorageEvap = 0.0;
         StorageInflow = SurfaceInflow + SurfaceVolume / Tstep;
         // A completed interval transfers only surface water left after its
         // evaporation. Otherwise the dry-depth clamp creates that water again.
-        if (Completed) StorageInflow = std::max(0.0, StorageInflow - SurfaceEvap);
+        if (Completed)
+            StorageInflow = std::max(0.0, StorageInflow - SurfaceEvap);
         StorageExfil = getStorageExfilRate();
         StorageDrain = 0.0;
         if (P->drain_coeff > 0.0) {
@@ -973,55 +1153,67 @@ public:
         StorageExfil = std::max(StorageExfil, 0.0);
         if (StorageDrain > 0.0) {
             maxRate = -StorageExfil - StorageEvap;
-            if (storageDepth >= storageThickness) maxRate += StorageInflow;
+            if (storageDepth >= storageThickness)
+                maxRate += StorageInflow;
             if (P->drain_offset <= storageDepth) {
-                maxRate += (storageDepth - P->drain_offset) *
-                           storageVoidFrac / Tstep;
+                maxRate += (storageDepth - P->drain_offset) * storageVoidFrac / Tstep;
             }
             maxRate = std::max(maxRate, 0.0);
             StorageDrain = std::min(StorageDrain, maxRate);
         }
-        maxRate = (storageThickness - storageDepth) * storageVoidFrac / Tstep +
-                  StorageExfil + StorageEvap + StorageDrain;
+        maxRate = (storageThickness - storageDepth) * storageVoidFrac / Tstep + StorageExfil +
+                  StorageEvap + StorageDrain;
         StorageInflow = std::min(StorageInflow, maxRate);
         SurfaceInfil = StorageInflow;
         SurfaceOutflow = getSurfaceOutflowRate(surfaceDepth);
-        f[L_SURF] = (SurfaceInflow - SurfaceEvap - StorageInflow - SurfaceOutflow) /
-                    P->surf_void;
-        f[L_STOR] = (StorageInflow - StorageEvap - StorageExfil - StorageDrain) /
-                    P->stor_void;
+        f[L_SURF] = (SurfaceInflow - SurfaceEvap - StorageInflow - SurfaceOutflow) / P->surf_void;
+        f[L_STOR] = (StorageInflow - StorageEvap - StorageExfil - StorageDrain) / P->stor_void;
         f[L_SOIL] = 0.0;
     }
 
     // ---- legacy pavementFluxRates
+    /**
+     * @brief Evaluate pavement, optional soil, storage and underdrain fluxes.
+     *
+     * Writes all four derivatives, using pavement clogging/regeneration. Soil-less pavement passes
+     * pavement percolation directly to storage. Completed mode uses void-weighted surface storage;
+     * ordinary mode retains the legacy surface-depth convention. Positive pavement and storage void
+     * fractions are required. Requires initialized P/G/U, positive Tstep and staged forcing; the input
+     * array is not retained.
+     *
+     * @param[in] x Readable four-element state [SURF, SOIL, STOR, PAVE]: depths in ft except SOIL
+     *     volumetric moisture.
+     * @param[out] f Writable four-element derivative array: depth rates in ft/s and SOIL fraction/s;
+     *     entries written depend on the selected type.
+     */
     void pavementFluxRates(const double x[], double f[]) {
         const double pervFrac = (1.0 - P->pave_imperv);
         double storageInflow;
         double availVolume;
         double maxRate;
-        const double paveVoidFrac     = P->pave_void * pervFrac;
-        const double paveThickness    = P->pave_thick;
-        const double soilThickness    = P->soil_thick;
-        const double soilPorosity     = P->soil_poros;
-        const double soilFieldCap     = P->soil_fc;
-        const double soilWiltPoint    = P->soil_wp;
+        const double paveVoidFrac = P->pave_void * pervFrac;
+        const double paveThickness = P->pave_thick;
+        const double soilThickness = P->soil_thick;
+        const double soilPorosity = P->soil_poros;
+        const double soilFieldCap = P->soil_fc;
+        const double soilWiltPoint = P->soil_wp;
         const double storageThickness = P->stor_thick;
-        const double storageVoidFrac  = P->stor_void;
+        const double storageVoidFrac = P->stor_void;
         const double surfaceDepth = x[L_SURF];
-        const double paveDepth    = x[L_PAVE];
-        const double soilTheta    = x[L_SOIL];
+        const double paveDepth = x[L_PAVE];
+        const double soilTheta = x[L_SOIL];
         const double storageDepth = x[L_STOR];
         SurfaceVolume = surfaceDepth * P->surf_void;
         PaveVolume = paveDepth * paveVoidFrac;
         SoilVolume = soilTheta * soilThickness;
         StorageVolume = storageDepth * storageVoidFrac;
         availVolume = SoilVolume - soilWiltPoint * soilThickness;
-        getEvapRates(SurfaceVolume, PaveVolume, availVolume, StorageVolume,
-                     pervFrac);
-        if (paveDepth >= paveThickness ||
-            (soilThickness > 0.0 && soilTheta >= soilPorosity)) StorageEvap = 0.0;
+        getEvapRates(SurfaceVolume, PaveVolume, availVolume, StorageVolume, pervFrac);
+        if (paveDepth >= paveThickness || (soilThickness > 0.0 && soilTheta >= soilPorosity))
+            StorageEvap = 0.0;
         SurfaceInfil = SurfaceInflow + (SurfaceVolume / Tstep);
-        if (Completed) SurfaceInfil = std::max(0.0, SurfaceInfil - SurfaceEvap);
+        if (Completed)
+            SurfaceInfil = std::max(0.0, SurfaceInfil - SurfaceEvap);
         PavePerc = getPavementPermRate() * pervFrac;
         SurfaceInfil = std::min(SurfaceInfil, PavePerc);
         maxRate = PaveVolume / Tstep + SurfaceInfil - PaveEvap;
@@ -1033,34 +1225,33 @@ public:
             maxRate = std::max(availVolume, 0.0) / Tstep - SoilEvap;
             SoilPerc = std::min(SoilPerc, maxRate);
             SoilPerc = std::max(SoilPerc, 0.0);
-        }
-        else SoilPerc = PavePerc;
+        } else
+            SoilPerc = PavePerc;
         StorageExfil = getStorageExfilRate();
         StorageDrain = 0.0;
         if (P->drain_coeff > 0.0) {
-            StorageDrain = getStorageDrainRate(storageDepth, soilTheta, paveDepth,
-                                               surfaceDepth);
+            StorageDrain = getStorageDrainRate(storageDepth, soilTheta, paveDepth, surfaceDepth);
         }
-        if (soilThickness == 0.0 &&
-            storageDepth >= storageThickness &&
+        if (soilThickness == 0.0 && storageDepth >= storageThickness &&
             paveDepth >= paveThickness) {
             maxRate = StorageEvap + StorageDrain + StorageExfil;
-            if (PavePerc > maxRate) PavePerc = maxRate;
+            if (PavePerc > maxRate)
+                PavePerc = maxRate;
             else {
                 StorageExfil = std::min(StorageExfil, PavePerc);
                 StorageDrain = PavePerc - StorageExfil;
             }
             SoilPerc = PavePerc;
             SurfaceInfil = std::min(SurfaceInfil, PavePerc);
-        }
-        else if (soilThickness > 0 &&
-                 storageDepth >= storageThickness &&
-                 soilTheta >= soilPorosity &&
-                 paveDepth >= paveThickness) {
+        } else if (soilThickness > 0 && storageDepth >= storageThickness &&
+                   soilTheta >= soilPorosity && paveDepth >= paveThickness) {
             maxRate = StorageExfil + StorageDrain;
-            if (SoilPerc < maxRate) maxRate = SoilPerc;
-            else maxRate = std::min(maxRate, PavePerc);
-            if (maxRate > StorageExfil) StorageDrain = maxRate - StorageExfil;
+            if (SoilPerc < maxRate)
+                maxRate = SoilPerc;
+            else
+                maxRate = std::min(maxRate, PavePerc);
+            if (maxRate > StorageExfil)
+                StorageDrain = maxRate - StorageExfil;
             else {
                 StorageExfil = maxRate;
                 StorageDrain = 0.0;
@@ -1068,12 +1259,11 @@ public:
             SoilPerc = maxRate;
             PavePerc = maxRate;
             SurfaceInfil = std::min(SurfaceInfil, PavePerc);
-        }
-        else if (soilThickness > 0.0 &&
-                 storageDepth >= storageThickness &&
-                 soilTheta >= soilPorosity) {
+        } else if (soilThickness > 0.0 && storageDepth >= storageThickness &&
+                   soilTheta >= soilPorosity) {
             maxRate = StorageDrain + StorageExfil;
-            if (SoilPerc > maxRate) SoilPerc = maxRate;
+            if (SoilPerc > maxRate)
+                SoilPerc = maxRate;
             else {
                 StorageExfil = std::min(StorageExfil, SoilPerc);
                 StorageDrain = SoilPerc - StorageExfil;
@@ -1082,26 +1272,22 @@ public:
             availVolume = (paveThickness - paveDepth) * paveVoidFrac;
             maxRate = availVolume / Tstep + PavePerc + PaveEvap;
             SurfaceInfil = std::min(SurfaceInfil, maxRate);
-        }
-        else if (soilThickness > 0.0 &&
-                 paveDepth >= paveThickness &&
-                 soilTheta >= soilPorosity) {
+        } else if (soilThickness > 0.0 && paveDepth >= paveThickness && soilTheta >= soilPorosity) {
             PavePerc = std::min(PavePerc, SoilPerc);
             SoilPerc = PavePerc;
             SurfaceInfil = std::min(SurfaceInfil, PavePerc);
             maxRate = std::max(StorageVolume / Tstep + SoilPerc - StorageEvap, 0.0);
             StorageExfil = std::min(StorageExfil, maxRate);
-        }
-        else {
+        } else {
             maxRate = SoilPerc - StorageEvap + StorageVolume / Tstep;
             maxRate = std::max(0.0, maxRate);
             StorageExfil = std::min(StorageExfil, maxRate);
             if (StorageDrain > 0.0) {
                 maxRate = -StorageExfil - StorageEvap;
-                if (storageDepth >= storageThickness) maxRate += SoilPerc;
+                if (storageDepth >= storageThickness)
+                    maxRate += SoilPerc;
                 if (P->drain_offset <= storageDepth) {
-                    maxRate += (storageDepth - P->drain_offset) *
-                               storageVoidFrac / Tstep;
+                    maxRate += (storageDepth - P->drain_offset) * storageVoidFrac / Tstep;
                 }
                 maxRate = std::max(maxRate, 0.0);
                 StorageDrain = std::min(StorageDrain, maxRate);
@@ -1111,8 +1297,7 @@ public:
             maxRate = std::max(maxRate, 0.0);
             if (soilThickness > 0.0) {
                 SoilPerc = std::min(SoilPerc, maxRate);
-                maxRate = (soilPorosity - soilTheta) * soilThickness / Tstep +
-                          SoilPerc;
+                maxRate = (soilPorosity - soilTheta) * soilThickness / Tstep + SoilPerc;
             }
             PavePerc = std::min(PavePerc, maxRate);
             availVolume = (paveThickness - paveDepth) * paveVoidFrac;
@@ -1123,7 +1308,8 @@ public:
         f[L_SURF] = SurfaceInflow - SurfaceEvap - SurfaceInfil - SurfaceOutflow;
         // Completed volumes use the actual void-weighted surface store.
         // The ordinary legacy pavement depth convention remains unchanged.
-        if (Completed) f[L_SURF] /= P->surf_void;
+        if (Completed)
+            f[L_SURF] /= P->surf_void;
         f[L_PAVE] = (SurfaceInfil - PaveEvap - PavePerc) / paveVoidFrac;
         if (P->soil_thick > 0.0) {
             f[L_SOIL] = (PavePerc - SoilEvap - SoilPerc) / soilThickness;
@@ -1133,11 +1319,24 @@ public:
             storageInflow = PavePerc;
             SoilPerc = 0.0;
         }
-        f[L_STOR] = (storageInflow - StorageEvap - StorageExfil - StorageDrain) /
-                    storageVoidFrac;
+        f[L_STOR] = (storageInflow - StorageEvap - StorageExfil - StorageDrain) / storageVoidFrac;
     }
 
     // ---- legacy swaleFluxRates
+    /**
+     * @brief Evaluate trapezoidal swale evaporation, native infiltration and Manning discharge.
+     *
+     * Writes SURF and zeroes SOIL/STOR, leaving PAVE unchanged. Uses one unit area/width, a 0.5 ft
+     * minimum bottom width, and the actual wetted surface area. At full depth, positive excess becomes
+     * runoff. The depth derivative divides by wetted plan area; valid positive surface height and area
+     * are required. Requires initialized P/G/U, positive Tstep and staged forcing; the input array is
+     * not retained.
+     *
+     * @param[in] x Readable four-element state [SURF, SOIL, STOR, PAVE]: depths in ft except SOIL
+     *     volumetric moisture.
+     * @param[out] f Writable four-element derivative array: depth rates in ft/s and SOIL fraction/s;
+     *     entries written depend on the selected type.
+     */
     void swaleFluxRates(const double x[], double f[]) {
         double depth = x[L_SURF];
         depth = std::min(depth, P->surf_thick);
@@ -1161,16 +1360,17 @@ public:
         SurfaceEvap = std::min(SurfaceEvap, volume / Tstep);
         StorageExfil = SurfaceInfil * surfArea;
         const double xDepth = depth - dStore;
-        if (xDepth <= L_ZERO) SurfaceOutflow = 0.0;
+        if (xDepth <= L_ZERO)
+            SurfaceOutflow = 0.0;
         else {
             flowArea -= (dStore * (botWidth + slope * dStore)) * P->surf_void;
-            if (flowArea < L_ZERO) SurfaceOutflow = 0.0;
+            if (flowArea < L_ZERO)
+                SurfaceOutflow = 0.0;
             else {
                 botWidth = botWidth + 2.0 * dStore * slope;
                 double hydRadius = botWidth + 2.0 * xDepth * std::sqrt(1.0 + slope * slope);
                 hydRadius = flowArea / hydRadius;
-                SurfaceOutflow = P->surf_alpha * flowArea *
-                                 std::pow(hydRadius, 2. / 3.);
+                SurfaceOutflow = P->surf_alpha * flowArea * std::pow(hydRadius, 2. / 3.);
             }
         }
         double dVdT = surfInflow - SurfaceEvap - StorageExfil - SurfaceOutflow;
@@ -1193,26 +1393,61 @@ public:
     // depth update reports only its final rates and cannot close a completed
     // extensive-water receipt. Retain its instantaneous flux laws, bound their
     // shared demand by available water, then invert the same physical section.
-    void completedSwale(double x[],double f[]) {
-        const double top=std::max(P->full_width,.5),height=P->surf_thick;
-        double side=P->surf_side,bottom=top-2*side*height;
-        if(bottom<.5){bottom=.5;side=.5*(top-.5)/height;}
-        const auto volume=[&](double depth){return depth*(bottom+side*depth)*P->surf_void/top;};
-        const double old_depth=x[L_SURF],initial=volume(old_depth);
-        swaleFluxRates(x,f);
-        const double available=initial+SurfaceInflow*Tstep;
-        const double demand=(SurfaceEvap+StorageExfil+SurfaceOutflow)*Tstep;
-        const double scale=demand>available && demand>0 ? available/demand : 1;
-        SurfaceEvap*=scale;StorageExfil*=scale;SurfaceOutflow*=scale;
-        double final=std::max(0.0,available-demand*scale);
-        const double excess=std::max(0.0,final-volume(height));
-        SurfaceOutflow+=excess/Tstep;final-=excess;
-        const double section=final*top/P->surf_void;
-        x[L_SURF]=2*section/(bottom+std::sqrt(bottom*bottom+4*side*section));
-        SurfaceVolume=final;f[L_SURF]=(x[L_SURF]-old_depth)/Tstep;
+    /**
+     * @brief Advance a swale using a conservative extensive-water receipt.
+     *
+     * Calls the instantaneous swale law, scales evaporation/infiltration/outflow together if their
+     * demand exceeds initial water plus interval inflow, spills capacity excess, then inverts the same
+     * section. Updates shared fluxes and final SurfaceVolume. Requires valid positive geometry, void
+     * fraction and Tstep; PAVE remains caller-initialized.
+     *
+     * @param[in,out] x Writable four-element state; replaces SURF depth in ft with the inverted final
+     *     trapezoidal volume. Other states remain unchanged.
+     * @param[out] f Writable four-element derivative buffer; swaleFluxRates initializes SURF/SOIL/STOR,
+     *     then SURF is replaced by the accepted interval-average depth change.
+     */
+    void completedSwale(double x[], double f[]) {
+        const double top = std::max(P->full_width, .5), height = P->surf_thick;
+        double side = P->surf_side, bottom = top - 2 * side * height;
+        if (bottom < .5) {
+            bottom = .5;
+            side = .5 * (top - .5) / height;
+        }
+        const auto volume = [&](double depth) {
+            return depth * (bottom + side * depth) * P->surf_void / top;
+        };
+        const double old_depth = x[L_SURF], initial = volume(old_depth);
+        swaleFluxRates(x, f);
+        const double available = initial + SurfaceInflow * Tstep;
+        const double demand = (SurfaceEvap + StorageExfil + SurfaceOutflow) * Tstep;
+        const double scale = demand > available && demand > 0 ? available / demand : 1;
+        SurfaceEvap *= scale;
+        StorageExfil *= scale;
+        SurfaceOutflow *= scale;
+        double final = std::max(0.0, available - demand * scale);
+        const double excess = std::max(0.0, final - volume(height));
+        SurfaceOutflow += excess / Tstep;
+        final -= excess;
+        const double section = final * top / P->surf_void;
+        x[L_SURF] = 2 * section / (bottom + std::sqrt(bottom * bottom + 4 * side * section));
+        SurfaceVolume = final;
+        f[L_SURF] = (x[L_SURF] - old_depth) / Tstep;
     }
 
     // ---- legacy barrelFluxRates
+    /**
+     * @brief Evaluate rain-barrel storage filling and delayed underdrain release.
+     *
+     * Writes SURF/STOR and zeroes SOIL, leaving PAVE unchanged. No evaporation/exfiltration is
+     * allocated. The existing dry_time selects whether the drain may operate; storage and drain limits
+     * bound the inflow retained. Completed mode divides the surface derivative by its void fraction.
+     * Requires initialized P/G/U, positive Tstep and staged forcing; the input array is not retained.
+     *
+     * @param[in] x Readable four-element state [SURF, SOIL, STOR, PAVE]: depths in ft except SOIL
+     *     volumetric moisture.
+     * @param[out] f Writable four-element derivative array: depth rates in ft/s and SOIL fraction/s;
+     *     entries written depend on the selected type.
+     */
     void barrelFluxRates(const double x[], double f[]) {
         const double storageDepth = x[L_STOR];
         double head;
@@ -1236,28 +1471,80 @@ public:
         StorageInflow = std::min(StorageInflow, maxValue);
         SurfaceInfil = StorageInflow;
         f[L_SURF] = SurfaceInflow - StorageInflow;
-        if (Completed) f[L_SURF] /= P->surf_void;
+        if (Completed)
+            f[L_SURF] /= P->surf_void;
         f[L_STOR] = StorageInflow - StorageDrain;
         f[L_SOIL] = 0.0;
     }
 
+    /**
+     * @brief Evaluate type-specific derivatives through the shared kernel dispatcher.
+     *
+     * Dispatches on P->type; BC and RG share the biocell routine. The selected routine updates shared
+     * flux and equivalent-volume fields. The caller initializes derivative entries unused by a type;
+     * there is no default handling for an invalid enum. Requires initialized P/G/U, positive Tstep and
+     * staged forcing; the input array is not retained.
+     *
+     * @param[in] x Readable four-element state [SURF, SOIL, STOR, PAVE]: depths in ft except SOIL
+     *     volumetric moisture.
+     * @param[out] f Writable four-element derivative array: depth rates in ft/s and SOIL fraction/s;
+     *     entries written depend on the selected type.
+     */
     void fluxRates(const double x[], double f[]) {
         switch (P->type) {
-            case LIDType::BIO_CELL:
-            case LIDType::RAIN_GARDEN:   biocellFluxRates(x, f);   break;
-            case LIDType::GREEN_ROOF:    greenRoofFluxRates(x, f); break;
-            case LIDType::INFIL_TRENCH:  trenchFluxRates(x, f);    break;
-            case LIDType::PERM_PAVEMENT: pavementFluxRates(x, f);  break;
-            case LIDType::RAIN_BARREL:   barrelFluxRates(x, f);    break;
-            case LIDType::ROOF_DISCON:   roofFluxRates(x, f);      break;
-            case LIDType::VEG_SWALE:     swaleFluxRates(x, f);     break;
+        case LIDType::BIO_CELL:
+        case LIDType::RAIN_GARDEN:
+            biocellFluxRates(x, f);
+            break;
+        case LIDType::GREEN_ROOF:
+            greenRoofFluxRates(x, f);
+            break;
+        case LIDType::INFIL_TRENCH:
+            trenchFluxRates(x, f);
+            break;
+        case LIDType::PERM_PAVEMENT:
+            pavementFluxRates(x, f);
+            break;
+        case LIDType::RAIN_BARREL:
+            barrelFluxRates(x, f);
+            break;
+        case LIDType::ROOF_DISCON:
+            roofFluxRates(x, f);
+            break;
+        case LIDType::VEG_SWALE:
+            swaleFluxRates(x, f);
+            break;
         }
     }
 
     // ---- legacy modpuls_solve
-    int modpulsSolve(int n, double* x, double* xOld, double* xPrev,
-                     const double* xMin, const double* xMax, const double* xTol,
-                     const double* qOld, double* q, double dt, double omega) {
+    /**
+     * @brief Integrate and clamp layer states with the legacy Modified Puls iteration.
+     *
+     * All pointers must be non-null valid arrays, with distinct writable work storage. With omega=0 the
+     * first explicit evaluation is accepted; positive omega compares consecutive clamped states against
+     * xTol.
+     *
+     * @param[in] n Number of entries in every state/rate/work array; nonnegative and no greater than
+     *     the buffers provided.
+     * @param[in,out] x Writable current state, replaced by the final clamped iterate; fluxRates expects
+     *     at least the four LID layer entries.
+     * @param[out] xOld Writable n-element work array receiving the initial state.
+     * @param[out] xPrev Writable n-element work array storing the most recent clamped iterate.
+     * @param[in] xMin Readable n-element lower state bounds.
+     * @param[in] xMax Readable n-element upper state bounds, at least xMin.
+     * @param[in] xTol Readable n-element absolute convergence tolerances, in each state variable unit.
+     * @param[in] qOld Readable n-element previous derivatives for omega weighting.
+     * @param[in,out] q Writable initialized n-element derivative buffer; fluxRates rewrites the entries
+     *     relevant to its type.
+     * @param[in] dt Positive interval seconds; also must match kernel Tstep used by flux laws.
+     * @param[in] omega Previous-rate weighting; ordinary types use 0, swales 0.5.
+     * @return Iteration number 1..19 on convergence, or 0 after exhausting 19 evaluations. Failure
+     *     leaves x, q and shared fluxes at the last iterate; no rollback or exception is provided.
+     */
+    int modpulsSolve(int n, double* x, double* xOld, double* xPrev, const double* xMin,
+                     const double* xMax, const double* xTol, const double* qOld, double* q,
+                     double dt, double omega) {
         int steps = 1;
         const int maxSteps = 20;
         for (int i = 0; i < n; i++) {
@@ -1271,11 +1558,12 @@ public:
                 x[i] = xOld[i] + (omega * qOld[i] + (1.0 - omega) * q[i]) * dt;
                 x[i] = std::min(x[i], xMax[i]);
                 x[i] = std::max(x[i], xMin[i]);
-                if (omega > 0.0 &&
-                    std::fabs(x[i] - xPrev[i]) > xTol[i]) canStop = 0;
+                if (omega > 0.0 && std::fabs(x[i] - xPrev[i]) > xTol[i])
+                    canStop = 0;
                 xPrev[i] = x[i];
             }
-            if (canStop) return steps;
+            if (canStop)
+                return steps;
             steps++;
         }
         return 0;
@@ -1283,9 +1571,32 @@ public:
 
     // ---- legacy lidproc_getOutflow: returns the surface outflow (ft/s per
     //      unit area) and the unit's evaporation, exfiltration and drain rates
-    double getOutflow(double inflow, double evap, double infil, double maxInfil,
-                      double tStep, double infil_factor, double recovery_factor,
-                      double* lidEvap, double* lidInfil, double* lidDrain) {
+    /**
+     * @brief Advance one bound unit and expose its final discharge/loss rates.
+     *
+     * P/G/U must identify a valid initialized unit and P must remain alive during the call. Updates
+     * group depths, four previous derivatives and Green-Ampt/regeneration history. Uses bounded
+     * Modified Puls (omega=0.5 for ordinary swales, 0 otherwise), or extensive completedSwale;
+     * iteration exhaustion is accepted silently. Final layer/overflow clamps apply before outputs. This
+     * method does not book ledgers or update dry/drain history; runUnitLegacy and its caller do so.
+     *
+     * @param[in] inflow External surface inflow in ft/s per unit footprint.
+     * @param[in] evap Potential evaporation in ft/s.
+     * @param[in] infil Fallback surface/native infiltration in ft/s when unit Green-Ampt is
+     *     unavailable.
+     * @param[in] maxInfil Native bottom exfiltration ceiling in ft/s.
+     * @param[in] tStep Positive interval seconds; stored as kernel Tstep.
+     * @param[in] infil_factor Dimensionless multiplier passed to modified Green-Ampt infiltration.
+     * @param[in] recovery_factor Dimensionless Green-Ampt recovery multiplier.
+     * @param[out] lidEvap Non-null writable total layer evaporation rate in ft/s.
+     * @param[out] lidInfil Non-null writable bottom exfiltration rate in ft/s, including any spatial
+     *     share.
+     * @param[out] lidDrain Non-null writable underdrain rate in ft/s.
+     * @return Surface outflow in ft/s per unit footprint, including final overflow when enabled.
+     */
+    double getOutflow(double inflow, double evap, double infil, double maxInfil, double tStep,
+                      double infil_factor, double recovery_factor, double* lidEvap,
+                      double* lidInfil, double* lidDrain) {
         double x[L_MAX], xOld[L_MAX], xPrev[L_MAX], xMin[L_MAX], xMax[L_MAX];
         double fOld[L_MAX], f[L_MAX];
         double xTol[L_MAX] = {L_STOPTOL, L_STOPTOL, L_STOPTOL, L_STOPTOL};
@@ -1299,22 +1610,22 @@ public:
         x[L_STOR] = G->stor_depth[U];
         x[L_PAVE] = G->pave_depth[U];
 
-        SurfaceVolume  = 0.0;
-        PaveVolume     = 0.0;
-        SoilVolume     = 0.0;
-        StorageVolume  = 0.0;
-        SurfaceInflow  = inflow;
-        SurfaceInfil   = 0.0;
-        SurfaceEvap    = 0.0;
+        SurfaceVolume = 0.0;
+        PaveVolume = 0.0;
+        SoilVolume = 0.0;
+        StorageVolume = 0.0;
+        SurfaceInflow = inflow;
+        SurfaceInfil = 0.0;
+        SurfaceEvap = 0.0;
         SurfaceOutflow = 0.0;
-        PaveEvap       = 0.0;
-        PavePerc       = 0.0;
-        SoilEvap       = 0.0;
-        SoilPerc       = 0.0;
-        StorageInflow  = 0.0;
-        StorageExfil   = 0.0;
-        StorageEvap    = 0.0;
-        StorageDrain   = 0.0;
+        PaveEvap = 0.0;
+        PavePerc = 0.0;
+        SoilEvap = 0.0;
+        SoilPerc = 0.0;
+        StorageInflow = 0.0;
+        StorageExfil = 0.0;
+        StorageEvap = 0.0;
+        StorageDrain = 0.0;
         fOld[L_SURF] = G->f_old_surf[U];
         fOld[L_SOIL] = G->f_old_soil[U];
         fOld[L_STOR] = G->f_old_stor[U];
@@ -1327,35 +1638,42 @@ public:
 
         // surface-to-soil infiltration: the unit's own Green-Ampt state, or
         // the native soil rate when the unit has no soil layer
-        if (P->type == LIDType::PERM_PAVEMENT) SurfaceInfil = 0.0;
+        if (P->type == LIDType::PERM_PAVEMENT)
+            SurfaceInfil = 0.0;
         else if (G->soil_infil[U].Ks > 0.0 &&
-                 !(SpatialFraction==1 && P->type==LIDType::VEG_SWALE)) {
-            SurfaceInfil = infil::grnampt_getInfil(G->soil_infil[U], SurfaceInflow,
-                                                   G->surf_depth[U], Tstep,
-                                                   InfilModel::MOD_GREEN_AMPT,
-                                                   infil_factor, recovery_factor);
-        }
-        else SurfaceInfil = infil;
-        if(SpatialFraction>=0 && P->type==LIDType::VEG_SWALE) {
-            const double native=std::min(SurfaceInfil,MaxNativeInfil);
-            SurfaceInfil=SpatialFraction*SpatialLimit+(1-SpatialFraction)*native;
-            SpatialExfilRatio=SurfaceInfil>0 ? SpatialFraction*SpatialLimit/SurfaceInfil : 0.0;
+                 !(SpatialFraction == 1 && P->type == LIDType::VEG_SWALE)) {
+            SurfaceInfil =
+                infil::grnampt_getInfil(G->soil_infil[U], SurfaceInflow, G->surf_depth[U], Tstep,
+                                        InfilModel::MOD_GREEN_AMPT, infil_factor, recovery_factor);
+        } else
+            SurfaceInfil = infil;
+        if (SpatialFraction >= 0 && P->type == LIDType::VEG_SWALE) {
+            const double native = std::min(SurfaceInfil, MaxNativeInfil);
+            SurfaceInfil = SpatialFraction * SpatialLimit + (1 - SpatialFraction) * native;
+            SpatialExfilRatio =
+                SurfaceInfil > 0 ? SpatialFraction * SpatialLimit / SurfaceInfil : 0.0;
         }
 
-        if(Completed && SpatialFraction<0 && P->type==LIDType::VEG_SWALE)
-            SurfaceInfil=std::min(SurfaceInfil,MaxNativeInfil);
+        if (Completed && SpatialFraction < 0 && P->type == LIDType::VEG_SWALE)
+            SurfaceInfil = std::min(SurfaceInfil, MaxNativeInfil);
 
         if (P->soil_thick > 0.0) {
             xMin[L_SOIL] = P->soil_wp;
             xMax[L_SOIL] = P->soil_poros;
         }
-        if (P->pave_thick > 0.0) xMax[L_PAVE] = P->pave_thick;
-        if (P->stor_thick > 0.0) xMax[L_STOR] = P->stor_thick;
-        if (P->type == LIDType::GREEN_ROOF) xMax[L_STOR] = P->dm_thick;
-        if (P->type == LIDType::VEG_SWALE) omega = 0.5;
+        if (P->pave_thick > 0.0)
+            xMax[L_PAVE] = P->pave_thick;
+        if (P->stor_thick > 0.0)
+            xMax[L_STOR] = P->stor_thick;
+        if (P->type == LIDType::GREEN_ROOF)
+            xMax[L_STOR] = P->dm_thick;
+        if (P->type == LIDType::VEG_SWALE)
+            omega = 0.5;
 
-        if(Completed && P->type==LIDType::VEG_SWALE)completedSwale(x,f);
-        else modpulsSolve(L_MAX, x, xOld, xPrev, xMin, xMax, xTol, fOld, f, tStep, omega);
+        if (Completed && P->type == LIDType::VEG_SWALE)
+            completedSwale(x, f);
+        else
+            modpulsSolve(L_MAX, x, xOld, xPrev, xMin, xMax, xTol, fOld, f, tStep, omega);
 
         if (P->can_overflow || P->full_width == 0.0)
             SurfaceOutflow += getSurfaceOverflowRate(&x[L_SURF]);
@@ -1376,98 +1694,150 @@ public:
     }
 };
 
-/// Fill a parameter view from SoA slot u.
+/**
+ * @brief Copy a unit slot into the internal legacy-kernel parameter view.
+ *
+ * The returned view owns only scalar copies, with no references into g.
+ *
+ * @param[in] g Initialized group in internal ft/ft/s with parallel arrays.
+ * @param[in] u Unchecked valid unit index.
+ * @return Independent value view. Uses one-unit area/width when unit_area > 0, otherwise aggregate
+ *     area/full_width for hand-built single-unit groups.
+ */
 inline LidProcView makeView(const LIDGroupSoA& g, std::size_t u) {
     LidProcView p;
     p.type = g.type;
-    p.surf_thick = g.surf_store[u]; p.surf_void = g.surf_void_frac[u];
-    p.surf_alpha = g.surf_alpha[u]; p.surf_side = g.surf_side_slope[u];
+    p.surf_thick = g.surf_store[u];
+    p.surf_void = g.surf_void_frac[u];
+    p.surf_alpha = g.surf_alpha[u];
+    p.surf_side = g.surf_side_slope[u];
     p.can_overflow = g.can_overflow[u] != 0;
-    p.pave_thick = g.pave_thick[u]; p.pave_void = g.pave_void[u];
-    p.pave_imperv = g.pave_imperv_frac[u]; p.pave_ksat = g.pave_ksat[u];
-    p.pave_clog = g.pave_clog_factor[u]; p.pave_regen_days = g.pave_regen_days[u];
+    p.pave_thick = g.pave_thick[u];
+    p.pave_void = g.pave_void[u];
+    p.pave_imperv = g.pave_imperv_frac[u];
+    p.pave_ksat = g.pave_ksat[u];
+    p.pave_clog = g.pave_clog_factor[u];
+    p.pave_regen_days = g.pave_regen_days[u];
     p.pave_regen_deg = g.pave_regen_deg[u];
-    p.soil_thick = g.soil_thick[u]; p.soil_poros = g.soil_poros[u];
-    p.soil_fc = g.soil_fc[u]; p.soil_wp = g.soil_wp[u];
-    p.soil_ksat = g.soil_ksat[u]; p.soil_kslope = g.soil_kslope[u];
-    p.stor_thick = g.stor_thick[u]; p.stor_void = g.stor_void[u];
-    p.stor_ksat = g.stor_ksat[u]; p.stor_clog = g.stor_clog[u];
-    p.drain_coeff = g.drain_coeff[u]; p.drain_expon = g.drain_expon[u];
-    p.drain_offset = g.drain_offset[u]; p.drain_delay = g.drain_delay[u];
-    p.drain_hopen = g.drain_hopen[u]; p.drain_hclose = g.drain_hclose[u];
-    p.dm_thick = g.drainmat_thick[u]; p.dm_alpha = g.drainmat_alpha[u];
+    p.soil_thick = g.soil_thick[u];
+    p.soil_poros = g.soil_poros[u];
+    p.soil_fc = g.soil_fc[u];
+    p.soil_wp = g.soil_wp[u];
+    p.soil_ksat = g.soil_ksat[u];
+    p.soil_kslope = g.soil_kslope[u];
+    p.stor_thick = g.stor_thick[u];
+    p.stor_void = g.stor_void[u];
+    p.stor_ksat = g.stor_ksat[u];
+    p.stor_clog = g.stor_clog[u];
+    p.drain_coeff = g.drain_coeff[u];
+    p.drain_expon = g.drain_expon[u];
+    p.drain_offset = g.drain_offset[u];
+    p.drain_delay = g.drain_delay[u];
+    p.drain_hopen = g.drain_hopen[u];
+    p.drain_hclose = g.drain_hclose[u];
+    p.dm_thick = g.drainmat_thick[u];
+    p.dm_alpha = g.drainmat_alpha[u];
     // ONE unit's area / width (legacy lidUnit->area, ->fullWidth); a hand-built
     // group (unit tests) that only set the footprint is a single unit.
     p.area = g.unit_area[u] > 0.0 ? g.unit_area[u] : g.area[u];
     p.full_width = g.unit_area[u] > 0.0 ? g.unit_width[u] : g.full_width[u];
-    p.ucf_rainfall = g.ucf_rainfall; p.ucf_raindepth = g.ucf_raindepth;
+    p.ucf_rainfall = g.ucf_rainfall;
+    p.ucf_raindepth = g.ucf_raindepth;
     return p;
 }
 
-/// Run one unit through the legacy kernel and book its results the way
-/// legacy evalLidUnit + lidproc_saveResults do. `evap` is the potential
-/// evaporation rate legacy's subcatch_getEvapRate returns for the parent
-/// subcatchment, `native_infil` / `max_native_infil` its findNativeInfil
-/// values, `inflow` the unit's surface inflow (ft/s).
+/**
+ * @brief Advance one unit and book per-area water receipts and transport inputs.
+ *
+ * Mutates depths/history, cumulative depth ledgers, wet flag, staged report rates and transport
+ * inflows. surface_runoff/drain_flow are ft/s; evap_loss/infil_loss/spatial_infil_loss are interval
+ * ft depths, partitioned using the accepted spatial ratio. wb_final_vol uses the kernel
+ * equivalent-volume fields. Does not update dry_time, drain_open or old_drain_flow and performs no
+ * report IO. The local parameter view is borrowed only for this synchronous call.
+ *
+ * @param[in,out] g Initialized mutable group in internal units; type/geometry and all arrays must
+ *     cover u.
+ * @param[in] u Unchecked unit index.
+ * @param[in] inflow Surface water input in ft/s per aggregate footprint.
+ * @param[in] evap Resolved potential evaporation in ft/s.
+ * @param[in] native_infil Fallback surface/native infiltration rate in ft/s.
+ * @param[in] max_native_infil Native bottom ceiling in ft/s.
+ * @param[in] dt Positive interval seconds.
+ * @param[in] old_runoff_sec Beginning of interval in elapsed seconds; converted to days for
+ *     regeneration.
+ * @param[in] infil_factor Dimensionless modified Green-Ampt infiltration multiplier.
+ * @param[in] recovery_factor Dimensionless Green-Ampt recovery multiplier.
+ * @param[in] spatial_fraction -1 keeps ordinary bottom arithmetic; otherwise [0,1] is the spatial
+ *     footprint share.
+ * @param[in] spatial_limit Spatial bottom capacity in ft/s over its footprint share.
+ * @param[in] completed Enable completed-volume conservation and post-clamp layer evaporation
+ *     receipts.
+ */
 inline void runUnitLegacy(LIDGroupSoA& g, std::size_t u, double inflow, double evap,
                           double native_infil, double max_native_infil, double dt,
-                          double old_runoff_sec, double infil_factor,
-                          double recovery_factor,double spatial_fraction=-1.0,double spatial_limit=L_BIG,bool completed=false) {
+                          double old_runoff_sec, double infil_factor, double recovery_factor,
+                          double spatial_fraction = -1.0, double spatial_limit = L_BIG,
+                          bool completed = false) {
     LidProcView view = makeView(g, u);
     LegacyLidKernel k;
     k.P = &view;
     k.G = &g;
     k.U = u;
     k.old_runoff_days = old_runoff_sec / 86400.0;
-    k.SpatialFraction=spatial_fraction;k.SpatialLimit=spatial_limit;k.Completed=completed;
+    k.SpatialFraction = spatial_fraction;
+    k.SpatialLimit = spatial_limit;
+    k.Completed = completed;
 
     double lidEvap = 0.0, lidInfil = 0.0, lidDrain = 0.0;
-    double lidRunoff = k.getOutflow(inflow, evap, native_infil, max_native_infil, dt,
-                                    infil_factor, recovery_factor,
-                                    &lidEvap, &lidInfil, &lidDrain);
+    double lidRunoff = k.getOutflow(inflow, evap, native_infil, max_native_infil, dt, infil_factor,
+                                    recovery_factor, &lidEvap, &lidInfil, &lidDrain);
 
     // legacy lidproc_saveResults: water balance and the wet-LID flag
     const double totalEvap = k.SurfaceEvap + k.PaveEvap + k.SoilEvap + k.StorageEvap;
     const double totalVolume = k.SurfaceVolume + k.PaveVolume + k.SoilVolume + k.StorageVolume;
-    g.vol_treated[u]   += k.SurfaceInflow * dt;
-    g.wb_inflow[u]     += k.SurfaceInflow * dt;
-    g.wb_evap[u]       += totalEvap * dt;
-    g.wb_infil[u]      += k.StorageExfil * dt;
-    g.wb_surf_flow[u]  += k.SurfaceOutflow * dt;
+    g.vol_treated[u] += k.SurfaceInflow * dt;
+    g.wb_inflow[u] += k.SurfaceInflow * dt;
+    g.wb_evap[u] += totalEvap * dt;
+    g.wb_infil[u] += k.StorageExfil * dt;
+    g.wb_surf_flow[u] += k.SurfaceOutflow * dt;
     g.wb_drain_flow[u] += k.StorageDrain * dt;
-    g.wb_final_vol[u]   = totalVolume;
-    const bool is_dry = (k.SurfaceInflow < L_MINFLOW && k.SurfaceOutflow < L_MINFLOW &&
-                         k.StorageDrain < L_MINFLOW && k.StorageExfil < L_MINFLOW &&
-                         totalEvap < L_MINFLOW);
+    g.wb_final_vol[u] = totalVolume;
+    const bool is_dry =
+        (k.SurfaceInflow < L_MINFLOW && k.SurfaceOutflow < L_MINFLOW &&
+         k.StorageDrain < L_MINFLOW && k.StorageExfil < L_MINFLOW && totalEvap < L_MINFLOW);
     g.is_wet[u] = is_dry ? 0 : 1;
 
     // outputs (rates per unit area; the engine scales by the footprint)
     g.surface_runoff[u] = lidRunoff;
-    g.drain_flow[u]     = lidDrain;
-    g.evap_loss[u]      = lidEvap * dt;     // depth this step (ft)
-    g.infil_loss[u]     = lidInfil * dt;
-    g.spatial_infil_loss[u]=g.infil_loss[u]*k.SpatialExfilRatio;
-    g.wb_spatial_infil[u]+=g.spatial_infil_loss[u];    // depth this step (ft)
+    g.drain_flow[u] = lidDrain;
+    g.evap_loss[u] = lidEvap * dt; // depth this step (ft)
+    g.infil_loss[u] = lidInfil * dt;
+    g.spatial_infil_loss[u] = g.infil_loss[u] * k.SpatialExfilRatio;
+    g.wb_spatial_infil[u] += g.spatial_infil_loss[u]; // depth this step (ft)
 
     // staged for the per-unit LID report file (legacy lidproc_saveResults
     // reads lidproc.c's static flux variables; the kernel here is per-call)
     g.rpt_surf_infil[u] = k.SurfaceInfil;
-    g.rpt_pave_perc[u]  = k.PavePerc;
-    g.rpt_soil_perc[u]  = k.SoilPerc;
+    g.rpt_pave_perc[u] = k.PavePerc;
+    g.rpt_soil_perc[u] = k.SoilPerc;
 
     // per-layer inflow rates after every clamp, for the transport tracks
     g.in_surf[u] = k.SurfaceInflow;
     if (completed) {
-        g.evap_surf[u] = k.SurfaceEvap; g.evap_pave[u] = k.PaveEvap;
-        g.evap_soil[u] = k.SoilEvap; g.evap_stor[u] = k.StorageEvap;
+        g.evap_surf[u] = k.SurfaceEvap;
+        g.evap_pave[u] = k.PaveEvap;
+        g.evap_soil[u] = k.SoilEvap;
+        g.evap_stor[u] = k.StorageEvap;
     }
     g.in_pave[u] = (g.type == LIDType::PERM_PAVEMENT) ? k.SurfaceInfil : 0.0;
-    g.in_soil[u] = (g.type == LIDType::PERM_PAVEMENT) ? k.PavePerc
-                 : (g.soil_thick[u] > 0.0 ? k.SurfaceInfil : 0.0);
+    g.in_soil[u] = (g.type == LIDType::PERM_PAVEMENT)
+                       ? k.PavePerc
+                       : (g.soil_thick[u] > 0.0 ? k.SurfaceInfil : 0.0);
     g.in_stor[u] = (g.type == LIDType::RAIN_BARREL || g.type == LIDType::INFIL_TRENCH)
-                   ? k.StorageInflow
-                   : ((g.soil_thick[u] > 0.0 && g.stor_thick[u] > 0.0) ? k.SoilPerc
-                      : (g.type == LIDType::PERM_PAVEMENT ? k.PavePerc : 0.0));
+                       ? k.StorageInflow
+                       : ((g.soil_thick[u] > 0.0 && g.stor_thick[u] > 0.0)
+                              ? k.SoilPerc
+                              : (g.type == LIDType::PERM_PAVEMENT ? k.PavePerc : 0.0));
 }
 
 } // namespace
@@ -1479,53 +1849,70 @@ inline void runUnitLegacy(LIDGroupSoA& g, std::size_t u, double inflow, double e
 // ============================================================================
 
 namespace {
-inline void runGroupStandalone(LIDGroupSoA& g, double rainfall,
-                               const double* evap_rate, double dt) {
-    constexpr double MIN_RUNOFF = 2.31481e-8;   // legacy consts.h (ft/s)
+/**
+ * @brief Advance a standalone group and refresh its dry/drain history.
+ *
+ * Uses zero native infiltration, unlimited (1e10 ft/s) native ceiling, zero old clock and unit
+ * factors. Updates each unit in place, resets/increments dry_time from subcatch_rain, and copies
+ * accepted drain_flow into old_drain_flow/drain_open. No context, forcing lookup or file IO is
+ * involved.
+ *
+ * @param[in,out] g Initialized group; all count slots have valid positive geometry for g.type.
+ * @param[in] rainfall Fallback inflow in ft/s for slots without positive staged inflow; covered
+ *     barrels force zero.
+ * @param[in] evap_rate Optional borrowed count-element ft/s PET array; null supplies zero.
+ * @param[in] dt Positive interval seconds, unchecked.
+ */
+inline void runGroupStandalone(LIDGroupSoA& g, double rainfall, const double* evap_rate,
+                               double dt) {
+    constexpr double MIN_RUNOFF = 2.31481e-8; // legacy consts.h (ft/s)
     for (int i = 0; i < g.count; ++i) {
         auto ui = static_cast<std::size_t>(i);
         double inflow = (g.inflow[ui] > 0.0) ? g.inflow[ui] : rainfall;
-        if (g.type == LIDType::RAIN_BARREL && g.stor_covered[ui]) inflow = 0.0;
+        if (g.type == LIDType::RAIN_BARREL && g.stor_covered[ui])
+            inflow = 0.0;
         const double evap = evap_rate ? evap_rate[ui] : 0.0;
         runUnitLegacy(g, ui, inflow, evap, 0.0, L_BIG, dt, 0.0, 1.0, 1.0);
         // legacy evalLidUnit: the dry clock for the rain-barrel drain delay
-        if (g.subcatch_rain[ui] > MIN_RUNOFF) g.dry_time[ui] = 0.0;
-        else                                  g.dry_time[ui] += dt;
+        if (g.subcatch_rain[ui] > MIN_RUNOFF)
+            g.dry_time[ui] = 0.0;
+        else
+            g.dry_time[ui] += dt;
         g.drain_open[ui] = (g.drain_flow[ui] > 0.0) ? 1 : 0;
         g.old_drain_flow[ui] = g.drain_flow[ui];
     }
 }
 } // namespace
 
-void LIDSolver::batchBioCellFlux(LIDGroupSoA& g, double rainfall,
-                                  const double* evap_rate, double dt) {
+void LIDSolver::batchBioCellFlux(LIDGroupSoA& g, double rainfall, const double* evap_rate,
+                                 double dt) {
     runGroupStandalone(g, rainfall, evap_rate, dt);
 }
 void LIDSolver::batchBarrelFlux(LIDGroupSoA& g, double rainfall, double dt) {
     runGroupStandalone(g, rainfall, nullptr, dt);
 }
-void LIDSolver::batchInfilTrenchFlux(LIDGroupSoA& g, double rainfall,
-                                      const double* evap_rate, double dt) {
+void LIDSolver::batchInfilTrenchFlux(LIDGroupSoA& g, double rainfall, const double* evap_rate,
+                                     double dt) {
     runGroupStandalone(g, rainfall, evap_rate, dt);
 }
-void LIDSolver::batchSwaleFlux(LIDGroupSoA& g, double rainfall,
-                                const double* evap_rate, double dt) {
+void LIDSolver::batchSwaleFlux(LIDGroupSoA& g, double rainfall, const double* evap_rate,
+                               double dt) {
     runGroupStandalone(g, rainfall, evap_rate, dt);
 }
-void LIDSolver::batchSwaleModPuls(LIDGroupSoA& g, double rainfall,
-                                   const double* evap_rate, double dt) {
+void LIDSolver::batchSwaleModPuls(LIDGroupSoA& g, double rainfall, const double* evap_rate,
+                                  double dt) {
     runGroupStandalone(g, rainfall, evap_rate, dt);
 }
-void LIDSolver::batchGreenRoofFlux(LIDGroupSoA& g, double rainfall,
-                                    const double* evap_rate, double dt) {
+void LIDSolver::batchGreenRoofFlux(LIDGroupSoA& g, double rainfall, const double* evap_rate,
+                                   double dt) {
     runGroupStandalone(g, rainfall, evap_rate, dt);
 }
-void LIDSolver::batchPavementFlux(LIDGroupSoA& g, double rainfall,
-                                   const double* evap_rate, double dt) {
+void LIDSolver::batchPavementFlux(LIDGroupSoA& g, double rainfall, const double* evap_rate,
+                                  double dt) {
     runGroupStandalone(g, rainfall, evap_rate, dt);
 }
-void LIDSolver::batchRoofDisconFlux(LIDGroupSoA& g, double rainfall,
-                                     const double* evap_rate, double dt) {
+void LIDSolver::batchRoofDisconFlux(LIDGroupSoA& g, double rainfall, const double* evap_rate,
+                                    double dt) {
     runGroupStandalone(g, rainfall, evap_rate, dt);
 }
 
@@ -1538,7 +1925,7 @@ double LIDSolver::totalStoredVolume() const {
     for (const auto& g : groups_) {
         for (int i = 0; i < g.count; ++i) {
             auto ui = static_cast<std::size_t>(i);
-            vol += g.wb_final_vol[ui] * g.area[ui];  // ft depth × ft² = ft³
+            vol += g.wb_final_vol[ui] * g.area[ui]; // ft depth × ft² = ft³
         }
     }
     return vol;
@@ -1560,7 +1947,7 @@ double LIDSolver::totalInfilVolume() const {
     for (const auto& g : groups_) {
         for (int i = 0; i < g.count; ++i) {
             auto ui = static_cast<std::size_t>(i);
-            vol += g.wb_infil[ui] * g.area[ui];  // ft depth × ft² = ft³
+            vol += g.wb_infil[ui] * g.area[ui]; // ft depth × ft² = ft³
         }
     }
     return vol;
@@ -1594,7 +1981,7 @@ LIDSolver LIDSolver::waterTrial() const {
 }
 
 void LIDSolver::executeCompleted(double dt, double start, double recovery_factor,
-                                const std::vector<CompletedUnitInput>& inputs) {
+                                 const std::vector<CompletedUnitInput>& inputs) {
     if (!std::isfinite(dt) || dt <= 0.0 || !std::isfinite(start) || start < 0.0 ||
         !std::isfinite(recovery_factor) || recovery_factor < 0.0)
         throw std::invalid_argument("Invalid completed LID interval.");
@@ -1604,12 +1991,12 @@ void LIDSolver::executeCompleted(double dt, double start, double recovery_factor
         if (in.type < 0 || in.type >= numGroups() || in.unit < 0 ||
             in.unit >= group(in.type).count || key <= previous)
             throw std::invalid_argument("Invalid, unordered or duplicate completed LID unit.");
-        for (double rate : {in.inflow, in.rain, in.pet, in.native_infil,
-                            in.max_native_infil, in.infil_factor,in.spatial_max_infil})
+        for (double rate : {in.inflow, in.rain, in.pet, in.native_infil, in.max_native_infil,
+                            in.infil_factor, in.spatial_max_infil})
             if (!std::isfinite(rate) || rate < 0.0)
                 throw std::invalid_argument("Invalid completed LID rate or bottom ceiling.");
-        if(!std::isfinite(in.spatial_fraction) ||
-           (in.spatial_fraction != -1 && (in.spatial_fraction < 0 || in.spatial_fraction > 1)))
+        if (!std::isfinite(in.spatial_fraction) ||
+            (in.spatial_fraction != -1 && (in.spatial_fraction < 0 || in.spatial_fraction > 1)))
             throw std::invalid_argument("Invalid completed LID spatial footprint fraction.");
         previous = key;
     }
@@ -1617,60 +2004,68 @@ void LIDSolver::executeCompleted(double dt, double start, double recovery_factor
     for (const auto& in : inputs) {
         auto& g = group(in.type);
         const auto u = static_cast<std::size_t>(in.unit);
-        if (g.area[u] <= 0.0) continue;
-        g.inflow[u] = in.inflow; g.subcatch_rain[u] = in.rain; g.evap_rate_unit[u] = in.pet;
-        runUnitLegacy(g, u, in.inflow, in.pet, in.native_infil,
-                      in.max_native_infil, dt, start, in.infil_factor, recovery_factor,
-                      in.spatial_fraction,in.spatial_max_infil,true);
-        if (in.rain > MIN_RUNOFF) g.dry_time[u] = 0.0;
-        else g.dry_time[u] += dt;
+        if (g.area[u] <= 0.0)
+            continue;
+        g.inflow[u] = in.inflow;
+        g.subcatch_rain[u] = in.rain;
+        g.evap_rate_unit[u] = in.pet;
+        runUnitLegacy(g, u, in.inflow, in.pet, in.native_infil, in.max_native_infil, dt, start,
+                      in.infil_factor, recovery_factor, in.spatial_fraction, in.spatial_max_infil,
+                      true);
+        if (in.rain > MIN_RUNOFF)
+            g.dry_time[u] = 0.0;
+        else
+            g.dry_time[u] += dt;
     }
 }
 
-void LIDSolver::execute(SimulationContext& ctx, double dt,
-                        double rainfall, double evap_rate, const std::vector<int>* source_owners) {
-    constexpr double MIN_RUNOFF = 2.31481e-8;   // legacy consts.h (ft/s)
+void LIDSolver::execute(SimulationContext& ctx, double dt, double rainfall, double evap_rate,
+                        const std::vector<int>* source_owners) {
+    constexpr double MIN_RUNOFF = 2.31481e-8; // legacy consts.h (ft/s)
     if (source_owners && source_owners->size() != static_cast<std::size_t>(ctx.n_subcatches()))
         throw std::invalid_argument("Ordinary LID ownership requires a matching source map.");
-    (void)rainfall;   // the engine sets each unit's inflow (rain + capture)
+    (void)rainfall; // the engine sets each unit's inflow (rain + capture)
     for (auto& g : groups_) {
-        if (g.count == 0) continue;
+        if (g.count == 0)
+            continue;
         for (int u = 0; u < g.count; ++u) {
             auto uu = static_cast<std::size_t>(u);
             // legacy lid_getRunoff: a unit without area (0 units or 0 ft2,
             // no-units-w-wo-rg-2subcatchments) is never evaluated — the
             // kernel divides by it.
-            if (g.area[uu] <= 0.0) continue;
+            if (g.area[uu] <= 0.0)
+                continue;
             int sc = g.subcatch_idx[uu];
-            if (source_owners && sc >= 0 && (*source_owners)[sc] >= 0) continue;
+            if (source_owners && sc >= 0 && (*source_owners)[sc] >= 0)
+                continue;
             const auto usc = static_cast<std::size_t>(sc);
             // legacy subcatch_getEvapRate: an API-prescribed rate first, else
             // 0 under DRY_ONLY while it rains on the subcatchment, else the
             // climate rate.
-            double e_dry = (ctx.options.evap_dry_only && g.subcatch_rain[uu] > 0.0)
-                           ? 0.0 : evap_rate;
-            const double evap = (sc >= 0)
-                ? ctx.forcing.effective_evap_rate(usc, e_dry) : e_dry;
+            double e_dry =
+                (ctx.options.evap_dry_only && g.subcatch_rain[uu] > 0.0) ? 0.0 : evap_rate;
+            const double evap = (sc >= 0) ? ctx.forcing.effective_evap_rate(usc, e_dry) : e_dry;
             g.evap_rate_unit[uu] = evap;
-            const double native = (sc >= 0 && usc < native_infil_.size())
-                                  ? native_infil_[usc] : 0.0;
-            const double max_native = (sc >= 0 && usc < max_native_infil_.size())
-                                      ? max_native_infil_[usc] : L_BIG;
-            const double infil_factor = (sc >= 0 && usc < infil_factor_.size())
-                                        ? infil_factor_[usc] : 1.0;
-            runUnitLegacy(g, uu, g.inflow[uu], evap, native, max_native, dt,
-                          old_runoff_sec_, infil_factor, recovery_factor_);
+            const double native =
+                (sc >= 0 && usc < native_infil_.size()) ? native_infil_[usc] : 0.0;
+            const double max_native =
+                (sc >= 0 && usc < max_native_infil_.size()) ? max_native_infil_[usc] : L_BIG;
+            const double infil_factor =
+                (sc >= 0 && usc < infil_factor_.size()) ? infil_factor_[usc] : 1.0;
+            runUnitLegacy(g, uu, g.inflow[uu], evap, native, max_native, dt, old_runoff_sec_,
+                          infil_factor, recovery_factor_);
             // legacy evalLidUnit: the dry clock for the rain-barrel drain
             // delay, updated AFTER the unit ran (it reads the clock as it
             // stood before this step); reset by the parent subcatchment's
             // rainfall above MIN_RUNOFF.
-            if (g.subcatch_rain[uu] > MIN_RUNOFF) g.dry_time[uu] = 0.0;
-            else                                  g.dry_time[uu] += dt;
+            if (g.subcatch_rain[uu] > MIN_RUNOFF)
+                g.dry_time[uu] = 0.0;
+            else
+                g.dry_time[uu] += dt;
             // legacy lidproc_saveResults' report-file half: one row per
             // evaluated runoff step for a unit with a [LID_USAGE] file.
             if (!g.rpt_path[uu].empty())
-                saveLidReport(ctx, static_cast<int>(&g - groups_.data()),
-                              g, uu, dt);
+                saveLidReport(ctx, static_cast<int>(&g - groups_.data()), g, uu, dt);
         }
     }
 }
@@ -1681,8 +2076,8 @@ void LIDSolver::execute(SimulationContext& ctx, double dt,
 // Same columns, same formats, same dry-spell compression, so the two
 // engines' files diff line-for-line.
 // ============================================================================
-void LIDSolver::saveLidReport(SimulationContext& ctx, int gi, LIDGroupSoA& g,
-                              std::size_t u, double dt) {
+void LIDSolver::saveLidReport(SimulationContext& ctx, int gi, LIDGroupSoA& g, std::size_t u,
+                              double dt) {
     auto key = std::make_pair(gi, static_cast<int>(u));
     auto it = rpt_files_.find(key);
     if (it == rpt_files_.end()) {
@@ -1692,81 +2087,121 @@ void LIDSolver::saveLidReport(SimulationContext& ctx, int gi, LIDGroupSoA& g,
         if (!st->failed) {
             // --- initLidRptFile: title lines, two heading rows, a units row
             //     picked by unit system, and the dashed rule.
-            static const char* head1[14] = {
-                "\n                    \t", "  Elapsed\t",
-                "    Total\t", "    Total\t", "  Surface\t", " Pavement\t",
-                "     Soil\t", "  Storage\t", "  Surface\t", "    Drain\t",
-                "  Surface\t", " Pavement\t", "     Soil\t", "  Storage"};
-            static const char* head2[14] = {
-                "\n                    \t", "     Time\t",
-                "   Inflow\t", "     Evap\t", "    Infil\t", "     Perc\t",
-                "     Perc\t", "    Exfil\t", "   Runoff\t", "  OutFlow\t",
-                "    Level\t", "    Level\t", " Moisture\t", "    Level"};
-            static const char* units1[14] = {
-                "\nDate        Time    \t", "    Hours\t",
-                "    in/hr\t", "    in/hr\t", "    in/hr\t", "    in/hr\t",
-                "    in/hr\t", "    in/hr\t", "    in/hr\t", "    in/hr\t",
-                "   inches\t", "   inches\t", "  Content\t", "   inches"};
-            static const char* units2[14] = {
-                "\nDate        Time    \t", "    Hours\t",
-                "    mm/hr\t", "    mm/hr\t", "    mm/hr\t", "    mm/hr\t",
-                "    mm/hr\t", "    mm/hr\t", "    mm/hr\t", "    mm/hr\t",
-                "       mm\t", "       mm\t", "  Content\t", "       mm"};
+            static const char* head1[14] = {"\n                    \t",
+                                            "  Elapsed\t",
+                                            "    Total\t",
+                                            "    Total\t",
+                                            "  Surface\t",
+                                            " Pavement\t",
+                                            "     Soil\t",
+                                            "  Storage\t",
+                                            "  Surface\t",
+                                            "    Drain\t",
+                                            "  Surface\t",
+                                            " Pavement\t",
+                                            "     Soil\t",
+                                            "  Storage"};
+            static const char* head2[14] = {"\n                    \t",
+                                            "     Time\t",
+                                            "   Inflow\t",
+                                            "     Evap\t",
+                                            "    Infil\t",
+                                            "     Perc\t",
+                                            "     Perc\t",
+                                            "    Exfil\t",
+                                            "   Runoff\t",
+                                            "  OutFlow\t",
+                                            "    Level\t",
+                                            "    Level\t",
+                                            " Moisture\t",
+                                            "    Level"};
+            static const char* units1[14] = {"\nDate        Time    \t",
+                                             "    Hours\t",
+                                             "    in/hr\t",
+                                             "    in/hr\t",
+                                             "    in/hr\t",
+                                             "    in/hr\t",
+                                             "    in/hr\t",
+                                             "    in/hr\t",
+                                             "    in/hr\t",
+                                             "    in/hr\t",
+                                             "   inches\t",
+                                             "   inches\t",
+                                             "  Content\t",
+                                             "   inches"};
+            static const char* units2[14] = {"\nDate        Time    \t",
+                                             "    Hours\t",
+                                             "    mm/hr\t",
+                                             "    mm/hr\t",
+                                             "    mm/hr\t",
+                                             "    mm/hr\t",
+                                             "    mm/hr\t",
+                                             "    mm/hr\t",
+                                             "    mm/hr\t",
+                                             "    mm/hr\t",
+                                             "       mm\t",
+                                             "       mm\t",
+                                             "  Content\t",
+                                             "       mm"};
             const bool is_us = (g.ucf_raindepth == 12.0);
-            const std::string title =
-                ctx.title_notes.empty() ? std::string{} : ctx.title_notes[0];
+            const std::string title = ctx.title_notes.empty() ? std::string{} : ctx.title_notes[0];
             const int ci = g.control_idx[u];
             const int si = g.subcatch_idx[u];
             st->f << "SWMM5 LID Report File\n";
             st->f << "\nProject:  " << title;
-            st->f << "\nLID Unit: "
-                  << (ci >= 0 ? ctx.lid_names.name_of(ci) : std::string{})
+            st->f << "\nLID Unit: " << (ci >= 0 ? ctx.lid_names.name_of(ci) : std::string{})
                   << " in Subcatchment "
-                  << (si >= 0 ? ctx.subcatch_names.name_of(si) : std::string{})
-                  << "\n";
-            for (const char* c : head1) st->f << c;
-            for (const char* c : head2) st->f << c;
-            if (is_us) { for (const char* c : units1) st->f << c; }
-            else       { for (const char* c : units2) st->f << c; }
+                  << (si >= 0 ? ctx.subcatch_names.name_of(si) : std::string{}) << "\n";
+            for (const char* c : head1)
+                st->f << c;
+            for (const char* c : head2)
+                st->f << c;
+            if (is_us) {
+                for (const char* c : units1)
+                    st->f << c;
+            } else {
+                for (const char* c : units2)
+                    st->f << c;
+            }
             st->f << "\n----------- --------";
-            for (int i = 1; i < 14; ++i) st->f << "\t ---------";
+            for (int i = 1; i < 14; ++i)
+                st->f << "\t ---------";
         }
         it = rpt_files_.emplace(key, std::move(st)).first;
     }
     LidRptFile& r = *it->second;
-    if (r.failed) return;
+    if (r.failed)
+        return;
 
     // --- rptVars, exactly lidproc.c:391-407: rates x ucfRainfall,
     //     depths x ucfRainDepth, soil moisture raw.
     const double total_evap = (dt > 0.0) ? g.evap_loss[u] / dt : 0.0;
     const double stor_exfil = (dt > 0.0) ? g.infil_loss[u] / dt : 0.0;
     const double ucfQ = g.ucf_rainfall, ucfD = g.ucf_raindepth;
-    const double rv[12] = {
-        g.in_surf[u]        * ucfQ,   // Total Inflow
-        total_evap          * ucfQ,   // Total Evap
-        g.rpt_surf_infil[u] * ucfQ,   // Surface Infil
-        g.rpt_pave_perc[u]  * ucfQ,   // Pavement Perc
-        g.rpt_soil_perc[u]  * ucfQ,   // Soil Perc
-        stor_exfil          * ucfQ,   // Storage Exfil
-        g.surface_runoff[u] * ucfQ,   // Surface Runoff
-        g.drain_flow[u]     * ucfQ,   // Drain OutFlow
-        g.surf_depth[u]     * ucfD,   // Surface Level
-        g.pave_depth[u]     * ucfD,   // Pavement Level
-        // legacy prints x[SOIL], which stays 0 for a unit with no soil
-        // layer (barrelFluxRates never touches it); g.soil_moist carries a
-        // seeded default there, so mirror the layer test.
-        g.soil_thick[u] > 0.0 ? g.soil_moist[u] : 0.0,  // Soil Moisture
-        g.stor_depth[u]     * ucfD }; // Storage Level
+    const double rv[12] = {g.in_surf[u] * ucfQ,        // Total Inflow
+                           total_evap * ucfQ,          // Total Evap
+                           g.rpt_surf_infil[u] * ucfQ, // Surface Infil
+                           g.rpt_pave_perc[u] * ucfQ,  // Pavement Perc
+                           g.rpt_soil_perc[u] * ucfQ,  // Soil Perc
+                           stor_exfil * ucfQ,          // Storage Exfil
+                           g.surface_runoff[u] * ucfQ, // Surface Runoff
+                           g.drain_flow[u] * ucfQ,     // Drain OutFlow
+                           g.surf_depth[u] * ucfD,     // Surface Level
+                           g.pave_depth[u] * ucfD,     // Pavement Level
+                           // legacy prints x[SOIL], which stays 0 for a unit with no soil
+                           // layer (barrelFluxRates never touches it); g.soil_moist carries a
+                           // seeded default there, so mirror the layer test.
+                           g.soil_thick[u] > 0.0 ? g.soil_moist[u] : 0.0, // Soil Moisture
+                           g.stor_depth[u] * ucfD};                       // Storage Level
 
-    const bool is_dry = (g.in_surf[u]        < L_MINFLOW &&
-                         g.surface_runoff[u] < L_MINFLOW &&
-                         g.drain_flow[u]     < L_MINFLOW &&
-                         stor_exfil          < L_MINFLOW &&
-                         total_evap          < L_MINFLOW);
+    const bool is_dry =
+        (g.in_surf[u] < L_MINFLOW && g.surface_runoff[u] < L_MINFLOW &&
+         g.drain_flow[u] < L_MINFLOW && stor_exfil < L_MINFLOW && total_evap < L_MINFLOW);
 
     // --- a wet step ending a >1-period dry spell first flushes the HELD
     //     row (the spell's last state), lidproc.c:412-417.
-    if (!is_dry && r.was_dry > 1) r.f << r.held;
+    if (!is_dry && r.was_dry > 1)
+        r.f << r.held;
 
     // --- format the current row into the held buffer
     const double new_sec = old_runoff_sec_ + dt;
@@ -1775,20 +2210,19 @@ void LIDSolver::saveLidReport(SimulationContext& ctx, int gi, LIDGroupSoA& g,
     datetime::decodeDate(when, yy, mo, dd);
     datetime::decodeTime(when, hh, mi, ss);
     char ts[24];
-    std::snprintf(ts, sizeof(ts), "%02d/%02d/%04d %02d:%02d:%02d",
-                  mo, dd, yy, hh, mi, ss);
+    std::snprintf(ts, sizeof(ts), "%02d/%02d/%04d %02d:%02d:%02d", mo, dd, yy, hh, mi, ss);
     char row[512];
     std::snprintf(row, sizeof(row),
-        "\n%20s\t %8.3f\t %8.3f\t %8.4f\t %8.3f\t %8.3f\t %8.3f\t %8.3f\t"
-        "%8.3f\t %8.3f\t %8.3f\t %8.3f\t %8.3f\t %8.3f",
-        ts, new_sec / 3600.0,
-        rv[0], rv[1], rv[2], rv[3], rv[4], rv[5],
-        rv[6], rv[7], rv[8], rv[9], rv[10], rv[11]);
+                  "\n%20s\t %8.3f\t %8.3f\t %8.4f\t %8.3f\t %8.3f\t %8.3f\t %8.3f\t"
+                  "%8.3f\t %8.3f\t %8.3f\t %8.3f\t %8.3f\t %8.3f",
+                  ts, new_sec / 3600.0, rv[0], rv[1], rv[2], rv[3], rv[4], rv[5], rv[6], rv[7],
+                  rv[8], rv[9], rv[10], rv[11]);
     r.held = row;
 
     // --- dry-spell compression, lidproc.c:419-437
     if (is_dry) {
-        if (r.was_dry == 0) r.f << r.held;
+        if (r.was_dry == 0)
+            r.f << r.held;
         r.was_dry++;
     } else {
         r.f << r.held;
@@ -1799,8 +2233,10 @@ void LIDSolver::saveLidReport(SimulationContext& ctx, int gi, LIDGroupSoA& g,
 bool LIDSolver::anyWet(const std::vector<int>* source_owners) const {
     for (const auto& g : groups_)
         for (int u = 0; u < g.count; ++u)
-            if ((!source_owners || g.subcatch_idx[u] < 0 || source_owners->at(g.subcatch_idx[u]) < 0) &&
-                g.is_wet[static_cast<std::size_t>(u)]) return true;
+            if ((!source_owners || g.subcatch_idx[u] < 0 ||
+                 source_owners->at(g.subcatch_idx[u]) < 0) &&
+                g.is_wet[static_cast<std::size_t>(u)])
+                return true;
     return false;
 }
 

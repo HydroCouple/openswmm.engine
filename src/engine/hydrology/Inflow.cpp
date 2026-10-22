@@ -15,13 +15,13 @@
 // limitations under the License.
 
 /**
- * @file Inflow.cpp
- * @brief External/DWF inflows — batch SoA, numerically identical to legacy.
+ * @file      Inflow.cpp
+ * @brief     External/DWF inflows — batch SoA, numerically identical to legacy.
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "Inflow.hpp"
@@ -44,23 +44,26 @@ using constants::DATE_DELTA;
 
 namespace {
 
-/// Legacy `match(str, w_FLOW)` (keywords.c): the keyword has to be a
-/// case-insensitive PREFIX of the token, not the whole of it, after leading
-/// blanks are skipped. So FLOW, Flow, FLOWRATE and FLOW_EXPANSION all name the
-/// node's hydrograph in [INFLOWS] and [DWF].
+/** @brief Recognize the legacy case-insensitive FLOW keyword prefix.
+ * @param s Borrowed token; skips leading ASCII spaces only, then requires FLOW as
+ * a complete four-byte prefix. Longer suffixes are allowed; tabs are not skipped.
+ * @return True for FLOW/Flow/FLOWRATE/etc. Does not inspect pollutant precedence;
+ * the caller must resolve a pollutant with the same name before treating it as flow. */
 bool matches_flow_keyword(const std::string& s) {
     static constexpr char kFlow[] = "FLOW";
     std::size_t i = s.find_first_not_of(' ');
-    if (i == std::string::npos) return false;
+    if (i == std::string::npos)
+        return false;
     for (std::size_t j = 0; j < 4; ++j, ++i) {
-        if (i >= s.size()) return false;
+        if (i >= s.size())
+            return false;
         if (std::toupper(static_cast<unsigned char>(s[i])) != kFlow[j])
             return false;
     }
     return true;
 }
 
-}  // namespace
+} // namespace
 
 void ExtInflowSoA::resize(int n) {
     count = n;
@@ -95,11 +98,16 @@ double InflowSolver::getPatternFactor(int pat_idx, int month, int day, int hour)
 
     const auto& pat = patterns_[static_cast<std::size_t>(pat_idx)];
     switch (pat.type) {
-        case 0: return pat.factors[month % 12];           // monthly
-        case 1: return pat.factors[day % 7];              // daily
-        case 2: return pat.factors[hour % 24];            // hourly
-        case 3: return pat.factors[hour % 24];            // weekend (same layout)
-        default: return 1.0;
+    case 0:
+        return pat.factors[month % 12]; // monthly
+    case 1:
+        return pat.factors[day % 7]; // daily
+    case 2:
+        return pat.factors[hour % 24]; // hourly
+    case 3:
+        return pat.factors[hour % 24]; // weekend (same layout)
+    default:
+        return 1.0;
     }
 }
 
@@ -111,7 +119,8 @@ void InflowSolver::refreshPatterns(const SimulationContext& ctx) {
         patterns_[ui].type = ctx.patterns.types[ui];
         const auto& facs = ctx.patterns.factors[ui];
         // Initialize all 24 slots to 1.0 (default multiplier)
-        for (int k = 0; k < 24; ++k) patterns_[ui].factors[k] = 1.0;
+        for (int k = 0; k < 24; ++k)
+            patterns_[ui].factors[k] = 1.0;
         for (std::size_t k = 0; k < facs.size() && k < 24; ++k) {
             patterns_[ui].factors[k] = facs[k];
         }
@@ -144,17 +153,16 @@ void InflowSolver::init(SimulationContext& ctx) {
     // is the authority on which rows exist (an [INFLOWS] row removed via
     // the API must not leave its last age behind).
     if (ctx.options.water_age)
-        ctx.water_age_state.node_ext_inflow_age.assign(
-            static_cast<std::size_t>(ctx.n_nodes()),
-            std::numeric_limits<double>::quiet_NaN());
+        ctx.water_age_state.node_ext_inflow_age.assign(static_cast<std::size_t>(ctx.n_nodes()),
+                                                       std::numeric_limits<double>::quiet_NaN());
 
     // ---- Populate external inflows with name resolution ----
     int ne = ctx.ext_inflows.count();
     ext_inflows_.resize(ne);
     for (int i = 0; i < ne; ++i) {
         auto ui = static_cast<std::size_t>(i);
-        ext_inflows_.node_idx[ui]     = ctx.ext_inflows.node_idx[ui];
-        ext_inflows_.baseline[ui]     = ctx.ext_inflows.baseline[ui];
+        ext_inflows_.node_idx[ui] = ctx.ext_inflows.node_idx[ui];
+        ext_inflows_.baseline[ui] = ctx.ext_inflows.baseline[ui];
         ext_inflows_.scale_factor[ui] = ctx.ext_inflows.s_factor[ui];
 
         // Unit conversion factor. For a FLOW inflow the timeseries/baseline are
@@ -169,8 +177,8 @@ void InflowSolver::init(SimulationContext& ctx) {
         // other constituent names a pollutant and carries a load, NOT water.
         // Legacy: inflow_readExtInflow() / routing.c addExternalInflows().
         auto upper = [](std::string s) {
-            for (auto& ch : s) ch = static_cast<char>(std::toupper(
-                static_cast<unsigned char>(ch)));
+            for (auto& ch : s)
+                ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
             return s;
         };
         // Warnings below dedupe against ctx.warnings because init() re-runs
@@ -178,66 +186,60 @@ void InflowSolver::init(SimulationContext& ctx) {
         // would repeat every standing warning.
         auto warn_once = [&ctx](const std::string& msg) {
             for (const auto& w : ctx.warnings)
-                if (w == msg) return;
+                if (w == msg)
+                    return;
             ctx.warnings.push_back(msg);
         };
         // Legacy inflow_readExtInflow (inflow.c:252-258) looks the token up in
         // the POLLUTANT table first and only then tests match(tok[1], w_FLOW),
         // which is a PREFIX test — see matches_flow_keyword above.
         if (ctx.pollutant_names.find(cons) < 0 && matches_flow_keyword(cons)) {
-            ext_inflows_.kind[ui]       = static_cast<int>(ExtInflowKind::FLOW);
+            ext_inflows_.kind[ui] = static_cast<int>(ExtInflowKind::FLOW);
             ext_inflows_.pollut_idx[ui] = -1;
             int fu = static_cast<int>(ctx.options.flow_units);
-            if (fu >= 0 && fu < 6) cf /= ucf::Qcf[fu];
+            if (fu >= 0 && fu < 6)
+                cf /= ucf::Qcf[fu];
         } else if (cons == "__WATER_AGE__") {
             // Z1 (amendment D-Y4): the reserved age species is a legal
             // [INFLOWS] constituent. The row's value is the AGE of the
             // node's external inflow water — HOURS in the file (the
             // [WATER_AGE_SOURCES] unit), SECONDS internally — and it wins
             // over the source table's EXTERNAL_INFLOW entry at this node.
-            ext_inflows_.kind[ui]       = static_cast<int>(ExtInflowKind::AGE);
+            ext_inflows_.kind[ui] = static_cast<int>(ExtInflowKind::AGE);
             ext_inflows_.pollut_idx[ui] = -1;
-            cf *= 3600.0;   // hours → seconds
+            cf *= 3600.0; // hours → seconds
             const std::string type_u = upper(ctx.ext_inflows.inflow_type[ui]);
             if (type_u == "MASS")
-                warn_once(
-                    "[INFLOWS] __WATER_AGE__ at node '" +
-                    ctx.ext_inflows.node_name[ui] +
-                    "': MASS has no meaning for the age species — the value "
-                    "is taken as the inflow's age in hours (CONCEN).");
+                warn_once("[INFLOWS] __WATER_AGE__ at node '" + ctx.ext_inflows.node_name[ui] +
+                          "': MASS has no meaning for the age species — the value "
+                          "is taken as the inflow's age in hours (CONCEN).");
             if (!ctx.options.water_age)
-                warn_once(
-                    "[INFLOWS] __WATER_AGE__ rows are present but [OPTIONS] "
-                    "WATER_AGE is OFF — the rows are inert this simulation.");
+                warn_once("[INFLOWS] __WATER_AGE__ rows are present but [OPTIONS] "
+                          "WATER_AGE is OFF — the rows are inert this simulation.");
             // Amendment 1 §6: two ways to state an external-inflow age.
             // The [INFLOWS] row wins because it is the more specific
             // statement; say so instead of letting one silently lose.
-            for (std::size_t k = 0;
-                 k < ctx.water_age_config.node_over_source.size(); ++k)
+            for (std::size_t k = 0; k < ctx.water_age_config.node_over_source.size(); ++k)
                 if (ctx.water_age_config.node_over_source[k] ==
                         static_cast<int>(WaterAgeSource::EXTERNAL_INFLOW) &&
-                    ctx.water_age_config.node_over_node[k] ==
-                        ext_inflows_.node_idx[ui])
-                    warn_once(
-                        "[INFLOWS] __WATER_AGE__ at node '" +
-                        ctx.ext_inflows.node_name[ui] +
-                        "' overrides the [WATER_AGE_SOURCES] "
-                        "EXTERNAL_INFLOW row for the same node — the "
-                        "inflow row wins (amendment D-Y4).");
+                    ctx.water_age_config.node_over_node[k] == ext_inflows_.node_idx[ui])
+                    warn_once("[INFLOWS] __WATER_AGE__ at node '" + ctx.ext_inflows.node_name[ui] +
+                              "' overrides the [WATER_AGE_SOURCES] "
+                              "EXTERNAL_INFLOW row for the same node — the "
+                              "inflow row wins (amendment D-Y4).");
         } else if (cons == "__TEMPERATURE__") {
             // Heat keeps the dedicated-page treatment until its own round
             // (amendment 1 §6) — but never the silent drop.
-            ext_inflows_.kind[ui]       = static_cast<int>(ExtInflowKind::CONCEN);
+            ext_inflows_.kind[ui] = static_cast<int>(ExtInflowKind::CONCEN);
             ext_inflows_.pollut_idx[ui] = -1;
-            warn_once(
-                "[INFLOWS] __TEMPERATURE__ rows arrive with heat's round — "
-                "the row at node '" + ctx.ext_inflows.node_name[ui] +
-                "' is ignored.");
+            warn_once("[INFLOWS] __TEMPERATURE__ rows arrive with heat's round — "
+                      "the row at node '" +
+                      ctx.ext_inflows.node_name[ui] + "' is ignored.");
         } else {
             const std::string type_u = upper(ctx.ext_inflows.inflow_type[ui]);
             const bool is_mass = (type_u == "MASS");
-            ext_inflows_.kind[ui] = static_cast<int>(
-                is_mass ? ExtInflowKind::MASS : ExtInflowKind::CONCEN);
+            ext_inflows_.kind[ui] =
+                static_cast<int>(is_mass ? ExtInflowKind::MASS : ExtInflowKind::CONCEN);
             ext_inflows_.pollut_idx[ui] = ctx.pollutant_names.find(cons);
             // U2 (2026-09-07): a reactions-component species is a legal
             // constituent on the same footing as a pollutant (the one
@@ -245,34 +247,33 @@ void InflowSolver::init(SimulationContext& ctx) {
             if (ext_inflows_.pollut_idx[ui] < 0 && ctx.reactions.configured) {
                 const int m = ctx.reactions.find_species(cons);
                 if (m >= 0) {
-                    ext_inflows_.kind[ui] = static_cast<int>(
-                        is_mass ? ExtInflowKind::MSX_MASS : ExtInflowKind::MSX_CONCEN);
+                    ext_inflows_.kind[ui] = static_cast<int>(is_mass ? ExtInflowKind::MSX_MASS
+                                                                     : ExtInflowKind::MSX_CONCEN);
                     ext_inflows_.pollut_idx[ui] = m;
                     if (m < static_cast<int>(ctx.reactions.species_is_wall.size()) &&
                         ctx.reactions.species_is_wall[static_cast<std::size_t>(m)])
-                        warn_once(
-                            "[INFLOWS] '" + cons + "' at node '" +
-                            ctx.ext_inflows.node_name[ui] +
-                            "' is a WALL species — inflow water carries no "
-                            "wall-bound mass; the row is ignored.");
+                        warn_once("[INFLOWS] '" + cons + "' at node '" +
+                                  ctx.ext_inflows.node_name[ui] +
+                                  "' is a WALL species — inflow water carries no "
+                                  "wall-bound mass; the row is ignored.");
                 }
             }
             // Z1: a constituent matching nothing was SILENTLY dropped at
             // routing (pollut_idx −1 skips the row); a typo in a pollutant
             // name deserves words.
             if (ext_inflows_.pollut_idx[ui] < 0)
-                warn_once(
-                    "[INFLOWS] constituent '" + cons + "' at node '" +
-                    ctx.ext_inflows.node_name[ui] +
-                    "' matches no pollutant, reactions species or reserved "
-                    "species — the row is ignored.");
+                warn_once("[INFLOWS] constituent '" + cons + "' at node '" +
+                          ctx.ext_inflows.node_name[ui] +
+                          "' matches no pollutant, reactions species or reserved "
+                          "species — the row is ignored.");
             // Internal quality unit is ft3 x mg/L, so a user-supplied MASS rate
             // divides by the liters-per-ft3 factor exactly as legacy does
             // (inflow.c: "if ( type == MASS_INFLOW ) cf /= LperFT3").
-            constexpr double L_PER_FT3 = 28.317;   // legacy consts.h LperFT3
-            if (is_mass) cf /= L_PER_FT3;
+            constexpr double L_PER_FT3 = 28.317; // legacy consts.h LperFT3
+            if (is_mass)
+                cf /= L_PER_FT3;
         }
-        ext_inflows_.conv_factor[ui]  = cf;
+        ext_inflows_.conv_factor[ui] = cf;
 
         // Resolve timeseries name → table index
         const auto& ts_name = ctx.ext_inflows.ts_name[ui];
@@ -297,7 +298,7 @@ void InflowSolver::init(SimulationContext& ctx) {
     dwf_inflows_.resize(nd);
     for (int i = 0; i < nd; ++i) {
         auto ui = static_cast<std::size_t>(i);
-        dwf_inflows_.node_idx[ui]  = ctx.dwf_inflows.node_idx[ui];
+        dwf_inflows_.node_idx[ui] = ctx.dwf_inflows.node_idx[ui];
 
         // Convert avg_value from display flow units to CFS
         // (matching legacy inflow_readDwfInflow: x /= UCF(FLOW))
@@ -333,17 +334,15 @@ void InflowSolver::init(SimulationContext& ctx) {
         int tmp_pats[4] = {-1, -1, -1, -1};
 
         // The four pattern name fields from parsed data (in input order)
-        const std::string* pat_fields[4] = {
-            &ctx.dwf_inflows.pat1[ui],
-            &ctx.dwf_inflows.pat2[ui],
-            &ctx.dwf_inflows.pat3[ui],
-            &ctx.dwf_inflows.pat4[ui]
-        };
+        const std::string* pat_fields[4] = {&ctx.dwf_inflows.pat1[ui], &ctx.dwf_inflows.pat2[ui],
+                                            &ctx.dwf_inflows.pat3[ui], &ctx.dwf_inflows.pat4[ui]};
 
         for (int p = 0; p < 4; ++p) {
-            if (pat_fields[p]->empty()) continue;
+            if (pat_fields[p]->empty())
+                continue;
             auto pit = pattern_map.find(*pat_fields[p]);
-            if (pit == pattern_map.end()) continue;
+            if (pit == pattern_map.end())
+                continue;
             int pat_idx = pit->second;
             // Sort into correct position by pattern type
             int pat_type = ctx.patterns.types[static_cast<std::size_t>(pat_idx)];
@@ -353,8 +352,8 @@ void InflowSolver::init(SimulationContext& ctx) {
         }
 
         dwf_inflows_.pat_monthly[ui] = tmp_pats[MONTHLY_PATTERN];
-        dwf_inflows_.pat_daily[ui]   = tmp_pats[DAILY_PATTERN];
-        dwf_inflows_.pat_hourly[ui]  = tmp_pats[HOURLY_PATTERN];
+        dwf_inflows_.pat_daily[ui] = tmp_pats[DAILY_PATTERN];
+        dwf_inflows_.pat_hourly[ui] = tmp_pats[HOURLY_PATTERN];
         dwf_inflows_.pat_weekend[ui] = tmp_pats[WEEKEND_PATTERN];
     }
 
@@ -380,27 +379,30 @@ void InflowSolver::init(SimulationContext& ctx) {
     // node's FLOW row and silence that. Superseded rows are marked with
     // node_idx = −1, which every consumer below already skips.
     {
-        constexpr long long kNone    = std::numeric_limits<long long>::min();
+        constexpr long long kNone = std::numeric_limits<long long>::min();
         constexpr long long kMsxBase = 1LL << 32;
-        constexpr long long kAgeKey  = 1LL << 33;
+        constexpr long long kAgeKey = 1LL << 33;
         auto ext_param = [](int kind, int idx) -> long long {
             switch (static_cast<ExtInflowKind>(kind)) {
-                case ExtInflowKind::FLOW:       return -1;
-                case ExtInflowKind::AGE:        return kAgeKey;
-                case ExtInflowKind::MSX_CONCEN:
-                case ExtInflowKind::MSX_MASS:   return (idx >= 0) ? kMsxBase + idx : kNone;
-                default:                        return (idx >= 0) ? idx : kNone;
+            case ExtInflowKind::FLOW:
+                return -1;
+            case ExtInflowKind::AGE:
+                return kAgeKey;
+            case ExtInflowKind::MSX_CONCEN:
+            case ExtInflowKind::MSX_MASS:
+                return (idx >= 0) ? kMsxBase + idx : kNone;
+            default:
+                return (idx >= 0) ? idx : kNone;
             }
         };
         std::unordered_map<long long, int> last;
-        auto supersede = [&last](std::vector<int>& node_idx, int row,
-                                 long long param) {
-            if (param == kNone) return;
+        auto supersede = [&last](std::vector<int>& node_idx, int row, long long param) {
+            if (param == kNone)
+                return;
             // param ∈ [−1, 2^33]; +3 keeps it positive so the node bits above
             // bit 34 stay clean.
             const long long key =
-                (static_cast<long long>(node_idx[static_cast<std::size_t>(row)])
-                 << 34) + param + 3;
+                (static_cast<long long>(node_idx[static_cast<std::size_t>(row)]) << 34) + param + 3;
             auto it = last.find(key);
             if (it != last.end())
                 node_idx[static_cast<std::size_t>(it->second)] = -1;
@@ -409,21 +411,22 @@ void InflowSolver::init(SimulationContext& ctx) {
 
         for (int i = 0; i < ne; ++i) {
             auto ui = static_cast<std::size_t>(i);
-            if (ext_inflows_.node_idx[ui] < 0) continue;
+            if (ext_inflows_.node_idx[ui] < 0)
+                continue;
             supersede(ext_inflows_.node_idx, i,
-                      ext_param(ext_inflows_.kind[ui],
-                                ext_inflows_.pollut_idx[ui]));
+                      ext_param(ext_inflows_.kind[ui], ext_inflows_.pollut_idx[ui]));
         }
 
         last.clear();
         for (int i = 0; i < nd; ++i) {
             auto ui = static_cast<std::size_t>(i);
-            if (dwf_inflows_.node_idx[ui] < 0) continue;
-            const long long param =
-                dwf_inflows_.is_flow[ui]        ? -1
-              : dwf_inflows_.msx_idx[ui] >= 0   ? kMsxBase + dwf_inflows_.msx_idx[ui]
-              : dwf_inflows_.pollut_idx[ui] >= 0 ? dwf_inflows_.pollut_idx[ui]
-                                                : kNone;
+            if (dwf_inflows_.node_idx[ui] < 0)
+                continue;
+            const long long param = dwf_inflows_.is_flow[ui] ? -1
+                                    : dwf_inflows_.msx_idx[ui] >= 0
+                                        ? kMsxBase + dwf_inflows_.msx_idx[ui]
+                                    : dwf_inflows_.pollut_idx[ui] >= 0 ? dwf_inflows_.pollut_idx[ui]
+                                                                       : kNone;
             supersede(dwf_inflows_.node_idx, i, param);
         }
     }
@@ -449,7 +452,7 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
     // Routing.c then subtracts 1 giving 0=Sun..6=Sat.
     // Simplified: (floor(date) + DateDelta) % 7 directly gives 0=Sun..6=Sat.
     int total_days = static_cast<int>(std::floor(current_date));
-    int day = (total_days + constants::DATE_DELTA) % 7;  // 0=Sun..6=Sat
+    int day = (total_days + constants::DATE_DELTA) % 7; // 0=Sun..6=Sat
 
     // Month of year using DateTime API (1-based), convert to 0-based.
     int month = datetime::monthOfYear(current_date) - 1;
@@ -493,7 +496,8 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
         // newLatFlow (and before the CONCEN rows multiply by it). Without this
         // the first step of a ramp starting at 0 injected ~1e-6 cfs that
         // legacy zeroes (extran9: storage node depth 1.5e-7 ft off from step 1).
-        if (std::fabs(q) < constants::FLOW_TOL) q = 0.0;
+        if (std::fabs(q) < constants::FLOW_TOL)
+            q = 0.0;
 
         // Write to decomposed external inflow array (assembled into lat_flow later)
         int ni = ext_inflows_.node_idx[ui];
@@ -511,16 +515,16 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
             if (kind != static_cast<int>(ExtInflowKind::CONCEN) &&
                 kind != static_cast<int>(ExtInflowKind::MASS))
                 continue;
-            const int p  = ext_inflows_.pollut_idx[ui];
+            const int p = ext_inflows_.pollut_idx[ui];
             const int ni = ext_inflows_.node_idx[ui];
-            if (p < 0 || p >= np || ni < 0 || ni >= ctx.n_nodes()) continue;
+            if (p < 0 || p >= np || ni < 0 || ni >= ctx.n_nodes())
+                continue;
 
             double w = row_value(ui);
             if (kind == static_cast<int>(ExtInflowKind::CONCEN))
                 w *= ctx.nodes.ext_inflow[static_cast<std::size_t>(ni)];
 
-            const auto idx = static_cast<std::size_t>(ni) *
-                             static_cast<std::size_t>(np) +
+            const auto idx = static_cast<std::size_t>(ni) * static_cast<std::size_t>(np) +
                              static_cast<std::size_t>(p);
             if (idx < ctx.nodes.ext_qual_mass.size())
                 ctx.nodes.ext_qual_mass[idx] += w;
@@ -540,11 +544,13 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
                 any_msx = (kind == static_cast<int>(ExtInflowKind::MSX_CONCEN) ||
                            kind == static_cast<int>(ExtInflowKind::MSX_MASS));
             }
-            const auto want = static_cast<std::size_t>(ctx.n_nodes()) *
-                              static_cast<std::size_t>(nsp);
+            const auto want =
+                static_cast<std::size_t>(ctx.n_nodes()) * static_cast<std::size_t>(nsp);
             if (any_msx || rx.msx_ext_mass_in.size() == want) {
-                if (rx.msx_ext_mass_in.size() != want) rx.msx_ext_mass_in.assign(want, 0.0);
-                else std::fill(rx.msx_ext_mass_in.begin(), rx.msx_ext_mass_in.end(), 0.0);
+                if (rx.msx_ext_mass_in.size() != want)
+                    rx.msx_ext_mass_in.assign(want, 0.0);
+                else
+                    std::fill(rx.msx_ext_mass_in.begin(), rx.msx_ext_mass_in.end(), 0.0);
             }
             if (any_msx) {
                 for (int i = 0; i < ext_inflows_.count; ++i) {
@@ -553,17 +559,18 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
                     if (kind != static_cast<int>(ExtInflowKind::MSX_CONCEN) &&
                         kind != static_cast<int>(ExtInflowKind::MSX_MASS))
                         continue;
-                    const int m  = ext_inflows_.pollut_idx[ui];
+                    const int m = ext_inflows_.pollut_idx[ui];
                     const int ni = ext_inflows_.node_idx[ui];
-                    if (m < 0 || m >= nsp || ni < 0 || ni >= ctx.n_nodes()) continue;
+                    if (m < 0 || m >= nsp || ni < 0 || ni >= ctx.n_nodes())
+                        continue;
                     if (static_cast<std::size_t>(m) < rx.species_is_wall.size() &&
                         rx.species_is_wall[static_cast<std::size_t>(m)])
-                        continue;   // wall species carry no inflow mass
+                        continue; // wall species carry no inflow mass
                     double w = row_value(ui);
                     if (kind == static_cast<int>(ExtInflowKind::MSX_CONCEN))
                         w *= ctx.nodes.ext_inflow[static_cast<std::size_t>(ni)];
                     rx.msx_ext_mass_in[static_cast<std::size_t>(ni) *
-                                       static_cast<std::size_t>(nsp) +
+                                           static_cast<std::size_t>(nsp) +
                                        static_cast<std::size_t>(m)] += w;
                 }
             }
@@ -577,8 +584,7 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
     // of the source table's age. Later rows at the same node win, matching
     // write order. The state array is sized by the transport engine at
     // init; the guard below only skips writes on an unsized array (age OFF).
-    if (ctx.options.water_age &&
-        !ctx.water_age_state.node_ext_inflow_age.empty()) {
+    if (ctx.options.water_age && !ctx.water_age_state.node_ext_inflow_age.empty()) {
         auto& ov = ctx.water_age_state.node_ext_inflow_age;
         for (int i = 0; i < ext_inflows_.count; ++i) {
             auto ui = static_cast<std::size_t>(i);
@@ -598,9 +604,11 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
     auto dwfFactor = [&](std::size_t ui) {
         double factor = 1.0;
         int pm = dwf_inflows_.pat_monthly[ui];
-        if (pm >= 0) factor *= getPatternFactor(pm, month, day, hour);
+        if (pm >= 0)
+            factor *= getPatternFactor(pm, month, day, hour);
         int pd = dwf_inflows_.pat_daily[ui];
-        if (pd >= 0) factor *= getPatternFactor(pd, month, day, hour);
+        if (pd >= 0)
+            factor *= getPatternFactor(pd, month, day, hour);
         // Hourly vs weekend (matches legacy logic exactly):
         int ph = dwf_inflows_.pat_hourly[ui];
         int pw = dwf_inflows_.pat_weekend[ui];
@@ -622,11 +630,13 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
     // inflated lateral inflow (wq-mass-extran1: node 80408 got 47+2 cfs).
     for (int i = 0; i < dwf_inflows_.count; ++i) {
         auto ui = static_cast<std::size_t>(i);
-        if (!dwf_inflows_.is_flow[ui]) continue;
+        if (!dwf_inflows_.is_flow[ui])
+            continue;
 
         double q = dwfFactor(ui) * dwf_inflows_.avg_value[ui];
         // PARITY routing.c addDryWeatherInflows: `if (fabs(q) < FLOW_TOL) q = 0`.
-        if (std::fabs(q) < constants::FLOW_TOL) q = 0.0;
+        if (std::fabs(q) < constants::FLOW_TOL)
+            q = 0.0;
 
         // Write to decomposed DWF inflow array (assembled into lat_flow later)
         int ni = dwf_inflows_.node_idx[ui];
@@ -644,19 +654,22 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
         for (int i = 0; i < dwf_inflows_.count; ++i) {
             auto ui = static_cast<std::size_t>(i);
             const int p = dwf_inflows_.pollut_idx[ui];
-            if (p < 0 || p >= np) continue;
+            if (p < 0 || p >= np)
+                continue;
             const int ni = dwf_inflows_.node_idx[ui];
-            if (ni < 0 || ni >= ctx.n_nodes()) continue;
+            if (ni < 0 || ni >= ctx.n_nodes())
+                continue;
 
             const double q = ctx.nodes.dwf_inflow[static_cast<std::size_t>(ni)];
-            if (q <= 0.0) continue;   // legacy: no DWF quality without DWF flow
+            if (q <= 0.0)
+                continue; // legacy: no DWF quality without DWF flow
 
             double w = q * (dwfFactor(ui) * dwf_inflows_.avg_value[ui]);
             const double c_glob = ctx.pollutants.c_dwf[static_cast<std::size_t>(p)];
-            if (c_glob > 0.0) w -= q * c_glob;
+            if (c_glob > 0.0)
+                w -= q * c_glob;
 
-            const auto idx = static_cast<std::size_t>(ni) *
-                             static_cast<std::size_t>(np) +
+            const auto idx = static_cast<std::size_t>(ni) * static_cast<std::size_t>(np) +
                              static_cast<std::size_t>(p);
             if (idx < ctx.nodes.dwf_qual_mass.size())
                 ctx.nodes.dwf_qual_mass[idx] += w;
@@ -673,22 +686,26 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
             for (int i = 0; i < dwf_inflows_.count && !any; ++i)
                 any = dwf_inflows_.msx_idx[static_cast<std::size_t>(i)] >= 0;
             if (any) {
-                const auto want = static_cast<std::size_t>(ctx.n_nodes()) *
-                                  static_cast<std::size_t>(nsp);
-                if (rx.msx_ext_mass_in.size() != want) rx.msx_ext_mass_in.assign(want, 0.0);
+                const auto want =
+                    static_cast<std::size_t>(ctx.n_nodes()) * static_cast<std::size_t>(nsp);
+                if (rx.msx_ext_mass_in.size() != want)
+                    rx.msx_ext_mass_in.assign(want, 0.0);
                 for (int i = 0; i < dwf_inflows_.count; ++i) {
                     auto ui = static_cast<std::size_t>(i);
                     const int m = dwf_inflows_.msx_idx[ui];
-                    if (m < 0 || m >= nsp) continue;
+                    if (m < 0 || m >= nsp)
+                        continue;
                     if (static_cast<std::size_t>(m) < rx.species_is_wall.size() &&
                         rx.species_is_wall[static_cast<std::size_t>(m)])
                         continue;
                     const int ni = dwf_inflows_.node_idx[ui];
-                    if (ni < 0 || ni >= ctx.n_nodes()) continue;
+                    if (ni < 0 || ni >= ctx.n_nodes())
+                        continue;
                     const double q = ctx.nodes.dwf_inflow[static_cast<std::size_t>(ni)];
-                    if (q <= 0.0) continue;
+                    if (q <= 0.0)
+                        continue;
                     rx.msx_ext_mass_in[static_cast<std::size_t>(ni) *
-                                       static_cast<std::size_t>(nsp) +
+                                           static_cast<std::size_t>(nsp) +
                                        static_cast<std::size_t>(m)] +=
                         q * (dwfFactor(ui) * dwf_inflows_.avg_value[ui]);
                 }
@@ -702,10 +719,12 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
     if (rx.configured && !rx.sources.empty()) {
         const auto ns = static_cast<std::size_t>(rx.n_species());
         const auto want = static_cast<std::size_t>(ctx.n_nodes()) * ns;
-        if (rx.msx_ext_mass_in.size() != want) rx.msx_ext_mass_in.assign(want, 0.0);
+        if (rx.msx_ext_mass_in.size() != want)
+            rx.msx_ext_mass_in.assign(want, 0.0);
         const double seconds = std::max(0.0, (current_date - ctx.options.start_date) * 86400.0);
         for (const auto& source : rx.sources) {
-            if(source.booster)continue; // applied after the receiving node mixes its water
+            if (source.booster)
+                continue; // applied after the receiving node mixes its water
             double factor = 1.0;
             if (source.pattern >= 0) {
                 const auto& factors = rx.source_patterns[source.pattern].factors;
@@ -719,12 +738,12 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
                 factor = factors[static_cast<std::size_t>(std::fmod(step, count))];
             }
             const auto node = static_cast<std::size_t>(source.node);
-            const double water = std::max(0.0, ctx.nodes.ext_inflow[node]) + std::max(0.0, ctx.nodes.dwf_inflow[node]);
+            const double water = std::max(0.0, ctx.nodes.ext_inflow[node]) +
+                                 std::max(0.0, ctx.nodes.dwf_inflow[node]);
             const double rate = source.value * factor * (source.mass ? 1.0 / 28.317 : water);
             rx.msx_ext_mass_in[node * ns + static_cast<std::size_t>(source.species)] += rate;
         }
     }
-
 }
 
 } // namespace inflow

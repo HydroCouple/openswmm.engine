@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file FvOptions.hpp
- * @brief Option struct for the explicit finite-volume 1D network solver.
+ * @file      FvOptions.hpp
+ * @brief     Option struct for the explicit finite-volume 1D network solver.
  *
  * @details Mirrors the role SolverOptions2D plays for the 2D marcher: a plain
  *          value type carrying every knob the solver reads, populated from the
@@ -29,9 +29,9 @@
  * @see plans/EXPLICIT_FV_KOKKOS_1D_SOLVER_PLAN.md §4.2
  * @ingroup engine_fv
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_FV_OPTIONS_HPP
@@ -53,28 +53,28 @@ inline constexpr int kMaxLtsTiers = 8;
 /// away is exactly the wave that carries an advected scalar, so HLL is not a
 /// legitimate production choice once transport is on the same mesh.
 enum class RiemannSolver : int {
-    HLL  = 0,   ///< baseline / debug only
-    HLLC = 1    ///< default
+    HLL = 0, ///< baseline / debug only
+    HLLC = 1 ///< default
 };
 
 /// Slope limiter used by the second-order (MUSCL) reconstruction.
 enum class Limiter : int {
-    MINMOD   = 0,  ///< most diffusive, most robust (default)
-    VANLEER  = 1,
-    SUPERBEE = 2   ///< sharpest; can artificially steepen smooth profiles
+    MINMOD = 0, ///< most diffusive, most robust (default)
+    VANLEER = 1,
+    SUPERBEE = 2 ///< sharpest; can artificially steepen smooth profiles
 };
 
 /// Reconstruction used for the advected scalar field.
 enum class ScalarScheme : int {
-    UPWIND            = 0,  ///< 1st-order upwind — monotone, diffusive
-    MUSCL             = 1,  ///< 2nd-order TVD, one-cell stencil (default)
-    QUICKEST_ULTIMATE = 2   ///< 3rd-order, two-cell upstream stencil
+    UPWIND = 0,           ///< 1st-order upwind — monotone, diffusive
+    MUSCL = 1,            ///< 2nd-order TVD, one-cell stencil (default)
+    QUICKEST_ULTIMATE = 2 ///< 3rd-order, two-cell upstream stencil
 };
 
 /// Temporal integrator.
 enum class TimeIntegration : int {
-    EULER = 0,  ///< forward Euler (default)
-    RK2   = 1   ///< SSP-RK2 (Heun) — strong-stability-preserving
+    EULER = 0, ///< forward Euler (default)
+    RK2 = 1    ///< SSP-RK2 (Heun) — strong-stability-preserving
 };
 
 // FV_NODE_COUPLING, FV_NODE_DT and FV_NODE_PICARD were retired 2026-08-29
@@ -99,17 +99,17 @@ enum class TimeIntegration : int {
 
 /// When pump/orifice/weir/outlet structure equations are re-evaluated.
 enum class StructureCoupling : int {
-    SUBSTEP      = 0,  ///< every explicit substep (default; physically exact)
-    ROUTING_STEP = 1   ///< once per routing step (matches DW-scale control cadence)
+    SUBSTEP = 0,     ///< every explicit substep (default; physically exact)
+    ROUTING_STEP = 1 ///< once per routing step (matches DW-scale control cadence)
 };
 
 /// Backend selection for the solver kernels.
 enum class Backend : int {
-    CPU  = 0,
-    AUTO = 1,   ///< default: try plugins above the parallel gate, else CPU
-    OMP  = 2,
+    CPU = 0,
+    AUTO = 1, ///< default: try plugins above the parallel gate, else CPU
+    OMP = 2,
     CUDA = 3,
-    HIP  = 4,
+    HIP = 4,
     SYCL = 5
 };
 
@@ -171,11 +171,11 @@ struct FvOptions {
 
     // -- Scheme -------------------------------------------------------------
 
-    double        cfl              = 0.5;
-    RiemannSolver riemann          = RiemannSolver::HLLC;
-    int           order            = 1;                    ///< 1 | 2 (MUSCL-Hancock)
-    Limiter       limiter          = Limiter::MINMOD;
-    ScalarScheme  scalar_scheme    = ScalarScheme::MUSCL;
+    double cfl = 0.5;
+    RiemannSolver riemann = RiemannSolver::HLLC;
+    int order = 1; ///< 1 | 2 (MUSCL-Hancock)
+    Limiter limiter = Limiter::MINMOD;
+    ScalarScheme scalar_scheme = ScalarScheme::MUSCL;
     TimeIntegration time_integration = TimeIntegration::EULER;
 
     /// Pressurized wave speed (ft/s internal). Sets the Preissmann slot top

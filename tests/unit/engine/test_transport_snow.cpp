@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_transport_snow.cpp
- * @brief Phase S1 gates — the snow mixing volume.
+ * @file      test_transport_snow.cpp
+ * @brief     Phase S1 gates — the snow mixing volume.
  *
  * @details **The first `[SNOWPACKS]` deck in this program.** No gate anywhere
  *          used one before, which is exactly why the defect S1 fixes went
@@ -48,9 +48,9 @@
  *
  * @see plans/transport/SNOW_MIXING_VOLUME_FINDING_2026-08-20.md
  * @see src/engine/transport/components/WatershedCommon.hpp
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -72,42 +72,61 @@ namespace tr = openswmm::transport;
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
 constexpr int kNSubAge = static_cast<int>(openswmm::SubArea::COUNT_);
 
-/// `stop_min > 0` writes `v` up to that minute and ZERO after it, which is
-/// the only way this deck can put water of one age on the surface and then
-/// take the source away. Every gate but 2 leaves it at 0 and gets the flat
-/// series it always had.
-std::string series(const char* name, int last_min, double v,
-                   int stop_min = 0) {
+/**
+ * @brief Construct controlled five-minute held-value signal rows with optional cutoff.
+ *
+ * No quote/length/time validation or date rollover; hours can exceed23. Does not create/load a file
+ * or report snprintf truncation.
+ *
+ * @param[in] name Non-null short signal name fitting the fixed80-byte row buffer.
+ * @param[in] last_min Inclusive last minute index; negative produces only a blank line, and loop
+ *     arithmetic must not overflow.
+ * @param[in] v Value in the signal's authored units, formatted to four decimals.
+ * @param[in] stop_min Positive selects zero for m>=stop_min; nonpositive keeps v for all emitted
+ *     rows.
+ * @return Owned rows dated01/01/2026 at minute indices0,5,...<=last_min, plus trailing blank line.
+ */
+std::string series(const char* name, int last_min, double v, int stop_min = 0) {
     std::string s;
     char buf[80];
     for (int m = 0; m <= last_min; m += 5) {
         const double x = (stop_min > 0 && m >= stop_min) ? 0.0 : v;
-        std::snprintf(buf, sizeof(buf), "%s 01/01/2026 %02d:%02d %.4f\n",
-                      name, m / 60, m % 60, x);
+        std::snprintf(buf, sizeof(buf), "%s 01/01/2026 %02d:%02d %.4f\n", name, m / 60, m % 60, x);
         s += buf;
     }
     return s + "\n";
 }
 
 struct Opts {
-    bool   water_age = false;
-    bool   heat      = false;
-    bool   pack      = true;
-    bool   ignore_melt = false;
-    double air_f     = 50.0;   ///< above tbase, so the pack melts
-    double sd0       = 6.0;    ///< initial pack depth, deck units
-    double fwfrac    = 0.10;   ///< free-water capacity, fraction of the pack
+    bool water_age = false;
+    bool heat = false;
+    bool pack = true;
+    bool ignore_melt = false;
+    double air_f = 50.0;  ///< above tbase, so the pack melts
+    double sd0 = 6.0;     ///< initial pack depth, deck units
+    double fwfrac = 0.10; ///< free-water capacity, fraction of the pack
     /// A RIPE pack starts with its free-water store full, so melt leaves
     /// from the first step. Set false for a pack with capacity to SPARE —
     /// which after S3 is the only way a pack can absorb rain rather than
     /// transmit it, because a full store passes every drop straight through.
-    bool   ripe      = true;
+    bool ripe = true;
     /// `WaterAgeSource::RAINFALL` age, **in HOURS** — the `_h` is the unit,
     /// not decoration. `[WATER_AGE_SOURCES]` is parsed as hours and stored as
     /// seconds (`WaterAgeComponent.cpp:162`), so **every comparison against a
@@ -115,17 +134,17 @@ struct Opts {
     /// used a nonzero age got this wrong on their first writing, in opposite
     /// directions: one wrote seconds into the field, the other compared the
     /// field against seconds. Default 0.0, where the unit does not show.
-    double rain_h    = 0.0;
+    double rain_h = 0.0;
     /// `WaterAgeSource::INITIAL_STATE` age, **in HOURS**. See `rain_h`.
-    double init_h    = 0.0;
-    double rain_c    = 0.0;    ///< arriving water is 0 °C
-    double init_c    = 25.0;
-    int    end_min   = 60;
-    double rain_inhr = 0.0;    ///< gage intensity; 0 on every gate but 7
+    double init_h = 0.0;
+    double rain_c = 0.0; ///< arriving water is 0 °C
+    double init_c = 25.0;
+    int end_min = 60;
+    double rain_inhr = 0.0; ///< gage intensity; 0 on every gate but 7
     /// Minute at which the gage goes dry. 0 = never. Only gate 2 uses it,
     /// and it needs it: see that gate for why a single-phase deck cannot
     /// observe the mixing volume in the AGE channel at all.
-    int    rain_stop_min = 0;
+    int rain_stop_min = 0;
     /// Areal snow cover, written as a flat `ADC` curve. The default curve is
     /// all ones (`Snow.hpp:92`) and `si` is pinned to the INITIAL pack depth
     /// (`SWMMEngine.cpp:5613`, the deck's SD100 field is not read), so
@@ -151,31 +170,41 @@ struct Opts {
     double weplow = 0.0;
     /// F8 — the `REMOVAL` row's first fraction: snow ploughed OUT of the
     /// system. This is the only sink `runoff_snowremov` measures.
-    double f_out  = 0.0;
+    double f_out = 0.0;
     /// A SECOND subcatchment with no pack, on a project that HAS packs.
     /// Without this the only pack-less deck is a pack-less PROJECT, and
     /// `PostParseResolver.cpp:2199` forces IGNORE_SNOWMELT on there
     /// (legacy project.c:221) — so the guard such a deck exercises is the
     /// IGNORE_SNOWMELT one, not the per-subcatchment one.
-    bool   bare_second = false;
+    bool bare_second = false;
 };
 
+/**
+ * @brief Write fixed-name model/age/heat files for controlled snow transport cases.
+ *
+ * Overwrites _snow.age/.heat/.inp in cwd with CFS/DYNWAVE/Horton deck, optional ripe or unripe pack
+ * and fixed routing/forcing cadence. Rain uses in/hr, air F and snowpack authored US depths;
+ * initial free water is fwfrac*sd0 only when ripe. Ignores all stream statuses; callers serialize
+ * fixed artifact names and provide valid formatting/ranges. Does not open or run the model.
+ *
+ * @param[in] o Fixture choices for duration, rain/air, source age hours/temperature C, snowpack
+ *     state/ADC/plowing, optional second catchment and process activation.
+ */
 void write_files(const Opts& o) {
     {
         std::ofstream f("_snow.age");
-        f << "[WATER_AGE_SOURCES]\nRAINFALL GLOBAL " << o.rain_h
-          << "\nINITIAL_STATE GLOBAL " << o.init_h << "\n";
+        f << "[WATER_AGE_SOURCES]\nRAINFALL GLOBAL " << o.rain_h << "\nINITIAL_STATE GLOBAL "
+          << o.init_h << "\n";
     }
     {
         std::ofstream f("_snow.heat");
-        f << "[HEAT_SOURCES]\nRAINFALL GLOBAL " << o.rain_c
-          << "\nINITIAL_STATE GLOBAL " << o.init_c << "\n";
+        f << "[HEAT_SOURCES]\nRAINFALL GLOBAL " << o.rain_c << "\nINITIAL_STATE GLOBAL " << o.init_c
+          << "\n";
     }
     std::ofstream f("_snow.inp");
     f << "[TITLE]\nS1 snow mixing volume gate deck\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nINFILTRATION HORTON\n"
-      << (o.water_age ? "WATER_AGE ON\n" : "")
-      << (o.heat ? "HEAT_TRANSPORT ON\n" : "")
+      << (o.water_age ? "WATER_AGE ON\n" : "") << (o.heat ? "HEAT_TRANSPORT ON\n" : "")
       << (o.ignore_melt ? "IGNORE_SNOWMELT YES\n" : "")
       << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
       << "END_DATE 01/01/2026\nEND_TIME 0" << (o.end_min / 60) << ":"
@@ -194,12 +223,14 @@ void write_files(const Opts& o) {
         // depletion index, so `rain·(1 − asc)` is a live term.
         for (const char* surf : {"IMPERVIOUS", "PERVIOUS"}) {
             f << "ADC " << surf;
-            for (int i = 0; i < 10; ++i) f << " " << o.adc_cover;
+            for (int i = 0; i < 10; ++i)
+                f << " " << o.adc_cover;
             f << "\n";
         }
     }
     f << "WINDSPEED MONTHLY";
-    for (int m = 0; m < 12; ++m) f << " 5.0";
+    for (int m = 0; m < 12; ++m)
+        f << " 5.0";
     f << "\n\n[RAINGAGES]\nRG1 INTENSITY 0:05 1.0 TIMESERIES rain_ts\n\n"
       // Rainfall is IDENTICALLY ZERO on every gate but 7. Every drop that
       // reaches the surface comes out of the pack, which is what makes the
@@ -219,48 +250,60 @@ void write_files(const Opts& o) {
         const double fw0 = o.ripe ? o.fwfrac * o.sd0 : 0.0;
         //          Name SURFACE     cmin cmax tbase fwfrac sd0  fw0 snn0
         f << "[SNOWPACKS]\n"
-          << "SP1 PLOWABLE   0.02 0.06 32.0 " << o.fwfrac << " " << o.sd0
-          << " " << fw0 << " " << o.snn0 << "\n"
-          << "SP1 IMPERVIOUS 0.02 0.06 32.0 " << o.fwfrac << " " << o.sd0
-          << " " << fw0 << " " << o.sd100 << "\n"
-          << "SP1 PERVIOUS   0.01 0.03 32.0 " << o.fwfrac << " " << o.sd0
-          << " " << fw0 << " " << o.sd100 << "\n"
-          << "SP1 REMOVAL    " << o.weplow << " " << o.f_out
-          << " 0.0 0.0 0.0 0.0\n\n";
+          << "SP1 PLOWABLE   0.02 0.06 32.0 " << o.fwfrac << " " << o.sd0 << " " << fw0 << " "
+          << o.snn0 << "\n"
+          << "SP1 IMPERVIOUS 0.02 0.06 32.0 " << o.fwfrac << " " << o.sd0 << " " << fw0 << " "
+          << o.sd100 << "\n"
+          << "SP1 PERVIOUS   0.01 0.03 32.0 " << o.fwfrac << " " << o.sd0 << " " << fw0 << " "
+          << o.sd100 << "\n"
+          << "SP1 REMOVAL    " << o.weplow << " " << o.f_out << " 0.0 0.0 0.0 0.0\n\n";
     }
     // The 9th token is the snowpack name; "*" means none.
-    f << "[SUBCATCHMENTS]\nS1 RG1 J1 5 50 500 0.5 0 "
-      << (o.pack ? "SP1" : "*") << "\n";
-    if (o.bare_second) f << "S2 RG1 J1 5 50 500 0.5 0 *\n";
+    f << "[SUBCATCHMENTS]\nS1 RG1 J1 5 50 500 0.5 0 " << (o.pack ? "SP1" : "*") << "\n";
+    if (o.bare_second)
+        f << "S2 RG1 J1 5 50 500 0.5 0 *\n";
     f << "\n[SUBAREAS]\nS1 0.01 0.1 0.02 0.02 25 OUTLET\n";
-    if (o.bare_second) f << "S2 0.01 0.1 0.02 0.02 25 OUTLET\n";
+    if (o.bare_second)
+        f << "S2 0.01 0.1 0.02 0.02 25 OUTLET\n";
     f << "\n[INFILTRATION]\nS1 3.0 0.5 4 7 0\n";
-    if (o.bare_second) f << "S2 3.0 0.5 4 7 0\n";
+    if (o.bare_second)
+        f << "S2 3.0 0.5 4 7 0\n";
     f << "\n"
       << "[JUNCTIONS]\nJ1 10.0 10 0 0 0\n\n"
       << "[OUTFALLS]\nOUT 9.0 FREE  NO\n\n"
       << "[CONDUITS]\nC1 J1 OUT 400 0.013 0 0 0\n\n"
       << "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n\n"
       << "[PROCESS_COMPONENTS]\n";
-    if (o.water_age) f << "org.hydrocouple.openswmm.waterage config=\"_snow.age\"\n";
-    if (o.heat)      f << "org.hydrocouple.openswmm.heat config=\"_snow.heat\"\n";
+    if (o.water_age)
+        f << "org.hydrocouple.openswmm.waterage config=\"_snow.age\"\n";
+    if (o.heat)
+        f << "org.hydrocouple.openswmm.heat config=\"_snow.heat\"\n";
     f << "\n[REPORT]\nINPUT NO\n";
 }
 
-/// `age_at_stop` / `t_at_stop`, when given, capture `subarea_age` and the
-/// simulation clock at the FIRST step past `rain_stop_min`. A gate that has
-/// to show "the age moved on its own" needs the value it moved FROM, and on
-/// this deck that value is not computable in advance -- it is whatever the
-/// wet phase left behind. Both are optional and every other gate omits them.
+/**
+ * @brief Attempt the snow transport run and optionally capture age at the rain cutoff.
+ *
+ * Steps until error/completion or40000-iteration guard; later step error/guard exhaustion still
+ * returns an ended handle with possible partial state. Ignores end status; caller closes/destroys
+ * success. Cutoff observation is step-quantized, with no interpolation or capture when stop_min<=0.
+ *
+ * @param[in] o Deck options forwarded to write_files.
+ * @param[out] age_at_stop Optional vector receiving subarea ages in seconds at the first successful
+ *     step with elapsed>=positive rain_stop_min; unchanged when never captured.
+ * @param[out] t_at_stop Optional captured elapsed seconds, assigned only when age_at_stop is
+ *     non-null and its capture condition occurs.
+ * @return Owned ended engine for inspection, or null after create/open/init/start refusal and
+ *     destruction.
+ */
 SWMM_Engine run(const Opts& o, std::vector<double>* age_at_stop = nullptr,
                 double* t_at_stop = nullptr) {
     write_files(o);
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) return nullptr;
-    if (swmm_engine_open(e, "_snow.inp", "_snow.rpt", "_snow.out", nullptr)
-            != SWMM_OK ||
-        swmm_engine_initialize(e) != SWMM_OK ||
-        swmm_engine_start(e, 1) != SWMM_OK) {
+    if (e == nullptr)
+        return nullptr;
+    if (swmm_engine_open(e, "_snow.inp", "_snow.rpt", "_snow.out", nullptr) != SWMM_OK ||
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
         swmm_engine_destroy(e);
         return nullptr;
     }
@@ -271,12 +314,12 @@ SWMM_Engine run(const Opts& o, std::vector<double>* age_at_stop = nullptr,
     double elapsed = 0.0;
     int guard = 0;
     do {
-        if (swmm_engine_step(e, &elapsed) != SWMM_OK) break;
-        if (age_at_stop != nullptr && !captured && o.rain_stop_min > 0 &&
-            elapsed >= stop_days) {
-            *age_at_stop = as_cpp_engine(e).context().water_age_state
-                               .subarea_age;
-            if (t_at_stop != nullptr) *t_at_stop = elapsed * 86400.0;
+        if (swmm_engine_step(e, &elapsed) != SWMM_OK)
+            break;
+        if (age_at_stop != nullptr && !captured && o.rain_stop_min > 0 && elapsed >= stop_days) {
+            *age_at_stop = as_cpp_engine(e).context().water_age_state.subarea_age;
+            if (t_at_stop != nullptr)
+                *t_at_stop = elapsed * 86400.0;
             captured = true;
         }
     } while (elapsed > 0.0 && ++guard < 40000);
@@ -284,11 +327,17 @@ SWMM_Engine run(const Opts& o, std::vector<double>* age_at_stop = nullptr,
     return e;
 }
 
-/// The SETUP every defect gate needs: a pack that is MELTING, with the
-/// rainfall field at exactly zero. If any leg fails, the deck never reached
-/// the state the gate is about and nothing below it means anything.
-::testing::AssertionResult MeltingWithNoRain(
-        const openswmm::SimulationContext& c) {
+/**
+ * @brief Verify the fixture actually has a snowpack releasing water without rainfall.
+ *
+ * Reads internal rate state only, treats NaN/negative snow-net as failure and does not advance
+ * snow, assert by itself or mutate context.
+ *
+ * @param[in] c Stable initialized context with consistent subcatchment/snow-net arrays.
+ * @return AssertionSuccess only when S1 exists, has a pack, rainfall is exactly zero, both snow-net
+ *     rates are nonnegative and at least one is positive; otherwise explanatory AssertionFailure.
+ */
+::testing::AssertionResult MeltingWithNoRain(const openswmm::SimulationContext& c) {
     if (c.n_subcatches() < 1)
         return ::testing::AssertionFailure() << "no subcatchment";
     if (c.subcatches.snowpack[0] < 0)
@@ -315,7 +364,7 @@ SWMM_Engine run(const Opts& o, std::vector<double>* age_at_stop = nullptr,
     return ::testing::AssertionSuccess();
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Gate 1 — the deck itself. Water arrives from a melting pack while the
@@ -338,8 +387,7 @@ TEST(TransportSnowTest, AMeltingPackDeliversWaterWhileRainfallReadsZero) {
                      ctx.subcatches.snow_net_imperv[0]);
     EXPECT_DOUBLE_EQ(tr::arrivingPrecipRate(ctx, 0, tr::kSubIMPERV1),
                      ctx.subcatches.snow_net_imperv[0]);
-    EXPECT_DOUBLE_EQ(tr::arrivingPrecipRate(ctx, 0, tr::kSubPERV),
-                     ctx.subcatches.snow_net_perv[0]);
+    EXPECT_DOUBLE_EQ(tr::arrivingPrecipRate(ctx, 0, tr::kSubPERV), ctx.subcatches.snow_net_perv[0]);
     swmm_engine_destroy(e);
 }
 
@@ -374,18 +422,18 @@ TEST(TransportSnowTest, AMeltingPackDeliversWaterWhileRainfallReadsZero) {
 TEST(TransportSnowTest, MeltwaterMixesIntoTheSubareaAge) {
     Opts o{};
     o.water_age = true;
-    o.rain_h        = 10.0;   // HOURS — old water, so the wet phase leaves
-                              // the surface far above the pack's own age
-    o.rain_inhr     = 1.0;
-    o.rain_stop_min = 60;     // dry from here on: the gage reads zero and
-                              // every drop that still arrives is melt
-    o.end_min       = 120;
+    o.rain_h = 10.0; // HOURS — old water, so the wet phase leaves
+                     // the surface far above the pack's own age
+    o.rain_inhr = 1.0;
+    o.rain_stop_min = 60; // dry from here on: the gage reads zero and
+                          // every drop that still arrives is melt
+    o.end_min = 120;
     // Partial cover, so the wet phase actually reaches the ground instead of
     // being swallowed whole by the pack. `sd100` above `sd0` is what puts the
     // pack below its 100 %-cover depth and lets the ADC curve apply at all
     // (S4/F6 — with sd100 at 0 the pack is permanently at full cover).
     o.adc_cover = 0.5;
-    o.sd100     = 12.0;
+    o.sd100 = 12.0;
 
     std::vector<double> at_stop;
     double t_stop = 0.0;
@@ -416,9 +464,9 @@ TEST(TransportSnowTest, MeltwaterMixesIntoTheSubareaAge) {
         // changeover plus the time since. Anything that arrived came out of
         // the pack, which is younger than the hour-old rain the surface is
         // carrying, so it can only pull the age DOWN.
-        EXPECT_LE(age, unmixed + 1.0e-6)
-            << "subarea " << k << " aged FASTER than the clock, which "
-               "nothing in a dry phase can produce";
+        EXPECT_LE(age, unmixed + 1.0e-6) << "subarea " << k
+                                         << " aged FASTER than the clock, which "
+                                            "nothing in a dry phase can produce";
         // Half the dry phase, and the bar is set from measurement rather
         // than from taste. Pure accrual does NOT land exactly on `unmixed`:
         // the age advances one WET step (60 s) at a time while `t_stop` is
@@ -432,11 +480,10 @@ TEST(TransportSnowTest, MeltwaterMixesIntoTheSubareaAge) {
         if (unmixed - age > 0.5 * dry_s)
             any_mixed = true;
     }
-    EXPECT_TRUE(any_mixed)
-        << "no subarea age moved more than half the dry phase off pure "
-           "accrual, which is what a surface reads when NOTHING mixes into "
-           "it. Meltwater reached this subcatchment — the mixing volume is "
-           "still being read from subcatches.rainfall, which is zero here";
+    EXPECT_TRUE(any_mixed) << "no subarea age moved more than half the dry phase off pure "
+                              "accrual, which is what a surface reads when NOTHING mixes into "
+                              "it. Meltwater reached this subcatchment — the mixing volume is "
+                              "still being read from subcatches.rainfall, which is zero here";
     swmm_engine_destroy(e);
 }
 
@@ -458,8 +505,7 @@ TEST(TransportSnowTest, MeltwaterMixesIntoTheSubareaTemperature) {
            "rather than from meltwater and this gate would not be about S1";
 
     const auto& hs = ctx.heat_state;
-    ASSERT_GE(static_cast<int>(hs.subarea_temp.size()),
-              openswmm::HeatState::kNSubArea);
+    ASSERT_GE(static_cast<int>(hs.subarea_temp.size()), openswmm::HeatState::kNSubArea);
 
     bool any_cooled = false;
     for (int k = 0; k < openswmm::HeatState::kNSubArea; ++k) {
@@ -470,13 +516,13 @@ TEST(TransportSnowTest, MeltwaterMixesIntoTheSubareaTemperature) {
         // reference value.
         EXPECT_LE(t, o.init_c + 1.0e-6) << "subarea " << k;
         EXPECT_GE(t, o.rain_c - 1.0e-6) << "subarea " << k;
-        if (t < o.init_c - 1.0e-3) any_cooled = true;
+        if (t < o.init_c - 1.0e-3)
+            any_cooled = true;
     }
-    EXPECT_TRUE(any_cooled)
-        << "every subarea is still at INITIAL_STATE (" << o.init_c
-        << " C) after an hour of meltwater at " << o.rain_c
-        << " C arrived. With no flux module on, mixing is the only thing "
-           "that can move this number — so nothing mixed in";
+    EXPECT_TRUE(any_cooled) << "every subarea is still at INITIAL_STATE (" << o.init_c
+                            << " C) after an hour of meltwater at " << o.rain_c
+                            << " C arrived. With no flux module on, mixing is the only thing "
+                               "that can move this number — so nothing mixed in";
     swmm_engine_destroy(e);
 }
 
@@ -542,9 +588,9 @@ TEST(TransportSnowTest, ASubcatchmentWithoutAPackReadsTheGageRate) {
         << "S2 built a pack despite '*' in the snowpack column";
 
     for (int k = 0; k < kNSubAge; ++k)
-        EXPECT_DOUBLE_EQ(tr::arrivingPrecipRate(ctx, 1, k),
-                         ctx.subcatches.rainfall[1])
-            << "subarea " << k << ": a pack-less subcatchment must read the "
+        EXPECT_DOUBLE_EQ(tr::arrivingPrecipRate(ctx, 1, k), ctx.subcatches.rainfall[1])
+            << "subarea " << k
+            << ": a pack-less subcatchment must read the "
                "gage rate unchanged, or S1 has moved every existing deck";
     swmm_engine_destroy(e);
 }
@@ -566,9 +612,9 @@ TEST(TransportSnowTest, IgnoreSnowmeltFallsBackToTheGageRate) {
            "configuration";
 
     for (int k = 0; k < kNSubAge; ++k)
-        EXPECT_DOUBLE_EQ(tr::arrivingPrecipRate(ctx, 0, k),
-                         ctx.subcatches.rainfall[0])
-            << "subarea " << k << ": under IGNORE_SNOWMELT the transport "
+        EXPECT_DOUBLE_EQ(tr::arrivingPrecipRate(ctx, 0, k), ctx.subcatches.rainfall[0])
+            << "subarea " << k
+            << ": under IGNORE_SNOWMELT the transport "
                "mixing volume must follow the solver back to the gage rate";
     swmm_engine_destroy(e);
 
@@ -587,9 +633,9 @@ TEST(TransportSnowTest, IgnoreSnowmeltFallsBackToTheGageRate) {
     ASSERT_GT(ctx2.subcatches.snow_net_imperv[0], 0.0);
     ctx2.options.ignore_snow_melt = true;
     for (int k = 0; k < kNSubAge; ++k)
-        EXPECT_DOUBLE_EQ(tr::arrivingPrecipRate(ctx2, 0, k),
-                         ctx2.subcatches.rainfall[0])
-            << "subarea " << k << ": with the flag raised the solver returns "
+        EXPECT_DOUBLE_EQ(tr::arrivingPrecipRate(ctx2, 0, k), ctx2.subcatches.rainfall[0])
+            << "subarea " << k
+            << ": with the flag raised the solver returns "
                "to the gage rate and leaves snow_net_* stale at "
             << ctx2.subcatches.snow_net_imperv[0]
             << "; the transport mixing volume must follow it back";
@@ -611,8 +657,8 @@ TEST(TransportSnowTest, IgnoreSnowmeltFallsBackToTheGageRate) {
 TEST(TransportSnowTest, APackAbsorbingRainPublishesAGenuineZero) {
     Opts o{};
     o.water_age = true;
-    o.air_f = 20.0;      // below tbase: nothing melts
-    o.rain_inhr = 0.5;   // but it IS raining, so the gage rate is not zero
+    o.air_f = 20.0;    // below tbase: nothing melts
+    o.rain_inhr = 0.5; // but it IS raining, so the gage rate is not zero
     // NOT ripe. S3 routes rain that falls on the covered fraction into the
     // free-water store, and a store already at capacity passes every drop
     // straight back out as `imelt` — the pack transmits rather than absorbs,
@@ -639,7 +685,8 @@ TEST(TransportSnowTest, APackAbsorbingRainPublishesAGenuineZero) {
 
     for (int k = 0; k < kNSubAge; ++k)
         EXPECT_DOUBLE_EQ(tr::arrivingPrecipRate(ctx, 0, k), 0.0)
-            << "subarea " << k << ": the pack absorbed every drop, but the "
+            << "subarea " << k
+            << ": the pack absorbed every drop, but the "
                "mixing volume reads the gage rate of "
             << ctx.subcatches.rainfall[0]
             << " — a genuine 0.0 was mistaken for the 'no pack' sentinel";
@@ -649,9 +696,9 @@ TEST(TransportSnowTest, APackAbsorbingRainPublishesAGenuineZero) {
     const auto& ws = ctx.water_age_state;
     ASSERT_GE(static_cast<int>(ws.subarea_age.size()), kNSubAge);
     for (int k = 0; k < kNSubAge; ++k)
-        EXPECT_NEAR(ws.subarea_age[static_cast<std::size_t>(k)],
-                    o.end_min * 60.0, 1.0)
-            << "subarea " << k << " is younger than the run, so water was "
+        EXPECT_NEAR(ws.subarea_age[static_cast<std::size_t>(k)], o.end_min * 60.0, 1.0)
+            << "subarea " << k
+            << " is younger than the run, so water was "
                "mixed into a surface the pack never let anything reach";
     swmm_engine_destroy(e);
 }
@@ -670,7 +717,7 @@ TEST(TransportSnowTest, APackAbsorbingRainPublishesAGenuineZero) {
 TEST(TransportSnowTest, MeltwaterArrivesAtFreezingNotAtTheRainTemperature) {
     Opts o{};
     o.heat = true;
-    o.rain_c = 20.0;      // the S1-only answer, and the wrong one
+    o.rain_c = 20.0; // the S1-only answer, and the wrong one
     o.init_c = 25.0;
     SWMM_Engine e = run(o);
     ASSERT_NE(e, nullptr);
@@ -683,13 +730,12 @@ TEST(TransportSnowTest, MeltwaterArrivesAtFreezingNotAtTheRainTemperature) {
     // not 1 the deck is not the configuration this gate is about.
     for (int k = 0; k < kNSubAge; ++k) {
         const double f = tr::arrivingMeltFraction(ctx, 0, k);
-        ASSERT_NEAR(f, 1.0, 1.0e-12)
-            << "subarea " << k << ": melt fraction is " << f
-            << " on a deck with zero rainfall — every drop arriving here "
-               "came out of the pack, so it must be 1";
-        EXPECT_DOUBLE_EQ(tr::arrivingPrecipTemperature(ctx, 0, k),
-                         tr::kMeltwaterTempC)
-            << "subarea " << k << ": pure meltwater is not arriving at the "
+        ASSERT_NEAR(f, 1.0, 1.0e-12) << "subarea " << k << ": melt fraction is " << f
+                                     << " on a deck with zero rainfall — every drop arriving here "
+                                        "came out of the pack, so it must be 1";
+        EXPECT_DOUBLE_EQ(tr::arrivingPrecipTemperature(ctx, 0, k), tr::kMeltwaterTempC)
+            << "subarea " << k
+            << ": pure meltwater is not arriving at the "
                "freezing point";
     }
 
@@ -700,12 +746,14 @@ TEST(TransportSnowTest, MeltwaterArrivesAtFreezingNotAtTheRainTemperature) {
         EXPECT_TRUE(std::isfinite(t));
         EXPECT_GE(t, tr::kMeltwaterTempC - 1.0e-6)
             << "subarea " << k << " is colder than the meltwater feeding it";
-        if (t < o.rain_c - 1.0e-3) any_below_rain = true;
+        if (t < o.rain_c - 1.0e-3)
+            any_below_rain = true;
     }
-    EXPECT_TRUE(any_below_rain)
-        << "every subarea settled at or above the configured RAINFALL "
-           "temperature (" << o.rain_c << " C). That is the S1-only answer: "
-           "the right VOLUME of water arriving at the wrong VALUE";
+    EXPECT_TRUE(any_below_rain) << "every subarea settled at or above the configured RAINFALL "
+                                   "temperature ("
+                                << o.rain_c
+                                << " C). That is the S1-only answer: "
+                                   "the right VOLUME of water arriving at the wrong VALUE";
     swmm_engine_destroy(e);
 }
 
@@ -741,8 +789,8 @@ TEST(TransportSnowTest, RainThroughAndMeltBlendStrictlyBetweenTheirSources) {
         const double f = tr::arrivingMeltFraction(ctx, 0, k);
         EXPECT_GE(f, 0.0) << "subarea " << k;
         EXPECT_LE(f, 1.0) << "subarea " << k
-            << ": a melt fraction above 1 means more water melted than "
-               "arrived, so the two area blends have diverged";
+                          << ": a melt fraction above 1 means more water melted than "
+                             "arrived, so the two area blends have diverged";
         const double t = tr::arrivingPrecipTemperature(ctx, 0, k);
         // Bracketed by its own two sources, whatever the fraction is.
         EXPECT_GE(t, std::min(tr::kMeltwaterTempC, o.rain_c) - 1.0e-9);
@@ -760,8 +808,7 @@ TEST(TransportSnowTest, RainThroughAndMeltBlendStrictlyBetweenTheirSources) {
                 << " C, but the arriving temperature is the melt endpoint";
             EXPECT_LT(t, o.rain_c - 1.0e-3)
                 << "subarea " << k << ": melt fraction is " << f
-                << ", so part of this water is meltwater at "
-                << tr::kMeltwaterTempC
+                << ", so part of this water is meltwater at " << tr::kMeltwaterTempC
                 << " C, but the arriving temperature is the rain endpoint — "
                    "that is the S1-only answer";
         }
@@ -794,10 +841,12 @@ TEST(TransportSnowTest, WithoutAPackTheArrivingTemperatureIsTheConfiguredOne) {
 
     for (int k = 0; k < kNSubAge; ++k) {
         EXPECT_DOUBLE_EQ(tr::arrivingMeltFraction(ctx, 0, k), 0.0)
-            << "subarea " << k << ": a pack-less subcatchment reported a "
+            << "subarea " << k
+            << ": a pack-less subcatchment reported a "
                "melt fraction";
         EXPECT_DOUBLE_EQ(tr::arrivingPrecipTemperature(ctx, 0, k), o.rain_c)
-            << "subarea " << k << ": S2a moved the arriving temperature on a "
+            << "subarea " << k
+            << ": S2a moved the arriving temperature on a "
                "deck with no snow anywhere";
     }
     swmm_engine_destroy(e);
@@ -827,7 +876,7 @@ TEST(TransportSnowTest, ThePublishedMeltTermCarriesTheAreaBlend) {
     o.sd100 = 24.0;
     o.adc_cover = 0.5;
     o.rain_inhr = 0.2;
-    o.snn0 = 0.4;          // 40 % of the impervious area is plowable
+    o.snn0 = 0.4; // 40 % of the impervious area is plowable
     SWMM_Engine e = run(o);
     ASSERT_NE(e, nullptr);
     auto& eng = as_cpp_engine(e);
@@ -837,7 +886,7 @@ TEST(TransportSnowTest, ThePublishedMeltTermCarriesTheAreaBlend) {
     ASSERT_GE(ctx.subcatches.snowpack[0], 0) << "no pack on this deck";
 
     const auto plow = static_cast<std::size_t>(openswmm::snow::SNOW_PLOWABLE);
-    const auto imp  = static_cast<std::size_t>(openswmm::snow::SNOW_IMPERV);
+    const auto imp = static_cast<std::size_t>(openswmm::snow::SNOW_IMPERV);
 
     // SETUP: a plowable surface must exist, and its melt rate must differ
     // from the non-plowable one, or an area blend and a raw read agree.
@@ -846,7 +895,9 @@ TEST(TransportSnowTest, ThePublishedMeltTermCarriesTheAreaBlend) {
            "its non-plowable term and this gate cannot see the weighting";
     ASSERT_GT(std::fabs(sn.imelt[plow] - sn.imelt[imp]), 1.0e-12)
         << "the plowable and non-plowable surfaces are melting at the same "
-           "rate (" << sn.imelt[plow] << "), so any weighting of them gives "
+           "rate ("
+        << sn.imelt[plow]
+        << "), so any weighting of them gives "
            "the same answer";
 
     const double lo = std::min(sn.imelt[plow], sn.imelt[imp]);
@@ -857,10 +908,12 @@ TEST(TransportSnowTest, ThePublishedMeltTermCarriesTheAreaBlend) {
     // weights positive cannot land on either endpoint, and reading one
     // surface raw lands exactly on one.
     EXPECT_GT(published, lo + 1.0e-15)
-        << "snow_melt_imperv is " << published << ", the lower of the two "
+        << "snow_melt_imperv is " << published
+        << ", the lower of the two "
            "surface rates — it was read raw rather than area-weighted";
     EXPECT_LT(published, hi - 1.0e-15)
-        << "snow_melt_imperv is " << published << ", the higher of the two "
+        << "snow_melt_imperv is " << published
+        << ", the higher of the two "
            "surface rates — it was read raw rather than area-weighted";
 
     // And the fraction it feeds stays a fraction.
@@ -868,8 +921,8 @@ TEST(TransportSnowTest, ThePublishedMeltTermCarriesTheAreaBlend) {
         const double f = tr::arrivingMeltFraction(ctx, 0, k);
         EXPECT_GE(f, 0.0) << "subarea " << k;
         EXPECT_LE(f, 1.0) << "subarea " << k
-            << ": more water melted than arrived, which is what a mismatched "
-               "pair of area blends produces";
+                          << ": more water melted than arrived, which is what a mismatched "
+                             "pair of area blends produces";
     }
     swmm_engine_destroy(e);
 }
@@ -887,14 +940,20 @@ TEST(TransportSnowTest, ThePublishedMeltTermCarriesTheAreaBlend) {
 
 namespace {
 
-/// Total water the pack holds on one snow surface, ft: snow plus the liquid
-/// held in its pores. Both stores, because the divergence S3 fixes was
-/// precisely water moving between them without being debited from the first.
+/**
+ * @brief Read snow-plus-liquid water held on one snow surface.
+ *
+ * Does not include runoff, plowed exports or other surfaces; state is unchanged.
+ *
+ * @param[in] s Stable snow state with compatible wsnow/fw arrays.
+ * @param[in] idx Valid flat snow-surface index in both arrays, unchecked here.
+ * @return wsnow[idx]+fw[idx] in feet water equivalent, with no sign/finite normalization.
+ */
 double packWater(const openswmm::snow::SnowSoA& s, std::size_t idx) {
     return s.wsnow[idx] + s.fw[idx];
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Gate 12 — A SLOWLY MELTING PACK DEPLETES. The gate that fails on the
@@ -909,8 +968,8 @@ double packWater(const openswmm::snow::SnowSoA& s, std::size_t idx) {
 TEST(TransportSnowTest, ASlowlyMeltingPackLosesSnowWaterEquivalent) {
     Opts o{};
     o.water_age = true;
-    o.fwfrac = 0.90;      // a large store: melt stays inside it for a long
-    o.air_f  = 40.0;      // time, which is the regime the defect lived in
+    o.fwfrac = 0.90; // a large store: melt stays inside it for a long
+    o.air_f = 40.0;  // time, which is the regime the defect lived in
     o.end_min = 60;
     // ...and the store must have ROOM. A ripe pack starts at capacity, so
     // every drop of melt drains the instant it appears and "SWE minus the
@@ -921,7 +980,7 @@ TEST(TransportSnowTest, ASlowlyMeltingPackLosesSnowWaterEquivalent) {
     SWMM_Engine e = run(o);
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
-    const auto& s   = as_cpp_engine(e).snowSolver().state();
+    const auto& s = as_cpp_engine(e).snowSolver().state();
     ASSERT_GE(ctx.n_subcatches(), 1);
     ASSERT_GE(ctx.subcatches.snowpack[0], 0) << "no pack on this deck";
 
@@ -939,8 +998,8 @@ TEST(TransportSnowTest, ASlowlyMeltingPackLosesSnowWaterEquivalent) {
            "added — that is the mass-creation signature, in its purest form";
 
     EXPECT_LT(s.wsnow[perv], sd0_ft - 1.0e-9)
-        << "SWE is still " << s.wsnow[perv] << " ft against an initial "
-        << sd0_ft << " ft after an hour of melt. A pack melting slower than "
+        << "SWE is still " << s.wsnow[perv] << " ft against an initial " << sd0_ft
+        << " ft after an hour of melt. A pack melting slower than "
            "its free-water capacity is not losing snow: SWE is being reduced "
            "by the drained excess instead of by the melt, so the melted water "
            "is counted as snow AND as free water";
@@ -955,23 +1014,23 @@ TEST(TransportSnowTest, ASlowlyMeltingPackLosesSnowWaterEquivalent) {
 TEST(TransportSnowTest, RainFallingOnACoveredPackEntersTheFreeWaterStore) {
     Opts o{};
     o.water_age = true;
-    o.rain_inhr = 0.20;    // well above the rain-on-snow threshold
+    o.rain_inhr = 0.20; // well above the rain-on-snow threshold
     // BELOW tbase, so the pack is not melting. At 40 F the free-water store
     // fills with MELTWATER whether or not the rain reaches it, and `fw > 0`
     // below says nothing about the rain — measured: this gate passes with F3
     // fully restored. Cold content absorbs the rain-on-snow term, so the
     // only thing that can put water in the store is the rain itself.
-    o.air_f     = 20.0;
-    o.fwfrac    = 0.90;    // capacity large enough to HOLD the rain, so this
-    o.end_min   = 30;      // gate observes storage rather than drainage
+    o.air_f = 20.0;
+    o.fwfrac = 0.90; // capacity large enough to HOLD the rain, so this
+    o.end_min = 30;  // gate observes storage rather than drainage
     // Empty to start with, or `fw > 0` below is satisfied by the pack's
     // INITIAL free water and says nothing about the rain. Measured: with the
     // ripe default this gate passes with F3 fully restored.
-    o.ripe      = false;
+    o.ripe = false;
     SWMM_Engine e = run(o);
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
-    const auto& s   = as_cpp_engine(e).snowSolver().state();
+    const auto& s = as_cpp_engine(e).snowSolver().state();
     ASSERT_GE(ctx.subcatches.snowpack[0], 0);
 
     const auto perv = static_cast<std::size_t>(openswmm::snow::SNOW_PERV);
@@ -980,7 +1039,8 @@ TEST(TransportSnowTest, RainFallingOnACoveredPackEntersTheFreeWaterStore) {
     // `snow_net`. Without this the gate cannot tell "entered the pack" from
     // "fell on bare ground".
     ASSERT_NEAR(s.asc[perv], 1.0, 1.0e-9)
-        << "areal cover is " << s.asc[perv] << ", not 1 — some rain reached "
+        << "areal cover is " << s.asc[perv]
+        << ", not 1 — some rain reached "
            "the ground directly and this gate cannot attribute the water";
     // SETUP: and nothing melted, or the store fills from the snow instead.
     ASSERT_NEAR(s.wsnow[perv], o.sd0 / 12.0, 1.0e-9)
@@ -988,10 +1048,9 @@ TEST(TransportSnowTest, RainFallingOnACoveredPackEntersTheFreeWaterStore) {
         << " ft, so the pack IS melting and the free water below could have "
            "come from the snow rather than from the rain";
 
-    EXPECT_GT(s.fw[perv], 0.0)
-        << "the free-water store is empty after 30 minutes of rain onto a "
-           "fully-covered pack. That rain is excluded from snow_net by "
-           "construction, so if it is not here it is nowhere";
+    EXPECT_GT(s.fw[perv], 0.0) << "the free-water store is empty after 30 minutes of rain onto a "
+                                  "fully-covered pack. That rain is excluded from snow_net by "
+                                  "construction, so if it is not here it is nowhere";
     swmm_engine_destroy(e);
 }
 
@@ -1003,13 +1062,13 @@ TEST(TransportSnowTest, RainFallingOnACoveredPackEntersTheFreeWaterStore) {
 TEST(TransportSnowTest, AnInstantlyMeltedThinPackDeliversItsWater) {
     Opts o{};
     o.water_age = true;
-    o.sd0    = 0.0005;    // BELOW the 0.001-inch instant-melt threshold
-    o.air_f  = 40.0;
+    o.sd0 = 0.0005; // BELOW the 0.001-inch instant-melt threshold
+    o.air_f = 40.0;
     o.end_min = 15;
     SWMM_Engine e = run(o);
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
-    const auto& s   = as_cpp_engine(e).snowSolver().state();
+    const auto& s = as_cpp_engine(e).snowSolver().state();
     ASSERT_GE(ctx.subcatches.snowpack[0], 0) << "no pack was built";
 
     const auto perv = static_cast<std::size_t>(openswmm::snow::SNOW_PERV);
@@ -1036,14 +1095,14 @@ TEST(TransportSnowTest, AnInstantlyMeltedThinPackDeliversItsWater) {
 TEST(TransportSnowTest, ThePackNeverGainsWaterItWasNotGiven) {
     Opts o{};
     o.water_age = true;
-    o.rain_inhr = 0.0;     // NOTHING is added: no rain, no snowfall
-    o.air_f     = 40.0;
-    o.fwfrac    = 0.90;
-    o.end_min   = 60;
+    o.rain_inhr = 0.0; // NOTHING is added: no rain, no snowfall
+    o.air_f = 40.0;
+    o.fwfrac = 0.90;
+    o.end_min = 60;
     SWMM_Engine e = run(o);
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
-    const auto& s   = as_cpp_engine(e).snowSolver().state();
+    const auto& s = as_cpp_engine(e).snowSolver().state();
     ASSERT_GE(ctx.subcatches.snowpack[0], 0);
     ASSERT_DOUBLE_EQ(ctx.subcatches.rainfall[0], 0.0)
         << "something is falling on this deck, so the pack CAN legitimately "
@@ -1051,13 +1110,13 @@ TEST(TransportSnowTest, ThePackNeverGainsWaterItWasNotGiven) {
 
     const double sd0_ft = o.sd0 / 12.0;
     const double fw0_ft = o.fwfrac * sd0_ft;
-    const double given  = sd0_ft + fw0_ft;
+    const double given = sd0_ft + fw0_ft;
 
     for (int k = 0; k < openswmm::snow::N_SUBAREAS; ++k) {
         const auto idx = static_cast<std::size_t>(k);
         EXPECT_LE(packWater(s, idx), given + 1.0e-9)
-            << "snow surface " << k << " holds " << packWater(s, idx)
-            << " ft against " << given << " ft ever put into it, with no "
+            << "snow surface " << k << " holds " << packWater(s, idx) << " ft against " << given
+            << " ft ever put into it, with no "
                "precipitation on this deck. Water is being created";
     }
     swmm_engine_destroy(e);
@@ -1080,15 +1139,15 @@ TEST(TransportSnowTest, ThePackNeverGainsWaterItWasNotGiven) {
 TEST(TransportSnowTest, TheFreeWaterStoreNeverExceedsItsCurrentCapacity) {
     Opts o{};
     o.water_age = true;
-    o.rain_inhr = 0.0;     // nothing added, so every change is the melt
-    o.air_f     = 40.0;
-    o.fwfrac    = 0.90;
-    o.ripe      = true;    // AT capacity, which is where the threshold bites
-    o.end_min   = 60;
+    o.rain_inhr = 0.0; // nothing added, so every change is the melt
+    o.air_f = 40.0;
+    o.fwfrac = 0.90;
+    o.ripe = true; // AT capacity, which is where the threshold bites
+    o.end_min = 60;
     SWMM_Engine e = run(o);
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
-    const auto& s   = as_cpp_engine(e).snowSolver().state();
+    const auto& s = as_cpp_engine(e).snowSolver().state();
     ASSERT_GE(ctx.subcatches.snowpack[0], 0);
 
     const auto perv = static_cast<std::size_t>(openswmm::snow::SNOW_PERV);
@@ -1100,11 +1159,12 @@ TEST(TransportSnowTest, TheFreeWaterStoreNeverExceedsItsCurrentCapacity) {
 
     for (int k = 0; k < openswmm::snow::N_SUBAREAS; ++k) {
         const auto idx = static_cast<std::size_t>(k);
-        if (s.wsnow[idx] <= 0.0) continue;
+        if (s.wsnow[idx] <= 0.0)
+            continue;
         EXPECT_LE(s.fw[idx], s.fwfrac[idx] * s.wsnow[idx] + 1.0e-12)
             << "snow surface " << k << " holds " << s.fw[idx]
-            << " ft of free water against a capacity of "
-            << (s.fwfrac[idx] * s.wsnow[idx]) << " ft. The capacity is being "
+            << " ft of free water against a capacity of " << (s.fwfrac[idx] * s.wsnow[idx])
+            << " ft. The capacity is being "
                "measured against the SWE the pack had BEFORE it melted";
     }
     swmm_engine_destroy(e);
@@ -1123,9 +1183,9 @@ TEST(TransportSnowTest, TheFreeWaterStoreNeverExceedsItsCurrentCapacity) {
 TEST(TransportSnowTest, TheDecksSD100SetsTheHundredPercentCoverDepth) {
     Opts o{};
     o.water_age = true;
-    o.sd0    = 6.0;
-    o.sd100  = 24.0;   // FOUR TIMES the initial depth, so the pack starts
-    o.air_f  = 40.0;   // well below full cover and depletion is live
+    o.sd0 = 6.0;
+    o.sd100 = 24.0; // FOUR TIMES the initial depth, so the pack starts
+    o.air_f = 40.0; // well below full cover and depletion is live
     // ...and a curve to index. The DEFAULT ADC is all ones (`Snow.hpp:92`),
     // which means "no depletion at any index", so SD100 alone changes
     // nothing: `getArealSnowCover` returns 1 whatever `wsnow/si` is. Reading
@@ -1135,12 +1195,12 @@ TEST(TransportSnowTest, TheDecksSD100SetsTheHundredPercentCoverDepth) {
     SWMM_Engine e = run(o);
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
-    const auto& s   = as_cpp_engine(e).snowSolver().state();
+    const auto& s = as_cpp_engine(e).snowSolver().state();
     ASSERT_GE(ctx.subcatches.snowpack[0], 0) << "no pack on this deck";
 
     const auto perv = static_cast<std::size_t>(openswmm::snow::SNOW_PERV);
     const double sd100_ft = o.sd100 / 12.0;
-    const double sd0_ft   = o.sd0 / 12.0;
+    const double sd0_ft = o.sd0 / 12.0;
 
     // The field reached the solver at all.
     EXPECT_NEAR(s.si[perv], sd100_ft, 1.0e-9)
@@ -1155,10 +1215,9 @@ TEST(TransportSnowTest, TheDecksSD100SetsTheHundredPercentCoverDepth) {
         << "the pack is at or above SD100, so full cover is correct here and "
            "this gate cannot observe depletion";
 
-    EXPECT_LT(s.asc[perv], 1.0)
-        << "areal cover is still exactly 1 on a pack below its SD100. That "
-           "is the signature of si being pinned to the pack depth: "
-           "wsnow >= si is then always true";
+    EXPECT_LT(s.asc[perv], 1.0) << "areal cover is still exactly 1 on a pack below its SD100. That "
+                                   "is the signature of si being pinned to the pack depth: "
+                                   "wsnow >= si is then always true";
     EXPECT_GT(s.asc[perv], 0.0);
     swmm_engine_destroy(e);
 }
@@ -1216,7 +1275,7 @@ TEST(TransportSnowTest, TheSeasonalMeltFactorPeaksOnTheSolstice) {
 TEST(TransportSnowTest, MeltwaterCarriesThePacksResidenceTime) {
     Opts o{};
     o.water_age = true;
-    o.rain_h = 0.0;   // the DEFECT's answer, so it is the value to beat
+    o.rain_h = 0.0; // the DEFECT's answer, so it is the value to beat
     o.init_h = 0.0;
     SWMM_Engine e = run(o);
     ASSERT_NE(e, nullptr);
@@ -1228,8 +1287,8 @@ TEST(TransportSnowTest, MeltwaterCarriesThePacksResidenceTime) {
     const double m_imp = ctx.subcatches.snow_melt_imperv[0];
     const double m_prv = ctx.subcatches.snow_melt_perv[0];
     ASSERT_TRUE(m_imp > 0.0 || m_prv > 0.0)
-        << "no melt was published on either surface (" << m_imp << " / "
-        << m_prv << "), so this deck never reached the state the gate is "
+        << "no melt was published on either surface (" << m_imp << " / " << m_prv
+        << "), so this deck never reached the state the gate is "
            "about. Fix the deck; do NOT relax this";
 
     const double elapsed_s = o.end_min * 60.0;
@@ -1238,16 +1297,15 @@ TEST(TransportSnowTest, MeltwaterCarriesThePacksResidenceTime) {
         const double a = tr::arrivingPrecipAge(ctx, 0, k);
         EXPECT_TRUE(std::isfinite(a));
         // A pack cannot deliver water older than the run that made it.
-        EXPECT_LE(a, elapsed_s + 1.0e-6)
-            << "arriving age on subarea " << k << " is " << a
-            << " s, older than the " << elapsed_s << " s run";
-        if (a > 1.0e-9) any_aged = true;
+        EXPECT_LE(a, elapsed_s + 1.0e-6) << "arriving age on subarea " << k << " is " << a
+                                         << " s, older than the " << elapsed_s << " s run";
+        if (a > 1.0e-9)
+            any_aged = true;
     }
-    EXPECT_TRUE(any_aged)
-        << "arriving water on every subarea is age 0 — the configured "
-           "RAINFALL value — so the pack's residence time is not reaching "
-           "the blend. Either snow_melt_age_* is still at its -1.0 sentinel "
-           "or the pack age is never advanced";
+    EXPECT_TRUE(any_aged) << "arriving water on every subarea is age 0 — the configured "
+                             "RAINFALL value — so the pack's residence time is not reaching "
+                             "the blend. Either snow_melt_age_* is still at its -1.0 sentinel "
+                             "or the pack age is never advanced";
     swmm_engine_destroy(e);
 }
 
@@ -1269,14 +1327,14 @@ TEST(TransportSnowTest, SnowfallLowersThePackAgeStrictlyBetweenTheTwo) {
     openswmm::snow::SnowSolver solver;
     solver.init(1);
     auto& st = solver.state();
-    st.track_age  = true;
-    st.precip_age = 0.0;              // fresh snow
+    st.track_age = true;
+    st.precip_age = 0.0; // fresh snow
 
     const auto perv = static_cast<std::size_t>(openswmm::snow::SNOW_PERV);
-    st.fArea[perv] = 1.0;             // one surface carries the whole area
-    st.wsnow[perv] = 1.0;             // 1 ft of old snow
-    st.fw[perv]    = 0.0;
-    st.age[perv]   = 10000.0;         // it has been there a while
+    st.fArea[perv] = 1.0; // one surface carries the whole area
+    st.wsnow[perv] = 1.0; // 1 ft of old snow
+    st.fw[perv] = 0.0;
+    st.age[perv] = 10000.0; // it has been there a while
 
     const double dt = 60.0;
     const double snowfall = 0.5 / dt; // adds 0.5 ft this step
@@ -1284,13 +1342,13 @@ TEST(TransportSnowTest, SnowfallLowersThePackAgeStrictlyBetweenTheTwo) {
 
     const double a = st.age[perv];
     EXPECT_TRUE(std::isfinite(a));
-    EXPECT_GT(a, st.precip_age)
-        << "the pack age fell to the snowfall's age (" << a << "), so the "
-           "new snow REPLACED the pack rather than mixing into it";
-    EXPECT_LT(a, 10000.0 + dt)
-        << "the pack age is " << a << ", unchanged by half a foot of fresh "
-           "snow on one foot of old — the snowfall is being added to wsnow "
-           "without an age mix";
+    EXPECT_GT(a, st.precip_age) << "the pack age fell to the snowfall's age (" << a
+                                << "), so the "
+                                   "new snow REPLACED the pack rather than mixing into it";
+    EXPECT_LT(a, 10000.0 + dt) << "the pack age is " << a
+                               << ", unchanged by half a foot of fresh "
+                                  "snow on one foot of old — the snowfall is being added to wsnow "
+                                  "without an age mix";
 }
 
 // ---------------------------------------------------------------------------
@@ -1308,11 +1366,11 @@ TEST(TransportSnowTest, SnowfallLowersThePackAgeStrictlyBetweenTheTwo) {
 TEST(TransportSnowTest, ArrivingAgeBlendsStrictlyBetweenItsTwoSources) {
     Opts o{};
     o.water_age = true;
-    o.rain_h    = 10.0;            // OLD rain, in HOURS — see gate 2
-    o.init_h    = 0.0;
-    o.rain_inhr = 0.2;             // rain AND melt at once
-    o.adc_cover = 0.5;             // partial cover: both waters arrive
-    o.sd100     = 24.0;            // 4x sd0, so `wsnow < si` is not marginal
+    o.rain_h = 10.0; // OLD rain, in HOURS — see gate 2
+    o.init_h = 0.0;
+    o.rain_inhr = 0.2; // rain AND melt at once
+    o.adc_cover = 0.5; // partial cover: both waters arrive
+    o.sd100 = 24.0;    // 4x sd0, so `wsnow < si` is not marginal
     SWMM_Engine e = run(o);
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
@@ -1322,14 +1380,12 @@ TEST(TransportSnowTest, ArrivingAgeBlendsStrictlyBetweenItsTwoSources) {
     ASSERT_GE(ctx.n_subcatches(), 1);
     ASSERT_GE(ctx.subcatches.snowpack[0], 0) << "S1 has no snowpack";
     const double f = tr::arrivingMeltFraction(ctx, 0, tr::kSubIMPERV0);
-    ASSERT_GT(f, 0.0)
-        << "the melt fraction is 0, so no meltwater arrived and there is "
-           "nothing to blend against the rain";
-    ASSERT_LT(f, 1.0)
-        << "the melt fraction is 1, so NO rain reached the ground — cover is "
-           "still 1. SD100 and the ADC curve are both needed after S4, and "
-           "this deck sets both; if this fires, one of them is not reaching "
-           "the solver";
+    ASSERT_GT(f, 0.0) << "the melt fraction is 0, so no meltwater arrived and there is "
+                         "nothing to blend against the rain";
+    ASSERT_LT(f, 1.0) << "the melt fraction is 1, so NO rain reached the ground — cover is "
+                         "still 1. SD100 and the ADC curve are both needed after S4, and "
+                         "this deck sets both; if this fires, one of them is not reaching "
+                         "the solver";
 
     // `rain_h` is the DECK value and the deck is parsed in hours; every age
     // the engine publishes is in SECONDS. Comparing the two directly is a
@@ -1338,20 +1394,19 @@ TEST(TransportSnowTest, ArrivingAgeBlendsStrictlyBetweenItsTwoSources) {
     const double a_pack = ctx.subcatches.snow_melt_age_imperv[0];
     ASSERT_GE(a_pack, 0.0) << "snow_melt_age_imperv is still at its -1.0 "
                               "sentinel while melt is arriving";
-    ASSERT_LT(a_pack, rain_age_s)
-        << "the pack is not younger than the rain on this deck, so the "
-           "bracket below cannot discriminate";
+    ASSERT_LT(a_pack, rain_age_s) << "the pack is not younger than the rain on this deck, so the "
+                                     "bracket below cannot discriminate";
 
     const double a = tr::arrivingPrecipAge(ctx, 0, tr::kSubIMPERV0);
     // STRICT both ways. Reading either source raw lands on an endpoint, and
     // that is exactly lesson 111's failure — gate 9 passed on its own defect
     // for this reason before it was tightened.
-    EXPECT_GT(a, a_pack)
-        << "arriving age " << a << " sits on the PACK age, so the rain that "
-           "reached the ground through the bare fraction is not in the blend";
-    EXPECT_LT(a, rain_age_s)
-        << "arriving age " << a << " sits on the RAIN age, so the meltwater "
-           "is not in the blend";
+    EXPECT_GT(a, a_pack) << "arriving age " << a
+                         << " sits on the PACK age, so the rain that "
+                            "reached the ground through the bare fraction is not in the blend";
+    EXPECT_LT(a, rain_age_s) << "arriving age " << a
+                             << " sits on the RAIN age, so the meltwater "
+                                "is not in the blend";
     swmm_engine_destroy(e);
 }
 
@@ -1375,7 +1430,7 @@ TEST(TransportSnowTest, PlowedSnowCarriesTheDonorsAgeAcrossSubcatchments) {
     openswmm::snow::SnowSolver solver;
     solver.init(2);
     auto& st = solver.state();
-    st.track_age  = true;
+    st.track_age = true;
     st.precip_age = 0.0;
 
     constexpr int NS = openswmm::snow::N_SUBAREAS;
@@ -1385,14 +1440,14 @@ TEST(TransportSnowTest, PlowedSnowCarriesTheDonorsAgeAcrossSubcatchments) {
     // Donor: subcatchment 0, plowable surface, deep and OLD.
     st.fArea[d_plow] = 1.0;
     st.wsnow[d_plow] = 2.0;
-    st.age[d_plow]   = 20000.0;
+    st.age[d_plow] = 20000.0;
     // Receiver: subcatchment 1, pervious surface, shallow and YOUNG.
     st.fArea[r_perv] = 1.0;
     st.wsnow[r_perv] = 1.0;
-    st.age[r_perv]   = 0.0;
+    st.age[r_perv] = 0.0;
 
-    st.weplow[0] = 1.0;                         // 2.0 ft is over the trigger
-    st.sfrac[0 * 5 + 4] = 0.5;                  // half of it crosses over
+    st.weplow[0] = 1.0;        // 2.0 ft is over the trigger
+    st.sfrac[0 * 5 + 4] = 0.5; // half of it crosses over
     st.to_subcatch[0] = 1;
 
     const double donor_age0 = st.age[d_plow];
@@ -1402,10 +1457,10 @@ TEST(TransportSnowTest, PlowedSnowCarriesTheDonorsAgeAcrossSubcatchments) {
     // step's first snow call. Comparing against the pre-ageing total would
     // fail by exactly `dt * total_volume` on correct behaviour, which is the
     // kind of baseline error that gets "fixed" by widening a band.
-    const double av_before  = st.wsnow[d_plow] * (st.age[d_plow] + dt) +
-                              st.wsnow[r_perv] * (st.age[r_perv] + dt);
+    const double av_before =
+        st.wsnow[d_plow] * (st.age[d_plow] + dt) + st.wsnow[r_perv] * (st.age[r_perv] + dt);
 
-    solver.plowSnow(ctx, dt, 0.0);              // NO snowfall: plowing only
+    solver.plowSnow(ctx, dt, 0.0); // NO snowfall: plowing only
 
     // SETUP: snow actually moved. Without this the assertions below are
     // satisfied by a plow that never fired.
@@ -1415,7 +1470,9 @@ TEST(TransportSnowTest, PlowedSnowCarriesTheDonorsAgeAcrossSubcatchments) {
 
     EXPECT_GT(st.age[r_perv], 0.0)
         << "the receiver's age is still 0 after taking on snow that had been "
-           "sitting for " << donor_age0 << " s. The transfer is arriving "
+           "sitting for "
+        << donor_age0
+        << " s. The transfer is arriving "
            "AGELESS — which is what an age update running after plowSnow can "
            "only produce, because it cannot see where the water came from";
     EXPECT_LT(st.age[r_perv], donor_age0)
@@ -1425,8 +1482,7 @@ TEST(TransportSnowTest, PlowedSnowCarriesTheDonorsAgeAcrossSubcatchments) {
     // Age-volume is conserved: nothing left the system on this configuration
     // (sfrac[0], the plow-out fraction, is 0), and ageing has not run because
     // both surfaces are handled in the same call.
-    const double av_after = st.wsnow[d_plow] * st.age[d_plow] +
-                            st.wsnow[r_perv] * st.age[r_perv];
+    const double av_after = st.wsnow[d_plow] * st.age[d_plow] + st.wsnow[r_perv] * st.age[r_perv];
     EXPECT_NEAR(av_after, av_before, 1.0e-6 * std::fabs(av_before) + 1.0e-9)
         << "age-volume before " << av_before << ", after " << av_after
         << ". The transfer moved water at the wrong age — the direction was "
@@ -1448,17 +1504,17 @@ TEST(TransportSnowTest, APackThatMeltsOutDoesNotCarryItsAgeIntoNewSnow) {
     openswmm::snow::SnowSolver solver;
     solver.init(1);
     auto& st = solver.state();
-    st.track_age  = true;
+    st.track_age = true;
     st.precip_age = 0.0;
 
     const auto perv = static_cast<std::size_t>(openswmm::snow::SNOW_PERV);
-    st.fArea[perv]  = 1.0;
-    st.tbase[perv]  = 32.0;
+    st.fArea[perv] = 1.0;
+    st.tbase[perv] = 32.0;
     st.fwfrac[perv] = 0.1;
     // Below the 0.001-inch instant-melt threshold, and OLD.
-    st.wsnow[perv]  = 0.5 * (0.001 / 12.0);
-    st.fw[perv]     = 0.0;
-    st.age[perv]    = 50000.0;
+    st.wsnow[perv] = 0.5 * (0.001 / 12.0);
+    st.fw[perv] = 0.0;
+    st.age[perv] = 50000.0;
 
     const double dt = 60.0;
     const double old_age = st.age[perv];
@@ -1470,8 +1526,8 @@ TEST(TransportSnowTest, APackThatMeltsOutDoesNotCarryItsAgeIntoNewSnow) {
     // The water that LEFT still carries what the pack had — that is the
     // whole point of `out_age` being separate from `age`.
     EXPECT_NEAR(st.out_age[perv], old_age, 1.0e-9)
-        << "the departing meltwater reads age " << st.out_age[perv]
-        << " instead of the pack's " << old_age
+        << "the departing meltwater reads age " << st.out_age[perv] << " instead of the pack's "
+        << old_age
         << ". Reading `age` after the pack is emptied gives 0, which is the "
            "age of water that fell this instant — this water did not";
 
@@ -1484,8 +1540,7 @@ TEST(TransportSnowTest, APackThatMeltsOutDoesNotCarryItsAgeIntoNewSnow) {
     // Now let it re-form from fresh snow and confirm it starts fresh.
     solver.plowSnow(ctx, dt, 1.0 / dt);
     EXPECT_NEAR(st.age[perv], 0.0, 1.0e-9)
-        << "a pack re-formed entirely from age-0 snowfall reads "
-        << st.age[perv] << " s";
+        << "a pack re-formed entirely from age-0 snowfall reads " << st.age[perv] << " s";
 }
 
 // ---------------------------------------------------------------------------
@@ -1502,7 +1557,7 @@ TEST(TransportSnowTest, APackThatMeltsOutDoesNotCarryItsAgeIntoNewSnow) {
 // ---------------------------------------------------------------------------
 TEST(TransportSnowTest, TheRunoffLedgerClosesOnAPackThatJustSitsThere) {
     Opts o{};
-    o.air_f = 10.0;        // well below tbase: no melt at all
+    o.air_f = 10.0; // well below tbase: no melt at all
     // Rain, and it is not decoration. `runoff_error()` divides by `total_in`
     // and returns 0.0 when that is zero -- so on a deck whose ONLY input is
     // the pack, dropping `runoff_init_snow` from the input side does not
@@ -1559,9 +1614,9 @@ TEST(TransportSnowTest, TheRunoffLedgerClosesOnAPackThatJustSitsThere) {
 // ---------------------------------------------------------------------------
 TEST(TransportSnowTest, TheRunoffLedgerClosesWhileThePackIsMeltingAway) {
     Opts o{};
-    o.air_f = 50.0;        // well above tbase
-    o.rain_inhr = 0.2;     // a snow-independent input — see gate 24 for why
-    o.ripe = true;         // melt leaves from the first step
+    o.air_f = 50.0;    // well above tbase
+    o.rain_inhr = 0.2; // a snow-independent input — see gate 24 for why
+    o.ripe = true;     // melt leaves from the first step
     SWMM_Engine e = run(o);
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
@@ -1574,14 +1629,12 @@ TEST(TransportSnowTest, TheRunoffLedgerClosesWhileThePackIsMeltingAway) {
            "and this gate is testing nothing gate 24 did not";
     ASSERT_GT(mb.runoff_runoff + mb.runoff_infil, 0.0)
         << "the pack shrank but no water reached the ground";
-    ASSERT_GT(mb.runoff_rainfall, 0.0)
-        << "no snow-independent input on the books — see gate 24";
+    ASSERT_GT(mb.runoff_rainfall, 0.0) << "no snow-independent input on the books — see gate 24";
 
     EXPECT_LT(std::fabs(mb.runoff_error()), 1.0e-3)
-        << "runoff continuity is " << mb.runoff_error() * 100.0
-        << " % — initial snow " << mb.runoff_init_snow << " ft3, final "
-        << mb.runoff_final_snow << " ft3, runoff " << mb.runoff_runoff
-        << ", infil " << mb.runoff_infil;
+        << "runoff continuity is " << mb.runoff_error() * 100.0 << " % — initial snow "
+        << mb.runoff_init_snow << " ft3, final " << mb.runoff_final_snow << " ft3, runoff "
+        << mb.runoff_runoff << ", infil " << mb.runoff_infil;
     swmm_engine_destroy(e);
 }
 
@@ -1600,11 +1653,11 @@ TEST(TransportSnowTest, TheRunoffLedgerClosesWhileThePackIsMeltingAway) {
 // ---------------------------------------------------------------------------
 TEST(TransportSnowTest, PloughedSnowIsBookedAsRemovedInTheLedger) {
     Opts o{};
-    o.air_f = 10.0;        // no melt: the ONLY sink is the plough
+    o.air_f = 10.0; // no melt: the ONLY sink is the plough
     o.rain_inhr = 0.0;
-    o.snn0 = 0.5;          // half the impervious area is plowable
-    o.weplow = 0.05;       // well below sd0, so the plough fires on step 1
-    o.f_out = 0.40;        // and 40 % of it leaves the system
+    o.snn0 = 0.5;    // half the impervious area is plowable
+    o.weplow = 0.05; // well below sd0, so the plough fires on step 1
+    o.f_out = 0.40;  // and 40 % of it leaves the system
     SWMM_Engine e = run(o);
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
@@ -1616,8 +1669,7 @@ TEST(TransportSnowTest, PloughedSnowIsBookedAsRemovedInTheLedger) {
         << "the solver's own accumulator is 0, so no snow was ploughed out — "
            "check snn0, weplow and f_out in that order";
 
-    EXPECT_NEAR(mb.runoff_snowremov, soa.removed,
-                1.0e-9 * std::fabs(soa.removed) + 1.0e-12)
+    EXPECT_NEAR(mb.runoff_snowremov, soa.removed, 1.0e-9 * std::fabs(soa.removed) + 1.0e-12)
         << "the ledger books " << mb.runoff_snowremov
         << " ft3 of snow removal while the solver accumulated " << soa.removed
         << ". The field is exposed through SWMM_RUNOFF_SNOWREMOV and read by "

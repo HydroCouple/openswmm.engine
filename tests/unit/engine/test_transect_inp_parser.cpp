@@ -1,6 +1,6 @@
 /**
- * @file test_transect_inp_parser.cpp
- * @brief Pins the [TRANSECTS] X1-line column mapping in the .inp parser.
+ * @file      test_transect_inp_parser.cpp
+ * @brief     Pins the [TRANSECTS] X1-line column mapping in the .inp parser.
  *
  *  EPA SWMM 5 (legacy transect.c::setParams) layout:
  *      X1  Name  Nsta  Xleft  Xright  0  0  Lfactor  Xfactor  Yfactor
@@ -19,6 +19,10 @@
  *
  *  These tests load minimal .inp files on disk through swmm_engine_open
  *  and read back the modifiers via swmm_transect_get_modifiers.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -35,7 +39,7 @@ namespace {
 
 // Minimal valid .inp skeleton with a single placeholder conduit/transect.
 // Just enough sections for swmm_engine_open() to succeed.
-constexpr const char *kInpSkeletonHead = R"(
+constexpr const char* kInpSkeletonHead = R"(
 [TITLE]
 Transect parser test
 
@@ -80,7 +84,7 @@ C1               CIRCULAR    1       0     0     0     1
 [TRANSECTS]
 )";
 
-constexpr const char *kInpTail = R"(
+constexpr const char* kInpTail = R"(
 
 [REPORT]
 SUBCATCHMENTS  NONE
@@ -90,14 +94,24 @@ LINKS          NONE
 
 // Write `inpContents` (which is "skeleton + transect_block + tail") to a
 // temp file and return its path. The caller must delete the path.
-std::string writeTempInp(const std::string &transectBlock) {
+/**
+ * @brief Write the fixed parser skeleton around supplied transect text.
+ *
+ * Uses tmpnam without atomic reservation or null checking; the unused mkstemp template is not used.
+ * Requires exclusive controlled test use and caller cleanup. Parent directories/write status are
+ * unchecked and no model parsing occurs.
+ *
+ * @param[in] transectBlock Raw TRANSECTS rows inserted between fixed header/tail text.
+ * @return Owned tmpnam-derived .inp filename, even after unchecked write failure.
+ */
+std::string writeTempInp(const std::string& transectBlock) {
     std::string path;
     {
         // mkstemp pattern — XXXXXX is replaced in place.
         char tmpl[] = "/tmp/swmm_transect_test_XXXXXX.inp";
         // Use a deterministic-ish path; mkstemps would need <unistd.h> on
         // macOS. tmpnam is deprecated but adequate here for a unit test.
-        char *tname = std::tmpnam(nullptr);
+        char* tname = std::tmpnam(nullptr);
         path = tname;
         path += ".inp";
         (void)tmpl;
@@ -114,27 +128,46 @@ protected:
     std::string rptPath;
     std::string outPath;
 
+    /**
+     * @brief Close/destroy the transect parser engine and remove generated artifacts.
+     *
+     * For non-null eng, closes/destroys and resets it to null. Removes nonempty input/report/output
+     * paths, ignoring all cleanup statuses.
+     */
     void TearDown() override {
         if (eng) {
             swmm_engine_close(eng);
             swmm_engine_destroy(eng);
             eng = nullptr;
         }
-        if (!inpPath.empty()) std::remove(inpPath.c_str());
-        if (!rptPath.empty()) std::remove(rptPath.c_str());
-        if (!outPath.empty()) std::remove(outPath.c_str());
+        if (!inpPath.empty())
+            std::remove(inpPath.c_str());
+        if (!rptPath.empty())
+            std::remove(rptPath.c_str());
+        if (!outPath.empty())
+            std::remove(outPath.c_str());
     }
 
     // Helper — write the transect block, open, return the engine.
-    bool loadWithTransects(const std::string &transectBlock) {
+    /**
+     * @brief Write/open the transect parser fixture into its owned handle.
+     *
+     * Requires no existing eng to avoid replacing its ownership. Sets inp/rpt/out members and retains
+     * artifacts until fixture cleanup; does not initialize/run the model.
+     *
+     * @param[in] transectBlock Raw transect rows passed to writeTempInp.
+     * @return True only when handle creation and engine open succeed; false leaves any created handle
+     *     owned by the fixture.
+     */
+    bool loadWithTransects(const std::string& transectBlock) {
         inpPath = writeTempInp(transectBlock);
         rptPath = inpPath + ".rpt";
         outPath = inpPath + ".out";
         eng = swmm_engine_create();
-        if (!eng) return false;
-        return swmm_engine_open(eng, inpPath.c_str(),
-                                  rptPath.c_str(), outPath.c_str(), nullptr)
-               == SWMM_OK;
+        if (!eng)
+            return false;
+        return swmm_engine_open(eng, inpPath.c_str(), rptPath.c_str(), outPath.c_str(), nullptr) ==
+               SWMM_OK;
     }
 };
 
@@ -144,10 +177,9 @@ protected:
 // ---------------------------------------------------------------------------
 
 TEST_F(TransectInpParserTest, ZeroModifiersDefaultToOne) {
-    const std::string block =
-        "NC 0.04 0.04 0.04\n"
-        "X1 TRZ              4       2.0 8.0 0 0 0 0 0\n"
-        "GR 105 0  100 2  100 8  105 10\n";
+    const std::string block = "NC 0.04 0.04 0.04\n"
+                              "X1 TRZ              4       2.0 8.0 0 0 0 0 0\n"
+                              "GR 105 0  100 2  100 8  105 10\n";
     ASSERT_TRUE(loadWithTransects(block));
 
     const int idx = swmm_transect_index(eng, "TRZ");
@@ -155,9 +187,9 @@ TEST_F(TransectInpParserTest, ZeroModifiersDefaultToOne) {
 
     double xF = -1, yF = -1, lF = -1;
     ASSERT_EQ(swmm_transect_get_modifiers(eng, idx, &xF, &yF, &lF), SWMM_OK);
-    EXPECT_DOUBLE_EQ(lF, 1.0);   // Lfactor zero -> default 1.0
-    EXPECT_DOUBLE_EQ(xF, 1.0);   // Xfactor zero -> default 1.0
-    EXPECT_DOUBLE_EQ(yF, 0.0);   // Yfactor 0 is a valid offset (no shift).
+    EXPECT_DOUBLE_EQ(lF, 1.0); // Lfactor zero -> default 1.0
+    EXPECT_DOUBLE_EQ(xF, 1.0); // Xfactor zero -> default 1.0
+    EXPECT_DOUBLE_EQ(yF, 0.0); // Yfactor 0 is a valid offset (no shift).
 
     // Stations come through raw (un-multiplied) on the engine side.
     ASSERT_EQ(swmm_transect_get_station_count(eng, idx), 4);
@@ -177,10 +209,9 @@ TEST_F(TransectInpParserTest, ZeroModifiersDefaultToOne) {
 // ---------------------------------------------------------------------------
 
 TEST_F(TransectInpParserTest, ExplicitModifiersReadFromCorrectColumns) {
-    const std::string block =
-        "NC 0.04 0.04 0.04\n"
-        "X1 TRM              3       1.0 9.0 0 0 1.5 2.0 3.0\n"
-        "GR 100 0  90 5  100 10\n";
+    const std::string block = "NC 0.04 0.04 0.04\n"
+                              "X1 TRM              3       1.0 9.0 0 0 1.5 2.0 3.0\n"
+                              "GR 100 0  90 5  100 10\n";
     ASSERT_TRUE(loadWithTransects(block));
 
     const int idx = swmm_transect_index(eng, "TRM");
@@ -199,10 +230,9 @@ TEST_F(TransectInpParserTest, ExplicitModifiersReadFromCorrectColumns) {
 // ---------------------------------------------------------------------------
 
 TEST_F(TransectInpParserTest, BankStationsReadFromCorrectColumns) {
-    const std::string block =
-        "NC 0.04 0.04 0.04\n"
-        "X1 TBK              3       2.5 7.5 0 0 0 0 0\n"
-        "GR 100 0  90 5  100 10\n";
+    const std::string block = "NC 0.04 0.04 0.04\n"
+                              "X1 TBK              3       2.5 7.5 0 0 0 0 0\n"
+                              "GR 100 0  90 5  100 10\n";
     ASSERT_TRUE(loadWithTransects(block));
 
     const int idx = swmm_transect_index(eng, "TBK");
@@ -221,10 +251,9 @@ TEST_F(TransectInpParserTest, BankStationsReadFromCorrectColumns) {
 // ---------------------------------------------------------------------------
 
 TEST_F(TransectInpParserTest, ZeroChannelManningIsError227) {
-    const std::string block =
-        "NC 0.04 0.04 0.0\n"
-        "X1 TZN              3       1.0 9.0 0 0 0 0 0\n"
-        "GR 100 0  90 5  100 10\n";
+    const std::string block = "NC 0.04 0.04 0.0\n"
+                              "X1 TZN              3       1.0 9.0 0 0 0 0 0\n"
+                              "GR 100 0  90 5  100 10\n";
     EXPECT_FALSE(loadWithTransects(block));
 
     // The error message must mention ERROR 227.
@@ -239,10 +268,9 @@ TEST_F(TransectInpParserTest, ZeroChannelManningIsError227) {
 // ---------------------------------------------------------------------------
 
 TEST_F(TransectInpParserTest, NegativeChannelManningIsError) {
-    const std::string block =
-        "NC 0.04 0.04 -0.01\n"
-        "X1 TNM              3       1.0 9.0 0 0 0 0 0\n"
-        "GR 100 0  90 5  100 10\n";
+    const std::string block = "NC 0.04 0.04 -0.01\n"
+                              "X1 TNM              3       1.0 9.0 0 0 0 0 0\n"
+                              "GR 100 0  90 5  100 10\n";
     EXPECT_FALSE(loadWithTransects(block));
 }
 
@@ -254,13 +282,12 @@ TEST_F(TransectInpParserTest, NegativeChannelManningIsError) {
 // ---------------------------------------------------------------------------
 
 TEST_F(TransectInpParserTest, ZeroNcComponentsInheritPrecedingValues) {
-    const std::string block =
-        "NC 0.04 0.05 0.03\n"
-        "X1 TI1              3       1.0 9.0 0 0 0 0 0\n"
-        "GR 100 0  90 5  100 10\n"
-        "NC 0 0 0\n"
-        "X1 TI2              3       1.0 9.0 0 0 0 0 0\n"
-        "GR 100 0  90 5  100 10\n";
+    const std::string block = "NC 0.04 0.05 0.03\n"
+                              "X1 TI1              3       1.0 9.0 0 0 0 0 0\n"
+                              "GR 100 0  90 5  100 10\n"
+                              "NC 0 0 0\n"
+                              "X1 TI2              3       1.0 9.0 0 0 0 0 0\n"
+                              "GR 100 0  90 5  100 10\n";
     ASSERT_TRUE(loadWithTransects(block));
 
     const int idx = swmm_transect_index(eng, "TI2");
@@ -279,13 +306,12 @@ TEST_F(TransectInpParserTest, ZeroNcComponentsInheritPrecedingValues) {
 // ---------------------------------------------------------------------------
 
 TEST_F(TransectInpParserTest, PositiveNcComponentsOverwriteInheritedOnes) {
-    const std::string block =
-        "NC 0.04 0.05 0.03\n"
-        "X1 TP1              3       1.0 9.0 0 0 0 0 0\n"
-        "GR 100 0  90 5  100 10\n"
-        "NC 0 0 0.02\n"
-        "X1 TP2              3       1.0 9.0 0 0 0 0 0\n"
-        "GR 100 0  90 5  100 10\n";
+    const std::string block = "NC 0.04 0.05 0.03\n"
+                              "X1 TP1              3       1.0 9.0 0 0 0 0 0\n"
+                              "GR 100 0  90 5  100 10\n"
+                              "NC 0 0 0.02\n"
+                              "X1 TP2              3       1.0 9.0 0 0 0 0 0\n"
+                              "GR 100 0  90 5  100 10\n";
     ASSERT_TRUE(loadWithTransects(block));
 
     const int idx = swmm_transect_index(eng, "TP2");
@@ -293,9 +319,9 @@ TEST_F(TransectInpParserTest, PositiveNcComponentsOverwriteInheritedOnes) {
 
     double nL = -1, nR = -1, nC = -1;
     ASSERT_EQ(swmm_transect_get_roughness(eng, idx, &nL, &nR, &nC), SWMM_OK);
-    EXPECT_DOUBLE_EQ(nL, 0.04);   // inherited
-    EXPECT_DOUBLE_EQ(nR, 0.05);   // inherited
-    EXPECT_DOUBLE_EQ(nC, 0.02);   // overwritten
+    EXPECT_DOUBLE_EQ(nL, 0.04); // inherited
+    EXPECT_DOUBLE_EQ(nR, 0.05); // inherited
+    EXPECT_DOUBLE_EQ(nC, 0.02); // overwritten
 }
 
 // ---------------------------------------------------------------------------
@@ -304,10 +330,9 @@ TEST_F(TransectInpParserTest, PositiveNcComponentsOverwriteInheritedOnes) {
 // ---------------------------------------------------------------------------
 
 TEST_F(TransectInpParserTest, ZeroOverbankRoughnessDefaultsToChannel) {
-    const std::string block =
-        "NC 0 0 0.03\n"
-        "X1 TOB              3       1.0 9.0 0 0 0 0 0\n"
-        "GR 100 0  90 5  100 10\n";
+    const std::string block = "NC 0 0 0.03\n"
+                              "X1 TOB              3       1.0 9.0 0 0 0 0 0\n"
+                              "GR 100 0  90 5  100 10\n";
     ASSERT_TRUE(loadWithTransects(block));
 
     const int idx = swmm_transect_index(eng, "TOB");
@@ -327,17 +352,15 @@ TEST_F(TransectInpParserTest, ZeroOverbankRoughnessDefaultsToChannel) {
 // ---------------------------------------------------------------------------
 
 TEST_F(TransectInpParserTest, ZeroNcWithNoPredecessorIsStillError227) {
-    const std::string block =
-        "NC 0 0 0\n"
-        "X1 TNP              3       1.0 9.0 0 0 0 0 0\n"
-        "GR 100 0  90 5  100 10\n";
+    const std::string block = "NC 0 0 0\n"
+                              "X1 TNP              3       1.0 9.0 0 0 0 0 0\n"
+                              "GR 100 0  90 5  100 10\n";
     EXPECT_FALSE(loadWithTransects(block));
 
     const char* msg = swmm_get_last_error_msg(eng);
     ASSERT_NE(msg, nullptr);
     EXPECT_NE(std::string(msg).find("227"), std::string::npos)
-        << "Expected Error 227 when no channel roughness was ever set, got: "
-        << msg;
+        << "Expected Error 227 when no channel roughness was ever set, got: " << msg;
 }
 
 // ---------------------------------------------------------------------------
@@ -346,13 +369,12 @@ TEST_F(TransectInpParserTest, ZeroNcWithNoPredecessorIsStillError227) {
 // ---------------------------------------------------------------------------
 
 TEST_F(TransectInpParserTest, NegativeNcComponentRejectedDespiteActiveValues) {
-    const std::string block =
-        "NC 0.04 0.05 0.03\n"
-        "X1 TNG1             3       1.0 9.0 0 0 0 0 0\n"
-        "GR 100 0  90 5  100 10\n"
-        "NC -0.01 0 0\n"
-        "X1 TNG2             3       1.0 9.0 0 0 0 0 0\n"
-        "GR 100 0  90 5  100 10\n";
+    const std::string block = "NC 0.04 0.05 0.03\n"
+                              "X1 TNG1             3       1.0 9.0 0 0 0 0 0\n"
+                              "GR 100 0  90 5  100 10\n"
+                              "NC -0.01 0 0\n"
+                              "X1 TNG2             3       1.0 9.0 0 0 0 0 0\n"
+                              "GR 100 0  90 5  100 10\n";
     EXPECT_FALSE(loadWithTransects(block));
 }
 

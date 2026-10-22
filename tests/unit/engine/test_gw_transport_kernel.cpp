@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_gw_transport_kernel.cpp
- * @brief T7.1 — the transported tuple in the two-zone groundwater kernel.
+ * @file      test_gw_transport_kernel.cpp
+ * @brief     T7.1 — the transported tuple in the two-zone groundwater kernel.
  *
  * @details The authoring surface has its own suite
  *          (`test_gw_transport_authoring.cpp`); this one is about what the
@@ -33,9 +33,9 @@
  *             now, and the "authored but inert" warning fires only where
  *             there is genuinely no kernel.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -56,7 +56,7 @@
 #include <openswmm/engine/openswmm_2d.h>
 #include <openswmm/engine/openswmm_model.h>
 #include <openswmm/engine/openswmm_reactions.h>
-#include <openswmm/engine/openswmm_hotstart.h>   // T7.5
+#include <openswmm/engine/openswmm_hotstart.h> // T7.5
 
 #include <hdf5.h>
 
@@ -87,9 +87,14 @@ enum class Mesh { Tri, Quad, Mixed };
  * recharges the table, drains deep, exchanges with J1's bed and comes back
  * up as saturation excess — so the ledger has something in every row it can
  * reach.
+
+ * @param[in] m Triangle, quad or mixed-cell layout to author.
+ * @param[in] extra_gw Raw sections/rows inserted before coordinates and report rows.
+ * @param[in] hg0 Initial saturated height in metres for the whole-mesh row; cell 1 is separately seeded at 0.95 m.
+ * @param[in] deep Positive C_LOSS value in authored aquifer units; nonpositive omits the keyword.
+ * @return Owned CMS deck text; rows are copied without parser validation or file IO.
  */
-std::string deck(Mesh m, const std::string& extra_gw = "",
-                 double hg0 = 0.5, double deep = 0.0) {
+std::string deck(Mesh m, const std::string& extra_gw = "", double hg0 = 0.5, double deep = 0.0) {
     std::ostringstream s;
     s << "[OPTIONS]\n"
          "FLOW_UNITS           CMS\nFLOW_ROUTING         DYNWAVE\n"
@@ -134,8 +139,10 @@ std::string deck(Mesh m, const std::string& extra_gw = "",
     s << "[2D_INFILTRATION_DEFAULTS]\n*  CONSTANT  40.0  -  -  -  -\n\n"
          "[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\nNODE_ENROLMENT ROWS\n\n"
          "[2D_AQUIFER]\n;;Scope KS ZS THETA_S THETA_R ALPHA\n"
-         "*  36.0  1.0  0.45  0.10  2.0  HG0 " << hg0;
-    if (deep > 0.0) s << "  C_LOSS " << deep;
+         "*  36.0  1.0  0.45  0.10  2.0  HG0 "
+      << hg0;
+    if (deep > 0.0)
+        s << "  C_LOSS " << deep;
     // Cell 1 starts with its table nearly at the ground: it saturates first,
     // which gives the gate a Dunne channel AND a lateral head gradient to
     // its neighbour — the two channels with their own accumulators.
@@ -157,65 +164,115 @@ struct Deck {
     bool opened = false, started = false;
 };
 
+/**
+ * @brief Write and open a groundwater transport fixture without starting it.
+ *
+ * Creates kOutDir and truncates .inp with unchecked stream success. Allocation failure returns a
+ * null handle; caller must finish every non-null returned handle. Filesystem exceptions propagate.
+ *
+ * @param[in] tag Artifact stem appended below kOutDir; matching .inp/.rpt/.out paths may be
+ *     overwritten.
+ * @param[in] body Borrowed full input deck text written verbatim.
+ * @return Record retaining ownership of e even on open rejection; opened reports open status, eng
+ *     borrows the same handle.
+ */
 Deck open(const std::string& tag, const std::string& body) {
     fs::create_directories(kOutDir);
     Deck r;
     const fs::path inp = kOutDir / (tag + ".inp");
-    { std::ofstream f(inp); f << body; }
+    {
+        std::ofstream f(inp);
+        f << body;
+    }
     r.e = swmm_engine_create();
-    if (!r.e) return r;
-    r.opened = swmm_engine_open(r.e, inp.string().c_str(),
-                                (kOutDir / (tag + ".rpt")).string().c_str(),
-                                (kOutDir / (tag + ".out")).string().c_str(),
-                                nullptr) == SWMM_OK;
+    if (!r.e)
+        return r;
+    r.opened =
+        swmm_engine_open(r.e, inp.string().c_str(), (kOutDir / (tag + ".rpt")).string().c_str(),
+                         (kOutDir / (tag + ".out")).string().c_str(), nullptr) == SWMM_OK;
     r.eng = static_cast<openswmm::SWMMEngine*>(r.e);
     return r;
 }
 
+/**
+ * @brief Initialize, start with saved results, and step a transport fixture.
+ *
+ * No iteration guard is applied. Leaves engine state for diagnostic sampling and requires caller
+ * finish; does not independently assert completion beyond elapsed becoming nonpositive.
+ *
+ * @param[in,out] r Opened record advanced until completion or the first rejected step; started is
+ *     set after start succeeds.
+ * @return True only when opened/init/start and the stopping step all return SWMM_OK; false on
+ *     rejection.
+ */
 bool run(Deck& r) {
-    if (!r.opened) return false;
-    if (swmm_engine_initialize(r.e) != SWMM_OK) return false;
-    if (swmm_engine_start(r.e, 1) != SWMM_OK) return false;
+    if (!r.opened)
+        return false;
+    if (swmm_engine_initialize(r.e) != SWMM_OK)
+        return false;
+    if (swmm_engine_start(r.e, 1) != SWMM_OK)
+        return false;
     r.started = true;
     double elapsed = 0.0;
-    int status=SWMM_OK;
-    while ((status=swmm_engine_step(r.e, &elapsed)) == SWMM_OK && elapsed > 0.0) {}
+    int status = SWMM_OK;
+    while ((status = swmm_engine_step(r.e, &elapsed)) == SWMM_OK && elapsed > 0.0) {
+    }
     return status == SWMM_OK;
 }
 
+/**
+ * @brief End, close and destroy a transport fixture record.
+ *
+ * Ends only when started, ignores lifecycle statuses, and leaves eng dangling plus opened/started
+ * unchanged. Null e is a no-op; the record must not be inspected through eng afterward.
+ *
+ * @param[in,out] r Record owning e; non-null e is destroyed and reset to null.
+ */
 void finish(Deck& r) {
-    if (!r.e) return;
-    if (r.started) swmm_engine_end(r.e);
+    if (!r.e)
+        return;
+    if (r.started)
+        swmm_engine_end(r.e);
     swmm_engine_close(r.e);
     swmm_engine_destroy(r.e);
     r.e = nullptr;
 }
 
+/**
+ * @brief Format one transported species groundwater ledger.
+ *
+ * Only the displayed name is bounds checked; mass-vector accesses require a valid row. State is not
+ * mutated.
+ *
+ * @param[in] t Borrowed active transport state with every ledger vector populated for species s.
+ * @param[in] s Nonnegative valid species row index for all accessed vectors.
+ * @return Owned text in the species native mass units, including ledgered storage and residual.
+ */
 std::string ledgerDump(const openswmm::twoD::SubsurfaceTransportState& t, int s) {
     const auto u = static_cast<std::size_t>(s);
     std::ostringstream o;
     o << "\n  gw species ledger (" << (u < t.row_names.size() ? t.row_names[u] : "?")
-      << "):\n    init      " << t.init_mass[u]
-      << "\n    storage   " << t.ledgeredStorage(s)
-      << "\n    +infil    " << t.gained_infil[u]
-      << "\n    +node     " << t.gained_node[u]
-      << "\n    +link     " << t.gained_link[u]
-      << "\n    +lateral  " << t.net_lateral[u]
-      << "\n    -deep     " << t.lost_deep[u]
-      << "\n    -node     " << t.lost_node[u]
-      << "\n    -link     " << t.lost_link[u]
-      << "\n    -dunne    " << t.lost_dunne[u]
-      << "\n    -et       " << t.lost_et[u]
-      << "\n    (recharge, internal) " << t.internal_recharge[u]
-      << "\n    residual  " << t.residual(s) << "\n";
+      << "):\n    init      " << t.init_mass[u] << "\n    storage   " << t.ledgeredStorage(s)
+      << "\n    +infil    " << t.gained_infil[u] << "\n    +node     " << t.gained_node[u]
+      << "\n    +link     " << t.gained_link[u] << "\n    +lateral  " << t.net_lateral[u]
+      << "\n    -deep     " << t.lost_deep[u] << "\n    -node     " << t.lost_node[u]
+      << "\n    -link     " << t.lost_link[u] << "\n    -dunne    " << t.lost_dunne[u]
+      << "\n    -et       " << t.lost_et[u] << "\n    (recharge, internal) "
+      << t.internal_recharge[u] << "\n    residual  " << t.residual(s) << "\n";
     return o.str();
 }
 
+/**
+ * @brief Return a stable label for the mesh selector.
+ *
+ * @param[in] m Mesh selector; values other than Tri/Quad fall through to mixed.
+ * @return Borrowed static string tri, quad or mixed; caller must not free it.
+ */
 const char* meshName(Mesh m) {
     return m == Mesh::Tri ? "tri" : (m == Mesh::Quad ? "quad" : "mixed");
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Gate 6 stub — every channel's ledger closes, on every cell shape.
@@ -229,15 +286,15 @@ TEST(GwTransportKernel, TupleConservesOnEveryMeshFlavour) {
         ASSERT_TRUE(r.opened) << tag;
         ASSERT_TRUE(run(r)) << tag;
         const auto& gw = r.eng->surfaceRouter2D().subsurface();
-        const auto& t  = gw.transport();
+        const auto& t = gw.transport();
         ASSERT_TRUE(t.active()) << tag << ": the aquifer is not transporting";
         ASSERT_GT(t.n_species, 0) << tag;
 
         for (int s = 0; s < t.n_species; ++s) {
             const auto us = static_cast<std::size_t>(s);
-            const double scale = std::max({std::fabs(t.init_mass[us]),
-                                           std::fabs(t.ledgeredStorage(s)),
-                                           std::fabs(t.gained_infil[us]), 1.0e-30});
+            const double scale =
+                std::max({std::fabs(t.init_mass[us]), std::fabs(t.ledgeredStorage(s)),
+                          std::fabs(t.gained_infil[us]), 1.0e-30});
             EXPECT_LT(std::fabs(t.residual(s)), 1.0e-10 * scale)
                 << tag << " species " << s << ledgerDump(t, s);
         }
@@ -256,15 +313,17 @@ TEST(GwTransportKernel, TupleConservesOnEveryMeshFlavour) {
 TEST(GwTransportKernel, InfiltrationHandsMassToTheAquiferAndExcessBringsItBack) {
     Deck r = open("seam", deck(Mesh::Tri));
     ASSERT_TRUE(r.opened);
-    ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK);
-    ASSERT_EQ(swmm_engine_start(r.e,1),SWMM_OK);r.started=true;
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r.e, 1), SWMM_OK);
+    r.started = true;
     // Independent upward forcing: surface receiving capacity now prevents
     // the old forced-infiltration/refund loop from generating this channel.
-    r.eng->surfaceRouter2D().subsurface().bookLinkSeepage(0,10.0);
-    double elapsed=0.0;
-    while(swmm_engine_step(r.e,&elapsed)==SWMM_OK&&elapsed>0.0){}
-    const auto& gw  = r.eng->surfaceRouter2D().subsurface();
-    const auto& t   = gw.transport();
+    r.eng->surfaceRouter2D().subsurface().bookLinkSeepage(0, 10.0);
+    double elapsed = 0.0;
+    while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+    }
+    const auto& gw = r.eng->surfaceRouter2D().subsurface();
+    const auto& t = gw.transport();
     const auto& srf = r.eng->surfaceRouter2D().state().transport;
     ASSERT_TRUE(t.active());
     ASSERT_TRUE(srf.active());
@@ -276,11 +335,12 @@ TEST(GwTransportKernel, InfiltrationHandsMassToTheAquiferAndExcessBringsItBack) 
     // concentration; here it does not, so the mass that goes DOWN is
     // whatever the surface was carrying — zero — and the interesting
     // direction is the one coming UP out of a seeded aquifer.
-    double pending_down=0.0;
-    for(int c=0;c<t.n_cells;++c)pending_down+=t.xacc_from_surface[t.idx(0,c)];
+    double pending_down = 0.0;
+    for (int c = 0; c < t.n_cells; ++c)
+        pending_down += t.xacc_from_surface[t.idx(0, c)];
     EXPECT_NEAR(srf.lost_infiltration[0], t.gained_infil[0] + pending_down, 1.0e-12)
-        << "the surface lost " << srf.lost_infiltration[0]
-        << " but the aquifer gained " << t.gained_infil[0];
+        << "the surface lost " << srf.lost_infiltration[0] << " but the aquifer gained "
+        << t.gained_infil[0];
     // …less whatever is still in flight: `lost_dunne` is booked when the GW
     // cell PUSHES and `gained_exfiltration` when the surface DRAINS, so at
     // the end of a run the two differ by exactly what is sitting in the
@@ -289,14 +349,11 @@ TEST(GwTransportKernel, InfiltrationHandsMassToTheAquiferAndExcessBringsItBack) 
     for (int c = 0; c < t.n_cells; ++c)
         pending += t.xacc_to_surface[t.idx(0, c)];
     EXPECT_NEAR(srf.gained_exfiltration[0] + pending, t.lost_dunne[0], 1.0e-12)
-        << "saturation excess carried " << t.lost_dunne[0]
-        << " up, the surface received " << srf.gained_exfiltration[0]
-        << " and " << pending << " is still in flight";
+        << "saturation excess carried " << t.lost_dunne[0] << " up, the surface received "
+        << srf.gained_exfiltration[0] << " and " << pending << " is still in flight";
     EXPECT_GT(t.lost_dunne[0], 0.0)
-        << "no saturation excess returned — the seam's upward half is untested"
-        << ledgerDump(t, 0);
-    EXPECT_LT(std::fabs(t.residual(0)), 1.0e-10 * std::fabs(t.init_mass[0]))
-        << ledgerDump(t, 0);
+        << "no saturation excess returned — the seam's upward half is untested" << ledgerDump(t, 0);
+    EXPECT_LT(std::fabs(t.residual(0)), 1.0e-10 * std::fabs(t.init_mass[0])) << ledgerDump(t, 0);
     finish(r);
 }
 
@@ -322,10 +379,8 @@ TEST(GwTransportKernel, SubsurfaceEtLeavesTheSolutesBehind) {
     const double gw_et = r.eng->surfaceRouter2D().subsurface().state().led_et;
     EXPECT_GT(gw_et, 0.0) << "the deck did not evaporate from the column";
     // TSS is row 0 and is a solute: ET took none of it.
-    EXPECT_EQ(t.lost_et[0], 0.0)
-        << "ET carried solute out of the aquifer" << ledgerDump(t, 0);
-    EXPECT_LT(std::fabs(t.residual(0)), 1.0e-10 * std::fabs(t.init_mass[0]))
-        << ledgerDump(t, 0);
+    EXPECT_EQ(t.lost_et[0], 0.0) << "ET carried solute out of the aquifer" << ledgerDump(t, 0);
+    EXPECT_LT(std::fabs(t.residual(0)), 1.0e-10 * std::fabs(t.init_mass[0])) << ledgerDump(t, 0);
     finish(r);
 }
 
@@ -357,13 +412,11 @@ TEST(GwTransportKernel, SubsurfaceEtLeavesTheSolutesBehind) {
 // ---------------------------------------------------------------------------
 TEST(GwTransportKernel, EtCarriesTheAgeRowOutWithTheWaterD_A20) {
     std::string body = deck(Mesh::Tri, "", /*hg0=*/0.5);
-    const std::string anchor =
-        "[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\nNODE_ENROLMENT ROWS\n";
+    const std::string anchor = "[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\nNODE_ENROLMENT ROWS\n";
     const auto at = body.find(anchor);
     ASSERT_NE(at, std::string::npos);
     body.insert(at + anchor.size(), "GW_ET BOUNDARY_ET\n");
-    body.insert(body.find("[2D_OPTIONS]"),
-                "[EVAPORATION]\nCONSTANT  5.0\nDRY_ONLY  NO\n\n");
+    body.insert(body.find("[2D_OPTIONS]"), "[EVAPORATION]\nCONSTANT  5.0\nDRY_ONLY  NO\n\n");
     // The age row has to exist for this to test anything.
     // The age row needs TWO switches and the GW one is only a MASK:
     // `TransportPolicy` computes `e.age = ta && ctx.options.water_age`, so
@@ -377,28 +430,27 @@ TEST(GwTransportKernel, EtCarriesTheAgeRowOutWithTheWaterD_A20) {
     // survive, and relying on what a partially-specified
     // [GW_TRANSPORT_OPTIONS] defaults to would make this gate depend on a
     // policy default rather than on the behaviour under test.
-    body.insert(body.find("[2D_OPTIONS]"),
-                "[GW_TRANSPORT_OPTIONS]\n"
-                "TRANSPORT_POLLUTANTS  YES\n"
-                "TRANSPORT_AGE         YES\n\n");
+    body.insert(body.find("[2D_OPTIONS]"), "[GW_TRANSPORT_OPTIONS]\n"
+                                           "TRANSPORT_POLLUTANTS  YES\n"
+                                           "TRANSPORT_AGE         YES\n\n");
 
     Deck r = open("et_age", body);
     ASSERT_TRUE(r.opened);
     ASSERT_TRUE(run(r));
     const auto& gw = r.eng->surfaceRouter2D().subsurface();
-    const auto& t  = gw.transport();
+    const auto& t = gw.transport();
     ASSERT_TRUE(t.active());
-    ASSERT_GE(t.age_row, 0)
-        << "no __WATER_AGE__ row, so this gate is measuring nothing";
+    ASSERT_GE(t.age_row, 0) << "no __WATER_AGE__ row, so this gate is measuring nothing";
     const auto a = static_cast<std::size_t>(t.age_row);
 
-    const double et_vol = gw.state().led_et;          // m³ of water ET removed
+    const double et_vol = gw.state().led_et; // m³ of water ET removed
     ASSERT_GT(et_vol, 0.0) << "the deck did not evaporate from the column";
 
     // (1) The discriminator. D-A20 says this is positive; the GW transport
     //     plan's stale §3.5 ET row says it is exactly zero.
     EXPECT_GT(t.lost_et[a], 0.0)
-        << "ET removed " << et_vol << " m³ of water and no age-volume with it."
+        << "ET removed " << et_vol
+        << " m³ of water and no age-volume with it."
            " That is the superseded convention (GW plan §2.4 / §3.5), under"
            " which the mean age of the remaining water rises. D-A20 amends"
            " both sections: age leaves at the supplying layer's age."
@@ -411,9 +463,8 @@ TEST(GwTransportKernel, EtCarriesTheAgeRowOutWithTheWaterD_A20) {
     //     double-booking, not physics.
     constexpr double kRunSeconds = 20.0 * 60.0;
     EXPECT_LE(t.lost_et[a], et_vol * kRunSeconds)
-        << "the age-volume ET carried out implies a mean age of "
-        << (t.lost_et[a] / et_vol) << " s in a " << kRunSeconds
-        << " s run" << ledgerDump(t, t.age_row);
+        << "the age-volume ET carried out implies a mean age of " << (t.lost_et[a] / et_vol)
+        << " s in a " << kRunSeconds << " s run" << ledgerDump(t, t.age_row);
 
     // (3) …and the age row's own books still close, so (1) is a transfer and
     //     not an invention.
@@ -423,8 +474,7 @@ TEST(GwTransportKernel, EtCarriesTheAgeRowOutWithTheWaterD_A20) {
 
     // (4) The solute row is unchanged by all of this — evapoconcentration is
     //     the half of §3.5 that D-A20 did NOT amend.
-    EXPECT_EQ(t.lost_et[0], 0.0)
-        << "ET carried solute out of the aquifer" << ledgerDump(t, 0);
+    EXPECT_EQ(t.lost_et[0], 0.0) << "ET carried solute out of the aquifer" << ledgerDump(t, 0);
     finish(r);
 }
 
@@ -437,13 +487,13 @@ TEST(GwTransportKernel, MatrixReportsTheGroundwaterRowAndTheWarningIsScoped) {
         ASSERT_TRUE(r.opened);
         ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
         const auto m = openswmm::transport::resolve(r.eng->context());
-        EXPECT_EQ(m.at(Domain::GROUNDWATER, SpeciesClass::POLLUTANTS).state,
-                  CellState::ENABLED)
+        EXPECT_EQ(m.at(Domain::GROUNDWATER, SpeciesClass::POLLUTANTS).state, CellState::ENABLED)
             << "reason: " << m.at(Domain::GROUNDWATER, SpeciesClass::POLLUTANTS).reason;
         EXPECT_EQ(m.at(Domain::GROUNDWATER, SpeciesClass::POLLUTANTS).count, 1);
         bool inert = false;
         for (const auto& w : r.eng->context().warnings)
-            if (w.find("AUTHORED but INERT") != std::string::npos) inert = true;
+            if (w.find("AUTHORED but INERT") != std::string::npos)
+                inert = true;
         EXPECT_FALSE(inert) << "the inert warning fired on a deck WITH a kernel";
         finish(r);
     }
@@ -455,7 +505,7 @@ TEST(GwTransportKernel, MatrixReportsTheGroundwaterRowAndTheWarningIsScoped) {
         const auto b = body.find("[GW_INITIAL_QUALITY]");
         ASSERT_NE(a, std::string::npos);
         ASSERT_NE(b, std::string::npos);
-        body.erase(a, b - a);   // drop the aquifer, keep the [GW_*] rows
+        body.erase(a, b - a); // drop the aquifer, keep the [GW_*] rows
         Deck r = open("matrix_inert", body);
         ASSERT_TRUE(r.opened);
         ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
@@ -464,7 +514,8 @@ TEST(GwTransportKernel, MatrixReportsTheGroundwaterRowAndTheWarningIsScoped) {
                   CellState::UNAVAILABLE);
         bool inert = false;
         for (const auto& w : r.eng->context().warnings)
-            if (w.find("AUTHORED but INERT") != std::string::npos) inert = true;
+            if (w.find("AUTHORED but INERT") != std::string::npos)
+                inert = true;
         EXPECT_TRUE(inert) << "a deck with no kernel was not told its rows are inert";
         finish(r);
     }
@@ -480,28 +531,44 @@ TEST(GwTransportKernel, MatrixReportsTheGroundwaterRowAndTheWarningIsScoped) {
 namespace {
 
 struct T72 {
-    double sat_c0 = 0.0, sat_c1 = 0.0;   ///< end-of-run saturated concentrations
+    double sat_c0 = 0.0, sat_c1 = 0.0; ///< end-of-run saturated concentrations
     double stored = 0.0, reacted = 0.0, residual = 0.0, init = 0.0;
-    double exported = 0.0;   ///< everything that LEFT the aquifer as solute
-    long   binds = 0;
+    double exported = 0.0; ///< everything that LEFT the aquifer as solute
+    long binds = 0;
 };
 
-/// @param extra rows appended to the `[GW_*]` block (sorption, params…)
-/// @param dispersion the `[GW_TRANSPORT_OPTIONS] DISPERSION` switch
-T72 runT72(const std::string& tag, const std::string& extra,
-           bool dispersion = true, double deep = 0.0) {
+/**
+ * @brief Run a sorption/dispersion fixture and copy first-species diagnostics.
+ *
+ * Uses nonfatal run assertions and may inspect partial state after run failure. Assumes two
+ * cells/one species, converts mass to concentration by positive saturated volume, then finishes the
+ * handle. Open rejection returns without releasing an allocated failed-open handle.
+ *
+ * @param[in] tag Artifact stem appended below kOutDir; matching .inp/.rpt/.out paths may be
+ *     overwritten.
+ * @param[in] extra Raw groundwater rows forwarded after the dispersion option.
+ * @param[in] dispersion Select DISPERSION YES or NO.
+ * @param[in] deep Positive deep-loss coefficient forwarded to deck; nonpositive omits C_LOSS.
+ * @return Owned first-species concentration/mass/residual record and limiter-bind count; default
+ *     record when open or transport activation fails.
+ */
+T72 runT72(const std::string& tag, const std::string& extra, bool dispersion = true,
+           double deep = 0.0) {
     std::ostringstream gw;
-    gw << "[GW_TRANSPORT_OPTIONS]\nDISPERSION " << (dispersion ? "YES" : "NO")
-       << "\n\n" << extra;
+    gw << "[GW_TRANSPORT_OPTIONS]\nDISPERSION " << (dispersion ? "YES" : "NO") << "\n\n" << extra;
     Deck r = open(tag, deck(Mesh::Tri, gw.str(), 0.5, deep));
     T72 o;
     EXPECT_TRUE(r.opened) << tag;
-    if (!r.opened) return o;
+    if (!r.opened)
+        return o;
     EXPECT_TRUE(run(r)) << tag;
     const auto& gws = r.eng->surfaceRouter2D().subsurface();
-    const auto& t   = gws.transport();
+    const auto& t = gws.transport();
     EXPECT_TRUE(t.active()) << tag;
-    if (!t.active()) { finish(r); return o; }
+    if (!t.active()) {
+        finish(r);
+        return o;
+    }
     const double v0 = gws.satVolume(0), v1 = gws.satVolume(1);
     o.sat_c0 = (v0 > 0.0) ? t.sat_mass[t.idx(0, 0)] / v0 : 0.0;
     o.sat_c1 = (v1 > 0.0) ? t.sat_mass[t.idx(0, 1)] / v1 : 0.0;
@@ -515,23 +582,22 @@ T72 runT72(const std::string& tag, const std::string& extra,
     return o;
 }
 
-}  // namespace
+} // namespace
 
 TEST(GwTransportKernel, DispersionMixesTheNeighboursAndRespectsTheMaxPrinciple) {
     // A big dispersivity, so the term is unmistakably active.
     const std::string params =
         "[GW_TRANSPORT_PARAMS]\n;;Scope rho_s c_s lambda_s a_s alpha_L alpha_T D_m D_v geo\n"
         "*  2650  880  2.0  0.0  50.0  5.0  1.0e-9  1.0e-9  0.065\n\n";
-    const T72 on  = runT72("disp_on",  params, /*dispersion=*/true);
+    const T72 on = runT72("disp_on", params, /*dispersion=*/true);
     const T72 off = runT72("disp_off", params, /*dispersion=*/false);
 
     // Cell 1 starts rich (25 mg/L) and cell 0 lean (5 mg/L). Dispersion
     // narrows that gap; without it only advection mixes them.
-    const double gap_on  = std::fabs(on.sat_c1  - on.sat_c0);
+    const double gap_on = std::fabs(on.sat_c1 - on.sat_c0);
     const double gap_off = std::fabs(off.sat_c1 - off.sat_c0);
-    EXPECT_LT(gap_on, gap_off)
-        << "dispersion did not mix: gap " << gap_on << " with it, "
-        << gap_off << " without";
+    EXPECT_LT(gap_on, gap_off) << "dispersion did not mix: gap " << gap_on << " with it, "
+                               << gap_off << " without";
     // The max principle, pairwise: no cell may end outside the range the
     // two started in. 25 and 5 are the seeded saturated concentrations;
     // infiltration brings 10 mg/L rain water in, so the upper bound is the
@@ -541,21 +607,18 @@ TEST(GwTransportKernel, DispersionMixesTheNeighboursAndRespectsTheMaxPrinciple) 
     EXPECT_GE(on.sat_c0, 0.0);
     EXPECT_GE(on.sat_c1, 0.0);
     // …and it conserves: dispersion is an exchange, not a source.
-    EXPECT_LT(std::fabs(on.residual), 1.0e-10 * std::fabs(on.init))
-        << "residual " << on.residual;
+    EXPECT_LT(std::fabs(on.residual), 1.0e-10 * std::fabs(on.init)) << "residual " << on.residual;
 }
 
 TEST(GwTransportKernel, RetardationHoldsMassBackAndStillConserves) {
-    const std::string params =
-        "[GW_TRANSPORT_PARAMS]\n"
-        "*  2650  880  2.0  0.0  50.0  5.0  1.0e-9  1.0e-9  0.065\n\n";
+    const std::string params = "[GW_TRANSPORT_PARAMS]\n"
+                               "*  2650  880  2.0  0.0  50.0  5.0  1.0e-9  1.0e-9  0.065\n\n";
     // K_d = 2 L/kg over ρ_b ≈ 2650(1 − 0.45) ≈ 1458 kg/m³ at θ = 0.45 gives
     // R ≈ 1 + 1458·0.002/0.45 ≈ 7.5: most of the mass is on the grains and
     // only a seventh of it travels.
-    const std::string sorb = params +
-        "[GW_SORPTION]\n;;Scope Species Kd Decay\n*  TSS  2.0  -\n\n";
+    const std::string sorb = params + "[GW_SORPTION]\n;;Scope Species Kd Decay\n*  TSS  2.0  -\n\n";
     const T72 plain = runT72("retard_off", params, true, 1e-4);
-    const T72 held  = runT72("retard_on",  sorb, true, 1e-4);
+    const T72 held = runT72("retard_on", sorb, true, 1e-4);
 
     // The defining property, and the one that does not depend on which way
     // a particular cell's net flux happens to run: every EXIT from the
@@ -567,8 +630,7 @@ TEST(GwTransportKernel, RetardationHoldsMassBackAndStillConserves) {
     EXPECT_LT(held.exported, plain.exported)
         << "retarded export " << held.exported << " vs free " << plain.exported;
     EXPECT_GT(held.stored, plain.stored)
-        << "…and what did not leave must still be here: " << held.stored
-        << " vs " << plain.stored;
+        << "…and what did not leave must still be here: " << held.stored << " vs " << plain.stored;
     // Sorption moves nothing out of the aquifer, so the books are untouched.
     EXPECT_EQ(held.reacted, 0.0) << "K_d alone should not remove mass";
     EXPECT_LT(std::fabs(held.residual), 1.0e-10 * std::fabs(held.init))
@@ -576,15 +638,14 @@ TEST(GwTransportKernel, RetardationHoldsMassBackAndStillConserves) {
 }
 
 TEST(GwTransportKernel, DecayRemovesTheAnalyticFractionAndIsLedgered) {
-    const std::string params =
-        "[GW_TRANSPORT_PARAMS]\n"
-        "*  2650  880  2.0  0.0  1.0  0.1  1.0e-9  1.0e-9  0.065\n\n";
+    const std::string params = "[GW_TRANSPORT_PARAMS]\n"
+                               "*  2650  880  2.0  0.0  1.0  0.1  1.0e-9  1.0e-9  0.065\n\n";
     // 10 /day over the deck's 20 minutes: exp(−10 × 20/1440) ≈ 0.871, so
     // ~13 % of whatever the aquifer held should be gone.
-    const std::string decay = params +
-        "[GW_SORPTION]\n;;Scope Species Kd Decay\n*  TSS  0.0  10.0\n\n";
+    const std::string decay =
+        params + "[GW_SORPTION]\n;;Scope Species Kd Decay\n*  TSS  0.0  10.0\n\n";
     const T72 without = runT72("decay_off", params);
-    const T72 with    = runT72("decay_on",  decay);
+    const T72 with = runT72("decay_on", decay);
 
     EXPECT_GT(with.reacted, 0.0) << "nothing decayed";
     EXPECT_EQ(without.reacted, 0.0) << "mass decayed with no DECAY authored";
@@ -598,8 +659,7 @@ TEST(GwTransportKernel, DecayRemovesTheAnalyticFractionAndIsLedgered) {
     const double expect_frac = 1.0 - std::exp(-10.0 * (20.0 / 1440.0));
     const double got_frac = with.reacted / std::max(with.init, 1.0e-30);
     EXPECT_NEAR(got_frac, expect_frac, 0.25 * expect_frac)
-        << "decayed " << got_frac << " of the initial mass, analytic "
-        << expect_frac;
+        << "decayed " << got_frac << " of the initial mass, analytic " << expect_frac;
 }
 
 // ---------------------------------------------------------------------------
@@ -616,7 +676,7 @@ TEST(GwTransportKernel, CApiReportsTheSpeciesRowsConcentrationsAndLedger) {
     ASSERT_TRUE(r.opened);
     ASSERT_TRUE(run(r));
     const auto& gw = r.eng->surfaceRouter2D().subsurface();
-    const auto& t  = gw.transport();
+    const auto& t = gw.transport();
 
     int n = -1;
     ASSERT_EQ(swmm_gw2d_species_count(r.e, &n), SWMM_OK);
@@ -645,9 +705,9 @@ TEST(GwTransportKernel, CApiReportsTheSpeciesRowsConcentrationsAndLedger) {
     ASSERT_EQ(swmm_gw2d_get_cell_conc(r.e, SWMM_GW2D_ZONE_UNSAT, 0, c.data(),
                                       static_cast<int>(c.size()), &written),
               SWMM_OK);
-    EXPECT_NE(swmm_gw2d_get_cell_conc(r.e, 42, 0, c.data(),
-                                      static_cast<int>(c.size()), &written),
-              SWMM_OK) << "an unknown zone was accepted";
+    EXPECT_NE(swmm_gw2d_get_cell_conc(r.e, 42, 0, c.data(), static_cast<int>(c.size()), &written),
+              SWMM_OK)
+        << "an unknown zone was accepted";
 
     // …and the ledger terms are the kernel's own.
     double v = 0.0;
@@ -672,7 +732,9 @@ TEST(GwTransportKernel, ReportCarriesTheAquiferQualityContinuity) {
     finish(r);
     const std::string rpt = [&] {
         std::ifstream f(kOutDir / "rpt_species.rpt");
-        std::ostringstream ss; ss << f.rdbuf(); return ss.str();
+        std::ostringstream ss;
+        ss << f.rdbuf();
+        return ss.str();
     }();
     EXPECT_NE(rpt.find("2D Aquifer Quality Continuity"), std::string::npos)
         << "the species continuity block is missing from the report";
@@ -698,8 +760,8 @@ TEST(GwTransportKernel, HotStartCarriesTheAquiferSpeciesAcrossARestart) {
         ASSERT_TRUE(r.opened);
         ASSERT_TRUE(run(r));
         const auto& t = r.eng->surfaceRouter2D().subsurface().transport();
-        sat0   = t.sat_mass[t.idx(0, 0)];
-        uns0   = t.unsat_mass[t.idx(0, 0)];
+        sat0 = t.sat_mass[t.idx(0, 0)];
+        uns0 = t.unsat_mass[t.idx(0, 0)];
         infil0 = t.gained_infil[0];
         ASSERT_EQ(swmm_hotstart_save(r.e, hsf.string().c_str()), SWMM_OK);
         finish(r);
@@ -743,8 +805,8 @@ TEST(GwTransportKernel, FilesNativeHotStartCarriesTheAquiferSpeciesAcrossARestar
 
     double sat0 = 0.0, uns0 = 0.0, infil0 = 0.0;
     {
-        Deck r = open("hs_files_write", deck(Mesh::Tri,
-            "[FILES]\nSAVE HOTSTART \"" + hsf.string() + "\" NATIVE\n\n"));
+        Deck r = open("hs_files_write", deck(Mesh::Tri, "[FILES]\nSAVE HOTSTART \"" + hsf.string() +
+                                                            "\" NATIVE\n\n"));
         ASSERT_TRUE(r.opened);
         ASSERT_TRUE(run(r));
         // end() writes the [FILES] save, after the 2D finalize — so the
@@ -752,18 +814,21 @@ TEST(GwTransportKernel, FilesNativeHotStartCarriesTheAquiferSpeciesAcrossARestar
         ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
         r.started = false;
         const auto& t = r.eng->surfaceRouter2D().subsurface().transport();
-        sat0   = t.sat_mass[t.idx(0, 0)];
-        uns0   = t.unsat_mass[t.idx(0, 0)];
+        sat0 = t.sat_mass[t.idx(0, 0)];
+        uns0 = t.unsat_mass[t.idx(0, 0)];
         infil0 = t.gained_infil[0];
         finish(r);
     }
     std::string stamp(14, '\0');
-    { std::ifstream f(hsf, std::ios::binary); f.read(stamp.data(), 14); }
+    {
+        std::ifstream f(hsf, std::ios::binary);
+        f.read(stamp.data(), 14);
+    }
     ASSERT_EQ(stamp, "OPENSWMM_HS_V1") << "SAVE HOTSTART … NATIVE did not write a native file";
     EXPECT_GT(sat0, 0.0);
 
-    Deck r2 = open("hs_files_read", deck(Mesh::Tri,
-        "[FILES]\nUSE HOTSTART \"" + hsf.string() + "\"\n\n"));
+    Deck r2 = open("hs_files_read",
+                   deck(Mesh::Tri, "[FILES]\nUSE HOTSTART \"" + hsf.string() + "\"\n\n"));
     ASSERT_TRUE(r2.opened);
     ASSERT_EQ(swmm_engine_initialize(r2.e), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(r2.e, 1), SWMM_OK);
@@ -782,7 +847,7 @@ TEST(GwTransportKernel, FilesNativeHotStartCarriesTheAquiferSpeciesAcrossARestar
 // so the aquifer, which does not exist yet then, was dropped without a word.
 TEST(GwTransportKernel, FilesNativeHotStartWithANodeLidCarriesTheAquifer) {
     const std::string lid =
-        "[STORAGE]\nS1 -1.0 0.75 0 FUNCTIONAL 0 0 100 0 0\n\n"   // depth = layer sum
+        "[STORAGE]\nS1 -1.0 0.75 0 FUNCTIONAL 0 0 100 0 0\n\n" // depth = layer sum
         "[WEIRS]\nW1 S1 J1 TRANSVERSE 0.8 1.84 NO 0 0 NO\n\n"
         "[XSECTIONS]\nW1 RECT_OPEN 0.2 0.2 0 0\n\n"
         "[LID_CONTROLS]\nTrain NODE\nTrain SURFACE 150 .1\n"
@@ -795,8 +860,8 @@ TEST(GwTransportKernel, FilesNativeHotStartWithANodeLidCarriesTheAquifer) {
 
     double sat0 = 0.0, uns0 = 0.0;
     {
-        Deck r = open("hs_files_lid_write", deck(Mesh::Tri, lid +
-            "[FILES]\nSAVE HOTSTART \"" + hsf.string() + "\" NATIVE\n\n"));
+        Deck r = open("hs_files_lid_write", deck(Mesh::Tri, lid + "[FILES]\nSAVE HOTSTART \"" +
+                                                                hsf.string() + "\" NATIVE\n\n"));
         ASSERT_TRUE(r.opened);
         ASSERT_TRUE(run(r));
         ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
@@ -808,8 +873,8 @@ TEST(GwTransportKernel, FilesNativeHotStartWithANodeLidCarriesTheAquifer) {
     }
     EXPECT_GT(sat0, 0.0);
 
-    Deck r2 = open("hs_files_lid_read", deck(Mesh::Tri, lid +
-        "[FILES]\nUSE HOTSTART \"" + hsf.string() + "\"\n\n"));
+    Deck r2 = open("hs_files_lid_read",
+                   deck(Mesh::Tri, lid + "[FILES]\nUSE HOTSTART \"" + hsf.string() + "\"\n\n"));
     ASSERT_TRUE(r2.opened);
     ASSERT_EQ(swmm_engine_initialize(r2.e), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(r2.e, 1), SWMM_OK);
@@ -845,12 +910,11 @@ TEST(GwTransportKernel, ResultsFileCarriesTheSpeciesFieldsAndLedger) {
     const int ns = t.n_species;
     const int nc = t.n_cells;
     std::vector<double> want_sat(static_cast<std::size_t>(nc), 0.0);
-    {   // the concentrations the file should hold at the last record
+    { // the concentrations the file should hold at the last record
         const auto& gw = r.eng->surfaceRouter2D().subsurface();
         for (int c = 0; c < nc; ++c) {
             const double v = gw.satVolume(c);
-            want_sat[static_cast<std::size_t>(c)] =
-                (v > 0.0) ? t.sat_mass[t.idx(0, c)] / v : 0.0;
+            want_sat[static_cast<std::size_t>(c)] = (v > 0.0) ? t.sat_mass[t.idx(0, c)] / v : 0.0;
         }
     }
     const double want_resid = t.residual(0);
@@ -867,11 +931,17 @@ TEST(GwTransportKernel, ResultsFileCarriesTheSpeciesFieldsAndLedger) {
     EXPECT_TRUE(has("Mesh2_face_gw_unsat_conc"));
     EXPECT_TRUE(has("groundwater_species_ledger"));
     for (const char* field : {"Mesh2_face_gw_sat_conc", "Mesh2_face_gw_unsat_conc"}) {
-        const hid_t ds=H5Dopen2(fid,field,H5P_DEFAULT);ASSERT_GE(ds,0);
-        const hid_t attr=H5Aopen(ds,"species_units",H5P_DEFAULT);ASSERT_GE(attr,0);
-        const hid_t type=H5Aget_type(attr);std::vector<char> unit(H5Tget_size(type)+1,0);
-        ASSERT_GE(H5Aread(attr,type,unit.data()),0);EXPECT_STREQ(unit.data(),"MG/L");
-        H5Tclose(type);H5Aclose(attr);H5Dclose(ds);
+        const hid_t ds = H5Dopen2(fid, field, H5P_DEFAULT);
+        ASSERT_GE(ds, 0);
+        const hid_t attr = H5Aopen(ds, "species_units", H5P_DEFAULT);
+        ASSERT_GE(attr, 0);
+        const hid_t type = H5Aget_type(attr);
+        std::vector<char> unit(H5Tget_size(type) + 1, 0);
+        ASSERT_GE(H5Aread(attr, type, unit.data()), 0);
+        EXPECT_STREQ(unit.data(), "MG/L");
+        H5Tclose(type);
+        H5Aclose(attr);
+        H5Dclose(ds);
     }
 
     auto readAll = [&](const char* n) {
@@ -881,10 +951,12 @@ TEST(GwTransportKernel, ResultsFileCarriesTheSpeciesFieldsAndLedger) {
         std::vector<hsize_t> d(static_cast<std::size_t>(rank));
         H5Sget_simple_extent_dims(sp, d.data(), nullptr);
         hsize_t total = 1;
-        for (auto x : d) total *= x;
+        for (auto x : d)
+            total *= x;
         std::vector<double> v(static_cast<std::size_t>(total));
         H5Dread(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, v.data());
-        H5Sclose(sp); H5Dclose(ds);
+        H5Sclose(sp);
+        H5Dclose(ds);
         return std::make_pair(v, d);
     };
     // [time, species, face] — the last record must be the state the run
@@ -895,8 +967,7 @@ TEST(GwTransportKernel, ResultsFileCarriesTheSpeciesFieldsAndLedger) {
     EXPECT_EQ(static_cast<int>(sat.second[2]), nc);
     ASSERT_GT(sat.second[0], 0u);
     const std::size_t last = (static_cast<std::size_t>(sat.second[0]) - 1) *
-                             static_cast<std::size_t>(ns) *
-                             static_cast<std::size_t>(nc);
+                             static_cast<std::size_t>(ns) * static_cast<std::size_t>(nc);
     for (int c = 0; c < nc; ++c)
         EXPECT_NEAR(sat.first[last + static_cast<std::size_t>(c)],
                     want_sat[static_cast<std::size_t>(c)], 1.0e-9)
@@ -907,8 +978,8 @@ TEST(GwTransportKernel, ResultsFileCarriesTheSpeciesFieldsAndLedger) {
     const auto led = readAll("groundwater_species_ledger");
     ASSERT_EQ(led.second.size(), 3u);
     EXPECT_EQ(static_cast<int>(led.second[2]), 15);
-    const std::size_t ll = (static_cast<std::size_t>(led.second[0]) - 1) *
-                           static_cast<std::size_t>(ns) * 15;
+    const std::size_t ll =
+        (static_cast<std::size_t>(led.second[0]) - 1) * static_cast<std::size_t>(ns) * 15;
     EXPECT_NEAR(led.first[ll + 2], want_infil, 1.0e-9) << "infil_in term";
     EXPECT_NEAR(led.first[ll + 12], want_resid, 1.0e-12) << "residual term";
     EXPECT_GT(want_source, 0.0);
@@ -934,11 +1005,19 @@ TEST(GwTransportKernel, ResultsFileCarriesTheSpeciesFieldsAndLedger) {
 // ---------------------------------------------------------------------------
 namespace {
 
-/// The aquifer deck with a BED under J1, so the node seam is live, plus an
-/// inflow that decides the direction: a big one surcharges J1 and pushes
-/// water DOWN the bed; none lets the (high) table drain INTO the pipe.
-std::string seamDeck(double hg0, double inflow_cms, double seep_mm_hr,
-                     double node_tss) {
+/**
+ * @brief Build a live node-bed fixture with optional inflow and conduit seepage.
+ *
+ * Copied verbatim without escaping or parser validation; caller supplies valid row separators. No
+ * file IO occurs.
+ *
+ * @param[in] hg0 Initial whole-mesh saturated height in metres.
+ * @param[in] inflow_cms J1 inflow in m3/s; exactly zero omits flow and concentration series.
+ * @param[in] seep_mm_hr Positive conduit seepage in mm/hr; nonpositive omits LOSSES.
+ * @param[in] node_tss Positive inflow TSS concentration in mg/L; authored only with nonzero inflow.
+ * @return Owned CMS deck with J1 bed enrollment.
+ */
+std::string seamDeck(double hg0, double inflow_cms, double seep_mm_hr, double node_tss) {
     std::ostringstream extra;
     extra << "[2D_AQUIFER_NODE]\nJ1  1\n\n";
     std::string body = deck(Mesh::Tri, extra.str(), hg0);
@@ -949,16 +1028,16 @@ std::string seamDeck(double hg0, double inflow_cms, double seep_mm_hr,
     std::ostringstream ins;
     if (inflow_cms != 0.0) {
         ins << "[INFLOWS]\nJ1  FLOW  IN1  FLOW  1.0  1.0\n";
-        if (node_tss > 0.0) ins << "J1  TSS  IN2  CONCEN  1.0  1.0\n";
-        ins << "\n[TIMESERIES]\nIN1  0:00  " << inflow_cms
-            << "\nIN1  1:00  " << inflow_cms << "\n";
+        if (node_tss > 0.0)
+            ins << "J1  TSS  IN2  CONCEN  1.0  1.0\n";
+        ins << "\n[TIMESERIES]\nIN1  0:00  " << inflow_cms << "\nIN1  1:00  " << inflow_cms << "\n";
         if (node_tss > 0.0)
             ins << "IN2  0:00  " << node_tss << "\nIN2  1:00  " << node_tss << "\n";
         ins << "\n";
     }
     if (seep_mm_hr > 0.0)
-        ins << "[LOSSES]\n;;Link Kentry Kexit Kavg Flap Seepage\nC1  0 0 0 NO  "
-            << seep_mm_hr << "\n\n";
+        ins << "[LOSSES]\n;;Link Kentry Kexit Kavg Flap Seepage\nC1  0 0 0 NO  " << seep_mm_hr
+            << "\n\n";
     body.insert(at, ins.str());
     return body;
 }
@@ -967,37 +1046,52 @@ struct SeamResult {
     double gained_node = 0.0, lost_node = 0.0;
     double gained_link = 0.0, lost_link = 0.0;
     double residual = 0.0, init = 0.0;
-    double in_flight = 0.0;      ///< G-W1: sampled from the 1D, not yet gathered
-    double queue_sum = 0.0;      ///< mass parked in the node's coupling queue
-    double gw_in_ledger = 0.0;   ///< 1D qual_routing_gw_in
-    double seep_ledger = 0.0;    ///< 1D qual_routing_seep
-    double ex_in_ledger = 0.0;   ///< 1D qual_routing_ex_in (the coupling row)
-    double v12 = 1.0;            ///< vol_1d_to_2d, for the unit check
-    double led_node = 0.0;       ///< water ledger, m³, + out of the aquifer
-    double led_link = 0.0;       ///< water ledger, m³, + into the aquifer
+    double in_flight = 0.0;    ///< G-W1: sampled from the 1D, not yet gathered
+    double queue_sum = 0.0;    ///< mass parked in the node's coupling queue
+    double gw_in_ledger = 0.0; ///< 1D qual_routing_gw_in
+    double seep_ledger = 0.0;  ///< 1D qual_routing_seep
+    double ex_in_ledger = 0.0; ///< 1D qual_routing_ex_in (the coupling row)
+    double v12 = 1.0;          ///< vol_1d_to_2d, for the unit check
+    double led_node = 0.0;     ///< water ledger, m³, + out of the aquifer
+    double led_link = 0.0;     ///< water ledger, m³, + into the aquifer
 };
 
+/**
+ * @brief Run a seam fixture and copy first-species exchange bookkeeping.
+ *
+ * Records nonfatal open/run failures; successful open is inspected even after run failure, then
+ * finished. Open rejection returns a default record without releasing a non-null failed-open
+ * handle. Intended node/cell/species layout is a precondition; returned values own their storage.
+ *
+ * @param[in] tag Artifact stem appended below kOutDir; matching .inp/.rpt/.out paths may be
+ *     overwritten.
+ * @param[in] body Borrowed full input deck text written verbatim.
+ * @return Owned transport/water diagnostic record; species masses retain native units, water
+ *     ledgers are m3, and v12 converts native 1D volumes to m3.
+ */
 SeamResult runSeam(const std::string& tag, const std::string& body) {
     SeamResult o;
     Deck r = open(tag, body);
     EXPECT_TRUE(r.opened) << tag;
-    if (!r.opened) return o;
+    if (!r.opened)
+        return o;
     EXPECT_TRUE(run(r)) << tag;
     const auto& ctx = r.eng->context();
     const auto& t = r.eng->surfaceRouter2D().subsurface().transport();
     if (t.active()) {
         o.gained_node = t.gained_node[0];
-        o.lost_node   = t.lost_node[0];
+        o.lost_node = t.lost_node[0];
         o.gained_link = t.gained_link[0];
-        o.lost_link   = t.lost_link[0];
-        o.residual    = t.residual(0);
-        o.in_flight   = t.inFlight1D(0);
-        o.init        = t.init_mass[0];
+        o.lost_link = t.lost_link[0];
+        o.residual = t.residual(0);
+        o.in_flight = t.inFlight1D(0);
+        o.init = t.init_mass[0];
     }
     o.v12 = r.eng->surfaceRouter2D().options().vol_1d_to_2d;
     o.led_node = r.eng->surfaceRouter2D().subsurface().state().led_node;
     o.led_link = r.eng->surfaceRouter2D().subsurface().state().led_link;
-    for (double v : ctx.nodes.coupling_qual_queue) o.queue_sum += v;
+    for (double v : ctx.nodes.coupling_qual_queue)
+        o.queue_sum += v;
     if (!ctx.mass_balance.qual_routing_gw_in.empty())
         o.gw_in_ledger = ctx.mass_balance.qual_routing_gw_in[0];
     if (!ctx.mass_balance.qual_routing_seep.empty())
@@ -1010,39 +1104,54 @@ SeamResult runSeam(const std::string& tag, const std::string& body) {
 
 /// G-W1 diagnostic: the WATER side of the same seam, in volume.
 struct SeamWater {
-    double led_node = 0.0;          ///< aquifer's own books, m³, + out
-    double routing_external = 0.0;  ///< 1D inflow row (ft³ / project units)
+    double led_node = 0.0;         ///< aquifer's own books, m³, + out
+    double routing_external = 0.0; ///< 1D inflow row (ft³ / project units)
     double routing_coupling_out = 0.0;
-    double coupling_queue = 0.0;    ///< still parked, not yet delivered
+    double coupling_queue = 0.0; ///< still parked, not yet delivered
     double coupling_volume = 0.0;
-    double nacc = 0.0;              ///< sampled but not yet gathered by a cell
-    double sy_gap = 0.0;            ///< G-W1b: textbook Sy / the one the column uses
-    long   cap_binds = 0;           ///< G-W1b: firings the drain cap clamped
-    long   refunds   = 0;           ///< G-W1b: firings a column went short on the node
-    double error_pct = 0.0;         ///< the 1D flow continuity error
+    double nacc = 0.0;      ///< sampled but not yet gathered by a cell
+    double sy_gap = 0.0;    ///< G-W1b: textbook Sy / the one the column uses
+    long cap_binds = 0;     ///< G-W1b: firings the drain cap clamped
+    long refunds = 0;       ///< G-W1b: firings a column went short on the node
+    double error_pct = 0.0; ///< the 1D flow continuity error
     double v12 = 1.0;
 };
 
+/**
+ * @brief Run a seam fixture and copy water accounting and clamp diagnostics.
+ *
+ * Records nonfatal open/run failures; successful open is inspected even after run failure, then
+ * finished. Open rejection returns a default record without releasing a non-null failed-open
+ * handle. Intended node/cell/species layout is a precondition; returned values own their storage.
+ *
+ * @param[in] tag Artifact stem appended below kOutDir; matching .inp/.rpt/.out paths may be
+ *     overwritten.
+ * @param[in] body Borrowed full input deck text written verbatim.
+ * @return Owned record with SI aquifer m3, native 1D volumes, conversion factor, percent continuity
+ *     error, and integer clamp/refund counters.
+ */
 SeamWater runSeamWater(const std::string& tag, const std::string& body) {
     SeamWater o;
     Deck r = open(tag, body);
     EXPECT_TRUE(r.opened) << tag;
-    if (!r.opened) return o;
+    if (!r.opened)
+        return o;
     EXPECT_TRUE(run(r)) << tag;
     const auto& ctx = r.eng->context();
     const auto& led = r.eng->surfaceRouter2D().subsurface().state();
     o.led_node = led.led_node;
-    for (double v : led.nacc) o.nacc += v;
+    for (double v : led.nacc)
+        o.nacc += v;
     // G-W1b (2026-09-23): the counters that say whether this deck is an
     // instrument, straight from the solver. `sy_gap` is kept for the failure
     // message only — see the gate — and it now asks the solver for the yield
     // the column actually uses instead of re-deriving one branch of it.
     const auto& gw = r.eng->surfaceRouter2D().subsurface();
     o.cap_binds = gw.drainCapBinds();
-    o.refunds   = gw.nodeRefunds();
+    o.refunds = gw.nodeRefunds();
     for (int c = 0; c < led.n_cells; ++c) {
         const auto u = static_cast<std::size_t>(c);
-        const double sy_col  = std::max(gw.specificYieldOf(c), 1.0e-300);
+        const double sy_col = std::max(gw.specificYieldOf(c), 1.0e-300);
         const double sy_text = led.theta_s[u] - led.theta_r[u];
         o.sy_gap = std::max(o.sy_gap, sy_text / sy_col);
     }
@@ -1075,7 +1184,7 @@ SeamWater runSeamWater(const std::string& tag, const std::string& body) {
     return o;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // G-W1 — the two sides of the bed exchange must agree IN VOLUME.
@@ -1098,8 +1207,20 @@ SeamWater runSeamWater(const std::string& tag, const std::string& body) {
 // `routing_external` row. That makes it useless as an instrument here (it
 // reads 22.06 against the bed's 2.35, and the difference is honest surface
 // water). This deck has no raingage at all, so the bed is the only inflow.
-std::string bedOnlyDeck(bool bed, const char* closure = "CLOSED_FORM",
-                        double zs = 1.0, double hg0 = 0.95) {
+/**
+ * @brief Build a rain-free fixture isolating node-bed groundwater drainage.
+ *
+ * Copied verbatim without escaping or parser validation; caller supplies valid row separators. No
+ * file IO occurs.
+ *
+ * @param[in] bed True enables J1 bed exchange; false authors EXCHANGE NO as the control.
+ * @param[in] closure Non-null raw closure keyword copied into aquifer options.
+ * @param[in] zs Aquifer thickness in metres.
+ * @param[in] hg0 Initial saturated height above the aquifer bottom in metres.
+ * @return Owned twenty-minute CMS deck with no raingage or external inflow.
+ */
+std::string bedOnlyDeck(bool bed, const char* closure = "CLOSED_FORM", double zs = 1.0,
+                        double hg0 = 0.95) {
     std::ostringstream s;
     s << "[OPTIONS]\n"
          "FLOW_UNITS           CMS\nFLOW_ROUTING         DYNWAVE\n"
@@ -1119,28 +1240,44 @@ std::string bedOnlyDeck(bool bed, const char* closure = "CLOSED_FORM",
          "[2D_TRIANGLES]\n;;V1 V2 V3 N INIT_DEPTH\n"
          "0 1 2 0.03 0.0\n0 2 3 0.03 0.0\n\n"
          "[2D_INFILTRATION_DEFAULTS]\n*  CONSTANT  40.0  -  -  -  -\n\n"
-         "[2D_AQUIFER_OPTIONS]\nCLOSURE " << closure
+         "[2D_AQUIFER_OPTIONS]\nCLOSURE "
+      << closure
       << "\nNODE_ENROLMENT ROWS\n\n"
          "[2D_AQUIFER]\n;;Scope KS ZS THETA_S THETA_R ALPHA\n"
-         "*  36.0  " << zs << "  0.45  0.10  2.0  HG0 " << hg0 << "\n\n";
+         "*  36.0  "
+      << zs << "  0.45  0.10  2.0  HG0 " << hg0 << "\n\n";
     // The control: the same deck with the bed switched off. The validator's
     // pair — bed on gives −0.722 %, bed off gives 0.000 % — is what
     // established that the residual IS the bed.
-    if (bed) s << "[2D_AQUIFER_NODE]\nJ1  1\n\n";
-    else     s << "[2D_AQUIFER_NODE]\nJ1  1  EXCHANGE NO\n\n";
+    if (bed)
+        s << "[2D_AQUIFER_NODE]\nJ1  1\n\n";
+    else
+        s << "[2D_AQUIFER_NODE]\nJ1  1  EXCHANGE NO\n\n";
     s << "[COORDINATES]\nJ1  5.0  5.0\nO1  40.0  40.0\n\n"
          "[REPORT]\nINPUT NO\n";
     return s.str();
 }
 
-void checkDrainingBed(const std::string& tag, const char* closure,
-                      double zs, double hg0) {
+/**
+ * @brief Assert bed-drain cap accounting against an exchange-disabled control.
+ *
+ * Runs both fixtures, fatally requires an active cap and actual drainage, then nonfatally compares
+ * refunds and promised/gathered volumes. Prints nonzero 1D continuity percent instead of
+ * thresholding it. A fatal assertion returns from this helper; callers still rely on the recorded
+ * test failure.
+ *
+ * @param[in] tag Artifact stem appended below kOutDir; matching .inp/.rpt/.out paths may be
+ *     overwritten.
+ * @param[in] closure Non-null closure keyword for both control and active decks.
+ * @param[in] zs Aquifer column thickness in metres.
+ * @param[in] hg0 Initial saturated height in metres.
+ */
+void checkDrainingBed(const std::string& tag, const char* closure, double zs, double hg0) {
     SCOPED_TRACE(tag);
     // The control first: with the bed off, nothing enters the 1D at all and
     // its continuity must be exactly closed. If this fails, the deck is
     // wrong and the measurement below means nothing.
-    const SeamWater off = runSeamWater(tag + "_none",
-                                       bedOnlyDeck(false, closure, zs, hg0));
+    const SeamWater off = runSeamWater(tag + "_none", bedOnlyDeck(false, closure, zs, hg0));
     ASSERT_LT(std::fabs(off.error_pct), 1.0e-6)
         << "the control deck does not close (" << off.error_pct
         << " %), so it cannot be used to attribute the residual to the bed";
@@ -1162,35 +1299,38 @@ void checkDrainingBed(const std::string& tag, const char* closure,
     //
     // So the instrument is the clamp itself, counted where it happens. No
     // threshold to tune, and no geometry can make it lie.
-    ASSERT_GT(s.cap_binds, 0)
-        << "the aquifer→node drain cap never clamped on this deck, so the"
-           " assertions below would pass with the defect present. (Specific"
-           " yields here differ by " << s.sy_gap << "×, which is NOT the"
-           " test — a 56.8× deck sees nothing. What matters is that h_g·Sy·A"
-           " is small enough to bind: put the table close under the ground"
-           " AND keep the column thin.)";
+    ASSERT_GT(s.cap_binds, 0) << "the aquifer→node drain cap never clamped on this deck, so the"
+                                 " assertions below would pass with the defect present. (Specific"
+                                 " yields here differ by "
+                              << s.sy_gap
+                              << "×, which is NOT the"
+                                 " test — a 56.8× deck sees nothing. What matters is that h_g·Sy·A"
+                                 " is small enough to bind: put the table close under the ground"
+                                 " AND keep the column thin.)";
 
     // …and then the defect's own signature must be absent. Every refund is
     // water the router already paid the node and the aquifer then disowned.
-    EXPECT_EQ(s.refunds, 0)
-        << s.refunds << " firings went short on the node's account and were"
-           " refunded into the aquifer's books alone — after the router had"
-           " already handed that volume over. This was ~120 before G-W1"
-           " (124 on Linux, 117 on macOS — the COUNT is platform-dependent,"
-           " which is why the assertion is == 0 and not a magnitude).";
+    EXPECT_EQ(s.refunds, 0) << s.refunds
+                            << " firings went short on the node's account and were"
+                               " refunded into the aquifer's books alone — after the router had"
+                               " already handed that volume over. This was ~120 before G-W1"
+                               " (124 on Linux, 117 on macOS — the COUNT is platform-dependent,"
+                               " which is why the assertion is == 0 and not a magnitude).";
 
     // The aquifer's side of the seam is what its ledger says left plus what
     // is still sitting in the side accumulator, sampled but not yet gathered
     // by a cell firing. (`nacc` is the in-flight tail, not a loss: the run
     // ends between a sample and the firing that consumes it.)
     const double want_1d = (s.led_node + s.nacc) / s.v12;
-    const double booked  = s.routing_external + s.coupling_queue + s.coupling_volume;
+    const double booked = s.routing_external + s.coupling_queue + s.coupling_volume;
     EXPECT_NEAR(booked, want_1d, 1.0e-9 * want_1d)
-        << "the aquifer gave up " << want_1d << " (1D units) through the bed"
-           " — ledgered " << (s.led_node / s.v12) << " plus " << (s.nacc / s.v12)
-        << " in flight — but the 1D booked " << booked << ": external "
-        << s.routing_external << ", queued " << s.coupling_queue
-        << ", unqueued " << s.coupling_volume << ".\n"
+        << "the aquifer gave up " << want_1d
+        << " (1D units) through the bed"
+           " — ledgered "
+        << (s.led_node / s.v12) << " plus " << (s.nacc / s.v12) << " in flight — but the 1D booked "
+        << booked << ": external " << s.routing_external << ", queued " << s.coupling_queue
+        << ", unqueued " << s.coupling_volume
+        << ".\n"
            "Too LARGE means the node received water the aquifer never"
            " released — the refund path in fireCell §2 shrinking"
            " `qnode_last` after the router has already handed the volume"
@@ -1225,8 +1365,8 @@ void checkDrainingBed(const std::string& tag, const char* closure,
     // handoff's `kSyFloor` table.
     EXPECT_NEAR(s.coupling_volume * s.v12, s.nacc, 1.0e-12)
         << "the 1D has been promised " << (s.coupling_volume * s.v12)
-        << " m³ that has not been delivered, but the aquifer is only holding "
-        << s.nacc << " m³ that it has not yet handed over";
+        << " m³ that has not been delivered, but the aquifer is only holding " << s.nacc
+        << " m³ that it has not yet handed over";
 
     // The 1D's own continuity error is REPORTED, not asserted against a
     // threshold: on a deck this short the undelivered tail above is a real
@@ -1239,8 +1379,7 @@ void checkDrainingBed(const std::string& tag, const char* closure,
                      "[G-W1] 1D flow continuity, %s: %.6f %% (clamped %ld"
                      " firings; undelivered tail %.6g m3 of %.6g m3"
                      " exchanged)\n",
-                     tag.c_str(), s.error_pct, s.cap_binds, s.nacc,
-                     s.led_node + s.nacc);
+                     tag.c_str(), s.error_pct, s.cap_binds, s.nacc, s.led_node + s.nacc);
 }
 
 TEST(GwTransportKernel, DrainingBedAgreesWithTheNodeInVolume) {
@@ -1270,10 +1409,10 @@ TEST(GwTransportKernel, LeakingConduitCarriesItsQualityIntoTheAquifer) {
     // A seeping conduit over the mesh, no node inflow. The 1D already
     // debits this mass as its exfiltration loss, so the aquifer receiving
     // it completes a transfer rather than creating one.
-    std::string body=seamDeck(0.5,0.0,100.0,0.0);
-    const std::string anchor="[2D_AQUIFER_OPTIONS]\n";
-    body.insert(body.find(anchor)+anchor.size(),"LINK_SEEPAGE ONE_WAY\n");
-    const SeamResult s = runSeam("seam_link",body);
+    std::string body = seamDeck(0.5, 0.0, 100.0, 0.0);
+    const std::string anchor = "[2D_AQUIFER_OPTIONS]\n";
+    body.insert(body.find(anchor) + anchor.size(), "LINK_SEEPAGE ONE_WAY\n");
+    const SeamResult s = runSeam("seam_link", body);
     EXPECT_GT(s.gained_link, 0.0)
         << "a leaking conduit delivered no mass — the seam is still closed";
     // …and it did not come out of the aquifer's own books: the residual
@@ -1289,8 +1428,7 @@ TEST(GwTransportKernel, LeakingConduitCarriesItsQualityIntoTheAquifer) {
     // tail jumped to 0.0705 against a 6.1e-8 bound, with `residual` equal to
     // `inFlight1D` to the last digit — which is how the tail was identified
     // rather than mistaken for an 11 % mass leak.
-    EXPECT_LT(std::fabs(s.residual - s.in_flight),
-              1.0e-10 * std::fabs(s.init) + 1.0e-12)
+    EXPECT_LT(std::fabs(s.residual - s.in_flight), 1.0e-10 * std::fabs(s.init) + 1.0e-12)
         << "residual " << s.residual << ", of which " << s.in_flight
         << " is sampled-but-not-yet-gathered; the unexplained part is "
         << (s.residual - s.in_flight);
@@ -1305,9 +1443,8 @@ TEST(GwTransportKernel, LeakingConduitCarriesItsQualityIntoTheAquifer) {
     // carry 35.31× the pipe's concentration.
     ASSERT_GT(s.led_link, 0.0) << "no seepage water arrived; deck defect";
     EXPECT_LE(s.gained_link / s.led_link, 25.0 * (1.0 + 1.0e-9))
-        << "the aquifer received " << s.gained_link << " conc·m³ with "
-        << s.led_link << " m³ — " << s.gained_link / s.led_link
-        << " per m³ (1/vol_1d_to_2d = " << 1.0 / s.v12 << ")";
+        << "the aquifer received " << s.gained_link << " conc·m³ with " << s.led_link << " m³ — "
+        << s.gained_link / s.led_link << " per m³ (1/vol_1d_to_2d = " << 1.0 / s.v12 << ")";
 }
 
 TEST(GwTransportKernel, RechargingNodeSendsItsQualityDownTheBedAndIsLedgered) {
@@ -1327,8 +1464,7 @@ TEST(GwTransportKernel, RechargingNodeSendsItsQualityDownTheBedAndIsLedgered) {
     // tail jumped to 0.0705 against a 6.1e-8 bound, with `residual` equal to
     // `inFlight1D` to the last digit — which is how the tail was identified
     // rather than mistaken for an 11 % mass leak.
-    EXPECT_LT(std::fabs(s.residual - s.in_flight),
-              1.0e-10 * std::fabs(s.init) + 1.0e-12)
+    EXPECT_LT(std::fabs(s.residual - s.in_flight), 1.0e-10 * std::fabs(s.init) + 1.0e-12)
         << "residual " << s.residual << ", of which " << s.in_flight
         << " is sampled-but-not-yet-gathered; the unexplained part is "
         << (s.residual - s.in_flight);
@@ -1341,9 +1477,8 @@ TEST(GwTransportKernel, RechargingNodeSendsItsQualityDownTheBedAndIsLedgered) {
     // recharge cannot deliver more than 50 per m³ — in the aquifer's units.
     ASSERT_LT(s.led_node, 0.0) << "the bed did not recharge; deck defect";
     EXPECT_LE(s.gained_node / -s.led_node, 50.0 * (1.0 + 1.0e-9))
-        << "the aquifer received " << s.gained_node << " conc·m³ with "
-        << -s.led_node << " m³ — " << s.gained_node / -s.led_node
-        << " per m³ (1/vol_1d_to_2d = " << 1.0 / s.v12 << ")";
+        << "the aquifer received " << s.gained_node << " conc·m³ with " << -s.led_node << " m³ — "
+        << s.gained_node / -s.led_node << " per m³ (1/vol_1d_to_2d = " << 1.0 / s.v12 << ")";
 }
 
 TEST(GwTransportKernel, DrainingAquiferHandsItsMassToTheNodeQueue) {
@@ -1351,8 +1486,7 @@ TEST(GwTransportKernel, DrainingAquiferHandsItsMassToTheNodeQueue) {
     // bed, and the mass must reach the node's coupling queue — the same
     // channel the 2D surface's drain uses.
     const SeamResult s = runSeam("seam_node_out", seamDeck(0.95, 0.0, 0.0, 0.0));
-    EXPECT_GT(s.lost_node, 0.0)
-        << "the aquifer drained no mass to the node" ;
+    EXPECT_GT(s.lost_node, 0.0) << "the aquifer drained no mass to the node";
     // THE seam identity, and the one gate that catches both failure modes
     // this seam has produced: every unit of mass the aquifer gave up is
     // booked on the 1D side EXACTLY ONCE — delivered into an inflow row, or
@@ -1374,12 +1508,11 @@ TEST(GwTransportKernel, DrainingAquiferHandsItsMassToTheNodeQueue) {
     // This deck has no other external inflow and no surface coupling point,
     // so every unit in the 1D's inflow rows came from the aquifer.
     const double want_1d = s.lost_node / s.v12;
-    const double booked  = s.ex_in_ledger + s.gw_in_ledger + s.queue_sum;
+    const double booked = s.ex_in_ledger + s.gw_in_ledger + s.queue_sum;
     EXPECT_NEAR(booked, want_1d, 1.0e-9 * want_1d)
-        << "the 1D booked " << booked << " (ex_in " << s.ex_in_ledger
-        << " + gw_in " << s.gw_in_ledger << " + queued " << s.queue_sum
-        << ") against the aquifer's " << s.lost_node << " = " << want_1d
-        << " in 1D units (v12 " << s.v12 << ")";
+        << "the 1D booked " << booked << " (ex_in " << s.ex_in_ledger << " + gw_in "
+        << s.gw_in_ledger << " + queued " << s.queue_sum << ") against the aquifer's "
+        << s.lost_node << " = " << want_1d << " in 1D units (v12 " << s.v12 << ")";
     // G-W1 (2026-09-22): the identity is completed, NOT loosened. `nacc_mass`
     // is counted in `ledgeredStorage` (in-flight mass is storage the ledger
     // has not yet named) but is only booked into `gained_node` when the cell
@@ -1391,8 +1524,7 @@ TEST(GwTransportKernel, DrainingAquiferHandsItsMassToTheNodeQueue) {
     // tail jumped to 0.0705 against a 6.1e-8 bound, with `residual` equal to
     // `inFlight1D` to the last digit — which is how the tail was identified
     // rather than mistaken for an 11 % mass leak.
-    EXPECT_LT(std::fabs(s.residual - s.in_flight),
-              1.0e-10 * std::fabs(s.init) + 1.0e-12)
+    EXPECT_LT(std::fabs(s.residual - s.in_flight), 1.0e-10 * std::fabs(s.init) + 1.0e-12)
         << "residual " << s.residual << ", of which " << s.in_flight
         << " is sampled-but-not-yet-gathered; the unexplained part is "
         << (s.residual - s.in_flight);
@@ -1429,17 +1561,27 @@ TEST(GwTransportKernel, ContinuityDenominatorNamesEveryInflowRoute) {
         // make the reported percentage misbehave.
         t.sat_mass[0] = 5.0;
         switch (route) {
-            case 0: t.init_mass[0]    = 5.0; break;
-            case 1: t.gained_infil[0] = 5.0; break;
-            case 2: t.gained_node[0]  = 5.0; break;   // T7.4
-            case 3: t.gained_link[0]  = 5.0; break;   // T7.4
-            default: t.net_lateral[0] = 5.0; break;
+        case 0:
+            t.init_mass[0] = 5.0;
+            break;
+        case 1:
+            t.gained_infil[0] = 5.0;
+            break;
+        case 2:
+            t.gained_node[0] = 5.0;
+            break; // T7.4
+        case 3:
+            t.gained_link[0] = 5.0;
+            break; // T7.4
+        default:
+            t.net_lateral[0] = 5.0;
+            break;
         }
         return t;
     };
 
-    const char* names[5] = {"init_mass", "gained_infil", "gained_node",
-                            "gained_link", "net_lateral"};
+    const char* names[5] = {"init_mass", "gained_infil", "gained_node", "gained_link",
+                            "net_lateral"};
     for (int route = 0; route < 5; ++route) {
         const SubsurfaceTransportState t = only(route);
         EXPECT_NEAR(t.continuityDenominator(0), 5.0, 1.0e-12)
@@ -1461,7 +1603,7 @@ TEST(GwTransportKernel, ContinuityDenominatorNamesEveryInflowRoute) {
     SubsurfaceTransportState t;
     t.resize(1, 1, 0);
     t.row_names = {"TSS"};
-    t.lost_deep[0] = 5.0;   // mass left…
+    t.lost_deep[0] = 5.0; // mass left…
     // …and nothing booked its arrival: all five routes stay zero.
     EXPECT_EQ(t.continuityDenominator(0), 0.0)
         << "a state with no inflow on any route must have no scale to divide"
@@ -1526,7 +1668,9 @@ TEST(GwTransportKernel, ReportSaysNaWhenThereIsNoScaleToDivideBy) {
 
     const std::string rpt = [&] {
         std::ifstream f(kOutDir / "denom_no_scale.rpt");
-        std::ostringstream ss; ss << f.rdbuf(); return ss.str();
+        std::ostringstream ss;
+        ss << f.rdbuf();
+        return ss.str();
     }();
     const auto blk = rpt.find("2D Aquifer Quality Continuity");
     ASSERT_NE(blk, std::string::npos)
@@ -1537,7 +1681,8 @@ TEST(GwTransportKernel, ReportSaysNaWhenThereIsNoScaleToDivideBy) {
     EXPECT_NE(reported.find("n/a"), std::string::npos)
         << "with every inflow route at zero there is no scale to judge the"
            " residual against, and the report claimed a number anyway: \""
-        << reported.substr(0, reported.find('\n')) << "\". Printing 0.000"
+        << reported.substr(0, reported.find('\n'))
+        << "\". Printing 0.000"
            " here reads as a perfect balance when the truth is that the"
            " question is unanswerable — and a zero scale beside a non-zero"
            " residual is exactly how the NEXT unbooked inflow route will"
@@ -1546,10 +1691,23 @@ TEST(GwTransportKernel, ReportSaysNaWhenThereIsNoScaleToDivideBy) {
 
 // Phase35: authored wells must affect the actual aquifer and its persisted books.
 namespace {
+/**
+ * @brief Adapt the groundwater deck to isolate authored source forcing.
+ *
+ * Missing replacement fragments are silently ignored; no parser validation or file IO occurs.
+ *
+ * @param[in] rows Raw groundwater source/options rows inserted into the base deck.
+ * @param[in] hg Initial saturated height in metres.
+ * @param[in] mesh Selected triangle/quad/mixed layout.
+ * @return Owned deck with exact matching rain/infiltration entries zeroed, near-zero conductivity,
+ *     and the cell-1 override removed.
+ */
 std::string forcingDeck(const std::string& rows, double hg = .3, Mesh mesh = Mesh::Tri) {
     auto text = deck(mesh, rows, hg);
     auto replace = [&](const std::string& a, const std::string& b) {
-        const auto at = text.find(a); if (at != std::string::npos) text.replace(at,a.size(),b);
+        const auto at = text.find(a);
+        if (at != std::string::npos)
+            text.replace(at, a.size(), b);
     };
     replace("RAIN  0:00  20.0", "RAIN  0:00  0.0");
     replace("*  CONSTANT  40.0", "*  CONSTANT  0.0");
@@ -1560,173 +1718,280 @@ std::string forcingDeck(const std::string& rows, double hg = .3, Mesh mesh = Mes
 }
 TEST(GwTransportKernel, NamedSourcesApplyTotalFlowScaleAndNativeMassOnActualCells) {
     for (const auto& units : {"MG/L", "UG/L", "#/L"}) {
-        auto body=forcingDeck("[GW_SOURCES]\nW * FLOW 0.001 SCALE 0.5 TSS CONC 10\nM CELL 1 FLOW 0 TSS MASS 2\n\n");
-        const auto at=body.find("TSS  MG/L");body.replace(at,9,std::string("TSS  ")+units);
-        Deck r=open(std::string("named_sources_")+units[0],body);ASSERT_TRUE(r.opened);
-        const auto expectedUnit=units[0]=='#'?openswmm::MassUnits::COUNTS_PER_L:
-            units[0]=='U'?openswmm::MassUnits::UG_PER_L:openswmm::MassUnits::MG_PER_L;
-        ASSERT_EQ(r.eng->context().pollutants.units[0],expectedUnit);
+        auto body = forcingDeck(
+            "[GW_SOURCES]\nW * FLOW 0.001 SCALE 0.5 TSS CONC 10\nM CELL 1 FLOW 0 TSS MASS 2\n\n");
+        const auto at = body.find("TSS  MG/L");
+        body.replace(at, 9, std::string("TSS  ") + units);
+        Deck r = open(std::string("named_sources_") + units[0], body);
+        ASSERT_TRUE(r.opened);
+        const auto expectedUnit = units[0] == '#'   ? openswmm::MassUnits::COUNTS_PER_L
+                                  : units[0] == 'U' ? openswmm::MassUnits::UG_PER_L
+                                                    : openswmm::MassUnits::MG_PER_L;
+        ASSERT_EQ(r.eng->context().pollutants.units[0], expectedUnit);
         ASSERT_TRUE(run(r));
-        const auto& gw=r.eng->surfaceRouter2D().subsurface();const auto& tr=gw.transport();
-        EXPECT_NEAR(gw.state().led_source_in,.6,1e-7);
-        EXPECT_NEAR(tr.gained_source[0],8.4,1e-6); // 0.6 m3 × 10 + 2 native-mass/s × 1200 / 1000
-        EXPECT_NEAR(gw.state().continuityResidual(),0,1e-7);
-        EXPECT_NEAR(tr.residual(0),0,1e-7);
-        EXPECT_GT(gw.state().hg[0],.3);EXPECT_GT(gw.state().hg[1],.3);
-        double value=0;ASSERT_EQ(swmm_gw2d_get_ledger(r.e,SWMM_GW2D_LED_SOURCE_IN,&value),SWMM_OK);EXPECT_NEAR(value,.6,1e-7);
-        ASSERT_EQ(swmm_gw2d_get_species_ledger(r.e,0,SWMM_GW2D_SPL_SOURCE_IN,&value),SWMM_OK);EXPECT_NEAR(value,8.4,1e-6);
+        const auto& gw = r.eng->surfaceRouter2D().subsurface();
+        const auto& tr = gw.transport();
+        EXPECT_NEAR(gw.state().led_source_in, .6, 1e-7);
+        EXPECT_NEAR(tr.gained_source[0], 8.4, 1e-6); // 0.6 m3 × 10 + 2 native-mass/s × 1200 / 1000
+        EXPECT_NEAR(gw.state().continuityResidual(), 0, 1e-7);
+        EXPECT_NEAR(tr.residual(0), 0, 1e-7);
+        EXPECT_GT(gw.state().hg[0], .3);
+        EXPECT_GT(gw.state().hg[1], .3);
+        double value = 0;
+        ASSERT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_SOURCE_IN, &value), SWMM_OK);
+        EXPECT_NEAR(value, .6, 1e-7);
+        ASSERT_EQ(swmm_gw2d_get_species_ledger(r.e, 0, SWMM_GW2D_SPL_SOURCE_IN, &value), SWMM_OK);
+        EXPECT_NEAR(value, 8.4, 1e-6);
         finish(r);
     }
 }
 TEST(GwTransportKernel, ExtractionIsAvailabilityLimitedAndRemovesDissolvedSpecies) {
-    Deck r=open("source_extraction",forcingDeck("[GW_SOURCES]\nP * FLOW -1\n\n",.1));
-    ASSERT_TRUE(r.opened);ASSERT_TRUE(run(r));const auto& gw=r.eng->surfaceRouter2D().subsurface();
-    EXPECT_GT(gw.state().led_source_out,0);EXPECT_LT(gw.state().led_source_out,20);
-    EXPECT_GT(gw.transport().lost_source[0],0);
-    EXPECT_NEAR(gw.state().continuityResidual(),0,1e-7);EXPECT_NEAR(gw.transport().residual(0),0,1e-7);
+    Deck r = open("source_extraction", forcingDeck("[GW_SOURCES]\nP * FLOW -1\n\n", .1));
+    ASSERT_TRUE(r.opened);
+    ASSERT_TRUE(run(r));
+    const auto& gw = r.eng->surfaceRouter2D().subsurface();
+    EXPECT_GT(gw.state().led_source_out, 0);
+    EXPECT_LT(gw.state().led_source_out, 20);
+    EXPECT_GT(gw.transport().lost_source[0], 0);
+    EXPECT_NEAR(gw.state().continuityResidual(), 0, 1e-7);
+    EXPECT_NEAR(gw.transport().residual(0), 0, 1e-7);
     finish(r);
 }
 TEST(GwTransportKernel, SourceSeriesUsesNonMidnightStartAndFileValues) {
     fs::create_directories(kOutDir);
-    const auto series=kOutDir/"well_nonmidnight.dat";
-    {std::ofstream out(series);out<<"01/01/2026 12:00 0\n01/01/2026 12:10 0.002\n01/01/2026 12:20 0\n";}
-    auto body=forcingDeck("[TIMESERIES]\nWQ FILE \""+series.string()+"\"\n\n[GW_SOURCES]\nW * FLOW WQ TSS CONC 3\n\n");
-    auto at=body.find("START_TIME           00:00:00");body.replace(at,std::string("START_TIME           00:00:00").size(),"START_TIME           12:00:00");
-    at=body.find("END_TIME             00:20:00");body.replace(at,std::string("END_TIME             00:20:00").size(),"END_TIME             12:20:00");
-    Deck r=open("source_nonmidnight",body);ASSERT_TRUE(r.opened);ASSERT_TRUE(run(r));
+    const auto series = kOutDir / "well_nonmidnight.dat";
+    {
+        std::ofstream out(series);
+        out << "01/01/2026 12:00 0\n01/01/2026 12:10 0.002\n01/01/2026 12:20 0\n";
+    }
+    auto body = forcingDeck("[TIMESERIES]\nWQ FILE \"" + series.string() +
+                            "\"\n\n[GW_SOURCES]\nW * FLOW WQ TSS CONC 3\n\n");
+    auto at = body.find("START_TIME           00:00:00");
+    body.replace(at, std::string("START_TIME           00:00:00").size(),
+                 "START_TIME           12:00:00");
+    at = body.find("END_TIME             00:20:00");
+    body.replace(at, std::string("END_TIME             00:20:00").size(),
+                 "END_TIME             12:20:00");
+    Deck r = open("source_nonmidnight", body);
+    ASSERT_TRUE(r.opened);
+    ASSERT_TRUE(run(r));
     // End flushes the final partial surface/GW synchronization batch.
-    ASSERT_EQ(swmm_engine_end(r.e),SWMM_OK);r.started=false;
-    const double duration=r.eng->context().options.totalDurationMs()/1000.0;
-    EXPECT_NEAR(r.eng->context().current_time,duration,1e-8);
-    ASSERT_GT(duration,1198);ASSERT_LE(duration,1200);
+    ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
+    r.started = false;
+    const double duration = r.eng->context().options.totalDurationMs() / 1000.0;
+    EXPECT_NEAR(r.eng->context().current_time, duration, 1e-8);
+    ASSERT_GT(duration, 1198);
+    ASSERT_LE(duration, 1200);
     // Legacy duration floors separate datetime fractions: this non-midnight
     // interval is 1199 s on this representation, not an assumed 1200 s.
-    const double expected=1.2-(1200-duration)*(1200-duration)*.002/(2*600);
-    const auto& gw=r.eng->surfaceRouter2D().subsurface();
-    EXPECT_NEAR(gw.state().led_source_in,expected,1e-8);
-    EXPECT_NEAR(gw.transport().gained_source[0],3*expected,1e-8);finish(r);
+    const double expected = 1.2 - (1200 - duration) * (1200 - duration) * .002 / (2 * 600);
+    const auto& gw = r.eng->surfaceRouter2D().subsurface();
+    EXPECT_NEAR(gw.state().led_source_in, expected, 1e-8);
+    EXPECT_NEAR(gw.transport().gained_source[0], 3 * expected, 1e-8);
+    finish(r);
 }
 TEST(GwTransportKernel, UnsupportedGroundwaterForcingFailsRatherThanRunningInertly) {
-    const std::vector<std::string> unsupported={
-        "[GW_INITIAL_QUALITY]\n* LAYER 1 TSS 3\n\n",
-        "[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 3\n\n",
-        "[GW_SOURCES]\nW TAG no_such_tag FLOW 0.001\n\n"};
-    for(std::size_t i=0;i<unsupported.size();++i){
+    const std::vector<std::string> unsupported = {"[GW_INITIAL_QUALITY]\n* LAYER 1 TSS 3\n\n",
+                                                  "[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 3\n\n",
+                                                  "[GW_SOURCES]\nW TAG no_such_tag FLOW 0.001\n\n"};
+    for (std::size_t i = 0; i < unsupported.size(); ++i) {
         SCOPED_TRACE(i);
-        Deck r=open("unsupported_forcing_"+std::to_string(i),forcingDeck(unsupported[i]));
-        if(i<2)ASSERT_TRUE(r.opened); // Valid authored drafts; the active kernel rejects unsupported semantics.
-        if(r.opened)EXPECT_NE(swmm_engine_initialize(r.e),SWMM_OK);
-        std::string errors=swmm_get_last_error_msg(r.e)?swmm_get_last_error_msg(r.e):"";
-        for(int n=0;n<swmm_get_error_count(r.e);++n)if(const char* e=swmm_get_error_at(r.e,n))errors+=e;
-        EXPECT_NE(errors.find(i==0?"LAYER":i==1?"GW_BOUNDARY_QUALITY":"no_such_tag"),std::string::npos)<<errors;
+        Deck r = open("unsupported_forcing_" + std::to_string(i), forcingDeck(unsupported[i]));
+        if (i < 2)
+            ASSERT_TRUE(
+                r.opened); // Valid authored drafts; the active kernel rejects unsupported semantics.
+        if (r.opened)
+            EXPECT_NE(swmm_engine_initialize(r.e), SWMM_OK);
+        std::string errors = swmm_get_last_error_msg(r.e) ? swmm_get_last_error_msg(r.e) : "";
+        for (int n = 0; n < swmm_get_error_count(r.e); ++n)
+            if (const char* e = swmm_get_error_at(r.e, n))
+                errors += e;
+        EXPECT_NE(errors.find(i == 0   ? "LAYER"
+                              : i == 1 ? "GW_BOUNDARY_QUALITY"
+                                       : "no_such_tag"),
+                  std::string::npos)
+            << errors;
         finish(r);
     }
 }
 TEST(GwTransportKernel, InitialCellQualityOverridesLaterGlobalRows) {
-    Deck r=open("initial_scope_precedence",forcingDeck("[GW_INITIAL_QUALITY]\n* SAT TSS 7\n\n"));ASSERT_TRUE(r.opened);ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK);
-    const auto& gw=r.eng->surfaceRouter2D().subsurface();const auto& tr=gw.transport();
-    EXPECT_NEAR(tr.sat_mass[tr.idx(0,0)]/gw.satVolume(0),25,1e-12);
-    EXPECT_NEAR(tr.sat_mass[tr.idx(0,1)]/gw.satVolume(1),7,1e-12);finish(r);
+    Deck r = open("initial_scope_precedence", forcingDeck("[GW_INITIAL_QUALITY]\n* SAT TSS 7\n\n"));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    const auto& gw = r.eng->surfaceRouter2D().subsurface();
+    const auto& tr = gw.transport();
+    EXPECT_NEAR(tr.sat_mass[tr.idx(0, 0)] / gw.satVolume(0), 25, 1e-12);
+    EXPECT_NEAR(tr.sat_mass[tr.idx(0, 1)] / gw.satVolume(1), 7, 1e-12);
+    finish(r);
 }
 TEST(GwTransportKernel, SourceLedgersResumeThroughNativeHotstart) {
-    const auto body=forcingDeck("[GW_SOURCES]\nW * FLOW 0.0005 TSS CONC 2\nP CELL 1 FLOW -0.0001\n\n");
-    const auto path=kOutDir/"source_restart.hsf";Deck r=open("source_restart_write",body);ASSERT_TRUE(r.opened);ASSERT_TRUE(run(r));
-    const auto& gw=r.eng->surfaceRouter2D().subsurface();const double waterIn=gw.state().led_source_in,waterOut=gw.state().led_source_out;
-    const double massIn=gw.transport().gained_source[0],massOut=gw.transport().lost_source[0];
-    ASSERT_EQ(swmm_hotstart_save(r.e,path.string().c_str()),SWMM_OK);finish(r);
-    Deck resumed=open("source_restart_read",body);ASSERT_TRUE(resumed.opened);ASSERT_EQ(swmm_engine_initialize(resumed.e),SWMM_OK);
-    SWMM_HotStart hs=nullptr;ASSERT_EQ(swmm_hotstart_open(path.string().c_str(),&hs),SWMM_OK);ASSERT_EQ(swmm_hotstart_apply(resumed.e,hs),SWMM_OK);
-    ASSERT_EQ(swmm_engine_start(resumed.e,1),SWMM_OK);resumed.started=true;
-    const auto& next=resumed.eng->surfaceRouter2D().subsurface();
-    EXPECT_DOUBLE_EQ(next.state().led_source_in,waterIn);EXPECT_DOUBLE_EQ(next.state().led_source_out,waterOut);
-    EXPECT_DOUBLE_EQ(next.transport().gained_source[0],massIn);EXPECT_DOUBLE_EQ(next.transport().lost_source[0],massOut);
-    EXPECT_NEAR(next.transport().residual(0),0,1e-7);
-    double elapsed=0;
-    for(int i=0;i<20;++i){ASSERT_EQ(swmm_engine_step(resumed.e,&elapsed),SWMM_OK);if(elapsed<=0)break;}
+    const auto body =
+        forcingDeck("[GW_SOURCES]\nW * FLOW 0.0005 TSS CONC 2\nP CELL 1 FLOW -0.0001\n\n");
+    const auto path = kOutDir / "source_restart.hsf";
+    Deck r = open("source_restart_write", body);
+    ASSERT_TRUE(r.opened);
+    ASSERT_TRUE(run(r));
+    const auto& gw = r.eng->surfaceRouter2D().subsurface();
+    const double waterIn = gw.state().led_source_in, waterOut = gw.state().led_source_out;
+    const double massIn = gw.transport().gained_source[0], massOut = gw.transport().lost_source[0];
+    ASSERT_EQ(swmm_hotstart_save(r.e, path.string().c_str()), SWMM_OK);
+    finish(r);
+    Deck resumed = open("source_restart_read", body);
+    ASSERT_TRUE(resumed.opened);
+    ASSERT_EQ(swmm_engine_initialize(resumed.e), SWMM_OK);
+    SWMM_HotStart hs = nullptr;
+    ASSERT_EQ(swmm_hotstart_open(path.string().c_str(), &hs), SWMM_OK);
+    ASSERT_EQ(swmm_hotstart_apply(resumed.e, hs), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(resumed.e, 1), SWMM_OK);
+    resumed.started = true;
+    const auto& next = resumed.eng->surfaceRouter2D().subsurface();
+    EXPECT_DOUBLE_EQ(next.state().led_source_in, waterIn);
+    EXPECT_DOUBLE_EQ(next.state().led_source_out, waterOut);
+    EXPECT_DOUBLE_EQ(next.transport().gained_source[0], massIn);
+    EXPECT_DOUBLE_EQ(next.transport().lost_source[0], massOut);
+    EXPECT_NEAR(next.transport().residual(0), 0, 1e-7);
+    double elapsed = 0;
+    for (int i = 0; i < 20; ++i) {
+        ASSERT_EQ(swmm_engine_step(resumed.e, &elapsed), SWMM_OK);
+        if (elapsed <= 0)
+            break;
+    }
     resumed.eng->surfaceRouter2D().flushPendingBatch(resumed.eng->context());
-    EXPECT_GT(next.state().led_source_in,waterIn);
-    EXPECT_GT(next.transport().gained_source[0],massIn);
-    EXPECT_NEAR(next.transport().residual(0),0,1e-7);
-    swmm_hotstart_close(hs);finish(resumed);
+    EXPECT_GT(next.state().led_source_in, waterIn);
+    EXPECT_GT(next.transport().gained_source[0], massIn);
+    EXPECT_NEAR(next.transport().residual(0), 0, 1e-7);
+    swmm_hotstart_close(hs);
+    finish(resumed);
 }
 TEST(GwTransportKernel, FlowReversalCannotWithdrawFutureInjectionAndClosesAcrossCadences) {
-    double firstIn[2]={},firstOut[2]={};
-    for(int cadence=0;cadence<2;++cadence) for(int reverse=0;reverse<2;++reverse){
-        const std::string values=reverse ? "1\nWQ 0:00:03 -1\nWQ 0:00:06 0" : "-1\nWQ 0:00:03 1\nWQ 0:00:06 0";
-        auto body=forcingDeck("[TIMESERIES]\nWQ 0:00:00 "+values+"\n\n[GW_SOURCES]\nW * FLOW WQ TSS CONC 2\n\n",0);
-        if(cadence){auto at=body.find("MAX_TIMESTEP 5");body.replace(at,14,"MAX_TIMESTEP 1");}
-        Deck r=open("reversal_"+std::to_string(cadence)+"_"+std::to_string(reverse),body);ASSERT_TRUE(r.opened);ASSERT_TRUE(run(r));
-        const auto& gw=r.eng->surfaceRouter2D().subsurface();
-        EXPECT_NEAR(gw.state().led_source_in,reverse?.75:2.25,1e-6);
-        if(!reverse)EXPECT_NEAR(gw.state().led_source_out,0,1e-6);
-        else EXPECT_GT(gw.state().led_source_out,.5);
-        EXPECT_NEAR(gw.state().continuityResidual(),0,1e-7);
-        EXPECT_NEAR(gw.transport().residual(0),0,1e-7);
-        if(!cadence){firstIn[reverse]=gw.state().led_source_in;firstOut[reverse]=gw.state().led_source_out;}
-        else {EXPECT_NEAR(gw.state().led_source_in,firstIn[reverse],1e-6);EXPECT_NEAR(gw.state().led_source_out,firstOut[reverse],1e-5);}
-        finish(r);
-    }
+    double firstIn[2] = {}, firstOut[2] = {};
+    for (int cadence = 0; cadence < 2; ++cadence)
+        for (int reverse = 0; reverse < 2; ++reverse) {
+            const std::string values =
+                reverse ? "1\nWQ 0:00:03 -1\nWQ 0:00:06 0" : "-1\nWQ 0:00:03 1\nWQ 0:00:06 0";
+            auto body = forcingDeck("[TIMESERIES]\nWQ 0:00:00 " + values +
+                                        "\n\n[GW_SOURCES]\nW * FLOW WQ TSS CONC 2\n\n",
+                                    0);
+            if (cadence) {
+                auto at = body.find("MAX_TIMESTEP 5");
+                body.replace(at, 14, "MAX_TIMESTEP 1");
+            }
+            Deck r =
+                open("reversal_" + std::to_string(cadence) + "_" + std::to_string(reverse), body);
+            ASSERT_TRUE(r.opened);
+            ASSERT_TRUE(run(r));
+            const auto& gw = r.eng->surfaceRouter2D().subsurface();
+            EXPECT_NEAR(gw.state().led_source_in, reverse ? .75 : 2.25, 1e-6);
+            if (!reverse)
+                EXPECT_NEAR(gw.state().led_source_out, 0, 1e-6);
+            else
+                EXPECT_GT(gw.state().led_source_out, .5);
+            EXPECT_NEAR(gw.state().continuityResidual(), 0, 1e-7);
+            EXPECT_NEAR(gw.transport().residual(0), 0, 1e-7);
+            if (!cadence) {
+                firstIn[reverse] = gw.state().led_source_in;
+                firstOut[reverse] = gw.state().led_source_out;
+            } else {
+                EXPECT_NEAR(gw.state().led_source_in, firstIn[reverse], 1e-6);
+                EXPECT_NEAR(gw.state().led_source_out, firstOut[reverse], 1e-5);
+            }
+            finish(r);
+        }
 }
 TEST(GwTransportKernel, CoupledGroundwaterRejectsUnsupportedRk2Route) {
-    auto body=forcingDeck("");const auto at=body.find("[2D_OPTIONS]\n");body.insert(at+13,"RECONSTRUCTION_ORDER 2\n");
-    Deck r=open("groundwater_rk2",body);ASSERT_TRUE(r.opened);EXPECT_NE(swmm_engine_initialize(r.e),SWMM_OK);finish(r);
+    auto body = forcingDeck("");
+    const auto at = body.find("[2D_OPTIONS]\n");
+    body.insert(at + 13, "RECONSTRUCTION_ORDER 2\n");
+    Deck r = open("groundwater_rk2", body);
+    ASSERT_TRUE(r.opened);
+    EXPECT_NE(swmm_engine_initialize(r.e), SWMM_OK);
+    finish(r);
 }
 TEST(GwTransportKernel, AquiferOptionSnapshotsPreserveFullDoublePrecision) {
-    Deck r=open("aquifer_option_precision",forcingDeck(""));ASSERT_TRUE(r.opened);
-    for(const char* key : {"C_GW","C_COL"}) {
-        constexpr double exact=.12345678901234566;
-        ASSERT_EQ(swmm_gw2d_option_set(r.e,key,"0.12345678901234566"),SWMM_OK);
-        char buffer[128]={};ASSERT_EQ(swmm_gw2d_option_get(r.e,key,buffer,sizeof buffer),SWMM_OK);
-        EXPECT_DOUBLE_EQ(std::stod(buffer),exact);
-        ASSERT_EQ(swmm_gw2d_option_set(r.e,key,"0.5"),SWMM_OK);
-        ASSERT_EQ(swmm_gw2d_option_set(r.e,key,buffer),SWMM_OK);
-        ASSERT_EQ(swmm_gw2d_option_get(r.e,key,buffer,sizeof buffer),SWMM_OK);
-        EXPECT_DOUBLE_EQ(std::stod(buffer),exact);
+    Deck r = open("aquifer_option_precision", forcingDeck(""));
+    ASSERT_TRUE(r.opened);
+    for (const char* key : {"C_GW", "C_COL"}) {
+        constexpr double exact = .12345678901234566;
+        ASSERT_EQ(swmm_gw2d_option_set(r.e, key, "0.12345678901234566"), SWMM_OK);
+        char buffer[128] = {};
+        ASSERT_EQ(swmm_gw2d_option_get(r.e, key, buffer, sizeof buffer), SWMM_OK);
+        EXPECT_DOUBLE_EQ(std::stod(buffer), exact);
+        ASSERT_EQ(swmm_gw2d_option_set(r.e, key, "0.5"), SWMM_OK);
+        ASSERT_EQ(swmm_gw2d_option_set(r.e, key, buffer), SWMM_OK);
+        ASSERT_EQ(swmm_gw2d_option_get(r.e, key, buffer, sizeof buffer), SWMM_OK);
+        EXPECT_DOUBLE_EQ(std::stod(buffer), exact);
     }
     finish(r);
 }
 TEST(GwTransportKernel, AuthoringTagGettersWorkBeforeRuntimeInitialization) {
-    Deck r=open("authoring_tag_snapshot",forcingDeck(""));ASSERT_TRUE(r.opened);
-    ASSERT_EQ(swmm_2d_set_triangle_tag(r.e,0,"selected-groundwater"),SWMM_OK);
-    ASSERT_EQ(swmm_2d_set_vertex_tag(r.e,0,"survey"),SWMM_OK);
-    char text[128]={};ASSERT_EQ(swmm_2d_get_triangle_tag(r.e,0,text,sizeof text),SWMM_OK);EXPECT_STREQ(text,"selected-groundwater");
-    ASSERT_EQ(swmm_2d_get_vertex_tag(r.e,0,text,sizeof text),SWMM_OK);EXPECT_STREQ(text,"survey");
-    EXPECT_EQ(swmm_2d_get_triangle_tag(r.e,-1,text,sizeof text),SWMM_ERR_BADINDEX);
-    EXPECT_EQ(swmm_2d_get_vertex_tag(r.e,999,text,sizeof text),SWMM_ERR_BADINDEX);
+    Deck r = open("authoring_tag_snapshot", forcingDeck(""));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_2d_set_triangle_tag(r.e, 0, "selected-groundwater"), SWMM_OK);
+    ASSERT_EQ(swmm_2d_set_vertex_tag(r.e, 0, "survey"), SWMM_OK);
+    char text[128] = {};
+    ASSERT_EQ(swmm_2d_get_triangle_tag(r.e, 0, text, sizeof text), SWMM_OK);
+    EXPECT_STREQ(text, "selected-groundwater");
+    ASSERT_EQ(swmm_2d_get_vertex_tag(r.e, 0, text, sizeof text), SWMM_OK);
+    EXPECT_STREQ(text, "survey");
+    EXPECT_EQ(swmm_2d_get_triangle_tag(r.e, -1, text, sizeof text), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_2d_get_vertex_tag(r.e, 999, text, sizeof text), SWMM_ERR_BADINDEX);
     finish(r);
 }
 TEST(GwTransportKernel, GroundwaterHdfUnitsFollowNativeSpeciesEvenWhenSurfaceTransportIsOff) {
-    const char* inputUnits[]={"MG/L","UG/L","#/L"};
-    const char* outputUnits[]={"MG/L","UG/L","#/L"};
-    for(int variant=0;variant<3;++variant) {
-        const auto file="gw_native_units_"+std::to_string(variant)+".h5";
-        auto body=forcingDeck("[GW_TRANSPORT_OPTIONS]\nTRANSPORT_POLLUTANTS YES\nTRANSPORT_AGE YES\n\n"
+    const char* inputUnits[] = {"MG/L", "UG/L", "#/L"};
+    const char* outputUnits[] = {"MG/L", "UG/L", "#/L"};
+    for (int variant = 0; variant < 3; ++variant) {
+        const auto file = "gw_native_units_" + std::to_string(variant) + ".h5";
+        auto body = forcingDeck(
+            "[GW_TRANSPORT_OPTIONS]\nTRANSPORT_POLLUTANTS YES\nTRANSPORT_AGE YES\n\n"
             "[GW_INITIAL_QUALITY]\n* SAT __WATER_AGE__ 3600\n* UNSAT __WATER_AGE__ 3600\n\n"
             "[GW_SOURCES]\nW * FLOW 0.0001 __WATER_AGE__ CONC 7200\n\n");
-        auto at=body.find("TSS  MG/L");body.replace(at,9,std::string("TSS  ")+inputUnits[variant]);
-        body.insert(body.find("[POLLUTANTS]"),"[OPTIONS]\nWATER_AGE ON\n\n");
-        at=body.find("REPORT_2D NO");body.replace(at,12,"REPORT_2D YES\nOUTPUT_FILE "+file+"\nOUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES DEPTH GROUNDWATER\nTRANSPORT_POLLUTANTS NO\nTRANSPORT_AGE NO");
-        Deck r=open("gw_native_units_"+std::to_string(variant),body);ASSERT_TRUE(r.opened);
-        ASSERT_EQ(r.eng->context().pollutants.units[0],static_cast<openswmm::MassUnits>(variant));
-        ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK);ASSERT_EQ(swmm_engine_start(r.e,1),SWMM_OK);r.started=true;
-        const auto& gw=r.eng->surfaceRouter2D().subsurface();const auto& tr=gw.transport();ASSERT_GE(tr.age_row,0);
-        EXPECT_NEAR(tr.sat_mass[tr.idx(tr.age_row,0)]/gw.satVolume(0),3600,1e-10);
-        double elapsed=0;int status=0;while((status=swmm_engine_step(r.e,&elapsed))==SWMM_OK&&elapsed>0){}
-        ASSERT_EQ(status,SWMM_OK);ASSERT_EQ(swmm_engine_end(r.e),SWMM_OK);r.started=false;
-        EXPECT_NEAR(tr.gained_source[static_cast<std::size_t>(tr.age_row)],864,1e-7);
+        auto at = body.find("TSS  MG/L");
+        body.replace(at, 9, std::string("TSS  ") + inputUnits[variant]);
+        body.insert(body.find("[POLLUTANTS]"), "[OPTIONS]\nWATER_AGE ON\n\n");
+        at = body.find("REPORT_2D NO");
+        body.replace(
+            at, 12,
+            "REPORT_2D YES\nOUTPUT_FILE " + file +
+                "\nOUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES DEPTH GROUNDWATER\nTRANSPORT_POLLUTANTS NO\nTRANSPORT_AGE NO");
+        Deck r = open("gw_native_units_" + std::to_string(variant), body);
+        ASSERT_TRUE(r.opened);
+        ASSERT_EQ(r.eng->context().pollutants.units[0], static_cast<openswmm::MassUnits>(variant));
+        ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+        ASSERT_EQ(swmm_engine_start(r.e, 1), SWMM_OK);
+        r.started = true;
+        const auto& gw = r.eng->surfaceRouter2D().subsurface();
+        const auto& tr = gw.transport();
+        ASSERT_GE(tr.age_row, 0);
+        EXPECT_NEAR(tr.sat_mass[tr.idx(tr.age_row, 0)] / gw.satVolume(0), 3600, 1e-10);
+        double elapsed = 0;
+        int status = 0;
+        while ((status = swmm_engine_step(r.e, &elapsed)) == SWMM_OK && elapsed > 0) {
+        }
+        ASSERT_EQ(status, SWMM_OK);
+        ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
+        r.started = false;
+        EXPECT_NEAR(tr.gained_source[static_cast<std::size_t>(tr.age_row)], 864, 1e-7);
         finish(r);
-        const hid_t h5=H5Fopen((kOutDir/file).string().c_str(),H5F_ACC_RDONLY,H5P_DEFAULT);ASSERT_GE(h5,0);
-        EXPECT_LE(H5Lexists(h5,"Mesh2_face_species_conc",H5P_DEFAULT),0);
-        for(const char* field:{"Mesh2_face_gw_sat_conc","Mesh2_face_gw_unsat_conc"}) {
-            const hid_t ds=H5Dopen2(h5,field,H5P_DEFAULT);ASSERT_GE(ds,0);
-            auto attr=[&](const char* key){
-                const hid_t a=H5Aopen(ds,key,H5P_DEFAULT);if(a<0)return std::string{};
-                const hid_t t=H5Aget_type(a);std::vector<char> bytes(H5Tget_size(t)+1,0);
-                const auto ok=H5Aread(a,t,bytes.data());H5Tclose(t);H5Aclose(a);
-                return ok<0?std::string{}:std::string(bytes.data());
+        const hid_t h5 = H5Fopen((kOutDir / file).string().c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+        ASSERT_GE(h5, 0);
+        EXPECT_LE(H5Lexists(h5, "Mesh2_face_species_conc", H5P_DEFAULT), 0);
+        for (const char* field : {"Mesh2_face_gw_sat_conc", "Mesh2_face_gw_unsat_conc"}) {
+            const hid_t ds = H5Dopen2(h5, field, H5P_DEFAULT);
+            ASSERT_GE(ds, 0);
+            auto attr = [&](const char* key) {
+                const hid_t a = H5Aopen(ds, key, H5P_DEFAULT);
+                if (a < 0)
+                    return std::string{};
+                const hid_t t = H5Aget_type(a);
+                std::vector<char> bytes(H5Tget_size(t) + 1, 0);
+                const auto ok = H5Aread(a, t, bytes.data());
+                H5Tclose(t);
+                H5Aclose(a);
+                return ok < 0 ? std::string{} : std::string(bytes.data());
             };
-            EXPECT_EQ(attr("species_names"),"TSS,__WATER_AGE__");
-            EXPECT_EQ(attr("species_units"),std::string(outputUnits[variant])+",s");
+            EXPECT_EQ(attr("species_names"), "TSS,__WATER_AGE__");
+            EXPECT_EQ(attr("species_units"), std::string(outputUnits[variant]) + ",s");
             H5Dclose(ds);
         }
         H5Fclose(h5);
@@ -1741,28 +2006,47 @@ TEST(GwTransportKernel, GroundwaterHdfUnitsFollowNativeSpeciesEvenWhenSurfaceTra
 // none (its link concentration was never read).
 // ---------------------------------------------------------------------------
 namespace {
+/**
+ * @brief Add an inert MSX species sidecar and groundwater initial rows.
+ *
+ * Creates kOutDir, writes unchecked zero-rate X config, inserts X seeds when their anchor exists,
+ * and disables mesh rain when its anchor exists. REPORT must exist or insertion throws. Raw tag is
+ * quoted without escaping; no parsing/running occurs.
+ *
+ * @param[in] body Owned deck copy containing REPORT and the expected optional groundwater seed
+ *     section.
+ * @param[in] tag Artifact stem appended below kOutDir; matching .inp/.rpt/.out paths may be
+ *     overwritten.
+ * @return Modified owned deck referring to tag.rxn; also truncates that sidecar beneath kOutDir.
+ */
 std::string withSpeciesX(std::string body, const std::string& tag) {
     fs::create_directories(kOutDir);
-    { std::ofstream f(kOutDir / (tag + ".rxn"));
-      f << "[REACTION_OPTIONS]\nSOLVER RK5\n[REACTION_SPECIES]\nBULK X MG\n"
-           "[REACTION_PIPES]\nRATE X 0\n[REACTION_TANKS]\nRATE X 0\n"; }
+    {
+        std::ofstream f(kOutDir / (tag + ".rxn"));
+        f << "[REACTION_OPTIONS]\nSOLVER RK5\n[REACTION_SPECIES]\nBULK X MG\n"
+             "[REACTION_PIPES]\nRATE X 0\n[REACTION_TANKS]\nRATE X 0\n";
+    }
     const std::string iq = "[GW_INITIAL_QUALITY]\n;;Scope Zone Species Value\n";
     const auto at = body.find(iq);
     if (at != std::string::npos)
-        body.insert(at + iq.size(), "*       SAT    X  5.0\n*       UNSAT  X  2.0\nCELL 1  SAT    X  25.0\n");
+        body.insert(at + iq.size(),
+                    "*       SAT    X  5.0\n*       UNSAT  X  2.0\nCELL 1  SAT    X  25.0\n");
     // Species rain in clean while TSS rains at 10 mg/L; take rain off the mesh
     // so the two differ only through the seam under test.
     const std::string rain = "RAINFALL_MODE SYSTEM";
     const auto rp = body.find(rain);
-    if (rp != std::string::npos) body.replace(rp, rain.size(), "RAINFALL_MODE NONE");
+    if (rp != std::string::npos)
+        body.replace(rp, rain.size(), "RAINFALL_MODE NONE");
     body.insert(body.find("[REPORT]"),
-                "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions config=\"" + tag + ".rxn\"\n\n");
+                "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions config=\"" + tag +
+                    ".rxn\"\n\n");
     return body;
 }
-}  // namespace
+} // namespace
 
 TEST(GwTransportKernel, DrainingAquiferHandsReactionSpeciesToTheNode) {
-    Deck r = open("seam_node_out_msx", withSpeciesX(seamDeck(0.95, 0.0, 0.0, 0.0), "seam_node_out_msx"));
+    Deck r =
+        open("seam_node_out_msx", withSpeciesX(seamDeck(0.95, 0.0, 0.0, 0.0), "seam_node_out_msx"));
     ASSERT_TRUE(r.opened);
     ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(r.e, 1), SWMM_OK);
@@ -1776,7 +2060,8 @@ TEST(GwTransportKernel, DrainingAquiferHandsReactionSpeciesToTheNode) {
     while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {
         const auto ns = static_cast<std::size_t>(ctx.reactions.n_species());
         const double c_tss = ctx.nodes.conc[static_cast<std::size_t>(j1) * np];
-        const double c_x = ns ? ctx.reactions.msx_node_conc[static_cast<std::size_t>(j1) * ns] : 0.0;
+        const double c_x =
+            ns ? ctx.reactions.msx_node_conc[static_cast<std::size_t>(j1) * ns] : 0.0;
         peak_tss = std::max(peak_tss, c_tss);
         worst = std::max(worst, std::fabs(c_x - c_tss));
     }
@@ -1841,7 +2126,8 @@ TEST(GwTransportKernel, GainingConduitDeliversTheAquiferQualityToTheNetwork) {
     while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {
         const auto ns = static_cast<std::size_t>(ctx.reactions.n_species());
         peak_tss = std::max(peak_tss, ctx.nodes.conc[uj * np]);
-        if (ns) peak_x = std::max(peak_x, ctx.reactions.msx_node_conc[uj * ns]);
+        if (ns)
+            peak_x = std::max(peak_x, ctx.reactions.msx_node_conc[uj * ns]);
     }
     const auto& gw = r.eng->surfaceRouter2D().subsurface();
     const auto& t = gw.transport();
@@ -1854,15 +2140,15 @@ TEST(GwTransportKernel, GainingConduitDeliversTheAquiferQualityToTheNetwork) {
     // Cross-domain identity, TSS, in 1D units.
     const double f21 = r.eng->surfaceRouter2D().options().flow_2d_to_1d;
     double pend_2d = 0.0;
-    for (int c = 0; c < t.n_cells; ++c) pend_2d += t.lout_mass[t.idx(0, c)];
+    for (int c = 0; c < t.n_cells; ++c)
+        pend_2d += t.lout_mass[t.idx(0, c)];
     const double aq_out = (t.lost_link[0] + pend_2d + t.link_gain_shortfall[0]) * f21;
     double pend_1d = 0.0;
     for (std::size_t i = 0; i < ctx.link_gain_quality.mass.size(); i += np)
         pend_1d += ctx.link_gain_quality.mass[i];
     const double gw_in = ctx.mass_balance.qual_routing_gw_in[0];
     EXPECT_NEAR(gw_in + pend_1d, aq_out, 1e-9 * aq_out)
-        << "1D received " << gw_in << " + pending " << pend_1d
-        << ", aquifer gave " << aq_out;
+        << "1D received " << gw_in << " + pending " << pend_1d << ", aquifer gave " << aq_out;
     EXPECT_EQ(t.link_gain_shortfall[0], 0.0);
     finish(r);
 }
@@ -1874,14 +2160,18 @@ TEST(GwTransportKernel, GainingConduitDeliversTheAquiferQualityToTheNetwork) {
 TEST(GwTransportKernel, SpeciesRainOnTheMeshAtTheirRainfallConcentration) {
     std::string body = deck(Mesh::Tri);
     fs::create_directories(kOutDir);
-    { std::ofstream f(kOutDir / "mesh_rain_msx.rxn");
-      f << "[REACTION_OPTIONS]\nSOLVER RK5\n[REACTION_SPECIES]\nBULK X MG\n"
-           "[REACTION_PIPES]\nRATE X 0\n[REACTION_TANKS]\nRATE X 0\n"
-           "[REACTION_RAINFALL]\nX  10.0\n"; }
+    {
+        std::ofstream f(kOutDir / "mesh_rain_msx.rxn");
+        f << "[REACTION_OPTIONS]\nSOLVER RK5\n[REACTION_SPECIES]\nBULK X MG\n"
+             "[REACTION_PIPES]\nRATE X 0\n[REACTION_TANKS]\nRATE X 0\n"
+             "[REACTION_RAINFALL]\nX  10.0\n";
+    }
     const std::string iq = "[GW_INITIAL_QUALITY]\n;;Scope Zone Species Value\n";
-    body.insert(body.find(iq) + iq.size(), "*       SAT    X  5.0\n*       UNSAT  X  2.0\nCELL 1  SAT    X  25.0\n");
-    body.insert(body.find("[REPORT]"),
-                "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions config=\"mesh_rain_msx.rxn\"\n\n");
+    body.insert(body.find(iq) + iq.size(),
+                "*       SAT    X  5.0\n*       UNSAT  X  2.0\nCELL 1  SAT    X  25.0\n");
+    body.insert(
+        body.find("[REPORT]"),
+        "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions config=\"mesh_rain_msx.rxn\"\n\n");
     Deck r = open("mesh_rain_msx", body);
     ASSERT_TRUE(r.opened);
     ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
@@ -1898,1494 +2188,2475 @@ TEST(GwTransportKernel, SpeciesRainOnTheMeshAtTheirRainfallConcentration) {
             worst = std::max(worst, std::fabs(a - b));
         }
     ASSERT_GT(peak, 0.0) << "no TSS on the mesh; deck defect";
-    EXPECT_LE(worst, 1e-12 * peak) << "X and TSS differ by up to " << worst << " (peak " << peak << ")";
+    EXPECT_LE(worst, 1e-12 * peak)
+        << "X and TSS differ by up to " << worst << " (peak " << peak << ")";
     finish(r);
 }
-
 
 // Groundwater completion G0: positive capabilities, not acceptance of inert rows.
 TEST(GwCompletion, BoundaryFlowCarriesWaterAndSpeciesWithoutBecomingAWell) {
     for (const auto shape : {Mesh::Tri, Mesh::Quad, Mesh::Mixed}) {
         SCOPED_TRACE(meshName(shape));
-        const auto body=forcingDeck(
-            "[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST 0.0001\n\n"
-            "[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 3\n\n", .3, shape);
-        Deck r=open(std::string("completion_boundary_")+meshName(shape),body);
+        const auto body = forcingDeck("[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST 0.0001\n\n"
+                                      "[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 3\n\n",
+                                      .3, shape);
+        Deck r = open(std::string("completion_boundary_") + meshName(shape), body);
         ASSERT_TRUE(r.opened) << swmm_get_last_error_msg(r.e);
         ASSERT_TRUE(run(r)) << swmm_get_last_error_msg(r.e);
-        ASSERT_EQ(swmm_engine_end(r.e),SWMM_OK);r.started=false;
-        const auto& gw=r.eng->surfaceRouter2D().subsurface();
-        const double water=.0001*r.eng->context().current_time;
-        EXPECT_NEAR(gw.state().led_lateral,water,1e-9);
-        EXPECT_NEAR(gw.transport().net_lateral[0],3*water,1e-9);
-        EXPECT_DOUBLE_EQ(gw.state().led_source_in,0);
-        EXPECT_DOUBLE_EQ(gw.transport().gained_source[0],0);
-        EXPECT_NEAR(gw.state().continuityResidual(),0,1e-9);
-        EXPECT_NEAR(gw.transport().residual(0),0,1e-9);
+        ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
+        r.started = false;
+        const auto& gw = r.eng->surfaceRouter2D().subsurface();
+        const double water = .0001 * r.eng->context().current_time;
+        EXPECT_NEAR(gw.state().led_lateral, water, 1e-9);
+        EXPECT_NEAR(gw.transport().net_lateral[0], 3 * water, 1e-9);
+        EXPECT_DOUBLE_EQ(gw.state().led_source_in, 0);
+        EXPECT_DOUBLE_EQ(gw.transport().gained_source[0], 0);
+        EXPECT_NEAR(gw.state().continuityResidual(), 0, 1e-9);
+        EXPECT_NEAR(gw.transport().residual(0), 0, 1e-9);
         finish(r);
     }
 }
 
 TEST(GwCompletion, HydraulicBoundaryRejectsAnInteriorEdge) {
-    Deck r=open("completion_interior_boundary",forcingDeck(
-        "[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 1 FLOW CONST 0.0001\n\n[GW_BOUNDARY_QUALITY]\n1 1 TSS CONC 3\n\n"));
+    Deck r = open(
+        "completion_interior_boundary",
+        forcingDeck(
+            "[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 1 FLOW CONST 0.0001\n\n[GW_BOUNDARY_QUALITY]\n1 1 TSS CONC 3\n\n"));
     ASSERT_TRUE(r.opened) << swmm_get_last_error_msg(r.e);
-    EXPECT_NE(swmm_engine_initialize(r.e),SWMM_OK);
-    EXPECT_NE(std::string(swmm_get_last_error_msg(r.e)).find("exterior"),std::string::npos);
+    EXPECT_NE(swmm_engine_initialize(r.e), SWMM_OK);
+    EXPECT_NE(std::string(swmm_get_last_error_msg(r.e)).find("exterior"), std::string::npos);
     finish(r);
 }
 
 TEST(GwCompletion, LayeredInitialConditionsRequireActualSigmaTransport) {
-    auto body=forcingDeck(
-        "[GW_TRANSPORT_OPTIONS]\nUNSAT_TRANSPORT LAYERED\n\n"
-        "[GW_INITIAL_QUALITY]\n* LAYER 1 TSS 7\n* LAYER 2 TSS 11\n\n");
-    auto at=body.find("CLOSURE CLOSED_FORM");
-    ASSERT_NE(at,std::string::npos);body.replace(at,19,"CLOSURE SIGMA");
-    Deck r=open("completion_layered_initial",body);
+    auto body = forcingDeck("[GW_TRANSPORT_OPTIONS]\nUNSAT_TRANSPORT LAYERED\n\n"
+                            "[GW_INITIAL_QUALITY]\n* LAYER 1 TSS 7\n* LAYER 2 TSS 11\n\n");
+    auto at = body.find("CLOSURE CLOSED_FORM");
+    ASSERT_NE(at, std::string::npos);
+    body.replace(at, 19, "CLOSURE SIGMA");
+    Deck r = open("completion_layered_initial", body);
     ASSERT_TRUE(r.opened) << swmm_get_last_error_msg(r.e);
-    EXPECT_EQ(swmm_engine_initialize(r.e),SWMM_OK) << swmm_get_last_error_msg(r.e);
+    EXPECT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << swmm_get_last_error_msg(r.e);
     finish(r);
 }
 
 TEST(GwCompletion, BoundaryWithdrawalIsLimitedAndItsNativeReceiptsArePublic) {
-    Deck r=open("completion_boundary_drain",forcingDeck(
-        "[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST -1\n\n",.1));
-    ASSERT_TRUE(r.opened);ASSERT_TRUE(run(r))<<swmm_get_last_error_msg(r.e);
-    ASSERT_EQ(swmm_engine_end(r.e),SWMM_OK);r.started=false;
-    double ri=-1,ro=-1,ai=-1,ao=-1;
-    ASSERT_EQ(swmm_gw2d_boundary_water(r.e,0,&ri,&ro,&ai,&ao),SWMM_OK);
-    EXPECT_DOUBLE_EQ(ri,0);EXPECT_DOUBLE_EQ(ai,0);
-    EXPECT_GT(ro,1000);EXPECT_GT(ao,0);EXPECT_LT(ao,20);
-    const auto& gw=r.eng->surfaceRouter2D().subsurface();
-    EXPECT_NEAR(gw.state().led_lateral,-ao,1e-10);
-    EXPECT_NEAR(gw.state().continuityResidual(),0,1e-9);
-    EXPECT_NEAR(gw.transport().residual(0),0,1e-9);
-    double mi=-1,mo=-1,fi=-1,fo=-1;
-    ASSERT_EQ(swmm_gw2d_boundary_species(r.e,0,0,&mi,&mo,&fi,&fo),SWMM_OK);
-    EXPECT_DOUBLE_EQ(mi,0);EXPECT_GT(mo,0);EXPECT_DOUBLE_EQ(fi,0);EXPECT_DOUBLE_EQ(fo,0);
-    EXPECT_NEAR(gw.transport().net_lateral[0],-mo,1e-9);
+    Deck r = open("completion_boundary_drain",
+                  forcingDeck("[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST -1\n\n", .1));
+    ASSERT_TRUE(r.opened);
+    ASSERT_TRUE(run(r)) << swmm_get_last_error_msg(r.e);
+    ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
+    r.started = false;
+    double ri = -1, ro = -1, ai = -1, ao = -1;
+    ASSERT_EQ(swmm_gw2d_boundary_water(r.e, 0, &ri, &ro, &ai, &ao), SWMM_OK);
+    EXPECT_DOUBLE_EQ(ri, 0);
+    EXPECT_DOUBLE_EQ(ai, 0);
+    EXPECT_GT(ro, 1000);
+    EXPECT_GT(ao, 0);
+    EXPECT_LT(ao, 20);
+    const auto& gw = r.eng->surfaceRouter2D().subsurface();
+    EXPECT_NEAR(gw.state().led_lateral, -ao, 1e-10);
+    EXPECT_NEAR(gw.state().continuityResidual(), 0, 1e-9);
+    EXPECT_NEAR(gw.transport().residual(0), 0, 1e-9);
+    double mi = -1, mo = -1, fi = -1, fo = -1;
+    ASSERT_EQ(swmm_gw2d_boundary_species(r.e, 0, 0, &mi, &mo, &fi, &fo), SWMM_OK);
+    EXPECT_DOUBLE_EQ(mi, 0);
+    EXPECT_GT(mo, 0);
+    EXPECT_DOUBLE_EQ(fi, 0);
+    EXPECT_DOUBLE_EQ(fo, 0);
+    EXPECT_NEAR(gw.transport().net_lateral[0], -mo, 1e-9);
     finish(r);
 }
 TEST(GwCompletion, EdgeMassFluxUsesPhysicalLengthWithoutInventingWater) {
-    Deck r=open("completion_boundary_mass",forcingDeck(
-        "[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST 0\n\n"
-        "[GW_BOUNDARY_QUALITY]\n1 0 TSS MASSFLUX 2\n\n"));
-    ASSERT_TRUE(r.opened);ASSERT_TRUE(run(r))<<swmm_get_last_error_msg(r.e);
-    ASSERT_EQ(swmm_engine_end(r.e),SWMM_OK);r.started=false;
-    const auto& gw=r.eng->surfaceRouter2D().subsurface();
+    Deck r = open("completion_boundary_mass",
+                  forcingDeck("[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST 0\n\n"
+                              "[GW_BOUNDARY_QUALITY]\n1 0 TSS MASSFLUX 2\n\n"));
+    ASSERT_TRUE(r.opened);
+    ASSERT_TRUE(run(r)) << swmm_get_last_error_msg(r.e);
+    ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
+    r.started = false;
+    const auto& gw = r.eng->surfaceRouter2D().subsurface();
     // Two native amount/s/metre on the 10 metre edge, with 1000 L per m3.
-    const double expected=.001*2*10*r.eng->context().current_time;
-    EXPECT_DOUBLE_EQ(gw.state().led_lateral,0);
-    EXPECT_NEAR(gw.transport().net_lateral[0],expected,1e-9);
-    EXPECT_DOUBLE_EQ(gw.transport().gained_source[0],0);
-    EXPECT_NEAR(gw.transport().residual(0),0,1e-9);
+    const double expected = .001 * 2 * 10 * r.eng->context().current_time;
+    EXPECT_DOUBLE_EQ(gw.state().led_lateral, 0);
+    EXPECT_NEAR(gw.transport().net_lateral[0], expected, 1e-9);
+    EXPECT_DOUBLE_EQ(gw.transport().gained_source[0], 0);
+    EXPECT_NEAR(gw.transport().residual(0), 0, 1e-9);
     finish(r);
 }
 TEST(GwCompletion, BoundaryReversalKeepsGrossTransfersAndChronologicalDonors) {
-    for(int cadence:{1,5})for(int positive_first:{0,1}) {
-        const std::string values=positive_first?"1\nBQ 0:00:03 -1\nBQ 0:00:06 0":"-1\nBQ 0:00:03 1\nBQ 0:00:06 0";
-        auto body=forcingDeck("[TIMESERIES]\nBQ 0:00:00 "+values+"\n\n"
-            "[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW SERIES BQ\n\n"
-            "[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 3\n\n",0);
-        if(cadence==1){auto at=body.find("MAX_TIMESTEP 5");body.replace(at,14,"MAX_TIMESTEP 1");}
-        Deck r=open("completion_boundary_reversal_"+std::to_string(cadence)+"_"+std::to_string(positive_first),body);
-        ASSERT_TRUE(r.opened);ASSERT_TRUE(run(r))<<swmm_get_last_error_msg(r.e);
-        ASSERT_EQ(swmm_engine_end(r.e),SWMM_OK);r.started=false;
-        const auto& gw=r.eng->surfaceRouter2D().subsurface();
-        EXPECT_NEAR(gw.state().led_boundary_in,positive_first?.75:2.25,1e-7);
-        if(!positive_first)EXPECT_NEAR(gw.state().led_boundary_out,0,1e-8);
-        else EXPECT_GT(gw.state().led_boundary_out,.1);
-        EXPECT_NEAR(gw.transport().boundary_in[0],3*gw.state().led_boundary_in,1e-8);
-        EXPECT_NEAR(gw.state().continuityResidual(),0,1e-8);
-        EXPECT_NEAR(gw.transport().residual(0),0,1e-8);
-        finish(r);
-    }
+    for (int cadence : {1, 5})
+        for (int positive_first : {0, 1}) {
+            const std::string values = positive_first ? "1\nBQ 0:00:03 -1\nBQ 0:00:06 0"
+                                                      : "-1\nBQ 0:00:03 1\nBQ 0:00:06 0";
+            auto body = forcingDeck("[TIMESERIES]\nBQ 0:00:00 " + values +
+                                        "\n\n"
+                                        "[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW SERIES BQ\n\n"
+                                        "[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 3\n\n",
+                                    0);
+            if (cadence == 1) {
+                auto at = body.find("MAX_TIMESTEP 5");
+                body.replace(at, 14, "MAX_TIMESTEP 1");
+            }
+            Deck r = open("completion_boundary_reversal_" + std::to_string(cadence) + "_" +
+                              std::to_string(positive_first),
+                          body);
+            ASSERT_TRUE(r.opened);
+            ASSERT_TRUE(run(r)) << swmm_get_last_error_msg(r.e);
+            ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
+            r.started = false;
+            const auto& gw = r.eng->surfaceRouter2D().subsurface();
+            EXPECT_NEAR(gw.state().led_boundary_in, positive_first ? .75 : 2.25, 1e-7);
+            if (!positive_first)
+                EXPECT_NEAR(gw.state().led_boundary_out, 0, 1e-8);
+            else
+                EXPECT_GT(gw.state().led_boundary_out, .1);
+            EXPECT_NEAR(gw.transport().boundary_in[0], 3 * gw.state().led_boundary_in, 1e-8);
+            EXPECT_NEAR(gw.state().continuityResidual(), 0, 1e-8);
+            EXPECT_NEAR(gw.transport().residual(0), 0, 1e-8);
+            finish(r);
+        }
 }
 TEST(GwCompletion, BoundaryHeadAtRestAndMissingCompositionHaveDistinctBehavior) {
-    Deck r=open("completion_boundary_head",forcingDeck(
-        "[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 HEAD CONST -0.7\n\n"
-        "[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 3\n\n",.3));
-    ASSERT_TRUE(r.opened);ASSERT_TRUE(run(r))<<swmm_get_last_error_msg(r.e);
-    const auto& gw=r.eng->surfaceRouter2D().subsurface();
-    EXPECT_NEAR(gw.state().led_boundary_in,0,1e-12);
-    EXPECT_NEAR(gw.state().led_boundary_out,0,1e-12);finish(r);
-    Deck missing=open("completion_boundary_composition",forcingDeck(
-        "[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 HEAD CONST -0.6\n\n"));
-    ASSERT_TRUE(missing.opened);EXPECT_NE(swmm_engine_initialize(missing.e),SWMM_OK);
-    EXPECT_NE(std::string(swmm_get_last_error_msg(missing.e)).find("composition"),std::string::npos);
+    Deck r = open("completion_boundary_head",
+                  forcingDeck("[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 HEAD CONST -0.7\n\n"
+                              "[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 3\n\n",
+                              .3));
+    ASSERT_TRUE(r.opened);
+    ASSERT_TRUE(run(r)) << swmm_get_last_error_msg(r.e);
+    const auto& gw = r.eng->surfaceRouter2D().subsurface();
+    EXPECT_NEAR(gw.state().led_boundary_in, 0, 1e-12);
+    EXPECT_NEAR(gw.state().led_boundary_out, 0, 1e-12);
+    finish(r);
+    Deck missing = open("completion_boundary_composition",
+                        forcingDeck("[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 HEAD CONST -0.6\n\n"));
+    ASSERT_TRUE(missing.opened);
+    EXPECT_NE(swmm_engine_initialize(missing.e), SWMM_OK);
+    EXPECT_NE(std::string(swmm_get_last_error_msg(missing.e)).find("composition"),
+              std::string::npos);
     finish(missing);
 }
 
 namespace {
+/**
+ * @brief Concatenate the current engine error and stored error entries.
+ *
+ * Does not clear errors or mutate the record.
+ *
+ * @param[in] r Borrowed record whose e is passed to error query APIs.
+ * @return Owned concatenated text without separators; null messages are skipped.
+ */
 std::string completionErrors(const Deck& r) {
-    std::string text=swmm_get_last_error_msg(r.e)?swmm_get_last_error_msg(r.e):"";
-    for(int n=0;n<swmm_get_error_count(r.e);++n)if(const char* error=swmm_get_error_at(r.e,n))text+=error;
+    std::string text = swmm_get_last_error_msg(r.e) ? swmm_get_last_error_msg(r.e) : "";
+    for (int n = 0; n < swmm_get_error_count(r.e); ++n)
+        if (const char* error = swmm_get_error_at(r.e, n))
+            text += error;
     return text;
 }
-std::string layeredDeck(const std::string& extra,Mesh mesh=Mesh::Tri,double hg=.3) {
-    auto body=forcingDeck("[GW_TRANSPORT_OPTIONS]\nUNSAT_TRANSPORT LAYERED\nDISPERSION NO\n\n"+extra,hg,mesh);
-    const auto at=body.find("CLOSURE CLOSED_FORM");
-    if(at!=std::string::npos)body.replace(at,19,"CLOSURE SIGMA");
-    const auto seed=body.find("[GW_INITIAL_QUALITY]");
-    const auto next=body.find('[',seed+1);
-    body.erase(seed,next-seed);
+/**
+ * @brief Build a SIGMA aquifer fixture with layered unsaturated transport.
+ *
+ * Requires the expected base section anchors; exact closure replacement is conditional while seed
+ * erasure assumes the seed exists. Does not validate row syntax or create files.
+ *
+ * @param[in] extra Raw rows appended after LAYERED/DISPERSION options.
+ * @param[in] mesh Base mesh layout.
+ * @param[in] hg Initial saturated height in metres.
+ * @return Owned forcing deck with initial-quality section removed.
+ */
+std::string layeredDeck(const std::string& extra, Mesh mesh = Mesh::Tri, double hg = .3) {
+    auto body = forcingDeck(
+        "[GW_TRANSPORT_OPTIONS]\nUNSAT_TRANSPORT LAYERED\nDISPERSION NO\n\n" + extra, hg, mesh);
+    const auto at = body.find("CLOSURE CLOSED_FORM");
+    if (at != std::string::npos)
+        body.replace(at, 19, "CLOSURE SIGMA");
+    const auto seed = body.find("[GW_INITIAL_QUALITY]");
+    const auto next = body.find('[', seed + 1);
+    body.erase(seed, next - seed);
     return body;
 }
 }
 TEST(GwCompletion, LayerScopesAndSorptionSeedDissolvedConcentrations) {
-    Deck r=open("layer_scope_sorption",layeredDeck(
-        "[GW_INITIAL_QUALITY]\n* LAYER 1 TSS 7\nCELL 1 UNSAT TSS 3\nCELL 1 LAYER 2 TSS 11\n\n"
-        "[GW_SORPTION]\n* TSS 2 0\n\n"));
-    ASSERT_TRUE(r.opened)<<completionErrors(r);ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-    const auto& gw=r.eng->surfaceRouter2D().subsurface();const auto& t=gw.transport();const auto& w=gw.state();
-    ASSERT_GT(t.n_layers,1);
-    for(int i=0;i<t.n_cells;++i)for(int j=0;j<t.n_layers;++j) {
-        const double capacity=w.area[i]*(w.zs[i]-w.hg[i])/t.n_layers*
-            (w.theta_sigma[std::size_t(j)*t.n_cells+i]+t.rho_b[i]*.002);
-        const double expected=i==0?(j==1?11:3):(j==0?7:0);
-        EXPECT_NEAR(t.layer_mass[t.layerIdx(0,j,i)]/capacity,expected,1e-12);
-    }
+    Deck r = open(
+        "layer_scope_sorption",
+        layeredDeck(
+            "[GW_INITIAL_QUALITY]\n* LAYER 1 TSS 7\nCELL 1 UNSAT TSS 3\nCELL 1 LAYER 2 TSS 11\n\n"
+            "[GW_SORPTION]\n* TSS 2 0\n\n"));
+    ASSERT_TRUE(r.opened) << completionErrors(r);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+    const auto& gw = r.eng->surfaceRouter2D().subsurface();
+    const auto& t = gw.transport();
+    const auto& w = gw.state();
+    ASSERT_GT(t.n_layers, 1);
+    for (int i = 0; i < t.n_cells; ++i)
+        for (int j = 0; j < t.n_layers; ++j) {
+            const double capacity =
+                w.area[i] * (w.zs[i] - w.hg[i]) / t.n_layers *
+                (w.theta_sigma[std::size_t(j) * t.n_cells + i] + t.rho_b[i] * .002);
+            const double expected = i == 0 ? (j == 1 ? 11 : 3) : (j == 0 ? 7 : 0);
+            EXPECT_NEAR(t.layer_mass[t.layerIdx(0, j, i)] / capacity, expected, 1e-12);
+        }
     finish(r);
 }
 TEST(GwCompletion, LayeredMovingTableKeepsUniformDissolvedQualityAndMass) {
-    for(const Mesh mesh:{Mesh::Tri,Mesh::Quad,Mesh::Mixed})for(const std::string rate:{"0.001","-0.001"}) {
-        Deck r=open(std::string("layer_uniform_")+meshName(mesh)+(rate[0]=='-'?"_out":"_in"),layeredDeck(
-            "[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n\n"
-            "[GW_SORPTION]\n* TSS 2 0\n\n"
-            "[GW_SOURCES]\nW * FLOW "+rate+" TSS CONC 7\n\n",mesh));
-        ASSERT_TRUE(r.opened)<<completionErrors(r);ASSERT_TRUE(run(r))<<completionErrors(r);
-        ASSERT_EQ(swmm_engine_end(r.e),SWMM_OK);r.started=false;
-        const auto& gw=r.eng->surfaceRouter2D().subsurface();const auto& t=gw.transport();const auto& w=gw.state();
-        std::vector<double> bulk(t.n_cells);int written=0;
-        ASSERT_EQ(swmm_gw2d_get_cell_conc(r.e,SWMM_GW2D_ZONE_SAT,0,bulk.data(),t.n_cells,&written),SWMM_OK);
-        for(int i=0;i<t.n_cells;++i)if(gw.satVolume(i)>1e-10)EXPECT_NEAR(bulk[i],7,1e-8);
-        ASSERT_EQ(swmm_gw2d_get_cell_conc(r.e,SWMM_GW2D_ZONE_UNSAT,0,bulk.data(),t.n_cells,&written),SWMM_OK);
-        for(int i=0;i<t.n_cells;++i)if(gw.unsatVolume(i)>1e-10)EXPECT_NEAR(bulk[i],7,1e-8);
-        for(int i=0;i<t.n_cells;++i) {
-            const double capacity=w.area[i]*w.hg[i]*(w.theta_s[i]+t.rho_b[i]*.002);
-            if(capacity>1e-10)EXPECT_NEAR(t.sat_mass[t.idx(0,i)]/capacity,7,1e-8);
-            double sum=0;
-            for(int j=0;j<t.n_layers;++j) {
-                const double cap=w.area[i]*(w.zs[i]-w.hg[i])/t.n_layers*
-                    (w.theta_sigma[std::size_t(j)*t.n_cells+i]+t.rho_b[i]*.002);
-                const double mass=t.layer_mass[t.layerIdx(0,j,i)];sum+=mass;
-                if(cap>1e-10)EXPECT_NEAR(mass/cap,7,1e-8);
+    for (const Mesh mesh : {Mesh::Tri, Mesh::Quad, Mesh::Mixed})
+        for (const std::string rate : {"0.001", "-0.001"}) {
+            Deck r = open(std::string("layer_uniform_") + meshName(mesh) +
+                              (rate[0] == '-' ? "_out" : "_in"),
+                          layeredDeck("[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n\n"
+                                      "[GW_SORPTION]\n* TSS 2 0\n\n"
+                                      "[GW_SOURCES]\nW * FLOW " +
+                                          rate + " TSS CONC 7\n\n",
+                                      mesh));
+            ASSERT_TRUE(r.opened) << completionErrors(r);
+            ASSERT_TRUE(run(r)) << completionErrors(r);
+            ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
+            r.started = false;
+            const auto& gw = r.eng->surfaceRouter2D().subsurface();
+            const auto& t = gw.transport();
+            const auto& w = gw.state();
+            std::vector<double> bulk(t.n_cells);
+            int written = 0;
+            ASSERT_EQ(swmm_gw2d_get_cell_conc(r.e, SWMM_GW2D_ZONE_SAT, 0, bulk.data(), t.n_cells,
+                                              &written),
+                      SWMM_OK);
+            for (int i = 0; i < t.n_cells; ++i)
+                if (gw.satVolume(i) > 1e-10)
+                    EXPECT_NEAR(bulk[i], 7, 1e-8);
+            ASSERT_EQ(swmm_gw2d_get_cell_conc(r.e, SWMM_GW2D_ZONE_UNSAT, 0, bulk.data(), t.n_cells,
+                                              &written),
+                      SWMM_OK);
+            for (int i = 0; i < t.n_cells; ++i)
+                if (gw.unsatVolume(i) > 1e-10)
+                    EXPECT_NEAR(bulk[i], 7, 1e-8);
+            for (int i = 0; i < t.n_cells; ++i) {
+                const double capacity = w.area[i] * w.hg[i] * (w.theta_s[i] + t.rho_b[i] * .002);
+                if (capacity > 1e-10)
+                    EXPECT_NEAR(t.sat_mass[t.idx(0, i)] / capacity, 7, 1e-8);
+                double sum = 0;
+                for (int j = 0; j < t.n_layers; ++j) {
+                    const double cap =
+                        w.area[i] * (w.zs[i] - w.hg[i]) / t.n_layers *
+                        (w.theta_sigma[std::size_t(j) * t.n_cells + i] + t.rho_b[i] * .002);
+                    const double mass = t.layer_mass[t.layerIdx(0, j, i)];
+                    sum += mass;
+                    if (cap > 1e-10)
+                        EXPECT_NEAR(mass / cap, 7, 1e-8);
+                }
+                EXPECT_DOUBLE_EQ(sum, t.unsat_mass[t.idx(0, i)]);
             }
-            EXPECT_DOUBLE_EQ(sum,t.unsat_mass[t.idx(0,i)]);
+            EXPECT_NEAR(t.residual(0), 0, 1e-8) << ledgerDump(t, 0);
+            EXPECT_NEAR(w.continuityResidual(), 0, 1e-9);
+            finish(r);
         }
-        EXPECT_NEAR(t.residual(0),0,1e-8)<<ledgerDump(t,0);
-        EXPECT_NEAR(w.continuityResidual(),0,1e-9);finish(r);
-    }
 }
 TEST(GwCompletion, NativeRestartRestoresLayersAndBoundaryReceiptsOrRefusesIdentityMismatch) {
-    const auto body=layeredDeck("[GW_INITIAL_QUALITY]\n* LAYER 1 TSS 7\n* LAYER 2 TSS 11\n\n"
-        "[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST 0.0001\n\n"
-        "[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 3\n\n");
-    const auto path=kOutDir/"completion_layers.hsf";
-    Deck first=open("completion_restart_write",body);ASSERT_TRUE(first.opened)<<completionErrors(first);ASSERT_TRUE(run(first))<<completionErrors(first);
-    const auto expected=first.eng->surfaceRouter2D().subsurface().transportRestartState();
-    ASSERT_FALSE(expected.empty());ASSERT_EQ(swmm_hotstart_save(first.e,path.string().c_str()),SWMM_OK);
+    const auto body = layeredDeck("[GW_INITIAL_QUALITY]\n* LAYER 1 TSS 7\n* LAYER 2 TSS 11\n\n"
+                                  "[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST 0.0001\n\n"
+                                  "[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 3\n\n");
+    const auto path = kOutDir / "completion_layers.hsf";
+    Deck first = open("completion_restart_write", body);
+    ASSERT_TRUE(first.opened) << completionErrors(first);
+    ASSERT_TRUE(run(first)) << completionErrors(first);
+    const auto expected = first.eng->surfaceRouter2D().subsurface().transportRestartState();
+    ASSERT_FALSE(expected.empty());
+    ASSERT_EQ(swmm_hotstart_save(first.e, path.string().c_str()), SWMM_OK);
     finish(first);
-    SWMM_HotStart hs=nullptr;ASSERT_EQ(swmm_hotstart_open(path.string().c_str(),&hs),SWMM_OK);
-    Deck next=open("completion_restart_read",body);ASSERT_TRUE(next.opened);
-    ASSERT_EQ(swmm_engine_initialize(next.e),SWMM_OK);
-    ASSERT_EQ(swmm_hotstart_apply(next.e,hs),SWMM_OK)<<swmm_get_last_error_msg(next.e);
-    ASSERT_EQ(swmm_engine_start(next.e,1),SWMM_OK);next.started=true;
-    EXPECT_EQ(next.eng->surfaceRouter2D().subsurface().transportRestartState(),expected);
+    SWMM_HotStart hs = nullptr;
+    ASSERT_EQ(swmm_hotstart_open(path.string().c_str(), &hs), SWMM_OK);
+    Deck next = open("completion_restart_read", body);
+    ASSERT_TRUE(next.opened);
+    ASSERT_EQ(swmm_engine_initialize(next.e), SWMM_OK);
+    ASSERT_EQ(swmm_hotstart_apply(next.e, hs), SWMM_OK) << swmm_get_last_error_msg(next.e);
+    ASSERT_EQ(swmm_engine_start(next.e, 1), SWMM_OK);
+    next.started = true;
+    EXPECT_EQ(next.eng->surfaceRouter2D().subsurface().transportRestartState(), expected);
     finish(next);
-    auto changed=body;const auto at=changed.find("FLOW CONST 0.0001");changed.replace(at,17,"FLOW CONST 0.0002");
-    Deck wrong=open("completion_restart_wrong",changed);ASSERT_TRUE(wrong.opened);
-    ASSERT_EQ(swmm_engine_initialize(wrong.e),SWMM_OK);
-    const auto original=wrong.eng->surfaceRouter2D().subsurface().transportRestartState();
-    EXPECT_NE(swmm_hotstart_apply(wrong.e,hs),SWMM_OK);
-    EXPECT_EQ(wrong.eng->surfaceRouter2D().subsurface().transportRestartState(),original);
-    finish(wrong);swmm_hotstart_close(hs);
+    auto changed = body;
+    const auto at = changed.find("FLOW CONST 0.0001");
+    changed.replace(at, 17, "FLOW CONST 0.0002");
+    Deck wrong = open("completion_restart_wrong", changed);
+    ASSERT_TRUE(wrong.opened);
+    ASSERT_EQ(swmm_engine_initialize(wrong.e), SWMM_OK);
+    const auto original = wrong.eng->surfaceRouter2D().subsurface().transportRestartState();
+    EXPECT_NE(swmm_hotstart_apply(wrong.e, hs), SWMM_OK);
+    EXPECT_EQ(wrong.eng->surfaceRouter2D().subsurface().transportRestartState(), original);
+    finish(wrong);
+    swmm_hotstart_close(hs);
 }
 
 TEST(GwCompletion, ExplicitGroundwaterReactorsConvertAIntoBAndCloseEachLedger) {
-    const std::string reactions=
+    const std::string reactions =
         "[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\nCOUPLING FULL\nATOL 1e-12\nRTOL 1e-10\n\n"
         "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n\n"
         "[REACTION_SUBSURFACE]\n* SAT A RATE -0.001*A\n* SAT B RATE 0.001*A\n"
         "* UNSAT A RATE -0.001*A\n* UNSAT B RATE 0.001*A\n\n"
         "[GW_INITIAL_QUALITY]\n* SAT A 7\n* UNSAT A 7\n\n";
-    for(bool layers:{false,true}) {
-        Deck r=open(layers?"reactor_layers":"reactor_bulk",layers?layeredDeck(reactions):forcingDeck(reactions));
-        ASSERT_TRUE(r.opened)<<completionErrors(r);ASSERT_TRUE(run(r))<<completionErrors(r);
-        ASSERT_EQ(swmm_engine_end(r.e),SWMM_OK);r.started=false;
-        const auto& gw=r.eng->surfaceRouter2D().subsurface();const auto& t=gw.transport();
-        const int a=t.rowIndex("A"),b=t.rowIndex("B");ASSERT_GE(a,0);ASSERT_GE(b,0);
-        const double initial=t.init_mass[a],remaining=initial*std::exp(-.001*r.eng->context().current_time);
-        EXPECT_NEAR(t.ledgeredStorage(a),remaining,initial*1e-8);
-        EXPECT_NEAR(t.ledgeredStorage(a)+t.ledgeredStorage(b),initial,initial*1e-10);
-        EXPECT_NEAR(t.residual(a),0,1e-9);EXPECT_NEAR(t.residual(b),0,1e-9);
-        EXPECT_GT(t.lost_reaction[a],0);EXPECT_LT(t.lost_reaction[b],0);
+    for (bool layers : {false, true}) {
+        Deck r = open(layers ? "reactor_layers" : "reactor_bulk",
+                      layers ? layeredDeck(reactions) : forcingDeck(reactions));
+        ASSERT_TRUE(r.opened) << completionErrors(r);
+        ASSERT_TRUE(run(r)) << completionErrors(r);
+        ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
+        r.started = false;
+        const auto& gw = r.eng->surfaceRouter2D().subsurface();
+        const auto& t = gw.transport();
+        const int a = t.rowIndex("A"), b = t.rowIndex("B");
+        ASSERT_GE(a, 0);
+        ASSERT_GE(b, 0);
+        const double initial = t.init_mass[a],
+                     remaining = initial * std::exp(-.001 * r.eng->context().current_time);
+        EXPECT_NEAR(t.ledgeredStorage(a), remaining, initial * 1e-8);
+        EXPECT_NEAR(t.ledgeredStorage(a) + t.ledgeredStorage(b), initial, initial * 1e-10);
+        EXPECT_NEAR(t.residual(a), 0, 1e-9);
+        EXPECT_NEAR(t.residual(b), 0, 1e-9);
+        EXPECT_GT(t.lost_reaction[a], 0);
+        EXPECT_LT(t.lost_reaction[b], 0);
         finish(r);
     }
 }
 TEST(GwCompletion, GroundwaterVariablesWorkThroughTermsAndPipeAndWallDependenciesAreRefused) {
-    const std::string prefix="[REACTION_SPECIES]\nBULK A MG\nWALL W MG/FT2\n\n"
+    const std::string prefix =
+        "[REACTION_SPECIES]\nBULK A MG\nWALL W MG/FT2\n\n"
         "[REACTION_TERMS]\nsoil GW_THETA/GW_POROSITY+GW_SE*0+GW_DEPTH_M*0\n\n";
-    for(const std::string expression:{"-0.001*A*soil","-A*HRT","-A*W","-A*Q"}) {
-        Deck r=open("reactor_context_"+std::to_string(expression.size()),forcingDeck(prefix+
-            "[REACTION_SUBSURFACE]\n* SAT A RATE "+expression+"\n\n"));
-        if(expression=="-0.001*A*soil") {
-            ASSERT_TRUE(r.opened)<<completionErrors(r);
-            char message[256];int column=0;
-            EXPECT_EQ(swmm_reaction_validate_expression(r.e,SWMM_RXN_SCOPE_SUBSURFACE,expression.c_str(),message,sizeof message,&column),SWMM_OK)<<message;
-            EXPECT_NE(swmm_reaction_validate_expression(r.e,SWMM_RXN_SCOPE_PIPE,expression.c_str(),message,sizeof message,&column),SWMM_OK);
+    for (const std::string expression : {"-0.001*A*soil", "-A*HRT", "-A*W", "-A*Q"}) {
+        Deck r = open(
+            "reactor_context_" + std::to_string(expression.size()),
+            forcingDeck(prefix + "[REACTION_SUBSURFACE]\n* SAT A RATE " + expression + "\n\n"));
+        if (expression == "-0.001*A*soil") {
+            ASSERT_TRUE(r.opened) << completionErrors(r);
+            char message[256];
+            int column = 0;
+            EXPECT_EQ(swmm_reaction_validate_expression(r.e, SWMM_RXN_SCOPE_SUBSURFACE,
+                                                        expression.c_str(), message, sizeof message,
+                                                        &column),
+                      SWMM_OK)
+                << message;
+            EXPECT_NE(swmm_reaction_validate_expression(r.e, SWMM_RXN_SCOPE_PIPE,
+                                                        expression.c_str(), message, sizeof message,
+                                                        &column),
+                      SWMM_OK);
 
-            EXPECT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-        } else EXPECT_FALSE(r.opened)<<expression;
+            EXPECT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+        } else
+            EXPECT_FALSE(r.opened) << expression;
         finish(r);
     }
-    Deck network=open("reactor_ground_variable_in_pipe",forcingDeck(prefix+
-        "[REACTION_PIPES]\nRATE A -A*soil\n\n"));
-    EXPECT_FALSE(network.opened);finish(network);
+    Deck network = open("reactor_ground_variable_in_pipe",
+                        forcingDeck(prefix + "[REACTION_PIPES]\nRATE A -A*soil\n\n"));
+    EXPECT_FALSE(network.opened);
+    finish(network);
 }
 
 TEST(GwCompletion, MolecularDiffusionRunsAtHydrostaticRest) {
-    Deck r=open("completion_diffusion_at_rest",forcingDeck(
-        "[GW_INITIAL_QUALITY]\nCELL 1 SAT TSS 10\nCELL 2 SAT TSS 0\n\n"
-        "[GW_TRANSPORT_PARAMS]\n* - - - - 0 0 0.01 - -\n\n"));
-    ASSERT_TRUE(r.opened)<<completionErrors(r);ASSERT_TRUE(run(r))<<completionErrors(r);
-    ASSERT_EQ(swmm_engine_end(r.e),SWMM_OK);r.started=false;
-    const auto& gw=r.eng->surfaceRouter2D().subsurface();const auto& t=gw.transport();
-    const double a=t.sat_mass[t.idx(0,0)]/gw.satVolume(0),b=t.sat_mass[t.idx(0,1)]/gw.satVolume(1);
-    EXPECT_LT(a,9.9);EXPECT_GT(b,.1);EXPECT_GE(b,0);EXPECT_LE(a,10);
-    EXPECT_NEAR(t.residual(0),0,1e-9);EXPECT_NEAR(gw.state().continuityResidual(),0,1e-9);finish(r);
+    Deck r = open("completion_diffusion_at_rest",
+                  forcingDeck("[GW_INITIAL_QUALITY]\nCELL 1 SAT TSS 10\nCELL 2 SAT TSS 0\n\n"
+                              "[GW_TRANSPORT_PARAMS]\n* - - - - 0 0 0.01 - -\n\n"));
+    ASSERT_TRUE(r.opened) << completionErrors(r);
+    ASSERT_TRUE(run(r)) << completionErrors(r);
+    ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
+    r.started = false;
+    const auto& gw = r.eng->surfaceRouter2D().subsurface();
+    const auto& t = gw.transport();
+    const double a = t.sat_mass[t.idx(0, 0)] / gw.satVolume(0),
+                 b = t.sat_mass[t.idx(0, 1)] / gw.satVolume(1);
+    EXPECT_LT(a, 9.9);
+    EXPECT_GT(b, .1);
+    EXPECT_GE(b, 0);
+    EXPECT_LE(a, 10);
+    EXPECT_NEAR(t.residual(0), 0, 1e-9);
+    EXPECT_NEAR(gw.state().continuityResidual(), 0, 1e-9);
+    finish(r);
 }
 
 TEST(GwCompletion, LayerAndEdgeResultsPersistCanonicalInventoriesAndGrossReceipts) {
-    auto body=layeredDeck("[GW_INITIAL_QUALITY]\n* UNSAT TSS 7\n\n"
-        "[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST 0.0001\n\n"
-        "[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 3\n\n");
-    const auto at=body.find("REPORT_2D NO");ASSERT_NE(at,std::string::npos);
-    body.replace(at,12,"REPORT_2D YES\nOUTPUT_FILE completion_layers.h5\nOUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES DEPTH GROUNDWATER");
-    Deck r=open("completion_layer_results",body);ASSERT_TRUE(r.opened)<<completionErrors(r);
-    ASSERT_TRUE(run(r))<<completionErrors(r);
-    const auto& gw=r.eng->surfaceRouter2D().subsurface();const auto expected=gw.transport().layer_mass;
-    const int ns=gw.transport().n_species,nl=gw.transport().n_layers,nc=gw.transport().n_cells;
-    double water=-1,mass=-2,conc=-3;
-    ASSERT_EQ(swmm_gw2d_get_layer_quality(r.e,0,0,0,&water,&mass,&conc),SWMM_OK);
-    EXPECT_DOUBLE_EQ(mass,expected[0]);EXPECT_GE(water,0);EXPECT_GE(conc,0);
-    EXPECT_NE(swmm_gw2d_get_layer_quality(r.e,-1,0,0,&water,&mass,&conc),SWMM_OK);
-    EXPECT_DOUBLE_EQ(mass,expected[0]);
+    auto body = layeredDeck("[GW_INITIAL_QUALITY]\n* UNSAT TSS 7\n\n"
+                            "[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST 0.0001\n\n"
+                            "[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 3\n\n");
+    const auto at = body.find("REPORT_2D NO");
+    ASSERT_NE(at, std::string::npos);
+    body.replace(
+        at, 12,
+        "REPORT_2D YES\nOUTPUT_FILE completion_layers.h5\nOUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES DEPTH GROUNDWATER");
+    Deck r = open("completion_layer_results", body);
+    ASSERT_TRUE(r.opened) << completionErrors(r);
+    ASSERT_TRUE(run(r)) << completionErrors(r);
+    const auto& gw = r.eng->surfaceRouter2D().subsurface();
+    const auto expected = gw.transport().layer_mass;
+    const int ns = gw.transport().n_species, nl = gw.transport().n_layers,
+              nc = gw.transport().n_cells;
+    double water = -1, mass = -2, conc = -3;
+    ASSERT_EQ(swmm_gw2d_get_layer_quality(r.e, 0, 0, 0, &water, &mass, &conc), SWMM_OK);
+    EXPECT_DOUBLE_EQ(mass, expected[0]);
+    EXPECT_GE(water, 0);
+    EXPECT_GE(conc, 0);
+    EXPECT_NE(swmm_gw2d_get_layer_quality(r.e, -1, 0, 0, &water, &mass, &conc), SWMM_OK);
+    EXPECT_DOUBLE_EQ(mass, expected[0]);
     finish(r);
-    hid_t file=H5Fopen((kOutDir/"completion_layers.h5").string().c_str(),H5F_ACC_RDONLY,H5P_DEFAULT);
-    ASSERT_GE(file,0);
-    for(const char* name:{"Mesh2_face_gw_layer_mass","Mesh2_face_gw_layer_conc","groundwater_boundary_species"}) {
-        hid_t dataset=H5Dopen2(file,name,H5P_DEFAULT);ASSERT_GE(dataset,0)<<name;
-        hid_t space=H5Dget_space(dataset);EXPECT_EQ(H5Sget_simple_extent_ndims(space),4);
-        hsize_t dims[4]={};H5Sget_simple_extent_dims(space,dims,nullptr);EXPECT_GT(dims[0],0);
-        EXPECT_EQ(dims[1],ns);
-        if(std::string(name)=="Mesh2_face_gw_layer_mass") {
-            EXPECT_EQ(dims[2],nl);EXPECT_EQ(dims[3],nc);
-            std::vector<double> values(std::size_t(dims[0])*ns*nl*nc);
-            ASSERT_GE(H5Dread(dataset,H5T_NATIVE_DOUBLE,H5S_ALL,H5S_ALL,H5P_DEFAULT,values.data()),0);
-            const auto offset=values.size()-expected.size();
-            for(std::size_t k=0;k<expected.size();++k)EXPECT_NEAR(values[offset+k],expected[k],1e-9);
+    hid_t file =
+        H5Fopen((kOutDir / "completion_layers.h5").string().c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    ASSERT_GE(file, 0);
+    for (const char* name :
+         {"Mesh2_face_gw_layer_mass", "Mesh2_face_gw_layer_conc", "groundwater_boundary_species"}) {
+        hid_t dataset = H5Dopen2(file, name, H5P_DEFAULT);
+        ASSERT_GE(dataset, 0) << name;
+        hid_t space = H5Dget_space(dataset);
+        EXPECT_EQ(H5Sget_simple_extent_ndims(space), 4);
+        hsize_t dims[4] = {};
+        H5Sget_simple_extent_dims(space, dims, nullptr);
+        EXPECT_GT(dims[0], 0);
+        EXPECT_EQ(dims[1], ns);
+        if (std::string(name) == "Mesh2_face_gw_layer_mass") {
+            EXPECT_EQ(dims[2], nl);
+            EXPECT_EQ(dims[3], nc);
+            std::vector<double> values(std::size_t(dims[0]) * ns * nl * nc);
+            ASSERT_GE(
+                H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, values.data()),
+                0);
+            const auto offset = values.size() - expected.size();
+            for (std::size_t k = 0; k < expected.size(); ++k)
+                EXPECT_NEAR(values[offset + k], expected[k], 1e-9);
         }
-        H5Sclose(space);H5Dclose(dataset);
+        H5Sclose(space);
+        H5Dclose(dataset);
     }
-    EXPECT_GT(H5Lexists(file,"groundwater_boundary_water",H5P_DEFAULT),0);
-    EXPECT_GT(H5Lexists(file,"groundwater_transport_ledger",H5P_DEFAULT),0);H5Fclose(file);
+    EXPECT_GT(H5Lexists(file, "groundwater_boundary_water", H5P_DEFAULT), 0);
+    EXPECT_GT(H5Lexists(file, "groundwater_transport_ledger", H5P_DEFAULT), 0);
+    H5Fclose(file);
 }
 
 TEST(GwCompletion, PorousOwnerReceivesBoundarySpeciesAndPhysicalHeatExactlyOnce) {
-    auto body=forcingDeck("[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION NO\n\n"
-        "[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n\n"
-        "[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST 0.0001\n\n"
-        "[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 3\n1 0 TSS MASSFLUX 2\n"
-        "1 0 __TEMPERATURE__ CONC 20\n1 0 __TEMPERATURE__ HEATFLUX 100\n\n");
-    body.insert(body.find("FLOW_UNITS"),"HEAT_TRANSPORT YES\n");
-    Deck r=open("completion_porous_boundary",body);ASSERT_TRUE(r.opened)<<completionErrors(r);
-    ASSERT_TRUE(run(r))<<completionErrors(r);ASSERT_EQ(swmm_engine_end(r.e),SWMM_OK);r.started=false;
-    const auto& gw=r.eng->surfaceRouter2D().subsurface();const auto& t=gw.transport();
-    const double duration=r.eng->context().current_time,water=.0001*duration;
-    EXPECT_NEAR(t.boundary_in[0],3*water,1e-9);EXPECT_NEAR(t.boundary_flux_in[0],.001*2*10*duration,1e-9);
-    EXPECT_DOUBLE_EQ(t.gained_source[0],0);EXPECT_NEAR(t.residual(0),0,1e-9);
-    double initial=0,final=0,advection=0,heating=0;
-    for(const auto& cell:gw.heat().cells) {
-        initial+=cell.initial_j;advection+=cell.advective_j;heating+=cell.source_j;
-        for(double energy:cell.column.energy)final+=energy;
-        EXPECT_FALSE(cell.failed)<<cell.error;
+    auto body =
+        forcingDeck("[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION NO\n\n"
+                    "[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n\n"
+                    "[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST 0.0001\n\n"
+                    "[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 3\n1 0 TSS MASSFLUX 2\n"
+                    "1 0 __TEMPERATURE__ CONC 20\n1 0 __TEMPERATURE__ HEATFLUX 100\n\n");
+    body.insert(body.find("FLOW_UNITS"), "HEAT_TRANSPORT YES\n");
+    Deck r = open("completion_porous_boundary", body);
+    ASSERT_TRUE(r.opened) << completionErrors(r);
+    ASSERT_TRUE(run(r)) << completionErrors(r);
+    ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
+    r.started = false;
+    const auto& gw = r.eng->surfaceRouter2D().subsurface();
+    const auto& t = gw.transport();
+    const double duration = r.eng->context().current_time, water = .0001 * duration;
+    EXPECT_NEAR(t.boundary_in[0], 3 * water, 1e-9);
+    EXPECT_NEAR(t.boundary_flux_in[0], .001 * 2 * 10 * duration, 1e-9);
+    EXPECT_DOUBLE_EQ(t.gained_source[0], 0);
+    EXPECT_NEAR(t.residual(0), 0, 1e-9);
+    double initial = 0, final = 0, advection = 0, heating = 0;
+    for (const auto& cell : gw.heat().cells) {
+        initial += cell.initial_j;
+        advection += cell.advective_j;
+        heating += cell.source_j;
+        for (double energy : cell.column.energy)
+            final += energy;
+        EXPECT_FALSE(cell.failed) << cell.error;
     }
-    EXPECT_NEAR(heating,100*10*duration,1e-6);
-    EXPECT_NEAR(advection,gw.heat().water_capacity*20*water,1e-5);
-    EXPECT_NEAR(final-initial,advection+heating,1e-4);
-    double rejected=-1;ASSERT_EQ(swmm_gw2d_get_ledger(r.e,SWMM_GW2D_LED_REJECT,&rejected),SWMM_OK);
-    EXPECT_DOUBLE_EQ(rejected,gw.state().led_reject);finish(r);
+    EXPECT_NEAR(heating, 100 * 10 * duration, 1e-6);
+    EXPECT_NEAR(advection, gw.heat().water_capacity * 20 * water, 1e-5);
+    EXPECT_NEAR(final - initial, advection + heating, 1e-4);
+    double rejected = -1;
+    ASSERT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_REJECT, &rejected), SWMM_OK);
+    EXPECT_DOUBLE_EQ(rejected, gw.state().led_reject);
+    finish(r);
 }
 
 TEST(GwCompletion, LayeredStrongReversalCollapseAndRewetStayAdmissibleAndConserve) {
-    auto body=layeredDeck("[GW_INITIAL_QUALITY]\n* LAYER 1 TSS 7\n* LAYER 2 TSS 11\n\n"
-        "[TIMESERIES]\nWQ 0:00:00 -0.5\nWQ 0:05:00 -0.5\nWQ 0:10:00 0.5\n"
-        "WQ 0:15:00 0.5\nWQ 0:20:00 -0.5\n\n"
-        "[GW_SOURCES]\nW * FLOW WQ TSS CONC 0\n\n",Mesh::Tri,.02);
-    Deck r=open("completion_layer_strong_reversal",body);ASSERT_TRUE(r.opened)<<completionErrors(r);
-    ASSERT_TRUE(run(r))<<completionErrors(r);ASSERT_EQ(swmm_engine_end(r.e),SWMM_OK);r.started=false;
-    const auto& gw=r.eng->surfaceRouter2D().subsurface();const auto& t=gw.transport();
-    for(double mass:t.layer_mass){EXPECT_TRUE(std::isfinite(mass));EXPECT_GE(mass,0);}
-    for(double mass:t.sat_mass){EXPECT_TRUE(std::isfinite(mass));EXPECT_GE(mass,0);}
-    EXPECT_GT(gw.state().led_source_in,1);EXPECT_GT(gw.state().led_source_out,.01);
-    EXPECT_NEAR(t.residual(0),0,1e-8)<<ledgerDump(t,0);
-    EXPECT_NEAR(gw.state().continuityResidual(),0,1e-8);finish(r);
+    auto body = layeredDeck("[GW_INITIAL_QUALITY]\n* LAYER 1 TSS 7\n* LAYER 2 TSS 11\n\n"
+                            "[TIMESERIES]\nWQ 0:00:00 -0.5\nWQ 0:05:00 -0.5\nWQ 0:10:00 0.5\n"
+                            "WQ 0:15:00 0.5\nWQ 0:20:00 -0.5\n\n"
+                            "[GW_SOURCES]\nW * FLOW WQ TSS CONC 0\n\n",
+                            Mesh::Tri, .02);
+    Deck r = open("completion_layer_strong_reversal", body);
+    ASSERT_TRUE(r.opened) << completionErrors(r);
+    ASSERT_TRUE(run(r)) << completionErrors(r);
+    ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
+    r.started = false;
+    const auto& gw = r.eng->surfaceRouter2D().subsurface();
+    const auto& t = gw.transport();
+    for (double mass : t.layer_mass) {
+        EXPECT_TRUE(std::isfinite(mass));
+        EXPECT_GE(mass, 0);
+    }
+    for (double mass : t.sat_mass) {
+        EXPECT_TRUE(std::isfinite(mass));
+        EXPECT_GE(mass, 0);
+    }
+    EXPECT_GT(gw.state().led_source_in, 1);
+    EXPECT_GT(gw.state().led_source_out, .01);
+    EXPECT_NEAR(t.residual(0), 0, 1e-8) << ledgerDump(t, 0);
+    EXPECT_NEAR(gw.state().continuityResidual(), 0, 1e-8);
+    finish(r);
 }
-
 
 TEST(GwCompletion, TensorFluxMatchesLinearSkewedFieldsUnderRotationAndReflection) {
     using namespace openswmm::twoD::dispersion;
-    for(double angle:{0.,.37,1.2})for(double reflection:{-1.,1.}) {
-        const auto rotate=[&](std::array<double,2> a) {
-            return std::array<double,2>{std::cos(angle)*a[0]-std::sin(angle)*reflection*a[1],
-                std::sin(angle)*a[0]+std::cos(angle)*reflection*a[1]};
-        };
-        const auto v=rotate({2.,0.}),g=rotate({.3,.7}),n=rotate({1.,0.});
-        const auto l=rotate({.4,.3}),r=rotate({-.6,-.2});
-        const auto d=tensor(v[0],v[1],3,.5,.1);
-        const double left=5.,right=left+g[0]*(l[0]-r[0])+g[1]*(l[1]-r[1]);
-        const double measured=faceFlux(d,d,n[0],n[1],.4,.6,l,r,g,g,left,right,2.);
-        const auto dg=d.apply(g);const double expected=-2*(n[0]*dg[0]+n[1]*dg[1]);
-        EXPECT_NEAR(measured,expected,1e-13);
-        const auto transverse=rotate({0.,1.});
-        EXPECT_NEAR(transverse[0]*dg[0]+transverse[1]*dg[1],1.1*.7,1e-13);
-    }
-    GradientFit fit;fit.add(1,.3,.3+.7*.3);fit.add(-.2,1.,-.3*.2+.7);
-    EXPECT_NEAR(fit.value()[0],.3,1e-14);EXPECT_NEAR(fit.value()[1],.7,1e-14);
+    for (double angle : {0., .37, 1.2})
+        for (double reflection : {-1., 1.}) {
+            const auto rotate = [&](std::array<double, 2> a) {
+                return std::array<double, 2>{
+                    std::cos(angle) * a[0] - std::sin(angle) * reflection * a[1],
+                    std::sin(angle) * a[0] + std::cos(angle) * reflection * a[1]};
+            };
+            const auto v = rotate({2., 0.}), g = rotate({.3, .7}), n = rotate({1., 0.});
+            const auto l = rotate({.4, .3}), r = rotate({-.6, -.2});
+            const auto d = tensor(v[0], v[1], 3, .5, .1);
+            const double left = 5., right = left + g[0] * (l[0] - r[0]) + g[1] * (l[1] - r[1]);
+            const double measured = faceFlux(d, d, n[0], n[1], .4, .6, l, r, g, g, left, right, 2.);
+            const auto dg = d.apply(g);
+            const double expected = -2 * (n[0] * dg[0] + n[1] * dg[1]);
+            EXPECT_NEAR(measured, expected, 1e-13);
+            const auto transverse = rotate({0., 1.});
+            EXPECT_NEAR(transverse[0] * dg[0] + transverse[1] * dg[1], 1.1 * .7, 1e-13);
+        }
+    GradientFit fit;
+    fit.add(1, .3, .3 + .7 * .3);
+    fit.add(-.2, 1., -.3 * .2 + .7);
+    EXPECT_NEAR(fit.value()[0], .3, 1e-14);
+    EXPECT_NEAR(fit.value()[1], .7, 1e-14);
 }
 
 TEST(GwCompletion, HeterogeneousTensorResistancePreservesAContinuousInterfaceFlux) {
     using namespace openswmm::twoD::dispersion;
-    const Tensor a{4,1,3},b{2,.5,2};
-    const double q=1.2,gy=.7,gxL=(-q-a.xy*gy)/a.xx,gxR=(-q-b.xy*gy)/b.xx;
-    const std::array<double,2> armL{.4,.3},armR{-.6,-.2};
-    const double left=5-gxL*armL[0]-gy*armL[1],right=5-gxR*armR[0]-gy*armR[1];
-    EXPECT_NEAR(faceFlux(a,b,1,0,.4,.6,armL,armR,{gxL,gy},{gxR,gy},left,right,1),q,1e-14);
+    const Tensor a{4, 1, 3}, b{2, .5, 2};
+    const double q = 1.2, gy = .7, gxL = (-q - a.xy * gy) / a.xx, gxR = (-q - b.xy * gy) / b.xx;
+    const std::array<double, 2> armL{.4, .3}, armR{-.6, -.2};
+    const double left = 5 - gxL * armL[0] - gy * armL[1], right = 5 - gxR * armR[0] - gy * armR[1];
+    EXPECT_NEAR(faceFlux(a, b, 1, 0, .4, .6, armL, armR, {gxL, gy}, {gxR, gy}, left, right, 1), q,
+                1e-14);
 }
 TEST(GwCompletion, SoluteDiffusionSafetyFactorChangesTheActualCellTimeLimit) {
     double limits[2]{};
-    for(int i=0;i<2;++i) {
-        Deck r=open("completion_cdiff_"+std::to_string(i),forcingDeck(
-            "[GW_TRANSPORT_OPTIONS]\nDISPERSION YES\nC_DIFF "+std::string(i?"0.1":"0.4")+
-            "\n[GW_TRANSPORT_PARAMS]\n* - - - - 0 0 100 - -\n"));
-        ASSERT_TRUE(r.opened);ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-        auto& gw=r.eng->surfaceRouter2D().subsurface();limits[i]=gw.state().dt_cell[0];
-        EXPECT_GT(limits[i],0);finish(r);
+    for (int i = 0; i < 2; ++i) {
+        Deck r = open("completion_cdiff_" + std::to_string(i),
+                      forcingDeck("[GW_TRANSPORT_OPTIONS]\nDISPERSION YES\nC_DIFF " +
+                                  std::string(i ? "0.1" : "0.4") +
+                                  "\n[GW_TRANSPORT_PARAMS]\n* - - - - 0 0 100 - -\n"));
+        ASSERT_TRUE(r.opened);
+        ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+        auto& gw = r.eng->surfaceRouter2D().subsurface();
+        limits[i] = gw.state().dt_cell[0];
+        EXPECT_GT(limits[i], 0);
+        finish(r);
     }
-    EXPECT_NEAR(limits[1]/limits[0],.25,1e-12);
+    EXPECT_NEAR(limits[1] / limits[0], .25, 1e-12);
 }
 
 TEST(GwCompletion, TransverseDispersivitySpreadsATracerAcrossAnOrthogonalDarcyFlow) {
     double transverse[2]{};
-    for(int mode=0;mode<2;++mode) {
-        auto body=forcingDeck("[GW_TRANSPORT_PARAMS]\n* - - - - 1 "+std::to_string(mode)+" 0 - -\n");
-        std::ostringstream mesh;mesh<<"[2D_VERTICES]\n";
-        for(int y=0;y<=3;++y)for(int x=0;x<=3;++x)mesh<<x*10<<" "<<y*10<<" 0\n";
-        mesh<<"[2D_QUADS]\n";
-        for(int y=0;y<3;++y)for(int x=0;x<3;++x) {
-            const int v=y*4+x;mesh<<v<<" "<<v+1<<" "<<v+5<<" "<<v+4<<" .03 0\n";
-        }
-        const auto begin=body.find("[2D_VERTICES]"),end=body.find("[2D_INFILTRATION_DEFAULTS]");
-        ASSERT_NE(begin,std::string::npos);ASSERT_NE(end,std::string::npos);body.replace(begin,end-begin,mesh.str());
-        Deck r=open("completion_transverse_"+std::to_string(mode),body);ASSERT_TRUE(r.opened);
-        ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-        auto& gw=r.eng->surfaceRouter2D().subsurface();auto& state=gw.state();auto& transport=gw.transport();
-        for(int y=0;y<3;++y)for(int x=0;x<3;++x) {
-            const int cell=y*3+x;state.hg[cell]=.5-.01*x;state.Ks[cell]=.001;
-            transport.sat_mass[transport.idx(0,cell)]=(y==1?10:0)*gw.satVolume(cell);
-        }
-        gw.assignTiers(1,1);gw.fireGwFaces(0,1);
+    for (int mode = 0; mode < 2; ++mode) {
+        auto body =
+            forcingDeck("[GW_TRANSPORT_PARAMS]\n* - - - - 1 " + std::to_string(mode) + " 0 - -\n");
+        std::ostringstream mesh;
+        mesh << "[2D_VERTICES]\n";
+        for (int y = 0; y <= 3; ++y)
+            for (int x = 0; x <= 3; ++x)
+                mesh << x * 10 << " " << y * 10 << " 0\n";
+        mesh << "[2D_QUADS]\n";
+        for (int y = 0; y < 3; ++y)
+            for (int x = 0; x < 3; ++x) {
+                const int v = y * 4 + x;
+                mesh << v << " " << v + 1 << " " << v + 5 << " " << v + 4 << " .03 0\n";
+            }
+        const auto begin = body.find("[2D_VERTICES]"),
+                   end = body.find("[2D_INFILTRATION_DEFAULTS]");
+        ASSERT_NE(begin, std::string::npos);
+        ASSERT_NE(end, std::string::npos);
+        body.replace(begin, end - begin, mesh.str());
+        Deck r = open("completion_transverse_" + std::to_string(mode), body);
+        ASSERT_TRUE(r.opened);
+        ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+        auto& gw = r.eng->surfaceRouter2D().subsurface();
+        auto& state = gw.state();
+        auto& transport = gw.transport();
+        for (int y = 0; y < 3; ++y)
+            for (int x = 0; x < 3; ++x) {
+                const int cell = y * 3 + x;
+                state.hg[cell] = .5 - .01 * x;
+                state.Ks[cell] = .001;
+                transport.sat_mass[transport.idx(0, cell)] = (y == 1 ? 10 : 0) * gw.satVolume(cell);
+            }
+        gw.assignTiers(1, 1);
+        gw.fireGwFaces(0, 1);
         // Faces with zero hydraulic transfer are transverse to the x flow.
         // Their paired species packets expose diffusion before cell gathering.
-        for(std::size_t e=0;e<state.eacc_L.size();++e)if(std::abs(state.eacc_L[e])<1e-15)
-            transverse[mode]+=std::abs(transport.sacc_L[e]);
+        for (std::size_t e = 0; e < state.eacc_L.size(); ++e)
+            if (std::abs(state.eacc_L[e]) < 1e-15)
+                transverse[mode] += std::abs(transport.sacc_L[e]);
         finish(r);
     }
-    EXPECT_NEAR(transverse[0],0,1e-15);EXPECT_GT(transverse[1],1e-8);
+    EXPECT_NEAR(transverse[0], 0, 1e-15);
+    EXPECT_GT(transverse[1], 1e-8);
 }
 
 TEST(GwCompletion, PendingFaceAndLayerRestartContinuesExactlyAndTruncationIsAtomic) {
-    const auto body=layeredDeck("[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST .0001\n"
-        "[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 3\n"
-        "[GW_INITIAL_QUALITY]\n* LAYER 1 TSS 7\n* LAYER 2 TSS 11\n");
-    Deck first=open("completion_pending_reference",body),second=open("completion_pending_restart",body);
-    ASSERT_TRUE(first.opened);ASSERT_TRUE(second.opened);
-    ASSERT_EQ(swmm_engine_initialize(first.e),SWMM_OK);ASSERT_EQ(swmm_engine_initialize(second.e),SWMM_OK);
-    auto& a=first.eng->surfaceRouter2D();auto& b=second.eng->surfaceRouter2D();
-    auto& ga=a.subsurface();auto& gb=b.subsurface();
-    ga.assignTiers(.1,1);gb.assignTiers(.1,1);
-    for(int step=0;step<40;++step) {
-        ga.fireGwFaces(0,.1);
-        if(step==17) {
-            const auto saved=ga.transportRestartState();ASSERT_FALSE(saved.empty());
-            const auto before=gb.transportRestartState();
-            EXPECT_FALSE(gb.restoreTransportRestart(saved.substr(0,saved.size()/2),true).empty());
-            EXPECT_EQ(gb.transportRestartState(),before);
-            ASSERT_TRUE(gb.restoreTransportRestart(saved,true).empty());
-            EXPECT_EQ(gb.transportRestartState(),saved);
-        } else if(step>17)gb.fireGwFaces(0,.1);
-        ga.fireGwCells(0,.1,a.state(),step*.1);
-        if(step>=17) {
-            gb.fireGwCells(0,.1,b.state(),step*.1);
-            EXPECT_EQ(gb.transportRestartState(),ga.transportRestartState())<<step;
+    const auto body = layeredDeck("[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST .0001\n"
+                                  "[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 3\n"
+                                  "[GW_INITIAL_QUALITY]\n* LAYER 1 TSS 7\n* LAYER 2 TSS 11\n");
+    Deck first = open("completion_pending_reference", body),
+         second = open("completion_pending_restart", body);
+    ASSERT_TRUE(first.opened);
+    ASSERT_TRUE(second.opened);
+    ASSERT_EQ(swmm_engine_initialize(first.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(second.e), SWMM_OK);
+    auto& a = first.eng->surfaceRouter2D();
+    auto& b = second.eng->surfaceRouter2D();
+    auto& ga = a.subsurface();
+    auto& gb = b.subsurface();
+    ga.assignTiers(.1, 1);
+    gb.assignTiers(.1, 1);
+    for (int step = 0; step < 40; ++step) {
+        ga.fireGwFaces(0, .1);
+        if (step == 17) {
+            const auto saved = ga.transportRestartState();
+            ASSERT_FALSE(saved.empty());
+            const auto before = gb.transportRestartState();
+            EXPECT_FALSE(
+                gb.restoreTransportRestart(saved.substr(0, saved.size() / 2), true).empty());
+            EXPECT_EQ(gb.transportRestartState(), before);
+            ASSERT_TRUE(gb.restoreTransportRestart(saved, true).empty());
+            EXPECT_EQ(gb.transportRestartState(), saved);
+        } else if (step > 17)
+            gb.fireGwFaces(0, .1);
+        ga.fireGwCells(0, .1, a.state(), step * .1);
+        if (step >= 17) {
+            gb.fireGwCells(0, .1, b.state(), step * .1);
+            EXPECT_EQ(gb.transportRestartState(), ga.transportRestartState()) << step;
         }
     }
-    for(int s=0;s<ga.transport().n_species;++s)EXPECT_NEAR(ga.transport().residual(s),0,1e-9);
-    finish(first);finish(second);
+    for (int s = 0; s < ga.transport().n_species; ++s)
+        EXPECT_NEAR(ga.transport().residual(s), 0, 1e-9);
+    finish(first);
+    finish(second);
 }
 
 TEST(GwCompletion, DisabledGroundwaterRetainsItsChildBoundariesWithoutExecutingThem) {
-    auto body=forcingDeck("[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST .0001\n");
-    body.insert(body.find("[2D_OPTIONS]\n")+13,"GROUNDWATER NO\n");
-    Deck r=open("completion_disabled_parent",body);ASSERT_TRUE(r.opened);
-    ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
+    auto body = forcingDeck("[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST .0001\n");
+    body.insert(body.find("[2D_OPTIONS]\n") + 13, "GROUNDWATER NO\n");
+    Deck r = open("completion_disabled_parent", body);
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
     EXPECT_FALSE(r.eng->surfaceRouter2D().subsurface().active());
-    EXPECT_EQ(swmm_gw2d_boundary_count(r.e),1);finish(r);
+    EXPECT_EQ(swmm_gw2d_boundary_count(r.e), 1);
+    finish(r);
 }
 
 TEST(GwCompletion, ManufacturedNeumannDiffusionConvergesOnThreeSpatialTimeRefinements) {
-    std::ofstream evidence(kOutDir/"manufactured_diffusion_refinement.csv");
-    ASSERT_TRUE(evidence.good());evidence.precision(17);
-    evidence<<"cells_per_axis,steps,dt,l2_error,refinement_ratio,water_residual,species_residual\n";
-    double previous=0;
-    for(int n:{8,16,32}) {
-        constexpr double diffusion=.01,finalTime=1.;
-        const double pi=std::acos(-1.),dx=1./n;
-        auto body=forcingDeck("[GW_TRANSPORT_PARAMS]\n* - - - - 0 0 .01 - -\n");
-        std::ostringstream mesh;mesh.precision(17);mesh<<"[2D_VERTICES]\n";
-        for(int y=0;y<=n;++y)for(int x=0;x<=n;++x)mesh<<x*dx<<" "<<y*dx<<" 0\n";
-        mesh<<"[2D_QUADS]\n";
-        for(int y=0;y<n;++y)for(int x=0;x<n;++x) {
-            const int v=y*(n+1)+x;mesh<<v<<" "<<v+1<<" "<<v+n+2<<" "<<v+n+1<<" .03 0\n";
+    std::ofstream evidence(kOutDir / "manufactured_diffusion_refinement.csv");
+    ASSERT_TRUE(evidence.good());
+    evidence.precision(17);
+    evidence
+        << "cells_per_axis,steps,dt,l2_error,refinement_ratio,water_residual,species_residual\n";
+    double previous = 0;
+    for (int n : {8, 16, 32}) {
+        constexpr double diffusion = .01, finalTime = 1.;
+        const double pi = std::acos(-1.), dx = 1. / n;
+        auto body = forcingDeck("[GW_TRANSPORT_PARAMS]\n* - - - - 0 0 .01 - -\n");
+        std::ostringstream mesh;
+        mesh.precision(17);
+        mesh << "[2D_VERTICES]\n";
+        for (int y = 0; y <= n; ++y)
+            for (int x = 0; x <= n; ++x)
+                mesh << x * dx << " " << y * dx << " 0\n";
+        mesh << "[2D_QUADS]\n";
+        for (int y = 0; y < n; ++y)
+            for (int x = 0; x < n; ++x) {
+                const int v = y * (n + 1) + x;
+                mesh << v << " " << v + 1 << " " << v + n + 2 << " " << v + n + 1 << " .03 0\n";
+            }
+        const auto begin = body.find("[2D_VERTICES]"),
+                   end = body.find("[2D_INFILTRATION_DEFAULTS]");
+        ASSERT_NE(begin, std::string::npos);
+        ASSERT_NE(end, std::string::npos);
+        body.replace(begin, end - begin, mesh.str());
+        Deck r = open("completion_manufactured_diffusion_" + std::to_string(n), body);
+        ASSERT_TRUE(r.opened);
+        ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+        auto& router = r.eng->surfaceRouter2D();
+        auto& gw = router.subsurface();
+        auto& tr = gw.transport();
+        for (int y = 0; y < n; ++y)
+            for (int x = 0; x < n; ++x) {
+                const int cell = y * n + x;
+                const double c =
+                    1 + .2 * std::cos(pi * (x + .5) * dx) * std::cos(pi * (y + .5) * dx);
+                tr.sat_mass[tr.idx(0, cell)] = c * gw.satVolume(cell);
+            }
+        tr.init_mass[0] = tr.storage(0);
+        const int steps = int(std::ceil(finalTime / (.05 * dx * dx / diffusion)));
+        const double dt = finalTime / steps;
+        gw.assignTiers(dt, 1);
+        for (int step = 0; step < steps; ++step) {
+            gw.fireGwFaces(0, dt);
+            gw.fireGwCells(0, dt, router.state(), step * dt);
         }
-        const auto begin=body.find("[2D_VERTICES]"),end=body.find("[2D_INFILTRATION_DEFAULTS]");
-        ASSERT_NE(begin,std::string::npos);ASSERT_NE(end,std::string::npos);body.replace(begin,end-begin,mesh.str());
-        Deck r=open("completion_manufactured_diffusion_"+std::to_string(n),body);ASSERT_TRUE(r.opened);
-        ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-        auto& router=r.eng->surfaceRouter2D();auto& gw=router.subsurface();auto& tr=gw.transport();
-        for(int y=0;y<n;++y)for(int x=0;x<n;++x) {
-            const int cell=y*n+x;const double c=1+.2*std::cos(pi*(x+.5)*dx)*std::cos(pi*(y+.5)*dx);
-            tr.sat_mass[tr.idx(0,cell)]=c*gw.satVolume(cell);
-        }
-        tr.init_mass[0]=tr.storage(0);
-        const int steps=int(std::ceil(finalTime/(.05*dx*dx/diffusion)));const double dt=finalTime/steps;
-        gw.assignTiers(dt,1);
-        for(int step=0;step<steps;++step) {
-            gw.fireGwFaces(0,dt);gw.fireGwCells(0,dt,router.state(),step*dt);
-        }
-        double square=0;
-        for(int y=0;y<n;++y)for(int x=0;x<n;++x) {
-            const int cell=y*n+x;
-            const double exact=1+.2*std::exp(-2*diffusion*pi*pi*finalTime)*
-                std::cos(pi*(x+.5)*dx)*std::cos(pi*(y+.5)*dx);
-            const double difference=tr.sat_mass[tr.idx(0,cell)]/gw.satVolume(cell)-exact;
-            square+=difference*difference;
-        }
-        const double error=std::sqrt(square/(n*n));
-        evidence<<n<<","<<steps<<","<<dt<<","<<error<<","<<(previous>0?previous/error:0)
-            <<","<<gw.state().continuityResidual()<<","<<tr.residual(0)<<"\n";
-        EXPECT_LT(error,.002);if(previous>0)EXPECT_GT(previous/error,3.5);
-        EXPECT_NEAR(tr.residual(0),0,1e-10);EXPECT_NEAR(gw.state().continuityResidual(),0,1e-10);
-        previous=error;finish(r);
+        double square = 0;
+        for (int y = 0; y < n; ++y)
+            for (int x = 0; x < n; ++x) {
+                const int cell = y * n + x;
+                const double exact = 1 + .2 * std::exp(-2 * diffusion * pi * pi * finalTime) *
+                                             std::cos(pi * (x + .5) * dx) *
+                                             std::cos(pi * (y + .5) * dx);
+                const double difference = tr.sat_mass[tr.idx(0, cell)] / gw.satVolume(cell) - exact;
+                square += difference * difference;
+            }
+        const double error = std::sqrt(square / (n * n));
+        evidence << n << "," << steps << "," << dt << "," << error << ","
+                 << (previous > 0 ? previous / error : 0) << "," << gw.state().continuityResidual()
+                 << "," << tr.residual(0) << "\n";
+        EXPECT_LT(error, .002);
+        if (previous > 0)
+            EXPECT_GT(previous / error, 3.5);
+        EXPECT_NEAR(tr.residual(0), 0, 1e-10);
+        EXPECT_NEAR(gw.state().continuityResidual(), 0, 1e-10);
+        previous = error;
+        finish(r);
     }
 }
 
 TEST(GwCompletion, HydraulicHeadAndTotalFlowBoundariesAgreeInUSAndSIProjects) {
-    for(bool head:{false,true}) {
+    for (bool head : {false, true}) {
         std::vector<double> reference;
-        for(bool us:{false,true}) {
-            const double length=us?1/.3048:1,conductivity=us?1/25.4:1;
-            std::ostringstream input;input.precision(17);
-            input<<"[OPTIONS]\nFLOW_UNITS "<<(us?"CFS":"CMS")
-                <<"\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2026\nEND_DATE 01/01/2026\nEND_TIME 00:00:10\nROUTING_STEP .5\nREPORT_STEP 00:00:01\n"
-                <<"[POLLUTANTS]\nTSS MG/L 0 0 0 0\n[JUNCTIONS]\nJ1 "<<-2*length<<" "<<2*length
-                <<"\n[OUTFALLS]\nO1 "<<-3*length<<" FREE NO\n[CONDUITS]\nC1 J1 O1 "<<30*length
-                <<" .013 0 0 0\n[XSECTIONS]\nC1 CIRCULAR "<<.5*length<<" 0 0 0 1\n"
-                <<"[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP .5\nREPORT_2D NO\nRAINFALL_MODE NONE\n"
-                <<"[2D_VERTICES]\n0 0 0\n"<<10*length<<" 0 0\n"<<10*length<<" "<<10*length<<" 0\n0 "<<10*length<<" 0\n"
-                <<"[2D_QUADS]\n0 1 2 3 .03 0\n[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\nSOIL_CHAR GARDNER\nNODE_ENROLMENT ROWS\n"
-                <<"[2D_AQUIFER]\n* "<<36*conductivity<<" "<<length<<" .45 .1 "<<2/length<<" HG0 "<<.3*length
-                <<"\n[GW_TRANSPORT_OPTIONS]\nDISPERSION NO\n[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 "
-                <<(head?"HEAD":"FLOW")<<" CONST "<<(head?-.6*length:.0001)
-                <<"\n[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 3\n[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 2\n";
-            Deck r=open(std::string("completion_units_")+(head?"head_":"flow_")+(us?"us":"si"),input.str());
-            ASSERT_TRUE(r.opened)<<completionErrors(r);ASSERT_TRUE(run(r))<<completionErrors(r);
-            ASSERT_EQ(swmm_engine_end(r.e),SWMM_OK);r.started=false;
-            const auto& gw=r.eng->surfaceRouter2D().subsurface();const auto& tr=gw.transport();
-            const std::vector<double> measured{gw.state().led_boundary_in,gw.state().led_boundary_out,
-                gw.state().storage(),tr.ledgeredStorage(0),tr.boundary_in[0],tr.boundary_out[0]};
-            EXPECT_GT(measured[0],0);EXPECT_NEAR(tr.residual(0),0,1e-10);
-            if(!us)reference=measured;
-            else for(std::size_t i=0;i<reference.size();++i)EXPECT_NEAR(measured[i],reference[i],1e-10*std::max(1.,std::abs(reference[i])))<<i;
+        for (bool us : {false, true}) {
+            const double length = us ? 1 / .3048 : 1, conductivity = us ? 1 / 25.4 : 1;
+            std::ostringstream input;
+            input.precision(17);
+            input
+                << "[OPTIONS]\nFLOW_UNITS " << (us ? "CFS" : "CMS")
+                << "\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2026\nEND_DATE 01/01/2026\nEND_TIME 00:00:10\nROUTING_STEP .5\nREPORT_STEP 00:00:01\n"
+                << "[POLLUTANTS]\nTSS MG/L 0 0 0 0\n[JUNCTIONS]\nJ1 " << -2 * length << " "
+                << 2 * length << "\n[OUTFALLS]\nO1 " << -3 * length
+                << " FREE NO\n[CONDUITS]\nC1 J1 O1 " << 30 * length
+                << " .013 0 0 0\n[XSECTIONS]\nC1 CIRCULAR " << .5 * length << " 0 0 0 1\n"
+                << "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP .5\nREPORT_2D NO\nRAINFALL_MODE NONE\n"
+                << "[2D_VERTICES]\n0 0 0\n"
+                << 10 * length << " 0 0\n"
+                << 10 * length << " " << 10 * length << " 0\n0 " << 10 * length << " 0\n"
+                << "[2D_QUADS]\n0 1 2 3 .03 0\n[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\nSOIL_CHAR GARDNER\nNODE_ENROLMENT ROWS\n"
+                << "[2D_AQUIFER]\n* " << 36 * conductivity << " " << length << " .45 .1 "
+                << 2 / length << " HG0 " << .3 * length
+                << "\n[GW_TRANSPORT_OPTIONS]\nDISPERSION NO\n[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 "
+                << (head ? "HEAD" : "FLOW") << " CONST " << (head ? -.6 * length : .0001)
+                << "\n[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 3\n[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 2\n";
+            Deck r = open(std::string("completion_units_") + (head ? "head_" : "flow_") +
+                              (us ? "us" : "si"),
+                          input.str());
+            ASSERT_TRUE(r.opened) << completionErrors(r);
+            ASSERT_TRUE(run(r)) << completionErrors(r);
+            ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
+            r.started = false;
+            const auto& gw = r.eng->surfaceRouter2D().subsurface();
+            const auto& tr = gw.transport();
+            const std::vector<double> measured{
+                gw.state().led_boundary_in, gw.state().led_boundary_out, gw.state().storage(),
+                tr.ledgeredStorage(0),      tr.boundary_in[0],           tr.boundary_out[0]};
+            EXPECT_GT(measured[0], 0);
+            EXPECT_NEAR(tr.residual(0), 0, 1e-10);
+            if (!us)
+                reference = measured;
+            else
+                for (std::size_t i = 0; i < reference.size(); ++i)
+                    EXPECT_NEAR(measured[i], reference[i],
+                                1e-10 * std::max(1., std::abs(reference[i])))
+                        << i;
             finish(r);
         }
     }
 }
 
-
 TEST(GwCompletion, AboveTableConduitContactPairsLayerWaterAndMassAcrossRestart) {
-    for(const Mesh shape:{Mesh::Tri,Mesh::Quad,Mesh::Mixed}) {
-        const auto body=layeredDeck("",shape);
-        Deck first=open(std::string("contact_pending_")+meshName(shape),body);
-        Deck second=open(std::string("contact_restored_")+meshName(shape),body);
-        ASSERT_TRUE(first.opened);ASSERT_TRUE(second.opened);
-        ASSERT_EQ(swmm_engine_initialize(first.e),SWMM_OK)<<completionErrors(first);
-        ASSERT_EQ(swmm_engine_initialize(second.e),SWMM_OK)<<completionErrors(second);
-        auto& a=first.eng->surfaceRouter2D();auto& b=second.eng->surfaceRouter2D();
-        auto& ga=a.subsurface();auto& gb=b.subsurface();
-        ga.assignTiers(.1,1);gb.assignTiers(.1,1);
-        const auto& w=ga.state();const auto& t=ga.transport();const int layer=t.n_layers/2;
-        const double elevation=w.z_bed[0]+w.zs[0]-(w.zs[0]-w.hg[0])*(layer+.5)/t.n_layers;
-        const double old_water=w.hu[0]*w.area[0];
-        std::vector<double> concentration(t.n_species,0);concentration[0]=7;
-        ga.bookLinkContact(0,.02,concentration,elevation,elevation);
-        EXPECT_NEAR(t.inFlight1D(0),.14,1e-14);
-        EXPECT_NEAR(t.contact_link_mass[t.layerIdx(0,layer,0)],.14,1e-14);
-        const auto saved=ga.transportRestartState();
-        ASSERT_TRUE(gb.restoreTransportRestart(saved,true).empty());
-        EXPECT_EQ(gb.transportRestartState(),saved);
-        ga.fireGwCells(0,.1,a.state(),0);gb.fireGwCells(0,.1,b.state(),0);
-        EXPECT_EQ(ga.transportRestartState(),gb.transportRestartState());
-        EXPECT_NEAR(t.layer_mass[t.layerIdx(0,layer,0)],.14,1e-10);
-        EXPECT_NEAR(t.sat_mass[t.idx(0,0)],0,1e-10);
-        EXPECT_NEAR(w.hu[0]*w.area[0]-old_water,.02,1e-10);
-        EXPECT_NEAR(t.gained_link[0],.14,1e-14);
-        EXPECT_NEAR(t.residual(0),0,1e-10);EXPECT_NEAR(w.continuityResidual(),0,1e-10);
-        EXPECT_DOUBLE_EQ(t.inFlight1D(0),0);
-        finish(first);finish(second);
+    for (const Mesh shape : {Mesh::Tri, Mesh::Quad, Mesh::Mixed}) {
+        const auto body = layeredDeck("", shape);
+        Deck first = open(std::string("contact_pending_") + meshName(shape), body);
+        Deck second = open(std::string("contact_restored_") + meshName(shape), body);
+        ASSERT_TRUE(first.opened);
+        ASSERT_TRUE(second.opened);
+        ASSERT_EQ(swmm_engine_initialize(first.e), SWMM_OK) << completionErrors(first);
+        ASSERT_EQ(swmm_engine_initialize(second.e), SWMM_OK) << completionErrors(second);
+        auto& a = first.eng->surfaceRouter2D();
+        auto& b = second.eng->surfaceRouter2D();
+        auto& ga = a.subsurface();
+        auto& gb = b.subsurface();
+        ga.assignTiers(.1, 1);
+        gb.assignTiers(.1, 1);
+        const auto& w = ga.state();
+        const auto& t = ga.transport();
+        const int layer = t.n_layers / 2;
+        const double elevation =
+            w.z_bed[0] + w.zs[0] - (w.zs[0] - w.hg[0]) * (layer + .5) / t.n_layers;
+        const double old_water = w.hu[0] * w.area[0];
+        std::vector<double> concentration(t.n_species, 0);
+        concentration[0] = 7;
+        ga.bookLinkContact(0, .02, concentration, elevation, elevation);
+        EXPECT_NEAR(t.inFlight1D(0), .14, 1e-14);
+        EXPECT_NEAR(t.contact_link_mass[t.layerIdx(0, layer, 0)], .14, 1e-14);
+        const auto saved = ga.transportRestartState();
+        ASSERT_TRUE(gb.restoreTransportRestart(saved, true).empty());
+        EXPECT_EQ(gb.transportRestartState(), saved);
+        ga.fireGwCells(0, .1, a.state(), 0);
+        gb.fireGwCells(0, .1, b.state(), 0);
+        EXPECT_EQ(ga.transportRestartState(), gb.transportRestartState());
+        EXPECT_NEAR(t.layer_mass[t.layerIdx(0, layer, 0)], .14, 1e-10);
+        EXPECT_NEAR(t.sat_mass[t.idx(0, 0)], 0, 1e-10);
+        EXPECT_NEAR(w.hu[0] * w.area[0] - old_water, .02, 1e-10);
+        EXPECT_NEAR(t.gained_link[0], .14, 1e-14);
+        EXPECT_NEAR(t.residual(0), 0, 1e-10);
+        EXPECT_NEAR(w.continuityResidual(), 0, 1e-10);
+        EXPECT_DOUBLE_EQ(t.inFlight1D(0), 0);
+        finish(first);
+        finish(second);
     }
 }
 
 TEST(GwCompletion, SlopingConduitCrossesLayersAndSaturatedContactWithoutMidpointLumping) {
-    for(bool reverse:{false,true}) {
-        Deck r=open(reverse?"contact_slope_reverse":"contact_slope",layeredDeck("",Mesh::Quad));
-        ASSERT_TRUE(r.opened);ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-        auto& router=r.eng->surfaceRouter2D();auto& gw=router.subsurface();
-        const auto& t=gw.transport();const auto& w=gw.state();
-        const double ground=w.z_bed[0]+w.zs[0],length=w.zs[0]-w.hg[0];
-        std::vector<double> concentration(t.n_species,0);concentration[0]=7;
-        const double a=ground,b=ground-2*length;
-        gw.bookLinkContact(0,.08,concentration,reverse?b:a,reverse?a:b);
-        for(int j=0;j<t.n_layers;++j) {
-            EXPECT_NEAR(t.contact_water[j*t.n_cells],.04/t.n_layers,1e-14);
-            EXPECT_NEAR(t.contact_link_mass[t.layerIdx(0,j,0)],.28/t.n_layers,1e-14);
+    for (bool reverse : {false, true}) {
+        Deck r =
+            open(reverse ? "contact_slope_reverse" : "contact_slope", layeredDeck("", Mesh::Quad));
+        ASSERT_TRUE(r.opened);
+        ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+        auto& router = r.eng->surfaceRouter2D();
+        auto& gw = router.subsurface();
+        const auto& t = gw.transport();
+        const auto& w = gw.state();
+        const double ground = w.z_bed[0] + w.zs[0], length = w.zs[0] - w.hg[0];
+        std::vector<double> concentration(t.n_species, 0);
+        concentration[0] = 7;
+        const double a = ground, b = ground - 2 * length;
+        gw.bookLinkContact(0, .08, concentration, reverse ? b : a, reverse ? a : b);
+        for (int j = 0; j < t.n_layers; ++j) {
+            EXPECT_NEAR(t.contact_water[j * t.n_cells], .04 / t.n_layers, 1e-14);
+            EXPECT_NEAR(t.contact_link_mass[t.layerIdx(0, j, 0)], .28 / t.n_layers, 1e-14);
         }
-        EXPECT_NEAR(t.lacc_mass[t.idx(0,0)],.28,1e-14);
-        gw.assignTiers(.1,1);gw.fireGwCells(0,.1,router.state(),0);
-        EXPECT_NEAR(t.gained_link[0],.56,1e-13);
-        EXPECT_NEAR(t.residual(0),0,1e-10);EXPECT_NEAR(w.continuityResidual(),0,1e-10);
+        EXPECT_NEAR(t.lacc_mass[t.idx(0, 0)], .28, 1e-14);
+        gw.assignTiers(.1, 1);
+        gw.fireGwCells(0, .1, router.state(), 0);
+        EXPECT_NEAR(t.gained_link[0], .56, 1e-13);
+        EXPECT_NEAR(t.residual(0), 0, 1e-10);
+        EXPECT_NEAR(w.continuityResidual(), 0, 1e-10);
         finish(r);
     }
 }
 
 TEST(GwCompletion, AboveTableNodeBedReceivesItsQualityInTheIntersectedLayer) {
-    auto body=layeredDeck("[2D_AQUIFER_NODE]\nJ1 1 KC 360 DC .05 AREA 1\n",Mesh::Quad);
-    const auto at=body.find("J1 -2.0 4.0 0 0 0");ASSERT_NE(at,std::string::npos);
-    body.replace(at,std::string("J1 -2.0 4.0 0 0 0").size(),"J1 -.2 4.0 .4 0 0");
-    Deck r=open("contact_node",body);ASSERT_TRUE(r.opened);
-    ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-    auto& router=r.eng->surfaceRouter2D();auto& gw=router.subsurface();auto nodes=r.eng->context().nodes;
-    const auto& w=gw.state();const auto& t=gw.transport();
-    const double l12=router.options().len_1d_to_2d;
-    nodes.depth[0]=.4/l12;nodes.volume[0]=10/router.options().vol_1d_to_2d;
-    std::vector<double> concentration(nodes.invert_elev.size()*t.n_species,0);concentration[0]=7;
-    gw.setNodeRowConc(concentration.data(),t.n_species);
-    gw.sampleNodeExchange(&nodes,.1,.1);
-    const int layer=gw.contactLayer(0,-.25);ASSERT_GE(layer,0);
-    const double incoming=-w.nacc[0];ASSERT_GT(incoming,0);
-    EXPECT_NEAR(t.contact_water[layer*t.n_cells],incoming,1e-15);
-    EXPECT_NEAR(t.contact_node_mass[t.layerIdx(0,layer,0)],7*incoming,1e-15);
-    EXPECT_DOUBLE_EQ(t.nacc_mass[0],0);
-    gw.assignTiers(.1,1);gw.fireGwCells(0,.1,router.state(),0);
-    EXPECT_NEAR(t.layer_mass[t.layerIdx(0,layer,0)],7*incoming,1e-10);
-    EXPECT_NEAR(t.gained_node[0],7*incoming,1e-14);
-    EXPECT_NEAR(t.residual(0),0,1e-10);EXPECT_NEAR(w.continuityResidual(),0,1e-10);
-    nodes.depth[0]=0;nodes.volume[0]=0;nodes.inflow[0]=0;gw.resetNodeExchangeVolumes();gw.sampleNodeExchange(&nodes,.1,.2);
-    EXPECT_DOUBLE_EQ(w.nacc[0],0); // disconnected table cannot lift water into an empty bed
+    auto body = layeredDeck("[2D_AQUIFER_NODE]\nJ1 1 KC 360 DC .05 AREA 1\n", Mesh::Quad);
+    const auto at = body.find("J1 -2.0 4.0 0 0 0");
+    ASSERT_NE(at, std::string::npos);
+    body.replace(at, std::string("J1 -2.0 4.0 0 0 0").size(), "J1 -.2 4.0 .4 0 0");
+    Deck r = open("contact_node", body);
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+    auto& router = r.eng->surfaceRouter2D();
+    auto& gw = router.subsurface();
+    auto nodes = r.eng->context().nodes;
+    const auto& w = gw.state();
+    const auto& t = gw.transport();
+    const double l12 = router.options().len_1d_to_2d;
+    nodes.depth[0] = .4 / l12;
+    nodes.volume[0] = 10 / router.options().vol_1d_to_2d;
+    std::vector<double> concentration(nodes.invert_elev.size() * t.n_species, 0);
+    concentration[0] = 7;
+    gw.setNodeRowConc(concentration.data(), t.n_species);
+    gw.sampleNodeExchange(&nodes, .1, .1);
+    const int layer = gw.contactLayer(0, -.25);
+    ASSERT_GE(layer, 0);
+    const double incoming = -w.nacc[0];
+    ASSERT_GT(incoming, 0);
+    EXPECT_NEAR(t.contact_water[layer * t.n_cells], incoming, 1e-15);
+    EXPECT_NEAR(t.contact_node_mass[t.layerIdx(0, layer, 0)], 7 * incoming, 1e-15);
+    EXPECT_DOUBLE_EQ(t.nacc_mass[0], 0);
+    gw.assignTiers(.1, 1);
+    gw.fireGwCells(0, .1, router.state(), 0);
+    EXPECT_NEAR(t.layer_mass[t.layerIdx(0, layer, 0)], 7 * incoming, 1e-10);
+    EXPECT_NEAR(t.gained_node[0], 7 * incoming, 1e-14);
+    EXPECT_NEAR(t.residual(0), 0, 1e-10);
+    EXPECT_NEAR(w.continuityResidual(), 0, 1e-10);
+    nodes.depth[0] = 0;
+    nodes.volume[0] = 0;
+    nodes.inflow[0] = 0;
+    gw.resetNodeExchangeVolumes();
+    gw.sampleNodeExchange(&nodes, .1, .2);
+    EXPECT_DOUBLE_EQ(w.nacc[0], 0); // disconnected table cannot lift water into an empty bed
     finish(r);
 }
 
 TEST(GwCompletion, ConduitResolverRetainsClippedStationElevations) {
-    auto body=layeredDeck("[LOSSES]\nC1 0 0 0 NO 100\n",Mesh::Quad);
-    Deck r=open("contact_resolver",body);ASSERT_TRUE(r.opened);
-    ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-    auto& ctx=r.eng->context();
-    ctx.spatial.node_x[0]=-5;ctx.spatial.node_y[0]=5;
-    ctx.spatial.node_x[1]=15;ctx.spatial.node_y[1]=5;
-    ctx.nodes.invert_elev[0]=0;ctx.nodes.invert_elev[1]=-1/.3048;
-    openswmm::twoD::SubsurfaceConfig cfg;std::vector<std::string> names;int count=0;
-    const auto shares=openswmm::twoD::resolveLinkSeepage(ctx,r.eng->surfaceRouter2D().mesh(),cfg,names,1,count);
-    ASSERT_EQ(shares.size(),1);EXPECT_NEAR(shares[0].weight,.5,1e-14);
-    ASSERT_EQ(shares[0].contacts.size(),1);
-    EXPECT_NEAR(shares[0].contacts[0].weight,.5,1e-14);
-    EXPECT_NEAR(shares[0].contacts[0].begin,-.25,1e-14);
-    EXPECT_NEAR(shares[0].contacts[0].end,-.75,1e-14);
+    auto body = layeredDeck("[LOSSES]\nC1 0 0 0 NO 100\n", Mesh::Quad);
+    Deck r = open("contact_resolver", body);
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+    auto& ctx = r.eng->context();
+    ctx.spatial.node_x[0] = -5;
+    ctx.spatial.node_y[0] = 5;
+    ctx.spatial.node_x[1] = 15;
+    ctx.spatial.node_y[1] = 5;
+    ctx.nodes.invert_elev[0] = 0;
+    ctx.nodes.invert_elev[1] = -1 / .3048;
+    openswmm::twoD::SubsurfaceConfig cfg;
+    std::vector<std::string> names;
+    int count = 0;
+    const auto shares = openswmm::twoD::resolveLinkSeepage(ctx, r.eng->surfaceRouter2D().mesh(),
+                                                           cfg, names, 1, count);
+    ASSERT_EQ(shares.size(), 1);
+    EXPECT_NEAR(shares[0].weight, .5, 1e-14);
+    ASSERT_EQ(shares[0].contacts.size(), 1);
+    EXPECT_NEAR(shares[0].contacts[0].weight, .5, 1e-14);
+    EXPECT_NEAR(shares[0].contacts[0].begin, -.25, 1e-14);
+    EXPECT_NEAR(shares[0].contacts[0].end, -.75, 1e-14);
     finish(r);
 }
 
 TEST(GwCompletion, LayerContactPreservesUniformQualityDuringCompressionAndOverflow) {
-    for(const double volume:{.02,30.}) {
-        Deck r=open(volume<1?"contact_uniform":"contact_overflow",layeredDeck(
-            "[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n",Mesh::Quad));
-        ASSERT_TRUE(r.opened);ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-        auto& router=r.eng->surfaceRouter2D();auto& gw=router.subsurface();
-        const auto& t=gw.transport();const auto& w=gw.state();
-        const double elevation=w.z_bed[0]+w.zs[0]-.01;
-        std::vector<double> concentration(t.n_species,0);concentration[0]=7;
-        gw.bookLinkContact(0,volume,concentration,elevation,elevation);
-        gw.assignTiers(.1,1);gw.fireGwCells(0,.1,router.state(),0);
-        for(int j=0;j<t.n_layers;++j) {
-            const double water=w.area[0]*(w.zs[0]-w.hg[0])/t.n_layers*w.theta_sigma[j*t.n_cells];
-            EXPECT_NEAR(t.layer_mass[t.layerIdx(0,j,0)],7*water,1e-9);
+    for (const double volume : {.02, 30.}) {
+        Deck r =
+            open(volume < 1 ? "contact_uniform" : "contact_overflow",
+                 layeredDeck("[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n", Mesh::Quad));
+        ASSERT_TRUE(r.opened);
+        ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+        auto& router = r.eng->surfaceRouter2D();
+        auto& gw = router.subsurface();
+        const auto& t = gw.transport();
+        const auto& w = gw.state();
+        const double elevation = w.z_bed[0] + w.zs[0] - .01;
+        std::vector<double> concentration(t.n_species, 0);
+        concentration[0] = 7;
+        gw.bookLinkContact(0, volume, concentration, elevation, elevation);
+        gw.assignTiers(.1, 1);
+        gw.fireGwCells(0, .1, router.state(), 0);
+        for (int j = 0; j < t.n_layers; ++j) {
+            const double water =
+                w.area[0] * (w.zs[0] - w.hg[0]) / t.n_layers * w.theta_sigma[j * t.n_cells];
+            EXPECT_NEAR(t.layer_mass[t.layerIdx(0, j, 0)], 7 * water, 1e-9);
         }
-        EXPECT_NEAR(t.sat_mass[t.idx(0,0)],7*w.area[0]*w.hg[0]*w.theta_s[0],1e-9);
-        EXPECT_NEAR(t.residual(0),0,1e-9);EXPECT_NEAR(w.continuityResidual(),0,1e-9);
+        EXPECT_NEAR(t.sat_mass[t.idx(0, 0)], 7 * w.area[0] * w.hg[0] * w.theta_s[0], 1e-9);
+        EXPECT_NEAR(t.residual(0), 0, 1e-9);
+        EXPECT_NEAR(w.continuityResidual(), 0, 1e-9);
         finish(r);
     }
 }
 
 namespace {
-std::string porousReactorDeck(const std::string& laws,const std::string& extra="") {
-    auto body=forcingDeck("[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION NO\nTHERMAL_LAYERS 4\nDISPERSION NO\n\n"
+/**
+ * @brief Build a porous-equilibrium groundwater reaction fixture.
+ *
+ * Copied verbatim without escaping or parser validation; caller supplies valid row separators. No
+ * file IO occurs.
+ *
+ * @param[in] laws Raw REACTION_SUBSURFACE rows; caller supplies line separators.
+ * @param[in] extra Raw text appended after fixed A/B and 20 C groundwater seeds.
+ * @return Owned heat-enabled forcing deck with four thermal layers and RK5 full coupling in
+ *     seconds.
+ */
+std::string porousReactorDeck(const std::string& laws, const std::string& extra = "") {
+    auto body = forcingDeck(
+        "[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION NO\nTHERMAL_LAYERS 4\nDISPERSION NO\n\n"
         "[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\nCOUPLING FULL\nATOL 1e-13\nRTOL 1e-11\n"
         "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
-        "[REACTION_SUBSURFACE]\n"+laws+
-        "[GW_INITIAL_QUALITY]\n* SAT A 7\n* UNSAT A 7\n* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n"+extra);
-    body.insert(body.find("FLOW_UNITS"),"HEAT_TRANSPORT YES\n");return body;
+        "[REACTION_SUBSURFACE]\n" +
+        laws +
+        "[GW_INITIAL_QUALITY]\n* SAT A 7\n* UNSAT A 7\n* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n" +
+        extra);
+    body.insert(body.find("FLOW_UNITS"), "HEAT_TRANSPORT YES\n");
+    return body;
 }
 }
 TEST(GwCompletion, PorousCanonicalReactorsConvertAIntoBWithoutChangingThermalEnergy) {
-    Deck r=open("porous_reactor",porousReactorDeck(
-        "* SAT A RATE -.001*A\n* SAT B RATE .001*A\n* UNSAT A RATE -.001*A\n* UNSAT B RATE .001*A\n"));
-    ASSERT_TRUE(r.opened)<<completionErrors(r);ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-    auto& gw=r.eng->surfaceRouter2D().subsurface();double initial_energy=0;
-    for(const auto& c:gw.heat().cells)for(double e:c.column.energy)initial_energy+=e;
-    ASSERT_TRUE(run(r))<<completionErrors(r);ASSERT_EQ(swmm_engine_end(r.e),SWMM_OK);r.started=false;
-    const auto& t=gw.transport();const int a=t.rowIndex("A"),b=t.rowIndex("B");ASSERT_GE(a,0);ASSERT_GE(b,0);
-    const double initial=t.init_mass[a],expected=initial*std::exp(-.001*r.eng->context().current_time);
-    EXPECT_NEAR(t.ledgeredStorage(a),expected,initial*1e-8);
-    EXPECT_NEAR(t.ledgeredStorage(a)+t.ledgeredStorage(b),initial,initial*1e-10);
-    EXPECT_NEAR(t.residual(a),0,1e-9);EXPECT_NEAR(t.residual(b),0,1e-9);
-    double final_energy=0;
-    for(const auto& c:gw.heat().cells)for(double e:c.column.energy)final_energy+=e;
-    EXPECT_NEAR(final_energy,initial_energy,1e-4);
-    for(int i=0;i<t.n_cells;++i)for(int row:{a,b}) {
-        const auto& c=gw.heat().cells[i];const auto view=c.porewater.zoneMass(c.column,c.saturated_water,row);
-        EXPECT_DOUBLE_EQ(t.sat_mass[t.idx(row,i)],view.first);
-        EXPECT_DOUBLE_EQ(t.unsat_mass[t.idx(row,i)],view.second);
-    }
+    Deck r = open(
+        "porous_reactor",
+        porousReactorDeck(
+            "* SAT A RATE -.001*A\n* SAT B RATE .001*A\n* UNSAT A RATE -.001*A\n* UNSAT B RATE .001*A\n"));
+    ASSERT_TRUE(r.opened) << completionErrors(r);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+    auto& gw = r.eng->surfaceRouter2D().subsurface();
+    double initial_energy = 0;
+    for (const auto& c : gw.heat().cells)
+        for (double e : c.column.energy)
+            initial_energy += e;
+    ASSERT_TRUE(run(r)) << completionErrors(r);
+    ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
+    r.started = false;
+    const auto& t = gw.transport();
+    const int a = t.rowIndex("A"), b = t.rowIndex("B");
+    ASSERT_GE(a, 0);
+    ASSERT_GE(b, 0);
+    const double initial = t.init_mass[a],
+                 expected = initial * std::exp(-.001 * r.eng->context().current_time);
+    EXPECT_NEAR(t.ledgeredStorage(a), expected, initial * 1e-8);
+    EXPECT_NEAR(t.ledgeredStorage(a) + t.ledgeredStorage(b), initial, initial * 1e-10);
+    EXPECT_NEAR(t.residual(a), 0, 1e-9);
+    EXPECT_NEAR(t.residual(b), 0, 1e-9);
+    double final_energy = 0;
+    for (const auto& c : gw.heat().cells)
+        for (double e : c.column.energy)
+            final_energy += e;
+    EXPECT_NEAR(final_energy, initial_energy, 1e-4);
+    for (int i = 0; i < t.n_cells; ++i)
+        for (int row : {a, b}) {
+            const auto& c = gw.heat().cells[i];
+            const auto view = c.porewater.zoneMass(c.column, c.saturated_water, row);
+            EXPECT_DOUBLE_EQ(t.sat_mass[t.idx(row, i)], view.first);
+            EXPECT_DOUBLE_EQ(t.unsat_mass[t.idx(row, i)], view.second);
+        }
     finish(r);
 }
 
 TEST(GwCompletion, PorousPhaseReactorsUseActualCapacityTemperatureAndDepth) {
-    for(bool sorption:{false,true}) {
-        Deck r=open(sorption?"porous_reactor_sorbed":"porous_reactor_phases",porousReactorDeck(
-            "* SAT A RATE -.01*A*TEMP/20\n* SAT B RATE .01*A*TEMP/20\n"
-            "* UNSAT A RATE -.02*A*(GW_DEPTH_M*0+1)\n* UNSAT B RATE .02*A*(GW_DEPTH_M*0+1)\n",
-            sorption?"[GW_SORPTION]\n* A 2 0\n* B 2 0\n":""));
-        ASSERT_TRUE(r.opened);ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-        auto& router=r.eng->surfaceRouter2D();auto& gw=router.subsurface();const auto& t=gw.transport();
-        const int a=t.rowIndex("A"),b=t.rowIndex("B");ASSERT_GE(a,0);ASSERT_GE(b,0);
+    for (bool sorption : {false, true}) {
+        Deck r = open(
+            sorption ? "porous_reactor_sorbed" : "porous_reactor_phases",
+            porousReactorDeck(
+                "* SAT A RATE -.01*A*TEMP/20\n* SAT B RATE .01*A*TEMP/20\n"
+                "* UNSAT A RATE -.02*A*(GW_DEPTH_M*0+1)\n* UNSAT B RATE .02*A*(GW_DEPTH_M*0+1)\n",
+                sorption ? "[GW_SORPTION]\n* A 2 0\n* B 2 0\n" : ""));
+        ASSERT_TRUE(r.opened);
+        ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+        auto& router = r.eng->surfaceRouter2D();
+        auto& gw = router.subsurface();
+        const auto& t = gw.transport();
+        const int a = t.rowIndex("A"), b = t.rowIndex("B");
+        ASSERT_GE(a, 0);
+        ASSERT_GE(b, 0);
         std::vector<double> expected;
-        for(int i=0;i<t.n_cells;++i) {
-            const auto& c=gw.heat().cells[i];const auto& col=c.column;const auto nl=col.theta.size();
-            for(std::size_t j=0;j<nl;++j) {
-                const double bulk=col.area*(col.depth_edges[j+1]-col.depth_edges[j]);
-                const double water=col.theta[j]*bulk,sat=c.saturated_water[j];
-                const double fraction=sat/(col.material.porosity*bulk);
-                const double retention=c.porewater.retention[std::size_t(a)*nl+j];
-                const double capacity=water+retention;
-                const double satcap=sat+retention*fraction,unsatcap=capacity-satcap;
-                const double original=c.porewater.mass[std::size_t(a)*nl+j];
-                expected.push_back(original*(satcap/capacity*std::exp(satcap>0?-.01*.1*sat/satcap:0)+
-                    unsatcap/capacity*std::exp(unsatcap>0?-.02*.1*(water-sat)/unsatcap:0)));
+        for (int i = 0; i < t.n_cells; ++i) {
+            const auto& c = gw.heat().cells[i];
+            const auto& col = c.column;
+            const auto nl = col.theta.size();
+            for (std::size_t j = 0; j < nl; ++j) {
+                const double bulk = col.area * (col.depth_edges[j + 1] - col.depth_edges[j]);
+                const double water = col.theta[j] * bulk, sat = c.saturated_water[j];
+                const double fraction = sat / (col.material.porosity * bulk);
+                const double retention = c.porewater.retention[std::size_t(a) * nl + j];
+                const double capacity = water + retention;
+                const double satcap = sat + retention * fraction, unsatcap = capacity - satcap;
+                const double original = c.porewater.mass[std::size_t(a) * nl + j];
+                expected.push_back(
+                    original *
+                    (satcap / capacity * std::exp(satcap > 0 ? -.01 * .1 * sat / satcap : 0) +
+                     unsatcap / capacity *
+                         std::exp(unsatcap > 0 ? -.02 * .1 * (water - sat) / unsatcap : 0)));
             }
         }
-        gw.assignTiers(.1,1);gw.fireGwCells(0,.1,router.state(),0);
-        std::size_t index=0;
-        for(const auto& c:gw.heat().cells)for(std::size_t j=0;j<c.column.theta.size();++j) {
-            EXPECT_NEAR(c.porewater.mass[std::size_t(a)*c.column.theta.size()+j],expected[index++],1e-8);
-        }
-        EXPECT_NEAR(t.residual(a),0,1e-9);EXPECT_NEAR(t.residual(b),0,1e-9);
-        const auto saved=gw.transportRestartState();
-        ASSERT_TRUE(gw.restoreTransportRestart(saved,true).empty());EXPECT_EQ(gw.transportRestartState(),saved);
+        gw.assignTiers(.1, 1);
+        gw.fireGwCells(0, .1, router.state(), 0);
+        std::size_t index = 0;
+        for (const auto& c : gw.heat().cells)
+            for (std::size_t j = 0; j < c.column.theta.size(); ++j) {
+                EXPECT_NEAR(c.porewater.mass[std::size_t(a) * c.column.theta.size() + j],
+                            expected[index++], 1e-8);
+            }
+        EXPECT_NEAR(t.residual(a), 0, 1e-9);
+        EXPECT_NEAR(t.residual(b), 0, 1e-9);
+        const auto saved = gw.transportRestartState();
+        ASSERT_TRUE(gw.restoreTransportRestart(saved, true).empty());
+        EXPECT_EQ(gw.transportRestartState(), saved);
         finish(r);
     }
 }
 
 TEST(GwCompletion, PorousReactorFailurePublishesNoPartialReactionInventory) {
-    Deck r=open("porous_reactor_refusal",porousReactorDeck(
-        "* SAT A RATE -.1*A\n* SAT B RATE .1*A\n* UNSAT A RATE 1/(GW_THETA-GW_THETA)\n"));
-    ASSERT_TRUE(r.opened)<<completionErrors(r);ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-    auto& router=r.eng->surfaceRouter2D();auto& gw=router.subsurface();const auto& t=gw.transport();
-    const int a=t.rowIndex("A"),b=t.rowIndex("B");ASSERT_GE(a,0);ASSERT_GE(b,0);
-    const auto before=gw.heat().cells[0].porewater.mass;
-    gw.assignTiers(.1,1);EXPECT_THROW(gw.fireGwCells(0,.1,router.state(),0),std::runtime_error);
-    const auto& after=gw.heat().cells[0].porewater.mass;ASSERT_EQ(after.size(),before.size());
-    for(std::size_t j=0;j<before.size();++j)EXPECT_NEAR(after[j],before[j],1e-9);
-    EXPECT_DOUBLE_EQ(t.lost_reaction[a],0);EXPECT_DOUBLE_EQ(t.lost_reaction[b],0);
+    Deck r =
+        open("porous_reactor_refusal",
+             porousReactorDeck(
+                 "* SAT A RATE -.1*A\n* SAT B RATE .1*A\n* UNSAT A RATE 1/(GW_THETA-GW_THETA)\n"));
+    ASSERT_TRUE(r.opened) << completionErrors(r);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+    auto& router = r.eng->surfaceRouter2D();
+    auto& gw = router.subsurface();
+    const auto& t = gw.transport();
+    const int a = t.rowIndex("A"), b = t.rowIndex("B");
+    ASSERT_GE(a, 0);
+    ASSERT_GE(b, 0);
+    const auto before = gw.heat().cells[0].porewater.mass;
+    gw.assignTiers(.1, 1);
+    EXPECT_THROW(gw.fireGwCells(0, .1, router.state(), 0), std::runtime_error);
+    const auto& after = gw.heat().cells[0].porewater.mass;
+    ASSERT_EQ(after.size(), before.size());
+    for (std::size_t j = 0; j < before.size(); ++j)
+        EXPECT_NEAR(after[j], before[j], 1e-9);
+    EXPECT_DOUBLE_EQ(t.lost_reaction[a], 0);
+    EXPECT_DOUBLE_EQ(t.lost_reaction[b], 0);
     finish(r);
 }
 
 TEST(GwCompletion, ContactReceiptsCarrySignedTemperatureAndAgeWithTheirWater) {
-    auto body=layeredDeck("",Mesh::Quad);
-    body.insert(body.find("FLOW_UNITS"),"HEAT_TRANSPORT YES\nWATER_AGE ON\n");
-    Deck r=open("contact_intensive_rows",body);ASSERT_TRUE(r.opened);
-    ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-    auto& router=r.eng->surfaceRouter2D();auto& gw=router.subsurface();const auto& t=gw.transport();
-    ASSERT_GE(t.age_row,0);ASSERT_GE(t.temp_row,0);
-    std::vector<double> concentration(t.n_species,0);concentration[0]=7;
-    concentration[t.age_row]=4;concentration[t.temp_row]=-5;
-    gw.bookLinkContact(0,.02,concentration,-.25,-.25);
-    EXPECT_NEAR(t.inFlight1D(t.temp_row),-.1,1e-15);
-    const auto saved=gw.transportRestartState();ASSERT_TRUE(gw.restoreTransportRestart(saved,true).empty());
-    gw.assignTiers(.1,1);gw.fireGwCells(0,.1,router.state(),0);
-    EXPECT_NEAR(t.gained_link[t.temp_row],-.1,1e-15);
-    EXPECT_NEAR(t.gained_link[t.age_row],.08,1e-15);
-    EXPECT_NEAR(t.residual(t.temp_row),0,1e-10);EXPECT_NEAR(t.residual(t.age_row),0,1e-10);
+    auto body = layeredDeck("", Mesh::Quad);
+    body.insert(body.find("FLOW_UNITS"), "HEAT_TRANSPORT YES\nWATER_AGE ON\n");
+    Deck r = open("contact_intensive_rows", body);
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+    auto& router = r.eng->surfaceRouter2D();
+    auto& gw = router.subsurface();
+    const auto& t = gw.transport();
+    ASSERT_GE(t.age_row, 0);
+    ASSERT_GE(t.temp_row, 0);
+    std::vector<double> concentration(t.n_species, 0);
+    concentration[0] = 7;
+    concentration[t.age_row] = 4;
+    concentration[t.temp_row] = -5;
+    gw.bookLinkContact(0, .02, concentration, -.25, -.25);
+    EXPECT_NEAR(t.inFlight1D(t.temp_row), -.1, 1e-15);
+    const auto saved = gw.transportRestartState();
+    ASSERT_TRUE(gw.restoreTransportRestart(saved, true).empty());
+    gw.assignTiers(.1, 1);
+    gw.fireGwCells(0, .1, router.state(), 0);
+    EXPECT_NEAR(t.gained_link[t.temp_row], -.1, 1e-15);
+    EXPECT_NEAR(t.gained_link[t.age_row], .08, 1e-15);
+    EXPECT_NEAR(t.residual(t.temp_row), 0, 1e-10);
+    EXPECT_NEAR(t.residual(t.age_row), 0, 1e-10);
     finish(r);
 }
 
 TEST(GwCompletion, ZeroNetConduitReversalKeepsGrossDonorReservation) {
-    Deck r=open("contact_gross_reservation",layeredDeck("",Mesh::Quad));
-    ASSERT_TRUE(r.opened);ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-    auto& router=r.eng->surfaceRouter2D();auto& gw=router.subsurface();
-    const double before=gw.unreservedDrainableWater(0),room=gw.infiltrationHeadroom(0);
-    const double v=std::min(.01,before/10);ASSERT_GT(v,0);
-    gw.bookLinkSeepage(0,-v);
-    std::vector<double> concentration(gw.transport().n_species,0);concentration[0]=7;
-    gw.bookLinkContact(0,v,concentration,-.25,-.25);
-    EXPECT_DOUBLE_EQ(gw.state().lacc[0],0);
-    EXPECT_NEAR(gw.unreservedDrainableWater(0),before-v,1e-14);
-    EXPECT_NEAR(gw.infiltrationHeadroom(0),room-v,1e-14);
-    const auto saved=gw.transportRestartState();ASSERT_TRUE(gw.restoreTransportRestart(saved,true).empty());
-    EXPECT_NEAR(gw.unreservedDrainableWater(0),before-v,1e-14);
-    gw.assignTiers(.1,1);gw.fireGwCells(0,.1,router.state(),0);
-    EXPECT_NEAR(gw.transport().gained_link[0],7*v,1e-14);
-    EXPECT_NEAR(gw.transport().residual(0),0,1e-10);
-    EXPECT_NEAR(gw.state().continuityResidual(),0,1e-10);finish(r);
+    Deck r = open("contact_gross_reservation", layeredDeck("", Mesh::Quad));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+    auto& router = r.eng->surfaceRouter2D();
+    auto& gw = router.subsurface();
+    const double before = gw.unreservedDrainableWater(0), room = gw.infiltrationHeadroom(0);
+    const double v = std::min(.01, before / 10);
+    ASSERT_GT(v, 0);
+    gw.bookLinkSeepage(0, -v);
+    std::vector<double> concentration(gw.transport().n_species, 0);
+    concentration[0] = 7;
+    gw.bookLinkContact(0, v, concentration, -.25, -.25);
+    EXPECT_DOUBLE_EQ(gw.state().lacc[0], 0);
+    EXPECT_NEAR(gw.unreservedDrainableWater(0), before - v, 1e-14);
+    EXPECT_NEAR(gw.infiltrationHeadroom(0), room - v, 1e-14);
+    const auto saved = gw.transportRestartState();
+    ASSERT_TRUE(gw.restoreTransportRestart(saved, true).empty());
+    EXPECT_NEAR(gw.unreservedDrainableWater(0), before - v, 1e-14);
+    gw.assignTiers(.1, 1);
+    gw.fireGwCells(0, .1, router.state(), 0);
+    EXPECT_NEAR(gw.transport().gained_link[0], 7 * v, 1e-14);
+    EXPECT_NEAR(gw.transport().residual(0), 0, 1e-10);
+    EXPECT_NEAR(gw.state().continuityResidual(), 0, 1e-10);
+    finish(r);
 }
 
 TEST(GwCompletion, ActualRoutingDeliversAboveTableConduitQualityToLayers) {
-    auto body=seamDeck(.3,.02,100,50);
-    auto replace=[&](const std::string& a,const std::string& b){const auto p=body.find(a);ASSERT_NE(p,std::string::npos);body.replace(p,a.size(),b);};
-    replace("CLOSURE CLOSED_FORM","CLOSURE SIGMA\nLINK_SEEPAGE ONE_WAY");
-    replace("J1 -2.0 4.0 0 0 0","J1 -.2 4.0 .1 0 0");
-    replace("O1 -2.5 FREE NO","O1 -.3 FREE NO");
-    replace("*  36.0  1.0","*  0.000000001  1.0");
-    replace("CELL 1  36.0  1.0  0.45  0.10  2.0  HG0 0.95","");
-    replace("J1  1\n","J1 1 EXCHANGE NO\n");
-    const auto seed=body.find("[GW_INITIAL_QUALITY]");const auto next=body.find('[',seed+1);
-    body.erase(seed,next-seed);
-    body.insert(body.find("[REPORT]"),"[GW_TRANSPORT_OPTIONS]\nUNSAT_TRANSPORT LAYERED\nDISPERSION NO\n");
-    Deck r=open("contact_routing",body);ASSERT_TRUE(r.opened)<<completionErrors(r);
-    ASSERT_TRUE(run(r))<<completionErrors(r);ASSERT_EQ(swmm_engine_end(r.e),SWMM_OK);r.started=false;
-    const auto& gw=r.eng->surfaceRouter2D().subsurface();const auto& t=gw.transport();
-    ASSERT_GT(t.gained_link[0],0);EXPECT_GT(t.unsat_mass[0],0);
-    EXPECT_NEAR(t.sat_mass[0],0,1e-7);
-    EXPECT_NEAR(t.residual(0),t.inFlight1D(0),1e-8);
-    EXPECT_NEAR(gw.state().continuityResidual(),0,1e-8);finish(r);
+    auto body = seamDeck(.3, .02, 100, 50);
+    auto replace = [&](const std::string& a, const std::string& b) {
+        const auto p = body.find(a);
+        ASSERT_NE(p, std::string::npos);
+        body.replace(p, a.size(), b);
+    };
+    replace("CLOSURE CLOSED_FORM", "CLOSURE SIGMA\nLINK_SEEPAGE ONE_WAY");
+    replace("J1 -2.0 4.0 0 0 0", "J1 -.2 4.0 .1 0 0");
+    replace("O1 -2.5 FREE NO", "O1 -.3 FREE NO");
+    replace("*  36.0  1.0", "*  0.000000001  1.0");
+    replace("CELL 1  36.0  1.0  0.45  0.10  2.0  HG0 0.95", "");
+    replace("J1  1\n", "J1 1 EXCHANGE NO\n");
+    const auto seed = body.find("[GW_INITIAL_QUALITY]");
+    const auto next = body.find('[', seed + 1);
+    body.erase(seed, next - seed);
+    body.insert(body.find("[REPORT]"),
+                "[GW_TRANSPORT_OPTIONS]\nUNSAT_TRANSPORT LAYERED\nDISPERSION NO\n");
+    Deck r = open("contact_routing", body);
+    ASSERT_TRUE(r.opened) << completionErrors(r);
+    ASSERT_TRUE(run(r)) << completionErrors(r);
+    ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
+    r.started = false;
+    const auto& gw = r.eng->surfaceRouter2D().subsurface();
+    const auto& t = gw.transport();
+    ASSERT_GT(t.gained_link[0], 0);
+    EXPECT_GT(t.unsat_mass[0], 0);
+    EXPECT_NEAR(t.sat_mass[0], 0, 1e-7);
+    EXPECT_NEAR(t.residual(0), t.inFlight1D(0), 1e-8);
+    EXPECT_NEAR(gw.state().continuityResidual(), 0, 1e-8);
+    finish(r);
 }
 
 namespace {
-std::string mappedPorousDeck(const std::string& extra="",Mesh shape=Mesh::Tri,int sigma=5,int thermal=3) {
-    auto body=layeredDeck("[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION NO\nTHERMAL_LAYERS "+
-        std::to_string(thermal)+"\n\n"+extra,shape);
-    body.insert(body.find("FLOW_UNITS"),"HEAT_TRANSPORT YES\n");
-    const std::string anchor="[2D_AQUIFER_OPTIONS]\n";
-    body.insert(body.find(anchor)+anchor.size(),"M_LAYERS "+std::to_string(sigma)+"\n");return body;
+/**
+ * @brief Build layered water/thermal fixture with independently selected layer counts.
+ *
+ * Requires base FLOW_UNITS and aquifer option anchors. Does not create files or validate requested
+ * discretizations.
+ *
+ * @param[in] extra Raw text appended after thermal options.
+ * @param[in] shape Triangle/quad/mixed mesh selector.
+ * @param[in] sigma Authored M_LAYERS count copied without validation.
+ * @param[in] thermal Authored THERMAL_LAYERS count copied without validation.
+ * @return Owned heat-enabled SIGMA deck with porous-equilibrium thermal storage.
+ */
+std::string mappedPorousDeck(const std::string& extra = "", Mesh shape = Mesh::Tri, int sigma = 5,
+                             int thermal = 3) {
+    auto body = layeredDeck(
+        "[GW_TRANSPORT_OPTIONS]\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION NO\nTHERMAL_LAYERS " +
+            std::to_string(thermal) + "\n\n" + extra,
+        shape);
+    body.insert(body.find("FLOW_UNITS"), "HEAT_TRANSPORT YES\n");
+    const std::string anchor = "[2D_AQUIFER_OPTIONS]\n";
+    body.insert(body.find(anchor) + anchor.size(), "M_LAYERS " + std::to_string(sigma) + "\n");
+    return body;
 }
+/**
+ * @brief Sum all groundwater thermal-column energy entries.
+ *
+ * Performs an ordered double sum without changing thermal state.
+ *
+ * @param[in] gw Borrowed solver; every current heat cell/layer is visited.
+ * @return Total stored column energy in joules, or zero when no entries exist.
+ */
 double totalGroundEnergy(const openswmm::twoD::SubsurfaceSolver& gw) {
-    double total=0;for(const auto& c:gw.heat().cells)for(double e:c.column.energy)total+=e;return total;
+    double total = 0;
+    for (const auto& c : gw.heat().cells)
+        for (double e : c.column.energy)
+            total += e;
+    return total;
 }
 }
 TEST(GwSigmaPorous, UnequalGridsPreserveCanonicalLayerInitialMassAndThermalEnergy) {
-    for(const auto counts:{std::pair<int,int>{5,3},{3,11},{8,2}}) {
-        Deck r=open("mapped_initial_"+std::to_string(counts.first)+"_"+std::to_string(counts.second),mappedPorousDeck(
-            "[GW_INITIAL_QUALITY]\n* SAT TSS 5\n* UNSAT TSS 7\n* LAYER 2 TSS 11\n"
-            "* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n* LAYER "+std::to_string(counts.first)+" __TEMPERATURE__ -5\n"
-            "[GW_SORPTION]\n* TSS 2 0\n",Mesh::Quad,counts.first,counts.second));
-        ASSERT_TRUE(r.opened)<<completionErrors(r);ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-        auto& gw=r.eng->surfaceRouter2D().subsurface();auto& tr=gw.transport();const auto& w=gw.state();
-        ASSERT_EQ(tr.n_layers,counts.first);ASSERT_EQ(gw.heat().cells[0].column.theta.size(),counts.second);
-        const auto original=tr.layer_mass;double expected_energy=0;
-        for(int cell=0;cell<tr.n_cells;++cell) {
-            const auto& c=gw.heat().cells[cell];const double dz=(w.zs[cell]-w.hg[cell])/tr.n_layers;
-            for(int layer=0;layer<tr.n_layers;++layer) {
-                const double theta=w.theta_sigma[layer*tr.n_cells+cell];
-                const double capacity=w.area[cell]*dz*(theta+tr.kd[tr.idx(0,cell)]*tr.rho_b[cell]);
-                EXPECT_NEAR(tr.layer_mass[tr.layerIdx(0,layer,cell)],capacity*(layer==1?11:7),1e-12);
-                expected_energy+=w.area[cell]*dz*c.column.material.volumetricCapacity(theta)*(layer==counts.first-1?-5:20);
+    for (const auto counts : {std::pair<int, int>{5, 3}, {3, 11}, {8, 2}}) {
+        Deck r = open(
+            "mapped_initial_" + std::to_string(counts.first) + "_" + std::to_string(counts.second),
+            mappedPorousDeck("[GW_INITIAL_QUALITY]\n* SAT TSS 5\n* UNSAT TSS 7\n* LAYER 2 TSS 11\n"
+                             "* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n* LAYER " +
+                                 std::to_string(counts.first) +
+                                 " __TEMPERATURE__ -5\n"
+                                 "[GW_SORPTION]\n* TSS 2 0\n",
+                             Mesh::Quad, counts.first, counts.second));
+        ASSERT_TRUE(r.opened) << completionErrors(r);
+        ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+        auto& gw = r.eng->surfaceRouter2D().subsurface();
+        auto& tr = gw.transport();
+        const auto& w = gw.state();
+        ASSERT_EQ(tr.n_layers, counts.first);
+        ASSERT_EQ(gw.heat().cells[0].column.theta.size(), counts.second);
+        const auto original = tr.layer_mass;
+        double expected_energy = 0;
+        for (int cell = 0; cell < tr.n_cells; ++cell) {
+            const auto& c = gw.heat().cells[cell];
+            const double dz = (w.zs[cell] - w.hg[cell]) / tr.n_layers;
+            for (int layer = 0; layer < tr.n_layers; ++layer) {
+                const double theta = w.theta_sigma[layer * tr.n_cells + cell];
+                const double capacity =
+                    w.area[cell] * dz * (theta + tr.kd[tr.idx(0, cell)] * tr.rho_b[cell]);
+                EXPECT_NEAR(tr.layer_mass[tr.layerIdx(0, layer, cell)],
+                            capacity * (layer == 1 ? 11 : 7), 1e-12);
+                expected_energy += w.area[cell] * dz * c.column.material.volumetricCapacity(theta) *
+                                   (layer == counts.first - 1 ? -5 : 20);
             }
-            expected_energy+=w.area[cell]*w.hg[cell]*c.column.material.volumetricCapacity(w.theta_s[cell])*20;
-            EXPECT_LE(c.porewater.sigma.overlaps.size(),std::size_t(counts.first+counts.second+1));
-            for(int repeat=0;repeat<30;++repeat) {
-                ASSERT_TRUE(gw.refreshSigmaPorewater(cell).empty());gw.heat().refreshView(cell,tr);
+            expected_energy += w.area[cell] * w.hg[cell] *
+                               c.column.material.volumetricCapacity(w.theta_s[cell]) * 20;
+            EXPECT_LE(c.porewater.sigma.overlaps.size(),
+                      std::size_t(counts.first + counts.second + 1));
+            for (int repeat = 0; repeat < 30; ++repeat) {
+                ASSERT_TRUE(gw.refreshSigmaPorewater(cell).empty());
+                gw.heat().refreshView(cell, tr);
             }
-            double physical=0;for(std::size_t j=0;j<c.column.theta.size();++j)physical+=c.porewater.mass[j];
-            EXPECT_NEAR(physical,tr.sat_mass[tr.idx(0,cell)]+tr.unsat_mass[tr.idx(0,cell)],1e-10);
+            double physical = 0;
+            for (std::size_t j = 0; j < c.column.theta.size(); ++j)
+                physical += c.porewater.mass[j];
+            EXPECT_NEAR(physical, tr.sat_mass[tr.idx(0, cell)] + tr.unsat_mass[tr.idx(0, cell)],
+                        1e-10);
         }
-        EXPECT_NEAR(totalGroundEnergy(gw),expected_energy,1e-5);
-        for(int cell=0;cell<tr.n_cells;++cell)for(int layer=0;layer<tr.n_layers;++layer)
-            EXPECT_DOUBLE_EQ(tr.layer_mass[tr.layerIdx(0,layer,cell)],original[tr.layerIdx(0,layer,cell)]);
-        EXPECT_NEAR(tr.residual(0),0,1e-10);finish(r);
-    }
-}
-
-TEST(GwSigmaPorous, MovingTableConservesUniformSorbingChemistryAndThermalEnergy) {
-    for(const Mesh shape:{Mesh::Tri,Mesh::Quad,Mesh::Mixed})for(const std::string rate:{"0.001","-0.001"}) {
-        Deck r=open(std::string("mapped_uniform_")+meshName(shape)+(rate[0]=='-'?"_out":"_in"),mappedPorousDeck(
-            "[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n"
-            "* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n"
-            "[GW_SORPTION]\n* TSS 2 0\n"
-            "[GW_SOURCES]\nW * FLOW "+rate+" TSS CONC 7 __TEMPERATURE__ CONC 20\n",shape));
-        ASSERT_TRUE(r.opened)<<completionErrors(r);ASSERT_TRUE(run(r))<<completionErrors(r);
-        ASSERT_EQ(swmm_engine_end(r.e),SWMM_OK);r.started=false;
-        const auto& gw=r.eng->surfaceRouter2D().subsurface();const auto& t=gw.transport();const auto& w=gw.state();
-        for(int i=0;i<t.n_cells;++i)for(int layer=0;layer<t.n_layers;++layer) {
-            const double dz=(w.zs[i]-w.hg[i])/t.n_layers,theta=w.theta_sigma[layer*t.n_cells+i];
-            const double capacity=w.area[i]*dz*(theta+t.kd[t.idx(0,i)]*t.rho_b[i]);
-            EXPECT_NEAR(t.layer_mass[t.layerIdx(0,layer,i)],7*capacity,1e-8);
-        }
-        double initial=0,external=0;for(const auto& c:gw.heat().cells) {
-            EXPECT_FALSE(c.failed)<<c.error;initial+=c.initial_j;
-            external+=c.advective_j+c.source_j+c.surface_j+c.deep_j+c.latent_j+c.lateral_j+c.water_contact_j+c.channel_contact_j+c.lid_contact_j;
-            for(std::size_t j=0;j<c.column.energy.size();++j)EXPECT_NEAR(c.column.energy[j]/c.column.capacity[j],20,1e-8);
-        }
-        EXPECT_NEAR(totalGroundEnergy(gw)-initial,external,1e-3);
-        EXPECT_NEAR(t.residual(0),0,1e-8);EXPECT_NEAR(w.continuityResidual(),0,1e-9);finish(r);
-    }
-}
-
-TEST(GwSigmaPorous, PendingFiniteContactMapsOnceAndRestartsWithoutASecondInventory) {
-    const auto body=mappedPorousDeck("[GW_INITIAL_QUALITY]\n* SAT TSS 5\n* UNSAT TSS 7\n",Mesh::Quad);
-    Deck a=open("mapped_contact",body),b=open("mapped_contact_restart",body);
-    ASSERT_TRUE(a.opened);ASSERT_TRUE(b.opened);
-    ASSERT_EQ(swmm_engine_initialize(a.e),SWMM_OK)<<completionErrors(a);
-    ASSERT_EQ(swmm_engine_initialize(b.e),SWMM_OK)<<completionErrors(b);
-    auto& ga=a.eng->surfaceRouter2D().subsurface();auto& gb=b.eng->surfaceRouter2D().subsurface();
-    auto& tr=ga.transport();auto& pore=ga.heat().cells[0].porewater;
-    const double before=tr.storage(0),energy=totalGroundEnergy(ga);
-    ASSERT_TRUE(pore.applyContactMassIncrement(0,0,.14));
-    EXPECT_DOUBLE_EQ(tr.storage(0),before); // accepted receipt is not a second writable store
-    const auto saved=ga.transportRestartState();ASSERT_FALSE(saved.empty());
-    ASSERT_TRUE(gb.restoreTransportRestart(saved,true).empty());EXPECT_EQ(gb.transportRestartState(),saved);
-    ga.heat().refreshView(0,tr);gb.heat().refreshView(0,gb.transport());
-    ASSERT_TRUE(ga.refreshPorewaterContactLedger().empty());ASSERT_TRUE(gb.refreshPorewaterContactLedger().empty());
-    EXPECT_EQ(ga.transportRestartState(),gb.transportRestartState());
-    EXPECT_NEAR(tr.storage(0)-before,.14,1e-12);EXPECT_NEAR(tr.gained_contact[0],.14,1e-12);
-    const auto settled=ga.transportRestartState();ga.heat().refreshView(0,tr);EXPECT_EQ(ga.transportRestartState(),settled);
-    EXPECT_DOUBLE_EQ(totalGroundEnergy(ga),energy);EXPECT_NEAR(tr.residual(0),0,1e-10);
-    const auto no_change=ga.transportRestartState();
-    EXPECT_FALSE(pore.applyContactMassIncrement(0,0,-1e9));EXPECT_EQ(ga.transportRestartState(),no_change);
-    finish(a);finish(b);
-}
-
-TEST(GwSigmaPorous, ColdLayerContactCarriesAgeAndPhysicalJoulesOnce) {
-    auto body=mappedPorousDeck("[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n",Mesh::Quad);
-    body.insert(body.find("FLOW_UNITS"),"WATER_AGE ON\n");
-    Deck r=open("mapped_cold_contact",body);ASSERT_TRUE(r.opened);
-    ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-    auto& router=r.eng->surfaceRouter2D();auto& gw=router.subsurface();const auto& t=gw.transport();
-    const double energy=totalGroundEnergy(gw);std::vector<double> concentration(t.n_species,0);
-    concentration[0]=7;concentration[t.temp_row]=-5;concentration[t.age_row]=4;
-    gw.bookLinkContact(0,.02,concentration,-.25,-.25);
-    gw.assignTiers(.1,1);gw.fireGwCells(0,.1,router.state(),0);
-    EXPECT_NEAR(totalGroundEnergy(gw)-energy,gw.heat().water_capacity*(-5)*.02,1e-5);
-    EXPECT_NEAR(t.gained_link[t.temp_row],-.1,1e-14);EXPECT_NEAR(t.gained_link[t.age_row],.08,1e-14);
-    EXPECT_NEAR(t.residual(0),0,1e-10);EXPECT_NEAR(t.residual(t.age_row),0,1e-10);
-    for(int layer=0;layer<t.n_layers;++layer)EXPECT_TRUE(std::isfinite(t.layer_mass[t.layerIdx(t.temp_row,layer,0)]));
-    finish(r);
-}
-
-TEST(GwSigmaPorous, LayerReactorsUseMappedThermalTemperatureWithAqueousSorptionCapacity) {
-    const std::string chemistry="[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\nCOUPLING FULL\nATOL 1e-12\nRTOL 1e-10\n"
-        "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
-        "[REACTION_SUBSURFACE]\n* SAT A RATE -.001*A*(TEMP+10)/30\n* SAT B RATE .001*A*(TEMP+10)/30\n"
-        "* UNSAT A RATE -.001*A*(TEMP+10)/30\n* UNSAT B RATE .001*A*(TEMP+10)/30\n"
-        "[GW_INITIAL_QUALITY]\n* SAT A 7\n* UNSAT A 7\n* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n";
-    Deck r=open("mapped_reactors",mappedPorousDeck(chemistry));ASSERT_TRUE(r.opened);
-    ASSERT_TRUE(run(r))<<completionErrors(r);ASSERT_EQ(swmm_engine_end(r.e),SWMM_OK);r.started=false;
-    const auto& t=r.eng->surfaceRouter2D().subsurface().transport();const int a=t.rowIndex("A"),b=t.rowIndex("B");ASSERT_GE(a,0);ASSERT_GE(b,0);
-    EXPECT_NEAR(t.ledgeredStorage(a),t.init_mass[a]*std::exp(-.001*r.eng->context().current_time),t.init_mass[a]*1e-8);
-    EXPECT_NEAR(t.ledgeredStorage(a)+t.ledgeredStorage(b),t.init_mass[a],t.init_mass[a]*1e-10);
-    EXPECT_NEAR(t.residual(a),0,1e-9);EXPECT_NEAR(t.residual(b),0,1e-9);finish(r);
-}
-
-TEST(GwSigmaPorous, PendingFaceHeatAndMappedContactContinueExactlyAfterRestore) {
-    const auto body=mappedPorousDeck("[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n"
-        "* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n"
-        "[2D_AQUIFER]\nCELL 1 36 1 .45 .1 2 HG0 .8\n");
-    Deck first=open("mapped_pending_face",body),second=open("mapped_pending_face_restore",body);
-    ASSERT_TRUE(first.opened);ASSERT_TRUE(second.opened);
-    ASSERT_EQ(swmm_engine_initialize(first.e),SWMM_OK)<<completionErrors(first);
-    ASSERT_EQ(swmm_engine_initialize(second.e),SWMM_OK)<<completionErrors(second);
-    auto& a=first.eng->surfaceRouter2D();auto& b=second.eng->surfaceRouter2D();auto& ga=a.subsurface();auto& gb=b.subsurface();
-    ga.assignTiers(.1,1);gb.assignTiers(.1,1);ga.fireGwFaces(0,.1);
-    double promised=0;for(const auto& c:ga.heat().cells)for(double amount:c.porewater.reserved_out)promised+=amount;
-    ASSERT_GT(promised,0);ASSERT_TRUE(ga.heat().cells[0].porewater.applyContactMassIncrement(0,0,.1));
-    const auto saved=ga.transportRestartState();
-    {std::ofstream file(kOutDir/"mapped_pending_face.bin",std::ios::binary);file.write(saved.data(),saved.size());}
-    ASSERT_TRUE(gb.restoreTransportRestart(saved,true).empty());EXPECT_EQ(gb.transportRestartState(),saved);
-    for(int step=0;step<12;++step) {
-        if(step){ga.fireGwFaces(0,.1);gb.fireGwFaces(0,.1);}
-        ga.fireGwCells(0,.1,a.state(),step*.1);gb.fireGwCells(0,.1,b.state(),step*.1);
-        ASSERT_TRUE(ga.refreshPorewaterContactLedger().empty());ASSERT_TRUE(gb.refreshPorewaterContactLedger().empty());
-        EXPECT_EQ(ga.transportRestartState(),gb.transportRestartState())<<step;
-    }
-    EXPECT_NEAR(ga.transport().residual(0),0,1e-9);EXPECT_NEAR(ga.state().continuityResidual(),0,1e-9);
-    Deck fresh=open("mapped_moving_restore_fresh",body);ASSERT_TRUE(fresh.opened);
-    ASSERT_EQ(swmm_engine_initialize(fresh.e),SWMM_OK);
-    auto& gf=fresh.eng->surfaceRouter2D().subsurface();
-    ASSERT_TRUE(gf.restoreTransportRestart(ga.transportRestartState(),true).empty());
-    EXPECT_EQ(gf.transportRestartState(),ga.transportRestartState());
-    finish(first);finish(second);finish(fresh);
-}
-
-TEST(GwSigmaPorous, IncompatibleThermalGridAndUnpairedMappingReceiptsRefuseAtomically) {
-    const std::string quality="[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n";
-    Deck a=open("mapped_identity",mappedPorousDeck(quality,Mesh::Quad,5,3));
-    Deck b=open("mapped_identity_target",mappedPorousDeck(quality,Mesh::Quad,5,3));
-    Deck c=open("mapped_identity_wrong",mappedPorousDeck(quality,Mesh::Quad,5,4));
-    ASSERT_TRUE(a.opened);ASSERT_TRUE(b.opened);ASSERT_TRUE(c.opened);
-    ASSERT_EQ(swmm_engine_initialize(a.e),SWMM_OK);ASSERT_EQ(swmm_engine_initialize(b.e),SWMM_OK);ASSERT_EQ(swmm_engine_initialize(c.e),SWMM_OK);
-    auto& ga=a.eng->surfaceRouter2D().subsurface();auto& gb=b.eng->surfaceRouter2D().subsurface();auto& gc=c.eng->surfaceRouter2D().subsurface();
-    const auto saved=ga.transportRestartState(),target=gb.transportRestartState(),wrong=gc.transportRestartState();
-    EXPECT_FALSE(gc.restoreTransportRestart(saved,true).empty());EXPECT_EQ(gc.transportRestartState(),wrong);
-    auto& pending=ga.heat().cells[0].porewater.sigma.pending;pending[0]+=.1;
-    const auto corrupt=ga.transportRestartState();pending[0]-=.1;
-    EXPECT_FALSE(gb.restoreTransportRestart(corrupt,true).empty());EXPECT_EQ(gb.transportRestartState(),target);
-    auto& cached=ga.heat().cells[0].porewater.mass;const double old=cached[0];cached[0]+=.1;
-    const auto corrupt_view=ga.transportRestartState();cached[0]=old;
-    EXPECT_FALSE(gb.restoreTransportRestart(corrupt_view,true).empty());EXPECT_EQ(gb.transportRestartState(),target);
-    EXPECT_FALSE(gb.restoreTransportRestart(saved.substr(0,saved.size()/2),true).empty());EXPECT_EQ(gb.transportRestartState(),target);
-    finish(a);finish(b);finish(c);
-}
-
-TEST(GwSigmaPorous, FiniteContactsCannotSpendAnAlreadyPromisedConduitExport) {
-    Deck r=open("mapped_protected_export",mappedPorousDeck("[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n",Mesh::Quad));
-    ASSERT_TRUE(r.opened);ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-    auto& router=r.eng->surfaceRouter2D();auto& gw=router.subsurface();auto& tr=gw.transport();
-    const double volume=.01,amount=gw.bookLinkGain(0,0,volume);ASSERT_GT(amount,0);
-    gw.bookLinkSeepage(0,-volume);
-    auto& pore=gw.heat().cells[0].porewater;const auto nl=gw.heat().cells[0].column.theta.size();
-    double reserved=0;for(std::size_t j=0;j<nl;++j)reserved+=pore.reserved_out[j];
-    EXPECT_NEAR(reserved,amount,1e-14);
-    for(std::size_t j=0;j<nl;++j) {
-        const double available=pore.contactAvailableMass(0,j);
-        ASSERT_TRUE(pore.applyContactMassIncrement(0,j,-.9*available));
-    }
-    gw.heat().refreshView(0,tr);ASSERT_TRUE(gw.refreshPorewaterContactLedger().empty());
-    EXPECT_GE(tr.sat_mass[0],amount);
-    const auto saved=gw.transportRestartState();ASSERT_TRUE(gw.restoreTransportRestart(saved,true).empty());
-    gw.assignTiers(.1,1);gw.fireGwCells(0,.1,router.state(),0);
-    EXPECT_NEAR(tr.lost_link[0],amount,1e-14);EXPECT_NEAR(tr.residual(0),0,1e-9);
-    for(double mass:tr.layer_mass)EXPECT_GE(mass,0);finish(r);
-}
-
-TEST(GwSigmaPorous, LayerSpecificKineticsReadProjectedTemperatureAndRetardation) {
-    const auto body=mappedPorousDeck("[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\nCOUPLING FULL\nATOL 1e-13\nRTOL 1e-11\n"
-        "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
-        "[REACTION_SUBSURFACE]\n* UNSAT A RATE -.01*A*TEMP/20\n* UNSAT B RATE .01*A*TEMP/20\n"
-        "[GW_INITIAL_QUALITY]\n* UNSAT A 7\n* SAT A 7\n* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 10\n* LAYER 2 __TEMPERATURE__ 30\n"
-        "[GW_SORPTION]\n* A 2 0\n* B 2 0\n",Mesh::Quad,5,3);
-    Deck r=open("mapped_local_kinetics",body);ASSERT_TRUE(r.opened);
-    ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-    auto& router=r.eng->surfaceRouter2D();auto& gw=router.subsurface();const auto& tr=gw.transport();const auto& w=gw.state();
-    const int a=tr.rowIndex("A"),b=tr.rowIndex("B");ASSERT_GE(a,0);ASSERT_GE(b,0);
-    std::vector<double> expected(tr.n_layers);double lo=1e30,hi=-1e30;
-    for(int layer=0;layer<tr.n_layers;++layer) {
-        double volume=0,mass=0,temperature=0;
-        ASSERT_EQ(swmm_gw2d_get_layer_quality(r.e,0,layer,tr.temp_row,&volume,&mass,&temperature),SWMM_OK);
-        lo=std::min(lo,temperature);hi=std::max(hi,temperature);
-        const double theta=w.theta_sigma[layer*tr.n_cells];
-        const double scale=theta/(theta+tr.kd[tr.idx(a,0)]*tr.rho_b[0]);
-        expected[layer]=tr.layer_mass[tr.layerIdx(a,layer,0)]*std::exp(-.01*.1*temperature/20*scale);
-    }
-    ASSERT_GT(hi-lo,1);
-    gw.assignTiers(.1,1);gw.fireGwCells(0,.1,router.state(),0);
-    for(int layer=0;layer<tr.n_layers;++layer)EXPECT_NEAR(tr.layer_mass[tr.layerIdx(a,layer,0)],expected[layer],1e-8);
-    EXPECT_NEAR(tr.residual(a),0,1e-9);EXPECT_NEAR(tr.residual(b),0,1e-9);finish(r);
-}
-
-TEST(GwSigmaPorous, UnspecifiedTemperatureUsesTheConfiguredThermalInitialState) {
-    Deck r=open("mapped_thermal_default",mappedPorousDeck("",Mesh::Quad));ASSERT_TRUE(r.opened);
-    ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-    const auto& ctx=r.eng->context();const auto& gw=r.eng->surfaceRouter2D().subsurface();
-    const double expected=ctx.heat_config.global_temp[int(openswmm::HeatSource::INITIAL_STATE)];
-    for(const auto& c:gw.heat().cells)for(std::size_t j=0;j<c.column.energy.size();++j)
-        EXPECT_NEAR(c.column.energy[j]/c.column.capacity[j],expected,1e-12);
-    finish(r);
-}
-
-TEST(GwSigmaPorous, ResultsKeepChemicalAndThermalLayerAxesIndependent) {
-    auto body=mappedPorousDeck("[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n"
-        "* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 10\n",Mesh::Quad,5,3);
-    const auto at=body.find("REPORT_2D NO");ASSERT_NE(at,std::string::npos);
-    body.replace(at,12,"REPORT_2D YES\nOUTPUT_FILE mapped_layers.h5\nOUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES DEPTH GROUNDWATER");
-    Deck r=open("mapped_results",body);ASSERT_TRUE(r.opened);ASSERT_TRUE(run(r))<<completionErrors(r);
-    const auto expected=r.eng->surfaceRouter2D().subsurface().transport().layer_mass;
-    const auto& tr=r.eng->surfaceRouter2D().subsurface().transport();const int ns=tr.n_species,nc=tr.n_cells;
-    finish(r);
-    hid_t file=H5Fopen((kOutDir/"mapped_layers.h5").string().c_str(),H5F_ACC_RDONLY,H5P_DEFAULT);ASSERT_GE(file,0);
-    hid_t dataset=H5Dopen2(file,"Mesh2_face_gw_layer_mass",H5P_DEFAULT);ASSERT_GE(dataset,0);
-    hid_t space=H5Dget_space(dataset);ASSERT_EQ(H5Sget_simple_extent_ndims(space),4);
-    hsize_t dimensions[4]={};H5Sget_simple_extent_dims(space,dimensions,nullptr);
-    EXPECT_EQ(dimensions[1],ns);EXPECT_EQ(dimensions[2],5);EXPECT_EQ(dimensions[3],nc);
-    std::vector<double> values(std::size_t(dimensions[0])*ns*5*nc);
-    ASSERT_GE(H5Dread(dataset,H5T_NATIVE_DOUBLE,H5S_ALL,H5S_ALL,H5P_DEFAULT,values.data()),0);
-    const auto offset=values.size()-expected.size();
-    for(std::size_t k=0;k<expected.size();++k)EXPECT_NEAR(values[offset+k],expected[k],1e-9);
-    H5Sclose(space);H5Dclose(dataset);H5Fclose(file);
-}
-
-TEST(GwIntegrated, ConduitNodeWellAndEdgesShareOneFiniteDonor) {
-    fs::create_directories(kOutDir);
-    std::ofstream metrics(kOutDir/"joint_donor_matrix.csv");ASSERT_TRUE(metrics.good());metrics.precision(17);
-    metrics<<"profile,sorption,node_first,node_water,link_water,well_water,edge_water,water_residual,species_residual\n";
-    for(int profile=0;profile<5;++profile)for(bool sorption:{false,true})for(bool node_first:{false,true}) {
-        const auto name="joint-donor-"+std::to_string(profile)+"-"+std::to_string(sorption)+"-"+std::to_string(node_first);
-        SCOPED_TRACE(name);
-        const std::string extra="[2D_AQUIFER_NODE]\nJ1 1 KC 360000 DC .05 AREA 100\n"
-            "[GW_SOURCES]\nW CELL 1 FLOW -10\n"
-            "[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST -20\nCELL 1 EDGE 2 FLOW CONST -30\n"
-            "[GW_INITIAL_QUALITY]\nCELL 1 SAT TSS 7\nCELL 1 UNSAT TSS 7\n"
-            "* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n"
-            "[GW_SORPTION]\n* TSS "+std::string(sorption?"2":"0")+" 0\n";
-        auto body=profile==4?mappedPorousDeck(extra,Mesh::Quad):profile==3?layeredDeck(extra,Mesh::Quad):forcingDeck(extra,.3,Mesh::Quad);
-        if(profile==1||profile==2) {
-            const auto at=body.find("CLOSURE CLOSED_FORM");ASSERT_NE(at,std::string::npos);
-            body.replace(at,19,profile==1?"CLOSURE ENSLAVED":"CLOSURE SIGMA");
-        }
-        // Temperature rows are authored only for the active porous profile.
-        if(profile!=4) {
-            const auto at=body.find("* SAT __TEMPERATURE__ 20\n");ASSERT_NE(at,std::string::npos);
-            body.erase(at,std::string("* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n").size());
-        }
-        Deck r=open(name,body);ASSERT_TRUE(r.opened)<<completionErrors(r);
-        ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-        auto& router=r.eng->surfaceRouter2D();auto& gw=router.subsurface();auto& tr=gw.transport();auto& water=gw.state();
-        const double initial_water=water.storage(),initial_mass=tr.storage(0),initial_donor=gw.unreservedDrainableWater(0);
-        ASSERT_GT(initial_donor,0);auto nodes=r.eng->context().nodes;
-        nodes.depth[0]=0;nodes.volume[0]=0;nodes.inflow[0]=0;
-        auto sample=[&] {gw.resetNodeExchangeVolumes();gw.sampleNodeExchange(&nodes,1,1);};
-        if(node_first)sample();
-        const double link_water=.25*gw.unreservedDrainableWater(0);ASSERT_GT(link_water,0);
-        const double link_mass=gw.bookLinkGain(0,0,link_water);ASSERT_GT(link_mass,0);
-        if(tr.temp_row>=0)gw.bookLinkGain(0,tr.temp_row,link_water);
-        gw.bookLinkSeepage(0,-link_water);
-        if(!node_first)sample();
-        const double node_water=std::accumulate(water.nacc.begin(),water.nacc.end(),0.);
-        ASSERT_GT(node_water,0);EXPECT_LE(link_water+node_water,initial_donor*(1+1e-12));
-        gw.assignTiers(1,1);ASSERT_NO_THROW(gw.fireGwCells(0,1,router.state(),0));
-        double requested_in,requested_a,in_a,out_a,requested_b,out_b;
-        ASSERT_EQ(swmm_gw2d_boundary_water(r.e,0,&requested_in,&requested_a,&in_a,&out_a),SWMM_OK);
-        ASSERT_EQ(swmm_gw2d_boundary_water(r.e,1,&requested_in,&requested_b,&in_a,&out_b),SWMM_OK);
-        EXPECT_DOUBLE_EQ(requested_a,20);EXPECT_DOUBLE_EQ(requested_b,30);
-        ASSERT_GT(water.led_source_out,0);EXPECT_LT(water.led_source_out,10);
-        EXPECT_NEAR(out_a,2*water.led_source_out,1e-10);EXPECT_NEAR(out_b,3*water.led_source_out,1e-10);
-        EXPECT_NEAR(water.led_node,node_water,1e-10);EXPECT_NEAR(water.led_link,-link_water,1e-10);
-        EXPECT_NEAR(tr.lost_link[0],link_mass,1e-10);
-        double node_mass=0;const auto& delivery=gw.nodeExchangeMass();
-        for(int n=0;n<r.eng->context().n_nodes();++n)node_mass+=delivery[n];
-        EXPECT_NEAR(tr.lost_node[0],node_mass,1e-10);
-        const double water_out=node_water+link_water+water.led_source_out+out_a+out_b+water.led_deep;
-        EXPECT_NEAR(water.storage()+water_out,initial_water,1e-10*std::max(1.,initial_water));
-        EXPECT_NEAR(tr.ledgeredStorage(0)+tr.lost_link[0]+tr.lost_node[0]+tr.lost_source[0]+tr.boundary_out[0]+tr.lost_deep[0],
-                    initial_mass,1e-10*std::max(1.,initial_mass));
-        EXPECT_NEAR(tr.residual(0),0,1e-10*std::max(1.,initial_mass));
-        EXPECT_NEAR(water.continuityResidual(),0,1e-10*std::max(1.,initial_water));
-        for(double value:tr.layer_mass)if(tr.temp_row<0)EXPECT_GE(value,0);
-        for(int cell=0;cell<tr.n_cells;++cell)EXPECT_GE(tr.sat_mass[tr.idx(0,cell)],0);
-        if(profile==4) {double residual=0;ASSERT_EQ(swmm_heat_get_ground_values(r.e,SWMM_GROUND_HEAT_NORMALIZED_RESIDUAL,0,1,&residual),SWMM_OK);EXPECT_NEAR(residual,0,1e-10);}
-        metrics<<profile<<","<<sorption<<","<<node_first<<","<<node_water<<","<<link_water<<","<<water.led_source_out<<","<<out_a+out_b
-               <<","<<water.continuityResidual()<<","<<tr.residual(0)<<"\n";
+        EXPECT_NEAR(totalGroundEnergy(gw), expected_energy, 1e-5);
+        for (int cell = 0; cell < tr.n_cells; ++cell)
+            for (int layer = 0; layer < tr.n_layers; ++layer)
+                EXPECT_DOUBLE_EQ(tr.layer_mass[tr.layerIdx(0, layer, cell)],
+                                 original[tr.layerIdx(0, layer, cell)]);
+        EXPECT_NEAR(tr.residual(0), 0, 1e-10);
         finish(r);
     }
 }
 
+TEST(GwSigmaPorous, MovingTableConservesUniformSorbingChemistryAndThermalEnergy) {
+    for (const Mesh shape : {Mesh::Tri, Mesh::Quad, Mesh::Mixed})
+        for (const std::string rate : {"0.001", "-0.001"}) {
+            Deck r = open(std::string("mapped_uniform_") + meshName(shape) +
+                              (rate[0] == '-' ? "_out" : "_in"),
+                          mappedPorousDeck("[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n"
+                                           "* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n"
+                                           "[GW_SORPTION]\n* TSS 2 0\n"
+                                           "[GW_SOURCES]\nW * FLOW " +
+                                               rate + " TSS CONC 7 __TEMPERATURE__ CONC 20\n",
+                                           shape));
+            ASSERT_TRUE(r.opened) << completionErrors(r);
+            ASSERT_TRUE(run(r)) << completionErrors(r);
+            ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
+            r.started = false;
+            const auto& gw = r.eng->surfaceRouter2D().subsurface();
+            const auto& t = gw.transport();
+            const auto& w = gw.state();
+            for (int i = 0; i < t.n_cells; ++i)
+                for (int layer = 0; layer < t.n_layers; ++layer) {
+                    const double dz = (w.zs[i] - w.hg[i]) / t.n_layers,
+                                 theta = w.theta_sigma[layer * t.n_cells + i];
+                    const double capacity =
+                        w.area[i] * dz * (theta + t.kd[t.idx(0, i)] * t.rho_b[i]);
+                    EXPECT_NEAR(t.layer_mass[t.layerIdx(0, layer, i)], 7 * capacity, 1e-8);
+                }
+            double initial = 0, external = 0;
+            for (const auto& c : gw.heat().cells) {
+                EXPECT_FALSE(c.failed) << c.error;
+                initial += c.initial_j;
+                external += c.advective_j + c.source_j + c.surface_j + c.deep_j + c.latent_j +
+                            c.lateral_j + c.water_contact_j + c.channel_contact_j + c.lid_contact_j;
+                for (std::size_t j = 0; j < c.column.energy.size(); ++j)
+                    EXPECT_NEAR(c.column.energy[j] / c.column.capacity[j], 20, 1e-8);
+            }
+            EXPECT_NEAR(totalGroundEnergy(gw) - initial, external, 1e-3);
+            EXPECT_NEAR(t.residual(0), 0, 1e-8);
+            EXPECT_NEAR(w.continuityResidual(), 0, 1e-9);
+            finish(r);
+        }
+}
+
+TEST(GwSigmaPorous, PendingFiniteContactMapsOnceAndRestartsWithoutASecondInventory) {
+    const auto body =
+        mappedPorousDeck("[GW_INITIAL_QUALITY]\n* SAT TSS 5\n* UNSAT TSS 7\n", Mesh::Quad);
+    Deck a = open("mapped_contact", body), b = open("mapped_contact_restart", body);
+    ASSERT_TRUE(a.opened);
+    ASSERT_TRUE(b.opened);
+    ASSERT_EQ(swmm_engine_initialize(a.e), SWMM_OK) << completionErrors(a);
+    ASSERT_EQ(swmm_engine_initialize(b.e), SWMM_OK) << completionErrors(b);
+    auto& ga = a.eng->surfaceRouter2D().subsurface();
+    auto& gb = b.eng->surfaceRouter2D().subsurface();
+    auto& tr = ga.transport();
+    auto& pore = ga.heat().cells[0].porewater;
+    const double before = tr.storage(0), energy = totalGroundEnergy(ga);
+    ASSERT_TRUE(pore.applyContactMassIncrement(0, 0, .14));
+    EXPECT_DOUBLE_EQ(tr.storage(0), before); // accepted receipt is not a second writable store
+    const auto saved = ga.transportRestartState();
+    ASSERT_FALSE(saved.empty());
+    ASSERT_TRUE(gb.restoreTransportRestart(saved, true).empty());
+    EXPECT_EQ(gb.transportRestartState(), saved);
+    ga.heat().refreshView(0, tr);
+    gb.heat().refreshView(0, gb.transport());
+    ASSERT_TRUE(ga.refreshPorewaterContactLedger().empty());
+    ASSERT_TRUE(gb.refreshPorewaterContactLedger().empty());
+    EXPECT_EQ(ga.transportRestartState(), gb.transportRestartState());
+    EXPECT_NEAR(tr.storage(0) - before, .14, 1e-12);
+    EXPECT_NEAR(tr.gained_contact[0], .14, 1e-12);
+    const auto settled = ga.transportRestartState();
+    ga.heat().refreshView(0, tr);
+    EXPECT_EQ(ga.transportRestartState(), settled);
+    EXPECT_DOUBLE_EQ(totalGroundEnergy(ga), energy);
+    EXPECT_NEAR(tr.residual(0), 0, 1e-10);
+    const auto no_change = ga.transportRestartState();
+    EXPECT_FALSE(pore.applyContactMassIncrement(0, 0, -1e9));
+    EXPECT_EQ(ga.transportRestartState(), no_change);
+    finish(a);
+    finish(b);
+}
+
+TEST(GwSigmaPorous, ColdLayerContactCarriesAgeAndPhysicalJoulesOnce) {
+    auto body = mappedPorousDeck(
+        "[GW_INITIAL_QUALITY]\n* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n", Mesh::Quad);
+    body.insert(body.find("FLOW_UNITS"), "WATER_AGE ON\n");
+    Deck r = open("mapped_cold_contact", body);
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+    auto& router = r.eng->surfaceRouter2D();
+    auto& gw = router.subsurface();
+    const auto& t = gw.transport();
+    const double energy = totalGroundEnergy(gw);
+    std::vector<double> concentration(t.n_species, 0);
+    concentration[0] = 7;
+    concentration[t.temp_row] = -5;
+    concentration[t.age_row] = 4;
+    gw.bookLinkContact(0, .02, concentration, -.25, -.25);
+    gw.assignTiers(.1, 1);
+    gw.fireGwCells(0, .1, router.state(), 0);
+    EXPECT_NEAR(totalGroundEnergy(gw) - energy, gw.heat().water_capacity * (-5) * .02, 1e-5);
+    EXPECT_NEAR(t.gained_link[t.temp_row], -.1, 1e-14);
+    EXPECT_NEAR(t.gained_link[t.age_row], .08, 1e-14);
+    EXPECT_NEAR(t.residual(0), 0, 1e-10);
+    EXPECT_NEAR(t.residual(t.age_row), 0, 1e-10);
+    for (int layer = 0; layer < t.n_layers; ++layer)
+        EXPECT_TRUE(std::isfinite(t.layer_mass[t.layerIdx(t.temp_row, layer, 0)]));
+    finish(r);
+}
+
+TEST(GwSigmaPorous, LayerReactorsUseMappedThermalTemperatureWithAqueousSorptionCapacity) {
+    const std::string chemistry =
+        "[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\nCOUPLING FULL\nATOL 1e-12\nRTOL 1e-10\n"
+        "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
+        "[REACTION_SUBSURFACE]\n* SAT A RATE -.001*A*(TEMP+10)/30\n* SAT B RATE .001*A*(TEMP+10)/30\n"
+        "* UNSAT A RATE -.001*A*(TEMP+10)/30\n* UNSAT B RATE .001*A*(TEMP+10)/30\n"
+        "[GW_INITIAL_QUALITY]\n* SAT A 7\n* UNSAT A 7\n* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n";
+    Deck r = open("mapped_reactors", mappedPorousDeck(chemistry));
+    ASSERT_TRUE(r.opened);
+    ASSERT_TRUE(run(r)) << completionErrors(r);
+    ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
+    r.started = false;
+    const auto& t = r.eng->surfaceRouter2D().subsurface().transport();
+    const int a = t.rowIndex("A"), b = t.rowIndex("B");
+    ASSERT_GE(a, 0);
+    ASSERT_GE(b, 0);
+    EXPECT_NEAR(t.ledgeredStorage(a),
+                t.init_mass[a] * std::exp(-.001 * r.eng->context().current_time),
+                t.init_mass[a] * 1e-8);
+    EXPECT_NEAR(t.ledgeredStorage(a) + t.ledgeredStorage(b), t.init_mass[a],
+                t.init_mass[a] * 1e-10);
+    EXPECT_NEAR(t.residual(a), 0, 1e-9);
+    EXPECT_NEAR(t.residual(b), 0, 1e-9);
+    finish(r);
+}
+
+TEST(GwSigmaPorous, PendingFaceHeatAndMappedContactContinueExactlyAfterRestore) {
+    const auto body = mappedPorousDeck("[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n"
+                                       "* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n"
+                                       "[2D_AQUIFER]\nCELL 1 36 1 .45 .1 2 HG0 .8\n");
+    Deck first = open("mapped_pending_face", body),
+         second = open("mapped_pending_face_restore", body);
+    ASSERT_TRUE(first.opened);
+    ASSERT_TRUE(second.opened);
+    ASSERT_EQ(swmm_engine_initialize(first.e), SWMM_OK) << completionErrors(first);
+    ASSERT_EQ(swmm_engine_initialize(second.e), SWMM_OK) << completionErrors(second);
+    auto& a = first.eng->surfaceRouter2D();
+    auto& b = second.eng->surfaceRouter2D();
+    auto& ga = a.subsurface();
+    auto& gb = b.subsurface();
+    ga.assignTiers(.1, 1);
+    gb.assignTiers(.1, 1);
+    ga.fireGwFaces(0, .1);
+    double promised = 0;
+    for (const auto& c : ga.heat().cells)
+        for (double amount : c.porewater.reserved_out)
+            promised += amount;
+    ASSERT_GT(promised, 0);
+    ASSERT_TRUE(ga.heat().cells[0].porewater.applyContactMassIncrement(0, 0, .1));
+    const auto saved = ga.transportRestartState();
+    {
+        std::ofstream file(kOutDir / "mapped_pending_face.bin", std::ios::binary);
+        file.write(saved.data(), saved.size());
+    }
+    ASSERT_TRUE(gb.restoreTransportRestart(saved, true).empty());
+    EXPECT_EQ(gb.transportRestartState(), saved);
+    for (int step = 0; step < 12; ++step) {
+        if (step) {
+            ga.fireGwFaces(0, .1);
+            gb.fireGwFaces(0, .1);
+        }
+        ga.fireGwCells(0, .1, a.state(), step * .1);
+        gb.fireGwCells(0, .1, b.state(), step * .1);
+        ASSERT_TRUE(ga.refreshPorewaterContactLedger().empty());
+        ASSERT_TRUE(gb.refreshPorewaterContactLedger().empty());
+        EXPECT_EQ(ga.transportRestartState(), gb.transportRestartState()) << step;
+    }
+    EXPECT_NEAR(ga.transport().residual(0), 0, 1e-9);
+    EXPECT_NEAR(ga.state().continuityResidual(), 0, 1e-9);
+    Deck fresh = open("mapped_moving_restore_fresh", body);
+    ASSERT_TRUE(fresh.opened);
+    ASSERT_EQ(swmm_engine_initialize(fresh.e), SWMM_OK);
+    auto& gf = fresh.eng->surfaceRouter2D().subsurface();
+    ASSERT_TRUE(gf.restoreTransportRestart(ga.transportRestartState(), true).empty());
+    EXPECT_EQ(gf.transportRestartState(), ga.transportRestartState());
+    finish(first);
+    finish(second);
+    finish(fresh);
+}
+
+TEST(GwSigmaPorous, IncompatibleThermalGridAndUnpairedMappingReceiptsRefuseAtomically) {
+    const std::string quality = "[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n";
+    Deck a = open("mapped_identity", mappedPorousDeck(quality, Mesh::Quad, 5, 3));
+    Deck b = open("mapped_identity_target", mappedPorousDeck(quality, Mesh::Quad, 5, 3));
+    Deck c = open("mapped_identity_wrong", mappedPorousDeck(quality, Mesh::Quad, 5, 4));
+    ASSERT_TRUE(a.opened);
+    ASSERT_TRUE(b.opened);
+    ASSERT_TRUE(c.opened);
+    ASSERT_EQ(swmm_engine_initialize(a.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(b.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(c.e), SWMM_OK);
+    auto& ga = a.eng->surfaceRouter2D().subsurface();
+    auto& gb = b.eng->surfaceRouter2D().subsurface();
+    auto& gc = c.eng->surfaceRouter2D().subsurface();
+    const auto saved = ga.transportRestartState(), target = gb.transportRestartState(),
+               wrong = gc.transportRestartState();
+    EXPECT_FALSE(gc.restoreTransportRestart(saved, true).empty());
+    EXPECT_EQ(gc.transportRestartState(), wrong);
+    auto& pending = ga.heat().cells[0].porewater.sigma.pending;
+    pending[0] += .1;
+    const auto corrupt = ga.transportRestartState();
+    pending[0] -= .1;
+    EXPECT_FALSE(gb.restoreTransportRestart(corrupt, true).empty());
+    EXPECT_EQ(gb.transportRestartState(), target);
+    auto& cached = ga.heat().cells[0].porewater.mass;
+    const double old = cached[0];
+    cached[0] += .1;
+    const auto corrupt_view = ga.transportRestartState();
+    cached[0] = old;
+    EXPECT_FALSE(gb.restoreTransportRestart(corrupt_view, true).empty());
+    EXPECT_EQ(gb.transportRestartState(), target);
+    EXPECT_FALSE(gb.restoreTransportRestart(saved.substr(0, saved.size() / 2), true).empty());
+    EXPECT_EQ(gb.transportRestartState(), target);
+    finish(a);
+    finish(b);
+    finish(c);
+}
+
+TEST(GwSigmaPorous, FiniteContactsCannotSpendAnAlreadyPromisedConduitExport) {
+    Deck r =
+        open("mapped_protected_export",
+             mappedPorousDeck("[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n", Mesh::Quad));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+    auto& router = r.eng->surfaceRouter2D();
+    auto& gw = router.subsurface();
+    auto& tr = gw.transport();
+    const double volume = .01, amount = gw.bookLinkGain(0, 0, volume);
+    ASSERT_GT(amount, 0);
+    gw.bookLinkSeepage(0, -volume);
+    auto& pore = gw.heat().cells[0].porewater;
+    const auto nl = gw.heat().cells[0].column.theta.size();
+    double reserved = 0;
+    for (std::size_t j = 0; j < nl; ++j)
+        reserved += pore.reserved_out[j];
+    EXPECT_NEAR(reserved, amount, 1e-14);
+    for (std::size_t j = 0; j < nl; ++j) {
+        const double available = pore.contactAvailableMass(0, j);
+        ASSERT_TRUE(pore.applyContactMassIncrement(0, j, -.9 * available));
+    }
+    gw.heat().refreshView(0, tr);
+    ASSERT_TRUE(gw.refreshPorewaterContactLedger().empty());
+    EXPECT_GE(tr.sat_mass[0], amount);
+    const auto saved = gw.transportRestartState();
+    ASSERT_TRUE(gw.restoreTransportRestart(saved, true).empty());
+    gw.assignTiers(.1, 1);
+    gw.fireGwCells(0, .1, router.state(), 0);
+    EXPECT_NEAR(tr.lost_link[0], amount, 1e-14);
+    EXPECT_NEAR(tr.residual(0), 0, 1e-9);
+    for (double mass : tr.layer_mass)
+        EXPECT_GE(mass, 0);
+    finish(r);
+}
+
+TEST(GwSigmaPorous, LayerSpecificKineticsReadProjectedTemperatureAndRetardation) {
+    const auto body = mappedPorousDeck(
+        "[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\nCOUPLING FULL\nATOL 1e-13\nRTOL 1e-11\n"
+        "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
+        "[REACTION_SUBSURFACE]\n* UNSAT A RATE -.01*A*TEMP/20\n* UNSAT B RATE .01*A*TEMP/20\n"
+        "[GW_INITIAL_QUALITY]\n* UNSAT A 7\n* SAT A 7\n* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 10\n* LAYER 2 __TEMPERATURE__ 30\n"
+        "[GW_SORPTION]\n* A 2 0\n* B 2 0\n",
+        Mesh::Quad, 5, 3);
+    Deck r = open("mapped_local_kinetics", body);
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+    auto& router = r.eng->surfaceRouter2D();
+    auto& gw = router.subsurface();
+    const auto& tr = gw.transport();
+    const auto& w = gw.state();
+    const int a = tr.rowIndex("A"), b = tr.rowIndex("B");
+    ASSERT_GE(a, 0);
+    ASSERT_GE(b, 0);
+    std::vector<double> expected(tr.n_layers);
+    double lo = 1e30, hi = -1e30;
+    for (int layer = 0; layer < tr.n_layers; ++layer) {
+        double volume = 0, mass = 0, temperature = 0;
+        ASSERT_EQ(
+            swmm_gw2d_get_layer_quality(r.e, 0, layer, tr.temp_row, &volume, &mass, &temperature),
+            SWMM_OK);
+        lo = std::min(lo, temperature);
+        hi = std::max(hi, temperature);
+        const double theta = w.theta_sigma[layer * tr.n_cells];
+        const double scale = theta / (theta + tr.kd[tr.idx(a, 0)] * tr.rho_b[0]);
+        expected[layer] = tr.layer_mass[tr.layerIdx(a, layer, 0)] *
+                          std::exp(-.01 * .1 * temperature / 20 * scale);
+    }
+    ASSERT_GT(hi - lo, 1);
+    gw.assignTiers(.1, 1);
+    gw.fireGwCells(0, .1, router.state(), 0);
+    for (int layer = 0; layer < tr.n_layers; ++layer)
+        EXPECT_NEAR(tr.layer_mass[tr.layerIdx(a, layer, 0)], expected[layer], 1e-8);
+    EXPECT_NEAR(tr.residual(a), 0, 1e-9);
+    EXPECT_NEAR(tr.residual(b), 0, 1e-9);
+    finish(r);
+}
+
+TEST(GwSigmaPorous, UnspecifiedTemperatureUsesTheConfiguredThermalInitialState) {
+    Deck r = open("mapped_thermal_default", mappedPorousDeck("", Mesh::Quad));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+    const auto& ctx = r.eng->context();
+    const auto& gw = r.eng->surfaceRouter2D().subsurface();
+    const double expected = ctx.heat_config.global_temp[int(openswmm::HeatSource::INITIAL_STATE)];
+    for (const auto& c : gw.heat().cells)
+        for (std::size_t j = 0; j < c.column.energy.size(); ++j)
+            EXPECT_NEAR(c.column.energy[j] / c.column.capacity[j], expected, 1e-12);
+    finish(r);
+}
+
+TEST(GwSigmaPorous, ResultsKeepChemicalAndThermalLayerAxesIndependent) {
+    auto body = mappedPorousDeck("[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n"
+                                 "* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 10\n",
+                                 Mesh::Quad, 5, 3);
+    const auto at = body.find("REPORT_2D NO");
+    ASSERT_NE(at, std::string::npos);
+    body.replace(
+        at, 12,
+        "REPORT_2D YES\nOUTPUT_FILE mapped_layers.h5\nOUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES DEPTH GROUNDWATER");
+    Deck r = open("mapped_results", body);
+    ASSERT_TRUE(r.opened);
+    ASSERT_TRUE(run(r)) << completionErrors(r);
+    const auto expected = r.eng->surfaceRouter2D().subsurface().transport().layer_mass;
+    const auto& tr = r.eng->surfaceRouter2D().subsurface().transport();
+    const int ns = tr.n_species, nc = tr.n_cells;
+    finish(r);
+    hid_t file =
+        H5Fopen((kOutDir / "mapped_layers.h5").string().c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    ASSERT_GE(file, 0);
+    hid_t dataset = H5Dopen2(file, "Mesh2_face_gw_layer_mass", H5P_DEFAULT);
+    ASSERT_GE(dataset, 0);
+    hid_t space = H5Dget_space(dataset);
+    ASSERT_EQ(H5Sget_simple_extent_ndims(space), 4);
+    hsize_t dimensions[4] = {};
+    H5Sget_simple_extent_dims(space, dimensions, nullptr);
+    EXPECT_EQ(dimensions[1], ns);
+    EXPECT_EQ(dimensions[2], 5);
+    EXPECT_EQ(dimensions[3], nc);
+    std::vector<double> values(std::size_t(dimensions[0]) * ns * 5 * nc);
+    ASSERT_GE(H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, values.data()), 0);
+    const auto offset = values.size() - expected.size();
+    for (std::size_t k = 0; k < expected.size(); ++k)
+        EXPECT_NEAR(values[offset + k], expected[k], 1e-9);
+    H5Sclose(space);
+    H5Dclose(dataset);
+    H5Fclose(file);
+}
+
+TEST(GwIntegrated, ConduitNodeWellAndEdgesShareOneFiniteDonor) {
+    fs::create_directories(kOutDir);
+    std::ofstream metrics(kOutDir / "joint_donor_matrix.csv");
+    ASSERT_TRUE(metrics.good());
+    metrics.precision(17);
+    metrics
+        << "profile,sorption,node_first,node_water,link_water,well_water,edge_water,water_residual,species_residual\n";
+    for (int profile = 0; profile < 5; ++profile)
+        for (bool sorption : {false, true})
+            for (bool node_first : {false, true}) {
+                const auto name = "joint-donor-" + std::to_string(profile) + "-" +
+                                  std::to_string(sorption) + "-" + std::to_string(node_first);
+                SCOPED_TRACE(name);
+                const std::string extra =
+                    "[2D_AQUIFER_NODE]\nJ1 1 KC 360000 DC .05 AREA 100\n"
+                    "[GW_SOURCES]\nW CELL 1 FLOW -10\n"
+                    "[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST -20\nCELL 1 EDGE 2 FLOW CONST -30\n"
+                    "[GW_INITIAL_QUALITY]\nCELL 1 SAT TSS 7\nCELL 1 UNSAT TSS 7\n"
+                    "* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n"
+                    "[GW_SORPTION]\n* TSS " +
+                    std::string(sorption ? "2" : "0") + " 0\n";
+                auto body = profile == 4   ? mappedPorousDeck(extra, Mesh::Quad)
+                            : profile == 3 ? layeredDeck(extra, Mesh::Quad)
+                                           : forcingDeck(extra, .3, Mesh::Quad);
+                if (profile == 1 || profile == 2) {
+                    const auto at = body.find("CLOSURE CLOSED_FORM");
+                    ASSERT_NE(at, std::string::npos);
+                    body.replace(at, 19, profile == 1 ? "CLOSURE ENSLAVED" : "CLOSURE SIGMA");
+                }
+                // Temperature rows are authored only for the active porous profile.
+                if (profile != 4) {
+                    const auto at = body.find("* SAT __TEMPERATURE__ 20\n");
+                    ASSERT_NE(at, std::string::npos);
+                    body.erase(at,
+                               std::string("* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n")
+                                   .size());
+                }
+                Deck r = open(name, body);
+                ASSERT_TRUE(r.opened) << completionErrors(r);
+                ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+                auto& router = r.eng->surfaceRouter2D();
+                auto& gw = router.subsurface();
+                auto& tr = gw.transport();
+                auto& water = gw.state();
+                const double initial_water = water.storage(), initial_mass = tr.storage(0),
+                             initial_donor = gw.unreservedDrainableWater(0);
+                ASSERT_GT(initial_donor, 0);
+                auto nodes = r.eng->context().nodes;
+                nodes.depth[0] = 0;
+                nodes.volume[0] = 0;
+                nodes.inflow[0] = 0;
+                auto sample = [&] {
+                    gw.resetNodeExchangeVolumes();
+                    gw.sampleNodeExchange(&nodes, 1, 1);
+                };
+                if (node_first)
+                    sample();
+                const double link_water = .25 * gw.unreservedDrainableWater(0);
+                ASSERT_GT(link_water, 0);
+                const double link_mass = gw.bookLinkGain(0, 0, link_water);
+                ASSERT_GT(link_mass, 0);
+                if (tr.temp_row >= 0)
+                    gw.bookLinkGain(0, tr.temp_row, link_water);
+                gw.bookLinkSeepage(0, -link_water);
+                if (!node_first)
+                    sample();
+                const double node_water = std::accumulate(water.nacc.begin(), water.nacc.end(), 0.);
+                ASSERT_GT(node_water, 0);
+                EXPECT_LE(link_water + node_water, initial_donor * (1 + 1e-12));
+                gw.assignTiers(1, 1);
+                ASSERT_NO_THROW(gw.fireGwCells(0, 1, router.state(), 0));
+                double requested_in, requested_a, in_a, out_a, requested_b, out_b;
+                ASSERT_EQ(
+                    swmm_gw2d_boundary_water(r.e, 0, &requested_in, &requested_a, &in_a, &out_a),
+                    SWMM_OK);
+                ASSERT_EQ(
+                    swmm_gw2d_boundary_water(r.e, 1, &requested_in, &requested_b, &in_a, &out_b),
+                    SWMM_OK);
+                EXPECT_DOUBLE_EQ(requested_a, 20);
+                EXPECT_DOUBLE_EQ(requested_b, 30);
+                ASSERT_GT(water.led_source_out, 0);
+                EXPECT_LT(water.led_source_out, 10);
+                EXPECT_NEAR(out_a, 2 * water.led_source_out, 1e-10);
+                EXPECT_NEAR(out_b, 3 * water.led_source_out, 1e-10);
+                EXPECT_NEAR(water.led_node, node_water, 1e-10);
+                EXPECT_NEAR(water.led_link, -link_water, 1e-10);
+                EXPECT_NEAR(tr.lost_link[0], link_mass, 1e-10);
+                double node_mass = 0;
+                const auto& delivery = gw.nodeExchangeMass();
+                for (int n = 0; n < r.eng->context().n_nodes(); ++n)
+                    node_mass += delivery[n];
+                EXPECT_NEAR(tr.lost_node[0], node_mass, 1e-10);
+                const double water_out =
+                    node_water + link_water + water.led_source_out + out_a + out_b + water.led_deep;
+                EXPECT_NEAR(water.storage() + water_out, initial_water,
+                            1e-10 * std::max(1., initial_water));
+                EXPECT_NEAR(tr.ledgeredStorage(0) + tr.lost_link[0] + tr.lost_node[0] +
+                                tr.lost_source[0] + tr.boundary_out[0] + tr.lost_deep[0],
+                            initial_mass, 1e-10 * std::max(1., initial_mass));
+                EXPECT_NEAR(tr.residual(0), 0, 1e-10 * std::max(1., initial_mass));
+                EXPECT_NEAR(water.continuityResidual(), 0, 1e-10 * std::max(1., initial_water));
+                for (double value : tr.layer_mass)
+                    if (tr.temp_row < 0)
+                        EXPECT_GE(value, 0);
+                for (int cell = 0; cell < tr.n_cells; ++cell)
+                    EXPECT_GE(tr.sat_mass[tr.idx(0, cell)], 0);
+                if (profile == 4) {
+                    double residual = 0;
+                    ASSERT_EQ(swmm_heat_get_ground_values(r.e, SWMM_GROUND_HEAT_NORMALIZED_RESIDUAL,
+                                                          0, 1, &residual),
+                              SWMM_OK);
+                    EXPECT_NEAR(residual, 0, 1e-10);
+                }
+                metrics << profile << "," << sorption << "," << node_first << "," << node_water
+                        << "," << link_water << "," << water.led_source_out << "," << out_a + out_b
+                        << "," << water.continuityResidual() << "," << tr.residual(0) << "\n";
+                finish(r);
+            }
+}
+
 TEST(GwIntegrated, UnequalGroundwaterClocksPreservePendingColdContactsAndExactRestart) {
-    for(const auto shape:{Mesh::Tri,Mesh::Quad,Mesh::Mixed}) {
+    for (const auto shape : {Mesh::Tri, Mesh::Quad, Mesh::Mixed}) {
         SCOPED_TRACE(meshName(shape));
-        auto body=mappedPorousDeck("[OPTIONS]\nWATER_AGE ON\n[2D_OPTIONS]\nTRANSPORT_AGE YES\n"
+        auto body = mappedPorousDeck(
+            "[OPTIONS]\nWATER_AGE ON\n[2D_OPTIONS]\nTRANSPORT_AGE YES\n"
             "[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n* SAT __TEMPERATURE__ 20\n* UNSAT __TEMPERATURE__ 20\n"
             "CELL 2 SAT TSS 2\nCELL 2 SAT __TEMPERATURE__ 5\nCELL 2 UNSAT __TEMPERATURE__ 5\n"
             "[GW_TRANSPORT_OPTIONS]\nDISPERSION YES\nCONDUCTION YES\nLATERAL_CONDUCTION YES\n"
             "SURFACE_THERMAL_BC ADIABATIC\nDEEP_THERMAL_BC ADIABATIC\n"
             "[GW_TRANSPORT_PARAMS]\n* - - - - 0 0 .002 - -\n"
-            "[2D_AQUIFER]\nCELL 1 36 1 .45 .1 2 HG0 .8\n",shape);
-        const auto conductivity=body.find("*  0.000000001  1.0");ASSERT_NE(conductivity,std::string::npos);
-        body.replace(conductivity,std::string("*  0.000000001  1.0").size(),"*  3.6  1.0");
-        if(shape==Mesh::Quad) {
-            const auto a=body.find("[2D_VERTICES]"),b=body.find("[2D_INFILTRATION_DEFAULTS]");
-            ASSERT_NE(a,std::string::npos);ASSERT_NE(b,std::string::npos);
-            body.replace(a,b-a,"[2D_VERTICES]\n0 0 0\n5 0 0\n10 0 0\n0 10 0\n5 10 0\n10 10 0\n"
-                "[2D_QUADS]\n0 1 4 3 .03 0\n1 2 5 4 .03 0\n");
+            "[2D_AQUIFER]\nCELL 1 36 1 .45 .1 2 HG0 .8\n",
+            shape);
+        const auto conductivity = body.find("*  0.000000001  1.0");
+        ASSERT_NE(conductivity, std::string::npos);
+        body.replace(conductivity, std::string("*  0.000000001  1.0").size(), "*  3.6  1.0");
+        if (shape == Mesh::Quad) {
+            const auto a = body.find("[2D_VERTICES]"), b = body.find("[2D_INFILTRATION_DEFAULTS]");
+            ASSERT_NE(a, std::string::npos);
+            ASSERT_NE(b, std::string::npos);
+            body.replace(a, b - a,
+                         "[2D_VERTICES]\n0 0 0\n5 0 0\n10 0 0\n0 10 0\n5 10 0\n10 10 0\n"
+                         "[2D_QUADS]\n0 1 4 3 .03 0\n1 2 5 4 .03 0\n");
         }
-        Deck a=open(std::string("unequal-clock-")+meshName(shape),body),b=open(std::string("unequal-clock-restored-")+meshName(shape),body);
-        ASSERT_TRUE(a.opened)<<completionErrors(a);ASSERT_TRUE(b.opened)<<completionErrors(b);
-        ASSERT_EQ(swmm_engine_initialize(a.e),SWMM_OK)<<completionErrors(a);
-        ASSERT_EQ(swmm_engine_initialize(b.e),SWMM_OK)<<completionErrors(b);
-        auto& ra=a.eng->surfaceRouter2D();auto& rb=b.eng->surfaceRouter2D();auto& ga=ra.subsurface();auto& gb=rb.subsurface();
-        for(auto* gw:{&ga,&gb}) {
-            for(int cell=0;cell<gw->state().n_cells;++cell)gw->state().dt_cell[cell]=cell==0?.4:cell==1?.05:.1;
-            gw->assignTiers(.05,4);ASSERT_EQ(gw->state().tier[0],3);ASSERT_EQ(gw->state().tier[1],0);
+        Deck a = open(std::string("unequal-clock-") + meshName(shape), body),
+             b = open(std::string("unequal-clock-restored-") + meshName(shape), body);
+        ASSERT_TRUE(a.opened) << completionErrors(a);
+        ASSERT_TRUE(b.opened) << completionErrors(b);
+        ASSERT_EQ(swmm_engine_initialize(a.e), SWMM_OK) << completionErrors(a);
+        ASSERT_EQ(swmm_engine_initialize(b.e), SWMM_OK) << completionErrors(b);
+        auto& ra = a.eng->surfaceRouter2D();
+        auto& rb = b.eng->surfaceRouter2D();
+        auto& ga = ra.subsurface();
+        auto& gb = rb.subsurface();
+        for (auto* gw : {&ga, &gb}) {
+            for (int cell = 0; cell < gw->state().n_cells; ++cell)
+                gw->state().dt_cell[cell] = cell == 0 ? .4 : cell == 1 ? .05 : .1;
+            gw->assignTiers(.05, 4);
+            ASSERT_EQ(gw->state().tier[0], 3);
+            ASSERT_EQ(gw->state().tier[1], 0);
         }
-        const double energy_before=totalGroundEnergy(ga),mass_before=ga.transport().storage(0);double incoming=0;
-        for(int tick=1;tick<=32;++tick) {
-            auto produce=[&](auto& gw) {
-                for(int tier=0;tier<4;++tier)if(tick%(1<<tier)==0)gw.fireGwFaces(tier,.05*(1<<tier));
-                const auto& t=gw.transport();std::vector<double> c(t.n_species,0);c[0]=3;c[t.age_row]=2;c[t.temp_row]=-4;
-                gw.bookLinkContact(0,.0001,c,gw.state().z_bed[0]+gw.state().zs[0]-.05,gw.state().z_bed[0]+gw.state().zs[0]-.05);
+        const double energy_before = totalGroundEnergy(ga), mass_before = ga.transport().storage(0);
+        double incoming = 0;
+        for (int tick = 1; tick <= 32; ++tick) {
+            auto produce = [&](auto& gw) {
+                for (int tier = 0; tier < 4; ++tier)
+                    if (tick % (1 << tier) == 0)
+                        gw.fireGwFaces(tier, .05 * (1 << tier));
+                const auto& t = gw.transport();
+                std::vector<double> c(t.n_species, 0);
+                c[0] = 3;
+                c[t.age_row] = 2;
+                c[t.temp_row] = -4;
+                gw.bookLinkContact(0, .0001, c, gw.state().z_bed[0] + gw.state().zs[0] - .05,
+                                   gw.state().z_bed[0] + gw.state().zs[0] - .05);
             };
-            ASSERT_NO_THROW(produce(ga));incoming+=.0001;
-            if(tick==7) {
-                const auto saved=ga.transportRestartState();ASSERT_TRUE(gb.restoreTransportRestart(saved,true).empty());
-                EXPECT_EQ(saved,gb.transportRestartState());
-                double pending=0;for(int cell=0;cell<ga.state().n_cells;++cell)pending+=std::abs(ga.pendingHeat(cell));
-                EXPECT_GT(pending,0);
-            } else if(tick>7)ASSERT_NO_THROW(produce(gb));
-            for(int tier=0;tier<4;++tier)if(tick%(1<<tier)==0) {
-                const double dt=.05*(1<<tier),start=tick*.05-dt;
-                ASSERT_NO_THROW(ga.fireGwCells(tier,dt,ra.state(),start));
-                if(tick>=7)ASSERT_NO_THROW(gb.fireGwCells(tier,dt,rb.state(),start));
-            }
-            if(tick>=7)EXPECT_EQ(ga.transportRestartState(),gb.transportRestartState())<<tick;
+            ASSERT_NO_THROW(produce(ga));
+            incoming += .0001;
+            if (tick == 7) {
+                const auto saved = ga.transportRestartState();
+                ASSERT_TRUE(gb.restoreTransportRestart(saved, true).empty());
+                EXPECT_EQ(saved, gb.transportRestartState());
+                double pending = 0;
+                for (int cell = 0; cell < ga.state().n_cells; ++cell)
+                    pending += std::abs(ga.pendingHeat(cell));
+                EXPECT_GT(pending, 0);
+            } else if (tick > 7)
+                ASSERT_NO_THROW(produce(gb));
+            for (int tier = 0; tier < 4; ++tier)
+                if (tick % (1 << tier) == 0) {
+                    const double dt = .05 * (1 << tier), start = tick * .05 - dt;
+                    ASSERT_NO_THROW(ga.fireGwCells(tier, dt, ra.state(), start));
+                    if (tick >= 7)
+                        ASSERT_NO_THROW(gb.fireGwCells(tier, dt, rb.state(), start));
+                }
+            if (tick >= 7)
+                EXPECT_EQ(ga.transportRestartState(), gb.transportRestartState()) << tick;
         }
-        EXPECT_NEAR(ga.transport().ledgeredStorage(0),mass_before+3*incoming,1e-10*std::max(1.,mass_before));
-        double pending_heat=0;for(int cell=0;cell<ga.state().n_cells;++cell)pending_heat+=ga.pendingHeat(cell);
-        EXPECT_NEAR(totalGroundEnergy(ga)+pending_heat,energy_before-4*incoming*ga.heat().water_capacity,1e-10*std::max(1.,std::abs(energy_before)));
-        for(int row:{0,ga.transport().age_row})EXPECT_NEAR(ga.transport().residual(row),0,1e-10*std::max(1.,ga.transport().continuityDenominator(row)));
-        EXPECT_NEAR(ga.state().continuityResidual(),0,1e-10*std::max(1.,ga.state().led_init_storage));
-        finish(a);finish(b);
+        EXPECT_NEAR(ga.transport().ledgeredStorage(0), mass_before + 3 * incoming,
+                    1e-10 * std::max(1., mass_before));
+        double pending_heat = 0;
+        for (int cell = 0; cell < ga.state().n_cells; ++cell)
+            pending_heat += ga.pendingHeat(cell);
+        EXPECT_NEAR(totalGroundEnergy(ga) + pending_heat,
+                    energy_before - 4 * incoming * ga.heat().water_capacity,
+                    1e-10 * std::max(1., std::abs(energy_before)));
+        for (int row : {0, ga.transport().age_row})
+            EXPECT_NEAR(ga.transport().residual(row), 0,
+                        1e-10 * std::max(1., ga.transport().continuityDenominator(row)));
+        EXPECT_NEAR(ga.state().continuityResidual(), 0,
+                    1e-10 * std::max(1., ga.state().led_init_storage));
+        finish(a);
+        finish(b);
     }
 }
 
 TEST(GwIntegrated, HeterogeneousSkewedDiffusionConvergesToMatchedInterfaceEigenmode) {
     fs::create_directories(kOutDir);
-    std::ofstream metrics(kOutDir/"heterogeneous_skewed_refinement.csv");ASSERT_TRUE(metrics.good());metrics.precision(17);
-    metrics<<"cells_per_axis,steps,dt,l2_error,ratio,water_residual,species_residual\n";
-    const double pi=std::acos(-1.),t=std::acos(std::sqrt(3./8)),kr=2*t,kl=4*t,amplitude=std::cos(2*t)/std::cos(t),lambda=.04*kr*kr;
-    const auto eigen=[&](double x){return x<.5?std::cos(kl*x):amplitude*std::cos(kr*(1-x));};
-    double previous=0;
-    for(int n:{8,16,32}) {
-        const double dx=1./n;auto body=forcingDeck("[GW_TRANSPORT_PARAMS]\n* - - - - 0 0 .01 - -\n");
-        std::ostringstream mesh;mesh.precision(17);mesh<<"[2D_VERTICES]\n";
-        for(int y=0;y<=n;++y)for(int x=0;x<=n;++x) {
-            const double u=x*dx,v=y*dx;
-            mesh<<u+.04*std::sin(2*pi*u)*std::sin(pi*v)<<" "<<v+.03*std::sin(2*pi*v)*std::sin(pi*u)<<" 0\n";
+    std::ofstream metrics(kOutDir / "heterogeneous_skewed_refinement.csv");
+    ASSERT_TRUE(metrics.good());
+    metrics.precision(17);
+    metrics << "cells_per_axis,steps,dt,l2_error,ratio,water_residual,species_residual\n";
+    const double pi = std::acos(-1.), t = std::acos(std::sqrt(3. / 8)), kr = 2 * t, kl = 4 * t,
+                 amplitude = std::cos(2 * t) / std::cos(t), lambda = .04 * kr * kr;
+    const auto eigen = [&](double x) {
+        return x < .5 ? std::cos(kl * x) : amplitude * std::cos(kr * (1 - x));
+    };
+    double previous = 0;
+    for (int n : {8, 16, 32}) {
+        const double dx = 1. / n;
+        auto body = forcingDeck("[GW_TRANSPORT_PARAMS]\n* - - - - 0 0 .01 - -\n");
+        std::ostringstream mesh;
+        mesh.precision(17);
+        mesh << "[2D_VERTICES]\n";
+        for (int y = 0; y <= n; ++y)
+            for (int x = 0; x <= n; ++x) {
+                const double u = x * dx, v = y * dx;
+                mesh << u + .04 * std::sin(2 * pi * u) * std::sin(pi * v) << " "
+                     << v + .03 * std::sin(2 * pi * v) * std::sin(pi * u) << " 0\n";
+            }
+        mesh << "[2D_QUADS]\n";
+        for (int y = 0; y < n; ++y)
+            for (int x = 0; x < n; ++x) {
+                const int v = y * (n + 1) + x;
+                mesh << v << " " << v + 1 << " " << v + n + 2 << " " << v + n + 1 << " .03 0\n";
+            }
+        const auto a = body.find("[2D_VERTICES]"), b = body.find("[2D_INFILTRATION_DEFAULTS]");
+        ASSERT_NE(a, std::string::npos);
+        ASSERT_NE(b, std::string::npos);
+        body.replace(a, b - a, mesh.str());
+        body += "[2D_AQUIFER]\n";
+        for (int y = 0; y < n; ++y)
+            for (int x = 0; x < n; ++x)
+                body += "CELL " + std::to_string(y * n + x + 1) + " .000000001 1 " +
+                        (x < n / 2 ? std::string(".30") : std::string(".45")) + " .1 2 HG0 .3\n";
+        Deck r = open("heterogeneous-skewed-" + std::to_string(n), body);
+        ASSERT_TRUE(r.opened) << completionErrors(r);
+        ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+        auto& router = r.eng->surfaceRouter2D();
+        auto& gw = router.subsurface();
+        auto& tr = gw.transport();
+        const auto& grid = router.mesh();
+        for (int cell = 0; cell < tr.n_cells; ++cell) {
+            const double x = grid.tri_cx[cell];
+            tr.D_m[cell] = x < .5 ? .01 : .04;
+            tr.sat_mass[tr.idx(0, cell)] = (1 + .2 * eigen(x)) * gw.satVolume(cell);
         }
-        mesh<<"[2D_QUADS]\n";
-        for(int y=0;y<n;++y)for(int x=0;x<n;++x) {const int v=y*(n+1)+x;mesh<<v<<" "<<v+1<<" "<<v+n+2<<" "<<v+n+1<<" .03 0\n";}
-        const auto a=body.find("[2D_VERTICES]"),b=body.find("[2D_INFILTRATION_DEFAULTS]");ASSERT_NE(a,std::string::npos);ASSERT_NE(b,std::string::npos);body.replace(a,b-a,mesh.str());
-        body+="[2D_AQUIFER]\n";
-        for(int y=0;y<n;++y)for(int x=0;x<n;++x)body+="CELL "+std::to_string(y*n+x+1)+" .000000001 1 "+(x<n/2?std::string(".30"):std::string(".45"))+" .1 2 HG0 .3\n";
-        Deck r=open("heterogeneous-skewed-"+std::to_string(n),body);ASSERT_TRUE(r.opened)<<completionErrors(r);
-        ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-        auto& router=r.eng->surfaceRouter2D();auto& gw=router.subsurface();auto& tr=gw.transport();const auto& grid=router.mesh();
-        for(int cell=0;cell<tr.n_cells;++cell) {const double x=grid.tri_cx[cell];tr.D_m[cell]=x<.5?.01:.04;tr.sat_mass[tr.idx(0,cell)]=(1+.2*eigen(x))*gw.satVolume(cell);}
-        tr.init_mass[0]=tr.storage(0);const int steps=int(std::ceil(1/(.05*dx*dx/.04)));const double dt=1./steps;
-        gw.assignTiers(dt,1);
-        for(int step=0;step<steps;++step) {gw.fireGwFaces(0,dt);gw.fireGwCells(0,dt,router.state(),step*dt);}
-        double square=0,area=0;
-        for(int cell=0;cell<tr.n_cells;++cell) {const double exact=1+.2*std::exp(-lambda)*eigen(grid.tri_cx[cell]);const double error=tr.sat_mass[tr.idx(0,cell)]/gw.satVolume(cell)-exact;square+=error*error*grid.tri_area[cell];area+=grid.tri_area[cell];}
-        const double error=std::sqrt(square/area);metrics<<n<<","<<steps<<","<<dt<<","<<error<<","<<(previous>0?previous/error:0)<<","<<gw.state().continuityResidual()<<","<<tr.residual(0)<<"\n";
-        EXPECT_LT(error,.002);if(previous>0)EXPECT_GT(previous/error,1.7);
-        EXPECT_NEAR(tr.residual(0),0,1e-10);EXPECT_NEAR(gw.state().continuityResidual(),0,1e-10);previous=error;finish(r);
-    }
-}
-
-
-TEST(GwIntegrated, InteriorLayerInjectionPreservesUniformQualityThroughCompressionCascade) {
-    for(const int layer:{1,2,4})for(const double volume:{.02,.1,.5,1.,2.,3.,4.,10.,100.}) {
-        SCOPED_TRACE(std::to_string(layer)+"/"+std::to_string(volume));
-        Deck r=open("interior-compression-"+std::to_string(layer)+"-"+std::to_string(volume),layeredDeck(
-            "[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n",Mesh::Quad));
-        ASSERT_TRUE(r.opened);ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-        auto& router=r.eng->surfaceRouter2D();auto& gw=router.subsurface();const auto& t=gw.transport();const auto& w=gw.state();
-        ASSERT_GT(t.n_layers,layer);
-        const double elevation=w.z_bed[0]+w.zs[0]-(layer+.5)*(w.zs[0]-w.hg[0])/t.n_layers;
-        std::vector<double> composition(t.n_species,0);composition[0]=7;
-        const double initial=t.storage(0);gw.bookLinkContact(0,volume,composition,elevation,elevation);
-        gw.assignTiers(.1,1);ASSERT_NO_THROW(gw.fireGwCells(0,.1,router.state(),0));
-        for(int j=0;j<t.n_layers;++j) {
-            const double water=w.area[0]*(w.zs[0]-w.hg[0])/t.n_layers*w.theta_sigma[j*t.n_cells];
-            EXPECT_NEAR(t.layer_mass[t.layerIdx(0,j,0)],7*water,1e-9);
+        tr.init_mass[0] = tr.storage(0);
+        const int steps = int(std::ceil(1 / (.05 * dx * dx / .04)));
+        const double dt = 1. / steps;
+        gw.assignTiers(dt, 1);
+        for (int step = 0; step < steps; ++step) {
+            gw.fireGwFaces(0, dt);
+            gw.fireGwCells(0, dt, router.state(), step * dt);
         }
-        EXPECT_NEAR(t.sat_mass[0],7*gw.satVolume(0),1e-9);
-        EXPECT_NEAR(t.ledgeredStorage(0)+t.lost_dunne[0],initial+7*volume,1e-9);
-        EXPECT_NEAR(t.residual(0),0,1e-9);EXPECT_NEAR(w.continuityResidual(),0,1e-9);
+        double square = 0, area = 0;
+        for (int cell = 0; cell < tr.n_cells; ++cell) {
+            const double exact = 1 + .2 * std::exp(-lambda) * eigen(grid.tri_cx[cell]);
+            const double error = tr.sat_mass[tr.idx(0, cell)] / gw.satVolume(cell) - exact;
+            square += error * error * grid.tri_area[cell];
+            area += grid.tri_area[cell];
+        }
+        const double error = std::sqrt(square / area);
+        metrics << n << "," << steps << "," << dt << "," << error << ","
+                << (previous > 0 ? previous / error : 0) << "," << gw.state().continuityResidual()
+                << "," << tr.residual(0) << "\n";
+        EXPECT_LT(error, .002);
+        if (previous > 0)
+            EXPECT_GT(previous / error, 1.7);
+        EXPECT_NEAR(tr.residual(0), 0, 1e-10);
+        EXPECT_NEAR(gw.state().continuityResidual(), 0, 1e-10);
+        previous = error;
         finish(r);
     }
 }
 
+TEST(GwIntegrated, InteriorLayerInjectionPreservesUniformQualityThroughCompressionCascade) {
+    for (const int layer : {1, 2, 4})
+        for (const double volume : {.02, .1, .5, 1., 2., 3., 4., 10., 100.}) {
+            SCOPED_TRACE(std::to_string(layer) + "/" + std::to_string(volume));
+            Deck r =
+                open("interior-compression-" + std::to_string(layer) + "-" + std::to_string(volume),
+                     layeredDeck("[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n", Mesh::Quad));
+            ASSERT_TRUE(r.opened);
+            ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+            auto& router = r.eng->surfaceRouter2D();
+            auto& gw = router.subsurface();
+            const auto& t = gw.transport();
+            const auto& w = gw.state();
+            ASSERT_GT(t.n_layers, layer);
+            const double elevation =
+                w.z_bed[0] + w.zs[0] - (layer + .5) * (w.zs[0] - w.hg[0]) / t.n_layers;
+            std::vector<double> composition(t.n_species, 0);
+            composition[0] = 7;
+            const double initial = t.storage(0);
+            gw.bookLinkContact(0, volume, composition, elevation, elevation);
+            gw.assignTiers(.1, 1);
+            ASSERT_NO_THROW(gw.fireGwCells(0, .1, router.state(), 0));
+            for (int j = 0; j < t.n_layers; ++j) {
+                const double water =
+                    w.area[0] * (w.zs[0] - w.hg[0]) / t.n_layers * w.theta_sigma[j * t.n_cells];
+                EXPECT_NEAR(t.layer_mass[t.layerIdx(0, j, 0)], 7 * water, 1e-9);
+            }
+            EXPECT_NEAR(t.sat_mass[0], 7 * gw.satVolume(0), 1e-9);
+            EXPECT_NEAR(t.ledgeredStorage(0) + t.lost_dunne[0], initial + 7 * volume, 1e-9);
+            EXPECT_NEAR(t.residual(0), 0, 1e-9);
+            EXPECT_NEAR(w.continuityResidual(), 0, 1e-9);
+            finish(r);
+        }
+}
 
 TEST(GwIntegrated, FullEngineAdvancesTheQualifiedWaterOnlyRk2Profile) {
-    const std::string body="[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2026\n"
+    const std::string body =
+        "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2026\n"
         "START_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:00:02\nREPORT_STEP 00:00:01\nROUTING_STEP .1\n"
         "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nMOMENTUM_EQUATION FULL_SWE\nRECONSTRUCTION_ORDER 2\n"
         "LTS_TIERS 1\nMAX_TIMESTEP .05\nREPORT_2D NO\nEVAPORATION NO\n"
         "[2D_VERTICES]\n0 0 0\n4 0 0\n4 4 0\n0 4 0\n[2D_TRIANGLES]\n0 1 2 .03 .2\n0 2 3 .03 .2\n"
         "[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\nNODE_ENROLMENT ROWS\nLINK_SEEPAGE NONE\nGW_ET NONE\n"
         "[2D_AQUIFER]\n* 18 2 .45 .1 2 HG0 .6 C_LOSS .5\n";
-    Deck r=open("qualified-water-rk2",body);ASSERT_TRUE(r.opened)<<completionErrors(r);
-    ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-    const double initial=r.eng->surfaceRouter2D().subsurface().storage();
-    ASSERT_EQ(swmm_engine_start(r.e,0),SWMM_OK);r.started=true;
-    double elapsed=0;int status=SWMM_OK;
-    do {status=swmm_engine_step(r.e,&elapsed);}while(status==SWMM_OK&&elapsed>0);
-    ASSERT_EQ(status,SWMM_OK)<<completionErrors(r);
-    const auto& gw=r.eng->surfaceRouter2D().subsurface();EXPECT_GT(gw.state().led_infil_in,0);
-    EXPECT_GT(gw.state().led_deep,0);EXPECT_NE(gw.state().storage(),initial);
-    EXPECT_NEAR(gw.state().continuityResidual(),0,1e-9);EXPECT_DOUBLE_EQ(gw.cellCompletedTime(0),2);
+    Deck r = open("qualified-water-rk2", body);
+    ASSERT_TRUE(r.opened) << completionErrors(r);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+    const double initial = r.eng->surfaceRouter2D().subsurface().storage();
+    ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
+    r.started = true;
+    double elapsed = 0;
+    int status = SWMM_OK;
+    do {
+        status = swmm_engine_step(r.e, &elapsed);
+    } while (status == SWMM_OK && elapsed > 0);
+    ASSERT_EQ(status, SWMM_OK) << completionErrors(r);
+    const auto& gw = r.eng->surfaceRouter2D().subsurface();
+    EXPECT_GT(gw.state().led_infil_in, 0);
+    EXPECT_GT(gw.state().led_deep, 0);
+    EXPECT_NE(gw.state().storage(), initial);
+    EXPECT_NEAR(gw.state().continuityResidual(), 0, 1e-9);
+    EXPECT_DOUBLE_EQ(gw.cellCompletedTime(0), 2);
     finish(r);
 }
 
-
 namespace {
 struct GroundwaterBackendOverride {
-    std::string previous;bool present=false;
+    std::string previous;
+    bool present = false;
+    /**
+     * @brief Set or clear the process-wide 2D backend override.
+     *
+     * Uses _putenv_s on Windows (empty also removes) and setenv/unsetenv elsewhere. Ignores environment
+     * operation statuses; callers serialize process environment changes and avoid racing backend
+     * selection.
+     *
+     * @param[in] value Non-null backend string to copy; null clears the variable.
+     */
     static void set(const char* value) {
 #ifdef _WIN32
-        _putenv_s("OPENSWMM_2D_BACKEND",value?value:"");
+        _putenv_s("OPENSWMM_2D_BACKEND", value ? value : "");
 #else
-        if(value)setenv("OPENSWMM_2D_BACKEND",value,1);else unsetenv("OPENSWMM_2D_BACKEND");
+        if (value)
+            setenv("OPENSWMM_2D_BACKEND", value, 1);
+        else
+            unsetenv("OPENSWMM_2D_BACKEND");
 #endif
     }
+    /**
+     * @brief Save the backend environment value and attempt a temporary override.
+     *
+     * Copies any previous value/presence into owned members, then calls set. Allocation failure can
+     * precede override; ignored setter errors mean construction does not guarantee the requested
+     * environment. Destructor restores the captured state; use exclusively and nest in strict lifetime
+     * order.
+     *
+     * @param[in] value Borrowed backend string or null to clear; copied by the environment API.
+     */
     explicit GroundwaterBackendOverride(const char* value) {
-        if(const char* old=std::getenv("OPENSWMM_2D_BACKEND")){present=true;previous=old;}set(value);
+        if (const char* old = std::getenv("OPENSWMM_2D_BACKEND")) {
+            present = true;
+            previous = old;
+        }
+        set(value);
     }
-    ~GroundwaterBackendOverride(){set(present?previous.c_str():nullptr);}
+    /**
+     * @brief Attempt to restore the captured process backend environment.
+     *
+     * Restores the copied prior value when present, otherwise unsets. Ignores API status and does not
+     * restore unrelated environment variables; overlapping concurrent guards are unsupported.
+     */
+    ~GroundwaterBackendOverride() { set(present ? previous.c_str() : nullptr); }
 };
 }
 TEST(GwIntegrated, BackendRequestsKeepGroundwaterOnTheObservableCpuOwnerWithoutDroppingPhysics) {
-    for(int profile=0;profile<3;++profile) {
+    for (int profile = 0; profile < 3; ++profile) {
         std::string reference;
-        for(const char* backend:{"cpu","omp","cuda","hip","sycl"}) {
-            SCOPED_TRACE(std::to_string(profile)+"/"+backend);GroundwaterBackendOverride select(backend);
-            const std::string extra="[GW_SOURCES]\nW CELL 1 FLOW .001 TSS CONC 3\n"
-                "[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n";
-            const auto body=profile==0?forcingDeck(extra):profile==1?layeredDeck(extra):mappedPorousDeck(extra);
-            Deck r=open("backend-"+std::to_string(profile)+"-"+backend,body);ASSERT_TRUE(r.opened)<<completionErrors(r);
-            ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-            SWMM_2DRunStats stats{};ASSERT_EQ(swmm_2d_get_run_stats(r.e,&stats),SWMM_OK);
-            EXPECT_EQ(std::string(stats.backend).find("cpu"),0u)<<stats.backend;
-            ASSERT_EQ(swmm_engine_start(r.e,0),SWMM_OK);r.started=true;
-            double elapsed=0;int status=SWMM_OK;do{status=swmm_engine_step(r.e,&elapsed);}while(status==SWMM_OK&&elapsed>0);
-            ASSERT_EQ(status,SWMM_OK)<<completionErrors(r);
-            const auto& gw=r.eng->surfaceRouter2D().subsurface();const auto& tr=gw.transport();
-            EXPECT_GT(gw.state().led_source_in,0);EXPECT_GT(tr.gained_source[0],0);
-            EXPECT_NEAR(gw.state().continuityResidual(),0,1e-9);EXPECT_NEAR(tr.residual(0),0,1e-8);
-            auto copy=gw;openswmm::detail::CompletedSourceArchive archive;copy.checkpoint(archive,false);
-            const auto state=archive.bytes();ASSERT_FALSE(state.empty());
-            if(reference.empty())reference=state;else EXPECT_EQ(state,reference);
+        for (const char* backend : {"cpu", "omp", "cuda", "hip", "sycl"}) {
+            SCOPED_TRACE(std::to_string(profile) + "/" + backend);
+            GroundwaterBackendOverride select(backend);
+            const std::string extra = "[GW_SOURCES]\nW CELL 1 FLOW .001 TSS CONC 3\n"
+                                      "[GW_INITIAL_QUALITY]\n* SAT TSS 7\n* UNSAT TSS 7\n";
+            const auto body = profile == 0   ? forcingDeck(extra)
+                              : profile == 1 ? layeredDeck(extra)
+                                             : mappedPorousDeck(extra);
+            Deck r = open("backend-" + std::to_string(profile) + "-" + backend, body);
+            ASSERT_TRUE(r.opened) << completionErrors(r);
+            ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+            SWMM_2DRunStats stats{};
+            ASSERT_EQ(swmm_2d_get_run_stats(r.e, &stats), SWMM_OK);
+            EXPECT_EQ(std::string(stats.backend).find("cpu"), 0u) << stats.backend;
+            ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
+            r.started = true;
+            double elapsed = 0;
+            int status = SWMM_OK;
+            do {
+                status = swmm_engine_step(r.e, &elapsed);
+            } while (status == SWMM_OK && elapsed > 0);
+            ASSERT_EQ(status, SWMM_OK) << completionErrors(r);
+            const auto& gw = r.eng->surfaceRouter2D().subsurface();
+            const auto& tr = gw.transport();
+            EXPECT_GT(gw.state().led_source_in, 0);
+            EXPECT_GT(tr.gained_source[0], 0);
+            EXPECT_NEAR(gw.state().continuityResidual(), 0, 1e-9);
+            EXPECT_NEAR(tr.residual(0), 0, 1e-8);
+            auto copy = gw;
+            openswmm::detail::CompletedSourceArchive archive;
+            copy.checkpoint(archive, false);
+            const auto state = archive.bytes();
+            ASSERT_FALSE(state.empty());
+            if (reference.empty())
+                reference = state;
+            else
+                EXPECT_EQ(state, reference);
             finish(r);
         }
     }
 }
 TEST(GwIntegrated, AvailableOpenmpPluginIsExecutedByASurfaceOnlyPositiveControl) {
     GroundwaterBackendOverride select("omp");
-    const std::string body="[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2026\n"
+    const std::string body =
+        "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2026\n"
         "START_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:00:02\nREPORT_STEP 00:00:01\nROUTING_STEP .1\n"
         "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP .05\nREPORT_2D NO\nEVAPORATION NO\n"
         "[2D_VERTICES]\n0 0 0\n4 0 0\n4 4 0\n0 4 0\n[2D_TRIANGLES]\n0 1 2 .03 .2\n0 2 3 .03 .2\n";
-    Deck r=open("openmp-surface-positive-control",body);ASSERT_TRUE(r.opened)<<completionErrors(r);
-    ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-    SWMM_2DRunStats stats{};ASSERT_EQ(swmm_2d_get_run_stats(r.e,&stats),SWMM_OK);
-    if(std::string(stats.backend).find("omp")!=0){finish(r);GTEST_SKIP()<<"Kokkos OpenMP plugin unavailable; accelerated execution is unqualified.";}
-    RecordProperty("executed_backend",stats.backend);
-    const auto& surface=r.eng->surfaceRouter2D().state();const double initial=std::accumulate(surface.volume.begin(),surface.volume.end(),0.);
-    ASSERT_EQ(swmm_engine_start(r.e,0),SWMM_OK);r.started=true;
-    double elapsed=0;int status=SWMM_OK;do{status=swmm_engine_step(r.e,&elapsed);}while(status==SWMM_OK&&elapsed>0);
-    ASSERT_EQ(status,SWMM_OK)<<completionErrors(r);
-    EXPECT_NEAR(std::accumulate(surface.volume.begin(),surface.volume.end(),0.),initial,1e-10);
-    ASSERT_EQ(swmm_2d_get_run_stats(r.e,&stats),SWMM_OK);EXPECT_GT(stats.steps,0);
+    Deck r = open("openmp-surface-positive-control", body);
+    ASSERT_TRUE(r.opened) << completionErrors(r);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+    SWMM_2DRunStats stats{};
+    ASSERT_EQ(swmm_2d_get_run_stats(r.e, &stats), SWMM_OK);
+    if (std::string(stats.backend).find("omp") != 0) {
+        finish(r);
+        GTEST_SKIP() << "Kokkos OpenMP plugin unavailable; accelerated execution is unqualified.";
+    }
+    RecordProperty("executed_backend", stats.backend);
+    const auto& surface = r.eng->surfaceRouter2D().state();
+    const double initial = std::accumulate(surface.volume.begin(), surface.volume.end(), 0.);
+    ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
+    r.started = true;
+    double elapsed = 0;
+    int status = SWMM_OK;
+    do {
+        status = swmm_engine_step(r.e, &elapsed);
+    } while (status == SWMM_OK && elapsed > 0);
+    ASSERT_EQ(status, SWMM_OK) << completionErrors(r);
+    EXPECT_NEAR(std::accumulate(surface.volume.begin(), surface.volume.end(), 0.), initial, 1e-10);
+    ASSERT_EQ(swmm_2d_get_run_stats(r.e, &stats), SWMM_OK);
+    EXPECT_GT(stats.steps, 0);
     finish(r);
 }
 
-
 TEST(GwRechargePlugin, AllSoilLawsMatchScalarPhysicsAndMalformedInputsAreAtomic) {
-    GroundwaterBackendOverride select("omp");openswmm::twoD::SolverOptions2D options;
-    auto backend=openswmm::twoD::makeGwRechargeBackend(options,100000);
-    if(!backend.evaluate) {
-        ASSERT_FALSE(std::getenv("OPENSWMM_GW_TEST_REQUIRE_PLUGIN"))<<backend.diagnostic;
-        GTEST_SKIP()<<backend.diagnostic;
+    GroundwaterBackendOverride select("omp");
+    openswmm::twoD::SolverOptions2D options;
+    auto backend = openswmm::twoD::makeGwRechargeBackend(options, 100000);
+    if (!backend.evaluate) {
+        ASSERT_FALSE(std::getenv("OPENSWMM_GW_TEST_REQUIRE_PLUGIN")) << backend.diagnostic;
+        GTEST_SKIP() << backend.diagnostic;
     }
-    std::vector<OpenSwmmGwRechargeInputV1> input;std::vector<double> expected;
-    for(int material:{0,1})for(int law=0;law<4;++law)for(double ks:{0.,1e-6,.01})for(double length:{1e-12,1e-4,.1,1.,10.})
-    for(double fraction:{0.,.1,.35,.45}) {
-        OpenSwmmGwRechargeInputV1 v{};v.struct_size=sizeof(v);v.law=law;v.Ks=ks;v.theta_s=.45;v.theta_r=.1;
-        v.alpha=material?1.3:2;v.psi_b=material?.15:.2;v.lambda=material?.6:.4;v.vg_n=material?2.1:1.6;v.vg_L=material?-.3:.5;
-        if(material){v.theta_s=.55;v.theta_r=.08;}v.length=length;v.hu=fraction*length;
-        openswmm::twoD::soil::Params p;p.law=static_cast<openswmm::twoD::SoilChar>(law);p.Ks=ks;
-        p.theta_s=v.theta_s;p.theta_r=v.theta_r;p.alpha=v.alpha;p.psi_b=v.psi_b;p.lambda=v.lambda;p.vg_n=v.vg_n;p.vg_L=v.vg_L;
-        expected.push_back(openswmm::twoD::soil::rechargeQ0(p,length,v.hu));input.push_back(v);
-    }
-    std::vector<double> actual(input.size(),-123.);ASSERT_EQ(backend.evaluate(input.data(),int(input.size()),actual.data(),4),0);
-    for(std::size_t i=0;i<actual.size();++i)EXPECT_NEAR(actual[i],expected[i],1e-12*std::max(1.,std::abs(expected[i])))<<i;
-    RecordProperty("evaluated_inputs",input.size());
-    ASSERT_GT(backend.threads(),0);RecordProperty("effective_threads",backend.threads());
-    if(const char* value=std::getenv("OPENSWMM_GW_TEST_EXPECT_THREADS"))EXPECT_EQ(backend.threads(),std::atoi(value));
-    for(int mutation=0;mutation<4;++mutation) {
-        auto bad=input;if(mutation==0)bad.back().struct_size=0;
-        if(mutation==1)bad.back().law=4;if(mutation==2)bad.back().hu=-1;
-        if(mutation==3)bad.back().alpha=std::numeric_limits<double>::quiet_NaN();
-        std::fill(actual.begin(),actual.end(),-123.);
-        EXPECT_NE(backend.evaluate(bad.data(),int(bad.size()),actual.data(),4),0);
-        EXPECT_TRUE(std::all_of(actual.begin(),actual.end(),[](double x){return x==-123.;}));
+    std::vector<OpenSwmmGwRechargeInputV1> input;
+    std::vector<double> expected;
+    for (int material : {0, 1})
+        for (int law = 0; law < 4; ++law)
+            for (double ks : {0., 1e-6, .01})
+                for (double length : {1e-12, 1e-4, .1, 1., 10.})
+                    for (double fraction : {0., .1, .35, .45}) {
+                        OpenSwmmGwRechargeInputV1 v{};
+                        v.struct_size = sizeof(v);
+                        v.law = law;
+                        v.Ks = ks;
+                        v.theta_s = .45;
+                        v.theta_r = .1;
+                        v.alpha = material ? 1.3 : 2;
+                        v.psi_b = material ? .15 : .2;
+                        v.lambda = material ? .6 : .4;
+                        v.vg_n = material ? 2.1 : 1.6;
+                        v.vg_L = material ? -.3 : .5;
+                        if (material) {
+                            v.theta_s = .55;
+                            v.theta_r = .08;
+                        }
+                        v.length = length;
+                        v.hu = fraction * length;
+                        openswmm::twoD::soil::Params p;
+                        p.law = static_cast<openswmm::twoD::SoilChar>(law);
+                        p.Ks = ks;
+                        p.theta_s = v.theta_s;
+                        p.theta_r = v.theta_r;
+                        p.alpha = v.alpha;
+                        p.psi_b = v.psi_b;
+                        p.lambda = v.lambda;
+                        p.vg_n = v.vg_n;
+                        p.vg_L = v.vg_L;
+                        expected.push_back(openswmm::twoD::soil::rechargeQ0(p, length, v.hu));
+                        input.push_back(v);
+                    }
+    std::vector<double> actual(input.size(), -123.);
+    ASSERT_EQ(backend.evaluate(input.data(), int(input.size()), actual.data(), 4), 0);
+    for (std::size_t i = 0; i < actual.size(); ++i)
+        EXPECT_NEAR(actual[i], expected[i], 1e-12 * std::max(1., std::abs(expected[i]))) << i;
+    RecordProperty("evaluated_inputs", input.size());
+    ASSERT_GT(backend.threads(), 0);
+    RecordProperty("effective_threads", backend.threads());
+    if (const char* value = std::getenv("OPENSWMM_GW_TEST_EXPECT_THREADS"))
+        EXPECT_EQ(backend.threads(), std::atoi(value));
+    for (int mutation = 0; mutation < 4; ++mutation) {
+        auto bad = input;
+        if (mutation == 0)
+            bad.back().struct_size = 0;
+        if (mutation == 1)
+            bad.back().law = 4;
+        if (mutation == 2)
+            bad.back().hu = -1;
+        if (mutation == 3)
+            bad.back().alpha = std::numeric_limits<double>::quiet_NaN();
+        std::fill(actual.begin(), actual.end(), -123.);
+        EXPECT_NE(backend.evaluate(bad.data(), int(bad.size()), actual.data(), 4), 0);
+        EXPECT_TRUE(std::all_of(actual.begin(), actual.end(), [](double x) { return x == -123.; }));
     }
 }
 
 TEST(GwRechargePlugin, ActualStatusAndSourceKnotsPreserveCanonicalCpuState) {
-    std::string body=forcingDeck("[OPTIONS]\nEND_DATE 01/01/2026\nEND_TIME 00:00:10\n"
+    std::string body = forcingDeck(
+        "[OPTIONS]\nEND_DATE 01/01/2026\nEND_TIME 00:00:10\n"
         "[TIMESERIES]\nPULSE 0:00:00 .002\nPULSE 0:00:01 -.001\nPULSE 0:00:02 .003\nPULSE 0:00:04 -.002\nPULSE 0:00:10 .001\n"
         "[GW_SOURCES]\nW CELL 1 FLOW PULSE TSS CONC 3\n");
-    const auto conductivity=body.find("*  0.000000001  1.0");ASSERT_NE(conductivity,std::string::npos);
-    body.replace(conductivity,std::string("*  0.000000001  1.0").size(),"*  36.0  1.0");
+    const auto conductivity = body.find("*  0.000000001  1.0");
+    ASSERT_NE(conductivity, std::string::npos);
+    body.replace(conductivity, std::string("*  0.000000001  1.0").size(), "*  36.0  1.0");
     std::string reference;
-    for(const char* mode:{"cpu","omp"}) {
-        GroundwaterBackendOverride select(mode);Deck r=open(std::string("recharge-knots-")+mode,body);ASSERT_TRUE(r.opened);
-        ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-        SWMM_GwExecutionStatus status{};status.struct_size=sizeof(status);
-        ASSERT_EQ(swmm_gw2d_get_execution_status(r.e,&status),SWMM_OK);
-        if(std::string(mode)=="omp"&&status.available_operators==0) {
-            finish(r);ASSERT_FALSE(std::getenv("OPENSWMM_GW_TEST_REQUIRE_PLUGIN"));GTEST_SKIP()<<status.detail;
+    for (const char* mode : {"cpu", "omp"}) {
+        GroundwaterBackendOverride select(mode);
+        Deck r = open(std::string("recharge-knots-") + mode, body);
+        ASSERT_TRUE(r.opened);
+        ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+        SWMM_GwExecutionStatus status{};
+        status.struct_size = sizeof(status);
+        ASSERT_EQ(swmm_gw2d_get_execution_status(r.e, &status), SWMM_OK);
+        if (std::string(mode) == "omp" && status.available_operators == 0) {
+            finish(r);
+            ASSERT_FALSE(std::getenv("OPENSWMM_GW_TEST_REQUIRE_PLUGIN"));
+            GTEST_SKIP() << status.detail;
         }
-        EXPECT_EQ(status.executed_operators,0u);EXPECT_EQ(status.accepted_batches,0u);
-        ASSERT_EQ(swmm_engine_start(r.e,0),SWMM_OK);r.started=true;double elapsed=0;int code;
-        do{code=swmm_engine_step(r.e,&elapsed);}while(code==SWMM_OK&&elapsed>0);
-        ASSERT_EQ(code,SWMM_OK)<<completionErrors(r);
-        ASSERT_EQ(swmm_gw2d_get_execution_status(r.e,&status),SWMM_OK);
-        EXPECT_EQ(status.host_owned_operations,15u);
-        if(std::string(mode)=="omp") {EXPECT_GT(status.accepted_batches,0u);EXPECT_GT(status.accepted_cells,0u);EXPECT_GT(status.effective_threads,0);EXPECT_EQ(status.executed_operators,1u);}
-        else {EXPECT_EQ(status.accepted_batches,0u);EXPECT_EQ(status.executed_operators,0u);}
-        const auto& gw=r.eng->surfaceRouter2D().subsurface();auto copy=gw;openswmm::detail::CompletedSourceArchive a;copy.checkpoint(a,false);
-        if(reference.empty())reference=a.bytes();else EXPECT_EQ(reference,a.bytes());
-        EXPECT_NEAR(gw.state().continuityResidual(),0,1e-9);EXPECT_NEAR(gw.transport().residual(0),0,1e-8);
-        auto unchanged=status;unchanged.struct_size=0;status=unchanged;
-        EXPECT_EQ(swmm_gw2d_get_execution_status(r.e,&status),SWMM_ERR_BADPARAM);
-        EXPECT_EQ(std::memcmp(&status,&unchanged,sizeof(status)),0);
+        EXPECT_EQ(status.executed_operators, 0u);
+        EXPECT_EQ(status.accepted_batches, 0u);
+        ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
+        r.started = true;
+        double elapsed = 0;
+        int code;
+        do {
+            code = swmm_engine_step(r.e, &elapsed);
+        } while (code == SWMM_OK && elapsed > 0);
+        ASSERT_EQ(code, SWMM_OK) << completionErrors(r);
+        ASSERT_EQ(swmm_gw2d_get_execution_status(r.e, &status), SWMM_OK);
+        EXPECT_EQ(status.host_owned_operations, 15u);
+        if (std::string(mode) == "omp") {
+            EXPECT_GT(status.accepted_batches, 0u);
+            EXPECT_GT(status.accepted_cells, 0u);
+            EXPECT_GT(status.effective_threads, 0);
+            EXPECT_EQ(status.executed_operators, 1u);
+        } else {
+            EXPECT_EQ(status.accepted_batches, 0u);
+            EXPECT_EQ(status.executed_operators, 0u);
+        }
+        const auto& gw = r.eng->surfaceRouter2D().subsurface();
+        auto copy = gw;
+        openswmm::detail::CompletedSourceArchive a;
+        copy.checkpoint(a, false);
+        if (reference.empty())
+            reference = a.bytes();
+        else
+            EXPECT_EQ(reference, a.bytes());
+        EXPECT_NEAR(gw.state().continuityResidual(), 0, 1e-9);
+        EXPECT_NEAR(gw.transport().residual(0), 0, 1e-8);
+        auto unchanged = status;
+        unchanged.struct_size = 0;
+        status = unchanged;
+        EXPECT_EQ(swmm_gw2d_get_execution_status(r.e, &status), SWMM_ERR_BADPARAM);
+        EXPECT_EQ(std::memcmp(&status, &unchanged, sizeof(status)), 0);
         finish(r);
     }
 }
 namespace {
-int invalidRechargeOutput(const OpenSwmmGwRechargeInputV1*,int n,double* output,int) {
-    for(int i=0;i<n;++i)output[i]=std::numeric_limits<double>::quiet_NaN();return 0;
+/**
+ * @brief Return successful callback status while deliberately poisoning recharge output.
+ *
+ * Both unnamed callback inputs are intentionally ignored. No ownership is transferred or retained.
+ *
+ * @param[in] n Number of output entries to fill; nonnegative and within caller-provided output
+ *     capacity.
+ * @param[out] output Writable array of at least n doubles; filled with quiet NaN.
+ * @return Zero unconditionally, exercising the caller numeric-output validation.
+ */
+int invalidRechargeOutput(const OpenSwmmGwRechargeInputV1*, int n, double* output, int) {
+    for (int i = 0; i < n; ++i)
+        output[i] = std::numeric_limits<double>::quiet_NaN();
+    return 0;
 }
 }
 TEST(GwRechargePlugin, NonfinitePluginOutputIsDiscardedBeforeAnyPhysicalUpdate) {
-    GroundwaterBackendOverride cpu("cpu");const auto body=forcingDeck("[GW_SOURCES]\nW CELL 1 FLOW .001 TSS CONC 3\n");
-    Deck a=open("recharge-bad-output",body),b=open("recharge-cpu-control",body);ASSERT_TRUE(a.opened);ASSERT_TRUE(b.opened);
-    ASSERT_EQ(swmm_engine_initialize(a.e),SWMM_OK);ASSERT_EQ(swmm_engine_initialize(b.e),SWMM_OK);
-    auto& ga=a.eng->surfaceRouter2D().subsurface();auto& gb=b.eng->surfaceRouter2D().subsurface();
-    openswmm::twoD::GwRechargeBackend bad;bad.evaluate=invalidRechargeOutput;bad.threads=+[]{return 4;};ga.setRechargeBackend(bad);
-    for(auto* r:{&a,&b}) {
-        ASSERT_EQ(swmm_engine_start(r->e,0),SWMM_OK);r->started=true;double elapsed=0;int code;
-        do{code=swmm_engine_step(r->e,&elapsed);}while(code==SWMM_OK&&elapsed>0);ASSERT_EQ(code,SWMM_OK);
+    GroundwaterBackendOverride cpu("cpu");
+    const auto body = forcingDeck("[GW_SOURCES]\nW CELL 1 FLOW .001 TSS CONC 3\n");
+    Deck a = open("recharge-bad-output", body), b = open("recharge-cpu-control", body);
+    ASSERT_TRUE(a.opened);
+    ASSERT_TRUE(b.opened);
+    ASSERT_EQ(swmm_engine_initialize(a.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(b.e), SWMM_OK);
+    auto& ga = a.eng->surfaceRouter2D().subsurface();
+    auto& gb = b.eng->surfaceRouter2D().subsurface();
+    openswmm::twoD::GwRechargeBackend bad;
+    bad.evaluate = invalidRechargeOutput;
+    bad.threads = +[] { return 4; };
+    ga.setRechargeBackend(bad);
+    for (auto* r : {&a, &b}) {
+        ASSERT_EQ(swmm_engine_start(r->e, 0), SWMM_OK);
+        r->started = true;
+        double elapsed = 0;
+        int code;
+        do {
+            code = swmm_engine_step(r->e, &elapsed);
+        } while (code == SWMM_OK && elapsed > 0);
+        ASSERT_EQ(code, SWMM_OK);
     }
-    EXPECT_FALSE(ga.rechargeBackend().evaluate);EXPECT_EQ(ga.rechargeBatches(),0u);
-    SWMM_GwExecutionStatus status{};status.struct_size=sizeof(status);ASSERT_EQ(swmm_gw2d_get_execution_status(a.e,&status),SWMM_OK);
-    EXPECT_EQ(status.effective_threads,0);EXPECT_EQ(std::string(status.recharge_backend),"cpu");
-    auto ca=ga,cb=gb;openswmm::detail::CompletedSourceArchive sa,sb;ca.checkpoint(sa,false);cb.checkpoint(sb,false);
-    EXPECT_EQ(sa.bytes(),sb.bytes());finish(a);finish(b);
+    EXPECT_FALSE(ga.rechargeBackend().evaluate);
+    EXPECT_EQ(ga.rechargeBatches(), 0u);
+    SWMM_GwExecutionStatus status{};
+    status.struct_size = sizeof(status);
+    ASSERT_EQ(swmm_gw2d_get_execution_status(a.e, &status), SWMM_OK);
+    EXPECT_EQ(status.effective_threads, 0);
+    EXPECT_EQ(std::string(status.recharge_backend), "cpu");
+    auto ca = ga, cb = gb;
+    openswmm::detail::CompletedSourceArchive sa, sb;
+    ca.checkpoint(sa, false);
+    cb.checkpoint(sb, false);
+    EXPECT_EQ(sa.bytes(), sb.bytes());
+    finish(a);
+    finish(b);
 }
 
 TEST(GwRechargePlugin, PendingRestartIsExactAndCrossOperatorRefusalIsAtomic) {
     GroundwaterBackendOverride select("omp");
-    const auto body=forcingDeck("[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST .0001\n"
-        "[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 3\n");
-    Deck a=open("recharge-restart",body),b=open("recharge-restored",body);
-    ASSERT_TRUE(a.opened);ASSERT_TRUE(b.opened);
-    ASSERT_EQ(swmm_engine_initialize(a.e),SWMM_OK);ASSERT_EQ(swmm_engine_initialize(b.e),SWMM_OK);
-    auto& ra=a.eng->surfaceRouter2D();auto& rb=b.eng->surfaceRouter2D();auto& ga=ra.subsurface();auto& gb=rb.subsurface();
-    if(!ga.rechargeBackend().evaluate){finish(a);finish(b);ASSERT_FALSE(std::getenv("OPENSWMM_GW_TEST_REQUIRE_PLUGIN"));GTEST_SKIP();}
-    ga.assignTiers(.1,1);gb.assignTiers(.1,1);
-    for(int step=0;step<24;++step) {
-        ga.fireGwFaces(0,.1);
-        if(step==7) {
-            const auto saved=ga.transportRestartState();ASSERT_FALSE(saved.empty());
-            const auto fresh=gb.transportRestartState();const auto backend=gb.rechargeBackend();
-            gb.setRechargeBackend({});const auto cpu=gb.transportRestartState();
-            EXPECT_FALSE(gb.restoreTransportRestart(saved,true).empty());EXPECT_EQ(gb.transportRestartState(),cpu);
-            gb.setRechargeBackend(backend);EXPECT_EQ(gb.transportRestartState(),fresh);
-            EXPECT_FALSE(gb.restoreTransportRestart(saved.substr(0,saved.size()/2),true).empty());
-            EXPECT_EQ(gb.transportRestartState(),fresh);
-            ASSERT_TRUE(gb.restoreTransportRestart(saved,true).empty());EXPECT_EQ(gb.transportRestartState(),saved);
-            EXPECT_EQ(gb.rechargeBatches(),0u);EXPECT_EQ(gb.rechargeCells(),0u);
-        } else if(step>7)gb.fireGwFaces(0,.1);
-        ga.fireGwCells(0,.1,ra.state(),step*.1);
-        if(step>=7) {
-            gb.fireGwCells(0,.1,rb.state(),step*.1);
-            EXPECT_EQ(ga.transportRestartState(),gb.transportRestartState())<<step;
+    const auto body = forcingDeck("[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 0 FLOW CONST .0001\n"
+                                  "[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 3\n");
+    Deck a = open("recharge-restart", body), b = open("recharge-restored", body);
+    ASSERT_TRUE(a.opened);
+    ASSERT_TRUE(b.opened);
+    ASSERT_EQ(swmm_engine_initialize(a.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(b.e), SWMM_OK);
+    auto& ra = a.eng->surfaceRouter2D();
+    auto& rb = b.eng->surfaceRouter2D();
+    auto& ga = ra.subsurface();
+    auto& gb = rb.subsurface();
+    if (!ga.rechargeBackend().evaluate) {
+        finish(a);
+        finish(b);
+        ASSERT_FALSE(std::getenv("OPENSWMM_GW_TEST_REQUIRE_PLUGIN"));
+        GTEST_SKIP();
+    }
+    ga.assignTiers(.1, 1);
+    gb.assignTiers(.1, 1);
+    for (int step = 0; step < 24; ++step) {
+        ga.fireGwFaces(0, .1);
+        if (step == 7) {
+            const auto saved = ga.transportRestartState();
+            ASSERT_FALSE(saved.empty());
+            const auto fresh = gb.transportRestartState();
+            const auto backend = gb.rechargeBackend();
+            gb.setRechargeBackend({});
+            const auto cpu = gb.transportRestartState();
+            EXPECT_FALSE(gb.restoreTransportRestart(saved, true).empty());
+            EXPECT_EQ(gb.transportRestartState(), cpu);
+            gb.setRechargeBackend(backend);
+            EXPECT_EQ(gb.transportRestartState(), fresh);
+            EXPECT_FALSE(
+                gb.restoreTransportRestart(saved.substr(0, saved.size() / 2), true).empty());
+            EXPECT_EQ(gb.transportRestartState(), fresh);
+            ASSERT_TRUE(gb.restoreTransportRestart(saved, true).empty());
+            EXPECT_EQ(gb.transportRestartState(), saved);
+            EXPECT_EQ(gb.rechargeBatches(), 0u);
+            EXPECT_EQ(gb.rechargeCells(), 0u);
+        } else if (step > 7)
+            gb.fireGwFaces(0, .1);
+        ga.fireGwCells(0, .1, ra.state(), step * .1);
+        if (step >= 7) {
+            gb.fireGwCells(0, .1, rb.state(), step * .1);
+            EXPECT_EQ(ga.transportRestartState(), gb.transportRestartState()) << step;
         }
     }
-    EXPECT_GT(gb.rechargeCells(),0u);EXPECT_NEAR(ga.transport().residual(0),0,1e-8);
-    EXPECT_NEAR(ga.state().continuityResidual(),0,1e-9);finish(a);finish(b);
+    EXPECT_GT(gb.rechargeCells(), 0u);
+    EXPECT_NEAR(ga.transport().residual(0), 0, 1e-8);
+    EXPECT_NEAR(ga.state().continuityResidual(), 0, 1e-9);
+    finish(a);
+    finish(b);
 }
 
 TEST(GwRechargePlugin, HostReactiveAndPorousOwnersPreserveCpuCanonicalState) {
-    const std::string laws="* SAT A RATE -.001*A\n* SAT B RATE .001*A\n"
-        "* UNSAT A RATE -.001*A\n* UNSAT B RATE .001*A\n";
-    for(bool porous:{false,true}) {
-        auto body=porousReactorDeck(laws);
-        if(!porous) {
-            const auto at=body.find("THERMAL_MODEL POROUS_EQUILIBRIUM");ASSERT_NE(at,std::string::npos);
-            body.replace(at,std::string("THERMAL_MODEL POROUS_EQUILIBRIUM").size(),"THERMAL_MODEL WATER_ONLY");
+    const std::string laws = "* SAT A RATE -.001*A\n* SAT B RATE .001*A\n"
+                             "* UNSAT A RATE -.001*A\n* UNSAT B RATE .001*A\n";
+    for (bool porous : {false, true}) {
+        auto body = porousReactorDeck(laws);
+        if (!porous) {
+            const auto at = body.find("THERMAL_MODEL POROUS_EQUILIBRIUM");
+            ASSERT_NE(at, std::string::npos);
+            body.replace(at, std::string("THERMAL_MODEL POROUS_EQUILIBRIUM").size(),
+                         "THERMAL_MODEL WATER_ONLY");
         }
         std::string reference;
-        for(const char* mode:{"cpu","omp"}) {
-            GroundwaterBackendOverride select(mode);Deck r=open(std::string("recharge-host-")+mode+(porous?"-porous":"-bulk"),body);
-            ASSERT_TRUE(r.opened)<<completionErrors(r);ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK)<<completionErrors(r);
-            auto& gw=r.eng->surfaceRouter2D().subsurface();
-            if(std::string(mode)=="omp"&&!gw.rechargeBackend().evaluate){finish(r);ASSERT_FALSE(std::getenv("OPENSWMM_GW_TEST_REQUIRE_PLUGIN"));GTEST_SKIP();}
-            ASSERT_TRUE(run(r))<<completionErrors(r);ASSERT_EQ(swmm_engine_end(r.e),SWMM_OK);r.started=false;
-            const auto& tr=gw.transport();const int a=tr.rowIndex("A"),b=tr.rowIndex("B");ASSERT_GE(a,0);ASSERT_GE(b,0);
-            const double initial=tr.init_mass[a];
-            EXPECT_NEAR(tr.ledgeredStorage(a)+tr.ledgeredStorage(b),initial,initial*1e-10);
-            EXPECT_GT(tr.ledgeredStorage(b),0);EXPECT_NEAR(tr.residual(a),0,1e-8);EXPECT_NEAR(tr.residual(b),0,1e-8);
-            auto copy=gw;openswmm::detail::CompletedSourceArchive state;copy.checkpoint(state,false);
-            if(reference.empty())reference=state.bytes();else {EXPECT_EQ(reference,state.bytes());EXPECT_GT(gw.rechargeCells(),0u);}
+        for (const char* mode : {"cpu", "omp"}) {
+            GroundwaterBackendOverride select(mode);
+            Deck r =
+                open(std::string("recharge-host-") + mode + (porous ? "-porous" : "-bulk"), body);
+            ASSERT_TRUE(r.opened) << completionErrors(r);
+            ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << completionErrors(r);
+            auto& gw = r.eng->surfaceRouter2D().subsurface();
+            if (std::string(mode) == "omp" && !gw.rechargeBackend().evaluate) {
+                finish(r);
+                ASSERT_FALSE(std::getenv("OPENSWMM_GW_TEST_REQUIRE_PLUGIN"));
+                GTEST_SKIP();
+            }
+            ASSERT_TRUE(run(r)) << completionErrors(r);
+            ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
+            r.started = false;
+            const auto& tr = gw.transport();
+            const int a = tr.rowIndex("A"), b = tr.rowIndex("B");
+            ASSERT_GE(a, 0);
+            ASSERT_GE(b, 0);
+            const double initial = tr.init_mass[a];
+            EXPECT_NEAR(tr.ledgeredStorage(a) + tr.ledgeredStorage(b), initial, initial * 1e-10);
+            EXPECT_GT(tr.ledgeredStorage(b), 0);
+            EXPECT_NEAR(tr.residual(a), 0, 1e-8);
+            EXPECT_NEAR(tr.residual(b), 0, 1e-8);
+            auto copy = gw;
+            openswmm::detail::CompletedSourceArchive state;
+            copy.checkpoint(state, false);
+            if (reference.empty())
+                reference = state.bytes();
+            else {
+                EXPECT_EQ(reference, state.bytes());
+                EXPECT_GT(gw.rechargeCells(), 0u);
+            }
             finish(r);
         }
     }
 }
 
 TEST(GwRechargePlugin, AutoRetainsScalarUntilIntegratedPerformanceIsQualified) {
-    GroundwaterBackendOverride select(nullptr);openswmm::twoD::SolverOptions2D options;
-    options.backend=openswmm::twoD::Backend2D::AUTO;
-    auto backend=openswmm::twoD::makeGwRechargeBackend(options,1000000);
-    EXPECT_FALSE(backend.evaluate);EXPECT_NE(backend.diagnostic.find("AUTO retains CPU"),std::string::npos);
+    GroundwaterBackendOverride select(nullptr);
+    openswmm::twoD::SolverOptions2D options;
+    options.backend = openswmm::twoD::Backend2D::AUTO;
+    auto backend = openswmm::twoD::makeGwRechargeBackend(options, 1000000);
+    EXPECT_FALSE(backend.evaluate);
+    EXPECT_NE(backend.diagnostic.find("AUTO retains CPU"), std::string::npos);
 }
 
 TEST(GwCompletion, BulkPorewaterAgeLedgerAndClockSurviveComponentRestore) {
     GroundwaterBackendOverride cpu("cpu");
-    const auto body=forcingDeck("[OPTIONS]\nWATER_AGE ON\nHEAT_TRANSPORT YES\n[2D_OPTIONS]\nTRANSPORT_AGE YES\n"
+    const auto body = forcingDeck(
+        "[OPTIONS]\nWATER_AGE ON\nHEAT_TRANSPORT YES\n[2D_OPTIONS]\nTRANSPORT_AGE YES\n"
         "[GW_TRANSPORT_OPTIONS]\nTRANSPORT_AGE YES\nTHERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION NO\n"
         "[GW_INITIAL_QUALITY]\n* SAT __WATER_AGE__ 2\n* UNSAT __WATER_AGE__ 1\n");
-    Deck a=open("bulk-pore-age-ledger",body),b=open("bulk-pore-age-restored",body);
-    ASSERT_TRUE(a.opened);ASSERT_TRUE(b.opened);
-    for(auto* r:{&a,&b}) {
-        ASSERT_EQ(swmm_engine_initialize(r->e),SWMM_OK);
+    Deck a = open("bulk-pore-age-ledger", body), b = open("bulk-pore-age-restored", body);
+    ASSERT_TRUE(a.opened);
+    ASSERT_TRUE(b.opened);
+    for (auto* r : {&a, &b}) {
+        ASSERT_EQ(swmm_engine_initialize(r->e), SWMM_OK);
         ASSERT_TRUE(r->eng->surfaceRouter2D().subsurface().initPorewater().empty());
     }
-    auto& ra=a.eng->surfaceRouter2D();auto& rb=b.eng->surfaceRouter2D();auto& ga=ra.subsurface();auto& gb=rb.subsurface();
-    ASSERT_EQ(ga.transport().n_layers,0);const int age=ga.transport().age_row;ASSERT_GE(age,0);
-    ASSERT_EQ(ga.transport().generated_age.size(),std::size_t(ga.transport().n_species));
-    ga.assignTiers(.1,1);gb.assignTiers(.1,1);
-    for(int tick=0;tick<25;++tick){ga.fireGwFaces(0,.1);ga.fireGwCells(0,.1,ra.state(),tick*.1);}
-    EXPECT_GT(ga.transport().generated_age[age],0);EXPECT_NEAR(ga.transport().residual(age),0,1e-9);
-    const auto saved=ga.transportRestartState();ASSERT_FALSE(saved.empty());
-    const auto before=gb.transportRestartState();const double generated=ga.transport().generated_age[age];
-    ga.transport().generated_age[age]=-1;const auto corrupt=ga.transportRestartState();ga.transport().generated_age[age]=generated;
-    EXPECT_FALSE(gb.restoreTransportRestart(corrupt,true).empty());EXPECT_EQ(gb.transportRestartState(),before);
-    EXPECT_FALSE(gb.restoreTransportRestart({},true).empty());EXPECT_EQ(gb.transportRestartState(),before);
-    ASSERT_TRUE(gb.restoreTransportRestart(saved,true).empty());EXPECT_EQ(gb.transportRestartState(),saved);
-    EXPECT_DOUBLE_EQ(gb.transport().generated_age[age],generated);EXPECT_DOUBLE_EQ(gb.cellCompletedTime(0),ga.cellCompletedTime(0));
-    for(int tick=25;tick<50;++tick) {
-        ga.fireGwFaces(0,.1);gb.fireGwFaces(0,.1);
-        ga.fireGwCells(0,.1,ra.state(),tick*.1);gb.fireGwCells(0,.1,rb.state(),tick*.1);
-        EXPECT_EQ(ga.transportRestartState(),gb.transportRestartState());
+    auto& ra = a.eng->surfaceRouter2D();
+    auto& rb = b.eng->surfaceRouter2D();
+    auto& ga = ra.subsurface();
+    auto& gb = rb.subsurface();
+    ASSERT_EQ(ga.transport().n_layers, 0);
+    const int age = ga.transport().age_row;
+    ASSERT_GE(age, 0);
+    ASSERT_EQ(ga.transport().generated_age.size(), std::size_t(ga.transport().n_species));
+    ga.assignTiers(.1, 1);
+    gb.assignTiers(.1, 1);
+    for (int tick = 0; tick < 25; ++tick) {
+        ga.fireGwFaces(0, .1);
+        ga.fireGwCells(0, .1, ra.state(), tick * .1);
     }
-    finish(a);finish(b);
+    EXPECT_GT(ga.transport().generated_age[age], 0);
+    EXPECT_NEAR(ga.transport().residual(age), 0, 1e-9);
+    const auto saved = ga.transportRestartState();
+    ASSERT_FALSE(saved.empty());
+    const auto before = gb.transportRestartState();
+    const double generated = ga.transport().generated_age[age];
+    ga.transport().generated_age[age] = -1;
+    const auto corrupt = ga.transportRestartState();
+    ga.transport().generated_age[age] = generated;
+    EXPECT_FALSE(gb.restoreTransportRestart(corrupt, true).empty());
+    EXPECT_EQ(gb.transportRestartState(), before);
+    EXPECT_FALSE(gb.restoreTransportRestart({}, true).empty());
+    EXPECT_EQ(gb.transportRestartState(), before);
+    ASSERT_TRUE(gb.restoreTransportRestart(saved, true).empty());
+    EXPECT_EQ(gb.transportRestartState(), saved);
+    EXPECT_DOUBLE_EQ(gb.transport().generated_age[age], generated);
+    EXPECT_DOUBLE_EQ(gb.cellCompletedTime(0), ga.cellCompletedTime(0));
+    for (int tick = 25; tick < 50; ++tick) {
+        ga.fireGwFaces(0, .1);
+        gb.fireGwFaces(0, .1);
+        ga.fireGwCells(0, .1, ra.state(), tick * .1);
+        gb.fireGwCells(0, .1, rb.state(), tick * .1);
+        EXPECT_EQ(ga.transportRestartState(), gb.transportRestartState());
+    }
+    finish(a);
+    finish(b);
 }

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file openswmm_infil2d.h
- * @brief Per-cell infiltration for the 2D overland-flow mesh — C API.
+ * @file      openswmm_infil2d.h
+ * @brief     Per-cell infiltration for the 2D overland-flow mesh — C API.
  *
  * @details Implements the API surface of
  *          `plans/TWO_ZONE_GROUNDWATER_EXPLICIT_LTS_PLAN_2026-08-15.md` §5.5.6
@@ -60,12 +60,14 @@
  *          no mesh, and require the engine to have been compiled with
  *          `OPENSWMM_BUILD_2D`.
  *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
+/**
  * @defgroup engine_infil2d 2D Infiltration API
  * @ingroup  engine_2d
- *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_INFIL2D_H
@@ -92,12 +94,12 @@ extern "C" {
 /** Infiltration method codes. Mirror `openswmm::InfilModel` value-for-value
  *  (D-I6: six methods). `CONSTANT` has no legacy `[INFILTRATION]` token — it
  *  is 2D-only. */
-#define SWMM_INFIL2D_HORTON         0  /**< Horton. */
-#define SWMM_INFIL2D_MOD_HORTON     1  /**< Modified Horton (linear decay). */
-#define SWMM_INFIL2D_GREEN_AMPT     2  /**< Green-Ampt. */
-#define SWMM_INFIL2D_MOD_GREEN_AMPT 3  /**< Modified Green-Ampt (F not reset). */
-#define SWMM_INFIL2D_CURVE_NUMBER   4  /**< SCS curve number. */
-#define SWMM_INFIL2D_CONSTANT       5  /**< Constant rate, capacity-bounded. */
+#define SWMM_INFIL2D_HORTON 0         /**< Horton. */
+#define SWMM_INFIL2D_MOD_HORTON 1     /**< Modified Horton (linear decay). */
+#define SWMM_INFIL2D_GREEN_AMPT 2     /**< Green-Ampt. */
+#define SWMM_INFIL2D_MOD_GREEN_AMPT 3 /**< Modified Green-Ampt (F not reset). */
+#define SWMM_INFIL2D_CURVE_NUMBER 4   /**< SCS curve number. */
+#define SWMM_INFIL2D_CONSTANT 5       /**< Constant rate, capacity-bounded. */
 
 /** Destination codes for infiltrated water. Mirror
  *  `openswmm::twoD::Infil2DDest`.
@@ -105,9 +107,9 @@ extern "C" {
  *  LOST and SUBCATCH_AQUIFER route ordinary bank cells. Aquifer-owned
  *  cells use their column capacity. AQUIFER_2D is retained for readable
  *  migration and is rejected at initialization. */
-#define SWMM_INFIL2D_DEST_LOST             0  /**< Leaves the domain; booked to the `infil_out` ledger row. */
-#define SWMM_INFIL2D_DEST_SUBCATCH_AQUIFER 1  /**< Reserved — legacy subcatchment aquifer. */
-#define SWMM_INFIL2D_DEST_AQUIFER_2D       2  /**< Obsolete; requires reviewed ownership migration. */
+#define SWMM_INFIL2D_DEST_LOST 0 /**< Leaves the domain; booked to the `infil_out` ledger row. */
+#define SWMM_INFIL2D_DEST_SUBCATCH_AQUIFER 1 /**< Reserved — legacy subcatchment aquifer. */
+#define SWMM_INFIL2D_DEST_AQUIFER_2D 2 /**< Obsolete; requires reviewed ownership migration. */
 
 /* =========================================================================
  * Value types
@@ -150,14 +152,14 @@ typedef struct SWMM_Infil2DOptions {
 typedef struct SWMM_Infil2DRow {
     /** 0 = `NONE` (the cell/tag has no infiltration model). When 0, every
      *  other field is meaningless and is ignored on write. */
-    int    has_method;
+    int has_method;
     /** One of the `SWMM_INFIL2D_*` method codes. */
-    int    method;
+    int method;
     /** Positional parameters in PROJECT UNITS — see the table above. */
     double p[SWMM_INFIL2D_MAX_PARAMS];
     /** One of the `SWMM_INFIL2D_DEST_*` codes. Only
      *  `SWMM_INFIL2D_DEST_LOST` is accepted in this release (D-I4). */
-    int    dest;
+    int dest;
 } SWMM_Infil2DRow;
 
 /** Ordered authoring record, including inheritance presence. cell=-1: default/tag.
@@ -171,19 +173,71 @@ typedef struct SWMM_Infil2DAuthoredRow {
     SWMM_Infil2DRow row;
     int dest_explicit;
 } SWMM_Infil2DAuthoredRow;
-SWMM_ENGINE_API int swmm_infil2d_get_authored_rows(SWMM_Engine engine,
-    SWMM_Infil2DAuthoredRow* out, int len, int* written);
+/**
+ * @brief Copy the complete ordered infiltration authoring records, including inheritance flags.
+ * @param[in] engine Borrowed live engine handle; not retained by this call.
+ * @param[out] out Writable row array, or NULL with len == 0 for a count query.
+ * Defaults/tags are copied first with cell == -1, then explicit cell overrides;
+ * parameters remain in PROJECT UNITS and dest_explicit is preserved.
+ * @param[in] len Nonnegative row capacity; a supplied array must fit every row.
+ * @param[out] written Non-null slot set to the required total row count before
+ * capacity/tag-length validation; no partial prefix is returned as success.
+ * @return SWMM_OK on success, SWMM_ERR_BADHANDLE for an invalid handle, or
+ * SWMM_ERR_BADPARAM for invalid arguments. Output storage is caller-owned.
+ * @note No initialized mesh is required. Oversized tags that cannot fit the
+ * 4096-byte row field are refused before writing, rather than truncated.
+ */
+SWMM_ENGINE_API int swmm_infil2d_get_authored_rows(SWMM_Engine engine, SWMM_Infil2DAuthoredRow* out,
+                                                   int len, int* written);
+/**
+ * @brief Validate and replace infiltration authoring rows as one edit.
+ * @param[in] engine Borrowed live engine handle; not retained by this call.
+ * @param[in] rows Borrowed count-element ordered array; NULL allowed only for
+ * zero count. cell == -1 requires a nonempty terminated tag; other cells use
+ * zero-based triangle indices. dest_explicit must be 0 or 1 and parameters finite.
+ * @param[in] count Nonnegative number of rows; zero clears all defaults and overrides.
+ * @return SWMM_OK, SWMM_ERR_BADHANDLE, SWMM_ERR_BADPARAM, SWMM_ERR_BADINDEX
+ * for an invalid explicit cell, or SWMM_ERR_LIFECYCLE.
+ * @note Requires an editable BUILDING or OPENED model; later states return
+ * SWMM_ERR_LIFECYCLE. Input data is copied and no input storage is retained.
+ * @note Keeps duplicate rows/order within each default/override collection.
+ * Obsolete destination codes are retained for migration/Undo authoring and
+ * may still be rejected at initialize. Entire input is checked before publication.
+ */
 SWMM_ENGINE_API int swmm_infil2d_replace_authored_rows(SWMM_Engine engine,
-    const SWMM_Infil2DAuthoredRow* rows, int count);
+                                                       const SWMM_Infil2DAuthoredRow* rows,
+                                                       int count);
 
-/** Resolved authoring ownership: 0 disabled, 1 surface bank, 2 aquifer.
- * aq_row = -1 denotes the implicit whole-mesh aquifer default.
- * conflict: 0 none, 1 explicit cell method, 2 obsolete AQUIFER_2D destination.
- * Available before initialize; authoring records are never modified. */
-SWMM_ENGINE_API int swmm_infil2d_get_ownership_bulk(SWMM_Engine engine,
-    int* owners, int* aq_rows, int* conflicts, int len, int* written);
-SWMM_ENGINE_API int swmm_infil2d_get_ownership(SWMM_Engine engine, int cell,
-    int* owner, int* aq_row, int* conflict);
+/**
+ * @brief Preview infiltration/aquifer ownership and authoring conflicts for all triangles.
+ * @param[in] engine Borrowed live engine handle; not retained by this call.
+ * @param[out] owners Non-null writable full-cell array: 0 disabled, 1 surface bank, 2 aquifer.
+ * @param[out] aq_rows Non-null writable full-cell array of resolved aquifer-row indices;
+ * -1 denotes no explicit selected row/implicit whole-mesh default.
+ * @param[out] conflicts Non-null writable full-cell array: 0 none, 1 explicit
+ * cell infiltration on an aquifer owner, 2 obsolete AQUIFER_2D destination.
+ * @param[in] len Capacity of each output array, at least the triangle count.
+ * @param[out] written Optional count slot; NULL skips it.
+ * @return SWMM_OK on success, SWMM_ERR_BADHANDLE for an invalid handle, or
+ * SWMM_ERR_BADPARAM for invalid arguments. Output storage is caller-owned.
+ * @note Requires a mesh, but can run before initialize. Uses authored options,
+ * GLOBAL/TAG/CELL precedence and infiltration records without modifying them.
+ */
+SWMM_ENGINE_API int swmm_infil2d_get_ownership_bulk(SWMM_Engine engine, int* owners, int* aq_rows,
+                                                    int* conflicts, int len, int* written);
+/**
+ * @brief Preview one triangle's infiltration/aquifer ownership and conflict.
+ * @param[in] engine Borrowed live engine handle; not retained by this call.
+ * @param[in] cell Zero-based triangle index, within the current mesh.
+ * @param[out] owner Non-null slot: 0 disabled, 1 surface bank, 2 aquifer.
+ * @param[out] aq_row Non-null resolved aquifer-row slot; -1 for implicit/no explicit row.
+ * @param[out] conflict Non-null slot: 0 none, 1 conflicting explicit cell model,
+ * 2 obsolete AQUIFER_2D routing destination.
+ * @return SWMM_OK, SWMM_ERR_BADHANDLE, SWMM_ERR_BADINDEX or SWMM_ERR_BADPARAM.
+ * @note Authoring-only preview before or after initialize; does not modify records.
+ */
+SWMM_ENGINE_API int swmm_infil2d_get_ownership(SWMM_Engine engine, int cell, int* owner,
+                                               int* aq_row, int* conflict);
 
 /* =========================================================================
  * Options — `[2D_INFILTRATION_OPTIONS]`
@@ -195,13 +249,12 @@ SWMM_ENGINE_API int swmm_infil2d_get_ownership(SWMM_Engine engine, int cell,
  *  which may still be `<= 0` ("use `WET_STEP`") — the cadence the solver
  *  actually resolved is not exposed here.
  *
- *  @param engine  Engine handle.
- *  @param options Output; must not be NULL.
+ *  @param[in] engine  Engine handle.
+ *  @param[out] options Output; must not be NULL.
  *  @returns `SWMM_OK`; `SWMM_ERR_BADHANDLE` on a bad handle;
  *           `SWMM_ERR_BADPARAM` on a NULL argument or when no 2D mesh exists.
  *  @ingroup engine_infil2d */
-SWMM_ENGINE_API int swmm_infil2d_get_options(SWMM_Engine engine,
-                                             SWMM_Infil2DOptions* options);
+SWMM_ENGINE_API int swmm_infil2d_get_options(SWMM_Engine engine, SWMM_Infil2DOptions* options);
 
 /** @brief Set the 2D infiltration options (`INFIL_STEP`, seconds).
  *
@@ -218,8 +271,8 @@ SWMM_ENGINE_API int swmm_infil2d_get_options(SWMM_Engine engine,
  *  in `SWMM_STATE_OPENED` (the state the GUI edits in) or the programmatic
  *  `BUILDING` state. Re-open or re-initialize to apply a change.
  *
- *  @param engine  Engine handle.
- *  @param options New options; must not be NULL. `infil_step <= 0` selects
+ *  @param[in] engine  Engine handle.
+ *  @param[in] options New options; must not be NULL. `infil_step <= 0` selects
  *                 the project `WET_STEP`; non-finite values are rejected.
  *  @returns `SWMM_OK`; `SWMM_ERR_BADHANDLE`; `SWMM_ERR_BADPARAM` on a NULL /
  *           non-finite argument or when no 2D mesh exists;
@@ -237,8 +290,8 @@ SWMM_ENGINE_API int swmm_infil2d_set_options(SWMM_Engine engine,
  *  The `*_count` companion for @ref swmm_infil2d_get_default /
  *  @ref swmm_infil2d_get_default_tag.
  *
- *  @param engine Engine handle.
- *  @param count  Output row count (0 when the model authors no defaults).
+ *  @param[in] engine Engine handle.
+ *  @param[out] count  Output row count (0 when the model authors no defaults).
  *  @returns `SWMM_OK`; `SWMM_ERR_BADHANDLE`; `SWMM_ERR_BADPARAM` on NULL
  *           @p count or when no 2D mesh exists.
  *  @ingroup engine_infil2d */
@@ -250,14 +303,13 @@ SWMM_ENGINE_API int swmm_infil2d_defaults_count(SWMM_Engine engine, int* count);
  *  Pair with @ref swmm_infil2d_get_default_tag to learn which tag the row
  *  belongs to.
  *
- *  @param engine Engine handle.
- *  @param idx    Row index in `[0, swmm_infil2d_defaults_count)`.
- *  @param row    Output row; must not be NULL.
+ *  @param[in] engine Engine handle.
+ *  @param[in] idx    Row index in `[0, swmm_infil2d_defaults_count)`.
+ *  @param[out] row    Output row; must not be NULL.
  *  @returns `SWMM_OK`; `SWMM_ERR_BADINDEX` on an out-of-range index;
  *           `SWMM_ERR_BADPARAM` on NULL @p row or when no 2D mesh exists.
  *  @ingroup engine_infil2d */
-SWMM_ENGINE_API int swmm_infil2d_get_default(SWMM_Engine engine, int idx,
-                                             SWMM_Infil2DRow* row);
+SWMM_ENGINE_API int swmm_infil2d_get_default(SWMM_Engine engine, int idx, SWMM_Infil2DRow* row);
 
 /** @brief Read the TAG of one default row by index.
  *
@@ -265,14 +317,14 @@ SWMM_ENGINE_API int swmm_infil2d_get_default(SWMM_Engine engine, int idx,
  *  (the `swmm_2d_get_triangle_tag` convention). `"*"` identifies the
  *  mesh-wide fallback row.
  *
- *  @param engine Engine handle.
- *  @param idx    Row index in `[0, swmm_infil2d_defaults_count)`.
- *  @param buf    Caller-allocated output buffer.
- *  @param buflen Capacity of @p buf in bytes; must be > 0.
+ *  @param[in] engine Engine handle.
+ *  @param[in] idx    Row index in `[0, swmm_infil2d_defaults_count)`.
+ *  @param[out] buf    Caller-allocated output buffer.
+ *  @param[in] buflen Capacity of @p buf in bytes; must be > 0.
  *  @returns `SWMM_OK`; `SWMM_ERR_BADINDEX`; `SWMM_ERR_BADPARAM`.
  *  @ingroup engine_infil2d */
-SWMM_ENGINE_API int swmm_infil2d_get_default_tag(SWMM_Engine engine, int idx,
-                                                 char* buf, int buflen);
+SWMM_ENGINE_API int swmm_infil2d_get_default_tag(SWMM_Engine engine, int idx, char* buf,
+                                                 int buflen);
 
 /** @brief Add or replace the default row for a tag.
  *
@@ -286,17 +338,16 @@ SWMM_ENGINE_API int swmm_infil2d_get_default_tag(SWMM_Engine engine, int idx,
  *  Persisted in `[2D_INFILTRATION_DEFAULTS]` on save. Subject to the
  *  staleness rule documented on @ref swmm_infil2d_set_options.
  *
- *  @param engine Engine handle.
- *  @param tag    Tag to define; must be non-empty.
- *  @param row    Row to store; must not be NULL.
+ *  @param[in] engine Engine handle.
+ *  @param[in] tag    Tag to define; must be non-empty.
+ *  @param[in] row    Row to store; must not be NULL.
  *  @returns `SWMM_OK`; `SWMM_ERR_BADHANDLE`; `SWMM_ERR_BADPARAM` on a NULL /
  *           empty tag, a NULL row, an unknown method code, a destination
  *           other than `SWMM_INFIL2D_DEST_LOST`, an out-of-range parameter,
  *           or when no 2D mesh exists; `SWMM_ERR_LIFECYCLE` after
  *           initialize().
  *  @ingroup engine_infil2d */
-SWMM_ENGINE_API int swmm_infil2d_set_default(SWMM_Engine engine,
-                                             const char* tag,
+SWMM_ENGINE_API int swmm_infil2d_set_default(SWMM_Engine engine, const char* tag,
                                              const SWMM_Infil2DRow* row);
 
 /** @brief Remove every default row carrying a tag.
@@ -305,15 +356,14 @@ SWMM_ENGINE_API int swmm_infil2d_set_default(SWMM_Engine engine,
  *  infiltration. Subject to the staleness rule documented on
  *  @ref swmm_infil2d_set_options.
  *
- *  @param engine Engine handle.
- *  @param tag    Tag to remove; must be non-empty.
+ *  @param[in] engine Engine handle.
+ *  @param[in] tag    Tag to remove; must be non-empty.
  *  @returns `SWMM_OK` (also when the tag was not present);
  *           `SWMM_ERR_BADHANDLE`; `SWMM_ERR_BADPARAM` on a NULL / empty tag
  *           or when no 2D mesh exists; `SWMM_ERR_LIFECYCLE` after
  *           initialize().
  *  @ingroup engine_infil2d */
-SWMM_ENGINE_API int swmm_infil2d_remove_default(SWMM_Engine engine,
-                                                const char* tag);
+SWMM_ENGINE_API int swmm_infil2d_remove_default(SWMM_Engine engine, const char* tag);
 
 /* =========================================================================
  * Per-cell overrides — `[2D_INFILTRATION]`
@@ -335,15 +385,14 @@ SWMM_ENGINE_API int swmm_infil2d_remove_default(SWMM_Engine engine,
  *    Combine with @ref swmm_infil2d_get_default and the triangle's tag
  *    (`swmm_2d_get_triangle_tag`) to preview the resolution in that state.
  *
- *  @param engine      Engine handle.
- *  @param tri         Triangle index (0-based) in `[0, triangle_count)`.
- *  @param row         Output row; must not be NULL.
- *  @param is_override Output flag, 1 / 0. May be NULL.
+ *  @param[in] engine      Engine handle.
+ *  @param[in] tri         Triangle index (0-based) in `[0, triangle_count)`.
+ *  @param[out] row         Output row; must not be NULL.
+ *  @param[out] is_override Output flag, 1 / 0. May be NULL.
  *  @returns `SWMM_OK`; `SWMM_ERR_BADINDEX` on an out-of-range triangle;
  *           `SWMM_ERR_BADPARAM` on NULL @p row or when no 2D mesh exists.
  *  @ingroup engine_infil2d */
-SWMM_ENGINE_API int swmm_infil2d_get_cell(SWMM_Engine engine, int tri,
-                                          SWMM_Infil2DRow* row,
+SWMM_ENGINE_API int swmm_infil2d_get_cell(SWMM_Engine engine, int tri, SWMM_Infil2DRow* row,
                                           int* is_override);
 
 /** @brief Set (or clear) the per-cell `[2D_INFILTRATION]` override of one
@@ -358,15 +407,14 @@ SWMM_ENGINE_API int swmm_infil2d_get_cell(SWMM_Engine engine, int tri,
  *  Persisted as one `[2D_INFILTRATION]` row on save. Subject to the staleness
  *  rule documented on @ref swmm_infil2d_set_options.
  *
- *  @param engine Engine handle.
- *  @param tri    Triangle index (0-based) in `[0, triangle_count)`.
- *  @param row    Row to store, or NULL to clear the override.
+ *  @param[in] engine Engine handle.
+ *  @param[in] tri    Triangle index (0-based) in `[0, triangle_count)`.
+ *  @param[in] row    Row to store, or NULL to clear the override.
  *  @returns `SWMM_OK`; `SWMM_ERR_BADINDEX` on an out-of-range triangle;
  *           `SWMM_ERR_BADPARAM` on an invalid row or when no 2D mesh exists;
  *           `SWMM_ERR_LIFECYCLE` after initialize().
  *  @ingroup engine_infil2d */
-SWMM_ENGINE_API int swmm_infil2d_set_cell(SWMM_Engine engine, int tri,
-                                          const SWMM_Infil2DRow* row);
+SWMM_ENGINE_API int swmm_infil2d_set_cell(SWMM_Engine engine, int tri, const SWMM_Infil2DRow* row);
 
 /** @brief Assign one specification to many triangles in a single call.
  *
@@ -381,17 +429,16 @@ SWMM_ENGINE_API int swmm_infil2d_set_cell(SWMM_Engine engine, int tri,
  *  the same all-or-nothing contract. Subject to the staleness rule documented
  *  on @ref swmm_infil2d_set_options.
  *
- *  @param engine Engine handle.
- *  @param tris   Caller-owned array of `n` 0-based triangle indices.
- *  @param n      Number of entries in @p tris; must be > 0.
- *  @param row    Row to store on every listed triangle, or NULL to clear.
+ *  @param[in] engine Engine handle.
+ *  @param[in] tris   Caller-owned array of `n` 0-based triangle indices.
+ *  @param[in] n      Number of entries in @p tris; must be > 0.
+ *  @param[in] row    Row to store on every listed triangle, or NULL to clear.
  *  @returns `SWMM_OK`; `SWMM_ERR_BADINDEX` when any entry of @p tris is out
  *           of range (nothing applied); `SWMM_ERR_BADPARAM` on a NULL @p tris,
  *           `n <= 0`, an invalid row, or when no 2D mesh exists;
  *           `SWMM_ERR_LIFECYCLE` after initialize().
  *  @ingroup engine_infil2d */
-SWMM_ENGINE_API int swmm_infil2d_set_cells(SWMM_Engine engine,
-                                           const int* tris, int n,
+SWMM_ENGINE_API int swmm_infil2d_set_cells(SWMM_Engine engine, const int* tris, int n,
                                            const SWMM_Infil2DRow* row);
 
 /* =========================================================================
@@ -408,14 +455,13 @@ SWMM_ENGINE_API int swmm_infil2d_set_cells(SWMM_Engine engine,
  *  infiltration model is a legitimate configuration, not an error: the buffer
  *  is zero-filled and `SWMM_OK` is returned.
  *
- *  @param engine Engine handle.
- *  @param f      Caller-allocated output buffer of at least @p n doubles.
- *  @param n      Capacity of @p f; must be > 0.
+ *  @param[in] engine Engine handle.
+ *  @param[out] f      Caller-allocated output buffer of at least @p n doubles.
+ *  @param[in] n      Capacity of @p f; must be > 0.
  *  @returns `SWMM_OK`; `SWMM_ERR_BADHANDLE`; `SWMM_ERR_BADPARAM` on a NULL
  *           buffer, `n <= 0`, or when no 2D mesh exists.
  *  @ingroup engine_infil2d */
-SWMM_ENGINE_API int swmm_infil2d_get_rate_bulk(SWMM_Engine engine,
-                                               double* f, int n);
+SWMM_ENGINE_API int swmm_infil2d_get_rate_bulk(SWMM_Engine engine, double* f, int n);
 
 /** @brief Bulk get the cumulative infiltrated depth per cell (m).
  *
@@ -428,14 +474,13 @@ SWMM_ENGINE_API int swmm_infil2d_get_rate_bulk(SWMM_Engine engine,
  *  when no infiltration model is resolved (same contract as
  *  @ref swmm_infil2d_get_rate_bulk).
  *
- *  @param engine Engine handle.
- *  @param F      Caller-allocated output buffer of at least @p n doubles.
- *  @param n      Capacity of @p F; must be > 0.
+ *  @param[in] engine Engine handle.
+ *  @param[out] F      Caller-allocated output buffer of at least @p n doubles.
+ *  @param[in] n      Capacity of @p F; must be > 0.
  *  @returns `SWMM_OK`; `SWMM_ERR_BADHANDLE`; `SWMM_ERR_BADPARAM` on a NULL
  *           buffer, `n <= 0`, or when no 2D mesh exists.
  *  @ingroup engine_infil2d */
-SWMM_ENGINE_API int swmm_infil2d_get_cum_bulk(SWMM_Engine engine,
-                                              double* F, int n);
+SWMM_ENGINE_API int swmm_infil2d_get_cum_bulk(SWMM_Engine engine, double* F, int n);
 
 /** @brief Get the cumulative 2D infiltration loss (m³) — the `infil_out`
  *         mass-balance ledger row.
@@ -445,13 +490,12 @@ SWMM_ENGINE_API int swmm_infil2d_get_cum_bulk(SWMM_Engine engine,
  *  @ref swmm_2d_get_mass_balance and, like it, requires the 2D mass balance
  *  to be live.
  *
- *  @param engine Engine handle.
- *  @param volume Output volume in m³; must not be NULL.
+ *  @param[in] engine Engine handle.
+ *  @param[out] volume Output volume in m³; must not be NULL.
  *  @returns `SWMM_OK`; `SWMM_ERR_BADHANDLE`; `SWMM_ERR_BADPARAM` on NULL
  *           @p volume or when the 2D mass balance is not active.
  *  @ingroup engine_infil2d */
-SWMM_ENGINE_API int swmm_infil2d_get_total_volume(SWMM_Engine engine,
-                                                  double* volume);
+SWMM_ENGINE_API int swmm_infil2d_get_total_volume(SWMM_Engine engine, double* volume);
 
 #ifdef __cplusplus
 } /* extern "C" */

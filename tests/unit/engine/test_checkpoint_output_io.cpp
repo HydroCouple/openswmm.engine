@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Caleb Buahin
+
+/**
+ * @file test_checkpoint_output_io.cpp
+ * @brief Regression helpers and cases for live checkpoint output publication.
+ * @author Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license Apache-2.0
+ */
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -20,6 +28,16 @@
 #endif
 using namespace openswmm;
 namespace {
+/**
+ * @brief Create the configured checkpoint-output artifact directory and remove one destination.
+ *
+ * Uses throwing directory/remove operations and propagates filesystem errors. Removes only the
+ * chosen path; does not create arbitrary nested parents or reserve/open the result.
+ *
+ * @param[in] name Safe filename/path beneath CHECKPOINT_OUTPUT_IO_DIR; caller chooses an artifact
+ *     it may remove.
+ * @return Owned root/name path, absent after a successful remove or already absent.
+ */
 std::filesystem::path path(const std::filesystem::path& name) {
     const auto root = std::filesystem::path(CHECKPOINT_OUTPUT_IO_DIR);
     std::filesystem::create_directories(root);
@@ -27,17 +45,60 @@ std::filesystem::path path(const std::filesystem::path& name) {
     std::filesystem::remove(p);
     return p;
 }
+/**
+ * @brief Open a checkpoint publication output stream with automatic fclose ownership.
+ *
+ * Caller checks the pointer before I/O. No borrowed FILE storage survives owner destruction; opener
+ * exceptions propagate, and fclose status is discarded by the deleter.
+ *
+ * @param[in] p Destination accepted by checkpointOpenOutput; parent exists and intended contents
+ *     may be replaced.
+ * @return unique_ptr<FILE,fclose> owning the opened stream, possibly null if the opener returns
+ *     null.
+ */
 auto stream(const std::filesystem::path& p) {
     return std::unique_ptr<FILE, decltype(&std::fclose)>(io::checkpointOpenOutput(p), &std::fclose);
 }
+/**
+ * @brief Write and flush exact bytes through a live publication-test stream.
+ *
+ * Fatal GoogleTest assertions require full fwrite and successful fflush. Does not close or rewind;
+ * failure may leave a partial prefix and returns only from this helper.
+ *
+ * @param[in,out] f Required non-null writable FILE positioned where bytes should be inserted;
+ *     ownership remains with caller.
+ * @param[in] data Binary bytes, including embedded zeros; may be empty.
+ */
 void write(FILE* f, const std::string& data) {
     ASSERT_EQ(std::fwrite(data.data(), 1, data.size(), f), data.size());
     ASSERT_EQ(std::fflush(f), 0);
 }
+/**
+ * @brief Collect an ordinary file's available binary bytes for comparisons.
+ *
+ * Uses unchecked stream iterators and no descriptor sharing/lifetime transfer.
+ *
+ * @param[in] p Input path, unchanged; concurrent locked-writer cases use liveBytes instead.
+ * @return Owned available bytes; empty can mean empty/unreadable file, with no distinct
+ *     partial-read status.
+ */
 std::string bytes(const std::filesystem::path& p) {
     std::ifstream f(p, std::ios::binary);
     return {std::istreambuf_iterator<char>(f), {}};
 }
+/**
+ * @brief Capture a flushed HDF5 writer's current file bytes through its borrowed descriptor.
+ *
+ * Calls H5Fflush twice with nonfatal success expectations, allocates file_size bytes then
+ * checkpointReadOutput from offset0. Requires exclusive compatible writer/read access and
+ * descriptor-driver identity. Filesystem/descriptor exceptions propagate; no HDF5
+ * identifier/descriptor ownership is taken.
+ *
+ * @param[in,out] f Valid live file created with the checkpoint HDF5 driver; global flushes mutate
+ *     persistent state.
+ * @param[in] p Path identifying the same live file; file_size supplies the exact read length.
+ * @return Owned current physical file bytes, including any HDF5 framing/payload.
+ */
 std::string liveBytes(hid_t f, const std::filesystem::path& p) {
     EXPECT_GE(H5Fflush(f, H5F_SCOPE_GLOBAL), 0);
     EXPECT_GE(H5Fflush(f, H5F_SCOPE_GLOBAL), 0);
@@ -45,6 +106,20 @@ std::string liveBytes(hid_t f, const std::filesystem::path& p) {
     io::checkpointReadOutput(io::checkpointHdf5Descriptor(f), 0, b.data(), b.size());
     return b;
 }
+/**
+ * @brief Create a new scalar-value HDF5 artifact using the supplied access properties.
+ *
+ * Records nonfatal dataset-create/write expectations and closes temporary dataset/dataspace ids
+ * with unchecked statuses. Later dataset failure can still return a nonnegative file id; caller
+ * must inspect test results. No simulation output schema is created.
+ *
+ * @param[in] p Absent destination path; H5F_ACC_EXCL refuses an existing file.
+ * @param[in] access Borrowed valid file-access property list, normally checkpointHdf5Access; not
+ *     closed here.
+ * @param[in] value Native integer to store in scalar dataset value with little-endian int32 file
+ *     datatype.
+ * @return Owned HDF5 file identifier for caller H5Fclose, or a negative create-file failure id.
+ */
 hid_t makeHdf(const std::filesystem::path& p, hid_t access, int value) {
     auto f = io::createHdf5File(io::path_utf8(p).c_str(), H5F_ACC_EXCL, H5P_DEFAULT, access);
     if (f < 0)
@@ -58,6 +133,17 @@ hid_t makeHdf(const std::filesystem::path& p, hid_t access, int value) {
     H5Sclose(space);
     return f;
 }
+/**
+ * @brief Read the scalar integer sentinel from an open HDF5 test file.
+ *
+ * Uses nonfatal dataset-open/read expectations, attempts read even after open failure, closes
+ * dataset and ignores close status. Does not provide a separate success flag or modify the stored
+ * value.
+ *
+ * @param[in] f Borrowed valid file containing the numeric scalar dataset value; ownership remains
+ *     with caller.
+ * @return Native integer read from the dataset, initially -1 if the read does not assign it.
+ */
 int value(hid_t f) {
     auto ds = H5Dopen2(f, "value", H5P_DEFAULT);
     int v = -1;

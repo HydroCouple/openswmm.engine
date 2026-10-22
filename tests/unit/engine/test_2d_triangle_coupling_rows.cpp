@@ -1,6 +1,6 @@
 /**
- * @file test_2d_triangle_coupling_rows.cpp
- * @brief Repeated-row `[2D_TRIANGLE_NODE_MAP]` — node→cell couplings.
+ * @file      test_2d_triangle_coupling_rows.cpp
+ * @brief     Repeated-row `[2D_TRIANGLE_NODE_MAP]` — node→cell couplings.
  *
  * @details A triangle may carry SEVERAL coupling rows, one per node (the
  *          weir/orifice-endpoint case: two 1D nodes land in one 2D cell).
@@ -18,6 +18,10 @@
  *          Registered only when OPENSWMM_BUILD_2D=ON.
  *
  * @ingroup engine_tests
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -100,11 +104,33 @@ const char* kTwoRowsSameTriangle = R"INP(
 0          J2    0.65  2
 )INP";
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Open failure is not
+ * reported by this helper. Subsequent write/close failures are not checked; the local stream closes
+ * at scope exit and no path/content storage is retained. Allocation exceptions can propagate.
+ *
+ * @param[in] p Borrowed destination path; an existing file is truncated/overwritten.
+ * @param[in] text Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const fs::path& p, const std::string& text) {
     std::ofstream f(p);
     f << text;
 }
 
+/**
+ * @brief Collect an entire fixture file into owned text.
+ *
+ * Uses ordinary text mode and its platform newline rules. The local stream closes on return; no
+ * model state is touched and no borrowed buffer is returned. Default stream exception settings
+ * apply; allocation exceptions may propagate.
+ *
+ * @param[in] p Borrowed input filename used for this synchronous open/read.
+ * @return Owned string collected from the stream; empty can mean an empty file or failure to open.
+ *     Partial read failures have no separate status.
+ */
 std::string read_file(const fs::path& p) {
     std::ifstream f(p);
     std::stringstream ss;
@@ -113,18 +139,33 @@ std::string read_file(const fs::path& p) {
 }
 
 // Count data rows in the [2D_TRIANGLE_NODE_MAP] section of an .inp text.
+/**
+ * @brief Count apparent data lines following the first triangle-map section marker.
+ *
+ * Search is a literal substring rather than a header parser; trims leading space/tab/CR for
+ * classification. Does not validate fields, deduplicate or parse comments inside a row; count must
+ * fit int.
+ *
+ * @param[in] text Input/writer text, unchanged.
+ * @return Number of nonblank/noncomment rows until the next leading bracket, or -1 when section
+ *     marker absent.
+ */
 int count_triangle_map_rows(const std::string& text) {
     const std::string sec = "[2D_TRIANGLE_NODE_MAP]";
     auto pos = text.find(sec);
-    if (pos == std::string::npos) return -1;
+    if (pos == std::string::npos)
+        return -1;
     std::istringstream in(text.substr(pos + sec.size()));
     std::string line;
     int rows = 0;
     while (std::getline(in, line)) {
         auto b = line.find_first_not_of(" \t\r");
-        if (b == std::string::npos) continue;
-        if (line[b] == '[') break;              // next section
-        if (line.compare(b, 1, ";") == 0) continue;
+        if (b == std::string::npos)
+            continue;
+        if (line[b] == '[')
+            break; // next section
+        if (line.compare(b, 1, ";") == 0)
+            continue;
         ++rows;
     }
     return rows;
@@ -138,18 +179,46 @@ protected:
     SWMM_Engine eng_ = nullptr;
     SWMM_Engine eng2_ = nullptr;
 
+    /**
+     * @brief Create the fixed temporary directory for this 2D fixture.
+     *
+     * Sets dir_=temp_directory_path()/openswmm_tri_coupling_rows_test and creates missing directories.
+     * Filesystem errors propagate; existing contents are retained and the fixed path assumes exclusive
+     * test-process use.
+     */
     void SetUp() override {
         dir_ = fs::temp_directory_path() / "openswmm_tri_coupling_rows_test";
         fs::create_directories(dir_);
     }
 
+    /**
+     * @brief Close/destroy both coupling-row engines and remove the temporary directory.
+     *
+     * Ignores close statuses and recursive remove_all error code; eng_/eng2_ must not be used
+     * afterward. Assumes dir_ identifies this fixture's exclusive temporary tree.
+     */
     void TearDown() override {
-        if (eng_)  { swmm_engine_close(eng_);  swmm_engine_destroy(eng_); }
-        if (eng2_) { swmm_engine_close(eng2_); swmm_engine_destroy(eng2_); }
+        if (eng_) {
+            swmm_engine_close(eng_);
+            swmm_engine_destroy(eng_);
+        }
+        if (eng2_) {
+            swmm_engine_close(eng2_);
+            swmm_engine_destroy(eng2_);
+        }
         std::error_code ec;
         fs::remove_all(dir_, ec);
     }
 
+    /**
+     * @brief Create/open a triangle-coupling fixture for authored-row checks.
+     *
+     * Uses empty report/output destinations, does not initialize/start and leaves destruction to
+     * caller. Expectations do not prevent subsequent open/return after create refusal.
+     *
+     * @param[in] inp Existing model path borrowed for synchronous open.
+     * @return Caller-owned handle, possibly null/partially opened after recorded nonfatal failure.
+     */
     SWMM_Engine open_engine(const fs::path& inp) {
         SWMM_Engine e = swmm_engine_create();
         EXPECT_NE(e, nullptr);
@@ -180,13 +249,13 @@ TEST_F(TriangleCouplingRowsTest, TwoRowsOnOneTriangleRoundTripThroughInp) {
     ASSERT_GE(j1, 0);
     ASSERT_GE(j2, 0);
 
-    int  tri = -1, node = -1;
+    int tri = -1, node = -1;
     double cd = 0.0, area = 0.0;
     ASSERT_EQ(swmm_2d_get_triangle_coupling_row(eng_, 0, &tri, &node, &cd, &area), 0);
     EXPECT_EQ(tri, 0);
     EXPECT_EQ(node, j1);
-    EXPECT_NEAR(cd,   0.65, 1e-12);
-    EXPECT_NEAR(area, 2.0,  1e-12);
+    EXPECT_NEAR(cd, 0.65, 1e-12);
+    EXPECT_NEAR(area, 2.0, 1e-12);
     ASSERT_EQ(swmm_2d_get_triangle_coupling_row(eng_, 1, &tri, &node, &cd, &area), 0);
     EXPECT_EQ(tri, 0);
     EXPECT_EQ(node, j2);
@@ -211,8 +280,7 @@ TEST_F(TriangleCouplingRowsTest, TwoRowsOnOneTriangleRoundTripThroughInp) {
 
 TEST_F(TriangleCouplingRowsTest, LegacySingleRowStillMirrorsToPerTriangleGetter) {
     const fs::path inp = dir_ / "one_row.inp";
-    write_file(inp, std::string(k1DBase) + k2DMesh +
-                        "\n[2D_TRIANGLE_NODE_MAP]\n1  J2  0.7  3\n");
+    write_file(inp, std::string(k1DBase) + k2DMesh + "\n[2D_TRIANGLE_NODE_MAP]\n1  J2  0.7  3\n");
 
     eng_ = open_engine(inp);
     ASSERT_EQ(swmm_engine_initialize(eng_), 0);
@@ -240,7 +308,7 @@ TEST_F(TriangleCouplingRowsTest, LegacySingleRowStillMirrorsToPerTriangleGetter)
 
 TEST_F(TriangleCouplingRowsTest, AddApiAppendsAndSurvivesRunAndWrite) {
     const fs::path inp_a = dir_ / "api_add.inp";
-    write_file(inp_a, std::string(k1DBase) + k2DMesh);   // no coupling authored
+    write_file(inp_a, std::string(k1DBase) + k2DMesh); // no coupling authored
 
     eng_ = open_engine(inp_a);
     ASSERT_EQ(swmm_engine_initialize(eng_), 0);
@@ -260,7 +328,8 @@ TEST_F(TriangleCouplingRowsTest, AddApiAppendsAndSurvivesRunAndWrite) {
     const int j2 = swmm_node_index(eng_, "J2");
     ASSERT_GE(j1, 0);
     ASSERT_GE(j2, 0);
-    int tri = -1, node = -1; double cd = 0.0, area = 0.0;
+    int tri = -1, node = -1;
+    double cd = 0.0, area = 0.0;
     ASSERT_EQ(swmm_2d_get_triangle_coupling_row(eng_, 0, &tri, &node, &cd, &area), 0);
     EXPECT_EQ(tri, 0);
     EXPECT_EQ(node, j1) << "node name must resolve at add time";
@@ -272,7 +341,8 @@ TEST_F(TriangleCouplingRowsTest, AddApiAppendsAndSurvivesRunAndWrite) {
     double elapsed = 0.0;
     for (int i = 0; i < 20; ++i) {
         ASSERT_EQ(swmm_engine_step(eng_, &elapsed), 0) << "step " << i;
-        if (elapsed <= 0.0) break;
+        if (elapsed <= 0.0)
+            break;
     }
     ASSERT_EQ(swmm_engine_end(eng_), 0);
 
@@ -346,10 +416,13 @@ TEST_F(TriangleCouplingRowsTest, ApiNanLeavesTokensUnauthored) {
     while (std::getline(rows, line)) {
         std::istringstream ls(line);
         std::vector<std::string> tok;
-        for (std::string t; ls >> t;) tok.push_back(t);
-        if (tok.empty() || tok[0][0] == ';' || tok[0][0] == '[') continue;
+        for (std::string t; ls >> t;)
+            tok.push_back(t);
+        if (tok.empty() || tok[0][0] == ';' || tok[0][0] == '[')
+            continue;
         data.push_back(tok);
-        if (data.size() == 3) break;
+        if (data.size() == 3)
+            break;
     }
     ASSERT_EQ(data.size(), 3u);
     EXPECT_EQ(data[0], (std::vector<std::string>{"0", "J1"}));
@@ -372,9 +445,9 @@ TEST_F(TriangleCouplingRowsTest, ApiRejectsBadArguments) {
 
     EXPECT_NE(swmm_2d_add_triangle_coupling(eng_, -1, "J1", 0.65, 2.0), 0);
     EXPECT_NE(swmm_2d_add_triangle_coupling(eng_, 99, "J1", 0.65, 2.0), 0);
-    EXPECT_NE(swmm_2d_add_triangle_coupling(eng_, 0, "",   0.65, 2.0), 0);
+    EXPECT_NE(swmm_2d_add_triangle_coupling(eng_, 0, "", 0.65, 2.0), 0);
     EXPECT_NE(swmm_2d_add_triangle_coupling(eng_, 0, nullptr, 0.65, 2.0), 0);
-    EXPECT_NE(swmm_2d_add_triangle_coupling(eng_, 0, "J1", 0.0,  2.0), 0);
+    EXPECT_NE(swmm_2d_add_triangle_coupling(eng_, 0, "J1", 0.0, 2.0), 0);
     EXPECT_NE(swmm_2d_add_triangle_coupling(eng_, 0, "J1", 0.65, 0.0), 0);
 
     int rows = -1;
@@ -382,7 +455,8 @@ TEST_F(TriangleCouplingRowsTest, ApiRejectsBadArguments) {
     EXPECT_EQ(rows, 0) << "no rejected call may have appended a row";
     EXPECT_NE(swmm_2d_triangle_coupling_rows(eng_, nullptr), 0);
 
-    int tri = -1, node = -1; double cd = 0.0, area = 0.0;
+    int tri = -1, node = -1;
+    double cd = 0.0, area = 0.0;
     EXPECT_NE(swmm_2d_get_triangle_coupling_row(eng_, 0, &tri, &node, &cd, &area), 0)
         << "no rows authored yet";
     ASSERT_EQ(swmm_2d_add_triangle_coupling(eng_, 0, "J1", 0.65, 2.0), 0);

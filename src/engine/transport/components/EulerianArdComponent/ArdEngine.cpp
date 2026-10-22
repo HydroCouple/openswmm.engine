@@ -15,12 +15,12 @@
 // limitations under the License.
 
 /**
- * @file ArdEngine.cpp
- * @brief Solver-agnostic Eulerian ARD transport engine — phase E1 body.
+ * @file      ArdEngine.cpp
+ * @brief     Solver-agnostic Eulerian ARD transport engine — phase E1 body.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "ArdEngine.hpp"
@@ -37,8 +37,8 @@
 #include "../../../quality/QualityRouting.hpp"
 #include "../../../hydraulics/Node.hpp"
 #include "../../InitialQualitySeeds.hpp"
-#include "../../TransportPolicy.hpp"   // E2
-#include "../ReactionModule/ReactionLegacyBinding.hpp"   // U2: ensureMsxState
+#include "../../TransportPolicy.hpp"                   // E2
+#include "../ReactionModule/ReactionLegacyBinding.hpp" // U2: ensureMsxState
 #include "../../../hydraulics/fv/FvKernels.hpp"
 #include "../../../hydraulics/fv/NetworkMeshBuilder.hpp"
 #include "../HeatFluxModules/BedExchange.hpp"
@@ -52,74 +52,150 @@
 namespace openswmm::transport {
 
 namespace fvk = openswmm::transport::fvkernels;
-namespace k   = openswmm::fv::kernels;
+namespace k = openswmm::fv::kernels;
 
+/**
+ * @brief Export wet transport-cell thermal regions and their SI geometry.
+ * @return Owning channel region snapshots with native parent link, global cell region index,
+ * normalized along-link interval, volume m3, degC, length/depth m and free/wetted contact area
+ * m2. Empty when uninitialized/thermal row absent; closed geometry has free area0. No context
+ * mutation; allocation or geometry dependency may throw. Caller keeps initialized owner stable
+ * during read, snapshots later stale.
+ */
 std::vector<ChannelThermalRegion> ArdEngine::thermalRegions() const {
-    std::vector<ChannelThermalRegion> out;if(!initialized_||temp_row_<0)return out;
-    const auto nc=std::size_t(mesh_.n_cells());out.reserve(nc);
-    for(std::size_t r=0;r<mesh_.conduit_cell_begin.size();++r) {
-        const int begin=mesh_.conduit_cell_begin[r],count=mesh_.conduit_cell_count[r];
-        double length=0;for(int k=0;k<count;++k)length+=mesh_.cell_dx[begin+k];if(!(length>0))continue;
-        double along=0;
-        for(int k=0;k<count;++k) {
-            const int c=begin+k;const double dx=mesh_.cell_dx[c],volume=state_.cell_a[c]*dx*.028316846592;
-            if(volume>0) {
-                out.push_back({mesh_.conduit_link[r],c,along/length,(along+dx)/length,
-                    volume,state_.cell_phi[std::size_t(temp_row_)*nc+c]});
-                auto& region=out.back();const auto& g=mesh_.geom[mesh_.cell_geom[c]];
-                const double depth=fv::kernels::depthOfArea(g,state_.cell_a[c]),radius=fv::kernels::hydRadOfDepth(g,depth);
-                region.length=dx*.3048;region.depth=depth*.3048;
-                region.surface_area=g.is_open?fv::kernels::widthOfDepth(g,depth)*dx*.09290304:0;
-                region.bed_area=radius>0?state_.cell_a[c]/radius*dx*.09290304:0;
+    std::vector<ChannelThermalRegion> out;
+    if (!initialized_ || temp_row_ < 0)
+        return out;
+    const auto nc = std::size_t(mesh_.n_cells());
+    out.reserve(nc);
+    for (std::size_t r = 0; r < mesh_.conduit_cell_begin.size(); ++r) {
+        const int begin = mesh_.conduit_cell_begin[r], count = mesh_.conduit_cell_count[r];
+        double length = 0;
+        for (int k = 0; k < count; ++k)
+            length += mesh_.cell_dx[begin + k];
+        if (!(length > 0))
+            continue;
+        double along = 0;
+        for (int k = 0; k < count; ++k) {
+            const int c = begin + k;
+            const double dx = mesh_.cell_dx[c], volume = state_.cell_a[c] * dx * .028316846592;
+            if (volume > 0) {
+                out.push_back({mesh_.conduit_link[r], c, along / length, (along + dx) / length,
+                               volume, state_.cell_phi[std::size_t(temp_row_) * nc + c]});
+                auto& region = out.back();
+                const auto& g = mesh_.geom[mesh_.cell_geom[c]];
+                const double depth = fv::kernels::depthOfArea(g, state_.cell_a[c]),
+                             radius = fv::kernels::hydRadOfDepth(g, depth);
+                region.length = dx * .3048;
+                region.depth = depth * .3048;
+                region.surface_area =
+                    g.is_open ? fv::kernels::widthOfDepth(g, depth) * dx * .09290304 : 0;
+                region.bed_area = radius > 0 ? state_.cell_a[c] / radius * dx * .09290304 : 0;
             }
-            along+=dx;
+            along += dx;
         }
     }
     return out;
 }
-std::string ArdEngine::applyThermalIncrements(SimulationContext& ctx,const std::vector<ChannelThermalIncrement>& updates) {
-    if(!initialized_||temp_row_<0)return "ARD channel thermal state is unavailable.";
-    const auto nc=std::size_t(mesh_.n_cells()),row=std::size_t(temp_row_)*nc;
-    for(const auto& u:updates)
-        if(u.region<0||std::size_t(u.region)>=nc||cellLink(std::size_t(u.region))!=u.link||
-           !std::isfinite(u.celsius)||!std::isfinite(state_.cell_phi[row+u.region]+u.celsius))
+/**
+ * @brief Add validated per-cell signed temperature increments then publish all families.
+ * @param[in,out] ctx Matching initialized public quality/scalar arrays; publish updates reported
+ * means.
+ * @param[in] updates Stable native-link/global-cell identities and signed celsius increments
+ * degC.
+ * @return Empty success, descriptive message before writes for unavailable
+ * state/identity/nonfinite candidate. Repeated cell IDs allowed and prevalidated independently,
+ * so aggregate overflow is caller responsibility. Publish/allocation may throw after writes; no
+ * ledger/water/clock advance. Exclusive coupling phase.
+ */
+std::string ArdEngine::applyThermalIncrements(SimulationContext& ctx,
+                                              const std::vector<ChannelThermalIncrement>& updates) {
+    if (!initialized_ || temp_row_ < 0)
+        return "ARD channel thermal state is unavailable.";
+    const auto nc = std::size_t(mesh_.n_cells()), row = std::size_t(temp_row_) * nc;
+    for (const auto& u : updates)
+        if (u.region < 0 || std::size_t(u.region) >= nc ||
+            cellLink(std::size_t(u.region)) != u.link || !std::isfinite(u.celsius) ||
+            !std::isfinite(state_.cell_phi[row + u.region] + u.celsius))
             return "ARD thermal increment does not match its finite channel region.";
-    for(const auto& u:updates)state_.cell_phi[row+u.region]+=u.celsius;
-    publish(ctx);return {};
+    for (const auto& u : updates)
+        state_.cell_phi[row + u.region] += u.celsius;
+    publish(ctx);
+    return {};
 }
+/**
+ * @brief Export carried row concentrations over available wet thermal transport-cell regions.
+ * @param[in] ctx Stable canonical network row policy/names matching initialized owner.
+ * @return Owning link/global-cell/normalized-interval snapshots with volume m3, canonical row
+ * names and pollutant/native declared concentrations, age s and thermal degC. Requires thermal
+ * row even when other species carried; absent heat yields empty. No mutation/clock change;
+ * allocation can throw.
+ */
 std::vector<ChannelSpeciesRegion> ArdEngine::speciesRegions(const SimulationContext& ctx) const {
-    std::vector<ChannelSpeciesRegion> out;const auto thermal=thermalRegions();
-    if(!initialized_||temp_row_<0)return out;
-    const auto rows=canonicalRows(ctx,network1DEnables(ctx));
-    const auto nc=std::size_t(mesh_.n_cells());out.reserve(thermal.size());
-    for(const auto& t:thermal) {
-        if(t.region<0||std::size_t(t.region)>=nc)continue;
-        ChannelSpeciesRegion region;region.link=t.link;region.region=t.region;region.begin=t.begin;
-        region.end=t.end;region.volume=t.volume;region.row_names=rows.names;region.concentration.resize(state_.n_species);
-        for(int row=0;row<state_.n_species;++row)
-            region.concentration[row]=state_.cell_phi[std::size_t(row)*nc+std::size_t(t.region)];
+    std::vector<ChannelSpeciesRegion> out;
+    const auto thermal = thermalRegions();
+    if (!initialized_ || temp_row_ < 0)
+        return out;
+    const auto rows = canonicalRows(ctx, network1DEnables(ctx));
+    const auto nc = std::size_t(mesh_.n_cells());
+    out.reserve(thermal.size());
+    for (const auto& t : thermal) {
+        if (t.region < 0 || std::size_t(t.region) >= nc)
+            continue;
+        ChannelSpeciesRegion region;
+        region.link = t.link;
+        region.region = t.region;
+        region.begin = t.begin;
+        region.end = t.end;
+        region.volume = t.volume;
+        region.row_names = rows.names;
+        region.concentration.resize(state_.n_species);
+        for (int row = 0; row < state_.n_species; ++row)
+            region.concentration[row] =
+                state_.cell_phi[std::size_t(row) * nc + std::size_t(t.region)];
         out.push_back(std::move(region));
     }
     return out;
 }
-std::string ArdEngine::applySpeciesIncrements(SimulationContext& ctx,const std::vector<ChannelSpeciesIncrement>& updates) {
-    if(!initialized_||temp_row_<0)return "ARD channel species state is unavailable.";
-    const auto nc=std::size_t(mesh_.n_cells());std::vector<unsigned char> seen(nc,0);
-    for(const auto& u:updates) {
-        if(u.region<0||std::size_t(u.region)>=nc||cellLink(std::size_t(u.region))!=u.link||
-           u.concentration_delta.size()!=std::size_t(state_.n_species)||seen[std::size_t(u.region)]++)
+/**
+ * @brief Validate unique cell species deltas then apply nonthermal rows and republish.
+ * @param[in,out] ctx Matching initialized public family stores and canonical row layout.
+ * @param[in] updates Stable native-link/global-cell records, concentration_delta total-row
+ * tuples; thermal delta exactly0, finite/nonnegative candidate for every other carried row.
+ * @return Empty success or descriptive validation error before writes. Duplicate cell region
+ * refused. No external mass ledger, hydraulic water or clock booking. Allocations/publish can
+ * throw after accepted updates; exclusive completed coupling owner and matching row units
+ * required.
+ */
+std::string ArdEngine::applySpeciesIncrements(SimulationContext& ctx,
+                                              const std::vector<ChannelSpeciesIncrement>& updates) {
+    if (!initialized_ || temp_row_ < 0)
+        return "ARD channel species state is unavailable.";
+    const auto nc = std::size_t(mesh_.n_cells());
+    std::vector<unsigned char> seen(nc, 0);
+    for (const auto& u : updates) {
+        if (u.region < 0 || std::size_t(u.region) >= nc ||
+            cellLink(std::size_t(u.region)) != u.link ||
+            u.concentration_delta.size() != std::size_t(state_.n_species) ||
+            seen[std::size_t(u.region)]++)
             return "ARD species increment does not match a unique finite channel region.";
-        for(int row=0;row<state_.n_species;++row) {
-            const double delta=u.concentration_delta[row];
-            const double next=state_.cell_phi[std::size_t(row)*nc+std::size_t(u.region)]+delta;
-            if(!std::isfinite(delta)||!std::isfinite(next)||(row!=temp_row_&&next<0))
+        for (int row = 0; row < state_.n_species; ++row) {
+            const double delta = u.concentration_delta[row];
+            const double next =
+                state_.cell_phi[std::size_t(row) * nc + std::size_t(u.region)] + delta;
+            if (!std::isfinite(delta) || !std::isfinite(next) || (row != temp_row_ && next < 0))
                 return "ARD species increment is nonfinite or makes a carried mass negative.";
         }
-        if(u.concentration_delta[temp_row_]!=0)return "ARD species update cannot modify the temperature row.";
+        if (u.concentration_delta[temp_row_] != 0)
+            return "ARD species update cannot modify the temperature row.";
     }
-    for(const auto& u:updates)for(int row=0;row<state_.n_species;++row)if(row!=temp_row_)
-        state_.cell_phi[std::size_t(row)*nc+std::size_t(u.region)]+=u.concentration_delta[row];
-    publish(ctx);return {};
+    for (const auto& u : updates)
+        for (int row = 0; row < state_.n_species; ++row)
+            if (row != temp_row_)
+                state_.cell_phi[std::size_t(row) * nc + std::size_t(u.region)] +=
+                    u.concentration_delta[row];
+    publish(ctx);
+    return {};
 }
 
 namespace {
@@ -146,7 +222,7 @@ constexpr double kResyncNoiseRel = 1.0e-4;
 /// whose real temperatures live inside it is untouched, and a store outside
 /// it is numerically broken by the engine's own definition.
 constexpr double kTempFloorC = -50.0;
-constexpr double kTempCeilC  = 100.0;
+constexpr double kTempCeilC = 100.0;
 /// Legacy's ZERO_VOLUME (massbal.c): one litre, in ft3. Below this an
 /// element's mass/volume quotient is residue over residue — LEGACY treats
 /// the element as holding no water at all, which is why it stays bounded on
@@ -164,12 +240,28 @@ constexpr double kMinSlope = 1.0e-5;
 /// numerator vanishes faster than Y·U* in the denominator, so D → 0 is the
 /// physical limit and also the numerically safe one.
 constexpr double kMinFischerDepth = 0.01;
-}  // namespace
+} // namespace
 
 // ===========================================================================
 // init — mesh + state sizing
 // ===========================================================================
 
+/**
+ * @brief Build a transport mesh and seed finite-volume carried species/node stores.
+ * @param[in,out] ctx Fully resolved hydraulic geometry, pollutant/native species, scalar
+ * seeds/options, ARD config and output path. May ensure MSX state, resize/reseed public age/heat
+ * arrays and open detail file.
+ * @return True when mesh/state setup completes; false with warnings for active WALL profile, no
+ * rows, mesh errors or no cells. Caller decides legacy fallback and exposes warnings; earlier
+ * setup may remain.
+ * @note Replaces owned mesh/inventories/scratch; rows pollutants, MSX, optional age, final
+ * temperature. Mesh lengths/dispersion converted display->native ft; TARGET_DX ignored under
+ * hydraulic FV with warning. Resolves boundary/source mesh mapping, preserves age hotstart seeds
+ * but initializes thermal overrides. DETAILED_OUTPUT opens/truncates configured CSV and writes
+ * header; open failure only warns/disables writer. Allocation/IO/dependency exceptions can leave
+ * partial state; initialized=true only at final success. No hydraulic water or engine clock
+ * advance, exclusive initial lifecycle with stable dimensions.
+ */
 bool ArdEngine::init(SimulationContext& ctx) {
     warnings_.clear();
     initialized_ = false;
@@ -190,10 +282,9 @@ bool ArdEngine::init(SimulationContext& ctx) {
     int nm = 0;
     if (transport::ardReactionsActive(ctx)) {
         if (en.msx_has_wall) {
-            warnings_.push_back(
-                "QUALITY_SOLVER EULERIAN_ARD: WALL species have no transport "
-                "semantics under this engine yet — falling back to LEGACY, "
-                "which runs them per element (R4).");
+            warnings_.push_back("QUALITY_SOLVER EULERIAN_ARD: WALL species have no transport "
+                                "semantics under this engine yet — falling back to LEGACY, "
+                                "which runs them per element (R4).");
             return false;
         }
         nm = en.n_msx;
@@ -210,10 +301,11 @@ bool ArdEngine::init(SimulationContext& ctx) {
     // for free, at the same dispersion coefficient as a solute.
     const int nt = en.temperature ? 1 : 0;
     const int ns = np + nm + na + nt;
-    nm_       = nm;
-    age_row_  = (na > 0) ? np + nm : -1;
+    nm_ = nm;
+    age_row_ = (na > 0) ? np + nm : -1;
     temp_row_ = (nt > 0) ? np + nm + na : -1;
-    if (ns <= 0) return false;
+    if (ns <= 0)
+        return false;
 
     // Mesh options are entered in DISPLAY units and must convert to internal
     // feet before meshing — exactly what Router::initFv does for the FV
@@ -225,24 +317,24 @@ bool ArdEngine::init(SimulationContext& ctx) {
     // warns.
     fv::FvOptions mesh_opts = ctx.options.fv;
     {
-        const double ucf_len0 = ucf::Ucf[ucf::LENGTH][ucf::getUnitSystem(
-            static_cast<int>(ctx.options.flow_units))];
-        mesh_opts.cell_length   /= ucf_len0;
+        const double ucf_len0 =
+            ucf::Ucf[ucf::LENGTH][ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units))];
+        mesh_opts.cell_length /= ucf_len0;
         mesh_opts.slot_celerity /= ucf_len0;
-        mesh_opts.dispersion    /= ucf_len0 * ucf_len0;
+        mesh_opts.dispersion /= ucf_len0 * ucf_len0;
         if (ctx.ard_config.configured && ctx.ard_config.target_dx > 0.0) {
             if (ctx.options.routing_model == RoutingModel::FV) {
-                warnings_.push_back(
-                    "[TRANSPORT_OPTIONS] TARGET_DX is ignored under "
-                    "FLOW_ROUTING FV — the hydraulic solver's mesh governs "
-                    "transport (FV_CELL_LENGTH).");
+                warnings_.push_back("[TRANSPORT_OPTIONS] TARGET_DX is ignored under "
+                                    "FLOW_ROUTING FV — the hydraulic solver's mesh governs "
+                                    "transport (FV_CELL_LENGTH).");
             } else {
                 mesh_opts.cell_length = ctx.ard_config.target_dx / ucf_len0;
             }
         }
     }
     const auto report = fv::buildNetworkMesh(ctx, mesh_opts, mesh_);
-    for (const auto& w : report.warnings) warnings_.push_back(w);
+    for (const auto& w : report.warnings)
+        warnings_.push_back(w);
     if (!report.errors.empty()) {
         for (const auto& e : report.errors)
             warnings_.push_back("EULERIAN_ARD mesh error: " + e);
@@ -250,10 +342,10 @@ bool ArdEngine::init(SimulationContext& ctx) {
     }
     const int nc = mesh_.n_cells();
     const int nf = mesh_.n_faces();
-    const int nn = static_cast<int>(mesh_.node_face_ptr.empty()
-                                        ? 0
-                                        : mesh_.node_face_ptr.size() - 1);
-    if (nc <= 0) return false;
+    const int nn =
+        static_cast<int>(mesh_.node_face_ptr.empty() ? 0 : mesh_.node_face_ptr.size() - 1);
+    if (nc <= 0)
+        return false;
 
     state_.resize(nc, nn, ns);
 
@@ -280,7 +372,8 @@ bool ArdEngine::init(SimulationContext& ctx) {
     cell_u_.assign(unc, 0.0);
     cell_active_.assign(unc, char{1});
     active_faces_.resize(unf);
-    for (int f = 0; f < nf; ++f) active_faces_[static_cast<std::size_t>(f)] = f;
+    for (int f = 0; f < nf; ++f)
+        active_faces_[static_cast<std::size_t>(f)] = f;
 
     node_mass_.assign(static_cast<std::size_t>(nn) * uns, 0.0);
     node_vol_.assign(static_cast<std::size_t>(nn), 0.0);
@@ -296,7 +389,8 @@ bool ArdEngine::init(SimulationContext& ctx) {
     // hotstart overwrites. Sizing it here is idempotent and makes the seed
     // path identical under all three engines (D-IQ5, D-IQ6).
     const auto unm_msx = static_cast<std::size_t>(nm);
-    if (nm > 0) transport::ensureMsxState(ctx);
+    if (nm > 0)
+        transport::ensureMsxState(ctx);
 
     // A2a: hotstart-loaded ages win over INITIAL_STATE. Snapshot them
     // BEFORE the resize below wipes the arrays, and consume the flag.
@@ -308,49 +402,48 @@ bool ArdEngine::init(SimulationContext& ctx) {
         hs_link_age = ctx.water_age_state.link_age;
     }
     const auto age_seed_link = [&](int link) {
-        if (age_from_hs &&
-            static_cast<std::size_t>(link) < hs_link_age.size())
+        if (age_from_hs && static_cast<std::size_t>(link) < hs_link_age.size())
             return hs_link_age[static_cast<std::size_t>(link)];
         // E-A3: [INITIAL_QUALITY] __WATER_AGE__ rows override the global
         // (hotstart wins above, D-IQ7).
         return initialAgeSecondsFor(
             ctx, true, link,
-            ctx.water_age_config.global_age[static_cast<int>(
-                WaterAgeSource::INITIAL_STATE)]);
+            ctx.water_age_config.global_age[static_cast<int>(WaterAgeSource::INITIAL_STATE)]);
     };
     // H4: temperature's INITIAL_STATE. Unlike age (whose default is 0, so
     // an unseeded row merely looks plausible) HeatConfigData's defaults are
     // deliberately NON-zero — 0 degC is an ordinary temperature — so the
     // seed must come from the config, never from a zeroed array.
-    const double temp_seed = ctx.heat_config.global_temp[static_cast<int>(
-        HeatSource::INITIAL_STATE)];
+    const double temp_seed =
+        ctx.heat_config.global_temp[static_cast<int>(HeatSource::INITIAL_STATE)];
     const auto age_seed_node = [&](std::size_t nd) {
-        if (age_from_hs && nd < hs_node_age.size()) return hs_node_age[nd];
+        if (age_from_hs && nd < hs_node_age.size())
+            return hs_node_age[nd];
         return initialAgeSecondsFor(
             ctx, false, static_cast<int>(nd),
-            ctx.water_age_config.global_age[static_cast<int>(
-                WaterAgeSource::INITIAL_STATE)]);
+            ctx.water_age_config.global_age[static_cast<int>(WaterAgeSource::INITIAL_STATE)]);
     };
 
     const int n_links = ctx.n_links();
     for (int r = 0; r < static_cast<int>(mesh_.conduit_link.size()); ++r) {
         const auto ur = static_cast<std::size_t>(r);
         const int link = mesh_.conduit_link[ur];
-        if (link < 0 || link >= n_links) continue;
-        const int  b   = mesh_.conduit_cell_begin[ur];
-        const int  n   = mesh_.conduit_cell_count[ur];
+        if (link < 0 || link >= n_links)
+            continue;
+        const int b = mesh_.conduit_cell_begin[ur];
+        const int n = mesh_.conduit_cell_count[ur];
         double length = 0.0;
         for (int i = 0; i < n; ++i)
             length += mesh_.cell_dx[static_cast<std::size_t>(b + i)];
         const double vol = ctx.links.volume[static_cast<std::size_t>(link)];
-        const double a0  = (length > 0.0) ? vol / length : 0.0;
+        const double a0 = (length > 0.0) ? vol / length : 0.0;
         for (int i = 0; i < n; ++i) {
             const auto uc = static_cast<std::size_t>(b + i);
             state_.cell_a[uc] = a0;
             for (int s = 0; s < np; ++s) {
                 state_.cell_phi[static_cast<std::size_t>(s) * unc + uc] =
-                    ctx.links.conc[static_cast<std::size_t>(link) * unp +
-                                   static_cast<std::size_t>(s)];
+                    ctx.links
+                        .conc[static_cast<std::size_t>(link) * unp + static_cast<std::size_t>(s)];
             }
             // U2: MSX rows seed from the element state (msx_link_conc),
             // which ensureMsxState fills with GLOBAL + the per-element rows
@@ -358,8 +451,8 @@ bool ArdEngine::init(SimulationContext& ctx) {
             // the same numbers the inline fill produced — and which a V4
             // hotstart overwrites before this lazy init (D-IQ5).
             for (int m = 0; m < nm; ++m) {
-                const std::size_t xi = static_cast<std::size_t>(link) * unm_msx +
-                                       static_cast<std::size_t>(m);
+                const std::size_t xi =
+                    static_cast<std::size_t>(link) * unm_msx + static_cast<std::size_t>(m);
                 state_.cell_phi[static_cast<std::size_t>(np + m) * unc + uc] =
                     xi < ctx.reactions.msx_link_conc.size()
                         ? ctx.reactions.msx_link_conc[xi]
@@ -370,7 +463,7 @@ bool ArdEngine::init(SimulationContext& ctx) {
                     age_seed_link(link);
             if (temp_row_ >= 0)
                 state_.cell_phi[static_cast<std::size_t>(temp_row_) * unc + uc] =
-                    initialTempFor(ctx, true, link, temp_seed);   // E-A3
+                    initialTempFor(ctx, true, link, temp_seed); // E-A3
         }
     }
     for (int nd = 0; nd < nn && nd < ctx.n_nodes(); ++nd) {
@@ -381,8 +474,7 @@ bool ArdEngine::init(SimulationContext& ctx) {
         node_vol_[und] = node::storeVolume(ctx.nodes, nd);
         for (int s = 0; s < np; ++s)
             node_mass_[und * uns + static_cast<std::size_t>(s)] =
-                ctx.nodes.conc[und * unp + static_cast<std::size_t>(s)] *
-                node_vol_[und];
+                ctx.nodes.conc[und * unp + static_cast<std::size_t>(s)] * node_vol_[und];
         // U2: node MSX seeds from msx_node_conc (see the link loop).
         for (int m = 0; m < nm; ++m) {
             const std::size_t xi = und * unm_msx + static_cast<std::size_t>(m);
@@ -397,12 +489,12 @@ bool ArdEngine::init(SimulationContext& ctx) {
                 age_seed_node(und) * node_vol_[und];
         if (temp_row_ >= 0)
             node_mass_[und * uns + static_cast<std::size_t>(temp_row_)] =
-                initialTempFor(ctx, false, nd, temp_seed) *       // E-A3
+                initialTempFor(ctx, false, nd, temp_seed) * // E-A3
                 node_vol_[und];
     }
     if (age_row_ >= 0)
         ctx.water_age_state.resize(ctx.n_nodes(), ctx.n_links(),
-                                   ctx.n_subcatches());  // A3: keep watershed rows
+                                   ctx.n_subcatches()); // A3: keep watershed rows
     if (temp_row_ >= 0) {
         ctx.heat_state.resize(ctx.n_nodes(), ctx.n_links(), temp_seed);
         // E-A3: mirror per-element temperature rows into the state arrays so
@@ -420,26 +512,24 @@ bool ArdEngine::init(SimulationContext& ctx) {
     // E3: dispersion configuration from the transport.ard component. Values
     // arrive in project display units (len²/s); convert to internal ft²/s
     // exactly the way Router::initFv converts FV_DISPERSION.
-    disp_active_    = false;
-    disp_mode_      = static_cast<int>(ArdDispersionMode::OFF);
+    disp_active_ = false;
+    disp_mode_ = static_cast<int>(ArdDispersionMode::OFF);
     disp_global_ft_ = 0.0;
     conduit_disp_ft_.assign(mesh_.conduit_link.size(), -1.0);
     cell_disp_.assign(unc, 0.0);
     if (ctx.ard_config.configured && ctx.ard_config.any_dispersion()) {
-        const double ucf_len = ucf::Ucf[ucf::LENGTH][ucf::getUnitSystem(
-            static_cast<int>(ctx.options.flow_units))];
-        disp_mode_      = static_cast<int>(ctx.ard_config.dispersion_mode);
-        disp_global_ft_ =
-            ctx.ard_config.dispersion_value / (ucf_len * ucf_len);
+        const double ucf_len =
+            ucf::Ucf[ucf::LENGTH][ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units))];
+        disp_mode_ = static_cast<int>(ctx.ard_config.dispersion_mode);
+        disp_global_ft_ = ctx.ard_config.dispersion_value / (ucf_len * ucf_len);
         // Overrides are keyed by LINK index; invert mesh conduit_link so
         // each mesh conduit row learns its override (if any).
-        for (std::size_t i = 0; i < ctx.ard_config.conduit_disp_link.size();
-             ++i) {
+        for (std::size_t i = 0; i < ctx.ard_config.conduit_disp_link.size(); ++i) {
             const int link = ctx.ard_config.conduit_disp_link[i];
-            const double d_ft =
-                ctx.ard_config.conduit_disp_value[i] / (ucf_len * ucf_len);
+            const double d_ft = ctx.ard_config.conduit_disp_value[i] / (ucf_len * ucf_len);
             for (std::size_t r = 0; r < mesh_.conduit_link.size(); ++r)
-                if (mesh_.conduit_link[r] == link) conduit_disp_ft_[r] = d_ft;
+                if (mesh_.conduit_link[r] == link)
+                    conduit_disp_ft_[r] = d_ft;
         }
         disp_active_ = true;
     }
@@ -450,15 +540,24 @@ bool ArdEngine::init(SimulationContext& ctx) {
     // E5a: boundary/source rows onto the mesh. The rows were resolved to
     // indices at open (resolveArdTransportRows); here they map to species
     // ROWS (np + msx) and, for sources, to mesh conduit rows + lengths.
-    bc_node_.clear(); bc_srow_.clear(); bc_ts_.clear();
-    bc_value_.clear(); bc_now_.clear();
-    src_crow_.clear(); src_srow_.clear(); src_ts_.clear();
-    src_value_.clear(); src_len_.clear(); src_now_.clear();
+    bc_node_.clear();
+    bc_srow_.clear();
+    bc_ts_.clear();
+    bc_value_.clear();
+    bc_now_.clear();
+    src_crow_.clear();
+    src_srow_.clear();
+    src_ts_.clear();
+    src_value_.clear();
+    src_len_.clear();
+    src_now_.clear();
     if (nm > 0) {
         const auto& cfg = ctx.ard_config;
         for (std::size_t i = 0; i < cfg.bc_node.size(); ++i) {
-            if (cfg.bc_msx[i] < 0 || cfg.bc_msx[i] >= nm) continue;
-            if (cfg.bc_node[i] < 0 || cfg.bc_node[i] >= nn) continue;
+            if (cfg.bc_msx[i] < 0 || cfg.bc_msx[i] >= nm)
+                continue;
+            if (cfg.bc_node[i] < 0 || cfg.bc_node[i] >= nn)
+                continue;
             bc_node_.push_back(cfg.bc_node[i]);
             bc_srow_.push_back(np + cfg.bc_msx[i]);
             bc_value_.push_back(cfg.bc_value[i]);
@@ -466,7 +565,8 @@ bool ArdEngine::init(SimulationContext& ctx) {
         }
         bc_now_.assign(bc_node_.size(), 0.0);
         for (std::size_t i = 0; i < cfg.src_link.size(); ++i) {
-            if (cfg.src_msx[i] < 0 || cfg.src_msx[i] >= nm) continue;
+            if (cfg.src_msx[i] < 0 || cfg.src_msx[i] >= nm)
+                continue;
             // Find the mesh conduit row carrying this link.
             int crow = -1;
             for (std::size_t r2 = 0; r2 < mesh_.conduit_link.size(); ++r2)
@@ -474,7 +574,8 @@ bool ArdEngine::init(SimulationContext& ctx) {
                     crow = static_cast<int>(r2);
                     break;
                 }
-            if (crow < 0) continue;
+            if (crow < 0)
+                continue;
             double length = 0.0;
             const int b2 = mesh_.conduit_cell_begin[static_cast<std::size_t>(crow)];
             const int n2 = mesh_.conduit_cell_count[static_cast<std::size_t>(crow)];
@@ -493,19 +594,17 @@ bool ArdEngine::init(SimulationContext& ctx) {
     // proceeds without detail output), never fatal.
     detail_active_ = false;
     detail_time_s_ = 0.0;
-    if (detail_out_.is_open()) detail_out_.close();
-    if (ctx.ard_config.configured &&
-        !ctx.ard_config.detailed_output_path.empty()) {
-        detail_out_.open(ctx.ard_config.detailed_output_path,
-                         std::ios::out | std::ios::trunc);
+    if (detail_out_.is_open())
+        detail_out_.close();
+    if (ctx.ard_config.configured && !ctx.ard_config.detailed_output_path.empty()) {
+        detail_out_.open(ctx.ard_config.detailed_output_path, std::ios::out | std::ios::trunc);
         if (detail_out_.is_open()) {
             detail_out_ << "time_s,element,kind,cell,species,conc\n";
             detail_active_ = true;
         } else {
-            warnings_.push_back(
-                "[TRANSPORT_OPTIONS] DETAILED_OUTPUT: could not open '" +
-                ctx.ard_config.detailed_output_path +
-                "' for writing — detail output disabled this run.");
+            warnings_.push_back("[TRANSPORT_OPTIONS] DETAILED_OUTPUT: could not open '" +
+                                ctx.ard_config.detailed_output_path +
+                                "' for writing — detail output disabled this run.");
         }
     }
 
@@ -517,22 +616,29 @@ bool ArdEngine::init(SimulationContext& ctx) {
 // updateTransportRows — per-routing-step BC/source evaluation (E5a)
 // ===========================================================================
 
+/**
+ * @brief Evaluate held ARD boundary/source values at current absolute model date.
+ * @param[in,out] ctx Stable resolved time-series tables; cursor lookup may mutate table cursors.
+ * @note Writes owner bc_now/source_now. Boundary concentration floors0; source series converts
+ * declared mass/s to concentration*ft3/s by kLitersPerFt3, signed extraction retained. Invalid
+ * TS uses stored constant. No generic finite repair, external clock advance or file read by this
+ * wrapper; exclusive owner and table cursor phase, configured arrays parallel and covered.
+ */
 void ArdEngine::updateTransportRows(SimulationContext& ctx) {
     for (std::size_t i = 0; i < bc_node_.size(); ++i) {
         double c = bc_value_[i];
         const int ts = bc_ts_[i];
         if (ts >= 0 && ts < static_cast<int>(ctx.tables.count()))
-            c = table_tseries_lookup_cursor(ctx.tables[ts],
-                                            ctx.current_date);
+            c = table_tseries_lookup_cursor(ctx.tables[ts], ctx.current_date);
         bc_now_[i] = std::max(0.0, c);
     }
     for (std::size_t i = 0; i < src_crow_.size(); ++i) {
-        double r = src_value_[i];   // already internal conc·ft³/s
+        double r = src_value_[i]; // already internal conc·ft³/s
         const int ts = src_ts_[i];
         if (ts >= 0 && ts < static_cast<int>(ctx.tables.count()))
             r = table_tseries_lookup_cursor(ctx.tables[ts],
                                             ctx.current_date) /
-                kLitersPerFt3;      // ts values are species mass/s
+                kLitersPerFt3; // ts values are species mass/s
         // P1.4: the sign is CARRIED. This was `std::max(0.0, r)`, which
         // silently zeroed a negative rate before the apply loop ever saw
         // it — so a [TRANSPORT_SOURCES] extraction row did nothing at all,
@@ -552,6 +658,17 @@ void ArdEngine::updateTransportRows(SimulationContext& ctx) {
 // projectHydraulics — continuity-consistent face fluxes (plan §3.2)
 // ===========================================================================
 
+/**
+ * @brief Project held link flow/volume change to continuity-consistent mesh face rates.
+ * @param[in] ctx Completed native link signed ft3/s and old/new volumes ft3, stable mesh
+ * mapping.
+ * @param[in] dt Positive finite routing seconds; nonpositive omits volume-change correction.
+ * @note Resets owner face rates and builds linearly varying conduit flux q+(volume
+ * delta/dt)*(.5-i/n), shared splice faces averaged. Fills hydraulic-flux/state scratch and
+ * native ft/s cell velocities from current represented areas, no cell area change here.
+ * Allocates face marker; exceptions may leave partial scratch. No context/water/clock mutation,
+ * exclusive prepared mesh owner.
+ */
 void ArdEngine::projectHydraulics(SimulationContext& ctx, double dt) {
     const int nf = mesh_.n_faces();
     std::fill(face_q_.begin(), face_q_.end(), 0.0);
@@ -560,22 +677,21 @@ void ArdEngine::projectHydraulics(SimulationContext& ctx, double dt) {
     for (int r = 0; r < static_cast<int>(mesh_.conduit_link.size()); ++r) {
         const auto ur = static_cast<std::size_t>(r);
         const int link = mesh_.conduit_link[ur];
-        if (link < 0) continue;
+        if (link < 0)
+            continue;
         const auto ul = static_cast<std::size_t>(link);
         const int b = mesh_.conduit_cell_begin[ur];
         const int n = mesh_.conduit_cell_count[ur];
-        if (n <= 0) continue;
+        if (n <= 0)
+            continue;
 
         // Link flow + volume change over this routing step. The ramp
         // F_i = Q + dV/dt·(1/2 − i/n), i = 0..n (cell-boundary index along
         // the conduit axis), gives every cell exactly dV/n of storage change
         // and centres the profile on the solver's link flow. Uniform-field
         // preservation and exact conservation both follow (E1 gates).
-        const double q  = ctx.links.flow[ul];
-        const double dv = (dt > 0.0)
-                              ? (ctx.links.volume[ul] -
-                                 ctx.links.old_volume[ul]) / dt
-                              : 0.0;
+        const double q = ctx.links.flow[ul];
+        const double dv = (dt > 0.0) ? (ctx.links.volume[ul] - ctx.links.old_volume[ul]) / dt : 0.0;
 
         for (int i = 0; i <= n; ++i) {
             // The face between cell (b+i-1) and (b+i); ends map through the
@@ -587,28 +703,25 @@ void ArdEngine::projectHydraulics(SimulationContext& ctx, double dt) {
             int face = -1;
             if (i < n) {
                 const auto uc = static_cast<std::size_t>(b + i);
-                face = (mesh_.cell_side0[uc] == 1) ? mesh_.cell_face0[uc]
-                                                   : mesh_.cell_face1[uc];
+                face = (mesh_.cell_side0[uc] == 1) ? mesh_.cell_face0[uc] : mesh_.cell_face1[uc];
                 // upstream face of cell b+i (between b+i-1 and b+i)
             } else {
                 const auto uc = static_cast<std::size_t>(b + n - 1);
-                face = (mesh_.cell_side0[uc] == 0) ? mesh_.cell_face0[uc]
-                                                   : mesh_.cell_face1[uc];
+                face = (mesh_.cell_side0[uc] == 0) ? mesh_.cell_face0[uc] : mesh_.cell_face1[uc];
                 // downstream face of the last cell
             }
-            if (face < 0 || face >= nf) continue;
+            if (face < 0 || face >= nf)
+                continue;
             const auto uf = static_cast<std::size_t>(face);
-            const double frac = (n > 0)
-                                    ? (0.5 - static_cast<double>(i) /
-                                                 static_cast<double>(n))
-                                    : 0.0;
+            const double frac =
+                (n > 0) ? (0.5 - static_cast<double>(i) / static_cast<double>(n)) : 0.0;
             const double fq = q + dv * frac;
             if (face_set[uf]) {
                 // Splice face shared with the neighbouring conduit (virtual
                 // junction): take the mean of the two conduits' end values.
                 face_q_[uf] = 0.5 * (face_q_[uf] + fq);
             } else {
-                face_q_[uf]  = fq;
+                face_q_[uf] = fq;
                 face_set[uf] = char{1};
             }
         }
@@ -620,10 +733,10 @@ void ArdEngine::projectHydraulics(SimulationContext& ctx, double dt) {
     for (int f = 0; f < nf; ++f) {
         const auto uf = static_cast<std::size_t>(f);
         const double fq = face_q_[uf];
-        f_mass_[uf]  = fq;
+        f_mass_[uf] = fq;
         f_sstar_[uf] = fq;
         k::FaceFlux fl;
-        fl.mass  = fq;
+        fl.mass = fq;
         fl.sstar = fq;
         f_flux_[uf] = fl;
 
@@ -650,10 +763,10 @@ void ArdEngine::projectHydraulics(SimulationContext& ctx, double dt) {
         const auto uc = static_cast<std::size_t>(c);
         const double a = state_.cell_a[uc];
         cell_u_[uc] = (a > k::kDryArea)
-                          ? 0.5 * (face_q_[static_cast<std::size_t>(
-                                       mesh_.cell_face0[uc])] +
-                                   face_q_[static_cast<std::size_t>(
-                                       mesh_.cell_face1[uc])]) / a
+                          ? 0.5 *
+                                (face_q_[static_cast<std::size_t>(mesh_.cell_face0[uc])] +
+                                 face_q_[static_cast<std::size_t>(mesh_.cell_face1[uc])]) /
+                                a
                           : 0.0;
     }
 }
@@ -662,13 +775,23 @@ void ArdEngine::projectHydraulics(SimulationContext& ctx, double dt) {
 // updateDispersion — per-cell coefficients for this routing step (E3)
 // ===========================================================================
 
+/**
+ * @brief Rebuild per-cell longitudinal dispersion coefficients from configured mode and held
+ * hydraulics.
+ * @param[in] ctx Matching native conduit depth ft, volume ft3, flow ft3/s, length/slope and
+ * subtype arrays.
+ * @note Per-conduit override>=0 wins; VALUE uses converted global ft2/s; FISCHER computes
+ * .011*v²*B²/ (depth*sqrt(g*depth*max(abs(slope),1e-5))) for wet depth>.01ft, otherwise0.
+ * Broadcasts per-conduit coefficient to cells, no general finite validation or allocation. No
+ * context/clock mutation; exclusive owner.
+ */
 void ArdEngine::updateDispersion(SimulationContext& ctx) {
     const auto mode = static_cast<ArdDispersionMode>(disp_mode_);
     for (int r = 0; r < static_cast<int>(mesh_.conduit_link.size()); ++r) {
         const auto ur = static_cast<std::size_t>(r);
         double d = 0.0;
         if (conduit_disp_ft_[ur] >= 0.0) {
-            d = conduit_disp_ft_[ur];        // user override always wins
+            d = conduit_disp_ft_[ur]; // user override always wins
         } else if (mode == ArdDispersionMode::VALUE) {
             d = disp_global_ft_;
         } else if (mode == ArdDispersionMode::FISCHER) {
@@ -683,25 +806,20 @@ void ArdEngine::updateDispersion(SimulationContext& ctx) {
             // and monotone — the worst case is over-mixing toward uniform,
             // never an overshoot.
             const int link = mesh_.conduit_link[ur];
-            const int cr2  = (link >= 0)
-                                 ? ctx.link_subtypes.conduit_row(link)
-                                 : -1;
+            const int cr2 = (link >= 0) ? ctx.link_subtypes.conduit_row(link) : -1;
             if (link >= 0 && cr2 >= 0) {
-                const auto ul   = static_cast<std::size_t>(link);
-                const auto ucr  = static_cast<std::size_t>(cr2);
-                const double len =
-                    ctx.link_subtypes.conduits.length[ucr];
+                const auto ul = static_cast<std::size_t>(link);
+                const auto ucr = static_cast<std::size_t>(cr2);
+                const double len = ctx.link_subtypes.conduits.length[ucr];
                 const double vol = ctx.links.volume[ul];
-                const double y   = ctx.links.depth[ul];
-                const double a   =
-                    (len > 0.0) ? vol / len : 0.0;
+                const double y = ctx.links.depth[ul];
+                const double a = (len > 0.0) ? vol / len : 0.0;
                 if (a > k::kDryArea && y > kMinFischerDepth) {
                     const double vel = std::fabs(ctx.links.flow[ul]) / a;
                     if (vel > 0.0) {
                         const double b_w = a / y;
-                        const double s = std::max(
-                            std::fabs(ctx.link_subtypes.conduits.slope[ucr]),
-                            kMinSlope);
+                        const double s =
+                            std::max(std::fabs(ctx.link_subtypes.conduits.slope[ucr]), kMinSlope);
                         const double ustar = std::sqrt(kGravity * y * s);
                         d = 0.011 * vel * vel * b_w * b_w / (y * ustar);
                     }
@@ -719,8 +837,26 @@ void ArdEngine::updateDispersion(SimulationContext& ctx) {
 // substep — advection + node mixing over dt_sub
 // ===========================================================================
 
-void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
-                        double load_frac) {
+/**
+ * @brief Advance reconstructed/FCT advection, node mixing, sources and implicit dispersion once.
+ * @param[in,out] ctx Prepared completed hydraulic/source arrays and quality/clamp/booster
+ * ledgers; may append extraction diagnostic, but does not change hydraulic water or engine
+ * clock.
+ * @param[in] dt_sub Positive finite accepted transport subinterval s.
+ * @param[in] load_frac Positive fraction of hydraulic interval for already-integrated
+ * qual_vol_in; source mass/scalar numerators use dt_sub independently. Fractions over parent
+ * step sum1.
+ * @note Requires initialized owner, projected rates and refreshed BC/source/dispersion.
+ * Virtual-node lateral receipts split half to adjacent cells; physical nodes consume external
+ * and face inflows, set outgoing concentration then lose flux, structures transfer bounded donor
+ * inventory. Cells/physical nodes floor nonthermal mass and clamp temperature[-50,100]degC
+ * during advection. Configured boundary mass adds to existing native source rates; boosters run
+ * after structure exchange. Distributed signed source rates applied over wet conduit cells,
+ * extraction limited to available mass, then implicit dispersion Lie-split. No complete ledger
+ * for every numerical clip. Shared scratch/allocations and dependencies can throw after partial
+ * inventories/ledgers; no rollback or concurrent owner calls.
+ */
+void ArdEngine::substep(SimulationContext& ctx, double dt_sub, double load_frac) {
     const int ns = state_.n_species;
     const int nc = mesh_.n_cells();
     const int nf = mesh_.n_faces();
@@ -730,31 +866,31 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
 
     // 1. Interior reconstruction + FCT through the shared kernels.
     fvk::SpeciesKernelView v;
-    v.mesh          = &mesh_;
-    v.state         = &state_;
+    v.mesh = &mesh_;
+    v.state = &state_;
     v.scalar_scheme = ctx.options.fv.scalar_scheme;
-    v.limiter       = ctx.options.fv.limiter;
-    v.dispersion    = 0.0;   // scalar path unused; per-cell array below (E3)
+    v.limiter = ctx.options.fv.limiter;
+    v.dispersion = 0.0; // scalar path unused; per-cell array below (E3)
     v.cell_dispersion = disp_active_ ? &cell_disp_ : nullptr;
-    v.hllc          = true;  // sstar = flux sign (projected path)
-    v.f_mass        = &f_mass_;
-    v.f_sstar       = &f_sstar_;
-    v.f_state_l     = &f_state_l_;
-    v.f_state_r     = &f_state_r_;
-    v.f_flux        = &f_flux_;
-    v.cell_u        = &cell_u_;
-    v.cell_active   = &cell_active_;
-    v.active_faces  = &active_faces_;
-    v.f_phi_l       = &f_phi_l_;
-    v.f_phi_r       = &f_phi_r_;
-    v.f_phi_flux    = &f_phi_flux_;
-    v.cell_slope    = &cell_slope_;
-    v.lo_flux       = &lo_flux_;
-    v.anti_flux     = &anti_flux_;
-    v.td            = &td_;
-    v.anew          = &anew_;
-    v.rplus         = &rplus_;
-    v.rminus        = &rminus_;
+    v.hllc = true; // sstar = flux sign (projected path)
+    v.f_mass = &f_mass_;
+    v.f_sstar = &f_sstar_;
+    v.f_state_l = &f_state_l_;
+    v.f_state_r = &f_state_r_;
+    v.f_flux = &f_flux_;
+    v.cell_u = &cell_u_;
+    v.cell_active = &cell_active_;
+    v.active_faces = &active_faces_;
+    v.f_phi_l = &f_phi_l_;
+    v.f_phi_r = &f_phi_r_;
+    v.f_phi_flux = &f_phi_flux_;
+    v.cell_slope = &cell_slope_;
+    v.lo_flux = &lo_flux_;
+    v.anti_flux = &anti_flux_;
+    v.td = &td_;
+    v.anew = &anew_;
+    v.rplus = &rplus_;
+    v.rminus = &rminus_;
     fvk::reconstructScalars(v, dt_sub);
 
     const int nn = static_cast<int>(node_mass_.size() / std::max<std::size_t>(uns, 1));
@@ -810,26 +946,27 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
         const int np_v = ctx.n_pollutants();
         const auto unp_v = static_cast<std::size_t>(np_v);
         auto ensure = [&]() {
-            if (has_vj_src_) return;
+            if (has_vj_src_)
+                return;
             cell_src_vol_.assign(unc, 0.0);
             cell_src_mass_.assign(uns * unc, 0.0);
             has_vj_src_ = true;
         };
         auto credit_mass = [&](std::size_t uf, std::size_t s_row, double amount) {
-            if (amount == 0.0) return;
+            if (amount == 0.0)
+                return;
             ensure();
             for (const int c : {mesh_.face_cl[uf], mesh_.face_cr[uf]})
                 if (c >= 0)
-                    cell_src_mass_[s_row * unc + static_cast<std::size_t>(c)] +=
-                        0.5 * amount;
+                    cell_src_mass_[s_row * unc + static_cast<std::size_t>(c)] += 0.5 * amount;
         };
         for (int nd = 0; nd < nn && nd < ctx.n_nodes(); ++nd) {
             const auto und = static_cast<std::size_t>(nd);
-            if (und >= mesh_.node_kind.size() ||
-                mesh_.node_kind[und] != fv::kNodeVirtual)
+            if (und >= mesh_.node_kind.size() || mesh_.node_kind[und] != fv::kNodeVirtual)
                 continue;
             const int f = mesh_.node_vj_face[und];
-            if (f < 0) continue;
+            if (f < 0)
+                continue;
             const auto uf = static_cast<std::size_t>(f);
             const double vol = load_frac * ctx.nodes.qual_vol_in[und];
             if (vol != 0.0) {
@@ -840,23 +977,21 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
             }
             for (int s = 0; s < np_v; ++s)
                 credit_mass(uf, static_cast<std::size_t>(s),
-                            dt_sub * ctx.nodes.qual_mass_in[und * unp_v +
-                                                            static_cast<std::size_t>(s)]);
+                            dt_sub *
+                                ctx.nodes.qual_mass_in[und * unp_v + static_cast<std::size_t>(s)]);
             // U2: species rows np..np+nm-1 take the [INFLOWS] species loads.
-            if (nm_ > 0 && ctx.reactions.msx_ext_mass_in.size() >=
-                               static_cast<std::size_t>(ctx.n_nodes()) *
-                                   static_cast<std::size_t>(nm_))
+            if (nm_ > 0 &&
+                ctx.reactions.msx_ext_mass_in.size() >=
+                    static_cast<std::size_t>(ctx.n_nodes()) * static_cast<std::size_t>(nm_))
                 for (int m = 0; m < nm_; ++m)
-                    credit_mass(uf, static_cast<std::size_t>(np_v + m),
-                                dt_sub * ctx.reactions.msx_ext_mass_in[
-                                    und * static_cast<std::size_t>(nm_) +
-                                    static_cast<std::size_t>(m)]);
-            if (age_row_ >= 0 &&
-                und < ctx.water_age_state.node_age_vol_in.size())
+                    credit_mass(
+                        uf, static_cast<std::size_t>(np_v + m),
+                        dt_sub * ctx.reactions.msx_ext_mass_in[und * static_cast<std::size_t>(nm_) +
+                                                               static_cast<std::size_t>(m)]);
+            if (age_row_ >= 0 && und < ctx.water_age_state.node_age_vol_in.size())
                 credit_mass(uf, static_cast<std::size_t>(age_row_),
                             dt_sub * ctx.water_age_state.node_age_vol_in[und]);
-            if (temp_row_ >= 0 &&
-                und < ctx.heat_state.node_temp_vol_in.size())
+            if (temp_row_ >= 0 && und < ctx.heat_state.node_temp_vol_in.size())
                 credit_mass(uf, static_cast<std::size_t>(temp_row_),
                             dt_sub * ctx.heat_state.node_temp_vol_in[und]);
         }
@@ -870,8 +1005,7 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
             const int f = mesh_.node_vj_face[und];
             const double vol_ext = load_frac * ctx.nodes.qual_vol_in[und];
             if (f >= 0 && vol_ext > 0.0 && bc_now_[i] > 0.0)
-                credit_mass(static_cast<std::size_t>(f),
-                            static_cast<std::size_t>(bc_srow_[i]),
+                credit_mass(static_cast<std::size_t>(f), static_cast<std::size_t>(bc_srow_[i]),
                             vol_ext * bc_now_[i]);
         }
     }
@@ -882,8 +1016,7 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
         for (int nd = 0; nd < nn && nd < ctx.n_nodes(); ++nd) {
             const auto und = static_cast<std::size_t>(nd);
             // Virtual junctions were credited to their spliced cells in 1a'.
-            if (und < mesh_.node_kind.size() &&
-                mesh_.node_kind[und] == fv::kNodeVirtual)
+            if (und < mesh_.node_kind.size() && mesh_.node_kind[und] == fv::kNodeVirtual)
                 continue;
             node_vol_[und] += load_frac * ctx.nodes.qual_vol_in[und];
             for (int s = 0; s < np_l; ++s) {
@@ -894,13 +1027,10 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
                 // and un-booked. Positive loads take the identical value —
                 // bit-inert on every non-negative deck.
                 double delta =
-                    dt_sub * ctx.nodes.qual_mass_in[und * unp_l +
-                                                    static_cast<std::size_t>(s)];
-                double& mstore =
-                    node_mass_[und * uns + static_cast<std::size_t>(s)];
+                    dt_sub * ctx.nodes.qual_mass_in[und * unp_l + static_cast<std::size_t>(s)];
+                double& mstore = node_mass_[und * uns + static_cast<std::size_t>(s)];
                 if (delta < 0.0 && mstore + delta < 0.0) {
-                    quality::bookNegativeSourceClamp(ctx, nd, s,
-                                                     -(mstore + delta));
+                    quality::bookNegativeSourceClamp(ctx, nd, s, -(mstore + delta));
                     delta = -mstore;
                 }
                 mstore += delta;
@@ -909,15 +1039,16 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
             // (msx_ext_mass_in, a rate; empty when no such row exists).
             // Same signed-with-floor rule as the pollutant rows above, minus
             // the ledger booking (species have no ledger row, L3).
-            if (nm_ > 0 && ctx.reactions.msx_ext_mass_in.size() >=
-                               static_cast<std::size_t>(ctx.n_nodes()) *
-                                   static_cast<std::size_t>(nm_)) {
+            if (nm_ > 0 &&
+                ctx.reactions.msx_ext_mass_in.size() >=
+                    static_cast<std::size_t>(ctx.n_nodes()) * static_cast<std::size_t>(nm_)) {
                 for (int m = 0; m < nm_; ++m) {
-                    double delta = dt_sub * ctx.reactions.msx_ext_mass_in[
-                        und * static_cast<std::size_t>(nm_) + static_cast<std::size_t>(m)];
-                    double& mstore =
-                        node_mass_[und * uns + static_cast<std::size_t>(np_l + m)];
-                    if (delta < 0.0 && mstore + delta < 0.0) delta = -mstore;
+                    double delta =
+                        dt_sub * ctx.reactions.msx_ext_mass_in[und * static_cast<std::size_t>(nm_) +
+                                                               static_cast<std::size_t>(m)];
+                    double& mstore = node_mass_[und * uns + static_cast<std::size_t>(np_l + m)];
+                    if (delta < 0.0 && mstore + delta < 0.0)
+                        delta = -mstore;
                     mstore += delta;
                 }
             }
@@ -928,15 +1059,13 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
             //
             // A1a: age-volume load — a RATE like qual_mass_in (the loaders
             // add q · age_source per pathway), so it integrates over dt_sub.
-            if (age_row_ >= 0 &&
-                und < ctx.water_age_state.node_age_vol_in.size())
+            if (age_row_ >= 0 && und < ctx.water_age_state.node_age_vol_in.size())
                 node_mass_[und * uns + static_cast<std::size_t>(age_row_)] +=
                     dt_sub * ctx.water_age_state.node_age_vol_in[und];
             // H4: the heat channel is the same shape (degC·ft3/s), filled at
             // the same seven loader pathways per D-UT10, so it integrates
             // over the substep identically.
-            if (temp_row_ >= 0 &&
-                und < ctx.heat_state.node_temp_vol_in.size())
+            if (temp_row_ >= 0 && und < ctx.heat_state.node_temp_vol_in.size())
                 node_mass_[und * uns + static_cast<std::size_t>(temp_row_)] +=
                     dt_sub * ctx.heat_state.node_temp_vol_in[und];
         }
@@ -957,14 +1086,13 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
     //     supposed to hold — 8.0128 against a boundary of 8.0.
     for (std::size_t i = 0; i < bc_node_.size(); ++i) {
         const auto und = static_cast<std::size_t>(bc_node_[i]);
-        if (static_cast<int>(und) >= nn) continue;
-        if (und < mesh_.node_kind.size() &&
-            mesh_.node_kind[und] == fv::kNodeVirtual)
-            continue;   // routed to the spliced cells in 1a'
+        if (static_cast<int>(und) >= nn)
+            continue;
+        if (und < mesh_.node_kind.size() && mesh_.node_kind[und] == fv::kNodeVirtual)
+            continue; // routed to the spliced cells in 1a'
         const double vol_ext = load_frac * ctx.nodes.qual_vol_in[und];
         if (vol_ext > 0.0 && bc_now_[i] > 0.0)
-            node_mass_[und * uns + static_cast<std::size_t>(bc_srow_[i])] +=
-                vol_ext * bc_now_[i];
+            node_mass_[und * uns + static_cast<std::size_t>(bc_srow_[i])] += vol_ext * bc_now_[i];
     }
 
     // 1c. Face INFLOWS are mixed in before the donor is read, for the same
@@ -991,16 +1119,16 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
         const int b = mesh_.node_face_ptr[und];
         const int e = mesh_.node_face_ptr[und + 1];
         for (int p = b; p < e; ++p) {
-            const auto uf = static_cast<std::size_t>(
-                mesh_.node_face_idx[static_cast<std::size_t>(p)]);
+            const auto uf =
+                static_cast<std::size_t>(mesh_.node_face_idx[static_cast<std::size_t>(p)]);
             const double sign = mesh_.node_face_sign[static_cast<std::size_t>(p)];
             const double fq = face_q_[uf];
-            if (sign * fq <= 0.0) continue;   // into the CELL — stage 4
+            if (sign * fq <= 0.0)
+                continue; // into the CELL — stage 4
             node_vol_[und] += dt_sub * sign * fq;
             for (int s = 0; s < ns; ++s)
                 node_mass_[und * uns + static_cast<std::size_t>(s)] +=
-                    dt_sub * sign *
-                    f_phi_flux_[static_cast<std::size_t>(s) * unf + uf];
+                    dt_sub * sign * f_phi_flux_[static_cast<std::size_t>(s) * unf + uf];
         }
     }
 
@@ -1013,8 +1141,8 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
         const int b = mesh_.node_face_ptr[und];
         const int e = mesh_.node_face_ptr[und + 1];
         for (int p = b; p < e; ++p) {
-            const auto uf = static_cast<std::size_t>(
-                mesh_.node_face_idx[static_cast<std::size_t>(p)]);
+            const auto uf =
+                static_cast<std::size_t>(mesh_.node_face_idx[static_cast<std::size_t>(p)]);
             const double sign = mesh_.node_face_sign[static_cast<std::size_t>(p)];
             const double fq = face_q_[uf];
             // Flux INTO the node when sign*fq > 0; into the CELL otherwise.
@@ -1032,16 +1160,13 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
                 // solvers' held-state sites). Its store keeps the mass that
                 // arrived; the flag guarantees that mass never re-enters.
                 const bool fresh_outfall =
-                    ctx.options.outfall_backflow_zero &&
-                    ctx.nodes.type[und] == NodeType::OUTFALL;
+                    ctx.options.outfall_backflow_zero && ctx.nodes.type[und] == NodeType::OUTFALL;
                 for (int s = 0; s < ns; ++s) {
                     const double cnode =
                         (!fresh_outfall && vol > kMinStoreVol)
-                            ? node_mass_[und * uns +
-                                         static_cast<std::size_t>(s)] / vol
+                            ? node_mass_[und * uns + static_cast<std::size_t>(s)] / vol
                             : 0.0;
-                    f_phi_flux_[static_cast<std::size_t>(s) * unf + uf] =
-                        fq * cnode;
+                    f_phi_flux_[static_cast<std::size_t>(s) * unf + uf] = fq * cnode;
                 }
             }
         }
@@ -1050,7 +1175,7 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
     // 3. Cell update: species mass and area from the SAME fluxes.
     for (int c = 0; c < nc; ++c) {
         const auto uc = static_cast<std::size_t>(c);
-        const int faces[2]    = {mesh_.cell_face0[uc], mesh_.cell_face1[uc]};
+        const int faces[2] = {mesh_.cell_face0[uc], mesh_.cell_face1[uc]};
         const int8_t sides[2] = {mesh_.cell_side0[uc], mesh_.cell_side1[uc]};
         const double inv_dx = 1.0 / mesh_.cell_dx[uc];
         double dA = 0.0;
@@ -1074,20 +1199,19 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
                 const double sg = (sides[e2] == 0) ? -1.0 : 1.0;
                 dm += sg * f_phi_flux_[sb * unf + uf];
             }
-            double m = a_old * state_.cell_phi[sb * unc + uc] +
-                       dt_sub * dm * inv_dx;
-            if (has_vj_src_) m += cell_src_mass_[sb * unc + uc] * inv_dx;
+            double m = a_old * state_.cell_phi[sb * unc + uc] + dt_sub * dm * inv_dx;
+            if (has_vj_src_)
+                m += cell_src_mass_[sb * unc + uc] * inv_dx;
             // Debt 216: the temperature row is EXEMPT from the
             // non-negativity floor (its zero is 0 °C, an ordinary state —
             // H7b's LARD row made the same call) but CLAMPED to the
             // parser's own band instead: see kTempFloorC. Every genuine
             // species row keeps the floor.
             const double m_f = (s == temp_row_)
-                ? std::clamp(m, kTempFloorC * a_new, kTempCeilC * a_new)
-                : std::max(0.0, m);
+                                   ? std::clamp(m, kTempFloorC * a_new, kTempCeilC * a_new)
+                                   : std::max(0.0, m);
             state_.cell_phi[sb * unc + uc] =
-                (a_new > k::kDryArea) ? m_f / a_new
-                                      : state_.cell_phi[sb * unc + uc];
+                (a_new > k::kDryArea) ? m_f / a_new : state_.cell_phi[sb * unc + uc];
         }
         state_.cell_a[uc] = a_new;
     }
@@ -1101,16 +1225,16 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
         const int e = mesh_.node_face_ptr[und + 1];
         double dvol = 0.0;
         for (int p = b; p < e; ++p) {
-            const auto uf = static_cast<std::size_t>(
-                mesh_.node_face_idx[static_cast<std::size_t>(p)]);
+            const auto uf =
+                static_cast<std::size_t>(mesh_.node_face_idx[static_cast<std::size_t>(p)]);
             const double sign = mesh_.node_face_sign[static_cast<std::size_t>(p)];
             const double fq = face_q_[uf];
-            if (sign * fq > 0.0) continue;   // into the NODE — stage 1c
+            if (sign * fq > 0.0)
+                continue; // into the NODE — stage 1c
             dvol += sign * fq;
             for (int s = 0; s < ns; ++s) {
                 node_mass_[und * uns + static_cast<std::size_t>(s)] +=
-                    dt_sub * sign *
-                    f_phi_flux_[static_cast<std::size_t>(s) * unf + uf];
+                    dt_sub * sign * f_phi_flux_[static_cast<std::size_t>(s) * unf + uf];
             }
         }
         // Volume after the outflow faces. The inflows and the external load
@@ -1152,10 +1276,12 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
     for (int i = 0; i < n_struct; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         const int link = mesh_.struct_link[ui];
-        if (link < 0 || link >= ctx.n_links()) continue;
+        if (link < 0 || link >= ctx.n_links())
+            continue;
         const double q = ctx.links.flow[static_cast<std::size_t>(link)];
-        if (q == 0.0) continue;
-        const int donor_n    = (q >= 0.0) ? mesh_.struct_n1[ui] : mesh_.struct_n2[ui];
+        if (q == 0.0)
+            continue;
+        const int donor_n = (q >= 0.0) ? mesh_.struct_n1[ui] : mesh_.struct_n2[ui];
         const int receiver_n = (q >= 0.0) ? mesh_.struct_n2[ui] : mesh_.struct_n1[ui];
         if (donor_n < 0 || receiver_n < 0 || donor_n >= nn || receiver_n >= nn)
             continue;
@@ -1167,8 +1293,7 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
             for (int s = 0; s < ns; ++s) {
                 const auto sb = static_cast<std::size_t>(s);
                 const double c_donor = node_mass_[ud * uns + sb] / donor_vol;
-                const double dm = std::min(dv * c_donor,
-                                           node_mass_[ud * uns + sb]);
+                const double dm = std::min(dv * c_donor, node_mass_[ud * uns + sb]);
                 node_mass_[ud * uns + sb] -= dm;
                 node_mass_[ur * uns + sb] += dm;
             }
@@ -1179,21 +1304,26 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
 
     // Booster stage follows accepted node exchanges. It changes mass only;
     // the next explicit face update uses the resulting mixed concentration.
-    if(!ctx.reactions.sources.empty())for(int nd=0;nd<nn;++nd) {
-        if(mesh_.node_kind[nd]==fv::kNodeVirtual)continue;
-        double arriving=std::max(0.,load_frac*ctx.nodes.qual_vol_in[nd]);
-        for(int p=mesh_.node_face_ptr[nd];p<mesh_.node_face_ptr[nd+1];++p) {
-            const auto f=mesh_.node_face_idx[p];arriving+=dt_sub*std::max(0.,mesh_.node_face_sign[p]*face_q_[f]);
+    if (!ctx.reactions.sources.empty())
+        for (int nd = 0; nd < nn; ++nd) {
+            if (mesh_.node_kind[nd] == fv::kNodeVirtual)
+                continue;
+            double arriving = std::max(0., load_frac * ctx.nodes.qual_vol_in[nd]);
+            for (int p = mesh_.node_face_ptr[nd]; p < mesh_.node_face_ptr[nd + 1]; ++p) {
+                const auto f = mesh_.node_face_idx[p];
+                arriving += dt_sub * std::max(0., mesh_.node_face_sign[p] * face_q_[f]);
+            }
+            for (int j = 0; j < n_struct; ++j) {
+                const auto link = mesh_.struct_link[j];
+                const double q = ctx.links.flow[link];
+                if ((q >= 0 ? mesh_.struct_n2[j] : mesh_.struct_n1[j]) == nd)
+                    arriving += std::abs(q) * dt_sub;
+            }
+            for (int m = 0; m < nm_; ++m) {
+                auto& mass = node_mass_[std::size_t(nd) * uns + ctx.n_pollutants() + m];
+                mass += reactionBoosterMass(ctx, nd, m, mass, node_vol_[nd], arriving);
+            }
         }
-        for(int j=0;j<n_struct;++j) {
-            const auto link=mesh_.struct_link[j];const double q=ctx.links.flow[link];
-            if((q>=0?mesh_.struct_n2[j]:mesh_.struct_n1[j])==nd)arriving+=std::abs(q)*dt_sub;
-        }
-        for(int m=0;m<nm_;++m) {
-            auto& mass=node_mass_[std::size_t(nd)*uns+ctx.n_pollutants()+m];
-            mass+=reactionBoosterMass(ctx,nd,m,mass,node_vol_[nd],arriving);
-        }
-    }
 
     // 5c. E5a distributed sources: internal rate r (conc·ft³/s) spread over
     //     the conduit's cells ∝ dx ⇒ Δconc per cell = r·dt/(L·a) — dx
@@ -1205,21 +1335,23 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
         const double r = src_now_[i];
         // P1.4: was `r <= 0.0`, which skipped extraction rows. Zero is still
         // nothing to do; a negative rate is now extraction (D-NS1).
-        if (r == 0.0) continue;
+        if (r == 0.0)
+            continue;
         const auto ucrow = static_cast<std::size_t>(src_crow_[i]);
         const int b2 = mesh_.conduit_cell_begin[ucrow];
         const int n2 = mesh_.conduit_cell_count[ucrow];
         const auto sb = static_cast<std::size_t>(src_srow_[i]);
-        double shortfall = 0.0;   // unmet extraction, internal mass units
+        double shortfall = 0.0; // unmet extraction, internal mass units
         for (int i2 = 0; i2 < n2; ++i2) {
             const auto uc = static_cast<std::size_t>(b2 + i2);
             const double a = state_.cell_a[uc];
-            if (a <= k::kDryArea) continue;
+            if (a <= k::kDryArea)
+                continue;
             // Identical arithmetic to the pre-P1.4 form for a POSITIVE r —
             // same operations in the same order — so positive-source decks
             // stay bit-identical. Only the negative branch is new.
-            double  dphi = dt_sub * r / (src_len_[i] * a);
-            double& phi  = state_.cell_phi[sb * unc + uc];
+            double dphi = dt_sub * r / (src_len_[i] * a);
+            double& phi = state_.cell_phi[sb * unc + uc];
             if (dphi < 0.0 && phi + dphi < 0.0) {
                 // Clamp to what THIS cell holds. The deficit is per-cell
                 // because the source's share is distributed ∝ dx, so a
@@ -1231,8 +1363,7 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
             phi += dphi;
         }
         if (shortfall > 0.0)
-            quality::bookNegativeCellSourceClamp(ctx, src_crow_[i],
-                                                 shortfall);
+            quality::bookNegativeCellSourceClamp(ctx, src_crow_[i], shortfall);
     }
 
     // 6. Dispersion (E3): implicit per-chain Thomas solve over the updated
@@ -1255,27 +1386,44 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
 // step
 // ===========================================================================
 
+/**
+ * @brief Advance one accepted projected-hydraulic ARD routing interval and publish family means.
+ * @param[in,out] ctx Completed hydraulics and freshly assembled pollutant/native/age/thermal
+ * sources; updates public current quality, entry old histories, HRT, heat/bed,
+ * reaction/clamp/forcing diagnostics.
+ * @param[in] dt Positive finite accepted routing seconds; uninitialized/nonpositive returns.
+ * @note Captures pollutant old histories at entry, projects hydraulics and refreshes rows.
+ * Resynchronizes node volume to hydraulic store, scales mass for shrinking/tiny relative-growth
+ * corrections only. CFL=.9 chooses up to512 advection/dispersion substeps; cap warns once and
+ * may exceed stability target. After transport increments age by whole dt, applies
+ * atmospheric/bed heat, HRT/kinetics and bed solute, then publishes. Detail writer advances
+ * private time and appends CSV when active. Caller applies node treatment separately then
+ * absorbs it. No hydraulic/engine clock advance. Allocation/IO/solver errors can leave partial
+ * accepted state, histories/ledgers/output without rollback; exclusive phase.
+ */
 void ArdEngine::step(SimulationContext& ctx, double dt) {
-    if (!initialized_ || dt <= 0.0) return;
+    if (!initialized_ || dt <= 0.0)
+        return;
 
     // conc_old bookkeeping matches the legacy engine's convention.
     ctx.links.conc_old = ctx.links.conc;
     ctx.nodes.conc_old = ctx.nodes.conc;
 
     projectHydraulics(ctx, dt);
-    if (disp_active_) updateDispersion(ctx);
-    if (!bc_node_.empty() || !src_crow_.empty()) updateTransportRows(ctx);
+    if (disp_active_)
+        updateDispersion(ctx);
+    if (!bc_node_.empty() || !src_crow_.empty())
+        updateTransportRows(ctx);
 
     // Node volumes resync to the solver's each routing step (the store keeps
     // its own between substeps only).
-    const int ns  = state_.n_species;
-    const int nn  = std::min(ctx.n_nodes(),
-                             static_cast<int>(node_vol_.size()));
+    const int ns = state_.n_species;
+    const int nn = std::min(ctx.n_nodes(), static_cast<int>(node_vol_.size()));
     const auto uns = static_cast<std::size_t>(ns);
     for (int nd = 0; nd < nn; ++nd) {
         const auto und = static_cast<std::size_t>(nd);
         const double v_old = node_vol_[und];
-        const double v_new = node::storeVolume(ctx.nodes, nd);   // see initialize
+        const double v_new = node::storeVolume(ctx.nodes, nd); // see initialize
 
         // Water that leaves the SYSTEM — outfall discharge, flooding — rides no
         // mesh face, so the store never saw it go. Preserving mass across the
@@ -1318,26 +1466,26 @@ void ArdEngine::step(SimulationContext& ctx, double dt) {
         // ROUTING_STEP or coarsen FV_CELL_LENGTH.
         if (!warned_cfl_clamp_) {
             warned_cfl_clamp_ = true;
-            ctx.warnings.push_back(
-                "QUALITY_SOLVER EULERIAN_ARD: transport subcycling clamped at " +
-                std::to_string(kMaxSubsteps) + " substeps (needed " +
-                std::to_string(nsub) +
-                ") — effective CFL exceeds the stability target; shorten "
-                "ROUTING_STEP or increase FV_CELL_LENGTH.");
+            ctx.warnings.push_back("QUALITY_SOLVER EULERIAN_ARD: transport subcycling clamped at " +
+                                   std::to_string(kMaxSubsteps) + " substeps (needed " +
+                                   std::to_string(nsub) +
+                                   ") — effective CFL exceeds the stability target; shorten "
+                                   "ROUTING_STEP or increase FV_CELL_LENGTH.");
         }
         nsub = kMaxSubsteps;
     }
     const double dt_sub = dt / static_cast<double>(nsub);
     const double load_frac = 1.0 / static_cast<double>(nsub);
 
-    for (int i = 0; i < nsub; ++i) substep(ctx, dt_sub, load_frac);
+    for (int i = 0; i < nsub; ++i)
+        substep(ctx, dt_sub, load_frac);
 
     // A1a: aging — the exact integral of d(age)/dt = 1 over the routing
     // step. Cells carry age as a concentration-like mean (+= dt); stores
     // carry age-VOLUME (mass += dt·vol keeps the mean advancing by dt at
     // constant volume). Lie-split like every other stage.
     if (age_row_ >= 0) {
-        const auto ar  = static_cast<std::size_t>(age_row_);
+        const auto ar = static_cast<std::size_t>(age_row_);
         const auto unc0 = static_cast<std::size_t>(mesh_.n_cells());
         for (std::size_t c = 0; c < unc0; ++c)
             state_.cell_phi[ar * unc0 + c] += dt;
@@ -1357,13 +1505,12 @@ void ArdEngine::step(SimulationContext& ctx, double dt) {
     // splitting, documented; the integrator substeps adaptively inside):
     // exact-exponential kdecay on pollutant rows + MSX integration per cell
     // (pipe scope) and per node store (tank scope).
-    quality::updateUntreatedStorageHrt(ctx, dt);   // review A6: tank HRT
-    transport::reactArdStage(
-        ctx, dt, state_.cell_phi.data(), state_.cell_a.data(),
-        mesh_.cell_dx.data(), mesh_.n_cells(), node_mass_.data(),
-        node_vol_.data(), static_cast<int>(node_vol_.size()),
-        ctx.n_pollutants(), state_.n_species, kMinStoreVol, temp_row_,
-        mesh_.cell_conduit.data(), mesh_.conduit_link.data());
+    quality::updateUntreatedStorageHrt(ctx, dt); // review A6: tank HRT
+    transport::reactArdStage(ctx, dt, state_.cell_phi.data(), state_.cell_a.data(),
+                             mesh_.cell_dx.data(), mesh_.n_cells(), node_mass_.data(),
+                             node_vol_.data(), static_cast<int>(node_vol_.size()),
+                             ctx.n_pollutants(), state_.n_species, kMinStoreVol, temp_row_,
+                             mesh_.cell_conduit.data(), mesh_.conduit_link.data());
 
     // H6b-ARD: bed/channel SOLUTE exchange, per cell, in the same Lie-split
     // slot as the other source stages — after reactions so the bed sees the
@@ -1383,20 +1530,32 @@ void ArdEngine::step(SimulationContext& ctx, double dt) {
 // absorbTreatedNodeConc — E5b treatment interop (see the header)
 // ===========================================================================
 
+/**
+ * @brief Replace represented pollutant mass only at wet nodes marked for treatment.
+ * @param[in] ctx Public post-treatment node concentrations and prepared treatment mask matching
+ * owner.
+ * @note Uninitialized/no pollutants/no treatment returns; wet node>1e-9ft3 receives
+ * c*represented water, untreated/tiny nodes remain bit-identical. Does not alter native/age/heat
+ * rows, publish or book removal again; caller treatment already owns ledger. Allocation-free,
+ * unchecked parallel extents, exclusive post-treatment phase.
+ */
 void ArdEngine::absorbTreatedNodeConc(SimulationContext& ctx) {
-    if (!initialized_) return;
+    if (!initialized_)
+        return;
     const int np = ctx.n_pollutants();
-    if (np <= 0 || !ctx.treatment.hasAny()) return;
+    if (np <= 0 || !ctx.treatment.hasAny())
+        return;
     const int ns = state_.n_species;
     const auto uns = static_cast<std::size_t>(ns);
     const auto unp = static_cast<std::size_t>(np);
-    const int nn = std::min(ctx.n_nodes(),
-                            static_cast<int>(node_vol_.size()));
+    const int nn = std::min(ctx.n_nodes(), static_cast<int>(node_vol_.size()));
     for (int nd = 0; nd < nn; ++nd) {
         const auto und = static_cast<std::size_t>(nd);
-        if (!ctx.treatment.has_treatment[und]) continue;
+        if (!ctx.treatment.has_treatment[und])
+            continue;
         const double vol = node_vol_[und];
-        if (vol <= kMinStoreVol) continue;
+        if (vol <= kMinStoreVol)
+            continue;
         for (int p = 0; p < np; ++p)
             node_mass_[und * uns + static_cast<std::size_t>(p)] =
                 ctx.nodes.conc[und * unp + static_cast<std::size_t>(p)] * vol;
@@ -1407,49 +1566,55 @@ void ArdEngine::absorbTreatedNodeConc(SimulationContext& ctx) {
 // writeDetailRows — E5b per-cell CSV sidecar
 // ===========================================================================
 
+/**
+ * @brief Append every cell/node carried concentration to the open diagnostic CSV stream.
+ * @param[in] ctx Stable native link/node/species names matching state rows.
+ * @note Requires active open writer. Uses private detail_time_s elapsed seconds, cell index
+ * local to conduit and node cell0. Values in declared concentration/age seconds/degC; tiny node
+ * volume yields0. Names emitted unquoted, stream failure not converted to an engine error here;
+ * normal iostream policy applies. No physical/clock/ledger mutation; output writes/temporary
+ * strings can fail after partial rows.
+ */
 void ArdEngine::writeDetailRows(SimulationContext& ctx) {
-    const int ns  = state_.n_species;
-    const int np  = ctx.n_pollutants();
+    const int ns = state_.n_species;
+    const int np = ctx.n_pollutants();
     const auto unc = static_cast<std::size_t>(mesh_.n_cells());
     const auto uns = static_cast<std::size_t>(ns);
     const auto species_name = [&](int s) -> std::string {
-        if (s == age_row_)  return "__WATER_AGE__";
-        if (s == temp_row_) return "__TEMPERATURE__";
-        return (s < np)
-                   ? std::string(ctx.pollutant_names.name_of(s))
-                   : ctx.reactions.species_name[static_cast<std::size_t>(s - np)];
+        if (s == age_row_)
+            return "__WATER_AGE__";
+        if (s == temp_row_)
+            return "__TEMPERATURE__";
+        return (s < np) ? std::string(ctx.pollutant_names.name_of(s))
+                        : ctx.reactions.species_name[static_cast<std::size_t>(s - np)];
     };
     for (int r = 0; r < static_cast<int>(mesh_.conduit_link.size()); ++r) {
         const auto ur = static_cast<std::size_t>(r);
         const int link = mesh_.conduit_link[ur];
-        if (link < 0 || link >= ctx.n_links()) continue;
-        const std::string& lname =
-            ctx.link_names.names()[static_cast<std::size_t>(link)];
+        if (link < 0 || link >= ctx.n_links())
+            continue;
+        const std::string& lname = ctx.link_names.names()[static_cast<std::size_t>(link)];
         const int b = mesh_.conduit_cell_begin[ur];
         const int n = mesh_.conduit_cell_count[ur];
         for (int i = 0; i < n; ++i) {
             const auto uc = static_cast<std::size_t>(b + i);
             for (int s = 0; s < ns; ++s)
-                detail_out_ << detail_time_s_ << ',' << lname << ",L," << i
-                            << ',' << species_name(s) << ','
-                            << state_.cell_phi[static_cast<std::size_t>(s) *
-                                                   unc + uc]
-                            << '\n';
+                detail_out_ << detail_time_s_ << ',' << lname << ",L," << i << ','
+                            << species_name(s) << ','
+                            << state_.cell_phi[static_cast<std::size_t>(s) * unc + uc] << '\n';
         }
     }
-    const int nn = std::min(ctx.n_nodes(),
-                            static_cast<int>(node_vol_.size()));
+    const int nn = std::min(ctx.n_nodes(), static_cast<int>(node_vol_.size()));
     for (int nd = 0; nd < nn; ++nd) {
         const auto und = static_cast<std::size_t>(nd);
         const double vol = node_vol_[und];
         const std::string& nname = ctx.node_names.names()[und];
         for (int s = 0; s < ns; ++s) {
-            const double c =
-                (vol > kMinStoreVol)
-                    ? node_mass_[und * uns + static_cast<std::size_t>(s)] / vol
-                    : 0.0;
-            detail_out_ << detail_time_s_ << ',' << nname << ",N,0,"
-                        << species_name(s) << ',' << c << '\n';
+            const double c = (vol > kMinStoreVol)
+                                 ? node_mass_[und * uns + static_cast<std::size_t>(s)] / vol
+                                 : 0.0;
+            detail_out_ << detail_time_s_ << ',' << nname << ",N,0," << species_name(s) << ',' << c
+                        << '\n';
         }
     }
 }
@@ -1479,44 +1644,66 @@ void ArdEngine::writeDetailRows(SimulationContext& ctx) {
 // ---------------------------------------------------------------------------
 // applyBedSoluteExchange — H6b-ARD: per-cell transient-storage exchange
 // ---------------------------------------------------------------------------
+/**
+ * @brief Resolve a mesh cell's native parent link identity.
+ * @param[in] cell Global mesh cell index; absent/out-of-range conduit mapping returns-1.
+ * @return Parent link ID or-1; no validation of returned link against external context,
+ * allocation or mutation.
+ */
 int ArdEngine::cellLink(std::size_t cell) const noexcept {
-    if (cell >= mesh_.cell_conduit.size()) return -1;
+    if (cell >= mesh_.cell_conduit.size())
+        return -1;
     const int cr = mesh_.cell_conduit[cell];
-    if (cr < 0 ||
-        static_cast<std::size_t>(cr) >= mesh_.conduit_link.size())
+    if (cr < 0 || static_cast<std::size_t>(cr) >= mesh_.conduit_link.size())
         return -1;
     return mesh_.conduit_link[static_cast<std::size_t>(cr)];
 }
 
+/**
+ * @brief Exchange carried pollutant/native rows with per-cell bulk bed solute pools.
+ * @param[in,out] ctx Enabled sediment config/contact mask and shared per-cell bed stores;
+ * updates bed species concentrations, may resize/reseed bed shape while preserving compatible
+ * thermal array.
+ * @param[in] dt Positive finite accepted routing seconds; disabled/nonpositive/NaN/no exchange
+ * rows returns.
+ * @note Excludes reserved age/temp, uses SI m3 water/bulk-bed volumes and m3/s exchange;
+ * mesh-contact links skipped to separate coupling owner. Applies exact two-pool increments to
+ * cell and bed values, no global mass ledger or hydraulic/clock advance. Allocation or
+ * geometry/dependency failure may leave partial bed reset/earlier exchanges; exclusive prepared
+ * owner/context, stable row/material extents.
+ */
 void ArdEngine::applyBedSoluteExchange(SimulationContext& ctx, double dt) {
-    if (!heat::bedExchangeEnabled(ctx) || !(dt > 0.0)) return;
+    if (!heat::bedExchangeEnabled(ctx) || !(dt > 0.0))
+        return;
 
     // Exchanged rows are pollutants + MSX — everything BEFORE the reserved
     // age/temperature rows, which are last by construction (init()). Age
     // does not live in the bed (the reference carries no bed age) and
     // temperature has its own pair inside applyHeatFluxes.
     int n_exch = state_.n_species;
-    if (age_row_  >= 0) --n_exch;
-    if (temp_row_ >= 0) --n_exch;
-    if (n_exch <= 0) return;
+    if (age_row_ >= 0)
+        --n_exch;
+    if (temp_row_ >= 0)
+        --n_exch;
+    if (n_exch <= 0)
+        return;
 
     auto& bed = ctx.bed_state;
     const int ncells = mesh_.n_cells();
-    if (bed.cell_temp.size() != static_cast<std::size_t>(ncells) ||
-        bed.cell_n_species != n_exch) {
+    if (bed.cell_temp.size() != static_cast<std::size_t>(ncells) || bed.cell_n_species != n_exch) {
         // Solutes seed at ZERO (BedExchange.cpp's reasoning); the
         // temperature seed is preserved when only the species extent grows.
         const auto& sd = ctx.heat_config.sediment;
         const double t_keep =
-            (bed.cell_temp.size() == static_cast<std::size_t>(ncells) &&
-             !bed.cell_temp.empty())
+            (bed.cell_temp.size() == static_cast<std::size_t>(ncells) && !bed.cell_temp.empty())
                 ? bed.cell_temp[0]
                 : (sd.has_initial_temp ? sd.initial_temp : sd.ground_temp);
         std::vector<double> keep_temp;
         if (bed.cell_temp.size() == static_cast<std::size_t>(ncells))
             keep_temp = bed.cell_temp;
         bed.resizeCells(ncells, n_exch, t_keep);
-        if (!keep_temp.empty()) bed.cell_temp = std::move(keep_temp);
+        if (!keep_temp.empty())
+            bed.cell_temp = std::move(keep_temp);
     }
 
     constexpr double kSqFtToSqM = 0.09290304;
@@ -1525,48 +1712,68 @@ void ArdEngine::applyBedSoluteExchange(SimulationContext& ctx, double dt) {
     const auto une = static_cast<std::size_t>(n_exch);
 
     for (std::size_t c = 0; c < unc; ++c) {
-        const int mesh_link=cellLink(c);
-        if(mesh_link>=0&&std::size_t(mesh_link)<ctx.heat_state.mesh_contact_link.size()&&ctx.heat_state.mesh_contact_link[mesh_link])continue;
+        const int mesh_link = cellLink(c);
+        if (mesh_link >= 0 && std::size_t(mesh_link) < ctx.heat_state.mesh_contact_link.size() &&
+            ctx.heat_state.mesh_contact_link[mesh_link])
+            continue;
         const auto gi = static_cast<std::size_t>(mesh_.cell_geom[c]);
-        if (gi >= mesh_.geom.size()) continue;
+        if (gi >= mesh_.geom.size())
+            continue;
         const auto& g = mesh_.geom[gi];
         const double area_x = state_.cell_a[c];
-        if (!(area_x > 0.0)) continue;
+        if (!(area_x > 0.0))
+            continue;
         const double vol_ft3 = area_x * mesh_.cell_dx[c];
-        if (!(vol_ft3 > 0.0)) continue;
+        if (!(vol_ft3 > 0.0))
+            continue;
         const double h = fv::kernels::depthOfArea(g, area_x);
-        if (!(h > 0.0)) continue;
+        if (!(h > 0.0))
+            continue;
         const double rh = fv::kernels::hydRadOfDepth(g, h);
-        if (!(rh > 0.0)) continue;
-        const double bed_m2 =
-            (area_x / rh) * mesh_.cell_dx[c] * kSqFtToSqM;
+        if (!(rh > 0.0))
+            continue;
+        const double bed_m2 = (area_x / rh) * mesh_.cell_dx[c] * kSqFtToSqM;
 
         // PE2: the parent link's bed material (cells resolve to their link,
         // D-PE1), so the ARD bed and the LEGACY/LARD beds read one config.
-        const auto& sd_c = heat::sedimentFor(
-            ctx, HeatElement::link(cellLink(c)));
-        const double vol_w  = vol_ft3 * kCuFtToCuM;
-        const double vol_b  = bed_m2 * sd_c.bed_thickness;
+        const auto& sd_c = heat::sedimentFor(ctx, HeatElement::link(cellLink(c)));
+        const double vol_w = vol_ft3 * kCuFtToCuM;
+        const double vol_b = bed_m2 * sd_c.bed_thickness;
         const double q_exch = heat::bedExchangeQ(sd_c, bed_m2);
-        if (!(q_exch > 0.0) || !(vol_b > 0.0)) continue;
+        if (!(q_exch > 0.0) || !(vol_b > 0.0))
+            continue;
 
         for (std::size_t sp = 0; sp < une; ++sp) {
             double& cw = state_.cell_phi[sp * unc + c];
             double& cb = bed.cell_conc[sp * unc + c];
-            const heat::SolutePairStep st =
-                heat::exchangePair(cw, cb, vol_w, vol_b, q_exch, dt);
+            const heat::SolutePairStep st = heat::exchangePair(cw, cb, vol_w, vol_b, q_exch, dt);
             cw += st.dc_w;
             cb += st.dc_b;
         }
     }
 }
 
+/**
+ * @brief Apply per-cell/channel-bed and node atmospheric heat to represented thermal
+ * inventories.
+ * @param[in,out] ctx Enabled thermal/radiative/sediment configuration, completed node geometry
+ * and weather/bed stores; refreshes solar forcing and may resize/reseed cell bed state.
+ * @param[in] dt Positive finite accepted routing seconds; no thermal row/nonpositive/NaN or no
+ * enabled flux returns.
+ * @note Cell free surface only for open sections; viable bed pair jointly solves water/bed,
+ * otherwise atmosphere acts alone. Mesh-contact links skipped. Nodes use represented volume and
+ * native surface area; all heat calculations convert to SI with degC increments. No
+ * post-flux[-50,100] clamp here. No water/clock/global-ledger advance; allocations/dependencies
+ * can leave partial changes. Exclusive phase.
+ */
 void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
-    if (temp_row_ < 0 || !(dt > 0.0)) return;
+    if (temp_row_ < 0 || !(dt > 0.0))
+        return;
     const bool bed_on = heat::bedExchangeEnabled(ctx);
-    const bool any = ctx.heat_config.surface_exchange ||
-                     ctx.heat_config.radiative_exchange || bed_on;
-    if (!any) return;
+    const bool any =
+        ctx.heat_config.surface_exchange || ctx.heat_config.radiative_exchange || bed_on;
+    if (!any)
+        return;
 
     // H6b-ARD: per-CELL bed slices, 1:1 — the reference's own element
     // mapping (BedZoneData.hpp). Seeded once, at the bed's configured
@@ -1575,12 +1782,10 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
     if (bed_on) {
         auto& bed = ctx.bed_state;
         const int ncells = mesh_.n_cells();
-        if (bed.cell_temp.size() != static_cast<std::size_t>(ncells) ||
-            !bed.cells_seeded) {
+        if (bed.cell_temp.size() != static_cast<std::size_t>(ncells) || !bed.cells_seeded) {
             const auto& sd = ctx.heat_config.sediment;
             bed.resizeCells(ncells, bed.cell_n_species,
-                            sd.has_initial_temp ? sd.initial_temp
-                                                : sd.ground_temp);
+                            sd.has_initial_temp ? sd.initial_temp : sd.ground_temp);
         }
         t_gr = heat::groundTemperature(ctx);
     }
@@ -1595,7 +1800,7 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
     constexpr double kCuFtToCuM = 0.028316846592;
 
     const double rho = ctx.options.water_density;
-    const double cp  = ctx.options.water_specific_heat;
+    const double cp = ctx.options.water_specific_heat;
 
     // The met forcing and wind-function coefficients that used to be
     // extracted here moved inside the shared evaluators with D-H5e; this
@@ -1615,21 +1820,27 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
     };
 
     // ---- Cells ----------------------------------------------------------
-    const auto tr  = static_cast<std::size_t>(temp_row_);
+    const auto tr = static_cast<std::size_t>(temp_row_);
     const auto unc = static_cast<std::size_t>(mesh_.n_cells());
     for (std::size_t c = 0; c < unc; ++c) {
-        const int mesh_link=cellLink(c);
-        if(mesh_link>=0&&std::size_t(mesh_link)<ctx.heat_state.mesh_contact_link.size()&&ctx.heat_state.mesh_contact_link[mesh_link])continue;
+        const int mesh_link = cellLink(c);
+        if (mesh_link >= 0 && std::size_t(mesh_link) < ctx.heat_state.mesh_contact_link.size() &&
+            ctx.heat_state.mesh_contact_link[mesh_link])
+            continue;
         const auto gi = static_cast<std::size_t>(mesh_.cell_geom[c]);
-        if (gi >= mesh_.geom.size()) continue;
+        if (gi >= mesh_.geom.size())
+            continue;
         const auto& g = mesh_.geom[gi];
         const double area_x = state_.cell_a[c];
-        if (!(area_x > 0.0)) continue;
+        if (!(area_x > 0.0))
+            continue;
         const double vol_ft3 = area_x * mesh_.cell_dx[c];
-        if (!(vol_ft3 > 0.0)) continue;
+        if (!(vol_ft3 > 0.0))
+            continue;
 
         const double h = fv::kernels::depthOfArea(g, area_x);
-        if (!(h > 0.0)) continue;
+        if (!(h > 0.0))
+            continue;
 
         // H6b-ARD: a CLOSED cell has no free surface but it does have a
         // bed, so `is_open` gates the surface AREA rather than the whole
@@ -1653,25 +1864,22 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
         // link derivation one level up.
         if (bed_on && c < ctx.bed_state.cell_temp.size()) {
             const double rh = fv::kernels::hydRadOfDepth(g, h);
-            const double bed_m2 = (rh > 0.0)
-                ? (area_x / rh) * mesh_.cell_dx[c] * kSqFtToSqM
-                : 0.0;
+            const double bed_m2 = (rh > 0.0) ? (area_x / rh) * mesh_.cell_dx[c] * kSqFtToSqM : 0.0;
             // PE2: the parent link's bed attributes and boundary.
             const auto& sd_c = heat::sedimentFor(ctx, ce);
             const heat::BedCoupling bc = heat::bedCouplingFromContact(
-                ctx, sd_c, bed_m2, vol_ft3,
-                heat::groundTempFor(ctx, sd_c, t_gr));
+                ctx, sd_c, bed_m2, vol_ft3, heat::groundTempFor(ctx, sd_c, t_gr));
             if (bc.viable()) {
-                const heat::PairStep ps = heat::relaxPair(
-                    bc, t_w, ctx.bed_state.cell_temp[c], flux_out(ce, t_w),
-                    flux_out(ce, t_w + heat::kProbeC), heat::kProbeC,
-                    surf_m2, dt);
+                const heat::PairStep ps =
+                    heat::relaxPair(bc, t_w, ctx.bed_state.cell_temp[c], flux_out(ce, t_w),
+                                    flux_out(ce, t_w + heat::kProbeC), heat::kProbeC, surf_m2, dt);
                 state_.cell_phi[tr * unc + c] += ps.dt_w;
-                ctx.bed_state.cell_temp[c]   += ps.dt_b;
+                ctx.bed_state.cell_temp[c] += ps.dt_b;
                 continue;
             }
         }
-        if (!(surf_m2 > 0.0)) continue;
+        if (!(surf_m2 > 0.0))
+            continue;
 
         // D-H5d's integrator, not forward Euler. This site shipped as the
         // explicit step `-J·A·dt/(ρ cp V)` while the plan's §6.3 recorded it
@@ -1680,34 +1888,32 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
         // is exactly the regime whose k·dt explodes the explicit form
         // (SurfaceExchange.hpp). Found while reading for H6b (§3 of its
         // handoff); fixed here with the same relaxT the other bindings use.
-        state_.cell_phi[tr * unc + c] += heat::relaxT(
-            flux_out(ce, t_w), flux_out(ce, t_w + heat::kProbeC),
-            heat::kProbeC, surf_m2, vol_ft3 * kCuFtToCuM, dt, rho, cp);
+        state_.cell_phi[tr * unc + c] +=
+            heat::relaxT(flux_out(ce, t_w), flux_out(ce, t_w + heat::kProbeC), heat::kProbeC,
+                         surf_m2, vol_ft3 * kCuFtToCuM, dt, rho, cp);
     }
 
     // ---- Node stores ----------------------------------------------------
-    const int unit_sys =
-        ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    const int unit_sys = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
     const auto uns = static_cast<std::size_t>(state_.n_species);
-    const int nn = std::min(ctx.n_nodes(),
-                            static_cast<int>(node_vol_.size()));
+    const int nn = std::min(ctx.n_nodes(), static_cast<int>(node_vol_.size()));
     for (int nd = 0; nd < nn; ++nd) {
         const auto und = static_cast<std::size_t>(nd);
         const double vol_ft3 = node_vol_[und];
-        if (!(vol_ft3 > 0.0)) continue;
-        const double area_ft2 = node::getSurfArea(
-            ctx.nodes, nd, ctx.nodes.depth[und], &ctx.tables, unit_sys,
-            &ctx.node_subtypes);
-        if (!(area_ft2 > 0.0)) continue;       // junctions have none
+        if (!(vol_ft3 > 0.0))
+            continue;
+        const double area_ft2 = node::getSurfArea(ctx.nodes, nd, ctx.nodes.depth[und], &ctx.tables,
+                                                  unit_sys, &ctx.node_subtypes);
+        if (!(area_ft2 > 0.0))
+            continue; // junctions have none
 
         const double t_w = node_mass_[und * uns + tr] / vol_ft3;
         const HeatElement ne = HeatElement::node(nd);
         // relaxT, same as the cell loop above — the node stores had the same
         // explicit step and the same thin-volume failure mode.
-        const double dT = heat::relaxT(
-            flux_out(ne, t_w), flux_out(ne, t_w + heat::kProbeC),
-            heat::kProbeC, area_ft2 * kSqFtToSqM, vol_ft3 * kCuFtToCuM,
-            dt, rho, cp);
+        const double dT =
+            heat::relaxT(flux_out(ne, t_w), flux_out(ne, t_w + heat::kProbeC), heat::kProbeC,
+                         area_ft2 * kSqFtToSqM, vol_ft3 * kCuFtToCuM, dt, rho, cp);
         // The store carries MASS (conc x volume), so a temperature
         // change of dT is a mass change of dT x volume.
         node_mass_[und * uns + tr] += dT * vol_ft3;
@@ -1718,6 +1924,19 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
 // publish — cell state → legacy link/node arrays
 // ===========================================================================
 
+/**
+ * @brief Publish represented conduit means, node concentrations and structure donor family
+ * values.
+ * @param[in,out] ctx Matching public pollutant/native/age/thermal arrays; may resize/reset MSX
+ * arrays when shape differs. Pollutant arrays/counts and optional scalar extents prepared by
+ * init.
+ * @note Conduit means weighted by native cell volume; tiny pool concentration0 except thermal
+ * value retained unless water>one litre. Node concentrations from stored mass/water, same
+ * thermal threshold. Structures copy signed-flow donor node values, even at zero flow selecting
+ * node1. Does not copy current pollutant values to old histories or advance clocks. Allocation
+ * can leave partial publication; exclusive completed owner/context, no separate mass ledger
+ * booking.
+ */
 void ArdEngine::publish(SimulationContext& ctx) {
     const int ns = state_.n_species;
     const int np = ctx.n_pollutants();
@@ -1749,7 +1968,8 @@ void ArdEngine::publish(SimulationContext& ctx) {
     for (int r = 0; r < static_cast<int>(mesh_.conduit_link.size()); ++r) {
         const auto ur = static_cast<std::size_t>(r);
         const int link = mesh_.conduit_link[ur];
-        if (link < 0 || link >= ctx.n_links()) continue;
+        if (link < 0 || link >= ctx.n_links())
+            continue;
         const int b = mesh_.conduit_cell_begin[ur];
         const int n = mesh_.conduit_cell_count[ur];
         for (int s = 0; s < ns; ++s) {
@@ -1758,15 +1978,13 @@ void ArdEngine::publish(SimulationContext& ctx) {
             for (int i = 0; i < n; ++i) {
                 const auto uc = static_cast<std::size_t>(b + i);
                 const double dv = state_.cell_a[uc] * mesh_.cell_dx[uc];
-                m   += dv * state_.cell_phi[sb * unc + uc];
+                m += dv * state_.cell_phi[sb * unc + uc];
                 vol += dv;
             }
             const double conc = (vol > 1.0e-12) ? m / vol : 0.0;
             if (s == age_row_) {
-                if (static_cast<std::size_t>(link) <
-                    ctx.water_age_state.link_age.size())
-                    ctx.water_age_state.link_age[static_cast<std::size_t>(
-                        link)] = conc;
+                if (static_cast<std::size_t>(link) < ctx.water_age_state.link_age.size())
+                    ctx.water_age_state.link_age[static_cast<std::size_t>(link)] = conc;
             } else if (s == temp_row_) {
                 // H4: temperature publishes into heat_state, which is where
                 // the snapshot builder reads it from REGARDLESS of engine —
@@ -1779,14 +1997,11 @@ void ArdEngine::publish(SimulationContext& ctx) {
                 // exactly this line) — HOLD the last real reading instead,
                 // which is H1's carried-temperature convention for dry
                 // elements and what the LEGACY engine does on this deck.
-                if (static_cast<std::size_t>(link) <
-                        ctx.heat_state.link_temp.size() &&
+                if (static_cast<std::size_t>(link) < ctx.heat_state.link_temp.size() &&
                     vol > kZeroVolumeFt3)
-                    ctx.heat_state.link_temp[static_cast<std::size_t>(link)] =
-                        conc;
+                    ctx.heat_state.link_temp[static_cast<std::size_t>(link)] = conc;
             } else if (s < np) {
-                ctx.links.conc[static_cast<std::size_t>(link) * unp + sb] =
-                    conc;
+                ctx.links.conc[static_cast<std::size_t>(link) * unp + sb] = conc;
             } else {
                 rx.msx_link_conc[static_cast<std::size_t>(link) * unm +
                                  static_cast<std::size_t>(s - np)] = conc;
@@ -1794,30 +2009,25 @@ void ArdEngine::publish(SimulationContext& ctx) {
         }
     }
 
-    const int nn = std::min(ctx.n_nodes(),
-                            static_cast<int>(node_vol_.size()));
+    const int nn = std::min(ctx.n_nodes(), static_cast<int>(node_vol_.size()));
     for (int nd = 0; nd < nn; ++nd) {
         const auto und = static_cast<std::size_t>(nd);
         const double vol = node_vol_[und];
         for (int s = 0; s < ns; ++s) {
             const double conc =
-                (vol > 1.0e-12)
-                    ? node_mass_[und * uns + static_cast<std::size_t>(s)] / vol
-                    : 0.0;
+                (vol > 1.0e-12) ? node_mass_[und * uns + static_cast<std::size_t>(s)] / vol : 0.0;
             if (s == age_row_) {
                 if (und < ctx.water_age_state.node_age.size())
                     ctx.water_age_state.node_age[und] = conc;
             } else if (s == temp_row_) {
                 // The link loop's ZeroVolume hold, node-store edition — the
                 // same deck read 2.8e+36 degC at an outfall store here.
-                if (und < ctx.heat_state.node_temp.size() &&
-                    vol > kZeroVolumeFt3)
+                if (und < ctx.heat_state.node_temp.size() && vol > kZeroVolumeFt3)
                     ctx.heat_state.node_temp[und] = conc;
             } else if (s < np) {
                 ctx.nodes.conc[und * unp + static_cast<std::size_t>(s)] = conc;
             } else {
-                rx.msx_node_conc[und * unm +
-                                 static_cast<std::size_t>(s - np)] = conc;
+                rx.msx_node_conc[und * unm + static_cast<std::size_t>(s - np)] = conc;
             }
         }
     }
@@ -1829,33 +2039,29 @@ void ArdEngine::publish(SimulationContext& ctx) {
     for (int i = 0; i < n_struct; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         const int link = mesh_.struct_link[ui];
-        if (link < 0 || link >= ctx.n_links()) continue;
+        if (link < 0 || link >= ctx.n_links())
+            continue;
         const double q = ctx.links.flow[static_cast<std::size_t>(link)];
         const int donor_n = (q >= 0.0) ? mesh_.struct_n1[ui] : mesh_.struct_n2[ui];
-        if (donor_n < 0 || donor_n >= nn) continue;
+        if (donor_n < 0 || donor_n >= nn)
+            continue;
         const auto ud = static_cast<std::size_t>(donor_n);
         for (int s = 0; s < np; ++s)
-            ctx.links.conc[static_cast<std::size_t>(link) * unp +
-                           static_cast<std::size_t>(s)] =
+            ctx.links.conc[static_cast<std::size_t>(link) * unp + static_cast<std::size_t>(s)] =
                 ctx.nodes.conc[ud * unp + static_cast<std::size_t>(s)];
         for (int m2 = 0; m2 < nm; ++m2)
-            rx.msx_link_conc[static_cast<std::size_t>(link) * unm +
-                             static_cast<std::size_t>(m2)] =
+            rx.msx_link_conc[static_cast<std::size_t>(link) * unm + static_cast<std::size_t>(m2)] =
                 rx.msx_node_conc[ud * unm + static_cast<std::size_t>(m2)];
-        if (age_row_ >= 0 &&
-            static_cast<std::size_t>(link) <
-                ctx.water_age_state.link_age.size() &&
+        if (age_row_ >= 0 && static_cast<std::size_t>(link) < ctx.water_age_state.link_age.size() &&
             ud < ctx.water_age_state.node_age.size())
             ctx.water_age_state.link_age[static_cast<std::size_t>(link)] =
                 ctx.water_age_state.node_age[ud];
         // H4: a regulator carries its donor node's temperature for the same
         // reason it carries its age — it stores nothing, so there is no
         // mixed value of its own.
-        if (temp_row_ >= 0 &&
-            static_cast<std::size_t>(link) < ctx.heat_state.link_temp.size() &&
+        if (temp_row_ >= 0 && static_cast<std::size_t>(link) < ctx.heat_state.link_temp.size() &&
             ud < ctx.heat_state.node_temp.size())
-            ctx.heat_state.link_temp[static_cast<std::size_t>(link)] =
-                ctx.heat_state.node_temp[ud];
+            ctx.heat_state.link_temp[static_cast<std::size_t>(link)] = ctx.heat_state.node_temp[ud];
     }
 }
 
@@ -1863,6 +2069,14 @@ void ArdEngine::publish(SimulationContext& ctx) {
 // totalMass — conservation ledger for the unit gates
 // ===========================================================================
 
+/**
+ * @brief Sum represented inventory over cells and physical node stores for every carried row.
+ * @param[in] ctx Unused context retained for diagnostics interface.
+ * @return Owning total-row vector of concentration*ft3 inventories, age s*ft3, temperature
+ * degC*ft3; no litre/user-mass or heat-capacity conversion. No physical/clock mutation, array
+ * validation or implicit initialization. Allocation can throw; stable matching owned state
+ * required.
+ */
 std::vector<double> ArdEngine::totalMass(const SimulationContext& ctx) const {
     (void)ctx;
     const int ns = state_.n_species;
@@ -1881,34 +2095,85 @@ std::vector<double> ArdEngine::totalMass(const SimulationContext& ctx) const {
     return total;
 }
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport
 
 namespace openswmm::transport {
 namespace {
-template<class A,class S> void ardRestartFields(A& a,S& s) {
-    a.fixed(s.cell_a,s.cell_q,s.cell_h,s.node_volume,s.node_head,s.node_surf_area,s.node_overflow,s.node_overflow_vol,s.cell_phi);
+/**
+ * @brief Archive only fixed-size persistent finite-volume numerical arrays.
+ * @tparam A Completed-source archive implementation supporting fixed vectors.
+ * @tparam S Compatible network state type with required cell/node/scalar members.
+ * @param[in,out] a Read/write archive, fixed extents already configured by initialized matching
+ * mesh.
+ * @param[in,out] s State fields serialized/restored; may be partially changed on archive
+ * failure.
+ * @note Excludes topology, dimensions, scratch, owner receipt vectors and context. No validation
+ * in this helper; staging caller validates numerical values after read, no rollback or clock
+ * mutation.
+ */
+template <class A, class S> void ardRestartFields(A& a, S& s) {
+    a.fixed(s.cell_a, s.cell_q, s.cell_h, s.node_volume, s.node_head, s.node_surf_area,
+            s.node_overflow, s.node_overflow_vol, s.cell_phi);
 }
 }
+/**
+ * @brief Export completed ARD numerical state without serializing live diagnostic writer.
+ * @return Owning bytes with ready flag, fixed state arrays, node mass/volume, face flux and
+ * warnings/latch.
+ * @throws std::runtime_error Active detailed output cannot continue from checkpoint;
+ * archive/allocation failures propagate. Does not validate finite values on save or serialize
+ * mesh/options/source row mappings, context inventory, engine clock or scratch; retain matching
+ * completed source separately. Stable owner required.
+ */
 std::string ArdEngine::checkpointState() const {
-    if(detail_active_)throw std::runtime_error("ARD detailed output cannot continue from a checkpoint.");
-    detail::CompletedSourceArchive a;auto ready=initialized_;a(ready);
-    if(ready) {
-        auto state=state_;auto mass=node_mass_,volume=node_vol_,flux=face_q_;
-        auto warnings=warnings_;auto warned=warned_cfl_clamp_;
-        ardRestartFields(a,state);a(mass,volume,flux,warnings,warned);
+    if (detail_active_)
+        throw std::runtime_error("ARD detailed output cannot continue from a checkpoint.");
+    detail::CompletedSourceArchive a;
+    auto ready = initialized_;
+    a(ready);
+    if (ready) {
+        auto state = state_;
+        auto mass = node_mass_, volume = node_vol_, flux = face_q_;
+        auto warnings = warnings_;
+        auto warned = warned_cfl_clamp_;
+        ardRestartFields(a, state);
+        a(mass, volume, flux, warnings, warned);
     }
     return a.bytes();
 }
-void ArdEngine::restoreCheckpointState(const std::string& bytes,SimulationContext& ctx) {
-    detail::CompletedSourceArchive a(bytes);bool ready=false;a(ready);
-    if(ready) {
-        if(!ctx.ard_config.detailed_output_path.empty() || !init(ctx))
+/**
+ * @brief Decode completed ARD state into a fresh staging owner against compatible context.
+ * @param[in] bytes Archive from checkpointState with matching source/configuration/dimensions.
+ * @param[in,out] ctx Matching completed native geometry/quality/options; ready snapshot calls
+ * init, which may reseed public scalar/native stores before fixed numerical state replacement.
+ * @throws std::runtime_error Detail path configured, init failure, archive/trailing extent
+ * error, nonfinite stored numerical values or negative node volume. Other
+ * allocations/dependencies propagate.
+ * @note Decode mutates staging owner/context before validation, no rollback. Does not reject all
+ * negative cell area/concentration values. False-ready snapshot leaves existing owner untouched,
+ * so caller must use fresh staging owner and install only after broader physical/output
+ * validation. No engine clock advance.
+ */
+void ArdEngine::restoreCheckpointState(const std::string& bytes, SimulationContext& ctx) {
+    detail::CompletedSourceArchive a(bytes);
+    bool ready = false;
+    a(ready);
+    if (ready) {
+        if (!ctx.ard_config.detailed_output_path.empty() || !init(ctx))
             throw std::runtime_error("Cannot initialize staged ARD checkpoint transport.");
-        ardRestartFields(a,state_);a.fixed(node_mass_,node_vol_,face_q_);a(warnings_,warned_cfl_clamp_);
-        for(const auto* v:{&state_.cell_a,&state_.cell_q,&state_.cell_h,&state_.node_volume,&state_.node_head,
-             &state_.node_surf_area,&state_.node_overflow,&state_.node_overflow_vol,&state_.cell_phi,&node_mass_,&node_vol_,&face_q_})
-            for(double value:*v)if(!std::isfinite(value))throw std::runtime_error("Nonfinite ARD checkpoint state.");
-        for(double value:node_vol_)if(value<0)throw std::runtime_error("Negative ARD checkpoint volume.");
+        ardRestartFields(a, state_);
+        a.fixed(node_mass_, node_vol_, face_q_);
+        a(warnings_, warned_cfl_clamp_);
+        for (const auto* v :
+             {&state_.cell_a, &state_.cell_q, &state_.cell_h, &state_.node_volume,
+              &state_.node_head, &state_.node_surf_area, &state_.node_overflow,
+              &state_.node_overflow_vol, &state_.cell_phi, &node_mass_, &node_vol_, &face_q_})
+            for (double value : *v)
+                if (!std::isfinite(value))
+                    throw std::runtime_error("Nonfinite ARD checkpoint state.");
+        for (double value : node_vol_)
+            if (value < 0)
+                throw std::runtime_error("Negative ARD checkpoint volume.");
     }
     a.finish();
 }

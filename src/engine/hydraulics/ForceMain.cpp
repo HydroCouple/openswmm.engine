@@ -15,13 +15,13 @@
 // limitations under the License.
 
 /**
- * @file ForceMain.cpp
- * @brief Force main friction — numerically identical to legacy forcmain.c.
+ * @file      ForceMain.cpp
+ * @brief     Force main friction — numerically identical to legacy forcmain.c.
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "ForceMain.hpp"
@@ -59,7 +59,8 @@ double getFricSlope_DW(double velocity, double hyd_rad, double roughness) {
 // ============================================================================
 
 double getFricFactor(double r_bot, double hrad, double re) {
-    if (hrad <= 0.0) return 0.0;
+    if (hrad <= 0.0)
+        return 0.0;
     // Legacy forcmain.c forcemain_getFricFactor, bit-exact (Swamee-Jain
     // approximation to Colebrook-White). The three arms — laminar, the
     // transitional 2000<Re<4000 blend, and turbulent — plus the Re<10 floor
@@ -69,7 +70,8 @@ double getFricFactor(double r_bot, double hrad, double re) {
     // the turbulent expression diverges the friction slope. Grouping matches
     // legacy: e/3.7/(4·hrad) and 0.25/f/f, left to right.
     double f;
-    if (re < 10.0) re = 10.0;
+    if (re < 10.0)
+        re = 10.0;
     if (re <= 2000.0) {
         f = 64.0 / re;
     } else if (re < 4000.0) {
@@ -77,7 +79,8 @@ double getFricFactor(double r_bot, double hrad, double re) {
         f = 0.032 + (f - 0.032) * (re - 2000.0) / 2000.0;
     } else {
         f = r_bot / 3.7 / (4.0 * hrad);
-        if (re < 1.0e10) f += 5.74 / std::pow(re, 0.9);
+        if (re < 1.0e10)
+            f += 5.74 / std::pow(re, 0.9);
         f = std::log10(f);
         f = 0.25 / f / f;
     }
@@ -89,22 +92,22 @@ double getFricFactor(double r_bot, double hrad, double re) {
 // Matches legacy forcemain_getEquivN() in forcmain.c
 // ============================================================================
 
-double getEquivN(FrictionModel model, double r_bot, double y_full,
-                 double slope, double n_raw) {
-    if (slope <= 0.0 || y_full <= 0.0) return n_raw;
+double getEquivN(FrictionModel model, double r_bot, double y_full, double slope, double n_raw) {
+    if (slope <= 0.0 || y_full <= 0.0)
+        return n_raw;
     switch (model) {
-        case FrictionModel::HAZEN_WILLIAMS:
-            // legacy: 1.067 / rBot * pow(d/slope, 0.04)
-            // where rBot = HW C-factor, d = y_full
-            return 1.067 / r_bot * std::pow(y_full / slope, 0.04);
+    case FrictionModel::HAZEN_WILLIAMS:
+        // legacy: 1.067 / rBot * pow(d/slope, 0.04)
+        // where rBot = HW C-factor, d = y_full
+        return 1.067 / r_bot * std::pow(y_full / slope, 0.04);
 
-        case FrictionModel::DARCY_WEISBACH: {
-            // legacy: sqrt(f/185.0) * pow(d, 1/6)
-            // where f = getFricFactor(rBot, d/4, 1e12), d = y_full
-            double hrad = y_full / 4.0;
-            double f = getFricFactor(r_bot, hrad, 1.0e12);
-            return std::sqrt(f / 185.0) * std::pow(y_full, 1.0 / 6.0);
-        }
+    case FrictionModel::DARCY_WEISBACH: {
+        // legacy: sqrt(f/185.0) * pow(d, 1/6)
+        // where f = getFricFactor(rBot, d/4, 1e12), d = y_full
+        double hrad = y_full / 4.0;
+        double f = getFricFactor(r_bot, hrad, 1.0e12);
+        return std::sqrt(f / 185.0) * std::pow(y_full, 1.0 / 6.0);
+    }
     }
     return n_raw;
 }
@@ -115,17 +118,18 @@ double getEquivN(FrictionModel model, double r_bot, double y_full,
 // ============================================================================
 
 double getRoughFactor(FrictionModel model, double r_bot, double length_factor) {
-    if (length_factor <= 0.0) length_factor = 1.0;
+    if (length_factor <= 0.0)
+        length_factor = 1.0;
     constexpr double G = 32.2;
     switch (model) {
-        case FrictionModel::HAZEN_WILLIAMS: {
-            // legacy: GRAVITY / pow(1.318 * rBot * pow(lengthFactor, 0.54), 1.852)
-            double denom = 1.318 * r_bot * std::pow(length_factor, 0.54);
-            return (denom > 0.0) ? G / std::pow(denom, 1.852) : 0.0;
-        }
-        case FrictionModel::DARCY_WEISBACH:
-            // legacy: 1.0 / 8.0 / lengthFactor
-            return 1.0 / (8.0 * length_factor);
+    case FrictionModel::HAZEN_WILLIAMS: {
+        // legacy: GRAVITY / pow(1.318 * rBot * pow(lengthFactor, 0.54), 1.852)
+        double denom = 1.318 * r_bot * std::pow(length_factor, 0.54);
+        return (denom > 0.0) ? G / std::pow(denom, 1.852) : 0.0;
+    }
+    case FrictionModel::DARCY_WEISBACH:
+        // legacy: 1.0 / 8.0 / lengthFactor
+        return 1.0 / (8.0 * length_factor);
     }
     return 0.0;
 }
@@ -134,9 +138,8 @@ double getRoughFactor(FrictionModel model, double r_bot, double length_factor) {
 // Batch friction slope — VECTORISABLE
 // ============================================================================
 
-void batchFricSlope(const double* velocity, const double* hyd_rad,
-                    const double* param, double* fric_slope,
-                    FrictionModel model, int count) {
+void batchFricSlope(const double* velocity, const double* hyd_rad, const double* param,
+                    double* fric_slope, FrictionModel model, int count) {
     if (model == FrictionModel::HAZEN_WILLIAMS) {
         for (int i = 0; i < count; ++i) {
             fric_slope[i] = getFricSlope_HW(velocity[i], hyd_rad[i], param[i]);

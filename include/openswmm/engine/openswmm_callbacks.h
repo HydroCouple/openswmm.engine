@@ -15,17 +15,21 @@
 // limitations under the License.
 
 /**
- * @file openswmm_callbacks.h
- * @brief Callback function typedefs for the OpenSWMM Engine C API.
+ * @file      openswmm_callbacks.h
+ * @brief     Callback function typedefs for the OpenSWMM Engine C API.
  *
  * @details Callbacks allow host applications to receive runtime notifications
  *          from the simulation engine without polling. Register callbacks via
  *          the corresponding swmm_set_*_callback() functions.
  *
- *          All callbacks are invoked on the **main simulation thread** unless
- *          otherwise noted. Callbacks must be thread-safe with respect to the
- *          IO thread (i.e., do not modify simulation state from within a
- *          callback unless the engine is in a safe state).
+ *          Registered runtime callbacks run synchronously on the thread making
+ *          the engine call, not necessarily the application UI thread. Callback
+ *          functions must not throw across the C boundary or recursively step,
+ *          close or destroy the engine. Only explicitly permitted runtime
+ *          setters may mutate state from step callbacks. The engine borrows
+ *          callback/context pointers; keep their storage alive until replaced
+ *          or unregistered. Strings supplied to callbacks are borrowed for the
+ *          callback invocation and must be copied if retained.
  *
  * @note All callback function pointers accept a `void* user_data` parameter
  *       that is passed through unmodified from registration. Use this to
@@ -35,9 +39,9 @@
  *
  * @see openswmm_engine.h for registration functions.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_CALLBACKS_H
@@ -55,156 +59,150 @@ typedef void* SWMM_Engine;
  * ========================================================================= */
 
 /**
- * @brief Called after each simulation timestep to report progress.
+ * @brief Report the simulation fraction immediately before a physical step.
  *
- * @details Invoked from inside swmm_engine_step() after advancing the
- *          simulation by one timestep. The callback receives the current
- *          elapsed fraction (0.0 to 1.0) and absolute simulation time.
+ * Invoked synchronously inside swmm_engine_step() before the step-begin callback and before
+ * physics. It is a notification and does not cancel the step. Keep it lightweight; it may run at
+ * every physical timestep. Register/unregister with swmm_set_progress_callback().
  *
- * @param engine        The engine handle that fired the callback.
- * @param elapsed_frac  Fraction of simulation complete [0.0, 1.0].
- * @param sim_time      Current simulation time as a SWMM DateTime double
- *                      (decimal days since 1899-12-30; see `openswmm_datetime.h`).
- * @param user_data     User-supplied context pointer from registration.
- *
- * @note This callback is called on every physical timestep, which may be
- *       very frequent. Keep the callback implementation lightweight.
- *
- * Example (C):
- * @code{.c}
- * void my_progress(SWMM_Engine e, double frac, double t, void* ud) {
- *     printf("Progress: %.1f%%  t=%.4f days\n", frac * 100.0, t);
- * }
- * swmm_set_progress_callback(engine, my_progress, NULL);
- * @endcode
+ * @param[in] engine Borrowed handle for the engine making the callback; do not close/destroy it
+ *     during the invocation.
+ * @param[in] elapsed_frac Elapsed simulation seconds divided by planned duration, normally in
+ *     [0,1]; zero when the duration is nonpositive. This is the fraction at the beginning of the
+ *     upcoming step.
+ * @param[in] sim_time Calendar time at the start of the upcoming step, as SWMM DateTime decimal
+ *     days since 1899-12-30.
+ * @param[in] user_data Borrowed context pointer supplied at registration or to the calling
+ *     operation; may be NULL and is passed through unchanged.
  */
-typedef void (*SWMM_ProgressCallback)(
-    SWMM_Engine engine,
-    double      elapsed_frac,
-    double      sim_time,
-    void*       user_data
-);
+typedef void (*SWMM_ProgressCallback)(SWMM_Engine engine, double elapsed_frac, double sim_time,
+                                      void* user_data);
 
 /**
- * @brief Reports progress for a synchronous, cancellable read-only operation.
+ * @brief Report synchronous read-only operation progress and optionally request cancellation.
  *
- * Return nonzero to cancel the operation. The callback runs on the calling
- * thread and must not mutate or close the engine. `stage` is operation-specific
- * and `progress` is in [0, 100].
+ * Runs on the calling thread. Do not mutate, recursively invoke, close or destroy the engine. There
+ * is no persistent registration: pass it to a supporting read-only API for the duration of that
+ * call.
+ *
+ * @param[in] engine Borrowed handle for the engine making the callback; do not close/destroy it
+ *     during the invocation.
+ * @param[in] stage Operation-specific stage identifier; interpret using the API that accepted this
+ *     callback.
+ * @param[in] progress Stage progress percentage in [0,100].
+ * @param[in] user_data Borrowed context pointer supplied at registration or to the calling
+ *     operation; may be NULL and is passed through unchanged.
+ * @return Zero to continue; any nonzero value requests cancellation. The enclosing operation
+ *     determines its cancellation return code and publication behavior.
  */
-typedef int (*SWMM_CancelCallback)(
-    SWMM_Engine engine,
-    int         stage,
-    int         progress,
-    void*       user_data
-);
+typedef int (*SWMM_CancelCallback)(SWMM_Engine engine, int stage, int progress, void* user_data);
 
 /* =========================================================================
  * Warning / error callback
  * ========================================================================= */
 
 /**
- * @brief Called when the engine emits a warning or non-fatal error.
+ * @brief Receive a diagnostic synchronously when the engine emits it.
  *
- * @details Warnings are issued for recoverable situations such as:
- *          - Missing objects during hot start application
- *          - Deprecated input section keywords
- *          - Numerical instabilities that were handled gracefully
- *          - Plugin initialization issues
+ * This callback also runs on fatal set_error() paths; receiving a message does not guarantee the
+ * simulation can continue. Check the operation return value and engine error state.
+ * Register/unregister with swmm_set_warning_callback().
  *
- * @param engine    The engine handle that fired the callback.
- * @param code      Warning/error code (see SWMM_WarnCode enum in openswmm_engine.h).
- * @param message   Null-terminated human-readable warning message.
- * @param user_data User-supplied context pointer from registration.
+ * @param[in] engine Borrowed handle for the engine making the callback; do not close/destroy it
+ *     during the invocation.
+ * @param[in] code Diagnostic code: an SWMM_WarnCode warning, an error code for a fatal engine
+ *     error, or 0 for an advisory without a specific warning code.
+ * @param[in] message Borrowed NUL-terminated human-readable diagnostic when supplied by the
+ *     emitter; copy it during this invocation if it must be retained.
+ * @param[in] user_data Borrowed context pointer supplied at registration or to the calling
+ *     operation; may be NULL and is passed through unchanged.
  */
-typedef void (*SWMM_WarningCallback)(
-    SWMM_Engine engine,
-    int         code,
-    const char* message,
-    void*       user_data
-);
+typedef void (*SWMM_WarningCallback)(SWMM_Engine engine, int code, const char* message,
+                                     void* user_data);
 
 /* =========================================================================
  * Timestep begin/end callbacks
  * ========================================================================= */
 
 /**
- * @brief Called at the beginning of each simulation timestep, before physics.
+ * @brief Run before physics at the start of a physical simulation step.
  *
- * @details This is the correct place to inject external forcings or modify
- *          boundary conditions before the engine advances the simulation.
+ * Called after the progress callback. Use only runtime APIs that explicitly permit callback updates
+ * to inject external forcing or boundary prescriptions. Recursive stepping/advancement and engine
+ * lifecycle changes are prohibited. Register/unregister with swmm_set_step_begin_callback().
  *
- * @param engine    The engine handle.
- * @param sim_time  Current simulation time (start of this step) in decimal days.
- * @param dt        Timestep duration in seconds.
- * @param user_data User-supplied context pointer.
+ * @param[in] engine Borrowed handle for the engine making the callback; do not close/destroy it
+ *     during the invocation.
+ * @param[in] sim_time Start-of-step SWMM DateTime in decimal days since 1899-12-30.
+ * @param[in] dt Proposed step duration in seconds. A runtime prescription installed by this
+ *     callback can introduce an earlier expiry and shorten the final step.
+ * @param[in] user_data Borrowed context pointer supplied at registration or to the calling
+ *     operation; may be NULL and is passed through unchanged.
  */
-typedef void (*SWMM_StepBeginCallback)(
-    SWMM_Engine engine,
-    double      sim_time,
-    double      dt,
-    void*       user_data
-);
+typedef void (*SWMM_StepBeginCallback)(SWMM_Engine engine, double sim_time, double dt,
+                                       void* user_data);
 
 /**
- * @brief Called at the end of each simulation timestep, after physics.
+ * @brief Run after physics and output snapshots for one physical simulation step.
  *
- * @details This is the correct place to read simulation results for
- *          real-time monitoring or control decisions.
+ * Read available state for monitoring or install runtime prescriptions for the following step
+ * through APIs that permit callback updates. One-step rainfall prescriptions and expired coupling
+ * rows have already been expired. Checkpoint-boundary acceptance/recording may still occur after
+ * this callback; the enclosing step can therefore still fail. Register/unregister with
+ * swmm_set_step_end_callback().
  *
- * @param engine    The engine handle.
- * @param sim_time  Simulation time at the END of this step in decimal days.
- * @param dt        Timestep duration in seconds that was just completed.
- * @param user_data User-supplied context pointer.
+ * @param[in] engine Borrowed handle for the engine making the callback; do not close/destroy it
+ *     during the invocation.
+ * @param[in] sim_time End-of-step SWMM DateTime in decimal days since 1899-12-30.
+ * @param[in] dt Actual duration of the completed physical step in seconds.
+ * @param[in] user_data Borrowed context pointer supplied at registration or to the calling
+ *     operation; may be NULL and is passed through unchanged.
  */
-typedef void (*SWMM_StepEndCallback)(
-    SWMM_Engine engine,
-    double      sim_time,
-    double      dt,
-    void*       user_data
-);
+typedef void (*SWMM_StepEndCallback)(SWMM_Engine engine, double sim_time, double dt,
+                                     void* user_data);
 
 /* =========================================================================
  * Plugin event callbacks (fired by the plugin system)
  * ========================================================================= */
 
 /**
- * @brief Called when a plugin changes state.
+ * @brief Describe a plugin-state notification callback signature.
  *
- * @param engine      The engine handle.
- * @param plugin_id   Null-terminated plugin identifier (reverse-DNS string).
- * @param old_state   Previous plugin state (SWMM_PluginState enum value).
- * @param new_state   New plugin state.
- * @param user_data   User-supplied context pointer.
+ * This header declares the signature only; the current public engine C API does not provide a
+ * registration function for it. Do not assume that declaring this callback installs a notification
+ * handler.
+ *
+ * @param[in] engine Borrowed handle for the engine making the callback; do not close/destroy it
+ *     during the invocation.
+ * @param[in] plugin_id Borrowed NUL-terminated plugin identifier, conventionally reverse-DNS.
+ * @param[in] old_state Previous plugin state integer, interpreted by the emitting plugin system.
+ * @param[in] new_state New plugin state integer, interpreted by the emitting plugin system.
+ * @param[in] user_data Borrowed context pointer supplied at registration or to the calling
+ *     operation; may be NULL and is passed through unchanged.
  */
-typedef void (*SWMM_PluginStateCallback)(
-    SWMM_Engine engine,
-    const char* plugin_id,
-    int         old_state,
-    int         new_state,
-    void*       user_data
-);
+typedef void (*SWMM_PluginStateCallback)(SWMM_Engine engine, const char* plugin_id, int old_state,
+                                         int new_state, void* user_data);
 
 /* =========================================================================
  * Hot start callbacks
  * ========================================================================= */
 
 /**
- * @brief Called for each object that was missing when applying a hot start.
+ * @brief Describe a missing-object hot-start notification callback signature.
  *
- * @details Allows the host application to log or react to missing objects.
+ * This header declares the signature only; the current public engine C API does not register or
+ * invoke this callback. Use the available hot-start diagnostics to inspect actual application
+ * results.
  *
- * @param engine       The engine handle.
- * @param object_type  Type string: "NODE", "LINK", "SUBCATCH", "FLAG".
- * @param object_id    Null-terminated identifier of the missing object.
- * @param user_data    User-supplied context pointer.
+ * @param[in] engine Borrowed handle for the engine making the callback; do not close/destroy it
+ *     during the invocation.
+ * @param[in] object_type Borrowed object category token, such as NODE, LINK, SUBCATCH or FLAG.
+ * @param[in] object_id Borrowed NUL-terminated missing-object identifier.
+ * @param[in] user_data Borrowed context pointer supplied at registration or to the calling
+ *     operation; may be NULL and is passed through unchanged.
  */
-typedef void (*SWMM_HotStartMissingCallback)(
-    SWMM_Engine engine,
-    const char* object_type,
-    const char* object_id,
-    void*       user_data
-);
+typedef void (*SWMM_HotStartMissingCallback)(SWMM_Engine engine, const char* object_type,
+                                             const char* object_id, void* user_data);
 
 #ifdef __cplusplus
 } /* extern "C" */

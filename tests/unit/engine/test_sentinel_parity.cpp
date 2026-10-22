@@ -22,6 +22,15 @@
  * Fixtures live in tests/unit/engine/data/ (the test's WORKING_DIRECTORY).
  */
 
+/**
+ * @file      test_sentinel_parity.cpp
+ * @brief     Tests for sentinel parity.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
 #include <gtest/gtest.h>
 
 #include <filesystem>
@@ -41,6 +50,17 @@ namespace {
 
 constexpr double kMissing = -1.0e10;
 
+/**
+ * @brief Collect an entire fixture file into owned text.
+ *
+ * Uses ordinary text mode and its platform newline rules. The local stream closes on return; no
+ * model state is touched and no borrowed buffer is returned. Default stream exception settings
+ * apply; allocation exceptions may propagate.
+ *
+ * @param[in] path Borrowed input filename used for this synchronous open/read.
+ * @return Owned string collected from the stream; empty can mean an empty file or failure to open.
+ *     Partial read failures have no separate status.
+ */
 std::string read_file(const std::string& path) {
     std::ifstream f(path);
     std::stringstream ss;
@@ -48,12 +68,34 @@ std::string read_file(const std::string& path) {
     return ss.str();
 }
 
+/**
+ * @brief Check a case-sensitive text fragment without modifying either string.
+ *
+ * @param[in] hay Borrowed text to search.
+ * @param[in] needle Borrowed substring; an empty substring always matches.
+ * @return True when std::string::find locates needle, false otherwise.
+ */
 bool contains(const std::string& hay, const std::string& needle) {
     return hay.find(needle) != std::string::npos;
 }
 
 // Open a deck; on success run it to completion and write the report. Returns
 // the open() code and the report text.
+/**
+ * @brief Attempt a sentinel deck run and return its open status plus report text.
+ *
+ * On successful open/init/start, steps until failure/completion then ends/reports. Closes the
+ * created handle but does not destroy it, so this helper does not release all native allocation
+ * ownership. Missing/unreadable report yields empty text via read_file; no progress callback is
+ * used.
+ *
+ * @param[in] stem Readable model path stem, without extension; same-stem .rpt/.out artifacts may be
+ *     overwritten.
+ * @param[out] rpt_text Replaced by available same-stem report contents, even after lifecycle
+ *     failure.
+ * @return Raw engine_open status only; later initialize/start/step/end/report failures are not
+ *     reflected in this return.
+ */
 int run_model(const std::string& stem, std::string& rpt_text) {
     const std::string inp = stem + ".inp", rpt = stem + ".rpt", out = stem + ".out";
     SWMM_Engine e = swmm_engine_create();
@@ -72,6 +114,17 @@ int run_model(const std::string& stem, std::string& rpt_text) {
 }
 
 // Open only (no run) for property assertions. Caller closes.
+/**
+ * @brief Open a sentinel deck without initialization for property inspection.
+ *
+ * Records an EXPECT_EQ success diagnostic including report text. Does not check creation separately
+ * or start/advance; same-stem report/output paths are passed to open.
+ *
+ * @param[in] stem Readable model path stem, without extension; same-stem .rpt/.out artifacts may be
+ *     overwritten.
+ * @return Created engine handle even after a nonfatal open failure; caller owns close/destroy
+ *     responsibility.
+ */
 SWMM_Engine open_only(const std::string& stem) {
     SWMM_Engine e = swmm_engine_create();
     const std::string inp = stem + ".inp", rpt = stem + ".rpt", out = stem + ".out";
@@ -80,15 +133,39 @@ SWMM_Engine open_only(const std::string& stem) {
     return e;
 }
 
+/**
+ * @brief Read the groundwater receiving-elevation parameter for one subcatchment.
+ *
+ * Uses nonfatal lookup/API expectations and discards the other seven parameters. Preserves
+ * literal/sentinel values supplied by the API; no extra interpretation or conversion occurs.
+ *
+ * @param[in] e Live opened native engine with groundwater parameters.
+ * @param[in] subcatch Non-null existing subcatchment identifier.
+ * @return Eighth groundwater parameter in the API model/display elevation units, or zero if the
+ *     getter leaves the initialized array unchanged.
+ */
 double egwt_of(SWMM_Engine e, const char* subcatch) {
     const int s = swmm_subcatch_index(e, subcatch);
     EXPECT_GE(s, 0);
     double v[8] = {};
-    EXPECT_EQ(swmm_subcatch_get_gw_params(e, s, &v[0], &v[1], &v[2], &v[3],
-                                          &v[4], &v[5], &v[6], &v[7]), SWMM_OK);
+    EXPECT_EQ(
+        swmm_subcatch_get_gw_params(e, s, &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7]),
+        SWMM_OK);
     return v[7];
 }
 
+/**
+ * @brief Run a sentinel fixture and sample S1's accumulated runoff volume.
+ *
+ * Short-circuits open/init/start, then steps until failure/completion and samples before end.
+ * Ignores getter/end/close statuses, closes but does not destroy the created handle. A partial run
+ * may therefore return partial statistics without a distinct failure flag.
+ *
+ * @param[in] stem Readable model path stem, without extension; same-stem .rpt/.out artifacts may be
+ *     overwritten.
+ * @return S1 runoff-statistic volume in API display volume units (fixture US decks), initially -1
+ *     if no successful lifecycle/getter assignment.
+ */
 double runoff_volume(const std::string& stem) {
     SWMM_Engine e = swmm_engine_create();
     const std::string inp = stem + ".inp", rpt = stem + ".rpt", out = stem + ".out";
@@ -107,6 +184,19 @@ double runoff_volume(const std::string& stem) {
 
 // Run to the first step at or past `days` elapsed and return the air
 // temperature there (deg F).
+/**
+ * @brief Sample air temperature at the first available step reaching the requested time.
+ *
+ * Steps until failure, completion or elapsed>=days, then samples/end/closes; no interpolation to
+ * exact target occurs. Lifecycle/getter statuses have no separate result beyond the initial
+ * sentinel. Created handle is closed but not destroyed.
+ *
+ * @param[in] stem Readable model path stem, without extension; same-stem .rpt/.out artifacts may be
+ *     overwritten.
+ * @param[in] days Target elapsed time in days; intended within the simulation window.
+ * @return API air temperature in degrees F for these US fixtures, initially -1e30 if the run/getter
+ *     does not assign it.
+ */
 double temperature_at(const std::string& stem, double days) {
     SWMM_Engine e = swmm_engine_create();
     const std::string inp = stem + ".inp", rpt = stem + ".rpt", out = stem + ".out";
@@ -123,6 +213,16 @@ double temperature_at(const std::string& stem, double days) {
     return temp;
 }
 
+/**
+ * @brief Read the opened G1 rainfall-series count in a sentinel deck.
+ *
+ * Uses open_only and a nonfatal getter expectation, then closes the handle without destroying it.
+ * Does not initialize a model or consume rainfall records.
+ *
+ * @param[in] stem Readable model path stem, without extension; same-stem .rpt/.out artifacts may be
+ *     overwritten.
+ * @return API series count, initially -1 when retrieval does not assign it.
+ */
 int rain_series_count(const std::string& stem) {
     SWMM_Engine e = open_only(stem);
     int n = -1;
@@ -132,6 +232,17 @@ int rain_series_count(const std::string& stem) {
 }
 
 // Re-write the opened deck and return the text of the written file.
+/**
+ * @brief Write an opened sentinel model to a new input file and collect its text.
+ *
+ * Uses nonfatal open/write expectations and closes but does not destroy the handle; still reads the
+ * destination after write failure. Overwrites the rewritten input, leaving the original deck
+ * unchanged.
+ *
+ * @param[in] stem Readable model path stem, without extension; same-stem .rpt/.out artifacts may be
+ *     overwritten.
+ * @return Owned available text from stem_rewritten.inp, empty/partial when writing/reading fails.
+ */
 std::string rewritten(const std::string& stem) {
     SWMM_Engine e = open_only(stem);
     const std::string path = stem + "_rewritten.inp";
@@ -140,7 +251,7 @@ std::string rewritten(const std::string& stem) {
     return read_file(path);
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // [GROUNDWATER]
@@ -179,14 +290,17 @@ TEST(SentinelParityGroundwater, RowBeforeReferencedSectionsResolves) {
     EXPECT_EQ(nd, swmm_node_index(e, "J1"));
     EXPECT_EQ(egwt_of(e, "S1"), kMissing);
     char expr[64] = {};
-    EXPECT_EQ(swmm_subcatch_get_gwf_expression(e, s, SWMM_GWF_LATERAL, expr, sizeof(expr)), SWMM_OK);
+    EXPECT_EQ(swmm_subcatch_get_gwf_expression(e, s, SWMM_GWF_LATERAL, expr, sizeof(expr)),
+              SWMM_OK);
     EXPECT_STREQ(expr, "0.001*HGW");
-    EXPECT_DOUBLE_EQ([&] {
-        double v[8] = {};
-        swmm_subcatch_get_gw_params(e, s, &v[0], &v[1], &v[2], &v[3], &v[4],
-                                    &v[5], &v[6], &v[7]);
-        return v[1];
-    }(), 0.1);
+    EXPECT_DOUBLE_EQ(
+        [&] {
+            double v[8] = {};
+            swmm_subcatch_get_gw_params(e, s, &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6],
+                                        &v[7]);
+            return v[1];
+        }(),
+        0.1);
     swmm_engine_close(e);
 }
 
@@ -233,12 +347,12 @@ TEST(SentinelParityGroundwater, NonNumericFieldIs211) {
 // legacy infil.c:349 replaces a zero drying time with TINY (1e-6 days), so the
 // capacity recovers almost at once; it does not switch recovery off.
 TEST(SentinelParityInfiltration, HortonDryTimeZeroIsTiny) {
-    const double v0    = runoff_volume("sentinel_horton_drytime0");
+    const double v0 = runoff_volume("sentinel_horton_drytime0");
     const double vtiny = runoff_volume("sentinel_horton_drytime_tiny");
-    const double v7    = runoff_volume("sentinel_horton_drytime7");
+    const double v7 = runoff_volume("sentinel_horton_drytime7");
     ASSERT_GT(v7, 0.0);
     EXPECT_EQ(v0, vtiny);
-    EXPECT_NE(v0, v7);  // the deck is sensitive to recovery at all
+    EXPECT_NE(v0, v7); // the deck is sensitive to recovery at all
 }
 
 // ---------------------------------------------------------------------------
@@ -324,7 +438,7 @@ TEST(SentinelParityClimate, FileStartDateRoundTrips) {
 // 40 and uses the new Tmax, so the Jan 2 afternoon is warmer than 40. Requiring
 // both values left the temperature frozen at Jan 1's 40.
 TEST(SentinelParityClimate, MissingTminKeepsPreviousTminButUsesNewTmax) {
-    const double t = temperature_at("sentinel_climate_missing_tmin", 1.625);  // Jan 2 15:00
+    const double t = temperature_at("sentinel_climate_missing_tmin", 1.625); // Jan 2 15:00
     EXPECT_GT(t, 40.5);
     EXPECT_LE(t, 60.0);
 }

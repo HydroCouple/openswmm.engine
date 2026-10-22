@@ -15,15 +15,15 @@
 // limitations under the License.
 
 /**
- * @file TimestepController.cpp
- * @brief Explicit next-timestep computation — implementation.
+ * @file      TimestepController.cpp
+ * @brief     Explicit next-timestep computation — implementation.
  *
  * @see TimestepController.hpp for interface documentation and design rationale.
  * @ingroup engine_hydraulics
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "TimestepController.hpp"
@@ -40,10 +40,7 @@ namespace openswmm::hydraulics {
 // compute_next
 // ============================================================================
 
-double TimestepController::compute_next(
-    const SimulationContext& ctx,
-    double                   dt_cfl
-) noexcept {
+double TimestepController::compute_next(const SimulationContext& ctx, double dt_cfl) noexcept {
     const SimulationOptions& opt = ctx.options;
     const double min_step = opt.min_routing_step;
 
@@ -73,7 +70,7 @@ double TimestepController::compute_next(
     const double total_msec = opt.totalDurationMs();
     if (ctx.elapsed_ms + 1000.0 * dt > total_msec) {
         dt = (total_msec - ctx.elapsed_ms) / 1000.0;
-        dt = std::max(dt, 0.001);  // legacy floor: 1 msec
+        dt = std::max(dt, 0.001); // legacy floor: 1 msec
     }
 
     // Step 3: Align to control rule event boundary
@@ -87,7 +84,8 @@ double TimestepController::compute_next(
     // postOutputSnapshot performs the identical interpolation.
 
     // Final safety: never allow zero or negative
-    if (dt <= 0.0) dt = min_step;
+    if (dt <= 0.0)
+        dt = min_step;
 
     return dt;
 }
@@ -96,24 +94,22 @@ double TimestepController::compute_next(
 // advance
 // ============================================================================
 
-void TimestepController::advance(
-    SimulationContext& ctx,
-    double             dt_taken
-) noexcept {
+void TimestepController::advance(SimulationContext& ctx, double dt_taken) noexcept {
     ctx.current_time += dt_taken;
     // Use decompose-recompose arithmetic (matching legacy getDateTime)
     // to avoid floating-point divergence from simple division.
-    ctx.current_date  = datetime::addSeconds(ctx.options.start_date, ctx.current_time);
+    ctx.current_date = datetime::addSeconds(ctx.options.start_date, ctx.current_time);
 
     // Legacy-parity ms clock (routing.c:308-309):
     //   OldRoutingTime = NewRoutingTime;
     //   NewRoutingTime = NewRoutingTime + 1000.0 * routingStep;
     ctx.old_elapsed_ms = ctx.elapsed_ms;
-    ctx.elapsed_ms     = ctx.elapsed_ms + 1000.0 * dt_taken;
+    ctx.elapsed_ms = ctx.elapsed_ms + 1000.0 * dt_taken;
 
     if (ctx.dt_controls_remaining > 0.0) {
         ctx.dt_controls_remaining -= dt_taken;
-        if (ctx.dt_controls_remaining < 0.0) ctx.dt_controls_remaining = 0.0;
+        if (ctx.dt_controls_remaining < 0.0)
+            ctx.dt_controls_remaining = 0.0;
     }
 }
 

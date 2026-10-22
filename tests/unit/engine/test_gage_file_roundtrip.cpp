@@ -1,6 +1,6 @@
 /**
- * @file test_gage_file_roundtrip.cpp
- * @brief [RAINGAGES] write→read round-trip for FILE / TIMESERIES gages.
+ * @file      test_gage_file_roundtrip.cpp
+ * @brief     [RAINGAGES] write→read round-trip for FILE / TIMESERIES gages.
  *
  * @details Regression coverage for the InpWriter dropping the station-ID and
  *          rain-units tokens of FILE-source gages (and gage scale factors),
@@ -18,6 +18,10 @@
  * @see src/engine/core/InpWriter.cpp ([RAINGAGES] section)
  * @see src/engine/input/handlers/CatchmentHandler.cpp (handle_raingages)
  * @see Legacy parity: src/legacy/engine/gage.c
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -42,25 +46,57 @@ namespace {
 // Reviewable test-output directory (CLAUDE.md §4.1). Resolved at runtime
 // relative to the test binary's CWD, then anchored to the source tree's
 // tests/unit/engine/data/gage_roundtrip/ folder.
+/**
+ * @brief Locate/create the retained rain-gage round-trip artifact folder.
+ *
+ * Searches at most eight parents from cwd for the test data tree, then creates the target even if
+ * no tree was found. Uses throwing filesystem operations, retains existing contents and leaves cwd
+ * unchanged.
+ * @return Path ending tests/unit/engine/data/gage_roundtrip beneath the located or final searched
+ *     ancestor.
+ */
 fs::path testDataDir() {
     fs::path here = fs::current_path();
     for (int i = 0; i < 8 && !fs::exists(here / "tests/unit/engine/data"); ++i) {
-        if (here.has_parent_path()) here = here.parent_path();
+        if (here.has_parent_path())
+            here = here.parent_path();
     }
     fs::path dir = here / "tests/unit/engine/data/gage_roundtrip";
     fs::create_directories(dir);
     return dir;
 }
 
+/**
+ * @brief Collect an entire fixture file into owned text.
+ *
+ * Uses ordinary text mode and its platform newline rules. The local stream closes on return; no
+ * model state is touched and no borrowed buffer is returned. Default stream exception settings
+ * apply; allocation exceptions may propagate.
+ *
+ * @param[in] p Borrowed input filename used for this synchronous open/read.
+ * @return Owned string collected from the stream; empty can mean an empty file or failure to open.
+ *     Partial read failures have no separate status.
+ */
 std::string readFile(const fs::path& p) {
     std::ifstream in(p);
-    std::stringstream ss; ss << in.rdbuf();
+    std::stringstream ss;
+    ss << in.rdbuf();
     return ss.str();
 }
 
 // Raw lines of the named section from written INP content (header excluded).
-std::vector<std::string> sectionLines(const std::string& content,
-                                      const std::string& name) {
+/**
+ * @brief Collect nonempty raw lines from matching input sections.
+ *
+ * Does not trim, normalize case, parse values or include header lines. Any later column-zero
+ * bracket header updates the active-section state.
+ *
+ * @param[in] content Complete input text, unchanged.
+ * @param[in] name Section name without brackets, used in a column-zero header-prefix match.
+ * @return Owned nonempty body lines from all matching sections, including comments/whitespace-only
+ *     lines.
+ */
+std::vector<std::string> sectionLines(const std::string& content, const std::string& name) {
     std::istringstream is(content);
     std::string line;
     std::vector<std::string> out;
@@ -70,30 +106,63 @@ std::vector<std::string> sectionLines(const std::string& content,
             in_section = (line.rfind("[" + name + "]", 0) == 0);
             continue;
         }
-        if (in_section && !line.empty()) out.push_back(line);
+        if (in_section && !line.empty())
+            out.push_back(line);
     }
     return out;
 }
 
 // First data (non-";;") line of the written [RAINGAGES] block.
+/**
+ * @brief Select the first non-double-semicolon line from RAINGAGES.
+ *
+ * Delegates section scanning to sectionLines; indented/single-semicolon comments and
+ * whitespace-only lines are not specially excluded. Does not validate a gage row.
+ *
+ * @param[in] content Canonical writer output containing an optional RAINGAGES block.
+ * @return Owned first qualifying line, or empty when none exists.
+ */
 std::string firstGageLine(const std::string& content) {
     for (const auto& l : sectionLines(content, "RAINGAGES"))
-        if (l.rfind(";;", 0) != 0) return l;
+        if (l.rfind(";;", 0) != 0)
+            return l;
     return {};
 }
 
 // Parse one [RAINGAGES] data row into a fresh context.
+/**
+ * @brief Pass one raw gage row to the native input-section parser.
+ *
+ * Calls handle_raingages with a one-entry vector. Does not resolve all cross references, open
+ * external rain data or initialize a model.
+ *
+ * @param[in,out] ctx Fresh intended context receiving parsed gage names/arrays/diagnostics; prior
+ *     state is not cleared.
+ * @param[in] row Raw RAINGAGES data row in authored units/file syntax.
+ */
 void parseGages(SimulationContext& ctx, const std::string& row) {
     handle_raingages(ctx, std::vector<std::string>{row});
 }
 
 // Write ctx to a reviewable .inp and return its content.
+/**
+ * @brief Write the gage fixture model and return available saved input text.
+ *
+ * Records nonfatal writer-success expectation and still reads afterward. Creates artifact directory
+ * through testDataDir, overwrites destination and performs no initialize/start.
+ *
+ * @param[in] ctx Stable serializable context, unchanged.
+ * @param[in] fname Non-null safe artifact filename beneath testDataDir.
+ * @param[out] warnings Optional writer-warning vector; null uses/discards a local vector, exact
+ *     append/replacement behavior follows writeInpFile.
+ * @return Owned file contents, possibly empty/partial after writer/read failure.
+ */
 std::string writeInp(const SimulationContext& ctx, const char* fname,
                      std::vector<std::string>* warnings = nullptr) {
     const fs::path dst = testDataDir() / fname;
     std::vector<std::string> local;
-    EXPECT_EQ(openswmm::inp_writer::writeInpFile(
-                  ctx, dst.string(), warnings ? warnings : &local), 0);
+    EXPECT_EQ(openswmm::inp_writer::writeInpFile(ctx, dst.string(), warnings ? warnings : &local),
+              0);
     return readFile(dst);
 }
 
@@ -151,8 +220,7 @@ TEST(GageFileRoundTrip, UserCsvColumnFormRoundTrip) {
     const std::string content = writeInp(ctx, "user_csv.inp");
     const std::string line = firstGageLine(content);
     ASSERT_FALSE(line.empty());
-    EXPECT_NE(line.find("FILE \"gage.csv:P1\" 2"), std::string::npos)
-        << "written line: " << line;
+    EXPECT_NE(line.find("FILE \"gage.csv:P1\" 2"), std::string::npos) << "written line: " << line;
 
     SimulationContext ctx2;
     parseGages(ctx2, line);
@@ -181,8 +249,7 @@ TEST(GageFileRoundTrip, UserCsvEmptyColumnWritesBarePath) {
     const std::string content = writeInp(ctx, "user_csv_empty_col.inp");
     const std::string line = firstGageLine(content);
     ASSERT_FALSE(line.empty());
-    EXPECT_NE(line.find("FILE \"gage.csv\""), std::string::npos)
-        << "written line: " << line;
+    EXPECT_NE(line.find("FILE \"gage.csv\""), std::string::npos) << "written line: " << line;
     EXPECT_EQ(line.find("gage.csv:"), std::string::npos)
         << "no dangling column separator: " << line;
 
@@ -211,12 +278,12 @@ TEST(GageFileRoundTrip, EmptyStationWritesPlaceholderAndWarns) {
     const std::string content = writeInp(ctx, "empty_station.inp", &warnings);
     const std::string line = firstGageLine(content);
     ASSERT_FALSE(line.empty());
-    EXPECT_NE(line.find("FILE \"rain.dat\" * IN"), std::string::npos)
-        << "written line: " << line;
+    EXPECT_NE(line.find("FILE \"rain.dat\" * IN"), std::string::npos) << "written line: " << line;
 
     bool warned = false;
     for (const auto& w : warnings)
-        if (w.find("station") != std::string::npos) warned = true;
+        if (w.find("station") != std::string::npos)
+            warned = true;
     EXPECT_TRUE(warned) << "expected a missing-station warning";
 
     // '*' normalizes back to empty ("accept all rows"), not a literal filter.
@@ -240,8 +307,7 @@ TEST(GageFileRoundTrip, TimeseriesScaleFactorRoundTrip) {
     const std::string content = writeInp(ctx, "timeseries_sf.inp");
     const std::string line = firstGageLine(content);
     ASSERT_FALSE(line.empty());
-    EXPECT_NE(line.find("TIMESERIES TS1 3.5"), std::string::npos)
-        << "written line: " << line;
+    EXPECT_NE(line.find("TIMESERIES TS1 3.5"), std::string::npos) << "written line: " << line;
 
     SimulationContext ctx2;
     ctx2.tables.add("TS1", openswmm::TableType::TIMESERIES);

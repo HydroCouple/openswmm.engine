@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_fv_unsteady_friction.cpp
- * @brief Gates for the FV unsteady-friction source term (issue #156 Phase 2).
+ * @file      test_fv_unsteady_friction.cpp
+ * @brief     Gates for the FV unsteady-friction source term (issue #156 Phase 2).
  *
  * @details Kernel-level algebra of kernels::ufUpdate, plus system-level gates
  *          on a two-tank slosh deck: inertness of UNSTEADY_FRICTION NONE,
@@ -24,9 +24,9 @@
  *          k3 > 0 (the physical point of the feature — Pinto et al. 2025).
  *          Plan: plans/MIXED_FLOW_CLOSURES_TPA_UF_PLAN_2026-08-29.md §3.3/§3.5.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -72,7 +72,7 @@ TEST(UfKernel, ImplicitLocalAccelerationFold) {
 TEST(UfKernel, DeceleratingFlowGainsMomentum) {
     // Q* < A·Vⁿ (flow just decelerated): UF opposes the deceleration, so the
     // updated Q must sit between Q* and A·Vⁿ — the Brunone behavior.
-    const double q = 8.0, a = 4.0, u_old = 3.0;  // A·Vⁿ = 12 > Q*
+    const double q = 8.0, a = 4.0, u_old = 3.0; // A·Vⁿ = 12 > Q*
     const double qn = k::ufUpdate(q, a, u_old, 0.02, 0.0, 0.1);
     EXPECT_GT(qn, q);
     EXPECT_LT(qn, a * u_old);
@@ -80,7 +80,7 @@ TEST(UfKernel, DeceleratingFlowGainsMomentum) {
 
 TEST(UfKernel, GradientTermIsResistive) {
     // Positive flow, positive grad_term: momentum must drop by dt·k3·A·grad.
-    const double q = 10.0, a = 4.0, u_old = 2.5;  // A·Vⁿ = Q* ⇒ accel part = 0
+    const double q = 10.0, a = 4.0, u_old = 2.5; // A·Vⁿ = Q* ⇒ accel part = 0
     const double dt = 0.1, k3 = 0.02, grad = 3.0;
     const double expect = q - dt * k3 * a * grad;
     EXPECT_NEAR(k::ufUpdate(q, a, u_old, k3, grad, dt), expect, 1e-12);
@@ -101,6 +101,17 @@ namespace {
 
 const char* kOutDir = "fv_uf_out";
 
+/**
+ * @brief Create the fixture output directory and form one artifact filename.
+ *
+ * Creates missing output-root directories and propagates filesystem errors. Does not
+ * create/truncate the artifact, sanitize name or create arbitrary nested parents; no
+ * current-directory change occurs.
+ *
+ * @param[in] name Raw filename/path appended below kOutDir; caller chooses a safe fixture
+ *     destination.
+ * @return Owned native path string.
+ */
 std::string outPath(const std::string& name) {
     fs::create_directories(kOutDir);
     return (fs::path(kOutDir) / name).string();
@@ -109,6 +120,18 @@ std::string outPath(const std::string& name) {
 // Two 100 sf tanks joined by 200 ft of 3-ft circular pipe; initial 4 ft head
 // imbalance drives a gravity slosh (period ~40 s). High-crest weir to a free
 // outfall satisfies the >=1-outfall rule without ever spilling.
+/**
+ * @brief Construct a two-tank gravity slosh deck for FV friction comparisons.
+ *
+ * Does not validate depths/options or solve dynamics; output/report conventions are those of the
+ * returned deck.
+ *
+ * @param[in] init_a TA initial depth in feet.
+ * @param[in] init_b TB initial depth in feet.
+ * @param[in] extra Raw extra FV/project option lines inserted before STORAGE.
+ * @return Owned twenty-minute CFS deck with100 ft2 tanks,200 ft three-foot pipe, minimum eight
+ *     cells and high overflow weir.
+ */
 std::string sloshModel(double init_a, double init_b, const std::string& extra) {
     std::ostringstream ss;
     ss << "[OPTIONS]\n"
@@ -124,8 +147,12 @@ std::string sloshModel(double init_a, double init_b, const std::string& extra) {
        << extra
        << "\n[STORAGE]\n"
           ";;Name Elev MaxDepth InitDepth Shape      A1 A2 A0\n"
-          "TA     0.0  25.0     " << init_a << "  FUNCTIONAL 0  0  100\n"
-          "TB     0.0  25.0     " << init_b << "  FUNCTIONAL 0  0  100\n"
+          "TA     0.0  25.0     "
+       << init_a
+       << "  FUNCTIONAL 0  0  100\n"
+          "TB     0.0  25.0     "
+       << init_b
+       << "  FUNCTIONAL 0  0  100\n"
           "\n[OUTFALLS]\n;;Name Elev Type Gated\nO_OUT  0.0  FREE NO\n"
           "\n[WEIRS]\n;;Name From To    Type       CrestHt Cd\n"
           "W_OVF  TB   O_OUT TRANSVERSE 24.5    3.33\n"
@@ -138,15 +165,32 @@ std::string sloshModel(double init_a, double init_b, const std::string& extra) {
 }
 
 struct SloshResult {
-    double late_amp = -1.0;   ///< max |depth_TA − 10| over the last 5 min
-    double max_q = 0.0;       ///< max |Q| over the whole run
+    double late_amp = -1.0; ///< max |depth_TA − 10| over the last 5 min
+    double max_q = 0.0;     ///< max |Q| over the whole run
     bool ok = false;
 };
 
+/**
+ * @brief Run a slosh deck and measure whole-run flow and late deviation from ten feet.
+ *
+ * Open/step failure records failure, destroys the handle and returns ok=false;
+ * initialize/start/index expectations are nonfatal. Getter/end statuses are ignored. late_amp
+ * retains -1 if no late sample exists, even on a shorter completed deck. Ends/destroys engine and
+ * sets ok=true only after the natural loop completes.
+ *
+ * @param[in] base Artifact basename beneath outPath, without extension; .inp/.rpt/.out are
+ *     overwritten.
+ * @param[in] deck Complete input text written through an unchecked stream.
+ * @return Owned max absolute C_P flow CFS, maximum |TA depth-10 ft| for recorded times>=900 s, and
+ *     completion flag.
+ */
 SloshResult runSlosh(const std::string& base, const std::string& deck) {
     SloshResult r;
     const std::string inp = outPath(base + ".inp");
-    { std::ofstream f(inp); f << deck; }
+    {
+        std::ofstream f(inp);
+        f << deck;
+    }
     SWMM_Engine e = swmm_engine_create();
     if (swmm_engine_open(e, inp.c_str(), outPath(base + ".rpt").c_str(),
                          outPath(base + ".out").c_str(), nullptr) != 0) {
@@ -172,7 +216,7 @@ SloshResult runSlosh(const std::string& base, const std::string& deck) {
         double q = 0.0;
         swmm_link_get_flow(e, cp, &q);
         r.max_q = std::max(r.max_q, std::fabs(q));
-        if (t_s >= 900.0) {  // last 5 of 20 minutes
+        if (t_s >= 900.0) { // last 5 of 20 minutes
             double d = 0.0;
             swmm_node_get_depth(e, ta, &d);
             r.late_amp = std::max(r.late_amp, std::fabs(d - 10.0));
@@ -184,6 +228,15 @@ SloshResult runSlosh(const std::string& base, const std::string& deck) {
     return r;
 }
 
+/**
+ * @brief Read binary output artifact bytes for exact comparison.
+ *
+ * Uses unchecked ordinary streams; allocation exceptions propagate.
+ *
+ * @param[in] p Input path, unchanged.
+ * @return Owned available bytes; empty can indicate unreadable or empty file, partial errors have
+ *     no separate status.
+ */
 std::string fileBytes(const std::string& p) {
     std::ifstream f(p, std::ios::binary);
     std::stringstream ss;
@@ -195,10 +248,9 @@ std::string fileBytes(const std::string& p) {
 
 TEST(FvUnsteadyFriction, NoneIsBitIdenticalToAbsent) {
     const auto a = runSlosh("uf_absent", sloshModel(12.0, 8.0, ""));
-    const auto b = runSlosh("uf_none",
-                            sloshModel(12.0, 8.0,
-                                       "UNSTEADY_FRICTION    NONE\n"
-                                       "UF_K3                0.02\n"));
+    const auto b = runSlosh("uf_none", sloshModel(12.0, 8.0,
+                                                  "UNSTEADY_FRICTION    NONE\n"
+                                                  "UF_K3                0.02\n"));
     ASSERT_TRUE(a.ok && b.ok);
     EXPECT_EQ(fileBytes(outPath("uf_absent.out")), fileBytes(outPath("uf_none.out")))
         << "UNSTEADY_FRICTION NONE must be bit-inert (U-G1)";
@@ -209,6 +261,16 @@ namespace {
 // Discretely-at-rest fixture: a junction chain over a flat bed at a uniform
 // level is the exact C-property state (zero flux from step one), unlike the
 // storage fixture whose coupling carries a small settling ripple.
+/**
+ * @brief Construct a discretely resting FV junction/pipe fixture.
+ *
+ * Uses TA/TB names for shared probes. Text construction does not check the C-property, run flow or
+ * validate overrides.
+ *
+ * @param[in] extra Raw option lines inserted before the node section.
+ * @return Owned ten-minute CFS deck with flat13 ft initial level,200 ft three-foot pipe, minimum
+ *     eight cells and high crest overflow.
+ */
 std::string restModel(const std::string& extra) {
     std::ostringstream ss;
     ss << "[OPTIONS]\n"
@@ -223,7 +285,7 @@ std::string restModel(const std::string& extra) {
           "FV_MIN_CELLS         8\n"
        << extra
        << "\n[JUNCTIONS]\n;;Name Elev MaxDepth InitDepth\n"
-          "TA     0.0  40.0     13.0\n"   // named TA/TB so runSlosh's probes work
+          "TA     0.0  40.0     13.0\n" // named TA/TB so runSlosh's probes work
           "TB     0.0  40.0     13.0\n"
           "\n[OUTFALLS]\n;;Name Elev Type Gated\nO_OUT  0.0  FREE NO\n"
           "\n[WEIRS]\n;;Name From To    Type       CrestHt Cd\n"
@@ -243,12 +305,10 @@ TEST(FvUnsteadyFriction, DiscreteRestIsBitIdentical) {
     // UF must be bit-inert — the well-balanced property survives (A-G2/G3
     // analog).
     const auto a = runSlosh("uf_rest_base", restModel(""));
-    const auto b = runSlosh("uf_rest_on",
-                            restModel("UNSTEADY_FRICTION    VITKOVSKY\n"
-                                      "UF_K3                0.02\n"));
+    const auto b = runSlosh("uf_rest_on", restModel("UNSTEADY_FRICTION    VITKOVSKY\n"
+                                                    "UF_K3                0.02\n"));
     ASSERT_TRUE(a.ok && b.ok);
-    EXPECT_EQ(fileBytes(outPath("uf_rest_base.out")),
-              fileBytes(outPath("uf_rest_on.out")));
+    EXPECT_EQ(fileBytes(outPath("uf_rest_base.out")), fileBytes(outPath("uf_rest_on.out")));
 }
 
 TEST(FvUnsteadyFriction, StorageRippleAmplificationBounded) {
@@ -260,17 +320,15 @@ TEST(FvUnsteadyFriction, StorageRippleAmplificationBounded) {
     // secular growth) so a regression that turns this into an instability
     // bites, and the measured behavior stays on record for the study.
     const auto a = runSlosh("uf_ripple_base", sloshModel(10.0, 10.0, ""));
-    const auto b = runSlosh("uf_ripple_on",
-                            sloshModel(10.0, 10.0,
-                                       "UNSTEADY_FRICTION    VITKOVSKY\n"
-                                       "UF_K3                0.02\n"));
+    const auto b = runSlosh("uf_ripple_on", sloshModel(10.0, 10.0,
+                                                       "UNSTEADY_FRICTION    VITKOVSKY\n"
+                                                       "UF_K3                0.02\n"));
     ASSERT_TRUE(a.ok && b.ok);
     EXPECT_LT(b.max_q, 5.0 * std::max(a.max_q, 1e-6));
     // The pool equilibrates slightly below 10 ft in BOTH runs (storage/pipe
     // redistribution, a fixture artifact) — gate on EXTRA drift vs the base,
     // not on an absolute level.
-    EXPECT_LT(b.late_amp, a.late_amp + 0.02)
-        << "UF must not add secular drift to a level pool";
+    EXPECT_LT(b.late_amp, a.late_amp + 0.02) << "UF must not add secular drift to a level pool";
 }
 
 // ---------------------------------------------------------------------------
@@ -285,6 +343,16 @@ TEST(FvUnsteadyFriction, StorageRippleAmplificationBounded) {
 
 namespace {
 
+/**
+ * @brief Construct an FV pressurized valve-closure deck for wave damping comparisons.
+ *
+ * Control closes the .41 ft side-orifice valve near60 s. Does not validate option text or execute
+ * the transient.
+ *
+ * @param[in] extra Raw extra FV/project option lines inserted before JUNCTIONS.
+ * @return Owned ten-minute CFS deck with15 ft upstream stage, JV initial depth13 ft,200 ft one-foot
+ *     pipe with initial2.4 CFS, .25 s routing and minimum16 cells.
+ */
 std::string valveModel(const std::string& extra) {
     std::ostringstream ss;
     ss << "[OPTIONS]\n"
@@ -318,18 +386,35 @@ std::string valveModel(const std::string& extra) {
 }
 
 struct ValveResult {
-    double late_amp = 0.0;  ///< max |head_JV − final| over the last 3 min
+    double late_amp = 0.0; ///< max |head_JV − final| over the last 3 min
     bool ok = false;
 };
 
 // win_start_s: where the late window opens. 420 s (default) suits the
 // explicit Euler runs; the implicit and RK2 variants kill the oscillation
 // sooner, so their gates look at an earlier window (closure is at t = 60 s).
-ValveResult runValve(const std::string& base, const std::string& deck,
-                     double win_start_s = 420.0) {
+/**
+ * @brief Run the valve deck and measure late node-depth oscillation about its final sample.
+ *
+ * Open failure returns defaults after recording failure/destruction. Initialize/start/index
+ * expectations are nonfatal. Step error records failure then exits, but any nonempty trace still
+ * yields ok=true after end/destruction, so partial runs can qualify. Getter/end statuses are
+ * ignored; no included late samples leaves the result's default amplitude.
+ *
+ * @param[in] base Artifact basename beneath outPath, without extension; .inp/.rpt/.out are
+ *     overwritten.
+ * @param[in] deck Complete input text written through an unchecked stream.
+ * @param[in] win_start_s Elapsed-second threshold selecting the late window, default420.
+ * @return Owned maximum absolute depth difference in feet from the final recorded JV depth and ok
+ *     flag.
+ */
+ValveResult runValve(const std::string& base, const std::string& deck, double win_start_s = 420.0) {
     ValveResult r;
     const std::string inp = outPath(base + ".inp");
-    { std::ofstream f(inp); f << deck; }
+    {
+        std::ofstream f(inp);
+        f << deck;
+    }
     SWMM_Engine e = swmm_engine_create();
     if (swmm_engine_open(e, inp.c_str(), outPath(base + ".rpt").c_str(),
                          outPath(base + ".out").c_str(), nullptr) != 0) {
@@ -341,7 +426,7 @@ ValveResult runValve(const std::string& base, const std::string& deck,
     EXPECT_EQ(swmm_engine_start(e, 1), 0);
     const int jv = swmm_node_index(e, "JV");
     EXPECT_GE(jv, 0);
-    std::vector<std::pair<double, double>> trace;  // (t_s, head)
+    std::vector<std::pair<double, double>> trace; // (t_s, head)
     double elapsed = 0.0;
     do {
         if (swmm_engine_step(e, &elapsed) != 0) {
@@ -354,10 +439,11 @@ ValveResult runValve(const std::string& base, const std::string& deck,
     } while (elapsed > 0.0);
     swmm_engine_end(e);
     swmm_engine_destroy(e);
-    if (trace.empty()) return r;
+    if (trace.empty())
+        return r;
     const double fin = trace.back().second;
     for (const auto& [t, d] : trace)
-        if (t >= win_start_s)  // default: last 3 of 10 minutes
+        if (t >= win_start_s) // default: last 3 of 10 minutes
             r.late_amp = std::max(r.late_amp, std::fabs(d - fin));
     r.ok = true;
     return r;
@@ -367,32 +453,27 @@ ValveResult runValve(const std::string& base, const std::string& deck,
 
 TEST(FvUnsteadyFriction, ValveClosureK3Damps) {
     const auto base = runValve("uf_valve_k0", valveModel(""));
-    const auto damped = runValve("uf_valve_k20",
-                                 valveModel("UNSTEADY_FRICTION    VITKOVSKY\n"
-                                            "UF_K3                0.020\n"));
+    const auto damped = runValve("uf_valve_k20", valveModel("UNSTEADY_FRICTION    VITKOVSKY\n"
+                                                            "UF_K3                0.020\n"));
     ASSERT_TRUE(base.ok && damped.ok);
-    ASSERT_GT(base.late_amp, 1e-4)
-        << "fixture must still be oscillating in the late window";
+    ASSERT_GT(base.late_amp, 1e-4) << "fixture must still be oscillating in the late window";
     EXPECT_LT(damped.late_amp, base.late_amp)
         << "k3=0.02 must damp the post-closure oscillation (U-G2 analog)";
 }
 
 TEST(FvUnsteadyFriction, ValveClosureDampingMonotoneInK3) {
-    const auto k5 = runValve("uf_valve_k05",
-                             valveModel("UNSTEADY_FRICTION    VITKOVSKY\n"
-                                        "UF_K3                0.005\n"));
-    const auto k20 = runValve("uf_valve_k20b",
-                              valveModel("UNSTEADY_FRICTION    VITKOVSKY\n"
-                                         "UF_K3                0.020\n"));
+    const auto k5 = runValve("uf_valve_k05", valveModel("UNSTEADY_FRICTION    VITKOVSKY\n"
+                                                        "UF_K3                0.005\n"));
+    const auto k20 = runValve("uf_valve_k20b", valveModel("UNSTEADY_FRICTION    VITKOVSKY\n"
+                                                          "UF_K3                0.020\n"));
     ASSERT_TRUE(k5.ok && k20.ok);
     EXPECT_LE(k20.late_amp, k5.late_amp * 1.001);
 }
 
 TEST(FvUnsteadyFriction, StableAtPaperMaxK3) {
     // U-G5: the paper's sweep ceiling; the clamp is the stability guard.
-    const auto r = runValve("uf_valve_k45",
-                            valveModel("UNSTEADY_FRICTION    VITKOVSKY\n"
-                                       "UF_K3                0.045\n"));
+    const auto r = runValve("uf_valve_k45", valveModel("UNSTEADY_FRICTION    VITKOVSKY\n"
+                                                       "UF_K3                0.045\n"));
     ASSERT_TRUE(r.ok);
     EXPECT_TRUE(std::isfinite(r.late_amp));
     EXPECT_LT(r.late_amp, 40.0) << "no blowup at k3=0.045";
@@ -400,12 +481,10 @@ TEST(FvUnsteadyFriction, StableAtPaperMaxK3) {
 
 TEST(FvUnsteadyFriction, ValveClosureDampsUnderLts) {
     // Exercises the fireCells/macro-cycle application path.
-    const auto base = runValve("uf_lts_k0",
-                               valveModel("FV_LTS               YES\n"));
-    const auto damped = runValve("uf_lts_k20",
-                                 valveModel("FV_LTS               YES\n"
-                                            "UNSTEADY_FRICTION    VITKOVSKY\n"
-                                            "UF_K3                0.020\n"));
+    const auto base = runValve("uf_lts_k0", valveModel("FV_LTS               YES\n"));
+    const auto damped = runValve("uf_lts_k20", valveModel("FV_LTS               YES\n"
+                                                          "UNSTEADY_FRICTION    VITKOVSKY\n"
+                                                          "UF_K3                0.020\n"));
     ASSERT_TRUE(base.ok && damped.ok);
     EXPECT_LE(damped.late_amp, base.late_amp * 1.001);
 }
@@ -435,16 +514,13 @@ TEST(FvUnsteadyFriction, ValveClosureDampsOnImplicitPath) {
                       "ROUTING_STEP         0.05\n";
     const auto base = runValve("uf_imp_k0", valveModel(imp), 65.0);
     const auto damped = runValve("uf_imp_k20",
-                                 valveModel(std::string(imp) +
-                                            "UNSTEADY_FRICTION    VITKOVSKY\n"
-                                            "UF_K3                0.020\n"),
+                                 valveModel(std::string(imp) + "UNSTEADY_FRICTION    VITKOVSKY\n"
+                                                               "UF_K3                0.020\n"),
                                  65.0);
     ASSERT_TRUE(base.ok && damped.ok);
-    std::printf("  [uf-implicit] late_amp base %.5f damped %.5f (ratio %.3f)\n",
-                base.late_amp, damped.late_amp,
-                (base.late_amp > 0.0) ? damped.late_amp / base.late_amp : 0.0);
-    ASSERT_GT(base.late_amp, 1e-3)
-        << "fixture must still be ringing in the observation window";
+    std::printf("  [uf-implicit] late_amp base %.5f damped %.5f (ratio %.3f)\n", base.late_amp,
+                damped.late_amp, (base.late_amp > 0.0) ? damped.late_amp / base.late_amp : 0.0);
+    ASSERT_GT(base.late_amp, 1e-3) << "fixture must still be ringing in the observation window";
     EXPECT_LT(damped.late_amp, base.late_amp)
         << "k3=0.02 must damp on the implicit-pressurized path (U-G2)";
 }
@@ -452,17 +528,14 @@ TEST(FvUnsteadyFriction, ValveClosureDampsOnImplicitPath) {
 TEST(FvUnsteadyFriction, ValveClosureDampsUnderRk2) {
     // Per-stage application: UF rides takeSubstep, which RK2 calls once per
     // stage like steady friction (plan §3.3 RK2/LTS bullet).
-    const auto base = runValve("uf_rk2_k0",
-                               valveModel("FV_TIME_INTEGRATION  RK2\n"),
-                               120.0);
+    const auto base = runValve("uf_rk2_k0", valveModel("FV_TIME_INTEGRATION  RK2\n"), 120.0);
     const auto damped = runValve("uf_rk2_k20",
                                  valveModel("FV_TIME_INTEGRATION  RK2\n"
                                             "UNSTEADY_FRICTION    VITKOVSKY\n"
                                             "UF_K3                0.020\n"),
                                  120.0);
     ASSERT_TRUE(base.ok && damped.ok);
-    ASSERT_GT(base.late_amp, 1e-4)
-        << "fixture must still be oscillating in the late window";
+    ASSERT_GT(base.late_amp, 1e-4) << "fixture must still be oscillating in the late window";
     EXPECT_LT(damped.late_amp, base.late_amp)
         << "k3=0.02 must damp under RK2 (same gate as the Euler run)";
 }

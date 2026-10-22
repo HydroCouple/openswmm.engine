@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_heat_ard_binding.cpp
- * @brief Phase H4 gates — `__TEMPERATURE__` on the Eulerian ARD mesh.
+ * @file      test_heat_ard_binding.cpp
+ * @brief     Phase H4 gates — `__TEMPERATURE__` on the Eulerian ARD mesh.
  *
  * @details H4 makes temperature a mesh row (after pollutants, MSX and age),
  *          so it inherits advection, FCT, node mixing, structure
@@ -44,9 +44,9 @@
  *          against the LEGACY mirror's, on a deck with two barrels.
  *
  * @see plans/transport/HEAT_TRANSPORT_PLAN.md §6 H4
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -63,33 +63,69 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
-constexpr double kQ      = 5.0;
-constexpr double kTIn    = 30.0;   ///< °C, external inflow
-constexpr double kTInit  = 5.0;    ///< °C, INITIAL_STATE — distinct from all
-constexpr double kCinit  = 42.0;   ///< mg/L TSS
+constexpr double kQ = 5.0;
+constexpr double kTIn = 30.0;   ///< °C, external inflow
+constexpr double kTInit = 5.0;  ///< °C, INITIAL_STATE — distinct from all
+constexpr double kCinit = 42.0; ///< mg/L TSS
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Open failure is not
+ * reported by this helper. Subsequent write/close failures are not checked; the local stream closes
+ * at scope exit and no path/content storage is retained. Allocation exceptions can propagate.
+ *
+ * @param[in] path Non-null null-terminated destination path; an existing file is
+ *     truncated/overwritten.
+ * @param[in] body Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const char* path, const std::string& body) {
     std::ofstream f(path);
     f << body;
 }
 
-/// Flow-through chain so a thermal signal has somewhere to travel.
-/// `solver` selects the engine; `open_channel` selects RECT_OPEN vs CIRCULAR
-/// so the mesh's `is_open` gate can be exercised by geometry; `end_time`
-/// selects whether the chain is caught mid-transient or fully flushed, which
-/// is the difference between a gate that can see the initial state and one
-/// that cannot; `barrels` is what tells a correct exchange area from one
-/// that applies the barrel count twice.
-void write_deck(const char* path, const char* solver,
-                const std::string& pc_lines, bool pollutants = true,
-                bool open_channel = false,
-                const std::string& extra_options = "",
-                const char* end_time = "01:00:00", int barrels = 1,
-                const char* routing_step = "5") {
+/**
+ * @brief Write a three-conduit heat/quality binding fixture with selectable barrel count.
+ *
+ * Enables heat, constant 50 F air and 50 percent humidity, and fixed kQ cfs inflow; it does not
+ * write the component sidecar configs. Opens/truncates the deck using a local ofstream; parent
+ * directories must exist. Stream open/write/close outcomes are not checked, and sidecar names/text
+ * are not escaped. Caller-owned inputs are not retained.
+ *
+ * @param[in] path Destination deck filename, non-null when a character pointer; borrowed only
+ *     during this call. Existing files are truncated.
+ * @param[in] solver Non-null QUALITY_SOLVER keyword copied verbatim.
+ * @param[in] pc_lines Raw PROCESS_COMPONENTS rows, copied when nonempty; caller supplies valid
+ *     component IDs/config references and line separators.
+ * @param[in] pollutants Emit a fixed TSS MG/L pollutant with kCinit when true.
+ * @param[in] open_channel True uses 3 by 4 ft RECT_OPEN sections; false uses 3 ft circular
+ *     sections.
+ * @param[in] extra_options Raw additional OPTIONS rows; inserted verbatim without validation.
+ * @param[in] end_time Non-null authored HH:MM:SS end time on the fixed start date; copied verbatim.
+ * @param[in] barrels Replicate count appended to every XSECTIONS row; caller supplies a valid
+ *     positive count.
+ * @param[in] routing_step Non-null authored routing-step token, normally seconds, copied verbatim.
+ */
+void write_deck(const char* path, const char* solver, const std::string& pc_lines,
+                bool pollutants = true, bool open_channel = false,
+                const std::string& extra_options = "", const char* end_time = "01:00:00",
+                int barrels = 1, const char* routing_step = "5") {
     std::ofstream f(path);
     const std::string nb = " " + std::to_string(barrels);
     f << "[TITLE]\nH4 ARD heat binding gate deck\n\n[OPTIONS]\n"
@@ -109,63 +145,93 @@ void write_deck(const char* path, const char* solver,
       << "C1 J0 J1  500 0.013 0 0 0\nC2 J1 J2 500 0.013 0 0 0\n"
       << "C3 J2 OUT 500 0.013 0 0 0\n\n"
       << "[XSECTIONS]\n"
-      << (open_channel
-              ? "C1 RECT_OPEN 3.0 4.0 0 0" + nb + "\nC2 RECT_OPEN 3.0 4.0 0 0" +
-                    nb + "\nC3 RECT_OPEN 3.0 4.0 0 0" + nb + "\n\n"
-              : "C1 CIRCULAR 3.0 0 0 0" + nb + "\nC2 CIRCULAR 3.0 0 0 0" + nb +
-                    "\nC3 CIRCULAR 3.0 0 0 0" + nb + "\n\n")
+      << (open_channel ? "C1 RECT_OPEN 3.0 4.0 0 0" + nb + "\nC2 RECT_OPEN 3.0 4.0 0 0" + nb +
+                             "\nC3 RECT_OPEN 3.0 4.0 0 0" + nb + "\n\n"
+                       : "C1 CIRCULAR 3.0 0 0 0" + nb + "\nC2 CIRCULAR 3.0 0 0 0" + nb +
+                             "\nC3 CIRCULAR 3.0 0 0 0" + nb + "\n\n")
       << "[INFLOWS]\nJ0 FLOW \"\" FLOW 1.0 1.0 " << kQ << "\n\n";
     if (pollutants)
         f << "[POLLUTANTS]\n"
           << ";;Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut CoFrac "
              "Cdwf Cinit\n"
-          << "TSS    MG/L  0     0   0     0      NO       *        0      0    "
-          << kCinit << "\n\n";
+          << "TSS    MG/L  0     0   0     0      NO       *        0      0    " << kCinit
+          << "\n\n";
     if (!pc_lines.empty())
         f << "[PROCESS_COMPONENTS]\n" << pc_lines << "\n\n";
     f << "[REPORT]\nINPUT NO\n";
 }
 
-/// Two MSX bulk species. `publish()` derives the MSX row count by
-/// SUBTRACTING the reserved rows from `ns`, and dispatches anything that is
-/// neither a reserved row nor a pollutant into the MSX arm — so neither the
-/// subtraction nor the dispatch is exercised at all unless a deck actually
-/// carries MSX rows.
+/**
+ * @brief Write two inert MSX bulk species for heat/quality stride assertions.
+ *
+ * Uses SEC rate units, zero X/Y pipe and tank rates, and global initial concentrations X=8/Y=3 in
+ * the MG species units. This ensures real MSX rows coexist with reserved heat/age/pollutant rows;
+ * no reaction integration occurs during writing. IO failures follow unchecked write_file behavior.
+ *
+ * @param[in] path Non-null destination filename passed to the truncating write_file helper.
+ */
 void write_rxn(const char* path) {
-    write_file(path,
-               "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
-               "[REACTION_SPECIES]\nBULK X MG\nBULK Y MG\n"
-               "[REACTION_PIPES]\nRATE X 0\nRATE Y 0\n"
-               "[REACTION_TANKS]\nRATE X 0\nRATE Y 0\n"
-               "[REACTION_QUALITY]\nGLOBAL X 8\nGLOBAL Y 3\n");
+    write_file(path, "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
+                     "[REACTION_SPECIES]\nBULK X MG\nBULK Y MG\n"
+                     "[REACTION_PIPES]\nRATE X 0\nRATE Y 0\n"
+                     "[REACTION_TANKS]\nRATE X 0\nRATE Y 0\n"
+                     "[REACTION_QUALITY]\nGLOBAL X 8\nGLOBAL Y 3\n");
 }
 
+/**
+ * @brief Build external/initial heat source rows with optional flux configuration.
+ *
+ * No parser, model state or file IO is involved; raw rows are copied without escaping.
+ *
+ * @param[in] flux_rows Raw HEAT_FLUXES rows; an empty string omits the section. Caller supplies
+ *     valid line separators.
+ * @return Owned HEAT_SOURCES text using fixed kTIn and kTInit in degrees C, plus any requested flux
+ *     section.
+ */
 std::string heat_cfg(const std::string& flux_rows = "") {
     return "[HEAT_SOURCES]\n"
-           "EXTERNAL_INFLOW GLOBAL " + std::to_string(kTIn) + "\n"
-           "INITIAL_STATE   GLOBAL " + std::to_string(kTInit) + "\n" +
+           "EXTERNAL_INFLOW GLOBAL " +
+           std::to_string(kTIn) +
+           "\n"
+           "INITIAL_STATE   GLOBAL " +
+           std::to_string(kTInit) + "\n" +
            (flux_rows.empty() ? "" : "\n[HEAT_FLUXES]\n" + flux_rows);
 }
 
+/**
+ * @brief Run a generated fixture and keep its engine for state inspection.
+ *
+ * Steps with saved results until completion, step error or a 20000-step guard, then invokes end
+ * without checking its status. A non-null result does not prove successful complete
+ * stepping/finalization. Does not request a full report; returned context/diagnostics remain owned
+ * by that handle.
+ *
+ * @param[in] inp Non-null input-deck path, borrowed for the synchronous run.
+ * @param[in] rpt Report destination passed through to engine open.
+ * @param[in] out Binary-result destination; start requests saved results.
+ * @return Owned raw engine handle after allocation/open/initialize/start succeed, or null after
+ *     allocation/setup failure; caller must destroy any returned handle.
+ */
 SWMM_Engine run_and_hold(const char* inp, const char* rpt, const char* out) {
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) return nullptr;
+    if (e == nullptr)
+        return nullptr;
     if (swmm_engine_open(e, inp, rpt, out, nullptr) != SWMM_OK ||
-        swmm_engine_initialize(e) != SWMM_OK ||
-        swmm_engine_start(e, 1) != SWMM_OK) {
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
         swmm_engine_destroy(e);
         return nullptr;
     }
     double elapsed = 0.0;
     int guard = 0;
     do {
-        if (swmm_engine_step(e, &elapsed) != SWMM_OK) break;
+        if (swmm_engine_step(e, &elapsed) != SWMM_OK)
+            break;
     } while (elapsed > 0.0 && ++guard < 20000);
     swmm_engine_end(e);
     return e;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Gate 1 — adding the temperature row must not disturb the pollutant or MSX
@@ -194,8 +260,7 @@ SWMM_Engine run_and_hold(const char* inp, const char* rpt, const char* out) {
 TEST(HeatArdBindingTest, AddingTheTemperatureRowLeavesPollutantsAndMsxIntact) {
     write_file("_h4.heat", heat_cfg());
     write_rxn("_h4.rxn");
-    const std::string rxn_pc =
-        "org.hydrocouple.openswmm.reactions config=\"_h4.rxn\"";
+    const std::string rxn_pc = "org.hydrocouple.openswmm.reactions config=\"_h4.rxn\"";
 
     write_deck("_h4_off.inp", "EULERIAN_ARD", rxn_pc, /*pollutants=*/true,
                /*open_channel=*/false, /*extra_options=*/"",
@@ -203,8 +268,7 @@ TEST(HeatArdBindingTest, AddingTheTemperatureRowLeavesPollutantsAndMsxIntact) {
     // Heat off: strip the option by rewriting the one line.
     {
         std::ifstream in("_h4_off.inp");
-        std::string body((std::istreambuf_iterator<char>(in)),
-                         std::istreambuf_iterator<char>());
+        std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         const auto at = body.find("HEAT_TRANSPORT ON\n");
         ASSERT_NE(at, std::string::npos);
         body.erase(at, std::string("HEAT_TRANSPORT ON\n").size());
@@ -212,8 +276,8 @@ TEST(HeatArdBindingTest, AddingTheTemperatureRowLeavesPollutantsAndMsxIntact) {
     }
     SWMM_Engine off = run_and_hold("_h4_off.inp", "_h4_off.rpt", "_h4_off.out");
     ASSERT_NE(off, nullptr);
-    const auto& off_ctx  = as_cpp_engine(off).context();
-    const auto conc_ref  = off_ctx.nodes.conc;
+    const auto& off_ctx = as_cpp_engine(off).context();
+    const auto conc_ref = off_ctx.nodes.conc;
     const auto lconc_ref = off_ctx.links.conc;
     const auto mnode_ref = off_ctx.reactions.msx_node_conc;
     const auto mlink_ref = off_ctx.reactions.msx_link_conc;
@@ -248,8 +312,8 @@ TEST(HeatArdBindingTest, AddingTheTemperatureRowLeavesPollutantsAndMsxIntact) {
     // computes its own index reads a neighbouring species.
     ASSERT_EQ(mnode_ref.size(), ctx.reactions.msx_node_conc.size())
         << "the MSX node array changed stride when the temperature row was "
-           "added: " << mnode_ref.size() << " -> "
-        << ctx.reactions.msx_node_conc.size()
+           "added: "
+        << mnode_ref.size() << " -> " << ctx.reactions.msx_node_conc.size()
         << ". publish() derives the MSX row count by subtracting the reserved "
            "rows from ns; a reserved row left out of that subtraction inflates "
            "the count by one.";
@@ -261,8 +325,10 @@ TEST(HeatArdBindingTest, AddingTheTemperatureRowLeavesPollutantsAndMsxIntact) {
                          const std::vector<double>& got) {
         for (std::size_t i = 0; i < ref.size(); ++i)
             EXPECT_NEAR(ref[i], got[i], 1.0e-12)
-                << what << " slot " << i << " moved when the temperature row "
-                   "was added to the mesh: " << ref[i] << " -> " << got[i]
+                << what << " slot " << i
+                << " moved when the temperature row "
+                   "was added to the mesh: "
+                << ref[i] << " -> " << got[i]
                 << ". The row is published by a dispatch chain that ends in an "
                    "MSX else-branch, and the MSX row count is derived by "
                    "subtraction — either can corrupt this array without any "
@@ -285,15 +351,13 @@ TEST(HeatArdBindingTest, AddingTheTemperatureRowLeavesPollutantsAndMsxIntact) {
 TEST(HeatArdBindingTest, ArdAndLegacyAgreeOnTransportedTemperature) {
     write_file("_h4x.heat", heat_cfg());
 
-    write_deck("_h4_leg.inp", "LEGACY",
-               "org.hydrocouple.openswmm.heat config=\"_h4x.heat\"");
+    write_deck("_h4_leg.inp", "LEGACY", "org.hydrocouple.openswmm.heat config=\"_h4x.heat\"");
     SWMM_Engine l = run_and_hold("_h4_leg.inp", "_h4_leg.rpt", "_h4_leg.out");
     ASSERT_NE(l, nullptr);
     const auto leg = as_cpp_engine(l).context().heat_state.node_temp;
     swmm_engine_destroy(l);
 
-    write_deck("_h4_ard.inp", "EULERIAN_ARD",
-               "org.hydrocouple.openswmm.heat config=\"_h4x.heat\"");
+    write_deck("_h4_ard.inp", "EULERIAN_ARD", "org.hydrocouple.openswmm.heat config=\"_h4x.heat\"");
     SWMM_Engine a = run_and_hold("_h4_ard.inp", "_h4_ard.rpt", "_h4_ard.out");
     ASSERT_NE(a, nullptr);
     const auto ard = as_cpp_engine(a).context().heat_state.node_temp;
@@ -304,17 +368,16 @@ TEST(HeatArdBindingTest, ArdAndLegacyAgreeOnTransportedTemperature) {
 
     // SETUP: both engines must have moved OFF the initial state, or an
     // agreement at 5 degC would just mean neither transported anything.
-    EXPECT_GT(leg[0], kTInit + 1.0)
-        << "LEGACY did not warm J0 above its 5 degC seed — nothing was "
-           "transported, so agreement below is vacuous";
+    EXPECT_GT(leg[0], kTInit + 1.0) << "LEGACY did not warm J0 above its 5 degC seed — nothing was "
+                                       "transported, so agreement below is vacuous";
     EXPECT_GT(ard[0], kTInit + 1.0)
         << "ARD did not warm J0 above its 5 degC seed — the mesh row is "
            "inert";
 
     for (std::size_t i = 0; i < leg.size(); ++i)
         EXPECT_NEAR(leg[i], ard[i], 2.0)
-            << "node " << i << ": LEGACY " << leg[i] << " degC vs ARD "
-            << ard[i] << ". A gap far larger than scheme tolerance means one "
+            << "node " << i << ": LEGACY " << leg[i] << " degC vs ARD " << ard[i]
+            << ". A gap far larger than scheme tolerance means one "
                "engine is not transporting heat at all — check which is at "
                "the 5 degC seed.";
 
@@ -324,12 +387,10 @@ TEST(HeatArdBindingTest, ArdAndLegacyAgreeOnTransportedTemperature) {
     // array instead of the heat config produces the identical 30 degC field
     // and the identical agreement. Five minutes puts the thermal front
     // mid-chain, where the last conduit is still holding its seed.
-    write_deck("_h4_seed.inp", "EULERIAN_ARD",
-               "org.hydrocouple.openswmm.heat config=\"_h4x.heat\"",
+    write_deck("_h4_seed.inp", "EULERIAN_ARD", "org.hydrocouple.openswmm.heat config=\"_h4x.heat\"",
                /*pollutants=*/true, /*open_channel=*/false,
                /*extra_options=*/"", /*end_time=*/"00:05:00");
-    SWMM_Engine sd = run_and_hold("_h4_seed.inp", "_h4_seed.rpt",
-                                  "_h4_seed.out");
+    SWMM_Engine sd = run_and_hold("_h4_seed.inp", "_h4_seed.rpt", "_h4_seed.out");
     ASSERT_NE(sd, nullptr);
     const auto& sctx = as_cpp_engine(sd).context();
     ASSERT_FALSE(sctx.heat_state.link_temp.empty());
@@ -342,7 +403,8 @@ TEST(HeatArdBindingTest, ArdAndLegacyAgreeOnTransportedTemperature) {
     EXPECT_NEAR(sctx.heat_state.link_temp.back(), kTInit, 1.0)
         << "C3 reads " << sctx.heat_state.link_temp.back()
         << " degC five minutes in, with the front still upstream of it. Its "
-           "cells were seeded from INITIAL_STATE (" << kTInit
+           "cells were seeded from INITIAL_STATE ("
+        << kTInit
         << " degC); a reading near 0 means the seed came from a zeroed array "
            "rather than the heat config.";
     swmm_engine_destroy(sd);
@@ -366,8 +428,7 @@ TEST(HeatArdBindingTest, SurfaceFluxesActPerCellUnderArd) {
     write_deck("_h4f_off.inp", "EULERIAN_ARD",
                "org.hydrocouple.openswmm.heat config=\"_h4f_off.heat\"",
                /*pollutants=*/false, /*open_channel=*/true);
-    SWMM_Engine off = run_and_hold("_h4f_off.inp", "_h4f_off.rpt",
-                                   "_h4f_off.out");
+    SWMM_Engine off = run_and_hold("_h4f_off.inp", "_h4f_off.rpt", "_h4f_off.out");
     ASSERT_NE(off, nullptr);
     const auto t_off = as_cpp_engine(off).context().heat_state.link_temp;
     swmm_engine_destroy(off);
@@ -375,8 +436,11 @@ TEST(HeatArdBindingTest, SurfaceFluxesActPerCellUnderArd) {
     ASSERT_FALSE(t_on.empty());
     ASSERT_EQ(t_on.size(), t_off.size());
     EXPECT_LT(t_on[0], t_off[0] - 1.0e-9)
-        << "C1 reads " << t_on[0] << " degC with per-cell surface exchange on "
-           "and " << t_off[0] << " off. 30 degC water under 10 degC air at "
+        << "C1 reads " << t_on[0]
+        << " degC with per-cell surface exchange on "
+           "and "
+        << t_off[0]
+        << " off. 30 degC water under 10 degC air at "
            "50 % RH evaporates and cools; identical values mean the per-cell "
            "stage never ran.";
 }
@@ -394,8 +458,7 @@ TEST(HeatArdBindingTest, ClosedConduitCellsDoNotExchange) {
     write_deck("_h4c_closed.inp", "EULERIAN_ARD",
                "org.hydrocouple.openswmm.heat config=\"_h4c.heat\"",
                /*pollutants=*/false, /*open_channel=*/false);
-    SWMM_Engine c = run_and_hold("_h4c_closed.inp", "_h4c_closed.rpt",
-                                 "_h4c_closed.out");
+    SWMM_Engine c = run_and_hold("_h4c_closed.inp", "_h4c_closed.rpt", "_h4c_closed.out");
     ASSERT_NE(c, nullptr);
     const auto closed = as_cpp_engine(c).context().heat_state.link_temp;
     swmm_engine_destroy(c);
@@ -404,8 +467,7 @@ TEST(HeatArdBindingTest, ClosedConduitCellsDoNotExchange) {
     write_deck("_h4c_off.inp", "EULERIAN_ARD",
                "org.hydrocouple.openswmm.heat config=\"_h4c_off.heat\"",
                /*pollutants=*/false, /*open_channel=*/false);
-    SWMM_Engine o = run_and_hold("_h4c_off.inp", "_h4c_off.rpt",
-                                 "_h4c_off.out");
+    SWMM_Engine o = run_and_hold("_h4c_off.inp", "_h4c_off.rpt", "_h4c_off.out");
     ASSERT_NE(o, nullptr);
     const auto ref = as_cpp_engine(o).context().heat_state.link_temp;
     swmm_engine_destroy(o);
@@ -414,8 +476,10 @@ TEST(HeatArdBindingTest, ClosedConduitCellsDoNotExchange) {
     ASSERT_EQ(closed.size(), ref.size());
     for (std::size_t i = 0; i < closed.size(); ++i)
         EXPECT_NEAR(closed[i], ref[i], 1.0e-12)
-            << "closed conduit " << i << " exchanged heat with the "
-               "atmosphere: " << closed[i] << " vs " << ref[i]
+            << "closed conduit " << i
+            << " exchanged heat with the "
+               "atmosphere: "
+            << closed[i] << " vs " << ref[i]
             << ". A CIRCULAR section has no free surface, and its "
                "Preissmann slot width is a numerical device, not water.";
 }
@@ -444,14 +508,12 @@ TEST(HeatArdBindingTest, ClosedConduitCellsDoNotExchange) {
 // ---------------------------------------------------------------------------
 TEST(HeatArdBindingTest, PerCellFluxAreaMatchesTheLegacyPath) {
     write_file("_h4a.heat", heat_cfg("SURFACE_EXCHANGE ON\n"));
-    const std::string pc =
-        "org.hydrocouple.openswmm.heat config=\"_h4a.heat\"";
+    const std::string pc = "org.hydrocouple.openswmm.heat config=\"_h4a.heat\"";
 
     write_deck("_h4a_leg.inp", "LEGACY", pc, /*pollutants=*/false,
                /*open_channel=*/true, /*extra_options=*/"",
                /*end_time=*/"01:00:00", /*barrels=*/2);
-    SWMM_Engine l = run_and_hold("_h4a_leg.inp", "_h4a_leg.rpt",
-                                 "_h4a_leg.out");
+    SWMM_Engine l = run_and_hold("_h4a_leg.inp", "_h4a_leg.rpt", "_h4a_leg.out");
     ASSERT_NE(l, nullptr);
     const auto leg = as_cpp_engine(l).context().heat_state.node_temp;
     swmm_engine_destroy(l);
@@ -459,8 +521,7 @@ TEST(HeatArdBindingTest, PerCellFluxAreaMatchesTheLegacyPath) {
     write_deck("_h4a_ard.inp", "EULERIAN_ARD", pc, /*pollutants=*/false,
                /*open_channel=*/true, /*extra_options=*/"",
                /*end_time=*/"01:00:00", /*barrels=*/2);
-    SWMM_Engine a = run_and_hold("_h4a_ard.inp", "_h4a_ard.rpt",
-                                 "_h4a_ard.out");
+    SWMM_Engine a = run_and_hold("_h4a_ard.inp", "_h4a_ard.rpt", "_h4a_ard.out");
     ASSERT_NE(a, nullptr);
     const auto ard = as_cpp_engine(a).context().heat_state.node_temp;
     swmm_engine_destroy(a);
@@ -471,9 +532,8 @@ TEST(HeatArdBindingTest, PerCellFluxAreaMatchesTheLegacyPath) {
     // SETUP: there must BE a flux to compare. With the module inert both
     // fields sit at 30 degC and agree perfectly for the wrong reason.
     const double cooling = kTIn - leg.back();
-    ASSERT_GT(cooling, 0.1)
-        << "the LEGACY reference cooled only " << cooling
-        << " degC over the hour — too little signal to size an area against";
+    ASSERT_GT(cooling, 0.1) << "the LEGACY reference cooled only " << cooling
+                            << " degC over the hour — too little signal to size an area against";
 
     // 0.05 degC against a 0.34 degC signal: the two schemes place the same
     // total area differently along the chain, which is worth about 0.01 degC
@@ -481,8 +541,8 @@ TEST(HeatArdBindingTest, PerCellFluxAreaMatchesTheLegacyPath) {
     // moves it by the whole signal.
     for (std::size_t i = 0; i < leg.size(); ++i)
         EXPECT_NEAR(leg[i], ard[i], 0.05)
-            << "node " << i << ": LEGACY " << leg[i] << " degC vs ARD "
-            << ard[i] << ", against a total cooling of " << cooling
+            << "node " << i << ": LEGACY " << leg[i] << " degC vs ARD " << ard[i]
+            << ", against a total cooling of " << cooling
             << " degC. The two paths must build the same exchange area — "
                "LEGACY as top width x length x barrels, the mesh as the sum "
                "of width(h_c) x dx_c with barrels already inside width().";
@@ -506,14 +566,12 @@ TEST(HeatArdBindingTest, PerCellFluxAreaMatchesTheLegacyPath) {
 // ---------------------------------------------------------------------------
 TEST(HeatArdBindingTest, SurfaceFluxIsAppliedOncePerRoutingStep) {
     write_file("_h4s.heat", heat_cfg("SURFACE_EXCHANGE ON\n"));
-    const std::string pc =
-        "org.hydrocouple.openswmm.heat config=\"_h4s.heat\"";
+    const std::string pc = "org.hydrocouple.openswmm.heat config=\"_h4s.heat\"";
 
     write_deck("_h4s_fine.inp", "EULERIAN_ARD", pc, /*pollutants=*/false,
                /*open_channel=*/true, /*extra_options=*/"",
                /*end_time=*/"01:00:00", /*barrels=*/2, /*routing_step=*/"5");
-    SWMM_Engine f = run_and_hold("_h4s_fine.inp", "_h4s_fine.rpt",
-                                 "_h4s_fine.out");
+    SWMM_Engine f = run_and_hold("_h4s_fine.inp", "_h4s_fine.rpt", "_h4s_fine.out");
     ASSERT_NE(f, nullptr);
     const auto fine = as_cpp_engine(f).context().heat_state.node_temp;
     swmm_engine_destroy(f);
@@ -521,8 +579,7 @@ TEST(HeatArdBindingTest, SurfaceFluxIsAppliedOncePerRoutingStep) {
     write_deck("_h4s_coarse.inp", "EULERIAN_ARD", pc, /*pollutants=*/false,
                /*open_channel=*/true, /*extra_options=*/"",
                /*end_time=*/"01:00:00", /*barrels=*/2, /*routing_step=*/"60");
-    SWMM_Engine c = run_and_hold("_h4s_coarse.inp", "_h4s_coarse.rpt",
-                                 "_h4s_coarse.out");
+    SWMM_Engine c = run_and_hold("_h4s_coarse.inp", "_h4s_coarse.rpt", "_h4s_coarse.out");
     ASSERT_NE(c, nullptr);
     const auto coarse = as_cpp_engine(c).context().heat_state.node_temp;
     swmm_engine_destroy(c);
@@ -538,8 +595,11 @@ TEST(HeatArdBindingTest, SurfaceFluxIsAppliedOncePerRoutingStep) {
 
     for (std::size_t i = 0; i < fine.size(); ++i)
         EXPECT_NEAR(fine[i], coarse[i], 0.05)
-            << "node " << i << ": " << fine[i] << " degC at a 5 s routing "
-               "step vs " << coarse[i] << " degC at 60 s. The coarse run "
+            << "node " << i << ": " << fine[i]
+            << " degC at a 5 s routing "
+               "step vs "
+            << coarse[i]
+            << " degC at 60 s. The coarse run "
                "subcycles the transport four ways; the surface flux must "
                "still be applied once for the whole routing step, so the "
                "hour's cooling cannot depend on the step.";
@@ -569,44 +629,42 @@ TEST(HeatArdBindingTest, SurfaceFluxIsAppliedOncePerRoutingStep) {
 // deck without the clamp reads e+2 and beyond).
 // ---------------------------------------------------------------------------
 TEST(HeatArdBindingTest, ThinSheetAtALargeFixedStepStaysInsideItsOwnBounds) {
-    write_file("_h4d.heat",
-               "[HEAT_SOURCES]\n"
-               "EXTERNAL_INFLOW GLOBAL 5.0\n"
-               "INITIAL_STATE   GLOBAL 5.0\n\n"
-               "[HEAT_FLUXES]\nSURFACE_EXCHANGE ON\n");
-    write_file("_h4d.inp",
-               "[TITLE]\nARD thin-sheet integrator gate\n\n"
-               "[OPTIONS]\n"
-               "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
-               "HEAT_TRANSPORT ON\nQUALITY_SOLVER EULERIAN_ARD\n"
-               "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
-               "END_DATE 01/01/2026\nEND_TIME 03:00:00\n"
-               "ROUTING_STEP 300\nREPORT_STEP 00:05:00\n"
-               // Fixed steps: the variable-step machinery would shrink dt
-               // and keep k*dt below the stability boundary.
-               "VARIABLE_STEP 0\n\n"
-               // 40 degC air; the strong steady wind is what makes the flux
-               // slope steep enough for k*dt to cross that boundary on a
-               // thin film — windless decks never bite.
-               "[TEMPERATURE]\nTIMESERIES air_ts\nHUMIDITY 50\n"
-               "WINDSPEED MONTHLY 25 25 25 25 25 25 25 25 25 25 25 25\n\n"
-               "[TIMESERIES]\nair_ts 01/01/2026 00:00 104.0\n"
-               "air_ts 01/02/2026 00:00 104.0\n"
-               "q_ts 01/01/2026 00:00 0.001\n"
-               "q_ts 01/02/2026 00:00 0.001\n\n"
-               "[JUNCTIONS]\n"
-               "J0 10.0 10 1.5 0 0\nJ1 9.4 10 1.5 0 0\nJ2 8.8 10 1.5 0 0\n\n"
-               "[OUTFALLS]\nOUT 8.0 FREE  NO\n\n"
-               "[CONDUITS]\n"
-               "C1 J0 J1  500 0.013 0 0 0\nC2 J1 J2 500 0.013 0 0 0\n"
-               "C3 J2 OUT 500 0.013 0 0 0\n\n"
-               "[XSECTIONS]\n"
-               "C1 RECT_OPEN 3.0 4.0 0 0\nC2 RECT_OPEN 3.0 4.0 0 0\n"
-               "C3 RECT_OPEN 3.0 4.0 0 0\n\n"
-               "[INFLOWS]\nJ0 FLOW q_ts FLOW 1.0 1.0\n\n"
-               "[PROCESS_COMPONENTS]\n"
-               "org.hydrocouple.openswmm.heat config=\"_h4d.heat\"\n\n"
-               "[REPORT]\nINPUT NO\n");
+    write_file("_h4d.heat", "[HEAT_SOURCES]\n"
+                            "EXTERNAL_INFLOW GLOBAL 5.0\n"
+                            "INITIAL_STATE   GLOBAL 5.0\n\n"
+                            "[HEAT_FLUXES]\nSURFACE_EXCHANGE ON\n");
+    write_file("_h4d.inp", "[TITLE]\nARD thin-sheet integrator gate\n\n"
+                           "[OPTIONS]\n"
+                           "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
+                           "HEAT_TRANSPORT ON\nQUALITY_SOLVER EULERIAN_ARD\n"
+                           "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+                           "END_DATE 01/01/2026\nEND_TIME 03:00:00\n"
+                           "ROUTING_STEP 300\nREPORT_STEP 00:05:00\n"
+                           // Fixed steps: the variable-step machinery would shrink dt
+                           // and keep k*dt below the stability boundary.
+                           "VARIABLE_STEP 0\n\n"
+                           // 40 degC air; the strong steady wind is what makes the flux
+                           // slope steep enough for k*dt to cross that boundary on a
+                           // thin film — windless decks never bite.
+                           "[TEMPERATURE]\nTIMESERIES air_ts\nHUMIDITY 50\n"
+                           "WINDSPEED MONTHLY 25 25 25 25 25 25 25 25 25 25 25 25\n\n"
+                           "[TIMESERIES]\nair_ts 01/01/2026 00:00 104.0\n"
+                           "air_ts 01/02/2026 00:00 104.0\n"
+                           "q_ts 01/01/2026 00:00 0.001\n"
+                           "q_ts 01/02/2026 00:00 0.001\n\n"
+                           "[JUNCTIONS]\n"
+                           "J0 10.0 10 1.5 0 0\nJ1 9.4 10 1.5 0 0\nJ2 8.8 10 1.5 0 0\n\n"
+                           "[OUTFALLS]\nOUT 8.0 FREE  NO\n\n"
+                           "[CONDUITS]\n"
+                           "C1 J0 J1  500 0.013 0 0 0\nC2 J1 J2 500 0.013 0 0 0\n"
+                           "C3 J2 OUT 500 0.013 0 0 0\n\n"
+                           "[XSECTIONS]\n"
+                           "C1 RECT_OPEN 3.0 4.0 0 0\nC2 RECT_OPEN 3.0 4.0 0 0\n"
+                           "C3 RECT_OPEN 3.0 4.0 0 0\n\n"
+                           "[INFLOWS]\nJ0 FLOW q_ts FLOW 1.0 1.0\n\n"
+                           "[PROCESS_COMPONENTS]\n"
+                           "org.hydrocouple.openswmm.heat config=\"_h4d.heat\"\n\n"
+                           "[REPORT]\nINPUT NO\n");
 
     SWMM_Engine e = run_and_hold("_h4d.inp", "_h4d.rpt", "_h4d.out");
     ASSERT_NE(e, nullptr);
@@ -625,10 +683,9 @@ TEST(HeatArdBindingTest, ThinSheetAtALargeFixedStepStaysInsideItsOwnBounds) {
 
     // SETUP: the exchange must have acted — three hours under 40 degC air
     // must warm the far end well above the 5 degC inflow.
-    EXPECT_GT(lt.back(), 15.0)
-        << "C3 reads " << lt.back()
-        << " degC after three hours under 40 degC air — the flux stage "
-           "never ran, so the bounds below are vacuous";
+    EXPECT_GT(lt.back(), 15.0) << "C3 reads " << lt.back()
+                               << " degC after three hours under 40 degC air — the flux stage "
+                                  "never ran, so the bounds below are vacuous";
 
     // The property: no element can leave the interval its own temperatures
     // span. 4 = inflow minus tolerance; 41 = air plus tolerance. The
@@ -639,10 +696,10 @@ TEST(HeatArdBindingTest, ThinSheetAtALargeFixedStepStaysInsideItsOwnBounds) {
         EXPECT_TRUE(std::isfinite(lt[i]))
             << "link " << i << " temperature is not finite: " << lt[i];
         EXPECT_GE(lt[i], 4.0) << "link " << i << ": " << lt[i]
-            << " degC — below every temperature in the deck (the explicit "
-               "step\'s downward overshoot, clamp-masked at 0)";
+                              << " degC — below every temperature in the deck (the explicit "
+                                 "step\'s downward overshoot, clamp-masked at 0)";
         EXPECT_LE(lt[i], 41.0) << "link " << i << ": " << lt[i]
-            << " degC — above every temperature in the deck";
+                               << " degC — above every temperature in the deck";
     }
     for (std::size_t i = 0; i < nt.size(); ++i) {
         EXPECT_TRUE(std::isfinite(nt[i]))

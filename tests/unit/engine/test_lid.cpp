@@ -1,6 +1,6 @@
 /**
- * @file test_lid.cpp
- * @brief Comprehensive unit tests for LID controls.
+ * @file      test_lid.cpp
+ * @brief     Comprehensive unit tests for LID controls.
  *
  * @details Covers:
  *   - LIDGroupSoA resize and initialization
@@ -16,6 +16,10 @@
  *
  * @see src/engine/hydrology/LID.hpp
  * @ingroup engine_hydrology
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -41,7 +45,7 @@ using namespace openswmm::lid;
 // Per-unit evap-rate arrays for the batch*Flux APIs (which take
 // const double* per-unit PET); every group exercised with evap in
 // this file has exactly one unit.
-static constexpr double kNoEvap[1]   = {0.0};
+static constexpr double kNoEvap[1] = {0.0};
 static constexpr double kEvap1em6[1] = {1e-6};
 static constexpr double kEvap1em4[1] = {1e-4};
 
@@ -49,19 +53,38 @@ static constexpr double kEvap1em4[1] = {1e-4};
 // Helper: create a context with one LID control and one usage entry
 // ============================================================================
 
-static SimulationContext makeLidContext(
-    const std::string& type_code,
-    const std::array<double,5>& surface,
-    const std::array<double,7>& soil,
-    const std::array<double,4>& storage,
-    const std::array<double,6>& drain,
-    double area = 1000.0, double width = 50.0, double init_sat = 0.0)
-{
+/**
+ * @brief Build a minimal one-control/one-usage LID initialization fixture.
+ *
+ * Sets a 10-acre subcatchment, zero inflow capture and empty report/drain destinations;
+ * pavement/drainmat fields are zero-filled. Parameters are deliberately not validated here so tests
+ * can supply edge cases.
+ *
+ * @param[in] type_code Authored LID code, copied into the control store.
+ * @param[in] surface Five authored SURFACE values [height in,vegetation fraction,roughness,slope
+ *     percent,side slope].
+ * @param[in] soil Seven authored SOIL values [thickness in,porosity,field capacity,wilting
+ *     fraction,K in/hr,K slope,suction in].
+ * @param[in] storage Four authored STORAGE values [thickness in,void ratio,K in/hr,clog factor].
+ * @param[in] drain Six authored DRAIN values [coefficient,exponent,offset in,delay hours,opening
+ *     in,closing in].
+ * @param[in] area One-unit footprint ft2, default 1000.
+ * @param[in] width One-unit width ft, default 50.
+ * @param[in] init_sat Initial saturation percent, default zero.
+ * @return Owned default-US context with S1, LID1 and one usage row, without initialized LIDSolver
+ *     state.
+ */
+static SimulationContext makeLidContext(const std::string& type_code,
+                                        const std::array<double, 5>& surface,
+                                        const std::array<double, 7>& soil,
+                                        const std::array<double, 4>& storage,
+                                        const std::array<double, 6>& drain, double area = 1000.0,
+                                        double width = 50.0, double init_sat = 0.0) {
     SimulationContext ctx;
 
     // Add one subcatchment
     ctx.subcatch_names.add("S1");
-    ctx.subcatches.area.push_back(10.0);  // 10 acres
+    ctx.subcatches.area.push_back(10.0); // 10 acres
 
     // Add one LID control
     ctx.lid_names.add("LID1");
@@ -69,10 +92,10 @@ static SimulationContext makeLidContext(
     ctx.lid_controls.lid_type.push_back(type_code);
     ctx.lid_controls.surface.push_back(surface);
     ctx.lid_controls.soil.push_back(soil);
-    ctx.lid_controls.pavement.push_back({0,0,0,0,0,0});
+    ctx.lid_controls.pavement.push_back({0, 0, 0, 0, 0, 0});
     ctx.lid_controls.storage.push_back(storage);
     ctx.lid_controls.drain.push_back(drain);
-    ctx.lid_controls.drainmat.push_back({0,0,0});
+    ctx.lid_controls.drainmat.push_back({0, 0, 0});
 
     // Add one LID usage
     ctx.lid_usage.subcatch_index.push_back(0);
@@ -135,12 +158,12 @@ TEST(LIDModelBuilder, EmptyUsageProducesEmptyGroups) {
 }
 
 TEST(LIDModelBuilder, SingleBioCellPopulated) {
-    auto ctx = makeLidContext("BC",
-        {0.5, 0.0, 0.1, 0.01, 0.0},   // surface: 0.5ft store, n=0.1, slope=1%
-        {1.5, 0.45, 0.20, 0.10, 1e-5, 30.0, 6.0},  // soil
-        {1.0, 0.5, 1e-6, 0.0},         // storage
-        {0.5, 0.5, 0.0, 0.0, 0.0, 0.0} // drain
-    );
+    auto ctx =
+        makeLidContext("BC", {0.5, 0.0, 0.1, 0.01, 0.0}, // surface: 0.5ft store, n=0.1, slope=1%
+                       {1.5, 0.45, 0.20, 0.10, 1e-5, 30.0, 6.0}, // soil
+                       {1.0, 0.5, 1e-6, 0.0},                    // storage
+                       {0.5, 0.5, 0.0, 0.0, 0.0, 0.0}            // drain
+        );
 
     LIDSolver solver;
     solver.init(ctx);
@@ -155,17 +178,15 @@ TEST(LIDModelBuilder, SingleBioCellPopulated) {
     EXPECT_NEAR(g.soil_poros[0], 0.45, 1e-10);
     EXPECT_NEAR(g.stor_thick[0], 1.0 / 12.0, 1e-10);
     EXPECT_NEAR(g.drain_coeff[0], 0.5, 1e-10);
-    EXPECT_NEAR(g.area[0], 1000.0, 1e-10);  // ft² (US: UCF(LENGTH)=1)
+    EXPECT_NEAR(g.area[0], 1000.0, 1e-10); // ft² (US: UCF(LENGTH)=1)
 }
 
 TEST(LIDModelBuilder, InitialSaturationSetsState) {
-    auto ctx = makeLidContext("BC",
-        {0.5, 0.0, 0.1, 0.01, 0.0},
-        {1.5, 0.45, 0.20, 0.10, 1e-5, 30.0, 6.0},
-        {1.0, 0.5, 0.0, 0.0},
-        {0.0, 0.5, 0.0, 0.0, 0.0, 0.0},
-        1000.0, 50.0, 50.0  // init_sat is a PERCENT (0-100): 50 → 0.5 fraction
-    );
+    auto ctx =
+        makeLidContext("BC", {0.5, 0.0, 0.1, 0.01, 0.0}, {1.5, 0.45, 0.20, 0.10, 1e-5, 30.0, 6.0},
+                       {1.0, 0.5, 0.0, 0.0}, {0.0, 0.5, 0.0, 0.0, 0.0, 0.0}, 1000.0, 50.0,
+                       50.0 // init_sat is a PERCENT (0-100): 50 → 0.5 fraction
+        );
 
     LIDSolver solver;
     solver.init(ctx);
@@ -225,12 +246,10 @@ TEST(LIDModelBuilder, MultipleTypesDistributed) {
 }
 
 TEST(LIDModelBuilder, ReplicateNumberScalesAreaAndWidth) {
-    auto ctx = makeLidContext("BC",
-        {0.5, 0.0, 0.1, 1.0, 0.0},
-        {1.5, 0.45, 0.20, 0.10, 1e-5, 30.0, 6.0},
-        {1.0, 0.5, 0.0, 0.0},
-        {0.0, 0.5, 0.0, 0.0, 0.0, 0.0});
-    ctx.lid_usage.number[0] = 3;  // three replicate units
+    auto ctx =
+        makeLidContext("BC", {0.5, 0.0, 0.1, 1.0, 0.0}, {1.5, 0.45, 0.20, 0.10, 1e-5, 30.0, 6.0},
+                       {1.0, 0.5, 0.0, 0.0}, {0.0, 0.5, 0.0, 0.0, 0.0, 0.0});
+    ctx.lid_usage.number[0] = 3; // three replicate units
 
     LIDSolver solver;
     solver.init(ctx);
@@ -256,19 +275,17 @@ TEST(LIDModelBuilder, ReplicateNumberScalesAreaAndWidth) {
 // path is covered by ReplicateNumberScalesAreaAndWidth above, where
 // Ucf[LENGTH][US] = 1.0 makes the division a no-op.
 TEST(LIDModelBuilder, MetricUsageAreaAndWidthConvertToInternalFeet) {
-    auto ctx = makeLidContext("BC",
-        {0.5, 0.0, 0.1, 1.0, 0.0},
-        {1.5, 0.45, 0.20, 0.10, 1e-5, 30.0, 6.0},
-        {1.0, 0.5, 0.0, 0.0},
-        {0.0, 0.5, 0.0, 0.0, 0.0, 0.0});
-    ctx.options.flow_units = FlowUnits::CMS;  // any of CMS/LPS/MLD → SI
+    auto ctx =
+        makeLidContext("BC", {0.5, 0.0, 0.1, 1.0, 0.0}, {1.5, 0.45, 0.20, 0.10, 1e-5, 30.0, 6.0},
+                       {1.0, 0.5, 0.0, 0.0}, {0.0, 0.5, 0.0, 0.0, 0.0, 0.0});
+    ctx.options.flow_units = FlowUnits::CMS; // any of CMS/LPS/MLD → SI
 
     LIDSolver solver;
     solver.init(ctx);
 
-    constexpr double kFtPerM  = 0.3048;          // Ucf[LENGTH][SI]
-    const double area_ft2  = 1000.0 / (kFtPerM * kFtPerM);
-    const double width_ft  = 50.0 / kFtPerM;
+    constexpr double kFtPerM = 0.3048; // Ucf[LENGTH][SI]
+    const double area_ft2 = 1000.0 / (kFtPerM * kFtPerM);
+    const double width_ft = 50.0 / kFtPerM;
 
     const auto& g = solver.group(0);
     EXPECT_NEAR(g.area[0], area_ft2, 1e-6);
@@ -281,9 +298,9 @@ TEST(LIDModelBuilder, MetricUsageAreaAndWidthConvertToInternalFeet) {
 }
 
 TEST(LIDModelBuilder, ManningAlphaComputed) {
-    auto ctx = makeLidContext("BC",
-        {0.5, 0.0, 0.05, 2.0, 0.0},  // roughness=0.05, slope entered as % (2 → 0.02)
-        {0,0,0,0,0,0,0}, {0,0,0,0}, {0,0,0,0,0,0});
+    auto ctx = makeLidContext(
+        "BC", {0.5, 0.0, 0.05, 2.0, 0.0}, // roughness=0.05, slope entered as % (2 → 0.02)
+        {0, 0, 0, 0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0, 0, 0});
 
     LIDSolver solver;
     solver.init(ctx);
@@ -308,17 +325,17 @@ TEST(LIDBioCell, RainfallFillsSurface) {
     g.surf_alpha[0] = 1.49 * std::sqrt(0.01) / 0.1;
     g.soil_thick[0] = 1.0;
     g.soil_poros[0] = 0.4;
-    g.soil_fc[0]    = 0.2;
-    g.soil_wp[0]    = 0.1;
-    g.soil_ksat[0]  = 0.0;  // no soil infiltration → water stays on surface
-    g.soil_kslope[0]= 0.0;
+    g.soil_fc[0] = 0.2;
+    g.soil_wp[0] = 0.1;
+    g.soil_ksat[0] = 0.0; // no soil infiltration → water stays on surface
+    g.soil_kslope[0] = 0.0;
     g.soil_moist[0] = 0.2;
     g.stor_thick[0] = 0.0;
-    g.stor_void[0]  = 0.5;
-    g.area[0]       = 1000.0;
+    g.stor_void[0] = 0.5;
+    g.area[0] = 1000.0;
     g.full_width[0] = 50.0;
 
-    double rainfall = 1e-4;  // ft/sec
+    double rainfall = 1e-4; // ft/sec
     double dt = 60.0;
     LIDSolver::batchBioCellFlux(g, rainfall, kNoEvap, dt);
 
@@ -331,80 +348,75 @@ TEST(LIDBioCell, SoilPercolationOccurs) {
     g.type = LIDType::BIO_CELL;
     g.resize(1);
     g.surf_store[0] = 0.5;
-    g.surf_depth[0] = 0.3;  // ponded water on surface
+    g.surf_depth[0] = 0.3; // ponded water on surface
     g.soil_thick[0] = 1.0;
     g.soil_poros[0] = 0.4;
-    g.soil_fc[0]    = 0.2;
-    g.soil_wp[0]    = 0.1;
-    g.soil_ksat[0]  = 1e-4;
-    g.soil_kslope[0]= 20.0;
+    g.soil_fc[0] = 0.2;
+    g.soil_wp[0] = 0.1;
+    g.soil_ksat[0] = 1e-4;
+    g.soil_kslope[0] = 20.0;
     g.soil_moist[0] = 0.35; // above FC → percolation should occur
     g.stor_thick[0] = 1.0;
-    g.stor_void[0]  = 0.5;
+    g.stor_void[0] = 0.5;
     g.stor_depth[0] = 0.0;
-    g.area[0]       = 1000.0;
+    g.area[0] = 1000.0;
 
     double dt = 300.0;
     LIDSolver::batchBioCellFlux(g, 0.0, kNoEvap, dt);
 
     // Storage depth should increase (soil percolated into it)
-    EXPECT_GT(g.stor_depth[0], 0.0)
-        << "Soil percolation should fill storage layer";
+    EXPECT_GT(g.stor_depth[0], 0.0) << "Soil percolation should fill storage layer";
 }
 
 TEST(LIDBioCell, DrainActivatesAboveOffset) {
     LIDGroupSoA g;
     g.type = LIDType::BIO_CELL;
     g.resize(1);
-    g.surf_store[0]  = 0.5;
-    g.soil_thick[0]  = 0.0;  // no soil layer (like infiltration trench)
-    g.soil_poros[0]  = 0.4;
-    g.soil_fc[0]     = 0.2;
-    g.soil_wp[0]     = 0.1;
-    g.soil_ksat[0]   = 0.0;
-    g.stor_thick[0]  = 2.0;
-    g.stor_void[0]   = 0.5;
-    g.stor_depth[0]  = 1.5;  // well above offset
-    g.stor_ksat[0]   = 0.0;  // no exfiltration
+    g.surf_store[0] = 0.5;
+    g.soil_thick[0] = 0.0; // no soil layer (like infiltration trench)
+    g.soil_poros[0] = 0.4;
+    g.soil_fc[0] = 0.2;
+    g.soil_wp[0] = 0.1;
+    g.soil_ksat[0] = 0.0;
+    g.stor_thick[0] = 2.0;
+    g.stor_void[0] = 0.5;
+    g.stor_depth[0] = 1.5; // well above offset
+    g.stor_ksat[0] = 0.0;  // no exfiltration
     g.drain_coeff[0] = 0.5;
     g.drain_expon[0] = 0.5;
-    g.drain_offset[0]= 0.5;  // drain at 0.5 ft
-    g.area[0]        = 1000.0;
+    g.drain_offset[0] = 0.5; // drain at 0.5 ft
+    g.area[0] = 1000.0;
 
     LIDSolver::batchBioCellFlux(g, 0.0, kNoEvap, 300.0);
 
-    EXPECT_GT(g.drain_flow[0], 0.0)
-        << "Drain should activate when storage > offset";
+    EXPECT_GT(g.drain_flow[0], 0.0) << "Drain should activate when storage > offset";
 }
 
 TEST(LIDBioCell, DrainInactiveWhenBelowOffset) {
     LIDGroupSoA g;
     g.type = LIDType::BIO_CELL;
     g.resize(1);
-    g.surf_store[0]  = 0.5;
-    g.soil_thick[0]  = 0.0;
-    g.soil_ksat[0]   = 0.0;
-    g.stor_thick[0]  = 2.0;
-    g.stor_void[0]   = 0.5;
-    g.stor_depth[0]  = 0.3;   // below offset
-    g.stor_ksat[0]   = 0.0;
+    g.surf_store[0] = 0.5;
+    g.soil_thick[0] = 0.0;
+    g.soil_ksat[0] = 0.0;
+    g.stor_thick[0] = 2.0;
+    g.stor_void[0] = 0.5;
+    g.stor_depth[0] = 0.3; // below offset
+    g.stor_ksat[0] = 0.0;
     g.drain_coeff[0] = 0.5;
     g.drain_expon[0] = 0.5;
-    g.drain_offset[0]= 0.5;
-    g.area[0]        = 1000.0;
+    g.drain_offset[0] = 0.5;
+    g.area[0] = 1000.0;
 
     LIDSolver::batchBioCellFlux(g, 0.0, kNoEvap, 300.0);
 
-    EXPECT_DOUBLE_EQ(g.drain_flow[0], 0.0)
-        << "Drain should be zero when storage < offset";
+    EXPECT_DOUBLE_EQ(g.drain_flow[0], 0.0) << "Drain should be zero when storage < offset";
 }
 
 TEST(LIDBioCell, WaterBalanceConserved) {
-    auto ctx = makeLidContext("BC",
-        {0.5, 0.0, 0.1, 0.01, 0.0},
-        {1.0, 0.45, 0.20, 0.10, 1e-5, 20.0, 0.0},
-        {1.0, 0.5, 1e-6, 0.0},
-        {0.3, 0.5, 0.0, 0.0, 0.0, 0.0});
+    auto ctx =
+        makeLidContext("BC", {0.5, 0.0, 0.1, 0.01, 0.0}, {1.0, 0.45, 0.20, 0.10, 1e-5, 20.0, 0.0},
+                       {1.0, 0.5, 1e-6, 0.0}, {0.3, 0.5, 0.0, 0.0, 0.0, 0.0});
 
     LIDSolver solver;
     solver.init(ctx);
@@ -414,7 +426,7 @@ TEST(LIDBioCell, WaterBalanceConserved) {
         solver.execute(ctx, 300.0, 1e-4, 1e-6);
 
     const auto& g = solver.group(0);
-    double in  = g.wb_inflow[0];
+    double in = g.wb_inflow[0];
     double out = g.wb_evap[0] + g.wb_infil[0] + g.wb_surf_flow[0] + g.wb_drain_flow[0];
     double stored = g.wb_final_vol[0] - g.wb_init_vol[0];
 
@@ -422,8 +434,7 @@ TEST(LIDBioCell, WaterBalanceConserved) {
     // Euler integration has small numerical drift; use relative tolerance
     double total = std::max(in, 1e-10);
     double error = std::abs(in - (out + stored)) / total;
-    EXPECT_LT(error, 0.05)
-        << "Water balance relative error should be < 5% for bio-cell (Euler)";
+    EXPECT_LT(error, 0.05) << "Water balance relative error should be < 5% for bio-cell (Euler)";
 }
 
 // ============================================================================
@@ -434,36 +445,33 @@ TEST(LIDBarrel, FillsAndOverflows) {
     LIDGroupSoA g;
     g.type = LIDType::RAIN_BARREL;
     g.resize(1);
-    g.stor_thick[0]  = 0.5;  // 0.5 ft storage capacity
-    g.stor_depth[0]  = 0.0;
-    g.drain_coeff[0] = 0.0;  // no drain
-    g.area[0]        = 100.0;
+    g.stor_thick[0] = 0.5; // 0.5 ft storage capacity
+    g.stor_depth[0] = 0.0;
+    g.drain_coeff[0] = 0.0; // no drain
+    g.area[0] = 100.0;
 
     // Heavy rainfall: 1e-3 ft/sec * 600s = 0.6 ft > 0.5 capacity
     LIDSolver::batchBarrelFlux(g, 1e-3, 600.0);
 
-    EXPECT_NEAR(g.stor_depth[0], 0.5, 1e-10)
-        << "Barrel should be full";
-    EXPECT_GT(g.surface_runoff[0], 0.0)
-        << "Excess should overflow";
+    EXPECT_NEAR(g.stor_depth[0], 0.5, 1e-10) << "Barrel should be full";
+    EXPECT_GT(g.surface_runoff[0], 0.0) << "Excess should overflow";
 }
 
 TEST(LIDBarrel, DrainReducesStorage) {
     LIDGroupSoA g;
     g.type = LIDType::RAIN_BARREL;
     g.resize(1);
-    g.stor_thick[0]   = 2.0;
-    g.stor_depth[0]   = 1.5;
-    g.drain_coeff[0]  = 0.01;
-    g.drain_expon[0]  = 0.5;
+    g.stor_thick[0] = 2.0;
+    g.stor_depth[0] = 1.5;
+    g.drain_coeff[0] = 0.01;
+    g.drain_expon[0] = 0.5;
     g.drain_offset[0] = 0.0;
-    g.area[0]         = 100.0;
+    g.area[0] = 100.0;
 
     double initial = g.stor_depth[0];
     LIDSolver::batchBarrelFlux(g, 0.0, 300.0);
 
-    EXPECT_LT(g.stor_depth[0], initial)
-        << "Drain should reduce storage depth";
+    EXPECT_LT(g.stor_depth[0], initial) << "Drain should reduce storage depth";
     EXPECT_GT(g.drain_flow[0], 0.0);
 }
 
@@ -471,12 +479,12 @@ TEST(LIDBarrel, WaterBalanceConserved) {
     LIDGroupSoA g;
     g.type = LIDType::RAIN_BARREL;
     g.resize(1);
-    g.stor_thick[0]   = 1.0;
-    g.stor_depth[0]   = 0.0;
-    g.drain_coeff[0]  = 0.005;
-    g.drain_expon[0]  = 0.5;
+    g.stor_thick[0] = 1.0;
+    g.stor_depth[0] = 0.0;
+    g.drain_coeff[0] = 0.005;
+    g.drain_expon[0] = 0.5;
     g.drain_offset[0] = 0.0;
-    g.area[0]         = 100.0;
+    g.area[0] = 100.0;
 
     // Reset water balance
     g.wb_inflow[0] = g.wb_evap[0] = g.wb_infil[0] = 0.0;
@@ -492,8 +500,7 @@ TEST(LIDBarrel, WaterBalanceConserved) {
     double out = g.wb_surf_flow[0] + g.wb_drain_flow[0];
     double stored = g.wb_final_vol[0] - g.wb_init_vol[0];
 
-    EXPECT_NEAR(in, out + stored, 1e-6)
-        << "Water balance should be conserved for rain barrel";
+    EXPECT_NEAR(in, out + stored, 1e-6) << "Water balance should be conserved for rain barrel";
 }
 
 // ============================================================================
@@ -504,15 +511,15 @@ TEST(LIDSwale, ManningsOutflowOccurs) {
     LIDGroupSoA g;
     g.type = LIDType::VEG_SWALE;
     g.resize(1);
-    g.surf_store[0]  = 0.1;   // low storage threshold
-    g.surf_depth[0]  = 0.5;   // ponded water well above storage
-    g.surf_rough[0]  = 0.05;
-    g.surf_slope[0]  = 0.02;
-    g.surf_alpha[0]  = 1.49 * std::sqrt(0.02) / 0.05;
+    g.surf_store[0] = 0.1; // low storage threshold
+    g.surf_depth[0] = 0.5; // ponded water well above storage
+    g.surf_rough[0] = 0.05;
+    g.surf_slope[0] = 0.02;
+    g.surf_alpha[0] = 1.49 * std::sqrt(0.02) / 0.05;
     g.surf_void_frac[0] = 1.0;
-    g.soil_ksat[0]   = 0.0;   // no infiltration
-    g.full_width[0]  = 10.0;
-    g.area[0]        = 500.0;
+    g.soil_ksat[0] = 0.0; // no infiltration
+    g.full_width[0] = 10.0;
+    g.area[0] = 500.0;
 
     LIDSolver::batchSwaleFlux(g, 0.0, kNoEvap, 300.0);
 
@@ -528,33 +535,32 @@ TEST(LIDGreenRoof, SoilPercolationToDrainMat) {
     LIDGroupSoA g;
     g.type = LIDType::GREEN_ROOF;
     g.resize(1);
-    g.surf_store[0]  = 0.1;
-    g.surf_depth[0]  = 0.05;
-    g.surf_rough[0]  = 0.1;
-    g.surf_slope[0]  = 0.02;
-    g.surf_alpha[0]  = 1.49 * std::sqrt(0.02) / 0.1;
+    g.surf_store[0] = 0.1;
+    g.surf_depth[0] = 0.05;
+    g.surf_rough[0] = 0.1;
+    g.surf_slope[0] = 0.02;
+    g.surf_alpha[0] = 1.49 * std::sqrt(0.02) / 0.1;
     g.surf_void_frac[0] = 1.0;
-    g.soil_thick[0]  = 0.5;
-    g.soil_poros[0]  = 0.5;
-    g.soil_fc[0]     = 0.25;
-    g.soil_wp[0]     = 0.10;
-    g.soil_ksat[0]   = 5e-5;
+    g.soil_thick[0] = 0.5;
+    g.soil_poros[0] = 0.5;
+    g.soil_fc[0] = 0.25;
+    g.soil_wp[0] = 0.10;
+    g.soil_ksat[0] = 5e-5;
     g.soil_kslope[0] = 20.0;
-    g.soil_moist[0]  = 0.40; // above FC → percolation occurs
+    g.soil_moist[0] = 0.40; // above FC → percolation occurs
     g.drainmat_thick[0] = 0.1;
-    g.drainmat_void[0]  = 0.5;
+    g.drainmat_void[0] = 0.5;
     g.drainmat_rough[0] = 0.1;
-    g.stor_thick[0]  = 0.1;
-    g.stor_void[0]   = 0.5;
-    g.stor_depth[0]  = 0.05;  // pre-fill drainage mat so drain activates
-    g.full_width[0]  = 20.0;
-    g.area[0]        = 1000.0;
+    g.stor_thick[0] = 0.1;
+    g.stor_void[0] = 0.5;
+    g.stor_depth[0] = 0.05; // pre-fill drainage mat so drain activates
+    g.full_width[0] = 20.0;
+    g.area[0] = 1000.0;
 
     LIDSolver::batchGreenRoofFlux(g, 1e-4, kEvap1em6, 300.0);
 
     // Drain flow should occur since drainage mat has water and drainmatAlpha > 0
-    EXPECT_GT(g.drain_flow[0], 0.0)
-        << "Green roof should produce drain flow from drainage mat";
+    EXPECT_GT(g.drain_flow[0], 0.0) << "Green roof should produce drain flow from drainage mat";
 }
 
 // ============================================================================
@@ -565,55 +571,59 @@ TEST(LIDPavement, PavementPercolation) {
     LIDGroupSoA g;
     g.type = LIDType::PERM_PAVEMENT;
     g.resize(1);
-    g.surf_store[0]    = 0.1;
-    g.surf_depth[0]    = 0.05;
-    g.surf_rough[0]    = 0.01;
-    g.surf_slope[0]    = 0.02;
-    g.surf_alpha[0]    = 1.49 * std::sqrt(0.02) / 0.01;
-    g.surf_void_frac[0]= 1.0;
-    g.pave_thick[0]    = 0.5;
-    g.pave_void[0]     = 0.15;
+    g.surf_store[0] = 0.1;
+    g.surf_depth[0] = 0.05;
+    g.surf_rough[0] = 0.01;
+    g.surf_slope[0] = 0.02;
+    g.surf_alpha[0] = 1.49 * std::sqrt(0.02) / 0.01;
+    g.surf_void_frac[0] = 1.0;
+    g.pave_thick[0] = 0.5;
+    g.pave_void[0] = 0.15;
     g.pave_imperv_frac[0] = 0.0;
-    g.pave_ksat[0]     = 1e-3;
+    g.pave_ksat[0] = 1e-3;
     g.pave_clog_factor[0] = 0.0;
-    g.pave_depth[0]    = 0.1;  // water in pavement
-    g.soil_thick[0]    = 0.0;  // no soil layer
-    g.stor_thick[0]    = 1.0;
-    g.stor_void[0]     = 0.4;
-    g.stor_ksat[0]     = 0.0;
-    g.stor_depth[0]    = 0.0;
-    g.drain_coeff[0]   = 0.1;
-    g.drain_expon[0]   = 0.5;
-    g.drain_offset[0]  = 0.0;
-    g.full_width[0]    = 30.0;
-    g.area[0]          = 2000.0;
+    g.pave_depth[0] = 0.1; // water in pavement
+    g.soil_thick[0] = 0.0; // no soil layer
+    g.stor_thick[0] = 1.0;
+    g.stor_void[0] = 0.4;
+    g.stor_ksat[0] = 0.0;
+    g.stor_depth[0] = 0.0;
+    g.drain_coeff[0] = 0.1;
+    g.drain_expon[0] = 0.5;
+    g.drain_offset[0] = 0.0;
+    g.full_width[0] = 30.0;
+    g.area[0] = 2000.0;
 
     LIDSolver::batchPavementFlux(g, 1e-4, kNoEvap, 300.0);
 
     // Storage should receive water through pavement
-    EXPECT_GT(g.stor_depth[0], 0.0)
-        << "Pavement should percolate into storage layer";
+    EXPECT_GT(g.stor_depth[0], 0.0) << "Pavement should percolate into storage layer";
 }
 
 TEST(LIDPavement, CloggingReducesPermeability) {
     // High clog factor with lots of treated volume should reduce percolation
     LIDGroupSoA g_clean, g_clogged;
     g_clean.type = g_clogged.type = LIDType::PERM_PAVEMENT;
-    g_clean.resize(1); g_clogged.resize(1);
+    g_clean.resize(1);
+    g_clogged.resize(1);
 
     auto setup = [](LIDGroupSoA& g) {
-        g.surf_store[0] = 0.1; g.surf_depth[0] = 0.05;
-        g.pave_thick[0] = 0.5; g.pave_void[0] = 0.15;
-        g.pave_ksat[0] = 1e-3; g.pave_depth[0] = 0.1;
-        g.stor_thick[0] = 1.0; g.stor_void[0] = 0.4;
+        g.surf_store[0] = 0.1;
+        g.surf_depth[0] = 0.05;
+        g.pave_thick[0] = 0.5;
+        g.pave_void[0] = 0.15;
+        g.pave_ksat[0] = 1e-3;
+        g.pave_depth[0] = 0.1;
+        g.stor_thick[0] = 1.0;
+        g.stor_void[0] = 0.4;
         g.area[0] = 1000.0;
     };
 
     setup(g_clean);
     setup(g_clogged);
     g_clean.pave_clog_factor[0] = 0.0;   // no clogging
-    g_clogged.pave_clog_factor[0] = 1.0;  // will clog
-    g_clogged.vol_treated[0] = 0.8;       // 80% clogged
+    g_clogged.pave_clog_factor[0] = 1.0; // will clog
+    g_clogged.vol_treated[0] = 0.8;      // 80% clogged
 
     LIDSolver::batchPavementFlux(g_clean, 1e-4, kNoEvap, 300.0);
     LIDSolver::batchPavementFlux(g_clogged, 1e-4, kNoEvap, 300.0);
@@ -638,29 +648,27 @@ TEST(LIDRoof, SplitsBetweenOverflowAndDrain) {
         LIDGroupSoA g;
         g.type = LIDType::ROOF_DISCON;
         g.resize(1);
-        g.surf_store[0]  = 0.02;  // small depression storage
-        g.surf_depth[0]  = 0.1;   // pre-fill above storage
+        g.surf_store[0] = 0.02; // small depression storage
+        g.surf_depth[0] = 0.1;  // pre-fill above storage
         g.surf_void_frac[0] = 1.0;
-        g.surf_alpha[0]  = alpha;
-        g.can_overflow[0] = (alpha > 0.0) ? 0 : 1;   // legacy validateLidProc
-        g.drain_coeff[0] = 0.001; // small drain capacity
-        g.area[0]        = 500.0;
-        g.full_width[0]  = 20.0;
+        g.surf_alpha[0] = alpha;
+        g.can_overflow[0] = (alpha > 0.0) ? 0 : 1; // legacy validateLidProc
+        g.drain_coeff[0] = 0.001;                  // small drain capacity
+        g.area[0] = 500.0;
+        g.full_width[0] = 20.0;
         return g;
     };
 
     LIDGroupSoA manning = build(1.486 / 0.02 * std::sqrt(0.01));
     LIDSolver::batchRoofDisconFlux(manning, 5e-4, kNoEvap, 300.0);
     EXPECT_GT(manning.drain_flow[0], 0.0) << "Should have drain flow";
-    EXPECT_GE(manning.surface_runoff[0], 0.0)
-        << "Should have non-negative surface runoff";
+    EXPECT_GE(manning.surface_runoff[0], 0.0) << "Should have non-negative surface runoff";
 
     LIDGroupSoA overflow = build(0.0);
     LIDSolver::batchRoofDisconFlux(overflow, 5e-4, kNoEvap, 300.0);
     EXPECT_DOUBLE_EQ(overflow.drain_flow[0], 0.0)
         << "legacy: no Manning outflow means nothing for the drain to take";
-    EXPECT_GT(overflow.surface_runoff[0], 0.0)
-        << "the excess above the storage depth overflows";
+    EXPECT_GT(overflow.surface_runoff[0], 0.0) << "the excess above the storage depth overflows";
 }
 
 // ============================================================================
@@ -671,23 +679,22 @@ TEST(LIDBioCell, EvaporationReducesSurfaceDepth) {
     LIDGroupSoA g;
     g.type = LIDType::BIO_CELL;
     g.resize(1);
-    g.surf_store[0]  = 0.5;
-    g.surf_depth[0]  = 0.1;  // ponded water
-    g.soil_thick[0]  = 1.0;
-    g.soil_poros[0]  = 0.4;
-    g.soil_fc[0]     = 0.2;
-    g.soil_wp[0]     = 0.1;
-    g.soil_ksat[0]   = 0.0;
-    g.stor_thick[0]  = 0.0;
-    g.area[0]        = 1000.0;
+    g.surf_store[0] = 0.5;
+    g.surf_depth[0] = 0.1; // ponded water
+    g.soil_thick[0] = 1.0;
+    g.soil_poros[0] = 0.4;
+    g.soil_fc[0] = 0.2;
+    g.soil_wp[0] = 0.1;
+    g.soil_ksat[0] = 0.0;
+    g.stor_thick[0] = 0.0;
+    g.area[0] = 1000.0;
 
-    const double evap[1] = {5e-6};  // per-unit ft/sec evaporation
+    const double evap[1] = {5e-6}; // per-unit ft/sec evaporation
     double dt = 600.0;
     double initial = g.surf_depth[0];
     LIDSolver::batchBioCellFlux(g, 0.0, evap, dt);
 
-    EXPECT_LT(g.surf_depth[0], initial)
-        << "Evaporation should reduce surface ponded depth";
+    EXPECT_LT(g.surf_depth[0], initial) << "Evaporation should reduce surface ponded depth";
     EXPECT_GT(g.evap_loss[0], 0.0);
 }
 
@@ -702,10 +709,10 @@ TEST(LIDBatch, MultipleBarrelsProcessedCorrectly) {
 
     for (int i = 0; i < 3; ++i) {
         auto ui = static_cast<size_t>(i);
-        g.stor_thick[ui]   = 1.0 + i * 0.5;  // different capacities
-        g.stor_depth[ui]   = 0.0;
-        g.drain_coeff[ui]  = 0.0;
-        g.area[ui]         = 100.0;
+        g.stor_thick[ui] = 1.0 + i * 0.5; // different capacities
+        g.stor_depth[ui] = 0.0;
+        g.drain_coeff[ui] = 0.0;
+        g.area[ui] = 100.0;
     }
 
     LIDSolver::batchBarrelFlux(g, 2e-4, 600.0);
@@ -713,8 +720,7 @@ TEST(LIDBatch, MultipleBarrelsProcessedCorrectly) {
     // All should have water, amounts differ by capacity
     for (int i = 0; i < 3; ++i) {
         auto ui = static_cast<size_t>(i);
-        EXPECT_GT(g.stor_depth[ui], 0.0)
-            << "Barrel " << i << " should have storage";
+        EXPECT_GT(g.stor_depth[ui], 0.0) << "Barrel " << i << " should have storage";
         // Inflow = 2e-4 * 600 = 0.12 ft, all < capacity → no overflow
         EXPECT_NEAR(g.stor_depth[ui], 0.12, 1e-6);
         EXPECT_DOUBLE_EQ(g.surface_runoff[ui], 0.0);
@@ -746,18 +752,18 @@ TEST(LIDEdge, NegativeDepthsClamped) {
     g.type = LIDType::BIO_CELL;
     g.resize(1);
     g.surf_store[0] = 0.5;
-    g.surf_depth[0] = 0.001;  // tiny ponding
+    g.surf_depth[0] = 0.001; // tiny ponding
     g.soil_thick[0] = 1.0;
     g.soil_poros[0] = 0.4;
-    g.soil_fc[0]    = 0.2;
-    g.soil_wp[0]    = 0.1;
-    g.soil_ksat[0]  = 1e-3;  // high infiltration
+    g.soil_fc[0] = 0.2;
+    g.soil_wp[0] = 0.1;
+    g.soil_ksat[0] = 1e-3; // high infiltration
     g.soil_moist[0] = 0.2;
     g.stor_thick[0] = 1.0;
-    g.stor_void[0]  = 0.5;
+    g.stor_void[0] = 0.5;
     g.stor_depth[0] = 0.001;
-    g.stor_ksat[0]  = 1e-3;  // high exfiltration
-    g.area[0]       = 1000.0;
+    g.stor_ksat[0] = 1e-3; // high exfiltration
+    g.area[0] = 1000.0;
 
     // No rainfall, high evap → should drain everything without going negative
     LIDSolver::batchBioCellFlux(g, 0.0, kEvap1em4, 600.0);
@@ -781,7 +787,7 @@ TEST(LIDInflow, PerUnitInflowUsedOverRainfall) {
     g.area[0] = 100.0;
 
     // Set per-unit inflow higher than rainfall
-    g.inflow[0] = 1e-3;  // ft/sec (much higher than rainfall=1e-5)
+    g.inflow[0] = 1e-3; // ft/sec (much higher than rainfall=1e-5)
 
     LIDSolver::batchBarrelFlux(g, 1e-5, 600.0);
 
@@ -800,7 +806,7 @@ TEST(LIDInflow, ZeroInflowFallsBackToRainfall) {
     g.drain_coeff[0] = 0.0;
     g.area[0] = 100.0;
 
-    g.inflow[0] = 0.0;  // no per-unit inflow → use rainfall
+    g.inflow[0] = 0.0; // no per-unit inflow → use rainfall
 
     double rainfall = 2e-4;
     LIDSolver::batchBarrelFlux(g, rainfall, 600.0);
@@ -815,13 +821,11 @@ TEST(LIDInflow, ZeroInflowFallsBackToRainfall) {
 // ============================================================================
 
 TEST(LIDModelBuilder, FromImpervConvertedToFraction) {
-    auto ctx = makeLidContext("BC",
-        {0.5, 0.0, 0.1, 0.01, 0.0},
-        {1.0, 0.4, 0.2, 0.1, 1e-5, 20.0, 0.0},
-        {1.0, 0.5, 0.0, 0.0},
-        {0.0, 0.5, 0.0, 0.0, 0.0, 0.0});
+    auto ctx =
+        makeLidContext("BC", {0.5, 0.0, 0.1, 0.01, 0.0}, {1.0, 0.4, 0.2, 0.1, 1e-5, 20.0, 0.0},
+                       {1.0, 0.5, 0.0, 0.0}, {0.0, 0.5, 0.0, 0.0, 0.0, 0.0});
     // from_imperv is in % in the usage store
-    ctx.lid_usage.from_imperv[0] = 50.0;  // 50%
+    ctx.lid_usage.from_imperv[0] = 50.0; // 50%
 
     LIDSolver solver;
     solver.init(ctx);
@@ -864,7 +868,8 @@ TEST(LIDModelBuilder, StorageVoidRatioAboveOneIsLegal) {
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
     ASSERT_EQ(swmm_engine_open(e, inp.c_str(), "lid_area_out/void_ratio.rpt",
-                               "lid_area_out/void_ratio.out", nullptr), 0)
+                               "lid_area_out/void_ratio.out", nullptr),
+              0)
         << swmm_get_last_error_msg(e);
     ASSERT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
     // And the solver holds the FRACTION: 3 / (3 + 1).
@@ -875,10 +880,8 @@ TEST(LIDModelBuilder, StorageVoidRatioAboveOneIsLegal) {
 }
 
 TEST(LIDModelBuilder, DrainToNodeResolved) {
-    auto ctx = makeLidContext("RB",
-        {0,0,0,0,0}, {0,0,0,0,0,0,0},
-        {3.0, 1.0, 0.0, 0.0},
-        {0.1, 0.5, 0.0, 0.0, 0.0, 0.0});
+    auto ctx = makeLidContext("RB", {0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0, 0}, {3.0, 1.0, 0.0, 0.0},
+                              {0.1, 0.5, 0.0, 0.0, 0.0, 0.0});
 
     // Add a node for drain-to resolution
     ctx.node_names.add("J1");
@@ -888,17 +891,14 @@ TEST(LIDModelBuilder, DrainToNodeResolved) {
     LIDSolver solver;
     solver.init(ctx);
 
-    EXPECT_EQ(solver.group(5).drain_node[0], 0)
-        << "drain_to 'J1' should resolve to node index 0";
+    EXPECT_EQ(solver.group(5).drain_node[0], 0) << "drain_to 'J1' should resolve to node index 0";
     EXPECT_EQ(solver.group(5).drain_subcatch[0], -1)
         << "drain_subcatch should be -1 when drain goes to node";
 }
 
 TEST(LIDModelBuilder, DrainToSubcatchResolved) {
-    auto ctx = makeLidContext("RB",
-        {0,0,0,0,0}, {0,0,0,0,0,0,0},
-        {3.0, 1.0, 0.0, 0.0},
-        {0.1, 0.5, 0.0, 0.0, 0.0, 0.0});
+    auto ctx = makeLidContext("RB", {0, 0, 0, 0, 0}, {0, 0, 0, 0, 0, 0, 0}, {3.0, 1.0, 0.0, 0.0},
+                              {0.1, 0.5, 0.0, 0.0, 0.0, 0.0});
 
     // Add a second subcatchment for drain-to
     ctx.subcatch_names.add("S2");
@@ -914,11 +914,9 @@ TEST(LIDModelBuilder, DrainToSubcatchResolved) {
 }
 
 TEST(LIDModelBuilder, ToPerFlagPreserved) {
-    auto ctx = makeLidContext("BC",
-        {0.5, 0.0, 0.1, 0.01, 0.0},
-        {1.0, 0.4, 0.2, 0.1, 1e-5, 20.0, 0.0},
-        {1.0, 0.5, 0.0, 0.0},
-        {0.0, 0.5, 0.0, 0.0, 0.0, 0.0});
+    auto ctx =
+        makeLidContext("BC", {0.5, 0.0, 0.1, 0.01, 0.0}, {1.0, 0.4, 0.2, 0.1, 1e-5, 20.0, 0.0},
+                       {1.0, 0.5, 0.0, 0.0}, {0.0, 0.5, 0.0, 0.0, 0.0, 0.0});
     ctx.lid_usage.to_perv[0] = 1;
 
     LIDSolver solver;
@@ -940,18 +938,18 @@ TEST(LIDModPuls, SwaleConvergesToSteadyState) {
     // legacy swaleFluxRates caps the depth at the surface thickness (the
     // swale's depth, a required positive value) and forms the section from
     // the side slope: a valid swale, not a zero-depth one.
-    g.surf_store[0]  = 1.0;   // swale depth (ft)
-    g.surf_depth[0]  = 0.0;
-    g.surf_rough[0]  = 0.05;
-    g.surf_slope[0]  = 0.02;
+    g.surf_store[0] = 1.0; // swale depth (ft)
+    g.surf_depth[0] = 0.0;
+    g.surf_rough[0] = 0.05;
+    g.surf_slope[0] = 0.02;
     g.surf_side_slope[0] = 3.0;
-    g.surf_alpha[0]  = 1.486 * std::sqrt(0.02) / 0.05;
+    g.surf_alpha[0] = 1.486 * std::sqrt(0.02) / 0.05;
     g.surf_void_frac[0] = 1.0;
-    g.soil_ksat[0]   = 0.0;  // no infiltration
-    g.full_width[0]  = 10.0;
-    g.area[0]        = 500.0;
+    g.soil_ksat[0] = 0.0; // no infiltration
+    g.full_width[0] = 10.0;
+    g.area[0] = 500.0;
 
-    double rainfall = 1e-4;  // constant inflow
+    double rainfall = 1e-4; // constant inflow
     double dt = 60.0;
 
     // Run until steady state
@@ -961,7 +959,8 @@ TEST(LIDModPuls, SwaleConvergesToSteadyState) {
         if (t > 100) {
             // After warmup, depth should stabilize
             double change = std::abs(g.surf_depth[0] - prev_depth);
-            if (change < 1e-8) break;
+            if (change < 1e-8)
+                break;
         }
         prev_depth = g.surf_depth[0];
     }
@@ -979,25 +978,27 @@ TEST(LIDModPuls, SwaleModPulsMoreStableThanEuler) {
     // Modified Puls should produce smoother, non-oscillating response.
     LIDGroupSoA g_mp, g_euler;
     g_mp.type = g_euler.type = LIDType::VEG_SWALE;
-    g_mp.resize(1); g_euler.resize(1);
+    g_mp.resize(1);
+    g_euler.resize(1);
 
     auto setup = [](LIDGroupSoA& g) {
-        g.surf_store[0]  = 0.0;
-        g.surf_depth[0]  = 0.5;  // start with significant ponding
-        g.surf_rough[0]  = 0.05;
-        g.surf_slope[0]  = 0.02;
-        g.surf_alpha[0]  = 1.49 * std::sqrt(0.02) / 0.05;
+        g.surf_store[0] = 0.0;
+        g.surf_depth[0] = 0.5; // start with significant ponding
+        g.surf_rough[0] = 0.05;
+        g.surf_slope[0] = 0.02;
+        g.surf_alpha[0] = 1.49 * std::sqrt(0.02) / 0.05;
         g.surf_void_frac[0] = 1.0;
-        g.soil_ksat[0]   = 0.0;
-        g.full_width[0]  = 10.0;
-        g.area[0]        = 500.0;
+        g.soil_ksat[0] = 0.0;
+        g.full_width[0] = 10.0;
+        g.area[0] = 500.0;
     };
-    setup(g_mp); setup(g_euler);
+    setup(g_mp);
+    setup(g_euler);
 
     // Modified Puls path (via batchSwaleModPuls)
-    LIDSolver::batchSwaleModPuls(g_mp, 0.0, kNoEvap, 300.0);  // no inflow, drain
+    LIDSolver::batchSwaleModPuls(g_mp, 0.0, kNoEvap, 300.0); // no inflow, drain
     // Euler path (via batchSwaleFlux)
-    LIDSolver::batchSwaleFlux(g_euler, 0.0, kNoEvap, 300.0);  // no inflow, drain
+    LIDSolver::batchSwaleFlux(g_euler, 0.0, kNoEvap, 300.0); // no inflow, drain
 
     // Both should reduce depth but not go negative
     EXPECT_GE(g_mp.surf_depth[0], 0.0);
@@ -1013,38 +1014,36 @@ TEST(LIDModPuls, SwalePreservesFOldBetweenTimesteps) {
     LIDGroupSoA g;
     g.type = LIDType::VEG_SWALE;
     g.resize(1);
-    g.surf_store[0]  = 0.0;
-    g.surf_depth[0]  = 0.2;
-    g.surf_rough[0]  = 0.05;
-    g.surf_slope[0]  = 0.02;
-    g.surf_alpha[0]  = 1.49 * std::sqrt(0.02) / 0.05;
+    g.surf_store[0] = 0.0;
+    g.surf_depth[0] = 0.2;
+    g.surf_rough[0] = 0.05;
+    g.surf_slope[0] = 0.02;
+    g.surf_alpha[0] = 1.49 * std::sqrt(0.02) / 0.05;
     g.surf_void_frac[0] = 1.0;
-    g.soil_ksat[0]   = 0.0;
-    g.area[0]        = 500.0;
+    g.soil_ksat[0] = 0.0;
+    g.area[0] = 500.0;
 
-    EXPECT_DOUBLE_EQ(g.f_old_surf[0], 0.0)
-        << "f_old should start at zero";
+    EXPECT_DOUBLE_EQ(g.f_old_surf[0], 0.0) << "f_old should start at zero";
 
     LIDSolver::batchSwaleModPuls(g, 1e-4, kNoEvap, 60.0);
 
     // After first timestep, f_old_surf should be updated (non-zero if there's runoff)
     // The exact value depends on the converged state, but it should be finite
-    EXPECT_TRUE(std::isfinite(g.f_old_surf[0]))
-        << "f_old_surf should be finite after timestep";
+    EXPECT_TRUE(std::isfinite(g.f_old_surf[0])) << "f_old_surf should be finite after timestep";
 }
 
 TEST(LIDModPuls, SwaleWaterBalanceWithModPuls) {
     LIDGroupSoA g;
     g.type = LIDType::VEG_SWALE;
     g.resize(1);
-    g.surf_store[0]  = 0.05;
-    g.surf_depth[0]  = 0.0;
-    g.surf_rough[0]  = 0.1;
-    g.surf_slope[0]  = 0.01;
-    g.surf_alpha[0]  = 1.49 * std::sqrt(0.01) / 0.1;
+    g.surf_store[0] = 0.05;
+    g.surf_depth[0] = 0.0;
+    g.surf_rough[0] = 0.1;
+    g.surf_slope[0] = 0.01;
+    g.surf_alpha[0] = 1.49 * std::sqrt(0.01) / 0.1;
     g.surf_void_frac[0] = 1.0;
-    g.soil_ksat[0]   = 1e-5;  // some infiltration
-    g.area[0]        = 500.0;
+    g.soil_ksat[0] = 1e-5; // some infiltration
+    g.area[0] = 500.0;
 
     // Reset water balance
     g.wb_inflow[0] = g.wb_evap[0] = g.wb_infil[0] = 0.0;
@@ -1062,8 +1061,7 @@ TEST(LIDModPuls, SwaleWaterBalanceWithModPuls) {
     double total = std::max(in, 1e-10);
     double error = std::abs(in - (out + stored)) / total;
 
-    EXPECT_LT(error, 0.05)
-        << "Water balance relative error should be < 5% for Modified Puls swale";
+    EXPECT_LT(error, 0.05) << "Water balance relative error should be < 5% for Modified Puls swale";
 }
 
 // ============================================================================
@@ -1074,33 +1072,32 @@ TEST(LIDDrainHysteresis, DrainOpensAtHOpen) {
     LIDGroupSoA g;
     g.type = LIDType::BIO_CELL;
     g.resize(1);
-    g.surf_store[0]  = 0.5;
+    g.surf_store[0] = 0.5;
     g.surf_void_frac[0] = 1.0;
     // A bio-cell has a soil layer (legacy biocellFluxRates divides by its
     // thickness); dry-ish soil so nothing percolates during the step.
-    g.soil_thick[0]  = 1.0;
-    g.soil_poros[0]  = 0.5;
-    g.soil_fc[0]     = 0.2;
-    g.soil_wp[0]     = 0.1;
-    g.soil_moist[0]  = 0.15;
-    g.soil_ksat[0]   = 0.0;
-    g.stor_thick[0]  = 2.0;
-    g.stor_void[0]   = 0.5;
-    g.stor_ksat[0]   = 0.0;
-    g.stor_depth[0]  = 1.0;   // head above offset = 1.0
+    g.soil_thick[0] = 1.0;
+    g.soil_poros[0] = 0.5;
+    g.soil_fc[0] = 0.2;
+    g.soil_wp[0] = 0.1;
+    g.soil_moist[0] = 0.15;
+    g.soil_ksat[0] = 0.0;
+    g.stor_thick[0] = 2.0;
+    g.stor_void[0] = 0.5;
+    g.stor_ksat[0] = 0.0;
+    g.stor_depth[0] = 1.0; // head above offset = 1.0
     g.drain_coeff[0] = 0.5;
     g.drain_expon[0] = 0.5;
-    g.drain_offset[0]= 0.0;
-    g.drain_hopen[0] = 0.8;   // opens when head > 0.8 (ft, legacy compares internal)
-    g.drain_hclose[0]= 0.3;   // closes when head <= 0.3
-    g.old_drain_flow[0] = 0.0;  // legacy: "closed" = no flow last step
-    g.drain_open[0]  = 0;
-    g.area[0]        = 1000.0;
+    g.drain_offset[0] = 0.0;
+    g.drain_hopen[0] = 0.8;    // opens when head > 0.8 (ft, legacy compares internal)
+    g.drain_hclose[0] = 0.3;   // closes when head <= 0.3
+    g.old_drain_flow[0] = 0.0; // legacy: "closed" = no flow last step
+    g.drain_open[0] = 0;
+    g.area[0] = 1000.0;
 
     LIDSolver::batchBioCellFlux(g, 0.0, kNoEvap, 300.0);
 
-    EXPECT_GT(g.drain_flow[0], 0.0)
-        << "Drain should open when head >= hOpen";
+    EXPECT_GT(g.drain_flow[0], 0.0) << "Drain should open when head >= hOpen";
     EXPECT_EQ(g.drain_open[0], 1);
 }
 
@@ -1108,32 +1105,31 @@ TEST(LIDDrainHysteresis, DrainStaysOpenAboveHClose) {
     LIDGroupSoA g;
     g.type = LIDType::BIO_CELL;
     g.resize(1);
-    g.surf_store[0]  = 0.5;
+    g.surf_store[0] = 0.5;
     g.surf_void_frac[0] = 1.0;
     // A bio-cell has a soil layer (legacy biocellFluxRates divides by its
     // thickness); dry-ish soil so nothing percolates during the step.
-    g.soil_thick[0]  = 1.0;
-    g.soil_poros[0]  = 0.5;
-    g.soil_fc[0]     = 0.2;
-    g.soil_wp[0]     = 0.1;
-    g.soil_moist[0]  = 0.15;
-    g.soil_ksat[0]   = 0.0;
-    g.stor_thick[0]  = 2.0;
-    g.stor_void[0]   = 0.5;
-    g.stor_ksat[0]   = 0.0;
-    g.stor_depth[0]  = 0.5;   // head = 0.5, between hClose and hOpen
+    g.soil_thick[0] = 1.0;
+    g.soil_poros[0] = 0.5;
+    g.soil_fc[0] = 0.2;
+    g.soil_wp[0] = 0.1;
+    g.soil_moist[0] = 0.15;
+    g.soil_ksat[0] = 0.0;
+    g.stor_thick[0] = 2.0;
+    g.stor_void[0] = 0.5;
+    g.stor_ksat[0] = 0.0;
+    g.stor_depth[0] = 0.5; // head = 0.5, between hClose and hOpen
     g.drain_coeff[0] = 0.5;
     g.drain_expon[0] = 0.5;
-    g.drain_offset[0]= 0.0;
+    g.drain_offset[0] = 0.0;
     g.drain_hopen[0] = 0.8;
-    g.drain_hclose[0]= 0.3;
-    g.old_drain_flow[0] = 1.0e-6;  // legacy: "open" = it flowed last step
-    g.drain_open[0]  = 1;
+    g.drain_hclose[0] = 0.3;
+    g.old_drain_flow[0] = 1.0e-6; // legacy: "open" = it flowed last step
+    g.drain_open[0] = 1;
 
     LIDSolver::batchBioCellFlux(g, 0.0, kNoEvap, 300.0);
 
-    EXPECT_GT(g.drain_flow[0], 0.0)
-        << "Drain should stay open when head >= hClose";
+    EXPECT_GT(g.drain_flow[0], 0.0) << "Drain should stay open when head >= hClose";
     EXPECT_EQ(g.drain_open[0], 1);
 }
 
@@ -1141,32 +1137,31 @@ TEST(LIDDrainHysteresis, DrainClosesBelow) {
     LIDGroupSoA g;
     g.type = LIDType::BIO_CELL;
     g.resize(1);
-    g.surf_store[0]  = 0.5;
+    g.surf_store[0] = 0.5;
     g.surf_void_frac[0] = 1.0;
     // A bio-cell has a soil layer (legacy biocellFluxRates divides by its
     // thickness); dry-ish soil so nothing percolates during the step.
-    g.soil_thick[0]  = 1.0;
-    g.soil_poros[0]  = 0.5;
-    g.soil_fc[0]     = 0.2;
-    g.soil_wp[0]     = 0.1;
-    g.soil_moist[0]  = 0.15;
-    g.soil_ksat[0]   = 0.0;
-    g.stor_thick[0]  = 2.0;
-    g.stor_void[0]   = 0.5;
-    g.stor_ksat[0]   = 0.0;
-    g.stor_depth[0]  = 0.2;   // head = 0.2, below hClose
+    g.soil_thick[0] = 1.0;
+    g.soil_poros[0] = 0.5;
+    g.soil_fc[0] = 0.2;
+    g.soil_wp[0] = 0.1;
+    g.soil_moist[0] = 0.15;
+    g.soil_ksat[0] = 0.0;
+    g.stor_thick[0] = 2.0;
+    g.stor_void[0] = 0.5;
+    g.stor_ksat[0] = 0.0;
+    g.stor_depth[0] = 0.2; // head = 0.2, below hClose
     g.drain_coeff[0] = 0.5;
     g.drain_expon[0] = 0.5;
-    g.drain_offset[0]= 0.0;
+    g.drain_offset[0] = 0.0;
     g.drain_hopen[0] = 0.8;
-    g.drain_hclose[0]= 0.3;
-    g.old_drain_flow[0] = 1.0e-6;  // was open
-    g.drain_open[0]  = 1;
+    g.drain_hclose[0] = 0.3;
+    g.old_drain_flow[0] = 1.0e-6; // was open
+    g.drain_open[0] = 1;
 
     LIDSolver::batchBioCellFlux(g, 0.0, kNoEvap, 300.0);
 
-    EXPECT_DOUBLE_EQ(g.drain_flow[0], 0.0)
-        << "Drain should close when head < hClose";
+    EXPECT_DOUBLE_EQ(g.drain_flow[0], 0.0) << "Drain should close when head < hClose";
     EXPECT_EQ(g.drain_open[0], 0);
 }
 
@@ -1178,16 +1173,15 @@ TEST(LIDBarrelCovered, CoveredBlocksRainfall) {
     LIDGroupSoA g;
     g.type = LIDType::RAIN_BARREL;
     g.resize(1);
-    g.stor_thick[0]   = 2.0;
-    g.stor_depth[0]   = 0.0;
-    g.stor_covered[0] = 1;     // covered
-    g.drain_coeff[0]  = 0.0;
-    g.area[0]         = 100.0;
+    g.stor_thick[0] = 2.0;
+    g.stor_depth[0] = 0.0;
+    g.stor_covered[0] = 1; // covered
+    g.drain_coeff[0] = 0.0;
+    g.area[0] = 100.0;
 
     LIDSolver::batchBarrelFlux(g, 1e-3, 600.0);
 
-    EXPECT_DOUBLE_EQ(g.stor_depth[0], 0.0)
-        << "Covered barrel should block rainfall";
+    EXPECT_DOUBLE_EQ(g.stor_depth[0], 0.0) << "Covered barrel should block rainfall";
     EXPECT_DOUBLE_EQ(g.surface_runoff[0], 0.0);
 }
 
@@ -1195,16 +1189,15 @@ TEST(LIDBarrelCovered, UncoveredReceivesRainfall) {
     LIDGroupSoA g;
     g.type = LIDType::RAIN_BARREL;
     g.resize(1);
-    g.stor_thick[0]   = 2.0;
-    g.stor_depth[0]   = 0.0;
-    g.stor_covered[0] = 0;     // not covered
-    g.drain_coeff[0]  = 0.0;
-    g.area[0]         = 100.0;
+    g.stor_thick[0] = 2.0;
+    g.stor_depth[0] = 0.0;
+    g.stor_covered[0] = 0; // not covered
+    g.drain_coeff[0] = 0.0;
+    g.area[0] = 100.0;
 
     LIDSolver::batchBarrelFlux(g, 1e-3, 600.0);
 
-    EXPECT_GT(g.stor_depth[0], 0.0)
-        << "Uncovered barrel should receive rainfall";
+    EXPECT_GT(g.stor_depth[0], 0.0) << "Uncovered barrel should receive rainfall";
 }
 
 // ============================================================================
@@ -1215,14 +1208,14 @@ TEST(LIDBarrelDelay, DrainBlockedDuringRain) {
     LIDGroupSoA g;
     g.type = LIDType::RAIN_BARREL;
     g.resize(1);
-    g.stor_thick[0]   = 2.0;
-    g.stor_depth[0]   = 1.0;
-    g.drain_coeff[0]  = 0.1;
-    g.drain_expon[0]  = 0.5;
+    g.stor_thick[0] = 2.0;
+    g.stor_depth[0] = 1.0;
+    g.drain_coeff[0] = 0.1;
+    g.drain_expon[0] = 0.5;
     g.drain_offset[0] = 0.0;
-    g.drain_delay[0]  = 3600.0;  // 1 hour delay after rain stops
-    g.dry_time[0]     = 0.0;     // just rained
-    g.area[0]         = 100.0;
+    g.drain_delay[0] = 3600.0; // 1 hour delay after rain stops
+    g.dry_time[0] = 0.0;       // just rained
+    g.area[0] = 100.0;
 
     // With rainfall → dry_time stays 0 → drain blocked by delay
     LIDSolver::batchBarrelFlux(g, 1e-4, 300.0);
@@ -1235,20 +1228,19 @@ TEST(LIDBarrelDelay, DrainActivatesAfterDelay) {
     LIDGroupSoA g;
     g.type = LIDType::RAIN_BARREL;
     g.resize(1);
-    g.stor_thick[0]   = 2.0;
-    g.stor_depth[0]   = 1.0;
-    g.drain_coeff[0]  = 0.1;
-    g.drain_expon[0]  = 0.5;
+    g.stor_thick[0] = 2.0;
+    g.stor_depth[0] = 1.0;
+    g.drain_coeff[0] = 0.1;
+    g.drain_expon[0] = 0.5;
     g.drain_offset[0] = 0.0;
-    g.drain_delay[0]  = 3600.0;  // 1 hour delay
-    g.dry_time[0]     = 4000.0;  // dry for > 1 hour
-    g.area[0]         = 100.0;
+    g.drain_delay[0] = 3600.0; // 1 hour delay
+    g.dry_time[0] = 4000.0;    // dry for > 1 hour
+    g.area[0] = 100.0;
 
     // No rainfall, dry_time > delay → drain should activate
     LIDSolver::batchBarrelFlux(g, 0.0, 300.0);
 
-    EXPECT_GT(g.drain_flow[0], 0.0)
-        << "Drain should activate after dry_time exceeds delay";
+    EXPECT_GT(g.drain_flow[0], 0.0) << "Drain should activate after dry_time exceeds delay";
 }
 
 // ============================================================================
@@ -1258,24 +1250,26 @@ TEST(LIDBarrelDelay, DrainActivatesAfterDelay) {
 TEST(LIDStorageClog, CloggingReducesExfiltration) {
     LIDGroupSoA g_clean, g_clogged;
     g_clean.type = g_clogged.type = LIDType::BIO_CELL;
-    g_clean.resize(1); g_clogged.resize(1);
+    g_clean.resize(1);
+    g_clogged.resize(1);
 
     auto setup = [](LIDGroupSoA& g) {
         g.surf_store[0] = 0.5;
         g.soil_thick[0] = 0.0;
-        g.soil_ksat[0]  = 0.0;
+        g.soil_ksat[0] = 0.0;
         g.stor_thick[0] = 2.0;
-        g.stor_void[0]  = 0.5;
-        g.stor_ksat[0]  = 1e-4;  // positive exfiltration
+        g.stor_void[0] = 0.5;
+        g.stor_ksat[0] = 1e-4; // positive exfiltration
         g.stor_depth[0] = 1.0;
-        g.drain_coeff[0]= 0.0;
-        g.area[0]       = 1000.0;
+        g.drain_coeff[0] = 0.0;
+        g.area[0] = 1000.0;
     };
-    setup(g_clean); setup(g_clogged);
+    setup(g_clean);
+    setup(g_clogged);
 
-    g_clean.stor_clog[0]   = 0.0;  // no clogging
-    g_clogged.stor_clog[0] = 1.0;  // clogs at 1 ft of cumulative inflow
-    g_clogged.wb_inflow[0] = 0.8;  // 80% clogged
+    g_clean.stor_clog[0] = 0.0;   // no clogging
+    g_clogged.stor_clog[0] = 1.0; // clogs at 1 ft of cumulative inflow
+    g_clogged.wb_inflow[0] = 0.8; // 80% clogged
 
     LIDSolver::batchBioCellFlux(g_clean, 0.0, kNoEvap, 300.0);
     LIDSolver::batchBioCellFlux(g_clogged, 0.0, kNoEvap, 300.0);
@@ -1292,27 +1286,26 @@ TEST(LIDPavementRegen, RegenerationReducesClogging) {
     LIDGroupSoA g;
     g.type = LIDType::PERM_PAVEMENT;
     g.resize(1);
-    g.surf_store[0]     = 0.1;
-    g.surf_depth[0]     = 0.05;
-    g.pave_thick[0]     = 0.5;
-    g.pave_void[0]      = 0.15;
-    g.pave_ksat[0]      = 1e-3;
+    g.surf_store[0] = 0.1;
+    g.surf_depth[0] = 0.05;
+    g.pave_thick[0] = 0.5;
+    g.pave_void[0] = 0.15;
+    g.pave_ksat[0] = 1e-3;
     g.pave_clog_factor[0] = 1.0;
-    g.pave_regen_days[0]  = 0.001;  // very short regen interval for testing
-    g.pave_regen_deg[0]   = 0.5;    // 50% regeneration
-    g.next_regen_day[0]   = 0.0;    // due now (legacy compares OldRunoffTime in days >= nextRegenDay)
-    g.vol_treated[0]      = 0.8;    // 80% clogged
-    g.stor_thick[0]     = 1.0;
-    g.stor_void[0]      = 0.4;
-    g.area[0]           = 1000.0;
+    g.pave_regen_days[0] = 0.001; // very short regen interval for testing
+    g.pave_regen_deg[0] = 0.5;    // 50% regeneration
+    g.next_regen_day[0] = 0.0;    // due now (legacy compares OldRunoffTime in days >= nextRegenDay)
+    g.vol_treated[0] = 0.8;       // 80% clogged
+    g.stor_thick[0] = 1.0;
+    g.stor_void[0] = 0.4;
+    g.area[0] = 1000.0;
 
     double vol_before = g.vol_treated[0];
     // Run a timestep long enough for regeneration to trigger
     LIDSolver::batchPavementFlux(g, 1e-4, kNoEvap, 100.0);
 
     // vol_treated should have been reduced by regeneration
-    EXPECT_LT(g.vol_treated[0], vol_before)
-        << "Regeneration should reduce vol_treated";
+    EXPECT_LT(g.vol_treated[0], vol_before) << "Regeneration should reduce vol_treated";
 }
 
 // ============================================================================
@@ -1334,10 +1327,10 @@ TEST(LIDPollutantRemoval, RemovalFractionsPopulatedFromContext) {
     ctx.lid_controls.lid_type.push_back("BC");
     ctx.lid_controls.surface.push_back({0.5, 0.0, 0.1, 0.01, 0.0});
     ctx.lid_controls.soil.push_back({1.0, 0.4, 0.2, 0.1, 1e-5, 20.0, 0.0});
-    ctx.lid_controls.pavement.push_back({0,0,0,0,0,0});
+    ctx.lid_controls.pavement.push_back({0, 0, 0, 0, 0, 0});
     ctx.lid_controls.storage.push_back({1.0, 0.5, 0.0, 0.0});
     ctx.lid_controls.drain.push_back({0.5, 0.5, 0.0, 0.0, 0.0, 0.0});
-    ctx.lid_controls.drainmat.push_back({0,0,0});
+    ctx.lid_controls.drainmat.push_back({0, 0, 0});
     // Removals: TSS=80%, Lead=95%
     ctx.lid_controls.removals.push_back({{0, 0.80}, {1, 0.95}});
 
@@ -1356,7 +1349,7 @@ TEST(LIDPollutantRemoval, RemovalFractionsPopulatedFromContext) {
     LIDSolver solver;
     solver.init(ctx);
 
-    const auto& g = solver.group(0);  // BIO_CELL
+    const auto& g = solver.group(0); // BIO_CELL
     EXPECT_EQ(g.count, 1);
     EXPECT_EQ(g.n_pollutants, 2);
     EXPECT_EQ(static_cast<int>(g.drain_rmvl.size()), 2);
@@ -1368,11 +1361,9 @@ TEST(LIDPollutantRemoval, RemovalFractionsPopulatedFromContext) {
 }
 
 TEST(LIDPollutantRemoval, NoRemovalsByDefault) {
-    auto ctx = makeLidContext("BC",
-        {0.5, 0.0, 0.1, 0.01, 0.0},
-        {1.0, 0.4, 0.2, 0.1, 1e-5, 20.0, 0.0},
-        {1.0, 0.5, 0.0, 0.0},
-        {0.5, 0.5, 0.0, 0.0, 0.0, 0.0});
+    auto ctx =
+        makeLidContext("BC", {0.5, 0.0, 0.1, 0.01, 0.0}, {1.0, 0.4, 0.2, 0.1, 1e-5, 20.0, 0.0},
+                       {1.0, 0.5, 0.0, 0.0}, {0.5, 0.5, 0.0, 0.0, 0.0, 0.0});
 
     LIDSolver solver;
     solver.init(ctx);
@@ -1388,8 +1379,8 @@ TEST(LIDPollutantRemoval, RemovalsStoreParsedCorrectly) {
     LidControlStore store;
     store.names.push_back("LID1");
     store.removals.resize(1);
-    store.removals[0].push_back({0, 0.75});  // pollutant 0: 75%
-    store.removals[0].push_back({2, 0.50});  // pollutant 2: 50%
+    store.removals[0].push_back({0, 0.75}); // pollutant 0: 75%
+    store.removals[0].push_back({2, 0.50}); // pollutant 2: 50%
 
     EXPECT_EQ(store.removals[0].size(), 2u);
     EXPECT_EQ(store.removals[0][0].first, 0);
@@ -1408,22 +1399,40 @@ TEST(LIDPollutantRemoval, RemovalsStoreParsedCorrectly) {
 // ============================================================================
 
 #ifndef BENCHMARK_DATA_DIR
-#  define BENCHMARK_DATA_DIR ""
+#define BENCHMARK_DATA_DIR ""
 #endif
 
 namespace {
 
-struct ExfilBenchRow { double t_s, stor_depth_ft, E_cumul_ft; };
+struct ExfilBenchRow {
+    double t_s, stor_depth_ft, E_cumul_ft;
+};
 
+/**
+ * @brief Load time/storage/cumulative-exfiltration oracle rows from CSV.
+ *
+ * Skips blank and column-zero # rows plus the first remaining header. Parses at most three comma
+ * tokens using stod and retains rows with three values; extra columns are ignored and numeric
+ * conversion exceptions propagate.
+ *
+ * @param[in] path Readable CSV path; borrowed during open/read.
+ * @return Owned rows [seconds,storage depth ft,cumulative exfiltration ft], or empty if opening
+ *     fails.
+ */
 static std::vector<ExfilBenchRow> load_exfil_bench(const std::string& path) {
     std::vector<ExfilBenchRow> rows;
     std::ifstream in(path);
-    if (!in.is_open()) return rows;
+    if (!in.is_open())
+        return rows;
     std::string line;
     bool header_seen = false;
     while (std::getline(in, line)) {
-        if (line.empty() || line[0] == '#') continue;
-        if (!header_seen) { header_seen = true; continue; }
+        if (line.empty() || line[0] == '#')
+            continue;
+        if (!header_seen) {
+            header_seen = true;
+            continue;
+        }
         // columns: t_s, stor_depth_ft, E_cumul_ft
         std::istringstream ss(line);
         std::string tok;
@@ -1437,14 +1446,14 @@ static std::vector<ExfilBenchRow> load_exfil_bench(const std::string& path) {
     return rows;
 }
 
-}  // namespace
+} // namespace
 
 // Constant-area storage draining at constant kSat (no clogging, no drain).
 // Exact solution: depth(t) = 2.0 - 2.5e-4*t, E_cumul(t) = 1e-4*t.
 // Euler is exact for this linear ODE, so tolerance is machine-epsilon tight.
 TEST(LIDStorageExfil, TrajectoryMatchesBenchmark) {
-    std::string path = std::string(BENCHMARK_DATA_DIR)
-        + "/manufactured/exfil-storage-constant-area/reference.csv";
+    std::string path =
+        std::string(BENCHMARK_DATA_DIR) + "/manufactured/exfil-storage-constant-area/reference.csv";
 
     auto rows = load_exfil_bench(path);
     if (rows.empty()) {
@@ -1458,16 +1467,16 @@ TEST(LIDStorageExfil, TrajectoryMatchesBenchmark) {
     g.type = LIDType::INFIL_TRENCH;
     g.resize(1);
     g.surf_void_frac[0] = 1.0;
-    g.stor_thick[0]  = 2.0;
-    g.stor_void[0]   = 0.4;
-    g.stor_ksat[0]   = 1.0e-4;
-    g.stor_clog[0]   = 0.0;
+    g.stor_thick[0] = 2.0;
+    g.stor_void[0] = 0.4;
+    g.stor_ksat[0] = 1.0e-4;
+    g.stor_clog[0] = 0.0;
     g.drain_coeff[0] = 0.0;
-    g.stor_depth[0]  = rows[0].stor_depth_ft;  // 2.0 ft (full)
-    g.surf_depth[0]  = 0.0;
+    g.stor_depth[0] = rows[0].stor_depth_ft; // 2.0 ft (full)
+    g.surf_depth[0] = 0.0;
 
     double max_depth_err = 0.0, max_exfil_err = 0.0;
-    double sum_sq_depth  = 0.0, sum_sq_exfil  = 0.0;
+    double sum_sq_depth = 0.0, sum_sq_exfil = 0.0;
     double prev_t = rows[0].t_s;
 
     for (size_t i = 1; i < rows.size(); ++i) {
@@ -1475,7 +1484,7 @@ TEST(LIDStorageExfil, TrajectoryMatchesBenchmark) {
         LIDSolver::batchInfilTrenchFlux(g, 0.0, kNoEvap, dt);
 
         double depth_err = std::abs(g.stor_depth[0] - rows[i].stor_depth_ft);
-        double exfil_err = std::abs(g.wb_infil[0]   - rows[i].E_cumul_ft);
+        double exfil_err = std::abs(g.wb_infil[0] - rows[i].E_cumul_ft);
 
         max_depth_err = std::max(max_depth_err, depth_err);
         max_exfil_err = std::max(max_exfil_err, exfil_err);
@@ -1492,19 +1501,15 @@ TEST(LIDStorageExfil, TrajectoryMatchesBenchmark) {
     // The 1e-9 ft threshold sits a million times above the expected noise floor.
     // If either assertion fails, investigate the rate, volume-limiter, or Euler
     // update in batchBarrelFlux — do not widen the tolerance to make it pass.
-    EXPECT_LT(max_depth_err, 1e-9)
-        << "Storage depth max error " << max_depth_err
-        << " ft exceeds 1e-9 ft (benchmark: " << path << ")";
+    EXPECT_LT(max_depth_err, 1e-9) << "Storage depth max error " << max_depth_err
+                                   << " ft exceeds 1e-9 ft (benchmark: " << path << ")";
     EXPECT_LT(max_exfil_err, 1e-9)
-        << "Cumulative exfil max error " << max_exfil_err
-        << " ft exceeds 1e-9 ft";
-    EXPECT_LT(std::sqrt(sum_sq_depth / n), 1e-10)
-        << "Storage depth RMS error exceeds 1e-10 ft";
-    EXPECT_LT(std::sqrt(sum_sq_exfil / n), 1e-10)
-        << "Cumulative exfil RMS error exceeds 1e-10 ft";
+        << "Cumulative exfil max error " << max_exfil_err << " ft exceeds 1e-9 ft";
+    EXPECT_LT(std::sqrt(sum_sq_depth / n), 1e-10) << "Storage depth RMS error exceeds 1e-10 ft";
+    EXPECT_LT(std::sqrt(sum_sq_exfil / n), 1e-10) << "Cumulative exfil RMS error exceeds 1e-10 ft";
 
     // Mass-balance identity: E_cumul == (depth_0 - depth) * phi
-    double depth_loss  = (rows[0].stor_depth_ft - g.stor_depth[0]) * g.stor_void[0];
+    double depth_loss = (rows[0].stor_depth_ft - g.stor_depth[0]) * g.stor_void[0];
     double exfil_total = g.wb_infil[0];
     EXPECT_NEAR(depth_loss, exfil_total, 1e-9)
         << "Mass-balance identity violated: depth_loss=" << depth_loss
@@ -1529,7 +1534,7 @@ TEST(LIDStorageExfil, TrajectoryMatchesBenchmark) {
 // ============================================================================
 
 TEST(LIDStorageExfil, CloggingTrajectoryMatchesBenchmark) {
-    const double RAINFALL = 1.0e-4;  // ft/s — unit inflow rate (= kSat)
+    const double RAINFALL = 1.0e-4; // ft/s — unit inflow rate (= kSat)
     const double KSAT = 1.0e-4, VOID = 0.4, CLOG = 0.3, DT = 60.0;
     const int N = 10;
 
@@ -1537,21 +1542,21 @@ TEST(LIDStorageExfil, CloggingTrajectoryMatchesBenchmark) {
     g.type = LIDType::INFIL_TRENCH;
     g.resize(1);
     g.surf_void_frac[0] = 1.0;
-    g.stor_thick[0]  = 3.0;          // large enough to never overflow
-    g.stor_void[0]   = VOID;
-    g.stor_ksat[0]   = KSAT;
-    g.stor_clog[0]   = CLOG;         // clogFactor: fully clogs at 0.3 ft inflow
+    g.stor_thick[0] = 3.0; // large enough to never overflow
+    g.stor_void[0] = VOID;
+    g.stor_ksat[0] = KSAT;
+    g.stor_clog[0] = CLOG; // clogFactor: fully clogs at 0.3 ft inflow
     g.drain_coeff[0] = 0.0;
-    g.stor_depth[0]  = 2.0;
-    g.surf_depth[0]  = 0.0;
+    g.stor_depth[0] = 2.0;
+    g.surf_depth[0] = 0.0;
 
     double D = 2.0, Ecum = 0.0, W = 0.0;
     double max_depth_err = 0.0, max_exfil_err = 0.0;
     for (int n = 0; n < N; ++n) {
         const double keff = KSAT * (1.0 - std::min(1.0, W / CLOG));
-        D    += (RAINFALL - keff) * DT / VOID;
+        D += (RAINFALL - keff) * DT / VOID;
         Ecum += keff * DT;
-        W    += RAINFALL * DT;
+        W += RAINFALL * DT;
 
         LIDSolver::batchInfilTrenchFlux(g, RAINFALL, kNoEvap, DT);
 
@@ -1588,74 +1593,72 @@ TEST(LidRunoffAreaTest, LidFootprintExcludedFromRunoffArea) {
     // S_REF: 5 ac bare twin of the non-LID remainder (same width/slope).
     // No infiltration, no depression storage: S_LID must shed the same
     // volume as S_REF once the LID half is excluded.
-    std::ofstream(inp) <<
-        "[OPTIONS]\n"
-        "FLOW_UNITS           CFS\n"
-        "INFILTRATION         HORTON\n"
-        "FLOW_ROUTING         KINWAVE\n"
-        "START_DATE           01/01/2026\n"
-        "START_TIME           00:00:00\n"
-        "END_DATE             01/01/2026\n"
-        "END_TIME             12:00:00\n"
-        "REPORT_STEP          00:05:00\n"
-        "WET_STEP             00:05:00\n"
-        "DRY_STEP             01:00:00\n"
-        "ROUTING_STEP         30\n"
-        "\n"
-        "[RAINGAGES]\n"
-        ";;Name  Format     Interval SCF  Source\n"
-        "RG      INTENSITY  1:00     1.0  TIMESERIES STORM\n"
-        "\n"
-        "[SUBCATCHMENTS]\n"
-        ";;Name  Gage  Outlet  Area  %Imperv  Width  Slope  CurbLen\n"
-        "S_LID   RG    O1      10    0        200    0.5    0\n"
-        "S_REF   RG    O1      5     0        200    0.5    0\n"
-        "\n"
-        "[SUBAREAS]\n"
-        ";;Subcatch  N-Imperv  N-Perv  S-Imperv  S-Perv  PctZero  RouteTo\n"
-        "S_LID       0.01      0.1     0.0       0.0     100      OUTLET\n"
-        "S_REF       0.01      0.1     0.0       0.0     100      OUTLET\n"
-        "\n"
-        "[INFILTRATION]\n"
-        ";;Subcatch  MaxRate  MinRate  Decay  DryTime  MaxInfil\n"
-        "S_LID       0.0      0.0      4.0    7.0      0\n"
-        "S_REF       0.0      0.0      4.0    7.0      0\n"
-        "\n"
-        "[LID_CONTROLS]\n"
-        ";;Name  Type/Layer  Parameters\n"
-        "RG1     RG\n"
-        "RG1     SURFACE     6.0   0.0   0.1   1.0   5\n"
-        "RG1     SOIL        18.0  0.5   0.2   0.1   0.5  10.0  3.5\n"
-        "RG1     STORAGE     0     0     0     0\n"
-        "\n"
-        "[LID_USAGE]\n"
-        ";;Subcatch  LID  Number  Area    Width  InitSat  FromImp  ToPerv\n"
-        "S_LID       RG1  1       217800  0      0        0        0\n"
-        "\n"
-        "[OUTFALLS]\n"
-        ";;Name  Elev  Type  Gated\n"
-        "O1      0.0   FREE  NO\n"
-        "\n"
-        "[TIMESERIES]\n"
-        ";;Name  Date        Time   Value\n"
-        "STORM   01/01/2026  00:00  0.5\n"
-        "STORM   01/01/2026  01:00  0.5\n"
-        "STORM   01/01/2026  02:00  0.5\n"
-        "STORM   01/01/2026  03:00  0.5\n"
-        "STORM   01/01/2026  04:00  0.0\n";
+    std::ofstream(inp) << "[OPTIONS]\n"
+                          "FLOW_UNITS           CFS\n"
+                          "INFILTRATION         HORTON\n"
+                          "FLOW_ROUTING         KINWAVE\n"
+                          "START_DATE           01/01/2026\n"
+                          "START_TIME           00:00:00\n"
+                          "END_DATE             01/01/2026\n"
+                          "END_TIME             12:00:00\n"
+                          "REPORT_STEP          00:05:00\n"
+                          "WET_STEP             00:05:00\n"
+                          "DRY_STEP             01:00:00\n"
+                          "ROUTING_STEP         30\n"
+                          "\n"
+                          "[RAINGAGES]\n"
+                          ";;Name  Format     Interval SCF  Source\n"
+                          "RG      INTENSITY  1:00     1.0  TIMESERIES STORM\n"
+                          "\n"
+                          "[SUBCATCHMENTS]\n"
+                          ";;Name  Gage  Outlet  Area  %Imperv  Width  Slope  CurbLen\n"
+                          "S_LID   RG    O1      10    0        200    0.5    0\n"
+                          "S_REF   RG    O1      5     0        200    0.5    0\n"
+                          "\n"
+                          "[SUBAREAS]\n"
+                          ";;Subcatch  N-Imperv  N-Perv  S-Imperv  S-Perv  PctZero  RouteTo\n"
+                          "S_LID       0.01      0.1     0.0       0.0     100      OUTLET\n"
+                          "S_REF       0.01      0.1     0.0       0.0     100      OUTLET\n"
+                          "\n"
+                          "[INFILTRATION]\n"
+                          ";;Subcatch  MaxRate  MinRate  Decay  DryTime  MaxInfil\n"
+                          "S_LID       0.0      0.0      4.0    7.0      0\n"
+                          "S_REF       0.0      0.0      4.0    7.0      0\n"
+                          "\n"
+                          "[LID_CONTROLS]\n"
+                          ";;Name  Type/Layer  Parameters\n"
+                          "RG1     RG\n"
+                          "RG1     SURFACE     6.0   0.0   0.1   1.0   5\n"
+                          "RG1     SOIL        18.0  0.5   0.2   0.1   0.5  10.0  3.5\n"
+                          "RG1     STORAGE     0     0     0     0\n"
+                          "\n"
+                          "[LID_USAGE]\n"
+                          ";;Subcatch  LID  Number  Area    Width  InitSat  FromImp  ToPerv\n"
+                          "S_LID       RG1  1       217800  0      0        0        0\n"
+                          "\n"
+                          "[OUTFALLS]\n"
+                          ";;Name  Elev  Type  Gated\n"
+                          "O1      0.0   FREE  NO\n"
+                          "\n"
+                          "[TIMESERIES]\n"
+                          ";;Name  Date        Time   Value\n"
+                          "STORM   01/01/2026  00:00  0.5\n"
+                          "STORM   01/01/2026  01:00  0.5\n"
+                          "STORM   01/01/2026  02:00  0.5\n"
+                          "STORM   01/01/2026  03:00  0.5\n"
+                          "STORM   01/01/2026  04:00  0.0\n";
 
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, inp.c_str(),
-                               "lid_area_out/issue131.rpt",
-                               "lid_area_out/issue131.out", nullptr), 0)
+    ASSERT_EQ(swmm_engine_open(e, inp.c_str(), "lid_area_out/issue131.rpt",
+                               "lid_area_out/issue131.out", nullptr),
+              0)
         << swmm_get_last_error_msg(e);
     ASSERT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
     ASSERT_EQ(swmm_engine_start(e, 0), 0) << swmm_get_last_error_msg(e);
     double elapsed = 0.0;
     do {
-        ASSERT_EQ(swmm_engine_step(e, &elapsed), 0)
-            << swmm_get_last_error_msg(e);
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), 0) << swmm_get_last_error_msg(e);
     } while (elapsed > 0.0);
 
     const int i_lid = swmm_subcatch_index(e, "S_LID");
@@ -1697,78 +1700,76 @@ TEST(LidRunoffAreaTest, CapturedRunoffLeavesTheSubcatchmentOutlet) {
     // 10 ac, fully impervious, 2 ac of it a rain garden that retains the storm.
     // S_CAP routes 100% of the remaining 8 ac of impervious runoff onto it;
     // S_NOCAP routes none. Same storm, same footprint, same everything else.
-    std::ofstream(inp) <<
-        "[OPTIONS]\n"
-        "FLOW_UNITS           CFS\n"
-        "INFILTRATION         HORTON\n"
-        "FLOW_ROUTING         KINWAVE\n"
-        "START_DATE           01/01/2026\n"
-        "START_TIME           00:00:00\n"
-        "END_DATE             01/01/2026\n"
-        "END_TIME             12:00:00\n"
-        "REPORT_STEP          00:05:00\n"
-        "WET_STEP             00:05:00\n"
-        "DRY_STEP             01:00:00\n"
-        "ROUTING_STEP         30\n"
-        "\n"
-        "[RAINGAGES]\n"
-        ";;Name  Format     Interval SCF  Source\n"
-        "RG      INTENSITY  1:00     1.0  TIMESERIES STORM\n"
-        "\n"
-        "[SUBCATCHMENTS]\n"
-        ";;Name   Gage  Outlet  Area  %Imperv  Width  Slope  CurbLen\n"
-        "S_CAP    RG    O1      10    100      200    0.5    0\n"
-        "S_NOCAP  RG    O1      10    100      200    0.5    0\n"
-        "\n"
-        "[SUBAREAS]\n"
-        ";;Subcatch  N-Imperv  N-Perv  S-Imperv  S-Perv  PctZero  RouteTo\n"
-        "S_CAP       0.01      0.1     0.0       0.0     100      OUTLET\n"
-        "S_NOCAP     0.01      0.1     0.0       0.0     100      OUTLET\n"
-        "\n"
-        "[INFILTRATION]\n"
-        ";;Subcatch  MaxRate  MinRate  Decay  DryTime  MaxInfil\n"
-        "S_CAP       0.0      0.0      4.0    7.0      0\n"
-        "S_NOCAP     0.0      0.0      4.0    7.0      0\n"
-        "\n"
-        "[LID_CONTROLS]\n"
-        ";;Name  Type/Layer  Parameters\n"
-        "RG1     RG\n"
-        "RG1     SURFACE     6.0   0.0   0.1   1.0   5\n"
-        "RG1     SOIL        18.0  0.5   0.2   0.1   0.5  10.0  3.5\n"
-        "RG1     STORAGE     0     0     0     0\n"
-        "\n"
-        "[LID_USAGE]\n"
-        ";;Subcatch  LID  Number  Area   Width  InitSat  FromImp  ToPerv\n"
-        "S_CAP       RG1  1       87120  0      0        100      0\n"
-        "S_NOCAP     RG1  1       87120  0      0        0        0\n"
-        "\n"
-        "[OUTFALLS]\n"
-        ";;Name  Elev  Type  Gated\n"
-        "O1      0.0   FREE  NO\n"
-        "\n"
-        "[TIMESERIES]\n"
-        ";;Name  Date        Time   Value\n"
-        "STORM   01/01/2026  00:00  0.5\n"
-        "STORM   01/01/2026  01:00  0.5\n"
-        "STORM   01/01/2026  02:00  0.5\n"
-        "STORM   01/01/2026  03:00  0.5\n"
-        "STORM   01/01/2026  04:00  0.0\n";
+    std::ofstream(inp) << "[OPTIONS]\n"
+                          "FLOW_UNITS           CFS\n"
+                          "INFILTRATION         HORTON\n"
+                          "FLOW_ROUTING         KINWAVE\n"
+                          "START_DATE           01/01/2026\n"
+                          "START_TIME           00:00:00\n"
+                          "END_DATE             01/01/2026\n"
+                          "END_TIME             12:00:00\n"
+                          "REPORT_STEP          00:05:00\n"
+                          "WET_STEP             00:05:00\n"
+                          "DRY_STEP             01:00:00\n"
+                          "ROUTING_STEP         30\n"
+                          "\n"
+                          "[RAINGAGES]\n"
+                          ";;Name  Format     Interval SCF  Source\n"
+                          "RG      INTENSITY  1:00     1.0  TIMESERIES STORM\n"
+                          "\n"
+                          "[SUBCATCHMENTS]\n"
+                          ";;Name   Gage  Outlet  Area  %Imperv  Width  Slope  CurbLen\n"
+                          "S_CAP    RG    O1      10    100      200    0.5    0\n"
+                          "S_NOCAP  RG    O1      10    100      200    0.5    0\n"
+                          "\n"
+                          "[SUBAREAS]\n"
+                          ";;Subcatch  N-Imperv  N-Perv  S-Imperv  S-Perv  PctZero  RouteTo\n"
+                          "S_CAP       0.01      0.1     0.0       0.0     100      OUTLET\n"
+                          "S_NOCAP     0.01      0.1     0.0       0.0     100      OUTLET\n"
+                          "\n"
+                          "[INFILTRATION]\n"
+                          ";;Subcatch  MaxRate  MinRate  Decay  DryTime  MaxInfil\n"
+                          "S_CAP       0.0      0.0      4.0    7.0      0\n"
+                          "S_NOCAP     0.0      0.0      4.0    7.0      0\n"
+                          "\n"
+                          "[LID_CONTROLS]\n"
+                          ";;Name  Type/Layer  Parameters\n"
+                          "RG1     RG\n"
+                          "RG1     SURFACE     6.0   0.0   0.1   1.0   5\n"
+                          "RG1     SOIL        18.0  0.5   0.2   0.1   0.5  10.0  3.5\n"
+                          "RG1     STORAGE     0     0     0     0\n"
+                          "\n"
+                          "[LID_USAGE]\n"
+                          ";;Subcatch  LID  Number  Area   Width  InitSat  FromImp  ToPerv\n"
+                          "S_CAP       RG1  1       87120  0      0        100      0\n"
+                          "S_NOCAP     RG1  1       87120  0      0        0        0\n"
+                          "\n"
+                          "[OUTFALLS]\n"
+                          ";;Name  Elev  Type  Gated\n"
+                          "O1      0.0   FREE  NO\n"
+                          "\n"
+                          "[TIMESERIES]\n"
+                          ";;Name  Date        Time   Value\n"
+                          "STORM   01/01/2026  00:00  0.5\n"
+                          "STORM   01/01/2026  01:00  0.5\n"
+                          "STORM   01/01/2026  02:00  0.5\n"
+                          "STORM   01/01/2026  03:00  0.5\n"
+                          "STORM   01/01/2026  04:00  0.0\n";
 
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, inp.c_str(),
-                               "lid_area_out/vlidin.rpt",
-                               "lid_area_out/vlidin.out", nullptr), 0)
+    ASSERT_EQ(swmm_engine_open(e, inp.c_str(), "lid_area_out/vlidin.rpt", "lid_area_out/vlidin.out",
+                               nullptr),
+              0)
         << swmm_get_last_error_msg(e);
     ASSERT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
     ASSERT_EQ(swmm_engine_start(e, 0), 0) << swmm_get_last_error_msg(e);
     double elapsed = 0.0;
     do {
-        ASSERT_EQ(swmm_engine_step(e, &elapsed), 0)
-            << swmm_get_last_error_msg(e);
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), 0) << swmm_get_last_error_msg(e);
     } while (elapsed > 0.0);
 
-    const int i_cap   = swmm_subcatch_index(e, "S_CAP");
+    const int i_cap = swmm_subcatch_index(e, "S_CAP");
     const int i_nocap = swmm_subcatch_index(e, "S_NOCAP");
     ASSERT_GE(i_cap, 0);
     ASSERT_GE(i_nocap, 0);
@@ -1804,74 +1805,72 @@ TEST(LidRunoffAreaTest, FullCoverageByReplicateUnitsShedsNothing) {
     fs::create_directories("lid_area_out");
     const std::string inp = "lid_area_out/issue131_full.inp";
 
-    std::ofstream(inp) <<
-        "[OPTIONS]\n"
-        "FLOW_UNITS           CFS\n"
-        "INFILTRATION         HORTON\n"
-        "FLOW_ROUTING         KINWAVE\n"
-        "START_DATE           01/01/2026\n"
-        "START_TIME           00:00:00\n"
-        "END_DATE             01/01/2026\n"
-        "END_TIME             12:00:00\n"
-        "REPORT_STEP          00:05:00\n"
-        "WET_STEP             00:05:00\n"
-        "DRY_STEP             01:00:00\n"
-        "ROUTING_STEP         30\n"
-        "\n"
-        "[RAINGAGES]\n"
-        ";;Name  Format     Interval SCF  Source\n"
-        "RG      INTENSITY  1:00     1.0  TIMESERIES STORM\n"
-        "\n"
-        "[SUBCATCHMENTS]\n"
-        ";;Name  Gage  Outlet  Area  %Imperv  Width  Slope  CurbLen\n"
-        "S_FULL  RG    O1      5     0        200    0.5    0\n"
-        "S_REF   RG    O1      5     0        200    0.5    0\n"
-        "\n"
-        "[SUBAREAS]\n"
-        ";;Subcatch  N-Imperv  N-Perv  S-Imperv  S-Perv  PctZero  RouteTo\n"
-        "S_FULL      0.01      0.1     0.0       0.0     100      OUTLET\n"
-        "S_REF       0.01      0.1     0.0       0.0     100      OUTLET\n"
-        "\n"
-        "[INFILTRATION]\n"
-        ";;Subcatch  MaxRate  MinRate  Decay  DryTime  MaxInfil\n"
-        "S_FULL      0.0      0.0      4.0    7.0      0\n"
-        "S_REF       0.0      0.0      4.0    7.0      0\n"
-        "\n"
-        "[LID_CONTROLS]\n"
-        ";;Name  Type/Layer  Parameters\n"
-        "RG1     RG\n"
-        "RG1     SURFACE     6.0   0.0   0.1   1.0   5\n"
-        "RG1     SOIL        18.0  0.5   0.2   0.1   0.5  10.0  3.5\n"
-        "RG1     STORAGE     0     0     0     0\n"
-        "\n"
-        "[LID_USAGE]\n"
-        ";;Subcatch  LID  Number  Area   Width  InitSat  FromImp  ToPerv\n"
-        "S_FULL      RG1  10      21780  0      0        0        0\n"
-        "\n"
-        "[OUTFALLS]\n"
-        ";;Name  Elev  Type  Gated\n"
-        "O1      0.0   FREE  NO\n"
-        "\n"
-        "[TIMESERIES]\n"
-        ";;Name  Date        Time   Value\n"
-        "STORM   01/01/2026  00:00  0.5\n"
-        "STORM   01/01/2026  01:00  0.5\n"
-        "STORM   01/01/2026  02:00  0.5\n"
-        "STORM   01/01/2026  03:00  0.5\n"
-        "STORM   01/01/2026  04:00  0.0\n";
+    std::ofstream(inp) << "[OPTIONS]\n"
+                          "FLOW_UNITS           CFS\n"
+                          "INFILTRATION         HORTON\n"
+                          "FLOW_ROUTING         KINWAVE\n"
+                          "START_DATE           01/01/2026\n"
+                          "START_TIME           00:00:00\n"
+                          "END_DATE             01/01/2026\n"
+                          "END_TIME             12:00:00\n"
+                          "REPORT_STEP          00:05:00\n"
+                          "WET_STEP             00:05:00\n"
+                          "DRY_STEP             01:00:00\n"
+                          "ROUTING_STEP         30\n"
+                          "\n"
+                          "[RAINGAGES]\n"
+                          ";;Name  Format     Interval SCF  Source\n"
+                          "RG      INTENSITY  1:00     1.0  TIMESERIES STORM\n"
+                          "\n"
+                          "[SUBCATCHMENTS]\n"
+                          ";;Name  Gage  Outlet  Area  %Imperv  Width  Slope  CurbLen\n"
+                          "S_FULL  RG    O1      5     0        200    0.5    0\n"
+                          "S_REF   RG    O1      5     0        200    0.5    0\n"
+                          "\n"
+                          "[SUBAREAS]\n"
+                          ";;Subcatch  N-Imperv  N-Perv  S-Imperv  S-Perv  PctZero  RouteTo\n"
+                          "S_FULL      0.01      0.1     0.0       0.0     100      OUTLET\n"
+                          "S_REF       0.01      0.1     0.0       0.0     100      OUTLET\n"
+                          "\n"
+                          "[INFILTRATION]\n"
+                          ";;Subcatch  MaxRate  MinRate  Decay  DryTime  MaxInfil\n"
+                          "S_FULL      0.0      0.0      4.0    7.0      0\n"
+                          "S_REF       0.0      0.0      4.0    7.0      0\n"
+                          "\n"
+                          "[LID_CONTROLS]\n"
+                          ";;Name  Type/Layer  Parameters\n"
+                          "RG1     RG\n"
+                          "RG1     SURFACE     6.0   0.0   0.1   1.0   5\n"
+                          "RG1     SOIL        18.0  0.5   0.2   0.1   0.5  10.0  3.5\n"
+                          "RG1     STORAGE     0     0     0     0\n"
+                          "\n"
+                          "[LID_USAGE]\n"
+                          ";;Subcatch  LID  Number  Area   Width  InitSat  FromImp  ToPerv\n"
+                          "S_FULL      RG1  10      21780  0      0        0        0\n"
+                          "\n"
+                          "[OUTFALLS]\n"
+                          ";;Name  Elev  Type  Gated\n"
+                          "O1      0.0   FREE  NO\n"
+                          "\n"
+                          "[TIMESERIES]\n"
+                          ";;Name  Date        Time   Value\n"
+                          "STORM   01/01/2026  00:00  0.5\n"
+                          "STORM   01/01/2026  01:00  0.5\n"
+                          "STORM   01/01/2026  02:00  0.5\n"
+                          "STORM   01/01/2026  03:00  0.5\n"
+                          "STORM   01/01/2026  04:00  0.0\n";
 
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, inp.c_str(),
-                               "lid_area_out/issue131_full.rpt",
-                               "lid_area_out/issue131_full.out", nullptr), 0)
+    ASSERT_EQ(swmm_engine_open(e, inp.c_str(), "lid_area_out/issue131_full.rpt",
+                               "lid_area_out/issue131_full.out", nullptr),
+              0)
         << swmm_get_last_error_msg(e);
     ASSERT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
     ASSERT_EQ(swmm_engine_start(e, 0), 0) << swmm_get_last_error_msg(e);
     double elapsed = 0.0;
     do {
-        ASSERT_EQ(swmm_engine_step(e, &elapsed), 0)
-            << swmm_get_last_error_msg(e);
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), 0) << swmm_get_last_error_msg(e);
     } while (elapsed > 0.0);
 
     const int i_full = swmm_subcatch_index(e, "S_FULL");
@@ -1887,7 +1886,6 @@ TEST(LidRunoffAreaTest, FullCoverageByReplicateUnitsShedsNothing) {
     swmm_engine_destroy(e);
 
     ASSERT_GT(vol_ref, 0.0);
-    EXPECT_LT(vol_full, 0.02 * vol_ref)
-        << "fully LID-covered subcatchment shed " << vol_full / vol_ref
-        << "x its bare twin (issue #131)";
+    EXPECT_LT(vol_full, 0.02 * vol_ref) << "fully LID-covered subcatchment shed "
+                                        << vol_full / vol_ref << "x its bare twin (issue #131)";
 }

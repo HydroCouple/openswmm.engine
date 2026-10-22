@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file LidLayerSpeciesData.hpp
- * @brief Phase A4 — per-(LID unit, layer, species) transported state.
+ * @file      LidLayerSpeciesData.hpp
+ * @brief     Phase A4 — per-(LID unit, layer, species) transported state.
  *
  * @details Plan §7 A4 asks for a "generic per-layer species block — heat
  *          reuses it", so this carries a species stride from the start.
@@ -30,9 +30,9 @@
  *          from the manager and asserted against it on every use.
  *
  * @see plans/transport/WATER_AGE_TRACKING_PLAN.md §7 A4
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_DATA_LIDLAYERSPECIESDATA_HPP
@@ -49,21 +49,15 @@ namespace openswmm {
 /// `LIDSolver::storedVolume()` sums. A drainage mat has thickness and void
 /// but no depth field of its own — the green roof stores its mat water in
 /// `stor_depth` — so it is not a fifth layer here.
-enum class LidLayer : int {
-    SURFACE  = 0,
-    PAVEMENT = 1,
-    SOIL     = 2,
-    STORAGE  = 3,
-    COUNT_   = 4
-};
+enum class LidLayer : int { SURFACE = 0, PAVEMENT = 1, SOIL = 2, STORAGE = 3, COUNT_ = 4 };
 
 /// Species rows carried on the LID layers.
 enum class LidSpecies : int {
-    AGE         = 0,
+    AGE = 0,
     /// H5b. A4 reserved the stride for exactly this: one more row, no second
     /// array, no change to `layer_index`.
     TEMPERATURE = 1,
-    COUNT_      = 2
+    COUNT_ = 2
 };
 
 /**
@@ -75,7 +69,7 @@ enum class LidSpecies : int {
  *          layer's own value, which is why only the INFLOW is needed.
  */
 struct LidLayerSpeciesState {
-    int n_units   = 0;
+    int n_units = 0;
     int n_species = 0;
 
     /// [type] flat index of that group's first unit; size = numGroups() + 1,
@@ -105,62 +99,83 @@ struct LidLayerSpeciesState {
 
     static constexpr int kLayerCount = static_cast<int>(LidLayer::COUNT_);
 
+    /**
+     * @brief Test whether both LID-unit and species counts are positive.
+     * @return n_units>0 && n_species>0; does not validate allocated arrays or offsets.
+     */
     bool active() const noexcept { return n_units > 0 && n_species > 0; }
 
+    /**
+     * @brief Calculate the flat unit/layer/species value index.
+     *
+     * @param[in] unit Existing unit index in [0,n_units); unchecked.
+     * @param[in] layer Existing layer enum excluding COUNT_; unchecked.
+     * @param[in] species Existing species index in [0,n_species); unchecked.
+     * @return (unit*kLayerCount+layer)*n_species+species; caller ensures size arithmetic and array
+     *     bounds.
+     */
     std::size_t layer_index(int unit, LidLayer layer, int species) const noexcept {
-        return (static_cast<std::size_t>(unit) * kLayerCount +
-                static_cast<std::size_t>(layer)) *
+        return (static_cast<std::size_t>(unit) * kLayerCount + static_cast<std::size_t>(layer)) *
                    static_cast<std::size_t>(n_species) +
                static_cast<std::size_t>(species);
     }
 
-    /// @note No defaulted arguments, deliberately. A3's round removed a
-    ///       default from `WaterAgeState::resize` because a short call
-    ///       compiled and emptied the new arrays at runtime, where nothing
-    ///       could observe it — every call site was guarded by a size
-    ///       mismatch that repaired itself on the next step. Requiring both
-    ///       counts keeps that failure at the compiler.
+    /**
+     * @brief Replace LID layer state with a zeroed shape and copied group offsets.
+     *
+     * Zero values mean seconds for AGE and degC for TEMPERATURE; caller then seeds each enabled species
+     * appropriately. Replaces prior values, volume history (ft water depth), drain and inflow arrays.
+     * Independent assignments can leave partial state on allocation failure; both explicit counts are
+     * required to avoid silently dropping a species dimension.
+     *
+     * @param[in] units Nonnegative total LID-unit count.
+     * @param[in] species Nonnegative species stride; all size_t products must fit.
+     * @param[in] offsets Borrowed group-prefix offsets copied into owned storage when resizing. Caller
+     *     provides monotone group-count+1 entries ending at units; not checked.
+     */
     void resize(int units, int species, const std::vector<int>& offsets) {
-        n_units   = units;
+        n_units = units;
         n_species = species;
         group_offset = offsets;
-        const auto n_layers = static_cast<std::size_t>(units) *
-                              static_cast<std::size_t>(kLayerCount);
+        const auto n_layers =
+            static_cast<std::size_t>(units) * static_cast<std::size_t>(kLayerCount);
         value.assign(n_layers * static_cast<std::size_t>(species), 0.0);
         vol_prev.assign(n_layers, 0.0);
-        drain_value.assign(static_cast<std::size_t>(units) *
-                               static_cast<std::size_t>(species), 0.0);
-        inflow_value.assign(static_cast<std::size_t>(units) *
-                                static_cast<std::size_t>(species), 0.0);
+        drain_value.assign(static_cast<std::size_t>(units) * static_cast<std::size_t>(species),
+                           0.0);
+        inflow_value.assign(static_cast<std::size_t>(units) * static_cast<std::size_t>(species),
+                            0.0);
     }
 
     /**
-     * @brief Size the block if it is not already the requested shape.
+     * @brief Resize LID state only when its main shape differs.
      *
-     * @details H5b: the block is now shared by TWO capabilities that are
-     *          independently switchable. A4's `initLidLayerAge` both sized
-     *          and seeded, under a `water_age` guard — so a HEAT-only deck
-     *          would never have sized it, and an AGE-only deck would have
-     *          left the temperature row at 0 °C, which D-H5c exists to say
-     *          is a real temperature and not a sentinel.
+     * Returns immediately when counts and value length match, preserving values and existing offsets.
+     * Does not verify offsets, vol_prev/drain/inflow lengths or refresh changed group topology in that
+     * case. Otherwise delegates to resize() and zeroes all state before species-specific seeding.
      *
-     *          Both initialisers now call this first and seed only their own
-     *          row, so neither depends on the other having run. That is the
-     *          lesson-20 configuration trap, whose eighth instance this
-     *          would otherwise have been.
+     * @param[in] units Nonnegative total LID-unit count.
+     * @param[in] species Nonnegative species stride; all size_t products must fit.
+     * @param[in] offsets Borrowed group-prefix offsets copied into owned storage when resizing. Caller
+     *     provides monotone group-count+1 entries ending at units; not checked.
      */
     void ensureSized(int units, int species, const std::vector<int>& offsets) {
-        const auto want = static_cast<std::size_t>(units) *
-                          static_cast<std::size_t>(kLayerCount) *
+        const auto want = static_cast<std::size_t>(units) * static_cast<std::size_t>(kLayerCount) *
                           static_cast<std::size_t>(species);
         if (n_units == units && n_species == species && value.size() == want)
             return;
         resize(units, species, offsets);
     }
 
+    /**
+     * @brief Release all LID layer species state and reset counts.
+     *
+     * Restores empty offsets/value/history/workspace arrays; invalidates borrowed elements and leaves
+     * the LID manager definitions unchanged.
+     */
     void clear() { *this = LidLayerSpeciesState{}; }
 };
 
-}  // namespace openswmm
+} // namespace openswmm
 
-#endif  // OPENSWMM_ENGINE_DATA_LIDLAYERSPECIESDATA_HPP
+#endif // OPENSWMM_ENGINE_DATA_LIDLAYERSPECIESDATA_HPP

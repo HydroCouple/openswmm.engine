@@ -15,12 +15,12 @@
 // limitations under the License.
 
 /**
- * @file HeatFluxes.cpp
- * @brief Plan D-H5e — the single node/link surface-flux binding.
+ * @file      HeatFluxes.cpp
+ * @brief     Plan D-H5e — the single node/link surface-flux binding.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "HeatFluxes.hpp"
@@ -41,49 +41,90 @@ namespace openswmm::transport::heat {
 
 namespace {
 
-/// Cross-section parameters for a link. Mirrors `Routing.cpp:54`'s local
-/// helper — the same one the non-DYNWAVE evaporation path uses, so an open
-/// conduit's exchange area is built exactly the way its evaporation area is.
-///
-/// D-H5e: there was one of these in SurfaceExchange.cpp and a hand-inlined
-/// near-copy in RadiativeExchange.cpp. Now there is one.
+/**
+ * @brief Cross-section parameters for a link. Mirrors `Routing.cpp:54`'s local helper — the same
+ * one the non-DYNWAVE evaporation path uses, so an open conduit's exchange area is built exactly
+ * the way its evaporation area is.
+ *
+ * D-H5e: there was one of these in SurfaceExchange.cpp and a hand-inlined near-copy in
+ * RadiativeExchange.cpp. Now there is one.
+ *
+ * @details Copy one native link cross-section descriptor for surface geometry lookup.
+ * @param[in] links Stable native SoA cross-section arrays covering uk, in internal ft/ft2
+ * conventions.
+ * @param[in] uk Valid zero-based link index, unchecked.
+ * @return Owned XSectParams with translated shape and copied geometric/full-flow fields.
+ * @note No table/owner mutation, validation, allocation or physical/clock advance.
+ */
 XSectParams buildXsp(const LinkData& links, std::size_t uk) {
     XSectParams xs{};
     const auto ls = links.xsect_shape[uk];
-    xs.type   = link::translateShape(ls);
+    xs.type = link::translateShape(ls);
     xs.y_full = links.xsect_y_full[uk];
     xs.a_full = links.xsect_a_full[uk];
-    xs.w_max  = links.xsect_w_max[uk];
+    xs.w_max = links.xsect_w_max[uk];
     xs.r_full = links.xsect_r_full[uk];
     xs.s_full = links.xsect_s_full[uk];
-    xs.s_max  = links.xsect_s_max[uk];
-    xs.y_bot  = links.xsect_y_bot[uk];
-    xs.a_bot  = links.xsect_a_bot[uk];
-    xs.s_bot  = links.xsect_s_bot[uk];
-    xs.r_bot  = links.xsect_r_bot[uk];
+    xs.s_max = links.xsect_s_max[uk];
+    xs.y_bot = links.xsect_y_bot[uk];
+    xs.a_bot = links.xsect_a_bot[uk];
+    xs.s_bot = links.xsect_s_bot[uk];
+    xs.r_bot = links.xsect_r_bot[uk];
     return xs;
 }
 
-}  // namespace
+} // namespace
 
-double netFluxOut(const SimulationContext& ctx,
-                  const HeatElement& elem, double t_w) noexcept {
+/**
+ * @brief Sum enabled element latent/sensible and radiative flux under one outward sign
+ * convention.
+ * @param[in] ctx Stable heat/weather/element-override context; providers nonthrowing and already
+ * sampled.
+ * @param[in] elem Element identity selecting prepared local attributes/weather, or global
+ * default.
+ * @param[in] t_w Qualified water degC, passed unchanged to both flux families.
+ * @return Surface+radiative W/m2, positive heat out of water; each disabled family contributes0.
+ * @note Bed contact is a separate finite second-body operator, not an additive atmospheric term.
+ * Pure/read-only query, no physical/clock mutation or weather refresh; no finite/result
+ * validation.
+ */
+double netFluxOut(const SimulationContext& ctx, const HeatElement& elem, double t_w) noexcept {
     // Every family, one sign convention (positive OUT of the water), one
     // sum. H6b's SEDIMENT_EXCHANGE is a fourth term on this line.
     //
     // H6a deliberately adds NO term here: it changes where `Jin` comes from
     // inside radiativeFluxOut, not how many families are summed.
-    return surfaceFluxOut(ctx, elem, t_w) +
-           radiativeFluxOut(ctx, elem, t_w);
+    return surfaceFluxOut(ctx, elem, t_w) + radiativeFluxOut(ctx, elem, t_w);
 }
 
+/**
+ * @brief Advance each eligible native water element once against combined atmospheric and finite
+ * bed heat.
+ * @param[in,out] ctx Prepared native node/link hydraulic geometry and temperatures,
+ * heat/material configuration, weather/providers, bed state and tables. Mutates temperature
+ * arrays, bed seeds, held ground/solar forcing and relevant series/geometry cursors; borrowed
+ * owners remain live/stable.
+ * @param[in] dt Positive finite accepted heat interval s; nonpositive/NaN returns. Caller
+ * chooses interval consistent with hydraulic volume/heat-owner chronology.
+ * @note Disabled heat/no flux families returns. Seeds bed/ground forcing once, prepares solar
+ * forcing, then relaxes positive-volume storage-node free surfaces and conduit water. Open
+ * conduit surface uses native top width*length*barrels; closed conduits still exchange with
+ * finite bed. Positive-volume links marked mesh_contact_link are skipped because shared mesh
+ * owner handles them. Viable bed water pair uses one coupled relaxation; otherwise positive
+ * surface uses one summed-flux relaxT. Converts ft2/ft3 to m2/m3 once, density kg/m3 and cp
+ * J/(kg*K); temperatures remain degC. No water movement/engine clock advance or general
+ * finite/shape validation. Temperature/bed/forcing changes are progressive; allocation/delegated
+ * lookup may throw without rollback. Exclusive native thermal/context/table-cursor ownership and
+ * exactly-once accepted-step invocation required.
+ */
 void applyHeatFluxes(SimulationContext& ctx, double dt) {
-    if (!ctx.options.heat_transport) return;
-    const bool bed_on = bedExchangeEnabled(ctx);
-    if (!ctx.heat_config.surface_exchange &&
-        !ctx.heat_config.radiative_exchange && !bed_on)
+    if (!ctx.options.heat_transport)
         return;
-    if (!(dt > 0.0)) return;
+    const bool bed_on = bedExchangeEnabled(ctx);
+    if (!ctx.heat_config.surface_exchange && !ctx.heat_config.radiative_exchange && !bed_on)
+        return;
+    if (!(dt > 0.0))
+        return;
     // H6b: seed the bed and resolve the deep-ground temperature ONCE per
     // step, beside `updateSolarForcing` and for the same reason — both are
     // GLOBAL-scope forcings whose timeseries cursors must not be advanced
@@ -101,9 +142,8 @@ void applyHeatFluxes(SimulationContext& ctx, double dt) {
 
     auto& hs = ctx.heat_state;
     const double rho = ctx.options.water_density;
-    const double cp  = ctx.options.water_specific_heat;
-    const int unit_sys =
-        ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    const double cp = ctx.options.water_specific_heat;
+    const int unit_sys = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
 
     // One relaxation per element against the SUMMED flux. Stepping each
     // module separately is what made the answer depend on module order —
@@ -112,12 +152,9 @@ void applyHeatFluxes(SimulationContext& ctx, double dt) {
     // it would silently read the global block for every element, which is
     // exactly the pre-PE behaviour and therefore invisible to a gate that
     // only checks "did the answer change" — see the PE handoff's falsifier.
-    const auto step = [&](const HeatElement& e, double t_w, double area_ft2,
-                          double vol_ft3) {
-        return relaxT(netFluxOut(ctx, e, t_w),
-                      netFluxOut(ctx, e, t_w + kProbeC), kProbeC,
-                      area_ft2 * kSqFtToSqM, vol_ft3 * kCuFtToCuM,
-                      dt, rho, cp);
+    const auto step = [&](const HeatElement& e, double t_w, double area_ft2, double vol_ft3) {
+        return relaxT(netFluxOut(ctx, e, t_w), netFluxOut(ctx, e, t_w + kProbeC), kProbeC,
+                      area_ft2 * kSqFtToSqM, vol_ft3 * kCuFtToCuM, dt, rho, cp);
     };
 
     // ---- Nodes. Only STORAGE nodes have a free surface: node::getSurfArea
@@ -127,18 +164,18 @@ void applyHeatFluxes(SimulationContext& ctx, double dt) {
     const int nn = ctx.n_nodes();
     for (int i = 0; i < nn; ++i) {
         const auto ui = static_cast<std::size_t>(i);
-        if (ui >= hs.node_temp.size()) break;
+        if (ui >= hs.node_temp.size())
+            break;
         const double vol_ft3 = node::storeVolume(ctx.nodes, i);
-        if (!(vol_ft3 > 0.0)) continue;
+        if (!(vol_ft3 > 0.0))
+            continue;
 
-        const double area_ft2 = node::getSurfArea(
-            ctx.nodes, i, ctx.nodes.depth[ui], &ctx.tables, unit_sys,
-            &ctx.node_subtypes);
-        if (!(area_ft2 > 0.0)) continue;
+        const double area_ft2 = node::getSurfArea(ctx.nodes, i, ctx.nodes.depth[ui], &ctx.tables,
+                                                  unit_sys, &ctx.node_subtypes);
+        if (!(area_ft2 > 0.0))
+            continue;
 
-        hs.node_temp[ui] +=
-            step(HeatElement::node(i), hs.node_temp[ui], area_ft2,
-                 vol_ft3);
+        hs.node_temp[ui] += step(HeatElement::node(i), hs.node_temp[ui], area_ft2, vol_ft3);
     }
 
     // ---- Links. Open conduits only, area = top width x length x barrels,
@@ -147,13 +184,17 @@ void applyHeatFluxes(SimulationContext& ctx, double dt) {
     const auto& CD = ctx.link_subtypes.conduits;
     for (int j = 0; j < nl; ++j) {
         const auto uj = static_cast<std::size_t>(j);
-        if(uj<ctx.heat_state.mesh_contact_link.size()&&ctx.heat_state.mesh_contact_link[uj])continue;
-        if (uj >= hs.link_temp.size()) break;
+        if (uj < ctx.heat_state.mesh_contact_link.size() && ctx.heat_state.mesh_contact_link[uj])
+            continue;
+        if (uj >= hs.link_temp.size())
+            break;
         const double vol_ft3 = ctx.links.volume[uj];
-        if (!(vol_ft3 > 0.0)) continue;
+        if (!(vol_ft3 > 0.0))
+            continue;
 
         const int cr = ctx.link_subtypes.conduit_row(j);
-        if (cr < 0) continue;                       // regulators have no surface
+        if (cr < 0)
+            continue; // regulators have no surface
 
         // H6b: a CLOSED conduit has no free surface but it does have a bed,
         // so the open-conduit test can no longer gate the whole iteration —
@@ -165,7 +206,8 @@ void applyHeatFluxes(SimulationContext& ctx, double dt) {
         if (xsect::isOpen(ctx.links.xsect_batch_shape[uj])) {
             const auto ucr = static_cast<std::size_t>(cr);
             double length = CD.length[ucr];
-            if (!(length > 0.0)) length = CD.mod_length[ucr];
+            if (!(length > 0.0))
+                length = CD.mod_length[ucr];
             const double depth = ctx.links.depth[uj];
             if (length > 0.0 && depth > 0.0) {
                 const auto xs = buildXsp(ctx.links, uj);
@@ -186,20 +228,18 @@ void applyHeatFluxes(SimulationContext& ctx, double dt) {
                 const double t_w = hs.link_temp[uj];
                 const HeatElement le = HeatElement::link(j);
                 const PairStep s = relaxPair(
-                    g, t_w, ctx.bed_state.link_temp[uj],
-                    netFluxOut(ctx, le, t_w),
-                    netFluxOut(ctx, le, t_w + kProbeC), kProbeC,
-                    area_ft2 * kSqFtToSqM, dt);
-                hs.link_temp[uj]             += s.dt_w;
-                ctx.bed_state.link_temp[uj]  += s.dt_b;
+                    g, t_w, ctx.bed_state.link_temp[uj], netFluxOut(ctx, le, t_w),
+                    netFluxOut(ctx, le, t_w + kProbeC), kProbeC, area_ft2 * kSqFtToSqM, dt);
+                hs.link_temp[uj] += s.dt_w;
+                ctx.bed_state.link_temp[uj] += s.dt_b;
                 continue;
             }
         }
 
-        if (!(area_ft2 > 0.0)) continue;
-        hs.link_temp[uj] += step(HeatElement::link(j),
-                                 hs.link_temp[uj], area_ft2, vol_ft3);
+        if (!(area_ft2 > 0.0))
+            continue;
+        hs.link_temp[uj] += step(HeatElement::link(j), hs.link_temp[uj], area_ft2, vol_ft3);
     }
 }
 
-}  // namespace openswmm::transport::heat
+} // namespace openswmm::transport::heat

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file ArdEngine.hpp
- * @brief Solver-agnostic Eulerian ARD transport engine (phase E1).
+ * @file      ArdEngine.hpp
+ * @brief     Solver-agnostic Eulerian ARD transport engine (phase E1).
  *
  * @details Selected by `[OPTIONS] QUALITY_SOLVER EULERIAN_ARD`
  *          (plans/transport/EULERIAN_ARD_TRANSPORT_PLAN.md rev. 2). Runs the
@@ -56,9 +56,9 @@
  *
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_ARD_ENGINE_HPP
@@ -81,40 +81,48 @@ namespace openswmm::transport {
 class ArdEngine {
 public:
     /**
-     * @brief Build the transport mesh and size all state; call once after the
-     *        model is fully resolved (Router::init done, pollutants known).
-     * @return false if the mesh could not be built — the caller must fall
-     *         back to the legacy quality path and surface the warnings.
+     * @brief Build the transport mesh and size all state; call once after the model is fully
+     * resolved (Router::init done, pollutants known).
+     * @return false if the mesh could not be built — the caller must fall back to the legacy
+     * quality path and surface the warnings.
      */
     bool init(SimulationContext& ctx);
 
     /**
      * @brief One transport step over the routing step dt.
      *
-     * @details Pre-condition: the external quality loads for this step have
-     *          been assembled into nodes.qual_mass_in / qual_vol_in (the
-     *          QualitySolver loader stage). Post-condition: links.conc,
-     *          links.conc_old, nodes.conc, nodes.conc_old updated.
+     * @details Pre-condition: the external quality loads for this step have been assembled into
+     * nodes.qual_mass_in / qual_vol_in (the QualitySolver loader stage). Post-condition:
+     * links.conc, nodes.conc updated; pollutant old arrays capture entry values.
      */
     void step(SimulationContext& ctx, double dt);
 
+    /**
+     * @brief Read successful mesh/state initialization flag.
+     * @return True only after final init success; does not validate current context/layout
+     * compatibility. No allocation/mutation.
+     */
     bool initialized() const noexcept { return initialized_; }
     std::string checkpointState() const;
     // Decode only into a fresh staging engine; caller installs after every
     // physical/output record has passed validation. Detailed writers excluded.
     void restoreCheckpointState(const std::string&, SimulationContext&);
+    /**
+     * @brief Borrow initialization diagnostics retained by this transport owner.
+     * @return Const reference to owner vector, nonowned, valid until owner destruction or next
+     * init/restore. Caller copies if retaining across lifecycle mutations; no allocation or
+     * context/clock change.
+     */
     const std::vector<std::string>& warnings() const noexcept { return warnings_; }
 
     /**
-     * @brief E5b treatment interop: absorb treated node concentrations back
-     *        into the node stores.
+     * @brief E5b treatment interop: absorb treated node concentrations back into the node
+     * stores.
      *
-     * @details Called by SWMMEngine AFTER QualitySolver::applyTreatment ran
-     *          on the PUBLISHED nodes.conc. Only nodes with treatment
-     *          defined are touched — untreated nodes keep their store mass
-     *          bit-identical (a conc→mass→conc round trip is NOT exact in
-     *          floating point, so a blanket absorb would break the
-     *          no-treatment parity).
+     * @details Called by SWMMEngine AFTER QualitySolver::applyTreatment ran on the PUBLISHED
+     * nodes.conc. Only nodes with treatment defined are touched — untreated nodes keep their
+     * store mass bit-identical (a conc→mass→conc round trip is NOT exact in floating point, so a
+     * blanket absorb would break the no-treatment parity).
      */
     void absorbTreatedNodeConc(SimulationContext& ctx);
 
@@ -122,9 +130,11 @@ public:
     /// species — the conservation ledger the unit gates check.
     std::vector<double> totalMass(const SimulationContext& ctx) const;
     std::vector<ChannelThermalRegion> thermalRegions() const;
-    std::string applyThermalIncrements(SimulationContext&,const std::vector<ChannelThermalIncrement>&);
+    std::string applyThermalIncrements(SimulationContext&,
+                                       const std::vector<ChannelThermalIncrement>&);
     std::vector<ChannelSpeciesRegion> speciesRegions(const SimulationContext&) const;
-    std::string applySpeciesIncrements(SimulationContext&,const std::vector<ChannelSpeciesIncrement>&);
+    std::string applySpeciesIncrements(SimulationContext&,
+                                       const std::vector<ChannelSpeciesIncrement>&);
 
 private:
     // Continuity-consistent face fluxes from the link/node fields of the
@@ -151,7 +161,7 @@ private:
 
     void publish(SimulationContext& ctx);
 
-    fv::NetworkMeshData  mesh_;
+    fv::NetworkMeshData mesh_;
     fv::NetworkStateData state_;
 
     // Projected per-face volumetric flux for the current routing step and the
@@ -172,36 +182,36 @@ private:
     // the splice, half each, mirroring the hydraulic solver's cell_qlat_
     // split. Rebuilt every substep; has_vj_src_ gates the whole path so a
     // deck without a fed virtual junction executes no new arithmetic.
-    std::vector<double> cell_src_vol_;    ///< water (ft³) per cell this substep
-    std::vector<double> cell_src_mass_;   ///< [s * nc + c] mass per cell this substep
+    std::vector<double> cell_src_vol_;  ///< water (ft³) per cell this substep
+    std::vector<double> cell_src_mass_; ///< [s * nc + c] mass per cell this substep
     bool has_vj_src_ = false;
 
     // Kernel scratch (sized once in init; see SpeciesKernelView).
-    std::vector<double> f_mass_, f_sstar_, f_phi_l_, f_phi_r_, f_phi_flux_,
-        cell_slope_, lo_flux_, anti_flux_, td_, anew_, rplus_, rminus_, cell_u_;
+    std::vector<double> f_mass_, f_sstar_, f_phi_l_, f_phi_r_, f_phi_flux_, cell_slope_, lo_flux_,
+        anti_flux_, td_, anew_, rplus_, rminus_, cell_u_;
     std::vector<fv::kernels::FaceState> f_state_l_, f_state_r_;
-    std::vector<fv::kernels::FaceFlux>  f_flux_;
+    std::vector<fv::kernels::FaceFlux> f_flux_;
     std::vector<char> cell_active_;
-    std::vector<int>  active_faces_;
+    std::vector<int> active_faces_;
 
     // E5a: transport boundaries/sources resolved onto the mesh at init.
     // Boundaries: the node's external inflow water carries the species at
     // bc_now_ (evaluated once per routing step: VALUE or timeseries).
     // Sources: internal-rate mass distributed over the conduit's wet cells.
     void updateTransportRows(SimulationContext& ctx);
-    std::vector<int>    bc_node_, bc_srow_, bc_ts_;
+    std::vector<int> bc_node_, bc_srow_, bc_ts_;
     std::vector<double> bc_value_, bc_now_;
-    std::vector<int>    src_crow_, src_srow_, src_ts_;
+    std::vector<int> src_crow_, src_srow_, src_ts_;
     std::vector<double> src_value_, src_len_, src_now_;
 
     // E3 dispersion state. disp_active_ gates the whole path: when false the
     // substep passes no per-cell array and dispersionSolve early-outs — the
     // pre-E3 behavior, bit-identical for existing ARD decks.
     bool disp_active_ = false;
-    int  disp_mode_   = 0;      ///< ArdDispersionMode as int (OFF/FISCHER/VALUE)
-    double disp_global_ft_ = 0.0;   ///< VALUE-mode coefficient, ft²/s
-    std::vector<double> conduit_disp_ft_;  ///< per mesh-conduit override, ft²/s (<0 ⇒ none)
-    std::vector<double> cell_disp_;        ///< per-cell D handed to the kernel
+    int disp_mode_ = 0;                   ///< ArdDispersionMode as int (OFF/FISCHER/VALUE)
+    double disp_global_ft_ = 0.0;         ///< VALUE-mode coefficient, ft²/s
+    std::vector<double> conduit_disp_ft_; ///< per mesh-conduit override, ft²/s (<0 ⇒ none)
+    std::vector<double> cell_disp_;       ///< per-cell D handed to the kernel
 
     // E5b: per-cell CSV sidecar ([TRANSPORT_OPTIONS] DETAILED_OUTPUT).
     // Written every routing step (documented decision — a detail feature
@@ -210,7 +220,7 @@ private:
     // store), cell index, species name, concentration.
     void writeDetailRows(SimulationContext& ctx);
     std::ofstream detail_out_;
-    bool   detail_active_ = false;
+    bool detail_active_ = false;
     double detail_time_s_ = 0.0;
 
     /// A1a: state row of the reserved __WATER_AGE__ species (after
@@ -243,9 +253,9 @@ private:
 
     std::vector<std::string> warnings_;
     bool initialized_ = false;
-    bool warned_cfl_clamp_ = false;  ///< E2: once-per-run loud subcycle clamp
+    bool warned_cfl_clamp_ = false; ///< E2: once-per-run loud subcycle clamp
 };
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_ARD_ENGINE_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_ARD_ENGINE_HPP

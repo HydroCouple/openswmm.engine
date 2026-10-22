@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_dw_tpa.cpp
- * @brief Gates for SURCHARGE_METHOD TPA in the dynamic wave solver
+ * @file      test_dw_tpa.cpp
+ * @brief     Gates for SURCHARGE_METHOD TPA in the dynamic wave solver
  *        (issue #156 Phase 5; TPA plan §B1–B4).
  *
  * @details DW's TPA is the pragmatic port: constant-width slot above the
@@ -28,9 +28,9 @@
  *          changes the answer, repeated crown crossings do not chatter the
  *          mass balance, and above the crown TPA parallels SLOT.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -54,6 +54,17 @@ namespace {
 
 const char* kOutDir = "dw_tpa_out";
 
+/**
+ * @brief Create the fixture output directory and form one artifact filename.
+ *
+ * Creates missing output-root directories and propagates filesystem errors. Does not
+ * create/truncate the artifact, sanitize name or create arbitrary nested parents; no
+ * current-directory change occurs.
+ *
+ * @param[in] name Raw filename/path appended below kOutDir; caller chooses a safe fixture
+ *     destination.
+ * @return Owned native path string.
+ */
 std::string outPath(const std::string& name) {
     fs::create_directories(kOutDir);
     return (fs::path(kOutDir) / name).string();
@@ -63,14 +74,29 @@ std::string outPath(const std::string& name) {
 // apex junction at invert 6 (crown 7), initially full at head 8; a mild
 // withdrawal takes the shared head into the (invert, crown) band where DW can
 // represent the sealed sub-crown state. apex_sealed toggles SUR_DEPTH.
-std::string drawdownModel(const std::string& method, bool apex_sealed,
-                          double withdraw_cfs = 0.3,
+/**
+ * @brief Build the US-unit two-tank high-apex drawdown deck.
+ *
+ * No token escaping, model validation, file creation or run. Negative withdrawal input would emit a
+ * double-minus token rather than a validated positive inflow.
+ *
+ * @param[in] method Raw SURCHARGE_METHOD keyword.
+ * @param[in] apex_sealed True gives JS 30 ft surcharge depth; false zero.
+ * @param[in] withdraw_cfs Intended nonnegative withdrawal magnitude cfs; emitted after a literal
+ *     minus sign.
+ * @param[in] extra Raw additional OPTIONS lines with valid separators.
+ * @return Owned fifteen-minute DYNWAVE deck with 100 ft/s TPA celerity, two 100 ft2 tanks and two
+ *     60 ft pipes.
+ */
+std::string drawdownModel(const std::string& method, bool apex_sealed, double withdraw_cfs = 0.3,
                           const std::string& extra = "") {
     std::ostringstream ss;
     ss << "[OPTIONS]\n"
           "FLOW_UNITS           CFS\n"
           "FLOW_ROUTING         DYNWAVE\n"
-          "SURCHARGE_METHOD     " << method << "\n"
+          "SURCHARGE_METHOD     "
+       << method
+       << "\n"
           "TPA_CELERITY         100\n"
           "START_DATE           01/01/2026\n"
           "START_TIME           00:00:00\n"
@@ -85,7 +111,8 @@ std::string drawdownModel(const std::string& method, bool apex_sealed,
           "TA     0.0  20.0     8.0       FUNCTIONAL 0  0  100\n"
           "TB     0.0  20.0     8.0       FUNCTIONAL 0  0  100\n"
        << "\n[JUNCTIONS]\n;;Name Elev MaxDepth InitDepth SurDepth\n"
-          "JS     6.0  2.0      2.0       " << (apex_sealed ? "30" : "0") << "\n"
+          "JS     6.0  2.0      2.0       "
+       << (apex_sealed ? "30" : "0") << "\n"
        << "\n[OUTFALLS]\n;;Name Elev Type Gated\nO_OUT  0.0  FREE NO\n"
           "\n[WEIRS]\n;;Name From To    Type       CrestHt Cd\n"
           "W_OVF  TB   O_OUT TRANSVERSE 19.5    3.33\n"
@@ -105,16 +132,32 @@ std::string drawdownModel(const std::string& method, bool apex_sealed,
 struct DwRun {
     double final_ta = -1.0, final_tb = -1.0;
     double min_apex_head = 1e9;
-    double max_abs_q = 0.0;      ///< max |Q| C_DN over the run
-    double max_dq = 0.0;         ///< max step-to-step |ΔQ| C_DN (smoothness)
+    double max_abs_q = 0.0; ///< max |Q| C_DN over the run
+    double max_dq = 0.0;    ///< max step-to-step |ΔQ| C_DN (smoothness)
     double cont_err = 1e9;
     bool ok = false;
 };
 
+/**
+ * @brief Run a drawdown deck and collect apex/flow/final-depth diagnostics.
+ *
+ * Owns/destroys engine, records nonfatal lifecycle/index expectations and steps without a cap.
+ * Collects head/depth feet, flow/max adjacent-step flow change cfs and routing continuity fraction.
+ * Getter/end statuses are ignored; partial/default values can remain after errors and artifacts
+ * persist.
+ *
+ * @param[in] base Safe outPath artifact basename.
+ * @param[in] deck Complete model text written with unchecked stream status.
+ * @return Owned probe; ok=false on open refusal, otherwise true even after initialize/start/step
+ *     failure.
+ */
 DwRun runDeck(const std::string& base, const std::string& deck) {
     DwRun r;
     const std::string inp = outPath(base + ".inp");
-    { std::ofstream f(inp); f << deck; }
+    {
+        std::ofstream f(inp);
+        f << deck;
+    }
     SWMM_Engine e = swmm_engine_create();
     if (swmm_engine_open(e, inp.c_str(), outPath(base + ".rpt").c_str(),
                          outPath(base + ".out").c_str(), nullptr) != 0) {
@@ -141,7 +184,8 @@ DwRun runDeck(const std::string& base, const std::string& deck) {
         swmm_link_get_flow(e, cd, &q);
         r.min_apex_head = std::min(r.min_apex_head, h);
         r.max_abs_q = std::max(r.max_abs_q, std::fabs(q));
-        if (!first) r.max_dq = std::max(r.max_dq, std::fabs(q - q_prev));
+        if (!first)
+            r.max_dq = std::max(r.max_dq, std::fabs(q - q_prev));
         q_prev = q;
         first = false;
     } while (elapsed > 0.0);
@@ -159,18 +203,21 @@ DwRun runDeck(const std::string& base, const std::string& deck) {
 TEST(DwTpa, OptionRoundTrip) {
     // Parse + API surface for the new enum value and celerity.
     const std::string inp = outPath("rt.inp");
-    { std::ofstream f(inp); f << drawdownModel("TPA", true); }
+    {
+        std::ofstream f(inp);
+        f << drawdownModel("TPA", true);
+    }
     SWMM_Engine e = swmm_engine_create();
-    ASSERT_EQ(swmm_engine_open(e, inp.c_str(), outPath("rt.rpt").c_str(),
-                               outPath("rt.out").c_str(), nullptr), 0)
+    ASSERT_EQ(swmm_engine_open(e, inp.c_str(), outPath("rt.rpt").c_str(), outPath("rt.out").c_str(),
+                               nullptr),
+              0)
         << swmm_get_last_error_msg(e);
     char buf[64];
     ASSERT_EQ(swmm_options_get(e, "SURCHARGE_METHOD", buf, sizeof buf), 0);
     EXPECT_STREQ(buf, "TPA");
     ASSERT_EQ(swmm_options_get(e, "TPA_CELERITY", buf, sizeof buf), 0);
     EXPECT_NEAR(std::stod(buf), 100.0, 1e-9);
-    EXPECT_EQ(swmm_options_set(e, "SURCHARGE_METHOD", "BOGUS"),
-              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_options_set(e, "SURCHARGE_METHOD", "BOGUS"), SWMM_ERR_BADPARAM);
     swmm_engine_destroy(e);
 }
 
@@ -198,11 +245,9 @@ TEST(DwTpa, VentingChangesTheAnswer) {
     const auto sealed = runDeck("dw_tpa_sealed2", drawdownModel("TPA", true));
     const auto vented = runDeck("dw_tpa_vented", drawdownModel("TPA", false));
     ASSERT_TRUE(sealed.ok && vented.ok);
-    const double d_final =
-        std::fabs(sealed.final_ta - vented.final_ta) +
-        std::fabs(sealed.min_apex_head - vented.min_apex_head);
-    EXPECT_GT(d_final, 1e-3)
-        << "sealed and vented runs are indistinguishable — the latch is inert";
+    const double d_final = std::fabs(sealed.final_ta - vented.final_ta) +
+                           std::fabs(sealed.min_apex_head - vented.min_apex_head);
+    EXPECT_GT(d_final, 1e-3) << "sealed and vented runs are indistinguishable — the latch is inert";
     EXPECT_LT(std::fabs(vented.cont_err), 3.0);
 }
 
@@ -211,8 +256,7 @@ TEST(DwTpa, CrownCrossingHysteresis) {
     // repeatedly; the latch updates once per step and must not chatter the
     // mass balance. Oscillating forcing via a reversing baseline is not
     // expressible in one INFLOWS row, so cycle with a timeseries.
-    std::string deck = drawdownModel("TPA", true, 0.0,
-                                     "");
+    std::string deck = drawdownModel("TPA", true, 0.0, "");
     deck += "\n[TIMESERIES]\n"
             ";;Name  Time  Value\n"
             "CYC     0:00  -1.0\n"
@@ -227,15 +271,14 @@ TEST(DwTpa, CrownCrossingHysteresis) {
     const auto r = runDeck("dw_tpa_cyc", deck);
     ASSERT_TRUE(r.ok);
     EXPECT_TRUE(std::isfinite(r.max_abs_q));
-    EXPECT_LT(std::fabs(r.cont_err), 3.0)
-        << "latch chatter is leaking mass: " << r.cont_err;
+    EXPECT_LT(std::fabs(r.cont_err), 3.0) << "latch chatter is leaking mass: " << r.cont_err;
 }
 
 TEST(DwTpa, AboveCrownParallelsSlot) {
     // B-G1 flavor: with a positive INFLOW driving the whole system above the
     // crown, TPA is a constant-width slot — peak apex heads should track the
     // Sjoberg-slot run within a loose band (the widths differ by design).
-    std::string tpa_deck  = drawdownModel("TPA", true, -0.8);   // inflow
+    std::string tpa_deck = drawdownModel("TPA", true, -0.8); // inflow
     std::string slot_deck = drawdownModel("SLOT", true, -0.8);
     const auto t = runDeck("dw_tpa_above", tpa_deck);
     const auto s = runDeck("dw_slot_above", slot_deck);

@@ -15,17 +15,17 @@
 // limitations under the License.
 
 /**
- * @file InflowData.hpp
- * @brief SoA stores for external inflows, DWF, RDII, and time patterns.
+ * @file      InflowData.hpp
+ * @brief     SoA stores for external inflows, DWF, RDII, and time patterns.
  *
  * @details Persistent data for .inp round-trip. Separate from the runtime
  *          InflowSolver which holds transient computation state.
  *
  * @ingroup engine_data
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_INFLOW_DATA_HPP
@@ -43,33 +43,73 @@ namespace openswmm {
 // External inflow definitions (from [INFLOWS] section)
 // ============================================================================
 
+/**
+ * @brief External inflow authoring rows stored in aligned columns.
+ *
+ * Owns its strings and vectors; references/iterators into columns may be invalidated by
+ * append/erase. Mutating this container does not synchronize engine solver state.
+ */
 struct ExtInflowData {
+    /**
+     * @brief Count rows in the primary ordered column.
+     * @return Primary row count converted to int; no alignment verification of the other columns.
+     */
     int count() const { return static_cast<int>(node_idx.size()); }
 
-    std::vector<int>         node_idx;       ///< Target node index
-    std::vector<std::string> node_name;      ///< Raw node name from input (for post-parse re-resolution)
-    std::vector<std::string> constituent;    ///< "FLOW" or pollutant name
-    std::vector<std::string> ts_name;        ///< Timeseries name ("" if none)
-    std::vector<std::string> inflow_type;    ///< "FLOW","CONCEN","MASS"
-    std::vector<double>      m_factor;       ///< Multiplier factor
-    std::vector<double>      s_factor;       ///< Scaling factor
-    std::vector<double>      baseline;       ///< Baseline value
-    std::vector<std::string> pattern_name;   ///< Baseline pattern name
+    std::vector<int> node_idx;          ///< Target node index
+    std::vector<std::string> node_name; ///< Raw node name from input (for post-parse re-resolution)
+    std::vector<std::string> constituent;  ///< "FLOW" or pollutant name
+    std::vector<std::string> ts_name;      ///< Timeseries name ("" if none)
+    std::vector<std::string> inflow_type;  ///< "FLOW","CONCEN","MASS"
+    std::vector<double> m_factor;          ///< Multiplier factor
+    std::vector<double> s_factor;          ///< Scaling factor
+    std::vector<double> baseline;          ///< Baseline value
+    std::vector<std::string> pattern_name; ///< Baseline pattern name
 
-    void add(int ni, const std::string& cons, const std::string& ts,
-             const std::string& type, double mf, double sf, double base,
-             const std::string& pat, const std::string& name = {}) {
-        node_idx.push_back(ni); node_name.push_back(name);
+    /**
+     * @brief Append a copied authoring row.
+     *
+     * Low-level authoring storage only: no lifecycle, name/reference, numeric or duplicate validation
+     * and no solver-cache rebuild. Caller keeps parallel columns aligned, serializes access and keeps
+     * row count representable as int. Allocation exceptions can leave a partially appended row; there
+     * is no rollback.
+     *
+     * @param[in] ni Resolved target node index, stored verbatim.
+     * @param[in] cons Copied FLOW/pollutant/reserved constituent token.
+     * @param[in] ts Copied timeseries name; empty means none.
+     * @param[in] type Copied FLOW/CONCEN/MASS token.
+     * @param[in] mf Timeseries multiplier.
+     * @param[in] sf Input-unit scaling multiplier.
+     * @param[in] base Baseline in the constituent input units.
+     * @param[in] pat Copied baseline pattern name; empty means none.
+     * @param[in] name Optional copied raw node name for post-parse resolution; defaults empty.
+     */
+    void add(int ni, const std::string& cons, const std::string& ts, const std::string& type,
+             double mf, double sf, double base, const std::string& pat,
+             const std::string& name = {}) {
+        node_idx.push_back(ni);
+        node_name.push_back(name);
         constituent.push_back(cons);
-        ts_name.push_back(ts); inflow_type.push_back(type);
-        m_factor.push_back(mf); s_factor.push_back(sf);
-        baseline.push_back(base); pattern_name.push_back(pat);
+        ts_name.push_back(ts);
+        inflow_type.push_back(type);
+        m_factor.push_back(mf);
+        s_factor.push_back(sf);
+        baseline.push_back(base);
+        pattern_name.push_back(pat);
     }
 
-    /// Remove the entry at @p idx. No-op if out of range. Subsequent entries
-    /// shift down by one — callers that hold cached indices must re-resolve.
+    /**
+     * @brief Erase an aligned row and shift all later row indices down.
+     *
+     * Erases each parallel column in order. Caller guarantees columns have at least count() rows and
+     * re-resolves cached row indices after success. Does not repair model-object references or runtime
+     * caches.
+     *
+     * @param[in] idx Zero-based row index; invalid indices are a no-op.
+     */
     void erase(int idx) {
-        if (idx < 0 || idx >= count()) return;
+        if (idx < 0 || idx >= count())
+            return;
         const auto u = static_cast<std::size_t>(idx);
         node_idx.erase(node_idx.begin() + u);
         node_name.erase(node_name.begin() + u);
@@ -87,31 +127,70 @@ struct ExtInflowData {
 // Dry weather flow definitions (from [DWF] section)
 // ============================================================================
 
+/**
+ * @brief Dry-weather-flow authoring rows stored in aligned columns.
+ *
+ * Owns its strings and vectors; references/iterators into columns may be invalidated by
+ * append/erase. Mutating this container does not synchronize engine solver state.
+ */
 struct DwfData {
+    /**
+     * @brief Count rows in the primary ordered column.
+     * @return Primary row count converted to int; no alignment verification of the other columns.
+     */
     int count() const { return static_cast<int>(node_idx.size()); }
 
-    std::vector<int>         node_idx;       ///< Target node
-    std::vector<std::string> node_name;      ///< Raw node name from input (for post-parse re-resolution)
-    std::vector<std::string> constituent;    ///< "FLOW" or pollutant name
-    std::vector<double>      avg_value;      ///< Average value
-    std::vector<std::string> pat1;           ///< Monthly pattern name
-    std::vector<std::string> pat2;           ///< Daily pattern name
-    std::vector<std::string> pat3;           ///< Hourly pattern name
-    std::vector<std::string> pat4;           ///< Weekend pattern name
+    std::vector<int> node_idx;          ///< Target node
+    std::vector<std::string> node_name; ///< Raw node name from input (for post-parse re-resolution)
+    std::vector<std::string> constituent; ///< "FLOW" or pollutant name
+    std::vector<double> avg_value;        ///< Average value
+    std::vector<std::string> pat1;        ///< Monthly pattern name
+    std::vector<std::string> pat2;        ///< Daily pattern name
+    std::vector<std::string> pat3;        ///< Hourly pattern name
+    std::vector<std::string> pat4;        ///< Weekend pattern name
 
-    void add(int ni, const std::string& cons, double avg,
-             const std::string& p1, const std::string& p2,
-             const std::string& p3, const std::string& p4,
+    /**
+     * @brief Append a copied authoring row.
+     *
+     * Low-level authoring storage only: no lifecycle, name/reference, numeric or duplicate validation
+     * and no solver-cache rebuild. Caller keeps parallel columns aligned, serializes access and keeps
+     * row count representable as int. Allocation exceptions can leave a partially appended row; there
+     * is no rollback.
+     *
+     * @param[in] ni Resolved node index stored verbatim.
+     * @param[in] cons Copied FLOW or constituent token.
+     * @param[in] avg Average value in constituent input units (project flow units for FLOW).
+     * @param[in] p1 Copied monthly pattern name; empty means none.
+     * @param[in] p2 Copied daily pattern name; empty means none.
+     * @param[in] p3 Copied hourly pattern name; empty means none.
+     * @param[in] p4 Copied weekend pattern name; empty means none.
+     * @param[in] name Optional copied raw node name for post-parse resolution.
+     */
+    void add(int ni, const std::string& cons, double avg, const std::string& p1,
+             const std::string& p2, const std::string& p3, const std::string& p4,
              const std::string& name = {}) {
-        node_idx.push_back(ni); node_name.push_back(name);
+        node_idx.push_back(ni);
+        node_name.push_back(name);
         constituent.push_back(cons);
         avg_value.push_back(avg);
-        pat1.push_back(p1); pat2.push_back(p2);
-        pat3.push_back(p3); pat4.push_back(p4);
+        pat1.push_back(p1);
+        pat2.push_back(p2);
+        pat3.push_back(p3);
+        pat4.push_back(p4);
     }
 
+    /**
+     * @brief Erase an aligned row and shift all later row indices down.
+     *
+     * Erases each parallel column in order. Caller guarantees columns have at least count() rows and
+     * re-resolves cached row indices after success. Does not repair model-object references or runtime
+     * caches.
+     *
+     * @param[in] idx Zero-based row index; invalid indices are a no-op.
+     */
     void erase(int idx) {
-        if (idx < 0 || idx >= count()) return;
+        if (idx < 0 || idx >= count())
+            return;
         const auto u = static_cast<std::size_t>(idx);
         node_idx.erase(node_idx.begin() + u);
         node_name.erase(node_name.begin() + u);
@@ -128,23 +207,56 @@ struct DwfData {
 // RDII assignments (from [RDII] section)
 // ============================================================================
 
+/**
+ * @brief Node-to-hydrograph authoring assignments stored in aligned columns.
+ *
+ * Owns its strings and vectors; references/iterators into columns may be invalidated by
+ * append/erase. Mutating this container does not synchronize engine solver state.
+ */
 struct RDIIAssignData {
+    /**
+     * @brief Count rows in the primary ordered column.
+     * @return Primary row count converted to int; no alignment verification of the other columns.
+     */
     int count() const { return static_cast<int>(node_idx.size()); }
 
-    std::vector<int>         node_idx;    ///< Target node
-    std::vector<std::string> node_name;   ///< Raw node name from input (for post-parse re-resolution)
-    std::vector<std::string> uh_name;     ///< Unit hydrograph name
-    std::vector<double>      sewer_area;  ///< Tributary sewer area
+    std::vector<int> node_idx;          ///< Target node
+    std::vector<std::string> node_name; ///< Raw node name from input (for post-parse re-resolution)
+    std::vector<std::string> uh_name;   ///< Unit hydrograph name
+    std::vector<double> sewer_area;     ///< Tributary sewer area
 
-    void add(int ni, const std::string& uh, double area,
-             const std::string& name = {}) {
-        node_idx.push_back(ni); node_name.push_back(name);
+    /**
+     * @brief Append a copied authoring row.
+     *
+     * Low-level authoring storage only: no lifecycle, name/reference, numeric or duplicate validation
+     * and no solver-cache rebuild. Caller keeps parallel columns aligned, serializes access and keeps
+     * row count representable as int. Allocation exceptions can leave a partially appended row; there
+     * is no rollback.
+     *
+     * @param[in] ni Resolved node index stored verbatim.
+     * @param[in] uh Copied unit-hydrograph group name.
+     * @param[in] area Tributary area in project watershed area units, acres/hectares.
+     * @param[in] name Optional copied raw node name for later resolution.
+     */
+    void add(int ni, const std::string& uh, double area, const std::string& name = {}) {
+        node_idx.push_back(ni);
+        node_name.push_back(name);
         uh_name.push_back(uh);
         sewer_area.push_back(area);
     }
 
+    /**
+     * @brief Erase an aligned row and shift all later row indices down.
+     *
+     * Erases each parallel column in order. Caller guarantees columns have at least count() rows and
+     * re-resolves cached row indices after success. Does not repair model-object references or runtime
+     * caches.
+     *
+     * @param[in] idx Zero-based row index; invalid indices are a no-op.
+     */
     void erase(int idx) {
-        if (idx < 0 || idx >= count()) return;
+        if (idx < 0 || idx >= count())
+            return;
         const auto u = static_cast<std::size_t>(idx);
         node_idx.erase(node_idx.begin() + u);
         node_name.erase(node_name.begin() + u);
@@ -158,19 +270,29 @@ struct RDIIAssignData {
 // ============================================================================
 
 struct UnitHydEntry {
-    std::string name;       ///< UH group name
-    std::string gage_name;  ///< Associated rain gage name
-    int month;              ///< Month index (0-11, or -1 for ALL)
-    int response;           ///< 0=SHORT, 1=MEDIUM, 2=LONG
-    double r;               ///< Fraction of rainfall volume
-    double t;               ///< Time to peak (hours)
-    double k;               ///< Recession-limb-to-peak-time ratio (tBase = t*(1+k); k >= 0)
-    double dmax;            ///< Max initial abstraction depth
-    double drecov;          ///< IA recovery rate
-    double dinit;           ///< Initial IA used
+    std::string name;      ///< UH group name
+    std::string gage_name; ///< Associated rain gage name
+    int month;             ///< Month index (0-11, or -1 for ALL)
+    int response;          ///< 0=SHORT, 1=MEDIUM, 2=LONG
+    double r;              ///< Fraction of rainfall volume
+    double t;              ///< Time to peak (hours)
+    double k;              ///< Recession-limb-to-peak-time ratio (tBase = t*(1+k); k >= 0)
+    double dmax;           ///< Max initial abstraction depth
+    double drecov;         ///< IA recovery rate
+    double dinit;          ///< Initial IA used
 };
 
+/**
+ * @brief Hydrograph parameter rows and independent group-to-gage assignments.
+ *
+ * Owns its strings and vectors; references/iterators into columns may be invalidated by
+ * append/erase. Mutating this container does not synchronize engine solver state.
+ */
 struct UnitHydData {
+    /**
+     * @brief Count rows in the primary ordered column.
+     * @return Primary row count converted to int; no alignment verification of the other columns.
+     */
     int count() const { return static_cast<int>(entries.size()); }
 
     std::vector<UnitHydEntry> entries;
@@ -179,11 +301,31 @@ struct UnitHydData {
     std::vector<std::string> gage_assignments; ///< UH group names
     std::vector<std::string> gage_names;       ///< Assigned rain gage names
 
+    /**
+     * @brief Append a copied group-to-gage assignment without deduplication.
+     *
+     * Appends gage_assignments then gage_names; caller maintains alignment and handles partial
+     * allocation failure. Does not change parameter entries.
+     *
+     * @param[in] uh_name Copied group name; group/row existence is not checked.
+     * @param[in] gage Copied rain-gage name; existence is not resolved.
+     */
     void add_gage(const std::string& uh_name, const std::string& gage) {
         gage_assignments.push_back(uh_name);
         gage_names.push_back(gage);
     }
 
+    /**
+     * @brief Append a copied authoring row.
+     *
+     * Low-level authoring storage only: no lifecycle, name/reference, numeric or duplicate validation
+     * and no solver-cache rebuild. Caller keeps parallel columns aligned, serializes access and keeps
+     * row count representable as int. Allocation exceptions can leave a partially appended row; there
+     * is no rollback.
+     *
+     * @param[in] e Copied complete parameter row; caller supplies month/response/numeric values in the
+     *     UnitHydEntry input-unit convention.
+     */
     void add(const UnitHydEntry& e) { entries.push_back(e); }
 };
 
@@ -202,29 +344,50 @@ struct UnitHydData {
 // @see docs/RDII_ExpDecay_Implementation.md
 
 struct RDIIDecayEntry {
-    std::string uh_name;    ///< Matches UnitHydEntry::name
-    int    response  = -1;  ///< 0=SHORT, 1=MEDIUM, 2=LONG
-    double k_dep     = 0.0; ///< Depletion rate (1/project rain-depth unit: 1/in or 1/mm) — temperature-independent
-    double k_0       = 0.0; ///< Base recovery rate (1/hr)
-    double k_T       = 0.0; ///< Thermal recovery rate at T_ref (1/hr)
-    double T_ref     = 10.0;///< Reference temperature (deg C)
+    std::string uh_name; ///< Matches UnitHydEntry::name
+    int response = -1;   ///< 0=SHORT, 1=MEDIUM, 2=LONG
+    double k_dep =
+        0.0; ///< Depletion rate (1/project rain-depth unit: 1/in or 1/mm) — temperature-independent
+    double k_0 = 0.0;       ///< Base recovery rate (1/hr)
+    double k_T = 0.0;       ///< Thermal recovery rate at T_ref (1/hr)
+    double T_ref = 10.0;    ///< Reference temperature (deg C)
     double theta_rec = 0.0; ///< Temperature sensitivity (1/deg C)
-    double T_freeze  = 0.0; ///< Recovery suppressed when T < T_freeze (deg C)
+    double T_freeze = 0.0;  ///< Recovery suppressed when T < T_freeze (deg C)
 
     // Optional degree-day snow model (SNOW keyword + 2 extra columns).
     // When on, precipitation at T <= snow_T accumulates as SWE (no liquid
     // input); at T > snow_T, melt = min(SWE, snow_ddf*(T - snow_T)*dt_days)
     // is added to rainfall before the IA update (rain-on-snow adds).
-    bool   snow_on   = false; ///< Degree-day snow model enabled for this row
-    double snow_T    = 1.0;   ///< Rain/snow partition threshold & melt base (deg C)
-    double snow_ddf  = 0.0;   ///< Degree-day melt factor (project rain-depth unit/degC/day)
+    bool snow_on = false;  ///< Degree-day snow model enabled for this row
+    double snow_T = 1.0;   ///< Rain/snow partition threshold & melt base (deg C)
+    double snow_ddf = 0.0; ///< Degree-day melt factor (project rain-depth unit/degC/day)
 };
 
+/**
+ * @brief Exponential IA-decay authoring rows keyed by group and response.
+ *
+ * Owns its strings and vectors; references/iterators into columns may be invalidated by
+ * append/erase. Mutating this container does not synchronize engine solver state.
+ */
 struct RDIIDecayData {
+    /**
+     * @brief Count rows in the primary ordered column.
+     * @return Primary row count converted to int; no alignment verification of the other columns.
+     */
     int count() const { return static_cast<int>(entries.size()); }
 
     std::vector<RDIIDecayEntry> entries;
 
+    /**
+     * @brief Append a copied authoring row.
+     *
+     * Low-level authoring storage only: no lifecycle, name/reference, numeric or duplicate validation
+     * and no solver-cache rebuild. Caller keeps parallel columns aligned, serializes access and keeps
+     * row count representable as int. Allocation exceptions can leave a partially appended row; there
+     * is no rollback.
+     *
+     * @param[in] e Copied complete decay row in the RDIIDecayEntry input-unit convention.
+     */
     void add(const RDIIDecayEntry& e) { entries.push_back(e); }
 };
 
@@ -232,23 +395,54 @@ struct RDIIDecayData {
 // Time patterns (from [PATTERNS] section)
 // ============================================================================
 
+/**
+ * @brief Time-pattern authoring names, types and multiplier vectors.
+ *
+ * Owns its strings and vectors; references/iterators into columns may be invalidated by
+ * append/erase. Mutating this container does not synchronize engine solver state.
+ */
 struct PatternData {
+    /**
+     * @brief Count rows in the primary ordered column.
+     * @return Primary row count converted to int; no alignment verification of the other columns.
+     */
     int count() const { return static_cast<int>(names.size()); }
 
     std::vector<std::string> names;           ///< Pattern name
-    std::vector<int>         types;           ///< 0=MONTHLY,1=DAILY,2=HOURLY,3=WEEKEND
+    std::vector<int> types;                   ///< 0=MONTHLY,1=DAILY,2=HOURLY,3=WEEKEND
     std::vector<std::vector<double>> factors; ///< Up to 24 multiplier values
 
+    /**
+     * @brief Append a copied pattern row.
+     *
+     * Low-level authoring storage only: no lifecycle, name/reference, numeric or duplicate validation
+     * and no solver-cache rebuild. Caller keeps parallel columns aligned, serializes access and keeps
+     * row count representable as int. Allocation exceptions can leave a partially appended row; there
+     * is no rollback.
+     *
+     * @param[in] name Copied pattern name; empty/duplicate names are accepted.
+     * @param[in] type Copied monthly/daily/hourly/weekend type code; no range check.
+     * @param[in] facs Copied multiplier sequence; its length and numeric values are not checked.
+     */
     void add(const std::string& name, int type, const std::vector<double>& facs) {
-        names.push_back(name); types.push_back(type);
+        names.push_back(name);
+        types.push_back(type);
         factors.push_back(facs);
     }
 
-    /// Find a pattern index by name (case-insensitive, legacy hash.c parity);
-    /// -1 if not found. The single lookup path for every pattern reference.
+    /**
+     * @brief Find the first ASCII-insensitive pattern name match.
+     *
+     * Linear scan preserves first-entry precedence when duplicate equivalent names exist. Caller
+     * prevents concurrent table mutation.
+     *
+     * @param[in] name Borrowed name bytes, including any embedded NUL; no allocation or normalization.
+     * @return First matching zero-based row, or -1 when absent.
+     */
     int find(std::string_view name) const noexcept {
         for (int i = 0; i < count(); ++i)
-            if (ieq(names[static_cast<std::size_t>(i)], name)) return i;
+            if (ieq(names[static_cast<std::size_t>(i)], name))
+                return i;
         return -1;
     }
 };

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_lard_transport.cpp
- * @brief X2: the LARD LTD engine transports, conserves, and out-resolves
+ * @file      test_lard_transport.cpp
+ * @brief     X2: the LARD LTD engine transports, conserves, and out-resolves
  *        the CSTR where plug flow says it must.
  *
  * @details Subplan X2 (plans/transport/LARD_AGE_EXPEDITE_SUBPLAN_2026-08-23.md;
@@ -47,9 +47,9 @@
  *
  *          Scratch fixtures use the `_lt_` prefix (collision-checked).
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -67,6 +67,17 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
@@ -75,15 +86,29 @@ constexpr double kQ = 5.0;
 constexpr double kCin = 100.0;
 
 struct DeckSpec {
-    bool lard = true;            ///< false → LEGACY control
+    bool lard = true; ///< false → LEGACY control
     int routing_step = 5;
     const char* end_time = "04:00:00";
-    double kdecay = 0.0;         ///< 1/s, [POLLUTANTS] Kdecay column
+    double kdecay = 0.0; ///< 1/s, [POLLUTANTS] Kdecay column
     double cinit = 0.0;
     bool single_conduit = false; ///< J0 → C1 → OUT (decay deck)
     bool with_orifice = false;   ///< J0-C1-J1 =OR1= J2-C2-OUT
 };
 
+/**
+ * @brief Write the Lagrangian/legacy transport chain and concentration-source fixture.
+ *
+ * Converts decay to the authored 1/day column and emits fixed kQ cfs / kCin mg/L external supply.
+ * single_conduit takes precedence over with_orifice. Uses a local ofstream and requires existing
+ * parent directories. Open/write/close failures are unchecked; owned input strings are not retained
+ * and raw tokens/config paths are not escaped. Optional sidecar files are also overwritten when
+ * described.
+ *
+ * @param[in] path Borrowed destination filename; character pointers must be non-null.
+ *     Opens/truncates this file for the generated deck.
+ * @param[in] s Borrowed spec selecting Lagrangian/legacy, end/routing time tokens,
+ *     single-conduit/orifice/default-chain geometry, initial TSS mg/L and decay in 1/s.
+ */
 void write_deck(const std::string& path, const DeckSpec& s) {
     std::ofstream f(path);
     f << "[TITLE]\nLARD X2 transport\n\n[OPTIONS]\n"
@@ -121,9 +146,8 @@ void write_deck(const std::string& path, const DeckSpec& s) {
           << "C3 CIRCULAR 2.0 0 0 0\nC4 CIRCULAR 2.0 0 0 0\n"
           << "C5 CIRCULAR 2.0 0 0 0\n\n";
     }
-    f << "[POLLUTANTS]\nTSS MG/L 0 0 0 " << (s.kdecay * 86400.0)  // 1/day column (KD1)
-      << " NO * 0 0 "
-      << s.cinit << "\n\n"
+    f << "[POLLUTANTS]\nTSS MG/L 0 0 0 " << (s.kdecay * 86400.0) // 1/day column (KD1)
+      << " NO * 0 0 " << s.cinit << "\n\n"
       << "[INFLOWS]\n"
       << "J0 FLOW \"\" FLOW 1.0 1.0 " << kQ << "\n"
       << "J0 TSS  \"\" CONCEN 1.0 1.0 " << kCin << "\n\n"
@@ -131,29 +155,42 @@ void write_deck(const std::string& path, const DeckSpec& s) {
 }
 
 struct TransportRun {
-    std::vector<double> node_final;   ///< [node] mg/L
-    std::vector<double> link_final;   ///< [link] mg/L
+    std::vector<double> node_final; ///< [node] mg/L
+    std::vector<double> link_final; ///< [link] mg/L
     double peak_node = 0.0, peak_link = 0.0;
-    double outfall_conc = 0.0;        ///< last node (writer order: OUT last)
-    double link_volume0 = 0.0;        ///< C1 volume at end (for tau)
-    double link_flow0 = 0.0;          ///< C1 |flow| at end
+    double outfall_conc = 0.0; ///< last node (writer order: OUT last)
+    double link_volume0 = 0.0; ///< C1 volume at end (for tau)
+    double link_flow0 = 0.0;   ///< C1 |flow| at end
     // ledger rows (internal mass units)
-    double mb_init = 0.0, mb_ex_in = 0.0, mb_outflow = 0.0, mb_final = 0.0,
-           mb_reacted = 0.0;
+    double mb_init = 0.0, mb_ex_in = 0.0, mb_outflow = 0.0, mb_final = 0.0, mb_reacted = 0.0;
     bool ok = false;
 };
 
+/**
+ * @brief Run the LARD transport comparison and snapshot first-pollutant trajectories/ledgers.
+ *
+ * Owns/destroys engine, caps at 200000 positive-time calls and ignores end status; guard exhaustion
+ * can still set ok. Link volume ft3 and flow ft3/s remain native. Does not independently check
+ * finiteness, full completion or quality-ledger closure; partial peaks may survive refusal.
+ *
+ * @param[in] tag Safe cwd artifact prefix.
+ * @param[in] s Deck choices yielding a pollutant and at least link zero.
+ * @return Owned peak/final concentrations, last encountered outfall concentration, native link-zero
+ *     hydraulics and first-species mass ledgers; ok=false on setup/step refusal.
+ */
 TransportRun run_deck(const std::string& tag, const DeckSpec& s) {
     TransportRun r;
     const std::string inp = tag + ".inp";
     write_deck(inp, s);
 
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) { ADD_FAILURE() << "engine create"; return r; }
-    if (swmm_engine_open(e, inp.c_str(), (tag + ".rpt").c_str(),
-                         (tag + ".out").c_str(), nullptr) != SWMM_OK ||
-        swmm_engine_initialize(e) != SWMM_OK ||
-        swmm_engine_start(e, 1) != SWMM_OK) {
+    if (e == nullptr) {
+        ADD_FAILURE() << "engine create";
+        return r;
+    }
+    if (swmm_engine_open(e, inp.c_str(), (tag + ".rpt").c_str(), (tag + ".out").c_str(), nullptr) !=
+            SWMM_OK ||
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
         ADD_FAILURE() << "open/init/start failed for " << inp;
         swmm_engine_destroy(e);
         return r;
@@ -171,11 +208,9 @@ TransportRun run_deck(const std::string& tag, const DeckSpec& s) {
             return r;
         }
         for (int l = 0; l < nl; ++l)
-            r.peak_link = std::max(
-                r.peak_link, ctx.links.conc[static_cast<std::size_t>(l * np)]);
+            r.peak_link = std::max(r.peak_link, ctx.links.conc[static_cast<std::size_t>(l * np)]);
         for (int j = 0; j < nn; ++j)
-            r.peak_node = std::max(
-                r.peak_node, ctx.nodes.conc[static_cast<std::size_t>(j * np)]);
+            r.peak_node = std::max(r.peak_node, ctx.nodes.conc[static_cast<std::size_t>(j * np)]);
     } while (elapsed > 0.0 && ++guard < 200000);
     swmm_engine_end(e);
 
@@ -189,16 +224,13 @@ TransportRun run_deck(const std::string& tag, const DeckSpec& s) {
             ctx.links.conc[static_cast<std::size_t>(l * np)];
     // The outfall is the node whose type says so (never index-guess).
     for (int j = 0; j < nn; ++j)
-        if (ctx.nodes.type[static_cast<std::size_t>(j)] ==
-            openswmm::NodeType::OUTFALL)
+        if (ctx.nodes.type[static_cast<std::size_t>(j)] == openswmm::NodeType::OUTFALL)
             r.outfall_conc = r.node_final[static_cast<std::size_t>(j)];
     r.link_volume0 = ctx.links.volume[0];
     r.link_flow0 = std::abs(ctx.links.flow[0]);
 
     const auto& mb = ctx.mass_balance;
-    auto row = [](const std::vector<double>& v) {
-        return v.empty() ? 0.0 : v[0];
-    };
+    auto row = [](const std::vector<double>& v) { return v.empty() ? 0.0 : v[0]; };
     r.mb_init = row(mb.qual_routing_init);
     r.mb_ex_in = row(mb.qual_routing_ex_in);
     r.mb_outflow = row(mb.qual_routing_outflow);
@@ -215,8 +247,10 @@ TransportRun run_deck(const std::string& tag, const DeckSpec& s) {
 // ---------------------------------------------------------------------------
 TEST(LardTransportTest, SteadySourceArrivesIntactAtEveryRoutingStep) {
     for (const int rs : {1, 5, 20, 60}) {
-        DeckSpec lard;  lard.routing_step = rs;
-        DeckSpec leg = lard;  leg.lard = false;
+        DeckSpec lard;
+        lard.routing_step = rs;
+        DeckSpec leg = lard;
+        leg.lard = false;
         const TransportRun a = run_deck("_lt_par_lard", lard);
         const TransportRun b = run_deck("_lt_par_leg", leg);
         ASSERT_TRUE(a.ok && b.ok) << "rs=" << rs;
@@ -243,12 +277,13 @@ TEST(LardTransportTest, SteadySourceArrivesIntactAtEveryRoutingStep) {
 // ---------------------------------------------------------------------------
 TEST(LardTransportTest, NoElementEverExceedsTheSource) {
     for (const int rs : {1, 5, 20, 120}) {
-        DeckSpec s;  s.routing_step = rs;  s.cinit = 50.0;
+        DeckSpec s;
+        s.routing_step = rs;
+        s.cinit = 50.0;
         const TransportRun a = run_deck("_lt_max", s);
         ASSERT_TRUE(a.ok) << "rs=" << rs;
         EXPECT_LE(a.peak_link, kCin * (1.0 + 1.0e-9))
-            << "a link exceeded the source at ROUTING_STEP " << rs
-            << " — mass was manufactured";
+            << "a link exceeded the source at ROUTING_STEP " << rs << " — mass was manufactured";
         EXPECT_LE(a.peak_node, kCin * (1.0 + 1.0e-9))
             << "a node exceeded the source at ROUTING_STEP " << rs;
     }
@@ -278,17 +313,19 @@ TEST(LardTransportTest, NoElementEverExceedsTheSource) {
 //   (b) the identity closes at steady state (measured 0.46% at 4 h).
 TEST(LardTransportTest, QualityMassBalanceClosesMidTransient) {
     DeckSpec s20;
-    s20.end_time = "00:20:00";  // stopped while the front is mid-chain
-    s20.cinit = 0.0;            // in = external only; init row must read 0
-    DeckSpec s60 = s20;  s60.end_time = "01:00:00";
-    DeckSpec s4h = s20;  s4h.end_time = "04:00:00";
+    s20.end_time = "00:20:00"; // stopped while the front is mid-chain
+    s20.cinit = 0.0;           // in = external only; init row must read 0
+    DeckSpec s60 = s20;
+    s60.end_time = "01:00:00";
+    DeckSpec s4h = s20;
+    s4h.end_time = "04:00:00";
 
     const TransportRun a = run_deck("_lt_mb20", s20);
     const TransportRun b = run_deck("_lt_mb60", s60);
     const TransportRun c = run_deck("_lt_mb4h", s4h);
     ASSERT_TRUE(a.ok && b.ok && c.ok);
 
-    const auto in_of  = [](const TransportRun& r) { return r.mb_init + r.mb_ex_in; };
+    const auto in_of = [](const TransportRun& r) { return r.mb_init + r.mb_ex_in; };
     const auto out_of = [](const TransportRun& r) {
         return r.mb_outflow + r.mb_final + r.mb_reacted;
     };
@@ -301,15 +338,14 @@ TEST(LardTransportTest, QualityMassBalanceClosesMidTransient) {
     const double miss20 = in_of(a) - out_of(a);
     const double miss60 = in_of(b) - out_of(b);
     EXPECT_NEAR(miss60, miss20, std::abs(miss20) * 0.15 + 1.0)
-        << "the ledger residual GREW with throughput: " << miss20
-        << " at 20 min vs " << miss60 << " at 1 h — that is an ongoing "
+        << "the ledger residual GREW with throughput: " << miss20 << " at 20 min vs " << miss60
+        << " at 1 h — that is an ongoing "
            "leak, not the frozen transient residual";
 
     // (b) Steady-state closure. 1% band over a measured 0.46%.
     EXPECT_NEAR(out_of(c) / in_of(c), 1.0, 1.0e-2)
-        << "ledger identity broke at steady state: in=" << in_of(c)
-        << " out=" << out_of(c) << " (outflow=" << c.mb_outflow
-        << " final=" << c.mb_final << ")";
+        << "ledger identity broke at steady state: in=" << in_of(c) << " out=" << out_of(c)
+        << " (outflow=" << c.mb_outflow << " final=" << c.mb_final << ")";
 
     // (c) The decay leg — the identity with qual_routing_reacted as a
     // LARGE term (handoff §5.vii: \"run T3's deck once with kdecay > 0 as
@@ -318,15 +354,16 @@ TEST(LardTransportTest, QualityMassBalanceClosesMidTransient) {
     // moves out/in by twice that fraction and cannot hide inside the
     // transient band. Without this leg the k=0 deck kept `removed` at
     // exactly zero and the sign was unobservable.
-    DeckSpec sk = s4h;  sk.kdecay = 1.0e-3;
+    DeckSpec sk = s4h;
+    sk.kdecay = 1.0e-3;
     const TransportRun d = run_deck("_lt_mbk", sk);
     ASSERT_TRUE(d.ok);
     ASSERT_GT(d.mb_reacted, 0.05 * in_of(d))
         << "decay removed almost nothing — the probe premise (a large "
            "reacted term) is broken, not the ledger";
     EXPECT_NEAR(out_of(d) / in_of(d), 1.0, 1.0e-2)
-        << "the decayed ledger identity broke: in=" << in_of(d) << " out="
-        << out_of(d) << " (reacted=" << d.mb_reacted
+        << "the decayed ledger identity broke: in=" << in_of(d) << " out=" << out_of(d)
+        << " (reacted=" << d.mb_reacted
         << ") — a reacted row with the wrong sign misses by 2x itself";
 }
 
@@ -337,29 +374,30 @@ TEST(LardTransportTest, QualityMassBalanceClosesMidTransient) {
 TEST(LardTransportTest, PlugFlowDecayMatchesTheExponentialAndBeatsTheCstr) {
     DeckSpec lard;
     lard.single_conduit = true;
-    lard.kdecay = 1.0e-3;     // 1/s — kτ ≈ O(1) on a 2000 ft conduit
+    lard.kdecay = 1.0e-3; // 1/s — kτ ≈ O(1) on a 2000 ft conduit
     lard.end_time = "06:00:00";
-    DeckSpec leg = lard;  leg.lard = false;
+    DeckSpec leg = lard;
+    leg.lard = false;
 
     const TransportRun a = run_deck("_lt_decay_lard", lard);
     const TransportRun b = run_deck("_lt_decay_leg", leg);
     ASSERT_TRUE(a.ok && b.ok);
 
     ASSERT_GT(a.link_flow0, 0.0);
-    const double tau = a.link_volume0 / a.link_flow0;  // measured residence
+    const double tau = a.link_volume0 / a.link_flow0; // measured residence
     const double expected = kCin * std::exp(-lard.kdecay * tau);
 
     // The plug answer, from the deck's own measured τ — no hand constant.
     EXPECT_NEAR(a.outfall_conc / expected, 1.0, 0.05)
-        << "LARD outfall " << a.outfall_conc << " vs plug answer "
-        << expected << " (tau=" << tau << " s)";
+        << "LARD outfall " << a.outfall_conc << " vs plug answer " << expected << " (tau=" << tau
+        << " s)";
 
     // The structural separation: a CSTR link at steady state reads
     // Cin/(1+kτ) > Cin·e^{−kτ}. Ordering, not tolerance.
     EXPECT_LT(a.outfall_conc, b.outfall_conc)
         << "plug-flow decay did not beat the CSTR — the segment engine is "
-           "not resolving the front (LARD " << a.outfall_conc
-        << " vs LEGACY " << b.outfall_conc << ")";
+           "not resolving the front (LARD "
+        << a.outfall_conc << " vs LEGACY " << b.outfall_conc << ")";
 }
 
 // ---------------------------------------------------------------------------
@@ -383,7 +421,7 @@ TEST(LardTransportTest, SegmentStoreConservesMassUnderEveryOperation) {
     const double c3[2] = {40.0, 4.0};
     st.push_front(0, 1.0, c1);
     st.push_front(0, 2.0, c2);
-    st.push_front(0, 3.0, c3);   // front=c3, back=c1
+    st.push_front(0, 3.0, c3); // front=c3, back=c1
     ASSERT_EQ(st.count(0), 3);
     ASSERT_NEAR(st.total_volume(0), 6.0, 1e-12);
     const double m0 = total_mass(0, 0);
@@ -394,8 +432,7 @@ TEST(LardTransportTest, SegmentStoreConservesMassUnderEveryOperation) {
     const double drained = st.drain_back(0, 1.5, mass);
     EXPECT_NEAR(drained, 1.5, 1e-12);
     EXPECT_NEAR(mass[0], 1.0 * 10 + 0.5 * 20, 1e-9);
-    EXPECT_NEAR(total_mass(0, 0) + mass[0], m0, 1e-9)
-        << "drain_back lost mass";
+    EXPECT_NEAR(total_mass(0, 0) + mass[0], m0, 1e-9) << "drain_back lost mass";
 
     // Reverse twice is the identity on volume and mass.
     const double mv = st.total_volume(0), mm = total_mass(0, 0);
@@ -412,10 +449,9 @@ TEST(LardTransportTest, SegmentStoreConservesMassUnderEveryOperation) {
     st.push_front(0, 1.0, c4);
     st.push_front(0, 1.0, c5);
     const double before = total_mass(0, 0) + 1.0 * 320.0;
-    st.push_front(0, 1.0, c6);  // forces a merge
+    st.push_front(0, 1.0, c6); // forces a merge
     EXPECT_LE(st.count(0), 4);
-    EXPECT_NEAR(total_mass(0, 0), before, 1e-9)
-        << "the D-L5 overflow merge lost mass";
+    EXPECT_NEAR(total_mass(0, 0), before, 1e-9) << "the D-L5 overflow merge lost mass";
 
     // Merge tolerance: pushing at the front concentration folds in.
     SegmentStore st2;
@@ -437,8 +473,10 @@ TEST(LardTransportTest, SegmentStoreConservesMassUnderEveryOperation) {
 // Gate 6 — zero-volume passthrough carries the signal through an orifice.
 // ---------------------------------------------------------------------------
 TEST(LardTransportTest, OrificePassthroughDeliversTheSteadySignal) {
-    DeckSpec lard;  lard.with_orifice = true;
-    DeckSpec leg = lard;  leg.lard = false;
+    DeckSpec lard;
+    lard.with_orifice = true;
+    DeckSpec leg = lard;
+    leg.lard = false;
     const TransportRun a = run_deck("_lt_orif_lard", lard);
     const TransportRun b = run_deck("_lt_orif_leg", leg);
     ASSERT_TRUE(a.ok && b.ok);
@@ -447,11 +485,10 @@ TEST(LardTransportTest, OrificePassthroughDeliversTheSteadySignal) {
     ASSERT_NEAR(b.outfall_conc, kCin, 1.0)
         << "LEGACY control does not carry the signal through the orifice — "
            "the deck's hydraulics need tuning, not the engine";
-    EXPECT_NEAR(a.outfall_conc, kCin, 1.0)
-        << "the passthrough dropped mass at the orifice seam";
+    EXPECT_NEAR(a.outfall_conc, kCin, 1.0) << "the passthrough dropped mass at the orifice seam";
     // The orifice link itself publishes its upstream node's concentration.
     EXPECT_NEAR(a.link_final[1], kCin, 1.0)
         << "the orifice link did not publish the passthrough concentration";
 }
 
-}  // namespace
+} // namespace

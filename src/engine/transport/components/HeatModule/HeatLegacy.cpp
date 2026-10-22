@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file HeatLegacy.cpp
- * @brief Phase H1 body — LEGACY CSTR temperature transport.
+ * @file      HeatLegacy.cpp
+ * @brief     Phase H1 body — LEGACY CSTR temperature transport.
  *
  * @details Formula provenance is the pollutant path in QualityRouting.cpp,
  *          by way of the A1b age mirror: accumulateLinkLoads (rate
@@ -33,9 +33,9 @@
  *          an ordinary temperature rather than an absence, so zeroing it
  *          would freeze every element that happened to drain.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "HeatLegacy.hpp"
@@ -62,6 +62,13 @@ using quality::LEGACY_ZERO;
 /// snapshots and the per-node temperature-volume accumulator.
 struct HeatScratch {
     std::vector<double> node_old, link_old, temp_in;
+    /**
+     * @brief Size shared legacy heat workspace to matching model dimensions.
+     * @param[in] nn Nonnegative node count; mismatch zeroes node_old and temp_in.
+     * @param[in] nl Nonnegative link count; mismatch zeroes link_old.
+     * @note Allocations can partially resize scratch; no physical state/clock change.
+     * Process-wide workspace requires serial use across contexts.
+     */
     void ensure(int nn, int nl) {
         if (node_old.size() != static_cast<std::size_t>(nn)) {
             node_old.assign(static_cast<std::size_t>(nn), 0.0);
@@ -71,19 +78,38 @@ struct HeatScratch {
             link_old.assign(static_cast<std::size_t>(nl), 0.0);
     }
 };
+/**
+ * @brief Borrow the process-wide mutable legacy heat workspace.
+ * @return Static HeatScratch reference with process lifetime, no ownership transfer. Calls
+ * across contexts are not synchronized; caller serializes all routeLegacyHeat uses.
+ */
 HeatScratch& scratch() {
     static HeatScratch s;
     return s;
 }
-}  // namespace
+} // namespace
 
+/**
+ * @brief Apply heat flux then legacy complete-mix transport of node/link temperatures.
+ * @param[in,out] ctx Enabled thermal config/state, completed old/new native hydraulics and
+ * assembled qual_vol_in ft3 plus external temperature-volume rate degC*ft3/s; writes node/link
+ * degC and heat/bed state.
+ * @param[in] dt Positive finite accepted routing interval s; disabled/nonpositive returns.
+ * @note First call seeds all temperatures plus overrides; shape mismatch resizes thermal state.
+ * Applies atmospheric/bed heat before snapshotting old concentrations, then accumulates old-link
+ * heat rates and mixes nodes bounded by donor extrema. No pollutant-style evaporation multiplier
+ * or zero dry-node reset; dry conduit uses upstream temperature, STEADY uses geometric node1. No
+ * hydraulic water/clock/pollutant-ledger advance. Static scratch prohibits concurrent calls
+ * across models; allocation/dependency failures can leave partial seeding, heat flux and
+ * temperatures without rollback.
+ */
 void routeLegacyHeat(SimulationContext& ctx, double dt) {
-    if (!ctx.options.heat_transport || dt <= 0.0) return;
+    if (!ctx.options.heat_transport || dt <= 0.0)
+        return;
     auto& hs = ctx.heat_state;
     const int nn = ctx.n_nodes();
     const int nl = ctx.n_links();
-    const double t_init = ctx.heat_config.global_temp[static_cast<int>(
-        HeatSource::INITIAL_STATE)];
+    const double t_init = ctx.heat_config.global_temp[static_cast<int>(HeatSource::INITIAL_STATE)];
     if (hs.node_temp.size() != static_cast<std::size_t>(nn))
         hs.resize(nn, nl, t_init);
 
@@ -120,11 +146,9 @@ void routeLegacyHeat(SimulationContext& ctx, double dt) {
     heat::applyHeatFluxes(ctx, dt);
 
     for (int i = 0; i < nn; ++i)
-        sc.node_old[static_cast<std::size_t>(i)] =
-            hs.node_temp[static_cast<std::size_t>(i)];
+        sc.node_old[static_cast<std::size_t>(i)] = hs.node_temp[static_cast<std::size_t>(i)];
     for (int j = 0; j < nl; ++j)
-        sc.link_old[static_cast<std::size_t>(j)] =
-            hs.link_temp[static_cast<std::size_t>(j)];
+        sc.link_old[static_cast<std::size_t>(j)] = hs.link_temp[static_cast<std::size_t>(j)];
 
     // ---- 2. Temperature-volume accumulation (accumulateLinkLoads mirror,
     //         RATE convention) + the loaders' per-source rates. ----------
@@ -132,13 +156,13 @@ void routeLegacyHeat(SimulationContext& ctx, double dt) {
     for (int j = 0; j < nl; ++j) {
         const auto uj = static_cast<std::size_t>(j);
         const double q = std::fabs(ctx.links.flow[uj]);
-        if (q <= 0.0) continue;
-        const int downstream = (ctx.links.flow[uj] >= 0.0)
-                                   ? ctx.links.node2[uj]
-                                   : ctx.links.node1[uj];
-        if (downstream < 0 || downstream >= nn) continue;
-        sc.temp_in[static_cast<std::size_t>(downstream)] +=
-            q * sc.link_old[uj];
+        if (q <= 0.0)
+            continue;
+        const int downstream =
+            (ctx.links.flow[uj] >= 0.0) ? ctx.links.node2[uj] : ctx.links.node1[uj];
+        if (downstream < 0 || downstream >= nn)
+            continue;
+        sc.temp_in[static_cast<std::size_t>(downstream)] += q * sc.link_old[uj];
     }
     for (int i = 0; i < nn; ++i) {
         const auto ui = static_cast<std::size_t>(i);
@@ -159,8 +183,8 @@ void routeLegacyHeat(SimulationContext& ctx, double dt) {
     for (int i = 0; i < nn; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         const double v_old = ctx.nodes.old_volume[ui];
-        const double v_in  = ctx.nodes.qual_vol_in[ui];
-        const double q_in  = (dt > 0.0) ? v_in / dt : 0.0;
+        const double v_in = ctx.nodes.qual_vol_in[ui];
+        const double q_in = (dt > 0.0) ? v_in / dt : 0.0;
         const double t_old = sc.node_old[ui];
 
         if (!quality::nodeIsReactor(ctx, i)) {
@@ -169,8 +193,7 @@ void routeLegacyHeat(SimulationContext& ctx, double dt) {
             // The gate is legacy's `qNode > ZERO` on the RATE, the same one
             // the reactor half below uses — not "v_in is non-zero", which
             // divides residual heat by residual volume.
-            hs.node_temp[ui] =
-                (q_in > LEGACY_ZERO) ? (sc.temp_in[ui] * dt) / v_in : t_old;
+            hs.node_temp[ui] = (q_in > LEGACY_ZERO) ? (sc.temp_in[ui] * dt) / v_in : t_old;
             continue;
         }
 
@@ -179,12 +202,11 @@ void routeLegacyHeat(SimulationContext& ctx, double dt) {
             continue;
         }
         const double mass_in = sc.temp_in[ui] * dt;
-        const double t_in    = mass_in / v_in;
+        const double t_in = mass_in / v_in;
         double t_new = (t_old * v_old + mass_in) / (v_old + v_in);
         // No max(·, 0): sub-zero water temperatures are ordinary, and a
         // zero floor would silently warm every cold-weather model.
-        t_new = std::clamp(t_new, std::min(t_old, t_in),
-                           std::max(t_old, t_in));
+        t_new = std::clamp(t_new, std::min(t_old, t_in), std::max(t_old, t_in));
         hs.node_temp[ui] = t_new;
     }
 
@@ -192,16 +214,15 @@ void routeLegacyHeat(SimulationContext& ctx, double dt) {
     //         As at the nodes, the dry-link rule does not carry over: an
     //         essentially empty conduit takes the upstream temperature,
     //         where a pollutant would read zero. ------------------------
-    const bool is_steady =
-        (ctx.options.routing_model == RoutingModel::STEADY);
+    const bool is_steady = (ctx.options.routing_model == RoutingModel::STEADY);
     for (int j = 0; j < nl; ++j) {
         const auto uj = static_cast<std::size_t>(j);
         // Steady flow draws on node1 unconditionally (findSFLinkQual).
         const int upstream =
             is_steady ? ctx.links.node1[uj]
-                      : ((ctx.links.flow[uj] >= 0.0) ? ctx.links.node1[uj]
-                                                     : ctx.links.node2[uj]);
-        if (upstream < 0 || upstream >= nn) continue;
+                      : ((ctx.links.flow[uj] >= 0.0) ? ctx.links.node1[uj] : ctx.links.node2[uj]);
+        if (upstream < 0 || upstream >= nn)
+            continue;
         const auto un = static_cast<std::size_t>(upstream);
         const double t_up = hs.node_temp[un];
 
@@ -226,12 +247,11 @@ void routeLegacyHeat(SimulationContext& ctx, double dt) {
             } else {
                 const double v_in = q_in * dt;
                 t_new = (t_old * v_old + t_up * v_in) / (v_old + v_in);
-                t_new = std::clamp(t_new, std::min(t_old, t_up),
-                                   std::max(t_old, t_up));
+                t_new = std::clamp(t_new, std::min(t_old, t_up), std::max(t_old, t_up));
             }
         }
         hs.link_temp[uj] = t_new;
     }
 }
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport
