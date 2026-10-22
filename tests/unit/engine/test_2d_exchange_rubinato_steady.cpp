@@ -42,6 +42,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <map>
 #include <sstream>
 #include <string>
@@ -58,6 +59,16 @@ const fs::path kRef = fs::path(__FILE__).parent_path() / "../../benchmarks/rubin
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kDm = 0.24, kZ = 0.478;
 
+/**
+ * @brief Read the simple unquoted steady-exchange reference CSV.
+ *
+ * Splits literal commas, preserves trailing empty fields, skips only empty lines, fills missing
+ * cells with empty text and discards extra cells. Duplicate headers overwrite and CR may remain; no
+ * quoting, whitespace normalization or numeric conversion.
+ *
+ * @param[in] p Reference filename borrowed for synchronous text read.
+ * @return Owned header-keyed row maps; empty on missing first line/open failure.
+ */
 std::vector<std::map<std::string, std::string>> read_csv(const fs::path& p) {
     std::ifstream f(p);
     std::vector<std::map<std::string, std::string>> rows;
@@ -88,6 +99,19 @@ std::vector<std::map<std::string, std::string>> read_csv(const fs::path& p) {
 }
 
 // Equation term X of a Table 2 row through the law, unit coefficients.
+/**
+ * @brief Evaluate the unit-coefficient exchange term selected by a reference scenario.
+ *
+ * Uses fixed manhole geometry and 1/6-scale head regularization; S1/S2 disable limiting orifice
+ * with 1e9 coefficient and set relevant weir coefficients, other scenarios set outflow orifice
+ * coefficient one. map::at/stod errors propagate; unknown scenarios follow the latter branch
+ * without explicit validation.
+ *
+ * @param[in] row Required scenario/h_s_m and, except S1, h_p_m keys with valid numeric text; heads
+ *     use meters.
+ * @return Positive-direction scenario term m3/s: S1/S2 shared-law q, otherwise negative q for the
+ *     sewer-to-surface convention.
+ */
 double term(const std::map<std::string, std::string>& row) {
     const Geometry g{kZ, kPi * kDm, kPi * kDm * kDm / 4.0};
     Coefficients c;
@@ -121,6 +145,7 @@ TEST(ExchangeRubinatoSteady, LawTermsRecoverTable3Slopes) {
 
     fs::create_directories("rubinato_steady_out");
     std::ofstream rep("rubinato_steady_out/law_vs_table2.csv");
+    rep << std::setprecision(12);
     rep << "scenario,q_e_lps,xi_f_lps,term_m3s,law_q_lps,rel_err\n";
 
     for (const auto& t : t3) {

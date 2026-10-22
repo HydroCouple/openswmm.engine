@@ -40,3 +40,10 @@ notes: >
   Body text "flow depths between 77mm and 191mm" is a typo for 7.7-19.1 mm
   (Table 2 and the Froude numbers agree on metres). Figure 11 is not yet
   digitised; check the article's supplementary data first.
+
+review_2026_10_21: >
+  Rechecked Tables 2 and 3 against rendered source pages. The reference tables
+  were not altered. Corrected reconstructed sewer inflow to use Table 2's
+  surcharge percentage and synthetic timestamps to HH:MM:SS. Added actual
+  shaft-storage and area-floor sensitivities. Raw transient series were not
+  retrieved; synthetic runs must not be labelled measured validation.

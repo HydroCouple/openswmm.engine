@@ -36,13 +36,37 @@ engine (manhole `[2D_NODE_COUPLING] MANHOLE D=0.24 COEFFS=RUBINATO2017`, weir/or
 law, structure-area wet-mean head, chamber pond) and runs every Table 2 row to steady
 state. The paper does not tabulate inflows, so each row's boundary conditions are
 reconstructed from the row itself: surface inflow `Q1 = Fr_s √(g h_s) h_s W`, sewer
-inflow from `Re_p` (S2–S4; in S1 `Re_p` equals `Q_e`, i.e. no sewer inflow), and the
+inflow from `Q3 = abs(Q_e / (surcharge_pct/100))` (S2–S4; S1 has no sewer inflow), and the
 measured `h_p` imposed at the manhole by a fixed outfall stage behind a short wide
 pipe. The manhole sits at the flume centre and the mesh is a uniform 0.2 m grid: a
 junction exchanges through one cell, and cells far smaller than the 0.045 m² opening
-concentrate the whole exchange in a sliver. Results (`model_vs_table2.csv`, report
-only): S1 free weir ≈ 1.04–1.09 × `Q_e` (the legacy orifice law ≈ 1.8 ×), S3/S4
-sewer→surface ≈ 1.6–2.5 × — the zero-intercept over-prediction the Table 3
-intercepts imply — and S2 at the crest 0.5–3 ×. The test gates only the exchange
+concentrate the whole exchange in a sliver. Results are exported in `model_vs_table2.csv`; see the dated review rather
+than treating the earlier reconstructed-flow ranges as fixed acceptance values. The test gates only the exchange
 direction and order of magnitude, plus a regression that the paper's own 0.0125 m
 mesh is not choked by the head-equalisation cap.
+
+## Finalisation review (21 October 2026)
+
+The model test now rejects a late step failure or premature EOF, exports the
+180-240 s and 240-300 s exchange rates, the nearest-centroid surface probe
+and manhole head, continuity and mesh size. `PhysicalShaftSensitivity` runs
+all 36 rows with actual cylindrical storage below the rim and MIN_SURFAREA
+set to pi D squared / 4, retaining every other assumption. It exports
+`shaft_vs_table2.csv`. This is a modelling sensitivity, not coefficient fitting.
+
+The benchmark corpus now has metadata/provenance and `suites/coupling/`. Its
+synthetic event uses HH:MM:SS timestamps (the previous MM:SS placed the pulse
+outside the run), actual shaft storage and an explicitly assumed 0.45 m
+downstream stage. The 27 synthetic tests exercise drainage, surcharge and
+drainback. They are not replicas of the paper's measured transient events.
+
+The source tables are unchanged. Using pipe Reynolds number as inlet flow
+was a reconstruction error; the surcharge-percentage definition directly
+constrains Q3. Absolute fit remains report-only, but the suite separately
+gates completion, direction, two-window drift and ordinary 1D continuity.
+
+Review report and proposed publication text: `docs/validation/rubinato2017/`.
+The original junction representation is retained as evidence of its large
+continuity errors. Neither that representation nor the physical-shaft
+sensitivity establishes spatial convergence or independent measured
+unsteady validation.

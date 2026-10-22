@@ -1822,8 +1822,8 @@ junctions and one for outfalls.
 
 `[2D_VERTEX_NODE_MAP]` and `[2D_TRIANGLE_NODE_MAP]` associate a mesh
 vertex or cell with a SWMM node, with a discharge coefficient \f$C_d\f$
-(default 0.65) and an exchange area. Exchange is an orifice law on the
-head difference:
+(default 0.65) and an exchange area. With the legacy
+`COUPLING_LAW ORIFICE`, exchange is an orifice law on the head difference:
 
 | | | | |
 |---|---|---|---|
@@ -1883,6 +1883,92 @@ one.
 Exchange volumes reach the 1D side through the lateral-inflow **delivery
 queue**, drained at a uniform rate over the batch span rather than as a
 single-step pulse.
+
+#### Regime-aware exchange and fine-scale ponding {#hydraulics_ref_regime_exchange}
+
+`COUPLING_LAW WEIR_ORIFICE` combines free and submerged weir control with
+orifice control. Heads and geometry are evaluated in metres; Q > 0 denotes
+surface-to-network flow. With crest z, surface head h2, network head h1,
+surface depth hs = max(h2-z,0), crest perimeter L and opening area A:
+
+- Free drainage uses Qw = (2/3) Cw L sqrt(2g) hs phi(hs).
+- Submerged drainage uses Qw = Csw L sqrt(2g) hs phi(h2-h1).
+- Inward orifice control uses Qo = Coi A sqrt(2g) phi(hs), or the
+  submerged head difference. The drainage rate is the p-norm minimum
+  `(Qw^-16 + Qo^-16)^(-1/16)`. It is no greater than either control and is
+  about 4.2% below either when the two are equal.
+- Outward flow uses an orifice rate with coefficient Coo and blends the
+  dry-surface head h1-z into the wet-surface difference h1-h2.
+
+The free/submerged transition is smoothed over a submergence ratio of 0.1.
+The regularised root phi equals sqrt(x) above its head threshold and is
+quadratic below, with a finite derivative at zero. The routed implementation
+uses a 0.02 m threshold. That is a numerical regularisation scale, and is
+large relative to the heads of the Rubinato laboratory rig. A comparison
+using a smaller threshold only in the isolated law test does not validate
+the routed model at that scale.
+
+The dynamic-wave head sensitivity is a nonnegative damping approximation:
+blend-weight and availability-ramp derivatives are dropped. It should not
+be described as the exact derivative of the blended expression.
+
+| Preset | Cw | Csw | Coi | Coo |
+|---|---|---|---|---|
+| DEFAULT | 0.540 | 0.360 | 0.167 | 0.160 |
+| RUBINATO2017 | 0.540 | 0.056 | 0.167 | 0.160 |
+| RUBINATO2017_LOWER | 0.493 | 0.055 | 0.160 | 0.159 |
+| RUBINATO2017_UPPER | 0.587 | 0.057 | 0.174 | 0.161 |
+
+These are implementation presets, not four independently calibrated
+physical regimes. Rubinato et al. calibrated free drainage (S1), submerged
+weir drainage (S2), wet outward orifice flow (S3, expected 0.167) and dry
+outward flow (S4, expected 0.160). The implementation uses Coo = 0.160 for
+both outward cases. Coi is borrowed by analogy; inward orifice flow was not
+calibrated in that paper. The default Csw = (2/3) Cw is a continuity choice,
+not the paper's submerged-weir calibration. Per-node coefficients override
+the selected preset; authored mapping-row Cd/Area can override the orifice
+terms and opening geometry.
+
+`COUPLING_HEAD CELL`, `VERTEX` and `STENCIL_WET_MEAN` select different head
+representations. The wet stencil excludes dry bed elevations from a water
+surface estimate; it is not the same as averaging all numerical cells
+within a circular opening, as in the paper's HMho construction.
+
+`[2D_NODE_COUPLING]` describes node eligibility and structure geometry before
+mesh mapping. `NONE` excludes a node; `MANHOLE`, `GRATE`, `CURB`, `OPEN` and
+`OUTFALL` distinguish the applicable geometry or boundary treatment.
+Geometry is authored in project length/area units and converted at routing.
+
+For non-storage coupled junctions, `COUPLING_POND_MODE FOOTPRINT`, `CHAMBER`
+and `TRACKING` select the effective above-rim storage. The smoothed area
+transition lies above the rim. Storage nodes retain their storage curves.
+`COUPLING_EQUALIZE` bounds the 1D-side exchange over the interval for which
+its head is held; the surface state evolves within that interval. It is
+not a proof that a frozen two-reservoir equilibrium is never crossed.
+Availability budgets still prevent spending donor water twice.
+
+#### Laboratory comparison and qualification
+
+The accompanying @ref hydraulics_ref_rubinato2017 "Rubinato comparison" compares all 36 steady
+measurements with the bare paper equations, a junction reconstruction and
+an actual-shaft-storage sensitivity. It preserves the fit, continuity,
+head residuals and successive-window drift separately. The paper's printed
+regression slopes have nonzero intercepts; matching the slopes does not
+establish absolute flow agreement.
+
+The nine transient demonstration shapes use Table 1 peak ratios and
+durations. Their boundary forcing is synthetic and must not be labelled
+validation against the measured events or Figure 11. The 0.0125 m local
+mesh check demonstrates that the equalisation cap does not choke exchange;
+it does not establish mesh convergence or footprint-resolved delivery.
+The current comparison is a qualified numerical example. It does not
+support an experimental validation claim.
+
+Reference: Rubinato et al. (2017), *Journal of Hydrology* 552, 421-432,
+[doi:10.1016/j.jhydrol.2017.06.024](https://doi.org/10.1016/j.jhydrol.2017.06.024).
+
+
+@subpage hydraulics_ref_rubinato2017 — measured steady comparisons, synthetic events, report and example downloads.
 
 ### 9.7.2 Outfalls
 
