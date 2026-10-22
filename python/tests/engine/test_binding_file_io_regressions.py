@@ -72,6 +72,24 @@ class TestBindingFileIO(unittest.TestCase):
             model.write(bad_path)
         self.assertIn("failed.inp", str(caught.exception))
 
+    def test_long_control_rule_is_not_truncated(self):
+        source = (
+            Path(__file__).resolve().parents[3] / "tests/parity/snow/snow_parity.inp"
+        )
+        work = Path(artifact_dir(self))
+        solver = Solver(source, work / "control.rpt", work / "control.out")
+        try:
+            solver.open()
+            rule = (
+                "RULE LONG\nIF NODE J1 DEPTH > 1\nTHEN LINK C1 STATUS = CLOSED\n;"
+                + "雪" * 5000
+            )
+            solver.controls.append(rule)
+            self.assertEqual(solver.controls[-1].id, "LONG")
+            self.assertEqual(solver.controls[-1].text, rule)
+        finally:
+            solver.destroy()
+
     def test_rain_and_snow_factors_affect_precipitation_once_and_persist(self):
         source = (
             Path(__file__).resolve().parents[3] / "tests/parity/snow/snow_parity.inp"
