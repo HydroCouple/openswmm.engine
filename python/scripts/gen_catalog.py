@@ -305,7 +305,7 @@ _STATE_RE = re.compile(r"@param\s+engine\b[^\n]*?\(([A-Z_]+(?:\s*(?:,|or|/)\s*[A
 
 _CALL = re.compile(r"(?:\b(self|cls)\s*\.\s*)?\b([A-Za-z_]\w*)\s*\(")
 # Error reporting runs on every failing call; it is not functionality.
-_NOT_HELPERS = {"_check"}
+_NOT_HELPERS = {"_check", "_check_engine"}
 
 
 _CLASS_BASES = re.compile(r"^\s*(?:cdef\s+)?class\s+(\w+)\s*(?:\(([^)]*)\))?")
@@ -323,14 +323,19 @@ def c_symbols_by_def() -> dict[tuple[str, str], set[str]]:
     Module-level defs use the class ``""``.
     """
     direct: dict[tuple[str, str], set[str]] = defaultdict(set)
+    exported = _audit.collect_c_functions()
     for sym, sites in _audit.pyx_callgraph().items():
+        if sym not in exported:
+            continue
         for _module, cls, name in sites:
             direct[(cls, name)].add(sym)
     calls: dict[tuple[str, str], set[tuple[str, str]]] = defaultdict(set)
     defined: set[tuple[str, str]] = set()
     module_defs: dict[str, int] = defaultdict(int)          # name -> modules defining it
     bases: dict[str, list[str]] = {}
-    for pyx in sorted(ENGINE_DIR.glob("*.pyx")):
+    # Visit implementations first so declaration-only classes cannot hide bases.
+    # Shared .pxd files also contain executable inline helpers.
+    for pyx in [*sorted(ENGINE_DIR.glob("*.pyx")), *sorted(ENGINE_DIR.glob("*.pxd"))]:
         scopes: list[tuple[int, str, str]] = []
         in_extern, extern_indent = False, 0
         for raw in _audit.executable_cython(pyx.read_text(encoding="utf-8")).splitlines():
