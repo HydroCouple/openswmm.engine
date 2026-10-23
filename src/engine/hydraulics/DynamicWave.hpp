@@ -360,7 +360,7 @@ public:
     double evap_rate = 0.0;
 
 private:
-    friend class ::openswmm::Router; // explicit internal checkpoint fields only
+    friend class openswmm::Router; // explicit internal checkpoint fields only
     int n_nodes_ = 0;
     int n_links_ = 0;
     int n_conduits_ = 0;

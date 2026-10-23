@@ -234,6 +234,33 @@ public:
     const XSectGroups& xsectGroups() const { return groups_; }
 
     /**
+     * @brief Adopt a link's changed cross-section mid-run (Phase 7).
+     *
+     * @details Rebuilds the batch SoA entry, rebuilds the conduit's FV closure,
+     *          and reconciles the water already in its cells under @p policy.
+     *          Call only BETWEEN routing steps.
+     *
+     * @param ctx        model context; the link's cross-section fields and
+     *                   `xsect_cheb_idx` must ALREADY be updated.
+     * @param link_j     LinkData row.
+     * @param policy     how to reconcile the water in place.
+     * @param t_now      current simulation time (s).
+     * @param bed_offset height of the new section's flow invert above the
+     *                   conduit's invert elevation (ft) — see
+     *                   FvGeometry::bed_offset. 0 for a section defined from
+     *                   the invert, positive for one sitting on a raised bed.
+     * @param[out] displaced  water volume removed from the conduit (ft³).
+     *
+     * @returns true on success; false when the link is not an FV-routed
+     *          conduit. FV is the only solver that carries a per-cell state
+     *          this can be reconciled against — see the C API's
+     *          SWMM_ERR_GEOMETRY contract.
+     */
+    bool refreshConduitGeometry(SimulationContext& ctx, int link_j,
+                                fv::GeomChangePolicy policy, double t_now,
+                                double bed_offset, double* displaced);
+
+    /**
      * @brief Report the topological cycle diagnostic from the most recent initialization.
      * @return True if KW/STEADY topological ordering detected a cycle; DW does not use this tree-order
      *     check.

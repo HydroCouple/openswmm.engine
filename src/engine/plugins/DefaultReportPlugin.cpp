@@ -83,7 +83,7 @@ static const char* XsectShapeWords[] = {
     "HORSESHOE",    "GOTHIC",          "CATENARY",    "SEMIELLIPTICAL",  "BASKETHANDLE",
     "SEMICIRCULAR", "RECT_TRIANGULAR", "RECT_ROUND",  "HORIZ_ELLIPSE",   "VERT_ELLIPSE",
     "ARCH",         "IRREGULAR",       "CUSTOM",      "FORCE_MAIN",      "STREET",
-    "DUMMY"};
+    "DUMMY",        "POLYGON"};
 
 // ---------------------------------------------------------------------------
 // Date/time helpers using DateTime.hpp
@@ -735,7 +735,7 @@ void DefaultReportPlugin::write_preamble(std::FILE* f, const SimulationContext& 
 
                     int shape = static_cast<int>(ctx.links.xsect_shape[ui]);
                     const char* shape_str =
-                        (shape >= 0 && shape <= 25) ? XsectShapeWords[shape] : "CIRCULAR";
+                        (shape >= 0 && shape <= 26) ? XsectShapeWords[shape] : "CIRCULAR";
                     // legacy names a CUSTOM / IRREGULAR / STREET section by its
                     // curve, transect or street
                     const auto xs = ctx.links.xsect_shape[ui];
@@ -905,6 +905,27 @@ void DefaultReportPlugin::write_preamble(std::FILE* f, const SimulationContext& 
         // TPA pressure closure (issue #156 Phase 4): FV, non-default only.
         if (rm == 3 && opt.fv.pressure_closure == 1) {
             std::fprintf(f, "\n  Pressure Closure ......... TPA");
+        }
+
+        const char* xg_name = (opt.xsect_geometry == XsectGeometryMode::EXACT)
+                              ? "EXACT" : "LEGACY";
+        std::fprintf(f, "\n  Cross-Section Geometry ... %s", xg_name);
+
+        // promptperf.md Phase C diagnostic: a compiled ChebSection is shared
+        // (memoized) across every link with an identical geometric identity
+        // — POLYGON links on the same (curve, scale, open flag), and, under
+        // XSECT_GEOMETRY EXACT, built-in shapes on the same (shape, y_full,
+        // w_max) — see PostParseResolver.cpp. Recomputed here from the
+        // resolved link/section state rather than cached at build time, so
+        // it can never drift from what the run actually used.
+        if (!ctx.cheb_sections.empty()) {
+            int n_compiled = 0;
+            for (std::size_t li = 0; li < ctx.links.xsect_cheb_idx.size(); ++li)
+                if (ctx.links.xsect_cheb_idx[li] >= 0) ++n_compiled;
+            std::fprintf(f, "\n  Compiled Cross-Sections .. %d link%s -> %d unique section%s",
+                         n_compiled, (n_compiled == 1 ? "" : "s"),
+                         static_cast<int>(ctx.cheb_sections.size()),
+                         (ctx.cheb_sections.size() == 1 ? "" : "s"));
         }
 
         // Unsteady friction (issue #156): applies to DW and FV alike.

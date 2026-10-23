@@ -927,6 +927,11 @@ public:
      */
     void set_lenient_open(bool on) noexcept { lenient_open_ = on; }
 
+    /** @brief Access the hydraulic router (for C API delegation — Phase 7
+     *         run-time geometry change needs the FV mesh and solver). */
+    Router& router() noexcept { return router_; }
+    const Router& router() const noexcept { return router_; }
+
     /**
      * @brief Borrow this engine's surface-quality store.
      *

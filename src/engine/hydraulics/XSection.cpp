@@ -280,6 +280,9 @@ double getYcrit(const XSectParams& xs, double q) {
 bool isOpen(int type) {
     return hostEval().isOpen(type);
 }
+bool isOpen(const XSectParams& xs) {
+    return hostEval().isOpen(xs);
+}
 
 // ============================================================================
 // setParams — compute full-depth properties from raw geometry inputs.
@@ -624,8 +627,9 @@ int setParams(XSectParams& xs, int type, const double p[], double ucf) {
     }
 
     default:
-        // IRREGULAR / CUSTOM / STREET_XSECT / DUMMY — geometry comes from
-        // transect/curve/street tables resolved externally; leave fields.
+        // IRREGULAR / CUSTOM / STREET_XSECT / DUMMY / POLYGON — geometry
+        // comes from transect/curve/street/boundary tables resolved
+        // externally (PostParseResolver); leave fields untouched.
         break;
     }
     return 0;

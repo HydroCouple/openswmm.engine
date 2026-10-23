@@ -147,6 +147,7 @@
   "DependencyError",
   "FileError",
   "GeoPackageError",
+  "GeometryError",
   "HotStartError",
   "LifecycleError",
   "NumericalError",

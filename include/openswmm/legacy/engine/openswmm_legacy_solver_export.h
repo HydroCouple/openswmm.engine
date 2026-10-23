@@ -39,12 +39,5 @@
 #    define OPENSWMM_LEGACY_SOLVER_NO_DEPRECATED
 #  endif
 #endif
-/**
- * @file      openswmm_legacy_solver_export.h
- * @brief     Build-generated visibility and deprecation macros for the legacy solver API.
- * @author    Caleb Buahin <caleb.buahin@gmail.com>
- * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license   Apache-2.0
- */
 
 #endif /* EXPORT_OPENSWMMCORE_SOLVER_API_H */

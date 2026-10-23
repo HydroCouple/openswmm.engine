@@ -207,6 +207,9 @@ public:
         step_sink_user_ = user;
     }
 
+    double refreshConduitGeometry(int conduit, const FvGeometry& g_new, double t_now,
+                                  GeomChangePolicy policy) override;
+
     /**
      * @brief Borrow the last-window signed node exchange receipt.
      *

@@ -32,12 +32,13 @@ class TestErrorCode(unittest.TestCase):
             "BADINDEX": 8, "BADPARAM": 9, "PLUGIN": 10, "IO": 11,
             "HOTSTART": 12, "CRS": 13, "NUMERICAL": 14, "DEPENDENCY": 15,
             "CANCELLED": 16, "INTERNAL": 99,
+            "GEOMETRY": 17,
         }
         for name, val in expected.items():
             self.assertEqual(ErrorCode[name].value, val)
 
     def test_member_count(self):
-        self.assertEqual(len(ErrorCode), 18)
+        self.assertEqual(len(ErrorCode), 19)
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +117,7 @@ class TestXSectShape(unittest.TestCase):
         self.assertEqual(XSectShape.FORCE_MAIN, 23)
 
     def test_member_count(self):
-        self.assertEqual(len(XSectShape), 26)
+        self.assertEqual(len(XSectShape), 27)
 
     def test_known_values(self):
         expected = {

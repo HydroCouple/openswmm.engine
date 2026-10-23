@@ -1596,6 +1596,22 @@ retroactive.
   Built-in plugin metadata (`IPluginComponentInfo::license_type`) now reports
   `"Apache-2.0"`.
 
+### Fixed
+
+- **`test_engine_2d_surface` no longer fails in every default build.** The
+  engine compiles its 2D sources only under `OPENSWMM_BUILD_2D`, but the test
+  executable was created unconditionally, so a default build produced a target
+  that could not link (undefined `twoD::validateMesh`, `twoD::is2DOptionKey`)
+  and `make` aborted before finishing. The target is now gated on the same
+  option. A default build completes cleanly and `ctest` reports 160/160.
+
+- **`-DOPENSWMM_BUILD_2D=ON` no longer aborts on HDF5 distributions that export
+  non-canonical target names.** Finding an `hdf5` CONFIG package that defines
+  neither `hdf5::hdf5-shared` nor `hdf5::hdf5-static` raised `FATAL_ERROR` and
+  killed the whole configure — on Homebrew among others — even though
+  `FindHDF5` resolves those installs correctly. That case now falls through to
+  the module path, the same route taken when no CONFIG package exists.
+
 ### Added
 
 - **Two-component pressure approach (TPA) — sub-atmospheric pressurized flow
@@ -1653,6 +1669,35 @@ retroactive.
   uniform-depth cell seed and was measured to drive a pressurized study deck
   from 0.000 % to −19 % continuity. Decks without VJs are bitwise untouched.
 
+- **A register of known defects in the legacy SWMM 5.2.4 solver.**
+  `docs/dev/legacy_defects.md` (Doxygen page `legacy_defects`, linked from the
+  Manuals index) catalogues defects OpenSWMM inherits from EPA SWMM 5.2.4 and
+  deliberately preserves under the LEGACY bit-parity contract, so that the
+  behavior is discoverable rather than folklore. Each entry records what is
+  wrong, what was measured, which code paths can reach it, and how to avoid
+  it. Four entries at introduction: the mutual inconsistency of the tabulated
+  shapes' area and width tables (`GOTHIC` worst, 439%); the shallow-depth
+  interpolation error of those tables (470% below `y/D = 0.10` on CIRCULAR);
+  the discontinuous, non-monotone conveyance inverse near full
+  (`generic_getAofS`); and the critical-depth solver's `O(y_full/25)`
+  precision floor. Nothing in `src/legacy/` or on any LEGACY code path was
+  changed.
+
+- **Critical depth is now solved to full precision on compiled boundaries.**
+  `generic_getYcrit`'s 25-step enumeration closes with a single linear
+  interpolation across a `y_full/25` bracket, leaving an `O(dy)` error —
+  worst measured **8.6e-3 ft** on a D=4 ft circle, three orders above the
+  1e-6 ft targeted elsewhere in the geometry pipeline. For a section carrying
+  a compiled boundary (`XSectParams::cheb` — every `POLYGON` link, and every
+  shape under `XSECT_GEOMETRY EXACT`), the bracket the enumeration already
+  produced is now polished with Ridder's method to `kYcritTolCheb`, since
+  `chebAWofY` resolves `A` and `W` far more sharply than the bracket does.
+  Worst error over `q` in [0.25, 100] cfs falls to **4.1e-8 ft**, a ~2e5x
+  improvement. LEGACY keeps the coarse enumeration by design — its tables are
+  themselves only good to ~1e-2, so refining inside one of their brackets
+  would be false precision — and is asserted untouched by
+  `ChebSection.CriticalDepthOnACompiledCircleMatchesTheAnalyticFormula`.
+
 - **A Lagrangian transport engine (LARD) joins the quality solvers.**
   `QUALITY_SOLVER LAGRANGIAN` routes pollutants with a Lagrangian
   advection–reaction–dispersion scheme in place of the legacy complete-mix
@@ -1681,6 +1726,44 @@ retroactive.
   prints a `[PERF-FV]` line whose bracketed phases sum to `total`, beside the
   whole-router `step`; the difference between them is unattributed time and is
   meant to be read as a finding rather than smoothed away.
+
+- **`POLYGON` cross-section — exact circular-arc/line boundary geometry
+  compressed to a piecewise Chebyshev series — plus a fused FV closure
+  evaluation and `swmm_link_set_polygon()` for run-time geometry updates.**
+  A conduit's boundary can now be given directly as a chain of straight
+  segments and circular arcs (`[CURVES] XPOLYGON`, DXF-style bulge
+  convention), rather than approximated from a normalized width table —
+  area, perimeter, top width, and the first moment of area are exact in
+  closed form (Green's theorem) at every depth, and are then compiled to a
+  compact piecewise Chebyshev series (split at every critical height, with
+  a coordinate change removing the square-root singularities a round
+  invert or crown otherwise introduces) for constant-time evaluation in the
+  hot loop. `[OPTIONS] XSECT_GEOMETRY LEGACY | EXACT` (default `LEGACY`)
+  additionally routes every built-in rounded shape (EGG, HORSESHOE, GOTHIC,
+  ARCH, ...) through the same compiled path, replacing EPA's interpolated
+  shape tables (21 to 51 points, depending on shape and field) — measured to carry large low-fill error (up to 41%
+  area error below 5% of full depth for the 51-point CUSTOM table; several
+  hundred percent relative error in the lowest panel of the 51-point
+  CIRCULAR table) — with the exact reconstruction; this deliberately breaks
+  bit-parity with legacy EPA SWMM results for those shapes, is alpha/
+  experimental, and is opt-in (`LEGACY` is unaffected and remains the
+  default). `swmm_link_set_polygon()` / `swmm_link_get_polygon()` let a
+  conduit's boundary be changed mid-run (sediment deposition, a CIPP
+  liner, corrosion) under FV routing, with `CONSERVE_DEPTH` /
+  `CONSERVE_VOLUME` reconciliation policies and a reported displaced
+  volume; this is FV-only (DYNWAVE/KINWAVE refuse the call) and is not
+  carried in hotstart files. Both are reachable from Python as
+  `link.xsect.set_polygon(x, y, policy)` / `link.xsect.polygon()`, with the
+  new `GeomChangePolicy` enum for the reconciliation choice (it has no
+  default — the two members describe opposite physical events) and a new
+  `GeometryError` for `SWMM_ERR_GEOMETRY`; `XSectShape.POLYGON` and
+  `ErrorCode.GEOMETRY` round out the two enums the shape and the error code
+  belong to. `XSECT_GEOMETRY` itself is readable and settable through the
+  generic `swmm_options_get` / `swmm_options_set` key API (before open only,
+  since the compiled sections are built at open). See `docs/dev/cheb_section.md`
+  for the design rationale and
+  measured performance, and Appendix D's `[XSECTIONS]` / `[CURVES]`
+  reference for the input format.
 
 - **`SWMM_FilePathRole` covers the remaining external-file slots.** Three new
   roles — `SWMM_FILE_MESH_2D`, `SWMM_FILE_OUTPUT_2D` and `SWMM_FILE_LID_REPORT` —

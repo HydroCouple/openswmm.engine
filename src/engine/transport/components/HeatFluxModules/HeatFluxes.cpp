@@ -33,6 +33,7 @@
 #include "SurfaceExchange.hpp"
 #include "../../../core/SimulationContext.hpp"
 #include "../../../core/UnitConversion.hpp"
+#include "../../../hydraulics/Link.hpp"
 #include "../../../hydraulics/Node.hpp"
 #include "../../../hydraulics/XSectBatch.hpp"
 #include "../../../hydraulics/Link.hpp"
@@ -49,17 +50,24 @@ namespace {
  * D-H5e: there was one of these in SurfaceExchange.cpp and a hand-inlined near-copy in
  * RadiativeExchange.cpp. Now there is one.
  *
+ * Takes the whole context, not just LinkData: a POLYGON section (and any shape under
+ * `XSECT_GEOMETRY EXACT`) evaluates through its compiled boundary in ctx.cheb_sections — without
+ * attaching it, getWofY() returns 0 for POLYGON and the link silently drops out of surface exchange.
+ *
  * @details Copy one native link cross-section descriptor for surface geometry lookup.
- * @param[in] links Stable native SoA cross-section arrays covering uk, in internal ft/ft2
- * conventions.
+ * @param[in] ctx Context holding the stable native SoA cross-section arrays and compiled sections.
  * @param[in] uk Valid zero-based link index, unchecked.
  * @return Owned XSectParams with translated shape and copied geometric/full-flow fields.
  * @note No table/owner mutation, validation, allocation or physical/clock advance.
  */
-XSectParams buildXsp(const LinkData& links, std::size_t uk) {
+XSectParams buildXsp(const SimulationContext& ctx, std::size_t uk) {
+    const LinkData& links = ctx.links;
     XSectParams xs{};
-    const auto ls = links.xsect_shape[uk];
-    xs.type = link::translateShape(ls);
+    // link::translateShape is the canonical LinkData-enum -> batch-enum
+    // translation (Link.cpp) — POLYGON=26 was appended to both enums at the
+    // same numeric value, breaking the flat +1 offset every earlier shape
+    // follows, so this delegates rather than re-deriving the mapping here.
+    xs.type = link::translateShape(links.xsect_shape[uk]);
     xs.y_full = links.xsect_y_full[uk];
     xs.a_full = links.xsect_a_full[uk];
     xs.w_max = links.xsect_w_max[uk];
@@ -70,6 +78,11 @@ XSectParams buildXsp(const LinkData& links, std::size_t uk) {
     xs.a_bot = links.xsect_a_bot[uk];
     xs.s_bot = links.xsect_s_bot[uk];
     xs.r_bot = links.xsect_r_bot[uk];
+    {
+        const int ci = links.xsect_cheb_idx[uk];
+        if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.cheb_sections.size())
+            xs.cheb = &ctx.cheb_sections[static_cast<std::size_t>(ci)];
+    }
     return xs;
 }
 
@@ -203,14 +216,22 @@ void applyHeatFluxes(SimulationContext& ctx, double dt) {
         // exactly the case the reference's top-width spelling would have
         // switched off (BedZoneData.hpp divergence 1).
         double area_ft2 = 0.0;
-        if (xsect::isOpen(ctx.links.xsect_batch_shape[uj])) {
+        // Per-INSTANCE isOpen, not isOpen(shape code): a POLYGON section can be
+        // open or closed depending on its compiled boundary, which the shape
+        // code alone cannot classify — the int overload falls to
+        // `default: return false` and an open POLYGON channel would silently
+        // never exchange with the atmosphere. Identical answers for every
+        // other shape. buildXsp also takes the whole context (it attaches
+        // xs.cheb); the two-argument form upstream wrote here does not exist.
+        const auto xs_link = buildXsp(ctx, uj);
+        if (xsect::isOpen(xs_link)) {
             const auto ucr = static_cast<std::size_t>(cr);
             double length = CD.length[ucr];
             if (!(length > 0.0))
                 length = CD.mod_length[ucr];
             const double depth = ctx.links.depth[uj];
             if (length > 0.0 && depth > 0.0) {
-                const auto xs = buildXsp(ctx.links, uj);
+                const auto& xs = xs_link;
                 const double top_width = xsect::getWofY(xs, depth);
                 if (top_width > 0.0)
                     area_ft2 = top_width * length * CD.barrels[ucr];

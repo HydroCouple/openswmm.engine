@@ -68,8 +68,8 @@ class TestShapeEnumParity(unittest.TestCase):
             )
 
     def test_enum_covers_every_engine_shape(self):
-        self.assertEqual(len(list(XSectShape)), 26)
-        self.assertEqual([m.value for m in XSectShape], list(range(26)))
+        self.assertEqual(len(list(XSectShape)), 27)
+        self.assertEqual([m.value for m in XSectShape], list(range(27)))
 
     def test_the_previously_broken_members_have_their_corrected_values(self):
         # Explicitly pinned: these are the three that silently mismapped.
@@ -79,7 +79,7 @@ class TestShapeEnumParity(unittest.TestCase):
 
     def test_shape_name_rejects_invalid_codes(self):
         with self.assertRaises(ValueError):
-            shape_name(26)
+            shape_name(27)
         with self.assertRaises(ValueError):
             shape_name(-1)
 
@@ -139,8 +139,12 @@ class TestStandaloneShapes(unittest.TestCase):
         self.assertEqual(xs.critical_depth(5.0), 0.0)
 
     def test_every_self_contained_shape_constructs(self):
+        # The shapes whose geometry lives outside the five geom fields — a
+        # transect, a shape curve, a street definition, an XPOLYGON boundary.
+        # The standalone constructor has no access to any of them, which is
+        # why the engine's own is_tabulated() rejects exactly this set.
         tabulated = {XSectShape.IRREGULAR, XSectShape.CUSTOM,
-                     XSectShape.STREET_XSECT}
+                     XSectShape.STREET_XSECT, XSectShape.POLYGON}
         for member in XSectShape:
             if member in tabulated:
                 continue

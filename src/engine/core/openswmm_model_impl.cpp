@@ -1379,6 +1379,8 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine, const char* key, char* 
             val = "NEITHER";
             break;
         }
+    } else if (k == "XSECT_GEOMETRY") {
+        val = (opt.xsect_geometry == openswmm::XsectGeometryMode::EXACT) ? "EXACT" : "LEGACY";
     } else if (k == "INERTIAL_DAMPING") {
         switch (opt.inertial_damping) {
         case 0:
@@ -1980,6 +1982,22 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine, const char* key, const 
                 opt.normal_flow_ltd = 2;
             else if (vu == "NEITHER")
                 opt.normal_flow_ltd = 3;
+            else
+                return SWMM_ERR_BADPARAM;
+        } else if (k == "XSECT_GEOMETRY") {
+            // The compiled sections this selects are built once, at open, by the
+            // resolver. Flipping the flag afterwards would change what the report
+            // prints and nothing else — the hot loop would keep the geometry it
+            // was built with — so refuse rather than leave the two disagreeing.
+            if (to_engine(engine)->context().state != openswmm::EngineState::CREATED)
+                return SWMM_ERR_LIFECYCLE;
+            std::string vu(v);
+            for (auto& c : vu)
+                c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+            if (vu == "LEGACY")
+                opt.xsect_geometry = openswmm::XsectGeometryMode::LEGACY;
+            else if (vu == "EXACT")
+                opt.xsect_geometry = openswmm::XsectGeometryMode::EXACT;
             else
                 return SWMM_ERR_BADPARAM;
         } else if (k == "INERTIAL_DAMPING") {

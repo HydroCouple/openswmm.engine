@@ -44,6 +44,7 @@ Its sections are:
 | `[REACTION_PIPES]` | Per-species `RATE`, `EQUIL` or `FORMULA` expressions in conduit scope | @ref engine_manual_sect_REACTION_PIPES | \status{Implemented} |
 | `[REACTION_TANKS]` | The same forms in node scope | @ref engine_manual_sect_REACTION_TANKS | \status{Implemented} |
 | `[REACTION_QUALITY]` | Initial concentrations: `GLOBAL`, `NODE` or `LINK` | @ref engine_manual_sect_REACTION_QUALITY | \status{Implemented} |
+| `[REACTION_RAINFALL]` | Rainfall concentration per species, the counterpart of the `[POLLUTANTS]` Crain column | @ref engine_manual_sect_REACTION_RAINFALL | \status{Implemented} |
 | `[REACTION_SOURCES]` | Species sources at nodes | @ref engine_manual_sect_REACTION_SOURCES | \status{Implemented} |
 | `[REACTION_PARAMETERS]` | Per-element overrides of `PARAMETER` coefficients | @ref engine_manual_sect_REACTION_PARAMETERS | \status{Implemented} |
 | `[REACTION_PATTERNS]` | Time patterns for sources | @ref engine_manual_sect_REACTION_PATTERNS | \status{Implemented} |

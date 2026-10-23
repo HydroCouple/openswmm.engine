@@ -306,6 +306,138 @@ void ExplicitFvSolver::reinitialize(double /*t0*/) {
     refreshNodeAreas();
 }
 
+double ExplicitFvSolver::refreshConduitGeometry(int conduit,
+                                                const FvGeometry& g_new,
+                                                double /*t_now*/,
+                                                GeomChangePolicy policy) {
+    if (!mesh_ || !state_) return 0.0;
+    if (conduit < 0 || conduit >= mesh_->n_conduits()) return 0.0;
+    const auto ur = static_cast<std::size_t>(conduit);
+
+    // The OLD closure must outlive the swap: CONSERVE_DEPTH inverts area in it
+    // (depthOfArea -> areaOfDepth -> sectionArea -> eval->getAofY(g.xs, .)), so
+    // a reference into mesh_->geom would read the new section halfway through.
+    //
+    // Sections are SHARED: mesh_->geom is indexed by section, and every
+    // conduit with identical geometry points at the same entry
+    // (NetworkMeshBuilder's geom_memo). Overwriting it in place would silently
+    // re-shape every one of them, so this conduit is given a section of its
+    // own and repointed at it — the conduit it was sharing with keeps the
+    // original. geom may reallocate here, so g_old is a value and g is bound
+    // only after the push_back.
+    const int sec_old = mesh_->conduit_section[ur];
+    const FvGeometry g_old = mesh_->geom[static_cast<std::size_t>(sec_old)];
+
+    const int c0 = mesh_->conduit_cell_begin[ur];
+    const int nc = mesh_->conduit_cell_count[ur];
+
+    const int sec_new = static_cast<int>(mesh_->geom.size());
+    mesh_->geom.push_back(g_new);
+    mesh_->conduit_section[ur] = sec_new;
+    for (int i = 0; i < nc; ++i)
+        mesh_->cell_geom[static_cast<std::size_t>(c0 + i)] = sec_new;
+    const FvGeometry& g = mesh_->geom[static_cast<std::size_t>(sec_new)];
+
+    // How far the FLOW INVERT moved. Both closures measure depth from their own
+    // lowest point, so a section sitting on a raised bed reports a smaller depth
+    // for the same water surface. Moving cell_zb by the same amount keeps the
+    // free-surface ELEVATION the physical quantity and the local depth the
+    // bookkeeping one — which is the only reading under which "sediment
+    // deposition removes capacity" comes out with the right sign.
+    const double dz = g.bed_offset - g_old.bed_offset;
+
+    double displaced = 0.0;
+    for (int i = 0; i < nc; ++i) {
+        const auto uc = static_cast<std::size_t>(c0 + i);
+        double a_old = state_->cell_a[uc];
+        if (a_old < 0.0) a_old = 0.0;
+        mesh_->cell_zb[uc] += dz;
+
+        if (policy == GeomChangePolicy::CONSERVE_DEPTH) {
+            // Solid material intruded: the free surface stays where it is and
+            // the displaced water leaves the conduit. Booked and returned, so
+            // the caller can close the mass balance — an unbooked change is
+            // indistinguishable from a continuity bug in the report.
+            const double h_old = k::depthOfArea(g_old, a_old);
+            // Same surface elevation, new bed: the depth available above the
+            // raised bed is smaller by exactly the bed rise. Clamped at dry —
+            // a bed that rises above the old surface leaves no water at all,
+            // and all of it is displaced.
+            double h_new = h_old - dz;
+            if (h_new < 0.0) h_new = 0.0;
+            const double a_new = k::areaOfDepth(g, h_new);
+            state_->cell_a[uc] = a_new;
+            displaced += (a_old - a_new) * mesh_->cell_dx[uc];
+
+            // Momentum: hold the VELOCITY, not the discharge. Q = u*A with A
+            // changed would keep the flux constant through a section that just
+            // lost part of its opening, which is the one reading that cannot be
+            // right; velocity continuity is what a sudden area change actually
+            // preserves for the water that stays.
+            const double u_old = (a_old > 0.0) ? state_->cell_q[uc] / a_old : 0.0;
+            state_->cell_q[uc] = u_old * a_new;
+        }
+        // CONSERVE_VOLUME: cell_a is left exactly as it is. Depth follows from
+        // the new closure in refreshDepths() below, and the displaced volume is
+        // 0 by construction — nothing left the conduit.
+    }
+
+    // Faces. buildNetworkMesh assigns face sections in two passes: every face
+    // takes its adjacent cell's section — the LEFT cell's, or the right one's
+    // at an upstream boundary (NetworkMeshData::deriveFaceGeom) — and then both
+    // faces at a clean degree-2 node between two different sections get one
+    // section-averaged geometry, unless either side carries a compiled
+    // boundary. Every run-time change installs a compiled boundary
+    // (Router::refreshConduitGeometry builds it from the polygon), so after it
+    // no averaged pair can involve this conduit, and a full rebuild's result
+    // is reproduced exactly by:
+    //   * re-deriving every face that touches one of this conduit's cells, and
+    //   * giving the PARTNER face at each of its degree-2 end nodes — the
+    //     neighbouring conduit's boundary face, which carried the averaged
+    //     section — its own cell's section back.
+    // Faces are found through cell OWNERSHIP (this conduit's contiguous cell
+    // range), never by comparing a section index with a conduit index: sections
+    // are shared between conduits with identical geometry, so the two index
+    // spaces differ, and the cells above already point at sec_new. Faces of
+    // every other conduit — including ones still sharing sec_old, and averaged
+    // pairs at nodes this conduit does not touch — are left as they are. The
+    // C-property holds for ANY consistent per-face choice, so well-balancedness
+    // is untouched; the interface merely drops to first order in the width
+    // step, as it does everywhere else a compiled boundary meets a section.
+    const auto ownsCell = [&](int c) { return c >= c0 && c < c0 + nc; };
+    const auto cellRule = [&](std::size_t uf) {
+        const int c = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf] : mesh_->face_cr[uf];
+        return (c >= 0) ? mesh_->cell_geom[static_cast<std::size_t>(c)] : mesh_->face_geom[uf];
+    };
+    const int nfaces = mesh_->n_faces();
+    for (int f = 0; f < nfaces; ++f) {
+        const auto uf = static_cast<std::size_t>(f);
+        if (!ownsCell(mesh_->face_cl[uf]) && !ownsCell(mesh_->face_cr[uf])) continue;
+        mesh_->face_geom[uf] = cellRule(uf);
+        const int node = mesh_->face_node[uf];
+        if (node < 0) continue;                       // interior or spliced face
+        const auto un = static_cast<std::size_t>(node);
+        const int nb = mesh_->node_face_ptr[un];
+        const int ne = mesh_->node_face_ptr[un + 1];
+        if (ne - nb != 2) continue;                   // averaging needs degree 2
+        for (int k = nb; k < ne; ++k) {
+            const int fp = mesh_->node_face_idx[static_cast<std::size_t>(k)];
+            if (fp != f)
+                mesh_->face_geom[static_cast<std::size_t>(fp)] =
+                    cellRule(static_cast<std::size_t>(fp));
+        }
+    }
+
+    // Every cached quantity derived from the section is now wrong: depths and
+    // free surfaces (refreshDepths), the node surface areas the coupling reads,
+    // the LTS tiering, and the active lists. reinitialize() is exactly this
+    // set, and routing it through one place keeps the two entry points from
+    // drifting apart.
+    reinitialize(0.0);
+    rebuildActiveLists();
+    return displaced;
+}
+
 void ExplicitFvSolver::finalize() {
     mesh_ = nullptr;
     state_ = nullptr;
